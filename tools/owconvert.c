@@ -68,6 +68,8 @@ static int convert(const char *from, const char *to, const char *format, int sho
     result = owf_import_file(from, NULL, &doc, report, &used);
     if (result != OWF_OK) {
         printf("OWConvert: %s: %s\n", from, owf_error_text(result));
+        if (owf_report_count(report))
+            print_report(report);
         owf_report_free(report);
         return result == OWF_ERR_MEMORY ? RC_FAIL : RC_ERROR;
     }

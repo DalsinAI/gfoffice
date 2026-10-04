@@ -356,7 +356,7 @@ static void put_named_styles(owf_buf *out, const owf_doc *doc)
     owf_buf_puts(out, "</office:styles>");
 }
 
-static int build_styles_xml(const owf_doc *doc, owf_buf *out, owf_report *report)
+static int build_styles_xml(const owf_doc *doc, owf_buf *out)
 {
     static const char *num_format[] = { "1", "I", "i", "A", "a" };
     const owf_page *pg = &doc->page;
@@ -389,14 +389,14 @@ static int build_styles_xml(const owf_doc *doc, owf_buf *out, owf_report *report
         put_story(out, &doc->header, &s);
         owf_buf_puts(out, "</style:header>");
         if (!pg->header_on_first)
-            owf_report_add(report, OWF_NOTE_APPROX, "The header is also on the first page");
+            owf_buf_puts(out, "<style:header-first/>");
     }
     if (doc->footer.nparas) {
         owf_buf_puts(out, "<style:footer>");
         put_story(out, &doc->footer, &s);
         owf_buf_puts(out, "</style:footer>");
         if (!pg->footer_on_first)
-            owf_report_add(report, OWF_NOTE_APPROX, "The footer is also on the first page");
+            owf_buf_puts(out, "<style:footer-first/>");
     }
     owf_buf_puts(out, "</style:master-page></office:master-styles></office:document-styles>\n");
     free_styles(&s);
@@ -473,7 +473,7 @@ static int export_odt(const owf_doc *doc, unsigned char **data, size_t *length, 
     part.length = 0;
 
     if (result == OWF_OK)
-        result = build_styles_xml(doc, &part, report);
+        result = build_styles_xml(doc, &part);
     if (result == OWF_OK)
         result = part.failed ? OWF_ERR_MEMORY : owf_zip_add(zip, "styles.xml", part.data, part.length, 1);
     part.length = 0;
@@ -494,5 +494,5 @@ static int export_odt(const owf_doc *doc, unsigned char **data, size_t *length, 
 }
 
 const owf_format owf_format_odt = {
-    "odt", "OpenDocument Text", "odt", NULL, NULL, export_odt
+    "odt", "OpenDocument Text", "odt ott", owf_detect_odt, owf_import_odt, export_odt
 };

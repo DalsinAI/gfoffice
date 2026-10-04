@@ -20,14 +20,14 @@ that the format holds and OpenWrite can show).
 
 | Format | Open | Save | Knowledge | Phase | State |
 | --- | --- | --- | --- | --- | --- |
-| ODT, OpenDocument Text (`.odt`), its template (`.ott`) and flat XML (`.fodt`) | Yes | Yes, the default | Spec: OASIS ODF 1.2 and 1.3, ISO/IEC 26300 | W1 | Saving: Formatting (libowf 0.1: paragraphs, text formatting, tabs, headers, footers, fields; no lists, tables or pictures yet). Opening: to do |
-| DOCX, Office Open XML (`.docx`) and its template (`.dotx`) | Yes | Yes | Spec: ECMA-376 / ISO/IEC 29500 (transitional) | W1 | To do |
+| ODT, OpenDocument Text (`.odt`), its template (`.ott`) and flat XML (`.fodt`) | Yes | Yes, the default | Spec: OASIS ODF 1.2 and 1.3, ISO/IEC 26300 | W1 | Formatting both ways (libowf 0.1): styles through their parents, paragraphs, text formatting, tabs, headers, footers, fields, page setup. Lists and tables come in as text (numbers, bullets, tab-separated cells); notes go to the end; pictures not yet |
+| DOCX, Office Open XML (`.docx`) and its template (`.dotx`) | Yes | Yes | Spec: ECMA-376 / ISO/IEC 29500 (transitional and strict) | W1 | Formatting both ways (libowf 0.1): styles, theme fonts, paragraphs, text formatting, tabs, headers, footers, fields, tracked changes (accepted), page setup. Lists and tables come in as text; notes go to the end; pictures not yet. Tested on 45 of LibreOffice's test documents |
 | RTF (`.rtf`) | Yes | Yes | Spec: Microsoft's RTF 1.9.1 | W1 | To do |
 | HTML (`.html`) | Yes | Yes | Spec: HTML and CSS; OpenWrite's own shape (DESIGN.md section 5) | W1 | Saving: Formatting (libowf 0.1). Opening: with the editor |
 | Plain text (`.txt`), Amiga ISO-8859-1 or UTF-8 | Yes | Yes | n/a | W1 | Full (libowf 0.1) |
 | Markdown (`.md`) | Yes | Yes | Spec: CommonMark (a subset) | W1 | To do |
 | PDF | No | Yes, and print | Through cairo | W4 | To do |
-| Word 97-2003 (`.doc`) | Later | No | Spec: Microsoft's [MS-DOC] | Later | To do |
+| Word 97-2003 (`.doc`) | Later | No | Spec: Microsoft's [MS-DOC] | Later | Recognised (and password-protected Office files), with a clear message; not read yet |
 | AbiWord (`.abw`), which was on AmigaOS 4 | Yes | No | Its XML, read from samples | W2 | To do |
 
 ## 2. Amiga text formats
@@ -47,8 +47,8 @@ here.
 | --- | --- | --- | --- | --- | --- |
 | ProWrite | New Horizons Software, 1987-1993 | IFF `FORM WORD` | Spec (New Horizons, 1987): `FONT`, `COLR`, `DOC`, `HEAD`, `FOOT`, `PARA`, `TABS`, `PAGE`, `TEXT`, `FSCC` (font, style and colour changes), `PCTS`/`PINF` with an ILBM `BODY` for pictures; measures in decipoints (1/720 inch) | W2 | Formatting (libowf 0.1, from the spec; pictures not yet). To confirm with real files: the style bits, what the right margin is measured from, where tab positions start |
 | QuickWrite | New Horizons Software | Probably IFF `FORM WORD` | To confirm from a sample | W2 | To do |
-| Final Writer, Final Copy and Final Copy II | SoftWood, 1990-1997 | IFF | Reference: fw2odf (MIT, Python) reads `ATTR` (font sizes) and is working on `RULE` (spacing and tabs). Sample | W2 | To do |
-| Wordworth | Digita, 1992-1999 | IFF, its own form `WTXT`; an older Wordworth 3 format too | Sample. Wordworth could save RTF, which gives us a second copy of each sample to check against | W2 | To do |
+| Final Writer, Final Copy and Final Copy II | SoftWood, 1990-1997 | IFF `FORM SWRT` | Real documents from Aminet; fw2odf (MIT) for the fonts and `ATTR`; notes in [formats/finalwriter.md](formats/finalwriter.md) | W2 | Text and character formatting (libowf 0.1): fonts, sizes, bold and italic, underline, tabs, text frames, table cells, master-page text as the header, the Symbol font. Alignment, indents and tab positions not yet |
+| Wordworth | Digita, 1992-1999 | IFF `FORM WOWO` | Real documents from Aminet (a 300 KB manual among them); notes in [formats/wordworth.md](formats/wordworth.md) | W2 | Text and character formatting (libowf 0.1): fonts, sizes, bold, italic, underline, colours, centred paragraphs, page breaks, headers and footers. Indents, margins and tab positions not yet |
 | Excellence! and Scribble! | Micro-Systems Software | Their own | Sample | W2 | To do |
 | Kindwords | The Disc Company, 1987 | Its own | Sample | W2 | To do |
 | Textcraft and Textcraft Plus | Arktronics for Commodore, 1985-1986 | Their own | Sample | W2 | To do |
