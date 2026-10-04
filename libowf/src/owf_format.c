@@ -102,6 +102,8 @@ static const owf_format *const formats[] = {
     &owf_format_html,
     &owf_format_ftxt,
     &owf_format_prowrite,
+    &owf_format_wordworth,
+    &owf_format_finalwriter,
     &owf_format_ansi,
     &owf_format_text,
     &owf_format_amiga_text,

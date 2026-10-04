@@ -235,7 +235,7 @@ int owf_import_docx(const unsigned char *data, size_t length, owf_doc *doc, owf_
 int owf_detect_docx(const unsigned char *data, size_t length);
 
 /* The formats. */
-extern const owf_format owf_format_fodt;
+extern const owf_format owf_format_fodt, owf_format_wordworth, owf_format_finalwriter;
 extern const owf_format owf_format_text, owf_format_amiga_text, owf_format_ftxt,
     owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_odt, owf_format_docx;
 

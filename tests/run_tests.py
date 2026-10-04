@@ -85,10 +85,66 @@ def prowrite_sample():
     return form("WORD", chunks)
 
 
+def wordworth_sample():
+    """A Wordworth document built from docs/formats/wordworth.md."""
+    def wpar(align=0, font=1, style=0):
+        b = bytearray(36)
+        b[18], b[21], b[22] = align, font, style
+        return bytes(b)
+    wdoc = bytearray(54)
+    wdoc[4:8] = struct.pack(">I", 595440)
+    wdoc[8:12] = struct.pack(">I", 843336)
+    body = b"Body with bold and plain.\x0fSecond para\tafter tab\x0f"
+    return form("WOWO", [
+        chunk("WVRN", struct.pack(">II", 5, 0)),
+        chunk("WFNT", bytes([1, 0xFA]) + struct.pack(">H", 12) + b"IF_CG Times\0"),
+        chunk("WFNT", bytes([0xFF, 0xFA]) + struct.pack(">H", 14) + b"IF_Shannon Book\0"),
+        chunk("WDOC", bytes(wdoc)),
+        chunk("WPAR", wpar(align=1, style=2)), chunk("WTAB", b""), chunk("WTXT", b"Title\x0f"),
+        chunk("WPAR", wpar()), chunk("WTAB", b""), chunk("WTXT", body),
+        chunk("WFSC", struct.pack(">IBBBBBBBB", 10, 1, 2, 0, 0, 0, 0, 0, 0x90) + struct.pack(">IBBBBBBBB", 14, 1, 0, 0, 0, 0, 0, 0, 0x90)),
+        chunk("WSPC", bytes(12)),
+        chunk("WPAG", b""), chunk("WTXT", b"Page two\x0f"),
+        chunk("WHED", bytes([3, 0, 0, 0, 0, 0])), chunk("WPAR", wpar()), chunk("WTXT", b"Head\x0f"),
+        chunk("WFOT", bytes([3, 1, 0, 0, 0, 0])), chunk("WPAR", wpar()), chunk("WTXT", b"Foot\x0f"),
+        form("ILBM", [chunk("BMHD", bytes(20))]),
+    ])
+
+
+def finalwriter_sample():
+    """A Final Writer document built from docs/formats/finalwriter.md."""
+    def attr(length, font=0, size=12, style=0, kind=0):
+        b = bytearray(22)
+        b[0:4] = struct.pack(">I", length)
+        b[4:6] = struct.pack(">H", font)
+        b[7], b[9], b[11] = size, style, kind
+        b[16:20] = struct.pack(">I", 100)
+        return bytes(b)
+    txob = bytearray(178)
+    txob[4:12] = b"SoftSans"
+    txob[147] = 24
+    txob[176:178] = struct.pack(">H", 10)
+    rule = bytes(9) + b"\x01" + bytes(14)
+    return form("SWRT", [
+        chunk("FDTA", b"Symbol\0"), chunk("FDTA", b"SoftSans_Bold\0"), chunk("FDTA", b"SoftSans\0"),
+        chunk("TXOB", bytes(txob) + b"Frame text"),
+        chunk("TBDY", b"\0\0"),
+        chunk("RULE", rule), chunk("ATTR", attr(5, font=1)), chunk("CHRS", b"Hello"),
+        chunk("ATTR", attr(1, kind=1)), chunk("CHRS", b"\t"),
+        chunk("ATTR", attr(5, size=10, style=1)), chunk("CHRS", b"world"),
+        chunk("RULE", rule), chunk("ATTR", attr(0)), chunk("CHRS", b""),
+        chunk("RULE", rule), chunk("ATTR", attr(11)), chunk("CHRS", "Caf\u00e9 \u00df ok.".encode("latin-1")),
+        chunk("ATTR", attr(3, font=2)), chunk("CHRS", b"abg"),
+        chunk("RMST", b""), chunk("RULE", rule), chunk("ATTR", attr(4)), chunk("CHRS", b"Page"),
+    ])
+
+
 SAMPLES = {
     "sample.ftxt": ftxt_sample(),
     "sample.pw": prowrite_sample(),
     "sample.ans": b"\x1b[1mBold\x1b[0m normal \x1b[32mgreen\x1b[0m\n",
+    "sample.ww": wordworth_sample(),
+    "sample.fw": finalwriter_sample(),
     "latin1.txt": b"Caf\xe9\r\nLine two\r\n",
     "utf8.txt": "﻿Café — UTF-8\n".encode("utf-8"),
 }
@@ -365,6 +421,24 @@ def main():
     text, _ = convert(work, "utf8.txt", "asc", ("--format", "amiga-text"))
     check("utf8 to amiga text", text == b"Caf\xe9 ? UTF-8\n", repr(text))
 
+    # Wordworth and Final Writer, as their notes describe them.
+    text, report = convert(work, "sample.ww", "txt")
+    check("wordworth text", text == b"Title\nBody with bold and plain.\nSecond para\tafter tab\n\fPage two\n", repr(text))
+    check("wordworth report pictures", "1 picture(s) or drawing(s)" in report, report)
+    html, _ = convert(work, "sample.ww", "html")
+    h = html.decode()
+    for want in ("text-align: center", "<b>Title</b>", "Body with <b>bold</b> and plain.", "'Liberation Serif', 'CG Times', serif",
+                 "@page { size: 595.4pt 843.3pt;", "<div class=\"ow-header\" data-first-page=\"0\">\n<p>Head</p>",
+                 "<div class=\"ow-footer\" data-first-page=\"1\">\n<p>Foot</p>", "class=\"ow-page-break\""):
+        check("wordworth html has " + want, want in h)
+    text, report = convert(work, "sample.fw", "txt")
+    check("finalwriter text", text.decode() == "Frame text\nHello\tworld\n\nCaf\u00e9 \u00df ok.\u03b1\u03b2\u03b3\n", repr(text.decode()))
+    check("finalwriter report frames", "1 text frame(s) became paragraphs" in report, report)
+    html, _ = convert(work, "sample.fw", "html")
+    h = html.decode()
+    for want in ("font-size: 24pt", "<b>Hello</b>", "<u>world</u>", "font-size: 10pt", "<div class=\"ow-header\"", "<p>Page</p>"):
+        check("finalwriter html has " + want, want in h)
+
     # Readers: our own ODT and DOCX come back with the same text.
     direct, _ = convert(work, "sample.pw", "txt")
     for fmt in ("odt", "docx"):
@@ -439,17 +513,21 @@ def main():
             break
 
     # Real-world documents, when a folder of them is given (not in the repository).
+    # Folders of them, separated by ":"; every file is tried, Amiga files
+    # often have no extension. Each must convert or be refused, never crash.
     corpus = os.environ.get("OWF_CORPUS")
     if corpus:
         n = 0
-        for name in sorted(os.listdir(corpus)):
-            if name.rsplit(".", 1)[-1].lower() not in ("docx", "odt", "fodt", "ott", "dotx", "pw", "ftxt", "fw", "ww"):
-                continue
-            for ext in ("txt", "odt", "docx"):
-                r = run(os.path.join(corpus, name), os.path.join(work, "corpus." + ext))
-                n += 1
-                if r.returncode not in (0, 10):
-                    check(f"corpus {name} -> {ext}", False, f"exit {r.returncode}: {(r.stdout + r.stderr)[-400:]!r}")
+        for folder in corpus.split(":"):
+            for root, _, files in os.walk(folder):
+                for name in sorted(files):
+                    if name.lower().endswith((".lha", ".info", ".txt", ".md", ".sig")) or name in ("SHA256SUMS",):
+                        continue
+                    for ext in ("txt", "odt", "docx"):
+                        r = run(os.path.join(root, name), os.path.join(work, "corpus." + ext))
+                        n += 1
+                        if r.returncode not in (0, 10):
+                            check(f"corpus {name} -> {ext}", False, f"exit {r.returncode}: {(r.stdout + r.stderr)[-400:]!r}")
         print(f"{n} conversions of real-world documents")
 
     # Unknown output and broken input
