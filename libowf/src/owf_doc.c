@@ -210,10 +210,12 @@ static const struct {
 } font_map[] = {
     { "times", "Liberation Serif", OWF_FONT_SERIF },
     { "cgtimes", "Liberation Serif", OWF_FONT_SERIF },
+    { "cg times", "Liberation Serif", OWF_FONT_SERIF },
     { "times new roman", "Liberation Serif", OWF_FONT_SERIF },
     { "timesroman", "Liberation Serif", OWF_FONT_SERIF },
     { "helvetica", "Liberation Sans", OWF_FONT_SANS },
     { "cgtriumvirate", "Liberation Sans", OWF_FONT_SANS },
+    { "cg triumvirate", "Liberation Sans", OWF_FONT_SANS },
     { "arial", "Liberation Sans", OWF_FONT_SANS },
     { "helvetica narrow", "Liberation Sans Narrow", OWF_FONT_SANS },
     /* The Workbench's own bitmap fonts: nearest is a plain sans. */

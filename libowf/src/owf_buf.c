@@ -246,3 +246,15 @@ int owf_utf8_valid(const unsigned char *text, size_t length)
     }
     return 1;
 }
+
+void owf_buf_trim_from(owf_buf *buf, size_t start)
+{
+    size_t n = start;
+    if (buf->failed || start > buf->length)
+        return;
+    while (n < buf->length && (buf->data[n] == ' ' || buf->data[n] == '\t'))
+        n++;
+    memmove(buf->data + start, buf->data + n, buf->length - n);
+    buf->length -= n - start;
+    buf->data[buf->length] = 0;
+}

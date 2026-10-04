@@ -3,8 +3,9 @@
 # m68k-amigaos-gcc 6.5, libnix). No FPU needed: the filters use no floating
 # point.
 #   build-os3.sh [OUT_DIR]                    (default build/os3)
-# With ZLIB_SRC set to a zlib 1.3 source folder, ODT and DOCX files are
-# deflated; without it they are stored, which every reader accepts.
+# ZLIB_SRC is a zlib 1.3 source folder: needed to open ODT and DOCX files,
+# which are always compressed. Without it OWConvert still saves them
+# (stored, which every reader accepts) but cannot open them.
 # MIT, Copyright (c) 2026 Dalsin Limited.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -23,7 +24,7 @@ if [ -n "${ZLIB_SRC:-}" ]; then
     cp "$ZLIB_SRC/zlib.h" "$OUT/zlib/"
     ZFLAGS="-DOWF_HAVE_ZLIB -DCHROMIUM_ZLIB_NO_CHROMECONF -I$OUT/zlib"
     # zlib is not ours: its own warnings are not errors here.
-    for f in adler32.c crc32.c deflate.c trees.c zutil.c cpu_features.c; do
+    for f in adler32.c crc32.c deflate.c trees.c zutil.c cpu_features.c inflate.c inffast.c inftrees.c; do
         if [ -f "$ZLIB_SRC/$f" ]; then
             "$CC" -noixemul -m68000 -Os -fno-common -DCHROMIUM_ZLIB_NO_CHROMECONF -I"$OUT/zlib" -I"$ZLIB_SRC" \
                 -c "$ZLIB_SRC/$f" -o "$OUT/zlib/${f%.c}.o"

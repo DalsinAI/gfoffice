@@ -10,15 +10,104 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Word 97-2003 documents and password-protected Office files are OLE
+ * compound files: recognised, so the answer is clear, but not read yet. */
+static int detect_ole(const unsigned char *data, size_t length)
+{
+    static const unsigned char sig[8] = { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 };
+    return length >= 512 && !memcmp(data, sig, 8) ? 100 : 0;
+}
+
+static int has_utf16_name(const unsigned char *data, size_t length, const char *name)
+{
+    size_t n = strlen(name), i, j;
+    for (i = 0; i + 2 * n <= length; i++) {
+        for (j = 0; j < n && data[i + 2 * j] == (unsigned char)name[j] && data[i + 2 * j + 1] == 0; j++)
+            ;
+        if (j == n)
+            return 1;
+    }
+    return 0;
+}
+
+static int import_ole(const unsigned char *data, size_t length, owf_doc *doc, owf_report *report)
+{
+    (void)doc;
+    if (has_utf16_name(data, length, "EncryptedPackage"))
+        owf_report_add(report, OWF_NOTE_LOST, "This document is protected with a password; OpenWrite cannot open protected documents yet");
+    else if (has_utf16_name(data, length, "WordDocument"))
+        owf_report_add(report, OWF_NOTE_LOST, "This is a Word 97-2003 document (.doc); OpenWrite cannot open these yet. Word or LibreOffice can save it as DOCX");
+    else
+        owf_report_add(report, OWF_NOTE_LOST, "This is an Office file of a kind OpenWrite does not open");
+    return OWF_ERR_UNSUPPORTED;
+}
+
+static const owf_format format_ole = {
+    "ole", "Word 97-2003 and protected Office documents (recognised only)", "doc", detect_ole, import_ole, NULL
+};
+
+/* Importers that do not know the document's main font leave every run
+ * with its own; the most used one becomes the document's. */
+static void find_base(owf_doc *doc)
+{
+    owf_story *stories[3];
+    long weight[64];
+    int fonts[64], sizes[64], n = 0, i, j, k, best = -1;
+
+    if (doc->base.font >= 0)
+        return;
+    stories[0] = &doc->body;
+    stories[1] = &doc->header;
+    stories[2] = &doc->footer;
+    for (k = 0; k < 1; k++)
+        for (i = 0; i < stories[k]->nparas; i++)
+            for (j = 0; j < stories[k]->paras[i].nruns; j++) {
+                const owf_run *r = &stories[k]->paras[i].runs[j];
+                int m;
+                if (r->kind != OWF_RUN_TEXT || r->fmt.font < 0 || !r->fmt.size)
+                    continue;
+                for (m = 0; m < n && !(fonts[m] == r->fmt.font && sizes[m] == r->fmt.size); m++)
+                    ;
+                if (m == n) {
+                    if (n == 64)
+                        continue;
+                    fonts[n] = r->fmt.font;
+                    sizes[n] = r->fmt.size;
+                    weight[n++] = 0;
+                }
+                weight[m] += (long)strlen(r->text);
+            }
+    for (i = 0; i < n; i++)
+        if (best < 0 || weight[i] > weight[best])
+            best = i;
+    if (best < 0)
+        return;
+    doc->base.font = fonts[best];
+    doc->base.size = sizes[best];
+    for (k = 0; k < 3; k++)
+        for (i = 0; i < stories[k]->nparas; i++)
+            for (j = 0; j < stories[k]->paras[i].nruns; j++) {
+                owf_charfmt *f = &stories[k]->paras[i].runs[j].fmt;
+                if (f->font == doc->base.font)
+                    f->font = -1;
+                if (f->size == doc->base.size)
+                    f->size = 0;
+            }
+}
+
 static const owf_format *const formats[] = {
     &owf_format_odt,
     &owf_format_docx,
+    &owf_format_fodt,
     &owf_format_html,
     &owf_format_ftxt,
     &owf_format_prowrite,
+    &owf_format_wordworth,
+    &owf_format_finalwriter,
     &owf_format_ansi,
     &owf_format_text,
     &owf_format_amiga_text,
+    &format_ole,
 };
 
 #define NFORMATS ((int)(sizeof formats / sizeof formats[0]))
@@ -134,6 +223,7 @@ int owf_import_memory(const unsigned char *data, size_t length, const char *form
         owf_doc_free(doc);
         return result;
     }
+    find_base(doc);
     if (used)
         *used = f;
     *doc_out = doc;

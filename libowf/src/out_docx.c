@@ -325,5 +325,5 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
 }
 
 const owf_format owf_format_docx = {
-    "docx", "Word document (Office Open XML)", "docx", NULL, NULL, export_docx
+    "docx", "Word document (Office Open XML)", "docx dotx docm", owf_detect_docx, owf_import_docx, export_docx
 };

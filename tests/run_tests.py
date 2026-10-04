@@ -85,10 +85,66 @@ def prowrite_sample():
     return form("WORD", chunks)
 
 
+def wordworth_sample():
+    """A Wordworth document built from docs/formats/wordworth.md."""
+    def wpar(align=0, font=1, style=0):
+        b = bytearray(36)
+        b[18], b[21], b[22] = align, font, style
+        return bytes(b)
+    wdoc = bytearray(54)
+    wdoc[4:8] = struct.pack(">I", 595440)
+    wdoc[8:12] = struct.pack(">I", 843336)
+    body = b"Body with bold and plain.\x0fSecond para\tafter tab\x0f"
+    return form("WOWO", [
+        chunk("WVRN", struct.pack(">II", 5, 0)),
+        chunk("WFNT", bytes([1, 0xFA]) + struct.pack(">H", 12) + b"IF_CG Times\0"),
+        chunk("WFNT", bytes([0xFF, 0xFA]) + struct.pack(">H", 14) + b"IF_Shannon Book\0"),
+        chunk("WDOC", bytes(wdoc)),
+        chunk("WPAR", wpar(align=1, style=2)), chunk("WTAB", b""), chunk("WTXT", b"Title\x0f"),
+        chunk("WPAR", wpar()), chunk("WTAB", b""), chunk("WTXT", body),
+        chunk("WFSC", struct.pack(">IBBBBBBBB", 10, 1, 2, 0, 0, 0, 0, 0, 0x90) + struct.pack(">IBBBBBBBB", 14, 1, 0, 0, 0, 0, 0, 0, 0x90)),
+        chunk("WSPC", bytes(12)),
+        chunk("WPAG", b""), chunk("WTXT", b"Page two\x0f"),
+        chunk("WHED", bytes([3, 0, 0, 0, 0, 0])), chunk("WPAR", wpar()), chunk("WTXT", b"Head\x0f"),
+        chunk("WFOT", bytes([3, 1, 0, 0, 0, 0])), chunk("WPAR", wpar()), chunk("WTXT", b"Foot\x0f"),
+        form("ILBM", [chunk("BMHD", bytes(20))]),
+    ])
+
+
+def finalwriter_sample():
+    """A Final Writer document built from docs/formats/finalwriter.md."""
+    def attr(length, font=0, size=12, style=0, kind=0):
+        b = bytearray(22)
+        b[0:4] = struct.pack(">I", length)
+        b[4:6] = struct.pack(">H", font)
+        b[7], b[9], b[11] = size, style, kind
+        b[16:20] = struct.pack(">I", 100)
+        return bytes(b)
+    txob = bytearray(178)
+    txob[4:12] = b"SoftSans"
+    txob[147] = 24
+    txob[176:178] = struct.pack(">H", 10)
+    rule = bytes(9) + b"\x01" + bytes(14)
+    return form("SWRT", [
+        chunk("FDTA", b"Symbol\0"), chunk("FDTA", b"SoftSans_Bold\0"), chunk("FDTA", b"SoftSans\0"),
+        chunk("TXOB", bytes(txob) + b"Frame text"),
+        chunk("TBDY", b"\0\0"),
+        chunk("RULE", rule), chunk("ATTR", attr(5, font=1)), chunk("CHRS", b"Hello"),
+        chunk("ATTR", attr(1, kind=1)), chunk("CHRS", b"\t"),
+        chunk("ATTR", attr(5, size=10, style=1)), chunk("CHRS", b"world"),
+        chunk("RULE", rule), chunk("ATTR", attr(0)), chunk("CHRS", b""),
+        chunk("RULE", rule), chunk("ATTR", attr(11)), chunk("CHRS", "Caf\u00e9 \u00df ok.".encode("latin-1")),
+        chunk("ATTR", attr(3, font=2)), chunk("CHRS", b"abg"),
+        chunk("RMST", b""), chunk("RULE", rule), chunk("ATTR", attr(4)), chunk("CHRS", b"Page"),
+    ])
+
+
 SAMPLES = {
     "sample.ftxt": ftxt_sample(),
     "sample.pw": prowrite_sample(),
     "sample.ans": b"\x1b[1mBold\x1b[0m normal \x1b[32mgreen\x1b[0m\n",
+    "sample.ww": wordworth_sample(),
+    "sample.fw": finalwriter_sample(),
     "latin1.txt": b"Caf\xe9\r\nLine two\r\n",
     "utf8.txt": "﻿Café — UTF-8\n".encode("utf-8"),
 }
@@ -170,6 +226,104 @@ def check_docx(name, data):
     return parts
 
 
+W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+
+
+def docx_sample():
+    """A Word document with the things Word writes and simple readers miss."""
+    def p(inner, ppr=""):
+        return f"<w:p>{('<w:pPr>' + ppr + '</w:pPr>') if ppr else ''}{inner}</w:p>"
+    def r(text, rpr=""):
+        return f"<w:r>{('<w:rPr>' + rpr + '</w:rPr>') if rpr else ''}<w:t xml:space=\"preserve\">{text}</w:t></w:r>"
+    num = '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>'
+    bul = '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr>'
+    body = "".join([
+        p(r("Heading here"), '<w:pStyle w:val="Heading1"/>'),
+        p(r("First"), num), p(r("Second"), num), p(r("Third"), num),
+        p(r("Apple"), bul),
+        p(r("Page ") + '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+          '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>5</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>'
+          + r(" and ") + '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> HYPERLINK "http://example.com" </w:instrText></w:r>'
+          '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' + r("a link") + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'),
+        p('<w:ins w:id="1" w:author="Kim Example">' + r("Kept insert. ") + '</w:ins><w:del w:id="2" w:author="Kim Example"><w:r><w:delText>Gone. </w:delText></w:r></w:del>'
+          + r("Note") + '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="1"/></w:r>'),
+        p('<w:r><w:sym w:font="Symbol" w:char="F061"/></w:r>' + r(" is alpha, ") + r("bold", "<w:b/>") + r(" and ") + r("not", "<w:b w:val=\"0\"/>")),
+        "<w:tbl><w:tr><w:tc>" + p(r("A1")) + "</w:tc><w:tc>" + p(r("B1")) + "</w:tc></w:tr><w:tr><w:tc>" + p(r("A2")) + "</w:tc><w:tc>" + p(r("B2")) + "</w:tc></w:tr></w:tbl>",
+        p(r("Before break") + '<w:r><w:br w:type="page"/></w:r>' + r("After break")),
+        p(r("Big red", '<w:color w:val="FF0000"/><w:sz w:val="32"/>')),
+        '<w:sectPr><w:headerReference w:type="default" r:id="rIdH"/><w:pgSz w:w="12240" w:h="15840"/>'
+        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>'
+        '<w:pgNumType w:start="3"/><w:titlePg/></w:sectPr>',
+    ])
+    files = {
+        "[Content_Types].xml": '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/></Types>',
+        "_rels/.rels": '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+        "word/_rels/document.xml.rels": '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rIdS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+            '<Relationship Id="rIdN" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>'
+            '<Relationship Id="rIdT" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>'
+            '<Relationship Id="rIdF" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>'
+            '<Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>',
+        "word/document.xml": f'<?xml version="1.0" encoding="UTF-8"?><w:document {W}><w:body>{body}</w:body></w:document>',
+        "word/styles.xml": f'<?xml version="1.0"?><w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/>'
+            '<w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>'
+            '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>'
+            '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:outlineLvl w:val="0"/></w:pPr>'
+            '<w:rPr><w:rFonts w:asciiTheme="majorHAnsi" w:hAnsiTheme="majorHAnsi"/><w:sz w:val="32"/></w:rPr></w:style></w:styles>',
+        "word/numbering.xml": f'<?xml version="1.0"?><w:numbering {W}>'
+            '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>'
+            '<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val=""/></w:lvl></w:abstractNum>'
+            '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num></w:numbering>',
+        "word/theme/theme1.xml": '<?xml version="1.0"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office"><a:themeElements>'
+            '<a:fontScheme name="Office"><a:majorFont><a:latin typeface="Calibri Light"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme>'
+            '</a:themeElements></a:theme>',
+        "word/footnotes.xml": f'<?xml version="1.0"?><w:footnotes {W}><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>'
+            '<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> The footnote text.</w:t></w:r></w:p></w:footnote></w:footnotes>',
+        "word/header1.xml": f'<?xml version="1.0"?><w:hdr {W}><w:p><w:r><w:t>Running head</w:t></w:r></w:p></w:hdr>',
+    }
+    import io
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, text in files.items():
+            z.writestr(name, text.encode("utf-8"))
+    return out.getvalue()
+
+
+FODT = """<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+ xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+ xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+ xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text">
+ <office:meta><dc:title>Flat &amp; tested</dc:title></office:meta>
+ <office:font-face-decls><style:font-face style:name="Liberation Sans" svg:font-family="'Liberation Sans'" style:font-family-generic="swiss"/></office:font-face-decls>
+ <office:styles>
+  <style:default-style style:family="paragraph"><style:text-properties fo:font-size="11pt"/></style:default-style>
+  <style:style style:name="Standard" style:family="paragraph"/>
+  <style:style style:name="Base" style:family="paragraph" style:parent-style-name="Standard"><style:paragraph-properties fo:text-align="center"/></style:style>
+  <style:style style:name="Child" style:family="paragraph" style:parent-style-name="Base"><style:text-properties fo:font-weight="bold" style:font-name="Liberation Sans"/></style:style>
+  <text:list-style style:name="Num"><text:list-level-style-number text:level="1" style:num-format="a" style:num-suffix=")"/><text:list-level-style-number text:level="2" style:num-format="1" text:display-levels="2" style:num-suffix="."/></text:list-style>
+ </office:styles>
+ <office:automatic-styles>
+  <style:style style:name="T1" style:family="text"><style:text-properties fo:font-style="italic" fo:color="#008000"/></style:style>
+  <style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm" fo:margin-left="2cm" fo:margin-right="2cm" fo:margin-top="1in" fo:margin-bottom="1in"/></style:page-layout>
+ </office:automatic-styles>
+ <office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1">
+  <style:header><text:p>Head <text:page-number>1</text:page-number></text:p></style:header><style:header-first/></style:master-page></office:master-styles>
+ <office:body><office:text>
+  <text:tracked-changes><text:changed-region text:id="c1"><text:deletion><text:p>Deleted text</text:p></text:deletion></text:changed-region></text:tracked-changes>
+  <text:h text:outline-level="2">A heading</text:h>
+  <text:p text:style-name="Child">Centred   and    bold<text:s text:c="3"/>spaced</text:p>
+  <text:p>Some <text:span text:style-name="T1">green italic</text:span> text<text:note text:note-class="footnote"><text:note-citation>1</text:note-citation><text:note-body><text:p>A note.</text:p></text:note-body></text:note>.<office:annotation><text:p>A comment</text:p></office:annotation></text:p>
+  <text:list text:style-name="Num"><text:list-item><text:p>one</text:p><text:list><text:list-item><text:p>inner</text:p></text:list-item></text:list></text:list-item><text:list-item><text:p>two</text:p></text:list-item></text:list>
+  <table:table><table:table-row><table:table-cell><text:p>c1</text:p></table:table-cell><table:table-cell><text:p>c2</text:p></table:table-cell></table:table-row></table:table>
+ </office:text></office:body>
+</office:document>
+"""
+
+
 def main():
     base = os.environ.get("OWF_TEST_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build", "tests")
     os.makedirs(base, exist_ok=True)
@@ -216,7 +370,7 @@ def main():
         check("prowrite odt content has " + want, want in c)
     for want in ("<style:header>", "Header ", "<style:footer>", "<text:date/>", "fo:page-width="):
         check("prowrite odt styles has " + want, want in s)
-    check("prowrite odt report header", "The header is also on the first page" in report, report)
+    check("prowrite odt header not on first page", "<style:header-first/>" in s, s[-400:])
 
     docx, report = convert(work, "sample.pw", "docx")
     parts = check_docx("prowrite", docx)
@@ -267,6 +421,115 @@ def main():
     text, _ = convert(work, "utf8.txt", "asc", ("--format", "amiga-text"))
     check("utf8 to amiga text", text == b"Caf\xe9 ? UTF-8\n", repr(text))
 
+    # Wordworth and Final Writer, as their notes describe them.
+    text, report = convert(work, "sample.ww", "txt")
+    check("wordworth text", text == b"Title\nBody with bold and plain.\nSecond para\tafter tab\n\fPage two\n", repr(text))
+    check("wordworth report pictures", "1 picture(s) or drawing(s)" in report, report)
+    html, _ = convert(work, "sample.ww", "html")
+    h = html.decode()
+    for want in ("text-align: center", "<b>Title</b>", "Body with <b>bold</b> and plain.", "'Liberation Serif', 'CG Times', serif",
+                 "@page { size: 595.4pt 843.3pt;", "<div class=\"ow-header\" data-first-page=\"0\">\n<p>Head</p>",
+                 "<div class=\"ow-footer\" data-first-page=\"1\">\n<p>Foot</p>", "class=\"ow-page-break\""):
+        check("wordworth html has " + want, want in h)
+    text, report = convert(work, "sample.fw", "txt")
+    check("finalwriter text", text.decode() == "Frame text\nHello\tworld\n\nCaf\u00e9 \u00df ok.\u03b1\u03b2\u03b3\n", repr(text.decode()))
+    check("finalwriter report frames", "1 text frame(s) became paragraphs" in report, report)
+    html, _ = convert(work, "sample.fw", "html")
+    h = html.decode()
+    for want in ("font-size: 24pt", "<b>Hello</b>", "<u>world</u>", "font-size: 10pt", "<div class=\"ow-header\"", "<p>Page</p>"):
+        check("finalwriter html has " + want, want in h)
+
+    # Readers: our own ODT and DOCX come back with the same text.
+    direct, _ = convert(work, "sample.pw", "txt")
+    for fmt in ("odt", "docx"):
+        with open(os.path.join(work, "sample.pw." + fmt), "rb") as f:
+            data = f.read()
+        with open(os.path.join(work, "round." + fmt), "wb") as f:
+            f.write(data)
+        text, _ = convert(work, "round." + fmt, "txt")
+        check(f"{fmt} round trip text", text == direct, repr(text))
+        html, _ = convert(work, "round." + fmt, "html")
+        h = html.decode()
+        for want in ("<b>Title</b>", "font-size: 18pt", "data-ow-tabs=\"2880:right\"", "line-height: 200%",
+                     "class=\"ow-page-break\"", "data-field=\"page\"", "color: #cc0000"):
+            check(f"{fmt} round trip html has {want}", want in h)
+        check(f"{fmt} round trip header not on first page", "<div class=\"ow-header\" data-first-page=\"0\">" in h, h[:600])
+
+    # A Word document with Word's own habits.
+    with open(os.path.join(work, "word.docx"), "wb") as f:
+        f.write(docx_sample())
+    text, report = convert(work, "word.docx", "txt")
+    want = ("Heading here\n1.\tFirst\n2.\tSecond\n3.\tThird\n\u2022\tApple\nPage # and a link\n"
+            "Kept insert. Note1\n\u03b1 is alpha, bold and not\nA1\tB1\nA2\tB2\nBefore break\n\fAfter break\nBig red\nNotes\n1\tThe footnote text.\n")
+    check("docx text", text.decode() == want, repr(text.decode()))
+    check("docx report lists", "Lists are kept as text" in report, report)
+    check("docx report tables", "Tables are kept as rows" in report, report)
+    html, _ = convert(work, "word.docx", "html")
+    h = html.decode()
+    for want in ("<h1", "'Carlito', 'Calibri'", "<b>bold</b>", "color: #ff0000", "font-size: 16pt",
+                 "<div class=\"ow-header\" data-first-page=\"0\">", "Running head", "font-size: 11pt; }"):
+        check("docx html has " + want, want in h)
+    check("docx not bold stays plain", "<b>not</b>" not in h)
+    check("docx deletion dropped", "Gone" not in h)
+
+    # A flat ODT with styles through parents, lists, notes and tracked changes.
+    with open(os.path.join(work, "flat.fodt"), "w", encoding="utf-8") as f:
+        f.write(FODT)
+    text, report = convert(work, "flat.fodt", "txt")
+    want = "A heading\nCentred and bold   spaced\nSome green italic text1.\na)\tone\na.1.\tinner\nb)\ttwo\nc1\tc2\nNotes\n1\tA note.\n"
+    check("fodt text", text.decode() == want, repr(text.decode()))
+    check("fodt report comments", "Comments were left out" in report, report)
+    html, _ = convert(work, "flat.fodt", "html")
+    h = html.decode()
+    for want in ("<h2>A heading</h2>", "text-align: center", "'Liberation Sans', sans-serif", "<b>Centred and bold   spaced</b>",
+                 "color: #008000\"><i>green italic</i>", "<title>Flat &amp; tested</title>", "@page { size: 595.3pt 841.9pt; margin: 72pt 56.7pt 72pt 56.7pt; }",
+                 "<div class=\"ow-header\" data-first-page=\"0\">"):
+        check("fodt html has " + want, want in h)
+    check("fodt deleted text dropped", "Deleted text" not in h)
+
+    # Word 97 and protected documents are recognised and refused clearly.
+    ole = bytearray(1024)
+    ole[0:8] = bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+    ole[600:600 + 24] = "WordDocument".encode("utf-16-le")
+    with open(os.path.join(work, "old.doc"), "wb") as f:
+        f.write(bytes(ole))
+    r = run(os.path.join(work, "old.doc"), os.path.join(work, "old.txt"))
+    check("word 97 refused", r.returncode == 10 and b"Word 97-2003" in r.stdout, r.stdout)
+
+    # Damaged XML: the flat ODT with bytes changed at random, a fixed seed.
+    import random
+    rng = random.Random(4102026)
+    base = FODT.encode("utf-8")
+    for i in range(300):
+        data = bytearray(base)
+        for _ in range(rng.randint(1, 8)):
+            pos = rng.randrange(len(data))
+            data[pos] = rng.choice(b"<>/&;\"'=:x \x00\xff") if rng.random() < 0.7 else rng.randrange(256)
+        with open(os.path.join(work, "fuzz.fodt"), "wb") as f:
+            f.write(bytes(data))
+        r = run(os.path.join(work, "fuzz.fodt"), os.path.join(work, "fuzz.html"))
+        if r.returncode not in (0, 10):
+            check(f"fodt fuzz {i}", False, f"exit {r.returncode}: {(r.stdout + r.stderr)[-400:]!r}")
+            break
+
+    # Real-world documents, when a folder of them is given (not in the repository).
+    # Folders of them, separated by ":"; every file is tried, Amiga files
+    # often have no extension. Each must convert or be refused, never crash.
+    corpus = os.environ.get("OWF_CORPUS")
+    if corpus:
+        n = 0
+        for folder in corpus.split(":"):
+            for root, _, files in os.walk(folder):
+                for name in sorted(files):
+                    if name.lower().endswith((".lha", ".info", ".txt", ".md", ".sig")) or name in ("SHA256SUMS",):
+                        continue
+                    for ext in ("txt", "odt", "docx"):
+                        r = run(os.path.join(root, name), os.path.join(work, "corpus." + ext))
+                        n += 1
+                        if r.returncode not in (0, 10):
+                            check(f"corpus {name} -> {ext}", False, f"exit {r.returncode}: {(r.stdout + r.stderr)[-400:]!r}")
+        print(f"{n} conversions of real-world documents")
+
     # Unknown output and broken input
     r = run(os.path.join(work, "sample.pw"), os.path.join(work, "out.xyz"))
     check("unknown extension refused", r.returncode == 10, r.stdout)
@@ -277,8 +540,13 @@ def main():
 
     # Every cut-short sample: an answer, never a crash.
     cuts = 0
-    for name, data in SAMPLES.items():
-        for n in range(len(data)):
+    cut_samples = dict(SAMPLES)
+    cut_samples["word.docx"] = docx_sample()
+    with open(os.path.join(work, "sample.pw.odt"), "rb") as f:
+        cut_samples["sample.odt"] = f.read()
+    for name, data in cut_samples.items():
+        step = 1 if len(data) < 1500 else 5
+        for n in range(0, len(data), step):
             path = os.path.join(work, "cut.bin")
             with open(path, "wb") as f:
                 f.write(data[:n])
