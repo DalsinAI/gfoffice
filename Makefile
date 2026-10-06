@@ -31,3 +31,14 @@ clean:
 	rm -rf build
 
 .PHONY: all test check clean
+
+CORE_SRC = src/core/editor.c
+
+$(OUT)/test-core: $(OWF_SRC) $(CORE_SRC) tests/core/test_core.c include/openwrite_core.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) tests/core/test_core.c -lz -o $@
+
+core-test: $(OUT)/test-core
+	$(OUT)/test-core
+
+.PHONY: core-test
