@@ -305,3 +305,27 @@ Not yet claimed complete:
 
 Those are implementation milestones, not reasons to add a heavier editor
 engine.
+
+## 0.3 usable-office milestone
+
+The native build now goes beyond the first editing milestone:
+
+- character bold/italic/underline, font choice and point size;
+- paragraph styles, alignment, indents, first-line indent, spacing and line spacing;
+- bullets and numbered lists;
+- Amiga clipboard.device cut/copy/paste using FTXT text;
+- Find, Find Again, Find Previous and Replace / Replace All;
+- automatic pagination plus explicit page breaks;
+- A4/Letter page setup, portrait/landscape and margins;
+- multi-page navigator and current-page tracking;
+- clipped large-page viewport with keyboard scrolling;
+- 100% actual-size semantics plus Fit Page and Fit Width;
+- standard printer.device output is live, making OpenAmigaPrint/OpenPrint a normal backend;
+- direct searchable PDF export is live from the same libowf document model;
+- formatted DOCX and ODT round-trip coverage in the core tests.
+
+Still intentionally outside the 0.3 text-document milestone are native table
+objects, inline OpenDatatypes images, headers/footers editing UI, spell/grammar
+services and a WYSIWYG graphics print path. The document model/design already
+reserves those as the next object/layout tier rather than faking them as
+completed features.

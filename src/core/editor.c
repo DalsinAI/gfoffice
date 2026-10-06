@@ -1896,6 +1896,51 @@ int ow_editor_current_page(const ow_editor *editor)
     return editor->para_page[p];
 }
 
+void ow_editor_page_setup(const ow_editor *editor, owf_page *page)
+{
+    if (!page) return;
+    memset(page, 0, sizeof(*page));
+    if (editor && editor->doc) *page = editor->doc->page;
+}
+
+int ow_editor_apply_page_setup(ow_editor *editor, const owf_page *page)
+{
+    if (!editor || !editor->doc || !page || page->width < 1440 || page->height < 1440)
+        return OWF_ERR_FORMAT;
+    if (page->margin_left < 0 || page->margin_right < 0 ||
+        page->margin_top < 0 || page->margin_bottom < 0 ||
+        page->margin_left + page->margin_right >= page->width ||
+        page->margin_top + page->margin_bottom >= page->height)
+        return OWF_ERR_FORMAT;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    editor->doc->page = *page;
+    editor->typing_group = 0;
+    editor->dirty = 1;
+    return ow_editor_layout(editor);
+}
+
+int ow_editor_insert_page_break(ow_editor *editor)
+{
+    ow_position pos, next;
+    int rc;
+    if (!editor || !editor->doc) return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    if (!ow_editor_selection_empty(editor)) {
+        rc = delete_selection_internal(editor);
+        if (rc < 0) return OWF_ERR_MEMORY;
+    }
+    pos = editor->selection.focus;
+    rc = split_paragraph(editor, pos, &next);
+    if (rc < 0) return OWF_ERR_MEMORY;
+    editor->doc->body.paras[next.paragraph].fmt.page_break_before = 1;
+    editor->selection.anchor = next;
+    editor->selection.focus = next;
+    editor->dirty = 1;
+    sync_typing_fmt(editor);
+    return ow_editor_layout(editor);
+}
+
 int ow_editor_render_page(const ow_editor *editor, int page_index,
                           const ow_renderer *renderer)
 {

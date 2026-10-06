@@ -471,6 +471,70 @@ static int test_modern_roundtrip(void)
     return 0;
 }
 
+
+static int test_page_setup_and_break(void)
+{
+    owf_doc *doc = doc_with("before after");
+    ow_editor *ed;
+    ow_selection sel;
+    owf_page pg;
+    if (!doc) return 1401;
+    ed = ow_editor_new(doc);
+    if (!ed) return 1402;
+    ow_editor_page_setup(ed, &pg);
+    pg.width = 15840; pg.height = 12240;
+    pg.margin_left = pg.margin_right = 720;
+    pg.margin_top = pg.margin_bottom = 720;
+    if (ow_editor_apply_page_setup(ed, &pg) != OWF_OK) return 1403;
+    if (doc->page.width != 15840 || doc->page.height != 12240 || doc->page.margin_left != 720) return 1404;
+    if (ow_editor_undo(ed) != 1) return 1405;
+    if (doc->page.width != 11906 || doc->page.height != 16838) return 1406;
+
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.paragraph = sel.focus.paragraph = 0;
+    sel.anchor.run = sel.focus.run = 0;
+    sel.anchor.byte_offset = sel.focus.byte_offset = 6;
+    ow_editor_set_selection(ed, &sel);
+    if (ow_editor_insert_page_break(ed) != OWF_OK) return 1407;
+    if (doc->body.nparas != 2) return 1408;
+    if (!doc->body.paras[1].fmt.page_break_before) return 1409;
+    if (ow_editor_page_count(ed) < 2) return 1410;
+    if (ow_editor_current_page(ed) != 1) return 1411;
+    if (ow_editor_undo(ed) != 1) return 1412;
+    if (doc->body.nparas != 1) return 1413;
+    ow_editor_free(ed); owf_doc_free(doc); return 0;
+}
+
+
+static int test_pdf_export(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_parafmt pf;
+    owf_charfmt cf;
+    int i;
+    FILE *f;
+    char *data;
+    long n;
+    if (!doc) return 1501;
+    owf_parafmt_init(&pf); owf_charfmt_init(&cf);
+    cf.flags = OWF_BOLD; cf.size = 14 * OWF_TWIPS_PER_POINT;
+    for (i = 0; i < 55; ++i) {
+        owf_para *p = owf_story_add(&doc->body, &pf);
+        if (!p || owf_para_add_text(p, &cf, "OpenWrite searchable PDF output with formatting and automatic pagination.", 70) != OWF_OK) return 1502;
+    }
+    if (owf_export_file(doc, "/tmp/openwrite-core.pdf", "pdf", NULL) != OWF_OK) return 1503;
+    f = fopen("/tmp/openwrite-core.pdf", "rb"); if (!f) return 1504;
+    fseek(f,0,SEEK_END); n=ftell(f); fseek(f,0,SEEK_SET);
+    if (n < 1000) { fclose(f); return 1505; }
+    data=(char *)malloc((size_t)n+1); if(!data){fclose(f);return 1506;}
+    if(fread(data,1,(size_t)n,f)!=(size_t)n){free(data);fclose(f);return 1507;}fclose(f);data[n]=0;
+    if(strncmp(data,"%PDF-1.4",8)){free(data);return 1508;}
+    if(!strstr(data,"/Type /Pages /Count ")){free(data);return 1509;}
+    if(!strstr(data,"Helvetica-Bold") && !strstr(data,"Times-Bold")){free(data);return 1510;}
+    if(!strstr(data,"(OpenWrite)") || !strstr(data,"(searchable)")){free(data);return 1511;}
+    free(data);remove("/tmp/openwrite-core.pdf");owf_doc_free(doc);return 0;
+}
+
 int main(void)
 {
     int rc;
@@ -487,6 +551,8 @@ int main(void)
     if ((rc = test_find())) goto fail;
     if ((rc = test_automatic_pagination())) goto fail;
     if ((rc = test_modern_roundtrip())) goto fail;
+    if ((rc = test_page_setup_and_break())) goto fail;
+    if ((rc = test_pdf_export())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;
 fail:

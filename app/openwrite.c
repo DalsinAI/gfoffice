@@ -16,6 +16,7 @@
 #include <dos/dos.h>
 #include <graphics/text.h>
 #include <graphics/gfx.h>
+#include <graphics/regions.h>
 #include <devices/inputevent.h>
 #include <devices/clipboard.h>
 #include <exec/io.h>
@@ -28,6 +29,7 @@
 #include <proto/gadtools.h>
 #include <proto/asl.h>
 #include <proto/diskfont.h>
+#include <proto/layers.h>
 
 #include <ctype.h>
 #include <stdio.h>
@@ -36,13 +38,14 @@
 
 #include "openwrite_core.h"
 #include "ow_stack.h"
+#include "ow_print.h"
 #include "ogt_theme.h"
 #include "ogt_draw.h"
 #include "ogt_icons.h"
 #include "ogt_toolbar.h"
 #include "ogt_font.h"
 
-struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL;
+struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *LayersBase = NULL;
 
 #define VERSION_TEXT "OpenWrite 0.3-dev (6.10.2026)"
 static const char version[] __attribute__((used)) =
@@ -58,10 +61,10 @@ enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_SELECT_ALL,
     M_FIND, M_FIND_NEXT, M_FIND_PREV, M_REPLACE,
-    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
+    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_ZOOM_FIT_PAGE, M_ZOOM_FIT_WIDTH,
     M_PAGE_FIRST, M_PAGE_PREV, M_PAGE_NEXT, M_PAGE_LAST,
     M_NAV, M_INSPECTOR,
-    M_IMAGE, M_TABLE, M_LINK,
+    M_IMAGE, M_TABLE, M_LINK, M_PAGE_BREAK,
     M_PARAGRAPH, M_BOLD, M_ITALIC, M_UNDERLINE,
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT, M_ALIGN_JUSTIFY,
     M_STYLE_BODY, M_STYLE_H1, M_STYLE_H2, M_STYLE_H3, M_BULLETS, M_NUMBERING,
@@ -108,7 +111,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Inspector", NULL, CHECKIT | CHECKED, 0, (APTR)M_INSPECTOR },
     { NM_ITEM, "Zoom in", "+", 0, 0, (APTR)M_ZOOM_IN },
     { NM_ITEM, "Zoom out", "-", 0, 0, (APTR)M_ZOOM_OUT },
-    { NM_ITEM, "Actual size", "0", 0, 0, (APTR)M_ZOOM_100 },
+    { NM_ITEM, "Actual size (100%)", "0", 0, 0, (APTR)M_ZOOM_100 },
+    { NM_ITEM, "Fit Page", NULL, 0, 0, (APTR)M_ZOOM_FIT_PAGE },
+    { NM_ITEM, "Fit Width", NULL, 0, 0, (APTR)M_ZOOM_FIT_WIDTH },
     { NM_ITEM, "Toolbar", NULL, 0, 0, NULL },
     { NM_SUB, "Icons and text", NULL, CHECKIT | CHECKED, ~1 & 7, (APTR)M_TB_BOTH },
     { NM_SUB, "Icons only", NULL, CHECKIT, ~2 & 7, (APTR)M_TB_ICONS },
@@ -124,6 +129,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Image...", NULL, 0, 0, (APTR)M_IMAGE },
     { NM_ITEM, "Table...", NULL, 0, 0, (APTR)M_TABLE },
     { NM_ITEM, "Link...", NULL, 0, 0, (APTR)M_LINK },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Page Break", NULL, 0, 0, (APTR)M_PAGE_BREAK },
 
     { NM_TITLE, "Format", NULL, 0, 0, NULL },
     { NM_ITEM, "Bold", "B", 0, 0, (APTR)M_BOLD },
@@ -209,7 +216,9 @@ static int show_nav = 1, show_inspector = 1;
 static int page_index;
 
 static box area, toolbar_box, format_box, navigator_box, canvas_box;
-static box ruler_box, page_box, inspector_box, status_box;
+static box ruler_box, page_box, page_view_box, inspector_box, status_box;
+static int page_full_w, page_full_h, page_max_scroll_x, page_max_scroll_y;
+static int scroll_x, scroll_y;
 static box fmt_style_box, fmt_font_box, fmt_size_box, fmt_button_box[9];
 static box nav_page_box[4];
 static int nav_page_number[4], nav_page_slots;
@@ -233,6 +242,8 @@ static void draw_all(void);
 static void redraw_document_area(void);
 static void request_document_redraw(void);
 static void doc_font_cache_clear(void);
+static void editor_repaint(const char *message);
+static int editor_result(int rc, const char *message);
 
 static const char classic_theme[] =
     "name Classic\nversion 1\nfont system\ntitle.align left\npassthrough yes\n[four]\n"
@@ -502,6 +513,7 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
         ow_editor_mark_saved(editor);
     }
     page_index = 0;
+    scroll_x = scroll_y = 0;
     snprintf(current_path, sizeof current_path, "%s", path ? path : "");
     snprintf(current_format, sizeof current_format, "%s", fmt && *fmt ? fmt : "ODT");
     update_window_title();
@@ -749,6 +761,8 @@ static void add_hit(int paragraph, int run, size_t start, size_t end,
 {
     hit_span *hs;
     if (hit_count >= HIT_MAX) return;
+    if (w > 0 && h > 0 && (x + w < page_view_box.x || x >= page_view_box.x + page_view_box.w ||
+        y + h < page_view_box.y || y >= page_view_box.y + page_view_box.h)) return;
     hs = &hits[hit_count++];
     hs->paragraph = paragraph;
     hs->run = run;
@@ -1104,7 +1118,17 @@ static void draw_inspector(void)
     ogt_text(rp, ogt_pen(&ctx, "label"), x + 6, y + 4, buf, fw - 12);
     y += fh + 13;
     field(rp, "string", x, y, fw, fh + 8);
-    ogt_text(rp, ogt_pen(&ctx, "label"), x + 6, y + 4, "Page       A4 portrait", fw - 12);
+    {
+        const char *paper = "Custom";
+        const char *orient = doc && doc->page.width > doc->page.height ? "landscape" : "portrait";
+        int sw = doc ? (doc->page.width < doc->page.height ? doc->page.width : doc->page.height) : 0;
+        int sh = doc ? (doc->page.width > doc->page.height ? doc->page.width : doc->page.height) : 0;
+        if (abs(sw - 11906) < 140 && abs(sh - 16838) < 140) paper = "A4";
+        else if (abs(sw - 12240) < 140 && abs(sh - 15840) < 140) paper = "Letter";
+        else if (abs(sw - 12240) < 140 && abs(sh - 20160) < 140) paper = "Legal";
+        snprintf(buf, sizeof buf, "Page       %s %s", paper, orient);
+        ogt_text(rp, ogt_pen(&ctx, "label"), x + 6, y + 4, buf, fw - 12);
+    }
     y += fh + 13;
     snprintf(buf, sizeof buf, "Zoom       %d%%", zoom);
     field(rp, "string", x, y, fw, fh + 8);
@@ -1145,30 +1169,55 @@ static void draw_ruler(void)
 static void draw_page(void)
 {
     struct RastPort *rp = win->RPort;
-    int availw, availh, pw, ph, scale_num, scale_den;
+    int pw, ph, scale_num, scale_den;
+    int vx, vy, vw, vh;
     ow_renderer r;
     LONG paper = ogt_pen_rgb(&ctx, (ogt_rgb){255,255,255});
     LONG shadow = ogt_pen(&ctx, "track");
     LONG edge = ogt_pen(&ctx, "group.line");
+    struct Region *clip = NULL, *oldclip = NULL;
+    struct Rectangle rect;
     if (!doc || !editor) return;
-    availw = canvas_box.w - 28;
-    availh = canvas_box.h - ruler_box.h - 24;
-    if (availw < 80 || availh < 80) return;
-    scale_num = availw;
-    scale_den = doc->page.width;
-    if (doc->page.height * scale_num / scale_den > availh) {
-        scale_num = availh;
-        scale_den = doc->page.height;
-    }
-    scale_num = scale_num * zoom / 100;
+
+    vx = canvas_box.x + 5;
+    vy = ruler_box.y + ruler_box.h + 5;
+    vw = canvas_box.w - 10;
+    vh = canvas_box.y + canvas_box.h - vy - 5;
+    if (vw < 80 || vh < 80) return;
+    page_view_box = (box){ vx, vy, vw, vh };
+    /* 100% means an approximately 96-dpi document surface: 1440 twips/inch
+     * divided by 96 pixels/inch is exactly 15 twips/pixel. Fit Page/Width
+     * compute a zoom percentage separately instead of redefining 100%. */
+    scale_num = zoom;
+    scale_den = 1500;
     pw = doc->page.width * scale_num / scale_den;
     ph = doc->page.height * scale_num / scale_den;
-    if (pw > availw) pw = availw;
-    if (ph > availh) ph = availh;
+    if (pw < 40) pw = 40;
+    if (ph < 40) ph = 40;
+    page_full_w = pw;
+    page_full_h = ph;
+    page_max_scroll_x = pw > vw ? pw - vw : 0;
+    page_max_scroll_y = ph > vh ? ph - vh : 0;
+    if (scroll_x < 0) scroll_x = 0;
+    if (scroll_y < 0) scroll_y = 0;
+    if (scroll_x > page_max_scroll_x) scroll_x = page_max_scroll_x;
+    if (scroll_y > page_max_scroll_y) scroll_y = page_max_scroll_y;
+
     page_box.w = pw;
     page_box.h = ph;
-    page_box.x = canvas_box.x + (canvas_box.w - pw) / 2;
-    page_box.y = ruler_box.y + ruler_box.h + 10;
+    page_box.x = vx + (pw < vw ? (vw - pw) / 2 : 0) - scroll_x;
+    page_box.y = vy + (ph < vh ? (vh - ph) / 2 : 0) - scroll_y;
+
+    if (LayersBase && win->WLayer) {
+        clip = NewRegion();
+        if (clip) {
+            rect.MinX = (WORD)vx; rect.MinY = (WORD)vy;
+            rect.MaxX = (WORD)(vx + vw - 1); rect.MaxY = (WORD)(vy + vh - 1);
+            if (OrRectRegion(clip, &rect)) oldclip = InstallClipRegion(win->WLayer, clip);
+            else { DisposeRegion(clip); clip = NULL; }
+        }
+    }
+
     ogt_box(rp, shadow, page_box.x + 4, page_box.y + 4, pw, ph);
     ogt_box(rp, paper, page_box.x, page_box.y, pw, ph);
     ogt_frame(rp, edge, page_box.x, page_box.y, pw, ph);
@@ -1185,6 +1234,12 @@ static void draw_page(void)
     r.end_page = render_end;
     r.text_run = render_text_run;
     ow_editor_render_page(editor, page_index, &r);
+
+    if (clip && LayersBase && win->WLayer) {
+        InstallClipRegion(win->WLayer, oldclip);
+        DisposeRegion(clip);
+    }
+    if (font) SetFont(rp, font);
 }
 
 static void draw_status(void)
@@ -1493,6 +1548,122 @@ out:
     if (rw) CloseWindow(rw); if (list) FreeGadgets(list); return mode;
 }
 
+static int twips_to_mm(int twips)
+{
+    if (twips >= 0) return (twips * 127 + 3600) / 7200;
+    return -((-twips * 127 + 3600) / 7200);
+}
+
+static int mm_to_twips(int mm)
+{
+    if (mm >= 0) return (mm * 7200 + 63) / 127;
+    return -((-mm * 7200 + 63) / 127);
+}
+
+static int paragraph_requester(owf_parafmt *fmt)
+{
+    static STRPTR align_labels[] = { (STRPTR)"Left", (STRPTR)"Centre", (STRPTR)"Right", (STRPTR)"Justify", NULL };
+    static STRPTR style_labels[] = { (STRPTR)"Body Text", (STRPTR)"Heading 1", (STRPTR)"Heading 2", (STRPTR)"Heading 3", NULL };
+    struct Gadget *list=NULL,*last,*gstyle,*galign,*gbefore,*gafter,*gleft,*gright,*gfirst,*gline,*gok,*gcancel;
+    struct NewGadget ng; struct Window *rw=NULL;
+    LONG v=0; int done=0,ok=0,ww=500,wh=250;
+    if(!fmt||!scr||!vi)return 0;
+    memset(&ng,0,sizeof ng); ng.ng_TextAttr=&font_attr; ng.ng_VisualInfo=vi;
+    last=CreateContext(&list);
+
+#define ADD_INT(var,id,label,top,value) do { \
+    ng.ng_Flags=PLACETEXT_LEFT; ng.ng_LeftEdge=180; ng.ng_TopEdge=(top); ng.ng_Width=90; ng.ng_Height=18; \
+    ng.ng_GadgetText=(STRPTR)(label); ng.ng_GadgetID=(id); \
+    last=(var)=CreateGadget(INTEGER_KIND,last,&ng,GTIN_Number,(LONG)(value),GTIN_MaxChars,7,GA_TabCycle,TRUE,TAG_DONE); \
+} while(0)
+
+    ng.ng_Flags=PLACETEXT_LEFT; ng.ng_LeftEdge=180; ng.ng_TopEdge=14; ng.ng_Width=170; ng.ng_Height=18;
+    ng.ng_GadgetText=(STRPTR)"Style"; ng.ng_GadgetID=1;
+    last=gstyle=CreateGadget(CYCLE_KIND,last,&ng,GTCY_Labels,(ULONG)style_labels,GTCY_Active,(ULONG)(fmt->heading>=1&&fmt->heading<=3?fmt->heading:0),TAG_DONE);
+    ng.ng_TopEdge=44; ng.ng_GadgetText=(STRPTR)"Alignment"; ng.ng_GadgetID=2;
+    last=galign=CreateGadget(CYCLE_KIND,last,&ng,GTCY_Labels,(ULONG)align_labels,GTCY_Active,(ULONG)fmt->align,TAG_DONE);
+    ADD_INT(gbefore,3,"Space before (pt)",74,(fmt->space_before+10)/20);
+    ADD_INT(gafter,4,"Space after (pt)",100,(fmt->space_after+10)/20);
+    ADD_INT(gleft,5,"Left indent (mm)",126,twips_to_mm(fmt->indent_left));
+    ADD_INT(gright,6,"Right indent (mm)",152,twips_to_mm(fmt->indent_right));
+    ADD_INT(gfirst,7,"First line (mm)",178,twips_to_mm(fmt->indent_first));
+    ADD_INT(gline,8,"Line spacing (%)",204,fmt->line_spacing?fmt->line_spacing:100);
+#undef ADD_INT
+    ng.ng_Flags=0; ng.ng_TopEdge=218; ng.ng_Height=20; ng.ng_Width=78; ng.ng_LeftEdge=330;
+    ng.ng_GadgetText=(STRPTR)"Apply"; ng.ng_GadgetID=9; last=gok=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
+    ng.ng_LeftEdge=414; ng.ng_GadgetText=(STRPTR)"Cancel"; ng.ng_GadgetID=10; last=gcancel=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
+    if(!gstyle||!galign||!gbefore||!gafter||!gleft||!gright||!gfirst||!gline||!gok||!gcancel)goto out;
+    rw=OpenWindowTags(NULL,WA_Title,(ULONG)"Paragraph",WA_PubScreen,(ULONG)scr,
+        WA_InnerWidth,ww,WA_InnerHeight,wh,WA_Left,(scr->Width-ww)/2,WA_Top,(scr->Height-wh)/2,
+        WA_Gadgets,(ULONG)list,WA_DragBar,TRUE,WA_DepthGadget,TRUE,WA_CloseGadget,TRUE,
+        WA_Activate,TRUE,WA_SimpleRefresh,TRUE,
+        WA_IDCMP,IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|BUTTONIDCMP|INTEGERIDCMP|CYCLEIDCMP,TAG_DONE);
+    if(!rw)goto out; GT_RefreshWindow(rw,NULL);
+    while(!done){struct IntuiMessage*m;Wait(1UL<<rw->UserPort->mp_SigBit);while((m=GT_GetIMsg(rw->UserPort))){ULONG cls=m->Class;UWORD id=m->IAddress?((struct Gadget*)m->IAddress)->GadgetID:0;GT_ReplyIMsg(m);if(cls==IDCMP_CLOSEWINDOW){done=1;break;}if(cls==IDCMP_REFRESHWINDOW){GT_BeginRefresh(rw);GT_EndRefresh(rw,TRUE);}else if(cls==IDCMP_GADGETUP){if(id==9){ok=1;done=1;}else if(id==10)done=1;}}}
+    if(ok){
+        GT_GetGadgetAttrs(gstyle,rw,NULL,GTCY_Active,(ULONG)&v,TAG_DONE); fmt->heading=(int)v;
+        GT_GetGadgetAttrs(galign,rw,NULL,GTCY_Active,(ULONG)&v,TAG_DONE); fmt->align=(owf_align)v;
+        GT_GetGadgetAttrs(gbefore,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->space_before=(int)v*20;
+        GT_GetGadgetAttrs(gafter,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->space_after=(int)v*20;
+        GT_GetGadgetAttrs(gleft,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->indent_left=mm_to_twips((int)v);
+        GT_GetGadgetAttrs(gright,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->indent_right=mm_to_twips((int)v);
+        GT_GetGadgetAttrs(gfirst,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->indent_first=mm_to_twips((int)v);
+        GT_GetGadgetAttrs(gline,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->line_spacing=(int)v;
+        if (fmt->line_spacing < 50) fmt->line_spacing = 50;
+        if (fmt->line_spacing > 400) fmt->line_spacing = 400;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    return ok;
+}
+
+static int page_setup_requester(owf_page *page)
+{
+    static STRPTR paper_labels[]={(STRPTR)"A4",(STRPTR)"Letter",(STRPTR)"Legal",NULL};
+    static STRPTR orient_labels[]={(STRPTR)"Portrait",(STRPTR)"Landscape",NULL};
+    struct Gadget *list=NULL,*last,*gpaper,*gorient,*gtop,*gright,*gbottom,*gleft,*gstart,*gok,*gcancel;
+    struct NewGadget ng; struct Window *rw=NULL; LONG v=0; int done=0,ok=0,paper=0,orient=0,ww=480,wh=226;
+    int w,h;
+    if(!page||!scr||!vi)return 0;
+    w=page->width;h=page->height;orient=w>h;
+    if(orient){int t=w;w=h;h=t;}
+    if(abs(w-12240)<120 && abs(h-15840)<120)paper=1; else if(abs(w-12240)<120 && abs(h-20160)<120)paper=2; else paper=0;
+    memset(&ng,0,sizeof ng);ng.ng_TextAttr=&font_attr;ng.ng_VisualInfo=vi;last=CreateContext(&list);
+    ng.ng_Flags=PLACETEXT_LEFT;ng.ng_LeftEdge=180;ng.ng_TopEdge=15;ng.ng_Width=180;ng.ng_Height=18;ng.ng_GadgetText=(STRPTR)"Paper";ng.ng_GadgetID=1;
+    last=gpaper=CreateGadget(CYCLE_KIND,last,&ng,GTCY_Labels,(ULONG)paper_labels,GTCY_Active,paper,TAG_DONE);
+    ng.ng_TopEdge=45;ng.ng_GadgetText=(STRPTR)"Orientation";ng.ng_GadgetID=2;
+    last=gorient=CreateGadget(CYCLE_KIND,last,&ng,GTCY_Labels,(ULONG)orient_labels,GTCY_Active,orient,TAG_DONE);
+#define ADD_PINT(var,id,label,top,value) do { ng.ng_Flags=PLACETEXT_LEFT;ng.ng_LeftEdge=180;ng.ng_TopEdge=(top);ng.ng_Width=90;ng.ng_Height=18;ng.ng_GadgetText=(STRPTR)(label);ng.ng_GadgetID=(id);last=(var)=CreateGadget(INTEGER_KIND,last,&ng,GTIN_Number,(LONG)(value),GTIN_MaxChars,5,GA_TabCycle,TRUE,TAG_DONE);} while(0)
+    ADD_PINT(gtop,3,"Top margin (mm)",75,twips_to_mm(page->margin_top));
+    ADD_PINT(gright,4,"Right margin (mm)",101,twips_to_mm(page->margin_right));
+    ADD_PINT(gbottom,5,"Bottom margin (mm)",127,twips_to_mm(page->margin_bottom));
+    ADD_PINT(gleft,6,"Left margin (mm)",153,twips_to_mm(page->margin_left));
+    ADD_PINT(gstart,7,"Start page",179,page->start_page>0?page->start_page:1);
+#undef ADD_PINT
+    ng.ng_Flags=0;ng.ng_TopEdge=194;ng.ng_Height=20;ng.ng_Width=78;ng.ng_LeftEdge=310;ng.ng_GadgetText=(STRPTR)"Apply";ng.ng_GadgetID=8;last=gok=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
+    ng.ng_LeftEdge=394;ng.ng_GadgetText=(STRPTR)"Cancel";ng.ng_GadgetID=9;last=gcancel=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
+    if(!gpaper||!gorient||!gtop||!gright||!gbottom||!gleft||!gstart||!gok||!gcancel)goto out;
+    rw=OpenWindowTags(NULL,WA_Title,(ULONG)"Page Setup",WA_PubScreen,(ULONG)scr,WA_InnerWidth,ww,WA_InnerHeight,wh,
+        WA_Left,(scr->Width-ww)/2,WA_Top,(scr->Height-wh)/2,WA_Gadgets,(ULONG)list,WA_DragBar,TRUE,WA_DepthGadget,TRUE,WA_CloseGadget,TRUE,WA_Activate,TRUE,WA_SimpleRefresh,TRUE,
+        WA_IDCMP,IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|BUTTONIDCMP|INTEGERIDCMP|CYCLEIDCMP,TAG_DONE);
+    if(!rw)goto out;GT_RefreshWindow(rw,NULL);
+    while(!done){struct IntuiMessage*m;Wait(1UL<<rw->UserPort->mp_SigBit);while((m=GT_GetIMsg(rw->UserPort))){ULONG cls=m->Class;UWORD id=m->IAddress?((struct Gadget*)m->IAddress)->GadgetID:0;GT_ReplyIMsg(m);if(cls==IDCMP_CLOSEWINDOW){done=1;break;}if(cls==IDCMP_REFRESHWINDOW){GT_BeginRefresh(rw);GT_EndRefresh(rw,TRUE);}else if(cls==IDCMP_GADGETUP){if(id==8){ok=1;done=1;}else if(id==9)done=1;}}}
+    if(ok){int pw=11906,ph=16838;
+        GT_GetGadgetAttrs(gpaper,rw,NULL,GTCY_Active,(ULONG)&v,TAG_DONE);paper=(int)v;if(paper==1){pw=12240;ph=15840;}else if(paper==2){pw=12240;ph=20160;}
+        GT_GetGadgetAttrs(gorient,rw,NULL,GTCY_Active,(ULONG)&v,TAG_DONE);if(v){int t=pw;pw=ph;ph=t;}page->width=pw;page->height=ph;
+        GT_GetGadgetAttrs(gtop,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE);page->margin_top=mm_to_twips((int)v);
+        GT_GetGadgetAttrs(gright,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE);page->margin_right=mm_to_twips((int)v);
+        GT_GetGadgetAttrs(gbottom,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE);page->margin_bottom=mm_to_twips((int)v);
+        GT_GetGadgetAttrs(gleft,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE);page->margin_left=mm_to_twips((int)v);
+        GT_GetGadgetAttrs(gstart,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE);page->start_page=(int)v<1?1:(int)v;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    return ok;
+}
+
 static int confirm_discard_changes(void)
 {
     struct EasyStruct es = {
@@ -1543,6 +1714,49 @@ static void do_save(void)
     } else do_save_as();
 }
 
+static void do_export_pdf(void)
+{
+    struct FileRequester *fr;
+    char path[512], initial[160] = "Untitled.pdf", msg[256];
+    const char *name;
+    owf_report *report;
+    int rc;
+    if (!doc) return;
+    if (current_path[0]) {
+        const char *src = leaf(current_path);
+        const char *dot;
+        snprintf(initial, sizeof initial, "%s", src);
+        dot = strrchr(initial, '.');
+        if (dot) initial[(size_t)(dot - initial)] = 0;
+        if (strlen(initial) + 4 < sizeof initial) strcat(initial, ".pdf");
+    }
+    fr = AllocAslRequestTags(ASL_FileRequest,
+        ASLFR_TitleText, (ULONG)"Export OpenWrite PDF",
+        ASLFR_Window, (ULONG)win, ASLFR_SleepWindow, TRUE,
+        ASLFR_DoSaveMode, TRUE, ASLFR_InitialFile, (ULONG)initial,
+        ASLFR_PositiveText, (ULONG)"Export", TAG_DONE);
+    if (!fr) { tell("Export PDF", "The file requester could not be opened."); return; }
+    if (!AslRequestTags(fr, TAG_DONE) || !fr->fr_File[0]) { FreeAslRequest(fr); return; }
+    snprintf(path, sizeof path, "%s", fr->fr_Drawer);
+    AddPart((STRPTR)path, fr->fr_File, sizeof path);
+    FreeAslRequest(fr);
+    name = FilePart((STRPTR)path);
+    if (!strrchr(name, '.')) AddPart((STRPTR)path, (STRPTR)"", sizeof path);
+    if (!strrchr(FilePart((STRPTR)path), '.')) {
+        if (strlen(path) + 4 < sizeof path) strcat(path, ".pdf");
+    }
+    report = owf_report_new();
+    rc = owf_export_file(doc, path, "pdf", report);
+    if (rc != OWF_OK) {
+        snprintf(msg, sizeof msg, "OpenWrite could not export the PDF.\n\n%s", owf_error_text(rc));
+        tell("Export PDF", msg);
+    } else {
+        snprintf(msg, sizeof msg, "%s exported as searchable PDF.", leaf(path));
+        set_status(msg); request_document_redraw();
+    }
+    owf_report_free(report);
+}
+
 static void about(void)
 {
     tell("OpenWrite",
@@ -1568,6 +1782,7 @@ static void set_page_view(int page)
     if (pages < 1) pages = 1;
     if (page < 0) page = 0;
     if (page >= pages) page = pages - 1;
+    if (page_index != page) scroll_x = scroll_y = 0;
     page_index = page;
     {
         char msg[64]; snprintf(msg, sizeof msg, "Page %d of %d.", page_index + 1, pages);
@@ -1582,11 +1797,37 @@ static void follow_caret_page(void)
     if (p >= 0 && editor && p < ow_editor_page_count(editor)) page_index = p;
 }
 
+static void scroll_page(int dx, int dy)
+{
+    scroll_x += dx; scroll_y += dy;
+    if (scroll_x < 0) scroll_x = 0;
+    if (scroll_y < 0) scroll_y = 0;
+    if (scroll_x > page_max_scroll_x) scroll_x = page_max_scroll_x;
+    if (scroll_y > page_max_scroll_y) scroll_y = page_max_scroll_y;
+    request_document_redraw();
+}
+
+static int fit_zoom(int width_only)
+{
+    int vw, vh, zw, zh, z;
+    if (!doc) return 100;
+    vw = canvas_box.w - 30;
+    vh = canvas_box.h - ruler_box.h - 30;
+    if (vw < 80 || vh < 80) return 100;
+    zw = vw * 1500 / doc->page.width;
+    zh = vh * 1500 / doc->page.height;
+    z = width_only ? zw : (zw < zh ? zw : zh);
+    if (z < 25) z = 25;
+    if (z > 200) z = 200;
+    return z;
+}
+
 static void set_zoom(int z)
 {
     if (z < 25) z = 25;
     if (z > 200) z = 200;
     zoom = z;
+    scroll_x = scroll_y = 0;
     if (editor) ow_editor_set_zoom(editor, z);
     relayout();
 }
@@ -1747,9 +1988,13 @@ static void do_command(int id)
     case C_NEW: new_document(); break;
     case C_OPEN: do_open(); break;
     case C_SAVE: do_save(); break;
-    case C_PRINT:
-        coming("OpenPrint", "Print preview and physical/PDF output are the next integration milestone.");
+    case C_PRINT: {
+        char msg[220];
+        if (ow_print_document(doc, msg, sizeof msg)) {
+            set_status(msg); request_document_redraw();
+        } else tell("Print", msg);
         break;
+    }
     case C_UNDO:
         if (editor && ow_editor_undo(editor) > 0) editor_repaint("Undo.");
         break;
@@ -1762,9 +2007,7 @@ static void do_command(int id)
     case C_TABLE:
         coming("Tables", "Table editing is in the first native layout milestone.");
         break;
-    case C_PDF:
-        coming("OpenPrint PDF", "PDF export will use the same pagination model as print preview.");
-        break;
+    case C_PDF: do_export_pdf(); break;
     }
 }
 
@@ -1882,11 +2125,14 @@ static void menu_action(ULONG id)
     case M_ZOOM_IN: set_zoom(zoom + 10); break;
     case M_ZOOM_OUT: set_zoom(zoom - 10); break;
     case M_ZOOM_100: set_zoom(100); break;
+    case M_ZOOM_FIT_PAGE: set_zoom(fit_zoom(0)); break;
+    case M_ZOOM_FIT_WIDTH: set_zoom(fit_zoom(1)); break;
     case M_NAV: show_nav = !show_nav; relayout(); break;
     case M_INSPECTOR: show_inspector = !show_inspector; relayout(); break;
     case M_IMAGE: do_command(C_IMAGE); break;
     case M_TABLE: do_command(C_TABLE); break;
     case M_LINK: coming("Link", "Hyperlink editing is part of DOCX Tier A."); break;
+    case M_PAGE_BREAK: editor_result(ow_editor_insert_page_break(editor), "Page break inserted."); break;
     case M_BOLD: editor_result(ow_editor_toggle_char_flags(editor, OWF_BOLD), "Bold."); break;
     case M_ITALIC: editor_result(ow_editor_toggle_char_flags(editor, OWF_ITALIC), "Italic."); break;
     case M_UNDERLINE: editor_result(ow_editor_toggle_char_flags(editor, OWF_UNDERLINE), "Underline."); break;
@@ -1900,8 +2146,27 @@ static void menu_action(ULONG id)
     case M_STYLE_H3: set_heading_level(3); break;
     case M_BULLETS: editor_result(ow_editor_toggle_list(editor, 0), "Bullets toggled."); break;
     case M_NUMBERING: editor_result(ow_editor_toggle_list(editor, 1), "Numbering toggled."); break;
-    case M_PARAGRAPH: coming("Paragraph", "Paragraph spacing and indents are represented in libowf; the detailed requester is next."); break;
-    case M_PAGE_SETUP: coming("Page Setup", "Page size, margins and orientation are already represented in libowf."); break;
+    case M_PARAGRAPH: {
+        owf_parafmt pf;
+        if (editor && ow_editor_current_parafmt(editor, &pf) && paragraph_requester(&pf))
+            editor_result(ow_editor_apply_parafmt(editor, &pf,
+                OW_PARAFMT_HEADING | OW_PARAFMT_ALIGN | OW_PARAFMT_INDENTS | OW_PARAFMT_SPACING),
+                "Paragraph updated.");
+        break;
+    }
+    case M_PAGE_SETUP: {
+        owf_page pg;
+        if (editor) {
+            ow_editor_page_setup(editor, &pg);
+            if (page_setup_requester(&pg)) {
+                int rc = ow_editor_apply_page_setup(editor, &pg);
+                if (rc == OWF_OK) { scroll_x = scroll_y = 0; editor_repaint("Page setup updated."); }
+                else if (rc == OWF_ERR_MEMORY) tell("Page Setup", "There is not enough memory to apply page setup.");
+                else tell("Page Setup", "Those margins do not leave a usable page area.");
+            }
+        }
+        break;
+    }
     case M_DATATYPES: do_command(C_IMAGE); break;
     case M_OPENPRINT: do_command(C_PRINT); break;
     case M_THEME_OPEN: apply_theme("Open"); break;
@@ -1969,7 +2234,20 @@ static void events(void)
         case IDCMP_RAWKEY:
             if (!(code & 0x80) && editor) {
                 int extend = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
-                switch (code) {
+                int alt = (qual & (IEQUALIFIER_LALT | IEQUALIFIER_RALT)) != 0;
+                int ramiga = (qual & IEQUALIFIER_RCOMMAND) != 0;
+                if (alt) {
+                    if (code == 0x4f) scroll_page(-48, 0);
+                    else if (code == 0x4e) scroll_page(48, 0);
+                    else if (code == 0x4c) scroll_page(0, -48);
+                    else if (code == 0x4d) scroll_page(0, 48);
+                } else if (ramiga) {
+                    if (code == 0x4f) set_page_view(0);
+                    else if (code == 0x4e) set_page_view(ow_editor_page_count(editor) - 1);
+                    else if (code == 0x4c) set_page_view(page_index - 1);
+                    else if (code == 0x4d) set_page_view(page_index + 1);
+                    else if (code == 0x44) editor_result(ow_editor_insert_page_break(editor), "Page break inserted.");
+                } else switch (code) {
                 case 0x4f: ow_editor_move_caret(editor, OW_MOVE_LEFT, extend); follow_caret_page(); request_document_redraw(); break;
                 case 0x4e: ow_editor_move_caret(editor, OW_MOVE_RIGHT, extend); follow_caret_page(); request_document_redraw(); break;
                 case 0x4c: ow_editor_move_caret(editor, OW_MOVE_UP, extend); follow_caret_page(); request_document_redraw(); break;
@@ -2028,6 +2306,7 @@ static int window_main(int argc, char **argv)
     }
 
     DiskfontBase = OpenLibrary((STRPTR)"diskfont.library", 36);
+    LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
 
     read_theme_choice();
     set_document(blank_document(), "", "ODT");
@@ -2062,6 +2341,7 @@ out:
     if (editor) { ow_editor_free(editor); editor = NULL; }
     if (doc) { owf_doc_free(doc); doc = NULL; }
     if (theme.text) ogt_theme_free(&theme);
+    if (LayersBase) { CloseLibrary(LayersBase); LayersBase = NULL; }
     if (DiskfontBase) { CloseLibrary(DiskfontBase); DiskfontBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);

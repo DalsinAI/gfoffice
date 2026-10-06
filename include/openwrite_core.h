@@ -104,6 +104,7 @@ enum {
 int ow_editor_current_parafmt(const ow_editor *editor, owf_parafmt *fmt);
 int ow_editor_apply_parafmt(ow_editor *editor, const owf_parafmt *fmt,
                             unsigned mask);
+
 /* Text-compatible lists: ordered=0 bullet, ordered=1 numbered. Calling the
  * same mode again removes list prefixes from the touched paragraphs. */
 int ow_editor_toggle_list(ow_editor *editor, int ordered);
@@ -137,6 +138,9 @@ void ow_editor_mark_saved(ow_editor *editor);
 int ow_editor_layout(ow_editor *editor);
 int ow_editor_page_count(const ow_editor *editor);
 int ow_editor_current_page(const ow_editor *editor);
+void ow_editor_page_setup(const ow_editor *editor, owf_page *page);
+int ow_editor_apply_page_setup(ow_editor *editor, const owf_page *page);
+int ow_editor_insert_page_break(ow_editor *editor);
 int ow_editor_render_page(const ow_editor *editor, int page_index,
                           const ow_renderer *renderer);
 
