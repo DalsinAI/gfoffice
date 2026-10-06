@@ -24,10 +24,32 @@ $(OUT)/owconvert-asan: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/
 test: $(OUT)/owconvert
 	python3 tests/run_tests.py $(OUT)/owconvert
 
-check: $(OUT)/owconvert-asan
+check: $(OUT)/owconvert-asan $(OUT)/test-core-asan
 	python3 tests/run_tests.py $(OUT)/owconvert-asan
+	$(OUT)/test-core-asan
 
 clean:
 	rm -rf build
 
 .PHONY: all test check clean
+
+CORE_SRC = src/core/editor.c
+
+$(OUT)/test-core: $(OWF_SRC) $(CORE_SRC) tests/core/test_core.c include/openwrite_core.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) tests/core/test_core.c -lz -o $@
+
+core-test: $(OUT)/test-core
+	$(OUT)/test-core
+
+.PHONY: core-test
+
+$(OUT)/test-core-asan: $(OWF_SRC) $(CORE_SRC) tests/core/test_core.c include/openwrite_core.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) tests/core/test_core.c -lz -o $@
+
+core-check: $(OUT)/test-core-asan
+	$(OUT)/test-core-asan
+
+.PHONY: core-check
