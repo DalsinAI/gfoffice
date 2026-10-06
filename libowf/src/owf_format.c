@@ -100,6 +100,7 @@ static const owf_format *const formats[] = {
     &owf_format_docx,
     &owf_format_fodt,
     &owf_format_html,
+    &owf_format_pdf,
     &owf_format_ftxt,
     &owf_format_prowrite,
     &owf_format_wordworth,

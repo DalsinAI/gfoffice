@@ -15,10 +15,14 @@ Status, 6 October 2026: the native editor direction is underway. `libowf`
 opens and saves ODT and DOCX; opens Wordworth, Final Writer, ProWrite, IFF
 FTXT, ANSI text and plain text; and saves HTML, FTXT and plain text.
 
-The first **OpenWrite native editor now builds and runs on AmigaOS 3.2.3**.
-It is a small m68020 C application with OpenGadTools chrome, a responsive
-page workspace, navigator and inspector layout, libowf Open/Save wiring, a
-native caret/selection path, text and paragraph editing, and undo/redo. See `docs/architecture/NATIVE_CORE.md` and
+**OpenWrite 0.3-dev is now a usable native text-document word processor on
+AmigaOS 3.2.3.** It remains a small m68020 C application, but now includes
+caret/selection editing, formatting and type size/font controls, paragraph
+styles/alignment/indents/spacing, bullets and numbering, clipboard cut/copy/
+paste, find/replace, automatic pagination, explicit page breaks, page setup,
+multi-page navigation, scrolling, actual-size/Fit Page/Fit Width zoom,
+DOCX/ODT round-tripping, searchable direct PDF export, and `printer.device`
+printing (including OpenAmigaPrint/OpenPrint when selected). See `docs/architecture/NATIVE_CORE.md` and
 `docs/UX_DESIGN.md`. WebCore is no longer a baseline requirement; it may be an
 optional rich component later.
 

@@ -232,6 +232,309 @@ static int test_cross_paragraph_selection(void)
     return 0;
 }
 
+
+static int test_character_formatting(void)
+{
+    owf_doc *doc = doc_with("abcdef");
+    ow_editor *ed;
+    ow_selection s;
+    owf_charfmt cf;
+    char *copied;
+    size_t copied_len = 0;
+    if (!doc) return 701;
+    ed = ow_editor_new(doc);
+    if (!ed) return 702;
+
+    memset(&s, 0, sizeof(s));
+    s.anchor.paragraph = s.focus.paragraph = 0;
+    s.anchor.run = s.focus.run = 0;
+    s.anchor.byte_offset = 1;
+    s.focus.byte_offset = 3;
+    ow_editor_set_selection(ed, &s);
+    if (ow_editor_toggle_char_flags(ed, OWF_BOLD) != OWF_OK) return 703;
+    if (doc->body.paras[0].nruns != 3) return 704;
+    if (strcmp(run_text(doc, 0, 0), "a")) return 705;
+    if (strcmp(run_text(doc, 0, 1), "bc")) return 706;
+    if (!(doc->body.paras[0].runs[1].fmt.flags & OWF_BOLD)) return 707;
+    if (strcmp(run_text(doc, 0, 2), "def")) return 708;
+    copied = ow_editor_selection_text(ed, &copied_len);
+    if (!copied || copied_len != 2 || strcmp(copied, "bc")) return 709;
+    free(copied);
+    if (ow_editor_undo(ed) != 1) return 710;
+    { char all[64]; paragraph_text(doc, 0, all, sizeof all); if (strcmp(all, "abcdef")) return 711; }
+
+    ow_editor_move_caret(ed, OW_MOVE_END, 0);
+    if (!ow_editor_current_charfmt(ed, &cf)) return 712;
+    cf.flags |= OWF_ITALIC;
+    if (ow_editor_apply_charfmt(ed, &cf, OW_CHARFMT_FLAGS) != OWF_OK) return 713;
+    if (ow_editor_insert_utf8(ed, "X", 1) != OWF_OK) return 714;
+    { char all[64]; paragraph_text(doc, 0, all, sizeof all); if (strcmp(all, "abcdefX")) return 715; }
+    if (!(doc->body.paras[0].runs[doc->body.paras[0].nruns - 1].fmt.flags & OWF_ITALIC)) return 716;
+
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
+}
+
+static int test_paragraph_formatting_and_select_all(void)
+{
+    owf_doc *doc = doc_with("alpha");
+    ow_editor *ed;
+    owf_para *p;
+    owf_parafmt pf, set;
+    owf_charfmt cf;
+    char *text;
+    size_t n = 0;
+    if (!doc) return 801;
+    owf_parafmt_init(&pf);
+    owf_charfmt_init(&cf);
+    p = owf_story_add(&doc->body, &pf);
+    if (!p || owf_para_add_text(p, &cf, "beta", 4) != OWF_OK) return 802;
+    ed = ow_editor_new(doc);
+    if (!ed) return 803;
+
+    ow_editor_select_all(ed);
+    text = ow_editor_selection_text(ed, &n);
+    if (!text || n != 10 || strcmp(text, "alpha\nbeta")) return 804;
+    free(text);
+    if (!ow_editor_current_parafmt(ed, &set)) return 805;
+    set.align = OWF_ALIGN_CENTRE;
+    set.heading = 2;
+    if (ow_editor_apply_parafmt(ed, &set, OW_PARAFMT_ALIGN | OW_PARAFMT_HEADING) != OWF_OK) return 806;
+    if (doc->body.paras[0].fmt.align != OWF_ALIGN_CENTRE || doc->body.paras[1].fmt.align != OWF_ALIGN_CENTRE) return 807;
+    if (doc->body.paras[0].fmt.heading != 2 || doc->body.paras[1].fmt.heading != 2) return 808;
+    if (ow_editor_undo(ed) != 1) return 809;
+    if (doc->body.paras[0].fmt.align != OWF_ALIGN_LEFT || doc->body.paras[1].fmt.align != OWF_ALIGN_LEFT) return 810;
+
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
+}
+
+
+static int test_text_block_paste(void)
+{
+    owf_doc *doc = doc_with("one");
+    ow_editor *ed;
+    if (!doc) return 901;
+    ed = ow_editor_new(doc);
+    if (!ed) return 902;
+    ow_editor_move_caret(ed, OW_MOVE_END, 0);
+    if (ow_editor_insert_text_block(ed, "\ntwo\r\nthree", 11) != OWF_OK) return 903;
+    if (doc->body.nparas != 3) return 904;
+    if (strcmp(run_text(doc, 0, 0), "one")) return 905;
+    if (strcmp(run_text(doc, 1, 0), "two")) return 906;
+    if (strcmp(run_text(doc, 2, 0), "three")) return 907;
+    if (ow_editor_undo(ed) != 1) return 908;
+    if (doc->body.nparas != 1) return 909;
+    if (strcmp(run_text(doc, 0, 0), "one")) return 910;
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
+}
+
+
+static int test_lists(void)
+{
+    owf_doc *doc = doc_with("alpha");
+    ow_editor *ed;
+    owf_para *p;
+    owf_parafmt pf;
+    owf_charfmt cf;
+    char all[64];
+    if (!doc) return 1001;
+    owf_parafmt_init(&pf); owf_charfmt_init(&cf);
+    p = owf_story_add(&doc->body, &pf);
+    if (!p || owf_para_add_text(p, &cf, "beta", 4) != OWF_OK) return 1002;
+    ed = ow_editor_new(doc);
+    if (!ed) return 1003;
+    ow_editor_select_all(ed);
+    if (ow_editor_toggle_list(ed, 0) != OWF_OK) return 1004;
+    paragraph_text(doc, 0, all, sizeof all); if (strcmp(all, "\xe2\x80\xa2 alpha")) return 1005;
+    paragraph_text(doc, 1, all, sizeof all); if (strcmp(all, "\xe2\x80\xa2 beta")) return 1006;
+    if (doc->body.paras[0].fmt.indent_left != 360 || doc->body.paras[0].fmt.indent_first != -360) return 1007;
+    if (ow_editor_toggle_list(ed, 0) != OWF_OK) return 1008;
+    paragraph_text(doc, 0, all, sizeof all); if (strcmp(all, "alpha")) return 1009;
+    paragraph_text(doc, 1, all, sizeof all); if (strcmp(all, "beta")) return 1010;
+    if (ow_editor_toggle_list(ed, 1) != OWF_OK) return 1011;
+    paragraph_text(doc, 0, all, sizeof all); if (strcmp(all, "1. alpha")) return 1012;
+    paragraph_text(doc, 1, all, sizeof all); if (strcmp(all, "2. beta")) return 1013;
+    if (ow_editor_undo(ed) != 1) return 1014;
+    paragraph_text(doc, 0, all, sizeof all); if (strcmp(all, "alpha")) return 1015;
+    ow_editor_free(ed); owf_doc_free(doc); return 0;
+}
+
+
+static int test_find(void)
+{
+    owf_doc *doc = doc_with("Alpha beta alpha");
+    ow_editor *ed;
+    char *t;
+    size_t n;
+    if (!doc) return 1101;
+    ed = ow_editor_new(doc);
+    if (!ed) return 1102;
+    if (ow_editor_find(ed, "alpha", 0, 0, 1) != 1) return 1103;
+    t = ow_editor_selection_text(ed, &n);
+    if (!t || strcmp(t, "Alpha")) return 1104;
+    free(t);
+    if (ow_editor_find(ed, "alpha", 0, 0, 1) != 1) return 1105;
+    t = ow_editor_selection_text(ed, &n);
+    if (!t || strcmp(t, "alpha")) return 1106;
+    free(t);
+    if (ow_editor_find(ed, "Alpha", 0, 1, 1) != 1) return 1107;
+    t = ow_editor_selection_text(ed, &n);
+    if (!t || strcmp(t, "Alpha")) return 1108;
+    free(t);
+    if (ow_editor_find(ed, "beta", 1, 0, 1) != 1) return 1109;
+    t = ow_editor_selection_text(ed, &n);
+    if (!t || strcmp(t, "beta")) return 1110;
+    free(t);
+    ow_editor_free(ed); owf_doc_free(doc); return 0;
+}
+
+
+static int test_automatic_pagination(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_parafmt pf;
+    owf_charfmt cf;
+    ow_editor *ed;
+    ow_renderer r;
+    int i, pages;
+    const char *line = "This is a reasonably long paragraph used to exercise automatic page layout in OpenWrite. It should wrap onto several visual lines on an A4 page.";
+    if (!doc) return 1201;
+    owf_parafmt_init(&pf); owf_charfmt_init(&cf);
+    for (i = 0; i < 40; ++i) {
+        owf_para *p = owf_story_add(&doc->body, &pf);
+        if (!p || owf_para_add_text(p, &cf, line, strlen(line)) != OWF_OK) return 1202;
+    }
+    ed = ow_editor_new(doc);
+    if (!ed) return 1203;
+    if (ow_editor_layout(ed) != OWF_OK) return 1204;
+    pages = ow_editor_page_count(ed);
+    if (pages < 2) return 1205;
+    memset(&r, 0, sizeof r); r.text_run = on_text_run;
+    text_run_calls = 0;
+    if (ow_editor_render_page(ed, 0, &r) != OWF_OK) return 1206;
+    if (text_run_calls <= 0 || text_run_calls >= 40) return 1207;
+    text_run_calls = 0;
+    if (ow_editor_render_page(ed, 1, &r) != OWF_OK) return 1208;
+    if (text_run_calls <= 0) return 1209;
+    ow_editor_free(ed); owf_doc_free(doc); return 0;
+}
+
+
+static int check_roundtrip_format(const char *path)
+{
+    owf_doc *doc = doc_with("Formatted document");
+    ow_editor *ed;
+    owf_charfmt cf;
+    owf_parafmt pf;
+    owf_doc *back = NULL;
+    const owf_format *used = NULL;
+    int rc = 0;
+    if (!doc) return 1;
+    ed = ow_editor_new(doc);
+    if (!ed) { owf_doc_free(doc); return 2; }
+    ow_editor_select_all(ed);
+    if (!ow_editor_current_charfmt(ed, &cf)) { rc = 3; goto out; }
+    cf.flags |= OWF_BOLD | OWF_ITALIC;
+    cf.size = 18 * OWF_TWIPS_PER_POINT;
+    if (ow_editor_apply_charfmt(ed, &cf, OW_CHARFMT_FLAGS | OW_CHARFMT_SIZE) != OWF_OK) { rc = 4; goto out; }
+    if (!ow_editor_current_parafmt(ed, &pf)) { rc = 5; goto out; }
+    pf.align = OWF_ALIGN_CENTRE;
+    if (ow_editor_apply_parafmt(ed, &pf, OW_PARAFMT_ALIGN) != OWF_OK) { rc = 6; goto out; }
+    if (owf_export_file(doc, path, NULL, NULL) != OWF_OK) { rc = 7; goto out; }
+    if (owf_import_file(path, NULL, &back, NULL, &used) != OWF_OK || !back) { rc = 8; goto out; }
+    if (back->body.nparas < 1 || back->body.paras[0].nruns < 1) { rc = 9; goto out; }
+    if (strcmp(back->body.paras[0].runs[0].text, "Formatted document")) { rc = 10; goto out; }
+    if (!(back->body.paras[0].runs[0].fmt.flags & OWF_BOLD)) { rc = 11; goto out; }
+    if (!(back->body.paras[0].runs[0].fmt.flags & OWF_ITALIC)) { rc = 12; goto out; }
+    if (back->body.paras[0].runs[0].fmt.size != 18 * OWF_TWIPS_PER_POINT) { rc = 13; goto out; }
+    if (back->body.paras[0].fmt.align != OWF_ALIGN_CENTRE) { rc = 14; goto out; }
+out:
+    if (back) owf_doc_free(back);
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    remove(path);
+    return rc;
+}
+
+static int test_modern_roundtrip(void)
+{
+    int rc;
+    rc = check_roundtrip_format("/tmp/openwrite-core-format.docx");
+    if (rc) return 1300 + rc;
+    rc = check_roundtrip_format("/tmp/openwrite-core-format.odt");
+    if (rc) return 1320 + rc;
+    return 0;
+}
+
+
+static int test_page_setup_and_break(void)
+{
+    owf_doc *doc = doc_with("before after");
+    ow_editor *ed;
+    ow_selection sel;
+    owf_page pg;
+    if (!doc) return 1401;
+    ed = ow_editor_new(doc);
+    if (!ed) return 1402;
+    ow_editor_page_setup(ed, &pg);
+    pg.width = 15840; pg.height = 12240;
+    pg.margin_left = pg.margin_right = 720;
+    pg.margin_top = pg.margin_bottom = 720;
+    if (ow_editor_apply_page_setup(ed, &pg) != OWF_OK) return 1403;
+    if (doc->page.width != 15840 || doc->page.height != 12240 || doc->page.margin_left != 720) return 1404;
+    if (ow_editor_undo(ed) != 1) return 1405;
+    if (doc->page.width != 11906 || doc->page.height != 16838) return 1406;
+
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.paragraph = sel.focus.paragraph = 0;
+    sel.anchor.run = sel.focus.run = 0;
+    sel.anchor.byte_offset = sel.focus.byte_offset = 6;
+    ow_editor_set_selection(ed, &sel);
+    if (ow_editor_insert_page_break(ed) != OWF_OK) return 1407;
+    if (doc->body.nparas != 2) return 1408;
+    if (!doc->body.paras[1].fmt.page_break_before) return 1409;
+    if (ow_editor_page_count(ed) < 2) return 1410;
+    if (ow_editor_current_page(ed) != 1) return 1411;
+    if (ow_editor_undo(ed) != 1) return 1412;
+    if (doc->body.nparas != 1) return 1413;
+    ow_editor_free(ed); owf_doc_free(doc); return 0;
+}
+
+
+static int test_pdf_export(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_parafmt pf;
+    owf_charfmt cf;
+    int i;
+    FILE *f;
+    char *data;
+    long n;
+    if (!doc) return 1501;
+    owf_parafmt_init(&pf); owf_charfmt_init(&cf);
+    cf.flags = OWF_BOLD; cf.size = 14 * OWF_TWIPS_PER_POINT;
+    for (i = 0; i < 55; ++i) {
+        owf_para *p = owf_story_add(&doc->body, &pf);
+        if (!p || owf_para_add_text(p, &cf, "OpenWrite searchable PDF output with formatting and automatic pagination.", 70) != OWF_OK) return 1502;
+    }
+    if (owf_export_file(doc, "/tmp/openwrite-core.pdf", "pdf", NULL) != OWF_OK) return 1503;
+    f = fopen("/tmp/openwrite-core.pdf", "rb"); if (!f) return 1504;
+    fseek(f,0,SEEK_END); n=ftell(f); fseek(f,0,SEEK_SET);
+    if (n < 1000) { fclose(f); return 1505; }
+    data=(char *)malloc((size_t)n+1); if(!data){fclose(f);return 1506;}
+    if(fread(data,1,(size_t)n,f)!=(size_t)n){free(data);fclose(f);return 1507;}fclose(f);data[n]=0;
+    if(strncmp(data,"%PDF-1.4",8)){free(data);return 1508;}
+    if(!strstr(data,"/Type /Pages /Count ")){free(data);return 1509;}
+    if(!strstr(data,"Helvetica-Bold") && !strstr(data,"Times-Bold")){free(data);return 1510;}
+    if(!strstr(data,"(OpenWrite)") || !strstr(data,"(searchable)")){free(data);return 1511;}
+    free(data);remove("/tmp/openwrite-core.pdf");owf_doc_free(doc);return 0;
+}
+
 int main(void)
 {
     int rc;
@@ -241,6 +544,15 @@ int main(void)
     if ((rc = test_newline_and_merge())) goto fail;
     if ((rc = test_utf8_backspace())) goto fail;
     if ((rc = test_cross_paragraph_selection())) goto fail;
+    if ((rc = test_character_formatting())) goto fail;
+    if ((rc = test_paragraph_formatting_and_select_all())) goto fail;
+    if ((rc = test_text_block_paste())) goto fail;
+    if ((rc = test_lists())) goto fail;
+    if ((rc = test_find())) goto fail;
+    if ((rc = test_automatic_pagination())) goto fail;
+    if ((rc = test_modern_roundtrip())) goto fail;
+    if ((rc = test_page_setup_and_break())) goto fail;
+    if ((rc = test_pdf_export())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;
 fail:
