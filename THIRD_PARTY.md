@@ -1,15 +1,18 @@
 # Third-party parts
 
 OpenWrite's own code and documents are MIT, Copyright (c) 2026 Dalsin
-Limited (`LICENSE`). Nothing below is in this repository yet; this is what
-OpenWrite will build on, and the licence each keeps.
+Limited (`LICENSE`). The source copy of OpenGadTools is present under
+`third_party/opengadtools`; the other entries are current or planned runtime
+dependencies and each keeps its own licence.
 
 | Part | What for | Licence | How |
 | --- | --- | --- | --- |
-| WebCore, WTF and JavaScriptCore (WebKit), through OpenBrowser | The editor | LGPL-2 and BSD-style | Linked at build time; a built OpenWrite ships with source and relinking notes, as OpenBrowser does |
-| ICU 78.3 | Unicode for WebCore | Unicode License v3 | Linked |
-| cairo and pixman (`openamigacairo`) | Drawing, PDF | LGPL-2.1 or MPL-1.1 (cairo); MIT (pixman) | Linked |
-| FreeType, HarfBuzz, fontconfig | Fonts and text shaping | FreeType License; MIT; MIT-style | Linked |
+| OpenGadTools (`DalsinAI/opengadtools`) | Native UI/theme drawing | MIT, Dalsin Limited | Source copy from main `d5f4dff` |
+| OpenRTG (`DalsinAI/openamigartg`) | Accelerated true-colour display path | MIT, Dalsin Limited | Runtime/system service |
+| OpenDatatypes / OpenImage | Embedded media and object decoding | MIT plus datatype-specific licences | Runtime/system service |
+| OpenPrint | Printing, PDF and network output | MIT, Dalsin Limited | Runtime/system service |
+| FreeType / HarfBuzz (later native text shaping) | Document fonts and shaping | FreeType License; MIT | Planned native renderer dependency |
+| WebCore/WTF/JavaScriptCore (optional future component) | Optional rich/HTML view, not the baseline editor | LGPL-2 and BSD-style | Not required by native OpenWrite |
 | zlib | Zip containers (ODT, DOCX) | zlib | Linked |
 | libpng, libjpeg (`openamigaimage`) | Pictures inside documents | libpng; IJG | Linked |
 | Hunspell (phase W5) | Spelling | MPL-1.1 (of its MPL/GPL/LGPL choice) | Linked |

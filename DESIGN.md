@@ -2,6 +2,12 @@
 
 Version 0.1 | 4 October 2026 | First design | Dalsin Limited, MIT
 
+> **Architecture update, 6 October 2026:** the WebCore-first editor in this
+> original design is superseded as the baseline. OpenWrite now uses the small
+> native C editor described in `docs/architecture/NATIVE_CORE.md`, with the UI
+> in `docs/UX_DESIGN.md`. WebCore remains an optional future component. The
+> product goals and format research below remain useful historical context.
+
 We, 4 October 2026: "let's do the OpenWrite project", a word processor
 "that can import any of the Amiga formats, along with DOCX and the
 OpenDocument formats". It follows from the browser work: WebKit on AmigaOS
@@ -10,8 +16,8 @@ app to build on it.
 
 **Decided** (We, 4 October 2026):
 - **The name:** OpenWrite. **Repository:** `DalsinAI/openamigawrite`.
-- **The engine:** our WebCore build (the one OpenBrowser uses) as the editor,
-  not a port of AbiWord.
+- **The engine (superseded 6 October):** the first design chose WebCore. The
+  shipping baseline is now the native C editor; WebCore is optional, not required.
 - **Formats:** it opens every Amiga word processor's documents we can get
   samples of, plus DOCX and the OpenDocument formats, and saves DOCX and ODT.
 

@@ -1,28 +1,33 @@
 # OpenWrite
 
-A word processor for AmigaOS 3.2 that opens and saves today's documents
-(DOCX and ODT) and opens the documents written with the Amiga's own word
-processors: ProWrite, Final Writer, Wordworth, Final Copy, Excellence!,
-Kindwords, Textcraft and the rest. It prints, saves PDF, and works like an
-Amiga program: a GadTools window, Amiga keys, the clipboard and ARexx.
+A native word processor for AmigaOS 3.2. Its working format layer opens and
+saves today's documents (DOCX and ODT) and already opens ProWrite, Final
+Writer, Wordworth, IFF FTXT and text. The project is extending that coverage
+toward the other Amiga word processors. OpenPrint will provide print/PDF
+output; clipboard, ARexx and full native editing are implementation milestones.
 
 We, 4 October 2026: "let's do the OpenWrite project", a word processor "that
 can import any of the Amiga formats, along with DOCX and the OpenDocument
 formats".
 
-Status, 4 October 2026: designed (version 0.1), and phase W1 started.
-`DESIGN.md` is the design and `docs/FORMATS.md` the list of formats.
-libowf 0.1 opens and saves ODT and DOCX; opens Wordworth, Final Writer,
-ProWrite, IFF FTXT, ANSI text and plain text; and saves HTML, FTXT and
-plain text. The other Amiga formats and RTF come next.
+Status, 6 October 2026: the native editor direction is underway. `libowf`
+opens and saves ODT and DOCX; opens Wordworth, Final Writer, ProWrite, IFF
+FTXT, ANSI text and plain text; and saves HTML, FTXT and plain text.
 
-Its editor is WebCore, the engine inside WebKit, from our OpenBrowser port
-(`DalsinAI/openamigabrowser`). Its file formats are a separate C library,
-**libowf**, with a Shell command, **C:OWConvert**, that converts documents on
-any Amiga, a 68000 included.
+The first **OpenWrite native shell now builds and runs on AmigaOS 3.2.3**.
+It is a small m68020 C application with OpenGadTools chrome, a responsive
+page workspace, navigator and inspector layout, libowf Open/Save wiring and a
+first native page renderer. See `docs/architecture/NATIVE_CORE.md` and
+`docs/UX_DESIGN.md`. WebCore is no longer a baseline requirement; it may be an
+optional rich component later.
 
-Part of the Open family: it builds on OpenBrowser, OpenGadTools and
-OpenPrint rather than bundling its own versions of them.
+The file formats remain a separate C library, **libowf**, with the Shell
+command **C:OWConvert**, which still targets any 68000. The OpenWrite UI
+targets the A1200 baseline (68020), with no FPU required.
+
+Part of the Open family: OpenGadTools supplies the application UI, OpenRTG is
+the accelerated document-canvas path, OpenDatatypes supplies embedded media,
+and OpenPrint is the output path.
 
 ## Building and testing
 
@@ -34,14 +39,15 @@ make test       # the filter tests
 make check      # the same under AddressSanitizer and UBSan
 ```
 
-For AmigaOS 3.x, any 68000, with bebbo's amiga-gcc 6.5 (the `os32` stove):
+For AmigaOS 3.x with bebbo's amiga-gcc 6.5 (the `os32` stove):
 
 ```
-ZLIB_SRC=/path/to/zlib-1.3 ./build-os3.sh      # build/os3/OWConvert
+ZLIB_SRC=/path/to/zlib-1.3 ./build-os3.sh      # build/os3/OWConvert + build/os3/OpenWrite
 ```
 
-Without `ZLIB_SRC`, ODT files are stored rather than deflated, which every
-reader accepts.
+`OWConvert` remains 68000-compatible; `OpenWrite` targets m68020. Without
+`ZLIB_SRC`, DOCX/ODT input is unavailable, although stored output remains
+possible.
 
 ## Licence
 
