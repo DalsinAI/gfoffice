@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "0.2"
+#define OW_CORE_VERSION "0.3"
 
 typedef struct ow_editor ow_editor;
 
@@ -74,10 +74,50 @@ int ow_editor_zoom(const ow_editor *editor);
 void ow_editor_set_selection(ow_editor *editor, const ow_selection *selection);
 ow_selection ow_editor_selection(const ow_editor *editor);
 int ow_editor_selection_empty(const ow_editor *editor);
+void ow_editor_select_all(ow_editor *editor);
+
+/* A malloc() string containing the selected plain text, including tabs and
+ * paragraph separators. The caller frees it. NULL means no selection or OOM. */
+char *ow_editor_selection_text(const ow_editor *editor, size_t *length);
+
+/* Character formatting. A zero-length selection changes the typing format;
+ * a non-empty selection reformats exactly the selected text and is undoable. */
+enum {
+    OW_CHARFMT_FLAGS  = 1 << 0,
+    OW_CHARFMT_FONT   = 1 << 1,
+    OW_CHARFMT_SIZE   = 1 << 2,
+    OW_CHARFMT_COLOUR = 1 << 3
+};
+int ow_editor_current_charfmt(const ow_editor *editor, owf_charfmt *fmt);
+int ow_editor_apply_charfmt(ow_editor *editor, const owf_charfmt *fmt,
+                            unsigned mask);
+int ow_editor_toggle_char_flags(ow_editor *editor, unsigned flags);
+
+/* Paragraph formatting applies to every paragraph touched by the selection,
+ * or the caret paragraph when the selection is empty. */
+enum {
+    OW_PARAFMT_HEADING = 1 << 0,
+    OW_PARAFMT_ALIGN   = 1 << 1,
+    OW_PARAFMT_INDENTS = 1 << 2,
+    OW_PARAFMT_SPACING = 1 << 3
+};
+int ow_editor_current_parafmt(const ow_editor *editor, owf_parafmt *fmt);
+int ow_editor_apply_parafmt(ow_editor *editor, const owf_parafmt *fmt,
+                            unsigned mask);
+/* Text-compatible lists: ordered=0 bullet, ordered=1 numbered. Calling the
+ * same mode again removes list prefixes from the touched paragraphs. */
+int ow_editor_toggle_list(ow_editor *editor, int ordered);
+
+/* Plain-text search. Returns 1 when selected, 0 when no match, -1 on OOM.
+ * Search stays within paragraph text but wraps across paragraphs. */
+int ow_editor_find(ow_editor *editor, const char *needle, int backwards,
+                   int match_case, int wrap);
 
 /* Native editing. All positions are UTF-8 byte offsets inside text runs.
  * Consecutive typing is coalesced into one undo step. */
 int ow_editor_insert_utf8(ow_editor *editor, const char *utf8, size_t length);
+/* Inserts/pastes a text block as one undo transaction; CR/LF create paragraphs. */
+int ow_editor_insert_text_block(ow_editor *editor, const char *utf8, size_t length);
 int ow_editor_backspace(ow_editor *editor);
 int ow_editor_delete_forward(ow_editor *editor);
 int ow_editor_newline(ow_editor *editor);
@@ -96,6 +136,7 @@ void ow_editor_mark_saved(ow_editor *editor);
 
 int ow_editor_layout(ow_editor *editor);
 int ow_editor_page_count(const ow_editor *editor);
+int ow_editor_current_page(const ow_editor *editor);
 int ow_editor_render_page(const ow_editor *editor, int page_index,
                           const ow_renderer *renderer);
 

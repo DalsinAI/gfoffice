@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include "openwrite_core.h"
 
@@ -16,6 +17,9 @@ struct ow_editor {
     ow_view_mode view;
     int zoom;
     int pages;
+    int *para_page;
+    int *para_y;
+    int para_cap;
     int dirty;
 
     ow_snapshot undo[OW_UNDO_LIMIT];
@@ -25,6 +29,8 @@ struct ow_editor {
 
     int typing_group;
     ow_position typing_next;
+    owf_charfmt typing_fmt;
+    int typing_fmt_set;
 };
 
 /* ---- small allocation helpers -------------------------------------------------- */
@@ -267,6 +273,91 @@ static ow_position clamp_position(ow_editor *editor, ow_position pos)
     return pos;
 }
 
+static int same_charfmt_local(const owf_charfmt *a, const owf_charfmt *b)
+{
+    return a && b && a->flags == b->flags && a->font == b->font &&
+           a->size == b->size && a->colour == b->colour;
+}
+
+static void sync_typing_fmt(ow_editor *editor)
+{
+    ow_position pos;
+    owf_para *p;
+    if (!editor || !editor->doc) return;
+    pos = clamp_position(editor, editor->selection.focus);
+    p = &editor->doc->body.paras[pos.paragraph];
+    if (pos.run >= 0 && pos.run < p->nruns &&
+        p->runs[pos.run].kind == OWF_RUN_TEXT) {
+        editor->typing_fmt = p->runs[pos.run].fmt;
+        editor->typing_fmt_set = 1;
+    } else {
+        editor->typing_fmt = editor->doc->base;
+        editor->typing_fmt_set = 1;
+    }
+}
+
+static size_t para_text_offset(const owf_para *p, ow_position pos)
+{
+    size_t out = 0;
+    int i;
+    if (!p) return 0;
+    for (i = 0; i < p->nruns; ++i) {
+        const owf_run *r = &p->runs[i];
+        if (i == pos.run) {
+            if (r->kind == OWF_RUN_TEXT && r->text) {
+                size_t n = strlen(r->text);
+                out += pos.byte_offset < n ? pos.byte_offset : n;
+            }
+            return out;
+        }
+        if (r->kind == OWF_RUN_TEXT && r->text) out += strlen(r->text);
+    }
+    return out;
+}
+
+static size_t para_text_length(const owf_para *p)
+{
+    size_t out = 0;
+    int i;
+    if (!p) return 0;
+    for (i = 0; i < p->nruns; ++i)
+        if (p->runs[i].kind == OWF_RUN_TEXT && p->runs[i].text)
+            out += strlen(p->runs[i].text);
+    return out;
+}
+
+static ow_position para_offset_position(ow_editor *editor, int paragraph,
+                                        size_t offset)
+{
+    ow_position pos = { paragraph, 0, 0 };
+    owf_para *p;
+    size_t at = 0;
+    int i, fallback = -1;
+    if (!editor || !editor->doc || paragraph < 0 ||
+        paragraph >= editor->doc->body.nparas) return pos;
+    p = &editor->doc->body.paras[paragraph];
+    for (i = 0; i < p->nruns; ++i) {
+        owf_run *r = &p->runs[i];
+        size_t n;
+        if (r->kind != OWF_RUN_TEXT) continue;
+        fallback = i;
+        n = r->text ? strlen(r->text) : 0;
+        if (offset <= at + n) {
+            pos.run = i;
+            pos.byte_offset = offset - at;
+            return pos;
+        }
+        at += n;
+    }
+    if (fallback < 0) {
+        if (!append_empty_text_run(p, &editor->doc->base)) return pos;
+        fallback = p->nruns - 1;
+    }
+    pos.run = fallback;
+    pos.byte_offset = p->runs[fallback].text ? strlen(p->runs[fallback].text) : 0;
+    return pos;
+}
+
 static size_t utf8_prev(const char *s, size_t off)
 {
     if (!s || !off) return 0;
@@ -355,6 +446,175 @@ static int ensure_run_capacity(owf_para *p, int want)
     return 1;
 }
 
+static int insert_run_at(owf_para *p, int index, const owf_charfmt *fmt,
+                         const char *text, size_t len)
+{
+    owf_run *r;
+    if (!p || !fmt || index < 0 || index > p->nruns) return 0;
+    if (!ensure_run_capacity(p, p->nruns + 1)) return 0;
+    if (index < p->nruns)
+        memmove(&p->runs[index + 1], &p->runs[index],
+                (size_t)(p->nruns - index) * sizeof(p->runs[0]));
+    r = &p->runs[index];
+    memset(r, 0, sizeof(*r));
+    r->kind = OWF_RUN_TEXT;
+    r->fmt = *fmt;
+    r->text = copy_bytes(text ? text : "", len);
+    if (!r->text) {
+        if (index < p->nruns)
+            memmove(&p->runs[index], &p->runs[index + 1],
+                    (size_t)(p->nruns - index) * sizeof(p->runs[0]));
+        memset(&p->runs[p->nruns], 0, sizeof(p->runs[0]));
+        return 0;
+    }
+    ++p->nruns;
+    return 1;
+}
+
+static int insert_formatted_text(ow_editor *editor, ow_position pos,
+                                 const char *utf8, size_t length,
+                                 const owf_charfmt *fmt, ow_position *after)
+{
+    owf_para *p;
+    owf_run *run;
+    owf_charfmt old_fmt;
+    size_t old_len;
+    char *left = NULL, *right = NULL;
+    int inserted;
+
+    if (!editor || !utf8 || !fmt) return 0;
+    pos = clamp_position(editor, pos);
+    p = &editor->doc->body.paras[pos.paragraph];
+    run = &p->runs[pos.run];
+    old_fmt = run->fmt;
+    old_len = run->text ? strlen(run->text) : 0;
+
+    if (same_charfmt_local(&run->fmt, fmt)) {
+        if (!replace_run_slice(run, pos.byte_offset, pos.byte_offset,
+                               utf8, length)) return 0;
+        if (after) { *after = pos; after->byte_offset += length; }
+        return 1;
+    }
+
+    if (!old_len) {
+        run->fmt = *fmt;
+        if (!replace_run_slice(run, 0, 0, utf8, length)) return 0;
+        if (after) { *after = pos; after->byte_offset = length; }
+        return 1;
+    }
+
+    if (pos.byte_offset == 0) {
+        if (!insert_run_at(p, pos.run, fmt, utf8, length)) return 0;
+        if (after) {
+            after->paragraph = pos.paragraph;
+            after->run = pos.run;
+            after->byte_offset = length;
+        }
+        return 1;
+    }
+
+    if (pos.byte_offset >= old_len) {
+        inserted = pos.run + 1;
+        if (!insert_run_at(p, inserted, fmt, utf8, length)) return 0;
+        if (after) {
+            after->paragraph = pos.paragraph;
+            after->run = inserted;
+            after->byte_offset = length;
+        }
+        return 1;
+    }
+
+    left = copy_bytes(run->text, pos.byte_offset);
+    right = copy_bytes(run->text + pos.byte_offset, old_len - pos.byte_offset);
+    if (!left || !right) { free(left); free(right); return 0; }
+    free(run->text);
+    run->text = left;
+    left = NULL;
+    inserted = pos.run + 1;
+    if (!insert_run_at(p, inserted, fmt, utf8, length)) {
+        /* The document remains valid even if this rare OOM path leaves the
+         * run split point at the caret. Undo snapshot still protects callers. */
+        free(right);
+        return 0;
+    }
+    if (!insert_run_at(p, inserted + 1, &old_fmt, right, strlen(right))) {
+        free(right);
+        return 0;
+    }
+    free(right);
+    if (after) {
+        after->paragraph = pos.paragraph;
+        after->run = inserted;
+        after->byte_offset = length;
+    }
+    return 1;
+}
+
+static void free_para_runs(owf_para *p)
+{
+    int i;
+    if (!p) return;
+    for (i = 0; i < p->nruns; ++i) free(p->runs[i].text);
+    free(p->runs);
+    p->runs = NULL;
+    p->nruns = p->capruns = 0;
+}
+
+static void apply_charfmt_fields(owf_charfmt *dst, const owf_charfmt *src,
+                                 unsigned mask)
+{
+    if (mask & OW_CHARFMT_FLAGS) dst->flags = src->flags;
+    if (mask & OW_CHARFMT_FONT) dst->font = src->font;
+    if (mask & OW_CHARFMT_SIZE) dst->size = src->size;
+    if (mask & OW_CHARFMT_COLOUR) dst->colour = src->colour;
+}
+
+static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
+                                const owf_charfmt *fmt, unsigned mask)
+{
+    owf_para tmp;
+    size_t at = 0;
+    int i;
+    memset(&tmp, 0, sizeof(tmp));
+    tmp.fmt = p->fmt;
+
+    for (i = 0; i < p->nruns; ++i) {
+        const owf_run *r = &p->runs[i];
+        if (r->kind == OWF_RUN_TEXT) {
+            const char *text = r->text ? r->text : "";
+            size_t n = strlen(text), rs = at, re = at + n;
+            size_t a = from > rs ? from : rs;
+            size_t b = to < re ? to : re;
+            owf_charfmt changed = r->fmt;
+            if (a < b) apply_charfmt_fields(&changed, fmt, mask);
+            if (a > rs && owf_para_add_text(&tmp, &r->fmt, text, a - rs) != OWF_OK)
+                goto fail;
+            if (a < b && owf_para_add_text(&tmp, &changed, text + (a - rs), b - a) != OWF_OK)
+                goto fail;
+            if (b < re && owf_para_add_text(&tmp, &r->fmt, text + (b - rs), re - b) != OWF_OK)
+                goto fail;
+            if (a >= b && n && owf_para_add_text(&tmp, &r->fmt, text, n) != OWF_OK)
+                goto fail;
+            if (!n && !tmp.nruns && !append_empty_text_run(&tmp, &r->fmt))
+                goto fail;
+            at = re;
+        } else {
+            if (owf_para_add_special(&tmp, &r->fmt, r->kind, r->field) != OWF_OK)
+                goto fail;
+        }
+    }
+
+    if (!tmp.nruns && !append_empty_text_run(&tmp, fmt)) goto fail;
+    free_para_runs(p);
+    p->runs = tmp.runs;
+    p->nruns = tmp.nruns;
+    p->capruns = tmp.capruns;
+    return 1;
+fail:
+    free_para_runs(&tmp);
+    return 0;
+}
+
 /* ---- snapshots / undo ---------------------------------------------------------- */
 
 static void snapshot_free(ow_snapshot *s)
@@ -420,6 +680,7 @@ static int restore_from_stack(ow_editor *editor,
     editor->selection.focus = clamp_position(editor, editor->selection.focus);
     editor->dirty = snap.dirty;
     editor->typing_group = 0;
+    sync_typing_fmt(editor);
     ow_editor_layout(editor);
     return 1;
 }
@@ -819,6 +1080,7 @@ ow_editor *ow_editor_new(owf_doc *doc)
         free(editor);
         return NULL;
     }
+    sync_typing_fmt(editor);
     return editor;
 }
 
@@ -827,6 +1089,8 @@ void ow_editor_free(ow_editor *editor)
     if (!editor) return;
     stack_clear(editor->undo, &editor->nundo);
     stack_clear(editor->redo, &editor->nredo);
+    free(editor->para_page);
+    free(editor->para_y);
     free(editor);
 }
 
@@ -875,6 +1139,7 @@ void ow_editor_set_selection(ow_editor *editor, const ow_selection *selection)
     editor->selection.anchor = clamp_position(editor, editor->selection.anchor);
     editor->selection.focus = clamp_position(editor, editor->selection.focus);
     editor->typing_group = 0;
+    sync_typing_fmt(editor);
 }
 
 ow_selection ow_editor_selection(const ow_editor *editor)
@@ -888,6 +1153,404 @@ int ow_editor_selection_empty(const ow_editor *editor)
 {
     return !editor || same_position(editor->selection.anchor,
                                     editor->selection.focus);
+}
+
+void ow_editor_select_all(ow_editor *editor)
+{
+    owf_story *story;
+    owf_para *p;
+    int r;
+    if (!editor || !editor->doc) return;
+    story = &editor->doc->body;
+    if (!story->nparas && !ensure_document_editable(editor)) return;
+    editor->selection.anchor.paragraph = 0;
+    p = &story->paras[0];
+    r = first_text_run(p);
+    if (r < 0) { append_empty_text_run(p, &editor->doc->base); r = p->nruns - 1; }
+    editor->selection.anchor.run = r;
+    editor->selection.anchor.byte_offset = 0;
+
+    editor->selection.focus.paragraph = story->nparas - 1;
+    p = &story->paras[story->nparas - 1];
+    r = last_text_run(p);
+    if (r < 0) { append_empty_text_run(p, &editor->doc->base); r = p->nruns - 1; }
+    editor->selection.focus.run = r;
+    editor->selection.focus.byte_offset = p->runs[r].text ? strlen(p->runs[r].text) : 0;
+    editor->typing_group = 0;
+    sync_typing_fmt(editor);
+}
+
+static int text_out_append(char **buf, size_t *used, size_t *cap,
+                           const char *s, size_t n)
+{
+    char *b;
+    size_t want;
+    if (!n) return 1;
+    if (*used + n + 1 > *cap) {
+        want = *cap ? *cap * 2 : 128;
+        while (want < *used + n + 1) want *= 2;
+        b = (char *)realloc(*buf, want);
+        if (!b) return 0;
+        *buf = b; *cap = want;
+    }
+    memcpy(*buf + *used, s, n);
+    *used += n;
+    (*buf)[*used] = 0;
+    return 1;
+}
+
+char *ow_editor_selection_text(const ow_editor *editor, size_t *length)
+{
+    ow_position start, end;
+    char *out = NULL;
+    size_t used = 0, cap = 0;
+    int pi, ri;
+    if (length) *length = 0;
+    if (!editor || !editor->doc || ow_editor_selection_empty(editor)) return NULL;
+    if (compare_position(editor->selection.anchor, editor->selection.focus) <= 0) {
+        start = editor->selection.anchor; end = editor->selection.focus;
+    } else {
+        start = editor->selection.focus; end = editor->selection.anchor;
+    }
+    for (pi = start.paragraph; pi <= end.paragraph; ++pi) {
+        const owf_para *p = &editor->doc->body.paras[pi];
+        for (ri = 0; ri < p->nruns; ++ri) {
+            const owf_run *r = &p->runs[ri];
+            ow_position rs = { pi, ri, 0 }, re = rs;
+            size_t n = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 0;
+            re.byte_offset = n;
+            if (r->kind == OWF_RUN_TEXT) {
+                size_t a = 0, b = n;
+                if (compare_position(end, rs) <= 0 || compare_position(start, re) >= 0)
+                    continue;
+                if (start.paragraph == pi && start.run == ri) a = start.byte_offset < n ? start.byte_offset : n;
+                if (end.paragraph == pi && end.run == ri) b = end.byte_offset < n ? end.byte_offset : n;
+                if (b > a && !text_out_append(&out, &used, &cap, r->text + a, b - a)) goto fail;
+            } else if (compare_position(start, rs) <= 0 && compare_position(rs, end) < 0) {
+                const char c = r->kind == OWF_RUN_TAB ? '\t' : r->kind == OWF_RUN_LINEBREAK ? '\n' : 0;
+                if (c && !text_out_append(&out, &used, &cap, &c, 1)) goto fail;
+            }
+        }
+        if (pi < end.paragraph && !text_out_append(&out, &used, &cap, "\n", 1)) goto fail;
+    }
+    if (!out) {
+        out = copy_bytes("", 0);
+        if (!out) return NULL;
+    }
+    if (length) *length = used;
+    return out;
+fail:
+    free(out);
+    return NULL;
+}
+
+int ow_editor_current_charfmt(const ow_editor *editor, owf_charfmt *fmt)
+{
+    const owf_para *p;
+    ow_position pos;
+    if (!editor || !editor->doc || !fmt) return 0;
+    if (ow_editor_selection_empty(editor) && editor->typing_fmt_set) {
+        *fmt = editor->typing_fmt;
+        return 1;
+    }
+    pos = editor->selection.focus;
+    if (pos.paragraph < 0 || pos.paragraph >= editor->doc->body.nparas) return 0;
+    p = &editor->doc->body.paras[pos.paragraph];
+    if (pos.run < 0 || pos.run >= p->nruns || p->runs[pos.run].kind != OWF_RUN_TEXT) return 0;
+    *fmt = p->runs[pos.run].fmt;
+    return 1;
+}
+
+int ow_editor_apply_charfmt(ow_editor *editor, const owf_charfmt *fmt,
+                            unsigned mask)
+{
+    ow_position start, end, old_a, old_f;
+    int pi;
+    size_t aoff, foff;
+    if (!editor || !fmt || !mask) return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (ow_editor_selection_empty(editor)) {
+        if (!editor->typing_fmt_set) sync_typing_fmt(editor);
+        apply_charfmt_fields(&editor->typing_fmt, fmt, mask);
+        return OWF_OK;
+    }
+
+    old_a = editor->selection.anchor;
+    old_f = editor->selection.focus;
+    aoff = para_text_offset(&editor->doc->body.paras[old_a.paragraph], old_a);
+    foff = para_text_offset(&editor->doc->body.paras[old_f.paragraph], old_f);
+    if (compare_position(old_a, old_f) <= 0) { start = old_a; end = old_f; }
+    else { start = old_f; end = old_a; }
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+
+    for (pi = start.paragraph; pi <= end.paragraph; ++pi) {
+        owf_para *p = &editor->doc->body.paras[pi];
+        size_t from = pi == start.paragraph ? para_text_offset(p, start) : 0;
+        size_t to = pi == end.paragraph ? para_text_offset(p, end) : para_text_length(p);
+        if (to > from && !rebuild_para_charfmt(p, from, to, fmt, mask))
+            return OWF_ERR_MEMORY;
+    }
+    editor->selection.anchor = para_offset_position(editor, old_a.paragraph, aoff);
+    editor->selection.focus = para_offset_position(editor, old_f.paragraph, foff);
+    editor->dirty = 1;
+    sync_typing_fmt(editor);
+    ow_editor_layout(editor);
+    return OWF_OK;
+}
+
+int ow_editor_toggle_char_flags(ow_editor *editor, unsigned flags)
+{
+    owf_charfmt fmt;
+    if (!editor || !flags || !ow_editor_current_charfmt(editor, &fmt)) return OWF_ERR_FORMAT;
+    fmt.flags ^= flags;
+    return ow_editor_apply_charfmt(editor, &fmt, OW_CHARFMT_FLAGS);
+}
+
+int ow_editor_current_parafmt(const ow_editor *editor, owf_parafmt *fmt)
+{
+    int p;
+    if (!editor || !editor->doc || !fmt) return 0;
+    p = editor->selection.focus.paragraph;
+    if (p < 0 || p >= editor->doc->body.nparas) return 0;
+    *fmt = editor->doc->body.paras[p].fmt;
+    return 1;
+}
+
+int ow_editor_apply_parafmt(ow_editor *editor, const owf_parafmt *fmt,
+                            unsigned mask)
+{
+    int first, last, p;
+    if (!editor || !editor->doc || !fmt || !mask) return OWF_ERR_FORMAT;
+    first = editor->selection.anchor.paragraph;
+    last = editor->selection.focus.paragraph;
+    if (first > last) { int t = first; first = last; last = t; }
+    if (first < 0) first = 0;
+    if (last >= editor->doc->body.nparas) last = editor->doc->body.nparas - 1;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    for (p = first; p <= last; ++p) {
+        owf_parafmt *dst = &editor->doc->body.paras[p].fmt;
+        if (mask & OW_PARAFMT_HEADING) dst->heading = fmt->heading;
+        if (mask & OW_PARAFMT_ALIGN) dst->align = fmt->align;
+        if (mask & OW_PARAFMT_INDENTS) {
+            dst->indent_left = fmt->indent_left;
+            dst->indent_right = fmt->indent_right;
+            dst->indent_first = fmt->indent_first;
+        }
+        if (mask & OW_PARAFMT_SPACING) {
+            dst->space_before = fmt->space_before;
+            dst->space_after = fmt->space_after;
+            dst->line_spacing = fmt->line_spacing;
+        }
+    }
+    editor->typing_group = 0;
+    editor->dirty = 1;
+    ow_editor_layout(editor);
+    return OWF_OK;
+}
+
+static int paragraph_list_prefix(const owf_para *p, int *ordered, size_t *length)
+{
+    int r = first_text_run(p);
+    const char *s;
+    size_t i = 0;
+    if (ordered) *ordered = -1;
+    if (length) *length = 0;
+    if (r < 0 || !p->runs[r].text) return 0;
+    s = p->runs[r].text;
+    if (!strncmp(s, "\xe2\x80\xa2 ", 4)) {
+        if (ordered) *ordered = 0;
+        if (length) *length = 4;
+        return 1;
+    }
+    while (s[i] >= '0' && s[i] <= '9') ++i;
+    if (i && s[i] == '.' && s[i + 1] == ' ') {
+        if (ordered) *ordered = 1;
+        if (length) *length = i + 2;
+        return 1;
+    }
+    return 0;
+}
+
+int ow_editor_toggle_list(ow_editor *editor, int ordered)
+{
+    int first, last, p, all_same = 1, changed = 0;
+    ow_position old_a, old_f;
+    size_t aoff, foff;
+    if (!editor || !editor->doc || (ordered != 0 && ordered != 1)) return OWF_ERR_FORMAT;
+    first = editor->selection.anchor.paragraph;
+    last = editor->selection.focus.paragraph;
+    if (first > last) { int t = first; first = last; last = t; }
+    if (first < 0) first = 0;
+    if (last >= editor->doc->body.nparas) last = editor->doc->body.nparas - 1;
+    for (p = first; p <= last; ++p) {
+        int kind = -1;
+        paragraph_list_prefix(&editor->doc->body.paras[p], &kind, NULL);
+        if (kind != ordered) { all_same = 0; break; }
+    }
+    old_a = editor->selection.anchor;
+    old_f = editor->selection.focus;
+    aoff = para_text_offset(&editor->doc->body.paras[old_a.paragraph], old_a);
+    foff = para_text_offset(&editor->doc->body.paras[old_f.paragraph], old_f);
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+
+    for (p = first; p <= last; ++p) {
+        owf_para *para = &editor->doc->body.paras[p];
+        int r = first_text_run(para), old_kind = -1;
+        size_t old_len = 0, add_len = 0;
+        char prefix[32];
+        if (r < 0) {
+            if (!append_empty_text_run(para, &editor->doc->base)) return OWF_ERR_MEMORY;
+            r = para->nruns - 1;
+        }
+        paragraph_list_prefix(para, &old_kind, &old_len);
+        if (old_len) {
+            if (!replace_run_slice(&para->runs[r], 0, old_len, NULL, 0)) return OWF_ERR_MEMORY;
+            changed = 1;
+            if (old_a.paragraph == p) aoff = aoff > old_len ? aoff - old_len : 0;
+            if (old_f.paragraph == p) foff = foff > old_len ? foff - old_len : 0;
+        }
+        if (!all_same) {
+            if (ordered == 0) snprintf(prefix, sizeof prefix, "%s", "\xe2\x80\xa2 ");
+            else snprintf(prefix, sizeof prefix, "%d. ", p - first + 1);
+            add_len = strlen(prefix);
+            if (!replace_run_slice(&para->runs[r], 0, 0, prefix, add_len)) return OWF_ERR_MEMORY;
+            if (old_a.paragraph == p) aoff += add_len;
+            if (old_f.paragraph == p) foff += add_len;
+            para->fmt.indent_left = 360;
+            para->fmt.indent_first = -360;
+            changed = 1;
+        } else {
+            para->fmt.indent_left = 0;
+            para->fmt.indent_first = 0;
+        }
+    }
+    if (!changed) {
+        snapshot_free(&editor->undo[editor->nundo - 1]);
+        --editor->nundo;
+        return OWF_OK;
+    }
+    editor->selection.anchor = para_offset_position(editor, old_a.paragraph, aoff);
+    editor->selection.focus = para_offset_position(editor, old_f.paragraph, foff);
+    editor->typing_group = 0;
+    editor->dirty = 1;
+    sync_typing_fmt(editor);
+    ow_editor_layout(editor);
+    return OWF_OK;
+}
+
+static char *paragraph_plain_text(const owf_para *p, size_t *out_len)
+{
+    size_t n = para_text_length(p), used = 0;
+    char *s = (char *)malloc(n + 1);
+    int i;
+    if (!s) return NULL;
+    for (i = 0; i < p->nruns; ++i) {
+        const owf_run *r = &p->runs[i];
+        size_t rn;
+        if (r->kind != OWF_RUN_TEXT || !r->text) continue;
+        rn = strlen(r->text);
+        memcpy(s + used, r->text, rn);
+        used += rn;
+    }
+    s[used] = 0;
+    if (out_len) *out_len = used;
+    return s;
+}
+
+static unsigned char lower_ascii(unsigned char c)
+{
+    return c >= 'A' && c <= 'Z' ? (unsigned char)(c + ('a' - 'A')) : c;
+}
+
+static int text_matches_at(const char *hay, size_t hlen, size_t at,
+                           const char *needle, size_t nlen, int match_case)
+{
+    size_t i;
+    if (at + nlen > hlen) return 0;
+    for (i = 0; i < nlen; ++i) {
+        unsigned char a = (unsigned char)hay[at + i];
+        unsigned char b = (unsigned char)needle[i];
+        if (!match_case) { a = lower_ascii(a); b = lower_ascii(b); }
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+static long find_forward_in(const char *hay, size_t hlen, const char *needle,
+                            size_t nlen, size_t start, int match_case)
+{
+    size_t i;
+    if (start > hlen) start = hlen;
+    for (i = start; i + nlen <= hlen; ++i)
+        if (text_matches_at(hay, hlen, i, needle, nlen, match_case)) return (long)i;
+    return -1;
+}
+
+static long find_backward_in(const char *hay, size_t hlen, const char *needle,
+                             size_t nlen, size_t before, int match_case)
+{
+    size_t i;
+    if (nlen > hlen) return -1;
+    if (before > hlen) before = hlen;
+    i = before >= nlen ? before - nlen : 0;
+    for (;;) {
+        if (i + nlen <= before && text_matches_at(hay, hlen, i, needle, nlen, match_case)) return (long)i;
+        if (!i) break;
+        --i;
+    }
+    return -1;
+}
+
+int ow_editor_find(ow_editor *editor, const char *needle, int backwards,
+                   int match_case, int wrap)
+{
+    ow_position startpos, endpos;
+    size_t nlen;
+    int total, step, pass;
+    if (!editor || !editor->doc || !needle || !(nlen = strlen(needle))) return 0;
+    total = editor->doc->body.nparas;
+    if (!total) return 0;
+    if (ow_editor_selection_empty(editor)) startpos = editor->selection.focus;
+    else if (!backwards)
+        startpos = compare_position(editor->selection.anchor, editor->selection.focus) >= 0
+            ? editor->selection.anchor : editor->selection.focus;
+    else
+        startpos = compare_position(editor->selection.anchor, editor->selection.focus) <= 0
+            ? editor->selection.anchor : editor->selection.focus;
+    startpos = clamp_position(editor, startpos);
+    step = backwards ? -1 : 1;
+
+    for (pass = 0; pass < total + (wrap ? 1 : 0); ++pass) {
+        int pi = startpos.paragraph + pass * step;
+        const owf_para *p;
+        char *plain;
+        size_t plen, from;
+        long hit;
+        if (pi < 0 || pi >= total) {
+            if (!wrap) break;
+            pi %= total;
+            if (pi < 0) pi += total;
+        }
+        p = &editor->doc->body.paras[pi];
+        plain = paragraph_plain_text(p, &plen);
+        if (!plain) return -1;
+        if (pass == 0) from = para_text_offset(p, startpos);
+        else from = backwards ? plen : 0;
+        hit = backwards
+            ? find_backward_in(plain, plen, needle, nlen, from, match_case)
+            : find_forward_in(plain, plen, needle, nlen, from, match_case);
+        free(plain);
+        if (hit >= 0) {
+            startpos = para_offset_position(editor, pi, (size_t)hit);
+            endpos = para_offset_position(editor, pi, (size_t)hit + nlen);
+            editor->selection.anchor = startpos;
+            editor->selection.focus = endpos;
+            editor->typing_group = 0;
+            sync_typing_fmt(editor);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int ow_editor_insert_utf8(ow_editor *editor, const char *utf8, size_t length)
@@ -910,16 +1573,67 @@ int ow_editor_insert_utf8(ow_editor *editor, const char *utf8, size_t length)
 
     pos = clamp_position(editor, pos);
     run = &editor->doc->body.paras[pos.paragraph].runs[pos.run];
-    if (!replace_run_slice(run, pos.byte_offset, pos.byte_offset,
-                           utf8, length))
+    if (!editor->typing_fmt_set) editor->typing_fmt = run->fmt;
+    editor->typing_fmt_set = 1;
+    if (!insert_formatted_text(editor, pos, utf8, length,
+                               &editor->typing_fmt, &pos))
         return OWF_ERR_MEMORY;
-
-    pos.byte_offset += length;
     editor->selection.anchor = pos;
     editor->selection.focus = pos;
     editor->typing_group = 1;
     editor->typing_next = pos;
     editor->dirty = 1;
+    ow_editor_layout(editor);
+    return OWF_OK;
+}
+
+int ow_editor_insert_text_block(ow_editor *editor, const char *utf8, size_t length)
+{
+    ow_position pos, next;
+    size_t i = 0, start = 0;
+    int had_selection, changed = 0;
+    if (!editor || (!utf8 && length)) return OWF_ERR_FORMAT;
+    had_selection = !ow_editor_selection_empty(editor);
+    if (!length && !had_selection) return OWF_OK;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    if (had_selection) {
+        if (delete_selection_internal(editor) < 0) return OWF_ERR_MEMORY;
+        changed = 1;
+    }
+    pos = clamp_position(editor, editor->selection.focus);
+    if (!editor->typing_fmt_set) sync_typing_fmt(editor);
+
+    while (i <= length) {
+        int newline = 0;
+        if (i == length || utf8[i] == '\r' || utf8[i] == '\n') {
+            if (i > start) {
+                if (!insert_formatted_text(editor, pos, utf8 + start, i - start,
+                                           &editor->typing_fmt, &pos))
+                    return OWF_ERR_MEMORY;
+                changed = 1;
+            }
+            if (i < length) {
+                newline = 1;
+                if (utf8[i] == '\r' && i + 1 < length && utf8[i + 1] == '\n') ++i;
+                if (split_paragraph(editor, pos, &next) < 0) return OWF_ERR_MEMORY;
+                pos = next;
+                changed = 1;
+            }
+            start = i + 1;
+        }
+        ++i;
+        (void)newline;
+    }
+    if (!changed) {
+        snapshot_free(&editor->undo[editor->nundo - 1]);
+        --editor->nundo;
+        return OWF_OK;
+    }
+    editor->selection.anchor = pos;
+    editor->selection.focus = pos;
+    editor->dirty = 1;
+    sync_typing_fmt(editor);
     ow_editor_layout(editor);
     return OWF_OK;
 }
@@ -949,6 +1663,7 @@ int ow_editor_backspace(ow_editor *editor)
         return OWF_OK;
     }
     editor->dirty = 1;
+    sync_typing_fmt(editor);
     ow_editor_layout(editor);
     return OWF_OK;
 }
@@ -977,6 +1692,7 @@ int ow_editor_delete_forward(ow_editor *editor)
         return OWF_OK;
     }
     editor->dirty = 1;
+    sync_typing_fmt(editor);
     ow_editor_layout(editor);
     return OWF_OK;
 }
@@ -999,6 +1715,7 @@ int ow_editor_newline(ow_editor *editor)
     editor->selection.anchor = next;
     editor->selection.focus = next;
     editor->dirty = 1;
+    sync_typing_fmt(editor);
     ow_editor_layout(editor);
     return OWF_OK;
 }
@@ -1009,15 +1726,13 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
     if (!editor) return 0;
     editor->typing_group = 0;
 
-    if (!extend_selection && !ow_editor_selection_empty(editor)) {
+    if (!extend_selection && !ow_editor_selection_empty(editor) &&
+        (move == OW_MOVE_LEFT || move == OW_MOVE_RIGHT)) {
         a = editor->selection.anchor;
         b = editor->selection.focus;
-        if (move == OW_MOVE_LEFT || move == OW_MOVE_HOME)
-            pos = compare_position(a, b) <= 0 ? a : b;
-        else if (move == OW_MOVE_RIGHT || move == OW_MOVE_END)
-            pos = compare_position(a, b) >= 0 ? a : b;
-        else
-            pos = b;
+        pos = move == OW_MOVE_LEFT
+            ? (compare_position(a, b) <= 0 ? a : b)
+            : (compare_position(a, b) >= 0 ? a : b);
     } else {
         pos = editor->selection.focus;
         switch (move) {
@@ -1035,6 +1750,7 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
         editor->selection.anchor = pos;
         editor->selection.focus = pos;
     }
+    sync_typing_fmt(editor);
     return 1;
 }
 
@@ -1070,23 +1786,98 @@ void ow_editor_mark_saved(ow_editor *editor)
     if (editor) editor->dirty = 0;
 }
 
+static int utf8_character_count(const char *s)
+{
+    int n = 0;
+    if (!s) return 0;
+    while (*s) {
+        if (((unsigned char)*s & 0xc0) != 0x80) ++n;
+        ++s;
+    }
+    return n;
+}
+
+static int paragraph_estimated_height(const owf_doc *doc, const owf_para *p)
+{
+    int i, chars = 0, hard_lines = 1, max_size;
+    int width, avg_char, chars_per_line, lines, line_height;
+    max_size = doc->base.size ? doc->base.size : 240;
+    if (p->fmt.heading == 1 && max_size < 360) max_size = 360;
+    else if (p->fmt.heading == 2 && max_size < 320) max_size = 320;
+    else if (p->fmt.heading == 3 && max_size < 280) max_size = 280;
+    for (i = 0; i < p->nruns; ++i) {
+        const owf_run *r = &p->runs[i];
+        if (r->fmt.size > max_size) max_size = r->fmt.size;
+        if (r->kind == OWF_RUN_TEXT && r->text) {
+            const char *q = r->text;
+            chars += utf8_character_count(q);
+            while (*q) { if (*q++ == '\n') ++hard_lines; }
+        } else if (r->kind == OWF_RUN_TAB) chars += 4;
+        else if (r->kind == OWF_RUN_LINEBREAK) ++hard_lines;
+    }
+    width = doc->page.width - doc->page.margin_left - doc->page.margin_right
+          - p->fmt.indent_left - p->fmt.indent_right;
+    if (width < 720) width = 720;
+    avg_char = max_size / 2;
+    if (avg_char < 80) avg_char = 80;
+    chars_per_line = width / avg_char;
+    if (chars_per_line < 8) chars_per_line = 8;
+    lines = chars ? (chars + chars_per_line - 1) / chars_per_line : 1;
+    if (lines < hard_lines) lines = hard_lines;
+    line_height = max_size * 6 / 5;
+    if (p->fmt.line_spacing > 0) line_height = line_height * p->fmt.line_spacing / 100;
+    if (line_height < 240) line_height = 240;
+    return lines * line_height;
+}
+
+static int paragraph_forces_page_after(const owf_para *p)
+{
+    int j;
+    for (j = 0; j < p->nruns; ++j)
+        if (p->runs[j].kind == OWF_RUN_TEXT && p->runs[j].text && strchr(p->runs[j].text, '\f'))
+            return 1;
+    return 0;
+}
+
 int ow_editor_layout(ow_editor *editor)
 {
-    int page_breaks = 0;
-    int i, j;
-    if (!editor || !editor->doc) return OWF_ERR_FORMAT;
+    owf_doc *doc;
+    int i, page = 0, y, bottom, n;
+    if (!editor || !(doc = editor->doc)) return OWF_ERR_FORMAT;
+    n = doc->body.nparas;
+    if (n > editor->para_cap) {
+        int *pp, *py;
+        pp = (int *)realloc(editor->para_page, (size_t)n * sizeof(*pp));
+        if (!pp) return OWF_ERR_MEMORY;
+        editor->para_page = pp;
+        py = (int *)realloc(editor->para_y, (size_t)n * sizeof(*py));
+        if (!py) return OWF_ERR_MEMORY;
+        editor->para_y = py;
+        editor->para_cap = n;
+    }
+    y = doc->page.margin_top;
+    bottom = doc->page.height - doc->page.margin_bottom;
+    if (bottom <= y + 240) bottom = doc->page.height;
 
-    for (i = 0; i < editor->doc->body.nparas; ++i) {
-        const owf_para *p = &editor->doc->body.paras[i];
-        if (p->fmt.page_break_before && i > 0) ++page_breaks;
-        for (j = 0; j < p->nruns; ++j) {
-            if (p->runs[j].kind == OWF_RUN_TEXT &&
-                p->runs[j].text &&
-                strchr(p->runs[j].text, '\f'))
-                ++page_breaks;
+    for (i = 0; i < n; ++i) {
+        const owf_para *p = &doc->body.paras[i];
+        int height = paragraph_estimated_height(doc, p);
+        int needed = p->fmt.space_before + height + p->fmt.space_after;
+        if (p->fmt.page_break_before && i > 0) {
+            ++page; y = doc->page.margin_top;
+        }
+        if (y > doc->page.margin_top && y + needed > bottom) {
+            ++page; y = doc->page.margin_top;
+        }
+        editor->para_page[i] = page;
+        editor->para_y[i] = y + p->fmt.space_before;
+        y += needed;
+        if (paragraph_forces_page_after(p) && i + 1 < n) {
+            ++page; y = doc->page.margin_top;
         }
     }
-    editor->pages = 1 + page_breaks;
+    editor->pages = page + 1;
+    if (editor->pages < 1) editor->pages = 1;
     return OWF_OK;
 }
 
@@ -1095,27 +1886,36 @@ int ow_editor_page_count(const ow_editor *editor)
     return editor ? editor->pages : 0;
 }
 
+int ow_editor_current_page(const ow_editor *editor)
+{
+    int p;
+    if (!editor || !editor->doc || !editor->para_page || !editor->doc->body.nparas) return 0;
+    p = editor->selection.focus.paragraph;
+    if (p < 0) p = 0;
+    if (p >= editor->doc->body.nparas) p = editor->doc->body.nparas - 1;
+    return editor->para_page[p];
+}
+
 int ow_editor_render_page(const ow_editor *editor, int page_index,
                           const ow_renderer *renderer)
 {
     ow_page_info page;
     int i, j;
-    int y;
-
     if (!editor || !editor->doc || !renderer) return OWF_ERR_FORMAT;
     if (page_index < 0 || page_index >= editor->pages) return OWF_ERR_FORMAT;
 
     page.width_twips = editor->doc->page.width;
     page.height_twips = editor->doc->page.height;
     page.page_index = page_index;
-
     if (renderer->begin_page) renderer->begin_page(renderer->userdata, &page);
 
-    y = editor->doc->page.margin_top;
     for (i = 0; i < editor->doc->body.nparas; ++i) {
-        const owf_para *p = &editor->doc->body.paras[i];
-        int x = editor->doc->page.margin_left + p->fmt.indent_left;
-        y += p->fmt.space_before;
+        const owf_para *p;
+        int x, y;
+        if (!editor->para_page || editor->para_page[i] != page_index) continue;
+        p = &editor->doc->body.paras[i];
+        x = editor->doc->page.margin_left + p->fmt.indent_left;
+        y = editor->para_y ? editor->para_y[i] : editor->doc->page.margin_top;
         for (j = 0; j < p->nruns; ++j) {
             const owf_run *run = &p->runs[j];
             if (run->kind != OWF_RUN_TEXT || !run->text) continue;
@@ -1123,12 +1923,9 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
                 renderer->text_run(renderer->userdata, i, j, x, y,
                                    run->text, &run->fmt);
             else if (renderer->text)
-                renderer->text(renderer->userdata, x, y,
-                               run->text, &run->fmt);
+                renderer->text(renderer->userdata, x, y, run->text, &run->fmt);
         }
-        y += p->fmt.space_after + 240;
     }
-
     if (renderer->end_page) renderer->end_page(renderer->userdata, &page);
     return OWF_OK;
 }
