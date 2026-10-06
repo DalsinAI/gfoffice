@@ -254,12 +254,12 @@ No GPL source from Ted, Siag or AbiWord is copied into the MIT OpenWrite core.
 
 ## 14. First coding milestones
 
-N1. Native core API and host test harness.
-N2. Paragraph measurement and line breaking.
+N1. Native core API and host test harness. **Landed.**
+N2. Paragraph measurement and line breaking. **First wrapping path landed; final layout remains.**
 N3. Display list and null/test renderer.
-N4. OpenRTG renderer adapter.
-N5. OpenGadTools document gadget and caret.
-N6. Editing operations plus undo/redo.
+N4. OpenRTG renderer adapter. **UI/canvas path live; dedicated display-list backend remains.**
+N5. OpenGadTools document gadget and caret. **Landed.**
+N6. Editing operations plus undo/redo. **Landed for the first native editor milestone.**
 N7. DOCX Tier A gap closure in libowf.
 N8. OpenDatatypes inline images.
 N9. OpenPrint preview/PDF/print path.

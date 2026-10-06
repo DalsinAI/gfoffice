@@ -3,8 +3,9 @@
 A native word processor for AmigaOS 3.2. Its working format layer opens and
 saves today's documents (DOCX and ODT) and already opens ProWrite, Final
 Writer, Wordworth, IFF FTXT and text. The project is extending that coverage
-toward the other Amiga word processors. OpenPrint will provide print/PDF
-output; clipboard, ARexx and full native editing are implementation milestones.
+toward the other Amiga word processors. The native editor now has a caret,
+selection, text entry, paragraph editing and bounded undo/redo. OpenPrint,
+clipboard integration, ARexx and richer layout remain implementation milestones.
 
 We, 4 October 2026: "let's do the OpenWrite project", a word processor "that
 can import any of the Amiga formats, along with DOCX and the OpenDocument
@@ -14,10 +15,10 @@ Status, 6 October 2026: the native editor direction is underway. `libowf`
 opens and saves ODT and DOCX; opens Wordworth, Final Writer, ProWrite, IFF
 FTXT, ANSI text and plain text; and saves HTML, FTXT and plain text.
 
-The first **OpenWrite native shell now builds and runs on AmigaOS 3.2.3**.
+The first **OpenWrite native editor now builds and runs on AmigaOS 3.2.3**.
 It is a small m68020 C application with OpenGadTools chrome, a responsive
-page workspace, navigator and inspector layout, libowf Open/Save wiring and a
-first native page renderer. See `docs/architecture/NATIVE_CORE.md` and
+page workspace, navigator and inspector layout, libowf Open/Save wiring, a
+native caret/selection path, text and paragraph editing, and undo/redo. See `docs/architecture/NATIVE_CORE.md` and
 `docs/UX_DESIGN.md`. WebCore is no longer a baseline requirement; it may be an
 optional rich component later.
 
@@ -35,8 +36,9 @@ On Linux (the tests need Python 3 and zlib):
 
 ```
 make            # build/host/owconvert
-make test       # the filter tests
-make check      # the same under AddressSanitizer and UBSan
+make core-test  # native editor tests
+make test       # the format/filter tests
+make check      # filters + editor under AddressSanitizer and UBSan
 ```
 
 For AmigaOS 3.x with bebbo's amiga-gcc 6.5 (the `os32` stove):

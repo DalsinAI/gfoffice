@@ -258,38 +258,50 @@ The visual design must never make the program feel heavy.
 
 The target feeling is immediate classic software with modern output quality.
 
-## Current first build
+## Current native build
 
-The first native shell now builds as an m68020 AmigaOS program and has been
-run on the scratch OS 3.2.3/OpenRTG bench.
+The native editor builds as an m68020 AmigaOS program and has been run on the
+scratch OS 3.2.3/OpenRTG/OpenLook bench.
 
-Implemented in the first shell:
+Implemented and exercised in the current editor build:
 
 - OpenLook-native window;
 - OpenGadTools main toolbar;
 - compact format row;
 - responsive Pages navigator;
 - native page canvas and ruler;
-- status line;
+- status line and dirty-document title;
 - wide-screen inspector layout;
 - New / Open / Save / Save As wiring;
+- unsaved-change guard for destructive New/Open/Quit actions;
 - libowf document loading and saving;
 - DOCX / ODT / classic-Amiga compatibility path;
 - responsive toolbar mode;
 - Open, Graphite, Ember, Clear and Classic theme selection;
-- first native page renderer with basic paragraph wrapping.
+- native caret;
+- keyboard selection and mouse hit-testing/selection plumbing;
+- UTF-8-aware text insertion, backspace and forward delete;
+- Return to split a paragraph and deletion across paragraph boundaries;
+- selection replacement, including across paragraphs;
+- bounded grouped undo/redo;
+- dirty state, live word count and Undo/Redo enable state;
+- first native page renderer with basic wrapping across formatted runs;
+- input-queue draining so bursts of typing repaint once rather than once per key.
+
+Bench validation includes live typing, paragraph creation, Shift+Arrow selection,
+selection replacement and right-Amiga-Z Undo on AmigaOS 3.2.3.
 
 Not yet claimed complete:
 
-- caret and selection;
-- editing;
-- undo/redo;
-- final font shaping;
+- visual-line-aware up/down movement;
+- final font shaping and font-size-accurate document rendering;
+- live B/I/U, paragraph/style and list controls;
+- clipboard integration;
 - real tables and embedded objects;
 - OpenDatatypes insertion;
 - OpenPrint preview/output;
 - scrolling and multi-page navigation;
-- final page-layout engine.
+- final incremental page-layout/display-list engine.
 
 Those are implementation milestones, not reasons to add a heavier editor
 engine.

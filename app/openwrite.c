@@ -16,6 +16,7 @@
 #include <dos/dos.h>
 #include <graphics/text.h>
 #include <graphics/gfx.h>
+#include <devices/inputevent.h>
 
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -39,7 +40,7 @@
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 0.1-dev (6.10.2026)"
+#define VERSION_TEXT "OpenWrite 0.2-dev (6.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
@@ -164,8 +165,24 @@ static int page_index;
 static box area, toolbar_box, format_box, navigator_box, canvas_box;
 static box ruler_box, page_box, inspector_box, status_box;
 
+#define HIT_MAX 1024
+typedef struct hit_span {
+    int paragraph, run;
+    size_t start, end;
+    int x, y, w, h;
+} hit_span;
+
 static int render_x0, render_y0, render_num = 1, render_den = 1;
-static int render_bottom, render_last_y = -1;
+static int render_bottom, render_para = -1;
+static int render_line_x, render_line_y, render_left_x, render_max_x, render_line_h;
+static hit_span hits[HIT_MAX];
+static int hit_count;
+static int mouse_selecting;
+static int defer_repaint, repaint_pending;
+
+static void draw_all(void);
+static void redraw_document_area(void);
+static void request_document_redraw(void);
 
 static const char classic_theme[] =
     "name Classic\nversion 1\nfont system\ntitle.align left\npassthrough yes\n[four]\n"
@@ -258,41 +275,26 @@ static void raised(struct RastPort *rp, int x, int y, int w, int h)
               x, y, w, h);
 }
 
-static owf_para *add_para(owf_doc *d, const char *text, int heading, int bold, int before, int after)
+static owf_doc *blank_document(void)
 {
-    owf_parafmt pf;
-    owf_charfmt cf;
-    owf_para *p;
-    owf_parafmt_init(&pf);
-    owf_charfmt_init(&cf);
-    pf.heading = heading;
-    pf.space_before = before;
-    pf.space_after = after;
-    if (bold) cf.flags |= OWF_BOLD;
-    if (heading == 1) cf.size = 24 * OWF_TWIPS_PER_POINT;
-    else if (heading == 2) cf.size = 16 * OWF_TWIPS_PER_POINT;
-    p = owf_story_add(&d->body, &pf);
-    if (!p) return NULL;
-    if (owf_para_add_text(p, &cf, text, strlen(text)) != OWF_OK) return NULL;
-    return p;
+    return owf_doc_new();
 }
 
-static owf_doc *sample_document(void)
+
+static void update_window_title(void)
 {
-    owf_doc *d = owf_doc_new();
-    if (!d) return NULL;
-    owf_doc_set_title(d, "OpenWrite Design Overview");
-    if (!add_para(d, "OPENWRITE DESIGN OVERVIEW", 1, 1, 0, 180)) goto fail;
-    if (!add_para(d, "A native word processor for the modern Amiga", 2, 1, 0, 260)) goto fail;
-    if (!add_para(d, "OpenWrite combines the lightness of classic Amiga software with modern document compatibility. The application chrome is OpenGadTools; the page is rendered as a document, not as a web page.", 0, 0, 0, 160)) goto fail;
-    if (!add_para(d, "Designed for the Open stack", 2, 1, 100, 120)) goto fail;
-    if (!add_para(d, "OpenRTG provides the fast true-colour canvas and smooth page caches. OpenDatatypes supplies document objects and media. OpenPrint owns PDF, printer profiles and network output.", 0, 0, 0, 160)) goto fail;
-    if (!add_para(d, "Compatibility without the weight", 2, 1, 100, 120)) goto fail;
-    if (!add_para(d, "DOCX and ODT pass through libowf alongside Final Writer, Wordworth, ProWrite and other Amiga document formats. The native editor remains small C code suitable for an A1200.", 0, 0, 0, 120)) goto fail;
-    return d;
-fail:
-    owf_doc_free(d);
-    return NULL;
+    char title[256];
+    const char *name = current_path[0] ? leaf(current_path) : "Untitled";
+    snprintf(title, sizeof title, "%s%s - OpenWrite",
+             editor && ow_editor_is_dirty(editor) ? "*" : "", name);
+    if (win) SetWindowTitles(win, (STRPTR)title, (STRPTR)-1);
+}
+
+static void update_edit_tools(void)
+{
+    if (!editor) return;
+    ogt_toolbar_enable(&tb, C_UNDO, ow_editor_can_undo(editor));
+    ogt_toolbar_enable(&tb, C_REDO, ow_editor_can_redo(editor));
 }
 
 static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
@@ -304,10 +306,12 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
     if (editor) {
         ow_editor_set_zoom(editor, zoom);
         ow_editor_layout(editor);
+        ow_editor_mark_saved(editor);
     }
     page_index = 0;
     snprintf(current_path, sizeof current_path, "%s", path ? path : "");
     snprintf(current_format, sizeof current_format, "%s", fmt && *fmt ? fmt : "ODT");
+    update_window_title();
 }
 
 static int ask_file(int save, char *out, size_t out_size)
@@ -374,6 +378,8 @@ static void save_document_as(const char *path)
     }
     snprintf(msg, sizeof msg, "%s saved.", leaf(path));
     set_status(msg);
+    if (editor) ow_editor_mark_saved(editor);
+    update_window_title();
     owf_report_free(report);
 }
 
@@ -396,9 +402,84 @@ static int word_count(void)
     return words;
 }
 
+static int pos_compare(ow_position a, ow_position b)
+{
+    if (a.paragraph != b.paragraph) return a.paragraph < b.paragraph ? -1 : 1;
+    if (a.run != b.run) return a.run < b.run ? -1 : 1;
+    if (a.byte_offset != b.byte_offset) return a.byte_offset < b.byte_offset ? -1 : 1;
+    return 0;
+}
+
+static size_t utf8_next_local(const char *s, size_t off, size_t len)
+{
+    size_t p = off < len ? off + 1 : len;
+    while (p < len && (((unsigned char)s[p] & 0xc0) == 0x80)) ++p;
+    return p;
+}
+
+static int text_width_n(struct RastPort *rp, const char *s, size_t n)
+{
+    if (!n) return 0;
+    return (int)TextLength(rp, (STRPTR)s, (ULONG)n);
+}
+
+static int selection_for_run(int paragraph, int run, size_t len,
+                             size_t *from, size_t *to)
+{
+    ow_selection sel;
+    ow_position a, b, rs, re;
+    if (!editor || ow_editor_selection_empty(editor)) return 0;
+    sel = ow_editor_selection(editor);
+    if (pos_compare(sel.anchor, sel.focus) <= 0) { a = sel.anchor; b = sel.focus; }
+    else { a = sel.focus; b = sel.anchor; }
+    rs.paragraph = re.paragraph = paragraph;
+    rs.run = re.run = run;
+    rs.byte_offset = 0;
+    re.byte_offset = len;
+    if (pos_compare(b, rs) <= 0 || pos_compare(a, re) >= 0) return 0;
+    *from = (a.paragraph == paragraph && a.run == run) ? a.byte_offset : 0;
+    *to = (b.paragraph == paragraph && b.run == run) ? b.byte_offset : len;
+    if (*from > len) *from = len;
+    if (*to > len) *to = len;
+    return *to > *from;
+}
+
+static void add_hit(int paragraph, int run, size_t start, size_t end,
+                    int x, int y, int w, int h)
+{
+    hit_span *hs;
+    if (hit_count >= HIT_MAX) return;
+    hs = &hits[hit_count++];
+    hs->paragraph = paragraph;
+    hs->run = run;
+    hs->start = start;
+    hs->end = end;
+    hs->x = x; hs->y = y; hs->w = w > 1 ? w : 2; hs->h = h;
+}
+
+static void draw_caret_if_here(struct RastPort *rp, int paragraph, int run,
+                               size_t segment_start, size_t segment_end,
+                               const char *text, int x, int y)
+{
+    ow_selection sel;
+    ow_position c;
+    int cx;
+    if (!editor || !ow_editor_selection_empty(editor)) return;
+    sel = ow_editor_selection(editor);
+    c = sel.focus;
+    if (c.paragraph != paragraph || c.run != run) return;
+    if (c.byte_offset < segment_start || c.byte_offset > segment_end) return;
+    cx = x + text_width_n(rp, text + segment_start,
+                          c.byte_offset - segment_start);
+    ogt_vline(rp, ogt_pen(&ctx, "accent"), cx, y, fh + 1);
+}
+
 static void render_begin(void *ud, const ow_page_info *p)
 {
     (void)ud; (void)p;
+    hit_count = 0;
+    render_para = -1;
+    render_bottom = page_box.y;
 }
 
 static void render_end(void *ud, const ow_page_info *p)
@@ -406,55 +487,171 @@ static void render_end(void *ud, const ow_page_info *p)
     (void)ud; (void)p;
 }
 
-static void render_text(void *ud, int x, int y, const char *utf8, const owf_charfmt *fmt)
+static void render_text_run(void *ud, int paragraph, int run_index,
+                            int x, int y, const char *utf8,
+                            const owf_charfmt *fmt)
 {
     struct RastPort *rp = (struct RastPort *)ud;
-    int px, py, style = FS_NORMAL, maxw, lineh, first = 1;
-    const char *s = utf8;
-    if (!utf8 || !*utf8) return;
-    px = render_x0 + x * render_num / render_den;
-    py = render_y0 + y * render_num / render_den;
-    lineh = fh + 2;
-    if (y != render_last_y && render_bottom > py) py = render_bottom + 2;
-    render_last_y = y;
-    maxw = page_box.x + page_box.w - 9 - px;
-    if (maxw < 20) return;
+    size_t len = utf8 ? strlen(utf8) : 0, off = 0;
+    size_t sel_from = 0, sel_to = 0;
+    int has_selection, style = FS_NORMAL;
+
+    if (!utf8) return;
+    render_line_h = fh + 2;
+    if (paragraph != render_para) {
+        int wanted_y = render_y0 + y * render_num / render_den;
+        render_para = paragraph;
+        render_left_x = render_x0 + x * render_num / render_den;
+        render_line_x = render_left_x;
+        render_line_y = wanted_y;
+        if (render_line_y < render_bottom + 2) render_line_y = render_bottom + 2;
+    }
+    render_max_x = page_box.x + page_box.w - 9;
+    if (render_line_x < render_left_x) render_line_x = render_left_x;
+
     if (fmt && (fmt->flags & OWF_BOLD)) style |= FSF_BOLD;
     if (fmt && (fmt->flags & OWF_ITALIC)) style |= FSF_ITALIC;
     if (fmt && (fmt->flags & OWF_UNDERLINE)) style |= FSF_UNDERLINED;
     SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    has_selection = selection_for_run(paragraph, run_index, len, &sel_from, &sel_to);
 
-    while (*s && py + fh < page_box.y + page_box.h - 7) {
-        char line[192];
-        int n = 0, last_space = -1, take;
-        const char *q = s;
-        while (*q && *q != '\n' && n < (int)sizeof(line) - 1) {
-            line[n] = *q;
-            line[n + 1] = 0;
-            if (*q == ' ' || *q == '\t') last_space = n;
-            if (ogt_text_width(rp, line) > maxw) break;
-            ++n; ++q;
-        }
-        if (!n) { line[0] = *s; n = 1; }
-        take = n;
-        if (*q && *q != '\n' && ogt_text_width(rp, line) > maxw) {
-            if (last_space > 0) take = last_space;
-            else if (take > 1) --take;
-        }
-        while (take > 0 && (s[take - 1] == ' ' || s[take - 1] == '\t')) --take;
-        if (take <= 0) take = 1;
-        if (take >= (int)sizeof(line)) take = sizeof(line) - 1;
-        memcpy(line, s, (size_t)take);
-        line[take] = 0;
-        ogt_text(rp, ogt_pen(&ctx, "fill.text"), px, py, line, maxw);
-        py += lineh;
-        s += take;
-        while (*s == ' ' || *s == '\t') ++s;
-        if (*s == '\n') { ++s; py += 2; }
-        if (first) first = 0;
+    if (!len) {
+        add_hit(paragraph, run_index, 0, 0, render_line_x, render_line_y, 2, render_line_h);
+        draw_caret_if_here(rp, paragraph, run_index, 0, 0, utf8,
+                           render_line_x, render_line_y);
+        if (render_bottom < render_line_y + render_line_h)
+            render_bottom = render_line_y + render_line_h;
+        SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+        return;
     }
-    render_bottom = py;
+
+    while (off < len && render_line_y + fh < page_box.y + page_box.h - 7) {
+        char line[256];
+        size_t p = off, best = off, last_space = (size_t)-1;
+        size_t seg_end, a, b;
+        int available, width, overflow = 0, newline = 0;
+
+        if (render_line_x >= render_max_x - 4) {
+            render_line_x = render_left_x;
+            render_line_y += render_line_h;
+        }
+        available = render_max_x - render_line_x;
+        while (p < len) {
+            size_t next;
+            int w;
+            if (utf8[p] == '\n') { newline = 1; break; }
+            next = utf8_next_local(utf8, p, len);
+            if (next - off >= sizeof(line) - 1) break;
+            w = text_width_n(rp, utf8 + off, next - off);
+            if (w > available) { overflow = 1; break; }
+            best = next;
+            if (utf8[p] == ' ' || utf8[p] == '\t') last_space = best;
+            p = next;
+        }
+        if (overflow && last_space != (size_t)-1 && last_space > off)
+            best = last_space;
+        if (best == off && off < len && utf8[off] != '\n')
+            best = utf8_next_local(utf8, off, len);
+        seg_end = best;
+
+        if (seg_end > off) {
+            size_t n = seg_end - off;
+            if (n >= sizeof(line)) n = sizeof(line) - 1;
+            memcpy(line, utf8 + off, n);
+            line[n] = 0;
+            width = text_width_n(rp, utf8 + off, n);
+
+            if (has_selection) {
+                a = sel_from > off ? sel_from : off;
+                b = sel_to < seg_end ? sel_to : seg_end;
+                if (b > a) {
+                    int sx = render_line_x + text_width_n(rp, utf8 + off, a - off);
+                    int sw = text_width_n(rp, utf8 + a, b - a);
+                    if (sw < 2) sw = 2;
+                    ogt_box(rp, ogt_pen(&ctx, "selection.inactive"),
+                            sx, render_line_y, sw, render_line_h);
+                }
+            }
+            ogt_text(rp, ogt_pen(&ctx, "fill.text"), render_line_x,
+                     render_line_y, line, available);
+            add_hit(paragraph, run_index, off, seg_end, render_line_x,
+                    render_line_y, width, render_line_h);
+            draw_caret_if_here(rp, paragraph, run_index, off, seg_end,
+                               utf8, render_line_x, render_line_y);
+            render_line_x += width;
+            off = seg_end;
+        }
+
+        if (off < len && utf8[off] == '\n') {
+            ++off;
+            render_line_x = render_left_x;
+            render_line_y += render_line_h;
+        } else if (overflow) {
+            render_line_x = render_left_x;
+            render_line_y += render_line_h;
+            while (off < len && utf8[off] == ' ') ++off;
+        } else if (newline) {
+            ++off;
+            render_line_x = render_left_x;
+            render_line_y += render_line_h;
+        } else if (seg_end == off && off < len) {
+            ++off;
+        }
+        if (render_bottom < render_line_y + render_line_h)
+            render_bottom = render_line_y + render_line_h;
+    }
     SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+}
+
+static int point_in_box(const box *b, int x, int y)
+{
+    return b && x >= b->x && y >= b->y && x < b->x + b->w && y < b->y + b->h;
+}
+
+static int hit_position(int mx, int my, ow_position *out)
+{
+    int i, best = -1, best_dist = 0x7fffffff;
+    struct RastPort *rp;
+    if (!win || !editor || !out || !hit_count) return 0;
+    rp = win->RPort;
+    for (i = 0; i < hit_count; ++i) {
+        hit_span *h = &hits[i];
+        int dy = my < h->y ? h->y - my : my >= h->y + h->h ? my - (h->y + h->h - 1) : 0;
+        int dx = mx < h->x ? h->x - mx : mx > h->x + h->w ? mx - (h->x + h->w) : 0;
+        int d = dy * 8 + dx;
+        if (d < best_dist) { best_dist = d; best = i; }
+    }
+    if (best < 0) return 0;
+    {
+        hit_span *h = &hits[best];
+        const owf_run *run = &doc->body.paras[h->paragraph].runs[h->run];
+        size_t p = h->start;
+        out->paragraph = h->paragraph;
+        out->run = h->run;
+        if (mx <= h->x || h->start == h->end) { out->byte_offset = h->start; return 1; }
+        if (mx >= h->x + h->w) { out->byte_offset = h->end; return 1; }
+        while (p < h->end) {
+            size_t next = utf8_next_local(run->text, p, strlen(run->text));
+            int left = h->x + text_width_n(rp, run->text + h->start, p - h->start);
+            int right = h->x + text_width_n(rp, run->text + h->start, next - h->start);
+            if (mx < (left + right) / 2) { out->byte_offset = p; return 1; }
+            p = next;
+        }
+        out->byte_offset = h->end;
+        return 1;
+    }
+}
+
+static void mouse_set_selection(int mx, int my, int extend)
+{
+    ow_position p;
+    ow_selection sel;
+    if (!point_in_box(&page_box, mx, my) || !hit_position(mx, my, &p)) return;
+    sel = ow_editor_selection(editor);
+    if (!extend) sel.anchor = p;
+    sel.focus = p;
+    ow_editor_set_selection(editor, &sel);
+    request_document_redraw();
 }
 
 static void draw_format_bar(void)
@@ -622,14 +819,14 @@ static void draw_page(void)
     render_x0 = page_box.x;
     render_y0 = page_box.y;
     render_bottom = page_box.y;
-    render_last_y = -1;
+    render_para = -1;
     render_num = scale_num;
     render_den = scale_den;
     memset(&r, 0, sizeof r);
     r.userdata = rp;
     r.begin_page = render_begin;
     r.end_page = render_end;
-    r.text = render_text;
+    r.text_run = render_text_run;
     ow_editor_render_page(editor, page_index, &r);
 }
 
@@ -677,6 +874,24 @@ static void draw_all(void)
     draw_status();
 }
 
+static void redraw_document_area(void)
+{
+    struct RastPort *rp;
+    if (!win) return;
+    rp = win->RPort;
+    SetFont(rp, font);
+    ogt_fill(&ctx, rp, "list", canvas_box.x, canvas_box.y, canvas_box.w, canvas_box.h);
+    draw_ruler();
+    draw_page();
+    draw_status();
+}
+
+static void request_document_redraw(void)
+{
+    if (defer_repaint) repaint_pending = 1;
+    else redraw_document_area();
+}
+
 static void free_gadgets(void)
 {
     if (chain) {
@@ -698,6 +913,7 @@ static void layout(void)
 
     use_style = area.w < 780 ? OGT_TB_ICONS : tb_style;
     ogt_toolbar_set(&tb, tools, sizeof tools / sizeof tools[0], use_style);
+    update_edit_tools();
     tbh = ogt_toolbar_layout(&tb, rp, area.x + 5, area.y + 3, area.w - 10);
     toolbar_box = (box){ area.x, area.y, area.w, tbh + 7 };
     format_box = (box){ area.x, toolbar_box.y + toolbar_box.h, area.w, fh + 16 };
@@ -768,15 +984,17 @@ static int open_window(void)
         WA_MaxWidth, ~0, WA_MaxHeight, ~0,
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
         WA_SizeGadget, TRUE, WA_SizeBBottom, TRUE,
-        WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_Activate, TRUE, WA_SmartRefresh, TRUE, WA_ReportMouse, TRUE,
         WA_NewLookMenus, TRUE, WA_AutoAdjust, TRUE,
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN |
                   IDCMP_MENUPICK | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW |
-                  IDCMP_VANILLAKEY | IDCMP_MOUSEBUTTONS,
+                  IDCMP_VANILLAKEY | IDCMP_RAWKEY | IDCMP_MOUSEBUTTONS |
+                  IDCMP_MOUSEMOVE,
         TAG_DONE);
     if (!win) return 0;
     if (menu) SetMenuStrip(win, menu);
     relayout();
+    update_window_title();
     return 1;
 }
 
@@ -795,9 +1013,23 @@ static void close_window(void)
     if (scr) { UnlockPubScreen(NULL, scr); scr = NULL; }
 }
 
+static int confirm_discard_changes(void)
+{
+    struct EasyStruct es = {
+        sizeof(struct EasyStruct), 0,
+        (UBYTE *)"OpenWrite",
+        (UBYTE *)"The document has unsaved changes.\n\nDiscard them?",
+        (UBYTE *)"Discard|Cancel"
+    };
+    if (!editor || !ow_editor_is_dirty(editor)) return 1;
+    return EasyRequest(win, &es, NULL) != 0;
+}
+
 static void new_document(void)
 {
-    owf_doc *d = sample_document();
+    owf_doc *d;
+    if (!confirm_discard_changes()) return;
+    d = blank_document();
     if (!d) { tell("New document", "There is not enough memory for a new document."); return; }
     set_document(d, "", "ODT");
     set_status("New document.");
@@ -807,6 +1039,7 @@ static void new_document(void)
 static void do_open(void)
 {
     char path[512];
+    if (!confirm_discard_changes()) return;
     if (ask_file(0, path, sizeof path)) {
         open_document(path);
         relayout();
@@ -858,6 +1091,39 @@ static void set_zoom(int z)
     relayout();
 }
 
+static void editor_repaint(const char *message)
+{
+    if (message) set_status(message);
+    update_edit_tools();
+    if (defer_repaint) { repaint_pending = 1; return; }
+    update_window_title();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    redraw_document_area();
+}
+
+static int editor_result(int rc, const char *message)
+{
+    if (rc == OWF_OK) {
+        editor_repaint(message);
+        return 1;
+    }
+    if (rc == OWF_ERR_MEMORY)
+        tell("OpenWrite", "There is not enough memory to complete that edit.");
+    else
+        tell("OpenWrite", owf_error_text(rc));
+    return 0;
+}
+
+static int vanilla_utf8(UWORD code, char out[3])
+{
+    unsigned c = code & 255;
+    if (c < 0x80) { out[0] = (char)c; out[1] = 0; return 1; }
+    out[0] = (char)(0xc0 | (c >> 6));
+    out[1] = (char)(0x80 | (c & 0x3f));
+    out[2] = 0;
+    return 2;
+}
+
 static void do_command(int id)
 {
     switch (id) {
@@ -867,8 +1133,12 @@ static void do_command(int id)
     case C_PRINT:
         coming("OpenPrint", "Print preview and physical/PDF output are the next integration milestone.");
         break;
-    case C_UNDO: set_status("Undo becomes live with the editing milestone."); draw_status(); break;
-    case C_REDO: set_status("Redo becomes live with the editing milestone."); draw_status(); break;
+    case C_UNDO:
+        if (editor && ow_editor_undo(editor) > 0) editor_repaint("Undo.");
+        break;
+    case C_REDO:
+        if (editor && ow_editor_redo(editor) > 0) editor_repaint("Redo.");
+        break;
     case C_IMAGE:
         coming("OpenDatatypes", "Image insertion will use OpenDatatypes, preserving unknown objects where possible.");
         break;
@@ -905,11 +1175,11 @@ static void menu_action(ULONG id)
     case M_PRINT: do_command(C_PRINT); break;
     case M_PDF: do_command(C_PDF); break;
     case M_ABOUT: about(); break;
-    case M_QUIT: quit_now = 1; break;
+    case M_QUIT: if (confirm_discard_changes()) quit_now = 1; break;
     case M_UNDO: do_command(C_UNDO); break;
     case M_REDO: do_command(C_REDO); break;
     case M_CUT: case M_COPY: case M_PASTE:
-        set_status("Clipboard editing becomes live with the caret/selection milestone."); draw_status(); break;
+        set_status("Clipboard integration is the next editing milestone."); draw_status(); break;
     case M_ZOOM_IN: set_zoom(zoom + 10); break;
     case M_ZOOM_OUT: set_zoom(zoom - 10); break;
     case M_ZOOM_100: set_zoom(100); break;
@@ -936,32 +1206,76 @@ static void menu_action(ULONG id)
 static void events(void)
 {
     struct IntuiMessage *im;
+    defer_repaint = 1;
     while (win && (im = GT_GetIMsg(win->UserPort))) {
         ULONG class = im->Class;
-        UWORD code = im->Code;
+        UWORD code = im->Code, qual = im->Qualifier;
         APTR ia = im->IAddress;
+        int mx = im->MouseX, my = im->MouseY;
         struct Gadget *g = (struct Gadget *)ia;
         GT_ReplyIMsg(im);
         switch (class) {
-        case IDCMP_CLOSEWINDOW: quit_now = 1; break;
-        case IDCMP_NEWSIZE: relayout(); break;
+        case IDCMP_CLOSEWINDOW:
+            if (confirm_discard_changes()) quit_now = 1;
+            break;
+        case IDCMP_NEWSIZE:
+            relayout();
+            break;
         case IDCMP_REFRESHWINDOW:
-            GT_BeginRefresh(win); draw_all(); GT_EndRefresh(win, TRUE); break;
+            GT_BeginRefresh(win); draw_all(); GT_EndRefresh(win, TRUE);
+            break;
         case IDCMP_GADGETDOWN:
         case IDCMP_GADGETUP:
             if (g && g->GadgetID >= GID_TOOLBAR) toolbar_event(class, g);
             break;
         case IDCMP_MOUSEBUTTONS:
-            if (code == SELECTUP && tb.pressed >= 0) {
-                ogt_toolbar_draw_one(&tb, &ctx, win->RPort, tb.pressed, 0, "window");
-                tb.pressed = -1;
+            if (code == SELECTDOWN && point_in_box(&page_box, mx, my)) {
+                mouse_selecting = 1;
+                mouse_set_selection(mx, my,
+                    (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0);
+            } else if (code == SELECTUP) {
+                if (mouse_selecting) {
+                    mouse_set_selection(mx, my, 1);
+                    mouse_selecting = 0;
+                }
+                if (tb.pressed >= 0) {
+                    ogt_toolbar_draw_one(&tb, &ctx, win->RPort,
+                                         tb.pressed, 0, "window");
+                    tb.pressed = -1;
+                }
+            }
+            break;
+        case IDCMP_MOUSEMOVE:
+            if (mouse_selecting) mouse_set_selection(mx, my, 1);
+            break;
+        case IDCMP_RAWKEY:
+            if (!(code & 0x80) && editor) {
+                int extend = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
+                switch (code) {
+                case 0x4f: ow_editor_move_caret(editor, OW_MOVE_LEFT, extend); request_document_redraw(); break;
+                case 0x4e: ow_editor_move_caret(editor, OW_MOVE_RIGHT, extend); request_document_redraw(); break;
+                case 0x4c: ow_editor_move_caret(editor, OW_MOVE_UP, extend); request_document_redraw(); break;
+                case 0x4d: ow_editor_move_caret(editor, OW_MOVE_DOWN, extend); request_document_redraw(); break;
+                case 0x46: editor_result(ow_editor_delete_forward(editor), "Modified."); break;
+                }
             }
             break;
         case IDCMP_VANILLAKEY:
-            switch (code) {
-            case '+': case '=': set_zoom(zoom + 10); break;
-            case '-': set_zoom(zoom - 10); break;
-            case '0': set_zoom(100); break;
+            if (!editor) break;
+            if (qual & (IEQUALIFIER_CONTROL | IEQUALIFIER_LCOMMAND | IEQUALIFIER_RCOMMAND))
+                break;
+            if (code == 8) {
+                editor_result(ow_editor_backspace(editor), "Modified.");
+            } else if (code == 13) {
+                editor_result(ow_editor_newline(editor), "Modified.");
+            } else if (code == 127) {
+                editor_result(ow_editor_delete_forward(editor), "Modified.");
+            } else if (code == 9) {
+                editor_result(ow_editor_insert_utf8(editor, "\t", 1), "Modified.");
+            } else if (code >= 32 && code < 256) {
+                char u[3];
+                int n = vanilla_utf8(code, u);
+                editor_result(ow_editor_insert_utf8(editor, u, (size_t)n), "Modified.");
             }
             break;
         case IDCMP_MENUPICK:
@@ -973,6 +1287,14 @@ static void events(void)
             }
             break;
         }
+    }
+    defer_repaint = 0;
+    if (repaint_pending && win) {
+        repaint_pending = 0;
+        update_window_title();
+        update_edit_tools();
+        ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+        redraw_document_area();
     }
 }
 
@@ -988,7 +1310,7 @@ static int window_main(int argc, char **argv)
     }
 
     read_theme_choice();
-    set_document(sample_document(), "", "ODT");
+    set_document(blank_document(), "", "ODT");
     if (!doc || !editor) { rc = 20; goto out; }
 
     if (argc > 1) snprintf(first, sizeof first, "%s", argv[1]);
@@ -1009,7 +1331,9 @@ static int window_main(int argc, char **argv)
     while (!quit_now) {
         ULONG sig = 1UL << win->UserPort->mp_SigBit;
         ULONG got = Wait(sig | SIGBREAKF_CTRL_C);
-        if (got & SIGBREAKF_CTRL_C) quit_now = 1;
+        if (got & SIGBREAKF_CTRL_C) {
+            if (confirm_discard_changes()) quit_now = 1;
+        }
         if (got & sig) events();
     }
 
