@@ -57,6 +57,7 @@ typedef struct {
                      const owf_charfmt *fmt);
     void (*rule)(void *userdata, int x1, int y1, int x2, int y2,
                  unsigned long rgb);
+    void (*image)(void *userdata, int image_index, int x, int y, int width, int height);
 } ow_renderer;
 
 ow_editor *ow_editor_new(owf_doc *doc);
@@ -141,6 +142,23 @@ int ow_editor_current_page(const ow_editor *editor);
 void ow_editor_page_setup(const ow_editor *editor, owf_page *page);
 int ow_editor_apply_page_setup(ow_editor *editor, const owf_page *page);
 int ow_editor_insert_page_break(ow_editor *editor);
+
+typedef enum { OW_STORY_HEADER = 1, OW_STORY_FOOTER = 2 } ow_story_kind;
+/* Header/footer templates use {PAGE}, {PAGES}, {DATE} and {TIME}. Newlines
+ * create separate paragraphs. The returned story text is malloc()'d. */
+char *ow_editor_story_text(const ow_editor *editor, ow_story_kind story);
+int ow_editor_set_story_text(ow_editor *editor, ow_story_kind story, const char *text);
+int ow_editor_insert_field(ow_editor *editor, owf_field field);
+int ow_editor_set_link(ow_editor *editor, const char *url);
+int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url);
+int ow_editor_insert_table(ow_editor *editor, int rows, int cols);
+int ow_editor_insert_image(ow_editor *editor, int image_index);
+int ow_editor_in_table(const ow_editor *editor);
+int ow_editor_table_move(ow_editor *editor, int delta);
+int ow_editor_table_insert_row(ow_editor *editor);
+int ow_editor_table_delete_row(ow_editor *editor);
+int ow_editor_table_insert_column(ow_editor *editor);
+int ow_editor_table_delete_column(ow_editor *editor);
 int ow_editor_render_page(const ow_editor *editor, int page_index,
                           const ow_renderer *renderer);
 

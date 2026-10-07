@@ -92,6 +92,9 @@ static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_re
     case OWF_RUN_LINEBREAK:
         owf_buf_puts(out, "<br>");
         break;
+    case OWF_RUN_IMAGE:
+        owf_buf_puts(out, "[image]");
+        break;
     case OWF_RUN_FIELD: {
         static const char *names[] = { "page", "pages", "date", "time" };
         static const char *shown[] = { "#", "##", "date", "time" };

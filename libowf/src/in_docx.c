@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define NS_W "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 #define NS_W_STRICT "http://purl.oclc.org/ooxml/wordprocessingml/main"
@@ -70,6 +71,8 @@ typedef struct {
     int break_next;          /* a page break waits for the next paragraph */
     owf_buf notes, scratch;
     int nnotes, failed;
+    const char *current_href;
+    int next_table_id;
 } docx;
 
 /* ---- Small helpers ---- */
@@ -599,6 +602,32 @@ static void note(docx *d, const owf_xml_node *ref, owf_xml *part, const char *el
     }
 }
 
+static const owf_xml_node *find_local(const owf_xml_node *n, const char *name)
+{
+    const owf_xml_node *c,*found;if(!n)return NULL;if(n->type==OWF_XML_ELEMENT&&!strcmp(n->name,name))return n;for(c=n->first;c;c=c->next)if((found=find_local(c,name)))return found;return NULL;
+}
+
+static const char *docx_image_mime(const char *name)
+{
+    const char *e=name?strrchr(name,'.'):NULL;if(!e)return "application/octet-stream";
+    if(!strcasecmp(e,".png"))return "image/png";
+    if(!strcasecmp(e,".jpg")||!strcasecmp(e,".jpeg"))return "image/jpeg";
+    if(!strcasecmp(e,".gif"))return "image/gif";
+    if(!strcasecmp(e,".webp"))return "image/webp";
+    if(!strcasecmp(e,".bmp"))return "image/bmp";
+    return "application/octet-stream";
+}
+
+static int import_drawing(docx *d, const owf_xml_node *drawing, const owf_charfmt *fmt)
+{
+    const owf_xml_node *blip=find_local(drawing,"blip"),*ext=find_local(drawing,"extent");const char *id=attr_any(blip,"embed"),*target;char name[256];unsigned char *data=NULL;size_t length=0;int w=4320,h=2880,idx;long cx,cy;
+    if(!id||(target=rel_by_id(&d->doc_rels,id))==NULL)return 0;
+    part_name(name,sizeof name,d->base,target);
+    if(owf_unzip_read(d->zip,name,&data,&length)!=OWF_OK)return 0;
+    if(ext){const char *xs=attr_any(ext,"cx"),*ys=attr_any(ext,"cy");cx=xs?strtol(xs,NULL,10):0;cy=ys?strtol(ys,NULL,10):0;if(cx>0)w=(int)(cx/635);if(cy>0)h=(int)(cy/635);}
+    idx=owf_doc_add_image(d->doc,name,docx_image_mime(name),data,length,w,h,NULL);free(data);if(idx<0){d->failed=1;return 0;}set_fmt(d,fmt);owf_builder_image(d->b,idx);return 1;
+}
+
 static void run_children(docx *d, const owf_xml_node *r, const owf_charfmt *fmt);
 static void start_para(docx *d, const owf_parafmt *pf);
 
@@ -616,10 +645,13 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
     if (strcmp(c->ns, d->w)) {
         if (!strcmp(c->ns, NS_MATH) && !strcmp(c->name, "t") && c->first && c->first->type == OWF_XML_TEXT) {
             set_fmt(d, fmt);
-            owf_builder_text(d->b, c->first->name, c->first->length);
+            if (d->current_href) owf_builder_link_text(d->b, c->first->name, c->first->length, d->current_href);
+            else owf_builder_text(d->b, c->first->name, c->first->length);
             owf_report_add(d->report, OWF_NOTE_APPROX, "Equations are kept as plain text");
-        } else if (!strcmp(c->name, "drawing") || !strcmp(c->name, "pict") || !strcmp(c->name, "object")) {
-            owf_report_add(d->report, OWF_NOTE_LOST, "Pictures and drawings are not brought across yet");
+        } else if (!strcmp(c->name, "drawing")) {
+            if(!import_drawing(d,c,fmt))owf_report_add(d->report, OWF_NOTE_LOST, "A picture could not be brought across");
+        } else if (!strcmp(c->name, "pict") || !strcmp(c->name, "object")) {
+            owf_report_add(d->report, OWF_NOTE_LOST, "Legacy pictures and embedded objects are not brought across yet");
         } else {
             run_children(d, c, fmt);
         }
@@ -628,7 +660,8 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
     if (!strcmp(c->name, "t")) {
         if (!hiding(d) && c->first && c->first->type == OWF_XML_TEXT) {
             set_fmt(d, fmt);
-            owf_builder_text(d->b, c->first->name, c->first->length);
+            if (d->current_href) owf_builder_link_text(d->b, c->first->name, c->first->length, d->current_href);
+            else owf_builder_text(d->b, c->first->name, c->first->length);
         }
     } else if (!strcmp(c->name, "instrText")) {
         if (d->nfields && d->fields[d->nfields - 1].code && c->first && c->first->type == OWF_XML_TEXT) {
@@ -722,8 +755,10 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
         note(d, c, d->endnotes, "endnote", fmt);
     } else if (!strcmp(c->name, "commentReference")) {
         owf_report_add(d->report, OWF_NOTE_LOST, "Comments were left out");
-    } else if (!strcmp(c->name, "drawing") || !strcmp(c->name, "pict") || !strcmp(c->name, "object")) {
-        owf_report_add(d->report, OWF_NOTE_LOST, "Pictures and drawings are not brought across yet");
+    } else if (!strcmp(c->name, "drawing")) {
+        if(!import_drawing(d,c,fmt))owf_report_add(d->report, OWF_NOTE_LOST, "A picture could not be brought across");
+    } else if (!strcmp(c->name, "pict") || !strcmp(c->name, "object")) {
+        owf_report_add(d->report, OWF_NOTE_LOST, "Legacy pictures and embedded objects are not brought across yet");
     } else if (!strcmp(c->name, "rPr") || !strcmp(c->name, "delText") || !strcmp(c->name, "delInstrText") ||
                !strcmp(c->name, "lastRenderedPageBreak") || !strcmp(c->name, "softHyphen") ||
                !strcmp(c->name, "footnoteRef") || !strcmp(c->name, "endnoteRef") || !strcmp(c->name, "separator") ||
@@ -781,6 +816,15 @@ static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para
             } else {
                 para_content(d, c, para_char);
             }
+        } else if (is_w(d, c, "hyperlink")) {
+            const char *id = attr_any(c, "id");
+            const char *anchor = owf_xml_attr(c, d->w, "anchor");
+            const char *old_href = d->current_href;
+            char internal[256];
+            if (id) d->current_href = rel_by_id(&d->doc_rels, id);
+            else if (anchor) { snprintf(internal, sizeof internal, "#%s", anchor); d->current_href = internal; }
+            para_content(d, c, para_char);
+            d->current_href = old_href;
         } else if (!strcmp(c->ns, NS_MATH)) {
             run_children(d, c, para_char);
         } else if (owf_xml_is(c, NS_MC, "AlternateContent")) {
@@ -921,24 +965,30 @@ static void cell_content(docx *d, const owf_xml_node *n, int *first)
 static void table(docx *d, const owf_xml_node *t)
 {
     const owf_xml_node *row, *cell;
-    owf_report_add(d->report, OWF_NOTE_APPROX, "Tables are kept as rows of text with tabs between the cells");
+    int table_id = d->next_table_id++, row_index = 0;
     for (row = t->first; row; row = row->next) {
-        int ncell = 0;
+        int col = 0, cols = 0;
         if (!is_w(d, row, "tr")) {
             if (is_w(d, row, "sdt") || is_w(d, row, "customXml"))
                 table(d, wchild(d, row, "sdtContent") ? wchild(d, row, "sdtContent") : row);
             continue;
         }
-        start_para(d, &d->base_para);
+        for (cell=row->first;cell;cell=cell->next) if(is_w(d,cell,"tc")) ++cols;
+        if(!cols)continue;
         for (cell = row->first; cell; cell = cell->next) {
-            int first = 1;
-            if (!is_w(d, cell, "tc"))
-                continue;
-            if (ncell++)
-                owf_builder_special(d->b, OWF_RUN_TAB, OWF_FIELD_PAGE);
+            int first = 1, before;
+            owf_para *p;
+            if (!is_w(d, cell, "tc")) continue;
+            start_para(d, &d->base_para);
+            before=d->b->story->nparas;
             cell_content(d, cell, &first);
+            owf_builder_end_para(d->b);
+            if(d->b->story->nparas<=before)continue;
+            p=&d->b->story->paras[d->b->story->nparas-1];
+            p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
+            ++col;
         }
-        owf_builder_end_para(d->b);
+        ++row_index;
     }
 }
 

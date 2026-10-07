@@ -103,6 +103,7 @@ static void put_story(owf_buf *out, const owf_story *story, int *first)
             case OWF_RUN_TAB: owf_buf_putc(out, '\t'); break;
             case OWF_RUN_LINEBREAK: owf_buf_putc(out, '\n'); break;
             case OWF_RUN_FIELD: put_field(out, run->field); break;
+            case OWF_RUN_IMAGE: owf_buf_puts(out, "[image]"); break;
             }
         }
         owf_buf_putc(out, '\n');

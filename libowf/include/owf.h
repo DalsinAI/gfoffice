@@ -52,14 +52,16 @@ typedef struct {
 
 /* ---- Paragraphs ---- */
 
-typedef enum { OWF_RUN_TEXT, OWF_RUN_TAB, OWF_RUN_LINEBREAK, OWF_RUN_FIELD } owf_run_kind;
+typedef enum { OWF_RUN_TEXT, OWF_RUN_TAB, OWF_RUN_LINEBREAK, OWF_RUN_FIELD, OWF_RUN_IMAGE } owf_run_kind;
 typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME } owf_field;
 
 typedef struct {
     owf_run_kind kind;
     owf_charfmt fmt;
     char *text;              /* UTF-8, for OWF_RUN_TEXT */
+    char *href;              /* optional hyperlink target for text */
     owf_field field;         /* for OWF_RUN_FIELD */
+    int image;               /* index into doc->images for OWF_RUN_IMAGE */
 } owf_run;
 
 typedef enum { OWF_ALIGN_LEFT, OWF_ALIGN_CENTRE, OWF_ALIGN_RIGHT, OWF_ALIGN_JUSTIFY } owf_align;
@@ -88,6 +90,9 @@ typedef struct {
     owf_parafmt fmt;
     int nruns, capruns;
     owf_run *runs;
+    /* Native table cells are ordinary editable paragraphs tagged with grid
+     * coordinates. table_id < 0 means a normal paragraph. */
+    int table_id, table_row, table_col, table_cols;
 } owf_para;
 
 /* A run of paragraphs: the body, a header or a footer. */
@@ -118,10 +123,19 @@ typedef struct {
     int header_on_first, footer_on_first;
 } owf_page;
 
+typedef struct {
+    char *name, *mime, *alt;
+    unsigned char *data;
+    size_t length;
+    int width, height;       /* display size in twips */
+} owf_image;
+
 typedef struct owf_doc {
     owf_story body, header, footer;
     int nfonts, capfonts;
     owf_font *fonts;
+    int nimages, capimages;
+    owf_image *images;
     owf_charfmt base;        /* the document's default font and size */
     owf_page page;
     char *title;             /* UTF-8, may be NULL */
@@ -136,7 +150,10 @@ void owf_parafmt_init(owf_parafmt *fmt);
 void owf_charfmt_init(owf_charfmt *fmt);
 owf_para *owf_story_add(owf_story *story, const owf_parafmt *fmt);
 int owf_para_add_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, size_t len);
+int owf_para_add_link_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, size_t len, const char *href);
 int owf_para_add_special(owf_para *para, const owf_charfmt *fmt, owf_run_kind kind, owf_field field);
+int owf_para_add_image(owf_para *para, const owf_charfmt *fmt, int image_index);
+int owf_doc_add_image(owf_doc *doc, const char *name, const char *mime, const void *data, size_t length, int width, int height, const char *alt);
 int owf_doc_font(owf_doc *doc, const char *name, owf_font_kind kind);
 int owf_doc_set_title(owf_doc *doc, const char *utf8);
 
