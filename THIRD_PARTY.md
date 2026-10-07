@@ -1,30 +1,35 @@
 # Third-party parts
 
 OpenWrite's own code and documents are MIT, Copyright (c) 2026 Dalsin
-Limited (`LICENSE`). The source copy of OpenGadTools is present under
-`third_party/opengadtools`; the other entries are current or planned runtime
-dependencies and each keeps its own licence.
+Limited (`LICENSE`). Third-party code, data and runtime services retain their
+own licences.
+
+## Included or linked in OpenWrite 1.0
 
 | Part | What for | Licence | How |
 | --- | --- | --- | --- |
-| OpenGadTools (`DalsinAI/opengadtools`) | Native UI/theme drawing | MIT, Dalsin Limited | Source copy from main `d5f4dff` |
-| OpenRTG (`DalsinAI/openamigartg`) | Accelerated true-colour display path | MIT, Dalsin Limited | Runtime/system service |
-| OpenDatatypes / OpenImage | Embedded media and object decoding | MIT plus datatype-specific licences | Runtime/system service |
-| OpenPrint | Printing, PDF and network output | MIT, Dalsin Limited | Runtime/system service |
-| FreeType / HarfBuzz (later native text shaping) | Document fonts and shaping | FreeType License; MIT | Planned native renderer dependency |
-| WebCore/WTF/JavaScriptCore (optional future component) | Optional rich/HTML view, not the baseline editor | LGPL-2 and BSD-style | Not required by native OpenWrite |
-| zlib | Zip containers (ODT, DOCX) | zlib | Linked |
-| libpng, libjpeg (`openamigaimage`) | Pictures inside documents | libpng; IJG | Linked |
-| Hunspell (phase W5) | Spelling | MPL-1.1 (of its MPL/GPL/LGPL choice) | Linked |
-| Liberation fonts, Carlito | Fonts shipped with OpenWrite | SIL Open Font License 1.1 | Shipped as files |
-| Caladea | Font shipped with OpenWrite | Apache-2.0 | Shipped as files |
-| DejaVu fonts | Font shipped with OpenWrite | DejaVu Fonts License (free) | Shipped as files |
+| OpenGadTools (`DalsinAI/opengadtools`) | Native UI/theme drawing | MIT, Dalsin Limited | Source copy under `third_party/opengadtools` |
+| zlib | ZIP containers used by ODT and DOCX | zlib | Linked into the format layer/build |
+| SCOWL/Aspell English word list | Bundled `en_GB.words` spelling dictionary | SCOWL/Aspell word-list permissions and upstream component notices | Shipped as data; full notice in `licenses/SCOWL-ASPELL-English.txt` |
 
-**Reference only** (read for understanding; no code copied unless its
-licence allows, and then with credit):
+## Runtime/system integrations
 
-| Work | Licence | For |
+| Part | What for | Licence | How |
+| --- | --- | --- | --- |
+| OpenRTG | Accelerated true-colour document canvas where installed | MIT, Dalsin Limited | Runtime/system service |
+| Amiga datatypes / OpenDatatypes | Embedded image/media decoding | System/datatype-specific licences | Runtime service |
+| OpenPrint / OpenAmigaPrint | PDF/IPP/network printer backends when configured | Backend-specific licence | Selected through standard `printer.device` output |
+
+No WebCore, JavaScriptCore, GTK, Qt or Unix GUI compatibility layer is required
+by OpenWrite 1.0.
+
+## Reference only
+
+The following work was read for format understanding. Its source is not copied
+into OpenWrite unless separately identified above under a compatible licence.
+
+| Work | Licence/status | For |
 | --- | --- | --- |
-| fw2odf (github.com/hornc/fw2odf) | MIT | The Final Writer format |
-| libwpd, libmwaw (Document Liberation Project) | MPL-2.0 / LGPL | WordPerfect and old word processor formats |
-| The IFF specifications (EA IFF 85; New Horizons' FORM WORD) | Published specifications | IFF FTXT and ProWrite |
+| fw2odf (github.com/hornc/fw2odf) | MIT | Final Writer format research |
+| libwpd, libmwaw (Document Liberation Project) | MPL-2.0 / LGPL | WordPerfect and older word-processor format research |
+| EA IFF 85 and New Horizons FORM WORD specifications | Published specifications | IFF FTXT and ProWrite |

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "0.3"
+#define OW_CORE_VERSION "1.0"
 
 typedef struct ow_editor ow_editor;
 

@@ -62,7 +62,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *Lay
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 0.3-dev (6.10.2026)"
+#define VERSION_TEXT "OpenWrite 1.0 (7.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
