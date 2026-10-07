@@ -2,6 +2,10 @@
 
 OpenWrite 1.0 is a native word processor for AmigaOS 3.2.
 
+![OpenWrite on AmigaOS 3.2.3: a Word document written on a PC, opened as it is](docs/screenshot.png)
+
+*OpenWrite on AmigaOS 3.2.3 (an AmigaChrome instance with OpenRTG and the Open look), opening a DOCX written on a PC.*
+
 It is a small m68020 C application with no FPU requirement and no browser,
 Unix GUI or JavaScript runtime dependency. The document/file layer is the
 separate C library **libowf**, and **C:OWConvert** remains usable on a 68000.

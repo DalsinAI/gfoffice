@@ -2384,7 +2384,10 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
         if (p->table_id >= 0) {
             int cols=p->table_cols>0?p->table_cols:1;
             int cw=(editor->doc->page.width-editor->doc->page.margin_left-editor->doc->page.margin_right)/cols;
-            int rh=paragraph_estimated_height_width(editor->doc,p,cw-240)+240;
+            /* every cell of a row draws the row's height, so the row's lines meet */
+            int rh=240,k;
+            for(k=0;k<editor->doc->body.nparas;++k){const owf_para *q=&editor->doc->body.paras[k];if(q->table_id==p->table_id&&q->table_row==p->table_row){int h=paragraph_estimated_height_width(editor->doc,q,cw-240);if(h>rh)rh=h;}}
+            rh+=240;
             x=editor->doc->page.margin_left+p->table_col*cw+120+p->fmt.indent_left;
             y=editor->para_y?editor->para_y[i]:editor->doc->page.margin_top;
             if(renderer->rule){int left=editor->doc->page.margin_left+p->table_col*cw, top=y-120, right=left+cw, bottom=top+rh;renderer->rule(renderer->userdata,left,top,right,top,0x808080);renderer->rule(renderer->userdata,left,bottom,right,bottom,0x808080);renderer->rule(renderer->userdata,left,top,left,bottom,0x808080);renderer->rule(renderer->userdata,right,top,right,bottom,0x808080);}

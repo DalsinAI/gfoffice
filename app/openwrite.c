@@ -273,6 +273,7 @@ typedef struct hit_span {
 
 static int render_x0, render_y0, render_num = 1, render_den = 1;
 static int render_bottom, render_para = -1;
+static int render_rule_bottom, render_tbl_id = -1, render_tbl_row = -1, render_row_y, render_para_prev = -1, render_cell_col = -1, render_cell_bottom, render_shift;
 static int render_line_x, render_line_y, render_left_x, render_max_x, render_line_h;
 static hit_span hits[HIT_MAX];
 static int hit_count;
@@ -803,11 +804,25 @@ static struct TextFont *document_font(int paragraph, const owf_charfmt *fmt)
     ta.ta_Name = (STRPTR)file;
     ta.ta_YSize = (UWORD)pixels;
     ta.ta_Style = FS_NORMAL;
-    ta.ta_Flags = FPF_DISKFONT | FPF_DESIGNED;
-    f = OpenDiskFont(&ta);
-    if (!f) {
-        ta.ta_Flags = FPF_DISKFONT;
+    /* An outline font (FONTS:name.otag) is made at the exact size asked
+     * for; asked for as FPF_DESIGNED, diskfont returns a size made before
+     * (CGTimes: 10 pixels for any size from 8 to 14). A bitmap font keeps
+     * its designed sizes, since scaling one looks worse than the nearest. */
+    {
+        char otag[96];
+        BPTR lk;
+        int outline = 0;
+        snprintf(otag, sizeof otag, "FONTS:%s", file);
+        if (strlen(otag) > 5 && !strcmp(otag + strlen(otag) - 5, ".font")) {
+            strcpy(otag + strlen(otag) - 5, ".otag");
+            if ((lk = Lock((STRPTR)otag, ACCESS_READ))) { outline = 1; UnLock(lk); }
+        }
+        ta.ta_Flags = outline ? FPF_DISKFONT : FPF_DISKFONT | FPF_DESIGNED;
         f = OpenDiskFont(&ta);
+        if (!f) {
+            ta.ta_Flags = outline ? FPF_DISKFONT | FPF_DESIGNED : FPF_DISKFONT;
+            f = OpenDiskFont(&ta);
+        }
     }
     if (!f) return font;
     snprintf(doc_fonts[empty].file, sizeof doc_fonts[empty].file, "%s", file);
@@ -815,6 +830,8 @@ static struct TextFont *document_font(int paragraph, const owf_charfmt *fmt)
     doc_fonts[empty].font = f;
     return f;
 }
+
+static int text_width_n(struct RastPort *rp, const char *s, size_t n);
 
 static int paragraph_single_line_width(struct RastPort *rp, int paragraph)
 {
@@ -827,7 +844,7 @@ static int paragraph_single_line_width(struct RastPort *rp, int paragraph)
         if (r->kind == OWF_RUN_TEXT && r->text) {
             if (strchr(r->text, '\n')) { SetFont(rp, font); return -1; }
             SetFont(rp, document_font(paragraph, &r->fmt));
-            total += TextLength(rp, (STRPTR)r->text, (ULONG)strlen(r->text));
+            total += text_width_n(rp, r->text, strlen(r->text));
         } else if (r->kind == OWF_RUN_TAB) total += 24;
         else if (r->kind == OWF_RUN_LINEBREAK) { SetFont(rp, font); return -1; }
     }
@@ -869,10 +886,50 @@ static size_t utf8_next_local(const char *s, size_t off, size_t len)
     return p;
 }
 
+/* The document is UTF-8; Amiga fonts are ISO-8859-1. Latin-1 code points
+ * map to their byte; common typography outside it to the nearest Latin-1
+ * (bullets to a middle dot, quotes and dashes to ASCII, an ellipsis to
+ * three dots); anything else to '?'. Returns the bytes written. */
+static size_t to_latin1(const char *s, size_t n, char *out, size_t cap)
+{
+    size_t i = 0, o = 0;
+    if (!cap) return 0;
+    while (i < n && s[i] && o + 1 < cap) {
+        unsigned c = (unsigned char)s[i], cp;
+        int len;
+        if (c < 0x80) { out[o++] = (char)c; ++i; continue; }
+        if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
+        else { out[o++] = '?'; ++i; continue; }
+        if (i + (size_t)len > n) { out[o++] = '?'; break; }
+        {
+            int k;
+            for (k = 1; k < len; ++k) cp = (cp << 6) | ((unsigned char)s[i + k] & 0x3F);
+        }
+        i += (size_t)len;
+        if (cp >= 0xA0 && cp <= 0xFF) out[o++] = (char)cp;
+        else if (cp == 0x2022 || cp == 0x25CF || cp == 0x25AA || cp == 0x2219) out[o++] = (char)0xB7;
+        else if (cp == 0x2018 || cp == 0x2019 || cp == 0x201A || cp == 0x2032) out[o++] = '\'';
+        else if (cp == 0x201C || cp == 0x201D || cp == 0x201E || cp == 0x2033) out[o++] = '"';
+        else if (cp == 0x2013 || cp == 0x2014 || cp == 0x2212 || cp == 0x2010 || cp == 0x2011) out[o++] = '-';
+        else if (cp == 0x2026) { out[o++] = '.'; if (o + 1 < cap) out[o++] = '.'; if (o + 1 < cap) out[o++] = '.'; }
+        else if (cp == 0x00A0 || cp == 0x2002 || cp == 0x2003 || cp == 0x2009 || cp == 0x202F) out[o++] = ' ';
+        else if (cp == 0x20AC) { out[o++] = 'E'; if (o + 1 < cap) out[o++] = 'U'; if (o + 1 < cap) out[o++] = 'R'; }
+        else if (cp == 0xFEFF || cp == 0x200B || cp == 0x200D || cp == 0x00AD) ;
+        else out[o++] = '?';
+    }
+    out[o] = 0;
+    return o;
+}
+
 static int text_width_n(struct RastPort *rp, const char *s, size_t n)
 {
+    char buf[512];
+    size_t m;
     if (!n) return 0;
-    return (int)TextLength(rp, (STRPTR)s, (ULONG)n);
+    m = to_latin1(s, n, buf, sizeof buf);
+    return m ? (int)TextLength(rp, (STRPTR)buf, (ULONG)m) : 0;
 }
 
 static int selection_for_run(int paragraph, int run, size_t len,
@@ -937,6 +994,10 @@ static void render_begin(void *ud, const ow_page_info *p)
     hit_count = 0;
     render_para = -1;
     render_bottom = page_box.y;
+    render_rule_bottom = page_box.y;
+    render_tbl_id = render_tbl_row = -1;
+    render_para_prev = -1;
+    render_shift = 0;
 }
 
 static void render_end(void *ud, const ow_page_info *p)
@@ -973,6 +1034,7 @@ static void render_text_run(void *ud, int paragraph, int run_index,
         int para_width, available;
         owf_align align = (doc && paragraph >= 0 && paragraph < doc->body.nparas)
             ? doc->body.paras[paragraph].fmt.align : OWF_ALIGN_LEFT;
+        render_para_prev = render_para;
         render_para = paragraph;
         render_left_x = render_x0 + x * render_num / render_den;
         available = content_right - render_left_x;
@@ -985,9 +1047,44 @@ static void render_text_run(void *ud, int paragraph, int run_index,
             if (df) SetFont(rp, df);
         }
         render_line_x = render_left_x;
-        render_line_y = wanted_y;
         render_line_h = run_h;
-        if (render_line_y < render_bottom + 2) render_line_y = render_bottom + 2;
+        {
+            /* The engine places paragraphs from estimated heights; the
+             * text is measured here. A table row's cells share one line,
+             * below what came before the row. Another paragraph follows
+             * what was drawn before it, with its spacing, so an estimate
+             * that was too tall leaves no gap; one that was too short
+             * is never drawn over. */
+            const owf_para *pp = (doc && paragraph >= 0 && paragraph < doc->body.nparas) ? &doc->body.paras[paragraph] : NULL;
+            int above = render_bottom > render_rule_bottom ? render_bottom : render_rule_bottom;
+            if (pp && pp->table_id >= 0) {
+                if (pp->table_id != render_tbl_id || pp->table_row != render_tbl_row) {
+                    render_tbl_id = pp->table_id;
+                    render_tbl_row = pp->table_row;
+                    render_row_y = wanted_y + render_shift < render_bottom + 2 ? render_bottom + 2 : wanted_y + render_shift;
+                    render_cell_col = -1;
+                }
+                if (pp->table_col != render_cell_col) {   /* the cell's first paragraph: the row's line */
+                    render_cell_col = pp->table_col;
+                    render_line_y = render_row_y;
+                } else                                   /* a cell's next paragraph: below the last */
+                    render_line_y = render_cell_bottom + 2;
+                render_cell_bottom = render_line_y;
+            } else {
+                int was_para = render_para_prev >= 0 && doc && render_para_prev < doc->body.nparas;
+                render_tbl_id = render_tbl_row = -1;
+                if (was_para && pp) {
+                    const owf_para *prev = &doc->body.paras[render_para_prev];
+                    int gap = ((prev->table_id >= 0 ? 0 : prev->fmt.space_after) + pp->fmt.space_before) * render_num / render_den;
+                    int flow;
+                    if (pp->fmt.heading >= 1 && pp->fmt.heading <= 3 && !pp->fmt.space_before) gap += run_h / 2;
+                    flow = above + 2 + gap;
+                    render_line_y = flow < wanted_y ? flow : (wanted_y < above + 2 ? above + 2 : wanted_y);
+                    render_shift = render_line_y - wanted_y;
+                } else
+                    render_line_y = wanted_y < render_bottom + 2 ? render_bottom + 2 : wanted_y;
+            }
+        }
     } else if (run_h > render_line_h) render_line_h = run_h;
     render_max_x = page_box.x + page_box.w - 9;
     if (render_line_x < render_left_x) render_line_x = render_left_x;
@@ -1043,8 +1140,7 @@ static void render_text_run(void *ud, int paragraph, int run_index,
         if (seg_end > off) {
             size_t n = seg_end - off;
             if (n >= sizeof(line)) n = sizeof(line) - 1;
-            memcpy(line, utf8 + off, n);
-            line[n] = 0;
+            to_latin1(utf8 + off, n, line, sizeof line);
             width = text_width_n(rp, utf8 + off, n);
 
             if (has_selection) {
@@ -1058,9 +1154,12 @@ static void render_text_run(void *ud, int paragraph, int run_index,
                             sx, render_line_y, sw, render_line_h);
                 }
             }
-            ogt_text(rp, ogt_pen(&ctx, (paragraph >= 0 && doc && paragraph < doc->body.nparas &&
+            ogt_text(rp, (paragraph >= 0 && doc && paragraph < doc->body.nparas &&
                      run_index >= 0 && run_index < doc->body.paras[paragraph].nruns &&
-                     doc->body.paras[paragraph].runs[run_index].href) ? "accent" : "fill.text"), render_line_x,
+                     doc->body.paras[paragraph].runs[run_index].href) ? ogt_pen(&ctx, "accent")
+                     : (fmt && fmt->colour != OWF_COLOUR_AUTO && fmt->colour != 0)
+                     ? ogt_pen_rgb(&ctx, (ogt_rgb){ (UBYTE)((fmt->colour >> 16) & 255), (UBYTE)((fmt->colour >> 8) & 255), (UBYTE)(fmt->colour & 255) })
+                     : ogt_pen(&ctx, "fill.text"), render_line_x,
                      render_line_y, line, available);
             add_hit(paragraph, run_index, off, seg_end, render_line_x,
                     render_line_y, width, render_line_h);
@@ -1087,6 +1186,8 @@ static void render_text_run(void *ud, int paragraph, int run_index,
         }
         if (render_bottom < render_line_y + render_line_h)
             render_bottom = render_line_y + render_line_h;
+        if (render_cell_bottom < render_line_y + render_line_h)
+            render_cell_bottom = render_line_y + render_line_h;
     }
     SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
 }
@@ -1154,7 +1255,7 @@ static void draw_format_bar(void)
     char style_name[32] = "Body Text  v";
     char font_name[96] = "Default  v";
     char size_name[24] = "12";
-    const char *labels[] = { "B", "I", "U", "L", "C", "R", "J", "•", "1." };
+    const char *labels[] = { "B", "I", "U", "L", "C", "R", "J", "\xb7", "1." };
     int active[9] = { 0,0,0,0,0,0,0,0,0 };
     int i, bw = fh + 11;
 
@@ -1333,10 +1434,12 @@ static void render_image(void *ud,int image_index,int x,int y,int width,int heig
 static void render_rule(void *ud, int x1, int y1, int x2, int y2, unsigned long rgb)
 {
     struct RastPort *rp=(struct RastPort*)ud;
-    int px1=render_x0+x1*render_num/render_den, py1=render_y0+y1*render_num/render_den;
-    int px2=render_x0+x2*render_num/render_den, py2=render_y0+y2*render_num/render_den;
+    int px1=render_x0+x1*render_num/render_den, py1=render_y0+y1*render_num/render_den+render_shift;
+    int px2=render_x0+x2*render_num/render_den, py2=render_y0+y2*render_num/render_den+render_shift;
     LONG pen=ogt_pen_rgb(&ctx,(ogt_rgb){(UBYTE)((rgb>>16)&255),(UBYTE)((rgb>>8)&255),(UBYTE)(rgb&255)});
     SetAPen(rp,pen);Move(rp,px1,py1);Draw(rp,px2,py2);
+    if(py1>render_rule_bottom)render_rule_bottom=py1;
+    if(py2>render_rule_bottom)render_rule_bottom=py2;
 }
 
 static void draw_page(void)
