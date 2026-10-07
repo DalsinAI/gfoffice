@@ -41,6 +41,8 @@ typedef struct {
     int nlists;
     owf_parafmt base_para;
     owf_charfmt base_char;           /* the default style's text, with real font and size */
+    struct { const char *name; unsigned long colour; } cells[64];   /* table-cell styles with a background */
+    int ncells;
     owf_builder *b;
     int space;                       /* the last character was white space */
     int counters[OWF_LIST_LEVELS];
@@ -125,6 +127,14 @@ static void read_text_props(odt *o, const owf_xml_node *n, owf_charprops *cp)
     }
 }
 
+/* "#rrggbb" (or a border's "0.5pt solid #rrggbb"): OWF_SHADE(rgb); 0 for none or transparent */
+static unsigned long odt_colour(const char *v)
+{
+    const char *h = v ? strchr(v, '#') : NULL;
+    if (!h || strlen(h) < 7) return 0;
+    return OWF_SHADE(strtoul(h + 1, NULL, 16));
+}
+
 static void read_para_props(const owf_xml_node *n, owf_paraprops *pp)
 {
     const char *v;
@@ -159,6 +169,29 @@ static void read_para_props(const owf_xml_node *n, owf_paraprops *pp)
     if ((v = owf_xml_attr(n, NS_FO, "break-before"))) {
         pp->fmt.page_break_before = !strcmp(v, "page");
         pp->mask |= OWF_PP_BREAK;
+    }
+    if ((v = owf_xml_attr(n, NS_FO, "background-color"))) {
+        pp->fmt.shading = strcmp(v, "transparent") ? odt_colour(v) : 0;
+        pp->mask |= OWF_PP_SHADING;
+    }
+    {
+        static const char *side[] = { "border-top", "border-left", "border-bottom", "border-right" };
+        const char *all = owf_xml_attr(n, NS_FO, "border");
+        int k, any = all != NULL;
+        for (k = 0; k < 4; k++) any |= owf_xml_attr(n, NS_FO, side[k]) != NULL;
+        if (any) {
+            pp->fmt.borders = 0;
+            pp->fmt.border_colour = 0;
+            for (k = 0; k < 4; k++) {
+                const char *b = owf_xml_attr(n, NS_FO, side[k]);
+                if (!b) b = all;
+                if (b && strcmp(b, "none")) {
+                    pp->fmt.borders |= 1 << k;
+                    if (odt_colour(b)) pp->fmt.border_colour = odt_colour(b);
+                }
+            }
+            pp->mask |= OWF_PP_BORDERS;
+        }
     }
     if ((tabs = owf_xml_child(n, NS_STYLE, "tab-stops"))) {
         pp->fmt.ntabs = 0;
@@ -275,6 +308,16 @@ static void read_styles(odt *o, const owf_xml_node *container, owf_styles *into)
             const char *family = owf_xml_attr(n, NS_STYLE, "family");
             const char *name = owf_xml_attr(n, NS_STYLE, "name");
             const char *outline = owf_xml_attr(n, NS_STYLE, "default-outline-level");
+            if (family && !strcmp(family, "table-cell") && name && o->ncells < 64) {
+                const owf_xml_node *tc = owf_xml_child(n, NS_STYLE, "table-cell-properties");
+                const char *bg = tc ? owf_xml_attr(tc, NS_FO, "background-color") : NULL;
+                if (bg && strcmp(bg, "transparent") && odt_colour(bg)) {
+                    o->cells[o->ncells].name = name;
+                    o->cells[o->ncells].colour = odt_colour(bg);
+                    o->ncells++;
+                }
+                continue;
+            }
             int fam = family && !strcmp(family, "paragraph") ? OWF_FAMILY_PARAGRAPH
                     : family && !strcmp(family, "text") ? OWF_FAMILY_TEXT : 0;
             owf_style *st;
@@ -646,7 +689,7 @@ static void table_rows_id(odt *o, const owf_xml_node *n, int table_id, int *row_
             for(c=r->first;c;c=c->next){int first=1,before;owf_para *p;if(!owf_xml_is(c,NS_TABLE,"table-cell"))continue;
                 if(o->b->para||o->b->text.length)owf_builder_end_para(o->b);
                 o->b->parafmt=o->base_para;before=o->b->story->nparas;cell_text(o,c,&first);owf_builder_end_para(o->b);
-                if(o->b->story->nparas>before){p=&o->b->story->paras[o->b->story->nparas-1];p->table_id=table_id;p->table_row=*row_index;p->table_col=col;p->table_cols=cols;}++col;
+                if(o->b->story->nparas>before){p=&o->b->story->paras[o->b->story->nparas-1];p->table_id=table_id;p->table_row=*row_index;p->table_col=col;p->table_cols=cols;{const char *sn=owf_xml_attr(c,NS_TABLE,"style-name");int k;for(k=0;sn&&k<o->ncells;k++)if(!strcmp(o->cells[k].name,sn)){p->cell_shading=o->cells[k].colour;break;}}}++col;
             }++*row_index;
         }else if(owf_xml_is(r,NS_TABLE,"table-header-rows")||owf_xml_is(r,NS_TABLE,"table-rows")||owf_xml_is(r,NS_TABLE,"table-row-group"))table_rows_id(o,r,table_id,row_index);
     }

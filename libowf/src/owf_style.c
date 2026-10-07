@@ -39,6 +39,8 @@ void owf_paraprops_apply(owf_parafmt *to, const owf_paraprops *p)
     if (p->mask & OWF_PP_LINE) to->line_spacing = f->line_spacing;
     if (p->mask & OWF_PP_BREAK) to->page_break_before = f->page_break_before;
     if (p->mask & OWF_PP_HEADING) to->heading = f->heading;
+    if (p->mask & OWF_PP_SHADING) to->shading = f->shading;
+    if (p->mask & OWF_PP_BORDERS) { to->borders = f->borders; to->border_colour = f->border_colour; }
     if (p->mask & OWF_PP_TABS) {
         to->ntabs = f->ntabs;
         memcpy(to->tabs, f->tabs, sizeof to->tabs);

@@ -10,6 +10,7 @@ Real files from the original programs replace and add to these samples as the
 format lab makes them (docs/FORMATS.md, section 4).
 MIT, Copyright (c) 2026 Dalsin Limited.
 """
+import io
 import os
 import struct
 import subprocess
@@ -324,6 +325,46 @@ FODT = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+def png_rgba(w=4, h=3):
+    """A small PNG with an alpha channel (half see-through)."""
+    import struct, zlib
+    raw = b"".join(b"\x00" + b"".join(bytes((200, 32, 43, 128 if (x + y) % 2 else 255)) for x in range(w)) for y in range(h))
+    def ch(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+    return b"\x89PNG\r\n\x1a\n" + ch(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) + ch(b"IDAT", zlib.compress(raw)) + ch(b"IEND", b"")
+
+
+def docx_shading_sample():
+    """Shading, borders, a shaded cell, a transparent picture and a footer in a table row (7 Oct 2026)."""
+    W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"'
+    pic = ('<w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="685800"/><wp:docPr id="1" name="Logo"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+           '<pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill><pic:spPr><a:xfrm><a:ext cx="914400" cy="685800"/></a:xfrm></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>')
+    body = ('<w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/></w:pPr><w:r><w:t>Shaded box</w:t></w:r></w:p>'
+            '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="888888"/></w:pBdr></w:pPr><w:r><w:t>Ruled heading</w:t></w:r></w:p>'
+            '<w:tbl><w:tblPr/><w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="D6D6D6"/></w:tcPr><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc>'
+            '<w:tc><w:p><w:r><w:t>Plain</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+            f'<w:p>{pic}</w:p>'
+            '<w:sectPr><w:footerReference w:type="default" r:id="rIdFoot"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>')
+    foot = (f'<w:ftr {W}><w:tbl><w:tblPr/><w:tr><w:tc><w:p><w:r><w:t>Left title</w:t></w:r></w:p></w:tc>'
+            '<w:tc><w:p><w:r><w:t>Middle notice</w:t></w:r></w:p></w:tc>'
+            '<w:tc><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p></w:tc></w:tr></w:tbl></w:ftr>')
+    doc = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W}><w:body>{body}</w:body></w:document>'
+    ct = ('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+          '<Default Extension="png" ContentType="image/png"/>'
+          '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+          '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>')
+    rels = ('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+    drels = ('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+             '<Relationship Id="rIdImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/>'
+             '<Relationship Id="rIdFoot" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", ct); z.writestr("_rels/.rels", rels); z.writestr("word/document.xml", doc)
+        z.writestr("word/_rels/document.xml.rels", drels); z.writestr("word/footer1.xml", foot); z.writestr("word/media/logo.png", png_rgba())
+    return buf.getvalue()
+
+
 def main():
     base = os.environ.get("OWF_TEST_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build", "tests")
     os.makedirs(base, exist_ok=True)
@@ -555,6 +596,35 @@ def main():
             if r.returncode not in (0, 10):
                 check(f"{name} cut at {n}", False, f"exit {r.returncode}: {(r.stdout + r.stderr)[-400:]!r}")
                 break
+
+    # Shading, borders, a shaded cell, a transparent picture, a footer in a table row (7 Oct 2026)
+    with open(os.path.join(work, "shade.docx"), "wb") as f:
+        f.write(docx_shading_sample())
+    odt, _ = convert(work, "shade.docx", "odt")
+    with zipfile.ZipFile(io.BytesIO(odt)) as z:
+        c = z.read("content.xml").decode()
+    check("shading odt paragraph background", 'fo:background-color="#f2f2f2"' in c, c[:800])
+    check("shading odt paragraph border", 'fo:border-bottom="0.5pt solid #888888"' in c)
+    check("shading odt cell style", 'style:name="CellD6D6D6"' in c and 'table:style-name="CellD6D6D6"' in c)
+    with open(os.path.join(work, "shade-round.odt"), "wb") as f:
+        f.write(odt)
+    back, _ = convert(work, "shade-round.odt", "docx")
+    with zipfile.ZipFile(io.BytesIO(back)) as z:
+        d = z.read("word/document.xml").decode()
+    check("shading odt to docx paragraph", 'w:fill="F2F2F2"' in d, d[:900])
+    check("shading odt to docx border", '<w:bottom w:val="single"' in d and 'w:color="888888"' in d)
+    check("shading odt to docx cell", '<w:tcPr><w:tcW w:w="0" w:type="auto"/><w:shd w:val="clear" w:color="auto" w:fill="D6D6D6"/>' in d)
+    html, _ = convert(work, "shade.docx", "html")
+    h = html.decode()
+    for want in ("background-color: #f2f2f2", "border-bottom: 0.5pt solid #888888", "<table class=\"ow-table\">",
+                 "<td style=\"background-color: #d6d6d6\">", "<img src=\"data:image/png;base64,"):
+        check("shading html has " + want, want in h)
+    pdf, _ = convert(work, "shade.docx", "pdf")
+    check("pdf picture drawn", b"/Subtype /Image" in pdf and b"/Im1 Do" in pdf)
+    check("pdf picture keeps its transparency", b"/SMask" in pdf)
+    for want in (b"(Left title)", b"(Middle notice)", b"(Page )"):
+        check("pdf footer has " + want.decode(), want in pdf)
+    check("pdf text in one object a line", pdf.count(b"BT ") < 12, str(pdf.count(b"BT ")))
     print(f"{cuts} cut-short files tried")
 
     print(f"{'FAILED' if failures else 'passed'}: {len(failures)} failure(s); files in {work}")

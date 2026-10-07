@@ -40,7 +40,8 @@ static int same_para(const owf_parafmt *a, const owf_parafmt *b)
         a->indent_right != b->indent_right || a->indent_first != b->indent_first ||
         a->space_before != b->space_before || a->space_after != b->space_after ||
         a->line_spacing != b->line_spacing || a->page_break_before != b->page_break_before ||
-        a->ntabs != b->ntabs)
+        a->ntabs != b->ntabs || a->shading != b->shading || a->borders != b->borders ||
+        a->border_colour != b->border_colour)
         return 0;
     for (i = 0; i < a->ntabs; i++)
         if (a->tabs[i].position != b->tabs[i].position || a->tabs[i].kind != b->tabs[i].kind)
@@ -210,6 +211,16 @@ static void put_para_props(owf_buf *out, const owf_parafmt *f)
         owf_buf_printf(out, " fo:line-height=\"%d%%\"", f->line_spacing);
     if (f->page_break_before)
         owf_buf_puts(out, " fo:break-before=\"page\"");
+    if (OWF_SHADE_SET(f->shading))
+        owf_buf_printf(out, " fo:background-color=\"#%06lx\"", OWF_SHADE_RGB(f->shading));
+    if (f->borders) {
+        static const char *side[] = { "top", "left", "bottom", "right" };
+        unsigned long col = OWF_SHADE_SET(f->border_colour) ? OWF_SHADE_RGB(f->border_colour) : 0;
+        int k;
+        for (k = 0; k < 4; k++)
+            if (f->borders & (1 << k))
+                owf_buf_printf(out, " fo:border-%s=\"0.5pt solid #%06lx\" fo:padding-%s=\"0.1cm\"", side[k], col, side[k]);
+    }
     if (!f->ntabs) {
         owf_buf_puts(out, "/>");
         return;
@@ -229,6 +240,17 @@ static void put_para_props(owf_buf *out, const owf_parafmt *f)
 static void put_automatic_styles(owf_buf *out, const owf_doc *doc, const styles *s)
 {
     int i;
+    /* a table-cell style for each cell colour the body uses (Cell<RRGGBB>) */
+    for (i = 0; i < doc->body.nparas; i++) {
+        unsigned long c = doc->body.paras[i].cell_shading;
+        int j, seen = 0;
+        if (doc->body.paras[i].table_id < 0 || !OWF_SHADE_SET(c)) continue;
+        for (j = 0; j < i && !seen; j++) seen = doc->body.paras[j].table_id >= 0 && doc->body.paras[j].cell_shading == c;
+        if (!seen)
+            owf_buf_printf(out, "<style:style style:name=\"Cell%06lX\" style:family=\"table-cell\">"
+                                "<style:table-cell-properties fo:background-color=\"#%06lx\"/></style:style>",
+                           OWF_SHADE_RGB(c), OWF_SHADE_RGB(c));
+    }
     for (i = 0; i < s->nparas; i++) {
         const owf_parafmt *f = s->paras[i];
         owf_buf_printf(out, "<style:style style:name=\"P%d\" style:family=\"paragraph\" style:parent-style-name=\"", i + 1);
@@ -311,7 +333,7 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
     int i=0;
     while(i<story->nparas){const owf_para *p=&story->paras[i];
         if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
-            while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
+            while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
             if(row>=0)owf_buf_puts(out,"</table:table-row>");
             owf_buf_puts(out,"</table:table>");
         }else{put_para_odt(out,doc,p,s);++i;}

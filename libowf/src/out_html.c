@@ -52,6 +52,21 @@ static void put_family(owf_buf *out, const owf_doc *doc, int font, owf_report *r
     owf_buf_puts(out, generic_family(kind));
 }
 
+/* a picture as a data: URI, so the page is one file that shows everything */
+static void put_base64(owf_buf *out, const unsigned char *d, size_t n)
+{
+    static const char tb[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    char q[4];
+    size_t i;
+    for (i = 0; i + 2 < n; i += 3) {
+        q[0] = tb[d[i] >> 2]; q[1] = tb[((d[i] & 3) << 4) | (d[i + 1] >> 4)];
+        q[2] = tb[((d[i + 1] & 15) << 2) | (d[i + 2] >> 6)]; q[3] = tb[d[i + 2] & 63];
+        owf_buf_put(out, q, 4);
+    }
+    if (n - i == 1) { q[0] = tb[d[i] >> 2]; q[1] = tb[(d[i] & 3) << 4]; q[2] = q[3] = '='; owf_buf_put(out, q, 4); }
+    else if (n - i == 2) { q[0] = tb[d[i] >> 2]; q[1] = tb[((d[i] & 3) << 4) | (d[i + 1] >> 4)]; q[2] = tb[(d[i + 1] & 15) << 2]; q[3] = '='; owf_buf_put(out, q, 4); }
+}
+
 static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_report *report)
 {
     const owf_charfmt *f = &run->fmt;
@@ -93,7 +108,20 @@ static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_re
         owf_buf_puts(out, "<br>");
         break;
     case OWF_RUN_IMAGE:
-        owf_buf_puts(out, "[image]");
+        if (run->image >= 0 && run->image < doc->nimages && doc->images[run->image].data && doc->images[run->image].length) {
+            const owf_image *im = &doc->images[run->image];
+            owf_buf_printf(out, "<img src=\"data:%s;base64,", im->mime ? im->mime : "application/octet-stream");
+            put_base64(out, im->data, im->length);
+            owf_buf_puts(out, "\" alt=\"");
+            if (im->alt) owf_buf_put_xml(out, im->alt, strlen(im->alt));
+            owf_buf_puts(out, "\"");
+            if (im->width > 0 && im->height > 0) {
+                owf_buf_puts(out, " style=\"width: "); owf_put_points(out, im->width);
+                owf_buf_puts(out, "; height: "); owf_put_points(out, im->height); owf_buf_puts(out, "\"");
+            }
+            owf_buf_puts(out, ">");
+        } else
+            owf_buf_puts(out, "[image]");
         break;
     case OWF_RUN_FIELD: {
         static const char *names[] = { "page", "pages", "date", "time" };
@@ -157,6 +185,16 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_para *para, owf
     }
     if (f->line_spacing && f->line_spacing != 100)
         owf_buf_printf(&style, "line-height: %d%%; ", f->line_spacing);
+    if (OWF_SHADE_SET(f->shading))
+        owf_buf_printf(&style, "background-color: #%06lx; ", OWF_SHADE_RGB(f->shading));
+    if (f->borders) {
+        static const char *side[] = { "top", "left", "bottom", "right" };
+        unsigned long col = OWF_SHADE_SET(f->border_colour) ? OWF_SHADE_RGB(f->border_colour) : 0;
+        int k;
+        for (k = 0; k < 4; k++)
+            if (f->borders & (1 << k))
+                owf_buf_printf(&style, "border-%s: 0.5pt solid #%06lx; padding-%s: 3pt; ", side[k], col, side[k]);
+    }
 
     owf_buf_printf(out, "<%s", tag);
     if (f->page_break_before)
@@ -188,9 +226,34 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_para *para, owf
 
 static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, owf_report *report)
 {
-    int i;
-    for (i = 0; i < story->nparas; i++)
-        put_para(out, doc, &story->paras[i], report);
+    int i = 0;
+    while (i < story->nparas) {
+        const owf_para *p = &story->paras[i];
+        if (p->table_id >= 0) {      /* a table: its cells are paragraphs tagged with their row and column */
+            int id = p->table_id, row = -1;
+            owf_buf_puts(out, "<table class=\"ow-table\">\n");
+            while (i < story->nparas && story->paras[i].table_id == id) {
+                p = &story->paras[i];
+                if (p->table_row != row) {
+                    if (row >= 0) owf_buf_puts(out, "</tr>\n");
+                    owf_buf_puts(out, "<tr>");
+                    row = p->table_row;
+                }
+                if (OWF_SHADE_SET(p->cell_shading))
+                    owf_buf_printf(out, "<td style=\"background-color: #%06lx\">", OWF_SHADE_RGB(p->cell_shading));
+                else
+                    owf_buf_puts(out, "<td>");
+                put_para(out, doc, p, report);
+                owf_buf_puts(out, "</td>");
+                ++i;
+            }
+            if (row >= 0) owf_buf_puts(out, "</tr>\n");
+            owf_buf_puts(out, "</table>\n");
+        } else {
+            put_para(out, doc, p, report);
+            ++i;
+        }
+    }
 }
 
 static int export_html(const owf_doc *doc, unsigned char **data, size_t *length, owf_report *report)
@@ -225,6 +288,9 @@ static int export_html(const owf_doc *doc, unsigned char **data, size_t *length,
     owf_buf_puts(&out, "; }\n"
                        "p { margin: 0; }\n"
                        ".ow-page-break { break-before: page; }\n"
+                       ".ow-table { border-collapse: collapse; margin: 4pt 0; }\n"
+                       ".ow-table td { border: 0.5pt solid #808080; padding: 2pt 4pt; vertical-align: top; }\n"
+                       ".ow-table td > p, .ow-table td > h1, .ow-table td > h2, .ow-table td > h3 { margin: 0; }\n"
                        ".ow-header, .ow-footer { color: #666; font-size: 90%; }\n"
                        "</style>\n</head>\n<body>\n");
     if (doc->header.nparas) {

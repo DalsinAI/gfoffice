@@ -72,13 +72,28 @@ static void put_ppr(owf_buf *out, const owf_parafmt *f, const char *style)
     int i, spacing = f->space_before || f->space_after || (f->line_spacing && f->line_spacing != 100);
     int ind = f->indent_left || f->indent_right || f->indent_first;
 
-    if (!style && !f->page_break_before && !f->ntabs && !spacing && !ind && f->align == OWF_ALIGN_LEFT)
+    if (!style && !f->page_break_before && !f->ntabs && !spacing && !ind && f->align == OWF_ALIGN_LEFT &&
+        !f->borders && !OWF_SHADE_SET(f->shading))
         return;
     owf_buf_puts(out, "<w:pPr>");
     if (style)
         owf_buf_printf(out, "<w:pStyle w:val=\"%s\"/>", style);
     if (f->page_break_before)
         owf_buf_puts(out, "<w:pageBreakBefore/>");
+    if (f->borders) {
+        static const char *side[] = { "top", "left", "bottom", "right" };
+        char col[8];
+        int k;
+        if (OWF_SHADE_SET(f->border_colour)) snprintf(col, sizeof col, "%06lX", OWF_SHADE_RGB(f->border_colour));
+        else strcpy(col, "auto");
+        owf_buf_puts(out, "<w:pBdr>");
+        for (k = 0; k < 4; k++)
+            if (f->borders & (1 << k))
+                owf_buf_printf(out, "<w:%s w:val=\"single\" w:sz=\"4\" w:space=\"4\" w:color=\"%s\"/>", side[k], col);
+        owf_buf_puts(out, "</w:pBdr>");
+    }
+    if (OWF_SHADE_SET(f->shading))
+        owf_buf_printf(out, "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"%06lX\"/>", OWF_SHADE_RGB(f->shading));
     if (f->ntabs) {
         owf_buf_puts(out, "<w:tabs>");
         /* Word measures tab stops from the page's margin, not the indent. */
@@ -175,7 +190,9 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
             owf_buf_puts(out,"<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr>");
             while(i<story->nparas&&story->paras[i].table_id==id){
                 p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</w:tr>");owf_buf_puts(out,"<w:tr>");row=p->table_row;}
-                owf_buf_puts(out,"<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>");put_para(out,doc,story,p,report);owf_buf_puts(out,"</w:tc>");++i;
+                owf_buf_puts(out,"<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/>");
+                if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"%06lX\"/>",OWF_SHADE_RGB(p->cell_shading));
+                owf_buf_puts(out,"</w:tcPr>");put_para(out,doc,story,p,report);owf_buf_puts(out,"</w:tc>");++i;
             }
             if(row>=0)owf_buf_puts(out,"</w:tr>");
             owf_buf_puts(out,"</w:tbl>");

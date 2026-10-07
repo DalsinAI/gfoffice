@@ -24,9 +24,14 @@ if [ -n "${ZLIB_SRC:-}" ]; then
     sed 's/^#if !defined(CHROMIUM_ZLIB_NO_CHROMECONF)/#if 0/' "$ZLIB_SRC/zconf.h" > "$OUT/zlib/zconf.h"
     cp "$ZLIB_SRC/zlib.h" "$OUT/zlib/"
     ZFLAGS="-DOWF_HAVE_ZLIB -DCHROMIUM_ZLIB_NO_CHROMECONF -I$OUT/zlib"
-    for f in adler32.c crc32.c deflate.c trees.c zutil.c cpu_features.c inflate.c inffast.c inftrees.c; do
+    for f in adler32.c crc32.c deflate.c trees.c zutil.c cpu_features.c inflate.c inffast.c inftrees.c compress.c uncompr.c; do
+        # The stove's GCC 6.5 miscompiles trees.c at -Os and -O2: every
+        # deflate stream (saved DOCX/ODT, PDF pictures) came out corrupt on
+        # the Amiga. -O1 is right (checked on the Amiga, round trips).
+        OPT=-Os
+        [ "$f" = trees.c ] && OPT=-O1
         if [ -f "$ZLIB_SRC/$f" ]; then
-            "$CC" -noixemul -m68000 -Os -fno-common -DCHROMIUM_ZLIB_NO_CHROMECONF \
+            "$CC" -noixemul -m68000 $OPT -fno-common -DCHROMIUM_ZLIB_NO_CHROMECONF \
                 -I"$OUT/zlib" -I"$ZLIB_SRC" -c "$ZLIB_SRC/$f" -o "$OUT/zlib/${f%.c}.o"
             ZOBJS="$ZOBJS $OUT/zlib/${f%.c}.o"
         fi

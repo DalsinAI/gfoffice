@@ -289,6 +289,19 @@ static void read_rpr(docx *d, const owf_xml_node *rpr, owf_charprops *cp)
 
 /* Paragraph properties. Tab positions stay measured from the margin until
  * the paragraph's indent is known. */
+/* w:shd's fill (or a solid pattern's colour): OWF_SHADE(rgb), or 0 for none or "auto" */
+static unsigned long docx_fill(const docx *d, const owf_xml_node *shd)
+{
+    const char *fill = owf_xml_attr(shd, d->w, "fill"), *val = owf_xml_attr(shd, d->w, "val");
+    const char *col = owf_xml_attr(shd, d->w, "color");
+    if (val && !strcmp(val, "solid") && col && strlen(col) == 6 && strcmp(col, "auto"))
+        return OWF_SHADE(strtoul(col, NULL, 16));
+    if (val && !strcmp(val, "nil")) return 0;
+    if (fill && strlen(fill) == 6 && strcmp(fill, "auto"))
+        return OWF_SHADE(strtoul(fill, NULL, 16));
+    return 0;
+}
+
 static void read_ppr(docx *d, const owf_xml_node *ppr, owf_paraprops *pp, const char **num_id, int *num_level)
 {
     const owf_xml_node *n, *t;
@@ -339,6 +352,29 @@ static void read_ppr(docx *d, const owf_xml_node *ppr, owf_paraprops *pp, const 
         } else if (!strcmp(n->name, "pageBreakBefore")) {
             pp->fmt.page_break_before = on_off(d, n);
             pp->mask |= OWF_PP_BREAK;
+        } else if (!strcmp(n->name, "shd")) {
+            pp->fmt.shading = docx_fill(d, n);
+            pp->mask |= OWF_PP_SHADING;
+        } else if (!strcmp(n->name, "pBdr")) {
+            static const char *side[] = { "top", "left", "bottom", "right" };
+            const owf_xml_node *b;
+            int k;
+            pp->fmt.borders = 0;
+            pp->fmt.border_colour = 0;
+            for (k = 0; k < 4; k++) {
+                const char *v;
+                b = wchild(d, n, side[k]);
+                if (!b && k == 1) b = wchild(d, n, "start");
+                if (!b && k == 3) b = wchild(d, n, "end");
+                v = b ? wval(d, b) : NULL;
+                if (b && v && strcmp(v, "none") && strcmp(v, "nil")) {
+                    const char *col = owf_xml_attr(b, d->w, "color");
+                    pp->fmt.borders |= 1 << k;
+                    if (col && strlen(col) == 6 && strcmp(col, "auto"))
+                        pp->fmt.border_colour = OWF_SHADE(strtoul(col, NULL, 16));
+                }
+            }
+            pp->mask |= OWF_PP_BORDERS;
         } else if (!strcmp(n->name, "outlineLvl")) {
             const char *l = wval(d, n);
             int level = l ? atoi(l) + 1 : 0;
@@ -986,6 +1022,7 @@ static void table(docx *d, const owf_xml_node *t)
             if(d->b->story->nparas<=before)continue;
             p=&d->b->story->paras[d->b->story->nparas-1];
             p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
+            { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd"); if (shd) p->cell_shading = docx_fill(d, shd); }
             ++col;
         }
         ++row_index;

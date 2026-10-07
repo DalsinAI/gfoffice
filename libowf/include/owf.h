@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.0.1"
+#define OWF_VERSION "1.0.2"
 
 /* Results. */
 enum {
@@ -84,7 +84,19 @@ typedef struct {
     int page_break_before;
     int ntabs;
     owf_tab tabs[OWF_MAX_TABS];
+    unsigned long shading;   /* OWF_SHADE(0xRRGGBB) behind the paragraph; 0: none */
+    int borders;             /* OWF_BORDER_TOP | _LEFT | _BOTTOM | _RIGHT; 0: none */
+    unsigned long border_colour; /* OWF_SHADE(0xRRGGBB); 0: automatic (black) */
 } owf_parafmt;
+
+/* A colour that is set, black included: zero means none or automatic. */
+#define OWF_SHADE(rgb) (0x1000000UL | ((unsigned long)(rgb) & 0xFFFFFFUL))
+#define OWF_SHADE_SET(v) (((v) & 0x1000000UL) != 0)
+#define OWF_SHADE_RGB(v) ((v) & 0xFFFFFFUL)
+#define OWF_BORDER_TOP 1
+#define OWF_BORDER_LEFT 2
+#define OWF_BORDER_BOTTOM 4
+#define OWF_BORDER_RIGHT 8
 
 typedef struct {
     owf_parafmt fmt;
@@ -93,6 +105,7 @@ typedef struct {
     /* Native table cells are ordinary editable paragraphs tagged with grid
      * coordinates. table_id < 0 means a normal paragraph. */
     int table_id, table_row, table_col, table_cols;
+    unsigned long cell_shading;  /* a table cell's OWF_SHADE(0xRRGGBB); 0: none */
 } owf_para;
 
 /* A run of paragraphs: the body, a header or a footer. */

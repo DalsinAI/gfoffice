@@ -62,7 +62,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *Lay
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 1.0.1 (7.10.2026)"
+#define VERSION_TEXT "OpenWrite 1.0.2 (7.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
@@ -277,6 +277,9 @@ static int render_rule_bottom, render_tbl_id = -1, render_tbl_row = -1, render_r
 static int render_line_x, render_line_y, render_left_x, render_max_x, render_line_h;
 static hit_span hits[HIT_MAX];
 static int hit_count;
+/* Where a position is drawn, even off the visible part of the page. */
+static int track_on, track_y, track_h;
+static ow_position track_pos;
 typedef struct { int index; UBYTE *argb; UWORD w,h; } ow_image_cache;
 static ow_image_cache image_cache[16];
 static int image_cache_n;
@@ -967,6 +970,8 @@ static void add_hit(int paragraph, int run, size_t start, size_t end,
                     int x, int y, int w, int h)
 {
     hit_span *hs;
+    if (track_on && track_y < 0 && paragraph == track_pos.paragraph && run == track_pos.run &&
+        track_pos.byte_offset >= start && track_pos.byte_offset <= end) { track_y = y; track_h = h; }
     if (hit_count >= HIT_MAX) return;
     if (w > 0 && h > 0 && (x + w < page_view_box.x || x >= page_view_box.x + page_view_box.w ||
         y + h < page_view_box.y || y >= page_view_box.y + page_view_box.h)) return;
@@ -1451,7 +1456,11 @@ static void render_rule(void *ud, int x1, int y1, int x2, int y2, unsigned long 
     int px1=render_x0+x1*render_num/render_den, py1=render_y0+y1*render_num/render_den+render_shift;
     int px2=render_x0+x2*render_num/render_den, py2=render_y0+y2*render_num/render_den+render_shift;
     LONG pen=ogt_pen_rgb(&ctx,(ogt_rgb){(UBYTE)((rgb>>16)&255),(UBYTE)((rgb>>8)&255),(UBYTE)(rgb&255)});
-    SetAPen(rp,pen);Move(rp,px1,py1);Draw(rp,px2,py2);
+    /* the pen may be a direct colour (true-colour screens): SetAPen alone took
+     * its low bits as a palette pen, and table lines came out green */
+    if(py1==py2)ogt_hline(rp,pen,px1<px2?px1:px2,py1,(px1<px2?px2-px1:px1-px2)+1);
+    else if(px1==px2)ogt_vline(rp,pen,px1,py1<py2?py1:py2,(py1<py2?py2-py1:py1-py2)+1);
+    else{ogt_set_apen(rp,pen);Move(rp,px1,py1);Draw(rp,px2,py2);}
     if(py1>render_rule_bottom)render_rule_bottom=py1;
     if(py2>render_rule_bottom)render_rule_bottom=py2;
 }
@@ -2140,6 +2149,27 @@ static void follow_caret_page(void)
     if (p >= 0 && editor && p < ow_editor_page_count(editor)) page_index = p;
 }
 
+/* After Find: the match's page, then scrolled so the match is in view (a
+ * third of the way down), found among the spans the last drawing laid out. */
+static void bring_focus_into_view(void)
+{
+    int y, h;
+    if (!editor) return;
+    follow_caret_page();
+    scroll_x = 0;
+    track_pos = ow_editor_selection(editor).focus;
+    track_y = -1; track_h = 0; track_on = 1;
+    redraw_document_area();
+    track_on = 0;
+    y = track_y; h = track_h;
+    if (y < 0) return;
+    if (y >= page_view_box.y && y + h <= page_view_box.y + page_view_box.h) return;
+    scroll_y += y - (page_view_box.y + page_view_box.h / 3);
+    if (scroll_y < 0) scroll_y = 0;
+    if (scroll_y > page_max_scroll_y) scroll_y = page_max_scroll_y;
+    redraw_document_area();
+}
+
 static void scroll_page(int dx, int dy)
 {
     scroll_x += dx; scroll_y += dy;
@@ -2440,9 +2470,8 @@ static void do_find_again(int backwards)
     }
     rc = ow_editor_find(editor, last_find, backwards, 0, 1);
     if (rc > 0) {
-        follow_caret_page();
         set_status(backwards ? "Previous match." : "Match found.");
-        request_document_redraw();
+        bring_focus_into_view();
     } else if (!rc) {
         char msg[220]; snprintf(msg, sizeof msg, "Cannot find: %s", last_find);
         set_status(msg); request_document_redraw(); DisplayBeep(scr);
@@ -2648,7 +2677,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"EXPORT",&arg)){owf_report *rp;if(!*arg){ok=0;snprintf(result,sizeof result,"Missing export path");}else{rp=owf_report_new();ok=owf_export_file(doc,arg,NULL,rp)==OWF_OK;owf_report_free(rp);snprintf(result,sizeof result,"%s",ok?"Exported":"Export failed");}}
     else if(starts_word_ci(command,"PRINT",&arg)){ok=ow_print_document(doc,result,sizeof result);}
     else if(starts_word_ci(command,"INSERTTEXT",&arg)){ok=editor_result(ow_editor_insert_text_block(editor,arg,strlen(arg)),"ARexx text inserted.");snprintf(result,sizeof result,"%s",ok?"Inserted":"Insert failed");}
-    else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;request_document_redraw();snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
+    else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;if(ok)bring_focus_into_view();else request_document_redraw();snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
     else if(starts_word_ci(command,"GETTEXT",&arg)){dynamic=document_plain_text();if(!dynamic){ok=0;snprintf(result,sizeof result,"Out of memory");}}
     else if(starts_word_ci(command,"COMMAND",&arg)){
         if(!strcasecmp(arg,"BOLD"))menu_action(M_BOLD);else if(!strcasecmp(arg,"ITALIC"))menu_action(M_ITALIC);else if(!strcasecmp(arg,"UNDERLINE"))menu_action(M_UNDERLINE);else if(!strcasecmp(arg,"PAGEBREAK"))menu_action(M_PAGE_BREAK);else if(!strcasecmp(arg,"UNDO"))menu_action(M_UNDO);else if(!strcasecmp(arg,"REDO"))menu_action(M_REDO);else{ok=0;snprintf(result,sizeof result,"Unknown COMMAND");}

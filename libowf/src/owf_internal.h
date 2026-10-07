@@ -143,7 +143,7 @@ enum {
 enum {
     OWF_PP_ALIGN = 1 << 0, OWF_PP_LEFT = 1 << 1, OWF_PP_RIGHT = 1 << 2, OWF_PP_FIRST = 1 << 3,
     OWF_PP_BEFORE = 1 << 4, OWF_PP_AFTER = 1 << 5, OWF_PP_LINE = 1 << 6, OWF_PP_BREAK = 1 << 7,
-    OWF_PP_TABS = 1 << 8, OWF_PP_HEADING = 1 << 9
+    OWF_PP_TABS = 1 << 8, OWF_PP_HEADING = 1 << 9, OWF_PP_SHADING = 1 << 10, OWF_PP_BORDERS = 1 << 11
 };
 enum { OWF_FAMILY_PARAGRAPH = 1, OWF_FAMILY_TEXT, OWF_FAMILY_LIST };
 
