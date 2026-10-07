@@ -2,11 +2,11 @@ Short:        Native word processor for DOCX, ODT and Amiga documents
 Uploader:     (fill in at upload time)
 Author:       Dalsin Limited
 Type:         text/edit
-Version:      1.0
+Version:      1.0.1
 Architecture: m68k-amigaos >= 3.2.0
 Distribution: Aminet
 
-OpenWrite 1.0 is a native word processor for AmigaOS 3.2.
+OpenWrite 1.0.1 is a native word processor for AmigaOS 3.2.
 
 It opens and saves DOCX and ODT documents with text and common formatting,
 simple tables, inline pictures, headers, footers and page setup. It exports
@@ -36,3 +36,8 @@ Licence: MIT, Copyright (c) 2026 Dalsin Limited. Third-party material retains
 its own licence.
 
 Source: https://github.com/DalsinAI/openamigawrite
+
+New in 1.0.1: bullets and other non-Latin-1 characters drawn correctly,
+table rows aligned, coloured text, exact sizes from outline fonts (no lost
+full stops in small type), transparent pictures, and no text drawn over
+pictures or left with stray blank lines. See Release-Notes.txt.

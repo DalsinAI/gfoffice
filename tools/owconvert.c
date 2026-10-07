@@ -21,7 +21,7 @@
 #define RC_OK RETURN_OK
 #define RC_ERROR RETURN_ERROR
 #define RC_FAIL RETURN_FAIL
-static const char version[] __attribute__((used)) = "$VER: OWConvert " OWF_VERSION " (4.10.2026) Dalsin Limited";
+static const char version[] __attribute__((used)) = "$VER: OWConvert " OWF_VERSION " (7.10.2026) Dalsin Limited";
 #else
 #define RC_OK 0
 #define RC_ERROR 10

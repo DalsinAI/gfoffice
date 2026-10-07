@@ -62,7 +62,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *Lay
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 1.0 (7.10.2026)"
+#define VERSION_TEXT "OpenWrite 1.0.1 (7.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
@@ -568,6 +568,16 @@ static ow_image_cache *image_cache_get(int index)
     if(!bmh||!bmh->bmh_Width||!bmh->bmh_Height){DisposeDTObject(o);DeleteFile((STRPTR)tmp);return NULL;}
     c=&image_cache[image_cache_n];memset(c,0,sizeof(*c));c->index=index;c->w=bmh->bmh_Width;c->h=bmh->bmh_Height;c->argb=(UBYTE*)malloc((ULONG)c->w*c->h*4);
     if(!c->argb||!DoMethod(o,PDTM_READPIXELARRAY,(ULONG)c->argb,PBPAFMT_ARGB,c->w*4,0,0,c->w,c->h)){free(c->argb);memset(c,0,sizeof(*c));DisposeDTObject(o);DeleteFile((STRPTR)tmp);return NULL;}
+    /* ScalePixelArray draws ARGB without blending: a picture with an alpha
+     * channel (a PNG logo) showed black where it is see-through. Blend it
+     * onto the paper (white) once here. A picture whose alpha bytes are all
+     * zero has no alpha channel (some datatypes leave them so): kept as it is. */
+    {
+        ULONG k,n=(ULONG)c->w*c->h;int any=0,partial=0;
+        for(k=0;k<n;++k){UBYTE a=c->argb[k*4];if(a)any=1;if(a!=255)partial=1;}
+        if(any&&partial)for(k=0;k<n;++k){UBYTE *px=c->argb+k*4;unsigned a=px[0];
+            if(a!=255){px[1]=(UBYTE)((px[1]*a+255*(255-a))/255);px[2]=(UBYTE)((px[2]*a+255*(255-a))/255);px[3]=(UBYTE)((px[3]*a+255*(255-a))/255);px[0]=255;}}
+    }
     ++image_cache_n;DisposeDTObject(o);DeleteFile((STRPTR)tmp);return c;
 }
 
@@ -1424,11 +1434,15 @@ static void draw_ruler(void)
 
 static void render_image(void *ud,int image_index,int x,int y,int width,int height)
 {
-    struct RastPort *rp=(struct RastPort*)ud;ow_image_cache *c=image_cache_get(image_index);int px=render_x0+x*render_num/render_den,py=render_y0+y*render_num/render_den;int pw=width*render_num/render_den,ph=height*render_num/render_den;char label[96];
+    struct RastPort *rp=(struct RastPort*)ud;ow_image_cache *c=image_cache_get(image_index);int px=render_x0+x*render_num/render_den,py=render_y0+y*render_num/render_den+render_shift;int pw=width*render_num/render_den,ph=height*render_num/render_den;char label[96];
     if(pw<8)pw=8;
     if(ph<8)ph=8;
     if(c&&CyberGfxBase&&screen_depth()>8)ScalePixelArray(c->argb,c->w,c->h,c->w*4,rp,(UWORD)px,(UWORD)py,(UWORD)pw,(UWORD)ph,RECTFMT_ARGB);
     else {ogt_frame(rp,ogt_pen(&ctx,"group.line"),px,py,pw,ph);snprintf(label,sizeof label,"Image: %s",(doc&&image_index<doc->nimages&&doc->images[image_index].name)?doc->images[image_index].name:"embedded");ogt_text(rp,ogt_pen(&ctx,"muted"),px+6,py+6,label,pw-12);}
+    /* what follows goes below the picture, not over it (a floating picture
+     * is placed in its paragraph; text does not wrap round it yet) */
+    if(py+ph>render_bottom)render_bottom=py+ph;
+    if(py+ph>render_cell_bottom)render_cell_bottom=py+ph;
 }
 
 static void render_rule(void *ud, int x1, int y1, int x2, int y2, unsigned long rgb)
