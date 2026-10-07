@@ -87,25 +87,59 @@ static void put_field(owf_buf *out, owf_field field)
     }
 }
 
+static void put_para_runs(owf_buf *out, const owf_para *para)
+{
+    int j;
+
+    for (j = 0; j < para->nruns; j++) {
+        const owf_run *run = &para->runs[j];
+        switch (run->kind) {
+        case OWF_RUN_TEXT: owf_buf_puts(out, run->text); break;
+        case OWF_RUN_TAB: owf_buf_putc(out, '\t'); break;
+        case OWF_RUN_LINEBREAK: owf_buf_putc(out, '\n'); break;
+        case OWF_RUN_FIELD: put_field(out, run->field); break;
+        case OWF_RUN_IMAGE: owf_buf_puts(out, "[image]"); break;
+        }
+    }
+}
+
 static void put_story(owf_buf *out, const owf_story *story, int *first)
 {
-    int i, j;
+    int i = 0;
 
-    for (i = 0; i < story->nparas; i++) {
+    while (i < story->nparas) {
         const owf_para *para = &story->paras[i];
+
+        if (para->table_id >= 0) {
+            int table_id = para->table_id;
+            if (para->fmt.page_break_before && !*first)
+                owf_buf_putc(out, '\f');
+            *first = 0;
+
+            while (i < story->nparas && story->paras[i].table_id == table_id) {
+                int row = story->paras[i].table_row;
+                int first_cell = 1;
+
+                while (i < story->nparas &&
+                       story->paras[i].table_id == table_id &&
+                       story->paras[i].table_row == row) {
+                    if (!first_cell)
+                        owf_buf_putc(out, '\t');
+                    put_para_runs(out, &story->paras[i]);
+                    first_cell = 0;
+                    i++;
+                }
+                owf_buf_putc(out, '\n');
+            }
+            continue;
+        }
+
         if (para->fmt.page_break_before && !*first)
             owf_buf_putc(out, '\f');
         *first = 0;
-        for (j = 0; j < para->nruns; j++) {
-            const owf_run *run = &para->runs[j];
-            switch (run->kind) {
-            case OWF_RUN_TEXT: owf_buf_puts(out, run->text); break;
-            case OWF_RUN_TAB: owf_buf_putc(out, '\t'); break;
-            case OWF_RUN_LINEBREAK: owf_buf_putc(out, '\n'); break;
-            case OWF_RUN_FIELD: put_field(out, run->field); break;
-            }
-        }
+        put_para_runs(out, para);
         owf_buf_putc(out, '\n');
+        i++;
     }
 }
 
@@ -114,8 +148,17 @@ static int export_utf8(const owf_doc *doc, unsigned char **data, size_t *length,
     owf_buf out;
     int first = 1;
 
+    int i, has_table = 0;
+
     owf_buf_init(&out);
+    for (i = 0; i < doc->body.nparas; ++i)
+        if (doc->body.paras[i].table_id >= 0) {
+            has_table = 1;
+            break;
+        }
     put_story(&out, &doc->body, &first);
+    if (has_table)
+        owf_report_add(report, OWF_NOTE_APPROX, "Tables are kept as rows with tabs between cells");
     if (doc->header.nparas || doc->footer.nparas)
         owf_report_add(report, OWF_NOTE_LOST, "Headers and footers are not kept in plain text");
     owf_report_add(report, OWF_NOTE_LOST, "Plain text keeps no formatting");

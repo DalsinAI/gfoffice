@@ -1,6 +1,6 @@
 # OpenWrite: formats
 
-Version 0.1 | 4 October 2026 | Dalsin Limited, MIT
+Version 1.0 | 7 October 2026 | Dalsin Limited, MIT
 
 Every format OpenWrite opens or saves, what we know about it, and where that
 knowledge comes from. The design is in [../DESIGN.md](../DESIGN.md), section 4.
@@ -20,22 +20,22 @@ that the format holds and OpenWrite can show).
 
 | Format | Open | Save | Knowledge | Phase | State |
 | --- | --- | --- | --- | --- | --- |
-| ODT, OpenDocument Text (`.odt`), its template (`.ott`) and flat XML (`.fodt`) | Yes | Yes, the default | Spec: OASIS ODF 1.2 and 1.3, ISO/IEC 26300 | W1 | Formatting both ways (libowf 0.1): styles through their parents, paragraphs, text formatting, tabs, headers, footers, fields, page setup. Lists and tables come in as text (numbers, bullets, tab-separated cells); notes go to the end; pictures not yet |
-| DOCX, Office Open XML (`.docx`) and its template (`.dotx`) | Yes | Yes | Spec: ECMA-376 / ISO/IEC 29500 (transitional and strict) | W1 | Formatting both ways (libowf 0.1): styles, theme fonts, paragraphs, text formatting, tabs, headers, footers, fields, tracked changes (accepted), page setup. Lists and tables come in as text; notes go to the end; pictures not yet. Tested on 45 of LibreOffice's test documents |
-| RTF (`.rtf`) | Yes | Yes | Spec: Microsoft's RTF 1.9.1 | W1 | To do |
-| HTML (`.html`) | Yes | Yes | Spec: HTML and CSS; OpenWrite's own shape (DESIGN.md section 5) | W1 | Saving: Formatting (libowf 0.1). Opening: with the editor |
+| ODT, OpenDocument Text (`.odt`), its template (`.ott`) and flat XML (`.fodt`) | Yes | Yes | Spec: OASIS ODF 1.2 and 1.3, ISO/IEC 26300 | W1 | Formatting both ways: styles through parents, paragraphs, character formatting, tabs, headers, footers, fields and page setup. Simple tables are native editable tables and inline pictures are embedded; lists remain represented by their visible numbers/bullets; notes are appended to the document |
+| DOCX, Office Open XML (`.docx`) and its template (`.dotx`) | Yes | Yes | Spec: ECMA-376 / ISO/IEC 29500 (transitional and strict) | W1 | Formatting both ways: styles/theme fonts, paragraphs, character formatting, tabs, headers, footers, fields, hyperlinks, page setup, simple native tables and inline embedded pictures. Tracked changes are accepted on import; notes are appended. Unsupported advanced Office objects are reported |
+| RTF (`.rtf`) | No | No | Spec: Microsoft's RTF 1.9.1 | Later | To do |
+| HTML (`.html`) | No | Yes | Spec: HTML and CSS | W1 | Export with document formatting; HTML import is reserved for the OpenHTML/html.datatype work |
 | Plain text (`.txt`), Amiga ISO-8859-1 or UTF-8 | Yes | Yes | n/a | W1 | Full (libowf 0.1) |
-| Markdown (`.md`) | Yes | Yes | Spec: CommonMark (a subset) | W1 | To do |
-| PDF | No | Yes, and print | Through cairo | W4 | To do |
+| Markdown (`.md`) | No | No | Spec: CommonMark (a subset) | Later | To do |
+| PDF | No | Yes, and print | Direct OpenWrite/libowf PDF exporter | W1 | Searchable PDF export is live; standard printer.device output is live |
 | Word 97-2003 (`.doc`) | Later | No | Spec: Microsoft's [MS-DOC] | Later | Recognised (and password-protected Office files), with a clear message; not read yet |
-| AbiWord (`.abw`), which was on AmigaOS 4 | Yes | No | Its XML, read from samples | W2 | To do |
+| AbiWord (`.abw`), which was on AmigaOS 4 | No | No | Its XML, read from samples | Later | To do |
 
 ## 2. Amiga text formats
 
 | Format | Open | Save | Knowledge | Phase | State |
 | --- | --- | --- | --- | --- | --- |
 | IFF FTXT, the Amiga's formatted text and its clipboard format | Yes | Yes (clipboard) | Spec: EA IFF 85; `CHRS` text with ISO 6429 style codes, `FONS` fonts | W2 | Formatting (libowf 0.1, from the spec; to check against files from real programs) |
-| AmigaGuide (`.guide`) | Yes | No | Spec: AmigaGuide's `@node`, `@{b}`, links | W2 | To do |
+| AmigaGuide (`.guide`) | No | No | Spec: AmigaGuide's `@node`, `@{b}`, links | Later | To do |
 | ANSI text, with the Amiga console's style and colour codes | Yes | No | Spec: ECMA-48 | W2 | Formatting (libowf 0.1) |
 
 ## 3. Amiga word processors

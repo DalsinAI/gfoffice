@@ -15,10 +15,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define NS_OFFICE "urn:oasis:names:tc:opendocument:xmlns:office:1.0"
 #define NS_STYLE "urn:oasis:names:tc:opendocument:xmlns:style:1.0"
 #define NS_TEXT "urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+#define NS_XLINK "http://www.w3.org/1999/xlink"
 #define NS_TABLE "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
 #define NS_FO "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
 #define NS_SVG "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
@@ -46,6 +48,9 @@ typedef struct {
     int nnotes;
     owf_buf scratch;
     int failed;
+    const char *current_href;
+    int next_table_id;
+    const owf_unzip *zip;
 } odt;
 
 /* ---- Styles ---- */
@@ -377,17 +382,38 @@ static void plain_text(const owf_xml_node *n, owf_buf *out)
 
 static void inline_children(odt *o, const owf_xml_node *n, const owf_charfmt *fmt);
 
+static const char *image_mime(const char *name)
+{
+    const char *e=name?strrchr(name,'.'):NULL;if(!e)return "application/octet-stream";
+    if(!strcasecmp(e,".png"))return "image/png";
+    if(!strcasecmp(e,".jpg")||!strcasecmp(e,".jpeg"))return "image/jpeg";
+    if(!strcasecmp(e,".gif"))return "image/gif";
+    if(!strcasecmp(e,".webp"))return "image/webp";
+    if(!strcasecmp(e,".ilbm")||!strcasecmp(e,".iff"))return "image/iff";
+    return "application/octet-stream";
+}
+
 static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
 {
     owf_charfmt f;
     owf_charfmt rel;
 
     if (c->type == OWF_XML_TEXT) {
-        put_text(o, c->name, c->length, fmt);
+        if (o->current_href) {
+            owf_charfmt rel = relative(o, *fmt);
+            set_fmt(o->b, &rel);
+            owf_builder_link_text(o->b, c->name, c->length, o->current_href);
+        } else put_text(o, c->name, c->length, fmt);
         return;
     }
     rel = relative(o, *fmt);
-    if (owf_xml_is(c, NS_TEXT, "span")) {
+    if (owf_xml_is(c, NS_TEXT, "a")) {
+        const char *old_href = o->current_href;
+        const char *href = owf_xml_attr(c, NS_XLINK, "href");
+        o->current_href = href;
+        inline_children(o, c, fmt);
+        o->current_href = old_href;
+    } else if (owf_xml_is(c, NS_TEXT, "span")) {
         f = *fmt;
         owf_styles_resolve(o->tables, 2, owf_xml_attr(c, NS_TEXT, "style-name"), OWF_FAMILY_TEXT, NULL, &f);
         inline_children(o, c, &f);
@@ -438,10 +464,11 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
     } else if (owf_xml_is(c, NS_OFFICE, "annotation")) {
         owf_report_add(o->report, OWF_NOTE_LOST, "Comments were left out");
     } else if (owf_xml_is(c, NS_DRAW, "frame")) {
-        if (owf_xml_child(c, NS_DRAW, "image"))
-            owf_report_add(o->report, OWF_NOTE_LOST, "Pictures are not brought across yet");
-        else
-            owf_report_add(o->report, OWF_NOTE_LOST, "Text boxes and drawings were left out");
+        const owf_xml_node *img=owf_xml_child(c,NS_DRAW,"image");
+        const char *href=img?owf_xml_attr(img,NS_XLINK,"href"):NULL;
+        if(img&&href&&o->zip){unsigned char *data=NULL;size_t length=0;int w=4320,h=2880,idx;const char *wv=owf_xml_attr(c,NS_SVG,"width"),*hv=owf_xml_attr(c,NS_SVG,"height");owf_parse_length(wv,&w);owf_parse_length(hv,&h);if(owf_unzip_read(o->zip,href,&data,&length)==OWF_OK){idx=owf_doc_add_image(o->doc,href,image_mime(href),data,length,w,h,owf_xml_attr(c,NS_DRAW,"name"));free(data);if(idx>=0){set_fmt(o->b,&rel);owf_builder_image(o->b,idx);}else o->failed=1;}else owf_report_add(o->report,OWF_NOTE_LOST,"An embedded picture could not be read");}
+        else if(img)owf_report_add(o->report,OWF_NOTE_LOST,"An embedded picture was not available in this document form");
+        else owf_report_add(o->report, OWF_NOTE_LOST, "Text boxes and drawings were left out");
     } else if (owf_xml_is(c, NS_TEXT, "bookmark") || owf_xml_is(c, NS_TEXT, "bookmark-start") ||
                owf_xml_is(c, NS_TEXT, "bookmark-end") || owf_xml_is(c, NS_TEXT, "soft-page-break") ||
                owf_xml_is(c, NS_TEXT, "change") || owf_xml_is(c, NS_TEXT, "change-start") ||
@@ -609,29 +636,26 @@ static void cell_text(odt *o, const owf_xml_node *n, int *first)
     }
 }
 
+static void table_rows_id(odt *o, const owf_xml_node *n, int table_id, int *row_index)
+{
+    const owf_xml_node *r,*c;
+    for(r=n->first;r;r=r->next){
+        if(owf_xml_is(r,NS_TABLE,"table-row")){
+            int cols=0,col=0;
+            for(c=r->first;c;c=c->next)if(owf_xml_is(c,NS_TABLE,"table-cell"))++cols;
+            for(c=r->first;c;c=c->next){int first=1,before;owf_para *p;if(!owf_xml_is(c,NS_TABLE,"table-cell"))continue;
+                if(o->b->para||o->b->text.length)owf_builder_end_para(o->b);
+                o->b->parafmt=o->base_para;before=o->b->story->nparas;cell_text(o,c,&first);owf_builder_end_para(o->b);
+                if(o->b->story->nparas>before){p=&o->b->story->paras[o->b->story->nparas-1];p->table_id=table_id;p->table_row=*row_index;p->table_col=col;p->table_cols=cols;}++col;
+            }++*row_index;
+        }else if(owf_xml_is(r,NS_TABLE,"table-header-rows")||owf_xml_is(r,NS_TABLE,"table-rows")||owf_xml_is(r,NS_TABLE,"table-row-group"))table_rows_id(o,r,table_id,row_index);
+    }
+}
+
 static void table_rows(odt *o, const owf_xml_node *n)
 {
-    const owf_xml_node *r, *c;
-    for (r = n->first; r; r = r->next) {
-        if (owf_xml_is(r, NS_TABLE, "table-row")) {
-            int ncell = 0;
-            if (o->b->para || o->b->text.length)
-                owf_builder_end_para(o->b);
-            o->b->parafmt = o->base_para;
-            for (c = r->first; c; c = c->next) {
-                int first = 1;
-                if (!owf_xml_is(c, NS_TABLE, "table-cell"))
-                    continue;
-                if (ncell++)
-                    owf_builder_special(o->b, OWF_RUN_TAB, OWF_FIELD_PAGE);
-                cell_text(o, c, &first);
-            }
-            owf_builder_end_para(o->b);
-        } else if (owf_xml_is(r, NS_TABLE, "table-header-rows") || owf_xml_is(r, NS_TABLE, "table-rows") ||
-                   owf_xml_is(r, NS_TABLE, "table-row-group")) {
-            table_rows(o, r);
-        }
-    }
+    int row=0,id=o->next_table_id++;
+    table_rows_id(o,n,id,&row);
 }
 
 static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *list_name)
@@ -645,7 +669,6 @@ static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *li
         } else if (owf_xml_is(c, NS_TEXT, "list")) {
             list(o, c, list_level < 0 ? 0 : list_level, list_name);
         } else if (owf_xml_is(c, NS_TABLE, "table")) {
-            owf_report_add(o->report, OWF_NOTE_APPROX, "Tables are kept as rows of text with tabs between the cells");
             table_rows(o, c);
         } else if (owf_xml_is(c, NS_TEXT, "tracked-changes") || owf_xml_is(c, NS_TEXT, "sequence-decls") ||
                    owf_xml_is(c, NS_TEXT, "variable-decls") || owf_xml_is(c, NS_TEXT, "user-field-decls") ||
@@ -868,6 +891,7 @@ static int import_odt(const unsigned char *data, size_t length, owf_doc *doc, ow
         } else {
             o->doc = doc;
             o->report = report;
+            o->zip = &zip;
             result = read_document(o, owf_xml_root(content), styles ? owf_xml_root(styles) : owf_xml_root(content),
                                    meta ? owf_xml_root(meta) : NULL);
             odt_free(o);

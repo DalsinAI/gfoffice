@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include "openwrite_core.h"
 
 #define OW_UNDO_LIMIT 16
@@ -49,8 +50,10 @@ static void free_story_data(owf_story *story)
     int i, j;
     if (!story) return;
     for (i = 0; i < story->nparas; ++i) {
-        for (j = 0; j < story->paras[i].nruns; ++j)
+        for (j = 0; j < story->paras[i].nruns; ++j) {
             free(story->paras[i].runs[j].text);
+            free(story->paras[i].runs[j].href);
+        }
         free(story->paras[i].runs);
     }
     free(story->paras);
@@ -66,6 +69,8 @@ static void clear_doc_data(owf_doc *doc)
     free_story_data(&doc->footer);
     for (i = 0; i < doc->nfonts; ++i) free(doc->fonts[i].name);
     free(doc->fonts);
+    for (i = 0; i < doc->nimages; ++i) { free(doc->images[i].name); free(doc->images[i].mime); free(doc->images[i].alt); free(doc->images[i].data); }
+    free(doc->images);
     free(doc->title);
     memset(doc, 0, sizeof(*doc));
 }
@@ -82,6 +87,8 @@ static int clone_story(owf_story *dst, const owf_story *src)
         const owf_para *sp = &src->paras[i];
         owf_para *dp = &dst->paras[i];
         dp->fmt = sp->fmt;
+        dp->table_id = sp->table_id; dp->table_row = sp->table_row;
+        dp->table_col = sp->table_col; dp->table_cols = sp->table_cols;
         if (!sp->nruns) continue;
         dp->runs = (owf_run *)calloc((size_t)sp->nruns, sizeof(*dp->runs));
         if (!dp->runs) return 0;
@@ -89,10 +96,15 @@ static int clone_story(owf_story *dst, const owf_story *src)
         for (j = 0; j < sp->nruns; ++j) {
             dp->runs[j] = sp->runs[j];
             dp->runs[j].text = NULL;
+            dp->runs[j].href = NULL;
             if (sp->runs[j].text) {
                 dp->runs[j].text = copy_bytes(sp->runs[j].text,
                                                strlen(sp->runs[j].text));
                 if (!dp->runs[j].text) return 0;
+            }
+            if (sp->runs[j].href) {
+                dp->runs[j].href = copy_bytes(sp->runs[j].href, strlen(sp->runs[j].href));
+                if (!dp->runs[j].href) return 0;
             }
         }
     }
@@ -121,6 +133,12 @@ static owf_doc *clone_doc(const owf_doc *src)
             dst->fonts[i].name = copy_bytes(src->fonts[i].name,
                                              strlen(src->fonts[i].name));
             if (!dst->fonts[i].name) goto fail;
+        }
+    }
+    if (src->nimages) {
+        dst->images=(owf_image*)calloc((size_t)src->nimages,sizeof(*dst->images));if(!dst->images)goto fail;dst->nimages=dst->capimages=src->nimages;
+        for(i=0;i<src->nimages;++i){const owf_image *si=&src->images[i];owf_image *di=&dst->images[i];di->width=si->width;di->height=si->height;di->length=si->length;
+            if(si->name){di->name=copy_bytes(si->name,strlen(si->name));if(!di->name)goto fail;}if(si->mime){di->mime=copy_bytes(si->mime,strlen(si->mime));if(!di->mime)goto fail;}if(si->alt){di->alt=copy_bytes(si->alt,strlen(si->alt));if(!di->alt)goto fail;}if(si->length){di->data=(unsigned char*)malloc(si->length);if(!di->data)goto fail;memcpy(di->data,si->data,si->length);}
         }
     }
     if (!clone_story(&dst->body, &src->body) ||
@@ -426,6 +444,7 @@ static owf_para *insert_paragraph(owf_story *story, int index,
         memmove(&story->paras[index + 1], &story->paras[index],
                 (size_t)(story->nparas - index) * sizeof(story->paras[0]));
     memset(&story->paras[index], 0, sizeof(story->paras[index]));
+    story->paras[index].table_id = -1;
     if (fmt) story->paras[index].fmt = *fmt;
     else owf_parafmt_init(&story->paras[index].fmt);
     ++story->nparas;
@@ -1797,7 +1816,7 @@ static int utf8_character_count(const char *s)
     return n;
 }
 
-static int paragraph_estimated_height(const owf_doc *doc, const owf_para *p)
+static int paragraph_estimated_height_width(const owf_doc *doc, const owf_para *p, int forced_width)
 {
     int i, chars = 0, hard_lines = 1, max_size;
     int width, avg_char, chars_per_line, lines, line_height;
@@ -1814,9 +1833,12 @@ static int paragraph_estimated_height(const owf_doc *doc, const owf_para *p)
             while (*q) { if (*q++ == '\n') ++hard_lines; }
         } else if (r->kind == OWF_RUN_TAB) chars += 4;
         else if (r->kind == OWF_RUN_LINEBREAK) ++hard_lines;
+        else if (r->kind == OWF_RUN_IMAGE && r->image >= 0 && r->image < doc->nimages) {
+            int ih=doc->images[r->image].height; if(ih>max_size) max_size=ih;
+        }
     }
-    width = doc->page.width - doc->page.margin_left - doc->page.margin_right
-          - p->fmt.indent_left - p->fmt.indent_right;
+    width = forced_width > 0 ? forced_width : doc->page.width - doc->page.margin_left - doc->page.margin_right;
+    width -= p->fmt.indent_left + p->fmt.indent_right;
     if (width < 720) width = 720;
     avg_char = max_size / 2;
     if (avg_char < 80) avg_char = 80;
@@ -1828,6 +1850,11 @@ static int paragraph_estimated_height(const owf_doc *doc, const owf_para *p)
     if (p->fmt.line_spacing > 0) line_height = line_height * p->fmt.line_spacing / 100;
     if (line_height < 240) line_height = 240;
     return lines * line_height;
+}
+
+static int paragraph_estimated_height(const owf_doc *doc, const owf_para *p)
+{
+    return paragraph_estimated_height_width(doc, p, 0);
 }
 
 static int paragraph_forces_page_after(const owf_para *p)
@@ -1861,19 +1888,24 @@ int ow_editor_layout(ow_editor *editor)
 
     for (i = 0; i < n; ++i) {
         const owf_para *p = &doc->body.paras[i];
-        int height = paragraph_estimated_height(doc, p);
-        int needed = p->fmt.space_before + height + p->fmt.space_after;
-        if (p->fmt.page_break_before && i > 0) {
-            ++page; y = doc->page.margin_top;
+        if (p->table_id >= 0) {
+            int id=p->table_id,row=p->table_row,j=i,cols=p->table_cols>0?p->table_cols:1;
+            int cell_width=(doc->page.width-doc->page.margin_left-doc->page.margin_right)/cols;
+            int row_height=240,needed;
+            while(j<n&&doc->body.paras[j].table_id==id&&doc->body.paras[j].table_row==row){int h=paragraph_estimated_height_width(doc,&doc->body.paras[j],cell_width-240);if(h>row_height)row_height=h;++j;}
+            needed=row_height+240;
+            if(y>doc->page.margin_top&&y+needed>bottom){++page;y=doc->page.margin_top;}
+            while(i<j){editor->para_page[i]=page;editor->para_y[i]=y+120;++i;}--i;y+=needed;continue;
         }
-        if (y > doc->page.margin_top && y + needed > bottom) {
-            ++page; y = doc->page.margin_top;
-        }
-        editor->para_page[i] = page;
-        editor->para_y[i] = y + p->fmt.space_before;
-        y += needed;
-        if (paragraph_forces_page_after(p) && i + 1 < n) {
-            ++page; y = doc->page.margin_top;
+        {
+            int height = paragraph_estimated_height(doc, p);
+            int needed = p->fmt.space_before + height + p->fmt.space_after;
+            if (p->fmt.page_break_before && i > 0) { ++page; y = doc->page.margin_top; }
+            if (y > doc->page.margin_top && y + needed > bottom) { ++page; y = doc->page.margin_top; }
+            editor->para_page[i] = page;
+            editor->para_y[i] = y + p->fmt.space_before;
+            y += needed;
+            if (paragraph_forces_page_after(p) && i + 1 < n) { ++page; y = doc->page.margin_top; }
         }
     }
     editor->pages = page + 1;
@@ -1941,6 +1973,390 @@ int ow_editor_insert_page_break(ow_editor *editor)
     return ow_editor_layout(editor);
 }
 
+static int current_table_cell(const ow_editor *editor,int *id,int *row,int *col,int *cols)
+{
+    int p;if(!editor||!editor->doc)return 0;p=editor->selection.focus.paragraph;if(p<0||p>=editor->doc->body.nparas||editor->doc->body.paras[p].table_id<0)return 0;if(id)*id=editor->doc->body.paras[p].table_id;if(row)*row=editor->doc->body.paras[p].table_row;if(col)*col=editor->doc->body.paras[p].table_col;if(cols)*cols=editor->doc->body.paras[p].table_cols;return 1;
+}
+
+int ow_editor_in_table(const ow_editor *editor){return current_table_cell(editor,NULL,NULL,NULL,NULL);}
+
+static void free_para_one(owf_para *p)
+{
+    int j;for(j=0;j<p->nruns;++j){free(p->runs[j].text);free(p->runs[j].href);}free(p->runs);memset(p,0,sizeof(*p));p->table_id=-1;
+}
+
+static void remove_para_at(owf_story *story,int index)
+{
+    if(index<0||index>=story->nparas)return;
+    free_para_one(&story->paras[index]);
+    if(index+1<story->nparas)memmove(&story->paras[index],&story->paras[index+1],(size_t)(story->nparas-index-1)*sizeof(story->paras[0]));
+    --story->nparas;memset(&story->paras[story->nparas],0,sizeof(story->paras[0]));story->paras[story->nparas].table_id=-1;
+}
+
+static void caret_to_para(ow_editor *editor,int p)
+{
+    ow_position c;owf_para *para;if(p<0)p=0;if(p>=editor->doc->body.nparas)p=editor->doc->body.nparas-1;para=&editor->doc->body.paras[p];if(first_text_run(para)<0)append_empty_text_run(para,&editor->typing_fmt);c.paragraph=p;c.run=first_text_run(para);c.byte_offset=0;editor->selection.anchor=editor->selection.focus=c;
+}
+
+int ow_editor_table_move(ow_editor *editor,int delta)
+{
+    int id,p,target;if(!current_table_cell(editor,&id,NULL,NULL,NULL))return 0;p=editor->selection.focus.paragraph;target=p+(delta<0?-1:1);if(target>=0&&target<editor->doc->body.nparas&&editor->doc->body.paras[target].table_id==id){caret_to_para(editor,target);return 1;}return 0;
+}
+
+int ow_editor_table_insert_row(ow_editor *editor)
+{
+    int id,row,cols,i,pos,c;if(!current_table_cell(editor,&id,&row,NULL,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;pos=editor->selection.focus.paragraph;while(pos+1<editor->doc->body.nparas&&editor->doc->body.paras[pos+1].table_id==id&&editor->doc->body.paras[pos+1].table_row==row)++pos;++pos;for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_row>row)++editor->doc->body.paras[i].table_row;for(c=0;c<cols;++c){owf_para *p=insert_paragraph(&editor->doc->body,pos+c,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=row+1;p->table_col=c;p->table_cols=cols;}caret_to_para(editor,pos);editor->dirty=1;return ow_editor_layout(editor);
+}
+
+int ow_editor_table_delete_row(ow_editor *editor)
+{
+    int id,row,i,start=-1,count=0;if(!current_table_cell(editor,&id,&row,NULL,NULL))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_row==row){if(start<0)start=i;++count;}for(i=0;i<count;++i)remove_para_at(&editor->doc->body,start);for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_row>row)--editor->doc->body.paras[i].table_row;if(!editor->doc->body.nparas){owf_para *p=owf_story_add(&editor->doc->body,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}}caret_to_para(editor,start<editor->doc->body.nparas?start:editor->doc->body.nparas-1);editor->dirty=1;return ow_editor_layout(editor);
+}
+
+int ow_editor_table_insert_column(ow_editor *editor)
+{
+    int id,col,cols,i,maxrow=-1,r;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id){if(editor->doc->body.paras[i].table_row>maxrow)maxrow=editor->doc->body.paras[i].table_row;if(editor->doc->body.paras[i].table_col>col)++editor->doc->body.paras[i].table_col;editor->doc->body.paras[i].table_cols=cols+1;}for(r=maxrow;r>=0;--r){int pos=-1;for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_row==r&&editor->doc->body.paras[i].table_col==col){pos=i+1;break;}if(pos>=0){owf_para *p=insert_paragraph(&editor->doc->body,pos,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=r;p->table_col=col+1;p->table_cols=cols+1;}}editor->dirty=1;return ow_editor_layout(editor);
+}
+
+int ow_editor_table_delete_column(ow_editor *editor)
+{
+    int id,col,cols,i;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(cols<=1)return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=editor->doc->body.nparas-1;i>=0;--i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_col==col)remove_para_at(&editor->doc->body,i);for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id){if(editor->doc->body.paras[i].table_col>col)--editor->doc->body.paras[i].table_col;editor->doc->body.paras[i].table_cols=cols-1;}caret_to_para(editor,editor->selection.focus.paragraph<editor->doc->body.nparas?editor->selection.focus.paragraph:editor->doc->body.nparas-1);editor->dirty=1;return ow_editor_layout(editor);
+}
+
+int ow_editor_insert_image(ow_editor *editor, int image_index)
+{
+    ow_position pos,after,caret;owf_story *story;owf_para *p;int rc,base;
+    if(!editor||!editor->doc||image_index<0||image_index>=editor->doc->nimages)return OWF_ERR_FORMAT;
+    editor->typing_group=0;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
+    if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    pos=editor->selection.focus;rc=split_paragraph(editor,pos,&after);if(rc<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    story=&editor->doc->body;base=after.paragraph;p=insert_paragraph(story,base,NULL);if(!p||owf_para_add_image(p,&editor->typing_fmt,image_index)!=OWF_OK){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    caret.paragraph=base+1;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;return ow_editor_layout(editor);
+}
+
+int ow_editor_insert_table(ow_editor *editor, int rows, int cols)
+{
+    ow_position pos,after,caret;
+    owf_story *story;
+    int rc,base,k,r,c,id=0,i;
+    if(!editor||rows<1||cols<1||rows>64||cols>32)return OWF_ERR_FORMAT;
+    editor->typing_group=0;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
+    if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id>=id)id=editor->doc->body.paras[i].table_id+1;
+    pos=editor->selection.focus;rc=split_paragraph(editor,pos,&after);if(rc<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    story=&editor->doc->body;base=after.paragraph;
+    for(k=0,r=0;r<rows;++r)for(c=0;c<cols;++c,++k){owf_para *p=insert_paragraph(story,base+k,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=r;p->table_col=c;p->table_cols=cols;}
+    caret.paragraph=base;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;return ow_editor_layout(editor);
+}
+
+static const char *field_token(owf_field field)
+{
+    switch (field) {
+    case OWF_FIELD_PAGE: return "{PAGE}";
+    case OWF_FIELD_PAGES: return "{PAGES}";
+    case OWF_FIELD_DATE: return "{DATE}";
+    case OWF_FIELD_TIME: return "{TIME}";
+    default: return "";
+    }
+}
+
+static owf_story *story_for(ow_editor *editor, ow_story_kind which)
+{
+    if (!editor || !editor->doc) return NULL;
+    return which == OW_STORY_HEADER ? &editor->doc->header :
+           which == OW_STORY_FOOTER ? &editor->doc->footer : NULL;
+}
+
+static const owf_story *story_for_const(const ow_editor *editor, ow_story_kind which)
+{
+    if (!editor || !editor->doc) return NULL;
+    return which == OW_STORY_HEADER ? &editor->doc->header :
+           which == OW_STORY_FOOTER ? &editor->doc->footer : NULL;
+}
+
+char *ow_editor_story_text(const ow_editor *editor, ow_story_kind which)
+{
+    const owf_story *story = story_for_const(editor, which);
+    size_t cap = 128, n = 0;
+    char *out;
+    int p, r;
+    if (!story) return NULL;
+    out = (char *)malloc(cap);
+    if (!out) return NULL;
+    out[0] = 0;
+    for (p = 0; p < story->nparas; ++p) {
+        const owf_para *para = &story->paras[p];
+        for (r = 0; r < para->nruns; ++r) {
+            const owf_run *run = &para->runs[r];
+            const char *text = NULL;
+            size_t add;
+            if (run->kind == OWF_RUN_TEXT) text = run->text;
+            else if (run->kind == OWF_RUN_TAB) text = "\t";
+            else if (run->kind == OWF_RUN_LINEBREAK) text = "\n";
+            else if (run->kind == OWF_RUN_FIELD) text = field_token(run->field);
+            if (!text) continue;
+            add = strlen(text);
+            if (n + add + 2 > cap) {
+                size_t want = (n + add + 2) * 2;
+                char *q = (char *)realloc(out, want);
+                if (!q) { free(out); return NULL; }
+                out = q; cap = want;
+            }
+            memcpy(out + n, text, add); n += add; out[n] = 0;
+        }
+        if (p + 1 < story->nparas) {
+            if (n + 2 > cap) {
+                char *q = (char *)realloc(out, cap * 2);
+                if (!q) { free(out); return NULL; }
+                out = q; cap *= 2;
+            }
+            out[n++] = '\n'; out[n] = 0;
+        }
+    }
+    return out;
+}
+
+static int add_story_template_line(owf_para *para, const owf_charfmt *fmt,
+                                   const char *text, size_t length)
+{
+    size_t p = 0, start = 0;
+    while (p < length) {
+        owf_field field;
+        size_t token = 0;
+        if (p + 6 <= length && !memcmp(text + p, "{PAGE}", 6)) {
+            field = OWF_FIELD_PAGE; token = 6;
+        } else if (p + 7 <= length && !memcmp(text + p, "{PAGES}", 7)) {
+            field = OWF_FIELD_PAGES; token = 7;
+        } else if (p + 6 <= length && !memcmp(text + p, "{DATE}", 6)) {
+            field = OWF_FIELD_DATE; token = 6;
+        } else if (p + 6 <= length && !memcmp(text + p, "{TIME}", 6)) {
+            field = OWF_FIELD_TIME; token = 6;
+        }
+        if (token) {
+            if (p > start && owf_para_add_text(para, fmt, text + start, p - start) != OWF_OK)
+                return 0;
+            if (owf_para_add_special(para, fmt, OWF_RUN_FIELD, field) != OWF_OK)
+                return 0;
+            p += token; start = p;
+        } else ++p;
+    }
+    if (p > start && owf_para_add_text(para, fmt, text + start, p - start) != OWF_OK)
+        return 0;
+    if (!para->nruns && owf_para_add_text(para, fmt, "", 0) != OWF_OK)
+        return 0;
+    return 1;
+}
+
+int ow_editor_set_story_text(ow_editor *editor, ow_story_kind which, const char *text)
+{
+    owf_story *story = story_for(editor, which);
+    owf_charfmt fmt;
+    const char *p, *line;
+    if (!story || !text) return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    free_story_data(story);
+    fmt = editor->doc->base;
+    line = p = text;
+    for (;;) {
+        if (*p == '\n' || *p == '\r' || !*p) {
+            owf_para *para = owf_story_add(story, NULL);
+            if (!para || !add_story_template_line(para, &fmt, line, (size_t)(p - line))) {
+                ow_editor_undo(editor);
+                return OWF_ERR_MEMORY;
+            }
+            if (!*p) break;
+            if (*p == '\r' && p[1] == '\n') ++p;
+            ++p; line = p;
+        } else ++p;
+    }
+    editor->dirty = 1;
+    return OWF_OK;
+}
+
+static char *copy_cstr(const char *s)
+{
+    return s ? copy_bytes(s, strlen(s)) : NULL;
+}
+
+static int set_link_segment(owf_para *para, int index, size_t from, size_t to,
+                            const char *url)
+{
+    owf_run old, parts[3];
+    size_t len;
+    int n=0,i,extra;
+    if(!para||index<0||index>=para->nruns)return 0;
+    old=para->runs[index];
+    if(old.kind!=OWF_RUN_TEXT||!old.text)return 1;
+    len=strlen(old.text);if(from>len)from=len;if(to>len)to=len;if(to<=from)return 1;
+    memset(parts,0,sizeof parts);
+#define MAKE_PART(A,B,HREF) do { \
+    parts[n]=old;parts[n].text=copy_bytes(old.text+(A),(B)-(A));parts[n].href=copy_cstr(HREF); \
+    if(!parts[n].text||((HREF)&&!parts[n].href)){for(i=0;i<=n;++i){free(parts[i].text);free(parts[i].href);}return 0;} ++n; \
+} while(0)
+    if(from) MAKE_PART(0,from,old.href);
+    MAKE_PART(from,to,url);
+    if(to<len) MAKE_PART(to,len,old.href);
+#undef MAKE_PART
+    extra=n-1;
+    if(extra>0&&!ensure_run_capacity(para,para->nruns+extra)){for(i=0;i<n;++i){free(parts[i].text);free(parts[i].href);}return 0;}
+    if(extra>0&&index+1<para->nruns)memmove(&para->runs[index+n],&para->runs[index+1],(size_t)(para->nruns-index-1)*sizeof(para->runs[0]));
+    free(old.text);free(old.href);
+    for(i=0;i<n;++i)para->runs[index+i]=parts[i];
+    para->nruns+=extra;
+    return 1;
+}
+
+int ow_editor_set_link(ow_editor *editor, const char *url)
+{
+    ow_position a,b;
+    int pi,ri;
+    if(!editor||!url||!*url||ow_editor_selection_empty(editor))return OWF_ERR_FORMAT;
+    a=editor->selection.anchor;b=editor->selection.focus;
+    if(compare_position(a,b)>0){ow_position t=a;a=b;b=t;}
+    editor->typing_group=0;
+    if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
+    for(pi=b.paragraph;pi>=a.paragraph;--pi){
+        owf_para *p=&editor->doc->body.paras[pi];
+        for(ri=p->nruns-1;ri>=0;--ri){
+            owf_run *r=&p->runs[ri];size_t len,from=0,to;
+            if(r->kind!=OWF_RUN_TEXT||!r->text)continue;
+            len=strlen(r->text);to=len;
+            if(pi==a.paragraph&&ri<a.run)continue;
+            if(pi==b.paragraph&&ri>b.run)continue;
+            if(pi==a.paragraph&&ri==a.run)from=a.byte_offset;
+            if(pi==b.paragraph&&ri==b.run)to=b.byte_offset;
+            if(to>from&&!set_link_segment(p,ri,from,to,url)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+        }
+    }
+    editor->dirty=1;return OWF_OK;
+}
+
+int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
+{
+    ow_position pos;
+    owf_para *para;
+    owf_run *run;
+    owf_charfmt fmt;
+    char *right,*oldhref,*linked;
+    size_t right_len;
+    int old_n,move;
+    if(!editor||!text||!*text||!url||!*url)return OWF_ERR_FORMAT;
+    editor->typing_group=0;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
+    if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    pos=clamp_position(editor,editor->selection.focus);para=&editor->doc->body.paras[pos.paragraph];run=&para->runs[pos.run];fmt=run->fmt;
+    right_len=strlen(run->text)-pos.byte_offset;right=copy_bytes(run->text+pos.byte_offset,right_len);oldhref=copy_cstr(run->href);linked=copy_bytes(text,strlen(text));
+    if(!right||!linked||(run->href&&!oldhref)){free(right);free(oldhref);free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    if(!replace_run_slice(run,pos.byte_offset,strlen(run->text),NULL,0)){free(right);free(oldhref);free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    old_n=para->nruns;if(!ensure_run_capacity(para,old_n+2)){free(right);free(oldhref);free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    move=old_n-pos.run-1;if(move>0)memmove(&para->runs[pos.run+3],&para->runs[pos.run+1],(size_t)move*sizeof(para->runs[0]));
+    memset(&para->runs[pos.run+1],0,2*sizeof(para->runs[0]));
+    para->runs[pos.run+1].kind=OWF_RUN_TEXT;para->runs[pos.run+1].fmt=fmt;para->runs[pos.run+1].text=linked;para->runs[pos.run+1].href=copy_cstr(url);
+    para->runs[pos.run+2].kind=OWF_RUN_TEXT;para->runs[pos.run+2].fmt=fmt;para->runs[pos.run+2].text=right;para->runs[pos.run+2].href=oldhref;
+    if(!para->runs[pos.run+1].href){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    para->nruns=old_n+2;pos.run+=2;pos.byte_offset=0;editor->selection.anchor=editor->selection.focus=pos;editor->dirty=1;return ow_editor_layout(editor);
+}
+
+int ow_editor_insert_field(ow_editor *editor, owf_field field)
+{
+    ow_position pos;
+    owf_para *para;
+    owf_run *run;
+    owf_charfmt fmt;
+    char *right;
+    size_t right_len;
+    int old_n, move;
+    if (!editor || field < OWF_FIELD_PAGE || field > OWF_FIELD_TIME) return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    if (!ow_editor_selection_empty(editor) && delete_selection_internal(editor) < 0) {
+        ow_editor_undo(editor); return OWF_ERR_MEMORY;
+    }
+    pos = clamp_position(editor, editor->selection.focus);
+    para = &editor->doc->body.paras[pos.paragraph];
+    run = &para->runs[pos.run];
+    fmt = run->fmt;
+    right_len = strlen(run->text) - pos.byte_offset;
+    right = copy_bytes(run->text + pos.byte_offset, right_len);
+    if (!right) { ow_editor_undo(editor); return OWF_ERR_MEMORY; }
+    if (!replace_run_slice(run, pos.byte_offset, strlen(run->text), NULL, 0)) {
+        free(right); ow_editor_undo(editor); return OWF_ERR_MEMORY;
+    }
+    old_n = para->nruns;
+    if (!ensure_run_capacity(para, old_n + 2)) {
+        free(right); ow_editor_undo(editor); return OWF_ERR_MEMORY;
+    }
+    move = old_n - pos.run - 1;
+    if (move > 0)
+        memmove(&para->runs[pos.run + 3], &para->runs[pos.run + 1],
+                (size_t)move * sizeof(para->runs[0]));
+    memset(&para->runs[pos.run + 1], 0, 2 * sizeof(para->runs[0]));
+    para->runs[pos.run + 1].kind = OWF_RUN_FIELD;
+    para->runs[pos.run + 1].fmt = fmt;
+    para->runs[pos.run + 1].field = field;
+    para->runs[pos.run + 2].kind = OWF_RUN_TEXT;
+    para->runs[pos.run + 2].fmt = fmt;
+    para->runs[pos.run + 2].text = right;
+    para->nruns = old_n + 2;
+    pos.run += 2; pos.byte_offset = 0;
+    editor->selection.anchor = editor->selection.focus = pos;
+    editor->typing_fmt = fmt; editor->typing_fmt_set = 1;
+    editor->dirty = 1;
+    return ow_editor_layout(editor);
+}
+
+static const char *field_display(owf_field field, int page, int pages,
+                                 char *buffer, size_t size)
+{
+    time_t now;
+    struct tm *tmv;
+    switch (field) {
+    case OWF_FIELD_PAGE: snprintf(buffer, size, "%d", page + 1); break;
+    case OWF_FIELD_PAGES: snprintf(buffer, size, "%d", pages); break;
+    case OWF_FIELD_DATE:
+    case OWF_FIELD_TIME:
+        now = time(NULL); tmv = localtime(&now);
+        if (tmv) strftime(buffer, size, field == OWF_FIELD_DATE ? "%d/%m/%Y" : "%H:%M", tmv);
+        else buffer[0] = 0;
+        break;
+    default: buffer[0] = 0; break;
+    }
+    return buffer;
+}
+
+static void render_story(const ow_editor *editor, const owf_story *story,
+                         int para_base, int x, int y, int page_index,
+                         const ow_renderer *renderer)
+{
+    int i, j;
+    if (!story) return;
+    for (i = 0; i < story->nparas; ++i) {
+        const owf_para *p = &story->paras[i];
+        int px = x + p->fmt.indent_left;
+        y += p->fmt.space_before;
+        for (j = 0; j < p->nruns; ++j) {
+            const owf_run *run = &p->runs[j];
+            const char *text = NULL;
+            char field[64];
+            if (run->kind == OWF_RUN_TEXT) text = run->text;
+            else if (run->kind == OWF_RUN_IMAGE) {
+                if(renderer->image && run->image>=0 && run->image<editor->doc->nimages){const owf_image *im=&editor->doc->images[run->image];renderer->image(renderer->userdata,run->image,x,y,im->width,im->height);}
+                continue;
+            }
+            else if (run->kind == OWF_RUN_TAB) text = "    ";
+            else if (run->kind == OWF_RUN_LINEBREAK) text = "\n";
+            else if (run->kind == OWF_RUN_FIELD)
+                text = field_display(run->field, page_index, editor->pages, field, sizeof field);
+            if (!text) continue;
+            if (renderer->text_run)
+                renderer->text_run(renderer->userdata, para_base - i, j, px, y, text, &run->fmt);
+            else if (renderer->text)
+                renderer->text(renderer->userdata, px, y, text, &run->fmt);
+        }
+        y += p->fmt.space_after + 240;
+    }
+}
+
 int ow_editor_render_page(const ow_editor *editor, int page_index,
                           const ow_renderer *renderer)
 {
@@ -1954,23 +2370,55 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
     page.page_index = page_index;
     if (renderer->begin_page) renderer->begin_page(renderer->userdata, &page);
 
+    if ((page_index > 0 || editor->doc->page.header_on_first) && editor->doc->header.nparas)
+        render_story(editor, &editor->doc->header, -1000,
+                     editor->doc->page.margin_left,
+                     editor->doc->page.margin_top / 3,
+                     page_index, renderer);
+
     for (i = 0; i < editor->doc->body.nparas; ++i) {
         const owf_para *p;
         int x, y;
         if (!editor->para_page || editor->para_page[i] != page_index) continue;
         p = &editor->doc->body.paras[i];
-        x = editor->doc->page.margin_left + p->fmt.indent_left;
-        y = editor->para_y ? editor->para_y[i] : editor->doc->page.margin_top;
+        if (p->table_id >= 0) {
+            int cols=p->table_cols>0?p->table_cols:1;
+            int cw=(editor->doc->page.width-editor->doc->page.margin_left-editor->doc->page.margin_right)/cols;
+            int rh=paragraph_estimated_height_width(editor->doc,p,cw-240)+240;
+            x=editor->doc->page.margin_left+p->table_col*cw+120+p->fmt.indent_left;
+            y=editor->para_y?editor->para_y[i]:editor->doc->page.margin_top;
+            if(renderer->rule){int left=editor->doc->page.margin_left+p->table_col*cw, top=y-120, right=left+cw, bottom=top+rh;renderer->rule(renderer->userdata,left,top,right,top,0x808080);renderer->rule(renderer->userdata,left,bottom,right,bottom,0x808080);renderer->rule(renderer->userdata,left,top,left,bottom,0x808080);renderer->rule(renderer->userdata,right,top,right,bottom,0x808080);}
+        } else {
+            x = editor->doc->page.margin_left + p->fmt.indent_left;
+            y = editor->para_y ? editor->para_y[i] : editor->doc->page.margin_top;
+        }
         for (j = 0; j < p->nruns; ++j) {
             const owf_run *run = &p->runs[j];
-            if (run->kind != OWF_RUN_TEXT || !run->text) continue;
+            const char *text = NULL;
+            char field[64];
+            if (run->kind == OWF_RUN_TEXT) text = run->text;
+            else if (run->kind == OWF_RUN_IMAGE) {
+                if(renderer->image && run->image>=0 && run->image<editor->doc->nimages){const owf_image *im=&editor->doc->images[run->image];renderer->image(renderer->userdata,run->image,x,y,im->width,im->height);}
+                continue;
+            }
+            else if (run->kind == OWF_RUN_TAB) text = "    ";
+            else if (run->kind == OWF_RUN_LINEBREAK) text = "\n";
+            else if (run->kind == OWF_RUN_FIELD)
+                text = field_display(run->field, page_index, editor->pages, field, sizeof field);
+            if (!text) continue;
             if (renderer->text_run)
-                renderer->text_run(renderer->userdata, i, j, x, y,
-                                   run->text, &run->fmt);
+                renderer->text_run(renderer->userdata, i, j, x, y, text, &run->fmt);
             else if (renderer->text)
-                renderer->text(renderer->userdata, x, y, run->text, &run->fmt);
+                renderer->text(renderer->userdata, x, y, text, &run->fmt);
         }
     }
+
+    if ((page_index > 0 || editor->doc->page.footer_on_first) && editor->doc->footer.nparas)
+        render_story(editor, &editor->doc->footer, -2000,
+                     editor->doc->page.margin_left,
+                     editor->doc->page.height - editor->doc->page.margin_bottom / 2,
+                     page_index, renderer);
+
     if (renderer->end_page) renderer->end_page(renderer->userdata, &page);
     return OWF_OK;
 }

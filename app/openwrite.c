@@ -16,8 +16,17 @@
 #include <dos/dos.h>
 #include <graphics/text.h>
 #include <graphics/gfx.h>
+#include <rexx/storage.h>
+#include <rexx/errors.h>
+#include <proto/rexxsyslib.h>
 #include <graphics/regions.h>
 #include <devices/inputevent.h>
+#include <datatypes/datatypes.h>
+#include <datatypes/datatypesclass.h>
+#include <datatypes/pictureclass.h>
+#include <cybergraphx/cybergraphics.h>
+#include <proto/datatypes.h>
+#include <proto/cybergraphics.h>
 #include <devices/clipboard.h>
 #include <exec/io.h>
 #include <exec/ports.h>
@@ -35,10 +44,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <clib/alib_protos.h>
 
 #include "openwrite_core.h"
 #include "ow_stack.h"
 #include "ow_print.h"
+#include "ow_spell.h"
+#include "ow_autosave.h"
 #include "ogt_theme.h"
 #include "ogt_draw.h"
 #include "ogt_icons.h"
@@ -46,8 +59,10 @@
 #include "ogt_font.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *LayersBase = NULL;
+struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
+struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 0.3-dev (6.10.2026)"
+#define VERSION_TEXT "OpenWrite 1.0 (7.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
@@ -64,12 +79,13 @@ enum {
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_ZOOM_FIT_PAGE, M_ZOOM_FIT_WIDTH,
     M_PAGE_FIRST, M_PAGE_PREV, M_PAGE_NEXT, M_PAGE_LAST,
     M_NAV, M_INSPECTOR,
-    M_IMAGE, M_TABLE, M_LINK, M_PAGE_BREAK,
+    M_IMAGE, M_TABLE, M_LINK, M_PAGE_BREAK, M_FIELD_PAGE, M_FIELD_PAGES, M_FIELD_DATE, M_FIELD_TIME,
     M_PARAGRAPH, M_BOLD, M_ITALIC, M_UNDERLINE,
+    M_TABLE_NEXT, M_TABLE_PREV, M_TABLE_ROW_ADD, M_TABLE_ROW_DEL, M_TABLE_COL_ADD, M_TABLE_COL_DEL,
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT, M_ALIGN_JUSTIFY,
     M_STYLE_BODY, M_STYLE_H1, M_STYLE_H2, M_STYLE_H3, M_BULLETS, M_NUMBERING,
-    M_PAGE_SETUP,
-    M_DATATYPES, M_OPENPRINT,
+    M_PAGE_SETUP, M_HEADER, M_FOOTER,
+    M_DATATYPES, M_OPENPRINT, M_SPELL,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT
 };
@@ -131,6 +147,11 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Link...", NULL, 0, 0, (APTR)M_LINK },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Page Break", NULL, 0, 0, (APTR)M_PAGE_BREAK },
+    { NM_ITEM, "Field", NULL, 0, 0, NULL },
+    { NM_SUB, "Page Number", NULL, 0, 0, (APTR)M_FIELD_PAGE },
+    { NM_SUB, "Page Count", NULL, 0, 0, (APTR)M_FIELD_PAGES },
+    { NM_SUB, "Date", NULL, 0, 0, (APTR)M_FIELD_DATE },
+    { NM_SUB, "Time", NULL, 0, 0, (APTR)M_FIELD_TIME },
 
     { NM_TITLE, "Format", NULL, 0, 0, NULL },
     { NM_ITEM, "Bold", "B", 0, 0, (APTR)M_BOLD },
@@ -152,13 +173,27 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Paragraph...", NULL, 0, 0, (APTR)M_PARAGRAPH },
 
+    { NM_TITLE, "Table", NULL, 0, 0, NULL },
+    { NM_ITEM, "Next Cell", NULL, 0, 0, (APTR)M_TABLE_NEXT },
+    { NM_ITEM, "Previous Cell", NULL, 0, 0, (APTR)M_TABLE_PREV },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Insert Row Below", NULL, 0, 0, (APTR)M_TABLE_ROW_ADD },
+    { NM_ITEM, "Delete Row", NULL, 0, 0, (APTR)M_TABLE_ROW_DEL },
+    { NM_ITEM, "Insert Column Right", NULL, 0, 0, (APTR)M_TABLE_COL_ADD },
+    { NM_ITEM, "Delete Column", NULL, 0, 0, (APTR)M_TABLE_COL_DEL },
+
     { NM_TITLE, "Layout", NULL, 0, 0, NULL },
     { NM_ITEM, "Page Setup...", NULL, 0, 0, (APTR)M_PAGE_SETUP },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Header...", NULL, 0, 0, (APTR)M_HEADER },
+    { NM_ITEM, "Footer...", NULL, 0, 0, (APTR)M_FOOTER },
 
     { NM_TITLE, "Datatypes", NULL, 0, 0, NULL },
     { NM_ITEM, "OpenDatatypes...", NULL, 0, 0, (APTR)M_DATATYPES },
 
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
+    { NM_ITEM, "Spell Check...", NULL, 0, 0, (APTR)M_SPELL },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "OpenPrint...", NULL, 0, 0, (APTR)M_OPENPRINT },
 
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
@@ -207,6 +242,12 @@ static int tb_style = OGT_TB_ICONS_TEXT;
 
 static owf_doc *doc;
 static ow_editor *editor;
+static ow_spell *spell;
+static ow_autosave *autosave;
+static struct MsgPort *rexx_port;
+#define REXX_PORT_NAME "OPENWRITE"
+#define RECOVERY_FILE "T:OpenWrite-Recovery.odt"
+#define RECOVERY_META "T:OpenWrite-Recovery.meta"
 static char current_path[512];
 static char current_format[32] = "ODT";
 static char status[256] = "Ready.";
@@ -235,13 +276,20 @@ static int render_bottom, render_para = -1;
 static int render_line_x, render_line_y, render_left_x, render_max_x, render_line_h;
 static hit_span hits[HIT_MAX];
 static int hit_count;
+typedef struct { int index; UBYTE *argb; UWORD w,h; } ow_image_cache;
+static ow_image_cache image_cache[16];
+static int image_cache_n;
 static int mouse_selecting;
 static int defer_repaint, repaint_pending;
 
 static void draw_all(void);
 static void redraw_document_area(void);
 static void request_document_redraw(void);
+static void draw_status(void);
+static void relayout(void);
+static void menu_action(ULONG id);
 static void doc_font_cache_clear(void);
+static void image_cache_clear(void);
 static void editor_repaint(const char *message);
 static int editor_result(int rc, const char *message);
 
@@ -500,9 +548,32 @@ static void update_edit_tools(void)
     ogt_toolbar_enable(&tb, C_REDO, ow_editor_can_redo(editor));
 }
 
+static void image_cache_clear(void)
+{
+    int i;for(i=0;i<image_cache_n;++i)free(image_cache[i].argb);memset(image_cache,0,sizeof image_cache);image_cache_n=0;
+}
+
+static ow_image_cache *image_cache_get(int index)
+{
+    int i;char tmp[96];BPTR f;Object *o=NULL;struct BitMapHeader *bmh=NULL;ow_image_cache *c;const owf_image *im;
+    if(!doc||index<0||index>=doc->nimages||!DataTypesBase)return NULL;
+    for(i=0;i<image_cache_n;++i)if(image_cache[i].index==index)return &image_cache[i];
+    if(image_cache_n>=16)return NULL;
+    im=&doc->images[index];
+    snprintf(tmp,sizeof tmp,"T:OpenWrite-Image-%ld-%d.tmp",(long)FindTask(NULL),index);
+    f=Open((STRPTR)tmp,MODE_NEWFILE);if(!f)return NULL;if(Write(f,(APTR)im->data,(LONG)im->length)!=(LONG)im->length){Close(f);DeleteFile((STRPTR)tmp);return NULL;}Close(f);
+    o=NewDTObject((APTR)tmp,DTA_GroupID,GID_PICTURE,PDTA_DestMode,PMODE_V43,PDTA_Remap,FALSE,TAG_DONE);if(!o){DeleteFile((STRPTR)tmp);return NULL;}
+    GetDTAttrs(o,PDTA_BitMapHeader,(ULONG)&bmh,TAG_DONE);DoMethod(o,DTM_PROCLAYOUT,NULL,1);
+    if(!bmh||!bmh->bmh_Width||!bmh->bmh_Height){DisposeDTObject(o);DeleteFile((STRPTR)tmp);return NULL;}
+    c=&image_cache[image_cache_n];memset(c,0,sizeof(*c));c->index=index;c->w=bmh->bmh_Width;c->h=bmh->bmh_Height;c->argb=(UBYTE*)malloc((ULONG)c->w*c->h*4);
+    if(!c->argb||!DoMethod(o,PDTM_READPIXELARRAY,(ULONG)c->argb,PBPAFMT_ARGB,c->w*4,0,0,c->w,c->h)){free(c->argb);memset(c,0,sizeof(*c));DisposeDTObject(o);DeleteFile((STRPTR)tmp);return NULL;}
+    ++image_cache_n;DisposeDTObject(o);DeleteFile((STRPTR)tmp);return c;
+}
+
 static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
 {
     doc_font_cache_clear();
+    image_cache_clear();
     if (editor) ow_editor_free(editor);
     if (doc) owf_doc_free(doc);
     doc = newdoc;
@@ -517,6 +588,73 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
     snprintf(current_path, sizeof current_path, "%s", path ? path : "");
     snprintf(current_format, sizeof current_format, "%s", fmt && *fmt ? fmt : "ODT");
     update_window_title();
+}
+
+static void recovery_clear(void)
+{
+    DeleteFile((STRPTR)RECOVERY_FILE);
+    DeleteFile((STRPTR)RECOVERY_META);
+}
+
+static void recovery_save(void)
+{
+    FILE *f;
+    owf_report *report;
+    int rc;
+    if (!doc || !editor || !ow_editor_is_dirty(editor)) return;
+    report = owf_report_new();
+    rc = owf_export_file(doc, RECOVERY_FILE, "odt", report);
+    owf_report_free(report);
+    if (rc != OWF_OK) return;
+    f = fopen(RECOVERY_META, "w");
+    if (f) {
+        fprintf(f, "%s\n", current_path[0] ? current_path : "Untitled");
+        fclose(f);
+    }
+    set_status("Autosave recovery copy updated.");
+    draw_status();
+}
+
+static int recovery_exists(void)
+{
+    BPTR lock = Lock((STRPTR)RECOVERY_FILE, ACCESS_READ);
+    if (!lock) return 0;
+    UnLock(lock);
+    return 1;
+}
+
+static void recovery_offer(void)
+{
+    struct EasyStruct es = {
+        sizeof(struct EasyStruct), 0, (UBYTE *)"OpenWrite Recovery",
+        (UBYTE *)"OpenWrite found a recovery document from an interrupted session.\n\nRecover it?",
+        (UBYTE *)"Recover|Discard"
+    };
+    owf_doc *recovered = NULL;
+    owf_report *report;
+    const owf_format *used = NULL;
+    int answer, rc;
+    if (!recovery_exists()) return;
+    answer = EasyRequest(win, &es, NULL);
+    if (!answer) { recovery_clear(); return; }
+    report = owf_report_new();
+    rc = owf_import_file(RECOVERY_FILE, "odt", &recovered, report, &used);
+    owf_report_free(report);
+    if (rc != OWF_OK || !recovered) {
+        tell("OpenWrite Recovery", "The recovery copy could not be opened.");
+        recovery_clear();
+        return;
+    }
+    set_document(recovered, "", used ? used->name : "ODT");
+    if (editor) editor_result(ow_editor_insert_utf8(editor, "", 0), NULL);
+    /* Import creates a clean editor; mark it dirty so Save cannot silently
+     * lose the recovered work. */
+    if (editor) {
+        ow_editor_insert_utf8(editor, " ", 1);
+        ow_editor_backspace(editor);
+    }
+    set_status("Recovered document. Save it to keep the recovered work.");
+    relayout();
 }
 
 static int ask_file(int save, char *out, size_t out_size)
@@ -555,6 +693,7 @@ static void open_document(const char *path)
         return;
     }
     set_document(newdoc, path, used ? used->name : "document");
+    recovery_clear();
     snprintf(msg, sizeof msg, "%s opened%s%s.",
              leaf(path),
              report && owf_report_count(report) ? "; compatibility notes: " : "",
@@ -584,6 +723,7 @@ static void save_document_as(const char *path)
     snprintf(msg, sizeof msg, "%s saved.", leaf(path));
     set_status(msg);
     if (editor) ow_editor_mark_saved(editor);
+    recovery_clear();
     update_window_title();
     owf_report_free(report);
 }
@@ -740,7 +880,7 @@ static int selection_for_run(int paragraph, int run, size_t len,
 {
     ow_selection sel;
     ow_position a, b, rs, re;
-    if (!editor || ow_editor_selection_empty(editor)) return 0;
+    if (paragraph < 0 || !editor || ow_editor_selection_empty(editor)) return 0;
     sel = ow_editor_selection(editor);
     if (pos_compare(sel.anchor, sel.focus) <= 0) { a = sel.anchor; b = sel.focus; }
     else { a = sel.focus; b = sel.anchor; }
@@ -763,6 +903,9 @@ static void add_hit(int paragraph, int run, size_t start, size_t end,
     if (hit_count >= HIT_MAX) return;
     if (w > 0 && h > 0 && (x + w < page_view_box.x || x >= page_view_box.x + page_view_box.w ||
         y + h < page_view_box.y || y >= page_view_box.y + page_view_box.h)) return;
+    if (paragraph < 0) return;
+    if (doc && paragraph < doc->body.nparas && run >= 0 && run < doc->body.paras[paragraph].nruns &&
+        doc->body.paras[paragraph].runs[run].kind != OWF_RUN_TEXT) return;
     hs = &hits[hit_count++];
     hs->paragraph = paragraph;
     hs->run = run;
@@ -778,7 +921,7 @@ static void draw_caret_if_here(struct RastPort *rp, int paragraph, int run,
     ow_selection sel;
     ow_position c;
     int cx;
-    if (!editor || !ow_editor_selection_empty(editor)) return;
+    if (paragraph < 0 || !editor || !ow_editor_selection_empty(editor)) return;
     sel = ow_editor_selection(editor);
     c = sel.focus;
     if (c.paragraph != paragraph || c.run != run) return;
@@ -820,9 +963,16 @@ static void render_text_run(void *ud, int paragraph, int run_index,
     run_h = (df ? df->tf_YSize : fh) + 2;
     if (paragraph != render_para) {
         int wanted_y = render_y0 + y * render_num / render_den;
-        int content_right = render_x0 + (doc->page.width - doc->page.margin_right) * render_num / render_den;
+        int content_right;
+        if (paragraph >= 0 && doc && paragraph < doc->body.nparas && doc->body.paras[paragraph].table_id >= 0) {
+            const owf_para *tp=&doc->body.paras[paragraph];
+            int cols=tp->table_cols>0?tp->table_cols:1;
+            int cw=(doc->page.width-doc->page.margin_left-doc->page.margin_right)/cols;
+            content_right=render_x0+(doc->page.margin_left+(tp->table_col+1)*cw-120)*render_num/render_den;
+        } else content_right = render_x0 + (doc->page.width - doc->page.margin_right) * render_num / render_den;
         int para_width, available;
-        owf_align align = doc->body.paras[paragraph].fmt.align;
+        owf_align align = (doc && paragraph >= 0 && paragraph < doc->body.nparas)
+            ? doc->body.paras[paragraph].fmt.align : OWF_ALIGN_LEFT;
         render_para = paragraph;
         render_left_x = render_x0 + x * render_num / render_den;
         available = content_right - render_left_x;
@@ -845,6 +995,9 @@ static void render_text_run(void *ud, int paragraph, int run_index,
     if (fmt && (fmt->flags & OWF_BOLD)) style |= FSF_BOLD;
     if (fmt && (fmt->flags & OWF_ITALIC)) style |= FSF_ITALIC;
     if (fmt && (fmt->flags & OWF_UNDERLINE)) style |= FSF_UNDERLINED;
+    if (paragraph >= 0 && doc && paragraph < doc->body.nparas && run_index >= 0 &&
+        run_index < doc->body.paras[paragraph].nruns && doc->body.paras[paragraph].runs[run_index].href)
+        style |= FSF_UNDERLINED;
     SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     has_selection = selection_for_run(paragraph, run_index, len, &sel_from, &sel_to);
 
@@ -905,7 +1058,9 @@ static void render_text_run(void *ud, int paragraph, int run_index,
                             sx, render_line_y, sw, render_line_h);
                 }
             }
-            ogt_text(rp, ogt_pen(&ctx, "fill.text"), render_line_x,
+            ogt_text(rp, ogt_pen(&ctx, (paragraph >= 0 && doc && paragraph < doc->body.nparas &&
+                     run_index >= 0 && run_index < doc->body.paras[paragraph].nruns &&
+                     doc->body.paras[paragraph].runs[run_index].href) ? "accent" : "fill.text"), render_line_x,
                      render_line_y, line, available);
             add_hit(paragraph, run_index, off, seg_end, render_line_x,
                     render_line_y, width, render_line_h);
@@ -1166,6 +1321,24 @@ static void draw_ruler(void)
     }
 }
 
+static void render_image(void *ud,int image_index,int x,int y,int width,int height)
+{
+    struct RastPort *rp=(struct RastPort*)ud;ow_image_cache *c=image_cache_get(image_index);int px=render_x0+x*render_num/render_den,py=render_y0+y*render_num/render_den;int pw=width*render_num/render_den,ph=height*render_num/render_den;char label[96];
+    if(pw<8)pw=8;
+    if(ph<8)ph=8;
+    if(c&&CyberGfxBase&&screen_depth()>8)ScalePixelArray(c->argb,c->w,c->h,c->w*4,rp,(UWORD)px,(UWORD)py,(UWORD)pw,(UWORD)ph,RECTFMT_ARGB);
+    else {ogt_frame(rp,ogt_pen(&ctx,"group.line"),px,py,pw,ph);snprintf(label,sizeof label,"Image: %s",(doc&&image_index<doc->nimages&&doc->images[image_index].name)?doc->images[image_index].name:"embedded");ogt_text(rp,ogt_pen(&ctx,"muted"),px+6,py+6,label,pw-12);}
+}
+
+static void render_rule(void *ud, int x1, int y1, int x2, int y2, unsigned long rgb)
+{
+    struct RastPort *rp=(struct RastPort*)ud;
+    int px1=render_x0+x1*render_num/render_den, py1=render_y0+y1*render_num/render_den;
+    int px2=render_x0+x2*render_num/render_den, py2=render_y0+y2*render_num/render_den;
+    LONG pen=ogt_pen_rgb(&ctx,(ogt_rgb){(UBYTE)((rgb>>16)&255),(UBYTE)((rgb>>8)&255),(UBYTE)(rgb&255)});
+    SetAPen(rp,pen);Move(rp,px1,py1);Draw(rp,px2,py2);
+}
+
 static void draw_page(void)
 {
     struct RastPort *rp = win->RPort;
@@ -1233,6 +1406,8 @@ static void draw_page(void)
     r.begin_page = render_begin;
     r.end_page = render_end;
     r.text_run = render_text_run;
+    r.rule = render_rule;
+    r.image = render_image;
     ow_editor_render_page(editor, page_index, &r);
 
     if (clip && LayersBase && win->WLayer) {
@@ -1548,6 +1723,65 @@ out:
     if (rw) CloseWindow(rw); if (list) FreeGadgets(list); return mode;
 }
 
+static int spell_requester(const char *word, char suggestions[][48], int nsuggest,
+                           char *replacement, size_t replacement_size)
+{
+    struct Gadget *list=NULL,*last,*gtext,*grep,*gignore,*gadd,*gdone;
+    struct NewGadget ng; struct Window *rw=NULL; STRPTR v=NULL;
+    int done=0, mode=0, ww=500, wh=118; char label[180];
+    if(!scr||!vi||!word)return 0;
+    if(nsuggest>0) snprintf(label,sizeof label,"%s  (suggestion: %s)",word,suggestions[0]);
+    else snprintf(label,sizeof label,"Not in dictionary: %s",word);
+    memset(&ng,0,sizeof ng);ng.ng_TextAttr=&font_attr;ng.ng_VisualInfo=vi;last=CreateContext(&list);
+    ng.ng_Flags=PLACETEXT_ABOVE;ng.ng_LeftEdge=18;ng.ng_TopEdge=28;ng.ng_Width=464;ng.ng_Height=18;
+    ng.ng_GadgetText=(STRPTR)label;ng.ng_GadgetID=1;
+    last=gtext=CreateGadget(STRING_KIND,last,&ng,GTST_String,(ULONG)(nsuggest?suggestions[0]:word),GTST_MaxChars,(ULONG)(replacement_size-1),GA_TabCycle,TRUE,TAG_DONE);
+    ng.ng_Flags=0;ng.ng_TopEdge=70;ng.ng_Height=22;ng.ng_Width=94;ng.ng_GadgetID=2;ng.ng_LeftEdge=84;ng.ng_GadgetText=(STRPTR)"Replace";
+    last=grep=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
+    ng.ng_LeftEdge=184;ng.ng_GadgetID=3;ng.ng_GadgetText=(STRPTR)"Ignore";last=gignore=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
+    ng.ng_LeftEdge=284;ng.ng_GadgetID=4;ng.ng_GadgetText=(STRPTR)"Add";last=gadd=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
+    ng.ng_LeftEdge=384;ng.ng_GadgetID=5;ng.ng_GadgetText=(STRPTR)"Done";last=gdone=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
+    if(!gtext||!grep||!gignore||!gadd||!gdone)goto out;
+    rw=OpenWindowTags(NULL,WA_Title,(ULONG)"Spell Check",WA_PubScreen,(ULONG)scr,WA_InnerWidth,ww,WA_InnerHeight,wh,
+        WA_Left,(scr->Width-ww)/2,WA_Top,(scr->Height-wh)/2,WA_Gadgets,(ULONG)list,WA_DragBar,TRUE,WA_DepthGadget,TRUE,
+        WA_CloseGadget,TRUE,WA_Activate,TRUE,WA_SimpleRefresh,TRUE,WA_IDCMP,IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|STRINGIDCMP|BUTTONIDCMP,TAG_DONE);
+    if(!rw)goto out;GT_RefreshWindow(rw,NULL);ActivateGadget(gtext,rw,NULL);
+    while(!done){struct IntuiMessage*m;Wait(1UL<<rw->UserPort->mp_SigBit);while((m=GT_GetIMsg(rw->UserPort))){ULONG cls=m->Class;UWORD id=m->IAddress?((struct Gadget*)m->IAddress)->GadgetID:0;GT_ReplyIMsg(m);if(cls==IDCMP_CLOSEWINDOW){done=1;break;}if(cls==IDCMP_REFRESHWINDOW){GT_BeginRefresh(rw);GT_EndRefresh(rw,TRUE);}else if(cls==IDCMP_GADGETUP&&id>=2&&id<=5){mode=(int)id-1;done=1;}}}
+    if(mode==1){GT_GetGadgetAttrs(gtext,rw,NULL,GTST_String,(ULONG)&v,TAG_DONE);snprintf(replacement,replacement_size,"%s",v?(char*)v:"");if(!replacement[0])mode=2;}
+out:
+    if(rw)CloseWindow(rw);if(list)FreeGadgets(list);return mode;
+}
+
+static int ensure_spell(void)
+{
+    char msg[160];
+    static const char *paths[]={"PROGDIR:Dictionaries/en_GB.words","PROGDIR:Dictionaries/en_US.words","SYS:Dictionaries/en_GB.words",NULL};
+    int i;
+    if(spell)return 1;
+    for(i=0;paths[i];++i){spell=ow_spell_open(paths[i],"PROGDIR:Dictionaries/user.words",msg,sizeof msg);if(spell){set_status(msg);return 1;}}
+    tell("Spell Check","No OpenWrite dictionary was found. Install Dictionaries/en_GB.words beside OpenWrite.");
+    return 0;
+}
+
+static void do_spell_check(void)
+{
+    char word[96], repl[96], sug[4][48];
+    int rc, ns, mode;
+    if(!ensure_spell())return;
+    for(;;){
+        rc=ow_spell_next(spell,editor,word,sizeof word,1);
+        if(rc<0){tell("Spell Check","The document could not be checked.");return;}
+        if(!rc){set_status("Spell check complete: no more unknown words.");request_document_redraw();return;}
+        request_document_redraw();
+        ns=ow_spell_suggest(spell,word,sug,4);
+        repl[0]=0;mode=spell_requester(word,sug,ns,repl,sizeof repl);
+        if(mode==0||mode==4){set_status("Spell check stopped.");request_document_redraw();return;}
+        if(mode==1){if(editor_result(ow_editor_insert_utf8(editor,repl,strlen(repl)),"Spelling replaced.")){} }
+        else if(mode==3){if(!ow_spell_add(spell,word))tell("Spell Check","The word could not be added to the user dictionary.");}
+        /* mode 2 ignore: selection focus already sits after the word */
+    }
+}
+
 static int twips_to_mm(int twips)
 {
     if (twips >= 0) return (twips * 127 + 3600) / 7200;
@@ -1683,6 +1917,7 @@ static void new_document(void)
     d = blank_document();
     if (!d) { tell("New document", "There is not enough memory for a new document."); return; }
     set_document(d, "", "ODT");
+    recovery_clear();
     set_status("New document.");
     relayout();
 }
@@ -1769,12 +2004,6 @@ static void about(void)
          "MIT licence, Copyright (c) 2026 Dalsin Limited.");
 }
 
-static void coming(const char *name, const char *detail)
-{
-    char msg[300];
-    snprintf(msg, sizeof msg, "%s\n\n%s", name, detail);
-    tell(name, msg);
-}
 
 static void set_page_view(int page)
 {
@@ -1784,10 +2013,7 @@ static void set_page_view(int page)
     if (page >= pages) page = pages - 1;
     if (page_index != page) scroll_x = scroll_y = 0;
     page_index = page;
-    {
-        char msg[64]; snprintf(msg, sizeof msg, "Page %d of %d.", page_index + 1, pages);
-        set_status(msg);
-    }
+    { char msg[64]; snprintf(msg, sizeof msg, "Page %d of %d.", page_index + 1, pages); set_status(msg); }
     draw_all();
 }
 
@@ -1982,6 +2208,73 @@ static int vanilla_utf8(UWORD code, char out[3])
     return 2;
 }
 
+static const char *image_mime_name(const char *path)
+{
+    const char *e=strrchr(path,'.');if(!e)return "application/octet-stream";
+    if(!strcasecmp(e,".png"))return "image/png";
+    if(!strcasecmp(e,".jpg")||!strcasecmp(e,".jpeg"))return "image/jpeg";
+    if(!strcasecmp(e,".gif"))return "image/gif";
+    if(!strcasecmp(e,".webp"))return "image/webp";
+    if(!strcasecmp(e,".bmp"))return "image/bmp";
+    if(!strcasecmp(e,".iff")||!strcasecmp(e,".ilbm"))return "image/iff";
+    return "application/octet-stream";
+}
+
+static int ask_image_file(char *out,size_t out_size)
+{
+    struct FileRequester *fr;int ok=0;
+    fr=AllocAslRequestTags(ASL_FileRequest,ASLFR_TitleText,(ULONG)"Insert Image",ASLFR_Window,(ULONG)win,ASLFR_SleepWindow,TRUE,ASLFR_DoSaveMode,FALSE,ASLFR_PositiveText,(ULONG)"Insert",TAG_DONE);
+    if(!fr)return 0;
+    if(AslRequestTags(fr,TAG_DONE)&&fr->fr_File[0]){snprintf(out,out_size,"%s",fr->fr_Drawer);AddPart((STRPTR)out,fr->fr_File,out_size);ok=1;}
+    FreeAslRequest(fr);return ok;
+}
+
+static void do_image(void)
+{
+    char path[512],alt[160]="";BPTR f;LONG size,got;unsigned char *data;int width=4320,height=2880,idx,maxw;Object *o=NULL;struct BitMapHeader *bmh=NULL;
+    if(!doc||!editor||!ask_image_file(path,sizeof path))return;
+    f=Open((STRPTR)path,MODE_OLDFILE);if(!f){tell("Insert Image","The image file could not be opened.");return;}Seek(f,0,OFFSET_END);size=Seek(f,0,OFFSET_BEGINNING);if(size<=0||size>32*1024*1024){Close(f);tell("Insert Image","The image is empty or too large to embed.");return;}data=(unsigned char*)malloc((size_t)size);if(!data){Close(f);tell("Insert Image","There is not enough memory to embed the image.");return;}got=Read(f,data,size);Close(f);if(got!=size){free(data);tell("Insert Image","The image could not be read completely.");return;}
+    if(DataTypesBase){o=NewDTObject((APTR)path,DTA_GroupID,GID_PICTURE,PDTA_DestMode,PMODE_V43,PDTA_Remap,FALSE,TAG_DONE);if(o){GetDTAttrs(o,PDTA_BitMapHeader,(ULONG)&bmh,TAG_DONE);if(bmh&&bmh->bmh_Width&&bmh->bmh_Height){width=(int)bmh->bmh_Width*15;height=(int)bmh->bmh_Height*15;}DisposeDTObject(o);}}
+    maxw=doc->page.width-doc->page.margin_left-doc->page.margin_right;if(width>maxw&&width>0){height=(int)((long)height*maxw/width);width=maxw;}
+    snprintf(alt,sizeof alt,"%s",leaf(path));idx=owf_doc_add_image(doc,leaf(path),image_mime_name(path),data,(size_t)size,width,height,alt);free(data);if(idx<0){tell("Insert Image","There is not enough memory to add the image.");return;}
+    image_cache_clear();if(editor_result(ow_editor_insert_image(editor,idx),"Image inserted through OpenDatatypes."))relayout();
+}
+
+static void do_table(void)
+{
+    char rs[16]="3",cs[16]="3";int rows,cols;
+    if(!text_requester("Insert Table","Rows",rs,rs,sizeof rs))return;
+    if(!text_requester("Insert Table","Columns",cs,cs,sizeof cs))return;
+    rows=atoi(rs);cols=atoi(cs);
+    if(rows<1||rows>64||cols<1||cols>32){tell("Insert Table","Rows must be 1-64 and columns 1-32.");return;}
+    if(editor_result(ow_editor_insert_table(editor,rows,cols),"Table inserted."))relayout();
+}
+
+static void do_link(void)
+{
+    char url[256]="https://", text[160]="Link";
+    if(!editor)return;
+    if(!text_requester("Hyperlink","URL",url,url,sizeof url))return;
+    if(ow_editor_selection_empty(editor)){
+        if(!text_requester("Hyperlink","Text",text,text,sizeof text))return;
+        editor_result(ow_editor_insert_link(editor,text,url),"Hyperlink inserted.");
+    } else editor_result(ow_editor_set_link(editor,url),"Hyperlink applied.");
+}
+
+static void do_story_edit(ow_story_kind which)
+{
+    char *current = ow_editor_story_text(editor, which);
+    char value[512];
+    const char *title = which == OW_STORY_HEADER ? "Header" : "Footer";
+    int i;
+    if (!current) current = (char *)calloc(1, 1);
+    snprintf(value, sizeof value, "%s", current ? current : "");
+    free(current);
+    for (i = 0; value[i]; ++i) if (value[i] == '\n' || value[i] == '\r') value[i] = ' ';
+    if (!text_requester(title, "Text / {PAGE} {PAGES} {DATE} {TIME}", value, value, sizeof value)) return;
+    if (editor_result(ow_editor_set_story_text(editor, which, value), which == OW_STORY_HEADER ? "Header updated." : "Footer updated.")) relayout();
+}
+
 static void do_command(int id)
 {
     switch (id) {
@@ -2001,12 +2294,8 @@ static void do_command(int id)
     case C_REDO:
         if (editor && ow_editor_redo(editor) > 0) editor_repaint("Redo.");
         break;
-    case C_IMAGE:
-        coming("OpenDatatypes", "Image insertion will use OpenDatatypes, preserving unknown objects where possible.");
-        break;
-    case C_TABLE:
-        coming("Tables", "Table editing is in the first native layout milestone.");
-        break;
+    case C_IMAGE: do_image(); break;
+    case C_TABLE: do_table(); break;
     case C_PDF: do_export_pdf(); break;
     }
 }
@@ -2131,7 +2420,7 @@ static void menu_action(ULONG id)
     case M_INSPECTOR: show_inspector = !show_inspector; relayout(); break;
     case M_IMAGE: do_command(C_IMAGE); break;
     case M_TABLE: do_command(C_TABLE); break;
-    case M_LINK: coming("Link", "Hyperlink editing is part of DOCX Tier A."); break;
+    case M_LINK: do_link(); break;
     case M_PAGE_BREAK: editor_result(ow_editor_insert_page_break(editor), "Page break inserted."); break;
     case M_BOLD: editor_result(ow_editor_toggle_char_flags(editor, OWF_BOLD), "Bold."); break;
     case M_ITALIC: editor_result(ow_editor_toggle_char_flags(editor, OWF_ITALIC), "Italic."); break;
@@ -2154,6 +2443,12 @@ static void menu_action(ULONG id)
                 "Paragraph updated.");
         break;
     }
+    case M_TABLE_NEXT: if(!ow_editor_table_move(editor,1))set_status("Last table cell."); request_document_redraw(); break;
+    case M_TABLE_PREV: if(!ow_editor_table_move(editor,-1))set_status("First table cell."); request_document_redraw(); break;
+    case M_TABLE_ROW_ADD: editor_result(ow_editor_table_insert_row(editor),"Table row inserted."); break;
+    case M_TABLE_ROW_DEL: editor_result(ow_editor_table_delete_row(editor),"Table row deleted."); break;
+    case M_TABLE_COL_ADD: editor_result(ow_editor_table_insert_column(editor),"Table column inserted."); break;
+    case M_TABLE_COL_DEL: editor_result(ow_editor_table_delete_column(editor),"Table column deleted."); break;
     case M_PAGE_SETUP: {
         owf_page pg;
         if (editor) {
@@ -2167,8 +2462,15 @@ static void menu_action(ULONG id)
         }
         break;
     }
+    case M_HEADER: do_story_edit(OW_STORY_HEADER); break;
+    case M_FOOTER: do_story_edit(OW_STORY_FOOTER); break;
+    case M_FIELD_PAGE: editor_result(ow_editor_insert_field(editor, OWF_FIELD_PAGE), "Page field inserted."); break;
+    case M_FIELD_PAGES: editor_result(ow_editor_insert_field(editor, OWF_FIELD_PAGES), "Page-count field inserted."); break;
+    case M_FIELD_DATE: editor_result(ow_editor_insert_field(editor, OWF_FIELD_DATE), "Date field inserted."); break;
+    case M_FIELD_TIME: editor_result(ow_editor_insert_field(editor, OWF_FIELD_TIME), "Time field inserted."); break;
     case M_DATATYPES: do_command(C_IMAGE); break;
     case M_OPENPRINT: do_command(C_PRINT); break;
+    case M_SPELL: do_spell_check(); break;
     case M_THEME_OPEN: apply_theme("Open"); break;
     case M_THEME_GRAPHITE: apply_theme("Graphite"); break;
     case M_THEME_EMBER: apply_theme("Ember"); break;
@@ -2178,6 +2480,83 @@ static void menu_action(ULONG id)
     case M_TB_ICONS: tb_style = OGT_TB_ICONS; relayout(); break;
     case M_TB_TEXT: tb_style = OGT_TB_TEXT; relayout(); break;
     }
+}
+
+static const char *skip_space(const char *s)
+{
+    while (s && *s && isspace((unsigned char)*s)) ++s;
+    return s ? s : "";
+}
+
+static int starts_word_ci(const char *s, const char *word, const char **rest)
+{
+    size_t n=strlen(word),i;
+    for(i=0;i<n;++i)if(!s[i]||tolower((unsigned char)s[i])!=tolower((unsigned char)word[i]))return 0;
+    if(s[n]&&!isspace((unsigned char)s[n]))return 0;
+    if(rest)*rest=skip_space(s+n);
+    return 1;
+}
+
+static char *document_plain_text(void)
+{
+    size_t cap=4096,n=0;char *out=(char*)malloc(cap);int p,r;
+    if(!out||!doc){free(out);return NULL;}out[0]=0;
+    for(p=0;p<doc->body.nparas;++p){
+        const owf_para *para=&doc->body.paras[p];
+        for(r=0;r<para->nruns;++r){const owf_run *run=&para->runs[r];const char *t=NULL;char field[32];size_t add;
+            if(run->kind==OWF_RUN_TEXT)t=run->text;
+            else if(run->kind==OWF_RUN_TAB)t="\t";
+            else if(run->kind==OWF_RUN_LINEBREAK)t="\n";
+            else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",ow_editor_current_page(editor)+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",ow_editor_page_count(editor));else field[0]=0;t=field;}
+            if(!t)continue;
+            add=strlen(t);
+            if(n+add+2>cap){size_t want=(n+add+2)*2;char *q=(char*)realloc(out,want);if(!q){free(out);return NULL;}out=q;cap=want;}
+            memcpy(out+n,t,add);n+=add;out[n]=0;
+        }
+        if(p+1<doc->body.nparas){if(n+2>cap){char*q=(char*)realloc(out,cap*2);if(!q){free(out);return NULL;}out=q;cap*=2;}out[n++]='\n';out[n]=0;}
+    }
+    return out;
+}
+
+static int rexx_do_command(const char *command, char **result_out)
+{
+    const char *arg="";char result[512];int ok=1;char *dynamic=NULL;
+    result[0]=0;command=skip_space(command);
+    if(starts_word_ci(command,"VERSION",&arg))snprintf(result,sizeof result,"%s",VERSION_TEXT);
+    else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
+    else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?ow_editor_page_count(editor):0);
+    else if(starts_word_ci(command,"OPEN",&arg)){if(!*arg|| (editor&&ow_editor_is_dirty(editor))){ok=0;snprintf(result,sizeof result,"Unsaved changes or missing path");}else{open_document(arg);relayout();snprintf(result,sizeof result,"%s",status);}}
+    else if(starts_word_ci(command,"SAVEAS",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing path");}else{save_document_as(arg);snprintf(result,sizeof result,"%s",status);}}
+    else if(starts_word_ci(command,"SAVE",&arg)){if(current_path[0]){save_document_as(current_path);snprintf(result,sizeof result,"%s",status);}else{ok=0;snprintf(result,sizeof result,"Untitled document needs SAVEAS");}}
+    else if(starts_word_ci(command,"EXPORT",&arg)){owf_report *rp;if(!*arg){ok=0;snprintf(result,sizeof result,"Missing export path");}else{rp=owf_report_new();ok=owf_export_file(doc,arg,NULL,rp)==OWF_OK;owf_report_free(rp);snprintf(result,sizeof result,"%s",ok?"Exported":"Export failed");}}
+    else if(starts_word_ci(command,"PRINT",&arg)){ok=ow_print_document(doc,result,sizeof result);}
+    else if(starts_word_ci(command,"INSERTTEXT",&arg)){ok=editor_result(ow_editor_insert_text_block(editor,arg,strlen(arg)),"ARexx text inserted.");snprintf(result,sizeof result,"%s",ok?"Inserted":"Insert failed");}
+    else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;request_document_redraw();snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
+    else if(starts_word_ci(command,"GETTEXT",&arg)){dynamic=document_plain_text();if(!dynamic){ok=0;snprintf(result,sizeof result,"Out of memory");}}
+    else if(starts_word_ci(command,"COMMAND",&arg)){
+        if(!strcasecmp(arg,"BOLD"))menu_action(M_BOLD);else if(!strcasecmp(arg,"ITALIC"))menu_action(M_ITALIC);else if(!strcasecmp(arg,"UNDERLINE"))menu_action(M_UNDERLINE);else if(!strcasecmp(arg,"PAGEBREAK"))menu_action(M_PAGE_BREAK);else if(!strcasecmp(arg,"UNDO"))menu_action(M_UNDO);else if(!strcasecmp(arg,"REDO"))menu_action(M_REDO);else{ok=0;snprintf(result,sizeof result,"Unknown COMMAND");}
+        if(ok&&!result[0])snprintf(result,sizeof result,"OK");
+    }
+    else if(starts_word_ci(command,"QUIT",&arg)){if(editor&&ow_editor_is_dirty(editor)){ok=0;snprintf(result,sizeof result,"Unsaved changes");}else{quit_now=1;snprintf(result,sizeof result,"Quitting");}}
+    else {ok=0;snprintf(result,sizeof result,"Unknown OpenWrite ARexx command");}
+    if(result_out){if(dynamic)*result_out=dynamic;else{*result_out=(char*)malloc(strlen(result)+1);if(*result_out)strcpy(*result_out,result);else ok=0;}}
+    return ok;
+}
+
+static void rexx_messages(void)
+{
+    struct RexxMsg *rm;
+    while(rexx_port&&(rm=(struct RexxMsg*)GetMsg(rexx_port))!=NULL){char *result=NULL;int ok=rexx_do_command((const char*)rm->rm_Args[0],&result);rm->rm_Result1=ok?RC_OK:RC_ERROR;rm->rm_Result2=0;if((rm->rm_Action&RXFF_RESULT)&&RexxSysBase&&result)rm->rm_Result2=(LONG)CreateArgstring((STRPTR)result,(LONG)strlen(result));free(result);ReplyMsg((struct Message*)rm);}
+}
+
+static void rexx_open(void)
+{
+    struct MsgPort *p;if(!RexxSysBase)return;p=CreateMsgPort();if(!p)return;p->mp_Node.ln_Name=(char*)REXX_PORT_NAME;p->mp_Node.ln_Pri=0;Forbid();if(FindPort((STRPTR)REXX_PORT_NAME)){Permit();DeleteMsgPort(p);return;}AddPort(p);Permit();rexx_port=p;
+}
+
+static void rexx_close(void)
+{
+    struct RexxMsg *rm;if(!rexx_port)return;RemPort(rexx_port);while((rm=(struct RexxMsg*)GetMsg(rexx_port))!=NULL){rm->rm_Result1=RC_FATAL;rm->rm_Result2=0;ReplyMsg((struct Message*)rm);}DeleteMsgPort(rexx_port);rexx_port=NULL;
 }
 
 static void events(void)
@@ -2263,11 +2642,13 @@ static void events(void)
             if (code == 8) {
                 editor_result(ow_editor_backspace(editor), "Modified.");
             } else if (code == 13) {
-                editor_result(ow_editor_newline(editor), "Modified.");
+                if (ow_editor_in_table(editor)) editor_result(ow_editor_insert_utf8(editor, "\n", 1), "Table cell line break.");
+                else editor_result(ow_editor_newline(editor), "Modified.");
             } else if (code == 127) {
                 editor_result(ow_editor_delete_forward(editor), "Modified.");
             } else if (code == 9) {
-                editor_result(ow_editor_insert_utf8(editor, "\t", 1), "Modified.");
+                if(ow_editor_in_table(editor)){int backwards=(qual&(IEQUALIFIER_LSHIFT|IEQUALIFIER_RSHIFT))!=0;if(!ow_editor_table_move(editor,backwards?-1:1)&&!backwards)editor_result(ow_editor_table_insert_row(editor),"New table row.");else request_document_redraw();}
+                else editor_result(ow_editor_insert_utf8(editor, "\t", 1), "Modified.");
             } else if (code >= 32 && code < 256) {
                 char u[3];
                 int n = vanilla_utf8(code, u);
@@ -2308,6 +2689,9 @@ static int window_main(int argc, char **argv)
     DiskfontBase = OpenLibrary((STRPTR)"diskfont.library", 36);
     LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
 
+    RexxSysBase = (struct RxsLib *)OpenLibrary((STRPTR)"rexxsyslib.library", 36);
+    DataTypesBase = OpenLibrary((STRPTR)"datatypes.library", 39);
+    CyberGfxBase = OpenLibrary((STRPTR)"cybergraphics.library", 0);
     read_theme_choice();
     set_document(blank_document(), "", "ODT");
     if (!doc || !editor) { rc = 20; goto out; }
@@ -2325,24 +2709,38 @@ static int window_main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    rexx_open();
+    autosave = ow_autosave_open(60);
     if (first[0]) { open_document(first); relayout(); }
+    else recovery_offer();
 
     while (!quit_now) {
         ULONG sig = 1UL << win->UserPort->mp_SigBit;
-        ULONG got = Wait(sig | SIGBREAKF_CTRL_C);
+        ULONG asig = ow_autosave_signal(autosave);
+        ULONG rsig = rexx_port ? (1UL << rexx_port->mp_SigBit) : 0;
+        ULONG got = Wait(sig | asig | rsig | SIGBREAKF_CTRL_C);
         if (got & SIGBREAKF_CTRL_C) {
             if (confirm_discard_changes()) quit_now = 1;
         }
         if (got & sig) events();
+        if (got & rsig) rexx_messages();
+        if ((got & asig) && ow_autosave_tick(autosave)) recovery_save();
     }
 
 out:
+    if (autosave) { ow_autosave_close(autosave); autosave = NULL; }
+    rexx_close();
     close_window();
+    if (spell) { ow_spell_close(spell); spell = NULL; }
     if (editor) { ow_editor_free(editor); editor = NULL; }
     if (doc) { owf_doc_free(doc); doc = NULL; }
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) { CloseLibrary(LayersBase); LayersBase = NULL; }
     if (DiskfontBase) { CloseLibrary(DiskfontBase); DiskfontBase = NULL; }
+    image_cache_clear();
+    if (CyberGfxBase) { CloseLibrary(CyberGfxBase); CyberGfxBase = NULL; }
+    if (DataTypesBase) { CloseLibrary(DataTypesBase); DataTypesBase = NULL; }
+    if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
     return rc;

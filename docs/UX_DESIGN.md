@@ -291,41 +291,32 @@ Implemented and exercised in the current editor build:
 Bench validation includes live typing, paragraph creation, Shift+Arrow selection,
 selection replacement and right-Amiga-Z Undo on AmigaOS 3.2.3.
 
-Not yet claimed complete:
+## 1.0 release milestone
 
-- visual-line-aware up/down movement;
-- final font shaping and font-size-accurate document rendering;
-- live B/I/U, paragraph/style and list controls;
-- clipboard integration;
-- real tables and embedded objects;
-- OpenDatatypes insertion;
-- OpenPrint preview/output;
-- scrolling and multi-page navigation;
-- final incremental page-layout/display-list engine.
-
-Those are implementation milestones, not reasons to add a heavier editor
-engine.
-
-## 0.3 usable-office milestone
-
-The native build now goes beyond the first editing milestone:
+OpenWrite 1.0 completes the first native office-document release:
 
 - character bold/italic/underline, font choice and point size;
 - paragraph styles, alignment, indents, first-line indent, spacing and line spacing;
 - bullets and numbered lists;
-- Amiga clipboard.device cut/copy/paste using FTXT text;
+- native simple tables with row/column editing and keyboard cell navigation;
+- embedded inline images, decoded for display through Amiga datatypes;
+- headers and footers in the document model and page renderer;
+- Amiga clipboard.device cut/copy/paste using FTXT-compatible text;
 - Find, Find Again, Find Previous and Replace / Replace All;
 - automatic pagination plus explicit page breaks;
 - A4/Letter page setup, portrait/landscape and margins;
 - multi-page navigator and current-page tracking;
 - clipped large-page viewport with keyboard scrolling;
 - 100% actual-size semantics plus Fit Page and Fit Width;
-- standard printer.device output is live, making OpenAmigaPrint/OpenPrint a normal backend;
-- direct searchable PDF export is live from the same libowf document model;
-- formatted DOCX and ODT round-trip coverage in the core tests.
+- spelling with a bundled en_GB dictionary and persistent user dictionary;
+- recovery autosave and interrupted-session recovery;
+- ARexx scripting for document, export, print, text and search operations;
+- standard printer.device output, making OpenAmigaPrint/OpenPrint a normal backend;
+- direct searchable PDF export from the libowf document model;
+- DOCX and ODT round-trip coverage for common text formatting, simple tables and inline images.
 
-Still intentionally outside the 0.3 text-document milestone are native table
-objects, inline OpenDatatypes images, headers/footers editing UI, spell/grammar
-services and a WYSIWYG graphics print path. The document model/design already
-reserves those as the next object/layout tier rather than faking them as
-completed features.
+The 1.0 boundary remains deliberately word-processor sized. Later work may
+improve visual-line-aware vertical movement, font shaping, the incremental
+display-list layout engine, fully WYSIWYG graphics printing, floating objects,
+multi-column sections, footnotes/endnotes, generated TOCs and grammar
+services. Those are post-1.0 improvements rather than hidden 1.0 claims.

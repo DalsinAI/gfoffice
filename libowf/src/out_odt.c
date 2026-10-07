@@ -9,6 +9,7 @@
 #include "owf_internal.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #define NS "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" " \
@@ -17,6 +18,8 @@
            "xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" " \
            "xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" " \
            "xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" " \
+           "xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" " \
+           "xmlns:xlink=\"http://www.w3.org/1999/xlink\" " \
            "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" " \
            "xmlns:meta=\"urn:oasis:names:tc:opendocument:xmlns:meta:1.0\" " \
            "office:version=\"1.3\""
@@ -272,51 +275,46 @@ static void put_text(owf_buf *out, const char *text, int *after_space)
     owf_buf_put_xml(out, start, (size_t)(p - start));
 }
 
-static void put_story(owf_buf *out, const owf_story *story, styles *s)
+static const char *odt_image_ext(const owf_image *im)
+{
+    if(im&&im->mime){if(!strcmp(im->mime,"image/png"))return "png";if(!strcmp(im->mime,"image/jpeg"))return "jpg";if(!strcmp(im->mime,"image/gif"))return "gif";if(!strcmp(im->mime,"image/webp"))return "webp";if(!strcmp(im->mime,"image/iff"))return "iff";}return "bin";
+}
+
+static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s)
 {
     static const char *fields[] = {
         "<text:page-number text:select-page=\"current\">1</text:page-number>",
-        "<text:page-count>1</text:page-count>",
-        "<text:date/>",
-        "<text:time/>"
-    };
-    int i, j;
-
-    for (i = 0; i < story->nparas; i++) {
-        const owf_para *para = &story->paras[i];
-        int heading = para->fmt.heading >= 1 && para->fmt.heading <= 6;
-        int after_space = 1;
-        if (heading)
-            owf_buf_printf(out, "<text:h text:style-name=\"P%d\" text:outline-level=\"%d\">",
-                           para_style(s, &para->fmt), para->fmt.heading);
-        else
-            owf_buf_printf(out, "<text:p text:style-name=\"P%d\">", para_style(s, &para->fmt));
-        for (j = 0; j < para->nruns; j++) {
-            const owf_run *run = &para->runs[j];
-            int t = char_style(s, &run->fmt);
-            if (t)
-                owf_buf_printf(out, "<text:span text:style-name=\"T%d\">", t);
-            switch (run->kind) {
-            case OWF_RUN_TEXT:
-                put_text(out, run->text, &after_space);
-                break;
-            case OWF_RUN_TAB:
-                owf_buf_puts(out, "<text:tab/>");
-                after_space = 1;
-                break;
-            case OWF_RUN_LINEBREAK:
-                owf_buf_puts(out, "<text:line-break/>");
-                after_space = 1;
-                break;
-            case OWF_RUN_FIELD:
-                owf_buf_puts(out, fields[run->field]);
-                after_space = 0;
-                break;
-            }
-            if (t)
-                owf_buf_puts(out, "</text:span>");
+        "<text:page-count>1</text:page-count>", "<text:date/>", "<text:time/>" };
+    int heading=para->fmt.heading>=1&&para->fmt.heading<=6,after_space=1,j;
+    if(heading)owf_buf_printf(out,"<text:h text:style-name=\"P%d\" text:outline-level=\"%d\">",para_style(s,&para->fmt),para->fmt.heading);
+    else owf_buf_printf(out,"<text:p text:style-name=\"P%d\">",para_style(s,&para->fmt));
+    for(j=0;j<para->nruns;++j){const owf_run *run=&para->runs[j];int t=char_style(s,&run->fmt);
+        if(run->kind==OWF_RUN_TEXT&&run->href){owf_buf_puts(out,"<text:a xlink:href=\"");owf_buf_puts_xml(out,run->href);owf_buf_puts(out,"\">");}
+        if(t)owf_buf_printf(out,"<text:span text:style-name=\"T%d\">",t);
+        switch(run->kind){
+        case OWF_RUN_TEXT:put_text(out,run->text,&after_space);break;
+        case OWF_RUN_TAB:owf_buf_puts(out,"<text:tab/>");after_space=1;break;
+        case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<text:line-break/>");after_space=1;break;
+        case OWF_RUN_FIELD:owf_buf_puts(out,fields[run->field]);after_space=0;break;
+        case OWF_RUN_IMAGE:
+            if(doc&&run->image>=0&&run->image<doc->nimages){const owf_image *im=&doc->images[run->image];owf_buf_puts(out,"<draw:frame text:anchor-type=\"as-char\" svg:width=\"");owf_put_points(out,im->width);owf_buf_puts(out,"\" svg:height=\"");owf_put_points(out,im->height);owf_buf_printf(out,"\"><draw:image xlink:href=\"Pictures/image%d.%s\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/></draw:frame>",run->image+1,odt_image_ext(im));}
+            break;
         }
-        owf_buf_puts(out, heading ? "</text:h>" : "</text:p>");
+        if(t)owf_buf_puts(out,"</text:span>");
+        if(run->kind==OWF_RUN_TEXT&&run->href)owf_buf_puts(out,"</text:a>");
+    }
+    owf_buf_puts(out,heading?"</text:h>":"</text:p>");
+}
+
+static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, styles *s)
+{
+    int i=0;
+    while(i<story->nparas){const owf_para *p=&story->paras[i];
+        if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
+            while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
+            if(row>=0)owf_buf_puts(out,"</table:table-row>");
+            owf_buf_puts(out,"</table:table>");
+        }else{put_para_odt(out,doc,p,s);++i;}
     }
 }
 
@@ -386,14 +384,14 @@ static int build_styles_xml(const owf_doc *doc, owf_buf *out)
     owf_buf_puts(out, "<office:master-styles><style:master-page style:name=\"Standard\" style:page-layout-name=\"pm1\">");
     if (doc->header.nparas) {
         owf_buf_puts(out, "<style:header>");
-        put_story(out, &doc->header, &s);
+        put_story(out, doc, &doc->header, &s);
         owf_buf_puts(out, "</style:header>");
         if (!pg->header_on_first)
             owf_buf_puts(out, "<style:header-first/>");
     }
     if (doc->footer.nparas) {
         owf_buf_puts(out, "<style:footer>");
-        put_story(out, &doc->footer, &s);
+        put_story(out, doc, &doc->footer, &s);
         owf_buf_puts(out, "</style:footer>");
         if (!pg->footer_on_first)
             owf_buf_puts(out, "<style:footer-first/>");
@@ -411,7 +409,7 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
     memset(&s, 0, sizeof s);
     owf_buf_init(&body);
     /* The body first, so the styles it uses are known. */
-    put_story(&body, &doc->body, &s);
+    put_story(&body, doc, &doc->body, &s);
     if (doc->page.start_page != 1)
         owf_report_add(report, OWF_NOTE_APPROX, "Page numbers start at 1");
 
@@ -452,8 +450,9 @@ static int export_odt(const owf_doc *doc, unsigned char **data, size_t *length, 
                         "<manifest:file-entry manifest:full-path=\"/\" manifest:version=\"1.3\" manifest:media-type=\"application/vnd.oasis.opendocument.text\"/>"
                         "<manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/>"
                         "<manifest:file-entry manifest:full-path=\"styles.xml\" manifest:media-type=\"text/xml\"/>"
-                        "<manifest:file-entry manifest:full-path=\"meta.xml\" manifest:media-type=\"text/xml\"/>"
-                        "</manifest:manifest>\n");
+                        "<manifest:file-entry manifest:full-path=\"meta.xml\" manifest:media-type=\"text/xml\"/>");
+    { int i; for(i=0;i<doc->nimages;++i){const owf_image *im=&doc->images[i];owf_buf_printf(&part,"<manifest:file-entry manifest:full-path=\"Pictures/image%d.%s\" manifest:media-type=\"",i+1,odt_image_ext(im));owf_buf_puts_xml(&part,im->mime?im->mime:"application/octet-stream");owf_buf_puts(&part,"\"/>");} }
+    owf_buf_puts(&part, "</manifest:manifest>\n");
     if (part.failed)
         result = OWF_ERR_MEMORY;
     else
@@ -482,6 +481,7 @@ static int export_odt(const owf_doc *doc, unsigned char **data, size_t *length, 
         result = build_content_xml(doc, &part, report);
     if (result == OWF_OK)
         result = part.failed ? OWF_ERR_MEMORY : owf_zip_add(zip, "content.xml", part.data, part.length, 1);
+    if(result==OWF_OK){int i;char name[96];for(i=0;i<doc->nimages&&result==OWF_OK;++i){snprintf(name,sizeof name,"Pictures/image%d.%s",i+1,odt_image_ext(&doc->images[i]));result=owf_zip_add(zip,name,doc->images[i].data,doc->images[i].length,1);}}
 
     owf_buf_free(&part);
     if (owf_zip_finish(zip) != OWF_OK && result == OWF_OK)

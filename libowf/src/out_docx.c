@@ -13,7 +13,10 @@
 #include <string.h>
 
 #define W_NS "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" " \
-             "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\""
+             "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" " \
+             "xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" " \
+             "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" " \
+             "xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\""
 
 static const char *face_name(const owf_doc *doc, int font, owf_report *report)
 {
@@ -111,50 +114,72 @@ static void put_ppr(owf_buf *out, const owf_parafmt *f, const char *style)
     owf_buf_puts(out, "</w:pPr>");
 }
 
-static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, owf_report *report)
+static int body_link_id(const owf_doc *doc, const char *href)
+{
+    int i,j,id=10;
+    if(!doc||!href)return 0;
+    for(i=0;i<doc->body.nparas;++i)for(j=0;j<doc->body.paras[i].nruns;++j){
+        const owf_run *r=&doc->body.paras[i].runs[j];
+        int p,q,seen=0;
+        if(r->kind!=OWF_RUN_TEXT||!r->href)continue;
+        for(p=0;p<i&&!seen;++p)for(q=0;q<doc->body.paras[p].nruns;++q){const owf_run *x=&doc->body.paras[p].runs[q];if(x->kind==OWF_RUN_TEXT&&x->href&&!strcmp(x->href,r->href)){seen=1;break;}}
+        if(!seen)for(q=0;q<j;++q){const owf_run *x=&doc->body.paras[i].runs[q];if(x->kind==OWF_RUN_TEXT&&x->href&&!strcmp(x->href,r->href)){seen=1;break;}}
+        if(seen)continue;
+        if(!strcmp(r->href,href))return id;
+        ++id;
+    }
+    return 0;
+}
+
+static const char *docx_image_ext(const owf_image *im)
+{
+    if(im&&im->mime){if(!strcmp(im->mime,"image/png"))return "png";if(!strcmp(im->mime,"image/jpeg"))return "jpg";if(!strcmp(im->mime,"image/gif"))return "gif";if(!strcmp(im->mime,"image/webp"))return "webp";if(!strcmp(im->mime,"image/bmp"))return "bmp";}return "bin";
+}
+
+static void put_drawing(owf_buf *out,const owf_doc *doc,int index)
+{
+    const owf_image *im;if(index<0||index>=doc->nimages)return;im=&doc->images[index];
+    owf_buf_printf(out,"<w:drawing><wp:inline><wp:extent cx=\"%ld\" cy=\"%ld\"/><wp:docPr id=\"%d\" name=\"Picture %d\"/><a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:nvPicPr><pic:cNvPr id=\"%d\" name=\"Picture %d\"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed=\"rId%d\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"%ld\" cy=\"%ld\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>",(long)im->width*635L,(long)im->height*635L,index+1,index+1,index+1,index+1,100+index,(long)im->width*635L,(long)im->height*635L);
+}
+
+static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
+                     const owf_para *para, owf_report *report)
 {
     static const char *field_instr[] = { " PAGE ", " NUMPAGES ", " DATE ", " TIME " };
     static const char *field_shown[] = { "1", "1", "", "" };
     char style[16];
-    int i, j;
+    const char *pstyle = NULL;
+    int j;
+    if (para->fmt.heading >= 1 && para->fmt.heading <= 6) {
+        sprintf(style, "Heading%d", para->fmt.heading); pstyle = style;
+    }
+    owf_buf_puts(out, "<w:p>"); put_ppr(out, &para->fmt, pstyle);
+    for (j = 0; j < para->nruns; ++j) {
+        const owf_run *run=&para->runs[j];
+        if(run->kind==OWF_RUN_FIELD){owf_buf_printf(out,"<w:fldSimple w:instr=\"%s\"><w:r>",field_instr[run->field]);put_rpr(out,doc,&run->fmt,report);owf_buf_printf(out,"<w:t>%s</w:t></w:r></w:fldSimple>",field_shown[run->field]);continue;}
+        if(run->kind==OWF_RUN_TEXT&&run->href&&story==&doc->body)owf_buf_printf(out,"<w:hyperlink r:id=\"rId%d\">",body_link_id(doc,run->href));
+        owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);
+        switch(run->kind){case OWF_RUN_TEXT:owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,run->text);owf_buf_puts(out,"</w:t>");break;case OWF_RUN_TAB:owf_buf_puts(out,"<w:tab/>");break;case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<w:br/>");break;case OWF_RUN_IMAGE:put_drawing(out,doc,run->image);break;default:break;}
+        owf_buf_puts(out,"</w:r>");if(run->kind==OWF_RUN_TEXT&&run->href&&story==&doc->body)owf_buf_puts(out,"</w:hyperlink>");
+    }
+    owf_buf_puts(out,"</w:p>");
+}
 
-    for (i = 0; i < story->nparas; i++) {
-        const owf_para *para = &story->paras[i];
-        const char *pstyle = NULL;
-        if (para->fmt.heading >= 1 && para->fmt.heading <= 6) {
-            sprintf(style, "Heading%d", para->fmt.heading);
-            pstyle = style;
-        }
-        owf_buf_puts(out, "<w:p>");
-        put_ppr(out, &para->fmt, pstyle);
-        for (j = 0; j < para->nruns; j++) {
-            const owf_run *run = &para->runs[j];
-            if (run->kind == OWF_RUN_FIELD) {
-                owf_buf_printf(out, "<w:fldSimple w:instr=\"%s\"><w:r>", field_instr[run->field]);
-                put_rpr(out, doc, &run->fmt, report);
-                owf_buf_printf(out, "<w:t>%s</w:t></w:r></w:fldSimple>", field_shown[run->field]);
-                continue;
+static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, owf_report *report)
+{
+    int i=0;
+    while(i<story->nparas){
+        const owf_para *p=&story->paras[i];
+        if(story==&doc->body&&p->table_id>=0){
+            int id=p->table_id,row=-1;
+            owf_buf_puts(out,"<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr>");
+            while(i<story->nparas&&story->paras[i].table_id==id){
+                p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</w:tr>");owf_buf_puts(out,"<w:tr>");row=p->table_row;}
+                owf_buf_puts(out,"<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>");put_para(out,doc,story,p,report);owf_buf_puts(out,"</w:tc>");++i;
             }
-            owf_buf_puts(out, "<w:r>");
-            put_rpr(out, doc, &run->fmt, report);
-            switch (run->kind) {
-            case OWF_RUN_TEXT:
-                owf_buf_puts(out, "<w:t xml:space=\"preserve\">");
-                owf_buf_puts_xml(out, run->text);
-                owf_buf_puts(out, "</w:t>");
-                break;
-            case OWF_RUN_TAB:
-                owf_buf_puts(out, "<w:tab/>");
-                break;
-            case OWF_RUN_LINEBREAK:
-                owf_buf_puts(out, "<w:br/>");
-                break;
-            default:
-                break;
-            }
-            owf_buf_puts(out, "</w:r>");
-        }
-        owf_buf_puts(out, "</w:p>");
+            if(row>=0)owf_buf_puts(out,"</w:tr>");
+            owf_buf_puts(out,"</w:tbl>");
+        }else{put_para(out,doc,story,p,report);++i;}
     }
 }
 
@@ -248,6 +273,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Override PartName=\"/word/header1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>");
     if (footer)
         owf_buf_puts(&part, "<Override PartName=\"/word/footer1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>");
+    { int i; for(i=0;i<doc->nimages;++i){owf_buf_printf(&part,"<Override PartName=\"/word/media/image%d.%s\" ContentType=\"",i+1,docx_image_ext(&doc->images[i]));owf_buf_puts_xml(&part,doc->images[i].mime?doc->images[i].mime:"application/octet-stream");owf_buf_puts(&part,"\"/>");} }
     owf_buf_puts(&part, "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
                         "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>"
                         "</Types>\n");
@@ -269,6 +295,22 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header1.xml\"/>");
     if (footer)
         owf_buf_puts(&part, "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" Target=\"footer1.xml\"/>");
+    {
+        int i,j;
+        for(i=0;i<doc->body.nparas;++i)for(j=0;j<doc->body.paras[i].nruns;++j){
+            const owf_run *run=&doc->body.paras[i].runs[j];
+            int id,p,q,seen=0;
+            if(run->kind!=OWF_RUN_TEXT||!run->href)continue;
+            for(p=0;p<i&&!seen;++p)for(q=0;q<doc->body.paras[p].nruns;++q){const owf_run*x=&doc->body.paras[p].runs[q];if(x->kind==OWF_RUN_TEXT&&x->href&&!strcmp(x->href,run->href)){seen=1;break;}}
+            if(!seen)for(q=0;q<j;++q){const owf_run*x=&doc->body.paras[i].runs[q];if(x->kind==OWF_RUN_TEXT&&x->href&&!strcmp(x->href,run->href)){seen=1;break;}}
+            if(seen)continue;
+            id=body_link_id(doc,run->href);
+            owf_buf_printf(&part,"<Relationship Id=\"rId%d\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"",id);
+            owf_buf_puts_xml(&part,run->href);
+            owf_buf_puts(&part,"\" TargetMode=\"External\"/>");
+        }
+    }
+    { int i; for(i=0;i<doc->nimages;++i)owf_buf_printf(&part,"<Relationship Id=\"rId%d\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/image%d.%s\"/>",100+i,i+1,docx_image_ext(&doc->images[i])); }
     owf_buf_puts(&part, "</Relationships>\n");
     if (result == OWF_OK)
         result = add_part(zip, &part, "word/_rels/document.xml.rels");
@@ -313,6 +355,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
                         "<Application>OpenWrite libowf " OWF_VERSION "</Application></Properties>\n");
     if (result == OWF_OK)
         result = add_part(zip, &part, "docProps/app.xml");
+    if(result==OWF_OK){int i;char name[96];for(i=0;i<doc->nimages&&result==OWF_OK;++i){snprintf(name,sizeof name,"word/media/image%d.%s",i+1,docx_image_ext(&doc->images[i]));result=owf_zip_add(zip,name,doc->images[i].data,doc->images[i].length,1);}}
 
     owf_buf_free(&part);
     if (owf_zip_finish(zip) != OWF_OK && result == OWF_OK)

@@ -472,6 +472,56 @@ static int test_modern_roundtrip(void)
 }
 
 
+static int check_rich_roundtrip(const char *path)
+{
+    static const unsigned char fake_png[]={0x89,'P','N','G','\r','\n',0x1a,'\n',1,2,3,4};
+    owf_doc *doc=owf_doc_new(),*back=NULL;owf_parafmt pf;owf_charfmt cf;owf_para *p;const owf_format *used=NULL;int i,img,links=0,cells=0,images=0,rc=0;
+    if(!doc)return 1;
+    owf_parafmt_init(&pf);owf_charfmt_init(&cf);
+    p=owf_story_add(&doc->body,&pf);if(!p||owf_para_add_link_text(p,&cf,"OpenWrite",9,"https://dalsin.example/openwrite")!=OWF_OK){rc=2;goto out;}
+    for(i=0;i<4;++i){p=owf_story_add(&doc->body,&pf);if(!p||owf_para_add_text(p,&cf,"cell",4)!=OWF_OK){rc=3;goto out;}p->table_id=0;p->table_row=i/2;p->table_col=i%2;p->table_cols=2;}
+    img=owf_doc_add_image(doc,"tiny.png","image/png",fake_png,sizeof fake_png,1440,960,"tiny image");if(img<0){rc=4;goto out;}p=owf_story_add(&doc->body,&pf);if(!p||owf_para_add_image(p,&cf,img)!=OWF_OK){rc=5;goto out;}
+    if(owf_export_file(doc,path,NULL,NULL)!=OWF_OK){rc=6;goto out;}if(owf_import_file(path,NULL,&back,NULL,&used)!=OWF_OK||!back){rc=7;goto out;}
+    for(i=0;i<back->body.nparas;++i){int j;const owf_para *q=&back->body.paras[i];if(q->table_id>=0)++cells;for(j=0;j<q->nruns;++j){if(q->runs[j].href&&!strcmp(q->runs[j].href,"https://dalsin.example/openwrite"))++links;if(q->runs[j].kind==OWF_RUN_IMAGE)++images;}}
+    if(!links){rc=8;goto out;}if(cells<4){rc=9;goto out;}if(back->nimages<1||!images){rc=10;goto out;}if(back->images[0].length!=sizeof fake_png){rc=11;goto out;}
+out:if(back)owf_doc_free(back);owf_doc_free(doc);if(!rc)remove(path);return rc;
+}
+
+static int test_table_editing(void)
+{
+    owf_doc *doc=doc_with("before after");ow_editor *ed;ow_selection sel;int i,cells=0;
+    if(!doc)return 1651;
+    ed=ow_editor_new(doc);if(!ed)return 1652;
+    memset(&sel,0,sizeof sel);sel.anchor.paragraph=sel.focus.paragraph=0;sel.anchor.run=sel.focus.run=0;sel.anchor.byte_offset=sel.focus.byte_offset=6;ow_editor_set_selection(ed,&sel);
+    if(ow_editor_insert_table(ed,2,2)!=OWF_OK)return 1653;
+    for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
+    if(cells!=4)return 1654;
+    if(!ow_editor_in_table(ed))return 1655;
+    if(ow_editor_insert_utf8(ed,"A",1)!=OWF_OK)return 1656;
+    if(!ow_editor_table_move(ed,1))return 1657;
+    if(ow_editor_table_insert_row(ed)!=OWF_OK)return 1658;
+    cells=0;for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
+    if(cells!=6)return 1659;
+    if(ow_editor_table_insert_column(ed)!=OWF_OK)return 1660;
+    cells=0;for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
+    if(cells!=9)return 1661;
+    if(ow_editor_table_delete_column(ed)!=OWF_OK)return 1662;
+    cells=0;for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
+    if(cells!=6)return 1663;
+    if(ow_editor_table_delete_row(ed)!=OWF_OK)return 1664;
+    cells=0;for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
+    if(cells!=4)return 1665;
+    if(ow_editor_undo(ed)!=1)return 1666;
+    cells=0;for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
+    if(cells!=6)return 1667;
+    ow_editor_free(ed);owf_doc_free(doc);return 0;
+}
+
+static int test_rich_roundtrip(void)
+{
+    int rc=check_rich_roundtrip("/tmp/openwrite-rich.docx");if(rc)return 1600+rc;rc=check_rich_roundtrip("/tmp/openwrite-rich.odt");if(rc)return 1620+rc;return 0;
+}
+
 static int test_page_setup_and_break(void)
 {
     owf_doc *doc = doc_with("before after");
@@ -505,6 +555,26 @@ static int test_page_setup_and_break(void)
     ow_editor_free(ed); owf_doc_free(doc); return 0;
 }
 
+
+static int test_headers_fields(void)
+{
+    owf_doc *doc = doc_with("Body");
+    ow_editor *ed;
+    char *text;
+    ow_selection sel;
+    if(!doc)return 1451;
+    ed=ow_editor_new(doc);if(!ed)return 1452;
+    if(ow_editor_set_story_text(ed,OW_STORY_HEADER,"OpenWrite  {PAGE}/{PAGES}")!=OWF_OK)return 1453;
+    if(doc->header.nparas!=1||doc->header.paras[0].nruns<3)return 1454;
+    text=ow_editor_story_text(ed,OW_STORY_HEADER);if(!text)return 1455;
+    if(strcmp(text,"OpenWrite  {PAGE}/{PAGES}")){free(text);return 1456;}free(text);
+    memset(&sel,0,sizeof sel);sel.anchor.paragraph=sel.focus.paragraph=0;sel.anchor.run=sel.focus.run=0;sel.anchor.byte_offset=sel.focus.byte_offset=4;ow_editor_set_selection(ed,&sel);
+    if(ow_editor_insert_field(ed,OWF_FIELD_DATE)!=OWF_OK)return 1457;
+    if(doc->body.paras[0].nruns<3||doc->body.paras[0].runs[1].kind!=OWF_RUN_FIELD||doc->body.paras[0].runs[1].field!=OWF_FIELD_DATE)return 1458;
+    if(ow_editor_undo(ed)!=1)return 1459;
+    if(doc->body.paras[0].nruns!=1||strcmp(doc->body.paras[0].runs[0].text,"Body"))return 1460;
+    ow_editor_free(ed);owf_doc_free(doc);return 0;
+}
 
 static int test_pdf_export(void)
 {
@@ -551,7 +621,10 @@ int main(void)
     if ((rc = test_find())) goto fail;
     if ((rc = test_automatic_pagination())) goto fail;
     if ((rc = test_modern_roundtrip())) goto fail;
+    if ((rc = test_rich_roundtrip())) goto fail;
+    if ((rc = test_table_editing())) goto fail;
     if ((rc = test_page_setup_and_break())) goto fail;
+    if ((rc = test_headers_fields())) goto fail;
     if ((rc = test_pdf_export())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;

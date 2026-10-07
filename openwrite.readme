@@ -1,32 +1,38 @@
-Short:        Word processor for DOCX, ODT, Amiga docs
-Uploader:     (We fill this in at upload time)
+Short:        Native word processor for DOCX, ODT and Amiga documents
+Uploader:     (fill in at upload time)
 Author:       Dalsin Limited
 Type:         text/edit
-Version:      0.1
+Version:      1.0
 Architecture: m68k-amigaos >= 3.2.0
 Distribution: Aminet
 
-OpenWrite is a word processor for AmigaOS 3.2.
+OpenWrite 1.0 is a native word processor for AmigaOS 3.2.
 
-It opens and saves the documents people exchange today, DOCX and ODT, with
-their text, styles, lists, tables and pictures, and saves PDF. It opens the
-documents written with the Amiga's own word processors (ProWrite, Final
-Writer, Wordworth, Final Copy, Excellence!, Kindwords, Textcraft and more),
-so old letters and stories come back as editable text.
+It opens and saves DOCX and ODT documents with text and common formatting,
+simple tables, inline pictures, headers, footers and page setup. It exports
+searchable PDF and prints through standard printer.device, so configured
+OpenAmigaPrint/OpenPrint output works as a normal printer backend.
 
-Its editor is WebCore, the engine inside WebKit, so text is laid out and
-drawn with modern fonts. GadTools window, Amiga keys, the clipboard, an
-ARexx port and OS 3.2-style icons.
+The editor includes selection, undo/redo, character and paragraph formatting,
+lists, tables, embedded images, clipboard cut/copy/paste, find/replace,
+automatic pagination, page setup, multi-page navigation, spelling, recovery
+autosave and an ARexx port.
 
-C:OWConvert converts documents from a Shell or a script, on any Amiga.
+OpenWrite also opens ProWrite, Final Writer/Final Copy-family SWRT documents,
+Wordworth, IFF FTXT, ANSI text and plain text. Unsupported or approximated
+features are named in the import report.
 
-Needs: AmigaOS 3.2, a 68020 or better with an FPU (68040 or 68060
-recommended) and 128 MB of Fast RAM (256 MB recommended). C:OWConvert runs
-on any Amiga.
+C:OWConvert converts supported document formats from Shell scripts and runs
+on any 68000.
 
-Status: designed, not built; this readme is ready for the first release.
+OpenWrite needs AmigaOS 3.2 and a 68020 or better. No FPU is required.
+Small documents are intended to remain usable with about 8 MB Fast RAM;
+16-32 MB is the comfortable target for ordinary work.
 
-Licence: MIT, Copyright (c) 2026 Dalsin Limited. If you build on it, we ask
-that you credit Dalsin Limited and AmigaChrome.
+The bundled English spelling dictionary is derived from SCOWL/Aspell data;
+its licence notice is included in licenses/.
+
+Licence: MIT, Copyright (c) 2026 Dalsin Limited. Third-party material retains
+its own licence.
 
 Source: https://github.com/DalsinAI/openamigawrite

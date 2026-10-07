@@ -60,8 +60,10 @@ static void free_story(owf_story *story)
 {
     int i, j;
     for (i = 0; i < story->nparas; i++) {
-        for (j = 0; j < story->paras[i].nruns; j++)
+        for (j = 0; j < story->paras[i].nruns; j++) {
             free(story->paras[i].runs[j].text);
+            free(story->paras[i].runs[j].href);
+        }
         free(story->paras[i].runs);
     }
     free(story->paras);
@@ -80,6 +82,8 @@ void owf_doc_free(owf_doc *doc)
     for (i = 0; i < doc->nfonts; i++)
         free(doc->fonts[i].name);
     free(doc->fonts);
+    for (i = 0; i < doc->nimages; ++i) { free(doc->images[i].name); free(doc->images[i].mime); free(doc->images[i].alt); free(doc->images[i].data); }
+    free(doc->images);
     free(doc->title);
     free(doc);
 }
@@ -98,6 +102,7 @@ owf_para *owf_story_add(owf_story *story, const owf_parafmt *fmt)
     }
     para = &story->paras[story->nparas++];
     memset(para, 0, sizeof *para);
+    para->table_id = -1;
     if (fmt)
         para->fmt = *fmt;
     else
@@ -136,7 +141,7 @@ int owf_para_add_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, 
     /* Text in the same formatting as the run before joins it. */
     if (para->nruns) {
         run = &para->runs[para->nruns - 1];
-        if (run->kind == OWF_RUN_TEXT && same_charfmt(&run->fmt, fmt)) {
+        if (run->kind == OWF_RUN_TEXT && !run->href && same_charfmt(&run->fmt, fmt)) {
             size_t old = strlen(run->text);
             char *joined = realloc(run->text, old + len + 1);
             if (!joined)
@@ -160,6 +165,23 @@ int owf_para_add_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, 
     return 0;
 }
 
+int owf_para_add_link_text(owf_para *para, const owf_charfmt *fmt,
+                           const char *utf8, size_t len, const char *href)
+{
+    owf_run *run;
+    if (!para || !fmt || !utf8 || !len || !href || !*href) return -1;
+    run = add_run(para);
+    if (!run) return -1;
+    run->text = copy_text(utf8, len);
+    run->href = copy_text(href, strlen(href));
+    if (!run->text || !run->href) {
+        free(run->text); free(run->href); memset(run, 0, sizeof *run); para->nruns--; return -1;
+    }
+    run->kind = OWF_RUN_TEXT;
+    run->fmt = *fmt;
+    return 0;
+}
+
 int owf_para_add_special(owf_para *para, const owf_charfmt *fmt, owf_run_kind kind, owf_field field)
 {
     owf_run *run = add_run(para);
@@ -169,6 +191,23 @@ int owf_para_add_special(owf_para *para, const owf_charfmt *fmt, owf_run_kind ki
     run->fmt = *fmt;
     run->field = field;
     return 0;
+}
+
+int owf_para_add_image(owf_para *para, const owf_charfmt *fmt, int image_index)
+{
+    owf_run *run=add_run(para);if(!run)return -1;run->kind=OWF_RUN_IMAGE;run->fmt=*fmt;run->image=image_index;return 0;
+}
+
+int owf_doc_add_image(owf_doc *doc, const char *name, const char *mime, const void *data, size_t length, int width, int height, const char *alt)
+{
+    owf_image *im;int want;
+    if(!doc||!data||!length)return -1;
+    if(doc->nimages==doc->capimages){want=doc->capimages?doc->capimages*2:8;im=(owf_image*)realloc(doc->images,(size_t)want*sizeof(*im));if(!im)return -1;doc->images=im;doc->capimages=want;}
+    im=&doc->images[doc->nimages];memset(im,0,sizeof(*im));
+    im->data=(unsigned char*)malloc(length);if(!im->data)return -1;memcpy(im->data,data,length);im->length=length;
+    if(name){im->name=copy_text(name,strlen(name));if(!im->name)goto fail;}if(mime){im->mime=copy_text(mime,strlen(mime));if(!im->mime)goto fail;}if(alt){im->alt=copy_text(alt,strlen(alt));if(!im->alt)goto fail;}
+    im->width=width>0?width:4320;im->height=height>0?height:2880;return doc->nimages++;
+fail:free(im->name);free(im->mime);free(im->alt);free(im->data);memset(im,0,sizeof(*im));return -1;
 }
 
 int owf_doc_font(owf_doc *doc, const char *name, owf_font_kind kind)
@@ -377,11 +416,24 @@ void owf_builder_text(owf_builder *b, const char *utf8, size_t length)
     owf_buf_put(&b->text, utf8, length);
 }
 
+void owf_builder_link_text(owf_builder *b, const char *utf8, size_t length, const char *href)
+{
+    owf_builder_flush(b);
+    if (ensure_para(b) && owf_para_add_link_text(b->para, &b->charfmt, utf8, length, href) < 0)
+        b->failed = 1;
+}
+
 void owf_builder_special(owf_builder *b, owf_run_kind kind, owf_field field)
 {
     owf_builder_flush(b);
     if (ensure_para(b) && owf_para_add_special(b->para, &b->charfmt, kind, field) < 0)
         b->failed = 1;
+}
+
+void owf_builder_image(owf_builder *b, int image_index)
+{
+    owf_builder_flush(b);
+    if (ensure_para(b) && owf_para_add_image(b->para, &b->charfmt, image_index) < 0) b->failed = 1;
 }
 
 void owf_builder_end_para(owf_builder *b)
