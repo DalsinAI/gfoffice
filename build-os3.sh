@@ -14,7 +14,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 STOVE=${STOVE:-$HOME/AmigaChrome/stoves/os32}
 CC="$STOVE/prefix/bin/m68k-amigaos-gcc"
 OUT=${1:-$HERE/build/os3}
-CFLAGS_COMMON="-noixemul -std=gnu99 -Wall -Werror -fno-common"
+CFLAGS_COMMON="-noixemul -std=gnu99 -Wall -Werror -fno-delete-null-pointer-checks -fno-common"
 mkdir -p "$OUT"
 
 ZFLAGS=""
@@ -31,7 +31,7 @@ if [ -n "${ZLIB_SRC:-}" ]; then
         OPT=-Os
         [ "$f" = trees.c ] && OPT=-O1
         if [ -f "$ZLIB_SRC/$f" ]; then
-            "$CC" -noixemul -m68000 $OPT -fno-common -DCHROMIUM_ZLIB_NO_CHROMECONF \
+            "$CC" -noixemul -m68000 $OPT -fno-delete-null-pointer-checks -fno-common -DCHROMIUM_ZLIB_NO_CHROMECONF \
                 -I"$OUT/zlib" -I"$ZLIB_SRC" -c "$ZLIB_SRC/$f" -o "$OUT/zlib/${f%.c}.o"
             ZOBJS="$ZOBJS $OUT/zlib/${f%.c}.o"
         fi
