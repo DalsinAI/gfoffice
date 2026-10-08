@@ -4,7 +4,7 @@
 
 **Please update from 1.0.1.** DOCX and ODT files saved by OpenWrite 1.0.1
 on the Amiga are corrupt and cannot be opened again. 1.0.2 saves them
-correctly. Files saved by 1.0 and 1.0.1 on the PC (OWConvert there) are not
+correctly. Files saved by 1.0 and 1.0.1 on the x86 or ARM64 cores (OWConvert there) are not
 affected, and nothing in the file formats changed.
 
 The other fixes come from loading a real design document (Word for Mac,
@@ -46,7 +46,7 @@ OpenWrite kept, drew and exported with the original.
 - m68k AmigaOS cross-build with Chromium's zlib 1.3.1;
 - on AmigaOS 3.2.3 (an AmigaChrome instance with OpenRTG): the design
   document opened and searched (five searches, each shown on its page);
-  its DOCX, ODT, PDF and HTML saved on the Amiga and checked on the PC;
+  its DOCX, ODT, PDF and HTML saved on the Amiga and checked on x86 cores;
   the saved DOCX reopened on the Amiga.
 
 ## Known limits
