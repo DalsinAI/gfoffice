@@ -135,8 +135,6 @@ typedef struct {
     unsigned char *mask; size_t mlen;/* deflated alpha, or NULL */
 } pdf_image;
 
-static unsigned long be32(const unsigned char *p) { return ((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16) | ((unsigned long)p[2] << 8) | p[3]; }
-
 static int jpeg_size(const unsigned char *d, size_t n, int *w, int *h, int *comps)
 {
     size_t i = 2;
@@ -156,6 +154,8 @@ static int jpeg_size(const unsigned char *d, size_t n, int *w, int *h, int *comp
 }
 
 #ifdef OWF_HAVE_ZLIB
+/* a PNG chunk's big-endian length and the IHDR sizes (only PNG needs zlib) */
+static unsigned long be32(const unsigned char *p) { return ((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16) | ((unsigned long)p[2] << 8) | p[3]; }
 static unsigned char *pdf_deflate(const unsigned char *in, size_t n, size_t *out_len)
 {
     uLongf cap = compressBound((uLong)n);

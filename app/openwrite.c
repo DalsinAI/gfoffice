@@ -538,7 +538,7 @@ static owf_doc *blank_document(void)
 
 static void update_window_title(void)
 {
-    char title[256];
+    char title[sizeof current_path + 16];       /* "*", the name and " - OpenWrite" */
     const char *name = current_path[0] ? leaf(current_path) : "Untitled";
     snprintf(title, sizeof title, "%s%s - OpenWrite",
              editor && ow_editor_is_dirty(editor) ? "*" : "", name);
@@ -1546,7 +1546,7 @@ static void draw_page(void)
 static void draw_status(void)
 {
     struct RastPort *rp = win->RPort;
-    char left[260], right[64];
+    char left[sizeof status + sizeof current_format + 64], right[64];   /* the page, words, format and the whole status */
     int pages = editor ? ow_editor_page_count(editor) : 1;
     snprintf(left, sizeof left, " Page %d of %d  |  %d words  |  %s  |  %s",
              page_index + 1, pages, word_count(), current_format, status);
@@ -1846,7 +1846,9 @@ static int replace_requester(char *find, size_t find_size,
         if (!find[0]) mode = 0;
     }
 out:
-    if (rw) CloseWindow(rw); if (list) FreeGadgets(list); return mode;
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    return mode;
 }
 
 static int spell_requester(const char *word, char suggestions[][48], int nsuggest,
@@ -1856,7 +1858,7 @@ static int spell_requester(const char *word, char suggestions[][48], int nsugges
     struct NewGadget ng; struct Window *rw=NULL; STRPTR v=NULL;
     int done=0, mode=0, ww=500, wh=118; char label[180];
     if(!scr||!vi||!word)return 0;
-    if(nsuggest>0) snprintf(label,sizeof label,"%s  (suggestion: %s)",word,suggestions[0]);
+    if(nsuggest>0) snprintf(label,sizeof label,"%s  (suggestion: %.*s)",word,(int)sizeof suggestions[0]-1,suggestions[0]);
     else snprintf(label,sizeof label,"Not in dictionary: %s",word);
     memset(&ng,0,sizeof ng);ng.ng_TextAttr=&font_attr;ng.ng_VisualInfo=vi;last=CreateContext(&list);
     ng.ng_Flags=PLACETEXT_ABOVE;ng.ng_LeftEdge=18;ng.ng_TopEdge=28;ng.ng_Width=464;ng.ng_Height=18;
@@ -1871,11 +1873,14 @@ static int spell_requester(const char *word, char suggestions[][48], int nsugges
     rw=OpenWindowTags(NULL,WA_Title,(ULONG)"Spell Check",WA_PubScreen,(ULONG)scr,WA_InnerWidth,ww,WA_InnerHeight,wh,
         WA_Left,(scr->Width-ww)/2,WA_Top,(scr->Height-wh)/2,WA_Gadgets,(ULONG)list,WA_DragBar,TRUE,WA_DepthGadget,TRUE,
         WA_CloseGadget,TRUE,WA_Activate,TRUE,WA_SimpleRefresh,TRUE,WA_IDCMP,IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|STRINGIDCMP|BUTTONIDCMP,TAG_DONE);
-    if(!rw)goto out;GT_RefreshWindow(rw,NULL);ActivateGadget(gtext,rw,NULL);
+    if(!rw)goto out;
+    GT_RefreshWindow(rw,NULL);ActivateGadget(gtext,rw,NULL);
     while(!done){struct IntuiMessage*m;Wait(1UL<<rw->UserPort->mp_SigBit);while((m=GT_GetIMsg(rw->UserPort))){ULONG cls=m->Class;UWORD id=m->IAddress?((struct Gadget*)m->IAddress)->GadgetID:0;GT_ReplyIMsg(m);if(cls==IDCMP_CLOSEWINDOW){done=1;break;}if(cls==IDCMP_REFRESHWINDOW){GT_BeginRefresh(rw);GT_EndRefresh(rw,TRUE);}else if(cls==IDCMP_GADGETUP&&id>=2&&id<=5){mode=(int)id-1;done=1;}}}
     if(mode==1){GT_GetGadgetAttrs(gtext,rw,NULL,GTST_String,(ULONG)&v,TAG_DONE);snprintf(replacement,replacement_size,"%s",v?(char*)v:"");if(!replacement[0])mode=2;}
 out:
-    if(rw)CloseWindow(rw);if(list)FreeGadgets(list);return mode;
+    if(rw)CloseWindow(rw);
+    if(list)FreeGadgets(list);
+    return mode;
 }
 
 static int ensure_spell(void)
@@ -1958,7 +1963,8 @@ static int paragraph_requester(owf_parafmt *fmt)
         WA_Gadgets,(ULONG)list,WA_DragBar,TRUE,WA_DepthGadget,TRUE,WA_CloseGadget,TRUE,
         WA_Activate,TRUE,WA_SimpleRefresh,TRUE,
         WA_IDCMP,IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|BUTTONIDCMP|INTEGERIDCMP|CYCLEIDCMP,TAG_DONE);
-    if(!rw)goto out; GT_RefreshWindow(rw,NULL);
+    if(!rw)goto out;
+    GT_RefreshWindow(rw,NULL);
     while(!done){struct IntuiMessage*m;Wait(1UL<<rw->UserPort->mp_SigBit);while((m=GT_GetIMsg(rw->UserPort))){ULONG cls=m->Class;UWORD id=m->IAddress?((struct Gadget*)m->IAddress)->GadgetID:0;GT_ReplyIMsg(m);if(cls==IDCMP_CLOSEWINDOW){done=1;break;}if(cls==IDCMP_REFRESHWINDOW){GT_BeginRefresh(rw);GT_EndRefresh(rw,TRUE);}else if(cls==IDCMP_GADGETUP){if(id==9){ok=1;done=1;}else if(id==10)done=1;}}}
     if(ok){
         GT_GetGadgetAttrs(gstyle,rw,NULL,GTCY_Active,(ULONG)&v,TAG_DONE); fmt->heading=(int)v;
@@ -2007,7 +2013,8 @@ static int page_setup_requester(owf_page *page)
     rw=OpenWindowTags(NULL,WA_Title,(ULONG)"Page Setup",WA_PubScreen,(ULONG)scr,WA_InnerWidth,ww,WA_InnerHeight,wh,
         WA_Left,(scr->Width-ww)/2,WA_Top,(scr->Height-wh)/2,WA_Gadgets,(ULONG)list,WA_DragBar,TRUE,WA_DepthGadget,TRUE,WA_CloseGadget,TRUE,WA_Activate,TRUE,WA_SimpleRefresh,TRUE,
         WA_IDCMP,IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|BUTTONIDCMP|INTEGERIDCMP|CYCLEIDCMP,TAG_DONE);
-    if(!rw)goto out;GT_RefreshWindow(rw,NULL);
+    if(!rw)goto out;
+    GT_RefreshWindow(rw,NULL);
     while(!done){struct IntuiMessage*m;Wait(1UL<<rw->UserPort->mp_SigBit);while((m=GT_GetIMsg(rw->UserPort))){ULONG cls=m->Class;UWORD id=m->IAddress?((struct Gadget*)m->IAddress)->GadgetID:0;GT_ReplyIMsg(m);if(cls==IDCMP_CLOSEWINDOW){done=1;break;}if(cls==IDCMP_REFRESHWINDOW){GT_BeginRefresh(rw);GT_EndRefresh(rw,TRUE);}else if(cls==IDCMP_GADGETUP){if(id==8){ok=1;done=1;}else if(id==9)done=1;}}}
     if(ok){int pw=11906,ph=16838;
         GT_GetGadgetAttrs(gpaper,rw,NULL,GTCY_Active,(ULONG)&v,TAG_DONE);paper=(int)v;if(paper==1){pw=12240;ph=15840;}else if(paper==2){pw=12240;ph=20160;}
@@ -2086,7 +2093,7 @@ static void do_export_pdf(void)
     if (current_path[0]) {
         const char *src = leaf(current_path);
         const char *dot;
-        snprintf(initial, sizeof initial, "%s", src);
+        strlcpy(initial, src, sizeof initial);  /* a file name, cut to fit */
         dot = strrchr(initial, '.');
         if (dot) initial[(size_t)(dot - initial)] = 0;
         if (strlen(initial) + 4 < sizeof initial) strcat(initial, ".pdf");
@@ -2383,7 +2390,7 @@ static void do_image(void)
     f=Open((STRPTR)path,MODE_OLDFILE);if(!f){tell("Insert Image","The image file could not be opened.");return;}Seek(f,0,OFFSET_END);size=Seek(f,0,OFFSET_BEGINNING);if(size<=0||size>32*1024*1024){Close(f);tell("Insert Image","The image is empty or too large to embed.");return;}data=(unsigned char*)malloc((size_t)size);if(!data){Close(f);tell("Insert Image","There is not enough memory to embed the image.");return;}got=Read(f,data,size);Close(f);if(got!=size){free(data);tell("Insert Image","The image could not be read completely.");return;}
     if(DataTypesBase){o=NewDTObject((APTR)path,DTA_GroupID,GID_PICTURE,PDTA_DestMode,PMODE_V43,PDTA_Remap,FALSE,TAG_DONE);if(o){GetDTAttrs(o,PDTA_BitMapHeader,(ULONG)&bmh,TAG_DONE);if(bmh&&bmh->bmh_Width&&bmh->bmh_Height){width=(int)bmh->bmh_Width*15;height=(int)bmh->bmh_Height*15;}DisposeDTObject(o);}}
     maxw=doc->page.width-doc->page.margin_left-doc->page.margin_right;if(width>maxw&&width>0){height=(int)((long)height*maxw/width);width=maxw;}
-    snprintf(alt,sizeof alt,"%s",leaf(path));idx=owf_doc_add_image(doc,leaf(path),image_mime_name(path),data,(size_t)size,width,height,alt);free(data);if(idx<0){tell("Insert Image","There is not enough memory to add the image.");return;}
+    strlcpy(alt,leaf(path),sizeof alt);idx=owf_doc_add_image(doc,leaf(path),image_mime_name(path),data,(size_t)size,width,height,alt);free(data);if(idx<0){tell("Insert Image","There is not enough memory to add the image.");return;}
     image_cache_clear();if(editor_result(ow_editor_insert_image(editor,idx),"Image inserted through OpenDatatypes."))relayout();
 }
 
