@@ -67,7 +67,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *Lay
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 1.0.5 (10.10.2026)"
+#define VERSION_TEXT "OpenWrite 1.0.6 (10.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
@@ -1491,6 +1491,7 @@ static void vprop_update(int ph)
 }
 
 static void set_page_view(int page);
+static void scroll_page(int dx, int dy);
 
 /* The scroller moved to top: that page, scrolled to that place in it. */
 static void vprop_moved(LONG top)
