@@ -10,6 +10,9 @@
  */
 #include <exec/types.h>
 #include <intuition/intuition.h>
+#include <intuition/gadgetclass.h>
+#include <intuition/icclass.h>
+#include <utility/tagitem.h>
 #include <libraries/gadtools.h>
 #include <libraries/asl.h>
 #include <workbench/startup.h>
@@ -64,7 +67,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *Lay
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 1.0.4 (10.10.2026)"
+#define VERSION_TEXT "OpenWrite 1.0.5 (10.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
@@ -73,6 +76,8 @@ enum {
     C_IMAGE, C_TABLE, C_PDF
 };
 enum { GID_TOOLBAR = 100 };
+#define GID_VPROP 990          /* 1.0.5: the page scroller, at the canvas's right */
+#define VPROP_W 14
 
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
@@ -222,6 +227,8 @@ static APTR vi;
 static struct Window *win;
 static struct Menu *menu;
 static struct Gadget *chain;
+static Object *vprop;                                /* the scroller beside the pages (1.0.5) */
+static LONG vprop_shown[3] = { -1, -1, -1 };         /* what it was last given: top, total, visible */
 static struct TextFont *font;
 static struct TextAttr font_attr;
 static int fh;
@@ -1471,6 +1478,52 @@ static void render_rule(void *ud, int x1, int y1, int x2, int y2, unsigned long 
     if(py2>render_rule_bottom)render_rule_bottom=py2;
 }
 
+/* The scroller's place: the pages one under another, the view at this page's scroll (1.0.5). */
+static void vprop_update(int ph)
+{
+    LONG pages = editor ? ow_editor_page_count(editor) : 1, v[3];
+    if (!vprop || !win) return;
+    if (pages < 1) pages = 1;
+    v[0] = page_index * ph + scroll_y; v[1] = pages * ph; v[2] = page_view_box.h;
+    if (v[0] == vprop_shown[0] && v[1] == vprop_shown[1] && v[2] == vprop_shown[2]) return;
+    vprop_shown[0] = v[0]; vprop_shown[1] = v[1]; vprop_shown[2] = v[2];
+    SetGadgetAttrs((struct Gadget *)vprop, win, NULL, PGA_Top, v[0], PGA_Total, v[1], PGA_Visible, v[2], TAG_DONE);
+}
+
+static void set_page_view(int page);
+
+/* The scroller moved to top: that page, scrolled to that place in it. */
+static void vprop_moved(LONG top)
+{
+    int pages = editor ? ow_editor_page_count(editor) : 1, ph = page_full_h > 0 ? page_full_h : 1, page;
+    LONG within;
+    if (!editor || top < 0 || top == vprop_shown[0]) return;
+    page = (int)(top / ph);
+    if (page >= pages) page = pages - 1;
+    within = top - (LONG)page * ph;
+    vprop_shown[0] = top;
+    if (page != page_index) set_page_view(page);
+    scroll_y = within > page_max_scroll_y ? page_max_scroll_y : (int)within;
+    request_document_redraw();
+}
+
+/* The wheel: down the page, then on to the next one; up likewise (1.0.5). */
+static void wheel_scroll(int dir)
+{
+    int pages = editor ? ow_editor_page_count(editor) : 1;
+    if (!editor) return;
+    if (dir > 0 && scroll_y >= page_max_scroll_y && page_index + 1 < pages) {
+        set_page_view(page_index + 1);
+        scroll_y = 0;
+        request_document_redraw();
+    } else if (dir < 0 && scroll_y <= 0 && page_index > 0) {
+        set_page_view(page_index - 1);
+        scroll_y = 1 << 20;                   /* its foot: the layout keeps it within the page */
+        request_document_redraw();
+    } else
+        scroll_page(0, dir * 3 * (fh + 4));
+}
+
 static void draw_page(void)
 {
     struct RastPort *rp = win->RPort;
@@ -1508,6 +1561,7 @@ static void draw_page(void)
     if (scroll_x > page_max_scroll_x) scroll_x = page_max_scroll_x;
     if (scroll_y > page_max_scroll_y) scroll_y = page_max_scroll_y;
 
+    vprop_update(ph);
     page_box.w = pw;
     page_box.h = ph;
     page_box.x = vx + (pw < vw ? (vw - pw) / 2 : 0) - scroll_x;
@@ -1620,6 +1674,12 @@ static void free_gadgets(void)
         RemoveGList(win, chain, -1);
         chain = NULL;
     }
+    if (vprop) {
+        RemoveGadget(win, (struct Gadget *)vprop);
+        DisposeObject(vprop);
+        vprop = NULL;
+        vprop_shown[0] = vprop_shown[1] = vprop_shown[2] = -1;
+    }
 }
 
 static void layout(void)
@@ -1653,6 +1713,15 @@ static void layout(void)
 
     if ((chain = ogt_toolbar_gadgets(&tb, GID_TOOLBAR)))
         AddGList(win, chain, ~0, -1, NULL);
+    /* 1.0.5: a scroller at the canvas's right, below the ruler: where the view is in the whole document */
+    canvas_box.w -= VPROP_W + 2;
+    if (canvas_box.h > ruler_box.h + 40 &&
+        (vprop = NewObject(NULL, (STRPTR)"propgclass", GA_ID, GID_VPROP,
+                           GA_Left, canvas_box.x + canvas_box.w + 1, GA_Top, ruler_box.y + ruler_box.h + 2,
+                           GA_Width, VPROP_W, GA_Height, canvas_box.y + canvas_box.h - (ruler_box.y + ruler_box.h) - 4,
+                           GA_RelVerify, TRUE, GA_Immediate, TRUE, PGA_Freedom, FREEVERT, PGA_NewLook, TRUE,
+                           PGA_Top, 0, PGA_Total, 1, PGA_Visible, 1, ICA_TARGET, ICTARGET_IDCMP, TAG_DONE)))
+        AddGadget(win, (struct Gadget *)vprop, ~0);
 }
 
 static void relayout(void)
@@ -1775,7 +1844,7 @@ static int open_window(void)
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN |
                   IDCMP_MENUPICK | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW |
                   IDCMP_VANILLAKEY | IDCMP_RAWKEY | IDCMP_MOUSEBUTTONS |
-                  IDCMP_MOUSEMOVE,
+                  IDCMP_MOUSEMOVE | IDCMP_IDCMPUPDATE,
         TAG_DONE);
     if (!win) return 0;
     if (menu) SetMenuStrip(win, menu);
@@ -2797,6 +2866,18 @@ static void events(void)
         APTR ia = im->IAddress;
         int mx = im->MouseX, my = im->MouseY;
         struct Gadget *g = (struct Gadget *)ia;
+        LONG vtop = -1;
+        if (class == IDCMP_IDCMPUPDATE && ia) {      /* the scroller's tags: read before the reply frees them */
+            struct TagItem *t = (struct TagItem *)ia;
+            ULONG id = 0, top = 0;
+            int got = 0;
+            for (; t->ti_Tag != TAG_DONE; t++) {
+                if (t->ti_Tag == TAG_MORE) { t = (struct TagItem *)t->ti_Data; if (!t) break; t--; continue; }
+                if (t->ti_Tag == GA_ID) id = t->ti_Data;
+                else if (t->ti_Tag == PGA_Top) { top = t->ti_Data; got = 1; }
+            }
+            if (id == GID_VPROP && got) vtop = (LONG)top;
+        }
         GT_ReplyIMsg(im);
         switch (class) {
         case IDCMP_CLOSEWINDOW:
@@ -2808,9 +2889,15 @@ static void events(void)
         case IDCMP_REFRESHWINDOW:
             GT_BeginRefresh(win); draw_all(); GT_EndRefresh(win, TRUE);
             break;
+        case IDCMP_IDCMPUPDATE:
+            if (vtop >= 0) vprop_moved(vtop);
+            break;
         case IDCMP_GADGETDOWN:
         case IDCMP_GADGETUP:
-            if (g && g->GadgetID >= GID_TOOLBAR) toolbar_event(class, g);
+            if (g && g->GadgetID == GID_VPROP) {
+                ULONG top = 0;
+                if (vprop && GetAttr(PGA_Top, vprop, &top)) vprop_moved((LONG)top);
+            } else if (g && g->GadgetID >= GID_TOOLBAR) toolbar_event(class, g);
             break;
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN && point_in_box(&navigator_box, mx, my)) {
@@ -2839,6 +2926,10 @@ static void events(void)
             if (mouse_selecting) mouse_set_selection(mx, my, 1);
             break;
         case IDCMP_RAWKEY:
+            if ((code == 0x7a || code == 0x7b) && editor) {        /* the mouse wheel (1.0.5) */
+                wheel_scroll(code == 0x7a ? -1 : 1);
+                break;
+            }
             if (!(code & 0x80) && editor) {
                 int extend = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
                 int alt = (qual & (IEQUALIFIER_LALT | IEQUALIFIER_RALT)) != 0;
