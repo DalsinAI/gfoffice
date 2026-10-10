@@ -245,6 +245,13 @@ and gives it to the filters.
 
 ## 6. The window
 
+**First size:** 800 x 600, centred in the screen's free area (below the title
+bar and beside OpenDock), and never larger than that area, so on a screen
+smaller than 800 x 600 it is the whole free area (the rule for every Open app,
+10 October 2026, as in OpenFiles 0.2.3). A size the user gives the window is
+kept: OpenWindows remembers it. At 800 wide the inspector starts hidden (it
+shows from 900); making the window wider brings it back.
+
 **Menus** (Amiga keys in brackets):
 - **Project:** New (A-N), Open... (A-O), Open Recent, Save (A-S), Save As...,
   Export PDF..., Page Setup..., Print... (A-P), Import Report, About, Quit (A-Q).
@@ -260,7 +267,8 @@ and gives it to the filters.
 - **Help:** OpenWrite Guide (AmigaGuide).
 
 **Toolbar:** New, Open, Save, Print, PDF | Cut, Copy, Paste | Undo, Redo |
-Find. Icons with text by default; icons only or text only from the View menu.
+Find. Icons only by default (every Open app starts with icons, the Team's rule
+of 10 October 2026); icons and text or text only from the View menu.
 
 **Format bar:** style (cycle), font (a list from fontconfig), size, bold,
 italic, underline, text colour, the four alignments, numbered list, bullets,

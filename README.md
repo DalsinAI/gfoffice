@@ -1,6 +1,6 @@
 # OpenWrite
 
-OpenWrite 1.0.2 is a native word processor for AmigaOS 3.2.
+OpenWrite 1.0.3 is a native word processor for AmigaOS 3.2.
 
 ![OpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
 

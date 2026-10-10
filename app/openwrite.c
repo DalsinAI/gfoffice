@@ -14,6 +14,7 @@
 #include <libraries/asl.h>
 #include <workbench/startup.h>
 #include <dos/dos.h>
+#include <dos/var.h>
 #include <graphics/text.h>
 #include <graphics/gfx.h>
 #include <rexx/storage.h>
@@ -62,7 +63,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *Lay
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 1.0.2 (7.10.2026)"
+#define VERSION_TEXT "OpenWrite 1.0.3 (10.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
@@ -131,8 +132,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Fit Page", NULL, 0, 0, (APTR)M_ZOOM_FIT_PAGE },
     { NM_ITEM, "Fit Width", NULL, 0, 0, (APTR)M_ZOOM_FIT_WIDTH },
     { NM_ITEM, "Toolbar", NULL, 0, 0, NULL },
-    { NM_SUB, "Icons and text", NULL, CHECKIT | CHECKED, ~1 & 7, (APTR)M_TB_BOTH },
-    { NM_SUB, "Icons only", NULL, CHECKIT, ~2 & 7, (APTR)M_TB_ICONS },
+    { NM_SUB, "Icons and text", NULL, CHECKIT, ~1 & 7, (APTR)M_TB_BOTH },
+    { NM_SUB, "Icons only", NULL, CHECKIT | CHECKED, ~2 & 7, (APTR)M_TB_ICONS },
     { NM_SUB, "Text only", NULL, CHECKIT, ~4 & 7, (APTR)M_TB_TEXT },
     { NM_ITEM, "Theme", NULL, 0, 0, NULL },
     { NM_SUB, "Open", NULL, 0, 0, (APTR)M_THEME_OPEN },
@@ -238,7 +239,7 @@ static ogt_ctx ctx;
 static ogt_toolbar tb;
 static char theme_name[48] = "Open";
 static int theme_mode = OGT_LIGHT;
-static int tb_style = OGT_TB_ICONS_TEXT;
+static int tb_style = OGT_TB_ICONS;     /* icons only to start (the Team's rule, 10 October 2026) */
 
 static owf_doc *doc;
 static ow_editor *editor;
@@ -1672,9 +1673,77 @@ static void apply_theme(const char *name)
     if (win) relayout();
 }
 
+/* The part of the screen a full-size window may have: below the title bar,
+ * less the strip OpenDock takes along an edge (OpenFiles' free_area(), copied
+ * here). OpenDock's window is the one whose screen title starts "OpenDock";
+ * an ENV:OpenDock/Free of "left top width height" wins when the dock
+ * publishes one. Without a dock it is the screen less its title bar. */
+static void free_area(int *l, int *t, int *w, int *h)
+{
+    char buf[48];
+    struct Window *dw;
+    ULONG lock;
+    LONG got;
+    int top = scr->BarHeight + 1, bottom = scr->Height, left = 0, right = scr->Width, a, b, c, d;
+    got = GetVar((STRPTR)"OpenDock/Free", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY);
+    if (got > 0 && sscanf(buf, "%d %d %d %d", &a, &b, &c, &d) == 4 && c >= 400 && d >= 200 && a >= 0 && b >= 0 &&
+        a + c <= scr->Width && b + d <= scr->Height) {
+        *l = a;
+        *t = b < top ? top : b;
+        *w = c;
+        *h = b + d - *t;
+        return;
+    }
+    lock = LockIBase(0);
+    for (dw = scr->FirstWindow; dw; dw = dw->NextWindow) {
+        if (!dw->ScreenTitle || strncmp((const char *)dw->ScreenTitle, "OpenDock", 8) != 0)
+            continue;
+        if (dw->Width >= dw->Height) {              /* along the top or the bottom */
+            if (dw->TopEdge + dw->Height / 2 > scr->Height / 2) {
+                if (dw->TopEdge < bottom)
+                    bottom = dw->TopEdge;
+            } else if (dw->TopEdge + dw->Height > top)
+                top = dw->TopEdge + dw->Height;
+        } else {                                    /* down the left or the right */
+            if (dw->LeftEdge + dw->Width / 2 > scr->Width / 2) {
+                if (dw->LeftEdge < right)
+                    right = dw->LeftEdge;
+            } else if (dw->LeftEdge + dw->Width > left)
+                left = dw->LeftEdge + dw->Width;
+        }
+    }
+    UnlockIBase(lock);
+    if (right - left < 400 || bottom - top < 200) { /* a dock that big: use the whole screen */
+        left = 0;
+        right = scr->Width;
+        top = scr->BarHeight + 1;
+        bottom = scr->Height;
+    }
+    *l = left;
+    *t = top;
+    *w = right - left;
+    *h = bottom - top;
+}
+
+/* The first size (the user, 10 October 2026, as in OpenFiles 0.2.3): 800 x
+ * 600, centred in the free area, and never bigger than it, so on a screen
+ * smaller than 800 x 600 it is the free area itself. A size the user gives
+ * the window is kept and given back by OpenWindows. */
+#define START_W 800
+#define START_H 600
+static void start_box(int *l, int *t, int *w, int *h)
+{
+    int al, at, aw, ah;
+    free_area(&al, &at, &aw, &ah);
+    *w = aw < START_W ? aw : START_W;
+    *h = ah < START_H ? ah : START_H;
+    *l = al + (aw - *w) / 2;
+    *t = at + (ah - *h) / 2;
+}
+
 static int open_window(void)
 {
-    int w, h;
+    int l, t, w, h;
     if (!(scr = LockPubScreen(NULL))) return 0;
     if (!(vi = GetVisualInfo(scr, TAG_DONE))) return 0;
     load_theme();
@@ -1684,19 +1753,15 @@ static int open_window(void)
     menu = CreateMenus(menus, TAG_DONE);
     if (menu) LayoutMenus(menu, vi, GTMN_NewLookMenus, TRUE, TAG_DONE);
 
-    w = scr->Width >= 1200 ? scr->Width * 9 / 10 : scr->Width - 12;
-    h = scr->Height >= 700 ? (scr->Height - scr->BarHeight) * 9 / 10 : scr->Height - scr->BarHeight - 8;
-    if (w < 520) w = scr->Width;
-    if (h < 330) h = scr->Height - scr->BarHeight;
+    start_box(&l, &t, &w, &h);     /* 800 x 600 in the free area, or the free area when smaller */
 
     win = OpenWindowTags(NULL,
         WA_Title, (ULONG)"OpenWrite — OpenAmigaWriter",
         WA_ScreenTitle, (ULONG)VERSION_TEXT,
         WA_PubScreen, (ULONG)scr,
         WA_Width, w, WA_Height, h,
-        WA_Left, (scr->Width - w) / 2,
-        WA_Top, scr->BarHeight + (scr->Height - scr->BarHeight - h) / 2,
-        WA_MinWidth, 520, WA_MinHeight, 330,
+        WA_Left, l, WA_Top, t,
+        WA_MinWidth, w < 520 ? w : 520, WA_MinHeight, h < 330 ? h : 330,
         WA_MaxWidth, ~0, WA_MaxHeight, ~0,
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
         WA_SizeGadget, TRUE, WA_SizeBBottom, TRUE,
