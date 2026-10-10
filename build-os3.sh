@@ -47,12 +47,22 @@ fi
 
 # OpenWrite: A1200/68020 native UI.
 # shellcheck disable=SC2086
+APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $HERE/app/ow_stack.c"
 "$CC" $CFLAGS_COMMON -m68020 -O2 -Wno-pointer-sign $ZFLAGS \
     -I"$HERE/include" -I"$HERE/libowf/include" -I"$HERE/libowf/src" \
     -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    "$HERE"/libowf/src/*.c "$HERE"/src/core/*.c "$HERE"/app/*.c \
+    "$HERE"/libowf/src/*.c "$HERE"/src/core/*.c "$HERE/app/openwrite.c" $APP_COMMON \
     "$HERE"/third_party/opengadtools/*.c $ZOBJS -lamiga \
     -o "$OUT/OpenWrite"
+
+# OpenWrite 2: the shell on OpenGadTools' kinds (app/openwrite2.c), the same core and filters.
+"$CC" $CFLAGS_COMMON -m68020 -O2 -Wno-pointer-sign $ZFLAGS \
+    -I"$HERE/include" -I"$HERE/libowf/include" -I"$HERE/libowf/src" \
+    -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
+    "$HERE"/libowf/src/*.c "$HERE"/src/core/*.c "$HERE/app/openwrite2.c" $APP_COMMON \
+    "$HERE"/third_party/opengadtools/*.c $ZOBJS -lamiga \
+    -o "$OUT/OpenWrite2"
+echo "$OUT/OpenWrite2 ($(wc -c < "$OUT/OpenWrite2") bytes)"
 
 echo "$OUT/OWConvert ($(wc -c < "$OUT/OWConvert") bytes)"
 echo "$OUT/OpenWrite ($(wc -c < "$OUT/OpenWrite") bytes)"
