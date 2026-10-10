@@ -50,6 +50,7 @@
 
 #include "openwrite_core.h"
 #include "ow_stack.h"
+#include "lastdir.h"
 #include "ow_print.h"
 #include "ow_spell.h"
 #include "ow_autosave.h"
@@ -63,7 +64,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *Lay
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 1.0.3 (10.10.2026)"
+#define VERSION_TEXT "OpenWrite 1.0.4 (10.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
@@ -675,9 +676,12 @@ static void recovery_offer(void)
 static int ask_file(int save, char *out, size_t out_size)
 {
     struct FileRequester *fr;
+    char last[512];
     int ok = 0;
+    lastdir_get("OpenWrite", last, sizeof last);         /* 1.0.4: where the last document was */
     fr = AllocAslRequestTags(ASL_FileRequest,
         ASLFR_TitleText, (ULONG)(save ? "Save OpenWrite document" : "Open document"),
+        ASLFR_InitialDrawer, (ULONG)last,
         ASLFR_Window, (ULONG)win,
         ASLFR_SleepWindow, TRUE,
         ASLFR_DoSaveMode, save ? TRUE : FALSE,
@@ -687,6 +691,7 @@ static int ask_file(int save, char *out, size_t out_size)
     if (!fr) return 0;
     if (AslRequestTags(fr, TAG_DONE) && fr->fr_File[0]) {
         snprintf(out, out_size, "%s", fr->fr_Drawer);
+        lastdir_put("OpenWrite", (const char *)fr->fr_Drawer);
         AddPart((STRPTR)out, fr->fr_File, out_size);
         ok = 1;
     }
@@ -2151,6 +2156,7 @@ static void do_export_pdf(void)
 {
     struct FileRequester *fr;
     char path[512], initial[160] = "Untitled.pdf", msg[256];
+    static char pdf_last[512];
     const char *name;
     owf_report *report;
     int rc;
@@ -2163,14 +2169,17 @@ static void do_export_pdf(void)
         if (dot) initial[(size_t)(dot - initial)] = 0;
         if (strlen(initial) + 4 < sizeof initial) strcat(initial, ".pdf");
     }
+    lastdir_get("OpenWrite-PDF", pdf_last, sizeof pdf_last);
     fr = AllocAslRequestTags(ASL_FileRequest,
         ASLFR_TitleText, (ULONG)"Export OpenWrite PDF",
+        ASLFR_InitialDrawer, (ULONG)pdf_last,
         ASLFR_Window, (ULONG)win, ASLFR_SleepWindow, TRUE,
         ASLFR_DoSaveMode, TRUE, ASLFR_InitialFile, (ULONG)initial,
         ASLFR_PositiveText, (ULONG)"Export", TAG_DONE);
     if (!fr) { tell("Export PDF", "The file requester could not be opened."); return; }
     if (!AslRequestTags(fr, TAG_DONE) || !fr->fr_File[0]) { FreeAslRequest(fr); return; }
     snprintf(path, sizeof path, "%s", fr->fr_Drawer);
+    lastdir_put("OpenWrite-PDF", (const char *)fr->fr_Drawer);
     AddPart((STRPTR)path, fr->fr_File, sizeof path);
     FreeAslRequest(fr);
     name = FilePart((STRPTR)path);
@@ -2441,10 +2450,11 @@ static const char *image_mime_name(const char *path)
 
 static int ask_image_file(char *out,size_t out_size)
 {
-    struct FileRequester *fr;int ok=0;
-    fr=AllocAslRequestTags(ASL_FileRequest,ASLFR_TitleText,(ULONG)"Insert Image",ASLFR_Window,(ULONG)win,ASLFR_SleepWindow,TRUE,ASLFR_DoSaveMode,FALSE,ASLFR_PositiveText,(ULONG)"Insert",TAG_DONE);
+    struct FileRequester *fr;int ok=0;static char last[512];
+    lastdir_get("OpenWrite-images",last,sizeof last);
+    fr=AllocAslRequestTags(ASL_FileRequest,ASLFR_InitialDrawer,(ULONG)last,ASLFR_TitleText,(ULONG)"Insert Image",ASLFR_Window,(ULONG)win,ASLFR_SleepWindow,TRUE,ASLFR_DoSaveMode,FALSE,ASLFR_PositiveText,(ULONG)"Insert",TAG_DONE);
     if(!fr)return 0;
-    if(AslRequestTags(fr,TAG_DONE)&&fr->fr_File[0]){snprintf(out,out_size,"%s",fr->fr_Drawer);AddPart((STRPTR)out,fr->fr_File,out_size);ok=1;}
+    if(AslRequestTags(fr,TAG_DONE)&&fr->fr_File[0]){snprintf(out,out_size,"%s",fr->fr_Drawer);lastdir_put("OpenWrite-images",(const char *)fr->fr_Drawer);AddPart((STRPTR)out,fr->fr_File,out_size);ok=1;}
     FreeAslRequest(fr);return ok;
 }
 
