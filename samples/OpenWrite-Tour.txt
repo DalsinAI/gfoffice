@@ -1,0 +1,23 @@
+OpenWrite 2: a tour of what it shows
+This document was saved as a Word file (.docx) and as OpenDocument (.odt). Open either in OpenWrite: headings, styles, fonts, colours, alignment, lists and a table all come through.
+Character styles
+Bold, italic, underlined, red, blue, small (8 pt), large (18 pt), Times New Roman, Courier New.
+Alignment
+Left: the usual, text starts at the margin.
+Centred: a title line, a caption.
+Right: a date, a signature.
+Justified: both edges straight, as in a book. Justified: both edges straight, as in a book. Justified: both edges straight, as in a book. Justified: both edges straight, as in a book. 
+Lists
+•	A bullet
+•	Another bullet
+•	A third
+1.	First step
+2.	Second step
+3.	Third step
+A table
+Format	Opens	Saves
+Word (.docx)	yes	yes
+OpenDocument (.odt)	yes	yes
+Plain text (.txt)	yes	yes
+Amiga formats
+OpenWrite also opens Final Writer, ProWrite and Wordworth documents, IFF FTXT (the clipboard) and ANSI text with console colours, and saves PDF and HTML.

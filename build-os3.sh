@@ -45,24 +45,27 @@ fi
     "$HERE"/libowf/src/*.c "$HERE/tools/owconvert.c" $ZOBJS \
     -o "$OUT/OWConvert"
 
-# OpenWrite: A1200/68020 native UI.
+# OpenWrite: the OpenGadTools shell (app/openwrite2.c) is OpenWrite since 2.0.1 (the user, 10 October
+# 2026: "the rewrite is OpenWrite, not a second program"); the same core and filters.
 # shellcheck disable=SC2086
 APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $HERE/app/ow_stack.c"
 "$CC" $CFLAGS_COMMON -m68020 -O2 -Wno-pointer-sign $ZFLAGS \
     -I"$HERE/include" -I"$HERE/libowf/include" -I"$HERE/libowf/src" \
     -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    "$HERE"/libowf/src/*.c "$HERE"/src/core/*.c "$HERE/app/openwrite.c" $APP_COMMON \
+    "$HERE"/libowf/src/*.c "$HERE"/src/core/*.c "$HERE/app/openwrite2.c" $APP_COMMON \
     "$HERE"/third_party/opengadtools/*.c $ZOBJS -lamiga \
     -o "$OUT/OpenWrite"
 
-# OpenWrite 2: the shell on OpenGadTools' kinds (app/openwrite2.c), the same core and filters.
+# The 1.x window (app/openwrite.c), as OpenWrite1, only when asked: OW1=yes build-os3.sh
+if [ "${OW1:-}" = yes ]; then
 "$CC" $CFLAGS_COMMON -m68020 -O2 -Wno-pointer-sign $ZFLAGS \
     -I"$HERE/include" -I"$HERE/libowf/include" -I"$HERE/libowf/src" \
     -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    "$HERE"/libowf/src/*.c "$HERE"/src/core/*.c "$HERE/app/openwrite2.c" $APP_COMMON \
+    "$HERE"/libowf/src/*.c "$HERE"/src/core/*.c "$HERE/app/openwrite.c" $APP_COMMON \
     "$HERE"/third_party/opengadtools/*.c $ZOBJS -lamiga \
-    -o "$OUT/OpenWrite2"
-echo "$OUT/OpenWrite2 ($(wc -c < "$OUT/OpenWrite2") bytes)"
+    -o "$OUT/OpenWrite1"
+echo "$OUT/OpenWrite1 ($(wc -c < "$OUT/OpenWrite1") bytes)"
+fi
 
 echo "$OUT/OWConvert ($(wc -c < "$OUT/OWConvert") bytes)"
 echo "$OUT/OpenWrite ($(wc -c < "$OUT/OpenWrite") bytes)"

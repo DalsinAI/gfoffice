@@ -72,7 +72,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *Lay
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0 (10.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.1 (10.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
 
@@ -535,7 +535,7 @@ static owf_doc *blank_document(void)
 
 static void update_window_title(void)
 {
-    char title[sizeof current_path + 16];       /* "*", the name and " - OpenWrite" */
+    static char title[sizeof current_path + 16];   /* "*", the name and " - OpenWrite"; static: Intuition keeps the pointer (2.0.1) */
     const char *name = current_path[0] ? leaf(current_path) : "Untitled";
     snprintf(title, sizeof title, "%s%s - OpenWrite",
              editor && ow_editor_is_dirty(editor) ? "*" : "", name);
@@ -1889,7 +1889,7 @@ static int open_window(void)
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN |
                   IDCMP_MENUPICK | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW |
                   IDCMP_VANILLAKEY | IDCMP_RAWKEY | IDCMP_MOUSEBUTTONS |
-                  IDCMP_MOUSEMOVE | IDCMP_IDCMPUPDATE,
+                  IDCMP_MOUSEMOVE | IDCMP_IDCMPUPDATE | IDCMP_EXTENDEDMOUSE,   /* 2.0.1: the wheel as OS 3.2 sends it */
         TAG_DONE);
     if (!win) return 0;
     if (menu) SetMenuStrip(win, menu);

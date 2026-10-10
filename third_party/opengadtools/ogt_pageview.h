@@ -10,8 +10,10 @@
  * (ogt_pageview_show_page). Nothing stops a program using it without pages.
  *
  * The window needs IDCMP_MOUSEBUTTONS, IDCMP_GADGETUP, IDCMP_GADGETDOWN,
- * IDCMP_MOUSEMOVE, IDCMP_RAWKEY (the wheel) and IDCMP_IDCMPUPDATE; pass its
- * messages to ogt_pageview_event().
+ * IDCMP_MOUSEMOVE, IDCMP_RAWKEY and IDCMP_EXTENDEDMOUSE (the wheel, either
+ * way OS 3.2 sends it) and IDCMP_IDCMPUPDATE; pass its messages to
+ * ogt_pageview_event(). A scroll moves the view's pixels and draws only the
+ * strip that came in (0.2.1); a horizontal scroller runs along the bottom.
  *
  * First user: OpenWrite 2's page canvas (the user, 10 October 2026).
  *
@@ -36,6 +38,7 @@ typedef struct ogt_pageview {
     int gid;
     int x, y, w, h;             /* the whole view, scroller included */
     int sw;                     /* the scroller's width */
+    int sh;                     /* the horizontal scroller's height (0.2.1) */
     int cw, total;              /* the content's width and height */
     int top, left;              /* content pixels scrolled */
     int pages, ph, gap, margin; /* pages laid one under another (0: none) */
@@ -45,6 +48,7 @@ typedef struct ogt_pageview {
     void *user;
     const char *bg_key;         /* the theme key behind the content */
     struct Gadget *prop;
+    struct Gadget *hprop;       /* the horizontal scroller, GA_ID gid + 1000 */
     int dragging;
 } ogt_pageview;
 
@@ -66,6 +70,8 @@ void ogt_pageview_scroll_to(ogt_pageview *v, int top);
 void ogt_pageview_show_page(ogt_pageview *v, int page);
 /* Scrolls by dy pixels (the wheel, the keys). */
 void ogt_pageview_scroll_by(ogt_pageview *v, int dy);
+/* Scrolls sideways so content x is at the left (0.2.1). */
+void ogt_pageview_scroll_left_to(ogt_pageview *v, int left);
 /* Draws everything (the content through the callback). */
 void ogt_pageview_draw(ogt_pageview *v);
 /* The box the content shows in. */

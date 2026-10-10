@@ -1,0 +1,6 @@
+[1mOpenWrite reads ANSI text[0m
+
+This file uses the console codes an Amiga Shell shows: [1mbold[0m, [3mitalic[0m, [4munderline[0m,
+[31mred[0m, [32mgreen[0m, [33mblue[0m and [7mreversed[0m text.
+
+Open it in OpenWrite: the styles and colours become character formatting.
