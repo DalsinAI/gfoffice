@@ -103,17 +103,17 @@ The 1.0 release gate includes:
 
 ## Licence
 
-MIT, Copyright (c) 2026 Dalsin Limited (`LICENSE`).
+MIT, Copyright (c) 2026 AmigaChrome Team (`LICENSE`).
 
 Third-party components and data retain their own licences and notices; see
 `THIRD_PARTY.md` and `licenses/`.
 
 If you use or build on this work, we ask, but do not require, that you credit
-Dalsin Limited and AmigaChrome, for example: "based on OpenWrite by Dalsin
-Limited".
+the AmigaChrome Team, for example: "based on OpenWrite by the AmigaChrome
+Team".
 
 ## Contributors
 
 OpenWrite is created and maintained by
-[SacredTrees](https://github.com/SacredTrees), copyright Dalsin Limited.
+[SacredTrees](https://github.com/SacredTrees), copyright AmigaChrome Team.
 Everyone whose work it includes is credited in `CONTRIBUTORS.md`.

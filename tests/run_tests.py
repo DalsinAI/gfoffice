@@ -8,7 +8,7 @@ converter, which must answer with an error or a document, never crash.
 
 Real files from the original programs replace and add to these samples as the
 format lab makes them (docs/FORMATS.md, section 4).
-MIT, Copyright (c) 2026 Dalsin Limited.
+MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import io
 import os

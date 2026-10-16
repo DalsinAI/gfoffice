@@ -14,7 +14,7 @@
  *   WPAG  a page break; WHED and WFOT start the header and footer
  *   FORM  pictures and drawings (GTID, ILBM), not brought across yet
  * Style bits are graphics.library's: 1 underline, 2 bold, 4 italic.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

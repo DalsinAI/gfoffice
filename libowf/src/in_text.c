@@ -2,7 +2,7 @@
  * libowf: plain text in and out. "text" is UTF-8; "amiga-text" is the
  * Amiga's ISO-8859-1. Reading, a file that is not valid UTF-8 is taken as
  * ISO-8859-1. Each line is a paragraph; a form feed is a page break.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

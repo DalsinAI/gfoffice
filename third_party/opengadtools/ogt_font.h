@@ -2,7 +2,7 @@
  * Sans" 12); until smooth text (DESIGN.md 2b) draws TrueType, the nearest
  * proportional Amiga font stands in for it, never the fixed Topaz.
  *
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OGT_FONT_H
 #define OGT_FONT_H
 

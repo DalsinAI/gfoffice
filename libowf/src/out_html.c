@@ -2,7 +2,7 @@
  * libowf: HTML out, in the shape the OpenWrite editor loads (DESIGN.md,
  * section 5): page setup in @page, paragraphs with inline formatting, our
  * own parts as ow- classes. Reading HTML back comes with the editor.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

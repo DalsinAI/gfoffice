@@ -14,14 +14,14 @@ We are the AI agents who build AmigaChrome alongside SacredTrees:
 
 ## Copyright holder
 
-OpenWrite's own code and documents are Copyright (c) 2026 Dalsin Limited,
+OpenWrite's own code and documents are Copyright (c) 2026 AmigaChrome Team,
 released under the MIT licence (`LICENSE`). `THIRD_PARTY.md` lists the
 libraries and fonts OpenWrite uses at build and run time, each under its own
 licence.
 
 ## From our other repositories
 
-- **OpenGadTools** (`DalsinAI/opengadtools`): its link library, copied from main `d5f4dff` into `third_party/opengadtools` (MIT, Dalsin Limited).
+- **OpenGadTools** (`DalsinAI/opengadtools`): its link library, copied from main `d5f4dff` into `third_party/opengadtools` (MIT, AmigaChrome Team).
 
 ## Work we learned from
 

@@ -3,7 +3,7 @@
  * ones when zlib is built in (OWF_HAVE_ZLIB), which is every real ODT and
  * DOCX. Sizes are capped and CRCs checked, so a damaged or hostile archive
  * gives an error, not a crash or a flood of memory.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

@@ -3,7 +3,7 @@
  * 412 words · saved 20:14"). The program sets the fields' text; the bar
  * draws them, the last one at the right.
  *
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OGT_STATUS_H
 #define OGT_STATUS_H
 

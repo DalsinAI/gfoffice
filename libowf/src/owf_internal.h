@@ -1,7 +1,7 @@
 /*
  * libowf's own helpers: growing buffers, UTF-8 and character sets, IFF
  * chunks, zip writing. Not part of the public interface.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #ifndef OWF_INTERNAL_H
 #define OWF_INTERNAL_H

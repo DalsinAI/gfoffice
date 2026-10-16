@@ -60,7 +60,7 @@ OpenWrite 1.0 intentionally does not claim full desktop-publishing layout.
 
 ## Licence
 
-OpenWrite is MIT, Copyright (c) 2026 Dalsin Limited.
+OpenWrite is MIT, Copyright (c) 2026 AmigaChrome Team.
 
 Third-party code/data keep their own licences and notices; see
 `THIRD_PARTY.md` and `licenses/`.

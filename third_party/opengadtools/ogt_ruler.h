@@ -10,7 +10,7 @@
  *
  * First user: OpenWrite 2 (the user, 10 October 2026).
  *
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OGT_RULER_H
 #define OGT_RULER_H
 

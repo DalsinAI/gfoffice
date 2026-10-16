@@ -1,5 +1,5 @@
 /* ogt_pageview: OpenGadTools' scrolled view, drawn in the theme.
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #include <exec/types.h>
 #include <graphics/rastport.h>
 #include <graphics/regions.h>

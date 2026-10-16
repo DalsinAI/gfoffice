@@ -17,7 +17,7 @@
  *
  * First user: OpenWrite 2's page canvas (the user, 10 October 2026).
  *
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OGT_PAGEVIEW_H
 #define OGT_PAGEVIEW_H
 

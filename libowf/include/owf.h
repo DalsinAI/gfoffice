@@ -2,7 +2,7 @@
  * libowf: OpenWrite's file formats. One document model; importers build it,
  * exporters write it. Plain C99, zlib optional; runs on any Amiga and on the
  * PC, where the tests run.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #ifndef OWF_H
 #define OWF_H

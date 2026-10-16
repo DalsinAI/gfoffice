@@ -3,7 +3,7 @@
  * tree in one pass, in place in a copy of the text, with namespaces
  * resolved. Well-formed documents only; no DTDs, no external entities, so a
  * hostile document cannot make it read files or expand without end.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

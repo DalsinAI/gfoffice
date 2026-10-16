@@ -12,7 +12,7 @@
  * (first_gid + tab). Call ogt_tabs_draw() after GT_RefreshWindow() and
  * between GT_BeginRefresh() and GT_EndRefresh().
  *
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OGT_TABS_H
 #define OGT_TABS_H
 

@@ -1,5 +1,5 @@
 /* ogt_font: the theme's font, or the nearest proportional one.
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #include <exec/types.h>
 #include <graphics/text.h>
 #include <proto/exec.h>

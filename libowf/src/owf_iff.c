@@ -1,7 +1,7 @@
 /*
  * libowf: reading IFF files (EA IFF 85), the container of the Amiga's
  * documents: FTXT, ProWrite's WORD, Final Writer's and Wordworth's own forms.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 
