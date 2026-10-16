@@ -31,7 +31,7 @@ int main(void)
     if(ow_editor_insert_utf8(ed,"world",5)!=OWF_OK)return 8;
     if(strcmp(doc->body.paras[0].runs[0].text,"hello world"))return 9;
     if(ow_spell_next(sp,ed,word,sizeof word,1)!=0)return 10;
-    if(!ow_spell_add(sp,"dalsin"))return 11;
+    if(!ow_spell_add(sp,"amigachrome"))return 11;
     ow_editor_free(ed);owf_doc_free(doc);ow_spell_close(sp);
     remove("/tmp/openwrite-spell.words");remove("/tmp/openwrite-user.words");
     puts("openwrite spell tests passed");
