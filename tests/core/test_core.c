@@ -478,11 +478,11 @@ static int check_rich_roundtrip(const char *path)
     owf_doc *doc=owf_doc_new(),*back=NULL;owf_parafmt pf;owf_charfmt cf;owf_para *p;const owf_format *used=NULL;int i,img,links=0,cells=0,images=0,rc=0;
     if(!doc)return 1;
     owf_parafmt_init(&pf);owf_charfmt_init(&cf);
-    p=owf_story_add(&doc->body,&pf);if(!p||owf_para_add_link_text(p,&cf,"OpenWrite",9,"https://dalsin.example/openwrite")!=OWF_OK){rc=2;goto out;}
+    p=owf_story_add(&doc->body,&pf);if(!p||owf_para_add_link_text(p,&cf,"OpenWrite",9,"https://amigachrome.example/openwrite")!=OWF_OK){rc=2;goto out;}
     for(i=0;i<4;++i){p=owf_story_add(&doc->body,&pf);if(!p||owf_para_add_text(p,&cf,"cell",4)!=OWF_OK){rc=3;goto out;}p->table_id=0;p->table_row=i/2;p->table_col=i%2;p->table_cols=2;}
     img=owf_doc_add_image(doc,"tiny.png","image/png",fake_png,sizeof fake_png,1440,960,"tiny image");if(img<0){rc=4;goto out;}p=owf_story_add(&doc->body,&pf);if(!p||owf_para_add_image(p,&cf,img)!=OWF_OK){rc=5;goto out;}
     if(owf_export_file(doc,path,NULL,NULL)!=OWF_OK){rc=6;goto out;}if(owf_import_file(path,NULL,&back,NULL,&used)!=OWF_OK||!back){rc=7;goto out;}
-    for(i=0;i<back->body.nparas;++i){int j;const owf_para *q=&back->body.paras[i];if(q->table_id>=0)++cells;for(j=0;j<q->nruns;++j){if(q->runs[j].href&&!strcmp(q->runs[j].href,"https://dalsin.example/openwrite"))++links;if(q->runs[j].kind==OWF_RUN_IMAGE)++images;}}
+    for(i=0;i<back->body.nparas;++i){int j;const owf_para *q=&back->body.paras[i];if(q->table_id>=0)++cells;for(j=0;j<q->nruns;++j){if(q->runs[j].href&&!strcmp(q->runs[j].href,"https://amigachrome.example/openwrite"))++links;if(q->runs[j].kind==OWF_RUN_IMAGE)++images;}}
     if(!links){rc=8;goto out;}if(cells<4){rc=9;goto out;}if(back->nimages<1||!images){rc=10;goto out;}if(back->images[0].length!=sizeof fake_png){rc=11;goto out;}
 out:if(back)owf_doc_free(back);owf_doc_free(doc);if(!rc)remove(path);return rc;
 }
