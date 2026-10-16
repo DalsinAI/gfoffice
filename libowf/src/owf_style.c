@@ -2,7 +2,7 @@
  * libowf: named styles with inheritance, for the readers of formats that
  * have them (ODT, DOCX). A style sets some properties and leaves the rest
  * to its parent; the masks say which.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

@@ -9,7 +9,7 @@
  * Call ogt_sections_draw() after GT_RefreshWindow() and between
  * GT_BeginRefresh() and GT_EndRefresh().
  *
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OGT_SECTIONS_H
 #define OGT_SECTIONS_H
 

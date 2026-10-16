@@ -1,6 +1,6 @@
 Short:        Native word processor for DOCX, ODT and Amiga documents
 Uploader:     (fill in at upload time)
-Author:       Dalsin Limited
+Author:       AmigaChrome Team
 Type:         text/edit
 Version:      1.0.3
 Architecture: m68k-amigaos >= 3.2.0
@@ -32,7 +32,7 @@ Small documents are intended to remain usable with about 8 MB Fast RAM;
 The bundled English spelling dictionary is derived from SCOWL/Aspell data;
 its licence notice is included in licenses/.
 
-Licence: MIT, Copyright (c) 2026 Dalsin Limited. Third-party material retains
+Licence: MIT, Copyright (c) 2026 AmigaChrome Team. Third-party material retains
 its own licence.
 
 Source: https://github.com/DalsinAI/openamigawrite

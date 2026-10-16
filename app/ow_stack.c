@@ -1,4 +1,4 @@
-/* Run OpenWrite's UI on a useful stack. MIT, Copyright (c) 2026 Dalsin Limited. */
+/* Run OpenWrite's UI on a useful stack. MIT, Copyright (c) 2026 AmigaChrome Team. */
 #include "ow_stack.h"
 #include <exec/memory.h>
 #include <exec/tasks.h>

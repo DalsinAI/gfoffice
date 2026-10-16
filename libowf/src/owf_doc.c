@@ -1,7 +1,7 @@
 /*
  * libowf: the document model, the import report and the builder the
  * importers share.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

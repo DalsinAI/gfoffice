@@ -8,7 +8,7 @@
  * Lists keep their numbers and bullets as text, tables become rows of text
  * with tabs between the cells, and notes go to the end; the import report
  * says so.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

@@ -7,7 +7,7 @@
 # baseline (68020) and uses OpenGadTools. No FPU is required.
 #
 # ZLIB_SRC is a zlib source folder. DOCX/ODT input requires zlib.
-# MIT, Copyright (c) 2026 Dalsin Limited.
+# MIT, Copyright (c) 2026 AmigaChrome Team.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)

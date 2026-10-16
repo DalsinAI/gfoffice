@@ -2,7 +2,7 @@
  * libowf: writing zip archives, the container of ODT and DOCX. Files are
  * deflated with zlib when it is built in (OWF_HAVE_ZLIB), stored otherwise;
  * both are valid.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

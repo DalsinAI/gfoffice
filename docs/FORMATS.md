@@ -1,6 +1,6 @@
 # OpenWrite: formats
 
-Version 1.0 | 7 October 2026 | Dalsin Limited, MIT
+Version 1.0 | 7 October 2026 | AmigaChrome Team, MIT
 
 Every format OpenWrite opens or saves, what we know about it, and where that
 knowledge comes from. The design is in [../DESIGN.md](../DESIGN.md), section 4.

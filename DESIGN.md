@@ -1,6 +1,6 @@
 # OpenWrite: design
 
-Version 0.1 | 4 October 2026 | First design | Dalsin Limited, MIT
+Version 0.1 | 4 October 2026 | First design | AmigaChrome Team, MIT
 
 > **Architecture update, 6 October 2026:** the WebCore-first editor in this
 > original design is superseded as the baseline. OpenWrite now uses the small

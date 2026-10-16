@@ -4,7 +4,7 @@
  * After Adobe's Symbol encoding table (published by Unicode, and used the
  * same way by fw2odf, MIT, Charles Horn); where Adobe's table uses private
  * code points we give the standard ones.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

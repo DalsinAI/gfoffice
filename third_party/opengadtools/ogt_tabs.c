@@ -1,5 +1,5 @@
 /* ogt_tabs: OpenGadTools' tabs, as MUI's Register draws them.
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #include <exec/types.h>
 #include <graphics/rastport.h>
 #include <intuition/intuition.h>

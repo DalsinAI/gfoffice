@@ -9,7 +9,7 @@
  * fields and the others show their last result; tracked insertions are
  * kept and deletions dropped; tables become rows of text with tabs between
  * the cells; footnotes and endnotes go to the end.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

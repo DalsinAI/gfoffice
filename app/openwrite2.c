@@ -6,7 +6,7 @@
  * status line.  OpenRTG is used by OpenGadTools automatically on true-colour
  * screens; the page renderer remains portable to AGA.
  *
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include <exec/types.h>
 #include <intuition/intuition.h>
@@ -74,7 +74,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #define VERSION_TEXT "OpenWrite 2.0.1 (10.10.2026)"
 static const char version[] __attribute__((used)) =
-    "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 Dalsin Limited";
+    "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
 enum {
     C_NEW = 1, C_OPEN, C_SAVE, C_PRINT, C_UNDO, C_REDO,
@@ -2324,7 +2324,7 @@ static void about(void)
          "libowf DOCX/ODT/Amiga compatibility\n"
          "OpenRTG-ready page canvas\n"
          "OpenDatatypes and OpenPrint integration points\n\n"
-         "MIT licence, Copyright (c) 2026 Dalsin Limited.");
+         "MIT licence, Copyright (c) 2026 AmigaChrome Team.");
 }
 
 

@@ -4,7 +4,7 @@
  * styles, the page, headers and footers) and content.xml (the body).
  * Formatting becomes automatic styles: P1, P2... for paragraphs and T1,
  * T2... for text, one per distinct format.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

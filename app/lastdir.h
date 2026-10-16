@@ -2,7 +2,7 @@
  * 10 October 2026: "apps should remember the last folder they were browsing, right now they all suffer
  * amnesia"). Kept in ENV:OpenApps/<program>.drawer for the session and ENVARC: for the next boot; a drawer
  * that is no longer there (a volume taken out) is forgotten without a requester asking for it.
- * The same file in every Open app. MIT, Copyright (c) 2026 Dalsin Limited. */
+ * The same file in every Open app. MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OPENAPPS_LASTDIR_H
 #define OPENAPPS_LASTDIR_H
 

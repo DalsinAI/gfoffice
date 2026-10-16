@@ -17,7 +17,7 @@
  *   RMST, LMST  the right and left master pages: the right one's text
  *         becomes the header (labels keep everything there)
  * Bold and italic come from the font's name ("SoftSans_Bold").
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

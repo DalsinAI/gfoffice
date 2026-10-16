@@ -1,7 +1,7 @@
 /*
  * libowf: lightweight PDF export for OpenWrite.
  * Base-14 fonts keep output searchable and the 68000/68020 path FPU-free.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

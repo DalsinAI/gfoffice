@@ -2,7 +2,7 @@
  * libowf: the Amiga's formatted text. IFF FTXT (EA IFF 85: CHRS text and
  * FONS fonts; the clipboard's format) and ANSI text (the console's codes)
  * share one reader of ISO 6429 style codes: CSI n m.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 

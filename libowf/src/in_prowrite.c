@@ -10,7 +10,7 @@
  * bits (taken as graphics.library's FSF_UNDERLINED 1, FSF_BOLD 2,
  * FSF_ITALIC 4), what the right margin is measured from, and where tab
  * positions start.
- * MIT, Copyright (c) 2026 Dalsin Limited.
+ * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
 
