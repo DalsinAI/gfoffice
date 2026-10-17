@@ -3,14 +3,16 @@
 #
 #   build-os3.sh [OUT_DIR]              (default build/os3)
 #
-# OWConvert remains 68000-compatible. The OpenWrite UI targets the A1200
-# baseline (68020) and uses OpenGadTools. No FPU is required.
+# Both are 68040 code, as every build. The OpenWrite UI uses OpenGadTools.
+# No FPU is required.
 #
 # ZLIB_SRC is a zlib source folder. DOCX/ODT input requires zlib.
 # MIT, Copyright (c) 2026 AmigaChrome Team.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+# soft float: link libnix's libm020, not libm881 (specs/m68k-soft-m68040.specs)
+SPECS="$HERE/specs/m68k-soft-m68040.specs"
 STOVE=${STOVE:-$HOME/AmigaChrome/stoves/os32}
 CC="$STOVE/prefix/bin/m68k-amigaos-gcc"
 OUT=${1:-$HERE/build/os3}
@@ -31,16 +33,16 @@ if [ -n "${ZLIB_SRC:-}" ]; then
         OPT=-Os
         [ "$f" = trees.c ] && OPT=-O1
         if [ -f "$ZLIB_SRC/$f" ]; then
-            "$CC" -noixemul -m68000 $OPT -fno-delete-null-pointer-checks -fno-common -DCHROMIUM_ZLIB_NO_CHROMECONF \
+            "$CC" -noixemul -m68040 -specs=$SPECS $OPT -fno-delete-null-pointer-checks -fno-common -DCHROMIUM_ZLIB_NO_CHROMECONF \
                 -I"$OUT/zlib" -I"$ZLIB_SRC" -c "$ZLIB_SRC/$f" -o "$OUT/zlib/${f%.c}.o"
             ZOBJS="$ZOBJS $OUT/zlib/${f%.c}.o"
         fi
     done
 fi
 
-# OWConvert: any 68000.
+# OWConvert: 68040, as every build.
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -m68000 -Os $ZFLAGS \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -Os $ZFLAGS \
     -I"$HERE/libowf/include" -I"$HERE/libowf/src" \
     "$HERE"/libowf/src/*.c "$HERE/tools/owconvert.c" $ZOBJS \
     -o "$OUT/OWConvert"
@@ -49,7 +51,7 @@ fi
 # 2026: "the rewrite is OpenWrite, not a second program"); the same core and filters.
 # shellcheck disable=SC2086
 APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $HERE/app/ow_stack.c"
-"$CC" $CFLAGS_COMMON -m68020 -O2 -Wno-pointer-sign $ZFLAGS \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $ZFLAGS \
     -I"$HERE/include" -I"$HERE/libowf/include" -I"$HERE/libowf/src" \
     -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     "$HERE"/libowf/src/*.c "$HERE"/src/core/*.c "$HERE/app/openwrite2.c" $APP_COMMON \
@@ -58,7 +60,7 @@ APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $H
 
 # The 1.x window (app/openwrite.c), as OpenWrite1, only when asked: OW1=yes build-os3.sh
 if [ "${OW1:-}" = yes ]; then
-"$CC" $CFLAGS_COMMON -m68020 -O2 -Wno-pointer-sign $ZFLAGS \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $ZFLAGS \
     -I"$HERE/include" -I"$HERE/libowf/include" -I"$HERE/libowf/src" \
     -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     "$HERE"/libowf/src/*.c "$HERE"/src/core/*.c "$HERE/app/openwrite.c" $APP_COMMON \

@@ -232,7 +232,7 @@ Opening a DOCX and saving it again must not silently switch formats.
 The native editor target is deliberately much smaller than the former
 WebCore-first design:
 
-- 68020 baseline;
+- 68040 baseline (the builds are 68040 code);
 - no FPU required by OpenWrite core;
 - usable on 8 MB Fast RAM for small documents;
 - comfortable target: 16-32 MB Fast RAM;
