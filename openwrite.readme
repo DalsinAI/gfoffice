@@ -22,10 +22,9 @@ OpenWrite also opens ProWrite, Final Writer/Final Copy-family SWRT documents,
 Wordworth, IFF FTXT, ANSI text and plain text. Unsupported or approximated
 features are named in the import report.
 
-C:OWConvert converts supported document formats from Shell scripts and runs
-on any 68000.
+C:OWConvert converts supported document formats from Shell scripts.
 
-OpenWrite needs AmigaOS 3.2 and a 68020 or better. No FPU is required.
+OpenWrite and OWConvert need AmigaOS 3.2 and a 68040. No FPU is required.
 Small documents are intended to remain usable with about 8 MB Fast RAM;
 16-32 MB is the comfortable target for ordinary work.
 

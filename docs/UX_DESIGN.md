@@ -267,7 +267,7 @@ The target feeling is immediate classic software with modern output quality.
 
 ## Current native build
 
-The native editor builds as an m68020 AmigaOS program and has been run on the
+The native editor builds as a 68040 AmigaOS program and has been run on the
 scratch OS 3.2.3/OpenRTG/OpenLook bench.
 
 Implemented and exercised in the current editor build:

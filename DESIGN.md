@@ -91,7 +91,7 @@ into WebCore's commands.
 ### 3.1 libowf, the filters
 
 The filters are plain C99, depend only on zlib, and build three ways: for
-AmigaOS 3.x on any 68000 (GCC 6.5, libnix), for OS 3.2 with the GCC 16
+AmigaOS 3.x as 68040 code (GCC 6.5, libnix), for OS 3.2 with the GCC 16
 stove, and for Linux, where the tests run. They never touch WebCore.
 
 - **One document model** (`owf_doc`): styles (paragraph and character), page
@@ -110,7 +110,7 @@ stove, and for Linux, where the tests run. They never touch WebCore.
   (namespaces, entities; well-formed input only, which is what ODT and DOCX
   are), an IFF reader, and character set tables (Amiga ISO-8859-1, ISO-8859-2,
   Windows-1252 for RTF and DOCX, UTF-8). We write our own XML reader rather
-  than use libxml2 so the converter fits a 68000 with 1 MB.
+  than use libxml2 so the converter fits in about 1 MB.
 
 ### 3.2 The editing view
 
@@ -159,7 +159,7 @@ OWConvert FROM/A,TO/A,FORMAT/K,REPORT/S
 1> OWConvert Work:Story.fw Story.docx REPORT
 ```
 
-It runs on a stock 68000 Amiga. On AmigaChrome, Cradle can use the same
+It is built as 68040 code, as every build. On AmigaChrome, Cradle can use the same
 filters' Linux build for its own document jobs.
 
 ### 3.5 ARexx
@@ -342,7 +342,7 @@ noted in the import report.
      browser works; until then each program carries its own copy.
 
   Turning off the network and media code saves only a few MB.
-- **The filters and C:OWConvert** run on any Amiga: a 68000 and 1 MB.
+- **The filters and C:OWConvert** are built for the 68040 and need about 1 MB.
 
 ## 10. What OpenWrite needs from the rest of the Open family
 

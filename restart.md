@@ -4,9 +4,9 @@ _Written 7 October 2026 during the 1.0 release pass._
 
 ## What this repo is
 
-OpenWrite is the native AmigaOS 3.2 word processor. The GUI targets 68020+
+OpenWrite is the native AmigaOS 3.2 word processor. The GUI targets the 68040
 without an FPU requirement. libowf and C:OWConvert provide the shared document
-format/conversion layer, with OWConvert retaining a 68000 target.
+format/conversion layer; all are built as 68040 code.
 
 ## Current state
 
