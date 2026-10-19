@@ -1,5 +1,9 @@
 #!/bin/sh
-# OpenWrite and OWConvert for AmigaOS 3.x with the os32 stove.
+# OpenWrite and OWConvert for AmigaOS 3.x with the os32-gcc16 stove
+# (OpenAmigaGCC 16). The compiler: OS32_GCC16, else STOVE, else
+# ~/AmigaChrome/stoves/os32-gcc16; this script stops when given a GCC older
+# than 16 (the os32 stove's GCC 6.5 is retired: its peephole2 clears a word
+# and the long after it with one clr.l).
 #
 #   build-os3.sh [OUT_DIR]              (default build/os3)
 #
@@ -13,8 +17,10 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 # soft float: link libnix's libm020, not libm881 (specs/m68k-soft-m68040.specs)
 SPECS="$HERE/specs/m68k-soft-m68040.specs"
-STOVE=${STOVE:-$HOME/AmigaChrome/stoves/os32}
+STOVE=${OS32_GCC16:-${STOVE:-$HOME/AmigaChrome/stoves/os32-gcc16}}
 CC="$STOVE/prefix/bin/m68k-amigaos-gcc"
+GCCV=$("$CC" -dumpversion 2>/dev/null || echo 0)
+[ "${GCCV%%.*}" -ge 16 ] 2>/dev/null || { echo "$CC is GCC $GCCV: OpenWrite needs GCC 16 (the os32-gcc16 stove; set OS32_GCC16)"; exit 2; }
 OUT=${1:-$HERE/build/os3}
 CFLAGS_COMMON="-noixemul -std=gnu99 -Wall -Werror -fno-delete-null-pointer-checks -fno-common"
 mkdir -p "$OUT"
@@ -27,9 +33,9 @@ if [ -n "${ZLIB_SRC:-}" ]; then
     cp "$ZLIB_SRC/zlib.h" "$OUT/zlib/"
     ZFLAGS="-DOWF_HAVE_ZLIB -DCHROMIUM_ZLIB_NO_CHROMECONF -I$OUT/zlib"
     for f in adler32.c crc32.c deflate.c trees.c zutil.c cpu_features.c inflate.c inffast.c inftrees.c compress.c uncompr.c; do
-        # The stove's GCC 6.5 miscompiles trees.c at -Os and -O2: every
-        # deflate stream (saved DOCX/ODT, PDF pictures) came out corrupt on
-        # the Amiga. -O1 is right (checked on the Amiga, round trips).
+        # GCC 6.5 (the old os32 stove) miscompiled trees.c at -Os and -O2:
+        # every deflate stream (saved DOCX/ODT, PDF pictures) came out
+        # corrupt on the Amiga. It stays at -O1, which GCC 16 also gets right.
         OPT=-Os
         [ "$f" = trees.c ] && OPT=-O1
         if [ -f "$ZLIB_SRC/$f" ]; then
