@@ -49,10 +49,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 #include <clib/alib_protos.h>
 
 #include "openwrite_core.h"
 #include "owf_open.h"
+#include "ow_layout.h"
 #include "ow_stack.h"
 #include "lastdir.h"
 #include "ow_print.h"
@@ -254,6 +256,7 @@ typedef struct doc_font_slot {
     struct TextFont *font;
 } doc_font_slot;
 static doc_font_slot doc_fonts[DOC_FONT_CACHE];
+static int doc_font_next;                            /* 2.1: the slot a new size replaces when all are used */
 static int quit_now;
 
 static ogt_theme theme;
@@ -306,10 +309,19 @@ static int image_cache_n;
 static int mouse_selecting;
 static int defer_repaint, repaint_pending;
 
+/* 2.1: the pages are OpenLayout's: the body laid out once at full resolution (units, twips x 4) and drawn
+ * at the screen's pixels through one scale, so line and page breaks never move with the zoom. Laid out
+ * again when the document changes (ow_editor_changes). */
+static ow_layout *pages_layout;
+static const ow_editor *pages_editor;
+static unsigned long pages_changes;
+
 static void draw_all(void);
 static void redraw_document_area(void);
 static void layout(void);
 static void pages_changed(void);
+static void pages_free(void);
+static int page_hit(int mx, int my, ow_position *out);
 static void follow_caret_page(void);
 static void set_page_view(int page);
 static void scroll_page(int dx, int dy);
@@ -650,6 +662,7 @@ static ow_image_cache *image_cache_get(int index)
 
 static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
 {
+    pages_free();                                    /* 2.1: the pages point into the document */
     doc_font_cache_clear();
     image_cache_clear();
     if (editor) ow_editor_free(editor);
@@ -818,6 +831,7 @@ static void doc_font_cache_clear(void)
         if (doc_fonts[i].font) CloseFont(doc_fonts[i].font);
         memset(&doc_fonts[i], 0, sizeof doc_fonts[i]);
     }
+    doc_font_next = 0;
 }
 
 static int name_has(const char *name, const char *part)
@@ -864,24 +878,21 @@ static int run_twips(int paragraph, const owf_charfmt *fmt)
     return twips;
 }
 
-static struct TextFont *document_font(int paragraph, const owf_charfmt *fmt)
+/* A document font at a pixel size, kept open for the next drawing (DOC_FONT_CACHE sizes; the oldest makes
+ * way). NULL when diskfont has no such font. */
+static struct TextFont *document_font_px(const char *file, int pixels)
 {
-    char file[72];
-    int pixels, i, empty = -1;
+    int i, slot = -1;
     struct TextAttr ta;
     struct TextFont *f;
-    int font_index = fmt ? fmt->font : -1;
-    if (font_index < 0 && doc) font_index = doc->base.font;
-    document_font_file(font_index, file, sizeof file);
-    pixels = run_twips(paragraph, fmt) * render_num / render_den;
-    if (pixels < 8) pixels = 8;
-    if (pixels > 72) pixels = 72;
+    if (pixels < 4) pixels = 4;
+    if (pixels > 128) pixels = 128;                  /* an outline font's glyphs at 128 pixels: about 450 KB */
     for (i = 0; i < DOC_FONT_CACHE; ++i) {
         if (doc_fonts[i].font && doc_fonts[i].pixels == pixels && !strcmp(doc_fonts[i].file, file))
             return doc_fonts[i].font;
-        if (!doc_fonts[i].font && empty < 0) empty = i;
+        if (!doc_fonts[i].font && slot < 0) slot = i;
     }
-    if (!DiskfontBase || empty < 0) return font;
+    if (!DiskfontBase) return NULL;
     memset(&ta, 0, sizeof ta);
     ta.ta_Name = (STRPTR)file;
     ta.ta_YSize = (UWORD)pixels;
@@ -906,11 +917,31 @@ static struct TextFont *document_font(int paragraph, const owf_charfmt *fmt)
             f = OpenDiskFont(&ta);
         }
     }
-    if (!f) return font;
-    snprintf(doc_fonts[empty].file, sizeof doc_fonts[empty].file, "%s", file);
-    doc_fonts[empty].pixels = pixels;
-    doc_fonts[empty].font = f;
+    if (!f) return NULL;
+    if (slot < 0) {                                  /* every slot used: the oldest goes (the caller sets the new one) */
+        slot = doc_font_next;
+        doc_font_next = (doc_font_next + 1) % DOC_FONT_CACHE;
+        CloseFont(doc_fonts[slot].font);
+    }
+    snprintf(doc_fonts[slot].file, sizeof doc_fonts[slot].file, "%s", file);
+    doc_fonts[slot].pixels = pixels;
+    doc_fonts[slot].font = f;
     return f;
+}
+
+static struct TextFont *document_font(int paragraph, const owf_charfmt *fmt)
+{
+    char file[72];
+    int pixels;
+    struct TextFont *f;
+    int font_index = fmt ? fmt->font : -1;
+    if (font_index < 0 && doc) font_index = doc->base.font;
+    document_font_file(font_index, file, sizeof file);
+    pixels = run_twips(paragraph, fmt) * render_num / render_den;
+    if (pixels < 8) pixels = 8;
+    if (pixels > 72) pixels = 72;
+    f = document_font_px(file, pixels);
+    return f ? f : font;
 }
 
 static int text_width_n(struct RastPort *rp, const char *s, size_t n);
@@ -1005,13 +1036,28 @@ static size_t to_latin1(const char *s, size_t n, char *out, size_t cap)
     return o;
 }
 
+/* TextLength with the bold smear counted. Text() in a font made bold by the system moves each letter on by
+ * the font's bold smear, which TextLength can leave out; so a bold word is measured plain, plus the smear a
+ * letter, or as TextLength has it bold, whichever is wider. */
+static int text_length(struct RastPort *rp, const char *s, size_t m)
+{
+    struct TextFont *f = rp->Font;
+    UBYTE algo = rp->AlgoStyle;
+    LONG w = TextLength(rp, (STRPTR)s, (ULONG)m), plain;
+    if (!m || !(algo & FSF_BOLD) || !f || (f->tf_Style & FSF_BOLD)) return (int)w;
+    rp->AlgoStyle = algo & ~FSF_BOLD;
+    plain = TextLength(rp, (STRPTR)s, (ULONG)m) + (LONG)m * (f->tf_BoldSmear ? f->tf_BoldSmear : 1);
+    rp->AlgoStyle = algo;
+    return (int)(plain > w ? plain : w);
+}
+
 static int text_width_n(struct RastPort *rp, const char *s, size_t n)
 {
     char buf[512];
     size_t m;
     if (!n) return 0;
     m = to_latin1(s, n, buf, sizeof buf);
-    return m ? (int)TextLength(rp, (STRPTR)buf, (ULONG)m) : 0;
+    return m ? text_length(rp, buf, m) : 0;
 }
 
 static int selection_for_run(int paragraph, int run, size_t len,
@@ -1318,7 +1364,7 @@ static void mouse_set_selection(int mx, int my, int extend)
         int cx, cy;
         if (!pv || !ogt_pageview_to_content(pv, mx, my, &cx, &cy) || ogt_pageview_page_at(pv, cy) < 0) return;
     }
-    if (!hit_position(mx, my, &p)) return;
+    if (!page_hit(mx, my, &p) && !hit_position(mx, my, &p)) return;
     sel = ow_editor_selection(editor);
     if (!extend) sel.anchor = p;
     sel.focus = p;
@@ -1376,34 +1422,501 @@ static void page_size(int *pw, int *ph)
     if (*ph < 40) *ph = 40;
 }
 
+/* ---- 2.1: the pages drawn by OpenLayout --------------------------------------------------------------
+ *
+ * Text is measured for the layout from each font's advance widths, taken once at WIDTH_REF pixels and
+ * scaled to the text's size in units, so the layout is the same at every zoom. A page is drawn straight
+ * at the screen's pixels: each word where the layout put it, in the font opened at the word's scaled
+ * size; nothing is drawn big and shrunk. */
+
+#define WIDTH_REF 64
+#define WIDTH_TABLES 8
+#define TAB_UNITS (OL_UNITS_PER_INCH / 2)
+
+typedef struct {
+    char file[72];
+    UBYTE used, bold;
+    WORD ref, ascent, descent;
+    UWORD w[256];
+} width_table;
+static width_table width_tables[WIDTH_TABLES];
+static int width_next;
+static const width_table *width_memo;               /* the last style measured: most words share it */
+static uint32_t width_memo_key;
+
+/* The font file for an OpenLayout font number: the document's font index plus one, 0 its default. */
+static void layout_font_file(uint32_t flags, char *out, size_t size)
+{
+    unsigned number = OL_TEXT_FONT_OF(flags);
+    if (!number && (flags & OL_TEXT_MONO)) {
+        snprintf(out, size, "%s", "courier.font");
+        return;
+    }
+    document_font_file(number ? OW_LAYOUT_FONT_INDEX(number) : (doc ? doc->base.font : -1), out, size);
+}
+
+/* A font's advance widths at WIDTH_REF pixels (bold ones with the bold smear). */
+static const width_table *font_widths(uint32_t flags)
+{
+    char file[72];
+    int i, bold = (flags & OL_TEXT_BOLD) != 0;
+    uint32_t key = flags & (0xffff0000u | OL_TEXT_MONO | OL_TEXT_BOLD);
+    width_table *t;
+    struct TextFont *f;
+    struct RastPort trp;
+    if (width_memo && key == width_memo_key) return width_memo;
+    layout_font_file(flags, file, sizeof file);
+    for (i = 0; i < WIDTH_TABLES; ++i)
+        if (width_tables[i].used && width_tables[i].bold == bold && !strcmp(width_tables[i].file, file)) {
+            width_memo = &width_tables[i];
+            width_memo_key = key;
+            return width_memo;
+        }
+    t = &width_tables[width_next];
+    width_next = (width_next + 1) % WIDTH_TABLES;
+    memset(t, 0, sizeof *t);
+    snprintf(t->file, sizeof t->file, "%s", file);
+    t->used = 1;
+    t->bold = (UBYTE)bold;
+    f = document_font_px(file, WIDTH_REF);
+    if (!f) f = font;
+    InitRastPort(&trp);
+    SetFont(&trp, f);
+    SetSoftStyle(&trp, bold ? FSF_BOLD : FS_NORMAL, FSF_BOLD);
+    for (i = 32; i < 256; ++i) {
+        char c = (char)i;
+        t->w[i] = (UWORD)text_length(&trp, &c, 1);
+    }
+    t->ref = f->tf_YSize > 0 ? f->tf_YSize : 1;
+    t->ascent = f->tf_Baseline + 1;
+    t->descent = t->ref - t->ascent;
+    /* the widths are all that is needed of it: its glyphs at WIDTH_REF go */
+    for (i = 0; i < DOC_FONT_CACHE; ++i)
+        if (f != font && doc_fonts[i].font == f) {
+            CloseFont(f);
+            memset(&doc_fonts[i], 0, sizeof doc_fonts[i]);
+        }
+    width_memo = t;
+    width_memo_key = key;
+    return t;
+}
+
+/* A sum of a table's widths, at size units. */
+static ol_unit table_units(const width_table *t, ULONG sum, ol_unit size)
+{
+    return (ol_unit)(sum / (ULONG)t->ref) * size + (ol_unit)(sum % (ULONG)t->ref) * size / t->ref;
+}
+
+/* OpenLayout's measure callback: text in units, from the width tables. */
+static int measure_units(void *userdata, const char *utf8, size_t length, const ol_style *style,
+                         ol_text_metrics *m)
+{
+    const width_table *t = font_widths(style->text_flags);
+    ol_unit size = style->font_size > 0 ? style->font_size : OL_POINT(12), tabs = 0;
+    ULONG sum = 0;
+    size_t at = 0;
+    char buf[256];
+    (void)userdata;
+    while (at < length) {
+        size_t n = length - at, k, o;
+        if (n > 200) {                               /* a long run in pieces, cut between characters */
+            n = 200;
+            while (n > 1 && ((unsigned char)utf8[at + n] & 0xc0u) == 0x80u) --n;
+        }
+        o = to_latin1(utf8 + at, n, buf, sizeof buf);
+        for (k = 0; k < o; ++k) {
+            unsigned char c = (unsigned char)buf[k];
+            if (c == '\t') tabs += TAB_UNITS;
+            else sum += t->w[c];
+        }
+        at += n;
+    }
+    m->width = table_units(t, sum, size) + tabs;
+    m->ascent = t->ascent * size / t->ref;
+    m->descent = t->descent * size / t->ref;
+    return 1;
+}
+
+static void pages_free(void)
+{
+    if (pages_layout) ow_layout_free(pages_layout);
+    pages_layout = NULL;
+    pages_editor = NULL;
+    width_memo = NULL;                               /* font numbers are the document's */
+}
+
+/* The pages for the document as it is now; NULL when memory ran out (the 2.0 renderer draws then). */
+static ow_layout *pages(void)
+{
+    if (!editor) return NULL;
+    if (pages_layout && pages_editor == editor && pages_changes == ow_editor_changes(editor))
+        return pages_layout;
+    pages_free();
+    pages_layout = ow_layout_new(ow_editor_document(editor), measure_units, NULL);
+    pages_editor = editor;
+    pages_changes = ow_editor_changes(editor);
+    return pages_layout;
+}
+
+static int page_total(void)
+{
+    ow_layout *l = pages();
+    int n = l ? ow_layout_page_count(l) : editor ? ow_editor_page_count(editor) : 1;
+    return n < 1 ? 1 : n;
+}
+
+/* The page the caret is on. */
+static int caret_page(void)
+{
+    ow_layout *l = pages();
+    ol_rect box;
+    int page;
+    if (l && ow_layout_caret(l, ow_editor_selection(editor).focus, &page, &box)) return page;
+    return editor ? ow_editor_current_page(editor) : 0;
+}
+
+/* A page's scale (zoom 100: 15 twips, 60 units, a pixel, as the ruler), its top left corner at ox, oy. */
+static void page_scale(ol_scale *s, int ox, int oy)
+{
+    ol_scale_set(s, page_scale_num(), page_scale_den() * OL_UNITS_PER_TWIP);
+    s->origin_x = ox;
+    s->origin_y = oy;
+}
+
+typedef struct {
+    struct RastPort *rp;
+    ow_layout *layout;
+    const ol_scale *scale;
+    const ol_document *od;      /* the body, or a header or footer */
+    int body;                   /* od is the body: its text is the document's runs */
+    int thumb;                  /* a navigator thumbnail: text as grey lines */
+    int page;
+    int has_sel;
+    ow_position sel_a, sel_b;   /* the selection, in order */
+    int caret_on, caret_page, caret_done;
+    ow_position caret;
+    ol_rect caret_box;          /* units, on caret_page */
+    int caret_x, caret_y, caret_h;
+} page_paint;
+
+static LONG argb_pen(uint32_t argb)
+{
+    return ogt_pen_rgb(&ctx, (ogt_rgb){ (UBYTE)(argb >> 16), (UBYTE)(argb >> 8), (UBYTE)argb });
+}
+
+/* Where the first n bytes of a word end, in pixels from its left: in the screen font, or, for a word whose
+ * glyphs are placed one by one, the layout's. */
+static int word_x(const page_paint *pp, const ol_device_op *d, const char *s, size_t n, int placed)
+{
+    ol_text_metrics m;
+    if (!n) return 0;
+    if (!placed) return text_width_n(pp->rp, s, n);
+    measure_units(NULL, s, n, &d->op->u.text.style, &m);
+    return ol_scale_length(pp->scale, m.width);
+}
+
+static void paint_text(page_paint *pp, const ol_device_op *d)
+{
+    struct RastPort *rp = pp->rp;
+    const ol_text_op *t = &d->op->u.text;
+    const char *s = ol_node_text(ol_node_by_id(pp->od, t->node_id));
+    const width_table *wt;
+    ol_unit size = t->style.font_size > 0 ? t->style.font_size : OL_POINT(12), tabs;
+    char buf[256], file[72];
+    size_t n, k, drawn;
+    int baseline = d->baseline, style = FS_NORMAL, para = -1, run = -1, target, placed;
+    ULONG sum;
+    struct TextFont *f;
+    LONG pen;
+    if (!s || !t->text_length) return;
+    s += t->text_offset;
+    if (pp->thumb || d->font_pixels < 5) {           /* too small to read: a grey line where the words are */
+        int h = d->font_pixels / 2 > 0 ? d->font_pixels / 2 : 1;
+        k = t->text_length;
+        while (k && (s[k - 1] == ' ' || s[k - 1] == '\t')) --k;
+        if (k) ogt_box(rp, ogt_pen(&ctx, "muted"), d->box.x, baseline - h,
+                       (int)(d->box.width * (int32_t)k / (int32_t)t->text_length) + 1, h);
+        return;
+    }
+    layout_font_file(t->style.text_flags, file, sizeof file);
+    f = document_font_px(file, d->font_pixels);
+    SetFont(rp, f ? f : font);
+    if (t->style.text_flags & OL_TEXT_BOLD) style |= FSF_BOLD;
+    if (t->style.text_flags & OL_TEXT_ITALIC) style |= FSF_ITALIC;
+    if (t->style.text_flags & OL_TEXT_UNDERLINE) style |= FSF_UNDERLINED;
+    SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    if (t->style.text_flags & OL_TEXT_SUPER) baseline -= d->font_pixels / 2;
+    else if (t->style.text_flags & OL_TEXT_SUB) baseline += d->font_pixels / 4;
+
+    /* The word as the layout measured it. A screen font at a small size, or with the bold smear (a pixel a
+     * letter at any size), can run wider than that: then each glyph goes where the layout put it, so the
+     * word keeps its width and the space after it. */
+    n = to_latin1(s, t->text_length, buf, sizeof buf);
+    drawn = n;
+    while (drawn && (buf[drawn - 1] == ' ' || buf[drawn - 1] == '\t')) --drawn;
+    wt = font_widths(t->style.text_flags);
+    for (k = 0, sum = 0, tabs = 0; k < drawn; ++k) {
+        if (buf[k] == '\t') tabs += TAB_UNITS;
+        else sum += wt->w[(unsigned char)buf[k]];
+    }
+    target = ol_scale_length(pp->scale, table_units(wt, sum, size) + tabs);
+    for (k = 0; k < n; ++k)
+        if ((unsigned char)buf[k] < 32) buf[k] = ' ';   /* a tab: its space is the layout's */
+    placed = drawn && text_length(rp, buf, drawn) > target + 1;
+
+    /* the selection under the text, and where the caret goes, measured as the text is drawn */
+    if (pp->body && ow_layout_node_run(pp->layout, t->node_id, &para, &run) && run >= 0 &&
+        doc->body.paras[para].runs[run].kind == OWF_RUN_TEXT) {
+        ow_position rs, re;
+        rs.paragraph = re.paragraph = para;
+        rs.run = re.run = run;
+        rs.byte_offset = t->text_offset;
+        re.byte_offset = t->text_offset + t->text_length;
+        if (pp->has_sel && pos_compare(pp->sel_b, rs) > 0 && pos_compare(pp->sel_a, re) < 0) {
+            size_t from = pos_compare(pp->sel_a, rs) > 0 ? pp->sel_a.byte_offset : rs.byte_offset;
+            size_t to = pos_compare(pp->sel_b, re) < 0 ? pp->sel_b.byte_offset : re.byte_offset;
+            int sx = d->box.x + word_x(pp, d, s, from - rs.byte_offset, placed);
+            int sw = d->box.x + word_x(pp, d, s, to - rs.byte_offset, placed) - sx;
+            ogt_box(rp, ogt_pen(&ctx, "selection.inactive"), sx, d->box.y, sw > 2 ? sw : 2, d->box.height);
+        }
+        if (pp->caret_on && !pp->caret_done && pp->caret_page == pp->page &&
+            pp->caret.paragraph == para && pp->caret.run == run &&
+            pp->caret.byte_offset >= rs.byte_offset && pp->caret.byte_offset <= re.byte_offset &&
+            t->bounds.y == pp->caret_box.y) {
+            pp->caret_x = d->box.x + word_x(pp, d, s, pp->caret.byte_offset - rs.byte_offset, placed);
+            pp->caret_y = d->box.y;
+            pp->caret_h = d->box.height;
+            pp->caret_done = 1;
+        }
+    }
+
+    if (!(style & FSF_UNDERLINED)) n = drawn;        /* an underline runs on under the spaces */
+    if (!n) return;
+    pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : ogt_pen(&ctx, "fill.text");
+    ogt_set_apen(rp, pen);
+    SetDrMd(rp, JAM1);
+    if (!drawn) {                                      /* spaces or a tab: only their underline */
+        ogt_hline(rp, pen, d->box.x, baseline + 1, d->box.width);
+        return;
+    }
+    if (!placed) {
+        Move(rp, d->box.x, baseline);
+        Text(rp, (STRPTR)buf, n);
+        if (t->style.text_flags & OL_TEXT_STRIKE)
+            ogt_hline(rp, pen, d->box.x, baseline - (rp->TxBaseline + 1) / 3, text_length(rp, buf, drawn));
+        return;
+    }
+    SetSoftStyle(rp, style & ~FSF_UNDERLINED, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    to_latin1(s, t->text_length, buf, sizeof buf);    /* the tabs again, for their widths */
+    for (k = 0, sum = 0, tabs = 0; k < drawn; ++k) {
+        unsigned char c = (unsigned char)buf[k];
+        if (c > ' ') {
+            Move(rp, d->box.x + (sum || tabs ? ol_scale_length(pp->scale, table_units(wt, sum, size) + tabs) : 0),
+                 baseline);
+            Text(rp, (STRPTR)&buf[k], 1);
+        }
+        if (c == '\t') tabs += TAB_UNITS;
+        else sum += wt->w[c];
+    }
+    if (style & FSF_UNDERLINED)
+        ogt_hline(rp, pen, d->box.x, baseline + 1, n > drawn ? d->box.width : target);
+    if (t->style.text_flags & OL_TEXT_STRIKE)
+        ogt_hline(rp, pen, d->box.x, baseline - (rp->TxBaseline + 1) / 3, target);
+}
+
+static void paint_op(void *userdata, const ol_device_op *d)
+{
+    page_paint *pp = (page_paint *)userdata;
+    struct RastPort *rp = pp->rp;
+    switch (d->op->type) {
+    case OL_OP_TEXT:
+        paint_text(pp, d);
+        break;
+    case OL_OP_FILL_RECT:
+        if (d->op->u.fill_rect.argb >> 24)
+            ogt_box(rp, argb_pen(d->op->u.fill_rect.argb), d->box.x, d->box.y, d->box.width, d->box.height);
+        break;
+    case OL_OP_RULE: {
+        LONG pen = argb_pen(d->op->u.rule.argb);
+        int x1 = d->x1 < d->x2 ? d->x1 : d->x2, x2 = d->x1 < d->x2 ? d->x2 : d->x1;
+        int y1 = d->y1 < d->y2 ? d->y1 : d->y2, y2 = d->y1 < d->y2 ? d->y2 : d->y1;
+        if (y1 == y2) ogt_box(rp, pen, x1, y1 - (d->thickness - 1) / 2, x2 - x1 + 1, d->thickness);
+        else if (x1 == x2) ogt_box(rp, pen, x1 - (d->thickness - 1) / 2, y1, d->thickness, y2 - y1 + 1);
+        else { ogt_set_apen(rp, pen); Move(rp, d->x1, d->y1); Draw(rp, d->x2, d->y2); }
+        break;
+    }
+    case OL_OP_IMAGE: {
+        int index = d->op->u.image.image_id;
+        ow_image_cache *c = pp->thumb ? NULL : image_cache_get(index);
+        if (d->box.width < 1 || d->box.height < 1) break;
+        if (c && CyberGfxBase && screen_depth() > 8)
+            ScalePixelArray(c->argb, c->w, c->h, c->w * 4, rp, (UWORD)d->box.x, (UWORD)d->box.y,
+                            (UWORD)d->box.width, (UWORD)d->box.height, RECTFMT_ARGB);
+        else {
+            char label[96];
+            ogt_frame(rp, ogt_pen(&ctx, "group.line"), d->box.x, d->box.y, d->box.width, d->box.height);
+            if (!pp->thumb && d->box.width > 24 && d->box.height > fh + 8) {
+                SetFont(rp, font);
+                SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+                snprintf(label, sizeof label, "Image: %s",
+                         (doc && index >= 0 && index < doc->nimages && doc->images[index].name)
+                         ? doc->images[index].name : "embedded");
+                ogt_text(rp, ogt_pen(&ctx, "muted"), d->box.x + 6, d->box.y + 6, label, d->box.width - 12);
+            }
+        }
+        break;
+    }
+    }
+}
+
+/* Draws one page of the pages at s (its top left corner at s's origin), what crosses clip: the body, then
+ * its header and footer; the caret and the selection when it is the document's page. */
+static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_scale *s,
+                       const ol_pixel_rect *clip, int thumb)
+{
+    page_paint pp;
+    int k;
+    memset(&pp, 0, sizeof pp);
+    pp.rp = rp;
+    pp.layout = l;
+    pp.scale = s;
+    pp.od = ow_layout_body(l);
+    pp.body = 1;
+    pp.thumb = thumb;
+    pp.page = page;
+    if (!thumb && editor) {
+        ow_selection sel = ow_editor_selection(editor);
+        if (pos_compare(sel.anchor, sel.focus) <= 0) { pp.sel_a = sel.anchor; pp.sel_b = sel.focus; }
+        else { pp.sel_a = sel.focus; pp.sel_b = sel.anchor; }
+        pp.has_sel = pos_compare(pp.sel_a, pp.sel_b) != 0;
+        pp.caret = sel.focus;
+        pp.caret_on = !pp.has_sel && ow_layout_caret(l, sel.focus, &pp.caret_page, &pp.caret_box);
+    }
+    ol_draw_page(pp.od, page, s, clip, paint_op, &pp);
+    for (k = 0; k < 2; ++k) {
+        char date[32] = "", time_text[16] = "";
+        time_t now = time(NULL);
+        struct tm *tmv = localtime(&now);
+        ol_unit sx, sy;
+        ol_scale ss = *s;
+        ol_document *story;
+        if (tmv) {
+            strftime(date, sizeof date, "%d/%m/%Y", tmv);
+            strftime(time_text, sizeof time_text, "%H:%M", tmv);
+        }
+        story = ow_layout_story(l, k ? OW_STORY_FOOTER : OW_STORY_HEADER, page, date, time_text, &sx, &sy);
+        if (!story) continue;
+        ss.origin_x = ol_scale_x(s, sx);
+        ss.origin_y = ol_scale_y(s, sy);
+        pp.od = story;
+        pp.body = 0;
+        ol_draw_page(story, 0, &ss, clip, paint_op, &pp);
+        ol_document_free(story);
+    }
+    SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    if (pp.caret_on && pp.caret_page == page) {
+        if (!pp.caret_done) {                        /* not in a word (an empty paragraph): where the layout says */
+            pp.caret_x = ol_scale_x(s, pp.caret_box.x);
+            pp.caret_y = ol_scale_y(s, pp.caret_box.y);
+            pp.caret_h = ol_scale_length(s, pp.caret_box.height);
+        }
+        ogt_vline(rp, ogt_pen(&ctx, "accent"), pp.caret_x, pp.caret_y, pp.caret_h > 1 ? pp.caret_h - 1 : 1);
+    }
+}
+
+/* The editor position under the pointer (window coordinates). */
+static int page_hit(int mx, int my, ow_position *out)
+{
+    ow_layout *l = pages();
+    int cx, cy, page;
+    ol_scale s;
+    if (!l || !pv || !ogt_pageview_to_content(pv, mx, my, &cx, &cy)) return 0;
+    page = ogt_pageview_page_at(pv, cy);
+    if (page < 0) return 0;
+    page_scale(&s, PAGE_MARGIN, ogt_pageview_page_top(pv, page));
+    return ow_layout_hit(l, page, ol_unscale_x(&s, cx), ol_unscale_y(&s, cy), out);
+}
+
+/* Up and down a line, from where the caret is drawn: the nearest place on the line above or below, on
+ * this page or the one before or after. 0 when there are no pages (the editor's own move then). */
+static int caret_line_move(int dir, int extend)
+{
+    ow_layout *l = pages();
+    ow_selection sel;
+    ow_position to;
+    ol_rect box, nb;
+    ol_unit y, step, height;
+    int page, np, found, i, count;
+    if (!l || !editor) return 0;
+    sel = ow_editor_selection(editor);
+    if (!ow_layout_caret(l, sel.focus, &page, &box)) return 0;
+    count = ow_layout_page_count(l);
+    height = ow_layout_page(l)->height;
+    step = box.height / 2 > OL_POINT(1) ? box.height / 2 : OL_POINT(1);
+    y = dir < 0 ? box.y : box.y + box.height;
+    np = page;
+    for (i = 0; i < 512; ++i) {
+        y += dir < 0 ? -step : step;
+        if (y < 0) {
+            if (np == 0) return 1;                   /* the first line: the caret stays */
+            --np;
+            y = height - 1;
+        } else if (y >= height) {
+            if (np + 1 >= count) return 1;           /* the last line */
+            ++np;
+            y = 0;
+        }
+        if (ow_layout_hit(l, np, box.x, y, &to) && ow_layout_caret(l, to, &found, &nb) &&
+            (found != page || nb.y != box.y))
+            break;
+    }
+    if (i >= 512) return 1;
+    if (!extend) sel.anchor = to;
+    sel.focus = to;
+    ow_editor_set_selection(editor, &sel);
+    return 1;
+}
+
+
 /* The view's content: the pages at this zoom. */
 static void pages_changed(void)
 {
-    int pages = editor ? ow_editor_page_count(editor) : 1, pw, ph;
-    if (pages < 1) pages = 1;
+    int count = page_total(), pw, ph;
     page_size(&pw, &ph);
-    if (pv) ogt_pageview_set_pages(pv, pages, pw, ph, PAGE_GAP, PAGE_MARGIN);
-    if (nav) ogt_list_set_count(nav, pages);
+    if (pv) ogt_pageview_set_pages(pv, count, pw, ph, PAGE_GAP, PAGE_MARGIN);
+    if (nav) ogt_list_set_count(nav, count);
 }
 
 static void draw_pages(void *user, struct RastPort *rp, int x, int y, int w, int h, int cx, int cy)
 {
-    int p, pages = editor ? ow_editor_page_count(editor) : 1, pw, ph;
+    int p, count = page_total(), pw, ph;
     LONG paper = ogt_pen_rgb(&ctx, (ogt_rgb){255,255,255});
     LONG shadow = ogt_pen(&ctx, "track");
     LONG edge = ogt_pen(&ctx, "group.line");
     ow_renderer r;
-    (void)user; (void)w;
+    ow_layout *l = pages();
+    (void)user;
     if (!doc || !editor) return;
     page_size(&pw, &ph);
     hit_count = 0;
-    for (p = 0; p < pages; ++p) {
+    for (p = 0; p < count; ++p) {
         int top = ogt_pageview_page_top(pv, p) - cy;
         if (top + ph + 4 < 0 || top > h) continue;
         page_box = (box){ x + PAGE_MARGIN - cx, y + top, pw, ph };
         ogt_box(rp, shadow, page_box.x + 4, page_box.y + 4, pw, ph);
         ogt_box(rp, paper, page_box.x, page_box.y, pw, ph);
         ogt_frame(rp, edge, page_box.x, page_box.y, pw, ph);
+        if (l) {                                     /* 2.1: OpenLayout's page, at the screen's pixels */
+            ol_scale s;
+            ol_pixel_rect clip;
+            page_scale(&s, page_box.x, page_box.y);
+            clip.x = x;
+            clip.y = y;
+            clip.width = w;
+            clip.height = h;
+            paint_page(rp, l, p, &s, &clip, 0);
+            continue;
+        }
         render_x0 = page_box.x;
         render_y0 = page_box.y;
         render_bottom = page_box.y;
@@ -1437,6 +1950,23 @@ static void nav_draw(void *user, int index, struct RastPort *rp, int x, int y, i
     (void)user; (void)h;
     ogt_box(rp, ogt_pen(&ctx, "track"), px + 2, py + 2, pw, ph);
     ogt_box(rp, ogt_pen_rgb(&ctx, (ogt_rgb){255,255,255}), px, py, pw, ph);
+    {   /* 2.1: the page itself, small: OpenLayout's ops at the thumbnail's scale, words as grey lines */
+        ow_layout *l = pages();
+        if (l && index < ow_layout_page_count(l) && pw > 8) {
+            ol_scale s;
+            ol_pixel_rect clip;
+            memset(&s, 0, sizeof s);
+            ol_scale_fit(&s, ow_layout_page(l)->width, pw);
+            s.origin_x = px;
+            s.origin_y = py;
+            clip.x = px;
+            clip.y = py;
+            clip.width = pw;
+            clip.height = ph;
+            paint_page(rp, l, index, &s, &clip, 1);
+            SetFont(rp, font);
+        }
+    }
     ogt_frame(rp, ogt_pen(&ctx, selected || index == page_index ? "accent" : "group.line"), px, py, pw, ph);
     if (selected || index == page_index) ogt_frame(rp, ogt_pen(&ctx, "accent"), px - 1, py - 1, pw + 2, ph + 2);
     snprintf(s, sizeof s, "%d", index + 1);
@@ -1446,9 +1976,8 @@ static void nav_draw(void *user, int index, struct RastPort *rp, int x, int y, i
 static void draw_status(void)
 {
     char s[96];
-    int pages = editor ? ow_editor_page_count(editor) : 1;
     if (!win) return;
-    snprintf(s, sizeof s, "Page %d of %d", page_index + 1, pages);
+    snprintf(s, sizeof s, "Page %d of %d", page_index + 1, page_total());
     ogt_status_set(&sbar, 0, s);
     snprintf(s, sizeof s, "%d words", word_count());
     ogt_status_set(&sbar, 1, s);
@@ -1598,7 +2127,7 @@ static void layout(void)
     else if (glist2) { FreeGadgets(glist2); glist2 = NULL; }
 
     /* the navigator, the ruler, the page view, the status bar */
-    pages = editor ? ow_editor_page_count(editor) : 1;
+    pages = page_total();
     if (navw) {
         nav = ogt_list_new(win, &ctx, GID_NAV, nav_height, nav_draw, NULL, NULL, "list");
         if (nav) {
@@ -1626,8 +2155,7 @@ static void layout(void)
 
 static void set_page_view(int page)
 {
-    int pages = editor ? ow_editor_page_count(editor) : 1;
-    if (pages < 1) pages = 1;
+    int pages = page_total();
     if (page < 0) page = 0;
     if (page >= pages) page = pages - 1;
     page_index = page;
@@ -1642,8 +2170,23 @@ static void set_page_view(int page)
 static void bring_focus_into_view(void)
 {
     int y, h, bx, by, bw, bh;
+    ow_layout *l = pages();
     if (!editor || !pv) return;
     follow_caret_page();
+    if (l) {                                         /* 2.1: the caret's line from the layout, in content pixels */
+        ol_rect box;
+        ol_scale s;
+        int page;
+        if (ow_layout_caret(l, ow_editor_selection(editor).focus, &page, &box)) {
+            page_scale(&s, 0, ogt_pageview_page_top(pv, page));
+            y = ol_scale_y(&s, box.y);
+            h = ol_scale_length(&s, box.height);
+            ogt_pageview_box(pv, &bx, &by, &bw, &bh);
+            if (y < pv->top || y + h > pv->top + bh) ogt_pageview_scroll_by(pv, y - (pv->top + bh / 3));
+        }
+        redraw_document_area();
+        return;
+    }
     track_pos = ow_editor_selection(editor).focus;
     track_y = -1; track_h = 0; track_on = 1;
     redraw_document_area();
@@ -2332,8 +2875,8 @@ static void about(void)
 
 static void follow_caret_page(void)
 {
-    int p = editor ? ow_editor_current_page(editor) : 0;
-    if (p >= 0 && editor && p < ow_editor_page_count(editor)) page_index = p;
+    int p = caret_page();
+    if (p >= 0 && editor && p < page_total()) page_index = p;
 }
 
 /* After Find: the match's page, then scrolled so the match is in view (a
@@ -2637,7 +3180,7 @@ static void menu_action(ULONG id)
     case M_PAGE_FIRST: set_page_view(0); break;
     case M_PAGE_PREV: set_page_view(page_index - 1); break;
     case M_PAGE_NEXT: set_page_view(page_index + 1); break;
-    case M_PAGE_LAST: set_page_view(editor ? ow_editor_page_count(editor) - 1 : 0); break;
+    case M_PAGE_LAST: set_page_view(page_total() - 1); break;
     case M_ZOOM_IN: set_zoom(zoom + 10); break;
     case M_ZOOM_OUT: set_zoom(zoom - 10); break;
     case M_ZOOM_100: set_zoom(100); break;
@@ -2734,7 +3277,7 @@ static char *document_plain_text(void)
             if(run->kind==OWF_RUN_TEXT)t=run->text;
             else if(run->kind==OWF_RUN_TAB)t="\t";
             else if(run->kind==OWF_RUN_LINEBREAK)t="\n";
-            else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",ow_editor_current_page(editor)+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",ow_editor_page_count(editor));else field[0]=0;t=field;}
+            else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",caret_page()+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",page_total());else field[0]=0;t=field;}
             if(!t)continue;
             add=strlen(t);
             if(n+add+2>cap){size_t want=(n+add+2)*2;char *q=(char*)realloc(out,want);if(!q){free(out);return NULL;}out=q;cap=want;}
@@ -2751,7 +3294,7 @@ static int rexx_do_command(const char *command, char **result_out)
     result[0]=0;command=skip_space(command);
     if(starts_word_ci(command,"VERSION",&arg))snprintf(result,sizeof result,"%s",VERSION_TEXT);
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
-    else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?ow_editor_page_count(editor):0);
+    else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
     else if(starts_word_ci(command,"OPEN",&arg)){if(!*arg|| (editor&&ow_editor_is_dirty(editor))){ok=0;snprintf(result,sizeof result,"Unsaved changes or missing path");}else{open_document(arg);relayout();snprintf(result,sizeof result,"%s",status);}}
     else if(starts_word_ci(command,"SAVEAS",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing path");}else{save_document_as(arg);snprintf(result,sizeof result,"%s",status);}}
     else if(starts_word_ci(command,"SAVE",&arg)){if(current_path[0]){save_document_as(current_path);snprintf(result,sizeof result,"%s",status);}else{ok=0;snprintf(result,sizeof result,"Untitled document needs SAVEAS");}}
@@ -2866,15 +3409,15 @@ static void events(void)
                     else if (code == 0x4d) scroll_page(0, 48);
                 } else if (ramiga) {
                     if (code == 0x4f) set_page_view(0);
-                    else if (code == 0x4e) set_page_view(ow_editor_page_count(editor) - 1);
+                    else if (code == 0x4e) set_page_view(page_total() - 1);
                     else if (code == 0x4c) set_page_view(page_index - 1);
                     else if (code == 0x4d) set_page_view(page_index + 1);
                     else if (code == 0x44) editor_result(ow_editor_insert_page_break(editor), "Page break inserted.");
                 } else switch (code) {
                 case 0x4f: ow_editor_move_caret(editor, OW_MOVE_LEFT, extend); bring_focus_into_view(); break;
                 case 0x4e: ow_editor_move_caret(editor, OW_MOVE_RIGHT, extend); bring_focus_into_view(); break;
-                case 0x4c: ow_editor_move_caret(editor, OW_MOVE_UP, extend); bring_focus_into_view(); break;
-                case 0x4d: ow_editor_move_caret(editor, OW_MOVE_DOWN, extend); bring_focus_into_view(); break;
+                case 0x4c: if (!caret_line_move(-1, extend)) ow_editor_move_caret(editor, OW_MOVE_UP, extend); bring_focus_into_view(); break;
+                case 0x4d: if (!caret_line_move(1, extend)) ow_editor_move_caret(editor, OW_MOVE_DOWN, extend); bring_focus_into_view(); break;
                 case 0x46: editor_result(ow_editor_delete_forward(editor), "Modified."); break;
                 }
             }
@@ -2981,6 +3524,7 @@ out:
     rexx_close();
     close_window();
     if (spell) { ow_spell_close(spell); spell = NULL; }
+    pages_free();
     if (editor) { ow_editor_free(editor); editor = NULL; }
     if (doc) { owf_doc_free(doc); doc = NULL; }
     if (theme.text) ogt_theme_free(&theme);

@@ -530,8 +530,14 @@ static void read_numbering(docx *d)
                 if (!t[0] || (t[0] == 0xEF && (t[1] == 0x80 || t[1] == 0x81 || t[1] == 0x82 || t[1] == 0x83)))
                     snprintf(ll->text, sizeof ll->text, "%s", "\xe2\x80\xa2");
             }
-            if ((n = wchild(d, wchild(d, lvl, "pPr"), "ind")) && wint(d, n, "left", &v))
-                ll->indent = v;
+            if ((n = wchild(d, wchild(d, lvl, "pPr"), "ind"))) {
+                if (wint(d, n, "left", &v) || wint(d, n, "start", &v))
+                    ll->indent = v;
+                if (wint(d, n, "hanging", &v))
+                    ll->first = -v;
+                else if (wint(d, n, "firstLine", &v))
+                    ll->first = v;
+            }
         }
     }
 }
@@ -948,6 +954,8 @@ static void paragraph(docx *d, const owf_xml_node *p)
                 d->counters[li][k] = 0;
             if (!(pp.mask & OWF_PP_LEFT) && d->lists[li].levels[num_level].indent)
                 pf.indent_left = d->lists[li].levels[num_level].indent;
+            if (!(pp.mask & OWF_PP_FIRST) && d->lists[li].levels[num_level].first)
+                pf.indent_first = d->lists[li].levels[num_level].first;
             list_prefix(d, li, num_level, &d->scratch);
             start_para(d, &pf);
             if (!d->scratch.failed && d->scratch.length) {
@@ -985,9 +993,9 @@ static void cell_content(docx *d, const owf_xml_node *n, int *first)
             owf_parafmt pf = d->base_para;
             owf_charfmt cf = d->base_char;
             owf_styles_resolve(d->tables, 1, pstyle ? wval(d, pstyle) : d->default_para, OWF_FAMILY_PARAGRAPH, &pf, &cf);
-            if (!*first) {
+            if (!*first) {                           /* a cell holds one paragraph: the next starts a line */
                 set_fmt(d, &cf);
-                owf_builder_text(d->b, " ", 1);
+                owf_builder_special(d->b, OWF_RUN_LINEBREAK, OWF_FIELD_PAGE);
             }
             *first = 0;
             para_content(d, c, &cf);

@@ -134,6 +134,10 @@ int ow_editor_redo(ow_editor *editor);
 void ow_editor_break_edit_group(ow_editor *editor);
 
 int ow_editor_is_dirty(const ow_editor *editor);
+/* Counts every change to the document (an edit, undo, redo, page setup):
+ * a view that keeps its own layout of the document lays it out again when
+ * this moves. */
+unsigned long ow_editor_changes(const ow_editor *editor);
 void ow_editor_mark_saved(ow_editor *editor);
 
 int ow_editor_layout(ow_editor *editor);

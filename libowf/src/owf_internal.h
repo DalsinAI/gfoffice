@@ -210,6 +210,7 @@ typedef struct {
     char text[24];           /* DOCX's "%1.%2." or ODT's prefix + "%n" + suffix; a bullet's character */
     int start;
     int indent;              /* twips, 0 for the default */
+    int first;               /* the first line from indent, below 0 hangs; 0 for none */
 } owf_list_level;
 
 typedef struct {

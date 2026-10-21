@@ -665,10 +665,10 @@ static void cell_text(odt *o, const owf_xml_node *n, int *first)
             owf_parafmt pf;
             owf_charfmt cf;
             para_formats(o, c, &pf, &cf);
-            if (!*first) {
+            if (!*first) {                           /* a cell holds one paragraph: the next starts a line */
                 owf_charfmt rel = relative(o, cf);
                 set_fmt(o->b, &rel);
-                owf_builder_text(o->b, " ", 1);
+                owf_builder_special(o->b, OWF_RUN_LINEBREAK, OWF_FIELD_PAGE);
             }
             *first = 0;
             o->space = 1;
