@@ -1486,6 +1486,12 @@ static const width_table *font_widths(uint32_t flags)
     return t;
 }
 
+/* A sum of a table's widths, at size units. */
+static ol_unit table_units(const width_table *t, ULONG sum, ol_unit size)
+{
+    return (ol_unit)(sum / (ULONG)t->ref) * size + (ol_unit)(sum % (ULONG)t->ref) * size / t->ref;
+}
+
 /* OpenLayout's measure callback: text in units, from the width tables. */
 static int measure_units(void *userdata, const char *utf8, size_t length, const ol_style *style,
                          ol_text_metrics *m)
@@ -1510,7 +1516,7 @@ static int measure_units(void *userdata, const char *utf8, size_t length, const 
         }
         at += n;
     }
-    m->width = (ol_unit)(sum / (ULONG)t->ref) * size + (ol_unit)(sum % (ULONG)t->ref) * size / t->ref + tabs;
+    m->width = table_units(t, sum, size) + tabs;
     m->ascent = t->ascent * size / t->ref;
     m->descent = t->descent * size / t->ref;
     return 1;
@@ -1565,6 +1571,7 @@ static void page_scale(ol_scale *s, int ox, int oy)
 typedef struct {
     struct RastPort *rp;
     ow_layout *layout;
+    const ol_scale *scale;
     const ol_document *od;      /* the body, or a header or footer */
     int body;                   /* od is the body: its text is the document's runs */
     int thumb;                  /* a navigator thumbnail: text as grey lines */
@@ -1582,14 +1589,28 @@ static LONG argb_pen(uint32_t argb)
     return ogt_pen_rgb(&ctx, (ogt_rgb){ (UBYTE)(argb >> 16), (UBYTE)(argb >> 8), (UBYTE)argb });
 }
 
+/* Where the first n bytes of a word end, in pixels from its left: in the screen font, or, for a word whose
+ * glyphs are placed one by one, the layout's. */
+static int word_x(const page_paint *pp, const ol_device_op *d, const char *s, size_t n, int placed)
+{
+    ol_text_metrics m;
+    if (!n) return 0;
+    if (!placed) return text_width_n(pp->rp, s, n);
+    measure_units(NULL, s, n, &d->op->u.text.style, &m);
+    return ol_scale_length(pp->scale, m.width);
+}
+
 static void paint_text(page_paint *pp, const ol_device_op *d)
 {
     struct RastPort *rp = pp->rp;
     const ol_text_op *t = &d->op->u.text;
     const char *s = ol_node_text(ol_node_by_id(pp->od, t->node_id));
+    const width_table *wt;
+    ol_unit size = t->style.font_size > 0 ? t->style.font_size : OL_POINT(12), tabs;
     char buf[256], file[72];
-    size_t n, k;
-    int baseline = d->baseline, style = FS_NORMAL, para = -1, run = -1;
+    size_t n, k, drawn;
+    int baseline = d->baseline, style = FS_NORMAL, para = -1, run = -1, target, placed;
+    ULONG sum;
     struct TextFont *f;
     LONG pen;
     if (!s || !t->text_length) return;
@@ -1612,7 +1633,23 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     if (t->style.text_flags & OL_TEXT_SUPER) baseline -= d->font_pixels / 2;
     else if (t->style.text_flags & OL_TEXT_SUB) baseline += d->font_pixels / 4;
 
-    /* the selection under the text, and where the caret goes, measured in the font drawn */
+    /* The word as the layout measured it. A screen font at a small size, or with the bold smear (a pixel a
+     * letter at any size), can run wider than that: then each glyph goes where the layout put it, so the
+     * word keeps its width and the space after it. */
+    n = to_latin1(s, t->text_length, buf, sizeof buf);
+    drawn = n;
+    while (drawn && (buf[drawn - 1] == ' ' || buf[drawn - 1] == '\t')) --drawn;
+    wt = font_widths(t->style.text_flags);
+    for (k = 0, sum = 0, tabs = 0; k < drawn; ++k) {
+        if (buf[k] == '\t') tabs += TAB_UNITS;
+        else sum += wt->w[(unsigned char)buf[k]];
+    }
+    target = ol_scale_length(pp->scale, table_units(wt, sum, size) + tabs);
+    for (k = 0; k < n; ++k)
+        if ((unsigned char)buf[k] < 32) buf[k] = ' ';   /* a tab: its space is the layout's */
+    placed = drawn && (int)TextLength(rp, (STRPTR)buf, drawn) > target + 1;
+
+    /* the selection under the text, and where the caret goes, measured as the text is drawn */
     if (pp->body && ow_layout_node_run(pp->layout, t->node_id, &para, &run) && run >= 0 &&
         doc->body.paras[para].runs[run].kind == OWF_RUN_TEXT) {
         ow_position rs, re;
@@ -1623,33 +1660,49 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
         if (pp->has_sel && pos_compare(pp->sel_b, rs) > 0 && pos_compare(pp->sel_a, re) < 0) {
             size_t from = pos_compare(pp->sel_a, rs) > 0 ? pp->sel_a.byte_offset : rs.byte_offset;
             size_t to = pos_compare(pp->sel_b, re) < 0 ? pp->sel_b.byte_offset : re.byte_offset;
-            int sx = d->box.x + text_width_n(rp, s, from - rs.byte_offset);
-            int sw = text_width_n(rp, s + (from - rs.byte_offset), to - from);
+            int sx = d->box.x + word_x(pp, d, s, from - rs.byte_offset, placed);
+            int sw = d->box.x + word_x(pp, d, s, to - rs.byte_offset, placed) - sx;
             ogt_box(rp, ogt_pen(&ctx, "selection.inactive"), sx, d->box.y, sw > 2 ? sw : 2, d->box.height);
         }
         if (pp->caret_on && !pp->caret_done && pp->caret_page == pp->page &&
             pp->caret.paragraph == para && pp->caret.run == run &&
             pp->caret.byte_offset >= rs.byte_offset && pp->caret.byte_offset <= re.byte_offset &&
             t->bounds.y == pp->caret_box.y) {
-            pp->caret_x = d->box.x + text_width_n(rp, s, pp->caret.byte_offset - rs.byte_offset);
+            pp->caret_x = d->box.x + word_x(pp, d, s, pp->caret.byte_offset - rs.byte_offset, placed);
             pp->caret_y = d->box.y;
             pp->caret_h = d->box.height;
             pp->caret_done = 1;
         }
     }
 
-    n = to_latin1(s, t->text_length, buf, sizeof buf);
-    for (k = 0; k < n; ++k)
-        if ((unsigned char)buf[k] < 32) buf[k] = ' ';   /* a tab: its space is the layout's */
-    while (n && buf[n - 1] == ' ' && !(style & FSF_UNDERLINED)) --n;
+    if (!(style & FSF_UNDERLINED)) n = drawn;        /* an underline runs on under the spaces */
     if (!n) return;
     pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : ogt_pen(&ctx, "fill.text");
     ogt_set_apen(rp, pen);
     SetDrMd(rp, JAM1);
-    Move(rp, d->box.x, baseline);
-    Text(rp, (STRPTR)buf, n);
+    if (!placed) {
+        Move(rp, d->box.x, baseline);
+        Text(rp, (STRPTR)buf, n);
+        if (t->style.text_flags & OL_TEXT_STRIKE)
+            ogt_hline(rp, pen, d->box.x, baseline - (rp->TxBaseline + 1) / 3, TextLength(rp, (STRPTR)buf, drawn));
+        return;
+    }
+    SetSoftStyle(rp, style & ~FSF_UNDERLINED, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    to_latin1(s, t->text_length, buf, sizeof buf);    /* the tabs again, for their widths */
+    for (k = 0, sum = 0, tabs = 0; k < drawn; ++k) {
+        unsigned char c = (unsigned char)buf[k];
+        if (c > ' ') {
+            Move(rp, d->box.x + (sum || tabs ? ol_scale_length(pp->scale, table_units(wt, sum, size) + tabs) : 0),
+                 baseline);
+            Text(rp, (STRPTR)&buf[k], 1);
+        }
+        if (c == '\t') tabs += TAB_UNITS;
+        else sum += wt->w[c];
+    }
+    if (style & FSF_UNDERLINED)
+        ogt_hline(rp, pen, d->box.x, baseline + 1, n > drawn ? d->box.width : target);
     if (t->style.text_flags & OL_TEXT_STRIKE)
-        ogt_hline(rp, pen, d->box.x, baseline - (rp->TxBaseline + 1) / 3, TextLength(rp, (STRPTR)buf, n));
+        ogt_hline(rp, pen, d->box.x, baseline - (rp->TxBaseline + 1) / 3, target);
 }
 
 static void paint_op(void *userdata, const ol_device_op *d)
@@ -1707,6 +1760,7 @@ static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_sca
     memset(&pp, 0, sizeof pp);
     pp.rp = rp;
     pp.layout = l;
+    pp.scale = s;
     pp.od = ow_layout_body(l);
     pp.body = 1;
     pp.thumb = thumb;
