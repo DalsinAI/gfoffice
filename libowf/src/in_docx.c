@@ -985,9 +985,9 @@ static void cell_content(docx *d, const owf_xml_node *n, int *first)
             owf_parafmt pf = d->base_para;
             owf_charfmt cf = d->base_char;
             owf_styles_resolve(d->tables, 1, pstyle ? wval(d, pstyle) : d->default_para, OWF_FAMILY_PARAGRAPH, &pf, &cf);
-            if (!*first) {
+            if (!*first) {                           /* a cell holds one paragraph: the next starts a line */
                 set_fmt(d, &cf);
-                owf_builder_text(d->b, " ", 1);
+                owf_builder_special(d->b, OWF_RUN_LINEBREAK, OWF_FIELD_PAGE);
             }
             *first = 0;
             para_content(d, c, &cf);
