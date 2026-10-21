@@ -1036,13 +1036,28 @@ static size_t to_latin1(const char *s, size_t n, char *out, size_t cap)
     return o;
 }
 
+/* TextLength with the bold smear counted. Text() in a font made bold by the system moves each letter on by
+ * the font's bold smear, which TextLength can leave out; so a bold word is measured plain, plus the smear a
+ * letter, or as TextLength has it bold, whichever is wider. */
+static int text_length(struct RastPort *rp, const char *s, size_t m)
+{
+    struct TextFont *f = rp->Font;
+    UBYTE algo = rp->AlgoStyle;
+    LONG w = TextLength(rp, (STRPTR)s, (ULONG)m), plain;
+    if (!m || !(algo & FSF_BOLD) || !f || (f->tf_Style & FSF_BOLD)) return (int)w;
+    rp->AlgoStyle = algo & ~FSF_BOLD;
+    plain = TextLength(rp, (STRPTR)s, (ULONG)m) + (LONG)m * (f->tf_BoldSmear ? f->tf_BoldSmear : 1);
+    rp->AlgoStyle = algo;
+    return (int)(plain > w ? plain : w);
+}
+
 static int text_width_n(struct RastPort *rp, const char *s, size_t n)
 {
     char buf[512];
     size_t m;
     if (!n) return 0;
     m = to_latin1(s, n, buf, sizeof buf);
-    return m ? (int)TextLength(rp, (STRPTR)buf, (ULONG)m) : 0;
+    return m ? text_length(rp, buf, m) : 0;
 }
 
 static int selection_for_run(int paragraph, int run, size_t len,
@@ -1470,7 +1485,7 @@ static const width_table *font_widths(uint32_t flags)
     SetSoftStyle(&trp, bold ? FSF_BOLD : FS_NORMAL, FSF_BOLD);
     for (i = 32; i < 256; ++i) {
         char c = (char)i;
-        t->w[i] = (UWORD)TextLength(&trp, (STRPTR)&c, 1);
+        t->w[i] = (UWORD)text_length(&trp, &c, 1);
     }
     t->ref = f->tf_YSize > 0 ? f->tf_YSize : 1;
     t->ascent = f->tf_Baseline + 1;
@@ -1647,7 +1662,7 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     target = ol_scale_length(pp->scale, table_units(wt, sum, size) + tabs);
     for (k = 0; k < n; ++k)
         if ((unsigned char)buf[k] < 32) buf[k] = ' ';   /* a tab: its space is the layout's */
-    placed = drawn && (int)TextLength(rp, (STRPTR)buf, drawn) > target + 1;
+    placed = drawn && text_length(rp, buf, drawn) > target + 1;
 
     /* the selection under the text, and where the caret goes, measured as the text is drawn */
     if (pp->body && ow_layout_node_run(pp->layout, t->node_id, &para, &run) && run >= 0 &&
@@ -1684,7 +1699,7 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
         Move(rp, d->box.x, baseline);
         Text(rp, (STRPTR)buf, n);
         if (t->style.text_flags & OL_TEXT_STRIKE)
-            ogt_hline(rp, pen, d->box.x, baseline - (rp->TxBaseline + 1) / 3, TextLength(rp, (STRPTR)buf, drawn));
+            ogt_hline(rp, pen, d->box.x, baseline - (rp->TxBaseline + 1) / 3, text_length(rp, buf, drawn));
         return;
     }
     SetSoftStyle(rp, style & ~FSF_UNDERLINED, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
