@@ -233,9 +233,28 @@ static void test_sample(const char *path)
     l = ow_layout_new(doc, measure, NULL);
     CHECK(l != NULL);
     if (l) {
+        int lists = 0;
         CHECK(ow_layout_page_count(l) >= 1);
         for (i = 0; i < doc->body.nparas && i < 40; ++i) round_trip(l, doc, i, &checked);
-        printf("ow_layout: %s, %d pages, %d caret positions\n", path, ow_layout_page_count(l), checked);
+        /* a list item's bullet hangs and its text, after the tab, starts at the paragraph's indent */
+        for (i = 0; i < doc->body.nparas; ++i) {
+            const owf_para *p = &doc->body.paras[i];
+            ow_position pos;
+            ol_rect box;
+            int page;
+            if (p->table_id >= 0 || p->nruns < 3 || p->fmt.indent_first >= 0 ||
+                p->runs[0].kind != OWF_RUN_TEXT || p->runs[1].kind != OWF_RUN_TAB || p->runs[2].kind != OWF_RUN_TEXT)
+                continue;
+            pos.paragraph = i;
+            pos.run = 2;
+            pos.byte_offset = 0;
+            CHECK(ow_layout_caret(l, pos, &page, &box));
+            CHECK(box.x == ow_layout_page(l)->margin_left + p->fmt.indent_left * OL_UNITS_PER_TWIP);
+            ++lists;
+        }
+        if (strstr(path, "Tata.docx")) CHECK(lists > 0);
+        printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
+               checked, lists);
         ow_layout_free(l);
     }
     owf_doc_free(doc);

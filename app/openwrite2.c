@@ -1695,6 +1695,10 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : ogt_pen(&ctx, "fill.text");
     ogt_set_apen(rp, pen);
     SetDrMd(rp, JAM1);
+    if (!drawn) {                                      /* spaces or a tab: only their underline */
+        ogt_hline(rp, pen, d->box.x, baseline + 1, d->box.width);
+        return;
+    }
     if (!placed) {
         Move(rp, d->box.x, baseline);
         Text(rp, (STRPTR)buf, n);

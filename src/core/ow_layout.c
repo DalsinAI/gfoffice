@@ -164,6 +164,13 @@ static ol_node *add_paragraph(ow_layout *l, const owf_doc *doc, ol_document *od,
     para_style(doc, p, &s, &b);
     ol_node_set_style(block, &s);
     ol_node_set_box(block, &b);
+    if (p->fmt.ntabs > 0) {
+        /* left stops; centred, right and decimal ones are laid out as left ones for now */
+        ol_unit stops[OL_MAX_TABS];
+        int k, n = p->fmt.ntabs < OL_MAX_TABS ? p->fmt.ntabs : OL_MAX_TABS;
+        for (k = 0; k < n; ++k) stops[k] = TW(p->fmt.tabs[k].position);
+        if (!ol_node_set_tabs(block, n, stops)) return NULL;
+    }
     if (!remember(l, block, index, -1)) return NULL;
 
     for (j = 0; j < p->nruns; ++j) {
