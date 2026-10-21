@@ -21,12 +21,14 @@ $(OUT)/owconvert-asan: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/owconvert.c -lz -o $@
 
-test: $(OUT)/owconvert
+test: $(OUT)/owconvert $(OUT)/book-dump
 	python3 tests/run_tests.py $(OUT)/owconvert
+	python3 tests/book/test_books.py $(OUT)/book-dump $(OUT)/owconvert
 
-check: $(OUT)/owconvert-asan $(OUT)/test-core-asan
+check: $(OUT)/owconvert-asan $(OUT)/test-core-asan $(OUT)/book-dump-asan
 	python3 tests/run_tests.py $(OUT)/owconvert-asan
 	$(OUT)/test-core-asan
+	python3 tests/book/test_books.py $(OUT)/book-dump-asan $(OUT)/owconvert-asan
 
 clean:
 	rm -rf build
@@ -103,3 +105,21 @@ layout-check: $(OUT)/test-layout-asan
 	$(OUT)/test-layout-asan samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx
 
 .PHONY: layout-test layout-check
+
+# Workbooks (the spreadsheet's files): tests/book/test_books.py
+$(OUT)/book-dump: $(OWF_SRC) tests/book/book_dump.c libowf/include/owf.h libowf/src/owf_internal.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/book/book_dump.c -lz -o $@
+
+$(OUT)/book-dump-asan: $(OWF_SRC) tests/book/book_dump.c libowf/include/owf.h libowf/src/owf_internal.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/book/book_dump.c -lz -o $@
+
+book-test: $(OUT)/book-dump $(OUT)/owconvert
+	python3 tests/book/test_books.py $(OUT)/book-dump $(OUT)/owconvert
+
+book-check: $(OUT)/book-dump-asan $(OUT)/owconvert-asan
+	python3 tests/book/test_books.py $(OUT)/book-dump-asan $(OUT)/owconvert-asan
+
+.PHONY: book-test book-check

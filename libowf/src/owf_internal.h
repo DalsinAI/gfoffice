@@ -31,6 +31,10 @@ int owf_sys_now(owf_time *t);
 
 static inline int owf_lower(int c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; }
 static inline int owf_upper(int c) { return c >= 'a' && c <= 'z' ? c - ('a' - 'A') : c; }
+/* Two names the same but for case. */
+int owf_same_word(const char *a, const char *b);
+/* 1 when ext is one of the space-separated words in list. */
+int owf_ext_in_list(const char *list, const char *ext);
 
 /* ---- A growing byte buffer; after a failed allocation it stays failed ---- */
 
@@ -108,6 +112,47 @@ int owf_zip_add(owf_zip *zip, const char *name, const void *data, size_t length,
 /* Writes the central directory and frees the writer. */
 int owf_zip_finish(owf_zip *zip);
 unsigned long owf_crc32(unsigned long crc, const unsigned char *data, size_t length);
+
+/* ---- OLE compound files (owf_cfb.c): Excel 97-2003, Word 97-2003 ---- */
+
+typedef struct {
+    const unsigned char *data;
+    size_t length;
+    unsigned sector_size;
+    unsigned long nsectors;
+    unsigned long *fat, nfat;
+    unsigned long *minifat, nminifat;
+    unsigned char *ministream;
+    size_t ministream_length;
+    unsigned char *dir;           /* the directory's entries, 128 bytes each */
+    size_t ndir;
+    int cut_short;                /* a chain ran off the end of the file */
+} owf_cfb;
+
+/* 1 when the data starts as a compound file. */
+int owf_cfb_detect(const unsigned char *data, size_t length);
+/* OWF_OK, or OWF_ERR_FORMAT, _CORRUPT or _MEMORY (then nothing to close). */
+int owf_cfb_open(owf_cfb *cfb, const unsigned char *data, size_t length);
+void owf_cfb_close(owf_cfb *cfb);
+int owf_cfb_has(const owf_cfb *cfb, const char *name);
+/* A stream, by name (ignoring case), into memory from malloc with a NUL
+ * after it. OWF_ERR_FORMAT when there is none. */
+int owf_cfb_read(owf_cfb *cfb, const char *name, unsigned char **data, size_t *length);
+
+/* ---- Workbook formats ---- */
+
+extern const owf_book_format owf_book_format_xls;
+extern const owf_book_format owf_book_format_csv;
+/* Excel's functions, by their number in its files ([MS-XLS] Ftab): name,
+ * and the least and most arguments (min == max for a fixed count); NULL
+ * name for a number that is not a function we know. */
+typedef struct {
+    const char *name;
+    signed char min, max;
+} owf_xl_function;
+const owf_xl_function *owf_xl_function_at(unsigned index);
+/* A column's letters ("A", "IV"); out holds at least 8 bytes. */
+void owf_column_name(unsigned col, char *out);
 
 /* ---- XML (owf_xml.c) ---- */
 
