@@ -346,15 +346,85 @@ int owf_book_add_name(owf_book *book, const char *name, int sheet, const char *f
 
 /* ---- Numbers as text ---- */
 
-/* Up to 15 significant digits, as Excel shows them, with the system's
- * doubles only (no C library: owf.library has none). */
+/* Up to 15 significant digits, as Excel shows them, rounded half up from
+ * the double's exact value. The digits come from whole-number arithmetic
+ * on the value's bits (16-bit pieces, so 32-bit sums never overflow); the
+ * system's doubles only take the value apart, and never round. No C
+ * library: owf.library has none. */
+
+#define BIG_PIECES 80                    /* 1280 bits: 2^53 x 10^324 fits */
+
+typedef struct {
+    int n;                               /* pieces in use, lowest first */
+    unsigned short d[BIG_PIECES];
+} big;
+
+static void big_mul(big *b, unsigned long m)  /* m below 65536 */
+{
+    unsigned long carry = 0;
+    int i;
+    for (i = 0; i < b->n; i++) {
+        carry += b->d[i] * m;
+        b->d[i] = (unsigned short)(carry & 0xFFFF);
+        carry >>= 16;
+    }
+    if (carry && b->n < BIG_PIECES)
+        b->d[b->n++] = (unsigned short)carry;
+}
+
+static void big_mul_pow(big *b, unsigned base, int k)  /* b * base^k, base 2 or 10 */
+{
+    unsigned long step = base == 2 ? 32768 : 10000;
+    int per = base == 2 ? 15 : 4;
+    for (; k >= per; k -= per)
+        big_mul(b, step);
+    for (; k > 0; k--)
+        big_mul(b, base);
+}
+
+static int big_cmp(const big *a, const big *b)
+{
+    int i;
+    if (a->n != b->n)
+        return a->n < b->n ? -1 : 1;
+    for (i = a->n - 1; i >= 0; i--)
+        if (a->d[i] != b->d[i])
+            return a->d[i] < b->d[i] ? -1 : 1;
+    return 0;
+}
+
+static void big_sub(big *a, const big *b)    /* a >= b */
+{
+    long borrow = 0;
+    int i;
+    for (i = 0; i < a->n; i++) {
+        long t = (long)a->d[i] - (i < b->n ? (long)b->d[i] : 0) - borrow;
+        borrow = t < 0;
+        a->d[i] = (unsigned short)(t + (borrow << 16));
+    }
+    while (a->n && !a->d[a->n - 1])
+        a->n--;
+}
+
+/* The next digit of num / den, num left below den */
+static int big_digit(big *num, const big *den)
+{
+    int d = 0;
+    while (big_cmp(num, den) >= 0) {
+        big_sub(num, den);
+        d++;
+    }
+    return d;
+}
+
 void owf_number_text(double v, char *out)
 {
-    static const double powers[9] = { 1e1, 1e2, 1e4, 1e8, 1e16, 1e32, 1e64, 1e128, 1e256 };
+    static const double twos[10] = { 2.0, 4.0, 16.0, 256.0, 65536.0, 4294967296.0, 1.8446744073709552e19,
+                                     3.4028236692093846e38, 1.157920892373162e77, 1.3407807929942597e154 };
+    big num, den;
     char digits[16];
-    double x, m;
-    unsigned long hi, lo;
-    int shift = 0, k, nd, e, i;
+    double x;
+    int bits = 0, k, nd, e, i, d;
     char *p = out;
 
     if (v != v || v > 1.7976931348623157e308 || v < -1.7976931348623157e308) {
@@ -369,44 +439,75 @@ void owf_number_text(double v, char *out)
         strcpy(out, "0");
         return;
     }
-    /* x = v / 10^shift, from 1e14 to 1e15: its 15 digits are v's */
+    /* v = x * 2^bits, x a whole number from 2^52 to 2^53: scaling by
+     * powers of two is exact, even for the smallest doubles */
     x = v;
-    if (x >= 1e15) {
-        for (k = 8; k >= 0; k--)
-            if (x / powers[k] >= 1e14) {
-                x /= powers[k];
-                shift += 1 << k;
+    while (x >= 9007199254740992.0)
+        for (k = 9; k >= 0; k--)
+            if (x / twos[k] >= 4503599627370496.0) {
+                x /= twos[k];
+                bits += 1 << k;
             }
-    } else if (x < 1e14) {
-        for (k = 8; k >= 0; k--)
-            if (x * powers[k] < 1e15) {
-                x *= powers[k];
-                shift -= 1 << k;
+    while (x < 4503599627370496.0)
+        for (k = 9; k >= 0; k--)
+            if (x * twos[k] < 9007199254740992.0) {
+                x *= twos[k];
+                bits -= 1 << k;
             }
+    /* x in four 16-bit pieces; each conversion is of a number below 65536 */
+    num.n = 4;
+    for (i = 3; i >= 0; i--) {
+        double unit = i == 3 ? 281474976710656.0 : i == 2 ? 4294967296.0 : i == 1 ? 65536.0 : 1.0;
+        long piece = (long)(x / unit);
+        num.d[i] = (unsigned short)piece;
+        x -= (double)piece * unit;
     }
-    m = x + 0.5;
-    hi = (unsigned long)(m / 1e8);
-    lo = (unsigned long)(m - (double)hi * 1e8);
-    if (lo >= 100000000UL) {
-        hi++;
-        lo -= 100000000UL;
+    den.n = 1;
+    den.d[0] = 1;
+    /* a first guess at the first digit's power of ten: v is at least
+     * 2^(bits + 52), and 78913 / 2^18 is just under log10(2) */
+    k = bits + 52;
+    e = k >= 0 ? (int)(((long)k * 78913L) >> 18) : -(int)((-(long)k * 78913L + 262143L) >> 18);
+    /* num / den = v / 10^e */
+    if (bits > 0)
+        big_mul_pow(&num, 2, bits);
+    else
+        big_mul_pow(&den, 2, -bits);
+    if (e > 0)
+        big_mul_pow(&den, 10, e);
+    else
+        big_mul_pow(&num, 10, -e);
+    while (big_cmp(&num, &den) < 0) {    /* the guess was high */
+        big_mul(&num, 10);
+        e--;
     }
-    if (hi >= 10000000UL) {              /* rounding carried into a 16th digit */
-        hi = 1000000UL;
-        lo = 0;
-        shift++;
+    d = 0;
+    while (big_cmp(&num, &den) >= 0) {
+        big_sub(&num, &den);
+        if (++d == 10) {                 /* the guess was low: count on in tens */
+            big_mul(&den, 10);
+            e++;
+            d = 1;
+        }
     }
-    for (i = 6; i >= 0; i--) {
-        digits[i] = (char)('0' + hi % 10);
-        hi /= 10;
+    digits[0] = (char)('0' + d);
+    for (i = 1; i < 15; i++) {
+        big_mul(&num, 10);
+        digits[i] = (char)('0' + big_digit(&num, &den));
     }
-    for (i = 14; i >= 7; i--) {
-        digits[i] = (char)('0' + lo % 10);
-        lo /= 10;
+    big_mul(&num, 2);
+    if (big_cmp(&num, &den) >= 0) {      /* the rest is a half or more: round up */
+        for (i = 14; i >= 0 && digits[i] == '9'; i--)
+            digits[i] = '0';
+        if (i >= 0)
+            digits[i]++;
+        else {
+            digits[0] = '1';
+            e++;
+        }
     }
     for (nd = 15; nd > 1 && digits[nd - 1] == '0'; nd--)
         ;
-    e = shift + 14;                      /* the first digit's power of ten */
     if (e >= 15 || e < -9) {
         *p++ = digits[0];
         if (nd > 1) {

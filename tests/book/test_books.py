@@ -249,6 +249,14 @@ def rk_int(n):
     return ((n & 0x3FFFFFFF) << 2) | 2
 
 
+# values and what Excel shows for them: 15 digits, rounded half up from
+# the exact value
+NUMBERS_SHOWN = [(536465.9769450414, "536465.976945041"), (5e-324, "4.94065645841247E-324"),
+                 (1.7976931348623157e308, "1.79769313486232E+308"), (1000000000000005.0, "1.00000000000001E+15"),
+                 (999999999999999.5, "1E+15"), (0.1 + 0.2, "0.3"), (-2.2250738585072014e-308, "-2.2250738585072E-308"),
+                 (3.011054714928785e+281, "3.01105471492879E+281")]
+
+
 def built_book(filepass=False, biff5=False):
     """The globals, then the sheets; BOUNDSHEET offsets filled in after."""
     def boundsheet(offset, name, dt=0, hidden=0):
@@ -310,8 +318,13 @@ def built_book(filepass=False, biff5=False):
              rec(0x023E, struct.pack("<HHHI", 0x06B6 | 0x08, 0, 0, 64) + bytes(8)),       # WINDOW2, frozen
              rec(0x0041, struct.pack("<HHHHB", 1, 2, 2, 1, 0)),                           # PANE
              rec(0x000A)]
-    second = [bof(0x0010), rec(0x0203, cellhdr(0, 0) + struct.pack("<d", 7)),
-              rec(0x0203, cellhdr(2, 0) + struct.pack("<d", 8)), rec(0x000A)]
+    second = [bof(0x0010), rec(0x0203, cellhdr(0, 0) + struct.pack("<d", 7))]
+    # numbers whose 15th digit is hard to get right, in column B
+    for row, v in enumerate(NUMBERS_SHOWN):
+        if row == 2:
+            second.append(rec(0x0203, cellhdr(2, 0) + struct.pack("<d", 8)))
+        second.append(rec(0x0203, cellhdr(row, 1) + struct.pack("<d", v[0])))
+    second.append(rec(0x000A))
     chart = [bof(0x0020), rec(0x000A)]
 
     # shared strings: a rich one, one split across a CONTINUE with its
@@ -453,6 +466,8 @@ def test_built_book(work):
     for r, want in expect.items():
         cell_is(b, 0, r, want)
     cell_is(b, 1, "A1", "number 7")
+    for row, (v, shown) in enumerate(NUMBERS_SHOWN):
+        cell_is(b, 1, "B%d" % (row + 1), "number " + shown)
     check("built: second sheet", b["sheets"][1]["line"].startswith('sheet 1 "Second sheet" hidden=0'), b["sheets"][1]["line"])
     check("built: name", b["names"].get("Total", "").endswith('sheet=-1 hidden=0 "First!$A$1:$B$2"'), b["names"])
     check("built: built-in name", b["names"].get("Print_Area", "").endswith('sheet=0 hidden=0 "First!$A$1:$C$3"'), b["names"])
