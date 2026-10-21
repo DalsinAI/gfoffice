@@ -78,6 +78,12 @@ make libc-test
 `make libc-test` checks owf.library's own printf, strtol and case calls
 against the PC's C library.
 
+Pages are laid out by OpenLayout (DalsinAI/openamigalayout 0.2 or later).
+With it checked out beside this repository, or `OPENLAYOUT_SRC` pointing at
+it, `make layout-test` lays out a built document and the samples into pages
+and checks the caret and pointer mapping; `make layout-check` runs the same
+under the address and undefined-behaviour sanitizers.
+
 For AmigaOS 3.x with the os32-gcc16 stove (OpenAmigaGCC 16; set `OS32_GCC16`
 if it is not in `~/AmigaChrome/stoves/os32-gcc16`):
 

@@ -80,3 +80,26 @@ libc-test: $(OUT)/test-owf-libc
 	$(OUT)/test-owf-libc
 
 .PHONY: libc-test
+
+# OpenWrite's pages on OpenLayout (DalsinAI/openamigalayout 0.2 or later)
+OPENLAYOUT_SRC ?= ../openamigalayout
+LAYOUT_SRC = src/core/ow_layout.c $(OPENLAYOUT_SRC)/src/openlayout.c
+
+$(OUT)/test-layout: $(OWF_SRC) $(LAYOUT_SRC) tests/core/test_layout.c include/ow_layout.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
+		$(OWF_SRC) $(LAYOUT_SRC) tests/core/test_layout.c -lz -o $@
+
+$(OUT)/test-layout-asan: $(OWF_SRC) $(LAYOUT_SRC) tests/core/test_layout.c include/ow_layout.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
+		$(OWF_SRC) $(LAYOUT_SRC) tests/core/test_layout.c -lz -o $@
+
+layout-test: $(OUT)/test-layout
+	$(OUT)/test-layout samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx
+
+layout-check: $(OUT)/test-layout-asan
+	$(OUT)/test-layout-asan samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx
+
+.PHONY: layout-test layout-check
