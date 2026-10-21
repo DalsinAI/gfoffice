@@ -13,7 +13,6 @@
  */
 #include "owf_internal.h"
 
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -583,7 +582,7 @@ static int special_field(const char *instr, owf_field *field)
     while (*instr == ' ')
         instr++;
     while (*instr && *instr != ' ' && *instr != '\\' && n < sizeof word - 1)
-        word[n++] = (char)toupper((unsigned char)*instr++);
+        word[n++] = (char)owf_upper((unsigned char)*instr++);
     word[n] = 0;
     if (!strcmp(word, "PAGE")) *field = OWF_FIELD_PAGE;
     else if (!strcmp(word, "NUMPAGES") || !strcmp(word, "SECTIONPAGES")) *field = OWF_FIELD_PAGES;

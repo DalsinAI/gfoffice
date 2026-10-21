@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef OWF_HAVE_ZLIB
-#include <zlib.h>
+#include "owf_zlib.h"
 #endif
 
 #define PDF_MAX_LINE_PIECES 192

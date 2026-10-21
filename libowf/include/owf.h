@@ -2,6 +2,11 @@
  * libowf: OpenWrite's file formats. One document model; importers build it,
  * exporters write it. Plain C99, zlib optional; runs on any Amiga and on the
  * PC, where the tests run.
+ *
+ * On the Amiga it is also owf.library, shared by every program that reads
+ * or writes documents: define OWF_USE_LIBRARY, open "owf.library" into
+ * OWFBase (owf_open.h does both), and the calls below go to the library.
+ * The types are the same either way.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #ifndef OWF_H
@@ -13,7 +18,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.0.2"
+#define OWF_VERSION "1.1.0"
 
 /* Results. */
 enum {
@@ -154,6 +159,17 @@ typedef struct owf_doc {
     char *title;             /* UTF-8, may be NULL */
 } owf_doc;
 
+/* ---- Memory ----
+ * Everything an owf_doc holds (stories, paragraphs, runs, their text,
+ * fonts, images, the title) comes from these, and a program that changes a
+ * document's arrays itself (OpenWrite's editor) uses them too, so that
+ * owf.library and the program agree on whose memory it is. Linked in, they
+ * are malloc, calloc, realloc and free. */
+void *owf_malloc(size_t n);
+void *owf_calloc(size_t n, size_t size);
+void *owf_realloc(void *p, size_t n);
+void owf_free(void *p);
+
 owf_doc *owf_doc_new(void);
 void owf_doc_free(owf_doc *doc);
 
@@ -218,6 +234,11 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
 
 #ifdef __cplusplus
 }
+#endif
+
+/* The calls through owf.library (its inline calls in libowf/library/sdk). */
+#if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include <proto/owf.h>
 #endif
 
 #endif

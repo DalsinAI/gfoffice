@@ -11,6 +11,27 @@
 #include <stdarg.h>
 #include <stddef.h>
 
+/* ---- The system: files and the clock ----
+ * owf_sys.c has them over the C library (the PC, and Amiga programs that
+ * link libowf in); library/owf_sys_dos.c over dos.library for owf.library,
+ * which has no C library of its own. */
+
+/* Reads a whole file; *data gets a NUL after the bytes (from malloc). */
+int owf_sys_read_file(const char *path, unsigned char **data, size_t *length);
+/* Writes a whole file, replacing it. */
+int owf_sys_write_file(const char *path, const unsigned char *data, size_t length);
+typedef struct {
+    int year, month, day;        /* 1980..., 1-12, 1-31 */
+    int hour, minute, second;
+} owf_time;
+/* The local time now; 0 when the clock can't be read. */
+int owf_sys_now(owf_time *t);
+
+/* ---- ASCII case, as the file formats' names and keywords are ---- */
+
+static inline int owf_lower(int c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; }
+static inline int owf_upper(int c) { return c >= 'a' && c <= 'z' ? c - ('a' - 'A') : c; }
+
 /* ---- A growing byte buffer; after a failed allocation it stays failed ---- */
 
 typedef struct {

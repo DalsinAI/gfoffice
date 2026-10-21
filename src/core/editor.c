@@ -38,7 +38,7 @@ struct ow_editor {
 
 static char *copy_bytes(const char *s, size_t n)
 {
-    char *p = (char *)malloc(n + 1);
+    char *p = (char *)owf_malloc(n + 1);
     if (!p) return NULL;
     if (n) memcpy(p, s, n);
     p[n] = 0;
@@ -51,12 +51,12 @@ static void free_story_data(owf_story *story)
     if (!story) return;
     for (i = 0; i < story->nparas; ++i) {
         for (j = 0; j < story->paras[i].nruns; ++j) {
-            free(story->paras[i].runs[j].text);
-            free(story->paras[i].runs[j].href);
+            owf_free(story->paras[i].runs[j].text);
+            owf_free(story->paras[i].runs[j].href);
         }
-        free(story->paras[i].runs);
+        owf_free(story->paras[i].runs);
     }
-    free(story->paras);
+    owf_free(story->paras);
     memset(story, 0, sizeof(*story));
 }
 
@@ -67,11 +67,11 @@ static void clear_doc_data(owf_doc *doc)
     free_story_data(&doc->body);
     free_story_data(&doc->header);
     free_story_data(&doc->footer);
-    for (i = 0; i < doc->nfonts; ++i) free(doc->fonts[i].name);
-    free(doc->fonts);
-    for (i = 0; i < doc->nimages; ++i) { free(doc->images[i].name); free(doc->images[i].mime); free(doc->images[i].alt); free(doc->images[i].data); }
-    free(doc->images);
-    free(doc->title);
+    for (i = 0; i < doc->nfonts; ++i) owf_free(doc->fonts[i].name);
+    owf_free(doc->fonts);
+    for (i = 0; i < doc->nimages; ++i) { owf_free(doc->images[i].name); owf_free(doc->images[i].mime); owf_free(doc->images[i].alt); owf_free(doc->images[i].data); }
+    owf_free(doc->images);
+    owf_free(doc->title);
     memset(doc, 0, sizeof(*doc));
 }
 
@@ -80,7 +80,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
     int i, j;
     memset(dst, 0, sizeof(*dst));
     if (!src->nparas) return 1;
-    dst->paras = (owf_para *)calloc((size_t)src->nparas, sizeof(*dst->paras));
+    dst->paras = (owf_para *)owf_calloc((size_t)src->nparas, sizeof(*dst->paras));
     if (!dst->paras) return 0;
     dst->nparas = dst->capparas = src->nparas;
     for (i = 0; i < src->nparas; ++i) {
@@ -90,7 +90,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->table_id = sp->table_id; dp->table_row = sp->table_row;
         dp->table_col = sp->table_col; dp->table_cols = sp->table_cols;
         if (!sp->nruns) continue;
-        dp->runs = (owf_run *)calloc((size_t)sp->nruns, sizeof(*dp->runs));
+        dp->runs = (owf_run *)owf_calloc((size_t)sp->nruns, sizeof(*dp->runs));
         if (!dp->runs) return 0;
         dp->nruns = dp->capruns = sp->nruns;
         for (j = 0; j < sp->nruns; ++j) {
@@ -116,7 +116,7 @@ static owf_doc *clone_doc(const owf_doc *src)
     owf_doc *dst;
     int i;
     if (!src) return NULL;
-    dst = (owf_doc *)calloc(1, sizeof(*dst));
+    dst = (owf_doc *)owf_calloc(1, sizeof(*dst));
     if (!dst) return NULL;
     dst->base = src->base;
     dst->page = src->page;
@@ -125,7 +125,7 @@ static owf_doc *clone_doc(const owf_doc *src)
         if (!dst->title) goto fail;
     }
     if (src->nfonts) {
-        dst->fonts = (owf_font *)calloc((size_t)src->nfonts, sizeof(*dst->fonts));
+        dst->fonts = (owf_font *)owf_calloc((size_t)src->nfonts, sizeof(*dst->fonts));
         if (!dst->fonts) goto fail;
         dst->nfonts = dst->capfonts = src->nfonts;
         for (i = 0; i < src->nfonts; ++i) {
@@ -136,9 +136,9 @@ static owf_doc *clone_doc(const owf_doc *src)
         }
     }
     if (src->nimages) {
-        dst->images=(owf_image*)calloc((size_t)src->nimages,sizeof(*dst->images));if(!dst->images)goto fail;dst->nimages=dst->capimages=src->nimages;
+        dst->images=(owf_image*)owf_calloc((size_t)src->nimages,sizeof(*dst->images));if(!dst->images)goto fail;dst->nimages=dst->capimages=src->nimages;
         for(i=0;i<src->nimages;++i){const owf_image *si=&src->images[i];owf_image *di=&dst->images[i];di->width=si->width;di->height=si->height;di->length=si->length;
-            if(si->name){di->name=copy_bytes(si->name,strlen(si->name));if(!di->name)goto fail;}if(si->mime){di->mime=copy_bytes(si->mime,strlen(si->mime));if(!di->mime)goto fail;}if(si->alt){di->alt=copy_bytes(si->alt,strlen(si->alt));if(!di->alt)goto fail;}if(si->length){di->data=(unsigned char*)malloc(si->length);if(!di->data)goto fail;memcpy(di->data,si->data,si->length);}
+            if(si->name){di->name=copy_bytes(si->name,strlen(si->name));if(!di->name)goto fail;}if(si->mime){di->mime=copy_bytes(si->mime,strlen(si->mime));if(!di->mime)goto fail;}if(si->alt){di->alt=copy_bytes(si->alt,strlen(si->alt));if(!di->alt)goto fail;}if(si->length){di->data=(unsigned char*)owf_malloc(si->length);if(!di->data)goto fail;memcpy(di->data,si->data,si->length);}
         }
     }
     if (!clone_story(&dst->body, &src->body) ||
@@ -156,7 +156,7 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     if (!dst || !snapshot) return;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
-    free(snapshot);                 /* only the old outer shell */
+    owf_free(snapshot);                 /* only the old outer shell */
 }
 
 /* ---- document/run helpers ------------------------------------------------------ */
@@ -221,7 +221,7 @@ static int append_empty_text_run(owf_para *p, const owf_charfmt *fmt)
     if (!p || !fmt) return 0;
     if (p->nruns == p->capruns) {
         want = p->capruns ? p->capruns * 2 : 4;
-        runs = (owf_run *)realloc(p->runs, (size_t)want * sizeof(*runs));
+        runs = (owf_run *)owf_realloc(p->runs, (size_t)want * sizeof(*runs));
         if (!runs) return 0;
         p->runs = runs;
         p->capruns = want;
@@ -410,13 +410,13 @@ static int replace_run_slice(owf_run *run, size_t from, size_t to,
     if (to < from) to = from;
     if (to > old_len) to = old_len;
     tail = old_len - to;
-    text = (char *)malloc(from + insert_len + tail + 1);
+    text = (char *)owf_malloc(from + insert_len + tail + 1);
     if (!text) return 0;
     if (from) memcpy(text, run->text, from);
     if (insert_len) memcpy(text + from, insert, insert_len);
     if (tail) memcpy(text + from + insert_len, run->text + to, tail);
     text[from + insert_len + tail] = 0;
-    free(run->text);
+    owf_free(run->text);
     run->text = text;
     return 1;
 }
@@ -428,7 +428,7 @@ static int ensure_para_capacity(owf_story *story, int want)
     if (want <= story->capparas) return 1;
     cap = story->capparas ? story->capparas * 2 : 16;
     if (cap < want) cap = want;
-    p = (owf_para *)realloc(story->paras, (size_t)cap * sizeof(*p));
+    p = (owf_para *)owf_realloc(story->paras, (size_t)cap * sizeof(*p));
     if (!p) return 0;
     story->paras = p;
     story->capparas = cap;
@@ -458,7 +458,7 @@ static int ensure_run_capacity(owf_para *p, int want)
     if (want <= p->capruns) return 1;
     cap = p->capruns ? p->capruns * 2 : 4;
     if (cap < want) cap = want;
-    r = (owf_run *)realloc(p->runs, (size_t)cap * sizeof(*r));
+    r = (owf_run *)owf_realloc(p->runs, (size_t)cap * sizeof(*r));
     if (!r) return 0;
     p->runs = r;
     p->capruns = cap;
@@ -545,22 +545,22 @@ static int insert_formatted_text(ow_editor *editor, ow_position pos,
 
     left = copy_bytes(run->text, pos.byte_offset);
     right = copy_bytes(run->text + pos.byte_offset, old_len - pos.byte_offset);
-    if (!left || !right) { free(left); free(right); return 0; }
-    free(run->text);
+    if (!left || !right) { owf_free(left); owf_free(right); return 0; }
+    owf_free(run->text);
     run->text = left;
     left = NULL;
     inserted = pos.run + 1;
     if (!insert_run_at(p, inserted, fmt, utf8, length)) {
         /* The document remains valid even if this rare OOM path leaves the
          * run split point at the caret. Undo snapshot still protects callers. */
-        free(right);
+        owf_free(right);
         return 0;
     }
     if (!insert_run_at(p, inserted + 1, &old_fmt, right, strlen(right))) {
-        free(right);
+        owf_free(right);
         return 0;
     }
-    free(right);
+    owf_free(right);
     if (after) {
         after->paragraph = pos.paragraph;
         after->run = inserted;
@@ -573,8 +573,8 @@ static void free_para_runs(owf_para *p)
 {
     int i;
     if (!p) return;
-    for (i = 0; i < p->nruns; ++i) free(p->runs[i].text);
-    free(p->runs);
+    for (i = 0; i < p->nruns; ++i) owf_free(p->runs[i].text);
+    owf_free(p->runs);
     p->runs = NULL;
     p->nruns = p->capruns = 0;
 }
@@ -846,7 +846,7 @@ static int merge_paragraph_with_previous(ow_editor *editor, int paragraph,
         prev->runs[prev->nruns++] = cur->runs[i];
         memset(&cur->runs[i], 0, sizeof(cur->runs[i]));
     }
-    free(cur->runs);
+    owf_free(cur->runs);
     cur->runs = NULL;
     cur->nruns = cur->capruns = 0;
 
@@ -890,7 +890,7 @@ static int merge_paragraph_with_next(ow_editor *editor, int paragraph,
         cur->runs[cur->nruns++] = next->runs[i];
         memset(&next->runs[i], 0, sizeof(next->runs[i]));
     }
-    free(next->runs);
+    owf_free(next->runs);
     next->runs = NULL;
     next->nruns = next->capruns = 0;
 
@@ -1061,7 +1061,7 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     right = NULL;
     np->nruns = 1;
 
-    free(run->text);
+    owf_free(run->text);
     run->text = left;
     left = NULL;
 
@@ -1078,8 +1078,8 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     return 1;
 
 fail:
-    free(left);
-    free(right);
+    owf_free(left);
+    owf_free(right);
     return -1;
 }
 
@@ -1089,14 +1089,14 @@ ow_editor *ow_editor_new(owf_doc *doc)
 {
     ow_editor *editor;
     if (!doc) return NULL;
-    editor = (ow_editor *)calloc(1, sizeof(*editor));
+    editor = (ow_editor *)owf_calloc(1, sizeof(*editor));
     if (!editor) return NULL;
     editor->doc = doc;
     editor->view = OW_VIEW_PAGE;
     editor->zoom = 100;
     editor->pages = 1;
     if (!ensure_document_editable(editor)) {
-        free(editor);
+        owf_free(editor);
         return NULL;
     }
     sync_typing_fmt(editor);
@@ -1108,9 +1108,9 @@ void ow_editor_free(ow_editor *editor)
     if (!editor) return;
     stack_clear(editor->undo, &editor->nundo);
     stack_clear(editor->redo, &editor->nredo);
-    free(editor->para_page);
-    free(editor->para_y);
-    free(editor);
+    owf_free(editor->para_page);
+    owf_free(editor->para_y);
+    owf_free(editor);
 }
 
 owf_doc *ow_editor_document(ow_editor *editor)
@@ -1208,7 +1208,7 @@ static int text_out_append(char **buf, size_t *used, size_t *cap,
     if (*used + n + 1 > *cap) {
         want = *cap ? *cap * 2 : 128;
         while (want < *used + n + 1) want *= 2;
-        b = (char *)realloc(*buf, want);
+        b = (char *)owf_realloc(*buf, want);
         if (!b) return 0;
         *buf = b; *cap = want;
     }
@@ -1259,7 +1259,7 @@ char *ow_editor_selection_text(const ow_editor *editor, size_t *length)
     if (length) *length = used;
     return out;
 fail:
-    free(out);
+    owf_free(out);
     return NULL;
 }
 
@@ -1460,7 +1460,7 @@ int ow_editor_toggle_list(ow_editor *editor, int ordered)
 static char *paragraph_plain_text(const owf_para *p, size_t *out_len)
 {
     size_t n = para_text_length(p), used = 0;
-    char *s = (char *)malloc(n + 1);
+    char *s = (char *)owf_malloc(n + 1);
     int i;
     if (!s) return NULL;
     for (i = 0; i < p->nruns; ++i) {
@@ -1558,7 +1558,7 @@ int ow_editor_find(ow_editor *editor, const char *needle, int backwards,
         hit = backwards
             ? find_backward_in(plain, plen, needle, nlen, from, match_case)
             : find_forward_in(plain, plen, needle, nlen, from, match_case);
-        free(plain);
+        owf_free(plain);
         if (hit >= 0) {
             startpos = para_offset_position(editor, pi, (size_t)hit);
             endpos = para_offset_position(editor, pi, (size_t)hit + nlen);
@@ -1874,10 +1874,10 @@ int ow_editor_layout(ow_editor *editor)
     n = doc->body.nparas;
     if (n > editor->para_cap) {
         int *pp, *py;
-        pp = (int *)realloc(editor->para_page, (size_t)n * sizeof(*pp));
+        pp = (int *)owf_realloc(editor->para_page, (size_t)n * sizeof(*pp));
         if (!pp) return OWF_ERR_MEMORY;
         editor->para_page = pp;
-        py = (int *)realloc(editor->para_y, (size_t)n * sizeof(*py));
+        py = (int *)owf_realloc(editor->para_y, (size_t)n * sizeof(*py));
         if (!py) return OWF_ERR_MEMORY;
         editor->para_y = py;
         editor->para_cap = n;
@@ -1982,7 +1982,7 @@ int ow_editor_in_table(const ow_editor *editor){return current_table_cell(editor
 
 static void free_para_one(owf_para *p)
 {
-    int j;for(j=0;j<p->nruns;++j){free(p->runs[j].text);free(p->runs[j].href);}free(p->runs);memset(p,0,sizeof(*p));p->table_id=-1;
+    int j;for(j=0;j<p->nruns;++j){owf_free(p->runs[j].text);owf_free(p->runs[j].href);}owf_free(p->runs);memset(p,0,sizeof(*p));p->table_id=-1;
 }
 
 static void remove_para_at(owf_story *story,int index)
@@ -2081,7 +2081,7 @@ char *ow_editor_story_text(const ow_editor *editor, ow_story_kind which)
     char *out;
     int p, r;
     if (!story) return NULL;
-    out = (char *)malloc(cap);
+    out = (char *)owf_malloc(cap);
     if (!out) return NULL;
     out[0] = 0;
     for (p = 0; p < story->nparas; ++p) {
@@ -2098,16 +2098,16 @@ char *ow_editor_story_text(const ow_editor *editor, ow_story_kind which)
             add = strlen(text);
             if (n + add + 2 > cap) {
                 size_t want = (n + add + 2) * 2;
-                char *q = (char *)realloc(out, want);
-                if (!q) { free(out); return NULL; }
+                char *q = (char *)owf_realloc(out, want);
+                if (!q) { owf_free(out); return NULL; }
                 out = q; cap = want;
             }
             memcpy(out + n, text, add); n += add; out[n] = 0;
         }
         if (p + 1 < story->nparas) {
             if (n + 2 > cap) {
-                char *q = (char *)realloc(out, cap * 2);
-                if (!q) { free(out); return NULL; }
+                char *q = (char *)owf_realloc(out, cap * 2);
+                if (!q) { owf_free(out); return NULL; }
                 out = q; cap *= 2;
             }
             out[n++] = '\n'; out[n] = 0;
@@ -2192,16 +2192,16 @@ static int set_link_segment(owf_para *para, int index, size_t from, size_t to,
     memset(parts,0,sizeof parts);
 #define MAKE_PART(A,B,HREF) do { \
     parts[n]=old;parts[n].text=copy_bytes(old.text+(A),(B)-(A));parts[n].href=copy_cstr(HREF); \
-    if(!parts[n].text||((HREF)&&!parts[n].href)){for(i=0;i<=n;++i){free(parts[i].text);free(parts[i].href);}return 0;} ++n; \
+    if(!parts[n].text||((HREF)&&!parts[n].href)){for(i=0;i<=n;++i){owf_free(parts[i].text);owf_free(parts[i].href);}return 0;} ++n; \
 } while(0)
     if(from) MAKE_PART(0,from,old.href);
     MAKE_PART(from,to,url);
     if(to<len) MAKE_PART(to,len,old.href);
 #undef MAKE_PART
     extra=n-1;
-    if(extra>0&&!ensure_run_capacity(para,para->nruns+extra)){for(i=0;i<n;++i){free(parts[i].text);free(parts[i].href);}return 0;}
+    if(extra>0&&!ensure_run_capacity(para,para->nruns+extra)){for(i=0;i<n;++i){owf_free(parts[i].text);owf_free(parts[i].href);}return 0;}
     if(extra>0&&index+1<para->nruns)memmove(&para->runs[index+n],&para->runs[index+1],(size_t)(para->nruns-index-1)*sizeof(para->runs[0]));
-    free(old.text);free(old.href);
+    owf_free(old.text);owf_free(old.href);
     for(i=0;i<n;++i)para->runs[index+i]=parts[i];
     para->nruns+=extra;
     return 1;
@@ -2246,9 +2246,9 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
     if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     pos=clamp_position(editor,editor->selection.focus);para=&editor->doc->body.paras[pos.paragraph];run=&para->runs[pos.run];fmt=run->fmt;
     right_len=strlen(run->text)-pos.byte_offset;right=copy_bytes(run->text+pos.byte_offset,right_len);oldhref=copy_cstr(run->href);linked=copy_bytes(text,strlen(text));
-    if(!right||!linked||(run->href&&!oldhref)){free(right);free(oldhref);free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
-    if(!replace_run_slice(run,pos.byte_offset,strlen(run->text),NULL,0)){free(right);free(oldhref);free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
-    old_n=para->nruns;if(!ensure_run_capacity(para,old_n+2)){free(right);free(oldhref);free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    if(!right||!linked||(run->href&&!oldhref)){owf_free(right);owf_free(oldhref);owf_free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    if(!replace_run_slice(run,pos.byte_offset,strlen(run->text),NULL,0)){owf_free(right);owf_free(oldhref);owf_free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    old_n=para->nruns;if(!ensure_run_capacity(para,old_n+2)){owf_free(right);owf_free(oldhref);owf_free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     move=old_n-pos.run-1;if(move>0)memmove(&para->runs[pos.run+3],&para->runs[pos.run+1],(size_t)move*sizeof(para->runs[0]));
     memset(&para->runs[pos.run+1],0,2*sizeof(para->runs[0]));
     para->runs[pos.run+1].kind=OWF_RUN_TEXT;para->runs[pos.run+1].fmt=fmt;para->runs[pos.run+1].text=linked;para->runs[pos.run+1].href=copy_cstr(url);
@@ -2280,11 +2280,11 @@ int ow_editor_insert_field(ow_editor *editor, owf_field field)
     right = copy_bytes(run->text + pos.byte_offset, right_len);
     if (!right) { ow_editor_undo(editor); return OWF_ERR_MEMORY; }
     if (!replace_run_slice(run, pos.byte_offset, strlen(run->text), NULL, 0)) {
-        free(right); ow_editor_undo(editor); return OWF_ERR_MEMORY;
+        owf_free(right); ow_editor_undo(editor); return OWF_ERR_MEMORY;
     }
     old_n = para->nruns;
     if (!ensure_run_capacity(para, old_n + 2)) {
-        free(right); ow_editor_undo(editor); return OWF_ERR_MEMORY;
+        owf_free(right); ow_editor_undo(editor); return OWF_ERR_MEMORY;
     }
     move = old_n - pos.run - 1;
     if (move > 0)

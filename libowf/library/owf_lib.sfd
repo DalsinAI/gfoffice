@@ -1,0 +1,42 @@
+==id $Id: owf_lib.sfd 1.1 (21.10.2026) $
+* "owf.library": libowf, OpenWrite's file formats, as a shared library.
+* Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).
+* The calls are owf.h's, with its names and types; new calls go at the end.
+==base _OWFBase
+==basetype struct Library *
+==libname owf.library
+==bias 30
+==public
+==include <exec/types.h>
+==include <owf.h>
+==version 1
+const char *owf_error_text(int error) (d0)
+void *owf_malloc(size_t n) (d0)
+void *owf_calloc(size_t n, size_t size) (d0,d1)
+void *owf_realloc(void *p, size_t n) (a0,d0)
+void owf_free(void *p) (a0)
+owf_doc *owf_doc_new() ()
+void owf_doc_free(owf_doc *doc) (a0)
+void owf_parafmt_init(owf_parafmt *fmt) (a0)
+void owf_charfmt_init(owf_charfmt *fmt) (a0)
+owf_para *owf_story_add(owf_story *story, const owf_parafmt *fmt) (a0,a1)
+int owf_para_add_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, size_t len) (a0,a1,a2,d0)
+int owf_para_add_link_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, size_t len, const char *href) (a0,a1,a2,d0,a3)
+int owf_para_add_special(owf_para *para, const owf_charfmt *fmt, owf_run_kind kind, owf_field field) (a0,a1,d0,d1)
+int owf_para_add_image(owf_para *para, const owf_charfmt *fmt, int image_index) (a0,a1,d0)
+int owf_doc_add_image(owf_doc *doc, const char *name, const char *mime, const void *data, size_t length, int width, int height, const char *alt) (a0,a1,a2,a3,d0,d1,d2,d3)
+int owf_doc_font(owf_doc *doc, const char *name, owf_font_kind kind) (a0,a1,d0)
+int owf_doc_set_title(owf_doc *doc, const char *utf8) (a0,a1)
+const char *owf_font_modern(const char *name, owf_font_kind *kind) (a0,a1)
+owf_report *owf_report_new() ()
+void owf_report_free(owf_report *report) (a0)
+int owf_report_count(const owf_report *report) (a0)
+const char *owf_report_note(const owf_report *report, int n, owf_note_level *level, int *times) (a0,d0,a1,a2)
+int owf_format_count() ()
+const owf_format *owf_format_at(int index) (d0)
+const owf_format *owf_format_named(const char *name) (a0)
+const owf_format *owf_format_for_filename(const char *filename) (a0)
+int owf_import_memory(const unsigned char *data, size_t length, const char *format, owf_doc **doc, owf_report *report, const owf_format **used) (a0,d0,a1,a2,a3,d1)
+int owf_import_file(const char *path, const char *format, owf_doc **doc, owf_report *report, const owf_format **used) (a0,a1,a2,a3,d0)
+int owf_export_file(const owf_doc *doc, const char *path, const char *format, owf_report *report) (a0,a1,a2,a3)
+==end

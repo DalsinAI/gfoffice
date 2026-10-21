@@ -8,10 +8,9 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #ifdef OWF_HAVE_ZLIB
-#include <zlib.h>
+#include "owf_zlib.h"
 #endif
 
 typedef struct {
@@ -67,15 +66,15 @@ static void put32(owf_buf *b, unsigned long v)
 owf_zip *owf_zip_new(owf_buf *out)
 {
     owf_zip *zip = calloc(1, sizeof *zip);
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
+    owf_time now;
+    const owf_time *t = owf_sys_now(&now) ? &now : NULL;
 
     if (!zip)
         return NULL;
     zip->out = out;
-    if (t && t->tm_year >= 80) {
-        zip->dos_time = (unsigned)((t->tm_hour << 11) | (t->tm_min << 5) | (t->tm_sec / 2));
-        zip->dos_date = (unsigned)(((t->tm_year - 80) << 9) | ((t->tm_mon + 1) << 5) | t->tm_mday);
+    if (t && t->year >= 1980) {
+        zip->dos_time = (unsigned)((t->hour << 11) | (t->minute << 5) | (t->second / 2));
+        zip->dos_date = (unsigned)(((t->year - 1980) << 9) | (t->month << 5) | t->day);
     } else {
         zip->dos_date = (1 << 5) | 1;   /* 1 January 1980 */
     }

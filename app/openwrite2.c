@@ -52,6 +52,7 @@
 #include <clib/alib_protos.h>
 
 #include "openwrite_core.h"
+#include "owf_open.h"
 #include "ow_stack.h"
 #include "lastdir.h"
 #include "ow_print.h"
@@ -2928,6 +2929,11 @@ static int window_main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    if (!owf_open()) {
+        tell("OpenWrite", "OpenWrite needs owf.library 1 in LIBS:.");
+        rc = 20;
+        goto out;
+    }
 
     DiskfontBase = OpenLibrary((STRPTR)"diskfont.library", 36);
     LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
@@ -2986,6 +2992,7 @@ out:
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
+    owf_close();
     return rc;
 }
 

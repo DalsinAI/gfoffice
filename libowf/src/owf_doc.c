@@ -5,7 +5,6 @@
  */
 #include "owf_internal.h"
 
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +36,26 @@ void owf_parafmt_init(owf_parafmt *fmt)
     memset(fmt, 0, sizeof *fmt);
     fmt->align = OWF_ALIGN_LEFT;
     fmt->line_spacing = 100;
+}
+
+void *owf_malloc(size_t n)
+{
+    return malloc(n);
+}
+
+void *owf_calloc(size_t n, size_t size)
+{
+    return calloc(n, size);
+}
+
+void *owf_realloc(void *p, size_t n)
+{
+    return realloc(p, n);
+}
+
+void owf_free(void *p)
+{
+    free(p);
 }
 
 owf_doc *owf_doc_new(void)
@@ -281,7 +300,7 @@ const char *owf_font_modern(const char *name, owf_font_kind *kind)
 
     /* "times.font" and "Times" are the same font. */
     for (i = 0; name[i] && n < sizeof lower - 1; i++)
-        lower[n++] = (char)tolower((unsigned char)name[i]);
+        lower[n++] = (char)owf_lower((unsigned char)name[i]);
     lower[n] = 0;
     if (n > 5 && strcmp(lower + n - 5, ".font") == 0)
         lower[n - 5] = 0;

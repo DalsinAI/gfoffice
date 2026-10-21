@@ -5,8 +5,6 @@
  */
 #include "owf_internal.h"
 
-#include <ctype.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -139,7 +137,7 @@ const owf_format *owf_format_at(int index)
 static int same_word(const char *a, const char *b)
 {
     while (*a && *b) {
-        if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
+        if (owf_lower((unsigned char)*a) != owf_lower((unsigned char)*b))
             return 0;
         a++;
         b++;
@@ -164,7 +162,7 @@ static int in_list(const char *list, const char *ext)
         size_t w = strcspn(list, " ");
         if (w == n) {
             size_t i;
-            for (i = 0; i < n && tolower((unsigned char)list[i]) == tolower((unsigned char)ext[i]); i++)
+            for (i = 0; i < n && owf_lower((unsigned char)list[i]) == owf_lower((unsigned char)ext[i]); i++)
                 ;
             if (i == n)
                 return 1;
@@ -234,31 +232,15 @@ int owf_import_memory(const unsigned char *data, size_t length, const char *form
 int owf_import_file(const char *path, const char *format, owf_doc **doc,
                     owf_report *report, const owf_format **used)
 {
-    FILE *fh = fopen(path, "rb");
     unsigned char *data;
-    long size;
+    size_t size;
     int result;
 
     *doc = NULL;
-    if (!fh)
-        return OWF_ERR_IO;
-    if (fseek(fh, 0, SEEK_END) != 0 || (size = ftell(fh)) < 0 || fseek(fh, 0, SEEK_SET) != 0) {
-        fclose(fh);
-        return OWF_ERR_IO;
-    }
-    data = malloc((size_t)size + 1);
-    if (!data) {
-        fclose(fh);
-        return OWF_ERR_MEMORY;
-    }
-    if (size && fread(data, 1, (size_t)size, fh) != (size_t)size) {
-        free(data);
-        fclose(fh);
-        return OWF_ERR_IO;
-    }
-    fclose(fh);
-    data[size] = 0;
-    result = owf_import_memory(data, (size_t)size, format, doc, report, used);
+    result = owf_sys_read_file(path, &data, &size);
+    if (result != OWF_OK)
+        return result;
+    result = owf_import_memory(data, size, format, doc, report, used);
     free(data);
     return result;
 }
@@ -268,7 +250,6 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
     const owf_format *f = format ? owf_format_named(format) : owf_format_for_filename(path);
     unsigned char *data;
     size_t length;
-    FILE *fh;
     int result;
 
     if (!f)
@@ -278,15 +259,7 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
     result = f->export(doc, &data, &length, report);
     if (result != OWF_OK)
         return result;
-    fh = fopen(path, "wb");
-    if (!fh) {
-        free(data);
-        return OWF_ERR_IO;
-    }
-    if (length && fwrite(data, 1, length, fh) != length)
-        result = OWF_ERR_IO;
-    if (fclose(fh) != 0)
-        result = OWF_ERR_IO;
+    result = owf_sys_write_file(path, data, length);
     free(data);
     return result;
 }

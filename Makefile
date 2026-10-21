@@ -70,3 +70,13 @@ spell-check: $(OUT)/test-spell-asan
 	$(OUT)/test-spell-asan
 
 .PHONY: spell-test spell-check
+
+# owf.library's own C library calls against the PC's
+$(OUT)/test-owf-libc: libowf/library/owf_libc.c libowf/library/owf_libc.h tests/library/test_owf_libc.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -Wno-format-truncation -Ilibowf/library libowf/library/owf_libc.c tests/library/test_owf_libc.c -o $@
+
+libc-test: $(OUT)/test-owf-libc
+	$(OUT)/test-owf-libc
+
+.PHONY: libc-test
