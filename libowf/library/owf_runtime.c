@@ -134,6 +134,13 @@ void *memmove(void *dst, const void *src, size_t n)
     return dst;
 }
 
+/* libnix's <string.h> makes memmove a call to __bcopz(src, dst, n) */
+void __bcopz(const void *src, void *dst, size_t n);
+void __bcopz(const void *src, void *dst, size_t n)
+{
+    memmove(dst, src, n);
+}
+
 void *memset(void *dst, int c, size_t n)
 {
     unsigned char *d = (unsigned char *)dst;
@@ -253,6 +260,11 @@ long strtol(const char *s, char **end, int base)
 unsigned long strtoul(const char *s, char **end, int base)
 {
     return owf_rt_strtoul(s, end, base);
+}
+
+int atoi(const char *s)
+{
+    return (int)owf_rt_strtol(s, NULL, 10);
 }
 
 int abs(int v)
