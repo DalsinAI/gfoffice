@@ -72,12 +72,18 @@ make core-test
 make spell-test
 make test
 make check
+make libc-test
 ```
 
-For AmigaOS 3.x with bebbo's amiga-gcc 6.5:
+`make libc-test` checks owf.library's own printf, strtol and case calls
+against the PC's C library.
+
+For AmigaOS 3.x with the os32-gcc16 stove (OpenAmigaGCC 16; set `OS32_GCC16`
+if it is not in `~/AmigaChrome/stoves/os32-gcc16`):
 
 ```
-ZLIB_SRC=/path/to/zlib-1.3 ./build-os3.sh
+./build-os3.sh                 # libowf linked into each program
+OWF=library ./build-os3.sh     # both programs on LIBS:owf.library
 ```
 
 This builds:
@@ -85,10 +91,35 @@ This builds:
 ```
 build/os3/OpenWrite
 build/os3/OWConvert
+build/os3/library/owf.library      (OWF=library)
+build/os3/library/tests/OWFLibTest (OWF=library)
 ```
 
-Without `ZLIB_SRC`, DOCX/ODT input is unavailable although stored output
-remains possible.
+ODT and DOCX deflate and inflate through z.library, ours from
+amigachrome-guest (`libraries/openzlib`), opened the first time a document
+needs it. There is no zlib source in the Amiga build. Without z.library in
+LIBS:, ODT and DOCX files that are deflated (nearly all of them) cannot be
+read, and files are written stored.
+
+### owf.library
+
+`owf.library` is libowf as a shared Amiga library: every program that reads
+or writes documents (OpenWrite, OWConvert, and the spreadsheet and
+presentation programs to come) opens one copy instead of linking its own.
+`./build-library.sh [OUT_DIR]` builds it on its own, with no C library: its
+memory comes from one Exec pool, and it carries its own string, printf and
+number calls (`libowf/library`). The calls are described in
+`libowf/library/owf_lib.sfd`; `scripts/gen-sdk.sh` makes its headers in
+`libowf/library/sdk` with OpenNDK's ndkgen.
+
+A program uses it by defining `OWF_USE_LIBRARY`, including `owf.h` and
+`owf_open.h`, and calling `owf_open()` before anything else. Document memory
+a program changes itself comes from `owf_malloc` and `owf_free`, so the
+library and the program agree on whose memory it is.
+
+`OWFLibTest SAMPLES=<dir>` on an Amiga checks the library: the formats, a
+round trip through ODT, DOCX, HTML, PDF and text in T:, the two sample
+documents, and the same checks from a second process at once.
 
 ## 1.0 validation
 

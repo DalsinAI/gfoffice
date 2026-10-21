@@ -11,7 +11,7 @@
 #include <string.h>
 
 #ifdef OWF_HAVE_ZLIB
-#include <zlib.h>
+#include "owf_zlib.h"
 #endif
 
 #define LE16(p) ((unsigned)((p)[0] | ((p)[1] << 8)))
@@ -117,9 +117,11 @@ int owf_unzip_read(const owf_unzip *zip, const char *name, unsigned char **out, 
         z_stream z;
         int r;
         memset(&z, 0, sizeof z);
-        if (inflateInit2(&z, -15) != Z_OK) {
+        r = inflateInit2(&z, -15);
+        if (r != Z_OK) {
             free(data);
-            return OWF_ERR_MEMORY;
+            /* Z_VERSION_ERROR: no z.library on this Amiga */
+            return r == Z_VERSION_ERROR ? OWF_ERR_UNSUPPORTED : OWF_ERR_MEMORY;
         }
         z.next_in = (Bytef *)body;
         z.avail_in = (uInt)packed;

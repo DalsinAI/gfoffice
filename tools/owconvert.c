@@ -11,6 +11,7 @@
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf.h"
+#include "owf_open.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -103,6 +104,11 @@ int main(void)
         PrintFault(IoErr(), (CONST_STRPTR)"OWConvert");
         return RC_ERROR;
     }
+    if (!owf_open()) {
+        printf("OWConvert: needs owf.library %d in LIBS:\n", OWF_LIBRARY_VERSION);
+        FreeArgs(rda);
+        return RC_FAIL;
+    }
     if (args[4]) {
         list_formats();
         rc = RC_OK;
@@ -112,6 +118,7 @@ int main(void)
     } else {
         rc = convert((const char *)args[0], (const char *)args[1], (const char *)args[2], args[3] != 0);
     }
+    owf_close();
     FreeArgs(rda);
     return rc;
 }

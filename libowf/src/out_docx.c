@@ -166,7 +166,7 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     const char *pstyle = NULL;
     int j;
     if (para->fmt.heading >= 1 && para->fmt.heading <= 6) {
-        sprintf(style, "Heading%d", para->fmt.heading); pstyle = style;
+        snprintf(style, sizeof style, "Heading%d", para->fmt.heading); pstyle = style;
     }
     owf_buf_puts(out, "<w:p>"); put_ppr(out, &para->fmt, pstyle);
     for (j = 0; j < para->nruns; ++j) {
