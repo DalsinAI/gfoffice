@@ -432,6 +432,17 @@ int ow_layout_from_text(const ow_layout *l, const ol_text_position *in, ow_posit
     return 1;
 }
 
+int ow_layout_node_run(const ow_layout *l, ol_id node_id, int *paragraph, int *run)
+{
+    node_ref r;
+    if (!l || node_id >= l->caprefs) return 0;
+    r = l->refs[node_id];
+    if (r.paragraph < 0 || r.paragraph >= l->doc->body.nparas) return 0;
+    if (paragraph) *paragraph = r.paragraph;
+    if (run) *run = r.run;
+    return 1;
+}
+
 int ow_layout_caret(const ow_layout *l, ow_position pos, int *page, ol_rect *box)
 {
     ol_text_position t;
@@ -505,8 +516,28 @@ void ow_layout_page_number(const owf_page *page, int number, char *out, size_t s
     }
 }
 
+/* How far down a laid-out story's ops reach. */
+static ol_unit story_height(const ol_document *od)
+{
+    size_t i, n = ol_display_count(od);
+    ol_unit bottom = 0, b;
+    for (i = 0; i < n; ++i) {
+        const ol_display_op *op = ol_display_get(od, i);
+        switch (op->type) {
+        case OL_OP_TEXT: b = op->u.text.bounds.y + op->u.text.bounds.height; break;
+        case OL_OP_FILL_RECT: b = op->u.fill_rect.bounds.y + op->u.fill_rect.bounds.height; break;
+        case OL_OP_IMAGE: b = op->u.image.bounds.y + op->u.image.bounds.height; break;
+        case OL_OP_RULE: b = (op->u.rule.y1 > op->u.rule.y2 ? op->u.rule.y1 : op->u.rule.y2) +
+                             op->u.rule.thickness; break;
+        default: b = 0; break;
+        }
+        if (b > bottom) bottom = b;
+    }
+    return bottom;
+}
+
 ol_document *ow_layout_story(const ow_layout *l, ow_story_kind which, int page,
-                             const char *date, const char *time)
+                             const char *date, const char *time, ol_unit *x, ol_unit *y)
 {
     const owf_story *story;
     ol_document *od;
@@ -531,5 +562,9 @@ ol_document *ow_layout_story(const ow_layout *l, ow_story_kind which, int page,
         ol_document_free(od);
         return NULL;
     }
+    /* half way into the top margin; the footer ends half way into the bottom one */
+    if (x) *x = l->page.margin_left;
+    if (y) *y = which == OW_STORY_HEADER ? l->page.margin_top / 2
+                                         : l->page.height - l->page.margin_bottom / 2 - story_height(od);
     return od;
 }

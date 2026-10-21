@@ -90,6 +90,7 @@ static void test_built(void)
     size_t k;
     char text[200];
     ol_rect box0, box1;
+    ol_unit sx = -1, sy = -1;
     ow_position pos;
 
     owf_doc_font(doc, "Liberation Serif", OWF_FONT_SERIF);
@@ -163,10 +164,14 @@ static void test_built(void)
     CHECK(box1.y > box0.y && box1.x == box0.x);
 
     /* the footer of the second page says 2 */
-    story = ow_layout_story(l, OW_STORY_FOOTER, 1, NULL, NULL);
+    story = ow_layout_story(l, OW_STORY_FOOTER, 1, NULL, NULL, &sx, &sy);
     CHECK(story != NULL);
     if (story) {
         int found = 0;
+        /* in the bottom margin, at the body's left */
+        CHECK(sx == ow_layout_page(l)->margin_left);
+        CHECK(sy > ow_layout_page(l)->height - ow_layout_page(l)->margin_bottom &&
+              sy < ow_layout_page(l)->height - ow_layout_page(l)->margin_bottom / 2);
         for (k = 0; k < ol_display_count(story); ++k) {
             const ol_display_op *op = ol_display_get(story, k);
             const char *t;
@@ -177,7 +182,19 @@ static void test_built(void)
         CHECK(found);
         ol_document_free(story);
     }
-    CHECK(ow_layout_story(l, OW_STORY_HEADER, 0, NULL, NULL) == NULL);
+    CHECK(ow_layout_story(l, OW_STORY_HEADER, 0, NULL, NULL, NULL, NULL) == NULL);
+
+    /* a table cell's text is its paragraph's run; the table is no run */
+    {
+        ol_text_position t;
+        int para_of = -1, run_of = -2;
+        pos.paragraph = 18;
+        pos.run = 0;
+        pos.byte_offset = 2;
+        CHECK(ow_layout_to_text(l, pos, &t));
+        CHECK(ow_layout_node_run(l, t.node_id, &para_of, &run_of) && para_of == 18 && run_of == 0);
+        CHECK(!ow_layout_node_run(l, 1000000, &para_of, &run_of));
+    }
     ow_layout_free(l);
     owf_doc_free(doc);
     printf("ow_layout: built document, %d caret positions\n", checked);

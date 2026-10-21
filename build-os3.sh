@@ -53,13 +53,18 @@ esac
     $OWFSRC "$HERE/tools/owconvert.c" \
     -o "$OUT/OWConvert"
 
+# The pages are OpenLayout's (DalsinAI/openamigalayout 0.2 or later): OPENLAYOUT_SRC, else beside this
+# repository.
+OPENLAYOUT_SRC=${OPENLAYOUT_SRC:-$HERE/../openamigalayout}
+[ -f "$OPENLAYOUT_SRC/src/openlayout.c" ] || { echo "OpenLayout not found: set OPENLAYOUT_SRC to an openamigalayout checkout"; exit 2; }
+
 # OpenWrite: the OpenGadTools shell (app/openwrite2.c) is OpenWrite since 2.0.1 (the user, 10 October
 # 2026: "the rewrite is OpenWrite, not a second program"); the same core and filters.
 # shellcheck disable=SC2086
 APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $HERE/app/ow_stack.c"
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
-    -I"$HERE/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC "$HERE"/src/core/*.c "$HERE/app/openwrite2.c" $APP_COMMON \
+    -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
+    $OWFSRC "$HERE"/src/core/*.c "$OPENLAYOUT_SRC/src/openlayout.c" "$HERE/app/openwrite2.c" $APP_COMMON \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/OpenWrite"
 
@@ -68,8 +73,8 @@ if [ "${OW1:-}" = yes ] && [ "$OWF" = library ]; then
     echo "build-os3.sh: the 1.x window is built with libowf linked in only (OWF=linked)"
 elif [ "${OW1:-}" = yes ]; then
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
-    -I"$HERE/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC "$HERE"/src/core/*.c "$HERE/app/openwrite.c" $APP_COMMON \
+    -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
+    $OWFSRC "$HERE"/src/core/*.c "$OPENLAYOUT_SRC/src/openlayout.c" "$HERE/app/openwrite.c" $APP_COMMON \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/OpenWrite1"
 echo "$OUT/OpenWrite1 ($(wc -c < "$OUT/OpenWrite1") bytes)"
