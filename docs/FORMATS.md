@@ -30,6 +30,20 @@ that the format holds and OpenWrite can show).
 | Word 97-2003 (`.doc`) | Later | No | Spec: Microsoft's [MS-DOC] | Later | Recognised (and password-protected Office files), with a clear message; not read yet |
 | AbiWord (`.abw`), which was on AmigaOS 4 | No | No | Its XML, read from samples | Later | To do |
 
+## 1a. Workbooks (the spreadsheet's)
+
+Workbooks have their own model in libowf (`owf_book`: sheets of cells, each
+with a value, a formula as Excel writes it, and a style) and their own table
+of formats (`owf_book_format_*`). OWConvert converts them when the name it is
+given ends in a workbook format's extension.
+
+| Format | Open | Save | Knowledge | Phase | State |
+| --- | --- | --- | --- | --- | --- |
+| Excel 97-2003 (`.xls`, `.xlt`) | Yes | Later | Spec: Microsoft's [MS-XLS] (BIFF8) in [MS-CFB] compound files | S1 | Cells and values, shared strings (Unicode), fonts, number formats, alignment, borders, fills, column widths, row heights, merged cells, frozen panes, hidden sheets and columns, defined names, and formulas back as Excel's text (shared, array, 3-D and other-book references, add-in functions), with their last results. Comments, pictures, charts, conditional formatting, validation and data tables are reported. Excel 5/95 and 2-4 workbooks and password-protected ones are recognised with a clear message |
+| CSV (`.csv`) | Later | Yes | Spec: RFC 4180 | S1 | Saves one sheet's values, UTF-8 |
+| XLSX, Office Open XML | Later | Later | Spec: ECMA-376 | S2 | To do |
+| ODS, OpenDocument Spreadsheet | Later | Later | Spec: OASIS ODF 1.2 | S2 | To do |
+
 ## 2. Amiga text formats
 
 | Format | Open | Save | Knowledge | Phase | State |

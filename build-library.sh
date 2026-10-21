@@ -46,8 +46,13 @@ fi
 INC="-I$OWF/include -I$OWF/src -I$LIB -I$OWF/amiga/sdk/Include_H"
 DEFS="-DOWF_LIBRARY_BUILD -DOWF_HAVE_ZLIB -DOWF_ZLIBRARY"
 SRC=""
+# The workbook code (owf_book.c and its formats) joins the library with the
+# library's workbook calls and their double maths, next.
 for f in "$OWF"/src/*.c; do
-    case "$f" in */owf_sys.c) ;; *) SRC="$SRC $f" ;; esac
+    case "$f" in
+    */owf_sys.c | */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c) ;;
+    *) SRC="$SRC $f" ;;
+    esac
 done
 
 # owf_library.c first: its start() is the first code. -nostdlib: nothing of a

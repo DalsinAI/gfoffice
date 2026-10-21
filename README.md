@@ -76,7 +76,10 @@ make libc-test
 ```
 
 `make libc-test` checks owf.library's own printf, strtol and case calls
-against the PC's C library.
+against the PC's C library. `make test` and `make check` include the
+workbook tests (`make book-test`, `make book-check`): Excel 97-2003 files
+read into the spreadsheet's model, and saved as CSV
+(`tests/book/test_books.py`).
 
 Pages are laid out by OpenLayout (DalsinAI/openamigalayout 0.2 or later).
 With it checked out beside this repository, or `OPENLAYOUT_SRC` pointing at

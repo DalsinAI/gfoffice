@@ -232,6 +232,164 @@ int owf_import_file(const char *path, const char *format, owf_doc **doc,
 /* Writes a document; format NULL means by the file name's extension. */
 int owf_export_file(const owf_doc *doc, const char *path, const char *format, owf_report *report);
 
+/* ---- Workbooks: the spreadsheet's model ----
+ * A book holds sheets of cells. Cells hold a value (a formula's last
+ * result) and, for a formula, its text in Excel's A1 syntax without the "=";
+ * their look is a style from the book's list. Numbers are IEEE doubles, as
+ * in the files; dates and times are numbers too, days since the book's
+ * epoch (30 December 1899, or 1 January 1904 when date1904 is set). */
+
+typedef enum { OWF_VALUE_EMPTY, OWF_VALUE_NUMBER, OWF_VALUE_TEXT, OWF_VALUE_BOOL, OWF_VALUE_ERROR } owf_value_type;
+
+/* Errors, numbered as Excel's files number them. */
+enum {
+    OWF_ERROR_NULL = 0x00, OWF_ERROR_DIV0 = 0x07, OWF_ERROR_VALUE = 0x0F, OWF_ERROR_REF = 0x17,
+    OWF_ERROR_NAME = 0x1D, OWF_ERROR_NUM = 0x24, OWF_ERROR_NA = 0x2A
+};
+/* "#DIV/0!" and so on; NULL for a number that is not one. */
+const char *owf_error_name(int error);
+
+#define OWF_CELL_ARRAY 1         /* part of an array formula's range */
+
+typedef struct {
+    unsigned row, col;           /* from 0: A1 is row 0, column 0 */
+    owf_value_type type;
+    double number;               /* NUMBER; BOOL: 0 or 1 */
+    int error;                   /* ERROR: OWF_ERROR_... */
+    char *text;                  /* TEXT: UTF-8 */
+    char *formula;               /* "SUM(A1:A3)", or NULL */
+    int style;                   /* into the book's styles; 0 is the default */
+    unsigned flags;              /* OWF_CELL_... */
+} owf_cell;
+
+/* Horizontal and vertical alignment. */
+enum {
+    OWF_HALIGN_GENERAL, OWF_HALIGN_LEFT, OWF_HALIGN_CENTRE, OWF_HALIGN_RIGHT, OWF_HALIGN_FILL,
+    OWF_HALIGN_JUSTIFY, OWF_HALIGN_CENTRE_ACROSS
+};
+enum { OWF_VALIGN_TOP, OWF_VALIGN_CENTRE, OWF_VALIGN_BOTTOM };
+/* Border lines, numbered as Excel's files number them. */
+enum {
+    OWF_LINE_NONE, OWF_LINE_THIN, OWF_LINE_MEDIUM, OWF_LINE_DASHED, OWF_LINE_DOTTED, OWF_LINE_THICK,
+    OWF_LINE_DOUBLE, OWF_LINE_HAIR, OWF_LINE_MEDIUM_DASHED, OWF_LINE_DASH_DOT, OWF_LINE_MEDIUM_DASH_DOT,
+    OWF_LINE_DASH_DOT_DOT, OWF_LINE_MEDIUM_DASH_DOT_DOT, OWF_LINE_SLANTED_DASH_DOT
+};
+enum { OWF_SIDE_LEFT, OWF_SIDE_RIGHT, OWF_SIDE_TOP, OWF_SIDE_BOTTOM };
+
+typedef struct {
+    owf_charfmt font;            /* font is into the book's fonts */
+    int number_format;           /* into the book's number formats; 0 is "General" */
+    unsigned char halign, valign, wrap, indent;
+    unsigned long fill;          /* OWF_SHADE(0xRRGGBB) behind the cell; 0: none */
+    unsigned char border[4];     /* OWF_LINE_... by OWF_SIDE_... */
+    unsigned long border_colour[4]; /* OWF_SHADE(0xRRGGBB); 0: automatic */
+} owf_cellstyle;
+
+typedef struct {
+    unsigned first, last;        /* columns */
+    int width;                   /* twips */
+    int style;
+    int hidden;
+} owf_colinfo;
+
+typedef struct {
+    unsigned row;
+    int height;                  /* twips */
+    int hidden;
+} owf_rowinfo;
+
+typedef struct {
+    unsigned first_row, last_row, first_col, last_col;
+} owf_range;
+
+typedef struct {
+    char *name;                  /* UTF-8 */
+    int ncells, capcells;
+    owf_cell *cells;             /* by row, then column */
+    int ncols, capcols;
+    owf_colinfo *cols;
+    int nrows, caprows;
+    owf_rowinfo *rows;           /* by row */
+    int nmerges, capmerges;
+    owf_range *merges;
+    int default_width;           /* a column's, twips */
+    int default_height;          /* a row's, twips */
+    int hidden;                  /* 1 hidden, 2 hidden from the user too */
+    unsigned freeze_rows, freeze_cols;
+} owf_sheet;
+
+/* A defined name: "Prices" standing for "Sheet1!$B$2:$B$40". */
+typedef struct {
+    char *name;                  /* UTF-8 */
+    int sheet;                   /* the sheet it belongs to; -1: the whole book */
+    char *formula;               /* what it stands for, as a formula without "=" */
+    int hidden;
+} owf_defname;
+
+typedef struct owf_book {
+    int nsheets, capsheets;
+    owf_sheet *sheets;
+    int nstyles, capstyles;
+    owf_cellstyle *styles;       /* styles[0] is the default */
+    int nnumfmts, capnumfmts;
+    char **numfmts;              /* numfmts[0] is "General" */
+    int nfonts, capfonts;
+    owf_font *fonts;
+    int nnames, capnames;
+    owf_defname *names;
+    int date1904;
+    int active;                  /* the sheet shown first */
+} owf_book;
+
+owf_book *owf_book_new(void);
+void owf_book_free(owf_book *book);
+/* Building a book (importers). NULL or -1 when memory runs out; the book
+ * stays valid. */
+owf_sheet *owf_book_add_sheet(owf_book *book, const char *name);
+void owf_cellstyle_init(owf_cellstyle *style);
+/* The index of an equal style, number format or font, added if new. */
+int owf_book_style(owf_book *book, const owf_cellstyle *style);
+int owf_book_numfmt(owf_book *book, const char *format);
+int owf_book_font(owf_book *book, const char *name, owf_font_kind kind);
+/* The cell at row, col: NULL when there is none (or, with create, when
+ * memory ran out). A pointer stays good until the next cell is created. */
+owf_cell *owf_sheet_cell(owf_sheet *sheet, unsigned row, unsigned col, int create);
+const owf_cell *owf_sheet_find(const owf_sheet *sheet, unsigned row, unsigned col);
+/* A cell's value; a text or formula is copied. */
+void owf_cell_set_number(owf_cell *cell, double number);
+int owf_cell_set_text(owf_cell *cell, const char *utf8, size_t length);
+void owf_cell_set_bool(owf_cell *cell, int value);
+void owf_cell_set_error(owf_cell *cell, int error);
+int owf_cell_set_formula(owf_cell *cell, const char *text);
+int owf_sheet_set_columns(owf_sheet *sheet, unsigned first, unsigned last, int width, int style, int hidden);
+int owf_sheet_set_row(owf_sheet *sheet, unsigned row, int height, int hidden);
+int owf_sheet_merge(owf_sheet *sheet, const owf_range *range);
+int owf_book_add_name(owf_book *book, const char *name, int sheet, const char *formula, int hidden);
+
+/* A number as a formula or a file writes it: up to 15 significant digits,
+ * "0.1", "12", "1.5E+20". out holds at least 32 bytes. */
+void owf_number_text(double number, char *out);
+
+/* Workbook formats, as the document ones. */
+typedef struct owf_book_format {
+    const char *name;            /* "xls", "csv"... */
+    const char *description;
+    const char *extensions;
+    int (*detect)(const unsigned char *data, size_t length);
+    int (*import)(const unsigned char *data, size_t length, owf_book *book, owf_report *report);
+    int (*export)(const owf_book *book, unsigned char **data, size_t *length, owf_report *report);
+} owf_book_format;
+
+int owf_book_format_count(void);
+const owf_book_format *owf_book_format_at(int index);
+const owf_book_format *owf_book_format_named(const char *name);
+const owf_book_format *owf_book_format_for_filename(const char *filename);
+int owf_import_book_memory(const unsigned char *data, size_t length, const char *format,
+                           owf_book **book, owf_report *report, const owf_book_format **used);
+int owf_import_book_file(const char *path, const char *format, owf_book **book,
+                         owf_report *report, const owf_book_format **used);
+int owf_export_book_file(const owf_book *book, const char *path, const char *format, owf_report *report);
+
 #ifdef __cplusplus
 }
 #endif

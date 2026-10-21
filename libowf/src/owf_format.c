@@ -8,8 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Word 97-2003 documents and password-protected Office files are OLE
- * compound files: recognised, so the answer is clear, but not read yet. */
+/* Word 97-2003 documents, Excel workbooks and password-protected Office
+ * files are OLE compound files: recognised, so the answer is clear. Word's
+ * are not read yet; workbooks are the spreadsheet's (owf_book.c). */
 static int detect_ole(const unsigned char *data, size_t length)
 {
     static const unsigned char sig[8] = { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 };
@@ -33,6 +34,8 @@ static int import_ole(const unsigned char *data, size_t length, owf_doc *doc, ow
     (void)doc;
     if (has_utf16_name(data, length, "EncryptedPackage"))
         owf_report_add(report, OWF_NOTE_LOST, "This document is protected with a password; OpenWrite cannot open protected documents yet");
+    else if (has_utf16_name(data, length, "Workbook") || has_utf16_name(data, length, "Book"))
+        owf_report_add(report, OWF_NOTE_LOST, "This is an Excel workbook (.xls), not a document; OWConvert can save its sheet as CSV");
     else if (has_utf16_name(data, length, "WordDocument"))
         owf_report_add(report, OWF_NOTE_LOST, "This is a Word 97-2003 document (.doc); OpenWrite cannot open these yet. Word or LibreOffice can save it as DOCX");
     else
@@ -134,7 +137,7 @@ const owf_format *owf_format_at(int index)
     return index >= 0 && index < NFORMATS ? formats[index] : NULL;
 }
 
-static int same_word(const char *a, const char *b)
+int owf_same_word(const char *a, const char *b)
 {
     while (*a && *b) {
         if (owf_lower((unsigned char)*a) != owf_lower((unsigned char)*b))
@@ -149,13 +152,12 @@ const owf_format *owf_format_named(const char *name)
 {
     int i;
     for (i = 0; i < NFORMATS; i++)
-        if (same_word(formats[i]->name, name))
+        if (owf_same_word(formats[i]->name, name))
             return formats[i];
     return NULL;
 }
 
-/* 1 when ext is one of the space-separated words in list. */
-static int in_list(const char *list, const char *ext)
+int owf_ext_in_list(const char *list, const char *ext)
 {
     size_t n = strlen(ext);
     while (*list) {
@@ -183,7 +185,7 @@ const owf_format *owf_format_for_filename(const char *filename)
     if (!dot || strchr(dot, '/') || strchr(dot, ':'))
         return NULL;
     for (i = 0; i < NFORMATS; i++)
-        if (formats[i]->export && in_list(formats[i]->extensions, dot + 1))
+        if (formats[i]->export && owf_ext_in_list(formats[i]->extensions, dot + 1))
             return formats[i];
     return NULL;
 }

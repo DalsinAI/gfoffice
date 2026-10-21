@@ -8,6 +8,10 @@
  *
  * On other systems: owconvert [--format NAME] [--report] FROM TO, or
  * owconvert --formats.
+ *
+ * Workbooks too, when TO (or FORMAT) is a workbook format:
+ *   1> OWConvert Accounts.xls RAM:Accounts.csv
+ * (with libowf linked in; owf.library gets the workbook calls next).
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf.h"
@@ -38,6 +42,14 @@ static void list_formats(void)
         printf("%-11s %-5s %-5s %s (%s)\n", f->name, f->import ? "yes" : "", f->export ? "yes" : "",
                f->description, f->extensions);
     }
+#ifndef OWF_USE_LIBRARY
+    printf("\nWorkbooks\n");
+    for (i = 0; i < owf_book_format_count(); i++) {
+        const owf_book_format *f = owf_book_format_at(i);
+        printf("%-11s %-5s %-5s %s (%s)\n", f->name, f->import ? "yes" : "", f->export ? "yes" : "",
+               f->description, f->extensions);
+    }
+#endif
 }
 
 static void print_report(const owf_report *report)
@@ -55,6 +67,41 @@ static void print_report(const owf_report *report)
     }
 }
 
+#ifndef OWF_USE_LIBRARY
+static int convert_book(const char *from, const char *to, const char *format, int show_report)
+{
+    owf_report *report = owf_report_new();
+    owf_book *book = NULL;
+    const owf_book_format *used = NULL;
+    int result, rc = RC_OK;
+
+    if (!report) {
+        printf("OWConvert: %s\n", owf_error_text(OWF_ERR_MEMORY));
+        return RC_FAIL;
+    }
+    result = owf_import_book_file(from, NULL, &book, report, &used);
+    if (result != OWF_OK) {
+        printf("OWConvert: %s: %s\n", from, owf_error_text(result));
+        if (owf_report_count(report))
+            print_report(report);
+        owf_report_free(report);
+        return result == OWF_ERR_MEMORY ? RC_FAIL : RC_ERROR;
+    }
+    result = owf_export_book_file(book, to, format, report);
+    if (result != OWF_OK) {
+        printf("OWConvert: %s: %s\n", to, owf_error_text(result));
+        rc = result == OWF_ERR_MEMORY ? RC_FAIL : RC_ERROR;
+    } else {
+        printf("%s (%s) -> %s, %d sheet(s)\n", from, used->description, to, book->nsheets);
+    }
+    if (show_report && owf_report_count(report))
+        print_report(report);
+    owf_book_free(book);
+    owf_report_free(report);
+    return rc;
+}
+#endif
+
 static int convert(const char *from, const char *to, const char *format, int show_report)
 {
     owf_report *report = owf_report_new();
@@ -62,6 +109,12 @@ static int convert(const char *from, const char *to, const char *format, int sho
     const owf_format *used = NULL;
     int result, rc = RC_OK;
 
+#ifndef OWF_USE_LIBRARY
+    if (format ? owf_book_format_named(format) != NULL : owf_book_format_for_filename(to) != NULL) {
+        owf_report_free(report);
+        return convert_book(from, to, format, show_report);
+    }
+#endif
     if (!report) {
         printf("OWConvert: %s\n", owf_error_text(OWF_ERR_MEMORY));
         return RC_FAIL;
