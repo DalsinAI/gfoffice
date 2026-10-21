@@ -35,11 +35,15 @@ case "$OWF" in
 linked)
     OWFFLAGS="-DOWF_HAVE_ZLIB -DOWF_ZLIBRARY -I$HERE/libowf/include -I$HERE/libowf/src -I$HERE/libowf/amiga/sdk/Include_H"
     OWFSRC="$HERE/libowf/src/*.c $HERE/libowf/amiga/owf_zlib_amiga.c"
+    # a workbook's numbers are doubles: libnix's soft double maths, through
+    # mathieeedoubbas.library, which uses the FPU when there is one
+    OWFLIBS="-lm"
     ;;
 library)
     "$HERE/build-library.sh" "$OUT/library"
     OWFFLAGS="-DOWF_USE_LIBRARY -I$HERE/libowf/include -I$HERE/libowf/library/sdk/Include_H"
     OWFSRC=""
+    OWFLIBS=""
     ;;
 *)
     echo "build-os3.sh: OWF is linked or library, not $OWF"
@@ -50,7 +54,7 @@ esac
 # OWConvert: 68040, as every build.
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS \
-    $OWFSRC "$HERE/tools/owconvert.c" \
+    $OWFSRC "$HERE/tools/owconvert.c" $OWFLIBS \
     -o "$OUT/OWConvert"
 
 # The pages are OpenLayout's (DalsinAI/openamigalayout 0.2 or later): OPENLAYOUT_SRC, else beside this
@@ -65,7 +69,7 @@ APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $H
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     $OWFSRC "$HERE"/src/core/*.c "$OPENLAYOUT_SRC/src/openlayout.c" "$HERE/app/openwrite2.c" $APP_COMMON \
-    "$HERE"/third_party/opengadtools/*.c -lamiga \
+    "$HERE"/third_party/opengadtools/*.c -lamiga $OWFLIBS \
     -o "$OUT/OpenWrite"
 
 # The 1.x window (app/openwrite.c), as OpenWrite1, only when asked: OW1=yes build-os3.sh
@@ -75,7 +79,7 @@ elif [ "${OW1:-}" = yes ]; then
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     $OWFSRC "$HERE"/src/core/*.c "$OPENLAYOUT_SRC/src/openlayout.c" "$HERE/app/openwrite.c" $APP_COMMON \
-    "$HERE"/third_party/opengadtools/*.c -lamiga \
+    "$HERE"/third_party/opengadtools/*.c -lamiga $OWFLIBS \
     -o "$OUT/OpenWrite1"
 echo "$OUT/OpenWrite1 ($(wc -c < "$OUT/OpenWrite1") bytes)"
 fi
