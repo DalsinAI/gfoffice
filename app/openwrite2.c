@@ -41,7 +41,7 @@
 #include <proto/graphics.h>
 #include <proto/gadtools.h>
 #include <proto/asl.h>
-#include <proto/diskfont.h>
+#include "ogt_openfont.h"
 #include <proto/layers.h>
 
 #include <ctype.h>
@@ -71,7 +71,7 @@
 #include "ogt_sections.h"
 #include "ogt_status.h"
 
-struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL, *LayersBase = NULL;
+struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, *LayersBase = NULL;
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
@@ -879,7 +879,7 @@ static int run_twips(int paragraph, const owf_charfmt *fmt)
 }
 
 /* A document font at a pixel size, kept open for the next drawing (DOC_FONT_CACHE sizes; the oldest makes
- * way). NULL when diskfont has no such font. */
+ * way). NULL when openfont has no such font. */
 static struct TextFont *document_font_px(const char *file, int pixels)
 {
     int i, slot = -1;
@@ -892,13 +892,13 @@ static struct TextFont *document_font_px(const char *file, int pixels)
             return doc_fonts[i].font;
         if (!doc_fonts[i].font && slot < 0) slot = i;
     }
-    if (!DiskfontBase) return NULL;
+    if (!OpenFontTextBase) return NULL;
     memset(&ta, 0, sizeof ta);
     ta.ta_Name = (STRPTR)file;
     ta.ta_YSize = (UWORD)pixels;
     ta.ta_Style = FS_NORMAL;
     /* An outline font (FONTS:name.otag) is made at the exact size asked
-     * for; asked for as FPF_DESIGNED, diskfont returns a size made before
+     * for; asked for as FPF_DESIGNED, the font comes back at a size made before
      * (CGTimes: 10 pixels for any size from 8 to 14). A bitmap font keeps
      * its designed sizes, since scaling one looks worse than the nearest. */
     {
@@ -911,10 +911,10 @@ static struct TextFont *document_font_px(const char *file, int pixels)
             if ((lk = Lock((STRPTR)otag, ACCESS_READ))) { outline = 1; UnLock(lk); }
         }
         ta.ta_Flags = outline ? FPF_DISKFONT : FPF_DISKFONT | FPF_DESIGNED;
-        f = OpenDiskFont(&ta);
+        f = ogt_openfont_font(OpenFontTextBase, &ta);
         if (!f) {
             ta.ta_Flags = outline ? FPF_DISKFONT | FPF_DESIGNED : FPF_DISKFONT;
-            f = OpenDiskFont(&ta);
+            f = ogt_openfont_font(OpenFontTextBase, &ta);
         }
     }
     if (!f) return NULL;
@@ -3478,7 +3478,7 @@ static int window_main(int argc, char **argv)
         goto out;
     }
 
-    DiskfontBase = OpenLibrary((STRPTR)"diskfont.library", 36);
+    OpenFontTextBase = ogt_openfont_open();
     LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
 
     RexxSysBase = (struct RxsLib *)OpenLibrary((STRPTR)"rexxsyslib.library", 36);
@@ -3529,7 +3529,7 @@ out:
     if (doc) { owf_doc_free(doc); doc = NULL; }
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) { CloseLibrary(LayersBase); LayersBase = NULL; }
-    if (DiskfontBase) { CloseLibrary(DiskfontBase); DiskfontBase = NULL; }
+    if (OpenFontTextBase) { CloseLibrary(OpenFontTextBase); OpenFontTextBase = NULL; }
     image_cache_clear();
     if (CyberGfxBase) { CloseLibrary(CyberGfxBase); CyberGfxBase = NULL; }
     if (DataTypesBase) { CloseLibrary(DataTypesBase); DataTypesBase = NULL; }
