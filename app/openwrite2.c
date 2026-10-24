@@ -3054,7 +3054,7 @@ static void do_command(int id)
     case C_SAVE: do_save(); break;
     case C_PRINT: {
         char msg[220];
-        if (ow_print_document(doc, msg, sizeof msg)) {
+        if (ow_print_document_named(doc, current_path[0] ? leaf(current_path) : NULL, msg, sizeof msg)) {
             set_status(msg); request_document_redraw();
         } else tell("Print", msg);
         break;
@@ -3299,7 +3299,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"SAVEAS",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing path");}else{save_document_as(arg);snprintf(result,sizeof result,"%s",status);}}
     else if(starts_word_ci(command,"SAVE",&arg)){if(current_path[0]){save_document_as(current_path);snprintf(result,sizeof result,"%s",status);}else{ok=0;snprintf(result,sizeof result,"Untitled document needs SAVEAS");}}
     else if(starts_word_ci(command,"EXPORT",&arg)){owf_report *rp;if(!*arg){ok=0;snprintf(result,sizeof result,"Missing export path");}else{rp=owf_report_new();ok=owf_export_file(doc,arg,NULL,rp)==OWF_OK;owf_report_free(rp);snprintf(result,sizeof result,"%s",ok?"Exported":"Export failed");}}
-    else if(starts_word_ci(command,"PRINT",&arg)){ok=ow_print_document(doc,result,sizeof result);}
+    else if(starts_word_ci(command,"PRINT",&arg)){ok=ow_print_document_named(doc,current_path[0]?leaf(current_path):NULL,result,sizeof result);}
     else if(starts_word_ci(command,"INSERTTEXT",&arg)){ok=editor_result(ow_editor_insert_text_block(editor,arg,strlen(arg)),"ARexx text inserted.");snprintf(result,sizeof result,"%s",ok?"Inserted":"Insert failed");}
     else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;if(ok)bring_focus_into_view();else request_document_redraw();snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
     else if(starts_word_ci(command,"GETTEXT",&arg)){dynamic=document_plain_text();if(!dynamic){ok=0;snprintf(result,sizeof result,"Out of memory");}}
