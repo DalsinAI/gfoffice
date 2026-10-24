@@ -29,7 +29,7 @@ OpenWrite 1.0 includes:
 - an ARexx port for scripted open/save/export/print/text/search/edit commands;
 - DOCX and ODT formatted import/export, including simple tables and inline images;
 - searchable direct PDF export;
-- standard printer.device output, including OpenAmigaPrint/OpenPrint when selected.
+- Print: with OpenPrint on the disk, the document as laid out (a PDF, as Export PDF makes it) in OpenPrint's Print window, for an IPP printer or a saved PDF; without OpenPrint, its text through printer.device.
 
 OpenWrite also opens ProWrite, Final Writer/Final Copy-family SWRT documents,
 Wordworth, IFF FTXT, ANSI text and plain text. Import reports name

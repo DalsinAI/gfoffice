@@ -26,7 +26,7 @@ that the format holds and OpenWrite can show).
 | HTML (`.html`) | No | Yes | Spec: HTML and CSS | W1 | Export with document formatting; HTML import is reserved for the OpenHTML/html.datatype work |
 | Plain text (`.txt`), Amiga ISO-8859-1 or UTF-8 | Yes | Yes | n/a | W1 | Full (libowf 0.1) |
 | Markdown (`.md`) | No | No | Spec: CommonMark (a subset) | Later | To do |
-| PDF | No | Yes, and print | Direct OpenWrite/libowf PDF exporter | W1 | Searchable PDF export is live; standard printer.device output is live |
+| PDF | No | Yes, and print | Direct OpenWrite/libowf PDF exporter | W1 | Searchable PDF export is live; Print hands that PDF to OpenPrint (printer.device's text only without OpenPrint) |
 | Word 97-2003 (`.doc`) | Later | No | Spec: Microsoft's [MS-DOC] | Later | Recognised (and password-protected Office files), with a clear message; not read yet |
 | AbiWord (`.abw`), which was on AmigaOS 4 | No | No | Its XML, read from samples | Later | To do |
 
