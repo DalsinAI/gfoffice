@@ -220,7 +220,10 @@ static void put_para_props(owf_buf *out, const owf_parafmt *f)
         put_length_attr(out, "fo:margin-top", f->space_before);
     if (f->space_after)
         put_length_attr(out, "fo:margin-bottom", f->space_after);
-    if (f->line_spacing && f->line_spacing != 100)
+    if (OWF_LINE_IS_HEIGHT(f->line_spacing))           /* 2.0.18 */
+        put_length_attr(out, OWF_LINE_IS_EXACT(f->line_spacing) ? "fo:line-height" : "style:line-height-at-least",
+                        OWF_LINE_HEIGHT(f->line_spacing));
+    else if (f->line_spacing && f->line_spacing != 100)
         owf_buf_printf(out, " fo:line-height=\"%d%%\"", f->line_spacing);
     if (f->page_break_before)
         owf_buf_puts(out, " fo:break-before=\"page\"");
@@ -401,12 +404,15 @@ static void put_frame_odt(owf_buf *out, const owf_doc *doc, int index, styles *s
     int k, at, has_at;
     if (!doc || index < 0 || index >= doc->nframes) return;
     fr = &doc->frames[index];
-    owf_buf_printf(out, "<draw:frame draw:style-name=\"Fr%d\" draw:name=\"Frame%d\" text:anchor-type=\"paragraph\"",
-                   index + 1, index + 1);
-    odt_frame_place(doc, fr, 1, &pos, &rel, &at, &has_at);
-    if (has_at) put_length_attr(out, "svg:x", at);
-    odt_frame_place(doc, fr, 0, &pos, &rel, &at, &has_at);
-    if (has_at) put_length_attr(out, "svg:y", at);
+    /* 2.0.17: a text box in the line goes as a character (as-char), with no place of its own */
+    owf_buf_printf(out, "<draw:frame draw:style-name=\"Fr%d\" draw:name=\"Frame%d\" text:anchor-type=\"%s\"",
+                   index + 1, index + 1, fr->in_line ? "as-char" : "paragraph");
+    if (!fr->in_line) {
+        odt_frame_place(doc, fr, 1, &pos, &rel, &at, &has_at);
+        if (has_at) put_length_attr(out, "svg:x", at);
+        odt_frame_place(doc, fr, 0, &pos, &rel, &at, &has_at);
+        if (has_at) put_length_attr(out, "svg:y", at);
+    }
     put_length_attr(out, "svg:width", fr->width);
     put_length_attr(out, "svg:height", fr->height);
     owf_buf_printf(out, " draw:z-index=\"%d\">", fr->behind ? 0 : index + 1);
