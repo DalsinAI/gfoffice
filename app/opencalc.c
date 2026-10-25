@@ -41,6 +41,7 @@
 #include <proto/graphics.h>
 #include <proto/gadtools.h>
 #include <proto/asl.h>
+#include <proto/diskfont.h>
 #include "ogt_openfont.h"
 #include <proto/layers.h>
 
@@ -62,12 +63,13 @@
 #include "ogt_toolbar.h"
 #include "ogt_font.h"
 #include "ogt_status.h"
+#include "ow_fontwidths.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, *LayersBase = NULL;
-struct Library *CyberGfxBase = NULL;
+struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.1 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.8 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -233,7 +235,8 @@ static struct Gadget *g_name, *g_input, *g_vscroll, *g_hscroll;
 static struct TextFont *font;
 static struct TextAttr font_attr;
 static int fh;
-static struct RastPort mrp;                          /* measures text for the core */
+static struct RastPort mrp;                          /* measures text in the window's font */
+static struct RastPort crp;                          /* measures cells' text for the core, in their fonts */
 static int quit_now;
 
 static ogt_theme theme;
@@ -275,8 +278,12 @@ static ULONG click_secs, click_micros;
 static unsigned click_row, click_col;
 static int defer_repaint, repaint_pending;
 
+/* The sheet tabs' strip: every place a click means something (a sheet's tab, "+", the two arrows), and
+ * which sheets show (the core's oc_tab_strip). */
 #define MAX_TABS 64
-static int tab_n, tab_x[MAX_TABS + 1], tab_w[MAX_TABS + 1], tab_sheet[MAX_TABS + 1];   /* the last: "+" */
+enum { TAB_PLUS = -1, TAB_LEFT = -2, TAB_RIGHT = -3 };
+static int tab_n, tab_x[MAX_TABS + 3], tab_w[MAX_TABS + 3], tab_sheet[MAX_TABS + 3];
+static int tab_first, tab_end, tab_scroll, tab_shown_sheet = -1;
 
 static void draw_all(void);
 static void refresh(void);
@@ -343,16 +350,290 @@ static ULONG soft_style(unsigned flags)
            (flags & OWF_UNDERLINE ? FSF_UNDERLINED : 0);
 }
 
-/* The core's measure: the window's font for every cell (cell fonts and sizes come later). */
+/* ---- Cells' fonts ----
+ * A cell's text is drawn and measured in its own font at its own size (the core's oc_font_px: 11 points is a
+ * 15-pixel em at 100%). The book's font is taken to an Amiga family by its name and kind (CGTriumvirate for
+ * Arial, Calibri, Helvetica and the other sans fonts, CGTimes for serif ones, courier for fixed ones); the face
+ * that draws it is OpenWrite's choice (app/ow_fontwidths.c, ow_fw_face): that family when it opens, else the
+ * first of its kind's that does (openfont.library can't read OS 3.2's Intellifont CGTriumvirate, which has no
+ * bitmap sizes: DejaVu Sans, Liberation Sans, helvetica...), else the window's font. openfont makes a face at
+ * a size of its own reckoning (the lab's DejaVu Sans asked for 15 drew capitals 13 high, as large as its 13
+ * points of the window's font): the face is made again at the size whose capitals are 0.716 em, Arial's, when
+ * that comes nearer. Bold and italic are made from it. CELL_FONTS sizes stay open; the oldest makes way. */
+#define CELL_FONTS 12
+typedef struct cell_font_entry {
+    char file[40];                                   /* the family asked for (cell_font_file) */
+    char face[OW_FW_NAME];                           /* the face that draws it; "" the window's font */
+    int pixels, owned;                               /* the em asked for, in pixels */
+    int ysize, cap;                                  /* the size it was made at (ta_YSize), its capitals' height */
+    const char *by;                                  /* openfont, diskfont or the window's font */
+    struct TextFont *font;
+    int ink_top, ink_bottom;                         /* the rows text marks, from the font's top: ascenders to descenders */
+} cell_font_entry;
+static cell_font_entry cell_fonts[CELL_FONTS];
+static int cell_font_next;
+static ow_fontwidths cell_faces;                     /* which face opens, for each family */
+static int cell_faces_ready;
+#define FONT_PROBES 8
+static struct TextFont *font_probes[FONT_PROBES];    /* faces ow_fw_face opened to see that they open */
+static int font_probe_next;
+static const char *font_opened_by = "";             /* the library that opened the last font: FONTCHECK says */
+
+static void close_cell_fonts(void)
+{
+    int i;
+    for (i = 0; i < CELL_FONTS; ++i) {
+        if (cell_fonts[i].font && cell_fonts[i].owned) CloseFont(cell_fonts[i].font);
+        memset(&cell_fonts[i], 0, sizeof cell_fonts[i]);
+    }
+    cell_font_next = 0;
+    for (i = 0; i < FONT_PROBES; ++i) {
+        if (font_probes[i]) CloseFont(font_probes[i]);
+        font_probes[i] = NULL;
+    }
+    font_probe_next = 0;
+    cell_faces_ready = 0;                            /* the window's font (the last face to try) may change */
+}
+
+static int name_has(const char *name, const char *part)
+{
+    size_t i, j, n, p;
+    if (!name || !part) return 0;
+    n = strlen(name); p = strlen(part);
+    if (!p || p > n) return 0;
+    for (i = 0; i + p <= n; ++i) {
+        for (j = 0; j < p; ++j)
+            if (tolower((unsigned char)name[i + j]) != tolower((unsigned char)part[j])) break;
+        if (j == p) return 1;
+    }
+    return 0;
+}
+
+/* The book's font (-1 the book's own) and its name. */
+static int cell_font_index(int index, const char **name, owf_font_kind *kind)
+{
+    owf_book *book = core ? oc_core_book(core) : NULL;
+    *name = NULL;
+    *kind = OWF_FONT_ANY;
+    if (book && index < 0 && book->nstyles) index = book->styles[0].font.font;
+    if (book && index >= 0 && index < book->nfonts) {
+        *name = book->fonts[index].name;
+        *kind = book->fonts[index].kind;
+    }
+    return index;
+}
+
+static const char *cell_font_file(int index)
+{
+    const char *name;
+    owf_font_kind kind;
+    cell_font_index(index, &name, &kind);
+    if (kind == OWF_FONT_MONO || name_has(name, "courier") || name_has(name, "mono") || name_has(name, "consolas") ||
+        name_has(name, "lettergothic"))
+        return "courier.font";
+    if (kind != OWF_FONT_SANS && !name_has(name, "sans") &&
+        (kind == OWF_FONT_SERIF || name_has(name, "times") || name_has(name, "serif") || name_has(name, "cambria") ||
+         name_has(name, "georgia") || name_has(name, "garamond")))
+        return "CGTimes.font";
+    return "CGTriumvirate.font";
+}
+
+/* An Amiga font at a size: an outline font (FONTS:name.otag) made at exactly that size, a bitmap one at its
+ * nearest designed size (scaled only when it has none). Through openfont.library, then diskfont.library (the
+ * lab's openfont can't read OS 3.2's Intellifont outlines, which diskfont makes through bullet.library, and
+ * finds none of SYS:Fonts' bitmap families). NULL when neither has it. */
+static struct TextFont *open_font_px(const char *file, int pixels)
+{
+    struct TextAttr ta;
+    struct TextFont *f = NULL;
+    char otag[96];
+    BPTR lk;
+    int outline = 0;
+    if (!file || !file[0]) return NULL;
+    snprintf(otag, sizeof otag, "FONTS:%s", file);
+    if (strlen(otag) > 5 && !strcmp(otag + strlen(otag) - 5, ".font")) {
+        strcpy(otag + strlen(otag) - 5, ".otag");
+        if ((lk = Lock((STRPTR)otag, ACCESS_READ))) { outline = 1; UnLock(lk); }
+    }
+    memset(&ta, 0, sizeof ta);
+    ta.ta_Name = (STRPTR)file;
+    ta.ta_YSize = (UWORD)pixels;
+    ta.ta_Style = FS_NORMAL;
+    font_opened_by = "openfont";
+    if (OpenFontTextBase) {
+        ta.ta_Flags = outline ? FPF_DISKFONT : FPF_DISKFONT | FPF_DESIGNED;
+        if ((f = ogt_openfont_font(OpenFontTextBase, &ta))) return f;
+        ta.ta_Flags = outline ? FPF_DISKFONT | FPF_DESIGNED : FPF_DISKFONT;
+        if ((f = ogt_openfont_font(OpenFontTextBase, &ta))) return f;
+    }
+    font_opened_by = "diskfont";
+    if (DiskfontBase) {
+        ta.ta_Flags = outline ? FPF_DISKFONT : FPF_DISKFONT | FPF_DESIGNED;
+        if ((f = OpenDiskFont(&ta))) return f;
+        ta.ta_Flags = FPF_DISKFONT;
+        f = OpenDiskFont(&ta);
+    }
+    return f;
+}
+
+/* ow_fw_face's backend: a face opened to see that it opens (kept until the next FONT_PROBES), and its letters'
+ * advances. */
+static void *probe_open(void *user, const char *file, int pixels, int *ysize, int *ascent)
+{
+    struct TextFont *f = open_font_px(file, pixels);
+    (void)user;
+    if (!f) return NULL;
+    *ysize = f->tf_YSize;
+    *ascent = f->tf_Baseline + 1;
+    if (font_probes[font_probe_next]) CloseFont(font_probes[font_probe_next]);
+    font_probes[font_probe_next] = f;
+    font_probe_next = (font_probe_next + 1) % FONT_PROBES;
+    return f;
+}
+
+static int probe_advance(void *user, void *f, unsigned char c, int bold)
+{
+    struct RastPort rp;
+    char ch = (char)c;
+    (void)user;
+    InitRastPort(&rp);
+    SetFont(&rp, (struct TextFont *)f);
+    SetSoftStyle(&rp, bold ? FSF_BOLD : 0, FSF_BOLD);
+    return text_length(&rp, &ch, 1);
+}
+
+/* The rows of the font's box (from its top) that text s marks with ink, drawn into a small bitmap: what
+ * places a cell's text, since a font's height (tf_YSize) holds space above and below its letters that
+ * differs from font to font. 0 when there is no memory for the bitmap. */
+static int font_ink(struct TextFont *f, const char *s, int *top, int *bottom)
+{
+    struct RastPort rp;
+    struct BitMap *bm;
+    int len = (int)strlen(s), w, h, x, y, first = -1, last = -1;
+    InitRastPort(&rp);
+    SetFont(&rp, f);
+    w = TextLength(&rp, (STRPTR)s, (ULONG)len) + 8;
+    h = f->tf_YSize + 4;
+    if (((struct Library *)GfxBase)->lib_Version < 39 || !(bm = AllocBitMap((ULONG)w, (ULONG)h, 1, BMF_CLEAR, NULL)))
+        return 0;
+    rp.BitMap = bm;
+    SetAPen(&rp, 1);
+    SetDrMd(&rp, JAM1);
+    Move(&rp, 2, 2 + f->tf_Baseline);
+    Text(&rp, (STRPTR)s, (ULONG)len);
+    WaitBlit();
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++)
+            if (ReadPixel(&rp, x, y)) {
+                if (first < 0) first = y;
+                last = y;
+                break;
+            }
+    FreeBitMap(bm);
+    if (first < 0) return 0;
+    *top = first - 2;
+    *bottom = last - 2;
+    return 1;
+}
+
+static int font_cap(struct TextFont *f)
+{
+    int top, bottom;
+    return font_ink(f, "H", &top, &bottom) ? bottom - top + 1 : 0;
+}
+
+/* face at an em of pixels: made at pixels, then again at the size whose capitals are 0.716 em (Arial's) when
+ * that comes nearer. *ysize: the size it was made at; *cap: its capitals' height (0 not known). */
+static struct TextFont *open_cell_font(const char *face, int pixels, int *ysize, int *cap)
+{
+    struct TextFont *f = open_font_px(face, pixels), *g;
+    int want = (pixels * 716 + 500) / 1000, c, again, c2;
+    *ysize = pixels;
+    *cap = 0;
+    if (!f) return NULL;
+    if (want < 3) want = 3;
+    *cap = c = font_cap(f);
+    if (c > 0 && (c > want || c < want - 1)) {
+        again = (pixels * want + c / 2) / c;
+        if (again >= 4 && again != pixels && (g = open_font_px(face, again))) {
+            c2 = font_cap(g);
+            if (c2 > 0 && (c2 > want ? c2 - want : want - c2) < (c > want ? c - want : want - c)) {
+                CloseFont(f);
+                f = g;
+                *ysize = again;
+                *cap = c2;
+            } else {
+                CloseFont(g);
+            }
+        }
+    }
+    return f;
+}
+
+/* The font for a cell's text: the book's font index (-1 the book's own) at size twips (0 the default). */
+static cell_font_entry *cell_font(int index, int size)
+{
+    const char *file = cell_font_file(index), *face;
+    int i, slot = -1, pixels = core ? oc_font_px(core, size) : fh, owned = 1, ysize = 0, cap = 0;
+    struct TextFont *f = NULL;
+    cell_font_entry *e;
+    for (i = 0; i < CELL_FONTS; ++i) {
+        if (cell_fonts[i].font && cell_fonts[i].pixels == pixels && !strcmp(cell_fonts[i].file, file))
+            return &cell_fonts[i];
+        if (!cell_fonts[i].font && slot < 0) slot = i;
+    }
+    if (!cell_faces_ready) {
+        ow_fw_backend be;
+        memset(&be, 0, sizeof be);
+        be.open = probe_open;
+        be.advance = probe_advance;
+        ow_fw_init(&cell_faces, &be, font_attr.ta_Name ? (const char *)font_attr.ta_Name : "");
+        cell_faces_ready = 1;
+    }
+    face = ow_fw_face(&cell_faces, file);
+    if (face[0]) f = open_cell_font(face, pixels, &ysize, &cap);
+    if (!f) {                                        /* the window's: remembered, so it isn't looked for again */
+        f = font;
+        owned = 0;
+        face = "";
+        ysize = fh;
+        cap = f ? font_cap(f) : 0;
+        font_opened_by = "the window's font";
+    }
+    if (!f) return NULL;
+    if (slot < 0) {
+        slot = cell_font_next;
+        cell_font_next = (cell_font_next + 1) % CELL_FONTS;
+        if (cell_fonts[slot].owned) CloseFont(cell_fonts[slot].font);
+    }
+    e = &cell_fonts[slot];
+    snprintf(e->file, sizeof e->file, "%s", file);
+    snprintf(e->face, sizeof e->face, "%s", face);
+    e->pixels = pixels;
+    e->owned = owned;
+    e->ysize = ysize;
+    e->cap = cap;
+    e->by = font_opened_by;
+    e->font = f;
+    if (!font_ink(f, "Hdgjpqy", &e->ink_top, &e->ink_bottom)) {
+        e->ink_top = 0;
+        e->ink_bottom = f->tf_YSize - 1;
+    }
+    return e;
+}
+
+/* The core's measure: a cell's text in its font. */
 static int measure(void *user, const char *s, size_t n, unsigned flags, int fnt, int size)
 {
     char buf[512];
     size_t m;
-    (void)user; (void)fnt; (void)size;
-    if (!n || !mrp.Font) return 0;
+    cell_font_entry *e;
+    (void)user;
+    if (!n || !(e = cell_font(fnt, size))) return 0;
     m = to_latin1(s, n, buf, sizeof buf);
-    SetSoftStyle(&mrp, soft_style(flags), FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
-    return text_length(&mrp, buf, m);
+    SetFont(&crp, e->font);
+    SetSoftStyle(&crp, soft_style(flags), FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    return text_length(&crp, buf, m);
 }
 
 /* ---- The clipboard: FTXT, its CHRS in ISO-8859-1 ---- */
@@ -710,8 +991,9 @@ static void paint_line(const canvas *cv, const oc_draw_item *it)
         fill_box(cv, pen, it->x - (t - 1) / 2, it->y, t, it->h);
 }
 
-/* Text from x, cut to the clip box: letters wholly left of it skipped, those past it not drawn. */
-static void text_cut(const canvas *cv, LONG pen, const char *utf8, unsigned flags, int x, int y, int cx, int cw)
+/* Text from x, cut to the clip box: letters wholly left of it skipped, those past it not drawn. th: the
+ * rastport's font's height. */
+static void text_cut(const canvas *cv, LONG pen, const char *utf8, unsigned flags, int x, int y, int cx, int cw, int th)
 {
     char buf[512];
     struct TextExtent te;
@@ -721,14 +1003,14 @@ static void text_cut(const canvas *cv, LONG pen, const char *utf8, unsigned flag
     if (!n) return;
     if (cx < 0) { cw += cx; cx = 0; }
     if (cx + cw > cv->w) cw = cv->w - cx;
-    if (cw <= 0 || y < 0 || y + fh > cv->limit_h) return;
+    if (cw <= 0 || y < 0 || y + th > cv->limit_h) return;
     SetSoftStyle(rp, soft_style(flags), FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     while (start < n && x < cx) {
         x += text_length(rp, buf + start, 1);
         start++;
     }
     if (start >= n || x >= cx + cw) return;
-    fit = TextFit(rp, (STRPTR)buf + start, (ULONG)(n - start), &te, NULL, 1, (ULONG)(cx + cw - x), (ULONG)(fh + 8));
+    fit = TextFit(rp, (STRPTR)buf + start, (ULONG)(n - start), &te, NULL, 1, (ULONG)(cx + cw - x), (ULONG)(th + 8));
     if (fit <= 0) return;
     ogt_set_apen(rp, pen);
     SetDrMd(rp, JAM1);
@@ -746,11 +1028,19 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
         paint_line(cv, it);
         break;
     case OC_DRAW_TEXT: {
-        int y = it->valign == OWF_VALIGN_TOP ? it->y + 1 :
-                it->valign == OWF_VALIGN_CENTRE ? it->y + (it->h - fh) / 2 : it->y + it->h - fh - 1;
-        if (y < it->y && it->h >= fh) y = it->y;
-        if (it->text)
-            text_cut(cv, role_pen(OC_ROLE_TEXT, it->rgb), it->text, it->flags, it->text_x, y, it->clip_x, it->clip_w);
+        /* in the cell's font, placed in its box (y, h: the cell less its grid line, or one wrapped line) by
+           its letters' ink, as Excel places text: bottom, its descenders 1 pixel above the grid line; top, its
+           ascenders 1 pixel below the cell's top; centre, halfway */
+        cell_font_entry *e = cell_font(it->font, it->size);
+        struct TextFont *f = e ? e->font : font;
+        int th = f ? f->tf_YSize : fh, ink_top = e ? e->ink_top : 0, ink_bottom = e ? e->ink_bottom : th - 1, y;
+        if (!it->text) break;
+        if (f) SetFont(cv->rp, f);
+        if (it->valign == OWF_VALIGN_TOP) y = it->y + 1 - ink_top;
+        else if (it->valign == OWF_VALIGN_CENTRE) y = it->y + (it->h - (ink_bottom - ink_top + 1)) / 2 - ink_top;
+        else y = it->y + it->h - 2 - ink_bottom;
+        text_cut(cv, role_pen(OC_ROLE_TEXT, it->rgb), it->text, it->flags, it->text_x, y, it->clip_x, it->clip_w, th);
+        SetFont(cv->rp, font);
         break;
     }
     case OC_DRAW_HEADER: {
@@ -761,8 +1051,10 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
         to_latin1(it->text, strlen(it->text), buf, sizeof buf);
         SetSoftStyle(cv->rp, 0, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
         tw = text_length(cv->rp, buf, strlen(buf));
-        text_cut(cv, rgb_pen(it->flags ? RGB_HEADER_TEXT_SELECTED : RGB_HEADER_TEXT), it->text, 0, it->x + (it->w - tw) / 2,
-                 it->y + (it->h - fh) / 2, it->x, it->w - 1);
+        /* row numbers left-aligned a small inset in (the core's text_x), column letters centred */
+        text_cut(cv, rgb_pen(it->flags ? RGB_HEADER_TEXT_SELECTED : RGB_HEADER_TEXT), it->text, 0,
+                 it->align == OC_ALIGN_LEFT ? it->x + it->text_x : it->x + (it->w - tw) / 2, it->y + (it->h - fh) / 2, it->x,
+                 it->w - 1, fh);
         break;
     }
     case OC_DRAW_FRAME: {
@@ -829,59 +1121,122 @@ static void paint_grid(void)
 
 /* ---- The sheet tabs ---- */
 
+/* A hit area of the strip. */
+static void tab_area(int x, int w, int what)
+{
+    if (tab_n >= MAX_TABS + 3) return;
+    tab_x[tab_n] = x;
+    tab_w[tab_n] = w;
+    tab_sheet[tab_n] = what;
+    tab_n++;
+}
+
+/* A scroll arrow's button: a small triangle pointing left or right, dimmed when there is nothing that way. */
+static void draw_tab_arrow(struct RastPort *rp, int x, int y, int w, int h, int right, int live)
+{
+    int cx = x + w / 2, cy = y + h / 2, a = h / 4 > 2 ? h / 4 : 2, xy[6];
+    ogt_fill(&ctx, rp, "tab", x, y, w, h);
+    ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, w, h + 1);
+    xy[0] = right ? cx - a / 2 : cx + a / 2;
+    xy[1] = cy - a;
+    xy[2] = right ? cx - a / 2 : cx + a / 2;
+    xy[3] = cy + a;
+    xy[4] = right ? cx + a / 2 + 1 : cx - a / 2 - 1;
+    xy[5] = cy;
+    ogt_fill_poly(rp, ogt_pen(&ctx, live ? "tab.text" : "muted"), xy, 3);
+}
+
+/* The tabs: as many as fit from tab_first (the core's oc_tab_strip), two arrows before them when not all
+ * fit, "+" after them. The chosen sheet's tab is brought into view when the sheet changes (a click, the
+ * keys, the menu), not while the arrows or the wheel scroll the strip. */
 static void draw_tabs(void)
 {
     struct RastPort *rp;
     owf_book *book;
-    int x, s, h = tabs_box.h - 3, y = tabs_box.y + 1, right;
+    int x, s, h = tabs_box.h - 3, y = tabs_box.y + 1, cur, plus_w, arrow_w, avail, maxtab, *width;
     if (!win || !core || tabs_box.w <= 0) return;
     rp = win->RPort;
     book = oc_core_book(core);
+    cur = oc_core_sheet(core);
     SetFont(rp, font);
     ogt_fill(&ctx, rp, "window", tabs_box.x, tabs_box.y, tabs_box.w, tabs_box.h);
     ogt_hline(rp, ogt_pen(&ctx, "group.line"), tabs_box.x, tabs_box.y, tabs_box.w);
-    x = tabs_box.x + 4;
-    right = tabs_box.x + tabs_box.w - (ogt_text_width(rp, "+") + 20);
     tab_n = 0;
-    for (s = 0; s < book->nsheets && tab_n < MAX_TABS; s++) {
+    plus_w = ogt_text_width(rp, "+") + 16;
+    arrow_w = fh + 4;
+    avail = tabs_box.w - 4 - (plus_w + 2) - 4;
+    maxtab = avail / 3 > 60 ? avail / 3 : 60;        /* a long name is cut short ("...") to a third of the strip */
+    if (!(width = malloc((size_t)(book->nsheets > 0 ? book->nsheets : 1) * sizeof *width))) return;
+    ogt_bold(rp, 1);                                 /* each tab as wide as when chosen: none moves on a click */
+    for (s = 0; s < book->nsheets; s++) {
         char name[64];
-        int cur = s == oc_core_sheet(core), tw;
-        if (book->sheets[s].hidden && !cur) continue;
+        if (book->sheets[s].hidden && s != cur) { width[s] = 0; continue; }
         to_latin1(book->sheets[s].name, strlen(book->sheets[s].name), name, sizeof name);
-        ogt_bold(rp, cur);
-        tw = ogt_text_width(rp, name) + 16;
-        if (x + tw > right) break;
+        width[s] = ogt_text_width(rp, name) + 16;
+        if (width[s] > maxtab) width[s] = maxtab;
+        width[s] += 2;                               /* the gap after it */
+    }
+    ogt_bold(rp, 0);
+    tab_end = oc_tab_strip(width, book->nsheets, avail, 2 * (arrow_w + 2), cur != tab_shown_sheet ? cur : -1,
+                           &tab_first, &tab_scroll);
+    tab_shown_sheet = cur;
+    x = tabs_box.x + 4;
+    if (tab_scroll) {
+        int k, more_left = 0, more_right = 0;
+        for (k = 0; k < tab_first; k++) if (width[k]) more_left = 1;
+        for (k = tab_end; k < book->nsheets; k++) if (width[k]) more_right = 1;
+        draw_tab_arrow(rp, x, y, arrow_w, h, 0, more_left);
+        tab_area(x, arrow_w, TAB_LEFT);
+        x += arrow_w + 2;
+        draw_tab_arrow(rp, x, y, arrow_w, h, 1, more_right);
+        tab_area(x, arrow_w, TAB_RIGHT);
+        x += arrow_w + 2;
+    }
+    for (s = tab_first; s < tab_end && s < book->nsheets && tab_n < MAX_TABS; s++) {
+        char name[64];
+        int on = s == cur, tw = width[s] - 2;
+        if (!width[s]) continue;
+        to_latin1(book->sheets[s].name, strlen(book->sheets[s].name), name, sizeof name);
+        ogt_bold(rp, on);
         /* the chosen sheet's tab white, as the sheet; the others the theme's tabs (THEME_SPEC.md 5) */
-        if (cur) ogt_box(rp, rgb_pen(0xFFFFFFUL), x, y, tw, h);
+        if (on) ogt_box(rp, rgb_pen(0xFFFFFFUL), x, y, tw, h);
         else ogt_fill(&ctx, rp, "tab", x, y, tw, h);
         ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, tw, h + 1);
-        if (cur) ogt_hline(rp, rgb_pen(0xFFFFFFUL), x + 1, y - 1, tw - 2);
-        ogt_text(rp, cur ? rgb_pen(RGB_TAB_TEXT) : ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, name, 0);
+        if (on) ogt_hline(rp, rgb_pen(0xFFFFFFUL), x + 1, y - 1, tw - 2);
+        ogt_text(rp, on ? rgb_pen(RGB_TAB_TEXT) : ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, name, tw - 16);
         ogt_bold(rp, 0);
-        tab_x[tab_n] = x;
-        tab_w[tab_n] = tw;
-        tab_sheet[tab_n] = s;
-        tab_n++;
+        tab_area(x, tw, s);
         x += tw + 2;
     }
+    free(width);
     /* "+": a new sheet */
-    {
-        int tw = ogt_text_width(rp, "+") + 16;
-        ogt_fill(&ctx, rp, "tab", x, y, tw, h);
-        ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, tw, h + 1);
-        ogt_text(rp, ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, "+", 0);
-        tab_x[tab_n] = x;
-        tab_w[tab_n] = tw;
-        tab_sheet[tab_n] = -1;
-    }
+    ogt_fill(&ctx, rp, "tab", x, y, plus_w, h);
+    ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, plus_w, h + 1);
+    ogt_text(rp, ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, "+", 0);
+    tab_area(x, plus_w, TAB_PLUS);
 }
 
-/* Which tab is at x (tab_n: the "+"), or -1. */
+/* The strip scrolled a tab left (way < 0) or right. */
+static void scroll_tabs(int way)
+{
+    owf_book *book = oc_core_book(core);
+    int s, cur = oc_core_sheet(core);
+    if (way < 0) {
+        for (s = tab_first - 1; s >= 0; s--)
+            if (!book->sheets[s].hidden || s == cur) { tab_first = s; break; }
+    } else if (tab_end < book->nsheets) {
+        for (s = tab_first + 1; s < book->nsheets; s++)
+            if (!book->sheets[s].hidden || s == cur) { tab_first = s; break; }
+    }
+    draw_tabs();
+}
+
+/* Which hit area is at x, y (a tab, "+" or an arrow: tab_sheet says which), or -1. */
 static int tab_at(int mx, int my)
 {
     int i;
     if (my < tabs_box.y || my >= tabs_box.y + tabs_box.h) return -1;
-    for (i = 0; i <= tab_n; i++)
+    for (i = 0; i < tab_n; i++)
         if (mx >= tab_x[i] && mx < tab_x[i] + tab_w[i]) return i;
     return -1;
 }
@@ -1069,8 +1424,18 @@ static void layout(void)
     if (g) AddGList(win, glist2, ~0, -1, NULL);
     else if (glist2) { FreeGadgets(glist2); glist2 = NULL; g_name = g_input = g_vscroll = g_hscroll = NULL; }
 
-    /* the core's view: row numbers as wide as the biggest, column letters a line high */
-    oc_view_set_headers(core, ogt_text_width(rp, "1048576") + 10, fh + 4);
+    /* the core's view: column letters a line high; the row numbers' bar as wide as the largest number showing
+       (Dale, 25 October 2026: it starts narrow and stretches as the numbers grow), 6 pixels each side */
+    {
+        int dw = 0, k;
+        for (k = 0; k < 10; k++) {
+            char digit[2] = { (char)('0' + k), 0 };
+            int w = ogt_text_width(rp, digit);
+            if (w > dw) dw = w;
+        }
+        oc_view_set_headers(core, ogt_text_width(rp, "1048576") + 10, fh + 4);
+        oc_view_set_row_numbers(core, dw, 12);
+    }
     oc_view_set_size(core, grid_box.w, grid_box.h);
     ogt_status_init(&sbar, win, &ctx, 4);
     ogt_status_layout(&sbar, status_box.x, status_box.y, status_box.w, status_box.h);
@@ -1090,10 +1455,12 @@ static void apply_theme(const char *name)
     {
         struct TextFont *f = ogt_open_font(&theme, scr, &font_attr);
         if (f) {
+            close_cell_fonts();                      /* some may be the window's font, or the theme's */
             if (font) CloseFont(font);
             font = f;
             fh = font->tf_YSize;
             SetFont(&mrp, font);
+            SetFont(&crp, font);
         }
     }
     ogt_ctx_init(&ctx, scr, &theme, theme_mode);
@@ -1170,6 +1537,8 @@ static int open_window(void)
     fh = font->tf_YSize;
     InitRastPort(&mrp);
     SetFont(&mrp, font);
+    InitRastPort(&crp);
+    SetFont(&crp, font);
     ogt_ctx_init(&ctx, scr, &theme, theme_mode);
     menu = CreateMenus(menus, TAG_DONE);
     if (menu) LayoutMenus(menu, vi, GTMN_NewLookMenus, TRUE, TAG_DONE);
@@ -1209,6 +1578,7 @@ static void close_window(void)
     }
     ogt_ctx_free(&ctx);
     if (menu) { FreeMenus(menu); menu = NULL; }
+    close_cell_fonts();                              /* before the window's font: some may stand in for it */
     if (font) { CloseFont(font); font = NULL; }
     if (vi) { FreeVisualInfo(vi); vi = NULL; }
     if (scr) { UnlockPubScreen(NULL, scr); scr = NULL; }
@@ -1340,26 +1710,195 @@ static void writable_formats(char *out, size_t size)
     }
 }
 
-/* The report's notes, when they say something was left out. */
+/* ---- The notes requester ----
+ * What a file's import or export left out, in OpenCalc's own window: EasyRequest cut its lines short on the
+ * lab's RTG screen ("Formatting of whole rows is kept on their cel"). The window is as wide as its widest
+ * line in the window's font, up to three quarters of the screen (longer lines wrap at spaces), and as tall
+ * as its lines, up to the screen (the rest left out, and said so); the OK button below the last line. A
+ * line starting with NOTE_BULLET is a bulleted note: a round dot, its text (and the lines it wraps onto)
+ * indented after it. Return, Escape, OK or the close gadget close it. */
+#define NOTE_LINES 48
+#define NOTE_TEXT 4096
+#define NOTE_BULLET '\001'
+
+typedef struct { char *text; int indent, bullet; } note_line;
+
+/* The text's paragraphs (Latin-1, '\n' between them) broken to maxw pixels in rp's font into buf's
+ * NUL-ended lines. The count. */
+static int break_note_lines(struct RastPort *rp, const char *text, int maxw, int indent, char *buf, size_t size,
+                            note_line *line, int max)
+{
+    size_t o = 0;
+    int n = 0;
+    const char *p = text;
+    while (*p && n < max) {
+        const char *end = strchr(p, '\n'), *q;
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        int bullet = len && *p == NOTE_BULLET, first = 1;
+        if (bullet) { p++; len--; }
+        if (!len) {                                  /* an empty line */
+            if (o + 1 > size) return n;
+            buf[o] = 0;
+            line[n].text = buf + o++;
+            line[n].indent = line[n].bullet = 0;
+            n++;
+        }
+        while (len && n < max) {
+            size_t take = len, fit;
+            struct TextExtent te;
+            int room = maxw - (bullet ? indent : 0);
+            fit = (size_t)TextFit(rp, (STRPTR)p, (ULONG)len, &te, NULL, 1, (ULONG)(room > 0 ? room : 1), 32767);
+            if (fit < len) {                         /* back to the last space that fits; else a cut word */
+                for (q = p + fit; q > p && *q != ' '; q--) ;
+                take = q > p ? (size_t)(q - p) : (fit ? fit : 1);
+            }
+            if (o + take + 1 > size) return n;
+            memcpy(buf + o, p, take);
+            buf[o + take] = 0;
+            line[n].text = buf + o;
+            line[n].indent = bullet ? indent : 0;
+            line[n].bullet = bullet && first;
+            n++;
+            first = 0;
+            o += take + 1;
+            p += take;
+            len -= take;
+            while (len && *p == ' ') { p++; len--; }
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+    return n;
+}
+
+static void notes_window(const char *title, const char *text)
+{
+    struct Gadget *list = NULL, *gok = NULL;
+    struct NewGadget ng;
+    struct Window *rw;
+    struct RastPort trp;
+    char *buf;
+    note_line *line;
+    int n, i, ww = 0, wh, okw, okh = fh + 8, lh = fh + 2, maxw, maxlines, cut = 0, done = 0, text_h, indent;
+    if (!scr || !vi || !font) { tell(title, text); return; }
+    buf = malloc(NOTE_TEXT);
+    line = malloc(NOTE_LINES * sizeof *line);
+    if (!buf || !line) { free(buf); free(line); tell(title, text); return; }
+    InitRastPort(&trp);
+    SetFont(&trp, font);
+    indent = fh;                                     /* the dot and a space */
+    maxw = scr->Width * 3 / 4 - 32;
+    n = break_note_lines(&trp, text, maxw, indent, buf, NOTE_TEXT, line, NOTE_LINES);
+    maxlines = (scr->Height - scr->BarHeight - 40 - okh - 40) / lh;
+    if (maxlines < 3) maxlines = 3;
+    if (n > maxlines) { n = maxlines - 1; cut = 1; }
+    for (i = 0; i < n; i++) {
+        int w = line[i].indent + TextLength(&trp, (STRPTR)line[i].text, strlen(line[i].text));
+        if (w > ww) ww = w;
+    }
+    okw = TextLength(&trp, (STRPTR)"OK", 2) + 48;
+    ww += 32;
+    if (ww < okw + 32) ww = okw + 32;
+    if (ww < 280) ww = 280;
+    text_h = 14 + (n + cut) * lh;                    /* every line drawn, the "(and more)" too */
+    wh = text_h + 12 + okh + 10;
+    /* the window first, then its button from the window's own borders (a gadget's place counts from the
+       window's corner, its title bar included) */
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE, WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | BUTTONIDCMP,
+        TAG_DONE);
+    if (rw) {
+        memset(&ng, 0, sizeof ng);
+        ng.ng_TextAttr = &font_attr;
+        ng.ng_VisualInfo = vi;
+        gok = CreateContext(&list);
+        ng.ng_LeftEdge = rw->BorderLeft + (ww - okw) / 2;
+        ng.ng_TopEdge = rw->BorderTop + text_h + 12;
+        ng.ng_Width = okw;
+        ng.ng_Height = okh;
+        ng.ng_GadgetText = (STRPTR)"OK";
+        ng.ng_GadgetID = 1;
+        gok = CreateGadget(BUTTON_KIND, gok, &ng, TAG_DONE);
+        if (gok) AddGList(rw, list, (UWORD)~0, -1, NULL);
+    }
+    if (!rw || !gok) {
+        if (rw) CloseWindow(rw);
+        if (list) FreeGadgets(list);
+        free(buf);
+        free(line);
+        tell(title, text);
+        return;
+    }
+    while (!done) {
+        struct IntuiMessage *m;
+        int x = rw->BorderLeft, y = rw->BorderTop, k, r = fh / 5 > 2 ? fh / 5 : 2;
+        struct RastPort *rp = rw->RPort;
+        SetFont(rp, font);
+        ogt_fill(&ctx, rp, "window", x, y, ww, text_h + 6);
+        for (k = 0; k < n; k++) {
+            int ly = y + 14 + k * lh;
+            if (line[k].bullet)                      /* a round dot on the text's middle */
+                ogt_fill_circle(rp, ogt_pen(&ctx, "label"), x + 16 + r, ly + fh / 2, r);
+            ogt_text(rp, ogt_pen(&ctx, "label"), x + 16 + line[k].indent, ly, line[k].text, 0);
+        }
+        if (cut)
+            ogt_text(rp, ogt_pen(&ctx, "muted"), x + 16, y + 14 + n * lh, "(and more)", 0);
+        ogt_fill(&ctx, rp, "window", x, y + text_h + 6, ww, wh - text_h - 6);
+        RefreshGList(list, rw, NULL, -1);
+        GT_RefreshWindow(rw, NULL);
+        for (;;) {
+            int redraw = 0;
+            Wait(1UL << rw->UserPort->mp_SigBit);
+            while ((m = GT_GetIMsg(rw->UserPort))) {
+                ULONG cls = m->Class;
+                UWORD code = m->Code;
+                GT_ReplyIMsg(m);
+                if (cls == IDCMP_CLOSEWINDOW || cls == IDCMP_GADGETUP) done = 1;
+                else if (cls == IDCMP_VANILLAKEY && (code == 13 || code == 27)) done = 1;
+                else if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); redraw = 1; }
+            }
+            if (done || redraw) break;
+        }
+    }
+    RemoveGList(rw, list, -1);
+    CloseWindow(rw);
+    FreeGadgets(list);
+    free(buf);
+    free(line);
+}
+
+/* The report's notes, when they say something was left out or shown otherwise. */
 static void show_report(const char *title, owf_report *report)
 {
-    char text[1024];
+    char *text;
+    size_t used = 0;
     int i, n = report ? owf_report_count(report) : 0, any = 0;
-    snprintf(text, sizeof text, "%s", "");
-    for (i = 0; i < n && i < 8; i++) {
+    if (!n || !(text = malloc(NOTE_TEXT))) return;
+    used = (size_t)snprintf(text, NOTE_TEXT, "%s",
+                            "Some of the workbook can't be shown as it was made:\n\n");
+    for (i = 0; i < n; i++) {
         owf_note_level level;
         int times;
         const char *note = owf_report_note(report, i, &level, &times);
-        char latin[200];
+        char latin[300];
+        size_t k;
         if (level == OWF_NOTE_INFO || !note) continue;
-        to_latin1(note, strlen(note), latin, sizeof latin);
-        if (strlen(text) + strlen(latin) + 4 < sizeof text) {
-            strcat(text, latin);
-            strcat(text, "\n");
-        }
+        k = to_latin1(note, strlen(note), latin, sizeof latin);
+        if (used + k + 3 >= NOTE_TEXT) break;
+        text[used++] = NOTE_BULLET;
+        memcpy(text + used, latin, k);
+        used += k;
+        text[used++] = '\n';
+        text[used] = 0;
         any = 1;
     }
-    if (any) tell(title, text);
+    if (any) notes_window(title, text);
+    free(text);
 }
 
 static void open_book(const char *path)
@@ -1795,6 +2334,40 @@ static int rexx_cell(const char *arg, unsigned *row, unsigned *col, const char *
     return 1;
 }
 
+/* For the lab: FONTCHECK [cell] (the active cell without one): the cell's font as the book names it and
+ * its size, the Amiga family it is taken to, the face that draws it and which library opened it, the em asked
+ * for, the size it was made at and its height, whether that size was designed or scaled, its capitals' height
+ * and the rows its letters mark (ascenders to descenders), all in pixels at the view's zoom. */
+static int font_check(const char *arg, char *out, size_t size)
+{
+    owf_book *book = oc_core_book(core);
+    const owf_sheet *sh = &book->sheets[oc_core_sheet(core)];
+    const owf_cell *c;
+    const owf_cellstyle *st;
+    cell_font_entry *e;
+    const char *name;
+    owf_font_kind kind;
+    char ref[16];
+    unsigned row, col;
+    int pt10;
+    if (!*arg) oc_core_active(core, &row, &col);
+    else if (!rexx_cell(arg, &row, &col, NULL)) { snprintf(out, size, "Not a cell"); return 0; }
+    c = owf_sheet_find(sh, row, col);
+    st = &book->styles[c && c->style >= 0 && c->style < book->nstyles ? c->style : 0];
+    cell_font_index(st->font.font, &name, &kind);
+    e = cell_font(st->font.font, st->font.size);
+    oc_cell_name(row, col, ref);
+    pt10 = (st->font.size > 0 ? st->font.size : OC_DEFAULT_FONT_TWIPS) / 2;
+    if (!e) { snprintf(out, size, "%s: no font", ref); return 0; }
+    snprintf(out, size, "%s: %s %d.%d pt%s%s at %d%%: family %s, face %s by %s, em %d px, made at %d (%s, %d high), "
+             "capitals %d px, letters rows %d to %d",
+             ref, name ? name : "(the book's)", pt10 / 10, pt10 % 10, st->font.flags & OWF_BOLD ? " bold" : "",
+             st->font.flags & OWF_ITALIC ? " italic" : "", oc_view_zoom(core), e->file, e->face[0] ? e->face : "(none)",
+             e->by, e->pixels, e->ysize, e->font && (e->font->tf_Flags & FPF_DESIGNED) ? "designed" : "scaled",
+             e->font ? e->font->tf_YSize : 0, e->cap, e->ink_top, e->ink_bottom);
+    return 1;
+}
+
 /* As the GFOffice ARexx conventions (docs/gfoffice/Design-Suite-Shared.md 6.3, proposed): 0 done, 5 not
  * possible now, 10 an error or an unknown command. */
 #define RX_OK 0
@@ -1812,7 +2385,7 @@ static int rexx_do_command(const char *command, char **result_out)
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
     else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
-                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND QUIT");
+                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK QUIT");
     else if (starts_word_ci(command, "ACTIVATE", &arg)) {
         if (win) { WindowToFront(win); ActivateWindow(win); }
     } else if (starts_word_ci(command, "ISDIRTY", &arg))
@@ -1835,6 +2408,8 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = *arg && owf_export_book_file(oc_core_book(core), arg, NULL, rp) == OWF_OK;
         owf_report_free(rp);
         snprintf(result_text, sizeof result_text, "%s", ok ? "Exported" : "Export failed");
+    } else if (starts_word_ci(command, "FONTCHECK", &arg)) {
+        if (!font_check(arg, result_text, sizeof result_text)) ok = 0;
     } else if (starts_word_ci(command, "GETCELL", &arg)) {
         if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
         else {
@@ -2160,7 +2735,12 @@ static void tabs_press(int mx, int my, ULONG secs, ULONG micros)
     static int last_tab = -2;
     int t = tab_at(mx, my);
     if (t < 0) return;
-    if (t == tab_n) {
+    if (tab_sheet[t] == TAB_LEFT || tab_sheet[t] == TAB_RIGHT) {
+        scroll_tabs(tab_sheet[t] == TAB_LEFT ? -1 : 1);
+        last_tab = -2;
+        return;
+    }
+    if (tab_sheet[t] == TAB_PLUS) {
         if (oc_core_add_sheet(core, NULL) < 0) result(OWF_ERR_MEMORY, NULL);
         else set_status("Sheet added.");
     } else {
@@ -2271,7 +2851,10 @@ static void events(void)
             if (!(code & 0x80)) raw_key(code, qual);
             break;
         case IDCMP_EXTENDEDMOUSE:
-            if (have_wheel && (wheel.WheelY || wheel.WheelX)) {
+            if (have_wheel && (wheel.WheelY || wheel.WheelX) && mx >= tabs_box.x && mx < tabs_box.x + tabs_box.w &&
+                my >= tabs_box.y && my < tabs_box.y + tabs_box.h) {
+                scroll_tabs((wheel.WheelY ? wheel.WheelY : wheel.WheelX) < 0 ? -1 : 1);   /* over the tabs: they scroll */
+            } else if (have_wheel && (wheel.WheelY || wheel.WheelX)) {
                 unsigned t, l;
                 oc_view_scroll_pos(core, &t, &l);
                 if (wheel.WheelY) t = wheel.WheelY < 0 ? (t > 3 ? t - 3 : 0) : t + 3;
@@ -2317,6 +2900,7 @@ static int window_main(int argc, char **argv)
         goto out;
     }
     OpenFontTextBase = ogt_openfont_open();
+    DiskfontBase = OpenLibrary((STRPTR)"diskfont.library", 36);  /* cells' fonts openfont can't open */
     LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
     RexxSysBase = (struct RxsLib *)OpenLibrary((STRPTR)"rexxsyslib.library", 36);
     CyberGfxBase = OpenLibrary((STRPTR)"cybergraphics.library", 0);
@@ -2364,6 +2948,7 @@ out:
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) { CloseLibrary(LayersBase); LayersBase = NULL; }
     if (OpenFontTextBase) { CloseLibrary(OpenFontTextBase); OpenFontTextBase = NULL; }
+    if (DiskfontBase) { CloseLibrary(DiskfontBase); DiskfontBase = NULL; }
     if (CyberGfxBase) { CloseLibrary(CyberGfxBase); CyberGfxBase = NULL; }
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
