@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Makes fixtures/features-openpyxl.xlsx: make_feature_fixtures.py [OUTDIR]
+"""Makes fixtures/features-openpyxl.xlsx and fixtures/charts-openpyxl.xlsx: make_feature_fixtures.py [OUTDIR]
 
 A workbook made up to have what the lab's yardstick has (a team's
 systems list, 25 October 2026, which stays private and is never put
@@ -9,7 +9,9 @@ merged ranges, conditional formatting (cellIs, expression, colour scales,
 a data bar and a "contains text" rule), data validation, an AutoFilter,
 comments, grouped rows, column widths and row heights as Excel writes
 them (not custom), cells aligned top, centre and bottom, theme colours
-and custom number formats; a bar chart on another sheet.
+and custom number formats; a bar chart on another sheet. And a workbook
+of charts OpenCalc draws: lines, stacked bars and 100% columns over a
+table with frozen panes, and a pie (which it doesn't draw yet).
 test_sheet_features.py checks what libowf reads of it and keeps on
 saving. openpyxl (pip install openpyxl) only makes the file; nothing of it
 is in libowf. Run it again after changing the sheets below, and change
@@ -21,7 +23,7 @@ import os
 import sys
 
 from openpyxl import Workbook
-from openpyxl.chart import BarChart, Reference
+from openpyxl.chart import BarChart, LineChart, PieChart, Reference
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import CellIsRule, ColorScaleRule, DataBarRule, FormulaRule, Rule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -173,6 +175,45 @@ def main():
     chart_sheet.add_chart(chart, "D2")
     os.makedirs(OUT, exist_ok=True)
     wb.save(os.path.join(OUT, "features-openpyxl.xlsx"))
+    make_charts()
+
+
+def make_charts():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sales"
+    ws.append(["Month", "Amiga", "Atari", "PC"])
+    for row in [("Jan", 12, 8, 30), ("Feb", 15, 9, 28), ("Mar", 9, 12, 35), ("Apr", 18, 7, 40), ("May", 22, 10, 38),
+                ("Jun", 25, 6, 45)]:
+        ws.append(row)
+    ws.freeze_panes = "B2"
+
+    def series(chart):
+        chart.add_data(Reference(ws, min_col=2, max_col=4, min_row=1, max_row=7), titles_from_data=True)
+        chart.set_categories(Reference(ws, min_col=1, min_row=2, max_row=7))
+        return chart
+    lines = series(LineChart())
+    lines.title = "Sales by month"
+    ws.add_chart(lines, "F2")
+    bars = series(BarChart())
+    bars.type = "bar"
+    bars.grouping = "stacked"
+    bars.overlap = 100
+    bars.title = "Stacked bars"
+    ws.add_chart(bars, "F18")
+    share = series(BarChart())
+    share.grouping = "percentStacked"
+    share.overlap = 100
+    share.title = "Share"
+    share.legend.position = "b"
+    ws.add_chart(share, "P2")
+    pie_sheet = wb.create_sheet("Pie")
+    pie = PieChart()
+    pie.add_data(Reference(ws, min_col=2, min_row=1, max_row=7), titles_from_data=True)
+    pie.set_categories(Reference(ws, min_col=1, min_row=2, max_row=7))
+    pie.title = "Amiga by month"
+    pie_sheet.add_chart(pie, "B2")
+    wb.save(os.path.join(OUT, "charts-openpyxl.xlsx"))
 
 
 if __name__ == "__main__":

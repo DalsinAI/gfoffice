@@ -20,7 +20,9 @@ what it leaves out.
   - pictures and charts: a sheet's drawing and every part it leads to
     (charts, their styles and colours, pictures) kept as they were and
     written back the same, with the content types and relationships that
-    reach them; a drawing whose parts are missing left out whole.
+    reach them; a drawing whose parts are missing left out whole;
+  - charts: what owf_sheet_charts reads of them (where, kind, title,
+    legend, axis, and each series' cells, colour and cached values).
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import os
@@ -34,6 +36,7 @@ import xml.dom.minidom
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIX = os.path.join(HERE, "fixtures", "features-openpyxl.xlsx")
+CHARTS = os.path.join(HERE, "fixtures", "charts-openpyxl.xlsx")
 DUMP = os.path.abspath(sys.argv[1])
 OWCONVERT = os.path.abspath(sys.argv[2])
 SOFFICE = shutil.which("soffice") if os.environ.get("OWF_NO_SOFFICE") is None else None
@@ -595,6 +598,91 @@ def test_drawings(work):
           all(not n.startswith("etc/") for n in kept_parts(got)), kept_parts(got))
 
 
+# ---- Charts ----
+
+C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+EXCEL_CHART = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<c:chartSpace xmlns:c="%s" xmlns:a="%s" xmlns:r="%s"><c:chart>'
+    '<c:title><c:tx><c:strRef><c:f>Chart!$D$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Systems &amp; regions</c:v>'
+    '</c:pt></c:strCache></c:strRef></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>'
+    '<c:barChart><c:barDir val="bar"/><c:grouping val="stacked"/><c:varyColors val="0"/>'
+    '<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>Chart!$B$1</c:f><c:strCache><c:ptCount val="1"/>'
+    '<c:pt idx="0"><c:v>North</c:v></c:pt></c:strCache></c:strRef></c:tx><c:spPr><a:solidFill><a:schemeClr val="accent2">'
+    '<a:lumMod val="75000"/></a:schemeClr></a:solidFill></c:spPr><c:invertIfNegative val="0"/>'
+    '<c:cat><c:strRef><c:f>Chart!$A$2:$A$4</c:f><c:strCache><c:ptCount val="3"/><c:pt idx="0"><c:v>Q1</c:v></c:pt>'
+    '<c:pt idx="1"><c:v>Q2</c:v></c:pt><c:pt idx="2"><c:v>Q3</c:v></c:pt></c:strCache></c:strRef></c:cat>'
+    '<c:val><c:numRef><c:f>Chart!$B$2:$B$4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/>'
+    '<c:pt idx="0"><c:v>12</c:v></c:pt><c:pt idx="2"><c:v>-3.5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>'
+    '<c:ser><c:idx val="3"/><c:order val="1"/><c:tx><c:v>Typed</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val="00b050"/>'
+    '</a:solidFill></c:spPr><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v>'
+    '</c:pt></c:numLit></c:val></c:ser><c:gapWidth val="80"/><c:overlap val="100"/><c:axId val="1"/><c:axId val="2"/></c:barChart>'
+    '<c:lineChart><c:grouping val="standard"/><c:ser><c:idx val="9"/><c:val><c:numRef><c:f>Chart!$C$2:$C$4</c:f></c:numRef>'
+    '</c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:lineChart>'
+    '<c:catAx><c:axId val="1"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/>'
+    '<c:max val="20"/><c:min val="-5"/></c:scaling><c:delete val="0"/></c:valAx></c:plotArea>'
+    '<c:legend><c:legendPos val="b"/></c:legend></c:chart></c:chartSpace>' % (C, DML, RNS))
+
+
+def test_charts(work):
+    src = dump(FIX)
+    check("charts: the fixture's", sheet_lines(src, 7, "chart") == [
+        'chart kind=1 grouping=0 from=1,3+0,0 size=5400000x2700000 legend=r gap=150 grid=1 title "Systems by region"'],
+        sheet_lines(src, 7, "chart"))
+    check("charts: its series", sheet_lines(src, 7, "series") == [
+        "series 0 colour=- name \"\" values \"'Chart'!$B$1:$B$4\" categories \"'Chart'!$A$1:$A$4\" points"],
+        sheet_lines(src, 7, "series"))
+    with zipfile.ZipFile(FIX) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    # as Excel writes one: a stacked bar chart and a line chart over it (the first group read), a two-cell
+    # anchor, its title from a cell, theme and RGB colours, a literal series, gaps, the axis's limits
+    p = dict(parts)
+    p["xl/charts/chart1.xml"] = EXCEL_CHART.encode()
+    p["xl/drawings/drawing1.xml"] = p["xl/drawings/drawing1.xml"].replace(
+        b"<oneCellAnchor><from><col>3</col><colOff>0</colOff><row>1</row><rowOff>0</rowOff></from>"
+        b'<ext cx="5400000" cy="2700000"/>',
+        b"<twoCellAnchor><from><col>3</col><colOff>95250</colOff><row>1</row><rowOff>9525</rowOff></from>"
+        b"<to><col>10</col><colOff>0</colOff><row>16</row><rowOff>190500</rowOff></to>").replace(
+        b"</oneCellAnchor>", b"</twoCellAnchor>")
+    path = os.path.join(work, "excel-chart.xlsx")
+    write_zip(path, p)
+    got = dump(path)
+    check("charts: Excel's", sheet_lines(got, 7, "chart") == [
+        'chart kind=2 grouping=1 from=1,3+9525,95250 to=16,10+190500,0 legend=b gap=80 grid=0 min=-5 max=20 '
+        'title "Systems & regions"'], sheet_lines(got, 7, "chart"))
+    check("charts: Excel's series", sheet_lines(got, 7, "series") == [
+        'series 0 colour=ED7D31 name "North" from "Chart!$B$1" values "Chart!$B$2:$B$4" categories "Chart!$A$2:$A$4" '
+        'points 12="Q1" -="Q2" -3.5="Q3"',
+        'series 3 colour=00B050 name "Typed" values "" categories "" points 1 2'], sheet_lines(got, 7, "series"))
+    # a picture alone, a chart part missing or damaged: no chart, no error
+    for name, data in (("xl/charts/chart1.xml", EXCEL_CHART[:400].encode()), ("xl/charts/chart1.xml", b"")):
+        bad = dict(p, **{name: data})
+        write_zip(path, bad)
+        rc, out, err = run([DUMP, path])
+        check("charts: a damaged chart read safely", rc == 0 and not sheet_lines(out, 7, "chart"), out[-300:] + err[-300:])
+    # the charts fixture: lines, stacked bars, 100% columns (legend below), a pie on another sheet; the same after saving
+    got = dump(CHARTS)
+    want = [('chart kind=3 grouping=0 from=1,5+0,0 size=5400000x2700000 legend=r gap=150 grid=1 title "Sales by month"', 0),
+            ('chart kind=2 grouping=1 from=17,5+0,0 size=5400000x2700000 legend=r gap=150 grid=1 title "Stacked bars"', 0),
+            ('chart kind=1 grouping=2 from=1,15+0,0 size=5400000x2700000 legend=b gap=150 grid=1 title "Share"', 0),
+            ('chart kind=5 grouping=0 from=1,1+0,0 size=5400000x2700000 legend=r gap=150 grid=0 title "Amiga by month"', 1)]
+    check("charts: the charts fixture's", sheet_lines(got, 0, "chart") == [w for w, sh in want if sh == 0] and
+          sheet_lines(got, 1, "chart") == [w for w, sh in want if sh == 1], lines(got, "chart"))
+    check("charts: its series' names from their cells", lines(got, "series")[:3] == [
+        'series %d colour=- name "" from "\'Sales\'!%s1" values "\'Sales\'!$%s$2:$%s$7" categories "\'Sales\'!$A$2:$A$7" points'
+        % (k, c, c, c) for k, c in enumerate("BCD")], lines(got, "series")[:3])
+    saved = os.path.join(work, "charts-saved.xlsx")
+    convert(CHARTS, saved)
+    again = dump(saved)
+    check("charts: the same after saving", lines(again, "chart") == lines(got, "chart") and
+          lines(again, "series") == lines(got, "series"), lines(again, "chart"))
+    pics = drawn_book(parts)
+    write_zip(path, pics)
+    got = dump(path)
+    check("charts: pictures are not charts", sheet_lines(got, 0, "chart") == [] and len(sheet_lines(got, 7, "chart")) == 1,
+          (sheet_lines(got, 0, "chart"), sheet_lines(got, 7, "chart")))
+
+
 def damaged(work):
     """The first sheet's XML cut short and changed in what follows its cells (the conditional formats and
     the rest): book_dump answers with a book or an error, never a crash."""
@@ -624,8 +712,9 @@ def damaged(work):
     # the drawings' relationships and content types cut short or changed: read, and written, safely
     drawn = drawn_book(parts)
     bad = 0
+    drawn["xl/charts/chart1.xml"] = EXCEL_CHART.encode()
     for name in ("xl/drawings/_rels/drawing1.xml.rels", "xl/charts/_rels/chart1.xml.rels", "[Content_Types].xml",
-                 "xl/worksheets/_rels/sheet8.xml.rels"):
+                 "xl/worksheets/_rels/sheet8.xml.rels", "xl/charts/chart1.xml", "xl/drawings/drawing1.xml"):
         data = drawn[name]
         for k in range(0, len(data), max(1, len(data) // 25)):
             changed = bytearray(data)
@@ -652,6 +741,7 @@ def main():
         test_validation(work)
         test_autofilter(work)
         test_drawings(work)
+        test_charts(work)
         damaged(work)
     if failures:
         print("sheet features: %d of %d checks failed" % (len(failures), checks))

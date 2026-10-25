@@ -164,6 +164,7 @@ void oc_core_free(oc_core *core)
     oc_undo_clear(core);
     oc_clip_free(&core->clip);
     oc_cf_forget(core);
+    oc_charts_forget(core);
     owf_calc_free(core->calc);
     owf_book_free(core->book);
     free(core->states);
@@ -200,6 +201,7 @@ int oc_core_set_book(oc_core *core, owf_book *book)
     oc_undo_clear(core);
     oc_clip_free(&core->clip);
     oc_cf_forget(core);
+    oc_charts_forget(core);
     owf_calc_free(core->calc);
     owf_book_free(core->book);
     core->book = book;

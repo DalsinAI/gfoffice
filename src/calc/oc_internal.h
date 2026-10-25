@@ -122,6 +122,11 @@ struct oc_core {
     unsigned long cf_stamp, cf_hash;
     int cf_sheet, cf_nr, cf_nc;
 
+    /* the charts of the sheet showing (oc_core_charts), read once from its drawing, by the drawing's name */
+    owf_chart *charts;
+    int ncharts;
+    char *charts_of;
+
     /* the used part of the sheet showing, for the scrollers: worked out again when changes moves */
     unsigned long used_stamp;
     int used_sheet, used_valid;
@@ -169,6 +174,15 @@ int oc_cols_showing(const oc_core *core, int whole);
 void oc_view_follow(oc_core *core);
 int oc_measure(const oc_core *core, const char *s, size_t n, const owf_cellstyle *style);
 const owf_range *oc_merge_at(const owf_sheet *sheet, unsigned row, unsigned col);
+oc_draw_item *oc_draw_add(oc_draw_list *list, int kind, int role);
+int oc_draw_add_text(oc_draw_list *list, oc_draw_item *it, const char *s, size_t n);
+
+/* oc_chart.c: the sheet showing's charts (read once; NULL, 0 when none), forgotten when the book goes; a
+ * chart's items in its box x,y,w,h, cut to the clip box (grid pixels). 0 when memory ran out. */
+const owf_chart *oc_core_charts(oc_core *core, int *count);
+void oc_charts_forget(oc_core *core);
+int oc_chart_draw(oc_core *core, oc_draw_list *list, const owf_chart *chart, int x, int y, int w, int h, int cx, int cy,
+                  int cw, int ch);
 
 /* oc_condfmt.c: the looks of the cells showing (rows rl, columns cl), nr x nc, the core's own (good until
  * the next call); NULL when the sheet has no conditional formats (or memory ran out). */
