@@ -120,7 +120,7 @@ else
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC "$HERE"/libowf/calc/*.c "$HERE"/src/calc/*.c "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" \
+    $OWFSRC "$HERE"/libowf/calc/*.c "$HERE"/src/calc/*.c "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_fontwidths.c" \
     "$HERE"/third_party/opengadtools/*.c -lamiga $OWFLIBS \
     -o "$OUT/OpenCalc"
 echo "$OUT/OpenCalc ($(wc -c < "$OUT/OpenCalc") bytes)"

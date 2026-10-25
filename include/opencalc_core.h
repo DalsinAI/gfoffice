@@ -298,10 +298,26 @@ int oc_core_undo_lost(const oc_core *core);
  * default 10 points). Without one, a character is 7 pixels at 100%. */
 typedef int (*oc_measure_fn)(void *user, const char *utf8, size_t length, unsigned flags, int font, int size);
 void oc_view_set_measure(oc_core *core, oc_measure_fn measure, void *user);
+/* A cell font's size in pixels at the view's zoom (twips 0: the default,
+ * 10 points): its em, which a window opens the font at, to measure and
+ * draw a cell's text. At 100% 11 points is 15 pixels (96 dpi). Lines of
+ * wrapped text are oc_line_px apart: 1.15 em, as Arial's and Calibri's
+ * lines (11 points: 17 pixels). */
+#define OC_DEFAULT_FONT_TWIPS 200
+int oc_font_px(const oc_core *core, int twips);
+int oc_line_px(const oc_core *core, int twips);
 /* The grid area's size, and the row numbers' width and the column
  * letters' height (a window sets these from its font). */
 void oc_view_set_size(oc_core *core, int width, int height);
 void oc_view_set_headers(oc_core *core, int row_header_width, int col_header_height);
+/* The row numbers' bar following the rows showing (Dale, 25 October 2026): as wide as the largest row number
+ * showing (at least two digits) at digit_width pixels a digit, plus pad pixels, the numbers left-aligned
+ * pad / 2 in. It widens as the view reaches rows of more digits and narrows again, so it changes only where
+ * the digits do; the columns, the frozen panes' split and what is under the pointer follow it. digit_width 0:
+ * the width oc_view_set_headers gave, the numbers centred. */
+void oc_view_set_row_numbers(oc_core *core, int digit_width, int pad);
+/* The row numbers' bar's width now. */
+int oc_view_row_header(const oc_core *core);
 void oc_view_set_zoom(oc_core *core, int percent);   /* 25 to 400 */
 int oc_view_zoom(const oc_core *core);
 /* The first row and column of the scrolling part (after frozen ones). */
@@ -341,7 +357,7 @@ enum {
     OC_DRAW_FILL,       /* a box: role, rgb for OC_ROLE_CELL_FILL */
     OC_DRAW_LINE,       /* from x,y, w or h long (the other is 0): role, line, rgb for OC_ROLE_BORDER */
     OC_DRAW_TEXT,       /* text in its clip box, from text_x; valign in the box y,h; flags, font, size, rgb */
-    OC_DRAW_HEADER,     /* a row number or column letter in its box, centred; selected or not */
+    OC_DRAW_HEADER,     /* a row number or column letter in its box, centred (align OC_ALIGN_LEFT: from text_x); selected or not */
     OC_DRAW_FRAME,      /* a box's outline, `line` pixels thick: the active cell, the selection */
     OC_DRAW_CARET       /* the caret: a line from x,y, h long */
 };
@@ -404,6 +420,17 @@ unsigned oc_line_pattern(int line);
 /* "Sum=12 Average=4 Count=3" for a selection of more than one cell, a
  * circular reference's or a bad formula's warning; "" when nothing. */
 void oc_core_status(oc_core *core, char *out, size_t size);
+
+/* ---- The sheet tabs ----
+ * Which sheets' tabs a strip shows. width[s] is sheet s's tab in pixels,
+ * with the gap after it (0: no tab, a hidden sheet), avail the strip's width
+ * for tabs, arrows the width of the two scroll arrows a strip shows when
+ * not every tab fits. *first (in and out) is the first sheet shown: it moves
+ * so that the current sheet's tab shows, and back when there is room, so
+ * that the strip stays full. *scroll is 1 when the arrows show. The sheet
+ * after the last tab shown (n when the last shows). At least one tab shows,
+ * cut short when it is wider than the strip. */
+int oc_tab_strip(const int *width, int n, int avail, int arrows, int current, int *first, int *scroll);
 
 #ifdef __cplusplus
 }

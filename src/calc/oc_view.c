@@ -70,6 +70,57 @@ static int line_px(const oc_core *core, int axis, unsigned i)
     return oc_px(core, axis ? oc_col_twips(s, i) : oc_row_twips(s, i));
 }
 
+/* The row numbers' bar: as wide as set (oc_view_set_headers), or, following the rows showing
+ * (oc_view_set_row_numbers), as wide as the largest row number showing, at least two digits. Only the
+ * rows' heights and the area's height decide which show, never this width. */
+static int row_header(const oc_core *core)
+{
+    const owf_sheet *s;
+    const oc_sheetstate *st;
+    unsigned i, last = 0, frozen, n = 0;
+    int pos, digits = 1, skipped = 0;
+    if (core->rn_digit <= 0 || core->rowhdr <= 0)
+        return core->rowhdr;
+    s = oc_sheet(core);
+    st = oc_state_const(core);
+    frozen = s->freeze_rows;
+    pos = core->colhdr;
+    for (i = 0; i < frozen && i < OC_MAX_ROWS && pos < core->height; i++) {
+        int sz = line_px(core, 0, i);
+        if (sz) {
+            last = i;
+            pos += sz;
+        }
+    }
+    for (i = st->top > frozen ? st->top : frozen; i < OC_MAX_ROWS && pos < core->height && n < MAX_LINES; i++) {
+        int sz = line_px(core, 0, i);
+        if (!sz) {
+            if (++skipped > 65536)
+                break;
+            continue;
+        }
+        last = i;
+        pos += sz;
+        n++;
+    }
+    for (i = last + 1; i >= 10; i /= 10)
+        digits++;
+    if (digits < 2)
+        digits = 2;
+    return core->rn_pad + digits * core->rn_digit;
+}
+
+int oc_view_row_header(const oc_core *core)
+{
+    return row_header(core);
+}
+
+void oc_view_set_row_numbers(oc_core *core, int digit_width, int pad)
+{
+    core->rn_digit = digit_width > 0 ? digit_width : 0;
+    core->rn_pad = pad > 0 ? pad : 0;
+}
+
 int oc_measure(const oc_core *core, const char *s, size_t n, const owf_cellstyle *style)
 {
     size_t i, chars = 0;
@@ -92,7 +143,7 @@ static int lines(const oc_core *core, int axis, oc_line *out, int max, int *spli
     const owf_sheet *s = oc_sheet(core);
     const oc_sheetstate *st = oc_state_const(core);
     unsigned frozen = axis ? s->freeze_cols : s->freeze_rows, i, end = axis ? OC_MAX_COLS : OC_MAX_ROWS;
-    int pos = axis ? core->rowhdr : core->colhdr, limit = axis ? core->width : core->height, n = 0, skipped = 0;
+    int pos = axis ? row_header(core) : core->colhdr, limit = axis ? core->width : core->height, n = 0, skipped = 0;
     for (i = 0; i < frozen && i < end && pos < limit && n < max; i++) {
         int sz = line_px(core, axis, i);
         if (!sz)
@@ -230,7 +281,7 @@ static void show_line(oc_core *core, int axis, unsigned i)
     oc_sheetstate *st = oc_state(core);
     const owf_sheet *s = oc_sheet(core);
     unsigned frozen = axis ? s->freeze_cols : s->freeze_rows, *top = axis ? &st->left : &st->top, k;
-    int limit = axis ? core->width : core->height, start = axis ? core->rowhdr : core->colhdr, avail, used = 0, steps = 0;
+    int limit = axis ? core->width : core->height, start = axis ? row_header(core) : core->colhdr, avail, used = 0, steps = 0;
     if (i < frozen)
         return;
     for (k = 0; k < frozen; k++)
@@ -290,7 +341,7 @@ static int find_line(const oc_line *l, int n, int p)
 int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
 {
     oc_line *rl = malloc(MAX_LINES * sizeof *rl), *cl = malloc(MAX_LINES * sizeof *cl);
-    int nr, nc, split, ri, ci;
+    int nr, nc, split, ri, ci, rowhdr = row_header(core);
     memset(hit, 0, sizeof *hit);
     if (!rl || !cl) {
         free(rl);
@@ -301,9 +352,9 @@ int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
     nc = lines(core, 1, cl, MAX_LINES, &split);
     if (x < 0 || y < 0 || x >= core->width || y >= core->height) {
         hit->kind = OC_HIT_NONE;
-    } else if (x < core->rowhdr && y < core->colhdr) {
+    } else if (x < rowhdr && y < core->colhdr) {
         hit->kind = OC_HIT_CORNER;
-        hit->w = core->rowhdr;
+        hit->w = rowhdr;
         hit->h = core->colhdr;
     } else if (y < core->colhdr) {
         ci = find_line(cl, nc, x);
@@ -322,14 +373,14 @@ int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
                 hit->w = cl[ci - 1].size;
             }
         }
-    } else if (x < core->rowhdr) {
+    } else if (x < rowhdr) {
         ri = find_line(rl, nr, y);
         if (ri >= 0) {
             hit->kind = OC_HIT_ROW_HEADER;
             hit->row = rl[ri].index;
             hit->y = rl[ri].pos;
             hit->h = rl[ri].size;
-            hit->w = core->rowhdr;
+            hit->w = rowhdr;
             if (y >= rl[ri].pos + rl[ri].size - 3)
                 hit->kind = OC_HIT_ROW_EDGE;
             else if (y < rl[ri].pos + 2 && ri > 0 && rl[ri - 1].pos + rl[ri - 1].size == rl[ri].pos) {
@@ -578,6 +629,7 @@ typedef struct {
     const owf_sheet *sheet;
     oc_line *rl, *cl;
     int nr, nc, ysplit, xsplit;
+    int rowhdr;             /* the row numbers' bar's width */
     unsigned char *ci;      /* nr x nc */
 } drawing;
 
@@ -586,7 +638,7 @@ typedef struct {
 /* The quadrant (pane of rows, pane of columns) of the grid area, in pixels. */
 static void quadrant(const drawing *d, int pr, int pc, int *x, int *y, int *w, int *h)
 {
-    *x = pc ? d->xsplit : d->core->rowhdr;
+    *x = pc ? d->xsplit : d->rowhdr;
     *w = (pc ? d->core->width : d->xsplit) - *x;
     *y = pr ? d->ysplit : d->core->colhdr;
     *h = (pr ? d->core->height : d->ysplit) - *y;
@@ -640,18 +692,168 @@ static int resolve_align(const owf_cell *c, const owf_cellstyle *st)
     return OC_ALIGN_LEFT;
 }
 
-/* A cell's text item, its clip box run on over empty neighbours in the same
- * pane (text only, not wrapped, as Excel). j is the column's place in cl
- * (-1: a cell left of those showing, at x). */
-static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int x, int w)
+int oc_font_px(const oc_core *core, int twips)
+{
+    int px = oc_px(core, twips > 0 ? twips : OC_DEFAULT_FONT_TWIPS);
+    return px < 4 ? 4 : px > 160 ? 160 : px;
+}
+
+int oc_line_px(const oc_core *core, int twips)
+{
+    return (oc_font_px(core, twips) * 23 + 10) / 20;
+}
+
+/* Where a cell's text starts: by its alignment, pad and indent (10 pixels a step at 100%). */
+static int text_start(const oc_core *core, const owf_cellstyle *st, int align, int x, int w, int tw)
+{
+    int pad = PAD * core->zoom / 100 + 1, indent = st->indent * 10 * core->zoom / 100;
+    return align == OC_ALIGN_LEFT ? x + pad + indent : align == OC_ALIGN_RIGHT ? x + w - pad - tw - indent : x + (w - tw) / 2;
+}
+
+#define MAX_WRAP_LINES 64
+#define WRAP_TEXT 2048
+
+/* The end of the line of s[start..n) that fits avail pixels: at a space or
+ * the text's own line break, else (one long word) where the word must
+ * break, never before one character. */
+static size_t wrap_line(const oc_core *core, const owf_cellstyle *st, const char *s, size_t start, size_t n, int avail)
+{
+    size_t end = start, k = start, fit;
+    for (;;) {
+        size_t b = k;
+        while (b < n && s[b] != ' ' && s[b] != '\n')
+            b++;
+        if (b > start && oc_measure(core, s + start, b - start, st) > avail)
+            break;
+        end = b;
+        if (b >= n || s[b] == '\n')
+            return end;
+        k = b + 1;
+    }
+    if (end > start)
+        return end;
+    /* a word wider than the cell alone: after its last "/" or "-" that fits ("Software/" "Service"), else as
+       many characters as fit */
+    for (k = start + 1; k < n && s[k - 1] != ' ' && s[k - 1] != '\n'; k++) {
+        if (s[k - 1] != '/' && s[k - 1] != '-')
+            continue;
+        if (oc_measure(core, s + start, k - start, st) > avail)
+            break;
+        end = k;
+    }
+    if (end > start)
+        return end;
+    fit = start;
+    for (k = start + 1; k <= n; k++) {
+        if (k < n && ((unsigned char)s[k] & 0xC0) == 0x80)
+            continue;
+        if (s[k - 1] == ' ' || s[k - 1] == '\n' || oc_measure(core, s + start, k - start, st) > avail)
+            break;
+        fit = k;
+    }
+    if (fit == start) {                                      /* not even one: one character all the same */
+        fit = start + 1;
+        while (fit < n && ((unsigned char)s[fit] & 0xC0) == 0x80)
+            fit++;
+    }
+    return fit;
+}
+
+/* Wrapped text (wrap set): a text item for each line, broken at spaces and
+ * the text's own line breaks to the cell's width less its pads, a word
+ * wider than that alone broken after a "/" or "-" in it, else where it must.
+ * The lines are a block placed in the box (y, h) by the cell's vertical
+ * alignment, oc_line_px apart; lines that don't fit are left out, though one always shows (the
+ * first from the top, the last from the bottom). */
+static int wrapped_items(drawing *d, const owf_cell *c, const owf_cellstyle *st, const char *s, size_t n,
+                         unsigned long colour, int align, int x, int w, int y, int h, int qx, int qw)
+{
+    oc_core *core = d->core;
+    int pad = PAD * core->zoom / 100 + 1, avail = w - 2 * pad - st->indent * 10 * core->zoom / 100;
+    int lp = oc_line_px(core, st->font.size), nl = 0, k, top, first, last;
+    size_t at = 0, starts[MAX_WRAP_LINES], ends[MAX_WRAP_LINES];
+    while (n && (s[n - 1] == '\n' || s[n - 1] == '\r'))
+        n--;
+    if (avail < 1)
+        avail = 1;
+    while (at < n && nl < MAX_WRAP_LINES) {
+        size_t e = wrap_line(core, st, s, at, n, avail), next = e;
+        if (next < n && (s[next] == ' ' || s[next] == '\n'))
+            next++;
+        while (e > at && (s[e - 1] == ' ' || s[e - 1] == '\r'))
+            e--;
+        starts[nl] = at;
+        ends[nl] = e;
+        nl++;
+        at = next;
+    }
+    if (!nl)
+        return 1;
+    h -= 1;                                                  /* less the grid line */
+    top = st->valign == OWF_VALIGN_TOP ? y + 1 : st->valign == OWF_VALIGN_CENTRE ? y + (h - nl * lp) / 2 : y + h - nl * lp - 1;
+    first = 0;
+    last = nl - 1;
+    while (first < last && top + first * lp < y)
+        first++;
+    while (last > first && top + (last + 1) * lp > y + h + 1)
+        last--;
+    if (first == last && top + first * lp < y)
+        top = y - first * lp;                                /* the one line that shows starts at the top */
+    if ((x > qx ? x : qx) >= (x + w - 1 < qx + qw ? x + w - 1 : qx + qw))
+        return 1;                                            /* not in its pane */
+    for (k = first; k <= last; k++) {
+        oc_draw_item *it = add(d->list, OC_DRAW_TEXT, OC_ROLE_TEXT);
+        int tw = oc_measure(core, s + starts[k], ends[k] - starts[k], st);
+        if (!it)
+            return 0;
+        it->x = x;
+        it->w = w;
+        it->y = top + k * lp;
+        it->h = lp;
+        it->clip_x = x > qx ? x : qx;
+        it->clip_w = (x + w - 1 < qx + qw ? x + w - 1 : qx + qw) - it->clip_x;
+        it->clip_y = it->y;
+        it->clip_h = lp;
+        it->align = align;
+        it->valign = OWF_VALIGN_CENTRE;                      /* in its own line */
+        it->flags = st->font.flags;
+        it->font = st->font.font;
+        it->size = st->font.size;
+        it->rgb = colour != OWF_COLOUR_AUTO ? colour : st->font.colour;
+        it->row = c->row;
+        it->col = c->col;
+        it->text_x = text_start(core, st, align, x, w, tw);
+        if (!add_text(d->list, it, s + starts[k], ends[k] - starts[k]))
+            return 0;
+    }
+    return 1;
+}
+
+/* A cell's text in the box (x, y, w, h): wrapped (wrapped_items), or one
+ * line, its clip box run on over empty neighbours in the same pane (text
+ * only, not wrapped, as Excel). j is the column's place in cl (-1: a cell
+ * left of those showing, at x; -2: a merged range's first cell). */
+static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int x, int w, int y, int h)
 {
     oc_core *core = d->core;
     const owf_cellstyle *st = oc_cell_style(core, c, c->col);
     char buf[256];
     unsigned long colour = OWF_COLOUR_AUTO;
-    int n = cell_text(core, c, st, w, buf, sizeof buf, &colour), tw, pad = PAD * core->zoom / 100 + 1, align, lo, hi;
+    int n, tw, pad = PAD * core->zoom / 100 + 1, align, lo, hi;
     int clip_x = x, clip_w = w, qx, qy, qw, qh, k;
     oc_draw_item *it;
+    if (st->wrap && c->type == OWF_VALUE_TEXT) {
+        char *all = malloc(WRAP_TEXT);
+        int ok;
+        if (!all)
+            return 0;
+        n = owf_calc_format_value(format_of(core, st), c, core->book->date1904, 1, all, WRAP_TEXT, &colour);
+        quadrant(d, d->rl[i].pane, pane, &qx, &qy, &qw, &qh);
+        ok = n <= 0 || wrapped_items(d, c, st, all, (size_t)n, colour, resolve_align(c, st), x, w, y, h, qx, qw);
+        free(all);
+        return ok;
+    }
+    n = cell_text(core, c, st, w, buf, sizeof buf, &colour);
     if (n <= 0)
         return 1;
     align = resolve_align(c, st);
@@ -706,13 +908,13 @@ static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int 
     if (!(it = add(d->list, OC_DRAW_TEXT, OC_ROLE_TEXT)))
         return 0;
     it->x = x;
-    it->y = d->rl[i].pos;
+    it->y = y;
     it->w = w;
-    it->h = d->rl[i].size - 1;
+    it->h = h - 1;
     it->clip_x = clip_x;
-    it->clip_y = d->rl[i].pos;
+    it->clip_y = y;
     it->clip_w = clip_w - 1;
-    it->clip_h = d->rl[i].size - 1;
+    it->clip_h = h - 1;
     it->align = align;
     it->valign = st->valign;
     it->flags = st->font.flags;
@@ -721,10 +923,7 @@ static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int 
     it->rgb = colour != OWF_COLOUR_AUTO ? colour : st->font.colour;
     it->row = c->row;
     it->col = c->col;
-    {
-        int indent = st->indent * 10 * core->zoom / 100;
-        it->text_x = align == OC_ALIGN_LEFT ? x + pad + indent : align == OC_ALIGN_RIGHT ? x + w - pad - tw - indent : x + (w - tw) / 2;
-    }
+    it->text_x = text_start(core, st, align, x, w, tw);
     return add_text(d->list, it, buf, (size_t)n);
 }
 
@@ -1170,12 +1369,13 @@ static int build(drawing *d)
                     for (c = c0; c > q->col && d->cl[j].pos - x < core->width; c--)
                         x -= line_px(core, 1, c - 1);
                     w = line_px(core, 1, q->col);
-                    if (x + w < d->cl[j].pos && resolve_align(q, oc_cell_style(core, q, q->col)) == OC_ALIGN_LEFT) {
+                    if (x + w < d->cl[j].pos && resolve_align(q, oc_cell_style(core, q, q->col)) == OC_ALIGN_LEFT &&
+                        !oc_cell_style(core, q, q->col)->wrap) {
                         /* as if it were the column before the first: run on from there */
                         int saved_pos = d->cl[j].pos;
                         oc_draw_item *t;
                         int before = texts.n;
-                        if (!text_item(d, i, -1, 1, q, x, w)) {
+                        if (!text_item(d, i, -1, 1, q, x, w, d->rl[i].pos, d->rl[i].size)) {
                             d->list = list;
                             oc_draw_list_free(&texts);
                             return 0;
@@ -1214,19 +1414,15 @@ static int build(drawing *d)
                     int y, h, open;
                     if (!range_box(d, g, d->rl[i].pane, d->cl[j].pane, &x, &y, &w, &h, &open))
                         continue;
-                    if (!text_item(d, i, -2, d->cl[j].pane, c, x, w)) {
+                    /* the merge's height: its text placed in all of it */
+                    if (!text_item(d, i, -2, d->cl[j].pane, c, x, w, y, h)) {
                         d->list = list;
                         oc_draw_list_free(&texts);
                         return 0;
                     }
-                    /* the merge's height, its text placed in all of it */
-                    texts.items[texts.n - 1].y = y;
-                    texts.items[texts.n - 1].h = h - 1;
-                    texts.items[texts.n - 1].clip_y = y;
-                    texts.items[texts.n - 1].clip_h = h - 1;
                     continue;
                 }
-                if (!text_item(d, i, j, d->cl[j].pane, c, x, w)) {
+                if (!text_item(d, i, j, d->cl[j].pane, c, x, w, d->rl[i].pos, d->rl[i].size)) {
                     d->list = list;
                     oc_draw_list_free(&texts);
                     return 0;
@@ -1267,6 +1463,7 @@ static int build(drawing *d)
                 return 0;
             it->flags = it->role == OC_ROLE_HEADER_SELECTED;
             it->col = d->cl[j].index;
+            it->align = OC_ALIGN_CENTRE;
             if (!add_text(list, it, label, strlen(label)) ||
                 !line_item(list, OC_ROLE_HEADER_LINE, d->cl[j].pos + d->cl[j].size - 1, 0, 0, core->colhdr))
                 return 0;
@@ -1274,8 +1471,8 @@ static int build(drawing *d)
         if (!line_item(list, OC_ROLE_HEADER_LINE, 0, core->colhdr - 1, core->width, 0))
             return 0;
     }
-    if (core->rowhdr > 0) {
-        if (!add_box(list, OC_DRAW_FILL, OC_ROLE_HEADER, 0, core->colhdr, core->rowhdr, core->height - core->colhdr))
+    if (d->rowhdr > 0) {
+        if (!add_box(list, OC_DRAW_FILL, OC_ROLE_HEADER, 0, core->colhdr, d->rowhdr, core->height - core->colhdr))
             return 0;
         for (i = 0; i < d->nr; i++) {
             int n = 0;
@@ -1289,22 +1486,28 @@ static int build(drawing *d)
                 label[k] = t[n - 1 - k];
             label[n] = 0;
             if (!(it = add_box(list, OC_DRAW_HEADER, range_selected_row(st, d->rl[i].index) ? OC_ROLE_HEADER_SELECTED : OC_ROLE_HEADER,
-                               0, d->rl[i].pos, core->rowhdr, d->rl[i].size)))
+                               0, d->rl[i].pos, d->rowhdr, d->rl[i].size)))
                 return 0;
             it->flags = it->role == OC_ROLE_HEADER_SELECTED;
             it->row = d->rl[i].index;
+            if (core->rn_digit > 0) {                         /* following the rows: left, a small inset in */
+                it->align = OC_ALIGN_LEFT;
+                it->text_x = core->rn_pad / 2;
+            } else {
+                it->align = OC_ALIGN_CENTRE;
+            }
             if (!add_text(list, it, label, (size_t)n) ||
-                !line_item(list, OC_ROLE_HEADER_LINE, 0, d->rl[i].pos + d->rl[i].size - 1, core->rowhdr, 0))
+                !line_item(list, OC_ROLE_HEADER_LINE, 0, d->rl[i].pos + d->rl[i].size - 1, d->rowhdr, 0))
                 return 0;
         }
-        if (!line_item(list, OC_ROLE_HEADER_LINE, core->rowhdr - 1, 0, 0, core->height))
+        if (!line_item(list, OC_ROLE_HEADER_LINE, d->rowhdr - 1, 0, 0, core->height))
             return 0;
     }
 
     /* 7. frozen panes' lines */
-    if (s->freeze_rows && d->ysplit > core->colhdr && !line_item(list, OC_ROLE_FREEZE, core->rowhdr, d->ysplit - 1, core->width - core->rowhdr, 0))
+    if (s->freeze_rows && d->ysplit > core->colhdr && !line_item(list, OC_ROLE_FREEZE, d->rowhdr, d->ysplit - 1, core->width - d->rowhdr, 0))
         return 0;
-    if (s->freeze_cols && d->xsplit > core->rowhdr && !line_item(list, OC_ROLE_FREEZE, d->xsplit - 1, core->colhdr, 0, core->height - core->colhdr))
+    if (s->freeze_cols && d->xsplit > d->rowhdr && !line_item(list, OC_ROLE_FREEZE, d->xsplit - 1, core->colhdr, 0, core->height - core->colhdr))
         return 0;
 
     /* 8. the selection's outline and the active cell's frame */
@@ -1414,6 +1617,7 @@ int oc_view_draw(oc_core *core, oc_draw_list *list)
         free(d.cl);
         return OWF_ERR_MEMORY;
     }
+    d.rowhdr = row_header(core);
     d.nr = lines(core, 0, d.rl, MAX_LINES, &d.ysplit);
     d.nc = lines(core, 1, d.cl, MAX_LINES, &d.xsplit);
     d.ci = calloc((size_t)(d.nr ? d.nr : 1) * (size_t)(d.nc ? d.nc : 1), 1);
