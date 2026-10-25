@@ -4,8 +4,8 @@
  * gadget that draws nothing itself; the toolbar draws them in the theme.
  *
  * A button with an image name shows that picture from the icon set
- * (ogt_iconset: 24, 32 or 48 pixels, the nearest to twice the font's
- * height), else its vector icon. Its states follow the style guide
+ * (ogt_iconset: 24, 28, 32 or 48 pixels, the nearest to 1.25 times the
+ * font's height), else its vector icon, drawn at 1.25 times the height. Its states follow the style guide
  * (docs/style/README.md, section 2.1): pressed, on (a toggle), disabled.
  *
  * MIT, Copyright (c) 2026 AmigaChrome Team. */

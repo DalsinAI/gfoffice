@@ -41,14 +41,14 @@ typedef struct strip {
  * buffers drawing needs. */
 typedef struct sets {
     char name[32];
-    strip s[3];
+    strip s[OGT_ICONSET_SIZES];
     ULONG *argb;                /* 48 x 48 */
     UBYTE *chunky;              /* 48 x 48, rows padded to 16 */
     struct BitMap *tmpbm;
     int tmpdepth;
 } sets;
 
-static const int sizes[3] = { 24, 32, 48 };
+static const int sizes[OGT_ICONSET_SIZES] = { 24, 28, 32, 48 };
 
 void ogt_iconset_use(const char *name)
 {
@@ -58,9 +58,15 @@ void ogt_iconset_use(const char *name)
 int ogt_iconset_size(int want)
 {
     int i, best = sizes[0];
-    for (i = 1; i < 3; i++)
+    for (i = 1; i < OGT_ICONSET_SIZES; i++)
         if (abs(sizes[i] - want) < abs(best - want)) best = sizes[i];
     return best;
+}
+
+int ogt_iconset_want(int font_height)
+{
+    int want = (font_height * 5 + 2) / 4;              /* 1.25 times, rounded */
+    return want > 24 ? want : 24;
 }
 
 static void sets_free(void *p)
@@ -68,7 +74,7 @@ static void sets_free(void *p)
     sets *ss = p;
     int i;
     if (!ss) return;
-    for (i = 0; i < 3; i++) ogt_iconfile_free(&ss->s[i].f);
+    for (i = 0; i < OGT_ICONSET_SIZES; i++) ogt_iconfile_free(&ss->s[i].f);
     if (ss->tmpbm) FreeBitMap(ss->tmpbm);
     free(ss->argb);
     free(ss->chunky);
@@ -114,8 +120,8 @@ static strip *get_strip(ogt_ctx *c, int size)
     if (!set_name[0] || c->theme->passthrough || ((struct Library *)GfxBase)->lib_Version < 39) return NULL;
     depth = screen_depth(c);
     if (depth < 3) return NULL;                                 /* four colours: the vector icons */
-    for (i = 0; i < 3 && sizes[i] != size; i++) ;
-    if (i == 3) return NULL;
+    for (i = 0; i < OGT_ICONSET_SIZES && sizes[i] != size; i++) ;
+    if (i == OGT_ICONSET_SIZES) return NULL;
     if (ss && strcmp(ss->name, set_name)) {                     /* another set chosen since */
         sets_free(ss);
         c->icons = ss = NULL;

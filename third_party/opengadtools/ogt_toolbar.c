@@ -13,10 +13,12 @@
 #include "ogt_icons.h"
 #include "ogt_iconset.h"
 
-#define PADX 6
-#define PADY 3
-#define GAP 2
-#define SEP 9
+/* On the style's 4-pixel grid (docs/style/README.md, section 4.1): a 28-pixel
+ * icon makes a 36 x 36 button, and buttons stand 40 apart. */
+#define PADX 4
+#define PADY 4
+#define GAP 4
+#define SEP 8
 
 void ogt_toolbar_set(ogt_toolbar *tb, const ogt_tool *tools, int n, int style)
 {
@@ -46,14 +48,15 @@ int ogt_toolbar_layout(ogt_toolbar *tb, struct RastPort *rp, int x, int y, int m
 static int layout_once(ogt_toolbar *tb, struct RastPort *rp, int x, int y, int maxw)
 {
     int fh = rp->TxHeight, i, cx = x, h, images = 0;
-    tb->icon_size = tb->style == OGT_TB_INLINE ? fh + 2 : (fh * 2 > 24 ? fh * 2 : 24);
+    /* 1.25 times the font's height (the style guide, 25 October 2026: twice was too big) */
+    tb->icon_size = tb->style == OGT_TB_INLINE ? fh + 2 : ogt_iconset_want(fh);
     for (i = 0; i < tb->n; i++) images |= tb->tool[i].image != NULL;
     if (images) tb->icon_size = ogt_iconset_size(tb->icon_size);   /* the sizes a set has */
     switch (tb->style) {
-    case OGT_TB_ICONS: h = tb->icon_size + 2 * PADY + 2; break;
-    case OGT_TB_TEXT: h = fh + 2 * PADY + 4; break;
-    case OGT_TB_INLINE: h = (tb->icon_size > fh ? tb->icon_size : fh) + 2 * PADY + 2; break;
-    default: h = tb->icon_size + fh + 3 * PADY + 2; break;
+    case OGT_TB_ICONS: h = tb->icon_size + 2 * PADY; break;
+    case OGT_TB_TEXT: h = fh + 2 * PADY + 2; break;
+    case OGT_TB_INLINE: h = (tb->icon_size > fh ? tb->icon_size : fh) + 2 * PADY; break;
+    default: h = tb->icon_size + fh + 3 * PADY; break;
     }
     for (i = 0; i < tb->n; i++) {
         int tw = ogt_text_width(rp, tb->tool[i].label), w;
@@ -159,7 +162,7 @@ void ogt_toolbar_draw_one(ogt_toolbar *tb, ogt_ctx *c, struct RastPort *rp, int 
     ogt_bold(rp, t->primary);
     switch (tb->style) {
     case OGT_TB_ICONS:
-        picture(c, rp, t, x + (w - s) / 2 + o, y + PADY + 1 + o, s);
+        picture(c, rp, t, x + (w - s) / 2 + o, y + (h - s) / 2 + o, s);
         break;
     case OGT_TB_TEXT:
         ogt_text(rp, text, x + (w - tw) / 2 + o, y + (h - fh) / 2 + o, t->label, w - 4);
@@ -169,7 +172,7 @@ void ogt_toolbar_draw_one(ogt_toolbar *tb, ogt_ctx *c, struct RastPort *rp, int 
         ogt_text(rp, text, x + PADX + s + 4 + o, y + (h - fh) / 2 + o, t->label, 0);
         break;
     default:
-        picture(c, rp, t, x + (w - s) / 2 + o, y + PADY + 1 + o, s);
+        picture(c, rp, t, x + (w - s) / 2 + o, y + PADY + o, s);
         ogt_text(rp, text, x + (w - tw) / 2 + o, y + PADY + s + PADY + o, t->label, w - 2);
         break;
     }
@@ -181,7 +184,7 @@ void ogt_toolbar_draw(ogt_toolbar *tb, ogt_ctx *c, struct RastPort *rp, const ch
     int i;
     for (i = 0; i < tb->n; i++) {
         if (tb->tool[i].sep_before && i && tb->box[i].w)
-            ogt_vline(rp, ogt_pen(c, "group.line"), tb->box[i].x - SEP / 2 - 1, tb->box[i].y + 4, tb->box[i].h - 8);
+            ogt_vline(rp, ogt_pen(c, "group.line"), tb->box[i].x - (SEP + GAP) / 2, tb->box[i].y + 4, tb->box[i].h - 8);
         ogt_toolbar_draw_one(tb, c, rp, i, i == tb->pressed, bg_key);
     }
 }

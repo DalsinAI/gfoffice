@@ -1,5 +1,5 @@
 /* ogt_iconset: toolbar pictures from an icon set (docs/style/README.md):
- * one ILBM strip per size (24, 32, 48) and mode (light, dark), in 32
+ * one ILBM strip per size (24, 28, 32, 48) and mode (light, dark), in 32
  * colours, and in 8 for screens of fewer than 64. The strips are made by
  * tools/iconset/make_iconset.py from SVG sources and found in
  * PROGDIR:Images/Toolbar/, then in SYS:Prefs/Presets/Toolbar/.
@@ -18,12 +18,17 @@
 #include "ogt_draw.h"
 
 #define OGT_ICONSET_DEFAULT "Chrome"
+#define OGT_ICONSET_SIZES 4               /* 24, 28, 32 and 48 pixels */
 
 /* The set toolbars use, by name; NULL or "" for the vector icons only. */
 void ogt_iconset_use(const char *name);
-/* The size a set is drawn at for a wanted size: 24, 32 or 48, the nearest
- * (the smaller when halfway). */
+/* The size a set is drawn at for a wanted size: 24, 28, 32 or 48, the
+ * nearest (the smaller when halfway). */
 int ogt_iconset_size(int want);
+/* The toolbar icon size the style guide asks for with a font (section 3.4):
+ * 1.25 times its height, and 24 at least. A 13-point font wants 24, and a
+ * 23-pixel one 29, which a set draws at 28. */
+int ogt_iconset_want(int font_height);
 /* Draws the icon called name, size x size, at x,y: the normal picture, or
  * the disabled one. 1 when drawn, 0 when not (draw a vector icon). */
 int ogt_iconset_draw(ogt_ctx *c, struct RastPort *rp, const char *name, int size, int x, int y, int disabled);
