@@ -77,7 +77,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.3 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.4 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -220,16 +220,18 @@ static struct NewMenu menus[] = {
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
+/* 2.0.4: the pictures are the Chrome icon set's (opengadtools docs/style/README.md; Images/Toolbar/), by name;
+ * the vector icons are drawn when the set can't be (no strips, four colours, the Classic theme). */
 static const ogt_tool tools[] = {
-    { C_NEW,   "New",    OGT_ICON_FILE,    0, 0, 0 },
-    { C_OPEN,  "Open...",OGT_ICON_OPEN,    0, 0, 0 },
-    { C_SAVE,  "Save",   OGT_ICON_DISK,    0, 0, 0 },
-    { C_PRINT, "Print...",OGT_ICON_TEST,    1, 0, 0 },
-    { C_UNDO,  "Undo",   OGT_ICON_PARENT,  1, 1, 0 },
-    { C_REDO,  "Redo",   OGT_ICON_FORWARD, 0, 1, 0 },
-    { C_IMAGE, "Image...",OGT_ICON_FILE,    1, 0, 0 },
-    { C_TABLE, "Table...",OGT_ICON_FOLDER,  0, 0, 0 },
-    { C_PDF,   "PDF...",  OGT_ICON_SENT,    1, 0, 0 }
+    { C_NEW,   "New",    OGT_ICON_FILE,    0, 0, 0, "new" },
+    { C_OPEN,  "Open...",OGT_ICON_OPEN,    0, 0, 0, "open" },
+    { C_SAVE,  "Save",   OGT_ICON_DISK,    0, 0, 0, "save" },
+    { C_PRINT, "Print...",OGT_ICON_TEST,    1, 0, 0, "print" },
+    { C_UNDO,  "Undo",   OGT_ICON_PARENT,  1, 1, 0, "undo" },
+    { C_REDO,  "Redo",   OGT_ICON_FORWARD, 0, 1, 0, "redo" },
+    { C_IMAGE, "Image...",OGT_ICON_FILE,    1, 0, 0, "picture" },
+    { C_TABLE, "Table...",OGT_ICON_FOLDER,  0, 0, 0, "table" },
+    { C_PDF,   "PDF...",  OGT_ICON_SENT,    1, 0, 0, "pdf" }
 };
 
 typedef struct box { int x, y, w, h; } box;

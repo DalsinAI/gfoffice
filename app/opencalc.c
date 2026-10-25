@@ -69,7 +69,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.10 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.11 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -212,15 +212,17 @@ static struct NewMenu menus[] = {
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
+/* 0.1.11: the pictures are the Chrome icon set's (opengadtools docs/style/README.md; Images/Toolbar/), by name;
+ * the vector icons are drawn when the set can't be (no strips, four colours, the Classic theme). */
 static const ogt_tool tools[] = {
-    { C_NEW,   "New",     OGT_ICON_FILE,    0, 0, 0 },
-    { C_OPEN,  "Open...", OGT_ICON_OPEN,    0, 0, 0 },
-    { C_SAVE,  "Save",    OGT_ICON_DISK,    0, 0, 0 },
-    { C_UNDO,  "Undo",    OGT_ICON_PARENT,  1, 1, 0 },
-    { C_REDO,  "Redo",    OGT_ICON_FORWARD, 0, 1, 0 },
-    { C_CUT,   "Cut",     OGT_ICON_DELETE,  1, 0, 0 },
-    { C_COPY,  "Copy",    OGT_ICON_ARCHIVE, 0, 0, 0 },
-    { C_PASTE, "Paste",   OGT_ICON_EXTRACT, 0, 0, 0 }
+    { C_NEW,   "New",     OGT_ICON_FILE,    0, 0, 0, "new" },
+    { C_OPEN,  "Open...", OGT_ICON_OPEN,    0, 0, 0, "open" },
+    { C_SAVE,  "Save",    OGT_ICON_DISK,    0, 0, 0, "save" },
+    { C_UNDO,  "Undo",    OGT_ICON_PARENT,  1, 1, 0, "undo" },
+    { C_REDO,  "Redo",    OGT_ICON_FORWARD, 0, 1, 0, "redo" },
+    { C_CUT,   "Cut",     OGT_ICON_DELETE,  1, 0, 0, "cut" },
+    { C_COPY,  "Copy",    OGT_ICON_ARCHIVE, 0, 0, 0, "copy" },
+    { C_PASTE, "Paste",   OGT_ICON_EXTRACT, 0, 0, 0, "paste" }
 };
 
 typedef struct box { int x, y, w, h; } box;
