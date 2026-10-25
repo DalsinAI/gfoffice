@@ -543,3 +543,40 @@ done:
 const owf_format owf_format_pdf = {
     "pdf", "Portable Document Format", "pdf", NULL, NULL, export_pdf
 };
+
+/* ---- Pictures for the page writer (owf_pdf.c) ---- */
+
+int owf_pdf_encode_picture(const owf_image *image, owf_pdf_picture *out)
+{
+    pdf_image img;
+    memset(out, 0, sizeof *out);
+    if (!image)
+        return 0;
+    pdf_image_encode(image, &img);
+    if (!img.ok) {
+        if (!img.dct)
+            free(img.data);
+        free(img.mask);
+        return 0;
+    }
+    out->w = img.w;
+    out->h = img.h;
+    out->gray = img.gray;
+    out->dct = img.dct;
+    out->data = img.data;
+    out->len = img.len;
+    out->mask = img.mask;
+    out->mlen = img.mlen;
+    out->owned = !img.dct;       /* JPEG's bytes are the image's own */
+    return 1;
+}
+
+void owf_pdf_picture_free(owf_pdf_picture *p)
+{
+    if (!p)
+        return;
+    if (p->owned)
+        free(p->data);
+    free(p->mask);
+    memset(p, 0, sizeof *p);
+}

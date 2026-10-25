@@ -224,7 +224,7 @@ static ol_node *add_cell(ol_document *od, ol_node *row, const owf_para *p)
 
 /* Paragraphs first..end-1 share a table id: rows in the order they come,
  * a cell for every column, each paragraph into its cell. */
-static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, const owf_story *story,
+static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, const owf_story *story,
                      int first, int end, int record, const field_values *fv)
 {
     ol_style s;
@@ -234,7 +234,7 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, const ow
     for (i = first; i < end; ++i)
         if (story->paras[i].table_cols > cols) cols = story->paras[i].table_cols;
     if (cols > OL_MAX_COLUMNS) cols = OL_MAX_COLUMNS;
-    table = ol_node_append(od, NULL, OL_ROLE_TABLE, NULL);
+    table = ol_node_append(od, parent, OL_ROLE_TABLE, NULL);
     if (!table) return 0;
     ol_style_init(&s);
     s.display = OL_DISPLAY_BLOCK;
@@ -274,7 +274,7 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, const ow
     return 1;
 }
 
-static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, const owf_story *story,
+static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, const owf_story *story,
                      int record, const field_values *fv)
 {
     int i = 0;
@@ -283,10 +283,10 @@ static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, const ow
         if (p->table_id >= 0) {
             int end = i + 1;
             while (end < story->nparas && story->paras[end].table_id == p->table_id) ++end;
-            if (!add_table(l, doc, od, story, i, end, record, fv)) return 0;
+            if (!add_table(l, doc, od, parent, story, i, end, record, fv)) return 0;
             i = end;
         } else {
-            if (!add_paragraph(record ? l : NULL, doc, od, NULL, p, i, fv)) return 0;
+            if (!add_paragraph(record ? l : NULL, doc, od, parent, p, i, fv)) return 0;
             ++i;
         }
     }
@@ -308,7 +308,7 @@ ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure, void *m
     l->measure_userdata = measure_userdata;
     l->body = ol_document_new();
     l->blocks = (ol_id *)calloc((size_t)(doc->body.nparas ? doc->body.nparas : 1), sizeof(*l->blocks));
-    if (!l->body || !l->blocks || !add_story(l, doc, l->body, &doc->body, 1, NULL)) {
+    if (!l->body || !l->blocks || !add_story(l, doc, l->body, NULL, &doc->body, 1, NULL)) {
         ow_layout_free(l);
         return NULL;
     }
@@ -563,7 +563,7 @@ ol_document *ow_layout_story(const ow_layout *l, ow_story_kind which, int page,
     fv.time = time;
     od = ol_document_new();
     if (!od) return NULL;
-    if (!add_story(NULL, l->doc, od, story, 0, &fv) ||
+    if (!add_story(NULL, l->doc, od, NULL, story, 0, &fv) ||
         !ol_layout(od, l->page.width - l->page.margin_left - l->page.margin_right,
                    l->measure, l->measure_userdata)) {
         ol_document_free(od);
@@ -574,4 +574,17 @@ ol_document *ow_layout_story(const ow_layout *l, ow_story_kind which, int page,
     if (y) *y = which == OW_STORY_HEADER ? l->page.margin_top / 2
                                          : l->page.height - l->page.margin_bottom / 2 - story_height(od);
     return od;
+}
+
+/* Shared E5: any story into any node (a slide's frame, a report's band). */
+int ow_layout_add_story(ol_document *od, ol_node *parent, const owf_doc *doc, const owf_story *story,
+                        const char *const fields[4])
+{
+    field_values fv;
+    if (!od || !doc || !story) return 0;
+    snprintf(fv.page, sizeof fv.page, "%s", fields && fields[0] ? fields[0] : "1");
+    snprintf(fv.pages, sizeof fv.pages, "%s", fields && fields[1] ? fields[1] : "1");
+    fv.date = fields ? fields[2] : NULL;
+    fv.time = fields ? fields[3] : NULL;
+    return add_story(NULL, doc, od, parent, story, 0, &fv);
 }
