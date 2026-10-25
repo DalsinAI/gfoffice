@@ -159,6 +159,11 @@ void owf_column_name(unsigned col, char *out);
 extern const owf_book_format owf_book_format_xlsx, owf_book_format_xlsm, owf_book_format_ods,
     owf_book_format_fods;
 int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, owf_report *report);
+int owf_export_ods(const owf_book *book, unsigned char **data, size_t *length, owf_report *report);
+int owf_export_fods(const owf_book *book, unsigned char **data, size_t *length, owf_report *report);
+/* CSV's reader (in_csv.c), beside its writer (out_csv.c). */
+int owf_import_csv(const unsigned char *data, size_t length, owf_book *book, owf_report *report);
+int owf_detect_csv(const unsigned char *data, size_t length);
 
 /* Numbers in files (owf_booknum.c). The whole of s..s+length as a decimal
  * number ("12", "-0.5", "1.5E+20"), the nearest double; 0 when it is not
@@ -208,6 +213,9 @@ void owf_xl_links_free(owf_xl_links *links);
 /* OpenFormula ("of:=SUM([.A1:.A3])") to Excel's text and back. */
 char *owf_of_to_excel(const char *text);
 char *owf_excel_to_of(const char *text);
+/* The same, *lost set when something had to go: a sheet's or another
+ * book's own name ("Sheet1!Rate") becomes the name alone. */
+char *owf_excel_to_of_lossy(const char *text, int *lost);
 /* Excel's built-in number formats by number (NULL for the country's own)
  * and its 64 colours by number. */
 const char *owf_xl_builtin_format(unsigned id);

@@ -79,6 +79,8 @@ def canon(text, notes=False):
         if w[0] == "style":
             s = re.sub(r"^font=(-?\d+)", lambda m: "font=" + fonts.get(m.group(1), m.group(1)), w[2])
             styles[w[1]] = re.sub(r"numfmt=(\d+)", lambda m: "numfmt=" + numfmts.get(m.group(1), m.group(1)), s)
+    names = sorted(l for l in lines if l.startswith("name "))
+    lines = [l for l in lines if not l.startswith("name ")] + names
     for line in lines:
         w = line.split(" ")
         if w[0] in ("font", "numfmt", "style") or (w[0] == "note" and not notes):
@@ -488,6 +490,423 @@ def test_generated_xlsx():
     return paths
 
 
+
+# ---- ODS and flat ODS ----
+
+ODS_MIME = "application/vnd.oasis.opendocument.spreadsheet"
+
+
+def check_ods_package(path):
+    """mimetype first and stored, the manifest's parts there, each
+    well-formed, every style a cell, column, row or style names defined."""
+    label = os.path.basename(path)
+    z = zipfile.ZipFile(path)
+    infos = z.infolist()
+    check(label + ": mimetype first, stored", infos[0].filename == "mimetype" and infos[0].compress_type == zipfile.ZIP_STORED
+          and z.read("mimetype").decode() == ODS_MIME, [i.filename for i in infos[:2]])
+    manifest = z.read("META-INF/manifest.xml").decode()
+    for part in ("content.xml", "styles.xml", "meta.xml", "settings.xml"):
+        check(f"{label}: {part}", part in z.namelist() and f'manifest:full-path="{part}"' in manifest, z.namelist())
+    texts = {}
+    for n in z.namelist():
+        if n.endswith(".xml"):
+            if xml_ok(f"{label} {n}", z.read(n)):
+                texts[n] = z.read(n).decode()
+    defined = set(re.findall(r'style:name="([^"]+)"', texts.get("content.xml", "") + texts.get("styles.xml", "")))
+    used = set(re.findall(r'(?:table:style-name|style:data-style-name|table:default-cell-style-name|style:apply-style-name|'
+                          r'style:parent-style-name)="([^"]+)"', texts.get("content.xml", "") + texts.get("styles.xml", "")))
+    check(f"{label}: styles defined", used <= defined, sorted(used - defined))
+    fonts = set(re.findall(r'<style:font-face style:name="([^"]+)"', texts.get("content.xml", "")))
+    check(f"{label}: fonts declared", set(re.findall(r'style:font-name="([^"]+)"', texts.get("content.xml", ""))) <= fonts)
+
+
+def odfpy_rows(path, sheet=0):
+    """The first sheet's cells as odfpy reads them: value or text."""
+    try:
+        from odf.opendocument import load
+        from odf.table import Table, TableRow, TableCell
+        from odf.namespaces import OFFICENS, TABLENS
+    except ImportError:
+        return None
+    doc = load(path)
+    table = doc.spreadsheet.getElementsByType(Table)[sheet]
+    rows = []
+    for tr in table.getElementsByType(TableRow)[:12]:
+        row = []
+        for tc in tr.getElementsByType(TableCell):
+            rep = int(tc.attributes.get((TABLENS, "number-columns-repeated"), "1"))
+            kind = tc.attributes.get((OFFICENS, "value-type"))
+            v = tc.attributes.get((OFFICENS, "value")) or tc.attributes.get((OFFICENS, "date-value")) or \
+                tc.attributes.get((OFFICENS, "time-value")) or tc.attributes.get((OFFICENS, "boolean-value"))
+            if kind == "string":
+                v = "\n".join(str(p) for p in tc.childNodes if p.qname[1] == "p")
+            row += [v] * min(rep, 20)
+        rows.append(row)
+    return rows
+
+
+LO_RECALC = """<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Calc/Formula/Load"><prop oor:name="ODFRecalcMode" oor:op="fuse"><value>0</value></prop></item>
+<item oor:path="/org.openoffice.Office.Calc/Formula/Load"><prop oor:name="OOXMLRecalcMode" oor:op="fuse"><value>0</value></prop></item>
+</oor:items>
+"""
+
+
+def lo_shown(path):
+    """Every sheet as LibreOffice shows it, formats and all, its formulas
+    worked out again: {sheet: rows}."""
+    if not SOFFICE:
+        return None
+    import csv
+    out = {}
+    with tempfile.TemporaryDirectory() as work:
+        profile = tempfile.mkdtemp(prefix="owf-lo-", dir=work)
+        os.makedirs(os.path.join(profile, "user"))
+        with open(os.path.join(profile, "user", "registrymodifications.xcu"), "w") as f:
+            f.write(LO_RECALC)
+        p = subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to",
+                            'csv:Text - txt - csv (StarCalc):44,34,76,1,,0,false,true,true,false,false,-1',
+                            "--outdir", work, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+        stem = os.path.splitext(os.path.basename(path))[0]
+        for f in sorted(os.listdir(work)):
+            if f.endswith(".csv"):
+                with open(os.path.join(work, f), encoding="utf-8") as fh:
+                    out[f[len(stem) + 1:-4]] = list(csv.reader(fh))
+        if p.returncode or not out:
+            check("LibreOffice reads " + os.path.basename(path), False, p.stderr.decode()[-500:])
+    return out
+
+
+def lossless(line):
+    """What two formula texts mean the same by: TRUE() and TRUE, a sheet's
+    name in quotes it did not need."""
+    line = line.replace("TRUE()", "TRUE").replace("FALSE()", "FALSE")
+    return re.sub(r"'([A-Za-z_][A-Za-z0-9_]*)'!", r"\1!", line)
+
+
+def without_empty(text):
+    """Empty cells with the book's default style hold nothing: some formats
+    keep them, some do not."""
+    lines = canon(text)
+    default = lines[-1].split(" ", 2)[2]
+    return [l for l in lines if not (l.startswith("cell ") and l.endswith("style={" + default + "} empty"))]
+
+
+def same_meaning(name, a, b, extra=None):
+    ca = [lossless(l) for l in without_empty(a)]
+    cb = [lossless(l) for l in without_empty(b)]
+    if extra:
+        ca, cb = [extra(l) for l in ca], [extra(l) for l in cb]
+    if ca != cb:
+        import difflib
+        check(name, False, "\n" + "\n".join(list(difflib.unified_diff(ca, cb, lineterm="", n=0))[:30]))
+
+
+def test_xls_to_ods(work):
+    """The .xls books as ODS and flat ODS: the same model back."""
+    written = []
+    for src in (os.path.join(FIX, "book.xls"), os.path.join(work, "built.xls")):
+        rc_a, a, _ = dump(src)
+        for ext in ("ods", "fods"):
+            dst = os.path.join(work, os.path.basename(src) + "." + ext)
+            if not convert(src, dst):
+                continue
+            rc_b, b, err = dump(dst)
+            check("read back " + os.path.basename(dst), rc_b == 0, err)
+            # a name in another workbook: ODF formulas have none, and say so
+            other = lambda l: l.replace('"Other.xls!Rate"', '"Rate"')
+            same_books(f"xls to {ext}: {os.path.basename(src)}", a, b, ignore=other)
+            if ext == "ods":
+                check_ods_package(dst)
+            written.append(dst)
+    rc, out, err = run([OWCONVERT, "--report", os.path.join(work, "built.xls"), os.path.join(work, "notes.ods")])
+    check("ods: other book's names reported", "lost their sheet or workbook" in out, out)
+    return written
+
+
+def test_ods_readers(written, xlsx_written):
+    """odfpy and LibreOffice read the ODS libowf wrote; LibreOffice shows
+    the same in it as in the XLSX libowf wrote of the same book."""
+    ods = [p for p in written if p.endswith("book.xls.ods")]
+    if not ods:
+        return
+    rows = odfpy_rows(ods[0])
+    if rows is None:
+        print("odfpy not installed: ODS not read back by it")
+    else:
+        check("odfpy: header", rows[0][:8] == ["Item", "Qty", "Price", "Total", "Size", "Over50", "Ratio", "Other"], rows[0])
+        check("odfpy: values", rows[1][:7] == ["Apple", "3", "0.5", "1.5", "small", "0", "#DIV/0!"], rows[1])
+        check("odfpy: date", rows[7][:3] == ["2026-10-21", "PT13H45M30S", "0.25"], rows[7])
+    xlsx = [p for p in xlsx_written if p.endswith("book.xls.xlsx")]
+    if not xlsx:
+        return
+    a, b = lo_shown(xlsx[0]), lo_shown(ods[0])
+    if a is None:
+        print("LibreOffice not installed: ODS not read back by it")
+        return
+    check("LibreOffice shows XLSX and ODS alike", a == b,
+          [(k, x, y) for k in a for x, y in zip(a.get(k, []), b.get(k, [])) if x != y][:6])
+    check("LibreOffice: formats shown", b.get("Numbers", [[]] * 8)[7][:4] == ["2026-10-21", "13:45:30", "25%", "1,234.50"],
+          b.get("Numbers", [])[7:8])
+
+
+def test_xlsx_ods_xlsx(work, xlsx_paths):
+    """XLSX to ODS to XLSX: the same model, but for what ODF cannot hold,
+    which is reported."""
+    for src in xlsx_paths:
+        stem = os.path.basename(src)
+        ods = os.path.join(work, stem + ".ods")
+        back = os.path.join(work, stem + ".back.xlsx")
+        if not (convert(src, ods) and convert(ods, back)):
+            continue
+        a, b = dump(src)[1], dump(back)[1]
+        extra = (lambda l: l.replace('"Other.xls!Rate"', '"Rate"')) if stem == "built.xls.xlsx" else None
+        if stem == "hand.xlsx":
+            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, "hand-notes.ods")])
+            for want in ("lost their sheet or workbook", "Hidden names are shown", "Very hidden sheets",
+                         "centred in its cell", "Carriage returns"):
+                check("hand.xlsx to ods: note " + want, want in out, out)
+
+            def extra(l):
+                l = l.replace('"Other.xlsx!Rate"', '"Rate"').replace(' hidden=1 "\'Very', ' hidden=0 "\'Very')
+                l = l.replace('hidden=2 width', 'hidden=1 width').replace("halign=6", "halign=2").replace("\\x0d\\n", "\\n")
+                return l
+        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra)
+
+
+def test_ods_round_trips(work, ods_paths):
+    """ODS and flat ODS, whoever wrote them, saved by libowf as ODS, flat
+    ODS and XLSX: the same model."""
+    for src in ods_paths:
+        stem = os.path.basename(src)
+        rc, a, err = dump(src)
+        check("read " + stem, rc == 0, err)
+        for ext in ("ods", "fods", "xlsx"):
+            dst = os.path.join(work, stem + ".rt." + ext)
+            if not convert(src, dst):
+                continue
+            b = dump(dst)[1]
+            if ext == "xlsx":
+                # XLSX names a font and a size where ODS left the default's
+                fill = lambda l: l.replace("font=-1", 'font="Arial" kind=2').replace(" size=0 ", " size=200 ")
+                same_meaning(f"{stem} to {ext}", a, b, fill)
+            else:
+                same_books(f"{stem} to {ext}", a, b)
+        if src.endswith(".ods"):
+            check_ods_package(os.path.join(work, stem + ".rt.ods"))
+
+
+def test_hand_ods(work):
+    """fixtures/ods-hand: written from ODF 1.2, with what LibreOffice and
+    others may write."""
+    path = zip_dir(os.path.join(FIX, "ods-hand"), os.path.join(work, "hand.ods"), stored_first="mimetype")
+    rc, out, err = dump(path)
+    check("hand.ods read", rc == 0, out[-500:] + err[-500:])
+    if rc:
+        return path
+    b = parse(out)
+    check("hand.ods: book", b["line"] == "book format=ods sheets=3 active=2 date1904=0", b["line"])
+    notes = "\n".join(b["notes"])
+    for want in ("angle", "Conditional formatting", "Data validation", "Sheet protection", "Err:502", "Some formulas could not",
+                 "Comments on cells", "Pictures, charts", "AutoFilter", "split in two", "30 December 1899"):
+        check("hand.ods: note " + want, want in notes, notes)
+    fig = b["sheets"][0]
+    check("hand.ods: sheet", fig["line"] == 'sheet 0 "Figures" hidden=0 width=1440 height=255 freeze=1,2', fig["line"])
+    check("hand.ods: columns", fig["cols"] == ["col 0-0 width=1700 style=1 hidden=0", "col 1-2 width=720 style=0 hidden=1"], fig["cols"])
+    check("hand.ods: rows", fig["rows"] == ["row 0 height=360 hidden=0"] + ["row %d height=255 hidden=1" % r for r in (5, 6, 7, 8)], fig["rows"])
+    check("hand.ods: merge", fig["merges"] == ["merge 4,4-5,5"], fig["merges"])
+    expect = {
+        "A1": 'text "Heading & more"', "B1": "number -1234.5", "C1": "number 2.5", "D1": "number 1.14583333333333",
+        "E1": "number 46320.0625", "H1": "bool 0", "A2": 'text "t ext"', "B2": "number 25000",
+        "D2": 'number 40.5 formula "B1+Other!A1"', "E2": 'error #DIV/0! formula "1/0"', "F2": 'error #VALUE! formula "NOSUCH()"',
+        "G2": 'text "Heading & more!" formula "A1&\\"!\\""', "H2": "number 7",
+        "A3": "number 1", "B3": "number 1", "C3": 'number 1 formula "{1,2;3,4}" array', "D4": 'number 2 formula "{1,2;3,4}" array',
+        "E5": 'text "merged"', "F5": "empty", "A6": 'text "first\\nsecond\\x09tab\\nbreak  end"',
+    }
+    for ref, want in expect.items():
+        cell_is(b, 0, ref, want, "hand.ods: ")
+    check("hand.ods: column's style", "fill=FAFAFA" in style_of(b, 0, "A3") and "fill=-" in style_of(b, 0, "B3"),
+          (style_of(b, 0, "A3"), style_of(b, 0, "B3")))
+    s = style_of(b, 0, "A1")
+    check("hand.ods: style through parents", "size=280 flags=23 colour=333333" in s and "halign=2 valign=0 wrap=1" in s
+          and "fill=DDEEFF border=0:-,0:-,0:-,8:123456" in s, s)
+    check("hand.ods: fonts", b["fonts"].get(0, "").endswith('"DejaVu Sans" kind=2') and b["fonts"].get(2, "").endswith('"Courier New" kind=3'), b["fonts"])
+    for ref, want in {"A1": '"#,##0.00"', "B1": '"#,##0.00\\" €\\";[Red]-#,##0.00\\" €\\""', "C1": '"[$£]#,##0.00"',
+                      "D1": '"[h]:mm"', "E1": '"dddd, d. mmmm yyyy hh:mm AM/PM"', "F1": '"0.000E+00"', "G1": '"# ??/??"',
+                      "H1": '"\\"TRUE\\";\\"TRUE\\";\\"FALSE\\""', "A2": '"\\"[\\"@\\"]\\""', "C2": '"0;[Blue](0);\\"nil\\""'}.items():
+        check("hand.ods: number format " + ref, numfmt_of(b, 0, ref) == want, numfmt_of(b, 0, ref))
+    check("hand.ods: borders", style_of(b, 0, "A2").endswith("border=5:000000,11:00FF00,6:0000FF,0:-")
+          and style_of(b, 0, "C1").endswith("border=7:FF00FF,7:FF00FF,7:FF00FF,7:FF00FF") and "indent=3" in style_of(b, 0, "C1"),
+          (style_of(b, 0, "A2"), style_of(b, 0, "C1")))
+    check("hand.ods: names", b["names"].get("Local", "").endswith('sheet=0 hidden=0 "Figures!$A$1:$B$2"')
+          and b["names"].get("Both", "").endswith('sheet=-1 hidden=0 "Figures!$A$1,Other!$A$1:$A$2"')
+          and b["names"].get("Double", "").endswith('sheet=-1 hidden=0 "Other!$A$1*2"'), b["names"])
+    check("hand.ods: hidden sheet", b["sheets"][1]["line"].startswith('sheet 1 "Other" hidden=1'))
+    return path
+
+
+def test_generated_ods():
+    """Files LibreOffice and odfpy wrote, and book.fods (make_fixtures.py)."""
+    rc, out, err = dump(os.path.join(FIX, "book-lo.ods"))
+    check("book-lo.ods read", rc == 0, err)
+    rc2, xls, _ = dump(os.path.join(FIX, "book.xls"))
+    if rc == 0 and rc2 == 0:
+        # LibreOffice wrote both from book.fods: the cells are the same, but
+        # ODS keeps booleans as booleans where .xls has numbers in a boolean
+        # format, writes dates' dashes plainly, leaves merged-over cells
+        # without a style, and names its own fonts
+        def cells(t):
+            out = []
+            for l in canon(t):
+                if not l.startswith(("cell", "merge", "name")) or l.endswith("} empty"):
+                    continue
+                l = re.sub(r'font="[^"]*" kind=\d', "font", l).replace("yyyy\\\\-mm\\\\-dd", "yyyy-mm-dd")
+                l = re.sub(r'numfmt="General"(.*)\} bool', r'numfmt="\\"TRUE\\";\\"TRUE\\";\\"FALSE\\""\1} bool', l)
+                l = re.sub(r"\} bool (\d)", r"} number \1", l)
+                out.append(l.replace(" array", "").replace("TRUE()", "TRUE").replace("FALSE()", "FALSE"))
+            return out
+        a, b = cells(xls), cells(out)
+        check("lo.ods is book.xls", a == b, [x for x in zip(a, b) if x[0] != x[1]][:4])
+    rc, out, err = dump(os.path.join(FIX, "book-odfpy.ods"))
+    check("book-odfpy.ods read", rc == 0, err)
+    if rc == 0:
+        b = parse(out)
+        check("odfpy: book", b["line"] == "book format=ods sheets=2 active=0 date1904=1", b["line"])
+        for ref, want in {"A1": 'text "Head"', "D1": "number 44854", "C2": 'number 5 formula "SUM(A2:B2)"',
+                          "C3": 'number 84 formula "\'Odf two\'!A1*2"', "D3": 'number 3 formula "CEILING(A2,3)"',
+                          "A3": "bool 1", "B3": "number 1.5", "A4": 'text "a   b\\x09c\\nd\\nsecond"', "C8": "number 7"}.items():
+            cell_is(b, 0, ref, want, "odfpy: ")
+        check("odfpy: formats", numfmt_of(b, 0, "B1") == '"#,##0.00\\" kg\\""' and numfmt_of(b, 0, "D1") == '"dd.mm.yyyy"',
+              (numfmt_of(b, 0, "B1"), numfmt_of(b, 0, "D1")))
+        check("odfpy: style", "font=0 size=260 flags=9 colour=0000FF" in style_of(b, 0, "A1")
+              and style_of(b, 0, "A1").endswith("halign=3 valign=1 wrap=1 indent=2 fill=CCFFCC border=7:FF0000,7:FF0000,7:FF0000,7:FF0000"),
+              style_of(b, 0, "A1"))
+        check("odfpy: rows", b["sheets"][0]["rows"] == ["row 0 height=720 hidden=0", "row 4 height=255 hidden=1",
+                                                       "row 5 height=255 hidden=1", "row 6 height=255 hidden=1"], b["sheets"][0]["rows"])
+        check("odfpy: name", b["names"].get("Two", "").endswith('"\'Odf two\'!$A$1"'), b["names"])
+    rc, out, err = dump(os.path.join(FIX, "book.fods"))
+    check("book.fods read", rc == 0, err)
+    if rc == 0:
+        b = parse(out)
+        check("fods: book", b["line"] == "book format=fods sheets=3 active=0 date1904=0" and b["sheets"][2]["line"].startswith('sheet 2 "Hidden" hidden=1'), b["line"])
+        for ref, want in {"D2": 'number 0 formula "B2*C2"', "H2": 'text "" formula "\'Text & more\'!A1"',
+                          "E6": 'number 0 formula "ROUND(AVERAGE(B2:B5),2)"', "H6": 'number 0 formula "SUM(B2:B5*C2:C5)" array',
+                          "A9": 'text "" formula "CONCATENATE(A2,\\" & \\",A3)"', "A10": 'number 0 formula "SUM({1,2,3})"',
+                          "C10": 'bool 1 formula "TRUE"', "H10": 'number 0 formula "B2=B3=FALSE"', "H9": 'number 0 formula "SUM(B:B)"',
+                          "A8": "number 46316", "B8": "number 0.573263888888889", "A12": 'text "Merged title"'}.items():
+            cell_is(b, 0, ref, want, "fods: ")
+        cell_is(b, 1, "E1", 'text "Line one\\nLine two"', "fods: ")
+        check("fods: merge", b["sheets"][0]["merges"] == ["merge 11,0-11,2"], b["sheets"][0]["merges"])
+        check("fods: name", b["names"].get("Prices", "").endswith('"Numbers!$C$2:$C$5"'), b["names"])
+
+
+# ---- CSV ----
+
+def test_csv(work):
+    """CSV read: fixtures/csv; and both ways through the other formats."""
+    expect = {
+        "quoting.csv": {(0, 2): 'text "Price, each"', (1, 0): 'text "Fig, \\"dried\\""', (1, 2): "number 1E+20",
+                        (1, 3): 'text "two\\x0d\\nlines"', (2, 2): "number 0.3", (2, 3): 'text "  spaced  "',
+                        (4, 0): 'text "=SUM(A1:A2)"', (4, 1): "bool 1", (4, 2): "error #DIV/0!", (4, 3): "number 0.125",
+                        (5, 0): "number 46316", (5, 1): "number 46316.5732638889", (5, 2): "number 7", (5, 3): 'text "x\\"y"',
+                        (6, 0): 'text "quoted tail"'},
+        "semicolons.csv": {(0, 2): 'text "Datum"', (1, 0): 'text "1,5"', (1, 1): 'text "Grüße"', (2, 1): 'text "a;b"'},
+        "excel-semicolons.csv": {(0, 0): 'text "A"', (2, 2): "number 6"},
+        "tabs.txt": {(0, 2): 'text "c"', (1, 2): "number 3"},
+        "windows-1252.csv": {(0, 0): 'text "Café"', (0, 1): 'text "€5"', (0, 2): 'text "naïve"'},
+        "utf16.csv": {(1, 0): 'text "ü😀"', (1, 1): "number 42"},
+        "cr-only.csv": {(2, 1): "number 4"},
+        "open-quote.csv": {(0, 1): 'text "never closed,\\nb,c\\n"'},
+    }
+    paths = []
+    for name, cells in expect.items():
+        path = os.path.join(FIX, "csv", name)
+        paths.append(path)
+        rc, out, err = dump(path)
+        check("csv " + name, rc == 0 and out.splitlines()[0].startswith("book format=csv"), out[:200] + err)
+        b = parse(out)
+        for (r, c), want in cells.items():
+            line = b["sheets"][0]["cells"].get((r, c)) if b["sheets"] else None
+            got = line.split(" ", 3)[3] if line else None
+            check(f"csv {name} {r},{c}", got == want, f"got {got!r}, want {want!r}")
+    b = parse(dump(os.path.join(FIX, "csv", "quoting.csv"))[1])
+    check("csv: percent and date formats", numfmt_of(b, 0, "D5") == '"0.00%"' and numfmt_of(b, 0, "A6") == '"yyyy-mm-dd"'
+          and numfmt_of(b, 0, "B6") == '"yyyy-mm-dd hh:mm:ss"', (numfmt_of(b, 0, "D5"), numfmt_of(b, 0, "A6")))
+    # an .xls's first sheet to CSV and back: the values (formulas give theirs)
+    src = os.path.join(FIX, "book.xls")
+    out_csv = os.path.join(work, "book.csv")
+    if convert(src, out_csv):
+        a = parse(dump(src)[1])["sheets"][0]["cells"]
+        b = parse(dump(out_csv)[1])["sheets"][0]["cells"]
+        value = lambda l: re.sub(r" formula .*| array", "", l.split(" ", 3)[3])
+        want = {k: value(l) for k, l in a.items() if value(l) != "empty" and value(l) != 'text ""'}
+        got = {k: value(l) for k, l in b.items()}
+        # what CSV cannot say: a boolean format's 0 is a number again
+        check("xls to csv to model", got == want, [(k, want.get(k), got.get(k)) for k in sorted(set(want) | set(got)) if want.get(k) != got.get(k)][:6])
+        # and the CSV saved again from any format is the same text
+        for ext in ("xlsx", "ods", "fods"):
+            mid, again = os.path.join(work, "csv-mid." + ext), os.path.join(work, "csv-again-%s.csv" % ext)
+            if convert(out_csv, mid) and convert(mid, again):
+                check("csv to %s to csv" % ext, open(out_csv, "rb").read() == open(again, "rb").read())
+    return paths
+
+
+
+# ---- Small files that ask for too much ----
+
+def test_bombs(work):
+    """A few kilobytes must not become gigabytes: repeats, spaces and shared
+    strings have budgets, and the reader says what it left out."""
+    import time
+    content = ('<?xml version="1.0"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+               'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">'
+               '<office:body><office:spreadsheet>%s</office:spreadsheet></office:body></office:document-content>')
+    big = "x" * 200000
+    cases = {
+        "spaces.ods": '<table:table table:name="S"><table:table-row><table:table-cell office:value-type="string"><text:p>%s</text:p>'
+                      '</table:table-cell></table:table-row></table:table>' % ('<text:s text:c="10000"/>' * 5000),
+        "repeats.ods": '<table:table table:name="S"><table:table-row table:number-rows-repeated="1048576"><table:table-cell '
+                       'office:value-type="string" table:number-columns-repeated="16384"><text:p>%s</text:p></table:table-cell>'
+                       '</table:table-row></table:table>' % big,
+        "sheets.ods": "".join('<table:table table:name="S%d"><table:table-row table:number-rows-repeated="100000"><table:table-cell '
+                              'office:value-type="string" table:number-columns-repeated="100"><text:p>%s</text:p></table:table-cell>'
+                              '</table:table-row></table:table>' % (i, "y" * 5000) for i in range(30)),
+    }
+    for name, body in cases.items():
+        path = os.path.join(work, name)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", ODS_MIME, compress_type=zipfile.ZIP_STORED)
+            z.writestr("content.xml", content % body)
+        start = time.time()
+        rc, out, err = dump(path)
+        check("bounded " + name, rc in (0, 10) and time.time() - start < 120 and len(out) < 80000000,
+              "exit %d, %.1f s, %d bytes %s" % (rc, time.time() - start, len(out), err[-300:]))
+        check("bounded %s: said so" % name, "left out" in out or "cut short" in out, out[:300])
+    # one long shared string in many cells, and array formulas over whole sheets
+    xlsx = os.path.join(work, "shared.xlsx")
+    with zipfile.ZipFile(xlsx, "w", zipfile.ZIP_DEFLATED) as z:
+        ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+        z.writestr("[Content_Types].xml", '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>')
+        z.writestr("_rels/.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r" '
+                   'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+        z.writestr("xl/workbook.xml", '<workbook %s xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                   '<sheets><sheet name="S" sheetId="1" r:id="a"/></sheets></workbook>' % ns)
+        z.writestr("xl/_rels/workbook.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="a" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="s.xml"/>'
+                   '<Relationship Id="b" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="ss.xml"/></Relationships>')
+        z.writestr("xl/ss.xml", "<sst %s><si><t>%s</t></si></sst>" % (ns, "z" * 1000000))
+        cells = "".join('<row r="%d"><c r="A%d" t="s"><v>0</v></c></row>' % (r, r) for r in range(1, 3001))
+        arrays = "".join('<row r="%d"><c r="B%d"><f t="array" ref="B%d:XFD1048576">1</f><v>1</v></c></row>' % (r, r, r)
+                         for r in range(3001, 3101))
+        z.writestr("xl/s.xml", "<worksheet %s><sheetData>%s%s</sheetData></worksheet>" % (ns, cells, arrays))
+    start = time.time()
+    rc, out, err = dump(xlsx)
+    check("bounded shared strings", rc in (0, 10) and time.time() - start < 120, "exit %d %.1f s %s" % (rc, time.time() - start, err[-300:]))
+    check("bounded shared strings: said so", "used too often" in out, out[:300])
+
+
 # ---- Which reader a file goes to ----
 
 def test_routing(work):
@@ -539,6 +958,12 @@ def test_routing(work):
     check("macro-enabled: read without its macros", rc == 0 and "book format=xlsm" in out and "Macros (Visual Basic)" in out, out[:400] + err)
     rc, out, err = run([OWCONVERT, os.path.join(FIX, "book-openpyxl.xlsx"), os.path.join(work, "saved.xlsm")])
     check("never saved as .xlsm", rc != 0, out + err)
+    for name, fmt in (("book.fods", "fods"), ("book-lo.ods", "ods"), ("csv/quoting.csv", "csv")):
+        rc, out, err = dump(os.path.join(FIX, name))
+        check("by its contents: " + name, out.startswith("book format=" + fmt), out[:200])
+    rc, out, err = run([OWCONVERT, "--formats"])
+    for fmt in ("xlsx", "xlsm", "ods", "fods", "csv"):
+        check("OWConvert lists " + fmt, re.search(r"^%s\s+yes" % fmt, out, re.M) is not None, out)
 
 
 # ---- Damaged files ----
@@ -611,8 +1036,21 @@ def main():
         hand = test_hand_xlsx(work)
         strict = test_strict_and_bare(work)
         generated = test_generated_xlsx()
+        ods_written = test_xls_to_ods(work)
+        test_ods_readers(ods_written, written)
+        test_xlsx_ods_xlsx(work, written + [hand, os.path.join(FIX, "book-openpyxl.xlsx"), os.path.join(FIX, "book-lo.xlsx")])
+        hand_ods = test_hand_ods(work)
+        test_generated_ods()
+        test_ods_round_trips(work, [hand_ods, os.path.join(FIX, "book-lo.ods"), os.path.join(FIX, "book-odfpy.ods"),
+                                    os.path.join(FIX, "book.fods")])
+        csvs = test_csv(work)
+        test_bombs(work)
         test_routing(work)
         test_damaged([hand, strict] + generated + written[:1], "xlsx")
+        test_damaged([hand_ods, os.path.join(FIX, "book-lo.ods"), os.path.join(FIX, "book-odfpy.ods")]
+                     + [p for p in ods_written if p.endswith(".ods")][:1], "ods")
+        test_damaged([os.path.join(FIX, "book.fods")] + [p for p in ods_written if p.endswith("book.xls.fods")], "fods")
+        test_damaged(csvs, "csv")
     if failures:
         print("%d check(s) of XLSX, ODS and CSV failed" % len(failures))
         sys.exit(1)

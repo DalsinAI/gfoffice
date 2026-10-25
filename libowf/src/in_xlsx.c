@@ -33,7 +33,9 @@
 #define MAX_ROW 1048575UL
 #define MAX_COL 16383UL
 #define MAX_ARRAYS 4096                  /* array formulas a sheet spreads over their ranges */
-#define MAX_ARRAY_CELLS 65536UL          /* cells a sheet's array formulas may add */
+#define MAX_ARRAY_CELLS 262144UL         /* cells the book's array formulas may add */
+#define TEXT_BUDGET (64UL * 1024 * 1024) /* bytes of shared strings copied into cells: a short
+                                            file must not ask for gigabytes */
 #define PART_NAME 512
 
 /* ---- Small helpers ---- */
@@ -447,6 +449,7 @@ typedef struct {
     int npending, cappending;
     xarray *arrays;
     int narrays, caparrays;
+    unsigned long array_budget, text_budget;
 } xlsx;
 
 static void *grow(xlsx *x, void *items, int count, int *capacity, size_t size)
@@ -1076,10 +1079,14 @@ static void commit_cell(xlsx *x, cellstate *cs)
     }
     if (!strcmp(cs->type, "s")) {
         long i = xlong(v, -1, 0, 0x7FFFFFFFL);
-        if (cs->has_v && i >= 0 && (unsigned long)i < x->nsst)
-            set_text(x, c, (const char *)x->sst.data + x->sst_at[i], strlen((const char *)x->sst.data + x->sst_at[i]));
-        else
-            set_text(x, c, "", 0);
+        const char *t = cs->has_v && i >= 0 && (unsigned long)i < x->nsst ? (const char *)x->sst.data + x->sst_at[i] : "";
+        size_t n = strlen(t);
+        if (n > x->text_budget) {
+            owf_report_add(x->report, OWF_NOTE_LOST, "Some cells' text was left out: the shared strings were used too often");
+            n = 0;
+        }
+        x->text_budget -= n;
+        set_text(x, c, t, n);
     } else if (!strcmp(cs->type, "inlineStr")) {
         if (cs->is.length)
             set_text(x, c, (const char *)cs->is.data, unescape_xstring((char *)cs->is.data, cs->is.length));
@@ -1185,7 +1192,7 @@ static void commit_cell(xlsx *x, cellstate *cs)
  * formulas on every cell of their ranges, as the model keeps them. */
 static void finish_sheet(xlsx *x)
 {
-    unsigned long budget = MAX_ARRAY_CELLS;
+    unsigned long *budget = &x->array_budget;
     int i, k;
     for (i = 0; i < x->npending && !x->failed; i++) {
         const xpending *p = &x->pending[i];
@@ -1206,8 +1213,8 @@ static void finish_sheet(xlsx *x)
         unsigned long area = (unsigned long)(a->range.last_row - a->range.first_row + 1) *
                              (a->range.last_col - a->range.first_col + 1);
         int lo = 0, hi = sh->ncells;
-        if (area <= budget) {            /* cells the file left out are made, empty, up to a budget */
-            budget -= area;
+        if (area <= *budget) {           /* cells the file left out are made, empty, up to a budget */
+            *budget -= area;
             unsigned r, col;
             for (r = a->range.first_row; r <= a->range.last_row && !x->failed; r++)
                 for (col = a->range.first_col; col <= a->range.last_col; col++)
@@ -1687,6 +1694,8 @@ static int import_xlsx(const unsigned char *data, size_t length, owf_book *book,
     x->book = book;
     x->report = report;
     x->zip = &zip;
+    x->array_budget = MAX_ARRAY_CELLS;
+    x->text_budget = TEXT_BUDGET;
     owf_buf_init(&x->sst);
     if (!main_part(&zip, x->wb_part, sizeof x->wb_part))
         result = OWF_ERR_FORMAT;
