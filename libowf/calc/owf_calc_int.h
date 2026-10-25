@@ -113,6 +113,8 @@ typedef struct calc_ctx {
     int dmy;                     /* how text dates read: OWF_CALC_DMY or _MDY */
     int actx;                    /* the function being called is in an array context */
     long used_rows, used_cols;   /* the book's last row and column used, plus 1; -1: not known yet */
+    int pending;                 /* OFFSET or INDIRECT reached a formula this recalc has still to work
+                                    out: this one waits for it (calc_note_reach) */
 } calc_ctx;
 
 /* A context for a formula in (sheet, row, col). */
@@ -126,6 +128,12 @@ double calc_now(calc_ctx *ctx);
 /* The engine's note of the book's rows and columns used ([0], [1]; -1 not
  * known), kept between formulas; NULL without an engine. */
 long *calc_used_cache(owf_calc *calc);
+/* OFFSET and INDIRECT make references as they are worked out, so the
+ * dependency index cannot know them (they are volatile, as in Excel): each
+ * says here what it reached. A formula there that this recalc has still to
+ * work out sets ctx->pending, and the formula is worked out again after it
+ * (once nothing else can go, it is worked out as it is). */
+void calc_note_reach(calc_ctx *ctx, const calc_area *a);
 /* The bytes the engine holds (its nodes, index and code), for the tests. */
 size_t calc_memory(const owf_calc *calc);
 

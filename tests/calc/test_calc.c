@@ -592,6 +592,269 @@ static void test_function_coverage(void)
     }
 }
 
+/* ---- The second batch of functions ----
+ *
+ * tests/calc/fn2_cases.h holds the cells they read and the cases, with
+ * expected values that tests/calc/fn2_expect.py works out from the
+ * functions' definitions (make test checks the header is what it makes). */
+
+#include "fn2_cases.h"
+
+static void test_functions2(void)
+{
+    size_t i;
+    fresh();
+    for (i = 0; i < sizeof fn2_data / sizeof fn2_data[0]; i++)
+        CHECK(put_in(fn2_data[i].sheet, fn2_data[i].cell, fn2_data[i].input) == OWF_OK, "fn2 data %s", fn2_data[i].cell);
+    for (i = 0; i < sizeof fn2_hidden_rows / sizeof fn2_hidden_rows[0]; i++)
+        owf_sheet_set_row(&book->sheets[0], fn2_hidden_rows[i] - 1, 0, 1);
+    recalc();
+    for (i = 0; i < sizeof fn2_cases / sizeof fn2_cases[0]; i++) {
+        const char *f = fn2_cases[i].formula;
+        if (fn2_cases[i].tol == 0) {
+            EVAL(f, fn2_cases[i].want);
+        } else {
+            /* a number within tol (relative) of the expected one */
+            double want = strtod(fn2_cases[i].want, NULL), got = 0;
+            owf_cell res;
+            char shown[512];
+            int e = owf_calc_evaluate(calc, 0, 99, 25, f, &res), ok;
+            show(&res, shown, sizeof shown);
+            if (e == OWF_OK && res.type == OWF_VALUE_NUMBER)
+                got = res.number;
+            ok = e == OWF_OK && res.type == OWF_VALUE_NUMBER &&
+                 fabs(got - want) <= fn2_cases[i].tol * (want == 0 ? 1 : fabs(want));
+            CHECK(ok, "%s: got %s (%.17g), want %s (to %g)", f, shown, got, fn2_cases[i].want, fn2_cases[i].tol);
+            owf_free(res.text);
+        }
+    }
+}
+
+/* The table is in order (the compiler finds a name by halves), every
+ * function in it is found by its name, and each has a case in one of the
+ * two case tables. */
+static int has_case(const char *name, const char *formula)
+{
+    size_t n = strlen(name);
+    const char *p = formula;
+    while ((p = strstr(p, name)) != NULL) {
+        if ((p == formula || !((p[-1] >= 'A' && p[-1] <= 'Z') || p[-1] == '.')) && p[n] == '(')
+            return 1;
+        p++;
+    }
+    return 0;
+}
+
+static void test_function_table(void)
+{
+    int i, count = calc_function_count();
+    size_t k;
+    CHECK(count >= 270, "%d functions", count);
+    for (i = 0; i < count; i++) {
+        const calc_function *f = calc_function_at(i);
+        int found = 0;
+        if (i)
+            CHECK(strcmp(calc_function_at(i - 1)->name, f->name) < 0, "table order: %s before %s",
+                  calc_function_at(i - 1)->name, f->name);
+        CHECK(calc_function_find(f->name, strlen(f->name)) == i, "find %s", f->name);
+        CHECK(f->min <= f->max && strlen(f->args) > 0, "%s: arguments", f->name);
+        for (k = 0; k < sizeof function_cases / sizeof function_cases[0] && !found; k++)
+            found = has_case(f->name, function_cases[k].formula);
+        for (k = 0; k < sizeof fn2_cases / sizeof fn2_cases[0] && !found; k++)
+            found = has_case(f->name, fn2_cases[k].formula);
+        CHECK(found, "no test case for %s", f->name);
+    }
+    CHECK(calc_function_find("NORM.S.DIST", 11) >= 0 && calc_function_find("norm.s.dist", 11) >= 0, "dotted names");
+    CHECK(calc_function_find("NORM.S", 6) < 0, "a name's start is not the name");
+    fresh();
+    EVAL("_xlfn.STDEV.S({1,2,3,4})", "1.29099444873581");
+    EVAL("_xlfn.XLOOKUP(2,{1,2},{\"a\",\"b\"})", "\"b\"");
+    EVAL("_xlfn.CEILING.MATH(2.5)", "3");
+}
+
+/* OFFSET and INDIRECT reach cells the dependency index does not know: a
+ * formula they reach that is still to be worked out goes first. */
+static void test_dynamic_refs(void)
+{
+    owf_cell *c;
+    unsigned r;
+    fresh();
+    /* the readers are typed first, so they would be worked out first */
+    put("C1", "=SUM(OFFSET(A1,0,1))");
+    put("D1", "=INDIRECT(\"B\"&ROW())+1");
+    put("E1", "=C1*2");
+    put("F1", "=OFFSET(A1,0,6)");
+    put("G1", "=F1+1");          /* F1 reads G1 through OFFSET and G1 reads F1: a loop no index sees */
+    put("B1", "=A1*10");
+    put("A1", "1");
+    recalc();
+    EXPECT("B1", "10");
+    EXPECT("C1", "10");
+    EXPECT("D1", "11");
+    EXPECT("E1", "20");
+    CHECK(owf_calc_state(calc, 0, 0, 2) & OWF_CALC_VOLATILE, "OFFSET is volatile");
+    put("A1", "2");
+    recalc();
+    EXPECT("C1", "20");
+    EXPECT("D1", "21");
+    EXPECT("E1", "40");
+    /* a change OFFSET reaches, with no static dependency: volatile, so it follows */
+    put("B1", "7");
+    recalc();
+    EXPECT("C1", "7");
+    EXPECT("E1", "14");
+    /* a full recalc changes nothing */
+    CHECK(owf_calc_recalc_all(calc) == OWF_OK, "recalc all");
+    EXPECT("C1", "7");
+    EXPECT("D1", "8");
+    /* a chain through INDIRECT, typed backwards */
+    put("A10", "=INDIRECT(\"A11\")+1");
+    put("A11", "=INDIRECT(\"A12\")+1");
+    put("A12", "=A13+1");
+    put("A13", "5");
+    recalc();
+    EXPECT("A10", "8");
+    EXPECT("A11", "7");
+    /* defined names through INDIRECT */
+    owf_book_add_name(book, "Prices", -1, "Sheet1!$A$10:$A$13", 0);
+    owf_book_add_name(book, "Corner", 0, "$A$13", 0);
+    owf_calc_rebuild(calc);
+    recalc();
+    EVAL("SUM(INDIRECT(\"Prices\"))", "26");
+    EVAL("SUM(INDIRECT(\"prices\"))", "26");
+    EVAL("INDIRECT(\"Corner\")", "5");
+    EVAL("INDIRECT(\"NoSuchName\")", "#REF!");
+    /* array formulas: the cells of the range each show their element */
+    for (r = 0; r < 3; r++) {
+        c = owf_sheet_cell(&book->sheets[0], 20 + r, 0, 1);
+        owf_cell_set_formula(c, "TRANSPOSE({1,2,3})");
+        c->flags |= OWF_CELL_ARRAY;
+        c = owf_sheet_cell(&book->sheets[0], 20 + r, 1, 1);
+        owf_cell_set_formula(c, "MMULT({1,2;3,4;5,6},{1;1})");
+        c->flags |= OWF_CELL_ARRAY;
+        c = owf_sheet_cell(&book->sheets[0], 20 + r, 2, 1);
+        owf_cell_set_formula(c, "FREQUENCY({1,5,7,9},{4,8})");
+        c->flags |= OWF_CELL_ARRAY;
+        c = owf_sheet_cell(&book->sheets[0], 20 + r, 3, 1);
+        owf_cell_set_formula(c, "MODE.MULT({3,1,1,3,2})");
+        c->flags |= OWF_CELL_ARRAY;
+    }
+    owf_calc_rebuild(calc);
+    recalc();
+    EXPECT("A21", "1");
+    EXPECT("A22", "2");
+    EXPECT("A23", "3");
+    EXPECT("B21", "3");
+    EXPECT("B22", "7");
+    EXPECT("B23", "11");
+    EXPECT("C21", "1");
+    EXPECT("C22", "2");
+    EXPECT("C23", "1");
+    EXPECT("D21", "3");
+    EXPECT("D22", "1");
+    EXPECT("D23", "#N/A");
+}
+
+/* CELL("format") from a cell's number format, as Excel's table gives it. */
+static void test_cell_format(void)
+{
+    static const struct {
+        const char *format, *code;
+    } formats[] = {
+        { "General", "G" }, { "0", "F0" }, { "0.00", "F2" }, { "#,##0", ",0" }, { "#,##0.00", ",2" },
+        { "$#,##0_);($#,##0)", "C0" }, { "$#,##0_);[Red]($#,##0)", "C0-" }, { "$#,##0.00_);($#,##0.00)", "C2" },
+        { "0%", "P0" }, { "0.00%", "P2" }, { "0.00E+00", "S2" }, { "# ?/?", "G" }, { "m/d/yy", "D4" },
+        { "d-mmm-yy", "D1" }, { "d-mmm", "D2" }, { "mmm-yy", "D3" }, { "mm/dd", "D5" }, { "h:mm AM/PM", "D7" },
+        { "h:mm:ss AM/PM", "D6" }, { "h:mm", "D9" }, { "h:mm:ss", "D8" }, { "(0.00)", "F2()" },
+    };
+    size_t i;
+    char f[64], want[64];
+    fresh();
+    for (i = 0; i < sizeof formats / sizeof formats[0]; i++) {
+        owf_cellstyle st;
+        owf_cell *c = owf_sheet_cell(&book->sheets[0], (unsigned)i, 0, 1);
+        owf_cellstyle_init(&st);
+        st.number_format = owf_book_numfmt(book, formats[i].format);
+        c->style = owf_book_style(book, &st);
+        owf_cell_set_number(c, 1);
+        snprintf(f, sizeof f, "CELL(\"format\",A%u)", (unsigned)i + 1);
+        snprintf(want, sizeof want, "\"%s\"", formats[i].code);
+        EVAL(f, want);
+    }
+    EVAL("CELL(\"color\",A7)", "1");
+    EVAL("CELL(\"parentheses\",A22)", "1");
+    /* the prefix of left-aligned text, a column's width */
+    {
+        owf_cellstyle st;
+        owf_cell *c = owf_sheet_cell(&book->sheets[0], 0, 1, 1);
+        owf_cellstyle_init(&st);
+        st.halign = OWF_HALIGN_LEFT;
+        c->style = owf_book_style(book, &st);
+        owf_cell_set_text(c, "x", 1);
+        owf_sheet_set_columns(&book->sheets[0], 2, 2, 20 * 105 + 75, 0, 0);
+    }
+    EVAL("CELL(\"prefix\",B1)", "\"'\"");
+    EVAL("CELL(\"width\",C1)", "20");
+}
+
+/* Every function with random arguments of every kind (numbers past their
+ * ranges, text, booleans, errors, ranges, unions, arrays, left out):
+ * nothing may crash, hang or overflow (make check runs it under ASan and
+ * UBSan). */
+static double seconds(clock_t a, clock_t b);
+static unsigned long seed_fn = 20261025UL;
+
+static unsigned fn_rnd(unsigned n)
+{
+    seed_fn = seed_fn * 1103515245UL + 12345UL;
+    return (unsigned)((seed_fn >> 8) & 0xFFFFFF) % n;
+}
+
+static void test_function_fuzz(void)
+{
+    static const char *const vals[] = {
+        "0", "1", "-1", "2.5", "-2.5", "1E+300", "-1E+300", "1E-300", "0.5", "3", "100", "1048577", "2958466",
+        "-2958466", "4294967296", "1E+15", "\"x\"", "\"\"", "\"2026-10-25\"", "\"0000011\"", "\"R1C1\"",
+        "\"A1:B2\"", "TRUE", "FALSE", "#N/A", "1/0", "A1", "A1:B3", "Z1:Z5", "A:A", "1:1", "{1,2;3,4}",
+        "{1,\"a\",TRUE}", "{-1,2,-3}", "Sheet2!A1:B2", "(A1,B2)", "", "C1:C3", "{0.1,0.2}", "46320", "1E+8",
+        "Sheet1:Sheet2!A1", "-0.5", "0.999999",
+    };
+    int i, k, n, count = calc_function_count();
+    clock_t t0 = clock();
+    fresh();
+    put("A1", "3");
+    put("A2", "-2");
+    put("B1", "x");
+    put("B2", "TRUE");
+    put("C1", "1");
+    put("C2", "2");
+    put("C3", "5");
+    put("A3", "=B1");
+    put("D1", "=OFFSET(C1,1,0)");
+    put("D2", "=INDIRECT(\"D1\")");
+    recalc();
+    for (i = 0; i < count; i++) {
+        const calc_function *f = calc_function_at(i);
+        int spread = f->max - f->min > 5 ? 5 : f->max - f->min;
+        clock_t tf = clock();
+        for (k = 0; k < 40; k++) {
+            char formula[600];
+            int argc = f->min + (int)fn_rnd((unsigned)spread + 1);
+            snprintf(formula, sizeof formula, "%s(", f->name);
+            for (n = 0; n < argc; n++) {
+                if (n)
+                    strcat(formula, ",");
+                strcat(formula, vals[fn_rnd(sizeof vals / sizeof vals[0])]);
+            }
+            strcat(formula, ")");
+            (void)eval(formula);
+        }
+        if (getenv("CALC_FN_TIMES") && seconds(tf, clock()) > 0.02)
+            printf("  slow: %s %.3f s\n", f->name, seconds(tf, clock()));
+    }
+    printf("functions: %d of them, 40 random calls each, in %.2f s\n", count, seconds(t0, clock()));
+}
+
 /* ---- Array formulas ---- */
 
 static void test_arrays(void)
@@ -1939,6 +2202,11 @@ int main(int argc, char **argv)
     test_values();
     test_functions();
     test_function_coverage();
+    test_functions2();
+    test_function_table();
+    test_dynamic_refs();
+    test_cell_format();
+    test_function_fuzz();
     test_arrays();
     test_recalc();
     test_circular();

@@ -182,6 +182,7 @@ struct owf_calc {
     unsigned long rand_state;
     long used[2];                /* the book's rows and columns used; -1: not known */
     int circular;
+    int in_recalc;               /* during owf_calc_recalc: calc_note_reach looks */
     int stale;                   /* the index needs a rebuild (memory ran out) */
     int *work;                   /* worklists */
     int nwork, capwork;
@@ -583,6 +584,69 @@ long *calc_used_cache(owf_calc *calc)
     return calc ? calc->used : NULL;
 }
 
+/* A cell an OFFSET or INDIRECT reached: a formula still to be worked out
+ * in this recalc (not the formula's own cell)? */
+static int still_to_do(const owf_calc *calc, const calc_ctx *ctx, int sheet, unsigned row, unsigned col)
+{
+    int id;
+    if (sheet == ctx->sheet && row == ctx->row && col == ctx->col)
+        return 0;
+    id = node_at(calc, sheet, row, col);
+    return id >= 0 && (calc->nodes[id].flags & (NODE_IN_LIST | NODE_DONE)) == NODE_IN_LIST;
+}
+
+/* The first cell at or after (row, col), from cell `lo` on, by halves. */
+static int seek_cell(const owf_sheet *s, int lo, unsigned row, unsigned col)
+{
+    int hi = s->ncells;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        const owf_cell *c = &s->cells[mid];
+        if (c->row < row || (c->row == row && c->col < col))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+void calc_note_reach(calc_ctx *ctx, const calc_area *a)
+{
+    const owf_calc *calc = ctx->calc;
+    int sheet, i;
+    if (!calc || ctx->pending || !calc->in_recalc)
+        return;
+    for (sheet = a->s0; sheet <= a->s1; sheet++) {
+        const owf_sheet *s;
+        if (sheet < 0 || sheet >= calc->book->nsheets)
+            continue;
+        s = &calc->book->sheets[sheet];
+        /* each row's cells from c0 to c1, found by halves (a formula's
+         * cell may not have a value yet, so every cell counts) */
+        i = seek_cell(s, 0, a->r0, a->c0);
+        while (i < s->ncells) {
+            const owf_cell *c = &s->cells[i];
+            if (c->row > a->r1)
+                break;
+            if (c->col < a->c0) {
+                i = seek_cell(s, i, c->row, a->c0);
+                continue;
+            }
+            if (c->col > a->c1) {
+                if (c->row == a->r1)
+                    break;
+                i = seek_cell(s, i, c->row + 1, a->c0);
+                continue;
+            }
+            if (c->formula && still_to_do(calc, ctx, sheet, c->row, c->col)) {
+                ctx->pending = 1;
+                return;
+            }
+            i++;
+        }
+    }
+}
+
 /* ---- Dirty marking ---- */
 
 static void mark_one(owf_calc *calc, int node, void *user)
@@ -644,13 +708,18 @@ static int store(owf_cell *c, const calc_value *in)
     return 1;
 }
 
-static int evaluate(owf_calc *calc, int id)
+/* Works a node out and stores its value. With `wait` (not NULL), a formula
+ * whose OFFSET or INDIRECT reached one still to be worked out keeps its
+ * value and *wait is set. */
+static int evaluate(owf_calc *calc, int id, int *wait)
 {
     calc_node *n = &calc->nodes[id];
     owf_cell *cell = owf_sheet_cell(&calc->book->sheets[n->sheet], n->row, n->col, 0);
     calc_value v;
     calc_ctx ctx;
     int changed;
+    if (wait)
+        *wait = 0;
     if (!cell || (n->flags & OWF_CALC_KEPT))
         return OWF_OK;
     if (n->flags & OWF_CALC_BAD) {
@@ -667,6 +736,10 @@ static int evaluate(owf_calc *calc, int id)
         calc_run(&ctx, &n->prog, &v);
         if (ctx.failed)
             return OWF_ERR_MEMORY;
+        if (ctx.pending && wait) {
+            *wait = 1;
+            return OWF_OK;
+        }
     }
     changed = store(cell, &v);
     if (changed < 0)
@@ -827,7 +900,8 @@ out:
 
 static int recalc(owf_calc *calc, int all)
 {
-    int *list = NULL, *left = NULL, nlist = 0, id, i, done = 0, result = OWF_OK;
+    int *list = NULL, *left = NULL, *waiting = NULL, nlist = 0, nwaiting = 0, id, i, done = 0, result = OWF_OK;
+    int done_before = -1, force = 0, wait;
     ready q;
 
     if (calc->stale && build(calc, 1) != OWF_OK)
@@ -855,13 +929,16 @@ static int recalc(owf_calc *calc, int all)
         return OWF_OK;
     list = malloc((size_t)nlist * sizeof *list);
     left = malloc((size_t)nlist * sizeof *left);
+    waiting = malloc((size_t)nlist * sizeof *waiting);
     q.queue = malloc((size_t)nlist * sizeof *q.queue);
-    if (!list || !left || !q.queue) {
+    if (!list || !left || !waiting || !q.queue) {
         free(list);
         free(left);
+        free(waiting);
         free(q.queue);
         return OWF_ERR_MEMORY;
     }
+    calc->in_recalc = 1;
     q.head = q.tail = 0;
     nlist = 0;
     for (id = 0; id < calc->nnodes; id++) {
@@ -886,12 +963,28 @@ static int recalc(owf_calc *calc, int all)
         while (q.head < q.tail) {
             calc_node *n;
             id = q.queue[q.head++];
-            if ((result = evaluate(calc, id)) != OWF_OK)
+            if ((result = evaluate(calc, id, force ? NULL : &wait)) != OWF_OK)
                 goto out;
+            if (!force && wait) {        /* after what its OFFSET or INDIRECT reached */
+                waiting[nwaiting++] = id;
+                continue;
+            }
             n = &calc->nodes[id];
             n->flags = (unsigned short)((n->flags | NODE_DONE) & ~(unsigned)OWF_CALC_DIRTY);
             done++;
             each_dependent(calc, n->sheet, n->row, n->col, count_out, &q);
+        }
+        force = 0;
+        if (done < nlist && nwaiting) {
+            /* formulas that waited go again; when the last round got none
+               of them done, they are worked out as they are */
+            force = done == done_before;
+            done_before = done;
+            q.head = q.tail = 0;
+            for (i = 0; i < nwaiting; i++)
+                q.queue[q.tail++] = waiting[i];
+            nwaiting = 0;
+            continue;
         }
         if (done < nlist) {
             /* nothing is ready: loops. Those in one get #REF!, then on. */
@@ -929,10 +1022,12 @@ static int recalc(owf_calc *calc, int all)
         }
     }
 out:
+    calc->in_recalc = 0;
     for (i = 0; i < nlist; i++)
         calc->nodes[list[i]].flags &= (unsigned short)~(unsigned)(NODE_IN_LIST | NODE_DONE | NODE_QUEUED);
     free(list);
     free(left);
+    free(waiting);
     free(q.queue);
     calc_arena_reset(&calc->arena);
     return result;

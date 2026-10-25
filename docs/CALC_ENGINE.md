@@ -159,10 +159,11 @@ numbers, and gives the section's colour.
   what shows is not all zeros.
 - Month and day names are English.
 
-## The functions (119)
+## The functions (277)
 
 An unknown function gives `#NAME?` (a file's cell keeps its value, see
-above). These are the engine's, with Excel's names and argument counts:
+above). These are the engine's, with Excel's names and argument counts;
+the first 119 (owf_calc_fn.c):
 
 - **Maths and statistics (56):** ABS, ACOS, ASIN, ATAN, ATAN2, AVERAGE,
   AVERAGEIF, AVERAGEIFS, CEILING, COS, COSH, COUNT, COUNTA, COUNTBLANK,
@@ -206,14 +207,111 @@ Notes:
 - IF and CHOOSE work out all their arguments (Excel only the one it
   picks); the result is the same.
 
+The second batch, 158 more (in files beside owf_calc_fn.c, one for each
+kind, sharing its helpers through owf_calc_fn.h; the table of all of them
+stays in owf_calc_fn.c, in alphabetical order):
+
+- **Maths and trigonometry (32, owf_calc_fnmath.c):** ACOSH, ARABIC,
+  ASINH, ATANH, BASE, CEILING.MATH, CEILING.PRECISE, COMBIN, COMBINA,
+  DECIMAL, FACTDOUBLE, FLOOR.MATH, FLOOR.PRECISE, GCD, ISO.CEILING, LCM,
+  MDETERM, MINVERSE, MMULT, MROUND, MULTINOMIAL, PERMUT, PERMUTATIONA,
+  QUOTIENT, RANDBETWEEN, ROMAN, SERIESSUM, SQRTPI, SUBTOTAL, SUMX2MY2,
+  SUMX2PY2, SUMXMY2.
+- **Statistics (66, owf_calc_fnstat.c):** AVEDEV, AVERAGEA, BINOM.DIST,
+  BINOMDIST, CORREL, COVAR, COVARIANCE.P, COVARIANCE.S, DEVSQ,
+  EXPON.DIST, EXPONDIST, FORECAST, FORECAST.LINEAR, FREQUENCY, GEOMEAN,
+  HARMEAN, INTERCEPT, MAXA, MAXIFS, MINA, MINIFS, MODE, MODE.MULT,
+  MODE.SNGL, NORM.DIST, NORM.INV, NORM.S.DIST, NORM.S.INV, NORMDIST,
+  NORMINV, NORMSDIST, NORMSINV, PEARSON, PERCENTILE, PERCENTILE.EXC,
+  PERCENTILE.INC, PERCENTRANK, PERCENTRANK.EXC, PERCENTRANK.INC, POISSON,
+  POISSON.DIST, QUARTILE, QUARTILE.EXC, QUARTILE.INC, RANK, RANK.AVG,
+  RANK.EQ, RSQ, SLOPE, STANDARDIZE, STDEV.P, STDEV.S, STDEVA, STDEVPA,
+  T.DIST, T.DIST.2T, T.DIST.RT, T.INV, T.INV.2T, TDIST, TINV, TRIMMEAN,
+  VAR.P, VAR.S, VARA, VARPA.
+- **Text (7) and logic and information (12, owf_calc_fntext.c):** CONCAT,
+  DOLLAR, FIXED, NUMBERVALUE, TEXTJOIN, UNICHAR, UNICODE; CELL, ERROR.TYPE,
+  IFS, ISEVEN, ISFORMULA, ISODD, ISREF, SHEET, SHEETS, SWITCH, TYPE, XOR.
+- **Dates and times (14, owf_calc_fndate.c):** DATEDIF, DATEVALUE, DAYS,
+  DAYS360, EDATE, EOMONTH, ISOWEEKNUM, NETWORKDAYS, NETWORKDAYS.INTL,
+  TIMEVALUE, WEEKNUM, WORKDAY, WORKDAY.INTL, YEARFRAC.
+- **Lookup and reference (10, owf_calc_fnref.c):** ADDRESS, AREAS,
+  FORMULATEXT, HYPERLINK, INDIRECT, LOOKUP, OFFSET, TRANSPOSE, XLOOKUP,
+  XMATCH.
+- **Money (17, owf_calc_fnfin.c):** CUMIPMT, CUMPRINC, DB, DDB, EFFECT,
+  FVSCHEDULE, IPMT, IRR, MIRR, NOMINAL, NPER, PPMT, RATE, SLN, SYD, XIRR,
+  XNPV.
+
+Notes on the second batch (where Excel's documentation and OpenFormula
+differ, the engine follows Excel's, as the .xlsx files expect):
+
+- **OFFSET and INDIRECT** are volatile, as in Excel. The references they
+  make are not in the dependency index, so each tells the engine what it
+  reached (`calc_note_reach`): when that holds a formula this recalc has
+  still to work out, the formula waits and goes again after it; a round in
+  which none of the waiting ones can go works them out as they are (a loop
+  through INDIRECT, which Excel would call circular). INDIRECT reads A1
+  text (with sheets, 3-D, whole rows and columns, and defined names that
+  stand for a reference) and R1C1 text (`R2C3`, `R[-1]C`, `C2`, `R1:R3`).
+- **Distributions** are our own from their definitions, with only `exp`,
+  `log`, `sqrt`, `pow` and the trigonometric functions (the Amiga's maths
+  library has no `erf` or `lgamma`): log gamma by Stirling's series after
+  the recurrence; erfc by its series and continued fraction; Student's t
+  through the regularised incomplete beta function's continued fraction
+  (DLMF 8.17.22, Lentz's method); NORM.S.INV from Abramowitz and Stegun
+  26.2.23 refined by Halley's method, T.INV by Newton's method in a
+  bracket. The t functions truncate the degrees of freedom, as Excel's.
+  The binomial is exact as far as the binomial coefficient fits a double
+  (n up to 1000), then through the incomplete beta function; the
+  cumulative Poisson sums out from its largest term (past a mean of 10^8,
+  the normal approximation).
+- **RATE, IRR, XIRR** use Newton's method from the guess (10%) to a step
+  under 1e-10, with Excel's documented limits of 20, 20 and 100 tries;
+  past them, `#NUM!`. RATE works on its equation divided by
+  ((1+r)^n - 1)/r (a payment), which is nearly straight for long loans: a
+  30-year loan converges in four steps from 10%.
+- **DAYS360** (US): a start on its month's last day is the 30th; an end on
+  the 31st is the 30th when the start is the 30th, as Excel's
+  documentation gives it. **YEARFRAC** bases 0 and 1 follow Excel's
+  behaviour as OpenFormula describes it (the February rules of 30/360,
+  and actual/actual's 365, 366 or the years' average). **DATEDIF**'s "MD"
+  can be negative, as Excel's documentation warns.
+- **SUBTOTAL** passes over cells holding SUBTOTAL or AGGREGATE; 101 to 111
+  pass over hidden rows (the book keeps no filters, so 1 to 11 count
+  every row).
+- **ROMAN**'s forms 1 to 4 allow subtractive pairs one numeral smaller at
+  each step (499 is CDXCIX, LDVLIV, XDIX, VDIV, ID, as Excel's
+  documentation shows). **DOLLAR** is Excel's United States form,
+  "$1,234.57" and "($1,234.57)"; **NUMBERVALUE**'s separators default to
+  "." and ",".
+- **CELL** knows "address", "col", "row", "contents", "type", "format",
+  "prefix", "width", "protect", "parentheses", "color" and "filename"; the
+  book's file name is not known to the engine, so "filename" is "" (as
+  Excel gives for a book not saved) and an address on another sheet has
+  its sheet but no book.
+- **XLOOKUP** and **XMATCH** have all four match modes and search modes;
+  XLOOKUP gives a reference when its return array is one
+  (`SUM(XLOOKUP(...))` works). MMULT, MINVERSE, TRANSPOSE, FREQUENCY and
+  MODE.MULT give arrays: an array formula's cells show them, and INDEX,
+  SUM and the like take them in any formula (the engine has no spilled
+  arrays yet).
+- MAXIFS, MINIFS, SUMIFS and AVERAGEIFS want their first range the size
+  of the criteria ranges (else `#VALUE!`, as Excel).
+
 ## Tests
 
 `make calc-test` (and `make calc-check` under AddressSanitizer and
 UBSan; both in `make test` and `make check`) runs `tests/calc/test_calc.c`:
 
 - the parser (what parses, what does not, precedence, nesting limits);
-- every function, with its errors, from a case table (the test checks
-  that each function in the table has a case);
+- every function, with its errors, from case tables: the first batch's
+  in `test_calc.c`, the second's in `tests/calc/fn2_cases.h`, whose
+  expected values `tests/calc/fn2_expect.py` works out from the
+  functions' definitions with Python's math, statistics, fractions,
+  decimal and datetime (no spreadsheet program's output; `make test`
+  checks the header is what the script makes). The test checks that the
+  table is in order and every function in it has a case; it also calls
+  every function with random arguments of every kind, under ASan and
+  UBSan in `make check`;
 - values, conversions and error rules; references, names, implicit
   intersection, array formulas;
 - recalculation (only what reads a change is worked out again; chains of
@@ -259,9 +357,11 @@ on 1,000 rows, with running SUMs, VLOOKUPs over the 1,000 rows and
 COUNTIFs over a column) are worked out in about 0.14 s and parsed in under
 0.01 s; 10,000 light ones (arithmetic, a SUM of the row, IF, ROUND) in
 about 0.03 s. The engine holds about 2 MB for 10,000 formulas (nodes,
-index and code; less with the Amiga's 4-byte pointers). Its code is about
-120 KB at -O2 and 85 KB at -Os on x86-64, with 5 KB of tables (`size` of
-the five objects); the 68040 build needs the stove to measure. The largest
+index and code; less with the Amiga's 4-byte pointers). With its 277
+functions its code is about 225 KB at -O2 and 160 KB at -Os on x86-64,
+with 11.5 KB of tables (`size` of the eleven objects; the first 119
+functions' engine was 91 KB and 5 KB at -Os); the 68040 build needs the
+stove to measure. The second batch did not change the speeds above. The largest
 stack frame is `calc_format`'s, under 1 KB; parsing goes about 400 bytes
 deeper for each defined name inside a name (eight at most).
 
@@ -269,7 +369,13 @@ deeper for each defined name inside a name (eight at most).
 
 - The engine's calls in owf.library (`owf_lib.sfd`).
 - Typing an array formula (Ctrl+Shift+Enter); Excel 365's spilled arrays.
-- R1C1 references, table references, INDIRECT, OFFSET and the other
-  functions Excel has and the engine does not.
+- R1C1 references in formulas (INDIRECT reads R1C1 text), table
+  references, and the functions Excel has and the engine does not: those
+  that need spilled arrays (SORT, FILTER, UNIQUE, SEQUENCE, RANDARRAY,
+  TEXTSPLIT, VSTACK, LET, LAMBDA...), AGGREGATE, the engineering functions
+  (DEC2HEX, CONVERT...), the database functions (DSUM...), VDB, the
+  bond and security functions (PRICE, YIELD, ACCRINT...), and the
+  chi-squared, F, gamma, beta and lognormal distributions (the incomplete
+  beta function they need is there).
 - 3-D references are not adjusted when rows or columns go in or out.
 - A defined name changed by the program needs `owf_calc_rebuild`.
