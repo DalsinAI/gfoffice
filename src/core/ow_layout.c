@@ -101,6 +101,7 @@ static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spaci
     s->font_size = TW(size);
     if (flags & (OWF_SUPER | OWF_SUB)) s->font_size = s->font_size * 2 / 3;
     s->line_height = line_spacing > 100 ? (ol_unit)((long)TW(size) * 12 / 10 * line_spacing / 100) : 0;
+    if (OWF_LINE_IS_HEIGHT(line_spacing)) s->line_height = TW(OWF_LINE_HEIGHT(line_spacing));   /* 2.0.18 */
     if (colour == OWF_COLOUR_AUTO && doc->base.colour != OWF_COLOUR_AUTO) colour = doc->base.colour;
     s->foreground = colour == OWF_COLOUR_AUTO ? 0xff000000u : argb(colour);
     if (flags & OWF_BOLD) text |= OL_TEXT_BOLD;
@@ -140,6 +141,16 @@ static void para_style(const owf_doc *doc, const owf_para *p, ol_style *s, ol_bo
 
     ol_box_style_init(b);
     b->flags = OL_BOX_EMPTY_LINE;
+    if (OWF_LINE_IS_HEIGHT(f->line_spacing)) {
+        /* 2.0.18: Word's exact line spacing, every line so high (OpenLayout 0.7), or its at least */
+        ol_unit h = TW(OWF_LINE_HEIGHT(f->line_spacing));
+        if (OWF_LINE_IS_EXACT(f->line_spacing)) {
+            s->line_height = h;
+            b->flags |= OL_BOX_EXACT_LINES;
+        } else if (h > s->line_height) {
+            s->line_height = h;
+        }
+    }
     if (f->page_break_before) b->flags |= OL_BOX_PAGE_BREAK_BEFORE;
     if (f->heading > 0) b->flags |= OL_BOX_KEEP_WITH_NEXT;
     b->text_indent = TW(f->indent_first);
@@ -292,7 +303,7 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
 
     if (!block) return NULL;
     para_style(doc, p, &s, &b);
-    if (l && l->measure && spacing <= 100) {
+    if (l && l->measure && spacing > 0 && spacing <= 100) {
         /* 2.0.11: a single spaced empty line (the one a cover's pictures and text boxes sit in) as tall as a
          * line of text in its first run's font, as the measure gives it, not 1.2 times the size: typing in it
          * then moves nothing below it, nor what is anchored there */
