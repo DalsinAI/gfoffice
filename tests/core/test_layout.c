@@ -342,7 +342,7 @@ static int story_has(const owf_story *story, const char *s)
 
 /* tests/core/fixtures/cover.docx (make_cover_docx.py): a Word cover page, a picture the size of the page
  * behind the text and four text boxes in front of it, each where Word puts it; the body's lines where they
- * would be without them (2.0.6). */
+ * would be without them (2.0.8). */
 static void cover_checks(const ow_layout *l, const owf_doc *doc)
 {
     const ol_document *od = ow_layout_body(l);
@@ -433,6 +433,50 @@ static void cover_checks(const ow_layout *l, const owf_doc *doc)
     CHECK(!ow_layout_hit(l, 0, pg->margin_left + 400 * tw, y, &pos) || pos.paragraph <= 1);
 }
 
+/* tests/core/fixtures/cover-wpg.docx (make_cover_docx.py --wpg): the cover as Word writes it in a document
+ * with a group anywhere (the plan's): every drawing's Choice requires wpg, the drawing namespaces are declared
+ * on the elements, the picture is aligned to the page's right and placed 1536 twips above its paragraph, and a
+ * filled band has no text (2.0.8). The lab's cover was blank: no Choice was read, and the VML fallbacks aren't. */
+static void cover_wpg_checks(const ow_layout *l, const owf_doc *doc)
+{
+    const ol_document *od = ow_layout_body(l);
+    const ol_page *pg = ow_layout_page(l);
+    const owf_frame *f = doc->frames;
+    const ol_display_op *op, *pic;
+    size_t at_pic = 0, at = 0, first = 0, count = 0;
+    ol_unit tw = OL_UNITS_PER_TWIP;
+    int n;
+
+    CHECK(doc->nframes == 7);
+    if (doc->nframes != 7) return;
+    CHECK(doc->body.nparas == 5 && doc->body.paras[0].nruns == 6);
+    CHECK(f[0].image >= 0 && f[0].behind && f[0].x_from == OWF_FROM_PAGE && f[0].x_place == OWF_PLACE_END &&
+          f[0].y_from == OWF_FROM_PARAGRAPH && f[0].y_place == OWF_PLACE_AT && f[0].y == -1536 &&
+          f[0].width == 11931 && f[0].height == 16968 && !f[0].story.nparas);
+    CHECK(f[1].story.nparas == 1 && f[2].story.nparas == 1 && f[3].story.nparas == 1 && f[4].story.nparas == 1);
+    CHECK(f[5].image < 0 && !f[5].story.nparas && f[5].fill == OWF_SHADE(0xC00000) && f[5].width == 11906 &&
+          f[5].height == 360);
+    CHECK(f[6].image >= 0 && f[6].wrap == OWF_WRAP_SQUARE);
+    CHECK(!story_has(&doc->body, "Cover Title") && !story_has(&doc->body, "October"));
+
+    CHECK(ow_layout_page_count(l) == 2);
+    CHECK(text_on(od, 1, "Introduction", NULL) != NULL);
+    /* the picture first on page 1: its right edge at the page's, its top 1536 twips above the top margin */
+    pic = nth_op(od, 0, OL_OP_IMAGE, 0, &at_pic);
+    CHECK(ol_display_page_range(od, 0, &first, &count) && pic && at_pic == first &&
+          pic->u.image.image_id == f[0].image);
+    CHECK(pic && pic->u.image.bounds.x == pg->width - 11931 * tw && pic->u.image.bounds.y == (1440 - 1536) * tw &&
+          pic->u.image.bounds.width == 11931 * tw && pic->u.image.bounds.height == 16968 * tw);
+    /* the text boxes and the band in front of it */
+    op = text_on(od, 0, "Cover Title", &at);
+    CHECK(op && at > at_pic && op->u.text.bounds.x == pg->margin_left + 144 * tw);
+    CHECK(text_on(od, 0, "A plan", NULL) && text_on(od, 0, "Version", NULL) && text_on(od, 0, "25 October", NULL));
+    op = nth_op(od, 0, OL_OP_FILL_RECT, 0, &at);
+    for (n = 0; op && op->u.fill_rect.argb != 0xffc00000u; ) op = nth_op(od, 0, OL_OP_FILL_RECT, ++n, &at);
+    CHECK(op && at > at_pic && op->u.fill_rect.bounds.x == 0 && op->u.fill_rect.bounds.y == 0 &&
+          op->u.fill_rect.bounds.width == pg->width && op->u.fill_rect.bounds.height == 360 * tw);
+}
+
 static void test_sample(const char *path)
 {
     owf_doc *doc = NULL;
@@ -467,6 +511,7 @@ static void test_sample(const char *path)
         if (strstr(path, "Tata.docx")) CHECK(lists > 0);
         if (strstr(path, "contents.docx")) contents_checks(l, doc);
         if (strstr(path, "cover.docx")) cover_checks(l, doc);
+        if (strstr(path, "cover-wpg.docx")) cover_wpg_checks(l, doc);
         printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
                checked, lists);
         ow_layout_free(l);

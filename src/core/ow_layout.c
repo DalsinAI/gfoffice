@@ -141,7 +141,7 @@ static void para_style(const owf_doc *doc, const owf_para *p, ol_style *s, ol_bo
 static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, const owf_story *story,
                      int record, const field_values *fv);
 
-/* 2.0.6: where a frame goes, across (x) or down (y): OpenLayout 0.4's anchor (from the page, its margins or
+/* 2.0.8: where a frame goes, across (x) or down (y): OpenLayout 0.4's anchor (from the page, its margins or
  * the paragraph) and the offset from there, its alignment worked out against the area it is aligned in. */
 static ol_unit frame_at(const ol_page *pg, const owf_frame *fr, int across, uint32_t *anchor)
 {
@@ -170,7 +170,7 @@ static ol_unit frame_at(const ol_page *pg, const owf_frame *fr, int across, uint
     }
 }
 
-/* 2.0.6: a picture or a text box placed on the page (owf_frame, Word's wp:anchor) as OpenLayout's anchored
+/* 2.0.8: a picture or a text box placed on the page (owf_frame, Word's wp:anchor) as OpenLayout's anchored
  * frame, in the paragraph it is anchored to: behind the text or in front of it, its picture filling it, a
  * text box's paragraphs inside its insets. It moves no line and no page break; text isn't wrapped round it. */
 static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *block, const owf_frame *fr)
@@ -293,7 +293,7 @@ static ol_node *add_paragraph(ow_layout *l, const owf_doc *doc, ol_document *od,
         ol_node_set_style(n, &rs);
         if (!remember(l, n, index, j)) return NULL;
     }
-    /* 2.0.6: the frames anchored here (an empty run each above), after the runs, so run j stays node
+    /* 2.0.8: the frames anchored here (an empty run each above), after the runs, so run j stays node
      * block + 1 + j; the body's only (l), so a text box's own frames and a header's are left out */
     for (j = 0; l && j < p->nruns; ++j)
         if (p->runs[j].kind == OWF_RUN_FRAME && p->runs[j].image >= 0 && p->runs[j].image < doc->nframes &&
@@ -403,7 +403,7 @@ ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure, void *m
     l->doc = doc;
     l->measure = measure;
     l->measure_userdata = measure_userdata;
-    pg = &doc->page;                                 /* 2.0.6: first, for the frames placed on it */
+    pg = &doc->page;                                 /* 2.0.8: first, for the frames placed on it */
     l->page.width = TW(pg->width > 0 ? pg->width : 11906);
     l->page.height = TW(pg->height > 0 ? pg->height : 16838);
     l->page.margin_top = TW(pg->margin_top);

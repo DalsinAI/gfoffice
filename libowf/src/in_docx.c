@@ -880,13 +880,17 @@ static int import_drawing(docx *d, const owf_xml_node *drawing, const owf_charfm
 static void run_children(docx *d, const owf_xml_node *r, const owf_charfmt *fmt);
 static void start_para(docx *d, const owf_parafmt *pf);
 
-/* mc:AlternateContent's branch to read: the first mc:Choice whose Requires names only markup we read
- * (wps: Word 2010's shapes and text boxes; the others add to what we read without changing it), else the
- * mc:Fallback. */
+/* mc:AlternateContent's branch to read: the first mc:Choice whose Requires names only markup we read, else
+ * the mc:Fallback. Word 2010's drawings need wps (shapes and text boxes) or wpg (groups: Word asks for it on
+ * every drawing in a document that has a group anywhere, a picture's too), wp14 and the like add attributes
+ * we can do without; a group itself (wpg:wgp) keeps its first picture (import_anchor). 2.0.8: when no Choice
+ * qualifies and the fallback has no DrawingML of its own (VML only, w:pict, which isn't read), the first
+ * Choice with a w:drawing, read for what we can. */
 static const owf_xml_node *alternate(const docx *d, const owf_xml_node *ac)
 {
-    static const char *const known[] = { "wps", "wp14", "w14", "w15", "w16se", "w16cid", "w16", "a14", NULL };
-    const owf_xml_node *c;
+    static const char *const known[] = { "wps", "wpg", "wpc", "wp14", "w14", "w15", "w16se", "w16cid", "w16cex",
+                                         "w16sdtdh", "w16du", "w16", "a14", NULL };
+    const owf_xml_node *c, *fb = owf_xml_child(ac, NS_MC, "Fallback");
     (void)d;
     for (c = owf_xml_child(ac, NS_MC, "Choice"); c; c = owf_xml_next(c, NS_MC, "Choice")) {
         const char *req = attr_any(c, "Requires"), *p = req;
@@ -894,8 +898,8 @@ static const owf_xml_node *alternate(const docx *d, const owf_xml_node *ac)
         while (ok && *p) {
             size_t n;
             int k, found = 0;
-            while (*p == ' ') p++;
-            for (n = 0; p[n] && p[n] != ' '; n++)
+            while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+            for (n = 0; p[n] && p[n] != ' ' && p[n] != '\t' && p[n] != '\r' && p[n] != '\n'; n++)
                 ;
             for (k = 0; n && known[k]; k++)
                 if (strlen(known[k]) == n && !strncmp(known[k], p, n)) found = 1;
@@ -905,7 +909,11 @@ static const owf_xml_node *alternate(const docx *d, const owf_xml_node *ac)
         if (ok)
             return c;
     }
-    return owf_xml_child(ac, NS_MC, "Fallback");
+    if (!fb || !find_local(fb, "drawing"))
+        for (c = owf_xml_child(ac, NS_MC, "Choice"); c; c = owf_xml_next(c, NS_MC, "Choice"))
+            if (find_local(c, "drawing"))
+                return c;
+    return fb;
 }
 
 static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
