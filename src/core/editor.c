@@ -2032,6 +2032,9 @@ static int paragraph_estimated_height_width(const owf_doc *doc, const owf_para *
     line_height = max_size * 6 / 5;
     if (p->fmt.line_spacing > 0) line_height = line_height * p->fmt.line_spacing / 100;
     if (line_height < 240) line_height = 240;
+    if (OWF_LINE_IS_HEIGHT(p->fmt.line_spacing) &&          /* 2.0.18: exactly, or at least, a height */
+        (OWF_LINE_IS_EXACT(p->fmt.line_spacing) || OWF_LINE_HEIGHT(p->fmt.line_spacing) > line_height))
+        line_height = OWF_LINE_HEIGHT(p->fmt.line_spacing);
     return lines * line_height;
 }
 

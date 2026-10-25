@@ -67,7 +67,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 1.0.6 (10.10.2026)"
+#define VERSION_TEXT "OpenWrite 1.0.7 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -2093,7 +2093,8 @@ static int paragraph_requester(owf_parafmt *fmt)
     ADD_INT(gleft,5,"Left indent (mm)",126,twips_to_mm(fmt->indent_left));
     ADD_INT(gright,6,"Right indent (mm)",152,twips_to_mm(fmt->indent_right));
     ADD_INT(gfirst,7,"First line (mm)",178,twips_to_mm(fmt->indent_first));
-    ADD_INT(gline,8,"Line spacing (%)",204,fmt->line_spacing?fmt->line_spacing:100);
+    /* 2.0.18: a height (Word's exactly or at least) shows as 100 and stays unless the number is changed */
+    ADD_INT(gline,8,"Line spacing (%)",204,OWF_LINE_PERCENT(fmt->line_spacing));
 #undef ADD_INT
     ng.ng_Flags=0; ng.ng_TopEdge=218; ng.ng_Height=20; ng.ng_Width=78; ng.ng_LeftEdge=330;
     ng.ng_GadgetText=(STRPTR)"Apply"; ng.ng_GadgetID=9; last=gok=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
@@ -2115,9 +2116,12 @@ static int paragraph_requester(owf_parafmt *fmt)
         GT_GetGadgetAttrs(gleft,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->indent_left=mm_to_twips((int)v);
         GT_GetGadgetAttrs(gright,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->indent_right=mm_to_twips((int)v);
         GT_GetGadgetAttrs(gfirst,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->indent_first=mm_to_twips((int)v);
-        GT_GetGadgetAttrs(gline,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->line_spacing=(int)v;
-        if (fmt->line_spacing < 50) fmt->line_spacing = 50;
-        if (fmt->line_spacing > 400) fmt->line_spacing = 400;
+        GT_GetGadgetAttrs(gline,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE);
+        if (!OWF_LINE_IS_HEIGHT(fmt->line_spacing) || (int)v != OWF_LINE_PERCENT(fmt->line_spacing)) {
+            fmt->line_spacing=(int)v;
+            if (fmt->line_spacing < 50) fmt->line_spacing = 50;
+            if (fmt->line_spacing > 400) fmt->line_spacing = 400;
+        }
     }
 out:
     if (rw) CloseWindow(rw);

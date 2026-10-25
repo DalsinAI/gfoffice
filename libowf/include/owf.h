@@ -106,7 +106,7 @@ typedef struct {
     int indent_left, indent_right;
     int indent_first;        /* the first line, relative to indent_left */
     int space_before, space_after;
-    int line_spacing;        /* percent: 100 single, 200 double */
+    int line_spacing;        /* percent: 100 single, 200 double; 2.0.18: or a height (OWF_LINE_EXACT, _AT_LEAST) */
     int page_break_before;
     int ntabs;
     owf_tab tabs[OWF_MAX_TABS];
@@ -114,6 +114,17 @@ typedef struct {
     int borders;             /* OWF_BORDER_TOP | _LEFT | _BOTTOM | _RIGHT; 0: none */
     unsigned long border_colour; /* OWF_SHADE(0xRRGGBB); 0: automatic (black) */
 } owf_parafmt;
+
+/* 2.0.18: line spacing as a height, not a percent (Word's lineRule exact and atLeast, ODF's fo:line-height as a
+ * length and style:line-height-at-least), kept in line_spacing below 0: OWF_LINE_EXACT(twips) every line exactly
+ * that high, OWF_LINE_AT_LEAST(twips) every line at least that high. A writer that knows percents alone takes
+ * OWF_LINE_PERCENT (100 for a height). */
+#define OWF_LINE_EXACT(twips)    (-(int)(twips))
+#define OWF_LINE_AT_LEAST(twips) (-(int)(twips) - 0x8000)
+#define OWF_LINE_IS_HEIGHT(v)    ((v) < 0)
+#define OWF_LINE_IS_EXACT(v)     ((v) < 0 && (v) > -0x8000)
+#define OWF_LINE_HEIGHT(v)       ((v) <= -0x8000 ? -(v) - 0x8000 : -(v))
+#define OWF_LINE_PERCENT(v)      ((v) > 0 ? (v) : 100)
 
 /* A colour that is set, black included: zero means none or automatic. */
 #define OWF_SHADE(rgb) (0x1000000UL | ((unsigned long)(rgb) & 0xFFFFFFUL))
@@ -205,8 +216,10 @@ typedef struct {
     unsigned char x_from, y_from;    /* owf_frame_from */
     unsigned char x_place, y_place;  /* owf_frame_place */
     unsigned char behind;    /* behind the text, else in front of it */
-    unsigned char wrap;      /* owf_frame_wrap: how text goes round it; laid out as OWF_WRAP_NONE for now */
-    unsigned char reserved[2];
+    unsigned char wrap;      /* owf_frame_wrap: how text goes round it */
+    unsigned char in_line;   /* 2.0.17: a text box in the line (Word's wp:inline), not placed on the page: placed
+                                from its paragraph at 0, 0, with no wrap; OpenWrite puts it where its run is */
+    unsigned char reserved[1];
     int inset[4];            /* a text box's inner margins, twips: top, right, bottom, left */
     unsigned long fill;      /* OWF_SHADE(0xRRGGBB) inside it; 0: none */
     unsigned long line;      /* OWF_SHADE(0xRRGGBB) round it; 0: none */

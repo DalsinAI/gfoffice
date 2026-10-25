@@ -740,6 +740,116 @@ static void header_checks(const ow_layout *l, const owf_doc *doc)
     }
 }
 
+/* tests/core/fixtures/inline-box.docx (make_inline_docx.py): text boxes in the line (2.0.17), kept: each where its
+ * room in its line is, the text after it after it; written back to DOCX as text boxes in the line. */
+static void inline_checks(const ow_layout *l, const owf_doc *doc)
+{
+    const ol_document *od = ow_layout_body(l);
+    static const char *const texts[2] = { "First box", "Second box" };
+    owf_doc *back = NULL;
+    int k;
+    CHECK(doc->nframes == 2 && doc->frames[0].in_line && doc->frames[1].in_line && doc->nimages == 1);
+    if (doc->nframes != 2) return;
+    for (k = 0; k < 2; ++k) {
+        const ol_display_op *room = NULL, *text = text_on(od, 0, texts[k], NULL), *after;
+        size_t first = 0, count = 0, i;
+        CHECK(ol_display_page_range(od, 0, &first, &count));
+        for (i = first; i < first + count; ++i) {
+            const ol_display_op *op = ol_display_get(od, i);
+            int box = -1, para = -1, run = -1;
+            if (op->type == OL_OP_IMAGE && op->u.image.image_id == OW_LAYOUT_NO_IMAGE &&
+                ow_layout_node_ref(l, op->u.image.node_id, &box, &para, &run) && para == k)
+                room = op;
+        }
+        CHECK(room && text);
+        if (!room || !text) continue;
+        /* the box's text inside its room, inside its insets */
+        CHECK(text->u.text.bounds.x >= room->u.image.bounds.x &&
+              text->u.text.bounds.x < room->u.image.bounds.x + room->u.image.bounds.width &&
+              text->u.text.bounds.y >= room->u.image.bounds.y &&
+              text->u.text.bounds.y < room->u.image.bounds.y + room->u.image.bounds.height);
+        /* the line's text after the box starts after its room */
+        after = text_on(od, 0, k ? " after the box" : " and the text", NULL);
+        if (!after) after = text_on(od, 0, k ? "after" : "and", NULL);
+        CHECK(after && after->u.text.bounds.x >= room->u.image.bounds.x + room->u.image.bounds.width);
+        /* the second box comes after the text before it */
+        if (k) CHECK(room->u.image.bounds.x > ow_layout_page(l)->margin_left);
+    }
+    /* written back as text boxes in the line, their text kept */
+    CHECK(owf_export_file(doc, "/tmp/openwrite-inline-box.docx", NULL, NULL) == OWF_OK);
+    CHECK(owf_import_file("/tmp/openwrite-inline-box.docx", NULL, &back, NULL, NULL) == OWF_OK && back);
+    if (back) {
+        CHECK(back->nframes == 2 && back->frames[0].in_line && back->frames[1].in_line &&
+              back->frames[1].story.nparas == 1 && back->frames[1].story.paras[0].nruns &&
+              !strcmp(back->frames[1].story.paras[0].runs[0].text, "Second box"));
+        owf_doc_free(back);
+    }
+    remove("/tmp/openwrite-inline-box.docx");
+}
+
+/* The distinct tops of a paragraph's lines (its first run's), in order: how many, into tops. */
+static int line_tops(const ow_layout *l, int para, ol_unit *tops, int max)
+{
+    const ol_document *od = ow_layout_body(l);
+    ow_position pos = { 0, 0, 0, 0 };
+    ol_text_position t;
+    size_t i;
+    int n = 0;
+    pos.paragraph = para;
+    if (!ow_layout_to_text(l, pos, &t)) return 0;
+    for (i = 0; i < ol_display_count(od); ++i) {
+        const ol_display_op *op = ol_display_get(od, i);
+        if (op->type != OL_OP_TEXT || op->u.text.node_id != t.node_id) continue;
+        if (n && tops[n - 1] == op->u.text.bounds.y) continue;
+        if (n < max) tops[n++] = op->u.text.bounds.y;
+    }
+    return n;
+}
+
+/* tests/core/fixtures/line-rules.docx (make_lines_docx.py): Word's exact and at least line spacing (2.0.18), read,
+ * laid out (OpenLayout 0.7's exact lines) and written back to DOCX and ODT. */
+static void line_checks(const ow_layout *l, const owf_doc *doc)
+{
+    static const char *const paths[2] = { "/tmp/openwrite-line-rules.docx", "/tmp/openwrite-line-rules.odt" };
+    ol_unit tops[16], tw = OL_UNITS_PER_TWIP;
+    int n, i, k;
+    CHECK(doc->body.nparas == 4);
+    if (doc->body.nparas != 4) return;
+    CHECK(doc->body.paras[0].fmt.line_spacing == 150);
+    CHECK(doc->body.paras[1].fmt.line_spacing == OWF_LINE_EXACT(240));
+    CHECK(doc->body.paras[2].fmt.line_spacing == OWF_LINE_AT_LEAST(600));
+    CHECK(doc->body.paras[3].fmt.line_spacing == OWF_LINE_AT_LEAST(120));
+    /* exactly 12 points apart, its 16 point text closer than it is tall */
+    n = line_tops(l, 1, tops, 16);
+    CHECK(n >= 3);
+    for (i = 1; i < n; ++i) CHECK(tops[i] - tops[i - 1] == 240 * tw);
+    /* at least 30 points */
+    n = line_tops(l, 2, tops, 16);
+    CHECK(n >= 3);
+    for (i = 1; i < n; ++i) CHECK(tops[i] - tops[i - 1] == 600 * tw);
+    /* at least 6 points: as its 11 point text, more than 6 */
+    n = line_tops(l, 3, tops, 16);
+    CHECK(n >= 3);
+    for (i = 1; i < n; ++i) CHECK(tops[i] - tops[i - 1] > 120 * tw && tops[i] - tops[i - 1] < 360 * tw);
+    /* written back and read again: the same */
+    for (k = 0; k < 2; ++k) {
+        owf_doc *back = NULL;
+        CHECK(owf_export_file(doc, paths[k], NULL, NULL) == OWF_OK);
+        CHECK(owf_import_file(paths[k], NULL, &back, NULL, NULL) == OWF_OK && back);
+        if (back) {
+            CHECK(back->body.nparas == 4);
+            if (back->body.nparas == 4) {
+                CHECK(back->body.paras[0].fmt.line_spacing == 150);
+                CHECK(back->body.paras[1].fmt.line_spacing == OWF_LINE_EXACT(240));
+                CHECK(back->body.paras[2].fmt.line_spacing == OWF_LINE_AT_LEAST(600));
+                CHECK(back->body.paras[3].fmt.line_spacing == OWF_LINE_AT_LEAST(120));
+            }
+            owf_doc_free(back);
+        }
+        remove(paths[k]);
+    }
+}
+
 /* Where the cover's frames are on the page: the pictures and fills on pages 1 and 2, and the text boxes' first
  * words, in that order. */
 typedef struct { int n; ol_rect at[16]; } frame_places;
@@ -933,6 +1043,8 @@ static void test_sample(const char *path)
         if (strstr(path, "cover-wpg.docx")) cover_wpg_checks(l, doc);
         if (strstr(path, "wrap.docx")) wrap_checks(l, doc);
         if (strstr(path, "header-frames.docx")) header_checks(l, doc);
+        if (strstr(path, "inline-box.docx")) inline_checks(l, doc);
+        if (strstr(path, "line-rules.docx")) line_checks(l, doc);
         printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
                checked, lists);
         ow_layout_free(l);

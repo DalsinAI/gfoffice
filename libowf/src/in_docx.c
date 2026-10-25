@@ -351,10 +351,15 @@ static void read_ppr(docx *d, const owf_xml_node *ppr, owf_paraprops *pp, const 
                 pp->mask |= OWF_PP_AFTER;
             }
             if (wint(d, n, "line", &v)) {
-                /* rounded (1.3.1): 259 (1.08) is 108, written back as 259, not 107, then 256 and 106... */
-                pp->fmt.line_spacing = (!rule || !strcmp(rule, "auto")) ? (v * 100 + 120) / 240 : 100;
-                if (pp->fmt.line_spacing < 50 || pp->fmt.line_spacing > 500)
-                    pp->fmt.line_spacing = 100;
+                if (rule && (!strcmp(rule, "exact") || !strcmp(rule, "atLeast")) && v > 0 && v < 0x8000) {
+                    /* 2.0.18: a height in twips, exactly or at least */
+                    pp->fmt.line_spacing = !strcmp(rule, "exact") ? OWF_LINE_EXACT(v) : OWF_LINE_AT_LEAST(v);
+                } else {
+                    /* rounded (1.3.1): 259 (1.08) is 108, written back as 259, not 107, then 256 and 106... */
+                    pp->fmt.line_spacing = (!rule || !strcmp(rule, "auto")) ? (v * 100 + 120) / 240 : 100;
+                    if (pp->fmt.line_spacing < 50 || pp->fmt.line_spacing > 500)
+                        pp->fmt.line_spacing = 100;
+                }
                 pp->mask |= OWF_PP_LINE;
             }
         } else if (!strcmp(n->name, "pageBreakBefore")) {
@@ -787,7 +792,8 @@ static void text_box_story(docx *d, const owf_xml_node *content, owf_story *into
 }
 
 /* wp:anchor: a picture or a shape (a text box, a filled box) placed on the page, as a frame anchored to
- * the paragraph being read. 0 when there is nothing to show. */
+ * the paragraph being read. 2.0.17: wp:inline's text box too (in_line), which has no place of its own (from
+ * its paragraph at 0, 0) and no wrap: it stays in the line. 0 when there is nothing to show. */
 static int import_anchor(docx *d, const owf_xml_node *anchor, const owf_charfmt *fmt)
 {
     const owf_xml_node *ext = local_child(anchor, "extent"), *graphic = local_child(anchor, "graphic");
@@ -809,7 +815,10 @@ static int import_anchor(docx *d, const owf_xml_node *anchor, const owf_charfmt 
     v = attr_any(anchor, "behindDoc");
     fr.behind = v && (!strcmp(v, "1") || !strcmp(v, "true"));
     v = attr_any(anchor, "simplePos");
-    if (v && (!strcmp(v, "1") || !strcmp(v, "true")) && (n = local_child(anchor, "simplePos"))) {
+    if (!strcmp(anchor->name, "inline")) {
+        fr.in_line = 1;
+        fr.x_from = fr.y_from = OWF_FROM_PARAGRAPH;
+    } else if (v && (!strcmp(v, "1") || !strcmp(v, "true")) && (n = local_child(anchor, "simplePos"))) {
         fr.x_from = fr.y_from = OWF_FROM_PAGE;
         fr.x = EMU_TWIPS(strtol(attr_any(n, "x") ? attr_any(n, "x") : "0", NULL, 10));
         fr.y = EMU_TWIPS(strtol(attr_any(n, "y") ? attr_any(n, "y") : "0", NULL, 10));
@@ -859,8 +868,8 @@ static int import_anchor(docx *d, const owf_xml_node *anchor, const owf_charfmt 
         d->failed = 1;
         return 0;
     }
-    if (fr.wrap != OWF_WRAP_NONE)
-        owf_report_add(d->report, OWF_NOTE_APPROX, "Text runs under or over pictures and text boxes placed on the page, not round them");
+    if (fr.wrap == OWF_WRAP_TIGHT)            /* 2.0.14 wraps text round frames: round their rectangles */
+        owf_report_add(d->report, OWF_NOTE_APPROX, "Text wraps round the rectangle of a picture wrapped tight, not its outline");
     set_fmt(d, fmt);
     owf_builder_frame(d->b, idx);
     return 1;
@@ -871,6 +880,8 @@ static int import_drawing(docx *d, const owf_xml_node *drawing, const owf_charfm
     const owf_xml_node *blip=find_local(drawing,"blip"),*ext=find_local(drawing,"extent");const char *id=attr_any(blip,"embed"),*target;char name[256];unsigned char *data=NULL;size_t length=0;int w=4320,h=2880,idx;long cx,cy;
     if (local_child(drawing, "anchor"))                  /* 1.3: placed on the page, not in the line */
         return import_anchor(d, local_child(drawing, "anchor"), fmt);
+    if (local_child(drawing, "inline") && find_local(local_child(drawing, "inline"), "wsp"))
+        return import_anchor(d, local_child(drawing, "inline"), fmt);   /* 2.0.17: a text box in the line */
     if(!id||(target=rel_by_id(d->rels_now?d->rels_now:&d->doc_rels,id))==NULL)return 0;
     part_name(name,sizeof name,d->base,target);
     if(owf_unzip_read(d->zip,name,&data,&length)!=OWF_OK)return 0;
