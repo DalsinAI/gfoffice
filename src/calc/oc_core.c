@@ -202,6 +202,7 @@ int oc_core_set_book(oc_core *core, owf_book *book)
     oc_clip_free(&core->clip);
     oc_cf_forget(core);
     oc_charts_forget(core);
+    core->chart_sel = 0;
     owf_calc_free(core->calc);
     owf_book_free(core->book);
     core->book = book;

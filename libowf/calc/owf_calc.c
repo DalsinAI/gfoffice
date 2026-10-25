@@ -1633,6 +1633,16 @@ static int contains_nocase(const char *text, const char *word)
     return 0;
 }
 
+int owf_calc_place_chart(owf_calc *calc, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off)
+{
+    return calc_chart_place(calc->book, sheet, index, row, row_off, col, col_off);
+}
+
+int owf_calc_nudge_chart(owf_calc *calc, int sheet, int index, long dx, long dy)
+{
+    return calc_chart_nudge(calc->book, sheet, index, dx, dy);
+}
+
 /* A chart's reference with a sheet's new name. */
 typedef struct {
     const char *old_name, *new_name;

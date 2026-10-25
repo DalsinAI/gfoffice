@@ -1590,11 +1590,87 @@ static long emu_px(const oc_core *core, long emu, long most)
     return most >= 0 && px > most ? most : px;
 }
 
-/* Each chart over the cells, in each pane (quadrant) it reaches, mapped as that pane is. */
+/* A chart's box in a pane (pr, pc), mapped as that pane is: 0 when it is nowhere near the pane's area (qx,qy,qw,qh). */
+static int chart_box(const drawing *d, const owf_chart *c, int pr, int pc, int qx, int qy, int qw, int qh, long *x, long *y,
+                     long *w, long *h)
+{
+    const oc_core *core = d->core;
+    *x = edge_px(d, 1, pc, c->from_col) + emu_px(core, c->from_col_off, line_px(core, 1, c->from_col));
+    *y = edge_px(d, 0, pr, c->from_row) + emu_px(core, c->from_row_off, line_px(core, 0, c->from_row));
+    if (*x > qx + qw || *y > qy + qh)
+        return 0;
+    if (c->sized) {
+        *w = emu_px(core, c->width, -1);
+        *h = emu_px(core, c->height, -1);
+    } else {
+        *w = edge_px(d, 1, pc, c->from_col) + span_px(d, 1, c->from_col, c->to_col) +
+             emu_px(core, c->to_col_off, line_px(core, 1, c->to_col)) - *x;
+        *h = edge_px(d, 0, pr, c->from_row) + span_px(d, 0, c->from_row, c->to_row) +
+             emu_px(core, c->to_row_off, line_px(core, 0, c->to_row)) - *y;
+    }
+    return !(*w < 8 || *h < 8 || *x + *w <= qx || *y + *h <= qy || *x < -FAR_PX || *y < -FAR_PX || *w > 2 * FAR_PX ||
+             *h > 2 * FAR_PX);
+}
+
+#define HANDLE 7                    /* a selected chart's handles: pixels square */
+
+/* A box cut to a clip box; 0 when nothing of it is left. */
+static int cut_box(int cx, int cy, int cw, int ch, long *x, long *y, long *w, long *h)
+{
+    long x1 = *x + *w, y1 = *y + *h;
+    if (*x < cx)
+        *x = cx;
+    if (*y < cy)
+        *y = cy;
+    if (x1 > cx + cw)
+        x1 = cx + cw;
+    if (y1 > cy + ch)
+        y1 = cy + ch;
+    *w = x1 - *x;
+    *h = y1 - *y;
+    return *w > 0 && *h > 0;
+}
+
+/* The selected chart's frame and its eight handles (white, framed), as Excel marks one; cut to the pane. */
+static int selected_marks(drawing *d, long x, long y, long w, long h, int qx, int qy, int qw, int qh)
+{
+    oc_draw_item *it;
+    int k;
+    if (!(it = add_box(d->list, OC_DRAW_FRAME, OC_ROLE_CURSOR, (int)x, (int)y, (int)w, (int)h)))
+        return 0;
+    it->line = 1;
+    it->clip_x = qx;
+    it->clip_y = qy;
+    it->clip_w = qw;
+    it->clip_h = qh;
+    for (k = 0; k < 9; k++) {
+        long hx = x + (k % 3) * (w - 1) / 2 - HANDLE / 2, hy = y + (k / 3) * (h - 1) / 2 - HANDLE / 2, hw = HANDLE,
+             hh = HANDLE;
+        if (k == 4)
+            continue;                                /* the middle: none */
+        if (!cut_box(qx, qy, qw, qh, &hx, &hy, &hw, &hh))
+            continue;
+        if (!(it = add_box(d->list, OC_DRAW_FILL, OC_ROLE_CHART, (int)hx, (int)hy, (int)hw, (int)hh)))
+            return 0;
+        it->rgb = 0xFFFFFF;
+        hx = x + (k % 3) * (w - 1) / 2 - HANDLE / 2;
+        hy = y + (k / 3) * (h - 1) / 2 - HANDLE / 2;
+        if (!(it = add_box(d->list, OC_DRAW_FRAME, OC_ROLE_CURSOR, (int)hx, (int)hy, HANDLE, HANDLE)))
+            return 0;
+        it->line = 1;
+        it->clip_x = qx;
+        it->clip_y = qy;
+        it->clip_w = qw;
+        it->clip_h = qh;
+    }
+    return 1;
+}
+
+/* Each chart over the cells, in each pane (quadrant) it reaches, mapped as that pane is; the selected one marked. */
 static int charts(drawing *d)
 {
     oc_core *core = d->core;
-    int n, k, pr, pc;
+    int n, k, pr, pc, sel = oc_core_selected_chart(core);
     const owf_chart *list = oc_core_charts(core, &n);
     for (k = 0; k < n; k++) {
         const owf_chart *c = &list[k];
@@ -1603,29 +1679,83 @@ static int charts(drawing *d)
                 int qx, qy, qw, qh;
                 long x, y, w, h;
                 quadrant(d, pr, pc, &qx, &qy, &qw, &qh);
-                if (qw <= 0 || qh <= 0)
-                    continue;
-                x = edge_px(d, 1, pc, c->from_col) + emu_px(core, c->from_col_off, line_px(core, 1, c->from_col));
-                y = edge_px(d, 0, pr, c->from_row) + emu_px(core, c->from_row_off, line_px(core, 0, c->from_row));
-                if (x > qx + qw || y > qy + qh)
-                    continue;
-                if (c->sized) {
-                    w = emu_px(core, c->width, -1);
-                    h = emu_px(core, c->height, -1);
-                } else {
-                    w = edge_px(d, 1, pc, c->from_col) + span_px(d, 1, c->from_col, c->to_col) +
-                        emu_px(core, c->to_col_off, line_px(core, 1, c->to_col)) - x;
-                    h = edge_px(d, 0, pr, c->from_row) + span_px(d, 0, c->from_row, c->to_row) +
-                        emu_px(core, c->to_row_off, line_px(core, 0, c->to_row)) - y;
-                }
-                if (w < 8 || h < 8 || x + w <= qx || y + h <= qy || x < -FAR_PX || y < -FAR_PX || w > 2 * FAR_PX ||
-                    h > 2 * FAR_PX)
+                if (qw <= 0 || qh <= 0 || !chart_box(d, c, pr, pc, qx, qy, qw, qh, &x, &y, &w, &h))
                     continue;
                 if (!oc_chart_draw(core, d->list, c, (int)x, (int)y, (int)w, (int)h, qx, qy, qw, qh))
+                    return 0;
+                if (k == sel && !selected_marks(d, x, y, w, h, qx, qy, qw, qh))
                     return 0;
             }
     }
     return 1;
+}
+
+/* The view's lines and panes, for finding charts without drawing; 0 when memory ran out (free with lines_free). */
+static int lines_only(oc_core *core, drawing *d)
+{
+    memset(d, 0, sizeof *d);
+    d->core = core;
+    d->sheet = oc_sheet(core);
+    d->rl = malloc(MAX_LINES * sizeof *d->rl);
+    d->cl = malloc(MAX_LINES * sizeof *d->cl);
+    if (!d->rl || !d->cl) {
+        free(d->rl);
+        free(d->cl);
+        return 0;
+    }
+    d->rowhdr = row_header(core);
+    d->nr = lines(core, 0, d->rl, MAX_LINES, &d->ysplit);
+    d->nc = lines(core, 1, d->cl, MAX_LINES, &d->xsplit);
+    return 1;
+}
+
+int oc_view_chart_box(oc_core *core, int index, int *bx, int *by, int *bw, int *bh)
+{
+    drawing d;
+    int n, pr, pc, found = 0;
+    const owf_chart *list = oc_core_charts(core, &n);
+    if (index < 0 || index >= n || !lines_only(core, &d))
+        return 0;
+    for (pr = 1; pr >= 0 && !found; pr--)                /* the scrolled pane's first */
+        for (pc = 1; pc >= 0 && !found; pc--) {
+            int qx, qy, qw, qh;
+            long x, y, w, h;
+            quadrant(&d, pr, pc, &qx, &qy, &qw, &qh);
+            if (qw > 0 && qh > 0 && chart_box(&d, &list[index], pr, pc, qx, qy, qw, qh, &x, &y, &w, &h)) {
+                *bx = (int)x;
+                *by = (int)y;
+                *bw = (int)w;
+                *bh = (int)h;
+                found = 1;
+            }
+        }
+    free(d.rl);
+    free(d.cl);
+    return found;
+}
+
+int oc_view_chart_at(oc_core *core, int px, int py)
+{
+    drawing d;
+    int n, k, pr, pc, found = -1;
+    const owf_chart *list = oc_core_charts(core, &n);
+    if (!n || px < 0 || py < 0 || px >= core->width || py >= core->height || !lines_only(core, &d))
+        return -1;
+    for (k = n - 1; k >= 0 && found < 0; k--)            /* the last drawn is on top */
+        for (pr = 0; pr < 2 && found < 0; pr++)
+            for (pc = 0; pc < 2 && found < 0; pc++) {
+                int qx, qy, qw, qh;
+                long x, y, w, h;
+                quadrant(&d, pr, pc, &qx, &qy, &qw, &qh);
+                if (px < qx || py < qy || px >= qx + qw || py >= qy + qh)
+                    continue;                            /* the pointer's pane only */
+                if (chart_box(&d, &list[k], pr, pc, qx, qy, qw, qh, &x, &y, &w, &h) && px >= x && px < x + w && py >= y &&
+                    py < y + h)
+                    found = k;
+            }
+    free(d.rl);
+    free(d.cl);
+    return found;
 }
 
 static int build(drawing *d)

@@ -132,6 +132,15 @@ int owf_calc_touch(owf_calc *calc, int sheet, const owf_range *range);
  * (nothing changes); OWF_ERR_UNSUPPORTED for a sheet that is not there. */
 int owf_calc_rename_sheet(owf_calc *calc, int sheet, const char *name);
 
+/* A sheet's chart (index, as owf_sheet_charts counts them) moved, its size
+ * as it was: its top left corner to a row and column and an offset in each
+ * (EMU, 9525 a pixel at 96 dpi), or by dx, dy EMU (no further than the
+ * sheet's top and left). Only the numbers of its anchor in the sheet's
+ * kept drawing change. OWF_OK; OWF_ERR_UNSUPPORTED when there is no such
+ * chart; OWF_ERR_MEMORY (nothing changes). */
+int owf_calc_place_chart(owf_calc *calc, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off);
+int owf_calc_nudge_chart(owf_calc *calc, int sheet, int index, long dx, long dy);
+
 /* Cut and paste: the cells of range on sheet move by (drow, dcol) to
  * dsheet, as Excel moves them. The cells there before are replaced; the
  * range's cells left behind are empty. Formulas that move keep pointing

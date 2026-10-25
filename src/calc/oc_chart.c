@@ -60,6 +60,105 @@ const owf_chart *oc_core_charts(oc_core *core, int *count)
     return core->charts;
 }
 
+/* ---- Selecting one, and moving it ---- */
+
+void oc_core_select_chart(oc_core *core, int index)
+{
+    int n;
+    oc_core_charts(core, &n);
+    core->chart_sel = index >= 0 && index < n ? index + 1 : 0;
+    core->chart_sel_sheet = core->sheet;
+}
+
+int oc_core_selected_chart(oc_core *core)
+{
+    int n;
+    if (!core->chart_sel || core->chart_sel_sheet != core->sheet)
+        return -1;
+    oc_core_charts(core, &n);
+    return core->chart_sel <= n ? core->chart_sel - 1 : -1;
+}
+
+/* The selected chart moved by the engine (move), its drawing's text kept for undo first. */
+static int move_selected(oc_core *core, int (*move)(oc_core *core, int index, const void *how), const void *how)
+{
+    int index = oc_core_selected_chart(core), rc;
+    const owf_sheet *s = oc_sheet(core);
+    oc_undo *u;
+    if (index < 0 || !s->drawing)
+        return OWF_ERR_UNSUPPORTED;
+    if (core->edit_mode)
+        oc_edit_commit(core, OC_MOVE_NONE);
+    u = oc_undo_new(core, OC_UNDO_PART);
+    if (u && oc_undo_save_part(core, u, s->drawing) != OWF_OK) {
+        oc_undo_free(u);
+        u = NULL;
+    }
+    rc = move(core, index, how);
+    if (rc != OWF_OK) {
+        oc_undo_free(u);
+        return rc;
+    }
+    oc_undo_push(core, u);
+    oc_charts_forget(core);                          /* read again where it went */
+    oc_changed(core);
+    return OWF_OK;
+}
+
+static int by_pixels(oc_core *core, int index, const void *how)
+{
+    const int *d = how;
+    int zoom = core->zoom > 0 ? core->zoom : 100;
+    return owf_calc_nudge_chart(core->calc, core->sheet, index, (long)d[0] * 9525L * 100L / zoom,
+                                (long)d[1] * 9525L * 100L / zoom);
+}
+
+int oc_core_move_chart(oc_core *core, int dx, int dy)
+{
+    int d[2];
+    d[0] = dx;
+    d[1] = dy;
+    if (!dx && !dy)
+        return oc_core_selected_chart(core) < 0 ? OWF_ERR_UNSUPPORTED : OWF_OK;
+    return move_selected(core, by_pixels, d);
+}
+
+/* to: row, column and their offsets; step: by rows and columns from where it is */
+static int to_cell(oc_core *core, int index, const void *how)
+{
+    const long *t = how;
+    return owf_calc_place_chart(core->calc, core->sheet, index, (unsigned)t[0], t[1], (unsigned)t[2], t[3]);
+}
+
+int oc_core_step_chart(oc_core *core, int drow, int dcol)
+{
+    int index = oc_core_selected_chart(core), n;
+    const owf_chart *c = oc_core_charts(core, &n);
+    long t[4], r, col;
+    if (index < 0)
+        return OWF_ERR_UNSUPPORTED;
+    c += index;
+    r = (long)c->from_row + drow;
+    col = (long)c->from_col + dcol;
+    t[0] = r < 0 ? 0 : r >= (long)OC_MAX_ROWS ? (long)OC_MAX_ROWS - 1 : r;
+    t[1] = c->from_row_off;
+    t[2] = col < 0 ? 0 : col >= (long)OC_MAX_COLS ? (long)OC_MAX_COLS - 1 : col;
+    t[3] = c->from_col_off;
+    if ((unsigned long)t[0] == c->from_row && (unsigned long)t[2] == c->from_col)
+        return OWF_OK;                               /* at the sheet's edge already */
+    return move_selected(core, to_cell, t);
+}
+
+int oc_core_place_chart(oc_core *core, unsigned row, unsigned col)
+{
+    long t[4];
+    t[0] = row < OC_MAX_ROWS ? (long)row : (long)OC_MAX_ROWS - 1;
+    t[1] = 0;
+    t[2] = col < OC_MAX_COLS ? (long)col : (long)OC_MAX_COLS - 1;
+    t[3] = 0;
+    return move_selected(core, to_cell, t);
+}
+
 /* ---- The values: from the cells, else as the file last had them ---- */
 
 /* "Chart!$B$1:$B$4" or "'My sheet'!B1:B4" as a sheet and a range; 0 when it is not one of this book's. */

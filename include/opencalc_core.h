@@ -454,6 +454,23 @@ const owf_comment *oc_core_comment(const oc_core *core, int sheet, unsigned row,
  * kinds show their area and title. Fills (OC_ROLE_CHART), lines
  * (OC_DRAW_SEGMENT) and text, cut to their pane. */
 
+/* One of the sheet's charts can be selected, as a click on it selects it
+ * in Excel: it shows a frame (OC_DRAW_FRAME, OC_ROLE_CURSOR) and eight
+ * white handles. It moves by the pointer (pixels at the zoom), by whole
+ * rows and columns (its offsets in its cells as they were), or to a cell's
+ * corner, its size as it was; undo puts it back. Only its anchor's numbers
+ * in the sheet's kept drawing change. Indexes count as owf_sheet_charts
+ * does. */
+int oc_view_chart_at(oc_core *core, int x, int y);    /* the chart under the pointer (the topmost), or -1 */
+/* A chart's box in the grid (pixels), as the scrolled pane shows it (else another): 0 when none shows it. */
+int oc_view_chart_box(oc_core *core, int index, int *x, int *y, int *w, int *h);
+void oc_core_select_chart(oc_core *core, int index);  /* -1: none */
+int oc_core_selected_chart(oc_core *core);            /* on the sheet showing, or -1 */
+/* OWF_OK, OWF_ERR_UNSUPPORTED (none selected), OWF_ERR_MEMORY */
+int oc_core_move_chart(oc_core *core, int dx, int dy);
+int oc_core_step_chart(oc_core *core, int drow, int dcol);
+int oc_core_place_chart(oc_core *core, unsigned row, unsigned col);
+
 /* ---- The status line ---- */
 
 /* "Sum=12 Average=4 Count=3" for a selection of more than one cell, a

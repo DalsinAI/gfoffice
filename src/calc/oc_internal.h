@@ -25,7 +25,7 @@ typedef struct {
     int has_cols;
 } oc_cellsave;
 
-enum { OC_UNDO_CELLS, OC_UNDO_LAYOUT, OC_UNDO_BOOK, OC_UNDO_SHIFT };
+enum { OC_UNDO_CELLS, OC_UNDO_LAYOUT, OC_UNDO_BOOK, OC_UNDO_SHIFT, OC_UNDO_PART };
 
 typedef struct oc_undo {
     int kind;
@@ -50,6 +50,10 @@ typedef struct oc_undo {
     owf_book *book;
     oc_sheetstate *states;
     int nstates;
+    /* PART: one of the book's kept parts (a sheet's drawing, a chart moved on it), as it was */
+    char *part_name;
+    unsigned char *part_data;
+    size_t part_length;
 } oc_undo;
 
 /* The text a copy left, with its cells. */
@@ -126,6 +130,7 @@ struct oc_core {
     owf_chart *charts;
     int ncharts;
     char *charts_of;
+    int chart_sel, chart_sel_sheet;  /* the chart selected, its index + 1 (0 none), and on which sheet */
 
     /* the used part of the sheet showing, for the scrollers: worked out again when changes moves */
     unsigned long used_stamp;
@@ -157,6 +162,9 @@ oc_undo *oc_undo_new(oc_core *core, int kind);
 int oc_undo_save_range(oc_core *core, oc_undo *u, int sheet, const owf_range *range, int with_cols);
 int oc_undo_save_layout(oc_core *core, oc_undo *u, int sheet);
 int oc_undo_save_book(oc_core *core, oc_undo *u);
+/* One of the book's kept parts, by its name (a sheet's drawing): OWF_OK, OWF_ERR_UNSUPPORTED (no such part),
+ * OWF_ERR_MEMORY. */
+int oc_undo_save_part(oc_core *core, oc_undo *u, const char *name);
 void oc_undo_push(oc_core *core, oc_undo *u);
 void oc_undo_free(oc_undo *u);
 void oc_undo_clear(oc_core *core);

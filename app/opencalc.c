@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.26 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.27 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -275,6 +275,8 @@ static int buf_w, buf_h;
 
 /* the pointer */
 static int mouse_down, resizing, resize_axis;
+/* a chart being dragged: where the pointer went down, and the outline showing (its box, -1 none) */
+static int chart_drag, chart_from_x, chart_from_y, outline_x = -1, outline_y, outline_w, outline_h;
 static unsigned resize_index;
 static int resize_from, resize_size;
 static ULONG click_secs, click_micros;
@@ -2426,7 +2428,8 @@ static int font_check(const char *arg, char *out, size_t size)
 }
 
 /* For the lab: CHARTCHECK: the charts of the sheet showing, as read from its drawing: each one's kind, the
- * cell it starts in, its series and the first one's points, the cells its values come from, and its title. */
+ * cell it starts in, its series and the first one's points, the cells its values come from, and its title;
+ * which is selected. */
 static int chart_check(char *out, size_t size)
 {
     static const char *const kinds[] = { "other", "columns", "bars", "lines", "areas", "pie", "scatter" };
@@ -2452,6 +2455,8 @@ static int chart_check(char *out, size_t size)
                               c->nseries && c->series[0].values ? c->series[0].values : "(the file)", c->title ? c->title : "");
         if (k < sizeof buf && c->value_format)
             k += (size_t)snprintf(buf + k, sizeof buf - k, ", axis \"%s\"", c->value_format);
+        if (k < sizeof buf && i == oc_core_selected_chart(core))
+            k += (size_t)snprintf(buf + k, sizeof buf - k, ", selected");
         if (k < sizeof buf && c->nseries && c->series[0].labels)
             k += (size_t)snprintf(buf + k, sizeof buf - k, ", labels%s%s%s%s",
                                   c->series[0].labels & OWF_LABEL_SERIES ? " series" : "",
@@ -2481,7 +2486,8 @@ static int rexx_do_command(const char *command, char **result_out)
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
     else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
-                 "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK GETCOMMENT QUIT");
+                 "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
+                 "GETCOMMENT QUIT");
     else if (starts_word_ci(command, "ACTIVATE", &arg)) {
         if (win) { WindowToFront(win); ActivateWindow(win); }
     } else if (starts_word_ci(command, "ISDIRTY", &arg))
@@ -2506,6 +2512,27 @@ static int rexx_do_command(const char *command, char **result_out)
         snprintf(result_text, sizeof result_text, "%s", ok ? "Exported" : "Export failed");
     } else if (starts_word_ci(command, "FONTCHECK", &arg)) {
         if (!font_check(arg, result_text, sizeof result_text)) ok = 0;
+    } else if (starts_word_ci(command, "CHARTSELECT", &arg)) {   /* n (1 the first, 0 none); none given: which */
+        if (!*arg) snprintf(result_text, sizeof result_text, "%d", oc_core_selected_chart(core) + 1);
+        else {
+            int k = atoi(arg);
+            oc_core_select_chart(core, k - 1);
+            ok = k == 0 || oc_core_selected_chart(core) == k - 1;
+            snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : "No such chart");
+        }
+    } else if (starts_word_ci(command, "CHARTMOVE", &arg)) {     /* the selected chart: to a cell, or BY rows columns */
+        int rc2;
+        const char *by;
+        if (starts_word_ci(arg, "BY", &by)) {
+            int dr = 0, dc = 0;
+            ok = sscanf(by, "%d %d", &dr, &dc) == 2;
+            rc2 = ok ? oc_core_step_chart(core, dr, dc) : OWF_ERR_FORMAT;
+        } else {
+            ok = rexx_cell(arg, &row, &col, NULL);
+            rc2 = ok ? oc_core_place_chart(core, row, col) : OWF_ERR_FORMAT;
+        }
+        ok = rc2 == OWF_OK;
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc2 == OWF_ERR_UNSUPPORTED ? "No chart selected" : "Failed");
     } else if (starts_word_ci(command, "CHARTCHECK", &arg)) {
         if (!chart_check(result_text, sizeof result_text)) ok = 0;
     } else if (starts_word_ci(command, "GETCOMMENT", &arg)) {
@@ -2691,6 +2718,16 @@ static void raw_key(UWORD code, UWORD qual)
     }
     default: return;
     }
+    if (oc_core_selected_chart(core) >= 0 && !oc_core_editing(core)) {
+        if (key == OC_KEY_UP || key == OC_KEY_DOWN || key == OC_KEY_LEFT || key == OC_KEY_RIGHT) {
+            /* the selected chart: a row or column that way, a pixel with Shift */
+            int dr = key == OC_KEY_UP ? -1 : key == OC_KEY_DOWN ? 1 : 0, dc = key == OC_KEY_LEFT ? -1 : key == OC_KEY_RIGHT ? 1 : 0;
+            result((m & OC_MOD_SHIFT) ? oc_core_move_chart(core, dc, dr) : oc_core_step_chart(core, dr, dc), "Chart moved.");
+            refresh();
+            return;
+        }
+        oc_core_select_chart(core, -1);              /* another key: the cells again */
+    }
     if ((m & OC_MOD_ALT) && !oc_core_editing(core) && (key == OC_KEY_UP || key == OC_KEY_DOWN || key == OC_KEY_LEFT || key == OC_KEY_RIGHT)) {
         if (m & OC_MOD_CTRL) key = key == OC_KEY_UP || key == OC_KEY_LEFT ? OC_KEY_HOME : OC_KEY_END;
         else {
@@ -2721,6 +2758,14 @@ static void vanilla_key(UWORD code, UWORD qual)
     int rc = OWF_ERR_UNSUPPORTED;
     if (qual & (IEQUALIFIER_LCOMMAND | IEQUALIFIER_RCOMMAND)) return;   /* menu shortcuts */
     bar_done();
+    if (oc_core_selected_chart(core) >= 0) {        /* a chart selected: Esc leaves it, a key goes to the cells */
+        oc_core_select_chart(core, -1);
+        if (code == 27) {
+            set_status("");
+            refresh();
+            return;
+        }
+    }
     switch (code) {
     case 8: rc = oc_core_key(core, OC_KEY_BACKSPACE, m); break;
     case 9: rc = oc_core_key(core, OC_KEY_TAB, m); break;
@@ -2767,6 +2812,20 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
         bar_to_core();
         bar_active = 0;
     }
+    if (!oc_core_editing(core)) {                   /* a chart under the pointer: it is selected, to drag */
+        int k = oc_view_chart_at(core, mx - grid_box.x, my - grid_box.y);
+        if (k >= 0) {
+            oc_core_select_chart(core, k);
+            chart_drag = 1;
+            chart_from_x = mx;
+            chart_from_y = my;
+            mouse_down = 1;
+            set_status("Chart selected: drag it, or move it a cell with the arrow keys (a pixel with Shift).");
+            refresh();
+            return;
+        }
+    }
+    oc_core_select_chart(core, -1);                  /* a click anywhere else: the chart no longer */
     oc_view_hit(core, mx - grid_box.x, my - grid_box.y, &hit);
     if (hit.kind == OC_HIT_COL_EDGE || hit.kind == OC_HIT_ROW_EDGE) {
         resizing = 1;
@@ -2801,10 +2860,55 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
     refresh();
 }
 
+/* The dragged chart's outline, drawn over the grid by complementing (drawn again, it goes); cut to the grid. */
+static void outline(int x, int y, int w, int h)
+{
+    struct RastPort *rp = win ? win->RPort : NULL;
+    int x0 = x, y0 = y, x1 = x + w - 1, y1 = y + h - 1;
+    if (!rp || w < 2 || h < 2) return;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > grid_box.w - 1) x1 = grid_box.w - 1;
+    if (y1 > grid_box.h - 1) y1 = grid_box.h - 1;
+    if (x0 > x1 || y0 > y1) return;
+    SetDrMd(rp, COMPLEMENT);
+    if (y == y0) { Move(rp, grid_box.x + x0, grid_box.y + y0); Draw(rp, grid_box.x + x1, grid_box.y + y0); }
+    if (y + h - 1 == y1 && y1 > y0) { Move(rp, grid_box.x + x0, grid_box.y + y1); Draw(rp, grid_box.x + x1, grid_box.y + y1); }
+    if (x == x0 && y1 - y0 > 1) { Move(rp, grid_box.x + x0, grid_box.y + y0 + 1); Draw(rp, grid_box.x + x0, grid_box.y + y1 - 1); }
+    if (x + w - 1 == x1 && x1 > x0 && y1 - y0 > 1) {
+        Move(rp, grid_box.x + x1, grid_box.y + y0 + 1);
+        Draw(rp, grid_box.x + x1, grid_box.y + y1 - 1);
+    }
+    SetDrMd(rp, JAM1);
+}
+
+static void outline_off(void)
+{
+    if (outline_x == -1) return;
+    outline(outline_x, outline_y, outline_w, outline_h);
+    outline_x = -1;
+}
+
+static void chart_drag_to(int mx, int my)
+{
+    int x, y, w, h, k = oc_core_selected_chart(core);
+    outline_off();
+    if (k < 0 || !oc_view_chart_box(core, k, &x, &y, &w, &h)) return;
+    outline_x = x + mx - chart_from_x;
+    outline_y = y + my - chart_from_y;
+    outline_w = w;
+    outline_h = h;
+    outline(outline_x, outline_y, outline_w, outline_h);
+}
+
 static void grid_drag(int mx, int my)
 {
     oc_hit hit;
     int x = mx - grid_box.x, y = my - grid_box.y;
+    if (chart_drag) {
+        chart_drag_to(mx, my);
+        return;
+    }
     if (resizing) return;
     /* past the grid's edge: scroll a line that way, then select to the edge */
     if (y >= grid_box.h || x >= grid_box.w || y < 0 || x < 0) {
@@ -2825,6 +2929,17 @@ static void grid_drag(int mx, int my)
 
 static void grid_release(int mx, int my)
 {
+    if (chart_drag) {                                /* where the chart was dropped: moved there */
+        int dx = mx - chart_from_x, dy = my - chart_from_y;
+        outline_off();
+        chart_drag = 0;
+        mouse_down = 0;
+        if (dx * dx + dy * dy >= 9) {
+            result(oc_core_move_chart(core, dx, dy), "Chart moved.");
+            refresh();
+        }
+        return;
+    }
     if (resizing) {
         int d = (resize_axis ? mx : my) - resize_from, px = resize_size + d;
         int tw = oc_view_px_to_twips(core, px < 0 ? 0 : px);
@@ -2937,7 +3052,7 @@ static void events(void)
                 grid_drag(mx, my);
             break;
         case IDCMP_INTUITICKS:
-            if (mouse_down && !resizing) {               /* held past the edge: keep scrolling */
+            if (mouse_down && !resizing && !chart_drag) {   /* held past the edge: keep scrolling */
                 int x = mx - grid_box.x, y = my - grid_box.y;
                 if (x < 0 || y < 0 || x >= grid_box.w || y >= grid_box.h) grid_drag(mx, my);
             }
