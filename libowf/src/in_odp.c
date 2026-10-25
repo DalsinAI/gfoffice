@@ -2200,7 +2200,10 @@ static int read_deck(odp *o, const owf_xml_node *content_root, const owf_xml_nod
     {
         const gstyle *std = find_style(o, "standard", "graphic", OWF_ODF_COMMON);
         const owf_xml_node *gp = std ? owf_xml_child(std->node, NS_STYLE, "graphic-properties") : NULL;
-        if (gp && keep_xml(o, OWF_KEPT_GRAPHIC, gp) >= 0)
+        /* none to keep when they are what the writer writes without them */
+        int plain = gp && !gp->first && gp->nattrs == 2 && same(attr(gp, NS_DRAW, "stroke"), "none") &&
+                    same(attr(gp, NS_DRAW, "fill"), "none");
+        if (gp && !plain && keep_xml(o, OWF_KEPT_GRAPHIC, gp) >= 0)
             keep_refs(o, gp, OWF_ODF_COMMON, 1);
     }
     read_layouts(o);

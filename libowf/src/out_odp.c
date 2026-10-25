@@ -418,13 +418,15 @@ static void put_list_levels(owf_buf *out, const owf_doc *doc, const owf_textleve
             owf_buf_put_utf8(out, l->bullet);
             owf_buf_putc(out, '"');
         }
-        if (l->bullet_size > 0 && l->bullet_size != 100)
+        /* a bullet's size is its own attribute; a number's, its text's */
+        if (l->bullet_size > 0 && l->bullet_size != 100 && l->bullet && !(l->bullet & OWF_BULLET_NUMBER))
             owf_buf_printf(out, " text:bullet-relative-size=\"%d%%\"", l->bullet_size);
         owf_buf_puts(out, "><style:list-level-properties");
         len_attr(out, "text:space-before", before);
         len_attr(out, "text:min-label-width", width);
         owf_buf_puts(out, "/>");
-        if (l->bullet_font >= 0 || OWF_SHADE_SET(l->bullet_colour)) {
+        if (l->bullet_font >= 0 || OWF_SHADE_SET(l->bullet_colour) ||
+            ((l->bullet & OWF_BULLET_NUMBER) && l->bullet_size > 0 && l->bullet_size != 100)) {
             owf_buf_puts(out, "<style:text-properties");
             if (l->bullet_font >= 0 && l->bullet_font < doc->nfonts) {
                 owf_buf_puts(out, " style:font-name=\"");
@@ -435,6 +437,8 @@ static void put_list_levels(owf_buf *out, const owf_doc *doc, const owf_textleve
                 colour_attr(out, "fo:color", OWF_SHADE_RGB(l->bullet_colour));
             else
                 owf_buf_puts(out, " style:use-window-font-color=\"true\"");
+            if ((l->bullet & OWF_BULLET_NUMBER) && l->bullet_size > 0 && l->bullet_size != 100)
+                owf_buf_printf(out, " fo:font-size=\"%d%%\"", l->bullet_size);
             owf_buf_puts(out, "/>");
         }
         owf_buf_puts(out, (l->bullet & OWF_BULLET_NUMBER) || !l->bullet ? "</text:list-level-style-number>"

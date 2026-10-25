@@ -52,6 +52,7 @@ typedef struct {
     int failed;
     const char *current_href;
     int next_table_id;
+    int inline_depth;
     const owf_unzip *zip;
 } odt;
 
@@ -528,11 +529,21 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
     }
 }
 
+/* Spans in spans: a file's nesting is capped, so a hostile one can't use
+ * up the stack (a few KB on an Amiga). */
+#define MAX_INLINE_DEPTH 64
+
 static void inline_children(odt *o, const owf_xml_node *n, const owf_charfmt *fmt)
 {
     const owf_xml_node *c;
+    if (o->inline_depth >= MAX_INLINE_DEPTH) {
+        owf_report_add(o->report, OWF_NOTE_LOST, "Text nested too deeply was left out");
+        return;
+    }
+    o->inline_depth++;
     for (c = n->first; c; c = c->next)
         inline_node(o, c, fmt);
+    o->inline_depth--;
 }
 
 /* A paragraph's formats: the default style, then its style. */
