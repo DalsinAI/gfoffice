@@ -371,7 +371,7 @@ def test_hand_xlsx(work):
     for want in ("Diagonal lines", "Patterned cell backgrounds", "gradient", "angle", "Text formatted in parts",
                  "Pivot tables", "Chart sheets", "comments on cells could not be read", "#SPILL!", "Data tables", "numbers could not be read",
                  "Sheet protection", "Links in cells",
-                 "Pictures, charts", "Tables keep"):
+                 "pictures, charts or drawings could not be kept", "Tables keep"):
         check("hand: note " + want, want in notes, notes)
     check("hand: conditional formatting read, not noted", "Conditional formatting" not in notes, notes)
     data = b["sheets"][0]

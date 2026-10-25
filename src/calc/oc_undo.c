@@ -99,6 +99,8 @@ owf_book *oc_book_copy(const owf_book *b)
         return NULL;
     c->date1904 = b->date1904;
     c->active = b->active;
+    if (owf_book_copy_parts(c, b) < 0)                   /* kept drawings, charts... */
+        goto fail;
     if (b->nstyles && !(c->styles = dup_array(b->styles, (size_t)b->nstyles * sizeof *b->styles)))
         goto fail;
     c->nstyles = c->capstyles = b->nstyles;
@@ -182,6 +184,8 @@ static long book_bytes(const owf_book *b)
     }
     for (i = 0; i < b->nnames; i++)
         n += (long)strlen(b->names[i].formula) + 32;
+    for (i = 0; i < b->nparts; i++)
+        n += (long)b->parts[i].length + 64;
     return n;
 }
 

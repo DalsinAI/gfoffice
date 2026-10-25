@@ -66,6 +66,7 @@
 #include "ogt_draw.h"
 #include "ogt_icons.h"
 #include "ogt_toolbar.h"
+#include "ogt_iconset.h"
 #include "ogt_font.h"
 #include "ogt_list.h"
 #include "ogt_pageview.h"
@@ -77,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.8 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.10 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -311,7 +312,7 @@ static int hit_count;
 /* Where a position is drawn, even off the visible part of the page. */
 static int track_on, track_y, track_h;
 static ow_position track_pos;
-/* 2.0.8: pictures decoded once, at IMAGE_MAX_PIXELS at most (a cover's page-sized JPEG is read from its
+/* 2.0.10: pictures decoded once, at IMAGE_MAX_PIXELS at most (a cover's page-sized JPEG is read from its
  * datatype band by band and averaged down to it), IMAGE_CACHE_BYTES of them at most, the least recently
  * drawn going first; one that couldn't be read is remembered (argb NULL) and not tried again. */
 #define IMAGE_CACHE_SLOTS 16
@@ -1873,10 +1874,10 @@ typedef struct {
     ow_position caret;
     ol_rect caret_box;          /* units, on caret_page */
     int caret_x, caret_y, caret_h;
-    ol_pixel_rect lim;          /* 2.0.8: the page, and of it what is being drawn: pictures stay inside */
+    ol_pixel_rect lim;          /* 2.0.10: the page, and of it what is being drawn: pictures stay inside */
 } page_paint;
 
-/* 2.0.8: a picture into the box bx, by, bw, bh, only what of it is inside lim: each row of pixels picked from
+/* 2.0.10: a picture into the box bx, by, bw, bh, only what of it is inside lim: each row of pixels picked from
  * the cached picture and written a band at a time, so a page-sized picture scrolled half out of the window
  * costs what shows, and nothing is drawn at a negative place. */
 static void draw_picture(struct RastPort *rp, const ow_image_cache *c, int bx, int by, int bw, int bh,
@@ -2111,7 +2112,7 @@ static void paint_op(void *userdata, const ol_device_op *d)
     }
     case OL_OP_IMAGE: {
         int index = d->op->u.image.image_id;
-        ow_image_cache *c = pp->thumb ? image_cache_peek(index) : image_cache_get(index);   /* 2.0.8 */
+        ow_image_cache *c = pp->thumb ? image_cache_peek(index) : image_cache_get(index);   /* 2.0.10 */
         if (d->box.width < 1 || d->box.height < 1) break;
         if (c && CyberGfxBase && screen_depth() > 8)
             draw_picture(rp, c, d->box.x, d->box.y, d->box.width, d->box.height, &pp->lim);
@@ -2147,7 +2148,7 @@ static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_sca
     pp.body = 1;
     pp.thumb = thumb;
     pp.page = page;
-    {   /* 2.0.8: the page, cut to clip */
+    {   /* 2.0.10: the page, cut to clip */
         int x0 = ol_scale_x(s, 0), y0 = ol_scale_y(s, 0);
         int x1 = ol_scale_x(s, ow_layout_page(l)->width), y1 = ol_scale_y(s, ow_layout_page(l)->height);
         if (clip) {
@@ -3940,6 +3941,7 @@ static int window_main(int argc, char **argv)
     RexxSysBase = (struct RxsLib *)OpenLibrary((STRPTR)"rexxsyslib.library", 36);
     DataTypesBase = OpenLibrary((STRPTR)"datatypes.library", 39);
     CyberGfxBase = OpenLibrary((STRPTR)"cybergraphics.library", 0);
+    ogt_iconset_attach();   /* the toolbar's pictures come from the Chrome set (Images/Toolbar/) */
     read_theme_choice();
     set_document(blank_document(), "", "ODT");
     if (!doc || !editor) { rc = 20; goto out; }

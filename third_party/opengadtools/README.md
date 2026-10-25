@@ -30,6 +30,15 @@ the font's height, rounded to the set's 24, 28, 32 or 48: 28 with the lab's
 23-pixel font, where twice the height drew 48. The buttons' padding is on the
 style's 4-pixel grid.
 
+`ogt_toolbar.c`, `ogt_toolbar.h`, `ogt_iconset.c` and `ogt_iconset.h` are
+refreshed from DalsinAI/opengadtools PR #88 (branch
+`team5/toolbar-alone-20261025`, 25 October 2026). The toolbar no longer
+names the icon set, so a program can compile `ogt_toolbar.c` without
+`ogt_iconset.c` again. A program attaches the set by calling
+`ogt_iconset_attach()` once, before its first toolbar. OpenWrite and OpenCalc
+call it at startup. A toolbar without the set keeps the earlier measures and
+the vector icons, as OpenWrite1's does.
+
 `Images/Toolbar/` at the top of this repository holds the Chrome set's strips
 (24, 28, 32 and 48 pixels, light and dark, 32 and 8 colours), made by #87's
 `python3 tools/iconset/make_iconset.py`. `build-os3.sh` copies them next to the

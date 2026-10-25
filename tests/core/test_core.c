@@ -556,7 +556,7 @@ static int test_page_setup_and_break(void)
 }
 
 
-/* 2.0.8: a Word cover's frames (tests/core/fixtures/cover.docx) through typing in their paragraph, whose runs
+/* 2.0.10: a Word cover's frames (tests/core/fixtures/cover.docx) through typing in their paragraph, whose runs
  * are all frames, undo and redo: the undo copy holds them and their text boxes' paragraphs. */
 static int test_frames_undo(void)
 {

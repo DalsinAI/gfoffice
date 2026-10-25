@@ -94,6 +94,13 @@ int main(int argc, char **argv)
         put_string(book->names[i].formula);
         putchar('\n');
     }
+    for (i = 0; i < book->nparts; i++) {
+        printf("part ");
+        put_string(book->parts[i].name);
+        putchar(' ');
+        put_string(book->parts[i].type);
+        printf(" length=%lu\n", (unsigned long)book->parts[i].length);
+    }
     for (i = 0; i < book->nsheets; i++) {
         const owf_sheet *sh = &book->sheets[i];
         printf("sheet %d ", i);
@@ -108,6 +115,11 @@ int main(int argc, char **argv)
         for (k = 0; k < sh->nmerges; k++)
             printf("merge %u,%u-%u,%u\n", sh->merges[k].first_row, sh->merges[k].first_col, sh->merges[k].last_row,
                    sh->merges[k].last_col);
+        if (sh->drawing) {
+            printf("drawing ");
+            put_string(sh->drawing);
+            putchar('\n');
+        }
         if (sh->has_autofilter) {
             printf("autofilter %u,%u-%u,%u ", sh->autofilter.first_row, sh->autofilter.first_col, sh->autofilter.last_row,
                    sh->autofilter.last_col);

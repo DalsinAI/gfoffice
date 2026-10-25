@@ -72,7 +72,7 @@ static void clear_doc_data(owf_doc *doc)
     owf_free(doc->fonts);
     for (i = 0; i < doc->nimages; ++i) { owf_free(doc->images[i].name); owf_free(doc->images[i].mime); owf_free(doc->images[i].alt); owf_free(doc->images[i].data); }
     owf_free(doc->images);
-    for (i = 0; i < doc->nframes; ++i) free_story_data(&doc->frames[i].story);   /* 2.0.8: frames */
+    for (i = 0; i < doc->nframes; ++i) free_story_data(&doc->frames[i].story);   /* 2.0.10: frames */
     owf_free(doc->frames);
     owf_free(doc->title);
     memset(doc, 0, sizeof(*doc));
@@ -92,7 +92,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->fmt = sp->fmt;
         dp->table_id = sp->table_id; dp->table_row = sp->table_row;
         dp->table_col = sp->table_col; dp->table_cols = sp->table_cols;
-        dp->cell_shading = sp->cell_shading;         /* 2.0.8: undo kept no cell colour */
+        dp->cell_shading = sp->cell_shading;         /* 2.0.10: undo kept no cell colour */
         if (!sp->nruns) continue;
         dp->runs = (owf_run *)owf_calloc((size_t)sp->nruns, sizeof(*dp->runs));
         if (!dp->runs) return 0;
@@ -149,7 +149,7 @@ static owf_doc *clone_doc(const owf_doc *src)
         !clone_story(&dst->header, &src->header) ||
         !clone_story(&dst->footer, &src->footer))
         goto fail;
-    if (src->nframes) {                              /* 2.0.8: frames, their text boxes' paragraphs too */
+    if (src->nframes) {                              /* 2.0.10: frames, their text boxes' paragraphs too */
         dst->frames = (owf_frame *)owf_calloc((size_t)src->nframes, sizeof(*dst->frames));
         if (!dst->frames) goto fail;
         dst->nframes = dst->capframes = src->nframes;

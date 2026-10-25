@@ -342,7 +342,7 @@ static int story_has(const owf_story *story, const char *s)
 
 /* tests/core/fixtures/cover.docx (make_cover_docx.py): a Word cover page, a picture the size of the page
  * behind the text and four text boxes in front of it, each where Word puts it; the body's lines where they
- * would be without them (2.0.8). */
+ * would be without them (2.0.10). */
 static void cover_checks(const ow_layout *l, const owf_doc *doc)
 {
     const ol_document *od = ow_layout_body(l);
@@ -436,7 +436,7 @@ static void cover_checks(const ow_layout *l, const owf_doc *doc)
 /* tests/core/fixtures/cover-wpg.docx (make_cover_docx.py --wpg): the cover as Word writes it in a document
  * with a group anywhere (the plan's): every drawing's Choice requires wpg, the drawing namespaces are declared
  * on the elements, the picture is aligned to the page's right and placed 1536 twips above its paragraph, and a
- * filled band has no text (2.0.8). The lab's cover was blank: no Choice was read, and the VML fallbacks aren't. */
+ * filled band has no text (2.0.10). The lab's cover was blank: no Choice was read, and the VML fallbacks aren't. */
 static void cover_wpg_checks(const ow_layout *l, const owf_doc *doc)
 {
     const ol_document *od = ow_layout_body(l);

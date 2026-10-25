@@ -883,7 +883,7 @@ static void start_para(docx *d, const owf_parafmt *pf);
 /* mc:AlternateContent's branch to read: the first mc:Choice whose Requires names only markup we read, else
  * the mc:Fallback. Word 2010's drawings need wps (shapes and text boxes) or wpg (groups: Word asks for it on
  * every drawing in a document that has a group anywhere, a picture's too), wp14 and the like add attributes
- * we can do without; a group itself (wpg:wgp) keeps its first picture (import_anchor). 2.0.8: when no Choice
+ * we can do without; a group itself (wpg:wgp) keeps its first picture (import_anchor). 2.0.10: when no Choice
  * qualifies and the fallback has no DrawingML of its own (VML only, w:pict, which isn't read), the first
  * Choice with a w:drawing, read for what we can. */
 static const owf_xml_node *alternate(const docx *d, const owf_xml_node *ac)

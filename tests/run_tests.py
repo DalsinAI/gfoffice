@@ -657,7 +657,7 @@ def main():
     text, _ = convert(work, "contents.docx", "txt")
     check("leaders text", "01 Executive summary\t3\n" in text.decode(), repr(text[:200]))
 
-    # A Word cover page (2.0.8): tests/core/fixtures/cover.docx (tests/core/make_cover_docx.py), a picture the
+    # A Word cover page (2.0.10): tests/core/fixtures/cover.docx (tests/core/make_cover_docx.py), a picture the
     # size of the page behind the text and four text boxes in front of it, kept where Word puts them through
     # DOCX and ODT; their text once, not their VML fallbacks' too
     shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "fixtures", "cover.docx"),
@@ -695,7 +695,7 @@ def main():
     check("frames html", html.decode().count("Cover Title") == 1)
     pdf, _ = convert(work, "cover.docx", "pdf")
     check("frames pdf", b"/Subtype /Image" in pdf)
-    # The same cover as Word writes it with a group anywhere in the document (2.0.8, the plan's): every
+    # The same cover as Word writes it with a group anywhere in the document (2.0.10, the plan's): every
     # Choice requires wpg, the drawing namespaces declared on the elements (make_cover_docx.py --wpg)
     shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "fixtures", "cover-wpg.docx"),
                 os.path.join(work, "cover-wpg.docx"))

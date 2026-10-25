@@ -14,7 +14,7 @@ header1.xml.rels). test_layout.c (make layout-test) and run_tests.py read
 it. Run it again after changing it, and commit the file.
 
 --wpg makes tests/core/fixtures/cover-wpg.docx, the same cover as Word writes
-it in a document with a group anywhere (2.0.8, the plan's): every drawing,
+it in a document with a group anywhere (2.0.10, the plan's): every drawing,
 the pictures' too, in mc:AlternateContent whose Choice requires wpg, with a
 VML fallback; wp, wp14, a, pic and wps declared on the elements that use
 them, not on the document; the cover picture aligned to the page's right and

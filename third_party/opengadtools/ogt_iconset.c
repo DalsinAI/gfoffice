@@ -17,6 +17,7 @@
 
 #include "ogt_iconset.h"
 #include "ogt_iconfile.h"
+#include "ogt_toolbar.h"
 
 /* cybergraphics.library: reading and writing true-colour pixels. */
 static struct Library *CyberGfxBase;
@@ -49,6 +50,12 @@ typedef struct sets {
 } sets;
 
 static const int sizes[OGT_ICONSET_SIZES] = { 24, 28, 32, 48 };
+
+void ogt_iconset_attach(void)
+{
+    static const ogt_toolbar_pictures calls = { ogt_iconset_want, ogt_iconset_size, ogt_iconset_draw };
+    ogt_toolbar_pictures_use(&calls);
+}
 
 void ogt_iconset_use(const char *name)
 {
