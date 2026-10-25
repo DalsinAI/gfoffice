@@ -351,10 +351,15 @@ static void read_ppr(docx *d, const owf_xml_node *ppr, owf_paraprops *pp, const 
                 pp->mask |= OWF_PP_AFTER;
             }
             if (wint(d, n, "line", &v)) {
-                /* rounded (1.3.1): 259 (1.08) is 108, written back as 259, not 107, then 256 and 106... */
-                pp->fmt.line_spacing = (!rule || !strcmp(rule, "auto")) ? (v * 100 + 120) / 240 : 100;
-                if (pp->fmt.line_spacing < 50 || pp->fmt.line_spacing > 500)
-                    pp->fmt.line_spacing = 100;
+                if (rule && (!strcmp(rule, "exact") || !strcmp(rule, "atLeast")) && v > 0 && v < 0x8000) {
+                    /* 2.0.18: a height in twips, exactly or at least */
+                    pp->fmt.line_spacing = !strcmp(rule, "exact") ? OWF_LINE_EXACT(v) : OWF_LINE_AT_LEAST(v);
+                } else {
+                    /* rounded (1.3.1): 259 (1.08) is 108, written back as 259, not 107, then 256 and 106... */
+                    pp->fmt.line_spacing = (!rule || !strcmp(rule, "auto")) ? (v * 100 + 120) / 240 : 100;
+                    if (pp->fmt.line_spacing < 50 || pp->fmt.line_spacing > 500)
+                        pp->fmt.line_spacing = 100;
+                }
                 pp->mask |= OWF_PP_LINE;
             }
         } else if (!strcmp(n->name, "pageBreakBefore")) {
