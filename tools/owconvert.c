@@ -61,7 +61,7 @@ const char *owc_level_name(int level)
 
 int owc_missing(const char *library, int version, const char *what)
 {
-    printf("OWConvert: %s needs %s %d in LIBS:\n", what, library, version);
+    printf("OWConvert: %s need %s %d in LIBS:\n", what, library, version);
     return 1;
 }
 
@@ -120,9 +120,15 @@ static int convert(const char *from, const char *to, const char *format, int sho
         return rc;
     }
     free(data);
+    if (kind == OWF_KIND_DECK && !owc_deck_open())
+        return RC_FAIL;                         /* a presentation, and its library missing: said */
     /* a workbook's library only when FROM is a workbook or TO isn't a document */
-    if ((kind == OWF_KIND_WORKBOOK || !owc_doc_writes(to, format)) && owc_book_writes(to, format))
-        return owc_book_convert(from, to, format, show_report);
+    if (kind == OWF_KIND_WORKBOOK || !owc_doc_writes(to, format)) {
+        if (owc_book_writes(to, format))
+            return owc_book_convert(from, to, format, show_report);
+        if (kind == OWF_KIND_WORKBOOK && !owc_book_open())
+            return RC_FAIL;                     /* a workbook, and its library missing: said */
+    }
     if (kind == OWF_KIND_PUBLICATION)
         return owc_pub_convert(from, show_report);
     return owc_doc_convert(from, to, format, show_report);
