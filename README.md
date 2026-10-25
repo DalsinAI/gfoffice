@@ -81,6 +81,11 @@ workbook tests (`make book-test`, `make book-check`): Excel 97-2003 files
 read into the spreadsheet's model, and saved as CSV
 (`tests/book/test_books.py`).
 
+They include the formula engine's tests too (`make calc-test`, `make
+calc-check`): OpenCalc's engine in `libowf/calc` (calls in
+`libowf/include/owf_calc.h`; `docs/CALC_ENGINE.md`), with its functions
+checked one by one and against the results saved in the workbook fixtures.
+
 Pages are laid out by OpenLayout (DalsinAI/openamigalayout 0.2 or later).
 With it checked out beside this repository, or `OPENLAYOUT_SRC` pointing at
 it, `make layout-test` lays out a built document and the samples into pages
@@ -140,6 +145,18 @@ The 1.0 release gate includes:
 - the libowf normal and sanitizer corruption/cut-short corpus;
 - m68k AmigaOS cross-build;
 - real AmigaOS 3.2.3/OpenRTG bench validation.
+
+## OpenCalc
+
+OpenCalc is the spreadsheet of the GFOffice Suite, beside OpenWrite in this
+repository for now. Its portable core is `src/calc` (`include/opencalc_core.h`):
+the view, the selection, keys as Excel and LibreOffice have them, editing,
+fill, insert and delete, the clipboard, styles, bounded undo and the grid as a
+list of things to draw. It is tested on the PC with `make calc-test` and
+`make calc-check` (both part of `make test` and `make check`). The Amiga
+window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
+(OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
+by the engine in `libowf/include/owf_calc.h`.
 
 ## Licence
 

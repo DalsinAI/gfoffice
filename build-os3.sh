@@ -1,5 +1,5 @@
 #!/bin/sh
-# OpenWrite and OWConvert for AmigaOS 3.x with the os32-gcc16 stove
+# OpenWrite, OpenCalc and OWConvert for AmigaOS 3.x with the os32-gcc16 stove
 # (OpenAmigaGCC 16). The compiler: OS32_GCC16, else STOVE, else
 # ~/AmigaChrome/stoves/os32-gcc16; this script stops when given a GCC older
 # than 16 (the os32 stove's GCC 6.5 is retired: its peephole2 clears a word
@@ -93,6 +93,21 @@ elif [ "${OW1:-}" = yes ]; then
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/OpenWrite1"
 echo "$OUT/OpenWrite1 ($(wc -c < "$OUT/OpenWrite1") bytes)"
+fi
+
+# OpenCalc, the spreadsheet of the GFOffice Suite: its core (src/calc), every workbook format and the formula
+# engine (libowf/calc), with libowf linked in (owf.library has no workbook calls yet), and OpenWrite 2's
+# shell pieces.
+if [ "$OWF" = library ]; then
+    echo "build-os3.sh: OpenCalc is built with libowf linked in only (OWF=linked): owf.library has no workbook calls yet"
+else
+# shellcheck disable=SC2086
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+    -I"$HERE/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" -I"$HERE/third_party/opengadtools" \
+    $OWFSRC "$HERE"/libowf/calc/*.c "$HERE"/src/calc/*.c "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" \
+    "$HERE"/third_party/opengadtools/*.c -lamiga $OWFLIBS \
+    -o "$OUT/OpenCalc"
+echo "$OUT/OpenCalc ($(wc -c < "$OUT/OpenCalc") bytes)"
 fi
 
 echo "$OUT/OWConvert ($(wc -c < "$OUT/OWConvert") bytes)"
