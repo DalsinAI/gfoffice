@@ -405,6 +405,17 @@ unsigned oc_line_pattern(int line);
  * circular reference's or a bad formula's warning; "" when nothing. */
 void oc_core_status(oc_core *core, char *out, size_t size);
 
+/* ---- The sheet tabs ----
+ * Which sheets' tabs a strip shows. width[s] is sheet s's tab in pixels,
+ * with the gap after it (0: no tab, a hidden sheet), avail the strip's width
+ * for tabs, arrows the width of the two scroll arrows a strip shows when
+ * not every tab fits. *first (in and out) is the first sheet shown: it moves
+ * so that the current sheet's tab shows, and back when there is room, so
+ * that the strip stays full. *scroll is 1 when the arrows show. The sheet
+ * after the last tab shown (n when the last shows). At least one tab shows,
+ * cut short when it is wider than the strip. */
+int oc_tab_strip(const int *width, int n, int avail, int arrows, int current, int *first, int *scroll);
+
 #ifdef __cplusplus
 }
 #endif
