@@ -21,14 +21,16 @@ $(OUT)/owconvert-asan: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/owconvert.c -lz -o $@
 
-test: $(OUT)/owconvert $(OUT)/book-dump
+test: $(OUT)/owconvert $(OUT)/book-dump $(OUT)/test-calc
 	python3 tests/run_tests.py $(OUT)/owconvert
 	python3 tests/book/test_books.py $(OUT)/book-dump $(OUT)/owconvert
+	$(OUT)/test-calc $(CALC_FIXTURES)
 
-check: $(OUT)/owconvert-asan $(OUT)/test-core-asan $(OUT)/book-dump-asan
+check: $(OUT)/owconvert-asan $(OUT)/test-core-asan $(OUT)/book-dump-asan $(OUT)/test-calc-asan
 	python3 tests/run_tests.py $(OUT)/owconvert-asan
 	$(OUT)/test-core-asan
 	python3 tests/book/test_books.py $(OUT)/book-dump-asan $(OUT)/owconvert-asan
+	$(OUT)/test-calc-asan $(CALC_FIXTURES)
 
 clean:
 	rm -rf build
@@ -124,27 +126,54 @@ book-check: $(OUT)/book-dump-asan $(OUT)/owconvert-asan
 
 .PHONY: book-test book-check
 
-# OpenCalc's core (src/calc) on the formula engine: tests/calc_core
-CALC_SRC = $(wildcard src/calc/*.c)
-CALC_DEPS = $(OWF_SRC) $(CALC_SRC) tests/calc_core/test_calc_core.c include/opencalc_core.h src/calc/oc_internal.h libowf/include/owf_calc.h
+# The formula engine (OpenCalc's): libowf/calc, linked only by what
+# calculates (it needs -lm). tests/calc/test_calc.c checks it, and works out
+# the fixtures' formulas again against the results saved in them
+# (tests/calc/make_calc_fixtures.py makes calc.xls with LibreOffice).
+CALC_SRC = $(wildcard libowf/calc/*.c)
+CALC_FIXTURES = tests/book/fixtures/book.xls tests/calc/fixtures/calc.xls
 
-$(OUT)/test-calc-core: $(CALC_DEPS)
+$(OUT)/test-calc: $(OWF_SRC) $(CALC_SRC) tests/calc/test_calc.c libowf/include/owf.h libowf/include/owf_calc.h libowf/calc/owf_calc_int.h
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -Isrc/calc \
-		$(OWF_SRC) $(CALC_SRC) tests/calc_core/test_calc_core.c -lz -lm -o $@
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/calc $(OWF_SRC) $(CALC_SRC) tests/calc/test_calc.c -lz -lm -o $@
 
-$(OUT)/test-calc-core-asan: $(CALC_DEPS)
+$(OUT)/test-calc-asan: $(OWF_SRC) $(CALC_SRC) tests/calc/test_calc.c libowf/include/owf.h libowf/include/owf_calc.h libowf/calc/owf_calc_int.h
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
-		-Iinclude -Ilibowf/include -Ilibowf/src -Isrc/calc $(OWF_SRC) $(CALC_SRC) tests/calc_core/test_calc_core.c -lz -lm -o $@
+		-Ilibowf/include -Ilibowf/src -Ilibowf/calc $(OWF_SRC) $(CALC_SRC) tests/calc/test_calc.c -lz -lm -o $@
 
-calc-test: $(OUT)/test-calc-core
-	$(OUT)/test-calc-core
+calc-test: $(OUT)/test-calc
+	$(OUT)/test-calc $(CALC_FIXTURES)
 
-calc-check: $(OUT)/test-calc-core-asan
-	$(OUT)/test-calc-core-asan
+calc-check: $(OUT)/test-calc-asan
+	$(OUT)/test-calc-asan $(CALC_FIXTURES)
 
-test: calc-test
-check: calc-check
+# OpenCalc's core (src/calc) on the formula engine (libowf/calc, CALC_SRC
+# above): tests/calc_core
+OPENCALC_SRC = $(wildcard src/calc/*.c)
+OPENCALC_DEPS = $(OWF_SRC) $(CALC_SRC) $(OPENCALC_SRC) tests/calc_core/test_calc_core.c include/opencalc_core.h \
+	src/calc/oc_internal.h libowf/include/owf_calc.h
+
+$(OUT)/test-opencalc-core: $(OPENCALC_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -Ilibowf/calc -Isrc/calc \
+		$(OWF_SRC) $(CALC_SRC) $(OPENCALC_SRC) tests/calc_core/test_calc_core.c -lz -lm -o $@
+
+$(OUT)/test-opencalc-core-asan: $(OPENCALC_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src -Ilibowf/calc -Isrc/calc \
+		$(OWF_SRC) $(CALC_SRC) $(OPENCALC_SRC) tests/calc_core/test_calc_core.c -lz -lm -o $@
+
+opencalc-test: $(OUT)/test-opencalc-core
+	$(OUT)/test-opencalc-core
+
+opencalc-check: $(OUT)/test-opencalc-core-asan
+	$(OUT)/test-opencalc-core-asan
+
+test: opencalc-test
+check: opencalc-check
+
+.PHONY: opencalc-test opencalc-check
 
 .PHONY: calc-test calc-check
