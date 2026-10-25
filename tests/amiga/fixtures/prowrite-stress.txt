@@ -1,0 +1,40 @@
+ProWrite stress document
+Team 5, W142: every chunk the 1987 specification names
+
+1. Fonts, sizes, styles and colours
+Plain, bold, italic, underlined, all three, Courier 10, Times 18, topaz 8, diamond, CGTimes 72, H2O and E=mc2, red, green, blue, yellow, magenta, cyan, white, back to plain.
+This paragraph starts in red bold underlined Courier from its PARA, and an FSCC makes the rest plain Times.
+A whole paragraph raised (MiscStyle 1).
+A whole paragraph lowered (MiscStyle 2).
+
+2. Alignment, indents, spacing
+Left: The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all.
+Centred: The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all.
+Right: The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all.
+Fully justified: The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all.
+LeftIndent and LeftMargin 720 (an inch), RightMargin 4320 (six inches; what it is measured from is not said): The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all.
+·	A hanging indent: the first line starts at the margin, the rest at half an inch. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all.
+A first-line indent of an inch, the rest at the margin. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all.
+Double-spaced (Spacing 0x10): The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all. The quick brown fox jumps over the lazy dog, and the dog does not mind at all.
+
+3. Tab stops: left 1 in, centre 2.5 in, right 4 in, decimal 5.5 in
+Start	Left	Centre	Right	3.14159
+	l	centred text	right text	1234.5
+				-0.001
+No tab stops now: a tab here	goes to the default stop.
+
+4. Special characters
+In the body: page #, date @date, time @time (ProWrite allows them in headers and footers only).
+Latin-1: Café, naïve, Ærøskøbing, ¿Qué?, «guillemets», 1½ × 2¼, 90°, © ® § ¶ µ ß.
+
+Run 1 Run 2 Run 3 Run 4 Run 5 Run 6 Run 7 Run 8 Run 9 Run 10 Run 11 Run 12 Run 13 Run 14 Run 15 Run 16 Run 17 Run 18 Run 19 Run 20 Run 21 Run 22 Run 23 Run 24 Run 25 Run 26 Run 27 Run 28 Run 29 Run 30 Run 31 Run 32 Run 33 Run 34 Run 35 Run 36 Run 37 Run 38 Run 39 Run 40 Run 41 Run 42 Run 43 Run 44 Run 45 Run 46 Run 47 Run 48 Run 49 Run 50 Run 51 Run 52 Run 53 Run 54 Run 55 Run 56 Run 57 Run 58 Run 59 Run 60 Run 61 Run 62 Run 63 Run 64 Run 65 Run 66 Run 67 Run 68 Run 69 Run 70 Run 71 Run 72 Run 73 Run 74 Run 75 Run 76 Run 77 Run 78 Run 79 Run 80 Run 81 Run 82 Run 83 Run 84 Run 85 Run 86 Run 87 Run 88 Run 89 Run 90 Run 91 Run 92 Run 93 Run 94 Run 95 Run 96 Run 97 Run 98 Run 99 Run 100 Run 101 Run 102 Run 103 Run 104 Run 105 Run 106 Run 107 Run 108 Run 109 Run 110 Run 111 Run 112 Run 113 Run 114 Run 115 Run 116 Run 117 Run 118 Run 119 Run 120.
+5. The second page (VIII)
+A page break (PAGE) came before this page's first paragraph.
+Two page breaks in a row: page IX is empty, and this is page X.
+
+--- headers and footers ---
+Left-page header, page #
+Right-page header	@date @time	page #
+- # -
+A second footer paragraph, on the first page too.
+--- 2 pictures ---
