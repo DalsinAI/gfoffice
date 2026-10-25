@@ -1202,6 +1202,117 @@ static void test_borders(void)
     oc_core_free(core);
 }
 
+/* A cell's text wrapped (or not) and placed: its style's wrap, vertical alignment and font size. */
+static void wrapped(oc_core *core, const char *cell, int wrap, int valign, int size)
+{
+    owf_book *book = oc_core_book(core);
+    owf_cellstyle st;
+    owf_range r;
+    owf_cell *c;
+    if (!oc_parse_range(cell, &r))
+        return;
+    owf_cellstyle_init(&st);
+    st.wrap = (unsigned char)wrap;
+    st.valign = (unsigned char)valign;
+    st.font.size = size;
+    c = owf_sheet_cell(&book->sheets[0], r.first_row, r.first_col, 1);
+    if (c)
+        c->style = owf_book_style(book, &st);
+}
+
+/* The text items of a cell, in order: how many, and the k-th. */
+static int texts_of(const oc_draw_list *l, unsigned row, unsigned col, int k, const oc_draw_item **found)
+{
+    int i, n = 0;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_TEXT && l->items[i].row == row && l->items[i].col == col) {
+            if (n == k && found)
+                *found = &l->items[i];
+            n++;
+        }
+    return n;
+}
+
+static void test_text_layout(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    const oc_draw_item *it = NULL;
+    int y2 = 18 + 17;                                    /* row 2's top */
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    /* a cell font's pixels: 15 twips a pixel at 100%, 11 points 15 pixels, the default 10 points 13 */
+    CHECK(oc_font_px(core, 220) == 15 && oc_font_px(core, 0) == 13 && oc_font_px(core, 285) == 19);
+    oc_view_set_zoom(core, 200);
+    CHECK(oc_font_px(core, 220) == 29);
+    oc_view_set_zoom(core, 100);
+
+    /* one line: the item is the row's box less its grid line, the font's size and the cell's alignment given */
+    enter_at(core, "A2", "plain");
+    wrapped(core, "A2", 0, OWF_VALIGN_BOTTOM, 220);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 0, 0, &it) == 1 && it && it->y == y2 && it->h == 16 && it->valign == OWF_VALIGN_BOTTOM &&
+          it->size == 220);
+
+    /* wrapped: 6 pixels a character, 64 less 2 x 3 of pad = 58, 9 characters a line; the word too long for
+       a line is broken in it, the rest at spaces */
+    oc_core_set_rows_height(core, 1, 1, 41 * 15);        /* 41 pixels: three 13-pixel lines */
+    enter_at(core, "B2", "Software/Service Type");
+    wrapped(core, "B2", 1, OWF_VALIGN_TOP, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 1, 0, &it) == 3 && it && !strcmp(it->text, "Software/") && it->y == y2 + 1 && it->h == 13);
+    CHECK(texts_of(&l, 1, 1, 1, &it) == 3 && it && !strcmp(it->text, "Service") && it->y == y2 + 1 + 13);
+    CHECK(texts_of(&l, 1, 1, 2, &it) == 3 && it && !strcmp(it->text, "Type") && it->y == y2 + 1 + 26 &&
+          it->valign == OWF_VALIGN_CENTRE && it->clip_y == it->y && it->clip_w == 63);
+    /* centred: the three lines' block in the middle; at the bottom, a pixel up from the grid line */
+    wrapped(core, "B2", 1, OWF_VALIGN_CENTRE, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 1, 0, &it) == 3 && it && it->y == y2 + (40 - 39) / 2);
+    enter_at(core, "B2", "two several");
+    wrapped(core, "B2", 1, OWF_VALIGN_BOTTOM, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 1, 1, &it) == 2 && it && !strcmp(it->text, "several") && it->y + it->h == y2 + 40 - 1);
+    /* the text's own line breaks */
+    enter_at(core, "C2", "a\nb\nc");
+    wrapped(core, "C2", 1, OWF_VALIGN_TOP, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 2, 2, &it) == 3 && it && !strcmp(it->text, "c"));
+    /* not wrapped, the first line shows */
+    wrapped(core, "C2", 0, OWF_VALIGN_TOP, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 2, 0, &it) == 1 && it && !strcmp(it->text, "a"));
+
+    /* lines that don't fit the row are left out: a 17-pixel row holds one */
+    enter_at(core, "B4", "one two three");
+    wrapped(core, "B4", 1, OWF_VALIGN_TOP, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 3, 1, 0, &it) == 1 && it && !strcmp(it->text, "one two"));
+    wrapped(core, "B4", 1, OWF_VALIGN_BOTTOM, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 3, 1, 0, &it) == 1 && it && !strcmp(it->text, "three"));
+
+    /* a merged range's text is placed in all of it, wrapped across its width */
+    owf_sheet_merge(&oc_core_book(core)->sheets[0], &(owf_range){ 5, 6, 0, 1 });
+    enter_at(core, "A6", "merged and wrapped text");
+    wrapped(core, "A6", 1, OWF_VALIGN_CENTRE, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 5, 0, 0, &it) == 2 && it && it->w == 128 && it->clip_w == 127);
+    CHECK(texts_of(&l, 5, 0, 1, &it) == 2 && it && it->y == y2 + 3 * 17 + 41 + (2 * 17 - 1 - 26) / 2 + 13);
+    /* not wrapped: one item, the merge's box */
+    enter_at(core, "A6", "merged");
+    wrapped(core, "A6", 0, OWF_VALIGN_CENTRE, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 5, 0, 0, &it) == 1 && it && it->y == y2 + 41 + 3 * 17 && it->h == 2 * 17 - 1);
+    /* an empty merged cell adds nothing (and moves no other text) */
+    owf_sheet_merge(&oc_core_book(core)->sheets[0], &(owf_range){ 9, 9, 0, 1 });
+    enter_at(core, "A10", "");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 0, 0, &it) == 1 && it && it->y == y2);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -1417,6 +1528,7 @@ int main(void)
     test_sheets();
     test_draw();
     test_borders();
+    test_text_layout();
     test_status();
     test_files();
     if (failures) {
