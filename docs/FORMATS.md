@@ -120,7 +120,7 @@ a deck when the file it is given is one (by its contents).
 
 | Format | Open | Save | Knowledge | Phase | State |
 | --- | --- | --- | --- | --- | --- |
-| IFF FTXT, the Amiga's formatted text and its clipboard format | Yes | Yes (clipboard) | Spec: EA IFF 85; `CHRS` text with ISO 6429 style codes, `FONS` fonts | W2 | Formatting (libowf 0.1, from the spec; to check against files from real programs) |
+| IFF FTXT, the Amiga's formatted text and its clipboard format | Yes | Yes (clipboard) | Spec: EA IFF 85; `CHRS` text with ISO 6429 style codes, `FONS` fonts | W2 | Formatting (libowf 0.1, from the spec): a FORM's CHRS read as one stream, text in font 1 at the start, reserved sequences skipped whole, LIST (with PROP) and CAT read; checked against `tests/amiga/fixtures/ftxt-stress*` (tests/amiga/test_ftxt.py). To check against files from real programs |
 | AmigaGuide (`.guide`) | No | No | Spec: AmigaGuide's `@node`, `@{b}`, links | Later | To do |
 | ANSI text, with the Amiga console's style and colour codes | Yes | No | Spec: ECMA-48 | W2 | Formatting (libowf 0.1) |
 
