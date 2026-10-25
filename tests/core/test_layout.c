@@ -59,7 +59,7 @@ static void round_trip(const ow_layout *l, const owf_doc *doc, int pi, int *chec
         if (r->kind != OWF_RUN_TEXT || !r->text) continue;
         len = strlen(r->text);
         for (k = 0; k <= len; ++k) {
-            ow_position pos, back;
+            ow_position pos = { 0, 0, 0, 0 }, back = { 0, 0, 0, 0 };
             ol_rect box;
             int page;
             if (k < len && ((unsigned char)r->text[k] & 0xc0u) == 0x80u) continue;
@@ -92,7 +92,7 @@ static void test_built(void)
     char text[200];
     ol_rect box0, box1;
     ol_unit sx = -1, sy = -1;
-    ow_position pos;
+    ow_position pos = { 0, 0, 0, 0 };
 
     owf_doc_font(doc, "Liberation Serif", OWF_FONT_SERIF);
     para(doc, NULL, 1, "A heading that stays with what follows", 360);
@@ -225,7 +225,7 @@ static void test_page_numbers(void)
 /* The end of a paragraph's run on the page: its caret after its last byte. */
 static int run_end(const ow_layout *l, const owf_doc *doc, int para, int run, int *page, ol_rect *box)
 {
-    ow_position pos;
+    ow_position pos = { 0, 0, 0, 0 };
     const owf_run *r = &doc->body.paras[para].runs[run];
     pos.paragraph = para;
     pos.run = run;
@@ -236,7 +236,7 @@ static int run_end(const ow_layout *l, const owf_doc *doc, int para, int run, in
 /* A run's first op in the body (a tab's: its one). */
 static const ol_display_op *run_op(const ow_layout *l, int para, int run)
 {
-    ow_position pos;
+    ow_position pos = { 0, 0, 0, 0 };
     ol_text_position t;
     const ol_document *od = ow_layout_body(l);
     size_t i;
@@ -300,7 +300,7 @@ static void contents_checks(const ow_layout *l, const owf_doc *doc)
     /* "Centred" centred at 4513, "1234.50" with its point at 8000 */
     {
         const owf_para *p = &doc->body.paras[5];
-        ow_position pos;
+        ow_position pos = { 0, 0, 0, 0 };
         CHECK(p->nruns == 5 && p->fmt.ntabs == 2 && p->fmt.tabs[1].kind == OWF_TAB_DECIMAL);
         if (p->nruns == 5) {
             CHECK(run_end(l, doc, 5, 2, &pa, &b));
@@ -365,7 +365,7 @@ static void cover_checks(const ow_layout *l, const owf_doc *doc)
     const ol_display_op *op, *pic;
     size_t at_pic = 0, at = 0;
     ol_unit tw = OL_UNITS_PER_TWIP, x, y;
-    ow_position pos;
+    ow_position pos = { 0, 0, 0, 0 };
     int i, n, page;
     ol_rect box;
 
@@ -463,8 +463,77 @@ static void cover_checks(const ow_layout *l, const owf_doc *doc)
         CHECK(ow_layout_hit(l, 1, pic->u.image.bounds.x + 100 * tw, pic->u.image.bounds.y + 100 * tw, &pos) &&
               pos.paragraph == 3);
     }
+    /* 2.0.15: the pointer on the title box finds its text: text box 2 (the second frame) */
     y = (3600 + 300) * tw;
-    CHECK(!ow_layout_hit(l, 0, pg->margin_left + 400 * tw, y, &pos) || pos.paragraph <= 1);
+    CHECK(ow_layout_hit(l, 0, pg->margin_left + 400 * tw, y, &pos) && pos.box == 2 && pos.paragraph == 0);
+}
+
+/* 2.0.15: the caret in a text box: the pointer puts it in the cover's title, typing goes there and the box
+ * shows it, a new paragraph in the box has its caret below the title's line; the body is as it was. */
+static void test_box_caret(const char *path)
+{
+    owf_doc *doc = NULL;
+    ow_editor *ed;
+    ow_layout *l;
+    ow_selection sel;
+    ow_position pos = { 0, 0, 0, 0 }, empty = { 0, 0, 0, 0 };
+    const ol_display_op *op;
+    ol_rect box, title;
+    int page = -1, body_paras;
+    if (owf_import_file(path, NULL, &doc, NULL, NULL) != OWF_OK || !doc) {
+        CHECK(!"cover.docx read");
+        return;
+    }
+    body_paras = doc->body.nparas;
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (!l) { owf_doc_free(doc); return; }
+    op = text_on(ow_layout_body(l), 0, "Cover Title", NULL);
+    CHECK(op != NULL);
+    if (!op) { ow_layout_free(l); owf_doc_free(doc); return; }
+    title = op->u.text.bounds;
+    /* just left of the title's first letter: the box's start */
+    CHECK(ow_layout_hit(l, 0, title.x - OL_UNITS_PER_TWIP * 20, title.y + title.height / 2, &pos) && pos.box == 2 &&
+          pos.paragraph == 0 && pos.byte_offset == 0);
+    CHECK(ow_layout_caret(l, pos, &page, &box) && page == 0 && box.x == title.x && box.y == title.y);
+    ow_layout_free(l);
+    ed = ow_editor_new(doc);
+    CHECK(ed != NULL);
+    if (!ed) { owf_doc_free(doc); return; }
+    memset(&sel, 0, sizeof sel);
+    sel.anchor = sel.focus = pos;
+    ow_editor_set_selection(ed, &sel);
+    CHECK(ow_editor_insert_utf8(ed, "New ", 4) == OWF_OK);
+    CHECK(doc->frames[1].story.paras[0].runs[0].text && !strncmp(doc->frames[1].story.paras[0].runs[0].text, "New Cover", 9));
+    CHECK(doc->body.nparas == body_paras);
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        op = text_on(ow_layout_body(l), 0, "New Cover", NULL);
+        CHECK(op && op->u.text.bounds.x == title.x && op->u.text.bounds.y == title.y);
+        /* the caret after "New " is on the title's line, further right */
+        CHECK(ow_layout_caret(l, ow_editor_selection(ed).focus, &page, &box) && page == 0 && box.y == title.y &&
+              box.x > title.x);
+        ow_layout_free(l);
+    }
+    /* a new, empty paragraph at the title's end: its caret under the title, in the box */
+    ow_editor_move_caret(ed, OW_MOVE_END, 0);
+    CHECK(ow_editor_newline(ed) == OWF_OK && doc->frames[1].story.nparas == 2 && doc->body.nparas == body_paras);
+    empty = ow_editor_selection(ed).focus;
+    CHECK(empty.box == 2 && empty.paragraph == 1);
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        /* placed from the frame's corner, where the frame went; the pointer there finds it again */
+        CHECK(ow_layout_caret(l, empty, &page, &box) && page == 0 && box.y > title.y);
+        CHECK(ow_layout_hit(l, 0, box.x + OL_UNITS_PER_TWIP * 10, box.y + box.height / 2, &pos) && pos.box == 2 &&
+              pos.paragraph == 1);
+        ow_layout_free(l);
+    }
+    CHECK(ow_editor_undo(ed) == 1 && ow_editor_undo(ed) == 1);
+    CHECK(doc->frames[1].story.nparas == 1 && !strcmp(doc->frames[1].story.paras[0].runs[0].text, "Cover Title"));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
 }
 
 /* tests/core/fixtures/cover-wpg.docx (make_cover_docx.py --wpg): the cover as Word writes it in a document
@@ -479,7 +548,7 @@ static void cover_wpg_checks(const ow_layout *l, const owf_doc *doc)
     const ol_display_op *op, *pic;
     size_t at_pic = 0, at = 0, first = 0, count = 0;
     ol_unit tw = OL_UNITS_PER_TWIP;
-    ow_position pos;
+    ow_position pos = { 0, 0, 0, 0 };
     ol_rect box;
     int n, page;
 
@@ -758,7 +827,7 @@ static void test_sample(const char *path)
         /* a list item's bullet hangs and its text, after the tab, starts at the paragraph's indent */
         for (i = 0; i < doc->body.nparas; ++i) {
             const owf_para *p = &doc->body.paras[i];
-            ow_position pos;
+            ow_position pos = { 0, 0, 0, 0 };
             ol_rect box;
             int page;
             if (p->table_id >= 0 || p->nruns < 3 || p->fmt.indent_first >= 0 ||
@@ -800,6 +869,8 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)
         if (strstr(argv[i], "cover-wpg.docx")) test_cover_typing(argv[i]);
+    for (i = 1; i < argc; ++i)
+        if (strstr(argv[i], "cover.docx") && !strstr(argv[i], "wpg")) test_box_caret(argv[i]);
     for (i = 1; i < argc; ++i) test_round_trip(argv[i]);
     if (failures) {
         printf("ow_layout tests: %d failed\n", failures);
