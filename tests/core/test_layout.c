@@ -438,7 +438,27 @@ static void cover_checks(const ow_layout *l, const owf_doc *doc)
     CHECK(pic && pic->u.image.bounds.x == pg->margin_left + (9026 - 1440) * tw &&
           ow_layout_caret(l, pos, &page, &box) && page == 1 && pic->u.image.bounds.y <= box.y &&
           pic->u.image.bounds.y + 200 * tw > box.y);
-    /* the pointer on the picture in front finds the body's text under it; on the title, no box's text */
+    /* 2.0.14: the text goes round it (wrapSquare): the lines beside it end an eighth of an inch before it (a
+     * space may hang past), and fill up to there */
+    if (pic) {
+        size_t first = 0, count = 0, k;
+        int beside = 0;
+        ol_unit widest = 0;
+        CHECK(ol_display_page_range(od, 1, &first, &count));
+        for (k = first; k < first + count; ++k) {
+            const ol_display_op *t = ol_display_get(od, k);
+            if (t->type != OL_OP_TEXT) continue;
+            if (t->u.text.bounds.y < pic->u.image.bounds.y + pic->u.image.bounds.height &&
+                t->u.text.bounds.y + t->u.text.bounds.height > pic->u.image.bounds.y) {
+                CHECK(t->u.text.bounds.x + t->u.text.bounds.width <= pic->u.image.bounds.x - 180 * tw + 120 * tw);
+                if (t->u.text.bounds.x + t->u.text.bounds.width > widest)
+                    widest = t->u.text.bounds.x + t->u.text.bounds.width;
+                ++beside;
+            }
+        }
+        CHECK(beside >= 6 && widest > pic->u.image.bounds.x - 180 * tw - 1440 * tw);
+    }
+    /* the pointer on the picture finds the body's text beside it; on the title, no box's text */
     if (pic) {
         CHECK(ow_layout_hit(l, 1, pic->u.image.bounds.x + 100 * tw, pic->u.image.bounds.y + 100 * tw, &pos) &&
               pos.paragraph == 3);
@@ -500,6 +520,77 @@ static void cover_wpg_checks(const ow_layout *l, const owf_doc *doc)
     op = text_on(od, 0, "A plan", NULL);
     CHECK(op && ow_layout_caret(l, pos, &page, &box) && page == 0 && op->u.text.bounds.y >= box.y + (3600 + 72) * tw &&
           op->u.text.bounds.y < box.y + (3600 + 1080) * tw);
+}
+
+/* How many text ops on a page cross r, but those of node skip. */
+static int crossing(const ol_document *od, int page, ol_rect r, ol_id skip)
+{
+    size_t first = 0, count = 0, k;
+    int n = 0;
+    if (!ol_display_page_range(od, page, &first, &count)) return 0;
+    for (k = first; k < first + count; ++k) {
+        const ol_display_op *t = ol_display_get(od, k);
+        if (t->type != OL_OP_TEXT || t->u.text.node_id == skip) continue;
+        if (t->u.text.bounds.x < r.x + r.width && t->u.text.bounds.x + t->u.text.bounds.width > r.x &&
+            t->u.text.bounds.y < r.y + r.height && t->u.text.bounds.y + t->u.text.bounds.height > r.y)
+            ++n;
+    }
+    return n;
+}
+
+/* tests/core/fixtures/wrap.docx (make_wrap_docx.py): text round frames (2.0.14). No body text under a picture
+ * or the box, nor an eighth of an inch from a picture's sides; text on both sides of the centred one, none
+ * beside the box. */
+static void wrap_checks(const ow_layout *l, const owf_doc *doc)
+{
+    const ol_document *od = ow_layout_body(l);
+    const ol_page *pg = ow_layout_page(l);
+    ol_unit tw = OL_UNITS_PER_TWIP, gap = 180 * tw;
+    int p, pictures = 0, boxes = 0, both = 0;
+
+    CHECK(doc->nframes == 5);
+    if (doc->nframes != 5) return;
+    CHECK(doc->frames[0].wrap == OWF_WRAP_SQUARE && doc->frames[1].wrap == OWF_WRAP_SQUARE &&
+          doc->frames[2].wrap == OWF_WRAP_TOP_BOTTOM && doc->frames[3].wrap == OWF_WRAP_TIGHT &&
+          doc->frames[4].wrap == OWF_WRAP_SQUARE);
+    for (p = 0; p < ow_layout_page_count(l); ++p) {
+        size_t first = 0, count = 0, k;
+        CHECK(ol_display_page_range(od, p, &first, &count));
+        for (k = first; k < first + count; ++k) {
+            const ol_display_op *op = ol_display_get(od, k);
+            if (op->type == OL_OP_IMAGE) {
+                ol_rect r = op->u.image.bounds, wide = r;
+                size_t j;
+                int left = 0, right = 0;
+                wide.x -= gap;
+                wide.width += 2 * gap;
+                CHECK(crossing(od, p, r, 0) == 0);
+                /* nothing starts in its gaps either (a word's trailing space may hang into one) */
+                for (j = first; j < first + count; ++j) {
+                    const ol_display_op *t = ol_display_get(od, j);
+                    if (t->type != OL_OP_TEXT || t->u.text.bounds.y >= r.y + r.height ||
+                        t->u.text.bounds.y + t->u.text.bounds.height <= r.y)
+                        continue;
+                    CHECK(t->u.text.bounds.x < wide.x || t->u.text.bounds.x >= wide.x + wide.width);
+                    if (t->u.text.bounds.x + t->u.text.bounds.width <= r.x) ++left;
+                    if (t->u.text.bounds.x >= r.x + r.width) ++right;
+                }
+                if (left && right) ++both;
+                ++pictures;
+            } else if (op->type == OL_OP_FILL_RECT && op->u.fill_rect.argb == 0xff1f3864u) {
+                /* the box: across the whole column, nothing beside it but its own text */
+                const ol_display_op *own = text_on(od, p, "box", NULL);
+                ol_rect band = op->u.fill_rect.bounds;
+                band.x = pg->margin_left;
+                band.width = pg->width - pg->margin_left - pg->margin_right;
+                CHECK(own != NULL);
+                CHECK(crossing(od, p, band, own ? own->u.text.node_id : 0) == 0);
+                ++boxes;
+            }
+        }
+    }
+    /* text on both sides of the centred picture and of the page's own, 2 inches from the margin */
+    CHECK(pictures == 4 && boxes == 1 && both == 2);
 }
 
 /* Where the cover's frames are on the page: the pictures and fills on pages 1 and 2, and the text boxes' first
@@ -693,6 +784,7 @@ static void test_sample(const char *path)
         if (strstr(path, "contents.docx")) contents_checks(l, doc);
         if (strstr(path, "cover.docx")) cover_checks(l, doc);
         if (strstr(path, "cover-wpg.docx")) cover_wpg_checks(l, doc);
+        if (strstr(path, "wrap.docx")) wrap_checks(l, doc);
         printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
                checked, lists);
         ow_layout_free(l);
