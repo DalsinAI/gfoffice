@@ -108,6 +108,13 @@ int main(int argc, char **argv)
         for (k = 0; k < sh->nmerges; k++)
             printf("merge %u,%u-%u,%u\n", sh->merges[k].first_row, sh->merges[k].first_col, sh->merges[k].last_row,
                    sh->merges[k].last_col);
+        for (k = 0; k < sh->ncomments; k++) {
+            printf("comment %u,%u author ", sh->comments[k].row, sh->comments[k].col);
+            put_string(sh->comments[k].author ? sh->comments[k].author : "");
+            printf(" text ");
+            put_string(sh->comments[k].text);
+            putchar('\n');
+        }
         for (k = 0; k < sh->ncondfmts; k++) {
             const owf_condfmt *cf = &sh->condfmts[k];
             int r;

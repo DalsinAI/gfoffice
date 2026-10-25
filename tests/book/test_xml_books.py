@@ -126,8 +126,8 @@ def parse(text):
             sheet["cells"][(r, c)] = line
         elif word in ("col", "row", "merge"):
             sheet[word + "s"].append(line)
-        elif word == "cf":
-            sheet.setdefault("cfs", []).append(line)
+        elif word in ("cf", "comment"):
+            sheet.setdefault(word + "s", []).append(line)
     return book
 
 
@@ -369,7 +369,7 @@ def test_hand_xlsx(work):
     check("hand: book", b["line"] == "book format=xlsx sheets=3 active=2 date1904=1", b["line"])
     notes = "\n".join(b["notes"])
     for want in ("Diagonal lines", "Patterned cell backgrounds", "gradient", "angle", "Text formatted in parts",
-                 "Pivot tables", "Chart sheets", "Comments on cells", "#SPILL!", "Data tables", "numbers could not be read",
+                 "Pivot tables", "Chart sheets", "comments on cells could not be read", "#SPILL!", "Data tables", "numbers could not be read",
                  "Sheet protection", "AutoFilter", "Data validation", "Links in cells",
                  "Pictures, charts", "Tables keep"):
         check("hand: note " + want, want in notes, notes)
@@ -476,8 +476,9 @@ def test_generated_xlsx():
     if rc == 0:
         b = parse(out)
         check("openpyxl: book", b["line"] == "book format=xlsx sheets=3 active=2 date1904=1", b["line"])
-        for want in ("Comments on cells", "Data validation", "Text formatted in parts"):
+        for want in ("Data validation", "Text formatted in parts"):
             check("openpyxl: note " + want, want in "\n".join(b["notes"]), b["notes"])
+        check("openpyxl: comment read", 'comment 0,0 author "me" text "a note"' in out, "")
         check("openpyxl: conditional formatting read", any(sh.get("cfs") for sh in b["sheets"]), b["sheets"][0].get("cfs"))
         check("openpyxl: sheet", b["sheets"][0]["line"] == 'sheet 0 "Sums" hidden=0 width=960 height=300 freeze=1,1', b["sheets"][0]["line"])
         check("openpyxl: hidden", b["sheets"][1]["line"].startswith('sheet 1 "Other sheet" hidden=1'))
@@ -682,7 +683,10 @@ def test_xlsx_ods_xlsx(work, xlsx_paths):
         if "\ncf " in a:
             rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-cf.ods")])
             check("xlsx to ods: conditional formatting noted: " + stem, "Conditional formatting is kept" in out, out)
-        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("cf ",))
+        if "\ncomment " in a:
+            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-cm.ods")])
+            check("xlsx to ods: comments noted: " + stem, "Comments on cells are kept" in out, out)
+        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("cf ", "comment "))
 
 
 def test_ods_round_trips(work, ods_paths):

@@ -69,7 +69,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.12 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.13 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -929,6 +929,9 @@ static LONG role_pen(int role, unsigned long rgb)
     case OC_ROLE_HEADER_LINE: return rgb_pen(RGB_HEADER_LINE);
     case OC_ROLE_CURSOR: return ogt_pen(&ctx, "accent");
     case OC_ROLE_FREEZE: return rgb_pen(0x707070UL);
+    case OC_ROLE_COMMENT: return rgb_pen(0xD01010UL);        /* Excel's red mark */
+    case OC_ROLE_NOTE: return rgb_pen(0xFFFFE1UL);           /* and its comment's pale yellow */
+    case OC_ROLE_NOTE_LINE: return rgb_pen(0x808080UL);
     }
     return rgb_pen(0xFFFFFFUL);                      /* the paper, behind typing */
 }
@@ -1074,6 +1077,15 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
     case OC_DRAW_CARET:
         fill_box(cv, rgb_pen(0), it->x, it->y, 1, it->h);
         break;
+    case OC_DRAW_MARK: {                             /* a comment's: the box's top right half, when it is all in view */
+        int xy[6];
+        if (it->x < 0 || it->y < 0 || it->x + it->w >= cv->w || it->y + it->h >= cv->h || it->w < 1) break;
+        xy[0] = cv->ox + it->x; xy[1] = cv->oy + it->y;
+        xy[2] = cv->ox + it->x + it->w; xy[3] = cv->oy + it->y;
+        xy[4] = cv->ox + it->x + it->w; xy[5] = cv->oy + it->y + it->h;
+        ogt_fill_poly(cv->rp, role_pen(it->role, 0), xy, 3);
+        break;
+    }
     }
 }
 
@@ -1148,8 +1160,10 @@ static void draw_tab_arrow(struct RastPort *rp, int x, int y, int w, int h, int 
     xy[3] = cy + a;
     xy[4] = right ? cx + a / 2 + 1 : cx - a / 2 - 1;
     xy[5] = cy;
-    /* 0.1.12: dimmed is the theme's muted, as the style guide has it (opengadtools docs/style/README.md 4.2): in
-     * Chrome 4.4:1 on the tab in light and 5.3:1 in dark, against tab.text's 8.3 and 8.0 */
+    /* dimmed: the theme's muted (the style guide, opengadtools #85, 4.2): in the Open theme #4a5663 on the tabs'
+       #dde2e8 in the light mode (5.8:1, against tab.text's 12:1), #a9b4bf on #313c48 in the dark (5.3:1 against
+       9.2:1); in Chrome 4.4:1 light and 5.3:1 dark, against tab.text's 8.3 and 8.0: dimmer than the arrow that
+       works in both */
     ogt_fill_poly(rp, ogt_pen(&ctx, live ? "tab.text" : "muted"), xy, 3);
 }
 
@@ -2392,7 +2406,7 @@ static int rexx_do_command(const char *command, char **result_out)
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
     else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
-                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK QUIT");
+                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK GETCOMMENT QUIT");
     else if (starts_word_ci(command, "ACTIVATE", &arg)) {
         if (win) { WindowToFront(win); ActivateWindow(win); }
     } else if (starts_word_ci(command, "ISDIRTY", &arg))
@@ -2417,6 +2431,11 @@ static int rexx_do_command(const char *command, char **result_out)
         snprintf(result_text, sizeof result_text, "%s", ok ? "Exported" : "Export failed");
     } else if (starts_word_ci(command, "FONTCHECK", &arg)) {
         if (!font_check(arg, result_text, sizeof result_text)) ok = 0;
+    } else if (starts_word_ci(command, "GETCOMMENT", &arg)) {
+        const owf_comment *cm;
+        if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
+        else if ((cm = oc_core_comment(core, oc_core_sheet(core), row, col)) != NULL)
+            to_latin1(cm->text, strlen(cm->text), result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCELL", &arg)) {
         if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
         else {

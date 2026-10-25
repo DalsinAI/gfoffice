@@ -113,6 +113,66 @@ owf_condfmt *owf_sheet_add_condfmt(owf_sheet *sheet)
     return cf;
 }
 
+static int comment_at(const owf_sheet *sheet, unsigned row, unsigned col, int *found)
+{
+    int lo = 0, hi = sheet->ncomments;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        const owf_comment *c = &sheet->comments[mid];
+        if (c->row < row || (c->row == row && c->col < col))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    *found = lo < sheet->ncomments && sheet->comments[lo].row == row && sheet->comments[lo].col == col;
+    return lo;
+}
+
+const owf_comment *owf_sheet_comment(const owf_sheet *sheet, unsigned row, unsigned col)
+{
+    int found, at = comment_at(sheet, row, col, &found);
+    return found ? &sheet->comments[at] : NULL;
+}
+
+int owf_sheet_set_comment(owf_sheet *sheet, unsigned row, unsigned col, const char *author, const char *text)
+{
+    int found, at = comment_at(sheet, row, col, &found);
+    char *t, *a = NULL;
+    owf_comment *c;
+    if (!text) {
+        if (found) {
+            free(sheet->comments[at].author);
+            free(sheet->comments[at].text);
+            memmove(&sheet->comments[at], &sheet->comments[at + 1], (size_t)(sheet->ncomments - at - 1) * sizeof *c);
+            sheet->ncomments--;
+        }
+        return 0;
+    }
+    if (!(t = copy_text(text, strlen(text))) || (author && !(a = copy_text(author, strlen(author))))) {
+        free(t);
+        return -1;
+    }
+    if (found) {
+        c = &sheet->comments[at];
+        free(c->author);
+        free(c->text);
+    } else {
+        if (!grow((void **)&sheet->comments, sheet->ncomments, &sheet->capcomments, sizeof *c, 8)) {
+            free(t);
+            free(a);
+            return -1;
+        }
+        c = &sheet->comments[at];
+        memmove(c + 1, c, (size_t)(sheet->ncomments - at) * sizeof *c);
+        sheet->ncomments++;
+        c->row = row;
+        c->col = col;
+    }
+    c->author = a;
+    c->text = t;
+    return 0;
+}
+
 void owf_sheet_free_extras(owf_sheet *sheet)
 {
     int i;
@@ -121,6 +181,13 @@ void owf_sheet_free_extras(owf_sheet *sheet)
     free(sheet->condfmts);
     sheet->condfmts = NULL;
     sheet->ncondfmts = sheet->capcondfmts = 0;
+    for (i = 0; i < sheet->ncomments; i++) {
+        free(sheet->comments[i].author);
+        free(sheet->comments[i].text);
+    }
+    free(sheet->comments);
+    sheet->comments = NULL;
+    sheet->ncomments = sheet->capcomments = 0;
 }
 
 static char *dup_or_null(const char *s, int *failed)
@@ -138,6 +205,12 @@ int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src)
     int i, k, failed = 0;
     dst->condfmts = NULL;
     dst->ncondfmts = dst->capcondfmts = 0;
+    dst->comments = NULL;
+    dst->ncomments = dst->capcomments = 0;
+    for (i = 0; i < src->ncomments && !failed; i++)
+        if (owf_sheet_set_comment(dst, src->comments[i].row, src->comments[i].col, src->comments[i].author,
+                                  src->comments[i].text) < 0)
+            failed = 1;
     for (i = 0; i < src->ncondfmts && !failed; i++) {
         const owf_condfmt *a = &src->condfmts[i];
         owf_condfmt *b = owf_sheet_add_condfmt(dst);

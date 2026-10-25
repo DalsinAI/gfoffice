@@ -11,7 +11,9 @@ what it leaves out.
 
   - conditional formatting: cellIs, expression and colour scale rules
     with their looks (the styles' dxfs), a data bar and a "contains text"
-    rule kept as the file wrote them, priorities and stopIfTrue.
+    rule kept as the file wrote them, priorities and stopIfTrue;
+  - comments: their text and author, written with the boxes Excel shows
+    them in (a VML drawing).
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import os
@@ -172,6 +174,62 @@ def test_condfmt(work):
     check("cf: ODS says it leaves them out", "Conditional formatting is kept in Excel workbooks" in report, report)
 
 
+# ---- Comments ----
+
+def test_comments(work):
+    src = dump(FIX)
+    cms = sheet_lines(src, 0, "comment")
+    want = ['comment 6,0 author "Team 5" text "Main identity service.\\nOwner to confirm."',
+            'comment 8,2 author "Team 5" text "Hosted by the supplier"',
+            'comment 11,5 author "Finance" text "Cost per year, before VAT"']
+    check("comments read", cms == want, "\n".join(cms))
+    rc, out, err = run([DUMP, FIX])
+    check("comments: no 'not read yet' note", "Comments on cells are not read" not in out, out)
+    xlsx = os.path.join(work, "comments.xlsx")
+    convert(FIX, xlsx)
+    well_formed(xlsx)
+    check("comments: the same after saving", sheet_lines(dump(xlsx), 0, "comment") == want, "")
+    with zipfile.ZipFile(xlsx) as z:
+        names = z.namelist()
+        types = z.read("[Content_Types].xml").decode()
+        rels = z.read("xl/worksheets/_rels/sheet1.xml.rels").decode() if "xl/worksheets/_rels/sheet1.xml.rels" in names else ""
+        sheet = z.read("xl/worksheets/sheet1.xml").decode()
+        vml = z.read("xl/drawings/vmlDrawing1.vml").decode() if "xl/drawings/vmlDrawing1.vml" in names else ""
+    check("comments: the parts", "xl/comments1.xml" in names and "/xl/comments1.xml" in types and 'Extension="vml"' in types, names)
+    check("comments: the sheet's relationships", "comments1.xml" in rels and "vmlDrawing1.vml" in rels, rels)
+    check("comments: the legacy drawing, last", sheet.rstrip().endswith('<legacyDrawing r:id="rId2"/></worksheet>'), sheet[-200:])
+    check("comments: a note shape each", vml.count('ObjectType="Note"') == 3 and "<x:Row>6</x:Row><x:Column>0</x:Column>" in vml, vml[:500])
+    try:
+        import openpyxl
+    except ImportError:
+        openpyxl = None
+    if openpyxl:
+        ws = openpyxl.load_workbook(xlsx)["Systems"]
+        got = [(c, ws[c].comment.text if ws[c].comment else None, ws[c].comment.author if ws[c].comment else None)
+               for c in ("A7", "C9", "F12", "B7")]
+        check("comments: openpyxl reads them back", got == [("A7", "Main identity service.\nOwner to confirm.", "Team 5"),
+                                                           ("C9", "Hosted by the supplier", "Team 5"),
+                                                           ("F12", "Cost per year, before VAT", "Finance"), ("B7", None, None)], got)
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-comments")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "ods",
+                            "--outdir", outdir, xlsx], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=300)
+            with zipfile.ZipFile(os.path.join(outdir, "comments.ods")) as z:
+                content = z.read("content.xml").decode()
+            check("comments: LibreOffice reads the three", content.count("<office:annotation") == 3 and
+                  "Cost per year, before VAT" in content, content.count("<office:annotation"))
+        except Exception as e:  # noqa: BLE001
+            check("comments: LibreOffice converts the file written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+    report = convert(FIX, os.path.join(work, "comments.ods"))
+    check("comments: ODS says it leaves them out", "Comments on cells are kept in Excel workbooks" in report, report)
+
+
 def damaged(work):
     """The first sheet's XML cut short and changed in what follows its cells (the conditional formats and
     the rest): book_dump answers with a book or an error, never a crash."""
@@ -203,6 +261,7 @@ def damaged(work):
 def main():
     with tempfile.TemporaryDirectory() as work:
         test_condfmt(work)
+        test_comments(work)
         damaged(work)
     if failures:
         print("sheet features: %d of %d checks failed" % (len(failures), checks))

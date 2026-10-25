@@ -369,7 +369,8 @@ enum {
     OC_DRAW_TEXT,       /* text in its clip box, from text_x; valign in the box y,h; flags, font, size, rgb */
     OC_DRAW_HEADER,     /* a row number or column letter in its box, centred (align OC_ALIGN_LEFT: from text_x); selected or not */
     OC_DRAW_FRAME,      /* a box's outline, `line` pixels thick: the active cell, the selection */
-    OC_DRAW_CARET       /* the caret: a line from x,y, h long */
+    OC_DRAW_CARET,      /* the caret: a line from x,y, h long */
+    OC_DRAW_MARK        /* a comment's mark: a triangle filling the top right half of the box x,y,w,h */
 };
 enum {
     OC_ROLE_PAPER,          /* the empty sheet (the window fills the area with it first) */
@@ -383,7 +384,10 @@ enum {
     OC_ROLE_HEADER_LINE,
     OC_ROLE_CURSOR,         /* the active cell's frame, the caret */
     OC_ROLE_FREEZE,         /* the line under frozen rows, beside frozen columns */
-    OC_ROLE_EDIT            /* behind the text being typed */
+    OC_ROLE_EDIT,           /* behind the text being typed */
+    OC_ROLE_COMMENT,        /* a comment's mark (red) */
+    OC_ROLE_NOTE,           /* behind the active cell's comment (pale yellow) */
+    OC_ROLE_NOTE_LINE       /* its frame */
 };
 enum { OC_ALIGN_LEFT, OC_ALIGN_CENTRE, OC_ALIGN_RIGHT };
 
@@ -424,6 +428,12 @@ int oc_view_draw(oc_core *core, oc_draw_list *list);
  * top bit (0xFFFF solid), as SetDrPt takes it. */
 int oc_line_weight(int line);
 unsigned oc_line_pattern(int line);
+
+/* ---- Comments ----
+ * A commented cell has a mark in its top right corner (OC_DRAW_MARK), and
+ * the active cell's comment shows beside it, over the grid, as Excel shows
+ * one under the pointer (not while typing). */
+const owf_comment *oc_core_comment(const oc_core *core, int sheet, unsigned row, unsigned col);
 
 /* ---- The status line ---- */
 
