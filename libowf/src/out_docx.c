@@ -118,7 +118,10 @@ static void put_ppr(owf_buf *out, const owf_parafmt *f, const char *style)
             owf_buf_printf(out, " w:before=\"%d\"", f->space_before);
         if (f->space_after || style)
             owf_buf_printf(out, " w:after=\"%d\"", f->space_after);
-        if (f->line_spacing && f->line_spacing != 100)
+        if (OWF_LINE_IS_HEIGHT(f->line_spacing))     /* 2.0.18 */
+            owf_buf_printf(out, " w:line=\"%d\" w:lineRule=\"%s\"", OWF_LINE_HEIGHT(f->line_spacing),
+                           OWF_LINE_IS_EXACT(f->line_spacing) ? "exact" : "atLeast");
+        else if (f->line_spacing && f->line_spacing != 100)
             owf_buf_printf(out, " w:line=\"%d\" w:lineRule=\"auto\"", (f->line_spacing * 240 + 50) / 100);
         owf_buf_puts(out, "/>");
     }

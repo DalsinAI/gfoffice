@@ -220,7 +220,10 @@ static void put_para_props(owf_buf *out, const owf_parafmt *f)
         put_length_attr(out, "fo:margin-top", f->space_before);
     if (f->space_after)
         put_length_attr(out, "fo:margin-bottom", f->space_after);
-    if (f->line_spacing && f->line_spacing != 100)
+    if (OWF_LINE_IS_HEIGHT(f->line_spacing))           /* 2.0.18 */
+        put_length_attr(out, OWF_LINE_IS_EXACT(f->line_spacing) ? "fo:line-height" : "style:line-height-at-least",
+                        OWF_LINE_HEIGHT(f->line_spacing));
+    else if (f->line_spacing && f->line_spacing != 100)
         owf_buf_printf(out, " fo:line-height=\"%d%%\"", f->line_spacing);
     if (f->page_break_before)
         owf_buf_puts(out, " fo:break-before=\"page\"");
