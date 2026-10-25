@@ -298,6 +298,14 @@ int oc_core_undo_lost(const oc_core *core);
  * default 10 points). Without one, a character is 7 pixels at 100%. */
 typedef int (*oc_measure_fn)(void *user, const char *utf8, size_t length, unsigned flags, int font, int size);
 void oc_view_set_measure(oc_core *core, oc_measure_fn measure, void *user);
+/* A cell font's size in pixels at the view's zoom (twips 0: the default,
+ * 10 points): its em, which a window opens the font at, to measure and
+ * draw a cell's text. At 100% 11 points is 15 pixels (96 dpi). Lines of
+ * wrapped text are oc_line_px apart: 1.15 em, as Arial's and Calibri's
+ * lines (11 points: 17 pixels). */
+#define OC_DEFAULT_FONT_TWIPS 200
+int oc_font_px(const oc_core *core, int twips);
+int oc_line_px(const oc_core *core, int twips);
 /* The grid area's size, and the row numbers' width and the column
  * letters' height (a window sets these from its font). */
 void oc_view_set_size(oc_core *core, int width, int height);
@@ -412,6 +420,17 @@ unsigned oc_line_pattern(int line);
 /* "Sum=12 Average=4 Count=3" for a selection of more than one cell, a
  * circular reference's or a bad formula's warning; "" when nothing. */
 void oc_core_status(oc_core *core, char *out, size_t size);
+
+/* ---- The sheet tabs ----
+ * Which sheets' tabs a strip shows. width[s] is sheet s's tab in pixels,
+ * with the gap after it (0: no tab, a hidden sheet), avail the strip's width
+ * for tabs, arrows the width of the two scroll arrows a strip shows when
+ * not every tab fits. *first (in and out) is the first sheet shown: it moves
+ * so that the current sheet's tab shows, and back when there is room, so
+ * that the strip stays full. *scroll is 1 when the arrows show. The sheet
+ * after the last tab shown (n when the last shows). At least one tab shows,
+ * cut short when it is wider than the strip. */
+int oc_tab_strip(const int *width, int n, int avail, int arrows, int current, int *first, int *scroll);
 
 #ifdef __cplusplus
 }

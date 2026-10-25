@@ -1325,3 +1325,52 @@ void oc_core_status(oc_core *core, char *out, size_t size)
     if (sum[0])
         snprintf(out, size, "Sum %s  Average %s  Count %s", sum, avg, cnt);
 }
+
+/* ---- The sheet tabs ---- */
+
+/* The sheet after the last whose tab fits room pixels from sheet first (at least one tab). */
+static int tabs_fit(const int *width, int n, int room, int first)
+{
+    int k, x = 0, shown = 0;
+    for (k = first; k < n; k++) {
+        if (width[k] <= 0)
+            continue;
+        if (x + width[k] > room && shown)
+            break;
+        x += width[k];
+        shown++;
+    }
+    return k;
+}
+
+int oc_tab_strip(const int *width, int n, int avail, int arrows, int current, int *first, int *scroll)
+{
+    int k, total = 0, room, end;
+    for (k = 0; k < n; k++)
+        total += width[k] > 0 ? width[k] : 0;
+    if (total <= avail) {
+        *first = 0;
+        *scroll = 0;
+        return n;
+    }
+    *scroll = 1;
+    room = avail - arrows;
+    if (*first < 0)
+        *first = 0;
+    if (*first >= n)
+        *first = n > 0 ? n - 1 : 0;
+    if (current >= 0 && current < n && current < *first)
+        *first = current;
+    end = tabs_fit(width, n, room, *first);
+    while (current >= 0 && current < n && current >= end && *first < current)
+        end = tabs_fit(width, n, room, ++*first);
+    /* room left at the end: earlier tabs come back */
+    while (*first > 0 && end >= n) {
+        int prev = *first - 1, e = tabs_fit(width, n, room, prev);
+        if (e < n || (current >= 0 && current >= e))
+            break;
+        *first = prev;
+        end = e;
+    }
+    return end;
+}
