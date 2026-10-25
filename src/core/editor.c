@@ -297,6 +297,26 @@ static int append_empty_text_run(owf_para *p, const owf_charfmt *fmt)
     return 1;
 }
 
+/* 2.0.15: the paragraphs a position's box names: the body's (0), or a text box's (k: doc->frames[k - 1]); the
+ * body's for a box that isn't there or has no paragraphs. */
+static owf_story *story_of(const ow_editor *editor, int box)
+{
+    owf_doc *doc = editor->doc;
+    if (box > 0 && box <= doc->nframes && doc->frames[box - 1].story.nparas) return &doc->frames[box - 1].story;
+    return &doc->body;
+}
+
+static int box_of(const ow_editor *editor, int box)
+{
+    return story_of(editor, box) == &editor->doc->body ? 0 : box;
+}
+
+/* The story the selection is in, which every edit works on. */
+static owf_story *ed_story(const ow_editor *editor)
+{
+    return story_of(editor, editor->selection.focus.box);
+}
+
 static int ensure_document_editable(ow_editor *editor)
 {
     owf_para *p;
@@ -317,6 +337,7 @@ static int ensure_document_editable(ow_editor *editor)
     editor->selection.anchor.paragraph = 0;
     editor->selection.anchor.run = r;
     editor->selection.anchor.byte_offset = 0;
+    editor->selection.anchor.box = 0;
     editor->selection.focus = editor->selection.anchor;
     return 1;
 }
@@ -327,10 +348,11 @@ static ow_position clamp_position(ow_editor *editor, ow_position pos)
     owf_para *p;
     int r;
     size_t n;
-    ow_position zero = {0, 0, 0};
+    ow_position zero = {0, 0, 0, 0};
 
     if (!editor || !editor->doc) return zero;
-    story = &editor->doc->body;
+    pos.box = box_of(editor, pos.box);
+    story = story_of(editor, pos.box);
     if (!story->nparas && !ensure_document_editable(editor)) return zero;
 
     if (pos.paragraph < 0) pos.paragraph = 0;
@@ -368,7 +390,7 @@ static void sync_typing_fmt(ow_editor *editor)
     owf_para *p;
     if (!editor || !editor->doc) return;
     pos = clamp_position(editor, editor->selection.focus);
-    p = &editor->doc->body.paras[pos.paragraph];
+    p = &ed_story(editor)->paras[pos.paragraph];
     if (pos.run >= 0 && pos.run < p->nruns &&
         p->runs[pos.run].kind == OWF_RUN_TEXT) {
         editor->typing_fmt = p->runs[pos.run].fmt;
@@ -412,13 +434,14 @@ static size_t para_text_length(const owf_para *p)
 static ow_position para_offset_position(ow_editor *editor, int paragraph,
                                         size_t offset)
 {
-    ow_position pos = { paragraph, 0, 0 };
+    ow_position pos = { paragraph, 0, 0, 0 };
     owf_para *p;
     size_t at = 0;
     int i, fallback = -1;
+    pos.box = editor ? box_of(editor, editor->selection.focus.box) : 0;
     if (!editor || !editor->doc || paragraph < 0 ||
-        paragraph >= editor->doc->body.nparas) return pos;
-    p = &editor->doc->body.paras[paragraph];
+        paragraph >= ed_story(editor)->nparas) return pos;
+    p = &ed_story(editor)->paras[paragraph];
     for (i = 0; i < p->nruns; ++i) {
         owf_run *r = &p->runs[i];
         size_t n;
@@ -568,7 +591,7 @@ static int insert_formatted_text(ow_editor *editor, ow_position pos,
 
     if (!editor || !utf8 || !fmt) return 0;
     pos = clamp_position(editor, pos);
-    p = &editor->doc->body.paras[pos.paragraph];
+    p = &ed_story(editor)->paras[pos.paragraph];
     run = &p->runs[pos.run];
     old_fmt = run->fmt;
     old_len = run->text ? strlen(run->text) : 0;
@@ -838,7 +861,7 @@ static ow_position move_left_pos(ow_editor *editor, ow_position pos)
     owf_run *r;
     int pr;
     pos = clamp_position(editor, pos);
-    p = &editor->doc->body.paras[pos.paragraph];
+    p = &ed_story(editor)->paras[pos.paragraph];
     r = &p->runs[pos.run];
     if (pos.byte_offset) {
         pos.byte_offset = utf8_prev(r->text, pos.byte_offset);
@@ -852,7 +875,7 @@ static ow_position move_left_pos(ow_editor *editor, ow_position pos)
     }
     if (pos.paragraph > 0) {
         --pos.paragraph;
-        p = &editor->doc->body.paras[pos.paragraph];
+        p = &ed_story(editor)->paras[pos.paragraph];
         pr = last_text_run(p);
         if (pr < 0) {
             append_empty_text_run(p, &editor->doc->base);
@@ -870,7 +893,7 @@ static ow_position move_right_pos(ow_editor *editor, ow_position pos)
     owf_run *r;
     int nr;
     pos = clamp_position(editor, pos);
-    p = &editor->doc->body.paras[pos.paragraph];
+    p = &ed_story(editor)->paras[pos.paragraph];
     r = &p->runs[pos.run];
     if (pos.byte_offset < strlen(r->text)) {
         pos.byte_offset = utf8_next(r->text, pos.byte_offset);
@@ -882,9 +905,9 @@ static ow_position move_right_pos(ow_editor *editor, ow_position pos)
         pos.byte_offset = 0;
         return pos;
     }
-    if (pos.paragraph + 1 < editor->doc->body.nparas) {
+    if (pos.paragraph + 1 < ed_story(editor)->nparas) {
         ++pos.paragraph;
-        p = &editor->doc->body.paras[pos.paragraph];
+        p = &ed_story(editor)->paras[pos.paragraph];
         nr = first_text_run(p);
         if (nr < 0) {
             append_empty_text_run(p, &editor->doc->base);
@@ -901,7 +924,7 @@ static ow_position paragraph_home(ow_editor *editor, ow_position pos)
     owf_para *p;
     int r;
     pos = clamp_position(editor, pos);
-    p = &editor->doc->body.paras[pos.paragraph];
+    p = &ed_story(editor)->paras[pos.paragraph];
     r = first_text_run(p);
     if (r < 0) {
         append_empty_text_run(p, &editor->doc->base);
@@ -917,7 +940,7 @@ static ow_position paragraph_end(ow_editor *editor, ow_position pos)
     owf_para *p;
     int r;
     pos = clamp_position(editor, pos);
-    p = &editor->doc->body.paras[pos.paragraph];
+    p = &ed_story(editor)->paras[pos.paragraph];
     r = last_text_run(p);
     if (r < 0) {
         append_empty_text_run(p, &editor->doc->base);
@@ -930,7 +953,7 @@ static ow_position paragraph_end(ow_editor *editor, ow_position pos)
 
 static ow_position vertical_pos(ow_editor *editor, ow_position pos, int delta)
 {
-    owf_story *story = &editor->doc->body;
+    owf_story *story = ed_story(editor);
     owf_para *p;
     int target, r;
     size_t want = pos.byte_offset, n;
@@ -960,7 +983,7 @@ static ow_position vertical_pos(ow_editor *editor, ow_position pos, int delta)
 static int merge_paragraph_with_previous(ow_editor *editor, int paragraph,
                                          ow_position *caret)
 {
-    owf_story *story = &editor->doc->body;
+    owf_story *story = ed_story(editor);
     owf_para *prev, *cur;
     int boundary, i;
 
@@ -1005,7 +1028,7 @@ static int merge_paragraph_with_previous(ow_editor *editor, int paragraph,
 static int merge_paragraph_with_next(ow_editor *editor, int paragraph,
                                      ow_position *caret)
 {
-    owf_story *story = &editor->doc->body;
+    owf_story *story = ed_story(editor);
     owf_para *cur, *next;
     int boundary, i;
 
@@ -1055,7 +1078,7 @@ static int delete_one_before(ow_editor *editor, ow_position *pos)
     size_t from;
 
     *pos = clamp_position(editor, *pos);
-    p = &editor->doc->body.paras[pos->paragraph];
+    p = &ed_story(editor)->paras[pos->paragraph];
     r = &p->runs[pos->run];
 
     if (pos->byte_offset) {
@@ -1093,7 +1116,7 @@ static int delete_one_after(ow_editor *editor, ow_position *pos)
     size_t to;
 
     *pos = clamp_position(editor, *pos);
-    p = &editor->doc->body.paras[pos->paragraph];
+    p = &ed_story(editor)->paras[pos->paragraph];
     r = &p->runs[pos->run];
 
     if (pos->byte_offset < strlen(r->text)) {
@@ -1113,7 +1136,7 @@ static int delete_one_after(ow_editor *editor, ow_position *pos)
         nr = next_text_run(p, nr);
     }
 
-    if (pos->paragraph + 1 < editor->doc->body.nparas)
+    if (pos->paragraph + 1 < ed_story(editor)->nparas)
         return merge_paragraph_with_next(editor, pos->paragraph, pos);
     return 0;
 }
@@ -1148,7 +1171,7 @@ static int delete_selection_internal(ow_editor *editor)
 static int split_paragraph(ow_editor *editor, ow_position pos,
                            ow_position *new_caret)
 {
-    owf_story *story = &editor->doc->body;
+    owf_story *story = ed_story(editor);
     owf_para *p, *np;
     owf_run *run;
     owf_parafmt para_fmt;
@@ -1209,6 +1232,7 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     new_caret->paragraph = pos.paragraph + 1;
     new_caret->run = 0;
     new_caret->byte_offset = 0;
+    new_caret->box = pos.box;
     return 1;
 
 fail:
@@ -1289,8 +1313,11 @@ void ow_editor_set_selection(ow_editor *editor, const ow_selection *selection)
 {
     if (!editor || !selection) return;
     editor->selection = *selection;
-    editor->selection.anchor = clamp_position(editor, editor->selection.anchor);
     editor->selection.focus = clamp_position(editor, editor->selection.focus);
+    /* 2.0.15: both ends in one story: a selection that would leave a text box collapses to its focus */
+    if (box_of(editor, editor->selection.anchor.box) != editor->selection.focus.box)
+        editor->selection.anchor = editor->selection.focus;
+    editor->selection.anchor = clamp_position(editor, editor->selection.anchor);
     editor->typing_group = 0;
     sync_typing_fmt(editor);
 }
@@ -1314,7 +1341,7 @@ void ow_editor_select_all(ow_editor *editor)
     owf_para *p;
     int r;
     if (!editor || !editor->doc) return;
-    story = &editor->doc->body;
+    story = ed_story(editor);
     if (!story->nparas && !ensure_document_editable(editor)) return;
     editor->selection.anchor.paragraph = 0;
     p = &story->paras[0];
@@ -1366,10 +1393,10 @@ char *ow_editor_selection_text(const ow_editor *editor, size_t *length)
         start = editor->selection.focus; end = editor->selection.anchor;
     }
     for (pi = start.paragraph; pi <= end.paragraph; ++pi) {
-        const owf_para *p = &editor->doc->body.paras[pi];
+        const owf_para *p = &ed_story(editor)->paras[pi];
         for (ri = 0; ri < p->nruns; ++ri) {
             const owf_run *r = &p->runs[ri];
-            ow_position rs = { pi, ri, 0 }, re = rs;
+            ow_position rs = { pi, ri, 0, 0 }, re = rs;
             size_t n = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 0;
             re.byte_offset = n;
             if (r->kind == OWF_RUN_TEXT) {
@@ -1407,8 +1434,8 @@ int ow_editor_current_charfmt(const ow_editor *editor, owf_charfmt *fmt)
         return 1;
     }
     pos = editor->selection.focus;
-    if (pos.paragraph < 0 || pos.paragraph >= editor->doc->body.nparas) return 0;
-    p = &editor->doc->body.paras[pos.paragraph];
+    if (pos.paragraph < 0 || pos.paragraph >= ed_story(editor)->nparas) return 0;
+    p = &ed_story(editor)->paras[pos.paragraph];
     if (pos.run < 0 || pos.run >= p->nruns || p->runs[pos.run].kind != OWF_RUN_TEXT) return 0;
     *fmt = p->runs[pos.run].fmt;
     return 1;
@@ -1430,14 +1457,14 @@ int ow_editor_apply_charfmt(ow_editor *editor, const owf_charfmt *fmt,
 
     old_a = editor->selection.anchor;
     old_f = editor->selection.focus;
-    aoff = para_text_offset(&editor->doc->body.paras[old_a.paragraph], old_a);
-    foff = para_text_offset(&editor->doc->body.paras[old_f.paragraph], old_f);
+    aoff = para_text_offset(&ed_story(editor)->paras[old_a.paragraph], old_a);
+    foff = para_text_offset(&ed_story(editor)->paras[old_f.paragraph], old_f);
     if (compare_position(old_a, old_f) <= 0) { start = old_a; end = old_f; }
     else { start = old_f; end = old_a; }
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
 
     for (pi = start.paragraph; pi <= end.paragraph; ++pi) {
-        owf_para *p = &editor->doc->body.paras[pi];
+        owf_para *p = &ed_story(editor)->paras[pi];
         size_t from = pi == start.paragraph ? para_text_offset(p, start) : 0;
         size_t to = pi == end.paragraph ? para_text_offset(p, end) : para_text_length(p);
         if (to > from && !rebuild_para_charfmt(p, from, to, fmt, mask))
@@ -1464,8 +1491,8 @@ int ow_editor_current_parafmt(const ow_editor *editor, owf_parafmt *fmt)
     int p;
     if (!editor || !editor->doc || !fmt) return 0;
     p = editor->selection.focus.paragraph;
-    if (p < 0 || p >= editor->doc->body.nparas) return 0;
-    *fmt = editor->doc->body.paras[p].fmt;
+    if (p < 0 || p >= ed_story(editor)->nparas) return 0;
+    *fmt = ed_story(editor)->paras[p].fmt;
     return 1;
 }
 
@@ -1478,10 +1505,10 @@ int ow_editor_apply_parafmt(ow_editor *editor, const owf_parafmt *fmt,
     last = editor->selection.focus.paragraph;
     if (first > last) { int t = first; first = last; last = t; }
     if (first < 0) first = 0;
-    if (last >= editor->doc->body.nparas) last = editor->doc->body.nparas - 1;
+    if (last >= ed_story(editor)->nparas) last = ed_story(editor)->nparas - 1;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     for (p = first; p <= last; ++p) {
-        owf_parafmt *dst = &editor->doc->body.paras[p].fmt;
+        owf_parafmt *dst = &ed_story(editor)->paras[p].fmt;
         if (mask & OW_PARAFMT_HEADING) dst->heading = fmt->heading;
         if (mask & OW_PARAFMT_ALIGN) dst->align = fmt->align;
         if (mask & OW_PARAFMT_INDENTS) {
@@ -1534,20 +1561,20 @@ int ow_editor_toggle_list(ow_editor *editor, int ordered)
     last = editor->selection.focus.paragraph;
     if (first > last) { int t = first; first = last; last = t; }
     if (first < 0) first = 0;
-    if (last >= editor->doc->body.nparas) last = editor->doc->body.nparas - 1;
+    if (last >= ed_story(editor)->nparas) last = ed_story(editor)->nparas - 1;
     for (p = first; p <= last; ++p) {
         int kind = -1;
-        paragraph_list_prefix(&editor->doc->body.paras[p], &kind, NULL);
+        paragraph_list_prefix(&ed_story(editor)->paras[p], &kind, NULL);
         if (kind != ordered) { all_same = 0; break; }
     }
     old_a = editor->selection.anchor;
     old_f = editor->selection.focus;
-    aoff = para_text_offset(&editor->doc->body.paras[old_a.paragraph], old_a);
-    foff = para_text_offset(&editor->doc->body.paras[old_f.paragraph], old_f);
+    aoff = para_text_offset(&ed_story(editor)->paras[old_a.paragraph], old_a);
+    foff = para_text_offset(&ed_story(editor)->paras[old_f.paragraph], old_f);
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
 
     for (p = first; p <= last; ++p) {
-        owf_para *para = &editor->doc->body.paras[p];
+        owf_para *para = &ed_story(editor)->paras[p];
         int r = first_text_run(para), old_kind = -1;
         size_t old_len = 0, add_len = 0;
         char prefix[32];
@@ -1661,7 +1688,7 @@ int ow_editor_find(ow_editor *editor, const char *needle, int backwards,
     size_t nlen;
     int total, step, pass;
     if (!editor || !editor->doc || !needle || !(nlen = strlen(needle))) return 0;
-    total = editor->doc->body.nparas;
+    total = ed_story(editor)->nparas;
     if (!total) return 0;
     if (ow_editor_selection_empty(editor)) startpos = editor->selection.focus;
     else if (!backwards)
@@ -1684,7 +1711,7 @@ int ow_editor_find(ow_editor *editor, const char *needle, int backwards,
             pi %= total;
             if (pi < 0) pi += total;
         }
-        p = &editor->doc->body.paras[pi];
+        p = &ed_story(editor)->paras[pi];
         plain = paragraph_plain_text(p, &plen);
         if (!plain) return -1;
         if (pass == 0) from = para_text_offset(p, startpos);
@@ -1725,7 +1752,7 @@ int ow_editor_insert_utf8(ow_editor *editor, const char *utf8, size_t length)
     }
 
     pos = clamp_position(editor, pos);
-    run = &editor->doc->body.paras[pos.paragraph].runs[pos.run];
+    run = &ed_story(editor)->paras[pos.paragraph].runs[pos.run];
     if (!editor->typing_fmt_set) editor->typing_fmt = run->fmt;
     editor->typing_fmt_set = 1;
     if (!insert_formatted_text(editor, pos, utf8, length,
@@ -2080,6 +2107,14 @@ int ow_editor_current_page(const ow_editor *editor)
     int p;
     if (!editor || !editor->doc || !editor->para_page || !editor->doc->body.nparas) return 0;
     p = editor->selection.focus.paragraph;
+    if (box_of(editor, editor->selection.focus.box)) {    /* 2.0.15: in a text box, its paragraph's page */
+        int k = editor->selection.focus.box - 1, j;
+        for (p = 0; p < editor->doc->body.nparas; ++p) {
+            const owf_para *q = &editor->doc->body.paras[p];
+            for (j = 0; j < q->nruns && !(q->runs[j].kind == OWF_RUN_FRAME && q->runs[j].image == k); ++j) {}
+            if (j < q->nruns) break;
+        }
+    }
     if (p < 0) p = 0;
     if (p >= editor->doc->body.nparas) p = editor->doc->body.nparas - 1;
     return editor->para_page[p];
@@ -2113,6 +2148,7 @@ int ow_editor_insert_page_break(ow_editor *editor)
     ow_position pos, next;
     int rc;
     if (!editor || !editor->doc) return OWF_ERR_FORMAT;
+    if (box_of(editor, editor->selection.focus.box)) return OWF_ERR_FORMAT;   /* 2.0.15: not in a text box */
     editor->typing_group = 0;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     if (!ow_editor_selection_empty(editor)) {
@@ -2122,7 +2158,7 @@ int ow_editor_insert_page_break(ow_editor *editor)
     pos = editor->selection.focus;
     rc = split_paragraph(editor, pos, &next);
     if (rc < 0) return OWF_ERR_MEMORY;
-    editor->doc->body.paras[next.paragraph].fmt.page_break_before = 1;
+    ed_story(editor)->paras[next.paragraph].fmt.page_break_before = 1;
     editor->selection.anchor = next;
     editor->selection.focus = next;
     editor->dirty = 1; ++editor->changes;
@@ -2132,7 +2168,7 @@ int ow_editor_insert_page_break(ow_editor *editor)
 
 static int current_table_cell(const ow_editor *editor,int *id,int *row,int *col,int *cols)
 {
-    int p;if(!editor||!editor->doc)return 0;p=editor->selection.focus.paragraph;if(p<0||p>=editor->doc->body.nparas||editor->doc->body.paras[p].table_id<0)return 0;if(id)*id=editor->doc->body.paras[p].table_id;if(row)*row=editor->doc->body.paras[p].table_row;if(col)*col=editor->doc->body.paras[p].table_col;if(cols)*cols=editor->doc->body.paras[p].table_cols;return 1;
+    int p;if(!editor||!editor->doc)return 0;p=editor->selection.focus.paragraph;if(p<0||p>=ed_story(editor)->nparas||ed_story(editor)->paras[p].table_id<0)return 0;if(id)*id=ed_story(editor)->paras[p].table_id;if(row)*row=ed_story(editor)->paras[p].table_row;if(col)*col=ed_story(editor)->paras[p].table_col;if(cols)*cols=ed_story(editor)->paras[p].table_cols;return 1;
 }
 
 int ow_editor_in_table(const ow_editor *editor){return current_table_cell(editor,NULL,NULL,NULL,NULL);}
@@ -2152,32 +2188,32 @@ static void remove_para_at(owf_story *story,int index)
 
 static void caret_to_para(ow_editor *editor,int p)
 {
-    ow_position c;owf_para *para;if(p<0)p=0;if(p>=editor->doc->body.nparas)p=editor->doc->body.nparas-1;para=&editor->doc->body.paras[p];if(first_text_run(para)<0)append_empty_text_run(para,&editor->typing_fmt);c.paragraph=p;c.run=first_text_run(para);c.byte_offset=0;editor->selection.anchor=editor->selection.focus=c;
+    ow_position c;owf_para *para;if(p<0)p=0;if(p>=ed_story(editor)->nparas)p=ed_story(editor)->nparas-1;para=&ed_story(editor)->paras[p];if(first_text_run(para)<0)append_empty_text_run(para,&editor->typing_fmt);c.paragraph=p;c.run=first_text_run(para);c.byte_offset=0;c.box=editor->selection.focus.box;editor->selection.anchor=editor->selection.focus=c;
 }
 
 int ow_editor_table_move(ow_editor *editor,int delta)
 {
-    int id,p,target;if(!current_table_cell(editor,&id,NULL,NULL,NULL))return 0;p=editor->selection.focus.paragraph;target=p+(delta<0?-1:1);if(target>=0&&target<editor->doc->body.nparas&&editor->doc->body.paras[target].table_id==id){caret_to_para(editor,target);return 1;}return 0;
+    int id,p,target;if(!current_table_cell(editor,&id,NULL,NULL,NULL))return 0;p=editor->selection.focus.paragraph;target=p+(delta<0?-1:1);if(target>=0&&target<ed_story(editor)->nparas&&ed_story(editor)->paras[target].table_id==id){caret_to_para(editor,target);return 1;}return 0;
 }
 
 int ow_editor_table_insert_row(ow_editor *editor)
 {
-    int id,row,cols,i,pos,c;if(!current_table_cell(editor,&id,&row,NULL,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;pos=editor->selection.focus.paragraph;while(pos+1<editor->doc->body.nparas&&editor->doc->body.paras[pos+1].table_id==id&&editor->doc->body.paras[pos+1].table_row==row)++pos;++pos;for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_row>row)++editor->doc->body.paras[i].table_row;for(c=0;c<cols;++c){owf_para *p=insert_paragraph(&editor->doc->body,pos+c,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=row+1;p->table_col=c;p->table_cols=cols;}caret_to_para(editor,pos);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    int id,row,cols,i,pos,c;if(!current_table_cell(editor,&id,&row,NULL,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;pos=editor->selection.focus.paragraph;while(pos+1<ed_story(editor)->nparas&&ed_story(editor)->paras[pos+1].table_id==id&&ed_story(editor)->paras[pos+1].table_row==row)++pos;++pos;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row>row)++ed_story(editor)->paras[i].table_row;for(c=0;c<cols;++c){owf_para *p=insert_paragraph(ed_story(editor),pos+c,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=row+1;p->table_col=c;p->table_cols=cols;}caret_to_para(editor,pos);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_table_delete_row(ow_editor *editor)
 {
-    int id,row,i,start=-1,count=0;if(!current_table_cell(editor,&id,&row,NULL,NULL))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_row==row){if(start<0)start=i;++count;}for(i=0;i<count;++i)remove_para_at(&editor->doc->body,start);for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_row>row)--editor->doc->body.paras[i].table_row;if(!editor->doc->body.nparas){owf_para *p=owf_story_add(&editor->doc->body,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}}caret_to_para(editor,start<editor->doc->body.nparas?start:editor->doc->body.nparas-1);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    int id,row,i,start=-1,count=0;if(!current_table_cell(editor,&id,&row,NULL,NULL))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row==row){if(start<0)start=i;++count;}for(i=0;i<count;++i)remove_para_at(ed_story(editor),start);for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row>row)--ed_story(editor)->paras[i].table_row;if(!ed_story(editor)->nparas){owf_para *p=owf_story_add(ed_story(editor),NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}}caret_to_para(editor,start<ed_story(editor)->nparas?start:ed_story(editor)->nparas-1);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_table_insert_column(ow_editor *editor)
 {
-    int id,col,cols,i,maxrow=-1,r;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id){if(editor->doc->body.paras[i].table_row>maxrow)maxrow=editor->doc->body.paras[i].table_row;if(editor->doc->body.paras[i].table_col>col)++editor->doc->body.paras[i].table_col;editor->doc->body.paras[i].table_cols=cols+1;}for(r=maxrow;r>=0;--r){int pos=-1;for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_row==r&&editor->doc->body.paras[i].table_col==col){pos=i+1;break;}if(pos>=0){owf_para *p=insert_paragraph(&editor->doc->body,pos,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=r;p->table_col=col+1;p->table_cols=cols+1;}}editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    int id,col,cols,i,maxrow=-1,r;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id){if(ed_story(editor)->paras[i].table_row>maxrow)maxrow=ed_story(editor)->paras[i].table_row;if(ed_story(editor)->paras[i].table_col>col)++ed_story(editor)->paras[i].table_col;ed_story(editor)->paras[i].table_cols=cols+1;}for(r=maxrow;r>=0;--r){int pos=-1;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row==r&&ed_story(editor)->paras[i].table_col==col){pos=i+1;break;}if(pos>=0){owf_para *p=insert_paragraph(ed_story(editor),pos,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=r;p->table_col=col+1;p->table_cols=cols+1;}}editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_table_delete_column(ow_editor *editor)
 {
-    int id,col,cols,i;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(cols<=1)return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=editor->doc->body.nparas-1;i>=0;--i)if(editor->doc->body.paras[i].table_id==id&&editor->doc->body.paras[i].table_col==col)remove_para_at(&editor->doc->body,i);for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id==id){if(editor->doc->body.paras[i].table_col>col)--editor->doc->body.paras[i].table_col;editor->doc->body.paras[i].table_cols=cols-1;}caret_to_para(editor,editor->selection.focus.paragraph<editor->doc->body.nparas?editor->selection.focus.paragraph:editor->doc->body.nparas-1);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    int id,col,cols,i;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(cols<=1)return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=ed_story(editor)->nparas-1;i>=0;--i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_col==col)remove_para_at(ed_story(editor),i);for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id){if(ed_story(editor)->paras[i].table_col>col)--ed_story(editor)->paras[i].table_col;ed_story(editor)->paras[i].table_cols=cols-1;}caret_to_para(editor,editor->selection.focus.paragraph<ed_story(editor)->nparas?editor->selection.focus.paragraph:ed_story(editor)->nparas-1);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_insert_image(ow_editor *editor, int image_index)
@@ -2187,8 +2223,8 @@ int ow_editor_insert_image(ow_editor *editor, int image_index)
     editor->typing_group=0;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
     if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     pos=editor->selection.focus;rc=split_paragraph(editor,pos,&after);if(rc<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
-    story=&editor->doc->body;base=after.paragraph;p=insert_paragraph(story,base,NULL);if(!p||owf_para_add_image(p,&editor->typing_fmt,image_index)!=OWF_OK){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
-    caret.paragraph=base+1;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    story=ed_story(editor);base=after.paragraph;p=insert_paragraph(story,base,NULL);if(!p||owf_para_add_image(p,&editor->typing_fmt,image_index)!=OWF_OK){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    caret=after;caret.paragraph=base+1;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_insert_table(ow_editor *editor, int rows, int cols)
@@ -2199,11 +2235,11 @@ int ow_editor_insert_table(ow_editor *editor, int rows, int cols)
     if(!editor||rows<1||cols<1||rows>64||cols>32)return OWF_ERR_FORMAT;
     editor->typing_group=0;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
     if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
-    for(i=0;i<editor->doc->body.nparas;++i)if(editor->doc->body.paras[i].table_id>=id)id=editor->doc->body.paras[i].table_id+1;
+    for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id>=id)id=ed_story(editor)->paras[i].table_id+1;
     pos=editor->selection.focus;rc=split_paragraph(editor,pos,&after);if(rc<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
-    story=&editor->doc->body;base=after.paragraph;
+    story=ed_story(editor);base=after.paragraph;
     for(k=0,r=0;r<rows;++r)for(c=0;c<cols;++c,++k){owf_para *p=insert_paragraph(story,base+k,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=r;p->table_col=c;p->table_cols=cols;}
-    caret.paragraph=base;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    caret=after;caret.paragraph=base;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 static const char *field_token(owf_field field)
@@ -2374,7 +2410,7 @@ int ow_editor_set_link(ow_editor *editor, const char *url)
     editor->typing_group=0;
     if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
     for(pi=b.paragraph;pi>=a.paragraph;--pi){
-        owf_para *p=&editor->doc->body.paras[pi];
+        owf_para *p=&ed_story(editor)->paras[pi];
         for(ri=p->nruns-1;ri>=0;--ri){
             owf_run *r=&p->runs[ri];size_t len,from=0,to;
             if(r->kind!=OWF_RUN_TEXT||!r->text)continue;
@@ -2401,7 +2437,7 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
     if(!editor||!text||!*text||!url||!*url)return OWF_ERR_FORMAT;
     editor->typing_group=0;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
     if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
-    pos=clamp_position(editor,editor->selection.focus);para=&editor->doc->body.paras[pos.paragraph];run=&para->runs[pos.run];fmt=run->fmt;
+    pos=clamp_position(editor,editor->selection.focus);para=&ed_story(editor)->paras[pos.paragraph];run=&para->runs[pos.run];fmt=run->fmt;
     right_len=strlen(run->text)-pos.byte_offset;right=copy_bytes(run->text+pos.byte_offset,right_len);oldhref=copy_cstr(run->href);linked=copy_bytes(text,strlen(text));
     if(!right||!linked||(run->href&&!oldhref)){owf_free(right);owf_free(oldhref);owf_free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     if(!replace_run_slice(run,pos.byte_offset,strlen(run->text),NULL,0)){owf_free(right);owf_free(oldhref);owf_free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
@@ -2430,7 +2466,7 @@ int ow_editor_insert_field(ow_editor *editor, owf_field field)
         ow_editor_undo(editor); return OWF_ERR_MEMORY;
     }
     pos = clamp_position(editor, editor->selection.focus);
-    para = &editor->doc->body.paras[pos.paragraph];
+    para = &ed_story(editor)->paras[pos.paragraph];
     run = &para->runs[pos.run];
     fmt = run->fmt;
     right_len = strlen(run->text) - pos.byte_offset;
