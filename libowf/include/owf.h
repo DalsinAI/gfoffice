@@ -3,10 +3,15 @@
  * exporters write it. Plain C99, zlib optional; runs on any Amiga and on the
  * PC, where the tests run.
  *
- * On the Amiga it is also owf.library, shared by every program that reads
- * or writes documents: define OWF_USE_LIBRARY, open "owf.library" into
- * OWFBase (owf_open.h does both), and the calls below go to the library.
- * The types are the same either way.
+ * On the Amiga it is also four shared libraries, one per GFOffice program
+ * (docs/suite/owf-libraries.md): owfwrite.library (documents),
+ * owfcalc.library (workbooks), owfpub.library (Publisher files) and
+ * owfpresent.library (presentations). A program, or one file of it, names
+ * the library its calls go to with OWF_USE_WRITE_LIBRARY,
+ * OWF_USE_CALC_LIBRARY, OWF_USE_PUB_LIBRARY or OWF_USE_PRESENT_LIBRARY, and
+ * opens it with owf_open() (owf_open.h). OWF_USE_LIBRARY alone is
+ * owf.library 2, the one library before the split, until OpenUp ships the
+ * four. The types are the same either way.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #ifndef OWF_H
@@ -19,6 +24,14 @@ extern "C" {
 #endif
 
 #define OWF_VERSION "1.4.0"
+
+/* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
+#if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
+    defined(OWF_USE_PRESENT_LIBRARY)
+#ifndef OWF_USE_LIBRARY
+#define OWF_USE_LIBRARY
+#endif
+#endif
 
 /* Results. */
 enum {
@@ -275,6 +288,10 @@ void owf_report_add(owf_report *report, owf_note_level level, const char *fmt, .
 int owf_report_count(const owf_report *report);
 /* The n-th note, its level and how many times it happened. */
 const char *owf_report_note(const owf_report *report, int n, owf_note_level *level, int *times);
+/* Adds a note's finished text: owf_report_add without the printf, for
+ * the libraries, which take no "..." (a program on one of them calls
+ * owf_report_add as ever: owf_proto.h formats it and calls this). */
+void owf_report_text(owf_report *report, owf_note_level level, const char *text);
 
 /* ---- Formats ---- */
 
@@ -688,10 +705,13 @@ enum {
     OWF_STRUCT_PUB_PAGE, OWF_STRUCT_PUB_FRAME,
     OWF_STRUCT_CONDFMT, OWF_STRUCT_COMMENT, OWF_STRUCT_VALIDATION, OWF_STRUCT_PART, OWF_STRUCT_FRAME,
     OWF_STRUCT_CHART_POINT, OWF_STRUCT_CHART_SERIES, OWF_STRUCT_CHART,
+    /* owf_deck.h's (owfpresent.library's) */
+    OWF_STRUCT_LOOK, OWF_STRUCT_TEXTLEVEL, OWF_STRUCT_OBJ, OWF_STRUCT_TRANSITION, OWF_STRUCT_SLIDE, OWF_STRUCT_MASTER,
+    OWF_STRUCT_SLIDE_LAYOUT, OWF_STRUCT_KEPT, OWF_STRUCT_DECK_PART, OWF_STRUCT_DECK, OWF_STRUCT_DECK_FORMAT,
     OWF_STRUCT_COUNT
 };
 unsigned long owf_struct_size(int which);
-/* sizeof each, in that order, where owf_pub.h and owf_zip.h are included */
+/* sizeof each, in that order, where owf_pub.h, owf_zip.h and owf_deck.h are included */
 #define OWF_STRUCT_SIZES                                                                                   \
     sizeof(owf_charfmt), sizeof(owf_run), sizeof(owf_tab), sizeof(owf_parafmt), sizeof(owf_para),        \
     sizeof(owf_story), sizeof(owf_font), sizeof(owf_page), sizeof(owf_image), sizeof(owf_doc),            \
@@ -699,25 +719,27 @@ unsigned long owf_struct_size(int which);
     sizeof(owf_range), sizeof(owf_sheet), sizeof(owf_defname), sizeof(owf_book), sizeof(owf_book_format), \
     sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame), sizeof(owf_condfmt), \
     sizeof(owf_comment), sizeof(owf_validation), sizeof(owf_part), sizeof(owf_frame), sizeof(owf_chart_point), \
-    sizeof(owf_chart_series), sizeof(owf_chart)
+    sizeof(owf_chart_series), sizeof(owf_chart), sizeof(owf_look), sizeof(owf_textlevel), sizeof(owf_obj),           \
+    sizeof(owf_transition), sizeof(owf_slide), sizeof(owf_master), sizeof(owf_slide_layout), sizeof(owf_kept),     \
+    sizeof(owf_deck_part), sizeof(owf_deck), sizeof(owf_deck_format)
 
 #ifdef __cplusplus
 }
 #endif
 
-/* The calls through owf.library (its inline calls in libowf/library/sdk),
+/* The calls through the library (its inline calls in libowf/library/sdk),
  * once every header that declares calls is complete, whichever of them a
- * program includes first: owf_calc.h, owf_pub.h and owf_zip.h end the same
- * way. (The inline calls are macros of the calls' names, so they must come
- * after every declaration.) */
+ * program includes first: owf_calc.h, owf_pub.h, owf_zip.h, owf_deck.h and
+ * owf_pdf.h end the same way, through owf_proto.h. (The inline calls are
+ * macros of the calls' names, so they must come after every declaration.) */
 #define OWF_H_DONE
 #if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
 #include "owf_calc.h"
 #include "owf_pub.h"
 #include "owf_zip.h"
-#if defined(OWF_CALC_H_DONE) && defined(OWF_PUB_H_DONE) && defined(OWF_ZIP_H_DONE)
-#include <proto/owf.h>
-#endif
+#include "owf_deck.h"
+#include "owf_pdf.h"
+#include "owf_proto.h"
 #endif
 
 #endif
