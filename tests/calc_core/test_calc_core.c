@@ -1173,8 +1173,95 @@ static void test_latin1(void)
     owf_free(t);
 }
 
+static void test_more(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    oc_hit hit;
+    int i, found;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    /* Ctrl+click ranges, then Delete clears them all */
+    enter_at(core, "A1", "1");
+    enter_at(core, "C3", "2");
+    go(core, "A1");
+    oc_core_select_cell(core, 2, 2, 0, 1);
+    CHECK_STR(active_name(core), "C3");
+    key(core, OC_KEY_DELETE, 0);
+    CHECK(empty(core, "A1") && empty(core, "C3"));
+    oc_core_undo(core);
+    CHECK(num(core, "A1") == 1 && num(core, "C3") == 2);
+
+    /* a hidden column has no letter; a tall row is drawn tall */
+    go(core, "B1");
+    oc_core_hide(core, 1, 1);
+    go(core, "A2");
+    oc_core_set_row_height(core, 600);                   /* 40 pixels */
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = 0, found = 0; i < l.n; i++)
+        if (l.items[i].kind == OC_DRAW_HEADER && l.items[i].text && !strcmp(l.items[i].text, "B"))
+            found = 1;
+    CHECK(!found);
+    for (i = 0, found = 0; i < l.n; i++)
+        if (l.items[i].kind == OC_DRAW_HEADER && l.items[i].text && !strcmp(l.items[i].text, "2") && l.items[i].h == 40)
+            found = 1;
+    CHECK(found);
+    CHECK(oc_view_hit(core, 40 + 64 + 5, 18 + 17 + 30, &hit) == OC_HIT_CELL && hit.row == 1 && hit.col == 2);
+    oc_core_undo(core);
+    oc_core_undo(core);
+    CHECK(oc_core_col_width(core, 1) == 960 && oc_core_row_height(core, 1) == 255);
+
+    /* a percentage reads back as typed */
+    go(core, "D1");
+    type(core, "0.5");
+    key(core, OC_KEY_RETURN, 0);
+    go(core, "D1");
+    oc_core_set_number_format(core, "0%");
+    CHECK_STR(oc_core_input_text(core), "50%");
+
+    /* a paste that would go off the sheet */
+    go(core, "A1:B2");
+    owf_free(oc_core_copy(core, NULL));
+    go(core, "XFD1");
+    CHECK(oc_core_paste(core, NULL, 0) == OWF_ERR_UNSUPPORTED);
+
+    /* Escape while pointing leaves the cell as it was */
+    go(core, "E5");
+    type(core, "=");
+    key(core, OC_KEY_UP, 0);
+    key(core, OC_KEY_ESCAPE, 0);
+    CHECK(empty(core, "E5") && !oc_core_editing(core));
+
+    /* adding a sheet is undone */
+    CHECK(oc_core_add_sheet(core, "Two") == 1);
+    oc_core_undo(core);
+    CHECK(oc_core_book(core)->nsheets == 1 && oc_core_sheet(core) == 0);
+
+    /* 3-D references follow a rename too */
+    oc_core_add_sheet(core, NULL);
+    oc_core_add_sheet(core, NULL);
+    oc_core_set_sheet(core, 0);
+    enter_at(core, "F1", "=SUM(Sheet2:Sheet3!A1)");
+    CHECK(oc_core_rename_sheet(core, 2, "Last") == OWF_OK);
+    CHECK_STR(formula(core, "F1"), "SUM(Sheet2:Last!A1)");
+    CHECK(oc_core_rename_sheet(core, 1, "First") == OWF_OK);
+    CHECK_STR(formula(core, "F1"), "SUM(First:Last!A1)");
+
+    /* zoom: the cell stays in view */
+    go(core, "A60");
+    oc_view_set_zoom(core, 50);
+    oc_view_show_cell(core, 59, 0);
+    CHECK(oc_view_zoom(core) == 50);
+    oc_view_set_zoom(core, 1000);
+    CHECK(oc_view_zoom(core) == 400);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 int main(void)
 {
+    test_more();
     test_latin1();
     test_names();
     test_navigation();
