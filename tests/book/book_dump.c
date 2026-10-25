@@ -108,6 +108,12 @@ int main(int argc, char **argv)
         for (k = 0; k < sh->nmerges; k++)
             printf("merge %u,%u-%u,%u\n", sh->merges[k].first_row, sh->merges[k].first_col, sh->merges[k].last_row,
                    sh->merges[k].last_col);
+        if (sh->has_autofilter) {
+            printf("autofilter %u,%u-%u,%u ", sh->autofilter.first_row, sh->autofilter.first_col, sh->autofilter.last_row,
+                   sh->autofilter.last_col);
+            put_string(sh->autofilter_xml ? sh->autofilter_xml : "");
+            putchar('\n');
+        }
         for (k = 0; k < sh->nvalidations; k++) {
             const owf_validation *dv = &sh->validations[k];
             int r;
