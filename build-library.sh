@@ -71,7 +71,9 @@ done
 # C library; -fno-tree-loop-distribute-patterns: no memset or memcpy calls
 # made out of the runtime's own loops.
 # shellcheck disable=SC2086
-"$CC" -m68040 -specs="$SPECS" -mcrt=nix20 -O2 -std=gnu99 -fno-delete-null-pointer-checks -fno-common \
+# -fno-late-combine-instructions: see build-os3.sh (GCC 16's late-combine made "move.b (a2)+,(a0,a2.l)" in
+# owf_number_text and "move.b (a0)+,(a0,d2.l)" in owf_booknum.c, each a byte off on the 68k).
+"$CC" -m68040 -specs="$SPECS" -mcrt=nix20 -O2 -std=gnu99 -fno-delete-null-pointer-checks -fno-common -fno-late-combine-instructions \
     -fomit-frame-pointer -fno-toplevel-reorder -fno-builtin -fno-tree-loop-distribute-patterns \
     -Wall -Werror -Wno-pointer-sign -nostartfiles -nostdlib $DEFS $INC \
     "$LIB/owf_library.c" $SRC "$LIB/owf_sys_dos.c" "$LIB/owf_runtime.c" "$LIB/owf_libc.c" \
@@ -87,7 +89,7 @@ fi
 
 # OWFLibTest: an ordinary program that opens the library from LIBS:, with
 # its samples and fixtures beside it (PROGDIR:samples, PROGDIR:fixtures)
-"$CC" -m68040 -specs="$SPECS" -noixemul -O2 -std=gnu99 -fno-delete-null-pointer-checks -fno-common \
+"$CC" -m68040 -specs="$SPECS" -noixemul -O2 -std=gnu99 -fno-delete-null-pointer-checks -fno-common -fno-late-combine-instructions \
     -Wall -Werror -DOWF_USE_LIBRARY -I"$OWF/include" -I"$LIB/sdk/Include_H" -I"$HERE/tests/library" \
     "$HERE/tests/library/owf_lib_test.c" "$HERE/tests/library/owf_lib_checks.c" -o "$OUT/tests/OWFLibTest"
 echo "$OUT/tests/OWFLibTest ($(wc -c < "$OUT/tests/OWFLibTest") bytes)"
