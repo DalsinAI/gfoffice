@@ -88,8 +88,11 @@ if [ -n "$UNDEF" ]; then
 fi
 
 # OWFLibTest: an ordinary program that opens the library from LIBS:, with
-# its samples and fixtures beside it (PROGDIR:samples, PROGDIR:fixtures)
-"$CC" -m68040 -specs="$SPECS" -noixemul -O2 -std=gnu99 -fno-delete-null-pointer-checks -fno-common -fno-late-combine-instructions \
+# its samples and fixtures beside it (PROGDIR:samples, PROGDIR:fixtures).
+# -fno-builtin-strcat: GCC 16 expanded owf_lib_checks.c's strcat into a local array as
+# "&want + strlen(want)" and its vregs pass left that address's virtual-stack-vars in place, so
+# combine dropped the frame and the copy went to an absolute address (25 Oct 2026).
+"$CC" -m68040 -specs="$SPECS" -noixemul -O2 -std=gnu99 -fno-delete-null-pointer-checks -fno-common -fno-late-combine-instructions -fno-builtin-strcat \
     -Wall -Werror -DOWF_USE_LIBRARY -I"$OWF/include" -I"$LIB/sdk/Include_H" -I"$HERE/tests/library" \
     "$HERE/tests/library/owf_lib_test.c" "$HERE/tests/library/owf_lib_checks.c" -o "$OUT/tests/OWFLibTest"
 echo "$OUT/tests/OWFLibTest ($(wc -c < "$OUT/tests/OWFLibTest") bytes)"
