@@ -138,6 +138,15 @@ int owf_cfb_has(const owf_cfb *cfb, const char *name);
 /* A stream, by name (ignoring case), into memory from malloc with a NUL
  * after it. OWF_ERR_FORMAT when there is none. */
 int owf_cfb_read(owf_cfb *cfb, const char *name, unsigned char **data, size_t *length);
+/* Entries by number (0 is the root storage) and storages by path: "Quill/
+ * QuillSub/CONTENTS", names ignoring case; -1 when there is none. The walk
+ * over a storage's children is bounded, so a damaged directory ends it. */
+const unsigned char *owf_cfb_entry(const owf_cfb *cfb, unsigned long entry);
+int owf_cfb_entry_name(const owf_cfb *cfb, unsigned long entry, char *out, size_t size);
+int owf_cfb_children(const owf_cfb *cfb, unsigned long storage,
+                     int (*fn)(const owf_cfb *cfb, unsigned long entry, void *user), void *user);
+long owf_cfb_find_path(const owf_cfb *cfb, const char *path);
+int owf_cfb_read_entry(owf_cfb *cfb, unsigned long entry, unsigned char **data, size_t *length);
 
 /* ---- Workbook formats ---- */
 

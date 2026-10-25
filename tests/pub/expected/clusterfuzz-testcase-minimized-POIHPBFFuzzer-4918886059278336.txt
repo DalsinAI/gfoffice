@@ -1,0 +1,11 @@
+note 1 "The file is cut short or damaged; some of it may be missing" x1
+note 1 "The file is cut short in its text; some text is missing" x19
+note 2 "The file's table of contents is damaged; no pages could be read" x1
+version Publisher 2010
+build-mark 0x18
+page-size 0.0 x 0.0 mm (emu 0 x 0, twips 0 x 0)
+masters 0
+pages 0
+stories 0
+fonts 0
+pictures 0

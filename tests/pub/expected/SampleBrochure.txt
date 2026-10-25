@@ -1,0 +1,168 @@
+version Publisher 2002/2003
+build-mark 0x13
+written-by 11.5703
+page-size 297.0 x 210.0 mm (emu 10692000 x 7560000, twips 16838 x 11906)
+masters 1
+master 1 "Default Master" frames 0
+pages 2
+page 1 master 1 frames 28
+  frame 0 group box 216.5 12.7 20.4 18.5 mm (emu 7795636 457200 8530525 1121759) shape 0
+  frame 1 shape in 0 box 216.5 12.7 20.4 18.5 mm (emu 7795636 457200 8530525 1121759) shape 1
+  frame 2 shape in 0 box 216.5 12.7 20.4 18.5 mm (emu 7795636 457200 8530525 1121759) shape 1
+  frame 3 shape in 0 box 223.3 18.9 6.8 6.2 mm (emu 8040594 678715 8285551 900236) shape 1
+  frame 4 shape in 0 box 216.5 12.7 20.4 18.5 mm (emu 7795636 457200 8530525 1121759) shape 6
+  frame 5 shape in 0 box 223.3 18.9 6.8 6.2 mm (emu 8040594 678715 8285560 900236) shape 6
+  frame 6 group box 216.5 31.2 63.7 166.1 mm (emu 7795636 1121760 10088495 7102800) shape 0
+  frame 7 line in 6 box 216.5 197.3 63.7 0.0 mm (emu 7795636 7102800 10088495 7102800) shape 20
+  frame 8 line in 6 box 216.5 31.2 0.0 166.1 mm (emu 7795636 1121760 7795636 7102799) shape 20
+  frame 9 line in 6 box 280.2 31.2 0.0 166.1 mm (emu 10088495 1121760 10088495 7102799) shape 20
+  frame 10 shape box 16.8 12.7 63.6 184.6 mm (emu 603504 457200 2892689 7102800) shape 1
+  frame 11 text box 116.6 181.6 63.7 15.7 mm (emu 4197733 6537300 6490304 7102799) shape 202 text-id 2 story 0
+    para "Phone: (425) 555-0187"
+    para "Fax: (425) 555-0188"
+    para "Email: l.baker@contoso.com"
+  frame 12 text box 116.6 162.0 63.7 19.5 mm (emu 4197733 5833513 6490304 6537300) shape 202 text-id 3 story 1
+    para "Contoso Art Gallery"
+    para ""
+    para "Washington"
+  frame 13 text box 20.0 20.0 57.0 14.3 mm (emu 720000 720000 2772421 1234800) shape 202 text-id 4 story 2
+    para "Contoso Art Gallery\t\t"
+  frame 14 text box 116.6 150.0 63.7 12.0 mm (emu 4197733 5399865 6490304 5833513) shape 202 text-id 5 story 3
+    para "Featuring paintings by Van Gogh, \nDa Vinci, Picasso, and Contoso"
+  frame 15 text box 20.1 38.0 57.0 148.1 mm (emu 721885 1368000 2774306 6700607) shape 202 text-id 7 story 4
+    para "Opening hours"
+    para "Monday – Friday    10 A.M. – 5 P.M."
+    para "Saturday \t   10 A.M. – 4 P.M."
+    para "Sunday\t\t   11 A.M. – 4 P.M."
+    para "Open on public holidays"
+    para ""
+    para "Contoso Coffee Break"
+    para "Enjoy a coffee and a muffin at the gallery coffee shop. Light lunches are also available. A great place to sit and discuss your favorite art pieces."
+    para ""
+    para "Art Book Shop"
+    para "For all your art needs. Art Book Shop has in-store prints of all artworks currently on exhibit. A wide range of books from renaissance to cubism, the Art Book Shop has it all. Perhaps you’ll feel inspired. by the vast range of paints and brushes.  "
+    para " "
+  frame 16 text box 220.0 36.0 58.2 28.5 mm (emu 7920000 1296000 10016888 2321892) shape 202 text-id 8 story 5
+    para "\t\tThe "
+    para "\t      Great    "
+    para "            Portraits "
+    para "           Exhibition "
+    para "May 23 – June 1, 2003"
+  frame 17 text box 219.3 176.1 58.2 12.5 mm (emu 7893621 6341325 9990509 6792671) shape 202 text-id 9 story 6
+    para "Featuring paintings by Van Gogh, \nDa Vinci, Picasso, and Contoso"
+  frame 18 text box 219.3 188.7 58.2 6.2 mm (emu 7893621 6792672 9990509 7014191) shape 202 text-id 10 story 7
+    para ""
+  frame 19 group box 216.5 12.7 63.7 18.5 mm (emu 7795636 457200 10088495 1121759) shape 0
+  frame 20 line in 19 box 236.4 12.7 0.0 18.5 mm (emu 8510112 457200 8510112 1121759) shape 20
+  frame 21 shape in 19 box 216.5 12.7 63.7 18.5 mm (emu 7795636 457200 10088495 1121759) shape 1
+  frame 22 text box 239.1 14.5 38.4 14.9 mm (emu 8608778 521810 9990510 1057148) shape 202 text-id 11 story 8
+    para "Contoso Gallery of Fine Art"
+  frame 23 line box 219.3 175.9 58.2 0.0 mm (emu 7893621 6333633 9990509 6333633) shape 20
+  frame 24 text box 220.0 126.0 59.0 47.2 mm (emu 7920000 4536000 10044000 6236400) shape 202 text-id 22 story 17
+    para "World renowned artist, Lisa Baker, displays her unique style for capturing mood in this exhibition of portraits. \n"
+    para "With over 25 artworks on display this is an exhibition not to be missed."
+    para ""
+  frame 25 picture box 21.0 93.0 26.5 20.9 mm (emu 756000 3348000 1710011 4100286) shape 1 picture 4
+  frame 26 picture box 49.0 168.0 28.3 25.6 mm (emu 1764000 6048000 2782357 6968644) shape 1 picture 5
+  frame 27 picture box 228.0 74.0 46.0 44.5 mm (emu 8208000 2664000 9864000 4264800) shape 1 picture 7
+page 2 master 1 frames 29
+  frame 0 text box 107.6 12.7 81.9 184.6 mm (emu 3872135 457200 6820885 7102800) shape 202 text-id 13 story 9
+    para "Leonardo Da Vinci"
+    para ""
+    para "Creator of the most well- known portrait to date, the Mona Lisa, Da Vinci is a genius. Not only was he a painter of incredible talent creating works including the Madonna and the last supper, but Da Vinci was also a designer, architect and inventor. It is with great honor that we include from the Louvre Art Gallery of Paris, the Mona Lisa."
+    para ""
+    para ""
+    para ""
+    para "Picasso"
+    para "The key concept of Cubism is that the essence of objects can only be captured by showing it from multiple points of view simultaneously."
+    para "Picasso’s work would have to be one of the best examples of this type or artwork."
+    para "Trained in the traditional methods of art, Picasso broke away developing his own style. The deep pain over the death of his friend become apparent in Picasso’s “blue period”. This was followed by his “Rose period” in which the love he found in his soon-to-be-wife blossomed both in his life and on the pallet. "
+    para "  "
+  frame 1 group box 207.4 163.8 72.9 33.5 mm (emu 7464935 5896600 10088495 7102800) shape 0
+  frame 2 line in 1 box 207.4 197.3 72.9 0.0 mm (emu 7464935 7102800 10088495 7102800) shape 20
+  frame 3 line in 1 box 207.4 163.8 0.0 33.5 mm (emu 7464935 5896600 7464935 7102799) shape 20
+  frame 4 line in 1 box 280.2 163.8 0.0 33.5 mm (emu 10088495 5896600 10088495 7102799) shape 20
+  frame 5 shape box 16.8 12.7 72.9 18.5 mm (emu 603504 457200 3227064 1121759) shape 1
+  frame 6 text box 16.8 40.8 72.9 156.5 mm (emu 603504 1467885 3227064 7102799) shape 202 text-id 14 story 10
+    para "Lisa Baker studied art in her home town of Melbourne, Australia. "
+    para "Fascinated by the stories that are interwoven into the features of a face, Baker captures the true character hidden beneath the skin."
+    para "Her wide use of media including watercolor, conte crayon, graphic pen, oil, and charcoal are evident in this exhibition. "
+    para "In a recent interview Baker stated that her family formed the inspiration for many of her pieces. This is particularly evident in the pencil sketch, The Eyes of an Angel."
+    para "“ To watch your children grow and develop a sense of character, a belief in themselves, an individual way of viewing the world, is the greatest inspiration an artist could ever hope for.”"
+    para "Enjoy this opportunity to view her works here at the McKenzie Art Gallery. "
+    para ""
+  frame 7 group box 207.5 150.0 15.2 13.8 mm (emu 7468503 5399865 8016102 5896599) shape 0
+  frame 8 shape in 7 box 207.5 150.0 15.2 13.8 mm (emu 7468503 5399865 8016102 5896599) shape 1
+  frame 9 shape in 7 box 207.5 150.0 15.2 13.8 mm (emu 7468503 5399865 8016102 5896599) shape 1
+  frame 10 shape in 7 box 212.5 154.6 5.1 4.6 mm (emu 7651032 5565440 7833561 5731019) shape 1
+  frame 11 shape in 7 box 207.5 150.0 15.2 13.8 mm (emu 7468503 5399865 8016102 5896599) shape 6
+  frame 12 shape in 7 box 212.5 154.6 5.1 4.6 mm (emu 7651032 5565440 7833567 5731019) shape 6
+  frame 13 group box 207.4 150.0 72.9 13.8 mm (emu 7464935 5399865 10088495 5896599) shape 0
+  frame 14 shape in 13 box 207.4 150.0 72.9 13.8 mm (emu 7464935 5399865 10088495 5896599) shape 1
+  frame 15 line in 13 box 222.5 150.0 0.0 13.8 mm (emu 8008278 5399865 8008278 5896599) shape 20
+  frame 16 text box 20.0 16.0 66.9 12.9 mm (emu 720000 576000 3129078 1040035) shape 202 text-id 15 story 11
+    para "Lisa Baker"
+  frame 17 text box 207.4 12.7 72.9 129.6 mm (emu 7464935 457200 10088495 5122965) shape 202 text-id 29 story 19
+    para "Vincent Van Gogh"
+    para ""
+    para "\"Vincent van Gogh was born near Brabant, the son of a minister. In 1869, he got a position at the art dealers, Goupil and Co. in The Hague, through his uncle, and worked with them until he was dismissed from the London office in 1873. He worked as a schoolmaster in England (1876), before training for the ministry at Amsterdam University (1877). After he failed to get a post in the Church, he went to live as an independent missionary among the Borinage miners. Van Gogh’s preferred medium was oil on canvas which at times he liberally applied using a palette knife. His expressive use of paint as illustrated in ‘Starry Night’ resulted in the uniquely recognizable trait of suggestive movement. "
+    para ""
+    para ""
+  frame 18 text box 210.1 165.8 67.4 16.1 mm (emu 7562920 5970279 9990509 6549922) shape 202 text-id 17 story 12
+    para "Contoso Art Gallery"
+    para ""
+    para "Washington"
+  frame 19 text box 210.0 182.0 67.4 12.9 mm (emu 7560000 6552000 9987589 7016268) shape 202 text-id 18 story 13
+    para "Phone: (425) 555-0187"
+    para "Fax: (425) 555-0188"
+    para "Email: l.baker@contoso.com"
+  frame 20 text box 223.1 151.0 42.0 11.9 mm (emu 8030393 5436785 9541576 5863673) shape 202 text-id 19 story 14
+    para "Featuring paintings by Van Gogh, \nDa Vinci, Picasso, and Contoso"
+  frame 21 picture box 16.8 54.9 38.5 38.9 mm (emu 603504 1975483 1990684 3375382) shape 1 picture 0
+  frame 22 text box 16.8 93.8 38.6 14.4 mm (emu 603504 3375382 1993058 3893461) shape 202 text-id 20 story 15
+    para "Hindsight "
+    para "Lisa Baker uses mixed media to create her portraits."
+  frame 23 text box 148.0 162.0 39.0 11.0 mm (emu 5328000 5832000 6732000 6228000) shape 202 text-id 21 story 16
+    para "Dora Maar"
+    para "November 1937"
+  frame 24 picture box 148.0 111.0 39.1 48.7 mm (emu 5328000 3996000 6737280 5748079) shape 1 picture 1
+  frame 25 picture box 48.4 150.0 35.6 43.9 mm (emu 1742788 5401701 3026030 6982299) shape 1 picture 2
+  frame 26 text box 46.0 136.0 40.0 14.0 mm (emu 1656000 4896000 3096000 5400000) shape 202 text-id 25 story 18
+    para "The eyes of an angel"
+    para "May 2003"
+    para "A pencil sketch."
+  frame 27 picture box 147.0 26.0 39.6 54.9 mm (emu 5292000 937420 6717836 2914579) shape 1 picture 3
+  frame 28 picture box 229.8 50.6 48.9 60.8 mm (emu 8273193 1820183 10033857 4009116) shape 1 picture 6
+stories 20
+fonts 22
+font "Garamond"
+font "Times New Roman"
+font "Mangal"
+font "Vrinda"
+font "Raavi"
+font "Shruti"
+font "Sendnya"
+font "Latha"
+font "Gautami"
+font "Tunga"
+font "Angsana New"
+font "Sylfaen"
+font "Batang"
+font "MS Mincho"
+font "PMingLiU"
+font "SimSun"
+font "Estrangelo Edessa"
+font "Ahamedey"
+font "Gill Sans MT"
+font "Georgia"
+font "Arial Narrow"
+font "Arial"
+pictures 8
+picture 0 image/x-wmf 8274 bytes
+picture 1 image/gif 13157 bytes
+picture 2 image/x-wmf 10054 bytes
+picture 3 image/gif 16653 bytes
+picture 4 image/x-wmf 3536 bytes
+picture 5 image/x-wmf 9172 bytes
+picture 6 image/jpeg 11516 bytes
+picture 7 image/x-wmf 13320 bytes
