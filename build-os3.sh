@@ -126,5 +126,10 @@ else
 echo "$OUT/OpenCalc ($(wc -c < "$OUT/OpenCalc") bytes)"
 fi
 
+# The toolbars' pictures: the Chrome icon set's strips beside the programs, where they look first
+# (PROGDIR:Images/Toolbar/; opengadtools lib/ogt_iconset.c). Made by opengadtools' tools/iconset.
+mkdir -p "$OUT/Images/Toolbar"
+cp "$HERE"/Images/Toolbar/*.ilbm "$OUT/Images/Toolbar/"
+
 echo "$OUT/OWConvert ($(wc -c < "$OUT/OWConvert") bytes)"
 echo "$OUT/OpenWrite ($(wc -c < "$OUT/OpenWrite") bytes)"
