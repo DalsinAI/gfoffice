@@ -403,14 +403,28 @@ static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
 
 ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata)
 {
+    return ow_layout_new_reserved(doc, measure, measure_userdata, 0);
+}
+
+ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata,
+                                  size_t ops)
+{
     ow_layout *l;
+    ol_document *body;
     const owf_page *pg;
     size_t i;
     int k;
 
     if (!doc) return NULL;
+    /* 2.0.13: the pages' display list before anything else (OpenLayout 0.5's ol_document_new_reserved) */
+    body = ops ? ol_document_new_reserved(ops) : ol_document_new();
+    if (!body) return NULL;
     l = (ow_layout *)calloc(1, sizeof(*l));
-    if (!l) return NULL;
+    if (!l) {
+        ol_document_free(body);
+        return NULL;
+    }
+    l->body = body;
     l->doc = doc;
     l->measure = measure;
     l->measure_userdata = measure_userdata;
@@ -426,7 +440,6 @@ ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure, void *m
         l->page.margin_top = l->page.margin_bottom = TW(OWF_TWIPS_PER_INCH);
         l->page.margin_left = l->page.margin_right = TW(OWF_TWIPS_PER_INCH);
     }
-    l->body = ol_document_new();
     l->blocks = (ol_id *)calloc((size_t)(doc->body.nparas ? doc->body.nparas : 1), sizeof(*l->blocks));
     if (!l->body || !l->blocks || !add_story(l, doc, l->body, NULL, &doc->body, 1, NULL)) {
         ow_layout_free(l);

@@ -702,14 +702,19 @@ static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
             /* 2.0.12: a link stays a link when part of it is made bold (it lost its target) */
 #define ADD_PART(f, s, len) (r->href ? owf_para_add_link_text(&tmp, (f), (s), (len), r->href) \
                                      : owf_para_add_text(&tmp, (f), (s), (len)))
-            if (a > rs && ADD_PART(&r->fmt, text, a - rs) != OWF_OK)
+            /* 2.0.13: a run outside the selection is copied once, as it is. Its split used to run too:
+             * a run before the selection was copied on past its end, and one after it from before its
+             * start, and then the whole of either again. */
+            if (a < b) {
+                if (a > rs && ADD_PART(&r->fmt, text, a - rs) != OWF_OK)
+                    goto fail;
+                if (ADD_PART(&changed, text + (a - rs), b - a) != OWF_OK)
+                    goto fail;
+                if (b < re && ADD_PART(&r->fmt, text + (b - rs), re - b) != OWF_OK)
+                    goto fail;
+            } else if (n && ADD_PART(&r->fmt, text, n) != OWF_OK) {
                 goto fail;
-            if (a < b && ADD_PART(&changed, text + (a - rs), b - a) != OWF_OK)
-                goto fail;
-            if (b < re && ADD_PART(&r->fmt, text + (b - rs), re - b) != OWF_OK)
-                goto fail;
-            if (a >= b && n && ADD_PART(&r->fmt, text, n) != OWF_OK)
-                goto fail;
+            }
 #undef ADD_PART
             if (!n && !tmp.nruns && !append_empty_text_run(&tmp, &r->fmt))
                 goto fail;

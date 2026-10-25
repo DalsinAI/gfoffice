@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.12 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.13 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -330,6 +330,7 @@ static int defer_repaint, repaint_pending;
  * again when the document changes (ow_editor_changes). */
 static ow_layout *pages_layout;
 static const ow_editor *pages_editor;
+static size_t pages_room;                            /* 2.0.13: ow_layout_new_reserved's, 0 before the first */
 static unsigned long pages_changes;
 
 static void draw_all(void);
@@ -1833,8 +1834,16 @@ static ow_layout *pages(void)
     if (!editor) return NULL;
     if (pages_layout && pages_editor == editor && pages_changes == ow_editor_changes(editor))
         return pages_layout;
+    {
+        /* 2.0.13: the display list's room, the same each time while the document's list fits it (a quarter
+         * more than it needs, to the next 1024), taken before anything else as the last layout is freed: it
+         * then gets back the very block the last one had. Without it each edit left about 3 MB of libnix's
+         * pools behind (MEMCHECK) on a 20-page document. */
+        size_t had = pages_layout ? ol_display_count(ow_layout_body(pages_layout)) : 0;
+        if (had && (had > pages_room || had < pages_room / 4)) pages_room = (had + had / 4 + 1023) / 1024 * 1024;
+    }
     pages_free();
-    pages_layout = ow_layout_new(ow_editor_document(editor), measure_units, NULL);
+    pages_layout = ow_layout_new_reserved(ow_editor_document(editor), measure_units, NULL, pages_room);
     pages_editor = editor;
     pages_changes = ow_editor_changes(editor);
     return pages_layout;
@@ -3802,10 +3811,10 @@ static void mem_check(char *out, size_t size)
     snap = ow_editor_snapshot_bytes(editor, &nundo, &nredo);
     docb = ow_editor_document_bytes(editor);
     snprintf(out, size, "avail %lu (largest %lu); malloc pools %lu in %d, %lu of it free; document %lu; "
-             "undo %d + redo %d snapshots, %lu; pages %lu ops, %lu nodes, about %lu; pictures %d, %lu; "
+             "undo %d + redo %d snapshots, %lu; pages %lu ops (room %lu), %lu nodes, about %lu; pictures %d, %lu; "
              "fonts %d open, about %lu",
              (unsigned long)AvailMem(MEMF_ANY), (unsigned long)AvailMem(MEMF_ANY | MEMF_LARGEST), pool, puddles,
-             pool_free, docb, nundo, nredo, snap, layout_ops, layout_nodes,
+             pool_free, docb, nundo, nredo, snap, layout_ops, (unsigned long)pages_room, layout_nodes,
              layout_ops * (unsigned long)sizeof(ol_display_op) + layout_nodes * 160UL, image_cache_n, pictures,
              fonts, font_bytes);
 }
