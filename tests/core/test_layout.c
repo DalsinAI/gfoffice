@@ -662,6 +662,55 @@ static void wrap_checks(const ow_layout *l, const owf_doc *doc)
     CHECK(pictures == 4 && boxes == 1 && both == 2);
 }
 
+/* tests/core/fixtures/header-frames.docx (make_header_docx.py): frames in a header and a footer (2.0.16), on every
+ * page where Word puts them: the logo from the page's top right corner, the DRAFT box from the margin and the
+ * page's top, the footer's box at the right margin from its paragraph. */
+static void header_checks(const ow_layout *l, const owf_doc *doc)
+{
+    const ol_page *pg = ow_layout_page(l);
+    ol_unit tw = OL_UNITS_PER_TWIP;
+    int p, pages = ow_layout_page_count(l);
+    CHECK(doc->nframes == 3 && pages >= 3);
+    for (p = 0; p < pages; ++p) {
+        ol_document *h, *f;
+        ol_unit hx = 0, hy = 0, fx = 0, fy = 0;
+        size_t i;
+        int logo = 0, draft = 0, box = 0, words = 0;
+        h = ow_layout_story(l, OW_STORY_HEADER, p, NULL, NULL, &hx, &hy);
+        f = ow_layout_story(l, OW_STORY_FOOTER, p, NULL, NULL, &fx, &fy);
+        CHECK(h != NULL && f != NULL);
+        if (!h || !f) { ol_document_free(h); ol_document_free(f); return; }
+        for (i = 0; i < ol_display_count(h); ++i) {
+            const ol_display_op *op = ol_display_get(h, i);
+            if (op->type == OL_OP_IMAGE) {
+                CHECK(op->u.image.bounds.x + hx == (11906 - 360 - 720) * tw && op->u.image.bounds.y + hy == 360 * tw &&
+                      op->u.image.bounds.width == 720 * tw);
+                ++logo;
+            } else if (op->type == OL_OP_FILL_RECT && op->u.fill_rect.argb == 0xffc00000u) {
+                CHECK(op->u.fill_rect.bounds.x + hx == pg->margin_left && op->u.fill_rect.bounds.y + hy == 720 * tw &&
+                      op->u.fill_rect.bounds.width == 2880 * tw && op->u.fill_rect.bounds.height == 432 * tw);
+                ++draft;
+            } else if (op->type == OL_OP_TEXT && op->u.text.text_offset == 0 &&
+                       !strncmp(ol_node_text(ol_node_by_id(h, op->u.text.node_id)), "DRAFT", 5)) {
+                CHECK(op->u.text.bounds.y + hy >= 720 * tw && op->u.text.bounds.y + hy < (720 + 432) * tw);
+                ++words;
+            }
+        }
+        for (i = 0; i < ol_display_count(f); ++i) {
+            const ol_display_op *op = ol_display_get(f, i);
+            if (op->type == OL_OP_FILL_RECT && op->u.fill_rect.argb == 0xffddddddu) {
+                CHECK(op->u.fill_rect.bounds.x + fx == pg->margin_left + (9026 - 2160) * tw &&
+                      op->u.fill_rect.bounds.y + fy == fy && op->u.fill_rect.bounds.width == 2160 * tw);
+                ++box;
+            }
+        }
+        CHECK(logo == 1 && draft == 1 && box == 1 && words == 1);
+        CHECK(text_on(f, 0, "Footer box", NULL) != NULL && text_on(h, 0, "The header", NULL) != NULL);
+        ol_document_free(h);
+        ol_document_free(f);
+    }
+}
+
 /* Where the cover's frames are on the page: the pictures and fills on pages 1 and 2, and the text boxes' first
  * words, in that order. */
 typedef struct { int n; ol_rect at[16]; } frame_places;
@@ -854,6 +903,7 @@ static void test_sample(const char *path)
         if (strstr(path, "cover.docx")) cover_checks(l, doc);
         if (strstr(path, "cover-wpg.docx")) cover_wpg_checks(l, doc);
         if (strstr(path, "wrap.docx")) wrap_checks(l, doc);
+        if (strstr(path, "header-frames.docx")) header_checks(l, doc);
         printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
                checked, lists);
         ow_layout_free(l);
