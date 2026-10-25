@@ -234,7 +234,7 @@ int oc_core_open(oc_core *core, const char *path, const char *format, owf_report
     return oc_core_set_book(core, book);
 }
 
-int oc_core_save(oc_core *core, const char *path, const char *format, owf_report *report)
+int oc_core_export(oc_core *core, const char *path, const char *format, owf_report *report)
 {
     int rc, active = core->book->active;
     if (core->edit_mode)
@@ -243,9 +243,20 @@ int oc_core_save(oc_core *core, const char *path, const char *format, owf_report
     rc = owf_export_book_file(core->book, path, format, report);
     if (rc != OWF_OK)
         core->book->active = active;
-    else
+    return rc;
+}
+
+int oc_core_save(oc_core *core, const char *path, const char *format, owf_report *report)
+{
+    int rc = oc_core_export(core, path, format, report);
+    if (rc == OWF_OK)
         core->dirty = 0;
     return rc;
+}
+
+void oc_core_set_dirty(oc_core *core)
+{
+    oc_changed(core);
 }
 
 int oc_core_is_dirty(const oc_core *core)
@@ -1401,6 +1412,11 @@ static int input_into(const oc_core *core, const owf_cell *c, char *out, size_t 
         break;
     }
     return snprintf(out, size, "%s", "");
+}
+
+char *oc_core_cell_input(const oc_core *core, int sheet, unsigned row, unsigned col)
+{
+    return oc_cell_input(core, sheet, row, col);
 }
 
 /* What a cell holds as one would type it: owf_malloc'd. */

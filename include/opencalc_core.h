@@ -78,8 +78,13 @@ int oc_core_open(oc_core *core, const char *path, const char *format, owf_report
  * OWF_OK. */
 int oc_core_save(oc_core *core, const char *path, const char *format, owf_report *report);
 
+/* The same, as a copy (Export): the book stays as unsaved as it was. */
+int oc_core_export(oc_core *core, const char *path, const char *format, owf_report *report);
+
 int oc_core_is_dirty(const oc_core *core);
 void oc_core_mark_saved(oc_core *core);
+/* Marks the book changed (a recovered copy that must not be lost unasked). */
+void oc_core_set_dirty(oc_core *core);
 /* Counts every change to the book (an edit, undo, redo, a style). */
 unsigned long oc_core_changes(const oc_core *core);
 
@@ -191,6 +196,8 @@ int oc_edit_insert_ref(oc_core *core, const owf_range *range);
  * holds as one would type it ("=SUM(A1:A3)", "12.5", "'0123"). The
  * pointer is good until the next call into the core. */
 const char *oc_core_input_text(oc_core *core);
+/* What a cell holds as one would type it (owf_malloc'd; NULL: memory). */
+char *oc_core_cell_input(const oc_core *core, int sheet, unsigned row, unsigned col);
 /* A cell's value as the grid shows it, through its number format. */
 int oc_core_cell_text(const oc_core *core, int sheet, unsigned row, unsigned col, char *out, size_t size);
 /* Puts typed input in a cell, as editing would (undoable): for ARexx. */

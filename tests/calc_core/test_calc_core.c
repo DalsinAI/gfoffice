@@ -1097,6 +1097,27 @@ static void test_files(void)
     buf[n] = 0;
     CHECK_STR(buf, "1,two\r\n2,\r\n");
     remove("build/host/calc-core-test.csv");
+    /* an export is a copy: the workbook stays unsaved */
+    enter_at(core, "B2", "x");
+    CHECK(oc_core_is_dirty(core));
+    CHECK(oc_core_export(core, "build/host/calc-core-test.csv", NULL, report) == OWF_OK);
+    CHECK(oc_core_is_dirty(core));
+    remove("build/host/calc-core-test.csv");
+    oc_core_mark_saved(core);
+    CHECK(!oc_core_is_dirty(core));
+    oc_core_set_dirty(core);
+    CHECK(oc_core_is_dirty(core));
+    {
+        char *in = oc_core_cell_input(core, 0, 1, 0);
+        CHECK_STR(in, "=A1+1");
+        owf_free(in);
+        in = oc_core_cell_input(core, 0, 5, 5);
+        CHECK_STR(in, "");
+        owf_free(in);
+    }
+    CHECK(oc_core_save(core, "nosuchvolume:/x.csv", NULL, report) != OWF_OK);
+    CHECK(oc_core_save(core, "build/host/calc-core-test.xyz", NULL, report) == OWF_ERR_FORMAT);
+    CHECK(oc_core_is_dirty(core));
     /* typing commits before a save */
     go(core, "C1");
     type(core, "3");

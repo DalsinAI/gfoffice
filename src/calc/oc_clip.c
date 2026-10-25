@@ -55,8 +55,10 @@ static void put(sbuf *b, const char *s, size_t n)
 static void put_field(sbuf *b, const char *s)
 {
     const char *p;
-    if (!strpbrk(s, "\t\r\n\"")) {
-        put(b, s, strlen(s));
+    for (p = s; *p && *p != '\t' && *p != '\r' && *p != '\n' && *p != '"'; p++)
+        ;
+    if (!*p) {
+        put(b, s, (size_t)(p - s));
         return;
     }
     put(b, "\"", 1);
