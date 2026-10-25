@@ -7,7 +7,8 @@
 #
 #   build-os3.sh [OUT_DIR]              (default build/os3)
 #   OWF=library build-os3.sh [OUT_DIR]  each on its library (build-library.sh, docs/suite/owf-libraries.md):
-#                                       OpenWrite on owfwrite.library; OWConvert on owf.library 2 for now
+#                                       OpenWrite on owfwrite.library, OpenCalc on owfcalc.library; OWConvert
+#                                       on owf.library 2 for now
 #
 # Both are 68040 code, as every build. The OpenWrite UI uses OpenGadTools.
 # No FPU is required.
@@ -50,8 +51,8 @@ linked)
 library)
     # OWF_BUILD_LIBRARIES=no: the libraries are built elsewhere (build-amiga.sh builds them once, in OUT/library)
     [ "${OWF_BUILD_LIBRARIES:-yes}" = no ] || "$HERE/build-library.sh" "$OUT/library"
-    # each program names its library: OpenWrite owfwrite.library (OWF_USE_WRITE_LIBRARY), OWConvert owf.library 2
-    # (OWF_USE_LIBRARY alone) until it is split by library
+    # each program names its library: OpenWrite owfwrite.library (OWF_USE_WRITE_LIBRARY), OpenCalc
+    # owfcalc.library (below), OWConvert owf.library 2 (OWF_USE_LIBRARY alone) until it is split by library
     OWFFLAGS="-I$HERE/libowf/include -I$HERE/libowf/library/sdk/Include_H"
     OWF_WRITE="-DOWF_USE_WRITE_LIBRARY"
     OWF_OWC="-DOWF_USE_LIBRARY"
@@ -119,20 +120,24 @@ elif [ "${OW1:-}" = yes ]; then
 echo "$OUT/OpenWrite1 ($(wc -c < "$OUT/OpenWrite1") bytes)"
 fi
 
-# OpenCalc, the spreadsheet of the GFOffice Suite: its core (src/calc), every workbook format and the formula
-# engine (libowf/calc), with libowf linked in (owf.library has no workbook calls yet), and OpenWrite 2's
-# shell pieces.
+# OpenCalc, the spreadsheet of the GFOffice Suite: its core (src/calc) and OpenWrite 2's shell pieces, with
+# libowf linked in (OWF=linked: every workbook format and the formula engine, libowf/calc) or on
+# owfcalc.library (OWF=library, OWF_USE_CALC_LIBRARY). Its own drawing's doubles (the charts) take libnix's
+# maths (-lm) either way.
 if [ "$OWF" = library ]; then
-    echo "build-os3.sh: OpenCalc is built with libowf linked in only (OWF=linked): owf.library has no workbook calls yet"
+    OCSRC=""
+    OWF_CALC="-DOWF_USE_CALC_LIBRARY"
 else
+    OCSRC="$OWFSRC $HERE/libowf/calc/*.c"
+    OWF_CALC=""
+fi
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_CALC \
     -I"$HERE/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC "$HERE"/libowf/calc/*.c "$HERE"/src/calc/*.c "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_fontwidths.c" \
-    "$HERE"/third_party/opengadtools/*.c -lamiga $OWFLIBS \
+    $OCSRC "$HERE"/src/calc/*.c "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_fontwidths.c" \
+    "$HERE"/third_party/opengadtools/*.c -lamiga -lm \
     -o "$OUT/OpenCalc"
 echo "$OUT/OpenCalc ($(wc -c < "$OUT/OpenCalc") bytes)"
-fi
 
 # OpenPresentation, the GFOffice Suite's slides (P2 and P3's first typing): the documents' libowf files with
 # the deck's (the model, ODP, PPTX in, the page PDF writer), its core (src/deck) on OpenLayout and OpenWrite's
