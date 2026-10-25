@@ -22,4 +22,5 @@ but needs a document made to test it.
 | `WSPC` | Follows `WFSC`, 6 bytes per change | Not worked out |
 | `WPAG` | Page break | Sure |
 | `WHED`, `WFOT` | The header and footer start here (both at the end of the file): page type at 0 (3 = every page), "on the first page" at 1 | Sure, as ProWrite's `HEAD` |
-| `FORM` (`GTID`, `ILBM`) | Pictures and drawings | Not read yet |
+| `FORM GTID` | The drawing layer. `FORM GTIP` holds its objects: `RECT`, `RRCT`, `ELLP`, `CIRC`, `LINE`, `GROU` (in `FORM OBJF`), `PICT`, `PTXT` (a text object: its text's length is the word at 38, the text from 40), and text boxes (a `WOWO` chunk, then a `FORM WOWO` with the box's own `WPAR`, `WTAB`, `WTXT`, `WFSC`, `WLNK`). Each object starts with its place: x, y, width and height in millipoints, longs at 2, 7, 12 and 17, each followed by a byte (1 or 0) | Place sure in 3 documents (a caption box sits exactly under its colour box in `WW-Farben`); text sure |
+| `FORM ILBM` | Pictures | Not read yet |
