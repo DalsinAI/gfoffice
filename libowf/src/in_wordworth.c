@@ -480,7 +480,9 @@ static int import_wordworth(const unsigned char *data, size_t length, owf_doc *d
             }
             break;
         case OWF_ID('F', 'O', 'R', 'M'):
-            if (c.size >= 4 && OWF_BE32(c.data) == OWF_ID('G', 'T', 'I', 'D') && r->cur == &r->body)
+            /* The drawing layer comes after the header and footer, but
+             * belongs to the pages: its frames go into the body. */
+            if (c.size >= 4 && OWF_BE32(c.data) == OWF_ID('G', 'T', 'I', 'D'))
                 drawing(r, &c);
             else
                 r->pictures++;

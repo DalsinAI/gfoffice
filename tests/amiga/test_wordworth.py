@@ -80,6 +80,9 @@ def sample():
         chunk("WFNT", bytes([1, 0xFA]) + struct.pack(">H", 12) + b"IF_CG Times\0"),
         chunk("WDOC", bytes(wdoc)),
         chunk("WPAR", wpar()), chunk("WTAB", b""), chunk("WTXT", b"Body\x0f"),
+        # as Wordworth writes them: the header and footer, then the drawing layer
+        chunk("WHED", bytes([3, 0, 0, 0, 0, 0])), chunk("WPAR", wpar()), chunk("WTXT", b"\x0f"),
+        chunk("WFOT", bytes([3, 0, 0, 0, 0, 0])), chunk("WPAR", wpar()), chunk("WTXT", b"\x0f"),
         drawing,
     ])
 
