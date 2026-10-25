@@ -30,6 +30,13 @@ that the format holds and OpenWrite can show).
 | Word 97-2003 (`.doc`) | Later | No | Spec: Microsoft's [MS-DOC] | Later | Recognised (and password-protected Office files), with a clear message; not read yet |
 | AbiWord (`.abw`), which was on AmigaOS 4 | No | No | Its XML, read from samples | Later | To do |
 
+**Zip packages and z.library.** ODT, DOCX and the zip workbooks (XLSX, ODS)
+are zip packages whose parts are nearly always deflated. libowf inflates
+them through z.library when it is in LIBS:, and otherwise with its own
+inflater (`libowf/src/owf_inflate.c`, written from RFC 1951), so none of
+them needs z.library to be read. Saving still compresses only through
+z.library: without it the parts are stored, which every reader accepts.
+
 ## 1a. Workbooks (the spreadsheet's)
 
 Workbooks have their own model in libowf (`owf_book`: sheets of cells, each

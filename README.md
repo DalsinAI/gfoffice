@@ -115,9 +115,12 @@ build/os3/library/tests/OWFLibTest (OWF=library)
 
 ODT and DOCX deflate and inflate through z.library, ours from
 amigachrome-guest (`libraries/openzlib`), opened the first time a document
-needs it. There is no zlib source in the Amiga build. Without z.library in
-LIBS:, ODT and DOCX files that are deflated (nearly all of them) cannot be
-read, and files are written stored.
+needs it. There is no zlib source in the Amiga build. z.library is no
+longer needed to read: without it in LIBS:, libowf inflates zip packages
+(ODT, DOCX, XLSX, ODS) with its own inflater, written from RFC 1951
+(`libowf/src/owf_inflate.c`, more slowly than z.library; tested by `make
+inflate-test` and `make inflate-check`, part of `make test` and `make
+check`). Files are then written stored, which every reader accepts.
 
 ### owf.library
 
