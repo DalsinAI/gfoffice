@@ -282,6 +282,11 @@ int owf_deck_resolve(const owf_deck *deck, int slide, int obj,
  * body text). para -1: the object's first level. */
 const owf_textlevel *owf_deck_para_level(const owf_deck *deck, const owf_master *master,
                                          const owf_obj *obj, int para);
+/* A new paragraph at the end of an object's text, at list level 0 to 9,
+ * with that level's paragraph format (owf_deck_para_level's). Runs added to
+ * it with font -1, size 0 and OWF_COLOUR_AUTO take the level's. NULL when
+ * memory runs out. */
+owf_para *owf_deck_add_para(const owf_deck *deck, const owf_master *master, owf_obj *obj, int level);
 /* A slide's master, never NULL for a slide of a deck with a master. */
 const owf_master *owf_deck_slide_master(const owf_deck *deck, int slide);
 

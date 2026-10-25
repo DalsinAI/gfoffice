@@ -530,6 +530,29 @@ const owf_textlevel *owf_deck_para_level(const owf_deck *deck, const owf_master 
     return l;
 }
 
+owf_para *owf_deck_add_para(const owf_deck *deck, const owf_master *master, owf_obj *obj, int level)
+{
+    const owf_textlevel *lv = NULL;
+    owf_para *p;
+    int count;
+    (void)deck;
+    if (!obj || level < 0 || level > OWF_TEXT_LEVELS)
+        return NULL;
+    if (obj->list && level > 0)
+        lv = &obj->list[level - 1];
+    else if (master) {
+        lv = master_levels(master, obj->placeholder, &count);
+        if (count > 1)
+            lv = &lv[level > 0 ? level - 1 : 0];
+    }
+    p = owf_story_add(&obj->text, lv ? &lv->para : NULL);
+    if (p && owf_obj_set_level(obj, obj->text.nparas - 1, level) < 0) {
+        obj->text.nparas--;
+        return NULL;
+    }
+    return p;
+}
+
 /* ---- A new deck ---- */
 
 void owf_deck_default_levels(owf_master *m, int font)
