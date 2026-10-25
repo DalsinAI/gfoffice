@@ -47,6 +47,8 @@ typedef struct {
     char instr[32];
 } field_state;
 
+#define MAX_MARKS 32
+
 typedef struct {
     owf_doc *doc;
     owf_report *report;
@@ -76,6 +78,9 @@ typedef struct {
     const char *default_table;  /* the default table style's id (2.0.19) */
     const struct table_style *tstyle;   /* the table being read's style, for its cells (2.0.19); NULL: none */
     int t_row, t_col, t_rows, t_cols;   /* the cell being read, and its table's size */
+    /* 2.0.21: the bookmarks begun since the last paragraph was made, where in its text they begin and end */
+    struct { const char *name, *id; size_t start, end; int ended; } marks[MAX_MARKS];
+    int nmarks;
 } docx;
 
 /* 2.0.19: a table style (w:style w:type="table"), worked out for one table: what it gives its cells'
@@ -799,10 +804,14 @@ static int embed_image(docx *d, const owf_xml_node *blip, int w, int h)
 static void text_box_story(docx *d, const owf_xml_node *content, owf_story *into)
 {
     owf_builder b, *outer = d->b;
-    int break_next = d->break_next, nfields = d->nfields;
+    int break_next = d->break_next, nfields = d->nfields, nmarks = d->nmarks;
     const char *href = d->current_href;
+    void *marks = malloc(sizeof d->marks);           /* 2.0.21: the paragraph's own, round the box's */
+    if (marks) memcpy(marks, d->marks, sizeof d->marks);
+    else nmarks = 0;
     d->break_next = 0;
     d->nfields = 0;
+    d->nmarks = 0;
     d->current_href = NULL;
     owf_builder_init(&b, d->doc, into);
     d->b = &b;
@@ -813,6 +822,9 @@ static void text_box_story(docx *d, const owf_xml_node *content, owf_story *into
     d->break_next = break_next;
     d->nfields = nfields;
     d->current_href = href;
+    if (marks) memcpy(d->marks, marks, sizeof d->marks);
+    free(marks);
+    d->nmarks = nmarks;
 }
 
 /* wp:anchor: a picture or a shape (a text box, a filled box) placed on the page, as a frame anchored to
@@ -1115,6 +1127,39 @@ static void run(docx *d, const owf_xml_node *r, const owf_charfmt *para_char)
     run_children(d, r, &f);
 }
 
+/* 2.0.21: where in the paragraph being made the text has got to: its text runs' bytes and the text waiting */
+static size_t text_offset(const docx *d)
+{
+    return owf_para_text_bytes(d->b->para) + d->b->text.length;
+}
+
+/* 2.0.21: a bookmark begins here (w:bookmarkStart); Word's own _GoBack is left out */
+static void mark_start(docx *d, const owf_xml_node *n)
+{
+    const char *name = owf_xml_attr(n, d->w, "name");
+    if (!name || !*name || !strcmp(name, "_GoBack") || strchr(name, ' ') || strchr(name, '@') ||
+        d->nmarks >= MAX_MARKS)
+        return;
+    d->marks[d->nmarks].name = name;
+    d->marks[d->nmarks].id = owf_xml_attr(n, d->w, "id");
+    d->marks[d->nmarks].start = d->marks[d->nmarks].end = text_offset(d);
+    d->marks[d->nmarks].ended = 0;
+    d->nmarks++;
+}
+
+/* and ends here (w:bookmarkEnd), when it began in this paragraph */
+static void mark_end(docx *d, const owf_xml_node *n)
+{
+    const char *id = owf_xml_attr(n, d->w, "id");
+    int i;
+    for (i = 0; id && i < d->nmarks; ++i)
+        if (!d->marks[i].ended && d->marks[i].id && !strcmp(d->marks[i].id, id)) {
+            d->marks[i].end = text_offset(d);
+            d->marks[i].ended = 1;
+            break;
+        }
+}
+
 /* Runs and the containers runs live in. */
 static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para_char)
 {
@@ -1124,8 +1169,11 @@ static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para
             continue;
         if (is_w(d, c, "r")) {
             run(d, c, para_char);
-        } else if (is_w(d, c, "pPr") || is_w(d, c, "del") || is_w(d, c, "moveFrom") ||
-                   is_w(d, c, "bookmarkStart") || is_w(d, c, "bookmarkEnd") || is_w(d, c, "proofErr") ||
+        } else if (is_w(d, c, "bookmarkStart")) {
+            mark_start(d, c);                        /* 2.0.21 */
+        } else if (is_w(d, c, "bookmarkEnd")) {
+            mark_end(d, c);
+        } else if (is_w(d, c, "pPr") || is_w(d, c, "del") || is_w(d, c, "moveFrom") || is_w(d, c, "proofErr") ||
                    is_w(d, c, "permStart") || is_w(d, c, "permEnd") || is_w(d, c, "commentRangeStart") ||
                    is_w(d, c, "commentRangeEnd")) {
             /* deleted text and marks */
@@ -1171,26 +1219,6 @@ static void start_para(docx *d, const owf_parafmt *pf)
     }
 }
 
-/* 1.4: the bookmarks begun in a paragraph or a cell (w:bookmarkStart, at any depth but a text box's or a
- * drawing's), their names between spaces; Word's own _GoBack is left out. */
-static void collect_bookmarks(docx *d, const owf_xml_node *n, owf_buf *out)
-{
-    const owf_xml_node *c;
-    for (c = n ? n->first : NULL; c; c = c->next) {
-        if (c->type != OWF_XML_ELEMENT) continue;
-        if (is_w(d, c, "bookmarkStart")) {
-            const char *name = owf_xml_attr(c, d->w, "name");
-            if (name && *name && strcmp(name, "_GoBack") && !strchr(name, ' ')) {
-                if (out->length) owf_buf_putc(out, ' ');
-                owf_buf_puts(out, name);
-            }
-        } else if (!is_w(d, c, "txbxContent") && !is_w(d, c, "drawing") && !is_w(d, c, "pict") &&
-                   !owf_xml_is(c, NS_MC, "AlternateContent")) {
-            collect_bookmarks(d, c, out);
-        }
-    }
-}
-
 static char *dup_str(const char *s, size_t n)
 {
     char *t = (char *)malloc(n + 1);
@@ -1201,16 +1229,34 @@ static char *dup_str(const char *s, size_t n)
     return t;
 }
 
-/* 1.4: the paragraph just made gets its style's id and the bookmarks begun in node. */
-static void para_names(docx *d, const char *style, const owf_xml_node *node)
+/* 1.4: the paragraph just made gets its style's id and the bookmarks begun since the paragraph before it
+ * (in it, or between the two). 2.0.21: each at its place in the text ("name@start-end", owf.h); one that ends
+ * in a later paragraph ends at this one's end. */
+static void para_names(docx *d, const char *style)
 {
     owf_story *st = d->b->story;
     owf_para *p = st && st->nparas ? &st->paras[st->nparas - 1] : NULL;
     owf_buf names;
-    if (!p) return;
+    size_t length;
+    int i;
+    if (!p) {
+        d->nmarks = 0;
+        return;
+    }
     if (style && *style && !p->style && !(p->style = dup_str(style, strlen(style)))) d->failed = 1;
+    length = owf_para_text_bytes(p);
     owf_buf_init(&names);
-    collect_bookmarks(d, node, &names);
+    for (i = 0; i < d->nmarks; ++i) {
+        size_t start = d->marks[i].start < length ? d->marks[i].start : length;
+        size_t end = d->marks[i].ended ? d->marks[i].end : length;
+        if (end > length) end = length;
+        if (end < start) end = start;
+        if (names.length) owf_buf_putc(&names, ' ');
+        owf_buf_puts(&names, d->marks[i].name);
+        if (end > start) owf_buf_printf(&names, "@%lu-%lu", (unsigned long)start, (unsigned long)end);
+        else if (start) owf_buf_printf(&names, "@%lu", (unsigned long)start);
+    }
+    d->nmarks = 0;
     if (names.failed) d->failed = 1;
     else if (names.length && !p->bookmarks && !(p->bookmarks = dup_str((const char *)names.data, names.length)))
         d->failed = 1;
@@ -1303,7 +1349,7 @@ static void paragraph(docx *d, const owf_xml_node *p)
     }
     para_content(d, p, &cf);
     owf_builder_end_para(d->b);
-    para_names(d, pstyle ? wval(d, pstyle) : NULL, p);
+    para_names(d, pstyle ? wval(d, pstyle) : NULL);
     if (wchild(d, ppr, "sectPr")) {
         d->break_next = 1;
         owf_report_add(d->report, OWF_NOTE_APPROX, "Section breaks became page breaks");
@@ -1486,6 +1532,10 @@ static void cell_content(docx *d, const owf_xml_node *n, int *first)
             }
             *first = 0;
             para_content(d, c, &cf);
+        } else if (is_w(d, c, "bookmarkStart")) {
+            mark_start(d, c);                        /* 2.0.21: in the cell, between its paragraphs */
+        } else if (is_w(d, c, "bookmarkEnd")) {
+            mark_end(d, c);
         } else if (c->type == OWF_XML_ELEMENT && !is_w(d, c, "tcPr")) {
             cell_content(d, c, first);
         }
@@ -1561,7 +1611,7 @@ static void table(docx *d, const owf_xml_node *t)
             if(d->b->story->nparas<=before)continue;
             {   /* 1.4: the first paragraph's style, the cell's bookmarks */
                 const owf_xml_node *fp = wchild(d, cell, "p"), *ps = wchild(d, wchild(d, fp, "pPr"), "pStyle");
-                para_names(d, ps ? wval(d, ps) : NULL, cell);
+                para_names(d, ps ? wval(d, ps) : NULL);
             }
             p=&d->b->story->paras[d->b->story->nparas-1];
             p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
@@ -1582,6 +1632,8 @@ static void blocks(docx *d, const owf_xml_node *n)
     for (c = n->first; c; c = c->next) {
         if (is_w(d, c, "p"))
             paragraph(d, c);
+        else if (is_w(d, c, "bookmarkStart"))      /* 2.0.21: between paragraphs: the next one's, at its start */
+            mark_start(d, c);
         else if (is_w(d, c, "tbl"))
             table(d, c);
         else if (is_w(d, c, "sdt") || is_w(d, c, "sdtContent") || is_w(d, c, "customXml") ||
@@ -1615,6 +1667,7 @@ static void story(docx *d, const char *id, owf_story *into)
     }
     owf_builder_init(&b, d->doc, into);
     d->b = &b;
+    d->nmarks = 0;                                   /* 2.0.21: the body's last, after its last paragraph */
     blocks(d, owf_xml_root(part));
     if (owf_builder_done(&b) != OWF_OK)
         d->failed = 1;

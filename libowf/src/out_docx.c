@@ -298,6 +298,56 @@ static long bookmark_id(const owf_doc *doc, const owf_story *story, const owf_pa
     return base + (long)(para - story->paras) * 16L + k + 1;
 }
 
+/* 2.0.21: a paragraph's bookmarks as they are written: each one's id, and whether it is begun (1) or ended (2) */
+typedef struct {
+    owf_mark m[16];
+    long id[16];
+    unsigned char state[16];
+    int n;
+} docx_marks;
+
+/* The bookmarks at text offset at: the ones begun before that end here, then (starts: text follows, or the
+ * paragraph ends) the ones that begin here, an empty one ended where it begins. */
+static void put_marks(owf_buf *out, docx_marks *mk, size_t at, int starts)
+{
+    int i;
+    for (i = 0; i < mk->n; ++i)
+        if (mk->state[i] == 1 && mk->m[i].end <= at) {
+            owf_buf_printf(out, "<w:bookmarkEnd w:id=\"%ld\"/>", mk->id[i]);
+            mk->state[i] = 2;
+        }
+    if (!starts)
+        return;
+    for (i = 0; i < mk->n; ++i)
+        if (mk->state[i] == 0 && mk->m[i].start <= at) {
+            owf_buf_printf(out, "<w:bookmarkStart w:id=\"%ld\" w:name=\"", mk->id[i]);
+            owf_buf_put_xml(out, mk->m[i].name, mk->m[i].length);
+            owf_buf_puts(out, "\"/>");
+            mk->state[i] = 1;
+            if (mk->m[i].end <= at) {
+                owf_buf_printf(out, "<w:bookmarkEnd w:id=\"%ld\"/>", mk->id[i]);
+                mk->state[i] = 2;
+            }
+        }
+}
+
+/* Where a text run [at, at + len) is cut next after done, for a bookmark that begins or ends inside it: len
+ * when none does. At a character's start. */
+static size_t next_cut(const docx_marks *mk, const char *text, size_t at, size_t done, size_t len)
+{
+    size_t next = len;
+    int i;
+    for (i = 0; i < mk->n; ++i) {
+        if (mk->state[i] == 0 && mk->m[i].start > at + done && mk->m[i].start < at + len && mk->m[i].start - at < next)
+            next = mk->m[i].start - at;
+        if (mk->state[i] != 2 && mk->m[i].end > at + done && mk->m[i].end < at + len && mk->m[i].end - at < next)
+            next = mk->m[i].end - at;
+    }
+    while (next < len && ((unsigned char)text[next] & 0xC0) == 0x80)
+        ++next;
+    return next;
+}
+
 static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
                      const owf_para *para, owf_report *report)
 {
@@ -305,6 +355,8 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     static const char *field_shown[] = { "1", "1", "", "" };
     char style[16];
     const char *pstyle = NULL;
+    docx_marks mk;
+    size_t at = 0;
     int j;
     if (para->fmt.heading >= 1 && para->fmt.heading <= 6) {
         snprintf(style, sizeof style, "Heading%d", para->fmt.heading); pstyle = style;
@@ -312,33 +364,48 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
         pstyle = para->style;                        /* 1.4: TOC1 and the like, so Word's contents update */
     }
     owf_buf_puts(out, "<w:p>"); put_ppr(out, &para->fmt, pstyle);
-    if (para->bookmarks) {
-        /* 1.4: its bookmarks, where the contents' links go */
-        const char *b = para->bookmarks;
-        int k = 0;
-        while (*b && k < 16) {
-            size_t n = strcspn(b, " ");
-            long id = bookmark_id(doc, story, para, k++);
-            owf_buf_printf(out, "<w:bookmarkStart w:id=\"%ld\" w:name=\"", id);
-            owf_buf_put_xml(out, b, n);
-            owf_buf_printf(out, "\"/><w:bookmarkEnd w:id=\"%ld\"/>", id);
-            b += n;
-            while (*b == ' ') ++b;
-        }
+    /* 1.4: its bookmarks, where the contents' links go; 2.0.21: each where it is in the text */
+    mk.n = para->bookmarks ? owf_marks_parse(para->bookmarks, mk.m, 16) : 0;
+    for (j = 0; j < mk.n; ++j) {
+        mk.id[j] = bookmark_id(doc, story, para, j);
+        mk.state[j] = 0;
     }
     for (j = 0; j < para->nruns; ++j) {
         const owf_run *run=&para->runs[j];
+        int link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
+        put_marks(out, &mk, at, run->kind == OWF_RUN_TEXT);
         if(run->kind==OWF_RUN_FIELD){owf_buf_printf(out,"<w:fldSimple w:instr=\"%s\"><w:r>",field_instr[run->field]);put_rpr(out,doc,&run->fmt,report);owf_buf_printf(out,"<w:t>%s</w:t></w:r></w:fldSimple>",field_shown[run->field]);continue;}
-        if(run->kind==OWF_RUN_TEXT&&run->href&&story==&doc->body){
+        if(link){
             /* 1.3.1: a link inside the document ("#_Toc1", from w:anchor) stays w:anchor, with no relationship */
             if(run->href[0]=='#'){owf_buf_puts(out,"<w:hyperlink w:anchor=\"");owf_buf_puts_xml(out,run->href+1);owf_buf_puts(out,"\">");}
             else owf_buf_printf(out,"<w:hyperlink r:id=\"rId%d\">",body_link_id(doc,run->href));
         }
-        owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);
-        switch(run->kind){case OWF_RUN_TEXT:owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,run->text);owf_buf_puts(out,"</w:t>");break;case OWF_RUN_TAB:owf_buf_puts(out,"<w:tab/>");break;case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<w:br/>");break;case OWF_RUN_IMAGE:put_drawing(out,doc,run->image);break;
-            case OWF_RUN_FRAME:if(story==&doc->body)put_frame(out,doc,run->image,report);else owf_report_add(report,OWF_NOTE_LOST,"Pictures and text boxes placed on the page are kept in the body only");break;default:break;}
-        owf_buf_puts(out,"</w:r>");if(run->kind==OWF_RUN_TEXT&&run->href&&story==&doc->body)owf_buf_puts(out,"</w:hyperlink>");
+        if (run->kind == OWF_RUN_TEXT) {
+            /* in pieces where bookmarks begin or end inside it */
+            const char *text = run->text ? run->text : "";
+            size_t len = strlen(text), done = 0;
+            do {
+                size_t next = next_cut(&mk, text, at, done, len);
+                owf_buf_puts(out, "<w:r>");
+                put_rpr(out, doc, &run->fmt, report);
+                owf_buf_puts(out, "<w:t xml:space=\"preserve\">");
+                owf_buf_put_xml(out, text + done, next - done);
+                owf_buf_puts(out, "</w:t></w:r>");
+                done = next;
+                if (done < len)
+                    put_marks(out, &mk, at + done, 1);
+            } while (done < len);
+            at += len;
+        } else {
+            owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);
+            switch(run->kind){case OWF_RUN_TAB:owf_buf_puts(out,"<w:tab/>");break;case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<w:br/>");break;case OWF_RUN_IMAGE:put_drawing(out,doc,run->image);break;
+                case OWF_RUN_FRAME:if(story==&doc->body)put_frame(out,doc,run->image,report);else owf_report_add(report,OWF_NOTE_LOST,"Pictures and text boxes placed on the page are kept in the body only");break;default:break;}
+            owf_buf_puts(out,"</w:r>");
+        }
+        if(link)owf_buf_puts(out,"</w:hyperlink>");
     }
+    put_marks(out, &mk, at, 1);                      /* what is left: at the paragraph's end */
+    put_marks(out, &mk, (size_t)-1, 0);
     owf_buf_puts(out,"</w:p>");
 }
 
