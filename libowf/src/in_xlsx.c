@@ -2068,7 +2068,7 @@ static void keep_drawing(xlsx *x, const char *sheet_part, const char *id)
     }
     if (!(x->sheet->drawing = copy(x, part, strlen(part))))
         return;
-    owf_report_add(x->report, OWF_NOTE_APPROX, "Pictures and charts on sheets are kept for saving as an Excel workbook (.xlsx); pictures are not shown yet, nor charts other than columns, bars and lines");
+    owf_report_add(x->report, OWF_NOTE_APPROX, "Pictures and charts on sheets are kept for saving as an Excel workbook (.xlsx); pictures are not shown yet, nor charts other than columns, bars, lines, pies, doughnuts and scatters");
 }
 
 static void read_worksheet(xlsx *x, xsheet *xs)
