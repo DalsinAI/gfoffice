@@ -69,7 +69,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.8 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.9 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -587,7 +587,8 @@ static cell_font_entry *cell_font(int index, int size)
         memset(&be, 0, sizeof be);
         be.open = probe_open;
         be.advance = probe_advance;
-        ow_fw_init(&cell_faces, &be, font_attr.ta_Name ? (const char *)font_attr.ta_Name : "");
+        ow_fw_init(&cell_faces, &be, font_attr.ta_Name ? (const char *)font_attr.ta_Name : "",
+                   font_attr.ta_Name ? (const char *)font_attr.ta_Name : "");   /* the window's font is the theme's */
         cell_faces_ready = 1;
     }
     face = ow_fw_face(&cell_faces, file);
