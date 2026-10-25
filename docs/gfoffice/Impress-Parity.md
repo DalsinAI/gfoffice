@@ -33,7 +33,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Open and save ODF Presentation (`.odp`) | P1 | Yes |
 | ODF Presentation template (`.otp`) | P1 | Yes (opened; saved as `.otp` by name) |
 | Flat XML ODF Presentation (`.fodp`) | P1 | Yes; embedded objects' parts are not kept in flat XML (reported) |
-| Microsoft PowerPoint 2007-365 (`.pptx`, `.potx`, `.ppsx`) open | P2 | No (recognised, so nothing else claims it) |
+| Microsoft PowerPoint 2007-365 (`.pptx`, `.potx`, `.ppsx`) open | P2 | No in P1. P2: Yes (`in_pptx.c`; what is approximated is reported, see FORMATS.md); saved as ODP |
 | Save as PowerPoint 2007-365 | P2 | No |
 | PowerPoint 97-2003 (`.ppt`, `.pps`, `.pot`) open and save | Later | No |
 | OpenOffice.org 1.x (`.sxi`), StarImpress | Later, if samples appear | No |
@@ -76,6 +76,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Text boxes, placeholder text | P1 | Yes |
+| Typing in a text box: click to put the caret, type, Return, Backspace, Del, arrow keys | P3 | No in P1. P3's first part: Yes, in OpenPresentation 0.2 (`opr_edit.c`); selecting text and changing its look next |
 | Font, size, bold, italic, underline, strike-through, raised and lowered, colour | P1 | Yes |
 | Shadow, outline, relief, character spacing, highlighting, case | Later | No |
 | Paragraph alignment, indents, spacing above and below, line spacing, tabs | P1 | Yes |
@@ -160,7 +161,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Notes view, notes pages printed | P3, P4 | No |
 | Handouts: 1, 2, 3, 4, 6 or 9 slides a page | P4 (P1 design asks for them) | No |
 | Outline view | P4 | No |
-| Print slides, notes, handouts, outline (through OpenPrint) | P2 (slides), P4 | No (PDF export only) |
+| Print slides, notes, handouts, outline (through OpenPrint) | P2 (slides), P4 | No (PDF export only). P2: slides, through OpenPrint (OpenPresentation 0.2) |
 
 ## 10. Slide show
 
@@ -198,12 +199,12 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Normal view (slides, slide, notes) | P3 | No |
-| Slide Sorter | P3 | No |
+| Normal view (slides, slide, notes) | P3 | No. P2: the slide at the window's size with the slides beside it; no notes pane |
+| Slide Sorter | P3 | No. P2: a strip of slides to pick from; moving them is P3 |
 | Master view | P4 | No |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
-| Undo and redo | P3 (per slide) | No |
+| Undo and redo | P3 (per slide) | No. P3's first part: typing in text boxes undone and redone (`opr_edit.c`) |
 | Clipboard: objects and slides | P3 (Shared E10) | No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
 | ARexx port `OPENPRESENTATION` | P4 | No |
