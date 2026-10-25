@@ -11,7 +11,14 @@
  *   SHD1, TBDY  a section starts, then its body; text before the first
  *         body is in table cells (CLLE). A document has as many sections
  *         as it has SHD1s, each with its own body and master pages
- *   RULE  a paragraph starts (24 bytes, mostly not understood yet)
+ *   RULE  a paragraph starts (24 bytes): its left indent (word at 0) and
+ *         its first line's indent (word at 4), both in decipoints from the
+ *         margin; its alignment in byte 9 (1 left, 2 right, 4 centre,
+ *         8 justified, as TABS' kinds; higher bits not understood)
+ *   TABS  one tab stop of the paragraph: its kind (word at 0: 1 left,
+ *         2 right, 4 centre, 8 decimal) and position (long at 4, decipoints
+ *         from the margin)
+ *   PAG3  the page: width and height in decipoints (words at 2 and 4)
  *   ATTR  the next CHRS's format: length (long), font (word), size at 7,
  *         underline in bit 0 of 9; byte 11 is 1 for a tab, 17 for an
  *         endnote mark with its number at 12
@@ -118,6 +125,48 @@ static void text(owf_builder *b, owf_buf *scratch, const unsigned char *s, unsig
         owf_builder_text(b, (const char *)scratch->data, scratch->length);
 }
 
+/* A RULE's paragraph format (docs/formats/finalwriter.md). */
+static void rule_format(owf_parafmt *fmt, const unsigned char *rule, unsigned long size)
+{
+    int left, first;
+
+    if (size < 10)
+        return;
+    left = (int)OWF_BE16(rule);
+    first = (int)OWF_BE16(rule + 4);
+    if (left < 20000 && first < 20000) {
+        fmt->indent_left = left * 2;            /* decipoints to twips */
+        fmt->indent_first = (first - left) * 2;
+    }
+    switch (rule[9] & 0x0F) {
+    case 2: fmt->align = OWF_ALIGN_RIGHT; break;
+    case 4: fmt->align = OWF_ALIGN_CENTRE; break;
+    case 8: fmt->align = OWF_ALIGN_JUSTIFY; break;
+    default: fmt->align = OWF_ALIGN_LEFT; break;
+    }
+}
+
+static void add_tab(owf_parafmt *fmt, const unsigned char *tab, unsigned long size)
+{
+    owf_tab *t;
+    long pos;
+
+    if (size < 8 || fmt->ntabs >= OWF_MAX_TABS)
+        return;
+    pos = (long)OWF_BE32(tab + 4) * 2 - fmt->indent_left;
+    if (pos < 0 || pos > 40000)
+        return;
+    t = &fmt->tabs[fmt->ntabs++];
+    t->position = (int)pos;
+    t->leader = OWF_LEADER_NONE;
+    switch (OWF_BE16(tab)) {
+    case 2: t->kind = OWF_TAB_RIGHT; break;
+    case 4: t->kind = OWF_TAB_CENTRE; break;
+    case 8: t->kind = OWF_TAB_DECIMAL; break;
+    default: t->kind = OWF_TAB_LEFT; break;
+    }
+}
+
 static int detect_finalwriter(const unsigned char *data, size_t length)
 {
     return owf_iff_is_form(data, length, OWF_ID('S', 'W', 'R', 'T')) ? 100 : 0;
@@ -220,7 +269,21 @@ static int import_finalwriter(const unsigned char *data, size_t length, owf_doc 
                 if (*open || bp->para || bp->text.length)
                     owf_builder_end_para(bp);
                 owf_parafmt_init(&bp->parafmt);
+                rule_format(&bp->parafmt, c.data, c.size);
                 *open = 1;
+            }
+            break;
+        case OWF_ID('T', 'A', 'B', 'S'):
+            if (bp)
+                add_tab(&bp->parafmt, c.data, c.size);
+            break;
+        case OWF_ID('P', 'A', 'G', '3'):
+            if (c.size >= 6) {
+                unsigned w = OWF_BE16(c.data + 2), h = OWF_BE16(c.data + 4);
+                if (w >= 360 && w <= 20000 && h >= 360 && h <= 20000) {
+                    doc->page.width = (int)w * 2;
+                    doc->page.height = (int)h * 2;
+                }
             }
             break;
         case OWF_ID('A', 'T', 'T', 'R'):
@@ -297,7 +360,7 @@ static int import_finalwriter(const unsigned char *data, size_t length, owf_doc 
         owf_report_add(report, OWF_NOTE_INFO, "%d sections were read one after another", sections);
     if (iff.truncated)
         owf_report_add(report, OWF_NOTE_LOST, "The file is cut short; the text up to the cut was read");
-    owf_report_add(report, OWF_NOTE_INFO, "Final Writer's format is not published: alignment, indents and tab stops use the defaults");
+    owf_report_add(report, OWF_NOTE_INFO, "Final Writer's format is not published: line spacing and margins use the defaults");
     owf_buf_free(&scratch);
     free(fonts);
     result = owf_builder_done(&body);
