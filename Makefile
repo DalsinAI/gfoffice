@@ -334,15 +334,42 @@ $(OUT)/test-deck-asan: $(DECK_DEPS) $(DECK_SRC) tests/deck/test_deck.c
 deck-test: $(OUT)/test-deck $(OUT)/deck-dump $(OUT)/owconvert
 	$(OUT)/test-deck
 	python3 tests/deck/test_decks.py $(OUT)/deck-dump $(OUT)/owconvert
+	python3 tests/deck/test_pptx.py $(OUT)/deck-dump $(OUT)/owconvert
 
 deck-check: $(OUT)/test-deck-asan $(OUT)/deck-dump-asan $(OUT)/owconvert-asan
 	$(OUT)/test-deck-asan
 	python3 tests/deck/test_decks.py $(OUT)/deck-dump-asan $(OUT)/owconvert-asan
+	python3 tests/deck/test_pptx.py $(OUT)/deck-dump-asan $(OUT)/owconvert-asan
 
 test: deck-test
 check: deck-check
 
 .PHONY: deck-test deck-check
+
+# Typing in a slide's text (src/deck/opr_edit.c): the caret and the pointer go through OpenLayout's
+# display list, so these run when OpenLayout is there.
+ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
+$(OUT)/test-opr-edit: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_edit.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) \
+		tests/deck/test_opr_edit.c -lz -o $@
+
+$(OUT)/test-opr-edit-asan: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_edit.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_opr_edit.c -lz -o $@
+
+deck-edit-test: $(OUT)/test-opr-edit
+	$(OUT)/test-opr-edit tests/deck/fixtures/pptx-talk.pptx
+
+deck-edit-check: $(OUT)/test-opr-edit-asan
+	$(OUT)/test-opr-edit-asan tests/deck/fixtures/pptx-talk.pptx
+
+test: deck-edit-test
+check: deck-edit-check
+
+.PHONY: deck-edit-test deck-edit-check
+endif
 
 # OpenPublisher's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
 # compares pub_dump's output with tests/pub/expected and reads cut-short and
