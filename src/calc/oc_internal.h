@@ -105,6 +105,11 @@ struct oc_core {
 
     int dirty;
     unsigned long changes;
+
+    /* the used part of the sheet showing, for the scrollers: worked out again when changes moves */
+    unsigned long used_stamp;
+    int used_sheet, used_valid;
+    unsigned used_rows, used_cols;
 };
 
 /* oc_core.c */

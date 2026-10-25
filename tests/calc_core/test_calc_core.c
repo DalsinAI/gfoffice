@@ -1248,6 +1248,16 @@ static void test_more(void)
     CHECK(oc_core_rename_sheet(core, 1, "First") == OWF_OK);
     CHECK_STR(formula(core, "F1"), "SUM(First:Last!A1)");
 
+    /* the scroller's total follows the used part as it grows */
+    {
+        unsigned first, vis, total;
+        oc_view_scroller(core, 0, &first, &vis, &total);
+        CHECK(total < 500);
+        enter_at(core, "A700", "far");
+        oc_view_scroller(core, 0, &first, &vis, &total);
+        CHECK(total >= 700);
+    }
+
     /* zoom: the cell stays in view */
     go(core, "A60");
     oc_view_set_zoom(core, 50);
