@@ -199,8 +199,12 @@ static void engine(const owf_lib_checks *c)
         owf_cell_set_number(cell, 2.5e-7);
     CHECK(cell && !strcmp(shown(book, 0, 6, 0, text, sizeof text), "0.00000025"), "%s: owf_cell_set_number(2.5e-7): %s",
           c->tag, text);
-    if (cell)
-        owf_calc_touch(calc, 0, &(owf_range){ 6, 6, 0, 0 });
+    if (cell) {
+        /* the ranges are named, not compound literals: through owf.library's macros (inline/owf.h) the commas
+         * inside { } would split the macro's arguments */
+        static const owf_range a7 = { 6, 6, 0, 0 };
+        owf_calc_touch(calc, 0, &a7);
+    }
 
     /* rows in, a formula moved, a sheet renamed, a range moved */
     r = owf_calc_shift(calc, 0, 0, 0, 1);
@@ -214,7 +218,10 @@ static void engine(const owf_lib_checks *c)
     owf_free(moved);
     CHECK(owf_calc_rename_sheet(calc, 0, "Data") == OWF_OK && !strcmp(book->sheets[0].name, "Data"),
           "%s: the sheet renamed", c->tag);
-    r = owf_calc_move_range(calc, 0, &(owf_range){ 1, 1, 1, 1 }, 0, 0, 2);   /* B2 to D2 */
+    {
+        static const owf_range b2 = { 1, 1, 1, 1 };
+        r = owf_calc_move_range(calc, 0, &b2, 0, 0, 2);   /* B2 to D2 */
+    }
     r |= owf_calc_recalc(calc);
     CHECK(r == OWF_OK && !owf_sheet_find(&book->sheets[0], 1, 1) && !strcmp(shown(book, 0, 1, 3, text, sizeof text), "6.5"),
           "%s: B2 moved to D2", c->tag);
