@@ -1,0 +1,47 @@
+version Publisher 2007
+build-mark 0x15
+written-by 12.0
+page-size 210.0 x 297.0 mm (emu 7560000 x 10692000, twips 11906 x 16838)
+masters 1
+master 1 "Master Page A" frames 0
+pages 1
+page 1 master 1 frames 2
+  frame 0 text box 20.0 22.0 166.0 20.0 mm (emu 720000 792000 6696000 1512000) shape 202 text-id 1 story 0
+    para "0123456789"
+    para "0123456789abcdef"
+    para "0123456789abcdef0123456789abcdef"
+  frame 1 text box 24.0 49.0 101.0 28.4 mm (emu 864000 1764000 4500000 2786400) shape 202 text-id 3 story 1
+    para "0123456789"
+    para "0123456789abcdef"
+    para "0123456789abcdef0123456789abcdef"
+    para "0123456789abcdef0123456789abcdef0123456789abcdef"
+stories 2
+fonts 27
+font "Times New Roman"
+font "Sylfaen"
+font "Mangal"
+font "Vrinda"
+font "Raavi"
+font "Shruti"
+font "Kalinga"
+font "Latha"
+font "Gautami"
+font "Tunga"
+font "Kartika"
+font "Angsana New"
+font "DokChampa"
+font "Microsoft Himalaya"
+font "Batang"
+font "MS Mincho"
+font "PMingLiU"
+font "SimSun"
+font "Microsoft Yi Baiti"
+font "Estrangelo Edessa"
+font "MV Boli"
+font "Iskoola Pota"
+font "Nyala"
+font "Plantagenet Cherokee"
+font "Euphemia Regular CAS"
+font "DaunPenh"
+font "Mongolian Baiti"
+pictures 0

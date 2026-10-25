@@ -1,0 +1,51 @@
+version Publisher 2002/2003
+build-mark 0x13
+written-by 11.9999
+page-size 215.9 x 279.4 mm (emu 7772400 x 10058400, twips 12240 x 15840)
+masters 1
+master 1 "Master Page A" frames 0
+pages 1
+page 1 master 1 frames 17
+  frame 0 group box 12.7 12.7 31.7 31.8 mm (emu 458787 457200 1601786 1600200) shape 0
+  frame 1 shape in 0 box 12.7 12.7 31.7 31.8 mm (emu 458787 457200 1601786 1600200) shape 1
+  frame 2 shape in 0 box 12.7 12.7 31.7 31.8 mm (emu 458787 457200 1601786 1600200) shape 1
+  frame 3 shape in 0 box 23.3 23.3 10.6 10.6 mm (emu 839779 838192 1220770 1219195) shape 1
+  frame 4 shape in 0 box 12.7 12.7 31.7 31.8 mm (emu 458787 457200 1601786 1600200) shape 6
+  frame 5 shape in 0 box 23.3 23.3 10.6 10.6 mm (emu 839779 838192 1220784 1219195) shape 6
+  frame 6 shape box 44.1 12.7 159.1 31.8 mm (emu 1585913 457200 7315200 1600200) shape 1
+  frame 7 group box 12.7 12.7 190.5 31.8 mm (emu 458787 457200 7315200 1600200) shape 0
+  frame 8 shape in 7 box 12.7 12.7 190.5 31.8 mm (emu 458787 457200 7315200 1600200) shape 1
+  frame 9 line in 7 box 44.1 12.7 0.0 31.8 mm (emu 1585913 457200 1585913 1600200) shape 20
+  frame 10 group box 12.7 12.7 190.5 249.9 mm (emu 457200 457200 7315200 9454896) shape 0
+  frame 11 line in 10 box 202.7 12.7 0.0 249.9 mm (emu 7296150 457200 7296150 9454896) shape 20
+  frame 12 line in 10 box 13.2 12.7 0.0 249.9 mm (emu 476250 457200 476250 9454896) shape 20
+  frame 13 line in 10 box 12.7 262.1 190.5 0.0 mm (emu 457200 9435846 7315200 9435846) shape 20
+  frame 14 text box 38.1 131.9 139.7 60.8 mm (emu 1371600 4749237 6400800 6939384) shape 202 text-id 2 story 0
+    para "This is where it’s at"
+  frame 15 text box 38.1 192.8 139.7 45.4 mm (emu 1371600 6939385 6400800 8572499) shape 202 text-id 3 story 1
+    para "I pick things up and put them down."
+  frame 16 picture box 48.3 60.3 119.3 71.6 mm (emu 1738252 2171700 6034147 4749237) shape 1 picture 0
+stories 2
+fonts 20
+font "Times New Roman"
+font "Sylfaen"
+font "Mangal"
+font "Vrinda"
+font "Raavi"
+font "Shruti"
+font "Sandnya"
+font "Latha"
+font "Gautami"
+font "Tunga"
+font "Kartika"
+font "Angsana New"
+font "Batang"
+font "MS Mincho"
+font "PMingLiU"
+font "SimSun"
+font "Estrangelo Edessa"
+font "MV Boli"
+font "Gill Sans MT"
+font "Arial"
+pictures 1
+picture 0 image/png 40340 bytes

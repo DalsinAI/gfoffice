@@ -60,6 +60,7 @@ for f in $OWFSRC; do
     */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
     */owf_deck.c | */in_odp.c | */out_odp.c | */owf_pdf.c | */owf_pdffonts.c) ;;
+    */in_pub.c) ;;   # OpenPublisher's .pub reader: it needs owf_cfb.c
     *) OWFSRC_DOCS="$OWFSRC_DOCS $f" ;;
     esac
 done

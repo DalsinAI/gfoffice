@@ -1,0 +1,68 @@
+note 1 "In this older format, master pages and pictures are not read yet" x1
+version Publisher 98
+written-by 12.0
+page-size 210.0 x 297.0 mm (emu 7560000 x 10692000, twips 11906 x 16838)
+masters 0
+pages 2
+page 1 master 0 frames 2
+  frame 0 text box 30.0 25.0 141.0 27.0 mm (emu 1080000 900000 6156000 1872000) shape 8 text-id 1 story 0
+    para "This is some text on the first page"
+    para "It’s in times new roman, font size 10, all normal"
+  frame 1 text box 30.0 57.0 144.0 30.0 mm (emu 1080000 2052000 6264000 3132000) shape 8 text-id 3 story 1
+    para "This is in bold and italic"
+    para "It’s Arial, 20 point font"
+    para "It’s in the second textbox on the first page"
+page 2 master 0 frames 5
+  frame 0 text box 23.0 26.0 149.0 43.0 mm (emu 828000 936000 6192000 2484000) shape 8 text-id 4 story 2
+    para "This is the second page"
+    para ""
+    para "It is also times new roman, 10 point"
+  frame 1 table box 38.0 78.0 99.0 18.3 mm (emu 1368000 2808000 4932000 3465564) shape 10 text-id 6 story 3 table 3x2
+    para "Table on page 2"
+    para "Top right"
+    para "P2 table left"
+    para "P2 table right"
+    para "Bottom Left"
+    para "Bottom Right"
+  frame 2 shape box 52.0 119.0 108.0 20.0 mm (emu 1872000 4284000 5760000 5004000) shape 5
+  frame 3 text box 39.0 146.0 122.0 19.0 mm (emu 1404000 5256000 5796000 5940000) shape 8 text-id 7 story 4
+    para "This text is on page two"
+    para "#This is a link to Apache POI"
+    para "More normal text"
+    para "Link to a file"
+  frame 4 text box 40.0 173.0 126.0 48.0 mm (emu 1440000 6228000 5976000 7956000) shape 8 text-id 8 story 5
+    para "More text, more hyperlinks"
+    para "email link"
+    para "Final hyperlink"
+    para "Within doc to page 1"
+stories 6
+fonts 28
+font "Times New Roman"
+font "Sylfaen"
+font "Mangal"
+font "Vrinda"
+font "Raavi"
+font "Shruti"
+font "Kalinga"
+font "Latha"
+font "Gautami"
+font "Tunga"
+font "Kartika"
+font "Angsana New"
+font "DokChampa"
+font "Microsoft Himalaya"
+font "Batang"
+font "MS Mincho"
+font "PMingLiU"
+font "SimSun"
+font "Microsoft Yi Baiti"
+font "Estrangelo Edessa"
+font "MV Boli"
+font "Iskoola Pota"
+font "Nyala"
+font "Plantagenet Cherokee"
+font "Euphemia Regular CAS"
+font "DaunPenh"
+font "Mongolian Baiti"
+font "Arial"
+pictures 0
