@@ -178,10 +178,21 @@ static void read_para_props(const owf_xml_node *n, owf_paraprops *pp)
         pp->mask |= OWF_PP_AFTER;
     if ((v = owf_xml_attr(n, NS_FO, "line-height"))) {
         size_t len = strlen(v);
-        pp->fmt.line_spacing = (len && v[len - 1] == '%') ? atoi(v) : 100;
-        if (pp->fmt.line_spacing < 50 || pp->fmt.line_spacing > 500)
-            pp->fmt.line_spacing = 100;
+        int tw = 0;
+        if (len && v[len - 1] != '%' && owf_parse_length(v, &tw) && tw > 0 && tw < 0x8000) {
+            pp->fmt.line_spacing = OWF_LINE_EXACT(tw);              /* 2.0.18: a length: exactly so high */
+        } else {
+            pp->fmt.line_spacing = (len && v[len - 1] == '%') ? atoi(v) : 100;
+            if (pp->fmt.line_spacing < 50 || pp->fmt.line_spacing > 500)
+                pp->fmt.line_spacing = 100;
+        }
         pp->mask |= OWF_PP_LINE;
+    } else if ((v = owf_xml_attr(n, NS_STYLE, "line-height-at-least"))) {
+        int tw = 0;
+        if (owf_parse_length(v, &tw) && tw > 0 && tw < 0x8000) {   /* 2.0.18: at least so high */
+            pp->fmt.line_spacing = OWF_LINE_AT_LEAST(tw);
+            pp->mask |= OWF_PP_LINE;
+        }
     }
     if ((v = owf_xml_attr(n, NS_FO, "break-before"))) {
         pp->fmt.page_break_before = !strcmp(v, "page");

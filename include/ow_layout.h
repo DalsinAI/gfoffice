@@ -22,6 +22,8 @@ extern "C" {
 
 #define OW_LAYOUT_FONT(index) ((unsigned)((index) + 1))
 #define OW_LAYOUT_FONT_INDEX(number) ((int)(number) - 1)
+/* 2.0.17: the image number of a text box's room in its line (a picture of nothing: draw none) */
+#define OW_LAYOUT_NO_IMAGE (-1)
 
 typedef struct ow_layout ow_layout;
 
