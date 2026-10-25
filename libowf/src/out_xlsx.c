@@ -7,7 +7,9 @@
  * the styles (fonts, number formats, alignment, wrap, fills, borders),
  * column widths, row heights, hidden rows, columns and sheets, merged
  * cells, frozen panes, defined names, the active sheet and the 1904 date
- * system. Text goes in the shared strings, once each.
+ * system. Text goes in the shared strings, once each. A sheet's pictures
+ * and charts read from an .xlsx go back as they were read (the book's kept
+ * parts its drawing leads to, under their names).
  *
  * Each sheet's XML is made and packed in turn, so only one sheet's text is
  * in memory beside the file.
@@ -168,6 +170,8 @@ typedef struct {
     unsigned long nslots;
     unsigned long text_cells;
     char **names;                /* the sheets' names as written */
+    char *kept;                  /* the book's kept parts written (1), by number */
+    int *drawing;                /* each sheet's drawing among them, or -1 */
     int failed;
 } xlsx_out;
 
@@ -655,6 +659,7 @@ static void put_cell(xlsx_out *w, owf_buf *b, const owf_sheet *sh, const owf_cel
     const char *type = types[c->type];
     owf_range r;
     int array = (c->flags & OWF_CELL_ARRAY) && c->formula, anchor = 0;
+    memset(&r, 0, sizeof r);
     if (array)
         anchor = array_range(sh, c, &r);
     if (c->formula && c->type == OWF_VALUE_TEXT)
@@ -1018,6 +1023,114 @@ static void dv_xml(xlsx_out *w, owf_buf *b, int index)
     owf_buf_puts(b, "</dataValidations>");
 }
 
+/* ---- Parts kept as they were (a sheet's drawing, its charts and pictures) ---- */
+
+/* Names this writer gives its own parts: a kept part by one of them is not written. */
+static int own_name(const char *name)
+{
+    static const char *const own[] = { "[Content_Types].xml", "_rels/", "docProps/", "xl/workbook.", "xl/_rels/",
+                                       "xl/styles.xml", "xl/sharedStrings.xml", "xl/worksheets/", "xl/comments",
+                                       "xl/drawings/vmlDrawing", "xl/externalLinks/" };
+    size_t i, k;
+    for (i = 0; i < sizeof own / sizeof *own; i++) {
+        for (k = 0; own[i][k] && name[k]; k++) {
+            int a = (unsigned char)own[i][k], b = (unsigned char)name[k];
+            if (a >= 'A' && a <= 'Z')
+                a += 'a' - 'A';
+            if (b >= 'A' && b <= 'Z')
+                b += 'a' - 'A';
+            if (a != b)
+                break;
+        }
+        if (!own[i][k])
+            return 1;
+    }
+    return 0;
+}
+
+static int kept_index(const owf_book *book, const char *name)
+{
+    const owf_part *p = owf_book_part(book, name);
+    return p && !own_name(name) ? (int)(p - book->parts) : -1;
+}
+
+/* The kept parts to write: each sheet's drawing and every part its
+ * relationships lead to, through the kept .rels parts, each once. A list
+ * of numbers to go through, so no recursion. */
+static void collect_kept(xlsx_out *w)
+{
+    const owf_book *book = w->book;
+    int *todo, ntodo = 0, i;
+    if (!book->nsheets)
+        return;
+    w->drawing = malloc((size_t)book->nsheets * sizeof *w->drawing);
+    if (!w->drawing) {
+        w->failed = 1;
+        return;
+    }
+    for (i = 0; i < book->nsheets; i++)
+        w->drawing[i] = book->sheets[i].drawing ? kept_index(book, book->sheets[i].drawing) : -1;
+    if (!book->nparts)
+        return;
+    w->kept = calloc((size_t)book->nparts, 1);
+    todo = malloc((size_t)book->nparts * sizeof *todo);
+    if (!w->kept || !todo) {
+        free(todo);
+        w->failed = 1;
+        return;
+    }
+    for (i = 0; i < book->nsheets; i++)
+        if (w->drawing[i] >= 0 && !w->kept[w->drawing[i]]) {
+            w->kept[w->drawing[i]] = 1;
+            todo[ntodo++] = w->drawing[i];
+        }
+    while (ntodo && !w->failed) {
+        const char *name = book->parts[todo[--ntodo]].name, *slash = strrchr(name, '/');
+        char rels_name[600], dir[512];
+        const owf_part *rp;
+        owf_xml *xml;
+        const owf_xml_node *n;
+        int k, e;
+        snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - name + 1) : 0, name);
+        snprintf(rels_name, sizeof rels_name, "%s_rels/%s.rels", dir, slash ? slash + 1 : name);
+        if ((k = kept_index(book, rels_name)) < 0 || w->kept[k])
+            continue;
+        w->kept[k] = 1;
+        rp = &book->parts[k];
+        xml = owf_xml_parse((const char *)rp->data, rp->length, &e);
+        if (!xml) {
+            if (e == OWF_ERR_MEMORY)
+                w->failed = 1;
+            continue;
+        }
+        for (n = owf_xml_root(xml)->first; n; n = n->next) {
+            const char *target = owf_xml_attr(n, "", "Target"), *mode = owf_xml_attr(n, "", "TargetMode");
+            char part[512];
+            if (n->type != OWF_XML_ELEMENT || strcmp(n->name, "Relationship") || !target ||
+                (mode && !strcmp(mode, "External")) || !owf_opc_part_name(part, sizeof part, dir, target))
+                continue;
+            if ((k = kept_index(book, part)) >= 0 && !w->kept[k]) {
+                w->kept[k] = 1;
+                todo[ntodo++] = k;
+            }
+        }
+        owf_xml_free(xml);
+    }
+    free(todo);
+}
+
+/* The drawing's target from a sheet's relationships ("xl/worksheets/"). */
+static void put_drawing_target(owf_buf *b, const char *name)
+{
+    if (!strncmp(name, "xl/", 3)) {
+        owf_buf_puts(b, "../");
+        put_xml(b, name + 3, X_ATTR);
+    } else {
+        owf_buf_putc(b, '/');
+        put_xml(b, name, X_ATTR);
+    }
+}
+
 static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
 {
     const owf_sheet *sh = &w->book->sheets[index];
@@ -1126,6 +1239,8 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
     cf_xml(w, b, index);
     dv_xml(w, b, index);
     owf_buf_puts(b, "<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>");
+    if (w->drawing && w->drawing[index] >= 0)            /* its pictures and charts, kept (rId3) */
+        owf_buf_puts(b, "<drawing r:id=\"rId3\"/>");
     if (sh->ncomments)                                   /* the comments' boxes (sheet rels: rId1 comments, rId2 these) */
         owf_buf_puts(b, "<legacyDrawing r:id=\"rId2\"/>");
     owf_buf_puts(b, "</worksheet>\n");
@@ -1248,6 +1363,8 @@ static void free_writer(xlsx_out *w)
     for (i = 0; w->names && i < w->book->nsheets; i++)
         free(w->names[i]);
     free(w->names);
+    free(w->kept);
+    free(w->drawing);
 }
 
 int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, owf_report *report)
@@ -1270,6 +1387,8 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
         build_names(&w);
     if (!w.failed)
         collect_links(&w);
+    if (!w.failed)
+        collect_kept(&w);
     if (w.failed) {
         free_writer(&w);
         return OWF_ERR_MEMORY;
@@ -1306,6 +1425,14 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
     for (i = 0; i < w.links.count; i++)
         owf_buf_printf(&part, "<Override PartName=\"/xl/externalLinks/externalLink%d.xml\" ContentType=\"" CT
                               "externalLink+xml\"/>", i + 1);
+    for (i = 0; w.kept && i < book->nparts; i++)
+        if (w.kept[i] && strcmp(book->parts[i].type, "application/vnd.openxmlformats-package.relationships+xml")) {
+            owf_buf_puts(&part, "<Override PartName=\"/");
+            put_xml(&part, book->parts[i].name, X_ATTR);
+            owf_buf_puts(&part, "\" ContentType=\"");
+            put_xml(&part, book->parts[i].type, X_ATTR);
+            owf_buf_puts(&part, "\"/>");
+        }
     owf_buf_puts(&part, "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
                         "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>"
                         "</Types>\n");
@@ -1357,13 +1484,22 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
             result = OWF_ERR_MEMORY;
         snprintf(name, sizeof name, "xl/worksheets/sheet%d.xml", i + 1);
         result = add_part(zip, &part, name, result);
-        if (book->sheets[i].ncomments) {
-            owf_buf_printf(&part, XML_HEAD "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
-                                  "<Relationship Id=\"rId1\" Type=\"" REL "comments\" Target=\"../comments%d.xml\"/>"
-                                  "<Relationship Id=\"rId2\" Type=\"" REL "vmlDrawing\" Target=\"../drawings/vmlDrawing%d.vml\"/>"
-                                  "</Relationships>\n", i + 1, i + 1);
+        if (book->sheets[i].ncomments || w.drawing[i] >= 0) {
+            owf_buf_puts(&part, XML_HEAD "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">");
+            if (book->sheets[i].ncomments)
+                owf_buf_printf(&part, "<Relationship Id=\"rId1\" Type=\"" REL "comments\" Target=\"../comments%d.xml\"/>"
+                                      "<Relationship Id=\"rId2\" Type=\"" REL "vmlDrawing\" Target=\"../drawings/vmlDrawing%d.vml\"/>",
+                               i + 1, i + 1);
+            if (w.drawing[i] >= 0) {
+                owf_buf_puts(&part, "<Relationship Id=\"rId3\" Type=\"" REL "drawing\" Target=\"");
+                put_drawing_target(&part, book->parts[w.drawing[i]].name);
+                owf_buf_puts(&part, "\"/>");
+            }
+            owf_buf_puts(&part, "</Relationships>\n");
             snprintf(name, sizeof name, "xl/worksheets/_rels/sheet%d.xml.rels", i + 1);
             result = add_part(zip, &part, name, result);
+        }
+        if (book->sheets[i].ncomments) {
             comments_xml(&w, &part, i);
             if (w.failed)
                 result = OWF_ERR_MEMORY;
@@ -1395,6 +1531,18 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
     }
     if (w.links.count)
         owf_report_add(report, OWF_NOTE_INFO, "Formulas that use other workbooks keep their links (and their last values)");
+
+    for (i = 0; w.kept && i < book->nparts && result == OWF_OK; i++)   /* drawings, charts, pictures: as they were */
+        if (w.kept[i]) {
+            const char *type = book->parts[i].type;     /* pictures that are packed already are stored */
+            int packed = !strcmp(type, "image/png") || !strcmp(type, "image/jpeg") || !strcmp(type, "image/gif");
+            result = owf_zip_add(zip, book->parts[i].name, book->parts[i].data, book->parts[i].length, !packed);
+        }
+    for (i = 0; i < book->nsheets; i++)
+        if (book->sheets[i].drawing && w.drawing[i] < 0) {
+            owf_report_add(report, OWF_NOTE_LOST, "Some pictures, charts or drawings could not be written: their parts were not kept");
+            break;
+        }
 
     owf_buf_free(&part);
     if (owf_zip_finish(zip) != OWF_OK && result == OWF_OK)

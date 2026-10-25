@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "opencalc_core.h"
+#include "owf_zip.h"
 
 static int failures, checks;
 
@@ -1866,6 +1867,74 @@ static void test_autofilter(void)
     oc_core_free(core);
 }
 
+/* Whether a saved file (a zip) holds a part. */
+static int saved_has(const char *path, const char *part)
+{
+    FILE *f = fopen(path, "rb");
+    unsigned char *data = NULL;
+    long n = 0;
+    int has = 0;
+    owf_unzip zip;
+    if (f && fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 && (data = malloc((size_t)n)) &&
+        fread(data, 1, (size_t)n, f) == (size_t)n && owf_unzip_open(&zip, data, (size_t)n))
+        has = owf_unzip_has(&zip, part);
+    if (f)
+        fclose(f);
+    free(data);
+    return has;
+}
+
+/* A sheet's pictures and charts kept as they were (the book's kept parts
+ * and the sheet's drawing): through a change and its undo, a sheet
+ * deleted and brought back, and saving; a deleted sheet's not written. */
+static void test_drawings_kept(void)
+{
+    static const char *const path = "build/host/calc-core-drawing.xlsx";
+    oc_core *core = fresh();
+    owf_report *report = owf_report_new();
+    const owf_book_format *used = NULL;
+    const owf_book *book;
+    const owf_part *p;
+    if (!core || !report) {
+        CHECK(0);
+        oc_core_free(core);
+        owf_report_free(report);
+        return;
+    }
+    CHECK(oc_core_open(core, "tests/book/fixtures/features-openpyxl.xlsx", NULL, report, &used) == OWF_OK);
+    book = oc_core_book(core);
+    CHECK(book->nsheets == 8 && book->nparts == 3);
+    CHECK(book->sheets[7].drawing && !strcmp(book->sheets[7].drawing, "xl/drawings/drawing1.xml"));
+    p = owf_book_part(book, "xl/charts/chart1.xml");
+    CHECK(p && p->length > 100 && !strcmp(p->type, "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"));
+    /* a change on its sheet, and its undo */
+    oc_core_set_sheet(core, 7);
+    enter_at(core, "A10", "5");
+    CHECK(oc_core_undo(core) == OWF_OK);
+    book = oc_core_book(core);
+    CHECK(book->nparts == 3 && book->sheets[7].drawing && owf_book_part(book, "xl/drawings/_rels/drawing1.xml.rels"));
+    /* the sheet deleted, then brought back */
+    CHECK(oc_core_delete_sheet(core, 7) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 7);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    book = oc_core_book(core);
+    CHECK(book->nsheets == 8 && book->sheets[7].drawing && !strcmp(book->sheets[7].drawing, "xl/drawings/drawing1.xml"));
+    p = owf_book_part(book, "xl/charts/chart1.xml");
+    CHECK(p && p->length > 100);
+    /* saved: the drawing and its chart go with the sheet */
+    CHECK(oc_core_save(core, path, "xlsx", report) == OWF_OK);
+    CHECK(saved_has(path, "xl/drawings/drawing1.xml") && saved_has(path, "xl/charts/chart1.xml") &&
+          saved_has(path, "xl/worksheets/_rels/sheet8.xml.rels"));
+    /* the sheet deleted for good: none of it written */
+    CHECK(oc_core_delete_sheet(core, 7) == OWF_OK);
+    CHECK(oc_core_save(core, path, "xlsx", report) == OWF_OK);
+    CHECK(saved_has(path, "xl/worksheets/sheet7.xml") && !saved_has(path, "xl/drawings/drawing1.xml") &&
+          !saved_has(path, "xl/charts/chart1.xml"));
+    remove(path);
+    owf_report_free(report);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -2086,6 +2155,7 @@ int main(void)
     test_comments();
     test_validation();
     test_autofilter();
+    test_drawings_kept();
     test_row_numbers();
     test_text_layout();
     test_tab_strip();

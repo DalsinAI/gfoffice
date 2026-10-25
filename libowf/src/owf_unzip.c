@@ -10,6 +10,7 @@
 #include "owf_internal.h"
 #include "owf_inflate.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -229,4 +230,49 @@ int owf_ooxml_kind(const unsigned char *data, size_t length)
             kind = OWF_PACKAGE_TEXT;
     }
     return kind;
+}
+
+/* A target relative to dir (or from the package's root when it starts
+ * with "/"), with "." and ".." worked out: "xl/worksheets/sheet1.xml".
+ * 0 when it does not fit. */
+int owf_opc_part_name(char *out, size_t size, const char *dir, const char *target)
+{
+    char tmp[1024];
+    const char *seg[64];
+    size_t segn[64], n;
+    int nseg = 0, i;
+    const char *p;
+    if (target[0] == '/')
+        n = (size_t)snprintf(tmp, sizeof tmp, "%s", target + 1);
+    else
+        n = (size_t)snprintf(tmp, sizeof tmp, "%s%s", dir, target);
+    if (n >= sizeof tmp)
+        return 0;
+    for (p = tmp; *p;) {
+        const char *slash = strchr(p, '/');
+        size_t k = slash ? (size_t)(slash - p) : strlen(p);
+        if (k == 2 && p[0] == '.' && p[1] == '.') {
+            if (nseg)
+                nseg--;
+        } else if (k && !(k == 1 && p[0] == '.')) {
+            if (nseg == 64)
+                return 0;
+            seg[nseg] = p;
+            segn[nseg++] = k;
+        }
+        if (!slash)
+            break;
+        p = slash + 1;
+    }
+    n = 0;
+    for (i = 0; i < nseg; i++) {
+        if (n + segn[i] + 2 > size)
+            return 0;
+        if (i)
+            out[n++] = '/';
+        memcpy(out + n, seg[i], segn[i]);
+        n += segn[i];
+    }
+    out[n] = 0;
+    return nseg > 0;
 }

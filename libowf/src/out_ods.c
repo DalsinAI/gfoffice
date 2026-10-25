@@ -1204,6 +1204,8 @@ static void put_sheet(ods_out *w, owf_buf *b, int index)
         owf_report_add(w->report, OWF_NOTE_LOST, "Data validation is kept in Excel workbooks (.xlsx) only, not yet in ODS");
     if (sh->has_autofilter)
         owf_report_add(w->report, OWF_NOTE_LOST, "AutoFilters are kept in Excel workbooks (.xlsx) only, not yet in ODS");
+    if (sh->drawing)
+        owf_report_add(w->report, OWF_NOTE_LOST, "Pictures and charts on sheets are kept in Excel workbooks (.xlsx) only, not yet in ODS");
     put_columns(w, b, sh, width);
     i = 0;
     for (row = 0; row < last_row && !w->failed;) {
