@@ -418,6 +418,7 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
             *c = s->cells[j];                            /* the step's strings move into the book */
             s->cells[j].text = s->cells[j].formula = NULL;
         }
+        owf_calc_touch(core->calc, s->sheet, &s->range);   /* the engine takes the range again */
         if (s->has_cols) {
             owf_colinfo *cols = NULL;
             if (s->ncols && (cols = owf_malloc((size_t)s->ncols * sizeof *cols)))
@@ -474,7 +475,7 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
 static int step_back(oc_core *core, oc_undo **from, int *nfrom, oc_undo **to, int *nto)
 {
     oc_undo *u, *back;
-    int sheets;
+    int sheets, whole;
     if (!*nfrom)
         return OWF_ERR_UNSUPPORTED;
     if (core->edit_mode)
@@ -484,6 +485,7 @@ static int step_back(oc_core *core, oc_undo **from, int *nfrom, oc_undo **to, in
     if (!back)
         return OWF_ERR_MEMORY;
     (*nfrom)--;
+    whole = u->kind == OC_UNDO_BOOK;
     restore(core, u, back);
     /* the sheets may have come or gone: a cursor for each (the step knows the one it left) */
     sheets = core->book->nsheets;
@@ -510,7 +512,10 @@ static int step_back(oc_core *core, oc_undo **from, int *nfrom, oc_undo **to, in
         drop_oldest(to, nto);
     to[(*nto)++] = back;
     keep_budget(core);
-    owf_calc_rebuild(core->calc);
+    /* a whole book back: parsed again; cells back: touched as they came
+       back; rows and columns back: owf_calc_shift parsed it again */
+    if (whole)
+        owf_calc_rebuild(core->calc);
     owf_calc_recalc(core->calc);
     core->dirty = 1;
     core->changes++;

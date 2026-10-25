@@ -55,7 +55,9 @@ typedef struct oc_undo {
 /* The text a copy left, with its cells. */
 typedef struct {
     int valid;
-    int cut;                        /* a cut: formulas paste as they were */
+    int cut;                        /* a cut: the paste moves the cells (owf_calc_move_range) */
+    int cut_sheet;                  /* where from */
+    unsigned long cut_changes;      /* the book as it was then (a change since: pasted as a copy) */
     unsigned rows, cols;            /* its size */
     unsigned row0, col0;            /* where it came from */
     int ncells;

@@ -378,203 +378,29 @@ int oc_core_add_sheet(oc_core *core, const char *name)
     return at;
 }
 
-/* ---- Sheet names inside formulas ---- */
-
-static int ident_char(char c)
-{
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' ||
-           (unsigned char)c >= 0x80;
-}
-
-/* How a sheet's name is written before "!": bare when it can be. */
-static void put_sheet_name(char **out, size_t *n, const char *name)
-{
-    const char *p;
-    int bare = !(name[0] >= '0' && name[0] <= '9');
-    for (p = name; *p && bare; p++)
-        bare = ident_char(*p);
-    if (bare) {
-        size_t k = strlen(name);
-        memcpy(*out + *n, name, k);
-        *n += k;
-        return;
-    }
-    (*out)[(*n)++] = '\'';
-    for (p = name; *p; p++) {
-        if (*p == '\'')
-            (*out)[(*n)++] = '\'';
-        (*out)[(*n)++] = *p;
-    }
-    (*out)[(*n)++] = '\'';
-}
-
-/* A formula with references to sheet `from` written as `to`: 'Old name'!A1
- * and Old!A1 (and Old:Other!A1), outside string constants. NULL when
- * nothing changed (or memory ran out). */
-static char *rename_in_formula(const char *f, const char *from, const char *to)
-{
-    size_t len = strlen(f), cap = len + 1, n = 0, grow = strlen(to) * 2 + 3;
-    const char *p = f;
-    char *out, name[96];
-    int changed = 0;
-    /* each name may grow to the new one, quoted */
-    {
-        size_t k = 0;
-        const char *q;
-        for (q = f; *q; q++)
-            if (*q == '!')
-                k++;
-        cap += k * grow * 2;                             /* Old:Old!A1 has two */
-    }
-    out = owf_malloc(cap);
-    if (!out)
-        return NULL;
-    while (*p) {
-        if (*p == '"') {                                 /* a string constant: as it is */
-            out[n++] = *p++;
-            while (*p) {
-                if (*p == '"' && p[1] == '"') {
-                    out[n++] = *p++;
-                    out[n++] = *p++;
-                    continue;
-                }
-                if (*p == '"')
-                    break;
-                out[n++] = *p++;
-            }
-            if (*p)
-                out[n++] = *p++;
-            continue;
-        }
-        if (*p == '\'') {                                /* 'a name'! */
-            const char *q = p + 1;
-            size_t k = 0;
-            while (*q && k < sizeof name - 1) {
-                if (*q == '\'' && q[1] == '\'') {
-                    name[k++] = '\'';
-                    q += 2;
-                    continue;
-                }
-                if (*q == '\'')
-                    break;
-                name[k++] = *q++;
-            }
-            name[k] = 0;
-            if (*q == '\'' && q[1] == '!' && same_name(name, from)) {
-                put_sheet_name(&out, &n, to);
-                p = q + 1;
-                changed = 1;
-                continue;
-            }
-            if (*q == '\'') {
-                memcpy(out + n, p, (size_t)(q + 1 - p));
-                n += (size_t)(q + 1 - p);
-                p = q + 1;
-                continue;
-            }
-            out[n++] = *p++;
-            continue;
-        }
-        if (ident_char(*p) && (p == f || !ident_char(p[-1]))) {     /* Name! or Name:Other! */
-            const char *q = p;
-            size_t k = 0;
-            while (ident_char(*q) && k < sizeof name - 1)
-                name[k++] = *q++;
-            name[k] = 0;
-            if (!ident_char(*q) && (*q == '!' || *q == ':')) {
-                const char *bang = q;
-                if (*q == ':') {                         /* a 3-D range's first sheet, if a ! follows */
-                    bang = q + 1;
-                    while (ident_char(*bang))
-                        bang++;
-                }
-                if (*bang == '!' && same_name(name, from)) {
-                    put_sheet_name(&out, &n, to);
-                    p = q;
-                    changed = 1;
-                    continue;
-                }
-                if (*bang == '!' && *q == ':') {         /* Other:Old! */
-                    const char *second = q + 1;
-                    size_t m = (size_t)(bang - second);
-                    memcpy(out + n, p, (size_t)(second - p));
-                    n += (size_t)(second - p);
-                    if (m < sizeof name) {
-                        memcpy(name, second, m);
-                        name[m] = 0;
-                        if (same_name(name, from)) {
-                            put_sheet_name(&out, &n, to);
-                            changed = 1;
-                        } else {
-                            memcpy(out + n, second, m);
-                            n += m;
-                        }
-                    } else {
-                        memcpy(out + n, second, m);
-                        n += m;
-                    }
-                    p = bang;
-                    continue;
-                }
-            }
-            memcpy(out + n, p, (size_t)(q - p));
-            n += (size_t)(q - p);
-            p = q;
-            continue;
-        }
-        out[n++] = *p++;
-    }
-    out[n] = 0;
-    if (!changed) {
-        owf_free(out);
-        return NULL;
-    }
-    return out;
-}
-
 int oc_core_rename_sheet(oc_core *core, int sheet, const char *name)
 {
     owf_book *book = core->book;
     oc_undo *u;
-    char *old, *copy;
-    int s, i;
+    int rc;
     if (sheet < 0 || sheet >= book->nsheets || !name_ok(book, name, sheet))
         return OWF_ERR_FORMAT;
     if (!strcmp(book->sheets[sheet].name, name))
         return OWF_OK;
     if (core->edit_mode)
         oc_edit_commit(core, OC_MOVE_NONE);
-    copy = oc_strdup(name);
-    if (!copy)
-        return OWF_ERR_MEMORY;
     u = oc_undo_new(core, OC_UNDO_BOOK);
     if (u && oc_undo_save_book(core, u) != OWF_OK) {
         oc_undo_free(u);
         u = NULL;
     }
-    old = book->sheets[sheet].name;
-    /* the formulas and names that refer to it, by its new name (the engine
-     * reads them again from their text) */
-    for (s = 0; s < book->nsheets; s++)
-        for (i = 0; i < book->sheets[s].ncells; i++) {
-            owf_cell *c = &book->sheets[s].cells[i];
-            char *f;
-            if (c->formula && (f = rename_in_formula(c->formula, old, name))) {
-                owf_free(c->formula);
-                c->formula = f;
-            }
-        }
-    for (i = 0; i < book->nnames; i++) {
-        char *f = rename_in_formula(book->names[i].formula, old, name);
-        if (f) {
-            owf_free(book->names[i].formula);
-            book->names[i].formula = f;
-        }
+    /* the engine renames it in every formula and name that refers to it */
+    rc = owf_calc_rename_sheet(core->calc, sheet, name);
+    if (rc != OWF_OK) {
+        oc_undo_free(u);
+        return rc;
     }
-    book->sheets[sheet].name = copy;
-    owf_free(old);
     oc_undo_push(core, u);
-    owf_calc_rebuild(core->calc);
     owf_calc_recalc(core->calc);
     oc_changed(core);
     return OWF_OK;
