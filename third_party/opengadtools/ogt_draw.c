@@ -76,6 +76,8 @@ int ogt_ctx_init(ogt_ctx *c, struct Screen *scr, const ogt_theme *t, int mode)
 void ogt_ctx_free(ogt_ctx *c)
 {
     int i;
+    if (c->icons && c->icons_free) c->icons_free(c->icons);
+    c->icons = NULL;
     if (!c->cm) return;
     for (i = 0; i < c->n; i++) if (c->pen[i] >= 0) ReleasePen(c->cm, c->pen[i]);
     for (i = 0; i < 4; i++) if (c->fourown[i]) ReleasePen(c->cm, c->fourpen[i]);
