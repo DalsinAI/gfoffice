@@ -92,6 +92,7 @@ struct oc_core {
 
     /* the view */
     int width, height, rowhdr, colhdr, zoom;
+    int rn_digit, rn_pad;           /* the row numbers' bar follows them: a digit's width, the space beside them */
     oc_measure_fn measure;
     void *measure_user;
     int dragging;                   /* 0, or OC_HIT_CELL / _ROW_HEADER / _COL_HEADER being dragged */
