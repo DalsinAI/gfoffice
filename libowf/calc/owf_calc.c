@@ -1406,6 +1406,18 @@ int owf_calc_shift(owf_calc *calc, int sheet, int axis, unsigned at, int count)
         s->condfmts[out++] = *cf;
     }
     s->ncondfmts = out;
+    /* comments move with their cells, and go with them */
+    for (i = out = 0; i < s->ncomments; i++) {
+        owf_comment *cm = &s->comments[i];
+        unsigned *v = axis ? &cm->col : &cm->row, last = *v;
+        if (!shift_span(&job, v, &last, 1, limit)) {
+            free(cm->author);
+            free(cm->text);
+            continue;
+        }
+        s->comments[out++] = *cm;
+    }
+    s->ncomments = out;
     return build(calc, 1);
 }
 
