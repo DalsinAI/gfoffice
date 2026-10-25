@@ -2429,7 +2429,8 @@ static int font_check(const char *arg, char *out, size_t size)
  * cell it starts in, its series and the first one's points, the cells its values come from, and its title. */
 static int chart_check(char *out, size_t size)
 {
-    static const char *const kinds[] = { "other", "columns", "bars", "lines", "areas", "pie" };
+    static const char *const kinds[] = { "other", "columns", "bars", "lines", "areas", "pie", "scatter" };
+    static const char *const groupings[] = { "", " stacked", " 100%" };
     char buf[1024], ref[16];
     owf_chart *charts;
     int n, i;
@@ -2442,10 +2443,21 @@ static int chart_check(char *out, size_t size)
     for (i = 0; i < n && k < sizeof buf; i++) {
         const owf_chart *c = &charts[i];
         oc_cell_name(c->from_row, c->from_col, ref);
-        k += (size_t)snprintf(buf + k, sizeof buf - k, "; %s at %s, %d series, %d points from %s, \"%s\"",
-                              kinds[c->kind >= 0 && c->kind <= OWF_CHART_PIE ? c->kind : 0], ref, c->nseries,
+        k += (size_t)snprintf(buf + k, sizeof buf - k, "; %s%s at %s, %d series, %d points from %s, \"%s\"",
+                              c->kind == OWF_CHART_PIE && c->hole ? "doughnut" :
+                              kinds[c->kind >= 0 && c->kind <= OWF_CHART_SCATTER ? c->kind : 0],
+                              c->grouping >= 0 && c->grouping <= OWF_CHART_PERCENT && c->kind >= OWF_CHART_COLUMN &&
+                              c->kind <= OWF_CHART_AREA ? groupings[c->grouping] : "", ref, c->nseries,
                               c->nseries ? c->series[0].npoints : 0,
                               c->nseries && c->series[0].values ? c->series[0].values : "(the file)", c->title ? c->title : "");
+        if (k < sizeof buf && c->value_format)
+            k += (size_t)snprintf(buf + k, sizeof buf - k, ", axis \"%s\"", c->value_format);
+        if (k < sizeof buf && c->nseries && c->series[0].labels)
+            k += (size_t)snprintf(buf + k, sizeof buf - k, ", labels%s%s%s%s",
+                                  c->series[0].labels & OWF_LABEL_SERIES ? " series" : "",
+                                  c->series[0].labels & OWF_LABEL_CATEGORY ? " category" : "",
+                                  c->series[0].labels & OWF_LABEL_VALUE ? " value" : "",
+                                  c->series[0].labels & OWF_LABEL_PERCENT ? " percent" : "");
     }
     owf_charts_free(charts, n);
     to_latin1(buf, strlen(buf), out, size);
