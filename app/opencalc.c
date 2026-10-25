@@ -542,9 +542,20 @@ static void tell(const char *title, const char *text)
     EasyRequest(win, &es, NULL, (ULONG)text);
 }
 
+/* src into dst (n bytes), cut short to fit and always ended: what snprintf("%s") did, without GCC 16's
+ * format-truncation error at -Werror on a status or a file name that is meant to be cut short. */
+static void put_text(char *dst, size_t n, const char *src)
+{
+    size_t len = src ? strlen(src) : 0;
+    if (!n) return;
+    if (len >= n) len = n - 1;
+    if (len) memcpy(dst, src, len);
+    dst[len] = 0;
+}
+
 static void set_status(const char *s)
 {
-    snprintf(status, sizeof status, "%s", s ? s : "");
+    put_text(status, sizeof status, s);
 }
 
 static const char *leaf(const char *path)
@@ -1287,7 +1298,7 @@ static int ask_file(int save, const char *title, const char *initial, char *out,
 static void with_extension(const char *path, const char *ext, char *out, size_t size)
 {
     char *dot;
-    snprintf(out, size, "%s", path[0] ? leaf(path) : "Untitled");
+    put_text(out, size, path[0] ? leaf(path) : "Untitled");
     dot = strrchr(out, '.');
     if (dot) *dot = 0;
     if (strlen(out) + strlen(ext) + 2 < size) {

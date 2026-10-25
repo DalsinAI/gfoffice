@@ -27,7 +27,12 @@ CC="$STOVE/prefix/bin/m68k-amigaos-gcc"
 GCCV=$("$CC" -dumpversion 2>/dev/null || echo 0)
 [ "${GCCV%%.*}" -ge 16 ] 2>/dev/null || { echo "$CC is GCC $GCCV: OpenWrite needs GCC 16 (the os32-gcc16 stove; set OS32_GCC16)"; exit 2; }
 OUT=${1:-$HERE/build/os3}
-CFLAGS_COMMON="-noixemul -std=gnu99 -Wall -Werror -fno-delete-null-pointer-checks -fno-common"
+# -fno-late-combine-instructions: GCC 16's late-combine pass (after reload) can put an address register
+# that the same instruction post-increments into its other address too, as in "move.b (a2)+,(a0,a2.l)":
+# the 68k takes the incremented value, GCC meant the old one, so the copy lands a byte late. owf.library's
+# number text had it (25 Oct 2026: "6.5" read "6.w"); every GFOffice build turns the pass off until the
+# stove's GCC is fixed.
+CFLAGS_COMMON="-noixemul -std=gnu99 -Wall -Werror -fno-delete-null-pointer-checks -fno-common -fno-late-combine-instructions"
 mkdir -p "$OUT"
 
 OWF=${OWF:-linked}

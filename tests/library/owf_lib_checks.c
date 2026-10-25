@@ -286,9 +286,13 @@ static void files(const owf_lib_checks *c)
     for (i = 0; i < 6; i++)
         strcat(want, phrase);
     strcat(want, "Gr\xC3\xBC\xC3\x9F" "e aus K\xC3\xB6ln.\n");
+    memset(out, 0, sizeof out);
     r = owf_inflate(out, sizeof out, packed, sizeof packed);
-    CHECK(r == OWF_OK && strlen(want) == sizeof out && !memcmp(out, want, sizeof out), "%s: owf_inflate, 89 bytes to 511",
-          c->tag);
+    for (n = 0; n < sizeof out && out[n] == (unsigned char)want[n]; n++)
+        ;
+    CHECK(r == OWF_OK && strlen(want) == sizeof out && n == sizeof out,
+          "%s: owf_inflate, 89 bytes to 511 (result %d, the first %u bytes right%s%.24s)", c->tag, r, (unsigned)n,
+          n < sizeof out ? ", then: " : "", n < sizeof out ? (const char *)out + n : "");
     CHECK(owf_inflate(out, sizeof out - 1, packed, sizeof packed) == OWF_ERR_CORRUPT &&
           owf_inflate(out, sizeof out, packed, sizeof packed - 9) == OWF_ERR_CORRUPT,
           "%s: owf_inflate refuses a wrong size and a cut-short stream", c->tag);
