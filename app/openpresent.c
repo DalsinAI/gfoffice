@@ -55,6 +55,7 @@
 #include "ogt_openfont.h"
 
 #include <stdio.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <clib/alib_protos.h>
@@ -270,6 +271,36 @@ static LONG argb_pen(uint32_t argb)
 static LONG shade_pen(unsigned long shade)
 {
     return argb_pen(0xff000000u | (uint32_t)OWF_SHADE_RGB(shade));
+}
+
+/* Text and lines need a real pen, and on an RTG screen the shared palette
+   runs out (a slide's red came out olive). So one pen of our own, set to
+   each colour just before it draws: on a true-colour screen that changes
+   nothing already drawn. Fills are drawn in exact colours already. */
+static LONG own_pen = -1;
+static int own_pen_tried;
+
+static LONG exact_pen(LONG pen)
+{
+    ULONG rgb;
+    if (!(pen & OGT_DIRECT) || !scr) return pen;
+    if (own_pen < 0 && !own_pen_tried) {
+        own_pen_tried = 1;
+        if (((struct Library *)GfxBase)->lib_Version >= 39)
+            own_pen = ObtainPen(scr->ViewPort.ColorMap, (ULONG)-1, 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR);
+    }
+    if (own_pen < 0) return pen;
+    rgb = (ULONG)pen & 0xffffffUL;
+    SetRGB32(&scr->ViewPort, (ULONG)own_pen, ((rgb >> 16) & 255) * 0x01010101UL,
+             ((rgb >> 8) & 255) * 0x01010101UL, (rgb & 255) * 0x01010101UL);
+    return own_pen;
+}
+
+static void own_pen_free(void)
+{
+    if (own_pen >= 0 && scr) ReleasePen(scr->ViewPort.ColorMap, (ULONG)own_pen);
+    own_pen = -1;
+    own_pen_tried = 0;
 }
 
 /* UTF-8 to the Amiga fonts' ISO-8859-1, one character: its byte, the nearest one for common typography
@@ -668,6 +699,7 @@ static void outline(struct RastPort *rp, LONG pen, int *xy, int n, int width)
 {
     int k;
     if (n < 2) return;
+    pen = exact_pen(pen);
     xy[n * 2] = xy[0];
     xy[n * 2 + 1] = xy[1];
     ogt_poly_outline(rp, pen, xy, n + 1);
@@ -788,7 +820,7 @@ static void draw_shape(const painter *p, const owf_obj *o)
         LONG pen;
         if (!OWF_SHADE_SET(o->look.line)) return;
         pen = shade_pen(o->look.line);
-        ogt_set_apen(p->rp, pen);
+        ogt_set_apen(p->rp, exact_pen(pen));
         for (k = 0; k < width && k < 6; ++k) {
             int off = k - width / 2;
             if (abs(ax2 - ax1) >= abs(ay2 - ay1)) { Move(p->rp, ax1, ay1 + off); Draw(p->rp, ax2, ay2 + off); }
@@ -813,6 +845,49 @@ static void shapes_up_to(painter *p, int frame)
     }
 }
 
+/* The list bullets drawn as shapes: 1 a dot, 2 a square, 3 a ring, 4 a big
+   disc (U+25CF, LibreOffice's, drawn small by its relative size); 0 not one. */
+static int bullet_shape(unsigned long cp)
+{
+    switch (cp) {
+    case 0x2022: case 0x2219: case 0xF0B7: return 1;
+    case 0x25AA: case 0x25A0: case 0x25FC: case 0x25FE: case 0xF0A7: case 0xF06E: return 2;
+    case 0x25CB: case 0x25E6: case 0xF06F: return 3;
+    case 0x25CF: case 0xF06C: return 4;
+    default: return 0;
+    }
+}
+
+static void draw_bullet(struct RastPort *rp, LONG pen, int shape, int x, int baseline, int font_pixels)
+{
+    int r = font_pixels * (shape == 4 ? 30 : 22) / 100;
+    int cy = baseline - font_pixels * 33 / 100, dy;
+    if (r < 2) r = font_pixels >= 6 ? 2 : 1;
+    if (shape == 2) {
+        ogt_box(rp, pen, x, cy - r, 2 * r + 1, 2 * r + 1);
+        return;
+    }
+    for (dy = -r; dy <= r; ++dy) {
+        int hw = r;
+        while (hw > 0 && hw * hw + dy * dy > r * r + r / 2) --hw;
+        if (shape == 3 && dy > -r && dy < r) {
+            int in = r - 1, iw = in;
+            while (iw > 0 && iw * iw + dy * dy > in * in) --iw;
+            if (abs(dy) < in) {
+                ogt_box(rp, pen, x + r - hw, cy + dy, hw - iw > 0 ? hw - iw : 1, 1);
+                ogt_box(rp, pen, x + r + iw + 1, cy + dy, hw - iw > 0 ? hw - iw : 1, 1);
+                continue;
+            }
+        }
+        ogt_box(rp, pen, x + r - hw, cy + dy, 2 * hw + 1, 1);
+    }
+}
+
+/* A text run's words, measured before they are drawn. */
+#define RUN_WORDS 48
+typedef struct { int x0, x1, shape; unsigned short n; char text[64]; } run_word;
+static run_word run_words[RUN_WORDS];
+
 static void paint_text(painter *p, const ol_device_op *d)
 {
     struct RastPort *rp = p->rp;
@@ -826,8 +901,17 @@ static void paint_text(painter *p, const ol_device_op *d)
     s += t->text_offset;
     pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : argb_pen(0xff000000u);
     if (p->thumb || d->font_pixels < 6) {
-        /* too small to read: a line where the words are */
+        /* too small to read: a line where the words are; but a bullet at a
+           small relative size (LibreOffice's 45%) is still drawn */
         size_t k = len;
+        if (!p->thumb) {
+            size_t b = 0;
+            int shape = bullet_shape(utf8_next(s, len, &b));
+            if (shape && (b >= len || s[b] == ' ' || s[b] == '\t')) {
+                draw_bullet(rp, pen, shape, d->box.x, baseline, d->font_pixels);
+                return;
+            }
+        }
         int hh = d->font_pixels / 2 > 0 ? d->font_pixels / 2 : 1;
         while (k && (s[k - 1] == ' ' || s[k - 1] == '\t')) --k;
         if (k) ogt_box(rp, pen, d->box.x, baseline - hh, (int)(d->box.width * (long)k / (long)len) + 1, hh);
@@ -839,18 +923,67 @@ static void paint_text(painter *p, const ol_device_op *d)
     else if (t->style.text_flags & OL_TEXT_SUB) baseline += d->font_pixels / 4;
     SetFont(rp, slide_font(&t->style, d->font_pixels));
     SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
-    ogt_set_apen(rp, pen);
+    ogt_set_apen(rp, exact_pen(pen));
     SetDrMd(rp, JAM1);
-    /* each glyph where the layout's widths put it */
+    /* Each word starts where the layout put it and is drawn with the font's
+       own spacing (placing every glyph by the layout's widths left gaps
+       inside words). The layout measures with the print (PDF) widths, and an
+       Amiga font's size counts more than its letters' em, so its words come
+       out narrower: the font is taken a size up until the words' widths match
+       the layout's, and the words don't sit apart. */
     while (at < len) {
-        size_t start = at;
-        unsigned char c = latin1_of(utf8_next(s, len, &at));
-        if (c > ' ' && c != 0x7F) {
+        int nw = 0, k;
+        long layout_w = 0, screen_w = 0;
+        while (at < len && nw < RUN_WORDS) {
+            run_word *w = &run_words[nw];
+            size_t start = at;
+            unsigned long cp = utf8_next(s, len, &at);
+            unsigned char c = latin1_of(cp);
             ol_text_metrics m;
+            if (c <= ' ' || c == 0x7F) continue;
+            w->n = 0;
+            w->shape = bullet_shape(cp);
+            if (!(w->shape && (at >= len || s[at] == ' ' || s[at] == '\t'))) {
+                w->shape = 0;
+                w->text[w->n++] = (char)c;
+                while (at < len && w->n < sizeof w->text) {
+                    size_t here = at;
+                    c = latin1_of(utf8_next(s, len, &at));
+                    if (c <= ' ' || c == 0x7F) { at = here; break; }
+                    w->text[w->n++] = (char)c;
+                }
+            }
             m.width = 0;
             if (start) opr_measure((void *)deck, s, start, &t->style, &m);
-            Move(rp, ol_scale_x(&p->scale, t->bounds.x + m.width), baseline);
-            Text(rp, (STRPTR)&c, 1);
+            w->x0 = m.width;
+            opr_measure((void *)deck, s, at, &t->style, &m);
+            w->x1 = m.width;
+            if (!w->shape) {
+                layout_w += w->x1 - w->x0;
+                screen_w += TextLength(rp, (STRPTR)w->text, (UWORD)w->n);
+            }
+            nw++;
+        }
+        if (screen_w > 0) {
+            long want = ol_scale_length(&p->scale, (int)layout_w);
+            if (want * 100 > screen_w * 104) {
+                long px = (long)d->font_pixels * want / screen_w;
+                if (px > (long)d->font_pixels * 14 / 10) px = (long)d->font_pixels * 14 / 10;
+                SetFont(rp, slide_font(&t->style, (int)px));
+                SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+            }
+        }
+        for (k = 0; k < nw; ++k) {
+            const run_word *w = &run_words[k];
+            int x = ol_scale_x(&p->scale, t->bounds.x + w->x0);
+            if (w->shape) {
+                /* a bullet on its own: drawn, as the fonts' middle dot is too small to see */
+                draw_bullet(rp, pen, w->shape, x, baseline, d->font_pixels);
+                ogt_set_apen(rp, exact_pen(pen));
+                continue;
+            }
+            Move(rp, x, baseline);
+            Text(rp, (STRPTR)w->text, (WORD)w->n);
         }
     }
     SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
@@ -878,7 +1011,7 @@ static void paint_op(void *userdata, const ol_device_op *d)
         int y1 = d->y1 < d->y2 ? d->y1 : d->y2, y2 = d->y1 < d->y2 ? d->y2 : d->y1;
         if (y1 == y2) ogt_box(rp, pen, x1, y1 - (d->thickness - 1) / 2, x2 - x1 + 1, d->thickness);
         else if (x1 == x2) ogt_box(rp, pen, x1 - (d->thickness - 1) / 2, y1, d->thickness, y2 - y1 + 1);
-        else { ogt_set_apen(rp, pen); Move(rp, d->x1, d->y1); Draw(rp, d->x2, d->y2); }
+        else { ogt_set_apen(rp, exact_pen(pen)); Move(rp, d->x1, d->y1); Draw(rp, d->x2, d->y2); }
         break;
     }
     case OL_OP_IMAGE: {
@@ -1053,6 +1186,29 @@ static void layout(void)
     ogt_status_layout(&sbar, status_box.x, status_box.y, status_box.w, status_box.h);
 }
 
+/* A layout's name in words. LibreOffice names its ODP layouts "AL<n>T<k>",
+   k being its layout number: those few that have plain names get them,
+   the rest show nothing rather than a code. */
+static const char *layout_words(const char *name)
+{
+    const char *p = name;
+    long k;
+    if (!p || p[0] != 'A' || p[1] != 'L' || !isdigit((unsigned char)p[2])) return name;
+    for (p += 2; isdigit((unsigned char)*p); ++p) ;
+    if (*p != 'T' || !isdigit((unsigned char)p[1])) return name;
+    k = strtol(p + 1, (char **)&p, 10);
+    if (*p) return name;
+    switch (k) {
+    case 0: return "Title Slide";
+    case 1: return "Title, Content";
+    case 3: return "Title and 2 Content";
+    case 18: return "Title, 4 Content";
+    case 19: return "Title Only";
+    case 20: return "Blank";
+    default: return NULL;
+    }
+}
+
 static void draw_status(void)
 {
     char s[96];
@@ -1061,7 +1217,7 @@ static void draw_status(void)
     if (deck && deck->nslides) {
         int l = deck->slides[current].layout;
         snprintf(s, sizeof s, "Slide %d of %d", current + 1, deck->nslides);
-        if (l >= 0 && l < deck->nlayouts) lname = deck->layouts[l].name;
+        if (l >= 0 && l < deck->nlayouts) lname = layout_words(deck->layouts[l].name);
     } else {
         snprintf(s, sizeof s, "No slides");
     }
@@ -1102,7 +1258,8 @@ static void draw_slide_part(const box *part)
     if (!win) return;
     rp = win->RPort;
     if (!part) {
-        ogt_fill(&ctx, rp, "list", view_box.x, view_box.y, view_box.w, view_box.h);
+        /* the window's own colour around the slide, so the slide stands out */
+        ogt_fill(&ctx, rp, "window", view_box.x, view_box.y, view_box.w, view_box.h);
         if (!deck || !deck->nslides || slide_box.w <= 0) {
             ogt_text(rp, ogt_pen(&ctx, "muted"), view_box.x + 16, view_box.y + 16, "No slides.", view_box.w - 32);
             return;
@@ -1441,8 +1598,8 @@ static void open_deck(const char *path)
         return;
     }
     set_deck(d, path, used && !strcmp(used->name, "pptx") ? "PPTX" : "ODP");
-    snprintf(msg, sizeof msg, "%.200s opened: %d slide%.200s%.200s.", leaf(path), d->nslides, d->nslides == 1 ? "" : "s",
-             owf_report_count(report) ? "; some of it is shown as near as it can be" : "");
+    snprintf(msg, sizeof msg, "%d slide%s%s.", d->nslides, d->nslides == 1 ? "" : "s",
+             owf_report_count(report) ? "; some parts shown simpler" : "");
     set_status(msg);
     owf_report_free(report);
 }
@@ -1715,8 +1872,7 @@ static void events(void)
                 case 0x4e: opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_RIGHT); caret_moved(); break;
                 case 0x4c: caret_line(-1); break;
                 case 0x4d: caret_line(1); break;
-                case 0x46: type_key(127); break;
-                }
+                }                               /* Del comes as a vanilla key (127) */
             } else if (code == 0x4c || code == 0x4f) {
                 show_slide(current - 1);     /* up, left, or with Shift while typing: the slide before */
             } else if (code == 0x4d || code == 0x4e) {
@@ -1835,6 +1991,7 @@ static void close_window(void)
     if (menu) { FreeMenus(menu); menu = NULL; }
     if (font) { CloseFont(font); font = NULL; }
     if (vi) { FreeVisualInfo(vi); vi = NULL; }
+    own_pen_free();
     if (scr) { UnlockPubScreen(NULL, scr); scr = NULL; }
 }
 
