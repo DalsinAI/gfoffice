@@ -174,7 +174,7 @@ static char *cell_label(const oc_core *core, const owf_cell *c, unsigned col)
     const char *fmt = NULL;
     if (oc_cell_empty(c))
         return oc_strdup("");
-    st = oc_cell_style(core, c, col);
+    st = oc_cell_style(core, c, c->row, col);
     if (st && st->number_format > 0 && st->number_format < core->book->nnumfmts)
         fmt = core->book->numfmts[st->number_format];
     owf_calc_format_value(fmt, c, core->book->date1904, 11, buf, sizeof buf, &colour);

@@ -110,8 +110,12 @@ int main(int argc, char **argv)
         for (k = 0; k < sh->ncols; k++)
             printf("col %u-%u width=%d style=%d hidden=%d\n", sh->cols[k].first, sh->cols[k].last, sh->cols[k].width,
                    sh->cols[k].style, sh->cols[k].hidden);
-        for (k = 0; k < sh->nrows; k++)
-            printf("row %u height=%d hidden=%d\n", sh->rows[k].row, sh->rows[k].height, sh->rows[k].hidden);
+        for (k = 0; k < sh->nrows; k++) {
+            printf("row %u height=%d hidden=%d", sh->rows[k].row, sh->rows[k].height, sh->rows[k].hidden);
+            if (sh->rows[k].style)
+                printf(" style=%d", sh->rows[k].style);
+            putchar('\n');
+        }
         for (k = 0; k < sh->nmerges; k++)
             printf("merge %u,%u-%u,%u\n", sh->merges[k].first_row, sh->merges[k].first_col, sh->merges[k].last_row,
                    sh->merges[k].last_col);

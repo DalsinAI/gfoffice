@@ -956,7 +956,7 @@ static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int 
 {
     oc_core *core = d->core;
     owf_cellstyle with_look;
-    const owf_cellstyle *st = style_with_look(d, c, oc_cell_style(core, c, c->col), &with_look);
+    const owf_cellstyle *st = style_with_look(d, c, oc_cell_style(core, c, c->row, c->col), &with_look);
     char buf[256];
     unsigned long colour = OWF_COLOUR_AUTO;
     int n, tw, pad = PAD * core->zoom / 100 + 1, align, lo, hi;
@@ -1195,7 +1195,7 @@ static int line_rank(int line)
 
 static const owf_cellstyle *style_at(const drawing *d, unsigned row, unsigned col)
 {
-    return oc_cell_style(d->core, owf_sheet_find(d->sheet, row, col), col);
+    return oc_cell_style(d->core, owf_sheet_find(d->sheet, row, col), row, col);
 }
 
 /* The line on the edge a's side_a shares with b's side_b (b NULL: none). */
@@ -1642,7 +1642,7 @@ static int build(drawing *d)
     for (i = 0; i < d->nr; i++)
         for (j = 0; j < d->nc; j++) {
             const owf_cell *c = owf_sheet_find(s, d->rl[i].index, d->cl[j].index);
-            const owf_cellstyle *cs = oc_cell_style(core, c, d->cl[j].index);
+            const owf_cellstyle *cs = oc_cell_style(core, c, d->rl[i].index, d->cl[j].index);
             if (!oc_cell_empty(c))
                 CI(d, i, j) |= CI_VALUE;
             if (OWF_SHADE_SET(fill_at(d, d->rl[i].index, d->cl[j].index, cs)))
@@ -1676,7 +1676,7 @@ static int build(drawing *d)
             if (!(CI(d, i, j) & CI_FILLED))
                 continue;
             c = owf_sheet_find(s, d->rl[i].index, d->cl[j].index);
-            cs = oc_cell_style(core, c, d->cl[j].index);
+            cs = oc_cell_style(core, c, d->rl[i].index, d->cl[j].index);
             if (!(it = add_box(list, OC_DRAW_FILL, OC_ROLE_CELL_FILL, d->cl[j].pos, d->rl[i].pos, d->cl[j].size, d->rl[i].size)))
                 return 0;
             it->rgb = OWF_SHADE_RGB(fill_at(d, d->rl[i].index, d->cl[j].index, cs));
@@ -1686,7 +1686,7 @@ static int build(drawing *d)
     for (m = 0; m < s->nmerges; m++) {
         const owf_range *g = &s->merges[m];
         const owf_cell *c = owf_sheet_find(s, g->first_row, g->first_col);
-        const owf_cellstyle *cs = oc_cell_style(core, c, g->first_col);
+        const owf_cellstyle *cs = oc_cell_style(core, c, g->first_row, g->first_col);
         unsigned long fill = fill_at(d, g->first_row, g->first_col, cs);
         if (!OWF_SHADE_SET(fill))
             continue;
@@ -1731,7 +1731,7 @@ static int build(drawing *d)
                 for (pr = 0; pr < 2; pr++)
                     for (pc = 0; pc < 2; pc++) {
                         int x, y, w, h, open;
-                        const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, a.first_row, a.first_col), a.first_col);
+                        const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, a.first_row, a.first_col), a.first_row, a.first_col);
                         unsigned long fill = fill_at(d, a.first_row, a.first_col, cs);
                         if (!range_box(d, &a, pr, pc, &x, &y, &w, &h, &open))
                             continue;
@@ -1776,8 +1776,8 @@ static int build(drawing *d)
                     for (c = c0; c > q->col && d->cl[j].pos - x < core->width; c--)
                         x -= line_px(core, 1, c - 1);
                     w = line_px(core, 1, q->col);
-                    if (x + w < d->cl[j].pos && resolve_align(q, oc_cell_style(core, q, q->col)) == OC_ALIGN_LEFT &&
-                        !oc_cell_style(core, q, q->col)->wrap) {
+                    if (x + w < d->cl[j].pos && resolve_align(q, oc_cell_style(core, q, q->row, q->col)) == OC_ALIGN_LEFT &&
+                        !oc_cell_style(core, q, q->row, q->col)->wrap) {
                         /* as if it were the column before the first: run on from there */
                         int saved_pos = d->cl[j].pos;
                         oc_draw_item *t;
@@ -1793,7 +1793,7 @@ static int build(drawing *d)
                             int need, cw = 0;
                             t = &texts.items[texts.n - 1];
                             need = t->text_x + oc_measure(core, texts.pool + t->text_off, strlen(texts.pool + t->text_off),
-                                                          oc_cell_style(core, q, q->col)) + PAD - d->cl[j].pos;
+                                                          oc_cell_style(core, q, q->row, q->col)) + PAD - d->cl[j].pos;
                             for (k = j; need > 0 && k < d->nc && d->cl[k].pane == 1; k++) {
                                 if (CI(d, i, k) & (CI_VALUE | CI_INNER))
                                     break;
@@ -1974,7 +1974,7 @@ static int build(drawing *d)
 
                 /* 9. the text being typed, over the cell and on to the right as far as it needs */
                 if (core->edit_mode) {
-                    const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, st->sel.row, st->sel.col), st->sel.col);
+                    const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, st->sel.row, st->sel.col), st->sel.row, st->sel.col);
                     int pad = PAD * core->zoom / 100 + 1, tw = oc_measure(core, core->edit, core->edit_len, cs);
                     int ew = tw + 2 * pad + 2 > w ? tw + 2 * pad + 2 : w, cx;
                     if (x + ew > core->width)

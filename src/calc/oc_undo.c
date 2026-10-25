@@ -211,6 +211,7 @@ static void free_save(oc_cellsave *s)
         oc_free_cell(&s->cells[i]);
     free(s->cells);
     free(s->cols);
+    free(s->rows);
 }
 
 void oc_undo_free(oc_undo *u)
@@ -228,7 +229,7 @@ void oc_undo_free(oc_undo *u)
     free(u);
 }
 
-int oc_undo_save_range(oc_core *core, oc_undo *u, int sheet, const owf_range *range, int with_cols)
+int oc_undo_save_range(oc_core *core, oc_undo *u, int sheet, const owf_range *range, int with)
 {
     const owf_sheet *s = &core->book->sheets[sheet];
     oc_cellsave *save, *p;
@@ -255,8 +256,8 @@ int oc_undo_save_range(oc_core *core, oc_undo *u, int sheet, const owf_range *ra
             u->bytes += cell_bytes(&s->cells[i]);
             save->ncells++;
         }
-    if (with_cols) {
-        save->has_cols = 1;
+    save->has_cols = with;
+    if (with & OC_SAVE_COLS) {
         if (s->ncols && !(save->cols = malloc((size_t)s->ncols * sizeof *s->cols))) {
             free_save(save);
             return OWF_ERR_MEMORY;
@@ -265,6 +266,16 @@ int oc_undo_save_range(oc_core *core, oc_undo *u, int sheet, const owf_range *ra
             memcpy(save->cols, s->cols, (size_t)s->ncols * sizeof *s->cols);
         save->ncols = s->ncols;
         u->bytes += (long)s->ncols * (long)sizeof *s->cols;
+    }
+    if (with & OC_SAVE_ROWS) {
+        if (s->nrows && !(save->rows = malloc((size_t)s->nrows * sizeof *s->rows))) {
+            free_save(save);
+            return OWF_ERR_MEMORY;
+        }
+        if (s->nrows)
+            memcpy(save->rows, s->rows, (size_t)s->nrows * sizeof *s->rows);
+        save->nrows = s->nrows;
+        u->bytes += (long)s->nrows * (long)sizeof *s->rows;
     }
     u->nsaves++;
     return OWF_OK;
@@ -425,7 +436,17 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
             s->cells[j].text = s->cells[j].formula = NULL;
         }
         owf_calc_touch(core->calc, s->sheet, &s->range);   /* the engine takes the range again */
-        if (s->has_cols) {
+        if (s->has_cols & OC_SAVE_ROWS) {
+            owf_rowinfo *rows = NULL;
+            if (s->nrows && (rows = owf_malloc((size_t)s->nrows * sizeof *rows)))
+                memcpy(rows, s->rows, (size_t)s->nrows * sizeof *rows);
+            if (rows || !s->nrows) {
+                owf_free(sheet->rows);
+                sheet->rows = rows;
+                sheet->nrows = sheet->caprows = s->nrows;
+            }
+        }
+        if (s->has_cols & OC_SAVE_COLS) {
             owf_colinfo *cols = NULL;
             if (s->ncols && (cols = owf_malloc((size_t)s->ncols * sizeof *cols)))
                 memcpy(cols, s->cols, (size_t)s->ncols * sizeof *cols);
