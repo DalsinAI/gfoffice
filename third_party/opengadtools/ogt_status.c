@@ -31,7 +31,7 @@ void ogt_status_draw(ogt_status *s)
     int i, x = s->x + PAD, ty = s->y + (s->h - rp->TxHeight) / 2;
     LONG text = ogt_pen(s->ctx, "label"), line = ogt_pen(s->ctx, "muted");
     if (s->w <= 0 || s->h <= 0) return;
-    ogt_fill(s->ctx, rp, "panel", s->x, s->y, s->w, s->h);
+    ogt_fill(s->ctx, rp, "window", s->x, s->y, s->w, s->h);   /* a key every theme has (THEME_SPEC.md 5) */
     ogt_hline(rp, line, s->x, s->y, s->w);
     for (i = 0; i < s->n - 1; i++) {
         if (!s->text[i][0]) continue;

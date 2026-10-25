@@ -9,3 +9,8 @@ OpenGadTools repository first and are then refreshed here.
 `ogt_font.c` and `ogt_openfont.h` are refreshed from DalsinAI/opengadtools
 PR #71 (22 October 2026): fonts through openfont.library 1.2's
 `OF_OpenTextFont`, never diskfont.library.
+
+`ogt_status.c`, `ogt_ruler.c` and `ogt_draw.c` are refreshed from
+DalsinAI/opengadtools PR #84 (25 October 2026): the status bar and the
+ruler fill with `window`, and a key a theme doesn't name takes its role's
+colour, not pen 1 (they were black: no theme has `panel`).
