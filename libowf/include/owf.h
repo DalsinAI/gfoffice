@@ -550,15 +550,23 @@ void owf_sheet_free_extras(owf_sheet *sheet);
 /* ---- Charts on sheets (owf.library 2.1) ----
  * The charts a sheet's kept drawing (an .xlsx's: owf_sheet.drawing) holds,
  * read from the book's kept parts, for a program to show them: where each
- * sits, its kind, title, legend and value axis, and its series (the first
+ * sits, its kind, title, legend and value axes, and its series (the first
  * group of a chart that has several): the cells their values and
- * categories come from, and the values and categories the file last had. */
-enum { OWF_CHART_OTHER, OWF_CHART_COLUMN, OWF_CHART_BAR, OWF_CHART_LINE, OWF_CHART_AREA, OWF_CHART_PIE };
+ * categories (a scatter's x) come from, and the values and categories the
+ * file last had; a pie's angle and colours by point, a doughnut's hole,
+ * lines' and scatters' markers. A doughnut is a pie with a hole. */
+enum { OWF_CHART_OTHER, OWF_CHART_COLUMN, OWF_CHART_BAR, OWF_CHART_LINE, OWF_CHART_AREA, OWF_CHART_PIE, OWF_CHART_SCATTER };
 enum { OWF_CHART_CLUSTERED, OWF_CHART_STACKED, OWF_CHART_PERCENT };
+/* a point's marker: AUTO, the chart's own */
+enum { OWF_MARKER_AUTO, OWF_MARKER_NONE, OWF_MARKER_CIRCLE, OWF_MARKER_SQUARE, OWF_MARKER_DIAMOND, OWF_MARKER_TRIANGLE,
+       OWF_MARKER_X, OWF_MARKER_STAR, OWF_MARKER_PLUS, OWF_MARKER_DASH, OWF_MARKER_DOT };
 typedef struct {
     double value;
     int has_value;               /* 0: none (a gap) */
     char *label;                 /* its category, or NULL */
+    double x;                    /* a scatter's: its x, when has_x */
+    int has_x;
+    unsigned long colour;        /* its own fill (a pie's slice): OWF_SHADE(rgb), or 0 */
 } owf_chart_point;
 typedef struct {
     char *name;                  /* or NULL */
@@ -569,6 +577,9 @@ typedef struct {
     owf_chart_point *points;     /* as the file last had them */
     unsigned long colour;        /* its fill (a line's colour): OWF_SHADE(rgb), or 0: the chart's own, by index */
     int index;
+    char *x_values;              /* a scatter's: the cells its x values come from, or NULL */
+    int line;                    /* lines and scatters: 1 its line is drawn, 0 not */
+    int marker, marker_size;     /* OWF_MARKER_..., and its size in points (0: the chart's own) */
 } owf_chart_series;
 typedef struct {
     int kind, grouping;          /* OWF_CHART_... */
@@ -586,6 +597,12 @@ typedef struct {
     long width, height;
     int nseries;
     owf_chart_series *series;
+    int hole;                    /* a doughnut's hole, a percentage of its size; 0 a pie */
+    int first_angle;             /* a pie's first slice, degrees clockwise from 12 o'clock */
+    int vary;                    /* each point (a pie's slice) in its own colour */
+    int x_gridlines;             /* a scatter's x axis (the value axis above is its y): its gridlines and limits */
+    int has_xmin, has_xmax;
+    double xmin, xmax;
 } owf_chart;
 /* The sheet's charts (none: *count 0), freed with owf_charts_free. OWF_OK,
  * or OWF_ERR_MEMORY. */

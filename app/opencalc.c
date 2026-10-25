@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.19 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.20 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -1099,6 +1099,18 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
         ogt_set_apen(cv->rp, role_pen(it->role, it->rgb));
         Move(cv->rp, cv->ox + x0, cv->oy + y0);
         Draw(cv->rp, cv->ox + x1, cv->oy + y1);
+        break;
+    }
+    case OC_DRAW_POLY: {                             /* a chart's slice or marker: filled, cut to its pane by the core */
+        int xy[2 * 256], k, n = it->npoints;
+        if (!it->points || n < 3 || n > 256) break;
+        for (k = 0; k < n; k++) {
+            int px = it->points[2 * k], py = it->points[2 * k + 1];
+            if (px < 0 || py < 0 || px > cv->w || py > cv->h) break;   /* its right and bottom edges are outside it */
+            xy[2 * k] = cv->ox + px;
+            xy[2 * k + 1] = cv->oy + py;
+        }
+        if (k == n) ogt_fill_poly(cv->rp, role_pen(it->role, it->rgb), xy, n);
         break;
     }
     case OC_DRAW_MARK: {                             /* a comment's: the box's top right half, when it is all in view */
