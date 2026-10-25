@@ -1,11 +1,14 @@
 /*
- * libowf: reading zip archives (ODT, DOCX). Stored files always; deflated
- * ones when zlib is built in (OWF_HAVE_ZLIB), which is every real ODT and
- * DOCX. Sizes are capped and CRCs checked, so a damaged or hostile archive
- * gives an error, not a crash or a flood of memory.
+ * libowf: reading zip archives (ODT, DOCX). Stored files, and deflated ones
+ * (every real ODT and DOCX): through zlib when it is built in
+ * (OWF_HAVE_ZLIB) and there (on the Amiga, z.library), else with libowf's
+ * own inflate (owf_inflate.c), so no package needs z.library to be read.
+ * Sizes are capped and CRCs checked, so a damaged or hostile archive gives
+ * an error, not a crash or a flood of memory.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
+#include "owf_inflate.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -75,6 +78,29 @@ int owf_unzip_has(const owf_unzip *zip, const char *name)
     return find(zip, name) != NULL;
 }
 
+/* A deflated entry into out, which it must fill: size bytes. zlib's
+ * inflate is the faster, so it is used when it is there; when it is not (on
+ * the Amiga, no z.library in LIBS:), or cannot start, libowf's own. */
+static int inflate_entry(unsigned char *out, unsigned long size, const unsigned char *in, unsigned long packed)
+{
+#ifdef OWF_HAVE_ZLIB
+    z_stream z;
+    int r;
+
+    memset(&z, 0, sizeof z);
+    if (inflateInit2(&z, -15) == Z_OK) {
+        z.next_in = (Bytef *)in;
+        z.avail_in = (uInt)packed;
+        z.next_out = out;
+        z.avail_out = (uInt)size;
+        r = inflate(&z, Z_FINISH);
+        inflateEnd(&z);
+        return r == Z_STREAM_END && z.total_out == size ? OWF_OK : OWF_ERR_CORRUPT;
+    }
+#endif
+    return owf_inflate(out, size, in, packed);
+}
+
 int owf_unzip_read(const owf_unzip *zip, const char *name, unsigned char **out, size_t *out_length)
 {
     const unsigned char *e = find(zip, name), *local, *body;
@@ -113,30 +139,11 @@ int owf_unzip_read(const owf_unzip *zip, const char *name, unsigned char **out, 
         }
         memcpy(data, body, size);
     } else if (method == 8) {
-#ifdef OWF_HAVE_ZLIB
-        z_stream z;
-        int r;
-        memset(&z, 0, sizeof z);
-        r = inflateInit2(&z, -15);
-        if (r != Z_OK) {
+        int result = inflate_entry(data, size, body, packed);
+        if (result != OWF_OK) {
             free(data);
-            /* Z_VERSION_ERROR: no z.library on this Amiga */
-            return r == Z_VERSION_ERROR ? OWF_ERR_UNSUPPORTED : OWF_ERR_MEMORY;
+            return result;
         }
-        z.next_in = (Bytef *)body;
-        z.avail_in = (uInt)packed;
-        z.next_out = data;
-        z.avail_out = (uInt)size;
-        r = inflate(&z, Z_FINISH);
-        inflateEnd(&z);
-        if (r != Z_STREAM_END || z.total_out != size) {
-            free(data);
-            return OWF_ERR_CORRUPT;
-        }
-#else
-        free(data);
-        return OWF_ERR_UNSUPPORTED;
-#endif
     } else {
         free(data);
         return OWF_ERR_UNSUPPORTED;
