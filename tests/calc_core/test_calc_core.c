@@ -2136,8 +2136,9 @@ static void test_charts(void)
                     "<c:axId val=\"1\"/><c:axId val=\"2\"/></c:lineChart>", "");
     CHECK(oc_view_draw(core, &l) == OWF_OK);
     CHECK(chart_items(&l, OC_DRAW_SEGMENT, 0x4472C4) == 2 * 3);          /* two segments, 3 pixels thick */
-    CHECK(chart_items(&l, OC_DRAW_SEGMENT, 0x00B050) == 0);               /* 5, a gap, 45: no line, two dots */
-    CHECK(chart_items(&l, OC_DRAW_FILL, 0x00B050) == 2);
+    CHECK(chart_items(&l, OC_DRAW_SEGMENT, 0x00B050) == 0);               /* 5, a gap, 45: no line, two markers */
+    CHECK(chart_items(&l, OC_DRAW_POLY, 0x00B050) == 2 && chart_items(&l, OC_DRAW_POLY, 0x4472C4) == 3);   /* circles: the
+                                                                             chart's own markers */
     CHECK(find_text(&l, "50") != NULL && !find_text(&l, "2026"));       /* its scale takes in 45; no legend */
     oc_draw_list_free(&l);
     oc_core_free(core);
@@ -2225,6 +2226,66 @@ static void test_charts(void)
         CHECK(n == 3 && abs((xs[2] - xs[1]) - 2 * (xs[1] - xs[0])) <= 2);   /* x 1, 2, 4 */
     }
     CHECK(find_text(&l, "4") != NULL);                                    /* the x axis's labels */
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+
+    /* data labels: values in their own format above the columns (outside their ends), the axis in the cells'
+       format; a line's square markers with the values in the axis's format above them; a pie's categories and
+       shares in its slices */
+    core = fresh();
+    oc_draw_list_init(&l);
+    chart_values(core);
+    go(core, "B2:B4");
+    CHECK(oc_core_set_number_format(core, "\"$\"#,##0") == OWF_OK);
+    go(core, "A1");
+    put_chart(core, "<c:barChart><c:barDir val=\"col\"/><c:dLbls><c:numFmt formatCode=\"0.0\" sourceLinked=\"0\"/>"
+                    "<c:dLblPos val=\"outEnd\"/><c:showVal val=\"1\"/></c:dLbls>" SERIES(0, "2025", "B", "") "</c:barChart>", "");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    {
+        const oc_draw_item *t10 = find_text(&l, "10.0"), *t30 = find_text(&l, "30.0"), *axis = find_text(&l, "$30");
+        int bar30 = -1;
+        for (i = 0; i < l.n; i++)
+            if (l.items[i].kind == OC_DRAW_FILL && l.items[i].rgb == 0x4472C4 && l.items[i].h == biggest(&l, 0x4472C4, 0))
+                bar30 = i;
+        CHECK(t10 && t30 && axis && find_text(&l, "$0"));
+        CHECK(bar30 >= 0 && t30 && t30->y + t30->h <= l.items[bar30].y && t30->y + t30->h >= l.items[bar30].y - 3 &&
+              t30->x < l.items[bar30].x + l.items[bar30].w / 2 && t30->x + t30->w > l.items[bar30].x + l.items[bar30].w / 2);
+    }
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+
+    core = fresh();
+    oc_draw_list_init(&l);
+    chart_values(core);
+    put_chart(core, "<c:lineChart><c:marker val=\"1\"/><c:ser><c:idx val=\"0\"/><c:marker><c:symbol val=\"square\"/>"
+                    "<c:size val=\"7\"/></c:marker><c:dLbls><c:dLblPos val=\"t\"/><c:showVal val=\"1\"/></c:dLbls><c:cat>"
+                    "<c:strRef><c:f>Sheet1!$A$2:$A$4</c:f></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!$B$2:$B$4</c:f>"
+                    "</c:numRef></c:val></c:ser><c:ser><c:idx val=\"1\"/><c:dLbls><c:delete val=\"1\"/></c:dLbls><c:val>"
+                    "<c:numRef><c:f>Sheet1!$C$2:$C$4</c:f></c:numRef></c:val></c:ser><c:dLbls><c:showVal val=\"1\"/></c:dLbls>"
+                    "</c:lineChart><c:valAx><c:numFmt formatCode=\"0.00\" sourceLinked=\"0\"/></c:valAx>", "");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(chart_items(&l, OC_DRAW_FILL, 0x4472C4) == 3);                  /* three squares */
+    CHECK(find_text(&l, "10") && find_text(&l, "30") && !find_text(&l, "15"));   /* the second series' labels deleted */
+    CHECK(find_text(&l, "0.00") != NULL);                                 /* the axis in its own format */
+    {
+        const oc_draw_item *t = find_text(&l, "20");
+        int sq = -1;
+        for (i = 0; i < l.n; i++)
+            if (l.items[i].kind == OC_DRAW_FILL && l.items[i].rgb == 0x4472C4 && sq < 0 && t &&
+                l.items[i].x <= t->x + t->w / 2 && l.items[i].x + l.items[i].w >= t->x + t->w / 2)
+                sq = i;
+        CHECK(t && sq >= 0 && t->y + t->h <= l.items[sq].y);             /* above its marker */
+    }
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+
+    core = fresh();
+    oc_draw_list_init(&l);
+    chart_values(core);
+    put_chart(core, "<c:pieChart><c:varyColors val=\"1\"/><c:dLbls><c:showCatName val=\"1\"/><c:showPercent val=\"1\"/>"
+                    "</c:dLbls>" SERIES(0, "2025", "B", "") "</c:pieChart>", "");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(find_text(&l, "North, 17%") && find_text(&l, "South, 33%") && find_text(&l, "West, 50%"));
     oc_draw_list_free(&l);
     oc_core_free(core);
 

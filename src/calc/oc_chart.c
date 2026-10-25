@@ -141,6 +141,9 @@ typedef struct {
     unsigned char *has;
     char **labels;               /* n */
     char **names;                /* ns */
+    const char **fmts;           /* ns: each series' values' number format (its first value cell's, else the
+                                    file's), NULL General */
+    const char *xfmt;            /* a scatter's x values' (the first series') */
 } chartdata;
 
 /* Values the axis can hold: none past 1e200 (and not a number: the least). */
@@ -160,9 +163,23 @@ static void data_free(chartdata *cd)
         free(cd->names[i]);
     free(cd->labels);
     free(cd->names);
+    free(cd->fmts);
     free(cd->v);
     free(cd->x);
     free(cd->has);
+}
+
+/* A cell's number format (NULL: General). */
+static const char *cell_format(const oc_core *core, int sheet, const owf_cell *c, unsigned col)
+{
+    const owf_book *b = core->book;
+    int st = c->style;
+    (void)col;
+    if (st <= 0 && sheet >= 0 && sheet < b->nsheets)
+        st = oc_col_style(&b->sheets[sheet], c->col);
+    if (st > 0 && st < b->nstyles && b->styles[st].number_format > 0 && b->styles[st].number_format < b->nnumfmts)
+        return b->numfmts[b->styles[st].number_format];
+    return NULL;
 }
 
 /* A cell's text as the grid shows it (General numbers to 11 characters). */
@@ -210,10 +227,11 @@ static int read_data(const oc_core *core, const owf_chart *ch, chartdata *cd)
         cd->names = calloc(ns, sizeof *cd->names);
         cd->v = calloc(ns * np, sizeof *cd->v);
         cd->x = calloc(ns * np, sizeof *cd->x);
+        cd->fmts = calloc(ns, sizeof *cd->fmts);
         cd->has = calloc(ns * np, 1);
         cd->labels = calloc(np, sizeof *cd->labels);
     }
-    if (!cd->names || !cd->v || !cd->x || !cd->has || !cd->labels)
+    if (!cd->names || !cd->v || !cd->x || !cd->has || !cd->labels || !cd->fmts)
         return 0;
     for (s = 0; s < cd->ns; s++) {
         const owf_chart_series *se = &ch->series[s];
@@ -239,9 +257,14 @@ static int read_data(const oc_core *core, const owf_chart *ch, chartdata *cd)
                 if (!c || c->type == OWF_VALUE_EMPTY || c->type == OWF_VALUE_ERROR)
                     continue;            /* a gap (Excel's #N/A and blanks) */
                 cd->v[at + k] = c->type == OWF_VALUE_NUMBER ? bounded(c->number) : 0;
+                if (!cd->has[at + k] && !cd->fmts[s] && c->type == OWF_VALUE_NUMBER)
+                    cd->fmts[s] = cell_format(core, sheet, c, col);
                 cd->has[at + k] = 1;
             }
+            if (!cd->fmts[s])
+                cd->fmts[s] = se->format;
         } else {
+            cd->fmts[s] = se->format;
             for (k = 0; k < se->npoints && k < cd->n; k++)
                 if (se->points[k].has_value) {
                     cd->v[at + k] = bounded(se->points[k].value);
@@ -260,8 +283,11 @@ static int read_data(const oc_core *core, const owf_chart *ch, chartdata *cd)
                     const owf_cell *c;
                     range_at(&r, k, &row, &col);
                     c = oc_find(core, sheet, row, col);
-                    if (c && c->type == OWF_VALUE_NUMBER)
+                    if (c && c->type == OWF_VALUE_NUMBER) {
                         cd->x[at + k] = bounded(c->number);
+                        if (!cd->xfmt && s == 0)
+                            cd->xfmt = cell_format(core, sheet, c, col);
+                    }
                     else if (c && (c->type == OWF_VALUE_TEXT || c->type == OWF_VALUE_BOOL))
                         words = 1;
                 }
@@ -513,24 +539,36 @@ static void scale(int has_min, double min, int has_max, double max, double lo, d
         *to = *from + s;
 }
 
-static void number_label(const oc_core *core, double v, int percent, char *out, size_t size)
+/* A number in a format (NULL: General), as a cell shows it, on one line. */
+static void number_text(const oc_core *core, double v, const char *fmt, char *out, size_t size)
 {
     owf_cell c;
     unsigned long colour;
     memset(&c, 0, sizeof c);
     c.type = OWF_VALUE_NUMBER;
     c.number = v;
-    owf_calc_format_value(percent ? "0%" : NULL, &c, core->book->date1904, 11, out, size, &colour);
+    owf_calc_format_value(fmt, &c, core->book->date1904, 15, out, size, &colour);
+    out[strcspn(out, "\r\n")] = 0;
+}
+
+/* The value axis's format: the file's, else the first series' values' (as Excel links it to them); 100%: 0%. */
+static const char *axis_format(const render *r)
+{
+    if (r->ch->grouping == OWF_CHART_PERCENT && r->ch->kind != OWF_CHART_SCATTER)
+        return "0%";
+    if (r->ch->value_format)
+        return r->ch->value_format;
+    return r->cd.ns > 0 ? r->cd.fmts[0] : NULL;
 }
 
 /* The widest of an axis's labels. */
-static int labels_width(render *r, double from, double to, double step, int percent)
+static int labels_width(render *r, double from, double to, double step, const char *fmt)
 {
     char buf[64];
     double v;
     int ticks, most = 0, t;
     for (v = from, ticks = 0; v <= to + step / 2 && ticks < 64; v += step, ticks++) {
-        number_label(r->core, v, percent, buf, sizeof buf);
+        number_text(r->core, v, fmt, buf, sizeof buf);
         if ((t = width_of(r, buf)) > most)
             most = t;
     }
@@ -542,14 +580,14 @@ static int labels_width(render *r, double from, double to, double step, int perc
 #define POS(v) (across ? a0 + (int)floor(((v) - from) * (a1 - a0) / (to - from) + 0.5) \
                        : a1 - (int)floor(((v) - from) * (a1 - a0) / (to - from) + 0.5))
 static void axis(render *r, int across, int a0, int a1, int c0, int c1, double from, double to, double step, int grid,
-                 int percent, int lw)
+                 const char *fmt, int lw)
 {
     char buf[64];
     double v;
     int ticks;
     for (v = from, ticks = 0; v <= to + step / 2 && ticks < 64; v += step, ticks++) {
         int at = POS(v);
-        number_label(r->core, fabs(v) < step / 1e6 ? 0 : v, percent, buf, sizeof buf);
+        number_text(r->core, fabs(v) < step / 1e6 ? 0 : v, fmt, buf, sizeof buf);
         if (across) {
             if (grid)
                 r->g->line(r->g, at, c0, at, c1, 1, RGB_CHART_LINE);
@@ -560,6 +598,72 @@ static void axis(render *r, int across, int a0, int a1, int c0, int c1, double f
                 r->g->line(r->g, c0, at, c1 - 1, at, 1, RGB_CHART_LINE);
             text(r, buf, c0 - 4 - lw, at - r->lh / 2, lw, r->lh, OC_ALIGN_RIGHT, LABEL_TWIPS, 0);
         }
+    }
+}
+
+/* ---- Data labels ---- */
+
+/* A point's label: its series' name, category, value (in the labels' format, else its values') and share,
+ * as the series says, joined by ", " as Excel joins them. */
+static void label_text(render *r, int s, int k, double v, double share, const char *category, char *out, size_t size)
+{
+    const owf_chart_series *se = &r->ch->series[s];
+    char part[64];
+    const char *parts[4];
+    int n = 0, i;
+    size_t at = 0;
+    if (se->labels & OWF_LABEL_SERIES)
+        parts[n++] = r->cd.names[s];
+    if (se->labels & OWF_LABEL_CATEGORY)
+        parts[n++] = category ? category : k < r->cd.n ? r->cd.labels[k] : "";
+    if (se->labels & OWF_LABEL_VALUE) {
+        number_text(r->core, v, se->label_format ? se->label_format : r->cd.fmts[s], part, sizeof part);
+        parts[n++] = part;
+    }
+    out[0] = 0;
+    for (i = 0; i < n && at + 1 < size; i++) {
+        size_t m = strlen(parts[i]);
+        if (i && at + 2 < size) {
+            memcpy(out + at, ", ", 2);
+            at += 2;
+        }
+        if (m > size - 1 - at)
+            m = size - 1 - at;
+        memcpy(out + at, parts[i], m);
+        at += m;
+        out[at] = 0;
+    }
+    if ((se->labels & OWF_LABEL_PERCENT) && at + 2 < size) {
+        number_text(r->core, share, "0%", part, sizeof part);
+        if (at) {
+            memcpy(out + at, ", ", 2);
+            at += 2;
+        }
+        out[at] = 0;
+        strncat(out, part, size - 1 - at);
+    }
+}
+
+/* A label's text with its middle at cy: centred on x, or starting (OC_ALIGN_LEFT) or ending there. */
+static void put_label(render *r, const char *s, int x, int cy, int align)
+{
+    int w = width_of(r, s) + 2, lh = r->lh;
+    if (!*s)
+        return;
+    x = align == OC_ALIGN_LEFT ? x : align == OC_ALIGN_RIGHT ? x - w : x - w / 2;
+    text(r, s, x, cy - lh / 2, w, lh, OC_ALIGN_CENTRE, LABEL_TWIPS, 0);
+}
+
+/* A line's or a scatter's point's label, beside its marker (m pixels) where the series says: right unless. */
+static void point_label(render *r, const char *s, int x, int y, int m, int pos)
+{
+    int lh = r->lh;
+    switch (pos) {
+    case OWF_LABEL_LEFT: put_label(r, s, x - m / 2 - 3, y, OC_ALIGN_RIGHT); break;
+    case OWF_LABEL_ABOVE: put_label(r, s, x, y - m / 2 - 1 - lh / 2, OC_ALIGN_CENTRE); break;
+    case OWF_LABEL_BELOW: put_label(r, s, x, y + m / 2 + 1 + lh / 2, OC_ALIGN_CENTRE); break;
+    case OWF_LABEL_CENTRE: put_label(r, s, x, y, OC_ALIGN_CENTRE); break;
+    default: put_label(r, s, x + m / 2 + 3, y, OC_ALIGN_LEFT); break;
     }
 }
 
@@ -620,7 +724,7 @@ static int categories(render *r)
     along = horizontal ? r->x1 - r->x0 : r->y1 - r->y0;
     want = along / (horizontal ? 60 * core->zoom / 100 + 1 : lh * 3 / 2 + 1);
     scale(ch->has_min, ch->min, ch->has_max, ch->max, lo, hi, want < 2 ? 2 : want > 10 ? 10 : want, &from, &to, &step);
-    vw = labels_width(r, from, to, step, percent);
+    vw = labels_width(r, from, to, step, axis_format(r));
     for (k = 0; k < cd->n; k++)
         if ((t = width_of(r, cd->labels[k])) > cwid)
             cwid = t;
@@ -643,9 +747,9 @@ static int categories(render *r)
     a0 = horizontal ? ax0 : ay0;
     a1 = horizontal ? ax1 : ay1;
     if (horizontal)
-        axis(r, 1, ax0, ax1, ay0, ay1, from, to, step, ch->gridlines, percent, 0);
+        axis(r, 1, ax0, ax1, ay0, ay1, from, to, step, ch->gridlines, axis_format(r), 0);
     else
-        axis(r, 0, ay0, ay1, ax0, ax1, from, to, step, ch->gridlines, percent, vw);
+        axis(r, 0, ay0, ay1, ax0, ax1, from, to, step, ch->gridlines, axis_format(r), vw);
     /* the category axis, along 0 (or the scale's end nearest it) */
     val0 = from > 0 ? from : to < 0 ? to : 0;
     if (horizontal)
@@ -670,7 +774,9 @@ static int categories(render *r)
     }
     /* the data */
     if (ch->kind == OWF_CHART_COLUMN || ch->kind == OWF_CHART_BAR) {
+        int pass;
         bw = stacked ? sw / (1 + gap) : sw / (cd->ns + gap);
+        for (pass = 0; pass < 2; pass++)         /* the bars, then their labels over them all */
         for (k = 0; k < cd->n; k++) {
             double all = 0, pos = 0, neg = 0, start = k * sw + (sw - (stacked ? bw : bw * cd->ns)) / 2;
             for (s = 0; s < cd->ns; s++)
@@ -704,10 +810,41 @@ static int categories(render *r)
                 i1 = (int)floor(b + 0.5);
                 v0 = POS(base);
                 v1 = POS(top);
-                if (horizontal)
-                    oc_gfx_box(g, v0 < v1 ? v0 : v1, ay1 - i1, abs(v1 - v0), i1 - i0, point_rgb(ch, s, k));
-                else
-                    oc_gfx_box(g, ax0 + i0, v0 < v1 ? v0 : v1, i1 - i0, abs(v1 - v0), point_rgb(ch, s, k));
+                if (pass == 0) {
+                    if (horizontal)
+                        oc_gfx_box(g, v0 < v1 ? v0 : v1, ay1 - i1, abs(v1 - v0), i1 - i0, point_rgb(ch, s, k));
+                    else
+                        oc_gfx_box(g, ax0 + i0, v0 < v1 ? v0 : v1, i1 - i0, abs(v1 - v0), point_rgb(ch, s, k));
+                } else if (ch->series[s].labels) {
+                    /* where: at its end outside it (clustered) or in its middle (stacked), unless the file says */
+                    char buf[160];
+                    int pos = ch->series[s].label_pos, mid = (i0 + i1) / 2, up = horizontal ? v1 >= v0 : v1 <= v0;
+                    int end = v1, startp = v0, lh2 = lh / 2 + 1;
+                    label_text(r, s, k, cd->v[at], all > 0 ? fabs(cd->v[at]) / all : 0, NULL, buf, sizeof buf);
+                    if (pos == OWF_LABEL_AUTO || pos == OWF_LABEL_BEST_FIT)
+                        pos = stacked ? OWF_LABEL_CENTRE : OWF_LABEL_OUTSIDE_END;
+                    if (horizontal) {
+                        int cyy = ay1 - mid, dir = up ? 1 : -1;
+                        if (pos == OWF_LABEL_OUTSIDE_END)
+                            put_label(r, buf, end + dir * 3, cyy, up ? OC_ALIGN_LEFT : OC_ALIGN_RIGHT);
+                        else if (pos == OWF_LABEL_INSIDE_END)
+                            put_label(r, buf, end - dir * 3, cyy, up ? OC_ALIGN_RIGHT : OC_ALIGN_LEFT);
+                        else if (pos == OWF_LABEL_INSIDE_BASE)
+                            put_label(r, buf, startp + dir * 3, cyy, up ? OC_ALIGN_LEFT : OC_ALIGN_RIGHT);
+                        else
+                            put_label(r, buf, (end + startp) / 2, cyy, OC_ALIGN_CENTRE);
+                    } else {
+                        int cxx = ax0 + mid, dir = up ? -1 : 1;
+                        if (pos == OWF_LABEL_OUTSIDE_END)
+                            put_label(r, buf, cxx, end + dir * lh2, OC_ALIGN_CENTRE);
+                        else if (pos == OWF_LABEL_INSIDE_END)
+                            put_label(r, buf, cxx, end - dir * lh2, OC_ALIGN_CENTRE);
+                        else if (pos == OWF_LABEL_INSIDE_BASE)
+                            put_label(r, buf, cxx, startp + dir * lh2, OC_ALIGN_CENTRE);
+                        else
+                            put_label(r, buf, cxx, (end + startp) / 2, OC_ALIGN_CENTRE);
+                    }
+                }
             }
         }
     } else {                                     /* lines (and areas, as their lines) through the categories' middles */
@@ -722,32 +859,46 @@ static int categories(render *r)
             for (s = 0; s < cd->ns; s++)
                 if (cd->has[(size_t)s * cd->n + k])
                     all[k] += fabs(cd->v[(size_t)s * cd->n + k]);
-        for (s = 0; s < cd->ns; s++) {
-            int has_last = 0, lx = 0, lyy = 0;
-            for (k = 0; k < cd->n; k++) {
-                size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
-                int xx, yy;
-                if (!cd->has[at]) {
-                    has_last = 0;                /* a gap */
-                    continue;
+        int pass;
+        for (pass = 0; pass < 3; pass++) {       /* the lines, their markers, their labels */
+            memset(sum, 0, (size_t)n * sizeof *sum);
+            for (s = 0; s < cd->ns; s++) {
+                const owf_chart_series *se = &ch->series[s];
+                int has_last = 0, lx = 0, lyy = 0, mark = ch->kind == OWF_CHART_LINE ? se->marker : OWF_MARKER_NONE;
+                int mpx = mark == OWF_MARKER_NONE ? 0 : marker_px(core, se);
+                for (k = 0; k < cd->n; k++) {
+                    size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
+                    int xx, yy;
+                    if (!cd->has[at]) {
+                        has_last = 0;            /* a gap */
+                        continue;
+                    }
+                    v = cd->v[at];
+                    if (percent)
+                        v = all[k] > 0 ? v / all[k] : 0;
+                    if (stacked) {
+                        sum[k] += v;
+                        v = sum[k];
+                    }
+                    v = v < from ? from : v > to ? to : v;
+                    xx = ax0 + (int)floor((k + 0.5) * sw + 0.5);
+                    yy = POS(v);
+                    if (pass == 0) {
+                        if (has_last)
+                            g->line(g, lx, lyy, xx, yy, lt, series_rgb(se));
+                        else if (mark == OWF_MARKER_NONE && (k + 1 >= cd->n || !cd->has[at + 1]))   /* alone: a dot */
+                            oc_gfx_box(g, xx - lt, yy - lt, 2 * lt + 1, 2 * lt + 1, series_rgb(se));
+                    } else if (pass == 1 && mark != OWF_MARKER_NONE) {
+                        marker(g, mark, xx, yy, mpx, point_rgb(ch, s, k));
+                    } else if (pass == 2 && se->labels) {
+                        char buf[160];
+                        label_text(r, s, k, cd->v[at], all[k] > 0 ? fabs(cd->v[at]) / all[k] : 0, NULL, buf, sizeof buf);
+                        point_label(r, buf, xx, yy, mpx ? mpx : lt, se->label_pos);
+                    }
+                    lx = xx;
+                    lyy = yy;
+                    has_last = 1;
                 }
-                v = cd->v[at];
-                if (percent)
-                    v = all[k] > 0 ? v / all[k] : 0;
-                if (stacked) {
-                    sum[k] += v;
-                    v = sum[k];
-                }
-                v = v < from ? from : v > to ? to : v;
-                xx = ax0 + (int)floor((k + 0.5) * sw + 0.5);
-                yy = POS(v);
-                if (has_last)
-                    g->line(g, lx, lyy, xx, yy, lt, series_rgb(&ch->series[s]));
-                else if (k + 1 >= cd->n || !cd->has[at + 1])    /* a point alone: a dot */
-                    oc_gfx_box(g, xx - lt, yy - lt, 2 * lt + 1, 2 * lt + 1, series_rgb(&ch->series[s]));
-                lx = xx;
-                lyy = yy;
-                has_last = 1;
             }
         }
         free(sum);
@@ -799,18 +950,18 @@ static int scatter(render *r)
         }
     want = (r->y1 - r->y0) / (lh * 3 / 2 + 1);
     scale(ch->has_min, ch->min, ch->has_max, ch->max, ylo, yhi, want < 2 ? 2 : want > 10 ? 10 : want, &yfrom, &yto, &ystep);
-    vw = labels_width(r, yfrom, yto, ystep, 0);
+    vw = labels_width(r, yfrom, yto, ystep, axis_format(r));
     ax0 = r->x0 + vw + 4;
     ax1 = r->x1;
     want = (ax1 - ax0) / (60 * core->zoom / 100 + 1);
     scale(ch->has_xmin, ch->xmin, ch->has_xmax, ch->xmax, xlo, xhi, want < 2 ? 2 : want > 10 ? 10 : want, &xfrom, &xto, &xstep);
-    ax1 -= labels_width(r, xfrom, xto, xstep, 0) / 2;
+    ax1 -= labels_width(r, xfrom, xto, xstep, ch->x_format ? ch->x_format : cd->xfmt) / 2;
     ay0 = r->y0 + lh / 2;
     ay1 = r->y1 - lh - 2;
     if (ax1 - ax0 < 8 || ay1 - ay0 < 8)
         return 1;
-    axis(r, 1, ax0, ax1, ay0, ay1, xfrom, xto, xstep, ch->x_gridlines, 0, 0);
-    axis(r, 0, ay0, ay1, ax0, ax1, yfrom, yto, ystep, ch->gridlines, 0, vw);
+    axis(r, 1, ax0, ax1, ay0, ay1, xfrom, xto, xstep, ch->x_gridlines, ch->x_format ? ch->x_format : cd->xfmt, 0);
+    axis(r, 0, ay0, ay1, ax0, ax1, yfrom, yto, ystep, ch->gridlines, axis_format(r), vw);
     across = 0;                                  /* the x axis along y's 0 (or its end nearest it) */
     a0 = ay0;
     a1 = ay1;
@@ -851,6 +1002,25 @@ static int scatter(render *r)
             yv = cd->v[at] < yfrom ? yfrom : cd->v[at] > yto ? yto : cd->v[at];
             marker(g, se->marker, ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5),
                    ay1 - (int)floor((yv - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5), px, point_rgb(ch, s, k));
+        }
+    }
+    for (s = 0; s < cd->ns; s++) {               /* the labels over everything: a scatter's category is its x */
+        const owf_chart_series *se = &ch->series[s];
+        int px = se->marker == OWF_MARKER_NONE ? lt : marker_px(core, se);
+        if (!se->labels)
+            continue;
+        for (k = 0; k < cd->n; k++) {
+            size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
+            double xv, yv;
+            char buf[160], xs[64];
+            if (!cd->has[at])
+                continue;
+            xv = cd->x[at] < xfrom ? xfrom : cd->x[at] > xto ? xto : cd->x[at];
+            yv = cd->v[at] < yfrom ? yfrom : cd->v[at] > yto ? yto : cd->v[at];
+            number_text(core, cd->x[at], ch->x_format ? ch->x_format : cd->xfmt, xs, sizeof xs);
+            label_text(r, s, k, cd->v[at], 0, xs, buf, sizeof buf);
+            point_label(r, buf, ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5),
+                        ay1 - (int)floor((yv - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5), px, se->label_pos);
         }
     }
     (void)across;
@@ -966,6 +1136,33 @@ static int pie(render *r)
                 on_circle(cx, cy, inner, k * 6, &qx, &qy);
                 g->line(g, px, py, qx, qy, white, 0xFFFFFFUL);
             }
+        }
+    }
+    /* the labels: in each slice (a doughnut's ring's middle), or outside the pie, as the series says */
+    for (s = 0; s < rings; s++) {
+        const owf_chart_series *se = &ch->series[s];
+        double total = 0, at = ch->first_angle, inner = hole + band * s, outer = inner + band;
+        if (!se->labels)
+            continue;
+        for (k = 0; k < cd->n; k++)
+            if (cd->has[(size_t)s * cd->n + k])
+                total += fabs(cd->v[(size_t)s * cd->n + k]);
+        for (k = 0; k < cd->n && total > 0; k++) {
+            size_t i = (size_t)s * (size_t)cd->n + (size_t)k;
+            double sweep, mid, rad;
+            int lx, ly, pos = se->label_pos;
+            char buf[160];
+            if (!cd->has[i] || cd->v[i] == 0)
+                continue;
+            sweep = fabs(cd->v[i]) / total * 360;
+            mid = at + sweep / 2;
+            at += sweep;
+            rad = pos == OWF_LABEL_OUTSIDE_END ? outer + r->lh * 0.8
+                : ch->hole > 0 ? (inner + outer) / 2
+                : pos == OWF_LABEL_INSIDE_END ? outer * 0.8 : pos == OWF_LABEL_INSIDE_BASE ? outer * 0.35 : outer * 0.62;
+            on_circle(cx, cy, rad, mid, &lx, &ly);
+            label_text(r, s, k, cd->v[i], fabs(cd->v[i]) / total, NULL, buf, sizeof buf);
+            put_label(r, buf, lx, ly, pos != OWF_LABEL_OUTSIDE_END ? OC_ALIGN_CENTRE : lx >= cx ? OC_ALIGN_LEFT : OC_ALIGN_RIGHT);
         }
     }
     return 1;
