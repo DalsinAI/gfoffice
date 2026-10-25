@@ -2727,6 +2727,7 @@ static void raw_key(UWORD code, UWORD qual)
             return;
         }
         oc_core_select_chart(core, -1);              /* another key: the cells again */
+        set_status("");
     }
     if ((m & OC_MOD_ALT) && !oc_core_editing(core) && (key == OC_KEY_UP || key == OC_KEY_DOWN || key == OC_KEY_LEFT || key == OC_KEY_RIGHT)) {
         if (m & OC_MOD_CTRL) key = key == OC_KEY_UP || key == OC_KEY_LEFT ? OC_KEY_HOME : OC_KEY_END;
@@ -2760,8 +2761,8 @@ static void vanilla_key(UWORD code, UWORD qual)
     bar_done();
     if (oc_core_selected_chart(core) >= 0) {        /* a chart selected: Esc leaves it, a key goes to the cells */
         oc_core_select_chart(core, -1);
+        set_status("");
         if (code == 27) {
-            set_status("");
             refresh();
             return;
         }
@@ -2820,12 +2821,15 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
             chart_from_x = mx;
             chart_from_y = my;
             mouse_down = 1;
-            set_status("Chart selected: drag it, or move it a cell with the arrow keys (a pixel with Shift).");
+            set_status("Chart selected: drag it, or move it with the arrow keys.");
             refresh();
             return;
         }
     }
-    oc_core_select_chart(core, -1);                  /* a click anywhere else: the chart no longer */
+    if (oc_core_selected_chart(core) >= 0) {        /* a click anywhere else: the chart no longer */
+        oc_core_select_chart(core, -1);
+        set_status("");
+    }
     oc_view_hit(core, mx - grid_box.x, my - grid_box.y, &hit);
     if (hit.kind == OC_HIT_COL_EDGE || hit.kind == OC_HIT_ROW_EDGE) {
         resizing = 1;
