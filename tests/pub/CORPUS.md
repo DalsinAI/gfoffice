@@ -27,6 +27,7 @@ and one MIT file.
 | `Sample2000.pub` | apache/poi `test-data/publisher/Sample2000.pub` | Apache-2.0 | 2000 format (12.0) | 61440 | `40701ca47b26d04771cdd58467764e9ab39d3da69b59fbc529afd16d263d2f86` |
 | `51318.pub` | apache/poi `test-data/publisher/51318.pub` | Apache-2.0 | 2002/2003 format (11.9999) | 88576 | `3ab75a6a9196e0a51fc9b0aa759459501c71d313030c06652aabffbae0a2ab09` |
 | `60685.pub` | apache/poi `test-data/publisher/60685.pub` | Apache-2.0 | 2013-or-later format (15.0) | 119296 | `0d3cecf0ff000a20931d0de3ebc48040bea10e03833ade3f9902f996c20e7184` |
+| `SampleBrochure.pub` | apache/poi `test-data/publisher/SampleBrochure.pub` | Apache-2.0 | 2002/2003 format (11.5703), A4 landscape, 2 pages; GIF, JPEG and WMF pictures | 161792 | `ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87` |
 | `clusterfuzz-testcase-minimized-POIHPBFFuzzer-4918886059278336.pub` | apache/poi `test-data/publisher/` | Apache-2.0 | damaged (a fuzzer's): 2010 marks | 32832 | `2641d2d48a345f0eb52b4dd0151330142e3037505fea614c272ec7eba4b3e9b0` |
 | `clusterfuzz-testcase-minimized-POIHPBFFuzzer-6325615354773504.pub` | apache/poi `test-data/publisher/` | Apache-2.0 | damaged (a fuzzer's): not readable | 2042 | `e06b81d1a11a592d890e8d77c7f243c0529a36a0ec9bc4f18e8b1afb9e4f7bd2` |
 | `mimetype-pub.pub` | gabriel-vasile/mimetype `testdata/pub.pub` | MIT (Copyright (c) 2018 Gabriel Vasile; `licenses/MIT-gabriel-vasile-mimetype.txt`) | cut short: the first 4096 bytes of a .pub | 4096 | `62f55a46d8443891c0f102599e64309cb4dbeda882c286ac216c1f028aecbb5f` |
@@ -47,7 +48,6 @@ puts them in DIR; `PUB_CORPUS=DIR make pub-test` then reads them too.
 | `Sample2_2010.pub` | apache/poi | Apache-2.0 | 2010 (14.0) | 73216 | `931ff20980b8f72aab227fa3cbe61b017be8d17c337fecb9aca3c97075940777` |
 | `Sample3_2010.pub` | apache/poi | Apache-2.0 | 2010 (14.0) | 72704 | `baa9555a72d9e4264e3fd722896e2e43b960d20b4afdb96f75cb721a6133ff91` |
 | `Sample4_2010.pub` | apache/poi | Apache-2.0 | 2010 (14.0) | 72704 | `544e2043f91aed664c0a09f9ae45da42291b6730f107f99f3cdf9462ed38fb02` |
-| `SampleBrochure.pub` | apache/poi | Apache-2.0 | 2002/2003 (11.5703) | 161792 | `ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87` |
 | `SampleNewsletter.pub` | apache/poi | Apache-2.0 | 2002/2003 (11.5606) | 291840 | `6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf` |
 | `LinkAt0And10.pub` | apache/poi | Apache-2.0 | 2007 (12.0) | 64512 | `c59b7160c21a531e5872e76141c4cd43a4d74f30d78401f64175467fa40c44fc` |
 | `LinkAt10.pub` | apache/poi | Apache-2.0 | 2007 (12.0) | 64512 | `f1b7f65cb9646fddc2cfc77a795109bb958f629e4fbf7c9fc7a4d1b045074c35` |

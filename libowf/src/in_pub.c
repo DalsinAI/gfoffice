@@ -12,6 +12,7 @@
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
+#include "owf_inflate.h"
 #include "owf_pub.h"
 
 #ifdef OWF_HAVE_ZLIB
@@ -559,6 +560,30 @@ static const char *picture_mime(span p, size_t *skip)
     return NULL;
 }
 
+/* zlib data (RFC 1950) into out, which it must fill exactly: through zlib
+ * when it is built in, else libowf's own inflate (raw DEFLATE after the
+ * 2-byte header; the checksum after the last block is not checked). */
+static int inflate_zlib(unsigned char *out, unsigned long full, span z)
+{
+#ifdef OWF_HAVE_ZLIB
+    z_stream zs;
+    memset(&zs, 0, sizeof zs);
+    if (inflateInit2(&zs, 15) == Z_OK) {
+        int ok;
+        zs.next_in = (unsigned char *)z.p;
+        zs.avail_in = (unsigned)z.n;
+        zs.next_out = out;
+        zs.avail_out = (unsigned)full;
+        ok = inflate(&zs, Z_FINISH) == Z_STREAM_END && zs.total_out == full;
+        inflateEnd(&zs);
+        return ok ? OWF_OK : OWF_ERR_CORRUPT;
+    }
+#endif
+    if (z.n < 2 || (z.p[0] & 0x0F) != 8 || (z.p[1] & 0x20) || ((unsigned)z.p[0] << 8 | z.p[1]) % 31)
+        return OWF_ERR_CORRUPT;
+    return owf_inflate(out, full, z.p + 2, z.n - 2);
+}
+
 static int add_picture(reader *r, unsigned rtype, span body, int n)
 {
     char name[24] = "picture";
@@ -575,42 +600,28 @@ static int add_picture(reader *r, unsigned rtype, span body, int n)
            size, u32 compressed size, u8 compression 0, u8), then zlib data */
         unsigned long full = rd32(body, 16), packed = rd32(body, 44);
         span z = sub(body, 50, packed);
-        if (body.p && has(body, 48, 1) && body.p[48] == 0 && full && full < 0x4000000UL) {
-#ifdef OWF_HAVE_ZLIB
-            const char *kind = rtype == 0xF01A ? "image/x-emf" : "image/x-wmf";
-            unsigned char *out = owf_malloc(full);
-            z_stream zs;
-            int ok = 0;
-            if (!out) {
-                r->failed = 1;
-                return -1;
-            }
-            memset(&zs, 0, sizeof zs);
-            if (inflateInit2(&zs, 15) == Z_OK) {
-                zs.next_in = (unsigned char *)z.p;
-                zs.avail_in = (unsigned)z.n;
-                zs.next_out = out;
-                zs.avail_out = (unsigned)full;
-                ok = inflate(&zs, Z_FINISH) == Z_STREAM_END && zs.total_out == full;
-                inflateEnd(&zs);
-            }
-            index = ok ? owf_doc_add_image(r->pub->res, name, kind, out, full, 0, 0, NULL) : -1;
-            owf_free(out);
-            if (ok && index < 0)
-                r->failed = 1;
-            if (!ok)
-                owf_report_add(r->report, OWF_NOTE_LOST, "A metafile picture is damaged; it is left out");
-            return index;
-#else
-            index = owf_doc_add_image(r->pub->res, name, rtype == 0xF01A ? "image/x-emf-deflate" : "image/x-wmf-deflate",
-                                      z.p, z.n, 0, 0, NULL);
+        unsigned char *out;
+        if (!body.p || !has(body, 48, 1) || body.p[48] != 0 || !full || full >= 0x4000000UL) {
+            owf_report_add(r->report, OWF_NOTE_LOST, "A metafile picture is stored in a way not known yet; it is left out");
+            return -1;
+        }
+        if (!(out = owf_malloc(full))) {
+            owf_report_add(r->report, OWF_NOTE_LOST, "A picture is too big for the memory free; it is left out");
+            return -1;
+        }
+        index = -1;
+        k = (size_t)inflate_zlib(out, full, z);
+        if (k == OWF_OK) {
+            index = owf_doc_add_image(r->pub->res, name, rtype == 0xF01A ? "image/x-emf" : "image/x-wmf", out, full, 0, 0, NULL);
             if (index < 0)
                 r->failed = 1;
-            return index;
-#endif
+        } else if (k == OWF_ERR_MEMORY) {
+            owf_report_add(r->report, OWF_NOTE_LOST, "A picture is too big for the memory free; it is left out");
+        } else {
+            owf_report_add(r->report, OWF_NOTE_LOST, "A metafile picture is damaged; it is left out");
         }
-        owf_report_add(r->report, OWF_NOTE_LOST, "A metafile picture is stored in a way not known yet; it is left out");
-        return -1;
+        owf_free(out);
+        return index;
     }
     if (rtype == 0xF01F) {                   /* a DIB: 16-byte id, a tag byte, then BITMAPINFOHEADER */
         span d = sub(body, 17, body.n);
