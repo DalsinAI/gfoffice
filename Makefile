@@ -21,14 +21,16 @@ $(OUT)/owconvert-asan: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/owconvert.c -lz -o $@
 
-test: $(OUT)/owconvert $(OUT)/book-dump
+test: $(OUT)/owconvert $(OUT)/book-dump $(OUT)/test-calc
 	python3 tests/run_tests.py $(OUT)/owconvert
 	python3 tests/book/test_books.py $(OUT)/book-dump $(OUT)/owconvert
+	$(OUT)/test-calc $(CALC_FIXTURES)
 
-check: $(OUT)/owconvert-asan $(OUT)/test-core-asan $(OUT)/book-dump-asan
+check: $(OUT)/owconvert-asan $(OUT)/test-core-asan $(OUT)/book-dump-asan $(OUT)/test-calc-asan
 	python3 tests/run_tests.py $(OUT)/owconvert-asan
 	$(OUT)/test-core-asan
 	python3 tests/book/test_books.py $(OUT)/book-dump-asan $(OUT)/owconvert-asan
+	$(OUT)/test-calc-asan $(CALC_FIXTURES)
 
 clean:
 	rm -rf build
@@ -123,3 +125,27 @@ book-check: $(OUT)/book-dump-asan $(OUT)/owconvert-asan
 	python3 tests/book/test_books.py $(OUT)/book-dump-asan $(OUT)/owconvert-asan
 
 .PHONY: book-test book-check
+
+# The formula engine (OpenCalc's): libowf/calc, linked only by what
+# calculates (it needs -lm). tests/calc/test_calc.c checks it, and works out
+# the fixtures' formulas again against the results saved in them
+# (tests/calc/make_calc_fixtures.py makes calc.xls with LibreOffice).
+CALC_SRC = $(wildcard libowf/calc/*.c)
+CALC_FIXTURES = tests/book/fixtures/book.xls tests/calc/fixtures/calc.xls
+
+$(OUT)/test-calc: $(OWF_SRC) $(CALC_SRC) tests/calc/test_calc.c libowf/include/owf.h libowf/include/owf_calc.h libowf/calc/owf_calc_int.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/calc $(OWF_SRC) $(CALC_SRC) tests/calc/test_calc.c -lz -lm -o $@
+
+$(OUT)/test-calc-asan: $(OWF_SRC) $(CALC_SRC) tests/calc/test_calc.c libowf/include/owf.h libowf/include/owf_calc.h libowf/calc/owf_calc_int.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src -Ilibowf/calc $(OWF_SRC) $(CALC_SRC) tests/calc/test_calc.c -lz -lm -o $@
+
+calc-test: $(OUT)/test-calc
+	$(OUT)/test-calc $(CALC_FIXTURES)
+
+calc-check: $(OUT)/test-calc-asan
+	$(OUT)/test-calc-asan $(CALC_FIXTURES)
+
+.PHONY: calc-test calc-check
