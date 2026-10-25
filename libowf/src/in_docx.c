@@ -73,7 +73,29 @@ typedef struct {
     const char *current_href;
     int next_table_id;
     const rels *rels_now;    /* the relationships of the part being read (a header's own); NULL: the document's */
+    const char *default_table;  /* the default table style's id (2.0.19) */
+    const struct table_style *tstyle;   /* the table being read's style, for its cells (2.0.19); NULL: none */
+    int t_row, t_col, t_rows, t_cols;   /* the cell being read, and its table's size */
 } docx;
+
+/* 2.0.19: a table style (w:style w:type="table"), worked out for one table: what it gives its cells'
+ * paragraphs and text (pPr, rPr) and their fill (tcPr's shd), for the whole table and for each of its
+ * conditional parts (w:tblStylePr), in the order Word applies them; with its parents' (basedOn) first. */
+enum {
+    TS_WHOLE, TS_BAND1_VERT, TS_BAND2_VERT, TS_BAND1_HORZ, TS_BAND2_HORZ,
+    TS_FIRST_COL, TS_LAST_COL, TS_FIRST_ROW, TS_LAST_ROW, TS_PARTS
+};
+/* which parts a table uses (w:tblLook) */
+enum { TL_FIRST_ROW = 0x20, TL_LAST_ROW = 0x40, TL_FIRST_COL = 0x80, TL_LAST_COL = 0x100,
+       TL_NO_HBAND = 0x200, TL_NO_VBAND = 0x400 };
+typedef struct table_style {
+    owf_paraprops pp[TS_PARTS];
+    owf_charprops cp[TS_PARTS];
+    unsigned long shading[TS_PARTS];
+    unsigned char has_shading[TS_PARTS];
+    int row_band, col_band;  /* rows and columns in a band (tblStyleRowBandSize, ColBandSize) */
+    unsigned look;
+} table_style;
 
 /* ---- Small helpers ---- */
 
@@ -458,6 +480,9 @@ static void read_styles(docx *d)
             continue;
         type = owf_xml_attr(n, d->w, "type");
         id = owf_xml_attr(n, d->w, "styleId");
+        def = owf_xml_attr(n, d->w, "default");
+        if (type && !strcmp(type, "table") && id && def && (!strcmp(def, "1") || !strcmp(def, "true")))
+            d->default_table = id;           /* 2.0.19: read for each table that uses it (table_style_of) */
         family = type && !strcmp(type, "paragraph") ? OWF_FAMILY_PARAGRAPH
                : type && !strcmp(type, "character") ? OWF_FAMILY_TEXT : 0;
         if (!family || !id || !(st = owf_styles_add(&d->styles, id, family))) {
@@ -475,7 +500,6 @@ static void read_styles(docx *d)
                 st->pp.mask |= OWF_PP_HEADING;
             }
         }
-        def = owf_xml_attr(n, d->w, "default");
         if (family == OWF_FAMILY_PARAGRAPH && def && on_off(d, n) && (!strcmp(def, "1") || !strcmp(def, "true")))
             d->default_para = id;
     }
@@ -1288,14 +1312,173 @@ static void paragraph(docx *d, const owf_xml_node *p)
 
 static void blocks(docx *d, const owf_xml_node *n);
 
+/* ---- 2.0.19: table styles ---- */
+
+static const owf_xml_node *table_style_node(docx *d, const char *id)
+{
+    const owf_xml_node *n;
+    if (!id || !d->styles_xml)
+        return NULL;
+    for (n = owf_xml_root(d->styles_xml)->first; n; n = n->next) {
+        const char *type, *sid;
+        if (!is_w(d, n, "style"))
+            continue;
+        type = owf_xml_attr(n, d->w, "type");
+        sid = owf_xml_attr(n, d->w, "styleId");
+        if (type && sid && !strcmp(type, "table") && !strcmp(sid, id))
+            return n;
+    }
+    return NULL;
+}
+
+/* A part's pPr, rPr and tcPr's fill, over what the part has so far. */
+static void table_part(docx *d, table_style *ts, int part, const owf_xml_node *n)
+{
+    owf_paraprops pp;
+    owf_charprops cp;
+    const owf_xml_node *shd = wchild(d, wchild(d, n, "tcPr"), "shd");
+    memset(&pp, 0, sizeof pp);
+    memset(&cp, 0, sizeof cp);
+    read_ppr(d, wchild(d, n, "pPr"), &pp, NULL, NULL);
+    read_rpr(d, wchild(d, n, "rPr"), &cp);
+    owf_paraprops_apply(&ts->pp[part].fmt, &pp);
+    ts->pp[part].mask |= pp.mask;
+    owf_charprops_apply(&ts->cp[part].fmt, &cp);
+    ts->cp[part].mask |= cp.mask;
+    if (shd) {
+        ts->shading[part] = docx_fill(d, shd);
+        ts->has_shading[part] = 1;
+    }
+}
+
+static void table_style_add(docx *d, table_style *ts, const owf_xml_node *st, int depth)
+{
+    static const char *const parts[TS_PARTS] = {
+        "wholeTable", "band1Vert", "band2Vert", "band1Horz", "band2Horz", "firstCol", "lastCol", "firstRow", "lastRow"
+    };
+    const owf_xml_node *n, *based, *tblpr;
+    int i, v;
+    if (!st || depth > 16)                   /* depth: a style that is its own ancestor */
+        return;
+    based = wchild(d, st, "basedOn");
+    tblpr = wchild(d, st, "tblPr");
+    if (based && wval(d, based))
+        table_style_add(d, ts, table_style_node(d, wval(d, based)), depth + 1);
+    table_part(d, ts, TS_WHOLE, st);
+    if ((n = wchild(d, tblpr, "tblStyleRowBandSize")) && wval(d, n) && (v = atoi(wval(d, n))) > 0)
+        ts->row_band = v;
+    if ((n = wchild(d, tblpr, "tblStyleColBandSize")) && wval(d, n) && (v = atoi(wval(d, n))) > 0)
+        ts->col_band = v;
+    for (n = st->first; n; n = n->next) {
+        const char *type;
+        if (!is_w(d, n, "tblStylePr") || !(type = owf_xml_attr(n, d->w, "type")))
+            continue;
+        for (i = 0; i < TS_PARTS && strcmp(parts[i], type); i++)
+            ;
+        if (i < TS_PARTS)
+            table_part(d, ts, i, n);
+    }
+}
+
+/* The parts a table uses: w:tblLook's attributes (Word 2010 on), or its w:val (Word 2007's bits). A table
+ * without one uses none but the whole table's. */
+static unsigned table_look(docx *d, const owf_xml_node *look)
+{
+    static const struct { const char *name; unsigned bit; } attrs[] = {
+        { "firstRow", TL_FIRST_ROW }, { "lastRow", TL_LAST_ROW }, { "firstColumn", TL_FIRST_COL },
+        { "lastColumn", TL_LAST_COL }, { "noHBand", TL_NO_HBAND }, { "noVBand", TL_NO_VBAND }
+    };
+    const char *v;
+    unsigned bits = 0;
+    size_t i;
+    int named = 0;
+    if (!look)
+        return TL_NO_HBAND | TL_NO_VBAND;
+    for (i = 0; i < sizeof attrs / sizeof attrs[0]; i++)
+        if ((v = owf_xml_attr(look, d->w, attrs[i].name))) {
+            named = 1;
+            if (strcmp(v, "0") && strcmp(v, "false") && strcmp(v, "off"))
+                bits |= attrs[i].bit;
+        }
+    if (!named && (v = wval(d, look)))
+        bits = (unsigned)strtoul(v, NULL, 16);
+    return bits;
+}
+
+/* The table's style (its w:tblStyle, or the default table style), into ts: 0 when it has none. */
+static int table_style_of(docx *d, const owf_xml_node *t, table_style *ts)
+{
+    const owf_xml_node *tblpr = wchild(d, t, "tblPr"), *ref = wchild(d, tblpr, "tblStyle");
+    const owf_xml_node *st = table_style_node(d, ref ? wval(d, ref) : d->default_table);
+    if (!st)
+        return 0;
+    memset(ts, 0, sizeof *ts);
+    ts->row_band = ts->col_band = 1;
+    table_style_add(d, ts, st, 0);
+    ts->look = table_look(d, wchild(d, tblpr, "tblLook"));
+    return 1;
+}
+
+/* The parts of the table's style that the cell being read takes, in the order Word applies them. */
+static int table_parts(const docx *d, int *parts)
+{
+    const table_style *ts = d->tstyle;
+    int n = 0, first_row, last_row, first_col, last_col;
+    if (!ts)
+        return 0;
+    first_row = (ts->look & TL_FIRST_ROW) && d->t_row == 0;
+    last_row = (ts->look & TL_LAST_ROW) && d->t_row == d->t_rows - 1;
+    first_col = (ts->look & TL_FIRST_COL) && d->t_col == 0;
+    last_col = (ts->look & TL_LAST_COL) && d->t_col == d->t_cols - 1;
+    parts[n++] = TS_WHOLE;
+    if (!(ts->look & TL_NO_VBAND) && !first_col && !last_col) {
+        int c = d->t_col - ((ts->look & TL_FIRST_COL) ? 1 : 0);
+        parts[n++] = (c / ts->col_band) % 2 ? TS_BAND2_VERT : TS_BAND1_VERT;
+    }
+    if (!(ts->look & TL_NO_HBAND) && !first_row && !last_row) {
+        int r = d->t_row - ((ts->look & TL_FIRST_ROW) ? 1 : 0);
+        parts[n++] = (r / ts->row_band) % 2 ? TS_BAND2_HORZ : TS_BAND1_HORZ;
+    }
+    if (first_col) parts[n++] = TS_FIRST_COL;
+    if (last_col) parts[n++] = TS_LAST_COL;
+    if (first_row) parts[n++] = TS_FIRST_ROW;
+    if (last_row) parts[n++] = TS_LAST_ROW;
+    return n;
+}
+
+/* A cell's paragraph and text, before its paragraph style: the document's defaults, then its table's style
+ * (Word's order: defaults, table style, paragraph style, the paragraph's own). */
+static void cell_base(const docx *d, owf_parafmt *pf, owf_charfmt *cf)
+{
+    int parts[TS_PARTS], i, n = table_parts(d, parts);
+    *pf = d->base_para;
+    *cf = d->base_char;
+    for (i = 0; i < n; i++) {
+        owf_paraprops_apply(pf, &d->tstyle->pp[parts[i]]);
+        owf_charprops_apply(cf, &d->tstyle->cp[parts[i]]);
+    }
+}
+
+/* The cell's fill from its table's style; 0: none. */
+static unsigned long cell_style_shading(const docx *d)
+{
+    int parts[TS_PARTS], i, n = table_parts(d, parts);
+    unsigned long fill = 0;
+    for (i = 0; i < n; i++)
+        if (d->tstyle->has_shading[parts[i]])
+            fill = d->tstyle->shading[parts[i]];
+    return fill;
+}
+
 static void cell_content(docx *d, const owf_xml_node *n, int *first)
 {
     const owf_xml_node *c;
     for (c = n->first; c; c = c->next) {
         if (is_w(d, c, "p")) {
             const owf_xml_node *pstyle = wchild(d, wchild(d, c, "pPr"), "pStyle");
-            owf_parafmt pf = d->base_para;
-            owf_charfmt cf = d->base_char;
+            owf_parafmt pf;
+            owf_charfmt cf;
+            cell_base(d, &pf, &cf);
             owf_styles_resolve(d->tables, 1, pstyle ? wval(d, pstyle) : d->default_para, OWF_FAMILY_PARAGRAPH, &pf, &cf);
             if (!*first) {                           /* a cell holds one paragraph: the next starts a line */
                 set_fmt(d, &cf);
@@ -1318,9 +1501,10 @@ static owf_parafmt cell_format(docx *d, const owf_xml_node *cell)
     const owf_xml_node *c, *ppr = NULL, *pstyle;
     const char *num_id = NULL;
     int num_level = 0;
-    owf_parafmt pf = d->base_para;
-    owf_charfmt cf = d->base_char;
+    owf_parafmt pf;
+    owf_charfmt cf;
     owf_paraprops pp;
+    cell_base(d, &pf, &cf);
     for (c = cell->first; c; c = c->next)
         if (is_w(d, c, "p")) {
             ppr = wchild(d, c, "pPr");
@@ -1339,7 +1523,18 @@ static owf_parafmt cell_format(docx *d, const owf_xml_node *cell)
 static void table(docx *d, const owf_xml_node *t)
 {
     const owf_xml_node *row, *cell;
-    int table_id = d->next_table_id++, row_index = 0;
+    int table_id = d->next_table_id++, row_index = 0, rows = 0;
+    /* 2.0.19: the table's style for its cells; rows in a w:sdt (read here too) keep their table's */
+    const table_style *outer = d->tstyle;
+    int outer_rows = d->t_rows, is_tbl = is_w(d, t, "tbl");
+    table_style *ts = is_tbl ? malloc(sizeof *ts) : NULL;
+    if (is_tbl)
+        d->tstyle = ts && table_style_of(d, t, ts) ? ts : NULL;
+    for (row = t->first; row; row = row->next)
+        if (is_w(d, row, "tr"))
+            ++rows;
+    if (is_tbl)
+        d->t_rows = rows;
     for (row = t->first; row; row = row->next) {
         int col = 0, cols = 0;
         if (!is_w(d, row, "tr")) {
@@ -1353,6 +1548,9 @@ static void table(docx *d, const owf_xml_node *t)
             int first = 1, before;
             owf_para *p;
             if (!is_w(d, cell, "tc")) continue;
+            d->t_row = row_index;
+            d->t_col = col;
+            d->t_cols = cols;
             {
                 owf_parafmt pf = cell_format(d, cell);
                 start_para(d, &pf);
@@ -1367,11 +1565,15 @@ static void table(docx *d, const owf_xml_node *t)
             }
             p=&d->b->story->paras[d->b->story->nparas-1];
             p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
-            { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd"); if (shd) p->cell_shading = docx_fill(d, shd); }
+            { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd");
+              p->cell_shading = shd ? docx_fill(d, shd) : cell_style_shading(d); }
             ++col;
         }
         ++row_index;
     }
+    free(ts);
+    d->tstyle = outer;
+    d->t_rows = outer_rows;
 }
 
 static void blocks(docx *d, const owf_xml_node *n)
