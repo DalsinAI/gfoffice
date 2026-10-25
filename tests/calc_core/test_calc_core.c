@@ -1100,6 +1100,108 @@ static void test_draw(void)
     oc_core_free(core);
 }
 
+/* A cell given a style with these borders (left, right, top, bottom) in one colour. */
+static void bordered(oc_core *core, const char *cell, int left, int right, int top, int bottom, unsigned long colour)
+{
+    owf_book *book = oc_core_book(core);
+    owf_cellstyle st;
+    owf_range r;
+    owf_cell *c;
+    int side;
+    if (!oc_parse_range(cell, &r))
+        return;
+    owf_cellstyle_init(&st);
+    st.border[OWF_SIDE_LEFT] = (unsigned char)left;
+    st.border[OWF_SIDE_RIGHT] = (unsigned char)right;
+    st.border[OWF_SIDE_TOP] = (unsigned char)top;
+    st.border[OWF_SIDE_BOTTOM] = (unsigned char)bottom;
+    for (side = 0; side < 4; side++)
+        st.border_colour[side] = colour;
+    c = owf_sheet_cell(&book->sheets[0], r.first_row, r.first_col, 1);
+    if (c)
+        c->style = owf_book_style(book, &st);
+}
+
+/* Border lines that cover pixel (x, y): how many, and the last one. */
+static int borders_at(const oc_draw_list *l, int x, int y, const oc_draw_item **found)
+{
+    int i, n = 0;
+    for (i = 0; i < l->n; i++) {
+        const oc_draw_item *it = &l->items[i];
+        if (it->kind != OC_DRAW_LINE || it->role != OC_ROLE_BORDER)
+            continue;
+        if ((it->w == 0 && it->x == x && y >= it->y && y < it->y + it->h) ||
+            (it->h == 0 && it->y == y && x >= it->x && x < it->x + it->w)) {
+            n++;
+            if (found)
+                *found = it;
+        }
+    }
+    return n;
+}
+
+static void test_borders(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    const oc_draw_item *it = NULL;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    /* weights and dashes */
+    CHECK(oc_line_weight(OWF_LINE_NONE) == 0 && oc_line_weight(OWF_LINE_THIN) == 1 && oc_line_weight(OWF_LINE_HAIR) == 1);
+    CHECK(oc_line_weight(OWF_LINE_MEDIUM) == 2 && oc_line_weight(OWF_LINE_MEDIUM_DASHED) == 2);
+    CHECK(oc_line_weight(OWF_LINE_THICK) == 3 && oc_line_weight(OWF_LINE_DOUBLE) == 3);
+    CHECK(oc_line_weight(OWF_LINE_DASHED) == 1 && oc_line_weight(OWF_LINE_DOTTED) == 1);
+    CHECK(oc_line_pattern(OWF_LINE_THIN) == 0xFFFF && oc_line_pattern(OWF_LINE_THICK) == 0xFFFF);
+    CHECK(oc_line_pattern(OWF_LINE_DASHED) != 0xFFFF && oc_line_pattern(OWF_LINE_DOTTED) != 0xFFFF &&
+          oc_line_pattern(OWF_LINE_HAIR) != 0xFFFF && oc_line_pattern(OWF_LINE_DASH_DOT) != 0xFFFF);
+    CHECK(oc_line_pattern(OWF_LINE_DASHED) != oc_line_pattern(OWF_LINE_DOTTED));
+
+    /* B2's right side and C2's left side are one edge, drawn once in the heavier line (C2's medium), in its colour */
+    bordered(core, "B2", 0, OWF_LINE_THIN, 0, 0, OWF_SHADE(0x808080));
+    bordered(core, "C2", OWF_LINE_MEDIUM, 0, 0, 0, OWF_SHADE(0x112233));
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(borders_at(&l, 40 + 2 * 64 - 1, 18 + 17 + 8, &it) == 1);
+    CHECK(it && it->line == OWF_LINE_MEDIUM && it->rgb == 0x112233);
+    CHECK(count_kind(&l, OC_DRAW_LINE, OC_ROLE_BORDER) == 1);
+    /* the same lines on both sides: still once, in the file's colour (automatic when it gives none) */
+    bordered(core, "B2", 0, OWF_LINE_THIN, 0, 0, OWF_SHADE(0x808080));
+    bordered(core, "C2", OWF_LINE_THIN, 0, 0, 0, OWF_SHADE(0x808080));
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(borders_at(&l, 40 + 2 * 64 - 1, 18 + 17 + 8, &it) == 1 && it && it->rgb == 0x808080 && it->line == OWF_LINE_THIN);
+    bordered(core, "B2", 0, OWF_LINE_THIN, 0, 0, 0);
+    bordered(core, "C2", 0, 0, 0, 0, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(borders_at(&l, 40 + 2 * 64 - 1, 18 + 17 + 8, &it) == 1 && it && it->rgb == OWF_COLOUR_AUTO);
+    bordered(core, "B2", 0, 0, 0, 0, 0);
+
+    /* B4:D4 boxed, every cell with all four sides: the top and bottom are one line each across the three,
+       and the three cells' four upright edges one each */
+    bordered(core, "B4", OWF_LINE_THIN, OWF_LINE_THIN, OWF_LINE_THIN, OWF_LINE_THIN, 0);
+    bordered(core, "C4", OWF_LINE_THIN, OWF_LINE_THIN, OWF_LINE_THIN, OWF_LINE_THIN, 0);
+    bordered(core, "D4", OWF_LINE_THIN, OWF_LINE_THIN, OWF_LINE_THIN, OWF_LINE_THIN, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(count_kind(&l, OC_DRAW_LINE, OC_ROLE_BORDER) == 2 + 4);
+    CHECK(borders_at(&l, 40 + 64 + 10, 18 + 3 * 17 - 1, &it) == 1 && it && it->x == 40 + 64 - 1 && it->w == 3 * 64 + 1);
+    CHECK(borders_at(&l, 40 + 2 * 64 - 1, 18 + 3 * 17 + 8, NULL) == 1);
+    /* merged, the lines inside it go: the outline stays */
+    owf_sheet_merge(&oc_core_book(core)->sheets[0], &(owf_range){ 3, 3, 1, 3 });
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(borders_at(&l, 40 + 2 * 64 - 1, 18 + 3 * 17 + 8, NULL) == 0);
+    CHECK(borders_at(&l, 40 + 3 * 64 - 1, 18 + 3 * 17 + 8, NULL) == 0);
+    CHECK(borders_at(&l, 40 + 64 - 1, 18 + 3 * 17 + 8, NULL) == 1);
+    CHECK(borders_at(&l, 40 + 4 * 64 - 1, 18 + 3 * 17 + 8, NULL) == 1);
+    CHECK(count_kind(&l, OC_DRAW_LINE, OC_ROLE_BORDER) == 2 + 2);
+    /* a dashed line under a row is one item, so its dashes run on */
+    bordered(core, "B7", 0, 0, 0, OWF_LINE_DASHED, 0);
+    bordered(core, "C7", 0, 0, 0, OWF_LINE_DASHED, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(borders_at(&l, 40 + 64 + 100, 18 + 7 * 17 - 1, &it) == 1 && it && it->line == OWF_LINE_DASHED && it->w == 2 * 64 + 1);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -1314,6 +1416,7 @@ int main(void)
     test_clipboard();
     test_sheets();
     test_draw();
+    test_borders();
     test_status();
     test_files();
     if (failures) {

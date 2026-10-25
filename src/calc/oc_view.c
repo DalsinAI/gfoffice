@@ -814,33 +814,194 @@ static int grid_lines(drawing *d)
     return 1;
 }
 
-static int border_items(drawing *d, int i, int j, const owf_cellstyle *st, int x, int y, int w, int h)
+/* ---- Cell borders ----
+ * Two cells meet on one edge, and each may give it a line (the left one
+ * its right side, the right one its left side): the edge is drawn once,
+ * in the heavier of the two lines, as Excel and LibreOffice draw it. No
+ * line is drawn inside a merged range. A line goes on along a row or down
+ * a column as one item, so that its dashes run on. */
+
+int oc_line_weight(int line)
 {
-    int side;
-    for (side = 0; side < 4; side++) {
-        oc_draw_item *it;
-        if (!st->border[side])
-            continue;
-        switch (side) {
-        case OWF_SIDE_LEFT:
-            it = add_box(d->list, OC_DRAW_LINE, OC_ROLE_BORDER, x - 1, y - 1, 0, h + 1);
-            break;
-        case OWF_SIDE_RIGHT:
-            it = add_box(d->list, OC_DRAW_LINE, OC_ROLE_BORDER, x + w - 1, y - 1, 0, h + 1);
-            break;
-        case OWF_SIDE_TOP:
-            it = add_box(d->list, OC_DRAW_LINE, OC_ROLE_BORDER, x - 1, y - 1, w + 1, 0);
-            break;
-        default:
-            it = add_box(d->list, OC_DRAW_LINE, OC_ROLE_BORDER, x - 1, y + h - 1, w + 1, 0);
-            break;
+    switch (line) {
+    case OWF_LINE_NONE:
+        return 0;
+    case OWF_LINE_MEDIUM:
+    case OWF_LINE_MEDIUM_DASHED:
+    case OWF_LINE_MEDIUM_DASH_DOT:
+    case OWF_LINE_MEDIUM_DASH_DOT_DOT:
+    case OWF_LINE_SLANTED_DASH_DOT:
+        return 2;
+    case OWF_LINE_THICK:
+    case OWF_LINE_DOUBLE:
+        return 3;
+    }
+    return 1;                                                /* thin, hair, dashed, dotted, dash-dot(-dot) */
+}
+
+unsigned oc_line_pattern(int line)
+{
+    switch (line) {
+    case OWF_LINE_HAIR:
+        return 0xAAAAu;                                      /* every other pixel */
+    case OWF_LINE_DOTTED:
+        return 0xCCCCu;                                      /* 2 on, 2 off */
+    case OWF_LINE_DASHED:
+        return 0xF0F0u;                                      /* 4 on, 4 off */
+    case OWF_LINE_MEDIUM_DASHED:
+        return 0xFF00u;                                      /* 8 on, 8 off */
+    case OWF_LINE_DASH_DOT:
+    case OWF_LINE_MEDIUM_DASH_DOT:
+    case OWF_LINE_SLANTED_DASH_DOT:
+        return 0xFF18u;                                      /* 8 on, 3 off, 2 on, 3 off */
+    case OWF_LINE_DASH_DOT_DOT:
+    case OWF_LINE_MEDIUM_DASH_DOT_DOT:
+        return 0xFCCCu;                                      /* 6 on, 2 off, 2 on, 2 off, 2 on, 2 off */
+    }
+    return 0xFFFFu;
+}
+
+/* Which of two lines on one edge is drawn: the heavier (double, thick,
+ * medium, the medium dashes, thin, then the light dashes and dots). */
+static int line_rank(int line)
+{
+    static const unsigned char rank[14] = {
+        0,  /* none */           7,  /* thin */           11, /* medium */     6,  /* dashed */
+        3,  /* dotted */         12, /* thick */          13, /* double */     1,  /* hair */
+        10, /* medium dashed */  5,  /* dash dot */       9,  /* medium dash dot */
+        4,  /* dash dot dot */   8,  /* medium dash dot dot */                 9   /* slanted dash dot */
+    };
+    return line > 0 && line < 14 ? rank[line] : 0;
+}
+
+static const owf_cellstyle *style_at(const drawing *d, unsigned row, unsigned col)
+{
+    return oc_cell_style(d->core, owf_sheet_find(d->sheet, row, col), col);
+}
+
+/* The line on the edge a's side_a shares with b's side_b (b NULL: none). */
+static int edge_line(const owf_cellstyle *a, int side_a, const owf_cellstyle *b, int side_b, unsigned long *rgb)
+{
+    int la = a->border[side_a], lb = b ? b->border[side_b] : OWF_LINE_NONE;
+    unsigned long c;
+    if (line_rank(lb) > line_rank(la)) {
+        la = lb;
+        c = b->border_colour[side_b];
+    } else {
+        c = a->border_colour[side_a];
+    }
+    *rgb = OWF_SHADE_SET(c) ? OWF_SHADE_RGB(c) : OWF_COLOUR_AUTO;
+    return la;
+}
+
+/* Both cells in one merged range: the edge between them is inside it. */
+static int same_merge(const owf_sheet *s, unsigned r0, unsigned c0, unsigned r1, unsigned c1)
+{
+    const owf_range *m = oc_merge_at(s, r0, c0);
+    return m && r1 >= m->first_row && r1 <= m->last_row && c1 >= m->first_col && c1 <= m->last_col;
+}
+
+/* An edge's line: joined on to the item last made (*last, an index) when
+ * it goes on from it in the same line, else a new item. */
+static int edge_item(drawing *d, int *last, int vertical, int x, int y, int len, int line, unsigned long rgb,
+                     unsigned row, unsigned col)
+{
+    oc_draw_item *it;
+    if (!line) {
+        *last = -1;
+        return 1;
+    }
+    if (*last >= 0) {
+        it = &d->list->items[*last];
+        if (it->line == line && it->rgb == rgb) {
+            if (vertical && it->x == x && it->y + it->h >= y && y + len > it->y + it->h) {
+                it->h = y + len - it->y;
+                return 1;
+            }
+            if (!vertical && it->y == y && it->x + it->w >= x && x + len > it->x + it->w) {
+                it->w = x + len - it->x;
+                return 1;
+            }
         }
-        if (!it)
-            return 0;
-        it->line = st->border[side];
-        it->rgb = OWF_SHADE_SET(st->border_colour[side]) ? OWF_SHADE_RGB(st->border_colour[side]) : OWF_COLOUR_AUTO;
-        it->row = d->rl[i].index;
-        it->col = d->cl[j].index;
+    }
+    if (!(it = add_box(d->list, OC_DRAW_LINE, OC_ROLE_BORDER, x, y, vertical ? 0 : len, vertical ? len : 0)))
+        return 0;
+    it->line = line;
+    it->rgb = rgb;
+    it->row = row;
+    it->col = col;
+    *last = d->list->n - 1;
+    return 1;
+}
+
+/* Whether visible line k touches k - 1 (hidden ones between, or the frozen pane's edge, count as nothing). */
+static int follows(const oc_line *l, int k)
+{
+    return k > 0 && l[k].pos == l[k - 1].pos + l[k - 1].size;
+}
+
+static int border_lines(drawing *d)
+{
+    const owf_sheet *s = d->sheet;
+    int i, j, last;
+    unsigned long rgb = OWF_COLOUR_AUTO;
+    /* along the rows: each row's top edge where the row above isn't showing next to it, and every bottom edge */
+    for (i = 0; i < d->nr; i++) {
+        unsigned r = d->rl[i].index;
+        int top = !follows(d->rl, i) && r > 0, y = d->rl[i].pos + d->rl[i].size - 1;
+        unsigned below = i + 1 < d->nr && follows(d->rl, i + 1) ? d->rl[i + 1].index : r + 1;
+        if (top) {
+            last = -1;
+            for (j = 0; j < d->nc; j++) {
+                unsigned c = d->cl[j].index;
+                int line = same_merge(s, r - 1, c, r, c) ? 0
+                           : edge_line(style_at(d, r, c), OWF_SIDE_TOP, style_at(d, r - 1, c), OWF_SIDE_BOTTOM, &rgb);
+                if (!follows(d->cl, j))
+                    last = -1;
+                if (!edge_item(d, &last, 0, d->cl[j].pos - 1, d->rl[i].pos - 1, d->cl[j].size + 1, line, rgb, r, c))
+                    return 0;
+            }
+        }
+        last = -1;
+        for (j = 0; j < d->nc; j++) {
+            unsigned c = d->cl[j].index;
+            int line = below < OC_MAX_ROWS && same_merge(s, r, c, below, c) ? 0
+                       : edge_line(style_at(d, r, c), OWF_SIDE_BOTTOM, below < OC_MAX_ROWS ? style_at(d, below, c) : NULL,
+                                   OWF_SIDE_TOP, &rgb);
+            if (!follows(d->cl, j))
+                last = -1;
+            if (!edge_item(d, &last, 0, d->cl[j].pos - 1, y, d->cl[j].size + 1, line, rgb, r, c))
+                return 0;
+        }
+    }
+    /* down the columns: each column's left edge where the column before isn't showing next to it, and every right edge */
+    for (j = 0; j < d->nc; j++) {
+        unsigned c = d->cl[j].index;
+        int left = !follows(d->cl, j) && c > 0, x = d->cl[j].pos + d->cl[j].size - 1;
+        unsigned next = j + 1 < d->nc && follows(d->cl, j + 1) ? d->cl[j + 1].index : c + 1;
+        if (left) {
+            last = -1;
+            for (i = 0; i < d->nr; i++) {
+                unsigned r = d->rl[i].index;
+                int line = same_merge(s, r, c - 1, r, c) ? 0
+                           : edge_line(style_at(d, r, c), OWF_SIDE_LEFT, style_at(d, r, c - 1), OWF_SIDE_RIGHT, &rgb);
+                if (!follows(d->rl, i))
+                    last = -1;
+                if (!edge_item(d, &last, 1, d->cl[j].pos - 1, d->rl[i].pos - 1, d->rl[i].size + 1, line, rgb, r, c))
+                    return 0;
+            }
+        }
+        last = -1;
+        for (i = 0; i < d->nr; i++) {
+            unsigned r = d->rl[i].index;
+            int line = next < OC_MAX_COLS && same_merge(s, r, c, r, next) ? 0
+                       : edge_line(style_at(d, r, c), OWF_SIDE_RIGHT, next < OC_MAX_COLS ? style_at(d, r, next) : NULL,
+                                   OWF_SIDE_LEFT, &rgb);
+            if (!follows(d->rl, i))
+                last = -1;
+            if (!edge_item(d, &last, 1, x, d->rl[i].pos - 1, d->rl[i].size + 1, line, rgb, r, c))
+                return 0;
+        }
     }
     return 1;
 }
@@ -1075,20 +1236,10 @@ static int build(drawing *d)
         d->list = list;
 
         /* 4. grid lines, 5. borders */
-        if (!grid_lines(d)) {
+        if (!grid_lines(d) || !border_lines(d)) {
             oc_draw_list_free(&texts);
             return 0;
         }
-        for (i = 0; i < d->nr; i++)
-            for (j = 0; j < d->nc; j++) {
-                const owf_cell *c = owf_sheet_find(s, d->rl[i].index, d->cl[j].index);
-                const owf_cellstyle *cs = oc_cell_style(core, c, d->cl[j].index);
-                if ((cs->border[0] | cs->border[1] | cs->border[2] | cs->border[3]) &&
-                    !border_items(d, i, j, cs, d->cl[j].pos, d->rl[i].pos, d->cl[j].size, d->rl[i].size)) {
-                    oc_draw_list_free(&texts);
-                    return 0;
-                }
-            }
         /* then the text, moved over */
         for (k = 0; k < texts.n; k++) {
             oc_draw_item *t = &texts.items[k];
