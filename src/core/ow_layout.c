@@ -138,6 +138,87 @@ static void para_style(const owf_doc *doc, const owf_para *p, ol_style *s, ol_bo
     }
 }
 
+static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, const owf_story *story,
+                     int record, const field_values *fv);
+
+/* 2.0.10: where a frame goes, across (x) or down (y): OpenLayout 0.4's anchor (from the page, its margins or
+ * the paragraph) and the offset from there, its alignment worked out against the area it is aligned in. */
+static ol_unit frame_at(const ol_page *pg, const owf_frame *fr, int across, uint32_t *anchor)
+{
+    int from = across ? fr->x_from : fr->y_from, place = across ? fr->x_place : fr->y_place;
+    ol_unit size = TW(across ? fr->width : fr->height), offset = TW(across ? fr->x : fr->y);
+    ol_unit page = across ? pg->width : pg->height;
+    ol_unit lead = across ? pg->margin_left : pg->margin_top, trail = across ? pg->margin_right : pg->margin_bottom;
+    ol_unit start = 0, area;
+    unsigned kind = OL_ANCHOR_PAGE;
+    switch (from) {
+    case OWF_FROM_PAGE: area = page; break;
+    case OWF_FROM_MARGIN: kind = OL_ANCHOR_MARGIN; area = page - lead - trail; break;
+    case OWF_FROM_LEFT_MARGIN: case OWF_FROM_TOP_MARGIN: area = lead; break;
+    case OWF_FROM_RIGHT_MARGIN: case OWF_FROM_BOTTOM_MARGIN: start = page - trail; area = trail; break;
+    default:                                         /* the paragraph: its corner; down, it has no height */
+        kind = OL_ANCHOR_BLOCK;
+        area = across ? page - lead - trail : 0;
+        break;
+    }
+    *anchor |= across ? OL_ANCHOR_X(kind) : OL_ANCHOR_Y(kind);
+    switch (place) {
+    case OWF_PLACE_START: return start;
+    case OWF_PLACE_CENTRE: return start + (area - size) / 2;
+    case OWF_PLACE_END: return start + area - size;
+    default: return start + offset;
+    }
+}
+
+/* 2.0.10: a picture or a text box placed on the page (owf_frame, Word's wp:anchor) as OpenLayout's anchored
+ * frame, in the paragraph it is anchored to: behind the text or in front of it, its picture filling it, a
+ * text box's paragraphs inside its insets. It moves no line and no page break; text isn't wrapped round it. */
+static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *block, const owf_frame *fr)
+{
+    ol_style s;
+    ol_box_style b;
+    ol_node *f = ol_node_append(od, block, OL_ROLE_BLOCK, NULL), *n;
+    if (!f) return 0;
+    ol_style_init(&s);
+    s.display = OL_DISPLAY_BLOCK;
+    if (fr->story.nparas) {
+        s.padding_top = TW(fr->inset[0]);
+        s.padding_right = TW(fr->inset[1]);
+        s.padding_bottom = TW(fr->inset[2]);
+        s.padding_left = TW(fr->inset[3]);
+    }
+    if (OWF_SHADE_SET(fr->fill)) s.background = argb(OWF_SHADE_RGB(fr->fill));
+    ol_node_set_style(f, &s);
+    ol_box_style_init(&b);
+    b.flags = OL_BOX_ABSOLUTE;
+    b.frame.width = TW(fr->width > 0 ? fr->width : OWF_TWIPS_PER_INCH);
+    b.frame.height = TW(fr->height > 0 ? fr->height : 0);
+    b.frame.x = frame_at(&l->page, fr, 1, &b.anchor);
+    b.frame.y = frame_at(&l->page, fr, 0, &b.anchor);
+    if (fr->behind) b.anchor |= OL_ANCHOR_BEHIND;
+    else if (!b.anchor) b.anchor = OL_ANCHOR_ON;     /* from the paragraph both ways, in front */
+    if (OWF_SHADE_SET(fr->line)) {
+        b.border_width = BORDER_WIDTH;
+        b.border_argb = argb(OWF_SHADE_RGB(fr->line));
+        b.border_sides = OL_BORDER_ALL;
+    } else {
+        b.border_sides = 0;
+    }
+    ol_node_set_box(f, &b);
+    if (fr->image >= 0 && fr->image < doc->nimages) {
+        n = ol_node_append(od, f, OL_ROLE_IMAGE, NULL);
+        if (!n) return 0;
+        ol_style_init(&s);
+        s.display = OL_DISPLAY_INLINE;
+        s.font_size = OL_POINT(1);                   /* no line height but the picture's */
+        s.line_height = b.frame.height;
+        ol_node_set_style(n, &s);
+        ol_node_set_image(n, fr->image, b.frame.width, b.frame.height);
+    }
+    /* its paragraphs, not the body's: no caret goes into them yet, and a frame in them is left out */
+    return !fr->story.nparas || add_story(NULL, doc, od, f, &fr->story, 0, NULL);
+}
+
 static const char *field_text(const field_values *fv, owf_field field)
 {
     switch (field) {
@@ -212,6 +293,12 @@ static ol_node *add_paragraph(ow_layout *l, const owf_doc *doc, ol_document *od,
         ol_node_set_style(n, &rs);
         if (!remember(l, n, index, j)) return NULL;
     }
+    /* 2.0.10: the frames anchored here (an empty run each above), after the runs, so run j stays node
+     * block + 1 + j; the body's only (l), so a text box's own frames and a header's are left out */
+    for (j = 0; l && j < p->nruns; ++j)
+        if (p->runs[j].kind == OWF_RUN_FRAME && p->runs[j].image >= 0 && p->runs[j].image < doc->nframes &&
+            !add_frame(l, doc, od, block, &doc->frames[p->runs[j].image]))
+            return NULL;
     return block;
 }
 
@@ -316,6 +403,18 @@ ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure, void *m
     l->doc = doc;
     l->measure = measure;
     l->measure_userdata = measure_userdata;
+    pg = &doc->page;                                 /* 2.0.10: first, for the frames placed on it */
+    l->page.width = TW(pg->width > 0 ? pg->width : 11906);
+    l->page.height = TW(pg->height > 0 ? pg->height : 16838);
+    l->page.margin_top = TW(pg->margin_top);
+    l->page.margin_right = TW(pg->margin_right);
+    l->page.margin_bottom = TW(pg->margin_bottom);
+    l->page.margin_left = TW(pg->margin_left);
+    if (l->page.width - l->page.margin_left - l->page.margin_right <= 0 ||
+        l->page.height - l->page.margin_top - l->page.margin_bottom <= 0) {
+        l->page.margin_top = l->page.margin_bottom = TW(OWF_TWIPS_PER_INCH);
+        l->page.margin_left = l->page.margin_right = TW(OWF_TWIPS_PER_INCH);
+    }
     l->body = ol_document_new();
     l->blocks = (ol_id *)calloc((size_t)(doc->body.nparas ? doc->body.nparas : 1), sizeof(*l->blocks));
     if (!l->body || !l->blocks || !add_story(l, doc, l->body, NULL, &doc->body, 1, NULL)) {
@@ -331,19 +430,6 @@ ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure, void *m
             ow_layout_free(l);
             return NULL;
         }
-
-    pg = &doc->page;
-    l->page.width = TW(pg->width > 0 ? pg->width : 11906);
-    l->page.height = TW(pg->height > 0 ? pg->height : 16838);
-    l->page.margin_top = TW(pg->margin_top);
-    l->page.margin_right = TW(pg->margin_right);
-    l->page.margin_bottom = TW(pg->margin_bottom);
-    l->page.margin_left = TW(pg->margin_left);
-    if (l->page.width - l->page.margin_left - l->page.margin_right <= 0 ||
-        l->page.height - l->page.margin_top - l->page.margin_bottom <= 0) {
-        l->page.margin_top = l->page.margin_bottom = TW(OWF_TWIPS_PER_INCH);
-        l->page.margin_left = l->page.margin_right = TW(OWF_TWIPS_PER_INCH);
-    }
     if (!ol_layout_pages(l->body, &l->page, measure, measure_userdata)) {
         ow_layout_free(l);
         return NULL;

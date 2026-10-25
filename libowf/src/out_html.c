@@ -107,6 +107,28 @@ static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_re
     case OWF_RUN_LINEBREAK:
         owf_buf_puts(out, "<br>");
         break;
+    case OWF_RUN_FRAME:
+        /* 1.3: a picture or a text box placed on the page, where it is anchored */
+        if (run->image >= 0 && run->image < doc->nframes) {
+            const owf_frame *fr = &doc->frames[run->image];
+            int k, j;
+            owf_buf_puts(out, "<span class=\"ow-frame\">");
+            if (fr->image >= 0 && fr->image < doc->nimages) {
+                owf_run pic = *run;
+                pic.kind = OWF_RUN_IMAGE;
+                pic.image = fr->image;
+                owf_charfmt_init(&pic.fmt);
+                put_run(out, doc, &pic, report);
+            }
+            for (k = 0; k < fr->story.nparas; k++) {
+                if (k) owf_buf_puts(out, "<br>");
+                for (j = 0; j < fr->story.paras[k].nruns; j++)
+                    if (fr->story.paras[k].runs[j].kind != OWF_RUN_FRAME)
+                        put_run(out, doc, &fr->story.paras[k].runs[j], report);
+            }
+            owf_buf_puts(out, "</span>");
+        }
+        break;
     case OWF_RUN_IMAGE:
         if (run->image >= 0 && run->image < doc->nimages && doc->images[run->image].data && doc->images[run->image].length) {
             const owf_image *im = &doc->images[run->image];

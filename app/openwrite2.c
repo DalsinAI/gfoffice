@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.9 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.10 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -312,9 +312,16 @@ static int hit_count;
 /* Where a position is drawn, even off the visible part of the page. */
 static int track_on, track_y, track_h;
 static ow_position track_pos;
-typedef struct { int index; UBYTE *argb; UWORD w,h; } ow_image_cache;
-static ow_image_cache image_cache[16];
+/* 2.0.10: pictures decoded once, at IMAGE_MAX_PIXELS at most (a cover's page-sized JPEG is read from its
+ * datatype band by band and averaged down to it), IMAGE_CACHE_BYTES of them at most, the least recently
+ * drawn going first; one that couldn't be read is remembered (argb NULL) and not tried again. */
+#define IMAGE_CACHE_SLOTS 16
+#define IMAGE_MAX_PIXELS (1024UL * 1024UL)           /* 4 MB of ARGB: a whole A4 page at 100% is 794 x 1123 */
+#define IMAGE_CACHE_BYTES (8UL * 1024UL * 1024UL)
+typedef struct { int index; UBYTE *argb; UWORD w,h; ULONG used; } ow_image_cache;
+static ow_image_cache image_cache[IMAGE_CACHE_SLOTS];
 static int image_cache_n;
+static ULONG image_cache_tick;
 static int mouse_selecting;
 static int defer_repaint, repaint_pending;
 
@@ -642,31 +649,196 @@ static void image_cache_clear(void)
     int i;for(i=0;i<image_cache_n;++i)free(image_cache[i].argb);memset(image_cache,0,sizeof image_cache);image_cache_n=0;
 }
 
+static ULONG isqrt_ul(ULONG v)
+{
+    ULONG r = 0, bit = 1UL << 30;
+    while (bit > v) bit >>= 2;
+    while (bit) {
+        if (v >= r + bit) { v -= r + bit; r = (r >> 1) + bit; }
+        else r >>= 1;
+        bit >>= 2;
+    }
+    return r;
+}
+
+/* The cached picture, or NULL when it isn't decoded (thumbnails don't decode). */
+static ow_image_cache *image_cache_peek(int index)
+{
+    int i;
+    for (i = 0; i < image_cache_n; ++i)
+        if (image_cache[i].index == index) return image_cache[i].argb ? &image_cache[i] : NULL;
+    return NULL;
+}
+
+/* Room for need more bytes: the least recently drawn pictures go. */
+static void image_cache_room(ULONG need)
+{
+    for (;;) {
+        ULONG total = 0;
+        int i, old = -1;
+        for (i = 0; i < image_cache_n; ++i) {
+            total += (ULONG)image_cache[i].w * image_cache[i].h * 4;
+            if (old < 0 || image_cache[i].used < image_cache[old].used) old = i;
+        }
+        if (old < 0 || (image_cache_n < IMAGE_CACHE_SLOTS && total + need <= IMAGE_CACHE_BYTES)) return;
+        free(image_cache[old].argb);
+        image_cache[old] = image_cache[--image_cache_n];
+        memset(&image_cache[image_cache_n], 0, sizeof image_cache[image_cache_n]);
+    }
+}
+
+/* A target row of the averages: each the sum of its source pixels over how many there were. */
+static void image_row_out(UBYTE *dst, int tw, ULONG *acc, const UWORD *cols, int rc)
+{
+    int k, b;
+    for (k = 0; k < tw; ++k) {
+        ULONG cnt = (ULONG)cols[k] * rc;
+        for (b = 0; b < 4; ++b) dst[k * 4 + b] = (UBYTE)(cnt ? acc[k * 4 + b] / cnt : 255);
+    }
+    memset(acc, 0, (size_t)tw * 4 * sizeof(ULONG));
+}
+
+/* The picture's pixels at tw x th (no more than sw x sh), from the datatype's sw x sh: each the average of
+ * the source pixels that fall in it, the source read 64 KB of rows at a time. */
+static int image_read_scaled(Object *o, UBYTE *out, int sw, int sh, int tw, int th)
+{
+    ULONG *acc = (ULONG *)calloc((size_t)tw * 4, sizeof(ULONG));
+    UWORD *xmap = (UWORD *)malloc((size_t)sw * sizeof(UWORD)), *cols = (UWORD *)calloc((size_t)tw, sizeof(UWORD));
+    int rows = 65536 / (sw * 4) > 0 ? 65536 / (sw * 4) : 1, y0, r, sx, ty = 0, rc = 0, ok = 1;
+    UBYTE *band;
+    if (rows > sh) rows = sh;
+    band = (UBYTE *)malloc((size_t)sw * 4 * rows);
+    if (!acc || !xmap || !cols || !band) ok = 0;
+    for (sx = 0; ok && sx < sw; ++sx) {
+        xmap[sx] = (UWORD)((ULONG)sx * tw / sw);
+        ++cols[xmap[sx]];
+    }
+    for (y0 = 0; ok && y0 < sh; y0 += rows) {
+        int n = sh - y0 < rows ? sh - y0 : rows;
+        if (!DoMethod(o, PDTM_READPIXELARRAY, (ULONG)band, PBPAFMT_ARGB, (ULONG)sw * 4, 0, (ULONG)y0, (ULONG)sw,
+                      (ULONG)n)) {
+            ok = 0;
+            break;
+        }
+        for (r = 0; r < n; ++r) {
+            int row_ty = (int)((ULONG)(y0 + r) * th / sh);
+            const UBYTE *src = band + (size_t)r * sw * 4;
+            if (row_ty != ty && rc) {
+                image_row_out(out + (size_t)ty * tw * 4, tw, acc, cols, rc);
+                rc = 0;
+            }
+            ty = row_ty;
+            for (sx = 0; sx < sw; ++sx, src += 4) {
+                ULONG *a = acc + xmap[sx] * 4;
+                a[0] += src[0]; a[1] += src[1]; a[2] += src[2]; a[3] += src[3];
+            }
+            ++rc;
+        }
+    }
+    if (ok && rc) image_row_out(out + (size_t)ty * tw * 4, tw, acc, cols, rc);
+    free(band);
+    free(cols);
+    free(xmap);
+    free(acc);
+    return ok;
+}
+
+/* A slot for a picture, a slot made free first; argb NULL until it is read. */
+static ow_image_cache *image_cache_add(int index)
+{
+    ow_image_cache *c;
+    image_cache_room(0);
+    c = &image_cache[image_cache_n++];
+    memset(c, 0, sizeof(*c));
+    c->index = index;
+    c->used = ++image_cache_tick;
+    return c;
+}
+
 static ow_image_cache *image_cache_get(int index)
 {
-    int i;char tmp[96];BPTR f;Object *o=NULL;struct BitMapHeader *bmh=NULL;ow_image_cache *c;const owf_image *im;
-    if(!doc||index<0||index>=doc->nimages||!DataTypesBase)return NULL;
-    for(i=0;i<image_cache_n;++i)if(image_cache[i].index==index)return &image_cache[i];
-    if(image_cache_n>=16)return NULL;
-    im=&doc->images[index];
-    snprintf(tmp,sizeof tmp,"T:OpenWrite-Image-%ld-%d.tmp",(long)FindTask(NULL),index);
-    f=Open((STRPTR)tmp,MODE_NEWFILE);if(!f)return NULL;if(Write(f,(APTR)im->data,(LONG)im->length)!=(LONG)im->length){Close(f);DeleteFile((STRPTR)tmp);return NULL;}Close(f);
-    o=NewDTObject((APTR)tmp,DTA_GroupID,GID_PICTURE,PDTA_DestMode,PMODE_V43,PDTA_Remap,FALSE,TAG_DONE);if(!o){DeleteFile((STRPTR)tmp);return NULL;}
-    GetDTAttrs(o,PDTA_BitMapHeader,(ULONG)&bmh,TAG_DONE);DoMethod(o,DTM_PROCLAYOUT,NULL,1);
-    if(!bmh||!bmh->bmh_Width||!bmh->bmh_Height){DisposeDTObject(o);DeleteFile((STRPTR)tmp);return NULL;}
-    c=&image_cache[image_cache_n];memset(c,0,sizeof(*c));c->index=index;c->w=bmh->bmh_Width;c->h=bmh->bmh_Height;c->argb=(UBYTE*)malloc((ULONG)c->w*c->h*4);
-    if(!c->argb||!DoMethod(o,PDTM_READPIXELARRAY,(ULONG)c->argb,PBPAFMT_ARGB,c->w*4,0,0,c->w,c->h)){free(c->argb);memset(c,0,sizeof(*c));DisposeDTObject(o);DeleteFile((STRPTR)tmp);return NULL;}
-    /* ScalePixelArray draws ARGB without blending: a picture with an alpha
-     * channel (a PNG logo) showed black where it is see-through. Blend it
-     * onto the paper (white) once here. A picture whose alpha bytes are all
-     * zero has no alpha channel (some datatypes leave them so): kept as it is. */
-    {
-        ULONG k,n=(ULONG)c->w*c->h;int any=0,partial=0;
-        for(k=0;k<n;++k){UBYTE a=c->argb[k*4];if(a)any=1;if(a!=255)partial=1;}
-        if(any&&partial)for(k=0;k<n;++k){UBYTE *px=c->argb+k*4;unsigned a=px[0];
-            if(a!=255){px[1]=(UBYTE)((px[1]*a+255*(255-a))/255);px[2]=(UBYTE)((px[2]*a+255*(255-a))/255);px[3]=(UBYTE)((px[3]*a+255*(255-a))/255);px[0]=255;}}
+    int i, sw, sh, tw, th, ok;
+    char tmp[96];
+    BPTR f;
+    Object *o = NULL;
+    struct BitMapHeader *bmh = NULL;
+    ow_image_cache *c;
+    const owf_image *im;
+    if (!doc || index < 0 || index >= doc->nimages || !DataTypesBase) return NULL;
+    for (i = 0; i < image_cache_n; ++i)
+        if (image_cache[i].index == index) {
+            image_cache[i].used = ++image_cache_tick;
+            return image_cache[i].argb ? &image_cache[i] : NULL;
+        }
+    im = &doc->images[index];
+    snprintf(tmp, sizeof tmp, "T:OpenWrite-Image-%ld-%d.tmp", (long)FindTask(NULL), index);
+    f = im->data && im->length ? Open((STRPTR)tmp, MODE_NEWFILE) : 0;
+    if (!f) {
+        image_cache_add(index);                      /* not tried again */
+        return NULL;
     }
-    ++image_cache_n;DisposeDTObject(o);DeleteFile((STRPTR)tmp);return c;
+    ok = Write(f, (APTR)im->data, (LONG)im->length) == (LONG)im->length;
+    Close(f);
+    if (ok) o = NewDTObject((APTR)tmp, DTA_GroupID, GID_PICTURE, PDTA_DestMode, PMODE_V43, PDTA_Remap, FALSE, TAG_DONE);
+    if (!o) {
+        DeleteFile((STRPTR)tmp);
+        image_cache_add(index);
+        return NULL;
+    }
+    GetDTAttrs(o, PDTA_BitMapHeader, (ULONG)&bmh, TAG_DONE);
+    DoMethod(o, DTM_PROCLAYOUT, NULL, 1);
+    sw = bmh ? bmh->bmh_Width : 0;
+    sh = bmh ? bmh->bmh_Height : 0;
+    tw = sw;
+    th = sh;
+    if (sw > 0 && sh > 0 && (ULONG)sw * sh > IMAGE_MAX_PIXELS) {   /* the same shape, a megapixel */
+        ULONG root = isqrt_ul((ULONG)sw * sh);
+        tw = (int)((ULONG)sw * 1024UL / root);
+        th = (int)((ULONG)sh * 1024UL / root);
+        if (tw < 1) tw = 1;
+        if (th < 1) th = 1;
+        if (tw > sw) tw = sw;
+        if (th > sh) th = sh;
+    }
+    if (sw > 0 && sh > 0) image_cache_room((ULONG)tw * th * 4);
+    c = image_cache_add(index);
+    if (sw > 0 && sh > 0 && (c->argb = (UBYTE *)malloc((ULONG)tw * th * 4)) != NULL) {
+        if (tw == sw && th == sh)
+            ok = DoMethod(o, PDTM_READPIXELARRAY, (ULONG)c->argb, PBPAFMT_ARGB, (ULONG)sw * 4, 0, 0, (ULONG)sw,
+                          (ULONG)sh) != 0;
+        else
+            ok = image_read_scaled(o, c->argb, sw, sh, tw, th);
+        if (ok) {
+            c->w = (UWORD)tw;
+            c->h = (UWORD)th;
+        } else {
+            free(c->argb);
+            c->argb = NULL;
+        }
+    }
+    DisposeDTObject(o);
+    DeleteFile((STRPTR)tmp);
+    if (!c->argb) return NULL;
+    /* ScalePixelArray and WritePixelArray draw ARGB without blending: a picture with an alpha channel (a PNG
+     * logo) showed black where it is see-through. Blend it onto the paper (white) once here. A picture whose
+     * alpha bytes are all zero has no alpha channel (some datatypes leave them so): kept as it is. */
+    {
+        ULONG k, n = (ULONG)c->w * c->h;
+        int any = 0, partial = 0;
+        for (k = 0; k < n; ++k) { UBYTE a = c->argb[k * 4]; if (a) any = 1; if (a != 255) partial = 1; }
+        if (any && partial)
+            for (k = 0; k < n; ++k) {
+                UBYTE *px = c->argb + k * 4;
+                unsigned a = px[0];
+                if (a != 255) {
+                    px[1] = (UBYTE)((px[1] * a + 255 * (255 - a)) / 255);
+                    px[2] = (UBYTE)((px[2] * a + 255 * (255 - a)) / 255);
+                    px[3] = (UBYTE)((px[3] * a + 255 * (255 - a)) / 255);
+                    px[0] = 255;
+                }
+            }
+    }
+    return c;
 }
 
 static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
@@ -1702,7 +1874,41 @@ typedef struct {
     ow_position caret;
     ol_rect caret_box;          /* units, on caret_page */
     int caret_x, caret_y, caret_h;
+    ol_pixel_rect lim;          /* 2.0.10: the page, and of it what is being drawn: pictures stay inside */
 } page_paint;
+
+/* 2.0.10: a picture into the box bx, by, bw, bh, only what of it is inside lim: each row of pixels picked from
+ * the cached picture and written a band at a time, so a page-sized picture scrolled half out of the window
+ * costs what shows, and nothing is drawn at a negative place. */
+static void draw_picture(struct RastPort *rp, const ow_image_cache *c, int bx, int by, int bw, int bh,
+                         const ol_pixel_rect *lim)
+{
+    int x0 = bx > lim->x ? bx : lim->x, y0 = by > lim->y ? by : lim->y;
+    int x1 = bx + bw < lim->x + lim->width ? bx + bw : lim->x + lim->width;
+    int y1 = by + bh < lim->y + lim->height ? by + bh : lim->y + lim->height;
+    int w = x1 - x0, rows, y, k;
+    ULONG *band;
+    UWORD *xs;
+    if (w <= 0 || y1 <= y0 || bw <= 0 || bh <= 0 || x0 < 0 || y0 < 0) return;
+    rows = 16384 / w > 0 ? 16384 / w : 1;
+    if (rows > y1 - y0) rows = y1 - y0;
+    band = (ULONG *)malloc((size_t)w * rows * 4);
+    xs = (UWORD *)malloc((size_t)w * sizeof(UWORD));
+    if (band && xs) {
+        for (k = 0; k < w; ++k) xs[k] = (UWORD)((ULONG)(x0 + k - bx) * c->w / (ULONG)bw);
+        for (y = y0; y < y1; y += rows) {
+            int n = y1 - y < rows ? y1 - y : rows, r;
+            for (r = 0; r < n; ++r) {
+                const ULONG *src = (const ULONG *)c->argb + (ULONG)(y + r - by) * c->h / (ULONG)bh * c->w;
+                ULONG *dst = band + (size_t)r * w;
+                for (k = 0; k < w; ++k) dst[k] = src[xs[k]];
+            }
+            WritePixelArray(band, 0, 0, (UWORD)(w * 4), rp, (UWORD)x0, (UWORD)y, (UWORD)w, (UWORD)n, RECTFMT_ARGB);
+        }
+    }
+    free(xs);
+    free(band);
+}
 
 static LONG argb_pen(uint32_t argb)
 {
@@ -1906,11 +2112,10 @@ static void paint_op(void *userdata, const ol_device_op *d)
     }
     case OL_OP_IMAGE: {
         int index = d->op->u.image.image_id;
-        ow_image_cache *c = pp->thumb ? NULL : image_cache_get(index);
+        ow_image_cache *c = pp->thumb ? image_cache_peek(index) : image_cache_get(index);   /* 2.0.10 */
         if (d->box.width < 1 || d->box.height < 1) break;
         if (c && CyberGfxBase && screen_depth() > 8)
-            ScalePixelArray(c->argb, c->w, c->h, c->w * 4, rp, (UWORD)d->box.x, (UWORD)d->box.y,
-                            (UWORD)d->box.width, (UWORD)d->box.height, RECTFMT_ARGB);
+            draw_picture(rp, c, d->box.x, d->box.y, d->box.width, d->box.height, &pp->lim);
         else {
             char label[96];
             ogt_frame(rp, ogt_pen(&ctx, "group.line"), d->box.x, d->box.y, d->box.width, d->box.height);
@@ -1943,6 +2148,20 @@ static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_sca
     pp.body = 1;
     pp.thumb = thumb;
     pp.page = page;
+    {   /* 2.0.10: the page, cut to clip */
+        int x0 = ol_scale_x(s, 0), y0 = ol_scale_y(s, 0);
+        int x1 = ol_scale_x(s, ow_layout_page(l)->width), y1 = ol_scale_y(s, ow_layout_page(l)->height);
+        if (clip) {
+            if (x0 < clip->x) x0 = clip->x;
+            if (y0 < clip->y) y0 = clip->y;
+            if (x1 > clip->x + clip->width) x1 = clip->x + clip->width;
+            if (y1 > clip->y + clip->height) y1 = clip->y + clip->height;
+        }
+        pp.lim.x = x0;
+        pp.lim.y = y0;
+        pp.lim.width = x1 > x0 ? x1 - x0 : 0;
+        pp.lim.height = y1 > y0 ? y1 - y0 : 0;
+    }
     if (!thumb && editor) {
         ow_selection sel = ow_editor_selection(editor);
         if (pos_compare(sel.anchor, sel.focus) <= 0) { pp.sel_a = sel.anchor; pp.sel_b = sel.focus; }

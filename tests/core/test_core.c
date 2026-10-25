@@ -556,6 +556,38 @@ static int test_page_setup_and_break(void)
 }
 
 
+/* 2.0.10: a Word cover's frames (tests/core/fixtures/cover.docx) through typing in their paragraph, whose runs
+ * are all frames, undo and redo: the undo copy holds them and their text boxes' paragraphs. */
+static int test_frames_undo(void)
+{
+    owf_doc *doc = NULL;
+    ow_editor *ed;
+    ow_selection sel;
+    int i, frames = 0;
+    if (owf_import_file("tests/core/fixtures/cover.docx", NULL, &doc, NULL, NULL) != OWF_OK || !doc) return 1901;
+    if (doc->nframes != 6 || doc->frames[1].story.nparas != 1 || doc->body.paras[0].nruns != 5) return 1902;
+    ed = ow_editor_new(doc);
+    if (!ed) return 1903;
+    memset(&sel, 0, sizeof sel);
+    ow_editor_set_selection(ed, &sel);
+    if (ow_editor_insert_utf8(ed, "x", 1) != OWF_OK) return 1904;
+    for (i = 0; i < doc->body.paras[0].nruns; ++i) frames += doc->body.paras[0].runs[i].kind == OWF_RUN_FRAME;
+    if (frames != 5 || doc->body.paras[0].nruns != 6) return 1905;
+    if (ow_editor_undo(ed) != 1) return 1906;
+    if (doc->nframes != 6 || doc->frames[1].story.nparas != 1 || doc->frames[1].story.paras[0].nruns != 1 ||
+        strcmp(doc->frames[1].story.paras[0].runs[0].text, "Cover Title"))
+        return 1907;
+    /* the frames as they were (and the empty text run the caret was given) */
+    if (doc->body.paras[0].nruns < 5 || doc->body.paras[0].runs[4].kind != OWF_RUN_FRAME ||
+        doc->body.paras[0].runs[4].image != 4 ||
+        (doc->body.paras[0].nruns == 6 && strcmp(doc->body.paras[0].runs[5].text, "")))
+        return 1908;
+    if (ow_editor_redo(ed) != 1 || doc->nframes != 6 || doc->body.paras[0].nruns != 6) return 1909;
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
+}
+
 static int test_headers_fields(void)
 {
     owf_doc *doc = doc_with("Body");
@@ -625,6 +657,7 @@ int main(void)
     if ((rc = test_table_editing())) goto fail;
     if ((rc = test_page_setup_and_break())) goto fail;
     if ((rc = test_headers_fields())) goto fail;
+    if ((rc = test_frames_undo())) goto fail;
     if ((rc = test_pdf_export())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;
