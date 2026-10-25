@@ -12,7 +12,9 @@ them (not custom), cells aligned top, centre and bottom, theme colours
 and custom number formats; a bar chart on another sheet. And a workbook
 of charts OpenCalc draws: lines, stacked bars and 100% columns over a
 table with frozen panes; a pie (one slice coloured by hand) and a
-doughnut; a scatter of two series, one markers only.
+doughnut; a scatter of two series, one markers only; data labels (values
+on columns, values above a line's markers, categories and shares on a
+pie) and axes' number formats (one set on the axis, one the cells').
 test_sheet_features.py checks what libowf reads of it and keeps on
 saving. openpyxl (pip install openpyxl) only makes the file; nothing of it
 is in libowf. Run it again after changing the sheets below, and change
@@ -25,6 +27,7 @@ import sys
 
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, DoughnutChart, LineChart, PieChart, Reference, ScatterChart, Series
+from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.marker import DataPoint
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import CellIsRule, ColorScaleRule, DataBarRule, FormulaRule, Rule
@@ -240,6 +243,42 @@ def make_charts():
     scatter.series.append(speed)
     scatter.series.append(price)
     xy.add_chart(scatter, "E2")
+    lab = wb.create_sheet("Labels")
+    lab.append(["Quarter", "Cost", "Visits"])
+    for row in [("Q1", 1250, 40), ("Q2", 2400, 55), ("Q3", 1800, 47), ("Q4", 3100, 62)]:
+        lab.append(row)
+    for r in range(2, 6):
+        lab.cell(row=r, column=2).number_format = '"£"#,##0'
+    cost = BarChart()
+    cost.title = "Cost by quarter"
+    cost.add_data(Reference(lab, min_col=2, min_row=1, max_row=5), titles_from_data=True)
+    cost.set_categories(Reference(lab, min_col=1, min_row=2, max_row=5))
+    cost.dataLabels = DataLabelList()
+    cost.dataLabels.showVal = True
+    cost.dataLabels.position = "outEnd"
+    cost.legend = None
+    lab.add_chart(cost, "E2")
+    visits = LineChart()
+    visits.title = "Visits"
+    visits.add_data(Reference(lab, min_col=3, min_row=1, max_row=5), titles_from_data=True)
+    visits.set_categories(Reference(lab, min_col=1, min_row=2, max_row=5))
+    visits.series[0].marker.symbol = "square"
+    visits.series[0].marker.size = 7
+    visits.series[0].dLbls = DataLabelList()
+    visits.series[0].dLbls.showVal = True
+    visits.series[0].dLbls.position = "t"
+    visits.y_axis.number_format = "0.0"
+    visits.y_axis.numFmt.sourceLinked = False
+    visits.legend = None
+    lab.add_chart(visits, "E18")
+    share = PieChart()
+    share.title = "Share of cost"
+    share.add_data(Reference(lab, min_col=2, min_row=1, max_row=5), titles_from_data=True)
+    share.set_categories(Reference(lab, min_col=1, min_row=2, max_row=5))
+    share.dataLabels = DataLabelList()
+    share.dataLabels.showCatName = True
+    share.dataLabels.showPercent = True
+    lab.add_chart(share, "O2")
     wb.save(os.path.join(OUT, "charts-openpyxl.xlsx"))
 
 
