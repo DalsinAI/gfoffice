@@ -15,7 +15,8 @@ OpenDocument formats". It follows from the browser work: WebKit on AmigaOS
 app to build on it.
 
 **Decided** (We, 4 October 2026):
-- **The name:** OpenWrite. **Repository:** `DalsinAI/openamigawrite`.
+- **The name:** OpenWrite. **Repository:** `DalsinAI/openamigawrite`, renamed
+  `DalsinAI/gfoffice` on 25 October 2026, when it became the GFOffice Suite's home.
 - **The engine (superseded 6 October):** the first design chose WebCore. The
   shipping baseline is now the native C editor; WebCore is optional, not required.
 - **Formats:** it opens every Amiga word processor's documents we can get

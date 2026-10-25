@@ -1,3 +1,22 @@
+# GFOffice
+
+This is the GFOffice Suite: native office apps for AmigaOS 3.2, all sharing
+one document library, **libowf**. Its apps keep their Open names:
+
+- **OpenWrite**, the word processor (released, below);
+- **OpenCalc**, the spreadsheet (the formula engine and its core are here; its
+  Amiga app is being built);
+- **OpenPresentation**, slides; **OpenPublisher**, desktop publishing that
+  opens Microsoft Publisher and PageStream files; **OpenBase**, the database
+  (all being started).
+
+The suite aims at the features of Apache OpenOffice's apps. It is written from
+the file formats' specifications and our own code, never from OpenOffice's
+or LibreOffice's. The designs are in `docs/gfoffice/`.
+
+This repository was called `openamigawrite` until 25 October 2026. GitHub
+redirects the old name.
+
 # OpenWrite
 
 OpenWrite 1.0.3 is a native word processor for AmigaOS 3.2.
