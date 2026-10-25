@@ -120,7 +120,8 @@ if it is not in `~/AmigaChrome/stoves/os32-gcc16`):
 
 ```
 ./build-os3.sh                 # libowf linked into each program
-OWF=library ./build-os3.sh     # both programs on LIBS:owf.library
+OWF=library ./build-os3.sh     # each on its library: OpenWrite on owfwrite.library,
+                               # OpenCalc on owfcalc.library, OWConvert on all four
 ```
 
 This builds:
