@@ -67,7 +67,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.1 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -521,6 +521,15 @@ static void load_theme(void)
         strcpy(theme_name, "Classic");
     }
     free(text);
+    /* OpenGadTools' status bar (ogt_status) fills with "panel", a key no theme has (THEME_SPEC.md 5): ogt_pen
+     * then gives pen 1, black, under the status line's dark text. Until OpenGadTools takes a key themes
+     * have, "panel" is the window's colour here. */
+    ogt_theme_override(&theme, "panel", NULL);
+    {
+        int mode = theme_mode == OGT_DARK && theme.has_dark ? OGT_DARK : OGT_LIGHT;
+        const char *window = ogt_theme_get(&theme, mode, "window");
+        if (!ogt_theme_get(&theme, mode, "panel") && window) ogt_theme_override(&theme, "panel", window);
+    }
 }
 
 static void read_theme_choice(void)
@@ -609,17 +618,29 @@ static LONG selection_pen(void)
     return ogt_pen_rgb(&ctx, a);
 }
 
+/* The sheet's own colours, the same in every theme and mode, as Excel's and LibreOffice's: white paper,
+ * light grey grid lines, light grey row numbers and column letters with dark text (those the selection
+ * crosses a little darker). Exact on a true-colour screen; on a palette screen each is one shared pen
+ * (ObtainBestPen), the nearest the screen has when it has no pen to spare. */
+#define RGB_GRID 0xD4D4D4UL
+#define RGB_HEADER 0xEBEBEBUL
+#define RGB_HEADER_SELECTED 0xD2D2D2UL
+#define RGB_HEADER_LINE 0xC0C0C0UL
+#define RGB_HEADER_TEXT 0x333333UL
+#define RGB_HEADER_TEXT_SELECTED 0x111111UL
+#define RGB_TAB_TEXT 0x1C242DUL                      /* the chosen sheet's tab: white, as the sheet */
+
 static LONG role_pen(int role, unsigned long rgb)
 {
     switch (role) {
     case OC_ROLE_CELL_FILL: return rgb_pen(rgb);
     case OC_ROLE_SELECTION: return selection_pen();
-    case OC_ROLE_GRID: return rgb_pen(0xD4D4D4UL);
+    case OC_ROLE_GRID: return rgb_pen(RGB_GRID);
     case OC_ROLE_BORDER:
     case OC_ROLE_TEXT: return rgb == OWF_COLOUR_AUTO ? rgb_pen(0) : rgb_pen(rgb);
-    case OC_ROLE_HEADER: return ogt_pen(&ctx, "panel");
-    case OC_ROLE_HEADER_SELECTED: return ogt_pen(&ctx, "selection.inactive");
-    case OC_ROLE_HEADER_LINE: return ogt_pen(&ctx, "group.line");
+    case OC_ROLE_HEADER: return rgb_pen(RGB_HEADER);
+    case OC_ROLE_HEADER_SELECTED: return rgb_pen(RGB_HEADER_SELECTED);
+    case OC_ROLE_HEADER_LINE: return rgb_pen(RGB_HEADER_LINE);
     case OC_ROLE_CURSOR: return ogt_pen(&ctx, "accent");
     case OC_ROLE_FREEZE: return rgb_pen(0x707070UL);
     }
@@ -649,30 +670,24 @@ static void fill_box(const canvas *cv, LONG pen, int x, int y, int w, int h)
     fill_cut(cv, pen, x, y, w, h, 0, 0, cv->w, cv->h);
 }
 
+/* A line: grid and header lines 1 pixel; a cell's border at its weight and in its dashes (the core's
+ * oc_line_weight and oc_line_pattern), a medium or thick one centred on the cells' edge. */
 static void paint_line(const canvas *cv, const oc_draw_item *it)
 {
     LONG pen = role_pen(it->role, it->rgb);
-    int t = 1, k;
-    UWORD pattern = 0xFFFF;
-    switch (it->line) {
-    case OWF_LINE_MEDIUM: case OWF_LINE_MEDIUM_DASHED: case OWF_LINE_MEDIUM_DASH_DOT: case OWF_LINE_MEDIUM_DASH_DOT_DOT:
-    case OWF_LINE_SLANTED_DASH_DOT: t = 2; break;
-    case OWF_LINE_THICK: t = 3; break;
-    }
-    switch (it->line) {
-    case OWF_LINE_DASHED: case OWF_LINE_MEDIUM_DASHED: pattern = 0xF0F0; break;
-    case OWF_LINE_DOTTED: case OWF_LINE_HAIR: pattern = 0xAAAA; break;
-    case OWF_LINE_DASH_DOT: case OWF_LINE_MEDIUM_DASH_DOT: case OWF_LINE_SLANTED_DASH_DOT: pattern = 0xFE38; break;
-    case OWF_LINE_DASH_DOT_DOT: case OWF_LINE_MEDIUM_DASH_DOT_DOT: pattern = 0xF8D8; break;
-    }
-    if (it->role == OC_ROLE_BORDER && it->line == OWF_LINE_DOUBLE) {
+    int border = it->role == OC_ROLE_BORDER, t = border ? oc_line_weight(it->line) : 1, k;
+    UWORD pattern = border ? (UWORD)oc_line_pattern(it->line) : 0xFFFF;
+    if (t <= 0) return;
+    if (border && it->line == OWF_LINE_DOUBLE) {
         if (it->w) { fill_box(cv, pen, it->x, it->y - 1, it->w, 1); fill_box(cv, pen, it->x, it->y + 1, it->w, 1); }
         else { fill_box(cv, pen, it->x - 1, it->y, 1, it->h); fill_box(cv, pen, it->x + 1, it->y, 1, it->h); }
         return;
     }
     if (pattern != 0xFFFF) {
-        /* a pattern: Draw, its ends cut to the canvas */
-        int x0 = it->x, y0 = it->y, x1 = it->x + it->w, y1 = it->y + it->h;
+        /* a pattern: Draw, its ends cut to the canvas (the line's last pixel is x + w - 1) */
+        int x0 = it->x, y0 = it->y, x1 = it->x + (it->w ? it->w - 1 : 0), y1 = it->y + (it->h ? it->h - 1 : 0);
+        if (it->w) y0 = y1 = it->y - (t - 1) / 2;
+        else x0 = x1 = it->x - (t - 1) / 2;
         if (x0 < 0) x0 = 0;
         if (y0 < 0) y0 = 0;
         if (x1 > cv->w - 1) x1 = cv->w - 1;
@@ -746,7 +761,8 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
         to_latin1(it->text, strlen(it->text), buf, sizeof buf);
         SetSoftStyle(cv->rp, 0, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
         tw = text_length(cv->rp, buf, strlen(buf));
-        text_cut(cv, ogt_pen(&ctx, "label"), it->text, 0, it->x + (it->w - tw) / 2, it->y + (it->h - fh) / 2, it->x, it->w - 1);
+        text_cut(cv, rgb_pen(it->flags ? RGB_HEADER_TEXT_SELECTED : RGB_HEADER_TEXT), it->text, 0, it->x + (it->w - tw) / 2,
+                 it->y + (it->h - fh) / 2, it->x, it->w - 1);
         break;
     }
     case OC_DRAW_FRAME: {
@@ -835,11 +851,12 @@ static void draw_tabs(void)
         ogt_bold(rp, cur);
         tw = ogt_text_width(rp, name) + 16;
         if (x + tw > right) break;
+        /* the chosen sheet's tab white, as the sheet; the others the theme's tabs (THEME_SPEC.md 5) */
         if (cur) ogt_box(rp, rgb_pen(0xFFFFFFUL), x, y, tw, h);
-        else ogt_fill(&ctx, rp, "panel", x, y, tw, h);
+        else ogt_fill(&ctx, rp, "tab", x, y, tw, h);
         ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, tw, h + 1);
         if (cur) ogt_hline(rp, rgb_pen(0xFFFFFFUL), x + 1, y - 1, tw - 2);
-        ogt_text(rp, ogt_pen(&ctx, "label"), x + 8, y + (h - fh) / 2, name, 0);
+        ogt_text(rp, cur ? rgb_pen(RGB_TAB_TEXT) : ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, name, 0);
         ogt_bold(rp, 0);
         tab_x[tab_n] = x;
         tab_w[tab_n] = tw;
@@ -850,9 +867,9 @@ static void draw_tabs(void)
     /* "+": a new sheet */
     {
         int tw = ogt_text_width(rp, "+") + 16;
-        ogt_fill(&ctx, rp, "panel", x, y, tw, h);
+        ogt_fill(&ctx, rp, "tab", x, y, tw, h);
         ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, tw, h + 1);
-        ogt_text(rp, ogt_pen(&ctx, "label"), x + 8, y + (h - fh) / 2, "+", 0);
+        ogt_text(rp, ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, "+", 0);
         tab_x[tab_n] = x;
         tab_w[tab_n] = tw;
         tab_sheet[tab_n] = -1;

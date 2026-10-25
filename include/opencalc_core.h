@@ -389,6 +389,16 @@ void oc_draw_list_free(oc_draw_list *list);
  * OWF_ERR_MEMORY. */
 int oc_view_draw(oc_core *core, oc_draw_list *list);
 
+/* Cell borders (OC_ROLE_BORDER lines): the edge two cells share is one
+ * item, in the heavier of their two lines, and none is drawn inside a
+ * merged range; a line along a row or down a column is one item. How to
+ * draw a line OWF_LINE_...: its weight in pixels at any zoom (hair, thin,
+ * dashed and dotted 1; the medium ones 2; thick 3; double 3, two 1-pixel
+ * lines with one between) and its dashes, a 16-pixel pattern read from the
+ * top bit (0xFFFF solid), as SetDrPt takes it. */
+int oc_line_weight(int line);
+unsigned oc_line_pattern(int line);
+
 /* ---- The status line ---- */
 
 /* "Sum=12 Average=4 Count=3" for a selection of more than one cell, a
