@@ -54,6 +54,10 @@ typedef struct {
     int next_table_id;
     int inline_depth;
     const owf_unzip *zip;
+    /* 2.0.20: frames' graphic styles: the automatic styles of the part being read (styles.xml's for headers and
+     * footers, content.xml's for the body), then styles.xml's common ones */
+    const owf_xml_node *graphic_autos, *graphic_common;
+    int pending[16], npending;       /* frames anchored to the page, for the next paragraph */
 } odt;
 
 /* ---- Styles ---- */
@@ -465,6 +469,199 @@ static const char *image_mime(const char *name)
     return "application/octet-stream";
 }
 
+/* ---- 2.0.20: frames (draw:frame), pictures and text boxes placed on the page ---- */
+
+static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *list_name);
+
+static const owf_xml_node *graphic_style(const odt *o, const char *name)
+{
+    const owf_xml_node *containers[2], *n;
+    int k;
+    containers[0] = o->graphic_autos;
+    containers[1] = o->graphic_common;
+    if (!name)
+        return NULL;
+    for (k = 0; k < 2; k++)
+        for (n = containers[k] ? containers[k]->first : NULL; n; n = n->next) {
+            const char *nm, *fam;
+            if (!owf_xml_is(n, NS_STYLE, "style"))
+                continue;
+            nm = owf_xml_attr(n, NS_STYLE, "name");
+            fam = owf_xml_attr(n, NS_STYLE, "family");
+            if (nm && fam && !strcmp(nm, name) && !strcmp(fam, "graphic"))
+                return n;
+        }
+    return NULL;
+}
+
+/* A frame's graphic property: from its style, else its parents', else the graphic default style. */
+static const char *graphic_prop(const odt *o, const owf_xml_node *st, const char *ns, const char *name)
+{
+    const owf_xml_node *n;
+    const char *v;
+    int depth;
+    for (depth = 0; st && depth < 16; depth++) {
+        if ((v = owf_xml_attr(owf_xml_child(st, NS_STYLE, "graphic-properties"), ns, name)))
+            return v;
+        st = graphic_style(o, owf_xml_attr(st, NS_STYLE, "parent-style-name"));
+    }
+    for (n = o->graphic_common ? o->graphic_common->first : NULL; n; n = n->next) {
+        const char *fam = owf_xml_attr(n, NS_STYLE, "family");
+        if (owf_xml_is(n, NS_STYLE, "default-style") && fam && !strcmp(fam, "graphic"))
+            return owf_xml_attr(owf_xml_child(n, NS_STYLE, "graphic-properties"), ns, name);
+    }
+    return NULL;
+}
+
+/* Where a frame goes across (x) or down (y): what from, how, and its offset when it is at one. */
+static void odt_frame_place(const char *pos, const char *rel, int across, int offset, unsigned char *from,
+                            unsigned char *place, int *at)
+{
+    *from = OWF_FROM_PARAGRAPH;
+    if (rel) {
+        if (!strcmp(rel, "page")) *from = OWF_FROM_PAGE;
+        else if (!strcmp(rel, "page-content")) *from = OWF_FROM_MARGIN;
+        else if (!strcmp(rel, "page-start-margin")) *from = across ? OWF_FROM_LEFT_MARGIN : OWF_FROM_TOP_MARGIN;
+        else if (!strcmp(rel, "page-end-margin")) *from = across ? OWF_FROM_RIGHT_MARGIN : OWF_FROM_BOTTOM_MARGIN;
+    }
+    *place = OWF_PLACE_AT;
+    *at = offset;
+    if (!pos || !strcmp(pos, "from-left") || !strcmp(pos, "from-top") || !strcmp(pos, "from-inside"))
+        return;
+    if (!strcmp(pos, "left") || !strcmp(pos, "top") || !strcmp(pos, "inside")) *place = OWF_PLACE_START;
+    else if (!strcmp(pos, "center") || !strcmp(pos, "middle")) *place = OWF_PLACE_CENTRE;
+    else if (!strcmp(pos, "right") || !strcmp(pos, "bottom") || !strcmp(pos, "outside")) *place = OWF_PLACE_END;
+    *at = 0;
+}
+
+/* A picture from the package: the first of a frame's draw:image that can be read (SVG first, then a PNG:
+ * the first one we know). -1: none. */
+static int frame_image(odt *o, const owf_xml_node *frame, int w, int h)
+{
+    const owf_xml_node *img;
+    for (img = owf_xml_child(frame, NS_DRAW, "image"); img; img = owf_xml_next(img, NS_DRAW, "image")) {
+        const char *href = owf_xml_attr(img, NS_XLINK, "href");
+        unsigned char *data = NULL;
+        size_t length = 0;
+        int idx;
+        if (!href || !o->zip || !strcmp(image_mime(href), "application/octet-stream") ||
+            owf_unzip_read(o->zip, href, &data, &length) != OWF_OK)
+            continue;
+        idx = owf_doc_add_image(o->doc, href, image_mime(href), data, length, w, h,
+                                owf_xml_attr(frame, NS_DRAW, "name"));
+        free(data);
+        if (idx < 0)
+            o->failed = 1;
+        return idx;
+    }
+    return -1;
+}
+
+/* A text box's paragraphs into a story of their own, with a builder of their own. */
+static void text_box_story(odt *o, const owf_xml_node *box, owf_story *into)
+{
+    owf_builder b, *outer = o->b;
+    const char *href = o->current_href;
+    int space = o->space, npending = o->npending, pending[sizeof o->pending / sizeof o->pending[0]];
+    memcpy(pending, o->pending, sizeof pending);     /* the body's page frames wait for the body's paragraph */
+    o->current_href = NULL;
+    o->npending = 0;
+    owf_builder_init(&b, o->doc, into);
+    o->b = &b;
+    blocks(o, box, -1, NULL);
+    if (owf_builder_done(&b) != OWF_OK)
+        o->failed = 1;
+    o->b = outer;
+    o->current_href = href;
+    o->space = space;
+    memcpy(o->pending, pending, sizeof pending);
+    o->npending = npending;
+}
+
+/* A frame (a picture, or a text box) as OpenWrite's: its size, its place from its anchor's style and its
+ * own svg:x and svg:y, whether text goes round it, under or over it, its fill, line and insets. -1 when there
+ * is nothing to show, or it is a picture in the line (as-char: in_line), which stays OWF_RUN_IMAGE. */
+static int import_frame(odt *o, const owf_xml_node *c)
+{
+    const owf_xml_node *st = graphic_style(o, owf_xml_attr(c, NS_DRAW, "style-name"));
+    const owf_xml_node *box = owf_xml_child(c, NS_DRAW, "text-box");
+    const char *anchor = owf_xml_attr(c, NS_TEXT, "anchor-type"), *v;
+    owf_frame fr;
+    int x = 0, y = 0, idx, k;
+    static const char *const pads[4] = { "padding-top", "padding-right", "padding-bottom", "padding-left" };
+
+    memset(&fr, 0, sizeof fr);
+    fr.image = -1;
+    fr.width = 2880;
+    fr.height = 2880;
+    if (!owf_parse_length(owf_xml_attr(c, NS_SVG, "width"), &fr.width) &&
+        !owf_parse_length(owf_xml_attr(c, NS_FO, "min-width"), &fr.width))
+        owf_parse_length(owf_xml_attr(box, NS_FO, "min-width"), &fr.width);
+    if (!owf_parse_length(owf_xml_attr(c, NS_SVG, "height"), &fr.height) &&
+        !owf_parse_length(owf_xml_attr(c, NS_FO, "min-height"), &fr.height))
+        owf_parse_length(owf_xml_attr(box, NS_FO, "min-height"), &fr.height);
+    owf_parse_length(owf_xml_attr(c, NS_SVG, "x"), &x);
+    owf_parse_length(owf_xml_attr(c, NS_SVG, "y"), &y);
+    if (anchor && !strcmp(anchor, "as-char")) {
+        if (!box)
+            return -1;
+        fr.in_line = 1;                      /* a text box in the line (2.0.17's) */
+        fr.x_from = fr.y_from = OWF_FROM_PARAGRAPH;
+    } else {
+        const char *hrel = graphic_prop(o, st, NS_STYLE, "horizontal-rel");
+        const char *vrel = graphic_prop(o, st, NS_STYLE, "vertical-rel");
+        int page = anchor && !strcmp(anchor, "page");
+        odt_frame_place(graphic_prop(o, st, NS_STYLE, "horizontal-pos"), hrel ? hrel : page ? "page" : NULL, 1, x,
+                        &fr.x_from, &fr.x_place, &fr.x);
+        odt_frame_place(graphic_prop(o, st, NS_STYLE, "vertical-pos"), vrel ? vrel : page ? "page" : NULL, 0, y,
+                        &fr.y_from, &fr.y_place, &fr.y);
+        /* none: text above and below it (Writer's own default); run-through: over or under the text */
+        v = graphic_prop(o, st, NS_STYLE, "wrap");
+        fr.wrap = v && !strcmp(v, "run-through") ? OWF_WRAP_NONE : !v || !strcmp(v, "none") ? OWF_WRAP_TOP_BOTTOM
+                : (v = graphic_prop(o, st, NS_STYLE, "wrap-contour")) && !strcmp(v, "true") ? OWF_WRAP_TIGHT
+                : OWF_WRAP_SQUARE;
+        v = graphic_prop(o, st, NS_STYLE, "run-through");
+        fr.behind = fr.wrap == OWF_WRAP_NONE && v && !strcmp(v, "background");
+    }
+    /* its fill and line */
+    v = graphic_prop(o, st, NS_DRAW, "fill");
+    if (v && !strcmp(v, "solid"))
+        fr.fill = odt_colour(graphic_prop(o, st, NS_DRAW, "fill-color"));
+    if (!fr.fill && !(v && !strcmp(v, "none")) && (v = graphic_prop(o, st, NS_FO, "background-color")) &&
+        strcmp(v, "transparent"))
+        fr.fill = odt_colour(v);
+    if ((v = graphic_prop(o, st, NS_FO, "border")) && strcmp(v, "none"))
+        fr.line = odt_colour(v) ? odt_colour(v) : OWF_SHADE(0);
+    else if (!v && (v = graphic_prop(o, st, NS_DRAW, "stroke")) && strcmp(v, "none"))
+        fr.line = (v = graphic_prop(o, st, NS_SVG, "stroke-color")) ? odt_colour(v) : OWF_SHADE(0);
+    for (k = 0; k < 4; k++)
+        if (!owf_parse_length(graphic_prop(o, st, NS_FO, pads[k]), &fr.inset[k]))
+            owf_parse_length(graphic_prop(o, st, NS_FO, "padding"), &fr.inset[k]);
+    /* what is in it */
+    if (box)
+        text_box_story(o, box, &fr.story);
+    else
+        fr.image = frame_image(o, c, fr.width, fr.height);
+    if (fr.image < 0 && !fr.story.nparas && !fr.fill && !fr.line) {
+        if (!box)
+            owf_report_add(o->report, OWF_NOTE_LOST, owf_xml_child(c, NS_DRAW, "image")
+                           ? "An embedded picture could not be read" : "Drawings and objects were left out");
+        return -1;
+    }
+    if ((idx = owf_doc_add_frame(o->doc, &fr)) < 0)
+        o->failed = 1;
+    return idx;
+}
+
+/* The frames anchored to the page so far, at the start of the paragraph being started. */
+static void pending_frames(odt *o)
+{
+    int i;
+    for (i = 0; i < o->npending; i++)
+        owf_builder_frame(o->b, o->pending[i]);
+    o->npending = 0;
+}
+
 static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
 {
     owf_charfmt f;
@@ -538,6 +735,20 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         owf_report_add(o->report, OWF_NOTE_APPROX, "Footnotes and endnotes are listed at the end of the document");
     } else if (owf_xml_is(c, NS_OFFICE, "annotation")) {
         owf_report_add(o->report, OWF_NOTE_LOST, "Comments were left out");
+    } else if (owf_xml_is(c, NS_DRAW, "frame") && strcmp(owf_xml_attr(c, NS_TEXT, "anchor-type") ?
+                                                          owf_xml_attr(c, NS_TEXT, "anchor-type") : "", "as-char")) {
+        /* 2.0.20: placed on the page, from its paragraph, its character or the page: a frame */
+        int idx = import_frame(o, c);
+        if (idx >= 0) {
+            set_fmt(o->b, &rel);
+            owf_builder_frame(o->b, idx);
+        }
+    } else if (owf_xml_is(c, NS_DRAW, "frame") && owf_xml_child(c, NS_DRAW, "text-box")) {
+        int idx = import_frame(o, c);        /* 2.0.20: a text box in the line */
+        if (idx >= 0) {
+            set_fmt(o->b, &rel);
+            owf_builder_frame(o->b, idx);
+        }
     } else if (owf_xml_is(c, NS_DRAW, "frame")) {
         const owf_xml_node *img=owf_xml_child(c,NS_DRAW,"image");
         const char *href=img?owf_xml_attr(img,NS_XLINK,"href"):NULL;
@@ -643,6 +854,7 @@ static void paragraph(odt *o, const owf_xml_node *p, const char *prefix, int lis
         owf_builder_end_para(o->b);
     o->b->parafmt = pf;
     o->space = 1;
+    pending_frames(o);                               /* 2.0.20 */
     if (prefix) {
         owf_charfmt rel = relative(o, cf);
         set_fmt(o->b, &rel);
@@ -801,7 +1013,10 @@ static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *li
                    owf_xml_is(c, NS_TEXT, "table-of-content-source")) {
             /* nothing to show */
         } else if (owf_xml_is(c, NS_DRAW, "frame")) {
-            owf_report_add(o->report, OWF_NOTE_LOST, "Pictures are not brought across yet");
+            /* 2.0.20: anchored to the page (between the paragraphs): with the next paragraph */
+            int idx = import_frame(o, c);
+            if (idx >= 0 && o->npending < (int)(sizeof o->pending / sizeof o->pending[0]))
+                o->pending[o->npending++] = idx;
         } else {
             /* Sections, indexes, the table of contents: their paragraphs. */
             blocks(o, c, list_level, list_name);
@@ -917,17 +1132,28 @@ static int read_document(odt *o, const owf_xml_node *content_root, const owf_xml
     /* Headers and footers use styles.xml's automatic styles. */
     o->tables[0] = &o->autos_styles;
     o->tables[1] = &o->common;
+    o->graphic_autos = owf_xml_child(styles_root, NS_OFFICE, "automatic-styles");
+    o->graphic_common = owf_xml_child(styles_root, NS_OFFICE, "styles");
     read_page(o, styles_root, owf_xml_child(styles_root, NS_OFFICE, "automatic-styles"));
 
     /* The body uses content.xml's. */
     o->tables[0] = content_root != styles_root ? &o->autos_content : &o->autos_styles;
+    o->graphic_autos = owf_xml_child(content_root, NS_OFFICE, "automatic-styles");
     body = owf_xml_child(content_root, NS_OFFICE, "body");
     text = owf_xml_child(body, NS_OFFICE, "text");
     if (!text)
         return OWF_ERR_FORMAT;
     owf_builder_init(&b, o->doc, &o->doc->body);
     o->b = &b;
+    o->npending = 0;
     blocks(o, text, -1, NULL);
+    if (o->npending) {                               /* 2.0.20: frames on the page after the last paragraph */
+        if (b.para || b.text.length)
+            owf_builder_end_para(&b);
+        b.parafmt = o->base_para;
+        pending_frames(o);
+        owf_builder_end_para(&b);
+    }
 
     /* Notes at the end. */
     if (o->nnotes && !o->notes.failed) {

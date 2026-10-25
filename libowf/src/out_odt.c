@@ -104,13 +104,19 @@ static int char_style(styles *s, const owf_charfmt *f)
     return s->nchars;
 }
 
-static void collect(styles *s, const owf_story *story)
+/* A story's styles; with frames (doc), its text boxes' too (2.0.20: a header's or footer's, whose styles go
+ * before them in styles.xml). A text box's own frames are left out, as put_para_odt leaves them out. */
+static void collect(styles *s, const owf_doc *doc, const owf_story *story)
 {
     int i, j;
     for (i = 0; i < story->nparas; i++) {
         para_style(s, &story->paras[i].fmt);
-        for (j = 0; j < story->paras[i].nruns; j++)
-            char_style(s, &story->paras[i].runs[j].fmt);
+        for (j = 0; j < story->paras[i].nruns; j++) {
+            const owf_run *run = &story->paras[i].runs[j];
+            char_style(s, &run->fmt);
+            if (doc && run->kind == OWF_RUN_FRAME && run->image >= 0 && run->image < doc->nframes)
+                collect(s, NULL, &doc->frames[run->image].story);
+        }
     }
 }
 
@@ -368,6 +374,8 @@ static void put_frame_styles(owf_buf *out, const owf_doc *doc)
                             "style:wrap=\"%s\"", i + 1, wrap[fr->wrap <= OWF_WRAP_TOP_BOTTOM ? fr->wrap : 0]);
         if (fr->wrap == OWF_WRAP_NONE)
             owf_buf_printf(out, " style:run-through=\"%s\"", fr->behind ? "background" : "foreground");
+        if (fr->wrap == OWF_WRAP_TIGHT)              /* 2.0.20: round its outline, as ODF says it */
+            owf_buf_puts(out, " style:wrap-contour=\"true\"");
         odt_frame_place(doc, fr, 1, &pos, &rel, &at, &has_at);
         owf_buf_printf(out, " style:horizontal-pos=\"%s\" style:horizontal-rel=\"%s\"", pos, rel);
         odt_frame_place(doc, fr, 0, &pos, &rel, &at, &has_at);
@@ -449,7 +457,10 @@ static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para,
         case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<text:line-break/>");after_space=1;break;
         case OWF_RUN_FIELD:owf_buf_puts(out,fields[run->field]);after_space=0;break;
         case OWF_RUN_FRAME:
-            if(doc&&para>=doc->body.paras&&para<doc->body.paras+doc->body.nparas){put_frame_odt(out,doc,run->image,s);after_space=0;}
+            /* the body's, a header's and a footer's (2.0.20); a text box's own are left out */
+            if(doc&&((para>=doc->body.paras&&para<doc->body.paras+doc->body.nparas)||
+                     (para>=doc->header.paras&&para<doc->header.paras+doc->header.nparas)||
+                     (para>=doc->footer.paras&&para<doc->footer.paras+doc->footer.nparas))){put_frame_odt(out,doc,run->image,s);after_space=0;}
             break;
         case OWF_RUN_IMAGE:
             if(doc&&run->image>=0&&run->image<doc->nimages){const owf_image *im=&doc->images[run->image];owf_buf_puts(out,"<draw:frame text:anchor-type=\"as-char\" svg:width=\"");owf_put_points(out,im->width);owf_buf_puts(out,"\" svg:height=\"");owf_put_points(out,im->height);owf_buf_printf(out,"\"><draw:image xlink:href=\"Pictures/image%d.%s\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/></draw:frame>",run->image+1,odt_image_ext(im));}
@@ -516,8 +527,8 @@ static int build_styles_xml(const owf_doc *doc, owf_buf *out)
     styles s;
 
     memset(&s, 0, sizeof s);
-    collect(&s, &doc->header);
-    collect(&s, &doc->footer);
+    collect(&s, doc, &doc->header);
+    collect(&s, doc, &doc->footer);
 
     owf_buf_puts(out, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<office:document-styles " NS ">");
     put_font_faces(out, doc, NULL);
