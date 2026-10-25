@@ -6,22 +6,14 @@
  * name by halves); a function that is not in it gives #NAME?.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
-#include "owf_calc_int.h"
+#include "owf_calc_fn.h"
 
-#include <math.h>
-#include <stdlib.h>
-#include <string.h>
-
-#define NOERR (-1)                       /* OWF_ERROR_NULL is 0 */
-#define PI_ 3.14159265358979323846
-
-static int given(int argc, const calc_value *args, int i)
+int calc_given(int argc, const calc_value *args, int i)
 {
     return i < argc && args[i].type != CV_MISSING;
 }
 
-/* A number argument: absent, the default; left out (F(1,)), 0. */
-static int num_arg(calc_ctx *ctx, calc_value *args, int argc, int i, double def, double *out)
+int calc_num_arg(calc_ctx *ctx, calc_value *args, int argc, int i, double def, double *out)
 {
     if (i >= argc) {
         *out = def;
@@ -30,54 +22,8 @@ static int num_arg(calc_ctx *ctx, calc_value *args, int argc, int i, double def,
     return calc_to_number(ctx, &args[i], out);
 }
 
-#define NUM(i, def, var)                                                                                     \
-    do {                                                                                                     \
-        int e_ = num_arg(ctx, args, argc, (i), (def), &(var));                                               \
-        if (e_) {                                                                                            \
-            cv_err(r, e_);                                                                                   \
-            return;                                                                                          \
-        }                                                                                                    \
-    } while (0)
-
-#define TEXT(i, p, n)                                                                                        \
-    do {                                                                                                     \
-        int e_ = 0;                                                                                          \
-        if ((i) < argc)                                                                                      \
-            e_ = calc_to_text(ctx, &args[i], &(p), &(n));                                                    \
-        else {                                                                                               \
-            (p) = "";                                                                                        \
-            (n) = 0;                                                                                         \
-        }                                                                                                    \
-        if (e_) {                                                                                            \
-            cv_err(r, e_);                                                                                   \
-            return;                                                                                          \
-        }                                                                                                    \
-    } while (0)
-
-#define BOOL(i, def, var)                                                                                    \
-    do {                                                                                                     \
-        if ((i) >= argc)                                                                                     \
-            (var) = (def);                                                                                   \
-        else {                                                                                               \
-            int e_ = calc_to_bool(ctx, &args[i], &(var));                                                    \
-            if (e_) {                                                                                        \
-                cv_err(r, e_);                                                                               \
-                return;                                                                                      \
-            }                                                                                                \
-        }                                                                                                    \
-    } while (0)
-
-/* An argument's first error, if it is one. */
-#define PASS_ERROR(i)                                                                                        \
-    do {                                                                                                     \
-        if ((i) < argc && args[i].type == CV_ERR) {                                                          \
-            *r = args[i];                                                                                    \
-            return;                                                                                          \
-        }                                                                                                    \
-    } while (0)
-
 /* Text from a buffer, into the arena. */
-static void take_text(calc_ctx *ctx, owf_buf *b, calc_value *r)
+void calc_take_text(calc_ctx *ctx, owf_buf *b, calc_value *r)
 {
     if (b->failed)
         cv_err(r, OWF_ERROR_NUM);
@@ -88,11 +34,8 @@ static void take_text(calc_ctx *ctx, owf_buf *b, calc_value *r)
 
 /* ---- Numbers in the arguments ---- */
 
-/* fn gets each number; it returns NOERR to go on or an error to stop. */
-typedef int (*num_fn)(void *user, double v);
-
 typedef struct {
-    num_fn fn;
+    calc_num_fn fn;
     void *user;
     int err;
     int count_errors;            /* errors in references stop it (not for COUNT) */
@@ -115,12 +58,8 @@ static int walk_cell(void *user, const owf_cell *c, int sheet)
     return 0;
 }
 
-/* The numbers in args[from...], as SUM takes them: in references and
- * arrays only numbers (text, booleans and empty cells are passed over);
- * given directly, numbers, booleans and text that reads as a number (other
- * text is #VALUE!), and a left-out argument is 0. An error anywhere stops
- * it. NOERR, or the error. */
-static int each_number(calc_ctx *ctx, calc_value *args, int from, int argc, num_fn fn, void *user)
+/* The numbers in args[from...] (owf_calc_fn.h). */
+int calc_each_number(calc_ctx *ctx, calc_value *args, int from, int argc, calc_num_fn fn, void *user)
 {
     int i, e;
     for (i = from; i < argc; i++) {
@@ -178,7 +117,7 @@ static int gather(calc_ctx *ctx, calc_value *args, int from, int argc, stats *s)
 {
     memset(s, 0, sizeof *s);
     s->product = 1;
-    return each_number(ctx, args, from, argc, add_stat, s);
+    return calc_each_number(ctx, args, from, argc, add_stat, s);
 }
 
 #define GATHER(s)                                                                                            \
@@ -235,16 +174,9 @@ static void fn_max(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
     cv_num(r, s.count ? s.max : 0);
 }
 
-/* A list of numbers in the arena. */
-typedef struct {
-    calc_ctx *ctx;
-    double *v;
-    unsigned long n, cap;
-} numlist;
-
-static int add_num(void *user, double x)
+int calc_numlist_add(void *user, double x)
 {
-    numlist *l = user;
+    calc_numlist *l = user;
     if (l->n == l->cap) {
         unsigned long want = l->cap ? l->cap * 2 : 64;
         double *p = calc_arena_alloc(l->ctx->arena, want * sizeof *p);
@@ -261,16 +193,16 @@ static int add_num(void *user, double x)
     return NOERR;
 }
 
-static int collect(calc_ctx *ctx, calc_value *args, int from, int argc, numlist *l)
+int calc_collect(calc_ctx *ctx, calc_value *args, int from, int argc, calc_numlist *l)
 {
     l->ctx = ctx;
     l->v = NULL;
     l->n = l->cap = 0;
-    return each_number(ctx, args, from, argc, add_num, l);
+    return calc_each_number(ctx, args, from, argc, calc_numlist_add, l);
 }
 
 /* Heapsort: no recursion, no more memory. */
-static void sort_numbers(double *a, unsigned long n)
+void calc_sort_numbers(double *a, unsigned long n)
 {
     unsigned long start, end, root, child;
     double t;
@@ -303,34 +235,25 @@ static void sort_numbers(double *a, unsigned long n)
     }
 }
 
-#define COLLECT(l, from)                                                                                     \
-    do {                                                                                                     \
-        int e_ = collect(ctx, args, (from), argc, &(l));                                                     \
-        if (e_ != NOERR) {                                                                                   \
-            cv_err(r, e_);                                                                                   \
-            return;                                                                                          \
-        }                                                                                                    \
-    } while (0)
-
 static void fn_median(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 {
-    numlist l;
-    COLLECT(l, 0);
+    calc_numlist l;
+    COLLECT(l, 0, argc);
     if (!l.n) {
         cv_err(r, OWF_ERROR_NUM);
         return;
     }
-    sort_numbers(l.v, l.n);
+    calc_sort_numbers(l.v, l.n);
     cv_num(r, l.n % 2 ? l.v[l.n / 2] : (l.v[l.n / 2 - 1] + l.v[l.n / 2]) / 2);
 }
 
 /* Variance: sample (STDEV, VAR) or population (STDEVP, VARP). */
 static void variance(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, int sample, int root)
 {
-    numlist l;
+    calc_numlist l;
     double mean = 0, ss = 0;
     unsigned long i;
-    COLLECT(l, 0);
+    COLLECT(l, 0, argc);
     if (l.n < (sample ? 2u : 1u)) {
         cv_err(r, OWF_ERROR_DIV0);
         return;
@@ -366,9 +289,9 @@ static void fn_varp(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 
 static void kth(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, int large)
 {
-    numlist l;
+    calc_numlist l;
     double k;
-    int e = collect(ctx, args, 0, 1, &l);
+    int e = calc_collect(ctx, args, 0, 1, &l);
     if (e != NOERR) {
         cv_err(r, e);
         return;
@@ -379,7 +302,7 @@ static void kth(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, int la
         cv_err(r, OWF_ERROR_NUM);
         return;
     }
-    sort_numbers(l.v, l.n);
+    calc_sort_numbers(l.v, l.n);
     cv_num(r, large ? l.v[l.n - (unsigned long)k] : l.v[(unsigned long)k - 1]);
 }
 
@@ -618,6 +541,7 @@ typedef struct {
     crit crits[MAX_CRITERIA];
     const calc_area *target;     /* the cells summed; NULL to count */
     double sum, count;
+    double max, min;             /* of the numbers summed (MAXIFS, MINIFS) */
     int driver;                  /* the criterion whose cells are walked */
 } criteria;
 
@@ -639,6 +563,10 @@ static void criteria_at(criteria *c, unsigned dr, unsigned dc, const owf_cell *k
         calc_cell_value(c->ctx, c->target->s0, c->target->r0 + dr, c->target->c0 + dc, &v);
         if (v.type == CV_NUM) {
             c->sum = calc_approx_add(c->sum, v.u.num);
+            if (!c->count || v.u.num > c->max)
+                c->max = v.u.num;
+            if (!c->count || v.u.num < c->min)
+                c->min = v.u.num;
             c->count++;
         }
     } else {
@@ -730,7 +658,7 @@ static void if_family(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, 
         return;
     }
     c->target = NULL;
-    if (what == 3 || what == 4) {        /* SUMIFS, AVERAGEIFS: the target first, then pairs */
+    if (what == 3 || what == 4 || what >= 7) {   /* SUMIFS, AVERAGEIFS, MAXIFS, MINIFS: the target first */
         if ((e = crit_area(&args[0], &c->target)) != NOERR) {
             cv_err(r, e);
             return;
@@ -771,7 +699,7 @@ static void if_family(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, 
     }
     if (what == 1 || what == 2) {        /* SUMIF, AVERAGEIF: the sum range, sized as the range */
         const calc_area *t = c->areas[0];
-        if (given(argc, args, 2)) {
+        if (calc_given(argc, args, 2)) {
             if ((e = crit_area(&args[2], &t)) != NOERR) {
                 cv_err(r, e);
                 return;
@@ -786,6 +714,11 @@ static void if_family(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, 
         }
         c->target = &sized;
     }
+    if (first && (c->target->r1 - c->target->r0 != c->areas[0]->r1 - c->areas[0]->r0 ||
+                  c->target->c1 - c->target->c0 != c->areas[0]->c1 - c->areas[0]->c0)) {
+        cv_err(r, OWF_ERROR_VALUE);      /* the -IFS' first range: the criteria ranges' size */
+        return;
+    }
     if ((e = run_criteria(ctx, c)) != NOERR) {
         cv_err(r, e);
         return;
@@ -795,6 +728,8 @@ static void if_family(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, 
     case 6: cv_num(r, c->count); break;
     case 1:
     case 3: cv_num(r, c->sum); break;
+    case 7: cv_num(r, c->count ? c->max : 0); break;
+    case 8: cv_num(r, c->count ? c->min : 0); break;
     default:
         if (!c->count)
             cv_err(r, OWF_ERROR_DIV0);
@@ -832,6 +767,18 @@ static void fn_averageifs(calc_ctx *ctx, calc_value *args, int argc, calc_value 
 static void fn_countifs(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 {
     if_family(ctx, args, argc, r, 6);
+}
+
+/* MAXIFS and MINIFS: the largest and smallest number in max_range where
+ * every criterion is met; 0 when none is. */
+static void fn_maxifs(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
+{
+    if_family(ctx, args, argc, r, 7);
+}
+
+static void fn_minifs(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
+{
+    if_family(ctx, args, argc, r, 8);
 }
 
 static void fn_sumproduct(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -890,7 +837,7 @@ static void fn_sumproduct(calc_ctx *ctx, calc_value *args, int argc, calc_value 
  * from zero (ROUND), 1 away from zero (ROUNDUP), 2 toward zero (ROUNDDOWN,
  * TRUNC). A hair either side of the boundary counts as on it, as Excel's
  * 15 digits see it: ROUND(2.675, 2) is 2.68. */
-static double round_to(double x, double digits, int mode)
+double calc_round_to(double x, double digits, int mode)
 {
     double a = fabs(x), p, y, eps, rounded;
     int d;
@@ -928,7 +875,7 @@ static void fn_round(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
     double x, d;
     NUM(0, 0, x);
     NUM(1, 0, d);
-    cv_num(r, round_to(x, d, 0));
+    cv_num(r, calc_round_to(x, d, 0));
 }
 
 static void fn_roundup(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -936,7 +883,7 @@ static void fn_roundup(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
     double x, d;
     NUM(0, 0, x);
     NUM(1, 0, d);
-    cv_num(r, round_to(x, d, 1));
+    cv_num(r, calc_round_to(x, d, 1));
 }
 
 static void fn_rounddown(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -944,7 +891,7 @@ static void fn_rounddown(calc_ctx *ctx, calc_value *args, int argc, calc_value *
     double x, d;
     NUM(0, 0, x);
     NUM(1, 0, d);
-    cv_num(r, round_to(x, d, 2));
+    cv_num(r, calc_round_to(x, d, 2));
 }
 
 static void fn_trunc(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -952,7 +899,7 @@ static void fn_trunc(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
     double x, d;
     NUM(0, 0, x);
     NUM(1, 0, d);
-    cv_num(r, round_to(x, d, 2));
+    cv_num(r, calc_round_to(x, d, 2));
 }
 
 static void fn_int(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -1277,15 +1224,18 @@ static void fn_ifna(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 
 typedef struct {
     int any, all, seen;
+    long trues;                  /* XOR: how many */
 } logic;
 
 static void logic_one(logic *l, int b)
 {
     l->seen = 1;
-    if (b)
+    if (b) {
         l->any = 1;
-    else
+        l->trues++;
+    } else {
         l->all = 0;
+    }
 }
 
 static int logic_cell(void *user, const owf_cell *c, int sheet)
@@ -1306,6 +1256,7 @@ static void and_or(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, int
     l.any = 0;
     l.all = 1;
     l.seen = 0;
+    l.trues = 0;
     for (i = 0; i < argc; i++) {
         calc_value *v = &args[i];
         if (v->type == CV_REF) {
@@ -1336,11 +1287,13 @@ static void and_or(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, int
     if (!l.seen)
         cv_err(r, OWF_ERROR_VALUE);
     else
-        cv_bool(r, is_or ? l.any : l.all);
+        cv_bool(r, is_or == 2 ? (int)(l.trues & 1) : is_or ? l.any : l.all);
 }
 
 static void fn_and(calc_ctx *c, calc_value *a, int n, calc_value *r) { and_or(c, a, n, r, 0); }
 static void fn_or(calc_ctx *c, calc_value *a, int n, calc_value *r) { and_or(c, a, n, r, 1); }
+/* XOR: TRUE when an odd number of its values are TRUE (as AND and OR take them). */
+static void fn_xor(calc_ctx *c, calc_value *a, int n, calc_value *r) { and_or(c, a, n, r, 2); }
 
 static void fn_not(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 {
@@ -1409,7 +1362,7 @@ static void fn_len(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 static int char_count(calc_ctx *ctx, calc_value *args, int argc, int i, double def, unsigned *out)
 {
     double x;
-    int e = num_arg(ctx, args, argc, i, def, &x);
+    int e = calc_num_arg(ctx, args, argc, i, def, &x);
     if (e)
         return e;
     if (x < 0)
@@ -1488,7 +1441,7 @@ static void map_case(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, i
         }
         calc_put_utf8(&b, c);
     }
-    take_text(ctx, &b, r);
+    calc_take_text(ctx, &b, r);
 }
 
 static void fn_upper(calc_ctx *c, calc_value *a, int n, calc_value *r) { map_case(c, a, n, r, 0); }
@@ -1513,7 +1466,7 @@ static void fn_trim(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
         space = 0;
         owf_buf_putc(&b, p[i]);
     }
-    take_text(ctx, &b, r);
+    calc_take_text(ctx, &b, r);
 }
 
 static void fn_clean(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -1526,7 +1479,7 @@ static void fn_clean(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
     for (i = 0; i < n; i++)
         if ((unsigned char)p[i] >= 32)
             owf_buf_putc(&b, p[i]);
-    take_text(ctx, &b, r);
+    calc_take_text(ctx, &b, r);
 }
 
 static void fn_concatenate(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -1545,7 +1498,7 @@ static void fn_concatenate(calc_ctx *ctx, calc_value *args, int argc, calc_value
         }
         owf_buf_put(&b, p, n);
     }
-    take_text(ctx, &b, r);
+    calc_take_text(ctx, &b, r);
 }
 
 static void fn_rept(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -1561,10 +1514,14 @@ static void fn_rept(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
         cv_err(r, OWF_ERROR_VALUE);
         return;
     }
+    if (!n) {                            /* "" any number of times (not a billion turns of a loop) */
+        cv_str(r, "", 0);
+        return;
+    }
     owf_buf_init(&b);
     for (i = 0; i < k; i++)
         owf_buf_put(&b, p, n);
-    take_text(ctx, &b, r);
+    calc_take_text(ctx, &b, r);
 }
 
 static void fn_exact(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -1622,7 +1579,7 @@ static void fn_substitute(calc_ctx *ctx, calc_value *args, int argc, calc_value 
     TEXT(0, text, tn);
     TEXT(1, old, on);
     TEXT(2, by, bn);
-    if (given(argc, args, 3)) {
+    if (calc_given(argc, args, 3)) {
         NUM(3, 0, which);
         if (which < 1) {
             cv_err(r, OWF_ERROR_VALUE);
@@ -1650,7 +1607,7 @@ static void fn_substitute(calc_ctx *ctx, calc_value *args, int argc, calc_value 
         i++;
     }
     owf_buf_put(&b, text + i, tn - i);
-    take_text(ctx, &b, r);
+    calc_take_text(ctx, &b, r);
 }
 
 static void fn_replace(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -1675,7 +1632,7 @@ static void fn_replace(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
     owf_buf_put(&b, text, from);
     owf_buf_put(&b, by, bn);
     owf_buf_put(&b, text + to, tn - to);
-    take_text(ctx, &b, r);
+    calc_take_text(ctx, &b, r);
 }
 
 /* Windows-1252's 0x80-0x9F, as Excel's CHAR and CODE have them. */
@@ -1701,7 +1658,7 @@ static void fn_char(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
         c = cp1252[c - 0x80];
     owf_buf_init(&b);
     calc_put_utf8(&b, c);
-    take_text(ctx, &b, r);
+    calc_take_text(ctx, &b, r);
 }
 
 static void fn_code(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -1751,7 +1708,7 @@ static void fn_text(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
     f[fn_len_] = 0;
     owf_buf_init(&b);
     calc_format(f, &v, ctx->book->date1904, 0, &b, NULL);
-    take_text(ctx, &b, r);
+    calc_take_text(ctx, &b, r);
 }
 
 static void fn_value(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -1769,14 +1726,7 @@ static void fn_value(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 /* ---- Lookup ---- */
 
 /* A table: a reference's one area, or an array. */
-typedef struct {
-    calc_ctx *ctx;
-    const calc_area *a;
-    const calc_array *arr;
-    unsigned rows, cols;
-} table;
-
-static int table_of(calc_ctx *ctx, const calc_value *v, table *t)
+int calc_table_of(calc_ctx *ctx, const calc_value *v, calc_table *t)
 {
     t->ctx = ctx;
     t->a = NULL;
@@ -1810,7 +1760,7 @@ static int table_of(calc_ctx *ctx, const calc_value *v, table *t)
     return 0;
 }
 
-static void table_get(const table *t, unsigned i, unsigned j, calc_value *out)
+void calc_table_get(const calc_table *t, unsigned i, unsigned j, calc_value *out)
 {
     if (t->a)
         calc_cell_value(t->ctx, t->a->s0, t->a->r0 + i, t->a->c0 + j, out);
@@ -1825,7 +1775,7 @@ static int same_type(const calc_value *a, const calc_value *b)
     return a->type == b->type;
 }
 
-static int has_wild(const calc_value *v)
+int calc_has_wild(const calc_value *v)
 {
     return v->type == CV_STR && (memchr(v->u.str.p, '*', v->u.str.len) || memchr(v->u.str.p, '?', v->u.str.len) ||
                                  memchr(v->u.str.p, '~', v->u.str.len));
@@ -1834,15 +1784,15 @@ static int has_wild(const calc_value *v)
 /* Where key is along a row (by_row) or column of a table: exact (with
  * wildcards for text), the last at or below (sorted up: binary search, as
  * Excel), or the last at or above (sorted down). -1 for none. */
-static long lookup(const table *t, const calc_value *key, int by_row, unsigned fixed, int mode)
+long calc_lookup(const calc_table *t, const calc_value *key, int by_row, unsigned fixed, int mode)
 {
     unsigned n = by_row ? t->cols : t->rows, i;
     calc_value v;
     int err, cmp;
     if (mode == 0) {
-        int wild = has_wild(key);
+        int wild = calc_has_wild(key);
         for (i = 0; i < n; i++) {
-            table_get(t, by_row ? fixed : i, by_row ? i : fixed, &v);
+            calc_table_get(t, by_row ? fixed : i, by_row ? i : fixed, &v);
             if (!same_type(&v, key))
                 continue;
             if (wild ? calc_wild_match(key->u.str.p, key->u.str.len, v.u.str.p, v.u.str.len)
@@ -1854,7 +1804,7 @@ static long lookup(const table *t, const calc_value *key, int by_row, unsigned f
     if (mode < 0) {
         long found = -1;
         for (i = 0; i < n; i++) {
-            table_get(t, by_row ? fixed : i, by_row ? i : fixed, &v);
+            calc_table_get(t, by_row ? fixed : i, by_row ? i : fixed, &v);
             if (!same_type(&v, key))
                 continue;
             cmp = calc_compare(&v, key, &err);
@@ -1870,7 +1820,7 @@ static long lookup(const table *t, const calc_value *key, int by_row, unsigned f
             long mid = lo + (hi - lo) / 2, k;
             /* past empty cells and other kinds to one that compares */
             for (k = mid; k >= lo; k--) {
-                table_get(t, by_row ? fixed : (unsigned)k, by_row ? (unsigned)k : fixed, &v);
+                calc_table_get(t, by_row ? fixed : (unsigned)k, by_row ? (unsigned)k : fixed, &v);
                 if (same_type(&v, key))
                     break;
             }
@@ -1892,7 +1842,7 @@ static long lookup(const table *t, const calc_value *key, int by_row, unsigned f
 
 static void vh_lookup(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, int horizontal)
 {
-    table t;
+    calc_table t;
     calc_value key = args[0];
     double index;
     int approx, e;
@@ -1903,7 +1853,7 @@ static void vh_lookup(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, 
     }
     if (key.type == CV_EMPTY || key.type == CV_MISSING)
         cv_num(&key, 0);
-    if ((e = table_of(ctx, &args[1], &t)) != 0) {
+    if ((e = calc_table_of(ctx, &args[1], &t)) != 0) {
         cv_err(r, e);
         return;
     }
@@ -1918,15 +1868,15 @@ static void vh_lookup(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, 
         cv_err(r, OWF_ERROR_REF);
         return;
     }
-    at = lookup(&t, &key, horizontal, 0, approx ? 1 : 0);
+    at = calc_lookup(&t, &key, horizontal, 0, approx ? 1 : 0);
     if (at < 0) {
         cv_err(r, OWF_ERROR_NA);
         return;
     }
     if (horizontal)
-        table_get(&t, (unsigned)index - 1, (unsigned)at, r);
+        calc_table_get(&t, (unsigned)index - 1, (unsigned)at, r);
     else
-        table_get(&t, (unsigned)at, (unsigned)index - 1, r);
+        calc_table_get(&t, (unsigned)at, (unsigned)index - 1, r);
 }
 
 static void fn_vlookup(calc_ctx *c, calc_value *a, int n, calc_value *r) { vh_lookup(c, a, n, r, 0); }
@@ -1934,7 +1884,7 @@ static void fn_hlookup(calc_ctx *c, calc_value *a, int n, calc_value *r) { vh_lo
 
 static void fn_match(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 {
-    table t;
+    calc_table t;
     calc_value key = args[0];
     double type;
     int e, mode;
@@ -1945,7 +1895,7 @@ static void fn_match(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
     }
     if (key.type == CV_EMPTY || key.type == CV_MISSING)
         cv_num(&key, 0);
-    if ((e = table_of(ctx, &args[1], &t)) != 0) {
+    if ((e = calc_table_of(ctx, &args[1], &t)) != 0) {
         cv_err(r, e);
         return;
     }
@@ -1955,7 +1905,7 @@ static void fn_match(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
         cv_err(r, OWF_ERROR_NA);
         return;
     }
-    at = lookup(&t, &key, t.rows == 1 && t.cols != 1, 0, mode);
+    at = calc_lookup(&t, &key, t.rows == 1 && t.cols != 1, 0, mode);
     if (at < 0)
         cv_err(r, OWF_ERROR_NA);
     else
@@ -2139,10 +2089,10 @@ static void fn_date(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 }
 
 /* A serial date's day number, or an error. */
-static int serial_arg(calc_ctx *ctx, calc_value *args, int argc, double *out)
+int calc_serial_arg(calc_ctx *ctx, calc_value *args, int argc, double *out)
 {
     double x;
-    int e = num_arg(ctx, args, argc, 0, 0, &x);
+    int e = calc_num_arg(ctx, args, argc, 0, 0, &x);
     if (e)
         return e;
     if (x < 0 || x >= 2958466)
@@ -2154,7 +2104,7 @@ static int serial_arg(calc_ctx *ctx, calc_value *args, int argc, double *out)
 static void date_part(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, int which)
 {
     double x;
-    int y, m, d, e = serial_arg(ctx, args, argc, &x);
+    int y, m, d, e = calc_serial_arg(ctx, args, argc, &x);
     if (e) {
         cv_err(r, e);
         return;
@@ -2170,7 +2120,7 @@ static void fn_day(calc_ctx *c, calc_value *a, int n, calc_value *r) { date_part
 static void time_part(calc_ctx *ctx, calc_value *args, int argc, calc_value *r, int which)
 {
     double x, secs;
-    int e = serial_arg(ctx, args, argc, &x);
+    int e = calc_serial_arg(ctx, args, argc, &x);
     if (e) {
         cv_err(r, e);
         return;
@@ -2217,7 +2167,7 @@ static void fn_weekday(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 {
     double x, type;
     long serial, sunday0;
-    int e = serial_arg(ctx, args, argc, &x), first;
+    int e = calc_serial_arg(ctx, args, argc, &x), first;
     if (e) {
         cv_err(r, e);
         return;
@@ -2246,13 +2196,13 @@ static void fn_weekday(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 /* (1 + rate)^n and (1 + rate)^n - 1 without losing the digits a rate
  * near 0 has: through log(1 + x) and exp(x) - 1 in Kahan's forms, which
  * need only log and exp. */
-static double log1p_(double x)
+double calc_log1p(double x)
 {
     double u = 1 + x;
     return u == 1 ? x : log(u) * x / (u - 1);
 }
 
-static double expm1_(double x)
+double calc_expm1(double x)
 {
     double u = exp(x);
     if (u == 1)
@@ -2262,11 +2212,11 @@ static double expm1_(double x)
     return (u - 1) * x / log(u);
 }
 
-static void growth(double rate, double n, double *g, double *g1)
+void calc_growth(double rate, double n, double *g, double *g1)
 {
-    double l = n * log1p_(rate);
+    double l = n * calc_log1p(rate);
     *g = exp(l);
-    *g1 = expm1_(l);
+    *g1 = calc_expm1(l);
 }
 
 static void fn_pmt(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
@@ -2286,7 +2236,7 @@ static void fn_pmt(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
         cv_num(r, -(pv + fv) / n);
         return;
     }
-    growth(rate, n, &g, &g1);
+    calc_growth(rate, n, &g, &g1);
     cv_num(r, -(rate * (fv + pv * g)) / ((1 + rate * type) * g1));
 }
 
@@ -2303,7 +2253,7 @@ static void fn_fv(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
         cv_num(r, -(pv + pmt * n));
         return;
     }
-    growth(rate, n, &g, &g1);
+    calc_growth(rate, n, &g, &g1);
     cv_num(r, -(pv * g + pmt * (1 + rate * type) * g1 / rate));
 }
 
@@ -2320,7 +2270,7 @@ static void fn_pv(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
         cv_num(r, -(fv + pmt * n));
         return;
     }
-    growth(rate, n, &g, &g1);
+    calc_growth(rate, n, &g, &g1);
     cv_num(r, -(fv + pmt * (1 + rate * type) * g1 / rate) / g);
 }
 
@@ -2347,7 +2297,7 @@ static void fn_npv(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
     }
     s.sum = 0;
     s.factor = 1;
-    if ((e = each_number(ctx, args, 1, argc, npv_add, &s)) != NOERR)
+    if ((e = calc_each_number(ctx, args, 1, argc, npv_add, &s)) != NOERR)
         cv_err(r, e);
     else
         cv_num(r, s.sum);
@@ -2360,21 +2310,39 @@ static void fn_npv(calc_ctx *ctx, calc_value *args, int argc, calc_value *r)
 static const calc_function functions[] = {
     { "ABS", 1, 1, "V", 0, fn_abs },
     { "ACOS", 1, 1, "V", 0, fn_acos },
+    { "ACOSH", 1, 1, "V", 0, cf_acosh },
+    { "ADDRESS", 2, 5, "V", 0, cf_address },
     { "AND", 1, M, "R", 0, fn_and },
+    { "ARABIC", 1, 1, "V", 0, cf_arabic },
+    { "AREAS", 1, 1, "R", FN_ADDRESS, cf_areas },
     { "ASIN", 1, 1, "V", 0, fn_asin },
+    { "ASINH", 1, 1, "V", 0, cf_asinh },
     { "ATAN", 1, 1, "V", 0, fn_atan },
     { "ATAN2", 2, 2, "V", 0, fn_atan2 },
+    { "ATANH", 1, 1, "V", 0, cf_atanh },
+    { "AVEDEV", 1, M, "R", 0, cf_avedev },
     { "AVERAGE", 1, M, "R", 0, fn_average },
+    { "AVERAGEA", 1, M, "R", 0, cf_averagea },
     { "AVERAGEIF", 2, 3, "RVR", 0, fn_averageif },
     { "AVERAGEIFS", 3, M, "R*RV", 0, fn_averageifs },
+    { "BASE", 2, 3, "V", 0, cf_base },
+    { "BINOM.DIST", 4, 4, "V", 0, cf_binom_dist },
+    { "BINOMDIST", 4, 4, "V", 0, cf_binom_dist },
     { "CEILING", 2, 2, "V", 0, fn_ceiling },
+    { "CEILING.MATH", 1, 3, "V", 0, cf_ceiling_math },
+    { "CEILING.PRECISE", 1, 2, "V", 0, cf_ceiling_precise },
+    { "CELL", 1, 2, "VR", 0, cf_cell },
     { "CHAR", 1, 1, "V", 0, fn_char },
     { "CHOOSE", 2, M, "VR", 0, fn_choose },
     { "CLEAN", 1, 1, "V", 0, fn_clean },
     { "CODE", 1, 1, "V", 0, fn_code },
     { "COLUMN", 0, 1, "R", FN_ADDRESS, fn_column },
     { "COLUMNS", 1, 1, "R", FN_ADDRESS, fn_columns },
+    { "COMBIN", 2, 2, "V", 0, cf_combin },
+    { "COMBINA", 2, 2, "V", 0, cf_combina },
+    { "CONCAT", 1, M, "A", 0, cf_concat },
     { "CONCATENATE", 1, M, "V", 0, fn_concatenate },
+    { "CORREL", 2, 2, "A", 0, cf_correl },
     { "COS", 1, 1, "V", 0, fn_cos },
     { "COSH", 1, 1, "V", 0, fn_cosh },
     { "COUNT", 1, M, "R", 0, fn_count },
@@ -2382,101 +2350,241 @@ static const calc_function functions[] = {
     { "COUNTBLANK", 1, 1, "R", 0, fn_countblank },
     { "COUNTIF", 2, 2, "RV", 0, fn_countif },
     { "COUNTIFS", 2, M, "*RV", 0, fn_countifs },
+    { "COVAR", 2, 2, "A", 0, cf_covariance_p },
+    { "COVARIANCE.P", 2, 2, "A", 0, cf_covariance_p },
+    { "COVARIANCE.S", 2, 2, "A", 0, cf_covariance_s },
+    { "CUMIPMT", 6, 6, "V", 0, cf_cumipmt },
+    { "CUMPRINC", 6, 6, "V", 0, cf_cumprinc },
     { "DATE", 3, 3, "V", 0, fn_date },
+    { "DATEDIF", 3, 3, "V", 0, cf_datedif },
+    { "DATEVALUE", 1, 1, "V", 0, cf_datevalue },
     { "DAY", 1, 1, "V", 0, fn_day },
+    { "DAYS", 2, 2, "V", 0, cf_days },
+    { "DAYS360", 2, 3, "V", 0, cf_days360 },
+    { "DB", 4, 5, "V", 0, cf_db },
+    { "DDB", 4, 5, "V", 0, cf_ddb },
+    { "DECIMAL", 2, 2, "V", 0, cf_decimal },
     { "DEGREES", 1, 1, "V", 0, fn_degrees },
+    { "DEVSQ", 1, M, "R", 0, cf_devsq },
+    { "DOLLAR", 1, 2, "V", 0, cf_dollar },
+    { "EDATE", 2, 2, "V", 0, cf_edate },
+    { "EFFECT", 2, 2, "V", 0, cf_effect },
+    { "EOMONTH", 2, 2, "V", 0, cf_eomonth },
+    { "ERROR.TYPE", 1, 1, "V", 0, cf_error_type },
     { "EVEN", 1, 1, "V", 0, fn_even },
     { "EXACT", 2, 2, "V", 0, fn_exact },
     { "EXP", 1, 1, "V", 0, fn_exp },
+    { "EXPON.DIST", 3, 3, "V", 0, cf_expon_dist },
+    { "EXPONDIST", 3, 3, "V", 0, cf_expon_dist },
     { "FACT", 1, 1, "V", 0, fn_fact },
+    { "FACTDOUBLE", 1, 1, "V", 0, cf_factdouble },
     { "FALSE", 0, 0, "V", 0, fn_false },
     { "FIND", 2, 3, "V", 0, fn_find },
+    { "FIXED", 1, 3, "V", 0, cf_fixed },
     { "FLOOR", 2, 2, "V", 0, fn_floor },
+    { "FLOOR.MATH", 1, 3, "V", 0, cf_floor_math },
+    { "FLOOR.PRECISE", 1, 2, "V", 0, cf_floor_precise },
+    { "FORECAST", 3, 3, "VAA", 0, cf_forecast },
+    { "FORECAST.LINEAR", 3, 3, "VAA", 0, cf_forecast },
+    { "FORMULATEXT", 1, 1, "R", 0, cf_formulatext },
+    { "FREQUENCY", 2, 2, "A", 0, cf_frequency },
     { "FV", 3, 5, "V", 0, fn_fv },
+    { "FVSCHEDULE", 2, 2, "VA", 0, cf_fvschedule },
+    { "GCD", 1, M, "R", 0, cf_gcd },
+    { "GEOMEAN", 1, M, "R", 0, cf_geomean },
+    { "HARMEAN", 1, M, "R", 0, cf_harmean },
     { "HLOOKUP", 3, 4, "VRV", 0, fn_hlookup },
     { "HOUR", 1, 1, "V", 0, fn_hour },
+    { "HYPERLINK", 1, 2, "V", 0, cf_hyperlink },
     { "IF", 2, 3, "R", 0, fn_if },
     { "IFERROR", 2, 2, "V", 0, fn_iferror },
     { "IFNA", 2, 2, "V", 0, fn_ifna },
+    { "IFS", 2, M, "*VR", 0, cf_ifs },
     { "INDEX", 2, 4, "RV", 0, fn_index },
+    { "INDIRECT", 1, 2, "V", FN_VOLATILE, cf_indirect },
     { "INT", 1, 1, "V", 0, fn_int },
+    { "INTERCEPT", 2, 2, "A", 0, cf_intercept },
+    { "IPMT", 4, 6, "V", 0, cf_ipmt },
+    { "IRR", 1, 2, "AV", 0, cf_irr },
     { "ISBLANK", 1, 1, "V", 0, fn_isblank },
     { "ISERR", 1, 1, "V", 0, fn_iserr },
     { "ISERROR", 1, 1, "V", 0, fn_iserror },
+    { "ISEVEN", 1, 1, "V", 0, cf_iseven },
+    { "ISFORMULA", 1, 1, "R", 0, cf_isformula },
     { "ISLOGICAL", 1, 1, "V", 0, fn_islogical },
     { "ISNA", 1, 1, "V", 0, fn_isna },
     { "ISNONTEXT", 1, 1, "V", 0, fn_isnontext },
     { "ISNUMBER", 1, 1, "V", 0, fn_isnumber },
+    { "ISO.CEILING", 1, 2, "V", 0, cf_ceiling_precise },
+    { "ISODD", 1, 1, "V", 0, cf_isodd },
+    { "ISOWEEKNUM", 1, 1, "V", 0, cf_isoweeknum },
+    { "ISREF", 1, 1, "R", FN_ADDRESS, cf_isref },
     { "ISTEXT", 1, 1, "V", 0, fn_istext },
     { "LARGE", 2, 2, "RV", 0, fn_large },
+    { "LCM", 1, M, "R", 0, cf_lcm },
     { "LEFT", 1, 2, "V", 0, fn_left },
     { "LEN", 1, 1, "V", 0, fn_len },
     { "LN", 1, 1, "V", 0, fn_ln },
     { "LOG", 1, 2, "V", 0, fn_log },
     { "LOG10", 1, 1, "V", 0, fn_log10 },
+    { "LOOKUP", 2, 3, "VAA", 0, cf_lookup },
     { "LOWER", 1, 1, "V", 0, fn_lower },
     { "MATCH", 2, 3, "VRV", 0, fn_match },
     { "MAX", 1, M, "R", 0, fn_max },
+    { "MAXA", 1, M, "R", 0, cf_maxa },
+    { "MAXIFS", 3, M, "R*RV", 0, fn_maxifs },
+    { "MDETERM", 1, 1, "A", 0, cf_mdeterm },
     { "MEDIAN", 1, M, "R", 0, fn_median },
     { "MID", 3, 3, "V", 0, fn_mid },
     { "MIN", 1, M, "R", 0, fn_min },
+    { "MINA", 1, M, "R", 0, cf_mina },
+    { "MINIFS", 3, M, "R*RV", 0, fn_minifs },
     { "MINUTE", 1, 1, "V", 0, fn_minute },
+    { "MINVERSE", 1, 1, "A", 0, cf_minverse },
+    { "MIRR", 3, 3, "AV", 0, cf_mirr },
+    { "MMULT", 2, 2, "A", 0, cf_mmult },
     { "MOD", 2, 2, "V", 0, fn_mod },
+    { "MODE", 1, M, "R", 0, cf_mode },
+    { "MODE.MULT", 1, M, "R", 0, cf_mode_mult },
+    { "MODE.SNGL", 1, M, "R", 0, cf_mode },
     { "MONTH", 1, 1, "V", 0, fn_month },
+    { "MROUND", 2, 2, "V", 0, cf_mround },
+    { "MULTINOMIAL", 1, M, "R", 0, cf_multinomial },
     { "N", 1, 1, "V", 0, fn_n },
     { "NA", 0, 0, "V", 0, fn_na },
+    { "NETWORKDAYS", 2, 3, "VVA", 0, cf_networkdays },
+    { "NETWORKDAYS.INTL", 2, 4, "VVVA", 0, cf_networkdays_intl },
+    { "NOMINAL", 2, 2, "V", 0, cf_nominal },
+    { "NORM.DIST", 4, 4, "V", 0, cf_norm_dist },
+    { "NORM.INV", 3, 3, "V", 0, cf_norm_inv },
+    { "NORM.S.DIST", 2, 2, "V", 0, cf_norm_s_dist },
+    { "NORM.S.INV", 1, 1, "V", 0, cf_norm_s_inv },
+    { "NORMDIST", 4, 4, "V", 0, cf_norm_dist },
+    { "NORMINV", 3, 3, "V", 0, cf_norm_inv },
+    { "NORMSDIST", 1, 1, "V", 0, cf_normsdist },
+    { "NORMSINV", 1, 1, "V", 0, cf_norm_s_inv },
     { "NOT", 1, 1, "V", 0, fn_not },
     { "NOW", 0, 0, "V", FN_VOLATILE, fn_now },
+    { "NPER", 3, 5, "V", 0, cf_nper },
     { "NPV", 2, M, "VR", 0, fn_npv },
+    { "NUMBERVALUE", 1, 3, "V", 0, cf_numbervalue },
     { "ODD", 1, 1, "V", 0, fn_odd },
+    { "OFFSET", 3, 5, "RV", FN_VOLATILE, cf_offset },
     { "OR", 1, M, "R", 0, fn_or },
+    { "PEARSON", 2, 2, "A", 0, cf_correl },
+    { "PERCENTILE", 2, 2, "AV", 0, cf_percentile_inc },
+    { "PERCENTILE.EXC", 2, 2, "AV", 0, cf_percentile_exc },
+    { "PERCENTILE.INC", 2, 2, "AV", 0, cf_percentile_inc },
+    { "PERCENTRANK", 2, 3, "AV", 0, cf_percentrank_inc },
+    { "PERCENTRANK.EXC", 2, 3, "AV", 0, cf_percentrank_exc },
+    { "PERCENTRANK.INC", 2, 3, "AV", 0, cf_percentrank_inc },
+    { "PERMUT", 2, 2, "V", 0, cf_permut },
+    { "PERMUTATIONA", 2, 2, "V", 0, cf_permutationa },
     { "PI", 0, 0, "V", 0, fn_pi },
     { "PMT", 3, 5, "V", 0, fn_pmt },
+    { "POISSON", 3, 3, "V", 0, cf_poisson_dist },
+    { "POISSON.DIST", 3, 3, "V", 0, cf_poisson_dist },
     { "POWER", 2, 2, "V", 0, fn_power },
+    { "PPMT", 4, 6, "V", 0, cf_ppmt },
     { "PRODUCT", 1, M, "R", 0, fn_product },
     { "PROPER", 1, 1, "V", 0, fn_proper },
     { "PV", 3, 5, "V", 0, fn_pv },
+    { "QUARTILE", 2, 2, "AV", 0, cf_quartile_inc },
+    { "QUARTILE.EXC", 2, 2, "AV", 0, cf_quartile_exc },
+    { "QUARTILE.INC", 2, 2, "AV", 0, cf_quartile_inc },
+    { "QUOTIENT", 2, 2, "V", 0, cf_quotient },
     { "RADIANS", 1, 1, "V", 0, fn_radians },
     { "RAND", 0, 0, "V", FN_VOLATILE, fn_rand },
+    { "RANDBETWEEN", 2, 2, "V", FN_VOLATILE, cf_randbetween },
+    { "RANK", 2, 3, "VRV", 0, cf_rank_eq },
+    { "RANK.AVG", 2, 3, "VRV", 0, cf_rank_avg },
+    { "RANK.EQ", 2, 3, "VRV", 0, cf_rank_eq },
+    { "RATE", 3, 6, "V", 0, cf_rate },
     { "REPLACE", 4, 4, "V", 0, fn_replace },
     { "REPT", 2, 2, "V", 0, fn_rept },
     { "RIGHT", 1, 2, "V", 0, fn_right },
+    { "ROMAN", 1, 2, "V", 0, cf_roman },
     { "ROUND", 2, 2, "V", 0, fn_round },
     { "ROUNDDOWN", 2, 2, "V", 0, fn_rounddown },
     { "ROUNDUP", 2, 2, "V", 0, fn_roundup },
     { "ROW", 0, 1, "R", FN_ADDRESS, fn_row },
     { "ROWS", 1, 1, "R", FN_ADDRESS, fn_rows },
+    { "RSQ", 2, 2, "A", 0, cf_rsq },
     { "SEARCH", 2, 3, "V", 0, fn_search },
     { "SECOND", 1, 1, "V", 0, fn_second },
+    { "SERIESSUM", 4, 4, "VVVA", 0, cf_seriessum },
+    { "SHEET", 0, 1, "R", FN_ADDRESS, cf_sheet },
+    { "SHEETS", 0, 1, "R", FN_ADDRESS, cf_sheets },
     { "SIGN", 1, 1, "V", 0, fn_sign },
     { "SIN", 1, 1, "V", 0, fn_sin },
     { "SINH", 1, 1, "V", 0, fn_sinh },
+    { "SLN", 3, 3, "V", 0, cf_sln },
+    { "SLOPE", 2, 2, "A", 0, cf_slope },
     { "SMALL", 2, 2, "RV", 0, fn_small },
     { "SQRT", 1, 1, "V", 0, fn_sqrt },
+    { "SQRTPI", 1, 1, "V", 0, cf_sqrtpi },
+    { "STANDARDIZE", 3, 3, "V", 0, cf_standardize },
     { "STDEV", 1, M, "R", 0, fn_stdev },
+    { "STDEV.P", 1, M, "R", 0, fn_stdevp },
+    { "STDEV.S", 1, M, "R", 0, fn_stdev },
+    { "STDEVA", 1, M, "R", 0, cf_stdeva },
     { "STDEVP", 1, M, "R", 0, fn_stdevp },
+    { "STDEVPA", 1, M, "R", 0, cf_stdevpa },
     { "SUBSTITUTE", 3, 4, "V", 0, fn_substitute },
+    { "SUBTOTAL", 2, M, "VR", 0, cf_subtotal },
     { "SUM", 1, M, "R", 0, fn_sum },
     { "SUMIF", 2, 3, "RVR", 0, fn_sumif },
     { "SUMIFS", 3, M, "R*RV", 0, fn_sumifs },
     { "SUMPRODUCT", 1, M, "A", 0, fn_sumproduct },
     { "SUMSQ", 1, M, "R", 0, fn_sumsq },
+    { "SUMX2MY2", 2, 2, "A", 0, cf_sumx2my2 },
+    { "SUMX2PY2", 2, 2, "A", 0, cf_sumx2py2 },
+    { "SUMXMY2", 2, 2, "A", 0, cf_sumxmy2 },
+    { "SWITCH", 3, M, "V*VR", 0, cf_switch },
+    { "SYD", 4, 4, "V", 0, cf_syd },
     { "T", 1, 1, "V", 0, fn_t },
+    { "T.DIST", 3, 3, "V", 0, cf_t_dist },
+    { "T.DIST.2T", 2, 2, "V", 0, cf_t_dist_2t },
+    { "T.DIST.RT", 2, 2, "V", 0, cf_t_dist_rt },
+    { "T.INV", 2, 2, "V", 0, cf_t_inv },
+    { "T.INV.2T", 2, 2, "V", 0, cf_t_inv_2t },
     { "TAN", 1, 1, "V", 0, fn_tan },
     { "TANH", 1, 1, "V", 0, fn_tanh },
+    { "TDIST", 3, 3, "V", 0, cf_tdist },
     { "TEXT", 2, 2, "V", 0, fn_text },
+    { "TEXTJOIN", 3, M, "AVA", 0, cf_textjoin },
     { "TIME", 3, 3, "V", 0, fn_time },
+    { "TIMEVALUE", 1, 1, "V", 0, cf_timevalue },
+    { "TINV", 2, 2, "V", 0, cf_t_inv_2t },
     { "TODAY", 0, 0, "V", FN_VOLATILE, fn_today },
+    { "TRANSPOSE", 1, 1, "A", 0, cf_transpose },
     { "TRIM", 1, 1, "V", 0, fn_trim },
+    { "TRIMMEAN", 2, 2, "AV", 0, cf_trimmean },
     { "TRUE", 0, 0, "V", 0, fn_true },
     { "TRUNC", 1, 2, "V", 0, fn_trunc },
+    { "TYPE", 1, 1, "R", 0, cf_type },
+    { "UNICHAR", 1, 1, "V", 0, cf_unichar },
+    { "UNICODE", 1, 1, "V", 0, cf_unicode },
     { "UPPER", 1, 1, "V", 0, fn_upper },
     { "VALUE", 1, 1, "V", 0, fn_value },
     { "VAR", 1, M, "R", 0, fn_var },
+    { "VAR.P", 1, M, "R", 0, fn_varp },
+    { "VAR.S", 1, M, "R", 0, fn_var },
+    { "VARA", 1, M, "R", 0, cf_vara },
     { "VARP", 1, M, "R", 0, fn_varp },
+    { "VARPA", 1, M, "R", 0, cf_varpa },
     { "VLOOKUP", 3, 4, "VRV", 0, fn_vlookup },
     { "WEEKDAY", 1, 2, "V", 0, fn_weekday },
+    { "WEEKNUM", 1, 2, "V", 0, cf_weeknum },
+    { "WORKDAY", 2, 3, "VVA", 0, cf_workday },
+    { "WORKDAY.INTL", 2, 4, "VVVA", 0, cf_workday_intl },
+    { "XIRR", 2, 3, "AAV", 0, cf_xirr },
+    { "XLOOKUP", 3, 6, "VAARVV", 0, cf_xlookup },
+    { "XMATCH", 2, 4, "VAVV", 0, cf_xmatch },
+    { "XNPV", 3, 3, "VAA", 0, cf_xnpv },
+    { "XOR", 1, M, "R", 0, fn_xor },
     { "YEAR", 1, 1, "V", 0, fn_year },
+    { "YEARFRAC", 2, 3, "V", 0, cf_yearfrac },
 };
 
 #define NFUNCTIONS ((int)(sizeof functions / sizeof functions[0]))

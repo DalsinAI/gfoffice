@@ -242,3 +242,16 @@ check: opencalc-check
 .PHONY: opencalc-test opencalc-check
 
 .PHONY: calc-test calc-check
+
+# The formula engine's second batch of functions: tests/calc/fn2_cases.h is
+# made by tests/calc/fn2_expect.py (python3 tests/calc/fn2_expect.py >
+# tests/calc/fn2_cases.h); the tests check it is what the script makes.
+$(OUT)/test-calc $(OUT)/test-calc-asan: tests/calc/fn2_cases.h libowf/calc/owf_calc_fn.h
+
+calc-expect:
+	python3 tests/calc/fn2_expect.py --check tests/calc/fn2_cases.h
+
+test: calc-expect
+check: calc-expect
+
+.PHONY: calc-expect
