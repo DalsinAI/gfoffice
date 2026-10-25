@@ -146,6 +146,18 @@ The 1.0 release gate includes:
 - m68k AmigaOS cross-build;
 - real AmigaOS 3.2.3/OpenRTG bench validation.
 
+## OpenCalc
+
+OpenCalc is the spreadsheet of the GFOffice Suite, beside OpenWrite in this
+repository for now. Its portable core is `src/calc` (`include/opencalc_core.h`):
+the view, the selection, keys as Excel and LibreOffice have them, editing,
+fill, insert and delete, the clipboard, styles, bounded undo and the grid as a
+list of things to draw. It is tested on the PC with `make calc-test` and
+`make calc-check` (both part of `make test` and `make check`). The Amiga
+window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
+(OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
+by the engine in `libowf/include/owf_calc.h`.
+
 ## Licence
 
 MIT, Copyright (c) 2026 AmigaChrome Team (`LICENSE`).
