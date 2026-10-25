@@ -35,7 +35,7 @@
 
 #define REG(r, decl) register decl __asm(#r)
 #define LIB_VERSION 2
-#define LIB_REVISION 0
+#define LIB_REVISION 1                 /* 2.1: libowf 1.2's structures (owf_open checks their sizes) */
 
 struct OWFLibBase {
     struct Library lib;
@@ -50,9 +50,9 @@ int start(void) { return -1; }
 
 static const char lib_name[] = "owf.library";
 static const char lib_id[] =
-    "owf.library 2.0 (25.10.2026) libowf " OWF_VERSION ", AmigaChrome Team\r\n";
+    "owf.library 2.1 (25.10.2026) libowf " OWF_VERSION ", AmigaChrome Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
-    "$VER: owf.library 2.0 (25.10.2026) MIT, Copyright (c) 2026 AmigaChrome Team";
+    "$VER: owf.library 2.1 (25.10.2026) MIT, Copyright (c) 2026 AmigaChrome Team";
 
 static struct Library *lib_init(REG(d0, struct OWFLibBase *base), REG(a0, BPTR seglist),
                                 REG(a6, struct ExecBase *sys));

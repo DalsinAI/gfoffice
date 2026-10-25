@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.1.0"
+#define OWF_VERSION "1.2.0"
 
 /* Results. */
 enum {
@@ -71,10 +71,16 @@ typedef struct {
 
 typedef enum { OWF_ALIGN_LEFT, OWF_ALIGN_CENTRE, OWF_ALIGN_RIGHT, OWF_ALIGN_JUSTIFY } owf_align;
 typedef enum { OWF_TAB_LEFT, OWF_TAB_CENTRE, OWF_TAB_RIGHT, OWF_TAB_DECIMAL } owf_tab_kind;
+/* 1.2: what fills a tab's space (a contents page's dots) */
+typedef enum {
+    OWF_LEADER_NONE, OWF_LEADER_DOT, OWF_LEADER_HYPHEN, OWF_LEADER_UNDERSCORE, OWF_LEADER_MIDDLE_DOT,
+    OWF_LEADER_HEAVY
+} owf_tab_leader;
 
 typedef struct {
     int position;            /* twips from the paragraph's left indent */
     owf_tab_kind kind;
+    owf_tab_leader leader;   /* 1.2 */
 } owf_tab;
 
 #define OWF_MAX_TABS 32

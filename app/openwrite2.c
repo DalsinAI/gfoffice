@@ -75,7 +75,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.2 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.3 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -1615,6 +1615,38 @@ static int word_x(const page_paint *pp, const ol_device_op *d, const char *s, si
     return ol_scale_length(pp->scale, m.width);
 }
 
+/* 2.0.3: a tab's leader (OpenLayout 0.3) across its space: dots, hyphens, underscores or middle dots in the
+ * word's font, each where a run of them from the page's left edge would put it, so the leaders of a contents
+ * page line up from line to line; a heavy one is a rule. A little room is left at each end. */
+static void paint_leader(page_paint *pp, const ol_device_op *d, unsigned leader, LONG pen, int baseline)
+{
+    struct RastPort *rp = pp->rp;
+    char row[96];
+    int cw, from, to, x, k;
+    char c = leader == OL_LEADER_HYPHEN ? '-' : leader == OL_LEADER_UNDERSCORE ? '_'
+           : leader == OL_LEADER_MIDDLE_DOT ? (char)0xB7 : '.';
+    if (leader == OL_LEADER_HEAVY) {
+        int h = d->font_pixels / 8 > 1 ? d->font_pixels / 8 : 1, gap = d->font_pixels / 4;
+        if (d->box.width > 2 * gap) ogt_box(rp, pen, d->box.x + gap, baseline - h + 1, d->box.width - 2 * gap, h);
+        return;
+    }
+    cw = text_length(rp, &c, 1);
+    if (cw < 1) return;
+    from = d->box.x + cw / 2;
+    to = d->box.x + d->box.width - cw / 2;
+    x = pp->scale->origin_x + (from - pp->scale->origin_x + cw - 1) / cw * cw;   /* on the page's grid */
+    if (x + cw > to) return;
+    memset(row, c, sizeof row);
+    SetDrMd(rp, JAM1);
+    while (x + cw <= to) {
+        k = (to - x) / cw;
+        if (k > (int)sizeof row) k = (int)sizeof row;
+        Move(rp, x, baseline);
+        Text(rp, (STRPTR)row, (ULONG)k);
+        x += k * cw;
+    }
+}
+
 static void paint_text(page_paint *pp, const ol_device_op *d)
 {
     struct RastPort *rp = pp->rp;
@@ -1690,6 +1722,13 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
         }
     }
 
+    if (OL_TEXT_LEADER_OF(t->style.text_flags) && t->text_length == 1 && s[0] == '\t' && d->box.width > 0) {
+        pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : ogt_pen(&ctx, "fill.text");
+        ogt_set_apen(rp, pen);
+        SetSoftStyle(rp, style & ~FSF_UNDERLINED, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+        paint_leader(pp, d, OL_TEXT_LEADER_OF(t->style.text_flags), pen, baseline);
+        SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    }
     if (!(style & FSF_UNDERLINED)) n = drawn;        /* an underline runs on under the spaces */
     if (!n) return;
     pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : ogt_pen(&ctx, "fill.text");
