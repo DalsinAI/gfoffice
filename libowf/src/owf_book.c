@@ -34,20 +34,6 @@ static int grow(void **items, int count, int *capacity, size_t size, int first)
     return 1;
 }
 
-const char *owf_error_name(int error)
-{
-    switch (error) {
-    case OWF_ERROR_NULL: return "#NULL!";
-    case OWF_ERROR_DIV0: return "#DIV/0!";
-    case OWF_ERROR_VALUE: return "#VALUE!";
-    case OWF_ERROR_REF: return "#REF!";
-    case OWF_ERROR_NAME: return "#NAME?";
-    case OWF_ERROR_NUM: return "#NUM!";
-    case OWF_ERROR_NA: return "#N/A";
-    }
-    return NULL;
-}
-
 /* ---- The book ---- */
 
 void owf_cellstyle_init(owf_cellstyle *style)
