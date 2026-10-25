@@ -712,6 +712,35 @@ static void header_checks(const ow_layout *l, const owf_doc *doc)
         ol_document_free(h);
         ol_document_free(f);
     }
+    {   /* saved as DOCX and read again: the header's and the footer's frames kept, where they were */
+        const char *out = "/tmp/openwrite-header-frames.docx";
+        owf_doc *back = NULL;
+        int k;
+        CHECK(owf_export_file(doc, out, "docx", NULL) == OWF_OK);
+        CHECK(owf_import_file(out, NULL, &back, NULL, NULL) == OWF_OK && back);
+        if (back) {
+            CHECK(back->nframes == 3);
+            for (k = 0; k < 2; ++k) {
+                const owf_story *sa = k ? &doc->footer : &doc->header, *sb = k ? &back->footer : &back->header;
+                int i, j, na = 0, nb = 0, fa[4], fb[4];
+                for (i = 0; i < sa->nparas; ++i)
+                    for (j = 0; j < sa->paras[i].nruns; ++j)
+                        if (sa->paras[i].runs[j].kind == OWF_RUN_FRAME && na < 4) fa[na++] = sa->paras[i].runs[j].image;
+                for (i = 0; i < sb->nparas; ++i)
+                    for (j = 0; j < sb->paras[i].nruns; ++j)
+                        if (sb->paras[i].runs[j].kind == OWF_RUN_FRAME && nb < 4) fb[nb++] = sb->paras[i].runs[j].image;
+                CHECK(na == (k ? 1 : 2) && na == nb);
+                for (i = 0; i < na && i < nb; ++i) {
+                    const owf_frame *x = &doc->frames[fa[i]], *y = &back->frames[fb[i]];
+                    CHECK(x->x == y->x && x->y == y->y && x->x_from == y->x_from && x->y_from == y->y_from &&
+                          x->x_place == y->x_place && x->width == y->width && x->height == y->height &&
+                          x->fill == y->fill && (x->image >= 0) == (y->image >= 0) && x->story.nparas == y->story.nparas);
+                }
+            }
+            owf_doc_free(back);
+        }
+        remove(out);
+    }
 }
 
 /* tests/core/fixtures/inline-box.docx (make_inline_docx.py): text boxes in the line (2.0.17), kept: each where its

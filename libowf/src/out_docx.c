@@ -399,7 +399,9 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
         } else {
             owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);
             switch(run->kind){case OWF_RUN_TAB:owf_buf_puts(out,"<w:tab/>");break;case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<w:br/>");break;case OWF_RUN_IMAGE:put_drawing(out,doc,run->image);break;
-                case OWF_RUN_FRAME:if(story==&doc->body)put_frame(out,doc,run->image,report);else owf_report_add(report,OWF_NOTE_LOST,"Pictures and text boxes placed on the page are kept in the body only");break;default:break;}
+                case OWF_RUN_FRAME:/* 2.0.16: a header's and a footer's too (their parts' relationships have the pictures' ids) */
+                    if(story==&doc->body||story==&doc->header||story==&doc->footer)put_frame(out,doc,run->image,report);
+                    else owf_report_add(report,OWF_NOTE_LOST,"Pictures and text boxes placed in a text box are left out");break;default:break;}
             owf_buf_puts(out,"</w:r>");
         }
         if(link)owf_buf_puts(out,"</w:hyperlink>");
