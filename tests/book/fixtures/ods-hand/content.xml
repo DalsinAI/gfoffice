@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Written by hand from OASIS ODF 1.2 (and the calcext attributes LibreOffice adds) for libowf's tests. -->
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:number="urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:calcext="urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.2">
+ <office:automatic-styles>
+  <number:number-style style:name="N1P0" style:volatile="true"><number:number number:decimal-places="2" number:min-integer-digits="1" number:grouping="true"/><number:text> €</number:text></number:number-style>
+  <number:number-style style:name="N1"><style:text-properties fo:color="#ff0000"/><number:text>-</number:text><number:number number:decimal-places="2" number:min-integer-digits="1" number:grouping="true"/><number:text> €</number:text><style:map style:condition="value()&gt;=0" style:apply-style-name="N1P0"/></number:number-style>
+  <number:currency-style style:name="N2"><number:currency-symbol number:language="en" number:country="GB">£</number:currency-symbol><number:number number:decimal-places="2" number:min-integer-digits="1" number:grouping="true"/></number:currency-style>
+  <number:time-style style:name="N3" number:truncate-on-overflow="false"><number:hours/><number:text>:</number:text><number:minutes number:style="long"/></number:time-style>
+  <number:date-style style:name="N4"><number:day-of-week number:style="long"/><number:text>, </number:text><number:day/><number:text>. </number:text><number:month number:textual="true" number:style="long"/><number:text> </number:text><number:year number:style="long"/><number:text> </number:text><number:hours number:style="long"/><number:text>:</number:text><number:minutes number:style="long"/><number:text> </number:text><number:am-pm/></number:date-style>
+  <number:number-style style:name="N5"><number:scientific-number number:decimal-places="3" number:min-integer-digits="1" number:min-exponent-digits="2"/></number:number-style>
+  <number:number-style style:name="N6"><number:fraction number:min-integer-digits="0" number:min-numerator-digits="2" number:min-denominator-digits="2"/></number:number-style>
+  <number:boolean-style style:name="N7"><number:boolean/></number:boolean-style>
+  <number:text-style style:name="N8"><number:text>[</number:text><number:text-content/><number:text>]</number:text></number:text-style>
+  <number:number-style style:name="N9"><number:number number:decimal-places="1" number:min-integer-digits="1" number:display-factor="1000"/><number:text>k "units"</number:text></number:number-style>
+  <number:number-style style:name="N10P0" style:volatile="true"><number:number number:decimal-places="0" number:min-integer-digits="1"/></number:number-style>
+  <number:number-style style:name="N10P1" style:volatile="true"><style:text-properties fo:color="#0000ff"/><number:text>(</number:text><number:number number:decimal-places="0" number:min-integer-digits="1"/><number:text>)</number:text></number:number-style>
+  <number:number-style style:name="N10"><number:text>nil</number:text><style:map style:condition="value()&gt;0" style:apply-style-name="N10P0"/><style:map style:condition="value()&lt;0" style:apply-style-name="N10P1"/></number:number-style>
+  <style:style style:name="co1" style:family="table-column"><style:table-column-properties style:column-width="3cm"/></style:style>
+  <style:style style:name="co2" style:family="table-column"><style:table-column-properties style:column-width="0.5in"/></style:style>
+  <style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.25in" style:use-optimal-row-height="false"/></style:style>
+  <style:style style:name="ro2" style:family="table-row"><style:table-row-properties style:row-height="0.2in" style:use-optimal-row-height="true"/></style:style>
+  <style:style style:name="ta1" style:family="table"><style:table-properties table:display="true" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"/></style:style>
+  <style:style style:name="ta2" style:family="table"><style:table-properties xmlns:tab="urn:oasis:names:tc:opendocument:xmlns:table:1.0" tab:display="false"/></style:style>
+  <style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Heading"><style:table-cell-properties fo:wrap-option="wrap"/><style:paragraph-properties fo:text-align="center"/><style:text-properties fo:font-style="italic" style:text-underline-style="solid" style:text-position="33% 58%"/></style:style>
+  <style:style style:name="ce2" style:family="table-cell" style:data-style-name="N1"><style:text-properties style:font-name="Mono" style:use-window-font-color="true"/></style:style>
+  <style:style style:name="ce3" style:family="table-cell" style:data-style-name="N2"><style:table-cell-properties fo:border="0.06pt solid #ff00ff" style:rotation-angle="90"/><style:paragraph-properties fo:text-align="end" fo:margin-left="0.3125in"/></style:style>
+  <style:style style:name="ce4" style:family="table-cell" style:data-style-name="N3"/>
+  <style:style style:name="ce5" style:family="table-cell" style:data-style-name="N4"/>
+  <style:style style:name="ce6" style:family="table-cell" style:data-style-name="N5"/>
+  <style:style style:name="ce7" style:family="table-cell" style:data-style-name="N6"/>
+  <style:style style:name="ce8" style:family="table-cell" style:data-style-name="N7"/>
+  <style:style style:name="ce9" style:family="table-cell" style:data-style-name="N8"><style:table-cell-properties fo:border-left="2.49pt solid #000000" fo:border-right="0.74pt dash-dot-dot #00ff00" fo:border-top="1.76pt double-thin #0000ff" fo:border-bottom="none" fo:background-color="transparent"/></style:style>
+  <style:style style:name="ce10" style:family="table-cell" style:data-style-name="N9"><style:text-properties fo:font-family="Courier New" style:text-line-through-style="solid" style:text-position="sub 58%"/></style:style>
+  <style:style style:name="ce11" style:family="table-cell" style:data-style-name="N10"><style:map style:condition="cell-content()&gt;0" style:apply-style-name="ce1"/></style:style>
+  <style:style style:name="ce12" style:family="table-cell"><style:table-cell-properties fo:background-color="#fafafa"/></style:style>
+ </office:automatic-styles>
+ <office:body>
+  <office:spreadsheet>
+   <t:calculation-settings><t:null-date t:date-value="1900-01-01"/></t:calculation-settings>
+   <t:content-validations><t:content-validation t:name="val1" t:condition="of:cell-content-is-whole-number()"/></t:content-validations>
+   <t:table t:name="Figures" t:style-name="ta1" t:protected="true">
+    <t:table-column-group>
+     <t:table-column t:style-name="co1" t:default-cell-style-name="ce12"/>
+     <t:table-header-columns><t:table-column t:style-name="co2" t:number-columns-repeated="2" t:visibility="collapse"/></t:table-header-columns>
+    </t:table-column-group>
+    <t:table-column t:number-columns-repeated="16380" t:default-cell-style-name="Default"/>
+    <t:table-header-rows>
+     <t:table-row t:style-name="ro1">
+      <t:table-cell t:style-name="ce1" office:value-type="string" office:string-value="Heading &amp; more"><text:p>ignored</text:p></t:table-cell>
+      <t:table-cell t:style-name="ce2" office:value-type="float" office:value="-1234.5"><text:p>-1,234.50 €</text:p></t:table-cell>
+      <t:table-cell t:style-name="ce3" office:value-type="currency" office:currency="GBP" office:value="2.5"><text:p>£2.50</text:p></t:table-cell>
+      <t:table-cell t:style-name="ce4" office:value-type="time" office:time-value="PT27H30M00S"/>
+      <t:table-cell t:style-name="ce5" office:value-type="date" office:date-value="2026-10-25T01:30:00"/>
+      <t:table-cell t:style-name="ce6" office:value-type="float" office:value="12345.678"/>
+      <t:table-cell t:style-name="ce7" office:value-type="float" office:value="0.75"/>
+      <t:table-cell t:style-name="ce8" office:value-type="boolean" office:boolean-value="false"/>
+     </t:table-row>
+    </t:table-header-rows>
+    <t:table-row-group>
+     <t:table-row t:style-name="ro2">
+      <t:table-cell t:style-name="ce9" office:value-type="string"><text:p>t<text:s/>ext</text:p></t:table-cell>
+      <t:table-cell t:style-name="ce10" office:value-type="float" office:value="25000"/>
+      <t:table-cell t:style-name="ce11" office:value-type="float" office:value="0"/>
+      <t:table-cell t:formula="of:=[.B1]+[$Other.A1]" office:value-type="float" office:value="40.5"><text:p>40.5</text:p></t:table-cell>
+      <t:table-cell t:formula="of:=1/0" office:value-type="string" office:string-value="" calcext:value-type="error"><text:p>#DIV/0!</text:p></t:table-cell>
+      <t:table-cell t:formula="of:=NOSUCH()" office:value-type="string" office:string-value="" calcext:value-type="error"><text:p>Err:508</text:p></t:table-cell>
+      <t:table-cell t:formula="of:=[.A1]&amp;&quot;!&quot;" office:value-type="string" office:string-value="Heading &amp; more!"><text:p>Heading &amp; more!</text:p></t:table-cell>
+      <t:table-cell t:formula="of:=[.ZZZZ9]" office:value-type="float" office:value="7"/>
+     </t:table-row>
+    </t:table-row-group>
+    <t:table-row t:number-rows-repeated="2">
+     <t:table-cell office:value-type="float" office:value="1" t:number-columns-repeated="2"/>
+     <t:table-cell t:formula="of:={1;2|3;4}" t:number-matrix-columns-spanned="2" t:number-matrix-rows-spanned="2" office:value-type="float" office:value="1"/>
+     <t:table-cell office:value-type="float" office:value="2"/>
+     <t:table-cell><draw:frame><draw:image/></draw:frame></t:table-cell>
+    </t:table-row>
+    <t:table-row>
+     <t:table-cell t:number-columns-repeated="4"/>
+     <t:table-cell t:number-columns-spanned="2" t:number-rows-spanned="2" office:value-type="string"><text:p>merged</text:p><office:annotation><dc:creator>me</dc:creator><text:p>NOT THIS</text:p></office:annotation></t:table-cell>
+     <t:covered-table-cell t:style-name="ce12"/>
+    </t:table-row>
+    <t:table-row t:visibility="collapse"><t:table-cell office:value-type="string"><text:p>first</text:p><text:p><text:span>sec</text:span>ond<text:tab/>tab<text:line-break/>break<text:s text:c="2"/>end</text:p></t:table-cell></t:table-row>
+    <t:table-row t:number-rows-repeated="3" t:visibility="filter"><t:table-cell t:number-columns-repeated="16384"/></t:table-row>
+    <t:table-row t:style-name="ro2" t:number-rows-repeated="1048567"><t:table-cell t:number-columns-repeated="16384"/></t:table-row>
+    <t:named-expressions><t:named-range t:name="Local" t:base-cell-address="$Figures.$A$1" t:cell-range-address="$Figures.$A$1:.$B$2"/></t:named-expressions>
+   </t:table>
+   <t:table t:name="Other" t:style-name="ta2">
+    <t:table-column/>
+    <t:table-row><t:table-cell office:value-type="float" office:value="42"/></t:table-row>
+   </t:table>
+   <t:table t:name="Split"><t:table-row><t:table-cell office:value-type="percentage" office:value="0.5"/></t:table-row></t:table>
+   <t:named-expressions>
+    <t:named-range t:name="Both" t:base-cell-address="$Figures.$A$1" t:cell-range-address="$Figures.$A$1 $Other.$A$1:.$A$2"/>
+    <t:named-expression t:name="Double" t:base-cell-address="$Figures.$A$1" t:expression="of:=[$Other.$A$1]*2"/>
+   </t:named-expressions>
+   <t:database-ranges><t:database-range t:name="__Anonymous_Sheet_DB__0" t:target-range-address="Figures.A1:Figures.H2" t:display-filter-buttons="true"/></t:database-ranges>
+  </office:spreadsheet>
+ </office:body>
+</office:document-content>

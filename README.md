@@ -80,6 +80,10 @@ against the PC's C library. `make test` and `make check` include the
 workbook tests (`make book-test`, `make book-check`): Excel 97-2003 files
 read into the spreadsheet's model, and saved as CSV
 (`tests/book/test_books.py`).
+XLSX, ODS, flat ODS and CSV are read and written by the same tests
+(`tests/book/test_xml_books.py`, `tests/book/test_bookfmt.c`): files other
+programs wrote, packages written by hand from the specifications, round
+trips between the formats, and damaged and cut-short files.
 
 They include the formula engine's tests too (`make calc-test`, `make
 calc-check`): OpenCalc's engine in `libowf/calc` (calls in
