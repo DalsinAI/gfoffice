@@ -862,6 +862,7 @@ static const char *leaf(const char *path)
 }
 
 static int result(int rc, const char *done);
+static int ask_window(const char *title, const char *text, const char *buttons);
 
 /* A typed value its cell's rule refused: the rule's alert, as Excel shows it. Stop: Retry goes on typing,
  * Cancel puts the cell back. Warning ("Continue?"): Yes puts it in, No goes on typing, Cancel puts the cell
@@ -880,7 +881,9 @@ static void validation_alert(void)
     es.es_Title = (UBYTE *)title;
     es.es_GadgetFormat = (UBYTE *)(a.style == OWF_DV_WARNING ? "Yes|No|Cancel" : a.style == OWF_DV_INFORMATION ? "OK|Cancel"
                                                                                                          : "Retry|Cancel");
-    pick = EasyRequest(win, &es, NULL, (ULONG)text);
+    pick = ask_window(title, text, (const char *)es.es_GadgetFormat);   /* EasyRequest cuts lines short on RTG */
+    if (pick < 0) pick = EasyRequest(win, &es, NULL, (ULONG)text);
+    ActivateWindow(win);                             /* typing goes on in the window, not in the Workbench */
     if (a.style == OWF_DV_STOP) {
         if (pick == 0) oc_edit_cancel(core);
     } else if (a.style == OWF_DV_WARNING) {
@@ -1821,7 +1824,8 @@ static void writable_formats(char *out, size_t size)
  * line in the window's font, up to three quarters of the screen (longer lines wrap at spaces), and as tall
  * as its lines, up to the screen (the rest left out, and said so); the OK button below the last line. A
  * line starting with NOTE_BULLET is a bulleted note: a round dot, its text (and the lines it wraps onto)
- * indented after it. Return, Escape, OK or the close gadget close it. */
+ * indented after it. Return, Escape, OK or the close gadget close it. ask_window is the same window with
+ * other buttons ("Retry|Cancel", as EasyRequest's), side by side under the text. */
 #define NOTE_LINES 48
 #define NOTE_TEXT 4096
 #define NOTE_BULLET '\001'
@@ -1876,19 +1880,33 @@ static int break_note_lines(struct RastPort *rp, const char *text, int maxw, int
     return n;
 }
 
-static void notes_window(const char *title, const char *text)
+#define ASK_BUTTONS 4
+
+/* The window with buttons, as EasyRequest's gadget format gives them ("Yes|No|Cancel"): which was chosen as
+ * EasyRequest says it (the first 1, the next 2..., the last 0). Return chooses the first; Escape and the close
+ * gadget the last. -1 when the window could not be opened (the caller asks otherwise). */
+static int ask_window(const char *title, const char *text, const char *buttons)
 {
     struct Gadget *list = NULL, *gok = NULL;
     struct NewGadget ng;
     struct Window *rw;
     struct RastPort trp;
-    char *buf;
+    char *buf, names[ASK_BUTTONS][32];
     note_line *line;
-    int n, i, ww = 0, wh, okw, okh = fh + 8, lh = fh + 2, maxw, maxlines, cut = 0, done = 0, text_h, indent;
-    if (!scr || !vi || !font) { tell(title, text); return; }
+    int n, i, ww = 0, wh, okw = 0, okh = fh + 8, lh = fh + 2, maxw, maxlines, cut = 0, done = 0, text_h, indent;
+    int nb = 0, row_w, chosen = 0;
+    const char *b = buttons;
+    while (*b && nb < ASK_BUTTONS) {                 /* "Retry|Cancel": the buttons' names */
+        size_t k = strcspn(b, "|");
+        snprintf(names[nb], sizeof names[nb], "%.*s", (int)(k < 31 ? k : 31), b);
+        nb++;
+        b += k;
+        if (*b == '|') b++;
+    }
+    if (!nb || !scr || !vi || !font) return -1;
     buf = malloc(NOTE_TEXT);
     line = malloc(NOTE_LINES * sizeof *line);
-    if (!buf || !line) { free(buf); free(line); tell(title, text); return; }
+    if (!buf || !line) { free(buf); free(line); return -1; }
     InitRastPort(&trp);
     SetFont(&trp, font);
     indent = fh;                                     /* the dot and a space */
@@ -1901,9 +1919,13 @@ static void notes_window(const char *title, const char *text)
         int w = line[i].indent + TextLength(&trp, (STRPTR)line[i].text, strlen(line[i].text));
         if (w > ww) ww = w;
     }
-    okw = TextLength(&trp, (STRPTR)"OK", 2) + 48;
+    for (i = 0; i < nb; i++) {                       /* the buttons alike, each as wide as the widest name */
+        int w = TextLength(&trp, (STRPTR)names[i], strlen(names[i])) + 48;
+        if (w > okw) okw = w;
+    }
+    row_w = nb * okw + (nb - 1) * 16;
     ww += 32;
-    if (ww < okw + 32) ww = okw + 32;
+    if (ww < row_w + 32) ww = row_w + 32;
     if (ww < 280) ww = 280;
     text_h = 14 + (n + cut) * lh;                    /* every line drawn, the "(and more)" too */
     wh = text_h + 12 + okh + 10;
@@ -1922,13 +1944,15 @@ static void notes_window(const char *title, const char *text)
         ng.ng_TextAttr = &font_attr;
         ng.ng_VisualInfo = vi;
         gok = CreateContext(&list);
-        ng.ng_LeftEdge = rw->BorderLeft + (ww - okw) / 2;
-        ng.ng_TopEdge = rw->BorderTop + text_h + 12;
-        ng.ng_Width = okw;
-        ng.ng_Height = okh;
-        ng.ng_GadgetText = (STRPTR)"OK";
-        ng.ng_GadgetID = 1;
-        gok = CreateGadget(BUTTON_KIND, gok, &ng, TAG_DONE);
+        for (i = 0; i < nb && gok; i++) {
+            ng.ng_LeftEdge = rw->BorderLeft + (ww - row_w) / 2 + i * (okw + 16);
+            ng.ng_TopEdge = rw->BorderTop + text_h + 12;
+            ng.ng_Width = okw;
+            ng.ng_Height = okh;
+            ng.ng_GadgetText = (STRPTR)names[i];
+            ng.ng_GadgetID = (UWORD)(i + 1);
+            gok = CreateGadget(BUTTON_KIND, gok, &ng, TAG_DONE);
+        }
         if (gok) AddGList(rw, list, (UWORD)~0, -1, NULL);
     }
     if (!rw || !gok) {
@@ -1936,8 +1960,7 @@ static void notes_window(const char *title, const char *text)
         if (list) FreeGadgets(list);
         free(buf);
         free(line);
-        tell(title, text);
-        return;
+        return -1;
     }
     while (!done) {
         struct IntuiMessage *m;
@@ -1962,9 +1985,11 @@ static void notes_window(const char *title, const char *text)
             while ((m = GT_GetIMsg(rw->UserPort))) {
                 ULONG cls = m->Class;
                 UWORD code = m->Code;
+                int id = cls == IDCMP_GADGETUP && m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
                 GT_ReplyIMsg(m);
-                if (cls == IDCMP_CLOSEWINDOW || cls == IDCMP_GADGETUP) done = 1;
-                else if (cls == IDCMP_VANILLAKEY && (code == 13 || code == 27)) done = 1;
+                if (cls == IDCMP_GADGETUP && id >= 1 && id <= nb) { chosen = id == nb ? 0 : id; done = 1; }
+                else if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { chosen = 0; done = 1; }
+                else if (cls == IDCMP_VANILLAKEY && code == 13) { chosen = nb > 1 ? 1 : 0; done = 1; }
                 else if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); redraw = 1; }
             }
             if (done || redraw) break;
@@ -1975,6 +2000,12 @@ static void notes_window(const char *title, const char *text)
     FreeGadgets(list);
     free(buf);
     free(line);
+    return chosen;
+}
+
+static void notes_window(const char *title, const char *text)
+{
+    if (ask_window(title, text, "OK") < 0) tell(title, text);
 }
 
 /* The report's notes, when they say something was left out or shown otherwise. */
@@ -2883,9 +2914,12 @@ static void pick_from_list(int bx, int by, int bw, int bh)
                 else if (cls == IDCMP_MOUSEMOVE && mx >= 0 && mx < lw && row >= 0 && row < shown && top + row < n &&
                          top + row != at) { at = top + row; redraw = 1; }
                 else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTUP) {
-                    if (mx >= 0 && mx < lw && row >= 0 && row < shown && top + row < n) chosen = top + row;
-                    done = 1;
-                } else if (cls == IDCMP_MOUSEBUTTONS && code == MENUDOWN) done = 1;
+                    /* let go over a choice: it; elsewhere (the click on the button that opened the list): the
+                       list stays open, as Excel's does */
+                    if (mx >= 0 && mx < lw && row >= 0 && row < shown && top + row < n) { chosen = top + row; done = 1; }
+                } else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTDOWN &&
+                           (mx < 0 || mx >= lw || my < 0 || my >= lh)) done = 1;
+                else if (cls == IDCMP_MOUSEBUTTONS && code == MENUDOWN) done = 1;
                 else if (cls == IDCMP_VANILLAKEY && code == 13) { chosen = at; done = 1; }
                 else if (cls == IDCMP_VANILLAKEY && code == 27) done = 1;
                 else if ((cls == IDCMP_RAWKEY && (code == 0x4C || code == 0x4D)) || wheel_y) {
