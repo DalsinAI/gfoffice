@@ -413,6 +413,11 @@ void owf_report_add(owf_report *report, owf_note_level level, const char *fmt, .
     report->count++;
 }
 
+void owf_report_text(owf_report *report, owf_note_level level, const char *text)
+{
+    owf_report_add(report, level, "%s", text);
+}
+
 int owf_report_count(const owf_report *report)
 {
     return report ? report->count : 0;
