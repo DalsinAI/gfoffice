@@ -11,8 +11,10 @@
  * merged cells, frozen panes, defined names, the active sheet and the
  * 1904 date system, conditional formatting (cellIs, expression and colour
  * scale rules worked out; the others kept as written), comments, data
- * validation and the AutoFilter. What the model cannot hold (pictures,
- * charts, tables, pivot tables, macros) is reported.
+ * validation and the AutoFilter. A sheet's pictures and charts (its
+ * drawing, and every part that leads to) are kept as they were, for
+ * writing back. What the model cannot hold (chart sheets, tables, pivot
+ * tables, macros) is reported.
  *
  * Big parts (the sheets, the shared strings) are read as a stream, element
  * by element, so a sheet's memory is its cells', not a tree of its XML.
@@ -35,6 +37,8 @@
 #define MAX_COL 16383UL
 #define MAX_ARRAYS 4096                  /* array formulas a sheet spreads over their ranges */
 #define MAX_ARRAY_CELLS 262144UL         /* cells the book's array formulas may add */
+#define KEEP_BUDGET (16UL * 1024 * 1024) /* bytes of drawings, charts and pictures kept as they were */
+#define KEEP_PARTS 512                   /* and parts */
 #define TEXT_BUDGET (64UL * 1024 * 1024) /* bytes of shared strings copied into cells: a short
                                             file must not ask for gigabytes */
 #define PART_NAME 512
@@ -254,50 +258,7 @@ static owf_xml *read_xml(const owf_unzip *zip, const char *name, int *error)
     return xml;
 }
 
-/* A target relative to dir (or from the package's root when it starts
- * with "/"), with "." and ".." worked out: "xl/worksheets/sheet1.xml".
- * 0 when it does not fit. */
-static int part_name(char *out, size_t size, const char *dir, const char *target)
-{
-    char tmp[PART_NAME * 2];
-    const char *seg[64];
-    size_t segn[64], n;
-    int nseg = 0, i;
-    const char *p;
-    if (target[0] == '/')
-        n = (size_t)snprintf(tmp, sizeof tmp, "%s", target + 1);
-    else
-        n = (size_t)snprintf(tmp, sizeof tmp, "%s%s", dir, target);
-    if (n >= sizeof tmp)
-        return 0;
-    for (p = tmp; *p;) {
-        const char *slash = strchr(p, '/');
-        size_t k = slash ? (size_t)(slash - p) : strlen(p);
-        if (k == 2 && p[0] == '.' && p[1] == '.') {
-            if (nseg)
-                nseg--;
-        } else if (k && !(k == 1 && p[0] == '.')) {
-            if (nseg == 64)
-                return 0;
-            seg[nseg] = p;
-            segn[nseg++] = k;
-        }
-        if (!slash)
-            break;
-        p = slash + 1;
-    }
-    n = 0;
-    for (i = 0; i < nseg; i++) {
-        if (n + segn[i] + 2 > size)
-            return 0;
-        if (i)
-            out[n++] = '/';
-        memcpy(out + n, seg[i], segn[i]);
-        n += segn[i];
-    }
-    out[n] = 0;
-    return nseg > 0;
-}
+#define part_name owf_opc_part_name
 
 /* The relationships of a part: "xl/workbook.xml" has
  * "xl/_rels/workbook.xml.rels". None is no error. */
@@ -434,6 +395,10 @@ typedef struct {
     rels wb_rels;
     int failed;                  /* memory ran out */
     int damaged;                 /* a part was damaged or cut short */
+    owf_xml *types;              /* [Content_Types].xml, read when a part is first kept */
+    int types_read;
+    unsigned long keep_budget;   /* bytes of drawings, charts and pictures that may still be kept */
+    int keep_full;               /* one was not, for that */
 
     /* styles */
     unsigned long theme[12];
@@ -1126,6 +1091,7 @@ typedef struct {
     /* where the next cell goes without an r */
     unsigned long next_row, next_col;
     int in_data;
+    char drawing[64];            /* the <drawing>'s relationship, or "" */
 } cellstate;
 
 static void commit_cell(xlsx *x, cellstate *cs)
@@ -1412,7 +1378,12 @@ static void sheet_element(xlsx *x, const owf_xml_event *e, cellstate *cs)
     } else if (!strcmp(name, "hyperlink")) {
         owf_report_add(x->report, OWF_NOTE_LOST, "Links in cells keep their text; where they go is not read yet");
     } else if (!strcmp(name, "drawing")) {
-        owf_report_add(x->report, OWF_NOTE_LOST, "Pictures, charts and drawings on sheets are not read yet");
+        const char *id = owf_xml_event_attr(e, NS_REL, "id");
+        if (!id)
+            id = owf_xml_event_attr(e, NS_REL_STRICT, "id");
+        snprintf(cs->drawing, sizeof cs->drawing, "%s", id ? id : "");
+        if (!id)
+            owf_report_add(x->report, OWF_NOTE_LOST, "Some pictures, charts or drawings could not be kept: their part of the file is missing or damaged");
     } else if (!strcmp(name, "tablePart")) {
         owf_report_add(x->report, OWF_NOTE_LOST, "Tables keep their cells; the tables themselves (names, styles, filters) are not read yet");
     } else if (!strcmp(name, "sheetProtection")) {
@@ -1961,6 +1932,145 @@ static void read_comments(xlsx *x, const char *sheet_part)
     owf_xml_free(xml);
 }
 
+/* ---- Parts kept as they were ---- */
+
+#define CT_RELS "application/vnd.openxmlformats-package.relationships+xml"
+
+/* Part names and extensions are the same whatever their letters' case. */
+static int same_name(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        int ca = (unsigned char)*a, cb = (unsigned char)*b;
+        if (ca >= 'A' && ca <= 'Z')
+            ca += 'a' - 'A';
+        if (cb >= 'A' && cb <= 'Z')
+            cb += 'a' - 'A';
+        if (ca != cb)
+            return 0;
+    }
+    return !*a && !*b;
+}
+
+/* A part's content type, from [Content_Types].xml: its Override, else its
+ * extension's Default. NULL when it has none. */
+static const char *content_type(xlsx *x, const char *part)
+{
+    const owf_xml_node *root, *n;
+    const char *dot = strrchr(part, '.'), *slash = strrchr(part, '/'), *v;
+    if (!x->types_read) {
+        x->types_read = 1;
+        x->types = read_xml(x->zip, "[Content_Types].xml", NULL);
+    }
+    if (!x->types)
+        return NULL;
+    root = owf_xml_root(x->types);
+    for (n = root->first; n; n = n->next)
+        if (n->type == OWF_XML_ELEMENT && !strcmp(n->name, "Override") && (v = attr(n, "PartName")) != NULL &&
+            v[0] == '/' && same_name(v + 1, part))
+            return attr(n, "ContentType");
+    if (dot && (!slash || dot > slash))
+        for (n = root->first; n; n = n->next)
+            if (n->type == OWF_XML_ELEMENT && !strcmp(n->name, "Default") && (v = attr(n, "Extension")) != NULL &&
+                same_name(v, dot + 1))
+                return attr(n, "ContentType");
+    return NULL;
+}
+
+/* One part kept, bytes and content type. 0 when it is missing or the
+ * budget is spent (memory running out sets failed). */
+static int keep_one(xlsx *x, const char *part, const char *type)
+{
+    unsigned char *data;
+    size_t length;
+    int e;
+    if (owf_book_part(x->book, part))
+        return 1;
+    if (x->book->nparts >= KEEP_PARTS) {
+        x->keep_full = 1;
+        return 0;
+    }
+    e = owf_unzip_read(x->zip, part, &data, &length);
+    if (e != OWF_OK) {
+        if (e == OWF_ERR_MEMORY)
+            x->failed = 1;
+        return 0;
+    }
+    if (length > x->keep_budget) {
+        free(data);
+        x->keep_full = 1;
+        return 0;
+    }
+    if (!type)
+        type = content_type(x, part);
+    if (owf_book_keep_part(x->book, part, type ? type : "application/octet-stream", data, length) < 0)
+        x->failed = 1;
+    else
+        x->keep_budget -= length;
+    free(data);
+    return !x->failed;
+}
+
+/* The sheet's drawing (through its relationship id) kept as it was, with
+ * its relationships and every part they lead to inside the package: its
+ * charts, their styles, colours and relationships, its pictures. One part
+ * after another in the order they were kept, so no recursion, each once.
+ * The sheet's drawing is its name when all of them were kept. */
+static void keep_drawing(xlsx *x, const char *sheet_part, const char *id)
+{
+    rels r;
+    char part[PART_NAME];
+    int first = x->book->nparts, i, ok;
+
+    read_rels(x->zip, sheet_part, &r);
+    ok = rel_part(&r, rel_by_id(&r, id), part, sizeof part);
+    free_rels(&r);
+    x->keep_full = 0;
+    if (ok && owf_book_part(x->book, part)) {
+        owf_report_add(x->report, OWF_NOTE_LOST, "Some pictures, charts or drawings could not be kept: two sheets share them");
+        return;
+    }
+    ok = ok && keep_one(x, part, NULL);
+    for (i = first; ok && i < x->book->nparts; i++) {
+        char from[PART_NAME], name[PART_NAME * 2 + 16], target[PART_NAME];
+        const char *slash;
+        int k;
+        snprintf(from, sizeof from, "%s", x->book->parts[i].name);
+        if (type_is(from, ".rels"))
+            continue;
+        read_rels(x->zip, from, &r);
+        slash = strrchr(from, '/');
+        snprintf(name, sizeof name, "%s_rels/%s.rels", r.dir, slash ? slash + 1 : from);
+        if (r.xml) {
+            ok = keep_one(x, name, CT_RELS);
+            for (k = 0; ok && k < r.count; k++)
+                if (!r.items[k].external)
+                    ok = part_name(target, sizeof target, r.dir, r.items[k].target) && keep_one(x, target, NULL);
+        } else if (owf_unzip_has(x->zip, name)) {
+            ok = 0;                          /* its relationships are there but damaged */
+        }
+        free_rels(&r);
+    }
+    if (x->failed)
+        return;
+    if (!ok) {                           /* none of it, then: what was kept goes */
+        while (x->book->nparts > first) {
+            owf_part *p = &x->book->parts[--x->book->nparts];
+            x->keep_budget += p->length;
+            free(p->name);
+            free(p->type);
+            free(p->data);
+        }
+        if (x->keep_full)
+            owf_report_add(x->report, OWF_NOTE_LOST, "Some pictures, charts or drawings were too big to keep");
+        else
+            owf_report_add(x->report, OWF_NOTE_LOST, "Some pictures, charts or drawings could not be kept: their part of the file is missing or damaged");
+        return;
+    }
+    if (!(x->sheet->drawing = copy(x, part, strlen(part))))
+        return;
+    owf_report_add(x->report, OWF_NOTE_APPROX, "Pictures and charts on sheets are not shown; they are kept for saving as an Excel workbook (.xlsx)");
+}
+
 static void read_worksheet(xlsx *x, xsheet *xs)
 {
     unsigned char *data;
@@ -2047,6 +2157,8 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     clear_sheet_state(x);
     if (!x->failed)
         read_comments(x, xs->part);
+    if (!x->failed && cs.drawing[0])
+        keep_drawing(x, xs->part, cs.drawing);
     free(cr.ranges);
     owf_buf_free(&dr.text);
     owf_buf_free(&ar.xml);
@@ -2264,6 +2376,7 @@ static void free_reader(xlsx *x)
 {
     int i;
     free_rels(&x->wb_rels);
+    owf_xml_free(x->types);
     free(x->fonts);
     free(x->fills);
     free(x->fill_approx);
@@ -2320,6 +2433,7 @@ static int import_xlsx(const unsigned char *data, size_t length, owf_book *book,
     x->zip = &zip;
     x->array_budget = MAX_ARRAY_CELLS;
     x->text_budget = TEXT_BUDGET;
+    x->keep_budget = KEEP_BUDGET;
     owf_buf_init(&x->sst);
     if (!main_part(&zip, x->wb_part, sizeof x->wb_part))
         result = OWF_ERR_FORMAT;

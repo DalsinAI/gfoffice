@@ -232,6 +232,8 @@ void owf_sheet_free_extras(owf_sheet *sheet)
     free(sheet->autofilter_xml);
     sheet->autofilter_xml = NULL;
     sheet->has_autofilter = 0;
+    free(sheet->drawing);
+    sheet->drawing = NULL;
 }
 
 static char *dup_or_null(const char *s, int *failed)
@@ -254,6 +256,7 @@ int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src)
     dst->validations = NULL;
     dst->nvalidations = dst->capvalidations = 0;
     dst->autofilter_xml = dup_or_null(src->autofilter_xml, &failed);
+    dst->drawing = dup_or_null(src->drawing, &failed);
     for (i = 0; i < src->nvalidations && !failed; i++) {
         const owf_validation *a = &src->validations[i];
         owf_validation *b = owf_sheet_add_validation(dst);
@@ -332,7 +335,55 @@ void owf_book_free(owf_book *book)
         free(book->names[i].formula);
     }
     free(book->names);
+    for (i = 0; i < book->nparts; i++) {
+        free(book->parts[i].name);
+        free(book->parts[i].type);
+        free(book->parts[i].data);
+    }
+    free(book->parts);
     free(book);
+}
+
+int owf_book_keep_part(owf_book *book, const char *name, const char *type, const void *data, size_t length)
+{
+    owf_part *p;
+    if (owf_book_part(book, name))
+        return 0;
+    if (!grow((void **)&book->parts, book->nparts, &book->capparts, sizeof *p, 8))
+        return -1;
+    p = &book->parts[book->nparts];
+    p->name = copy_text(name, strlen(name));
+    p->type = copy_text(type, strlen(type));
+    p->data = malloc(length ? length : 1);
+    if (!p->name || !p->type || !p->data) {
+        free(p->name);
+        free(p->type);
+        free(p->data);
+        return -1;
+    }
+    if (length)
+        memcpy(p->data, data, length);
+    p->length = length;
+    book->nparts++;
+    return 0;
+}
+
+const owf_part *owf_book_part(const owf_book *book, const char *name)
+{
+    int i;
+    for (i = 0; i < book->nparts; i++)
+        if (!strcmp(book->parts[i].name, name))
+            return &book->parts[i];
+    return NULL;
+}
+
+int owf_book_copy_parts(owf_book *dst, const owf_book *src)
+{
+    int i;
+    for (i = 0; i < src->nparts; i++)
+        if (owf_book_keep_part(dst, src->parts[i].name, src->parts[i].type, src->parts[i].data, src->parts[i].length) < 0)
+            return -1;
+    return 0;
 }
 
 owf_sheet *owf_book_add_sheet(owf_book *book, const char *name)

@@ -16,7 +16,11 @@ what it leaves out.
     them in (a VML drawing);
   - data validation: lists, numbers, dates, text lengths and formulas,
     their operators, messages and error styles;
-  - the AutoFilter: its range, and what it filters and sorts by.
+  - the AutoFilter: its range, and what it filters and sorts by;
+  - pictures and charts: a sheet's drawing and every part it leads to
+    (charts, their styles and colours, pictures) kept as they were and
+    written back the same, with the content types and relationships that
+    reach them; a drawing whose parts are missing left out whole.
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import os
@@ -358,6 +362,239 @@ def test_autofilter(work):
     check("autofilter: ODS says it leaves it out", "AutoFilters are kept in Excel workbooks" in report, report)
 
 
+# ---- Pictures and charts ----
+
+DML = "http://schemas.openxmlformats.org/drawingml/2006/main"
+RNS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+RELS = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+
+def png_1x1():
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(b"\x00\xd0\x10\x10")) + chunk(b"IEND", b""))
+
+
+def picture_anchor(row, rid, link=None):
+    click = '<a:hlinkClick xmlns:a="%s" xmlns:r="%s" r:id="%s"/>' % (DML, RNS, link) if link else ""
+    return ('<twoCellAnchor editAs="oneCell"><from><col>3</col><colOff>0</colOff><row>%d</row><rowOff>0</rowOff></from>'
+            '<to><col>4</col><colOff>0</colOff><row>%d</row><rowOff>0</rowOff></to><pic><nvPicPr>'
+            '<cNvPr id="%d" name="Picture %d">%s</cNvPr><cNvPicPr/></nvPicPr><blipFill>'
+            '<a:blip xmlns:a="%s" xmlns:r="%s" r:embed="%s"/><a:stretch xmlns:a="%s"><a:fillRect/></a:stretch></blipFill>'
+            '<spPr><a:prstGeom xmlns:a="%s" prst="rect"><a:avLst/></a:prstGeom></spPr></pic><clientData/></twoCellAnchor>'
+            % (row, row + 2, row + 2, row + 2, click, DML, RNS, rid, DML, DML))
+
+
+def drawn_book(parts):
+    """The fixture as Excel writes a chart (its style and colours parts beside it) with a picture under it, a
+    link on the picture, and a second drawing (the same picture) on the sheet with the comments."""
+    p = dict(parts)
+    p["xl/media/image1.png"] = png_1x1()
+    p["xl/charts/style1.xml"] = b'<cs:chartStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" id="201"/>'
+    p["xl/charts/colors1.xml"] = (b'<cs:colorStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" '
+                                  b'meth="cycle" id="10"/>')
+    p["xl/charts/_rels/chart1.xml.rels"] = (
+        '<Relationships xmlns="%s"><Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/'
+        'chartColorStyle" Target="colors1.xml"/><Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2011/'
+        'relationships/chartStyle" Target="style1.xml"/></Relationships>' % RELS).encode()
+    drawing = p["xl/drawings/drawing1.xml"].decode()
+    p["xl/drawings/drawing1.xml"] = drawing.replace("</wsDr>", picture_anchor(18, "rId2", "rId3") + "</wsDr>").encode()
+    p["xl/drawings/_rels/drawing1.xml.rels"] = p["xl/drawings/_rels/drawing1.xml.rels"].replace(b"</Relationships>", (
+        '<Relationship Id="rId2" Type="%s/image" Target="../media/image1.png"/>'
+        '<Relationship Id="rId3" Type="%s/hyperlink" Target="https://example.org/a?b=1&amp;c=2" TargetMode="External"/>'
+        '</Relationships>' % (RNS, RNS)).encode())
+    p["xl/drawings/drawing2.xml"] = ('<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing">'
+                                     + picture_anchor(1, "rId1") + "</xdr:wsDr>").replace(
+        "<twoCellAnchor", "<xdr:twoCellAnchor").replace("</twoCellAnchor>", "</xdr:twoCellAnchor>")
+    p["xl/drawings/drawing2.xml"] = re.sub(r"<(/?)(from|to|col|colOff|row|rowOff|pic|nvPicPr|cNvPr|cNvPicPr|blipFill|spPr|clientData)([ >/])",
+                                           r"<\1xdr:\2\3", p["xl/drawings/drawing2.xml"]).encode()
+    p["xl/drawings/_rels/drawing2.xml.rels"] = ('<Relationships xmlns="%s"><Relationship Id="rId1" Type="%s/image" '
+                                                'Target="/xl/media/image1.png"/></Relationships>' % (RELS, RNS)).encode()
+    sheet = p["xl/worksheets/sheet1.xml"].decode()
+    p["xl/worksheets/sheet1.xml"] = sheet.replace("<legacyDrawing", '<drawing xmlns:r="%s" r:id="pics"/><legacyDrawing' % RNS).encode()
+    p["xl/worksheets/_rels/sheet1.xml.rels"] = p["xl/worksheets/_rels/sheet1.xml.rels"].replace(b"</Relationships>", (
+        '<Relationship Type="%s/drawing" Target="../drawings/drawing2.xml" Id="pics"/></Relationships>' % RNS).encode())
+    types = p["[Content_Types].xml"].decode()
+    p["[Content_Types].xml"] = types.replace("</Types>", (
+        '<Default Extension="PNG" ContentType="image/png"/>'
+        '<Override PartName="/xl/drawings/drawing2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+        '<Override PartName="/xl/charts/style1.xml" ContentType="application/vnd.ms-office.chartstyle+xml"/>'
+        '<Override PartName="/xl/charts/colors1.xml" ContentType="application/vnd.ms-office.chartcolorstyle+xml"/></Types>')).encode()
+    return p
+
+
+KEPT = {
+    "xl/drawings/drawing2.xml": "application/vnd.openxmlformats-officedocument.drawing+xml",
+    "xl/drawings/_rels/drawing2.xml.rels": "application/vnd.openxmlformats-package.relationships+xml",
+    "xl/media/image1.png": "image/png",
+    "xl/drawings/drawing1.xml": "application/vnd.openxmlformats-officedocument.drawing+xml",
+    "xl/drawings/_rels/drawing1.xml.rels": "application/vnd.openxmlformats-package.relationships+xml",
+    "xl/charts/chart1.xml": "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
+    "xl/charts/_rels/chart1.xml.rels": "application/vnd.openxmlformats-package.relationships+xml",
+    "xl/charts/colors1.xml": "application/vnd.ms-office.chartcolorstyle+xml",
+    "xl/charts/style1.xml": "application/vnd.ms-office.chartstyle+xml",
+}
+
+
+def write_zip(path, parts):
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, data in parts.items():
+            z.writestr(n, data)
+
+
+def kept_parts(text):
+    out = {}
+    for l in lines(text, "part"):
+        m = re.match(r'part "([^"]*)" "([^"]*)" length=(\d+)$', l)
+        check("drawings: part line " + l, m is not None)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def content_types(z):
+    types = z.read("[Content_Types].xml").decode()
+    return dict(re.findall(r'<Override PartName="/([^"]+)" ContentType="([^"]+)"/>', types))
+
+
+def test_drawings(work):
+    src = dump(FIX)
+    check("drawings: the chart's sheet has its drawing", sheet_lines(src, 7, "drawing") == ['drawing "xl/drawings/drawing1.xml"'],
+          sheet_lines(src, 7, "drawing"))
+    check("drawings: its parts kept", kept_parts(src) == {n: KEPT[n] for n in ("xl/drawings/drawing1.xml",
+          "xl/drawings/_rels/drawing1.xml.rels", "xl/charts/chart1.xml")}, kept_parts(src))
+    check("drawings: said to be kept, not 'not read yet'", "kept for saving as an Excel workbook" in src and
+          "not read yet\" x" not in "\n".join(l for l in lines(src, "note") if "ictures" in l), lines(src, "note"))
+    with zipfile.ZipFile(FIX) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    drawn = drawn_book(parts)
+    book = os.path.join(work, "drawn.xlsx")
+    write_zip(book, drawn)
+    got = dump(book)
+    check("drawings: each part kept once, with its content type", kept_parts(got) == KEPT, kept_parts(got))
+    check("drawings: the sheets' drawings", sheet_lines(got, 0, "drawing") == ['drawing "xl/drawings/drawing2.xml"'] and
+          sheet_lines(got, 7, "drawing") == ['drawing "xl/drawings/drawing1.xml"'], (sheet_lines(got, 0, "drawing"),
+                                                                                       sheet_lines(got, 7, "drawing")))
+    xlsx = os.path.join(work, "drawn-saved.xlsx")
+    convert(book, xlsx)
+    well_formed(xlsx)
+    with zipfile.ZipFile(xlsx) as z:
+        names = z.namelist()
+        check("drawings: each part written once", len(names) == len(set(names)), sorted(names))
+        for n in KEPT:
+            check("drawings: written as it was: " + n, n in names and z.read(n) == drawn[n], n)
+        types = content_types(z)
+        for n, t in KEPT.items():
+            if not n.endswith(".rels"):
+                check("drawings: content type of " + n, types.get(n) == t, types.get(n))
+        rels1 = z.read("xl/worksheets/_rels/sheet1.xml.rels").decode()
+        rels8 = z.read("xl/worksheets/_rels/sheet8.xml.rels").decode()
+        check("drawings: the comments' sheet reaches its comments, their boxes and its drawing",
+              'Id="rId1" Type="%s/comments"' % RNS in rels1 and 'Id="rId2" Type="%s/vmlDrawing"' % RNS in rels1 and
+              '<Relationship Id="rId3" Type="%s/drawing" Target="../drawings/drawing2.xml"/>' % RNS in rels1, rels1)
+        check("drawings: the chart's sheet reaches its drawing",
+              rels8.count("<Relationship ") == 1 and 'Target="../drawings/drawing1.xml"' in rels8, rels8)
+        sheet1 = z.read("xl/worksheets/sheet1.xml").decode()
+        sheet8 = z.read("xl/worksheets/sheet8.xml").decode()
+        check("drawings: <drawing> after the page margins, before the comments' boxes",
+              sheet1.find("<pageMargins") < sheet1.find('<drawing r:id="rId3"/>') < sheet1.find('<legacyDrawing r:id="rId2"/>'),
+              sheet1[-300:])
+        check("drawings: the chart's sheet's <drawing>", sheet8.endswith('<drawing r:id="rId3"/></worksheet>\n'), sheet8[-200:])
+        stored = {i.filename: i.compress_type for i in z.infolist()}
+        check("drawings: the picture stored as it is packed, the chart deflated",
+              stored.get("xl/media/image1.png") == zipfile.ZIP_STORED and stored.get("xl/charts/chart1.xml") == zipfile.ZIP_DEFLATED,
+              stored)
+    again = dump(xlsx)
+    check("drawings: the same after saving", kept_parts(again) == KEPT and
+          lines(again, "drawing") == lines(got, "drawing"), (kept_parts(again), lines(again, "drawing")))
+    twice = os.path.join(work, "drawn-twice.xlsx")
+    convert(xlsx, twice)
+    with zipfile.ZipFile(twice) as z:
+        check("drawings: and after saving again", all(z.read(n) == drawn[n] for n in KEPT), "")
+    try:
+        import openpyxl
+    except ImportError:
+        openpyxl = None
+    if openpyxl:
+        wb = openpyxl.load_workbook(xlsx)
+        charts = wb["Chart"]._charts
+        check("drawings: openpyxl reads the chart back", len(charts) == 1 and type(charts[0]).__name__ == "BarChart" and
+              (charts[0].anchor._from.col, charts[0].anchor._from.row) == (3, 1), charts)
+        try:
+            import PIL  # noqa: F401 - openpyxl reads pictures only with it
+            check("drawings: openpyxl reads the pictures back", len(wb["Chart"]._images) == 1 and len(wb["Systems"]._images) == 1,
+                  (wb["Chart"]._images, wb["Systems"]._images))
+        except ImportError:
+            pass
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-drawings")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "ods",
+                            "--outdir", outdir, xlsx], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=300)
+            with zipfile.ZipFile(os.path.join(outdir, "drawn-saved.ods")) as z:
+                content = z.read("content.xml").decode()
+            check("drawings: LibreOffice reads the chart", "<draw:object " in content and "Chart.B1:Chart.B4" in content,
+                  re.findall(r"<draw:object[^>]*>", content))
+            check("drawings: LibreOffice reads both pictures", len(re.findall(r'<draw:image xlink:href="Pictures/', content)) == 2,
+                  re.findall(r"<draw:image[^>]*>", content))
+        except Exception as e:  # noqa: BLE001
+            check("drawings: LibreOffice converts the file written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+    report = convert(FIX, os.path.join(work, "drawings.ods"))
+    check("drawings: ODS says it leaves them out", "Pictures and charts on sheets are kept in Excel workbooks" in report, report)
+
+    # the chart's part missing: that drawing is left out whole (with a note), the other kept
+    broken = dict(drawn)
+    del broken["xl/charts/chart1.xml"]
+    path = os.path.join(work, "drawn-broken.xlsx")
+    write_zip(path, broken)
+    got = dump(path)
+    check("drawings: a drawing with a part missing is left out", sheet_lines(got, 7, "drawing") == [] and
+          "could not be kept: their part of the file is missing" in got and
+          set(kept_parts(got)) == {"xl/drawings/drawing2.xml", "xl/drawings/_rels/drawing2.xml.rels", "xl/media/image1.png"},
+          (sheet_lines(got, 7, "drawing"), kept_parts(got)))
+    saved = os.path.join(work, "drawn-broken-saved.xlsx")
+    convert(path, saved)
+    well_formed(saved)
+    with zipfile.ZipFile(saved) as z:
+        check("drawings: nothing of it written", "xl/drawings/drawing1.xml" not in z.namelist() and
+              "xl/worksheets/_rels/sheet8.xml.rels" not in z.namelist() and "<drawing" not in z.read("xl/worksheets/sheet8.xml").decode(),
+              z.namelist())
+    # its relationships damaged: left out too
+    broken = dict(drawn)
+    broken["xl/drawings/_rels/drawing1.xml.rels"] = drawn["xl/drawings/_rels/drawing1.xml.rels"][:60]
+    write_zip(path, broken)
+    got = dump(path)
+    check("drawings: a drawing with damaged relationships is left out", sheet_lines(got, 7, "drawing") == [] and
+          "xl/charts/chart1.xml" not in kept_parts(got), kept_parts(got))
+    # relationships that go round (a part to itself, the chart back to its drawing), a target outside the package
+    looped = dict(drawn)
+    looped["xl/charts/_rels/chart1.xml.rels"] = drawn["xl/charts/_rels/chart1.xml.rels"].replace(b"</Relationships>", (
+        '<Relationship Id="rId7" Type="%s/image" Target="chart1.xml"/>'
+        '<Relationship Id="rId8" Type="%s/image" Target="/xl/drawings/drawing1.xml"/></Relationships>' % (RNS, RNS)).encode())
+    write_zip(path, looped)
+    got = dump(path)
+    check("drawings: relationships that go round keep each part once", set(kept_parts(got)) == set(KEPT), kept_parts(got))
+    convert(path, saved)
+    with zipfile.ZipFile(saved) as z:
+        check("drawings: and write it once", len(z.namelist()) == len(set(z.namelist())), sorted(z.namelist()))
+    outside = dict(drawn)
+    outside["xl/drawings/_rels/drawing2.xml.rels"] = drawn["xl/drawings/_rels/drawing2.xml.rels"].replace(
+        b"/xl/media/image1.png", b"../../../../../../etc/passwd")
+    write_zip(path, outside)
+    got = dump(path)
+    check("drawings: a target outside the package is not followed out of it", sheet_lines(got, 0, "drawing") == [] and
+          all(not n.startswith("etc/") for n in kept_parts(got)), kept_parts(got))
+
+
 def damaged(work):
     """The first sheet's XML cut short and changed in what follows its cells (the conditional formats and
     the rest): book_dump answers with a book or an error, never a crash."""
@@ -384,6 +621,28 @@ def damaged(work):
                 bad += 1
                 check("damaged sheet read safely (cut at %d)" % cut, False, err[-800:])
     check("damaged sheets read safely", bad == 0, bad)
+    # the drawings' relationships and content types cut short or changed: read, and written, safely
+    drawn = drawn_book(parts)
+    bad = 0
+    for name in ("xl/drawings/_rels/drawing1.xml.rels", "xl/charts/_rels/chart1.xml.rels", "[Content_Types].xml",
+                 "xl/worksheets/_rels/sheet8.xml.rels"):
+        data = drawn[name]
+        for k in range(0, len(data), max(1, len(data) // 25)):
+            changed = bytearray(data)
+            changed[k] = rnd.choice(b'<>"=/ x')
+            for v in (data[:k], bytes(changed)):
+                path = os.path.join(work, "damaged-drawing.xlsx")
+                write_zip(path, dict(drawn, **{name: v}))
+                rc, out, err = run([DUMP, path])
+                if rc not in (0, 10):
+                    bad += 1
+                    check("damaged drawing read safely (%s at %d)" % (name, k), False, err[-800:])
+                elif rc == 0:
+                    rc, out, err = run([OWCONVERT, path, os.path.join(work, "damaged-drawing-saved.xlsx")])
+                    if rc not in (0, 10):
+                        bad += 1
+                        check("damaged drawing written safely (%s at %d)" % (name, k), False, err[-800:])
+    check("damaged drawings read and written safely", bad == 0, bad)
 
 
 def main():
@@ -392,6 +651,7 @@ def main():
         test_comments(work)
         test_validation(work)
         test_autofilter(work)
+        test_drawings(work)
         damaged(work)
     if failures:
         print("sheet features: %d of %d checks failed" % (len(failures), checks))
