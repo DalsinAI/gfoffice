@@ -1464,6 +1464,148 @@ static void test_tab_strip(void)
     CHECK(end == 0 && first == 0 && !scroll);
 }
 
+/* A conditional format on the first sheet over one range ("A1:A5"). */
+static owf_condfmt *rule_on(oc_core *core, const char *range, int type, int priority)
+{
+    owf_condfmt *cf = owf_sheet_add_condfmt(&oc_core_book(core)->sheets[0]);
+    owf_range r;
+    if (!cf || !oc_parse_range(range, &r) || !(cf->ranges = malloc(sizeof *cf->ranges)))
+        return cf;
+    cf->ranges[0] = r;
+    cf->nranges = 1;
+    cf->type = type;
+    cf->priority = priority;
+    return cf;
+}
+
+static char *dup_text(const char *s)
+{
+    char *d = malloc(strlen(s) + 1);
+    if (d)
+        strcpy(d, s);
+    return d;
+}
+
+/* The fill drawn on a cell (its own: not the selection's), or -1. */
+static long fill_of(const oc_draw_list *l, unsigned row, unsigned col)
+{
+    int i;
+    long found = -1;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_FILL && l->items[i].role == OC_ROLE_CELL_FILL && l->items[i].row == row &&
+            l->items[i].col == col)
+            found = (long)l->items[i].rgb;
+    return found;
+}
+
+static void test_condfmt(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    owf_condfmt *cf;
+    const oc_draw_item *it;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    enter_at(core, "A1", "5");
+    enter_at(core, "A2", "15");
+    enter_at(core, "A3", "25");
+    enter_at(core, "A4", "x");
+    enter_at(core, "B1", "Yes");
+    enter_at(core, "B2", "No");
+    enter_at(core, "C1", "0");
+    enter_at(core, "C2", "50");
+    enter_at(core, "C3", "100");
+    go(core, "E9");
+    /* cellIs greater than 10: a red fill; text is greater than any number, as in Excel */
+    cf = rule_on(core, "A1:A5", OWF_CF_CELL_IS, 2);
+    CHECK(cf != NULL);
+    cf->op = OWF_CF_GREATER;
+    cf->formula[0] = dup_text("10");
+    cf->fill = OWF_SHADE(0xFF0000);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 0, 0) == -1 && fill_of(&l, 1, 0) == 0xFF0000 && fill_of(&l, 2, 0) == 0xFF0000);
+    CHECK(fill_of(&l, 3, 0) == 0xFF0000 && fill_of(&l, 4, 0) == -1);
+    /* a rule before it (priority 1) that holds for 25 and stops: green there, the red rule left out */
+    cf = rule_on(core, "A1:A5", OWF_CF_CELL_IS, 1);
+    cf->op = OWF_CF_EQUAL;
+    cf->formula[0] = dup_text("25");
+    cf->fill = OWF_SHADE(0x00FF00);
+    cf->font_set = OWF_BOLD;
+    cf->font_flags = OWF_BOLD;
+    cf->stop = 1;
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 2, 0) == 0x00FF00 && fill_of(&l, 1, 0) == 0xFF0000);
+    it = text_of(&l, 2, 0);
+    CHECK(it && (it->flags & OWF_BOLD));
+    it = text_of(&l, 1, 0);
+    CHECK(it && !(it->flags & OWF_BOLD));
+    /* an expression moved down the rows with its relative row, its column fixed: grey italic text where B is "No" */
+    cf = rule_on(core, "A1:C5", OWF_CF_EXPRESSION, 3);
+    cf->formula[0] = dup_text("$B1=\"No\"");
+    cf->font_colour = OWF_SHADE(0x808080);
+    cf->font_set = OWF_ITALIC;
+    cf->font_flags = OWF_ITALIC;
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    it = text_of(&l, 1, 2);
+    CHECK(it && it->rgb == 0x808080 && (it->flags & OWF_ITALIC));
+    it = text_of(&l, 0, 2);
+    CHECK(it && it->rgb != 0x808080 && !(it->flags & OWF_ITALIC));
+    it = text_of(&l, 1, 0);                             /* the red rule's fill stays; the italic is added */
+    CHECK(it && (it->flags & OWF_ITALIC) && fill_of(&l, 1, 0) == 0xFF0000);
+    /* between, its bounds either way round */
+    cf = rule_on(core, "C1:C3", OWF_CF_CELL_IS, 4);
+    cf->op = OWF_CF_BETWEEN;
+    cf->formula[0] = dup_text("60");
+    cf->formula[1] = dup_text("40");
+    cf->fill = OWF_SHADE(0x0000FF);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 1, 2) == 0x0000FF && fill_of(&l, 0, 2) == -1 && fill_of(&l, 2, 2) == -1);
+    /* a colour scale from white (the lowest) to blue (the highest), after it: the middle one half way */
+    cf = rule_on(core, "C1:C3", OWF_CF_COLOUR_SCALE, 5);
+    cf->npoints = 2;
+    cf->points[0].kind = OWF_CFV_MIN;
+    cf->points[0].colour = OWF_SHADE(0xFFFFFF);
+    cf->points[1].kind = OWF_CFV_MAX;
+    cf->points[1].colour = OWF_SHADE(0x0000FF);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 0, 2) == 0xFFFFFF && fill_of(&l, 2, 2) == 0x0000FF);
+    CHECK(fill_of(&l, 1, 2) == 0x0000FF);               /* the between rule came first */
+    /* a kept rule ("contains text") is shown by its formula */
+    cf = rule_on(core, "B1:B5", OWF_CF_KEPT, 6);
+    cf->formula[0] = dup_text("NOT(ISERROR(SEARCH(\"es\",B1)))");
+    cf->xml = dup_text("<cfRule type=\"containsText\" operator=\"containsText\" text=\"es\"></cfRule>");
+    cf->fill = OWF_SHADE(0xFFFF00);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 0, 1) == 0xFFFF00 && fill_of(&l, 1, 1) == -1);
+    /* a change shows: A1 made 30 gets the red fill */
+    enter_at(core, "A1", "30");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 0, 0) == 0xFF0000);
+    /* a row inserted above moves the ranges and the formulas */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    {
+        const owf_sheet *sh = &oc_core_book(core)->sheets[0];
+        CHECK(sh->ncondfmts == 6 && sh->condfmts[0].ranges[0].first_row == 1 && sh->condfmts[0].ranges[0].last_row == 5);
+        CHECK(sh->condfmts[2].formula[0] && !strcmp(sh->condfmts[2].formula[0], "$B2=\"No\""));
+    }
+    go(core, "E9");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 1, 0) == 0xFF0000 && fill_of(&l, 0, 0) == -1);
+    it = text_of(&l, 2, 2);
+    CHECK(it && it->rgb == 0x808080);
+    /* a sheet deleted and the deletion undone: its rules come back with it */
+    oc_core_add_sheet(core, "Two");
+    CHECK(oc_core_delete_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_book(core)->sheets[0].ncondfmts == 0);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 2 && oc_core_book(core)->sheets[0].ncondfmts == 6);
+    CHECK(oc_core_book(core)->sheets[0].condfmts[5].xml != NULL);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -1679,6 +1821,7 @@ int main(void)
     test_sheets();
     test_draw();
     test_borders();
+    test_condfmt();
     test_row_numbers();
     test_text_layout();
     test_tab_strip();

@@ -215,6 +215,20 @@ check: xml-book-check
 
 .PHONY: xml-book-test xml-book-check
 
+# What a sheet holds beside its cells (conditional formatting...), read from
+# fixtures/features-openpyxl.xlsx (tests/book/make_feature_fixtures.py) and
+# kept on saving: tests/book/test_sheet_features.py
+features-test: $(OUT)/book-dump $(OUT)/owconvert
+	python3 tests/book/test_sheet_features.py $(OUT)/book-dump $(OUT)/owconvert
+
+features-check: $(OUT)/book-dump-asan $(OUT)/owconvert-asan
+	python3 tests/book/test_sheet_features.py $(OUT)/book-dump-asan $(OUT)/owconvert-asan
+
+book-test: features-test
+book-check: features-check
+
+.PHONY: features-test features-check
+
 # The formula engine (OpenCalc's): libowf/calc, linked only by what
 # calculates (it needs -lm). tests/calc/test_calc.c checks it, and works out
 # the fixtures' formulas again against the results saved in them

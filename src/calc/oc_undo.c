@@ -142,6 +142,8 @@ owf_book *oc_book_copy(const owf_book *b)
         d->merges = NULL;
         d->ncells = d->ncols = d->nrows = d->nmerges = 0;
         d->capcells = d->capcols = d->caprows = d->capmerges = 0;
+        if (owf_sheet_copy_extras(d, s) < 0)                 /* conditional formats... (none on failure) */
+            goto fail_sheet;
         if (!(d->name = oc_strdup(s->name)))
             goto fail_sheet;
         if (s->ncols && !(d->cols = dup_array(s->cols, (size_t)s->ncols * sizeof *s->cols)))

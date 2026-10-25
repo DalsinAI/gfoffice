@@ -163,6 +163,7 @@ void oc_core_free(oc_core *core)
     oc_edit_free(core);
     oc_undo_clear(core);
     oc_clip_free(&core->clip);
+    oc_cf_forget(core);
     owf_calc_free(core->calc);
     owf_book_free(core->book);
     free(core->states);
@@ -198,6 +199,7 @@ int oc_core_set_book(oc_core *core, owf_book *book)
     oc_edit_free(core);
     oc_undo_clear(core);
     oc_clip_free(&core->clip);
+    oc_cf_forget(core);
     owf_calc_free(core->calc);
     owf_book_free(core->book);
     core->book = book;
@@ -438,6 +440,7 @@ int oc_core_delete_sheet(oc_core *core, int sheet)
     owf_free(gone.rows);
     owf_free(gone.merges);
     owf_free(gone.name);
+    owf_sheet_free_extras(&gone);
     /* names that belonged to it go with it */
     for (i = j = 0; i < book->nnames; i++) {
         owf_defname *nm = &book->names[i];

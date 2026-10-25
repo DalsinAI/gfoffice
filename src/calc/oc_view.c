@@ -631,7 +631,53 @@ typedef struct {
     int nr, nc, ysplit, xsplit;
     int rowhdr;             /* the row numbers' bar's width */
     unsigned char *ci;      /* nr x nc */
+    const oc_look *looks;   /* conditional formatting's, nr x nc, or NULL */
 } drawing;
+
+/* A visible line's place in l by its row (column), or -1: they go up, frozen ones first. */
+static int line_of(const oc_line *l, int n, unsigned index)
+{
+    int lo = 0, hi = n;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (l[mid].index < index)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < n && l[lo].index == index ? lo : -1;
+}
+
+/* The look conditional formatting gives a cell showing, or NULL. */
+static const oc_look *look_at(const drawing *d, unsigned row, unsigned col)
+{
+    int i, j;
+    if (!d->looks || (i = line_of(d->rl, d->nr, row)) < 0 || (j = line_of(d->cl, d->nc, col)) < 0)
+        return NULL;
+    return &d->looks[(size_t)i * (size_t)d->nc + (size_t)j];
+}
+
+/* A cell's fill, conditional formatting's first: OWF_SHADE(rgb) or 0. */
+static unsigned long fill_at(const drawing *d, unsigned row, unsigned col, const owf_cellstyle *cs)
+{
+    const oc_look *l = look_at(d, row, col);
+    return l && (l->parts & OC_LOOK_FILL) ? OWF_SHADE(l->fill) : cs->fill;
+}
+
+/* A cell's style with what conditional formatting gives it (in *buf when it gives something). */
+static const owf_cellstyle *style_with_look(const drawing *d, const owf_cell *c, const owf_cellstyle *st, owf_cellstyle *buf)
+{
+    const oc_look *l = look_at(d, c->row, c->col);
+    if (!l || (!l->set && !(l->parts & (OC_LOOK_FILL | OC_LOOK_COLOUR))))
+        return st;
+    *buf = *st;
+    buf->font.flags = (buf->font.flags & ~l->set) | (l->flags & l->set);
+    if (l->parts & OC_LOOK_COLOUR)
+        buf->font.colour = l->colour;
+    if (l->parts & OC_LOOK_FILL)
+        buf->fill = OWF_SHADE(l->fill);
+    return buf;
+}
 
 #define CI(d, i, j) ((d)->ci[(size_t)(i) * (size_t)(d)->nc + (size_t)(j)])
 
@@ -836,7 +882,8 @@ static int wrapped_items(drawing *d, const owf_cell *c, const owf_cellstyle *st,
 static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int x, int w, int y, int h)
 {
     oc_core *core = d->core;
-    const owf_cellstyle *st = oc_cell_style(core, c, c->col);
+    owf_cellstyle with_look;
+    const owf_cellstyle *st = style_with_look(d, c, oc_cell_style(core, c, c->col), &with_look);
     char buf[256];
     unsigned long colour = OWF_COLOUR_AUTO;
     int n, tw, pad = PAD * core->zoom / 100 + 1, align, lo, hi;
@@ -1240,7 +1287,7 @@ static int build(drawing *d)
             const owf_cellstyle *cs = oc_cell_style(core, c, d->cl[j].index);
             if (!oc_cell_empty(c))
                 CI(d, i, j) |= CI_VALUE;
-            if (OWF_SHADE_SET(cs->fill))
+            if (OWF_SHADE_SET(fill_at(d, d->rl[i].index, d->cl[j].index, cs)))
                 CI(d, i, j) |= CI_FILLED;
         }
     for (m = 0; m < s->nmerges; m++) {
@@ -1274,7 +1321,7 @@ static int build(drawing *d)
             cs = oc_cell_style(core, c, d->cl[j].index);
             if (!(it = add_box(list, OC_DRAW_FILL, OC_ROLE_CELL_FILL, d->cl[j].pos, d->rl[i].pos, d->cl[j].size, d->rl[i].size)))
                 return 0;
-            it->rgb = OWF_SHADE_RGB(cs->fill);
+            it->rgb = OWF_SHADE_RGB(fill_at(d, d->rl[i].index, d->cl[j].index, cs));
             it->row = d->rl[i].index;
             it->col = d->cl[j].index;
         }
@@ -1282,7 +1329,8 @@ static int build(drawing *d)
         const owf_range *g = &s->merges[m];
         const owf_cell *c = owf_sheet_find(s, g->first_row, g->first_col);
         const owf_cellstyle *cs = oc_cell_style(core, c, g->first_col);
-        if (!OWF_SHADE_SET(cs->fill))
+        unsigned long fill = fill_at(d, g->first_row, g->first_col, cs);
+        if (!OWF_SHADE_SET(fill))
             continue;
         for (pr = 0; pr < 2; pr++)
             for (pc = 0; pc < 2; pc++) {
@@ -1291,7 +1339,7 @@ static int build(drawing *d)
                     continue;
                 if (!(it = add_box(list, OC_DRAW_FILL, OC_ROLE_CELL_FILL, x, y, w, h)))
                     return 0;
-                it->rgb = OWF_SHADE_RGB(cs->fill);
+                it->rgb = OWF_SHADE_RGB(fill);
                 it->row = g->first_row;
                 it->col = g->first_col;
             }
@@ -1326,11 +1374,12 @@ static int build(drawing *d)
                     for (pc = 0; pc < 2; pc++) {
                         int x, y, w, h, open;
                         const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, a.first_row, a.first_col), a.first_col);
+                        unsigned long fill = fill_at(d, a.first_row, a.first_col, cs);
                         if (!range_box(d, &a, pr, pc, &x, &y, &w, &h, &open))
                             continue;
-                        if (!(it = add_box(list, OC_DRAW_FILL, OWF_SHADE_SET(cs->fill) ? OC_ROLE_CELL_FILL : OC_ROLE_PAPER, x, y, w, h)))
+                        if (!(it = add_box(list, OC_DRAW_FILL, OWF_SHADE_SET(fill) ? OC_ROLE_CELL_FILL : OC_ROLE_PAPER, x, y, w, h)))
                             return 0;
-                        it->rgb = OWF_SHADE_SET(cs->fill) ? OWF_SHADE_RGB(cs->fill) : 0xFFFFFFUL;
+                        it->rgb = OWF_SHADE_SET(fill) ? OWF_SHADE_RGB(fill) : 0xFFFFFFUL;
                     }
             }
         }
@@ -1621,6 +1670,7 @@ int oc_view_draw(oc_core *core, oc_draw_list *list)
     d.nr = lines(core, 0, d.rl, MAX_LINES, &d.ysplit);
     d.nc = lines(core, 1, d.cl, MAX_LINES, &d.xsplit);
     d.ci = calloc((size_t)(d.nr ? d.nr : 1) * (size_t)(d.nc ? d.nc : 1), 1);
+    d.looks = oc_cf_looks(core, d.rl, d.nr, d.cl, d.nc);
     ok = d.ci != NULL && build(&d);
     free(d.ci);
     free(d.rl);
