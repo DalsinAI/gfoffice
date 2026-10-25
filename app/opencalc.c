@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.21 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.23 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -290,6 +290,7 @@ static int tab_first, tab_end, tab_scroll, tab_shown_sheet = -1;
 
 static void draw_all(void);
 static void refresh(void);
+static void pick_from_list(int bx, int by, int bw, int bh);
 static void relayout(void);
 static void menu_action(ULONG id);
 
@@ -860,10 +861,44 @@ static const char *leaf(const char *path)
     return s && *s ? s : path;
 }
 
+static int result(int rc, const char *done);
+
+/* A typed value its cell's rule refused: the rule's alert, as Excel shows it. Stop: Retry goes on typing,
+ * Cancel puts the cell back. Warning ("Continue?"): Yes puts it in, No goes on typing, Cancel puts the cell
+ * back. Information: OK puts it in, Cancel puts the cell back. */
+static void validation_alert(void)
+{
+    oc_alert a;
+    char title[128], text[640];
+    struct EasyStruct es = { sizeof(struct EasyStruct), 0, NULL, (UBYTE *)"%s", NULL };
+    size_t n;
+    LONG pick;
+    if (!core || !oc_core_invalid(core, &a)) return;
+    to_latin1(a.title, strlen(a.title), title, sizeof title);
+    n = to_latin1(a.message, strlen(a.message), text, sizeof text - 16);
+    if (a.style == OWF_DV_WARNING) memcpy(text + n, "\n\nContinue?", 12);
+    es.es_Title = (UBYTE *)title;
+    es.es_GadgetFormat = (UBYTE *)(a.style == OWF_DV_WARNING ? "Yes|No|Cancel" : a.style == OWF_DV_INFORMATION ? "OK|Cancel"
+                                                                                                         : "Retry|Cancel");
+    pick = EasyRequest(win, &es, NULL, (ULONG)text);
+    if (a.style == OWF_DV_STOP) {
+        if (pick == 0) oc_edit_cancel(core);
+    } else if (a.style == OWF_DV_WARNING) {
+        if (pick == 1) result(oc_edit_commit_anyway(core, a.move), NULL);
+        else if (pick == 0) oc_edit_cancel(core);
+    } else {
+        if (pick == 1) result(oc_edit_commit_anyway(core, a.move), NULL);
+        else oc_edit_cancel(core);
+    }
+}
+
 /* What a core result means to the user; 1 when it went well. */
 static int result(int rc, const char *done)
 {
     switch (rc) {
+    case OC_INVALID:
+        validation_alert();
+        break;
     case OWF_OK:
         if (done) set_status(done);
         if (core && oc_core_undo_lost(core)) set_status("Done; it was too big to keep for Undo.");
@@ -1111,6 +1146,19 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
             xy[2 * k + 1] = cv->oy + py;
         }
         if (k == n) ogt_fill_poly(cv->rp, role_pen(it->role, it->rgb), xy, n);
+        break;
+    }
+    case OC_DRAW_DROPDOWN: {                         /* a list's button beside the active cell: Excel's grey box, an arrow */
+        int xy[6], a = it->w / 4 > 1 ? it->w / 4 : 1, cx = it->x + it->w / 2, cy = it->y + it->h / 2;
+        if (it->x < 0 || it->y < 0 || it->x + it->w > cv->w || it->y + it->h > cv->h) break;
+        fill_box(cv, rgb_pen(0xF3F3F3UL), it->x, it->y, it->w, it->h);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x, it->y, it->w, 1);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x, it->y + it->h - 1, it->w, 1);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x + it->w - 1, it->y, 1, it->h);
+        xy[0] = cv->ox + cx - a - 1; xy[1] = cv->oy + cy - a / 2;
+        xy[2] = cv->ox + cx + a + 1; xy[3] = cv->oy + cy - a / 2;
+        xy[4] = cv->ox + cx; xy[5] = cv->oy + cy + a;
+        ogt_fill_poly(cv->rp, rgb_pen(0x404040UL), xy, 3);
         break;
     }
     case OC_DRAW_MARK: {                             /* a comment's: the box's top right half, when it is all in view */
@@ -2685,6 +2733,14 @@ static void raw_key(UWORD code, UWORD qual)
     }
     default: return;
     }
+    if ((m & OC_MOD_ALT) && !(m & OC_MOD_CTRL) && key == OC_KEY_DOWN && !oc_core_editing(core)) {
+        int i;                                       /* Alt+Down: the active cell's list, when it has one */
+        for (i = 0; i < dl.n; i++)
+            if (dl.items[i].kind == OC_DRAW_DROPDOWN) {
+                pick_from_list(grid_box.x + dl.items[i].x, grid_box.y + dl.items[i].y, dl.items[i].w, dl.items[i].h);
+                return;
+            }
+    }
     if ((m & OC_MOD_ALT) && !oc_core_editing(core) && (key == OC_KEY_UP || key == OC_KEY_DOWN || key == OC_KEY_LEFT || key == OC_KEY_RIGHT)) {
         if (m & OC_MOD_CTRL) key = key == OC_KEY_UP || key == OC_KEY_LEFT ? OC_KEY_HOME : OC_KEY_END;
         else {
@@ -2752,6 +2808,108 @@ static void bar_to_core(void)
     owf_free(utf8);
 }
 
+/* The active cell's list: its choices in a box under its button (bx, by, bw, bh: in the window), one picked
+ * with the pointer or the arrows and Return, put in the cell as if typed; Escape or a click elsewhere
+ * closes it. Up to 12 show at once, the rest by the arrows and the wheel. */
+#define LIST_SHOWN 12
+static void pick_from_list(int bx, int by, int bw, int bh)
+{
+    char **items = NULL, latin[256];
+    int n = 0, i, w = 0, ih = fh + 4, shown, top = 0, at = 0, done = 0, chosen = -1, lw, lh, lx, ly;
+    struct RastPort trp;
+    struct Window *pw;
+    const char *now;
+    if (!core || oc_core_list_choices(core, &items, &n) != OWF_OK || !n) {
+        oc_choices_free(items, n);
+        set_status(n ? "Not enough memory for the list." : "The list has no choices.");
+        return;
+    }
+    InitRastPort(&trp);
+    SetFont(&trp, font);
+    for (i = 0; i < n; i++) {
+        size_t k = to_latin1(items[i], strlen(items[i]), latin, sizeof latin);
+        int tw = TextLength(&trp, (STRPTR)latin, (ULONG)k);
+        if (tw > w) w = tw;
+    }
+    now = oc_core_input_text(core);                  /* the one the cell holds, chosen to start with */
+    for (i = 0; now && i < n; i++)
+        if (!strcmp(items[i], now)) { at = i; break; }
+    shown = n < LIST_SHOWN ? n : LIST_SHOWN;
+    lw = w + 16 < 120 ? 120 : w + 16;
+    lh = shown * ih + 2;
+    lx = win->LeftEdge + bx + bw - lw;
+    ly = win->TopEdge + by + bh;
+    if (lx < 0) lx = 0;
+    if (lx + lw > scr->Width) lx = scr->Width - lw;
+    if (ly + lh > scr->Height) ly = win->TopEdge + by - lh;     /* no room below: above the cell */
+    if (at >= shown) top = at - shown + 1;
+    pw = OpenWindowTags(NULL, WA_PubScreen, (ULONG)scr, WA_Left, lx, WA_Top, ly, WA_Width, lw, WA_Height, lh,
+                        WA_Borderless, TRUE, WA_Activate, TRUE, WA_RMBTrap, TRUE, WA_ReportMouse, TRUE,
+                        WA_SimpleRefresh, TRUE,
+                        WA_IDCMP, IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE | IDCMP_VANILLAKEY | IDCMP_RAWKEY |
+                                  IDCMP_INACTIVEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_EXTENDEDMOUSE,
+                        TAG_DONE);
+    if (!pw) {
+        oc_choices_free(items, n);
+        return;
+    }
+    while (!done) {
+        struct RastPort *rp = pw->RPort;
+        struct IntuiMessage *m;
+        SetFont(rp, font);
+        ogt_fill(&ctx, rp, "window", 0, 0, lw, lh);
+        ogt_box(rp, rgb_pen(0x808080UL), 0, 0, lw, 1);
+        ogt_box(rp, rgb_pen(0x808080UL), 0, lh - 1, lw, 1);
+        ogt_box(rp, rgb_pen(0x808080UL), 0, 0, 1, lh);
+        ogt_box(rp, rgb_pen(0x808080UL), lw - 1, 0, 1, lh);
+        for (i = 0; i < shown && top + i < n; i++) {
+            int y = 1 + i * ih, sel = top + i == at;
+            to_latin1(items[top + i], strlen(items[top + i]), latin, sizeof latin);
+            if (sel) ogt_fill(&ctx, rp, "accent", 1, y, lw - 2, ih);
+            ogt_text(rp, sel ? ogt_pen(&ctx, "accent.text") : ogt_pen(&ctx, "label"), 8, y + 2, latin, lw - 16);
+        }
+        for (;;) {
+            int redraw = 0;
+            Wait(1UL << pw->UserPort->mp_SigBit);
+            while ((m = (struct IntuiMessage *)GetMsg(pw->UserPort))) {
+                ULONG cls = m->Class;
+                UWORD code = m->Code;
+                int my = m->MouseY, mx = m->MouseX, row = my >= 1 ? (my - 1) / ih : -1, wheel_y = 0;
+                if (cls == IDCMP_EXTENDEDMOUSE && code == IMSGCODE_INTUIWHEELDATA && m->IAddress)
+                    wheel_y = ((struct IntuiWheelData *)m->IAddress)->WheelY;
+                ReplyMsg((struct Message *)m);
+                if (cls == IDCMP_INACTIVEWINDOW) done = 1;
+                else if (cls == IDCMP_REFRESHWINDOW) { BeginRefresh(pw); EndRefresh(pw, TRUE); redraw = 1; }
+                else if (cls == IDCMP_MOUSEMOVE && mx >= 0 && mx < lw && row >= 0 && row < shown && top + row < n &&
+                         top + row != at) { at = top + row; redraw = 1; }
+                else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTUP) {
+                    if (mx >= 0 && mx < lw && row >= 0 && row < shown && top + row < n) chosen = top + row;
+                    done = 1;
+                } else if (cls == IDCMP_MOUSEBUTTONS && code == MENUDOWN) done = 1;
+                else if (cls == IDCMP_VANILLAKEY && code == 13) { chosen = at; done = 1; }
+                else if (cls == IDCMP_VANILLAKEY && code == 27) done = 1;
+                else if ((cls == IDCMP_RAWKEY && (code == 0x4C || code == 0x4D)) || wheel_y) {
+                    int down = cls == IDCMP_RAWKEY ? code == 0x4D : wheel_y > 0;
+                    at = down ? (at + 1 < n ? at + 1 : at) : (at > 0 ? at - 1 : 0);
+                    if (at < top) top = at;
+                    if (at >= top + shown) top = at - shown + 1;
+                    redraw = 1;
+                }
+            }
+            if (done || redraw) break;
+        }
+    }
+    CloseWindow(pw);
+    if (chosen >= 0) {
+        unsigned row, col;
+        oc_core_active(core, &row, &col);
+        if (result(oc_core_set_input(core, oc_core_sheet(core), row, col, items[chosen]), NULL)) set_status("Chosen from the list.");
+    }
+    oc_choices_free(items, n);
+    ActivateWindow(win);
+    refresh();
+}
+
 static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
 {
     oc_hit hit;
@@ -2762,6 +2920,10 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
         bar_active = 0;
     }
     oc_view_hit(core, mx - grid_box.x, my - grid_box.y, &hit);
+    if (hit.kind == OC_HIT_DROPDOWN) {               /* the list's button: its choices */
+        pick_from_list(grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
+        return;
+    }
     if (hit.kind == OC_HIT_COL_EDGE || hit.kind == OC_HIT_ROW_EDGE) {
         resizing = 1;
         resize_axis = hit.kind == OC_HIT_COL_EDGE;

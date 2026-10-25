@@ -37,6 +37,7 @@ import xml.dom.minidom
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIX = os.path.join(HERE, "fixtures", "features-openpyxl.xlsx")
 CHARTS = os.path.join(HERE, "fixtures", "charts-openpyxl.xlsx")
+CHECKS = os.path.join(HERE, "fixtures", "validation-openpyxl.xlsx")
 DUMP = os.path.abspath(sys.argv[1])
 OWCONVERT = os.path.abspath(sys.argv[2])
 SOFFICE = shutil.which("soffice") if os.environ.get("OWF_NO_SOFFICE") is None else None
@@ -302,6 +303,36 @@ def test_validation(work):
             shutil.rmtree(profile, ignore_errors=True)
     report = convert(FIX, os.path.join(work, "validation.ods"))
     check("validation: ODS says it leaves them out", "Data validation is kept in Excel workbooks" in report, report)
+
+
+# validation-openpyxl.xlsx: a rule that alerts to a row (lists written out, from cells, from a name, without the
+# arrow, without an alert; whole, decimal, date, time, text length, formula; Stop, Warning, Information)
+CHECK_RULES = [
+    'validation type=3 op=0 blank=1 nodropdown=0 prompt=0 error=1 style=0 ranges=1,1-1,2 formula "\\"Yes,No\\"" message "Not a choice" "Yes or No, please."',
+    'validation type=3 op=0 blank=1 nodropdown=0 prompt=0 error=1 style=0 ranges=2,1-2,2 formula "Teams!$A$1:$A$5"',
+    'validation type=3 op=0 blank=1 nodropdown=0 prompt=0 error=1 style=0 ranges=3,1-3,2 formula "TeamNames" message "" "One of the teams."',
+    'validation type=1 op=0 blank=1 nodropdown=0 prompt=0 error=1 style=1 ranges=4,1-4,2 formula "1" formula "10" message "Score" "Scores run from 1 to 10."',
+    'validation type=2 op=0 blank=1 nodropdown=0 prompt=0 error=1 style=0 ranges=5,1-5,2 formula "0" formula "1"',
+    'validation type=4 op=6 blank=1 nodropdown=0 prompt=0 error=1 style=2 ranges=6,1-6,2 formula "DATE(2020,1,1)" message "Date" "Dates before 2020 are unusual here."',
+    'validation type=5 op=0 blank=1 nodropdown=0 prompt=0 error=1 style=0 ranges=7,1-7,2 formula "TIME(9,0,0)" formula "TIME(17,0,0)"',
+    'validation type=6 op=7 blank=1 nodropdown=0 prompt=0 error=1 style=0 ranges=8,1-8,2 formula "10" message "" "10 characters at most."',
+    'validation type=7 op=0 blank=1 nodropdown=0 prompt=0 error=1 style=0 ranges=9,1-9,2 formula "B10<=$C$5" message "" "Not more than C5."',
+    'validation type=3 op=0 blank=1 nodropdown=1 prompt=0 error=1 style=0 ranges=10,1-10,2 formula "\\"Yes,No\\""',
+    'validation type=3 op=0 blank=1 nodropdown=0 prompt=0 error=0 style=0 ranges=11,1-11,2 formula "\\"Red,Green,Blue\\""',
+]
+
+
+def test_validation_alerts(work):
+    """The lab's workbook of rules that alert: each read with its alert (style, title, message) and the list's
+    arrow hidden where the rule says, and the same after saving."""
+    got = sheet_lines(dump(CHECKS), 0, "validation")
+    check("validation alerts: the eleven read", got == CHECK_RULES, "\n".join(got))
+    names = [l for l in dump(CHECKS).splitlines() if l.startswith("name ")]
+    check("validation alerts: the name a list uses", names == ['name "TeamNames" sheet=-1 hidden=0 "Teams!$A$1:$A$5"'], names)
+    xlsx = os.path.join(work, "alerts.xlsx")
+    convert(CHECKS, xlsx)
+    well_formed(xlsx)
+    check("validation alerts: the same after saving", sheet_lines(dump(xlsx), 0, "validation") == CHECK_RULES, "")
 
 
 # ---- The AutoFilter ----
@@ -812,6 +843,7 @@ def main():
         test_condfmt(work)
         test_comments(work)
         test_validation(work)
+        test_validation_alerts(work)
         test_autofilter(work)
         test_drawings(work)
         test_charts(work)

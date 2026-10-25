@@ -164,7 +164,7 @@ static unsigned *cells_in(const owf_sheet *s, const owf_range *r, int *count)
 static void end_editing(oc_core *core)
 {
     if (core->edit_mode)
-        oc_edit_commit(core, OC_MOVE_NONE);
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
 }
 
 /* ---- Fill ---- */

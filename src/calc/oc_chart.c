@@ -62,57 +62,10 @@ const owf_chart *oc_core_charts(oc_core *core, int *count)
 
 /* ---- The values: from the cells, else as the file last had them ---- */
 
-/* "Chart!$B$1:$B$4" or "'My sheet'!B1:B4" as a sheet and a range; 0 when it is not one of this book's. */
+/* "Chart!$B$1:$B$4" or "'My sheet'!B1:B4" as a sheet and a range (oc_sheet_range, a sheet needed). */
 static int chart_ref(const owf_book *book, const char *ref, int *sheet, owf_range *r)
 {
-    char name[256], range[64];
-    size_t n = 0, k = 0;
-    const char *p = ref, *bang;
-    int i;
-    if (!ref)
-        return 0;
-    if (*p == '\'') {
-        for (p++; *p && n < sizeof name - 1; p++) {
-            if (*p == '\'') {
-                if (p[1] != '\'')
-                    break;
-                p++;
-            }
-            name[n++] = *p;
-        }
-        if (*p != '\'' || p[1] != '!')
-            return 0;
-        bang = p + 1;
-    } else {
-        if (!(bang = strchr(p, '!')) || (size_t)(bang - p) >= sizeof name)
-            return 0;
-        n = (size_t)(bang - p);
-        memcpy(name, p, n);
-    }
-    name[n] = 0;
-    for (p = bang + 1; *p && k < sizeof range - 1; p++)
-        if (*p != '$')
-            range[k++] = *p;
-    range[k] = 0;
-    if (*p || !oc_parse_range(range, r))
-        return 0;
-    for (i = 0; i < book->nsheets; i++) {
-        const char *a = book->sheets[i].name, *b = name;
-        for (; *a && *b; a++, b++) {
-            int ca = (unsigned char)*a, cb = (unsigned char)*b;
-            if (ca >= 'A' && ca <= 'Z')
-                ca += 'a' - 'A';
-            if (cb >= 'A' && cb <= 'Z')
-                cb += 'a' - 'A';
-            if (ca != cb)
-                break;
-        }
-        if (!*a && !*b) {
-            *sheet = i;
-            return 1;
-        }
-    }
-    return 0;
+    return oc_sheet_range(book, ref, -1, sheet, r);
 }
 
 /* A one-row or one-column range's cells, in order: how many (0 when it is neither). */

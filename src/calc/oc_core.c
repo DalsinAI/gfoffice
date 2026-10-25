@@ -242,7 +242,7 @@ int oc_core_export(oc_core *core, const char *path, const char *format, owf_repo
 {
     int rc, active = core->book->active;
     if (core->edit_mode)
-        oc_edit_commit(core, OC_MOVE_NONE);
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
     core->book->active = core->sheet;         /* CSV writes the sheet showing; the others keep it too */
     rc = owf_export_book_file(core->book, path, format, report);
     if (rc != OWF_OK)
@@ -300,7 +300,7 @@ int oc_core_set_sheet(oc_core *core, int sheet)
     if (sheet < 0 || sheet >= core->book->nsheets || sheet >= core->nstates)
         return OWF_ERR_UNSUPPORTED;
     if (core->edit_mode)
-        oc_edit_commit(core, OC_MOVE_NONE);
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
     core->sheet = sheet;
     return OWF_OK;
 }
@@ -343,7 +343,7 @@ int oc_core_add_sheet(oc_core *core, const char *name)
     owf_sheet *s, keep;
     int at = core->sheet + 1, i, n = book->nsheets + 1;
     if (core->edit_mode)
-        oc_edit_commit(core, OC_MOVE_NONE);
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
     if (!name) {
         do
             snprintf(made, sizeof made, "Sheet%d", n++);
@@ -392,7 +392,7 @@ int oc_core_rename_sheet(oc_core *core, int sheet, const char *name)
     if (!strcmp(book->sheets[sheet].name, name))
         return OWF_OK;
     if (core->edit_mode)
-        oc_edit_commit(core, OC_MOVE_NONE);
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
     u = oc_undo_new(core, OC_UNDO_BOOK);
     if (u && oc_undo_save_book(core, u) != OWF_OK) {
         oc_undo_free(u);
@@ -752,7 +752,7 @@ int oc_core_goto(oc_core *core, const char *name)
     if (!oc_parse_range(name, &r))
         return OWF_ERR_FORMAT;
     if (core->edit_mode)
-        oc_edit_commit(core, OC_MOVE_NONE);
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
     oc_core_select_range(core, &r);
     return OWF_OK;
 }
@@ -1378,4 +1378,70 @@ int oc_tab_strip(const int *width, int n, int avail, int arrows, int current, in
         end = e;
     }
     return end;
+}
+
+/* ---- References in charts and rules ---- */
+
+int oc_sheet_range(const owf_book *book, const char *ref, int here, int *sheet, owf_range *r)
+{
+    char name[256], range[64];
+    size_t n = 0, k = 0;
+    const char *p = ref, *bang;
+    int i;
+    if (!ref)
+        return 0;
+    if (*p == '=')
+        p++;
+    if (!strchr(p, '!')) {                   /* no sheet: the one it is on, when there is one */
+        for (k = 0; *p && k < sizeof range - 1; p++)
+            if (*p != '$')
+                range[k++] = *p;
+        range[k] = 0;
+        if (here < 0 || *p || !oc_parse_range(range, r))
+            return 0;
+        *sheet = here;
+        return 1;
+    }
+    if (*p == '\'') {
+        for (p++; *p && n < sizeof name - 1; p++) {
+            if (*p == '\'') {
+                if (p[1] != '\'')
+                    break;
+                p++;
+            }
+            name[n++] = *p;
+        }
+        if (*p != '\'' || p[1] != '!')
+            return 0;
+        bang = p + 1;
+    } else {
+        if (!(bang = strchr(p, '!')) || (size_t)(bang - p) >= sizeof name)
+            return 0;
+        n = (size_t)(bang - p);
+        memcpy(name, p, n);
+    }
+    name[n] = 0;
+    for (p = bang + 1; *p && k < sizeof range - 1; p++)
+        if (*p != '$')
+            range[k++] = *p;
+    range[k] = 0;
+    if (*p || !oc_parse_range(range, r))
+        return 0;
+    for (i = 0; i < book->nsheets; i++) {
+        const char *a = book->sheets[i].name, *b = name;
+        for (; *a && *b; a++, b++) {
+            int ca = (unsigned char)*a, cb = (unsigned char)*b;
+            if (ca >= 'A' && ca <= 'Z')
+                ca += 'a' - 'A';
+            if (cb >= 'A' && cb <= 'Z')
+                cb += 'a' - 'A';
+            if (ca != cb)
+                break;
+        }
+        if (!*a && !*b) {
+            *sheet = i;
+            return 1;
+        }
+    }
+    return 0;
 }

@@ -124,7 +124,7 @@ char *oc_core_copy(oc_core *core, size_t *length)
     if (length)
         *length = 0;
     if (core->edit_mode)
-        oc_edit_commit(core, OC_MOVE_NONE);
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
     if (!copy_range(core, &r) || !(text = range_text(core, &r, &n)))
         return NULL;
     oc_clip_free(&core->clip);

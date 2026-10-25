@@ -29,7 +29,8 @@ OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/openamigalayout" sh "$HERE/build-os3.sh"
 OS32_GCC16=$STOVE sh "$HERE/build-library.sh" "$OUT/library"
 mkdir -p "$OUT/samples"
 for f in "$HERE"/samples/*.docx "$HERE"/samples/*.odt "$HERE"/samples/*.txt \
-         "$HERE"/tests/book/fixtures/features-openpyxl.xlsx "$HERE"/tests/book/fixtures/charts-openpyxl.xlsx; do
+         "$HERE"/tests/book/fixtures/features-openpyxl.xlsx "$HERE"/tests/book/fixtures/charts-openpyxl.xlsx \
+         "$HERE"/tests/book/fixtures/validation-openpyxl.xlsx; do
     [ -f "$f" ] && cp "$f" "$OUT/samples/"   # the workbooks: OpenCalc's charts and the rest, for a lab
 done
 rm -rf "$DEPS"   # the job's out/ keeps the programs, not the sources
