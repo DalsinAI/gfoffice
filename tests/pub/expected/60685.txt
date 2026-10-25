@@ -1,0 +1,111 @@
+version Publisher 2013 or later
+build-mark 0x1A
+written-by 15.0
+page-size 215.9 x 279.4 mm (emu 7772400 x 10058400, twips 12240 x 15840)
+masters 1
+master 1 "Master Page A" frames 0
+pages 1
+page 1 master 1 frames 43
+  frame 0 text box 12.7 38.1 190.5 186.7 mm (emu 457200 1371600 7315200 8092440) shape 202 text-id 2 story 0
+    para "Professional Experience"
+    para "Caring Registered Nurse with six years experience and excellent communication and teaching skills.  I also have 10 years experience in geriatric care as an LPN prior to my RN experience, two years of which were in a management position."
+    para ""
+    para "Education"
+    para ""
+    para "Work Experience"
+    para "06/2010 to current: RN"
+    para "UF Health Shands Hospital"
+    para "Currently work in a busy inpatient/outpatient endoscopy unit.  Work as charge nurse 20 hours per week and am responsible for flow of the unit and schedule of patients and staffing.  Have strong communication skills with physicians and interdisciplinary teams.  Also work in pre/post-op area as well as intraoperative, assisting with all types of endoscopic procedures including EGD, colonoscopy, EUS, ERCP.  While at UF Health I have also worked on med surg and IMC units."
+    para ""
+    para "04/2009-06/2010: LPN"
+    para "Lake Butler Hospital"
+    para "Administration of medications, wound care, respiratory treatments and assist patients with ADLs including bathing, toileting, oral care and grooming, dressing and meals as needed.  Also assisted in Emergency Room with triage and IV starts."
+    para ""
+    para "10/1999 to 04/2009"
+    para "Windsor Manor Nursing Home: LPN, Unit MRSA"
+    para "As Unit Manager, responsible for supervision of up to 20 other LPNs and CNAs in the care of a 120 bed unit, to ensure all patient care needs were met in a compassionate and caring manor.  Responsible for MDS data entry and completion as well as Care Plan Coordination and quarterly review/revision.  Met with resident and there families quarterly to ensure their wants and needs were met to their satisfaction and to keep them informed of Plan of Care.  Assisted DON with disciplinary actions, hiring process and annual performance appraisals.  Prior to Unit Manager position, worked as a staff nurse and was responsible for medication administration, wound care and other treatments and documentation of same. "
+    para ""
+    para "References"
+    para ""
+  frame 1 text box 12.7 245.6 190.5 17.1 mm (emu 457200 8840153 7315200 9454896) shape 202 text-id 3 story 1
+    para ""
+  frame 2 text box 12.7 224.8 190.5 17.8 mm (emu 457200 8092440 7315200 8732577) shape 202 text-id 4 story 2
+    para ""
+  frame 3 group box 12.7 12.7 190.5 4.6 mm (emu 457200 457200 7315200 621792) shape 0
+  frame 4 shape in 3 box 12.7 12.7 190.5 4.6 mm (emu 457200 457200 7315200 621792) shape 1
+  frame 5 shape in 3 box 12.7 12.7 190.5 4.6 mm (emu 457200 457200 7315200 621792) shape 1
+  frame 6 shape in 3 box 12.7 13.3 15.9 3.3 mm (emu 457200 479624 1028700 599458) shape 1
+  frame 7 shape in 3 box 24.8 13.3 3.7 3.3 mm (emu 892146 479624 1026381 599367) shape 1
+  frame 8 line in 3 box 12.7 15.0 12.1 0.0 mm (emu 457200 539496 892146 539496) shape 20
+  frame 9 shape in 3 box 28.6 13.3 15.9 3.3 mm (emu 1028700 479624 1600200 599458) shape 1
+  frame 10 shape in 3 box 40.7 13.3 3.7 3.3 mm (emu 1463646 479624 1597881 599367) shape 1
+  frame 11 line in 3 box 28.6 15.0 12.1 0.0 mm (emu 1028700 539496 1463646 539496) shape 20
+  frame 12 shape in 3 box 44.5 13.3 15.9 3.3 mm (emu 1600200 479624 2171700 599458) shape 1
+  frame 13 shape in 3 box 56.5 13.3 3.7 3.3 mm (emu 2035146 479624 2169381 599367) shape 1
+  frame 14 line in 3 box 44.5 15.0 12.1 0.0 mm (emu 1600200 539496 2035146 539496) shape 20
+  frame 15 shape in 3 box 60.3 13.3 15.9 3.3 mm (emu 2171700 479624 2743200 599458) shape 1
+  frame 16 shape in 3 box 72.4 13.3 3.7 3.3 mm (emu 2606646 479624 2740881 599367) shape 1
+  frame 17 line in 3 box 60.3 15.0 12.1 0.0 mm (emu 2171700 539496 2606646 539496) shape 20
+  frame 18 shape in 3 box 76.2 13.3 15.9 3.3 mm (emu 2743200 479624 3314700 599458) shape 1
+  frame 19 shape in 3 box 88.3 13.3 3.7 3.3 mm (emu 3178146 479624 3312381 599367) shape 1
+  frame 20 line in 3 box 76.2 15.0 12.1 0.0 mm (emu 2743200 539496 3178146 539496) shape 20
+  frame 21 shape in 3 box 92.1 13.3 15.9 3.3 mm (emu 3314700 479624 3886200 599458) shape 1
+  frame 22 shape in 3 box 104.2 13.3 3.7 3.3 mm (emu 3749646 479624 3883881 599367) shape 1
+  frame 23 line in 3 box 92.1 15.0 12.1 0.0 mm (emu 3314700 539496 3749646 539496) shape 20
+  frame 24 shape in 3 box 108.0 13.3 15.9 3.3 mm (emu 3886200 479624 4457700 599458) shape 1
+  frame 25 shape in 3 box 120.0 13.3 3.7 3.3 mm (emu 4321146 479624 4455381 599367) shape 1
+  frame 26 line in 3 box 108.0 15.0 12.1 0.0 mm (emu 3886200 539496 4321146 539496) shape 20
+  frame 27 shape in 3 box 123.8 13.3 15.9 3.3 mm (emu 4457700 479624 5029200 599458) shape 1
+  frame 28 shape in 3 box 135.9 13.3 3.7 3.3 mm (emu 4892646 479624 5026881 599367) shape 1
+  frame 29 line in 3 box 123.8 15.0 12.1 0.0 mm (emu 4457700 539496 4892646 539496) shape 20
+  frame 30 shape in 3 box 139.7 13.3 15.9 3.3 mm (emu 5029200 479624 5600700 599458) shape 1
+  frame 31 shape in 3 box 151.8 13.3 3.7 3.3 mm (emu 5464146 479624 5598381 599367) shape 1
+  frame 32 line in 3 box 139.7 15.0 12.1 0.0 mm (emu 5029200 539496 5464146 539496) shape 20
+  frame 33 shape in 3 box 155.6 13.3 15.9 3.3 mm (emu 5600700 479624 6172200 599458) shape 1
+  frame 34 shape in 3 box 167.7 13.3 3.7 3.3 mm (emu 6035646 479624 6169881 599367) shape 1
+  frame 35 line in 3 box 155.6 15.0 12.1 0.0 mm (emu 5600700 539496 6035646 539496) shape 20
+  frame 36 shape in 3 box 171.5 13.3 15.9 3.3 mm (emu 6172200 479624 6743700 599458) shape 1
+  frame 37 shape in 3 box 183.5 13.3 3.7 3.3 mm (emu 6607146 479624 6741381 599367) shape 1
+  frame 38 line in 3 box 171.5 15.0 12.1 0.0 mm (emu 6172200 539496 6607146 539496) shape 20
+  frame 39 shape in 3 box 187.3 13.3 15.9 3.3 mm (emu 6743700 479624 7315200 599458) shape 1
+  frame 40 shape in 3 box 199.4 13.3 3.7 3.3 mm (emu 7178646 479624 7312881 599367) shape 1
+  frame 41 line in 3 box 187.3 15.0 12.1 0.0 mm (emu 6743700 539496 7178646 539496) shape 20
+  frame 42 text box 12.7 18.3 190.5 10.8 mm (emu 457200 657225 7315200 1047750) shape 202 text-id 5 story 3
+    para ""
+stories 4
+fonts 34
+font "Times New Roman"
+font "Mangal"
+font "Vrinda"
+font "Raavi"
+font "Shruti"
+font "Kalinga"
+font "Latha"
+font "Gautami"
+font "Tunga"
+font "Kartika"
+font "Angsana New"
+font "DokChampa"
+font "Microsoft Himalaya"
+font "Sylfaen"
+font "Malgun Gothic"
+font "MS Mincho"
+font "PMingLiU"
+font "SimSun"
+font "Estrangelo Edessa"
+font "MV Boli"
+font "Iskoola Pota"
+font "Nyala"
+font "Plantagenet Cherokee"
+font "Euphemia Regular CAS"
+font "DaunPenh"
+font "Mongolian Baiti"
+font "Cambria"
+font "EucrosiaUPC"
+font "Batang"
+font "Symbol"
+font "Garamond"
+font "Calibri"
+font "Tahoma"
+font "BrowalliaUPC"
+pictures 0

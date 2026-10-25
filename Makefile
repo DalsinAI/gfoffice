@@ -203,3 +203,28 @@ check: opencalc-check
 .PHONY: opencalc-test opencalc-check
 
 .PHONY: calc-test calc-check
+
+# OpenPublisher's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
+# compares pub_dump's output with tests/pub/expected and reads cut-short and
+# changed copies of every sample (more of them under ASan/UBSan).
+PUB_DEPS = $(OWF_SRC) tests/pub/pub_dump.c libowf/include/owf.h libowf/include/owf_pub.h libowf/src/owf_internal.h
+
+$(OUT)/pub-dump: $(PUB_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/pub/pub_dump.c -lz -o $@
+
+$(OUT)/pub-dump-asan: $(PUB_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/pub/pub_dump.c -lz -o $@
+
+pub-test: $(OUT)/pub-dump
+	python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
+
+pub-check: $(OUT)/pub-dump-asan
+	python3 tests/pub/test_pub.py $(OUT)/pub-dump-asan 150
+
+test: pub-test
+check: pub-check
+
+.PHONY: pub-test pub-check
