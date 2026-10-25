@@ -103,6 +103,9 @@ void owf_doc_free(owf_doc *doc)
     free(doc->fonts);
     for (i = 0; i < doc->nimages; ++i) { free(doc->images[i].name); free(doc->images[i].mime); free(doc->images[i].alt); free(doc->images[i].data); }
     free(doc->images);
+    for (i = 0; i < doc->nframes; ++i)
+        free_story(&doc->frames[i].story);
+    free(doc->frames);
     free(doc->title);
     free(doc);
 }
@@ -227,6 +230,33 @@ int owf_doc_add_image(owf_doc *doc, const char *name, const char *mime, const vo
     if(name){im->name=copy_text(name,strlen(name));if(!im->name)goto fail;}if(mime){im->mime=copy_text(mime,strlen(mime));if(!im->mime)goto fail;}if(alt){im->alt=copy_text(alt,strlen(alt));if(!im->alt)goto fail;}
     im->width=width>0?width:4320;im->height=height>0?height:2880;return doc->nimages++;
 fail:free(im->name);free(im->mime);free(im->alt);free(im->data);memset(im,0,sizeof(*im));return -1;
+}
+
+int owf_doc_add_frame(owf_doc *doc, const owf_frame *frame)
+{
+    if (!doc || !frame)
+        return -1;
+    if (doc->nframes == doc->capframes) {
+        int want = doc->capframes ? doc->capframes * 2 : 8;
+        owf_frame *f = realloc(doc->frames, (size_t)want * sizeof *f);
+        if (!f)
+            return -1;
+        doc->frames = f;
+        doc->capframes = want;
+    }
+    doc->frames[doc->nframes] = *frame;
+    return doc->nframes++;
+}
+
+int owf_para_add_frame(owf_para *para, const owf_charfmt *fmt, int frame_index)
+{
+    owf_run *run = add_run(para);
+    if (!run)
+        return -1;
+    run->kind = OWF_RUN_FRAME;
+    run->fmt = *fmt;
+    run->image = frame_index;
+    return 0;
 }
 
 int owf_doc_font(owf_doc *doc, const char *name, owf_font_kind kind)
@@ -453,6 +483,12 @@ void owf_builder_image(owf_builder *b, int image_index)
 {
     owf_builder_flush(b);
     if (ensure_para(b) && owf_para_add_image(b->para, &b->charfmt, image_index) < 0) b->failed = 1;
+}
+
+void owf_builder_frame(owf_builder *b, int frame_index)
+{
+    owf_builder_flush(b);
+    if (ensure_para(b) && owf_para_add_frame(b->para, &b->charfmt, frame_index) < 0) b->failed = 1;
 }
 
 void owf_builder_end_para(owf_builder *b)

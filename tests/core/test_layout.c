@@ -306,6 +306,133 @@ static void contents_checks(const ow_layout *l, const owf_doc *doc)
     }
 }
 
+/* An op of a type on a page: the n-th (from 0), or NULL. */
+static const ol_display_op *nth_op(const ol_document *od, int page, ol_op_type type, int n, size_t *at)
+{
+    size_t first, count, i;
+    if (!ol_display_page_range(od, page, &first, &count)) return NULL;
+    for (i = first; i < first + count; ++i)
+        if (ol_display_get(od, i)->type == type && n-- == 0) {
+            if (at) *at = i;
+            return ol_display_get(od, i);
+        }
+    return NULL;
+}
+
+/* The first text op on a page whose node's text starts with s. */
+static const ol_display_op *text_on(const ol_document *od, int page, const char *s, size_t *at)
+{
+    const ol_display_op *op;
+    int n;
+    for (n = 0; (op = nth_op(od, page, OL_OP_TEXT, n, at)) != NULL; ++n) {
+        const char *t = ol_node_text(ol_node_by_id(od, op->u.text.node_id));
+        if (t && !strncmp(t + op->u.text.text_offset, s, strlen(s))) return op;
+    }
+    return NULL;
+}
+
+static int story_has(const owf_story *story, const char *s)
+{
+    int i, j;
+    for (i = 0; i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j)
+            if (story->paras[i].runs[j].text && strstr(story->paras[i].runs[j].text, s)) return 1;
+    return 0;
+}
+
+/* tests/core/fixtures/cover.docx (make_cover_docx.py): a Word cover page, a picture the size of the page
+ * behind the text and four text boxes in front of it, each where Word puts it; the body's lines where they
+ * would be without them (2.0.6). */
+static void cover_checks(const ow_layout *l, const owf_doc *doc)
+{
+    const ol_document *od = ow_layout_body(l);
+    const ol_page *pg = ow_layout_page(l);
+    const owf_frame *f = doc->frames;
+    const ol_display_op *op, *pic;
+    size_t at_pic = 0, at = 0;
+    ol_unit tw = OL_UNITS_PER_TWIP, x, y;
+    ow_position pos;
+    int i, n, page;
+    ol_rect box;
+
+    /* the model: six frames, the cover's five in its first paragraph */
+    CHECK(doc->nframes == 6);
+    if (doc->nframes != 6) return;
+    CHECK(doc->body.nparas == 5 && doc->body.paras[0].nruns == 5);
+    for (i = 0; i < 5 && i < doc->body.paras[0].nruns; ++i)
+        CHECK(doc->body.paras[0].runs[i].kind == OWF_RUN_FRAME && doc->body.paras[0].runs[i].image == i);
+    CHECK(f[0].image >= 0 && f[0].image < doc->nimages && doc->images[f[0].image].length == 342 &&
+          f[0].behind && f[0].x_from == OWF_FROM_PAGE && f[0].y_from == OWF_FROM_PAGE && f[0].x == 0 && f[0].y == 0 &&
+          f[0].width == 11906 && f[0].height == 16838 && f[0].wrap == OWF_WRAP_NONE && !f[0].story.nparas);
+    CHECK(f[1].image < 0 && !f[1].behind && f[1].story.nparas == 1 && f[1].x_from == OWF_FROM_MARGIN &&
+          f[1].y_from == OWF_FROM_PAGE && f[1].y == 3600 && f[1].width == 9026 && f[1].height == 2160 &&
+          f[1].inset[0] == 72 && f[1].inset[3] == 144 && !OWF_SHADE_SET(f[1].fill) && !OWF_SHADE_SET(f[1].line));
+    if (f[1].story.nparas == 1 && f[1].story.paras[0].nruns == 1) {
+        const owf_run *r = &f[1].story.paras[0].runs[0];
+        CHECK(r->text && !strcmp(r->text, "Cover Title") && (r->fmt.flags & OWF_BOLD) && r->fmt.size == 720 &&
+              r->fmt.colour == 0xFFFFFFUL);
+    }
+    CHECK(f[2].x_from == OWF_FROM_MARGIN && f[2].x_place == OWF_PLACE_CENTRE && f[2].story.nparas == 1);
+    CHECK(f[3].x_from == OWF_FROM_PAGE && f[3].x_place == OWF_PLACE_END && f[3].y_place == OWF_PLACE_END &&
+          f[3].fill == OWF_SHADE(0x1F3864) && f[3].line == OWF_SHADE(0xFFFFFF));
+    CHECK(f[4].y_from == OWF_FROM_PARAGRAPH && f[4].y == 12960 && f[4].x_from == OWF_FROM_MARGIN);
+    CHECK(f[5].image >= 0 && f[5].wrap == OWF_WRAP_SQUARE && f[5].x_from == OWF_FROM_MARGIN &&
+          f[5].x_place == OWF_PLACE_END && f[5].y_from == OWF_FROM_PARAGRAPH && f[5].y == 0);
+    /* the text boxes' text once, in the boxes: not their VML fallbacks' too, not in the body */
+    CHECK(!story_has(&doc->body, "Cover Title") && !story_has(&doc->body, "October"));
+    /* the header's picture from the header's own relationships */
+    for (i = n = 0; i < doc->header.nparas; ++i)
+        if (doc->header.paras[i].nruns && doc->header.paras[i].runs[0].kind == OWF_RUN_IMAGE &&
+            doc->header.paras[i].runs[0].image >= 0 && doc->images[doc->header.paras[i].runs[0].image].length == 342)
+            ++n;
+    CHECK(n == 1);
+
+    /* the layout: the body starts on page 2, as without the cover's frames */
+    CHECK(ow_layout_page_count(l) == 2);
+    CHECK(text_on(od, 1, "Introduction", NULL) != NULL && text_on(od, 0, "Introduction", NULL) == NULL);
+    /* page 1: the picture first, at the page's corner, the page's size */
+    pic = nth_op(od, 0, OL_OP_IMAGE, 0, &at_pic);
+    CHECK(pic && pic->u.image.image_id == f[0].image && pic->u.image.bounds.x == 0 && pic->u.image.bounds.y == 0 &&
+          pic->u.image.bounds.width == pg->width && pic->u.image.bounds.height == pg->height);
+    CHECK(ol_display_page_range(od, 0, &at, NULL) || 1);
+    CHECK(pic && at_pic == at);
+    /* the title in front of it: after it, from the margin and 2.5 inches down, inside its insets */
+    op = text_on(od, 0, "Cover Title", &at);
+    CHECK(op && at > at_pic && op->u.text.bounds.x == pg->margin_left + 144 * tw &&
+          op->u.text.bounds.y >= (3600 + 72) * tw && op->u.text.bounds.y < (3600 + 2160) * tw);
+    /* the subtitle centred in a box centred between the margins */
+    x = pg->margin_left + (9026 - 7200) / 2 * tw;
+    op = text_on(od, 0, "A plan", NULL);
+    CHECK(op && op->u.text.bounds.x > x + 144 * tw && op->u.text.bounds.y >= 6240 * tw);
+    /* the filled box in the page's bottom right corner, outlined */
+    op = nth_op(od, 0, OL_OP_FILL_RECT, 0, &at);
+    for (n = 0; op && op->u.fill_rect.argb != 0xff1f3864u; ) op = nth_op(od, 0, OL_OP_FILL_RECT, ++n, &at);
+    CHECK(op && at > at_pic && op->u.fill_rect.bounds.x == pg->width - 4320 * tw &&
+          op->u.fill_rect.bounds.y == pg->height - 1440 * tw && op->u.fill_rect.bounds.width == 4320 * tw &&
+          op->u.fill_rect.bounds.height == 1440 * tw);
+    CHECK(text_on(od, 0, "Version", NULL) != NULL);
+    /* the date from its paragraph's top, the top margin */
+    op = text_on(od, 0, "25 October", NULL);
+    CHECK(op && op->u.text.bounds.x == pg->margin_left + 144 * tw && op->u.text.bounds.y >= (1440 + 12960 + 72) * tw &&
+          op->u.text.bounds.y < (1440 + 12960 + 720) * tw);
+    /* page 2: the picture at the right margin, from its paragraph's top, behind nothing */
+    pic = nth_op(od, 1, OL_OP_IMAGE, 0, NULL);
+    for (n = 0; pic && pic->u.image.image_id != f[5].image; ) pic = nth_op(od, 1, OL_OP_IMAGE, ++n, NULL);
+    pos.paragraph = 3;
+    pos.run = 1;
+    pos.byte_offset = 0;
+    CHECK(pic && pic->u.image.bounds.x == pg->margin_left + (9026 - 1440) * tw &&
+          ow_layout_caret(l, pos, &page, &box) && page == 1 && pic->u.image.bounds.y <= box.y &&
+          pic->u.image.bounds.y + 200 * tw > box.y);
+    /* the pointer on the picture in front finds the body's text under it; on the title, no box's text */
+    if (pic) {
+        CHECK(ow_layout_hit(l, 1, pic->u.image.bounds.x + 100 * tw, pic->u.image.bounds.y + 100 * tw, &pos) &&
+              pos.paragraph == 3);
+    }
+    y = (3600 + 300) * tw;
+    CHECK(!ow_layout_hit(l, 0, pg->margin_left + 400 * tw, y, &pos) || pos.paragraph <= 1);
+}
+
 static void test_sample(const char *path)
 {
     owf_doc *doc = NULL;
@@ -339,6 +466,7 @@ static void test_sample(const char *path)
         }
         if (strstr(path, "Tata.docx")) CHECK(lists > 0);
         if (strstr(path, "contents.docx")) contents_checks(l, doc);
+        if (strstr(path, "cover.docx")) cover_checks(l, doc);
         printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
                checked, lists);
         ow_layout_free(l);

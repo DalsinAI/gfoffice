@@ -72,6 +72,8 @@ static void clear_doc_data(owf_doc *doc)
     owf_free(doc->fonts);
     for (i = 0; i < doc->nimages; ++i) { owf_free(doc->images[i].name); owf_free(doc->images[i].mime); owf_free(doc->images[i].alt); owf_free(doc->images[i].data); }
     owf_free(doc->images);
+    for (i = 0; i < doc->nframes; ++i) free_story_data(&doc->frames[i].story);   /* 2.0.6: frames */
+    owf_free(doc->frames);
     owf_free(doc->title);
     memset(doc, 0, sizeof(*doc));
 }
@@ -90,6 +92,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->fmt = sp->fmt;
         dp->table_id = sp->table_id; dp->table_row = sp->table_row;
         dp->table_col = sp->table_col; dp->table_cols = sp->table_cols;
+        dp->cell_shading = sp->cell_shading;         /* 2.0.6: undo kept no cell colour */
         if (!sp->nruns) continue;
         dp->runs = (owf_run *)owf_calloc((size_t)sp->nruns, sizeof(*dp->runs));
         if (!dp->runs) return 0;
@@ -146,6 +149,16 @@ static owf_doc *clone_doc(const owf_doc *src)
         !clone_story(&dst->header, &src->header) ||
         !clone_story(&dst->footer, &src->footer))
         goto fail;
+    if (src->nframes) {                              /* 2.0.6: frames, their text boxes' paragraphs too */
+        dst->frames = (owf_frame *)owf_calloc((size_t)src->nframes, sizeof(*dst->frames));
+        if (!dst->frames) goto fail;
+        dst->nframes = dst->capframes = src->nframes;
+        for (i = 0; i < src->nframes; ++i) {
+            dst->frames[i] = src->frames[i];
+            memset(&dst->frames[i].story, 0, sizeof dst->frames[i].story);
+            if (!clone_story(&dst->frames[i].story, &src->frames[i].story)) goto fail;
+        }
+    }
     return dst;
 fail:
     owf_doc_free(dst);
@@ -624,6 +637,7 @@ static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
         } else {
             if (owf_para_add_special(&tmp, &r->fmt, r->kind, r->field) != OWF_OK)
                 goto fail;
+            tmp.runs[tmp.nruns - 1].image = r->image;   /* a picture's or a frame's index goes with it */
         }
     }
 

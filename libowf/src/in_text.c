@@ -87,23 +87,36 @@ static void put_field(owf_buf *out, owf_field field)
     }
 }
 
-static void put_para_runs(owf_buf *out, const owf_para *para)
+static void put_para_runs(owf_buf *out, const owf_doc *doc, const owf_para *para, int depth)
 {
-    int j;
+    int j, k;
 
     for (j = 0; j < para->nruns; j++) {
         const owf_run *run = &para->runs[j];
+        const owf_frame *fr;
         switch (run->kind) {
         case OWF_RUN_TEXT: owf_buf_puts(out, run->text); break;
         case OWF_RUN_TAB: owf_buf_putc(out, '\t'); break;
         case OWF_RUN_LINEBREAK: owf_buf_putc(out, '\n'); break;
         case OWF_RUN_FIELD: put_field(out, run->field); break;
         case OWF_RUN_IMAGE: owf_buf_puts(out, "[image]"); break;
+        case OWF_RUN_FRAME:
+            /* a picture or a text box placed on the page: its text where it is anchored, a line a paragraph */
+            if (run->image < 0 || run->image >= doc->nframes || depth > 2)
+                break;
+            fr = &doc->frames[run->image];
+            if (fr->image >= 0 && !fr->story.nparas)
+                owf_buf_puts(out, "[image]");
+            for (k = 0; k < fr->story.nparas; k++) {
+                if (k || out->length) owf_buf_putc(out, '\n');
+                put_para_runs(out, doc, &fr->story.paras[k], depth + 1);
+            }
+            break;
         }
     }
 }
 
-static void put_story(owf_buf *out, const owf_story *story, int *first)
+static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, int *first)
 {
     int i = 0;
 
@@ -125,7 +138,7 @@ static void put_story(owf_buf *out, const owf_story *story, int *first)
                        story->paras[i].table_row == row) {
                     if (!first_cell)
                         owf_buf_putc(out, '\t');
-                    put_para_runs(out, &story->paras[i]);
+                    put_para_runs(out, doc, &story->paras[i], 0);
                     first_cell = 0;
                     i++;
                 }
@@ -137,7 +150,7 @@ static void put_story(owf_buf *out, const owf_story *story, int *first)
         if (para->fmt.page_break_before && !*first)
             owf_buf_putc(out, '\f');
         *first = 0;
-        put_para_runs(out, para);
+        put_para_runs(out, doc, para, 0);
         owf_buf_putc(out, '\n');
         i++;
     }
@@ -156,7 +169,7 @@ static int export_utf8(const owf_doc *doc, unsigned char **data, size_t *length,
             has_table = 1;
             break;
         }
-    put_story(&out, &doc->body, &first);
+    put_story(&out, doc, &doc->body, &first);
     if (has_table)
         owf_report_add(report, OWF_NOTE_APPROX, "Tables are kept as rows with tabs between cells");
     if (doc->header.nparas || doc->footer.nparas)

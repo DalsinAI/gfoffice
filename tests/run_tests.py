@@ -12,6 +12,7 @@ MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import io
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -655,6 +656,45 @@ def main():
     check("leaders odt to docx", 'w:leader="dot"' in d and 'w:leader="hyphen"' in d and 'w:leader="underscore"' in d, d[:900])
     text, _ = convert(work, "contents.docx", "txt")
     check("leaders text", "01 Executive summary\t3\n" in text.decode(), repr(text[:200]))
+
+    # A Word cover page (2.0.6): tests/core/fixtures/cover.docx (tests/core/make_cover_docx.py), a picture the
+    # size of the page behind the text and four text boxes in front of it, kept where Word puts them through
+    # DOCX and ODT; their text once, not their VML fallbacks' too
+    shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "fixtures", "cover.docx"),
+                os.path.join(work, "cover.docx"))
+    cover, report = convert(work, "cover.docx", "docx")
+    d = docx_part(cover, "word/document.xml")
+    check("frames docx anchors", d.count("<wp:anchor ") == 6, str(d.count("<wp:anchor ")))
+    check("frames docx picture behind, from the page",
+          'behindDoc="1"' in d and '<wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset>' in d and
+          '<wp:extent cx="7560310" cy="10692130"/>' in d, d[:1500])
+    check("frames docx text boxes", d.count("<w:txbxContent>") == 4 and "Cover Title" in d and
+          d.count('<mc:Choice Requires="wps">') == 4)
+    check("frames docx aligned", '<wp:align>center</wp:align>' in d and '<wp:align>bottom</wp:align>' in d and
+          '<wp:positionV relativeFrom="paragraph"><wp:posOffset>8229600</wp:posOffset>' in d)
+    check("frames docx filled box", '<a:solidFill><a:srgbClr val="1F3864"/></a:solidFill>' in d)
+    check("frames docx wrap kept", "<wp:wrapSquare" in d)
+    check("frames docx header picture's relationships",
+          'Id="rId1' in docx_part(cover, "word/_rels/header1.xml.rels"))
+    with open(os.path.join(work, "cover-round.docx"), "wb") as f:
+        f.write(cover)
+    again = docx_part(convert(work, "cover-round.docx", "docx")[0], "word/document.xml")
+    def drawings(xml):                      # the drawings, line spacing (rounded again each time) aside
+        return re.findall(r"<w:drawing>.*?</w:drawing>", re.sub(r"<w:spacing [^>]*/>", "", xml))
+    check("frames docx round trip", drawings(again) == drawings(d) and len(drawings(d)) == 7, again[:600])
+    odt, _ = convert(work, "cover.docx", "odt")
+    with zipfile.ZipFile(io.BytesIO(odt)) as z:
+        c = z.read("content.xml").decode()
+    check("frames odt", c.count('text:anchor-type="paragraph"') == 6 and c.count("<draw:text-box>") == 4 and
+          'style:run-through="background"' in c and 'style:horizontal-rel="page-content"' in c, c[:1500])
+    check("frames odt filled box", 'fo:background-color="#1f3864"' in c and 'style:horizontal-pos="right"' in c)
+    text, _ = convert(work, "cover.docx", "txt")
+    check("frames text once", text.decode().count("Cover Title") == 1 and "Introduction" in text.decode(),
+          repr(text[:300]))
+    html, _ = convert(work, "cover.docx", "html")
+    check("frames html", html.decode().count("Cover Title") == 1)
+    pdf, _ = convert(work, "cover.docx", "pdf")
+    check("frames pdf", b"/Subtype /Image" in pdf)
 
     print(f"{'FAILED' if failures else 'passed'}: {len(failures)} failure(s); files in {work}")
     sys.exit(1 if failures else 0)

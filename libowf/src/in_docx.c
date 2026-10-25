@@ -72,6 +72,7 @@ typedef struct {
     int nnotes, failed;
     const char *current_href;
     int next_table_id;
+    const rels *rels_now;    /* the relationships of the part being read (a header's own); NULL: the document's */
 } docx;
 
 /* ---- Small helpers ---- */
@@ -675,10 +676,201 @@ static const char *docx_image_mime(const char *name)
     return "application/octet-stream";
 }
 
+/* ---- Pictures and text boxes placed on the page (1.3) ---- */
+
+/* The first child element with a local name, whatever its namespace (DrawingML's are several). */
+static const owf_xml_node *local_child(const owf_xml_node *n, const char *name)
+{
+    const owf_xml_node *c;
+    for (c = n ? n->first : NULL; c; c = c->next)
+        if (c->type == OWF_XML_ELEMENT && !strcmp(c->name, name))
+            return c;
+    return NULL;
+}
+
+/* An element's text, as a number (a posOffset's EMUs). */
+static long node_number(const owf_xml_node *n)
+{
+    char buf[24];
+    size_t k;
+    if (!n || !n->first || n->first->type != OWF_XML_TEXT)
+        return 0;
+    k = n->first->length < sizeof buf - 1 ? n->first->length : sizeof buf - 1;
+    memcpy(buf, n->first->name, k);
+    buf[k] = 0;
+    return strtol(buf, NULL, 10);
+}
+
+static int node_text_is(const owf_xml_node *n, const char *s)
+{
+    size_t k = strlen(s);
+    return n && n->first && n->first->type == OWF_XML_TEXT && n->first->length == k && !memcmp(n->first->name, s, k);
+}
+
+#define EMU_TWIPS(v) ((int)((v) / 635))
+
+/* wp:positionH or wp:positionV: where from, and at what or how aligned. */
+static void anchor_position(const owf_xml_node *pos, int across, unsigned char *from, unsigned char *place, int *at)
+{
+    const char *rel = attr_any(pos, "relativeFrom");
+    const owf_xml_node *off = local_child(pos, "posOffset"), *align = local_child(pos, "align");
+    *from = across ? OWF_FROM_MARGIN : OWF_FROM_PARAGRAPH;
+    if (rel) {
+        if (!strcmp(rel, "page")) *from = OWF_FROM_PAGE;
+        else if (!strcmp(rel, "margin") || !strcmp(rel, "column")) *from = OWF_FROM_MARGIN;
+        else if (!strcmp(rel, "paragraph") || !strcmp(rel, "line") || !strcmp(rel, "character")) *from = OWF_FROM_PARAGRAPH;
+        else if (!strcmp(rel, "leftMargin") || !strcmp(rel, "insideMargin")) *from = across ? OWF_FROM_LEFT_MARGIN : OWF_FROM_TOP_MARGIN;
+        else if (!strcmp(rel, "rightMargin") || !strcmp(rel, "outsideMargin")) *from = across ? OWF_FROM_RIGHT_MARGIN : OWF_FROM_BOTTOM_MARGIN;
+        else if (!strcmp(rel, "topMargin")) *from = OWF_FROM_TOP_MARGIN;
+        else if (!strcmp(rel, "bottomMargin")) *from = OWF_FROM_BOTTOM_MARGIN;
+    }
+    *place = OWF_PLACE_AT;
+    *at = 0;
+    if (off) {
+        *at = EMU_TWIPS(node_number(off));
+    } else if (align) {
+        *place = node_text_is(align, "center") ? OWF_PLACE_CENTRE
+               : node_text_is(align, "right") || node_text_is(align, "bottom") || node_text_is(align, "outside") ? OWF_PLACE_END
+               : OWF_PLACE_START;
+    }
+}
+
+/* A DrawingML colour (a:srgbClr; a scheme colour is taken as none): OWF_SHADE(rgb), or 0. */
+static unsigned long drawing_colour(const owf_xml_node *fill)
+{
+    const owf_xml_node *c = local_child(fill, "srgbClr");
+    const char *v = attr_any(c, "val");
+    return v && strlen(v) == 6 ? OWF_SHADE(strtoul(v, NULL, 16)) : 0;
+}
+
+static void blocks(docx *d, const owf_xml_node *n);
+
+/* A picture's part (an r:embed) into doc->images: its index, or -1. */
+static int embed_image(docx *d, const owf_xml_node *blip, int w, int h)
+{
+    const char *id = attr_any(blip, "embed"), *target;
+    char name[256];
+    unsigned char *data = NULL;
+    size_t length = 0;
+    int idx;
+    if (!id || !(target = rel_by_id(d->rels_now ? d->rels_now : &d->doc_rels, id)))
+        return -1;
+    part_name(name, sizeof name, d->base, target);
+    if (owf_unzip_read(d->zip, name, &data, &length) != OWF_OK)
+        return -1;
+    idx = owf_doc_add_image(d->doc, name, docx_image_mime(name), data, length, w, h, NULL);
+    free(data);
+    if (idx < 0)
+        d->failed = 1;
+    return idx;
+}
+
+/* A text box's paragraphs (w:txbxContent) into a story of their own, with a builder of their own. */
+static void text_box_story(docx *d, const owf_xml_node *content, owf_story *into)
+{
+    owf_builder b, *outer = d->b;
+    int break_next = d->break_next, nfields = d->nfields;
+    const char *href = d->current_href;
+    d->break_next = 0;
+    d->nfields = 0;
+    d->current_href = NULL;
+    owf_builder_init(&b, d->doc, into);
+    d->b = &b;
+    blocks(d, content);
+    if (owf_builder_done(&b) != OWF_OK)
+        d->failed = 1;
+    d->b = outer;
+    d->break_next = break_next;
+    d->nfields = nfields;
+    d->current_href = href;
+}
+
+/* wp:anchor: a picture or a shape (a text box, a filled box) placed on the page, as a frame anchored to
+ * the paragraph being read. 0 when there is nothing to show. */
+static int import_anchor(docx *d, const owf_xml_node *anchor, const owf_charfmt *fmt)
+{
+    const owf_xml_node *ext = local_child(anchor, "extent"), *graphic = local_child(anchor, "graphic");
+    const owf_xml_node *data = local_child(graphic, "graphicData"), *pic, *wsp, *n;
+    const char *v;
+    owf_frame fr;
+    int idx;
+
+    memset(&fr, 0, sizeof fr);
+    fr.image = -1;
+    fr.width = 2880;
+    fr.height = 2880;
+    if (ext) {
+        long cx = strtol(attr_any(ext, "cx") ? attr_any(ext, "cx") : "0", NULL, 10);
+        long cy = strtol(attr_any(ext, "cy") ? attr_any(ext, "cy") : "0", NULL, 10);
+        if (cx > 0) fr.width = EMU_TWIPS(cx);
+        if (cy > 0) fr.height = EMU_TWIPS(cy);
+    }
+    v = attr_any(anchor, "behindDoc");
+    fr.behind = v && (!strcmp(v, "1") || !strcmp(v, "true"));
+    v = attr_any(anchor, "simplePos");
+    if (v && (!strcmp(v, "1") || !strcmp(v, "true")) && (n = local_child(anchor, "simplePos"))) {
+        fr.x_from = fr.y_from = OWF_FROM_PAGE;
+        fr.x = EMU_TWIPS(strtol(attr_any(n, "x") ? attr_any(n, "x") : "0", NULL, 10));
+        fr.y = EMU_TWIPS(strtol(attr_any(n, "y") ? attr_any(n, "y") : "0", NULL, 10));
+    } else {
+        anchor_position(local_child(anchor, "positionH"), 1, &fr.x_from, &fr.x_place, &fr.x);
+        anchor_position(local_child(anchor, "positionV"), 0, &fr.y_from, &fr.y_place, &fr.y);
+    }
+    fr.wrap = local_child(anchor, "wrapSquare") ? OWF_WRAP_SQUARE
+            : local_child(anchor, "wrapTight") || local_child(anchor, "wrapThrough") ? OWF_WRAP_TIGHT
+            : local_child(anchor, "wrapTopAndBottom") ? OWF_WRAP_TOP_BOTTOM : OWF_WRAP_NONE;
+
+    if ((pic = local_child(data, "pic"))) {
+        fr.image = embed_image(d, find_local(local_child(pic, "blipFill"), "blip"), fr.width, fr.height);
+    } else if ((wsp = local_child(data, "wsp"))) {
+        const owf_xml_node *sp = local_child(wsp, "spPr"), *body = local_child(wsp, "bodyPr");
+        const owf_xml_node *geom = local_child(sp, "prstGeom"), *ln = local_child(sp, "ln"), *txbx;
+        const char *prst = attr_any(geom, "prst");
+        /* a rectangle's fill and line (another outline is drawn as its text alone) */
+        int boxy = !prst || !strcmp(prst, "rect") || !strcmp(prst, "roundRect") || !strcmp(prst, "flowChartProcess") ||
+                   !strcmp(prst, "snip1Rect") || !strcmp(prst, "round1Rect");
+        static const char *const ins[4] = { "tIns", "rIns", "bIns", "lIns" };
+        static const long ins_default[4] = { 45720, 91440, 45720, 91440 };
+        int k;
+        if (boxy && (n = local_child(sp, "solidFill"))) fr.fill = drawing_colour(n);
+        if (boxy && ln && !local_child(ln, "noFill") && (n = local_child(ln, "solidFill"))) fr.line = drawing_colour(n);
+        if ((n = local_child(sp, "blipFill")))
+            fr.image = embed_image(d, local_child(n, "blip"), fr.width, fr.height);
+        for (k = 0; k < 4; k++) {
+            const char *iv = attr_any(body, ins[k]);
+            fr.inset[k] = EMU_TWIPS(iv ? strtol(iv, NULL, 10) : ins_default[k]);
+        }
+        if ((txbx = local_child(wsp, "txbx")) && (n = local_child(txbx, "txbxContent")))
+            text_box_story(d, n, &fr.story);
+    } else if ((n = find_local(data, "blip"))) {
+        /* a group or a canvas: its first picture, as before frames were read */
+        fr.image = embed_image(d, n, fr.width, fr.height);
+        owf_report_add(d->report, OWF_NOTE_APPROX, "Grouped shapes placed on the page are kept as their first picture");
+    } else {
+        owf_report_add(d->report, OWF_NOTE_LOST, "Grouped shapes, charts and canvases placed on the page were left out");
+        return 0;
+    }
+    if (fr.image < 0 && !fr.story.nparas && !fr.fill && !fr.line) {
+        /* an empty box's paragraphs (none) and a picture that couldn't be read */
+        return 0;
+    }
+    if ((idx = owf_doc_add_frame(d->doc, &fr)) < 0) {
+        d->failed = 1;
+        return 0;
+    }
+    if (fr.wrap != OWF_WRAP_NONE)
+        owf_report_add(d->report, OWF_NOTE_APPROX, "Text runs under or over pictures and text boxes placed on the page, not round them");
+    set_fmt(d, fmt);
+    owf_builder_frame(d->b, idx);
+    return 1;
+}
+
 static int import_drawing(docx *d, const owf_xml_node *drawing, const owf_charfmt *fmt)
 {
     const owf_xml_node *blip=find_local(drawing,"blip"),*ext=find_local(drawing,"extent");const char *id=attr_any(blip,"embed"),*target;char name[256];unsigned char *data=NULL;size_t length=0;int w=4320,h=2880,idx;long cx,cy;
-    if(!id||(target=rel_by_id(&d->doc_rels,id))==NULL)return 0;
+    if (local_child(drawing, "anchor"))                  /* 1.3: placed on the page, not in the line */
+        return import_anchor(d, local_child(drawing, "anchor"), fmt);
+    if(!id||(target=rel_by_id(d->rels_now?d->rels_now:&d->doc_rels,id))==NULL)return 0;
     part_name(name,sizeof name,d->base,target);
     if(owf_unzip_read(d->zip,name,&data,&length)!=OWF_OK)return 0;
     if(ext){const char *xs=attr_any(ext,"cx"),*ys=attr_any(ext,"cy");cx=xs?strtol(xs,NULL,10):0;cy=ys?strtol(ys,NULL,10):0;if(cx>0)w=(int)(cx/635);if(cy>0)h=(int)(cy/635);}
@@ -688,13 +880,42 @@ static int import_drawing(docx *d, const owf_xml_node *drawing, const owf_charfm
 static void run_children(docx *d, const owf_xml_node *r, const owf_charfmt *fmt);
 static void start_para(docx *d, const owf_parafmt *pf);
 
+/* mc:AlternateContent's branch to read: the first mc:Choice whose Requires names only markup we read
+ * (wps: Word 2010's shapes and text boxes; the others add to what we read without changing it), else the
+ * mc:Fallback. */
+static const owf_xml_node *alternate(const docx *d, const owf_xml_node *ac)
+{
+    static const char *const known[] = { "wps", "wp14", "w14", "w15", "w16se", "w16cid", "w16", "a14", NULL };
+    const owf_xml_node *c;
+    (void)d;
+    for (c = owf_xml_child(ac, NS_MC, "Choice"); c; c = owf_xml_next(c, NS_MC, "Choice")) {
+        const char *req = attr_any(c, "Requires"), *p = req;
+        int ok = req && *req;
+        while (ok && *p) {
+            size_t n;
+            int k, found = 0;
+            while (*p == ' ') p++;
+            for (n = 0; p[n] && p[n] != ' '; n++)
+                ;
+            for (k = 0; n && known[k]; k++)
+                if (strlen(known[k]) == n && !strncmp(known[k], p, n)) found = 1;
+            if (n && !found) ok = 0;
+            p += n;
+        }
+        if (ok)
+            return c;
+    }
+    return owf_xml_child(ac, NS_MC, "Fallback");
+}
+
 static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
 {
     if (c->type != OWF_XML_ELEMENT)
         return;
     if (owf_xml_is(c, NS_MC, "AlternateContent")) {
-        /* The same content twice: newer markup, and a fallback. */
-        const owf_xml_node *fb = owf_xml_child(c, NS_MC, "Fallback");
+        /* The same content twice: newer markup, and a fallback. 1.3: the newer when it needs only what we
+         * read (Word's text boxes: wps, whose fallback is VML) */
+        const owf_xml_node *fb = alternate(d, c);
         if (fb)
             run_children(d, fb, fmt);
         return;
@@ -885,7 +1106,7 @@ static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para
         } else if (!strcmp(c->ns, NS_MATH)) {
             run_children(d, c, para_char);
         } else if (owf_xml_is(c, NS_MC, "AlternateContent")) {
-            const owf_xml_node *fb = owf_xml_child(c, NS_MC, "Fallback");
+            const owf_xml_node *fb = alternate(d, c);
             if (fb)
                 para_content(d, fb, para_char);
         } else {
@@ -1072,6 +1293,7 @@ static void story(docx *d, const char *id, owf_story *into)
     char name[256];
     owf_xml *part;
     owf_builder b;
+    rels own;
 
     if (!target)
         return;
@@ -1079,11 +1301,22 @@ static void story(docx *d, const char *id, owf_story *into)
     part = read_xml(d->zip, name);
     if (!part)
         return;
+    {
+        /* 1.3: the part's own relationships, for its pictures (word/_rels/header1.xml.rels) */
+        char rels_name[300];
+        const char *slash = strrchr(name, '/');
+        snprintf(rels_name, sizeof rels_name, "%.*s_rels/%s.rels", slash ? (int)(slash - name + 1) : 0, name,
+                 slash ? slash + 1 : name);
+        read_rels(d->zip, rels_name, &own);
+        d->rels_now = &own;
+    }
     owf_builder_init(&b, d->doc, into);
     d->b = &b;
     blocks(d, owf_xml_root(part));
     if (owf_builder_done(&b) != OWF_OK)
         d->failed = 1;
+    d->rels_now = NULL;
+    free_rels(&own);
     owf_xml_free(part);
 }
 
