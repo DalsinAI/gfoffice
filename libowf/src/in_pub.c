@@ -1257,23 +1257,6 @@ const char *owf_pub_version_name(int version)
     }
 }
 
-int owf_pub_detect(const unsigned char *data, size_t length)
-{
-    owf_cfb cfb;
-    unsigned char *c;
-    size_t n;
-    int score = 0;
-    if (!owf_cfb_detect(data, length) || owf_cfb_open(&cfb, data, length) != OWF_OK)
-        return 0;
-    if (owf_cfb_read(&cfb, "Contents", &c, &n) == OWF_OK) {
-        if (n >= 8 && c[0] == 0xE8 && c[1] == 0xAC)
-            score = 95;
-        owf_free(c);
-    }
-    owf_cfb_close(&cfb);
-    return score;
-}
-
 int owf_pub_read(const unsigned char *data, size_t length, owf_pub **out, owf_report *report)
 {
     reader r;

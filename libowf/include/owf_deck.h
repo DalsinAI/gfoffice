@@ -319,4 +319,10 @@ int owf_export_deck_file(const owf_deck *deck, const char *path, const char *for
 }
 #endif
 
+/* the library's calls, once every header with calls is complete (owf.h) */
+#define OWF_DECK_H_DONE
+#if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "owf_proto.h"
+#endif
+
 #endif
