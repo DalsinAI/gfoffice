@@ -233,6 +233,26 @@ static int test_cross_paragraph_selection(void)
 }
 
 
+/* the position of a byte offset in a paragraph's text: the run it falls in, or the end of the one before */
+static ow_position position_at(const owf_doc *doc, int p, size_t offset)
+{
+    ow_position pos;
+    size_t at = 0;
+    int r;
+    memset(&pos, 0, sizeof pos);
+    pos.paragraph = p;
+    for (r = 0; r < doc->body.paras[p].nruns; ++r) {
+        const owf_run *run = &doc->body.paras[p].runs[r];
+        size_t n = run->kind == OWF_RUN_TEXT && run->text ? strlen(run->text) : 0;
+        if (run->kind != OWF_RUN_TEXT) continue;
+        pos.run = r;
+        if (offset <= at + n) { pos.byte_offset = offset - at; return pos; }
+        pos.byte_offset = n;
+        at += n;
+    }
+    return pos;
+}
+
 static int test_character_formatting(void)
 {
     owf_doc *doc = doc_with("abcdef");
@@ -273,6 +293,38 @@ static int test_character_formatting(void)
 
     ow_editor_free(ed);
     owf_doc_free(doc);
+
+    /* 2.0.13: the runs before and after the selection are kept as they were (those after it were
+     * written twice, from before their start, and those before it ran past their end) */
+    {
+        static const int spans[][3] = { { 1, 3, 1 }, { 0, 1, 1 }, { 4, 6, 1 }, { 2, 5, 0 } };
+        char all[64];
+        int k;
+        doc = doc_with("abcdef");
+        if (!doc) return 717;
+        ed = ow_editor_new(doc);
+        if (!ed) return 718;
+        for (k = 0; k < 4; ++k) {
+            memset(&s, 0, sizeof(s));
+            s.anchor = position_at(doc, 0, (size_t)spans[k][0]);
+            s.focus = position_at(doc, 0, (size_t)spans[k][1]);
+            ow_editor_set_selection(ed, &s);
+            owf_charfmt_init(&cf);
+            cf.flags = spans[k][2] ? OWF_ITALIC : 0;
+            if (ow_editor_apply_charfmt(ed, &cf, OW_CHARFMT_FLAGS) != OWF_OK) return 719;
+            paragraph_text(doc, 0, all, sizeof all);
+            if (strcmp(all, "abcdef")) return 720 + k;
+        }
+        /* a b italic, c d e plain again, f italic */
+        if (doc->body.paras[0].nruns != 3 || strcmp(run_text(doc, 0, 0), "ab") ||
+            strcmp(run_text(doc, 0, 1), "cde") || strcmp(run_text(doc, 0, 2), "f") ||
+            !(doc->body.paras[0].runs[0].fmt.flags & OWF_ITALIC) ||
+            (doc->body.paras[0].runs[1].fmt.flags & OWF_ITALIC) ||
+            !(doc->body.paras[0].runs[2].fmt.flags & OWF_ITALIC))
+            return 724;
+        ow_editor_free(ed);
+        owf_doc_free(doc);
+    }
     return 0;
 }
 
