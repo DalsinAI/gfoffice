@@ -56,13 +56,13 @@ library)
     ;;
 esac
 
-# OpenWrite reads documents only: the workbook code (owf_book.c and its
+# OpenWrite reads documents only: the workbook code (owf_book.c, its charts and its
 # formats) is OWConvert's and the spreadsheet's, and the deck code
 # (owf_deck.c, ODP, the page PDF writer) OWConvert's and OpenPresentation's.
 OWFSRC_DOCS=""
 for f in $OWFSRC; do
     case "$f" in
-    */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c) ;;
+    */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c | */owf_chart.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
     */owf_deck.c | */in_odp.c | */out_odp.c | */owf_pdf.c | */owf_pdffonts.c) ;;
     */in_pub.c) ;;   # OpenPublisher's .pub reader: it needs owf_cfb.c
