@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.16 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.17 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -2133,7 +2133,9 @@ static void paint_op(void *userdata, const ol_device_op *d)
     }
     case OL_OP_IMAGE: {
         int index = d->op->u.image.image_id;
-        ow_image_cache *c = pp->thumb ? image_cache_peek(index) : image_cache_get(index);   /* 2.0.10 */
+        ow_image_cache *c;
+        if (index == OW_LAYOUT_NO_IMAGE) break;       /* 2.0.17: a text box's room in its line */
+        c = pp->thumb ? image_cache_peek(index) : image_cache_get(index);   /* 2.0.10 */
         if (d->box.width < 1 || d->box.height < 1) break;
         if (c && CyberGfxBase && screen_depth() > 8)
             draw_picture(rp, c, d->box.x, d->box.y, d->box.width, d->box.height, &pp->lim);

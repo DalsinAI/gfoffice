@@ -192,8 +192,10 @@ typedef struct {
     unsigned char x_from, y_from;    /* owf_frame_from */
     unsigned char x_place, y_place;  /* owf_frame_place */
     unsigned char behind;    /* behind the text, else in front of it */
-    unsigned char wrap;      /* owf_frame_wrap: how text goes round it; laid out as OWF_WRAP_NONE for now */
-    unsigned char reserved[2];
+    unsigned char wrap;      /* owf_frame_wrap: how text goes round it */
+    unsigned char in_line;   /* 2.0.17: a text box in the line (Word's wp:inline), not placed on the page: placed
+                                from its paragraph at 0, 0, with no wrap; OpenWrite puts it where its run is */
+    unsigned char reserved[1];
     int inset[4];            /* a text box's inner margins, twips: top, right, bottom, left */
     unsigned long fill;      /* OWF_SHADE(0xRRGGBB) inside it; 0: none */
     unsigned long line;      /* OWF_SHADE(0xRRGGBB) round it; 0: none */
