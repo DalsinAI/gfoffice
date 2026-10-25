@@ -2543,6 +2543,33 @@ static int chart_check(char *out, size_t size)
     return 1;
 }
 
+/* For the lab: VALIDCHECK: the sheet's data validation rules: each one's kind, its first range (and how many
+ * more), its alert when a typed value is refused, and for a list whether it has its arrow. */
+static int valid_check(char *out, size_t size)
+{
+    static const char *const kinds[] = { "any", "whole", "decimal", "list", "date", "time", "text length", "formula" };
+    static const char *const alerts[] = { "Stop", "Warning", "Information" };
+    const owf_book *b = oc_core_book(core);
+    const owf_sheet *sh = &b->sheets[oc_core_sheet(core)];
+    char buf[1024], a[16], z[16];
+    int i;
+    size_t k = (size_t)snprintf(buf, sizeof buf, "%d rule%s", sh->nvalidations, sh->nvalidations == 1 ? "" : "s");
+    for (i = 0; i < sh->nvalidations && k < sizeof buf; i++) {
+        const owf_validation *v = &sh->validations[i];
+        const owf_range *r = v->nranges ? &v->ranges[0] : NULL;
+        if (r) {
+            oc_cell_name(r->first_row, r->first_col, a);
+            oc_cell_name(r->last_row, r->last_col, z);
+        }
+        k += (size_t)snprintf(buf + k, sizeof buf - k, "; %s %s%s%s%s, %s%s", kinds[v->type >= 0 && v->type <= 7 ? v->type : 0],
+                              r ? a : "?", r ? ":" : "", r ? z : "", v->nranges > 1 ? " +more" : "",
+                              v->show_error ? alerts[v->error_style >= 0 && v->error_style <= 2 ? v->error_style : 0] : "no alert",
+                              v->type == OWF_DV_LIST ? (v->no_dropdown ? ", no arrow" : ", arrow") : "");
+    }
+    to_latin1(buf, strlen(buf), out, size);
+    return 1;
+}
+
 /* As the GFOffice ARexx conventions (docs/gfoffice/Design-Suite-Shared.md 6.3, proposed): 0 done, 5 not
  * possible now, 10 an error or an unknown command. */
 #define RX_OK 0
@@ -2560,7 +2587,7 @@ static int rexx_do_command(const char *command, char **result_out)
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
     else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
-                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK CHARTCHECK GETCOMMENT QUIT");
+                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK CHARTCHECK VALIDCHECK GETCOMMENT QUIT");
     else if (starts_word_ci(command, "ACTIVATE", &arg)) {
         if (win) { WindowToFront(win); ActivateWindow(win); }
     } else if (starts_word_ci(command, "ISDIRTY", &arg))
@@ -2587,6 +2614,8 @@ static int rexx_do_command(const char *command, char **result_out)
         if (!font_check(arg, result_text, sizeof result_text)) ok = 0;
     } else if (starts_word_ci(command, "CHARTCHECK", &arg)) {
         if (!chart_check(result_text, sizeof result_text)) ok = 0;
+    } else if (starts_word_ci(command, "VALIDCHECK", &arg)) {
+        valid_check(result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCOMMENT", &arg)) {
         const owf_comment *cm;
         if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
