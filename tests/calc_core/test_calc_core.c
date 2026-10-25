@@ -784,19 +784,37 @@ static void test_clipboard(void)
         CHECK_STR(name_box(core), "A10:B12");
     }
 
-    /* cut: cleared at once; pasted with formulas as they were */
+    /* cut, as Excel's: the cells stay until the paste moves them, and
+       what read them follows (owf_calc_move_range) */
     go(core, "A1:B1");
     t = oc_core_cut(core, &n);
     CHECK_STR(t, "1\t2\n");
-    CHECK(empty(core, "A1") && empty(core, "B1"));
+    CHECK(num(core, "A1") == 1 && num(core, "B1") == 2);
     go(core, "J1");
     CHECK(oc_core_paste(core, t, n) == OWF_OK);
     CHECK(num(core, "J1") == 1);
-    CHECK_STR(formula(core, "K1"), "A1*2");             /* as it was */
+    CHECK_STR(formula(core, "K1"), "J1*2");             /* it read A1, which moved to J1 */
+    CHECK(num(core, "K1") == 2);
+    CHECK(empty(core, "A1") && empty(core, "B1"));
+    CHECK_STR(name_box(core), "J1:K1");
+    CHECK(oc_core_paste(core, t, n) == OWF_OK);         /* a cut pastes once: again, it is text */
     owf_free(t);
     oc_core_undo(core);
     oc_core_undo(core);
     CHECK(num(core, "A1") == 1);
+    CHECK_STR(formula(core, "B1"), "A1*2");
+    CHECK(empty(core, "J1"));
+    /* a cut and then a change: the paste copies, the cells stay */
+    go(core, "A1");
+    t = oc_core_cut(core, &n);
+    enter_at(core, "C30", "5");
+    go(core, "L1");
+    CHECK(oc_core_paste(core, t, n) == OWF_OK);
+    CHECK(num(core, "A1") == 1 && num(core, "L1") == 1);
+    owf_free(t);
+    oc_core_undo(core);
+    oc_core_undo(core);
+    CHECK(empty(core, "C30") && empty(core, "L1"));
 
     /* empty cells pasted onto empty cells make none */
     {

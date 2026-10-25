@@ -1,0 +1,8 @@
+Name,Qty,"Price, each",Note
+"Fig, ""dried""",-7,1E+20,"two
+lines"
+Plum,120,0.30000000000000004,  spaced  
+,,,
+"=SUM(A1:A2)",TRUE,#DIV/0!,12.5%
+2026-10-21,2026-10-21 13:45:30,"007",x"y
+"quoted" tail,last

@@ -1153,14 +1153,100 @@ static void put_cell(owf_buf *b, unsigned row, unsigned col, int rabs, int cabs,
     }
 }
 
-char *calc_rewrite(const owf_book *book, int sheet, const char *text, calc_ref_fn fn, void *user)
+/* A sheet's name as a formula writes it: quoted, its quotes doubled,
+ * unless it is one word that could not be read as anything else. */
+static int sheet_needs_quotes(const char *name)
+{
+    const char *p = name, *q;
+    unsigned abs = 0, r, c;
+    if (!*p || !is_name_start(*p))
+        return 1;
+    for (; *p; p++)
+        if (!is_name_char(*p) || *p == '?' || *p == '\\')
+            return 1;
+    q = cell_part(name, &r, &c, &abs, ABS_R0, ABS_C0);
+    if (q && !*q)
+        return 1;                        /* A1, XFD9 */
+    if (owf_upper((unsigned char)name[0]) == 'R') {   /* R1C1 */
+        p = name + 1;
+        while (is_digit(*p))
+            p++;
+        if (owf_upper((unsigned char)*p) == 'C') {
+            for (p++; is_digit(*p); p++)
+                ;
+            if (!*p)
+                return 1;
+        }
+    }
+    return 0;
+}
+
+static void put_sheet_name(owf_buf *b, const char *name, int quoted)
+{
+    for (; *name; name++) {
+        if (*name == '\'' && quoted)
+            owf_buf_putc(b, '\'');
+        owf_buf_putc(b, *name);
+    }
+}
+
+/* "Sheet2!", "'Q1 sales'!", "'First:Last sheet'!" */
+void calc_put_sheet_prefix(owf_buf *b, const char *first, const char *last)
+{
+    int quote = sheet_needs_quotes(first) || (last && sheet_needs_quotes(last));
+    if (quote)
+        owf_buf_putc(b, '\'');
+    put_sheet_name(b, first, quote);
+    if (last) {
+        owf_buf_putc(b, ':');
+        put_sheet_name(b, last, quote);
+    }
+    if (quote)
+        owf_buf_putc(b, '\'');
+    owf_buf_putc(b, '!');
+}
+
+static void put_body(owf_buf *b, const calc_token *t, unsigned r0, unsigned c0, unsigned r1, unsigned c1)
+{
+    switch (t->kind) {
+    case RK_CELL:
+        put_cell(b, r0, c0, t->abs & ABS_R0, t->abs & ABS_C0, 1, 1);
+        break;
+    case RK_AREA:
+        put_cell(b, r0, c0, t->abs & ABS_R0, t->abs & ABS_C0, 1, 1);
+        owf_buf_putc(b, ':');
+        put_cell(b, r1, c1, t->abs & ABS_R1, t->abs & ABS_C1, 1, 1);
+        break;
+    case RK_COLS:
+        put_cell(b, 0, c0, 0, t->abs & ABS_C0, 0, 1);
+        owf_buf_putc(b, ':');
+        put_cell(b, 0, c1, 0, t->abs & ABS_C1, 0, 1);
+        break;
+    case RK_ROWS:
+        put_cell(b, r0, 0, t->abs & ABS_R0, 0, 1, 0);
+        owf_buf_putc(b, ':');
+        put_cell(b, r1, 0, t->abs & ABS_R1, 0, 1, 0);
+        break;
+    }
+}
+
+static char *take_text(owf_buf *b)
+{
+    unsigned char *data;
+    size_t length;
+    if (b->failed || owf_buf_take(b, &data, &length) != OWF_OK) {
+        owf_buf_free(b);
+        return NULL;
+    }
+    return (char *)data;
+}
+
+char *calc_rewrite(const owf_book *book, int sheet, int home, const char *text, calc_ref_fn fn, void *user)
 {
     owf_buf b;
     const char *p = text, *done = text;
     calc_token t;
     calc_sheetref *sr = malloc(sizeof *sr);
-    unsigned char *data;
-    size_t length;
 
     if (!sr)
         return NULL;
@@ -1168,63 +1254,83 @@ char *calc_rewrite(const owf_book *book, int sheet, const char *text, calc_ref_f
     if (*p == '=')
         p++;
     for (;;) {
+        int ref_sheet = sheet, to = -1, keep;
+        unsigned r0, c0, r1, c1;
         calc_next_token(&p, &t);
         if (t.type == TK_END || t.type == TK_BAD)
             break;
-        if (t.type == TK_REF && t.kind != RK_ERR) {
-            int ref_sheet = sheet;
-            unsigned r0 = t.r0, c0 = t.c0, r1 = t.r1, c1 = t.c1;
-            if (t.sheet) {
-                if (!calc_split_sheet(&t, sr) || sr->has_book || strcmp(sr->first, sr->last))
-                    continue;            /* other books and 3-D references stay as they are */
-                ref_sheet = book ? calc_find_sheet(book, sr->first) : -1;
-            }
-            if (fn(user, ref_sheet, t.kind, &r0, &c0, &r1, &c1, t.abs)) {
-                if (r0 == t.r0 && c0 == t.c0 && r1 == t.r1 && c1 == t.c1)
-                    continue;            /* as it was, as it was written */
-                owf_buf_put(&b, done, (size_t)(t.start - done));
-                if (t.sheet)
-                    owf_buf_put(&b, t.start, (size_t)(t.body - t.start));
-                switch (t.kind) {
-                case RK_CELL:
-                    put_cell(&b, r0, c0, t.abs & ABS_R0, t.abs & ABS_C0, 1, 1);
-                    break;
-                case RK_AREA:
-                    put_cell(&b, r0, c0, t.abs & ABS_R0, t.abs & ABS_C0, 1, 1);
-                    owf_buf_putc(&b, ':');
-                    put_cell(&b, r1, c1, t.abs & ABS_R1, t.abs & ABS_C1, 1, 1);
-                    break;
-                case RK_COLS:
-                    put_cell(&b, 0, c0, 0, t.abs & ABS_C0, 0, 1);
-                    owf_buf_putc(&b, ':');
-                    put_cell(&b, 0, c1, 0, t.abs & ABS_C1, 0, 1);
-                    break;
-                case RK_ROWS:
-                    put_cell(&b, r0, 0, t.abs & ABS_R0, 0, 1, 0);
-                    owf_buf_putc(&b, ':');
-                    put_cell(&b, r1, 0, t.abs & ABS_R1, 0, 1, 0);
-                    break;
-                }
-            } else {
-                owf_buf_put(&b, done, (size_t)(t.start - done));
-                if (t.sheet)
-                    owf_buf_put(&b, t.start, (size_t)(t.body - t.start));
-                owf_buf_puts(&b, "#REF!");
-            }
-            done = t.end;
+        if (t.type != TK_REF || t.kind == RK_ERR)
+            continue;
+        r0 = t.r0;
+        c0 = t.c0;
+        r1 = t.r1;
+        c1 = t.c1;
+        if (t.sheet) {
+            if (!calc_split_sheet(&t, sr) || sr->has_book || strcmp(sr->first, sr->last))
+                continue;                /* other books and 3-D references stay as they are */
+            ref_sheet = book ? calc_find_sheet(book, sr->first) : -1;
         }
+        keep = fn(user, ref_sheet, t.kind, &r0, &c0, &r1, &c1, t.abs, &to);
+        if (keep && r0 == t.r0 && c0 == t.c0 && r1 == t.r1 && c1 == t.c1 &&
+            (to < 0 || to == (t.sheet ? ref_sheet : home)))
+            continue;                    /* as it was, as it was written */
+        owf_buf_put(&b, done, (size_t)(t.start - done));
+        if (keep && to >= 0 && book && to < book->nsheets) {
+            if (t.sheet || to != home)
+                calc_put_sheet_prefix(&b, book->sheets[to].name, NULL);
+        } else if (t.sheet) {
+            owf_buf_put(&b, t.start, (size_t)(t.body - t.start));
+        }
+        if (keep)
+            put_body(&b, &t, r0, c0, r1, c1);
+        else
+            owf_buf_puts(&b, "#REF!");
+        done = t.end;
     }
+    free(sr);
     if (t.type == TK_BAD) {              /* won't parse: as it was */
         b.length = 0;
         done = text;
     }
-    free(sr);
     owf_buf_puts(&b, done);
-    if (b.failed || owf_buf_take(&b, &data, &length) != OWF_OK) {
-        owf_buf_free(&b);
+    return take_text(&b);
+}
+
+char *calc_rename_sheet_in(const char *text, const char *old_name, const char *new_name)
+{
+    owf_buf b;
+    const char *p = text, *done = text;
+    calc_token t;
+    calc_sheetref *sr = malloc(sizeof *sr);
+    if (!sr)
         return NULL;
+    owf_buf_init(&b);
+    for (;;) {
+        int first, last;
+        calc_next_token(&p, &t);
+        if (t.type == TK_END || t.type == TK_BAD)
+            break;
+        if ((t.type != TK_REF && t.type != TK_NAME) || !t.sheet || !calc_split_sheet(&t, sr) || sr->has_book)
+            continue;
+        first = owf_same_word(sr->first, old_name);
+        last = owf_same_word(sr->last, old_name);
+        if (!first && !last)
+            continue;
+        owf_buf_put(&b, done, (size_t)(t.start - done));
+        if (!strcmp(sr->first, sr->last) || owf_same_word(sr->first, sr->last))
+            calc_put_sheet_prefix(&b, new_name, NULL);
+        else
+            calc_put_sheet_prefix(&b, first ? new_name : sr->first, last ? new_name : sr->last);
+        owf_buf_put(&b, t.body, (size_t)(t.end - t.body));
+        done = t.end;
     }
-    return (char *)data;
+    free(sr);
+    if (t.type == TK_BAD) {
+        b.length = 0;
+        done = text;
+    }
+    owf_buf_puts(&b, done);
+    return take_text(&b);
 }
 
 /* ---- A typed formula as Excel keeps it ---- */
@@ -1301,11 +1407,12 @@ typedef struct {
 } move_by;
 
 static int move_ref(void *user, int ref_sheet, int kind, unsigned *r0, unsigned *c0, unsigned *r1, unsigned *c1,
-                    unsigned abs)
+                    unsigned abs, int *to)
 {
     const move_by *m = user;
     long v;
     (void)ref_sheet;
+    (void)to;
     if (kind != RK_COLS) {
         if (!(abs & ABS_R0)) {
             v = (long)*r0 + m->drow;
@@ -1350,7 +1457,7 @@ char *owf_calc_move_formula(const char *text, int drow, int dcol)
         return NULL;
     if (r == OWF_OK) {
         calc_prog_free(&prog);
-        out = calc_rewrite(NULL, 0, text, move_ref, &m);
+        out = calc_rewrite(NULL, 0, 0, text, move_ref, &m);
     } else {                             /* won't parse: as it was */
         n = strlen(text);
         out = malloc(n + 1);

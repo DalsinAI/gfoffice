@@ -40,9 +40,43 @@ given ends in a workbook format's extension.
 | Format | Open | Save | Knowledge | Phase | State |
 | --- | --- | --- | --- | --- | --- |
 | Excel 97-2003 (`.xls`, `.xlt`) | Yes | Later | Spec: Microsoft's [MS-XLS] (BIFF8) in [MS-CFB] compound files | S1 | Cells and values, shared strings (Unicode), fonts, number formats, alignment, borders, fills, column widths, row heights, merged cells, frozen panes, hidden sheets and columns, defined names, and formulas back as Excel's text (shared, array, 3-D and other-book references, add-in functions), with their last results. Comments, pictures, charts, conditional formatting, validation and data tables are reported. Excel 5/95 and 2-4 workbooks and password-protected ones are recognised with a clear message |
-| CSV (`.csv`) | Later | Yes | Spec: RFC 4180 | S1 | Saves one sheet's values, UTF-8 |
-| XLSX, Office Open XML | Later | Later | Spec: ECMA-376 | S2 | To do |
-| ODS, OpenDocument Spreadsheet | Later | Later | Spec: OASIS ODF 1.2 | S2 | To do |
+| CSV (`.csv`) | Yes | Yes | Spec: RFC 4180 | S1 | Saves one sheet's values, UTF-8. Opens comma, semicolon and tab files (Excel's `sep=` line too) in UTF-8, UTF-16 or Windows-1252: numbers, percentages, ISO dates and times, TRUE and FALSE, error names, text |
+| XLSX, Office Open XML (`.xlsx`; `.xltx`, `.xlsm`, `.xltm` open only) | Yes | Yes | Spec: ECMA-376 (transitional; strict's namespaces read) and [MS-XLSX]'s `_xlfn.` names | S2 | Full both ways, as the model holds it (notes below). Macros, comments, pictures, charts, conditional formats, validation, tables and pivot tables are reported. Binary `.xlsb` is recognised with a clear message |
+| ODS, OpenDocument Spreadsheet (`.ods`, `.ots` opens; flat `.fods`) | Yes | Yes | Spec: OASIS ODF 1.2 and OpenFormula; LibreOffice's 1.3 additions read | S2 | Full both ways, as the model holds it (notes below), formulas translated to and from OpenFormula. Comments, pictures, charts, conditional formats and validation are reported |
+
+What each keeps, both ways: sheets and their names; values (numbers,
+text, booleans, errors; XLSX's shared strings and rich text flattened);
+formulas as Excel's text with their last results; cell styles (fonts,
+sizes, bold, italic, underline, strike-through, raised and lowered text,
+colours, number formats, alignment, wrap, indents, fills, borders); column
+widths, row heights, hidden rows, columns and sheets; merged cells; array
+formulas; frozen panes; defined names; the active sheet; the 1904 date
+system. Numbers are written in the fewest digits that read back as the same
+double (up to 17), and read exactly.
+
+- **XLSX.** Shared formulas are moved to each of their cells on reading;
+  array formulas' ranges come back on each cell. Excel 2010's and later
+  functions carry their `_xlfn.` names in the file and not in the model.
+  Other workbooks named in formulas (`[Other.xls]Rates!A1`) become
+  numbered links with externalLink parts, and back. Theme colours and
+  their tints are worked out. Sheet names Excel does not allow (over 31
+  characters, `: \ / ? * [ ]`) are changed on saving, and said so.
+- **ODS and flat ODS.** Formulas are OpenFormula in the file
+  (`of:=SUM([.A1:.A3])`) and Excel's text in the model: references,
+  sheets, 3-D ranges, other files, unions (`~`), intersections (`!`),
+  array constants, `TRUE()`, and the functions the two name differently
+  (`COM.MICROSOFT.`, `LEGACY.`, `FDIST`/`F.DIST`...). Number formats are
+  ODF's data styles, sections as LibreOffice maps them; libowf also keeps
+  Excel's text of each format, and a sheet's default column width and row
+  height, in attributes of its own namespace, which other programs ignore
+  and libowf reads back, so a workbook goes through ODS unchanged. ODF
+  cannot hold names of one sheet or of another workbook in formulas, hidden
+  names, very hidden sheets, or text centred across cells: those are made
+  the nearest ODF has, and reported. Dates counted from a null date other
+  than 1899-12-30 or 1904-01-01 are reported.
+- **CSV.** A field starting with `=` stays text: CSV is data. Fields CSV
+  cannot tell apart stay what they look like (the text `007` is the number
+  7).
 
 ## 2. Amiga text formats
 
