@@ -1,6 +1,6 @@
 # OpenCalc: the formula engine
 
-Version 0.1 | 25 October 2026 | AmigaChrome Team, MIT
+Version 0.2 | 25 October 2026 | AmigaChrome Team, MIT
 
 The formula engine works out the formulas of a workbook (`owf_book`) for
 OpenCalc, the spreadsheet of the GFOffice Suite. It is part of libowf: the
@@ -120,6 +120,20 @@ without an FPU), written for a 68040 with a small stack and 8 to 32 MB.
   call refuses, as Excel does).
 - `owf_calc_move_formula` moves a formula's relative references for copy
   and fill; a reference moved off the sheet becomes `#REF!`.
+- `owf_calc_move_range` is cut and paste, as Excel does it: the cells of
+  a range move (to another sheet too) and replace what was there. Formulas
+  that move keep pointing where they pointed (a reference left on the old
+  sheet gets its sheet's name); every reference in the book to cells all
+  inside the range follows them; a reference to a replaced cell becomes
+  `#REF!`. Only the formulas that changed and what reads the two places
+  are worked out again.
+- `owf_calc_rename_sheet` renames a sheet and every reference to it in
+  formulas and defined names, quoting the name as it needs
+  (`'Q1 o''clock'!A1`); it refuses the names Excel refuses.
+- `owf_calc_touch` is for cells the program changed itself (an undo that
+  puts cells back): the engine takes that range's formulas again and marks
+  dirty what is there and what reads it, without parsing the rest of the
+  book.
 - `owf_calc_evaluate` works out a formula without changing the book (a
   status line's sum of the selection).
 
@@ -208,10 +222,16 @@ UBSan; both in `make test` and `make check`) runs `tests/calc/test_calc.c`:
 - typed input and its formats, `owf_calc_move_formula`, `owf_calc_shift`
   (rows and columns, inserted and deleted, other sheets, names, merges,
   row heights), `owf_calc_rebuild`, kept values, number formats;
+- `owf_calc_touch`, `owf_calc_rename_sheet` and `owf_calc_move_range`
+  (references followed, kept, named, made `#REF!`; names; quoting; moves
+  to another sheet and onto themselves);
 - random books: 2,400 random edits (values, formulas, clears, inserted
-  and deleted rows and columns), each followed by a recalc, and every 20
-  a full recalc that must change nothing; and 6,000 random and broken
-  formulas through the parser, the machine and the mover;
+  and deleted rows and columns, cells changed behind the engine's back and
+  touched, sheets renamed, cuts and pastes), each followed by a recalc,
+  and every 20 a full recalc that must change nothing (`CALC_SEED` runs it
+  with another seed); and 12,000 random and broken formulas, bytes and
+  number formats through the parser, the machine, the mover and the
+  formatter;
 - the oracle: `tests/book/fixtures/book.xls` and
   `tests/calc/fixtures/calc.xls` are read with the results their writer
   saved, every formula is worked out again and compared.
