@@ -549,6 +549,8 @@ static const owf_book_format *const book_formats[] = {
     &owf_book_format_csv,
     &owf_book_format_xlsx,
     &owf_book_format_xlsm,
+    &owf_book_format_ods,
+    &owf_book_format_fods,
 };
 
 #define NBOOKFORMATS ((int)(sizeof book_formats / sizeof book_formats[0]))

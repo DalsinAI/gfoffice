@@ -216,10 +216,19 @@ int calc_find_sheet(const owf_book *book, const char *name);
 
 /* Rewrites the references in a formula: for each one (on sheet `sheet` when
  * it has no prefix), fn adjusts the rows and columns in place and returns 1
- * to keep it, 0 to make it #REF!. NULL when memory runs out. */
+ * to keep it, 0 to make it #REF!; it may set *to (else -1) to the sheet the
+ * reference is on now, written as a prefix unless that is `home`, where
+ * the formula is (and it had none). 3-D references and other books' stay.
+ * Text that won't tokenize comes back as it was. NULL when memory runs
+ * out. */
 typedef int (*calc_ref_fn)(void *user, int ref_sheet, int kind, unsigned *r0, unsigned *c0,
-                           unsigned *r1, unsigned *c1, unsigned abs);
-char *calc_rewrite(const owf_book *book, int sheet, const char *text, calc_ref_fn fn, void *user);
+                           unsigned *r1, unsigned *c1, unsigned abs, int *to);
+char *calc_rewrite(const owf_book *book, int sheet, int home, const char *text, calc_ref_fn fn, void *user);
+/* The text with every sheet prefix naming old_name (any case) naming
+ * new_name, quoted as it needs. NULL when memory runs out. */
+char *calc_rename_sheet_in(const char *text, const char *old_name, const char *new_name);
+/* "Sheet2!", "'Q1 sales'!", "'A:B c'!" (last NULL for one sheet). */
+void calc_put_sheet_prefix(owf_buf *b, const char *first, const char *last);
 
 /* A typed formula as Excel keeps it: function names, references,
  * booleans and errors in capitals ("sum(a1:b2)" is "SUM(A1:B2)"); text,

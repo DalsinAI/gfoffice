@@ -135,7 +135,8 @@ enum {
     NODE_QUEUED = 1 << 9,        /* during a recalc */
     NODE_IN_LIST = 1 << 10,
     NODE_DONE = 1 << 11,
-    NODE_FREE = 1 << 12
+    NODE_FREE = 1 << 12,
+    NODE_TYPED = 1 << 13         /* the user typed it (else it came from a file or the program) */
 };
 #define PUBLIC_STATE 0xFF
 
@@ -356,7 +357,7 @@ static int add_node(owf_calc *calc, int sheet, const owf_cell *cell, int typed, 
     n->row = cell->row;
     n->col = (unsigned short)cell->col;
     n->first_entry = -1;
-    n->flags = OWF_CALC_FORMULA;
+    n->flags = (unsigned short)(OWF_CALC_FORMULA | (typed ? NODE_TYPED : 0));
     if (array) {
         n->flags |= NODE_ARRAY;
         unsigned dc;
@@ -1189,10 +1190,11 @@ static int shift_span(const shift_job *j, unsigned *first, unsigned *last, int s
 }
 
 static int shift_ref(void *user, int ref_sheet, int kind, unsigned *r0, unsigned *c0, unsigned *r1, unsigned *c1,
-                     unsigned abs)
+                     unsigned abs, int *to)
 {
     const shift_job *j = user;
     (void)abs;
+    (void)to;
     if (ref_sheet != j->sheet)
         return 1;
     if (j->axis == 0)
@@ -1202,7 +1204,7 @@ static int shift_ref(void *user, int ref_sheet, int kind, unsigned *r0, unsigned
 
 static int rewrite_text(owf_book *book, int sheet, char **text, shift_job *job)
 {
-    char *t = calc_rewrite(book, sheet, *text, shift_ref, job);
+    char *t = calc_rewrite(book, sheet, sheet, *text, shift_ref, job);
     if (!t)
         return 0;
     if (strcmp(t, *text)) {
@@ -1287,4 +1289,429 @@ int owf_calc_shift(owf_calc *calc, int sheet, int axis, unsigned at, int count)
     }
     s->nmerges = out;
     return build(calc, 1);
+}
+
+/* ---- Cells the program changed itself ---- */
+
+/* A cell's node again, from its formula now (the user's still the user's). */
+static int resync_cell(owf_calc *calc, int sheet, unsigned row, unsigned col)
+{
+    int old = node_at(calc, sheet, row, col), typed = 0, id;
+    const owf_cell *c = owf_sheet_find(&calc->book->sheets[sheet], row, col);
+    if (old >= 0) {
+        typed = (calc->nodes[old].flags & NODE_TYPED) != 0;
+        remove_node(calc, old);
+    }
+    if (c && c->formula) {
+        if (add_node(calc, sheet, c, typed, &id) == OWF_ERR_MEMORY) {
+            calc->stale = 1;
+            return OWF_ERR_MEMORY;
+        }
+        calc->nodes[id].flags |= OWF_CALC_DIRTY;
+    }
+    return OWF_OK;
+}
+
+static int overlaps(unsigned a0, unsigned a1, unsigned b0, unsigned b1)
+{
+    return a0 <= b1 && b0 <= a1;
+}
+
+/* Everything that reads any cell of a range, and what reads that... */
+static void mark_range(owf_calc *calc, int sheet, const owf_range *r)
+{
+    unsigned i;
+    calc->nwork = 0;
+    for (i = 0; i < calc->buckets.cap; i++) {
+        const hslot *slot = &calc->buckets.slots[i];
+        int e, kind = (int)(slot->a >> 16);
+        if (slot->value < 0 || (int)(slot->a & 0xFFFF) != sheet)
+            continue;
+        if (kind == KEY_CELL &&
+            !(slot->b >= r->first_row && slot->b <= r->last_row && slot->c >= r->first_col && slot->c <= r->last_col))
+            continue;
+        if (kind == KEY_COLUMN && !(slot->b >= r->first_col && slot->b <= r->last_col))
+            continue;
+        for (e = slot->value; e >= 0; e = calc->entries[e].next) {
+            const dep_entry *d = &calc->entries[e];
+            if (d->node >= 0 && overlaps(d->r0, d->r1, r->first_row, r->last_row) &&
+                overlaps(d->c0, d->c1, r->first_col, r->last_col))
+                mark_one(calc, d->node, NULL);
+        }
+    }
+    while (calc->nwork) {
+        const calc_node *n = &calc->nodes[calc->work[--calc->nwork]];
+        each_dependent(calc, n->sheet, n->row, n->col, mark_one, NULL);
+    }
+}
+
+static int good_range(const owf_book *book, int sheet, const owf_range *r)
+{
+    return sheet >= 0 && sheet < book->nsheets && r && r->first_row <= r->last_row && r->first_col <= r->last_col &&
+           r->last_row < CALC_MAX_ROWS && r->last_col < CALC_MAX_COLS;
+}
+
+int owf_calc_touch(owf_calc *calc, int sheet, const owf_range *range)
+{
+    const owf_sheet *s;
+    int id, i;
+    if (!good_range(calc->book, sheet, range))
+        return OWF_ERR_UNSUPPORTED;
+    calc->used[0] = calc->used[1] = -1;
+    if (calc->stale)
+        return build(calc, 1);
+    /* the range's nodes go, its formulas come back */
+    for (id = 0; id < calc->nnodes; id++) {
+        const calc_node *n = &calc->nodes[id];
+        if (!(n->flags & NODE_FREE) && n->sheet == sheet && n->row >= range->first_row &&
+            n->row <= range->last_row && n->col >= range->first_col && n->col <= range->last_col)
+            remove_node(calc, id);
+    }
+    s = &calc->book->sheets[sheet];
+    for (i = 0; i < s->ncells; i++) {
+        const owf_cell *c = &s->cells[i];
+        if (c->formula && c->row >= range->first_row && c->row <= range->last_row && c->col >= range->first_col &&
+            c->col <= range->last_col) {
+            if (add_node(calc, sheet, c, 0, &id) == OWF_ERR_MEMORY) {
+                calc->stale = 1;
+                return OWF_ERR_MEMORY;
+            }
+            calc->nodes[id].flags |= OWF_CALC_DIRTY;
+        }
+    }
+    mark_range(calc, sheet, range);
+    return calc->stale ? OWF_ERR_MEMORY : OWF_OK;
+}
+
+/* ---- Renaming a sheet ---- */
+
+typedef struct {
+    char **where;                /* the text to replace */
+    char *text;                  /* its new text */
+    int sheet;                   /* a cell's: its node is taken again; -1 for a name */
+    unsigned row, col;
+} text_change;
+
+typedef struct {
+    text_change *items;
+    int n, cap;
+} changes;
+
+static int add_change(changes *ch, char **where, char *text, int sheet, unsigned row, unsigned col)
+{
+    if (ch->n == ch->cap) {
+        int want = ch->cap ? ch->cap * 2 : 32;
+        text_change *p = realloc(ch->items, (size_t)want * sizeof *p);
+        if (!p)
+            return 0;
+        ch->items = p;
+        ch->cap = want;
+    }
+    ch->items[ch->n].where = where;
+    ch->items[ch->n].text = text;
+    ch->items[ch->n].sheet = sheet;
+    ch->items[ch->n].row = row;
+    ch->items[ch->n].col = col;
+    ch->n++;
+    return 1;
+}
+
+static void drop_changes(changes *ch)
+{
+    int i;
+    for (i = 0; i < ch->n; i++)
+        free(ch->items[i].text);
+    free(ch->items);
+}
+
+/* Puts the new texts in; 1 when a defined name changed. */
+static int apply_changes(changes *ch)
+{
+    int i, names = 0;
+    for (i = 0; i < ch->n; i++) {
+        free(*ch->items[i].where);
+        *ch->items[i].where = ch->items[i].text;
+        ch->items[i].text = NULL;
+        names |= ch->items[i].sheet < 0;
+    }
+    return names;
+}
+
+/* Might the text name the sheet? (any case; a ' in the name may be
+ * doubled in the text, as a quoted name has it) */
+static int contains_nocase(const char *text, const char *word)
+{
+    for (; *text; text++) {
+        const char *t = text, *w = word;
+        while (*w && *t) {
+            if (*w == '\'' && *t == '\'') {
+                t += t[1] == '\'' ? 2 : 1;
+                w++;
+            } else if (owf_lower((unsigned char)*t) == owf_lower((unsigned char)*w)) {
+                t++;
+                w++;
+            } else {
+                break;
+            }
+        }
+        if (!*w)
+            return 1;
+    }
+    return 0;
+}
+
+int owf_calc_rename_sheet(owf_calc *calc, int sheet, const char *name)
+{
+    owf_book *book = calc->book;
+    changes ch;
+    char *new_name, *old_name;
+    size_t n;
+    int k, i, names = 0, result = OWF_OK;
+    const char *p;
+
+    if (sheet < 0 || sheet >= book->nsheets || !name)
+        return OWF_ERR_UNSUPPORTED;
+    n = strlen(name);
+    if (!n || n > 31 * 4 || calc_utf8_count(name, (unsigned)n) > 31 || name[0] == '\'' || name[n - 1] == '\'')
+        return OWF_ERR_FORMAT;
+    for (p = name; *p; p++)
+        if (strchr(":\\/?*[]", *p))
+            return OWF_ERR_FORMAT;
+    for (k = 0; k < book->nsheets; k++)
+        if (k != sheet && owf_same_word(book->sheets[k].name, name))
+            return OWF_ERR_FORMAT;
+    old_name = book->sheets[sheet].name;
+    if (!strcmp(old_name, name))
+        return OWF_OK;
+    new_name = malloc(n + 1);
+    if (!new_name)
+        return OWF_ERR_MEMORY;
+    memcpy(new_name, name, n + 1);
+    /* every new text first, so that running out of memory changes nothing */
+    memset(&ch, 0, sizeof ch);
+    for (k = 0; k < book->nsheets; k++)
+        for (i = 0; i < book->sheets[k].ncells; i++) {
+            owf_cell *c = &book->sheets[k].cells[i];
+            char *t;
+            if (!c->formula || !contains_nocase(c->formula, old_name))
+                continue;
+            if (!(t = calc_rename_sheet_in(c->formula, old_name, name)) ||
+                (strcmp(t, c->formula) ? !add_change(&ch, &c->formula, t, k, c->row, c->col) : (free(t), 0))) {
+                free(t);
+                drop_changes(&ch);
+                free(new_name);
+                return OWF_ERR_MEMORY;
+            }
+        }
+    for (i = 0; i < book->nnames; i++) {
+        char *t;
+        if (!book->names[i].formula || !contains_nocase(book->names[i].formula, old_name))
+            continue;
+        if (!(t = calc_rename_sheet_in(book->names[i].formula, old_name, name)) ||
+            (strcmp(t, book->names[i].formula) ? !add_change(&ch, &book->names[i].formula, t, -1, 0, 0)
+                                                : (free(t), 0))) {
+            free(t);
+            drop_changes(&ch);
+            free(new_name);
+            return OWF_ERR_MEMORY;
+        }
+    }
+    names = apply_changes(&ch);
+    drop_changes(&ch);
+    book->sheets[sheet].name = new_name;
+    free(old_name);
+    /* references by the old name compile as before; those that named the
+       new one (a sheet that was not there) find it now */
+    if (names)
+        return build(calc, 1);
+    for (i = 0; i < book->nnames; i++)
+        if (book->names[i].formula && contains_nocase(book->names[i].formula, name))
+            return build(calc, 1);
+    for (k = 0; k < calc->nnodes && result == OWF_OK; k++) {
+        const calc_node *nd = &calc->nodes[k];
+        const owf_cell *c;
+        if (nd->flags & NODE_FREE)
+            continue;
+        c = owf_sheet_find(&book->sheets[nd->sheet], nd->row, nd->col);
+        if (c && c->formula && contains_nocase(c->formula, name)) {
+            int s = nd->sheet;
+            unsigned r = nd->row, col = nd->col;
+            result = resync_cell(calc, s, r, col);
+            if (result == OWF_OK)
+                mark_from(calc, s, r, col);
+        }
+    }
+    return result;
+}
+
+/* ---- Cut and paste ---- */
+
+typedef struct {
+    int src, dst;                /* sheets */
+    owf_range from, to;
+    long drow, dcol;
+    int moving;                  /* the formula being rewritten is one of those that move */
+} move_job;
+
+static int inside(const owf_range *r, unsigned r0, unsigned c0, unsigned r1, unsigned c1)
+{
+    return r0 >= r->first_row && r1 <= r->last_row && c0 >= r->first_col && c1 <= r->last_col;
+}
+
+static int move_ref_job(void *user, int ref_sheet, int kind, unsigned *r0, unsigned *c0, unsigned *r1, unsigned *c1,
+                        unsigned abs, int *to)
+{
+    const move_job *j = user;
+    (void)abs;
+    (void)kind;
+    if (ref_sheet == j->src && inside(&j->from, *r0, *c0, *r1, *c1)) {
+        /* all of it moves: the reference follows */
+        *r0 = (unsigned)((long)*r0 + j->drow);
+        *r1 = (unsigned)((long)*r1 + j->drow);
+        *c0 = (unsigned)((long)*c0 + j->dcol);
+        *c1 = (unsigned)((long)*c1 + j->dcol);
+        *to = j->dst;
+        return 1;
+    }
+    if (ref_sheet == j->dst && inside(&j->to, *r0, *c0, *r1, *c1))
+        return 0;                        /* replaced: #REF! */
+    if (j->moving && ref_sheet >= 0)
+        *to = ref_sheet;                 /* still where it was: named if the formula leaves its sheet */
+    return 1;
+}
+
+static int keep_cell(const owf_range *r, const owf_cell *c)
+{
+    return !(c->row >= r->first_row && c->row <= r->last_row && c->col >= r->first_col && c->col <= r->last_col);
+}
+
+/* Takes a sheet's cells in a range out: into out (room for all of them),
+ * or freed when out is NULL. How many there were. */
+static int take_cells(owf_sheet *s, const owf_range *r, owf_cell *out)
+{
+    int i, k = 0, n = 0;
+    for (i = 0; i < s->ncells; i++) {
+        owf_cell *c = &s->cells[i];
+        if (keep_cell(r, c)) {
+            s->cells[k++] = *c;
+        } else if (out) {
+            out[n++] = *c;
+        } else {
+            free(c->text);
+            free(c->formula);
+            n++;
+        }
+    }
+    s->ncells = k;
+    return n;
+}
+
+int owf_calc_move_range(owf_calc *calc, int sheet, const owf_range *range, int dsheet, int drow, int dcol)
+{
+    owf_book *book = calc->book;
+    move_job job;
+    changes ch;
+    owf_cell *moved = NULL;
+    int nmoved = 0, k, i, names, result = OWF_OK;
+
+    if (!good_range(book, sheet, range) || dsheet < 0 || dsheet >= book->nsheets)
+        return OWF_ERR_UNSUPPORTED;
+    job.src = sheet;
+    job.dst = dsheet;
+    job.from = *range;
+    job.drow = drow;
+    job.dcol = dcol;
+    job.moving = 0;
+    if ((long)range->first_row + drow < 0 || (long)range->last_row + drow >= (long)CALC_MAX_ROWS ||
+        (long)range->first_col + dcol < 0 || (long)range->last_col + dcol >= (long)CALC_MAX_COLS)
+        return OWF_ERR_UNSUPPORTED;
+    job.to.first_row = (unsigned)((long)range->first_row + drow);
+    job.to.last_row = (unsigned)((long)range->last_row + drow);
+    job.to.first_col = (unsigned)((long)range->first_col + dcol);
+    job.to.last_col = (unsigned)((long)range->last_col + dcol);
+    if (sheet == dsheet && !drow && !dcol)
+        return OWF_OK;
+    /* the references in the book: every new text first */
+    memset(&ch, 0, sizeof ch);
+    for (k = 0; k < book->nsheets; k++)
+        for (i = 0; i < book->sheets[k].ncells; i++) {
+            owf_cell *c = &book->sheets[k].cells[i];
+            int moving = k == sheet && !keep_cell(range, c);
+            char *t;
+            if (!c->formula || (k == dsheet && !moving && !keep_cell(&job.to, c)))
+                continue;                /* (a cell about to be replaced) */
+            job.moving = moving;
+            t = calc_rewrite(book, k, moving ? dsheet : k, c->formula, move_ref_job, &job);
+            if (!t || (strcmp(t, c->formula) ? !add_change(&ch, &c->formula, t, moving ? -2 : k, c->row, c->col)
+                                             : (free(t), 0))) {
+                free(t);
+                drop_changes(&ch);
+                return OWF_ERR_MEMORY;
+            }
+        }
+    job.moving = 0;
+    for (i = 0; i < book->nnames; i++) {
+        char *t;
+        if (!book->names[i].formula)
+            continue;
+        t = calc_rewrite(book, book->names[i].sheet, book->names[i].sheet, book->names[i].formula, move_ref_job, &job);
+        if (!t || (strcmp(t, book->names[i].formula) ? !add_change(&ch, &book->names[i].formula, t, -1, 0, 0)
+                                                     : (free(t), 0))) {
+            free(t);
+            drop_changes(&ch);
+            return OWF_ERR_MEMORY;
+        }
+    }
+    /* room for the cells that move, before anything changes */
+    for (i = 0; i < book->sheets[sheet].ncells; i++)
+        nmoved += !keep_cell(range, &book->sheets[sheet].cells[i]);
+    moved = malloc(((size_t)nmoved + 1) * sizeof *moved);
+    if (!moved) {
+        drop_changes(&ch);
+        return OWF_ERR_MEMORY;
+    }
+    /* the new texts, while their places in the sheets are as they were */
+    names = apply_changes(&ch);
+    nmoved = take_cells(&book->sheets[sheet], range, moved);
+    /* the cells replaced go, the moved come */
+    take_cells(&book->sheets[dsheet], &job.to, NULL);
+    for (i = 0; i < nmoved; i++) {
+        owf_cell *c = owf_sheet_cell(&book->sheets[dsheet], (unsigned)((long)moved[i].row + drow),
+                                     (unsigned)((long)moved[i].col + dcol), 1);
+        if (!c) {
+            for (; i < nmoved; i++) {
+                free(moved[i].text);
+                free(moved[i].formula);
+            }
+            free(moved);
+            drop_changes(&ch);
+            calc->stale = 1;
+            return OWF_ERR_MEMORY;
+        }
+        c->type = moved[i].type;
+        c->number = moved[i].number;
+        c->error = moved[i].error;
+        c->text = moved[i].text;
+        c->formula = moved[i].formula;
+        c->style = moved[i].style;
+        c->flags = moved[i].flags;
+    }
+    free(moved);
+    if (names || calc->stale) {
+        drop_changes(&ch);
+        return build(calc, 1);
+    }
+    /* formulas elsewhere whose references changed: their nodes again */
+    for (i = 0; i < ch.n && result == OWF_OK; i++)
+        if (ch.items[i].sheet >= 0) {
+            result = resync_cell(calc, ch.items[i].sheet, ch.items[i].row, ch.items[i].col);
+            if (result == OWF_OK)        /* and what reads them */
+                mark_from(calc, ch.items[i].sheet, ch.items[i].row, ch.items[i].col);
+        }
+    drop_changes(&ch);
+    if (result == OWF_OK)
+        result = owf_calc_touch(calc, sheet, range);
+    if (result == OWF_OK)
+        result = owf_calc_touch(calc, dsheet, &job.to);
+    return result;
 }

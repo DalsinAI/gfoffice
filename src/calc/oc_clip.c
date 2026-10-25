@@ -172,27 +172,16 @@ char *oc_core_copy(oc_core *core, size_t *length)
     return text;
 }
 
+/* A cut copies, as Excel's does: the cells stay until the paste moves
+ * them (and what reads them follows). */
 char *oc_core_cut(oc_core *core, size_t *length)
 {
     char *text = oc_core_copy(core, length);
-    oc_sheetstate *st;
-    owf_range r;
-    int k;
-    if (!text)
-        return NULL;
-    /* the copied range alone is cleared */
-    st = oc_state(core);
-    if (copy_range(core, &r)) {
-        oc_selection keep = st->sel;
-        st->sel.nranges = 1;
-        st->sel.ranges[0] = r;
-        oc_core_clear(core, OC_CLEAR_ALL);
-        st = oc_state(core);
-        st->sel = keep;
-    }
-    if (core->clip.valid)
+    if (text && core->clip.valid) {
         core->clip.cut = 1;
-    (void)k;
+        core->clip.cut_sheet = core->sheet;
+        core->clip.cut_changes = core->changes;
+    }
     return text;
 }
 
@@ -237,6 +226,43 @@ static void paste_done(oc_core *core, const owf_range *t)
     }
 }
 
+/* A cut pasted: the cells move, with the references to them (the
+ * engine's owf_calc_move_range); the whole book is the undo step, as
+ * references anywhere may change. A cut pastes once. */
+static int paste_move(oc_core *core)
+{
+    oc_clip *clip = &core->clip;
+    owf_range from, t;
+    oc_undo *u;
+    int rc;
+    if (!paste_target(core, clip->rows, clip->cols, &t, 0))
+        return OWF_ERR_UNSUPPORTED;
+    from.first_row = clip->row0;
+    from.first_col = clip->col0;
+    from.last_row = clip->row0 + clip->rows - 1;
+    from.last_col = clip->col0 + clip->cols - 1;
+    u = oc_undo_new(core, OC_UNDO_BOOK);
+    if (u && oc_undo_save_book(core, u) != OWF_OK) {
+        oc_undo_free(u);
+        u = NULL;
+    }
+    rc = owf_calc_move_range(core->calc, clip->cut_sheet, &from, core->sheet,
+                             (int)((long)t.first_row - (long)from.first_row),
+                             (int)((long)t.first_col - (long)from.first_col));
+    if (rc == OWF_ERR_UNSUPPORTED) {
+        oc_undo_free(u);
+        return rc;
+    }
+    oc_undo_push(core, u);
+    clip->cut = 0;
+    clip->valid = 0;
+    oc_changed(core);
+    if (oc_recalc(core, rc == OWF_ERR_MEMORY) == OWF_ERR_MEMORY)
+        rc = OWF_ERR_MEMORY;
+    paste_done(core, &t);
+    return rc;
+}
+
 static int paste_cells(oc_core *core)
 {
     oc_clip *clip = &core->clip;
@@ -244,6 +270,8 @@ static int paste_cells(oc_core *core)
     oc_undo *u;
     unsigned tr, tc, dr, dc;
     int rc = OWF_OK, rebuild = 0;
+    if (clip->cut && clip->cut_sheet < core->book->nsheets && clip->cut_changes == core->changes)
+        return paste_move(core);
     if (!paste_target(core, clip->rows, clip->cols, &t, 1))
         return OWF_ERR_UNSUPPORTED;
     if ((long)(t.last_row - t.first_row + 1) * (long)(t.last_col - t.first_col + 1) > OC_MAX_RANGE_CELLS)

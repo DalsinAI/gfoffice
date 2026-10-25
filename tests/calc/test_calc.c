@@ -1086,6 +1086,207 @@ static void test_rebuild(void)
     EXPECT("A1", "2");
 }
 
+
+/* ---- Cells changed by the program, sheets renamed, cut and paste ---- */
+
+static void set_number_directly(int sheet, const char *ref, double v)
+{
+    unsigned row, col;
+    at(ref, &row, &col);
+    owf_cell_set_number(owf_sheet_cell(&book->sheets[sheet], row, col, 1), v);
+}
+
+static void test_touch(void)
+{
+    owf_range r;
+    owf_cell *c;
+    fresh();
+    put("A1", "1");
+    put("A2", "2");
+    put("B1", "=A1*10");
+    put("B2", "=SUM(A:A)");
+    put("C1", "=B1+1");
+    put("D1", "=5");
+    recalc();
+    /* an undo puts values back behind the engine's back */
+    set_number_directly(0, "A1", 7);
+    set_number_directly(0, "A3", 100);
+    r.first_row = 0;
+    r.last_row = 2;
+    r.first_col = 0;
+    r.last_col = 0;
+    CHECK(owf_calc_touch(calc, 0, &r) == OWF_OK, "touch");
+    CHECK(owf_calc_state(calc, 0, 0, 1) & OWF_CALC_DIRTY, "B1 dirty");
+    CHECK(owf_calc_state(calc, 0, 0, 2) & OWF_CALC_DIRTY, "C1 dirty");
+    CHECK(!(owf_calc_state(calc, 0, 0, 3) & OWF_CALC_DIRTY), "D1 not dirty");
+    recalc();
+    EXPECT("B1", "70");
+    EXPECT("B2", "109");
+    EXPECT("C1", "71");
+    /* and formulas: one put in, one taken out */
+    c = owf_sheet_cell(&book->sheets[0], 0, 1, 0);
+    owf_cell_set_formula(c, NULL);
+    owf_cell_set_number(c, 3);
+    c = owf_sheet_cell(&book->sheets[0], 1, 3, 1);
+    owf_cell_set_formula(c, "C1*2");
+    owf_cell_set_number(c, 0);
+    r.first_row = 0;
+    r.last_row = 1;
+    r.first_col = 1;
+    r.last_col = 3;
+    CHECK(owf_calc_touch(calc, 0, &r) == OWF_OK, "touch formulas");
+    CHECK(!(owf_calc_state(calc, 0, 0, 1) & OWF_CALC_FORMULA), "B1 a value now");
+    CHECK(owf_calc_state(calc, 0, 1, 3) & OWF_CALC_FORMULA, "D2 a formula now");
+    recalc();
+    EXPECT("C1", "4");
+    EXPECT("D2", "8");
+    put("B1", "10");
+    recalc();
+    EXPECT("D2", "22");
+    /* a formula the engine lacks, put back by an undo, keeps its value */
+    c = owf_sheet_cell(&book->sheets[0], 5, 0, 1);
+    owf_cell_set_formula(c, "GAMMALN(4)");
+    owf_cell_set_number(c, 1.5);
+    r.first_row = r.last_row = 5;
+    r.first_col = r.last_col = 0;
+    owf_calc_touch(calc, 0, &r);
+    recalc();
+    EXPECT("A6", "1.5");
+    CHECK(owf_calc_state(calc, 0, 5, 0) & OWF_CALC_KEPT, "kept");
+    r.last_row = 2000000;
+    CHECK(owf_calc_touch(calc, 0, &r) == OWF_ERR_UNSUPPORTED, "off the sheet");
+    CHECK(owf_calc_touch(calc, 9, &r) == OWF_ERR_UNSUPPORTED, "no sheet");
+}
+
+static void test_rename(void)
+{
+    fresh();
+    put_in(1, "A1", "5");
+    put_in(1, "B2", "6");
+    put("A1", "=Sheet2!A1*2");
+    put("A2", "=SUM('Sheet2'!A1:B2)");
+    put("A3", "=SUM(Sheet1:Sheet2!A1)");
+    put("A4", "=Renamed!A1");
+    put("A5", "=Sheet2!Here+1");
+    put("A6", "=\"Sheet2!A1\"&sheet2!A1");
+    owf_book_add_name(book, "Here", 1, "Sheet2!$B$2", 0);
+    owf_book_add_name(book, "There", -1, "Sheet2!$A$1:$B$2", 0);
+    owf_calc_rebuild(calc);
+    put("A7", "=SUM(There)");
+    recalc();
+    EXPECT("A4", "#REF!");
+    EXPECT("A5", "7");
+    CHECK(owf_calc_rename_sheet(calc, 1, "Renamed") == OWF_OK, "rename");
+    CHECK(!strcmp(book->sheets[1].name, "Renamed"), "name: %s", book->sheets[1].name);
+    FORMULA(0, "A1", "Renamed!A1*2");
+    FORMULA(0, "A2", "SUM(Renamed!A1:B2)");
+    FORMULA(0, "A3", "SUM(Sheet1:Renamed!A1)");
+    FORMULA(0, "A5", "Renamed!Here+1");
+    FORMULA(0, "A6", "\"Sheet2!A1\"&Renamed!A1");
+    CHECK(!strcmp(book->names[1].formula, "Renamed!$B$2") || !strcmp(book->names[0].formula, "Renamed!$B$2"),
+          "name formula");
+    recalc();
+    EXPECT("A1", "10");
+    EXPECT("A4", "5");
+    EXPECT("A6", "\"Sheet2!A15\"");
+    EXPECT("A7", "11");
+    /* quotes where the name needs them */
+    CHECK(owf_calc_rename_sheet(calc, 1, "Q1 o'clock") == OWF_OK, "rename with a space");
+    FORMULA(0, "A1", "'Q1 o''clock'!A1*2");
+    FORMULA(0, "A3", "SUM('Sheet1:Q1 o''clock'!A1)");
+    recalc();
+    EXPECT("A1", "10");
+    EXPECT("A3", "15");
+    CHECK(owf_calc_rename_sheet(calc, 1, "A1") == OWF_OK, "rename to a cell's name");
+    FORMULA(0, "A1", "'A1'!A1*2");
+    CHECK(owf_calc_rename_sheet(calc, 1, "data") == OWF_OK, "rename");
+    FORMULA(0, "A1", "data!A1*2");
+    /* refused */
+    CHECK(owf_calc_rename_sheet(calc, 1, "") == OWF_ERR_FORMAT, "empty");
+    CHECK(owf_calc_rename_sheet(calc, 1, "a:b") == OWF_ERR_FORMAT, "colon");
+    CHECK(owf_calc_rename_sheet(calc, 1, "x[1]") == OWF_ERR_FORMAT, "brackets");
+    CHECK(owf_calc_rename_sheet(calc, 1, "'quoted") == OWF_ERR_FORMAT, "apostrophe first");
+    CHECK(owf_calc_rename_sheet(calc, 1, "0123456789012345678901234567890x") == OWF_ERR_FORMAT, "32 characters");
+    CHECK(owf_calc_rename_sheet(calc, 1, "SHEET1") == OWF_ERR_FORMAT, "another sheet's name");
+    CHECK(owf_calc_rename_sheet(calc, 1, "DATA") == OWF_OK, "its own, in capitals");
+    CHECK(owf_calc_rename_sheet(calc, 5, "x") == OWF_ERR_UNSUPPORTED, "no sheet");
+    FORMULA(0, "A1", "DATA!A1*2");
+}
+
+static void test_move_range(void)
+{
+    owf_range r;
+    fresh();
+    put("A1", "1");
+    put("A2", "2");
+    put("B1", "=A1+A2");
+    put("B2", "=C5*2");
+    put("C1", "=B1*10");
+    put("C2", "=SUM(A1:B2)");
+    put("C3", "=SUM(A1:A3)");
+    put("D1", "=E6");
+    put("E6", "100");
+    put_in(1, "A1", "=Sheet1!B1+Sheet1!A2");
+    owf_book_add_name(book, "Pair", -1, "Sheet1!$A$1:$B$2", 0);
+    owf_calc_rebuild(calc);
+    put("F1", "=SUM(Pair)");
+    recalc();
+    EXPECT("C1", "30");
+    /* A1:B2 to D5:E6 (E6, read by D1, is replaced) */
+    r.first_row = 0;
+    r.last_row = 1;
+    r.first_col = 0;
+    r.last_col = 1;
+    CHECK(owf_calc_move_range(calc, 0, &r, 0, 4, 3) == OWF_OK, "move");
+    EXPECT("A1", "(none)");
+    EXPECT("D5", "1");
+    FORMULA(0, "E5", "D5+D6");
+    FORMULA(0, "E6", "C5*2");
+    FORMULA(0, "C1", "E5*10");
+    FORMULA(0, "C2", "SUM(D5:E6)");
+    FORMULA(0, "C3", "SUM(A1:A3)");
+    FORMULA(0, "D1", "#REF!");
+    FORMULA(1, "A1", "Sheet1!E5+Sheet1!D6");
+    CHECK(!strcmp(book->names[0].formula, "Sheet1!$D$5:$E$6"), "name: %s", book->names[0].formula);
+    recalc();
+    EXPECT("E5", "3");
+    EXPECT("C1", "30");
+    EXPECT("C3", "0");
+    EXPECT("D1", "#REF!");
+    EXPECT_IN(1, "A1", "5");
+    /* to another sheet: what stays behind is named */
+    put("A1", "40");
+    r.first_row = r.last_row = 4;
+    r.first_col = r.last_col = 4;      /* E5: =D5+D6 */
+    put("E5", "=D5+D6+A1");
+    CHECK(owf_calc_move_range(calc, 0, &r, 1, 2, 0) == OWF_OK, "move to Sheet2");
+    FORMULA(1, "E7", "Sheet1!D5+Sheet1!D6+Sheet1!A1");
+    FORMULA(0, "C1", "Sheet2!E7*10");
+    FORMULA(1, "A1", "Sheet2!E7+Sheet1!D6");
+    recalc();
+    EXPECT_IN(1, "E7", "43");
+    EXPECT("C1", "430");
+    EXPECT_IN(1, "A1", "45");
+    /* a block moved down over itself */
+    fresh();
+    put("A1", "1");
+    put("A2", "2");
+    put("A3", "3");
+    put("B1", "=SUM(A1:A3)");
+    put("B2", "=A3");
+    r.first_row = 0;
+    r.last_row = 2;
+    r.first_col = r.last_col = 0;
+    CHECK(owf_calc_move_range(calc, 0, &r, 0, 1, 0) == OWF_OK, "move down one");
+    FORMULA(0, "B1", "SUM(A2:A4)");
+    FORMULA(0, "B2", "A4");
+    recalc();
+    EXPECT("B1", "6");
+    EXPECT("A1", "(none)");
+    CHECK(owf_calc_move_range(calc, 0, &r, 0, -5, 0) == OWF_ERR_UNSUPPORTED, "off the sheet");
+    CHECK(owf_calc_move_range(calc, 0, &r, 4, 0, 0) == OWF_ERR_UNSUPPORTED, "no sheet");
+}
+
 /* ---- Unknown functions and kept values ---- */
 
 static void test_kept(void)
@@ -1486,9 +1687,35 @@ static void test_consistency(void)
         fresh();
         for (step = 0; step < 400; step++) {
             char ref[16], input[600];
-            unsigned what = rnd(20), row = rnd(14), col = rnd(7);
+            unsigned what = rnd(24), row = rnd(14), col = rnd(7);
             int sheet = rnd(6) == 0;
             owf_calc_cell_name(row, col, ref);
+            if (what >= 20) {
+                owf_range r;
+                int e;
+                r.first_row = rnd(10);
+                r.last_row = r.first_row + rnd(3);
+                r.first_col = rnd(5);
+                r.last_col = r.first_col + rnd(2);
+                if (what == 20) {        /* behind the engine's back, then touch */
+                    owf_cell *c = owf_sheet_cell(&book->sheets[sheet], r.first_row, r.first_col, 1);
+                    if (c && !c->formula)
+                        owf_cell_set_number(c, rnd(10));
+                    else if (c)
+                        owf_cell_set_formula(c, rnd(2) ? "A1+1" : "SUM(B1:B3)");
+                    e = owf_calc_touch(calc, sheet, &r);
+                } else if (what == 21) {
+                    e = owf_calc_rename_sheet(calc, 1, strcmp(book->sheets[1].name, "Sheet2") ? "Sheet2" : "Other's");
+                } else {                 /* cut and paste */
+                    e = owf_calc_move_range(calc, sheet, &r, rnd(4) == 0 ? !sheet : sheet, (int)rnd(7) - 3,
+                                            (int)rnd(5) - 2);
+                    if (e == OWF_ERR_UNSUPPORTED)
+                        e = OWF_OK;      /* off the sheet */
+                }
+                CHECK(e == OWF_OK, "what %u: %d", what, e);
+                recalc();
+                continue;
+            }
             if (what < 6)
                 snprintf(input, sizeof input, "%u", rnd(10));
             else if (what < 7)
@@ -1705,6 +1932,8 @@ static void test_speed(void)
 int main(int argc, char **argv)
 {
     int i;
+    if (getenv("CALC_SEED"))             /* another run of the random tests */
+        seed = strtoul(getenv("CALC_SEED"), NULL, 10);
     test_parser();
     test_references();
     test_values();
@@ -1717,6 +1946,9 @@ int main(int argc, char **argv)
     test_move();
     test_shift();
     test_rebuild();
+    test_touch();
+    test_rename();
+    test_move_range();
     test_kept();
     test_formats();
     test_names_of_cells();
