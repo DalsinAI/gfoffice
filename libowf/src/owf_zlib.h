@@ -2,8 +2,9 @@
  * libowf's deflate and inflate. On the PC (the tests) they are the system's
  * zlib. On the Amiga (OWF_ZLIBRARY) they are z.library, ours from
  * openzlib: its calls in libowf/amiga/sdk (made from z_lib.sfd), opened
- * the first time libowf needs it. Without z.library, ODT, DOCX and PNG in
- * PDF give OWF_ERR_UNSUPPORTED; plain and Amiga formats still work.
+ * the first time libowf needs it. Without z.library, zip entries are read
+ * with libowf's own inflate (owf_inflate.c) and written stored, and PNG
+ * pictures are left out of PDFs; everything else works.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #ifndef OWF_ZLIB_H
@@ -12,6 +13,17 @@
 #ifndef OWF_ZLIBRARY
 
 #include <zlib.h>
+
+#ifdef OWF_TEST_NO_ZLIBRARY
+/* For the PC's tests only: zlib's calls fail as z.library's do on an Amiga
+ * without it (below), so that the same paths are taken. */
+#undef inflateInit2
+#undef deflateInit2
+#define inflateInit2(s, w) ((void)(s), (void)(w), Z_VERSION_ERROR)
+#define deflateInit2(s, l, m, w, ml, st) ((void)(s), (void)(l), Z_VERSION_ERROR)
+#define compress2(d, dl, s, sl, l) ((void)(d), (void)(dl), (void)(s), (void)(sl), (void)(l), Z_VERSION_ERROR)
+#define uncompress(d, dl, s, sl) ((void)(d), (void)(dl), (void)(s), (void)(sl), Z_VERSION_ERROR)
+#endif
 
 #else
 

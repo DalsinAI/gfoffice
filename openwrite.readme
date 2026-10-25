@@ -34,7 +34,7 @@ its licence notice is included in licenses/.
 Licence: MIT, Copyright (c) 2026 AmigaChrome Team. Third-party material retains
 its own licence.
 
-Source: https://github.com/DalsinAI/openamigawrite
+Source: https://github.com/DalsinAI/gfoffice
 
 New in 1.0.3 (10 October 2026): the window first opens at 800 x 600, in
 the middle of the space beside OpenDock (or all of that space on a smaller
