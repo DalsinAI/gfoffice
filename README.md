@@ -251,8 +251,19 @@ OpenLayout in its portable core (`src/deck`, `include/openpresentation_core.h`)
 and drawn by the page PDF writer (`libowf/include/owf_pdf.h`).
 `OWConvert Talk.odp Talk.pdf` makes one. `make deck-test` and `make
 deck-check` (part of `make test` and `make check`) test them; with
-OpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too. Its player and
-PPTX come next (P2), then the editor (P3).
+OpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
+
+Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
+`tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
+`app/openpresent.c` (OpenPresentation 0.2), built by `build-os3.sh`: it opens
+ODP and PPTX, shows the slide at the window's size with the slide sorter
+beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
+part of P3 is in too: click in a slide's text box and type (Return, Backspace,
+Del, the arrow keys; Esc stops), with undo and redo
+(`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
+deck-edit-check`). Print hands the slides to OpenPrint as a PDF (`C:OpenPrint
+T:<name>.pdf`), and Export PDF writes one. The player (P2), New Slide, PPTX
+saving and the rest of the editor come next.
 
 ## Licence
 

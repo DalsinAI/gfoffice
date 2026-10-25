@@ -12,6 +12,7 @@
 #define TW(v) ((ol_unit)(v) * OL_UNITS_PER_TWIP)
 #define DEFAULT_SIZE 240            /* twips: 12 point */
 #define BORDER_WIDTH OL_POINT(1) / 2
+#define WRAP_GAP 180                /* twips: Word's distL and distR, 114300 EMU */
 
 /* What an OpenLayout node is in the document: run -1 is the paragraph's
  * own block; paragraph -1 is a table, row or cell. */
@@ -172,7 +173,9 @@ static ol_unit frame_at(const ol_page *pg, const owf_frame *fr, int across, uint
 
 /* 2.0.10: a picture or a text box placed on the page (owf_frame, Word's wp:anchor) as OpenLayout's anchored
  * frame, in the paragraph it is anchored to: behind the text or in front of it, its picture filling it, a
- * text box's paragraphs inside its insets. It moves no line and no page break; text isn't wrapped round it. */
+ * text box's paragraphs inside its insets. 2.0.14: the body's text goes round it as Word's wrap says
+ * (OpenLayout 0.6): square and tight beside it, top and bottom above and below it, Word's usual eighth of an
+ * inch from its sides; with no wrap (behind or in front of the text), it moves no line. */
 static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *block, const owf_frame *fr)
 {
     ol_style s;
@@ -197,6 +200,12 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
     b.frame.y = frame_at(&l->page, fr, 0, &b.anchor);
     if (fr->behind) b.anchor |= OL_ANCHOR_BEHIND;
     else if (!b.anchor) b.anchor = OL_ANCHOR_ON;     /* from the paragraph both ways, in front */
+    switch (fr->wrap) {
+    case OWF_WRAP_SQUARE: case OWF_WRAP_TIGHT: b.wrap = OL_WRAP_SQUARE; break;
+    case OWF_WRAP_TOP_BOTTOM: b.wrap = OL_WRAP_TOP_BOTTOM; break;
+    default: b.wrap = OL_WRAP_NONE; break;
+    }
+    if (b.wrap != OL_WRAP_NONE) b.wrap_gap[1] = b.wrap_gap[3] = TW(WRAP_GAP);
     if (OWF_SHADE_SET(fr->line)) {
         b.border_width = BORDER_WIDTH;
         b.border_argb = argb(OWF_SHADE_RGB(fr->line));

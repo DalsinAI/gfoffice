@@ -152,6 +152,14 @@ int main(int argc, char **argv)
                     owf_number_text(ch->xmax, b);
                     printf(" xgrid=%d xmin=%s xmax=%s", ch->x_gridlines, ch->has_xmin ? a : "-", ch->has_xmax ? b : "-");
                 }
+                if (ch->value_format) {
+                    printf(" format ");
+                    put_string(ch->value_format);
+                }
+                if (ch->x_format) {
+                    printf(" xformat ");
+                    put_string(ch->x_format);
+                }
                 printf(" title ");
                 put_string(ch->title ? ch->title : "");
                 putchar('\n');
@@ -179,6 +187,16 @@ int main(int argc, char **argv)
                         printf(" marker=%d", se->marker);
                     if (se->marker_size)
                         printf(" size=%d", se->marker_size);
+                    if (se->labels)
+                        printf(" labels=%u@%d", se->labels, se->label_pos);
+                    if (se->label_format) {
+                        printf(" lformat ");
+                        put_string(se->label_format);
+                    }
+                    if (se->format) {
+                        printf(" format ");
+                        put_string(se->format);
+                    }
                     printf(" points");
                     for (p = 0; p < se->npoints; p++) {
                         char num[32];
