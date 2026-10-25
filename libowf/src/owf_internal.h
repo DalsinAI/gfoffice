@@ -400,6 +400,7 @@ void owf_builder_text(owf_builder *b, const char *utf8, size_t length);
 void owf_builder_link_text(owf_builder *b, const char *utf8, size_t length, const char *href);
 void owf_builder_special(owf_builder *b, owf_run_kind kind, owf_field field);
 void owf_builder_image(owf_builder *b, int image_index);
+void owf_builder_frame(owf_builder *b, int frame_index);
 /* Call before the character formatting changes. */
 void owf_builder_flush(owf_builder *b);
 /* Ends the paragraph (an empty one is still a paragraph). */

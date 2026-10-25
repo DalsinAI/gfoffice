@@ -472,6 +472,11 @@ static int pdf_layout_document(pdf_layout *l)
             else if(r->kind==OWF_RUN_IMAGE&&r->image>=0&&r->image<l->doc->nimages&&l->image_used){
                 if(line.n){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
                 if(!pdf_place_image(l,p,r->image))return 0;}
+            else if(r->kind==OWF_RUN_FRAME&&r->image>=0&&r->image<l->doc->nframes&&l->image_used&&
+                    l->doc->frames[r->image].image>=0&&l->doc->frames[r->image].image<l->doc->nimages){
+                /* 1.3: a frame's picture where it is anchored, as before frames were read */
+                if(line.n){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
+                if(!pdf_place_image(l,p,l->doc->frames[r->image].image))return 0;}
             else if(r->kind==OWF_RUN_FIELD){char field[8]="#";owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=field;if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
         }
         if(line.n || !p->nruns){if(!pdf_flush_line(l,p,&line,first))return 0;}

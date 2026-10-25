@@ -530,6 +530,7 @@ static void put_para(odpw *w, owf_buf *out, const owf_para *p, const owf_textlev
         case OWF_RUN_LINEBREAK: owf_buf_puts(out, "<text:line-break/>"); after_space = 1; break;
         case OWF_RUN_FIELD: owf_buf_puts(out, fields[(unsigned)run->field < 4 ? run->field : 0]); after_space = 0; break;
         case OWF_RUN_IMAGE:
+        case OWF_RUN_FRAME:
             owf_report_add(w->report, OWF_NOTE_LOST, "Pictures inside slide text were left out");
             break;
         }

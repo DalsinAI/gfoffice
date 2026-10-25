@@ -16,7 +16,9 @@
              "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" " \
              "xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" " \
              "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" " \
-             "xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\""
+             "xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\" " \
+             "xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" " \
+             "xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\""
 
 static const char *face_name(const owf_doc *doc, int font, owf_report *report)
 {
@@ -164,6 +166,102 @@ static void put_drawing(owf_buf *out,const owf_doc *doc,int index)
 }
 
 static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
+                     const owf_para *para, owf_report *report);
+
+/* 1.3: wp:positionH or wp:positionV for a frame: from where, and at an offset or aligned. */
+static void put_frame_position(owf_buf *out, const owf_frame *fr, int across)
+{
+    static const char *const from_h[] = { "page", "margin", "column", "leftMargin", "rightMargin", "page", "page" };
+    static const char *const from_v[] = { "page", "margin", "paragraph", "topMargin", "bottomMargin", "topMargin",
+                                          "bottomMargin" };
+    static const char *const align_h[] = { "", "left", "center", "right" };
+    static const char *const align_v[] = { "", "top", "center", "bottom" };
+    unsigned from = across ? fr->x_from : fr->y_from, place = across ? fr->x_place : fr->y_place;
+    if (from > OWF_FROM_BOTTOM_MARGIN) from = OWF_FROM_MARGIN;
+    owf_buf_printf(out, "<wp:position%s relativeFrom=\"%s\">", across ? "H" : "V", across ? from_h[from] : from_v[from]);
+    if (place >= OWF_PLACE_START && place <= OWF_PLACE_END)
+        owf_buf_printf(out, "<wp:align>%s</wp:align>", across ? align_h[place] : align_v[place]);
+    else
+        owf_buf_printf(out, "<wp:posOffset>%ld</wp:posOffset>", (long)(across ? fr->x : fr->y) * 635L);
+    owf_buf_printf(out, "</wp:position%s>", across ? "H" : "V");
+}
+
+/* 1.3: a DrawingML colour fill (OWF_SHADE), or none. */
+static void put_frame_fill(owf_buf *out, unsigned long shade)
+{
+    if (OWF_SHADE_SET(shade))
+        owf_buf_printf(out, "<a:solidFill><a:srgbClr val=\"%06lX\"/></a:solidFill>", OWF_SHADE_RGB(shade));
+    else
+        owf_buf_puts(out, "<a:noFill/>");
+}
+
+/* 1.3: a frame (a picture or a text box placed on the page) as Word's wp:anchor: a picture as pic:pic, a text
+ * box as a wps shape inside mc:AlternateContent (Word 2010's; its VML fallback is not written). The body's
+ * frames only: a header's pictures are its own part's, and Word allows no text box in a text box. */
+static void put_frame(owf_buf *out, const owf_doc *doc, int index, owf_report *report)
+{
+    const owf_frame *fr;
+    long cx, cy;
+    int k, box, id = 1000 + index;
+    if (index < 0 || index >= doc->nframes) return;
+    fr = &doc->frames[index];
+    box = fr->story.nparas > 0 || fr->image < 0 || fr->image >= doc->nimages;
+    cx = (long)(fr->width > 0 ? fr->width : 1440) * 635L;
+    cy = (long)(fr->height > 0 ? fr->height : 1440) * 635L;
+    if (box) owf_buf_puts(out, "<mc:AlternateContent><mc:Choice Requires=\"wps\">");
+    owf_buf_printf(out, "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" "
+                        "relativeHeight=\"%ld\" behindDoc=\"%d\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">"
+                        "<wp:simplePos x=\"0\" y=\"0\"/>", 251658240L + index, fr->behind ? 1 : 0);
+    put_frame_position(out, fr, 1);
+    put_frame_position(out, fr, 0);
+    owf_buf_printf(out, "<wp:extent cx=\"%ld\" cy=\"%ld\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>", cx, cy);
+    switch (fr->wrap) {
+    case OWF_WRAP_SQUARE: owf_buf_puts(out, "<wp:wrapSquare wrapText=\"bothSides\"/>"); break;
+    case OWF_WRAP_TIGHT:
+        owf_buf_puts(out, "<wp:wrapTight wrapText=\"bothSides\"><wp:wrapPolygon edited=\"0\"><wp:start x=\"0\" y=\"0\"/>"
+                          "<wp:lineTo x=\"0\" y=\"21600\"/><wp:lineTo x=\"21600\" y=\"21600\"/><wp:lineTo x=\"21600\" y=\"0\"/>"
+                          "<wp:lineTo x=\"0\" y=\"0\"/></wp:wrapPolygon></wp:wrapTight>");
+        break;
+    case OWF_WRAP_TOP_BOTTOM: owf_buf_puts(out, "<wp:wrapTopAndBottom/>"); break;
+    default: owf_buf_puts(out, "<wp:wrapNone/>"); break;
+    }
+    owf_buf_printf(out, "<wp:docPr id=\"%d\" name=\"%s %d\"/><wp:cNvGraphicFramePr/><a:graphic>", id,
+                   box ? "Text Box" : "Picture", index + 1);
+    if (!box) {
+        owf_buf_printf(out, "<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic>"
+                            "<pic:nvPicPr><pic:cNvPr id=\"%d\" name=\"Picture %d\"/><pic:cNvPicPr/></pic:nvPicPr>"
+                            "<pic:blipFill><a:blip r:embed=\"rId%d\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>"
+                            "<pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"%ld\" cy=\"%ld\"/></a:xfrm>"
+                            "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData>",
+                       id, index + 1, 100 + fr->image, cx, cy);
+    } else {
+        static const char *const ins[4] = { "tIns", "rIns", "bIns", "lIns" };
+        owf_buf_printf(out, "<a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">"
+                            "<wps:wsp><wps:cNvSpPr txBox=\"1\"/><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/>"
+                            "<a:ext cx=\"%ld\" cy=\"%ld\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>", cx, cy);
+        if (fr->image >= 0 && fr->image < doc->nimages)
+            owf_buf_printf(out, "<a:blipFill><a:blip r:embed=\"rId%d\"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>",
+                           100 + fr->image);
+        else
+            put_frame_fill(out, fr->fill);
+        owf_buf_puts(out, "<a:ln w=\"9525\">");
+        put_frame_fill(out, fr->line);
+        owf_buf_puts(out, "</a:ln></wps:spPr>");
+        if (fr->story.nparas) {
+            owf_buf_puts(out, "<wps:txbx><w:txbxContent>");
+            for (k = 0; k < fr->story.nparas; ++k)
+                put_para(out, doc, &fr->story, &fr->story.paras[k], report);
+            owf_buf_puts(out, "</w:txbxContent></wps:txbx>");
+        }
+        owf_buf_puts(out, "<wps:bodyPr rot=\"0\" vert=\"horz\" wrap=\"square\"");
+        for (k = 0; k < 4; ++k) owf_buf_printf(out, " %s=\"%ld\"", ins[k], (long)fr->inset[k] * 635L);
+        owf_buf_puts(out, " anchor=\"t\" anchorCtr=\"0\"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData>");
+    }
+    owf_buf_puts(out, "</a:graphic></wp:anchor></w:drawing>");
+    if (box) owf_buf_puts(out, "</mc:Choice><mc:Fallback/></mc:AlternateContent>");
+}
+
+static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
                      const owf_para *para, owf_report *report)
 {
     static const char *field_instr[] = { " PAGE ", " NUMPAGES ", " DATE ", " TIME " };
@@ -180,7 +278,8 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
         if(run->kind==OWF_RUN_FIELD){owf_buf_printf(out,"<w:fldSimple w:instr=\"%s\"><w:r>",field_instr[run->field]);put_rpr(out,doc,&run->fmt,report);owf_buf_printf(out,"<w:t>%s</w:t></w:r></w:fldSimple>",field_shown[run->field]);continue;}
         if(run->kind==OWF_RUN_TEXT&&run->href&&story==&doc->body)owf_buf_printf(out,"<w:hyperlink r:id=\"rId%d\">",body_link_id(doc,run->href));
         owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);
-        switch(run->kind){case OWF_RUN_TEXT:owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,run->text);owf_buf_puts(out,"</w:t>");break;case OWF_RUN_TAB:owf_buf_puts(out,"<w:tab/>");break;case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<w:br/>");break;case OWF_RUN_IMAGE:put_drawing(out,doc,run->image);break;default:break;}
+        switch(run->kind){case OWF_RUN_TEXT:owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,run->text);owf_buf_puts(out,"</w:t>");break;case OWF_RUN_TAB:owf_buf_puts(out,"<w:tab/>");break;case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<w:br/>");break;case OWF_RUN_IMAGE:put_drawing(out,doc,run->image);break;
+            case OWF_RUN_FRAME:if(story==&doc->body)put_frame(out,doc,run->image,report);else owf_report_add(report,OWF_NOTE_LOST,"Pictures and text boxes placed on the page are kept in the body only");break;default:break;}
         owf_buf_puts(out,"</w:r>");if(run->kind==OWF_RUN_TEXT&&run->href&&story==&doc->body)owf_buf_puts(out,"</w:hyperlink>");
     }
     owf_buf_puts(out,"</w:p>");
@@ -204,6 +303,19 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
             owf_buf_puts(out,"</w:tbl>");
         }else{put_para(out,doc,story,p,report);++i;}
     }
+}
+
+/* 1.3: a part's relationships to the document's pictures, rId100 on (a header's or a footer's) */
+static void put_image_rels(owf_buf *part, const owf_doc *doc)
+{
+    int i;
+    owf_buf_puts(part, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+                       "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">");
+    for (i = 0; i < doc->nimages; ++i)
+        owf_buf_printf(part, "<Relationship Id=\"rId%d\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/"
+                             "relationships/image\" Target=\"media/image%d.%s\"/>", 100 + i, i + 1,
+                       docx_image_ext(&doc->images[i]));
+    owf_buf_puts(part, "</Relationships>\n");
 }
 
 static int add_part(owf_zip *zip, owf_buf *part, const char *name)
@@ -346,6 +458,16 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
     if (result == OWF_OK)
         result = add_part(zip, &part, "word/styles.xml");
 
+    /* 1.3: a header's and a footer's pictures: their parts' own relationships, the same ids as the body's */
+    {
+        int k;
+        for (k = 0; k < 2; ++k) {
+            if (!(k ? footer : header) || !doc->nimages) continue;
+            put_image_rels(&part, doc);
+            if (result == OWF_OK)
+                result = add_part(zip, &part, k ? "word/_rels/footer1.xml.rels" : "word/_rels/header1.xml.rels");
+        }
+    }
     if (header) {
         owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:hdr " W_NS ">");
         put_story(&part, doc, &doc->header, report);

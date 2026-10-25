@@ -251,6 +251,8 @@ static void put_para_props(owf_buf *out, const owf_parafmt *f)
     owf_buf_puts(out, "</style:tab-stops></style:paragraph-properties>");
 }
 
+static void put_frame_styles(owf_buf *out, const owf_doc *doc);
+
 static void put_automatic_styles(owf_buf *out, const owf_doc *doc, const styles *s)
 {
     int i;
@@ -276,6 +278,7 @@ static void put_automatic_styles(owf_buf *out, const owf_doc *doc, const styles 
         put_para_props(out, f);
         owf_buf_puts(out, "</style:style>");
     }
+    put_frame_styles(out, doc);
     for (i = 0; i < s->nchars; i++) {
         owf_buf_printf(out, "<style:style style:name=\"T%d\" style:family=\"text\">", i + 1);
         put_text_props(out, doc, s->chars[i]);
@@ -316,6 +319,109 @@ static const char *odt_image_ext(const owf_image *im)
     if(im&&im->mime){if(!strcmp(im->mime,"image/png"))return "png";if(!strcmp(im->mime,"image/jpeg"))return "jpg";if(!strcmp(im->mime,"image/gif"))return "gif";if(!strcmp(im->mime,"image/webp"))return "webp";if(!strcmp(im->mime,"image/iff"))return "iff";}return "bin";
 }
 
+static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s);
+
+/* 1.3: where a frame goes across (x) or down (y) in ODF: its position, what it is measured from, and its
+ * offset (svg:x, svg:y) when it is at one. A frame from a margin's own area is placed from the page. */
+static void odt_frame_place(const owf_doc *doc, const owf_frame *fr, int across, const char **pos, const char **rel,
+                            int *at, int *has_at)
+{
+    static const char *const pos_h[] = { "from-left", "left", "center", "right" };
+    static const char *const pos_v[] = { "from-top", "top", "middle", "bottom" };
+    unsigned from = across ? fr->x_from : fr->y_from, place = across ? fr->x_place : fr->y_place;
+    int size = across ? fr->width : fr->height, start = 0, area;
+    int page = across ? doc->page.width : doc->page.height;
+    int lead = across ? doc->page.margin_left : doc->page.margin_top;
+    int trail = across ? doc->page.margin_right : doc->page.margin_bottom;
+    if (place > OWF_PLACE_END) place = OWF_PLACE_AT;
+    *pos = across ? pos_h[place] : pos_v[place];
+    *at = across ? fr->x : fr->y;
+    *has_at = place == OWF_PLACE_AT;
+    switch (from) {
+    case OWF_FROM_PAGE: *rel = "page"; return;
+    case OWF_FROM_MARGIN: *rel = "page-content"; return;
+    case OWF_FROM_PARAGRAPH: *rel = "paragraph"; return;
+    case OWF_FROM_LEFT_MARGIN: case OWF_FROM_TOP_MARGIN: area = lead; break;
+    default: start = page - trail; area = trail; break;
+    }
+    *rel = "page";
+    *pos = across ? pos_h[0] : pos_v[0];
+    *has_at = 1;
+    *at = place == OWF_PLACE_START ? start : place == OWF_PLACE_CENTRE ? start + (area - size) / 2
+        : place == OWF_PLACE_END ? start + area - size : start + *at;
+}
+
+/* 1.3: each frame's graphic style (Fr1, Fr2...): where it goes, under or over the text, its fill, line and
+ * insets. */
+static void put_frame_styles(owf_buf *out, const owf_doc *doc)
+{
+    int i;
+    for (i = 0; i < doc->nframes; i++) {
+        const owf_frame *fr = &doc->frames[i];
+        const char *pos, *rel;
+        int at, has_at;
+        static const char *const wrap[] = { "run-through", "parallel", "parallel", "none" };
+        owf_buf_printf(out, "<style:style style:name=\"Fr%d\" style:family=\"graphic\"><style:graphic-properties "
+                            "style:wrap=\"%s\"", i + 1, wrap[fr->wrap <= OWF_WRAP_TOP_BOTTOM ? fr->wrap : 0]);
+        if (fr->wrap == OWF_WRAP_NONE)
+            owf_buf_printf(out, " style:run-through=\"%s\"", fr->behind ? "background" : "foreground");
+        odt_frame_place(doc, fr, 1, &pos, &rel, &at, &has_at);
+        owf_buf_printf(out, " style:horizontal-pos=\"%s\" style:horizontal-rel=\"%s\"", pos, rel);
+        odt_frame_place(doc, fr, 0, &pos, &rel, &at, &has_at);
+        owf_buf_printf(out, " style:vertical-pos=\"%s\" style:vertical-rel=\"%s\"", pos, rel);
+        if (OWF_SHADE_SET(fr->fill))
+            owf_buf_printf(out, " fo:background-color=\"#%06lx\" draw:fill=\"solid\" draw:fill-color=\"#%06lx\"",
+                           OWF_SHADE_RGB(fr->fill), OWF_SHADE_RGB(fr->fill));
+        else
+            owf_buf_puts(out, " fo:background-color=\"transparent\" draw:fill=\"none\"");
+        if (OWF_SHADE_SET(fr->line))
+            owf_buf_printf(out, " fo:border=\"0.75pt solid #%06lx\" draw:stroke=\"solid\" svg:stroke-color=\"#%06lx\"",
+                           OWF_SHADE_RGB(fr->line), OWF_SHADE_RGB(fr->line));
+        else
+            owf_buf_puts(out, " fo:border=\"none\" draw:stroke=\"none\"");
+        if (fr->story.nparas) {
+            put_length_attr(out, "fo:padding-top", fr->inset[0]);
+            put_length_attr(out, "fo:padding-right", fr->inset[1]);
+            put_length_attr(out, "fo:padding-bottom", fr->inset[2]);
+            put_length_attr(out, "fo:padding-left", fr->inset[3]);
+        }
+        owf_buf_puts(out, "/></style:style>");
+    }
+}
+
+static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s);
+
+/* 1.3: a frame (a picture or a text box placed on the page) anchored to its paragraph, placed by its graphic
+ * style (Fr<n>): a picture, or a text box with its paragraphs. A text box's own frames are left out (the
+ * body's paragraphs only write them). */
+static void put_frame_odt(owf_buf *out, const owf_doc *doc, int index, styles *s)
+{
+    const owf_frame *fr;
+    const char *pos, *rel;
+    int k, at, has_at;
+    if (!doc || index < 0 || index >= doc->nframes) return;
+    fr = &doc->frames[index];
+    owf_buf_printf(out, "<draw:frame draw:style-name=\"Fr%d\" draw:name=\"Frame%d\" text:anchor-type=\"paragraph\"",
+                   index + 1, index + 1);
+    odt_frame_place(doc, fr, 1, &pos, &rel, &at, &has_at);
+    if (has_at) put_length_attr(out, "svg:x", at);
+    odt_frame_place(doc, fr, 0, &pos, &rel, &at, &has_at);
+    if (has_at) put_length_attr(out, "svg:y", at);
+    put_length_attr(out, "svg:width", fr->width);
+    put_length_attr(out, "svg:height", fr->height);
+    owf_buf_printf(out, " draw:z-index=\"%d\">", fr->behind ? 0 : index + 1);
+    if (fr->image >= 0 && fr->image < doc->nimages && !fr->story.nparas)
+        owf_buf_printf(out, "<draw:image xlink:href=\"Pictures/image%d.%s\" xlink:type=\"simple\" xlink:show=\"embed\" "
+                       "xlink:actuate=\"onLoad\"/>", fr->image + 1, odt_image_ext(&doc->images[fr->image]));
+    else {
+        owf_buf_puts(out, "<draw:text-box>");
+        for (k = 0; k < fr->story.nparas; k++)
+            put_para_odt(out, doc, &fr->story.paras[k], s);
+        owf_buf_puts(out, "</draw:text-box>");
+    }
+    owf_buf_puts(out, "</draw:frame>");
+}
+
 static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s)
 {
     static const char *fields[] = {
@@ -332,6 +438,9 @@ static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para,
         case OWF_RUN_TAB:owf_buf_puts(out,"<text:tab/>");after_space=1;break;
         case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<text:line-break/>");after_space=1;break;
         case OWF_RUN_FIELD:owf_buf_puts(out,fields[run->field]);after_space=0;break;
+        case OWF_RUN_FRAME:
+            if(doc&&para>=doc->body.paras&&para<doc->body.paras+doc->body.nparas){put_frame_odt(out,doc,run->image,s);after_space=0;}
+            break;
         case OWF_RUN_IMAGE:
             if(doc&&run->image>=0&&run->image<doc->nimages){const owf_image *im=&doc->images[run->image];owf_buf_puts(out,"<draw:frame text:anchor-type=\"as-char\" svg:width=\"");owf_put_points(out,im->width);owf_buf_puts(out,"\" svg:height=\"");owf_put_points(out,im->height);owf_buf_printf(out,"\"><draw:image xlink:href=\"Pictures/image%d.%s\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/></draw:frame>",run->image+1,odt_image_ext(im));}
             break;

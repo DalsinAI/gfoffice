@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.2.0"
+#define OWF_VERSION "1.3.0"
 
 /* Results. */
 enum {
@@ -57,7 +57,9 @@ typedef struct {
 
 /* ---- Paragraphs ---- */
 
-typedef enum { OWF_RUN_TEXT, OWF_RUN_TAB, OWF_RUN_LINEBREAK, OWF_RUN_FIELD, OWF_RUN_IMAGE } owf_run_kind;
+typedef enum { OWF_RUN_TEXT, OWF_RUN_TAB, OWF_RUN_LINEBREAK, OWF_RUN_FIELD, OWF_RUN_IMAGE,
+               OWF_RUN_FRAME   /* 1.3: a frame anchored here (its image field is the frame's index) */
+} owf_run_kind;
 typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME } owf_field;
 
 typedef struct {
@@ -66,7 +68,7 @@ typedef struct {
     char *text;              /* UTF-8, for OWF_RUN_TEXT */
     char *href;              /* optional hyperlink target for text */
     owf_field field;         /* for OWF_RUN_FIELD */
-    int image;               /* index into doc->images for OWF_RUN_IMAGE */
+    int image;               /* index into doc->images for OWF_RUN_IMAGE, doc->frames for OWF_RUN_FRAME */
 } owf_run;
 
 typedef enum { OWF_ALIGN_LEFT, OWF_ALIGN_CENTRE, OWF_ALIGN_RIGHT, OWF_ALIGN_JUSTIFY } owf_align;
@@ -154,6 +156,43 @@ typedef struct {
     int width, height;       /* display size in twips */
 } owf_image;
 
+/* ---- Frames (1.3) ----
+ * A picture or a text box out of the text's flow (Word's anchored drawings,
+ * wp:anchor): at a place on the page measured from the page, its margins or
+ * the paragraph it belongs to, behind the text or in front of it. Its
+ * paragraph holds an OWF_RUN_FRAME run, so the frame moves with it. */
+typedef enum {
+    OWF_FROM_PAGE,           /* the page's edge */
+    OWF_FROM_MARGIN,         /* the page's margins (Word's column too) */
+    OWF_FROM_PARAGRAPH,      /* the paragraph's top (down), its left indent (across) */
+    OWF_FROM_LEFT_MARGIN, OWF_FROM_RIGHT_MARGIN,     /* the margins' own areas, across */
+    OWF_FROM_TOP_MARGIN, OWF_FROM_BOTTOM_MARGIN      /* and down */
+} owf_frame_from;
+typedef enum {
+    OWF_PLACE_AT,            /* x, y from the corner */
+    OWF_PLACE_START,         /* left or top */
+    OWF_PLACE_CENTRE,
+    OWF_PLACE_END            /* right or bottom */
+} owf_frame_place;
+typedef enum {
+    OWF_WRAP_NONE, OWF_WRAP_SQUARE, OWF_WRAP_TIGHT, OWF_WRAP_TOP_BOTTOM
+} owf_frame_wrap;
+
+typedef struct {
+    int image;               /* its picture: into doc->images; -1: none */
+    owf_story story;         /* a text box's paragraphs (nparas 0: none) */
+    int width, height;       /* twips */
+    int x, y;                /* twips from x_from's and y_from's corner, when placed OWF_PLACE_AT */
+    unsigned char x_from, y_from;    /* owf_frame_from */
+    unsigned char x_place, y_place;  /* owf_frame_place */
+    unsigned char behind;    /* behind the text, else in front of it */
+    unsigned char wrap;      /* owf_frame_wrap: how text goes round it; laid out as OWF_WRAP_NONE for now */
+    unsigned char reserved[2];
+    int inset[4];            /* a text box's inner margins, twips: top, right, bottom, left */
+    unsigned long fill;      /* OWF_SHADE(0xRRGGBB) inside it; 0: none */
+    unsigned long line;      /* OWF_SHADE(0xRRGGBB) round it; 0: none */
+} owf_frame;
+
 typedef struct owf_doc {
     owf_story body, header, footer;
     int nfonts, capfonts;
@@ -163,6 +202,8 @@ typedef struct owf_doc {
     owf_charfmt base;        /* the document's default font and size */
     owf_page page;
     char *title;             /* UTF-8, may be NULL */
+    int nframes, capframes;  /* 1.3 */
+    owf_frame *frames;
 } owf_doc;
 
 /* ---- Memory ----
@@ -189,6 +230,9 @@ int owf_para_add_link_text(owf_para *para, const owf_charfmt *fmt, const char *u
 int owf_para_add_special(owf_para *para, const owf_charfmt *fmt, owf_run_kind kind, owf_field field);
 int owf_para_add_image(owf_para *para, const owf_charfmt *fmt, int image_index);
 int owf_doc_add_image(owf_doc *doc, const char *name, const char *mime, const void *data, size_t length, int width, int height, const char *alt);
+/* 1.3: a frame, its index (-1: no memory). The document takes frame->story's paragraphs. */
+int owf_doc_add_frame(owf_doc *doc, const owf_frame *frame);
+int owf_para_add_frame(owf_para *para, const owf_charfmt *fmt, int frame_index);
 int owf_doc_font(owf_doc *doc, const char *name, owf_font_kind kind);
 int owf_doc_set_title(owf_doc *doc, const char *utf8);
 
@@ -548,7 +592,7 @@ enum {
     OWF_STRUCT_CELLSTYLE, OWF_STRUCT_COLINFO, OWF_STRUCT_ROWINFO, OWF_STRUCT_RANGE, OWF_STRUCT_SHEET,
     OWF_STRUCT_DEFNAME, OWF_STRUCT_BOOK, OWF_STRUCT_BOOK_FORMAT, OWF_STRUCT_UNZIP, OWF_STRUCT_PUB,
     OWF_STRUCT_PUB_PAGE, OWF_STRUCT_PUB_FRAME,
-    OWF_STRUCT_CONDFMT, OWF_STRUCT_COMMENT, OWF_STRUCT_VALIDATION, OWF_STRUCT_PART,
+    OWF_STRUCT_CONDFMT, OWF_STRUCT_COMMENT, OWF_STRUCT_VALIDATION, OWF_STRUCT_PART, OWF_STRUCT_FRAME,
     OWF_STRUCT_COUNT
 };
 unsigned long owf_struct_size(int which);
@@ -559,7 +603,7 @@ unsigned long owf_struct_size(int which);
     sizeof(owf_format), sizeof(owf_cell), sizeof(owf_cellstyle), sizeof(owf_colinfo), sizeof(owf_rowinfo), \
     sizeof(owf_range), sizeof(owf_sheet), sizeof(owf_defname), sizeof(owf_book), sizeof(owf_book_format), \
     sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame), sizeof(owf_condfmt), \
-    sizeof(owf_comment), sizeof(owf_validation), sizeof(owf_part)
+    sizeof(owf_comment), sizeof(owf_validation), sizeof(owf_part), sizeof(owf_frame)
 
 #ifdef __cplusplus
 }
