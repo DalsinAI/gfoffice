@@ -531,4 +531,1022 @@ __owf_owf_export_file(void *__base, const owf_doc *doc, const char *path, const 
 #define owf_export_file(doc, path, format, report) __owf_owf_export_file((OWF_BASE_NAME), (const owf_doc *)(doc), (const char *)(path), (const char *)(format), (owf_report *)(report))
 #define __owf_export_file_base(__in_base, doc, path, format, report) __owf_owf_export_file((__in_base), (const owf_doc *)(doc), (const char *)(path), (const char *)(format), (owf_report *)(report))
 
+static __inline__ const char *
+__owf_owf_error_name(void *__base, int error)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(error);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -204(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (const char *)_d0;
+}
+#define owf_error_name(error) __owf_owf_error_name((OWF_BASE_NAME), (int)(error))
+#define __owf_error_name_base(__in_base, error) __owf_owf_error_name((__in_base), (int)(error))
+
+static __inline__ owf_book *
+__owf_owf_book_new(void *__base)
+{
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -210(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (owf_book *)_d0;
+}
+#define owf_book_new() __owf_owf_book_new((OWF_BASE_NAME))
+#define __owf_book_new_base(__in_base) __owf_owf_book_new((__in_base))
+
+static __inline__ void
+__owf_owf_book_free(void *__base, owf_book *book)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(book);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -216(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_book_free(book) __owf_owf_book_free((OWF_BASE_NAME), (owf_book *)(book))
+#define __owf_book_free_base(__in_base, book) __owf_owf_book_free((__in_base), (owf_book *)(book))
+
+static __inline__ owf_sheet *
+__owf_owf_book_add_sheet(void *__base, owf_book *book, const char *name)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(book);
+	register ULONG _a1 __asm("a1") = (ULONG)(name);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -222(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (owf_sheet *)_d0;
+}
+#define owf_book_add_sheet(book, name) __owf_owf_book_add_sheet((OWF_BASE_NAME), (owf_book *)(book), (const char *)(name))
+#define __owf_book_add_sheet_base(__in_base, book, name) __owf_owf_book_add_sheet((__in_base), (owf_book *)(book), (const char *)(name))
+
+static __inline__ void
+__owf_owf_cellstyle_init(void *__base, owf_cellstyle *style)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(style);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -228(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_cellstyle_init(style) __owf_owf_cellstyle_init((OWF_BASE_NAME), (owf_cellstyle *)(style))
+#define __owf_cellstyle_init_base(__in_base, style) __owf_owf_cellstyle_init((__in_base), (owf_cellstyle *)(style))
+
+static __inline__ int
+__owf_owf_book_style(void *__base, owf_book *book, const owf_cellstyle *style)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(book);
+	register ULONG _a1 __asm("a1") = (ULONG)(style);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -234(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_book_style(book, style) __owf_owf_book_style((OWF_BASE_NAME), (owf_book *)(book), (const owf_cellstyle *)(style))
+#define __owf_book_style_base(__in_base, book, style) __owf_owf_book_style((__in_base), (owf_book *)(book), (const owf_cellstyle *)(style))
+
+static __inline__ int
+__owf_owf_book_numfmt(void *__base, owf_book *book, const char *format)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(book);
+	register ULONG _a1 __asm("a1") = (ULONG)(format);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -240(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_book_numfmt(book, format) __owf_owf_book_numfmt((OWF_BASE_NAME), (owf_book *)(book), (const char *)(format))
+#define __owf_book_numfmt_base(__in_base, book, format) __owf_owf_book_numfmt((__in_base), (owf_book *)(book), (const char *)(format))
+
+static __inline__ int
+__owf_owf_book_font(void *__base, owf_book *book, const char *name, owf_font_kind kind)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(book);
+	register ULONG _a1 __asm("a1") = (ULONG)(name);
+	register ULONG _d0 __asm("d0") = (ULONG)(kind);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -246(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_book_font(book, name, kind) __owf_owf_book_font((OWF_BASE_NAME), (owf_book *)(book), (const char *)(name), (owf_font_kind)(kind))
+#define __owf_book_font_base(__in_base, book, name, kind) __owf_owf_book_font((__in_base), (owf_book *)(book), (const char *)(name), (owf_font_kind)(kind))
+
+static __inline__ owf_cell *
+__owf_owf_sheet_cell(void *__base, owf_sheet *sheet, unsigned row, unsigned col, int create)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(sheet);
+	register ULONG _d0 __asm("d0") = (ULONG)(row);
+	register ULONG _d1 __asm("d1") = (ULONG)(col);
+	register ULONG _d2 __asm("d2") = (ULONG)(create);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -252(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (owf_cell *)_d0;
+}
+#define owf_sheet_cell(sheet, row, col, create) __owf_owf_sheet_cell((OWF_BASE_NAME), (owf_sheet *)(sheet), (unsigned)(row), (unsigned)(col), (int)(create))
+#define __owf_sheet_cell_base(__in_base, sheet, row, col, create) __owf_owf_sheet_cell((__in_base), (owf_sheet *)(sheet), (unsigned)(row), (unsigned)(col), (int)(create))
+
+static __inline__ const owf_cell *
+__owf_owf_sheet_find(void *__base, const owf_sheet *sheet, unsigned row, unsigned col)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(sheet);
+	register ULONG _d0 __asm("d0") = (ULONG)(row);
+	register ULONG _d1 __asm("d1") = (ULONG)(col);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -258(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (const owf_cell *)_d0;
+}
+#define owf_sheet_find(sheet, row, col) __owf_owf_sheet_find((OWF_BASE_NAME), (const owf_sheet *)(sheet), (unsigned)(row), (unsigned)(col))
+#define __owf_sheet_find_base(__in_base, sheet, row, col) __owf_owf_sheet_find((__in_base), (const owf_sheet *)(sheet), (unsigned)(row), (unsigned)(col))
+
+static __inline__ void
+__owf_owf_cell_set_number(void *__base, owf_cell *cell, double number)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(cell);
+	union { DOUBLE d; ULONG u[2]; } _d0_u; _d0_u.d = number;
+	register ULONG _d0 __asm("d0") = _d0_u.u[0];
+	register ULONG _d0_lo __asm("d1") = _d0_u.u[1];
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -264(%/a6)"
+		: "+r" (_d0), "+r" (_d0_lo), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d0_lo; (void)_a0; (void)_a1;
+}
+#define owf_cell_set_number(cell, number) __owf_owf_cell_set_number((OWF_BASE_NAME), (owf_cell *)(cell), (double)(number))
+#define __owf_cell_set_number_base(__in_base, cell, number) __owf_owf_cell_set_number((__in_base), (owf_cell *)(cell), (double)(number))
+
+static __inline__ int
+__owf_owf_cell_set_text(void *__base, owf_cell *cell, const char *utf8, size_t length)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(cell);
+	register ULONG _a1 __asm("a1") = (ULONG)(utf8);
+	register ULONG _d0 __asm("d0") = (ULONG)(length);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -270(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_cell_set_text(cell, utf8, length) __owf_owf_cell_set_text((OWF_BASE_NAME), (owf_cell *)(cell), (const char *)(utf8), (size_t)(length))
+#define __owf_cell_set_text_base(__in_base, cell, utf8, length) __owf_owf_cell_set_text((__in_base), (owf_cell *)(cell), (const char *)(utf8), (size_t)(length))
+
+static __inline__ void
+__owf_owf_cell_set_bool(void *__base, owf_cell *cell, int value)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(cell);
+	register ULONG _d0 __asm("d0") = (ULONG)(value);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -276(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_cell_set_bool(cell, value) __owf_owf_cell_set_bool((OWF_BASE_NAME), (owf_cell *)(cell), (int)(value))
+#define __owf_cell_set_bool_base(__in_base, cell, value) __owf_owf_cell_set_bool((__in_base), (owf_cell *)(cell), (int)(value))
+
+static __inline__ void
+__owf_owf_cell_set_error(void *__base, owf_cell *cell, int error)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(cell);
+	register ULONG _d0 __asm("d0") = (ULONG)(error);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -282(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_cell_set_error(cell, error) __owf_owf_cell_set_error((OWF_BASE_NAME), (owf_cell *)(cell), (int)(error))
+#define __owf_cell_set_error_base(__in_base, cell, error) __owf_owf_cell_set_error((__in_base), (owf_cell *)(cell), (int)(error))
+
+static __inline__ int
+__owf_owf_cell_set_formula(void *__base, owf_cell *cell, const char *text)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(cell);
+	register ULONG _a1 __asm("a1") = (ULONG)(text);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -288(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_cell_set_formula(cell, text) __owf_owf_cell_set_formula((OWF_BASE_NAME), (owf_cell *)(cell), (const char *)(text))
+#define __owf_cell_set_formula_base(__in_base, cell, text) __owf_owf_cell_set_formula((__in_base), (owf_cell *)(cell), (const char *)(text))
+
+static __inline__ int
+__owf_owf_sheet_set_columns(void *__base, owf_sheet *sheet, unsigned first, unsigned last, int width, int style, int hidden)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(sheet);
+	register ULONG _d0 __asm("d0") = (ULONG)(first);
+	register ULONG _d1 __asm("d1") = (ULONG)(last);
+	register ULONG _d2 __asm("d2") = (ULONG)(width);
+	register ULONG _d3 __asm("d3") = (ULONG)(style);
+	register ULONG _d4 __asm("d4") = (ULONG)(hidden);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -294(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3), "r" (_d4)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_sheet_set_columns(sheet, first, last, width, style, hidden) __owf_owf_sheet_set_columns((OWF_BASE_NAME), (owf_sheet *)(sheet), (unsigned)(first), (unsigned)(last), (int)(width), (int)(style), (int)(hidden))
+#define __owf_sheet_set_columns_base(__in_base, sheet, first, last, width, style, hidden) __owf_owf_sheet_set_columns((__in_base), (owf_sheet *)(sheet), (unsigned)(first), (unsigned)(last), (int)(width), (int)(style), (int)(hidden))
+
+static __inline__ int
+__owf_owf_sheet_set_row(void *__base, owf_sheet *sheet, unsigned row, int height, int hidden)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(sheet);
+	register ULONG _d0 __asm("d0") = (ULONG)(row);
+	register ULONG _d1 __asm("d1") = (ULONG)(height);
+	register ULONG _d2 __asm("d2") = (ULONG)(hidden);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -300(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_sheet_set_row(sheet, row, height, hidden) __owf_owf_sheet_set_row((OWF_BASE_NAME), (owf_sheet *)(sheet), (unsigned)(row), (int)(height), (int)(hidden))
+#define __owf_sheet_set_row_base(__in_base, sheet, row, height, hidden) __owf_owf_sheet_set_row((__in_base), (owf_sheet *)(sheet), (unsigned)(row), (int)(height), (int)(hidden))
+
+static __inline__ int
+__owf_owf_sheet_merge(void *__base, owf_sheet *sheet, const owf_range *range)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(sheet);
+	register ULONG _a1 __asm("a1") = (ULONG)(range);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -306(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_sheet_merge(sheet, range) __owf_owf_sheet_merge((OWF_BASE_NAME), (owf_sheet *)(sheet), (const owf_range *)(range))
+#define __owf_sheet_merge_base(__in_base, sheet, range) __owf_owf_sheet_merge((__in_base), (owf_sheet *)(sheet), (const owf_range *)(range))
+
+static __inline__ int
+__owf_owf_book_add_name(void *__base, owf_book *book, const char *name, int sheet, const char *formula, int hidden)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(book);
+	register ULONG _a1 __asm("a1") = (ULONG)(name);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _a2 __asm("a2") = (ULONG)(formula);
+	register ULONG _d1 __asm("d1") = (ULONG)(hidden);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -312(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_book_add_name(book, name, sheet, formula, hidden) __owf_owf_book_add_name((OWF_BASE_NAME), (owf_book *)(book), (const char *)(name), (int)(sheet), (const char *)(formula), (int)(hidden))
+#define __owf_book_add_name_base(__in_base, book, name, sheet, formula, hidden) __owf_owf_book_add_name((__in_base), (owf_book *)(book), (const char *)(name), (int)(sheet), (const char *)(formula), (int)(hidden))
+
+static __inline__ void
+__owf_owf_number_text(void *__base, double number, char *out)
+{
+	union { DOUBLE d; ULONG u[2]; } _d0_u; _d0_u.d = number;
+	register ULONG _d0 __asm("d0") = _d0_u.u[0];
+	register ULONG _d0_lo __asm("d1") = _d0_u.u[1];
+	register ULONG _a0 __asm("a0") = (ULONG)(out);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -318(%/a6)"
+		: "+r" (_d0), "+r" (_d0_lo), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d0_lo; (void)_a0; (void)_a1;
+}
+#define owf_number_text(number, out) __owf_owf_number_text((OWF_BASE_NAME), (double)(number), (char *)(out))
+#define __owf_number_text_base(__in_base, number, out) __owf_owf_number_text((__in_base), (double)(number), (char *)(out))
+
+static __inline__ int
+__owf_owf_book_format_count(void *__base)
+{
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -324(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_book_format_count() __owf_owf_book_format_count((OWF_BASE_NAME))
+#define __owf_book_format_count_base(__in_base) __owf_owf_book_format_count((__in_base))
+
+static __inline__ const owf_book_format *
+__owf_owf_book_format_at(void *__base, int index)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(index);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -330(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (const owf_book_format *)_d0;
+}
+#define owf_book_format_at(index) __owf_owf_book_format_at((OWF_BASE_NAME), (int)(index))
+#define __owf_book_format_at_base(__in_base, index) __owf_owf_book_format_at((__in_base), (int)(index))
+
+static __inline__ const owf_book_format *
+__owf_owf_book_format_named(void *__base, const char *name)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(name);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -336(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (const owf_book_format *)_d0;
+}
+#define owf_book_format_named(name) __owf_owf_book_format_named((OWF_BASE_NAME), (const char *)(name))
+#define __owf_book_format_named_base(__in_base, name) __owf_owf_book_format_named((__in_base), (const char *)(name))
+
+static __inline__ const owf_book_format *
+__owf_owf_book_format_for_filename(void *__base, const char *filename)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(filename);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -342(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (const owf_book_format *)_d0;
+}
+#define owf_book_format_for_filename(filename) __owf_owf_book_format_for_filename((OWF_BASE_NAME), (const char *)(filename))
+#define __owf_book_format_for_filename_base(__in_base, filename) __owf_owf_book_format_for_filename((__in_base), (const char *)(filename))
+
+static __inline__ int
+__owf_owf_import_book_memory(void *__base, const unsigned char *data, size_t length, const char *format, owf_book **book, owf_report *report, const owf_book_format **used)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(data);
+	register ULONG _d0 __asm("d0") = (ULONG)(length);
+	register ULONG _a1 __asm("a1") = (ULONG)(format);
+	register ULONG _a2 __asm("a2") = (ULONG)(book);
+	register ULONG _a3 __asm("a3") = (ULONG)(report);
+	register ULONG _d1 __asm("d1") = (ULONG)(used);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -348(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a3), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_import_book_memory(data, length, format, book, report, used) __owf_owf_import_book_memory((OWF_BASE_NAME), (const unsigned char *)(data), (size_t)(length), (const char *)(format), (owf_book **)(book), (owf_report *)(report), (const owf_book_format **)(used))
+#define __owf_import_book_memory_base(__in_base, data, length, format, book, report, used) __owf_owf_import_book_memory((__in_base), (const unsigned char *)(data), (size_t)(length), (const char *)(format), (owf_book **)(book), (owf_report *)(report), (const owf_book_format **)(used))
+
+static __inline__ int
+__owf_owf_import_book_file(void *__base, const char *path, const char *format, owf_book **book, owf_report *report, const owf_book_format **used)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(path);
+	register ULONG _a1 __asm("a1") = (ULONG)(format);
+	register ULONG _a2 __asm("a2") = (ULONG)(book);
+	register ULONG _a3 __asm("a3") = (ULONG)(report);
+	register ULONG _d0 __asm("d0") = (ULONG)(used);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -354(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a3), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_import_book_file(path, format, book, report, used) __owf_owf_import_book_file((OWF_BASE_NAME), (const char *)(path), (const char *)(format), (owf_book **)(book), (owf_report *)(report), (const owf_book_format **)(used))
+#define __owf_import_book_file_base(__in_base, path, format, book, report, used) __owf_owf_import_book_file((__in_base), (const char *)(path), (const char *)(format), (owf_book **)(book), (owf_report *)(report), (const owf_book_format **)(used))
+
+static __inline__ int
+__owf_owf_export_book_file(void *__base, const owf_book *book, const char *path, const char *format, owf_report *report)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(book);
+	register ULONG _a1 __asm("a1") = (ULONG)(path);
+	register ULONG _a2 __asm("a2") = (ULONG)(format);
+	register ULONG _a3 __asm("a3") = (ULONG)(report);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -360(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a3), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_export_book_file(book, path, format, report) __owf_owf_export_book_file((OWF_BASE_NAME), (const owf_book *)(book), (const char *)(path), (const char *)(format), (owf_report *)(report))
+#define __owf_export_book_file_base(__in_base, book, path, format, report) __owf_owf_export_book_file((__in_base), (const owf_book *)(book), (const char *)(path), (const char *)(format), (owf_report *)(report))
+
+static __inline__ owf_calc *
+__owf_owf_calc_new(void *__base, owf_book *book)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(book);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -366(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (owf_calc *)_d0;
+}
+#define owf_calc_new(book) __owf_owf_calc_new((OWF_BASE_NAME), (owf_book *)(book))
+#define __owf_calc_new_base(__in_base, book) __owf_owf_calc_new((__in_base), (owf_book *)(book))
+
+static __inline__ void
+__owf_owf_calc_free(void *__base, owf_calc *calc)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -372(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_calc_free(calc) __owf_owf_calc_free((OWF_BASE_NAME), (owf_calc *)(calc))
+#define __owf_calc_free_base(__in_base, calc) __owf_owf_calc_free((__in_base), (owf_calc *)(calc))
+
+static __inline__ int
+__owf_owf_calc_rebuild(void *__base, owf_calc *calc)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -378(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_rebuild(calc) __owf_owf_calc_rebuild((OWF_BASE_NAME), (owf_calc *)(calc))
+#define __owf_calc_rebuild_base(__in_base, calc) __owf_owf_calc_rebuild((__in_base), (owf_calc *)(calc))
+
+static __inline__ void
+__owf_owf_calc_set_date_order(void *__base, owf_calc *calc, int order)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(order);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -384(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_calc_set_date_order(calc, order) __owf_owf_calc_set_date_order((OWF_BASE_NAME), (owf_calc *)(calc), (int)(order))
+#define __owf_calc_set_date_order_base(__in_base, calc, order) __owf_owf_calc_set_date_order((__in_base), (owf_calc *)(calc), (int)(order))
+
+static __inline__ int
+__owf_owf_calc_enter(void *__base, owf_calc *calc, int sheet, unsigned row, unsigned col, const char *input)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _d1 __asm("d1") = (ULONG)(row);
+	register ULONG _d2 __asm("d2") = (ULONG)(col);
+	register ULONG _a1 __asm("a1") = (ULONG)(input);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -390(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_enter(calc, sheet, row, col, input) __owf_owf_calc_enter((OWF_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (unsigned)(row), (unsigned)(col), (const char *)(input))
+#define __owf_calc_enter_base(__in_base, calc, sheet, row, col, input) __owf_owf_calc_enter((__in_base), (owf_calc *)(calc), (int)(sheet), (unsigned)(row), (unsigned)(col), (const char *)(input))
+
+static __inline__ int
+__owf_owf_calc_recalc(void *__base, owf_calc *calc)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -396(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_recalc(calc) __owf_owf_calc_recalc((OWF_BASE_NAME), (owf_calc *)(calc))
+#define __owf_calc_recalc_base(__in_base, calc) __owf_owf_calc_recalc((__in_base), (owf_calc *)(calc))
+
+static __inline__ int
+__owf_owf_calc_recalc_all(void *__base, owf_calc *calc)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -402(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_recalc_all(calc) __owf_owf_calc_recalc_all((OWF_BASE_NAME), (owf_calc *)(calc))
+#define __owf_calc_recalc_all_base(__in_base, calc) __owf_owf_calc_recalc_all((__in_base), (owf_calc *)(calc))
+
+static __inline__ void
+__owf_owf_calc_set_notify(void *__base, owf_calc *calc, owf_calc_notify notify, void *user)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _a1 __asm("a1") = (ULONG)(notify);
+	register ULONG _a2 __asm("a2") = (ULONG)(user);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -408(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_calc_set_notify(calc, notify, user) __owf_owf_calc_set_notify((OWF_BASE_NAME), (owf_calc *)(calc), (owf_calc_notify)(notify), (void *)(user))
+#define __owf_calc_set_notify_base(__in_base, calc, notify, user) __owf_owf_calc_set_notify((__in_base), (owf_calc *)(calc), (owf_calc_notify)(notify), (void *)(user))
+
+static __inline__ unsigned
+__owf_owf_calc_state(void *__base, const owf_calc *calc, int sheet, unsigned row, unsigned col)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _d1 __asm("d1") = (ULONG)(row);
+	register ULONG _d2 __asm("d2") = (ULONG)(col);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -414(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (unsigned)_d0;
+}
+#define owf_calc_state(calc, sheet, row, col) __owf_owf_calc_state((OWF_BASE_NAME), (const owf_calc *)(calc), (int)(sheet), (unsigned)(row), (unsigned)(col))
+#define __owf_calc_state_base(__in_base, calc, sheet, row, col) __owf_owf_calc_state((__in_base), (const owf_calc *)(calc), (int)(sheet), (unsigned)(row), (unsigned)(col))
+
+static __inline__ int
+__owf_owf_calc_circular_count(void *__base, const owf_calc *calc)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -420(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_circular_count(calc) __owf_owf_calc_circular_count((OWF_BASE_NAME), (const owf_calc *)(calc))
+#define __owf_calc_circular_count_base(__in_base, calc) __owf_owf_calc_circular_count((__in_base), (const owf_calc *)(calc))
+
+static __inline__ int
+__owf_owf_calc_shift(void *__base, owf_calc *calc, int sheet, int axis, unsigned at, int count)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _d1 __asm("d1") = (ULONG)(axis);
+	register ULONG _d2 __asm("d2") = (ULONG)(at);
+	register ULONG _d3 __asm("d3") = (ULONG)(count);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -426(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_shift(calc, sheet, axis, at, count) __owf_owf_calc_shift((OWF_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (int)(axis), (unsigned)(at), (int)(count))
+#define __owf_calc_shift_base(__in_base, calc, sheet, axis, at, count) __owf_owf_calc_shift((__in_base), (owf_calc *)(calc), (int)(sheet), (int)(axis), (unsigned)(at), (int)(count))
+
+static __inline__ int
+__owf_owf_calc_touch(void *__base, owf_calc *calc, int sheet, const owf_range *range)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _a1 __asm("a1") = (ULONG)(range);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -432(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_touch(calc, sheet, range) __owf_owf_calc_touch((OWF_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (const owf_range *)(range))
+#define __owf_calc_touch_base(__in_base, calc, sheet, range) __owf_owf_calc_touch((__in_base), (owf_calc *)(calc), (int)(sheet), (const owf_range *)(range))
+
+static __inline__ int
+__owf_owf_calc_rename_sheet(void *__base, owf_calc *calc, int sheet, const char *name)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _a1 __asm("a1") = (ULONG)(name);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -438(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_rename_sheet(calc, sheet, name) __owf_owf_calc_rename_sheet((OWF_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (const char *)(name))
+#define __owf_calc_rename_sheet_base(__in_base, calc, sheet, name) __owf_owf_calc_rename_sheet((__in_base), (owf_calc *)(calc), (int)(sheet), (const char *)(name))
+
+static __inline__ int
+__owf_owf_calc_move_range(void *__base, owf_calc *calc, int sheet, const owf_range *range, int dsheet, int drow, int dcol)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _a1 __asm("a1") = (ULONG)(range);
+	register ULONG _d1 __asm("d1") = (ULONG)(dsheet);
+	register ULONG _d2 __asm("d2") = (ULONG)(drow);
+	register ULONG _d3 __asm("d3") = (ULONG)(dcol);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -444(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_move_range(calc, sheet, range, dsheet, drow, dcol) __owf_owf_calc_move_range((OWF_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (const owf_range *)(range), (int)(dsheet), (int)(drow), (int)(dcol))
+#define __owf_calc_move_range_base(__in_base, calc, sheet, range, dsheet, drow, dcol) __owf_owf_calc_move_range((__in_base), (owf_calc *)(calc), (int)(sheet), (const owf_range *)(range), (int)(dsheet), (int)(drow), (int)(dcol))
+
+static __inline__ char *
+__owf_owf_calc_move_formula(void *__base, const char *text, int drow, int dcol)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(text);
+	register ULONG _d0 __asm("d0") = (ULONG)(drow);
+	register ULONG _d1 __asm("d1") = (ULONG)(dcol);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -450(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (char *)_d0;
+}
+#define owf_calc_move_formula(text, drow, dcol) __owf_owf_calc_move_formula((OWF_BASE_NAME), (const char *)(text), (int)(drow), (int)(dcol))
+#define __owf_calc_move_formula_base(__in_base, text, drow, dcol) __owf_owf_calc_move_formula((__in_base), (const char *)(text), (int)(drow), (int)(dcol))
+
+static __inline__ int
+__owf_owf_calc_evaluate(void *__base, owf_calc *calc, int sheet, unsigned row, unsigned col, const char *formula, owf_cell *result)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _d1 __asm("d1") = (ULONG)(row);
+	register ULONG _d2 __asm("d2") = (ULONG)(col);
+	register ULONG _a1 __asm("a1") = (ULONG)(formula);
+	register ULONG _a2 __asm("a2") = (ULONG)(result);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -456(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_evaluate(calc, sheet, row, col, formula, result) __owf_owf_calc_evaluate((OWF_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (unsigned)(row), (unsigned)(col), (const char *)(formula), (owf_cell *)(result))
+#define __owf_calc_evaluate_base(__in_base, calc, sheet, row, col, formula, result) __owf_owf_calc_evaluate((__in_base), (owf_calc *)(calc), (int)(sheet), (unsigned)(row), (unsigned)(col), (const char *)(formula), (owf_cell *)(result))
+
+static __inline__ void
+__owf_owf_calc_cell_name(void *__base, unsigned row, unsigned col, char *out)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(row);
+	register ULONG _d1 __asm("d1") = (ULONG)(col);
+	register ULONG _a0 __asm("a0") = (ULONG)(out);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -462(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_calc_cell_name(row, col, out) __owf_owf_calc_cell_name((OWF_BASE_NAME), (unsigned)(row), (unsigned)(col), (char *)(out))
+#define __owf_calc_cell_name_base(__in_base, row, col, out) __owf_owf_calc_cell_name((__in_base), (unsigned)(row), (unsigned)(col), (char *)(out))
+
+static __inline__ int
+__owf_owf_calc_parse_cell(void *__base, const char *text, unsigned *row, unsigned *col)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(text);
+	register ULONG _a1 __asm("a1") = (ULONG)(row);
+	register ULONG _a2 __asm("a2") = (ULONG)(col);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -468(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_parse_cell(text, row, col) __owf_owf_calc_parse_cell((OWF_BASE_NAME), (const char *)(text), (unsigned *)(row), (unsigned *)(col))
+#define __owf_calc_parse_cell_base(__in_base, text, row, col) __owf_owf_calc_parse_cell((__in_base), (const char *)(text), (unsigned *)(row), (unsigned *)(col))
+
+static __inline__ int
+__owf_owf_calc_format(void *__base, const owf_book *book, const owf_cell *cell, char *out, size_t size)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(book);
+	register ULONG _a1 __asm("a1") = (ULONG)(cell);
+	register ULONG _a2 __asm("a2") = (ULONG)(out);
+	register ULONG _d0 __asm("d0") = (ULONG)(size);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -474(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_format(book, cell, out, size) __owf_owf_calc_format((OWF_BASE_NAME), (const owf_book *)(book), (const owf_cell *)(cell), (char *)(out), (size_t)(size))
+#define __owf_calc_format_base(__in_base, book, cell, out, size) __owf_owf_calc_format((__in_base), (const owf_book *)(book), (const owf_cell *)(cell), (char *)(out), (size_t)(size))
+
+static __inline__ int
+__owf_owf_calc_format_value(void *__base, const char *format, const owf_cell *value, int date1904, int width, char *out, size_t size, unsigned long *colour)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(format);
+	register ULONG _a1 __asm("a1") = (ULONG)(value);
+	register ULONG _d0 __asm("d0") = (ULONG)(date1904);
+	register ULONG _d1 __asm("d1") = (ULONG)(width);
+	register ULONG _a2 __asm("a2") = (ULONG)(out);
+	register ULONG _d2 __asm("d2") = (ULONG)(size);
+	register ULONG _a3 __asm("a3") = (ULONG)(colour);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -480(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a3), "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_format_value(format, value, date1904, width, out, size, colour) __owf_owf_calc_format_value((OWF_BASE_NAME), (const char *)(format), (const owf_cell *)(value), (int)(date1904), (int)(width), (char *)(out), (size_t)(size), (unsigned long *)(colour))
+#define __owf_calc_format_value_base(__in_base, format, value, date1904, width, out, size, colour) __owf_owf_calc_format_value((__in_base), (const char *)(format), (const owf_cell *)(value), (int)(date1904), (int)(width), (char *)(out), (size_t)(size), (unsigned long *)(colour))
+
+static __inline__ owf_kind
+__owf_owf_file_kind(void *__base, const unsigned char *data, size_t length)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(data);
+	register ULONG _d0 __asm("d0") = (ULONG)(length);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -486(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (owf_kind)_d0;
+}
+#define owf_file_kind(data, length) __owf_owf_file_kind((OWF_BASE_NAME), (const unsigned char *)(data), (size_t)(length))
+#define __owf_file_kind_base(__in_base, data, length) __owf_owf_file_kind((__in_base), (const unsigned char *)(data), (size_t)(length))
+
+static __inline__ unsigned long
+__owf_owf_struct_size(void *__base, int which)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(which);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -492(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (unsigned long)_d0;
+}
+#define owf_struct_size(which) __owf_owf_struct_size((OWF_BASE_NAME), (int)(which))
+#define __owf_struct_size_base(__in_base, which) __owf_owf_struct_size((__in_base), (int)(which))
+
+static __inline__ int
+__owf_owf_unzip_open(void *__base, owf_unzip *zip, const unsigned char *data, size_t length)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(zip);
+	register ULONG _a1 __asm("a1") = (ULONG)(data);
+	register ULONG _d0 __asm("d0") = (ULONG)(length);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -498(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_unzip_open(zip, data, length) __owf_owf_unzip_open((OWF_BASE_NAME), (owf_unzip *)(zip), (const unsigned char *)(data), (size_t)(length))
+#define __owf_unzip_open_base(__in_base, zip, data, length) __owf_owf_unzip_open((__in_base), (owf_unzip *)(zip), (const unsigned char *)(data), (size_t)(length))
+
+static __inline__ int
+__owf_owf_unzip_has(void *__base, const owf_unzip *zip, const char *name)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(zip);
+	register ULONG _a1 __asm("a1") = (ULONG)(name);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -504(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_unzip_has(zip, name) __owf_owf_unzip_has((OWF_BASE_NAME), (const owf_unzip *)(zip), (const char *)(name))
+#define __owf_unzip_has_base(__in_base, zip, name) __owf_owf_unzip_has((__in_base), (const owf_unzip *)(zip), (const char *)(name))
+
+static __inline__ int
+__owf_owf_unzip_read(void *__base, const owf_unzip *zip, const char *name, unsigned char **data, size_t *length)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(zip);
+	register ULONG _a1 __asm("a1") = (ULONG)(name);
+	register ULONG _a2 __asm("a2") = (ULONG)(data);
+	register ULONG _a3 __asm("a3") = (ULONG)(length);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -510(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a3), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_unzip_read(zip, name, data, length) __owf_owf_unzip_read((OWF_BASE_NAME), (const owf_unzip *)(zip), (const char *)(name), (unsigned char **)(data), (size_t *)(length))
+#define __owf_unzip_read_base(__in_base, zip, name, data, length) __owf_owf_unzip_read((__in_base), (const owf_unzip *)(zip), (const char *)(name), (unsigned char **)(data), (size_t *)(length))
+
+static __inline__ int
+__owf_owf_inflate(void *__base, unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(out);
+	register ULONG _d0 __asm("d0") = (ULONG)(out_length);
+	register ULONG _a1 __asm("a1") = (ULONG)(in);
+	register ULONG _d1 __asm("d1") = (ULONG)(in_length);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -516(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_inflate(out, out_length, in, in_length) __owf_owf_inflate((OWF_BASE_NAME), (unsigned char *)(out), (size_t)(out_length), (const unsigned char *)(in), (size_t)(in_length))
+#define __owf_inflate_base(__in_base, out, out_length, in, in_length) __owf_owf_inflate((__in_base), (unsigned char *)(out), (size_t)(out_length), (const unsigned char *)(in), (size_t)(in_length))
+
+static __inline__ const char *
+__owf_owf_pub_version_name(void *__base, int version)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(version);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -522(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (const char *)_d0;
+}
+#define owf_pub_version_name(version) __owf_owf_pub_version_name((OWF_BASE_NAME), (int)(version))
+#define __owf_pub_version_name_base(__in_base, version) __owf_owf_pub_version_name((__in_base), (int)(version))
+
+static __inline__ int
+__owf_owf_pub_detect(void *__base, const unsigned char *data, size_t length)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(data);
+	register ULONG _d0 __asm("d0") = (ULONG)(length);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -528(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pub_detect(data, length) __owf_owf_pub_detect((OWF_BASE_NAME), (const unsigned char *)(data), (size_t)(length))
+#define __owf_pub_detect_base(__in_base, data, length) __owf_owf_pub_detect((__in_base), (const unsigned char *)(data), (size_t)(length))
+
+static __inline__ int
+__owf_owf_pub_read(void *__base, const unsigned char *data, size_t length, owf_pub **pub, owf_report *report)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(data);
+	register ULONG _d0 __asm("d0") = (ULONG)(length);
+	register ULONG _a1 __asm("a1") = (ULONG)(pub);
+	register ULONG _a2 __asm("a2") = (ULONG)(report);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -534(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pub_read(data, length, pub, report) __owf_owf_pub_read((OWF_BASE_NAME), (const unsigned char *)(data), (size_t)(length), (owf_pub **)(pub), (owf_report *)(report))
+#define __owf_pub_read_base(__in_base, data, length, pub, report) __owf_owf_pub_read((__in_base), (const unsigned char *)(data), (size_t)(length), (owf_pub **)(pub), (owf_report *)(report))
+
+static __inline__ int
+__owf_owf_pub_read_file(void *__base, const char *path, owf_pub **pub, owf_report *report)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(path);
+	register ULONG _a1 __asm("a1") = (ULONG)(pub);
+	register ULONG _a2 __asm("a2") = (ULONG)(report);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -540(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pub_read_file(path, pub, report) __owf_owf_pub_read_file((OWF_BASE_NAME), (const char *)(path), (owf_pub **)(pub), (owf_report *)(report))
+#define __owf_pub_read_file_base(__in_base, path, pub, report) __owf_owf_pub_read_file((__in_base), (const char *)(path), (owf_pub **)(pub), (owf_report *)(report))
+
+static __inline__ void
+__owf_owf_pub_free(void *__base, owf_pub *pub)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pub);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -546(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_pub_free(pub) __owf_owf_pub_free((OWF_BASE_NAME), (owf_pub *)(pub))
+#define __owf_pub_free_base(__in_base, pub) __owf_owf_pub_free((__in_base), (owf_pub *)(pub))
+
 #endif /* INLINE_OWF_H */

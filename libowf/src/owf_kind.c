@@ -107,12 +107,6 @@ owf_kind owf_file_kind(const unsigned char *data, size_t length)
 
 unsigned long owf_struct_size(int which)
 {
-    static const unsigned short sizes[OWF_STRUCT_COUNT] = {
-        sizeof(owf_charfmt), sizeof(owf_run), sizeof(owf_tab), sizeof(owf_parafmt), sizeof(owf_para),
-        sizeof(owf_story), sizeof(owf_font), sizeof(owf_page), sizeof(owf_image), sizeof(owf_doc),
-        sizeof(owf_format), sizeof(owf_cell), sizeof(owf_cellstyle), sizeof(owf_colinfo), sizeof(owf_rowinfo),
-        sizeof(owf_range), sizeof(owf_sheet), sizeof(owf_defname), sizeof(owf_book), sizeof(owf_book_format),
-        sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame),
-    };
+    static const unsigned short sizes[OWF_STRUCT_COUNT] = { OWF_STRUCT_SIZES };
     return which >= 0 && which < OWF_STRUCT_COUNT ? sizes[which] : 0;
 }
