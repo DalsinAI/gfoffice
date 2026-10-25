@@ -8,14 +8,17 @@
  *   FDTA  a font's name; ATTR's font number counts from the last FDTA
  *   TXOB  a text frame: font name at 4, size at 147, text at 178 with its
  *         length (word) at 176
- *   TBDY  the body starts; text before it is in table cells (CLLE)
+ *   SHD1, TBDY  a section starts, then its body; text before the first
+ *         body is in table cells (CLLE). A document has as many sections
+ *         as it has SHD1s, each with its own body and master pages
  *   RULE  a paragraph starts (24 bytes, mostly not understood yet)
  *   ATTR  the next CHRS's format: length (long), font (word), size at 7,
  *         underline in bit 0 of 9; byte 11 is 1 for a tab, 17 for an
  *         endnote mark with its number at 12
  *   CHRS  text, ISO-8859-1; in the Symbol font, Symbol's characters
- *   RMST, LMST  the right and left master pages: the right one's text
- *         becomes the header (labels keep everything there)
+ *   RMST, LMST  a section's right and left master pages: the first
+ *         section's right one becomes the header (labels keep everything
+ *         there); later sections' are left out
  * Bold and italic come from the font's name ("SoftSans_Bold").
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
@@ -126,6 +129,7 @@ static int import_finalwriter(const unsigned char *data, size_t length, owf_doc 
     owf_iff_chunk c;
     fw_font *fonts;
     int nfonts = 0, master = 0, master_text = 0, cells = 0, in_body = 0, frames = 0, pictures = 0, endnotes = 0, result;
+    int sections = 0, masters = 0, later_masters = 0;
     int body_open = 0, header_open = 0, *open;   /* a RULE began a paragraph not yet ended */
     const unsigned char *attr = NULL;
     owf_builder body, header, *bp;
@@ -170,8 +174,23 @@ static int import_finalwriter(const unsigned char *data, size_t length, owf_doc 
                 }
             }
             break;
+        case OWF_ID('S', 'H', 'D', '1'):
         case OWF_ID('T', 'B', 'D', 'Y'):
-            in_body = 1;
+            /* A section, then its body: back from the last section's master
+             * pages to the body. */
+            if (c.id == OWF_ID('S', 'H', 'D', '1'))
+                sections++;
+            else
+                in_body = 1;
+            if (bp != &body) {
+                if (bp && (*open || bp->para || bp->text.length))
+                    owf_builder_end_para(bp);
+                if (bp)
+                    *open = 0;
+                bp = &body;
+                open = &body_open;
+                master = 0;
+            }
             break;
         case OWF_ID('C', 'L', 'L', 'E'):
             if (!in_body)
@@ -184,7 +203,15 @@ static int import_finalwriter(const unsigned char *data, size_t length, owf_doc 
             if (bp)
                 *open = 0;
             master = c.id == OWF_ID('R', 'M', 'S', 'T') ? 1 : 2;
-            bp = master == 1 ? &header : NULL;
+            /* The first right master page is the header; later sections'
+             * master pages would only repeat or replace it. */
+            if (master == 1 && masters++ == 0) {
+                bp = &header;
+            } else {
+                bp = NULL;
+                if (master == 1)
+                    later_masters = 1;
+            }
             open = &header_open;
             break;
         case OWF_ID('R', 'U', 'L', 'E'):
@@ -202,6 +229,8 @@ static int import_finalwriter(const unsigned char *data, size_t length, owf_doc 
         case OWF_ID('C', 'H', 'R', 'S'):
             if (master == 2 && c.size)
                 master_text = 1;
+            if (master == 1 && !bp && c.size)
+                later_masters = 2;
             if (bp && c.size) {
                 owf_charfmt f;
                 int symbol = 0;
@@ -262,6 +291,10 @@ static int import_finalwriter(const unsigned char *data, size_t length, owf_doc 
         owf_report_add(report, OWF_NOTE_APPROX, "The master page's text became the header");
     if (master_text)
         owf_report_add(report, OWF_NOTE_LOST, "The left-hand master page was left out");
+    if (later_masters == 2)
+        owf_report_add(report, OWF_NOTE_LOST, "The master pages of sections after the first were left out");
+    if (sections > 1)
+        owf_report_add(report, OWF_NOTE_INFO, "%d sections were read one after another", sections);
     if (iff.truncated)
         owf_report_add(report, OWF_NOTE_LOST, "The file is cut short; the text up to the cut was read");
     owf_report_add(report, OWF_NOTE_INFO, "Final Writer's format is not published: alignment, indents and tab stops use the defaults");
