@@ -77,7 +77,7 @@ void ogt_ruler_draw(ogt_ruler *r)
     if (!(clip = NewRegion())) return;
     OrRectRegion(clip, &box);
     old = InstallClipRegion(r->win->WLayer, clip);
-    ogt_fill(r->ctx, rp, "panel", r->x, r->y, r->w, r->h);
+    ogt_fill(r->ctx, rp, "window", r->x, r->y, r->w, r->h);   /* a key every theme has (THEME_SPEC.md 5) */
     /* the page's width, the margins shaded */
     ogt_fill(r->ctx, rp, "string", pl, r->y + 2, pr - pl, r->h - 4);
     ogt_fill(r->ctx, rp, "list.alternate", pl, r->y + 2, ml - pl, r->h - 4);
