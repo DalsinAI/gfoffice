@@ -142,12 +142,12 @@ $(OUT)/test-layout-asan: $(OWF_SRC) $(LAYOUT_SRC) $(CORE_SRC) tests/core/test_la
 layout-test: $(OUT)/test-layout
 	$(OUT)/test-layout samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx \
 		tests/core/fixtures/contents.docx tests/core/fixtures/cover.docx \
-		tests/core/fixtures/cover-wpg.docx
+		tests/core/fixtures/cover-wpg.docx tests/core/fixtures/wrap.docx
 
 layout-check: $(OUT)/test-layout-asan
 	$(OUT)/test-layout-asan samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx \
 		tests/core/fixtures/contents.docx tests/core/fixtures/cover.docx \
-		tests/core/fixtures/cover-wpg.docx
+		tests/core/fixtures/cover-wpg.docx tests/core/fixtures/wrap.docx
 
 .PHONY: layout-test layout-check
 
