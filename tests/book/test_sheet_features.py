@@ -236,8 +236,25 @@ def test_comments(work):
             check("comments: LibreOffice converts the file written", False, e)
         finally:
             shutil.rmtree(profile, ignore_errors=True)
-    report = convert(FIX, os.path.join(work, "comments.ods"))
-    check("comments: ODS says it leaves them out", "Comments on cells are kept in Excel workbooks" in report, report)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "comments." + ext)
+        report = convert(FIX, ods)
+        check("comments: kept in ." + ext + ", no note", "Comments on cells" not in report, report)
+        check("comments: the same from ." + ext, sheet_lines(dump(ods), 0, "comment") == want, sheet_lines(dump(ods), 0, "comment"))
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-comments-ods")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                            "--outdir", outdir, os.path.join(work, "comments.ods")], check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=300)
+            back = sheet_lines(dump(os.path.join(outdir, "comments.xlsx")), 0, "comment")
+            check("comments: LibreOffice reads the three from the ODS written", back == want, back)
+        except Exception as e:  # noqa: BLE001
+            check("comments: LibreOffice converts the ODS written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
 
 
 # ---- Data validation ----
@@ -300,8 +317,37 @@ def test_validation(work):
             check("validation: LibreOffice converts the file written", False, e)
         finally:
             shutil.rmtree(profile, ignore_errors=True)
-    report = convert(FIX, os.path.join(work, "validation.ods"))
-    check("validation: ODS says it leaves them out", "Data validation is kept in Excel workbooks" in report, report)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "validation." + ext)
+        report = convert(FIX, ods)
+        check("validation: kept in ." + ext + ", no note", "Data validation" not in report, report)
+        got = sheet_lines(dump(ods), 0, "validation")
+        check("validation: the seven from ." + ext, got == VALIDATIONS, "\n".join(got))
+    with zipfile.ZipFile(os.path.join(work, "validation.ods")) as z:
+        content = z.read("content.xml").decode()
+    check("validation: ODF's conditions", 'table:condition="of:cell-content-is-in-list(&quot;Yes&quot;;&quot;No&quot;)"' in content and
+          'table:condition="of:cell-content-is-decimal-number() and cell-content-is-between(0,100000)"' in content and
+          'table:condition="of:cell-content-text-length()&lt;=200"' in content and
+          'table:condition="of:is-true-formula(LEN([.A7])&gt;0)"' in content and
+          'table:condition="of:cell-content-is-in-list([$Lists.$A$1:.$A$5])"' in content, content[:2000])
+    check("validation: before the sheets; cells name them, empty ones too",
+          content.find("<table:content-validations>") < content.find("<table:table ") and
+          'table:content-validation-name="val' in content, "")
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-validation-ods")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                            "--outdir", outdir, os.path.join(work, "validation.ods")], check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=300)
+            back = sheet_lines(dump(os.path.join(outdir, "validation.xlsx")), 0, "validation")
+            check("validation: LibreOffice reads the seven from the ODS written", len(back) == 7 and
+                  any('formula "\\"Yes,No\\""' in l and "ranges=6,3-241,3" in l for l in back), "\n".join(back))
+        except Exception as e:  # noqa: BLE001
+            check("validation: LibreOffice converts the ODS written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
 
 
 # ---- The AutoFilter ----
@@ -361,8 +407,60 @@ def test_autofilter(work):
             check("autofilter: LibreOffice converts the file written", False, e)
         finally:
             shutil.rmtree(profile, ignore_errors=True)
-    report = convert(FIX, os.path.join(work, "autofilter.ods"))
-    check("autofilter: ODS says it leaves it out", "AutoFilters are kept in Excel workbooks" in report, report)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "autofilter." + ext)
+        report = convert(filtered, ods)
+        check("autofilter: the buttons and the filter kept in ." + ext + "; the sort said to be left out",
+              "AutoFilters are kept" not in report and "sorting are not kept" in report, report)
+        check("autofilter: the same from ." + ext + " but for the sort",
+              sheet_lines(dump(ods), 0, "autofilter") == [want[0].replace(AF_KEPT[AF_KEPT.find("<sortState"):].replace('"', '\\"'), "")],
+              sheet_lines(dump(ods), 0, "autofilter"))
+    with zipfile.ZipFile(os.path.join(work, "autofilter.ods")) as z:
+        content = z.read("content.xml").decode()
+    check("autofilter: as LibreOffice writes it", '<table:database-range table:name="__Anonymous_Sheet_DB__0" '
+          'table:target-range-address="Systems.A6:Systems.I242" table:display-filter-buttons="true"><table:filter>'
+          '<table:filter-condition table:field-number="3" table:value="Yes" table:operator="="/></table:filter>' in content,
+          content[content.find("<table:database-range"):][:400])
+
+
+def test_ods_quoted_sheet(work):
+    """A sheet whose name ODF quotes (a space, an apostrophe, a letter past ASCII): its rule's base cell, its
+    AutoFilter's range and its comment through ODS."""
+    try:
+        import openpyxl
+        from openpyxl.comments import Comment
+        from openpyxl.worksheet.datavalidation import DataValidation
+    except ImportError:
+        return
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Bob's \u03a9 list"
+    for r in range(1, 6):
+        ws.append(["n%d" % r, r, "Yes" if r % 2 else "No"])
+    ws.auto_filter.ref = "A1:C5"
+    ws.auto_filter.add_filter_column(2, ["Yes", "Maybe & so"])
+    dv = DataValidation(type="whole", operator="between", formula1="1", formula2="9", showErrorMessage=True,
+                        error="1 to 9")
+    ws.add_data_validation(dv)
+    dv.add("B2:B5")
+    ws["A3"].comment = Comment("Checked \u2713", "Zo\u00eb")
+    src = os.path.join(work, "quoted.xlsx")
+    wb.save(src)
+    before = dump(src)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "quoted." + ext)
+        convert(src, ods)
+        after = dump(ods)
+        for kind in ("autofilter", "validation", "comment"):
+            want = sheet_lines(before, 0, kind)
+            if kind == "autofilter":                 # openpyxl's defaults (buttons shown, no blanks) go without saying
+                want = [re.sub(r' (hiddenButton|showButton|blank)=\\"\d\\"', "", l) for l in want]
+            check("quoted sheet name: its %s through .%s" % (kind, ext), sheet_lines(after, 0, kind) == want,
+                  (want, sheet_lines(after, 0, kind)))
+    with zipfile.ZipFile(os.path.join(work, "quoted.ods")) as z:
+        content = z.read("content.xml").decode()
+    check("quoted sheet name: written as ODF quotes it", "table:target-range-address=\"'Bob''s \u03a9 list'.A1:'Bob''s \u03a9 list'.C5\"" in content and
+          "table:base-cell-address=\"'Bob''s \u03a9 list'.B2\"" in content, content[content.find("<table:database-range"):][:300])
 
 
 # ---- Pictures and charts ----
@@ -813,6 +911,7 @@ def main():
         test_comments(work)
         test_validation(work)
         test_autofilter(work)
+        test_ods_quoted_sheet(work)
         test_drawings(work)
         test_charts(work)
         damaged(work)

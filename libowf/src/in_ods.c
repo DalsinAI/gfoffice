@@ -9,8 +9,11 @@
  * lowered text, colours, number formats, alignment, wrap, indents,
  * backgrounds, borders); column widths and row heights, hidden rows,
  * columns and sheets, merged cells, array formulas, frozen panes and the
- * active sheet (settings.xml), named ranges and expressions, and the 1904
- * date system (the null date).
+ * active sheet (settings.xml), named ranges and expressions, the 1904
+ * date system (the null date), comments on cells (office:annotation), data
+ * validation (table:content-validations and the cells that name them) and
+ * AutoFilters (a database range with its buttons, and its conditions of
+ * values as Excel's).
  *
  * The XML is read as a stream, element by element: a sheet's memory is its
  * cells'. Repeated rows and cells (number-rows-repeated, the empty rows to
@@ -35,6 +38,7 @@
 #define NS_DRAW "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
 #define NS_CALCEXT "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0"
 #define NS_LOEXT "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0"
+#define NS_DC "http://purl.org/dc/elements/1.1/"
 /* libowf's own attributes: Excel's text of a number format, a sheet's default
  * column width and row height, which ODF has no place for. Other programs
  * ignore them, as ODF lets them; libowf reads them back. */
@@ -127,6 +131,23 @@ typedef struct {
 } ods_split;
 
 typedef struct {
+    char *name;
+    owf_validation v;                    /* without its ranges: the cells naming it give them */
+    int ok;                              /* its condition read */
+} ods_rule;
+
+typedef struct {
+    int rule;
+    owf_range *ranges;
+    int nranges, capranges;
+} ods_use;                               /* a rule's cells on the sheet being read */
+
+typedef struct {
+    int rule;
+    unsigned long first, last;
+} ods_run;                               /* a rule's cells in the row being read */
+
+typedef struct {
     owf_book *book;
     owf_report *report;
     int failed, damaged;
@@ -185,7 +206,28 @@ typedef struct {
     owf_buf cfg_text;
 
     int notes_cell;
+
+    /* data validation: the rules, the one being read (its number, 0 none), its message and text */
+    ods_rule *rules;
+    int nrules, caprules, rule_cur, rule_msg, rule_p, rule_paras;
+    owf_buf rule_text;
+    ods_use *uses;
+    int nuses, capuses;
+    ods_run *runs;
+    int nruns, capruns;
+    /* the comment of the cell being read */
+    int note_depth, note_p, note_who, note_paras, note_ready;
+    owf_buf note_text, note_author;
+    /* the AutoFilter being read: its sheet, Excel's filterColumn elements */
+    owf_sheet *af_sheet;
+    owf_buf af_xml;
+    int af_field, af_values, af_or, af_approx;
+    char *af_value;                      /* the filter-condition's own value, for one without a set */
 } ods;
+
+static void rule_cell(ods *o, const char *name, unsigned long first, unsigned long last);
+static void rule_row(ods *o, unsigned long n);
+static void rule_table(ods *o);
 
 static void *grow(ods *o, void *items, int count, int *capacity, size_t size)
 {
@@ -1046,17 +1088,30 @@ static void end_cell(ods *o)
     long mat_c = whole(cell_attr(o, NS_TABLE, "number-matrix-columns-spanned"), 1, 1, (long)MAX_COLS);
     long mat_r = whole(cell_attr(o, NS_TABLE, "number-matrix-rows-spanned"), 1, 1, (long)MAX_ROWS);
     int matrix = cell_attr(o, NS_TABLE, "number-matrix-columns-spanned") || cell_attr(o, NS_TABLE, "number-matrix-rows-spanned");
+    const char *rule = cell_attr(o, NS_TABLE, "content-validation-name");
     char *excel = NULL;
-    int style, k, has, explicit_style;
+    int style, k, has, explicit_style, note = o->note_ready;
     owf_cell probe;
 
     o->in_cell = 0;
+    o->note_ready = 0;
     if (o->col >= MAX_COLS || o->row >= MAX_ROWS) {
         o->col += (unsigned long)repeat;
         return;
     }
     if ((unsigned long)repeat > MAX_COLS - o->col)
         repeat = (long)(MAX_COLS - o->col);
+    if (rule)
+        rule_cell(o, rule, o->col, o->col + (unsigned long)repeat - 1);
+    if (note) {                                  /* its comment, on the first of its columns */
+        owf_buf_putc(&o->note_text, 0);
+        owf_buf_putc(&o->note_author, 0);
+        if (!o->note_text.failed && !o->note_author.failed &&
+            owf_sheet_set_comment(o->sheet, (unsigned)o->row, (unsigned)o->col,
+                                  o->note_author.data[0] ? (const char *)o->note_author.data : NULL,
+                                  (const char *)o->note_text.data) < 0)
+            o->failed = 1;
+    }
     explicit_style = name != NULL;
     if (!name)
         name = o->row_cell_style ? o->row_cell_style : column_cell_style(o, o->col);
@@ -1240,10 +1295,13 @@ static void end_row(ods *o)
     unsigned long n = o->row_repeat, k;
     int custom = s && !s->optimal, i, first = o->row_first_cell, last = o->sheet->ncells;
     int height = s && s->height > 0 ? s->height : o->sheet->default_height;
-    if (o->row >= MAX_ROWS)
+    if (o->row >= MAX_ROWS) {
+        o->nruns = 0;
         return;
+    }
     if (n > MAX_ROWS - o->row)
         n = MAX_ROWS - o->row;
+    rule_row(o, n);
     if (custom || o->row_hidden) {
         for (k = 0; k < n && !o->failed; k++) {
             if (k && !o->row_budget--) {
@@ -1330,6 +1388,7 @@ static void end_table(ods *o)
     for (i = 0; i < o->narrays; i++)
         free(o->arrays[i].text);
     o->narrays = 0;
+    rule_table(o);
     o->sheet = NULL;
     o->table_depth = 0;
 }
@@ -1480,15 +1539,550 @@ static void config_end(ods *o, const owf_xml_event *e)
     }
 }
 
+/* ---- Data validation ---- */
+
+static const char *after(const char *s, const char *prefix)
+{
+    size_t n = strlen(prefix);
+    return strncmp(s, prefix, n) ? NULL : s + n;
+}
+
+static char *copy_n(ods *o, const char *s, size_t n)
+{
+    char *out = malloc(n + 1);
+    if (!out) {
+        o->failed = 1;
+        return NULL;
+    }
+    memcpy(out, s, n);
+    out[n] = 0;
+    return out;
+}
+
+/* The arguments of "(a,b)" at p, copied (b NULL when there is one); where they end, or NULL. */
+static const char *rule_args(ods *o, const char *p, char **a, char **b)
+{
+    int depth = 0, quote = 0;
+    const char *start, *comma = NULL;
+    *a = *b = NULL;
+    while (*p == ' ')
+        p++;
+    if (*p != '(')
+        return NULL;
+    start = ++p;
+    for (; *p; p++) {
+        if (quote) {
+            if (*p == '"') {
+                if (p[1] == '"')
+                    p++;
+                else
+                    quote = 0;
+            }
+            continue;
+        }
+        if (*p == '"')
+            quote = 1;
+        else if (*p == '(' || *p == '[')
+            depth++;
+        else if (*p == ']')
+            depth--;
+        else if (*p == ')') {
+            if (!depth)
+                break;
+            depth--;
+        } else if (*p == ',' && !depth && !comma)
+            comma = p;
+    }
+    if (*p != ')')
+        return NULL;
+    if (comma) {
+        *a = copy_n(o, start, (size_t)(comma - start));
+        *b = copy_n(o, comma + 1, (size_t)(p - comma - 1));
+    } else {
+        *a = copy_n(o, start, (size_t)(p - start));
+    }
+    return p + 1;
+}
+
+/* A list's ODF expression as Excel's: "Yes";"No" as "\"Yes,No\"", a range or a name as its formula. */
+static char *list_formula(const char *of)
+{
+    const char *p = of;
+    owf_buf b;
+    int n = 0;
+    owf_buf_init(&b);
+    owf_buf_putc(&b, '"');
+    while (*p == ' ')
+        p++;
+    while (*p == '"') {
+        p++;
+        if (n++)
+            owf_buf_putc(&b, ',');
+        while (*p && !(*p == '"' && p[1] != '"')) {
+            if (*p == '"')
+                p++;
+            owf_buf_putc(&b, *p++);
+        }
+        if (*p != '"')
+            break;
+        p++;
+        while (*p == ' ')
+            p++;
+        if (*p != ';')
+            break;
+        p++;
+        while (*p == ' ')
+            p++;
+    }
+    if (n && !*p && !b.failed) {
+        owf_buf_putc(&b, '"');
+        owf_buf_putc(&b, 0);
+        if (!b.failed)
+            return (char *)b.data;
+    }
+    owf_buf_free(&b);
+    return owf_of_to_excel(of);
+}
+
+/* A comparison and its value, "<=10": the operator (OWF_CF_...) and the value as Excel's formula. */
+static int compared(const char *p, owf_validation *v)
+{
+    static const struct { const char *text; int op; } ops[] = {
+        { "<=", OWF_CF_LESS_EQUAL }, { ">=", OWF_CF_GREATER_EQUAL }, { "!=", OWF_CF_NOT_EQUAL },
+        { "<>", OWF_CF_NOT_EQUAL }, { "=", OWF_CF_EQUAL }, { "<", OWF_CF_LESS }, { ">", OWF_CF_GREATER }
+    };
+    size_t i;
+    while (*p == ' ')
+        p++;
+    for (i = 0; i < sizeof ops / sizeof ops[0]; i++) {
+        const char *q = after(p, ops[i].text);
+        if (q) {
+            v->op = ops[i].op;
+            while (*q == ' ')
+                q++;
+            return *q && (v->formula[0] = owf_of_to_excel(q)) != NULL;
+        }
+    }
+    return 0;
+}
+
+/* ODF's table:condition ("of:cell-content-is-whole-number() and cell-content-is-between(1,10)") as the
+ * model's rule; 0 when it says something the model has no rule for. */
+static int read_condition(ods *o, const char *c, owf_validation *v)
+{
+    static const struct { const char *text; int type; } kinds[] = {
+        { "cell-content-is-whole-number()", OWF_DV_WHOLE }, { "cell-content-is-decimal-number()", OWF_DV_DECIMAL },
+        { "cell-content-is-date()", OWF_DV_DATE }, { "cell-content-is-time()", OWF_DV_TIME }
+    };
+    const char *p, *q;
+    char *a = NULL, *b = NULL;
+    int ok = 0, two = 0, not_between = 0;
+    size_t i;
+    if ((q = after(c, "of:")) != NULL || (q = after(c, "oooc:")) != NULL)
+        c = q;
+    for (p = c; *p == ' '; p++)
+        ;
+    v->type = OWF_DV_ANY;
+    for (i = 0; i < sizeof kinds / sizeof kinds[0]; i++)
+        if ((q = after(p, kinds[i].text)) != NULL) {
+            v->type = kinds[i].type;
+            while (*q == ' ')
+                q++;
+            if (!*q) {                           /* any number of the kind: Excel's has bounds, as wide as it takes */
+                static const char *const lo[] = { "", "-1E+307", "-1E+307", "", "1", "0" },
+                                         *hi[] = { "", "1E+307", "1E+307", "", "2958465", "0.999988425925926" };
+                v->op = OWF_CF_BETWEEN;
+                return (v->formula[0] = copy(o, lo[v->type])) != NULL && (v->formula[1] = copy(o, hi[v->type])) != NULL;
+            }
+            if (!(p = after(q, "and")))
+                return 0;
+            while (*p == ' ')
+                p++;
+            break;
+        }
+    if ((q = after(p, "cell-content-is-in-list")) != NULL) {
+        if (rule_args(o, q, &a, &b) && a && !b) {
+            v->type = OWF_DV_LIST;
+            ok = (v->formula[0] = list_formula(a)) != NULL;
+        }
+    } else if ((q = after(p, "is-true-formula")) != NULL) {
+        if (rule_args(o, q, &a, &b) && a && !b) {
+            v->type = OWF_DV_CUSTOM;
+            ok = (v->formula[0] = owf_of_to_excel(a)) != NULL;
+        }
+    } else if ((q = after(p, "cell-content-text-length-is-between")) != NULL ||
+               (not_between = (q = after(p, "cell-content-text-length-is-not-between")) != NULL) != 0) {
+        v->type = OWF_DV_TEXT_LENGTH;
+        two = 1;
+    } else if ((q = after(p, "cell-content-text-length()")) != NULL) {
+        v->type = OWF_DV_TEXT_LENGTH;
+        ok = compared(q, v);
+    } else if ((q = after(p, "cell-content-is-between")) != NULL ||
+               (not_between = (q = after(p, "cell-content-is-not-between")) != NULL) != 0) {
+        two = 1;
+    } else if ((q = after(p, "cell-content()")) != NULL) {
+        ok = compared(q, v);
+    }
+    if (two && rule_args(o, q, &a, &b) && a && b) {
+        v->op = not_between ? OWF_CF_NOT_BETWEEN : OWF_CF_BETWEEN;
+        ok = (v->formula[0] = owf_of_to_excel(a)) != NULL && (v->formula[1] = owf_of_to_excel(b)) != NULL;
+    }
+    if (ok && v->type == OWF_DV_ANY)               /* a number with no kind said: any number */
+        v->type = OWF_DV_DECIMAL;
+    free(a);
+    free(b);
+    return ok;
+}
+
+/* table:content-validation: a rule, its cells to come. */
+static void rule_start(ods *o, const owf_xml_event *e)
+{
+    const char *name = ev(e, NS_TABLE, "name"), *cond = ev(e, NS_TABLE, "condition"), *v;
+    ods_rule *r;
+    if (!name || !(r = grow(o, o->rules, o->nrules, &o->caprules, sizeof *r)))
+        return;
+    o->rules = r;
+    r = &o->rules[o->nrules];
+    memset(r, 0, sizeof *r);
+    if (!(r->name = copy(o, name)))
+        return;
+    o->nrules++;
+    o->rule_cur = o->nrules;
+    r->v.allow_blank = !(v = ev(e, NS_TABLE, "allow-empty-cell")) || strcmp(v, "false") != 0;
+    r->v.no_dropdown = (v = ev(e, NS_TABLE, "display-list")) != NULL && !strcmp(v, "none");
+    r->ok = !cond || read_condition(o, cond, &r->v);
+    if (!r->ok)
+        owf_report_add(o->report, OWF_NOTE_LOST, "Some data validation rules could not be read: their cells take anything");
+}
+
+/* Its help-message (which 1) or error-message (2). */
+static void rule_message(ods *o, const owf_xml_event *e, int which)
+{
+    ods_rule *r = &o->rules[o->rule_cur - 1];
+    const char *t = ev(e, NS_TABLE, "title"), *d = ev(e, NS_TABLE, "display"), *m = ev(e, NS_TABLE, "message-type");
+    int display = !d || !strcmp(d, "true");
+    o->rule_msg = which;
+    o->rule_text.length = 0;
+    o->rule_paras = 0;
+    if (which == 1) {
+        r->v.show_prompt = display;
+        if (t && !r->v.prompt_title)
+            r->v.prompt_title = copy(o, t);
+    } else {
+        r->v.show_error = display;
+        r->v.error_style = m && !strcmp(m, "warning") ? OWF_DV_WARNING : m && !strcmp(m, "information") ? OWF_DV_INFORMATION
+                                                                                                         : OWF_DV_STOP;
+        if (t && !r->v.error_title)
+            r->v.error_title = copy(o, t);
+    }
+}
+
+static void rule_message_end(ods *o)
+{
+    ods_rule *r = &o->rules[o->rule_cur - 1];
+    char **to = o->rule_msg == 1 ? &r->v.prompt : &r->v.error;
+    if (o->rule_text.length && !*to && !o->rule_text.failed)
+        *to = copy_n(o, (const char *)o->rule_text.data, o->rule_text.length);
+    o->rule_msg = 0;
+    o->rule_p = 0;
+}
+
+/* A cell (repeated to last) naming a rule: one more of its cells in the row being read. */
+static void rule_cell(ods *o, const char *name, unsigned long first, unsigned long last)
+{
+    ods_run *run;
+    int i;
+    for (i = 0; i < o->nrules && strcmp(o->rules[i].name, name); i++)
+        ;
+    if (i == o->nrules || !o->rules[i].ok)
+        return;
+    if (o->nruns && o->runs[o->nruns - 1].rule == i && o->runs[o->nruns - 1].last + 1 == first) {
+        o->runs[o->nruns - 1].last = last;
+        return;
+    }
+    if (!(run = grow(o, o->runs, o->nruns, &o->capruns, sizeof *run)))
+        return;
+    o->runs = run;
+    run = &o->runs[o->nruns++];
+    run->rule = i;
+    run->first = first;
+    run->last = last;
+}
+
+/* The row's runs (repeated over n rows) into their rules' ranges on the sheet: a range below another of the
+ * same columns grows it, as one beside another of the same rows. */
+static void rule_row(ods *o, unsigned long n)
+{
+    int k, i, j;
+    for (k = 0; k < o->nruns && !o->failed; k++) {
+        const ods_run *run = &o->runs[k];
+        ods_use *u;
+        owf_range *r;
+        unsigned long last_row = o->row + n - 1 < MAX_ROWS ? o->row + n - 1 : MAX_ROWS - 1;
+        for (i = 0; i < o->nuses && o->uses[i].rule != run->rule; i++)
+            ;
+        if (i == o->nuses) {
+            if (!(u = grow(o, o->uses, o->nuses, &o->capuses, sizeof *u)))
+                return;
+            o->uses = u;
+            u = &o->uses[o->nuses++];
+            memset(u, 0, sizeof *u);
+            u->rule = run->rule;
+        }
+        u = &o->uses[i];
+        for (j = u->nranges - 1; j >= 0 && j >= u->nranges - 64; j--) {
+            r = &u->ranges[j];
+            if (r->first_col == run->first && r->last_col == run->last && (unsigned long)r->last_row + 1 == o->row) {
+                r->last_row = (unsigned)last_row;
+                break;
+            }
+        }
+        if (j >= 0 && j >= u->nranges - 64)
+            continue;
+        if (u->nranges) {
+            r = &u->ranges[u->nranges - 1];
+            if (r->first_row == o->row && r->last_row == last_row && (unsigned long)r->last_col + 1 == run->first) {
+                r->last_col = (unsigned)run->last;
+                continue;
+            }
+        }
+        if (u->nranges >= 65536) {
+            owf_report_add(o->report, OWF_NOTE_LOST, "Some cells' data validation was left out: too many ranges");
+            continue;
+        }
+        if (!(r = grow(o, u->ranges, u->nranges, &u->capranges, sizeof *r)))
+            return;
+        u->ranges = r;
+        r = &u->ranges[u->nranges++];
+        r->first_row = (unsigned)o->row;
+        r->last_row = (unsigned)last_row;
+        r->first_col = (unsigned)run->first;
+        r->last_col = (unsigned)run->last;
+    }
+    o->nruns = 0;
+}
+
+static char *copy_or_null(ods *o, const char *s)
+{
+    return s ? copy(o, s) : NULL;
+}
+
+/* After a sheet: its rules, each with the ranges its cells gave, in the order the rules came. */
+static void rule_table(ods *o)
+{
+    int i, k;
+    for (i = 1; i < o->nuses; i++)                /* by the rule's place: as written */
+        for (k = i; k > 0 && o->uses[k - 1].rule > o->uses[k].rule; k--) {
+            ods_use t = o->uses[k];
+            o->uses[k] = o->uses[k - 1];
+            o->uses[k - 1] = t;
+        }
+    for (i = 0; i < o->nuses; i++) {
+        ods_use *u = &o->uses[i];
+        const owf_validation *src = &o->rules[u->rule].v;
+        owf_validation *v = o->failed ? NULL : owf_sheet_add_validation(o->sheet);
+        if (!v) {
+            o->failed = 1;
+            free(u->ranges);
+            continue;
+        }
+        *v = *src;
+        v->ranges = u->ranges;
+        v->nranges = u->nranges;
+        v->formula[0] = copy_or_null(o, src->formula[0]);
+        v->formula[1] = copy_or_null(o, src->formula[1]);
+        v->prompt_title = copy_or_null(o, src->prompt_title);
+        v->prompt = copy_or_null(o, src->prompt);
+        v->error_title = copy_or_null(o, src->error_title);
+        v->error = copy_or_null(o, src->error);
+    }
+    o->nuses = 0;
+    o->nruns = 0;
+}
+
+/* ---- AutoFilters ---- */
+
+/* "'My sheet'.$A$6" at *p: the sheet's name (copied into name, when there is one) and the cell; where it
+ * ends. 0 when it is not one. */
+static int odf_cell(const char **p, char *name, size_t size, unsigned long *row, unsigned long *col)
+{
+    const char *s = *p;
+    size_t n = 0;
+    unsigned long c = 0, r = 0;
+    if (*s == '$')
+        s++;
+    if (*s == '\'') {
+        for (s++; *s && !(*s == '\'' && s[1] != '\''); s++) {
+            if (*s == '\'')
+                s++;
+            if (n + 1 < size)
+                name[n++] = *s;
+        }
+        if (*s != '\'')
+            return 0;
+        s++;
+        name[n] = 0;
+    } else if (*s != '.') {
+        const char *dot = strchr(s, '.');
+        if (!dot)
+            return 0;
+        for (; s < dot; s++)
+            if (n + 1 < size)
+                name[n++] = *s;
+        name[n] = 0;
+    }
+    if (*s++ != '.')
+        return 0;
+    if (*s == '$')
+        s++;
+    while ((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z')) {
+        c = c * 26 + (unsigned long)((*s & 0x1F));
+        s++;
+        if (c > MAX_COLS)
+            return 0;
+    }
+    if (*s == '$')
+        s++;
+    while (*s >= '0' && *s <= '9') {
+        r = r * 10 + (unsigned long)(*s - '0');
+        s++;
+        if (r > MAX_ROWS)
+            return 0;
+    }
+    if (!c || !r)
+        return 0;
+    *row = r - 1;
+    *col = c - 1;
+    *p = s;
+    return 1;
+}
+
+/* table:database-range: with its buttons, an AutoFilter on its sheet. */
+static void filter_start(ods *o, const owf_xml_event *e)
+{
+    const char *v = ev(e, NS_TABLE, "display-filter-buttons"), *p = ev(e, NS_TABLE, "target-range-address");
+    char name[256] = "", second[256] = "";
+    unsigned long r0, c0, r1, c1;
+    int i;
+    o->af_sheet = NULL;
+    if (!v || strcmp(v, "true") || !p || !odf_cell(&p, name, sizeof name, &r0, &c0) || *p++ != ':' ||
+        !odf_cell(&p, second, sizeof second, &r1, &c1) || r1 < r0 || c1 < c0)
+        return;
+    for (i = 0; i < o->book->nsheets && strcmp(o->book->sheets[i].name, name); i++)
+        ;
+    if (i == o->book->nsheets || o->book->sheets[i].has_autofilter)
+        return;
+    o->af_sheet = &o->book->sheets[i];
+    o->af_sheet->has_autofilter = 1;
+    o->af_sheet->autofilter.first_row = (unsigned)r0;
+    o->af_sheet->autofilter.first_col = (unsigned)c0;
+    o->af_sheet->autofilter.last_row = (unsigned)r1;
+    o->af_sheet->autofilter.last_col = (unsigned)c1;
+    o->af_xml.length = 0;
+    o->af_xml.failed = 0;
+    o->af_field = -1;
+    o->af_or = o->af_approx = 0;
+}
+
+/* The XML of a filterColumn's value: as escaped in an attribute. */
+static void af_value(ods *o, const char *v)
+{
+    owf_buf_puts(&o->af_xml, "<filter val=\"");
+    for (; *v; v++) {
+        switch (*v) {
+        case '&': owf_buf_puts(&o->af_xml, "&amp;"); break;
+        case '<': owf_buf_puts(&o->af_xml, "&lt;"); break;
+        case '>': owf_buf_puts(&o->af_xml, "&gt;"); break;
+        case '"': owf_buf_puts(&o->af_xml, "&quot;"); break;
+        default: owf_buf_putc(&o->af_xml, *v);
+        }
+    }
+    owf_buf_puts(&o->af_xml, "\"/>");
+}
+
+/* Inside it: table:filter-or, table:filter-condition (a field equal to a value, or to one of a set). */
+static void filter_child(ods *o, const owf_xml_event *e)
+{
+    if (is(e, NS_TABLE, "filter-or")) {
+        o->af_or = 1;
+    } else if (is(e, NS_TABLE, "filter-condition")) {
+        const char *op = ev(e, NS_TABLE, "operator"), *val = ev(e, NS_TABLE, "value");
+        long field = whole(ev(e, NS_TABLE, "field-number"), -1, 0, (long)MAX_COLS);
+        if (o->af_field >= 0)
+            owf_buf_puts(&o->af_xml, "</filters></filterColumn>");
+        o->af_field = -1;
+        if (!op || strcmp(op, "=") || field < 0 || !val) {
+            o->af_approx = 1;
+            return;
+        }
+        o->af_field = (int)field;
+        o->af_values = 0;
+        owf_buf_printf(&o->af_xml, "<filterColumn colId=\"%ld\"><filters>", field);
+        free(o->af_value);
+        o->af_value = copy(o, val);          /* one value, unless a set's items say them all */
+    } else if (is(e, NS_TABLE, "filter-set-item") && o->af_field >= 0) {
+        const char *val = ev(e, NS_TABLE, "value");
+        if (val) {
+            af_value(o, val);
+            o->af_values++;
+        }
+    }
+}
+
+/* The end of a filter-condition: its own value when no set's items said any. */
+static void filter_condition_end(ods *o)
+{
+    if (o->af_field >= 0 && !o->af_values && o->af_value) {
+        af_value(o, o->af_value);
+        o->af_values = 1;
+    }
+    free(o->af_value);
+    o->af_value = NULL;
+}
+
+static void filter_end(ods *o)
+{
+    owf_sheet *sh = o->af_sheet;
+    if (o->af_field >= 0)
+        owf_buf_puts(&o->af_xml, "</filters></filterColumn>");
+    o->af_sheet = NULL;
+    if (o->af_or || o->af_approx)
+        owf_report_add(o->report, OWF_NOTE_APPROX, "Some AutoFilters' conditions (other than a column's values) are left out: their buttons are kept");
+    if (o->af_or || !sh || !o->af_xml.length || o->af_xml.failed)
+        return;
+    if (!(sh->autofilter_xml = copy_n(o, (const char *)o->af_xml.data, o->af_xml.length)))
+        return;
+}
+
 /* ---- The stream ---- */
 
 static void text_start(ods *o, const owf_xml_event *e)
 {
     if (o->skip_depth)
         return;
+    if (o->note_depth) {                         /* the cell's comment: its author and paragraphs */
+        if (is(e, NS_TEXT, "p") || is(e, NS_TEXT, "h")) {
+            if (o->note_paras++)
+                owf_buf_putc(&o->note_text, '\n');
+            o->note_p = 1;
+        } else if (is(e, NS_DC, "creator")) {
+            o->note_who = 1;
+        } else if (is(e, NS_TEXT, "s") && o->note_p) {
+            long c = whole(ev(e, NS_TEXT, "c"), 1, 1, 1000);
+            while (c-- > 0)
+                owf_buf_putc(&o->note_text, ' ');
+        } else if (is(e, NS_TEXT, "tab") && o->note_p) {
+            owf_buf_putc(&o->note_text, '\t');
+        } else if (is(e, NS_TEXT, "line-break") && o->note_p) {
+            owf_buf_putc(&o->note_text, '\n');
+        }
+        return;
+    }
     if (is(e, NS_OFFICE, "annotation")) {
-        owf_report_add(o->report, OWF_NOTE_LOST, "Comments on cells are not read yet");
-        o->skip_depth = e->depth;
+        o->note_depth = e->depth;
+        o->note_text.length = o->note_author.length = 0;
+        o->note_text.failed = o->note_author.failed = 0;
+        o->note_paras = o->note_p = o->note_who = 0;
     } else if (!strcmp(e->ns, NS_DRAW)) {
         owf_report_add(o->report, OWF_NOTE_LOST, "Pictures, charts and drawings on sheets are not read yet");
         o->skip_depth = e->depth;
@@ -1519,6 +2113,22 @@ static void body_start(ods *o, const owf_xml_event *e)
         text_start(o, e);
         return;
     }
+    if (o->rule_cur && !o->sheet) {              /* inside a rule: its messages */
+        if (is(e, NS_TABLE, "help-message"))
+            rule_message(o, e, 1);
+        else if (is(e, NS_TABLE, "error-message"))
+            rule_message(o, e, 2);
+        else if (o->rule_msg && (is(e, NS_TEXT, "p") || is(e, NS_TEXT, "h"))) {
+            if (o->rule_paras++)
+                owf_buf_putc(&o->rule_text, '\n');
+            o->rule_p = 1;
+        }
+        return;
+    }
+    if (o->af_sheet && !o->sheet) {              /* inside an AutoFilter: its conditions */
+        filter_child(o, e);
+        return;
+    }
     if (!strcmp(e->ns, NS_TABLE)) {
         const char *n = e->name;
         if (!strcmp(n, "table") && !o->sheet && !o->skip_depth) {
@@ -1533,9 +2143,9 @@ static void body_start(ods *o, const owf_xml_event *e)
             } else if (!strcmp(n, "named-expression")) {
                 named(o, e, 1);
             } else if (!strcmp(n, "content-validation")) {
-                owf_report_add(o->report, OWF_NOTE_LOST, "Data validation (lists to pick from, limits) is not read yet");
-            } else if (!strcmp(n, "database-range") && ev(e, NS_TABLE, "display-filter-buttons")) {
-                owf_report_add(o->report, OWF_NOTE_LOST, "AutoFilter buttons are not read yet");
+                rule_start(o, e);
+            } else if (!strcmp(n, "database-range")) {
+                filter_start(o, e);
             } else if (!strcmp(n, "dde-link")) {
                 owf_report_add(o->report, OWF_NOTE_LOST, "Links to other programs (DDE) keep their last values");
             }
@@ -1571,14 +2181,37 @@ static void body_end(ods *o, const owf_xml_event *e)
         return;
     }
     if (o->in_cell) {
-        if (is(e, NS_TABLE, "table-cell") || is(e, NS_TABLE, "covered-table-cell"))
+        if (o->note_depth) {
+            if (e->depth == o->note_depth) {
+                o->note_depth = 0;
+                o->note_ready = 1;
+            } else if (is(e, NS_TEXT, "p") || is(e, NS_TEXT, "h")) {
+                o->note_p = 0;
+            } else if (is(e, NS_DC, "creator")) {
+                o->note_who = 0;
+            }
+        } else if (is(e, NS_TABLE, "table-cell") || is(e, NS_TABLE, "covered-table-cell"))
             end_cell(o);
         else if (is(e, NS_TEXT, "p") || is(e, NS_TEXT, "h"))
             o->in_p = 0;
         return;
     }
-    if (!o->sheet)
+    if (!o->sheet) {
+        if (o->rule_cur) {
+            if (is(e, NS_TABLE, "content-validation"))
+                o->rule_cur = 0;
+            else if (is(e, NS_TABLE, "help-message") || is(e, NS_TABLE, "error-message"))
+                rule_message_end(o);
+            else if (is(e, NS_TEXT, "p") || is(e, NS_TEXT, "h"))
+                o->rule_p = 0;
+        } else if (o->af_sheet) {
+            if (is(e, NS_TABLE, "database-range"))
+                filter_end(o);
+            else if (is(e, NS_TABLE, "filter-condition"))
+                filter_condition_end(o);
+        }
         return;
+    }
     if (is(e, NS_TABLE, "table-row"))
         end_row(o);
     else if (is(e, NS_TABLE, "table") && e->depth == o->table_depth)
@@ -1605,7 +2238,15 @@ static int read_part(ods *o, char *data, size_t length)
             }
         }
         if (e.type == OWF_XS_TEXT) {
-            if (o->in_cell && o->in_p && !o->skip_depth) {
+            if (o->note_depth && !o->skip_depth) {
+                if (o->note_p && o->note_text.length + e.length <= MAX_CELL_TEXT)
+                    owf_buf_put(&o->note_text, e.text, e.length);
+                else if (o->note_who && o->note_author.length + e.length <= 1024)
+                    owf_buf_put(&o->note_author, e.text, e.length);
+            } else if (o->rule_msg && o->rule_p) {
+                if (o->rule_text.length + e.length <= 65536)
+                    owf_buf_put(&o->rule_text, e.text, e.length);
+            } else if (o->in_cell && o->in_p && !o->skip_depth) {
                 if (o->text.length + e.length <= MAX_CELL_TEXT)
                     owf_buf_put(&o->text, e.text, e.length);
                 else
@@ -1779,6 +2420,20 @@ static void free_reader(ods *o)
         free(o->splits[i].sheet);
     free(o->splits);
     owf_buf_free(&o->cfg_text);
+    for (i = 0; i < o->nrules; i++) {
+        free(o->rules[i].name);
+        owf_validation_free(&o->rules[i].v);
+    }
+    free(o->rules);
+    for (i = 0; i < o->nuses; i++)
+        free(o->uses[i].ranges);
+    free(o->uses);
+    free(o->runs);
+    owf_buf_free(&o->rule_text);
+    owf_buf_free(&o->note_text);
+    owf_buf_free(&o->note_author);
+    owf_buf_free(&o->af_xml);
+    free(o->af_value);
 }
 
 static ods *new_reader(owf_book *book, owf_report *report)
@@ -1796,6 +2451,10 @@ static ods *new_reader(owf_book *book, owf_report *report)
     o->text_budget = TEXT_BUDGET;
     owf_buf_init(&o->text);
     owf_buf_init(&o->cfg_text);
+    owf_buf_init(&o->rule_text);
+    owf_buf_init(&o->note_text);
+    owf_buf_init(&o->note_author);
+    owf_buf_init(&o->af_xml);
     return o;
 }
 
