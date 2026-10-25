@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document-settings xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0" office:version="1.2">
+ <office:settings>
+  <config:config-item-set config:name="ooo:view-settings">
+   <config:config-item-map-indexed config:name="Views">
+    <config:config-item-map-entry>
+     <config:config-item config:name="ViewId" config:type="string">view1</config:config-item>
+     <config:config-item-map-named config:name="Tables">
+      <config:config-item-map-entry config:name="Figures">
+       <config:config-item config:name="HorizontalSplitMode" config:type="short">2</config:config-item>
+       <config:config-item config:name="VerticalSplitMode" config:type="short">2</config:config-item>
+       <config:config-item config:name="HorizontalSplitPosition" config:type="int">2</config:config-item>
+       <config:config-item config:name="VerticalSplitPosition" config:type="int">1</config:config-item>
+      </config:config-item-map-entry>
+      <config:config-item-map-entry config:name="Split">
+       <config:config-item config:name="HorizontalSplitMode" config:type="short">1</config:config-item>
+       <config:config-item config:name="HorizontalSplitPosition" config:type="int">3000</config:config-item>
+      </config:config-item-map-entry>
+     </config:config-item-map-named>
+     <config:config-item config:name="ActiveTable" config:type="string">Split</config:config-item>
+    </config:config-item-map-entry>
+    <config:config-item-map-entry>
+     <config:config-item config:name="ActiveTable" config:type="string">Figures</config:config-item>
+    </config:config-item-map-entry>
+   </config:config-item-map-indexed>
+  </config:config-item-set>
+ </office:settings>
+</office:document-settings>

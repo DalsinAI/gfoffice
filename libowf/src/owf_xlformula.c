@@ -888,6 +888,11 @@ enum { IN_FUNC = 1, IN_GROUP, IN_ARRAY };
 
 char *owf_excel_to_of(const char *text)
 {
+    return owf_excel_to_of_lossy(text, NULL);
+}
+
+char *owf_excel_to_of_lossy(const char *text, int *lost)
+{
     const char *p = text;
     owf_buf out;
     tok t, ahead;
@@ -945,8 +950,11 @@ char *owf_excel_to_of(const char *text)
             break;
         case K_NAME:
             /* OpenFormula has no names of a sheet's or another book's own */
-            if (t.prefix)
+            if (t.prefix) {
                 owf_buf_put(&out, t.body, t.nbody);
+                if (lost)
+                    *lost = 1;
+            }
             else
                 owf_buf_put(&out, t.p, t.n);
             break;

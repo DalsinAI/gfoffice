@@ -115,6 +115,35 @@ int owf_calc_circular_count(const owf_calc *calc);
  * OWF_ERR_UNSUPPORTED for a sheet that is not there. */
 int owf_calc_shift(owf_calc *calc, int sheet, int axis, unsigned at, int count);
 
+/* The program changed cells in a range itself (an undo put back values
+ * and formulas with owf_sheet_cell and owf_cell_set_...): the engine takes
+ * the range's formulas again and marks dirty what is there and what reads
+ * it, without parsing the rest of the book. A formula there that the
+ * engine cannot work out keeps the value the program gave it. OWF_OK,
+ * OWF_ERR_MEMORY (the next recalc parses everything again) or
+ * OWF_ERR_UNSUPPORTED for a sheet that is not there. */
+int owf_calc_touch(owf_calc *calc, int sheet, const owf_range *range);
+
+/* Renames a sheet, and every reference to it in the book's formulas and
+ * defined names ("Old!A1" becomes "'New name'!A1"; quotes as the name
+ * needs them). OWF_OK; OWF_ERR_FORMAT for a name Excel would not take
+ * (empty, over 31 characters, one of : \ / ? * [ ], a ' first or last, or
+ * another sheet's name in any case): nothing changes; OWF_ERR_MEMORY
+ * (nothing changes); OWF_ERR_UNSUPPORTED for a sheet that is not there. */
+int owf_calc_rename_sheet(owf_calc *calc, int sheet, const char *name);
+
+/* Cut and paste: the cells of range on sheet move by (drow, dcol) to
+ * dsheet, as Excel moves them. The cells there before are replaced; the
+ * range's cells left behind are empty. Formulas that move keep pointing
+ * where they pointed (relative references do not move; a reference left
+ * on the old sheet gets its sheet's name). Every reference in the book to
+ * cells all inside the range follows them; a reference to a replaced cell
+ * (not in the range) becomes #REF!. What reads either place is marked
+ * dirty. OWF_OK, OWF_ERR_UNSUPPORTED (a sheet that is not there, or a
+ * place off the sheet), OWF_ERR_MEMORY (the book may be half moved: the
+ * next recalc parses everything again). */
+int owf_calc_move_range(owf_calc *calc, int sheet, const owf_range *range, int dsheet, int drow, int dcol);
+
 /* A formula's text (with or without its "=") as copied from (row, col) to
  * (row + drow, col + dcol), for copy and fill: relative references move,
  * $ parts stay; a reference moved off the sheet becomes #REF!. From

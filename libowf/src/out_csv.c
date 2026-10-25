@@ -102,5 +102,5 @@ static int export_csv(const owf_book *book, unsigned char **data, size_t *length
 }
 
 const owf_book_format owf_book_format_csv = {
-    "csv", "Comma-separated values", "csv", NULL, NULL, export_csv
+    "csv", "Comma-separated values", "csv", owf_detect_csv, owf_import_csv, export_csv
 };
