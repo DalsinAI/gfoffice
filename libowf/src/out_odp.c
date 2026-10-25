@@ -732,13 +732,13 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
         int nw, nh;
         if (owf_deck_image_size(&w->deck->res->images[o->image], &nw, &nh)) {
             owf_buf_puts(&body, " fo:clip=\"rect(");
-            put_len(&body, (int)(((long)o->crop[1] * nh + 500) / 1000));
+            put_len(&body, (int)(((long long)o->crop[1] * nh + 500) / 1000));
             owf_buf_puts(&body, ", ");
-            put_len(&body, (int)(((long)o->crop[2] * nw + 500) / 1000));
+            put_len(&body, (int)(((long long)o->crop[2] * nw + 500) / 1000));
             owf_buf_puts(&body, ", ");
-            put_len(&body, (int)(((long)o->crop[3] * nh + 500) / 1000));
+            put_len(&body, (int)(((long long)o->crop[3] * nh + 500) / 1000));
             owf_buf_puts(&body, ", ");
-            put_len(&body, (int)(((long)o->crop[0] * nw + 500) / 1000));
+            put_len(&body, (int)(((long long)o->crop[0] * nw + 500) / 1000));
             owf_buf_puts(&body, ")\"");
         }
     }
@@ -769,9 +769,9 @@ static void put_geometry(owf_buf *out, const owf_obj *o)
     len_attr(out, "svg:width", o->width);
     len_attr(out, "svg:height", o->height);
     if (o->rotation) {
-        long c = owf_deck_cos(o->rotation), s = owf_deck_sin(o->rotation);
-        long cx = ((long)o->width * c + (long)o->height * s) / 2;
-        long cy = (-(long)o->width * s + (long)o->height * c) / 2;
+        long long c = owf_deck_cos(o->rotation), s = owf_deck_sin(o->rotation);
+        long long cx = ((long long)o->width * c + (long long)o->height * s) / 2;
+        long long cy = (-(long long)o->width * s + (long long)o->height * c) / 2;
         int tx = (int)(o->x + o->width / 2 - (cx + 8192) / 16384);
         int ty = (int)(o->y + o->height / 2 - (cy + 8192) / 16384);
         /* read back: x = tx + cx - w/2 */
@@ -1103,7 +1103,7 @@ static void put_notes(odpw *w, owf_buf *out, const owf_slide *s, int number, con
 
     if (thumb_w <= 0)
         thumb_w = 9000;
-    thumb_h = (int)((long)thumb_w * w->deck->height / (w->deck->width > 0 ? w->deck->width : 1));
+    thumb_h = (int)((long long)thumb_w * w->deck->height / (w->deck->width > 0 ? w->deck->width : 1));
     owf_buf_puts(out, "<presentation:notes");
     if (page_layout)
         owf_buf_printf(out, " style:page-layout-name=\"%s\"", page_layout);

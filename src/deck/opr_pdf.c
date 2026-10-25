@@ -19,9 +19,9 @@ static unsigned long shade_of(uint32_t argb)
     return (argb >> 24) ? OWF_SHADE(argb & 0xFFFFFFu) : 0;
 }
 
-static long isqrt(long v)
+static long long isqrt(long long v)
 {
-    long r = 0, bit = 1L << 30;
+    long long r = 0, bit = 1LL << 62;
     if (v <= 0)
         return 0;
     while (bit > v)
@@ -41,7 +41,8 @@ static long isqrt(long v)
 /* An arrowhead at (x2, y2), pointing away from (x1, y1). */
 static void arrowhead(owf_pdf *pdf, int x1, int y1, int x2, int y2, int width, unsigned long colour)
 {
-    long dx = x2 - x1, dy = y2 - y1, len = isqrt(dx * dx + dy * dy), size = width * 3 > 120 ? width * 3 : 120;
+    long long dx = (long long)x2 - x1, dy = (long long)y2 - y1, len = isqrt(dx * dx + dy * dy),
+              size = width * 3 > 120 ? width * 3 : 120;
     int pts[6];
     if (len <= 0)
         return;
@@ -97,9 +98,9 @@ static void draw_shape(owf_pdf *pdf, const owf_obj *o)
         static const int ax[7] = { 0, 750, 750, 1000, 750, 750, 0 };
         static const int ay[7] = { 250, 250, 0, 500, 1000, 750, 750 };
         for (k = 0; k < 7; k++) {
-            int px = (int)((long)w * ax[k] / 1000);
+            int px = (int)((long long)w * ax[k] / 1000);
             pts[k * 2] = (o->flags & OWF_OBJ_FLIP_H) ? x + w - px : x + px;
-            pts[k * 2 + 1] = y + (int)((long)h * ay[k] / 1000);
+            pts[k * 2 + 1] = y + (int)((long long)h * ay[k] / 1000);
         }
         owf_pdf_path(pdf, pts, 7, 1, fill, line, lw);
         break;
@@ -232,10 +233,10 @@ static void draw_op(void *userdata, const ol_device_op *dop)
             clip[1] = dop->box.y;
             clip[2] = dop->box.width;
             clip[3] = dop->box.height;
-            w = (int)((long)clip[2] * 1000 / (1000 - o->crop[0] - o->crop[2]));
-            h = (int)((long)clip[3] * 1000 / (1000 - o->crop[1] - o->crop[3]));
-            owf_pdf_image(d->pdf, &d->deck->res->images[image], clip[0] - (int)((long)w * o->crop[0] / 1000),
-                          clip[1] - (int)((long)h * o->crop[1] / 1000), w, h, clip);
+            w = (int)((long long)clip[2] * 1000 / (1000 - o->crop[0] - o->crop[2]));
+            h = (int)((long long)clip[3] * 1000 / (1000 - o->crop[1] - o->crop[3]));
+            owf_pdf_image(d->pdf, &d->deck->res->images[image], clip[0] - (int)((long long)w * o->crop[0] / 1000),
+                          clip[1] - (int)((long long)h * o->crop[1] / 1000), w, h, clip);
         } else {
             owf_pdf_image(d->pdf, &d->deck->res->images[image], dop->box.x, dop->box.y, dop->box.width,
                           dop->box.height, NULL);

@@ -384,6 +384,30 @@ def hostile(work, hand, pdf):
     rc, out, err = dump(p)
     cases += 1
     check("style loops and missing parts: read", rc == 0 and "A picture that is not in the file was left out" in out, out[:300] + err)
+    # numbers far past any slide: lengths, sizes, points, times
+    def huge(d):
+        k = [0]
+
+        def length(m):
+            k[0] += 1
+            return m.group(1) + (b'="-99999999in"' if k[0] % 3 == 0 else b'="99999999.99in"')
+        d = re.sub(rb'(svg:(?:x|y|width|height|x1|y1|x2|y2)|fo:(?:font-size|margin-left|margin-right|text-indent|'
+                   rb'margin-top|margin-bottom|padding)|style:column-width|svg:stroke-width|draw:corner-radius)="[^"]*"',
+                   length, d)
+        d = re.sub(rb'draw:points="[^"]*"', b'draw:points="0,0 99999999999,-99999999999 -2147483648,2147483647"', d)
+        d = re.sub(rb'svg:viewBox="[^"]*"', b'svg:viewBox="-2147483647 0 1 99999999999"', d)
+        d = re.sub(rb'presentation:duration="[^"]*"', b'presentation:duration="PT99999999H99999999M99999999S"', d)
+        d = re.sub(rb'text:bullet-relative-size="[^"]*"', b'text:bullet-relative-size="9999999%"', d)
+        return d.replace(b'draw:transform="', b'draw:transform="translate(99999999in -99999999in) ', 1)
+    p = rezip(hand, os.path.join(work, "huge.odp"), huge)
+    rc, out, err = dump(p)
+    cases += 1
+    check("numbers past any slide: read", rc == 0, f"exit {rc} {(out + err)[-300:]}")
+    if pdf and rc == 0:
+        rc, out, err = run([OWCONVERT, p, os.path.join(work, "huge.pdf")])
+        check("numbers past any slide to PDF", rc in (0, 10), f"exit {rc} {(out + err)[-300:]}")
+        rc, out, err = run([OWCONVERT, p, os.path.join(work, "huge-again.odp")])
+        check("numbers past any slide saved", rc in (0, 10), f"exit {rc} {(out + err)[-300:]}")
     # not a deck at all
     for what, data in (("empty", b""), ("text", b"hello"), ("a zip of nothing", b"PK\x05\x06" + b"\0" * 18)):
         p = os.path.join(work, "not.odp")
@@ -473,4 +497,5 @@ def main():
     sys.exit(1 if failures else 0)
 
 
-main()
+if __name__ == "__main__":
+    main()

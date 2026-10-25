@@ -97,9 +97,35 @@ static int same(const char *a, const char *b)
     return a && b && !strcmp(a, b);
 }
 
+/* Coordinates a file can't push beyond: about 35 metres. */
+#define MAX_COORD 2000000
+
+static int clamp(int v, int lo, int hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+static void clamp_box(owf_obj *obj)
+{
+    obj->x = clamp(obj->x, -MAX_COORD, MAX_COORD);
+    obj->y = clamp(obj->y, -MAX_COORD, MAX_COORD);
+    obj->width = clamp(obj->width, 0, MAX_COORD);
+    obj->height = clamp(obj->height, 0, MAX_COORD);
+}
+
+/* A length, kept within MAX_COORD so sums and products of a few stay in
+ * 32 bits on the 68k. */
+static int parse_len(const char *s, int *twips)
+{
+    if (!owf_parse_length(s, twips))
+        return 0;
+    *twips = clamp(*twips, -MAX_COORD, MAX_COORD);
+    return 1;
+}
+
 static int length_attr(const owf_xml_node *n, const char *ns, const char *name, int *twips)
 {
-    return owf_parse_length(attr(n, ns, name), twips);
+    return parse_len(attr(n, ns, name), twips);
 }
 
 /* "#rrggbb" as OWF_SHADE; 0 when it is not one. */
@@ -129,7 +155,8 @@ static int percent(const char *v, int def)
  * milliseconds; -1 when it is not one. */
 static long duration_ms(const char *v)
 {
-    long total = 0, n = 0, frac = 0, scale = 0;
+    long long total = 0;
+    long n = 0, frac = 0, scale = 0;
     int in_time = 0, digits = 0;
     if (!v || *v != 'P')
         return -1;
@@ -155,11 +182,13 @@ static long duration_ms(const char *v)
                 return -1;
             if (n > 100000)
                 n = 100000;
-            total += n * unit + (unit == 1000 ? frac * 10 : 0);
+            total += (long long)n * unit + (unit == 1000 ? frac * 10 : 0);
             n = frac = scale = 0;
+            if (total > 86400000L * 7)
+                total = 86400000L * 7;      /* a week: past any slide */
         }
     }
-    return digits ? total : -1;
+    return digits ? (long)total : -1;
 }
 
 /* "id12" as 12, else 0. */
@@ -1039,14 +1068,14 @@ static void read_crop(odp *o, owf_obj *obj, const char *clip)
         part[n] = 0;
         if (!strcmp(part, "auto"))
             v[i] = 0;
-        else if (!owf_parse_length(part, &v[i]))
+        else if (!parse_len(part, &v[i]))
             return;
     }
     /* top, right, bottom, left into left, top, right, bottom */
-    obj->crop[0] = (int)(((long)v[3] * 1000 + natural_w / 2) / natural_w);
-    obj->crop[1] = (int)(((long)v[0] * 1000 + natural_h / 2) / natural_h);
-    obj->crop[2] = (int)(((long)v[1] * 1000 + natural_w / 2) / natural_w);
-    obj->crop[3] = (int)(((long)v[2] * 1000 + natural_h / 2) / natural_h);
+    obj->crop[0] = (int)(((long long)v[3] * 1000 + natural_w / 2) / natural_w);
+    obj->crop[1] = (int)(((long long)v[0] * 1000 + natural_h / 2) / natural_h);
+    obj->crop[2] = (int)(((long long)v[1] * 1000 + natural_w / 2) / natural_w);
+    obj->crop[3] = (int)(((long long)v[2] * 1000 + natural_h / 2) / natural_h);
     for (i = 0; i < 4; i++)
         if (obj->crop[i] < 0 || obj->crop[i] > 1000)
             obj->crop[i] = 0;
@@ -1092,6 +1121,7 @@ static void read_box(odp *o, owf_obj *obj, const owf_xml_node *n)
     int has_h = length_attr(n, NS_SVG, "height", &obj->height);
     length_attr(n, NS_SVG, "x", &obj->x);
     length_attr(n, NS_SVG, "y", &obj->y);
+    clamp_box(obj);
     if (obj->placeholder != OWF_PH_NONE && !has_w && !has_h)
         obj->flags |= OWF_OBJ_INHERIT_BOX;
     if (t) {
@@ -1123,7 +1153,7 @@ static void read_box(odp *o, owf_obj *obj, const owf_xml_node *n)
                 for (k = 0; *p && *p != ' ' && *p != ')' && k < sizeof b - 1;)
                     b[k++] = *p++;
                 b[k] = 0;
-                if (!owf_parse_length(a, &tx) || !owf_parse_length(b, &ty))
+                if (!parse_len(a, &tx) || !parse_len(b, &ty))
                     ok = 0;
                 while (*p && *p != ')')
                     p++;
@@ -1134,13 +1164,15 @@ static void read_box(odp *o, owf_obj *obj, const owf_xml_node *n)
                 break;
             }
         }
+        tx = clamp(tx, -MAX_COORD, MAX_COORD);
+        ty = clamp(ty, -MAX_COORD, MAX_COORD);
         if (!ok) {
             owf_report_add(o->report, OWF_NOTE_APPROX, "Skewed or scaled objects are drawn in their own box");
         } else {
             /* the unrotated box: about the same centre */
-            long c = owf_deck_cos(rot), s = owf_deck_sin(rot);
-            long cx = ((long)obj->width * c + (long)obj->height * s) / 2;
-            long cy = (-(long)obj->width * s + (long)obj->height * c) / 2;
+            long long c = owf_deck_cos(rot), s = owf_deck_sin(rot);
+            long long cx = ((long long)obj->width * c + (long long)obj->height * s) / 2;
+            long long cy = (-(long long)obj->width * s + (long long)obj->height * c) / 2;
             obj->x = (int)(tx + (cx + 8192) / 16384 - obj->width / 2);
             obj->y = (int)(ty + (cy + 8192) / 16384 - obj->height / 2);
             obj->rotation = rot;
@@ -1197,17 +1229,17 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
         obj->look.line_style = OWF_LINE_THIN;
     }
     if (obj->look.line)
-        owf_parse_length(prop(o, st, "graphic-properties", NS_SVG, "stroke-width"), &obj->look.line_width);
+        parse_len(prop(o, st, "graphic-properties", NS_SVG, "stroke-width"), &obj->look.line_width);
     if ((v = prop(o, st, "graphic-properties", NS_DRAW, "marker-start")) && *v)
         obj->look.arrows |= OWF_ARROW_START;
     if ((v = prop(o, st, "graphic-properties", NS_DRAW, "marker-end")) && *v)
         obj->look.arrows |= OWF_ARROW_END;
-    if (owf_parse_length(prop(o, st, "graphic-properties", NS_FO, "padding"), &pad))
+    if (parse_len(prop(o, st, "graphic-properties", NS_FO, "padding"), &pad))
         obj->inset[0] = obj->inset[1] = obj->inset[2] = obj->inset[3] = pad;
-    owf_parse_length(prop(o, st, "graphic-properties", NS_FO, "padding-left"), &obj->inset[0]);
-    owf_parse_length(prop(o, st, "graphic-properties", NS_FO, "padding-top"), &obj->inset[1]);
-    owf_parse_length(prop(o, st, "graphic-properties", NS_FO, "padding-right"), &obj->inset[2]);
-    owf_parse_length(prop(o, st, "graphic-properties", NS_FO, "padding-bottom"), &obj->inset[3]);
+    parse_len(prop(o, st, "graphic-properties", NS_FO, "padding-left"), &obj->inset[0]);
+    parse_len(prop(o, st, "graphic-properties", NS_FO, "padding-top"), &obj->inset[1]);
+    parse_len(prop(o, st, "graphic-properties", NS_FO, "padding-right"), &obj->inset[2]);
+    parse_len(prop(o, st, "graphic-properties", NS_FO, "padding-bottom"), &obj->inset[3]);
     if ((v = prop(o, st, "graphic-properties", NS_DRAW, "textarea-vertical-align"))) {
         obj->valign = !strcmp(v, "middle") ? OWF_VALIGN_CENTRE : !strcmp(v, "bottom") ? OWF_VALIGN_BOTTOM
                                                                                    : OWF_VALIGN_TOP;
@@ -1390,7 +1422,8 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
                 const char *rep = attr(g, NS_TABLE, "number-columns-repeated");
                 int n = rep ? atoi(rep) : 1, w = 0, k;
                 const gstyle *cs = find_style(o, attr(g, NS_TABLE, "style-name"), "table-column", which);
-                owf_parse_length(prop(o, cs, "table-column-properties", NS_STYLE, "column-width"), &w);
+                parse_len(prop(o, cs, "table-column-properties", NS_STYLE, "column-width"), &w);
+                w = clamp(w, 0, MAX_COORD);
                 for (k = 0; k < n && ncols < TABLE_MAX_COLS; k++)
                     widths[ncols++] = w;
             } else if ((is(g, NS_TABLE, "table-columns") || is(g, NS_TABLE, "table-header-columns") ||
@@ -1546,6 +1579,9 @@ static void read_points(odp *o, owf_obj *obj, const owf_xml_node *n)
         return;
     if (vb && sscanf(vb, "%ld %ld %ld %ld", &box[0], &box[1], &box[2], &box[3]) != 4)
         box[2] = box[3] = 0;
+    for (k = 0; k < 4; k++)
+        if (box[k] < -100000000L || box[k] > 100000000L)
+            box[2] = box[3] = 0;
     for (p = pts; *p && count < 4096;) {
         long x, y;
         char *e;
@@ -1572,9 +1608,13 @@ static void read_points(odp *o, owf_obj *obj, const owf_xml_node *n)
             xy = q;
             cap = want;
         }
+        x = x < -100000000L ? -100000000L : x > 100000000L ? 100000000L : x;
+        y = y < -100000000L ? -100000000L : y > 100000000L ? 100000000L : y;
         if (box[2] > 0 && box[3] > 0) {
-            x = (x - box[0]) * obj->width / box[2];
-            y = (y - box[1]) * obj->height / box[3];
+            long long sx = ((long long)x - box[0]) * obj->width / box[2];
+            long long sy = ((long long)y - box[1]) * obj->height / box[3];
+            x = (long)(sx < -1000000 ? -1000000 : sx > 1000000 ? 1000000 : sx);
+            y = (long)(sy < -1000000 ? -1000000 : sy > 1000000 ? 1000000 : sy);
         }
         xy[count * 2] = (int)x;
         xy[count * 2 + 1] = (int)y;
@@ -1703,7 +1743,7 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
                 int shorter = obj->width < obj->height ? obj->width : obj->height;
                 if (m <= 0 || m > 10800)
                     m = 3600;
-                obj->radius = (int)((long)shorter * m / 21600);
+                obj->radius = (int)((long long)shorter * m / 21600);
             }
         }
         read_look(o, obj, st, obj->shape != OWF_SHAPE_LINE);
@@ -1758,6 +1798,7 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
         }
     }
     obj = &(*c->objs)[index];
+    clamp_box(obj);
     if (obj->kind == OWF_OBJ_OTHER) {
         obj->keep = keep_object(o, n, c->which);
         if (what)

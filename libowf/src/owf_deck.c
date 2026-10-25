@@ -598,10 +598,10 @@ static owf_obj *placeholder(owf_obj *o, int w, int h, owf_placeholder ph, int in
         return NULL;
     o->placeholder = ph;
     o->ph_index = index;
-    o->x = (int)((long)w * x / 1000);
-    o->y = (int)((long)h * y / 1000);
-    o->width = (int)((long)w * bw / 1000);
-    o->height = (int)((long)h * bh / 1000);
+    o->x = (int)((long long)w * x / 1000);
+    o->y = (int)((long long)h * y / 1000);
+    o->width = (int)((long long)w * bw / 1000);
+    o->height = (int)((long long)h * bh / 1000);
     if (ph == OWF_PH_TITLE || ph == OWF_PH_SUBTITLE)
         o->valign = OWF_VALIGN_CENTRE;
     if (ph == OWF_PH_BODY)

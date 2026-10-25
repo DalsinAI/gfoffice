@@ -14,6 +14,13 @@
 
 #define TW(v) ((ol_unit)(v) * OL_UNITS_PER_TWIP)
 #define MIN_SCALE 60                 /* shrink to fit stops here */
+#define MAX_SIZE 20000               /* twips: 1000 points, Impress's own largest is 999.9 */
+#define MAX_SPAN 200000              /* twips: an indent or space wider than any slide */
+
+static int bound(int v, int lo, int hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
 
 /* ---- Fonts and measuring ---- */
 
@@ -72,8 +79,8 @@ int opr_measure(void *userdata, const char *utf8, size_t length, const ol_style 
     int size = style->font_size / OL_UNITS_PER_TWIP;
     m->width = TW(owf_pdf_text_width(utf8, length, kind, style_flags(style->text_flags), size));
     /* Liberation Sans' (and Arial's) ascender and descender, of the em */
-    m->ascent = (ol_unit)((long)style->font_size * 905 / 1000);
-    m->descent = (ol_unit)((long)style->font_size * 212 / 1000);
+    m->ascent = (ol_unit)((long long)style->font_size * 905 / 1000);
+    m->descent = (ol_unit)((long long)style->font_size * 212 / 1000);
     return 1;
 }
 
@@ -215,9 +222,10 @@ static int prepare_text(const owf_deck *deck, const owf_master *m, const owf_obj
             *r = p->runs[j];
             if (r->fmt.font < 0) r->fmt.font = lv->chars.font;
             if (r->fmt.size <= 0) r->fmt.size = lv->chars.size > 0 ? lv->chars.size : deck->res->base.size;
+            if (r->fmt.size > MAX_SIZE) r->fmt.size = MAX_SIZE;
             if (r->fmt.colour == OWF_COLOUR_AUTO) r->fmt.colour = lv->chars.colour;
             if (r->fmt.colour == OWF_COLOUR_AUTO) r->fmt.colour = auto_colour;
-            r->fmt.size = (int)((long)r->fmt.size * scale / 100);
+            r->fmt.size = (int)((long long)r->fmt.size * scale / 100);
             if (r->kind == OWF_RUN_FIELD) {
                 r->kind = OWF_RUN_TEXT;
                 r->text = (char *)(fields && fields[r->field <= OWF_FIELD_TIME ? r->field : 0]
@@ -235,7 +243,8 @@ static int prepare_text(const owf_deck *deck, const owf_master *m, const owf_obj
             if (first.colour == OWF_COLOUR_AUTO) first.colour = auto_colour;
             if (first.font < 0) first.font = lv->chars.font;
             if (first.size <= 0) first.size = lv->chars.size > 0 ? lv->chars.size : deck->res->base.size;
-            first.size = (int)((long)first.size * scale / 100);
+            if (first.size > MAX_SIZE) first.size = MAX_SIZE;
+            first.size = (int)((long long)first.size * scale / 100);
         }
         /* the bullet or number, and a tab to the text */
         if (level > 0 && lv->bullet) {
@@ -251,7 +260,7 @@ static int prepare_text(const owf_deck *deck, const owf_master *m, const owf_obj
             if (lv->bullet_font >= 0 && !(lv->bullet & OWF_BULLET_NUMBER))
                 runs[k].fmt.font = lv->bullet_font;
             if (lv->bullet_size > 0)
-                runs[k].fmt.size = (int)((long)first.size * lv->bullet_size / 100);
+                runs[k].fmt.size = (int)((long long)first.size * bound(lv->bullet_size, 1, 1000) / 100);
             if (OWF_SHADE_SET(lv->bullet_colour))
                 runs[k].fmt.colour = OWF_SHADE_RGB(lv->bullet_colour);
             runs[k].href = NULL;
@@ -275,8 +284,15 @@ static int prepare_text(const owf_deck *deck, const owf_master *m, const owf_obj
             runs[0].fmt = first;
             q->nruns = 1;
         }
-        q->fmt.space_before = (int)((long)q->fmt.space_before * scale / 100);
-        q->fmt.space_after = (int)((long)q->fmt.space_after * scale / 100);
+        /* nothing past a page, so the sums below stay in 32 bits */
+        q->fmt.indent_left = bound(q->fmt.indent_left, -MAX_SPAN, MAX_SPAN);
+        q->fmt.indent_right = bound(q->fmt.indent_right, -MAX_SPAN, MAX_SPAN);
+        q->fmt.indent_first = bound(q->fmt.indent_first, -MAX_SPAN, MAX_SPAN);
+        q->fmt.line_spacing = bound(q->fmt.line_spacing, 0, 1000);
+        for (j = 0; j < q->fmt.ntabs && j < OWF_MAX_TABS; j++)
+            q->fmt.tabs[j].position = bound(q->fmt.tabs[j].position, 0, MAX_SPAN);
+        q->fmt.space_before = (int)((long long)bound(q->fmt.space_before, 0, MAX_SPAN) * scale / 100);
+        q->fmt.space_after = (int)((long long)bound(q->fmt.space_after, 0, MAX_SPAN) * scale / 100);
     }
     return 1;
 }

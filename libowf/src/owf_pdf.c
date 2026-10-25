@@ -176,7 +176,7 @@ int owf_pdf_rect(owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill, u
 
 /* A quarter of a circle as a Bezier curve: its handles are 0.5523 of the
  * radius along the tangents. */
-#define KAPPA(r) ((long)(r) * 5523 / 10000)
+#define KAPPA(r) ((long)((long long)(r) * 5523 / 10000))
 
 int owf_pdf_round_rect(owf_pdf *pdf, int x, int y, int w, int h, int r, unsigned long fill, unsigned long line,
                        int line_width)
@@ -298,7 +298,7 @@ static int face(owf_font_kind kind, unsigned flags)
 static long natural_width(const char *s, size_t n, int f, int size)
 {
     const unsigned char *p = (const unsigned char *)s, *end = p + n;
-    long units = 0;
+    long long units = 0, w;
     while (p < end) {
         unsigned long c = owf_utf8_next(&p, end);
         int b = owf_pdf_winansi(c);
@@ -308,7 +308,8 @@ static long natural_width(const char *s, size_t n, int f, int size)
             b = '?';
         units += f >= 8 ? 600 : owf_pdf_widths[f][b - 32];
     }
-    return (units * size + 500) / 1000;
+    w = (units * size + 500) / 1000;
+    return (long)(w > 100000000 ? 100000000 : w);     /* past any page */
 }
 
 int owf_pdf_text_width(const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size)
@@ -335,7 +336,7 @@ int owf_pdf_text(owf_pdf *pdf, int x, int baseline, int width, const char *utf8,
     owf_buf_puts(o, " Tf ");
     put_colour(o, colour & 0xFFFFFFUL, 0);
     if (width > 0 && natural > 0) {
-        long tz = (long)width * 1000 / natural;     /* tenths of a percent */
+        long tz = (long)((long long)width * 1000 / natural);     /* tenths of a percent */
         if (tz < 100) tz = 100;
         if (tz > 10000) tz = 10000;
         if (tz < 995 || tz > 1005)
