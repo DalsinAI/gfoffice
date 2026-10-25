@@ -11,9 +11,9 @@ writes every entry stored.
 1. Each sample (by default the repository's samples/*.docx and *.odt, and
    the workbook fixtures tests/book/fixtures/*.xlsx and *.ods), and each
    again packed at deflate levels 1 and 9, is read both ways and saved:
-   documents as text, HTML, ODT and DOCX, workbooks as CSV and XLSX. Text,
-   HTML and CSV must be the same byte for byte; ODT, DOCX and XLSX the same
-   part for part, those written without z.library all stored. A sample whose
+   documents as text, HTML, ODT and DOCX, workbooks as CSV, XLSX and ODS.
+   Text, HTML and CSV must be the same byte for byte; ODT, DOCX, XLSX and
+   ODS the same part for part, those written without z.library all stored. A sample whose
    format this OWConvert does not read yet is passed over.
 2. Damaged documents give the message for what is wrong, both ways: a wrong
    CRC or broken deflate data, "damaged"; another compression method or an
@@ -158,7 +158,7 @@ def main():
         data = open(sample, "rb").read()
         label = os.path.basename(sample)
         workbook = sample.endswith(WORKBOOK)
-        exts = ("csv", "xlsx") if workbook else ("txt", "html", "odt", "docx")
+        exts = ("csv", "xlsx", "ods") if workbook else ("txt", "html", "odt", "docx")
         rc, text = run(OWCONVERT, sample, os.path.join(work, "probe." + exts[0]))
         if rc != 0 and "not a document format" in text:
             print(f"{label}: not read by this OWConvert yet, passed over")
