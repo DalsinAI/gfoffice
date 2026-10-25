@@ -7,6 +7,7 @@
 #include "ow_layout.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int failures;
@@ -445,17 +446,21 @@ static void cover_wpg_checks(const ow_layout *l, const owf_doc *doc)
     const ol_display_op *op, *pic;
     size_t at_pic = 0, at = 0, first = 0, count = 0;
     ol_unit tw = OL_UNITS_PER_TWIP;
-    int n;
+    ow_position pos;
+    ol_rect box;
+    int n, page;
 
+    /* the picture, title, version box and band in the first paragraph; the subtitle and date in the second */
     CHECK(doc->nframes == 7);
     if (doc->nframes != 7) return;
-    CHECK(doc->body.nparas == 5 && doc->body.paras[0].nruns == 6);
+    CHECK(doc->body.nparas == 6 && doc->body.paras[0].nruns == 4 && doc->body.paras[1].nruns == 2);
     CHECK(f[0].image >= 0 && f[0].behind && f[0].x_from == OWF_FROM_PAGE && f[0].x_place == OWF_PLACE_END &&
           f[0].y_from == OWF_FROM_PARAGRAPH && f[0].y_place == OWF_PLACE_AT && f[0].y == -1536 &&
           f[0].width == 11931 && f[0].height == 16968 && !f[0].story.nparas);
-    CHECK(f[1].story.nparas == 1 && f[2].story.nparas == 1 && f[3].story.nparas == 1 && f[4].story.nparas == 1);
-    CHECK(f[5].image < 0 && !f[5].story.nparas && f[5].fill == OWF_SHADE(0xC00000) && f[5].width == 11906 &&
-          f[5].height == 360);
+    CHECK(f[1].story.nparas == 1 && f[2].story.nparas == 1 && f[4].story.nparas == 1 && f[5].story.nparas == 1);
+    CHECK(f[3].image < 0 && !f[3].story.nparas && f[3].fill == OWF_SHADE(0xC00000) && f[3].width == 11906 &&
+          f[3].height == 360);
+    CHECK(f[4].y_from == OWF_FROM_PARAGRAPH && f[4].y == 3600 && f[5].y_from == OWF_FROM_PARAGRAPH && f[5].y == 11520);
     CHECK(f[6].image >= 0 && f[6].wrap == OWF_WRAP_SQUARE);
     CHECK(!story_has(&doc->body, "Cover Title") && !story_has(&doc->body, "October"));
 
@@ -470,11 +475,163 @@ static void cover_wpg_checks(const ow_layout *l, const owf_doc *doc)
     /* the text boxes and the band in front of it */
     op = text_on(od, 0, "Cover Title", &at);
     CHECK(op && at > at_pic && op->u.text.bounds.x == pg->margin_left + 144 * tw);
-    CHECK(text_on(od, 0, "A plan", NULL) && text_on(od, 0, "Version", NULL) && text_on(od, 0, "25 October", NULL));
+    CHECK(text_on(od, 0, "Version", NULL) && text_on(od, 0, "25 October", NULL));
     op = nth_op(od, 0, OL_OP_FILL_RECT, 0, &at);
     for (n = 0; op && op->u.fill_rect.argb != 0xffc00000u; ) op = nth_op(od, 0, OL_OP_FILL_RECT, ++n, &at);
     CHECK(op && at > at_pic && op->u.fill_rect.bounds.x == 0 && op->u.fill_rect.bounds.y == 0 &&
           op->u.fill_rect.bounds.width == pg->width && op->u.fill_rect.bounds.height == 360 * tw);
+    /* the subtitle 3600 twips (and its inset) below its paragraph's top, the second paragraph's */
+    pos.paragraph = 1;
+    pos.run = 0;
+    pos.byte_offset = 0;
+    op = text_on(od, 0, "A plan", NULL);
+    CHECK(op && ow_layout_caret(l, pos, &page, &box) && page == 0 && op->u.text.bounds.y >= box.y + (3600 + 72) * tw &&
+          op->u.text.bounds.y < box.y + (3600 + 1080) * tw);
+}
+
+/* Where the cover's frames are on the page: the pictures and fills on pages 1 and 2, and the text boxes' first
+ * words, in that order. */
+typedef struct { int n; ol_rect at[16]; } frame_places;
+
+static void frame_places_of(const ow_layout *l, frame_places *fp)
+{
+    static const char *const words[] = { "Cover Title", "A plan", "Version", "25 October", NULL };
+    const ol_document *od = ow_layout_body(l);
+    const ol_display_op *op;
+    int page, k;
+    fp->n = 0;
+    for (page = 0; page < 2; ++page) {
+        for (k = 0; fp->n < 16 && (op = nth_op(od, page, OL_OP_IMAGE, k, NULL)) != NULL; ++k)
+            fp->at[fp->n++] = op->u.image.bounds;
+        for (k = 0; fp->n < 16 && (op = nth_op(od, page, OL_OP_FILL_RECT, k, NULL)) != NULL; ++k)
+            if (op->u.fill_rect.argb == 0xffc00000u || op->u.fill_rect.argb == 0xff1f3864u)
+                fp->at[fp->n++] = op->u.fill_rect.bounds;
+    }
+    for (k = 0; words[k] && fp->n < 16; ++k) {
+        op = text_on(od, 0, words[k], NULL);
+        if (op) fp->at[fp->n++] = op->u.text.bounds;
+        else memset(&fp->at[fp->n++], 0, sizeof fp->at[0]);
+    }
+}
+
+static int same_places(const frame_places *a, const frame_places *b)
+{
+    int i;
+    if (a->n != b->n) return 0;
+    for (i = 0; i < a->n; ++i)
+        if (a->at[i].x != b->at[i].x || a->at[i].y != b->at[i].y || a->at[i].width != b->at[i].width ||
+            a->at[i].height != b->at[i].height) {
+            printf("frame place %d: %ld,%ld -> %ld,%ld\n", i, (long)a->at[i].x, (long)a->at[i].y, (long)b->at[i].x,
+                   (long)b->at[i].y);
+            return 0;
+        }
+    return 1;
+}
+
+/* 2.0.11: typing on the cover (the lab: the caret in the paragraph that holds the picture and the title, "XYZ"
+ * typed) moved the subtitle and the date, anchored in the next paragraph, up 44 pixels at 100%. The typed
+ * text took the document's 11 points, not the 36 its paragraph's runs have, and a single spaced line with
+ * text was measured by its font, an empty one at 1.2 times the size. Now every frame stays where it is,
+ * through typing, undo and redo. */
+static void test_cover_typing(const char *path)
+{
+    owf_doc *doc = NULL;
+    ow_editor *ed;
+    ow_layout *l;
+    ow_selection sel;
+    frame_places before, after;
+    const owf_para *p;
+    int i, text_run = -1;
+    if (owf_import_file(path, NULL, &doc, NULL, NULL) != OWF_OK || !doc) {
+        CHECK(!"cover-wpg.docx read");
+        return;
+    }
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (!l) { owf_doc_free(doc); return; }
+    frame_places_of(l, &before);
+    ow_layout_free(l);
+    CHECK(before.n >= 7);
+    ed = ow_editor_new(doc);
+    CHECK(ed != NULL);
+    if (!ed) { owf_doc_free(doc); return; }
+    memset(&sel, 0, sizeof sel);
+    ow_editor_set_selection(ed, &sel);
+    CHECK(ow_editor_insert_utf8(ed, "XYZ", 3) == OWF_OK);
+    p = &doc->body.paras[0];
+    for (i = 0; i < p->nruns; ++i)
+        if (p->runs[i].kind == OWF_RUN_TEXT && p->runs[i].text && !strcmp(p->runs[i].text, "XYZ")) text_run = i;
+    /* the typed text in the size of the paragraph's runs, as Word types in a paragraph's mark's */
+    CHECK(text_run >= 0 && p->runs[text_run].fmt.size == 720);
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        frame_places_of(l, &after);
+        CHECK(same_places(&before, &after));
+        CHECK(text_on(ow_layout_body(l), 0, "XYZ", NULL) != NULL);
+        ow_layout_free(l);
+    }
+    CHECK(ow_editor_undo(ed) == 1);
+    l = ow_layout_new(doc, measure, NULL);
+    if (l) {
+        frame_places_of(l, &after);
+        CHECK(same_places(&before, &after));
+        ow_layout_free(l);
+    }
+    CHECK(ow_editor_redo(ed) == 1);
+    l = ow_layout_new(doc, measure, NULL);
+    if (l) {
+        frame_places_of(l, &after);
+        CHECK(same_places(&before, &after));
+        ow_layout_free(l);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
+/* 2.0.11: a document through DOCX and back keeps every paragraph's format and run's, and its page count. The
+ * lab's 34-page plan came back with 27: a table cell's paragraph took the document's defaults alone, ours
+ * once we had saved it; a heading's 0 before and after became our Heading style's; line spacing lost a
+ * percent each time (259 read as 107, written as 256). */
+static void test_round_trip(const char *path)
+{
+    owf_doc *a = NULL, *b = NULL;
+    ow_layout *la, *lb;
+    const char *out = "/tmp/openwrite-layout-round-trip.docx";
+    int i, j, bad = 0;
+    if (!strstr(path, ".docx") || owf_import_file(path, NULL, &a, NULL, NULL) != OWF_OK) return;
+    CHECK(owf_export_file(a, out, "docx", NULL) == OWF_OK);
+    CHECK(owf_import_file(out, NULL, &b, NULL, NULL) == OWF_OK);
+    if (!b) { owf_doc_free(a); return; }
+    CHECK(a->body.nparas == b->body.nparas);
+    for (i = 0; i < a->body.nparas && i < b->body.nparas && bad < 5; ++i) {
+        const owf_para *p = &a->body.paras[i], *q = &b->body.paras[i];
+        const owf_parafmt *x = &p->fmt, *y = &q->fmt;
+        int same = x->heading == y->heading && x->align == y->align && x->indent_left == y->indent_left &&
+                   x->indent_right == y->indent_right && x->indent_first == y->indent_first &&
+                   x->space_before == y->space_before && x->space_after == y->space_after &&
+                   x->line_spacing == y->line_spacing && x->page_break_before == y->page_break_before &&
+                   x->ntabs == y->ntabs && x->shading == y->shading && x->borders == y->borders &&
+                   p->table_id == q->table_id && p->table_cols == q->table_cols && p->nruns == q->nruns;
+        for (j = 0; same && j < p->nruns; ++j)
+            same = p->runs[j].kind == q->runs[j].kind && p->runs[j].fmt.size == q->runs[j].fmt.size &&
+                   p->runs[j].fmt.flags == q->runs[j].fmt.flags && p->runs[j].fmt.colour == q->runs[j].fmt.colour;
+        if (!same) {
+            printf("round trip %s: paragraph %d: before %d->%d after %d->%d line %d->%d runs %d->%d\n", path, i,
+                   x->space_before, y->space_before, x->space_after, y->space_after, x->line_spacing,
+                   y->line_spacing, p->nruns, q->nruns);
+            ++bad;
+        }
+    }
+    CHECK(bad == 0);
+    la = ow_layout_new(a, measure, NULL);
+    lb = ow_layout_new(b, measure, NULL);
+    CHECK(la && lb && ow_layout_page_count(la) == ow_layout_page_count(lb));
+    ow_layout_free(la);
+    ow_layout_free(lb);
+    owf_doc_free(a);
+    owf_doc_free(b);
+    remove(out);
 }
 
 static void test_sample(const char *path)
@@ -525,6 +682,9 @@ int main(int argc, char **argv)
     test_page_numbers();
     test_built();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
+    for (i = 1; i < argc; ++i)
+        if (strstr(argv[i], "cover-wpg.docx")) test_cover_typing(argv[i]);
+    for (i = 1; i < argc; ++i) test_round_trip(argv[i]);
     if (failures) {
         printf("ow_layout tests: %d failed\n", failures);
         return 1;

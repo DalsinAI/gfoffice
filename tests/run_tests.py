@@ -644,6 +644,10 @@ def main():
           '<w:tab w:val="left" w:pos="440"/><w:tab w:val="right" w:leader="dot" w:pos="9016"/>' in d)
     check("leaders docx a cleared stop", '<w:tab w:val="right" w:leader="hyphen" w:pos="8000"/></w:tabs>' in d)
     check("leaders docx decimal underscore", '<w:tab w:val="decimal" w:leader="underscore" w:pos="8000"/>' in d)
+    # 2.0.11: the entries' links into the document stay w:anchor, not relationships to "#_Toc..."
+    contents_out = convert(work, "contents.docx", "docx")[0]
+    rels = docx_part(contents_out, "word/_rels/document.xml.rels")
+    check("internal links kept as anchors", '<w:hyperlink w:anchor="_Toc' in d and 'Target="#' not in rels, rels[:600])
     odt, _ = convert(work, "contents.docx", "odt")
     with zipfile.ZipFile(io.BytesIO(odt)) as z:
         c = z.read("content.xml").decode()

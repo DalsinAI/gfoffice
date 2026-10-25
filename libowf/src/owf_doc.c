@@ -316,6 +316,13 @@ static const struct {
     { "xen", "Liberation Sans", OWF_FONT_SANS },
     { "calibri", "Carlito", OWF_FONT_SANS },
     { "cambria", "Caladea", OWF_FONT_SERIF },
+    /* 1.3.1: what we save those as, so a document saved by us reads back the same kinds */
+    { "carlito", "Carlito", OWF_FONT_SANS },
+    { "caladea", "Caladea", OWF_FONT_SERIF },
+    { "liberation serif", "Liberation Serif", OWF_FONT_SERIF },
+    { "liberation sans", "Liberation Sans", OWF_FONT_SANS },
+    { "liberation sans narrow", "Liberation Sans Narrow", OWF_FONT_SANS },
+    { "liberation mono", "Liberation Mono", OWF_FONT_MONO },
     { "courier", "Liberation Mono", OWF_FONT_MONO },
     { "courier new", "Liberation Mono", OWF_FONT_MONO },
     { "topaz", "Liberation Mono", OWF_FONT_MONO },

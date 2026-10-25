@@ -588,6 +588,61 @@ static int test_frames_undo(void)
     return 0;
 }
 
+/* 2.0.11: an undo doesn't copy the pictures (the lab: one undo on the plan cost 6 MB), and undo and redo
+ * hold about 4 MB of snapshots between them, the last edit's always. */
+static int test_undo_memory(void)
+{
+    owf_doc *doc = NULL;
+    ow_editor *ed;
+    ow_selection sel;
+    const unsigned char *pic;
+    owf_parafmt pf;
+    owf_charfmt cf;
+    char line[601];
+    int i, n, undos;
+    if (owf_import_file("tests/core/fixtures/cover.docx", NULL, &doc, NULL, NULL) != OWF_OK || !doc) return 2001;
+    n = doc->nimages;
+    if (n < 1 || !doc->images[0].data) return 2002;
+    pic = doc->images[0].data;
+    ed = ow_editor_new(doc);
+    if (!ed) return 2003;
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.paragraph = sel.focus.paragraph = 3;
+    ow_editor_set_selection(ed, &sel);
+    if (ow_editor_insert_utf8(ed, "x", 1) != OWF_OK) return 2004;
+    if (ow_editor_undo(ed) != 1 || ow_editor_redo(ed) != 1 || ow_editor_undo(ed) != 1) return 2005;
+    /* the same pictures, not copies back from a snapshot */
+    if (doc->nimages != n || doc->images[0].data != pic || doc->frames[0].image < 0) return 2006;
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    /* 1500 paragraphs of 600 letters: about 1.6 MB a snapshot, so two at most */
+    doc = owf_doc_new();
+    if (!doc) return 2007;
+    owf_parafmt_init(&pf);
+    owf_charfmt_init(&cf);
+    memset(line, 'a', 600);
+    line[600] = 0;
+    for (i = 0; i < 1500; ++i) {
+        owf_para *p = owf_story_add(&doc->body, &pf);
+        if (!p || owf_para_add_text(p, &cf, line, 600) != OWF_OK) return 2008;
+    }
+    ed = ow_editor_new(doc);
+    if (!ed) return 2009;
+    for (i = 0; i < 6; ++i) {
+        memset(&sel, 0, sizeof sel);
+        sel.anchor.paragraph = sel.focus.paragraph = i * 100;   /* each a new edit, not more typing */
+        ow_editor_set_selection(ed, &sel);
+        if (ow_editor_insert_utf8(ed, "b", 1) != OWF_OK) return 2010;
+    }
+    for (undos = 0; undos < 10 && ow_editor_undo(ed) == 1; ++undos)
+        ;
+    if (undos < 1 || undos > 2) return 2011;
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
+}
+
 static int test_headers_fields(void)
 {
     owf_doc *doc = doc_with("Body");
@@ -658,6 +713,7 @@ int main(void)
     if ((rc = test_page_setup_and_break())) goto fail;
     if ((rc = test_headers_fields())) goto fail;
     if ((rc = test_frames_undo())) goto fail;
+    if ((rc = test_undo_memory())) goto fail;
     if ((rc = test_pdf_export())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;

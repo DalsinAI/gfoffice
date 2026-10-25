@@ -351,7 +351,8 @@ static void read_ppr(docx *d, const owf_xml_node *ppr, owf_paraprops *pp, const 
                 pp->mask |= OWF_PP_AFTER;
             }
             if (wint(d, n, "line", &v)) {
-                pp->fmt.line_spacing = (!rule || !strcmp(rule, "auto")) ? v * 100 / 240 : 100;
+                /* rounded (1.3.1): 259 (1.08) is 108, written back as 259, not 107, then 256 and 106... */
+                pp->fmt.line_spacing = (!rule || !strcmp(rule, "auto")) ? (v * 100 + 120) / 240 : 100;
                 if (pp->fmt.line_spacing < 50 || pp->fmt.line_spacing > 500)
                     pp->fmt.line_spacing = 100;
                 pp->mask |= OWF_PP_LINE;
@@ -1250,6 +1251,33 @@ static void cell_content(docx *d, const owf_xml_node *n, int *first)
     }
 }
 
+/* 1.3.1: a cell's paragraph format: its first paragraph's, from its style and its own pPr,
+ * as a paragraph outside a table has it. It was the document's defaults alone, so a cell lost its
+ * paragraph's spacing, indents and alignment, and a document saved by us lost all of it (our defaults are
+ * none): the plan came back 7 pages shorter. */
+static owf_parafmt cell_format(docx *d, const owf_xml_node *cell)
+{
+    const owf_xml_node *c, *ppr = NULL, *pstyle;
+    const char *num_id = NULL;
+    int num_level = 0;
+    owf_parafmt pf = d->base_para;
+    owf_charfmt cf = d->base_char;
+    owf_paraprops pp;
+    for (c = cell->first; c; c = c->next)
+        if (is_w(d, c, "p")) {
+            ppr = wchild(d, c, "pPr");
+            break;
+        }
+    pstyle = wchild(d, ppr, "pStyle");
+    owf_styles_resolve(d->tables, 1, pstyle ? wval(d, pstyle) : d->default_para, OWF_FAMILY_PARAGRAPH, &pf, &cf);
+    memset(&pp, 0, sizeof pp);
+    read_ppr(d, ppr, &pp, &num_id, &num_level);
+    owf_paraprops_apply(&pf, &pp);
+    pf.heading = 0;                                  /* a cell is no heading, and starts no page */
+    pf.page_break_before = 0;
+    return pf;
+}
+
 static void table(docx *d, const owf_xml_node *t)
 {
     const owf_xml_node *row, *cell;
@@ -1267,7 +1295,10 @@ static void table(docx *d, const owf_xml_node *t)
             int first = 1, before;
             owf_para *p;
             if (!is_w(d, cell, "tc")) continue;
-            start_para(d, &d->base_para);
+            {
+                owf_parafmt pf = cell_format(d, cell);
+                start_para(d, &pf);
+            }
             before=d->b->story->nparas;
             cell_content(d, cell, &first);
             owf_builder_end_para(d->b);
