@@ -15,7 +15,8 @@ what it leaves out.
   - comments: their text and author, written with the boxes Excel shows
     them in (a VML drawing);
   - data validation: lists, numbers, dates, text lengths and formulas,
-    their operators, messages and error styles.
+    their operators, messages and error styles;
+  - the AutoFilter: its range, and what it filters and sorts by.
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import os
@@ -296,6 +297,67 @@ def test_validation(work):
     check("validation: ODS says it leaves them out", "Data validation is kept in Excel workbooks" in report, report)
 
 
+# ---- The AutoFilter ----
+
+AF_KEPT = ('<filterColumn colId="3"><filters><filter val="Yes"/></filters></filterColumn>'
+           '<sortState ref="A7:I242"><sortCondition ref="A7:A242"/></sortState>')
+
+
+def test_autofilter(work):
+    src = dump(FIX)
+    check("autofilter read", sheet_lines(src, 0, "autofilter") == ['autofilter 5,0-241,8 ""'], sheet_lines(src, 0, "autofilter"))
+    rc, out, err = run([DUMP, FIX])
+    check("autofilter: no 'not read yet' note", "AutoFilter buttons are not read" not in out, out)
+    # the fixture with a filter and a sort in it, as Excel writes them
+    with zipfile.ZipFile(FIX) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    sheet = parts["xl/worksheets/sheet1.xml"].decode()
+    sheet = re.sub(r'<autoFilter ref="A6:I242"\s*/>', '<autoFilter ref="A6:I242">' + AF_KEPT + '<extLst><ext uri="x"/></extLst></autoFilter>', sheet)
+    check("autofilter: the fixture made to filter", AF_KEPT in sheet, sheet[:300])
+    filtered = os.path.join(work, "filtered.xlsx")
+    with zipfile.ZipFile(filtered, "w") as z:
+        for n, data in parts.items():
+            z.writestr(n, sheet.encode() if n == "xl/worksheets/sheet1.xml" else data)
+    want = ['autofilter 5,0-241,8 "' + AF_KEPT.replace('"', '\\"') + '"']
+    check("autofilter: what it filters by kept (its extensions left out)", sheet_lines(dump(filtered), 0, "autofilter") == want,
+          sheet_lines(dump(filtered), 0, "autofilter"))
+    xlsx = os.path.join(work, "autofilter.xlsx")
+    convert(filtered, xlsx)
+    well_formed(xlsx)
+    check("autofilter: the same after saving", sheet_lines(dump(xlsx), 0, "autofilter") == want, sheet_lines(dump(xlsx), 0, "autofilter"))
+    with zipfile.ZipFile(xlsx) as z:
+        written = z.read("xl/worksheets/sheet1.xml").decode()
+    check("autofilter: after the cells, before the merged ones",
+          written.find("</sheetData>") < written.find('<autoFilter ref="A6:I242">') < written.find("<mergeCells"), "")
+    try:
+        import openpyxl
+    except ImportError:
+        openpyxl = None
+    if openpyxl:
+        ws = openpyxl.load_workbook(xlsx)["Systems"]
+        af = ws.auto_filter
+        check("autofilter: openpyxl reads it back", af.ref == "A6:I242" and len(af.filterColumn) == 1 and
+              af.filterColumn[0].colId == 3 and af.filterColumn[0].filters.filter == ["Yes"], (af.ref, af.filterColumn))
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-autofilter")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "ods",
+                            "--outdir", outdir, xlsx], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=300)
+            with zipfile.ZipFile(os.path.join(outdir, "autofilter.ods")) as z:
+                content = z.read("content.xml").decode()
+            check("autofilter: LibreOffice reads it", 'table:display-filter-buttons="true"' in content and
+                  "Systems.A6:" in content.replace("'", "").replace("$", ""), content[content.find("<table:database-range"):][:300])
+        except Exception as e:  # noqa: BLE001
+            check("autofilter: LibreOffice converts the file written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+    report = convert(FIX, os.path.join(work, "autofilter.ods"))
+    check("autofilter: ODS says it leaves it out", "AutoFilters are kept in Excel workbooks" in report, report)
+
+
 def damaged(work):
     """The first sheet's XML cut short and changed in what follows its cells (the conditional formats and
     the rest): book_dump answers with a book or an error, never a crash."""
@@ -329,6 +391,7 @@ def main():
         test_condfmt(work)
         test_comments(work)
         test_validation(work)
+        test_autofilter(work)
         damaged(work)
     if failures:
         print("sheet features: %d of %d checks failed" % (len(failures), checks))

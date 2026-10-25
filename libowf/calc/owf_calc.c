@@ -1441,6 +1441,13 @@ int owf_calc_shift(owf_calc *calc, int sheet, int axis, unsigned at, int count)
         s->validations[out++] = *dv;
     }
     s->nvalidations = out;
+    /* the AutoFilter's range: as a merged one; all of it deleted, it goes */
+    if (s->has_autofilter && !(axis ? shift_span(&job, &s->autofilter.first_col, &s->autofilter.last_col, 0, limit)
+                                    : shift_span(&job, &s->autofilter.first_row, &s->autofilter.last_row, 0, limit))) {
+        s->has_autofilter = 0;
+        free(s->autofilter_xml);
+        s->autofilter_xml = NULL;
+    }
     return build(calc, 1);
 }
 

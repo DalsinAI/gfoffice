@@ -1077,6 +1077,20 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
     case OC_DRAW_CARET:
         fill_box(cv, rgb_pen(0), it->x, it->y, 1, it->h);
         break;
+    case OC_DRAW_FILTER: {                           /* an AutoFilter's button: Excel's grey box with its arrow */
+        int xy[6], a = it->w / 4 > 1 ? it->w / 4 : 1, cx = it->x + it->w / 2, cy = it->y + it->h / 2;
+        if (it->x < 0 || it->y < 0 || it->x + it->w >= cv->w || it->y + it->h >= cv->h) break;
+        fill_box(cv, rgb_pen(0xF3F3F3UL), it->x, it->y, it->w, it->h);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x, it->y, it->w, 1);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x, it->y + it->h - 1, it->w, 1);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x, it->y, 1, it->h);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x + it->w - 1, it->y, 1, it->h);
+        xy[0] = cv->ox + cx - a - 1; xy[1] = cv->oy + cy - a / 2;
+        xy[2] = cv->ox + cx + a + 1; xy[3] = cv->oy + cy - a / 2;
+        xy[4] = cv->ox + cx; xy[5] = cv->oy + cy + a;
+        ogt_fill_poly(cv->rp, it->flags ? ogt_pen(&ctx, "accent") : rgb_pen(0x404040UL), xy, 3);   /* filtering: the accent */
+        break;
+    }
     case OC_DRAW_MARK: {                             /* a comment's: the box's top right half, when it is all in view */
         int xy[6];
         if (it->x < 0 || it->y < 0 || it->x + it->w >= cv->w || it->y + it->h >= cv->h || it->w < 1) break;

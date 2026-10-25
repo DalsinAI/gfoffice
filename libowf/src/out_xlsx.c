@@ -1092,6 +1092,18 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
             owf_buf_puts(b, "</row>");
         }
     owf_buf_puts(b, "</sheetData>");
+    if (sh->has_autofilter && sh->autofilter.last_row < MAX_ROWS && sh->autofilter.last_col < MAX_COLS) {
+        owf_buf_puts(b, "<autoFilter ref=\"");
+        put_sqref(b, &sh->autofilter, 1);
+        owf_buf_puts(b, "\"");
+        if (sh->autofilter_xml) {
+            owf_buf_putc(b, '>');
+            owf_buf_puts(b, sh->autofilter_xml);
+            owf_buf_puts(b, "</autoFilter>");
+        } else {
+            owf_buf_puts(b, "/>");
+        }
+    }
     if (sh->nmerges) {
         int n = 0;
         for (i = 0; i < sh->nmerges; i++)

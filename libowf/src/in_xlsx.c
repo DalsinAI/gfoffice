@@ -10,9 +10,9 @@
  * tints), column widths, row heights, hidden rows, columns and sheets,
  * merged cells, frozen panes, defined names, the active sheet and the
  * 1904 date system, conditional formatting (cellIs, expression and colour
- * scale rules worked out; the others kept as written), comments and data
- * validation. What the model cannot hold (pictures, charts, tables,
- * pivot tables, macros) is reported.
+ * scale rules worked out; the others kept as written), comments, data
+ * validation and the AutoFilter. What the model cannot hold (pictures,
+ * charts, tables, pivot tables, macros) is reported.
  *
  * Big parts (the sheets, the shared strings) are read as a stream, element
  * by element, so a sheet's memory is its cells', not a tree of its XML.
@@ -1415,8 +1415,6 @@ static void sheet_element(xlsx *x, const owf_xml_event *e, cellstate *cs)
         owf_report_add(x->report, OWF_NOTE_LOST, "Pictures, charts and drawings on sheets are not read yet");
     } else if (!strcmp(name, "tablePart")) {
         owf_report_add(x->report, OWF_NOTE_LOST, "Tables keep their cells; the tables themselves (names, styles, filters) are not read yet");
-    } else if (!strcmp(name, "autoFilter") && e->depth == 2) {
-        owf_report_add(x->report, OWF_NOTE_LOST, "AutoFilter buttons are not read yet");
     } else if (!strcmp(name, "sheetProtection")) {
         owf_report_add(x->report, OWF_NOTE_INFO, "Sheet protection is not kept: the sheets open unprotected");
     }
@@ -1816,6 +1814,61 @@ static int dv_event(xlsx *x, const owf_xml_event *e, dvread *dr)
     return 0;
 }
 
+/* ---- The AutoFilter: its range, and what it filters by kept as written ---- */
+
+typedef struct {
+    int capturing, skip_depth, skip_end;
+    owf_buf xml;
+} afread;
+
+static int af_event(xlsx *x, const owf_xml_event *e, afread *ar)
+{
+    owf_sheet *sh = x->sheet;
+    if (ar->capturing) {
+        if (ar->skip_depth) {
+            if (e->type == OWF_XS_END && e->depth == ar->skip_depth)
+                ar->skip_depth = 0;
+            return 1;
+        }
+        if (e->type == OWF_XS_TEXT) {
+            put_escaped(&ar->xml, e->text, e->length, 0);
+        } else if (e->type == OWF_XS_START) {
+            if (!is_main(e->ns) || !strcmp(e->name, "extLst")) {
+                if (e->empty)
+                    ar->skip_end = 1;
+                else
+                    ar->skip_depth = e->depth;
+                return 1;
+            }
+            put_start_tag(&ar->xml, e, 0);
+            if (e->empty)
+                ar->skip_end = 1;
+        } else if (ar->skip_end) {
+            ar->skip_end = 0;
+        } else if (e->depth == 2 && !strcmp(e->name, "autoFilter")) {
+            ar->capturing = 0;
+            if (ar->xml.failed)
+                x->failed = 1;
+            else if (ar->xml.length && !(sh->autofilter_xml = copy(x, (const char *)ar->xml.data, ar->xml.length)))
+                return 1;
+        } else {
+            owf_buf_printf(&ar->xml, "</%s>", e->name);
+        }
+        return 1;
+    }
+    if (e->type == OWF_XS_START && e->depth == 2 && is_main(e->ns) && !strcmp(e->name, "autoFilter")) {
+        owf_range r;
+        if (parse_range(ev_attr(e, "ref"), &r) && !sh->has_autofilter) {
+            sh->has_autofilter = 1;
+            sh->autofilter = r;
+            ar->xml.length = 0;
+            ar->capturing = !e->empty;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 static void read_sheet_notes(xlsx *x, const char *part)
 {
     rels r;
@@ -1917,6 +1970,7 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     cellstate cs;
     cfread cr;
     dvread dr;
+    afread ar;
     int r;
 
     x->sheet = &x->book->sheets[xs->sheet];
@@ -1946,8 +2000,10 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     memset(&dr, 0, sizeof dr);
     dr.rule = -1;
     owf_buf_init(&dr.text);
+    memset(&ar, 0, sizeof ar);
+    owf_buf_init(&ar.xml);
     while (!x->failed && (r = owf_xml_scan_next(scan, &e)) > 0) {
-        if (!cs.in_data && (cf_event(x, &e, &cr) || dv_event(x, &e, &dr)))
+        if (!cs.in_data && (af_event(x, &e, &ar) || cf_event(x, &e, &cr) || dv_event(x, &e, &dr)))
             continue;
         if (e.type == OWF_XS_TEXT) {
             if (cs.in_v)
@@ -1993,6 +2049,7 @@ static void read_worksheet(xlsx *x, xsheet *xs)
         read_comments(x, xs->part);
     free(cr.ranges);
     owf_buf_free(&dr.text);
+    owf_buf_free(&ar.xml);
     /* validations left without their ranges (a damaged sqref) go */
     {
         owf_sheet *sh = x->sheet;

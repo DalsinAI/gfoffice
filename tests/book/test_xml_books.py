@@ -126,7 +126,7 @@ def parse(text):
             sheet["cells"][(r, c)] = line
         elif word in ("col", "row", "merge"):
             sheet[word + "s"].append(line)
-        elif word in ("cf", "comment", "validation"):
+        elif word in ("cf", "comment", "validation", "autofilter"):
             sheet.setdefault(word + "s", []).append(line)
     return book
 
@@ -370,7 +370,7 @@ def test_hand_xlsx(work):
     notes = "\n".join(b["notes"])
     for want in ("Diagonal lines", "Patterned cell backgrounds", "gradient", "angle", "Text formatted in parts",
                  "Pivot tables", "Chart sheets", "comments on cells could not be read", "#SPILL!", "Data tables", "numbers could not be read",
-                 "Sheet protection", "AutoFilter", "Links in cells",
+                 "Sheet protection", "Links in cells",
                  "Pictures, charts", "Tables keep"):
         check("hand: note " + want, want in notes, notes)
     check("hand: conditional formatting read, not noted", "Conditional formatting" not in notes, notes)
@@ -692,7 +692,10 @@ def test_xlsx_ods_xlsx(work, xlsx_paths):
         if "\nvalidation " in a:
             rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-dv.ods")])
             check("xlsx to ods: validation noted: " + stem, "Data validation is kept" in out, out)
-        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("cf ", "comment ", "validation "))
+        if "\nautofilter " in a:
+            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-af.ods")])
+            check("xlsx to ods: AutoFilter noted: " + stem, "AutoFilters are kept" in out, out)
+        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("cf ", "comment ", "validation ", "autofilter "))
 
 
 def test_ods_round_trips(work, ods_paths):
