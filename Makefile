@@ -123,3 +123,28 @@ book-check: $(OUT)/book-dump-asan $(OUT)/owconvert-asan
 	python3 tests/book/test_books.py $(OUT)/book-dump-asan $(OUT)/owconvert-asan
 
 .PHONY: book-test book-check
+
+# OpenCalc's core (src/calc) on the formula engine: tests/calc_core
+CALC_SRC = $(wildcard src/calc/*.c)
+CALC_DEPS = $(OWF_SRC) $(CALC_SRC) tests/calc_core/test_calc_core.c include/opencalc_core.h src/calc/oc_internal.h libowf/include/owf_calc.h
+
+$(OUT)/test-calc-core: $(CALC_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -Isrc/calc \
+		$(OWF_SRC) $(CALC_SRC) tests/calc_core/test_calc_core.c -lz -lm -o $@
+
+$(OUT)/test-calc-core-asan: $(CALC_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src -Isrc/calc $(OWF_SRC) $(CALC_SRC) tests/calc_core/test_calc_core.c -lz -lm -o $@
+
+calc-test: $(OUT)/test-calc-core
+	$(OUT)/test-calc-core
+
+calc-check: $(OUT)/test-calc-core-asan
+	$(OUT)/test-calc-core-asan
+
+test: calc-test
+check: calc-check
+
+.PHONY: calc-test calc-check
