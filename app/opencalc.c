@@ -130,7 +130,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Select All", "A", 0, 0, (APTR)M_SELECT_ALL },
     { NM_ITEM, "Select Rows", NULL, 0, 0, (APTR)M_SELECT_ROWS },
     { NM_ITEM, "Select Columns", NULL, 0, 0, (APTR)M_SELECT_COLS },
-    { NM_ITEM, "Go To...", "G", 0, 0, (APTR)M_GOTO },
+    { NM_ITEM, "Go To...", NULL, 0, 0, (APTR)M_GOTO },
 
     { NM_TITLE, "View", NULL, 0, 0, NULL },
     { NM_ITEM, "Freeze Panes", NULL, 0, 0, (APTR)M_FREEZE },
@@ -205,8 +205,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Rename...", NULL, 0, 0, (APTR)M_SHEET_RENAME },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_SHEET_DELETE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
-    { NM_ITEM, "Next Sheet", NULL, 0, 0, (APTR)M_SHEET_NEXT },
-    { NM_ITEM, "Previous Sheet", NULL, 0, 0, (APTR)M_SHEET_PREV },
+    { NM_ITEM, "Next Sheet", "]", 0, 0, (APTR)M_SHEET_NEXT },
+    { NM_ITEM, "Previous Sheet", "[", 0, 0, (APTR)M_SHEET_PREV },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -248,6 +248,7 @@ static oc_core *core;
 static oc_draw_list dl;
 static ow_autosave *autosave;
 static struct MsgPort *rexx_port;
+static char rexx_name[16];                           /* OPENCALC, or OPENCALC.2 for a second copy */
 #define REXX_PORT_NAME "OPENCALC"
 #define RECOVERY_BASE "T:OpenCalc-Recovery"
 #define RECOVERY_META "T:OpenCalc-Recovery.meta"
@@ -1766,17 +1767,33 @@ static int rexx_cell(const char *arg, unsigned *row, unsigned *col, const char *
     return 1;
 }
 
+/* As the GFOffice ARexx conventions (docs/gfoffice/Design-Suite-Shared.md 6.3, proposed): 0 done, 5 not
+ * possible now, 10 an error or an unknown command. */
+#define RX_OK 0
+#define RX_NOW 5
+#define RX_ERROR 10
+
 static int rexx_do_command(const char *command, char **result_out)
 {
     const char *arg = "";
     char result_text[1024];
-    int ok = 1;
+    int ok = 1, rc_fail = RX_ERROR;
     unsigned row, col;
     result_text[0] = 0;
     command = skip_space(command);
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
+    else if (starts_word_ci(command, "HELP", &arg))
+        snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
+                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND QUIT");
+    else if (starts_word_ci(command, "ACTIVATE", &arg)) {
+        if (win) { WindowToFront(win); ActivateWindow(win); }
+    } else if (starts_word_ci(command, "ISDIRTY", &arg))
+        snprintf(result_text, sizeof result_text, "%d", oc_core_is_dirty(core) ? 1 : 0);
+    else if (starts_word_ci(command, "GETFILE", &arg))
+        snprintf(result_text, sizeof result_text, "%s", current_path);
     else if (starts_word_ci(command, "OPEN", &arg)) {
-        if (!*arg || oc_core_is_dirty(core)) { ok = 0; snprintf(result_text, sizeof result_text, "Unsaved changes or missing path"); }
+        if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "Missing path"); }
+        else if (oc_core_is_dirty(core)) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "Unsaved changes"); }
         else { open_book(arg); snprintf(result_text, sizeof result_text, "%s", status); }
     } else if (starts_word_ci(command, "SAVEAS", &arg)) {
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "Missing path"); }
@@ -1784,7 +1801,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "SAVE", &arg)) {
         const owf_book_format *f = current_format[0] ? owf_book_format_named(current_format) : NULL;
         if (current_path[0] && f && f->export) { ok = save_book_as(current_path, NULL, 1); snprintf(result_text, sizeof result_text, "%s", status); }
-        else { ok = 0; snprintf(result_text, sizeof result_text, "Needs SAVEAS"); }
+        else { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "Needs SAVEAS"); }
     } else if (starts_word_ci(command, "EXPORT", &arg)) {
         owf_report *rp = owf_report_new();
         ok = *arg && owf_export_book_file(oc_core_book(core), arg, NULL, rp) == OWF_OK;
@@ -1854,7 +1871,7 @@ static int rexx_do_command(const char *command, char **result_out)
         if (cmds[i].name) { menu_action(cmds[i].id); snprintf(result_text, sizeof result_text, "OK"); }
         else { ok = 0; snprintf(result_text, sizeof result_text, "Unknown COMMAND"); }
     } else if (starts_word_ci(command, "QUIT", &arg)) {
-        if (oc_core_is_dirty(core)) { ok = 0; snprintf(result_text, sizeof result_text, "Unsaved changes"); }
+        if (oc_core_is_dirty(core) && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "Unsaved changes"); }
         else { quit_now = 1; snprintf(result_text, sizeof result_text, "Quitting"); }
     } else { ok = 0; snprintf(result_text, sizeof result_text, "Unknown OpenCalc ARexx command"); }
     if (result_out) {
@@ -1863,7 +1880,7 @@ static int rexx_do_command(const char *command, char **result_out)
         else ok = 0;
     }
     refresh();
-    return ok;
+    return ok ? RX_OK : rc_fail;
 }
 
 static void rexx_messages(void)
@@ -1871,10 +1888,10 @@ static void rexx_messages(void)
     struct RexxMsg *rm;
     while (rexx_port && (rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
         char *res = NULL;
-        int ok = rexx_do_command((const char *)rm->rm_Args[0], &res);
-        rm->rm_Result1 = ok ? RC_OK : RC_ERROR;
+        int rc = rexx_do_command((const char *)rm->rm_Args[0], &res);
+        rm->rm_Result1 = rc;
         rm->rm_Result2 = 0;
-        if ((rm->rm_Action & RXFF_RESULT) && RexxSysBase && res)
+        if (rc == RX_OK && (rm->rm_Action & RXFF_RESULT) && RexxSysBase && res)
             rm->rm_Result2 = (LONG)CreateArgstring((STRPTR)res, (LONG)strlen(res));
         free(res);
         ReplyMsg((struct Message *)rm);
@@ -1884,12 +1901,18 @@ static void rexx_messages(void)
 static void rexx_open(void)
 {
     struct MsgPort *p;
+    int n;
     if (!RexxSysBase) return;
     if (!(p = CreateMsgPort())) return;
-    p->mp_Node.ln_Name = (char *)REXX_PORT_NAME;
     p->mp_Node.ln_Pri = 0;
     Forbid();
-    if (FindPort((STRPTR)REXX_PORT_NAME)) { Permit(); DeleteMsgPort(p); return; }
+    for (n = 1; n < 10; n++) {                       /* OPENCALC, then OPENCALC.2 for a second copy */
+        if (n == 1) snprintf(rexx_name, sizeof rexx_name, "%s", REXX_PORT_NAME);
+        else snprintf(rexx_name, sizeof rexx_name, "%s.%d", REXX_PORT_NAME, n);
+        if (!FindPort((STRPTR)rexx_name)) break;
+    }
+    if (n == 10) { Permit(); DeleteMsgPort(p); return; }
+    p->mp_Node.ln_Name = rexx_name;
     AddPort(p);
     Permit();
     rexx_port = p;
