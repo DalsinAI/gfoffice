@@ -651,6 +651,45 @@ int oc_line_px(const oc_core *core, int twips)
     return (oc_font_px(core, twips) * 23 + 10) / 20;
 }
 
+static int seen_size(const int *tried, int n, int size)
+{
+    int k;
+    for (k = 0; k < n; k++)
+        if (tried[k] == size)
+            return 1;
+    return 0;
+}
+
+int oc_font_size_for_caps(int pixels, int (*cap_at)(void *user, int size), void *user, int *cap)
+{
+    int want = (pixels * 716 + 500) / 1000, best = pixels, best_cap, size, tried[OC_CAP_TRIES + 1], ntried = 0, tries;
+    if (want < 3)
+        want = 3;
+    best_cap = cap_at(user, pixels);
+    *cap = best_cap;
+    if (best_cap <= 0)
+        return pixels;
+    tried[ntried++] = pixels;
+    size = (pixels * want + best_cap / 2) / best_cap;    /* the first guess: in proportion */
+    for (tries = 0; tries < OC_CAP_TRIES && best_cap != want; tries++) {
+        int c;
+        if (seen_size(tried, ntried, size))
+            size = best + (best_cap < want ? 1 : -1);
+        if (seen_size(tried, ntried, size) || size < 4 || size > 200)
+            break;
+        tried[ntried++] = size;
+        if ((c = cap_at(user, size)) <= 0)
+            break;
+        if ((c > want ? c - want : want - c) < (best_cap > want ? best_cap - want : want - best_cap)) {
+            best = size;
+            best_cap = c;
+        }
+        size = best + (best_cap < want ? 1 : -1);        /* then a step from the nearest yet, toward the height */
+    }
+    *cap = best_cap;
+    return best;
+}
+
 /* Where a cell's text starts: by its alignment, pad and indent (10 pixels a step at 100%). */
 static int text_start(const oc_core *core, const owf_cellstyle *st, int align, int x, int w, int tw)
 {

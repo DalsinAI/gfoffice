@@ -1374,6 +1374,77 @@ static void test_tab_strip(void)
     CHECK(end == 0 && first == 0 && !scroll);
 }
 
+/* Made-up faces for oc_font_size_for_caps: the capitals' height at each size, and the sizes asked for. */
+typedef struct {
+    int kind;                    /* 0 capitals = size; 1 two thirds of it; 2 never made; 3 bitmap sizes only */
+    int asked[16], nasked;
+} fake_face;
+
+static int fake_caps(void *user, int size)
+{
+    fake_face *f = (fake_face *)user;
+    if (f->nasked < 16)
+        f->asked[f->nasked++] = size;
+    switch (f->kind) {
+    case 0: return size;
+    case 1: return size * 2 / 3;
+    case 2: return 0;
+    default:                     /* 11, 13 and 15 pixels made, capitals 8, 9 and 11: the nearest */
+        return size <= 12 ? 8 : size <= 14 ? 9 : 11;
+    }
+}
+
+static void test_font_caps(void)
+{
+    fake_face f;
+    int cap, size, i, j, twice = 0;
+    /* capitals as tall as the size (openfont's DejaVu Sans): 11 points' 15-pixel em made at 11 */
+    memset(&f, 0, sizeof f);
+    size = oc_font_size_for_caps(15, fake_caps, &f, &cap);
+    CHECK(size == 11 && cap == 11 && f.nasked == 2);
+    /* two thirds (the lab's CGTriumvirate at 110%: 16 pixels gave capitals of 10, the guess 18 gives 12):
+       a step from the nearest finds 17, capitals 11 */
+    memset(&f, 0, sizeof f);
+    f.kind = 1;
+    size = oc_font_size_for_caps(16, fake_caps, &f, &cap);
+    CHECK(size == 17 && cap == 11);
+    for (i = 0; i < f.nasked; i++)
+        for (j = 0; j < i; j++)
+            twice |= f.asked[i] == f.asked[j];
+    CHECK(!twice && f.nasked <= 1 + OC_CAP_TRIES);
+    /* 18 pixels want 13: the guess in proportion, 20, has them */
+    memset(&f, 0, sizeof f);
+    f.kind = 1;
+    size = oc_font_size_for_caps(18, fake_caps, &f, &cap);
+    CHECK(size == 20 && cap == 13 && f.nasked == 2);
+    /* already right: asked once */
+    memset(&f, 0, sizeof f);
+    size = oc_font_size_for_caps(11, fake_caps, &f, &cap);   /* 11 wants 8; capitals = size */
+    CHECK(size == 8 && cap == 8);
+    memset(&f, 0, sizeof f);
+    f.kind = 1;
+    size = oc_font_size_for_caps(25, fake_caps, &f, &cap);   /* 25 wants 18: two thirds of 27 */
+    CHECK(cap == 18 && (size == 27 || size == 28) && f.nasked == 2);
+    memset(&f, 0, sizeof f);
+    f.kind = 0;
+    size = oc_font_size_for_caps(7, fake_caps, &f, &cap);    /* 7 wants 5 */
+    CHECK(size == 5 && cap == 5);
+    /* a face that is never made: the size asked, no capitals */
+    memset(&f, 0, sizeof f);
+    f.kind = 2;
+    size = oc_font_size_for_caps(15, fake_caps, &f, &cap);
+    CHECK(size == 15 && cap == 0 && f.nasked == 1);
+    /* a bitmap face's sizes: the nearest kept, the tries bounded, none twice */
+    memset(&f, 0, sizeof f);
+    f.kind = 3;
+    size = oc_font_size_for_caps(20, fake_caps, &f, &cap);   /* wants 14: 11 is the nearest it has */
+    CHECK(cap == 11 && f.nasked <= 1 + OC_CAP_TRIES);
+    for (i = 0, twice = 0; i < f.nasked; i++)
+        for (j = 0; j < i; j++)
+            twice |= f.asked[i] == f.asked[j];
+    CHECK(!twice);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -1589,6 +1660,7 @@ int main(void)
     test_sheets();
     test_draw();
     test_borders();
+    test_font_caps();
     test_text_layout();
     test_tab_strip();
     test_status();
