@@ -58,7 +58,7 @@ SRC=""
 for f in "$OWF"/src/*.c; do
     case "$f" in
     */owf_sys.c) ;;   # owf_sys_dos.c instead
-    */owf_deck.c | */in_odp.c | */out_odp.c | */owf_pdf.c | */owf_pdffonts.c) ;;   # with the library's deck calls (E3)
+    */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */owf_pdf.c | */owf_pdffonts.c) ;;   # with the library's deck calls (E3)
     *) SRC="$SRC $f" ;;
     esac
 done
