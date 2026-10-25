@@ -6,14 +6,15 @@
 # and the long after it with one clr.l).
 #
 #   build-os3.sh [OUT_DIR]              (default build/os3)
-#   OWF=library build-os3.sh [OUT_DIR]  both on owf.library (build-library.sh)
+#   OWF=library build-os3.sh [OUT_DIR]  each on its library (build-library.sh, docs/suite/owf-libraries.md):
+#                                       OpenWrite on owfwrite.library; OWConvert on owf.library 2 for now
 #
 # Both are 68040 code, as every build. The OpenWrite UI uses OpenGadTools.
 # No FPU is required.
 #
 # libowf, the file formats, is linked into each program (OWF=linked, the
-# default) or opened as LIBS:owf.library (OWF=library: the library and
-# OWFLibTest are built too). Either way ODT and DOCX deflate and inflate
+# default) or opened as GFOffice's libraries (OWF=library: the libraries,
+# OWFLibsTest and OWFLibTest are built too). Either way ODT and DOCX deflate and inflate
 # through z.library, ours (amigachrome-guest libraries/openzlib), opened
 # when a document first needs it; there is no zlib source in the build.
 # MIT, Copyright (c) 2026 AmigaChrome Team.
@@ -39,14 +40,21 @@ OWF=${OWF:-linked}
 case "$OWF" in
 linked)
     OWFFLAGS="-DOWF_HAVE_ZLIB -DOWF_ZLIBRARY -I$HERE/libowf/include -I$HERE/libowf/src -I$HERE/libowf/amiga/sdk/Include_H"
+    OWF_WRITE=""
+    OWF_OWC=""
     OWFSRC="$HERE/libowf/src/*.c $HERE/libowf/amiga/owf_zlib_amiga.c"
     # OWConvert's workbooks have doubles: libnix's soft double maths, through
     # mathieeedoubbas.library, which uses the FPU when there is one
     OWFLIBS="-lm"
     ;;
 library)
-    "$HERE/build-library.sh" "$OUT/library"
-    OWFFLAGS="-DOWF_USE_LIBRARY -I$HERE/libowf/include -I$HERE/libowf/library/sdk/Include_H"
+    # OWF_BUILD_LIBRARIES=no: the libraries are built elsewhere (build-amiga.sh builds them once, in OUT/library)
+    [ "${OWF_BUILD_LIBRARIES:-yes}" = no ] || "$HERE/build-library.sh" "$OUT/library"
+    # each program names its library: OpenWrite owfwrite.library (OWF_USE_WRITE_LIBRARY), OWConvert owf.library 2
+    # (OWF_USE_LIBRARY alone) until it is split by library
+    OWFFLAGS="-I$HERE/libowf/include -I$HERE/libowf/library/sdk/Include_H"
+    OWF_WRITE="-DOWF_USE_WRITE_LIBRARY"
+    OWF_OWC="-DOWF_USE_LIBRARY"
     OWFSRC=""
     OWFLIBS=""
     ;;
@@ -85,7 +93,7 @@ if [ "$OWF" = linked ]; then
     OWC_DECK="$OWC_DECK $HERE/src/core/ow_layout.c $OPENLAYOUT_SRC/src/openlayout.c"
 fi
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS $OWF_OWC \
     $OWFSRC $OWC_DECK "$HERE/tools/owconvert.c" $OWFLIBS \
     -o "$OUT/OWConvert"
 
@@ -93,7 +101,7 @@ fi
 # 2026: "the rewrite is OpenWrite, not a second program"); the same core and filters.
 # shellcheck disable=SC2086
 APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $HERE/app/ow_stack.c $HERE/app/ow_fontwidths.c"
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     $OWFSRC_DOCS "$HERE"/src/core/*.c "$OPENLAYOUT_SRC/src/openlayout.c" "$HERE/app/openwrite2.c" $APP_COMMON \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
