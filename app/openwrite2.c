@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.14 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.15 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -1307,6 +1307,7 @@ static int selection_for_run(int paragraph, int run, size_t len,
     ow_position a, b, rs, re;
     if (paragraph < 0 || !editor || ow_editor_selection_empty(editor)) return 0;
     sel = ow_editor_selection(editor);
+    if (sel.focus.box) return 0;                     /* 2.0.15: in a text box, not the body's */
     if (pos_compare(sel.anchor, sel.focus) <= 0) { a = sel.anchor; b = sel.focus; }
     else { a = sel.focus; b = sel.anchor; }
     rs.paragraph = re.paragraph = paragraph;
@@ -1351,7 +1352,7 @@ static void draw_caret_if_here(struct RastPort *rp, int paragraph, int run,
     if (paragraph < 0 || !editor || !ow_editor_selection_empty(editor)) return;
     sel = ow_editor_selection(editor);
     c = sel.focus;
-    if (c.paragraph != paragraph || c.run != run) return;
+    if (c.box || c.paragraph != paragraph || c.run != run) return;
     if (c.byte_offset < segment_start || c.byte_offset > segment_end) return;
     cx = x + text_width_n(rp, text + segment_start,
                           c.byte_offset - segment_start);
@@ -1576,6 +1577,7 @@ static int hit_position(int mx, int my, ow_position *out)
         if (d < best_dist) { best_dist = d; best = i; }
     }
     if (best < 0) return 0;
+    memset(out, 0, sizeof(*out));                    /* the body's (box 0) */
     {
         hit_span *h = &hits[best];
         const owf_run *run = &doc->body.paras[h->paragraph].runs[h->run];
@@ -1981,7 +1983,7 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     ol_unit size = t->style.font_size > 0 ? t->style.font_size : OL_POINT(12), tabs;
     char buf[256], file[72];
     size_t n, k, drawn;
-    int baseline = d->baseline, style = FS_NORMAL, para = -1, run = -1, target, placed, smear = 0;
+    int baseline = d->baseline, style = FS_NORMAL, para = -1, run = -1, nbox = 0, target, placed, smear = 0;
     ULONG sum;
     struct TextFont *f;
     LONG pen;
@@ -2032,10 +2034,15 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     /* bold of our own is always placed glyph by glyph; plain text when the font runs wider than the layout */
     placed = drawn && (smear || (int)TextLength(rp, (STRPTR)buf, drawn) > target + 1);
 
-    /* the selection under the text, and where the caret goes, measured as the text is drawn */
-    if (pp->body && ow_layout_node_run(pp->layout, t->node_id, &para, &run) && run >= 0 &&
-        doc->body.paras[para].runs[run].kind == OWF_RUN_TEXT) {
+    /* the selection under the text, and where the caret goes, measured as the text is drawn: the body's, or a
+     * text box's (2.0.15) */
+    if (pp->body && ow_layout_node_ref(pp->layout, t->node_id, &nbox, &para, &run) && run >= 0 &&
+        nbox == pp->caret.box && (nbox ? &doc->frames[nbox - 1].story : &doc->body)->paras[para].runs[run].kind ==
+        OWF_RUN_TEXT) {
         ow_position rs, re;
+        memset(&rs, 0, sizeof rs);
+        rs.box = nbox;
+        re = rs;
         rs.paragraph = re.paragraph = para;
         rs.run = re.run = run;
         rs.byte_offset = t->text_offset;
@@ -2258,7 +2265,8 @@ static int caret_line_move(int dir, int extend)
             ++np;
             y = 0;
         }
-        if (ow_layout_hit(l, np, box.x, y, &to) && ow_layout_caret(l, to, &found, &nb) &&
+        /* 2.0.15: in the story the caret is in (a text box's lines, not the body's beside it) */
+        if (ow_layout_hit(l, np, box.x, y, &to) && to.box == sel.focus.box && ow_layout_caret(l, to, &found, &nb) &&
             (found != page || nb.y != box.y))
             break;
     }

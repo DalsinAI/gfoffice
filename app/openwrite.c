@@ -1239,6 +1239,7 @@ static int hit_position(int mx, int my, ow_position *out)
         if (d < best_dist) { best_dist = d; best = i; }
     }
     if (best < 0) return 0;
+    memset(out, 0, sizeof(*out));                    /* the body's (box 0) */
     {
         hit_span *h = &hits[best];
         const owf_run *run = &doc->body.paras[h->paragraph].runs[h->run];

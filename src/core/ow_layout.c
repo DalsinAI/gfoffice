@@ -15,10 +15,12 @@
 #define WRAP_GAP 180                /* twips: Word's distL and distR, 114300 EMU */
 
 /* What an OpenLayout node is in the document: run -1 is the paragraph's
- * own block; paragraph -1 is a table, row or cell. */
+ * own block; paragraph -1 is a table, row or cell. box: the body's (0) or
+ * a text box's (k, doc->frames[k - 1]), 2.0.15. */
 typedef struct {
     int paragraph;
     int run;
+    int box;
 } node_ref;
 
 struct ow_layout {
@@ -30,6 +32,11 @@ struct ow_layout {
     node_ref *refs;             /* by node id */
     size_t caprefs;
     ol_id *blocks;              /* each body paragraph's block; its runs follow it */
+    /* 2.0.15: the text boxes, for the caret in them: each frame's node (0: not laid out) and each text box's
+     * paragraphs' blocks, by frame (doc->frames[k - 1] is box k) */
+    int nboxes;
+    ol_id *box_frame;
+    ol_id **box_blocks;
 };
 
 /* The text a field shows. */
@@ -40,7 +47,7 @@ typedef struct {
     const char *time;
 } field_values;
 
-static int remember(ow_layout *l, ol_node *node, int paragraph, int run)
+static int remember(ow_layout *l, ol_node *node, int box, int paragraph, int run)
 {
     ol_id id = ol_node_id(node);
     if (!l) return 1;
@@ -53,12 +60,14 @@ static int remember(ow_layout *l, ol_node *node, int paragraph, int run)
         for (i = l->caprefs; i < cap; ++i) {
             p[i].paragraph = -1;
             p[i].run = -1;
+            p[i].box = 0;
         }
         l->refs = p;
         l->caprefs = cap;
     }
     l->refs[id].paragraph = paragraph;
     l->refs[id].run = run;
+    l->refs[id].box = box;
     return 1;
 }
 
@@ -224,8 +233,12 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
         ol_node_set_style(n, &s);
         ol_node_set_image(n, fr->image, b.frame.width, b.frame.height);
     }
-    /* its paragraphs, not the body's: no caret goes into them yet, and a frame in them is left out */
-    return !fr->story.nparas || add_story((ow_layout *)l, doc, od, f, &fr->story, 0, NULL);
+    /* its paragraphs, recorded as text box k's (2.0.15: the caret goes into them); a frame in them is left
+     * out */
+    if (l && fr >= doc->frames && fr < doc->frames + doc->nframes && l->box_frame)
+        l->box_frame[fr - doc->frames] = ol_node_id(f);
+    return !fr->story.nparas ||
+           add_story((ow_layout *)l, doc, od, f, &fr->story, l ? (int)(fr - doc->frames) + 2 : 0, NULL);
 }
 
 static const char *field_text(const field_values *fv, owf_field field)
@@ -282,7 +295,7 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         }
         if (!ol_node_set_tab_stops(block, n, stops)) return NULL;
     }
-    if (!remember(record ? l : NULL, block, index, -1)) return NULL;
+    if (!remember(record ? l : NULL, block, record - 1, index, -1)) return NULL;
 
     for (j = 0; j < p->nruns; ++j) {
         const owf_run *r = &p->runs[j];
@@ -311,11 +324,12 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         if (!n) return NULL;
         run_style(doc, &r->fmt, spacing, &rs);
         ol_node_set_style(n, &rs);
-        if (!remember(record ? l : NULL, n, index, j)) return NULL;
+        if (!remember(record ? l : NULL, n, record - 1, index, j)) return NULL;
     }
     /* 2.0.10: the frames anchored here (an empty run each above), after the runs, so run j stays node
-     * block + 1 + j; the body's only (l), so a text box's own frames and a header's are left out */
-    for (j = 0; record && l && j < p->nruns; ++j)
+     * block + 1 + j; the body's only (record 1: l, box 0), so a text box's own frames and a header's are
+     * left out */
+    for (j = 0; record == 1 && l && j < p->nruns; ++j)
         if (p->runs[j].kind == OWF_RUN_FRAME && p->runs[j].image >= 0 && p->runs[j].image < doc->nframes &&
             !add_frame(l, doc, od, block, &doc->frames[p->runs[j].image]))
             return NULL;
@@ -450,14 +464,33 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
         l->page.margin_left = l->page.margin_right = TW(OWF_TWIPS_PER_INCH);
     }
     l->blocks = (ol_id *)calloc((size_t)(doc->body.nparas ? doc->body.nparas : 1), sizeof(*l->blocks));
+    if (doc->nframes > 0) {                          /* 2.0.15: the text boxes' */
+        l->nboxes = doc->nframes;
+        l->box_frame = (ol_id *)calloc((size_t)doc->nframes, sizeof(*l->box_frame));
+        l->box_blocks = (ol_id **)calloc((size_t)doc->nframes, sizeof(*l->box_blocks));
+        if (!l->box_frame || !l->box_blocks) {
+            ow_layout_free(l);
+            return NULL;
+        }
+        for (k = 0; k < doc->nframes; ++k)
+            if (doc->frames[k].story.nparas &&
+                !(l->box_blocks[k] = (ol_id *)calloc((size_t)doc->frames[k].story.nparas, sizeof(ol_id)))) {
+                ow_layout_free(l);
+                return NULL;
+            }
+    }
     if (!l->body || !l->blocks || !add_story(l, doc, l->body, NULL, &doc->body, 1, NULL)) {
         ow_layout_free(l);
         return NULL;
     }
     /* each paragraph's block: the node remembered with run -1 */
     for (i = 0; i < l->caprefs; ++i)
-        if (l->refs[i].paragraph >= 0 && l->refs[i].run < 0)
-            l->blocks[l->refs[i].paragraph] = (ol_id)i;
+        if (l->refs[i].paragraph >= 0 && l->refs[i].run < 0) {
+            int b = l->refs[i].box;
+            if (!b) l->blocks[l->refs[i].paragraph] = (ol_id)i;
+            else if (b <= l->nboxes && l->box_blocks[b - 1] && l->refs[i].paragraph < doc->frames[b - 1].story.nparas)
+                l->box_blocks[b - 1][l->refs[i].paragraph] = (ol_id)i;
+        }
     for (k = 0; k < doc->body.nparas; ++k)
         if (!l->blocks[k]) {
             ow_layout_free(l);
@@ -472,11 +505,28 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
 
 void ow_layout_free(ow_layout *l)
 {
+    int k;
     if (!l) return;
     ol_document_free(l->body);
     free(l->refs);
     free(l->blocks);
+    for (k = 0; l->box_blocks && k < l->nboxes; ++k) free(l->box_blocks[k]);
+    free(l->box_blocks);
+    free(l->box_frame);
     free(l);
+}
+
+/* 2.0.15: a position's story, and its paragraphs' blocks: the body's, or text box box's; NULL when it has none
+ * laid out. */
+static const owf_story *pos_story(const ow_layout *l, int box, const ol_id **blocks)
+{
+    if (!box) {
+        *blocks = l->blocks;
+        return &l->doc->body;
+    }
+    if (box < 0 || box > l->nboxes || !l->box_blocks || !l->box_blocks[box - 1] || !l->box_frame[box - 1]) return NULL;
+    *blocks = l->box_blocks[box - 1];
+    return &l->doc->frames[box - 1].story;
 }
 
 ol_document *ow_layout_body(const ow_layout *l)
@@ -497,14 +547,18 @@ const ol_page *ow_layout_page(const ow_layout *l)
 int ow_layout_to_text(const ow_layout *l, ow_position pos, ol_text_position *out)
 {
     const owf_para *p;
-    if (!l || !out || pos.paragraph < 0 || pos.paragraph >= l->doc->body.nparas) return 0;
-    p = &l->doc->body.paras[pos.paragraph];
+    const owf_story *story;
+    const ol_id *blocks = NULL;
+    if (!l || !out || !(story = pos_story(l, pos.box, &blocks)) || pos.paragraph < 0 ||
+        pos.paragraph >= story->nparas)
+        return 0;
+    p = &story->paras[pos.paragraph];
     if (pos.run < 0 || pos.run >= p->nruns) {
-        out->node_id = l->blocks[pos.paragraph];
+        out->node_id = blocks[pos.paragraph];
         out->offset = 0;
         return 1;
     }
-    out->node_id = l->blocks[pos.paragraph] + 1 + (ol_id)pos.run;
+    out->node_id = blocks[pos.paragraph] + 1 + (ol_id)pos.run;
     out->offset = 0;
     if (p->runs[pos.run].kind == OWF_RUN_TEXT && p->runs[pos.run].text) {
         size_t len = strlen(p->runs[pos.run].text);
@@ -559,35 +613,164 @@ static void into_text_run(const owf_para *p, int run, size_t offset, ow_position
 int ow_layout_from_text(const ow_layout *l, const ol_text_position *in, ow_position *out)
 {
     node_ref r;
+    const owf_story *story;
+    const ol_id *blocks = NULL;
     if (!l || !in || !out || in->node_id >= l->caprefs) return 0;
     r = l->refs[in->node_id];
-    if (r.paragraph < 0 || r.paragraph >= l->doc->body.nparas) return 0;
+    if (!(story = pos_story(l, r.box, &blocks)) || r.paragraph < 0 || r.paragraph >= story->nparas) return 0;
     out->paragraph = r.paragraph;
-    into_text_run(&l->doc->body.paras[r.paragraph], r.run < 0 ? -1 : r.run,
-                  r.run < 0 ? 0 : in->offset, out);
+    out->box = r.box;
+    into_text_run(&story->paras[r.paragraph], r.run < 0 ? -1 : r.run, r.run < 0 ? 0 : in->offset, out);
     return 1;
 }
 
-int ow_layout_node_run(const ow_layout *l, ol_id node_id, int *paragraph, int *run)
+int ow_layout_node_ref(const ow_layout *l, ol_id node_id, int *box, int *paragraph, int *run)
 {
     node_ref r;
+    const owf_story *story;
+    const ol_id *blocks = NULL;
     if (!l || node_id >= l->caprefs) return 0;
     r = l->refs[node_id];
-    if (r.paragraph < 0 || r.paragraph >= l->doc->body.nparas) return 0;
+    if (!(story = pos_story(l, r.box, &blocks)) || r.paragraph < 0 || r.paragraph >= story->nparas) return 0;
+    if (box) *box = r.box;
     if (paragraph) *paragraph = r.paragraph;
     if (run) *run = r.run;
     return 1;
 }
 
+int ow_layout_node_run(const ow_layout *l, ol_id node_id, int *paragraph, int *run)
+{
+    int box = 0;
+    return ow_layout_node_ref(l, node_id, &box, paragraph, run) && !box;
+}
+
 int ow_layout_caret(const ow_layout *l, ow_position pos, int *page, ol_rect *box)
 {
     ol_text_position t;
+    const ol_id *blocks = NULL;
     if (!ow_layout_to_text(l, pos, &t)) return 0;
     if (ol_caret_box(l->body, &t, l->measure, l->measure_userdata, page, box)) return 1;
+    pos_story(l, pos.box, &blocks);
+    if (pos.box) {
+        /* 2.0.15: in a text box, an empty paragraph's corner in its frame, where the frame went (the frame's
+         * nodes are where it was laid out, at its own corner) */
+        const ol_node *frame = ol_node_by_id(l->body, l->box_frame[pos.box - 1]);
+        const ol_node *block = ol_node_by_id(l->body, blocks[pos.paragraph]);
+        ol_rect at, b;
+        int fp;
+        if (!frame || !block || !ol_frame_place(l->body, frame, &fp, &at)) return 0;
+        b = ol_node_bounds(block);
+        box->x = at.x + b.x + ol_node_style(block)->padding_left;
+        box->y = at.y + b.y + ol_node_style(block)->padding_top;
+        box->width = 0;
+        box->height = ol_node_style(block)->line_height > 0 ? ol_node_style(block)->line_height : OL_POINT(12);
+        if (page) *page = fp;
+        return 1;
+    }
     /* a run with nothing laid out (empty text): its paragraph's start */
-    t.node_id = l->blocks[pos.paragraph];
+    t.node_id = blocks[pos.paragraph];
     t.offset = 0;
     return ol_caret_box(l->body, &t, l->measure, l->measure_userdata, page, box);
+}
+
+/* A paragraph with no text to lay out (its caret has no line of its own). */
+static int para_is_empty(const owf_para *p)
+{
+    int j;
+    for (j = 0; j < p->nruns; ++j)
+        if (p->runs[j].kind != OWF_RUN_TEXT || (p->runs[j].text && p->runs[j].text[0])) return 0;
+    return 1;
+}
+
+static ol_unit gap_to(ol_unit v, ol_unit lo, ol_unit len)
+{
+    if (v < lo) return lo - v;
+    if (v >= lo + len) return v - (lo + len) + 1;
+    return 0;
+}
+
+/* 2.0.15: the text box in front of the text under a point on a page, the front one first (the later frames are
+ * drawn over the earlier); in it, the character nearest the point, as ol_hit_text finds one in the body (which
+ * leaves frames out): on the nearest line, before or after the character under x. An empty box: its start. */
+static int hit_box(const ow_layout *l, int page, ol_unit x, ol_unit y, ow_position *pos)
+{
+    int k;
+    for (k = l->nboxes; k >= 1; --k) {
+        const owf_frame *fr = &l->doc->frames[k - 1];
+        const ol_node *frame;
+        ol_rect at;
+        size_t first = 0, count = 0, i, best = (size_t)-1, c, best_c = 0;
+        ol_unit best_dy = 0, best_dx = 0, best_d;
+        ol_text_position t;
+        const ol_display_op *op;
+        const char *text;
+        int fp;
+        if (!fr->story.nparas || fr->behind || !l->box_frame[k - 1] || !l->box_blocks[k - 1]) continue;
+        frame = ol_node_by_id(l->body, l->box_frame[k - 1]);
+        if (!frame || !ol_frame_place(l->body, frame, &fp, &at) || fp != page || x < at.x || x >= at.x + at.width ||
+            y < at.y || y >= at.y + at.height)
+            continue;
+        if (!ol_display_page_range(l->body, page, &first, &count)) return 0;
+        for (i = first; i < first + count; ++i) {
+            ol_unit dy, dx;
+            op = ol_display_get(l->body, i);
+            if (op->type != OL_OP_TEXT || op->u.text.node_id >= l->caprefs || l->refs[op->u.text.node_id].box != k)
+                continue;
+            dy = gap_to(y, op->u.text.bounds.y, op->u.text.bounds.height);
+            dx = gap_to(x, op->u.text.bounds.x, op->u.text.bounds.width);
+            if (best == (size_t)-1 || dy < best_dy || (dy == best_dy && dx < best_dx)) {
+                best = i;
+                best_dy = dy;
+                best_dx = dx;
+            }
+        }
+        if (best == (size_t)-1 || best_dy > 0) {
+            /* no line of text under the point: an empty paragraph's line there (their blocks are where the frame
+             * was laid out, at its own corner), or, with no text at all, the box's first paragraph */
+            int pi;
+            for (pi = 0; pi < fr->story.nparas; ++pi) {
+                const ol_node *b = ol_node_by_id(l->body, l->box_blocks[k - 1][pi]);
+                ol_rect r;
+                if (!b) continue;
+                r = ol_node_bounds(b);
+                if (y >= at.y + r.y && y < at.y + r.y + r.height) {
+                    t.node_id = l->box_blocks[k - 1][pi];
+                    t.offset = 0;
+                    if (best == (size_t)-1 || para_is_empty(&fr->story.paras[pi]))
+                        return ow_layout_from_text(l, &t, pos);
+                }
+            }
+            if (best == (size_t)-1) {
+                t.node_id = l->box_blocks[k - 1][0];
+                t.offset = 0;
+                return ow_layout_from_text(l, &t, pos);
+            }
+        }
+        op = ol_display_get(l->body, best);
+        text = ol_node_text(ol_node_by_id(l->body, op->u.text.node_id));
+        if (!text) return 0;
+        text += op->u.text.text_offset;
+        best_d = x > op->u.text.bounds.x ? x - op->u.text.bounds.x : op->u.text.bounds.x - x;
+        for (c = 1; c <= op->u.text.text_length; ++c) {
+            ol_text_metrics m;
+            ol_unit edge, d;
+            if (c < op->u.text.text_length && ((unsigned char)text[c] & 0xc0u) == 0x80u) continue;
+            memset(&m, 0, sizeof m);
+            if (op->u.text.text_length == 1 && text[0] == '\t') m.width = op->u.text.bounds.width;
+            else if (!l->measure || !l->measure(l->measure_userdata, text, c, &op->u.text.style, &m)) return 0;
+            edge = op->u.text.bounds.x + m.width;
+            d = x > edge ? x - edge : edge - x;
+            if (d < best_d) {
+                best_d = d;
+                best_c = c;
+            }
+            if (edge >= x) break;
+        }
+        t.node_id = op->u.text.node_id;
+        t.offset = op->u.text.text_offset + best_c;
+        return ow_layout_from_text(l, &t, pos);
+    }
+    return 0;
 }
 
 int ow_layout_hit(const ow_layout *l, int page, ol_unit x, ol_unit y, ow_position *pos)
@@ -595,6 +778,8 @@ int ow_layout_hit(const ow_layout *l, int page, ol_unit x, ol_unit y, ow_positio
     ol_text_position t;
     const ol_node *n;
     if (!l || !pos) return 0;
+    memset(pos, 0, sizeof(*pos));
+    if (hit_box(l, page, x, y, pos)) return 1;      /* 2.0.15: a text box in front of the text */
     if (ol_hit_text(l->body, page, x, y, l->measure, l->measure_userdata, &t))
         return ow_layout_from_text(l, &t, pos);
     /* a page with no text (empty paragraphs): the paragraph under the point */
