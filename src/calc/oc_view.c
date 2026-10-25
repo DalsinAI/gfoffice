@@ -195,13 +195,20 @@ void oc_view_scroll_to(oc_core *core, unsigned top, unsigned left)
     st->left = left < s->freeze_cols ? s->freeze_cols : left;
 }
 
-void oc_view_scroller(const oc_core *core, int axis, unsigned *first, unsigned *visible, unsigned *total)
+void oc_view_scroller(oc_core *core, int axis, unsigned *first, unsigned *visible, unsigned *total)
 {
     const oc_sheetstate *st = oc_state_const(core);
     const owf_sheet *s = oc_sheet(core);
     unsigned rows, cols, used, pos, frozen = axis ? s->freeze_cols : s->freeze_rows, max = axis ? OC_MAX_COLS : OC_MAX_ROWS;
     unsigned vis = (unsigned)count_showing(core, axis, 1);
-    oc_used_range(s, &rows, &cols);
+    if (!core->used_valid || core->used_stamp != core->changes || core->used_sheet != core->sheet) {
+        oc_used_range(s, &core->used_rows, &core->used_cols);    /* only when the book changed */
+        core->used_stamp = core->changes;
+        core->used_sheet = core->sheet;
+        core->used_valid = 1;
+    }
+    rows = core->used_rows;
+    cols = core->used_cols;
     used = axis ? cols : rows;
     pos = axis ? st->left : st->top;
     if (vis < 1)

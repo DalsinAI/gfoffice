@@ -309,7 +309,7 @@ void oc_view_scroll_pos(const oc_core *core, unsigned *top, unsigned *left);
 void oc_view_scroll_to(oc_core *core, unsigned top, unsigned left);
 /* For a scroller: the first row (axis 0) or column showing, how many
  * show, and a total that grows past the used part of the sheet. */
-void oc_view_scroller(const oc_core *core, int axis, unsigned *first, unsigned *visible, unsigned *total);
+void oc_view_scroller(oc_core *core, int axis, unsigned *first, unsigned *visible, unsigned *total);
 /* Scrolls so the cell shows. */
 void oc_view_show_cell(oc_core *core, unsigned row, unsigned col);
 
