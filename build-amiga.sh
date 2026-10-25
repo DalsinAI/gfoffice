@@ -16,7 +16,7 @@ mkdir -p "$DEPS"
 # OpenLayout pinned (Team 5, 25 October 2026): a build of a GFOffice commit always takes the same OpenLayout,
 # and a GFOffice pull request that needs an OpenLayout one names that one's head here, to be checked together.
 REF=master
-[ -f "$HERE/deps/openamigalayout.ref" ] && REF=$(sed -n '1s/[[:space:]]//gp' "$HERE/deps/openamigalayout.ref")
+[ -f "$HERE/deps/openamigalayout.ref" ] && REF=$(head -n 1 "$HERE/deps/openamigalayout.ref" | tr -d '[:space:]')
 [ -n "$REF" ] || REF=master
 if [ ! -d "$DEPS/openamigalayout/.git" ]; then
     git init -q "$DEPS/openamigalayout" &&
