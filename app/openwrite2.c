@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.10 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.11 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -582,12 +582,17 @@ static void update_edit_tools(void)
 static const char *const style_labels[] = { "Body text", "Heading 1", "Heading 2", "Heading 3", NULL };
 static const char *const font_labels[] = { "CGTriumvirate", "Times New Roman", "Courier New", NULL };
 static const owf_font_kind font_kinds[] = { OWF_FONT_SANS, OWF_FONT_SERIF, OWF_FONT_MONO };
-static const char *const zoom_labels[] = { "50%", "75%", "100%", "125%", "150%", "Fit page", "Fit width", NULL };
-static const int zoom_values[] = { 50, 75, 100, 125, 150, -1, -2 };
+/* 2.0.11: 25% and 200% too, the zoom's ends, and the keys step through these (zoom_step), so the format row's
+ * Zoom always says what the pages are at; it stayed at 50% while + and - went 10% at a time */
+static const char *const zoom_labels[] = { "25%", "50%", "75%", "100%", "125%", "150%", "200%", "Fit page", "Fit width", NULL };
+static const int zoom_values[] = { 25, 50, 75, 100, 125, 150, 200, -1, -2 };
+#define ZOOM_STEPS 7                                 /* the percentages before Fit page and Fit width */
+#define ZOOM_FIT_PAGE 7
+#define ZOOM_FIT_WIDTH 8
 static const char *const align_labels[] = { "Left", "Centre", "Right", "Justify", NULL };
 static const char *const spacing_labels[] = { "Single", "1.5 lines", "Double", NULL };
 static const char *const paper_labels[] = { "A4", "Letter", "Legal", "Custom", NULL };
-static int zoom_choice = 2;
+static int zoom_choice = 3;
 
 static int font_choice(const owf_charfmt *cf)
 {
@@ -1042,7 +1047,7 @@ static void document_font_file(int font_index, char *out, size_t out_size)
     /* 2.0.5: more of today's families by their names (Roboto Slab, Cambria, Consolas...) */
     static const char *const serifs[] = { "times", "serif", "slab", "cambria", "georgia", "garamond", "palatino",
                                           "baskerville", "bookman", "book antiqua", "century", "caslon", "minion",
-                                          "constantia", "rockwell", NULL };
+                                          "constantia", "rockwell", "caladea", NULL };
     static const char *const monos[] = { "courier", "mono", "lettergothic", "consolas", "code", "menlo", "monaco",
                                          "fixed", NULL };
     int i, serif = kind == OWF_FONT_SERIF, mono = kind == OWF_FONT_MONO;
@@ -2493,12 +2498,16 @@ static void layout(void)
             { OGT_ROW_CYCLE, GID_I_PAPER, "Paper", 0, paper_labels, NULL, 0, 0, 0, 0 },
             { OGT_ROW_INTEGER, GID_I_MARGIN, "Margin mm", 56, NULL, NULL, 20, 0, 0, 0 },
         };
+        /* 2.0.11: only the sections that fit above the status bar. ogt_sections lays a section out as its title
+         * (a row and 4) and its rows (a row and its 4 gap each), 10 between sections; a window too low for the
+         * Page section had its gadgets drawn over the status bar and the window's border. */
+        int room = inspector_box.h - 8, need;
         ogt_sections_init(&isec, inspector_box.x + 10, inspector_box.y + 8, inspector_box.w - 20,
                           ogt_text_width(rp, "Margin mm") + 6, lh, &font_attr, vi);
-        ogt_sections_add(&isec, "Paragraph", para, 5);
-        ogt_sections_add(&isec, "Character", chr, 4);
-        ogt_sections_add(&isec, "Page", page, 2);
-        g = ogt_sections_gadgets(&isec, g);
+        if ((need = 6 * (lh + 4)) <= room) { ogt_sections_add(&isec, "Paragraph", para, 5); room -= need + 10; }
+        if ((need = 5 * (lh + 4)) <= room) { ogt_sections_add(&isec, "Character", chr, 4); room -= need + 10; }
+        if ((need = 3 * (lh + 4)) <= room) ogt_sections_add(&isec, "Page", page, 2);
+        g = isec.n ? ogt_sections_gadgets(&isec, g) : g;
         inspector_live = g != NULL;
     }
     if (g && glist2) AddGList(win, glist2, ~0, -1, NULL);
@@ -2605,8 +2614,20 @@ static void set_zoom(int z)
     if (z > 200) z = 200;
     zoom = z;
     if (editor) ow_editor_set_zoom(editor, z);
-    for (i = 0; i < 5; ++i) if (zoom_values[i] == z) zoom_choice = i;
+    for (i = 0; i < ZOOM_STEPS; ++i) if (zoom_values[i] == z) zoom_choice = i;
     relayout();
+}
+
+/* 2.0.11: the next of the Zoom gadget's percentages above (dir > 0) or below the zoom. */
+static int zoom_step(int dir)
+{
+    int i;
+    if (dir > 0) {
+        for (i = 0; i < ZOOM_STEPS; ++i) if (zoom_values[i] > zoom) return zoom_values[i];
+        return zoom_values[ZOOM_STEPS - 1];
+    }
+    for (i = ZOOM_STEPS - 1; i >= 0; --i) if (zoom_values[i] < zoom) return zoom_values[i];
+    return zoom_values[0];
 }
 
 /* The format row's and the inspector's gadgets: what was picked, applied to the caret's text. */
@@ -2818,7 +2839,7 @@ static int open_window(void)
     if (!win) return 0;
     if (menu) SetMenuStrip(win, menu);
     relayout();
-    zoom_choice = 6;                                 /* 2.0: the page as wide as the view to start */
+    zoom_choice = ZOOM_FIT_WIDTH;                    /* 2.0: the page as wide as the view to start */
     set_zoom(fit_zoom(1));
     update_window_title();
     return 1;
@@ -3561,11 +3582,11 @@ static void menu_action(ULONG id)
     case M_PAGE_PREV: set_page_view(page_index - 1); break;
     case M_PAGE_NEXT: set_page_view(page_index + 1); break;
     case M_PAGE_LAST: set_page_view(page_total() - 1); break;
-    case M_ZOOM_IN: set_zoom(zoom + 10); break;
-    case M_ZOOM_OUT: set_zoom(zoom - 10); break;
+    case M_ZOOM_IN: set_zoom(zoom_step(1)); break;
+    case M_ZOOM_OUT: set_zoom(zoom_step(-1)); break;
     case M_ZOOM_100: set_zoom(100); break;
-    case M_ZOOM_FIT_PAGE: set_zoom(fit_zoom(0)); break;
-    case M_ZOOM_FIT_WIDTH: set_zoom(fit_zoom(1)); break;
+    case M_ZOOM_FIT_PAGE: zoom_choice = ZOOM_FIT_PAGE; set_zoom(fit_zoom(0)); break;
+    case M_ZOOM_FIT_WIDTH: zoom_choice = ZOOM_FIT_WIDTH; set_zoom(fit_zoom(1)); break;
     case M_NAV: show_nav = !show_nav; relayout(); break;
     case M_INSPECTOR: show_inspector = !show_inspector; relayout(); break;
     case M_IMAGE: do_command(C_IMAGE); break;

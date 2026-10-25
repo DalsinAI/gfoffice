@@ -110,14 +110,16 @@ static void put_ppr(owf_buf *out, const owf_parafmt *f, const char *style)
         }
         owf_buf_puts(out, "</w:tabs>");
     }
-    if (spacing) {
+    if (spacing || style) {
+        /* 1.3.1: a heading's before and after even when 0: our Heading styles have their own (build_styles), which
+         * came back in their place */
         owf_buf_puts(out, "<w:spacing");
-        if (f->space_before)
+        if (f->space_before || style)
             owf_buf_printf(out, " w:before=\"%d\"", f->space_before);
-        if (f->space_after)
+        if (f->space_after || style)
             owf_buf_printf(out, " w:after=\"%d\"", f->space_after);
         if (f->line_spacing && f->line_spacing != 100)
-            owf_buf_printf(out, " w:line=\"%d\" w:lineRule=\"auto\"", f->line_spacing * 240 / 100);
+            owf_buf_printf(out, " w:line=\"%d\" w:lineRule=\"auto\"", (f->line_spacing * 240 + 50) / 100);
         owf_buf_puts(out, "/>");
     }
     if (ind) {
@@ -276,7 +278,11 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     for (j = 0; j < para->nruns; ++j) {
         const owf_run *run=&para->runs[j];
         if(run->kind==OWF_RUN_FIELD){owf_buf_printf(out,"<w:fldSimple w:instr=\"%s\"><w:r>",field_instr[run->field]);put_rpr(out,doc,&run->fmt,report);owf_buf_printf(out,"<w:t>%s</w:t></w:r></w:fldSimple>",field_shown[run->field]);continue;}
-        if(run->kind==OWF_RUN_TEXT&&run->href&&story==&doc->body)owf_buf_printf(out,"<w:hyperlink r:id=\"rId%d\">",body_link_id(doc,run->href));
+        if(run->kind==OWF_RUN_TEXT&&run->href&&story==&doc->body){
+            /* 1.3.1: a link inside the document ("#_Toc1", from w:anchor) stays w:anchor, with no relationship */
+            if(run->href[0]=='#'){owf_buf_puts(out,"<w:hyperlink w:anchor=\"");owf_buf_puts_xml(out,run->href+1);owf_buf_puts(out,"\">");}
+            else owf_buf_printf(out,"<w:hyperlink r:id=\"rId%d\">",body_link_id(doc,run->href));
+        }
         owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);
         switch(run->kind){case OWF_RUN_TEXT:owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,run->text);owf_buf_puts(out,"</w:t>");break;case OWF_RUN_TAB:owf_buf_puts(out,"<w:tab/>");break;case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<w:br/>");break;case OWF_RUN_IMAGE:put_drawing(out,doc,run->image);break;
             case OWF_RUN_FRAME:if(story==&doc->body)put_frame(out,doc,run->image,report);else owf_report_add(report,OWF_NOTE_LOST,"Pictures and text boxes placed on the page are kept in the body only");break;default:break;}
@@ -435,7 +441,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         for(i=0;i<doc->body.nparas;++i)for(j=0;j<doc->body.paras[i].nruns;++j){
             const owf_run *run=&doc->body.paras[i].runs[j];
             int id,p,q,seen=0;
-            if(run->kind!=OWF_RUN_TEXT||!run->href)continue;
+            if(run->kind!=OWF_RUN_TEXT||!run->href||run->href[0]=='#')continue;
             for(p=0;p<i&&!seen;++p)for(q=0;q<doc->body.paras[p].nruns;++q){const owf_run*x=&doc->body.paras[p].runs[q];if(x->kind==OWF_RUN_TEXT&&x->href&&!strcmp(x->href,run->href)){seen=1;break;}}
             if(!seen)for(q=0;q<j;++q){const owf_run*x=&doc->body.paras[i].runs[q];if(x->kind==OWF_RUN_TEXT&&x->href&&!strcmp(x->href,run->href)){seen=1;break;}}
             if(seen)continue;

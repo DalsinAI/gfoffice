@@ -5,11 +5,14 @@
 #include "openwrite_core.h"
 
 #define OW_UNDO_LIMIT 16
+/* 2.0.11: what the undo and redo snapshots may hold between them, about; the last edit's is always kept */
+#define OW_UNDO_BYTES (4UL * 1024UL * 1024UL)
 
 typedef struct {
-    owf_doc *doc;
+    owf_doc *doc;               /* without the pictures: those stay the document's (clone_doc) */
     ow_selection selection;
     int dirty;
+    unsigned long bytes;        /* about what doc holds */
 } ow_snapshot;
 
 struct ow_editor {
@@ -139,12 +142,9 @@ static owf_doc *clone_doc(const owf_doc *src)
             if (!dst->fonts[i].name) goto fail;
         }
     }
-    if (src->nimages) {
-        dst->images=(owf_image*)owf_calloc((size_t)src->nimages,sizeof(*dst->images));if(!dst->images)goto fail;dst->nimages=dst->capimages=src->nimages;
-        for(i=0;i<src->nimages;++i){const owf_image *si=&src->images[i];owf_image *di=&dst->images[i];di->width=si->width;di->height=si->height;di->length=si->length;
-            if(si->name){di->name=copy_bytes(si->name,strlen(si->name));if(!di->name)goto fail;}if(si->mime){di->mime=copy_bytes(si->mime,strlen(si->mime));if(!di->mime)goto fail;}if(si->alt){di->alt=copy_bytes(si->alt,strlen(si->alt));if(!di->alt)goto fail;}if(si->length){di->data=(unsigned char*)owf_malloc(si->length);if(!di->data)goto fail;memcpy(di->data,si->data,si->length);}
-        }
-    }
+    /* 2.0.11: no pictures. An edit only ever adds one (ow_editor_insert_image, at the end, and the runs name
+     * them by index), so the document keeps all it has had through undo and redo (restore_doc), and a
+     * snapshot no longer copies them: one undo copied the plan's 0.5 MB cover JPEG and the rest each time. */
     if (!clone_story(&dst->body, &src->body) ||
         !clone_story(&dst->header, &src->header) ||
         !clone_story(&dst->footer, &src->footer))
@@ -167,10 +167,45 @@ fail:
 
 static void restore_doc(owf_doc *dst, owf_doc *snapshot)
 {
+    owf_image *images;
+    int nimages, capimages;
     if (!dst || !snapshot) return;
+    images = dst->images;           /* 2.0.11: the pictures stay the document's (clone_doc) */
+    nimages = dst->nimages;
+    capimages = dst->capimages;
+    dst->images = NULL;
+    dst->nimages = dst->capimages = 0;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
+    dst->images = images;
+    dst->nimages = nimages;
+    dst->capimages = capimages;
     owf_free(snapshot);                 /* only the old outer shell */
+}
+
+/* About the bytes a snapshot's stories hold (malloc's own a block counted as 8). */
+static unsigned long story_bytes(const owf_story *story)
+{
+    unsigned long n = (unsigned long)story->nparas * sizeof(owf_para) + 8;
+    int i, j;
+    for (i = 0; i < story->nparas; ++i) {
+        n += (unsigned long)story->paras[i].nruns * sizeof(owf_run) + 8;
+        for (j = 0; j < story->paras[i].nruns; ++j) {
+            const owf_run *r = &story->paras[i].runs[j];
+            if (r->text) n += strlen(r->text) + 9;
+            if (r->href) n += strlen(r->href) + 9;
+        }
+    }
+    return n;
+}
+
+static unsigned long doc_bytes(const owf_doc *doc)
+{
+    unsigned long n = sizeof(owf_doc) + story_bytes(&doc->body) + story_bytes(&doc->header) +
+                      story_bytes(&doc->footer) + (unsigned long)doc->nfonts * (sizeof(owf_font) + 24);
+    int i;
+    for (i = 0; i < doc->nframes; ++i) n += sizeof(owf_frame) + story_bytes(&doc->frames[i].story);
+    return n;
 }
 
 /* ---- document/run helpers ------------------------------------------------------ */
@@ -228,11 +263,16 @@ static int prev_text_run(const owf_para *p, int from)
     return -1;
 }
 
+/* 2.0.11: in a paragraph that has runs but no text (a cover's pictures and text boxes, a picture, a tab), the
+ * text typed takes its first run's character format, the one its empty line is laid out in (ow_layout), as
+ * Word types in the paragraph mark's: the line keeps its height, and what is anchored below it its place. */
 static int append_empty_text_run(owf_para *p, const owf_charfmt *fmt)
 {
     owf_run *runs;
+    owf_charfmt use;
     int want;
     if (!p || !fmt) return 0;
+    use = p->nruns ? p->runs[0].fmt : *fmt;              /* a copy: the runs may move below */
     if (p->nruns == p->capruns) {
         want = p->capruns ? p->capruns * 2 : 4;
         runs = (owf_run *)owf_realloc(p->runs, (size_t)want * sizeof(*runs));
@@ -242,7 +282,7 @@ static int append_empty_text_run(owf_para *p, const owf_charfmt *fmt)
     }
     memset(&p->runs[p->nruns], 0, sizeof(p->runs[p->nruns]));
     p->runs[p->nruns].kind = OWF_RUN_TEXT;
-    p->runs[p->nruns].fmt = *fmt;
+    p->runs[p->nruns].fmt = use;
     p->runs[p->nruns].text = copy_bytes("", 0);
     if (!p->runs[p->nruns].text) return 0;
     ++p->nruns;
@@ -668,17 +708,36 @@ static void stack_clear(ow_snapshot *stack, int *count)
     *count = 0;
 }
 
+static void stack_drop_oldest(ow_snapshot *stack, int *count)
+{
+    snapshot_free(&stack[0]);
+    memmove(&stack[0], &stack[1], (size_t)(*count - 1) * sizeof(stack[0]));
+    memset(&stack[*count - 1], 0, sizeof(stack[0]));
+    --*count;
+}
+
 static int stack_push(ow_snapshot *stack, int *count, ow_snapshot snap)
 {
-    if (*count == OW_UNDO_LIMIT) {
-        snapshot_free(&stack[0]);
-        memmove(&stack[0], &stack[1],
-                (OW_UNDO_LIMIT - 1) * sizeof(stack[0]));
-        --*count;
-    }
+    if (*count == OW_UNDO_LIMIT) stack_drop_oldest(stack, count);
     stack[*count] = snap;
     ++*count;
     return 1;
+}
+
+/* 2.0.11: the oldest snapshots go while undo and redo hold more than OW_UNDO_BYTES between them; the newest
+ * of each stays. On an Amiga with a document of 30 pages, sixteen copies were too many. */
+static void stacks_trim(ow_editor *editor)
+{
+    for (;;) {
+        unsigned long total = 0;
+        int i;
+        for (i = 0; i < editor->nundo; ++i) total += editor->undo[i].bytes;
+        for (i = 0; i < editor->nredo; ++i) total += editor->redo[i].bytes;
+        if (total <= OW_UNDO_BYTES) return;
+        if (editor->nundo > 1) stack_drop_oldest(editor->undo, &editor->nundo);
+        else if (editor->nredo > 1) stack_drop_oldest(editor->redo, &editor->nredo);
+        else return;
+    }
 }
 
 static int capture_snapshot(const ow_editor *editor, ow_snapshot *out)
@@ -688,6 +747,7 @@ static int capture_snapshot(const ow_editor *editor, ow_snapshot *out)
     if (!out->doc) return 0;
     out->selection = editor->selection;
     out->dirty = editor->dirty;
+    out->bytes = doc_bytes(out->doc);
     return 1;
 }
 
@@ -696,7 +756,9 @@ static int remember_before_edit(ow_editor *editor)
     ow_snapshot snap;
     if (!capture_snapshot(editor, &snap)) return 0;
     stack_clear(editor->redo, &editor->nredo);
-    return stack_push(editor->undo, &editor->nundo, snap);
+    stack_push(editor->undo, &editor->nundo, snap);
+    stacks_trim(editor);
+    return 1;
 }
 
 static int restore_from_stack(ow_editor *editor,
@@ -711,6 +773,7 @@ static int restore_from_stack(ow_editor *editor,
     --*nfrom;
     stack_push(to, nto, current);
     restore_doc(editor->doc, snap.doc);
+    stacks_trim(editor);
     snap.doc = NULL;
     editor->selection = snap.selection;
     editor->selection.anchor = clamp_position(editor, editor->selection.anchor);

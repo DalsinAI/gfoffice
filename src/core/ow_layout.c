@@ -216,7 +216,7 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
         ol_node_set_image(n, fr->image, b.frame.width, b.frame.height);
     }
     /* its paragraphs, not the body's: no caret goes into them yet, and a frame in them is left out */
-    return !fr->story.nparas || add_story(NULL, doc, od, f, &fr->story, 0, NULL);
+    return !fr->story.nparas || add_story((ow_layout *)l, doc, od, f, &fr->story, 0, NULL);
 }
 
 static const char *field_text(const field_values *fv, owf_field field)
@@ -232,7 +232,7 @@ static const char *field_text(const field_values *fv, owf_field field)
 
 /* One paragraph: its block, then one node a run, in order, so that run j
  * is node block + 1 + j. */
-static ol_node *add_paragraph(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent,
+static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_document *od, ol_node *parent,
                               const owf_para *p, int index, const field_values *fv)
 {
     ol_style s;
@@ -243,6 +243,17 @@ static ol_node *add_paragraph(ow_layout *l, const owf_doc *doc, ol_document *od,
 
     if (!block) return NULL;
     para_style(doc, p, &s, &b);
+    if (l && l->measure && spacing <= 100) {
+        /* 2.0.11: a single spaced empty line (the one a cover's pictures and text boxes sit in) as tall as a
+         * line of text in its first run's font, as the measure gives it, not 1.2 times the size: typing in it
+         * then moves nothing below it, nor what is anchored there */
+        ol_style ms;
+        ol_text_metrics m;
+        memset(&m, 0, sizeof m);
+        run_style(doc, p->nruns ? &p->runs[0].fmt : &doc->base, spacing, &ms);
+        if (l->measure(l->measure_userdata, "x", 1, &ms, &m) && m.ascent + m.descent > 0)
+            s.line_height = m.ascent + m.descent;
+    }
     ol_node_set_style(block, &s);
     ol_node_set_box(block, &b);
     if (p->fmt.ntabs > 0) {
@@ -262,7 +273,7 @@ static ol_node *add_paragraph(ow_layout *l, const owf_doc *doc, ol_document *od,
         }
         if (!ol_node_set_tab_stops(block, n, stops)) return NULL;
     }
-    if (!remember(l, block, index, -1)) return NULL;
+    if (!remember(record ? l : NULL, block, index, -1)) return NULL;
 
     for (j = 0; j < p->nruns; ++j) {
         const owf_run *r = &p->runs[j];
@@ -291,11 +302,11 @@ static ol_node *add_paragraph(ow_layout *l, const owf_doc *doc, ol_document *od,
         if (!n) return NULL;
         run_style(doc, &r->fmt, spacing, &rs);
         ol_node_set_style(n, &rs);
-        if (!remember(l, n, index, j)) return NULL;
+        if (!remember(record ? l : NULL, n, index, j)) return NULL;
     }
     /* 2.0.10: the frames anchored here (an empty run each above), after the runs, so run j stays node
      * block + 1 + j; the body's only (l), so a text box's own frames and a header's are left out */
-    for (j = 0; l && j < p->nruns; ++j)
+    for (j = 0; record && l && j < p->nruns; ++j)
         if (p->runs[j].kind == OWF_RUN_FRAME && p->runs[j].image >= 0 && p->runs[j].image < doc->nframes &&
             !add_frame(l, doc, od, block, &doc->frames[p->runs[j].image]))
             return NULL;
@@ -362,7 +373,7 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
             if (!cell) return 0;
             ++col;
         }
-        if (!add_paragraph(record ? l : NULL, doc, od, cell, p, i, fv)) return 0;
+        if (!add_paragraph(l, record, doc, od, cell, p, i, fv)) return 0;
     }
     while (have_row && col < cols - 1) {
         if (!add_cell(od, row, NULL)) return 0;
@@ -383,7 +394,7 @@ static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
             if (!add_table(l, doc, od, parent, story, i, end, record, fv)) return 0;
             i = end;
         } else {
-            if (!add_paragraph(record ? l : NULL, doc, od, parent, p, i, fv)) return 0;
+            if (!add_paragraph(l, record, doc, od, parent, p, i, fv)) return 0;
             ++i;
         }
     }
@@ -659,7 +670,7 @@ ol_document *ow_layout_story(const ow_layout *l, ow_story_kind which, int page,
     fv.time = time;
     od = ol_document_new();
     if (!od) return NULL;
-    if (!add_story(NULL, l->doc, od, NULL, story, 0, &fv) ||
+    if (!add_story((ow_layout *)l, l->doc, od, NULL, story, 0, &fv) ||
         !ol_layout(od, l->page.width - l->page.margin_left - l->page.margin_right,
                    l->measure, l->measure_userdata)) {
         ol_document_free(od);

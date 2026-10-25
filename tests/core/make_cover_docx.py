@@ -20,7 +20,10 @@ VML fallback; wp, wp14, a, pic and wps declared on the elements that use
 them, not on the document; the cover picture aligned to the page's right and
 placed from its paragraph, a little above it, a little larger than the page,
 with wp14:sizeRelH and sizeRelV after its graphic; and one more shape, a
-filled band with no text.
+filled band with no text. Its first paragraph is single spaced and holds the
+picture, the title, the version box and the band in runs of 36 points; the
+subtitle and the date are anchored in the next paragraph and placed from it,
+so typing in the first must leave them where they are (2.0.11).
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import base64
@@ -156,7 +159,7 @@ def box_para(text, size, colour, bold=False, jc=None):
     return '<w:p>%s<w:r>%s<w:t xml:space="preserve">%s</w:t></w:r></w:p>' % (ppr, rpr, text)
 
 
-def text_box(ident, horizontal, vertical, cx, cy, paras, fill=None, line=None):
+def text_box(ident, horizontal, vertical, cx, cy, paras, fill=None, line=None, rpr=""):
     """A wps text box in mc:AlternateContent, its VML fallback with the same text, as Word writes them; with no
     paragraphs, a shape with no text."""
     sp_fill = '<a:solidFill><a:srgbClr val="%s"/></a:solidFill>' % fill if fill else "<a:noFill/>"
@@ -175,13 +178,15 @@ def text_box(ident, horizontal, vertical, cx, cy, paras, fill=None, line=None):
            'style="position:absolute;margin-left:0;margin-top:0;width:%dpt;height:%dpt;z-index:%d" filled="%s" '
            'stroked="%s">%s</v:shape></w:pict>'
            % (ident, 1024 + ident, cx // 20, cy // 20, ident, "t" if fill else "f", "t" if line else "f", inner))
-    return '<w:r>%s</w:r>' % alternate(anchor(ident, "Text Box %d" % ident, horizontal, vertical, cx, cy, wsp), vml)
+    return '<w:r>%s%s</w:r>' % (rpr, alternate(anchor(ident, "Text Box %d" % ident, horizontal, vertical, cx, cy, wsp),
+                                                 vml))
 
 
 def document():
     page_w, page_h = 11906, 16838
+    big = '<w:rPr><w:sz w:val="72"/></w:rPr>' if WPG else ""
     if WPG:   # as the plan's: from the page's right and its paragraph, above it, a little larger than the page
-        cover = '<w:r><w:rPr><w:noProof/></w:rPr>%s</w:r>' % alternate(anchor(
+        cover = '<w:r><w:rPr><w:noProof/><w:sz w:val="72"/></w:rPr>%s</w:r>' % alternate(anchor(
             1, "Cover picture", position("H", "page", align="right"), position("V", "paragraph", -1536), 0, 0,
             picture(1, "rId10", 11931, 16968), behind=True, size_emu=(7576336, 10774680)),
             vml_picture(1, "rId10", 11931, 16968))
@@ -190,18 +195,19 @@ def document():
             1, "Cover picture", position("H", "page", 0), position("V", "page", 0), page_w, page_h,
             picture(1, "rId10", page_w, page_h), behind=True)
     title = text_box(2, position("H", "margin", 0), position("V", "page", 3600), 9026, 2160,
-                     box_para("Cover Title", 72, "FFFFFF", bold=True))
-    subtitle = text_box(3, position("H", "margin", align="center"), position("V", "page", 6240), 7200, 1080,
+                     box_para("Cover Title", 72, "FFFFFF", bold=True), rpr=big)
+    subtitle = text_box(3, position("H", "margin", align="center"),
+                        position("V", "paragraph", 3600) if WPG else position("V", "page", 6240), 7200, 1080,
                         box_para("A plan made up for the tests", 32, "FFFFFF", jc="center"))
     version = text_box(4, position("H", "page", align="right"), position("V", "page", align="bottom"), 4320, 1440,
-                       box_para("Version 1.0", 28, "FFFFFF"), fill="1F3864", line="FFFFFF")
-    date = text_box(5, position("H", "margin", 0), position("V", "paragraph", 12960), 3600, 720,
+                       box_para("Version 1.0", 28, "FFFFFF"), fill="1F3864", line="FFFFFF", rpr=big)
+    date = text_box(5, position("H", "margin", 0), position("V", "paragraph", 11520 if WPG else 12960), 3600, 720,
                     box_para("25 October 2026", 24, "FFFFFF"))
     side = anchor(6, "Side picture", position("H", "margin", align="right"), position("V", "paragraph", 0), 1440,
                   2016, picture(6, "rId11", 1440, 2016), wrap='<wp:wrapSquare wrapText="bothSides"/>')
     side = ('<w:r>%s</w:r>' % alternate(side, vml_picture(6, "rId11", 1440, 2016)) if WPG
             else '<w:r><w:drawing>%s</w:drawing></w:r>' % side)
-    band = text_box(8, position("H", "page", 0), position("V", "page", 0), page_w, 360, "", fill="C00000") \
+    band = text_box(8, position("H", "page", 0), position("V", "page", 0), page_w, 360, "", fill="C00000", rpr=big) \
         if WPG else ""
     inline = ('<w:r><w:drawing><wp:inline%s distT="0" distB="0" distL="0" distR="0"><wp:extent cx="%d" cy="%d"/>'
               '<wp:docPr id="7" name="Inline picture"/>%s</wp:inline></w:drawing></w:r>'
@@ -209,7 +215,9 @@ def document():
     words = ("The body starts on the second page, where it would start without the cover's picture and text "
              "boxes, which move no line. ")
     body = [
-        '<w:p>%s%s%s%s%s%s</w:p>' % (cover, title, subtitle, version, date, band),
+        ('<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>%s%s%s%s</w:p>'
+         '<w:p>%s%s</w:p>' % (cover, title, version, band, subtitle, date)) if WPG
+        else '<w:p>%s%s%s%s%s</w:p>' % (cover, title, subtitle, version, date),
         '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
         '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Introduction</w:t></w:r></w:p>',
         '<w:p>%s<w:r><w:t xml:space="preserve">%s</w:t></w:r></w:p>' % (side, words * 3),
