@@ -37,6 +37,9 @@ struct ow_layout {
     int nboxes;
     ol_id *box_frame;
     ol_id **box_blocks;
+    /* 2.0.17: how far each text box in the line is moved from its paragraph's corner onto its room there (by
+     * frame; NULL: not yet) */
+    const ol_unit *inline_dx, *inline_dy;
 };
 
 /* The text a field shows. */
@@ -98,6 +101,7 @@ static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spaci
     s->font_size = TW(size);
     if (flags & (OWF_SUPER | OWF_SUB)) s->font_size = s->font_size * 2 / 3;
     s->line_height = line_spacing > 100 ? (ol_unit)((long)TW(size) * 12 / 10 * line_spacing / 100) : 0;
+    if (OWF_LINE_IS_HEIGHT(line_spacing)) s->line_height = TW(OWF_LINE_HEIGHT(line_spacing));   /* 2.0.18 */
     if (colour == OWF_COLOUR_AUTO && doc->base.colour != OWF_COLOUR_AUTO) colour = doc->base.colour;
     s->foreground = colour == OWF_COLOUR_AUTO ? 0xff000000u : argb(colour);
     if (flags & OWF_BOLD) text |= OL_TEXT_BOLD;
@@ -137,6 +141,16 @@ static void para_style(const owf_doc *doc, const owf_para *p, ol_style *s, ol_bo
 
     ol_box_style_init(b);
     b->flags = OL_BOX_EMPTY_LINE;
+    if (OWF_LINE_IS_HEIGHT(f->line_spacing)) {
+        /* 2.0.18: Word's exact line spacing, every line so high (OpenLayout 0.7), or its at least */
+        ol_unit h = TW(OWF_LINE_HEIGHT(f->line_spacing));
+        if (OWF_LINE_IS_EXACT(f->line_spacing)) {
+            s->line_height = h;
+            b->flags |= OL_BOX_EXACT_LINES;
+        } else if (h > s->line_height) {
+            s->line_height = h;
+        }
+    }
     if (f->page_break_before) b->flags |= OL_BOX_PAGE_BREAK_BEFORE;
     if (f->heading > 0) b->flags |= OL_BOX_KEEP_WITH_NEXT;
     b->text_indent = TW(f->indent_first);
@@ -212,6 +226,10 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
     b.frame.height = TW(fr->height > 0 ? fr->height : 0);
     b.frame.x = frame_at(&l->page, fr, 1, &b.anchor);
     b.frame.y = frame_at(&l->page, fr, 0, &b.anchor);
+    if (fr->in_line && l && l->inline_dx && fr >= doc->frames && fr < doc->frames + doc->nframes) {
+        b.frame.x += l->inline_dx[fr - doc->frames];  /* 2.0.17: onto its room in the line */
+        b.frame.y += l->inline_dy[fr - doc->frames];
+    }
     if (fr->behind) b.anchor |= OL_ANCHOR_BEHIND;
     else if (!b.anchor) b.anchor = OL_ANCHOR_ON;     /* from the paragraph both ways, in front */
     switch (fr->wrap) {
@@ -285,7 +303,7 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
 
     if (!block) return NULL;
     para_style(doc, p, &s, &b);
-    if (l && l->measure && spacing <= 100) {
+    if (l && l->measure && spacing > 0 && spacing <= 100) {
         /* 2.0.11: a single spaced empty line (the one a cover's pictures and text boxes sit in) as tall as a
          * line of text in its first run's font, as the measure gives it, not 1.2 times the size: typing in it
          * then moves nothing below it, nor what is anchored there */
@@ -336,6 +354,18 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
                 ol_node_set_image(n, r->image, TW(im && im->width > 0 ? im->width : OWF_TWIPS_PER_INCH),
                                   TW(im && im->height > 0 ? im->height : OWF_TWIPS_PER_INCH));
             }
+            break;
+        case OWF_RUN_FRAME:
+            if (r->image >= 0 && r->image < doc->nframes && doc->frames[r->image].in_line) {
+                /* 2.0.17: a text box in the line: its room there, a picture of nothing its size (the box itself
+                 * is drawn over it, as a frame from the paragraph moved onto it, add_frame) */
+                const owf_frame *fr = &doc->frames[r->image];
+                n = ol_node_append(od, block, OL_ROLE_IMAGE, NULL);
+                if (n) ol_node_set_image(n, OW_LAYOUT_NO_IMAGE, TW(fr->width > 0 ? fr->width : OWF_TWIPS_PER_INCH),
+                                         TW(fr->height > 0 ? fr->height : 240));
+                break;
+            }
+            n = ol_node_append(od, block, OL_ROLE_TEXT, "");
             break;
         default:
             n = ol_node_append(od, block, OL_ROLE_TEXT, "");
@@ -449,8 +479,78 @@ ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure, void *m
     return ow_layout_new_reserved(doc, measure, measure_userdata, 0);
 }
 
+static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
+                              const ol_unit *inline_dx, const ol_unit *inline_dy);
+
+/* 2.0.17: where each text box in the line went, against its room in the line: how far to move it there, by
+ * frame (dx, dy, nframes long). 1 when one needs moving; the boxes whose room is on another page stay. */
+static int inline_moves(const ow_layout *l, ol_unit *dx, ol_unit *dy)
+{
+    const owf_doc *doc = l->doc;
+    int i, j, moves = 0;
+    for (i = 0; i < doc->body.nparas; ++i) {
+        const owf_para *p = &doc->body.paras[i];
+        for (j = 0; j < p->nruns; ++j) {
+            const owf_run *r = &p->runs[j];
+            const ol_node *frame;
+            ol_id room = l->blocks[i] + 1 + (ol_id)j;
+            size_t first = 0, count = 0, k;
+            ol_rect at;
+            int fp, rp;
+            if (r->kind != OWF_RUN_FRAME || r->image < 0 || r->image >= doc->nframes || !doc->frames[r->image].in_line ||
+                !l->box_frame || !l->box_frame[r->image])
+                continue;
+            frame = ol_node_by_id(l->body, l->box_frame[r->image]);
+            if (!frame || !ol_frame_place(l->body, frame, &fp, &at)) continue;
+            for (rp = 0; rp < ol_page_count(l->body); ++rp) {
+                if (!ol_display_page_range(l->body, rp, &first, &count)) continue;
+                for (k = first; k < first + count; ++k) {
+                    const ol_display_op *op = ol_display_get(l->body, k);
+                    if (op->type != OL_OP_IMAGE || op->u.image.node_id != room) continue;
+                    if (rp == fp && (op->u.image.bounds.x != at.x || op->u.image.bounds.y != at.y)) {
+                        dx[r->image] += op->u.image.bounds.x - at.x;
+                        dy[r->image] += op->u.image.bounds.y - at.y;
+                        moves = 1;
+                    }
+                    rp = ol_page_count(l->body);
+                    break;
+                }
+            }
+        }
+    }
+    return moves;
+}
+
 ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata,
                                   size_t ops)
+{
+    ow_layout *l;
+    ol_unit *dx, *dy;
+    int i, in_line = 0;
+    if (!doc) return NULL;
+    l = layout_with(doc, measure, measure_userdata, ops, NULL, NULL);
+    for (i = 0; l && !in_line && i < doc->nframes; ++i) in_line = doc->frames[i].in_line;
+    if (!in_line) return l;
+    /* 2.0.17: a text box in the line goes from its paragraph's corner onto its room in the line: laid out again
+     * with it moved there (it moves no line: it doesn't wrap) */
+    dx = (ol_unit *)calloc((size_t)doc->nframes, sizeof(*dx));
+    dy = (ol_unit *)calloc((size_t)doc->nframes, sizeof(*dy));
+    if (dx && dy && inline_moves(l, dx, dy)) {
+        ow_layout *moved;
+        ow_layout_free(l);
+        moved = layout_with(doc, measure, measure_userdata, ops, dx, dy);
+        l = moved;
+    }
+    if (l && l->inline_dx == dx) {              /* the moved layout keeps its offsets */
+        dx = dy = NULL;
+    }
+    free(dx);
+    free(dy);
+    return l;
+}
+
+static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
+                              const ol_unit *inline_dx, const ol_unit *inline_dy)
 {
     ow_layout *l;
     ol_document *body;
@@ -471,6 +571,8 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
     l->doc = doc;
     l->measure = measure;
     l->measure_userdata = measure_userdata;
+    l->inline_dx = inline_dx;
+    l->inline_dy = inline_dy;
     pg = &doc->page;                                 /* 2.0.10: first, for the frames placed on it */
     l->page.width = TW(pg->width > 0 ? pg->width : 11906);
     l->page.height = TW(pg->height > 0 ? pg->height : 16838);
@@ -533,6 +635,8 @@ void ow_layout_free(ow_layout *l)
     for (k = 0; l->box_blocks && k < l->nboxes; ++k) free(l->box_blocks[k]);
     free(l->box_blocks);
     free(l->box_frame);
+    free((void *)l->inline_dx);              /* 2.0.17: the moved layout's own */
+    free((void *)l->inline_dy);
     free(l);
 }
 
@@ -727,7 +831,8 @@ static int hit_box(const ow_layout *l, int page, ol_unit x, ol_unit y, ow_positi
         int fp;
         if (!fr->story.nparas || fr->behind || !l->box_frame[k - 1] || !l->box_blocks[k - 1]) continue;
         frame = ol_node_by_id(l->body, l->box_frame[k - 1]);
-        if (!frame || !ol_frame_place(l->body, frame, &fp, &at) || fp != page || x < at.x || x >= at.x + at.width ||
+        /* inside it: not on its left or right edge, where the line's caret before and after a box in the line is */
+        if (!frame || !ol_frame_place(l->body, frame, &fp, &at) || fp != page || x <= at.x || x >= at.x + at.width ||
             y < at.y || y >= at.y + at.height)
             continue;
         if (!ol_display_page_range(l->body, page, &first, &count)) return 0;

@@ -1,5 +1,5 @@
 /*
- * owfwrite.library 3.0, OpenWrite's part of libowf: documents. The document
+ * owfwrite.library 3.1, OpenWrite's part of libowf: documents. The document
  * model and its formats: DOCX, ODT, the Amiga word processors' files (Final
  * Writer, Wordworth, ProWrite, IFF FTXT), text, ANSI and HTML, and PDF out.
  *
@@ -8,12 +8,16 @@
  * are the same in all four of GFOffice's libraries
  * (docs/suite/owf-libraries.md).
  *
+ * 3.1: owf_frame.in_line (a byte that was reserved), set by the DOCX reader for
+ * Word's text box in the line (OpenWrite 2.0.17); the structure's size is the
+ * same.
+ *
  * Copyright (c) 2026 AmigaChrome Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 0
-#define OWF_LIB_VERS "3.0"
-#define OWF_LIB_DATE "25.10.2026"
+#define OWF_LIB_REVISION 1
+#define OWF_LIB_VERS "3.1"
+#define OWF_LIB_DATE "26.10.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

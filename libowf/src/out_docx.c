@@ -118,7 +118,10 @@ static void put_ppr(owf_buf *out, const owf_parafmt *f, const char *style)
             owf_buf_printf(out, " w:before=\"%d\"", f->space_before);
         if (f->space_after || style)
             owf_buf_printf(out, " w:after=\"%d\"", f->space_after);
-        if (f->line_spacing && f->line_spacing != 100)
+        if (OWF_LINE_IS_HEIGHT(f->line_spacing))     /* 2.0.18 */
+            owf_buf_printf(out, " w:line=\"%d\" w:lineRule=\"%s\"", OWF_LINE_HEIGHT(f->line_spacing),
+                           OWF_LINE_IS_EXACT(f->line_spacing) ? "exact" : "atLeast");
+        else if (f->line_spacing && f->line_spacing != 100)
             owf_buf_printf(out, " w:line=\"%d\" w:lineRule=\"auto\"", (f->line_spacing * 240 + 50) / 100);
         owf_buf_puts(out, "/>");
     }
@@ -211,6 +214,11 @@ static void put_frame(owf_buf *out, const owf_doc *doc, int index, owf_report *r
     cx = (long)(fr->width > 0 ? fr->width : 1440) * 635L;
     cy = (long)(fr->height > 0 ? fr->height : 1440) * 635L;
     if (box) owf_buf_puts(out, "<mc:AlternateContent><mc:Choice Requires=\"wps\">");
+    if (fr->in_line) {                                   /* 2.0.17: a text box in the line, as Word's wp:inline */
+        owf_buf_printf(out, "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">"
+                            "<wp:extent cx=\"%ld\" cy=\"%ld\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>", cx, cy);
+        goto drawn_place;
+    }
     owf_buf_printf(out, "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" "
                         "relativeHeight=\"%ld\" behindDoc=\"%d\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">"
                         "<wp:simplePos x=\"0\" y=\"0\"/>", 251658240L + index, fr->behind ? 1 : 0);
@@ -227,6 +235,7 @@ static void put_frame(owf_buf *out, const owf_doc *doc, int index, owf_report *r
     case OWF_WRAP_TOP_BOTTOM: owf_buf_puts(out, "<wp:wrapTopAndBottom/>"); break;
     default: owf_buf_puts(out, "<wp:wrapNone/>"); break;
     }
+drawn_place:
     owf_buf_printf(out, "<wp:docPr id=\"%d\" name=\"%s %d\"/><wp:cNvGraphicFramePr/><a:graphic>", id,
                    box ? "Text Box" : "Picture", index + 1);
     if (!box) {
@@ -259,7 +268,7 @@ static void put_frame(owf_buf *out, const owf_doc *doc, int index, owf_report *r
         for (k = 0; k < 4; ++k) owf_buf_printf(out, " %s=\"%ld\"", ins[k], (long)fr->inset[k] * 635L);
         owf_buf_puts(out, " anchor=\"t\" anchorCtr=\"0\"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData>");
     }
-    owf_buf_puts(out, "</a:graphic></wp:anchor></w:drawing>");
+    owf_buf_puts(out, fr->in_line ? "</a:graphic></wp:inline></w:drawing>" : "</a:graphic></wp:anchor></w:drawing>");
     if (box) owf_buf_puts(out, "</mc:Choice><mc:Fallback/></mc:AlternateContent>");
 }
 
