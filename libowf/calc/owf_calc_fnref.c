@@ -366,8 +366,9 @@ static int sheet_of_text(calc_ctx *ctx, const char *p, unsigned n)
         k = n;
     }
     name[k] = 0;
-    if (memchr(name, '[', k))
-        return -1;
+    for (i = 0; i < k; i++)
+        if (name[i] == '[')              /* another book's */
+            return -1;
     return calc_find_sheet(ctx->book, name);
 }
 
