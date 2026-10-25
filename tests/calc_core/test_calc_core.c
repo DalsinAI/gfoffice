@@ -1749,6 +1749,71 @@ static void test_comments(void)
     oc_core_free(core);
 }
 
+static void test_validation(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    owf_sheet *sh;
+    owf_validation *dv;
+    int i, notes, texts;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    sh = &oc_core_book(core)->sheets[0];
+    dv = owf_sheet_add_validation(sh);
+    CHECK(dv != NULL);
+    dv->ranges = malloc(sizeof *dv->ranges);
+    dv->ranges[0] = (owf_range){ 1, 5, 1, 1 };            /* B2:B6 */
+    dv->nranges = 1;
+    dv->type = OWF_DV_LIST;
+    dv->formula[0] = dup_text("\"Yes,No\"");
+    dv->prompt_title = dup_text("Hosted");
+    dv->prompt = dup_text("Hosted by us?");
+    CHECK(owf_sheet_validation(sh, 3, 1) == dv && !owf_sheet_validation(sh, 6, 1) && !owf_sheet_validation(sh, 3, 2));
+    /* its input message shows only when the file says to show it */
+    go(core, "B3");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = notes = 0; i < l.n; i++)
+        notes += l.items[i].kind == OC_DRAW_FILL && l.items[i].role == OC_ROLE_NOTE;
+    CHECK(notes == 0);
+    dv->show_prompt = 1;
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = notes = texts = 0; i < l.n; i++) {
+        notes += l.items[i].kind == OC_DRAW_FILL && l.items[i].role == OC_ROLE_NOTE;
+        if (notes && l.items[i].kind == OC_DRAW_TEXT) {
+            if (!texts)
+                CHECK(!strcmp(l.items[i].text, "Hosted") && (l.items[i].flags & OWF_BOLD));
+            else
+                CHECK(!strcmp(l.items[i].text, "Hosted by us?"));
+            texts++;
+        }
+    }
+    CHECK(notes == 1 && texts == 2);
+    /* a comment on the cell shows instead */
+    owf_sheet_set_comment(sh, 2, 1, NULL, "a comment");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(l.items[l.n - 1].kind == OC_DRAW_TEXT && !strcmp(l.items[l.n - 1].text, "a comment"));
+    /* rows inserted move it; a sheet deleted and undone keeps it */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(sh == &oc_core_book(core)->sheets[0] && sh->validations[0].ranges[0].first_row == 2 &&
+          sh->validations[0].ranges[0].last_row == 6);
+    oc_core_add_sheet(core, "Two");
+    CHECK(oc_core_delete_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    sh = &oc_core_book(core)->sheets[0];
+    CHECK(sh->nvalidations == 1 && sh->validations[0].formula[0] && !strcmp(sh->validations[0].formula[0], "\"Yes,No\"") &&
+          sh->validations[0].prompt && !strcmp(sh->validations[0].prompt, "Hosted by us?"));
+    /* its rows deleted, it goes */
+    oc_core_set_sheet(core, 0);
+    go(core, "A3:A7");
+    oc_core_select_rows(core);
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(oc_core_book(core)->sheets[0].nvalidations == 0);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -1967,6 +2032,7 @@ int main(void)
     test_condfmt();
     test_font_caps();
     test_comments();
+    test_validation();
     test_row_numbers();
     test_text_layout();
     test_tab_strip();

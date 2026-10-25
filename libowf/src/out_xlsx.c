@@ -607,6 +607,13 @@ static void collect_links(xlsx_out *w)
                 if (cf->formula[j])
                     free(formula_for_file(w, cf->formula[j]));
         }
+    for (i = 0; i < book->nsheets && !w->failed; i++)
+        for (k = 0; k < book->sheets[i].nvalidations && !w->failed; k++) {
+            int j;
+            for (j = 0; j < 2; j++)
+                if (book->sheets[i].validations[k].formula[j])
+                    free(formula_for_file(w, book->sheets[i].validations[k].formula[j]));
+        }
 }
 
 /* ---- A sheet ---- */
@@ -935,6 +942,82 @@ static void cf_xml(xlsx_out *w, owf_buf *b, int index)
     }
 }
 
+/* A sqref: the ranges Excel can hold, one space between. 0 when none could be. */
+static int put_sqref(owf_buf *b, const owf_range *ranges, int n)
+{
+    int r, any = 0;
+    for (r = 0; r < n; r++) {
+        const owf_range *m = &ranges[r];
+        if (m->last_row >= MAX_ROWS || m->last_col >= MAX_COLS)
+            continue;
+        if (any++)
+            owf_buf_putc(b, ' ');
+        put_ref(b, m->first_row, m->first_col);
+        if (m->last_row != m->first_row || m->last_col != m->first_col) {
+            owf_buf_putc(b, ':');
+            put_ref(b, m->last_row, m->last_col);
+        }
+    }
+    return any;
+}
+
+static void put_message(owf_buf *b, const char *name, const char *text)
+{
+    if (!text)
+        return;
+    owf_buf_printf(b, " %s=\"", name);
+    put_xml(b, text, X_ATTR);
+    owf_buf_putc(b, '"');
+}
+
+static void dv_xml(xlsx_out *w, owf_buf *b, int index)
+{
+    static const char *const types[8] = { "none", "whole", "decimal", "list", "date", "time", "textLength", "custom" };
+    static const char *const ops[8] = { "between", "notBetween", "equal", "notEqual", "greaterThan", "lessThan",
+                                        "greaterThanOrEqual", "lessThanOrEqual" };
+    static const char *const styles[3] = { "stop", "warning", "information" };
+    const owf_sheet *sh = &w->book->sheets[index];
+    int i, k, n = 0;
+    for (i = 0; i < sh->nvalidations; i++)
+        n += sh->validations[i].nranges > 0;
+    if (!n)
+        return;
+    owf_buf_printf(b, "<dataValidations count=\"%d\">", n);
+    for (i = 0; i < sh->nvalidations && !w->failed; i++) {
+        const owf_validation *dv = &sh->validations[i];
+        int type = dv->type >= 0 && dv->type < 8 ? dv->type : 0;
+        if (!dv->nranges)
+            continue;
+        owf_buf_puts(b, "<dataValidation");
+        if (type)
+            owf_buf_printf(b, " type=\"%s\"", types[type]);
+        if (dv->error_style > 0 && dv->error_style < 3)
+            owf_buf_printf(b, " errorStyle=\"%s\"", styles[dv->error_style]);
+        if (dv->op > 0 && dv->op < 8 && type != OWF_DV_LIST && type != OWF_DV_CUSTOM)
+            owf_buf_printf(b, " operator=\"%s\"", ops[dv->op]);
+        if (dv->allow_blank)
+            owf_buf_puts(b, " allowBlank=\"1\"");
+        if (dv->no_dropdown)
+            owf_buf_puts(b, " showDropDown=\"1\"");
+        if (dv->show_prompt)
+            owf_buf_puts(b, " showInputMessage=\"1\"");
+        if (dv->show_error)
+            owf_buf_puts(b, " showErrorMessage=\"1\"");
+        put_message(b, "errorTitle", dv->error_title);
+        put_message(b, "error", dv->error);
+        put_message(b, "promptTitle", dv->prompt_title);
+        put_message(b, "prompt", dv->prompt);
+        owf_buf_puts(b, " sqref=\"");
+        put_sqref(b, dv->ranges, dv->nranges);
+        owf_buf_puts(b, "\">");
+        for (k = 0; k < 2; k++)
+            if (dv->formula[k])
+                put_formula_element(w, b, k ? "formula2" : "formula1", dv->formula[k]);
+        owf_buf_puts(b, "</dataValidation>");
+    }
+    owf_buf_puts(b, "</dataValidations>");
+}
+
 static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
 {
     const owf_sheet *sh = &w->book->sheets[index];
@@ -1029,6 +1112,7 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
         }
     }
     cf_xml(w, b, index);
+    dv_xml(w, b, index);
     owf_buf_puts(b, "<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>");
     if (sh->ncomments)                                   /* the comments' boxes (sheet rels: rId1 comments, rId2 these) */
         owf_buf_puts(b, "<legacyDrawing r:id=\"rId2\"/>");

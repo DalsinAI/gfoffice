@@ -13,7 +13,9 @@ what it leaves out.
     with their looks (the styles' dxfs), a data bar and a "contains text"
     rule kept as the file wrote them, priorities and stopIfTrue;
   - comments: their text and author, written with the boxes Excel shows
-    them in (a VML drawing).
+    them in (a VML drawing);
+  - data validation: lists, numbers, dates, text lengths and formulas,
+    their operators, messages and error styles.
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import os
@@ -230,6 +232,70 @@ def test_comments(work):
     check("comments: ODS says it leaves them out", "Comments on cells are kept in Excel workbooks" in report, report)
 
 
+# ---- Data validation ----
+
+VALIDATIONS = [
+    'validation type=3 op=0 blank=1 nodropdown=0 prompt=0 error=0 style=0 ranges=6,3-241,3 formula "\\"Yes,No\\"" '
+    'prompt "Hosted" "Hosted by us?" message "Not a choice" "Yes or No"',
+    'validation type=2 op=0 blank=0 nodropdown=0 prompt=0 error=0 style=0 ranges=6,5-241,5 formula "0" formula "100000"',
+    'validation type=4 op=4 blank=0 nodropdown=0 prompt=0 error=0 style=0 ranges=6,6-241,6 formula "DATE(2020,1,1)"',
+    'validation type=6 op=7 blank=0 nodropdown=0 prompt=0 error=1 style=1 ranges=6,8-241,8 formula "200"',
+    'validation type=3 op=0 blank=0 nodropdown=0 prompt=0 error=0 style=0 ranges=6,4-241,4 formula "Lists!$A$1:$A$5"',
+    'validation type=1 op=0 blank=0 nodropdown=0 prompt=0 error=0 style=0 ranges=6,7-19,7;29,7-39,7 formula "0" formula "10"',
+    'validation type=7 op=0 blank=0 nodropdown=0 prompt=0 error=0 style=0 ranges=6,0-241,0 formula "LEN(A7)>0"',
+]
+
+
+def openpyxl_validations(path):
+    import openpyxl
+    ws = openpyxl.load_workbook(path)["Systems"]
+    return sorted((str(v.sqref), v.type, v.operator or "between", v.formula1, v.formula2, bool(v.allow_blank),
+                   v.promptTitle, v.prompt, v.errorTitle, v.error, v.errorStyle or "stop", bool(v.showErrorMessage))
+                  for v in ws.data_validations.dataValidation)
+
+
+def test_validation(work):
+    src = dump(FIX)
+    got = sheet_lines(src, 0, "validation")
+    check("validation: the seven read", got == VALIDATIONS, "\n".join(got))
+    rc, out, err = run([DUMP, FIX])
+    check("validation: no 'not read yet' note", "Data validation (lists to pick from, limits) is not read" not in out, out)
+    xlsx = os.path.join(work, "validation.xlsx")
+    convert(FIX, xlsx)
+    well_formed(xlsx)
+    check("validation: the same after saving", sheet_lines(dump(xlsx), 0, "validation") == VALIDATIONS, "")
+    with zipfile.ZipFile(xlsx) as z:
+        sheet = z.read("xl/worksheets/sheet1.xml").decode()
+    check("validation: after the conditional formats, before the margins",
+          sheet.rfind("</conditionalFormatting>") < sheet.find('<dataValidations count="7">') < sheet.find("<pageMargins"), "")
+    try:
+        import openpyxl  # noqa: F401
+        have = True
+    except ImportError:
+        have = False
+    if have:
+        a, b = openpyxl_validations(xlsx), openpyxl_validations(FIX)
+        check("validation: openpyxl reads them back", a == b, "%s\n---\n%s" % (a, b))
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-validation")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "ods",
+                            "--outdir", outdir, xlsx], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=300)
+            with zipfile.ZipFile(os.path.join(outdir, "validation.ods")) as z:
+                content = z.read("content.xml").decode()
+            n = content.count("<table:content-validation ")
+            check("validation: LibreOffice reads the seven", n == 7 and "Hosted by us?" in content, n)
+        except Exception as e:  # noqa: BLE001
+            check("validation: LibreOffice converts the file written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+    report = convert(FIX, os.path.join(work, "validation.ods"))
+    check("validation: ODS says it leaves them out", "Data validation is kept in Excel workbooks" in report, report)
+
+
 def damaged(work):
     """The first sheet's XML cut short and changed in what follows its cells (the conditional formats and
     the rest): book_dump answers with a book or an error, never a crash."""
@@ -262,6 +328,7 @@ def main():
     with tempfile.TemporaryDirectory() as work:
         test_condfmt(work)
         test_comments(work)
+        test_validation(work)
         damaged(work)
     if failures:
         print("sheet features: %d of %d checks failed" % (len(failures), checks))

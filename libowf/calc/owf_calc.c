@@ -1418,6 +1418,29 @@ int owf_calc_shift(owf_calc *calc, int sheet, int axis, unsigned at, int count)
         s->comments[out++] = *cm;
     }
     s->ncomments = out;
+    /* validations: as conditional formats */
+    for (i = out = 0; i < s->nvalidations; i++) {
+        owf_validation *dv = &s->validations[i];
+        int r, kept = 0;
+        for (r = 0; r < dv->nranges; r++) {
+            owf_range *m = &dv->ranges[r];
+            if (axis ? shift_span(&job, &m->first_col, &m->last_col, 0, limit)
+                     : shift_span(&job, &m->first_row, &m->last_row, 0, limit))
+                dv->ranges[kept++] = *m;
+        }
+        dv->nranges = kept;
+        for (r = 0; r < 2; r++)
+            if (dv->formula[r] && !rewrite_text(book, sheet, &dv->formula[r], &job)) {
+                calc->stale = 1;
+                return OWF_ERR_MEMORY;
+            }
+        if (!kept) {
+            owf_validation_free(dv);
+            continue;
+        }
+        s->validations[out++] = *dv;
+    }
+    s->nvalidations = out;
     return build(calc, 1);
 }
 

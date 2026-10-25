@@ -432,7 +432,8 @@ unsigned oc_line_pattern(int line);
 /* ---- Comments ----
  * A commented cell has a mark in its top right corner (OC_DRAW_MARK), and
  * the active cell's comment shows beside it, over the grid, as Excel shows
- * one under the pointer (not while typing). */
+ * one under the pointer (not while typing); a cell without one shows its
+ * data validation's input message there, when the file says to show it. */
 const owf_comment *oc_core_comment(const oc_core *core, int sheet, unsigned row, unsigned col);
 
 /* ---- The status line ---- */

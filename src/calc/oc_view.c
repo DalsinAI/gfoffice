@@ -1367,11 +1367,20 @@ static int comment_note(drawing *d)
     oc_core *core = d->core;
     const oc_sheetstate *st = oc_state_const(core);
     const owf_comment *cm = owf_sheet_comment(d->sheet, st->sel.row, st->sel.col);
+    const owf_validation *dv = cm ? NULL : owf_sheet_validation(d->sheet, st->sel.row, st->sel.col);
+    owf_comment prompt;
     owf_cellstyle font;
     const char *text;
     size_t n, at = 0, starts[NOTE_LINES], ends[NOTE_LINES];
     int x, y, w, h, bw, bh, bx, by, pad, lp, nl = 0, author = 0, k, avail;
     oc_draw_item *it;
+    if (!cm && dv && dv->show_prompt && (dv->prompt || dv->prompt_title)) {
+        /* no comment: the cell's validation's input message, as Excel shows it, its title in bold */
+        memset(&prompt, 0, sizeof prompt);
+        prompt.author = dv->prompt_title;
+        prompt.text = dv->prompt ? dv->prompt : (char *)"";
+        cm = &prompt;
+    }
     if (!cm || core->edit_mode || !cell_box(d, st->sel.row, st->sel.col, &x, &y, &w, &h))
         return 1;
     owf_cellstyle_init(&font);
@@ -1385,8 +1394,8 @@ static int comment_note(drawing *d)
         return 1;
     text = cm->text ? cm->text : "";
     n = strlen(text);
-    if (cm->author && *cm->author && strncmp(text, cm->author, strlen(cm->author)))
-        author = 1;
+    if (cm->author && *cm->author && (cm == &prompt || strncmp(text, cm->author, strlen(cm->author))))
+        author = 1;                                          /* a comment's author, unless its text begins with it */
     while (at < n && nl < NOTE_LINES - author) {
         size_t e = wrap_line(core, &font, text, at, n, avail), next = e;
         if (next < n && (text[next] == ' ' || text[next] == '\n'))

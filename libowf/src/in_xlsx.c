@@ -10,9 +10,9 @@
  * tints), column widths, row heights, hidden rows, columns and sheets,
  * merged cells, frozen panes, defined names, the active sheet and the
  * 1904 date system, conditional formatting (cellIs, expression and colour
- * scale rules worked out; the others kept as written) and comments. What
- * the model cannot hold (pictures, charts, validation, tables, pivot
- * tables, macros) is reported.
+ * scale rules worked out; the others kept as written), comments and data
+ * validation. What the model cannot hold (pictures, charts, tables,
+ * pivot tables, macros) is reported.
  *
  * Big parts (the sheets, the shared strings) are read as a stream, element
  * by element, so a sheet's memory is its cells', not a tree of its XML.
@@ -1409,8 +1409,6 @@ static void sheet_element(xlsx *x, const owf_xml_event *e, cellstate *cs)
         owf_range r;
         if (parse_range(ev_attr(e, "ref"), &r) && owf_sheet_merge(sh, &r) < 0)
             x->failed = 1;
-    } else if (!strcmp(name, "dataValidation")) {
-        owf_report_add(x->report, OWF_NOTE_LOST, "Data validation (lists to pick from, limits) is not read yet");
     } else if (!strcmp(name, "hyperlink")) {
         owf_report_add(x->report, OWF_NOTE_LOST, "Links in cells keep their text; where they go is not read yet");
     } else if (!strcmp(name, "drawing")) {
@@ -1721,6 +1719,103 @@ static int cf_event(xlsx *x, const owf_xml_event *e, cfread *cr)
     return 1;
 }
 
+/* ---- Data validation ---- */
+
+typedef struct {
+    int rule;                    /* the sheet's validations index, -1 none */
+    int in_formula;              /* 1 or 2 */
+    owf_buf text;
+} dvread;
+
+/* An attribute's text as the model has it (Excel's _xHHHH_ escapes undone), or NULL. */
+static char *dv_text(xlsx *x, const owf_xml_event *e, const char *name)
+{
+    const char *v = ev_attr(e, name);
+    char *t;
+    if (!v)
+        return NULL;
+    if ((t = copy(x, v, strlen(v))) != NULL)
+        t[unescape_xstring(t, strlen(t))] = 0;
+    return t;
+}
+
+static int dv_event(xlsx *x, const owf_xml_event *e, dvread *dr)
+{
+    owf_validation *dv = dr->rule >= 0 && dr->rule < x->sheet->nvalidations ? &x->sheet->validations[dr->rule] : NULL;
+    if (e->type == OWF_XS_TEXT) {
+        if (dr->in_formula)
+            owf_buf_put(&dr->text, e->text, e->length);
+        return dr->in_formula != 0;
+    }
+    if (e->type == OWF_XS_START && !strcmp(e->name, "dataValidation") && !strcmp(e->ns, NS_X14)) {
+        owf_report_add(x->report, OWF_NOTE_LOST, "Excel 2010's own validations (in the sheet's extensions) are not kept");
+        return 1;
+    }
+    if (!is_main(e->ns))
+        return 0;
+    if (e->type == OWF_XS_END) {
+        if (!strcmp(e->name, "dataValidation")) {
+            dr->rule = -1;
+            return 1;
+        }
+        if (dr->in_formula && (!strcmp(e->name, "formula1") || !strcmp(e->name, "formula2"))) {
+            int k = dr->in_formula - 1;
+            dr->in_formula = 0;
+            owf_buf_putc(&dr->text, 0);
+            if (dr->text.failed) {
+                x->failed = 1;
+            } else if (dv && !dv->formula[k]) {
+                if (!(dv->formula[k] = owf_xl_formula_from_file((const char *)dr->text.data, x->books, x->nbooks)))
+                    x->failed = 1;
+            }
+            return 1;
+        }
+        return 0;
+    }
+    if (!strcmp(e->name, "dataValidation")) {
+        static const char *const types[8] = { "none", "whole", "decimal", "list", "date", "time", "textLength", "custom" };
+        static const char *const ops[8] = { "between", "notBetween", "equal", "notEqual", "greaterThan", "lessThan",
+                                            "greaterThanOrEqual", "lessThanOrEqual" };
+        const char *v;
+        int k;
+        if (!(dv = owf_sheet_add_validation(x->sheet))) {
+            x->failed = 1;
+            return 1;
+        }
+        dr->rule = x->sheet->nvalidations - 1;
+        dv->nranges = parse_sqref(x, ev_attr(e, "sqref"), &dv->ranges);
+        v = ev_attr(e, "type");
+        for (k = 0; v && k < 8; k++)
+            if (!strcmp(v, types[k]))
+                dv->type = k;
+        dv->op = OWF_CF_BETWEEN;
+        v = ev_attr(e, "operator");
+        for (k = 0; v && k < 8; k++)
+            if (!strcmp(v, ops[k]))
+                dv->op = k;
+        dv->allow_blank = xbool(ev_attr(e, "allowBlank"), 0);
+        dv->no_dropdown = xbool(ev_attr(e, "showDropDown"), 0);
+        dv->show_prompt = xbool(ev_attr(e, "showInputMessage"), 0);
+        dv->show_error = xbool(ev_attr(e, "showErrorMessage"), 0);
+        v = ev_attr(e, "errorStyle");
+        dv->error_style = v && !strcmp(v, "warning") ? OWF_DV_WARNING : v && !strcmp(v, "information") ? OWF_DV_INFORMATION
+                                                                                                         : OWF_DV_STOP;
+        dv->prompt_title = dv_text(x, e, "promptTitle");
+        dv->prompt = dv_text(x, e, "prompt");
+        dv->error_title = dv_text(x, e, "errorTitle");
+        dv->error = dv_text(x, e, "error");
+        if (!dv->nranges)
+            owf_report_add(x->report, OWF_NOTE_LOST, "Some data validation without cells to check was left out");
+        return 1;
+    }
+    if (dv && (!strcmp(e->name, "formula1") || !strcmp(e->name, "formula2"))) {
+        dr->in_formula = e->name[7] == '2' ? 2 : 1;
+        dr->text.length = 0;
+        return 1;
+    }
+    return 0;
+}
+
 static void read_sheet_notes(xlsx *x, const char *part)
 {
     rels r;
@@ -1821,6 +1916,7 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     owf_xml_event e;
     cellstate cs;
     cfread cr;
+    dvread dr;
     int r;
 
     x->sheet = &x->book->sheets[xs->sheet];
@@ -1847,8 +1943,11 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     cr.rule = -1;
     owf_buf_init(&cr.text);
     owf_buf_init(&cr.xml);
+    memset(&dr, 0, sizeof dr);
+    dr.rule = -1;
+    owf_buf_init(&dr.text);
     while (!x->failed && (r = owf_xml_scan_next(scan, &e)) > 0) {
-        if (!cs.in_data && cf_event(x, &e, &cr))
+        if (!cs.in_data && (cf_event(x, &e, &cr) || dv_event(x, &e, &dr)))
             continue;
         if (e.type == OWF_XS_TEXT) {
             if (cs.in_v)
@@ -1893,6 +1992,20 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     if (!x->failed)
         read_comments(x, xs->part);
     free(cr.ranges);
+    owf_buf_free(&dr.text);
+    /* validations left without their ranges (a damaged sqref) go */
+    {
+        owf_sheet *sh = x->sheet;
+        int i, out;
+        for (i = out = 0; i < sh->nvalidations; i++) {
+            if (!sh->validations[i].nranges) {
+                owf_validation_free(&sh->validations[i]);
+                continue;
+            }
+            sh->validations[out++] = sh->validations[i];
+        }
+        sh->nvalidations = out;
+    }
     owf_buf_free(&cr.text);
     owf_buf_free(&cr.xml);
     owf_buf_free(&cs.v);
