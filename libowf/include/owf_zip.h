@@ -51,11 +51,10 @@ int owf_inflate(unsigned char *out, size_t out_length, const unsigned char *in, 
 }
 #endif
 
-/* owf.library's calls, once every header with calls is complete (owf.h) */
+/* the library's calls, once every header with calls is complete (owf.h) */
 #define OWF_ZIP_H_DONE
-#if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD) && defined(OWF_H_DONE) && \
-    defined(OWF_CALC_H_DONE) && defined(OWF_PUB_H_DONE)
-#include <proto/owf.h>
+#if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "owf_proto.h"
 #endif
 
 #endif

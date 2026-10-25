@@ -9,6 +9,7 @@
 #include "owf_internal.h"
 #include "owf_pub.h"
 #include "owf_zip.h"
+#include "owf_deck.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -123,7 +124,9 @@ int main(void)
             sizeof(owf_range), sizeof(owf_sheet), sizeof(owf_defname), sizeof(owf_book), sizeof(owf_book_format),
             sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame), sizeof(owf_condfmt),
             sizeof(owf_comment), sizeof(owf_validation), sizeof(owf_part), sizeof(owf_frame), sizeof(owf_chart_point),
-            sizeof(owf_chart_series), sizeof(owf_chart),
+            sizeof(owf_chart_series), sizeof(owf_chart), sizeof(owf_look), sizeof(owf_textlevel), sizeof(owf_obj),
+            sizeof(owf_transition), sizeof(owf_slide), sizeof(owf_master), sizeof(owf_slide_layout), sizeof(owf_kept),
+            sizeof(owf_deck_part), sizeof(owf_deck), sizeof(owf_deck_format),
         };
         int k;
         for (k = 0; k < OWF_STRUCT_COUNT; k++) {
