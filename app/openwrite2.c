@@ -59,6 +59,7 @@
 #include "lastdir.h"
 #include "ow_print.h"
 #include "ow_spell.h"
+#include "ow_fontwidths.h"
 #include "ow_autosave.h"
 #include "ogt_theme.h"
 #include "ogt_draw.h"
@@ -1435,17 +1436,11 @@ static void page_size(int *pw, int *ph)
  * (fit_pixels). A page is drawn straight at the screen's pixels; nothing is drawn big and shrunk. */
 
 #define WIDTH_UNITS (OL_UNITS_PER_TWIP * 15)        /* units a pixel at 100% (page_scale_den: 15 twips) */
-#define WIDTH_TABLES 16
 #define TAB_UNITS (OL_UNITS_PER_INCH / 2)
 
-typedef struct {
-    char file[72];
-    UBYTE used, bold;
-    WORD px, ascent, descent;                         /* the size measured at, its ascent and descent */
-    UWORD w[256];                                     /* advances in pixels at px */
-} width_table;
-static width_table width_tables[WIDTH_TABLES];
-static int width_next;
+typedef ow_fw_table width_table;
+static ow_fontwidths fontw;                          /* the faces and widths (app/ow_fontwidths.c) */
+static int fontw_ready;
 static const width_table *width_memo;               /* the last style measured: most words share it */
 static uint32_t width_memo_key;
 static ol_unit width_memo_size;
@@ -1461,55 +1456,69 @@ static void layout_font_file(uint32_t flags, char *out, size_t size)
     document_font_file(number ? OW_LAYOUT_FONT_INDEX(number) : (doc ? doc->base.font : -1), out, size);
 }
 
-/* The pixel size text of size units is drawn at at 100%. */
-static int measure_pixels(ol_unit size)
+/* ow_fontwidths' fonts are document_font_px's (kept open in its cache); advances through a RastPort of
+ * its own. */
+static void *fw_open(void *user, const char *file, int pixels, int *ysize, int *ascent)
 {
-    int px = (int)((size + WIDTH_UNITS / 2) / WIDTH_UNITS);
-    return px < 4 ? 4 : px > 128 ? 128 : px;
+    struct TextFont *f = document_font_px(file, pixels);
+    (void)user;
+    if (!f) return NULL;
+    *ysize = f->tf_YSize;
+    *ascent = f->tf_Baseline + 1;
+    return f;
 }
 
-/* A font's advance widths at the size text of size units is drawn at at 100% (bold ones with the bold
- * smear), from the font that draws it there, which stays open for that. */
+static int fw_advance(void *user, void *f, unsigned char c, int bold)
+{
+    static struct RastPort trp;
+    static struct TextFont *set;
+    static int set_bold = -1, ready;
+    char ch = (char)c;
+    (void)user;
+    if (!ready) { InitRastPort(&trp); ready = 1; }
+    if (set != (struct TextFont *)f || set_bold != bold) {
+        SetFont(&trp, (struct TextFont *)f);
+        SetSoftStyle(&trp, bold ? FSF_BOLD : FS_NORMAL, FSF_BOLD);
+        set = (struct TextFont *)f;
+        set_bold = bold;
+    }
+    return text_length(&trp, &ch, 1);
+}
+
+/* The faces and widths, ready for the window's font (again after a theme change: font_widths_reset). */
+static ow_fontwidths *fonts_w(void)
+{
+    if (!fontw_ready || fontw.be.fallback != (void *)font) {   /* first, or a new window font */
+        ow_fw_backend be;
+        memset(&be, 0, sizeof be);
+        be.open = fw_open;
+        be.advance = fw_advance;
+        be.fallback = font;
+        be.fallback_ysize = font ? font->tf_YSize : 8;
+        be.fallback_ascent = font ? font->tf_Baseline + 1 : 7;
+        ow_fw_init(&fontw, &be, font_attr.ta_Name ? (const char *)font_attr.ta_Name : NULL);
+        fontw_ready = 1;
+    }
+    return &fontw;
+}
+
+static void font_widths_reset(void)
+{
+    fontw_ready = 0;
+    width_memo = NULL;
+}
+
+/* A style's advance widths, at the size it is drawn at at 100%, from the face that draws it. */
 static const width_table *font_widths(uint32_t flags, ol_unit size)
 {
     char file[72];
-    int i, bold = (flags & OL_TEXT_BOLD) != 0, px = measure_pixels(size);
     uint32_t key = flags & (0xffff0000u | OL_TEXT_MONO | OL_TEXT_BOLD);
-    width_table *t;
-    struct TextFont *f;
-    struct RastPort trp;
     if (width_memo && key == width_memo_key && size == width_memo_size) return width_memo;
     layout_font_file(flags, file, sizeof file);
-    for (i = 0; i < WIDTH_TABLES; ++i)
-        if (width_tables[i].used && width_tables[i].bold == bold && width_tables[i].px == px &&
-            !strcmp(width_tables[i].file, file)) {
-            width_memo = &width_tables[i];
-            width_memo_key = key;
-            width_memo_size = size;
-            return width_memo;
-        }
-    t = &width_tables[width_next];
-    width_next = (width_next + 1) % WIDTH_TABLES;
-    memset(t, 0, sizeof *t);
-    snprintf(t->file, sizeof t->file, "%s", file);
-    t->used = 1;
-    t->bold = (UBYTE)bold;
-    t->px = (WORD)px;
-    f = document_font_px(file, px);
-    if (!f) f = font;
-    InitRastPort(&trp);
-    SetFont(&trp, f);
-    SetSoftStyle(&trp, bold ? FSF_BOLD : FS_NORMAL, FSF_BOLD);
-    for (i = 32; i < 256; ++i) {
-        char c = (char)i;
-        t->w[i] = (UWORD)text_length(&trp, &c, 1);
-    }
-    t->ascent = (WORD)(f->tf_Baseline + 1);
-    t->descent = (WORD)(f->tf_YSize > t->ascent ? f->tf_YSize - t->ascent : 0);
-    width_memo = t;
+    width_memo = ow_fw_widths(fonts_w(), file, (flags & OL_TEXT_BOLD) != 0, ow_fw_pixels(size));
     width_memo_key = key;
     width_memo_size = size;
-    return t;
+    return width_memo;
 }
 
 /* A sum of a table's widths, in units. */
@@ -1548,35 +1557,36 @@ static int measure_units(void *userdata, const char *utf8, size_t length, const 
     return 1;
 }
 
-/* 2.0.3: the pixel size a style is drawn at at a scale: its own (pixels) when its font is no wider there
- * than the layout's widths scaled, else the largest smaller one that is (down to three quarters). Each
- * answer is kept, so its fonts are tried once a style and zoom. */
+/* 2.0.3: the pixel size a style is drawn at at a scale: its own (pixels) when its face is no wider there than
+ * the layout's widths scaled, else the largest smaller one that is (down to three quarters). Each answer is
+ * kept, so its fonts are tried once a style and zoom. face "": the window's font, which has one size. */
 #define FIT_SLOTS 16
 static const char fit_sample[] = "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789";
 static struct {
-    char file[72];
+    char face[72];
     UBYTE bold;
     WORD px, measured, fitted;
     uint32_t mul;
 } fit_slots[FIT_SLOTS];
 static int fit_next;
 
-static int fit_pixels(const char *file, int bold, int pixels, const width_table *wt, const ol_scale *scale)
+static int fit_pixels(const char *face, int bold, int pixels, const width_table *wt, const ol_scale *scale)
 {
     int i, p, low;
     ULONG sum = 0;
     int32_t target;
     struct RastPort trp;
+    if (!face[0]) return pixels;
     for (i = 0; i < FIT_SLOTS; ++i)
         if (fit_slots[i].px == pixels && fit_slots[i].measured == wt->px && fit_slots[i].mul == scale->mul &&
-            fit_slots[i].bold == bold && !strcmp(fit_slots[i].file, file))
+            fit_slots[i].bold == bold && !strcmp(fit_slots[i].face, face))
             return fit_slots[i].fitted;
     for (i = 0; fit_sample[i]; ++i) sum += wt->w[(unsigned char)fit_sample[i]];
     target = ol_scale_length(scale, table_units(sum));
     low = pixels * 3 / 4 > 4 ? pixels * 3 / 4 : 4;
     InitRastPort(&trp);
     for (p = pixels; p > low; --p) {
-        struct TextFont *f = document_font_px(file, p);
+        struct TextFont *f = document_font_px(face, p);
         if (!f) {                                    /* no such size: the last there was */
             if (p < pixels) ++p;
             break;
@@ -1587,10 +1597,10 @@ static int fit_pixels(const char *file, int bold, int pixels, const width_table 
     }
     i = fit_next;
     fit_next = (fit_next + 1) % FIT_SLOTS;
-    snprintf(fit_slots[i].file, sizeof fit_slots[i].file, "%s", file);
+    snprintf(fit_slots[i].face, sizeof fit_slots[i].face, "%s", face);
     fit_slots[i].bold = (UBYTE)bold;
     fit_slots[i].px = (WORD)pixels;
-    fit_slots[i].measured = wt->px;
+    fit_slots[i].measured = (WORD)wt->px;
     fit_slots[i].mul = scale->mul;
     fit_slots[i].fitted = (WORD)p;
     return p;
@@ -1602,7 +1612,6 @@ static void pages_free(void)
     pages_layout = NULL;
     pages_editor = NULL;
     width_memo = NULL;                               /* font numbers are the document's */
-    memset(fit_slots, 0, sizeof fit_slots);
 }
 
 /* The pages for the document as it is now; NULL when memory ran out (the 2.0 renderer draws then). */
@@ -1698,7 +1707,6 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
                        (int)(d->box.width * (int32_t)k / (int32_t)t->text_length) + 1, h);
         return;
     }
-    layout_font_file(t->style.text_flags, file, sizeof file);
     if (t->style.text_flags & OL_TEXT_BOLD) style |= FSF_BOLD;
     if (t->style.text_flags & OL_TEXT_ITALIC) style |= FSF_ITALIC;
     if (t->style.text_flags & OL_TEXT_UNDERLINE) style |= FSF_UNDERLINED;
@@ -1714,6 +1722,7 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     drawn = n;
     while (drawn && (buf[drawn - 1] == ' ' || buf[drawn - 1] == '\t')) --drawn;
     wt = font_widths(t->style.text_flags, size);
+    snprintf(file, sizeof file, "%s", wt->face);      /* the face the widths are from draws it ("": the window's) */
     for (k = 0, sum = 0, tabs = 0; k < drawn; ++k) {
         if (buf[k] == '\t') tabs += TAB_UNITS;
         else sum += wt->w[(unsigned char)buf[k]];
@@ -1721,7 +1730,7 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     target = ol_scale_length(pp->scale, table_units(sum) + tabs);
     for (k = 0; k < n; ++k)
         if ((unsigned char)buf[k] < 32) buf[k] = ' ';   /* a tab: its space is the layout's */
-    f = document_font_px(file, d->font_pixels);
+    f = file[0] ? document_font_px(file, d->font_pixels) : NULL;
     SetFont(rp, f ? f : font);
     SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     if (f && drawn > 1 && text_length(rp, buf, drawn) > target + 1) {
@@ -2401,6 +2410,8 @@ static void apply_theme(const char *name)
         }
     }
     ogt_ctx_init(&ctx, scr, &theme, theme_mode);
+    font_widths_reset();                             /* 2.0.3: the window's font is a face of last resort */
+    pages_free();
     if (win) relayout();
 }
 
@@ -3357,11 +3368,13 @@ static char *document_plain_text(void)
 }
 
 /* 2.0.3, for the lab: FONTCHECK [points [zoom]]: the document's own font at a size (11 points, the window's
- * zoom), how the layout measures it and how it is drawn: the sizes, whether each font was made at that size
- * (designed) or scaled from another, and the width of fit_sample laid out and drawn. */
+ * zoom): the face that draws it (the document's, or the first of its kind that opens), whether its widths are
+ * the face's own at that size, scaled from another or the window's font's, the sizes it is measured and drawn
+ * at (each designed, scaled or not opened), and the width of fit_sample laid out and drawn. */
 static void font_check(const char *arg, char *out, size_t size)
 {
-    char file[72], *end;
+    static const char *const from[] = { "own", "scaled", "window font" };
+    char file[72], face[72], *end;
     long pt = strtol(arg, &end, 10), z = strtol(end, NULL, 10);
     uint32_t flags = doc && doc->base.font >= 0 ? OL_TEXT_FONT(OW_LAYOUT_FONT(doc->base.font)) : 0;
     ol_unit units;
@@ -3370,33 +3383,37 @@ static void font_check(const char *arg, char *out, size_t size)
     struct TextFont *mf, *df;
     struct RastPort trp;
     ULONG sum = 0;
-    int i, dpx, fit, drawn = 0, m_tall = 0;
-    const char *m_made = "no font";
+    int i, dpx, fit, drawn = 0, m_tall = 0, d_tall = 0, mpx, how;
+    const char *m_made = "not opened", *d_made = "not opened";
     if (pt < 4 || pt > 96) pt = 11;
     if (z < 10 || z > 800) z = zoom;
     units = OL_POINT(pt);
     layout_font_file(flags, file, sizeof file);
     wt = font_widths(flags, units);
+    snprintf(face, sizeof face, "%s", wt->face);
+    mpx = wt->px;
+    how = wt->from >= 0 && wt->from <= 2 ? wt->from : 0;
     for (i = 0; fit_sample[i]; ++i) sum += wt->w[(unsigned char)fit_sample[i]];
     memset(&sc, 0, sizeof sc);
     ol_scale_set(&sc, (int32_t)z, page_scale_den() * OL_UNITS_PER_TWIP);
     dpx = ol_scale_length(&sc, units);
-    fit = fit_pixels(file, 0, dpx, wt, &sc);
-    if ((mf = document_font_px(file, wt->px))) {      /* read now: the next may close it */
+    fit = fit_pixels(face, 0, dpx, wt, &sc);
+    if (face[0] && (mf = document_font_px(face, mpx))) {   /* read now: the next may close it */
         m_made = (mf->tf_Flags & FPF_DESIGNED) ? "designed" : "scaled";
         m_tall = mf->tf_YSize;
     }
-    df = document_font_px(file, dpx);
+    df = face[0] ? document_font_px(face, fit) : font;
     if (df) {
+        d_made = !face[0] ? "window font" : (df->tf_Flags & FPF_DESIGNED) ? "designed" : "scaled";
+        d_tall = df->tf_YSize;
         InitRastPort(&trp);
         SetFont(&trp, df);
         drawn = text_length(&trp, fit_sample, sizeof fit_sample - 1);
     }
-    snprintf(out, size, "%s %ldpt: measured at %dpx (%s %d tall); at %ld%%: %dpx (%s %d tall), sample %d px drawn, "
-             "%ld px laid out; drawn at %dpx", file, pt, wt->px,
-             m_made, m_tall, z, dpx,
-             !df ? "no font" : (df->tf_Flags & FPF_DESIGNED) ? "designed" : "scaled", df ? df->tf_YSize : 0, drawn,
-             (long)ol_scale_length(&sc, table_units(sum)), fit);
+    snprintf(out, size, "%s %ldpt: face %s, widths %s; measured at %dpx (%s, %d tall); at %ld%%: %dpx, drawn at "
+             "%dpx (%s, %d tall), sample %d px drawn, %ld px laid out", file, pt, face[0] ? face : "(none)",
+             from[how], mpx, m_made, m_tall, z, dpx, fit, d_made, d_tall, drawn,
+             (long)ol_scale_length(&sc, table_units(sum)));
 }
 
 static int rexx_do_command(const char *command, char **result_out)
