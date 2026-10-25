@@ -406,6 +406,23 @@ int owf_detect_odt(const unsigned char *data, size_t length);
 int owf_import_docx(const unsigned char *data, size_t length, owf_doc *doc, owf_report *report);
 int owf_detect_docx(const unsigned char *data, size_t length);
 
+/* ODF text as ODT reads it, for the other ODF readers (in_odt.c; ODP's
+ * text boxes): fonts, paragraph and text styles, and one paragraph at a
+ * time into a builder. Style tables: styles.xml's common styles, its
+ * automatic ones (master pages), content.xml's automatic ones. */
+enum { OWF_ODF_COMMON, OWF_ODF_STYLES_AUTO, OWF_ODF_CONTENT_AUTO };
+typedef struct owf_odf_text owf_odf_text;
+owf_odf_text *owf_odf_text_new(owf_doc *doc, owf_report *report, const owf_unzip *zip);
+void owf_odf_text_free(owf_odf_text *t);
+void owf_odf_text_faces(owf_odf_text *t, const owf_xml_node *decls);
+void owf_odf_text_styles(owf_odf_text *t, const owf_xml_node *container, int which);
+void owf_odf_text_props(owf_odf_text *t, const owf_xml_node *n, owf_charprops *cp);
+void owf_odf_para_props(const owf_xml_node *n, owf_paraprops *pp);
+/* A text:p or text:h: base_para and base_char, then its styles; runs keep
+ * font -1 and size 0 where they are base_char's. */
+int owf_odf_text_paragraph(owf_odf_text *t, owf_builder *b, const owf_xml_node *p, int which,
+                           const owf_parafmt *base_para, const owf_charfmt *base_char);
+
 /* The formats. */
 extern const owf_format owf_format_fodt, owf_format_wordworth, owf_format_finalwriter;
 extern const owf_format owf_format_text, owf_format_amiga_text, owf_format_ftxt,

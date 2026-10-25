@@ -1019,3 +1019,73 @@ int owf_detect_odt(const unsigned char *data, size_t length)
 {
     return detect_odt(data, length);
 }
+
+/* ---- ODF text for the other ODF readers (in_odp.c's text boxes) ----
+ * The same fonts, paragraph and text styles and paragraphs as ODT's body,
+ * on a builder and a story the caller gives. */
+
+struct owf_odf_text {
+    odt o;
+};
+
+owf_odf_text *owf_odf_text_new(owf_doc *doc, owf_report *report, const owf_unzip *zip)
+{
+    owf_odf_text *t = calloc(1, sizeof *t);
+    if (!t)
+        return NULL;
+    t->o.doc = doc;
+    t->o.report = report;
+    t->o.zip = zip;
+    owf_parafmt_init(&t->o.base_para);
+    owf_charfmt_init(&t->o.base_char);
+    owf_buf_init(&t->o.notes);
+    owf_buf_init(&t->o.scratch);
+    return t;
+}
+
+void owf_odf_text_free(owf_odf_text *t)
+{
+    if (!t)
+        return;
+    owf_buf_free(&t->o.notes);
+    owf_buf_free(&t->o.scratch);
+    owf_styles_free(&t->o.common);
+    owf_styles_free(&t->o.autos_content);
+    owf_styles_free(&t->o.autos_styles);
+    free(t);
+}
+
+void owf_odf_text_faces(owf_odf_text *t, const owf_xml_node *decls)
+{
+    read_font_faces(&t->o, decls);
+}
+
+void owf_odf_text_styles(owf_odf_text *t, const owf_xml_node *container, int which)
+{
+    read_styles(&t->o, container, which == OWF_ODF_COMMON ? &t->o.common
+                                  : which == OWF_ODF_STYLES_AUTO ? &t->o.autos_styles : &t->o.autos_content);
+}
+
+void owf_odf_text_props(owf_odf_text *t, const owf_xml_node *n, owf_charprops *cp)
+{
+    read_text_props(&t->o, n, cp);
+}
+
+void owf_odf_para_props(const owf_xml_node *n, owf_paraprops *pp)
+{
+    read_para_props(n, pp);
+}
+
+int owf_odf_text_paragraph(owf_odf_text *t, owf_builder *b, const owf_xml_node *p, int which,
+                           const owf_parafmt *base_para, const owf_charfmt *base_char)
+{
+    odt *o = &t->o;
+    o->tables[0] = which == OWF_ODF_STYLES_AUTO ? &o->autos_styles : &o->autos_content;
+    o->tables[1] = &o->common;
+    o->base_para = *base_para;
+    o->base_char = *base_char;
+    o->b = b;
+    paragraph(o, p, NULL, -1);
+    o->b = NULL;
+    return o->failed || o->notes.failed || o->scratch.failed ? OWF_ERR_MEMORY : OWF_OK;
+}

@@ -108,8 +108,10 @@ typedef struct {
     int npoints, *points;        /* OWF_SHAPE_POLYGON: x, y pairs, twips inside the box */
     owf_story text;              /* text, a shape's text, or a table's cells */
     /* Each paragraph's list level, until Shared E8 puts it in owf_parafmt:
-       0 not in a list, 1-9 a list item's level. NULL: none in a list. */
+       0 not in a list, 1-9 a list item's level; NULL: none in a list.
+       caplevels entries: owf_obj_level and owf_obj_set_level look after it. */
     unsigned char *levels;
+    int caplevels;
     owf_textlevel *list;         /* OWF_TEXT_LEVELS levels of the frame's own list; NULL: its master's */
     int ncols, *col_widths;      /* OWF_OBJ_TABLE: twips; NULL: equal */
     unsigned char valign;        /* OWF_VALIGN_TOP, _CENTRE, _BOTTOM */
@@ -187,7 +189,8 @@ typedef enum {
     OWF_KEPT_TIMING,             /* a slide's animations (owf_slide.keep_timing) */
     OWF_KEPT_STYLE,              /* an automatic style kept objects use */
     OWF_KEPT_DEFINITION,         /* a gradient, hatch, marker, dash or fill picture kept objects use */
-    OWF_KEPT_ATTRIBUTES          /* attributes, as name="value" pairs (a transition's) */
+    OWF_KEPT_ATTRIBUTES,         /* attributes, as name="value" pairs (a transition's) */
+    OWF_KEPT_SETTINGS            /* the show's settings and custom shows */
 } owf_kept_kind;
 
 typedef struct {
