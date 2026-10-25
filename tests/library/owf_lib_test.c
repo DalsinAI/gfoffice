@@ -10,7 +10,8 @@
  * editor does; then does it all again from a second task at the same
  * time. Prints one line per check (the second task's as one line) and
  * "OWFLibTest: N passed, M failed".
- * Needs z.library (ours, openzlib) for ODT and DOCX.
+ * z.library (ours, openzlib) is optional: without it the library reads
+ * ODT and DOCX with its own inflate, and writes them stored.
  *
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */

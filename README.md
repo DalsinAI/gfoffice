@@ -1,3 +1,22 @@
+# GFOffice
+
+This is the GFOffice Suite: native office apps for AmigaOS 3.2, all sharing
+one document library, **libowf**. Its apps keep their Open names:
+
+- **OpenWrite**, the word processor (released, below);
+- **OpenCalc**, the spreadsheet (the formula engine and its core are here; its
+  Amiga app is being built);
+- **OpenPresentation**, slides; **OpenPublisher**, desktop publishing that
+  opens Microsoft Publisher and PageStream files; **OpenBase**, the database
+  (all being started).
+
+The suite aims at the features of Apache OpenOffice's apps. It is written from
+the file formats' specifications and our own code, never from OpenOffice's
+or LibreOffice's. The designs are in `docs/gfoffice/`.
+
+This repository was called `openamigawrite` until 25 October 2026. GitHub
+redirects the old name.
+
 # OpenWrite
 
 OpenWrite 1.0.3 is a native word processor for AmigaOS 3.2.
@@ -115,9 +134,12 @@ build/os3/library/tests/OWFLibTest (OWF=library)
 
 ODT and DOCX deflate and inflate through z.library, ours from
 amigachrome-guest (`libraries/openzlib`), opened the first time a document
-needs it. There is no zlib source in the Amiga build. Without z.library in
-LIBS:, ODT and DOCX files that are deflated (nearly all of them) cannot be
-read, and files are written stored.
+needs it. There is no zlib source in the Amiga build. z.library is no
+longer needed to read: without it in LIBS:, libowf inflates zip packages
+(ODT, DOCX, XLSX, ODS) with its own inflater, written from RFC 1951
+(`libowf/src/owf_inflate.c`, more slowly than z.library; tested by `make
+inflate-test` and `make inflate-check`, part of `make test` and `make
+check`). Files are then written stored, which every reader accepts.
 
 ### owf.library
 

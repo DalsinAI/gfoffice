@@ -127,18 +127,25 @@ static void part_name(char *out, size_t size, const char *base, const char *targ
         snprintf(out, size, "%s%s", base, target);
 }
 
-static owf_xml *read_xml(const owf_unzip *zip, const char *name)
+/* A part as XML; NULL when it cannot be read, with *error saying why. */
+static owf_xml *read_xml_error(const owf_unzip *zip, const char *name, int *error)
 {
     unsigned char *data;
     size_t length;
     owf_xml *xml;
-    int error;
 
-    if (owf_unzip_read(zip, name, &data, &length) != OWF_OK)
+    *error = owf_unzip_read(zip, name, &data, &length);
+    if (*error != OWF_OK)
         return NULL;
-    xml = owf_xml_parse((const char *)data, length, &error);
+    xml = owf_xml_parse((const char *)data, length, error);
     free(data);
     return xml;
+}
+
+static owf_xml *read_xml(const owf_unzip *zip, const char *name)
+{
+    int error;
+    return read_xml_error(zip, name, &error);
 }
 
 static void read_rels(const owf_unzip *zip, const char *name, rels *r)
@@ -1151,9 +1158,12 @@ static int read_docx(docx *d)
     snprintf(d->base, sizeof d->base, "%.*s", slash ? (int)(slash - main_name + 1) : 0, main_name);
     snprintf(rels_name, sizeof rels_name, "%.63s_rels/%.200s.rels", d->base, slash ? slash + 1 : main_name);
 
-    document = read_xml(d->zip, main_name);
+    /* what went wrong, not "damaged" for everything: a main part that is
+     * missing or is not XML is damage, but memory, encryption or another
+     * kind of compression are not */
+    document = read_xml_error(d->zip, main_name, &result);
     if (!document)
-        return OWF_ERR_CORRUPT;
+        return result == OWF_ERR_FORMAT || result == OWF_OK ? OWF_ERR_CORRUPT : result;
     root = owf_xml_root(document);
     d->w = root->ns;
     if (strcmp(root->name, "document") || (strcmp(d->w, NS_W) && strcmp(d->w, NS_W_STRICT))) {

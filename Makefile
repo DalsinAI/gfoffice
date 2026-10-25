@@ -85,6 +85,45 @@ libc-test: $(OUT)/test-owf-libc
 
 .PHONY: libc-test
 
+# libowf's own inflate (libowf/src/owf_inflate.c), which reads zip packages
+# without z.library. tests/inflate/test_inflate.c checks it against zlib's
+# deflate, hand-made streams and damaged ones (--bench ZIP... times it
+# against zlib). owconvert-nozlibrary is OWConvert with zlib's calls failing
+# as z.library's do on an Amiga without it; test_inflate_samples.py reads
+# the samples with it and with zlib, and compares.
+INFLATE_SRC = libowf/src/owf_inflate.c libowf/src/owf_inflate.h
+
+$(OUT)/test-inflate: $(INFLATE_SRC) tests/inflate/test_inflate.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -Ilibowf/include -Ilibowf/src libowf/src/owf_inflate.c tests/inflate/test_inflate.c -lz -o $@
+
+$(OUT)/test-inflate-asan: $(INFLATE_SRC) tests/inflate/test_inflate.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-Ilibowf/include -Ilibowf/src libowf/src/owf_inflate.c tests/inflate/test_inflate.c -lz -o $@
+
+$(OUT)/owconvert-nozlibrary: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/src/owf_internal.h libowf/src/owf_zlib.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -DOWF_TEST_NO_ZLIBRARY -Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/owconvert.c -lz -o $@
+
+$(OUT)/owconvert-nozlibrary-asan: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/src/owf_internal.h libowf/src/owf_zlib.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -DOWF_TEST_NO_ZLIBRARY -Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/owconvert.c -lz -o $@
+
+inflate-test: $(OUT)/test-inflate $(OUT)/owconvert $(OUT)/owconvert-nozlibrary
+	$(OUT)/test-inflate
+	python3 tests/inflate/test_inflate_samples.py $(OUT)/owconvert $(OUT)/owconvert-nozlibrary
+
+inflate-check: $(OUT)/test-inflate-asan $(OUT)/owconvert-asan $(OUT)/owconvert-nozlibrary-asan
+	$(OUT)/test-inflate-asan 100000
+	python3 tests/inflate/test_inflate_samples.py $(OUT)/owconvert-asan $(OUT)/owconvert-nozlibrary-asan
+
+test: inflate-test
+check: inflate-check
+
+.PHONY: inflate-test inflate-check
+
 # OpenWrite's pages on OpenLayout (DalsinAI/openamigalayout 0.2 or later)
 OPENLAYOUT_SRC ?= ../openamigalayout
 LAYOUT_SRC = src/core/ow_layout.c $(OPENLAYOUT_SRC)/src/openlayout.c
