@@ -77,7 +77,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.4 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.5 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -864,9 +864,18 @@ static void document_font_file(int font_index, char *out, size_t out_size)
         name = doc->fonts[font_index].name;
         kind = doc->fonts[font_index].kind;
     }
-    if (kind == OWF_FONT_MONO || name_has(name, "courier") || name_has(name, "mono") || name_has(name, "lettergothic"))
+    /* 2.0.5: more of today's families by their names (Roboto Slab, Cambria, Consolas...) */
+    static const char *const serifs[] = { "times", "serif", "slab", "cambria", "georgia", "garamond", "palatino",
+                                          "baskerville", "bookman", "book antiqua", "century", "caslon", "minion",
+                                          "constantia", "rockwell", NULL };
+    static const char *const monos[] = { "courier", "mono", "lettergothic", "consolas", "code", "menlo", "monaco",
+                                         "fixed", NULL };
+    int i, serif = kind == OWF_FONT_SERIF, mono = kind == OWF_FONT_MONO;
+    for (i = 0; !mono && monos[i]; ++i) mono = name_has(name, monos[i]);
+    for (i = 0; !serif && serifs[i]; ++i) serif = name_has(name, serifs[i]);
+    if (mono)
         snprintf(out, out_size, "%s", "courier.font");
-    else if (kind == OWF_FONT_SERIF || name_has(name, "times") || name_has(name, "serif"))
+    else if (serif)
         snprintf(out, out_size, "%s", "CGTimes.font");
     else if (name_has(name, "helvetica"))
         snprintf(out, out_size, "%s", "helvetica.font");
@@ -1517,21 +1526,31 @@ static void *fw_open(void *user, const char *file, int pixels, int *ysize, int *
     return f;
 }
 
+/* 2.0.5: bold is drawn by OpenWrite itself, each glyph plain and again the font's bold smear further on,
+ * its advance that much wider (smear_of: 0 for a font made bold, which has its own widths). What the layout
+ * measures for bold is then just what is drawn, whatever graphics' own bold would advance: in the lab (25
+ * October 2026) bold words drew narrower than they were laid out, and the gaps between them grew (14 point
+ * bold paragraphs, bold contents entries). */
+static int smear_of(const struct TextFont *f, int bold)
+{
+    if (!bold || !f || (f->tf_Style & FSF_BOLD)) return 0;
+    return f->tf_BoldSmear > 0 ? f->tf_BoldSmear : 1;
+}
+
 static int fw_advance(void *user, void *f, unsigned char c, int bold)
 {
     static struct RastPort trp;
     static struct TextFont *set;
-    static int set_bold = -1, ready;
+    static int ready;
     char ch = (char)c;
     (void)user;
     if (!ready) { InitRastPort(&trp); ready = 1; }
-    if (set != (struct TextFont *)f || set_bold != bold) {
+    if (set != (struct TextFont *)f) {
         SetFont(&trp, (struct TextFont *)f);
-        SetSoftStyle(&trp, bold ? FSF_BOLD : FS_NORMAL, FSF_BOLD);
+        SetSoftStyle(&trp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
         set = (struct TextFont *)f;
-        set_bold = bold;
     }
-    return text_length(&trp, &ch, 1);
+    return (int)TextLength(&trp, (STRPTR)&ch, 1) + smear_of((struct TextFont *)f, bold);
 }
 
 /* The theme's font as a file name, as OpenGadTools opens it: "DejaVu Sans" is DejaVuSans.font. */
@@ -1739,7 +1758,7 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     ol_unit size = t->style.font_size > 0 ? t->style.font_size : OL_POINT(12), tabs;
     char buf[256], file[72];
     size_t n, k, drawn;
-    int baseline = d->baseline, style = FS_NORMAL, para = -1, run = -1, target, placed;
+    int baseline = d->baseline, style = FS_NORMAL, para = -1, run = -1, target, placed, smear = 0;
     ULONG sum;
     struct TextFont *f;
     LONG pen;
@@ -1778,14 +1797,17 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
         if ((unsigned char)buf[k] < 32) buf[k] = ' ';   /* a tab: its space is the layout's */
     f = file[0] ? document_font_px(file, d->font_pixels) : NULL;
     SetFont(rp, f ? f : font);
-    SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
-    if (f && drawn > 1 && text_length(rp, buf, drawn) > target + 1) {
+    smear = smear_of(f ? f : font, (style & FSF_BOLD) != 0);
+    SetSoftStyle(rp, smear ? style & ~FSF_BOLD : style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    if (f && drawn > 1 && (int)TextLength(rp, (STRPTR)buf, drawn) + (int)drawn * smear > target + 1) {
         int fit = ow_fw_fit(fonts_w(), wt, d->font_pixels, ol_scale_length(pp->scale, table_units(ow_fw_sample_sum(wt))));
         f = document_font_px(file, fit);             /* again: trying sizes may have closed the first */
         SetFont(rp, f ? f : font);
-        SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+        smear = smear_of(f ? f : font, (style & FSF_BOLD) != 0);
+        SetSoftStyle(rp, smear ? style & ~FSF_BOLD : style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     }
-    placed = drawn && text_length(rp, buf, drawn) > target + 1;
+    /* bold of our own is always placed glyph by glyph; plain text when the font runs wider than the layout */
+    placed = drawn && (smear || (int)TextLength(rp, (STRPTR)buf, drawn) > target + 1);
 
     /* the selection under the text, and where the caret goes, measured as the text is drawn */
     if (pp->body && ow_layout_node_run(pp->layout, t->node_id, &para, &run) && run >= 0 &&
@@ -1816,9 +1838,9 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     if (OL_TEXT_LEADER_OF(t->style.text_flags) && t->text_length == 1 && s[0] == '\t' && d->box.width > 0) {
         pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : ogt_pen(&ctx, "fill.text");
         ogt_set_apen(rp, pen);
-        SetSoftStyle(rp, style & ~FSF_UNDERLINED, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+        SetSoftStyle(rp, style & ~(FSF_UNDERLINED | FSF_BOLD), FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
         paint_leader(pp, d, OL_TEXT_LEADER_OF(t->style.text_flags), pen, baseline);
-        SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+        SetSoftStyle(rp, smear ? style & ~FSF_BOLD : style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     }
     if (!(style & FSF_UNDERLINED)) n = drawn;        /* an underline runs on under the spaces */
     if (!n) return;
@@ -1836,14 +1858,18 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
             ogt_hline(rp, pen, d->box.x, baseline - (rp->TxBaseline + 1) / 3, text_length(rp, buf, drawn));
         return;
     }
-    SetSoftStyle(rp, style & ~FSF_UNDERLINED, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    SetSoftStyle(rp, style & ~(FSF_UNDERLINED | (smear ? FSF_BOLD : 0)), FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     to_latin1(s, t->text_length, buf, sizeof buf);    /* the tabs again, for their widths */
     for (k = 0, sum = 0, tabs = 0; k < drawn; ++k) {
         unsigned char c = (unsigned char)buf[k];
         if (c > ' ') {
-            Move(rp, d->box.x + (sum || tabs ? ol_scale_length(pp->scale, table_units(sum) + tabs) : 0),
-                 baseline);
+            int gx = d->box.x + (sum || tabs ? ol_scale_length(pp->scale, table_units(sum) + tabs) : 0);
+            Move(rp, gx, baseline);
             Text(rp, (STRPTR)&buf[k], 1);
+            if (smear) {                             /* bold: the glyph again, the smear on */
+                Move(rp, gx + smear, baseline);
+                Text(rp, (STRPTR)&buf[k], 1);
+            }
         }
         if (c == '\t') tabs += TAB_UNITS;
         else sum += wt->w[c];
@@ -3420,11 +3446,39 @@ static char *document_plain_text(void)
     return out;
 }
 
+/* 2.0.5, for FONTCHECK: what graphics' Text() advances for n bytes in f, with its own bold or without,
+ * drawn into a bitmap of our own and read off the RastPort's cp_x; -1 when it can't be drawn. */
+static int drawn_advance(struct TextFont *f, const char *s, int n, int algo_bold)
+{
+    struct BitMap *bm;
+    struct RastPort trp;
+    int w;
+    if (!f || n <= 0 || n > 32) return -1;
+    InitRastPort(&trp);
+    SetFont(&trp, f);
+    SetSoftStyle(&trp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    w = (int)TextLength(&trp, (STRPTR)s, (ULONG)n);    /* room for it twice over and more: no layer clips it */
+    bm = AllocBitMap((ULONG)(2 * w + n * (2 * f->tf_XSize + 8) + 64), (ULONG)(f->tf_YSize + 4), 1, BMF_CLEAR, NULL);
+    if (!bm) return -1;
+    trp.BitMap = bm;
+    SetSoftStyle(&trp, algo_bold ? FSF_BOLD : FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    SetAPen(&trp, 1);
+    SetDrMd(&trp, JAM1);
+    Move(&trp, 0, f->tf_Baseline);
+    Text(&trp, (STRPTR)s, (ULONG)n);
+    w = trp.cp_x;
+    WaitBlit();
+    FreeBitMap(bm);
+    return w;
+}
+
 /* 2.0.3, for the lab: FONTCHECK [points [zoom [bold]]]: the document's own font at a size (11 points, the window's
  * zoom): the routes there are (openfont.library and diskfont.library), the window's font, the face that
  * draws the text (the document's, or the first of its kind that opens), where its widths come from (its own
  * at the size, scaled from another, or the window font's), and the sample of letters and digits laid out and
- * drawn: at every zoom drawn is no wider than laid out, and at 100% just as wide. */
+ * drawn: at every zoom drawn is no wider than laid out, and at 100% just as wide. 2.0.5: with bold, one word
+ * as well: plain, in graphics' own bold (its TextLength, and how far its Text() moves on), and ours (plain
+ * and the smear a letter, as OpenWrite lays out and draws bold). */
 static void font_check(const char *arg, char *out, size_t size)
 {
     static const char *const from[] = { "own", "scaled", "window font" };
@@ -3447,6 +3501,25 @@ static void font_check(const char *arg, char *out, size_t size)
              font_attr.ta_Name ? (const char *)font_attr.ta_Name : "?", font ? font->tf_YSize : 0,
              c.face[0] ? c.face : "(none)", from[c.from >= 0 && c.from <= 2 ? c.from : 0], c.px, t->w[' '], t->w['e'],
              z, c.zoom_px, c.draw_px, c.draw_ysize, c.drawn, c.laid);
+    if (bold && c.face[0]) {
+        /* 2.0.5: graphics' own bold against ours, on one word at the size drawn */
+        struct TextFont *bf = document_font_px(c.face, c.draw_px);
+        if (bf) {
+            static const char word[] = "Contents";
+            struct RastPort trp;
+            int n = (int)sizeof word - 1, plain, tl_bold, d_plain = drawn_advance(bf, word, n, 0);
+            int d_bold = drawn_advance(bf, word, n, 1);
+            size_t used = strlen(out);
+            InitRastPort(&trp);
+            SetFont(&trp, bf);
+            plain = (int)TextLength(&trp, (STRPTR)word, (ULONG)n);
+            SetSoftStyle(&trp, FSF_BOLD, FSF_BOLD);
+            tl_bold = (int)TextLength(&trp, (STRPTR)word, (ULONG)n);
+            snprintf(out + used, size - used, "; \"%s\": plain %d (Text %d), graphics bold TextLength %d, Text %d, "
+                     "smear %d; ours %d", word, plain, d_plain, tl_bold, d_bold, bf->tf_BoldSmear,
+                     plain + n * smear_of(bf, 1));
+        }
+    }
 }
 
 static int rexx_do_command(const char *command, char **result_out)
