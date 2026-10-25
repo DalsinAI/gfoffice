@@ -10,6 +10,8 @@
 
 #define UNITS_PER_PIXEL 60           /* OpenLayout's units a pixel at 100% (15 twips) */
 
+const char ow_fw_sample_text[] = "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789";
+
 static const char *const serif_faces[] = { "CGTimes.font", "DejaVuSerif.font", "LiberationSerif.font", "times.font", NULL };
 static const char *const mono_faces[] = { "courier.font", "DejaVuSansMono.font", "LiberationMono.font", NULL };
 static const char *const sans_faces[] = { "CGTriumvirate.font", "DejaVuSans.font", "LiberationSans.font",
@@ -26,23 +28,31 @@ static int has(const char *name, const char *part)
     return 0;
 }
 
-void ow_fw_init(ow_fontwidths *fw, const ow_fw_backend *be, const char *theme_face)
+void ow_fw_init(ow_fontwidths *fw, const ow_fw_backend *be, const char *theme_face, const char *window_face)
 {
     memset(fw, 0, sizeof *fw);
     fw->be = *be;
     if (theme_face) snprintf(fw->theme_face, sizeof fw->theme_face, "%s", theme_face);
+    if (window_face) snprintf(fw->window_face, sizeof fw->window_face, "%s", window_face);
 }
 
 void ow_fw_reset(ow_fontwidths *fw)
 {
     fw->nfaces = fw->next_face = 0;
     fw->ntables = fw->next_table = 0;
+    fw->nfits = fw->next_fit = 0;
 }
 
 int ow_fw_pixels(long size_units)
 {
     long px = (size_units + UNITS_PER_PIXEL / 2) / UNITS_PER_PIXEL;
     return px < 4 ? 4 : px > 128 ? 128 : (int)px;
+}
+
+int ow_fw_pixels_at(long size_units, int zoom)
+{
+    long d = (long)UNITS_PER_PIXEL * 100, px = (size_units * zoom + d / 2) / d;
+    return px < 1 ? 1 : (int)px;
 }
 
 static int opens(ow_fontwidths *fw, const char *file)
@@ -64,6 +74,7 @@ const char *ow_fw_face(ow_fontwidths *fw, const char *file)
     for (i = 0; !face && kind[i]; ++i)
         if (opens(fw, kind[i])) face = kind[i];
     if (!face && opens(fw, fw->theme_face)) face = fw->theme_face;
+    if (!face && opens(fw, fw->window_face)) face = fw->window_face;
     slot = fw->nfaces < OW_FW_FACES ? fw->nfaces++ : fw->next_face;
     fw->next_face = (slot + 1) % OW_FW_FACES;
     snprintf(fw->faces[slot].file, sizeof fw->faces[slot].file, "%s", file);
@@ -121,4 +132,79 @@ const ow_fw_table *ow_fw_widths(ow_fontwidths *fw, const char *file, int bold, i
         t->descent = ys == px ? d : scaled(d, px, ys);
     }
     return t;
+}
+
+unsigned long ow_fw_sample_sum(const ow_fw_table *t)
+{
+    unsigned long sum = 0;
+    int i;
+    for (i = 0; ow_fw_sample_text[i]; ++i) sum += t->w[(unsigned char)ow_fw_sample_text[i]];
+    return sum;
+}
+
+int ow_fw_text(ow_fontwidths *fw, void *font, const char *s, int n, int bold)
+{
+    int i, w = 0;
+    for (i = 0; i < n; ++i) w += fw->be.advance(fw->be.user, font, (unsigned char)s[i], bold);
+    return w;
+}
+
+/* The font text in t's face is drawn with at pixels: the face's; without one, the window's font. */
+static void *draw_font(ow_fontwidths *fw, const ow_fw_table *t, int pixels, int *ysize)
+{
+    int as = 0;
+    void *f = t->face[0] ? fw->be.open(fw->be.user, t->face, pixels, ysize, &as) : NULL;
+    if (!f && !t->face[0] && fw->be.fallback) {
+        f = fw->be.fallback;
+        *ysize = fw->be.fallback_ysize;
+    }
+    return f;
+}
+
+int ow_fw_fit(ow_fontwidths *fw, const ow_fw_table *t, int pixels, long laid)
+{
+    int i, p, low, slot, n = (int)sizeof ow_fw_sample_text - 1;
+    for (i = 0; i < fw->nfits; ++i)
+        if (fw->fits[i].pixels == pixels && fw->fits[i].laid == laid && fw->fits[i].bold == t->bold &&
+            !strcmp(fw->fits[i].face, t->face))
+            return fw->fits[i].fitted;
+    low = pixels * 3 / 4 > 1 ? pixels * 3 / 4 : 1;
+    for (p = pixels; p > low; --p) {
+        int ys = 0;
+        void *f = draw_font(fw, t, p, &ys);
+        if (!f) {                                    /* no such size: the last there was */
+            if (p < pixels) ++p;
+            break;
+        }
+        if (ow_fw_text(fw, f, ow_fw_sample_text, n, t->bold) <= laid) break;
+        if (!t->face[0]) break;                      /* the window's font has its one size */
+    }
+    slot = fw->nfits < OW_FW_FITS ? fw->nfits++ : fw->next_fit;
+    fw->next_fit = (slot + 1) % OW_FW_FITS;
+    snprintf(fw->fits[slot].face, sizeof fw->fits[slot].face, "%s", t->face);
+    fw->fits[slot].bold = t->bold;
+    fw->fits[slot].pixels = pixels;
+    fw->fits[slot].laid = laid;
+    fw->fits[slot].fitted = p;
+    return p;
+}
+
+void ow_fw_check_sample(ow_fontwidths *fw, const char *file, int bold, long size_units, int zoom,
+                        ow_fw_check *out)
+{
+    const ow_fw_table *t = ow_fw_widths(fw, file, bold, ow_fw_pixels(size_units));
+    void *f;
+    int ys = 0;
+    memset(out, 0, sizeof *out);
+    snprintf(out->face, sizeof out->face, "%s", t->face);
+    out->from = t->from;
+    out->px = t->px;
+    out->zoom_px = ow_fw_pixels_at(size_units, zoom);
+    out->laid = ((long)ow_fw_sample_sum(t) * zoom + 50) / 100;
+    out->draw_px = ow_fw_fit(fw, t, out->zoom_px, out->laid);
+    f = draw_font(fw, t, out->draw_px, &ys);
+    if (f) {
+        out->draw_ysize = ys;
+        out->drawn = ow_fw_text(fw, f, ow_fw_sample_text, (int)sizeof ow_fw_sample_text - 1, t->bold);
+    }
 }

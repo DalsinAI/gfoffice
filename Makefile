@@ -149,6 +149,30 @@ layout-check: $(OUT)/test-layout-asan
 
 .PHONY: layout-test layout-check
 
+# OpenWrite's text widths for the layout (app/ow_fontwidths.c, 2.0.3): the face that draws the text when the
+# document's doesn't open, and widths at the size asked or scaled to it (tests/core/test_fontwidths.c)
+FONTW_SRC = app/ow_fontwidths.c app/ow_fontwidths.h tests/core/test_fontwidths.c
+
+$(OUT)/test-fontwidths: $(FONTW_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -Iapp app/ow_fontwidths.c tests/core/test_fontwidths.c -o $@
+
+$(OUT)/test-fontwidths-asan: $(FONTW_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-Iapp app/ow_fontwidths.c tests/core/test_fontwidths.c -o $@
+
+fontwidths-test: $(OUT)/test-fontwidths
+	$(OUT)/test-fontwidths
+
+fontwidths-check: $(OUT)/test-fontwidths-asan
+	$(OUT)/test-fontwidths-asan
+
+test: fontwidths-test
+check: fontwidths-check
+
+.PHONY: fontwidths-test fontwidths-check
+
 # Workbooks (the spreadsheet's files): tests/book/test_books.py
 $(OUT)/book-dump: $(OWF_SRC) tests/book/book_dump.c libowf/include/owf.h libowf/src/owf_internal.h
 	mkdir -p $(OUT)
