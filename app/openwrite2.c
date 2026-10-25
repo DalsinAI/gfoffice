@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.15 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.16 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -2191,7 +2191,8 @@ static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_sca
         pp.caret = sel.focus;
         pp.caret_on = !pp.has_sel && ow_layout_caret(l, sel.focus, &pp.caret_page, &pp.caret_box);
     }
-    ol_draw_page(pp.od, page, s, clip, paint_op, &pp);
+    /* 2.0.16: the header and the footer first, under the body (and its frames behind the text), as Word draws
+     * them: a header's picture over the page stays behind the body's text */
     for (k = 0; k < 2; ++k) {
         char date[32] = "", time_text[16] = "";
         time_t now = time(NULL);
@@ -2212,6 +2213,9 @@ static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_sca
         ol_draw_page(story, 0, &ss, clip, paint_op, &pp);
         ol_document_free(story);
     }
+    pp.od = ow_layout_body(l);
+    pp.body = 1;
+    ol_draw_page(pp.od, page, s, clip, paint_op, &pp);
     SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     if (pp.caret_on && pp.caret_page == page) {
         if (!pp.caret_done) {                        /* not in a word (an empty paragraph): where the layout says */

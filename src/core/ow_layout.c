@@ -45,6 +45,10 @@ typedef struct {
     char pages[32];
     const char *date;
     const char *time;
+    /* 2.0.16: a header's or footer's frames too, its own top left on the page at ox, oy (their places from the
+     * page and its margins are made the header's own) */
+    int frames;
+    ol_unit ox, oy;
 } field_values;
 
 static int remember(ow_layout *l, ol_node *node, int box, int paragraph, int run)
@@ -185,7 +189,8 @@ static ol_unit frame_at(const ol_page *pg, const owf_frame *fr, int across, uint
  * text box's paragraphs inside its insets. 2.0.14: the body's text goes round it as Word's wrap says
  * (OpenLayout 0.6): square and tight beside it, top and bottom above and below it, Word's usual eighth of an
  * inch from its sides; with no wrap (behind or in front of the text), it moves no line. */
-static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *block, const owf_frame *fr)
+static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *block, const owf_frame *fr,
+                     const field_values *fv)
 {
     ol_style s;
     ol_box_style b;
@@ -215,6 +220,21 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
     default: b.wrap = OL_WRAP_NONE; break;
     }
     if (b.wrap != OL_WRAP_NONE) b.wrap_gap[1] = b.wrap_gap[3] = TW(WRAP_GAP);
+    if (fv) {
+        /* 2.0.16: a header's or footer's frame, laid out with its story (ol_layout, its corner the galley's) and
+         * drawn where the story goes: from the page or its margins, from the story's top left instead; from its
+         * paragraph as it is. Its story's text doesn't wrap round it. */
+        unsigned ax = OL_ANCHOR_X_OF(b.anchor), ay = OL_ANCHOR_Y_OF(b.anchor);
+        if (ax == OL_ANCHOR_MARGIN) b.frame.x += l->page.margin_left;
+        if (ax != OL_ANCHOR_BLOCK) b.frame.x -= fv->ox;
+        if (ay == OL_ANCHOR_MARGIN) b.frame.y += l->page.margin_top;
+        if (ay != OL_ANCHOR_BLOCK) b.frame.y -= fv->oy;
+        b.anchor = OL_ANCHOR_X(ax == OL_ANCHOR_BLOCK ? OL_ANCHOR_BLOCK : OL_ANCHOR_PAGE) |
+                   OL_ANCHOR_Y(ay == OL_ANCHOR_BLOCK ? OL_ANCHOR_BLOCK : OL_ANCHOR_PAGE) |
+                   (fr->behind ? OL_ANCHOR_BEHIND : 0u);
+        if (!b.anchor) b.anchor = OL_ANCHOR_ON;
+        b.wrap = OL_WRAP_NONE;
+    }
     if (OWF_SHADE_SET(fr->line)) {
         b.border_width = BORDER_WIDTH;
         b.border_argb = argb(OWF_SHADE_RGB(fr->line));
@@ -235,10 +255,10 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
     }
     /* its paragraphs, recorded as text box k's (2.0.15: the caret goes into them); a frame in them is left
      * out */
-    if (l && fr >= doc->frames && fr < doc->frames + doc->nframes && l->box_frame)
+    if (!fv && l && fr >= doc->frames && fr < doc->frames + doc->nframes && l->box_frame)
         l->box_frame[fr - doc->frames] = ol_node_id(f);
     return !fr->story.nparas ||
-           add_story((ow_layout *)l, doc, od, f, &fr->story, l ? (int)(fr - doc->frames) + 2 : 0, NULL);
+           add_story((ow_layout *)l, doc, od, f, &fr->story, l && !fv ? (int)(fr - doc->frames) + 2 : 0, NULL);
 }
 
 static const char *field_text(const field_values *fv, owf_field field)
@@ -329,9 +349,9 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
     /* 2.0.10: the frames anchored here (an empty run each above), after the runs, so run j stays node
      * block + 1 + j; the body's only (record 1: l, box 0), so a text box's own frames and a header's are
      * left out */
-    for (j = 0; record == 1 && l && j < p->nruns; ++j)
+    for (j = 0; ((record == 1 && l) || (l && fv && fv->frames)) && j < p->nruns; ++j)
         if (p->runs[j].kind == OWF_RUN_FRAME && p->runs[j].image >= 0 && p->runs[j].image < doc->nframes &&
-            !add_frame(l, doc, od, block, &doc->frames[p->runs[j].image]))
+            !add_frame(l, doc, od, block, &doc->frames[p->runs[j].image], record == 1 ? NULL : fv))
             return NULL;
     return block;
 }
@@ -838,6 +858,16 @@ void ow_layout_page_number(const owf_page *page, int number, char *out, size_t s
 }
 
 /* How far down a laid-out story's ops reach. */
+/* Whether a story's paragraphs hold frames. */
+static int story_has_frames(const owf_story *story)
+{
+    int i, j;
+    for (i = 0; i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j)
+            if (story->paras[i].runs[j].kind == OWF_RUN_FRAME) return 1;
+    return 0;
+}
+
 static ol_unit story_height(const ol_document *od)
 {
     size_t i, n = ol_display_count(od);
@@ -875,6 +905,8 @@ ol_document *ow_layout_story(const ow_layout *l, ow_story_kind which, int page,
     ow_layout_page_number(&l->doc->page, first + ow_layout_page_count(l) - 1, fv.pages, sizeof fv.pages);
     fv.date = date;
     fv.time = time;
+    fv.frames = 0;
+    fv.ox = fv.oy = 0;
     od = ol_document_new();
     if (!od) return NULL;
     if (!add_story((ow_layout *)l, l->doc, od, NULL, story, 0, &fv) ||
@@ -884,9 +916,24 @@ ol_document *ow_layout_story(const ow_layout *l, ow_story_kind which, int page,
         return NULL;
     }
     /* half way into the top margin; the footer ends half way into the bottom one */
-    if (x) *x = l->page.margin_left;
-    if (y) *y = which == OW_STORY_HEADER ? l->page.margin_top / 2
-                                         : l->page.height - l->page.margin_bottom / 2 - story_height(od);
+    fv.ox = l->page.margin_left;
+    fv.oy = which == OW_STORY_HEADER ? l->page.margin_top / 2
+                                     : l->page.height - l->page.margin_bottom / 2 - story_height(od);
+    if (x) *x = fv.ox;
+    if (y) *y = fv.oy;
+    if (story_has_frames(story)) {
+        /* 2.0.16: laid out again with its frames, now that its place on the page is known */
+        ol_document_free(od);
+        fv.frames = 1;
+        od = ol_document_new();
+        if (!od) return NULL;
+        if (!add_story((ow_layout *)l, l->doc, od, NULL, story, 0, &fv) ||
+            !ol_layout(od, l->page.width - l->page.margin_left - l->page.margin_right,
+                       l->measure, l->measure_userdata)) {
+            ol_document_free(od);
+            return NULL;
+        }
+    }
     return od;
 }
 
@@ -900,5 +947,7 @@ int ow_layout_add_story(ol_document *od, ol_node *parent, const owf_doc *doc, co
     snprintf(fv.pages, sizeof fv.pages, "%s", fields && fields[1] ? fields[1] : "1");
     fv.date = fields ? fields[2] : NULL;
     fv.time = fields ? fields[3] : NULL;
+    fv.frames = 0;
+    fv.ox = fv.oy = 0;
     return add_story(NULL, doc, od, parent, story, 0, &fv);
 }
