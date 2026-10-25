@@ -12,12 +12,24 @@
  * Workbooks too, when TO (or FORMAT) is a workbook format:
  *   1> OWConvert Accounts.xls RAM:Accounts.csv
  * (with libowf linked in; owf.library gets the workbook calls next).
+ *
+ * Presentations, when FROM is one (ODP, flat ODP): to ODP or flat ODP,
+ * and to PDF, a page a slide, laid out by OpenLayout (OpenPresentation's
+ * core, src/deck; built in when OWC_DECK_PDF is defined):
+ *   1> OWConvert Talk.odp RAM:Talk.pdf
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf.h"
 #include "owf_open.h"
+#ifndef OWF_USE_LIBRARY
+#include "owf_deck.h"
+#endif
+#ifdef OWC_DECK_PDF
+#include "openpresentation_core.h"
+#endif
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifdef __amigaos__
@@ -49,6 +61,15 @@ static void list_formats(void)
         printf("%-11s %-5s %-5s %s (%s)\n", f->name, f->import ? "yes" : "", f->export ? "yes" : "",
                f->description, f->extensions);
     }
+    printf("\nPresentations\n");
+    for (i = 0; i < owf_deck_format_count(); i++) {
+        const owf_deck_format *f = owf_deck_format_at(i);
+        printf("%-11s %-5s %-5s %s (%s)\n", f->name, f->import ? "yes" : "", f->export ? "yes" : "",
+               f->description, f->extensions);
+    }
+#ifdef OWC_DECK_PDF
+    printf("%-11s %-5s %-5s %s (%s)\n", "pdf", "", "yes", "Portable Document Format, a page a slide", "pdf");
+#endif
 #endif
 }
 
@@ -102,6 +123,124 @@ static int convert_book(const char *from, const char *to, const char *format, in
 }
 #endif
 
+#ifndef OWF_USE_LIBRARY
+static int ends_with(const char *s, const char *tail)
+{
+    size_t a = strlen(s), b = strlen(tail), i;
+    if (a < b)
+        return 0;
+    for (i = 0; i < b; i++) {
+        char c = s[a - b + i];
+        if (c >= 'A' && c <= 'Z')
+            c = (char)(c - 'A' + 'a');
+        if (c != tail[i])
+            return 0;
+    }
+    return 1;
+}
+
+/* The whole file, from malloc; NULL when it can't be read. */
+static unsigned char *read_all(const char *path, size_t *length)
+{
+    FILE *f = fopen(path, "rb");
+    unsigned char *data = NULL;
+    size_t cap = 0, n = 0;
+    if (!f)
+        return NULL;
+    for (;;) {
+        size_t got;
+        if (n == cap) {
+            unsigned char *p;
+            cap = cap ? cap * 2 : 65536;
+            if (cap > 256UL * 1024 * 1024 || !(p = realloc(data, cap))) {
+                free(data);
+                fclose(f);
+                return NULL;
+            }
+            data = p;
+        }
+        got = fread(data + n, 1, cap - n, f);
+        n += got;
+        if (got == 0)
+            break;
+    }
+    fclose(f);
+    *length = n;
+    return data;
+}
+
+/* A presentation: 1 when FROM is one (and it was converted, or failed). */
+static int convert_deck(const char *from, const char *to, const char *format, int show_report, int *rc)
+{
+    owf_report *report;
+    owf_deck *deck = NULL;
+    const owf_deck_format *used = NULL;
+    unsigned char *data;
+    size_t n = 0;
+    int result, to_pdf = format ? !strcmp(format, "pdf") : ends_with(to, ".pdf");
+
+    data = read_all(from, &n);
+    if (!data)
+        return 0;
+    if (!(format && owf_deck_format_named(format)) && !owf_deck_format_detect(data, n)) {
+        free(data);
+        return 0;
+    }
+    *rc = RC_OK;
+    report = owf_report_new();
+    if (!report) {
+        printf("OWConvert: %s\n", owf_error_text(OWF_ERR_MEMORY));
+        free(data);
+        *rc = RC_FAIL;
+        return 1;
+    }
+    result = owf_import_deck_memory(data, n, NULL, &deck, report, &used);
+    free(data);
+    if (result != OWF_OK) {
+        printf("OWConvert: %s: %s\n", from, owf_error_text(result));
+        if (owf_report_count(report))
+            print_report(report);
+        owf_report_free(report);
+        *rc = result == OWF_ERR_MEMORY ? RC_FAIL : RC_ERROR;
+        return 1;
+    }
+    if (to_pdf) {
+#ifdef OWC_DECK_PDF
+        unsigned char *data;
+        size_t length;
+        result = opr_export_pdf(deck, NULL, &data, &length, report);
+        if (result == OWF_OK) {
+            FILE *out = fopen(to, "wb");
+            if (!out || fwrite(data, 1, length, out) != length)
+                result = OWF_ERR_IO;
+            if (out && fclose(out) != 0)
+                result = OWF_ERR_IO;
+            free(data);
+        }
+#else
+        printf("OWConvert: this OWConvert was built without OpenLayout, which presentations' PDFs need\n");
+        result = OWF_ERR_UNSUPPORTED;
+#endif
+    } else {
+        result = owf_export_deck_file(deck, to, format, report);
+    }
+    if (result != OWF_OK) {
+        if (result == OWF_ERR_FORMAT)
+            printf("OWConvert: %s: a presentation converts to odp, otp, fodp or pdf\n", to);
+        else
+            printf("OWConvert: %s: %s\n", to, owf_error_text(result));
+        *rc = result == OWF_ERR_MEMORY ? RC_FAIL : RC_ERROR;
+    } else {
+        printf("%s (%s) -> %s, %d slide(s)\n", from, used->description, to, deck->nslides);
+    }
+    if (show_report && owf_report_count(report))
+        print_report(report);
+    owf_deck_free(deck);
+    owf_report_free(report);
+    return 1;
+}
+#endif
+
 static int convert(const char *from, const char *to, const char *format, int show_report)
 {
     owf_report *report = owf_report_new();
@@ -110,6 +249,13 @@ static int convert(const char *from, const char *to, const char *format, int sho
     int result, rc = RC_OK;
 
 #ifndef OWF_USE_LIBRARY
+    {
+        int deck_rc;
+        if (convert_deck(from, to, format, show_report, &deck_rc)) {
+            owf_report_free(report);
+            return deck_rc;
+        }
+    }
     if (format ? owf_book_format_named(format) != NULL : owf_book_format_for_filename(to) != NULL) {
         owf_report_free(report);
         return convert_book(from, to, format, show_report);

@@ -410,13 +410,12 @@ static void put_list_levels(owf_buf *out, const owf_doc *doc, const owf_textleve
             }
             if (l->start > 1)
                 owf_buf_printf(out, " text:start-value=\"%d\"", l->start);
+        } else if (!l->bullet) {
+            /* a level without a bullet: a number in no format */
+            owf_buf_printf(out, "<text:list-level-style-number text:level=\"%d\" style:num-format=\"\"", i + 1);
         } else {
-            unsigned long c = l->bullet ? l->bullet : 0x2022;
             owf_buf_printf(out, "<text:list-level-style-bullet text:level=\"%d\" text:bullet-char=\"", i + 1);
-            if (!l->bullet)
-                owf_buf_puts(out, " ");     /* a level without a bullet: a blank one */
-            else
-                owf_buf_put_utf8(out, c);
+            owf_buf_put_utf8(out, l->bullet);
             owf_buf_putc(out, '"');
         }
         if (l->bullet_size > 0 && l->bullet_size != 100)
@@ -438,8 +437,8 @@ static void put_list_levels(owf_buf *out, const owf_doc *doc, const owf_textleve
                 owf_buf_puts(out, " style:use-window-font-color=\"true\"");
             owf_buf_puts(out, "/>");
         }
-        owf_buf_puts(out, (l->bullet & OWF_BULLET_NUMBER) ? "</text:list-level-style-number>"
-                                                          : "</text:list-level-style-bullet>");
+        owf_buf_puts(out, (l->bullet & OWF_BULLET_NUMBER) || !l->bullet ? "</text:list-level-style-number>"
+                                                                        : "</text:list-level-style-bullet>");
     }
 }
 
@@ -549,8 +548,8 @@ static void put_para(odpw *w, owf_buf *out, const owf_para *p, const owf_textlev
 static const owf_textlevel *para_level(odpw *w, const owf_obj *obj, int level)
 {
     const owf_master *m = w->master;
-    if (obj->list)
-        return &obj->list[level > 0 ? level - 1 : 0];
+    if (obj->list && level > 0)
+        return &obj->list[level - 1];
     switch (obj->placeholder) {
     case OWF_PH_TITLE: return &m->title;
     case OWF_PH_SUBTITLE: return &m->subtitle;
@@ -715,12 +714,12 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
         owf_buf_puts(&body, " draw:marker-end=\"op-arrow\"");
         len_attr(&body, "draw:marker-end-width", o->look.line_width * 3 > 200 ? o->look.line_width * 3 : 200);
     }
+    len_attr(&body, "fo:padding-left", o->inset[0]);
+    len_attr(&body, "fo:padding-top", o->inset[1]);
+    len_attr(&body, "fo:padding-right", o->inset[2]);
+    len_attr(&body, "fo:padding-bottom", o->inset[3]);
     if (text_frame) {
         owf_buf_printf(&body, " draw:textarea-vertical-align=\"%s\"", valign[o->valign <= 2 ? o->valign : 0]);
-        len_attr(&body, "fo:padding-left", o->inset[0]);
-        len_attr(&body, "fo:padding-top", o->inset[1]);
-        len_attr(&body, "fo:padding-right", o->inset[2]);
-        len_attr(&body, "fo:padding-bottom", o->inset[3]);
         owf_buf_printf(&body, " draw:auto-grow-height=\"%s\"", o->autofit == OWF_AUTOFIT_GROW ? "true" : "false");
         if (o->autofit == OWF_AUTOFIT_SHRINK)
             owf_buf_puts(&body, " style:shrink-to-fit=\"true\"");
@@ -729,13 +728,13 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
         int nw, nh;
         if (owf_deck_image_size(&w->deck->res->images[o->image], &nw, &nh)) {
             owf_buf_puts(&body, " fo:clip=\"rect(");
-            put_len(&body, (int)((long)o->crop[1] * nh / 1000));
+            put_len(&body, (int)(((long)o->crop[1] * nh + 500) / 1000));
             owf_buf_puts(&body, ", ");
-            put_len(&body, (int)((long)o->crop[2] * nw / 1000));
+            put_len(&body, (int)(((long)o->crop[2] * nw + 500) / 1000));
             owf_buf_puts(&body, ", ");
-            put_len(&body, (int)((long)o->crop[3] * nh / 1000));
+            put_len(&body, (int)(((long)o->crop[3] * nh + 500) / 1000));
             owf_buf_puts(&body, ", ");
-            put_len(&body, (int)((long)o->crop[0] * nw / 1000));
+            put_len(&body, (int)(((long)o->crop[0] * nw + 500) / 1000));
             owf_buf_puts(&body, ")\"");
         }
     }
@@ -1345,8 +1344,12 @@ static int build_styles(odpw *w, owf_buf *out)
         put_text_props(out, d->res, &base, NULL, 1);
     }
     owf_buf_puts(out, "</style:default-style>");
-    owf_buf_puts(out, "<style:style style:name=\"standard\" style:family=\"graphic\">"
-                      "<style:graphic-properties draw:stroke=\"none\" draw:fill=\"none\"/>");
+    owf_buf_puts(out, "<style:style style:name=\"standard\" style:family=\"graphic\">");
+    /* the file's own graphic defaults, which kept objects inherit; else none */
+    for (i = 0; i < d->nkept; i++)
+        if (d->kept[i].kind == OWF_KEPT_GRAPHIC)
+            break;
+    owf_buf_puts(out, i < d->nkept ? d->kept[i].xml : "<style:graphic-properties draw:stroke=\"none\" draw:fill=\"none\"/>");
     if (d->nmasters) {
         put_para_props(out, &d->masters[0].other.para, NULL, 1, 0);
         put_text_props(out, d->res, &d->masters[0].other.chars, NULL, 1);

@@ -190,7 +190,9 @@ typedef enum {
     OWF_KEPT_STYLE,              /* an automatic style kept objects use */
     OWF_KEPT_DEFINITION,         /* a gradient, hatch, marker, dash or fill picture kept objects use */
     OWF_KEPT_ATTRIBUTES,         /* attributes, as name="value" pairs (a transition's) */
-    OWF_KEPT_SETTINGS            /* the show's settings and custom shows */
+    OWF_KEPT_SETTINGS,           /* the show's settings and custom shows */
+    OWF_KEPT_GRAPHIC             /* the graphic properties of the file's "standard" style, which
+                                    kept objects' styles inherit */
 } owf_kept_kind;
 
 typedef struct {
@@ -275,8 +277,9 @@ int owf_deck_add_part(owf_deck *deck, const char *name, const char *mime, const 
  * -1 when slide or obj is out of range. box and levels may be NULL. */
 int owf_deck_resolve(const owf_deck *deck, int slide, int obj,
                      owf_obj *box, const owf_textlevel **levels);
-/* The look of one paragraph of an object: its own list's level, else the
- * levels owf_deck_resolve gives (by its list level for body text). */
+/* The look of one paragraph of an object: its own list's level for a list
+ * paragraph, else the levels owf_deck_resolve gives (by its list level for
+ * body text). para -1: the object's first level. */
 const owf_textlevel *owf_deck_para_level(const owf_deck *deck, const owf_master *master,
                                          const owf_obj *obj, int para);
 /* A slide's master, never NULL for a slide of a deck with a master. */

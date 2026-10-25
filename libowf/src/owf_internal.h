@@ -423,6 +423,23 @@ void owf_odf_para_props(const owf_xml_node *n, owf_paraprops *pp);
 int owf_odf_text_paragraph(owf_odf_text *t, owf_builder *b, const owf_xml_node *p, int which,
                            const owf_parafmt *base_para, const owf_charfmt *base_char);
 
+/* The page PDF writer's pieces (owf_pdf.h): a picture as a PDF image
+ * (out_pdf.c's JPEG and PNG code; JPEG kept as it is, PNG decoded) and the
+ * standard fonts' widths (owf_pdffonts.c). */
+typedef struct {
+    int w, h, gray, dct;
+    unsigned char *data;
+    size_t len;
+    unsigned char *mask;         /* deflated alpha, or NULL */
+    size_t mlen;
+    int owned;                   /* data is the picture's own copy */
+} owf_pdf_picture;
+int owf_pdf_encode_picture(const owf_image *image, owf_pdf_picture *out);
+void owf_pdf_picture_free(owf_pdf_picture *p);
+/* Helvetica, Helvetica-Bold, -Oblique, -BoldOblique, then Times' four, in
+ * thousandths of an em, for WinAnsiEncoding's bytes 32 to 255. */
+extern const unsigned short owf_pdf_widths[8][224];
+
 /* The formats. */
 extern const owf_format owf_format_fodt, owf_format_wordworth, owf_format_finalwriter;
 extern const owf_format owf_format_text, owf_format_amiga_text, owf_format_ftxt,

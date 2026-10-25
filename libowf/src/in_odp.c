@@ -454,6 +454,8 @@ static void read_list(odp *o, const owf_xml_node *list, owf_textlevel *lv)
             t->bullet = first_char(attr(l, NS_TEXT, "bullet-char"));
             if (!t->bullet)
                 t->bullet = 0x2022;
+            if (t->bullet == ' ')
+                t->bullet = 0;            /* a blank bullet: none */
             t->bullet_size = percent(attr(l, NS_TEXT, "bullet-relative-size"), 0);
         } else if (is(l, NS_TEXT, "list-level-style-number")) {
             const char *f = attr(l, NS_STYLE, "num-format");
@@ -1033,10 +1035,10 @@ static void read_crop(odp *o, owf_obj *obj, const char *clip)
             return;
     }
     /* top, right, bottom, left into left, top, right, bottom */
-    obj->crop[0] = (int)((long)v[3] * 1000 / natural_w);
-    obj->crop[1] = (int)((long)v[0] * 1000 / natural_h);
-    obj->crop[2] = (int)((long)v[1] * 1000 / natural_w);
-    obj->crop[3] = (int)((long)v[2] * 1000 / natural_h);
+    obj->crop[0] = (int)(((long)v[3] * 1000 + natural_w / 2) / natural_w);
+    obj->crop[1] = (int)(((long)v[0] * 1000 + natural_h / 2) / natural_h);
+    obj->crop[2] = (int)(((long)v[1] * 1000 + natural_w / 2) / natural_w);
+    obj->crop[3] = (int)(((long)v[2] * 1000 + natural_h / 2) / natural_h);
     for (i = 0; i < 4; i++)
         if (obj->crop[i] < 0 || obj->crop[i] > 1000)
             obj->crop[i] = 0;
@@ -1217,8 +1219,8 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
  * master's levels. */
 static const owf_textlevel *level_look(const owf_master *m, const owf_obj *obj, int level)
 {
-    if (obj->list)
-        return &obj->list[level > 0 ? level - 1 : 0];
+    if (obj->list && level > 0)
+        return &obj->list[level - 1];
     switch (obj->placeholder) {
     case OWF_PH_TITLE: return &m->title;
     case OWF_PH_SUBTITLE: return &m->subtitle;
@@ -2194,6 +2196,13 @@ static int read_deck(odp *o, const owf_xml_node *content_root, const owf_xml_nod
         o->deck->res->base.size = cf.size;
     }
 
+    /* the graphic defaults kept objects' styles inherit */
+    {
+        const gstyle *std = find_style(o, "standard", "graphic", OWF_ODF_COMMON);
+        const owf_xml_node *gp = std ? owf_xml_child(std->node, NS_STYLE, "graphic-properties") : NULL;
+        if (gp && keep_xml(o, OWF_KEPT_GRAPHIC, gp) >= 0)
+            keep_refs(o, gp, OWF_ODF_COMMON, 1);
+    }
     read_layouts(o);
     for (c = o->masters_node ? o->masters_node->first : NULL; c && !o->failed; c = c->next)
         if (is(c, NS_STYLE, "master-page"))

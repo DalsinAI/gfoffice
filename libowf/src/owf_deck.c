@@ -520,8 +520,8 @@ const owf_textlevel *owf_deck_para_level(const owf_deck *deck, const owf_master 
     int level = owf_obj_level(obj, para), count;
     const owf_textlevel *l;
     (void)deck;
-    if (obj->list)
-        return &obj->list[level > 0 ? level - 1 : 0];
+    if (obj->list && level > 0)
+        return &obj->list[level - 1];
     if (!master)
         return NULL;
     l = master_levels(master, obj->placeholder, &count);

@@ -279,12 +279,12 @@ int main(int argc, char **argv)
         }
     }
     {
-        int counts[6] = { 0, 0, 0, 0, 0, 0 };
+        int counts[7] = { 0, 0, 0, 0, 0, 0, 0 };
         for (i = 0; i < d->nkept; i++)
-            if ((unsigned)d->kept[i].kind < 6)
+            if ((unsigned)d->kept[i].kind < 7)
                 counts[d->kept[i].kind]++;
-        printf("kept objects=%d timing=%d styles=%d definitions=%d attributes=%d settings=%d\n", counts[0], counts[1],
-               counts[2], counts[3], counts[4], counts[5]);
+        printf("kept objects=%d timing=%d styles=%d definitions=%d attributes=%d settings=%d graphic=%d\n", counts[0],
+               counts[1], counts[2], counts[3], counts[4], counts[5], counts[6]);
     }
     for (i = 0; i < d->nparts; i++) {
         printf("part ");

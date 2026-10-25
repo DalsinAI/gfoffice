@@ -446,6 +446,9 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
             owf_charfmt rel = relative(o, *fmt);
             set_fmt(o->b, &rel);
             owf_builder_link_text(o->b, c->name, c->length, o->current_href);
+            /* white space after a link is its own, not the link's */
+            o->space = c->length && (c->name[c->length - 1] == ' ' || c->name[c->length - 1] == '\t' ||
+                                     c->name[c->length - 1] == '\n' || c->name[c->length - 1] == '\r');
         } else put_text(o, c->name, c->length, fmt);
         return;
     }
