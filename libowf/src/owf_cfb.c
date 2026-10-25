@@ -238,3 +238,142 @@ int owf_cfb_read(owf_cfb *cfb, const char *name, unsigned char **data, size_t *l
     *length = buf.length - 1;
     return OWF_OK;
 }
+
+/* ---- Storages and entries ([MS-CFB] 2.6: each storage's children are a
+ * tree through the left and right sibling fields, from its child field) ---- */
+
+#define NOSTREAM 0xFFFFFFFFUL
+
+const unsigned char *owf_cfb_entry(const owf_cfb *cfb, unsigned long entry)
+{
+    return entry < cfb->ndir ? cfb->dir + (size_t)entry * DIR_ENTRY : NULL;
+}
+
+int owf_cfb_entry_name(const owf_cfb *cfb, unsigned long entry, char *out, size_t size)
+{
+    const unsigned char *e = owf_cfb_entry(cfb, entry);
+    unsigned len, i;
+    size_t k = 0;
+    if (!size)
+        return 0;
+    out[0] = 0;
+    if (!e)
+        return 0;
+    len = (e[0x40] | (e[0x41] << 8)) / 2;
+    if (len > 32)
+        len = 32;
+    for (i = 0; i < len; i++) {
+        unsigned c = e[2 * i] | (e[2 * i + 1] << 8);
+        if (!c)
+            break;
+        if (k + 7 >= size)
+            break;
+        if (c >= 0x20 && c < 0x7F) {
+            out[k++] = (char)c;
+        } else if (c > 0xFF) {
+            out[k++] = '?';
+        } else {                             /* "\x01", as a dump shows it */
+            static const char hex[] = "0123456789ABCDEF";
+            out[k++] = '\\';
+            out[k++] = 'x';
+            out[k++] = hex[(c >> 4) & 15];
+            out[k++] = hex[c & 15];
+        }
+    }
+    out[k] = 0;
+    return 1;
+}
+
+/* Calls fn for each child of storage (in no particular order); stops when fn
+ * returns non-zero and returns that. Bounded: a sibling loop ends the walk. */
+int owf_cfb_children(const owf_cfb *cfb, unsigned long storage,
+                     int (*fn)(const owf_cfb *cfb, unsigned long entry, void *user), void *user)
+{
+    const unsigned char *e = owf_cfb_entry(cfb, storage);
+    unsigned long *stack, n, steps = 0;
+    size_t depth = 0;
+    int r = 0;
+    if (!e || (e[0x42] != 1 && e[0x42] != 5))
+        return 0;
+    if (!(stack = malloc(cfb->ndir * sizeof *stack)))
+        return 0;
+    n = le32(e + 0x4C);
+    while (n != NOSTREAM || depth) {
+        if (n == NOSTREAM) {
+            n = stack[--depth];
+            if ((r = fn(cfb, n, user)) != 0)
+                break;
+            n = le32(cfb->dir + (size_t)n * DIR_ENTRY + 0x48);   /* right */
+            continue;
+        }
+        if (n >= cfb->ndir || ++steps > cfb->ndir)
+            break;                           /* off the directory, or a loop */
+        stack[depth++] = n;
+        n = le32(cfb->dir + (size_t)n * DIR_ENTRY + 0x44);       /* left */
+    }
+    free(stack);
+    return r;
+}
+
+struct cfb_find { const char *name; size_t len; unsigned long found; };
+
+static int find_child(const owf_cfb *cfb, unsigned long entry, void *user)
+{
+    struct cfb_find *f = user;
+    const unsigned char *e = owf_cfb_entry(cfb, entry);
+    unsigned len = e[0x40] | (e[0x41] << 8);
+    size_t j;
+    if (len != 2 * (f->len + 1) || f->len > 31)
+        return 0;
+    for (j = 0; j < f->len; j++)
+        if (e[2 * j + 1] || owf_lower(e[2 * j]) != owf_lower((unsigned char)f->name[j]))
+            return 0;
+    f->found = entry;
+    return 1;
+}
+
+long owf_cfb_find_path(const owf_cfb *cfb, const char *path)
+{
+    unsigned long at = 0;
+    while (*path) {
+        struct cfb_find f;
+        const char *slash = strchr(path, '/');
+        f.name = path;
+        f.len = slash ? (size_t)(slash - path) : strlen(path);
+        f.found = NOSTREAM;
+        if (f.len && !owf_cfb_children(cfb, at, find_child, &f))
+            return -1;
+        if (f.len)
+            at = f.found;
+        path += f.len + (slash ? 1 : 0);
+    }
+    return (long)at;
+}
+
+int owf_cfb_read_entry(owf_cfb *cfb, unsigned long entry, unsigned char **data, size_t *length)
+{
+    const unsigned char *e = owf_cfb_entry(cfb, entry);
+    unsigned long size, start, cutoff;
+    owf_buf buf;
+    int result = OWF_OK;
+
+    *data = NULL;
+    *length = 0;
+    if (!e || e[0x42] != 2)
+        return OWF_ERR_FORMAT;
+    start = le32(e + 0x74);
+    size = le32(e + 0x78);
+    cutoff = le32(cfb->data + 0x38);
+    owf_buf_init(&buf);
+    if (size)
+        result = read_chain(cfb, start, size, size < (cutoff ? cutoff : 4096), &buf);
+    if (result == OWF_OK)
+        owf_buf_putc(&buf, 0);
+    if (result != OWF_OK || buf.failed) {
+        owf_buf_free(&buf);
+        return result != OWF_OK ? result : OWF_ERR_MEMORY;
+    }
+    *data = buf.data;
+    *length = buf.length - 1;
+    return OWF_OK;
+}

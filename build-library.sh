@@ -52,6 +52,8 @@ for f in "$OWF"/src/*.c; do
     case "$f" in
     */owf_sys.c | */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
+    */owf_deck.c | */in_odp.c | */out_odp.c | */owf_pdf.c | */owf_pdffonts.c) ;;   # with the library's deck calls (E3)
+    */in_pub.c) ;;   # OpenPublisher's .pub reader: not a library call yet
     *) SRC="$SRC $f" ;;
     esac
 done

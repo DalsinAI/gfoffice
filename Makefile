@@ -14,12 +14,12 @@ all: $(OUT)/owconvert
 
 $(OUT)/owconvert: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/src/owf_internal.h
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/owconvert.c -lz -o $@
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(OWC_DECK) tools/owconvert.c -lz -o $@
 
 $(OUT)/owconvert-asan: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/src/owf_internal.h
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
-		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/owconvert.c -lz -o $@
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(OWC_DECK) tools/owconvert.c -lz -o $@
 
 test: $(OUT)/owconvert $(OUT)/book-dump $(OUT)/test-calc
 	python3 tests/run_tests.py $(OUT)/owconvert
@@ -255,3 +255,79 @@ test: calc-expect
 check: calc-expect
 
 .PHONY: calc-expect
+
+# OpenPresentation (GFOffice's slides): the deck model and ODP in libowf
+# (owf_deck.h), the slides laid out by OpenLayout and drawn into the page
+# PDF writer in src/deck. tests/deck/test_decks.py reads, writes and checks
+# the fixtures (odfpy and pypdf when installed, for the tests only). With
+# OpenLayout (OPENLAYOUT_SRC), OWConvert exports decks to PDF and the PDF
+# and layout tests run too; without it they are skipped, and say so.
+DECK_SRC = $(wildcard src/deck/*.c) src/core/ow_layout.c
+DECK_DEPS = $(OWF_SRC) libowf/include/owf.h libowf/include/owf_deck.h libowf/include/owf_pdf.h libowf/src/owf_internal.h \
+	libowf/src/owf_deck_int.h
+ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
+OWC_DECK = -DOWC_DECK_PDF -Iinclude -I$(OPENLAYOUT_SRC)/include $(DECK_SRC) $(OPENLAYOUT_SRC)/src/openlayout.c
+DECK_LAYOUT = -DOPR_WITH_LAYOUT -Iinclude -I$(OPENLAYOUT_SRC)/include $(DECK_SRC) $(OPENLAYOUT_SRC)/src/openlayout.c
+$(OUT)/owconvert $(OUT)/owconvert-asan: $(DECK_SRC) include/openpresentation_core.h include/ow_layout.h
+endif
+
+$(OUT)/deck-dump: $(DECK_DEPS) tests/deck/deck_dump.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/deck/deck_dump.c -lz -o $@
+
+$(OUT)/deck-dump-asan: $(DECK_DEPS) tests/deck/deck_dump.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/deck/deck_dump.c -lz -o $@
+
+$(OUT)/test-deck: $(DECK_DEPS) $(DECK_SRC) tests/deck/test_deck.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_deck.c -lz -o $@
+
+$(OUT)/test-deck-asan: $(DECK_DEPS) $(DECK_SRC) tests/deck/test_deck.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_deck.c -lz -o $@
+
+deck-test: $(OUT)/test-deck $(OUT)/deck-dump $(OUT)/owconvert
+	$(OUT)/test-deck
+	python3 tests/deck/test_decks.py $(OUT)/deck-dump $(OUT)/owconvert
+
+deck-check: $(OUT)/test-deck-asan $(OUT)/deck-dump-asan $(OUT)/owconvert-asan
+	$(OUT)/test-deck-asan
+	python3 tests/deck/test_decks.py $(OUT)/deck-dump-asan $(OUT)/owconvert-asan
+
+test: deck-test
+check: deck-check
+
+.PHONY: deck-test deck-check
+
+# OpenPublisher's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
+# compares pub_dump's output with tests/pub/expected and reads cut-short and
+# changed copies of every sample (more of them under ASan/UBSan).
+PUB_DEPS = $(OWF_SRC) tests/pub/pub_dump.c libowf/include/owf.h libowf/include/owf_pub.h libowf/src/owf_internal.h
+
+$(OUT)/pub-dump: $(PUB_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/pub/pub_dump.c -lz -o $@
+
+$(OUT)/pub-dump-asan: $(PUB_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/pub/pub_dump.c -lz -o $@
+
+# the format lab's stream lister (tools/publab: docs/gfoffice/PUB-FORMAT.md)
+$(OUT)/pub-streams: $(OWF_SRC) tools/publab/pub_streams.c libowf/src/owf_internal.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -Wno-format-truncation -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/publab/pub_streams.c -lz -o $@
+
+pub-test: $(OUT)/pub-dump
+	python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
+
+pub-check: $(OUT)/pub-dump-asan
+	python3 tests/pub/test_pub.py $(OUT)/pub-dump-asan 150
+
+test: pub-test
+check: pub-check
+
+.PHONY: pub-test pub-check

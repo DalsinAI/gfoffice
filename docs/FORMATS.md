@@ -85,6 +85,37 @@ double (up to 17), and read exactly.
   cannot tell apart stay what they look like (the text `007` is the number
   7).
 
+## 1b. Presentations (OpenPresentation's)
+
+Decks have their own model in libowf (`owf_deck`, in
+`libowf/include/owf_deck.h`: slides, masters with their text levels and
+placeholders, layouts, objects, notes and transitions; a frame's text is an
+`owf_story`) and their own table of formats (`owf_deck_format_*`). The
+design is [gfoffice/Design-OpenPresentation.md](gfoffice/Design-OpenPresentation.md);
+what Impress does and where we are is
+[gfoffice/Impress-Parity.md](gfoffice/Impress-Parity.md). OWConvert converts
+a deck when the file it is given is one (by its contents).
+
+| Format | Open | Save | Knowledge | Phase | State |
+| --- | --- | --- | --- | --- | --- |
+| ODP, OpenDocument Presentation (`.odp`, `.otp`; flat `.fodp`) | Yes | Yes | Spec: OASIS ODF 1.2 (presentation and drawing); LibreOffice's ODF 1.3 `style:shrink-to-fit` read and written | P1 | Masters and their presentation styles (title, subtitle, outline levels with their bullets, notes), layouts, slides, text frames, pictures (cropped too), tables, rectangles, rounded rectangles, ellipses, lines and arrows, polygons, the custom shapes we model (triangle, diamond, block arrow), groups, notes, footer, date and number fields, backgrounds, hidden slides, transitions and timings. Kept and written back as they were: other shapes, connectors, embedded charts and objects with their parts, animations, rare transitions, custom shows and the show's settings. Gradients and hatching are drawn in one colour |
+| PDF | No | Export | Our page-drawing PDF writer (`owf_pdf.h`, Shared E4) | P1 | A page a slide at the slide's size, laid out by OpenLayout (`src/deck`); text searchable in the standard fonts; JPEG and PNG pictures; hidden slides left out. Built into OWConvert when OpenLayout is there |
+| PPTX, Office Open XML (`.pptx`; `.potx`, `.ppsx`) | Later | Later | Spec: ECMA-376 Part 1, PresentationML and DrawingML | P2 | To do. Recognised (`owf_ooxml_kind`), so no other reader claims it |
+| PowerPoint 97-2003 (`.ppt`) | Later | No | Spec: Microsoft's [MS-PPT] | Later | To do |
+
+- **ODP.** Each run keeps only what differs from its level's look, so a
+  master's look stays the master's: a title without a font of its own takes
+  the master's title font. A list paragraph's indents are its list level's.
+  Lengths are written in points with two decimals, exactly the twips the
+  deck holds, so a deck goes through ODP unchanged; automatic style names
+  start with `op`, so they never meet those of styles kept from the file. A
+  kept object's XML is written back with the automatic styles, drawing
+  definitions (gradients, markers, dashes) and package members it names,
+  and the file's graphic defaults, which those styles inherit. Rotation is
+  kept and written back (`draw:transform`); the PDF draws objects
+  unrotated. Flat ODP holds no package members: an embedded chart's are
+  reported lost there.
+
 ## 2. Amiga text formats
 
 | Format | Open | Save | Knowledge | Phase | State |
@@ -124,3 +155,17 @@ here.
    result go into the tests.
 4. Set this table's state, and the import report lists anything the filter
    cannot bring across.
+
+## 5. Publications (OpenPublisher's)
+
+OpenPublisher is the GFOffice Suite's desktop publisher
+([gfoffice/Design-OpenPublisher.md](gfoffice/Design-OpenPublisher.md)).
+Its files are read into their own model (`libowf/include/owf_pub.h`), not
+into OpenWrite's documents.
+
+| Format | Open | Save | Knowledge | Phase | State |
+| --- | --- | --- | --- | --- | --- |
+| Microsoft Publisher (`.pub`), 2002/2003 to 2013 and later | Yes (P0 reader) | P3, if wanted | No published spec: learnt from samples alone, in [MS-CFB] compound files; [gfoffice/PUB-FORMAT.md](gfoffice/PUB-FORMAT.md) | P0-P1 | The version, page size, pages, master pages, frames (boxes and kinds: text, picture, table, line, shape, group), text as paragraphs, tables' and WordArt's text, fonts, pictures (PNG, JPEG, GIF, DIB, WMF). Formatting, wrap and linked frames: P1. Not shown yet (P1) |
+| Microsoft Publisher 98 and 2000 formats | Yes (P0 reader) | No | The same | P0-P1 | Version, page size, pages, frames, text, tables. Master pages and pictures: P1 |
+| Microsoft Publisher 97 and older | Version and page size | No | One sample | P1 | To do |
+| PageStream 1-5 (Amiga) | P2, import only | No | Samples needed (none found on GitHub) | P2 | To do |

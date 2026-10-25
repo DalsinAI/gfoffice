@@ -52,26 +52,36 @@ library)
 esac
 
 # OpenWrite reads documents only: the workbook code (owf_book.c and its
-# formats) is OWConvert's and the spreadsheet's.
+# formats) is OWConvert's and the spreadsheet's, and the deck code
+# (owf_deck.c, ODP, the page PDF writer) OWConvert's and OpenPresentation's.
 OWFSRC_DOCS=""
 for f in $OWFSRC; do
     case "$f" in
     */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
+    */owf_deck.c | */in_odp.c | */out_odp.c | */owf_pdf.c | */owf_pdffonts.c) ;;
+    */in_pub.c) ;;   # OpenPublisher's .pub reader: it needs owf_cfb.c
     *) OWFSRC_DOCS="$OWFSRC_DOCS $f" ;;
     esac
 done
-
-# OWConvert: 68040, as every build.
-# shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS \
-    $OWFSRC "$HERE/tools/owconvert.c" $OWFLIBS \
-    -o "$OUT/OWConvert"
 
 # The pages are OpenLayout's (DalsinAI/openamigalayout 0.2 or later): OPENLAYOUT_SRC, else beside this
 # repository.
 OPENLAYOUT_SRC=${OPENLAYOUT_SRC:-$HERE/../openamigalayout}
 [ -f "$OPENLAYOUT_SRC/src/openlayout.c" ] || { echo "OpenLayout not found: set OPENLAYOUT_SRC to an openamigalayout checkout"; exit 2; }
+
+# OWConvert: 68040, as every build. With libowf linked in it converts
+# presentations too, to PDF through OpenPresentation's core (src/deck) on
+# OpenLayout; owf.library has no deck calls yet.
+OWC_DECK=""
+if [ "$OWF" = linked ]; then
+    OWC_DECK="-DOWC_DECK_PDF -I$HERE/include -I$OPENLAYOUT_SRC/include $HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c"
+    OWC_DECK="$OWC_DECK $HERE/src/core/ow_layout.c $OPENLAYOUT_SRC/src/openlayout.c"
+fi
+# shellcheck disable=SC2086
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS \
+    $OWFSRC $OWC_DECK "$HERE/tools/owconvert.c" $OWFLIBS \
+    -o "$OUT/OWConvert"
 
 # OpenWrite: the OpenGadTools shell (app/openwrite2.c) is OpenWrite since 2.0.1 (the user, 10 October
 # 2026: "the rewrite is OpenWrite, not a second program"); the same core and filters.

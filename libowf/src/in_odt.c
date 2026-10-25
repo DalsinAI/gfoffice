@@ -52,6 +52,7 @@ typedef struct {
     int failed;
     const char *current_href;
     int next_table_id;
+    int inline_depth;
     const owf_unzip *zip;
 } odt;
 
@@ -446,6 +447,9 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
             owf_charfmt rel = relative(o, *fmt);
             set_fmt(o->b, &rel);
             owf_builder_link_text(o->b, c->name, c->length, o->current_href);
+            /* white space after a link is its own, not the link's */
+            o->space = c->length && (c->name[c->length - 1] == ' ' || c->name[c->length - 1] == '\t' ||
+                                     c->name[c->length - 1] == '\n' || c->name[c->length - 1] == '\r');
         } else put_text(o, c->name, c->length, fmt);
         return;
     }
@@ -525,11 +529,21 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
     }
 }
 
+/* Spans in spans: a file's nesting is capped, so a hostile one can't use
+ * up the stack (a few KB on an Amiga). */
+#define MAX_INLINE_DEPTH 64
+
 static void inline_children(odt *o, const owf_xml_node *n, const owf_charfmt *fmt)
 {
     const owf_xml_node *c;
+    if (o->inline_depth >= MAX_INLINE_DEPTH) {
+        owf_report_add(o->report, OWF_NOTE_LOST, "Text nested too deeply was left out");
+        return;
+    }
+    o->inline_depth++;
     for (c = n->first; c; c = c->next)
         inline_node(o, c, fmt);
+    o->inline_depth--;
 }
 
 /* A paragraph's formats: the default style, then its style. */
@@ -1018,4 +1032,74 @@ int owf_import_odt(const unsigned char *data, size_t length, owf_doc *doc, owf_r
 int owf_detect_odt(const unsigned char *data, size_t length)
 {
     return detect_odt(data, length);
+}
+
+/* ---- ODF text for the other ODF readers (in_odp.c's text boxes) ----
+ * The same fonts, paragraph and text styles and paragraphs as ODT's body,
+ * on a builder and a story the caller gives. */
+
+struct owf_odf_text {
+    odt o;
+};
+
+owf_odf_text *owf_odf_text_new(owf_doc *doc, owf_report *report, const owf_unzip *zip)
+{
+    owf_odf_text *t = calloc(1, sizeof *t);
+    if (!t)
+        return NULL;
+    t->o.doc = doc;
+    t->o.report = report;
+    t->o.zip = zip;
+    owf_parafmt_init(&t->o.base_para);
+    owf_charfmt_init(&t->o.base_char);
+    owf_buf_init(&t->o.notes);
+    owf_buf_init(&t->o.scratch);
+    return t;
+}
+
+void owf_odf_text_free(owf_odf_text *t)
+{
+    if (!t)
+        return;
+    owf_buf_free(&t->o.notes);
+    owf_buf_free(&t->o.scratch);
+    owf_styles_free(&t->o.common);
+    owf_styles_free(&t->o.autos_content);
+    owf_styles_free(&t->o.autos_styles);
+    free(t);
+}
+
+void owf_odf_text_faces(owf_odf_text *t, const owf_xml_node *decls)
+{
+    read_font_faces(&t->o, decls);
+}
+
+void owf_odf_text_styles(owf_odf_text *t, const owf_xml_node *container, int which)
+{
+    read_styles(&t->o, container, which == OWF_ODF_COMMON ? &t->o.common
+                                  : which == OWF_ODF_STYLES_AUTO ? &t->o.autos_styles : &t->o.autos_content);
+}
+
+void owf_odf_text_props(owf_odf_text *t, const owf_xml_node *n, owf_charprops *cp)
+{
+    read_text_props(&t->o, n, cp);
+}
+
+void owf_odf_para_props(const owf_xml_node *n, owf_paraprops *pp)
+{
+    read_para_props(n, pp);
+}
+
+int owf_odf_text_paragraph(owf_odf_text *t, owf_builder *b, const owf_xml_node *p, int which,
+                           const owf_parafmt *base_para, const owf_charfmt *base_char)
+{
+    odt *o = &t->o;
+    o->tables[0] = which == OWF_ODF_STYLES_AUTO ? &o->autos_styles : &o->autos_content;
+    o->tables[1] = &o->common;
+    o->base_para = *base_para;
+    o->base_char = *base_char;
+    o->b = b;
+    paragraph(o, p, NULL, -1);
+    o->b = NULL;
+    return o->failed || o->notes.failed || o->scratch.failed ? OWF_ERR_MEMORY : OWF_OK;
 }
