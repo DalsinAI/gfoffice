@@ -798,6 +798,20 @@ static void test_clipboard(void)
     oc_core_undo(core);
     CHECK(num(core, "A1") == 1);
 
+    /* empty cells pasted onto empty cells make none */
+    {
+        int before;
+        enter_at(core, "B21", "1");
+        go(core, "A20:C22");
+        t = oc_core_copy(core, &n);
+        go(core, "E30");
+        before = oc_core_book(core)->sheets[0].ncells;
+        CHECK(oc_core_paste(core, t, n) == OWF_OK);
+        CHECK(oc_core_book(core)->sheets[0].ncells == before + 1);
+        CHECK(num(core, "F31") == 1);
+        owf_free(t);
+    }
+
     /* typing: a paste goes in at the caret */
     go(core, "L1");
     type(core, "x");

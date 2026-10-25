@@ -92,7 +92,10 @@ int oc_put_cell(oc_core *core, int sheet, unsigned row, unsigned col, const owf_
             break;
         }
     }
-    rc = owf_calc_enter(core->calc, sheet, row, col, in);
+    if (!f && (!src || src->type == OWF_VALUE_EMPTY) && oc_cell_empty(oc_find(core, sheet, row, col)))
+        rc = OWF_OK;                                 /* empty onto empty: nothing for the engine */
+    else
+        rc = owf_calc_enter(core->calc, sheet, row, col, in);
     owf_free(buf);
     if (rc == OWF_ERR_MEMORY || rc == OWF_ERR_UNSUPPORTED)
         return rc;
