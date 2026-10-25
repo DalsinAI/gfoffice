@@ -1,8 +1,10 @@
 /*
- * libowf: the formula engine (OpenCalc's). It parses the formulas a book's
- * cells hold (Excel's A1 syntax, without the "="), keeps which cells each
- * one reads, and works them out again, in order, when cells change. Each
- * result goes into its cell's value (owf_cell), where the files keep it.
+ * libowf: the formula engine (OpenCalc's, in the GFOffice Suite). It
+ * parses the formulas a book's cells hold (Excel's A1 syntax, without the
+ * "="), keeps which cells each one reads, and works them out again, in
+ * order, when cells change. Each result goes into its cell's value
+ * (owf_cell), where the files keep it. docs/CALC_ENGINE.md has the
+ * functions and the rules.
  *
  * A book read from a file shows the file's results until something
  * changes: owf_calc_new parses, it does not calculate. A formula the engine
@@ -14,11 +16,14 @@
  * Cells in a circular reference (a loop of formulas that read each other,
  * or one that reads itself) get #REF! and the OWF_CALC_CIRCULAR state; the
  * cells that read them are worked out from that #REF!. The engine never
- * loops: nothing in it recurses more than a few calls deep, and its memory
- * grows with the book, not with how formulas nest.
+ * loops: nothing in it recurses (but defined names inside names, at most
+ * eight deep), and its memory grows with the book, not with how formulas
+ * nest; a formula's working values have a limit (1 MB: past it, #NUM!).
  *
- * Plain C99 doubles and <math.h>. Linked into a program; not in
- * owf.library yet (its calls come later).
+ * Plain C99 doubles and <math.h>. The sources are the .c files in
+ * libowf/calc: a program that calculates compiles them with libowf's own
+ * and links the maths library (-lm on the PC, libnix's soft maths on the
+ * Amiga). They are not in owf.library yet (its calls come later).
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #ifndef OWF_CALC_H
@@ -52,7 +57,8 @@ enum { OWF_CALC_DMY, OWF_CALC_MDY };
 void owf_calc_set_date_order(owf_calc *calc, int order);
 
 /* A cell's content as a user types it, as Excel reads typed input:
- *   "=SUM(A1:A3)"   a formula (the cell keeps "SUM(A1:A3)");
+ *   "=SUM(A1:A3)"   a formula (the cell keeps "SUM(A1:A3)"; typed
+ *                   "=sum(a1:a3)", it keeps that too, in capitals);
  *   "12.5", "-3", "1,234.5", "1E3", "(12)", "50%", "£12.50", "$3", "€4"
  *                   a number;
  *   "25/10/2026", "2026-10-25", "25-Oct-2026", "13:45", "1:45 PM",
@@ -120,7 +126,8 @@ char *owf_calc_move_formula(const char *text, int drow, int dcol);
  * col), without changing the book: for a status line's sum of the
  * selection. result's text, if any, is from owf_malloc (owf_free it).
  * OWF_OK (the result may be an error value), OWF_ERR_FORMAT for a formula
- * that won't parse, OWF_ERR_MEMORY. */
+ * that won't parse, OWF_ERR_MEMORY, OWF_ERR_UNSUPPORTED for a sheet that
+ * is not there. */
 int owf_calc_evaluate(owf_calc *calc, int sheet, unsigned row, unsigned col, const char *formula,
                       owf_cell *result);
 

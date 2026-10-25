@@ -81,6 +81,11 @@ workbook tests (`make book-test`, `make book-check`): Excel 97-2003 files
 read into the spreadsheet's model, and saved as CSV
 (`tests/book/test_books.py`).
 
+They include the formula engine's tests too (`make calc-test`, `make
+calc-check`): OpenCalc's engine in `libowf/calc` (calls in
+`libowf/include/owf_calc.h`; `docs/CALC_ENGINE.md`), with its functions
+checked one by one and against the results saved in the workbook fixtures.
+
 Pages are laid out by OpenLayout (DalsinAI/openamigalayout 0.2 or later).
 With it checked out beside this repository, or `OPENLAYOUT_SRC` pointing at
 it, `make layout-test` lays out a built document and the samples into pages

@@ -140,21 +140,25 @@ enum {
 #define PUBLIC_STATE 0xFF
 
 typedef struct {
-    int sheet;
-    unsigned row, col;
     calc_prog prog;              /* no code: a formula that won't parse, or one kept */
-    unsigned flags;              /* OWF_CALC_... and NODE_... */
-    unsigned adr, adc;           /* an array formula's cell: where in the result */
+    unsigned row;
+    unsigned short col;
+    unsigned short flags;        /* OWF_CALC_... and NODE_... */
+    int sheet;                   /* the free list runs through it when the node is free */
     int first_entry;             /* its entries in the index */
     int indeg;                   /* during a recalc */
-    int scc_index, scc_low;      /* while looking for loops */
+    int scc_low;                 /* while looking for loops: a position, then the lowest reached */
+    unsigned short scc_on;       /* on Tarjan's stack */
+    unsigned short adc;          /* an array formula's cell: where in the result */
+    unsigned adr;
 } calc_node;
 
-/* What a node reads, filed under a cell, a column or a sheet. */
+/* What a node reads, filed under a cell, a column or a sheet (the
+ * bucket's key holds the sheet). */
 typedef struct {
     int node;                    /* -1 when the node has gone */
-    int sheet;
-    unsigned r0, c0, r1, c1;
+    unsigned r0, r1;
+    unsigned short c0, c1;
     int next;                    /* in its bucket */
     int owner_next;              /* the node's next one */
 } dep_entry;
@@ -215,11 +219,10 @@ static int add_entry(owf_calc *calc, int node, unsigned kind, int sheet, unsigne
         return 0;
     e = &calc->entries[calc->nentries];
     e->node = node;
-    e->sheet = sheet;
     e->r0 = area->r0;
-    e->c0 = area->c0;
+    e->c0 = (unsigned short)area->c0;
     e->r1 = area->r1;
-    e->c1 = area->c1;
+    e->c1 = (unsigned short)area->c1;
     e->next = head;
     e->owner_next = calc->nodes[node].first_entry;
     calc->nodes[node].first_entry = calc->nentries++;
@@ -351,12 +354,14 @@ static int add_node(owf_calc *calc, int sheet, const owf_cell *cell, int typed, 
     memset(n, 0, sizeof *n);
     n->sheet = sheet;
     n->row = cell->row;
-    n->col = cell->col;
+    n->col = (unsigned short)cell->col;
     n->first_entry = -1;
     n->flags = OWF_CALC_FORMULA;
     if (array) {
         n->flags |= NODE_ARRAY;
-        array_offset(&calc->book->sheets[sheet], cell, &n->adr, &n->adc);
+        unsigned dc;
+        array_offset(&calc->book->sheets[sheet], cell, &n->adr, &dc);
+        n->adc = (unsigned short)dc;
     }
     if (result == OWF_OK && (prog.flags & PROG_BADARGS) && typed) {
         calc_prog_free(&prog);
@@ -412,9 +417,21 @@ static void free_all(owf_calc *calc)
 
 static int build(owf_calc *calc, int dirty)
 {
-    int s, i, id;
+    int s, i, id, count = 0;
     free_all(calc);
     calc->used[0] = calc->used[1] = -1;
+    /* the nodes' room in one go, not doubling (half of it would be spare) */
+    for (s = 0; s < calc->book->nsheets; s++)
+        for (i = 0; i < calc->book->sheets[s].ncells; i++)
+            count += calc->book->sheets[s].cells[i].formula != NULL;
+    if (count) {
+        calc->nodes = malloc(((size_t)count + 16) * sizeof *calc->nodes);
+        if (!calc->nodes) {
+            calc->stale = 1;
+            return OWF_ERR_MEMORY;
+        }
+        calc->capnodes = count + 16;
+    }
     for (s = 0; s < calc->book->nsheets; s++) {
         const owf_sheet *sheet = &calc->book->sheets[s];
         for (i = 0; i < sheet->ncells; i++) {
@@ -547,6 +564,17 @@ double calc_now(calc_ctx *ctx)
     if (!owf_sys_now(&t) || !calc_date_serial(t.year, t.month, t.day, ctx->book->date1904, &serial))
         return 0;
     return serial + (t.hour * 3600.0 + t.minute * 60.0 + t.second) / 86400.0;
+}
+
+size_t calc_memory(const owf_calc *calc)
+{
+    size_t n = (size_t)calc->capnodes * sizeof(calc_node) + (size_t)calc->capentries * sizeof(dep_entry) +
+               ((size_t)calc->cells.cap + calc->buckets.cap) * sizeof(hslot) + (size_t)calc->capwork * sizeof(int) +
+               (size_t)calc->arena.total + sizeof *calc;
+    int i;
+    for (i = 0; i < calc->nnodes; i++)
+        n += calc->nodes[i].prog.len;
+    return n;
 }
 
 long *calc_used_cache(owf_calc *calc)
@@ -715,7 +743,7 @@ static int find_loops(owf_calc *calc, const int *left, int nleft)
     /* node ids to positions in left[], through scc_low for now */
     for (i = 0; i < nleft; i++) {
         calc->nodes[left[i]].scc_low = i;
-        calc->nodes[left[i]].scc_index = 0;
+        calc->nodes[left[i]].scc_on = 0;
     }
     for (i = 0; i < nleft; i++) {
         const calc_node *n = &calc->nodes[left[i]];
@@ -737,7 +765,7 @@ static int find_loops(owf_calc *calc, const int *left, int nleft)
         edge_at[ncall++] = g.adj_start[i];
         pos[i] = index;
         calc->nodes[left[i]].scc_low = index++;
-        calc->nodes[left[i]].scc_index = 1;  /* on the stack */
+        calc->nodes[left[i]].scc_on = 1;
         stack[nstack++] = i;
         while (ncall) {
             int v = call[ncall - 1];
@@ -746,11 +774,11 @@ static int find_loops(owf_calc *calc, const int *left, int nleft)
                 if (pos[w] < 0) {
                     pos[w] = index;
                     calc->nodes[left[w]].scc_low = index++;
-                    calc->nodes[left[w]].scc_index = 1;
+                    calc->nodes[left[w]].scc_on = 1;
                     stack[nstack++] = w;
                     call[ncall] = w;
                     edge_at[ncall++] = g.adj_start[w];
-                } else if (calc->nodes[left[w]].scc_index) {
+                } else if (calc->nodes[left[w]].scc_on) {
                     if (pos[w] < calc->nodes[left[v]].scc_low)
                         calc->nodes[left[v]].scc_low = pos[w];
                 }
@@ -772,7 +800,7 @@ static int find_loops(owf_calc *calc, const int *left, int nleft)
                 }
                 for (k = 0; k < size; k++) {
                     int w = stack[--nstack];
-                    calc->nodes[left[w]].scc_index = 0;
+                    calc->nodes[left[w]].scc_on = 0;
                     if (size > 1 || self)
                         calc->nodes[left[w]].flags |= OWF_CALC_CIRCULAR;
                 }
@@ -838,7 +866,7 @@ static int recalc(owf_calc *calc, int all)
     for (id = 0; id < calc->nnodes; id++) {
         calc_node *n = &calc->nodes[id];
         if ((n->flags & (NODE_FREE | OWF_CALC_DIRTY)) == OWF_CALC_DIRTY) {
-            n->flags = (n->flags | NODE_IN_LIST) & ~(unsigned)(OWF_CALC_CIRCULAR | NODE_DONE | NODE_QUEUED);
+            n->flags = (unsigned short)((n->flags | NODE_IN_LIST) & ~(unsigned)(OWF_CALC_CIRCULAR | NODE_DONE | NODE_QUEUED));
             n->indeg = 0;
             list[nlist++] = id;
         }
@@ -860,7 +888,7 @@ static int recalc(owf_calc *calc, int all)
             if ((result = evaluate(calc, id)) != OWF_OK)
                 goto out;
             n = &calc->nodes[id];
-            n->flags = (n->flags | NODE_DONE) & ~(unsigned)OWF_CALC_DIRTY;
+            n->flags = (unsigned short)((n->flags | NODE_DONE) & ~(unsigned)OWF_CALC_DIRTY);
             done++;
             each_dependent(calc, n->sheet, n->row, n->col, count_out, &q);
         }
@@ -883,7 +911,7 @@ static int recalc(owf_calc *calc, int all)
                     if (calc->notify)
                         calc->notify(calc->notify_user, n->sheet, n->row, n->col);
                 }
-                n->flags = (n->flags | NODE_DONE | NODE_QUEUED) & ~(unsigned)OWF_CALC_DIRTY;
+                n->flags = (unsigned short)((n->flags | NODE_DONE | NODE_QUEUED) & ~(unsigned)OWF_CALC_DIRTY);
                 calc->circular++;
                 done++;
             }
@@ -901,7 +929,7 @@ static int recalc(owf_calc *calc, int all)
     }
 out:
     for (i = 0; i < nlist; i++)
-        calc->nodes[list[i]].flags &= ~(unsigned)(NODE_IN_LIST | NODE_DONE | NODE_QUEUED);
+        calc->nodes[list[i]].flags &= (unsigned short)~(unsigned)(NODE_IN_LIST | NODE_DONE | NODE_QUEUED);
     free(list);
     free(left);
     free(q.queue);

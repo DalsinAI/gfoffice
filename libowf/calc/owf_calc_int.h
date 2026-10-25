@@ -126,6 +126,8 @@ double calc_now(calc_ctx *ctx);
 /* The engine's note of the book's rows and columns used ([0], [1]; -1 not
  * known), kept between formulas; NULL without an engine. */
 long *calc_used_cache(owf_calc *calc);
+/* The bytes the engine holds (its nodes, index and code), for the tests. */
+size_t calc_memory(const owf_calc *calc);
 
 /* ---- Bytecode (owf_calc_parse.c writes it, owf_calc_eval.c runs it) ---- */
 

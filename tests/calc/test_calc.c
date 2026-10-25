@@ -13,6 +13,7 @@
  */
 #include "owf.h"
 #include "owf_calc.h"
+#include "owf_calc_int.h"                /* calc_memory, for the size note */
 
 #include <math.h>
 #include <stdarg.h>
@@ -149,6 +150,19 @@ static const char *eval(const char *formula)
         const char *got_ = eval(formula);                                                                    \
         CHECK(!strcmp(got_, want), "%s: got %s, want %s", formula, got_, want);                              \
     } while (0)
+
+static int same_value_test(const owf_cell *a, const owf_cell *b)
+{
+    if (a->type != b->type)
+        return 0;
+    switch (a->type) {
+    case OWF_VALUE_NUMBER:
+    case OWF_VALUE_BOOL: return a->number == b->number;
+    case OWF_VALUE_ERROR: return a->error == b->error;
+    case OWF_VALUE_TEXT: return !strcmp(a->text ? a->text : "", b->text ? b->text : "");
+    default: return 1;
+    }
+}
 
 /* ---- The parser ---- */
 
@@ -388,6 +402,7 @@ static const case_t function_cases[] = {
     { "COUNTIF(D1:D6,\"\")", "2" }, { "COUNTIF(A1:A5,\"3\")", "1" }, { "COUNTIF(D5,5)", "1" },
     { "COUNTIF(A:A,\"<>\")", "5" }, { "COUNTIF(H1:H10,\"\")", "9" }, { "COUNTIF(B1:B5,\"*\")", "5" },
     { "COUNTIF(B1:B5,\"~*\")", "0" }, { "COUNTIF({1,2,3},\">1\")", "2" },
+    { "COUNTBLANK(Z:Z)", "1048576" }, { "COUNTIF(Z:Z,\"\")", "1048576" }, { "SUMIF(A:A,\">2\",C:C)", "120" },
     { "COUNTIFS(B1:B5,\"a\",C1:C5,\">10\")", "1" }, { "COUNTIFS(G1:G4,\"\",H1:H4,\"\")", "3" },
     { "ROUND(2.675,2)", "2.68" }, { "ROUND(-2.5,0)", "-3" }, { "ROUND(1234.5678,-2)", "1200" },
     { "ROUND(1.005,2)", "1.01" }, { "ROUND(0.285,2)", "0.29" }, { "ROUND(5,)", "5" }, { "ROUND(2.5,0.9)", "3" },
@@ -1045,6 +1060,32 @@ static void test_shift(void)
     CHECK(owf_calc_shift(calc, 9, 0, 0, 1) == OWF_ERR_UNSUPPORTED, "no sheet");
 }
 
+/* ---- The book changed behind the engine's back ---- */
+
+static void test_rebuild(void)
+{
+    owf_sheet *added;
+    owf_cell *c;
+    fresh();
+    put("A1", "=Later!A1*2");
+    put("A2", "=Rate*10");
+    recalc();
+    EXPECT("A1", "#REF!");
+    EXPECT("A2", "#NAME?");
+    added = owf_book_add_sheet(book, "Later");
+    c = owf_sheet_cell(added, 0, 0, 1);
+    owf_cell_set_number(c, 21);
+    owf_book_add_name(book, "Rate", -1, "0.5", 0);
+    CHECK(owf_calc_rebuild(calc) == OWF_OK, "rebuild");
+    CHECK(owf_calc_state(calc, 0, 0, 0) & OWF_CALC_DIRTY, "dirty after rebuild");
+    recalc();
+    EXPECT("A1", "42");
+    EXPECT("A2", "5");
+    put_in(3, "A1", "1");
+    recalc();
+    EXPECT("A1", "2");
+}
+
 /* ---- Unknown functions and kept values ---- */
 
 static void test_kept(void)
@@ -1353,6 +1394,231 @@ static void oracle(const char *path)
     owf_book_free(b);
 }
 
+
+/* ---- Random books: the incremental recalc agrees with a full one ---- */
+
+static unsigned long seed = 12345;
+
+static unsigned rnd(unsigned n)
+{
+    seed = seed * 1103515245UL + 12345UL;
+    return (unsigned)((seed >> 16) & 0x7FFF) % n;
+}
+
+static void random_ref(char *out, size_t size, int range)
+{
+    char a[16], b[16];
+    unsigned r0 = rnd(12), c0 = rnd(6), r1 = r0 + rnd(4), c1 = c0 + rnd(2);
+    const char *sheet = rnd(5) == 0 ? "Sheet2!" : "";
+    owf_calc_cell_name(r0, c0, a);
+    owf_calc_cell_name(r1, c1, b);
+    if (range)
+        snprintf(out, size, "%s%s%s:%s", sheet, rnd(4) ? "" : "$", a, b);
+    else
+        snprintf(out, size, "%s%s", sheet, a);
+}
+
+static void random_expr(char *out, size_t size, int depth)
+{
+    char a[256], b[256], r[48];
+    unsigned k = depth > 2 ? rnd(4) : rnd(16);
+    switch (k) {
+    case 0: snprintf(out, size, "%u", rnd(20)); break;
+    case 1: random_ref(r, sizeof r, 0); snprintf(out, size, "%s", r); break;
+    case 2: random_ref(r, sizeof r, 0); snprintf(out, size, "%s", r); break;
+    case 3: snprintf(out, size, "\"%c\"", 'a' + rnd(3)); break;
+    case 4: random_ref(r, sizeof r, 1); snprintf(out, size, "SUM(%s)", r); break;
+    case 5: random_ref(r, sizeof r, 1); snprintf(out, size, "COUNTIF(%s,\">%u\")", r, rnd(10)); break;
+    case 6:
+        random_expr(a, sizeof a, depth + 1);
+        random_expr(b, sizeof b, depth + 1);
+        snprintf(out, size, "(%.120s%c%.120s)", a, "+-*/&<>="[rnd(8)], b);
+        break;
+    case 7:
+        random_expr(a, sizeof a, depth + 1);
+        random_expr(b, sizeof b, depth + 1);
+        snprintf(out, size, "IF(%.70s>%u,%.70s,%.70s)", a, rnd(10), a, b);
+        break;
+    case 8: random_expr(a, sizeof a, depth + 1); snprintf(out, size, "IFERROR(%.200s,-1)", a); break;
+    case 9: random_ref(r, sizeof r, 1); snprintf(out, size, "AVERAGE(%s)", r); break;
+    case 10: random_ref(r, sizeof r, 1); snprintf(out, size, "INDEX(%s,%u)", r, 1 + rnd(3)); break;
+    case 11: random_ref(r, sizeof r, 1); snprintf(out, size, "MAX(%s)*2", r); break;
+    case 12: random_expr(a, sizeof a, depth + 1); snprintf(out, size, "LEN(%.200s)", a); break;
+    case 13: random_ref(r, sizeof r, 1); snprintf(out, size, "VLOOKUP(%u,%s,1,FALSE)", rnd(10), r); break;
+    case 14: random_ref(r, sizeof r, 1); snprintf(out, size, "SUMPRODUCT((%s>2)*1)", r); break;
+    default: random_ref(r, sizeof r, 1); snprintf(out, size, "ROUND(SUM(%s)/3,1)", r); break;
+    }
+}
+
+typedef struct {
+    int sheet;
+    unsigned row, col;
+    owf_cell value;
+} snap;
+
+static int snapshot(snap **out)
+{
+    int s, i, n = 0;
+    for (s = 0; s < book->nsheets; s++)
+        n += book->sheets[s].ncells;
+    *out = calloc((size_t)n + 1, sizeof **out);
+    n = 0;
+    for (s = 0; s < book->nsheets; s++)
+        for (i = 0; i < book->sheets[s].ncells; i++) {
+            const owf_cell *c = &book->sheets[s].cells[i];
+            (*out)[n].sheet = s;
+            (*out)[n].row = c->row;
+            (*out)[n].col = c->col;
+            (*out)[n].value = *c;
+            (*out)[n].value.formula = NULL;
+            (*out)[n].value.text = NULL;
+            if (c->text && ((*out)[n].value.text = malloc(strlen(c->text) + 1)) != NULL)
+                strcpy((*out)[n].value.text, c->text);
+            n++;
+        }
+    return n;
+}
+
+static void test_consistency(void)
+{
+    int round, step, bad = 0;
+    for (round = 0; round < 6; round++) {
+        fresh();
+        for (step = 0; step < 400; step++) {
+            char ref[16], input[600];
+            unsigned what = rnd(20), row = rnd(14), col = rnd(7);
+            int sheet = rnd(6) == 0;
+            owf_calc_cell_name(row, col, ref);
+            if (what < 6)
+                snprintf(input, sizeof input, "%u", rnd(10));
+            else if (what < 7)
+                snprintf(input, sizeof input, "%c", 'a' + rnd(3));
+            else if (what < 8)
+                input[0] = 0;
+            else if (what < 19) {
+                input[0] = '=';
+                random_expr(input + 1, sizeof input - 1, 0);
+            } else {
+                int r = owf_calc_shift(calc, sheet, rnd(2), rnd(8), rnd(2) ? 1 : -1);
+                CHECK(r == OWF_OK || r == OWF_ERR_UNSUPPORTED, "shift: %d", r);
+                recalc();
+                continue;
+            }
+            put_in(sheet, ref, input);
+            recalc();
+            if (step % 20 == 19) {
+                snap *before;
+                int n = snapshot(&before), i;
+                CHECK(owf_calc_recalc_all(calc) == OWF_OK, "recalc_all");
+                for (i = 0; i < n; i++) {
+                    const owf_cell *c = owf_sheet_find(&book->sheets[before[i].sheet], before[i].row, before[i].col);
+                    if (c && !same_value_test(c, &before[i].value) && bad < 10) {
+                        char x[600], y[600], name[16];
+                        bad++;
+                        show(&before[i].value, x, sizeof x);
+                        show(c, y, sizeof y);
+                        owf_calc_cell_name(before[i].row, before[i].col, name);
+                        CHECK(0, "round %d step %d: %d!%s =%s: incremental %s, full %s", round, step, before[i].sheet,
+                              name, c->formula ? c->formula : "", x, y);
+                    }
+                    free(before[i].value.text);
+                }
+                free(before);
+            }
+        }
+    }
+}
+
+/* ---- Fuzz: no text makes the parser, the mover or the machine fall over ---- */
+
+static char fmt_long[520];
+
+static void test_fuzz(void)
+{
+    static const char *const pieces[] = {
+        "A1", "$B$2", "C3:D4", "A:A", "1:1", "Sheet2!A1", "'My ''Q'' Sheet'!B2", "SUM(", "IF(", "INDEX(",
+        "VLOOKUP(", "(", ")", ",", ";", "+", "-", "*", "/", "^", "&", "=", "<>", "%", " ", "1", "2.5", "1E+300",
+        "\"x\"", "\"", "TRUE", "#N/A", "#REF!", "{", "}", "{1,2;3,4}", ":", "!", "'", "Name", "[Book]S!A1",
+        "_xlfn.", "TEXT(", "\"0.00\"", "ROW(", "SUMPRODUCT(", "1:1048576", "XFD1", "XFE1", "A0", "$", "..",
+    };
+    int i, k;
+    fresh();
+    put("A1", "1");
+    put("B2", "x");
+    for (i = 0; i < 4000; i++) {
+        char f[256], *moved;
+        int n = 1 + (int)rnd(12);
+        f[0] = 0;
+        for (k = 0; k < n; k++) {
+            const char *piece = pieces[rnd(sizeof pieces / sizeof pieces[0])];
+            if (strlen(f) + strlen(piece) + 1 < sizeof f)
+                strcat(f, piece);
+        }
+        (void)eval(f);
+        moved = owf_calc_move_formula(f, (int)rnd(5) - 2, (int)rnd(5) - 2);
+        CHECK(moved != NULL, "move %s", f);
+        owf_free(moved);
+        if (i % 50 == 0) {
+            char input[300];
+            snprintf(input, sizeof input, "=%s", f);
+            put("C3", input);
+            recalc();
+        }
+    }
+    /* number formats: random pieces, random values */
+    {
+        static const char *const fp[] = {
+            "0", "#", "?", ",", ".", "%", "E+", "e-", "\"x\"", "[Red]", ";", "@", "/", "d", "dd", "ddd", "m",
+            "mmm", "mmmmm", "yy", "yyyy", "h", "hh", "s", ".00", "AM/PM", "a/p", "[h]", "[mm]", "_)", "*-", "\\",
+            "[>5]", "[$\xE2\x82\xAC-407]", "General", " ", "-", "000000000000000000000000000000000000",
+            "??????????", "/99999999999", "[", "\"",
+        };
+        static const double vals[] = { 0, 1, -1, 0.5, -0.004, 1234567.891, 1e15, 1e300, -1e300, 1e-300, 46320.75,
+                                       3e9, 2958466, -2958466, 0.999999999 };
+        char out[64];
+        owf_cell v;
+        memset(&v, 0, sizeof v);
+        for (i = 0; i < 6000; i++) {
+            char fmt[200];
+            int n = 1 + (int)rnd(8);
+            fmt[0] = 0;
+            for (k = 0; k < n; k++) {
+                const char *piece = fp[rnd(sizeof fp / sizeof fp[0])];
+                if (strlen(fmt) + strlen(piece) + 1 < sizeof fmt)
+                    strcat(fmt, piece);
+            }
+            v.type = OWF_VALUE_NUMBER;
+            v.number = vals[rnd(sizeof vals / sizeof vals[0])];
+            owf_calc_format_value(fmt, &v, (int)rnd(2), (int)rnd(14), out, sizeof out, NULL);
+            v.type = OWF_VALUE_TEXT;
+            v.text = (char *)"txt";
+            owf_calc_format_value(fmt, &v, 0, 0, out, sizeof out, NULL);
+        }
+        /* and the long ones that were dangerous */
+        v.type = OWF_VALUE_NUMBER;
+        v.number = 1e300;
+        memset(fmt_long, '0', 500);
+        strcpy(fmt_long + 500, "E+00");
+        owf_calc_format_value(fmt_long, &v, 0, 0, out, sizeof out, NULL);
+        owf_calc_format_value("# ??????????" "/??????????", &v, 0, 0, out, sizeof out, NULL);
+        v.number = 0.123;
+        owf_calc_format_value("# ??????????" "/??????????", &v, 0, 0, out, sizeof out, NULL);
+        CHECK(!strcmp(out, "123/1000"), "long fraction: %s", out);
+        v.number = 1e300;
+        owf_calc_format_value("?/4", &v, 0, 0, out, sizeof out, NULL);
+    }
+    /* raw bytes too */
+    for (i = 0; i < 2000; i++) {
+        char f[64];
+        int n = (int)rnd(63);
+        for (k = 0; k < n; k++)
+            f[k] = (char)(1 + rnd(255));
+        f[n] = 0;
+        (void)eval(f);
+        owf_free(owf_calc_move_formula(f, 1, 1));
+    }
+}
+
 /* ---- Speed ---- */
 
 static double seconds(clock_t a, clock_t b)
@@ -1403,12 +1669,37 @@ static void test_speed(void)
            "not optimised",
 #endif
            seconds(t2, t3));
+    printf("speed: the engine holds %lu KB for them (nodes, index, code)\n", (unsigned long)(calc_memory(calc) / 1024));
     /* and a recalc after one change: only what reads it */
     t0 = clock();
     put("A500", "999");
     owf_calc_recalc(calc);
     t1 = clock();
-    printf("speed: one cell changed, its readers worked out in %.3f s\n", seconds(t0, t1));
+    printf("speed: one cell changed (most of the sheet reads it), its readers worked out in %.3f s\n", seconds(t0, t1));
+    /* light formulas: arithmetic on the row, a short SUM, an IF */
+    fresh();
+    for (i = 1; i <= 1000; i++) {
+        static const char *const cols[10] = {
+            "=A%d*2+1", "=B%d-A%d", "=C%d/2", "=SUM(A%d:D%d)", "=IF(E%d>100,1,0)", "=E%d*F%d",
+            "=ROUND(G%d,1)", "=H%d+B%d", "=MAX(A%d,I%d)", "=J%d&\"\"",
+        };
+        int k;
+        snprintf(ref, sizeof ref, "A%d", i);
+        snprintf(f, sizeof f, "%d", i);
+        put(ref, f);
+        for (k = 0; k < 10; k++) {
+            snprintf(ref, sizeof ref, "%c%d", 'B' + k, i);
+            snprintf(f, sizeof f, cols[k], i, i);
+            put(ref, f);
+        }
+    }
+    t0 = clock();
+    r = owf_calc_recalc_all(calc);
+    t1 = clock();
+    CHECK(r == OWF_OK, "recalc light");
+    EXPECT("K1000", "\"6503.5\"");
+    printf("speed: 10,000 light formulas (arithmetic, SUM of a row, IF, ROUND) worked out in %.3f s; engine %lu KB\n",
+           seconds(t0, t1), (unsigned long)(calc_memory(calc) / 1024));
 }
 
 int main(int argc, char **argv)
@@ -1425,9 +1716,12 @@ int main(int argc, char **argv)
     test_enter();
     test_move();
     test_shift();
+    test_rebuild();
     test_kept();
     test_formats();
     test_names_of_cells();
+    test_consistency();
+    test_fuzz();
     for (i = 1; i < argc; i++)
         oracle(argv[i]);
     if (argc > 1)

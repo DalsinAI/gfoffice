@@ -907,10 +907,19 @@ static const char *literal(owf_buf *out, const char *p, const char *e)
     return NULL;
 }
 
+/* Digits for a formatted number: one set, passed down, so that the
+ * formatter's stack stays small (an Amiga task's is). */
+typedef struct {
+    char whole[320];             /* a double has at most 309 whole digits */
+    char frac[32];
+    char dig[32];
+    char tmp[32];
+} digits_t;
+
 /* A General number in at most width characters (0: any). */
-static void general(owf_buf *out, double v, int width)
+static void general(owf_buf *out, double v, int width, digits_t *d)
 {
-    char text[40], whole[400], frac[40];
+    char text[40], *whole = d->whole, *frac = d->frac;
     int len, neg = v < 0, places, digits_before;
     calc_number_text(v, text);
     len = (int)strlen(text);
@@ -921,12 +930,14 @@ static void general(owf_buf *out, double v, int width)
     if (neg)
         v = -v;
     if (!strchr(text, 'E') && v >= 1) {
-        fixed(v, 0, whole, sizeof whole, frac);
+        fixed(v, 0, whole, sizeof d->whole, frac);
         digits_before = (int)strlen(whole) + neg;
         if (digits_before <= width) {
             places = width - digits_before - 1;
+            if (places > 30)
+                places = 30;
             if (places > 0) {
-                fixed(v, places, whole, sizeof whole, frac);
+                fixed(v, places, whole, sizeof d->whole, frac);
                 while (places > 0 && frac[places - 1] == '0')
                     frac[--places] = 0;
             }
@@ -941,8 +952,10 @@ static void general(owf_buf *out, double v, int width)
         }
     } else if (!strchr(text, 'E') && v >= 0.0001) {
         places = width - 2 - neg;
+        if (places > 30)
+            places = 30;
         if (places > 0) {
-            fixed(v, places, whole, sizeof whole, frac);
+            fixed(v, places, whole, sizeof d->whole, frac);
             while (places > 0 && frac[places - 1] == '0')
                 frac[--places] = 0;
             if (places > 0) {
@@ -956,7 +969,7 @@ static void general(owf_buf *out, double v, int width)
         }
     }
     {   /* scientific: d.dddE+XX */
-        char dig[40];
+        char *dig = d->dig;
         int point, n = decimal(v, dig, &point), e, keep, i;
         e = point - 1;
         keep = width - neg - (e >= 100 || e <= -100 ? 6 : 5);   /* d, E, sign, two or three digits */
@@ -1013,9 +1026,12 @@ static void whole_ph(owf_buf *out, whole_out *w, int ph)
     w->k++;
 }
 
-static void number_section(owf_buf *out, const char *s, const char *e, const info *in, double v)
+/* A number through a section; neg: put a minus first, when what shows is
+ * not all zeros. */
+static void number_section(owf_buf *out, const char *s, const char *e, const info *in, double v, int neg,
+                           digits_t *d)
 {
-    char whole[400], frac[40], dig[40];
+    char *whole = d->whole, *frac = d->frac, *dig = d->dig;
     whole_out w;
     int fk = 0, places = in->frac_ph > 30 ? 30 : in->frac_ph, exponent = 0, i, point = 0, n;
     const char *p;
@@ -1026,7 +1042,7 @@ static void number_section(owf_buf *out, const char *s, const char *e, const inf
         v /= 1000;
     if (in->exp) {
         /* mantissa with int_ph whole digits ("##0.0E+0": exponents in threes) */
-        int ni = in->int_ph ? in->int_ph : 1, keep;
+        int ni = in->int_ph ? (in->int_ph > 300 ? 300 : in->int_ph) : 1, keep;
         int eng = in->int_ph > 1 && *s != '0';
         n = decimal(v, dig, &point);
         if (n == 0) {
@@ -1043,7 +1059,7 @@ static void number_section(owf_buf *out, const char *s, const char *e, const inf
                     exponent = point - ni;
                 keep = point - exponent + places;
                 {
-                    char tmp[40];
+                    char *tmp = d->tmp;
                     int pt = point, k;
                     memcpy(tmp, dig, (size_t)n);
                     k = round_digits(tmp, n, keep, &pt);
@@ -1067,8 +1083,10 @@ static void number_section(owf_buf *out, const char *s, const char *e, const inf
             }
         }
     } else {
-        fixed(v, places, whole, sizeof whole, frac);
+        fixed(v, places, whole, sizeof d->whole, frac);
     }
+    if (neg && (in->exp ? v != 0 : (whole[0] || strspn(frac, "0") != strlen(frac))))
+        owf_buf_putc(out, '-');
     w.whole = whole;
     w.len = (int)strlen(whole);
     w.ni = in->int_ph;
@@ -1143,7 +1161,9 @@ static void number_section(owf_buf *out, const char *s, const char *e, const inf
             continue;
         }
         if (e - p >= 7 && word_is(p, p + 7, "general")) {
-            general(out, v, 0);
+            char text[40];
+            calc_number_text(v, text);
+            owf_buf_puts(out, text);
             p += 7;
             continue;
         }
@@ -1159,9 +1179,9 @@ static void number_section(owf_buf *out, const char *s, const char *e, const inf
 static void fraction_section(owf_buf *out, const char *s, const char *e, double v)
 {
     const char *slash = s, *p;
-    long den_max = 0, fixed_den = 0, best_n = 0, best_d = 1, whole = 0, d;
-    int groups = 0, in_group = 0, den_ph = 0;
-    double best = 2, x;
+    long den_max = 0, fixed_den = 0, best_d = 1, d;
+    int groups = 0, in_group = 0, den_ph = 0, fixed_digits = 0;
+    double best = 2, x, whole = 0, best_n = 0;
 
     while (slash < e && *slash != '/')
         slash++;
@@ -1183,20 +1203,20 @@ static void fraction_section(owf_buf *out, const char *s, const char *e, double 
     for (p = slash + 1; p < e; p++) {
         if (is_ph((unsigned char)*p))
             den_ph++;
-        else if (*p >= '1' && *p <= '9' && !den_ph)
+        else if (*p >= '0' && *p <= '9' && !den_ph && (fixed_den || *p != '0') && ++fixed_digits <= 6)
             fixed_den = fixed_den * 10 + (*p - '0');
-        else if (*p == '0' && fixed_den)
-            fixed_den *= 10;
         else
             break;
     }
-    if (groups >= 2) {
-        whole = (long)floor(v);
-        v -= (double)whole;
+    if (den_ph > 4)
+        den_ph = 4;                      /* at most 9999: the search below is that long */
+    if (groups >= 2 || v >= 1e15) {
+        whole = floor(v);
+        v -= whole;
     }
     if (fixed_den) {
         best_d = fixed_den;
-        best_n = (long)floor(v * (double)fixed_den + 0.5);
+        best_n = floor(v * (double)fixed_den + 0.5);
     } else {
         for (den_max = 1; den_ph-- > 0;)
             den_max *= 10;
@@ -1204,8 +1224,8 @@ static void fraction_section(owf_buf *out, const char *s, const char *e, double 
         if (den_max < 1)
             den_max = 9;
         for (d = 1; d <= den_max; d++) {
-            long n = (long)floor(v * (double)d + 0.5);
-            x = fabs(v - (double)n / (double)d);
+            double n = floor(v * (double)d + 0.5);
+            x = fabs(v - n / (double)d);
             if (x < best - 1e-12) {
                 best = x;
                 best_n = n;
@@ -1213,29 +1233,30 @@ static void fraction_section(owf_buf *out, const char *s, const char *e, double 
             }
         }
     }
-    if (groups >= 2 && best_n == best_d) {
+    if (groups >= 2 && best_n == (double)best_d) {
         whole++;
         best_n = 0;
     }
-    if (groups >= 2 && (whole || !best_n))
-        put_whole(out, (double)whole, 1);
+    if ((groups >= 2 || whole) && (whole || !best_n))
+        put_whole(out, whole, 1);
     if (best_n) {
-        if (groups >= 2 && whole)
+        if ((groups >= 2 || whole) && whole)
             owf_buf_putc(out, ' ');
-        put_whole(out, (double)best_n, 1);
+        put_whole(out, best_n, 1);
         owf_buf_putc(out, '/');
         put_whole(out, (double)best_d, 1);
-    } else if (groups < 2) {
+    } else if (groups < 2 && !whole) {
         owf_buf_puts(out, "0");
     }
 }
 
 /* ---- Dates and times through a format ---- */
 
+/* A piece of a date format; small, as there may be 64 of them on the stack. */
 typedef struct {
-    int kind;                    /* 'y' 'm' 'd' 'h' 'M' (minutes) 's' 'a' (AM/PM) 'H' 'N' 'S' (elapsed) '.' 'l' (literal) */
-    int len;
-    const char *s, *e;
+    unsigned char kind;          /* 'y' 'm' 'd' 'h' 'M' (minutes) 's' 'a' (AM/PM) 'H' 'N' 'S' (elapsed) '.' 'l' (literal) */
+    unsigned char len;
+    unsigned short s, e;         /* from the section's start */
 } dtok;
 
 static void date_section(owf_buf *out, const char *s, const char *e, const info *in, double v, int date1904)
@@ -1246,7 +1267,7 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
     long secs_of_day, h, mi, sec;
     const char *p = s;
 
-    if (v < 0 || v >= (double)(LAST_SERIAL_1900 + 1 - (date1904 ? 1462 : 0))) {
+    if (v < 0 || v >= (double)(LAST_SERIAL_1900 + 1 - (date1904 ? 1462 : 0)) || e - s > 4096) {
         owf_buf_puts(out, "########");
         return;
     }
@@ -1255,7 +1276,7 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
         int c = (unsigned char)*p, lc = owf_lower(c);
         const char *q;
         dtok *k = &t[nt];
-        k->s = p;
+        k->s = (unsigned short)(p - s);
         if (c == '"' || c == '\\' || c == '_' || c == '*' || (c == '[' && p + 1 < e && p[1] == '$')) {
             q = p;
             if (c == '"') {
@@ -1270,7 +1291,7 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
                 q = p + 2 <= e ? p + 2 : e;
             }
             k->kind = 'l';
-            k->e = q;
+            k->e = (unsigned short)((q) - s);
             nt++;
             p = q;
             continue;
@@ -1282,9 +1303,9 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
                 close++;
             l = owf_lower((unsigned char)(p + 1 < e ? p[1] : 0));
             if (l == 'h' || l == 'm' || l == 's') {
-                k->kind = l == 'h' ? 'H' : l == 'm' ? 'N' : 'S';
-                k->len = (int)(close - p - 1);
-                k->e = close;
+                k->kind = (unsigned char)(l == 'h' ? 'H' : l == 'm' ? 'N' : 'S');
+                k->len = (unsigned char)(close - p - 1 > 255 ? 255 : close - p - 1);
+                k->e = (unsigned short)((close) - s);
                 nt++;
             }
             p = close < e ? close + 1 : close;
@@ -1293,7 +1314,7 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
         if (e - p >= 5 && word_is(p, p + 5, "am/pm")) {
             k->kind = 'a';
             k->len = 5;
-            k->e = p + 5;
+            k->e = (unsigned short)((p + 5) - s);
             nt++;
             p += 5;
             continue;
@@ -1301,7 +1322,7 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
         if (e - p >= 3 && word_is(p, p + 3, "a/p")) {
             k->kind = 'a';
             k->len = 3;
-            k->e = p + 3;
+            k->e = (unsigned short)((p + 3) - s);
             nt++;
             p += 3;
             continue;
@@ -1310,9 +1331,9 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
             q = p;
             while (q < e && owf_lower((unsigned char)*q) == lc)
                 q++;
-            k->kind = lc;
-            k->len = (int)(q - p);
-            k->e = q;
+            k->kind = (unsigned char)lc;
+            k->len = (unsigned char)(q - p > 255 ? 255 : q - p);
+            k->e = (unsigned short)((q) - s);
             nt++;
             p = q;
             continue;
@@ -1322,11 +1343,9 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
             while (q < e && *q == '0')
                 q++;
             k->kind = '.';
-            k->len = (int)(q - p - 1);
-            if (k->len > 3)
-                k->len = 3;
+            k->len = (unsigned char)(q - p - 1 > 3 ? 3 : q - p - 1);
             fd = k->len;
-            k->e = q;
+            k->e = (unsigned short)((q) - s);
             nt++;
             p = q;
             continue;
@@ -1339,7 +1358,7 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
         while (q < e && ((unsigned char)*q & 0xC0) == 0x80)
             q++;
         k->kind = 'l';
-        k->e = q;
+        k->e = (unsigned short)((q) - s);
         nt++;
         p = q;
     }
@@ -1375,8 +1394,8 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
         dtok *k = &t[i];
         switch (k->kind) {
         case 'l':
-            if (!literal(out, k->s, k->e))
-                owf_buf_put(out, k->s, (size_t)(k->e - k->s));
+            if (!literal(out, s + k->s, s + k->e))
+                owf_buf_put(out, s + k->s, (size_t)(k->e - k->s));
             break;
         case 'y':
             if (k->len <= 2)
@@ -1438,9 +1457,9 @@ static void date_section(owf_buf *out, const char *s, const char *e, const info 
         case 'a': {
             int pm = h >= 12;
             if (k->len == 5)
-                owf_buf_puts(out, k->s[0] == 'a' || k->s[0] == 'p' ? (pm ? "pm" : "am") : (pm ? "PM" : "AM"));
+                owf_buf_puts(out, s[k->s] == 'a' || s[k->s] == 'p' ? (pm ? "pm" : "am") : (pm ? "PM" : "AM"));
             else
-                owf_buf_putc(out, k->s[0] == 'a' || k->s[0] == 'p' ? (pm ? 'p' : 'a') : (pm ? 'P' : 'A'));
+                owf_buf_putc(out, s[k->s] == 'a' || s[k->s] == 'p' ? (pm ? 'p' : 'a') : (pm ? 'P' : 'A'));
             break;
         }
         }
@@ -1471,6 +1490,7 @@ int calc_format(const char *format, const calc_value *v, int date1904, int width
     section sec[4];
     const section *use;
     info in;
+    digits_t d;
     int n, neg = 0;
     double x;
 
@@ -1557,7 +1577,7 @@ int calc_format(const char *format, const calc_value *v, int date1904, int width
         return 0;
     }
     if (in.text_at && !in.int_ph && !in.frac_ph && !in.general) {
-        general(out, neg ? -x : x, width);  /* a number in a text format: as General */
+        general(out, neg ? -x : x, width, &d);   /* a number in a text format: as General */
         return 0;
     }
     if (in.general && !in.int_ph && !in.frac_ph) {
@@ -1570,7 +1590,7 @@ int calc_format(const char *format, const calc_value *v, int date1904, int width
                 continue;
             }
             if (use->e - p >= 7 && word_is(p, p + 7, "general")) {
-                general(out, neg ? -x : x, width);
+                general(out, neg ? -x : x, width, &d);
                 p += 7;
                 continue;
             }
@@ -1578,28 +1598,13 @@ int calc_format(const char *format, const calc_value *v, int date1904, int width
         }
         return 0;
     }
-    if (neg) {
-        /* the minus sign only when something nonzero shows */
-        char whole[400], frac[40];
-        double y = x;
-        int i, nonzero = 0;
-        for (i = 0; i < in.percent; i++)
-            y *= 100;
-        for (i = 0; i < in.scale; i++)
-            y /= 1000;
-        if (in.exp || in.slash)
-            nonzero = y != 0;
-        else {
-            fixed(y, in.frac_ph > 30 ? 30 : in.frac_ph, whole, sizeof whole, frac);
-            nonzero = whole[0] || strspn(frac, "0") != strlen(frac);
-        }
-        if (nonzero)
+    if (in.slash) {
+        if (neg && x != 0)
             owf_buf_putc(out, '-');
-    }
-    if (in.slash)
         fraction_section(out, use->s, use->e, x);
-    else
-        number_section(out, use->s, use->e, &in, x);
+    } else {
+        number_section(out, use->s, use->e, &in, x, neg, &d);
+    }
     return 0;
 }
 
