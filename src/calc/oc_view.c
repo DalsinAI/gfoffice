@@ -646,6 +646,11 @@ int oc_font_px(const oc_core *core, int twips)
     return px < 4 ? 4 : px > 160 ? 160 : px;
 }
 
+int oc_line_px(const oc_core *core, int twips)
+{
+    return (oc_font_px(core, twips) * 23 + 10) / 20;
+}
+
 /* Where a cell's text starts: by its alignment, pad and indent (10 pixels a step at 100%). */
 static int text_start(const oc_core *core, const owf_cellstyle *st, int align, int x, int w, int tw)
 {
@@ -675,7 +680,17 @@ static size_t wrap_line(const oc_core *core, const owf_cellstyle *st, const char
     }
     if (end > start)
         return end;
-    /* a word wider than the cell: as many characters as fit */
+    /* a word wider than the cell alone: after its last "/" or "-" that fits ("Software/" "Service"), else as
+       many characters as fit */
+    for (k = start + 1; k < n && s[k - 1] != ' ' && s[k - 1] != '\n'; k++) {
+        if (s[k - 1] != '/' && s[k - 1] != '-')
+            continue;
+        if (oc_measure(core, s + start, k - start, st) > avail)
+            break;
+        end = k;
+    }
+    if (end > start)
+        return end;
     fit = start;
     for (k = start + 1; k <= n; k++) {
         if (k < n && ((unsigned char)s[k] & 0xC0) == 0x80)
@@ -694,16 +709,16 @@ static size_t wrap_line(const oc_core *core, const owf_cellstyle *st, const char
 
 /* Wrapped text (wrap set): a text item for each line, broken at spaces and
  * the text's own line breaks to the cell's width less its pads, a word
- * wider than that broken where it must. The lines are a block placed in the
- * box (y, h) by the cell's vertical alignment, a line the font's height
- * each; lines that don't fit are left out, though one always shows (the
+ * wider than that alone broken after a "/" or "-" in it, else where it must.
+ * The lines are a block placed in the box (y, h) by the cell's vertical
+ * alignment, oc_line_px apart; lines that don't fit are left out, though one always shows (the
  * first from the top, the last from the bottom). */
 static int wrapped_items(drawing *d, const owf_cell *c, const owf_cellstyle *st, const char *s, size_t n,
                          unsigned long colour, int align, int x, int w, int y, int h, int qx, int qw)
 {
     oc_core *core = d->core;
     int pad = PAD * core->zoom / 100 + 1, avail = w - 2 * pad - st->indent * 10 * core->zoom / 100;
-    int lp = oc_font_px(core, st->font.size), nl = 0, k, top, first, last;
+    int lp = oc_line_px(core, st->font.size), nl = 0, k, top, first, last;
     size_t at = 0, starts[MAX_WRAP_LINES], ends[MAX_WRAP_LINES];
     while (n && (s[n - 1] == '\n' || s[n - 1] == '\r'))
         n--;

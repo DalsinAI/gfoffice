@@ -67,7 +67,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.2 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.4 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -351,7 +351,13 @@ static ULONG soft_style(unsigned flags)
  * fixed ones) through openfont.library; bold and italic are made from it. Without openfont, or without the
  * font, the theme's font at that size, else the window's. CELL_FONTS sizes stay open; the oldest makes way. */
 #define CELL_FONTS 12
-static struct { char file[40]; int pixels, owned; struct TextFont *font; } cell_fonts[CELL_FONTS];
+typedef struct cell_font_entry {
+    char file[40];
+    int pixels, owned;
+    struct TextFont *font;
+    int ink_top, ink_bottom;                         /* the rows text marks, from the font's top: ascenders to descenders */
+} cell_font_entry;
+static cell_font_entry cell_fonts[CELL_FONTS];
 static int cell_font_next;
 
 static void close_cell_fonts(void)
@@ -399,8 +405,8 @@ static const char *cell_font_file(int index)
 }
 
 /* An Amiga font at a pixel height: an outline font (FONTS:name.otag) made at exactly that size, a bitmap
- * one at its nearest designed size. NULL when there is none. */
-static struct TextFont *open_font_px(const char *file, int pixels)
+ * one at its nearest designed size. NULL when there is none. *outline: which it is. */
+static struct TextFont *open_font_px(const char *file, int pixels, int *outline_out)
 {
     struct TextAttr ta;
     struct TextFont *f;
@@ -413,6 +419,7 @@ static struct TextFont *open_font_px(const char *file, int pixels)
         strcpy(otag + strlen(otag) - 5, ".otag");
         if ((lk = Lock((STRPTR)otag, ACCESS_READ))) { outline = 1; UnLock(lk); }
     }
+    if (outline_out) *outline_out = outline;
     memset(&ta, 0, sizeof ta);
     ta.ta_Name = (STRPTR)file;
     ta.ta_YSize = (UWORD)pixels;
@@ -423,22 +430,76 @@ static struct TextFont *open_font_px(const char *file, int pixels)
     return ogt_openfont_font(OpenFontTextBase, &ta);
 }
 
+/* The rows of the font's box (from its top) that text s marks with ink, drawn into a small bitmap: what
+ * places a cell's text, since a font's height (tf_YSize) holds space above and below its letters that
+ * differs from font to font. 0 when there is no memory for the bitmap. */
+static int font_ink(struct TextFont *f, const char *s, int *top, int *bottom)
+{
+    struct RastPort rp;
+    struct BitMap *bm;
+    int len = (int)strlen(s), w, h, x, y, first = -1, last = -1;
+    InitRastPort(&rp);
+    SetFont(&rp, f);
+    w = TextLength(&rp, (STRPTR)s, (ULONG)len) + 8;
+    h = f->tf_YSize + 4;
+    if (((struct Library *)GfxBase)->lib_Version < 39 || !(bm = AllocBitMap((ULONG)w, (ULONG)h, 1, BMF_CLEAR, NULL)))
+        return 0;
+    rp.BitMap = bm;
+    SetAPen(&rp, 1);
+    SetDrMd(&rp, JAM1);
+    Move(&rp, 2, 2 + f->tf_Baseline);
+    Text(&rp, (STRPTR)s, (ULONG)len);
+    WaitBlit();
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++)
+            if (ReadPixel(&rp, x, y)) {
+                if (first < 0) first = y;
+                last = y;
+                break;
+            }
+    FreeBitMap(bm);
+    if (first < 0) return 0;
+    *top = first - 2;
+    *bottom = last - 2;
+    return 1;
+}
+
+/* An outline font made at em pixels comes back with taller letters than a cell font of that em has (the
+ * lab's CGTriumvirate asked for 15 pixels drew capitals 13 high; Arial 11 at 96 dpi has them 10.5): made
+ * again at the size whose capitals are 0.716 em, Arial's. */
+static struct TextFont *open_cell_font(const char *file, int pixels)
+{
+    int outline = 0, top, bottom;
+    struct TextFont *f = open_font_px(file, pixels, &outline), *g;
+    if (f && outline && font_ink(f, "H", &top, &bottom)) {
+        int cap = bottom - top + 1, want = (pixels * 716 + 500) / 1000, again;
+        if (want < 3) want = 3;
+        again = cap > 0 ? (pixels * want + cap / 2) / cap : pixels;
+        if ((cap > want || cap < want - 1) && again >= 4 && again != pixels && (g = open_font_px(file, again, NULL))) {
+            CloseFont(f);
+            f = g;
+        }
+    }
+    return f;
+}
+
 /* The font for a cell's text: the book's font index (-1 the book's own) at size twips (0 the default). */
-static struct TextFont *cell_font(int index, int size)
+static cell_font_entry *cell_font(int index, int size)
 {
     const char *file = cell_font_file(index);
     int i, slot = -1, pixels = core ? oc_font_px(core, size) : fh, owned = 1;
     struct TextFont *f;
+    cell_font_entry *e;
     for (i = 0; i < CELL_FONTS; ++i) {
         if (cell_fonts[i].font && cell_fonts[i].pixels == pixels && !strcmp(cell_fonts[i].file, file))
-            return cell_fonts[i].font;
+            return &cell_fonts[i];
         if (!cell_fonts[i].font && slot < 0) slot = i;
     }
-    f = open_font_px(file, pixels);
+    f = open_cell_font(file, pixels);
     if (!f && font_attr.ta_Name) {                   /* the theme's font, at the cell's size */
         char theme_file[64];
         snprintf(theme_file, sizeof theme_file, "%s", (const char *)font_attr.ta_Name);
-        f = open_font_px(theme_file, pixels);
+        f = open_cell_font(theme_file, pixels);
     }
     if (!f) { f = font; owned = 0; }                 /* the window's: remembered, so it isn't looked for again */
     if (!f) return NULL;
@@ -447,11 +508,16 @@ static struct TextFont *cell_font(int index, int size)
         cell_font_next = (cell_font_next + 1) % CELL_FONTS;
         if (cell_fonts[slot].owned) CloseFont(cell_fonts[slot].font);
     }
-    snprintf(cell_fonts[slot].file, sizeof cell_fonts[slot].file, "%s", file);
-    cell_fonts[slot].pixels = pixels;
-    cell_fonts[slot].owned = owned;
-    cell_fonts[slot].font = f;
-    return f;
+    e = &cell_fonts[slot];
+    snprintf(e->file, sizeof e->file, "%s", file);
+    e->pixels = pixels;
+    e->owned = owned;
+    e->font = f;
+    if (!font_ink(f, "Hdgjpqy", &e->ink_top, &e->ink_bottom)) {
+        e->ink_top = 0;
+        e->ink_bottom = f->tf_YSize - 1;
+    }
+    return e;
 }
 
 /* The core's measure: a cell's text in its font. */
@@ -459,11 +525,11 @@ static int measure(void *user, const char *s, size_t n, unsigned flags, int fnt,
 {
     char buf[512];
     size_t m;
-    struct TextFont *f;
+    cell_font_entry *e;
     (void)user;
-    if (!n || !(f = cell_font(fnt, size))) return 0;
+    if (!n || !(e = cell_font(fnt, size))) return 0;
     m = to_latin1(s, n, buf, sizeof buf);
-    SetFont(&crp, f);
+    SetFont(&crp, e->font);
     SetSoftStyle(&crp, soft_style(flags), FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     return text_length(&crp, buf, m);
 }
@@ -861,14 +927,16 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
         break;
     case OC_DRAW_TEXT: {
         /* in the cell's font, placed in its box (y, h: the cell less its grid line, or one wrapped line) by
-           its vertical alignment, as Excel places it: top 1 pixel down, bottom 1 pixel up, centre between */
-        struct TextFont *f = cell_font(it->font, it->size);
-        int th = f ? f->tf_YSize : fh, y;
+           its letters' ink, as Excel places text: bottom, its descenders 1 pixel above the grid line; top, its
+           ascenders 1 pixel below the cell's top; centre, halfway */
+        cell_font_entry *e = cell_font(it->font, it->size);
+        struct TextFont *f = e ? e->font : font;
+        int th = f ? f->tf_YSize : fh, ink_top = e ? e->ink_top : 0, ink_bottom = e ? e->ink_bottom : th - 1, y;
         if (!it->text) break;
         if (f) SetFont(cv->rp, f);
-        y = it->valign == OWF_VALIGN_TOP ? it->y + 1 :
-            it->valign == OWF_VALIGN_CENTRE ? it->y + (it->h - th + 1) / 2 : it->y + it->h - th - 1;
-        if (y < it->y) y = it->valign == OWF_VALIGN_BOTTOM && it->h < th ? it->y + it->h - th : it->y;
+        if (it->valign == OWF_VALIGN_TOP) y = it->y + 1 - ink_top;
+        else if (it->valign == OWF_VALIGN_CENTRE) y = it->y + (it->h - (ink_bottom - ink_top + 1)) / 2 - ink_top;
+        else y = it->y + it->h - 2 - ink_bottom;
         text_cut(cv, role_pen(OC_ROLE_TEXT, it->rgb), it->text, it->flags, it->text_x, y, it->clip_x, it->clip_w, th);
         SetFont(cv->rp, font);
         break;

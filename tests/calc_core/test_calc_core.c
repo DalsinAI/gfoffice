@@ -1244,6 +1244,7 @@ static void test_text_layout(void)
     oc_draw_list_init(&l);
     /* a cell font's pixels: 15 twips a pixel at 100%, 11 points 15 pixels, the default 10 points 13 */
     CHECK(oc_font_px(core, 220) == 15 && oc_font_px(core, 0) == 13 && oc_font_px(core, 285) == 19);
+    CHECK(oc_line_px(core, 220) == 17 && oc_line_px(core, 0) == 15);   /* wrapped lines 1.15 em apart */
     oc_view_set_zoom(core, 200);
     CHECK(oc_font_px(core, 220) == 29);
     oc_view_set_zoom(core, 100);
@@ -1257,22 +1258,35 @@ static void test_text_layout(void)
 
     /* wrapped: 6 pixels a character, 64 less 2 x 3 of pad = 58, 9 characters a line; the word too long for
        a line is broken in it, the rest at spaces */
-    oc_core_set_rows_height(core, 1, 1, 41 * 15);        /* 41 pixels: three 13-pixel lines */
+    oc_core_set_rows_height(core, 1, 1, 47 * 15);        /* 47 pixels: three 15-pixel lines */
     enter_at(core, "B2", "Software/Service Type");
     wrapped(core, "B2", 1, OWF_VALIGN_TOP, 0);
     CHECK(oc_view_draw(core, &l) == OWF_OK);
-    CHECK(texts_of(&l, 1, 1, 0, &it) == 3 && it && !strcmp(it->text, "Software/") && it->y == y2 + 1 && it->h == 13);
-    CHECK(texts_of(&l, 1, 1, 1, &it) == 3 && it && !strcmp(it->text, "Service") && it->y == y2 + 1 + 13);
-    CHECK(texts_of(&l, 1, 1, 2, &it) == 3 && it && !strcmp(it->text, "Type") && it->y == y2 + 1 + 26 &&
+    CHECK(texts_of(&l, 1, 1, 0, &it) == 3 && it && !strcmp(it->text, "Software/") && it->y == y2 + 1 && it->h == 15);
+    CHECK(texts_of(&l, 1, 1, 1, &it) == 3 && it && !strcmp(it->text, "Service") && it->y == y2 + 1 + 15);
+    CHECK(texts_of(&l, 1, 1, 2, &it) == 3 && it && !strcmp(it->text, "Type") && it->y == y2 + 1 + 30 &&
           it->valign == OWF_VALIGN_CENTRE && it->clip_y == it->y && it->clip_w == 63);
     /* centred: the three lines' block in the middle; at the bottom, a pixel up from the grid line */
     wrapped(core, "B2", 1, OWF_VALIGN_CENTRE, 0);
     CHECK(oc_view_draw(core, &l) == OWF_OK);
-    CHECK(texts_of(&l, 1, 1, 0, &it) == 3 && it && it->y == y2 + (40 - 39) / 2);
+    CHECK(texts_of(&l, 1, 1, 0, &it) == 3 && it && it->y == y2 + (46 - 45) / 2);
+    /* a word wider than the cell breaks after its "/" (or "-"), not inside a part that fits */
+    enter_at(core, "B2", "ab/cdefghijk");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 1, 0, &it) == 2 && it && !strcmp(it->text, "ab/"));
+    CHECK(texts_of(&l, 1, 1, 1, &it) == 2 && it && !strcmp(it->text, "cdefghijk"));
+    enter_at(core, "B2", "Cloud-hosted service");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 1, 0, &it) == 3 && it && !strcmp(it->text, "Cloud-"));
+    CHECK(texts_of(&l, 1, 1, 1, &it) == 3 && it && !strcmp(it->text, "hosted"));
+    /* none: where it must */
+    enter_at(core, "B2", "abcdefghijkl");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(texts_of(&l, 1, 1, 0, &it) == 2 && it && !strcmp(it->text, "abcdefghi"));
     enter_at(core, "B2", "two several");
     wrapped(core, "B2", 1, OWF_VALIGN_BOTTOM, 0);
     CHECK(oc_view_draw(core, &l) == OWF_OK);
-    CHECK(texts_of(&l, 1, 1, 1, &it) == 2 && it && !strcmp(it->text, "several") && it->y + it->h == y2 + 40 - 1);
+    CHECK(texts_of(&l, 1, 1, 1, &it) == 2 && it && !strcmp(it->text, "several") && it->y + it->h == y2 + 46 - 1);
     /* the text's own line breaks */
     enter_at(core, "C2", "a\nb\nc");
     wrapped(core, "C2", 1, OWF_VALIGN_TOP, 0);
@@ -1298,12 +1312,12 @@ static void test_text_layout(void)
     wrapped(core, "A6", 1, OWF_VALIGN_CENTRE, 0);
     CHECK(oc_view_draw(core, &l) == OWF_OK);
     CHECK(texts_of(&l, 5, 0, 0, &it) == 2 && it && it->w == 128 && it->clip_w == 127);
-    CHECK(texts_of(&l, 5, 0, 1, &it) == 2 && it && it->y == y2 + 3 * 17 + 41 + (2 * 17 - 1 - 26) / 2 + 13);
+    CHECK(texts_of(&l, 5, 0, 1, &it) == 2 && it && it->y == y2 + 3 * 17 + 47 + (2 * 17 - 1 - 30) / 2 + 15);
     /* not wrapped: one item, the merge's box */
     enter_at(core, "A6", "merged");
     wrapped(core, "A6", 0, OWF_VALIGN_CENTRE, 0);
     CHECK(oc_view_draw(core, &l) == OWF_OK);
-    CHECK(texts_of(&l, 5, 0, 0, &it) == 1 && it && it->y == y2 + 41 + 3 * 17 && it->h == 2 * 17 - 1);
+    CHECK(texts_of(&l, 5, 0, 0, &it) == 1 && it && it->y == y2 + 47 + 3 * 17 && it->h == 2 * 17 - 1);
     /* an empty merged cell adds nothing (and moves no other text) */
     owf_sheet_merge(&oc_core_book(core)->sheets[0], &(owf_range){ 9, 9, 0, 1 });
     enter_at(core, "A10", "");

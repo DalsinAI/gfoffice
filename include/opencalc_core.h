@@ -299,11 +299,13 @@ int oc_core_undo_lost(const oc_core *core);
 typedef int (*oc_measure_fn)(void *user, const char *utf8, size_t length, unsigned flags, int font, int size);
 void oc_view_set_measure(oc_core *core, oc_measure_fn measure, void *user);
 /* A cell font's size in pixels at the view's zoom (twips 0: the default,
- * 10 points): the height a window opens the font at, which measures and
- * draws a cell's text, and the height of a line of wrapped text. At 100%
- * 11 points is 15 pixels (96 dpi). */
+ * 10 points): its em, which a window opens the font at, to measure and
+ * draw a cell's text. At 100% 11 points is 15 pixels (96 dpi). Lines of
+ * wrapped text are oc_line_px apart: 1.15 em, as Arial's and Calibri's
+ * lines (11 points: 17 pixels). */
 #define OC_DEFAULT_FONT_TWIPS 200
 int oc_font_px(const oc_core *core, int twips);
+int oc_line_px(const oc_core *core, int twips);
 /* The grid area's size, and the row numbers' width and the column
  * letters' height (a window sets these from its font). */
 void oc_view_set_size(oc_core *core, int width, int height);
