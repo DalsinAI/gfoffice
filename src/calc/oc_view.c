@@ -583,6 +583,18 @@ static oc_draw_item *add(oc_draw_list *list, int kind, int role)
     return it;
 }
 
+oc_draw_item *oc_draw_add(oc_draw_list *list, int kind, int role)
+{
+    return add(list, kind, role);
+}
+
+static int add_text(oc_draw_list *list, oc_draw_item *it, const char *s, size_t n);
+
+int oc_draw_add_text(oc_draw_list *list, oc_draw_item *it, const char *s, size_t n)
+{
+    return add_text(list, it, s, n);
+}
+
 static int add_text(oc_draw_list *list, oc_draw_item *it, const char *s, size_t n)
 {
     if (list->pool_used + n + 1 > list->pool_cap) {
@@ -1509,6 +1521,91 @@ static int comment_note(drawing *d)
     return 1;
 }
 
+/* ---- Charts ---- */
+
+#define FAR_PX 16384L               /* what is further off the area than this (and a screen) doesn't show */
+
+/* A row's (axis 0) or column's top (left) edge in a pane: frozen ones' (pane 0) from the headers, the
+ * others' from the split, as scrolled. The walk stops once it is far off the area. */
+static long edge_px(const drawing *d, int axis, int pane, unsigned index)
+{
+    const oc_core *core = d->core;
+    const owf_sheet *s = d->sheet;
+    const oc_sheetstate *st = oc_state_const(core);
+    unsigned frozen = axis ? s->freeze_cols : s->freeze_rows, first = axis ? st->left : st->top, i;
+    long far = (axis ? core->width : core->height) + FAR_PX, pos, steps = 0;
+    if (first < frozen)
+        first = frozen;
+    if (pane == 0) {
+        first = 0;
+        pos = axis ? d->rowhdr : core->colhdr;
+    } else {
+        pos = axis ? d->xsplit : d->ysplit;
+    }
+    if (index >= first)
+        for (i = first; i < index && pos < far && steps < 200000L; i++, steps++)
+            pos += line_px(core, axis, i);
+    else
+        for (i = first; i > index && pos > -far && steps < 200000L; i--, steps++)
+            pos -= line_px(core, axis, i - 1);
+    return pos;
+}
+
+/* Rows (columns) a to b, not b, in pixels; at most far. */
+static long span_px(const drawing *d, int axis, unsigned a, unsigned b)
+{
+    long n = 0, far = (axis ? d->core->width : d->core->height) + FAR_PX, steps = 0;
+    for (; a < b && n < far && steps < 200000L; a++, steps++)
+        n += line_px(d->core, axis, a);
+    return n;
+}
+
+/* EMU (9525 a pixel at 100%) as pixels at the zoom; an offset in a cell no more than the cell. */
+static long emu_px(const oc_core *core, long emu, long most)
+{
+    long px = ((emu > 0 ? emu : 0) + 4762) / 9525;
+    px = (px * core->zoom + 50) / 100;
+    return most >= 0 && px > most ? most : px;
+}
+
+/* Each chart over the cells, in each pane (quadrant) it reaches, mapped as that pane is. */
+static int charts(drawing *d)
+{
+    oc_core *core = d->core;
+    int n, k, pr, pc;
+    const owf_chart *list = oc_core_charts(core, &n);
+    for (k = 0; k < n; k++) {
+        const owf_chart *c = &list[k];
+        for (pr = 0; pr < 2; pr++)
+            for (pc = 0; pc < 2; pc++) {
+                int qx, qy, qw, qh;
+                long x, y, w, h;
+                quadrant(d, pr, pc, &qx, &qy, &qw, &qh);
+                if (qw <= 0 || qh <= 0)
+                    continue;
+                x = edge_px(d, 1, pc, c->from_col) + emu_px(core, c->from_col_off, line_px(core, 1, c->from_col));
+                y = edge_px(d, 0, pr, c->from_row) + emu_px(core, c->from_row_off, line_px(core, 0, c->from_row));
+                if (x > qx + qw || y > qy + qh)
+                    continue;
+                if (c->sized) {
+                    w = emu_px(core, c->width, -1);
+                    h = emu_px(core, c->height, -1);
+                } else {
+                    w = edge_px(d, 1, pc, c->from_col) + span_px(d, 1, c->from_col, c->to_col) +
+                        emu_px(core, c->to_col_off, line_px(core, 1, c->to_col)) - x;
+                    h = edge_px(d, 0, pr, c->from_row) + span_px(d, 0, c->from_row, c->to_row) +
+                        emu_px(core, c->to_row_off, line_px(core, 0, c->to_row)) - y;
+                }
+                if (w < 8 || h < 8 || x + w <= qx || y + h <= qy || x < -FAR_PX || y < -FAR_PX || w > 2 * FAR_PX ||
+                    h > 2 * FAR_PX)
+                    continue;
+                if (!oc_chart_draw(core, d->list, c, (int)x, (int)y, (int)w, (int)h, qx, qy, qw, qh))
+                    return 0;
+            }
+    }
+    return 1;
+}
+
 static int build(drawing *d)
 {
     oc_core *core = d->core;
@@ -1742,6 +1839,10 @@ static int build(drawing *d)
 
     /* comments' marks: a small red triangle in each commented cell's top right corner (a merged range's) */
     if (!comment_marks(d) || !filter_buttons(d))
+        return 0;
+
+    /* charts, over the cells */
+    if (!charts(d))
         return 0;
 
     /* 6. the row numbers and column letters */

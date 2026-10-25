@@ -541,6 +541,51 @@ const owf_comment *owf_sheet_comment(const owf_sheet *sheet, unsigned row, unsig
 int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src);
 void owf_sheet_free_extras(owf_sheet *sheet);
 
+/* ---- Charts on sheets (owf.library 2.1) ----
+ * The charts a sheet's kept drawing (an .xlsx's: owf_sheet.drawing) holds,
+ * read from the book's kept parts, for a program to show them: where each
+ * sits, its kind, title, legend and value axis, and its series (the first
+ * group of a chart that has several): the cells their values and
+ * categories come from, and the values and categories the file last had. */
+enum { OWF_CHART_OTHER, OWF_CHART_COLUMN, OWF_CHART_BAR, OWF_CHART_LINE, OWF_CHART_AREA, OWF_CHART_PIE };
+enum { OWF_CHART_CLUSTERED, OWF_CHART_STACKED, OWF_CHART_PERCENT };
+typedef struct {
+    double value;
+    int has_value;               /* 0: none (a gap) */
+    char *label;                 /* its category, or NULL */
+} owf_chart_point;
+typedef struct {
+    char *name;                  /* or NULL */
+    char *name_cell;             /* the cell its name comes from, "Chart!$B$1", or NULL */
+    char *values;                /* the cells its values come from, "Chart!$B$1:$B$4", or NULL (only its points) */
+    char *categories;            /* and its categories', or NULL */
+    int npoints;
+    owf_chart_point *points;     /* as the file last had them */
+    unsigned long colour;        /* its fill (a line's colour): OWF_SHADE(rgb), or 0: the chart's own, by index */
+    int index;
+} owf_chart_series;
+typedef struct {
+    int kind, grouping;          /* OWF_CHART_... */
+    char *title;                 /* or NULL */
+    int legend;                  /* where: 'r', 'l', 't', 'b'; 0 none */
+    int gap;                     /* bars: the gap between categories, a percentage of a bar's width */
+    int gridlines;               /* the value axis's major gridlines */
+    int has_min, has_max;
+    double min, max;             /* the value axis's, when set */
+    /* where: from a cell's top left corner and an offset (EMU, 914400 an
+     * inch, 9525 a pixel at 96 dpi) to another cell's, or a size from there */
+    unsigned from_col, from_row, to_col, to_row;
+    long from_col_off, from_row_off, to_col_off, to_row_off;
+    int sized;                   /* 1: width and height, not to_* */
+    long width, height;
+    int nseries;
+    owf_chart_series *series;
+} owf_chart;
+/* The sheet's charts (none: *count 0), freed with owf_charts_free. OWF_OK,
+ * or OWF_ERR_MEMORY. */
+int owf_sheet_charts(const owf_book *book, int sheet, owf_chart **charts, int *count);
+void owf_charts_free(owf_chart *charts, int count);
+
 /* A number as a formula or a file writes it: up to 15 significant digits,
  * "0.1", "12", "1.5E+20". out holds at least 32 bytes. */
 void owf_number_text(double number, char *out);
@@ -593,6 +638,7 @@ enum {
     OWF_STRUCT_DEFNAME, OWF_STRUCT_BOOK, OWF_STRUCT_BOOK_FORMAT, OWF_STRUCT_UNZIP, OWF_STRUCT_PUB,
     OWF_STRUCT_PUB_PAGE, OWF_STRUCT_PUB_FRAME,
     OWF_STRUCT_CONDFMT, OWF_STRUCT_COMMENT, OWF_STRUCT_VALIDATION, OWF_STRUCT_PART, OWF_STRUCT_FRAME,
+    OWF_STRUCT_CHART_POINT, OWF_STRUCT_CHART_SERIES, OWF_STRUCT_CHART,
     OWF_STRUCT_COUNT
 };
 unsigned long owf_struct_size(int which);
@@ -603,7 +649,8 @@ unsigned long owf_struct_size(int which);
     sizeof(owf_format), sizeof(owf_cell), sizeof(owf_cellstyle), sizeof(owf_colinfo), sizeof(owf_rowinfo), \
     sizeof(owf_range), sizeof(owf_sheet), sizeof(owf_defname), sizeof(owf_book), sizeof(owf_book_format), \
     sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame), sizeof(owf_condfmt), \
-    sizeof(owf_comment), sizeof(owf_validation), sizeof(owf_part), sizeof(owf_frame)
+    sizeof(owf_comment), sizeof(owf_validation), sizeof(owf_part), sizeof(owf_frame), sizeof(owf_chart_point), \
+    sizeof(owf_chart_series), sizeof(owf_chart)
 
 #ifdef __cplusplus
 }
