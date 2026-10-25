@@ -218,6 +218,11 @@ $(OUT)/pub-dump-asan: $(PUB_DEPS)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/pub/pub_dump.c -lz -o $@
 
+# the format lab's stream lister (tools/publab: docs/gfoffice/PUB-FORMAT.md)
+$(OUT)/pub-streams: $(OWF_SRC) tools/publab/pub_streams.c libowf/src/owf_internal.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -Wno-format-truncation -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/publab/pub_streams.c -lz -o $@
+
 pub-test: $(OUT)/pub-dump
 	python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
 
