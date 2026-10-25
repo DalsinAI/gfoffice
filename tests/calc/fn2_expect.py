@@ -7,7 +7,12 @@ spreadsheet program's output is used; the examples Excel's documentation
 gives are checked against these definitions too.
 
   fn2_expect.py            prints the C table (tests/calc/fn2_cases.h)
-  fn2_expect.py --check F  fails when F is not what it would print
+  fn2_expect.py --check F  fails when F is not what it would print, but
+                           for a number's last (15th) digit: Python's
+                           math and statistics (the C library's, and
+                           Python's own from one version to the next)
+                           don't round alike everywhere, so a value on a
+                           halfway point can come out a digit apart
 
 The table has the cells the cases read (fn2_data, typed into Sheet1 to
 Sheet3 of the test book; row 3 of Sheet1 hidden) and the cases (formula,
@@ -19,6 +24,7 @@ MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import datetime
 import math
+import re
 import statistics
 import sys
 from decimal import Decimal, ROUND_HALF_UP, getcontext
@@ -1637,12 +1643,46 @@ def table():
     return "\n".join(lines) + "\n"
 
 
+CASE_LINE = re.compile(r'^    \{ ("(?:[^"\\]|\\.)*"), "((?:[^"\\]|\\.)*)", ([^ ]+) \},$')
+
+
+def last_digit_apart(have, want):
+    """Two lines of the cases' table that differ only in a number's 15th significant digit (the same formula,
+    the same tolerance, numbers both)."""
+    a, b = CASE_LINE.match(have), CASE_LINE.match(want)
+    if not a or not b or a.group(1) != b.group(1) or a.group(3) != b.group(3):
+        return False
+    try:
+        x, y = float(a.group(2)), float(b.group(2))
+    except ValueError:                   # text, a truth value, an error: as made, or not at all
+        return False
+    return abs(x - y) <= 1.0000001e-14 * max(abs(x), abs(y))
+
+
+def check(path, text):
+    """0 when the file at path is text but for numbers a last digit apart (say how many); else what differs."""
+    with open(path, encoding="utf-8") as f:
+        have = f.read().split("\n")
+    want = text.split("\n")
+    if len(have) != len(want):
+        return "%d lines where fn2_expect.py makes %d" % (len(have), len(want))
+    apart = [(h, w) for h, w in zip(have, want) if h != w]
+    wrong = [(h, w) for h, w in apart if not last_digit_apart(h, w)]
+    if wrong:
+        return "\n".join("  has:   %s\n  makes: %s" % hw for hw in wrong[:5]) + ("\n  ..." if len(wrong) > 5 else "")
+    if apart:
+        print("%s: %d case(s) a last digit apart from this Python's (%s), as alike:" % (path, len(apart), sys.version.split()[0]))
+        for h, w in apart:
+            print("  has:   %s\n  makes: %s" % (h.strip(), w.strip()))
+    return 0
+
+
 if __name__ == "__main__":
     text = table()
     if len(sys.argv) > 2 and sys.argv[1] == "--check":
-        with open(sys.argv[2], encoding="utf-8") as f:
-            if f.read() != text:
-                sys.exit("%s is not what fn2_expect.py makes: run python3 tests/calc/fn2_expect.py > %s" % (sys.argv[2], sys.argv[2]))
+        why = check(sys.argv[2], text)
+        if why:
+            sys.exit("%s is not what fn2_expect.py makes: run python3 tests/calc/fn2_expect.py > %s\n%s" % (sys.argv[2], sys.argv[2], why))
         print("%s: %d cases, as fn2_expect.py makes them" % (sys.argv[2], len(CASES)))
     else:
         sys.stdout.write(text)

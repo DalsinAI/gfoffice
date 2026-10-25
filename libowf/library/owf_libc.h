@@ -21,5 +21,10 @@ unsigned long owf_rt_strtoul(const char *s, char **end, int base);
  * %x, %X, with l, a width, and the '0' and '-' flags; %%. Always
  * terminated when size > 0; returns the length the whole would have. */
 int owf_rt_vsnprintf(char *out, size_t size, const char *fmt, va_list ap);
+/* sscanf for what libowf reads: %d, %i, %u, %x with l, a space for any
+ * run of spaces, other characters as themselves, %%. Returns how many it
+ * stored, or -1 when the text ran out before the first; it stops at a
+ * conversion it doesn't do (%f, %s...), so that shows as a short count. */
+int owf_rt_vsscanf(const char *s, const char *fmt, va_list ap);
 
 #endif

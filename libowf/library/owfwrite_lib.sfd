@@ -1,0 +1,63 @@
+==id $Id: owfwrite_lib.sfd 3.0 (25.10.2026) $
+* "owfwrite.library" 3.0: OpenWrite's part of libowf: documents. The
+* document model and its formats: DOCX, ODT, the Amiga word processors'
+* files (Final Writer, Wordworth, ProWrite, IFF FTXT), text, ANSI and HTML,
+* and PDF out.
+* Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).
+* The calls are libowf's, with its names and types; new calls go at the end.
+* The first 17, libowf's shared calls (memory, reports, kinds, zip), are the
+* same calls at the same offsets in all four of GFOffice's libraries
+* (docs/suite/owf-libraries.md). A double goes in two data registers, its
+* high word first, as mathieeedoubbas.library takes them.
+==base _OWFWriteBase
+==basetype struct Library *
+==libname owfwrite.library
+==bias 30
+==public
+==include <exec/types.h>
+==include <owf.h>
+==include <owf_zip.h>
+==version 3
+* libowf's shared calls
+const char *owf_error_text(int error) (d0)
+const char *owf_error_name(int error) (d0)
+void *owf_malloc(size_t n) (d0)
+void *owf_calloc(size_t n, size_t size) (d0,d1)
+void *owf_realloc(void *p, size_t n) (a0,d0)
+void owf_free(void *p) (a0)
+owf_report *owf_report_new() ()
+void owf_report_free(owf_report *report) (a0)
+int owf_report_count(const owf_report *report) (a0)
+const char *owf_report_note(const owf_report *report, int n, owf_note_level *level, int *times) (a0,d0,a1,a2)
+void owf_report_text(owf_report *report, owf_note_level level, const char *text) (a0,d0,a1)
+unsigned long owf_struct_size(int which) (d0)
+owf_kind owf_file_kind(const unsigned char *data, size_t length) (a0,d0)
+int owf_unzip_open(owf_unzip *zip, const unsigned char *data, size_t length) (a0,a1,d0)
+int owf_unzip_has(const owf_unzip *zip, const char *name) (a0,a1)
+int owf_unzip_read(const owf_unzip *zip, const char *name, unsigned char **data, size_t *length) (a0,a1,a2,a3)
+int owf_inflate(unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length) (a0,d0,a1,d1)
+* the document model
+owf_doc *owf_doc_new() ()
+void owf_doc_free(owf_doc *doc) (a0)
+void owf_parafmt_init(owf_parafmt *fmt) (a0)
+void owf_charfmt_init(owf_charfmt *fmt) (a0)
+owf_para *owf_story_add(owf_story *story, const owf_parafmt *fmt) (a0,a1)
+int owf_para_add_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, size_t len) (a0,a1,a2,d0)
+int owf_para_add_link_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, size_t len, const char *href) (a0,a1,a2,d0,a3)
+int owf_para_add_special(owf_para *para, const owf_charfmt *fmt, owf_run_kind kind, owf_field field) (a0,a1,d0,d1)
+int owf_para_add_image(owf_para *para, const owf_charfmt *fmt, int image_index) (a0,a1,d0)
+int owf_doc_add_image(owf_doc *doc, const char *name, const char *mime, const void *data, size_t length, int width, int height, const char *alt) (a0,a1,a2,a3,d0,d1,d2,d3)
+int owf_doc_add_frame(owf_doc *doc, const owf_frame *frame) (a0,a1)
+int owf_para_add_frame(owf_para *para, const owf_charfmt *fmt, int frame_index) (a0,a1,d0)
+int owf_doc_font(owf_doc *doc, const char *name, owf_font_kind kind) (a0,a1,d0)
+int owf_doc_set_title(owf_doc *doc, const char *utf8) (a0,a1)
+const char *owf_font_modern(const char *name, owf_font_kind *kind) (a0,a1)
+* documents' formats
+int owf_format_count() ()
+const owf_format *owf_format_at(int index) (d0)
+const owf_format *owf_format_named(const char *name) (a0)
+const owf_format *owf_format_for_filename(const char *filename) (a0)
+int owf_import_memory(const unsigned char *data, size_t length, const char *format, owf_doc **doc, owf_report *report, const owf_format **used) (a0,d0,a1,a2,a3,d1)
+int owf_import_file(const char *path, const char *format, owf_doc **doc, owf_report *report, const owf_format **used) (a0,a1,a2,a3,d0)
+int owf_export_file(const owf_doc *doc, const char *path, const char *format, owf_report *report) (a0,a1,a2,a3)
+==end
