@@ -599,11 +599,14 @@ static const char *format_of(const oc_core *core, const owf_cellstyle *st)
     return NULL;
 }
 
-/* A cell's text as the grid shows it, and its colour. */
-static int cell_text(const oc_core *core, const owf_cell *c, const owf_cellstyle *st, unsigned col, char *out,
+/* A cell's text as the grid shows it, and its colour. A General number is
+ * fitted to as many digits as the cell's pixels hold in its font (fewer
+ * decimals, then scientific), as Excel fits it to its column. */
+static int cell_text(const oc_core *core, const owf_cell *c, const owf_cellstyle *st, int px, char *out,
                      size_t size, unsigned long *colour)
 {
-    int chars = (int)((long)oc_col_twips(core->book->sheets + core->sheet, col) * 11 / 960);
+    int digit = oc_measure(core, "0", 1, st), pad = PAD * core->zoom / 100 + 1;
+    int chars = digit > 0 ? (px - 2 * pad) / digit : 11;
     char *nl;
     int n = owf_calc_format_value(format_of(core, st), c, core->book->date1904, chars > 0 ? chars : 1, out, size, colour);
     if ((nl = strchr(out, '\n')) != NULL) {               /* one line: up to a line break */
@@ -646,7 +649,7 @@ static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int 
     const owf_cellstyle *st = oc_cell_style(core, c, c->col);
     char buf[256];
     unsigned long colour = OWF_COLOUR_AUTO;
-    int n = cell_text(core, c, st, c->col, buf, sizeof buf, &colour), tw, pad = PAD * core->zoom / 100 + 1, align, lo, hi;
+    int n = cell_text(core, c, st, w, buf, sizeof buf, &colour), tw, pad = PAD * core->zoom / 100 + 1, align, lo, hi;
     int clip_x = x, clip_w = w, qx, qy, qw, qh, k;
     oc_draw_item *it;
     if (n <= 0)

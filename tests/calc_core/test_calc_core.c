@@ -941,7 +941,20 @@ static void test_draw(void)
     CHECK(!vline_at(&l, 40 + 63, 20));                   /* no grid line where the text runs on */
     CHECK(vline_at(&l, 40 + 63, 40));                    /* but the row below has it */
     it = text_of(&l, 2, 2);
-    CHECK(it && it->text && it->text[0] == '#');
+    CHECK(it && !strcmp(it->text, "1.235E+14"));         /* General: scientific, as Excel narrows it */
+    go(core, "C3");
+    oc_core_set_number_format(core, "#,##0.00");         /* a fixed format that doesn't fit: #### */
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    it = text_of(&l, 2, 2);
+    CHECK(it && !strcmp(it->text, "#########"));
+    /* a General number is fitted to the column: (64 - 6) / 6 = 9 characters, not #### */
+    enter_at(core, "D2", "=1/3");
+    enter_at(core, "D3", "=2/3");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    it = text_of(&l, 1, 3);
+    CHECK(it && !strcmp(it->text, "0.3333333"));
+    it = text_of(&l, 2, 3);
+    CHECK(it && !strcmp(it->text, "0.6666667"));
     /* a value stops the run */
     enter_at(core, "B1", "x");
     CHECK(oc_view_draw(core, &l) == OWF_OK);
