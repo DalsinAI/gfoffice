@@ -61,6 +61,7 @@
 #include "ogt_draw.h"
 #include "ogt_icons.h"
 #include "ogt_toolbar.h"
+#include "ogt_iconset.h"
 #include "ogt_font.h"
 #include "ogt_status.h"
 #include "ow_fontwidths.h"
@@ -69,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.17 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.18 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -2944,6 +2945,7 @@ static int window_main(int argc, char **argv)
     LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
     RexxSysBase = (struct RxsLib *)OpenLibrary((STRPTR)"rexxsyslib.library", 36);
     CyberGfxBase = OpenLibrary((STRPTR)"cybergraphics.library", 0);
+    ogt_iconset_attach();   /* the toolbar's pictures come from the Chrome set (Images/Toolbar/) */
     read_theme_choice();
     oc_draw_list_init(&dl);
     if (!(core = oc_core_new(NULL))) { rc = 20; goto out; }

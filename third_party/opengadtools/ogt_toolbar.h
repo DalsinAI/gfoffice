@@ -3,10 +3,13 @@
  * the icon beside its name). Each button is a plain Intuition boolean
  * gadget that draws nothing itself; the toolbar draws them in the theme.
  *
- * A button with an image name shows that picture from the icon set
- * (ogt_iconset: 24, 28, 32 or 48 pixels, the nearest to 1.25 times the
- * font's height), else its vector icon, drawn at 1.25 times the height. Its states follow the style guide
- * (docs/style/README.md, section 2.1): pressed, on (a toggle), disabled.
+ * Pictures from an icon set: a program that links lib/ogt_iconset.c and
+ * calls ogt_iconset_attach() once gives its buttons pictures by name (the
+ * tool's image), sized and spaced as the style guide has them
+ * (docs/style/README.md, sections 3.4 and 4.1: 1.25 times the font's
+ * height, rounded to the set's sizes, on a 4-pixel grid), in its states
+ * (section 2.1). Without that, this file needs nothing of the icon set, and
+ * buttons show their vector icons, laid out and drawn as before the sets.
  *
  * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OGT_TOOLBAR_H
@@ -39,7 +42,19 @@ typedef struct ogt_toolbar {
     int x, y, w, h;     /* the row */
     int pressed;        /* the button held down, or -1 */
     int first_gid;
+    int sets;           /* laid out for an icon set's pictures (the style guide's measures) */
+    int padx, pady, gap, sep;
 } ogt_toolbar;
+
+/* An icon set's calls, handed to the toolbar by ogt_iconset_attach(). */
+typedef struct ogt_toolbar_pictures {
+    int (*want)(int font_height);       /* the icon size a font asks for */
+    int (*size)(int want);              /* the nearest size the set has */
+    int (*draw)(ogt_ctx *c, struct RastPort *rp, const char *name, int size, int x, int y, int disabled);
+} ogt_toolbar_pictures;
+
+/* Gives every toolbar an icon set's pictures (NULL: none, the vector icons). */
+void ogt_toolbar_pictures_use(const ogt_toolbar_pictures *p);
 
 /* Sets the buttons (copied). */
 void ogt_toolbar_set(ogt_toolbar *tb, const ogt_tool *tools, int n, int style);
