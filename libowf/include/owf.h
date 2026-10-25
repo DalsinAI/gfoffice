@@ -351,6 +351,30 @@ typedef struct {
     char *xml;                   /* KEPT: its cfRule element as the file had it, but its look's dxfId */
 } owf_condfmt;
 
+/* Data validation over ranges, as Excel's dataValidation: what a cell
+ * may hold (a whole number, a decimal, one of a list, a date, a time, a
+ * text of a length, or what a formula allows), compared by op with
+ * formula[0] (and [1]) as at the first range's top left cell; a list's
+ * formula[0] is "\"Yes,No\"" or a range. The messages are UTF-8 or NULL. */
+enum {
+    OWF_DV_ANY, OWF_DV_WHOLE, OWF_DV_DECIMAL, OWF_DV_LIST, OWF_DV_DATE, OWF_DV_TIME, OWF_DV_TEXT_LENGTH,
+    OWF_DV_CUSTOM
+};
+enum { OWF_DV_STOP, OWF_DV_WARNING, OWF_DV_INFORMATION };
+
+typedef struct {
+    int nranges;
+    owf_range *ranges;
+    int type;                    /* OWF_DV_... */
+    int op;                      /* OWF_CF_BETWEEN...: as conditional formatting's cellIs */
+    int allow_blank;
+    int no_dropdown;             /* a list without its arrow (Excel's showDropDown) */
+    int show_prompt, show_error;
+    int error_style;             /* OWF_DV_STOP... */
+    char *formula[2];
+    char *prompt_title, *prompt, *error_title, *error;
+} owf_validation;
+
 /* A comment (Excel's note) on a cell: its author and text, UTF-8, from
  * malloc; the author may be NULL. */
 typedef struct {
@@ -377,6 +401,8 @@ typedef struct {
     owf_condfmt *condfmts;
     int ncomments, capcomments;
     owf_comment *comments;       /* by row, then column */
+    int nvalidations, capvalidations;
+    owf_validation *validations;
 } owf_sheet;
 
 /* A defined name: "Prices" standing for "Sheet1!$B$2:$B$40". */
@@ -431,6 +457,12 @@ int owf_book_add_name(owf_book *book, const char *name, int sheet, const char *f
  * malloc. NULL when memory runs out. */
 owf_condfmt *owf_sheet_add_condfmt(owf_sheet *sheet);
 void owf_condfmt_free(owf_condfmt *cf);
+/* A new validation at the end of the sheet's, all zero (as
+ * owf_sheet_add_condfmt), and one freed; the first whose ranges hold a
+ * cell, or NULL. */
+owf_validation *owf_sheet_add_validation(owf_sheet *sheet);
+void owf_validation_free(owf_validation *v);
+const owf_validation *owf_sheet_validation(const owf_sheet *sheet, unsigned row, unsigned col);
 /* The comment on a cell, set (text and author copied; NULL text takes it
  * away), or found (NULL: none). -1 when memory runs out. */
 int owf_sheet_set_comment(owf_sheet *sheet, unsigned row, unsigned col, const char *author, const char *text);
@@ -438,7 +470,7 @@ const owf_comment *owf_sheet_comment(const owf_sheet *sheet, unsigned row, unsig
 /* What a sheet holds beside its cells, columns, rows and merges (its
  * conditional formats and comments) copied from src into dst, which has
  * none: for a program that copies a sheet. -1 when memory runs out (dst
- * has none). */
+ * has none). Its validations too. */
 int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src);
 void owf_sheet_free_extras(owf_sheet *sheet);
 
@@ -493,7 +525,7 @@ enum {
     OWF_STRUCT_CELLSTYLE, OWF_STRUCT_COLINFO, OWF_STRUCT_ROWINFO, OWF_STRUCT_RANGE, OWF_STRUCT_SHEET,
     OWF_STRUCT_DEFNAME, OWF_STRUCT_BOOK, OWF_STRUCT_BOOK_FORMAT, OWF_STRUCT_UNZIP, OWF_STRUCT_PUB,
     OWF_STRUCT_PUB_PAGE, OWF_STRUCT_PUB_FRAME,
-    OWF_STRUCT_CONDFMT, OWF_STRUCT_COMMENT,
+    OWF_STRUCT_CONDFMT, OWF_STRUCT_COMMENT, OWF_STRUCT_VALIDATION,
     OWF_STRUCT_COUNT
 };
 unsigned long owf_struct_size(int which);
@@ -504,7 +536,7 @@ unsigned long owf_struct_size(int which);
     sizeof(owf_format), sizeof(owf_cell), sizeof(owf_cellstyle), sizeof(owf_colinfo), sizeof(owf_rowinfo), \
     sizeof(owf_range), sizeof(owf_sheet), sizeof(owf_defname), sizeof(owf_book), sizeof(owf_book_format), \
     sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame), sizeof(owf_condfmt), \
-    sizeof(owf_comment)
+    sizeof(owf_comment), sizeof(owf_validation)
 
 #ifdef __cplusplus
 }

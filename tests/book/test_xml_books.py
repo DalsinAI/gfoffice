@@ -126,7 +126,7 @@ def parse(text):
             sheet["cells"][(r, c)] = line
         elif word in ("col", "row", "merge"):
             sheet[word + "s"].append(line)
-        elif word in ("cf", "comment"):
+        elif word in ("cf", "comment", "validation"):
             sheet.setdefault(word + "s", []).append(line)
     return book
 
@@ -370,13 +370,16 @@ def test_hand_xlsx(work):
     notes = "\n".join(b["notes"])
     for want in ("Diagonal lines", "Patterned cell backgrounds", "gradient", "angle", "Text formatted in parts",
                  "Pivot tables", "Chart sheets", "comments on cells could not be read", "#SPILL!", "Data tables", "numbers could not be read",
-                 "Sheet protection", "AutoFilter", "Data validation", "Links in cells",
+                 "Sheet protection", "AutoFilter", "Links in cells",
                  "Pictures, charts", "Tables keep"):
         check("hand: note " + want, want in notes, notes)
     check("hand: conditional formatting read, not noted", "Conditional formatting" not in notes, notes)
     data = b["sheets"][0]
     check("hand: conditional format", data.get("cfs") == [
         'cf type=0 op=4 priority=1 stop=0 ranges=1,1-2,1 set=0 flags=0 colour=- fill=- formula "2"'], data.get("cfs"))
+    check("hand: data validation", data.get("validations") == [
+        'validation type=3 op=0 blank=0 nodropdown=0 prompt=0 error=0 style=0 ranges=1,2-1,2 formula "\\"a,b\\""'],
+        data.get("validations"))
     check("hand: sheet", data["line"] == 'sheet 0 "Data" hidden=0 width=1200 height=300 freeze=2,1', data["line"])
     check("hand: columns", data["cols"] == ["col 1-2 width=2175 style=2 hidden=1", "col 7-16383 width=525 style=0 hidden=0"], data["cols"])
     check("hand: rows", data["rows"] == ["row 0 height=600 hidden=0", "row 2 height=300 hidden=1", "row 5 height=90 hidden=0"], data["rows"])
@@ -476,7 +479,7 @@ def test_generated_xlsx():
     if rc == 0:
         b = parse(out)
         check("openpyxl: book", b["line"] == "book format=xlsx sheets=3 active=2 date1904=1", b["line"])
-        for want in ("Data validation", "Text formatted in parts"):
+        for want in ("Text formatted in parts",):
             check("openpyxl: note " + want, want in "\n".join(b["notes"]), b["notes"])
         check("openpyxl: comment read", 'comment 0,0 author "me" text "a note"' in out, "")
         check("openpyxl: conditional formatting read", any(sh.get("cfs") for sh in b["sheets"]), b["sheets"][0].get("cfs"))
@@ -686,7 +689,10 @@ def test_xlsx_ods_xlsx(work, xlsx_paths):
         if "\ncomment " in a:
             rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-cm.ods")])
             check("xlsx to ods: comments noted: " + stem, "Comments on cells are kept" in out, out)
-        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("cf ", "comment "))
+        if "\nvalidation " in a:
+            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-dv.ods")])
+            check("xlsx to ods: validation noted: " + stem, "Data validation is kept" in out, out)
+        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("cf ", "comment ", "validation "))
 
 
 def test_ods_round_trips(work, ods_paths):
