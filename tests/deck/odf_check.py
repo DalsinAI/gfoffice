@@ -8,6 +8,8 @@
   the required attributes there, by odfpy's grammar (odf.grammar, made from
   the OASIS ODF 1.2 schema). Foreign namespaces are allowed, as ODF's
   extended conformance allows them.
+- Every style, list style, master page, layout and drawing definition a
+  part names is defined where that part can see it.
 - odfpy itself loads the package.
 
 Prints one line per problem; exit 1 when there is any. Used by
@@ -71,6 +73,58 @@ def check_tree(part, root, problems):
     walk(root, None)
 
 
+REF_ATTRS = {"style-name", "parent-style-name", "text-style-name", "list-style-name", "master-page-name",
+             "page-layout-name", "presentation-page-layout-name", "data-style-name", "next-style-name",
+             "fill-image-name", "fill-gradient-name", "fill-hatch-name", "marker-start", "marker-end",
+             "stroke-dash", "opacity-name"}
+NAME_ATTRS = ("{urn:oasis:names:tc:opendocument:xmlns:style:1.0}name",
+              "{urn:oasis:names:tc:opendocument:xmlns:drawing:1.0}name")
+
+
+def names_in(el):
+    out = set()
+    for e in el.iter() if el is not None else ():
+        for a in NAME_ATTRS:
+            if a in e.attrib and split(e.tag)[1] not in ("page", "frame", "custom-shape", "rect", "ellipse", "line",
+                                                         "polygon", "g", "layer", "connector", "image"):
+                out.add(e.attrib[a])
+    return out
+
+
+def check_refs(trees, problems):
+    """Every style, list, master page, layout and drawing definition named is
+    there: content.xml's from its own automatic styles and styles.xml's
+    common ones, master pages and layouts; styles.xml's from its own."""
+    O = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}"
+    styles = trees.get("styles.xml")
+    content = trees.get("content.xml")
+    common = names_in(styles.find(O + "styles")) if styles is not None else set()
+    masters = names_in(styles.find(O + "master-styles")) if styles is not None else set()
+    styles_auto = names_in(styles.find(O + "automatic-styles")) if styles is not None else set()
+    scope = {"styles.xml": common | masters | styles_auto}
+    if content is not None:
+        page_layouts = {e.get(NAME_ATTRS[0]) for e in styles.iter("{urn:oasis:names:tc:opendocument:xmlns:style:1.0}presentation-page-layout")} if styles is not None else set()
+        scope["content.xml"] = common | masters | page_layouts | names_in(content.find(O + "automatic-styles"))
+    def walk(el):
+        """The part's elements, but not an embedded object's own document
+        (a chart in flat XML), whose names are its own."""
+        yield el
+        for c in el:
+            if c.tag != O + "document":
+                yield from walk(c)
+
+    for part, root in trees.items():
+        if part not in scope:
+            continue
+        for e in walk(root):
+            for a, v in e.attrib.items():
+                ans, aname = split(a)
+                if ans not in ODF_NS or aname not in REF_ATTRS or not v:
+                    continue
+                if v not in scope[part]:
+                    problems.append(f"{part}: {aname}={v!r} names nothing there")
+
+
 def check(path):
     problems = []
     with open(path, "rb") as f:
@@ -108,6 +162,7 @@ def check(path):
     for n in listed:
         if n != "/" and not n.endswith("/") and n not in names:
             problems.append(f"the manifest lists {n}, which is not there")
+    trees = {}
     for n in sorted(names):
         if not n.endswith(".xml") or "/" in n and not n.startswith("META-INF"):
             continue
@@ -118,6 +173,8 @@ def check(path):
             continue
         if n != "META-INF/manifest.xml":
             check_tree(n, root, problems)
+            trees[n] = root
+    check_refs(trees, problems)
     try:
         load(io.BytesIO(data))
     except Exception as e:  # noqa: BLE001 - odfpy raises many kinds

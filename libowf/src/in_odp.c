@@ -73,6 +73,8 @@ typedef struct {
     const char *lnames[OWF_DECK_MAX_LAYOUTS];   /* each layout's style:name */
     pic *pics;
     int npics, cappics;
+    struct { const owf_xml_node *node; owf_kept_kind kind; } *keptnodes;
+    int nkeptnodes, capkeptnodes;
     owf_buf scratch;
     int failed;
     int depth;
@@ -682,21 +684,26 @@ static int keep_xml(odp *o, owf_kept_kind kind, const owf_xml_node *n)
     return k;
 }
 
-/* The name a kept element is known by, for not keeping it twice. */
-static int already_kept(const odp *o, owf_kept_kind kind, const char *element, const char *name)
+/* 1 when this element was kept as this kind already; else it is noted. */
+static int already_kept(odp *o, owf_kept_kind kind, const owf_xml_node *n)
 {
     int i;
-    char want[160];
-    snprintf(want, sizeof want, ":%s ", element);
-    for (i = 0; i < o->deck->nkept; i++) {
-        const char *x = o->deck->kept[i].xml, *p;
-        if (o->deck->kept[i].kind != kind || !(p = strstr(x, want)) || p - x > 32)
-            continue;
-        /* name="..." or draw:name="..." in its first tag */
-        if ((p = strstr(x, "name=\"")) && (size_t)(strchr(x, '>') - x) > (size_t)(p - x) &&
-            !strncmp(p + 6, name, strlen(name)) && p[6 + strlen(name)] == '"')
+    for (i = 0; i < o->nkeptnodes; i++)
+        if (o->keptnodes[i].node == n && o->keptnodes[i].kind == kind)
             return 1;
+    if (o->nkeptnodes == o->capkeptnodes) {
+        int want = o->capkeptnodes ? o->capkeptnodes * 2 : 32;
+        void *p = realloc(o->keptnodes, (size_t)want * sizeof *o->keptnodes);
+        if (!p) {
+            o->failed = 1;
+            return 1;
+        }
+        o->keptnodes = p;
+        o->capkeptnodes = want;
     }
+    o->keptnodes[o->nkeptnodes].node = n;
+    o->keptnodes[o->nkeptnodes].kind = kind;
+    o->nkeptnodes++;
     return 0;
 }
 
@@ -737,12 +744,14 @@ static void keep_style_named(odp *o, const char *name, int where, int depth)
     containers[1] = o->common;
     for (k = 0; k < 2; k++)
         for (c = containers[k] ? containers[k]->first : NULL; c; c = c->next) {
-            owf_kept_kind kind = k ? OWF_KEPT_DEFINITION : OWF_KEPT_STYLE;
+            /* a master's objects are in styles.xml, so are the styles they use */
+            owf_kept_kind kind = k ? OWF_KEPT_DEFINITION
+                               : where == OWF_ODF_STYLES_AUTO ? OWF_KEPT_MASTER_STYLE : OWF_KEPT_STYLE;
             if (c->type != OWF_XML_ELEMENT || !same(attr(c, NS_STYLE, "name"), name))
                 continue;
             if (k && generated_style(o, name, attr(c, NS_STYLE, "family")))
                 return;
-            if (already_kept(o, kind, c->name, name))
+            if (already_kept(o, kind, c))
                 return;
             if (keep_xml(o, kind, c) >= 0)
                 keep_refs(o, c, k ? OWF_ODF_COMMON : where, depth + 1);
@@ -755,8 +764,7 @@ static void keep_definition_named(odp *o, const char *name)
     const owf_xml_node *c;
     for (c = o->common ? o->common->first : NULL; c; c = c->next)
         if (c->type == OWF_XML_ELEMENT && c->ns && !strcmp(c->ns, NS_DRAW) && same(attr(c, NS_DRAW, "name"), name)) {
-            if (!already_kept(o, OWF_KEPT_DEFINITION, c->name, name) &&
-                keep_xml(o, OWF_KEPT_DEFINITION, c) >= 0)
+            if (!already_kept(o, OWF_KEPT_DEFINITION, c) && keep_xml(o, OWF_KEPT_DEFINITION, c) >= 0)
                 keep_refs(o, c, OWF_ODF_COMMON, 1);
             return;
         }
@@ -2279,6 +2287,7 @@ static void free_reader(odp *o)
     owf_buf_free(&o->scratch);
     free(o->styles);
     free(o->pics);
+    free(o->keptnodes);
     free(o);
 }
 

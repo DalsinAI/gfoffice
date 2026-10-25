@@ -1390,6 +1390,9 @@ static int build_styles(odpw *w, owf_buf *out)
     put_page_layout(out, "opPM2", d->notes_page.width > 0 ? d->notes_page.width : 11906,
                     d->notes_page.height > 0 ? d->notes_page.height : 16838);
     reg_write(out, &w->autos_styles);
+    for (i = 0; i < d->nkept; i++)
+        if (d->kept[i].kind == OWF_KEPT_MASTER_STYLE)
+            owf_buf_puts(out, d->kept[i].xml);
     owf_buf_puts(out, "</office:automatic-styles>");
     owf_buf_put(out, masters.data, masters.length);
     if (masters.failed || body.failed)

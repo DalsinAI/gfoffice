@@ -185,12 +185,13 @@ def test_hand(work, hand):
           and len([x for x in lines if "parent=10 " in x]) == 2)
     check("hand: a rotated rectangle", any("rot=300" in x and 'name="Tilted"' in x for x in lines))
     kept = [x for x in lines if "kind=6 " in x]
-    check("hand: three objects kept", len(kept) == 3 and all("keep=0/" in x for x in kept), kept)
+    check("hand: four objects kept, one on the master", len(kept) == 4 and all("keep=0/" in x for x in kept)
+          and any('name="Badge"' in x and "fill=FFC000" in x for x in kept), kept)
     check("hand: the chart's picture shown", any('name="Chart"' in x and "image=image/png/116/" in x for x in kept))
     check("hand: a cropped picture", "crop=188,124,188,124" in out and 'alt="A red picture"' in out)
     check("hand: a JPEG", "image=image/jpeg/910/" in out)
     check("hand: a table", "cols=3 widths=3401,1700,1700" in out and "cell=0,0/3 shade=D9E2F3" in out and "cell=2,2/3 shade=-" in out)
-    check("hand: kept XML", "kept objects=3 timing=1 styles=3 definitions=2 attributes=1 settings=1 graphic=1" in out,
+    check("hand: kept XML", "kept objects=4 timing=1 styles=3 definitions=2 attributes=1 settings=1 graphic=1 master-styles=1" in out,
           lines_with(lines, "kept "))
     check("hand: the chart's parts", 'part "Object 1/" application/vnd.oasis.opendocument.chart 0' in out and
           'part "Object 1/content.xml" text/xml' in out and 'part "ObjectReplacements/Object 1" image/png 116' in out)

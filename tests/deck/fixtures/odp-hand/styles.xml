@@ -99,6 +99,9 @@
     <style:style style:name="Mgr2" style:family="graphic" style:parent-style-name="standard">
       <style:graphic-properties draw:stroke="none" draw:fill="none"/>
     </style:style>
+    <style:style style:name="Mgr3" style:family="graphic" style:parent-style-name="standard">
+      <style:graphic-properties draw:stroke="none" draw:fill="solid" draw:fill-color="#ffc000"/>
+    </style:style>
     <style:style style:name="MP1" style:family="paragraph">
       <style:paragraph-properties fo:text-align="end"/>
     </style:style>
@@ -119,6 +122,9 @@
       <draw:frame draw:style-name="Mgr2" draw:layer="backgroundobjects" draw:name="Logo" svg:x="26.4cm" svg:y="0.4cm" svg:width="1.2cm" svg:height="0.9cm">
         <draw:image xlink:href="Pictures/red.png" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>
       </draw:frame>
+      <draw:custom-shape draw:style-name="Mgr3" draw:layer="backgroundobjects" draw:name="Badge" svg:x="0.3cm" svg:y="0.3cm" svg:width="1cm" svg:height="1cm">
+        <draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="star5" draw:enhanced-path="M 10797 0 L 8278 8256 0 8256 6722 13405 4198 21600 10797 16580 17401 21600 14878 13405 21600 8256 13321 8256 10797 0 Z N"/>
+      </draw:custom-shape>
       <draw:frame presentation:style-name="Default-title" draw:layer="backgroundobjects" svg:x="1.4cm" svg:y="0.6cm" svg:width="25.2cm" svg:height="2.6cm" presentation:class="title" presentation:placeholder="true">
         <draw:text-box/>
       </draw:frame>

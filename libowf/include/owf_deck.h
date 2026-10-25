@@ -191,8 +191,9 @@ typedef enum {
     OWF_KEPT_DEFINITION,         /* a gradient, hatch, marker, dash or fill picture kept objects use */
     OWF_KEPT_ATTRIBUTES,         /* attributes, as name="value" pairs (a transition's) */
     OWF_KEPT_SETTINGS,           /* the show's settings and custom shows */
-    OWF_KEPT_GRAPHIC             /* the graphic properties of the file's "standard" style, which
+    OWF_KEPT_GRAPHIC,            /* the graphic properties of the file's "standard" style, which
                                     kept objects' styles inherit */
+    OWF_KEPT_MASTER_STYLE        /* an automatic style kept objects of a master use (styles.xml's) */
 } owf_kept_kind;
 
 typedef struct {
