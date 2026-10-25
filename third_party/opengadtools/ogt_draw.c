@@ -122,13 +122,21 @@ ogt_rgb ogt_colour(ogt_ctx *c, const char *key)
 
 LONG ogt_pen(ogt_ctx *c, const char *key)
 {
+    /* a key the theme doesn't name: its role's colour (THEME_SPEC.md section 8),
+     * the window's for a background and the text's for text, not pen 1, which
+     * is black on the Workbench's palette (a status bar was black, under dark
+     * text) */
+    static const char *const role_key[4] = { "window", "text", "frame.highlight", "accent" };
     ogt_rgb rgb;
+    int role;
     if (c->four) {
-        int role = ogt_four_role(key, c->tf, c->tt, c->ft);
+        role = ogt_four_role(key, c->tf, c->tt, c->ft);
         return c->fourpen[role < 0 ? 0 : role & 3];
     }
-    if (!ogt_theme_colour(c->theme, c->mode, key, &rgb)) return c->fourpen[1] ? c->fourpen[1] : 1;
-    return ogt_pen_rgb(c, rgb);
+    if (ogt_theme_colour(c->theme, c->mode, key, &rgb)) return ogt_pen_rgb(c, rgb);
+    role = ogt_four_role(key, c->tf, c->tt, c->ft);
+    if (ogt_theme_colour(c->theme, c->mode, role_key[role < 0 ? 0 : role & 3], &rgb)) return ogt_pen_rgb(c, rgb);
+    return c->fourpen[1] ? c->fourpen[1] : 1;
 }
 
 /* A real pen for a direct colour: text and lines can't use FillPixelArray. */
