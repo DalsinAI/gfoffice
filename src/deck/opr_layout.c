@@ -340,7 +340,10 @@ static opr_frame *add_frame(builder *b, const owf_obj *obj, int from_master)
     memset(f, 0, sizeof *f);
     f->obj = obj;
     f->from_master = from_master;
-    f->scale = b->scales ? b->scales[b->out->nframes - 1] : 100;
+    /* text PowerPoint shrank to fit starts at the size it shrank it to */
+    f->scale = b->scales ? b->scales[b->out->nframes - 1]
+             : obj && obj->autofit == OWF_AUTOFIT_SHRINK && obj->font_scale >= 10 && obj->font_scale < 100
+               ? obj->font_scale : 100;
     if (obj)
         f->box = *obj;
     return f;
@@ -744,7 +747,7 @@ opr_slide *opr_slide_layout(const owf_deck *deck, int slide, ol_measure_text_fn 
             if (!scales)
                 goto fail;
             for (i = 0; i < s->nframes; i++)
-                scales[i] = 100;
+                scales[i] = s->frames[i].scale;
             b.scales = scales;
         }
         if (pass >= 4)

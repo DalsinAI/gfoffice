@@ -160,6 +160,8 @@ static void put_objs(const char *indent, const owf_obj *objs, int n)
         }
         printf(" valign=%d autofit=%d inset=%d,%d,%d,%d", o->valign, o->autofit, o->inset[0], o->inset[1],
                o->inset[2], o->inset[3]);
+        if (o->font_scale || o->line_reduction)
+            printf(" fitted=%d/%d", o->font_scale, o->line_reduction);
         if (o->kind == OWF_OBJ_PICTURE || o->image >= 0) {
             printf(" image=");
             put_image(o->image);
