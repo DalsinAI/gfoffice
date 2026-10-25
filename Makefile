@@ -331,3 +331,94 @@ test: pub-test
 check: pub-check
 
 .PHONY: pub-test pub-check
+
+# owf.library 2 (libowf/library): the library's own double arithmetic
+# (owf_softdouble.c) bit for bit against the PC's doubles; its maths and
+# strtod (owf_libm.c) against the PC's C library; the formula engine's own
+# tests on those maths (libm_shim.c, no -lm); OWFLibTest's version-2 checks
+# (owf_lib_checks.c) with libowf linked in and the same maths;
+# owf_file_kind and the structures' sizes; the SFD against the headers and
+# the glue (check_sfd.py), and the maths' tables (gen_libm_tables.py).
+LIBM_DEPS = libowf/library/owf_libm.c libowf/library/owf_libm.h
+LIBM_ON = -fno-builtin -Ilibowf/library libowf/library/owf_libm.c tests/library/libm_shim.c
+LIB_FIXTURES = tests/book/fixtures/book.xls tests/book/fixtures/book-lo.xlsx tests/book/fixtures/book-lo.ods \
+	tests/pub/samples/Sample.pub
+LIBCHECK_DEPS = $(OWF_SRC) $(CALC_SRC) $(LIBM_DEPS) tests/library/libm_shim.c tests/library/owf_lib_checks.c \
+	tests/library/owf_lib_checks.h tests/library/test_owf_lib_checks.c libowf/include/owf.h libowf/include/owf_zip.h
+SANITIZE = -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+
+$(OUT)/test-owf-softdouble: libowf/library/owf_softdouble.c tests/library/test_owf_softdouble.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOSD_HOST_TEST libowf/library/owf_softdouble.c tests/library/test_owf_softdouble.c -lm -o $@
+
+$(OUT)/test-owf-softdouble-asan: libowf/library/owf_softdouble.c tests/library/test_owf_softdouble.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(SANITIZE) -DOSD_HOST_TEST libowf/library/owf_softdouble.c tests/library/test_owf_softdouble.c -lm -o $@
+
+$(OUT)/test-owf-libm: $(OWF_SRC) $(LIBM_DEPS) tests/library/test_owf_libm.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -fno-builtin -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/library $(OWF_SRC) \
+		libowf/library/owf_libm.c tests/library/test_owf_libm.c -lz -lm -o $@
+
+$(OUT)/test-owf-libm-asan: $(OWF_SRC) $(LIBM_DEPS) tests/library/test_owf_libm.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(SANITIZE) -fno-builtin -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/library $(OWF_SRC) \
+		libowf/library/owf_libm.c tests/library/test_owf_libm.c -lz -lm -o $@
+
+$(OUT)/test-calc-owflibm: $(OWF_SRC) $(CALC_SRC) $(LIBM_DEPS) tests/library/libm_shim.c tests/calc/test_calc.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/calc $(LIBM_ON) $(OWF_SRC) $(CALC_SRC) \
+		tests/calc/test_calc.c -lz -o $@
+
+$(OUT)/test-calc-owflibm-asan: $(OWF_SRC) $(CALC_SRC) $(LIBM_DEPS) tests/library/libm_shim.c tests/calc/test_calc.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(SANITIZE) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/calc $(LIBM_ON) $(OWF_SRC) $(CALC_SRC) \
+		tests/calc/test_calc.c -lz -o $@
+
+$(OUT)/test-owf-lib-checks: $(LIBCHECK_DEPS)
+	mkdir -p $(OUT)/libfixtures
+	cp $(LIB_FIXTURES) $(OUT)/libfixtures/
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/calc $(LIBM_ON) $(OWF_SRC) $(CALC_SRC) \
+		tests/library/owf_lib_checks.c tests/library/test_owf_lib_checks.c -lz -o $@
+
+$(OUT)/test-owf-lib-checks-asan: $(LIBCHECK_DEPS)
+	mkdir -p $(OUT)/libfixtures
+	cp $(LIB_FIXTURES) $(OUT)/libfixtures/
+	$(CC) $(WARN) $(SANITIZE) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/calc $(LIBM_ON) $(OWF_SRC) $(CALC_SRC) \
+		tests/library/owf_lib_checks.c tests/library/test_owf_lib_checks.c -lz -o $@
+
+$(OUT)/test-owf-kind: $(OWF_SRC) tests/library/test_owf_kind.c libowf/include/owf.h libowf/include/owf_zip.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/library/test_owf_kind.c -lz -o $@
+
+$(OUT)/test-owf-kind-asan: $(OWF_SRC) tests/library/test_owf_kind.c libowf/include/owf.h libowf/include/owf_zip.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(SANITIZE) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/library/test_owf_kind.c -lz -o $@
+
+sfd-check:
+	python3 tests/library/check_sfd.py
+	python3 tests/library/gen_libm_tables.py --check libowf/library/owf_libm.c
+
+library-test: sfd-check $(OUT)/test-owf-softdouble $(OUT)/test-owf-libm $(OUT)/test-calc-owflibm \
+		$(OUT)/test-owf-lib-checks $(OUT)/test-owf-kind
+	$(OUT)/test-owf-softdouble
+	$(OUT)/test-owf-libm
+	$(OUT)/test-calc-owflibm $(CALC_FIXTURES)
+	$(OUT)/test-owf-lib-checks $(OUT)/libfixtures $(OUT)/
+	$(OUT)/test-owf-kind
+
+library-check: sfd-check $(OUT)/test-owf-softdouble-asan $(OUT)/test-owf-libm-asan $(OUT)/test-calc-owflibm-asan \
+		$(OUT)/test-owf-lib-checks-asan $(OUT)/test-owf-kind-asan
+	$(OUT)/test-owf-softdouble-asan 300000
+	$(OUT)/test-owf-libm-asan 40000
+	$(OUT)/test-calc-owflibm-asan $(CALC_FIXTURES)
+	$(OUT)/test-owf-lib-checks-asan $(OUT)/libfixtures $(OUT)/
+	$(OUT)/test-owf-kind-asan
+
+libtest-host: $(OUT)/test-owf-lib-checks
+	$(OUT)/test-owf-lib-checks $(OUT)/libfixtures $(OUT)/
+
+test: library-test
+check: library-check
+
+.PHONY: sfd-check library-test library-check libtest-host

@@ -1,23 +1,32 @@
 /*
  * OWFLibTest: owf.library from LIBS:, as a program uses it.
  *
- *   OWFLibTest [SAMPLES=dir]     (default PROGDIR:samples)
+ *   OWFLibTest [SAMPLES=dir] [FIXTURES=dir]
+ *              (default PROGDIR:samples and PROGDIR:fixtures, as
+ *              build-library.sh lays them out)
  *
  * Builds a document through the library's calls, saves it as ODT, DOCX,
  * HTML, PDF and text in T:, reads the ODT and DOCX back and compares the
  * text; opens the sample DOCX and ODT; frees memory the library allocated
  * with owf_free and grows a document's runs with owf_realloc, as the
- * editor does; then does it all again from a second task at the same
- * time. Prints one line per check (the second task's as one line) and
+ * editor does. Then version 2's calls (owf_lib_checks.c, which the PC runs
+ * too): the fixture workbook as XLS, XLSX and ODS, saved and read back;
+ * the formula engine on a new book, 27 formulas through the library's own
+ * maths among them; what files are; a zip read and raw DEFLATE inflated;
+ * a .pub read. Then it all again from a second task at the same time.
+ * Prints one line per check (the second task's as one line) and
  * "OWFLibTest: N passed, M failed".
  * z.library (ours, openzlib) is optional: without it the library reads
- * ODT and DOCX with its own inflate, and writes them stored.
+ * zip packages with its own inflate, and writes them stored.
  *
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
+#ifndef OWF_USE_LIBRARY
 #define OWF_USE_LIBRARY
+#endif
 #include "owf.h"
 #include "owf_open.h"
+#include "owf_lib_checks.h"
 
 #include <exec/types.h>
 #include <exec/tasks.h>
@@ -177,6 +186,41 @@ static int editor_memory(void)
 }
 
 static const char *samples = "PROGDIR:samples";
+static const char *fixtures = "PROGDIR:fixtures";
+
+/* a whole file through dos.library into the library's memory: safe from
+ * either task, as libnix's stdio is not */
+static int read_file(const char *path, unsigned char **data, size_t *length)
+{
+    BPTR fh = Open((CONST_STRPTR)path, MODE_OLDFILE);
+    LONG n;
+    *data = NULL;
+    *length = 0;
+    if (!fh)
+        return 0;
+    Seek(fh, 0, OFFSET_END);
+    n = Seek(fh, 0, OFFSET_BEGINNING);
+    if (n < 0 || !(*data = (unsigned char *)owf_malloc((size_t)n + 1)) || Read(fh, *data, n) != n) {
+        Close(fh);
+        owf_free(*data);
+        *data = NULL;
+        return 0;
+    }
+    Close(fh);
+    (*data)[n] = 0;
+    *length = (size_t)n;
+    return 1;
+}
+
+static void delete_file(const char *path)
+{
+    DeleteFile((CONST_STRPTR)path);
+}
+
+static void check_v2(void *ctx, int ok, const char *what)
+{
+    check_in((struct results *)ctx, ok, what);
+}
 
 static void run_checks(struct results *res, const char *tag)
 {
@@ -202,6 +246,17 @@ static void run_checks(struct results *res, const char *tag)
     check_in(res, open_sample(samples, "OpenWrite-Tour.odt", "odt"), what);
     snprintf(what, sizeof what, "%s: editor-style memory, freed by the library", tag);
     check_in(res, editor_memory(), what);
+    {
+        owf_lib_checks c;
+        c.check = check_v2;
+        c.ctx = res;
+        c.read_file = read_file;
+        c.delete_file = delete_file;
+        c.fixtures = fixtures;
+        c.temp = "T:";
+        c.tag = tag;
+        owf_lib_run_checks(&c);
+    }
 }
 
 /* ---- a second task using the library at the same time -------------------- */
@@ -220,21 +275,27 @@ static void child_main(void)
 
 int main(void)
 {
-    static const char template[] = "SAMPLES";
-    LONG args[1] = { 0 };
+    static const char template[] = "SAMPLES,FIXTURES";
+    LONG args[2] = { 0, 0 };
     struct RDArgs *rda = ReadArgs((CONST_STRPTR)template, args, NULL);
     struct Process *child;
     int i, nformats;
 
     if (rda && args[0]) samples = (const char *)args[0];
+    if (rda && args[1]) fixtures = (const char *)args[1];
     if (!owf_open()) {
-        printf("OWFLibTest: owf.library %d is not in LIBS:\n", OWF_LIBRARY_VERSION);
+        if (owf_open_sizes_differ)
+            printf("OWFLibTest: LIBS:owf.library's structures are not the sizes this test was built with\n");
+        else
+            printf("OWFLibTest: owf.library %d is not in LIBS:\n", OWF_LIBRARY_VERSION);
         if (rda) FreeArgs(rda);
         return RETURN_FAIL;
     }
     printf("OWFLibTest: %s %d.%d, libowf %s\n", OWF_LIBRARY_NAME, OWFBase->lib_Version,
            OWFBase->lib_Revision, OWF_VERSION);
     check(OWFBase->lib_Version >= OWF_LIBRARY_VERSION, "library version");
+    check(owf_struct_size(OWF_STRUCT_CELL) == sizeof(owf_cell) && owf_struct_size(OWF_STRUCT_COUNT) == 0,
+          "structure sizes as this program's (owf_open checked them all)");
     nformats = owf_format_count();
     check(nformats >= 10, "formats listed");
     for (i = 0; i < nformats; i++) {

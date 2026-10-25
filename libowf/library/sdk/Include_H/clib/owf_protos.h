@@ -7,6 +7,9 @@
 
 #include <exec/types.h>
 #include <owf.h>
+#include <owf_calc.h>
+#include <owf_pub.h>
+#include <owf_zip.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +46,66 @@ const owf_format * owf_format_for_filename(const char *filename);
 int owf_import_memory(const unsigned char *data, size_t length, const char *format, owf_doc **doc, owf_report *report, const owf_format **used);
 int owf_import_file(const char *path, const char *format, owf_doc **doc, owf_report *report, const owf_format **used);
 int owf_export_file(const owf_doc *doc, const char *path, const char *format, owf_report *report);
+
+/* From version 2 */
+const char * owf_error_name(int error);
+owf_book * owf_book_new(VOID);
+void owf_book_free(owf_book *book);
+owf_sheet * owf_book_add_sheet(owf_book *book, const char *name);
+void owf_cellstyle_init(owf_cellstyle *style);
+int owf_book_style(owf_book *book, const owf_cellstyle *style);
+int owf_book_numfmt(owf_book *book, const char *format);
+int owf_book_font(owf_book *book, const char *name, owf_font_kind kind);
+owf_cell * owf_sheet_cell(owf_sheet *sheet, unsigned row, unsigned col, int create);
+const owf_cell * owf_sheet_find(const owf_sheet *sheet, unsigned row, unsigned col);
+void owf_cell_set_number(owf_cell *cell, double number);
+int owf_cell_set_text(owf_cell *cell, const char *utf8, size_t length);
+void owf_cell_set_bool(owf_cell *cell, int value);
+void owf_cell_set_error(owf_cell *cell, int error);
+int owf_cell_set_formula(owf_cell *cell, const char *text);
+int owf_sheet_set_columns(owf_sheet *sheet, unsigned first, unsigned last, int width, int style, int hidden);
+int owf_sheet_set_row(owf_sheet *sheet, unsigned row, int height, int hidden);
+int owf_sheet_merge(owf_sheet *sheet, const owf_range *range);
+int owf_book_add_name(owf_book *book, const char *name, int sheet, const char *formula, int hidden);
+void owf_number_text(double number, char *out);
+int owf_book_format_count(VOID);
+const owf_book_format * owf_book_format_at(int index);
+const owf_book_format * owf_book_format_named(const char *name);
+const owf_book_format * owf_book_format_for_filename(const char *filename);
+int owf_import_book_memory(const unsigned char *data, size_t length, const char *format, owf_book **book, owf_report *report, const owf_book_format **used);
+int owf_import_book_file(const char *path, const char *format, owf_book **book, owf_report *report, const owf_book_format **used);
+int owf_export_book_file(const owf_book *book, const char *path, const char *format, owf_report *report);
+owf_calc * owf_calc_new(owf_book *book);
+void owf_calc_free(owf_calc *calc);
+int owf_calc_rebuild(owf_calc *calc);
+void owf_calc_set_date_order(owf_calc *calc, int order);
+int owf_calc_enter(owf_calc *calc, int sheet, unsigned row, unsigned col, const char *input);
+int owf_calc_recalc(owf_calc *calc);
+int owf_calc_recalc_all(owf_calc *calc);
+void owf_calc_set_notify(owf_calc *calc, owf_calc_notify notify, void *user);
+unsigned owf_calc_state(const owf_calc *calc, int sheet, unsigned row, unsigned col);
+int owf_calc_circular_count(const owf_calc *calc);
+int owf_calc_shift(owf_calc *calc, int sheet, int axis, unsigned at, int count);
+int owf_calc_touch(owf_calc *calc, int sheet, const owf_range *range);
+int owf_calc_rename_sheet(owf_calc *calc, int sheet, const char *name);
+int owf_calc_move_range(owf_calc *calc, int sheet, const owf_range *range, int dsheet, int drow, int dcol);
+char * owf_calc_move_formula(const char *text, int drow, int dcol);
+int owf_calc_evaluate(owf_calc *calc, int sheet, unsigned row, unsigned col, const char *formula, owf_cell *result);
+void owf_calc_cell_name(unsigned row, unsigned col, char *out);
+int owf_calc_parse_cell(const char *text, unsigned *row, unsigned *col);
+int owf_calc_format(const owf_book *book, const owf_cell *cell, char *out, size_t size);
+int owf_calc_format_value(const char *format, const owf_cell *value, int date1904, int width, char *out, size_t size, unsigned long *colour);
+owf_kind owf_file_kind(const unsigned char *data, size_t length);
+unsigned long owf_struct_size(int which);
+int owf_unzip_open(owf_unzip *zip, const unsigned char *data, size_t length);
+int owf_unzip_has(const owf_unzip *zip, const char *name);
+int owf_unzip_read(const owf_unzip *zip, const char *name, unsigned char **data, size_t *length);
+int owf_inflate(unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length);
+const char * owf_pub_version_name(int version);
+int owf_pub_detect(const unsigned char *data, size_t length);
+int owf_pub_read(const unsigned char *data, size_t length, owf_pub **pub, owf_report *report);
+int owf_pub_read_file(const char *path, owf_pub **pub, owf_report *report);
+void owf_pub_free(owf_pub *pub);
 
 #ifdef __cplusplus
 }

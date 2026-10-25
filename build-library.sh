@@ -7,13 +7,22 @@
 #   OUT_DIR/owf.library          for LIBS:
 #   OUT_DIR/owf.library.map      the linker's map
 #   OUT_DIR/tests/OWFLibTest     opens LIBS:owf.library and runs its calls,
-#                                from two tasks at once (tests/library)
+#                                from two tasks at once (tests/library),
+#                                with its samples/ and fixtures/ beside it
 #
 # The library links with no C library: libowf's sources, its files over
 # dos.library (libowf/library/owf_sys_dos.c), one Exec pool behind a
 # semaphore for every document's memory and its own string and printf
 # calls (owf_runtime.c, owf_libc.c). Deflate and inflate are z.library's,
-# ours (amigachrome-guest libraries/openzlib), opened when first needed.
+# ours (amigachrome-guest libraries/openzlib), opened when first needed;
+# without it, packages inflate with libowf's own (owf_inflate.c).
+#
+# Version 2 holds the workbooks (owf_book.c and its formats), the formula
+# engine (libowf/calc), the .pub reader and owf_kind.c too. Their doubles
+# need the library's own soft double arithmetic (owf_softdouble.c: this
+# toolchain's libgcc has none, and libnix's calls the mathieee libraries
+# in the caller's task) and maths and strtod (owf_libm.c). The deck code
+# (owf_deck.c, ODP, the page PDF writer) waits for the library's deck calls.
 #
 #   OS32_GCC16 or STOVE   the stove (default ~/AmigaChrome/stoves/os32-gcc16)
 #   OPENSDK_SRC           an openamigasdk checkout: when set, the SDK headers
@@ -43,19 +52,19 @@ if [ -n "${OPENSDK_SRC:-}" ]; then
     done
 fi
 
-INC="-I$OWF/include -I$OWF/src -I$LIB -I$OWF/amiga/sdk/Include_H"
+INC="-I$OWF/include -I$OWF/src -I$OWF/calc -I$LIB -I$OWF/amiga/sdk/Include_H"
 DEFS="-DOWF_LIBRARY_BUILD -DOWF_HAVE_ZLIB -DOWF_ZLIBRARY"
 SRC=""
-# The workbook code (owf_book.c and its formats) joins the library with the
-# library's workbook calls and their double maths, next.
 for f in "$OWF"/src/*.c; do
     case "$f" in
-    */owf_sys.c | */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c) ;;
-    */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
+    */owf_sys.c) ;;   # owf_sys_dos.c instead
     */owf_deck.c | */in_odp.c | */out_odp.c | */owf_pdf.c | */owf_pdffonts.c) ;;   # with the library's deck calls (E3)
-    */in_pub.c) ;;   # OpenPublisher's .pub reader: not a library call yet
     *) SRC="$SRC $f" ;;
     esac
+done
+# the formula engine, every file of it (new functions arrive as new files)
+for f in "$OWF"/calc/*.c; do
+    SRC="$SRC $f"
 done
 
 # owf_library.c first: its start() is the first code. -nostdlib: nothing of a
@@ -66,7 +75,7 @@ done
     -fomit-frame-pointer -fno-toplevel-reorder -fno-builtin -fno-tree-loop-distribute-patterns \
     -Wall -Werror -Wno-pointer-sign -nostartfiles -nostdlib $DEFS $INC \
     "$LIB/owf_library.c" $SRC "$LIB/owf_sys_dos.c" "$LIB/owf_runtime.c" "$LIB/owf_libc.c" \
-    "$OWF/amiga/owf_zlib_amiga.c" \
+    "$LIB/owf_libm.c" "$LIB/owf_softdouble.c" "$OWF/amiga/owf_zlib_amiga.c" \
     -lgcc -Wl,-Map,"$OUT/owf.library.map" -o "$OUT/owf.library"
 echo "$OUT/owf.library ($(wc -c < "$OUT/owf.library") bytes)"
 UNDEF=$("$BIN/m68k-amigaos-nm" -u "$OUT/owf.library" || true)
@@ -76,9 +85,14 @@ if [ -n "$UNDEF" ]; then
     exit 1
 fi
 
-# OWFLibTest: an ordinary program that opens the library from LIBS:
+# OWFLibTest: an ordinary program that opens the library from LIBS:, with
+# its samples and fixtures beside it (PROGDIR:samples, PROGDIR:fixtures)
 "$CC" -m68040 -specs="$SPECS" -noixemul -O2 -std=gnu99 -fno-delete-null-pointer-checks -fno-common \
-    -Wall -Werror -I"$OWF/include" -I"$LIB/sdk/Include_H" \
-    "$HERE/tests/library/owf_lib_test.c" -o "$OUT/tests/OWFLibTest"
+    -Wall -Werror -DOWF_USE_LIBRARY -I"$OWF/include" -I"$LIB/sdk/Include_H" -I"$HERE/tests/library" \
+    "$HERE/tests/library/owf_lib_test.c" "$HERE/tests/library/owf_lib_checks.c" -o "$OUT/tests/OWFLibTest"
 echo "$OUT/tests/OWFLibTest ($(wc -c < "$OUT/tests/OWFLibTest") bytes)"
+mkdir -p "$OUT/tests/samples" "$OUT/tests/fixtures"
+cp "$HERE/samples/OpenWrite-Tour.docx" "$HERE/samples/OpenWrite-Tour.odt" "$OUT/tests/samples/"
+cp "$HERE/tests/book/fixtures/book.xls" "$HERE/tests/book/fixtures/book-lo.xlsx" \
+    "$HERE/tests/book/fixtures/book-lo.ods" "$HERE/tests/pub/samples/Sample.pub" "$OUT/tests/fixtures/"
 sha256sum "$OUT/owf.library" "$OUT/tests/OWFLibTest"
