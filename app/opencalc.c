@@ -1148,14 +1148,9 @@ static void draw_tab_arrow(struct RastPort *rp, int x, int y, int w, int h, int 
     xy[3] = cy + a;
     xy[4] = right ? cx + a / 2 + 1 : cx - a / 2 - 1;
     xy[5] = cy;
-    if (live) {
-        ogt_fill_poly(rp, ogt_pen(&ctx, "tab.text"), xy, 3);
-    } else {                                         /* dimmed: three fifths of the way from the text to the tab */
-        ogt_rgb t = ogt_colour(&ctx, "tab.text"), b = ogt_colour(&ctx, "tab");
-        unsigned long dim = ((unsigned long)(t.r + (b.r - t.r) * 3 / 5) << 16) | ((unsigned long)(t.g + (b.g - t.g) * 3 / 5) << 8) |
-                            (unsigned long)(t.b + (b.b - t.b) * 3 / 5);
-        ogt_fill_poly(rp, rgb_pen(dim), xy, 3);
-    }
+    /* 0.1.11: dimmed is the theme's muted, as the style guide has it (opengadtools docs/style/README.md 4.2): in
+     * Chrome 4.4:1 on the tab in light and 5.3:1 in dark, against tab.text's 8.3 and 8.0 */
+    ogt_fill_poly(rp, ogt_pen(&ctx, live ? "tab.text" : "muted"), xy, 3);
 }
 
 /* The tabs: as many as fit from tab_first (the core's oc_tab_strip), two arrows before them when not all
