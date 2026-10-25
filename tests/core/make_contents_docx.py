@@ -6,8 +6,11 @@ into the repository): TOC1 and TOC2 styles whose right tab stop at the right
 margin has a dot leader, entries in a TOC field with hyperlinks and PAGEREF
 fields, an entry whose own stops add a left stop to the style's, one that
 clears the style's stop for its own hyphen-led one, and a paragraph with
-centred, decimal and underscore-led stops. test_layout.c (make layout-test)
-reads it. Run it again after changing it, and commit the file.
+centred, decimal and underscore-led stops. Then (2.0.12) the headings the
+entries link to, on a page of their own, each with its bookmark (Word's
+_GoBack beside one, and a second bookmark), the last in a table's cell.
+test_layout.c (make layout-test) reads it. Run it again after changing it,
+and commit the file.
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import os
@@ -48,6 +51,10 @@ STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9016"/></w:tabs><w:spacing w:after="100"/></w:pPr></w:style>
 <w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/><w:basedOn w:val="TOC1"/>
 <w:pPr><w:ind w:left="220"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/>
+<w:pPr><w:keepNext/><w:spacing w:before="240" w:after="0"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/>
+<w:pPr><w:keepNext/><w:spacing w:before="40" w:after="0"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style>
 <w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>
 </w:styles>""" % W
 
@@ -91,6 +98,18 @@ def document():
     body += ('<w:p><w:pPr><w:tabs><w:tab w:val="center" w:pos="4513"/>'
              '<w:tab w:val="decimal" w:leader="underscore" w:pos="8000"/></w:tabs></w:pPr>'
              '%s<w:r><w:tab/></w:r>%s<w:r><w:tab/></w:r>%s</w:p>') % (run("Item"), run("Centred"), run("1234.50"))
+    # the headings the entries go to, each with its bookmark
+    def heading(level, text, names, brk=False):
+        marks = "".join('<w:bookmarkStart w:id="%d" w:name="%s"/>' % (i + 10 * level, n) for i, n in enumerate(names))
+        ends = "".join('<w:bookmarkEnd w:id="%d"/>' % (i + 10 * level) for i in range(len(names)))
+        return ('<w:p><w:pPr><w:pStyle w:val="Heading%d"/>%s</w:pPr>%s%s%s</w:p>'
+                % (level, "<w:pageBreakBefore/>" if brk else "", marks, run(text), ends))
+    body += heading(1, "01 Executive summary", ["_Toc1"], brk=True)
+    body += heading(2, "1.1 Purpose of this plan", ["_Toc2"])
+    body += heading(1, "02 Scope", ["_GoBack", "_Toc3", "_Ref9"])
+    body += ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="9016"/></w:tblGrid>'
+             '<w:tr><w:tc><w:tcPr><w:tcW w:w="9016" w:type="dxa"/></w:tcPr><w:p><w:bookmarkStart w:id="40" w:name="_Toc4"/>'
+             '%s<w:bookmarkEnd w:id="40"/></w:p></w:tc></w:tr></w:tbl>' % run("03 Roles"))
     body += ('<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
              '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>'
              '</w:sectPr>')

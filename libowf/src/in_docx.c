@@ -1136,6 +1136,52 @@ static void start_para(docx *d, const owf_parafmt *pf)
     }
 }
 
+/* 1.4: the bookmarks begun in a paragraph or a cell (w:bookmarkStart, at any depth but a text box's or a
+ * drawing's), their names between spaces; Word's own _GoBack is left out. */
+static void collect_bookmarks(docx *d, const owf_xml_node *n, owf_buf *out)
+{
+    const owf_xml_node *c;
+    for (c = n ? n->first : NULL; c; c = c->next) {
+        if (c->type != OWF_XML_ELEMENT) continue;
+        if (is_w(d, c, "bookmarkStart")) {
+            const char *name = owf_xml_attr(c, d->w, "name");
+            if (name && *name && strcmp(name, "_GoBack") && !strchr(name, ' ')) {
+                if (out->length) owf_buf_putc(out, ' ');
+                owf_buf_puts(out, name);
+            }
+        } else if (!is_w(d, c, "txbxContent") && !is_w(d, c, "drawing") && !is_w(d, c, "pict") &&
+                   !owf_xml_is(c, NS_MC, "AlternateContent")) {
+            collect_bookmarks(d, c, out);
+        }
+    }
+}
+
+static char *dup_str(const char *s, size_t n)
+{
+    char *t = (char *)malloc(n + 1);
+    if (t) {
+        memcpy(t, s, n);
+        t[n] = 0;
+    }
+    return t;
+}
+
+/* 1.4: the paragraph just made gets its style's id and the bookmarks begun in node. */
+static void para_names(docx *d, const char *style, const owf_xml_node *node)
+{
+    owf_story *st = d->b->story;
+    owf_para *p = st && st->nparas ? &st->paras[st->nparas - 1] : NULL;
+    owf_buf names;
+    if (!p) return;
+    if (style && *style && !p->style && !(p->style = dup_str(style, strlen(style)))) d->failed = 1;
+    owf_buf_init(&names);
+    collect_bookmarks(d, node, &names);
+    if (names.failed) d->failed = 1;
+    else if (names.length && !p->bookmarks && !(p->bookmarks = dup_str((const char *)names.data, names.length)))
+        d->failed = 1;
+    owf_buf_free(&names);
+}
+
 static void list_prefix(docx *d, int li, int level, owf_buf *out)
 {
     const owf_list_style *ls = &d->lists[li];
@@ -1222,6 +1268,7 @@ static void paragraph(docx *d, const owf_xml_node *p)
     }
     para_content(d, p, &cf);
     owf_builder_end_para(d->b);
+    para_names(d, pstyle ? wval(d, pstyle) : NULL, p);
     if (wchild(d, ppr, "sectPr")) {
         d->break_next = 1;
         owf_report_add(d->report, OWF_NOTE_APPROX, "Section breaks became page breaks");
@@ -1303,6 +1350,10 @@ static void table(docx *d, const owf_xml_node *t)
             cell_content(d, cell, &first);
             owf_builder_end_para(d->b);
             if(d->b->story->nparas<=before)continue;
+            {   /* 1.4: the first paragraph's style, the cell's bookmarks */
+                const owf_xml_node *fp = wchild(d, cell, "p"), *ps = wchild(d, wchild(d, fp, "pPr"), "pStyle");
+                para_names(d, ps ? wval(d, ps) : NULL, cell);
+            }
             p=&d->b->story->paras[d->b->story->nparas-1];
             p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
             { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd"); if (shd) p->cell_shading = docx_fill(d, shd); }

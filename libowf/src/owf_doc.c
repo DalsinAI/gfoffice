@@ -84,6 +84,8 @@ static void free_story(owf_story *story)
             free(story->paras[i].runs[j].href);
         }
         free(story->paras[i].runs);
+        free(story->paras[i].style);                 /* 1.4 */
+        free(story->paras[i].bookmarks);
     }
     free(story->paras);
     story->paras = NULL;

@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.3.1"
+#define OWF_VERSION "1.4.0"
 
 /* Results. */
 enum {
@@ -119,6 +119,12 @@ typedef struct {
      * coordinates. table_id < 0 means a normal paragraph. */
     int table_id, table_row, table_col, table_cols;
     unsigned long cell_shading;  /* a table cell's OWF_SHADE(0xRRGGBB); 0: none */
+    /* 1.4: the paragraph's style as its file names it (DOCX's w:pStyle id, "TOC1"), NULL: none. Its format is
+     * in fmt already; a heading is written as its level's style whatever this says. */
+    char *style;
+    /* 1.4: the bookmarks at its start, their names between single spaces ("_Toc123 _Ref7"), NULL: none.
+     * DOCX's w:bookmarkStart and ODF's text:bookmark; a link into the document ("#_Toc123") goes to one. */
+    char *bookmarks;
 } owf_para;
 
 /* A run of paragraphs: the body, a header or a footer. */

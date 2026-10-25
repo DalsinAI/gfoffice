@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.11 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.12 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -3765,6 +3765,51 @@ static void font_check(const char *arg, char *out, size_t size)
     }
 }
 
+/* 2.0.12, for the lab: MEMCHECK: where OpenWrite's memory is. Free memory (and the largest block); libnix's
+ * malloc pools (its puddles from AllocMem: how much, how much of it free inside them, which Avail counts as
+ * used); and what we hold: the document's paragraphs and runs, the undo and redo snapshots, the pages laid
+ * out (OpenLayout's ops and nodes, about), the decoded pictures, and the document fonts open (their bitmaps,
+ * about). A drop in Avail that none of ours explains is the pools' or the system's (diskfont keeps a font
+ * it made until memory runs short; Avail FLUSH frees it). */
+extern struct MinList __memorylist;                  /* libnix's malloc (stdlib/malloc.c) */
+
+static void mem_check(char *out, size_t size)
+{
+    const struct MinNode *n;
+    unsigned long pool = 0, pool_free = 0, layout_ops = 0, layout_nodes = 0, pictures = 0, font_bytes = 0;
+    unsigned long snap, docb;
+    int puddles = 0, nundo = 0, nredo = 0, fonts = 0, i;
+    ol_document *od = pages_layout ? ow_layout_body(pages_layout) : NULL;
+    Forbid();
+    for (n = __memorylist.mlh_Head; n && n->mln_Succ; n = n->mln_Succ) {
+        const struct MemHeader *mh = (const struct MemHeader *)n;
+        pool += (unsigned long)((const char *)mh->mh_Upper - (const char *)mh);
+        pool_free += mh->mh_Free;
+        ++puddles;
+    }
+    Permit();
+    if (od) {
+        layout_ops = (unsigned long)ol_display_count(od);
+        while (ol_node_by_id(od, (ol_id)(layout_nodes + 1))) ++layout_nodes;
+    }
+    for (i = 0; i < image_cache_n; ++i) pictures += (unsigned long)image_cache[i].w * image_cache[i].h * 4;
+    for (i = 0; i < DOC_FONT_CACHE; ++i)
+        if (doc_fonts[i].font) {
+            const struct TextFont *f = doc_fonts[i].font;
+            ++fonts;
+            font_bytes += (unsigned long)f->tf_YSize * f->tf_Modulo + (unsigned long)(f->tf_HiChar - f->tf_LoChar + 2) * 8;
+        }
+    snap = ow_editor_snapshot_bytes(editor, &nundo, &nredo);
+    docb = ow_editor_document_bytes(editor);
+    snprintf(out, size, "avail %lu (largest %lu); malloc pools %lu in %d, %lu of it free; document %lu; "
+             "undo %d + redo %d snapshots, %lu; pages %lu ops, %lu nodes, about %lu; pictures %d, %lu; "
+             "fonts %d open, about %lu",
+             (unsigned long)AvailMem(MEMF_ANY), (unsigned long)AvailMem(MEMF_ANY | MEMF_LARGEST), pool, puddles,
+             pool_free, docb, nundo, nredo, snap, layout_ops, layout_nodes,
+             layout_ops * (unsigned long)sizeof(ol_display_op) + layout_nodes * 160UL, image_cache_n, pictures,
+             fonts, font_bytes);
+}
+
 static int rexx_do_command(const char *command, char **result_out)
 {
     const char *arg="";char result[512];int ok=1;char *dynamic=NULL;
@@ -3773,6 +3818,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
     else if(starts_word_ci(command,"FONTCHECK",&arg))font_check(arg,result,sizeof result);
+    else if(starts_word_ci(command,"MEMCHECK",&arg))mem_check(result,sizeof result);
     else if(starts_word_ci(command,"OPEN",&arg)){if(!*arg|| (editor&&ow_editor_is_dirty(editor))){ok=0;snprintf(result,sizeof result,"Unsaved changes or missing path");}else{open_document(arg);relayout();snprintf(result,sizeof result,"%s",status);}}
     else if(starts_word_ci(command,"SAVEAS",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing path");}else{save_document_as(arg);snprintf(result,sizeof result,"%s",status);}}
     else if(starts_word_ci(command,"SAVE",&arg)){if(current_path[0]){save_document_as(current_path);snprintf(result,sizeof result,"%s",status);}else{ok=0;snprintf(result,sizeof result,"Untitled document needs SAVEAS");}}

@@ -571,6 +571,45 @@ static void para_formats(odt *o, const owf_xml_node *p, owf_parafmt *pf, owf_cha
     owf_styles_resolve(o->tables, 2, owf_xml_attr(p, NS_TEXT, "style-name"), OWF_FAMILY_PARAGRAPH, pf, cf);
 }
 
+/* 1.4: the bookmarks in a paragraph (text:bookmark, text:bookmark-start), their names between spaces; a frame's
+ * own paragraphs keep theirs. */
+static void odt_bookmarks(const owf_xml_node *n, owf_buf *out)
+{
+    const owf_xml_node *c;
+    for (c = n ? n->first : NULL; c; c = c->next) {
+        if (c->type != OWF_XML_ELEMENT) continue;
+        if (owf_xml_is(c, NS_TEXT, "bookmark") || owf_xml_is(c, NS_TEXT, "bookmark-start")) {
+            const char *name = owf_xml_attr(c, NS_TEXT, "name");
+            if (name && *name && !strchr(name, ' ')) {
+                if (out->length) owf_buf_putc(out, ' ');
+                owf_buf_puts(out, name);
+            }
+        } else if (!owf_xml_is(c, NS_DRAW, "frame")) {
+            odt_bookmarks(c, out);
+        }
+    }
+}
+
+/* 1.4: the paragraph just made gets the bookmarks in n (a paragraph, or a table's cell). */
+static void odt_para_bookmarks(odt *o, const owf_xml_node *n)
+{
+    owf_story *st = o->b->story;
+    owf_buf names;
+    owf_buf_init(&names);
+    odt_bookmarks(n, &names);
+    if (names.length && !names.failed && st && st->nparas && !st->paras[st->nparas - 1].bookmarks) {
+        char *t = (char *)malloc(names.length + 1);
+        if (t) {
+            memcpy(t, names.data, names.length);
+            t[names.length] = 0;
+            st->paras[st->nparas - 1].bookmarks = t;
+        } else {
+            o->failed = 1;
+        }
+    }
+    owf_buf_free(&names);
+}
+
 static void paragraph(odt *o, const owf_xml_node *p, const char *prefix, int list_level)
 {
     owf_parafmt pf;
@@ -601,6 +640,7 @@ static void paragraph(odt *o, const owf_xml_node *p, const char *prefix, int lis
     }
     inline_children(o, p, &cf);
     owf_builder_end_para(o->b);
+    odt_para_bookmarks(o, p);                        /* 1.4 */
 }
 
 static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *list_name);
@@ -719,7 +759,7 @@ static void table_rows_id(odt *o, const owf_xml_node *n, int table_id, int *row_
             for(c=r->first;c;c=c->next)if(owf_xml_is(c,NS_TABLE,"table-cell"))++cols;
             for(c=r->first;c;c=c->next){int first=1,before;owf_para *p;if(!owf_xml_is(c,NS_TABLE,"table-cell"))continue;
                 if(o->b->para||o->b->text.length)owf_builder_end_para(o->b);
-                o->b->parafmt=o->base_para;before=o->b->story->nparas;cell_text(o,c,&first);owf_builder_end_para(o->b);
+                o->b->parafmt=o->base_para;before=o->b->story->nparas;cell_text(o,c,&first);owf_builder_end_para(o->b);odt_para_bookmarks(o,c);
                 if(o->b->story->nparas>before){p=&o->b->story->paras[o->b->story->nparas-1];p->table_id=table_id;p->table_row=*row_index;p->table_col=col;p->table_cols=cols;{const char *sn=owf_xml_attr(c,NS_TABLE,"style-name");int k;for(k=0;sn&&k<o->ncells;k++)if(!strcmp(o->cells[k].name,sn)){p->cell_shading=o->cells[k].colour;break;}}}++col;
             }++*row_index;
         }else if(owf_xml_is(r,NS_TABLE,"table-header-rows")||owf_xml_is(r,NS_TABLE,"table-rows")||owf_xml_is(r,NS_TABLE,"table-row-group"))table_rows_id(o,r,table_id,row_index);

@@ -648,16 +648,27 @@ def main():
     contents_out = convert(work, "contents.docx", "docx")[0]
     rels = docx_part(contents_out, "word/_rels/document.xml.rels")
     check("internal links kept as anchors", '<w:hyperlink w:anchor="_Toc' in d and 'Target="#' not in rels, rels[:600])
+    # 2.0.12: the entries keep their styles (Word's contents levels, "toc 1"), and the headings their bookmarks
+    styles = docx_part(contents_out, "word/styles.xml")
+    check("contents styles kept", '<w:pStyle w:val="TOC1"/>' in d and '<w:pStyle w:val="TOC2"/>' in d and
+          'w:styleId="TOC1"><w:name w:val="toc 1"/>' in styles and 'w:styleId="TOCHeading"><w:name w:val="TOC Heading"/>' in styles,
+          styles[-800:])
+    check("bookmarks kept", re.search(r'<w:bookmarkStart w:id="\d+" w:name="_Toc1"/>', d) is not None and
+          'w:name="_Ref9"' in d and 'w:name="_Toc4"' in d and "_GoBack" not in d, d[-1500:])
+    ids = re.findall(r'<w:bookmarkStart w:id="(\d+)"', d)
+    check("bookmark ids once each", len(ids) == len(set(ids)) == 5, str(ids))
     odt, _ = convert(work, "contents.docx", "odt")
     with zipfile.ZipFile(io.BytesIO(odt)) as z:
         c = z.read("content.xml").decode()
     check("leaders odt dots", 'style:type="right" style:leader-style="dotted" style:leader-text="."' in c, c[:1200])
     check("leaders odt hyphens", 'style:leader-style="solid" style:leader-text="-"' in c)
     check("leaders odt underscores", 'style:type="char" style:char="." style:leader-style="solid" style:leader-text="_"' in c)
+    check("bookmarks odt", '<text:bookmark text:name="_Toc1"/>' in c and '<text:bookmark text:name="_Toc3"/><text:bookmark text:name="_Ref9"/>' in c, c[-1500:])
     with open(os.path.join(work, "contents-round.odt"), "wb") as f:
         f.write(odt)
     d = docx_part(convert(work, "contents-round.odt", "docx")[0], "word/document.xml")
     check("leaders odt to docx", 'w:leader="dot"' in d and 'w:leader="hyphen"' in d and 'w:leader="underscore"' in d, d[:900])
+    check("bookmarks odt to docx", 'w:name="_Toc1"' in d and 'w:name="_Toc4"' in d and '<w:hyperlink w:anchor="_Toc1">' in d, d[-1500:])
     text, _ = convert(work, "contents.docx", "txt")
     check("leaders text", "01 Executive summary\t3\n" in text.decode(), repr(text[:200]))
 
