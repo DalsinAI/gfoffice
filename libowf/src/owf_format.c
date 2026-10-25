@@ -114,19 +114,6 @@ static const owf_format *const formats[] = {
 
 #define NFORMATS ((int)(sizeof formats / sizeof formats[0]))
 
-const char *owf_error_text(int error)
-{
-    switch (error) {
-    case OWF_OK: return "no error";
-    case OWF_ERR_IO: return "the file could not be read or written";
-    case OWF_ERR_FORMAT: return "not a document format OpenWrite knows";
-    case OWF_ERR_CORRUPT: return "the document is damaged";
-    case OWF_ERR_MEMORY: return "not enough memory";
-    case OWF_ERR_UNSUPPORTED: return "OpenWrite cannot do that with this format yet";
-    default: return "unknown error";
-    }
-}
-
 int owf_format_count(void)
 {
     return NFORMATS;
@@ -137,17 +124,6 @@ const owf_format *owf_format_at(int index)
     return index >= 0 && index < NFORMATS ? formats[index] : NULL;
 }
 
-int owf_same_word(const char *a, const char *b)
-{
-    while (*a && *b) {
-        if (owf_lower((unsigned char)*a) != owf_lower((unsigned char)*b))
-            return 0;
-        a++;
-        b++;
-    }
-    return *a == *b;
-}
-
 const owf_format *owf_format_named(const char *name)
 {
     int i;
@@ -155,25 +131,6 @@ const owf_format *owf_format_named(const char *name)
         if (owf_same_word(formats[i]->name, name))
             return formats[i];
     return NULL;
-}
-
-int owf_ext_in_list(const char *list, const char *ext)
-{
-    size_t n = strlen(ext);
-    while (*list) {
-        size_t w = strcspn(list, " ");
-        if (w == n) {
-            size_t i;
-            for (i = 0; i < n && owf_lower((unsigned char)list[i]) == owf_lower((unsigned char)ext[i]); i++)
-                ;
-            if (i == n)
-                return 1;
-        }
-        list += w;
-        while (*list == ' ')
-            list++;
-    }
-    return 0;
 }
 
 const owf_format *owf_format_for_filename(const char *filename)

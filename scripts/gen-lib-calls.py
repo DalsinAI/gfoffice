@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""The library side of an SFD: one L_ function per call, in the call's
+registers, that runs libowf's own function, and the vector table in the
+SFD's order. GFOffice's four libraries (docs/suite/owf-libraries.md) each
+include theirs: owfwrite.library's libowf/library/owfwrite_calls.h comes
+from owfwrite_lib.sfd, and so on.
+
+    gen-lib-calls.py SFD [OUT]       (OUT: <sfd's folder>/<name>_calls.h)
+    gen-lib-calls.py --check SFD...  (exit status 1 when a committed one is stale)
+
+A double comes in two data registers, its high word first, and is put
+together here (as owf.library's own glue did). scripts/gen-sdk.sh runs this
+with ndkgen.py; tests/library/check_sfd.py checks the output is current.
+MIT, Copyright (c) 2026 AmigaChrome Team.
+"""
+import os
+import re
+import sys
+
+REGS = ["d%d" % i for i in range(8)] + ["a%d" % i for i in range(6)]
+
+
+def split_args(text):
+    out, depth, cur = [], 0, ""
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def parse_arg(text):
+    """(type, name) of 'const char *name'."""
+    m = re.match(r"(.*?)(\w+)\s*$", text)
+    if not m:
+        raise ValueError("cannot read the argument %r" % text)
+    return re.sub(r"\s*\*", " *", m.group(1).strip()).replace("* *", "**").strip(), m.group(2)
+
+
+def is_double(t):
+    return re.sub(r"\b(const|CONST)\b", "", t).strip() in ("double", "DOUBLE")
+
+
+def parse_sfd(path):
+    """The library's name and its calls, as (ret, name, [(type, name)], [regs])."""
+    libname, calls = None, []
+    with open(path) as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("*"):
+                continue
+            if line.startswith("=="):
+                word, _, rest = line[2:].partition(" ")
+                if word == "libname":
+                    libname = rest.strip()
+                elif word == "end":
+                    break
+                elif word in ("varargs", "alias", "reserve", "private"):
+                    raise ValueError("%s: ==%s is not used by GFOffice's libraries" % (path, word))
+                continue
+            m = re.match(r"(.+?)\b(\w+)\s*\((.*)\)\s*\(([^()]*)\)\s*$", line)
+            if not m:
+                raise ValueError("%s: not a call: %s" % (path, line))
+            ret, name, argtext, regtext = m.group(1).strip(), m.group(2), m.group(3).strip(), m.group(4)
+            args = [parse_arg(a) for a in split_args(argtext)] if argtext and argtext not in ("void", "VOID") else []
+            regs = [r.strip().lower() for r in regtext.split(",") if r.strip()]
+            calls.append((ret, name, args, regs))
+    if not libname:
+        raise ValueError("%s: no ==libname" % path)
+    return libname, calls
+
+
+def l_function(ret, name, args, regs):
+    params, body, call = [], [], []
+    regs = list(regs)
+    for t, n in args:
+        if is_double(t):
+            hi, lo = regs.pop(0), regs.pop(0)
+            if not (hi.startswith("d") and lo.startswith("d")):
+                raise ValueError("%s: a double goes in two data registers" % name)
+            params.append("REG(%s, ULONG %s_hi)" % (hi, n))
+            params.append("REG(%s, ULONG %s_lo)" % (lo, n))
+            body.append("    union { ULONG u[2]; double d; } %s;" % n)
+            call.append("%s.d" % n)
+        else:
+            r = regs.pop(0)
+            if r not in REGS:
+                raise ValueError("%s: register %s" % (name, r))
+            params.append("REG(%s, %s%s%s)" % (r, t, "" if t.endswith("*") else " ", n))
+            call.append(n)
+    if regs:
+        raise ValueError("%s: more registers than arguments" % name)
+    params.append("REG(a6, struct Library *base)")
+    out = ["static %s%sL_%s(%s)" % (ret, "" if ret.endswith("*") else " ", name, (",\n    ").join(params)), "{"]
+    out += body
+    for t, n in args:
+        if is_double(t):
+            out.append("    %s.u[0] = %s_hi;" % (n, n))
+            out.append("    %s.u[1] = %s_lo;" % (n, n))
+    out.append("    (void)base;")
+    expr = "%s(%s)" % (name, ", ".join(call))
+    out.append("    %s%s;" % ("" if ret in ("void", "VOID") else "return ", expr))
+    out.append("}")
+    return "\n".join(out)
+
+
+def generate(sfd):
+    libname, calls = parse_sfd(sfd)
+    rel = os.path.relpath(sfd, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    out = ["/*",
+           " * %s's calls: one L_ function per call of %s, in its" % (libname, os.path.basename(sfd)),
+           " * registers, running libowf's own function; then the vector table, in the",
+           " * SFD's order after the four standard vectors (OWF_LIB_CALLS, for",
+           " * owf_libbase.h). %d calls." % len(calls),
+           " * Generated by scripts/gen-lib-calls.py from %s. Do not edit." % rel,
+           " */", ""]
+    for c in calls:
+        out.append(l_function(*c))
+        out.append("")
+    out.append("#define OWF_LIB_CALLS \\")
+    names = ["(APTR)L_%s" % c[1] for c in calls]
+    for i, n in enumerate(names):
+        out.append("    %s%s" % (n, ", \\" if i + 1 < len(names) else ""))
+    out.append("")
+    return "\n".join(out)
+
+
+def target(sfd):
+    stem = re.sub(r"_lib\.sfd$", "", os.path.basename(sfd))
+    return os.path.join(os.path.dirname(sfd), "%s_calls.h" % stem)
+
+
+def main(argv):
+    if argv and argv[0] == "--check":
+        stale = 0
+        for sfd in argv[1:]:
+            path = target(sfd)
+            want = generate(sfd)
+            have = open(path).read() if os.path.exists(path) else None
+            if have != want:
+                print("%s is stale: run scripts/gen-sdk.sh" % path)
+                stale = 1
+        return stale
+    if not argv or len(argv) > 2:
+        print(__doc__.strip().split("\n\n")[1])
+        return 2
+    path = argv[1] if len(argv) > 1 else target(argv[0])
+    with open(path, "w") as f:
+        f.write(generate(argv[0]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
