@@ -302,6 +302,10 @@ enum {
 };
 int owf_odf_kind(const unsigned char *data, size_t length);
 int owf_ooxml_kind(const unsigned char *data, size_t length);
+/* A relationship's target relative to dir (or from the package's root
+ * when it starts with "/"), with "." and ".." worked out:
+ * "xl/worksheets/sheet1.xml". 0 when it does not fit. */
+int owf_opc_part_name(char *out, size_t size, const char *dir, const char *target);
 
 /* ---- Named styles (owf_style.c), for ODT and DOCX ---- */
 

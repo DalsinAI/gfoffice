@@ -407,6 +407,7 @@ typedef struct {
     owf_range autofilter;
     char *autofilter_xml;        /* what it filters and sorts by, as the file wrote it (Excel's filterColumn and
                                     sortState elements), or NULL */
+    char *drawing;               /* its drawing (charts, pictures) in the book's kept parts: the part's name, or NULL */
 } owf_sheet;
 
 /* A defined name: "Prices" standing for "Sheet1!$B$2:$B$40". */
@@ -416,6 +417,16 @@ typedef struct {
     char *formula;               /* what it stands for, as a formula without "=" */
     int hidden;
 } owf_defname;
+
+/* A part of a file kept as it was, for writing it back: an .xlsx sheet's
+ * drawing and everything it shows (its relationships, charts, their
+ * styles and colours, pictures), by their names in the package. */
+typedef struct {
+    char *name;                  /* "xl/charts/chart1.xml" */
+    char *type;                  /* its content type */
+    unsigned char *data;
+    size_t length;
+} owf_part;
 
 typedef struct owf_book {
     int nsheets, capsheets;
@@ -430,6 +441,8 @@ typedef struct owf_book {
     owf_defname *names;
     int date1904;
     int active;                  /* the sheet shown first */
+    int nparts, capparts;        /* owf.library 2.1: parts kept as they were (a sheet's drawing...) */
+    owf_part *parts;
 } owf_book;
 
 owf_book *owf_book_new(void);
@@ -461,6 +474,12 @@ int owf_book_add_name(owf_book *book, const char *name, int sheet, const char *f
  * malloc. NULL when memory runs out. */
 owf_condfmt *owf_sheet_add_condfmt(owf_sheet *sheet);
 void owf_condfmt_free(owf_condfmt *cf);
+/* A part kept (name, type and bytes copied), or found by its name (NULL:
+ * none). -1 when memory runs out. A book's kept parts copied into another
+ * that has none (-1: memory; it has none). */
+int owf_book_keep_part(owf_book *book, const char *name, const char *type, const void *data, size_t length);
+const owf_part *owf_book_part(const owf_book *book, const char *name);
+int owf_book_copy_parts(owf_book *dst, const owf_book *src);
 /* A new validation at the end of the sheet's, all zero (as
  * owf_sheet_add_condfmt), and one freed; the first whose ranges hold a
  * cell, or NULL. */
@@ -474,7 +493,7 @@ const owf_comment *owf_sheet_comment(const owf_sheet *sheet, unsigned row, unsig
 /* What a sheet holds beside its cells, columns, rows and merges (its
  * conditional formats and comments) copied from src into dst, which has
  * none: for a program that copies a sheet. -1 when memory runs out (dst
- * has none). Its validations and AutoFilter too. */
+ * has none). Its validations, AutoFilter and drawing's name too. */
 int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src);
 void owf_sheet_free_extras(owf_sheet *sheet);
 
@@ -529,7 +548,7 @@ enum {
     OWF_STRUCT_CELLSTYLE, OWF_STRUCT_COLINFO, OWF_STRUCT_ROWINFO, OWF_STRUCT_RANGE, OWF_STRUCT_SHEET,
     OWF_STRUCT_DEFNAME, OWF_STRUCT_BOOK, OWF_STRUCT_BOOK_FORMAT, OWF_STRUCT_UNZIP, OWF_STRUCT_PUB,
     OWF_STRUCT_PUB_PAGE, OWF_STRUCT_PUB_FRAME,
-    OWF_STRUCT_CONDFMT, OWF_STRUCT_COMMENT, OWF_STRUCT_VALIDATION,
+    OWF_STRUCT_CONDFMT, OWF_STRUCT_COMMENT, OWF_STRUCT_VALIDATION, OWF_STRUCT_PART,
     OWF_STRUCT_COUNT
 };
 unsigned long owf_struct_size(int which);
@@ -540,7 +559,7 @@ unsigned long owf_struct_size(int which);
     sizeof(owf_format), sizeof(owf_cell), sizeof(owf_cellstyle), sizeof(owf_colinfo), sizeof(owf_rowinfo), \
     sizeof(owf_range), sizeof(owf_sheet), sizeof(owf_defname), sizeof(owf_book), sizeof(owf_book_format), \
     sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame), sizeof(owf_condfmt), \
-    sizeof(owf_comment), sizeof(owf_validation)
+    sizeof(owf_comment), sizeof(owf_validation), sizeof(owf_part)
 
 #ifdef __cplusplus
 }
