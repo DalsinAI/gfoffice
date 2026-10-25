@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.1.0"
+#define OPR_CORE_VERSION "0.2.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */

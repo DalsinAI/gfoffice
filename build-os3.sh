@@ -126,6 +126,25 @@ else
 echo "$OUT/OpenCalc ($(wc -c < "$OUT/OpenCalc") bytes)"
 fi
 
+# OpenPresentation, the GFOffice Suite's slides (P2 and P3's first typing): the documents' libowf files with
+# the deck's (the model, ODP, PPTX in, the page PDF writer), its core (src/deck) on OpenLayout and OpenWrite's
+# paragraph layout, with libowf linked in (owf.library has no deck calls yet).
+if [ "$OWF" = library ]; then
+    echo "build-os3.sh: OpenPresentation is built with libowf linked in only (OWF=linked): owf.library has no deck calls yet"
+else
+OWFSRC_DECK="$OWFSRC_DOCS"
+for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c; do
+    OWFSRC_DECK="$OWFSRC_DECK $HERE/libowf/src/$f"
+done
+# shellcheck disable=SC2086
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+    -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
+    $OWFSRC_DECK "$HERE"/src/deck/*.c "$HERE/src/core/ow_layout.c" "$OPENLAYOUT_SRC/src/openlayout.c" \
+    "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
+    -o "$OUT/OpenPresentation"
+echo "$OUT/OpenPresentation ($(wc -c < "$OUT/OpenPresentation") bytes)"
+fi
+
 # The toolbars' pictures: the Chrome icon set's strips beside the programs, where they look first
 # (PROGDIR:Images/Toolbar/; opengadtools lib/ogt_iconset.c). Made by opengadtools' tools/iconset.
 mkdir -p "$OUT/Images/Toolbar"
