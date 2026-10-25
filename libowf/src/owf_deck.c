@@ -673,6 +673,7 @@ owf_deck *owf_deck_new(int width, int height)
 static const owf_deck_format *const deck_formats[] = {
     &owf_deck_format_odp,
     &owf_deck_format_fodp,
+    &owf_deck_format_pptx,
 };
 
 #define NDECKFORMATS ((int)(sizeof deck_formats / sizeof deck_formats[0]))

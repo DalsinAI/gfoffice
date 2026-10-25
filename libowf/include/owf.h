@@ -574,6 +574,10 @@ void owf_sheet_free_extras(owf_sheet *sheet);
  * lines' and scatters' markers. A doughnut is a pie with a hole. */
 enum { OWF_CHART_OTHER, OWF_CHART_COLUMN, OWF_CHART_BAR, OWF_CHART_LINE, OWF_CHART_AREA, OWF_CHART_PIE, OWF_CHART_SCATTER };
 enum { OWF_CHART_CLUSTERED, OWF_CHART_STACKED, OWF_CHART_PERCENT };
+/* what a series' data labels show, and where */
+enum { OWF_LABEL_VALUE = 1, OWF_LABEL_PERCENT = 2, OWF_LABEL_CATEGORY = 4, OWF_LABEL_SERIES = 8 };
+enum { OWF_LABEL_AUTO, OWF_LABEL_CENTRE, OWF_LABEL_INSIDE_END, OWF_LABEL_INSIDE_BASE, OWF_LABEL_OUTSIDE_END,
+       OWF_LABEL_ABOVE, OWF_LABEL_BELOW, OWF_LABEL_LEFT, OWF_LABEL_RIGHT, OWF_LABEL_BEST_FIT };
 /* a point's marker: AUTO, the chart's own */
 enum { OWF_MARKER_AUTO, OWF_MARKER_NONE, OWF_MARKER_CIRCLE, OWF_MARKER_SQUARE, OWF_MARKER_DIAMOND, OWF_MARKER_TRIANGLE,
        OWF_MARKER_X, OWF_MARKER_STAR, OWF_MARKER_PLUS, OWF_MARKER_DASH, OWF_MARKER_DOT };
@@ -597,6 +601,10 @@ typedef struct {
     char *x_values;              /* a scatter's: the cells its x values come from, or NULL */
     int line;                    /* lines and scatters: 1 its line is drawn, 0 not */
     int marker, marker_size;     /* OWF_MARKER_..., and its size in points (0: the chart's own) */
+    unsigned labels;             /* its data labels: OWF_LABEL_VALUE...; 0 none */
+    int label_pos;               /* OWF_LABEL_AUTO... */
+    char *label_format;          /* their number format, or NULL: the values' own */
+    char *format;                /* the values' number format as the file last had them, or NULL */
 } owf_chart_series;
 typedef struct {
     int kind, grouping;          /* OWF_CHART_... */
@@ -620,6 +628,8 @@ typedef struct {
     int x_gridlines;             /* a scatter's x axis (the value axis above is its y): its gridlines and limits */
     int has_xmin, has_xmax;
     double xmin, xmax;
+    char *value_format;          /* the value axis's number format, or NULL: the values' own */
+    char *x_format;              /* a scatter's x axis's */
 } owf_chart;
 /* The sheet's charts (none: *count 0), freed with owf_charts_free. OWF_OK,
  * or OWF_ERR_MEMORY. */

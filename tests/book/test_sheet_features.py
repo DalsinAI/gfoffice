@@ -687,6 +687,27 @@ def test_charts(work):
             check("charts: a scatter's x as words", sheet_lines(got, 7, "series")[1] ==
                   'series 1 colour=- name "" values "" categories "" x "Chart!$B$1:$B$1" line=0 points 5="Q1"',
                   sheet_lines(got, 7, "series"))
+    # data labels as Excel writes them: the group's, a series' own over them (one deleted), formats set and linked,
+    # the values' format as the file last had it
+    q = dict(p)
+    q["xl/charts/chart1.xml"] = (
+        '<c:chartSpace xmlns:c="%s" xmlns:a="%s"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/>'
+        '<c:ser><c:idx val="0"/><c:val><c:numRef><c:f>Chart!$B$1:$B$2</c:f><c:numCache><c:formatCode>#,##0.00</c:formatCode>'
+        '<c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>'
+        '<c:ser><c:idx val="1"/><c:dLbls><c:numFmt formatCode="0%%" sourceLinked="0"/><c:dLblPos val="inEnd"/>'
+        '<c:showVal val="0"/><c:showSerName val="1"/></c:dLbls><c:val><c:numLit><c:ptCount val="1"/></c:numLit></c:val></c:ser>'
+        '<c:ser><c:idx val="2"/><c:dLbls><c:delete val="1"/></c:dLbls></c:ser>'
+        '<c:dLbls><c:numFmt formatCode="General" sourceLinked="1"/><c:showVal val="1"/><c:showCatName/></c:dLbls>'
+        '</c:barChart><c:valAx><c:numFmt formatCode="#,##0" sourceLinked="1"/></c:valAx>'
+        '<c:valAx><c:numFmt formatCode="0.0" sourceLinked="0"/></c:valAx></c:plotArea></c:chart></c:chartSpace>' % (C, DML)).encode()
+    write_zip(path, q)
+    got = dump(path)
+    check("charts: data labels' groups and series, formats", sheet_lines(got, 7, "chart") == [
+        'chart kind=1 grouping=0 from=1,3+9525,95250 to=16,10+190500,0 legend=- gap=150 grid=0 title ""'] and
+        sheet_lines(got, 7, "series") == [
+        'series 0 colour=- name "" values "Chart!$B$1:$B$2" categories "" labels=5@0 format "#,##0.00" points 1',
+        'series 1 colour=- name "" values "" categories "" labels=8@2 lformat "0%" points -',
+        'series 2 colour=- name "" values "" categories "" points'], (sheet_lines(got, 7, "chart"), sheet_lines(got, 7, "series")))
     # a picture alone, a chart part missing or damaged: no chart, no error
     for name, data in (("xl/charts/chart1.xml", EXCEL_CHART[:400].encode()), ("xl/charts/chart1.xml", b"")):
         bad = dict(p, **{name: data})
@@ -716,6 +737,13 @@ def test_charts(work):
         'x "\'Scatter\'!$A$2:$A$6" marker=2 points',
         'series 1 colour=- name "" from "\'Scatter\'!C1" values "\'Scatter\'!$C$2:$C$6" categories "" '
         'x "\'Scatter\'!$A$2:$A$6" line=0 marker=4 points'], sheet_lines(got, 2, "series"))
+    check("charts: data labels and formats", sheet_lines(got, 3, "chart") == [
+        'chart kind=1 grouping=0 from=1,4+0,0 size=5400000x2700000 legend=- gap=150 grid=1 title "Cost by quarter"',
+        'chart kind=3 grouping=0 from=17,4+0,0 size=5400000x2700000 legend=- gap=150 grid=1 format "0.0" title "Visits"',
+        'chart kind=5 grouping=0 from=1,14+0,0 size=5400000x2700000 legend=r gap=150 grid=0 vary=1 title "Share of cost"'] and
+        [l.split(" points")[0].split(" categories ")[1] for l in sheet_lines(got, 3, "series")] == [
+        '"\'Labels\'!$A$2:$A$5" labels=1@4', '"\'Labels\'!$A$2:$A$5" marker=3 size=7 labels=1@5',
+        '"\'Labels\'!$A$2:$A$5" labels=6@0'], (sheet_lines(got, 3, "chart"), sheet_lines(got, 3, "series")))
     saved = os.path.join(work, "charts-saved.xlsx")
     convert(CHARTS, saved)
     again = dump(saved)
