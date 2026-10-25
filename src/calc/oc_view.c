@@ -1355,6 +1355,55 @@ static int comment_marks(drawing *d)
     return 1;
 }
 
+/* Whether the AutoFilter filters by the column at offset k of its range (a filterColumn colId="k"). */
+static int filters_by(const owf_sheet *s, unsigned k)
+{
+    const char *p = s->autofilter_xml;
+    if (!p)
+        return 0;
+    for (; (p = strstr(p, "<filterColumn")) != NULL; p++) {
+        const char *end = strchr(p, '>'), *at = strstr(p, " colId=\"");
+        unsigned long v = 0;
+        if (!at || !end || at > end)
+            continue;
+        for (at += 8; *at >= '0' && *at <= '9'; at++)
+            v = v * 10 + (unsigned long)(*at - '0');
+        if (*at == '"' && v == k)
+            return 1;
+    }
+    return 0;
+}
+
+/* The AutoFilter's buttons: one at the right of each cell of its first row, square, a pixel in from the
+ * cell's bottom right, as Excel draws them; flags 1 for a column it filters by. */
+static int filter_buttons(drawing *d)
+{
+    const owf_sheet *s = d->sheet;
+    int i, j;
+    if (!s->has_autofilter || (i = line_of(d->rl, d->nr, s->autofilter.first_row)) < 0)
+        return 1;
+    for (j = 0; j < d->nc; j++) {
+        unsigned col = d->cl[j].index;
+        int size = d->rl[i].size - 3, cap = 17 * d->core->zoom / 100;
+        oc_draw_item *it;
+        if (col < s->autofilter.first_col || col > s->autofilter.last_col)
+            continue;
+        if (size > cap)
+            size = cap;
+        if (size > d->cl[j].size - 2)
+            size = d->cl[j].size - 2;
+        if (size < 5)
+            continue;
+        if (!(it = add_box(d->list, OC_DRAW_FILTER, OC_ROLE_FILTER, d->cl[j].pos + d->cl[j].size - 2 - size,
+                           d->rl[i].pos + d->rl[i].size - 2 - size, size, size)))
+            return 0;
+        it->flags = (unsigned)filters_by(s, col - s->autofilter.first_col);
+        it->row = s->autofilter.first_row;
+        it->col = col;
+    }
+    return 1;
+}
+
 /* The active cell's comment, beside it, as Excel shows one when the pointer is over its cell: a pale yellow
  * box (OC_ROLE_NOTE) with a grey frame, its author on the first line in bold (unless the text begins with
  * the name, as Excel's own comments do) and the text wrapped to the box, in the book's font at 9 points.
@@ -1692,7 +1741,7 @@ static int build(drawing *d)
     }
 
     /* comments' marks: a small red triangle in each commented cell's top right corner (a merged range's) */
-    if (!comment_marks(d))
+    if (!comment_marks(d) || !filter_buttons(d))
         return 0;
 
     /* 6. the row numbers and column letters */

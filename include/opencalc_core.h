@@ -370,7 +370,8 @@ enum {
     OC_DRAW_HEADER,     /* a row number or column letter in its box, centred (align OC_ALIGN_LEFT: from text_x); selected or not */
     OC_DRAW_FRAME,      /* a box's outline, `line` pixels thick: the active cell, the selection */
     OC_DRAW_CARET,      /* the caret: a line from x,y, h long */
-    OC_DRAW_MARK        /* a comment's mark: a triangle filling the top right half of the box x,y,w,h */
+    OC_DRAW_MARK,       /* a comment's mark: a triangle filling the top right half of the box x,y,w,h */
+    OC_DRAW_FILTER      /* an AutoFilter's button: the box x,y,w,h with an arrow down; flags 1: its column filters */
 };
 enum {
     OC_ROLE_PAPER,          /* the empty sheet (the window fills the area with it first) */
@@ -387,7 +388,8 @@ enum {
     OC_ROLE_EDIT,           /* behind the text being typed */
     OC_ROLE_COMMENT,        /* a comment's mark (red) */
     OC_ROLE_NOTE,           /* behind the active cell's comment (pale yellow) */
-    OC_ROLE_NOTE_LINE       /* its frame */
+    OC_ROLE_NOTE_LINE,      /* its frame */
+    OC_ROLE_FILTER          /* an AutoFilter's button */
 };
 enum { OC_ALIGN_LEFT, OC_ALIGN_CENTRE, OC_ALIGN_RIGHT };
 

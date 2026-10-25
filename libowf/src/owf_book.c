@@ -229,6 +229,9 @@ void owf_sheet_free_extras(owf_sheet *sheet)
     free(sheet->validations);
     sheet->validations = NULL;
     sheet->nvalidations = sheet->capvalidations = 0;
+    free(sheet->autofilter_xml);
+    sheet->autofilter_xml = NULL;
+    sheet->has_autofilter = 0;
 }
 
 static char *dup_or_null(const char *s, int *failed)
@@ -250,6 +253,7 @@ int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src)
     dst->ncomments = dst->capcomments = 0;
     dst->validations = NULL;
     dst->nvalidations = dst->capvalidations = 0;
+    dst->autofilter_xml = dup_or_null(src->autofilter_xml, &failed);
     for (i = 0; i < src->nvalidations && !failed; i++) {
         const owf_validation *a = &src->validations[i];
         owf_validation *b = owf_sheet_add_validation(dst);

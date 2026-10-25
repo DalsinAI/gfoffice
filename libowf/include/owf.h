@@ -403,6 +403,10 @@ typedef struct {
     owf_comment *comments;       /* by row, then column */
     int nvalidations, capvalidations;
     owf_validation *validations;
+    int has_autofilter;          /* an AutoFilter: its buttons on autofilter's first row */
+    owf_range autofilter;
+    char *autofilter_xml;        /* what it filters and sorts by, as the file wrote it (Excel's filterColumn and
+                                    sortState elements), or NULL */
 } owf_sheet;
 
 /* A defined name: "Prices" standing for "Sheet1!$B$2:$B$40". */
@@ -470,7 +474,7 @@ const owf_comment *owf_sheet_comment(const owf_sheet *sheet, unsigned row, unsig
 /* What a sheet holds beside its cells, columns, rows and merges (its
  * conditional formats and comments) copied from src into dst, which has
  * none: for a program that copies a sheet. -1 when memory runs out (dst
- * has none). Its validations too. */
+ * has none). Its validations and AutoFilter too. */
 int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src);
 void owf_sheet_free_extras(owf_sheet *sheet);
 

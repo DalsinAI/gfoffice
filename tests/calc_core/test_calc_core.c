@@ -1814,6 +1814,58 @@ static void test_validation(void)
     oc_core_free(core);
 }
 
+static void test_autofilter(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    owf_sheet *sh;
+    int i, buttons, filtered;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    sh = &oc_core_book(core)->sheets[0];
+    sh->has_autofilter = 1;
+    sh->autofilter = (owf_range){ 1, 20, 1, 3 };         /* B2:D21 */
+    sh->autofilter_xml = dup_text("<filterColumn colId=\"2\"><filters><filter val=\"Yes\"/></filters></filterColumn>");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = buttons = filtered = 0; i < l.n; i++) {
+        const oc_draw_item *it = &l.items[i];
+        if (it->kind != OC_DRAW_FILTER)
+            continue;
+        buttons++;
+        CHECK(it->row == 1 && it->w == it->h && it->w == 14);   /* a 17-pixel row: 14 */
+        CHECK(it->x + it->w == 40 + (int)(it->col + 1) * 64 - 2 && it->y + it->h == 18 + 2 * 17 - 2);
+        if (it->flags) {
+            filtered++;
+            CHECK(it->col == 3);                         /* colId 2 of B:D */
+        }
+    }
+    CHECK(buttons == 3 && filtered == 1);
+    /* a column inserted before it moves it; rows deleted under it shrink it */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 1) == OWF_OK);
+    sh = &oc_core_book(core)->sheets[0];
+    CHECK(sh->has_autofilter && sh->autofilter.first_col == 2 && sh->autofilter.last_col == 4);
+    go(core, "A10:A12");
+    oc_core_select_rows(core);
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(sh->autofilter.last_row == 17);
+    /* a sheet deleted and undone keeps it */
+    oc_core_add_sheet(core, "Two");
+    CHECK(oc_core_delete_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    sh = &oc_core_book(core)->sheets[0];
+    CHECK(sh->has_autofilter && sh->autofilter_xml && strstr(sh->autofilter_xml, "colId=\"2\""));
+    /* all its rows deleted, it goes */
+    oc_core_set_sheet(core, 0);
+    go(core, "A2:A18");
+    oc_core_select_rows(core);
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(!oc_core_book(core)->sheets[0].has_autofilter && !oc_core_book(core)->sheets[0].autofilter_xml);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -2033,6 +2085,7 @@ int main(void)
     test_font_caps();
     test_comments();
     test_validation();
+    test_autofilter();
     test_row_numbers();
     test_text_layout();
     test_tab_strip();
