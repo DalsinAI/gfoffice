@@ -59,6 +59,14 @@ int ow_layout_hit(const ow_layout *layout, int page, ol_unit x, ol_unit y, ow_po
 ol_document *ow_layout_story(const ow_layout *layout, ow_story_kind which, int page,
                              const char *date, const char *time, ol_unit *x, ol_unit *y);
 
+/* Any story into any OpenLayout node (Shared E5): its paragraphs as
+ * blocks and its tables as grids, appended to parent (NULL: the root), with
+ * the fonts, default format and pictures of doc. fields: the text of the
+ * page number, page count, date and time fields (NULL, or any of them NULL:
+ * "1", "1", "", ""). 1, or 0 when memory runs out. */
+int ow_layout_add_story(ol_document *od, ol_node *parent, const owf_doc *doc, const owf_story *story,
+                        const char *const fields[4]);
+
 /* A page number as the document writes it: 1, iv, IV, d or D. */
 void ow_layout_page_number(const owf_page *page, int number, char *out, size_t size);
 

@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Written by hand from OASIS ODF 1.2 for OpenPresentation's tests: five
+     slides (one hidden) with placeholders, lists, a numbered list, a link,
+     the basic shapes, custom shapes, a group, a rotated shape, pictures (one
+     cropped), a table, an embedded chart with its replacement picture,
+     notes, footer fields, transitions, an animation, a background picture,
+     and the show's settings with a custom show. -->
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+    xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+    xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+    xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+    xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+    xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+    xmlns:xlink="http://www.w3.org/1999/xlink"
+    xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+    xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
+    xmlns:smil="urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0"
+    xmlns:anim="urn:oasis:names:tc:opendocument:xmlns:animation:1.0"
+    office:version="1.2">
+  <office:font-face-decls>
+    <style:font-face style:name="Liberation Sans" svg:font-family="'Liberation Sans'" style:font-family-generic="swiss" style:font-pitch="variable"/>
+    <style:font-face style:name="Liberation Mono" svg:font-family="'Liberation Mono'" style:font-family-generic="modern" style:font-pitch="fixed"/>
+  </office:font-face-decls>
+  <office:automatic-styles>
+    <style:style style:name="dp1" style:family="drawing-page">
+      <style:drawing-page-properties presentation:display-footer="true" presentation:display-page-number="true" presentation:display-date-time="true" smil:type="fade" smil:subtype="crossfade" presentation:transition-speed="slow" presentation:transition-type="automatic" presentation:duration="PT00H00M05S"/>
+    </style:style>
+    <style:style style:name="dp2" style:family="drawing-page">
+      <style:drawing-page-properties draw:fill="solid" draw:fill-color="#ffffff" presentation:display-footer="true" presentation:display-page-number="true" presentation:display-date-time="false" smil:type="pushWipe" smil:subtype="fromRight" presentation:transition-speed="fast"/>
+    </style:style>
+    <style:style style:name="dp3" style:family="drawing-page">
+      <style:drawing-page-properties draw:fill="gradient" draw:fill-gradient-name="Sunrise" presentation:display-page-number="true" smil:type="barWipe" smil:subtype="topToBottom" smil:direction="reverse"/>
+    </style:style>
+    <style:style style:name="dp4" style:family="drawing-page">
+      <style:drawing-page-properties presentation:display-page-number="false" smil:type="dissolve"/>
+    </style:style>
+    <style:style style:name="dp5" style:family="drawing-page">
+      <style:drawing-page-properties draw:fill="bitmap" draw:fill-image-name="Background" style:repeat="stretch" presentation:visibility="hidden" smil:type="clockWipe" smil:subtype="clockwiseTwelve"/>
+    </style:style>
+    <style:style style:name="pr1" style:family="presentation" style:parent-style-name="Default-title">
+      <style:graphic-properties draw:fill="none" draw:stroke="none"/>
+    </style:style>
+    <style:style style:name="pr2" style:family="presentation" style:parent-style-name="Default-subtitle">
+      <style:graphic-properties draw:fill="none"/>
+    </style:style>
+    <style:style style:name="pr3" style:family="presentation" style:parent-style-name="Default-outline1">
+      <style:graphic-properties draw:fill="none" style:shrink-to-fit="true"/>
+    </style:style>
+    <style:style style:name="pr4" style:family="presentation" style:parent-style-name="Default-notes"/>
+    <style:style style:name="gr1" style:family="graphic" style:parent-style-name="standard">
+      <style:graphic-properties draw:fill="solid" draw:fill-color="#4472c4" draw:stroke="solid" svg:stroke-color="#2f528f" svg:stroke-width="0.05cm" draw:textarea-vertical-align="middle"/>
+      <style:paragraph-properties fo:text-align="center"/>
+      <style:text-properties fo:color="#ffffff"/>
+    </style:style>
+    <style:style style:name="gr2" style:family="graphic" style:parent-style-name="standard">
+      <style:graphic-properties draw:fill="solid" draw:fill-color="#70ad47" draw:stroke="none"/>
+    </style:style>
+    <style:style style:name="gr3" style:family="graphic" style:parent-style-name="standard">
+      <style:graphic-properties draw:fill="none" draw:stroke="solid" svg:stroke-color="#c00000" svg:stroke-width="0.1cm" draw:marker-end="Arrow" draw:marker-end-width="0.3cm"/>
+    </style:style>
+    <style:style style:name="gr4" style:family="graphic" style:parent-style-name="standard">
+      <style:graphic-properties draw:fill="solid" draw:fill-color="#ffc000" draw:stroke="dash" svg:stroke-color="#7f6000" svg:stroke-width="0.03cm"/>
+    </style:style>
+    <style:style style:name="gr5" style:family="graphic" style:parent-style-name="standard">
+      <style:graphic-properties draw:fill="gradient" draw:fill-gradient-name="Sunrise" draw:stroke="none"/>
+    </style:style>
+    <style:style style:name="gr6" style:family="graphic">
+      <style:graphic-properties draw:fill="none" draw:stroke="none" fo:clip="rect(0.1cm, 0.2cm, 0.1cm, 0.2cm)"/>
+    </style:style>
+    <style:style style:name="gr7" style:family="graphic">
+      <style:graphic-properties draw:fill="none" draw:stroke="none"/>
+    </style:style>
+    <style:style style:name="gr8" style:family="graphic" style:parent-style-name="standard">
+      <style:graphic-properties draw:fill="none" draw:stroke="none" draw:textarea-vertical-align="top" draw:auto-grow-height="true"/>
+      <style:text-properties style:font-name="Liberation Mono" fo:font-size="16pt"/>
+    </style:style>
+    <style:style style:name="co1" style:family="table-column">
+      <style:table-column-properties style:column-width="6cm"/>
+    </style:style>
+    <style:style style:name="co2" style:family="table-column">
+      <style:table-column-properties style:column-width="3cm"/>
+    </style:style>
+    <style:style style:name="ce1" style:family="table-cell">
+      <style:graphic-properties draw:fill="solid" draw:fill-color="#d9e2f3"/>
+      <style:table-cell-properties fo:background-color="#d9e2f3"/>
+    </style:style>
+    <style:style style:name="P1" style:family="paragraph">
+      <style:paragraph-properties fo:text-align="end"/>
+    </style:style>
+    <style:style style:name="T1" style:family="text">
+      <style:text-properties fo:font-weight="bold" fo:color="#c00000"/>
+    </style:style>
+    <style:style style:name="T2" style:family="text">
+      <style:text-properties fo:font-style="italic" style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"/>
+    </style:style>
+    <text:list-style style:name="L1">
+      <text:list-level-style-number text:level="1" style:num-suffix="." style:num-format="1">
+        <style:list-level-properties text:min-label-width="0.8cm"/>
+      </text:list-level-style-number>
+      <text:list-level-style-number text:level="2" style:num-suffix=")" style:num-format="a">
+        <style:list-level-properties text:space-before="0.8cm" text:min-label-width="0.8cm"/>
+      </text:list-level-style-number>
+    </text:list-style>
+  </office:automatic-styles>
+  <office:body>
+    <office:presentation>
+      <presentation:footer-decl presentation:name="ftr1">Team 5 &amp; friends</presentation:footer-decl>
+      <presentation:date-time-decl presentation:name="dtd1" presentation:source="fixed">25 October 2026</presentation:date-time-decl>
+      <draw:page draw:name="page1" draw:style-name="dp1" draw:master-page-name="Default" presentation:presentation-page-layout-name="TitleSlide" presentation:use-footer-name="ftr1" presentation:use-date-time-name="dtd1">
+        <draw:frame presentation:style-name="pr1" draw:layer="layout" svg:width="24cm" svg:height="4cm" svg:x="2cm" svg:y="3cm" presentation:class="title">
+          <draw:text-box><text:p>OpenPresentation</text:p></draw:text-box>
+        </draw:frame>
+        <draw:frame presentation:style-name="pr2" draw:layer="layout" svg:width="24cm" svg:height="4cm" svg:x="2cm" svg:y="8cm" presentation:class="subtitle">
+          <draw:text-box><text:p>Phase P1 — the model &amp; ODP</text:p></draw:text-box>
+        </draw:frame>
+        <presentation:notes>
+          <draw:page-thumbnail draw:layer="layout" svg:width="13.6cm" svg:height="7.65cm" svg:x="3.7cm" svg:y="2cm" draw:page-number="1" presentation:class="page"/>
+          <draw:frame presentation:style-name="pr4" draw:layer="layout" svg:width="17cm" svg:height="17cm" svg:x="2cm" svg:y="10.6cm" presentation:class="notes">
+            <draw:text-box><text:p>Welcome everyone.</text:p><text:p>Say what P1 is.</text:p></draw:text-box>
+          </draw:frame>
+        </presentation:notes>
+      </draw:page>
+      <draw:page draw:name="page2" draw:style-name="dp2" draw:master-page-name="Default" presentation:presentation-page-layout-name="TitleContent" presentation:use-footer-name="ftr1">
+        <draw:frame presentation:style-name="pr1" draw:layer="layout" svg:width="25.2cm" svg:height="2.6cm" svg:x="1.4cm" svg:y="0.6cm" presentation:class="title">
+          <draw:text-box><text:p>Bullets and numbers</text:p></draw:text-box>
+        </draw:frame>
+        <draw:frame presentation:style-name="pr3" draw:layer="layout" svg:width="14cm" svg:height="9.1cm" svg:x="1.4cm" svg:y="3.7cm" presentation:class="outline">
+          <draw:text-box>
+            <text:list>
+              <text:list-item><text:p>A point with <text:span text:style-name="T1">bold red</text:span> words</text:p></text:list-item>
+              <text:list-item>
+                <text:list>
+                  <text:list-item><text:p>A second level, <text:span text:style-name="T2">italic</text:span></text:p></text:list-item>
+                  <text:list-item>
+                    <text:list>
+                      <text:list-item><text:p>A third level</text:p></text:list-item>
+                    </text:list>
+                  </text:list-item>
+                </text:list>
+              </text:list-item>
+              <text:list-item><text:p>See <text:a xlink:type="simple" xlink:href="https://github.com/DalsinAI">DalsinAI</text:a> for more</text:p></text:list-item>
+            </text:list>
+          </draw:text-box>
+        </draw:frame>
+        <draw:frame draw:style-name="gr8" draw:layer="layout" svg:width="10cm" svg:height="6cm" svg:x="16.5cm" svg:y="4cm" draw:name="Steps">
+          <draw:text-box>
+            <text:list text:style-name="L1">
+              <text:list-item><text:p>Open</text:p></text:list-item>
+              <text:list-item><text:p>Save</text:p>
+                <text:list>
+                  <text:list-item><text:p>as ODP</text:p></text:list-item>
+                  <text:list-item><text:p>as PDF</text:p></text:list-item>
+                </text:list>
+              </text:list-item>
+              <text:list-item><text:p>Show</text:p></text:list-item>
+            </text:list>
+            <text:p text:style-name="P1">Right<text:tab/>tab<text:s text:c="3"/>spaces<text:line-break/>new line</text:p>
+          </draw:text-box>
+        </draw:frame>
+        <presentation:notes>
+          <draw:page-thumbnail draw:layer="layout" svg:width="13.6cm" svg:height="7.65cm" svg:x="3.7cm" svg:y="2cm" draw:page-number="2" presentation:class="page"/>
+          <draw:frame presentation:style-name="pr4" draw:layer="layout" svg:width="17cm" svg:height="17cm" svg:x="2cm" svg:y="10.6cm" presentation:class="notes">
+            <draw:text-box><text:p>Lists keep their levels.</text:p></draw:text-box>
+          </draw:frame>
+        </presentation:notes>
+      </draw:page>
+      <draw:page draw:name="page3" draw:style-name="dp3" draw:master-page-name="Default">
+        <draw:frame presentation:style-name="pr1" draw:layer="layout" svg:width="25.2cm" svg:height="2.6cm" svg:x="1.4cm" svg:y="0.6cm" presentation:class="title">
+          <draw:text-box><text:p>Shapes</text:p></draw:text-box>
+        </draw:frame>
+        <draw:rect draw:style-name="gr1" draw:layer="layout" draw:name="Box" xml:id="id1" draw:id="id1" svg:width="5cm" svg:height="2.5cm" svg:x="1.5cm" svg:y="4cm"><text:p>Rectangle</text:p></draw:rect>
+        <draw:rect draw:style-name="gr2" draw:layer="layout" svg:width="5cm" svg:height="2.5cm" svg:x="7.5cm" svg:y="4cm" draw:corner-radius="0.5cm"><svg:desc>A rounded rectangle</svg:desc><text:p>Rounded</text:p></draw:rect>
+        <draw:ellipse draw:style-name="gr1" draw:layer="layout" svg:width="4cm" svg:height="3cm" svg:x="13.5cm" svg:y="3.8cm"><text:p>Ellipse</text:p></draw:ellipse>
+        <draw:line draw:style-name="gr3" draw:layer="layout" svg:x1="19cm" svg:y1="6.5cm" svg:x2="26cm" svg:y2="4cm"><text:p/></draw:line>
+        <draw:custom-shape draw:style-name="gr4" draw:layer="layout" svg:width="4cm" svg:height="3cm" svg:x="1.5cm" svg:y="8cm">
+          <text:p>Triangle</text:p>
+          <draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="isosceles-triangle" draw:modifiers="10800" draw:enhanced-path="M ?f0 0 L 21600 21600 0 21600 Z N">
+            <draw:equation draw:name="f0" draw:formula="$0 "/>
+          </draw:enhanced-geometry>
+        </draw:custom-shape>
+        <draw:custom-shape draw:style-name="gr2" draw:layer="layout" svg:width="3cm" svg:height="3cm" svg:x="6.5cm" svg:y="8cm">
+          <draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="diamond" draw:enhanced-path="M 10800 0 L 21600 10800 10800 21600 0 10800 10800 0 Z N"/>
+        </draw:custom-shape>
+        <draw:custom-shape draw:style-name="gr1" draw:layer="layout" svg:width="5cm" svg:height="2cm" svg:x="10.5cm" svg:y="8.5cm">
+          <text:p>Next</text:p>
+          <draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="right-arrow" draw:modifiers="16200 5400" draw:enhanced-path="M 0 ?f1 L ?f0 ?f1 ?f0 0 21600 10800 ?f0 21600 ?f0 ?f3 0 ?f3 Z N">
+            <draw:equation draw:name="f0" draw:formula="$0 "/>
+            <draw:equation draw:name="f1" draw:formula="$1 "/>
+            <draw:equation draw:name="f2" draw:formula="21600-$0 "/>
+            <draw:equation draw:name="f3" draw:formula="21600-$1 "/>
+          </draw:enhanced-geometry>
+        </draw:custom-shape>
+        <draw:polygon draw:style-name="gr4" draw:layer="layout" svg:width="4cm" svg:height="3cm" svg:x="16.5cm" svg:y="8cm" svg:viewBox="0 0 4000 3000" draw:points="0,3000 2000,0 4000,3000 2000,2000"/>
+        <draw:custom-shape draw:style-name="gr5" draw:layer="layout" draw:name="Star" svg:width="3cm" svg:height="3cm" svg:x="21.5cm" svg:y="8cm">
+          <draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="star5" draw:enhanced-path="M 10797 0 L 8278 8256 0 8256 6722 13405 4198 21600 10797 16580 17401 21600 14878 13405 21600 8256 13321 8256 10797 0 Z N"/>
+        </draw:custom-shape>
+        <draw:g draw:name="Pair">
+          <draw:rect draw:style-name="gr2" draw:layer="layout" svg:width="2cm" svg:height="1cm" svg:x="1.5cm" svg:y="12cm"/>
+          <draw:ellipse draw:style-name="gr4" draw:layer="layout" svg:width="2cm" svg:height="1cm" svg:x="4cm" svg:y="12.5cm"/>
+        </draw:g>
+        <draw:rect draw:style-name="gr2" draw:layer="layout" draw:name="Tilted" svg:width="4cm" svg:height="1cm" draw:transform="rotate (0.523598775598299) translate (8cm 13.5cm)"/>
+        <draw:connector draw:style-name="gr3" draw:layer="layout" draw:type="standard" svg:viewBox="0 0 4000 1000" svg:x1="14cm" svg:y1="12cm" svg:x2="18cm" svg:y2="13cm"><text:p/></draw:connector>
+        <anim:par presentation:node-type="timing-root">
+          <anim:seq presentation:node-type="main-sequence">
+            <anim:par smil:begin="indefinite" smil:fill="hold">
+              <anim:par smil:begin="0s" smil:fill="hold">
+                <anim:par smil:begin="0s" smil:fill="hold" presentation:node-type="on-click" presentation:preset-class="entrance" presentation:preset-id="ooo-entrance-appear">
+                  <anim:set smil:begin="0s" smil:dur="0.001s" smil:fill="hold" smil:targetElement="id1" smil:attributeName="visibility" smil:to="visible"/>
+                </anim:par>
+              </anim:par>
+            </anim:par>
+          </anim:seq>
+        </anim:par>
+      </draw:page>
+      <draw:page draw:name="page4" draw:style-name="dp4" draw:master-page-name="Default">
+        <draw:frame presentation:style-name="pr1" draw:layer="layout" svg:width="25.2cm" svg:height="2.6cm" svg:x="1.4cm" svg:y="0.6cm" presentation:class="title">
+          <draw:text-box><text:p>Pictures, a table and a chart</text:p></draw:text-box>
+        </draw:frame>
+        <draw:frame draw:style-name="gr6" draw:layer="layout" draw:name="Cropped" svg:width="4cm" svg:height="3cm" svg:x="1.5cm" svg:y="4cm">
+          <draw:image xlink:href="Pictures/red.png" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>
+          <svg:title>A red picture</svg:title>
+        </draw:frame>
+        <draw:frame draw:style-name="gr7" draw:layer="layout" svg:width="4cm" svg:height="3cm" svg:x="1.5cm" svg:y="8cm">
+          <draw:image xlink:href="Pictures/photo.jpg" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>
+        </draw:frame>
+        <draw:frame draw:style-name="gr7" draw:layer="layout" svg:width="12cm" svg:height="3cm" svg:x="7cm" svg:y="4cm">
+          <table:table>
+            <table:table-column table:style-name="co1"/>
+            <table:table-column table:style-name="co2" table:number-columns-repeated="2"/>
+            <table:table-row>
+              <table:table-cell table:style-name="ce1" office:value-type="string"><text:p>Phase</text:p></table:table-cell>
+              <table:table-cell table:style-name="ce1" office:value-type="string"><text:p>Open</text:p></table:table-cell>
+              <table:table-cell table:style-name="ce1" office:value-type="string"><text:p>Save</text:p></table:table-cell>
+            </table:table-row>
+            <table:table-row>
+              <table:table-cell office:value-type="string"><text:p>P1</text:p></table:table-cell>
+              <table:table-cell office:value-type="string"><text:p>ODP</text:p></table:table-cell>
+              <table:table-cell office:value-type="string"><text:p>ODP, PDF</text:p></table:table-cell>
+            </table:table-row>
+            <table:table-row>
+              <table:table-cell office:value-type="string"><text:p>P2</text:p></table:table-cell>
+              <table:table-cell office:value-type="string"><text:p>PPTX</text:p></table:table-cell>
+              <table:table-cell/>
+            </table:table-row>
+          </table:table>
+        </draw:frame>
+        <draw:frame draw:style-name="gr7" draw:layer="layout" draw:name="Chart" svg:width="6cm" svg:height="4.5cm" svg:x="20cm" svg:y="4cm">
+          <draw:object xlink:href="./Object 1" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>
+          <draw:image xlink:href="./ObjectReplacements/Object 1" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>
+        </draw:frame>
+      </draw:page>
+      <draw:page draw:name="page5" draw:style-name="dp5" draw:master-page-name="Default">
+        <draw:frame presentation:style-name="pr1" draw:layer="layout" svg:width="25.2cm" svg:height="2.6cm" svg:x="1.4cm" svg:y="0.6cm" presentation:class="title">
+          <draw:text-box><text:p>Backup (hidden)</text:p></draw:text-box>
+        </draw:frame>
+      </draw:page>
+      <presentation:settings presentation:start-page="page1" presentation:endless="false">
+        <presentation:show presentation:name="Short" presentation:pages="page1,page2"/>
+      </presentation:settings>
+    </office:presentation>
+  </office:body>
+</office:document-content>

@@ -442,9 +442,9 @@ owf_xml_node *owf_xml_next(const owf_xml_node *n, const char *ns, const char *na
 
 int owf_parse_length(const char *s, int *twips)
 {
-    long whole = 0, milli = 0, scale = 100;
+    long long whole = 0, milli = 0, t;     /* 32-bit longs overflow past 1491in */
+    long scale = 100;
     int negative = 0, digits = 0;
-    long t;
 
     if (!s)
         return 0;
@@ -481,6 +481,8 @@ int owf_parse_length(const char *s, int *twips)
     else if (!strcmp(s, "pc")) t = milli * 240 / 1000;
     else if (!strcmp(s, "px")) t = milli * 15 / 1000;
     else return 0;
+    if (t > 1000000000)
+        t = 1000000000;
     *twips = (int)(negative ? -t : t);
     return 1;
 }
