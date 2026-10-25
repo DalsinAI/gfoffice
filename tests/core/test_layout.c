@@ -681,6 +681,15 @@ static void test_sample(const char *path)
             ++lists;
         }
         if (strstr(path, "Tata.docx")) CHECK(lists > 0);
+        {   /* 2.0.13: laid out again with its display list's room made first, the same ops */
+            const ol_document *a = ow_layout_body(l);
+            ow_layout *r = ow_layout_new_reserved(doc, measure, NULL, ol_display_count(a) + 100);
+            CHECK(r && ol_display_count(ow_layout_body(r)) == ol_display_count(a) &&
+                  ow_layout_page_count(r) == ow_layout_page_count(l) &&
+                  !memcmp(ol_display_get(ow_layout_body(r), 0), ol_display_get(a, 0),
+                          ol_display_count(a) * sizeof(ol_display_op)));
+            ow_layout_free(r);
+        }
         if (strstr(path, "contents.docx")) contents_checks(l, doc);
         if (strstr(path, "cover.docx")) cover_checks(l, doc);
         if (strstr(path, "cover-wpg.docx")) cover_wpg_checks(l, doc);

@@ -30,6 +30,13 @@ typedef struct ow_layout ow_layout;
  * after an edit. NULL when memory runs out. */
 ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure,
                          void *measure_userdata);
+/* 2.0.13: the same, with room for ops display ops made before anything else (OpenLayout 0.5's
+ * ol_document_new_reserved; 0: none): a program that lays its document out again after each change, the
+ * last layout freed just before, can give the same room each time, a little more than the last layout's
+ * ol_display_count, and its display list takes back the block the last one had (on an Amiga libnix's
+ * malloc otherwise kept 3 MB of a 30-page document's in its pools after each change). */
+ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata,
+                                  size_t ops);
 void ow_layout_free(ow_layout *layout);
 
 ol_document *ow_layout_body(const ow_layout *layout);
