@@ -77,7 +77,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.4 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.5 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -220,7 +220,7 @@ static struct NewMenu menus[] = {
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
-/* 2.0.4: the pictures are the Chrome icon set's (opengadtools docs/style/README.md; Images/Toolbar/), by name;
+/* 2.0.5: the pictures are the Chrome icon set's (opengadtools docs/style/README.md; Images/Toolbar/), by name;
  * the vector icons are drawn when the set can't be (no strips, four colours, the Classic theme). */
 static const ogt_tool tools[] = {
     { C_NEW,   "New",    OGT_ICON_FILE,    0, 0, 0, "new" },
@@ -1700,6 +1700,38 @@ static int word_x(const page_paint *pp, const ol_device_op *d, const char *s, si
     return ol_scale_length(pp->scale, m.width);
 }
 
+/* 2.0.4: a tab's leader (OpenLayout 0.3) across its space: dots, hyphens, underscores or middle dots in the
+ * word's font, each where a run of them from the page's left edge would put it, so the leaders of a contents
+ * page line up from line to line; a heavy one is a rule. A little room is left at each end. */
+static void paint_leader(page_paint *pp, const ol_device_op *d, unsigned leader, LONG pen, int baseline)
+{
+    struct RastPort *rp = pp->rp;
+    char row[96];
+    int cw, from, to, x, k;
+    char c = leader == OL_LEADER_HYPHEN ? '-' : leader == OL_LEADER_UNDERSCORE ? '_'
+           : leader == OL_LEADER_MIDDLE_DOT ? (char)0xB7 : '.';
+    if (leader == OL_LEADER_HEAVY) {
+        int h = d->font_pixels / 8 > 1 ? d->font_pixels / 8 : 1, gap = d->font_pixels / 4;
+        if (d->box.width > 2 * gap) ogt_box(rp, pen, d->box.x + gap, baseline - h + 1, d->box.width - 2 * gap, h);
+        return;
+    }
+    cw = text_length(rp, &c, 1);
+    if (cw < 1) return;
+    from = d->box.x + cw / 2;
+    to = d->box.x + d->box.width - cw / 2;
+    x = pp->scale->origin_x + (from - pp->scale->origin_x + cw - 1) / cw * cw;   /* on the page's grid */
+    if (x + cw > to) return;
+    memset(row, c, sizeof row);
+    SetDrMd(rp, JAM1);
+    while (x + cw <= to) {
+        k = (to - x) / cw;
+        if (k > (int)sizeof row) k = (int)sizeof row;
+        Move(rp, x, baseline);
+        Text(rp, (STRPTR)row, (ULONG)k);
+        x += k * cw;
+    }
+}
+
 static void paint_text(page_paint *pp, const ol_device_op *d)
 {
     struct RastPort *rp = pp->rp;
@@ -1783,6 +1815,13 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
         }
     }
 
+    if (OL_TEXT_LEADER_OF(t->style.text_flags) && t->text_length == 1 && s[0] == '\t' && d->box.width > 0) {
+        pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : ogt_pen(&ctx, "fill.text");
+        ogt_set_apen(rp, pen);
+        SetSoftStyle(rp, style & ~FSF_UNDERLINED, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+        paint_leader(pp, d, OL_TEXT_LEADER_OF(t->style.text_flags), pen, baseline);
+        SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    }
     if (!(style & FSF_UNDERLINED)) n = drawn;        /* an underline runs on under the spaces */
     if (!n) return;
     pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : ogt_pen(&ctx, "fill.text");
@@ -3383,7 +3422,7 @@ static char *document_plain_text(void)
     return out;
 }
 
-/* 2.0.3, for the lab: FONTCHECK [points [zoom]]: the document's own font at a size (11 points, the window's
+/* 2.0.3, for the lab: FONTCHECK [points [zoom [bold]]]: the document's own font at a size (11 points, the window's
  * zoom): the routes there are (openfont.library and diskfont.library), the window's font, the face that
  * draws the text (the document's, or the first of its kind that opens), where its widths come from (its own
  * at the size, scaled from another, or the window font's), and the sample of letters and digits laid out and
@@ -3392,21 +3431,24 @@ static void font_check(const char *arg, char *out, size_t size)
 {
     static const char *const from[] = { "own", "scaled", "window font" };
     char file[72], *end;
-    long pt = strtol(arg, &end, 10), z = strtol(end, NULL, 10);
+    long pt = strtol(arg, &end, 10), z = strtol(end, &end, 10), bold = strtol(end, NULL, 10);
     uint32_t flags = doc && doc->base.font >= 0 ? OL_TEXT_FONT(OW_LAYOUT_FONT(doc->base.font)) : 0;
     ow_fw_check c;
+    const ow_fw_table *t;
     char of[16] = "none", df[16] = "none";
     if (pt < 4 || pt > 96) pt = 11;
     if (z < 10 || z > 800) z = zoom;
     layout_font_file(flags, file, sizeof file);
-    ow_fw_check_sample(fonts_w(), file, 0, OL_POINT(pt), (int)z, &c);
+    ow_fw_check_sample(fonts_w(), file, bold != 0, OL_POINT(pt), (int)z, &c);
+    t = ow_fw_widths(fonts_w(), file, bold != 0, c.px);   /* 2.0.4: a space's and an e's widths too */
     if (OpenFontTextBase) snprintf(of, sizeof of, "%d.%d", OpenFontTextBase->lib_Version, OpenFontTextBase->lib_Revision);
     if (DiskfontBase) snprintf(df, sizeof df, "%d.%d", DiskfontBase->lib_Version, DiskfontBase->lib_Revision);
-    snprintf(out, size, "%s %ldpt: openfont %s, diskfont %s, window font %s %d; face %s, widths %s, measured at "
-             "%dpx; at %ld%%: %dpx, drawn at %dpx (%d tall), sample %ld px drawn, %ld px laid out", file, pt, of, df,
+    snprintf(out, size, "%s %ldpt%s: openfont %s, diskfont %s, window font %s %d; face %s, widths %s, measured at "
+             "%dpx (space %d, e %d); at %ld%%: %dpx, drawn at %dpx (%d tall), sample %ld px drawn, %ld px laid out",
+             file, pt, bold ? " bold" : "", of, df,
              font_attr.ta_Name ? (const char *)font_attr.ta_Name : "?", font ? font->tf_YSize : 0,
-             c.face[0] ? c.face : "(none)", from[c.from >= 0 && c.from <= 2 ? c.from : 0], c.px, z, c.zoom_px,
-             c.draw_px, c.draw_ysize, c.drawn, c.laid);
+             c.face[0] ? c.face : "(none)", from[c.from >= 0 && c.from <= 2 ? c.from : 0], c.px, t->w[' '], t->w['e'],
+             z, c.zoom_px, c.draw_px, c.draw_ysize, c.drawn, c.laid);
 }
 
 static int rexx_do_command(const char *command, char **result_out)

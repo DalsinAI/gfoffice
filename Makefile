@@ -140,10 +140,12 @@ $(OUT)/test-layout-asan: $(OWF_SRC) $(LAYOUT_SRC) tests/core/test_layout.c inclu
 		$(OWF_SRC) $(LAYOUT_SRC) tests/core/test_layout.c -lz -o $@
 
 layout-test: $(OUT)/test-layout
-	$(OUT)/test-layout samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx
+	$(OUT)/test-layout samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx \
+		tests/core/fixtures/contents.docx
 
 layout-check: $(OUT)/test-layout-asan
-	$(OUT)/test-layout-asan samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx
+	$(OUT)/test-layout-asan samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx \
+		tests/core/fixtures/contents.docx
 
 .PHONY: layout-test layout-check
 
@@ -214,6 +216,20 @@ test: xml-book-test
 check: xml-book-check
 
 .PHONY: xml-book-test xml-book-check
+
+# What a sheet holds beside its cells (conditional formatting...), read from
+# fixtures/features-openpyxl.xlsx (tests/book/make_feature_fixtures.py) and
+# kept on saving: tests/book/test_sheet_features.py
+features-test: $(OUT)/book-dump $(OUT)/owconvert
+	python3 tests/book/test_sheet_features.py $(OUT)/book-dump $(OUT)/owconvert
+
+features-check: $(OUT)/book-dump-asan $(OUT)/owconvert-asan
+	python3 tests/book/test_sheet_features.py $(OUT)/book-dump-asan $(OUT)/owconvert-asan
+
+book-test: features-test
+book-check: features-check
+
+.PHONY: features-test features-check
 
 # The formula engine (OpenCalc's): libowf/calc, linked only by what
 # calculates (it needs -lm). tests/calc/test_calc.c checks it, and works out

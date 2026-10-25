@@ -84,6 +84,89 @@ static void free_sheet(owf_sheet *sheet)
     free(sheet->rows);
     free(sheet->merges);
     free(sheet->name);
+    owf_sheet_free_extras(sheet);
+}
+
+/* ---- What a sheet holds beside its cells ---- */
+
+void owf_condfmt_free(owf_condfmt *cf)
+{
+    int k;
+    if (!cf)
+        return;
+    free(cf->ranges);
+    free(cf->formula[0]);
+    free(cf->formula[1]);
+    for (k = 0; k < 3; k++)
+        free(cf->points[k].value);
+    free(cf->xml);
+    memset(cf, 0, sizeof *cf);
+}
+
+owf_condfmt *owf_sheet_add_condfmt(owf_sheet *sheet)
+{
+    owf_condfmt *cf;
+    if (!grow((void **)&sheet->condfmts, sheet->ncondfmts, &sheet->capcondfmts, sizeof *cf, 4))
+        return NULL;
+    cf = &sheet->condfmts[sheet->ncondfmts++];
+    memset(cf, 0, sizeof *cf);
+    return cf;
+}
+
+void owf_sheet_free_extras(owf_sheet *sheet)
+{
+    int i;
+    for (i = 0; i < sheet->ncondfmts; i++)
+        owf_condfmt_free(&sheet->condfmts[i]);
+    free(sheet->condfmts);
+    sheet->condfmts = NULL;
+    sheet->ncondfmts = sheet->capcondfmts = 0;
+}
+
+static char *dup_or_null(const char *s, int *failed)
+{
+    char *d;
+    if (!s)
+        return NULL;
+    if (!(d = copy_text(s, strlen(s))))
+        *failed = 1;
+    return d;
+}
+
+int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src)
+{
+    int i, k, failed = 0;
+    dst->condfmts = NULL;
+    dst->ncondfmts = dst->capcondfmts = 0;
+    for (i = 0; i < src->ncondfmts && !failed; i++) {
+        const owf_condfmt *a = &src->condfmts[i];
+        owf_condfmt *b = owf_sheet_add_condfmt(dst);
+        if (!b) {
+            failed = 1;
+            break;
+        }
+        *b = *a;
+        b->ranges = NULL;
+        b->formula[0] = b->formula[1] = b->xml = NULL;
+        for (k = 0; k < 3; k++)
+            b->points[k].value = NULL;
+        if (a->nranges && !(b->ranges = malloc((size_t)a->nranges * sizeof *b->ranges)))
+            failed = 1;
+        else if (a->nranges)
+            memcpy(b->ranges, a->ranges, (size_t)a->nranges * sizeof *b->ranges);
+        if (failed)
+            b->nranges = 0;
+        b->formula[0] = dup_or_null(a->formula[0], &failed);
+        b->formula[1] = dup_or_null(a->formula[1], &failed);
+        b->xml = dup_or_null(a->xml, &failed);
+        for (k = 0; k < 3; k++)
+            b->points[k].value = dup_or_null(a->points[k].value, &failed);
+    }
+    if (failed) {
+        owf_sheet_free_extras(dst);
+        return -1;
+    }
+    return 0;
 }
 
 void owf_book_free(owf_book *book)

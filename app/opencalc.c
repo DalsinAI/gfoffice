@@ -69,7 +69,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.11 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.12 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -212,7 +212,7 @@ static struct NewMenu menus[] = {
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
-/* 0.1.11: the pictures are the Chrome icon set's (opengadtools docs/style/README.md; Images/Toolbar/), by name;
+/* 0.1.12: the pictures are the Chrome icon set's (opengadtools docs/style/README.md; Images/Toolbar/), by name;
  * the vector icons are drawn when the set can't be (no strips, four colours, the Classic theme). */
 static const ogt_tool tools[] = {
     { C_NEW,   "New",     OGT_ICON_FILE,    0, 0, 0, "new" },
@@ -1148,7 +1148,7 @@ static void draw_tab_arrow(struct RastPort *rp, int x, int y, int w, int h, int 
     xy[3] = cy + a;
     xy[4] = right ? cx + a / 2 + 1 : cx - a / 2 - 1;
     xy[5] = cy;
-    /* 0.1.11: dimmed is the theme's muted, as the style guide has it (opengadtools docs/style/README.md 4.2): in
+    /* 0.1.12: dimmed is the theme's muted, as the style guide has it (opengadtools docs/style/README.md 4.2): in
      * Chrome 4.4:1 on the tab in light and 5.3:1 in dark, against tab.text's 8.3 and 8.0 */
     ogt_fill_poly(rp, ogt_pen(&ctx, live ? "tab.text" : "muted"), xy, 3);
 }

@@ -9,9 +9,10 @@
  * formats, alignment, wrap, fills, borders, theme colours with their
  * tints), column widths, row heights, hidden rows, columns and sheets,
  * merged cells, frozen panes, defined names, the active sheet and the
- * 1904 date system. What the model cannot hold (comments, pictures,
- * charts, conditional formats, validation, tables, pivot tables, macros)
- * is reported.
+ * 1904 date system, conditional formatting (cellIs, expression and colour
+ * scale rules worked out; the others kept as written). What the model
+ * cannot hold (comments, pictures, charts, validation, tables, pivot
+ * tables, macros) is reported.
  *
  * Big parts (the sheets, the shared strings) are read as a stream, element
  * by element, so a sheet's memory is its cells', not a tree of its XML.
@@ -383,6 +384,24 @@ typedef struct {
     int index;                   /* the book's */
 } xnumfmt;
 
+/* A look conditional formatting gives (a dxf): the font's parts it sets, its colour and the fill. */
+typedef struct {
+    unsigned set, flags;
+    unsigned long colour, fill;  /* OWF_SHADE, 0 none */
+} xdxf;
+
+/* The conditional formatting being read: its ranges, the rule (an index: the array moves), what it holds. */
+typedef struct {
+    owf_range *ranges;
+    int nranges;
+    int rule;                    /* the sheet's condfmts index, -1 none */
+    int in_formula, nformula;
+    owf_buf text;
+    int in_scale, ncfvo, ncolor;
+    owf_buf xml;                 /* a kept rule's, as read */
+    int keeping, skip_depth, skip_end;
+} cfread;
+
 typedef struct {
     char *name;
     int kind;                    /* 0 a worksheet, 1 a chart sheet, 2 other */
@@ -430,6 +449,8 @@ typedef struct {
     int nnumfmts;
     int *xf_style;
     int nxf;
+    xdxf *dxfs;
+    int ndxfs;
 
     /* shared strings, each with a NUL after */
     owf_buf sst;
@@ -784,6 +805,42 @@ static void xf_style(xlsx *x, const owf_xml_node *xf, owf_cellstyle *s)
         owf_report_add(x->report, OWF_NOTE_APPROX, "Text turned at an angle in cells is shown level");
 }
 
+/* A dxf: <font><b/><i val="0"/><color .../></font>, <fill><patternFill><bgColor .../></patternFill></fill>
+ * (a look's solid fill is its bgColor; its fgColor when it has none). */
+static void read_dxf(xlsx *x, const owf_xml_node *d, xdxf *out)
+{
+    static const struct { const char *name; unsigned flag; } parts[4] = {
+        { "b", OWF_BOLD }, { "i", OWF_ITALIC }, { "strike", OWF_STRIKE }, { "u", OWF_UNDERLINE }
+    };
+    const owf_xml_node *f = main_child(d, "font"), *c, *p;
+    unsigned long rgb;
+    int k;
+    memset(out, 0, sizeof *out);
+    for (c = f ? f->first : NULL; c; c = c->next) {
+        const char *v;
+        if (c->type != OWF_XML_ELEMENT || !is_main(c->ns))
+            continue;
+        v = attr(c, "val");
+        for (k = 0; k < 4; k++)
+            if (!strcmp(c->name, parts[k].name)) {
+                int on = k == 3 ? !v || strcmp(v, "none") : xbool(v, 1);
+                out->set |= parts[k].flag;
+                if (on)
+                    out->flags |= parts[k].flag;
+            }
+        if (!strcmp(c->name, "color") && colour_of(x, c, &rgb))
+            out->colour = OWF_SHADE(rgb);
+    }
+    p = main_child(main_child(d, "fill"), "patternFill");
+    if (p) {
+        const char *type = attr(p, "patternType");
+        if (!type || strcmp(type, "none")) {
+            if (colour_of(x, main_child(p, "bgColor"), &rgb) || colour_of(x, main_child(p, "fgColor"), &rgb))
+                out->fill = OWF_SHADE(rgb);
+        }
+    }
+}
+
 static void read_styles(xlsx *x, const char *part)
 {
     owf_xml *xml = read_xml(x->zip, part, NULL);
@@ -858,6 +915,16 @@ static void read_styles(xlsx *x, const char *part)
         }
         for (n = main_child(sec, "border"); n; n = main_next(n, "border"))
             read_border(x, n, &x->borders[x->nborders++]);
+    }
+    if ((sec = main_child(root, "dxfs")) != NULL) {
+        count = count_children(sec, "dxf");
+        x->dxfs = calloc((size_t)count + 1, sizeof *x->dxfs);
+        if (!x->dxfs) {
+            x->failed = 1;
+            goto done;
+        }
+        for (n = main_child(sec, "dxf"); n; n = main_next(n, "dxf"))
+            read_dxf(x, n, &x->dxfs[x->ndxfs++]);
     }
     if ((sec = main_child(root, "cellXfs")) != NULL) {
         count = count_children(sec, "xf");
@@ -1342,8 +1409,6 @@ static void sheet_element(xlsx *x, const owf_xml_event *e, cellstate *cs)
         owf_range r;
         if (parse_range(ev_attr(e, "ref"), &r) && owf_sheet_merge(sh, &r) < 0)
             x->failed = 1;
-    } else if (!strcmp(name, "conditionalFormatting")) {
-        owf_report_add(x->report, OWF_NOTE_LOST, "Conditional formatting is not read yet");
     } else if (!strcmp(name, "dataValidation")) {
         owf_report_add(x->report, OWF_NOTE_LOST, "Data validation (lists to pick from, limits) is not read yet");
     } else if (!strcmp(name, "hyperlink")) {
@@ -1357,6 +1422,303 @@ static void sheet_element(xlsx *x, const owf_xml_event *e, cellstate *cs)
     } else if (!strcmp(name, "sheetProtection")) {
         owf_report_add(x->report, OWF_NOTE_INFO, "Sheet protection is not kept: the sheets open unprotected");
     }
+}
+
+/* ---- Conditional formatting ---- */
+
+#define NS_X14 "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
+
+/* "A1:B2 C3" (a sqref): its ranges, from malloc. The count; 0 when none. */
+static int parse_sqref(xlsx *x, const char *s, owf_range **out)
+{
+    int n = 0, cap = 0;
+    owf_range *r = NULL;
+    *out = NULL;
+    while (s && *s) {
+        char one[40];
+        size_t k = 0;
+        while (*s == ' ')
+            s++;
+        while (s[k] && s[k] != ' ')
+            k++;
+        if (k && k < sizeof one) {
+            owf_range range;
+            memcpy(one, s, k);
+            one[k] = 0;
+            if (parse_range(one, &range)) {
+                owf_range *p = grow(x, r, n, &cap, sizeof *r);
+                if (!p)
+                    break;
+                r = p;
+                r[n++] = range;
+            }
+        }
+        s += k;
+    }
+    if (!n)
+        free(r);
+    else
+        *out = r;
+    return n;
+}
+
+/* A colour from an element's attributes (as colour_of from a node's). */
+static int ev_colour(const xlsx *x, const owf_xml_event *e, unsigned long *rgb)
+{
+    const char *v;
+    double tint = 0;
+    long i;
+    if (xbool(ev_attr(e, "auto"), 0))
+        return 0;
+    xdouble(ev_attr(e, "tint"), &tint);
+    if ((v = ev_attr(e, "rgb")) != NULL) {
+        if (strlen(v) == 8)
+            v += 2;
+        if (!owf_parse_colour(v, rgb))
+            return 0;
+    } else if ((i = xlong(ev_attr(e, "theme"), -1, 0, 11)) >= 0) {
+        *rgb = x->theme[i];
+    } else if ((i = xlong(ev_attr(e, "indexed"), -1, 0, 63)) >= 0) {
+        *rgb = x->palette[i];
+    } else {
+        return 0;
+    }
+    *rgb = tinted(*rgb, tint);
+    return 1;
+}
+
+static void put_escaped(owf_buf *b, const char *s, size_t n, int in_attr)
+{
+    size_t i;
+    for (i = 0; i < n; i++)
+        switch (s[i]) {
+        case '&': owf_buf_puts(b, "&amp;"); break;
+        case '<': owf_buf_puts(b, "&lt;"); break;
+        case '>': owf_buf_puts(b, "&gt;"); break;
+        case '"': owf_buf_puts(b, in_attr ? "&quot;" : "\""); break;
+        default: owf_buf_putc(b, s[i]); break;
+        }
+}
+
+/* A start tag of a kept rule as read: its attributes in no namespace (a rule's dxfId and priority left
+ * out: the writer gives its own). */
+static void put_start_tag(owf_buf *b, const owf_xml_event *e, int rule)
+{
+    int i;
+    owf_buf_putc(b, '<');
+    owf_buf_puts(b, e->name);
+    for (i = 0; i < e->nattrs; i++) {
+        const owf_xml_attribute *a = &e->attrs[i];
+        if (a->ns && *a->ns)
+            continue;
+        if (rule && (!strcmp(a->name, "dxfId") || !strcmp(a->name, "priority")))
+            continue;
+        owf_buf_printf(b, " %s=\"", a->name);
+        put_escaped(b, a->value, strlen(a->value), 1);
+        owf_buf_putc(b, '"');
+    }
+    owf_buf_puts(b, e->empty ? "/>" : ">");
+}
+
+static owf_condfmt *cf_rule(xlsx *x, cfread *cr)
+{
+    return cr->rule >= 0 && cr->rule < x->sheet->ncondfmts ? &x->sheet->condfmts[cr->rule] : NULL;
+}
+
+static void cf_formula_done(xlsx *x, cfread *cr)
+{
+    owf_condfmt *cf = cf_rule(x, cr);
+    char *text;
+    cr->in_formula = 0;
+    owf_buf_putc(&cr->text, 0);
+    if (cr->text.failed) {
+        x->failed = 1;
+        return;
+    }
+    if (!cf || cr->nformula >= 2)
+        return;
+    text = owf_xl_formula_from_file((const char *)cr->text.data, x->books, x->nbooks);
+    if (!text)
+        x->failed = 1;
+    else
+        cf->formula[cr->nformula++] = text;
+}
+
+static void cf_kept_done(xlsx *x, cfread *cr)
+{
+    owf_condfmt *cf = cf_rule(x, cr);
+    cr->keeping = 0;
+    if (cr->xml.failed || !cf) {
+        x->failed |= cr->xml.failed;
+        return;
+    }
+    if (!(cf->xml = copy(x, (const char *)cr->xml.data, cr->xml.length)))
+        return;
+    if (!cf->formula[0])
+        owf_report_add(x->report, OWF_NOTE_APPROX,
+                       "Some conditional formats (data bars, icon sets, top 10 and the like) are kept but not shown");
+}
+
+/* The events of a sheet's conditional formatting (and those of a kept rule, all of them): 1 when it took
+ * the event. */
+static int cf_event(xlsx *x, const owf_xml_event *e, cfread *cr)
+{
+    owf_condfmt *cf;
+    const char *v;
+    if (cr->keeping) {
+        if (cr->skip_depth) {
+            if (e->type == OWF_XS_END && e->depth == cr->skip_depth)
+                cr->skip_depth = 0;
+            return 1;
+        }
+        if (e->type == OWF_XS_TEXT) {
+            put_escaped(&cr->xml, e->text, e->length, 0);
+            if (cr->in_formula)
+                owf_buf_put(&cr->text, e->text, e->length);
+        } else if (e->type == OWF_XS_START) {
+            if (!is_main(e->ns) || !strcmp(e->name, "extLst")) {   /* Excel 2010's extensions: left out */
+                if (e->empty)
+                    cr->skip_end = 1;
+                else
+                    cr->skip_depth = e->depth;
+                return 1;
+            }
+            put_start_tag(&cr->xml, e, 0);
+            if (e->empty)
+                cr->skip_end = 1;
+            if (!strcmp(e->name, "formula")) {
+                cr->in_formula = 1;
+                cr->text.length = 0;
+            }
+        } else if (cr->skip_end) {
+            cr->skip_end = 0;
+        } else {
+            owf_buf_printf(&cr->xml, "</%s>", e->name);
+            if (!strcmp(e->name, "formula") && cr->in_formula)
+                cf_formula_done(x, cr);
+            else if (!strcmp(e->name, "cfRule")) {
+                cf_kept_done(x, cr);
+                cr->rule = -1;
+            }
+        }
+        return 1;
+    }
+    if (e->type == OWF_XS_TEXT) {
+        if (cr->in_formula)
+            owf_buf_put(&cr->text, e->text, e->length);
+        return cr->in_formula;
+    }
+    if (e->type == OWF_XS_START && !strcmp(e->name, "conditionalFormatting") && !strcmp(e->ns, NS_X14)) {
+        owf_report_add(x->report, OWF_NOTE_LOST, "Excel 2010's own conditional formats (in the sheet's extensions) are not kept");
+        return 1;
+    }
+    if (!is_main(e->ns))
+        return 0;
+    if (e->type == OWF_XS_END) {
+        if (!strcmp(e->name, "conditionalFormatting")) {
+            free(cr->ranges);
+            cr->ranges = NULL;
+            cr->nranges = 0;
+            cr->rule = -1;
+            return 1;
+        }
+        if (!cr->nranges)
+            return 0;
+        if (!strcmp(e->name, "formula") && cr->in_formula)
+            cf_formula_done(x, cr);
+        else if (!strcmp(e->name, "colorScale")) {
+            cr->in_scale = 0;
+            if ((cf = cf_rule(x, cr)) != NULL)
+                cf->npoints = cr->ncfvo < cr->ncolor ? cr->ncfvo : cr->ncolor;
+        } else if (!strcmp(e->name, "cfRule"))
+            cr->rule = -1;
+        return 1;
+    }
+    if (!strcmp(e->name, "conditionalFormatting") && e->depth == 2) {
+        free(cr->ranges);
+        cr->nranges = parse_sqref(x, ev_attr(e, "sqref"), &cr->ranges);
+        cr->rule = -1;
+        return 1;
+    }
+    if (!cr->nranges)
+        return 0;
+    if (!strcmp(e->name, "cfRule")) {
+        long dxf = xlong(ev_attr(e, "dxfId"), -1, 0, 0x7FFFFFFFL);
+        if (!(cf = owf_sheet_add_condfmt(x->sheet))) {
+            x->failed = 1;
+            return 1;
+        }
+        cr->rule = x->sheet->ncondfmts - 1;
+        cr->nformula = cr->ncfvo = cr->ncolor = cr->in_scale = 0;
+        if (!(cf->ranges = malloc((size_t)cr->nranges * sizeof *cf->ranges))) {
+            x->failed = 1;
+            return 1;
+        }
+        memcpy(cf->ranges, cr->ranges, (size_t)cr->nranges * sizeof *cf->ranges);
+        cf->nranges = cr->nranges;
+        cf->priority = (int)xlong(ev_attr(e, "priority"), 0, 0, 0x7FFFFFFFL);
+        cf->stop = xbool(ev_attr(e, "stopIfTrue"), 0);
+        if (dxf >= 0 && dxf < x->ndxfs) {
+            cf->font_set = x->dxfs[dxf].set;
+            cf->font_flags = x->dxfs[dxf].flags;
+            cf->font_colour = x->dxfs[dxf].colour;
+            cf->fill = x->dxfs[dxf].fill;
+        }
+        v = ev_attr(e, "type");
+        if (v && !strcmp(v, "cellIs")) {
+            static const char *const ops[8] = { "between", "notBetween", "equal", "notEqual", "greaterThan", "lessThan",
+                                                "greaterThanOrEqual", "lessThanOrEqual" };
+            const char *op = ev_attr(e, "operator");
+            int k;
+            cf->type = OWF_CF_CELL_IS;
+            cf->op = OWF_CF_EQUAL;
+            for (k = 0; op && k < 8; k++)
+                if (!strcmp(op, ops[k]))
+                    cf->op = k;
+        } else if (v && !strcmp(v, "expression")) {
+            cf->type = OWF_CF_EXPRESSION;
+        } else if (v && !strcmp(v, "colorScale")) {
+            cf->type = OWF_CF_COLOUR_SCALE;
+        } else {
+            cf->type = OWF_CF_KEPT;
+            cr->xml.length = 0;
+            put_start_tag(&cr->xml, e, 1);
+            cr->keeping = 1;
+            if (e->empty) {
+                cf_kept_done(x, cr);
+                cr->rule = -1;
+            }
+        }
+        return 1;
+    }
+    if (cr->rule < 0)
+        return 1;                                    /* inside conditionalFormatting, not a rule */
+    cf = cf_rule(x, cr);
+    if (!strcmp(e->name, "formula")) {
+        cr->in_formula = 1;
+        cr->text.length = 0;
+    } else if (!strcmp(e->name, "colorScale")) {
+        cr->in_scale = 1;
+    } else if (cr->in_scale && !strcmp(e->name, "cfvo") && cr->ncfvo < 3 && cf) {
+        static const char *const kinds[6] = { "min", "max", "num", "percent", "percentile", "formula" };
+        owf_cfpoint *p = &cf->points[cr->ncfvo++];
+        const char *type = ev_attr(e, "type"), *val = ev_attr(e, "val");
+        int k;
+        p->kind = OWF_CFV_MIN;
+        for (k = 0; type && k < 6; k++)
+            if (!strcmp(type, kinds[k]))
+                p->kind = k;
+        if (type && !strcmp(type, "autoMax"))
+            p->kind = OWF_CFV_MAX;
+        if (val && (p->kind == OWF_CFV_FORMULA ? !!(p->value = owf_xl_formula_from_file(val, x->books, x->nbooks))
+                                                : !!(p->value = copy(x, val, strlen(val)))) == 0)
+            x->failed = 1;
+    } else if (cr->in_scale && !strcmp(e->name, "color") && cr->ncolor < 3 && cf) {
+        unsigned long rgb = 0;
+        ev_colour(x, e, &rgb);
+        cf->points[cr->ncolor++].colour = OWF_SHADE(rgb);
+    }
+    return 1;
 }
 
 static void read_sheet_notes(xlsx *x, const char *part)
@@ -1379,6 +1741,7 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     owf_xml_scan *scan;
     owf_xml_event e;
     cellstate cs;
+    cfread cr;
     int r;
 
     x->sheet = &x->book->sheets[xs->sheet];
@@ -1401,7 +1764,13 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     owf_buf_init(&cs.v);
     owf_buf_init(&cs.f);
     owf_buf_init(&cs.is);
+    memset(&cr, 0, sizeof cr);
+    cr.rule = -1;
+    owf_buf_init(&cr.text);
+    owf_buf_init(&cr.xml);
     while (!x->failed && (r = owf_xml_scan_next(scan, &e)) > 0) {
+        if (!cs.in_data && cf_event(x, &e, &cr))
+            continue;
         if (e.type == OWF_XS_TEXT) {
             if (cs.in_v)
                 owf_buf_put(&cs.v, e.text, e.length);
@@ -1442,6 +1811,9 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     }
     finish_sheet(x);
     clear_sheet_state(x);
+    free(cr.ranges);
+    owf_buf_free(&cr.text);
+    owf_buf_free(&cr.xml);
     owf_buf_free(&cs.v);
     owf_buf_free(&cs.f);
     owf_buf_free(&cs.is);
@@ -1647,6 +2019,7 @@ static void free_reader(xlsx *x)
     free(x->borders);
     free(x->numfmts);
     free(x->xf_style);
+    free(x->dxfs);
     owf_buf_free(&x->sst);
     free(x->sst_at);
     for (i = 0; i < x->nbooks; i++)

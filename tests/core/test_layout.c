@@ -221,6 +221,91 @@ static void test_page_numbers(void)
     CHECK(!strcmp(out, "c"));
 }
 
+/* The end of a paragraph's run on the page: its caret after its last byte. */
+static int run_end(const ow_layout *l, const owf_doc *doc, int para, int run, int *page, ol_rect *box)
+{
+    ow_position pos;
+    const owf_run *r = &doc->body.paras[para].runs[run];
+    pos.paragraph = para;
+    pos.run = run;
+    pos.byte_offset = r->text ? strlen(r->text) : 0;
+    return ow_layout_caret(l, pos, page, box);
+}
+
+/* A run's first op in the body (a tab's: its one). */
+static const ol_display_op *run_op(const ow_layout *l, int para, int run)
+{
+    ow_position pos;
+    ol_text_position t;
+    const ol_document *od = ow_layout_body(l);
+    size_t i;
+    pos.paragraph = para;
+    pos.run = run;
+    pos.byte_offset = 0;
+    if (!ow_layout_to_text(l, pos, &t)) return NULL;
+    for (i = 0; i < ol_display_count(od); ++i) {
+        const ol_display_op *op = ol_display_get(od, i);
+        if (op->type == OL_OP_TEXT && op->u.text.node_id == t.node_id) return op;
+    }
+    return NULL;
+}
+
+/* tests/core/fixtures/contents.docx (make_contents_docx.py): a Word contents page. Each page number ends at
+ * its right stop on its entry's line, after a tab that carries the stop's leader (2.0.3). */
+static void contents_checks(const ow_layout *l, const owf_doc *doc)
+{
+    static const struct { int para, stop; unsigned leader; } entries[] = {
+        { 1, 9016, OL_LEADER_DOT }, { 2, 9016, OL_LEADER_DOT }, { 3, 9016, OL_LEADER_DOT }, { 4, 8000, OL_LEADER_HYPHEN }
+    };
+    ol_unit margin = ow_layout_page(l)->margin_left;
+    ol_rect a, b;
+    int i, pa, pb;
+    const ol_display_op *op;
+    CHECK(doc->body.nparas == 6);
+    if (doc->body.nparas != 6) return;
+    /* the model: the style's stop, a paragraph's own added to it, one cleared for another */
+    CHECK(doc->body.paras[1].fmt.ntabs == 1 && doc->body.paras[1].fmt.tabs[0].kind == OWF_TAB_RIGHT &&
+          doc->body.paras[1].fmt.tabs[0].leader == OWF_LEADER_DOT && doc->body.paras[1].fmt.tabs[0].position == 9016);
+    CHECK(doc->body.paras[2].fmt.ntabs == 1 && doc->body.paras[2].fmt.tabs[0].position == 9016 - 220);
+    CHECK(doc->body.paras[3].fmt.ntabs == 2 && doc->body.paras[3].fmt.tabs[0].kind == OWF_TAB_LEFT &&
+          doc->body.paras[3].fmt.tabs[1].kind == OWF_TAB_RIGHT);
+    CHECK(doc->body.paras[4].fmt.ntabs == 1 && doc->body.paras[4].fmt.tabs[0].leader == OWF_LEADER_HYPHEN &&
+          doc->body.paras[4].fmt.tabs[0].position == 8000);
+    for (i = 0; i < 4; ++i) {
+        const owf_para *p = &doc->body.paras[entries[i].para];
+        CHECK(p->nruns == 3 && p->runs[1].kind == OWF_RUN_TAB && p->runs[2].kind == OWF_RUN_TEXT);
+        if (p->nruns != 3) continue;
+        CHECK(run_end(l, doc, entries[i].para, 0, &pa, &a) && run_end(l, doc, entries[i].para, 2, &pb, &b));
+        /* on the entry's line, ending at the stop */
+        CHECK(pa == pb && a.y == b.y);
+        CHECK(b.x == margin + entries[i].stop * OL_UNITS_PER_TWIP);
+        op = run_op(l, entries[i].para, 1);
+        CHECK(op && OL_TEXT_LEADER_OF(op->u.text.style.text_flags) == entries[i].leader &&
+              op->u.text.bounds.x + op->u.text.bounds.width < b.x && op->u.text.bounds.width > 0);
+    }
+    /* "Centred" centred at 4513, "1234.50" with its point at 8000 */
+    {
+        const owf_para *p = &doc->body.paras[5];
+        ow_position pos;
+        CHECK(p->nruns == 5 && p->fmt.ntabs == 2 && p->fmt.tabs[1].kind == OWF_TAB_DECIMAL);
+        if (p->nruns == 5) {
+            CHECK(run_end(l, doc, 5, 2, &pa, &b));
+            pos.paragraph = 5;
+            pos.run = 2;
+            pos.byte_offset = 0;
+            CHECK(ow_layout_caret(l, pos, &pa, &a));
+            CHECK(a.x + b.x == 2 * (margin + 4513 * OL_UNITS_PER_TWIP) ||
+                  a.x + b.x + 1 == 2 * (margin + 4513 * OL_UNITS_PER_TWIP));
+            pos.run = 4;
+            pos.byte_offset = 4;                         /* "1234|.50" */
+            CHECK(ow_layout_caret(l, pos, &pa, &a));
+            CHECK(a.x == margin + 8000 * OL_UNITS_PER_TWIP);
+            op = run_op(l, 5, 3);
+            CHECK(op && OL_TEXT_LEADER_OF(op->u.text.style.text_flags) == OL_LEADER_UNDERSCORE);
+        }
+    }
+}
+
 static void test_sample(const char *path)
 {
     owf_doc *doc = NULL;
@@ -253,6 +338,7 @@ static void test_sample(const char *path)
             ++lists;
         }
         if (strstr(path, "Tata.docx")) CHECK(lists > 0);
+        if (strstr(path, "contents.docx")) contents_checks(l, doc);
         printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
                checked, lists);
         ow_layout_free(l);

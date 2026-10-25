@@ -44,7 +44,8 @@ static int same_para(const owf_parafmt *a, const owf_parafmt *b)
         a->border_colour != b->border_colour)
         return 0;
     for (i = 0; i < a->ntabs; i++)
-        if (a->tabs[i].position != b->tabs[i].position || a->tabs[i].kind != b->tabs[i].kind)
+        if (a->tabs[i].position != b->tabs[i].position || a->tabs[i].kind != b->tabs[i].kind ||
+            a->tabs[i].leader != b->tabs[i].leader)
             return 0;
     return 1;
 }
@@ -190,6 +191,18 @@ static void put_text_props(owf_buf *out, const owf_doc *doc, const owf_charfmt *
     owf_buf_puts(out, "/>");
 }
 
+void owf_odf_put_leader(owf_buf *out, owf_tab_leader leader)
+{
+    switch (leader) {
+    case OWF_LEADER_DOT: owf_buf_puts(out, " style:leader-style=\"dotted\" style:leader-text=\".\""); break;
+    case OWF_LEADER_HYPHEN: owf_buf_puts(out, " style:leader-style=\"solid\" style:leader-text=\"-\""); break;
+    case OWF_LEADER_UNDERSCORE:
+    case OWF_LEADER_HEAVY: owf_buf_puts(out, " style:leader-style=\"solid\" style:leader-text=\"_\""); break;
+    case OWF_LEADER_MIDDLE_DOT: owf_buf_puts(out, " style:leader-style=\"dotted\" style:leader-text=\"\xc2\xb7\""); break;
+    default: break;
+    }
+}
+
 static void put_para_props(owf_buf *out, const owf_parafmt *f)
 {
     static const char *align[] = { "start", "center", "end", "justify" };
@@ -232,6 +245,7 @@ static void put_para_props(owf_buf *out, const owf_parafmt *f)
         owf_buf_printf(out, " style:type=\"%s\"", tab_type[f->tabs[i].kind]);
         if (f->tabs[i].kind == OWF_TAB_DECIMAL)
             owf_buf_puts(out, " style:char=\".\"");
+        owf_odf_put_leader(out, f->tabs[i].leader);
         owf_buf_puts(out, "/>");
     }
     owf_buf_puts(out, "</style:tab-stops></style:paragraph-properties>");

@@ -74,6 +74,14 @@ typedef struct {
     int pane;                       /* 0 frozen, 1 scrolling */
 } oc_line;
 
+/* The look conditional formatting gives a cell showing (oc_condfmt.c): which parts it sets. */
+enum { OC_LOOK_FILL = 1, OC_LOOK_COLOUR = 2 };
+typedef struct {
+    unsigned long fill, colour;     /* 0xRRGGBB, for OC_LOOK_FILL, OC_LOOK_COLOUR */
+    unsigned set, flags;            /* OWF_BOLD...: which it sets, and to what */
+    unsigned char parts, stop;
+} oc_look;
+
 struct oc_core {
     owf_book *book;
     owf_calc *calc;
@@ -108,6 +116,11 @@ struct oc_core {
 
     int dirty;
     unsigned long changes;
+
+    /* conditional formatting's looks for the cells showing (oc_cf_looks), kept while nothing changes */
+    oc_look *cf_looks;
+    unsigned long cf_stamp, cf_hash;
+    int cf_sheet, cf_nr, cf_nc;
 
     /* the used part of the sheet showing, for the scrollers: worked out again when changes moves */
     unsigned long used_stamp;
@@ -156,6 +169,11 @@ int oc_cols_showing(const oc_core *core, int whole);
 void oc_view_follow(oc_core *core);
 int oc_measure(const oc_core *core, const char *s, size_t n, const owf_cellstyle *style);
 const owf_range *oc_merge_at(const owf_sheet *sheet, unsigned row, unsigned col);
+
+/* oc_condfmt.c: the looks of the cells showing (rows rl, columns cl), nr x nc, the core's own (good until
+ * the next call); NULL when the sheet has no conditional formats (or memory ran out). */
+const oc_look *oc_cf_looks(oc_core *core, const oc_line *rl, int nr, const oc_line *cl, int nc);
+void oc_cf_forget(oc_core *core);
 
 /* oc_clip.c */
 void oc_clip_free(oc_clip *clip);

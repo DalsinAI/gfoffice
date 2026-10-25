@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.1.0"
+#define OWF_VERSION "1.2.0"
 
 /* Results. */
 enum {
@@ -71,10 +71,16 @@ typedef struct {
 
 typedef enum { OWF_ALIGN_LEFT, OWF_ALIGN_CENTRE, OWF_ALIGN_RIGHT, OWF_ALIGN_JUSTIFY } owf_align;
 typedef enum { OWF_TAB_LEFT, OWF_TAB_CENTRE, OWF_TAB_RIGHT, OWF_TAB_DECIMAL } owf_tab_kind;
+/* 1.2: what fills a tab's space (a contents page's dots) */
+typedef enum {
+    OWF_LEADER_NONE, OWF_LEADER_DOT, OWF_LEADER_HYPHEN, OWF_LEADER_UNDERSCORE, OWF_LEADER_MIDDLE_DOT,
+    OWF_LEADER_HEAVY
+} owf_tab_leader;
 
 typedef struct {
     int position;            /* twips from the paragraph's left indent */
     owf_tab_kind kind;
+    owf_tab_leader leader;   /* 1.2 */
 } owf_tab;
 
 #define OWF_MAX_TABS 32
@@ -302,6 +308,49 @@ typedef struct {
     unsigned first_row, last_row, first_col, last_col;
 } owf_range;
 
+/* Conditional formatting: a rule over ranges of a sheet, as Excel's
+ * cfRule. CELL_IS compares each cell's value with formula[0] (and [1]);
+ * EXPRESSION holds where formula[0] is true; COLOUR_SCALE colours each
+ * number between its points; KEPT is one the model doesn't work out (data
+ * bars, icon sets, top 10, above average, duplicates...), kept as its
+ * file wrote it (xml) for writing back, and shown by formula[0] like an
+ * EXPRESSION when the file gave one (containsText and its kind do). The
+ * formulas are as at the first range's top left cell, without "=", and
+ * move with each cell as relative references do. A rule that holds gives
+ * its cells what its look sets (font_set says which of OWF_BOLD... it
+ * sets, font_flags to what); rules go by priority, 1 first, and the first
+ * to set a part of the look wins it; stop leaves the later ones out. */
+enum { OWF_CF_CELL_IS, OWF_CF_EXPRESSION, OWF_CF_COLOUR_SCALE, OWF_CF_KEPT };
+enum {
+    OWF_CF_BETWEEN, OWF_CF_NOT_BETWEEN, OWF_CF_EQUAL, OWF_CF_NOT_EQUAL, OWF_CF_GREATER, OWF_CF_LESS,
+    OWF_CF_GREATER_EQUAL, OWF_CF_LESS_EQUAL
+};
+/* A colour scale's point: the lowest or highest number, a number, a
+ * percent of the way, a percentile, or a formula's value. */
+enum { OWF_CFV_MIN, OWF_CFV_MAX, OWF_CFV_NUMBER, OWF_CFV_PERCENT, OWF_CFV_PERCENTILE, OWF_CFV_FORMULA };
+
+typedef struct {
+    int kind;                    /* OWF_CFV_... */
+    char *value;                 /* NUMBER, PERCENT, PERCENTILE: the number as text; FORMULA: the formula; else NULL */
+    unsigned long colour;        /* OWF_SHADE(0xRRGGBB) */
+} owf_cfpoint;
+
+typedef struct {
+    int nranges;
+    owf_range *ranges;           /* where it applies */
+    int type;                    /* OWF_CF_... */
+    int op;                      /* CELL_IS: OWF_CF_BETWEEN... */
+    int priority;                /* 1 first */
+    int stop;                    /* stopIfTrue */
+    char *formula[2];            /* or NULL */
+    unsigned font_set, font_flags;
+    unsigned long font_colour;   /* OWF_SHADE(0xRRGGBB), or 0: not set */
+    unsigned long fill;          /* OWF_SHADE(0xRRGGBB), or 0: not set */
+    int npoints;                 /* COLOUR_SCALE: 2 or 3 */
+    owf_cfpoint points[3];
+    char *xml;                   /* KEPT: its cfRule element as the file had it, but its look's dxfId */
+} owf_condfmt;
+
 typedef struct {
     char *name;                  /* UTF-8 */
     int ncells, capcells;
@@ -316,6 +365,8 @@ typedef struct {
     int default_height;          /* a row's, twips */
     int hidden;                  /* 1 hidden, 2 hidden from the user too */
     unsigned freeze_rows, freeze_cols;
+    int ncondfmts, capcondfmts;  /* owf.library 2.1 */
+    owf_condfmt *condfmts;
 } owf_sheet;
 
 /* A defined name: "Prices" standing for "Sheet1!$B$2:$B$40". */
@@ -365,6 +416,16 @@ int owf_sheet_set_columns(owf_sheet *sheet, unsigned first, unsigned last, int w
 int owf_sheet_set_row(owf_sheet *sheet, unsigned row, int height, int hidden);
 int owf_sheet_merge(owf_sheet *sheet, const owf_range *range);
 int owf_book_add_name(owf_book *book, const char *name, int sheet, const char *formula, int hidden);
+/* A new conditional format at the end of the sheet's, all zero (its
+ * pointers NULL): the importer fills it in, its strings and ranges from
+ * malloc. NULL when memory runs out. */
+owf_condfmt *owf_sheet_add_condfmt(owf_sheet *sheet);
+void owf_condfmt_free(owf_condfmt *cf);
+/* What a sheet holds beside its cells, columns, rows and merges (its
+ * conditional formats) copied from src into dst, which has none: for a
+ * program that copies a sheet. -1 when memory runs out (dst has none). */
+int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src);
+void owf_sheet_free_extras(owf_sheet *sheet);
 
 /* A number as a formula or a file writes it: up to 15 significant digits,
  * "0.1", "12", "1.5E+20". out holds at least 32 bytes. */
@@ -417,6 +478,7 @@ enum {
     OWF_STRUCT_CELLSTYLE, OWF_STRUCT_COLINFO, OWF_STRUCT_ROWINFO, OWF_STRUCT_RANGE, OWF_STRUCT_SHEET,
     OWF_STRUCT_DEFNAME, OWF_STRUCT_BOOK, OWF_STRUCT_BOOK_FORMAT, OWF_STRUCT_UNZIP, OWF_STRUCT_PUB,
     OWF_STRUCT_PUB_PAGE, OWF_STRUCT_PUB_FRAME,
+    OWF_STRUCT_CONDFMT,
     OWF_STRUCT_COUNT
 };
 unsigned long owf_struct_size(int which);
@@ -426,7 +488,7 @@ unsigned long owf_struct_size(int which);
     sizeof(owf_story), sizeof(owf_font), sizeof(owf_page), sizeof(owf_image), sizeof(owf_doc),            \
     sizeof(owf_format), sizeof(owf_cell), sizeof(owf_cellstyle), sizeof(owf_colinfo), sizeof(owf_rowinfo), \
     sizeof(owf_range), sizeof(owf_sheet), sizeof(owf_defname), sizeof(owf_book), sizeof(owf_book_format), \
-    sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame)
+    sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame), sizeof(owf_condfmt)
 
 #ifdef __cplusplus
 }
