@@ -4024,7 +4024,7 @@ static int window_main(int argc, char **argv)
         goto out;
     }
     if (!owf_open()) {
-        tell("OpenWrite", "OpenWrite needs owf.library 1 in LIBS:.");
+        tell("OpenWrite", "OpenWrite needs " OWF_LIBRARY_NAME " in LIBS:.");
         rc = 20;
         goto out;
     }

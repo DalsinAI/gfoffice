@@ -5,6 +5,12 @@
  * compared as the grid shows them (owf_calc_format), so no double is
  * worked on here: on the Amiga that is the library's arithmetic and maths
  * (owf_softdouble.c, owf_libm.c), not this program's.
+ *
+ * Built with OWF_LIB_CHECKS_PART 1 it holds only the workbook and engine
+ * checks (owf_lib_book_checks), for owfcalc.library; with 3 only the .pub
+ * checks (owf_lib_pub_checks), for owfpub.library: OWFLibsTest builds it
+ * twice so (build-library.sh). Without it, owf_lib_run_checks runs them
+ * all, and what files are, zips and inflate.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf.h"
@@ -30,6 +36,8 @@ static void path_in(char *out, size_t size, const char *dir, const char *name)
     size_t n = strlen(dir);
     snprintf(out, size, "%s%s%s", dir, n && dir[n - 1] != ':' && dir[n - 1] != '/' ? "/" : "", name);
 }
+
+#if !defined(OWF_LIB_CHECKS_PART) || OWF_LIB_CHECKS_PART == 1
 
 /* a cell as the grid shows it; "" when there is none */
 static const char *shown(const owf_book *book, int sheet, unsigned row, unsigned col, char *out, size_t size)
@@ -256,6 +264,10 @@ static void engine(const owf_lib_checks *c)
     owf_book_free(book);
 }
 
+#endif
+
+#ifndef OWF_LIB_CHECKS_PART
+
 /* ---- what files are, zips and inflate, .pub --------------------------------- */
 
 static void files(const owf_lib_checks *c)
@@ -278,8 +290,6 @@ static void files(const owf_lib_checks *c)
     unsigned char out[511], *data, *part;
     size_t length, n;
     owf_unzip zip;
-    owf_pub *pub = NULL;
-    owf_report *report;
     int i, r;
 
     want[0] = 0;
@@ -321,6 +331,18 @@ static void files(const owf_lib_checks *c)
             CHECK(owf_pub_detect(data, length) > 0, "%s: Sample.pub detected", c->tag);
         owf_free(data);
     }
+}
+
+#endif
+
+#if !defined(OWF_LIB_CHECKS_PART) || OWF_LIB_CHECKS_PART == 3
+
+static void pub_file(const owf_lib_checks *c)
+{
+    char path[256];
+    owf_pub *pub = NULL;
+    owf_report *report;
+    int r;
 
     path_in(path, sizeof path, c->fixtures, "Sample.pub");
     report = owf_report_new();
@@ -333,7 +355,19 @@ static void files(const owf_lib_checks *c)
     owf_report_free(report);
 }
 
+#endif
+
+#if OWF_LIB_CHECKS_PART == 3
+void owf_lib_pub_checks(const owf_lib_checks *c)
+{
+    pub_file(c);
+}
+#else
+#if OWF_LIB_CHECKS_PART == 1
+void owf_lib_book_checks(const owf_lib_checks *c)
+#else
 void owf_lib_run_checks(const owf_lib_checks *c)
+#endif
 {
     char text[32];
     CHECK(owf_error_name(OWF_ERROR_DIV0) && !strcmp(owf_error_name(OWF_ERROR_DIV0), "#DIV/0!"), "%s: owf_error_name",
@@ -348,5 +382,9 @@ void owf_lib_run_checks(const owf_lib_checks *c)
     fixture_book(c, "book-lo.ods", "ods");
     save_and_read(c);
     engine(c);
+#ifndef OWF_LIB_CHECKS_PART
     files(c);
+    pub_file(c);
+#endif
 }
+#endif
