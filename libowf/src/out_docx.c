@@ -98,8 +98,14 @@ static void put_ppr(owf_buf *out, const owf_parafmt *f, const char *style)
         owf_buf_puts(out, "<w:tabs>");
         /* Word measures tab stops from the page's margin, not the indent. */
         for (i = 0; i < f->ntabs; i++)
-            owf_buf_printf(out, "<w:tab w:val=\"%s\" w:pos=\"%d\"/>", tab_val[f->tabs[i].kind],
-                           f->tabs[i].position + f->indent_left);
+        {
+            static const char *const leader[] = { NULL, "dot", "hyphen", "underscore", "middleDot", "heavy" };
+            unsigned l = (unsigned)f->tabs[i].leader;
+            owf_buf_printf(out, "<w:tab w:val=\"%s\"", tab_val[f->tabs[i].kind]);
+            if (l > 0 && l < sizeof leader / sizeof leader[0])
+                owf_buf_printf(out, " w:leader=\"%s\"", leader[l]);
+            owf_buf_printf(out, " w:pos=\"%d\"/>", f->tabs[i].position + f->indent_left);
+        }
         owf_buf_puts(out, "</w:tabs>");
     }
     if (spacing) {

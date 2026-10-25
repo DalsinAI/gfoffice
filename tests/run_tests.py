@@ -155,6 +155,11 @@ def run(*args):
     return subprocess.run([OWCONVERT, *args], capture_output=True, timeout=60)
 
 
+def docx_part(data, name):
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        return z.read(name).decode()
+
+
 def convert(work, name, ext, extra=()):
     src = os.path.join(work, name)
     dst = os.path.join(work, name + "." + ext)
@@ -626,6 +631,30 @@ def main():
         check("pdf footer has " + want.decode(), want in pdf)
     check("pdf text in one object a line", pdf.count(b"BT ") < 12, str(pdf.count(b"BT ")))
     print(f"{cuts} cut-short files tried")
+
+    # Tab leaders (25 Oct 2026): a Word contents page (tests/core/fixtures/contents.docx, made by
+    # tests/core/make_contents_docx.py) keeps its right stops' leaders through ODT and back to DOCX
+    import shutil
+    shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "fixtures", "contents.docx"),
+                os.path.join(work, "contents.docx"))
+    d = docx_part(convert(work, "contents.docx", "docx")[0], "word/document.xml")
+    check("leaders docx right dot stop", '<w:tab w:val="right" w:leader="dot" w:pos="9016"/>' in d, d[:900])
+    check("leaders docx a paragraph's stop with the style's",
+          '<w:tab w:val="left" w:pos="440"/><w:tab w:val="right" w:leader="dot" w:pos="9016"/>' in d)
+    check("leaders docx a cleared stop", '<w:tab w:val="right" w:leader="hyphen" w:pos="8000"/></w:tabs>' in d)
+    check("leaders docx decimal underscore", '<w:tab w:val="decimal" w:leader="underscore" w:pos="8000"/>' in d)
+    odt, _ = convert(work, "contents.docx", "odt")
+    with zipfile.ZipFile(io.BytesIO(odt)) as z:
+        c = z.read("content.xml").decode()
+    check("leaders odt dots", 'style:type="right" style:leader-style="dotted" style:leader-text="."' in c, c[:1200])
+    check("leaders odt hyphens", 'style:leader-style="solid" style:leader-text="-"' in c)
+    check("leaders odt underscores", 'style:type="char" style:char="." style:leader-style="solid" style:leader-text="_"' in c)
+    with open(os.path.join(work, "contents-round.odt"), "wb") as f:
+        f.write(odt)
+    d = docx_part(convert(work, "contents-round.odt", "docx")[0], "word/document.xml")
+    check("leaders odt to docx", 'w:leader="dot"' in d and 'w:leader="hyphen"' in d and 'w:leader="underscore"' in d, d[:900])
+    text, _ = convert(work, "contents.docx", "txt")
+    check("leaders text", "01 Executive summary\t3\n" in text.decode(), repr(text[:200]))
 
     print(f"{'FAILED' if failures else 'passed'}: {len(failures)} failure(s); files in {work}")
     sys.exit(1 if failures else 0)

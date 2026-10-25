@@ -542,32 +542,34 @@ static int font_cap(struct TextFont *f)
     return font_ink(f, "H", &top, &bottom) ? bottom - top + 1 : 0;
 }
 
-/* face at an em of pixels: made at pixels, then again at the size whose capitals are 0.716 em (Arial's) when
- * that comes nearer. *ysize: the size it was made at; *cap: its capitals' height (0 not known). */
+/* face at an em of pixels, at the size whose capitals are 0.716 em high (the core's oc_font_size_for_caps):
+ * the sizes it tries made and measured, the chosen kept, the others closed. *ysize: the size it was made
+ * at; *cap: its capitals' height (0 not known). */
+typedef struct { const char *face; int n; int size[OC_CAP_TRIES + 1]; struct TextFont *font[OC_CAP_TRIES + 1]; } cap_trial;
+
+static int cap_at_size(void *user, int size)
+{
+    cap_trial *t = (cap_trial *)user;
+    struct TextFont *f;
+    if (t->n > OC_CAP_TRIES || !(f = open_font_px(t->face, size))) return 0;
+    t->size[t->n] = size;
+    t->font[t->n++] = f;
+    return font_cap(f);
+}
+
 static struct TextFont *open_cell_font(const char *face, int pixels, int *ysize, int *cap)
 {
-    struct TextFont *f = open_font_px(face, pixels), *g;
-    int want = (pixels * 716 + 500) / 1000, c, again, c2;
-    *ysize = pixels;
-    *cap = 0;
-    if (!f) return NULL;
-    if (want < 3) want = 3;
-    *cap = c = font_cap(f);
-    if (c > 0 && (c > want || c < want - 1)) {
-        again = (pixels * want + c / 2) / c;
-        if (again >= 4 && again != pixels && (g = open_font_px(face, again))) {
-            c2 = font_cap(g);
-            if (c2 > 0 && (c2 > want ? c2 - want : want - c2) < (c > want ? c - want : want - c)) {
-                CloseFont(f);
-                f = g;
-                *ysize = again;
-                *cap = c2;
-            } else {
-                CloseFont(g);
-            }
-        }
+    cap_trial t;
+    struct TextFont *keep = NULL;
+    int k;
+    memset(&t, 0, sizeof t);
+    t.face = face;
+    *ysize = oc_font_size_for_caps(pixels, cap_at_size, &t, cap);
+    for (k = 0; k < t.n; k++) {
+        if (!keep && t.size[k] == *ysize) keep = t.font[k];
+        else CloseFont(t.font[k]);
     }
-    return f;
+    return keep;
 }
 
 /* The font for a cell's text: the book's font index (-1 the book's own) at size twips (0 the default). */
@@ -1144,7 +1146,14 @@ static void draw_tab_arrow(struct RastPort *rp, int x, int y, int w, int h, int 
     xy[3] = cy + a;
     xy[4] = right ? cx + a / 2 + 1 : cx - a / 2 - 1;
     xy[5] = cy;
-    ogt_fill_poly(rp, ogt_pen(&ctx, live ? "tab.text" : "muted"), xy, 3);
+    if (live) {
+        ogt_fill_poly(rp, ogt_pen(&ctx, "tab.text"), xy, 3);
+    } else {                                         /* dimmed: three fifths of the way from the text to the tab */
+        ogt_rgb t = ogt_colour(&ctx, "tab.text"), b = ogt_colour(&ctx, "tab");
+        unsigned long dim = ((unsigned long)(t.r + (b.r - t.r) * 3 / 5) << 16) | ((unsigned long)(t.g + (b.g - t.g) * 3 / 5) << 8) |
+                            (unsigned long)(t.b + (b.b - t.b) * 3 / 5);
+        ogt_fill_poly(rp, rgb_pen(dim), xy, 3);
+    }
 }
 
 /* The tabs: as many as fit from tab_first (the core's oc_tab_strip), two arrows before them when not all

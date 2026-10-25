@@ -209,6 +209,7 @@ static void read_tabs(reader *r, const owf_iff_chunk *c)
         owf_tab *tab = &r->parafmt.tabs[r->parafmt.ntabs++];
         int pos = (int)OWF_BE16(c->data + i) * 2 - r->parafmt.indent_left;
         tab->position = pos < 0 ? 0 : pos;
+        tab->leader = OWF_LEADER_NONE;
         switch (c->data[i + 2]) {
         case 1: tab->kind = OWF_TAB_CENTRE; break;
         case 2: tab->kind = OWF_TAB_RIGHT; break;

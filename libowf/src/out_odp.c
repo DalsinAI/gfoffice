@@ -362,7 +362,8 @@ static void put_para_props(owf_buf *out, const owf_parafmt *f, const owf_parafmt
 #undef DIFF
     if (!tabs_differ && level && !full)
         for (i = 0; i < f->ntabs && !tabs_differ; i++)
-            tabs_differ = f->tabs[i].position != level->tabs[i].position || f->tabs[i].kind != level->tabs[i].kind;
+            tabs_differ = f->tabs[i].position != level->tabs[i].position || f->tabs[i].kind != level->tabs[i].kind ||
+                          f->tabs[i].leader != level->tabs[i].leader;
     if (!tabs_differ) {
         if (out->length == start + 27) {
             out->length = start;
@@ -378,6 +379,7 @@ static void put_para_props(owf_buf *out, const owf_parafmt *f, const owf_parafmt
         owf_buf_printf(out, " style:type=\"%s\"", tab_type[(unsigned)f->tabs[i].kind < 4 ? f->tabs[i].kind : 0]);
         if (f->tabs[i].kind == OWF_TAB_DECIMAL)
             owf_buf_puts(out, " style:char=\".\"");
+        owf_odf_put_leader(out, f->tabs[i].leader);
         owf_buf_puts(out, "/>");
     }
     owf_buf_puts(out, "</style:tab-stops></style:paragraph-properties>");

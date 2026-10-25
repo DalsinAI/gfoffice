@@ -136,6 +136,22 @@ static unsigned long odt_colour(const char *v)
     return OWF_SHADE(strtoul(h + 1, NULL, 16));
 }
 
+/* A tab stop's leader: its character, else its line's style (a space, or "none": no leader) */
+static owf_tab_leader odt_leader(const char *text, const char *style)
+{
+    if (text && text[0] && strcmp(text, " ")) {
+        if (!strcmp(text, ".")) return OWF_LEADER_DOT;
+        if (!strcmp(text, "-")) return OWF_LEADER_HYPHEN;
+        if (!strcmp(text, "_")) return OWF_LEADER_UNDERSCORE;
+        if (!strcmp(text, "\xc2\xb7")) return OWF_LEADER_MIDDLE_DOT;
+        return OWF_LEADER_DOT;
+    }
+    if (!style || !strcmp(style, "none")) return OWF_LEADER_NONE;
+    if (!strcmp(style, "dotted")) return OWF_LEADER_DOT;
+    if (!strcmp(style, "dash") || !strcmp(style, "long-dash")) return OWF_LEADER_HYPHEN;
+    return OWF_LEADER_UNDERSCORE;
+}
+
 static void read_para_props(const owf_xml_node *n, owf_paraprops *pp)
 {
     const char *v;
@@ -206,6 +222,7 @@ static void read_para_props(const owf_xml_node *n, owf_paraprops *pp)
             if (type && !strcmp(type, "center")) tab->kind = OWF_TAB_CENTRE;
             else if (type && !strcmp(type, "right")) tab->kind = OWF_TAB_RIGHT;
             else if (type && !strcmp(type, "char")) tab->kind = OWF_TAB_DECIMAL;
+            tab->leader = odt_leader(owf_xml_attr(t, NS_STYLE, "leader-text"), owf_xml_attr(t, NS_STYLE, "leader-style"));
             pp->fmt.ntabs++;
         }
         pp->mask |= OWF_PP_TABS;

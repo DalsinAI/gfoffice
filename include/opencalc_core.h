@@ -306,6 +306,16 @@ void oc_view_set_measure(oc_core *core, oc_measure_fn measure, void *user);
 #define OC_DEFAULT_FONT_TWIPS 200
 int oc_font_px(const oc_core *core, int twips);
 int oc_line_px(const oc_core *core, int twips);
+/* The size to make a face at for a cell font of em pixels, so that its
+ * capitals are 0.716 em high (Arial's: 11 at 15 pixels; Amiga fonts are
+ * made at a size of their own reckoning): cap_at(user, size) is the
+ * capitals' height the face has made at a size (0: it can't be made).
+ * Tried at pixels, then in proportion, then a size at a time toward the
+ * height from the nearest yet, up to OC_CAP_TRIES sizes after the first,
+ * none twice; the nearest is chosen (the first of equals). *cap: its
+ * capitals' height. */
+#define OC_CAP_TRIES 4
+int oc_font_size_for_caps(int pixels, int (*cap_at)(void *user, int size), void *user, int *cap);
 /* The grid area's size, and the row numbers' width and the column
  * letters' height (a window sets these from its font). */
 void oc_view_set_size(oc_core *core, int width, int height);
