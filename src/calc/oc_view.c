@@ -70,6 +70,57 @@ static int line_px(const oc_core *core, int axis, unsigned i)
     return oc_px(core, axis ? oc_col_twips(s, i) : oc_row_twips(s, i));
 }
 
+/* The row numbers' bar: as wide as set (oc_view_set_headers), or, following the rows showing
+ * (oc_view_set_row_numbers), as wide as the largest row number showing, at least two digits. Only the
+ * rows' heights and the area's height decide which show, never this width. */
+static int row_header(const oc_core *core)
+{
+    const owf_sheet *s;
+    const oc_sheetstate *st;
+    unsigned i, last = 0, frozen, n = 0;
+    int pos, digits = 1, skipped = 0;
+    if (core->rn_digit <= 0 || core->rowhdr <= 0)
+        return core->rowhdr;
+    s = oc_sheet(core);
+    st = oc_state_const(core);
+    frozen = s->freeze_rows;
+    pos = core->colhdr;
+    for (i = 0; i < frozen && i < OC_MAX_ROWS && pos < core->height; i++) {
+        int sz = line_px(core, 0, i);
+        if (sz) {
+            last = i;
+            pos += sz;
+        }
+    }
+    for (i = st->top > frozen ? st->top : frozen; i < OC_MAX_ROWS && pos < core->height && n < MAX_LINES; i++) {
+        int sz = line_px(core, 0, i);
+        if (!sz) {
+            if (++skipped > 65536)
+                break;
+            continue;
+        }
+        last = i;
+        pos += sz;
+        n++;
+    }
+    for (i = last + 1; i >= 10; i /= 10)
+        digits++;
+    if (digits < 2)
+        digits = 2;
+    return core->rn_pad + digits * core->rn_digit;
+}
+
+int oc_view_row_header(const oc_core *core)
+{
+    return row_header(core);
+}
+
+void oc_view_set_row_numbers(oc_core *core, int digit_width, int pad)
+{
+    core->rn_digit = digit_width > 0 ? digit_width : 0;
+    core->rn_pad = pad > 0 ? pad : 0;
+}
+
 int oc_measure(const oc_core *core, const char *s, size_t n, const owf_cellstyle *style)
 {
     size_t i, chars = 0;
@@ -92,7 +143,7 @@ static int lines(const oc_core *core, int axis, oc_line *out, int max, int *spli
     const owf_sheet *s = oc_sheet(core);
     const oc_sheetstate *st = oc_state_const(core);
     unsigned frozen = axis ? s->freeze_cols : s->freeze_rows, i, end = axis ? OC_MAX_COLS : OC_MAX_ROWS;
-    int pos = axis ? core->rowhdr : core->colhdr, limit = axis ? core->width : core->height, n = 0, skipped = 0;
+    int pos = axis ? row_header(core) : core->colhdr, limit = axis ? core->width : core->height, n = 0, skipped = 0;
     for (i = 0; i < frozen && i < end && pos < limit && n < max; i++) {
         int sz = line_px(core, axis, i);
         if (!sz)
@@ -230,7 +281,7 @@ static void show_line(oc_core *core, int axis, unsigned i)
     oc_sheetstate *st = oc_state(core);
     const owf_sheet *s = oc_sheet(core);
     unsigned frozen = axis ? s->freeze_cols : s->freeze_rows, *top = axis ? &st->left : &st->top, k;
-    int limit = axis ? core->width : core->height, start = axis ? core->rowhdr : core->colhdr, avail, used = 0, steps = 0;
+    int limit = axis ? core->width : core->height, start = axis ? row_header(core) : core->colhdr, avail, used = 0, steps = 0;
     if (i < frozen)
         return;
     for (k = 0; k < frozen; k++)
@@ -290,7 +341,7 @@ static int find_line(const oc_line *l, int n, int p)
 int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
 {
     oc_line *rl = malloc(MAX_LINES * sizeof *rl), *cl = malloc(MAX_LINES * sizeof *cl);
-    int nr, nc, split, ri, ci;
+    int nr, nc, split, ri, ci, rowhdr = row_header(core);
     memset(hit, 0, sizeof *hit);
     if (!rl || !cl) {
         free(rl);
@@ -301,9 +352,9 @@ int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
     nc = lines(core, 1, cl, MAX_LINES, &split);
     if (x < 0 || y < 0 || x >= core->width || y >= core->height) {
         hit->kind = OC_HIT_NONE;
-    } else if (x < core->rowhdr && y < core->colhdr) {
+    } else if (x < rowhdr && y < core->colhdr) {
         hit->kind = OC_HIT_CORNER;
-        hit->w = core->rowhdr;
+        hit->w = rowhdr;
         hit->h = core->colhdr;
     } else if (y < core->colhdr) {
         ci = find_line(cl, nc, x);
@@ -322,14 +373,14 @@ int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
                 hit->w = cl[ci - 1].size;
             }
         }
-    } else if (x < core->rowhdr) {
+    } else if (x < rowhdr) {
         ri = find_line(rl, nr, y);
         if (ri >= 0) {
             hit->kind = OC_HIT_ROW_HEADER;
             hit->row = rl[ri].index;
             hit->y = rl[ri].pos;
             hit->h = rl[ri].size;
-            hit->w = core->rowhdr;
+            hit->w = rowhdr;
             if (y >= rl[ri].pos + rl[ri].size - 3)
                 hit->kind = OC_HIT_ROW_EDGE;
             else if (y < rl[ri].pos + 2 && ri > 0 && rl[ri - 1].pos + rl[ri - 1].size == rl[ri].pos) {
@@ -578,6 +629,7 @@ typedef struct {
     const owf_sheet *sheet;
     oc_line *rl, *cl;
     int nr, nc, ysplit, xsplit;
+    int rowhdr;             /* the row numbers' bar's width */
     unsigned char *ci;      /* nr x nc */
 } drawing;
 
@@ -586,7 +638,7 @@ typedef struct {
 /* The quadrant (pane of rows, pane of columns) of the grid area, in pixels. */
 static void quadrant(const drawing *d, int pr, int pc, int *x, int *y, int *w, int *h)
 {
-    *x = pc ? d->xsplit : d->core->rowhdr;
+    *x = pc ? d->xsplit : d->rowhdr;
     *w = (pc ? d->core->width : d->xsplit) - *x;
     *y = pr ? d->ysplit : d->core->colhdr;
     *h = (pr ? d->core->height : d->ysplit) - *y;
@@ -1450,6 +1502,7 @@ static int build(drawing *d)
                 return 0;
             it->flags = it->role == OC_ROLE_HEADER_SELECTED;
             it->col = d->cl[j].index;
+            it->align = OC_ALIGN_CENTRE;
             if (!add_text(list, it, label, strlen(label)) ||
                 !line_item(list, OC_ROLE_HEADER_LINE, d->cl[j].pos + d->cl[j].size - 1, 0, 0, core->colhdr))
                 return 0;
@@ -1457,8 +1510,8 @@ static int build(drawing *d)
         if (!line_item(list, OC_ROLE_HEADER_LINE, 0, core->colhdr - 1, core->width, 0))
             return 0;
     }
-    if (core->rowhdr > 0) {
-        if (!add_box(list, OC_DRAW_FILL, OC_ROLE_HEADER, 0, core->colhdr, core->rowhdr, core->height - core->colhdr))
+    if (d->rowhdr > 0) {
+        if (!add_box(list, OC_DRAW_FILL, OC_ROLE_HEADER, 0, core->colhdr, d->rowhdr, core->height - core->colhdr))
             return 0;
         for (i = 0; i < d->nr; i++) {
             int n = 0;
@@ -1472,22 +1525,28 @@ static int build(drawing *d)
                 label[k] = t[n - 1 - k];
             label[n] = 0;
             if (!(it = add_box(list, OC_DRAW_HEADER, range_selected_row(st, d->rl[i].index) ? OC_ROLE_HEADER_SELECTED : OC_ROLE_HEADER,
-                               0, d->rl[i].pos, core->rowhdr, d->rl[i].size)))
+                               0, d->rl[i].pos, d->rowhdr, d->rl[i].size)))
                 return 0;
             it->flags = it->role == OC_ROLE_HEADER_SELECTED;
             it->row = d->rl[i].index;
+            if (core->rn_digit > 0) {                         /* following the rows: left, a small inset in */
+                it->align = OC_ALIGN_LEFT;
+                it->text_x = core->rn_pad / 2;
+            } else {
+                it->align = OC_ALIGN_CENTRE;
+            }
             if (!add_text(list, it, label, (size_t)n) ||
-                !line_item(list, OC_ROLE_HEADER_LINE, 0, d->rl[i].pos + d->rl[i].size - 1, core->rowhdr, 0))
+                !line_item(list, OC_ROLE_HEADER_LINE, 0, d->rl[i].pos + d->rl[i].size - 1, d->rowhdr, 0))
                 return 0;
         }
-        if (!line_item(list, OC_ROLE_HEADER_LINE, core->rowhdr - 1, 0, 0, core->height))
+        if (!line_item(list, OC_ROLE_HEADER_LINE, d->rowhdr - 1, 0, 0, core->height))
             return 0;
     }
 
     /* 7. frozen panes' lines */
-    if (s->freeze_rows && d->ysplit > core->colhdr && !line_item(list, OC_ROLE_FREEZE, core->rowhdr, d->ysplit - 1, core->width - core->rowhdr, 0))
+    if (s->freeze_rows && d->ysplit > core->colhdr && !line_item(list, OC_ROLE_FREEZE, d->rowhdr, d->ysplit - 1, core->width - d->rowhdr, 0))
         return 0;
-    if (s->freeze_cols && d->xsplit > core->rowhdr && !line_item(list, OC_ROLE_FREEZE, d->xsplit - 1, core->colhdr, 0, core->height - core->colhdr))
+    if (s->freeze_cols && d->xsplit > d->rowhdr && !line_item(list, OC_ROLE_FREEZE, d->xsplit - 1, core->colhdr, 0, core->height - core->colhdr))
         return 0;
 
     /* 8. the selection's outline and the active cell's frame */
@@ -1597,6 +1656,7 @@ int oc_view_draw(oc_core *core, oc_draw_list *list)
         free(d.cl);
         return OWF_ERR_MEMORY;
     }
+    d.rowhdr = row_header(core);
     d.nr = lines(core, 0, d.rl, MAX_LINES, &d.ysplit);
     d.nc = lines(core, 1, d.cl, MAX_LINES, &d.xsplit);
     d.ci = calloc((size_t)(d.nr ? d.nr : 1) * (size_t)(d.nc ? d.nc : 1), 1);

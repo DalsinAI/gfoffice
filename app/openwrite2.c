@@ -42,6 +42,7 @@
 #include <proto/gadtools.h>
 #include <proto/asl.h>
 #include "ogt_openfont.h"
+#include <proto/diskfont.h>
 #include <proto/layers.h>
 
 #include <ctype.h>
@@ -59,6 +60,7 @@
 #include "lastdir.h"
 #include "ow_print.h"
 #include "ow_spell.h"
+#include "ow_fontwidths.h"
 #include "ow_autosave.h"
 #include "ogt_theme.h"
 #include "ogt_draw.h"
@@ -75,7 +77,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.2 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.3 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -249,13 +251,17 @@ static struct TextFont *font;
 static struct TextAttr font_attr;
 static int fh;
 
-#define DOC_FONT_CACHE 16
+#define DOC_FONT_CACHE 24                             /* 2.0.3: room for the sizes a zoom's text is fitted at */
 typedef struct doc_font_slot {
     char file[72];
     int pixels;
     struct TextFont *font;
 } doc_font_slot;
 static doc_font_slot doc_fonts[DOC_FONT_CACHE];
+/* The fonts that didn't open, not tried again until the cache is cleared. */
+#define DOC_FONT_MISSES 16
+static struct { char file[72]; int pixels; } doc_font_misses[DOC_FONT_MISSES];
+static int doc_font_miss_next;
 static int doc_font_next;                            /* 2.1: the slot a new size replaces when all are used */
 static int quit_now;
 
@@ -832,6 +838,8 @@ static void doc_font_cache_clear(void)
         memset(&doc_fonts[i], 0, sizeof doc_fonts[i]);
     }
     doc_font_next = 0;
+    memset(doc_font_misses, 0, sizeof doc_font_misses);   /* 2.0.3 */
+    doc_font_miss_next = 0;
 }
 
 static int name_has(const char *name, const char *part)
@@ -878,13 +886,42 @@ static int run_twips(int paragraph, const owf_charfmt *fmt)
     return twips;
 }
 
+/* 2.0.3: a font through one route: openfont.library (route 0), diskfont.library (1, opened when openfont
+ * can't give the font: diskfont scales bitmap families and draws outlines through bullet.library, OS 3.2's
+ * Intellifont included) or graphics' OpenFont (2: the fonts in memory, the ROM's and the screen's). */
+struct Library *DiskfontBase = NULL;
+static int diskfont_tried;
+
+static struct TextFont *open_route(int route, struct TextAttr *ta, UBYTE flags)
+{
+    ta->ta_Flags = flags;
+    switch (route) {
+    case 0: return OpenFontTextBase ? ogt_openfont_font(OpenFontTextBase, ta) : NULL;
+    case 1:
+        if (!DiskfontBase && !diskfont_tried) {
+            diskfont_tried = 1;
+            DiskfontBase = OpenLibrary((STRPTR)"diskfont.library", 36);
+        }
+        return DiskfontBase ? OpenDiskFont(ta) : NULL;
+    default: return OpenFont(ta);
+    }
+}
+
 /* A document font at a pixel size, kept open for the next drawing (DOC_FONT_CACHE sizes; the oldest makes
- * way). NULL when openfont has no such font. */
+ * way). NULL when no route has such a font.
+ *
+ * 2.0.3: at that very size whenever a route can give it: what a word is laid out with must be what it is
+ * drawn with (ow_fontwidths.h). A bitmap family's designed size when it has that one (FPF_DESIGNED), else
+ * the family scaled to the size (an outline is drawn at it); openfont first, then diskfont. Only when none
+ * can: the nearest size there is, whose widths ow_fontwidths scales. In the lab (25 October 2026)
+ * openfont opened nothing of OS 3.2's Intellifont CGTriumvirate, which has no bitmap sizes, and the old
+ * FPF_DESIGNED request could come back at another size than asked. */
 static struct TextFont *document_font_px(const char *file, int pixels)
 {
-    int i, slot = -1;
+    int i, slot = -1, route, outline = 0;
     struct TextAttr ta;
-    struct TextFont *f;
+    struct TextFont *f = NULL;
+    if (!file || !file[0]) return NULL;
     if (pixels < 4) pixels = 4;
     if (pixels > 128) pixels = 128;                  /* an outline font's glyphs at 128 pixels: about 450 KB */
     for (i = 0; i < DOC_FONT_CACHE; ++i) {
@@ -892,32 +929,45 @@ static struct TextFont *document_font_px(const char *file, int pixels)
             return doc_fonts[i].font;
         if (!doc_fonts[i].font && slot < 0) slot = i;
     }
-    if (!OpenFontTextBase) return NULL;
+    for (i = 0; i < DOC_FONT_MISSES; ++i)
+        if (doc_font_misses[i].pixels == pixels && !strcmp(doc_font_misses[i].file, file)) return NULL;
     memset(&ta, 0, sizeof ta);
     ta.ta_Name = (STRPTR)file;
     ta.ta_YSize = (UWORD)pixels;
     ta.ta_Style = FS_NORMAL;
-    /* An outline font (FONTS:name.otag) is made at the exact size asked
-     * for; asked for as FPF_DESIGNED, the font comes back at a size made before
-     * (CGTimes: 10 pixels for any size from 8 to 14). A bitmap font keeps
-     * its designed sizes, since scaling one looks worse than the nearest. */
     {
         char otag[96];
         BPTR lk;
-        int outline = 0;
         snprintf(otag, sizeof otag, "FONTS:%s", file);
         if (strlen(otag) > 5 && !strcmp(otag + strlen(otag) - 5, ".font")) {
             strcpy(otag + strlen(otag) - 5, ".otag");
             if ((lk = Lock((STRPTR)otag, ACCESS_READ))) { outline = 1; UnLock(lk); }
         }
-        ta.ta_Flags = outline ? FPF_DISKFONT : FPF_DISKFONT | FPF_DESIGNED;
-        f = ogt_openfont_font(OpenFontTextBase, &ta);
-        if (!f) {
-            ta.ta_Flags = outline ? FPF_DISKFONT | FPF_DESIGNED : FPF_DISKFONT;
-            f = ogt_openfont_font(OpenFontTextBase, &ta);
+    }
+    /* the size itself: a designed bitmap, else scaled or drawn at it */
+    for (route = 0; !f && route < 2; ++route) {
+        if (!outline && (f = open_route(route, &ta, FPF_DISKFONT | FPF_DESIGNED)) && f->tf_YSize != pixels) {
+            CloseFont(f);
+            f = NULL;
+        }
+        if (!f && (f = open_route(route, &ta, FPF_DISKFONT)) && f->tf_YSize != pixels) {
+            CloseFont(f);
+            f = NULL;
         }
     }
-    if (!f) return NULL;
+    /* else the nearest there is */
+    for (route = 0; !f && route < 3; ++route)
+        f = open_route(route, &ta, route == 2 ? 0 : FPF_DISKFONT | FPF_DESIGNED);
+    if (f && route == 3 && strcmp((const char *)f->tf_Message.mn_Node.ln_Name, file)) {
+        CloseFont(f);                                /* OpenFont's another family: not this one */
+        f = NULL;
+    }
+    if (!f) {
+        snprintf(doc_font_misses[doc_font_miss_next].file, sizeof doc_font_misses[0].file, "%s", file);
+        doc_font_misses[doc_font_miss_next].pixels = pixels;
+        doc_font_miss_next = (doc_font_miss_next + 1) % DOC_FONT_MISSES;
+        return NULL;
+    }
     if (slot < 0) {                                  /* every slot used: the oldest goes (the caller sets the new one) */
         slot = doc_font_next;
         doc_font_next = (doc_font_next + 1) % DOC_FONT_CACHE;
@@ -1424,25 +1474,25 @@ static void page_size(int *pw, int *ph)
 
 /* ---- 2.1: the pages drawn by OpenLayout --------------------------------------------------------------
  *
- * Text is measured for the layout from each font's advance widths, taken once at WIDTH_REF pixels and
- * scaled to the text's size in units, so the layout is the same at every zoom. A page is drawn straight
- * at the screen's pixels: each word where the layout put it, in the font opened at the word's scaled
- * size; nothing is drawn big and shrunk. */
+ * 2.0.3: text is measured for the layout from each font's advance widths at the size it is drawn at 100%
+ * (WIDTH_UNITS units a pixel: 96 dpi), from the very font that draws it there, so at 100% each word is as
+ * wide as the layout made it. The layout is still the same at every zoom. Before, the widths were taken at
+ * 64 pixels and scaled to the text's size; the screen's fonts are not that proportional (a bitmap font's
+ * small sizes run wide, CGTriumvirate's sizes come from its bitmaps since openfont can't read its
+ * Intellifont outline, each advance and the size itself are rounded to pixels, the bold smear is a pixel at
+ * any size), so words drew wider than their place and, glyph by glyph where the layout put them, ran into
+ * each other. At other zooms a style whose font draws wider than the layout is drawn a size or two smaller
+ * (ow_fw_fit). A page is drawn straight at the screen's pixels; nothing is drawn big and shrunk. */
 
-#define WIDTH_REF 64
-#define WIDTH_TABLES 8
+#define WIDTH_UNITS (OL_UNITS_PER_TWIP * 15)        /* units a pixel at 100% (page_scale_den: 15 twips) */
 #define TAB_UNITS (OL_UNITS_PER_INCH / 2)
 
-typedef struct {
-    char file[72];
-    UBYTE used, bold;
-    WORD ref, ascent, descent;
-    UWORD w[256];
-} width_table;
-static width_table width_tables[WIDTH_TABLES];
-static int width_next;
+typedef ow_fw_table width_table;
+static ow_fontwidths fontw;                          /* the faces and widths (app/ow_fontwidths.c) */
+static int fontw_ready;
 static const width_table *width_memo;               /* the last style measured: most words share it */
 static uint32_t width_memo_key;
+static ol_unit width_memo_size;
 
 /* The font file for an OpenLayout font number: the document's font index plus one, 0 its default. */
 static void layout_font_file(uint32_t flags, char *out, size_t size)
@@ -1455,64 +1505,97 @@ static void layout_font_file(uint32_t flags, char *out, size_t size)
     document_font_file(number ? OW_LAYOUT_FONT_INDEX(number) : (doc ? doc->base.font : -1), out, size);
 }
 
-/* A font's advance widths at WIDTH_REF pixels (bold ones with the bold smear). */
-static const width_table *font_widths(uint32_t flags)
+/* ow_fontwidths' fonts are document_font_px's (kept open in its cache); advances through a RastPort of
+ * its own. */
+static void *fw_open(void *user, const char *file, int pixels, int *ysize, int *ascent)
 {
-    char file[72];
-    int i, bold = (flags & OL_TEXT_BOLD) != 0;
-    uint32_t key = flags & (0xffff0000u | OL_TEXT_MONO | OL_TEXT_BOLD);
-    width_table *t;
-    struct TextFont *f;
-    struct RastPort trp;
-    if (width_memo && key == width_memo_key) return width_memo;
-    layout_font_file(flags, file, sizeof file);
-    for (i = 0; i < WIDTH_TABLES; ++i)
-        if (width_tables[i].used && width_tables[i].bold == bold && !strcmp(width_tables[i].file, file)) {
-            width_memo = &width_tables[i];
-            width_memo_key = key;
-            return width_memo;
-        }
-    t = &width_tables[width_next];
-    width_next = (width_next + 1) % WIDTH_TABLES;
-    memset(t, 0, sizeof *t);
-    snprintf(t->file, sizeof t->file, "%s", file);
-    t->used = 1;
-    t->bold = (UBYTE)bold;
-    f = document_font_px(file, WIDTH_REF);
-    if (!f) f = font;
-    InitRastPort(&trp);
-    SetFont(&trp, f);
-    SetSoftStyle(&trp, bold ? FSF_BOLD : FS_NORMAL, FSF_BOLD);
-    for (i = 32; i < 256; ++i) {
-        char c = (char)i;
-        t->w[i] = (UWORD)text_length(&trp, &c, 1);
-    }
-    t->ref = f->tf_YSize > 0 ? f->tf_YSize : 1;
-    t->ascent = f->tf_Baseline + 1;
-    t->descent = t->ref - t->ascent;
-    /* the widths are all that is needed of it: its glyphs at WIDTH_REF go */
-    for (i = 0; i < DOC_FONT_CACHE; ++i)
-        if (f != font && doc_fonts[i].font == f) {
-            CloseFont(f);
-            memset(&doc_fonts[i], 0, sizeof doc_fonts[i]);
-        }
-    width_memo = t;
-    width_memo_key = key;
-    return t;
+    struct TextFont *f = document_font_px(file, pixels);
+    (void)user;
+    if (!f) return NULL;
+    *ysize = f->tf_YSize;
+    *ascent = f->tf_Baseline + 1;
+    return f;
 }
 
-/* A sum of a table's widths, at size units. */
-static ol_unit table_units(const width_table *t, ULONG sum, ol_unit size)
+static int fw_advance(void *user, void *f, unsigned char c, int bold)
 {
-    return (ol_unit)(sum / (ULONG)t->ref) * size + (ol_unit)(sum % (ULONG)t->ref) * size / t->ref;
+    static struct RastPort trp;
+    static struct TextFont *set;
+    static int set_bold = -1, ready;
+    char ch = (char)c;
+    (void)user;
+    if (!ready) { InitRastPort(&trp); ready = 1; }
+    if (set != (struct TextFont *)f || set_bold != bold) {
+        SetFont(&trp, (struct TextFont *)f);
+        SetSoftStyle(&trp, bold ? FSF_BOLD : FS_NORMAL, FSF_BOLD);
+        set = (struct TextFont *)f;
+        set_bold = bold;
+    }
+    return text_length(&trp, &ch, 1);
+}
+
+/* The theme's font as a file name, as OpenGadTools opens it: "DejaVu Sans" is DejaVuSans.font. */
+static const char *theme_face_file(void)
+{
+    static char file[72];
+    const char *s;
+    char *d = file;
+    for (s = theme.font; *s && d < file + sizeof file - 6; s++)
+        if (*s != ' ') *d++ = *s;
+    strcpy(d, ".font");
+    return file[0] != '.' ? file : NULL;
+}
+
+/* The faces and widths, ready for the window's font (again after a theme change: font_widths_reset). The
+ * faces a document font falls back to end with the theme's and then the window's own (on an Amiga with only
+ * bitmap fonts, the screen's, which diskfont scales). */
+static ow_fontwidths *fonts_w(void)
+{
+    if (!fontw_ready || fontw.be.fallback != (void *)font) {   /* first, or a new window font */
+        ow_fw_backend be;
+        memset(&be, 0, sizeof be);
+        be.open = fw_open;
+        be.advance = fw_advance;
+        be.fallback = font;
+        be.fallback_ysize = font ? font->tf_YSize : 8;
+        be.fallback_ascent = font ? font->tf_Baseline + 1 : 7;
+        ow_fw_init(&fontw, &be, theme_face_file(), font_attr.ta_Name ? (const char *)font_attr.ta_Name : NULL);
+        fontw_ready = 1;
+    }
+    return &fontw;
+}
+
+static void font_widths_reset(void)
+{
+    fontw_ready = 0;
+    width_memo = NULL;
+}
+
+/* A style's advance widths, at the size it is drawn at at 100%, from the face that draws it. */
+static const width_table *font_widths(uint32_t flags, ol_unit size)
+{
+    char file[72];
+    uint32_t key = flags & (0xffff0000u | OL_TEXT_MONO | OL_TEXT_BOLD);
+    if (width_memo && key == width_memo_key && size == width_memo_size) return width_memo;
+    layout_font_file(flags, file, sizeof file);
+    width_memo = ow_fw_widths(fonts_w(), file, (flags & OL_TEXT_BOLD) != 0, ow_fw_pixels(size));
+    width_memo_key = key;
+    width_memo_size = size;
+    return width_memo;
+}
+
+/* A sum of a table's widths, in units. */
+static ol_unit table_units(ULONG sum)
+{
+    return (ol_unit)sum * WIDTH_UNITS;
 }
 
 /* OpenLayout's measure callback: text in units, from the width tables. */
 static int measure_units(void *userdata, const char *utf8, size_t length, const ol_style *style,
                          ol_text_metrics *m)
 {
-    const width_table *t = font_widths(style->text_flags);
     ol_unit size = style->font_size > 0 ? style->font_size : OL_POINT(12), tabs = 0;
+    const width_table *t = font_widths(style->text_flags, size);
     ULONG sum = 0;
     size_t at = 0;
     char buf[256];
@@ -1531,9 +1614,9 @@ static int measure_units(void *userdata, const char *utf8, size_t length, const 
         }
         at += n;
     }
-    m->width = table_units(t, sum, size) + tabs;
-    m->ascent = t->ascent * size / t->ref;
-    m->descent = t->descent * size / t->ref;
+    m->width = table_units(sum) + tabs;
+    m->ascent = (ol_unit)t->ascent * WIDTH_UNITS;
+    m->descent = (ol_unit)t->descent * WIDTH_UNITS;
     return 1;
 }
 
@@ -1638,30 +1721,38 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
                        (int)(d->box.width * (int32_t)k / (int32_t)t->text_length) + 1, h);
         return;
     }
-    layout_font_file(t->style.text_flags, file, sizeof file);
-    f = document_font_px(file, d->font_pixels);
-    SetFont(rp, f ? f : font);
     if (t->style.text_flags & OL_TEXT_BOLD) style |= FSF_BOLD;
     if (t->style.text_flags & OL_TEXT_ITALIC) style |= FSF_ITALIC;
     if (t->style.text_flags & OL_TEXT_UNDERLINE) style |= FSF_UNDERLINED;
-    SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     if (t->style.text_flags & OL_TEXT_SUPER) baseline -= d->font_pixels / 2;
     else if (t->style.text_flags & OL_TEXT_SUB) baseline += d->font_pixels / 4;
 
-    /* The word as the layout measured it. A screen font at a small size, or with the bold smear (a pixel a
-     * letter at any size), can run wider than that: then each glyph goes where the layout put it, so the
-     * word keeps its width and the space after it. */
+    /* The word as the layout measured it: its font's widths at its size at 100%, where that font draws it
+     * at just that width. At another zoom a style whose font runs wider than the layout's widths scaled is
+     * drawn a size or two smaller (ow_fw_fit); a word that is still wider (the bold smear, a pixel a letter
+     * at any size) has each glyph where the layout put it, so it keeps its width and the space after it.
+     * The widths first: they may open fonts, and the drawing font is set after them. */
     n = to_latin1(s, t->text_length, buf, sizeof buf);
     drawn = n;
     while (drawn && (buf[drawn - 1] == ' ' || buf[drawn - 1] == '\t')) --drawn;
-    wt = font_widths(t->style.text_flags);
+    wt = font_widths(t->style.text_flags, size);
+    snprintf(file, sizeof file, "%s", wt->face);      /* the face the widths are from draws it ("": the window's) */
     for (k = 0, sum = 0, tabs = 0; k < drawn; ++k) {
         if (buf[k] == '\t') tabs += TAB_UNITS;
         else sum += wt->w[(unsigned char)buf[k]];
     }
-    target = ol_scale_length(pp->scale, table_units(wt, sum, size) + tabs);
+    target = ol_scale_length(pp->scale, table_units(sum) + tabs);
     for (k = 0; k < n; ++k)
         if ((unsigned char)buf[k] < 32) buf[k] = ' ';   /* a tab: its space is the layout's */
+    f = file[0] ? document_font_px(file, d->font_pixels) : NULL;
+    SetFont(rp, f ? f : font);
+    SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    if (f && drawn > 1 && text_length(rp, buf, drawn) > target + 1) {
+        int fit = ow_fw_fit(fonts_w(), wt, d->font_pixels, ol_scale_length(pp->scale, table_units(ow_fw_sample_sum(wt))));
+        f = document_font_px(file, fit);             /* again: trying sizes may have closed the first */
+        SetFont(rp, f ? f : font);
+        SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    }
     placed = drawn && text_length(rp, buf, drawn) > target + 1;
 
     /* the selection under the text, and where the caret goes, measured as the text is drawn */
@@ -1711,7 +1802,7 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     for (k = 0, sum = 0, tabs = 0; k < drawn; ++k) {
         unsigned char c = (unsigned char)buf[k];
         if (c > ' ') {
-            Move(rp, d->box.x + (sum || tabs ? ol_scale_length(pp->scale, table_units(wt, sum, size) + tabs) : 0),
+            Move(rp, d->box.x + (sum || tabs ? ol_scale_length(pp->scale, table_units(sum) + tabs) : 0),
                  baseline);
             Text(rp, (STRPTR)&buf[k], 1);
         }
@@ -2333,6 +2424,8 @@ static void apply_theme(const char *name)
         }
     }
     ogt_ctx_init(&ctx, scr, &theme, theme_mode);
+    font_widths_reset();                             /* 2.0.3: the window's font is a face of last resort */
+    pages_free();
     if (win) relayout();
 }
 
@@ -3288,6 +3381,32 @@ static char *document_plain_text(void)
     return out;
 }
 
+/* 2.0.3, for the lab: FONTCHECK [points [zoom]]: the document's own font at a size (11 points, the window's
+ * zoom): the routes there are (openfont.library and diskfont.library), the window's font, the face that
+ * draws the text (the document's, or the first of its kind that opens), where its widths come from (its own
+ * at the size, scaled from another, or the window font's), and the sample of letters and digits laid out and
+ * drawn: at every zoom drawn is no wider than laid out, and at 100% just as wide. */
+static void font_check(const char *arg, char *out, size_t size)
+{
+    static const char *const from[] = { "own", "scaled", "window font" };
+    char file[72], *end;
+    long pt = strtol(arg, &end, 10), z = strtol(end, NULL, 10);
+    uint32_t flags = doc && doc->base.font >= 0 ? OL_TEXT_FONT(OW_LAYOUT_FONT(doc->base.font)) : 0;
+    ow_fw_check c;
+    char of[16] = "none", df[16] = "none";
+    if (pt < 4 || pt > 96) pt = 11;
+    if (z < 10 || z > 800) z = zoom;
+    layout_font_file(flags, file, sizeof file);
+    ow_fw_check_sample(fonts_w(), file, 0, OL_POINT(pt), (int)z, &c);
+    if (OpenFontTextBase) snprintf(of, sizeof of, "%d.%d", OpenFontTextBase->lib_Version, OpenFontTextBase->lib_Revision);
+    if (DiskfontBase) snprintf(df, sizeof df, "%d.%d", DiskfontBase->lib_Version, DiskfontBase->lib_Revision);
+    snprintf(out, size, "%s %ldpt: openfont %s, diskfont %s, window font %s %d; face %s, widths %s, measured at "
+             "%dpx; at %ld%%: %dpx, drawn at %dpx (%d tall), sample %ld px drawn, %ld px laid out", file, pt, of, df,
+             font_attr.ta_Name ? (const char *)font_attr.ta_Name : "?", font ? font->tf_YSize : 0,
+             c.face[0] ? c.face : "(none)", from[c.from >= 0 && c.from <= 2 ? c.from : 0], c.px, z, c.zoom_px,
+             c.draw_px, c.draw_ysize, c.drawn, c.laid);
+}
+
 static int rexx_do_command(const char *command, char **result_out)
 {
     const char *arg="";char result[512];int ok=1;char *dynamic=NULL;
@@ -3295,6 +3414,7 @@ static int rexx_do_command(const char *command, char **result_out)
     if(starts_word_ci(command,"VERSION",&arg))snprintf(result,sizeof result,"%s",VERSION_TEXT);
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
+    else if(starts_word_ci(command,"FONTCHECK",&arg))font_check(arg,result,sizeof result);
     else if(starts_word_ci(command,"OPEN",&arg)){if(!*arg|| (editor&&ow_editor_is_dirty(editor))){ok=0;snprintf(result,sizeof result,"Unsaved changes or missing path");}else{open_document(arg);relayout();snprintf(result,sizeof result,"%s",status);}}
     else if(starts_word_ci(command,"SAVEAS",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing path");}else{save_document_as(arg);snprintf(result,sizeof result,"%s",status);}}
     else if(starts_word_ci(command,"SAVE",&arg)){if(current_path[0]){save_document_as(current_path);snprintf(result,sizeof result,"%s",status);}else{ok=0;snprintf(result,sizeof result,"Untitled document needs SAVEAS");}}
@@ -3530,6 +3650,7 @@ out:
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) { CloseLibrary(LayersBase); LayersBase = NULL; }
     if (OpenFontTextBase) { CloseLibrary(OpenFontTextBase); OpenFontTextBase = NULL; }
+    if (DiskfontBase) { CloseLibrary(DiskfontBase); DiskfontBase = NULL; }
     image_cache_clear();
     if (CyberGfxBase) { CloseLibrary(CyberGfxBase); CyberGfxBase = NULL; }
     if (DataTypesBase) { CloseLibrary(DataTypesBase); DataTypesBase = NULL; }

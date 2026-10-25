@@ -320,6 +320,14 @@ int oc_font_size_for_caps(int pixels, int (*cap_at)(void *user, int size), void 
  * letters' height (a window sets these from its font). */
 void oc_view_set_size(oc_core *core, int width, int height);
 void oc_view_set_headers(oc_core *core, int row_header_width, int col_header_height);
+/* The row numbers' bar following the rows showing (Dale, 25 October 2026): as wide as the largest row number
+ * showing (at least two digits) at digit_width pixels a digit, plus pad pixels, the numbers left-aligned
+ * pad / 2 in. It widens as the view reaches rows of more digits and narrows again, so it changes only where
+ * the digits do; the columns, the frozen panes' split and what is under the pointer follow it. digit_width 0:
+ * the width oc_view_set_headers gave, the numbers centred. */
+void oc_view_set_row_numbers(oc_core *core, int digit_width, int pad);
+/* The row numbers' bar's width now. */
+int oc_view_row_header(const oc_core *core);
 void oc_view_set_zoom(oc_core *core, int percent);   /* 25 to 400 */
 int oc_view_zoom(const oc_core *core);
 /* The first row and column of the scrolling part (after frozen ones). */
@@ -359,7 +367,7 @@ enum {
     OC_DRAW_FILL,       /* a box: role, rgb for OC_ROLE_CELL_FILL */
     OC_DRAW_LINE,       /* from x,y, w or h long (the other is 0): role, line, rgb for OC_ROLE_BORDER */
     OC_DRAW_TEXT,       /* text in its clip box, from text_x; valign in the box y,h; flags, font, size, rgb */
-    OC_DRAW_HEADER,     /* a row number or column letter in its box, centred; selected or not */
+    OC_DRAW_HEADER,     /* a row number or column letter in its box, centred (align OC_ALIGN_LEFT: from text_x); selected or not */
     OC_DRAW_FRAME,      /* a box's outline, `line` pixels thick: the active cell, the selection */
     OC_DRAW_CARET       /* the caret: a line from x,y, h long */
 };

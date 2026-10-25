@@ -69,7 +69,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.9 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.10 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -589,7 +589,8 @@ static cell_font_entry *cell_font(int index, int size)
         memset(&be, 0, sizeof be);
         be.open = probe_open;
         be.advance = probe_advance;
-        ow_fw_init(&cell_faces, &be, font_attr.ta_Name ? (const char *)font_attr.ta_Name : "");
+        ow_fw_init(&cell_faces, &be, font_attr.ta_Name ? (const char *)font_attr.ta_Name : "",
+                   font_attr.ta_Name ? (const char *)font_attr.ta_Name : "");   /* the window's font is the theme's */
         cell_faces_ready = 1;
     }
     face = ow_fw_face(&cell_faces, file);
@@ -1053,8 +1054,10 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
         to_latin1(it->text, strlen(it->text), buf, sizeof buf);
         SetSoftStyle(cv->rp, 0, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
         tw = text_length(cv->rp, buf, strlen(buf));
-        text_cut(cv, rgb_pen(it->flags ? RGB_HEADER_TEXT_SELECTED : RGB_HEADER_TEXT), it->text, 0, it->x + (it->w - tw) / 2,
-                 it->y + (it->h - fh) / 2, it->x, it->w - 1, fh);
+        /* row numbers left-aligned a small inset in (the core's text_x), column letters centred */
+        text_cut(cv, rgb_pen(it->flags ? RGB_HEADER_TEXT_SELECTED : RGB_HEADER_TEXT), it->text, 0,
+                 it->align == OC_ALIGN_LEFT ? it->x + it->text_x : it->x + (it->w - tw) / 2, it->y + (it->h - fh) / 2, it->x,
+                 it->w - 1, fh);
         break;
     }
     case OC_DRAW_FRAME: {
@@ -1431,8 +1434,18 @@ static void layout(void)
     if (g) AddGList(win, glist2, ~0, -1, NULL);
     else if (glist2) { FreeGadgets(glist2); glist2 = NULL; g_name = g_input = g_vscroll = g_hscroll = NULL; }
 
-    /* the core's view: row numbers as wide as the biggest, column letters a line high */
-    oc_view_set_headers(core, ogt_text_width(rp, "1048576") + 10, fh + 4);
+    /* the core's view: column letters a line high; the row numbers' bar as wide as the largest number showing
+       (Dale, 25 October 2026: it starts narrow and stretches as the numbers grow), 6 pixels each side */
+    {
+        int dw = 0, k;
+        for (k = 0; k < 10; k++) {
+            char digit[2] = { (char)('0' + k), 0 };
+            int w = ogt_text_width(rp, digit);
+            if (w > dw) dw = w;
+        }
+        oc_view_set_headers(core, ogt_text_width(rp, "1048576") + 10, fh + 4);
+        oc_view_set_row_numbers(core, dw, 12);
+    }
     oc_view_set_size(core, grid_box.w, grid_box.h);
     ogt_status_init(&sbar, win, &ctx, 4);
     ogt_status_layout(&sbar, status_box.x, status_box.y, status_box.w, status_box.h);

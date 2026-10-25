@@ -1202,6 +1202,96 @@ static void test_borders(void)
     oc_core_free(core);
 }
 
+/* The row header item of a row, or NULL. */
+static const oc_draw_item *row_label(const oc_draw_list *l, const char *text)
+{
+    int i;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_HEADER && l->items[i].x == 0 && l->items[i].text && !strcmp(l->items[i].text, text))
+            return &l->items[i];
+    return NULL;
+}
+
+static const oc_draw_item *col_label(const oc_draw_list *l, const char *text)
+{
+    int i;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_HEADER && l->items[i].y == 0 && l->items[i].text && !strcmp(l->items[i].text, text))
+            return &l->items[i];
+    return NULL;
+}
+
+static void test_row_numbers(void)
+{
+    oc_core *core = fresh();                             /* 400 pixels high: 17-pixel rows from 18, 23 show */
+    oc_draw_list l;
+    const oc_draw_item *it;
+    oc_hit hit;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    /* set: the width given, the numbers centred */
+    CHECK(oc_view_row_header(core) == 40);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    it = row_label(&l, "1");
+    CHECK(it && it->w == 40 && it->align == OC_ALIGN_CENTRE);
+    /* following the rows: 7 pixels a digit, 8 beside them; rows 1 to 23 show, two digits: 22 */
+    oc_view_set_row_numbers(core, 7, 8);
+    CHECK(oc_view_row_header(core) == 8 + 2 * 7);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    it = row_label(&l, "1");
+    CHECK(it && it->w == 22 && it->align == OC_ALIGN_LEFT && it->text_x == 4);
+    it = col_label(&l, "A");
+    CHECK(it && it->x == 22 && it->align == OC_ALIGN_CENTRE);
+    CHECK(oc_view_hit(core, 23, 18 + 5, &hit) == OC_HIT_CELL && hit.row == 0 && hit.col == 0 && hit.x == 22);
+    CHECK(oc_view_hit(core, 21, 18 + 5, &hit) == OC_HIT_ROW_HEADER && hit.w == 22);
+    /* rows 90 to 112: three digits */
+    oc_view_scroll_to(core, 89, 0);
+    CHECK(oc_view_row_header(core) == 8 + 3 * 7);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    it = col_label(&l, "A");
+    CHECK(it && it->x == 29);
+    /* back to rows 70 to 92: two digits again */
+    oc_view_scroll_to(core, 69, 0);
+    CHECK(oc_view_row_header(core) == 8 + 2 * 7);
+    /* 99 is the last of two digits: rows 78 to 100 make it three */
+    oc_view_scroll_to(core, 77, 0);
+    CHECK(oc_view_row_header(core) == 8 + 3 * 7);
+    /* rows past ten thousand: five */
+    oc_view_scroll_to(core, 9990, 0);
+    CHECK(oc_view_row_header(core) == 8 + 5 * 7);
+    /* the frozen rows show too, and the split follows the bar */
+    oc_view_scroll_to(core, 0, 0);
+    go(core, "B3");
+    oc_core_freeze(core);
+    oc_view_scroll_to(core, 999, 0);                     /* rows 1, 2, then 1000 on: four digits */
+    CHECK(oc_view_row_header(core) == 8 + 4 * 7);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    it = row_label(&l, "1000");
+    CHECK(it && it->w == 36);
+    it = col_label(&l, "A");
+    CHECK(it && it->x == 36);
+    CHECK(count_kind(&l, OC_DRAW_LINE, OC_ROLE_FREEZE) == 2);
+    {
+        int i, ok = 0;
+        for (i = 0; i < l.n; i++)
+            if (l.items[i].kind == OC_DRAW_LINE && l.items[i].role == OC_ROLE_FREEZE && l.items[i].w == 0 &&
+                l.items[i].x == 36 + 64 - 1)
+                ok = 1;
+        CHECK(ok);                                       /* beside column A, which moved with the bar */
+    }
+    /* a tall view showing a hundred rows from the top: three digits */
+    oc_core_freeze(core);
+    oc_view_scroll_to(core, 0, 0);
+    oc_view_set_size(core, 640, 18 + 100 * 17);
+    CHECK(oc_view_row_header(core) == 8 + 3 * 7);
+    /* back to set */
+    oc_view_set_row_numbers(core, 0, 0);
+    CHECK(oc_view_row_header(core) == 40);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 /* A cell's text wrapped (or not) and placed: its style's wrap, vertical alignment and font size. */
 static void wrapped(oc_core *core, const char *cell, int wrap, int valign, int size)
 {
@@ -1661,6 +1751,7 @@ int main(void)
     test_draw();
     test_borders();
     test_font_caps();
+    test_row_numbers();
     test_text_layout();
     test_tab_strip();
     test_status();
