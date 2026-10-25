@@ -108,6 +108,34 @@ int main(int argc, char **argv)
         for (k = 0; k < sh->nmerges; k++)
             printf("merge %u,%u-%u,%u\n", sh->merges[k].first_row, sh->merges[k].first_col, sh->merges[k].last_row,
                    sh->merges[k].last_col);
+        for (k = 0; k < sh->ncondfmts; k++) {
+            const owf_condfmt *cf = &sh->condfmts[k];
+            int r;
+            printf("cf type=%d op=%d priority=%d stop=%d ranges=", cf->type, cf->op, cf->priority, cf->stop);
+            for (r = 0; r < cf->nranges; r++)
+                printf("%s%u,%u-%u,%u", r ? ";" : "", cf->ranges[r].first_row, cf->ranges[r].first_col,
+                       cf->ranges[r].last_row, cf->ranges[r].last_col);
+            printf(" set=%u flags=%u colour=", cf->font_set, cf->font_flags);
+            put_colour(cf->font_colour);
+            printf(" fill=");
+            put_colour(cf->fill);
+            for (r = 0; r < 2; r++)
+                if (cf->formula[r]) {
+                    printf(" formula ");
+                    put_string(cf->formula[r]);
+                }
+            for (r = 0; r < cf->npoints; r++) {
+                printf(" point %d ", cf->points[r].kind);
+                put_string(cf->points[r].value ? cf->points[r].value : "");
+                putchar(' ');
+                put_colour(cf->points[r].colour);
+            }
+            if (cf->xml) {
+                printf(" xml ");
+                put_string(cf->xml);
+            }
+            putchar('\n');
+        }
         for (k = 0; k < sh->ncells; k++) {
             const owf_cell *c = &sh->cells[k];
             char num[32];

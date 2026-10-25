@@ -1383,6 +1383,29 @@ int owf_calc_shift(owf_calc *calc, int sheet, int axis, unsigned at, int count)
             s->merges[out++] = *m;
     }
     s->nmerges = out;
+    /* conditional formats: their ranges as merged ones move, their formulas as the cells' */
+    for (i = out = 0; i < s->ncondfmts; i++) {
+        owf_condfmt *cf = &s->condfmts[i];
+        int r, kept = 0;
+        for (r = 0; r < cf->nranges; r++) {
+            owf_range *m = &cf->ranges[r];
+            if (axis ? shift_span(&job, &m->first_col, &m->last_col, 0, limit)
+                     : shift_span(&job, &m->first_row, &m->last_row, 0, limit))
+                cf->ranges[kept++] = *m;
+        }
+        cf->nranges = kept;
+        for (r = 0; r < 2; r++)
+            if (cf->formula[r] && !rewrite_text(book, sheet, &cf->formula[r], &job)) {
+                calc->stale = 1;
+                return OWF_ERR_MEMORY;
+            }
+        if (!kept) {
+            owf_condfmt_free(cf);
+            continue;
+        }
+        s->condfmts[out++] = *cf;
+    }
+    s->ncondfmts = out;
     return build(calc, 1);
 }
 
