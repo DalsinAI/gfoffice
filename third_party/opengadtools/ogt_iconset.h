@@ -20,6 +20,10 @@
 #define OGT_ICONSET_DEFAULT "Chrome"
 #define OGT_ICONSET_SIZES 4               /* 24, 28, 32 and 48 pixels */
 
+/* Gives OpenGadTools' toolbars this file's pictures (ogt_toolbar_pictures_use).
+ * Call it once, before the first toolbar is laid out; until then, and in a
+ * program that doesn't link this file, toolbars show their vector icons. */
+void ogt_iconset_attach(void);
 /* The set toolbars use, by name; NULL or "" for the vector icons only. */
 void ogt_iconset_use(const char *name);
 /* The size a set is drawn at for a wanted size: 24, 28, 32 or 48, the

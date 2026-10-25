@@ -66,6 +66,7 @@
 #include "ogt_draw.h"
 #include "ogt_icons.h"
 #include "ogt_toolbar.h"
+#include "ogt_iconset.h"
 #include "ogt_font.h"
 #include "ogt_list.h"
 #include "ogt_pageview.h"
@@ -77,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.7 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.9 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -3721,6 +3722,7 @@ static int window_main(int argc, char **argv)
     RexxSysBase = (struct RxsLib *)OpenLibrary((STRPTR)"rexxsyslib.library", 36);
     DataTypesBase = OpenLibrary((STRPTR)"datatypes.library", 39);
     CyberGfxBase = OpenLibrary((STRPTR)"cybergraphics.library", 0);
+    ogt_iconset_attach();   /* the toolbar's pictures come from the Chrome set (Images/Toolbar/) */
     read_theme_choice();
     set_document(blank_document(), "", "ODT");
     if (!doc || !editor) { rc = 20; goto out; }
