@@ -67,7 +67,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.3 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.5 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -1344,14 +1344,19 @@ static void writable_formats(char *out, size_t size)
  * What a file's import or export left out, in OpenCalc's own window: EasyRequest cut its lines short on the
  * lab's RTG screen ("Formatting of whole rows is kept on their cel"). The window is as wide as its widest
  * line in the window's font, up to three quarters of the screen (longer lines wrap at spaces), and as tall
- * as its lines, up to the screen (the rest left out, and said so). Return, Escape, OK or the close gadget
- * close it. */
+ * as its lines, up to the screen (the rest left out, and said so); the OK button below the last line. A
+ * line starting with NOTE_BULLET is a bulleted note: a round dot, its text (and the lines it wraps onto)
+ * indented after it. Return, Escape, OK or the close gadget close it. */
 #define NOTE_LINES 48
 #define NOTE_TEXT 4096
+#define NOTE_BULLET '\001'
 
-/* The text's lines (Latin-1, '\n' between them) broken to maxw pixels in rp's font, written into buf as
- * NUL-ended lines; their starts in line[]. The count. */
-static int break_note_lines(struct RastPort *rp, const char *text, int maxw, char *buf, size_t size, char **line, int max)
+typedef struct { char *text; int indent, bullet; } note_line;
+
+/* The text's paragraphs (Latin-1, '\n' between them) broken to maxw pixels in rp's font into buf's
+ * NUL-ended lines. The count. */
+static int break_note_lines(struct RastPort *rp, const char *text, int maxw, int indent, char *buf, size_t size,
+                            note_line *line, int max)
 {
     size_t o = 0;
     int n = 0;
@@ -1359,23 +1364,32 @@ static int break_note_lines(struct RastPort *rp, const char *text, int maxw, cha
     while (*p && n < max) {
         const char *end = strchr(p, '\n'), *q;
         size_t len = end ? (size_t)(end - p) : strlen(p);
+        int bullet = len && *p == NOTE_BULLET, first = 1;
+        if (bullet) { p++; len--; }
         if (!len) {                                  /* an empty line */
             if (o + 1 > size) return n;
             buf[o] = 0;
-            line[n++] = buf + o++;
+            line[n].text = buf + o++;
+            line[n].indent = line[n].bullet = 0;
+            n++;
         }
         while (len && n < max) {
             size_t take = len, fit;
             struct TextExtent te;
-            fit = (size_t)TextFit(rp, (STRPTR)p, (ULONG)len, &te, NULL, 1, (ULONG)(maxw > 0 ? maxw : 1), 32767);
+            int room = maxw - (bullet ? indent : 0);
+            fit = (size_t)TextFit(rp, (STRPTR)p, (ULONG)len, &te, NULL, 1, (ULONG)(room > 0 ? room : 1), 32767);
             if (fit < len) {                         /* back to the last space that fits; else a cut word */
                 for (q = p + fit; q > p && *q != ' '; q--) ;
                 take = q > p ? (size_t)(q - p) : (fit ? fit : 1);
             }
-            if (o + take + 1 > size || n >= max) return n;
+            if (o + take + 1 > size) return n;
             memcpy(buf + o, p, take);
             buf[o + take] = 0;
-            line[n++] = buf + o;
+            line[n].text = buf + o;
+            line[n].indent = bullet ? indent : 0;
+            line[n].bullet = bullet && first;
+            n++;
+            first = 0;
             o += take + 1;
             p += take;
             len -= take;
@@ -1389,66 +1403,82 @@ static int break_note_lines(struct RastPort *rp, const char *text, int maxw, cha
 
 static void notes_window(const char *title, const char *text)
 {
-    struct Gadget *list = NULL, *gok;
+    struct Gadget *list = NULL, *gok = NULL;
     struct NewGadget ng;
-    struct Window *rw = NULL;
+    struct Window *rw;
     struct RastPort trp;
-    char *buf = NULL, *line[NOTE_LINES];
-    int n, i, ww = 0, wh, okw, okh = fh + 8, lh = fh + 2, maxw, maxlines, cut = 0, done = 0;
+    char *buf;
+    note_line *line;
+    int n, i, ww = 0, wh, okw, okh = fh + 8, lh = fh + 2, maxw, maxlines, cut = 0, done = 0, text_h, indent;
     if (!scr || !vi || !font) { tell(title, text); return; }
-    if (!(buf = malloc(NOTE_TEXT))) { tell(title, text); return; }
+    buf = malloc(NOTE_TEXT);
+    line = malloc(NOTE_LINES * sizeof *line);
+    if (!buf || !line) { free(buf); free(line); tell(title, text); return; }
     InitRastPort(&trp);
     SetFont(&trp, font);
+    indent = fh;                                     /* the dot and a space */
     maxw = scr->Width * 3 / 4 - 32;
-    n = break_note_lines(&trp, text, maxw, buf, NOTE_TEXT, line, NOTE_LINES);
-    maxlines = (scr->Height - scr->BarHeight - 40 - okh - 32) / lh;
+    n = break_note_lines(&trp, text, maxw, indent, buf, NOTE_TEXT, line, NOTE_LINES);
+    maxlines = (scr->Height - scr->BarHeight - 40 - okh - 40) / lh;
     if (maxlines < 3) maxlines = 3;
     if (n > maxlines) { n = maxlines - 1; cut = 1; }
     for (i = 0; i < n; i++) {
-        int w = TextLength(&trp, (STRPTR)line[i], strlen(line[i]));
+        int w = line[i].indent + TextLength(&trp, (STRPTR)line[i].text, strlen(line[i].text));
         if (w > ww) ww = w;
     }
     okw = TextLength(&trp, (STRPTR)"OK", 2) + 48;
     ww += 32;
     if (ww < okw + 32) ww = okw + 32;
     if (ww < 280) ww = 280;
-    wh = 14 + (n + cut) * lh + 14 + okh + 10;
-    memset(&ng, 0, sizeof ng);
-    ng.ng_TextAttr = &font_attr;
-    ng.ng_VisualInfo = vi;
-    gok = CreateContext(&list);
-    ng.ng_LeftEdge = (ww - okw) / 2;
-    ng.ng_TopEdge = wh - okh - 10;
-    ng.ng_Width = okw;
-    ng.ng_Height = okh;
-    ng.ng_GadgetText = (STRPTR)"OK";
-    ng.ng_GadgetID = 1;
-    gok = CreateGadget(BUTTON_KIND, gok, &ng, TAG_DONE);
-    if (gok)
-        rw = OpenWindowTags(NULL,
-            WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
-            WA_InnerWidth, ww, WA_InnerHeight, wh,
-            WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
-            WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
-            WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE, WA_AutoAdjust, TRUE,
-            WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | BUTTONIDCMP,
-            TAG_DONE);
-    if (!rw) {
+    text_h = 14 + (n + cut) * lh;                    /* every line drawn, the "(and more)" too */
+    wh = text_h + 12 + okh + 10;
+    /* the window first, then its button from the window's own borders (a gadget's place counts from the
+       window's corner, its title bar included) */
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE, WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | BUTTONIDCMP,
+        TAG_DONE);
+    if (rw) {
+        memset(&ng, 0, sizeof ng);
+        ng.ng_TextAttr = &font_attr;
+        ng.ng_VisualInfo = vi;
+        gok = CreateContext(&list);
+        ng.ng_LeftEdge = rw->BorderLeft + (ww - okw) / 2;
+        ng.ng_TopEdge = rw->BorderTop + text_h + 12;
+        ng.ng_Width = okw;
+        ng.ng_Height = okh;
+        ng.ng_GadgetText = (STRPTR)"OK";
+        ng.ng_GadgetID = 1;
+        gok = CreateGadget(BUTTON_KIND, gok, &ng, TAG_DONE);
+        if (gok) AddGList(rw, list, (UWORD)~0, -1, NULL);
+    }
+    if (!rw || !gok) {
+        if (rw) CloseWindow(rw);
         if (list) FreeGadgets(list);
         free(buf);
+        free(line);
         tell(title, text);
         return;
     }
     while (!done) {
         struct IntuiMessage *m;
-        int x = rw->BorderLeft, y = rw->BorderTop, k;
+        int x = rw->BorderLeft, y = rw->BorderTop, k, r = fh / 5 > 2 ? fh / 5 : 2;
         struct RastPort *rp = rw->RPort;
         SetFont(rp, font);
-        ogt_fill(&ctx, rp, "window", x, y, ww, wh);
-        for (k = 0; k < n; k++)
-            ogt_text(rp, ogt_pen(&ctx, "label"), x + 16, y + 14 + k * lh, line[k], 0);
+        ogt_fill(&ctx, rp, "window", x, y, ww, text_h + 6);
+        for (k = 0; k < n; k++) {
+            int ly = y + 14 + k * lh;
+            if (line[k].bullet)                      /* a round dot on the text's middle */
+                ogt_fill_circle(rp, ogt_pen(&ctx, "label"), x + 16 + r, ly + fh / 2, r);
+            ogt_text(rp, ogt_pen(&ctx, "label"), x + 16 + line[k].indent, ly, line[k].text, 0);
+        }
         if (cut)
             ogt_text(rp, ogt_pen(&ctx, "muted"), x + 16, y + 14 + n * lh, "(and more)", 0);
+        ogt_fill(&ctx, rp, "window", x, y + text_h + 6, ww, wh - text_h - 6);
         RefreshGList(list, rw, NULL, -1);
         GT_RefreshWindow(rw, NULL);
         for (;;) {
@@ -1465,9 +1495,11 @@ static void notes_window(const char *title, const char *text)
             if (done || redraw) break;
         }
     }
+    RemoveGList(rw, list, -1);
     CloseWindow(rw);
     FreeGadgets(list);
     free(buf);
+    free(line);
 }
 
 /* The report's notes, when they say something was left out or shown otherwise. */
@@ -1487,9 +1519,8 @@ static void show_report(const char *title, owf_report *report)
         size_t k;
         if (level == OWF_NOTE_INFO || !note) continue;
         k = to_latin1(note, strlen(note), latin, sizeof latin);
-        if (used + k + 4 >= NOTE_TEXT) break;
-        text[used++] = (char)0xB7;                   /* a bullet, in Latin-1 */
-        text[used++] = ' ';
+        if (used + k + 3 >= NOTE_TEXT) break;
+        text[used++] = NOTE_BULLET;
         memcpy(text + used, latin, k);
         used += k;
         text[used++] = '\n';
