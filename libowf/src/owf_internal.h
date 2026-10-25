@@ -291,18 +291,9 @@ const char *owf_xml_event_attr(const owf_xml_event *event, const char *ns, const
 
 /* ---- Zip reading (owf_unzip.c) ---- */
 
-typedef struct {
-    const unsigned char *data;
-    size_t length;
-    const unsigned char *dir;     /* the central directory */
-    unsigned entries;
-} owf_unzip;
-
-/* 0 when the data is not a zip we can read. */
-int owf_unzip_open(owf_unzip *zip, const unsigned char *data, size_t length);
-int owf_unzip_has(const owf_unzip *zip, const char *name);
-/* Extracts one file into memory from malloc (NUL-terminated). */
-int owf_unzip_read(const owf_unzip *zip, const char *name, unsigned char **data, size_t *length);
+/* owf_unzip, owf_unzip_open, owf_unzip_has and owf_unzip_read are public
+ * since owf.library 2: owf_zip.h. */
+#include "owf_zip.h"
 /* What an ODF package (by its mimetype) or an OOXML package (by its
  * content types) holds, so that each reader claims only its own. */
 enum {

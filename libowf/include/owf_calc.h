@@ -23,7 +23,7 @@
  * Plain C99 doubles and <math.h>. The sources are the .c files in
  * libowf/calc: a program that calculates compiles them with libowf's own
  * and links the maths library (-lm on the PC, libnix's soft maths on the
- * Amiga). They are not in owf.library yet (its calls come later).
+ * Amiga), or opens owf.library 2, which holds them and their maths.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #ifndef OWF_CALC_H
@@ -181,6 +181,13 @@ int owf_calc_format_value(const char *format, const owf_cell *value, int date190
 
 #ifdef __cplusplus
 }
+#endif
+
+/* owf.library's calls, once every header with calls is complete (owf.h) */
+#define OWF_CALC_H_DONE
+#if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD) && defined(OWF_H_DONE) && \
+    defined(OWF_PUB_H_DONE) && defined(OWF_ZIP_H_DONE)
+#include <proto/owf.h>
 #endif
 
 #endif

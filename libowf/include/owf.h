@@ -390,13 +390,54 @@ int owf_import_book_file(const char *path, const char *format, owf_book **book,
                          owf_report *report, const owf_book_format **used);
 int owf_export_book_file(const owf_book *book, const char *path, const char *format, owf_report *report);
 
+/* ---- What a file is (owf.library 2) ----
+ * Which of the suite's programs a file is for, from its bytes: ODF
+ * packages by their mimetype, OOXML packages by their main part, compound
+ * files by their streams (Publisher's by owf_pub_detect), OpenBase's
+ * databases by SQLite's header and their application id ("OADB"); any
+ * other file by the best score of the document and workbook format
+ * tables. Plain text is a document, CSV included: the bytes can't tell
+ * them apart (a program with the file's name can ask
+ * owf_book_format_for_filename). */
+typedef enum {
+    OWF_KIND_UNKNOWN, OWF_KIND_DOCUMENT, OWF_KIND_WORKBOOK, OWF_KIND_DECK, OWF_KIND_DATABASE,
+    OWF_KIND_PUBLICATION         /* Microsoft Publisher */
+} owf_kind;
+owf_kind owf_file_kind(const unsigned char *data, size_t length);
+
+/* ---- The structures' sizes (owf.library 2) ----
+ * Programs index owf.library's arrays themselves (a story's paragraphs, a
+ * sheet's cells), so each structure's size is part of the library's ABI.
+ * owf_struct_size says what the library was built with (0 for a number it
+ * doesn't know), and owf_open() (owf_open.h) refuses a library whose sizes
+ * differ from the program's. New structures go at the end. */
+enum {
+    OWF_STRUCT_CHARFMT, OWF_STRUCT_RUN, OWF_STRUCT_TAB, OWF_STRUCT_PARAFMT, OWF_STRUCT_PARA, OWF_STRUCT_STORY,
+    OWF_STRUCT_FONT, OWF_STRUCT_PAGE, OWF_STRUCT_IMAGE, OWF_STRUCT_DOC, OWF_STRUCT_FORMAT, OWF_STRUCT_CELL,
+    OWF_STRUCT_CELLSTYLE, OWF_STRUCT_COLINFO, OWF_STRUCT_ROWINFO, OWF_STRUCT_RANGE, OWF_STRUCT_SHEET,
+    OWF_STRUCT_DEFNAME, OWF_STRUCT_BOOK, OWF_STRUCT_BOOK_FORMAT, OWF_STRUCT_UNZIP, OWF_STRUCT_PUB,
+    OWF_STRUCT_PUB_PAGE, OWF_STRUCT_PUB_FRAME,
+    OWF_STRUCT_COUNT
+};
+unsigned long owf_struct_size(int which);
+
 #ifdef __cplusplus
 }
 #endif
 
-/* The calls through owf.library (its inline calls in libowf/library/sdk). */
+/* The calls through owf.library (its inline calls in libowf/library/sdk),
+ * once every header that declares calls is complete, whichever of them a
+ * program includes first: owf_calc.h, owf_pub.h and owf_zip.h end the same
+ * way. (The inline calls are macros of the calls' names, so they must come
+ * after every declaration.) */
+#define OWF_H_DONE
 #if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "owf_calc.h"
+#include "owf_pub.h"
+#include "owf_zip.h"
+#if defined(OWF_CALC_H_DONE) && defined(OWF_PUB_H_DONE) && defined(OWF_ZIP_H_DONE)
 #include <proto/owf.h>
+#endif
 #endif
 
 #endif
