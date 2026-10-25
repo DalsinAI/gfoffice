@@ -1309,6 +1309,148 @@ static int range_selected_row(const oc_sheetstate *st, unsigned row)
     return 0;
 }
 
+/* ---- Comments ---- */
+
+const owf_comment *oc_core_comment(const oc_core *core, int sheet, unsigned row, unsigned col)
+{
+    if (sheet < 0 || sheet >= core->book->nsheets)
+        return NULL;
+    return owf_sheet_comment(&core->book->sheets[sheet], row, col);
+}
+
+/* Where a cell shows in the panes: the box of it (a merged range's, when it is one's first cell); 0 when it
+ * doesn't show. */
+static int cell_box(const drawing *d, unsigned row, unsigned col, int *x, int *y, int *w, int *h)
+{
+    const owf_range *m = oc_merge_at(d->sheet, row, col);
+    int i = line_of(d->rl, d->nr, row), j = line_of(d->cl, d->nc, col), open;
+    if (m && m->first_row == row && m->first_col == col && i >= 0 && j >= 0)
+        return range_box(d, m, d->rl[i].pane, d->cl[j].pane, x, y, w, h, &open);
+    if (i < 0 || j < 0 || (m && (m->first_row != row || m->first_col != col)))
+        return 0;
+    *x = d->cl[j].pos;
+    *y = d->rl[i].pos;
+    *w = d->cl[j].size;
+    *h = d->rl[i].size;
+    return 1;
+}
+
+static int comment_marks(drawing *d)
+{
+    const owf_sheet *s = d->sheet;
+    int k, size = 5 * d->core->zoom / 100;
+    if (size < 3)
+        size = 3;
+    for (k = 0; k < s->ncomments; k++) {
+        int x, y, w, h;
+        oc_draw_item *it;
+        if (!cell_box(d, s->comments[k].row, s->comments[k].col, &x, &y, &w, &h))
+            continue;
+        if (!(it = add_box(d->list, OC_DRAW_MARK, OC_ROLE_COMMENT, x + w - 1 - (size < w ? size : w - 1), y,
+                           size < w ? size : w - 1, size < h ? size : h - 1)))
+            return 0;
+        it->row = s->comments[k].row;
+        it->col = s->comments[k].col;
+    }
+    return 1;
+}
+
+/* The active cell's comment, beside it, as Excel shows one when the pointer is over its cell: a pale yellow
+ * box (OC_ROLE_NOTE) with a grey frame, its author on the first line in bold (unless the text begins with
+ * the name, as Excel's own comments do) and the text wrapped to the box, in the book's font at 9 points.
+ * To the right of the cell, else to its left; as tall as its lines, up to the grid. Not while typing. */
+#define NOTE_WIDTH 160              /* pixels at 100%: Excel's box is 108 points */
+#define NOTE_LINES 24
+
+static int comment_note(drawing *d)
+{
+    oc_core *core = d->core;
+    const oc_sheetstate *st = oc_state_const(core);
+    const owf_comment *cm = owf_sheet_comment(d->sheet, st->sel.row, st->sel.col);
+    owf_cellstyle font;
+    const char *text;
+    size_t n, at = 0, starts[NOTE_LINES], ends[NOTE_LINES];
+    int x, y, w, h, bw, bh, bx, by, pad, lp, nl = 0, author = 0, k, avail;
+    oc_draw_item *it;
+    if (!cm || core->edit_mode || !cell_box(d, st->sel.row, st->sel.col, &x, &y, &w, &h))
+        return 1;
+    owf_cellstyle_init(&font);
+    font.font.font = -1;
+    font.font.size = 180;
+    pad = 4 * core->zoom / 100 + 1;
+    bw = NOTE_WIDTH * core->zoom / 100;
+    lp = oc_line_px(core, font.font.size);
+    avail = bw - 2 * pad;
+    if (avail < 8)
+        return 1;
+    text = cm->text ? cm->text : "";
+    n = strlen(text);
+    if (cm->author && *cm->author && strncmp(text, cm->author, strlen(cm->author)))
+        author = 1;
+    while (at < n && nl < NOTE_LINES - author) {
+        size_t e = wrap_line(core, &font, text, at, n, avail), next = e;
+        if (next < n && (text[next] == ' ' || text[next] == '\n'))
+            next++;
+        while (e > at && (text[e - 1] == ' ' || text[e - 1] == '\r'))
+            e--;
+        starts[nl] = at;
+        ends[nl] = e;
+        nl++;
+        at = next;
+    }
+    bh = (nl + author) * lp + 2 * pad;
+    if (bh > core->height - core->colhdr)
+        bh = core->height - core->colhdr;
+    bx = x + w + 6;
+    if (bx + bw > core->width && x - 6 - bw >= d->rowhdr)
+        bx = x - 6 - bw;                                     /* no room on the right: the left */
+    by = y;
+    if (by + bh > core->height)
+        by = core->height - bh;
+    if (by < core->colhdr)
+        by = core->colhdr;
+    if (!(it = add_box(d->list, OC_DRAW_FILL, OC_ROLE_NOTE, bx, by, bw, bh)))
+        return 0;
+    it->row = st->sel.row;
+    it->col = st->sel.col;
+    if (!(it = add_box(d->list, OC_DRAW_FRAME, OC_ROLE_NOTE_LINE, bx, by, bw, bh)))
+        return 0;
+    it->line = 1;
+    it->clip_x = 0;
+    it->clip_y = 0;
+    it->clip_w = core->width;
+    it->clip_h = core->height;
+    for (k = -author; k < nl; k++) {
+        const char *t = k < 0 ? cm->author : text + starts[k];
+        size_t len = k < 0 ? strlen(cm->author) : ends[k] - starts[k];
+        int ly = by + pad + (k + author) * lp;
+        if (ly + lp > by + bh)
+            break;
+        if (!(it = add(d->list, OC_DRAW_TEXT, OC_ROLE_TEXT)))
+            return 0;
+        it->x = bx;
+        it->w = bw;
+        it->y = ly;
+        it->h = lp;
+        it->clip_x = bx + 1;
+        it->clip_w = bw - 2;
+        it->clip_y = ly;
+        it->clip_h = lp;
+        it->text_x = bx + pad;
+        it->align = OC_ALIGN_LEFT;
+        it->valign = OWF_VALIGN_CENTRE;
+        it->flags = k < 0 ? OWF_BOLD : 0;
+        it->font = -1;
+        it->size = font.font.size;
+        it->rgb = 0;
+        it->row = st->sel.row;
+        it->col = st->sel.col;
+        if (!add_text(d->list, it, t, len))
+            return 0;
+    }
+    return 1;
+}
+
 static int build(drawing *d)
 {
     oc_core *core = d->core;
@@ -1540,6 +1682,10 @@ static int build(drawing *d)
         oc_draw_list_free(&texts);
     }
 
+    /* comments' marks: a small red triangle in each commented cell's top right corner (a merged range's) */
+    if (!comment_marks(d))
+        return 0;
+
     /* 6. the row numbers and column letters */
     if (core->colhdr > 0) {
         if (!add_box(list, OC_DRAW_FILL, OC_ROLE_HEADER, 0, 0, core->width, core->colhdr))
@@ -1685,7 +1831,8 @@ static int build(drawing *d)
                 }
             }
     }
-    return 1;
+    /* 10. the active cell's comment, on top of everything */
+    return comment_note(d);
 }
 
 int oc_view_draw(oc_core *core, oc_draw_list *list)

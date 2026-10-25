@@ -1677,6 +1677,78 @@ static void test_font_caps(void)
     CHECK(!twice);
 }
 
+static void test_comments(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    owf_sheet *sh;
+    int i, marks, notes, texts;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    sh = &oc_core_book(core)->sheets[0];
+    enter_at(core, "B2", "commented");
+    CHECK(owf_sheet_set_comment(sh, 1, 1, "Team 5", "Owner to confirm. The supplier hosts it.") == 0);
+    CHECK(owf_sheet_set_comment(sh, 4, 2, NULL, "C5's") == 0);
+    CHECK(owf_sheet_set_comment(sh, 1, 1, "Team 5", "Owner to confirm. The supplier hosts it, as before.") == 0);
+    CHECK(sh->ncomments == 2 && oc_core_comment(core, 0, 1, 1) && !oc_core_comment(core, 0, 1, 2));
+    /* each commented cell has its mark in the top right corner; no note while another cell is active */
+    go(core, "E9");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = marks = notes = 0; i < l.n; i++) {
+        const oc_draw_item *it = &l.items[i];
+        if (it->kind == OC_DRAW_MARK) {
+            marks++;
+            if (it->row == 1 && it->col == 1)
+                CHECK(it->x + it->w == 40 + 2 * 64 - 1 && it->y == 18 + 17 && it->w == 5 && it->h == 5);
+        }
+        notes += it->kind == OC_DRAW_FILL && it->role == OC_ROLE_NOTE;
+    }
+    CHECK(marks == 2 && notes == 0);
+    /* the active cell's comment beside it: a box right of the cell, its author in bold, the text wrapped,
+       after everything else */
+    go(core, "B2");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = notes = texts = 0; i < l.n; i++) {
+        const oc_draw_item *it = &l.items[i];
+        if (it->kind == OC_DRAW_FILL && it->role == OC_ROLE_NOTE) {
+            notes++;
+            CHECK(it->x == 40 + 2 * 64 + 6 && it->y == 18 + 17 && it->w == 160);
+        }
+        if (notes && it->kind == OC_DRAW_TEXT) {
+            if (!texts)
+                CHECK(it->text && !strcmp(it->text, "Team 5") && (it->flags & OWF_BOLD));
+            texts++;
+        }
+    }
+    CHECK(notes == 1 && texts >= 3);                    /* the author, then at least two lines of text */
+    CHECK(l.items[l.n - 1].kind == OC_DRAW_TEXT && l.items[l.n - 1].row == 1);
+    /* not while typing */
+    type(core, "x");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = notes = 0; i < l.n; i++)
+        notes += l.items[i].kind == OC_DRAW_FILL && l.items[i].role == OC_ROLE_NOTE;
+    CHECK(notes == 0);
+    key(core, OC_KEY_ESCAPE, 0);
+    /* rows inserted above move it; a deleted row takes its comment */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(oc_core_comment(core, 0, 2, 1) && !oc_core_comment(core, 0, 1, 1));
+    go(core, "A6");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(oc_core_book(core)->sheets[0].ncomments == 1);
+    /* a sheet deleted and the deletion undone: its comments come back */
+    oc_core_add_sheet(core, "Two");
+    CHECK(oc_core_delete_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_comment(core, 0, 2, 1) && !strcmp(oc_core_comment(core, 0, 2, 1)->author, "Team 5"));
+    /* taken away */
+    CHECK(owf_sheet_set_comment(&oc_core_book(core)->sheets[0], 2, 1, NULL, NULL) == 0);
+    CHECK(oc_core_book(core)->sheets[0].ncomments == 0);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -1894,6 +1966,7 @@ int main(void)
     test_borders();
     test_condfmt();
     test_font_caps();
+    test_comments();
     test_row_numbers();
     test_text_layout();
     test_tab_strip();

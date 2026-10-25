@@ -10,8 +10,8 @@
  * tints), column widths, row heights, hidden rows, columns and sheets,
  * merged cells, frozen panes, defined names, the active sheet and the
  * 1904 date system, conditional formatting (cellIs, expression and colour
- * scale rules worked out; the others kept as written). What the model
- * cannot hold (comments, pictures, charts, validation, tables, pivot
+ * scale rules worked out; the others kept as written) and comments. What
+ * the model cannot hold (pictures, charts, validation, tables, pivot
  * tables, macros) is reported.
  *
  * Big parts (the sheets, the shared strings) are read as a stream, element
@@ -1725,13 +1725,92 @@ static void read_sheet_notes(xlsx *x, const char *part)
 {
     rels r;
     read_rels(x->zip, part, &r);
-    if (rel_by_type(&r, "/comments"))
-        owf_report_add(x->report, OWF_NOTE_LOST, "Comments on cells are not read yet");
     if (rel_by_type(&r, "/pivotTable"))
         owf_report_add(x->report, OWF_NOTE_LOST, "Pivot tables keep their cells; the pivot tables themselves are not read yet");
     if (rel_by_type(&r, "/threadedComment"))
-        owf_report_add(x->report, OWF_NOTE_LOST, "Comments on cells are not read yet");
+        owf_report_add(x->report, OWF_NOTE_APPROX, "Threaded comments are read as the plain comments Excel keeps beside them; their replies are not kept apart");
     free_rels(&r);
+}
+
+/* The text of a comment's <text>: its <t>s, run by run, without the phonetic guide's. */
+static void comment_text(const owf_xml_node *n, owf_buf *out)
+{
+    const owf_xml_node *c;
+    for (c = n->first; c; c = c->next) {
+        if (c->type == OWF_XML_TEXT) {
+            if (n->type == OWF_XML_ELEMENT && main_is(n, "t"))
+                owf_buf_put(out, c->name, c->length);
+        } else if (is_main(c->ns) && strcmp(c->name, "rPh")) {
+            comment_text(c, out);
+        }
+    }
+}
+
+/* The sheet's comments part (through its relationships): <comments><authors><author/>...</authors>
+ * <commentList><comment ref="A1" authorId="0"><text>...</text></comment>...</commentList></comments>. */
+static void read_comments(xlsx *x, const char *sheet_part)
+{
+    rels r;
+    char part[PART_NAME];
+    owf_xml *xml;
+    const owf_xml_node *root, *authors, *n;
+    const char *names[64];
+    int nnames = 0, read = 0;
+    read_rels(x->zip, sheet_part, &r);
+    if (!rel_part(&r, rel_by_type(&r, "/comments"), part, sizeof part) || !(xml = read_xml(x->zip, part, NULL))) {
+        if (rel_by_type(&r, "/comments"))
+            owf_report_add(x->report, OWF_NOTE_LOST, "Some comments on cells could not be read: their part of the file is missing or damaged");
+        free_rels(&r);
+        return;
+    }
+    free_rels(&r);
+    root = owf_xml_root(xml);
+    authors = main_child(root, "authors");
+    for (n = main_child(authors, "author"); n && nnames < 64; n = main_next(n, "author")) {
+        const owf_xml_node *t = n->first;
+        names[nnames++] = t && t->type == OWF_XML_TEXT ? t->name : NULL;
+    }
+    for (n = main_child(main_child(root, "commentList"), "comment"); n && !x->failed; n = main_next(n, "comment")) {
+        const char *ref = attr(n, "ref");
+        unsigned long row, col;
+        long who = xlong(attr(n, "authorId"), -1, 0, 0xFFFF);
+        owf_buf text, author;
+        if (!ref || !parse_cell(&ref, &row, &col) || *ref)
+            continue;
+        owf_buf_init(&text);
+        owf_buf_init(&author);
+        comment_text(main_child(n, "text"), &text);
+        if (who >= 0 && who < nnames && names[who]) {
+            const owf_xml_node *t = main_child(authors, "author");
+            long k;
+            for (k = 0; k < who; k++)
+                t = main_next(t, "author");
+            for (t = t ? t->first : NULL; t; t = t->next)
+                if (t->type == OWF_XML_TEXT)
+                    owf_buf_put(&author, t->name, t->length);
+        }
+        text.length = unescape_xstring((char *)text.data, text.length);
+        owf_buf_putc(&text, 0);
+        owf_buf_putc(&author, 0);
+        if (text.failed || author.failed) {
+            x->failed = 1;
+        } else {
+            owf_buf clean;
+            owf_buf_init(&clean);
+            owf_buf_put_utf8_clean(&clean, (const char *)text.data, strlen((const char *)text.data));
+            owf_buf_putc(&clean, 0);
+            if (clean.failed || owf_sheet_set_comment(x->sheet, (unsigned)row, (unsigned)col,
+                                                      author.length > 1 ? (const char *)author.data : NULL,
+                                                      (const char *)clean.data) < 0)
+                x->failed = 1;
+            owf_buf_free(&clean);
+            read++;
+        }
+        owf_buf_free(&text);
+        owf_buf_free(&author);
+    }
+    (void)read;
+    owf_xml_free(xml);
 }
 
 static void read_worksheet(xlsx *x, xsheet *xs)
@@ -1811,6 +1890,8 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     }
     finish_sheet(x);
     clear_sheet_state(x);
+    if (!x->failed)
+        read_comments(x, xs->part);
     free(cr.ranges);
     owf_buf_free(&cr.text);
     owf_buf_free(&cr.xml);
