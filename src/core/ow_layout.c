@@ -165,11 +165,21 @@ static ol_node *add_paragraph(ow_layout *l, const owf_doc *doc, ol_document *od,
     ol_node_set_style(block, &s);
     ol_node_set_box(block, &b);
     if (p->fmt.ntabs > 0) {
-        /* left stops; centred, right and decimal ones are laid out as left ones for now */
-        ol_unit stops[OL_MAX_TABS];
+        /* left, centred, right and decimal stops, with their leaders (OpenLayout 0.3) */
+        ol_tab_stop stops[OL_MAX_TABS];
         int k, n = p->fmt.ntabs < OL_MAX_TABS ? p->fmt.ntabs : OL_MAX_TABS;
-        for (k = 0; k < n; ++k) stops[k] = TW(p->fmt.tabs[k].position);
-        if (!ol_node_set_tabs(block, n, stops)) return NULL;
+        for (k = 0; k < n; ++k) {
+            const owf_tab *t = &p->fmt.tabs[k];
+            stops[k].position = TW(t->position);
+            stops[k].align = t->kind == OWF_TAB_CENTRE ? OL_TAB_CENTER : t->kind == OWF_TAB_RIGHT ? OL_TAB_RIGHT
+                           : t->kind == OWF_TAB_DECIMAL ? OL_TAB_DECIMAL : OL_TAB_LEFT;
+            stops[k].leader = t->leader == OWF_LEADER_DOT ? OL_LEADER_DOT
+                            : t->leader == OWF_LEADER_HYPHEN ? OL_LEADER_HYPHEN
+                            : t->leader == OWF_LEADER_UNDERSCORE ? OL_LEADER_UNDERSCORE
+                            : t->leader == OWF_LEADER_MIDDLE_DOT ? OL_LEADER_MIDDLE_DOT
+                            : t->leader == OWF_LEADER_HEAVY ? OL_LEADER_HEAVY : OL_LEADER_NONE;
+        }
+        if (!ol_node_set_tab_stops(block, n, stops)) return NULL;
     }
     if (!remember(l, block, index, -1)) return NULL;
 

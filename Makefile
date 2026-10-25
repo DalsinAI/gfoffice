@@ -140,10 +140,12 @@ $(OUT)/test-layout-asan: $(OWF_SRC) $(LAYOUT_SRC) tests/core/test_layout.c inclu
 		$(OWF_SRC) $(LAYOUT_SRC) tests/core/test_layout.c -lz -o $@
 
 layout-test: $(OUT)/test-layout
-	$(OUT)/test-layout samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx
+	$(OUT)/test-layout samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx \
+		tests/core/fixtures/contents.docx
 
 layout-check: $(OUT)/test-layout-asan
-	$(OUT)/test-layout-asan samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx
+	$(OUT)/test-layout-asan samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx \
+		tests/core/fixtures/contents.docx
 
 .PHONY: layout-test layout-check
 

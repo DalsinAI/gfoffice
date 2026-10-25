@@ -41,7 +41,24 @@ void owf_paraprops_apply(owf_parafmt *to, const owf_paraprops *p)
     if (p->mask & OWF_PP_HEADING) to->heading = f->heading;
     if (p->mask & OWF_PP_SHADING) to->shading = f->shading;
     if (p->mask & OWF_PP_BORDERS) { to->borders = f->borders; to->border_colour = f->border_colour; }
-    if (p->mask & OWF_PP_TABS) {
+    if ((p->mask & (OWF_PP_TABS | OWF_PP_TABS_MERGE)) == (OWF_PP_TABS | OWF_PP_TABS_MERGE)) {
+        /* Word's: each stop in among the ones there, in order, in place of one at the same place */
+        int i, j, k;
+        for (i = 0; i < f->ntabs; i++) {
+            for (j = 0; j < to->ntabs && to->tabs[j].position != f->tabs[i].position; j++)
+                ;
+            if (j < to->ntabs) {
+                for (k = j; k + 1 < to->ntabs; k++) to->tabs[k] = to->tabs[k + 1];
+                to->ntabs--;
+            }
+            if (f->tabs[i].kind == OWF_TAB_CLEARED || to->ntabs >= OWF_MAX_TABS)
+                continue;
+            for (j = to->ntabs; j > 0 && to->tabs[j - 1].position > f->tabs[i].position; j--)
+                to->tabs[j] = to->tabs[j - 1];
+            to->tabs[j] = f->tabs[i];
+            to->ntabs++;
+        }
+    } else if (p->mask & OWF_PP_TABS) {
         to->ntabs = f->ntabs;
         memcpy(to->tabs, f->tabs, sizeof to->tabs);
     }

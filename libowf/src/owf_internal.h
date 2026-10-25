@@ -312,8 +312,14 @@ enum {
 enum {
     OWF_PP_ALIGN = 1 << 0, OWF_PP_LEFT = 1 << 1, OWF_PP_RIGHT = 1 << 2, OWF_PP_FIRST = 1 << 3,
     OWF_PP_BEFORE = 1 << 4, OWF_PP_AFTER = 1 << 5, OWF_PP_LINE = 1 << 6, OWF_PP_BREAK = 1 << 7,
-    OWF_PP_TABS = 1 << 8, OWF_PP_HEADING = 1 << 9, OWF_PP_SHADING = 1 << 10, OWF_PP_BORDERS = 1 << 11
+    OWF_PP_TABS = 1 << 8, OWF_PP_HEADING = 1 << 9, OWF_PP_SHADING = 1 << 10, OWF_PP_BORDERS = 1 << 11,
+    /* with OWF_PP_TABS: the stops go in among the ones there (Word's), a stop of kind OWF_TAB_CLEARED taking
+     * the one at its place away; without it they replace them (ODF's) */
+    OWF_PP_TABS_MERGE = 1 << 12
 };
+/* A tab stop that takes away the one at its place (Word's w:val="clear"): in an owf_paraprops only, never in
+ * a document. */
+#define OWF_TAB_CLEARED ((owf_tab_kind)-1)
 enum { OWF_FAMILY_PARAGRAPH = 1, OWF_FAMILY_TEXT, OWF_FAMILY_LIST };
 
 typedef struct { unsigned mask; owf_charfmt fmt; } owf_charprops;
@@ -418,6 +424,8 @@ void owf_odf_text_faces(owf_odf_text *t, const owf_xml_node *decls);
 void owf_odf_text_styles(owf_odf_text *t, const owf_xml_node *container, int which);
 void owf_odf_text_props(owf_odf_text *t, const owf_xml_node *n, owf_charprops *cp);
 void owf_odf_para_props(const owf_xml_node *n, owf_paraprops *pp);
+/* A tab stop's leader as ODF's style:leader-style and style:leader-text attributes (out_odt.c) */
+void owf_odf_put_leader(owf_buf *out, owf_tab_leader leader);
 /* A text:p or text:h: base_para and base_char, then its styles; runs keep
  * font -1 and size 0 where they are base_char's. */
 int owf_odf_text_paragraph(owf_odf_text *t, owf_builder *b, const owf_xml_node *p, int which,

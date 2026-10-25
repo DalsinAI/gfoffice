@@ -389,23 +389,32 @@ static void read_ppr(docx *d, const owf_xml_node *ppr, owf_paraprops *pp, const 
                 pp->mask |= OWF_PP_HEADING;
             }
         } else if (!strcmp(n->name, "tabs")) {
+            /* Word's stops add to the style's: "clear" takes one of them away (owf_paraprops_apply) */
             pp->fmt.ntabs = 0;
             for (t = n->first; t && pp->fmt.ntabs < OWF_MAX_TABS; t = t->next) {
-                const char *type;
+                const char *type, *leader;
                 owf_tab *tab;
                 if (!is_w(d, t, "tab") || !wint(d, t, "pos", &v))
                     continue;
                 type = wval(d, t);
-                if (type && (!strcmp(type, "clear") || !strcmp(type, "bar")))
+                if (type && (!strcmp(type, "bar") || !strcmp(type, "num")))
                     continue;
+                leader = owf_xml_attr(t, d->w, "leader");
                 tab = &pp->fmt.tabs[pp->fmt.ntabs++];
                 tab->position = v;
                 tab->kind = !type ? OWF_TAB_LEFT
+                          : !strcmp(type, "clear") ? OWF_TAB_CLEARED
                           : !strcmp(type, "center") ? OWF_TAB_CENTRE
                           : (!strcmp(type, "right") || !strcmp(type, "end")) ? OWF_TAB_RIGHT
                           : !strcmp(type, "decimal") ? OWF_TAB_DECIMAL : OWF_TAB_LEFT;
+                tab->leader = !leader ? OWF_LEADER_NONE
+                            : !strcmp(leader, "dot") ? OWF_LEADER_DOT
+                            : !strcmp(leader, "hyphen") ? OWF_LEADER_HYPHEN
+                            : !strcmp(leader, "underscore") ? OWF_LEADER_UNDERSCORE
+                            : !strcmp(leader, "middleDot") ? OWF_LEADER_MIDDLE_DOT
+                            : !strcmp(leader, "heavy") ? OWF_LEADER_HEAVY : OWF_LEADER_NONE;
             }
-            pp->mask |= OWF_PP_TABS;
+            pp->mask |= OWF_PP_TABS | OWF_PP_TABS_MERGE;
         } else if (!strcmp(n->name, "numPr") && num_id) {
             const owf_xml_node *id = wchild(d, n, "numId"), *lvl = wchild(d, n, "ilvl");
             if (id)
