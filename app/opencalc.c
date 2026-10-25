@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.18 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.19 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -920,7 +920,8 @@ static LONG selection_pen(void)
 static LONG role_pen(int role, unsigned long rgb)
 {
     switch (role) {
-    case OC_ROLE_CELL_FILL: return rgb_pen(rgb);
+    case OC_ROLE_CELL_FILL:
+    case OC_ROLE_CHART: return rgb_pen(rgb);             /* a chart's area, bars and lines */
     case OC_ROLE_SELECTION: return selection_pen();
     case OC_ROLE_GRID: return rgb_pen(RGB_GRID);
     case OC_ROLE_BORDER:
@@ -1090,6 +1091,14 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
         xy[2] = cv->ox + cx + a + 1; xy[3] = cv->oy + cy - a / 2;
         xy[4] = cv->ox + cx; xy[5] = cv->oy + cy + a;
         ogt_fill_poly(cv->rp, it->flags ? ogt_pen(&ctx, "accent") : rgb_pen(0x404040UL), xy, 3);   /* filtering: the accent */
+        break;
+    }
+    case OC_DRAW_SEGMENT: {                          /* a chart's line: 1 pixel, cut to its pane by the core */
+        int x0 = it->x, y0 = it->y, x1 = it->x + it->w, y1 = it->y + it->h;
+        if (x0 < 0 || y0 < 0 || x1 < 0 || y1 < 0 || x0 >= cv->w || x1 >= cv->w || y0 >= cv->h || y1 >= cv->h) break;
+        ogt_set_apen(cv->rp, role_pen(it->role, it->rgb));
+        Move(cv->rp, cv->ox + x0, cv->oy + y0);
+        Draw(cv->rp, cv->ox + x1, cv->oy + y1);
         break;
     }
     case OC_DRAW_MARK: {                             /* a comment's: the box's top right half, when it is all in view */
@@ -2404,6 +2413,33 @@ static int font_check(const char *arg, char *out, size_t size)
     return 1;
 }
 
+/* For the lab: CHARTCHECK: the charts of the sheet showing, as read from its drawing: each one's kind, the
+ * cell it starts in, its series and the first one's points, the cells its values come from, and its title. */
+static int chart_check(char *out, size_t size)
+{
+    static const char *const kinds[] = { "other", "columns", "bars", "lines", "areas", "pie" };
+    char buf[1024], ref[16];
+    owf_chart *charts;
+    int n, i;
+    size_t k;
+    if (owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n) != OWF_OK) {
+        snprintf(out, size, "Out of memory");
+        return 0;
+    }
+    k = (size_t)snprintf(buf, sizeof buf, "%d chart%s", n, n == 1 ? "" : "s");
+    for (i = 0; i < n && k < sizeof buf; i++) {
+        const owf_chart *c = &charts[i];
+        oc_cell_name(c->from_row, c->from_col, ref);
+        k += (size_t)snprintf(buf + k, sizeof buf - k, "; %s at %s, %d series, %d points from %s, \"%s\"",
+                              kinds[c->kind >= 0 && c->kind <= OWF_CHART_PIE ? c->kind : 0], ref, c->nseries,
+                              c->nseries ? c->series[0].npoints : 0,
+                              c->nseries && c->series[0].values ? c->series[0].values : "(the file)", c->title ? c->title : "");
+    }
+    owf_charts_free(charts, n);
+    to_latin1(buf, strlen(buf), out, size);
+    return 1;
+}
+
 /* As the GFOffice ARexx conventions (docs/gfoffice/Design-Suite-Shared.md 6.3, proposed): 0 done, 5 not
  * possible now, 10 an error or an unknown command. */
 #define RX_OK 0
@@ -2421,7 +2457,7 @@ static int rexx_do_command(const char *command, char **result_out)
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
     else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
-                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK GETCOMMENT QUIT");
+                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK CHARTCHECK GETCOMMENT QUIT");
     else if (starts_word_ci(command, "ACTIVATE", &arg)) {
         if (win) { WindowToFront(win); ActivateWindow(win); }
     } else if (starts_word_ci(command, "ISDIRTY", &arg))
@@ -2446,6 +2482,8 @@ static int rexx_do_command(const char *command, char **result_out)
         snprintf(result_text, sizeof result_text, "%s", ok ? "Exported" : "Export failed");
     } else if (starts_word_ci(command, "FONTCHECK", &arg)) {
         if (!font_check(arg, result_text, sizeof result_text)) ok = 0;
+    } else if (starts_word_ci(command, "CHARTCHECK", &arg)) {
+        if (!chart_check(result_text, sizeof result_text)) ok = 0;
     } else if (starts_word_ci(command, "GETCOMMENT", &arg)) {
         const owf_comment *cm;
         if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }

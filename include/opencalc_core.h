@@ -371,7 +371,8 @@ enum {
     OC_DRAW_FRAME,      /* a box's outline, `line` pixels thick: the active cell, the selection */
     OC_DRAW_CARET,      /* the caret: a line from x,y, h long */
     OC_DRAW_MARK,       /* a comment's mark: a triangle filling the top right half of the box x,y,w,h */
-    OC_DRAW_FILTER      /* an AutoFilter's button: the box x,y,w,h with an arrow down; flags 1: its column filters */
+    OC_DRAW_FILTER,     /* an AutoFilter's button: the box x,y,w,h with an arrow down; flags 1: its column filters */
+    OC_DRAW_SEGMENT     /* a chart's line, 1 pixel, from x,y to x+w,y+h (either way), cut to the area: rgb */
 };
 enum {
     OC_ROLE_PAPER,          /* the empty sheet (the window fills the area with it first) */
@@ -389,7 +390,8 @@ enum {
     OC_ROLE_COMMENT,        /* a comment's mark (red) */
     OC_ROLE_NOTE,           /* behind the active cell's comment (pale yellow) */
     OC_ROLE_NOTE_LINE,      /* its frame */
-    OC_ROLE_FILTER          /* an AutoFilter's button */
+    OC_ROLE_FILTER,         /* an AutoFilter's button */
+    OC_ROLE_CHART           /* a chart's area, bars and lines (its text is OC_ROLE_TEXT): rgb */
 };
 enum { OC_ALIGN_LEFT, OC_ALIGN_CENTRE, OC_ALIGN_RIGHT };
 
@@ -437,6 +439,15 @@ unsigned oc_line_pattern(int line);
  * one under the pointer (not while typing); a cell without one shows its
  * data validation's input message there, when the file says to show it. */
 const owf_comment *oc_core_comment(const oc_core *core, int sheet, unsigned row, unsigned col);
+
+/* ---- Charts ----
+ * The charts an .xlsx's sheet holds (owf_sheet_charts) are drawn over the
+ * cells where the file puts them, in each pane they reach: columns and
+ * bars (clustered, stacked, 100%) and lines, with their title, legend,
+ * gridlines and axes' labels, from the values in the cells their series
+ * come from (as the file last had them when those cannot be found). Other
+ * kinds show their area and title. Fills (OC_ROLE_CHART), lines
+ * (OC_DRAW_SEGMENT) and text, cut to their pane. */
 
 /* ---- The status line ---- */
 

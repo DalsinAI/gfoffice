@@ -120,6 +120,61 @@ int main(int argc, char **argv)
             put_string(sh->drawing);
             putchar('\n');
         }
+        {
+            owf_chart *charts;
+            int nc, c, r, p;
+            if (owf_sheet_charts(book, i, &charts, &nc) != OWF_OK)
+                printf("charts: out of memory\n");
+            for (c = 0; c < nc; c++) {
+                const owf_chart *ch = &charts[c];
+                printf("chart kind=%d grouping=%d from=%u,%u+%ld,%ld ", ch->kind, ch->grouping, ch->from_row, ch->from_col,
+                       ch->from_row_off, ch->from_col_off);
+                if (ch->sized)
+                    printf("size=%ldx%ld", ch->width, ch->height);
+                else
+                    printf("to=%u,%u+%ld,%ld", ch->to_row, ch->to_col, ch->to_row_off, ch->to_col_off);
+                printf(" legend=%c gap=%d grid=%d", ch->legend ? ch->legend : '-', ch->gap, ch->gridlines);
+                if (ch->has_min || ch->has_max) {
+                    char a[32], b[32];
+                    owf_number_text(ch->min, a);
+                    owf_number_text(ch->max, b);
+                    printf(" min=%s max=%s", ch->has_min ? a : "-", ch->has_max ? b : "-");
+                }
+                printf(" title ");
+                put_string(ch->title ? ch->title : "");
+                putchar('\n');
+                for (r = 0; r < ch->nseries; r++) {
+                    const owf_chart_series *se = &ch->series[r];
+                    printf("series %d colour=", se->index);
+                    put_colour(se->colour);
+                    printf(" name ");
+                    put_string(se->name ? se->name : "");
+                    if (se->name_cell) {
+                        printf(" from ");
+                        put_string(se->name_cell);
+                    }
+                    printf(" values ");
+                    put_string(se->values ? se->values : "");
+                    printf(" categories ");
+                    put_string(se->categories ? se->categories : "");
+                    printf(" points");
+                    for (p = 0; p < se->npoints; p++) {
+                        char num[32];
+                        if (se->points[p].has_value)
+                            owf_number_text(se->points[p].value, num);
+                        else
+                            strcpy(num, "-");
+                        printf(" %s", num);
+                        if (se->points[p].label) {
+                            putchar('=');
+                            put_string(se->points[p].label);
+                        }
+                    }
+                    putchar('\n');
+                }
+            }
+            owf_charts_free(charts, nc);
+        }
         if (sh->has_autofilter) {
             printf("autofilter %u,%u-%u,%u ", sh->autofilter.first_row, sh->autofilter.first_col, sh->autofilter.last_row,
                    sh->autofilter.last_col);

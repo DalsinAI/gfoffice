@@ -1935,6 +1935,269 @@ static void test_drawings_kept(void)
     oc_core_free(core);
 }
 
+/* ---- Charts ---- */
+
+#define XDR "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+#define DML "http://schemas.openxmlformats.org/drawingml/2006/main"
+#define CML "http://schemas.openxmlformats.org/drawingml/2006/chart"
+#define RNS "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+/* A chart on sheet 0 from B2 to F12 (columns 1 to 5, rows 1 to 11), as Excel keeps one: its drawing, the
+ * drawing's relationships and the chart, whose plot area is `plot`. */
+static void put_chart(oc_core *core, const char *plot, const char *more)
+{
+    static const char drawing[] =
+        "<xdr:wsDr xmlns:xdr=\"" XDR "\" xmlns:a=\"" DML "\"><xdr:twoCellAnchor>"
+        "<xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>"
+        "<xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>11</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>"
+        "<xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"2\" name=\"Chart 1\"/><xdr:cNvGraphicFramePr/>"
+        "</xdr:nvGraphicFramePr><xdr:xfrm/><a:graphic><a:graphicData uri=\"" CML "\"><c:chart xmlns:c=\"" CML "\" "
+        "xmlns:r=\"" RNS "\" r:id=\"rId1\"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/>"
+        "</xdr:twoCellAnchor></xdr:wsDr>";
+    static const char rels[] =
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" "
+        "Type=\"" RNS "/chart\" Target=\"../charts/chart1.xml\"/></Relationships>";
+    char chart[4096];
+    owf_book *book = oc_core_book(core);
+    snprintf(chart, sizeof chart,
+             "<c:chartSpace xmlns:c=\"" CML "\" xmlns:a=\"" DML "\"><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r>"
+             "<a:t>Sales</a:t></a:r></a:p></c:rich></c:tx></c:title><c:plotArea>%s<c:valAx><c:axId val=\"2\"/>"
+             "<c:majorGridlines/></c:valAx></c:plotArea>%s</c:chart></c:chartSpace>", plot, more);
+    CHECK(owf_book_keep_part(book, "xl/drawings/drawing1.xml", "application/vnd.openxmlformats-officedocument.drawing+xml",
+                             drawing, strlen(drawing)) == 0);
+    CHECK(owf_book_keep_part(book, "xl/drawings/_rels/drawing1.xml.rels",
+                             "application/vnd.openxmlformats-package.relationships+xml", rels, strlen(rels)) == 0);
+    CHECK(owf_book_keep_part(book, "xl/charts/chart1.xml", "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
+                             chart, strlen(chart)) == 0);
+    book->sheets[0].drawing = dup_text("xl/drawings/drawing1.xml");
+}
+
+#define SERIES(n, name, col, cache)                                                                             \
+    "<c:ser><c:idx val=\"" #n "\"/><c:tx><c:strRef><c:f>Sheet1!$" col "$1</c:f><c:strCache><c:pt idx=\"0\"><c:v>" name \
+    "</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>Sheet1!$A$2:$A$4</c:f></c:strRef></c:cat>"     \
+    "<c:val><c:numRef><c:f>Sheet1!$" col "$2:$" col "$4</c:f>" cache "</c:numRef></c:val></c:ser>"
+
+/* The chart's items of a kind (role OC_ROLE_CHART), and of a colour (rgb, or any: -1). */
+static int chart_items(const oc_draw_list *l, int kind, long rgb)
+{
+    int i, n = 0;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == kind && l->items[i].role == OC_ROLE_CHART && (rgb < 0 || l->items[i].rgb == (unsigned long)rgb))
+            n++;
+    return n;
+}
+
+/* The tallest (the widest, `across`) fill of a colour. */
+static int biggest(const oc_draw_list *l, unsigned long rgb, int across)
+{
+    int i, most = 0;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_FILL && l->items[i].role == OC_ROLE_CHART && l->items[i].rgb == rgb &&
+            (across ? l->items[i].w : l->items[i].h) > most)
+            most = across ? l->items[i].w : l->items[i].h;
+    return most;
+}
+
+/* A chart's text: after its area's fill (the cells' text comes before). */
+static const oc_draw_item *find_text(const oc_draw_list *l, const char *s)
+{
+    int i, chart = 0;
+    for (i = 0; i < l->n; i++) {
+        if (l->items[i].kind == OC_DRAW_FILL && l->items[i].role == OC_ROLE_CHART && l->items[i].rgb == 0xFFFFFF)
+            chart = 1;
+        if (chart && l->items[i].kind == OC_DRAW_TEXT && l->items[i].text && !strcmp(l->items[i].text, s))
+            return &l->items[i];
+    }
+    return NULL;
+}
+
+/* Whether a fill of a colour is about a part of the tallest one (h * times = tall * parts). */
+static int has_bar(const oc_draw_list *l, unsigned long rgb, int tall, int parts, int times)
+{
+    int i;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_FILL && l->items[i].role == OC_ROLE_CHART && l->items[i].rgb == rgb &&
+            abs(l->items[i].h * times - tall * parts) <= times)
+            return 1;
+    return 0;
+}
+
+static void chart_values(oc_core *core)
+{
+    enter_at(core, "A2", "North");
+    enter_at(core, "A3", "South");
+    enter_at(core, "A4", "West");
+    enter_at(core, "B1", "2025");
+    enter_at(core, "B2", "10");
+    enter_at(core, "B3", "20");
+    enter_at(core, "B4", "30");
+    enter_at(core, "C1", "2026");
+    enter_at(core, "C2", "15");
+    enter_at(core, "C3", "5");
+    enter_at(core, "C4", "=C2*2");
+}
+
+static void test_charts(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    const oc_draw_item *it;
+    int i, tall, inside = 1, panes_ok = 1, ysplit;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    chart_values(core);
+    put_chart(core, "<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/>"
+                    SERIES(0, "2025", "B", "") SERIES(1, "2026", "C", "")
+                    "<c:gapWidth val=\"100\"/><c:axId val=\"1\"/><c:axId val=\"2\"/></c:barChart>",
+              "<c:legend><c:legendPos val=\"r\"/></c:legend>");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    /* its area: white, from B2 (40 + 64, 18 + 17) four columns wide and ten rows tall */
+    for (i = 0; i < l.n && !(l.items[i].kind == OC_DRAW_FILL && l.items[i].role == OC_ROLE_CHART); i++)
+        ;
+    CHECK(i < l.n && l.items[i].rgb == 0xFFFFFF && l.items[i].x == 104 && l.items[i].y == 35 && l.items[i].w == 256 &&
+          l.items[i].h == 170);
+    /* over the cells: after their text */
+    CHECK(i < l.n && text_of(&l, 1, 0) && text_of(&l, 1, 0) < &l.items[i]);
+    /* the title, the legend, the categories from the cells, the values' scale */
+    CHECK((it = find_text(&l, "Sales")) != NULL && (it->flags & OWF_BOLD) && it->x >= 104 && it->x + it->w <= 360);
+    CHECK(find_text(&l, "2025") && find_text(&l, "2026") && find_text(&l, "North") && find_text(&l, "West"));
+    CHECK(find_text(&l, "0") && find_text(&l, "30"));
+    /* six columns, three of each series' colour (Office's first two accents), 30 three times as tall as 10 */
+    CHECK(chart_items(&l, OC_DRAW_FILL, 0x4472C4) == 4 && chart_items(&l, OC_DRAW_FILL, 0xED7D31) == 4);   /* and the legend's */
+    tall = biggest(&l, 0x4472C4, 0);
+    CHECK(tall > 60 && has_bar(&l, 0x4472C4, tall, 1, 3) && has_bar(&l, 0x4472C4, tall, 2, 3));
+    /* the gridlines and the axis: lines across the plot */
+    CHECK(chart_items(&l, OC_DRAW_SEGMENT, 0xD9D9D9) >= 5 && chart_items(&l, OC_DRAW_SEGMENT, 0xBFBFBF) == 1);
+    for (i = 0; i < l.n; i++)
+        if (l.items[i].role == OC_ROLE_CHART &&
+            (l.items[i].x < 104 || l.items[i].y < 35 || l.items[i].x + (l.items[i].w > 0 ? l.items[i].w : 0) > 360 ||
+             l.items[i].y + (l.items[i].h > 0 ? l.items[i].h : 0) > 205))
+            inside = 0;
+    CHECK(inside);
+    /* typed values show: B4 from 30 to 60, the tallest column twice as tall */
+    enter_at(core, "B4", "60");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    tall = biggest(&l, 0x4472C4, 0);
+    CHECK(find_text(&l, "60") && has_bar(&l, 0x4472C4, tall, 1, 6) && has_bar(&l, 0x4472C4, tall, 1, 3));
+    /* a formula's value: C4 = C2*2 = 30 */
+    CHECK(chart_items(&l, OC_DRAW_FILL, 0xED7D31) == 4);
+    /* scrolled away below it: nothing of it */
+    oc_view_scroll_to(core, 20, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(chart_items(&l, OC_DRAW_FILL, -1) == 0 && chart_items(&l, OC_DRAW_SEGMENT, -1) == 0);
+    /* frozen rows: its top in the frozen pane, the rest scrolled; nothing crosses the split */
+    oc_core_book(core)->sheets[0].freeze_rows = 3;
+    oc_view_scroll_to(core, 6, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    ysplit = 18 + 3 * 17;
+    for (i = 0; i < l.n; i++) {
+        const oc_draw_item *c = &l.items[i];
+        int y0 = c->kind == OC_DRAW_SEGMENT && c->h < 0 ? c->y + c->h : c->y, y1 = y0 + (c->h < 0 ? -c->h : c->h);
+        if (c->role == OC_ROLE_CHART && y0 < ysplit && y1 > ysplit)
+            panes_ok = 0;
+    }
+    CHECK(panes_ok);
+    CHECK(chart_items(&l, OC_DRAW_FILL, 0xFFFFFF) == 2);                  /* its area in each pane */
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+
+    /* lines, stacked; one series from cells another book holds: the values the file last had */
+    core = fresh();
+    oc_draw_list_init(&l);
+    chart_values(core);
+    put_chart(core, "<c:lineChart><c:grouping val=\"standard\"/>"
+                    SERIES(0, "2025", "B", "")
+                    "<c:ser><c:idx val=\"1\"/><c:spPr><a:ln><a:solidFill><a:srgbClr val=\"00B050\"/></a:solidFill></a:ln>"
+                    "</c:spPr><c:val><c:numRef><c:f>[2]Other!$B$2:$B$4</c:f><c:numCache><c:ptCount val=\"3\"/>"
+                    "<c:pt idx=\"0\"><c:v>5</c:v></c:pt><c:pt idx=\"2\"><c:v>45</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+                    "<c:axId val=\"1\"/><c:axId val=\"2\"/></c:lineChart>", "");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(chart_items(&l, OC_DRAW_SEGMENT, 0x4472C4) == 2 * 3);          /* two segments, 3 pixels thick */
+    CHECK(chart_items(&l, OC_DRAW_SEGMENT, 0x00B050) == 0);               /* 5, a gap, 45: no line, two dots */
+    CHECK(chart_items(&l, OC_DRAW_FILL, 0x00B050) == 2);
+    CHECK(find_text(&l, "50") != NULL && !find_text(&l, "2026"));       /* its scale takes in 45; no legend */
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+
+    /* a pie: its area, title and a word */
+    core = fresh();
+    oc_draw_list_init(&l);
+    put_chart(core, "<c:pieChart>" SERIES(0, "2025", "B", "") "</c:pieChart>", "");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(find_text(&l, "Sales") && find_text(&l, "Pie charts are not drawn yet") && chart_items(&l, OC_DRAW_FILL, 0xFFFFFF) == 1);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+
+    /* values at the ends of what a double holds, limits the wrong way round, every zoom: drawn, inside its box */
+    core = fresh();
+    oc_draw_list_init(&l);
+    enter_at(core, "B2", "1E+300");
+    enter_at(core, "B3", "-1E+300");
+    enter_at(core, "B4", "=1/0");
+    put_chart(core, "<c:barChart><c:barDir val=\"bar\"/><c:grouping val=\"percentStacked\"/>" SERIES(0, "x", "B", "")
+                    SERIES(1, "y", "C", "") "</c:barChart><c:valAx><c:scaling><c:min val=\"10\"/><c:max val=\"5\"/></c:scaling>"
+                    "</c:valAx>", "<c:legend><c:legendPos val=\"t\"/></c:legend>");
+    {
+        static const int zooms[] = { 10, 50, 100, 200, 400 };
+        int z, bad = 0;
+        for (z = 0; z < 5; z++) {
+            oc_view_set_zoom(core, zooms[z]);
+            CHECK(oc_view_draw(core, &l) == OWF_OK);
+            CHECK(l.n < 2000);
+            for (i = 0; i < l.n; i++)
+                if (l.items[i].role == OC_ROLE_CHART && (l.items[i].x < 40 || l.items[i].y < 18 || l.items[i].x > 640 || l.items[i].y > 400))
+                    bad++;
+        }
+        CHECK(bad == 0);
+    }
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+
+    core = fresh();
+    oc_draw_list_init(&l);
+    put_chart(core, "<c:pieChart>" SERIES(0, "2025", "B", "") "</c:pieChart>", "");
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+
+    /* the charts fixture: three charts beside a table frozen at B2, their series named from the cells */
+    core = fresh();
+    oc_draw_list_init(&l);
+    {
+        owf_report *report = owf_report_new();
+        const owf_book_format *used = NULL;
+        CHECK(report && oc_core_open(core, "tests/book/fixtures/charts-openpyxl.xlsx", NULL, report, &used) == OWF_OK);
+        owf_report_free(report);
+    }
+    oc_view_set_size(core, 1700, 700);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(chart_items(&l, OC_DRAW_FILL, 0xFFFFFF) == 3);                  /* three areas */
+    CHECK(find_text(&l, "Sales by month") && find_text(&l, "Stacked bars") && find_text(&l, "Share"));
+    CHECK(find_text(&l, "Amiga") && find_text(&l, "Atari") && find_text(&l, "PC") && find_text(&l, "100%"));
+    CHECK(chart_items(&l, OC_DRAW_SEGMENT, 0xA5A5A5) >= 5 * 3);         /* PC's line: five segments */
+    CHECK(chart_items(&l, OC_DRAW_FILL, 0x4472C4) >= 6 + 6 + 3);        /* Amiga's bars, columns and swatches */
+    /* scrolled under the frozen first row and column: no chart reaches into them */
+    oc_view_scroll_to(core, 10, 3);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = 0, panes_ok = 1; i < l.n; i++)
+        if (l.items[i].role == OC_ROLE_CHART && l.items[i].kind == OC_DRAW_FILL && (l.items[i].x < 40 + 64 || l.items[i].y < 18 + 17))
+            panes_ok = 0;
+    CHECK(panes_ok && chart_items(&l, OC_DRAW_FILL, 0xFFFFFF) >= 1);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+
+    core = fresh();
+    oc_draw_list_init(&l);
+    put_chart(core, "<c:pieChart>" SERIES(0, "2025", "B", "") "</c:pieChart>", "");
+    /* the sheet changed: another sheet has none */
+    oc_core_add_sheet(core, "Two");
+    oc_core_set_sheet(core, 1);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(chart_items(&l, OC_DRAW_FILL, -1) == 0);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -2156,6 +2419,7 @@ int main(void)
     test_validation();
     test_autofilter();
     test_drawings_kept();
+    test_charts();
     test_row_numbers();
     test_text_layout();
     test_tab_strip();
