@@ -1327,6 +1327,53 @@ static void test_text_layout(void)
     oc_core_free(core);
 }
 
+/* The sheet tabs a strip shows: eight sheets, as Dale's workbook has. */
+static void test_tab_strip(void)
+{
+    int w[8] = { 150, 90, 60, 100, 100, 80, 120, 70 }, first = 0, scroll = 0, end, k, sum;
+    /* every tab fits: no arrows, from the first */
+    first = 3;
+    end = oc_tab_strip(w, 8, 1000, 40, 0, &first, &scroll);
+    CHECK(end == 8 && first == 0 && !scroll);
+    /* only some fit (400 less 40 of arrows: 150 + 90 + 60 = 300, the 100 after doesn't): arrows */
+    first = 0;
+    end = oc_tab_strip(w, 8, 400, 40, 0, &first, &scroll);
+    CHECK(scroll && first == 0 && end == 3);
+    /* the sixth sheet chosen: the strip moves on until its tab shows, and no further */
+    end = oc_tab_strip(w, 8, 400, 40, 5, &first, &scroll);
+    CHECK(first <= 5 && end > 5);
+    for (k = first, sum = 0; k < end; k++)
+        sum += w[k];
+    CHECK(sum <= 360 && sum + w[end < 8 ? end : 7] > 360 - (end < 8 ? 0 : 1000));
+    /* back to the first sheet: it moves back */
+    end = oc_tab_strip(w, 8, 400, 40, 0, &first, &scroll);
+    CHECK(first == 0 && end == 3);
+    /* the arrows scroll it with no sheet to bring in (current -1): it stays where they put it, and doesn't
+       leave room at the end (the last tabs fill the strip) */
+    first = 7;
+    end = oc_tab_strip(w, 8, 400, 40, -1, &first, &scroll);
+    CHECK(end == 8 && first == 5);                       /* 80 + 120 + 70 = 270; with 100 more it's 370 > 360 */
+    first = 2;
+    end = oc_tab_strip(w, 8, 400, 40, -1, &first, &scroll);
+    CHECK(first == 2 && end == 6);                       /* 60 + 100 + 100 + 80 = 340; 120 more is 460 */
+    /* hidden sheets (0) have no tab and take no room */
+    w[1] = 0;
+    w[2] = 0;
+    first = 0;
+    end = oc_tab_strip(w, 8, 400, 40, 0, &first, &scroll);
+    CHECK(first == 0 && end == 5);                       /* 150 + 100 + 100 = 350; 80 more is 430 */
+    /* one tab wider than the strip: it shows all the same (cut short by the window) */
+    w[0] = 900;
+    first = 0;
+    end = oc_tab_strip(w, 8, 400, 40, 0, &first, &scroll);
+    CHECK(first == 0 && end == 3);                       /* sheets 1 and 2 hidden, then sheet 3's doesn't fit */
+    end = oc_tab_strip(w, 8, 400, 40, 7, &first, &scroll);
+    CHECK(end == 8 && first > 0);
+    /* no sheets at all */
+    end = oc_tab_strip(w, 0, 400, 40, 0, &first, &scroll);
+    CHECK(end == 0 && first == 0 && !scroll);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -1543,6 +1590,7 @@ int main(void)
     test_draw();
     test_borders();
     test_text_layout();
+    test_tab_strip();
     test_status();
     test_files();
     if (failures) {
