@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Written by hand from ECMA-376 for libowf's tests: what Excel writes, and what it may. -->
+<x:workbook xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <x:workbookPr date1904="true"/>
+  <x:bookViews><x:workbookView activeTab="3"/></x:bookViews>
+  <x:sheets>
+    <x:sheet name="Data" sheetId="1" rel:id="rId1"/>
+    <x:sheet name="Chart1" sheetId="4" rel:id="rId9"/>
+    <x:sheet name="Hidden" sheetId="2" state="hidden" rel:id="rId2"/>
+    <x:sheet name="Very &amp; hidden" sheetId="3" state="veryHidden" rel:id="rId3"/>
+  </x:sheets>
+  <x:externalReferences><x:externalReference rel:id="rId7"/></x:externalReferences>
+  <x:definedNames>
+    <x:definedName name="_xlnm.Print_Area" localSheetId="0">Data!$A$1:$F$6</x:definedName>
+    <x:definedName name="Rate">[1]!Rate</x:definedName>
+    <x:definedName name="Local" localSheetId="3" hidden="1">'Very &amp; hidden'!$A$1</x:definedName>
+    <x:definedName name="OnChart" localSheetId="1">Data!$A$1</x:definedName>
+  </x:definedNames>
+  <x:pivotCaches><x:pivotCache cacheId="1" rel:id="rId99"/></x:pivotCaches>
+</x:workbook>

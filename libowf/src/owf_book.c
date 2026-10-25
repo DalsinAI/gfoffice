@@ -547,6 +547,8 @@ void owf_number_text(double v, char *out)
 static const owf_book_format *const book_formats[] = {
     &owf_book_format_xls,
     &owf_book_format_csv,
+    &owf_book_format_xlsx,
+    &owf_book_format_xlsm,
 };
 
 #define NBOOKFORMATS ((int)(sizeof book_formats / sizeof book_formats[0]))

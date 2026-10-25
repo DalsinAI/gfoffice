@@ -57,6 +57,7 @@ OWFSRC_DOCS=""
 for f in $OWFSRC; do
     case "$f" in
     */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c) ;;
+    */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
     *) OWFSRC_DOCS="$OWFSRC_DOCS $f" ;;
     esac
 done

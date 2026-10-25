@@ -126,6 +126,32 @@ book-check: $(OUT)/book-dump-asan $(OUT)/owconvert-asan
 
 .PHONY: book-test book-check
 
+# GFOffice's workbook files: XLSX, ODS and CSV (tests/book/test_xml_books.py),
+# and the formula and number helpers they share (tests/book/test_bookfmt.c)
+$(OUT)/test-bookfmt: $(OWF_SRC) tests/book/test_bookfmt.c libowf/include/owf.h libowf/src/owf_internal.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/book/test_bookfmt.c -lz -o $@
+
+$(OUT)/test-bookfmt-asan: $(OWF_SRC) tests/book/test_bookfmt.c libowf/include/owf.h libowf/src/owf_internal.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/book/test_bookfmt.c -lz -o $@
+
+xml-book-test: $(OUT)/test-bookfmt $(OUT)/book-dump $(OUT)/owconvert
+	$(OUT)/test-bookfmt
+	python3 tests/book/test_xml_books.py $(OUT)/book-dump $(OUT)/owconvert $(OUT)/test-bookfmt
+
+xml-book-check: $(OUT)/test-bookfmt-asan $(OUT)/book-dump-asan $(OUT)/owconvert-asan
+	$(OUT)/test-bookfmt-asan
+	python3 tests/book/test_xml_books.py $(OUT)/book-dump-asan $(OUT)/owconvert-asan $(OUT)/test-bookfmt-asan
+
+book-test: xml-book-test
+book-check: xml-book-check
+test: xml-book-test
+check: xml-book-check
+
+.PHONY: xml-book-test xml-book-check
+
 # The formula engine (OpenCalc's): libowf/calc, linked only by what
 # calculates (it needs -lm). tests/calc/test_calc.c checks it, and works out
 # the fixtures' formulas again against the results saved in them

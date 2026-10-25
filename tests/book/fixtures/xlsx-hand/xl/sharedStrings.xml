@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="99999999" uniqueCount="7">
+  <si><t>Item</t></si>
+  <si><r><t>Rich </t></r><r><rPr><b/><sz val="11"/></rPr><t xml:space="preserve">and bold</t></r><rPh sb="0" eb="1"><t>NOT THIS</t></rPh></si>
+  <si><t xml:space="preserve">  Spaced  </t></si>
+  <si><t>Line one_x000D_
+Line two</t></si>
+  <si><t>Literal _x005F_x0041_ and _x0041_ and _x00e9_</t></si>
+  <si><t>Face _xD83D__xDE00_ &amp; &lt;tags&gt;</t></si>
+  <si><t>Grüße — 日本語</t></si>
+</sst>
