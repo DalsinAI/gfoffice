@@ -59,6 +59,8 @@ static void free_story_data(owf_story *story)
             owf_free(story->paras[i].runs[j].href);
         }
         owf_free(story->paras[i].runs);
+        owf_free(story->paras[i].style);             /* 2.0.12: libowf 1.4's names */
+        owf_free(story->paras[i].bookmarks);
     }
     owf_free(story->paras);
     memset(story, 0, sizeof(*story));
@@ -96,6 +98,10 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->table_id = sp->table_id; dp->table_row = sp->table_row;
         dp->table_col = sp->table_col; dp->table_cols = sp->table_cols;
         dp->cell_shading = sp->cell_shading;         /* 2.0.10: undo kept no cell colour */
+        dp->style = NULL;                            /* 2.0.12: its style and bookmarks too */
+        dp->bookmarks = NULL;
+        if (sp->style && !(dp->style = copy_bytes(sp->style, strlen(sp->style)))) return 0;
+        if (sp->bookmarks && !(dp->bookmarks = copy_bytes(sp->bookmarks, strlen(sp->bookmarks)))) return 0;
         if (!sp->nruns) continue;
         dp->runs = (owf_run *)owf_calloc((size_t)sp->nruns, sizeof(*dp->runs));
         if (!dp->runs) return 0;
@@ -190,6 +196,8 @@ static unsigned long story_bytes(const owf_story *story)
     int i, j;
     for (i = 0; i < story->nparas; ++i) {
         n += (unsigned long)story->paras[i].nruns * sizeof(owf_run) + 8;
+        if (story->paras[i].style) n += strlen(story->paras[i].style) + 9;
+        if (story->paras[i].bookmarks) n += strlen(story->paras[i].bookmarks) + 9;
         for (j = 0; j < story->paras[i].nruns; ++j) {
             const owf_run *r = &story->paras[i].runs[j];
             if (r->text) n += strlen(r->text) + 9;
@@ -630,10 +638,38 @@ static void free_para_runs(owf_para *p)
 {
     int i;
     if (!p) return;
-    for (i = 0; i < p->nruns; ++i) owf_free(p->runs[i].text);
+    for (i = 0; i < p->nruns; ++i) {
+        owf_free(p->runs[i].text);
+        owf_free(p->runs[i].href);                   /* 2.0.12: a link's target went unfreed */
+    }
     owf_free(p->runs);
     p->runs = NULL;
     p->nruns = p->capruns = 0;
+}
+
+/* 2.0.12: what a paragraph merged into the one before it leaves it: its bookmarks, after the other's (the
+ * contents' links still find the text); its style goes. */
+static void merge_names(owf_para *into, owf_para *from)
+{
+    if (from->bookmarks) {
+        if (!into->bookmarks) {
+            into->bookmarks = from->bookmarks;
+            from->bookmarks = NULL;
+        } else {
+            size_t a = strlen(into->bookmarks), b = strlen(from->bookmarks);
+            char *both = (char *)owf_malloc(a + b + 2);
+            if (both) {
+                memcpy(both, into->bookmarks, a);
+                both[a] = ' ';
+                memcpy(both + a + 1, from->bookmarks, b + 1);
+                owf_free(into->bookmarks);
+                into->bookmarks = both;
+            }
+        }
+    }
+    owf_free(from->bookmarks);
+    owf_free(from->style);
+    from->bookmarks = from->style = NULL;
 }
 
 static void apply_charfmt_fields(owf_charfmt *dst, const owf_charfmt *src,
@@ -663,14 +699,18 @@ static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
             size_t b = to < re ? to : re;
             owf_charfmt changed = r->fmt;
             if (a < b) apply_charfmt_fields(&changed, fmt, mask);
-            if (a > rs && owf_para_add_text(&tmp, &r->fmt, text, a - rs) != OWF_OK)
+            /* 2.0.12: a link stays a link when part of it is made bold (it lost its target) */
+#define ADD_PART(f, s, len) (r->href ? owf_para_add_link_text(&tmp, (f), (s), (len), r->href) \
+                                     : owf_para_add_text(&tmp, (f), (s), (len)))
+            if (a > rs && ADD_PART(&r->fmt, text, a - rs) != OWF_OK)
                 goto fail;
-            if (a < b && owf_para_add_text(&tmp, &changed, text + (a - rs), b - a) != OWF_OK)
+            if (a < b && ADD_PART(&changed, text + (a - rs), b - a) != OWF_OK)
                 goto fail;
-            if (b < re && owf_para_add_text(&tmp, &r->fmt, text + (b - rs), re - b) != OWF_OK)
+            if (b < re && ADD_PART(&r->fmt, text + (b - rs), re - b) != OWF_OK)
                 goto fail;
-            if (a >= b && n && owf_para_add_text(&tmp, &r->fmt, text, n) != OWF_OK)
+            if (a >= b && n && ADD_PART(&r->fmt, text, n) != OWF_OK)
                 goto fail;
+#undef ADD_PART
             if (!n && !tmp.nruns && !append_empty_text_run(&tmp, &r->fmt))
                 goto fail;
             at = re;
@@ -931,6 +971,7 @@ static int merge_paragraph_with_previous(ow_editor *editor, int paragraph,
     owf_free(cur->runs);
     cur->runs = NULL;
     cur->nruns = cur->capruns = 0;
+    merge_names(prev, cur);
 
     if (paragraph + 1 < story->nparas)
         memmove(&story->paras[paragraph], &story->paras[paragraph + 1],
@@ -975,6 +1016,7 @@ static int merge_paragraph_with_next(ow_editor *editor, int paragraph,
     owf_free(next->runs);
     next->runs = NULL;
     next->nruns = next->capruns = 0;
+    merge_names(cur, next);
 
     if (paragraph + 2 < story->nparas)
         memmove(&story->paras[paragraph + 1], &story->paras[paragraph + 2],
@@ -1122,12 +1164,15 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     np = insert_paragraph(story, pos.paragraph + 1, &para_fmt);
     if (!np) goto fail;
     p = &story->paras[pos.paragraph];
+    if (p->style) np->style = copy_bytes(p->style, strlen(p->style));   /* 2.0.12: the style goes on, no bookmark */
     run = &p->runs[pos.run];
 
     moved = p->nruns - pos.run - 1;
     if (!ensure_run_capacity(np, 1 + moved)) {
         /* A newly inserted empty paragraph is safe to leave only if we undo
          * the structural insertion here. */
+        owf_free(np->style);
+        np->style = NULL;
         if (pos.paragraph + 2 < story->nparas)
             memmove(&story->paras[pos.paragraph + 1],
                     &story->paras[pos.paragraph + 2],
@@ -1140,6 +1185,8 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
 
     np->runs[0] = *run;
     np->runs[0].text = right;
+    /* 2.0.12: a link split by Return: each half its own copy of the target (both freed it, twice) */
+    np->runs[0].href = run->href ? copy_bytes(run->href, strlen(run->href)) : NULL;
     right = NULL;
     np->nruns = 1;
 
@@ -1877,6 +1924,23 @@ int ow_editor_redo(ow_editor *editor)
                               editor->undo, &editor->nundo);
 }
 
+unsigned long ow_editor_document_bytes(const ow_editor *editor)
+{
+    return editor && editor->doc ? doc_bytes(editor->doc) : 0;
+}
+
+unsigned long ow_editor_snapshot_bytes(const ow_editor *editor, int *nundo, int *nredo)
+{
+    unsigned long n = 0;
+    int i;
+    if (nundo) *nundo = editor ? editor->nundo : 0;
+    if (nredo) *nredo = editor ? editor->nredo : 0;
+    if (!editor) return 0;
+    for (i = 0; i < editor->nundo; ++i) n += editor->undo[i].bytes;
+    for (i = 0; i < editor->nredo; ++i) n += editor->redo[i].bytes;
+    return n;
+}
+
 unsigned long ow_editor_changes(const ow_editor *editor)
 {
     return editor ? editor->changes : 0;
@@ -2070,7 +2134,7 @@ int ow_editor_in_table(const ow_editor *editor){return current_table_cell(editor
 
 static void free_para_one(owf_para *p)
 {
-    int j;for(j=0;j<p->nruns;++j){owf_free(p->runs[j].text);owf_free(p->runs[j].href);}owf_free(p->runs);memset(p,0,sizeof(*p));p->table_id=-1;
+    int j;for(j=0;j<p->nruns;++j){owf_free(p->runs[j].text);owf_free(p->runs[j].href);}owf_free(p->runs);owf_free(p->style);owf_free(p->bookmarks);memset(p,0,sizeof(*p));p->table_id=-1;
 }
 
 static void remove_para_at(owf_story *story,int index)

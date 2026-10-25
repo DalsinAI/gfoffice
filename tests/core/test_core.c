@@ -643,6 +643,65 @@ static int test_undo_memory(void)
     return 0;
 }
 
+static int name_is(const char *a, const char *b)
+{
+    return a && b && !strcmp(a, b);
+}
+
+/* 2.0.12: paragraphs' styles and bookmarks (tests/core/fixtures/contents.docx) through editing: Return gives
+ * the new paragraph the style and no bookmark, Backspace joining two keeps both's bookmarks, undo brings back
+ * the names as they were. */
+static int test_names_editing(void)
+{
+    owf_doc *doc = NULL;
+    ow_editor *ed;
+    ow_selection sel;
+    if (owf_import_file("tests/core/fixtures/contents.docx", NULL, &doc, NULL, NULL) != OWF_OK || !doc) return 2101;
+    if (doc->body.nparas != 10 || !name_is(doc->body.paras[1].style, "TOC1") ||
+        !name_is(doc->body.paras[7].bookmarks, "_Toc2"))
+        return 2102;
+    ed = ow_editor_new(doc);
+    if (!ed) return 2103;
+    /* Return in the middle of the first entry: both halves TOC1, the bookmark-free entry stays so */
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.paragraph = sel.focus.paragraph = 1;
+    sel.anchor.byte_offset = sel.focus.byte_offset = 3;
+    ow_editor_set_selection(ed, &sel);
+    if (ow_editor_newline(ed) != OWF_OK || doc->body.nparas != 11) return 2104;
+    if (!name_is(doc->body.paras[1].style, "TOC1") || !name_is(doc->body.paras[2].style, "TOC1") ||
+        doc->body.paras[2].bookmarks)
+        return 2105;
+    if (ow_editor_undo(ed) != 1 || doc->body.nparas != 10 || !name_is(doc->body.paras[2].style, "TOC2")) return 2106;
+    /* Backspace at the start of "1.1 Purpose": joined to "01 Executive summary", both bookmarks there */
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.paragraph = sel.focus.paragraph = 7;
+    ow_editor_set_selection(ed, &sel);
+    if (ow_editor_backspace(ed) != OWF_OK || doc->body.nparas != 9) return 2107;
+    if (!name_is(doc->body.paras[6].bookmarks, "_Toc1 _Toc2")) return 2108;
+    if (ow_editor_undo(ed) != 1 || doc->body.nparas != 10 || !name_is(doc->body.paras[6].bookmarks, "_Toc1") ||
+        !name_is(doc->body.paras[7].bookmarks, "_Toc2"))
+        return 2109;
+    /* bold on part of an entry: every part still links to its heading (the link was lost) */
+    {
+        int k, linked = 0, runs;
+        memset(&sel, 0, sizeof sel);
+        sel.anchor.paragraph = sel.focus.paragraph = 1;
+        sel.anchor.byte_offset = 3;
+        sel.focus.byte_offset = 12;
+        ow_editor_set_selection(ed, &sel);
+        if (ow_editor_toggle_char_flags(ed, OWF_BOLD) != OWF_OK) return 2110;
+        runs = doc->body.paras[1].nruns;
+        for (k = 0; k < runs; ++k)
+            if (doc->body.paras[1].runs[k].kind == OWF_RUN_TEXT && doc->body.paras[1].runs[k].text &&
+                *doc->body.paras[1].runs[k].text)
+                linked += name_is(doc->body.paras[1].runs[k].href, "#_Toc1");
+        if (linked < 3) return 2111;
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
+}
+
 static int test_headers_fields(void)
 {
     owf_doc *doc = doc_with("Body");
@@ -714,6 +773,7 @@ int main(void)
     if ((rc = test_headers_fields())) goto fail;
     if ((rc = test_frames_undo())) goto fail;
     if ((rc = test_undo_memory())) goto fail;
+    if ((rc = test_names_editing())) goto fail;
     if ((rc = test_pdf_export())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;

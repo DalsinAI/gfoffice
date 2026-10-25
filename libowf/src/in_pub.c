@@ -221,6 +221,8 @@ static void free_story(owf_story *story)
             owf_free(story->paras[i].runs[j].href);
         }
         owf_free(story->paras[i].runs);
+        owf_free(story->paras[i].style);             /* 1.4 */
+        owf_free(story->paras[i].bookmarks);
     }
     owf_free(story->paras);
     memset(story, 0, sizeof *story);

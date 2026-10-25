@@ -430,6 +430,10 @@ static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para,
     int heading=para->fmt.heading>=1&&para->fmt.heading<=6,after_space=1,j;
     if(heading)owf_buf_printf(out,"<text:h text:style-name=\"P%d\" text:outline-level=\"%d\">",para_style(s,&para->fmt),para->fmt.heading);
     else owf_buf_printf(out,"<text:p text:style-name=\"P%d\">",para_style(s,&para->fmt));
+    if(para->bookmarks){                             /* 1.4: its bookmarks, where links into the document go */
+        const char *b=para->bookmarks;
+        while(*b){size_t n=strcspn(b," ");owf_buf_puts(out,"<text:bookmark text:name=\"");owf_buf_put_xml(out,b,n);owf_buf_puts(out,"\"/>");b+=n;while(*b==' ')++b;}
+    }
     for(j=0;j<para->nruns;++j){const owf_run *run=&para->runs[j];int t=char_style(s,&run->fmt);
         if(run->kind==OWF_RUN_TEXT&&run->href){owf_buf_puts(out,"<text:a xlink:href=\"");owf_buf_puts_xml(out,run->href);owf_buf_puts(out,"\">");}
         if(t)owf_buf_printf(out,"<text:span text:style-name=\"T%d\">",t);

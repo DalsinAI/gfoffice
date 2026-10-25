@@ -253,6 +253,11 @@ static const ol_display_op *run_op(const ow_layout *l, int para, int run)
 
 /* tests/core/fixtures/contents.docx (make_contents_docx.py): a Word contents page. Each page number ends at
  * its right stop on its entry's line, after a tab that carries the stop's leader (2.0.3). */
+static int same_name(const char *a, const char *b)
+{
+    return a && b ? !strcmp(a, b) : a == b;
+}
+
 static void contents_checks(const ow_layout *l, const owf_doc *doc)
 {
     static const struct { int para, stop; unsigned leader; } entries[] = {
@@ -262,8 +267,16 @@ static void contents_checks(const ow_layout *l, const owf_doc *doc)
     ol_rect a, b;
     int i, pa, pb;
     const ol_display_op *op;
-    CHECK(doc->body.nparas == 6);
-    if (doc->body.nparas != 6) return;
+    CHECK(doc->body.nparas == 10);
+    if (doc->body.nparas != 10) return;
+    /* 2.0.12: the entries' styles, and the bookmarks their links go to (Word's _GoBack left out, a cell's too) */
+    CHECK(same_name(doc->body.paras[0].style, "TOCHeading") && same_name(doc->body.paras[1].style, "TOC1") &&
+          same_name(doc->body.paras[2].style, "TOC2") && same_name(doc->body.paras[4].style, "TOC1") &&
+          doc->body.paras[5].style == NULL);
+    CHECK(same_name(doc->body.paras[6].bookmarks, "_Toc1") && same_name(doc->body.paras[7].bookmarks, "_Toc2") &&
+          same_name(doc->body.paras[8].bookmarks, "_Toc3 _Ref9") && same_name(doc->body.paras[9].bookmarks, "_Toc4") &&
+          doc->body.paras[9].table_id >= 0 && doc->body.paras[1].bookmarks == NULL);
+    CHECK(doc->body.paras[1].runs[0].href && !strcmp(doc->body.paras[1].runs[0].href, "#_Toc1"));
     /* the model: the style's stop, a paragraph's own added to it, one cleared for another */
     CHECK(doc->body.paras[1].fmt.ntabs == 1 && doc->body.paras[1].fmt.tabs[0].kind == OWF_TAB_RIGHT &&
           doc->body.paras[1].fmt.tabs[0].leader == OWF_LEADER_DOT && doc->body.paras[1].fmt.tabs[0].position == 9016);
@@ -612,7 +625,9 @@ static void test_round_trip(const char *path)
                    x->space_before == y->space_before && x->space_after == y->space_after &&
                    x->line_spacing == y->line_spacing && x->page_break_before == y->page_break_before &&
                    x->ntabs == y->ntabs && x->shading == y->shading && x->borders == y->borders &&
-                   p->table_id == q->table_id && p->table_cols == q->table_cols && p->nruns == q->nruns;
+                   p->table_id == q->table_id && p->table_cols == q->table_cols && p->nruns == q->nruns &&
+                   same_name(p->bookmarks, q->bookmarks) &&
+                   (x->heading || same_name(p->style, q->style));   /* 2.0.12: a heading's style is its level */
         for (j = 0; same && j < p->nruns; ++j)
             same = p->runs[j].kind == q->runs[j].kind && p->runs[j].fmt.size == q->runs[j].fmt.size &&
                    p->runs[j].fmt.flags == q->runs[j].fmt.flags && p->runs[j].fmt.colour == q->runs[j].fmt.colour;

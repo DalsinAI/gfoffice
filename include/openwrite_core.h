@@ -138,6 +138,10 @@ int ow_editor_is_dirty(const ow_editor *editor);
  * a view that keeps its own layout of the document lays it out again when
  * this moves. */
 unsigned long ow_editor_changes(const ow_editor *editor);
+/* 2.0.12: about the bytes the document's paragraphs, runs and frames hold (its pictures not counted), and those
+ * the undo and redo snapshots hold (*nundo, *nredo of them; either may be NULL). For MEMCHECK. */
+unsigned long ow_editor_document_bytes(const ow_editor *editor);
+unsigned long ow_editor_snapshot_bytes(const ow_editor *editor, int *nundo, int *nredo);
 void ow_editor_mark_saved(ow_editor *editor);
 
 int ow_editor_layout(ow_editor *editor);

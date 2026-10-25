@@ -263,6 +263,32 @@ static void put_frame(owf_buf *out, const owf_doc *doc, int index, owf_report *r
     if (box) owf_buf_puts(out, "</mc:Choice><mc:Fallback/></mc:AlternateContent>");
 }
 
+/* 1.4: a paragraph style of the document's own that we write (TOC1, Title...): a plain id, and none of ours
+ * (build_styles writes Normal, Heading1 to 6, Header and Footer itself). */
+static int own_style(const char *id)
+{
+    const char *c;
+    if (!id || !*id || strlen(id) > 64) return 0;
+    for (c = id; *c; ++c)
+        if (!((*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_' || *c == '-'))
+            return 0;
+    return strcmp(id, "Normal") && strcmp(id, "Header") && strcmp(id, "Footer") && strncmp(id, "Heading", 7);
+}
+
+/* 1.4: a bookmark's w:id, the same each time and none twice: the story (body, header, footer, a frame's), the
+ * paragraph's place in it, the bookmark's in the paragraph. */
+static long bookmark_id(const owf_doc *doc, const owf_story *story, const owf_para *para, int k)
+{
+    long base = 0;
+    int i;
+    if (story == &doc->header) base = 1000000L;
+    else if (story == &doc->footer) base = 2000000L;
+    else if (story != &doc->body)
+        for (i = 0; i < doc->nframes; ++i)
+            if (&doc->frames[i].story == story) base = 3000000L + (long)i * 10000L;
+    return base + (long)(para - story->paras) * 16L + k + 1;
+}
+
 static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
                      const owf_para *para, owf_report *report)
 {
@@ -273,8 +299,24 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     int j;
     if (para->fmt.heading >= 1 && para->fmt.heading <= 6) {
         snprintf(style, sizeof style, "Heading%d", para->fmt.heading); pstyle = style;
+    } else if (own_style(para->style)) {
+        pstyle = para->style;                        /* 1.4: TOC1 and the like, so Word's contents update */
     }
     owf_buf_puts(out, "<w:p>"); put_ppr(out, &para->fmt, pstyle);
+    if (para->bookmarks) {
+        /* 1.4: its bookmarks, where the contents' links go */
+        const char *b = para->bookmarks;
+        int k = 0;
+        while (*b && k < 16) {
+            size_t n = strcspn(b, " ");
+            long id = bookmark_id(doc, story, para, k++);
+            owf_buf_printf(out, "<w:bookmarkStart w:id=\"%ld\" w:name=\"", id);
+            owf_buf_put_xml(out, b, n);
+            owf_buf_printf(out, "\"/><w:bookmarkEnd w:id=\"%ld\"/>", id);
+            b += n;
+            while (*b == ' ') ++b;
+        }
+    }
     for (j = 0; j < para->nruns; ++j) {
         const owf_run *run=&para->runs[j];
         if(run->kind==OWF_RUN_FIELD){owf_buf_printf(out,"<w:fldSimple w:instr=\"%s\"><w:r>",field_instr[run->field]);put_rpr(out,doc,&run->fmt,report);owf_buf_printf(out,"<w:t>%s</w:t></w:r></w:fldSimple>",field_shown[run->field]);continue;}
@@ -331,6 +373,52 @@ static int add_part(owf_zip *zip, owf_buf *part, const char *name)
     return result;
 }
 
+/* 1.4: the name Word gives a style of its own by id (it knows its contents levels by "toc 1" to "toc 9"); any
+ * other style is named as its id. */
+static void put_style_name(owf_buf *out, const char *id)
+{
+    static const char *const known[][2] = {
+        { "TOCHeading", "TOC Heading" }, { "ListParagraph", "List Paragraph" }, { "NoSpacing", "No Spacing" },
+        { "Caption", "caption" }, { "IntenseQuote", "Intense Quote" }, { "Title", "Title" }, { "Subtitle", "Subtitle" },
+        { "Quote", "Quote" }, { "BodyText", "Body Text" }, { "NormalWeb", "Normal (Web)" }
+    };
+    size_t i;
+    if (!strncmp(id, "TOC", 3) && id[3] >= '1' && id[3] <= '9' && !id[4]) {
+        owf_buf_printf(out, "<w:name w:val=\"toc %c\"/>", id[3]);
+        return;
+    }
+    for (i = 0; i < sizeof known / sizeof known[0]; ++i)
+        if (!strcmp(id, known[i][0])) {
+            owf_buf_printf(out, "<w:name w:val=\"%s\"/>", known[i][1]);
+            return;
+        }
+    owf_buf_printf(out, "<w:name w:val=\"%s\"/>", id);
+}
+
+/* 1.4: the paragraph styles the document's paragraphs name (own_style), each once, with no format of their own
+ * (each paragraph's is written with it). */
+static void put_own_styles(owf_buf *out, const owf_doc *doc)
+{
+    const char *seen[64];
+    int nseen = 0, s, i, k;
+    for (s = 0; s < 3 + doc->nframes; ++s) {
+        const owf_story *st = s == 0 ? &doc->body : s == 1 ? &doc->header : s == 2 ? &doc->footer
+                            : &doc->frames[s - 3].story;
+        for (i = 0; i < st->nparas && nseen < 64; ++i) {
+            const char *id = st->paras[i].style;
+            if (st->paras[i].fmt.heading >= 1 && st->paras[i].fmt.heading <= 6) continue;
+            if (!own_style(id)) continue;
+            for (k = 0; k < nseen && strcmp(seen[k], id); ++k)
+                ;
+            if (k < nseen) continue;
+            seen[nseen++] = id;
+            owf_buf_printf(out, "<w:style w:type=\"paragraph\" w:styleId=\"%s\">", id);
+            put_style_name(out, id);
+            owf_buf_puts(out, "<w:basedOn w:val=\"Normal\"/><w:qFormat/></w:style>");
+        }
+    }
+}
+
 static void build_styles(owf_buf *out, const owf_doc *doc)
 {
     static const int heading_half_points[] = { 0, 36, 32, 28, 26, 24, 24 };
@@ -354,8 +442,9 @@ static void build_styles(owf_buf *out, const owf_doc *doc)
                             "<w:rPr><w:b/><w:sz w:val=\"%d\"/></w:rPr></w:style>",
                        i, i, i - 1, heading_half_points[i]);
     owf_buf_puts(out, "<w:style w:type=\"paragraph\" w:styleId=\"Header\"><w:name w:val=\"header\"/><w:basedOn w:val=\"Normal\"/></w:style>"
-                      "<w:style w:type=\"paragraph\" w:styleId=\"Footer\"><w:name w:val=\"footer\"/><w:basedOn w:val=\"Normal\"/></w:style>"
-                      "</w:styles>\n");
+                      "<w:style w:type=\"paragraph\" w:styleId=\"Footer\"><w:name w:val=\"footer\"/><w:basedOn w:val=\"Normal\"/></w:style>");
+    put_own_styles(out, doc);
+    owf_buf_puts(out, "</w:styles>\n");
 }
 
 static void build_document(owf_buf *out, const owf_doc *doc, owf_report *report)
