@@ -67,7 +67,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.5 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.6 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -275,8 +275,12 @@ static ULONG click_secs, click_micros;
 static unsigned click_row, click_col;
 static int defer_repaint, repaint_pending;
 
+/* The sheet tabs' strip: every place a click means something (a sheet's tab, "+", the two arrows), and
+ * which sheets show (the core's oc_tab_strip). */
 #define MAX_TABS 64
-static int tab_n, tab_x[MAX_TABS + 1], tab_w[MAX_TABS + 1], tab_sheet[MAX_TABS + 1];   /* the last: "+" */
+enum { TAB_PLUS = -1, TAB_LEFT = -2, TAB_RIGHT = -3 };
+static int tab_n, tab_x[MAX_TABS + 3], tab_w[MAX_TABS + 3], tab_sheet[MAX_TABS + 3];
+static int tab_first, tab_end, tab_scroll, tab_shown_sheet = -1;
 
 static void draw_all(void);
 static void refresh(void);
@@ -829,59 +833,122 @@ static void paint_grid(void)
 
 /* ---- The sheet tabs ---- */
 
+/* A hit area of the strip. */
+static void tab_area(int x, int w, int what)
+{
+    if (tab_n >= MAX_TABS + 3) return;
+    tab_x[tab_n] = x;
+    tab_w[tab_n] = w;
+    tab_sheet[tab_n] = what;
+    tab_n++;
+}
+
+/* A scroll arrow's button: a small triangle pointing left or right, dimmed when there is nothing that way. */
+static void draw_tab_arrow(struct RastPort *rp, int x, int y, int w, int h, int right, int live)
+{
+    int cx = x + w / 2, cy = y + h / 2, a = h / 4 > 2 ? h / 4 : 2, xy[6];
+    ogt_fill(&ctx, rp, "tab", x, y, w, h);
+    ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, w, h + 1);
+    xy[0] = right ? cx - a / 2 : cx + a / 2;
+    xy[1] = cy - a;
+    xy[2] = right ? cx - a / 2 : cx + a / 2;
+    xy[3] = cy + a;
+    xy[4] = right ? cx + a / 2 + 1 : cx - a / 2 - 1;
+    xy[5] = cy;
+    ogt_fill_poly(rp, ogt_pen(&ctx, live ? "tab.text" : "muted"), xy, 3);
+}
+
+/* The tabs: as many as fit from tab_first (the core's oc_tab_strip), two arrows before them when not all
+ * fit, "+" after them. The chosen sheet's tab is brought into view when the sheet changes (a click, the
+ * keys, the menu), not while the arrows or the wheel scroll the strip. */
 static void draw_tabs(void)
 {
     struct RastPort *rp;
     owf_book *book;
-    int x, s, h = tabs_box.h - 3, y = tabs_box.y + 1, right;
+    int x, s, h = tabs_box.h - 3, y = tabs_box.y + 1, cur, plus_w, arrow_w, avail, maxtab, *width;
     if (!win || !core || tabs_box.w <= 0) return;
     rp = win->RPort;
     book = oc_core_book(core);
+    cur = oc_core_sheet(core);
     SetFont(rp, font);
     ogt_fill(&ctx, rp, "window", tabs_box.x, tabs_box.y, tabs_box.w, tabs_box.h);
     ogt_hline(rp, ogt_pen(&ctx, "group.line"), tabs_box.x, tabs_box.y, tabs_box.w);
-    x = tabs_box.x + 4;
-    right = tabs_box.x + tabs_box.w - (ogt_text_width(rp, "+") + 20);
     tab_n = 0;
-    for (s = 0; s < book->nsheets && tab_n < MAX_TABS; s++) {
+    plus_w = ogt_text_width(rp, "+") + 16;
+    arrow_w = fh + 4;
+    avail = tabs_box.w - 4 - (plus_w + 2) - 4;
+    maxtab = avail / 3 > 60 ? avail / 3 : 60;        /* a long name is cut short ("...") to a third of the strip */
+    if (!(width = malloc((size_t)(book->nsheets > 0 ? book->nsheets : 1) * sizeof *width))) return;
+    ogt_bold(rp, 1);                                 /* each tab as wide as when chosen: none moves on a click */
+    for (s = 0; s < book->nsheets; s++) {
         char name[64];
-        int cur = s == oc_core_sheet(core), tw;
-        if (book->sheets[s].hidden && !cur) continue;
+        if (book->sheets[s].hidden && s != cur) { width[s] = 0; continue; }
         to_latin1(book->sheets[s].name, strlen(book->sheets[s].name), name, sizeof name);
-        ogt_bold(rp, cur);
-        tw = ogt_text_width(rp, name) + 16;
-        if (x + tw > right) break;
+        width[s] = ogt_text_width(rp, name) + 16;
+        if (width[s] > maxtab) width[s] = maxtab;
+        width[s] += 2;                               /* the gap after it */
+    }
+    ogt_bold(rp, 0);
+    tab_end = oc_tab_strip(width, book->nsheets, avail, 2 * (arrow_w + 2), cur != tab_shown_sheet ? cur : -1,
+                           &tab_first, &tab_scroll);
+    tab_shown_sheet = cur;
+    x = tabs_box.x + 4;
+    if (tab_scroll) {
+        int k, more_left = 0, more_right = 0;
+        for (k = 0; k < tab_first; k++) if (width[k]) more_left = 1;
+        for (k = tab_end; k < book->nsheets; k++) if (width[k]) more_right = 1;
+        draw_tab_arrow(rp, x, y, arrow_w, h, 0, more_left);
+        tab_area(x, arrow_w, TAB_LEFT);
+        x += arrow_w + 2;
+        draw_tab_arrow(rp, x, y, arrow_w, h, 1, more_right);
+        tab_area(x, arrow_w, TAB_RIGHT);
+        x += arrow_w + 2;
+    }
+    for (s = tab_first; s < tab_end && s < book->nsheets && tab_n < MAX_TABS; s++) {
+        char name[64];
+        int on = s == cur, tw = width[s] - 2;
+        if (!width[s]) continue;
+        to_latin1(book->sheets[s].name, strlen(book->sheets[s].name), name, sizeof name);
+        ogt_bold(rp, on);
         /* the chosen sheet's tab white, as the sheet; the others the theme's tabs (THEME_SPEC.md 5) */
-        if (cur) ogt_box(rp, rgb_pen(0xFFFFFFUL), x, y, tw, h);
+        if (on) ogt_box(rp, rgb_pen(0xFFFFFFUL), x, y, tw, h);
         else ogt_fill(&ctx, rp, "tab", x, y, tw, h);
         ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, tw, h + 1);
-        if (cur) ogt_hline(rp, rgb_pen(0xFFFFFFUL), x + 1, y - 1, tw - 2);
-        ogt_text(rp, cur ? rgb_pen(RGB_TAB_TEXT) : ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, name, 0);
+        if (on) ogt_hline(rp, rgb_pen(0xFFFFFFUL), x + 1, y - 1, tw - 2);
+        ogt_text(rp, on ? rgb_pen(RGB_TAB_TEXT) : ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, name, tw - 16);
         ogt_bold(rp, 0);
-        tab_x[tab_n] = x;
-        tab_w[tab_n] = tw;
-        tab_sheet[tab_n] = s;
-        tab_n++;
+        tab_area(x, tw, s);
         x += tw + 2;
     }
+    free(width);
     /* "+": a new sheet */
-    {
-        int tw = ogt_text_width(rp, "+") + 16;
-        ogt_fill(&ctx, rp, "tab", x, y, tw, h);
-        ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, tw, h + 1);
-        ogt_text(rp, ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, "+", 0);
-        tab_x[tab_n] = x;
-        tab_w[tab_n] = tw;
-        tab_sheet[tab_n] = -1;
-    }
+    ogt_fill(&ctx, rp, "tab", x, y, plus_w, h);
+    ogt_frame(rp, ogt_pen(&ctx, "group.line"), x, y - 1, plus_w, h + 1);
+    ogt_text(rp, ogt_pen(&ctx, "tab.text"), x + 8, y + (h - fh) / 2, "+", 0);
+    tab_area(x, plus_w, TAB_PLUS);
 }
 
-/* Which tab is at x (tab_n: the "+"), or -1. */
+/* The strip scrolled a tab left (way < 0) or right. */
+static void scroll_tabs(int way)
+{
+    owf_book *book = oc_core_book(core);
+    int s, cur = oc_core_sheet(core);
+    if (way < 0) {
+        for (s = tab_first - 1; s >= 0; s--)
+            if (!book->sheets[s].hidden || s == cur) { tab_first = s; break; }
+    } else if (tab_end < book->nsheets) {
+        for (s = tab_first + 1; s < book->nsheets; s++)
+            if (!book->sheets[s].hidden || s == cur) { tab_first = s; break; }
+    }
+    draw_tabs();
+}
+
+/* Which hit area is at x, y (a tab, "+" or an arrow: tab_sheet says which), or -1. */
 static int tab_at(int mx, int my)
 {
     int i;
     if (my < tabs_box.y || my >= tabs_box.y + tabs_box.h) return -1;
-    for (i = 0; i <= tab_n; i++)
+    for (i = 0; i < tab_n; i++)
         if (mx >= tab_x[i] && mx < tab_x[i] + tab_w[i]) return i;
     return -1;
 }
@@ -2329,7 +2396,12 @@ static void tabs_press(int mx, int my, ULONG secs, ULONG micros)
     static int last_tab = -2;
     int t = tab_at(mx, my);
     if (t < 0) return;
-    if (t == tab_n) {
+    if (tab_sheet[t] == TAB_LEFT || tab_sheet[t] == TAB_RIGHT) {
+        scroll_tabs(tab_sheet[t] == TAB_LEFT ? -1 : 1);
+        last_tab = -2;
+        return;
+    }
+    if (tab_sheet[t] == TAB_PLUS) {
         if (oc_core_add_sheet(core, NULL) < 0) result(OWF_ERR_MEMORY, NULL);
         else set_status("Sheet added.");
     } else {
@@ -2440,7 +2512,10 @@ static void events(void)
             if (!(code & 0x80)) raw_key(code, qual);
             break;
         case IDCMP_EXTENDEDMOUSE:
-            if (have_wheel && (wheel.WheelY || wheel.WheelX)) {
+            if (have_wheel && (wheel.WheelY || wheel.WheelX) && mx >= tabs_box.x && mx < tabs_box.x + tabs_box.w &&
+                my >= tabs_box.y && my < tabs_box.y + tabs_box.h) {
+                scroll_tabs((wheel.WheelY ? wheel.WheelY : wheel.WheelX) < 0 ? -1 : 1);   /* over the tabs: they scroll */
+            } else if (have_wheel && (wheel.WheelY || wheel.WheelX)) {
                 unsigned t, l;
                 oc_view_scroll_pos(core, &t, &l);
                 if (wheel.WheelY) t = wheel.WheelY < 0 ? (t > 3 ? t - 3 : 0) : t + 3;
