@@ -7,8 +7,8 @@
 #
 #   build-os3.sh [OUT_DIR]              (default build/os3)
 #   OWF=library build-os3.sh [OUT_DIR]  each on its library (build-library.sh, docs/suite/owf-libraries.md):
-#                                       OpenWrite on owfwrite.library, OpenCalc on owfcalc.library; OWConvert
-#                                       on owf.library 2 for now
+#                                       OpenWrite on owfwrite.library, OpenCalc on owfcalc.library, OWConvert
+#                                       on all four
 #
 # Both are 68040 code, as every build. The OpenWrite UI uses OpenGadTools.
 # No FPU is required.
@@ -42,7 +42,6 @@ case "$OWF" in
 linked)
     OWFFLAGS="-DOWF_HAVE_ZLIB -DOWF_ZLIBRARY -I$HERE/libowf/include -I$HERE/libowf/src -I$HERE/libowf/amiga/sdk/Include_H"
     OWF_WRITE=""
-    OWF_OWC=""
     OWFSRC="$HERE/libowf/src/*.c $HERE/libowf/amiga/owf_zlib_amiga.c"
     # OWConvert's workbooks have doubles: libnix's soft double maths, through
     # mathieeedoubbas.library, which uses the FPU when there is one
@@ -52,10 +51,9 @@ library)
     # OWF_BUILD_LIBRARIES=no: the libraries are built elsewhere (build-amiga.sh builds them once, in OUT/library)
     [ "${OWF_BUILD_LIBRARIES:-yes}" = no ] || "$HERE/build-library.sh" "$OUT/library"
     # each program names its library: OpenWrite owfwrite.library (OWF_USE_WRITE_LIBRARY), OpenCalc
-    # owfcalc.library (below), OWConvert owf.library 2 (OWF_USE_LIBRARY alone) until it is split by library
+    # owfcalc.library and OWConvert all four (below)
     OWFFLAGS="-I$HERE/libowf/include -I$HERE/libowf/library/sdk/Include_H"
     OWF_WRITE="-DOWF_USE_WRITE_LIBRARY"
-    OWF_OWC="-DOWF_USE_LIBRARY"
     OWFSRC=""
     OWFLIBS=""
     ;;
@@ -85,18 +83,31 @@ done
 OPENLAYOUT_SRC=${OPENLAYOUT_SRC:-$HERE/../openamigalayout}
 [ -f "$OPENLAYOUT_SRC/src/openlayout.c" ] || { echo "OpenLayout not found: set OPENLAYOUT_SRC to an openamigalayout checkout"; exit 2; }
 
-# OWConvert: 68040, as every build. With libowf linked in it converts
-# presentations too, to PDF through OpenPresentation's core (src/deck) on
-# OpenLayout; owf.library has no deck calls yet.
-OWC_DECK=""
-if [ "$OWF" = linked ]; then
-    OWC_DECK="-DOWC_DECK_PDF -I$HERE/include -I$OPENLAYOUT_SRC/include $HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c"
-    OWC_DECK="$OWC_DECK $HERE/src/core/ow_layout.c $OPENLAYOUT_SRC/src/openlayout.c"
+# OWConvert: 68040, as every build, with presentations' PDFs through OpenPresentation's core (src/deck) on
+# OpenLayout. Its parts are one file per library (tools/owc.h, docs/suite/owf-libraries.md section 5): with
+# libowf linked in they are built together; on the libraries each is built for its own (owc_doc.c for
+# owfwrite.library, owc_book.c owfcalc, owc_pub.c owfpub, owc_deck.c and the deck's PDF owfpresent), so a
+# conversion opens only the libraries it needs.
+OWC_DECK="-DOWC_DECK_PDF -I$HERE/include -I$OPENLAYOUT_SRC/include"
+OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/core/ow_layout.c $OPENLAYOUT_SRC/src/openlayout.c"
+OWCFLAGS="$CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS -I$HERE/tools"
+if [ "$OWF" = library ]; then
+    OWC_OBJ="$OUT/obj-owconvert"
+    rm -rf "$OWC_OBJ"
+    mkdir -p "$OWC_OBJ"
+    # shellcheck disable=SC2086
+    (cd "$OWC_OBJ" &&
+        "$CC" $OWCFLAGS -DOWF_USE_WRITE_LIBRARY -c "$HERE/tools/owc_doc.c" &&
+        "$CC" $OWCFLAGS -DOWF_USE_CALC_LIBRARY -c "$HERE/tools/owc_book.c" &&
+        "$CC" $OWCFLAGS -DOWF_USE_PUB_LIBRARY -c "$HERE/tools/owc_pub.c" &&
+        "$CC" $OWCFLAGS -DOWF_USE_PRESENT_LIBRARY $OWC_DECK -c "$HERE/tools/owc_deck.c" $OWC_PDF)
+    # shellcheck disable=SC2086
+    "$CC" $OWCFLAGS "$HERE/tools/owconvert.c" "$OWC_OBJ"/*.o -lm -o "$OUT/OWConvert"
+else
+    # shellcheck disable=SC2086
+    "$CC" $OWCFLAGS $OWC_DECK $OWFSRC $OWC_PDF "$HERE/tools/owconvert.c" "$HERE"/tools/owc_*.c $OWFLIBS \
+        -o "$OUT/OWConvert"
 fi
-# shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS $OWF_OWC \
-    $OWFSRC $OWC_DECK "$HERE/tools/owconvert.c" $OWFLIBS \
-    -o "$OUT/OWConvert"
 
 # OpenWrite: the OpenGadTools shell (app/openwrite2.c) is OpenWrite since 2.0.1 (the user, 10 October
 # 2026: "the rewrite is OpenWrite, not a second program"); the same core and filters.
