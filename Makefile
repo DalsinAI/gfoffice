@@ -334,10 +334,12 @@ $(OUT)/test-deck-asan: $(DECK_DEPS) $(DECK_SRC) tests/deck/test_deck.c
 deck-test: $(OUT)/test-deck $(OUT)/deck-dump $(OUT)/owconvert
 	$(OUT)/test-deck
 	python3 tests/deck/test_decks.py $(OUT)/deck-dump $(OUT)/owconvert
+	python3 tests/deck/test_pptx.py $(OUT)/deck-dump $(OUT)/owconvert
 
 deck-check: $(OUT)/test-deck-asan $(OUT)/deck-dump-asan $(OUT)/owconvert-asan
 	$(OUT)/test-deck-asan
 	python3 tests/deck/test_decks.py $(OUT)/deck-dump-asan $(OUT)/owconvert-asan
+	python3 tests/deck/test_pptx.py $(OUT)/deck-dump-asan $(OUT)/owconvert-asan
 
 test: deck-test
 check: deck-check

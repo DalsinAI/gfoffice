@@ -64,7 +64,7 @@ for f in $OWFSRC; do
     case "$f" in
     */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c | */owf_chart.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
-    */owf_deck.c | */in_odp.c | */out_odp.c | */owf_pdf.c | */owf_pdffonts.c) ;;
+    */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */owf_pdf.c | */owf_pdffonts.c) ;;
     */in_pub.c) ;;   # OpenPublisher's .pub reader: it needs owf_cfb.c
     */owf_kind.c) ;;   # owf_file_kind: it reads the workbook and .pub detectors
     *) OWFSRC_DOCS="$OWFSRC_DOCS $f" ;;
