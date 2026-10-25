@@ -150,3 +150,76 @@ int owf_unzip_read(const owf_unzip *zip, const char *name, unsigned char **out, 
     *out_length = size;
     return OWF_OK;
 }
+
+/* ---- What a package holds ----
+ * ODF says it in its "mimetype" entry (or its manifest's root entry), OOXML
+ * in [Content_Types].xml's main part, so that a document reader never
+ * claims a workbook or a presentation, nor the other way round. */
+
+static int has_text(const char *text, const char *word)
+{
+    return text && strstr(text, word) != NULL;
+}
+
+int owf_odf_kind(const unsigned char *data, size_t length)
+{
+    owf_unzip zip;
+    unsigned char *part;
+    size_t n;
+    const char *t;
+    int kind = OWF_PACKAGE_UNKNOWN;
+    if (!owf_unzip_open(&zip, data, length))
+        return OWF_PACKAGE_UNKNOWN;
+    if (owf_unzip_read(&zip, "mimetype", &part, &n) != OWF_OK &&
+        owf_unzip_read(&zip, "META-INF/manifest.xml", &part, &n) != OWF_OK)
+        return OWF_PACKAGE_UNKNOWN;
+    t = (const char *)part;
+    if (has_text(t, "application/vnd.oasis.opendocument.spreadsheet"))
+        kind = OWF_PACKAGE_SHEET;
+    else if (has_text(t, "application/vnd.oasis.opendocument.presentation"))
+        kind = OWF_PACKAGE_SLIDES;
+    else if (has_text(t, "application/vnd.oasis.opendocument.text"))
+        kind = OWF_PACKAGE_TEXT;
+    else if (has_text(t, "application/vnd.oasis.opendocument."))
+        kind = OWF_PACKAGE_OTHER;        /* drawings, charts, formulas, databases */
+    free(part);
+    return kind;
+}
+
+int owf_ooxml_kind(const unsigned char *data, size_t length)
+{
+    owf_unzip zip;
+    unsigned char *part;
+    size_t n;
+    int kind = OWF_PACKAGE_UNKNOWN;
+    if (!owf_unzip_open(&zip, data, length))
+        return OWF_PACKAGE_UNKNOWN;
+    if (owf_unzip_read(&zip, "[Content_Types].xml", &part, &n) == OWF_OK) {
+        const char *t = (const char *)part;
+        if (has_text(t, "application/vnd.ms-excel.sheet.binary.macroEnabled.main"))
+            kind = OWF_PACKAGE_SHEET_BINARY;
+        else if (has_text(t, "application/vnd.ms-excel.sheet.macroEnabled.main+xml") ||
+                 has_text(t, "application/vnd.ms-excel.template.macroEnabled.main+xml"))
+            kind = OWF_PACKAGE_SHEET_MACROS;
+        else if (has_text(t, "spreadsheetml.sheet.main+xml") || has_text(t, "spreadsheetml.template.main+xml"))
+            kind = OWF_PACKAGE_SHEET;
+        else if (has_text(t, "presentationml.") || has_text(t, "application/vnd.ms-powerpoint."))
+            kind = OWF_PACKAGE_SLIDES;
+        else if (has_text(t, "wordprocessingml.document.main+xml") || has_text(t, "wordprocessingml.template.main+xml") ||
+                 has_text(t, "application/vnd.ms-word.document.macroEnabled.main+xml") ||
+                 has_text(t, "application/vnd.ms-word.template.macroEnabledTemplate.main+xml"))
+            kind = OWF_PACKAGE_TEXT;
+        free(part);
+    }
+    if (kind == OWF_PACKAGE_UNKNOWN) {   /* no content types: the parts' usual names */
+        if (owf_unzip_has(&zip, "xl/workbook.xml"))
+            kind = owf_unzip_has(&zip, "xl/vbaProject.bin") ? OWF_PACKAGE_SHEET_MACROS : OWF_PACKAGE_SHEET;
+        else if (owf_unzip_has(&zip, "xl/workbook.bin"))
+            kind = OWF_PACKAGE_SHEET_BINARY;
+        else if (owf_unzip_has(&zip, "ppt/presentation.xml"))
+            kind = OWF_PACKAGE_SLIDES;
+        else if (owf_unzip_has(&zip, "word/document.xml"))
+            kind = OWF_PACKAGE_TEXT;
+    }
+    return kind;
+}

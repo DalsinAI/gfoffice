@@ -154,6 +154,70 @@ const owf_xl_function *owf_xl_function_at(unsigned index);
 /* A column's letters ("A", "IV"); out holds at least 8 bytes. */
 void owf_column_name(unsigned col, char *out);
 
+/* ---- XLSX, ODS and CSV (in_xlsx.c, out_xlsx.c, in_ods.c, out_ods.c,
+ * in_csv.c) and what they share ---- */
+extern const owf_book_format owf_book_format_xlsx, owf_book_format_xlsm, owf_book_format_ods,
+    owf_book_format_fods;
+int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, owf_report *report);
+
+/* Numbers in files (owf_booknum.c). The whole of s..s+length as a decimal
+ * number ("12", "-0.5", "1.5E+20"), the nearest double; 0 when it is not
+ * one or is beyond a double. */
+int owf_number_parse(const char *s, size_t length, double *value);
+/* The fewest digits (up to 17) that read back as the same double: "0.1",
+ * "0.30000000000000004". out holds at least 32 bytes. */
+void owf_number_exact(double v, char *out);
+/* Days since 30 December 1899, and back (proleptic Gregorian). */
+long owf_days_from_date(long year, int month, int day);
+void owf_date_from_days(long days, long *year, int *month, int *day);
+/* ISO 8601 as ODF writes it: "2026-10-21", "2026-10-21T13:45:30.5" as a
+ * day number; "PT13H45M30S" as days. 0 when it is not one. */
+int owf_parse_iso_date(const char *s, double *serial);
+int owf_parse_iso_duration(const char *s, double *days);
+int owf_put_iso_date(owf_buf *out, double serial, int with_time);
+int owf_put_iso_duration(owf_buf *out, double days);
+/* What a number format shows: by its first section. */
+enum { OWF_NUMFMT_NUMBER, OWF_NUMFMT_DATE, OWF_NUMFMT_TIME, OWF_NUMFMT_PERCENT, OWF_NUMFMT_TEXT };
+int owf_numfmt_kind(const char *format);
+
+/* Formulas in files (owf_xlformula.c); each gives text from malloc, or
+ * NULL when memory runs out (or, from OpenFormula, the formula cannot be
+ * read). */
+/* Relative references moved by drow and dcol, as XLSX's shared formulas
+ * need; one moved off the sheet becomes #REF!. */
+char *owf_xl_formula_move(const char *text, long drow, long dcol);
+/* From an XLSX file: "_xlfn." (and "_xlws.", "_xlpm.") off, and another
+ * book's number ("[1]Rates!A1") as its file's name, books[0] for [1]. */
+char *owf_xl_formula_from_file(const char *text, char *const *books, int nbooks);
+/* For an XLSX file: "_xlfn." on where Excel wants it, and with links, each
+ * other book by its number, the books, their sheets and names collected in
+ * links for the file's externalLink parts. */
+typedef struct {
+    char *file;
+    char **sheets;
+    int nsheets, capsheets;
+    char **names;
+    int nnames, capnames;
+} owf_xl_link;
+typedef struct {
+    owf_xl_link *items;
+    int count, capacity, failed;
+} owf_xl_links;
+char *owf_xl_formula_for_file(const char *text, const owf_book *book, owf_xl_links *links);
+void owf_xl_links_free(owf_xl_links *links);
+/* OpenFormula ("of:=SUM([.A1:.A3])") to Excel's text and back. */
+char *owf_of_to_excel(const char *text);
+char *owf_excel_to_of(const char *text);
+/* Excel's built-in number formats by number (NULL for the country's own)
+ * and its 64 colours by number. */
+const char *owf_xl_builtin_format(unsigned id);
+extern const unsigned long owf_xl_palette[64];
+/* "#DIV/0!" for an OWF_ERROR_...; the code of such a name, or -1. */
+const char *owf_xl_error_text(int error);
+int owf_xl_error_code(const char *s, size_t length);
+/* UTF-8 that is valid: bad bytes become U+FFFD. */
+void owf_buf_put_utf8_clean(owf_buf *out, const char *s, size_t length);
+
 /* ---- XML (owf_xml.c) ---- */
 
 enum { OWF_XML_ELEMENT, OWF_XML_TEXT };
@@ -185,6 +249,29 @@ int owf_parse_length(const char *s, int *twips);
 /* "#RRGGBB" or "RRGGBB"; 0 if it is not one. */
 int owf_parse_colour(const char *s, unsigned long *colour);
 
+/* Reading as a stream, for parts too big for a tree (a sheet's cells): one
+ * start tag, end tag or run of text at a time. text must be writable with
+ * a byte after length (owf_unzip_read's has); it is parsed in place and
+ * must outlive the scanner. An empty element gives its start, then its end. */
+enum { OWF_XS_START = 1, OWF_XS_END, OWF_XS_TEXT };
+typedef struct {
+    int type;
+    const char *ns, *name;           /* START and END */
+    const owf_xml_attribute *attrs;  /* START */
+    int nattrs, empty;
+    const char *text;                /* TEXT: decoded, not NUL-terminated */
+    size_t length;
+    int depth;                       /* the element's, the root's is 1 */
+} owf_xml_event;
+typedef struct owf_xml_scan owf_xml_scan;
+owf_xml_scan *owf_xml_scan_new(char *text, size_t length);
+void owf_xml_scan_free(owf_xml_scan *scan);
+/* 1 with the next event, 0 after the root element's end, -1 when the XML
+ * is damaged or memory ran out (owf_xml_scan_error says which). */
+int owf_xml_scan_next(owf_xml_scan *scan, owf_xml_event *event);
+int owf_xml_scan_error(const owf_xml_scan *scan);
+const char *owf_xml_event_attr(const owf_xml_event *event, const char *ns, const char *name);
+
 /* ---- Zip reading (owf_unzip.c) ---- */
 
 typedef struct {
@@ -199,6 +286,14 @@ int owf_unzip_open(owf_unzip *zip, const unsigned char *data, size_t length);
 int owf_unzip_has(const owf_unzip *zip, const char *name);
 /* Extracts one file into memory from malloc (NUL-terminated). */
 int owf_unzip_read(const owf_unzip *zip, const char *name, unsigned char **data, size_t *length);
+/* What an ODF package (by its mimetype) or an OOXML package (by its
+ * content types) holds, so that each reader claims only its own. */
+enum {
+    OWF_PACKAGE_UNKNOWN, OWF_PACKAGE_TEXT, OWF_PACKAGE_SHEET, OWF_PACKAGE_SHEET_MACROS, OWF_PACKAGE_SHEET_BINARY,
+    OWF_PACKAGE_SLIDES, OWF_PACKAGE_OTHER
+};
+int owf_odf_kind(const unsigned char *data, size_t length);
+int owf_ooxml_kind(const unsigned char *data, size_t length);
 
 /* ---- Named styles (owf_style.c), for ODT and DOCX ---- */
 

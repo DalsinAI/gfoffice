@@ -975,11 +975,15 @@ static int import_fodt(const unsigned char *data, size_t length, owf_doc *doc, o
 static int detect_odt(const unsigned char *data, size_t length)
 {
     owf_unzip zip;
+    int kind;
     static const char mime[] = "application/vnd.oasis.opendocument.text";
     /* ODF puts "mimetype" first and stored, so its text is at byte 38. */
     if (length > 38 + sizeof mime && !memcmp(data, "PK\3\4", 4) && !memcmp(data + 30, "mimetype", 8) &&
         !memcmp(data + 38, mime, sizeof mime - 1))
         return 100;
+    kind = owf_odf_kind(data, length);
+    if (kind != OWF_PACKAGE_UNKNOWN && kind != OWF_PACKAGE_TEXT)
+        return 0;    /* a spreadsheet, a presentation, a drawing: another reader's */
     if (owf_unzip_open(&zip, data, length) && owf_unzip_has(&zip, "content.xml") && owf_unzip_has(&zip, "styles.xml"))
         return 80;
     return 0;

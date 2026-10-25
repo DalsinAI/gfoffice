@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" mc:Ignorable="x14ac">
+  <dimension ref="A1:H9"/>
+  <sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="2" topLeftCell="B3" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>
+  <sheetFormatPr baseColWidth="10" defaultRowHeight="15" x14ac:dyDescent="0.25"/>
+  <cols><col min="2" max="3" width="20.7109375" style="2" hidden="1" customWidth="1"/><col min="8" max="16385" width="5" customWidth="1"/></cols>
+  <sheetData>
+    <row r="1" spans="1:8" ht="30" customHeight="1">
+      <c r="A1" s="1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c><c r="D1" t="s"><v>3</v></c>
+      <c r="E1" t="s"><v>4</v></c><c r="F1" t="s"><v>5</v></c><c r="G1" t="s"><v>6</v></c><c r="H1" t="s"><v>99</v></c>
+    </row>
+    <row r="2">
+      <c r="A2" s="2"><v>1.5</v></c><c r="B2"><v>3</v></c><c r="C2"><v>0.1</v></c>
+      <c r="D2"><f t="shared" ref="D2:D4" si="0">B2*C2+$A$2</f><v>1.8000000000000003</v></c>
+      <c r="E2"><f t="array" ref="E2:E3">B2:B3*2</f><v>6</v></c>
+      <c r="F2" t="str"><f>_xlfn.CONCAT("a",_xlfn._xlws.SORT(B2:B3))</f><v>a3</v></c>
+      <c r="G2" t="b"><f>B2&gt;2</f><v>1</v></c>
+      <c r="H2" t="e"><f>1/0</f><v>#DIV/0!</v></c>
+    </row>
+    <row r="3" hidden="1">
+      <c r="B3"><v>-4.5E-3</v></c>
+      <c r="D3"><f t="shared" si="0"/><v>1.4995500000000001</v></c>
+      <c r="E3"><v>-0.009</v></c>
+      <c t="inlineStr"><is><t>Inline</t></is></c>
+      <c t="inlineStr"><is><r><t>Rich</t></r><r><t xml:space="preserve"> inline</t></r></is></c>
+      <c r="H3" t="e"><v>#SPILL!</v></c>
+    </row>
+    <row>
+      <c r="A4" s="3" t="d"><v>2026-10-21T00:00:00</v></c><c r="B4" t="d"><v>T12:00:00</v></c>
+      <c r="D4"><f t="shared" si="0" aca="false"/><v>1.5</v></c>
+      <c r="E4"><f>[1]Rates!$A$1+Rate</f><v>2</v></c>
+      <c r="F4"><f t="shared" si="7"/><v>9</v></c>
+      <c r="G4"><f t="dataTable" ref="G4" dt2D="0" dtr="0" r1="A1"/><v>5</v></c>
+      <c r="H4" s="4"><v>0.25</v></c>
+    </row>
+    <row r="6" ht="4.5" customHeight="1">
+      <c r="A6" s="5" t="s"><v>6</v></c><c r="B6" s="6"><v>1234.5</v></c><c r="C6" s="7"><v>46316.5</v></c>
+      <c r="D6" s="1"/>
+      <c r="E6"><f t="shared" ref="E6:F6" si="7">SUM($B$2:B2)</f><v>1</v></c><c r="F6"><f t="shared" si="7"/><v>2</v></c>
+      <c r="G6"><v>not a number</v></c>
+    </row>
+  </sheetData>
+  <sheetProtection sheet="1"/>
+  <autoFilter ref="A1:H6"/>
+  <mergeCells count="2"><mergeCell ref="A9:C9"/><mergeCell ref="bad"/></mergeCells>
+  <conditionalFormatting sqref="B2:B3"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>2</formula></cfRule></conditionalFormatting>
+  <dataValidations count="1"><dataValidation type="list" sqref="C2"><formula1>"a,b"</formula1></dataValidation></dataValidations>
+  <hyperlinks><hyperlink ref="A1" r:id="rId2"/></hyperlinks>
+  <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
+  <drawing r:id="rId3"/>
+  <tableParts count="1"><tablePart r:id="rId4"/></tableParts>
+</worksheet>

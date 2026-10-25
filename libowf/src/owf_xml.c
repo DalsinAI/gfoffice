@@ -506,3 +506,253 @@ int owf_parse_colour(const char *s, unsigned long *colour)
     *colour = c;
     return 1;
 }
+
+/* ---- Reading a big part as a stream ----
+ * A sheet's cells can run to megabytes of XML; a tree of them would take
+ * several times that. The scanner hands over one start tag, end tag or run
+ * of text at a time instead, parsing in place in the caller's text, with
+ * the same rules as the tree: namespaces resolved, entities decoded, no
+ * DTDs. Its memory is the stack of open elements, so depth is capped. */
+
+#define SCAN_MAX_DEPTH 256
+#define SCAN_MAX_ATTRS 64
+
+typedef struct {
+    const char *ns, *name;
+} scan_open;
+
+struct owf_xml_scan {
+    owf_xml x;               /* only its namespace bindings */
+    char *p, *end;
+    scan_open *open;
+    int nopen, capopen;
+    owf_xml_attribute attrs[SCAN_MAX_ATTRS];
+    int pending_end;         /* an empty element's end comes next */
+    int started, done, error;
+};
+
+owf_xml_scan *owf_xml_scan_new(char *text, size_t length)
+{
+    owf_xml_scan *s = calloc(1, sizeof *s);
+    if (!s)
+        return NULL;
+    if (!bind(&s->x, "", "", 0)) {
+        free(s);
+        return NULL;
+    }
+    s->p = text;
+    s->end = text + length;
+    *s->end = 0;
+    return s;
+}
+
+void owf_xml_scan_free(owf_xml_scan *s)
+{
+    if (!s)
+        return;
+    free(s->x.bindings);
+    free(s->open);
+    free(s);
+}
+
+int owf_xml_scan_error(const owf_xml_scan *s)
+{
+    return s->error;
+}
+
+static int scan_fail(owf_xml_scan *s, int error)
+{
+    s->error = error;
+    s->done = 1;
+    return -1;
+}
+
+/* Closes the innermost element: its bindings go, as the tree's do. */
+static void scan_close(owf_xml_scan *s, owf_xml_event *e)
+{
+    int depth = s->nopen;
+    e->type = OWF_XS_END;
+    e->ns = s->open[depth - 1].ns;
+    e->name = s->open[depth - 1].name;
+    e->depth = depth;
+    e->nattrs = 0;
+    while (s->x.nbindings > 1 && s->x.bindings[s->x.nbindings - 1].depth == depth)
+        s->x.nbindings--;
+    s->nopen--;
+    if (!s->nopen)
+        s->done = 1;         /* the root element closed */
+}
+
+int owf_xml_scan_next(owf_xml_scan *s, owf_xml_event *e)
+{
+    memset(e, 0, sizeof *e);
+    if (s->error)
+        return -1;
+    if (s->pending_end) {
+        s->pending_end = 0;
+        scan_close(s, e);
+        return 1;
+    }
+    while (!s->done && s->p < s->end) {
+        char *p = s->p, *lt = memchr(p, '<', (size_t)(s->end - p));
+        if (!lt)
+            lt = s->end;
+        if (lt > p) {
+            s->p = lt;
+            if (!s->nopen)
+                continue;    /* outside the root: only white space is allowed */
+            e->type = OWF_XS_TEXT;
+            e->text = p;
+            e->length = (size_t)(decode(p, lt) - p);
+            e->depth = s->nopen;
+            return 1;
+        }
+        if (!strncmp(p, "<?", 2)) {
+            char *q = strstr(p + 2, "?>");
+            if (!q)
+                return scan_fail(s, OWF_ERR_CORRUPT);
+            s->p = q + 2;
+        } else if (!strncmp(p, "<!--", 4)) {
+            char *q = strstr(p + 4, "-->");
+            if (!q)
+                return scan_fail(s, OWF_ERR_CORRUPT);
+            s->p = q + 3;
+        } else if (!strncmp(p, "<![CDATA[", 9)) {
+            char *q = strstr(p + 9, "]]>");
+            if (!q)
+                return scan_fail(s, OWF_ERR_CORRUPT);
+            s->p = q + 3;
+            if (s->nopen && q > p + 9) {
+                e->type = OWF_XS_TEXT;
+                e->text = p + 9;
+                e->length = (size_t)(q - (p + 9));
+                e->depth = s->nopen;
+                return 1;
+            }
+        } else if (!strncmp(p, "<!", 2)) {
+            int brackets = 0;
+            for (p += 2; p < s->end && (*p != '>' || brackets > 0); p++) {
+                if (*p == '[') brackets++;
+                else if (*p == ']') brackets--;
+            }
+            if (p >= s->end)
+                return scan_fail(s, OWF_ERR_CORRUPT);
+            s->p = p + 1;
+        } else if (p[1] == '/') {
+            char *q = memchr(p, '>', (size_t)(s->end - p)), *c;
+            const char *ns, *name;
+            if (!q || !s->nopen)
+                return scan_fail(s, OWF_ERR_CORRUPT);
+            for (c = p + 2; name_char(*c); c++)
+                ;
+            while (c < q && space(*c))
+                c++;
+            if (c != q || c == p + 2)
+                return scan_fail(s, OWF_ERR_CORRUPT);
+            *q = 0;
+            for (c = p + 2; name_char(*c); c++)
+                ;
+            *c = 0;
+            resolve(&s->x, p + 2, 0, &ns, &name);
+            if (strcmp(ns, s->open[s->nopen - 1].ns) || strcmp(name, s->open[s->nopen - 1].name))
+                return scan_fail(s, OWF_ERR_CORRUPT);
+            s->p = q + 1;
+            scan_close(s, e);
+            return 1;
+        } else {
+            char *qname = p + 1, *c;
+            char *names[SCAN_MAX_ATTRS];
+            int nattrs = 0, i, empty = 0, depth = s->nopen + 1;
+
+            if (s->started && !s->nopen)
+                return scan_fail(s, OWF_ERR_CORRUPT);    /* a second root */
+            for (c = qname; name_char(*c); c++)
+                ;
+            if (c == qname)
+                return scan_fail(s, OWF_ERR_CORRUPT);
+            if (depth > SCAN_MAX_DEPTH)
+                return scan_fail(s, OWF_ERR_CORRUPT);
+            for (;;) {
+                char *an, *av, quote, *close;
+                while (space(*c))
+                    *c++ = 0;
+                if (*c == '>') {
+                    *c++ = 0;
+                    break;
+                }
+                if (c[0] == '/' && c[1] == '>') {
+                    *c = 0;
+                    c += 2;
+                    empty = 1;
+                    break;
+                }
+                if (!name_char(*c))
+                    return scan_fail(s, OWF_ERR_CORRUPT);
+                an = c;
+                while (name_char(*c))
+                    c++;
+                while (space(*c))
+                    *c++ = 0;
+                if (*c != '=')
+                    return scan_fail(s, OWF_ERR_CORRUPT);
+                *c++ = 0;
+                while (space(*c))
+                    c++;
+                quote = *c;
+                if (quote != '"' && quote != '\'')
+                    return scan_fail(s, OWF_ERR_CORRUPT);
+                av = ++c;
+                close = strchr(av, quote);
+                if (!close)
+                    return scan_fail(s, OWF_ERR_CORRUPT);
+                *close = 0;
+                decode(av, close);
+                c = close + 1;
+                if (!strncmp(an, "xmlns", 5) && (an[5] == 0 || an[5] == ':')) {
+                    if (!bind(&s->x, an[5] ? an + 6 : "", av, depth))
+                        return scan_fail(s, OWF_ERR_MEMORY);
+                } else if (nattrs < SCAN_MAX_ATTRS) {
+                    names[nattrs] = an;
+                    s->attrs[nattrs].value = av;
+                    nattrs++;
+                }
+            }
+            if (s->nopen == s->capopen) {
+                int want = s->capopen ? s->capopen * 2 : 16;
+                scan_open *o = realloc(s->open, (size_t)want * sizeof *o);
+                if (!o)
+                    return scan_fail(s, OWF_ERR_MEMORY);
+                s->open = o;
+                s->capopen = want;
+            }
+            resolve(&s->x, qname, 0, &s->open[s->nopen].ns, &s->open[s->nopen].name);
+            for (i = 0; i < nattrs; i++)
+                resolve(&s->x, names[i], 1, &s->attrs[i].ns, &s->attrs[i].name);
+            s->nopen = depth;
+            s->started = 1;
+            s->p = c;
+            e->type = OWF_XS_START;
+            e->ns = s->open[depth - 1].ns;
+            e->name = s->open[depth - 1].name;
+            e->attrs = s->attrs;
+            e->nattrs = nattrs;
+            e->depth = depth;
+            e->empty = empty;
+            s->pending_end = empty;
+            return 1;
+        }
+    }
+    if (s->nopen || !s->started)
+        return scan_fail(s, OWF_ERR_CORRUPT);    /* cut short, or no element at all */
+    s->done = 1;
+    return 0;
+}
+
+const char *owf_xml_event_attr(const owf_xml_event *e, const char *ns, const char *name)
+{
+    int i;
+    for (i = 0; i < e->nattrs; i++)
+        if (strcmp(e->attrs[i].name, name) == 0 && strcmp(e->attrs[i].ns, ns) == 0)
+            return e->attrs[i].value;
+    return NULL;
+}

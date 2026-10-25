@@ -1259,8 +1259,12 @@ static int import_docx(const unsigned char *data, size_t length, owf_doc *doc, o
 static int detect_docx(const unsigned char *data, size_t length)
 {
     owf_unzip zip;
+    int kind;
     if (!owf_unzip_open(&zip, data, length))
         return 0;
+    kind = owf_ooxml_kind(data, length);
+    if (kind != OWF_PACKAGE_UNKNOWN && kind != OWF_PACKAGE_TEXT)
+        return 0;    /* a workbook or a presentation: another reader's */
     if (owf_unzip_has(&zip, "word/document.xml"))
         return 95;
     if (owf_unzip_has(&zip, "[Content_Types].xml") && owf_unzip_has(&zip, "_rels/.rels"))
