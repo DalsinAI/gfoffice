@@ -249,6 +249,7 @@ static int paste_move(oc_core *core)
     rc = owf_calc_move_range(core->calc, clip->cut_sheet, &from, core->sheet,
                              (int)((long)t.first_row - (long)from.first_row),
                              (int)((long)t.first_col - (long)from.first_col));
+    oc_charts_forget(core);                          /* their series may name the cells that moved */
     if (rc == OWF_ERR_UNSUPPORTED) {
         oc_undo_free(u);
         return rc;

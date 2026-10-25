@@ -243,6 +243,17 @@ void calc_put_sheet_prefix(owf_buf *b, const char *first, const char *last);
  * names and spaces as typed. From malloc; NULL when memory runs out. */
 char *calc_normalize(const char *text);
 
+/* ---- Charts kept as Excel's parts (owf_calc_charts.c) ---- */
+
+/* A chart's reference (a <c:f>'s text, its chart on sheet home) as it is to be: a new string, or NULL when
+ * memory ran out. */
+typedef char *(*calc_chart_fix)(void *user, const owf_book *book, int home, const char *ref);
+/* Every chart's references fixed. 0 when memory ran out (some changed, maybe). */
+int calc_charts_refs(owf_book *book, calc_chart_fix fix, void *user);
+/* The anchors in a sheet's drawing moved as rows (axis 0) or columns go in (count > 0) at at, or (count < 0)
+ * out: each edge with its cell; one wholly in deleted ones goes, as Excel's do. 0 when memory ran out. */
+int calc_charts_shift(owf_book *book, int sheet, int axis, long at, long count, long limit);
+
 /* ---- Functions (owf_calc_fn.c) ---- */
 
 typedef void (*calc_fn)(calc_ctx *ctx, calc_value *args, int argc, calc_value *result);

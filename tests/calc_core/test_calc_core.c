@@ -2358,6 +2358,259 @@ static void test_charts(void)
     oc_core_free(core);
 }
 
+/* A sheet's charts, read again from its parts (n of them); the first one's first series in *c. */
+static int charts_of(oc_core *core, int sheet, owf_chart *c)
+{
+    owf_chart *charts = NULL;
+    int n = 0;
+    memset(c, 0, sizeof *c);
+    if (owf_sheet_charts(oc_core_book(core), sheet, &charts, &n) != OWF_OK)
+        return -1;
+    if (n) {
+        *c = charts[0];
+        memset(&charts[0], 0, sizeof charts[0]);
+    }
+    owf_charts_free(charts, n);
+    return n;
+}
+
+static void chart_free(owf_chart *c)
+{
+    owf_chart *one = malloc(sizeof *one);
+    if (one) {
+        *one = *c;
+        owf_charts_free(one, 1);
+    }
+    memset(c, 0, sizeof *c);
+}
+
+static int same(const char *a, const char *b)
+{
+    return a && b && !strcmp(a, b);
+}
+
+/* Charts follow the sheet as Excel's do: rows and columns in and out move their anchors and the cells their
+ * series name, a sheet renamed is renamed in them, cells cut and pasted take their series with them, a chart
+ * whose rows all go goes; undo puts all back, and saving keeps it. */
+static void test_chart_refs(void)
+{
+    static const char *const path = "build/host/calc-core-chartrefs.xlsx";
+    oc_core *core = fresh();
+    owf_report *report = owf_report_new();
+    owf_chart c;
+    oc_draw_list l;
+    int n;
+    if (!core || !report) {
+        CHECK(0);
+        oc_core_free(core);
+        owf_report_free(report);
+        return;
+    }
+    oc_draw_list_init(&l);
+    chart_values(core);
+    put_chart(core, "<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/>"
+                    SERIES(0, "2025", "B", "") SERIES(1, "2026", "C", "")
+                    "<c:axId val=\"1\"/><c:axId val=\"2\"/></c:barChart>", "");
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_row == 1 && c.to_row == 11 && c.from_col == 1 && c.to_col == 5);
+    CHECK(same(c.series[0].values, "Sheet1!$B$2:$B$4") && same(c.series[0].categories, "Sheet1!$A$2:$A$4"));
+    chart_free(&c);
+
+    /* two rows in above row 3: the series' cells grow round them, the chart's end goes down two */
+    go(core, "A3:A4");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_row == 1 && c.to_row == 13 && c.from_col == 1 && c.to_col == 5);
+    CHECK(same(c.series[0].values, "Sheet1!$B$2:$B$6") && same(c.series[0].categories, "Sheet1!$A$2:$A$6") &&
+          same(c.series[1].name_cell, "Sheet1!$C$1") && same(c.series[1].values, "Sheet1!$C$2:$C$6"));
+    chart_free(&c);
+    /* drawn from the cells where they went: South two rows down, still in the chart */
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(find_text(&l, "North") && find_text(&l, "South") && find_text(&l, "West"));
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.to_row == 11 && same(c.series[0].values, "Sheet1!$B$2:$B$4"));
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.to_row == 13 && same(c.series[0].values, "Sheet1!$B$2:$B$6"));
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* a column in before A: all of it one column on */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 1) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 2 && c.to_col == 6 && c.from_row == 1 && c.to_row == 11);
+    CHECK(same(c.series[0].values, "Sheet1!$C$2:$C$4") && same(c.series[0].categories, "Sheet1!$B$2:$B$4") &&
+          same(c.series[1].name_cell, "Sheet1!$D$1"));
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* row 1 out: the chart up a row, the series' names' cells gone with it */
+    go(core, "A1");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_row == 0 && c.to_row == 10);
+    CHECK(same(c.series[0].values, "Sheet1!$B$1:$B$3") && c.series[0].name_cell && strstr(c.series[0].name_cell, "#REF!"));
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_row == 1 && same(c.series[0].name_cell, "Sheet1!$B$1"));
+    chart_free(&c);
+
+    /* rows 4 to 6 out, the chart's middle: it's shorter; its start in them, it starts where they were */
+    go(core, "A4:A6");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_row == 1 && c.to_row == 8 && same(c.series[0].values, "Sheet1!$B$2:$B$3"));
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    go(core, "A1:A3");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_row == 0 && c.from_row_off == 0 && c.to_row == 8);
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* all its rows out: it goes with them, as in Excel; undo brings it back */
+    go(core, "A2:A12");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_FILL, 0xFFFFFF) == 0);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_row == 1 && c.to_row == 11);
+    chart_free(&c);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_FILL, 0xFFFFFF) == 1);
+
+    /* the sheet renamed: its new name in the chart, quoted as it needs; drawn as before */
+    CHECK(oc_core_rename_sheet(core, 0, "Q Sales") == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && same(c.series[0].values, "'Q Sales'!$B$2:$B$4") &&
+          same(c.series[1].name_cell, "'Q Sales'!$C$1") && same(c.series[0].categories, "'Q Sales'!$A$2:$A$4"));
+    chart_free(&c);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_FILL, 0xFFFFFF) == 1 && find_text(&l, "North") &&
+          find_text(&l, "30"));                         /* its categories and its scale from the cells */
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && same(c.series[0].values, "Sheet1!$B$2:$B$4"));
+    chart_free(&c);
+
+    /* the 2025 column cut and pasted to H: its series follows it; undo puts it back */
+    {
+        size_t len;
+        char *t;
+        go(core, "B1:B4");
+        t = oc_core_cut(core, &len);
+        go(core, "H1");
+        CHECK(t && oc_core_paste(core, t, len) == OWF_OK);
+        owf_free(t);
+        CHECK(charts_of(core, 0, &c) == 1 && same(c.series[0].values, "Sheet1!$H$2:$H$4") &&
+              same(c.series[0].name_cell, "Sheet1!$H$1") && same(c.series[0].categories, "Sheet1!$A$2:$A$4") &&
+              same(c.series[1].values, "Sheet1!$C$2:$C$4"));
+        chart_free(&c);
+        CHECK(oc_view_draw(core, &l) == OWF_OK && find_text(&l, "30"));
+        CHECK(oc_core_undo(core) == OWF_OK);
+        CHECK(charts_of(core, 0, &c) == 1 && same(c.series[0].values, "Sheet1!$B$2:$B$4"));
+        chart_free(&c);
+    }
+
+    /* saved and read again: the anchor and the cells as they went */
+    go(core, "A3");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(oc_core_rename_sheet(core, 0, "Sales & Co") == OWF_OK);
+    CHECK(oc_core_save(core, path, "xlsx", report) == OWF_OK);
+    CHECK(oc_core_open(core, path, NULL, report, NULL) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_row == 1 && c.to_row == 12 &&
+          same(c.series[0].values, "'Sales & Co'!$B$2:$B$5") && same(c.series[1].name_cell, "'Sales & Co'!$C$1"));
+    chart_free(&c);
+    remove(path);
+
+    /* the charts fixture: columns in on Sales move the cells the Pie sheet's charts name too */
+    {
+        const owf_book_format *used = NULL;
+        CHECK(oc_core_open(core, "tests/book/fixtures/charts-openpyxl.xlsx", NULL, report, &used) == OWF_OK);
+    }
+    n = charts_of(core, 1, &c);
+    CHECK(n == 2 && same(c.series[0].values, "'Sales'!$B$2:$B$7"));
+    chart_free(&c);
+    oc_core_set_sheet(core, 0);
+    go(core, "A1:B1");
+    CHECK(oc_core_insert(core, 1) == OWF_OK);
+    n = charts_of(core, 1, &c);
+    CHECK(n == 2 && same(c.series[0].values, "'Sales'!$D$2:$D$7") && same(c.series[0].categories, "'Sales'!$C$2:$C$7") &&
+          c.from_col == 1);                              /* on another sheet: it stays where it was */
+    chart_free(&c);
+    CHECK(charts_of(core, 0, &c) == 3 && c.from_col == 7);   /* on Sales, F to H */
+    chart_free(&c);
+    oc_draw_list_free(&l);
+    owf_report_free(report);
+    oc_core_free(core);
+}
+
+/* A kept part's text, NUL-terminated (to free), or NULL. */
+static char *part_text(const owf_book *book, const char *name)
+{
+    const owf_part *p = owf_book_part(book, name);
+    char *t = p ? malloc(p->length + 1) : NULL;
+    if (t) {
+        memcpy(t, p->data, p->length);
+        t[p->length] = 0;
+    }
+    return t;
+}
+
+/* The anchors as Excel sets them: one cell (moved, its size its own), two cells moved and not sized
+ * (editAs="oneCell"), not moved (absolute), and a picture's, each in a drawing's text that stays as it was. */
+static void test_anchor_kinds(void)
+{
+    static const char drawing[] =
+        "<xdr:wsDr xmlns:xdr=\"" XDR "\">"
+        "<xdr:oneCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>5</xdr:colOff><xdr:row>4</xdr:row>"
+        "<xdr:rowOff>7</xdr:rowOff></xdr:from><xdr:ext cx=\"100\" cy=\"200\"/><xdr:sp/><xdr:clientData/></xdr:oneCellAnchor>"
+        "<xdr:twoCellAnchor editAs=\"oneCell\"><xdr:from><xdr:col>2</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>3</xdr:row>"
+        "<xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row>"
+        "<xdr:rowOff>9</xdr:rowOff></xdr:to><xdr:pic/><xdr:clientData/></xdr:twoCellAnchor>"
+        "<xdr:twoCellAnchor editAs='absolute'><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>8</xdr:row>"
+        "<xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>9</xdr:row>"
+        "<xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp/><xdr:clientData/></xdr:twoCellAnchor>"
+        "<!-- <xdr:row>2</xdr:row> --><xdr:twoCellAnchor><xdr:from><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff>"
+        "<xdr:row>10</xdr:row><xdr:rowOff>3</xdr:rowOff></xdr:from><xdr:to><xdr:col>6</xdr:col><xdr:colOff>0</xdr:colOff>"
+        "<xdr:row>12</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:pic/><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>";
+    oc_core *core = fresh();
+    owf_book *book;
+    char *text;
+    if (!core)
+        return;
+    book = oc_core_book(core);
+    CHECK(owf_book_keep_part(book, "xl/drawings/drawing1.xml", "application/vnd.openxmlformats-officedocument.drawing+xml",
+                             drawing, strlen(drawing)) == 0);
+    book->sheets[0].drawing = dup_text("xl/drawings/drawing1.xml");
+    /* two rows in above row 2 */
+    go(core, "A2:A3");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    text = part_text(oc_core_book(core), "xl/drawings/drawing1.xml");
+    CHECK(text != NULL);
+    if (text) {
+        /* one cell: from row 4 to 6, its offset and its size as they were */
+        CHECK(strstr(text, "<xdr:row>6</xdr:row><xdr:rowOff>7</xdr:rowOff></xdr:from><xdr:ext cx=\"100\" cy=\"200\"/>") != NULL);
+        /* moved, not sized: 3 to 5 and 6 to 8 */
+        CHECK(strstr(text, "<xdr:row>5</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col>"
+                           "<xdr:colOff>0</xdr:colOff><xdr:row>8</xdr:row><xdr:rowOff>9</xdr:rowOff>") != NULL);
+        /* absolute: where it was */
+        CHECK(strstr(text, "<xdr:row>8</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>1</xdr:col>"
+                           "<xdr:colOff>0</xdr:colOff><xdr:row>9</xdr:row>") != NULL);
+        /* a picture's two cells: 10 to 12 and 12 to 14; a comment as it was */
+        CHECK(strstr(text, "<xdr:row>12</xdr:row><xdr:rowOff>3</xdr:rowOff></xdr:from>") != NULL &&
+              strstr(text, "<xdr:row>14</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:pic/>") != NULL &&
+              strstr(text, "<!-- <xdr:row>2</xdr:row> -->") != NULL);
+        CHECK(strlen(text) == strlen(drawing));          /* nothing else changed */
+        free(text);
+    }
+    /* rows 11 to 15 out: the picture all in them goes; the rest stay as they were */
+    go(core, "A11:A15");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    text = part_text(oc_core_book(core), "xl/drawings/drawing1.xml");
+    CHECK(text && !strstr(text, "<xdr:row>12</xdr:row><xdr:rowOff>3</xdr:rowOff>") && strstr(text, "editAs=\"oneCell\"") &&
+          strstr(text, "editAs='absolute'") && strstr(text, "<xdr:ext cx=\"100\" cy=\"200\"/>") &&
+          strstr(text, "</xdr:twoCellAnchor><!-- <xdr:row>2</xdr:row> --></xdr:wsDr>"));
+    free(text);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    text = part_text(oc_core_book(core), "xl/drawings/drawing1.xml");
+    CHECK(text && strlen(text) == strlen(drawing) && strstr(text, "<xdr:row>12</xdr:row><xdr:rowOff>3</xdr:rowOff>"));
+    free(text);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -2580,6 +2833,8 @@ int main(void)
     test_autofilter();
     test_drawings_kept();
     test_charts();
+    test_chart_refs();
+    test_anchor_kinds();
     test_row_numbers();
     test_text_layout();
     test_tab_strip();

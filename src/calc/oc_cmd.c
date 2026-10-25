@@ -293,6 +293,7 @@ int oc_core_insert(oc_core *core, int axis)
         u->shift_count = -(int)count;
     }
     rc = owf_calc_shift(core->calc, core->sheet, axis, at, (int)count);
+    oc_charts_forget(core);                          /* their anchors and cells moved: read again */
     if (rc == OWF_ERR_MEMORY) {                      /* half moved, maybe: start again from the book */
         oc_undo_free(u);
         oc_undo_push(core, NULL);
@@ -322,6 +323,7 @@ int oc_core_delete(oc_core *core, int axis)
         u = NULL;
     }
     rc = owf_calc_shift(core->calc, core->sheet, axis, at, -(int)count);
+    oc_charts_forget(core);
     if (rc == OWF_ERR_UNSUPPORTED) {
         oc_undo_free(u);
         return rc;
