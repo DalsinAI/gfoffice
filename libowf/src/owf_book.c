@@ -84,6 +84,232 @@ static void free_sheet(owf_sheet *sheet)
     free(sheet->rows);
     free(sheet->merges);
     free(sheet->name);
+    owf_sheet_free_extras(sheet);
+}
+
+/* ---- What a sheet holds beside its cells ---- */
+
+void owf_condfmt_free(owf_condfmt *cf)
+{
+    int k;
+    if (!cf)
+        return;
+    free(cf->ranges);
+    free(cf->formula[0]);
+    free(cf->formula[1]);
+    for (k = 0; k < 3; k++)
+        free(cf->points[k].value);
+    free(cf->xml);
+    memset(cf, 0, sizeof *cf);
+}
+
+owf_condfmt *owf_sheet_add_condfmt(owf_sheet *sheet)
+{
+    owf_condfmt *cf;
+    if (!grow((void **)&sheet->condfmts, sheet->ncondfmts, &sheet->capcondfmts, sizeof *cf, 4))
+        return NULL;
+    cf = &sheet->condfmts[sheet->ncondfmts++];
+    memset(cf, 0, sizeof *cf);
+    return cf;
+}
+
+void owf_validation_free(owf_validation *v)
+{
+    if (!v)
+        return;
+    free(v->ranges);
+    free(v->formula[0]);
+    free(v->formula[1]);
+    free(v->prompt_title);
+    free(v->prompt);
+    free(v->error_title);
+    free(v->error);
+    memset(v, 0, sizeof *v);
+}
+
+owf_validation *owf_sheet_add_validation(owf_sheet *sheet)
+{
+    owf_validation *v;
+    if (!grow((void **)&sheet->validations, sheet->nvalidations, &sheet->capvalidations, sizeof *v, 4))
+        return NULL;
+    v = &sheet->validations[sheet->nvalidations++];
+    memset(v, 0, sizeof *v);
+    return v;
+}
+
+const owf_validation *owf_sheet_validation(const owf_sheet *sheet, unsigned row, unsigned col)
+{
+    int i, r;
+    for (i = 0; i < sheet->nvalidations; i++)
+        for (r = 0; r < sheet->validations[i].nranges; r++) {
+            const owf_range *g = &sheet->validations[i].ranges[r];
+            if (row >= g->first_row && row <= g->last_row && col >= g->first_col && col <= g->last_col)
+                return &sheet->validations[i];
+        }
+    return NULL;
+}
+
+static int comment_at(const owf_sheet *sheet, unsigned row, unsigned col, int *found)
+{
+    int lo = 0, hi = sheet->ncomments;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        const owf_comment *c = &sheet->comments[mid];
+        if (c->row < row || (c->row == row && c->col < col))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    *found = lo < sheet->ncomments && sheet->comments[lo].row == row && sheet->comments[lo].col == col;
+    return lo;
+}
+
+const owf_comment *owf_sheet_comment(const owf_sheet *sheet, unsigned row, unsigned col)
+{
+    int found, at = comment_at(sheet, row, col, &found);
+    return found ? &sheet->comments[at] : NULL;
+}
+
+int owf_sheet_set_comment(owf_sheet *sheet, unsigned row, unsigned col, const char *author, const char *text)
+{
+    int found, at = comment_at(sheet, row, col, &found);
+    char *t, *a = NULL;
+    owf_comment *c;
+    if (!text) {
+        if (found) {
+            free(sheet->comments[at].author);
+            free(sheet->comments[at].text);
+            memmove(&sheet->comments[at], &sheet->comments[at + 1], (size_t)(sheet->ncomments - at - 1) * sizeof *c);
+            sheet->ncomments--;
+        }
+        return 0;
+    }
+    if (!(t = copy_text(text, strlen(text))) || (author && !(a = copy_text(author, strlen(author))))) {
+        free(t);
+        return -1;
+    }
+    if (found) {
+        c = &sheet->comments[at];
+        free(c->author);
+        free(c->text);
+    } else {
+        if (!grow((void **)&sheet->comments, sheet->ncomments, &sheet->capcomments, sizeof *c, 8)) {
+            free(t);
+            free(a);
+            return -1;
+        }
+        c = &sheet->comments[at];
+        memmove(c + 1, c, (size_t)(sheet->ncomments - at) * sizeof *c);
+        sheet->ncomments++;
+        c->row = row;
+        c->col = col;
+    }
+    c->author = a;
+    c->text = t;
+    return 0;
+}
+
+void owf_sheet_free_extras(owf_sheet *sheet)
+{
+    int i;
+    for (i = 0; i < sheet->ncondfmts; i++)
+        owf_condfmt_free(&sheet->condfmts[i]);
+    free(sheet->condfmts);
+    sheet->condfmts = NULL;
+    sheet->ncondfmts = sheet->capcondfmts = 0;
+    for (i = 0; i < sheet->ncomments; i++) {
+        free(sheet->comments[i].author);
+        free(sheet->comments[i].text);
+    }
+    free(sheet->comments);
+    sheet->comments = NULL;
+    sheet->ncomments = sheet->capcomments = 0;
+    for (i = 0; i < sheet->nvalidations; i++)
+        owf_validation_free(&sheet->validations[i]);
+    free(sheet->validations);
+    sheet->validations = NULL;
+    sheet->nvalidations = sheet->capvalidations = 0;
+    free(sheet->autofilter_xml);
+    sheet->autofilter_xml = NULL;
+    sheet->has_autofilter = 0;
+}
+
+static char *dup_or_null(const char *s, int *failed)
+{
+    char *d;
+    if (!s)
+        return NULL;
+    if (!(d = copy_text(s, strlen(s))))
+        *failed = 1;
+    return d;
+}
+
+int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src)
+{
+    int i, k, failed = 0;
+    dst->condfmts = NULL;
+    dst->ncondfmts = dst->capcondfmts = 0;
+    dst->comments = NULL;
+    dst->ncomments = dst->capcomments = 0;
+    dst->validations = NULL;
+    dst->nvalidations = dst->capvalidations = 0;
+    dst->autofilter_xml = dup_or_null(src->autofilter_xml, &failed);
+    for (i = 0; i < src->nvalidations && !failed; i++) {
+        const owf_validation *a = &src->validations[i];
+        owf_validation *b = owf_sheet_add_validation(dst);
+        if (!b) {
+            failed = 1;
+            break;
+        }
+        *b = *a;
+        b->ranges = NULL;
+        b->formula[0] = b->formula[1] = b->prompt_title = b->prompt = b->error_title = b->error = NULL;
+        if (a->nranges && !(b->ranges = malloc((size_t)a->nranges * sizeof *b->ranges))) {
+            failed = 1;
+            b->nranges = 0;
+        } else if (a->nranges) {
+            memcpy(b->ranges, a->ranges, (size_t)a->nranges * sizeof *b->ranges);
+        }
+        b->formula[0] = dup_or_null(a->formula[0], &failed);
+        b->formula[1] = dup_or_null(a->formula[1], &failed);
+        b->prompt_title = dup_or_null(a->prompt_title, &failed);
+        b->prompt = dup_or_null(a->prompt, &failed);
+        b->error_title = dup_or_null(a->error_title, &failed);
+        b->error = dup_or_null(a->error, &failed);
+    }
+    for (i = 0; i < src->ncomments && !failed; i++)
+        if (owf_sheet_set_comment(dst, src->comments[i].row, src->comments[i].col, src->comments[i].author,
+                                  src->comments[i].text) < 0)
+            failed = 1;
+    for (i = 0; i < src->ncondfmts && !failed; i++) {
+        const owf_condfmt *a = &src->condfmts[i];
+        owf_condfmt *b = owf_sheet_add_condfmt(dst);
+        if (!b) {
+            failed = 1;
+            break;
+        }
+        *b = *a;
+        b->ranges = NULL;
+        b->formula[0] = b->formula[1] = b->xml = NULL;
+        for (k = 0; k < 3; k++)
+            b->points[k].value = NULL;
+        if (a->nranges && !(b->ranges = malloc((size_t)a->nranges * sizeof *b->ranges)))
+            failed = 1;
+        else if (a->nranges)
+            memcpy(b->ranges, a->ranges, (size_t)a->nranges * sizeof *b->ranges);
+        if (failed)
+            b->nranges = 0;
+        b->formula[0] = dup_or_null(a->formula[0], &failed);
+        b->formula[1] = dup_or_null(a->formula[1], &failed);
+        b->xml = dup_or_null(a->xml, &failed);
+        for (k = 0; k < 3; k++)
+            b->points[k].value = dup_or_null(a->points[k].value, &failed);
+    }
+    if (failed) {
+        owf_sheet_free_extras(dst);
+        return -1;
+    }
+    return 0;
 }
 
 void owf_book_free(owf_book *book)

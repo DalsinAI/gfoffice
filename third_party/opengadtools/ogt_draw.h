@@ -48,6 +48,8 @@ typedef struct ogt_ctx {
     int n;
     ULONG rgb[OGT_MAX_PENS];
     LONG pen[OGT_MAX_PENS];
+    void *icons;            /* the icon sets drawn on this context (ogt_iconset), freed with it */
+    void (*icons_free)(void *);
 } ogt_ctx;
 
 /* Sets up drawing a theme on a screen. 1, or 0 when the theme can't draw there. */

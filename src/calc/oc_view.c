@@ -631,7 +631,53 @@ typedef struct {
     int nr, nc, ysplit, xsplit;
     int rowhdr;             /* the row numbers' bar's width */
     unsigned char *ci;      /* nr x nc */
+    const oc_look *looks;   /* conditional formatting's, nr x nc, or NULL */
 } drawing;
+
+/* A visible line's place in l by its row (column), or -1: they go up, frozen ones first. */
+static int line_of(const oc_line *l, int n, unsigned index)
+{
+    int lo = 0, hi = n;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (l[mid].index < index)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < n && l[lo].index == index ? lo : -1;
+}
+
+/* The look conditional formatting gives a cell showing, or NULL. */
+static const oc_look *look_at(const drawing *d, unsigned row, unsigned col)
+{
+    int i, j;
+    if (!d->looks || (i = line_of(d->rl, d->nr, row)) < 0 || (j = line_of(d->cl, d->nc, col)) < 0)
+        return NULL;
+    return &d->looks[(size_t)i * (size_t)d->nc + (size_t)j];
+}
+
+/* A cell's fill, conditional formatting's first: OWF_SHADE(rgb) or 0. */
+static unsigned long fill_at(const drawing *d, unsigned row, unsigned col, const owf_cellstyle *cs)
+{
+    const oc_look *l = look_at(d, row, col);
+    return l && (l->parts & OC_LOOK_FILL) ? OWF_SHADE(l->fill) : cs->fill;
+}
+
+/* A cell's style with what conditional formatting gives it (in *buf when it gives something). */
+static const owf_cellstyle *style_with_look(const drawing *d, const owf_cell *c, const owf_cellstyle *st, owf_cellstyle *buf)
+{
+    const oc_look *l = look_at(d, c->row, c->col);
+    if (!l || (!l->set && !(l->parts & (OC_LOOK_FILL | OC_LOOK_COLOUR))))
+        return st;
+    *buf = *st;
+    buf->font.flags = (buf->font.flags & ~l->set) | (l->flags & l->set);
+    if (l->parts & OC_LOOK_COLOUR)
+        buf->font.colour = l->colour;
+    if (l->parts & OC_LOOK_FILL)
+        buf->fill = OWF_SHADE(l->fill);
+    return buf;
+}
 
 #define CI(d, i, j) ((d)->ci[(size_t)(i) * (size_t)(d)->nc + (size_t)(j)])
 
@@ -875,7 +921,8 @@ static int wrapped_items(drawing *d, const owf_cell *c, const owf_cellstyle *st,
 static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int x, int w, int y, int h)
 {
     oc_core *core = d->core;
-    const owf_cellstyle *st = oc_cell_style(core, c, c->col);
+    owf_cellstyle with_look;
+    const owf_cellstyle *st = style_with_look(d, c, oc_cell_style(core, c, c->col), &with_look);
     char buf[256];
     unsigned long colour = OWF_COLOUR_AUTO;
     int n, tw, pad = PAD * core->zoom / 100 + 1, align, lo, hi;
@@ -1262,6 +1309,206 @@ static int range_selected_row(const oc_sheetstate *st, unsigned row)
     return 0;
 }
 
+/* ---- Comments ---- */
+
+const owf_comment *oc_core_comment(const oc_core *core, int sheet, unsigned row, unsigned col)
+{
+    if (sheet < 0 || sheet >= core->book->nsheets)
+        return NULL;
+    return owf_sheet_comment(&core->book->sheets[sheet], row, col);
+}
+
+/* Where a cell shows in the panes: the box of it (a merged range's, when it is one's first cell); 0 when it
+ * doesn't show. */
+static int cell_box(const drawing *d, unsigned row, unsigned col, int *x, int *y, int *w, int *h)
+{
+    const owf_range *m = oc_merge_at(d->sheet, row, col);
+    int i = line_of(d->rl, d->nr, row), j = line_of(d->cl, d->nc, col), open;
+    if (m && m->first_row == row && m->first_col == col && i >= 0 && j >= 0)
+        return range_box(d, m, d->rl[i].pane, d->cl[j].pane, x, y, w, h, &open);
+    if (i < 0 || j < 0 || (m && (m->first_row != row || m->first_col != col)))
+        return 0;
+    *x = d->cl[j].pos;
+    *y = d->rl[i].pos;
+    *w = d->cl[j].size;
+    *h = d->rl[i].size;
+    return 1;
+}
+
+static int comment_marks(drawing *d)
+{
+    const owf_sheet *s = d->sheet;
+    int k, size = 5 * d->core->zoom / 100;
+    if (size < 3)
+        size = 3;
+    for (k = 0; k < s->ncomments; k++) {
+        int x, y, w, h;
+        oc_draw_item *it;
+        if (!cell_box(d, s->comments[k].row, s->comments[k].col, &x, &y, &w, &h))
+            continue;
+        if (!(it = add_box(d->list, OC_DRAW_MARK, OC_ROLE_COMMENT, x + w - 1 - (size < w ? size : w - 1), y,
+                           size < w ? size : w - 1, size < h ? size : h - 1)))
+            return 0;
+        it->row = s->comments[k].row;
+        it->col = s->comments[k].col;
+    }
+    return 1;
+}
+
+/* Whether the AutoFilter filters by the column at offset k of its range (a filterColumn colId="k"). */
+static int filters_by(const owf_sheet *s, unsigned k)
+{
+    const char *p = s->autofilter_xml;
+    if (!p)
+        return 0;
+    for (; (p = strstr(p, "<filterColumn")) != NULL; p++) {
+        const char *end = strchr(p, '>'), *at = strstr(p, " colId=\"");
+        unsigned long v = 0;
+        if (!at || !end || at > end)
+            continue;
+        for (at += 8; *at >= '0' && *at <= '9'; at++)
+            v = v * 10 + (unsigned long)(*at - '0');
+        if (*at == '"' && v == k)
+            return 1;
+    }
+    return 0;
+}
+
+/* The AutoFilter's buttons: one at the right of each cell of its first row, square, a pixel in from the
+ * cell's bottom right, as Excel draws them; flags 1 for a column it filters by. */
+static int filter_buttons(drawing *d)
+{
+    const owf_sheet *s = d->sheet;
+    int i, j;
+    if (!s->has_autofilter || (i = line_of(d->rl, d->nr, s->autofilter.first_row)) < 0)
+        return 1;
+    for (j = 0; j < d->nc; j++) {
+        unsigned col = d->cl[j].index;
+        int size = d->rl[i].size - 3, cap = 17 * d->core->zoom / 100;
+        oc_draw_item *it;
+        if (col < s->autofilter.first_col || col > s->autofilter.last_col)
+            continue;
+        if (size > cap)
+            size = cap;
+        if (size > d->cl[j].size - 2)
+            size = d->cl[j].size - 2;
+        if (size < 5)
+            continue;
+        if (!(it = add_box(d->list, OC_DRAW_FILTER, OC_ROLE_FILTER, d->cl[j].pos + d->cl[j].size - 2 - size,
+                           d->rl[i].pos + d->rl[i].size - 2 - size, size, size)))
+            return 0;
+        it->flags = (unsigned)filters_by(s, col - s->autofilter.first_col);
+        it->row = s->autofilter.first_row;
+        it->col = col;
+    }
+    return 1;
+}
+
+/* The active cell's comment, beside it, as Excel shows one when the pointer is over its cell: a pale yellow
+ * box (OC_ROLE_NOTE) with a grey frame, its author on the first line in bold (unless the text begins with
+ * the name, as Excel's own comments do) and the text wrapped to the box, in the book's font at 9 points.
+ * To the right of the cell, else to its left; as tall as its lines, up to the grid. Not while typing. */
+#define NOTE_WIDTH 160              /* pixels at 100%: Excel's box is 108 points */
+#define NOTE_LINES 24
+
+static int comment_note(drawing *d)
+{
+    oc_core *core = d->core;
+    const oc_sheetstate *st = oc_state_const(core);
+    const owf_comment *cm = owf_sheet_comment(d->sheet, st->sel.row, st->sel.col);
+    const owf_validation *dv = cm ? NULL : owf_sheet_validation(d->sheet, st->sel.row, st->sel.col);
+    owf_comment prompt;
+    owf_cellstyle font;
+    const char *text;
+    size_t n, at = 0, starts[NOTE_LINES], ends[NOTE_LINES];
+    int x, y, w, h, bw, bh, bx, by, pad, lp, nl = 0, author = 0, k, avail;
+    oc_draw_item *it;
+    if (!cm && dv && dv->show_prompt && (dv->prompt || dv->prompt_title)) {
+        /* no comment: the cell's validation's input message, as Excel shows it, its title in bold */
+        memset(&prompt, 0, sizeof prompt);
+        prompt.author = dv->prompt_title;
+        prompt.text = dv->prompt ? dv->prompt : (char *)"";
+        cm = &prompt;
+    }
+    if (!cm || core->edit_mode || !cell_box(d, st->sel.row, st->sel.col, &x, &y, &w, &h))
+        return 1;
+    owf_cellstyle_init(&font);
+    font.font.font = -1;
+    font.font.size = 180;
+    pad = 4 * core->zoom / 100 + 1;
+    bw = NOTE_WIDTH * core->zoom / 100;
+    lp = oc_line_px(core, font.font.size);
+    avail = bw - 2 * pad;
+    if (avail < 8)
+        return 1;
+    text = cm->text ? cm->text : "";
+    n = strlen(text);
+    if (cm->author && *cm->author && (cm == &prompt || strncmp(text, cm->author, strlen(cm->author))))
+        author = 1;                                          /* a comment's author, unless its text begins with it */
+    while (at < n && nl < NOTE_LINES - author) {
+        size_t e = wrap_line(core, &font, text, at, n, avail), next = e;
+        if (next < n && (text[next] == ' ' || text[next] == '\n'))
+            next++;
+        while (e > at && (text[e - 1] == ' ' || text[e - 1] == '\r'))
+            e--;
+        starts[nl] = at;
+        ends[nl] = e;
+        nl++;
+        at = next;
+    }
+    bh = (nl + author) * lp + 2 * pad;
+    if (bh > core->height - core->colhdr)
+        bh = core->height - core->colhdr;
+    bx = x + w + 6;
+    if (bx + bw > core->width && x - 6 - bw >= d->rowhdr)
+        bx = x - 6 - bw;                                     /* no room on the right: the left */
+    by = y;
+    if (by + bh > core->height)
+        by = core->height - bh;
+    if (by < core->colhdr)
+        by = core->colhdr;
+    if (!(it = add_box(d->list, OC_DRAW_FILL, OC_ROLE_NOTE, bx, by, bw, bh)))
+        return 0;
+    it->row = st->sel.row;
+    it->col = st->sel.col;
+    if (!(it = add_box(d->list, OC_DRAW_FRAME, OC_ROLE_NOTE_LINE, bx, by, bw, bh)))
+        return 0;
+    it->line = 1;
+    it->clip_x = 0;
+    it->clip_y = 0;
+    it->clip_w = core->width;
+    it->clip_h = core->height;
+    for (k = -author; k < nl; k++) {
+        const char *t = k < 0 ? cm->author : text + starts[k];
+        size_t len = k < 0 ? strlen(cm->author) : ends[k] - starts[k];
+        int ly = by + pad + (k + author) * lp;
+        if (ly + lp > by + bh)
+            break;
+        if (!(it = add(d->list, OC_DRAW_TEXT, OC_ROLE_TEXT)))
+            return 0;
+        it->x = bx;
+        it->w = bw;
+        it->y = ly;
+        it->h = lp;
+        it->clip_x = bx + 1;
+        it->clip_w = bw - 2;
+        it->clip_y = ly;
+        it->clip_h = lp;
+        it->text_x = bx + pad;
+        it->align = OC_ALIGN_LEFT;
+        it->valign = OWF_VALIGN_CENTRE;
+        it->flags = k < 0 ? OWF_BOLD : 0;
+        it->font = -1;
+        it->size = font.font.size;
+        it->rgb = 0;
+        it->row = st->sel.row;
+        it->col = st->sel.col;
+        if (!add_text(d->list, it, t, len))
+            return 0;
+    }
+    return 1;
+}
+
 static int build(drawing *d)
 {
     oc_core *core = d->core;
@@ -1279,7 +1526,7 @@ static int build(drawing *d)
             const owf_cellstyle *cs = oc_cell_style(core, c, d->cl[j].index);
             if (!oc_cell_empty(c))
                 CI(d, i, j) |= CI_VALUE;
-            if (OWF_SHADE_SET(cs->fill))
+            if (OWF_SHADE_SET(fill_at(d, d->rl[i].index, d->cl[j].index, cs)))
                 CI(d, i, j) |= CI_FILLED;
         }
     for (m = 0; m < s->nmerges; m++) {
@@ -1313,7 +1560,7 @@ static int build(drawing *d)
             cs = oc_cell_style(core, c, d->cl[j].index);
             if (!(it = add_box(list, OC_DRAW_FILL, OC_ROLE_CELL_FILL, d->cl[j].pos, d->rl[i].pos, d->cl[j].size, d->rl[i].size)))
                 return 0;
-            it->rgb = OWF_SHADE_RGB(cs->fill);
+            it->rgb = OWF_SHADE_RGB(fill_at(d, d->rl[i].index, d->cl[j].index, cs));
             it->row = d->rl[i].index;
             it->col = d->cl[j].index;
         }
@@ -1321,7 +1568,8 @@ static int build(drawing *d)
         const owf_range *g = &s->merges[m];
         const owf_cell *c = owf_sheet_find(s, g->first_row, g->first_col);
         const owf_cellstyle *cs = oc_cell_style(core, c, g->first_col);
-        if (!OWF_SHADE_SET(cs->fill))
+        unsigned long fill = fill_at(d, g->first_row, g->first_col, cs);
+        if (!OWF_SHADE_SET(fill))
             continue;
         for (pr = 0; pr < 2; pr++)
             for (pc = 0; pc < 2; pc++) {
@@ -1330,7 +1578,7 @@ static int build(drawing *d)
                     continue;
                 if (!(it = add_box(list, OC_DRAW_FILL, OC_ROLE_CELL_FILL, x, y, w, h)))
                     return 0;
-                it->rgb = OWF_SHADE_RGB(cs->fill);
+                it->rgb = OWF_SHADE_RGB(fill);
                 it->row = g->first_row;
                 it->col = g->first_col;
             }
@@ -1365,11 +1613,12 @@ static int build(drawing *d)
                     for (pc = 0; pc < 2; pc++) {
                         int x, y, w, h, open;
                         const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, a.first_row, a.first_col), a.first_col);
+                        unsigned long fill = fill_at(d, a.first_row, a.first_col, cs);
                         if (!range_box(d, &a, pr, pc, &x, &y, &w, &h, &open))
                             continue;
-                        if (!(it = add_box(list, OC_DRAW_FILL, OWF_SHADE_SET(cs->fill) ? OC_ROLE_CELL_FILL : OC_ROLE_PAPER, x, y, w, h)))
+                        if (!(it = add_box(list, OC_DRAW_FILL, OWF_SHADE_SET(fill) ? OC_ROLE_CELL_FILL : OC_ROLE_PAPER, x, y, w, h)))
                             return 0;
-                        it->rgb = OWF_SHADE_SET(cs->fill) ? OWF_SHADE_RGB(cs->fill) : 0xFFFFFFUL;
+                        it->rgb = OWF_SHADE_SET(fill) ? OWF_SHADE_RGB(fill) : 0xFFFFFFUL;
                     }
             }
         }
@@ -1490,6 +1739,10 @@ static int build(drawing *d)
         }
         oc_draw_list_free(&texts);
     }
+
+    /* comments' marks: a small red triangle in each commented cell's top right corner (a merged range's) */
+    if (!comment_marks(d) || !filter_buttons(d))
+        return 0;
 
     /* 6. the row numbers and column letters */
     if (core->colhdr > 0) {
@@ -1636,7 +1889,8 @@ static int build(drawing *d)
                 }
             }
     }
-    return 1;
+    /* 10. the active cell's comment, on top of everything */
+    return comment_note(d);
 }
 
 int oc_view_draw(oc_core *core, oc_draw_list *list)
@@ -1660,6 +1914,7 @@ int oc_view_draw(oc_core *core, oc_draw_list *list)
     d.nr = lines(core, 0, d.rl, MAX_LINES, &d.ysplit);
     d.nc = lines(core, 1, d.cl, MAX_LINES, &d.xsplit);
     d.ci = calloc((size_t)(d.nr ? d.nr : 1) * (size_t)(d.nc ? d.nc : 1), 1);
+    d.looks = oc_cf_looks(core, d.rl, d.nr, d.cl, d.nc);
     ok = d.ci != NULL && build(&d);
     free(d.ci);
     free(d.rl);

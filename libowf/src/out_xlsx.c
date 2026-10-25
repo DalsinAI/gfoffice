@@ -258,6 +258,65 @@ static void put_rgb(owf_buf *b, const char *element, unsigned long rgb)
     owf_buf_printf(b, "<%s rgb=\"FF%06lX\"/>", element, rgb & 0xFFFFFFUL);
 }
 
+/* ---- Conditional formatting's looks: the styles' dxfs, one for each rule with a look, sheet by sheet ---- */
+
+static int cf_has_look(const owf_condfmt *cf)
+{
+    return cf->font_set || OWF_SHADE_SET(cf->font_colour) || OWF_SHADE_SET(cf->fill);
+}
+
+static int cf_writable(const owf_condfmt *cf)
+{
+    return cf->nranges > 0 && (cf->type != OWF_CF_KEPT || cf->xml);
+}
+
+/* The dxf of sheet's rule k (-1: none): the looks before it counted. */
+static int cf_dxf(const owf_book *book, int sheet, int k)
+{
+    int i, j, n = 0;
+    for (i = 0; i <= sheet; i++)
+        for (j = 0; j < book->sheets[i].ncondfmts && (i < sheet || j < k); j++)
+            n += cf_writable(&book->sheets[i].condfmts[j]) && cf_has_look(&book->sheets[i].condfmts[j]);
+    return cf_writable(&book->sheets[sheet].condfmts[k]) && cf_has_look(&book->sheets[sheet].condfmts[k]) ? n : -1;
+}
+
+static void dxfs_xml(xlsx_out *w, owf_buf *b)
+{
+    static const struct { unsigned flag; const char *on, *off; } parts[4] = {
+        { OWF_BOLD, "<b/>", "<b val=\"0\"/>" }, { OWF_ITALIC, "<i/>", "<i val=\"0\"/>" },
+        { OWF_STRIKE, "<strike/>", "<strike val=\"0\"/>" }, { OWF_UNDERLINE, "<u/>", "<u val=\"none\"/>" }
+    };
+    const owf_book *book = w->book;
+    int i, j, k, n = 0;
+    for (i = 0; i < book->nsheets; i++)
+        for (j = 0; j < book->sheets[i].ncondfmts; j++)
+            n += cf_writable(&book->sheets[i].condfmts[j]) && cf_has_look(&book->sheets[i].condfmts[j]);
+    owf_buf_printf(b, "<dxfs count=\"%d\">", n);
+    for (i = 0; i < book->nsheets; i++)
+        for (j = 0; j < book->sheets[i].ncondfmts; j++) {
+            const owf_condfmt *cf = &book->sheets[i].condfmts[j];
+            if (!cf_writable(cf) || !cf_has_look(cf))
+                continue;
+            owf_buf_puts(b, "<dxf>");
+            if (cf->font_set || OWF_SHADE_SET(cf->font_colour)) {
+                owf_buf_puts(b, "<font>");
+                for (k = 0; k < 4; k++)
+                    if (cf->font_set & parts[k].flag)
+                        owf_buf_puts(b, cf->font_flags & parts[k].flag ? parts[k].on : parts[k].off);
+                if (OWF_SHADE_SET(cf->font_colour))
+                    put_rgb(b, "color", OWF_SHADE_RGB(cf->font_colour));
+                owf_buf_puts(b, "</font>");
+            }
+            if (OWF_SHADE_SET(cf->fill)) {               /* a look's solid fill is its bgColor, as Excel writes it */
+                owf_buf_puts(b, "<fill><patternFill>");
+                put_rgb(b, "bgColor", OWF_SHADE_RGB(cf->fill));
+                owf_buf_puts(b, "</patternFill></fill>");
+            }
+            owf_buf_puts(b, "</dxf>");
+        }
+    owf_buf_puts(b, "</dxfs>");
+}
+
 static void styles_xml(xlsx_out *w, owf_buf *b)
 {
     const owf_book *book = w->book;
@@ -367,8 +426,9 @@ static void styles_xml(xlsx_out *w, owf_buf *b)
             owf_buf_printf(b, " indent=\"%u\"", (unsigned)s->indent);
         owf_buf_puts(b, "/></xf>");
     }
-    owf_buf_puts(b, "</cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>"
-                    "<dxfs count=\"0\"/><tableStyles count=\"0\"/></styleSheet>\n");
+    owf_buf_puts(b, "</cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>");
+    dxfs_xml(w, b);
+    owf_buf_puts(b, "<tableStyles count=\"0\"/></styleSheet>\n");
 }
 
 /* ---- Shared strings ---- */
@@ -539,6 +599,21 @@ static void collect_links(xlsx_out *w)
                 free(formula_for_file(w, book->sheets[i].cells[k].formula));
     for (i = 0; i < book->nnames && !w->failed; i++)
         free(formula_for_file(w, book->names[i].formula));
+    for (i = 0; i < book->nsheets && !w->failed; i++)
+        for (k = 0; k < book->sheets[i].ncondfmts && !w->failed; k++) {
+            const owf_condfmt *cf = &book->sheets[i].condfmts[k];
+            int j;
+            for (j = 0; j < 2 && cf->type != OWF_CF_KEPT; j++)
+                if (cf->formula[j])
+                    free(formula_for_file(w, cf->formula[j]));
+        }
+    for (i = 0; i < book->nsheets && !w->failed; i++)
+        for (k = 0; k < book->sheets[i].nvalidations && !w->failed; k++) {
+            int j;
+            for (j = 0; j < 2; j++)
+                if (book->sheets[i].validations[k].formula[j])
+                    free(formula_for_file(w, book->sheets[i].validations[k].formula[j]));
+        }
 }
 
 /* ---- A sheet ---- */
@@ -710,6 +785,239 @@ static void put_row_start(owf_buf *b, const owf_sheet *sh, unsigned long row, in
     owf_buf_putc(b, '>');
 }
 
+/* ---- Comments: commentsN.xml, and the boxes Excel shows them in (a VML drawing) ---- */
+
+static void comments_xml(xlsx_out *w, owf_buf *b, int index)
+{
+    const owf_sheet *sh = &w->book->sheets[index];
+    const char **authors = calloc((size_t)sh->ncomments + 1, sizeof *authors);
+    int i, k, nauthors = 0;
+    if (!authors) {
+        w->failed = 1;
+        return;
+    }
+    owf_buf_puts(b, XML_HEAD "<comments xmlns=\"" NS_MAIN "\"><authors>");
+    for (i = 0; i < sh->ncomments; i++) {
+        const char *a = sh->comments[i].author ? sh->comments[i].author : "";
+        for (k = 0; k < nauthors && strcmp(authors[k], a); k++)
+            ;
+        if (k == nauthors) {
+            authors[nauthors++] = a;
+            owf_buf_puts(b, "<author>");
+            put_xml(b, a, X_TEXT);
+            owf_buf_puts(b, "</author>");
+        }
+    }
+    owf_buf_puts(b, "</authors><commentList>");
+    for (i = 0; i < sh->ncomments; i++) {
+        const owf_comment *c = &sh->comments[i];
+        const char *a = c->author ? c->author : "";
+        if (c->row >= MAX_ROWS || c->col >= MAX_COLS)
+            continue;
+        for (k = 0; k < nauthors && strcmp(authors[k], a); k++)
+            ;
+        owf_buf_puts(b, "<comment ref=\"");
+        put_ref(b, c->row, c->col);
+        owf_buf_printf(b, "\" authorId=\"%d\"><text><t xml:space=\"preserve\">", k);
+        put_text(b, c->text, strlen(c->text), X_CELL);
+        owf_buf_puts(b, "</t></text></comment>");
+    }
+    owf_buf_puts(b, "</commentList></comments>\n");
+    free(authors);
+}
+
+/* Excel shows a comment in a box its legacy drawing describes: one hidden note shape a comment, beside its
+ * cell (the anchor: column, offset, row, offset of the box's corners). */
+static void comments_vml(xlsx_out *w, owf_buf *b, int index)
+{
+    const owf_sheet *sh = &w->book->sheets[index];
+    int i;
+    owf_buf_printf(b, "<xml xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" "
+                      "xmlns:x=\"urn:schemas-microsoft-com:office:excel\"><o:shapelayout v:ext=\"edit\">"
+                      "<o:idmap v:ext=\"edit\" data=\"%d\"/></o:shapelayout>"
+                      "<v:shapetype id=\"_x0000_t202\" coordsize=\"21600,21600\" o:spt=\"202\" "
+                      "path=\"m,l,21600r21600,l21600,xe\"><v:stroke joinstyle=\"miter\"/>"
+                      "<v:path gradientshapeok=\"t\" o:connecttype=\"rect\"/></v:shapetype>\n", index + 1);
+    for (i = 0; i < sh->ncomments; i++) {
+        const owf_comment *c = &sh->comments[i];
+        if (c->row >= MAX_ROWS || c->col >= MAX_COLS)
+            continue;
+        owf_buf_printf(b, "<v:shape id=\"_x0000_s%d\" type=\"#_x0000_t202\" style=\"position:absolute;margin-left:59.25pt;"
+                          "margin-top:1.5pt;width:108pt;height:59.25pt;z-index:%d;visibility:hidden\" fillcolor=\"#ffffe1\" "
+                          "o:insetmode=\"auto\"><v:fill color2=\"#ffffe1\"/><v:shadow on=\"t\" color=\"black\" obscured=\"t\"/>"
+                          "<v:path o:connecttype=\"none\"/><v:textbox style=\"mso-direction-alt:auto\">"
+                          "<div style=\"text-align:left\"></div></v:textbox><x:ClientData ObjectType=\"Note\"><x:MoveWithCells/>"
+                          "<x:SizeWithCells/><x:Anchor>%u, 15, %u, 2, %u, 15, %u, 16</x:Anchor><x:AutoFill>False</x:AutoFill>"
+                          "<x:Row>%u</x:Row><x:Column>%u</x:Column></x:ClientData></v:shape>\n",
+                       1024 * (index + 1) + i + 1, i + 1, c->col + 1, c->row, c->col + 3, c->row + 3, c->row, c->col);
+    }
+    owf_buf_puts(b, "</xml>\n");
+}
+
+/* A formula of the model in a file's element, as Excel writes it. */
+static void put_formula_element(xlsx_out *w, owf_buf *b, const char *element, const char *text)
+{
+    char *f = formula_for_file(w, text);
+    if (!f)
+        return;
+    owf_buf_printf(b, "<%s>", element);
+    put_xml(b, f, X_TEXT);
+    owf_buf_printf(b, "</%s>", element);
+    free(f);
+}
+
+static void cf_xml(xlsx_out *w, owf_buf *b, int index)
+{
+    static const char *const ops[8] = { "between", "notBetween", "equal", "notEqual", "greaterThan", "lessThan",
+                                        "greaterThanOrEqual", "lessThanOrEqual" };
+    static const char *const kinds[6] = { "min", "max", "num", "percent", "percentile", "formula" };
+    const owf_sheet *sh = &w->book->sheets[index];
+    int i, r, k;
+    for (i = 0; i < sh->ncondfmts && !w->failed; i++) {
+        const owf_condfmt *cf = &sh->condfmts[i];
+        int dxf = cf_dxf(w->book, index, i), any = 0;
+        if (!cf_writable(cf))
+            continue;
+        owf_buf_puts(b, "<conditionalFormatting sqref=\"");
+        for (r = 0; r < cf->nranges; r++) {
+            const owf_range *m = &cf->ranges[r];
+            if (m->last_row >= MAX_ROWS || m->last_col >= MAX_COLS)
+                continue;
+            if (any++)
+                owf_buf_putc(b, ' ');
+            put_ref(b, m->first_row, m->first_col);
+            if (m->last_row != m->first_row || m->last_col != m->first_col) {
+                owf_buf_putc(b, ':');
+                put_ref(b, m->last_row, m->last_col);
+            }
+        }
+        owf_buf_puts(b, "\">");
+        if (cf->type == OWF_CF_KEPT) {                   /* as read, its priority and look put back in */
+            const char *rest = cf->xml + (strncmp(cf->xml, "<cfRule", 7) ? 0 : 7);
+            owf_buf_printf(b, "<cfRule priority=\"%d\"", cf->priority > 0 ? cf->priority : i + 1);
+            if (dxf >= 0)
+                owf_buf_printf(b, " dxfId=\"%d\"", dxf);
+            owf_buf_puts(b, rest);
+            owf_buf_puts(b, "</conditionalFormatting>");
+            continue;
+        }
+        owf_buf_printf(b, "<cfRule type=\"%s\"", cf->type == OWF_CF_CELL_IS ? "cellIs" : cf->type == OWF_CF_EXPRESSION ? "expression" : "colorScale");
+        if (dxf >= 0 && cf->type != OWF_CF_COLOUR_SCALE)
+            owf_buf_printf(b, " dxfId=\"%d\"", dxf);
+        owf_buf_printf(b, " priority=\"%d\"", cf->priority > 0 ? cf->priority : i + 1);
+        if (cf->stop)
+            owf_buf_puts(b, " stopIfTrue=\"1\"");
+        if (cf->type == OWF_CF_CELL_IS)
+            owf_buf_printf(b, " operator=\"%s\"", ops[cf->op >= 0 && cf->op < 8 ? cf->op : 2]);
+        owf_buf_putc(b, '>');
+        if (cf->type == OWF_CF_COLOUR_SCALE) {
+            owf_buf_puts(b, "<colorScale>");
+            for (k = 0; k < cf->npoints && k < 3; k++) {
+                const owf_cfpoint *p = &cf->points[k];
+                owf_buf_printf(b, "<cfvo type=\"%s\"", kinds[p->kind >= 0 && p->kind < 6 ? p->kind : 0]);
+                if (p->value && p->kind == OWF_CFV_FORMULA) {
+                    char *f = formula_for_file(w, p->value);
+                    if (f) {
+                        owf_buf_puts(b, " val=\"");
+                        put_xml(b, f, X_ATTR);
+                        owf_buf_putc(b, '"');
+                        free(f);
+                    }
+                } else if (p->value) {
+                    owf_buf_puts(b, " val=\"");
+                    put_xml(b, p->value, X_ATTR);
+                    owf_buf_putc(b, '"');
+                }
+                owf_buf_puts(b, "/>");
+            }
+            for (k = 0; k < cf->npoints && k < 3; k++)
+                put_rgb(b, "color", OWF_SHADE_RGB(cf->points[k].colour));
+            owf_buf_puts(b, "</colorScale>");
+        } else {
+            for (k = 0; k < 2; k++)
+                if (cf->formula[k])
+                    put_formula_element(w, b, "formula", cf->formula[k]);
+        }
+        owf_buf_puts(b, "</cfRule></conditionalFormatting>");
+    }
+}
+
+/* A sqref: the ranges Excel can hold, one space between. 0 when none could be. */
+static int put_sqref(owf_buf *b, const owf_range *ranges, int n)
+{
+    int r, any = 0;
+    for (r = 0; r < n; r++) {
+        const owf_range *m = &ranges[r];
+        if (m->last_row >= MAX_ROWS || m->last_col >= MAX_COLS)
+            continue;
+        if (any++)
+            owf_buf_putc(b, ' ');
+        put_ref(b, m->first_row, m->first_col);
+        if (m->last_row != m->first_row || m->last_col != m->first_col) {
+            owf_buf_putc(b, ':');
+            put_ref(b, m->last_row, m->last_col);
+        }
+    }
+    return any;
+}
+
+static void put_message(owf_buf *b, const char *name, const char *text)
+{
+    if (!text)
+        return;
+    owf_buf_printf(b, " %s=\"", name);
+    put_xml(b, text, X_ATTR);
+    owf_buf_putc(b, '"');
+}
+
+static void dv_xml(xlsx_out *w, owf_buf *b, int index)
+{
+    static const char *const types[8] = { "none", "whole", "decimal", "list", "date", "time", "textLength", "custom" };
+    static const char *const ops[8] = { "between", "notBetween", "equal", "notEqual", "greaterThan", "lessThan",
+                                        "greaterThanOrEqual", "lessThanOrEqual" };
+    static const char *const styles[3] = { "stop", "warning", "information" };
+    const owf_sheet *sh = &w->book->sheets[index];
+    int i, k, n = 0;
+    for (i = 0; i < sh->nvalidations; i++)
+        n += sh->validations[i].nranges > 0;
+    if (!n)
+        return;
+    owf_buf_printf(b, "<dataValidations count=\"%d\">", n);
+    for (i = 0; i < sh->nvalidations && !w->failed; i++) {
+        const owf_validation *dv = &sh->validations[i];
+        int type = dv->type >= 0 && dv->type < 8 ? dv->type : 0;
+        if (!dv->nranges)
+            continue;
+        owf_buf_puts(b, "<dataValidation");
+        if (type)
+            owf_buf_printf(b, " type=\"%s\"", types[type]);
+        if (dv->error_style > 0 && dv->error_style < 3)
+            owf_buf_printf(b, " errorStyle=\"%s\"", styles[dv->error_style]);
+        if (dv->op > 0 && dv->op < 8 && type != OWF_DV_LIST && type != OWF_DV_CUSTOM)
+            owf_buf_printf(b, " operator=\"%s\"", ops[dv->op]);
+        if (dv->allow_blank)
+            owf_buf_puts(b, " allowBlank=\"1\"");
+        if (dv->no_dropdown)
+            owf_buf_puts(b, " showDropDown=\"1\"");
+        if (dv->show_prompt)
+            owf_buf_puts(b, " showInputMessage=\"1\"");
+        if (dv->show_error)
+            owf_buf_puts(b, " showErrorMessage=\"1\"");
+        put_message(b, "errorTitle", dv->error_title);
+        put_message(b, "error", dv->error);
+        put_message(b, "promptTitle", dv->prompt_title);
+        put_message(b, "prompt", dv->prompt);
+        owf_buf_puts(b, " sqref=\"");
+        put_sqref(b, dv->ranges, dv->nranges);
+        owf_buf_puts(b, "\">");
+        for (k = 0; k < 2; k++)
+            if (dv->formula[k])
+                put_formula_element(w, b, k ? "formula2" : "formula1", dv->formula[k]);
+        owf_buf_puts(b, "</dataValidation>");
+    }
+    owf_buf_puts(b, "</dataValidations>");
+}
+
 static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
 {
     const owf_sheet *sh = &w->book->sheets[index];
@@ -784,6 +1092,18 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
             owf_buf_puts(b, "</row>");
         }
     owf_buf_puts(b, "</sheetData>");
+    if (sh->has_autofilter && sh->autofilter.last_row < MAX_ROWS && sh->autofilter.last_col < MAX_COLS) {
+        owf_buf_puts(b, "<autoFilter ref=\"");
+        put_sqref(b, &sh->autofilter, 1);
+        owf_buf_puts(b, "\"");
+        if (sh->autofilter_xml) {
+            owf_buf_putc(b, '>');
+            owf_buf_puts(b, sh->autofilter_xml);
+            owf_buf_puts(b, "</autoFilter>");
+        } else {
+            owf_buf_puts(b, "/>");
+        }
+    }
     if (sh->nmerges) {
         int n = 0;
         for (i = 0; i < sh->nmerges; i++)
@@ -803,8 +1123,12 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
             owf_buf_puts(b, "</mergeCells>");
         }
     }
-    owf_buf_puts(b, "<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>"
-                    "</worksheet>\n");
+    cf_xml(w, b, index);
+    dv_xml(w, b, index);
+    owf_buf_puts(b, "<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>");
+    if (sh->ncomments)                                   /* the comments' boxes (sheet rels: rId1 comments, rId2 these) */
+        owf_buf_puts(b, "<legacyDrawing r:id=\"rId2\"/>");
+    owf_buf_puts(b, "</worksheet>\n");
     if (skipped)
         owf_report_add(w->report, OWF_NOTE_LOST, "Cells beyond Excel's 1048576 rows or 16384 columns were left out");
 }
@@ -969,6 +1293,16 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
                         "<Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"" CT "sharedStrings+xml\"/>");
     for (i = 0; i < nsh; i++)
         owf_buf_printf(&part, "<Override PartName=\"/xl/worksheets/sheet%d.xml\" ContentType=\"" CT "worksheet+xml\"/>", i + 1);
+    {
+        int vml = 0;
+        for (i = 0; i < book->nsheets; i++)
+            if (book->sheets[i].ncomments) {
+                owf_buf_printf(&part, "<Override PartName=\"/xl/comments%d.xml\" ContentType=\"" CT "comments+xml\"/>", i + 1);
+                vml = 1;
+            }
+        if (vml)
+            owf_buf_puts(&part, "<Default Extension=\"vml\" ContentType=\"application/vnd.openxmlformats-officedocument.vmlDrawing\"/>");
+    }
     for (i = 0; i < w.links.count; i++)
         owf_buf_printf(&part, "<Override PartName=\"/xl/externalLinks/externalLink%d.xml\" ContentType=\"" CT
                               "externalLink+xml\"/>", i + 1);
@@ -1023,6 +1357,22 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
             result = OWF_ERR_MEMORY;
         snprintf(name, sizeof name, "xl/worksheets/sheet%d.xml", i + 1);
         result = add_part(zip, &part, name, result);
+        if (book->sheets[i].ncomments) {
+            owf_buf_printf(&part, XML_HEAD "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                                  "<Relationship Id=\"rId1\" Type=\"" REL "comments\" Target=\"../comments%d.xml\"/>"
+                                  "<Relationship Id=\"rId2\" Type=\"" REL "vmlDrawing\" Target=\"../drawings/vmlDrawing%d.vml\"/>"
+                                  "</Relationships>\n", i + 1, i + 1);
+            snprintf(name, sizeof name, "xl/worksheets/_rels/sheet%d.xml.rels", i + 1);
+            result = add_part(zip, &part, name, result);
+            comments_xml(&w, &part, i);
+            if (w.failed)
+                result = OWF_ERR_MEMORY;
+            snprintf(name, sizeof name, "xl/comments%d.xml", i + 1);
+            result = add_part(zip, &part, name, result);
+            comments_vml(&w, &part, i);
+            snprintf(name, sizeof name, "xl/drawings/vmlDrawing%d.vml", i + 1);
+            result = add_part(zip, &part, name, result);
+        }
     }
     if (!book->nsheets) {
         owf_buf_puts(&part, XML_HEAD "<worksheet xmlns=\"" NS_MAIN "\"><sheetData/></worksheet>\n");

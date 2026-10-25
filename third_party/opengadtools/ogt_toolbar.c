@@ -3,17 +3,22 @@
 #include <exec/types.h>
 #include <graphics/rastport.h>
 #include <intuition/intuition.h>
+#include <dos/dos.h>
+#include <proto/dos.h>
 #include <proto/graphics.h>
 
 #include <string.h>
 
 #include "ogt_toolbar.h"
 #include "ogt_icons.h"
+#include "ogt_iconset.h"
 
-#define PADX 6
-#define PADY 3
-#define GAP 2
-#define SEP 9
+/* On the style's 4-pixel grid (docs/style/README.md, section 4.1): a 28-pixel
+ * icon makes a 36 x 36 button, and buttons stand 40 apart. */
+#define PADX 4
+#define PADY 4
+#define GAP 4
+#define SEP 8
 
 void ogt_toolbar_set(ogt_toolbar *tb, const ogt_tool *tools, int n, int style)
 {
@@ -42,13 +47,16 @@ int ogt_toolbar_layout(ogt_toolbar *tb, struct RastPort *rp, int x, int y, int m
 
 static int layout_once(ogt_toolbar *tb, struct RastPort *rp, int x, int y, int maxw)
 {
-    int fh = rp->TxHeight, i, cx = x, h;
-    tb->icon_size = tb->style == OGT_TB_INLINE ? fh + 2 : (fh * 2 > 24 ? fh * 2 : 24);
+    int fh = rp->TxHeight, i, cx = x, h, images = 0;
+    /* 1.25 times the font's height (the style guide, 25 October 2026: twice was too big) */
+    tb->icon_size = tb->style == OGT_TB_INLINE ? fh + 2 : ogt_iconset_want(fh);
+    for (i = 0; i < tb->n; i++) images |= tb->tool[i].image != NULL;
+    if (images) tb->icon_size = ogt_iconset_size(tb->icon_size);   /* the sizes a set has */
     switch (tb->style) {
-    case OGT_TB_ICONS: h = tb->icon_size + 2 * PADY + 2; break;
-    case OGT_TB_TEXT: h = fh + 2 * PADY + 4; break;
-    case OGT_TB_INLINE: h = (tb->icon_size > fh ? tb->icon_size : fh) + 2 * PADY + 2; break;
-    default: h = tb->icon_size + fh + 3 * PADY + 2; break;
+    case OGT_TB_ICONS: h = tb->icon_size + 2 * PADY; break;
+    case OGT_TB_TEXT: h = fh + 2 * PADY + 2; break;
+    case OGT_TB_INLINE: h = (tb->icon_size > fh ? tb->icon_size : fh) + 2 * PADY; break;
+    default: h = tb->icon_size + fh + 3 * PADY; break;
     }
     for (i = 0; i < tb->n; i++) {
         int tw = ogt_text_width(rp, tb->tool[i].label), w;
@@ -112,11 +120,29 @@ void ogt_toolbar_enable(ogt_toolbar *tb, int id, int enabled)
         }
 }
 
+void ogt_toolbar_select(ogt_toolbar *tb, int id, int on)
+{
+    int i;
+    for (i = 0; i < tb->n; i++)
+        if (tb->tool[i].id == id) tb->tool[i].selected = on != 0;
+}
+
+/* The button's picture: from the icon set when it has one, else the vector icon. */
+static void picture(ogt_ctx *c, struct RastPort *rp, const ogt_tool *t, int x, int y, int s)
+{
+    if (t->image && ogt_iconset_draw(c, rp, t->image, s, x, y, t->disabled)) return;
+    ogt_icon_draw(c, rp, t->icon, x, y, s, t->disabled);
+}
+
+/* The states (docs/style/README.md, section 2.1): at rest, the bar's own
+ * background; on (a toggle), the inactive selection with an accent frame;
+ * pressed, the inactive selection sunk, and the picture a pixel down and
+ * right; disabled, the set's disabled colours and a muted label. */
 void ogt_toolbar_draw_one(ogt_toolbar *tb, ogt_ctx *c, struct RastPort *rp, int i, int down, const char *bg_key)
 {
     const ogt_tool *t = &tb->tool[i];
     int x = tb->box[i].x, y = tb->box[i].y, w = tb->box[i].w, h = tb->box[i].h, fh = rp->TxHeight;
-    int tw = ogt_text_width(rp, t->label), s = tb->icon_size;
+    int tw = ogt_text_width(rp, t->label), s = tb->icon_size, o = down ? 1 : 0;
     LONG text = t->disabled ? ogt_pen(c, "muted") : ogt_pen(c, "label");
     if (!w) return;
     if (t->primary) {
@@ -126,6 +152,9 @@ void ogt_toolbar_draw_one(ogt_toolbar *tb, ogt_ctx *c, struct RastPort *rp, int 
     } else if (down) {
         ogt_box(rp, ogt_pen(c, "selection.inactive"), x, y, w, h);
         ogt_bevel(rp, ogt_pen(c, "string.shadow"), ogt_pen(c, "string.shine"), x, y, w, h);
+    } else if (t->selected) {
+        ogt_box(rp, ogt_pen(c, "selection.inactive"), x, y, w, h);
+        ogt_frame(rp, ogt_pen(c, "accent"), x, y, w, h);
     } else {
         ogt_fill(c, rp, bg_key, x, y, w, h);
     }
@@ -133,18 +162,18 @@ void ogt_toolbar_draw_one(ogt_toolbar *tb, ogt_ctx *c, struct RastPort *rp, int 
     ogt_bold(rp, t->primary);
     switch (tb->style) {
     case OGT_TB_ICONS:
-        ogt_icon_draw(c, rp, t->icon, x + (w - s) / 2, y + PADY + 1, s, t->disabled);
+        picture(c, rp, t, x + (w - s) / 2 + o, y + (h - s) / 2 + o, s);
         break;
     case OGT_TB_TEXT:
-        ogt_text(rp, text, x + (w - tw) / 2, y + (h - fh) / 2, t->label, w - 4);
+        ogt_text(rp, text, x + (w - tw) / 2 + o, y + (h - fh) / 2 + o, t->label, w - 4);
         break;
     case OGT_TB_INLINE:
-        ogt_icon_draw(c, rp, t->icon, x + PADX, y + (h - s) / 2, s, t->disabled);
-        ogt_text(rp, text, x + PADX + s + 4, y + (h - fh) / 2, t->label, 0);
+        picture(c, rp, t, x + PADX + o, y + (h - s) / 2 + o, s);
+        ogt_text(rp, text, x + PADX + s + 4 + o, y + (h - fh) / 2 + o, t->label, 0);
         break;
     default:
-        ogt_icon_draw(c, rp, t->icon, x + (w - s) / 2, y + PADY + 1, s, t->disabled);
-        ogt_text(rp, text, x + (w - tw) / 2, y + PADY + s + PADY, t->label, w - 2);
+        picture(c, rp, t, x + (w - s) / 2 + o, y + PADY + o, s);
+        ogt_text(rp, text, x + (w - tw) / 2 + o, y + PADY + s + PADY + o, t->label, w - 2);
         break;
     }
     ogt_bold(rp, 0);
@@ -155,7 +184,42 @@ void ogt_toolbar_draw(ogt_toolbar *tb, ogt_ctx *c, struct RastPort *rp, const ch
     int i;
     for (i = 0; i < tb->n; i++) {
         if (tb->tool[i].sep_before && i && tb->box[i].w)
-            ogt_vline(rp, ogt_pen(c, "group.line"), tb->box[i].x - SEP / 2 - 1, tb->box[i].y + 4, tb->box[i].h - 8);
+            ogt_vline(rp, ogt_pen(c, "group.line"), tb->box[i].x - (SEP + GAP) / 2, tb->box[i].y + 4, tb->box[i].h - 8);
         ogt_toolbar_draw_one(tb, c, rp, i, i == tb->pressed, bg_key);
     }
+}
+
+int ogt_buttons_parse(const char *s)
+{
+    char w[16];
+    int n = 0;
+    while (s && (*s == ' ' || *s == '\t' || *s == '=')) s++;
+    while (s && *s && *s != ' ' && *s != '\t' && *s != '\n' && *s != '\r' && n < (int)sizeof w - 1) {
+        char ch = *s++;
+        w[n++] = (char)(ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch);
+    }
+    w[n] = 0;
+    if (!strcmp(w, "icons+text") || !strcmp(w, "both") || !strcmp(w, "icons-text")) return OGT_TB_ICONS_TEXT;
+    if (!strcmp(w, "icons")) return OGT_TB_ICONS;
+    if (!strcmp(w, "text")) return OGT_TB_TEXT;
+    return -1;
+}
+
+int ogt_buttons_style(void)
+{
+    char buf[1024], *l;
+    BPTR fh = Open((STRPTR)"ENV:OpenGadTools/Look", MODE_OLDFILE);
+    LONG n;
+    int style = OGT_TB_ICONS;      /* every Open app starts with icons only (the Team's rule, 10 October 2026) */
+    if (!fh) return style;
+    n = Read(fh, buf, sizeof buf - 1);
+    Close(fh);
+    buf[n > 0 ? n : 0] = 0;
+    for (l = buf; l && *l; l = strchr(l, '\n') ? strchr(l, '\n') + 1 : NULL) {
+        if (!strncmp(l, "buttons", 7) && (l[7] == ' ' || l[7] == '\t')) {
+            int s = ogt_buttons_parse(l + 7);
+            if (s >= 0) style = s;
+        }
+    }
+    return style;
 }

@@ -1464,6 +1464,148 @@ static void test_tab_strip(void)
     CHECK(end == 0 && first == 0 && !scroll);
 }
 
+/* A conditional format on the first sheet over one range ("A1:A5"). */
+static owf_condfmt *rule_on(oc_core *core, const char *range, int type, int priority)
+{
+    owf_condfmt *cf = owf_sheet_add_condfmt(&oc_core_book(core)->sheets[0]);
+    owf_range r;
+    if (!cf || !oc_parse_range(range, &r) || !(cf->ranges = malloc(sizeof *cf->ranges)))
+        return cf;
+    cf->ranges[0] = r;
+    cf->nranges = 1;
+    cf->type = type;
+    cf->priority = priority;
+    return cf;
+}
+
+static char *dup_text(const char *s)
+{
+    char *d = malloc(strlen(s) + 1);
+    if (d)
+        strcpy(d, s);
+    return d;
+}
+
+/* The fill drawn on a cell (its own: not the selection's), or -1. */
+static long fill_of(const oc_draw_list *l, unsigned row, unsigned col)
+{
+    int i;
+    long found = -1;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_FILL && l->items[i].role == OC_ROLE_CELL_FILL && l->items[i].row == row &&
+            l->items[i].col == col)
+            found = (long)l->items[i].rgb;
+    return found;
+}
+
+static void test_condfmt(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    owf_condfmt *cf;
+    const oc_draw_item *it;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    enter_at(core, "A1", "5");
+    enter_at(core, "A2", "15");
+    enter_at(core, "A3", "25");
+    enter_at(core, "A4", "x");
+    enter_at(core, "B1", "Yes");
+    enter_at(core, "B2", "No");
+    enter_at(core, "C1", "0");
+    enter_at(core, "C2", "50");
+    enter_at(core, "C3", "100");
+    go(core, "E9");
+    /* cellIs greater than 10: a red fill; text is greater than any number, as in Excel */
+    cf = rule_on(core, "A1:A5", OWF_CF_CELL_IS, 2);
+    CHECK(cf != NULL);
+    cf->op = OWF_CF_GREATER;
+    cf->formula[0] = dup_text("10");
+    cf->fill = OWF_SHADE(0xFF0000);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 0, 0) == -1 && fill_of(&l, 1, 0) == 0xFF0000 && fill_of(&l, 2, 0) == 0xFF0000);
+    CHECK(fill_of(&l, 3, 0) == 0xFF0000 && fill_of(&l, 4, 0) == -1);
+    /* a rule before it (priority 1) that holds for 25 and stops: green there, the red rule left out */
+    cf = rule_on(core, "A1:A5", OWF_CF_CELL_IS, 1);
+    cf->op = OWF_CF_EQUAL;
+    cf->formula[0] = dup_text("25");
+    cf->fill = OWF_SHADE(0x00FF00);
+    cf->font_set = OWF_BOLD;
+    cf->font_flags = OWF_BOLD;
+    cf->stop = 1;
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 2, 0) == 0x00FF00 && fill_of(&l, 1, 0) == 0xFF0000);
+    it = text_of(&l, 2, 0);
+    CHECK(it && (it->flags & OWF_BOLD));
+    it = text_of(&l, 1, 0);
+    CHECK(it && !(it->flags & OWF_BOLD));
+    /* an expression moved down the rows with its relative row, its column fixed: grey italic text where B is "No" */
+    cf = rule_on(core, "A1:C5", OWF_CF_EXPRESSION, 3);
+    cf->formula[0] = dup_text("$B1=\"No\"");
+    cf->font_colour = OWF_SHADE(0x808080);
+    cf->font_set = OWF_ITALIC;
+    cf->font_flags = OWF_ITALIC;
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    it = text_of(&l, 1, 2);
+    CHECK(it && it->rgb == 0x808080 && (it->flags & OWF_ITALIC));
+    it = text_of(&l, 0, 2);
+    CHECK(it && it->rgb != 0x808080 && !(it->flags & OWF_ITALIC));
+    it = text_of(&l, 1, 0);                             /* the red rule's fill stays; the italic is added */
+    CHECK(it && (it->flags & OWF_ITALIC) && fill_of(&l, 1, 0) == 0xFF0000);
+    /* between, its bounds either way round */
+    cf = rule_on(core, "C1:C3", OWF_CF_CELL_IS, 4);
+    cf->op = OWF_CF_BETWEEN;
+    cf->formula[0] = dup_text("60");
+    cf->formula[1] = dup_text("40");
+    cf->fill = OWF_SHADE(0x0000FF);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 1, 2) == 0x0000FF && fill_of(&l, 0, 2) == -1 && fill_of(&l, 2, 2) == -1);
+    /* a colour scale from white (the lowest) to blue (the highest), after it: the middle one half way */
+    cf = rule_on(core, "C1:C3", OWF_CF_COLOUR_SCALE, 5);
+    cf->npoints = 2;
+    cf->points[0].kind = OWF_CFV_MIN;
+    cf->points[0].colour = OWF_SHADE(0xFFFFFF);
+    cf->points[1].kind = OWF_CFV_MAX;
+    cf->points[1].colour = OWF_SHADE(0x0000FF);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 0, 2) == 0xFFFFFF && fill_of(&l, 2, 2) == 0x0000FF);
+    CHECK(fill_of(&l, 1, 2) == 0x0000FF);               /* the between rule came first */
+    /* a kept rule ("contains text") is shown by its formula */
+    cf = rule_on(core, "B1:B5", OWF_CF_KEPT, 6);
+    cf->formula[0] = dup_text("NOT(ISERROR(SEARCH(\"es\",B1)))");
+    cf->xml = dup_text("<cfRule type=\"containsText\" operator=\"containsText\" text=\"es\"></cfRule>");
+    cf->fill = OWF_SHADE(0xFFFF00);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 0, 1) == 0xFFFF00 && fill_of(&l, 1, 1) == -1);
+    /* a change shows: A1 made 30 gets the red fill */
+    enter_at(core, "A1", "30");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 0, 0) == 0xFF0000);
+    /* a row inserted above moves the ranges and the formulas */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    {
+        const owf_sheet *sh = &oc_core_book(core)->sheets[0];
+        CHECK(sh->ncondfmts == 6 && sh->condfmts[0].ranges[0].first_row == 1 && sh->condfmts[0].ranges[0].last_row == 5);
+        CHECK(sh->condfmts[2].formula[0] && !strcmp(sh->condfmts[2].formula[0], "$B2=\"No\""));
+    }
+    go(core, "E9");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 1, 0) == 0xFF0000 && fill_of(&l, 0, 0) == -1);
+    it = text_of(&l, 2, 2);
+    CHECK(it && it->rgb == 0x808080);
+    /* a sheet deleted and the deletion undone: its rules come back with it */
+    oc_core_add_sheet(core, "Two");
+    CHECK(oc_core_delete_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_book(core)->sheets[0].ncondfmts == 0);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 2 && oc_core_book(core)->sheets[0].ncondfmts == 6);
+    CHECK(oc_core_book(core)->sheets[0].condfmts[5].xml != NULL);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 /* Made-up faces for oc_font_size_for_caps: the capitals' height at each size, and the sizes asked for. */
 typedef struct {
     int kind;                    /* 0 capitals = size; 1 two thirds of it; 2 never made; 3 bitmap sizes only */
@@ -1533,6 +1675,195 @@ static void test_font_caps(void)
         for (j = 0; j < i; j++)
             twice |= f.asked[i] == f.asked[j];
     CHECK(!twice);
+}
+
+static void test_comments(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    owf_sheet *sh;
+    int i, marks, notes, texts;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    sh = &oc_core_book(core)->sheets[0];
+    enter_at(core, "B2", "commented");
+    CHECK(owf_sheet_set_comment(sh, 1, 1, "Team 5", "Owner to confirm. The supplier hosts it.") == 0);
+    CHECK(owf_sheet_set_comment(sh, 4, 2, NULL, "C5's") == 0);
+    CHECK(owf_sheet_set_comment(sh, 1, 1, "Team 5", "Owner to confirm. The supplier hosts it, as before.") == 0);
+    CHECK(sh->ncomments == 2 && oc_core_comment(core, 0, 1, 1) && !oc_core_comment(core, 0, 1, 2));
+    /* each commented cell has its mark in the top right corner; no note while another cell is active */
+    go(core, "E9");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = marks = notes = 0; i < l.n; i++) {
+        const oc_draw_item *it = &l.items[i];
+        if (it->kind == OC_DRAW_MARK) {
+            marks++;
+            if (it->row == 1 && it->col == 1)
+                CHECK(it->x + it->w == 40 + 2 * 64 - 1 && it->y == 18 + 17 && it->w == 5 && it->h == 5);
+        }
+        notes += it->kind == OC_DRAW_FILL && it->role == OC_ROLE_NOTE;
+    }
+    CHECK(marks == 2 && notes == 0);
+    /* the active cell's comment beside it: a box right of the cell, its author in bold, the text wrapped,
+       after everything else */
+    go(core, "B2");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = notes = texts = 0; i < l.n; i++) {
+        const oc_draw_item *it = &l.items[i];
+        if (it->kind == OC_DRAW_FILL && it->role == OC_ROLE_NOTE) {
+            notes++;
+            CHECK(it->x == 40 + 2 * 64 + 6 && it->y == 18 + 17 && it->w == 160);
+        }
+        if (notes && it->kind == OC_DRAW_TEXT) {
+            if (!texts)
+                CHECK(it->text && !strcmp(it->text, "Team 5") && (it->flags & OWF_BOLD));
+            texts++;
+        }
+    }
+    CHECK(notes == 1 && texts >= 3);                    /* the author, then at least two lines of text */
+    CHECK(l.items[l.n - 1].kind == OC_DRAW_TEXT && l.items[l.n - 1].row == 1);
+    /* not while typing */
+    type(core, "x");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = notes = 0; i < l.n; i++)
+        notes += l.items[i].kind == OC_DRAW_FILL && l.items[i].role == OC_ROLE_NOTE;
+    CHECK(notes == 0);
+    key(core, OC_KEY_ESCAPE, 0);
+    /* rows inserted above move it; a deleted row takes its comment */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(oc_core_comment(core, 0, 2, 1) && !oc_core_comment(core, 0, 1, 1));
+    go(core, "A6");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(oc_core_book(core)->sheets[0].ncomments == 1);
+    /* a sheet deleted and the deletion undone: its comments come back */
+    oc_core_add_sheet(core, "Two");
+    CHECK(oc_core_delete_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_comment(core, 0, 2, 1) && !strcmp(oc_core_comment(core, 0, 2, 1)->author, "Team 5"));
+    /* taken away */
+    CHECK(owf_sheet_set_comment(&oc_core_book(core)->sheets[0], 2, 1, NULL, NULL) == 0);
+    CHECK(oc_core_book(core)->sheets[0].ncomments == 0);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
+static void test_validation(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    owf_sheet *sh;
+    owf_validation *dv;
+    int i, notes, texts;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    sh = &oc_core_book(core)->sheets[0];
+    dv = owf_sheet_add_validation(sh);
+    CHECK(dv != NULL);
+    dv->ranges = malloc(sizeof *dv->ranges);
+    dv->ranges[0] = (owf_range){ 1, 5, 1, 1 };            /* B2:B6 */
+    dv->nranges = 1;
+    dv->type = OWF_DV_LIST;
+    dv->formula[0] = dup_text("\"Yes,No\"");
+    dv->prompt_title = dup_text("Hosted");
+    dv->prompt = dup_text("Hosted by us?");
+    CHECK(owf_sheet_validation(sh, 3, 1) == dv && !owf_sheet_validation(sh, 6, 1) && !owf_sheet_validation(sh, 3, 2));
+    /* its input message shows only when the file says to show it */
+    go(core, "B3");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = notes = 0; i < l.n; i++)
+        notes += l.items[i].kind == OC_DRAW_FILL && l.items[i].role == OC_ROLE_NOTE;
+    CHECK(notes == 0);
+    dv->show_prompt = 1;
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = notes = texts = 0; i < l.n; i++) {
+        notes += l.items[i].kind == OC_DRAW_FILL && l.items[i].role == OC_ROLE_NOTE;
+        if (notes && l.items[i].kind == OC_DRAW_TEXT) {
+            if (!texts)
+                CHECK(!strcmp(l.items[i].text, "Hosted") && (l.items[i].flags & OWF_BOLD));
+            else
+                CHECK(!strcmp(l.items[i].text, "Hosted by us?"));
+            texts++;
+        }
+    }
+    CHECK(notes == 1 && texts == 2);
+    /* a comment on the cell shows instead */
+    owf_sheet_set_comment(sh, 2, 1, NULL, "a comment");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(l.items[l.n - 1].kind == OC_DRAW_TEXT && !strcmp(l.items[l.n - 1].text, "a comment"));
+    /* rows inserted move it; a sheet deleted and undone keeps it */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(sh == &oc_core_book(core)->sheets[0] && sh->validations[0].ranges[0].first_row == 2 &&
+          sh->validations[0].ranges[0].last_row == 6);
+    oc_core_add_sheet(core, "Two");
+    CHECK(oc_core_delete_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    sh = &oc_core_book(core)->sheets[0];
+    CHECK(sh->nvalidations == 1 && sh->validations[0].formula[0] && !strcmp(sh->validations[0].formula[0], "\"Yes,No\"") &&
+          sh->validations[0].prompt && !strcmp(sh->validations[0].prompt, "Hosted by us?"));
+    /* its rows deleted, it goes */
+    oc_core_set_sheet(core, 0);
+    go(core, "A3:A7");
+    oc_core_select_rows(core);
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(oc_core_book(core)->sheets[0].nvalidations == 0);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
+static void test_autofilter(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    owf_sheet *sh;
+    int i, buttons, filtered;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    sh = &oc_core_book(core)->sheets[0];
+    sh->has_autofilter = 1;
+    sh->autofilter = (owf_range){ 1, 20, 1, 3 };         /* B2:D21 */
+    sh->autofilter_xml = dup_text("<filterColumn colId=\"2\"><filters><filter val=\"Yes\"/></filters></filterColumn>");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = buttons = filtered = 0; i < l.n; i++) {
+        const oc_draw_item *it = &l.items[i];
+        if (it->kind != OC_DRAW_FILTER)
+            continue;
+        buttons++;
+        CHECK(it->row == 1 && it->w == it->h && it->w == 14);   /* a 17-pixel row: 14 */
+        CHECK(it->x + it->w == 40 + (int)(it->col + 1) * 64 - 2 && it->y + it->h == 18 + 2 * 17 - 2);
+        if (it->flags) {
+            filtered++;
+            CHECK(it->col == 3);                         /* colId 2 of B:D */
+        }
+    }
+    CHECK(buttons == 3 && filtered == 1);
+    /* a column inserted before it moves it; rows deleted under it shrink it */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 1) == OWF_OK);
+    sh = &oc_core_book(core)->sheets[0];
+    CHECK(sh->has_autofilter && sh->autofilter.first_col == 2 && sh->autofilter.last_col == 4);
+    go(core, "A10:A12");
+    oc_core_select_rows(core);
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(sh->autofilter.last_row == 17);
+    /* a sheet deleted and undone keeps it */
+    oc_core_add_sheet(core, "Two");
+    CHECK(oc_core_delete_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    sh = &oc_core_book(core)->sheets[0];
+    CHECK(sh->has_autofilter && sh->autofilter_xml && strstr(sh->autofilter_xml, "colId=\"2\""));
+    /* all its rows deleted, it goes */
+    oc_core_set_sheet(core, 0);
+    go(core, "A2:A18");
+    oc_core_select_rows(core);
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(!oc_core_book(core)->sheets[0].has_autofilter && !oc_core_book(core)->sheets[0].autofilter_xml);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
 }
 
 static void test_status(void)
@@ -1750,7 +2081,11 @@ int main(void)
     test_sheets();
     test_draw();
     test_borders();
+    test_condfmt();
     test_font_caps();
+    test_comments();
+    test_validation();
+    test_autofilter();
     test_row_numbers();
     test_text_layout();
     test_tab_strip();

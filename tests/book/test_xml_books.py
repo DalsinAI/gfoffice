@@ -126,6 +126,8 @@ def parse(text):
             sheet["cells"][(r, c)] = line
         elif word in ("col", "row", "merge"):
             sheet[word + "s"].append(line)
+        elif word in ("cf", "comment", "validation", "autofilter"):
+            sheet.setdefault(word + "s", []).append(line)
     return book
 
 
@@ -367,11 +369,17 @@ def test_hand_xlsx(work):
     check("hand: book", b["line"] == "book format=xlsx sheets=3 active=2 date1904=1", b["line"])
     notes = "\n".join(b["notes"])
     for want in ("Diagonal lines", "Patterned cell backgrounds", "gradient", "angle", "Text formatted in parts",
-                 "Pivot tables", "Chart sheets", "Comments on cells", "#SPILL!", "Data tables", "numbers could not be read",
-                 "Sheet protection", "AutoFilter", "Conditional formatting", "Data validation", "Links in cells",
+                 "Pivot tables", "Chart sheets", "comments on cells could not be read", "#SPILL!", "Data tables", "numbers could not be read",
+                 "Sheet protection", "Links in cells",
                  "Pictures, charts", "Tables keep"):
         check("hand: note " + want, want in notes, notes)
+    check("hand: conditional formatting read, not noted", "Conditional formatting" not in notes, notes)
     data = b["sheets"][0]
+    check("hand: conditional format", data.get("cfs") == [
+        'cf type=0 op=4 priority=1 stop=0 ranges=1,1-2,1 set=0 flags=0 colour=- fill=- formula "2"'], data.get("cfs"))
+    check("hand: data validation", data.get("validations") == [
+        'validation type=3 op=0 blank=0 nodropdown=0 prompt=0 error=0 style=0 ranges=1,2-1,2 formula "\\"a,b\\""'],
+        data.get("validations"))
     check("hand: sheet", data["line"] == 'sheet 0 "Data" hidden=0 width=1200 height=300 freeze=2,1', data["line"])
     check("hand: columns", data["cols"] == ["col 1-2 width=2175 style=2 hidden=1", "col 7-16383 width=525 style=0 hidden=0"], data["cols"])
     check("hand: rows", data["rows"] == ["row 0 height=600 hidden=0", "row 2 height=300 hidden=1", "row 5 height=90 hidden=0"], data["rows"])
@@ -471,8 +479,10 @@ def test_generated_xlsx():
     if rc == 0:
         b = parse(out)
         check("openpyxl: book", b["line"] == "book format=xlsx sheets=3 active=2 date1904=1", b["line"])
-        for want in ("Comments on cells", "Conditional formatting", "Data validation", "Text formatted in parts"):
+        for want in ("Text formatted in parts",):
             check("openpyxl: note " + want, want in "\n".join(b["notes"]), b["notes"])
+        check("openpyxl: comment read", 'comment 0,0 author "me" text "a note"' in out, "")
+        check("openpyxl: conditional formatting read", any(sh.get("cfs") for sh in b["sheets"]), b["sheets"][0].get("cfs"))
         check("openpyxl: sheet", b["sheets"][0]["line"] == 'sheet 0 "Sums" hidden=0 width=960 height=300 freeze=1,1', b["sheets"][0]["line"])
         check("openpyxl: hidden", b["sheets"][1]["line"].startswith('sheet 1 "Other sheet" hidden=1'))
         check("openpyxl: cols rows merges", b["sheets"][0]["cols"] == ["col 0-0 width=1943 style=0 hidden=0", "col 7-7 width=1365 style=0 hidden=1"]
@@ -593,9 +603,9 @@ def without_empty(text):
     return [l for l in lines if not (l.startswith("cell ") and l.endswith("style={" + default + "} empty"))]
 
 
-def same_meaning(name, a, b, extra=None):
-    ca = [lossless(l) for l in without_empty(a)]
-    cb = [lossless(l) for l in without_empty(b)]
+def same_meaning(name, a, b, extra=None, drop=()):
+    ca = [lossless(l) for l in without_empty(a) if not l.startswith(drop)]
+    cb = [lossless(l) for l in without_empty(b) if not l.startswith(drop)]
     if extra:
         ca, cb = [extra(l) for l in ca], [extra(l) for l in cb]
     if ca != cb:
@@ -672,7 +682,20 @@ def test_xlsx_ods_xlsx(work, xlsx_paths):
                 l = l.replace('"Other.xlsx!Rate"', '"Rate"').replace(' hidden=1 "\'Very', ' hidden=0 "\'Very')
                 l = l.replace('hidden=2 width', 'hidden=1 width').replace("halign=6", "halign=2").replace("\\x0d\\n", "\\n")
                 return l
-        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra)
+        # conditional formatting is kept in .xlsx only (and said so): not through ODS yet
+        if "\ncf " in a:
+            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-cf.ods")])
+            check("xlsx to ods: conditional formatting noted: " + stem, "Conditional formatting is kept" in out, out)
+        if "\ncomment " in a:
+            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-cm.ods")])
+            check("xlsx to ods: comments noted: " + stem, "Comments on cells are kept" in out, out)
+        if "\nvalidation " in a:
+            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-dv.ods")])
+            check("xlsx to ods: validation noted: " + stem, "Data validation is kept" in out, out)
+        if "\nautofilter " in a:
+            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-af.ods")])
+            check("xlsx to ods: AutoFilter noted: " + stem, "AutoFilters are kept" in out, out)
+        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("cf ", "comment ", "validation ", "autofilter "))
 
 
 def test_ods_round_trips(work, ods_paths):

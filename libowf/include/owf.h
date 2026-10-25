@@ -352,6 +352,81 @@ typedef struct {
     unsigned first_row, last_row, first_col, last_col;
 } owf_range;
 
+/* Conditional formatting: a rule over ranges of a sheet, as Excel's
+ * cfRule. CELL_IS compares each cell's value with formula[0] (and [1]);
+ * EXPRESSION holds where formula[0] is true; COLOUR_SCALE colours each
+ * number between its points; KEPT is one the model doesn't work out (data
+ * bars, icon sets, top 10, above average, duplicates...), kept as its
+ * file wrote it (xml) for writing back, and shown by formula[0] like an
+ * EXPRESSION when the file gave one (containsText and its kind do). The
+ * formulas are as at the first range's top left cell, without "=", and
+ * move with each cell as relative references do. A rule that holds gives
+ * its cells what its look sets (font_set says which of OWF_BOLD... it
+ * sets, font_flags to what); rules go by priority, 1 first, and the first
+ * to set a part of the look wins it; stop leaves the later ones out. */
+enum { OWF_CF_CELL_IS, OWF_CF_EXPRESSION, OWF_CF_COLOUR_SCALE, OWF_CF_KEPT };
+enum {
+    OWF_CF_BETWEEN, OWF_CF_NOT_BETWEEN, OWF_CF_EQUAL, OWF_CF_NOT_EQUAL, OWF_CF_GREATER, OWF_CF_LESS,
+    OWF_CF_GREATER_EQUAL, OWF_CF_LESS_EQUAL
+};
+/* A colour scale's point: the lowest or highest number, a number, a
+ * percent of the way, a percentile, or a formula's value. */
+enum { OWF_CFV_MIN, OWF_CFV_MAX, OWF_CFV_NUMBER, OWF_CFV_PERCENT, OWF_CFV_PERCENTILE, OWF_CFV_FORMULA };
+
+typedef struct {
+    int kind;                    /* OWF_CFV_... */
+    char *value;                 /* NUMBER, PERCENT, PERCENTILE: the number as text; FORMULA: the formula; else NULL */
+    unsigned long colour;        /* OWF_SHADE(0xRRGGBB) */
+} owf_cfpoint;
+
+typedef struct {
+    int nranges;
+    owf_range *ranges;           /* where it applies */
+    int type;                    /* OWF_CF_... */
+    int op;                      /* CELL_IS: OWF_CF_BETWEEN... */
+    int priority;                /* 1 first */
+    int stop;                    /* stopIfTrue */
+    char *formula[2];            /* or NULL */
+    unsigned font_set, font_flags;
+    unsigned long font_colour;   /* OWF_SHADE(0xRRGGBB), or 0: not set */
+    unsigned long fill;          /* OWF_SHADE(0xRRGGBB), or 0: not set */
+    int npoints;                 /* COLOUR_SCALE: 2 or 3 */
+    owf_cfpoint points[3];
+    char *xml;                   /* KEPT: its cfRule element as the file had it, but its look's dxfId */
+} owf_condfmt;
+
+/* Data validation over ranges, as Excel's dataValidation: what a cell
+ * may hold (a whole number, a decimal, one of a list, a date, a time, a
+ * text of a length, or what a formula allows), compared by op with
+ * formula[0] (and [1]) as at the first range's top left cell; a list's
+ * formula[0] is "\"Yes,No\"" or a range. The messages are UTF-8 or NULL. */
+enum {
+    OWF_DV_ANY, OWF_DV_WHOLE, OWF_DV_DECIMAL, OWF_DV_LIST, OWF_DV_DATE, OWF_DV_TIME, OWF_DV_TEXT_LENGTH,
+    OWF_DV_CUSTOM
+};
+enum { OWF_DV_STOP, OWF_DV_WARNING, OWF_DV_INFORMATION };
+
+typedef struct {
+    int nranges;
+    owf_range *ranges;
+    int type;                    /* OWF_DV_... */
+    int op;                      /* OWF_CF_BETWEEN...: as conditional formatting's cellIs */
+    int allow_blank;
+    int no_dropdown;             /* a list without its arrow (Excel's showDropDown) */
+    int show_prompt, show_error;
+    int error_style;             /* OWF_DV_STOP... */
+    char *formula[2];
+    char *prompt_title, *prompt, *error_title, *error;
+} owf_validation;
+
+/* A comment (Excel's note) on a cell: its author and text, UTF-8, from
+ * malloc; the author may be NULL. */
+typedef struct {
+    unsigned row, col;
+    char *author;
+    char *text;
+} owf_comment;
+
 typedef struct {
     char *name;                  /* UTF-8 */
     int ncells, capcells;
@@ -366,6 +441,16 @@ typedef struct {
     int default_height;          /* a row's, twips */
     int hidden;                  /* 1 hidden, 2 hidden from the user too */
     unsigned freeze_rows, freeze_cols;
+    int ncondfmts, capcondfmts;  /* owf.library 2.1 */
+    owf_condfmt *condfmts;
+    int ncomments, capcomments;
+    owf_comment *comments;       /* by row, then column */
+    int nvalidations, capvalidations;
+    owf_validation *validations;
+    int has_autofilter;          /* an AutoFilter: its buttons on autofilter's first row */
+    owf_range autofilter;
+    char *autofilter_xml;        /* what it filters and sorts by, as the file wrote it (Excel's filterColumn and
+                                    sortState elements), or NULL */
 } owf_sheet;
 
 /* A defined name: "Prices" standing for "Sheet1!$B$2:$B$40". */
@@ -415,6 +500,27 @@ int owf_sheet_set_columns(owf_sheet *sheet, unsigned first, unsigned last, int w
 int owf_sheet_set_row(owf_sheet *sheet, unsigned row, int height, int hidden);
 int owf_sheet_merge(owf_sheet *sheet, const owf_range *range);
 int owf_book_add_name(owf_book *book, const char *name, int sheet, const char *formula, int hidden);
+/* A new conditional format at the end of the sheet's, all zero (its
+ * pointers NULL): the importer fills it in, its strings and ranges from
+ * malloc. NULL when memory runs out. */
+owf_condfmt *owf_sheet_add_condfmt(owf_sheet *sheet);
+void owf_condfmt_free(owf_condfmt *cf);
+/* A new validation at the end of the sheet's, all zero (as
+ * owf_sheet_add_condfmt), and one freed; the first whose ranges hold a
+ * cell, or NULL. */
+owf_validation *owf_sheet_add_validation(owf_sheet *sheet);
+void owf_validation_free(owf_validation *v);
+const owf_validation *owf_sheet_validation(const owf_sheet *sheet, unsigned row, unsigned col);
+/* The comment on a cell, set (text and author copied; NULL text takes it
+ * away), or found (NULL: none). -1 when memory runs out. */
+int owf_sheet_set_comment(owf_sheet *sheet, unsigned row, unsigned col, const char *author, const char *text);
+const owf_comment *owf_sheet_comment(const owf_sheet *sheet, unsigned row, unsigned col);
+/* What a sheet holds beside its cells, columns, rows and merges (its
+ * conditional formats and comments) copied from src into dst, which has
+ * none: for a program that copies a sheet. -1 when memory runs out (dst
+ * has none). Its validations and AutoFilter too. */
+int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src);
+void owf_sheet_free_extras(owf_sheet *sheet);
 
 /* A number as a formula or a file writes it: up to 15 significant digits,
  * "0.1", "12", "1.5E+20". out holds at least 32 bytes. */
@@ -466,7 +572,8 @@ enum {
     OWF_STRUCT_FONT, OWF_STRUCT_PAGE, OWF_STRUCT_IMAGE, OWF_STRUCT_DOC, OWF_STRUCT_FORMAT, OWF_STRUCT_CELL,
     OWF_STRUCT_CELLSTYLE, OWF_STRUCT_COLINFO, OWF_STRUCT_ROWINFO, OWF_STRUCT_RANGE, OWF_STRUCT_SHEET,
     OWF_STRUCT_DEFNAME, OWF_STRUCT_BOOK, OWF_STRUCT_BOOK_FORMAT, OWF_STRUCT_UNZIP, OWF_STRUCT_PUB,
-    OWF_STRUCT_PUB_PAGE, OWF_STRUCT_PUB_FRAME, OWF_STRUCT_FRAME,
+    OWF_STRUCT_PUB_PAGE, OWF_STRUCT_PUB_FRAME,
+    OWF_STRUCT_CONDFMT, OWF_STRUCT_COMMENT, OWF_STRUCT_VALIDATION, OWF_STRUCT_FRAME,
     OWF_STRUCT_COUNT
 };
 unsigned long owf_struct_size(int which);
@@ -476,7 +583,8 @@ unsigned long owf_struct_size(int which);
     sizeof(owf_story), sizeof(owf_font), sizeof(owf_page), sizeof(owf_image), sizeof(owf_doc),            \
     sizeof(owf_format), sizeof(owf_cell), sizeof(owf_cellstyle), sizeof(owf_colinfo), sizeof(owf_rowinfo), \
     sizeof(owf_range), sizeof(owf_sheet), sizeof(owf_defname), sizeof(owf_book), sizeof(owf_book_format), \
-    sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame), sizeof(owf_frame)
+    sizeof(owf_unzip), sizeof(owf_pub), sizeof(owf_pub_page), sizeof(owf_pub_frame), sizeof(owf_condfmt), \
+    sizeof(owf_comment), sizeof(owf_validation), sizeof(owf_frame)
 
 #ifdef __cplusplus
 }

@@ -1383,6 +1383,71 @@ int owf_calc_shift(owf_calc *calc, int sheet, int axis, unsigned at, int count)
             s->merges[out++] = *m;
     }
     s->nmerges = out;
+    /* conditional formats: their ranges as merged ones move, their formulas as the cells' */
+    for (i = out = 0; i < s->ncondfmts; i++) {
+        owf_condfmt *cf = &s->condfmts[i];
+        int r, kept = 0;
+        for (r = 0; r < cf->nranges; r++) {
+            owf_range *m = &cf->ranges[r];
+            if (axis ? shift_span(&job, &m->first_col, &m->last_col, 0, limit)
+                     : shift_span(&job, &m->first_row, &m->last_row, 0, limit))
+                cf->ranges[kept++] = *m;
+        }
+        cf->nranges = kept;
+        for (r = 0; r < 2; r++)
+            if (cf->formula[r] && !rewrite_text(book, sheet, &cf->formula[r], &job)) {
+                calc->stale = 1;
+                return OWF_ERR_MEMORY;
+            }
+        if (!kept) {
+            owf_condfmt_free(cf);
+            continue;
+        }
+        s->condfmts[out++] = *cf;
+    }
+    s->ncondfmts = out;
+    /* comments move with their cells, and go with them */
+    for (i = out = 0; i < s->ncomments; i++) {
+        owf_comment *cm = &s->comments[i];
+        unsigned *v = axis ? &cm->col : &cm->row, last = *v;
+        if (!shift_span(&job, v, &last, 1, limit)) {
+            free(cm->author);
+            free(cm->text);
+            continue;
+        }
+        s->comments[out++] = *cm;
+    }
+    s->ncomments = out;
+    /* validations: as conditional formats */
+    for (i = out = 0; i < s->nvalidations; i++) {
+        owf_validation *dv = &s->validations[i];
+        int r, kept = 0;
+        for (r = 0; r < dv->nranges; r++) {
+            owf_range *m = &dv->ranges[r];
+            if (axis ? shift_span(&job, &m->first_col, &m->last_col, 0, limit)
+                     : shift_span(&job, &m->first_row, &m->last_row, 0, limit))
+                dv->ranges[kept++] = *m;
+        }
+        dv->nranges = kept;
+        for (r = 0; r < 2; r++)
+            if (dv->formula[r] && !rewrite_text(book, sheet, &dv->formula[r], &job)) {
+                calc->stale = 1;
+                return OWF_ERR_MEMORY;
+            }
+        if (!kept) {
+            owf_validation_free(dv);
+            continue;
+        }
+        s->validations[out++] = *dv;
+    }
+    s->nvalidations = out;
+    /* the AutoFilter's range: as a merged one; all of it deleted, it goes */
+    if (s->has_autofilter && !(axis ? shift_span(&job, &s->autofilter.first_col, &s->autofilter.last_col, 0, limit)
+                                    : shift_span(&job, &s->autofilter.first_row, &s->autofilter.last_row, 0, limit))) {
+        s->has_autofilter = 0;
+        free(s->autofilter_xml);
+        s->autofilter_xml = NULL;
+    }
     return build(calc, 1);
 }
 

@@ -1196,6 +1196,14 @@ static void put_sheet(ods_out *w, owf_buf *b, int index)
                    sh->hidden ? "ta2" : "ta1", sh->default_width, sh->default_height);
     if (sh->hidden == 2)
         owf_report_add(w->report, OWF_NOTE_APPROX, "Very hidden sheets became hidden ones");
+    if (sh->ncondfmts)
+        owf_report_add(w->report, OWF_NOTE_LOST, "Conditional formatting is kept in Excel workbooks (.xlsx) only, not yet in ODS");
+    if (sh->ncomments)
+        owf_report_add(w->report, OWF_NOTE_LOST, "Comments on cells are kept in Excel workbooks (.xlsx) only, not yet in ODS");
+    if (sh->nvalidations)
+        owf_report_add(w->report, OWF_NOTE_LOST, "Data validation is kept in Excel workbooks (.xlsx) only, not yet in ODS");
+    if (sh->has_autofilter)
+        owf_report_add(w->report, OWF_NOTE_LOST, "AutoFilters are kept in Excel workbooks (.xlsx) only, not yet in ODS");
     put_columns(w, b, sh, width);
     i = 0;
     for (row = 0; row < last_row && !w->failed;) {

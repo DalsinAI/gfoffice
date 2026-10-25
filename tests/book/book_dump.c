@@ -108,6 +108,74 @@ int main(int argc, char **argv)
         for (k = 0; k < sh->nmerges; k++)
             printf("merge %u,%u-%u,%u\n", sh->merges[k].first_row, sh->merges[k].first_col, sh->merges[k].last_row,
                    sh->merges[k].last_col);
+        if (sh->has_autofilter) {
+            printf("autofilter %u,%u-%u,%u ", sh->autofilter.first_row, sh->autofilter.first_col, sh->autofilter.last_row,
+                   sh->autofilter.last_col);
+            put_string(sh->autofilter_xml ? sh->autofilter_xml : "");
+            putchar('\n');
+        }
+        for (k = 0; k < sh->nvalidations; k++) {
+            const owf_validation *dv = &sh->validations[k];
+            int r;
+            printf("validation type=%d op=%d blank=%d nodropdown=%d prompt=%d error=%d style=%d ranges=", dv->type, dv->op,
+                   dv->allow_blank, dv->no_dropdown, dv->show_prompt, dv->show_error, dv->error_style);
+            for (r = 0; r < dv->nranges; r++)
+                printf("%s%u,%u-%u,%u", r ? ";" : "", dv->ranges[r].first_row, dv->ranges[r].first_col,
+                       dv->ranges[r].last_row, dv->ranges[r].last_col);
+            for (r = 0; r < 2; r++)
+                if (dv->formula[r]) {
+                    printf(" formula ");
+                    put_string(dv->formula[r]);
+                }
+            if (dv->prompt_title || dv->prompt) {
+                printf(" prompt ");
+                put_string(dv->prompt_title ? dv->prompt_title : "");
+                putchar(' ');
+                put_string(dv->prompt ? dv->prompt : "");
+            }
+            if (dv->error_title || dv->error) {
+                printf(" message ");
+                put_string(dv->error_title ? dv->error_title : "");
+                putchar(' ');
+                put_string(dv->error ? dv->error : "");
+            }
+            putchar('\n');
+        }
+        for (k = 0; k < sh->ncomments; k++) {
+            printf("comment %u,%u author ", sh->comments[k].row, sh->comments[k].col);
+            put_string(sh->comments[k].author ? sh->comments[k].author : "");
+            printf(" text ");
+            put_string(sh->comments[k].text);
+            putchar('\n');
+        }
+        for (k = 0; k < sh->ncondfmts; k++) {
+            const owf_condfmt *cf = &sh->condfmts[k];
+            int r;
+            printf("cf type=%d op=%d priority=%d stop=%d ranges=", cf->type, cf->op, cf->priority, cf->stop);
+            for (r = 0; r < cf->nranges; r++)
+                printf("%s%u,%u-%u,%u", r ? ";" : "", cf->ranges[r].first_row, cf->ranges[r].first_col,
+                       cf->ranges[r].last_row, cf->ranges[r].last_col);
+            printf(" set=%u flags=%u colour=", cf->font_set, cf->font_flags);
+            put_colour(cf->font_colour);
+            printf(" fill=");
+            put_colour(cf->fill);
+            for (r = 0; r < 2; r++)
+                if (cf->formula[r]) {
+                    printf(" formula ");
+                    put_string(cf->formula[r]);
+                }
+            for (r = 0; r < cf->npoints; r++) {
+                printf(" point %d ", cf->points[r].kind);
+                put_string(cf->points[r].value ? cf->points[r].value : "");
+                putchar(' ');
+                put_colour(cf->points[r].colour);
+            }
+            if (cf->xml) {
+                printf(" xml ");
+                put_string(cf->xml);
+            }
+            putchar('\n');
+        }
         for (k = 0; k < sh->ncells; k++) {
             const owf_cell *c = &sh->cells[k];
             char num[32];

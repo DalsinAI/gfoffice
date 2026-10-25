@@ -1,7 +1,12 @@
-/* ogt_toolbar: a row of icon buttons (DESIGN.md section 0: icons with their
- * names under them by default; icons only; text only; or, for small rows,
+/* ogt_toolbar: a row of icon buttons (DESIGN.md section 0: icons only by
+ * default; icons with their names under them; text only; or, for small rows,
  * the icon beside its name). Each button is a plain Intuition boolean
  * gadget that draws nothing itself; the toolbar draws them in the theme.
+ *
+ * A button with an image name shows that picture from the icon set
+ * (ogt_iconset: 24, 28, 32 or 48 pixels, the nearest to 1.25 times the
+ * font's height), else its vector icon, drawn at 1.25 times the height. Its states follow the style guide
+ * (docs/style/README.md, section 2.1): pressed, on (a toggle), disabled.
  *
  * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OGT_TOOLBAR_H
@@ -18,10 +23,12 @@ enum { OGT_TB_ICONS_TEXT = 0, OGT_TB_ICONS = 1, OGT_TB_TEXT = 2, OGT_TB_INLINE =
 typedef struct ogt_tool {
     int id;             /* the program's command number */
     const char *label;
-    int icon;           /* OGT_ICON_* */
+    int icon;           /* OGT_ICON_*: the vector icon, drawn when there is no picture */
     int sep_before;     /* a separator line before it */
     int disabled;
     int primary;        /* drawn in the accent colour (Send) */
+    const char *image;  /* the picture's name in the icon set ("save"; ogt_iconset), or NULL */
+    int selected;       /* on, as a toggle is (Bold): ogt_toolbar_select() */
 } ogt_tool;
 
 typedef struct ogt_toolbar {
@@ -45,5 +52,15 @@ int ogt_toolbar_index(const ogt_toolbar *tb, int gadget_id);
 void ogt_toolbar_draw(ogt_toolbar *tb, ogt_ctx *c, struct RastPort *rp, const char *bg_key);
 void ogt_toolbar_draw_one(ogt_toolbar *tb, ogt_ctx *c, struct RastPort *rp, int i, int down, const char *bg_key);
 void ogt_toolbar_enable(ogt_toolbar *tb, int id, int enabled);
+/* Shows a toggle button on or off (redraw it after). */
+void ogt_toolbar_select(ogt_toolbar *tb, int id, int on);
+
+/* The Buttons style (Open Apps Look and Feel): "icons+text", "icons" or
+ * "text" (also BOTH, ICONS, TEXT as a ToolType gives them) as OGT_TB_*, or
+ * -1 when it says none of those ("look", empty). */
+int ogt_buttons_parse(const char *s);
+/* The style for every Open app: the "buttons" line in ENV:OpenGadTools/Look
+ * (OpenPrefs Look), or icons only when there is none. */
+int ogt_buttons_style(void);
 
 #endif
