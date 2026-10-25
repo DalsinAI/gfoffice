@@ -1349,6 +1349,7 @@ static void read_text(odp *o, owf_obj *obj, const owf_xml_node *box, const owf_x
                       const owf_master *m, int which)
 {
     textctx t;
+    memset(&t, 0, sizeof t);     /* the builder's formats are compared whole, padding too */
     t.pstyle = find_style(o, attr(shape, NS_DRAW, "text-style-name"), "paragraph", which);
     t.o = o;
     t.obj = obj;
@@ -1369,6 +1370,8 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
     const owf_xml_node *groups[8], *g, *row, *cell;
     int widths[TABLE_MAX_COLS], ncols = 0, ngroups = 0, nrows = 0, i, merged = 0;
     textctx t;
+
+    memset(&t, 0, sizeof t);
 
     obj->kind = OWF_OBJ_TABLE;
     /* columns, inside their groups too */
@@ -1901,6 +1904,7 @@ static void read_notes(odp *o, owf_slide *s, const owf_xml_node *notes, const ow
         const owf_xml_node *box;
         owf_obj tmp;
         textctx t;
+        memset(&t, 0, sizeof t);
         if (!is(f, NS_DRAW, "frame") || !same(attr(f, NS_PRES, "class"), "notes") ||
             !(box = owf_xml_child(f, NS_DRAW, "text-box")))
             continue;

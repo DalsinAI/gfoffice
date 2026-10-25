@@ -124,6 +124,9 @@ static void label(const owf_textlevel *l, int number, char *out, size_t size)
     char num[24];
     if (!(l->bullet & OWF_BULLET_NUMBER)) {
         unsigned long c = l->bullet;
+        /* a symbol font's private character (StarBats', Wingdings'): a plain bullet */
+        if (c >= 0xE000 && c <= 0xF8FF)
+            c = 0x2022;
         size_t n = 0;
         if (c < 0x80) out[n++] = (char)c;
         else if (c < 0x800) { out[n++] = (char)(0xC0 | (c >> 6)); out[n++] = (char)(0x80 | (c & 0x3F)); }
@@ -164,7 +167,15 @@ static int prepare_text(const owf_deck *deck, const owf_master *m, const owf_obj
                         int with_levels, int scale, const char *const fields[4], frame_text *t)
 {
     int i, counters[OWF_TEXT_LEVELS + 1];
+    unsigned long auto_colour = OWF_COLOUR_AUTO;
     memset(t, 0, sizeof *t);
+    /* automatic text on a dark fill is white, as Impress draws it */
+    if (OWF_SHADE_SET(obj->look.fill)) {
+        unsigned long rgb = OWF_SHADE_RGB(obj->look.fill);
+        unsigned long y = ((rgb >> 16) & 255) * 299 + ((rgb >> 8) & 255) * 587 + (rgb & 255) * 114;
+        if (y < 128000UL)
+            auto_colour = 0xFFFFFF;
+    }
     memset(counters, 0, sizeof counters);
     if (!src->nparas)
         return 1;
@@ -205,6 +216,7 @@ static int prepare_text(const owf_deck *deck, const owf_master *m, const owf_obj
             if (r->fmt.font < 0) r->fmt.font = lv->chars.font;
             if (r->fmt.size <= 0) r->fmt.size = lv->chars.size > 0 ? lv->chars.size : deck->res->base.size;
             if (r->fmt.colour == OWF_COLOUR_AUTO) r->fmt.colour = lv->chars.colour;
+            if (r->fmt.colour == OWF_COLOUR_AUTO) r->fmt.colour = auto_colour;
             r->fmt.size = (int)((long)r->fmt.size * scale / 100);
             if (r->kind == OWF_RUN_FIELD) {
                 r->kind = OWF_RUN_TEXT;
@@ -220,6 +232,7 @@ static int prepare_text(const owf_deck *deck, const owf_master *m, const owf_obj
         }
         first = p->nruns ? runs[2].fmt : lv->chars;
         if (!p->nruns) {
+            if (first.colour == OWF_COLOUR_AUTO) first.colour = auto_colour;
             if (first.font < 0) first.font = lv->chars.font;
             if (first.size <= 0) first.size = lv->chars.size > 0 ? lv->chars.size : deck->res->base.size;
             first.size = (int)((long)first.size * scale / 100);

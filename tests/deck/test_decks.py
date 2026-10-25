@@ -98,8 +98,24 @@ def owc_pdf():
 
 
 def pdf_pages(data):
+    """Our writer's page count, from its page tree."""
     m = re.search(rb"/Type /Pages /Count (\d+)", data)
     return int(m.group(1)) if m else -1
+
+
+def pdf_pages_any(path):
+    """Any PDF's page count, by pypdf or pdfinfo; -1 when neither is there."""
+    try:
+        import pypdf
+        return len(pypdf.PdfReader(path).pages)
+    except ImportError:
+        pass
+    if shutil.which("pdfinfo"):
+        r = subprocess.run(["pdfinfo", path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        m = re.search(rb"Pages:\s+(\d+)", r.stdout)
+        if m:
+            return int(m.group(1))
+    return -1
 
 
 def pdf_text(path):
@@ -260,6 +276,8 @@ def test_pdf(work, name, path, slides, words, absent=()):
         data = f.read()
     check(f"{name}: a PDF", data.startswith(b"%PDF-1.4") and data.rstrip().endswith(b"%%EOF"))
     check(f"{name}: a page a slide shown", pdf_pages(data) == slides, f"{pdf_pages(data)} pages, {slides} wanted")
+    n = pdf_pages_any(pdf)
+    check(f"{name}: pypdf or pdfinfo counts the same pages", n in (-1, slides), f"{n} pages")
     if shutil.which("qpdf"):
         r = subprocess.run(["qpdf", "--check", pdf], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         check(f"{name}: qpdf --check", r.returncode == 0, r.stdout.decode()[-500:])
@@ -387,10 +405,9 @@ def libreoffice_opens(work, odp, slides):
     ok = os.path.exists(pdf)
     check("LibreOffice opens " + os.path.basename(odp), ok)
     if ok:
-        with open(pdf, "rb") as f:
-            n = pdf_pages(f.read())
-        # LibreOffice prints hidden slides too; a deck's count either way
-        check("LibreOffice shows its slides: " + os.path.basename(odp), n >= slides, f"{n} pages")
+        n = pdf_pages_any(pdf)
+        # LibreOffice's PDF leaves hidden slides out, as ours does
+        check("LibreOffice shows its slides: " + os.path.basename(odp), n == slides, f"{n} pages")
 
 
 def main():
@@ -445,7 +462,7 @@ def main():
     print(f"{tried} cut-short and {cases} damaged files tried")
 
     if os.environ.get("DECK_LIBREOFFICE") == "1" and (shutil.which("soffice") or shutil.which("libreoffice")):
-        for name, slides in (("hand", 5), ("odfpy", 2), ("libreoffice", 5)):
+        for name, slides in (("hand", 4), ("odfpy", 2), ("libreoffice", 4)):
             if written.get(name):
                 libreoffice_opens(work, written[name], slides)
 

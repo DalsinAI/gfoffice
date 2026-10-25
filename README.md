@@ -184,6 +184,19 @@ window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
 by the engine in `libowf/include/owf_calc.h`.
 
+## OpenPresentation
+
+OpenPresentation is the GFOffice Suite's slide program, beside OpenWrite and
+OpenCalc here for now (`docs/gfoffice/Design-OpenPresentation.md`). Phase
+P1 is in: the deck model in libowf (`libowf/include/owf_deck.h`), ODP and
+flat ODP opened and saved, and a deck's PDF, its slides laid out by
+OpenLayout in its portable core (`src/deck`, `include/openpresentation_core.h`)
+and drawn by the page PDF writer (`libowf/include/owf_pdf.h`).
+`OWConvert Talk.odp Talk.pdf` makes one. `make deck-test` and `make
+deck-check` (part of `make test` and `make check`) test them; with
+OpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too. Its player and
+PPTX come next (P2), then the editor (P3).
+
 ## Licence
 
 MIT, Copyright (c) 2026 AmigaChrome Team (`LICENSE`).
