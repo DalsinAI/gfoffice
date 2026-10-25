@@ -23,7 +23,14 @@ from an icon set and draws the style guide's states. The toolbar's copy also
 brings main's Buttons style (`ogt_buttons_parse`, `ogt_buttons_style`), which
 these programs don't call yet.
 
+`ogt_toolbar.c`, `ogt_toolbar.h`, `ogt_iconset.c` and `ogt_iconset.h` are
+refreshed from DalsinAI/opengadtools PR #87 (branch
+`team5/toolbar-size-20261025`, 25 October 2026). Toolbar icons are 1.25 times
+the font's height, rounded to the set's 24, 28, 32 or 48: 28 with the lab's
+23-pixel font, where twice the height drew 48. The buttons' padding is on the
+style's 4-pixel grid.
+
 `Images/Toolbar/` at the top of this repository holds the Chrome set's strips
-(24, 32 and 48 pixels, light and dark, 32 and 8 colours), made by that branch's
+(24, 28, 32 and 48 pixels, light and dark, 32 and 8 colours), made by #87's
 `python3 tools/iconset/make_iconset.py`. `build-os3.sh` copies them next to the
 programs, and OpenWrite and OpenCalc find them in `PROGDIR:Images/Toolbar/`.
