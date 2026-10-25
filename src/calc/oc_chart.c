@@ -169,14 +169,13 @@ static void data_free(chartdata *cd)
     free(cd->has);
 }
 
-/* A cell's number format (NULL: General). */
+/* A cell's number format (NULL: General): its own style's, as the grid shows it. */
 static const char *cell_format(const oc_core *core, int sheet, const owf_cell *c, unsigned col)
 {
     const owf_book *b = core->book;
     int st = c->style;
     (void)col;
-    if (st <= 0 && sheet >= 0 && sheet < b->nsheets)
-        st = oc_col_style(&b->sheets[sheet], c->col);
+    (void)sheet;
     if (st > 0 && st < b->nstyles && b->styles[st].number_format > 0 && b->styles[st].number_format < b->nnumfmts)
         return b->numfmts[b->styles[st].number_format];
     return NULL;
