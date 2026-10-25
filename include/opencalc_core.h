@@ -372,7 +372,9 @@ enum {
     OC_DRAW_CARET,      /* the caret: a line from x,y, h long */
     OC_DRAW_MARK,       /* a comment's mark: a triangle filling the top right half of the box x,y,w,h */
     OC_DRAW_FILTER,     /* an AutoFilter's button: the box x,y,w,h with an arrow down; flags 1: its column filters */
-    OC_DRAW_SEGMENT     /* a chart's line, 1 pixel, from x,y to x+w,y+h (either way), cut to the area: rgb */
+    OC_DRAW_SEGMENT,    /* a chart's line, 1 pixel, from x,y to x+w,y+h (either way), cut to the area: rgb */
+    OC_DRAW_POLY        /* a chart's filled polygon: points (x, y pairs), npoints; x,y,w,h around it; cut to the
+                           area (its right and bottom edges outside it, as a box's); rgb */
 };
 enum {
     OC_ROLE_PAPER,          /* the empty sheet (the window fills the area with it first) */
@@ -408,6 +410,9 @@ typedef struct {
     unsigned row, col;                      /* the cell (or header) it belongs to */
     const char *text;                       /* TEXT, HEADER */
     size_t text_off;
+    const int *points;                      /* POLY: npoints x, y pairs */
+    int npoints;
+    size_t points_off;
 } oc_draw_item;
 
 typedef struct {

@@ -140,6 +140,26 @@ int main(int argc, char **argv)
                     owf_number_text(ch->max, b);
                     printf(" min=%s max=%s", ch->has_min ? a : "-", ch->has_max ? b : "-");
                 }
+                if (ch->hole)
+                    printf(" hole=%d", ch->hole);
+                if (ch->first_angle)
+                    printf(" angle=%d", ch->first_angle);
+                if (ch->vary)
+                    printf(" vary=1");
+                if (ch->kind == OWF_CHART_SCATTER) {
+                    char a[32], b[32];
+                    owf_number_text(ch->xmin, a);
+                    owf_number_text(ch->xmax, b);
+                    printf(" xgrid=%d xmin=%s xmax=%s", ch->x_gridlines, ch->has_xmin ? a : "-", ch->has_xmax ? b : "-");
+                }
+                if (ch->value_format) {
+                    printf(" format ");
+                    put_string(ch->value_format);
+                }
+                if (ch->x_format) {
+                    printf(" xformat ");
+                    put_string(ch->x_format);
+                }
                 printf(" title ");
                 put_string(ch->title ? ch->title : "");
                 putchar('\n');
@@ -157,6 +177,26 @@ int main(int argc, char **argv)
                     put_string(se->values ? se->values : "");
                     printf(" categories ");
                     put_string(se->categories ? se->categories : "");
+                    if (se->x_values) {
+                        printf(" x ");
+                        put_string(se->x_values);
+                    }
+                    if (!se->line)
+                        printf(" line=0");
+                    if (se->marker)
+                        printf(" marker=%d", se->marker);
+                    if (se->marker_size)
+                        printf(" size=%d", se->marker_size);
+                    if (se->labels)
+                        printf(" labels=%u@%d", se->labels, se->label_pos);
+                    if (se->label_format) {
+                        printf(" lformat ");
+                        put_string(se->label_format);
+                    }
+                    if (se->format) {
+                        printf(" format ");
+                        put_string(se->format);
+                    }
                     printf(" points");
                     for (p = 0; p < se->npoints; p++) {
                         char num[32];
@@ -164,7 +204,15 @@ int main(int argc, char **argv)
                             owf_number_text(se->points[p].value, num);
                         else
                             strcpy(num, "-");
-                        printf(" %s", num);
+                        if (se->points[p].has_x) {
+                            char xs[32];
+                            owf_number_text(se->points[p].x, xs);
+                            printf(" %s:%s", xs, num);
+                        } else {
+                            printf(" %s", num);
+                        }
+                        if (OWF_SHADE_SET(se->points[p].colour))
+                            printf("#%06lX", OWF_SHADE_RGB(se->points[p].colour));
                         if (se->points[p].label) {
                             putchar('=');
                             put_string(se->points[p].label);

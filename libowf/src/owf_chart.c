@@ -223,17 +223,77 @@ static int point_count(const owf_xml_node *cache)
     return n < 0 ? 0 : n > MAX_POINTS ? MAX_POINTS : (int)n;
 }
 
+static int marker_of(const char *v)
+{
+    static const char *const names[] = { "auto", "none", "circle", "square", "diamond", "triangle", "x", "star", "plus",
+                                         "dash", "dot" };
+    size_t i;
+    for (i = 0; v && i < sizeof names / sizeof *names; i++)
+        if (!strcmp(v, names[i]))
+            return (int)i;
+    return v && !strcmp(v, "picture") ? OWF_MARKER_SQUARE : OWF_MARKER_AUTO;
+}
+
+/* A number format the file sets (numFmt, not linked to the cells'), or NULL. */
+static char *format_of(const owf_xml_node *numfmt, int *failed)
+{
+    const char *code = numfmt ? owf_xml_attr(numfmt, "", "formatCode") : NULL, *linked;
+    if (!code || !*code)
+        return NULL;
+    linked = owf_xml_attr(numfmt, "", "sourceLinked");
+    if (linked && (!strcmp(linked, "1") || !strcmp(linked, "true")))
+        return NULL;
+    return dup_str(code, failed);
+}
+
+static int flag_set(const owf_xml_node *n, const char *name)
+{
+    const char *v = val(child(n, ns_c, name));
+    return child(n, ns_c, name) && (!v || !strcmp(v, "1") || !strcmp(v, "true"));
+}
+
+/* Data labels (dLbls): what they show, where, in which format. A series' own over its group's. */
+static void read_labels(owf_chart_series *s, const owf_xml_node *d, int *failed)
+{
+    static const char *const pos[] = { "", "ctr", "inEnd", "inBase", "outEnd", "t", "b", "l", "r", "bestFit" };
+    const char *v;
+    size_t i;
+    if (!d)
+        return;
+    if (flag_set(d, "delete")) {
+        s->labels = 0;
+        return;
+    }
+    s->labels = (flag_set(d, "showVal") ? OWF_LABEL_VALUE : 0) | (flag_set(d, "showPercent") ? OWF_LABEL_PERCENT : 0) |
+                (flag_set(d, "showCatName") ? OWF_LABEL_CATEGORY : 0) | (flag_set(d, "showSerName") ? OWF_LABEL_SERIES : 0);
+    s->label_pos = OWF_LABEL_AUTO;
+    if ((v = val(child(d, ns_c, "dLblPos"))) != NULL)
+        for (i = 1; i < sizeof pos / sizeof *pos; i++)
+            if (!strcmp(v, pos[i]))
+                s->label_pos = (int)i;
+    free(s->label_format);
+    s->label_format = format_of(child(d, ns_c, "numFmt"), failed);
+}
+
 static int read_series(owf_chart_series *s, const owf_xml_node *ser, int kind, int number, int *failed)
 {
-    const owf_xml_node *f, *cat_cache, *val_cache, *name_cache, *p;
+    const owf_xml_node *f, *cat_cache, *val_cache, *name_cache, *p, *m, *ln;
     char buf[256];
-    int n;
+    int n, scatter = kind == OWF_CHART_SCATTER;
+    long most = -1;
     owf_buf b;
 
     s->index = (int)attr_long(child(ser, ns_c, "idx"), "val", number);
     if (s->index < 0)
         s->index = number;
     s->colour = series_colour(ser, kind);
+    ln = child(child(ser, ns_c, "spPr"), ns_a, "ln");
+    s->line = !child(ln, ns_a, "noFill");
+    m = child(ser, ns_c, "marker");
+    s->marker = marker_of(val(child(m, ns_c, "symbol")));
+    s->marker_size = (int)attr_long(child(m, ns_c, "size"), "val", 0);
+    if (s->marker_size < 0 || s->marker_size > 72)
+        s->marker_size = 0;
     /* its name: a reference's cache, or the text itself */
     name_cache = data_source(child(ser, ns_c, "tx"), &f);
     if (f) {
@@ -248,20 +308,32 @@ static int read_series(owf_chart_series *s, const owf_xml_node *ser, int kind, i
     if (b.length || b.failed)
         s->name = dup_buf(&b, failed);
     owf_buf_free(&b);
-    /* its values and categories */
-    val_cache = data_source(child(ser, ns_c, "val"), &f);
+    /* its values and categories (a scatter's y and x) */
+    val_cache = data_source(child(ser, ns_c, scatter ? "yVal" : "val"), &f);
     if (f) {
         text_of(f, buf, sizeof buf);
         s->values = dup_str(buf, failed);
     }
-    cat_cache = data_source(child(ser, ns_c, "cat"), &f);
+    cat_cache = data_source(child(ser, ns_c, scatter ? "xVal" : "cat"), &f);
     if (f) {
         text_of(f, buf, sizeof buf);
-        s->categories = dup_str(buf, failed);
+        if (scatter)
+            s->x_values = dup_str(buf, failed);
+        else
+            s->categories = dup_str(buf, failed);
     }
+    if (child(val_cache, ns_c, "formatCode")) {
+        text_of(child(val_cache, ns_c, "formatCode"), buf, sizeof buf);
+        if (*buf && strcmp(buf, "General"))
+            s->format = dup_str(buf, failed);
+    }
+    read_labels(s, child(ser, ns_c, "dLbls"), failed);
     n = point_count(val_cache);
     if (point_count(cat_cache) > n)
         n = point_count(cat_cache);
+    for (p = child(ser, ns_c, "dPt"); p; p = next(p, ns_c, "dPt"))   /* points of their own colour */
+        if ((most = attr_long(child(p, ns_c, "idx"), "val", -1)) >= n && most < MAX_POINTS)
+            n = (int)most + 1;
     if (n && !*failed) {
         s->points = calloc((size_t)n, sizeof *s->points);
         if (!s->points) {
@@ -281,10 +353,21 @@ static int read_series(owf_chart_series *s, const owf_xml_node *ser, int kind, i
     }
     for (p = child(cat_cache, ns_c, "pt"); p && !*failed; p = next(p, ns_c, "pt")) {
         long idx = attr_long(p, "idx", -1);
+        double d;
         if (idx >= 0 && idx < n && !s->points[idx].label) {
             text_of(child(p, ns_c, "v"), buf, sizeof buf);
-            s->points[idx].label = dup_str(buf, failed);
+            if (scatter && is(cat_cache, ns_c, "numCache") && owf_number_parse(buf, strlen(buf), &d)) {
+                s->points[idx].x = d;            /* a number, not a category */
+                s->points[idx].has_x = 1;
+            } else {
+                s->points[idx].label = dup_str(buf, failed);
+            }
         }
+    }
+    for (p = child(ser, ns_c, "dPt"); p && !*failed; p = next(p, ns_c, "dPt")) {
+        long idx = attr_long(child(p, ns_c, "idx"), "val", -1);
+        if (idx >= 0 && idx < n)
+            s->points[idx].colour = colour_in(child(child(p, ns_c, "spPr"), ns_a, "solidFill"));
     }
     return !*failed;
 }
@@ -296,7 +379,7 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
         { "barChart", OWF_CHART_COLUMN }, { "bar3DChart", OWF_CHART_COLUMN }, { "lineChart", OWF_CHART_LINE },
         { "line3DChart", OWF_CHART_LINE }, { "areaChart", OWF_CHART_AREA }, { "area3DChart", OWF_CHART_AREA },
         { "pieChart", OWF_CHART_PIE }, { "pie3DChart", OWF_CHART_PIE }, { "doughnutChart", OWF_CHART_PIE },
-        { "ofPieChart", OWF_CHART_PIE }, { "scatterChart", OWF_CHART_OTHER }, { "radarChart", OWF_CHART_OTHER },
+        { "ofPieChart", OWF_CHART_PIE }, { "scatterChart", OWF_CHART_SCATTER }, { "radarChart", OWF_CHART_OTHER },
         { "bubbleChart", OWF_CHART_OTHER }, { "stockChart", OWF_CHART_OTHER }, { "surfaceChart", OWF_CHART_OTHER },
         { "surface3DChart", OWF_CHART_OTHER }
     };
@@ -334,8 +417,36 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
             }
         }
         for (ser = child(g, ns_c, "ser"); ser && c->nseries < count && !*failed; ser = next(ser, ns_c, "ser")) {
-            read_series(&c->series[c->nseries], ser, c->kind, c->nseries, failed);
+            owf_chart_series *s = &c->series[c->nseries];
+            read_labels(s, child(g, ns_c, "dLbls"), failed);       /* the group's, then the series' own */
+            read_series(s, ser, c->kind, c->nseries, failed);
             c->nseries++;
+        }
+        /* pies: the hole, the first slice's angle, a colour each */
+        if (is(g, ns_c, "doughnutChart")) {
+            c->hole = (int)attr_long(child(g, ns_c, "holeSize"), "val", 50);
+            if (c->hole < 10 || c->hole > 90)
+                c->hole = c->hole < 10 ? 10 : 90;
+        }
+        c->first_angle = (int)(attr_long(child(g, ns_c, "firstSliceAng"), "val", 0) % 360);
+        if (c->first_angle < 0)
+            c->first_angle += 360;
+        if (child(g, ns_c, "varyColors"))
+            c->vary = !(v = val(child(g, ns_c, "varyColors"))) || !strcmp(v, "1") || !strcmp(v, "true");
+        else
+            c->vary = c->kind == OWF_CHART_PIE;
+        /* lines' markers (a line chart's c:marker 0: none), a scatter's style (lines only, markers only) */
+        for (count = 0; count < c->nseries; count++) {
+            owf_chart_series *s = &c->series[count];
+            if (c->kind == OWF_CHART_LINE && (v = val(child(g, ns_c, "marker"))) != NULL &&
+                (!strcmp(v, "0") || !strcmp(v, "false")) && s->marker == OWF_MARKER_AUTO)
+                s->marker = OWF_MARKER_NONE;
+            if (c->kind == OWF_CHART_SCATTER && (v = val(child(g, ns_c, "scatterStyle"))) != NULL) {
+                if ((!strcmp(v, "line") || !strcmp(v, "smooth")) && s->marker == OWF_MARKER_AUTO)
+                    s->marker = OWF_MARKER_NONE;
+                if (!strcmp(v, "marker") || !strcmp(v, "none"))
+                    s->line = 0;
+            }
         }
     }
     /* the title: its text, a reference's cache, or (none given) the only series' name */
@@ -359,12 +470,25 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
         v = val(child(legend, ns_c, "legendPos"));
         c->legend = !v || !strcmp(v, "r") || !strcmp(v, "tr") ? 'r' : !strcmp(v, "l") ? 'l' : !strcmp(v, "t") ? 't' : 'b';
     }
-    /* the value axis: its gridlines and its limits */
-    for (ax = child(plot, ns_c, "valAx"); ax; ax = NULL) {
+    /* the value axis: its gridlines and its limits; a scatter's two, x the group's first axis (by its id) */
+    v = val(child(g, ns_c, "axId"));
+    for (ax = child(plot, ns_c, "valAx"), count = 0; ax; ax = next(ax, ns_c, "valAx"), count++) {
         const owf_xml_node *sc = child(ax, ns_c, "scaling");
-        c->gridlines = child(ax, ns_c, "majorGridlines") != NULL;
-        c->has_min = attr_double(child(sc, ns_c, "min"), &c->min);
-        c->has_max = attr_double(child(sc, ns_c, "max"), &c->max);
+        const char *pos = val(child(ax, ns_c, "axPos")), *id = val(child(ax, ns_c, "axId"));
+        int x_axis = c->kind == OWF_CHART_SCATTER &&
+                     (v && id ? !strcmp(v, id) : pos ? !strcmp(pos, "b") || !strcmp(pos, "t") : count == 0);
+        if (x_axis) {
+            c->x_format = format_of(child(ax, ns_c, "numFmt"), failed);
+            c->x_gridlines = child(ax, ns_c, "majorGridlines") != NULL;
+            c->has_xmin = attr_double(child(sc, ns_c, "min"), &c->xmin);
+            c->has_xmax = attr_double(child(sc, ns_c, "max"), &c->xmax);
+        } else if (c->kind == OWF_CHART_SCATTER || count == 0) {          /* others: the first, the primary */
+            free(c->value_format);
+            c->value_format = format_of(child(ax, ns_c, "numFmt"), failed);
+            c->gridlines = child(ax, ns_c, "majorGridlines") != NULL;
+            c->has_min = attr_double(child(sc, ns_c, "min"), &c->min);
+            c->has_max = attr_double(child(sc, ns_c, "max"), &c->max);
+        }
     }
 }
 
@@ -461,11 +585,16 @@ void owf_charts_free(owf_chart *charts, int count)
             free(s->points);
             free(s->name);
             free(s->name_cell);
+            free(s->label_format);
+            free(s->format);
+            free(s->x_values);
             free(s->values);
             free(s->categories);
         }
         free(charts[i].series);
         free(charts[i].title);
+        free(charts[i].value_format);
+        free(charts[i].x_format);
     }
     free(charts);
 }

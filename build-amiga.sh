@@ -28,8 +28,9 @@ echo "build-amiga.sh: openamigalayout at $(git -C "$DEPS/openamigalayout" rev-pa
 OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/openamigalayout" sh "$HERE/build-os3.sh" "$OUT"
 OS32_GCC16=$STOVE sh "$HERE/build-library.sh" "$OUT/library"
 mkdir -p "$OUT/samples"
-for f in "$HERE"/samples/*.docx "$HERE"/samples/*.odt "$HERE"/samples/*.txt; do
-    [ -f "$f" ] && cp "$f" "$OUT/samples/"
+for f in "$HERE"/samples/*.docx "$HERE"/samples/*.odt "$HERE"/samples/*.txt \
+         "$HERE"/tests/book/fixtures/features-openpyxl.xlsx "$HERE"/tests/book/fixtures/charts-openpyxl.xlsx; do
+    [ -f "$f" ] && cp "$f" "$OUT/samples/"   # the workbooks: OpenCalc's charts and the rest, for a lab
 done
 # and presentations for OpenPresentation: the deck tests' fixtures, made here (tests/deck/make_*fixtures.py)
 for f in pptx-talk.pptx pptx-plain.pptx odfpy.odp libreoffice.odp; do

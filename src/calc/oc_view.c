@@ -579,6 +579,7 @@ static oc_draw_item *add(oc_draw_list *list, int kind, int role)
     it->kind = kind;
     it->role = role;
     it->text_off = NO_TEXT;
+    it->points_off = NO_TEXT;
     it->font = -1;
     return it;
 }
@@ -593,6 +594,27 @@ static int add_text(oc_draw_list *list, oc_draw_item *it, const char *s, size_t 
 int oc_draw_add_text(oc_draw_list *list, oc_draw_item *it, const char *s, size_t n)
 {
     return add_text(list, it, s, n);
+}
+
+/* A polygon's points, in the pool after the text (aligned for ints). */
+int oc_draw_add_points(oc_draw_list *list, oc_draw_item *it, const int *xy, int n)
+{
+    size_t at = (list->pool_used + sizeof(long) - 1) / sizeof(long) * sizeof(long), bytes = (size_t)n * 2 * sizeof *xy;
+    if (at + bytes > list->pool_cap) {
+        size_t want = (at + bytes) * 2;
+        char *p;
+        if (want < 4096)
+            want = 4096;
+        if (!(p = realloc(list->pool, want)))
+            return 0;
+        list->pool = p;
+        list->pool_cap = want;
+    }
+    memcpy(list->pool + at, xy, bytes);
+    list->pool_used = at + bytes;
+    it->points_off = at;
+    it->npoints = n;
+    return 1;
 }
 
 static int add_text(oc_draw_list *list, oc_draw_item *it, const char *s, size_t n)
@@ -2020,7 +2042,9 @@ int oc_view_draw(oc_core *core, oc_draw_list *list)
     free(d.ci);
     free(d.rl);
     free(d.cl);
-    for (k = 0; k < list->n; k++)
+    for (k = 0; k < list->n; k++) {
         list->items[k].text = list->items[k].text_off != NO_TEXT ? list->pool + list->items[k].text_off : NULL;
+        list->items[k].points = list->items[k].points_off != NO_TEXT ? (const int *)(list->pool + list->items[k].points_off) : NULL;
+    }
     return ok ? OWF_OK : OWF_ERR_MEMORY;
 }

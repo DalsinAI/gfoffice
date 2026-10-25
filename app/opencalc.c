@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.19 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.21 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -1099,6 +1099,18 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
         ogt_set_apen(cv->rp, role_pen(it->role, it->rgb));
         Move(cv->rp, cv->ox + x0, cv->oy + y0);
         Draw(cv->rp, cv->ox + x1, cv->oy + y1);
+        break;
+    }
+    case OC_DRAW_POLY: {                             /* a chart's slice or marker: filled, cut to its pane by the core */
+        int xy[2 * 256], k, n = it->npoints;
+        if (!it->points || n < 3 || n > 256) break;
+        for (k = 0; k < n; k++) {
+            int px = it->points[2 * k], py = it->points[2 * k + 1];
+            if (px < 0 || py < 0 || px > cv->w || py > cv->h) break;   /* its right and bottom edges are outside it */
+            xy[2 * k] = cv->ox + px;
+            xy[2 * k + 1] = cv->oy + py;
+        }
+        if (k == n) ogt_fill_poly(cv->rp, role_pen(it->role, it->rgb), xy, n);
         break;
     }
     case OC_DRAW_MARK: {                             /* a comment's: the box's top right half, when it is all in view */
@@ -2417,7 +2429,8 @@ static int font_check(const char *arg, char *out, size_t size)
  * cell it starts in, its series and the first one's points, the cells its values come from, and its title. */
 static int chart_check(char *out, size_t size)
 {
-    static const char *const kinds[] = { "other", "columns", "bars", "lines", "areas", "pie" };
+    static const char *const kinds[] = { "other", "columns", "bars", "lines", "areas", "pie", "scatter" };
+    static const char *const groupings[] = { "", " stacked", " 100%" };
     char buf[1024], ref[16];
     owf_chart *charts;
     int n, i;
@@ -2430,10 +2443,21 @@ static int chart_check(char *out, size_t size)
     for (i = 0; i < n && k < sizeof buf; i++) {
         const owf_chart *c = &charts[i];
         oc_cell_name(c->from_row, c->from_col, ref);
-        k += (size_t)snprintf(buf + k, sizeof buf - k, "; %s at %s, %d series, %d points from %s, \"%s\"",
-                              kinds[c->kind >= 0 && c->kind <= OWF_CHART_PIE ? c->kind : 0], ref, c->nseries,
+        k += (size_t)snprintf(buf + k, sizeof buf - k, "; %s%s at %s, %d series, %d points from %s, \"%s\"",
+                              c->kind == OWF_CHART_PIE && c->hole ? "doughnut" :
+                              kinds[c->kind >= 0 && c->kind <= OWF_CHART_SCATTER ? c->kind : 0],
+                              c->grouping >= 0 && c->grouping <= OWF_CHART_PERCENT && c->kind >= OWF_CHART_COLUMN &&
+                              c->kind <= OWF_CHART_AREA ? groupings[c->grouping] : "", ref, c->nseries,
                               c->nseries ? c->series[0].npoints : 0,
                               c->nseries && c->series[0].values ? c->series[0].values : "(the file)", c->title ? c->title : "");
+        if (k < sizeof buf && c->value_format)
+            k += (size_t)snprintf(buf + k, sizeof buf - k, ", axis \"%s\"", c->value_format);
+        if (k < sizeof buf && c->nseries && c->series[0].labels)
+            k += (size_t)snprintf(buf + k, sizeof buf - k, ", labels%s%s%s%s",
+                                  c->series[0].labels & OWF_LABEL_SERIES ? " series" : "",
+                                  c->series[0].labels & OWF_LABEL_CATEGORY ? " category" : "",
+                                  c->series[0].labels & OWF_LABEL_VALUE ? " value" : "",
+                                  c->series[0].labels & OWF_LABEL_PERCENT ? " percent" : "");
     }
     owf_charts_free(charts, n);
     to_latin1(buf, strlen(buf), out, size);

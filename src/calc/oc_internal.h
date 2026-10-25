@@ -176,6 +176,7 @@ int oc_measure(const oc_core *core, const char *s, size_t n, const owf_cellstyle
 const owf_range *oc_merge_at(const owf_sheet *sheet, unsigned row, unsigned col);
 oc_draw_item *oc_draw_add(oc_draw_list *list, int kind, int role);
 int oc_draw_add_text(oc_draw_list *list, oc_draw_item *it, const char *s, size_t n);
+int oc_draw_add_points(oc_draw_list *list, oc_draw_item *it, const int *xy, int n);
 
 /* oc_chart.c: the sheet showing's charts (read once; NULL, 0 when none), forgotten when the book goes; a
  * chart's items in its box x,y,w,h, cut to the clip box (grid pixels). 0 when memory ran out. */
