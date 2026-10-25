@@ -11,9 +11,11 @@
  * columns and sheets, merged cells, array formulas, frozen panes and the
  * active sheet (settings.xml), named ranges and expressions, the 1904
  * date system (the null date), comments on cells (office:annotation), data
- * validation (table:content-validations and the cells that name them) and
+ * validation (table:content-validations and the cells that name them),
  * AutoFilters (a database range with its buttons, and its conditions of
- * values as Excel's).
+ * values as Excel's) and conditional formatting (LibreOffice's
+ * calcext:conditional-formats: conditions with their styles' looks,
+ * colour scales, data bars and icon sets).
  *
  * The XML is read as a stream, element by element: a sheet's memory is its
  * cells'. Repeated rows and cells (number-rows-repeated, the empty rows to
@@ -223,6 +225,11 @@ typedef struct {
     owf_buf af_xml;
     int af_field, af_values, af_or, af_approx;
     char *af_value;                      /* the filter-condition's own value, for one without a set */
+    /* conditional formatting: the ranges of the conditional-format being read, the rules' priorities so far,
+     * the data bar or icon set being read (its rule, -1 none) and its cfvo elements */
+    owf_range *cf_ranges;
+    int cf_nranges, cf_capranges, cf_priority, cf_kept, cf_seen, style_maps;
+    owf_buf cf_xml;
 } ods;
 
 static void rule_cell(ods *o, const char *name, unsigned long first, unsigned long last);
@@ -552,7 +559,7 @@ static void style_properties(ods *o, const owf_xml_event *e)
         if ((v = ev(e, NS_TABLE, "display")) != NULL)
             s->display = strcmp(v, "false") != 0;
     } else if (!strcmp(e->name, "map") && s->family == F_CELL) {
-        owf_report_add(o->report, OWF_NOTE_LOST, "Conditional formatting is not read yet");
+        o->style_maps = 1;                       /* said once the body shows whether LibreOffice's are there too */
     }
 }
 
@@ -1221,6 +1228,8 @@ static void start_table(ods *o, const owf_xml_event *e)
     o->ncols = 0;
     o->ncolumns = 0;
     o->narrays = 0;
+    o->cf_priority = 0;
+    o->cf_kept = 0;
     o->default_width = o->default_height = -1;
     if (ts && !ts->display)
         o->sheet->hidden = 1;
@@ -2054,6 +2063,413 @@ static void filter_end(ods *o)
         return;
 }
 
+/* ---- Conditional formatting ---- */
+
+/* An ODF text in a condition ("Review", its quotes doubled) at p: copied unquoted into out; where it ends. */
+static const char *of_string(const char *p, char *out, size_t size)
+{
+    size_t k = 0;
+    while (*p == ' ')
+        p++;
+    if (*p++ != '"')
+        return NULL;
+    for (; *p && !(*p == '"' && p[1] != '"'); p++) {
+        if (*p == '"')
+            p++;
+        if (k + 1 < size)
+            out[k++] = *p;
+    }
+    out[k] = 0;
+    return *p == '"' ? p + 1 : NULL;
+}
+
+/* Text for XML: an attribute's (quotes escaped too) or an element's. */
+static void put_escaped(owf_buf *b, const char *s, int attribute)
+{
+    for (; *s; s++)
+        switch (*s) {
+        case '&': owf_buf_puts(b, "&amp;"); break;
+        case '<': owf_buf_puts(b, "&lt;"); break;
+        case '>': owf_buf_puts(b, "&gt;"); break;
+        case '"':
+            owf_buf_puts(b, attribute ? "&quot;" : "\"");
+            break;
+        default: owf_buf_putc(b, *s);
+        }
+}
+
+static void put_escaped_xml(owf_buf *b, const char *s)
+{
+    put_escaped(b, s, 1);
+}
+
+/* A cell's name, A1, for Excel's formulas. */
+static void put_cell_name(owf_buf *b, unsigned row, unsigned col)
+{
+    char letters[8];
+    int n = 0;
+    unsigned c = col + 1;
+    while (c && n < 7) {
+        letters[n++] = (char)('A' + (c - 1) % 26);
+        c = (c - 1) / 26;
+    }
+    while (n)
+        owf_buf_putc(b, letters[--n]);
+    owf_buf_printf(b, "%u", row + 1);
+}
+
+/* calcext:conditional-format: its ranges ("Sheet1.A1:Sheet1.B9 Sheet1.D2"), for the rules inside it. */
+static void cf_format(ods *o, const owf_xml_event *e)
+{
+    const char *p = ev(e, NS_CALCEXT, "target-range-address");
+    char name[256];
+    o->cf_nranges = 0;
+    while (p && *p) {
+        unsigned long r0, c0, r1, c1;
+        owf_range *r;
+        while (*p == ' ')
+            p++;
+        if (!*p || !odf_cell(&p, name, sizeof name, &r0, &c0))
+            break;
+        r1 = r0;
+        c1 = c0;
+        if (*p == ':' && (p++, !odf_cell(&p, name, sizeof name, &r1, &c1)))
+            break;
+        if (r1 < r0 || c1 < c0)
+            continue;
+        if (!(r = grow(o, o->cf_ranges, o->cf_nranges, &o->cf_capranges, sizeof *r)))
+            return;
+        o->cf_ranges = r;
+        r = &o->cf_ranges[o->cf_nranges++];
+        r->first_row = (unsigned)r0;
+        r->first_col = (unsigned)c0;
+        r->last_row = (unsigned)r1;
+        r->last_col = (unsigned)c1;
+    }
+}
+
+/* A new rule over the format's ranges, its priority libowf's own (when it wrote the file) or the next. */
+static owf_condfmt *cf_new(ods *o, const owf_xml_event *e)
+{
+    owf_condfmt *cf;
+    long priority = o->ext_ns ? whole(ev(e, o->ext_ns, "priority"), 0, 1, 0x7FFFFFFFL) : 0;
+    const char *stop = o->ext_ns ? ev(e, o->ext_ns, "stop-if-true") : NULL;
+    if (!o->cf_nranges)
+        return NULL;
+    if (!(cf = owf_sheet_add_condfmt(o->sheet))) {
+        o->failed = 1;
+        return NULL;
+    }
+    if (!(cf->ranges = malloc((size_t)o->cf_nranges * sizeof *cf->ranges))) {
+        o->failed = 1;
+        return NULL;
+    }
+    memcpy(cf->ranges, o->cf_ranges, (size_t)o->cf_nranges * sizeof *cf->ranges);
+    cf->nranges = o->cf_nranges;
+    cf->priority = priority > 0 ? (int)priority : o->cf_priority + 1;
+    if (cf->priority > o->cf_priority)
+        o->cf_priority = cf->priority;
+    cf->stop = stop && !strcmp(stop, "true");
+    return cf;
+}
+
+/* A kept rule's XML, as Excel's cfRule (for writing back as .xlsx), with the formula its kind holds by. */
+static void cf_keep(ods *o, owf_condfmt *cf, const char *start, const char *formula)
+{
+    owf_buf b;
+    owf_buf_init(&b);
+    owf_buf_puts(&b, start);
+    if (formula) {
+        owf_buf_puts(&b, "><formula>");
+        put_escaped(&b, formula, 0);
+        owf_buf_puts(&b, "</formula></cfRule>");
+    } else {
+        owf_buf_puts(&b, "/>");
+    }
+    owf_buf_putc(&b, 0);
+    cf->type = OWF_CF_KEPT;
+    if (b.failed || (formula && !(cf->formula[0] = copy(o, formula)))) {
+        owf_buf_free(&b);
+        o->failed = 1;
+        return;
+    }
+    cf->xml = (char *)b.data;
+}
+
+/* calcext:condition: a rule whose look is its style's, held when its value says. */
+static void cf_condition(ods *o, const owf_xml_event *e)
+{
+    static const struct { const char *text; int op; } ops[] = {
+        { "<=", OWF_CF_LESS_EQUAL }, { ">=", OWF_CF_GREATER_EQUAL }, { "!=", OWF_CF_NOT_EQUAL }, { "<>", OWF_CF_NOT_EQUAL },
+        { "=", OWF_CF_EQUAL }, { "<", OWF_CF_LESS }, { ">", OWF_CF_GREATER }
+    };
+    static const struct { const char *odf, *xl, *op; } texts[] = {
+        { "contains-text", "containsText", "containsText" }, { "not-contains-text", "notContainsText", "notContains" },
+        { "begins-with", "beginsWith", "beginsWith" }, { "ends-with", "endsWith", "endsWith" }
+    };
+    const char *v = ev(e, NS_CALCEXT, "value"), *q;
+    const char *look = ev(e, NS_CALCEXT, "apply-style-name");
+    const ods_style *st = find_style(o, look, F_CELL);
+    owf_condfmt *cf;
+    char *a = NULL, *b = NULL, text[512];
+    int ok = 0;
+    size_t i;
+    if (!v || !(cf = cf_new(o, e)))
+        return;
+    if (!st && look) {                               /* LibreOffice names the style by its display name: its name */
+        owf_buf n;                                   /* has "_" as "_5f_" and a space as "_20_" */
+        owf_buf_init(&n);
+        for (q = look; *q; q++) {
+            if (*q == '_')
+                owf_buf_puts(&n, "_5f_");
+            else if (*q == ' ')
+                owf_buf_puts(&n, "_20_");
+            else
+                owf_buf_putc(&n, *q);
+        }
+        owf_buf_putc(&n, 0);
+        if (!n.failed)
+            st = find_style(o, (const char *)n.data, F_CELL);
+        owf_buf_free(&n);
+    }
+    if (st) {                                        /* its look: what its style sets */
+        if (st->mask & P_FILL)
+            cf->fill = st->fill;
+        if ((st->mask & P_COLOUR) && st->colour != OWF_COLOUR_AUTO)
+            cf->font_colour = OWF_SHADE(st->colour);
+        cf->font_set = st->flag_mask & (OWF_BOLD | OWF_ITALIC | OWF_UNDERLINE | OWF_STRIKE);
+        cf->font_flags = st->flags & cf->font_set;
+    }
+    while (*v == ' ')
+        v++;
+    if ((q = after(v, "between")) != NULL || (q = after(v, "not-between")) != NULL) {
+        cf->type = OWF_CF_CELL_IS;
+        cf->op = *v == 'n' ? OWF_CF_NOT_BETWEEN : OWF_CF_BETWEEN;
+        ok = rule_args(o, q, &a, &b) && a && b && (cf->formula[0] = owf_of_to_excel(a)) != NULL &&
+             (cf->formula[1] = owf_of_to_excel(b)) != NULL;
+    } else if ((q = after(v, "formula-is")) != NULL) {
+        cf->type = OWF_CF_EXPRESSION;
+        ok = rule_args(o, q, &a, &b) && a && !b && (cf->formula[0] = owf_of_to_excel(a)) != NULL;
+    } else {
+        for (i = 0; i < sizeof texts / sizeof texts[0] && !ok; i++)
+            if ((q = after(v, texts[i].odf)) != NULL && *q == '(' && of_string(q + 1, text, sizeof text)) {
+                owf_buf f, start;
+                owf_buf_init(&f);
+                owf_buf_init(&start);
+                owf_buf_putc(&f, 0);                 /* the cell: the ranges' first, as Excel's formula has it */
+                f.length = 0;
+                {
+                    owf_buf cell;
+                    owf_buf_init(&cell);
+                    put_cell_name(&cell, cf->ranges[0].first_row, cf->ranges[0].first_col);
+                    owf_buf_putc(&cell, 0);
+                    owf_buf_puts(&f, i == 0 ? "NOT(ISERROR(SEARCH(\"" : i == 1 ? "ISERROR(SEARCH(\"" : i == 2 ? "LEFT(" : "RIGHT(");
+                    if (i < 2) {
+                        const char *t;
+                        for (t = text; *t; t++) {
+                            if (*t == '"')
+                                owf_buf_putc(&f, '"');
+                            owf_buf_putc(&f, *t);
+                        }
+                        owf_buf_printf(&f, "\",%s))%s", cell.failed ? "A1" : (const char *)cell.data, i == 0 ? ")" : "");
+                    } else {
+                        const char *t;
+                        owf_buf_printf(&f, "%s,LEN(\"", cell.failed ? "A1" : (const char *)cell.data);
+                        for (t = text; *t; t++) {
+                            if (*t == '"')
+                                owf_buf_putc(&f, '"');
+                            owf_buf_putc(&f, *t);
+                        }
+                        owf_buf_puts(&f, "\"))=\"");
+                        for (t = text; *t; t++) {
+                            if (*t == '"')
+                                owf_buf_putc(&f, '"');
+                            owf_buf_putc(&f, *t);
+                        }
+                        owf_buf_putc(&f, '"');
+                    }
+                    owf_buf_free(&cell);
+                }
+                owf_buf_putc(&f, 0);
+                owf_buf_printf(&start, "<cfRule type=\"%s\" operator=\"%s\" text=\"", texts[i].xl, texts[i].op);
+                put_escaped_xml(&start, text);
+                owf_buf_putc(&start, '"');
+                owf_buf_putc(&start, 0);
+                if (!f.failed && !start.failed) {
+                    cf_keep(o, cf, (const char *)start.data, (const char *)f.data);
+                    ok = cf->xml != NULL;
+                }
+                owf_buf_free(&f);
+                owf_buf_free(&start);
+            }
+        if (!ok) {
+            static const struct { const char *odf, *xl; } kinds[] = {
+                { "duplicate", "<cfRule type=\"duplicateValues\"" }, { "unique", "<cfRule type=\"uniqueValues\"" },
+                { "above-equal-average", "<cfRule type=\"aboveAverage\" equalAverage=\"1\"" },
+                { "below-equal-average", "<cfRule type=\"aboveAverage\" aboveAverage=\"0\" equalAverage=\"1\"" },
+                { "above-average", "<cfRule type=\"aboveAverage\"" },
+                { "below-average", "<cfRule type=\"aboveAverage\" aboveAverage=\"0\"" }
+            };
+            static const struct { const char *odf, *xl; } ranks[] = {
+                { "top-elements", "" }, { "bottom-elements", " bottom=\"1\"" }, { "top-percent", " percent=\"1\"" },
+                { "bottom-percent", " percent=\"1\" bottom=\"1\"" }
+            };
+            for (i = 0; i < sizeof kinds / sizeof kinds[0] && !ok; i++)
+                if (!strcmp(v, kinds[i].odf)) {
+                    cf_keep(o, cf, kinds[i].xl, NULL);
+                    ok = cf->xml != NULL;
+                }
+            if (!ok && (!strcmp(v, "is-error") || !strcmp(v, "is-no-error"))) {
+                owf_buf f;                           /* Excel's holds by ISERROR of its first cell */
+                owf_buf_init(&f);
+                owf_buf_puts(&f, v[3] == 'e' ? "ISERROR(" : "NOT(ISERROR(");
+                put_cell_name(&f, cf->ranges[0].first_row, cf->ranges[0].first_col);
+                owf_buf_puts(&f, v[3] == 'e' ? ")" : "))");
+                owf_buf_putc(&f, 0);
+                if (!f.failed)
+                    cf_keep(o, cf, v[3] == 'e' ? "<cfRule type=\"containsErrors\"" : "<cfRule type=\"notContainsErrors\"",
+                            (const char *)f.data);
+                ok = cf->xml != NULL;
+                owf_buf_free(&f);
+            }
+            for (i = 0; i < sizeof ranks / sizeof ranks[0] && !ok; i++)
+                if ((q = after(v, ranks[i].odf)) != NULL && rule_args(o, q, &a, &b) && a && !b) {
+                    char start[96];
+                    snprintf(start, sizeof start, "<cfRule type=\"top10\" rank=\"%ld\"%s", strtol(a, NULL, 10), ranks[i].xl);
+                    cf_keep(o, cf, start, NULL);
+                    ok = cf->xml != NULL;
+                }
+        }
+        for (i = 0; i < sizeof ops / sizeof ops[0] && !ok && !cf->xml; i++)
+            if ((q = after(v, ops[i].text)) != NULL) {
+                while (*q == ' ')
+                    q++;
+                cf->type = OWF_CF_CELL_IS;
+                cf->op = ops[i].op;
+                ok = *q && (cf->formula[0] = owf_of_to_excel(q)) != NULL;
+                break;
+            }
+    }
+    free(a);
+    free(b);
+    if (!ok) {                                       /* not one the model has: taken back */
+        owf_condfmt_free(cf);
+        o->sheet->ncondfmts--;
+        owf_report_add(o->report, OWF_NOTE_LOST, "Some conditional formatting rules could not be read");
+    }
+}
+
+/* calcext:color-scale-entry, calcext:formatting-entry: an Excel kind of point. */
+static int cf_kind(const char *type)
+{
+    static const char *const kinds[] = { "minimum", "maximum", "number", "percent", "percentile", "formula" };
+    int k;
+    for (k = 0; type && k < 6; k++)
+        if (!strcmp(type, kinds[k]))
+            return k;
+    if (type && !strcmp(type, "auto-minimum"))
+        return OWF_CFV_MIN;
+    if (type && !strcmp(type, "auto-maximum"))
+        return OWF_CFV_MAX;
+    return OWF_CFV_NUMBER;
+}
+
+/* Inside a sheet's calcext:conditional-formats. */
+static void cf_start(ods *o, const owf_xml_event *e)
+{
+    owf_condfmt *cf;
+    o->cf_seen = 1;
+    if (!strcmp(e->name, "conditional-format")) {
+        cf_format(o, e);
+    } else if (!strcmp(e->name, "condition")) {
+        cf_condition(o, e);
+    } else if (!strcmp(e->name, "color-scale")) {
+        if ((cf = cf_new(o, e)) != NULL)
+            cf->type = OWF_CF_COLOUR_SCALE;
+    } else if (!strcmp(e->name, "color-scale-entry") && o->sheet->ncondfmts) {
+        unsigned long rgb = 0;
+        owf_cfpoint *pt;
+        const char *v = ev(e, NS_CALCEXT, "value");
+        cf = &o->sheet->condfmts[o->sheet->ncondfmts - 1];
+        if (cf->type != OWF_CF_COLOUR_SCALE || cf->npoints >= 3)
+            return;
+        pt = &cf->points[cf->npoints++];
+        pt->kind = cf_kind(ev(e, NS_CALCEXT, "type"));
+        if (owf_parse_colour(ev(e, NS_CALCEXT, "color"), &rgb))
+            pt->colour = OWF_SHADE(rgb);
+        if (pt->kind == OWF_CFV_FORMULA)
+            pt->value = v ? owf_of_to_excel(v) : NULL;
+        else if (pt->kind != OWF_CFV_MIN && pt->kind != OWF_CFV_MAX)
+            pt->value = copy(o, v ? v : "0");
+        else
+            pt->value = copy(o, "");
+    } else if (!strcmp(e->name, "data-bar") || !strcmp(e->name, "icon-set")) {
+        unsigned long rgb = 0;
+        if (!(cf = cf_new(o, e)))
+            return;
+        cf->type = OWF_CF_KEPT;
+        o->cf_kept = o->sheet->ncondfmts;
+        o->cf_xml.length = 0;
+        o->cf_xml.failed = 0;
+        if (e->name[0] == 'd') {
+            const char *lo = ev(e, NS_CALCEXT, "min-length"), *hi = ev(e, NS_CALCEXT, "max-length");
+            owf_buf_puts(&o->cf_xml, "<cfRule type=\"dataBar\"><dataBar");
+            if (lo && strcmp(lo, "10"))
+                owf_buf_printf(&o->cf_xml, " minLength=\"%ld\"", whole(lo, 10, 0, 100));
+            if (hi && strcmp(hi, "90"))
+                owf_buf_printf(&o->cf_xml, " maxLength=\"%ld\"", whole(hi, 90, 0, 100));
+            owf_buf_putc(&o->cf_xml, '>');
+            if (!owf_parse_colour(ev(e, NS_CALCEXT, "positive-color"), &rgb))
+                rgb = 0x638EC6;
+            cf->points[0].colour = OWF_SHADE(rgb);   /* kept for its end */
+        } else {
+            const char *set = ev(e, NS_CALCEXT, "icon-set-type"), *show = ev(e, NS_CALCEXT, "show-value");
+            owf_buf_puts(&o->cf_xml, "<cfRule type=\"iconSet\"><iconSet");
+            if (set && strcmp(set, "3TrafficLights1")) {
+                owf_buf_puts(&o->cf_xml, " iconSet=\"");
+                put_escaped_xml(&o->cf_xml, set);
+                owf_buf_putc(&o->cf_xml, '"');
+            }
+            if (show && !strcmp(show, "false"))
+                owf_buf_puts(&o->cf_xml, " showValue=\"0\"");
+            owf_buf_putc(&o->cf_xml, '>');
+        }
+    } else if (!strcmp(e->name, "formatting-entry") && o->cf_kept) {
+        static const char *const kinds[] = { "min", "max", "num", "percent", "percentile", "formula" };
+        const char *v = ev(e, NS_CALCEXT, "value");
+        int k = cf_kind(ev(e, NS_CALCEXT, "type"));
+        owf_buf_printf(&o->cf_xml, "<cfvo type=\"%s\"", kinds[k]);
+        if (k != OWF_CFV_MIN && k != OWF_CFV_MAX && v) {
+            char *f = k == OWF_CFV_FORMULA ? owf_of_to_excel(v) : NULL;
+            owf_buf_puts(&o->cf_xml, " val=\"");
+            put_escaped_xml(&o->cf_xml, f ? f : v);
+            owf_buf_putc(&o->cf_xml, '"');
+            free(f);
+        }
+        owf_buf_puts(&o->cf_xml, "/>");
+    } else if (!strcmp(e->name, "date-is")) {
+        owf_report_add(o->report, OWF_NOTE_LOST, "Some conditional formatting rules could not be read");
+    }
+}
+
+static void cf_end(ods *o, const owf_xml_event *e)
+{
+    owf_condfmt *cf;
+    if (!o->cf_kept || (strcmp(e->name, "data-bar") && strcmp(e->name, "icon-set")))
+        return;
+    cf = &o->sheet->condfmts[o->cf_kept - 1];
+    if (e->name[0] == 'd') {
+        owf_buf_printf(&o->cf_xml, "<color rgb=\"FF%06lX\"/></dataBar></cfRule>", cf->points[0].colour & 0xFFFFFFUL);
+        cf->points[0].colour = 0;
+    } else {
+        owf_buf_puts(&o->cf_xml, "</iconSet></cfRule>");
+    }
+    owf_buf_putc(&o->cf_xml, 0);
+    if (!o->cf_xml.failed)
+        cf->xml = copy(o, (const char *)o->cf_xml.data);
+    o->cf_kept = 0;
+}
+
 /* ---- The stream ---- */
 
 static void text_start(ods *o, const owf_xml_event *e)
@@ -2166,8 +2582,8 @@ static void body_start(ods *o, const owf_xml_event *e)
         } else if (!strcmp(n, "table") && o->sheet) {
             o->skip_depth = e->depth;    /* a table inside a cell's text: not the model's */
         }
-    } else if (is(e, NS_CALCEXT, "conditional-formats")) {
-        owf_report_add(o->report, OWF_NOTE_LOST, "Conditional formatting is not read yet");
+    } else if (o->sheet && !strcmp(e->ns, NS_CALCEXT)) {
+        cf_start(o, e);
     } else if (!strcmp(e->ns, NS_DRAW) && o->sheet) {
         owf_report_add(o->report, OWF_NOTE_LOST, "Pictures, charts and drawings on sheets are not read yet");
     }
@@ -2216,6 +2632,8 @@ static void body_end(ods *o, const owf_xml_event *e)
         end_row(o);
     else if (is(e, NS_TABLE, "table") && e->depth == o->table_depth)
         end_table(o);
+    else if (!strcmp(e->ns, NS_CALCEXT))
+        cf_end(o, e);
 }
 
 /* One part (content.xml, styles.xml, settings.xml) or the whole of a
@@ -2353,6 +2771,8 @@ static int read_part(ods *o, char *data, size_t length)
 static void finish(ods *o)
 {
     int i, k;
+    if (o->style_maps && !o->cf_seen)                /* ODF's own conditional styles alone: not read */
+        owf_report_add(o->report, OWF_NOTE_LOST, "Conditional formatting is not read yet");
     for (i = 0; i < o->nnames && !o->failed; i++)
         if (owf_book_add_name(o->book, o->names[i].name, o->names[i].sheet, o->names[i].formula, 0) < 0)
             o->failed = 1;
@@ -2434,6 +2854,8 @@ static void free_reader(ods *o)
     owf_buf_free(&o->note_author);
     owf_buf_free(&o->af_xml);
     free(o->af_value);
+    free(o->cf_ranges);
+    owf_buf_free(&o->cf_xml);
 }
 
 static ods *new_reader(owf_book *book, owf_report *report)
@@ -2455,6 +2877,7 @@ static ods *new_reader(owf_book *book, owf_report *report)
     owf_buf_init(&o->note_text);
     owf_buf_init(&o->note_author);
     owf_buf_init(&o->af_xml);
+    owf_buf_init(&o->cf_xml);
     return o;
 }
 

@@ -179,9 +179,58 @@ def test_condfmt(work):
         except Exception as e:  # noqa: BLE001
             check("cf: LibreOffice converts the file written", False, e)
 
-    # ODS: said to be left out
-    report = convert(FIX, os.path.join(work, "features.ods"))
-    check("cf: ODS says it leaves them out", "Conditional formatting is kept in Excel workbooks" in report, report)
+    # ODS and flat ODS: the same rules, as LibreOffice keeps them (and libowf's priority and stopIfTrue beside)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "features." + ext)
+        report = convert(FIX, ods)
+        check("cf: kept in ." + ext + ", no note", "Conditional formatting" not in report, report)
+        got = sheet_lines(dump(ods), 0, "cf")
+        check("cf: the same from ." + ext, got == cf, "\n".join(got) + "\n---\n" + "\n".join(cf))
+    with zipfile.ZipFile(os.path.join(work, "features.ods")) as z:
+        content, styles = z.read("content.xml").decode(), z.read("styles.xml").decode()
+    check("cf: after the rows, the rules over the same cells together",
+          content.rfind("</table:table-row>", 0, content.find("<calcext:conditional-formats>")) > 0 and
+          content.count("<calcext:conditional-format ") == 8 and content.count("<calcext:condition ") == 7 and
+          content.count("<calcext:color-scale ") == 2 and content.count("<calcext:data-bar ") == 1, content.count("<calcext:"))
+    check("cf: LibreOffice's words", 'calcext:value="between(100,200)"' in content and
+          'calcext:value="formula-is([.$D7]=&quot;No&quot;)"' in content and 'calcext:value="contains-text(&quot;Review&quot;)"' in content, "")
+    check("cf: each look a style of its own", styles.count('style:name="GfoCondition') == 7 and
+          '<style:style style:name="GfoCondition4" style:family="table-cell" style:parent-style-name="Default"><style:text-properties '
+          'fo:color="#808080" fo:font-style="italic"/></style:style>' in styles, styles[styles.find("GfoCondition"):][:600])
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-cf-ods")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                            "--outdir", outdir, os.path.join(work, "features.ods")], check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=300)
+            back = sheet_lines(dump(os.path.join(outdir, "features.xlsx")), 0, "cf")
+            looks = lambda ls: sorted(re.sub(r" priority=\d+ stop=\d", "", re.sub(r' xml ".*', "", l)) for l in ls)
+            check("cf: LibreOffice reads the ten from the ODS written, with their looks",
+                  len(back) == 10 and [l for l in looks(back) if "type=0" in l or "type=1" in l] ==
+                  [l for l in looks(cf) if "type=0" in l or "type=1" in l], "\n".join(back))
+        except Exception as e:  # noqa: BLE001
+            check("cf: LibreOffice converts the ODS written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+    # LibreOffice's own ODS of the fixture: its rules read (no priorities or stopIfTrue in it: in its order)
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-cf-theirs")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "ods",
+                            "--outdir", outdir, FIX], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+            theirs = dump(os.path.join(outdir, "features-openpyxl.ods"))
+            got = sheet_lines(theirs, 0, "cf")
+            same = lambda ls: sorted(re.sub(r" priority=\d+ stop=\d", "", l) for l in ls)
+            check("cf: LibreOffice's ODS read: the ten rules", same(got) == same(cf), "\n".join(got))
+            check("cf: LibreOffice's ODS read: no note", "Conditional formatting" not in "\n".join(lines(theirs, "note")), lines(theirs, "note"))
+        except Exception as e:  # noqa: BLE001
+            check("cf: LibreOffice converts the fixture", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
 
 
 # ---- Comments ----
@@ -421,6 +470,53 @@ def test_autofilter(work):
           'table:target-range-address="Systems.A6:Systems.I242" table:display-filter-buttons="true"><table:filter>'
           '<table:filter-condition table:field-number="3" table:value="Yes" table:operator="="/></table:filter>' in content,
           content[content.find("<table:database-range"):][:400])
+
+
+def test_cf_kinds_ods(work):
+    """The kept rules LibreOffice has words for (an icon set, top and bottom tens, an average, duplicates and
+    uniques, a text's start, errors, a data bar from a number to a percentile) through ODS and back."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.formatting.rule import DataBarRule, IconSetRule, Rule
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.styles.differential import DifferentialStyle
+    except ImportError:
+        return
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Kinds"
+    for r in range(1, 21):
+        ws.append([r, r * 3 % 7, "a%d" % (r % 4), "x"])
+    red = DifferentialStyle(font=Font(color="9C0006"), fill=PatternFill(bgColor="FFC7CE"))
+    ws.conditional_formatting.add("A1:A20", IconSetRule("3Arrows", "percent", [0, 33, 67]))
+    ws.conditional_formatting.add("B1:B20", Rule(type="top10", rank=3, dxf=red))
+    ws.conditional_formatting.add("B1:B20", Rule(type="top10", rank=10, percent=True, bottom=True, dxf=red))
+    ws.conditional_formatting.add("A1:A20", Rule(type="aboveAverage", aboveAverage=False, equalAverage=True, dxf=red))
+    ws.conditional_formatting.add("C1:C20", Rule(type="duplicateValues", dxf=red))
+    ws.conditional_formatting.add("C1:C20", Rule(type="uniqueValues", dxf=red))
+    ws.conditional_formatting.add("C1:C20", Rule(type="beginsWith", operator="beginsWith", text="a1",
+                                                 formula=['LEFT(C1,LEN("a1"))="a1"'], dxf=red))
+    ws.conditional_formatting.add("C1:C20", Rule(type="containsErrors", formula=["ISERROR(C1)"], dxf=red))
+    ws.conditional_formatting.add("D1:D20", DataBarRule(start_type="num", start_value=1, end_type="percentile",
+                                                        end_value=90, color="FF00AA00"))
+    src = os.path.join(work, "kinds.xlsx")
+    wb.save(src)
+
+    def norm(l):                                     # a start tag's attributes in any order
+        return re.sub(r'(<cfRule)((?: \w+=\\"[^\\]*\\")*)', lambda m: m.group(1) + "".join(sorted(re.findall(r' \w+=\\"[^\\]*\\"', m.group(2)))), l)
+    want = [norm(l) for l in sheet_lines(dump(src), 0, "cf")]
+    check("cf kinds: nine read", len(want) == 9, want)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "kinds." + ext)
+        convert(src, ods)
+        got = [norm(l) for l in sheet_lines(dump(ods), 0, "cf")]
+        check("cf kinds: the same through ." + ext, got == want, "\n".join(got) + "\n---\n" + "\n".join(want))
+    with zipfile.ZipFile(os.path.join(work, "kinds.ods")) as z:
+        content = z.read("content.xml").decode()
+    for said in ('calcext:icon-set-type="3Arrows"', 'calcext:value="top-elements(3)"', 'calcext:value="bottom-percent(10)"',
+                 'calcext:value="below-equal-average"', 'calcext:value="duplicate"', 'calcext:value="unique"',
+                 'calcext:value="begins-with(&quot;a1&quot;)"', 'calcext:value="is-error"', 'calcext:type="percentile"'):
+        check("cf kinds: written as LibreOffice says it: " + said, said in content, "")
 
 
 def test_ods_quoted_sheet(work):
@@ -912,6 +1008,7 @@ def main():
         test_validation(work)
         test_autofilter(work)
         test_ods_quoted_sheet(work)
+        test_cf_kinds_ods(work)
         test_drawings(work)
         test_charts(work)
         damaged(work)
