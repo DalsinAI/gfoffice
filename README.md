@@ -161,6 +161,26 @@ library and the program agree on whose memory it is.
 round trip through ODT, DOCX, HTML, PDF and text in T:, the two sample
 documents, and the same checks from a second process at once.
 
+**Version 2** (`owf.library 2.0`) keeps version 1's 29 calls where they were
+and adds 58 after them (offsets -204 to -546): the workbooks (`owf.h`'s
+"Workbooks" section: XLS, XLSX, ODS, flat ODS and CSV), the formula engine
+(`owf_calc.h`), `owf_file_kind` (which program a file is for) and
+`owf_struct_size`, zip reading and libowf's own inflate (`owf_zip.h`), and
+the .pub reader (`owf_pub.h`). A double goes in two data registers, high
+word first. Programs index the library's arrays themselves, so the
+structures' sizes are part of its ABI: `owf_open()` opens version 2 and
+refuses a library whose sizes differ from the program's. The workbook and
+engine code brings doubles into the library, which links no C library:
+it carries its own soft double arithmetic (`owf_softdouble.c`, from
+amigachrome-guest) and maths and `strtod` (`owf_libm.c`), and opens no
+mathieee library, so it needs no FPU and never touches a caller's FPCR.
+`make library-test` (part of `make test`) checks them against the PC's,
+runs the engine's own tests on them, runs OWFLibTest's version-2 checks
+with libowf linked in, and checks the SFD against the headers, the glue's
+registers and the SDK (`tests/library/check_sfd.py`). OWFLibTest takes
+`FIXTURES=<dir>` too (build-library.sh puts `samples/` and `fixtures/`
+beside it). The deck calls (OpenPresentation) come in a later version.
+
 ## 1.0 validation
 
 The 1.0 release gate includes:
