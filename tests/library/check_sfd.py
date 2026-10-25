@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
-"""owf.library's SFD against the C it stands for, on the PC (make sfd-check).
+"""GFOffice's libraries' SFDs against the C they stand for, on the PC
+(make sfd-check): owf.library 2 (owf_lib.sfd) and the four of
+docs/suite/owf-libraries.md (owfwrite_lib.sfd, owfcalc_lib.sfd,
+owfpub_lib.sfd, owfpresent_lib.sfd).
 
     check_sfd.py [REPO]
 
-For every call in libowf/library/owf_lib.sfd:
-  - the public headers (owf.h, owf_calc.h, owf_pub.h, owf_zip.h) declare it
-    with the same return type, the same number of arguments and the same
-    types;
-  - owf_library.c has its L_ function: the same return type, the SFD's
-    registers in the SFD's order (a double as two data registers, high word
-    first), the same types, and a body that calls the function with its
-    arguments in order;
-  - lib_vectors lists the L_ functions in the SFD's order, after the four
-    standard vectors, so each call's offset is the SFD's;
+For every call in each SFD:
+  - the public headers (owf.h, owf_calc.h, owf_pub.h, owf_zip.h,
+    owf_deck.h, owf_pdf.h) declare it with the same return type, the same
+    number of arguments and the same types;
+  - the library's glue (owf_library.c; for the four, their <name>_calls.h)
+    has its L_ function: the same return type, the SFD's registers in the
+    SFD's order (a double as two data registers, high word first), the same
+    types, and a body that calls the function with its arguments in order;
+  - the vector table lists the L_ functions in the SFD's order, after the
+    four standard vectors, so each call's offset is the SFD's;
   - no call takes a6 or a7, no register twice, and a double only in two
     data registers;
-  - the committed LVO file (sdk/Include_I/lvo/owf_lib.i) has the SFD's
+  - the committed LVO file (sdk/Include_I/lvo/<name>_lib.i) has the SFD's
     offsets, so a stale SDK shows here without an openamigasdk checkout
     (build-library.sh checks the whole SDK with ndkgen when it has one).
+And for the four: each <name>_calls.h is what scripts/gen-lib-calls.py
+makes from its SFD now, and their first 17 calls (the shared ones) are the
+same calls in the same registers in all four.
 Prints what differs; exit status 1 when anything does.
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
@@ -27,7 +33,10 @@ import sys
 
 REPO = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 LIB = os.path.join(REPO, "libowf", "library")
-HEADERS = [os.path.join(REPO, "libowf", "include", h) for h in ("owf.h", "owf_calc.h", "owf_pub.h", "owf_zip.h")]
+HEADERS = [os.path.join(REPO, "libowf", "include", h)
+           for h in ("owf.h", "owf_calc.h", "owf_pub.h", "owf_zip.h", "owf_deck.h", "owf_pdf.h")]
+FOUR = ("owfwrite", "owfcalc", "owfpub", "owfpresent")
+SHARED = 17
 REGS = ["d%d" % i for i in range(8)] + ["a%d" % i for i in range(8)]
 
 problems = []
@@ -95,7 +104,7 @@ def read_sfd(path):
             continue
         m = re.match(r"(.+?)\b(\w+)\s*\((.*)\)\s*\(([^()]*)\)\s*$", line)
         if not m:
-            problem("owf_lib.sfd:%d: not a call: %s" % (n, line))
+            problem("%s:%d: not a call: %s" % (os.path.basename(path), n, line))
             continue
         args = [] if m.group(3).strip() in ("", "void", "VOID") else split_args(m.group(3))
         regs = [r.strip().lower() for r in re.split(r"[,/-]", m.group(4)) if r.strip()]
@@ -146,31 +155,40 @@ def glue_functions(text):
 
 def vectors(text):
     m = re.search(r"lib_vectors\[\]\s*=\s*\{(.*?)\};", text, flags=re.S)
-    return re.findall(r"\(APTR\)\s*(-?\w+)", m.group(1)) if m else []
+    if not m:
+        return []
+    table = m.group(1)
+    if "OWF_LIB_CALLS" in table:              # the four: owf_libbase.h's table around the calls file's list
+        calls = re.search(r"#define OWF_LIB_CALLS \\\n(.*?)(?:\n\n|\Z)", text, flags=re.S)
+        table = table.replace("OWF_LIB_CALLS", calls.group(1).replace("\\", "") if calls else "")
+    return re.findall(r"\(APTR\)\s*(-?\w+)", table)
 
 
-def lvo_file():
-    path = os.path.join(LIB, "sdk", "Include_I", "lvo", "owf_lib.i")
+def lvo_file(stem):
+    path = os.path.join(LIB, "sdk", "Include_I", "lvo", "%s_lib.i" % stem)
     out = {}
     for m in re.finditer(r"_LVO(\w+)\s+EQU\s+-(\d+)", open(path, encoding="latin-1").read()):
         out[m.group(1)] = int(m.group(2))
     return out
 
 
-def main():
-    calls = read_sfd(os.path.join(LIB, "owf_lib.sfd"))
+def check_library(stem, glue_files):
+    """One library: its SFD (<stem>_lib.sfd), the glue its L_ functions and vector table are in, its LVO file.
+    Returns its calls."""
+    sfd = "%s_lib.sfd" % stem
+    calls = read_sfd(os.path.join(LIB, sfd))
     protos = header_prototypes(set(c["name"] for c in calls))
-    glue_text = open(os.path.join(LIB, "owf_library.c"), encoding="utf-8").read()
+    glue_text = "\n".join(open(os.path.join(LIB, g), encoding="utf-8").read() for g in glue_files)
     glue = glue_functions(glue_text)
     vec = vectors(glue_text)
-    lvo = lvo_file()
+    lvo = lvo_file(stem)
     names = [c["name"] for c in calls]
     if len(set(names)) != len(names):
-        problem("owf_lib.sfd names a call twice")
+        problem("%s names a call twice" % sfd)
 
     for c in calls:
         name = c["name"]
-        where = "owf_lib.sfd:%d %s" % (c["line"], name)
+        where = "%s:%d %s" % (sfd, c["line"], name)
         # registers
         if any(r not in REGS for r in c["regs"]):
             problem("%s: a register that isn't one: %s" % (where, c["regs"]))
@@ -205,7 +223,7 @@ def main():
         # the glue
         g = glue.get(name)
         if not g:
-            problem("%s: no L_%s in owf_library.c" % (where, name))
+            problem("%s: no L_%s in %s" % (where, name, " or ".join(glue_files)))
             continue
         if g["ret"] != c["ret"]:
             problem("%s: L_%s returns %r, the SFD %r" % (where, name, g["ret"], c["ret"]))
@@ -228,25 +246,50 @@ def main():
         if not re.search(r"\b%s\(%s\);" % (re.escape(name), re.escape(callargs)), g["body"]):
             problem("%s: L_%s doesn't call %s(%s)" % (where, name, name, callargs))
         if lvo.get(name) != c["bias"]:
-            problem("%s: the SFD puts it at -%d, sdk/Include_I/lvo/owf_lib.i at %s (run scripts/gen-sdk.sh)"
-                    % (where, c["bias"], "-%d" % lvo[name] if name in lvo else "nothing"))
+            problem("%s: the SFD puts it at -%d, sdk/Include_I/lvo/%s_lib.i at %s (run scripts/gen-sdk.sh)"
+                    % (where, c["bias"], stem, "-%d" % lvo[name] if name in lvo else "nothing"))
 
     # the vector table: the four standard ones, then the SFD's order
     if vec[:4] != ["lib_open", "lib_close", "lib_expunge", "lib_null"] or not vec or vec[-1] != "-1":
-        problem("lib_vectors: not open, close, expunge, null ... -1")
+        problem("%s's lib_vectors: not open, close, expunge, null ... -1" % stem)
     listed = [v[2:] for v in vec[4:-1]]
     if listed != names:
         for i, (a, b) in enumerate(zip(listed, names)):
             if a != b:
-                problem("lib_vectors: slot %d (offset -%d) is L_%s, the SFD's is %s" % (i, 30 + 6 * i, a, b))
+                problem("%s's lib_vectors: slot %d (offset -%d) is L_%s, the SFD's is %s" % (stem, i, 30 + 6 * i, a, b))
                 break
         if len(listed) != len(names):
-            problem("lib_vectors: %d calls, the SFD has %d" % (len(listed), len(names)))
+            problem("%s's lib_vectors: %d calls, the SFD has %d" % (stem, len(listed), len(names)))
     extra = set(lvo) - set(names)
     if extra:
-        problem("sdk/Include_I/lvo/owf_lib.i has calls the SFD hasn't: %s" % ", ".join(sorted(extra)))
+        problem("sdk/Include_I/lvo/%s_lib.i has calls the SFD hasn't: %s" % (stem, ", ".join(sorted(extra))))
+    return calls
 
+
+def main():
+    sys.path.insert(0, os.path.join(REPO, "scripts"))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gen_lib_calls", os.path.join(REPO, "scripts", "gen-lib-calls.py"))
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    calls = check_library("owf", ["owf_library.c"])
     v2 = [c for c in calls if c["version"] >= 2]
+    four = {}
+    for stem in FOUR:
+        four[stem] = check_library(stem, ["owf_libbase.h", "%s_calls.h" % stem])
+        sfd = os.path.join(LIB, "%s_lib.sfd" % stem)
+        have = open(gen.target(sfd), encoding="utf-8").read() if os.path.exists(gen.target(sfd)) else None
+        if have != gen.generate(sfd):
+            problem("%s_calls.h is not what scripts/gen-lib-calls.py makes from %s_lib.sfd (run scripts/gen-sdk.sh)"
+                    % (stem, stem))
+    first = [(c["ret"], c["name"], c["args"], c["regs"]) for c in four[FOUR[0]][:SHARED]]
+    for stem in FOUR[1:]:
+        mine = [(c["ret"], c["name"], c["args"], c["regs"]) for c in four[stem][:SHARED]]
+        if mine != first:
+            problem("%s_lib.sfd's first %d calls are not %s_lib.sfd's (the shared ones, at the same offsets)"
+                    % (stem, SHARED, FOUR[0]))
+
     if problems:
         for p in problems:
             print("check_sfd.py: " + p)
@@ -255,6 +298,9 @@ def main():
     print("check_sfd.py: owf_lib.sfd's %d calls (%d of version 2, -%d to -%d) agree with the headers, "
           "owf_library.c's registers and vectors, and the SDK's offsets"
           % (len(calls), len(v2), v2[0]["bias"] if v2 else 0, v2[-1]["bias"] if v2 else 0))
+    print("check_sfd.py: %s: %s calls agree with the headers, their generated glue and the SDK's offsets; the "
+          "first %d are the same in all four" % (", ".join("%s.library" % s for s in FOUR),
+                                                 ", ".join(str(len(four[s])) for s in FOUR), SHARED))
     return 0
 
 
