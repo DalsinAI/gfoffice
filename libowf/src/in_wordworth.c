@@ -314,14 +314,26 @@ static void read_drawing(reader *r, const unsigned char *data, unsigned long siz
     }
 }
 
-static int by_place(const void *a, const void *b)
+/* Reading order: top to bottom, then left to right, then file order. An
+ * insertion sort: there are few, and owf.library has no qsort. */
+static int before(const placed *p, const placed *q)
 {
-    const placed *p = a, *q = b;
     if (p->y != q->y)
-        return p->y < q->y ? -1 : 1;
+        return p->y < q->y;
     if (p->x != q->x)
-        return p->x < q->x ? -1 : 1;
-    return p->frame - q->frame;
+        return p->x < q->x;
+    return p->frame < q->frame;
+}
+
+static void sort_places(placed *p, int n)
+{
+    int i, j;
+    for (i = 1; i < n; i++) {
+        placed t = p[i];
+        for (j = i; j > 0 && before(&t, &p[j - 1]); j--)
+            p[j] = p[j - 1];
+        p[j] = t;
+    }
 }
 
 /* A FORM GTID: its text boxes and text as frames, anchored in the body's
@@ -334,7 +346,7 @@ static void drawing(reader *r, const owf_iff_chunk *c)
 
     read_drawing(r, c->data - 8, c->size + 8, 0, &places, &nplaces, &cap);
     if (nplaces) {
-        qsort(places, (size_t)nplaces, sizeof *places, by_place);
+        sort_places(places, nplaces);
         for (i = 0; i < nplaces; i++) {
             owf_story *story = &r->doc->body;
             if (!b->para && !b->text.length && story->nparas) {
