@@ -84,5 +84,6 @@
 #pragma libcall OWFCalcBase owf_calc_parse_cell 1da a9803
 #pragma libcall OWFCalcBase owf_calc_format 1e0 0a9804
 #pragma libcall OWFCalcBase owf_calc_format_value 1e6 b2a109807
+#pragma libcall OWFCalcBase owf_sheet_set_row_style 1ec 10803
 
 #endif /* PRAGMAS_OWFCALC_PRAGMAS_H */

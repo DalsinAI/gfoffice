@@ -474,6 +474,49 @@ static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
     return 1;
 }
 
+/* 2.0.22: the ops one story's paragraphs make, about: OpenLayout makes a text op a word (with the spaces after
+ * it), one more where a run ends inside a word, one a tab, a field and a picture, a frame's few, and a little
+ * a paragraph (an empty one's line, a fill and borders) and a table's cell (its fill and rules). */
+static size_t story_ops(const owf_story *st)
+{
+    size_t n = 0;
+    int i, j;
+    for (i = 0; i < st->nparas; ++i) {
+        const owf_para *p = &st->paras[i];
+        int in_word = 0;
+        n += 1;
+        if (p->table_id >= 0) n += 4;
+        if (OWF_SHADE_SET(p->fmt.shading) || p->fmt.borders) n += 5;
+        for (j = 0; j < p->nruns; ++j) {
+            const owf_run *r = &p->runs[j];
+            if (r->kind == OWF_RUN_TEXT && r->text) {
+                const unsigned char *t = (const unsigned char *)r->text;
+                if (*t && in_word && !(*t == ' ' || *t == '\t')) ++n;   /* a word cut by the run's end */
+                for (; *t; ++t) {
+                    int space = *t == ' ' || *t == '\t' || *t == '\n' || *t == '\r';
+                    if (!space && !in_word) ++n;
+                    in_word = !space;
+                }
+            } else {
+                n += r->kind == OWF_RUN_FRAME ? 3 : 1;
+                in_word = 0;
+            }
+        }
+    }
+    return n;
+}
+
+size_t ow_layout_estimate_ops(const owf_doc *doc)
+{
+    size_t n;
+    int k;
+    if (!doc) return 0;
+    n = story_ops(&doc->body);
+    for (k = 0; k < doc->nframes; ++k)
+        n += 3 + story_ops(&doc->frames[k].story);
+    return n + n / 8 + 32;
+}
+
 ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata)
 {
     return ow_layout_new_reserved(doc, measure, measure_userdata, 0);
@@ -528,6 +571,9 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
     ol_unit *dx, *dy;
     int i, in_line = 0;
     if (!doc) return NULL;
+    /* 2.0.22: the first layout's room from a guess (ow_layout_estimate_ops), so its display list is made once,
+     * not doubled from 64 up (eight blocks a 20-page document, each copied into the next) */
+    if (!ops) ops = ow_layout_estimate_ops(doc);
     l = layout_with(doc, measure, measure_userdata, ops, NULL, NULL);
     for (i = 0; l && !in_line && i < doc->nframes; ++i) in_line = doc->frames[i].in_line;
     if (!in_line) return l;

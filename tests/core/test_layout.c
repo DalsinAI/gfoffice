@@ -273,8 +273,11 @@ static void contents_checks(const ow_layout *l, const owf_doc *doc)
     CHECK(same_name(doc->body.paras[0].style, "TOCHeading") && same_name(doc->body.paras[1].style, "TOC1") &&
           same_name(doc->body.paras[2].style, "TOC2") && same_name(doc->body.paras[4].style, "TOC1") &&
           doc->body.paras[5].style == NULL);
-    CHECK(same_name(doc->body.paras[6].bookmarks, "_Toc1") && same_name(doc->body.paras[7].bookmarks, "_Toc2") &&
-          same_name(doc->body.paras[8].bookmarks, "_Toc3 _Ref9") && same_name(doc->body.paras[9].bookmarks, "_Toc4") &&
+    /* 2.0.21: round their headings' text */
+    CHECK(same_name(doc->body.paras[6].bookmarks, "_Toc1@0-20") &&
+          same_name(doc->body.paras[7].bookmarks, "_Toc2@0-24") &&
+          same_name(doc->body.paras[8].bookmarks, "_Toc3@0-8 _Ref9@0-8") &&
+          same_name(doc->body.paras[9].bookmarks, "_Toc4@0-8") &&
           doc->body.paras[9].table_id >= 0 && doc->body.paras[1].bookmarks == NULL);
     CHECK(doc->body.paras[1].runs[0].href && !strcmp(doc->body.paras[1].runs[0].href, "#_Toc1"));
     /* the model: the style's stop, a paragraph's own added to it, one cleared for another */
@@ -806,6 +809,96 @@ static int line_tops(const ow_layout *l, int para, ol_unit *tops, int max)
     return n;
 }
 
+/* A paragraph's first text run's format. */
+static owf_charfmt first_text_fmt(const owf_para *p)
+{
+    static const owf_charfmt none = { 0, -1, 0, OWF_COLOUR_AUTO };
+    int i;
+    for (i = 0; i < p->nruns; ++i)
+        if (p->runs[i].kind == OWF_RUN_TEXT) return p->runs[i].fmt;
+    return none;
+}
+
+/* tests/core/fixtures/table-styles.docx (make_tables_docx.py): Word's table styles (2.0.19), their pPr, rPr
+ * and fills given to the cells, under the cells' paragraph styles and their own formats. */
+static void table_style_checks(const ow_layout *l, const owf_doc *doc)
+{
+    const owf_para *p = doc->body.paras;
+    int i;
+    (void)l;
+    CHECK(doc->body.nparas == 20);
+    if (doc->body.nparas != 20) return;
+    /* outside: the document's defaults */
+    CHECK(p[0].fmt.space_after == 160 && p[0].fmt.line_spacing == 108);
+    /* Table Grid: no space after, single lines */
+    for (i = 1; i <= 4; ++i) {
+        CHECK(p[i].table_id >= 0);
+        CHECK(p[i].fmt.space_after == 0 && p[i].fmt.line_spacing == 100);
+        CHECK(p[i].fmt.align == OWF_ALIGN_LEFT && p[i].cell_shading == 0);
+    }
+    CHECK(p[5].table_id < 0 && p[5].fmt.space_after == 160);
+    /* Plan Table, on Table Grid: centred, 10 point, Table Grid's spacing */
+    for (i = 6; i <= 15; ++i) {
+        CHECK(p[i].table_id >= 0 && p[i].fmt.align == OWF_ALIGN_CENTRE);
+        CHECK(p[i].fmt.line_spacing == 100);
+        CHECK(first_text_fmt(&p[i]).size == 200);
+    }
+    /* its header row: bold, white on dark blue */
+    for (i = 6; i <= 7; ++i) {
+        owf_charfmt f = first_text_fmt(&p[i]);
+        CHECK(p[i].table_row == 0 && p[i].fmt.space_after == 0);
+        CHECK((f.flags & OWF_BOLD) && !(f.flags & OWF_ITALIC) && f.colour == 0xFFFFFFUL);
+        CHECK(p[i].cell_shading == OWF_SHADE(0x1F3864));
+    }
+    /* banded rows (light blue, white, light blue), banded columns off (no red) */
+    CHECK(p[8].cell_shading == OWF_SHADE(0xD9E2F3) && p[9].cell_shading == OWF_SHADE(0xD9E2F3));
+    CHECK(p[10].cell_shading == 0 && p[11].cell_shading == 0);
+    CHECK(p[12].cell_shading == OWF_SHADE(0xD9E2F3) && p[13].cell_shading == OWF_SHADE(0xD9E2F3));
+    CHECK(!(first_text_fmt(&p[8]).flags & OWF_BOLD) && first_text_fmt(&p[8]).colour != 0xFFFFFFUL);
+    /* the cell's own spacing, and a paragraph style's, over the table style's */
+    CHECK(p[8].fmt.space_after == 0);
+    CHECK(p[9].fmt.space_after == 120);
+    CHECK(p[11].fmt.space_after == 80);
+    /* the last row: italic, not banded */
+    for (i = 14; i <= 15; ++i) {
+        owf_charfmt f = first_text_fmt(&p[i]);
+        CHECK(p[i].table_row == 4 && (f.flags & OWF_ITALIC) && !(f.flags & OWF_BOLD));
+        CHECK(p[i].cell_shading == 0);
+    }
+    /* no style: the default table style (Normal Table), which gives nothing */
+    for (i = 17; i <= 18; ++i) {
+        CHECK(p[i].table_id >= 0 && p[i].fmt.space_after == 160 && p[i].fmt.line_spacing == 108);
+        CHECK(p[i].fmt.align == OWF_ALIGN_LEFT && p[i].cell_shading == 0);
+        CHECK(first_text_fmt(&p[i]).size == first_text_fmt(&p[0]).size && !(first_text_fmt(&p[i]).flags & OWF_BOLD));
+    }
+    CHECK(p[19].table_id < 0 && p[19].fmt.space_after == 160);
+    /* written back to DOCX (as the cells' own formats) and read again: the same. (ODT doesn't keep a cell's
+     * paragraph format yet, with a table style or without.) */
+    {
+        static const char *const paths[1] = { "/tmp/openwrite-table-styles.docx" };
+        int k;
+        for (k = 0; k < 1; ++k) {
+            owf_doc *back = NULL;
+            CHECK(owf_export_file(doc, paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_file(paths[k], NULL, &back, NULL, NULL) == OWF_OK && back);
+            if (back && back->body.nparas == 20) {
+                const owf_para *q = back->body.paras;
+                CHECK(q[1].fmt.space_after == 0 && q[1].fmt.line_spacing == 100);
+                CHECK(q[6].fmt.align == OWF_ALIGN_CENTRE && q[6].cell_shading == OWF_SHADE(0x1F3864));
+                CHECK((first_text_fmt(&q[6]).flags & OWF_BOLD) && first_text_fmt(&q[6]).colour == 0xFFFFFFUL);
+                CHECK(q[8].cell_shading == OWF_SHADE(0xD9E2F3) && q[10].cell_shading == 0);
+                CHECK(q[9].fmt.space_after == 120 && q[11].fmt.space_after == 80);
+                CHECK(first_text_fmt(&q[14]).flags & OWF_ITALIC);
+                CHECK(q[17].fmt.space_after == 160);
+            } else {
+                CHECK(back && back->body.nparas == 20);
+            }
+            if (back) owf_doc_free(back);
+            remove(paths[k]);
+        }
+    }
+}
+
 /* tests/core/fixtures/line-rules.docx (make_lines_docx.py): Word's exact and at least line spacing (2.0.18), read,
  * laid out (OpenLayout 0.7's exact lines) and written back to DOCX and ODT. */
 static void line_checks(const ow_layout *l, const owf_doc *doc)
@@ -997,6 +1090,195 @@ static void test_round_trip(const char *path)
     remove(out);
 }
 
+/* The frames a story's runs hold, in order: their indices into frames, how many. */
+static int story_frames(const owf_story *st, int *frames, int max)
+{
+    int i, j, n = 0;
+    for (i = 0; i < st->nparas; ++i)
+        for (j = 0; j < st->paras[i].nruns; ++j)
+            if (st->paras[i].runs[j].kind == OWF_RUN_FRAME && n < max) frames[n++] = st->paras[i].runs[j].image;
+    return n;
+}
+
+static int near_twips(int a, int b) { return a - b <= 2 && b - a <= 2; }
+
+/* 2.0.20: a document's frames through ODT and back (ODT reads them back as frames): every story's frames, in
+ * order, the same size, in the same place, wrapped and filled as before, with the same picture or text. */
+static void test_odt_frames(const char *path)
+{
+    owf_doc *a = NULL, *b = NULL;
+    const char *out = "/tmp/openwrite-layout-frames.odt";
+    int k, i, fa[32], fb[32], bad = 0;
+    if (!strstr(path, ".docx") || owf_import_file(path, NULL, &a, NULL, NULL) != OWF_OK) return;
+    if (!a->nframes) { owf_doc_free(a); return; }
+    CHECK(owf_export_file(a, out, "odt", NULL) == OWF_OK);
+    CHECK(owf_import_file(out, NULL, &b, NULL, NULL) == OWF_OK && b);
+    if (!b) { owf_doc_free(a); return; }
+    CHECK(a->nframes == b->nframes);
+    for (k = 0; k < 3; ++k) {
+        const owf_story *sa = k == 0 ? &a->body : k == 1 ? &a->header : &a->footer;
+        const owf_story *sb = k == 0 ? &b->body : k == 1 ? &b->header : &b->footer;
+        int na = story_frames(sa, fa, 32), nb = story_frames(sb, fb, 32);
+        CHECK(na == nb);
+        for (i = 0; i < na && i < nb; ++i) {
+            const owf_frame *x = &a->frames[fa[i]], *y = &b->frames[fb[i]];
+            int same = near_twips(x->width, y->width) && near_twips(x->height, y->height) &&
+                       near_twips(x->x, y->x) && near_twips(x->y, y->y) && x->x_from == y->x_from &&
+                       x->y_from == y->y_from && x->x_place == y->x_place && x->y_place == y->y_place &&
+                       x->behind == y->behind && x->wrap == y->wrap && x->in_line == y->in_line &&
+                       x->fill == y->fill && x->line == y->line && (x->image >= 0) == (y->image >= 0) &&
+                       x->story.nparas == y->story.nparas;
+            if (same && x->story.nparas) {
+                const owf_para *pa = &x->story.paras[0], *pb = &y->story.paras[0];
+                same = near_twips(x->inset[0], y->inset[0]) && near_twips(x->inset[3], y->inset[3]) &&
+                       pa->nruns && pb->nruns && pa->runs[0].text && pb->runs[0].text &&
+                       !strcmp(pa->runs[0].text, pb->runs[0].text);
+            }
+            if (!same) {
+                printf("odt frames %s: story %d frame %d: %dx%d at %d/%d/%d, %d/%d/%d wrap %d behind %d, back "
+                       "%dx%d at %d/%d/%d, %d/%d/%d wrap %d behind %d\n", path, k, i, x->width, x->height,
+                       x->x_from, x->x_place, x->x, x->y_from, x->y_place, x->y, x->wrap, x->behind, y->width,
+                       y->height, y->x_from, y->x_place, y->x, y->y_from, y->y_place, y->y, y->wrap, y->behind);
+                ++bad;
+            }
+        }
+    }
+    CHECK(bad == 0);
+    owf_doc_free(a);
+    owf_doc_free(b);
+    remove(out);
+}
+
+/* tests/core/fixtures/frames.odt (make_frames_odt.py): frames as Writer writes them (2.0.20), their places
+ * and looks from their styles and the common styles those are based on. */
+static void frames_odt_checks(const ow_layout *l, const owf_doc *doc)
+{
+    const owf_frame *f;
+    int body[8], header[4], n;
+    (void)l;
+    CHECK(doc->nframes == 4);
+    n = story_frames(&doc->body, body, 8);
+    CHECK(n == 3);
+    CHECK(story_frames(&doc->header, header, 4) == 1);
+    if (n != 3 || doc->nframes != 4 || doc->body.nparas < 3) return;
+    /* the page's picture: with the first paragraph, at its start, 1 inch from the page's corner, under the text */
+    CHECK(doc->body.paras[0].runs[0].kind == OWF_RUN_FRAME && doc->body.paras[0].runs[0].image == body[0]);
+    f = &doc->frames[body[0]];
+    CHECK(f->image >= 0 && !f->story.nparas && f->width == 2880 && f->height == 4032);
+    CHECK(f->x_from == OWF_FROM_PAGE && f->x_place == OWF_PLACE_AT && f->x == 1440);
+    CHECK(f->y_from == OWF_FROM_PAGE && f->y_place == OWF_PLACE_AT && f->y == 1440);
+    CHECK(f->wrap == OWF_WRAP_NONE && f->behind);
+    /* the text box: in the first paragraph after its text, centred in the paragraph, Frame's wrap, border and
+     * padding, its own fill, as high as its text box's least */
+    f = &doc->frames[body[1]];
+    CHECK(f->image < 0 && f->story.nparas == 2 && f->width == 4320 && f->height == 1080);
+    CHECK(f->x_from == OWF_FROM_PARAGRAPH && f->x_place == OWF_PLACE_CENTRE);
+    CHECK(f->y_from == OWF_FROM_PARAGRAPH && f->y_place == OWF_PLACE_START);
+    CHECK(f->wrap == OWF_WRAP_SQUARE && !f->behind && !f->in_line);
+    CHECK(f->fill == OWF_SHADE(0xFFF2CC) && f->line == OWF_SHADE(0));
+    CHECK(near_twips(f->inset[0], 85) && near_twips(f->inset[3], 85));
+    CHECK(f->story.paras[0].nruns && !strcmp(f->story.paras[0].runs[0].text, "Text in the box"));
+    /* the picture at the margin's right, wrapped round its outline: the JPEG after the SVG */
+    f = &doc->frames[body[2]];
+    CHECK(f->image >= 0 && !strcmp(doc->images[f->image].mime, "image/jpeg"));
+    CHECK(f->x_from == OWF_FROM_MARGIN && f->x_place == OWF_PLACE_END && f->wrap == OWF_WRAP_TIGHT);
+    CHECK(f->width == 1440 && f->height == 2016);
+    /* the picture as a character stays in the line */
+    CHECK(doc->body.paras[2].nruns >= 2 && doc->body.paras[2].runs[1].kind == OWF_RUN_IMAGE);
+    /* the header's box, 2 inches from the page's left, from its paragraph down, filled and outlined */
+    f = &doc->frames[header[0]];
+    CHECK(f->story.nparas == 1 && f->x_from == OWF_FROM_PAGE && f->x == 2880 && f->y_from == OWF_FROM_PARAGRAPH);
+    CHECK(f->width == 2880 && f->height == 432 && f->fill == OWF_SHADE(0xC00000) && f->wrap == OWF_WRAP_SQUARE);
+}
+
+/* tests/core/fixtures/bookmarks.docx (make_bookmarks_docx.py): bookmarks at their places in the text (2.0.21),
+ * from DOCX and through DOCX and ODT. */
+static void bookmark_checks(const ow_layout *l, const owf_doc *doc)
+{
+    static const struct { int para; const char *marks; } want[] = {
+        { 0, "_Ref1@11-16 Point@21" },   /* round the bold word; empty, inside a run */
+        { 1, "_Toc5@0-7" },              /* round a heading's text */
+        { 2, "Inner@8-12" },             /* inside a link */
+        { 3, "Span@5-16" },              /* ending in the next paragraph: at this one's end */
+        { 4, NULL },
+        { 5, "Between@0-34" },           /* begun between the paragraphs */
+        { 6, "Accent@5-12" },            /* after a two-byte character */
+        { 8, "Cell@15-19" }              /* in a cell's second paragraph */
+    };
+    static const char *const paths[2] = { "/tmp/openwrite-bookmarks.docx", "/tmp/openwrite-bookmarks.odt" };
+    size_t i;
+    int k;
+    (void)l;
+    CHECK(doc->body.nparas == 10);
+    if (doc->body.nparas != 10) return;
+    for (i = 0; i < sizeof want / sizeof want[0]; ++i)
+        CHECK(same_name(doc->body.paras[want[i].para].bookmarks, want[i].marks));
+    for (k = 0; k < 2; ++k) {
+        owf_doc *back = NULL;
+        CHECK(owf_export_file(doc, paths[k], NULL, NULL) == OWF_OK);
+        CHECK(owf_import_file(paths[k], NULL, &back, NULL, NULL) == OWF_OK && back);
+        if (back && back->body.nparas == 10)
+            for (i = 0; i < sizeof want / sizeof want[0]; ++i)
+                CHECK(same_name(back->body.paras[want[i].para].bookmarks, want[i].marks));
+        else
+            CHECK(back && back->body.nparas == 10);
+        if (back) owf_doc_free(back);
+        remove(paths[k]);
+    }
+}
+
+/* 2.0.21: the bookmarks keep their places through typing, Return, Backspace and undo. */
+static void test_bookmark_edits(const char *path)
+{
+    owf_doc *doc = NULL;
+    ow_editor *ed;
+    ow_selection sel;
+    if (owf_import_file(path, NULL, &doc, NULL, NULL) != OWF_OK || !doc) {
+        CHECK(!"bookmarks.docx read");
+        return;
+    }
+    ed = ow_editor_new(doc);
+    CHECK(ed != NULL);
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@11-16 Point@21"));
+    /* typed before them: moved on */
+    memset(&sel, 0, sizeof sel);
+    ow_editor_set_selection(ed, &sel);
+    CHECK(ow_editor_insert_utf8(ed, "Our ", 4) == OWF_OK);
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@15-20 Point@25"));
+    /* Return just before the bold word: they go with the text */
+    CHECK(doc->body.paras[0].nruns >= 2 && !strcmp(doc->body.paras[0].runs[1].text, "first"));
+    sel.anchor.paragraph = sel.focus.paragraph = 0;
+    sel.anchor.run = sel.focus.run = 1;
+    sel.anchor.byte_offset = sel.focus.byte_offset = 0;
+    ow_editor_set_selection(ed, &sel);
+    CHECK(ow_editor_newline(ed) == OWF_OK);
+    CHECK(doc->body.paras[0].bookmarks == NULL);
+    CHECK(same_name(doc->body.paras[1].bookmarks, "_Ref1@0-5 Point@10"));
+    /* Backspace at the new paragraph's start: back where they were */
+    CHECK(ow_editor_backspace(ed) == OWF_OK);
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@15-20 Point@25"));
+    /* two characters of the bold word deleted: the range is shorter, the point after it moves back */
+    {
+        const owf_para *p = &doc->body.paras[0];
+        int r;
+        for (r = 0; r < p->nruns && !(p->runs[r].kind == OWF_RUN_TEXT && !strcmp(p->runs[r].text, "first")); ++r)
+            ;
+        CHECK(r < p->nruns);
+        sel.anchor.run = sel.focus.run = r;
+        sel.anchor.byte_offset = sel.focus.byte_offset = 5;
+        ow_editor_set_selection(ed, &sel);
+    }
+    CHECK(ow_editor_backspace(ed) == OWF_OK && ow_editor_backspace(ed) == OWF_OK);
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@15-18 Point@23"));
+    /* undone: as they were read */
+    while (ow_editor_undo(ed) == 1)
+        ;
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@11-16 Point@21"));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
 static void test_sample(const char *path)
 {
     owf_doc *doc = NULL;
@@ -1045,8 +1327,16 @@ static void test_sample(const char *path)
         if (strstr(path, "header-frames.docx")) header_checks(l, doc);
         if (strstr(path, "inline-box.docx")) inline_checks(l, doc);
         if (strstr(path, "line-rules.docx")) line_checks(l, doc);
-        printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
-               checked, lists);
+        if (strstr(path, "table-styles.docx")) table_style_checks(l, doc);
+        if (strstr(path, "frames.odt")) frames_odt_checks(l, doc);
+        if (strstr(path, "bookmarks.docx")) bookmark_checks(l, doc);
+        {   /* 2.0.22: the first layout's room, guessed: enough, and not twice as much */
+            size_t ops = ol_display_count(ow_layout_body(l)), guess = ow_layout_estimate_ops(doc);
+            CHECK(guess >= ops && guess <= ops * 2 + 128);
+        }
+        printf("ow_layout: %s, %d pages, %d caret positions, %d list items, %lu ops (guessed %lu)\n", path,
+               ow_layout_page_count(l), checked, lists, (unsigned long)ol_display_count(ow_layout_body(l)),
+               (unsigned long)ow_layout_estimate_ops(doc));
         ow_layout_free(l);
     }
     owf_doc_free(doc);
@@ -1063,6 +1353,9 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; ++i)
         if (strstr(argv[i], "cover.docx") && !strstr(argv[i], "wpg")) test_box_caret(argv[i]);
     for (i = 1; i < argc; ++i) test_round_trip(argv[i]);
+    for (i = 1; i < argc; ++i) test_odt_frames(argv[i]);
+    for (i = 1; i < argc; ++i)
+        if (strstr(argv[i], "bookmarks.docx")) test_bookmark_edits(argv[i]);
     if (failures) {
         printf("ow_layout tests: %d failed\n", failures);
         return 1;
