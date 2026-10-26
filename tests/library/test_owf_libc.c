@@ -1,5 +1,5 @@
 /*
- * owf.library's own printf, strtol, strtoul and case calls
+ * owf.library's own printf, sscanf, strtol, strtoul and case calls
  * (libowf/library/owf_libc.c) against the C library's, on the PC, for every
  * format libowf writes and the numbers its readers parse.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
@@ -58,6 +58,30 @@ static void numbers(const char *s, int base)
     }
 }
 
+static int ours_scan(const char *s, const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = owf_rt_vsscanf(s, fmt, ap);
+    va_end(ap);
+    return n;
+}
+
+/* four longs, as ODP's svg:viewBox, against the C library's sscanf */
+static void scan4(const char *s, const char *fmt)
+{
+    long a[4] = { 7, 7, 7, 7 }, b[4] = { 7, 7, 7, 7 };
+    int na = ours_scan(s, fmt, &a[0], &a[1], &a[2], &a[3]);
+    int nb = sscanf(s, fmt, &b[0], &b[1], &b[2], &b[3]);
+    checks++;
+    if (na != nb || memcmp(a, b, sizeof a)) {
+        failures++;
+        printf("FAIL sscanf(\"%s\", \"%s\"): ours %d (%ld %ld %ld %ld), libc %d (%ld %ld %ld %ld)\n", s, fmt, na,
+               a[0], a[1], a[2], a[3], nb, b[0], b[1], b[2], b[3]);
+    }
+}
+
 int main(void)
 {
     static const char *const nums[] = {
@@ -102,6 +126,31 @@ int main(void)
     for (i = 0; i < sizeof nums / sizeof nums[0]; i++)
         for (j = 0; j < sizeof bases / sizeof bases[0]; j++)
             numbers(nums[i], bases[j]);
+
+    /* what libowf reads (in_odp.c's svg:viewBox) */
+    scan4("0 0 21600 21600", "%ld %ld %ld %ld");
+    scan4("  -5   10 20\t30 extra", "%ld %ld %ld %ld");
+    scan4("1 2 3", "%ld %ld %ld %ld");
+    scan4("", "%ld %ld %ld %ld");
+    scan4("   ", "%ld %ld %ld %ld");
+    scan4("x 1 2 3", "%ld %ld %ld %ld");
+    scan4("1,2,3,4", "%ld,%ld,%ld,%ld");
+    scan4("1, 2 ,3,4", "%ld , %ld , %ld , %ld");
+    scan4("+8 0x10 -0 99999999999", "%ld %li %ld %ld");
+    {
+        int i1 = 0, i2 = 0;
+        unsigned u = 0;
+        checks++;
+        if (ours_scan("12%-3 ff", "%d%%%d %x", &i1, &i2, &u) != 3 || i1 != 12 || i2 != -3 || u != 255u) {
+            failures++;
+            printf("FAIL sscanf %%d%%%%%%d %%x\n");
+        }
+        checks++;
+        if (ours_scan("1.5", "%d %f", &i1, &u) != 1) {     /* %f isn't one it does: a short count */
+            failures++;
+            printf("FAIL sscanf stops at %%f\n");
+        }
+    }
 
     checks += 4;
     if ((owf_rt_strcasecmp("Word.DOCX", "word.docx") != 0) != (strcasecmp("Word.DOCX", "word.docx") != 0)) failures++;

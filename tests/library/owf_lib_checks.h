@@ -24,5 +24,10 @@ typedef struct {
 } owf_lib_checks;
 
 void owf_lib_run_checks(const owf_lib_checks *c);
+/* OWFLibsTest's parts of them (owf_lib_checks.c built with OWF_LIB_CHECKS_PART
+ * 1 and 3): the workbooks and the engine, through owfcalc.library; the .pub
+ * reader, through owfpub.library */
+void owf_lib_book_checks(const owf_lib_checks *c);
+void owf_lib_pub_checks(const owf_lib_checks *c);
 
 #endif

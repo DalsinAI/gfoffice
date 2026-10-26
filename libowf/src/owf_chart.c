@@ -700,3 +700,319 @@ int owf_sheet_charts(const owf_book *book, int sheet, owf_chart **charts, int *c
     *count = n;
     return OWF_OK;
 }
+
+/* ---- Writing: a chart as an .xlsx's chart part (DrawingML), as read above ---- */
+
+static void put_text(owf_buf *b, const char *s)
+{
+    for (; s && *s; s++)
+        switch (*s) {
+        case '&': owf_buf_puts(b, "&amp;"); break;
+        case '<': owf_buf_puts(b, "&lt;"); break;
+        case '>': owf_buf_puts(b, "&gt;"); break;
+        case '"': owf_buf_puts(b, "&quot;"); break;
+        default: owf_buf_putc(b, *s);
+        }
+}
+
+static void put_rgb(owf_buf *b, unsigned long shade)
+{
+    owf_buf_printf(b, "<a:solidFill><a:srgbClr val=\"%06lX\"/></a:solidFill>", shade & 0xFFFFFFUL);
+}
+
+/* A series' tx, cat, val (xVal, yVal): its reference and what it last held, as a cache. */
+static void put_source(owf_buf *b, const char *element, const char *ref, const owf_chart_series *s, int which,
+                       const char *format)
+{
+    int i, n = 0, numbers = which != 0 && which != 1;     /* 0 the name, 1 the categories, 2 the values, 3 x values */
+    char num[40];
+    for (i = 0; i < s->npoints; i++)
+        if (which == 1 ? s->points[i].label != NULL : which == 2 ? s->points[i].has_value : which == 3 && s->points[i].has_x)
+            n = i + 1;
+    if (!ref && (which == 0 ? !s->name : !n))
+        return;
+    owf_buf_printf(b, "<c:%s>", element);
+    if (ref) {
+        owf_buf_printf(b, "<c:%s><c:f>", numbers ? "numRef" : "strRef");
+        put_text(b, ref);
+        owf_buf_printf(b, "</c:f><c:%s>", numbers ? "numCache" : "strCache");
+    } else {
+        owf_buf_printf(b, "<c:%s>", numbers ? "numLit" : "strLit");
+    }
+    if (numbers && format && *format) {
+        owf_buf_puts(b, "<c:formatCode>");
+        put_text(b, format);
+        owf_buf_puts(b, "</c:formatCode>");
+    }
+    if (which == 0) {
+        owf_buf_puts(b, "<c:ptCount val=\"1\"/>");
+        if (s->name) {
+            owf_buf_puts(b, "<c:pt idx=\"0\"><c:v>");
+            put_text(b, s->name);
+            owf_buf_puts(b, "</c:v></c:pt>");
+        }
+    } else {
+        owf_buf_printf(b, "<c:ptCount val=\"%d\"/>", n);
+        for (i = 0; i < n; i++) {
+            const owf_chart_point *p = &s->points[i];
+            if (which == 1 && p->label) {
+                owf_buf_printf(b, "<c:pt idx=\"%d\"><c:v>", i);
+                put_text(b, p->label);
+                owf_buf_puts(b, "</c:v></c:pt>");
+            } else if ((which == 2 && p->has_value) || (which == 3 && p->has_x)) {
+                owf_number_exact(which == 2 ? p->value : p->x, num);
+                owf_buf_printf(b, "<c:pt idx=\"%d\"><c:v>%s</c:v></c:pt>", i, num);
+            }
+        }
+    }
+    owf_buf_printf(b, "</c:%s>", ref ? (numbers ? "numCache" : "strCache") : (numbers ? "numLit" : "strLit"));
+    if (ref)
+        owf_buf_printf(b, "</c:%s>", numbers ? "numRef" : "strRef");
+    owf_buf_printf(b, "</c:%s>", element);
+}
+
+static void put_labels(owf_buf *b, const owf_chart_series *s)
+{
+    static const char *const pos[] = { "", "ctr", "inEnd", "inBase", "outEnd", "t", "b", "l", "r", "bestFit" };
+    if (!s->labels)
+        return;
+    owf_buf_puts(b, "<c:dLbls>");
+    if (s->label_format) {
+        owf_buf_puts(b, "<c:numFmt formatCode=\"");
+        put_text(b, s->label_format);
+        owf_buf_puts(b, "\" sourceLinked=\"0\"/>");
+    }
+    if (s->label_pos > 0 && s->label_pos <= OWF_LABEL_BEST_FIT)
+        owf_buf_printf(b, "<c:dLblPos val=\"%s\"/>", pos[s->label_pos]);
+    owf_buf_printf(b, "<c:showLegendKey val=\"0\"/><c:showVal val=\"%d\"/><c:showCatName val=\"%d\"/><c:showSerName val=\"%d\"/>"
+                      "<c:showPercent val=\"%d\"/><c:showBubbleSize val=\"0\"/></c:dLbls>",
+                   !!(s->labels & OWF_LABEL_VALUE), !!(s->labels & OWF_LABEL_CATEGORY), !!(s->labels & OWF_LABEL_SERIES),
+                   !!(s->labels & OWF_LABEL_PERCENT));
+}
+
+static void put_series(owf_buf *b, const owf_chart *c, const owf_chart_series *s, int number)
+{
+    static const char *const markers[] = { "auto", "none", "circle", "square", "diamond", "triangle", "x", "star", "plus",
+                                           "dash", "dot" };
+    int lines = c->kind == OWF_CHART_LINE || c->kind == OWF_CHART_SCATTER, i;
+    owf_buf_printf(b, "<c:ser><c:idx val=\"%d\"/><c:order val=\"%d\"/>", s->index, number);
+    if (s->name_cell || s->name) {
+        if (s->name_cell) {
+            put_source(b, "tx", s->name_cell, s, 0, NULL);
+        } else {
+            owf_buf_puts(b, "<c:tx><c:v>");
+            put_text(b, s->name);
+            owf_buf_puts(b, "</c:v></c:tx>");
+        }
+    }
+    if (s->colour || (lines && !s->line)) {
+        owf_buf_puts(b, "<c:spPr>");
+        if (s->colour && !lines)
+            put_rgb(b, s->colour);
+        if (lines) {
+            owf_buf_puts(b, "<a:ln>");
+            if (!s->line)
+                owf_buf_puts(b, "<a:noFill/>");
+            else
+                put_rgb(b, s->colour);
+            owf_buf_puts(b, "</a:ln>");
+        }
+        owf_buf_puts(b, "</c:spPr>");
+    }
+    if (lines && (s->marker != OWF_MARKER_AUTO || s->marker_size)) {
+        owf_buf_printf(b, "<c:marker><c:symbol val=\"%s\"/>", markers[s->marker >= 0 && s->marker <= OWF_MARKER_DOT ? s->marker : 0]);
+        if (s->marker_size)
+            owf_buf_printf(b, "<c:size val=\"%d\"/>", s->marker_size);
+        owf_buf_puts(b, "</c:marker>");
+    }
+    for (i = 0; i < s->npoints; i++)
+        if (OWF_SHADE_SET(s->points[i].colour)) {
+            owf_buf_printf(b, "<c:dPt><c:idx val=\"%d\"/>%s<c:spPr>", i, c->kind == OWF_CHART_PIE ? "<c:bubble3D val=\"0\"/>" : "");
+            put_rgb(b, s->points[i].colour);
+            owf_buf_puts(b, "</c:spPr></c:dPt>");
+        }
+    put_labels(b, s);
+    if (c->kind == OWF_CHART_SCATTER) {
+        put_source(b, "xVal", s->x_values, s, 3, NULL);
+        put_source(b, "yVal", s->values, s, 2, s->format);
+    } else {
+        put_source(b, "cat", s->categories, s, 1, NULL);
+        put_source(b, "val", s->values, s, 2, s->format);
+    }
+    if (lines)
+        owf_buf_puts(b, "<c:smooth val=\"0\"/>");
+    owf_buf_puts(b, "</c:ser>");
+}
+
+static void put_value_axis(owf_buf *b, int id, int cross, const char *pos, int gridlines, int has_min, double min, int has_max,
+                           double max, const char *format)
+{
+    char num[40];
+    owf_buf_printf(b, "<c:valAx><c:axId val=\"%d\"/><c:scaling><c:orientation val=\"minMax\"/>", id);
+    if (has_max) {
+        owf_number_exact(max, num);
+        owf_buf_printf(b, "<c:max val=\"%s\"/>", num);
+    }
+    if (has_min) {
+        owf_number_exact(min, num);
+        owf_buf_printf(b, "<c:min val=\"%s\"/>", num);
+    }
+    owf_buf_printf(b, "</c:scaling><c:delete val=\"0\"/><c:axPos val=\"%s\"/>", pos);
+    if (gridlines)
+        owf_buf_puts(b, "<c:majorGridlines/>");
+    if (format) {
+        owf_buf_puts(b, "<c:numFmt formatCode=\"");
+        put_text(b, format);
+        owf_buf_puts(b, "\" sourceLinked=\"0\"/>");
+    } else {
+        owf_buf_puts(b, "<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>");
+    }
+    owf_buf_printf(b, "<c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>"
+                      "<c:crossAx val=\"%d\"/><c:crosses val=\"autoZero\"/>", cross);
+    owf_buf_puts(b, "</c:valAx>");
+}
+
+int owf_chart_part_xml(const owf_chart *c, owf_buf *b)
+{
+    static const char *const groupings[] = { "clustered", "stacked", "percentStacked" };
+    int i, pie = c->kind == OWF_CHART_PIE, scatter = c->kind == OWF_CHART_SCATTER;
+    const char *g = c->kind == OWF_CHART_LINE ? "lineChart" : c->kind == OWF_CHART_AREA ? "areaChart" :
+                    pie ? (c->hole ? "doughnutChart" : "pieChart") : scatter ? "scatterChart" : "barChart";
+    int grouping = c->grouping >= 0 && c->grouping <= OWF_CHART_PERCENT ? c->grouping : 0;
+    owf_buf_puts(b, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+                    "<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" "
+                    "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" "
+                    "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><c:chart>");
+    if (c->title) {
+        owf_buf_puts(b, "<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>");
+        put_text(b, c->title);
+        owf_buf_puts(b, "</a:t></a:r></a:p></c:rich></c:tx><c:overlay val=\"0\"/></c:title><c:autoTitleDeleted val=\"0\"/>");
+    } else {
+        owf_buf_puts(b, "<c:autoTitleDeleted val=\"1\"/>");
+    }
+    owf_buf_printf(b, "<c:plotArea><c:layout/><c:%s>", g);
+    if (!strcmp(g, "barChart"))
+        owf_buf_printf(b, "<c:barDir val=\"%s\"/>", c->kind == OWF_CHART_BAR ? "bar" : "col");
+    if (scatter)
+        owf_buf_printf(b, "<c:scatterStyle val=\"lineMarker\"/>");
+    else if (!pie)
+        owf_buf_printf(b, "<c:grouping val=\"%s\"/>", c->kind == OWF_CHART_COLUMN || c->kind == OWF_CHART_BAR || grouping ?
+                                                      groupings[grouping] : "standard");
+    owf_buf_printf(b, "<c:varyColors val=\"%d\"/>", c->vary ? 1 : 0);
+    for (i = 0; i < c->nseries; i++)
+        put_series(b, c, &c->series[i], i);
+    if (!strcmp(g, "barChart")) {
+        owf_buf_printf(b, "<c:gapWidth val=\"%d\"/>", c->gap > 0 ? c->gap : 150);
+        if (grouping)
+            owf_buf_puts(b, "<c:overlap val=\"100\"/>");
+    }
+    if (c->kind == OWF_CHART_LINE)
+        owf_buf_puts(b, "<c:marker val=\"1\"/>");
+    if (pie) {
+        owf_buf_printf(b, "<c:firstSliceAng val=\"%d\"/>", c->first_angle);
+        if (c->hole)
+            owf_buf_printf(b, "<c:holeSize val=\"%d\"/>", c->hole);
+    } else {
+        owf_buf_puts(b, "<c:axId val=\"500000001\"/><c:axId val=\"500000002\"/>");
+    }
+    owf_buf_printf(b, "</c:%s>", g);
+    if (scatter) {                                   /* x the group's first axis, along the bottom */
+        put_value_axis(b, 500000001, 500000002, "b", c->x_gridlines, c->has_xmin, c->xmin, c->has_xmax, c->xmax, c->x_format);
+        put_value_axis(b, 500000002, 500000001, "l", c->gridlines, c->has_min, c->min, c->has_max, c->max, c->value_format);
+    } else if (!pie) {
+        int bar = c->kind == OWF_CHART_BAR;
+        owf_buf_printf(b, "<c:catAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling>"
+                          "<c:delete val=\"0\"/><c:axPos val=\"%s\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>"
+                          "<c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>"
+                          "<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/>"
+                          "<c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/></c:catAx>", bar ? "l" : "b");
+        put_value_axis(b, 500000002, 500000001, bar ? "b" : "l", c->gridlines, c->has_min, c->min, c->has_max, c->max,
+                       c->value_format);
+    }
+    owf_buf_puts(b, "</c:plotArea>");
+    if (c->legend)
+        owf_buf_printf(b, "<c:legend><c:legendPos val=\"%c\"/><c:overlay val=\"0\"/></c:legend>", c->legend);
+    owf_buf_puts(b, "<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart></c:chartSpace>");
+    return b->failed ? OWF_ERR_MEMORY : OWF_OK;
+}
+
+int owf_chart_drawing_xml(const owf_chart *charts, int n, owf_buf *b)
+{
+    int i;
+    owf_buf_puts(b, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+                    "<xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" "
+                    "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" "
+                    "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+                    "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">");
+    for (i = 0; i < n; i++) {
+        const owf_chart *c = &charts[i];
+        owf_buf_printf(b, "<xdr:%s><xdr:from><xdr:col>%u</xdr:col><xdr:colOff>%ld</xdr:colOff><xdr:row>%u</xdr:row>"
+                          "<xdr:rowOff>%ld</xdr:rowOff></xdr:from>",
+                       c->sized ? "oneCellAnchor" : "twoCellAnchor", c->from_col, c->from_col_off, c->from_row, c->from_row_off);
+        if (c->sized)
+            owf_buf_printf(b, "<xdr:ext cx=\"%ld\" cy=\"%ld\"/>", c->width, c->height);
+        else
+            owf_buf_printf(b, "<xdr:to><xdr:col>%u</xdr:col><xdr:colOff>%ld</xdr:colOff><xdr:row>%u</xdr:row>"
+                              "<xdr:rowOff>%ld</xdr:rowOff></xdr:to>",
+                           c->to_col, c->to_col_off, c->to_row, c->to_row_off);
+        owf_buf_printf(b, "<xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"%d\" name=\"Chart %d\"/>"
+                          "<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x=\"0\" y=\"0\"/>"
+                          "<a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm><a:graphic>"
+                          "<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">"
+                          "<c:chart r:id=\"rId%d\"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:%s>",
+                       i + 2, i + 1, i + 1, c->sized ? "oneCellAnchor" : "twoCellAnchor");
+    }
+    owf_buf_puts(b, "</xdr:wsDr>");
+    return b->failed ? OWF_ERR_MEMORY : OWF_OK;
+}
+
+/* A sheet's charts kept as an .xlsx's drawing would keep them: a drawing part (xl/drawings/drawing<k>.xml, the
+ * first k free), its relationships and a chart part each (xl/charts/chart<j>.xml), the sheet's drawing named. */
+int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, int n)
+{
+    static const char *const ct_drawing = "application/vnd.openxmlformats-officedocument.drawing+xml",
+                             *ct_chart = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
+                             *ct_rels = "application/vnd.openxmlformats-package.relationships+xml";
+    char drawing[64], name[128];
+    owf_buf b, rels;
+    int k = 1, j = 1, i, r = OWF_OK;
+    if (!n || sheet < 0 || sheet >= book->nsheets || book->sheets[sheet].drawing)
+        return OWF_OK;
+    do
+        snprintf(drawing, sizeof drawing, "xl/drawings/drawing%d.xml", k++);
+    while (owf_book_part(book, drawing));
+    owf_buf_init(&b);
+    owf_buf_init(&rels);
+    owf_buf_puts(&rels, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+                        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">");
+    for (i = 0; i < n && r == OWF_OK; i++) {
+        do
+            snprintf(name, sizeof name, "xl/charts/chart%d.xml", j++);
+        while (owf_book_part(book, name));
+        b.length = 0;
+        if ((r = owf_chart_part_xml(&charts[i], &b)) != OWF_OK)
+            break;
+        if (owf_book_keep_part(book, name, ct_chart, b.data, b.length) < 0) {
+            r = OWF_ERR_MEMORY;
+            break;
+        }
+        owf_buf_printf(&rels, "<Relationship Id=\"rId%d\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/"
+                              "relationships/chart\" Target=\"../charts/%s\"/>", i + 1, name + 10);
+    }
+    owf_buf_puts(&rels, "</Relationships>");
+    b.length = 0;
+    if (r == OWF_OK && (rels.failed || (r = owf_chart_drawing_xml(charts, n, &b)) != OWF_OK))
+        r = OWF_ERR_MEMORY;
+    if (r == OWF_OK) {
+        snprintf(name, sizeof name, "xl/drawings/_rels/%s.rels", drawing + 12);
+        if (owf_book_keep_part(book, drawing, ct_drawing, b.data, b.length) < 0 ||
+            owf_book_keep_part(book, name, ct_rels, rels.data, rels.length) < 0 ||
+            !(book->sheets[sheet].drawing = malloc(strlen(drawing) + 1)))
+            r = OWF_ERR_MEMORY;
+        else
+            strcpy(book->sheets[sheet].drawing, drawing);
+    }
+    owf_buf_free(&b);
+    owf_buf_free(&rels);
+    return r;
+}

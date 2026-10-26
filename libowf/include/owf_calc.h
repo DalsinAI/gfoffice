@@ -192,11 +192,10 @@ int owf_calc_format_value(const char *format, const owf_cell *value, int date190
 }
 #endif
 
-/* owf.library's calls, once every header with calls is complete (owf.h) */
+/* the library's calls, once every header with calls is complete (owf.h) */
 #define OWF_CALC_H_DONE
-#if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD) && defined(OWF_H_DONE) && \
-    defined(OWF_PUB_H_DONE) && defined(OWF_ZIP_H_DONE)
-#include <proto/owf.h>
+#if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "owf_proto.h"
 #endif
 
 #endif

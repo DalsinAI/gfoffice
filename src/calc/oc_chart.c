@@ -161,57 +161,10 @@ int oc_core_place_chart(oc_core *core, unsigned row, unsigned col)
 
 /* ---- The values: from the cells, else as the file last had them ---- */
 
-/* "Chart!$B$1:$B$4" or "'My sheet'!B1:B4" as a sheet and a range; 0 when it is not one of this book's. */
+/* "Chart!$B$1:$B$4" or "'My sheet'!B1:B4" as a sheet and a range (oc_sheet_range, a sheet needed). */
 static int chart_ref(const owf_book *book, const char *ref, int *sheet, owf_range *r)
 {
-    char name[256], range[64];
-    size_t n = 0, k = 0;
-    const char *p = ref, *bang;
-    int i;
-    if (!ref)
-        return 0;
-    if (*p == '\'') {
-        for (p++; *p && n < sizeof name - 1; p++) {
-            if (*p == '\'') {
-                if (p[1] != '\'')
-                    break;
-                p++;
-            }
-            name[n++] = *p;
-        }
-        if (*p != '\'' || p[1] != '!')
-            return 0;
-        bang = p + 1;
-    } else {
-        if (!(bang = strchr(p, '!')) || (size_t)(bang - p) >= sizeof name)
-            return 0;
-        n = (size_t)(bang - p);
-        memcpy(name, p, n);
-    }
-    name[n] = 0;
-    for (p = bang + 1; *p && k < sizeof range - 1; p++)
-        if (*p != '$')
-            range[k++] = *p;
-    range[k] = 0;
-    if (*p || !oc_parse_range(range, r))
-        return 0;
-    for (i = 0; i < book->nsheets; i++) {
-        const char *a = book->sheets[i].name, *b = name;
-        for (; *a && *b; a++, b++) {
-            int ca = (unsigned char)*a, cb = (unsigned char)*b;
-            if (ca >= 'A' && ca <= 'Z')
-                ca += 'a' - 'A';
-            if (cb >= 'A' && cb <= 'Z')
-                cb += 'a' - 'A';
-            if (ca != cb)
-                break;
-        }
-        if (!*a && !*b) {
-            *sheet = i;
-            return 1;
-        }
-    }
-    return 0;
+    return oc_sheet_range(book, ref, -1, sheet, r);
 }
 
 /* A one-row or one-column range's cells, in order: how many (0 when it is neither). */
@@ -268,14 +221,13 @@ static void data_free(chartdata *cd)
     free(cd->has);
 }
 
-/* A cell's number format (NULL: General). */
+/* A cell's number format (NULL: General): its own style's, as the grid shows it. */
 static const char *cell_format(const oc_core *core, int sheet, const owf_cell *c, unsigned col)
 {
     const owf_book *b = core->book;
     int st = c->style;
     (void)col;
-    if (st <= 0 && sheet >= 0 && sheet < b->nsheets)
-        st = oc_col_style(&b->sheets[sheet], c->col);
+    (void)sheet;
     if (st > 0 && st < b->nstyles && b->styles[st].number_format > 0 && b->styles[st].number_format < b->nnumfmts)
         return b->numfmts[b->styles[st].number_format];
     return NULL;
@@ -290,7 +242,7 @@ static char *cell_label(const oc_core *core, const owf_cell *c, unsigned col)
     const char *fmt = NULL;
     if (oc_cell_empty(c))
         return oc_strdup("");
-    st = oc_cell_style(core, c, col);
+    st = oc_cell_style(core, c, c->row, col);
     if (st && st->number_format > 0 && st->number_format < core->book->nnumfmts)
         fmt = core->book->numfmts[st->number_format];
     owf_calc_format_value(fmt, c, core->book->date1904, 11, buf, sizeof buf, &colour);

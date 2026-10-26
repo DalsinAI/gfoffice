@@ -682,20 +682,19 @@ def test_xlsx_ods_xlsx(work, xlsx_paths):
                 l = l.replace('"Other.xlsx!Rate"', '"Rate"').replace(' hidden=1 "\'Very', ' hidden=0 "\'Very')
                 l = l.replace('hidden=2 width', 'hidden=1 width').replace("halign=6", "halign=2").replace("\\x0d\\n", "\\n")
                 return l
-        # conditional formatting is kept in .xlsx only (and said so): not through ODS yet
-        if "\ncf " in a:
-            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-cf.ods")])
-            check("xlsx to ods: conditional formatting noted: " + stem, "Conditional formatting is kept" in out, out)
-        if "\ncomment " in a:
-            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-cm.ods")])
-            check("xlsx to ods: comments noted: " + stem, "Comments on cells are kept" in out, out)
-        if "\nvalidation " in a:
-            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-dv.ods")])
-            check("xlsx to ods: validation noted: " + stem, "Data validation is kept" in out, out)
-        if "\nautofilter " in a:
-            rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-af.ods")])
-            check("xlsx to ods: AutoFilter noted: " + stem, "AutoFilters are kept" in out, out)
-        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("cf ", "comment ", "validation ", "autofilter "))
+        # comments, data validation and AutoFilters go through ODS (what an AutoFilter filters by, when it is a
+        # column's values; its range and buttons always)
+        rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, stem + "-notes.ods")])
+        for said in ("Conditional formatting is kept", "Comments on cells are kept", "Data validation is kept",
+                     "AutoFilters are kept"):
+            check("xlsx to ods: not said to be left out (%s): %s" % (said, stem), said not in out, out)
+        for kind in ("cf ", "comment ", "validation "):
+            check("xlsx to ods to xlsx: %s the same: %s" % (kind.strip(), stem),
+                  [l for l in a.splitlines() if l.startswith(kind)] == [l for l in b.splitlines() if l.startswith(kind)],
+                  "\n".join(l for l in (a + "\n---\n" + b).splitlines() if l.startswith(kind) or l == "---"))
+        ranges = lambda text: [l.split(' "')[0] for l in text.splitlines() if l.startswith("autofilter ")]
+        check("xlsx to ods to xlsx: AutoFilter ranges the same: " + stem, ranges(a) == ranges(b), (ranges(a), ranges(b)))
+        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("autofilter ",))
 
 
 def test_ods_round_trips(work, ods_paths):
@@ -731,9 +730,13 @@ def test_hand_ods(work):
     b = parse(out)
     check("hand.ods: book", b["line"] == "book format=ods sheets=3 active=2 date1904=0", b["line"])
     notes = "\n".join(b["notes"])
-    for want in ("angle", "Conditional formatting", "Data validation", "Sheet protection", "Err:502", "Some formulas could not",
-                 "Comments on cells", "Pictures, charts", "AutoFilter", "split in two", "30 December 1899"):
+    for want in ("angle", "Conditional formatting", "Sheet protection", "Err:502", "Some formulas could not",
+                 "Pictures on sheets", "split in two", "30 December 1899"):
         check("hand.ods: note " + want, want in notes, notes)
+    for gone in ("Data validation", "Comments on cells", "AutoFilter"):
+        check("hand.ods: read, not noted: " + gone, gone not in notes, notes)
+    check("hand.ods: the merged cell's comment, not its text", 'comment 4,4 author "me" text "NOT THIS"' in out, out[-2000:])
+    check("hand.ods: the AutoFilter's buttons", 'autofilter 0,0-1,7 ""' in out, out[-2000:])
     fig = b["sheets"][0]
     check("hand.ods: sheet", fig["line"] == 'sheet 0 "Figures" hidden=0 width=1440 height=255 freeze=1,2', fig["line"])
     check("hand.ods: columns", fig["cols"] == ["col 0-0 width=1700 style=1 hidden=0", "col 1-2 width=720 style=0 hidden=1"], fig["cols"])

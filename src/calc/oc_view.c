@@ -338,6 +338,9 @@ static int find_line(const oc_line *l, int n, int p)
     return -1;
 }
 
+static int dropdown_box(const oc_core *core, const oc_line *rl, int nr, const oc_line *cl, int nc, int *x, int *y, int *w,
+                        int *h);
+
 int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
 {
     oc_line *rl = malloc(MAX_LINES * sizeof *rl), *cl = malloc(MAX_LINES * sizeof *cl);
@@ -390,9 +393,16 @@ int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
                 hit->h = rl[ri - 1].size;
             }
         }
+    } else if (dropdown_box(core, rl, nr, cl, nc, &hit->x, &hit->y, &hit->w, &hit->h) && x >= hit->x &&
+               x < hit->x + hit->w && y >= hit->y && y < hit->y + hit->h) {
+        const oc_sheetstate *st = oc_state_const(core);
+        hit->kind = OC_HIT_DROPDOWN;                     /* the list's button, over the cell beside it */
+        hit->row = st->sel.row;
+        hit->col = st->sel.col;
     } else {
         ri = find_line(rl, nr, y);
         ci = find_line(cl, nc, x);
+        memset(hit, 0, sizeof *hit);
         if (ri >= 0 && ci >= 0) {
             hit->kind = OC_HIT_CELL;
             hit->row = rl[ri].index;
@@ -486,7 +496,7 @@ int oc_core_press(oc_core *core, const oc_hit *hit, int extend, int add)
             return OWF_OK;
         {
             int rc = oc_edit_commit(core, OC_MOVE_NONE);
-            if (rc == OWF_ERR_MEMORY)
+            if (rc == OWF_ERR_MEMORY || rc == OC_INVALID)    /* refused: the click goes nowhere */
                 return rc;
         }
     }
@@ -956,7 +966,7 @@ static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int 
 {
     oc_core *core = d->core;
     owf_cellstyle with_look;
-    const owf_cellstyle *st = style_with_look(d, c, oc_cell_style(core, c, c->col), &with_look);
+    const owf_cellstyle *st = style_with_look(d, c, oc_cell_style(core, c, c->row, c->col), &with_look);
     char buf[256];
     unsigned long colour = OWF_COLOUR_AUTO;
     int n, tw, pad = PAD * core->zoom / 100 + 1, align, lo, hi;
@@ -1195,7 +1205,7 @@ static int line_rank(int line)
 
 static const owf_cellstyle *style_at(const drawing *d, unsigned row, unsigned col)
 {
-    return oc_cell_style(d->core, owf_sheet_find(d->sheet, row, col), col);
+    return oc_cell_style(d->core, owf_sheet_find(d->sheet, row, col), row, col);
 }
 
 /* The line on the edge a's side_a shares with b's side_b (b NULL: none). */
@@ -1543,6 +1553,46 @@ static int comment_note(drawing *d)
     return 1;
 }
 
+/* ---- A list's dropdown button ---- */
+
+/* The active cell's list's button: beside its right edge, at its foot, a row tall at most; 0 when it has
+ * none (no list rule, the rule hides it, typing, the cell not showing). */
+static int dropdown_box(const oc_core *core, const oc_line *rl, int nr, const oc_line *cl, int nc, int *x, int *y, int *w,
+                        int *h)
+{
+    const oc_sheetstate *st = oc_state_const(core);
+    const owf_sheet *s = oc_sheet(core);
+    const owf_validation *dv;
+    const owf_range *m;
+    unsigned last_row = st->sel.row, last_col = st->sel.col;
+    int i0, j0, i1, j1, bw = 16 * core->zoom / 100 + 1, bh;
+    if (core->edit_mode || !(dv = owf_sheet_validation(s, st->sel.row, st->sel.col)) || dv->type != OWF_DV_LIST ||
+        dv->no_dropdown)
+        return 0;
+    if ((m = oc_merge_at(s, st->sel.row, st->sel.col)) != NULL) {
+        last_row = m->last_row;
+        last_col = m->last_col;
+    }
+    i0 = line_of(rl, nr, st->sel.row);
+    j0 = line_of(cl, nc, st->sel.col);
+    for (i1 = -1; i1 < 0 && last_row >= st->sel.row; last_row--)
+        i1 = line_of(rl, nr, last_row);
+    for (j1 = -1; j1 < 0 && last_col >= st->sel.col; last_col--)
+        j1 = line_of(cl, nc, last_col);
+    if (i0 < 0 || j0 < 0 || i1 < 0 || j1 < 0)
+        return 0;
+    if (bw < 12)
+        bw = 12;
+    bh = rl[i1].pos + rl[i1].size - rl[i0].pos;
+    if (bh > 20 * core->zoom / 100 + 2)
+        bh = 20 * core->zoom / 100 + 2;
+    *x = cl[j1].pos + cl[j1].size;
+    *y = rl[i1].pos + rl[i1].size - bh;
+    *w = bw;
+    *h = bh;
+    return *x + *w <= core->width;
+}
+
 /* ---- Charts ---- */
 
 #define FAR_PX 16384L               /* what is further off the area than this (and a screen) doesn't show */
@@ -1772,7 +1822,7 @@ static int build(drawing *d)
     for (i = 0; i < d->nr; i++)
         for (j = 0; j < d->nc; j++) {
             const owf_cell *c = owf_sheet_find(s, d->rl[i].index, d->cl[j].index);
-            const owf_cellstyle *cs = oc_cell_style(core, c, d->cl[j].index);
+            const owf_cellstyle *cs = oc_cell_style(core, c, d->rl[i].index, d->cl[j].index);
             if (!oc_cell_empty(c))
                 CI(d, i, j) |= CI_VALUE;
             if (OWF_SHADE_SET(fill_at(d, d->rl[i].index, d->cl[j].index, cs)))
@@ -1806,7 +1856,7 @@ static int build(drawing *d)
             if (!(CI(d, i, j) & CI_FILLED))
                 continue;
             c = owf_sheet_find(s, d->rl[i].index, d->cl[j].index);
-            cs = oc_cell_style(core, c, d->cl[j].index);
+            cs = oc_cell_style(core, c, d->rl[i].index, d->cl[j].index);
             if (!(it = add_box(list, OC_DRAW_FILL, OC_ROLE_CELL_FILL, d->cl[j].pos, d->rl[i].pos, d->cl[j].size, d->rl[i].size)))
                 return 0;
             it->rgb = OWF_SHADE_RGB(fill_at(d, d->rl[i].index, d->cl[j].index, cs));
@@ -1816,7 +1866,7 @@ static int build(drawing *d)
     for (m = 0; m < s->nmerges; m++) {
         const owf_range *g = &s->merges[m];
         const owf_cell *c = owf_sheet_find(s, g->first_row, g->first_col);
-        const owf_cellstyle *cs = oc_cell_style(core, c, g->first_col);
+        const owf_cellstyle *cs = oc_cell_style(core, c, g->first_row, g->first_col);
         unsigned long fill = fill_at(d, g->first_row, g->first_col, cs);
         if (!OWF_SHADE_SET(fill))
             continue;
@@ -1861,7 +1911,7 @@ static int build(drawing *d)
                 for (pr = 0; pr < 2; pr++)
                     for (pc = 0; pc < 2; pc++) {
                         int x, y, w, h, open;
-                        const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, a.first_row, a.first_col), a.first_col);
+                        const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, a.first_row, a.first_col), a.first_row, a.first_col);
                         unsigned long fill = fill_at(d, a.first_row, a.first_col, cs);
                         if (!range_box(d, &a, pr, pc, &x, &y, &w, &h, &open))
                             continue;
@@ -1906,8 +1956,8 @@ static int build(drawing *d)
                     for (c = c0; c > q->col && d->cl[j].pos - x < core->width; c--)
                         x -= line_px(core, 1, c - 1);
                     w = line_px(core, 1, q->col);
-                    if (x + w < d->cl[j].pos && resolve_align(q, oc_cell_style(core, q, q->col)) == OC_ALIGN_LEFT &&
-                        !oc_cell_style(core, q, q->col)->wrap) {
+                    if (x + w < d->cl[j].pos && resolve_align(q, oc_cell_style(core, q, q->row, q->col)) == OC_ALIGN_LEFT &&
+                        !oc_cell_style(core, q, q->row, q->col)->wrap) {
                         /* as if it were the column before the first: run on from there */
                         int saved_pos = d->cl[j].pos;
                         oc_draw_item *t;
@@ -1923,7 +1973,7 @@ static int build(drawing *d)
                             int need, cw = 0;
                             t = &texts.items[texts.n - 1];
                             need = t->text_x + oc_measure(core, texts.pool + t->text_off, strlen(texts.pool + t->text_off),
-                                                          oc_cell_style(core, q, q->col)) + PAD - d->cl[j].pos;
+                                                          oc_cell_style(core, q, q->row, q->col)) + PAD - d->cl[j].pos;
                             for (k = j; need > 0 && k < d->nc && d->cl[k].pane == 1; k++) {
                                 if (CI(d, i, k) & (CI_VALUE | CI_INNER))
                                     break;
@@ -2104,7 +2154,7 @@ static int build(drawing *d)
 
                 /* 9. the text being typed, over the cell and on to the right as far as it needs */
                 if (core->edit_mode) {
-                    const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, st->sel.row, st->sel.col), st->sel.col);
+                    const owf_cellstyle *cs = oc_cell_style(core, owf_sheet_find(s, st->sel.row, st->sel.col), st->sel.row, st->sel.col);
                     int pad = PAD * core->zoom / 100 + 1, tw = oc_measure(core, core->edit, core->edit_len, cs);
                     int ew = tw + 2 * pad + 2 > w ? tw + 2 * pad + 2 : w, cx;
                     if (x + ew > core->width)
@@ -2141,6 +2191,13 @@ static int build(drawing *d)
                         return 0;
                 }
             }
+    }
+    /* the active cell's list's dropdown button */
+    {
+        int bx, by, bw, bh;
+        if (dropdown_box(core, d->rl, d->nr, d->cl, d->nc, &bx, &by, &bw, &bh) &&
+            !add_box(list, OC_DRAW_DROPDOWN, OC_ROLE_FILTER, bx, by, bw, bh))
+            return 0;
     }
     /* 10. the active cell's comment, on top of everything */
     return comment_note(d);
