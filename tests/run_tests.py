@@ -653,6 +653,10 @@ def main():
     check("contents styles kept", '<w:pStyle w:val="TOC1"/>' in d and '<w:pStyle w:val="TOC2"/>' in d and
           'w:styleId="TOC1"><w:name w:val="toc 1"/>' in styles and 'w:styleId="TOCHeading"><w:name w:val="TOC Heading"/>' in styles,
           styles[-800:])
+    # 2.0.21: round their headings' text, where Word has them
+    check("bookmarks round the text", re.search(r'<w:bookmarkStart w:id="(\d+)" w:name="_Toc1"/><w:r>(<w:rPr>.*?</w:rPr>)?'
+                                                r'<w:t xml:space="preserve">01 Executive summary</w:t></w:r>'
+                                                r'<w:bookmarkEnd w:id="\1"/>', d) is not None, d[-1500:])
     check("bookmarks kept", re.search(r'<w:bookmarkStart w:id="\d+" w:name="_Toc1"/>', d) is not None and
           'w:name="_Ref9"' in d and 'w:name="_Toc4"' in d and "_GoBack" not in d, d[-1500:])
     ids = re.findall(r'<w:bookmarkStart w:id="(\d+)"', d)
@@ -663,12 +667,35 @@ def main():
     check("leaders odt dots", 'style:type="right" style:leader-style="dotted" style:leader-text="."' in c, c[:1200])
     check("leaders odt hyphens", 'style:leader-style="solid" style:leader-text="-"' in c)
     check("leaders odt underscores", 'style:type="char" style:char="." style:leader-style="solid" style:leader-text="_"' in c)
-    check("bookmarks odt", '<text:bookmark text:name="_Toc1"/>' in c and '<text:bookmark text:name="_Toc3"/><text:bookmark text:name="_Ref9"/>' in c, c[-1500:])
+    # 2.0.21: round their headings' text, where Word has them
+    check("bookmarks odt", re.search(r'<text:bookmark-start text:name="_Toc1"/>(<text:span[^>]*>)?01 Executive summary'
+                                     r'(</text:span>)?<text:bookmark-end text:name="_Toc1"/>', c) is not None and
+          re.search(r'<text:bookmark-start text:name="_Toc3"/><text:bookmark-start text:name="_Ref9"/>(<text:span[^>]*>)?'
+                    r'02 Scope(</text:span>)?<text:bookmark-end text:name="_Toc3"/><text:bookmark-end text:name="_Ref9"/>',
+                    c) is not None, c[-1500:])
     with open(os.path.join(work, "contents-round.odt"), "wb") as f:
         f.write(odt)
     d = docx_part(convert(work, "contents-round.odt", "docx")[0], "word/document.xml")
     check("leaders odt to docx", 'w:leader="dot"' in d and 'w:leader="hyphen"' in d and 'w:leader="underscore"' in d, d[:900])
     check("bookmarks odt to docx", 'w:name="_Toc1"' in d and 'w:name="_Toc4"' in d and '<w:hyperlink w:anchor="_Toc1">' in d, d[-1500:])
+    # 2.0.21: bookmarks at their places in the text (tests/core/fixtures/bookmarks.docx, make_bookmarks_docx.py):
+    # round a bold word, empty inside a run (which is cut there), inside a cell's second line
+    shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "fixtures", "bookmarks.docx"),
+                os.path.join(work, "bookmarks.docx"))
+    d = docx_part(convert(work, "bookmarks.docx", "docx")[0], "word/document.xml")
+    check("bookmark round a word", re.search(r'plan\'s </w:t></w:r><w:bookmarkStart w:id="(\d+)" w:name="_Ref1"/><w:r>'
+                                             r'<w:rPr><w:b/></w:rPr><w:t xml:space="preserve">first</w:t></w:r>'
+                                             r'<w:bookmarkEnd w:id="\1"/>', d) is not None, d[:1500])
+    check("bookmark inside a run", re.search(r'> para</w:t></w:r><w:bookmarkStart w:id="(\d+)" w:name="Point"/>'
+                                             r'<w:bookmarkEnd w:id="\1"/><w:r><w:t xml:space="preserve">graph\.', d)
+          is not None, d[:1500])
+    check("bookmark in a cell's second line", re.search(r'second </w:t></w:r><w:bookmarkStart w:id="(\d+)" '
+                                                        r'w:name="Cell"/><w:r><w:t xml:space="preserve">line</w:t></w:r>'
+                                                        r'<w:bookmarkEnd w:id="\1"/>', d) is not None, d[-1500:])
+    odt, _ = convert(work, "bookmarks.docx", "odt")
+    with zipfile.ZipFile(io.BytesIO(odt)) as z:
+        c = z.read("content.xml").decode()
+    check("odt bookmark inside a run", ' para<text:bookmark text:name="Point"/>graph.' in c, c[-1500:])
     text, _ = convert(work, "contents.docx", "txt")
     check("leaders text", "01 Executive summary\t3\n" in text.decode(), repr(text[:200]))
 

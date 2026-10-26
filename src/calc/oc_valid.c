@@ -68,7 +68,7 @@ static int number_of(const owf_cell *c, double *d)
 /* A value as the grid shows it, on one line (for lengths and lists). */
 static void shown(const oc_core *core, const owf_cell *c, char *out, size_t size)
 {
-    const owf_cellstyle *st = oc_cell_style(core, c, c->col);
+    const owf_cellstyle *st = oc_cell_style(core, c, c->row, c->col);
     const char *fmt = st && st->number_format > 0 && st->number_format < core->book->nnumfmts
                           ? core->book->numfmts[st->number_format] : NULL;
     unsigned long colour;

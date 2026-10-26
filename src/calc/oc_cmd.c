@@ -20,6 +20,27 @@ const char *const oc_number_format_names[] = {
 
 /* ---- Styles of columns and cells ---- */
 
+/* A row's own style (Excel's customFormat row), or 0. */
+int oc_row_style(const owf_sheet *sheet, unsigned row)
+{
+    int lo = 0, hi = sheet->nrows;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (sheet->rows[mid].row < row)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < sheet->nrows && sheet->rows[lo].row == row ? sheet->rows[lo].style : 0;
+}
+
+/* The style a cell that has none of its own takes: its row's, else its column's (Excel's order). */
+int oc_empty_style(const owf_sheet *sheet, unsigned row, unsigned col)
+{
+    int s = oc_row_style(sheet, row);
+    return s > 0 ? s : oc_col_style(sheet, col);
+}
+
 int oc_col_style(const owf_sheet *sheet, unsigned col)
 {
     int i;
@@ -29,12 +50,24 @@ int oc_col_style(const owf_sheet *sheet, unsigned col)
     return 0;
 }
 
-const owf_cellstyle *oc_cell_style(const oc_core *core, const owf_cell *cell, unsigned col)
+const owf_cellstyle *oc_cell_style(const oc_core *core, const owf_cell *cell, unsigned row, unsigned col)
 {
-    int s = cell ? cell->style : oc_col_style(oc_sheet(core), col);
+    int s = cell ? cell->style : oc_empty_style(oc_sheet(core), row, col);
     if (s < 0 || s >= core->book->nstyles)
         s = 0;
     return &core->book->styles[s];
+}
+
+int oc_enter(oc_core *core, int sheet, unsigned row, unsigned col, const char *text)
+{
+    int made = oc_find(core, sheet, row, col) == NULL, rc = owf_calc_enter(core->calc, sheet, row, col, text);
+    if (made && rc != OWF_ERR_MEMORY && rc != OWF_ERR_UNSUPPORTED) {
+        owf_sheet *s = &core->book->sheets[sheet];
+        owf_cell *c = owf_sheet_cell(s, row, col, 0);
+        if (c && !c->style)
+            c->style = oc_empty_style(s, row, col);
+    }
+    return rc;
 }
 
 /* ---- Putting a cell ---- */
@@ -126,6 +159,14 @@ static long range_cells(const owf_range *r)
 static int whole_cols(const owf_range *r)
 {
     return r->first_row == 0 && r->last_row == OC_MAX_ROWS - 1;
+}
+
+/* What a step saves of a range beside its cells: the columns' list for whole columns, the rows' for whole
+ * rows (both: all of it is whole columns). */
+static int whole_rows(const owf_range *r);
+static int saves_of(const owf_range *r)
+{
+    return whole_cols(r) ? OC_SAVE_COLS : whole_rows(r) ? OC_SAVE_ROWS : 0;
 }
 
 static int whole_rows(const owf_range *r)
@@ -232,7 +273,7 @@ int oc_core_fill(oc_core *core, int direction)
                     break;
                 }
                 have = 1;
-                style = *oc_cell_style(core, found, down ? a : src[k]);
+                style = *oc_cell_style(core, found, found->row, found->col);
             }
             for (b = down ? t->first_row : t->first_col; b <= (down ? t->last_row : t->last_col); b++) {
                 unsigned row = down ? b : a, col = down ? a : b;
@@ -429,7 +470,7 @@ int oc_core_clear(oc_core *core, unsigned what)
         r[n++] = st->sel.ranges[k];
     u = oc_undo_new(core, OC_UNDO_CELLS);
     for (k = 0; u && k < n; k++)
-        if (oc_undo_save_range(core, u, core->sheet, &r[k], (what & OC_CLEAR_FORMATS) && whole_cols(&r[k])) != OWF_OK) {
+        if (oc_undo_save_range(core, u, core->sheet, &r[k], !(what & OC_CLEAR_FORMATS) ? 0 : saves_of(&r[k])) != OWF_OK) {
             oc_undo_free(u);
             u = NULL;
         }
@@ -459,6 +500,10 @@ int oc_core_clear(oc_core *core, unsigned what)
                     s->cols[i].style = 0;
             cols_join(s);
         }
+        if ((what & OC_CLEAR_FORMATS) && whole_rows(&r[k]))   /* the rows' own formatting too */
+            for (i = 0; i < s->nrows; i++)
+                if (s->rows[i].row >= r[k].first_row && s->rows[i].row <= r[k].last_row)
+                    s->rows[i].style = 0;
     }
     oc_changed(core);
     if (oc_recalc(core, 0) == OWF_ERR_MEMORY)
@@ -537,7 +582,7 @@ static int change_cell(oc_core *core, unsigned row, unsigned col, const style_ch
 {
     owf_sheet *s = oc_sheet(core);
     owf_cell *c = owf_sheet_cell(s, row, col, 0);
-    owf_cellstyle st = *oc_cell_style(core, c, col);
+    owf_cellstyle st = *oc_cell_style(core, c, row, col);
     int idx;
     change(&st, sc, row, col);
     if ((idx = owf_book_style(core->book, &st)) < 0)
@@ -568,7 +613,7 @@ static int apply_style(oc_core *core, style_change *sc)
         return OWF_ERR_UNSUPPORTED;
     u = oc_undo_new(core, OC_UNDO_CELLS);
     for (k = 0; u && k < n; k++)
-        if (oc_undo_save_range(core, u, core->sheet, &r[k], whole_cols(&r[k])) != OWF_OK) {
+        if (oc_undo_save_range(core, u, core->sheet, &r[k], saves_of(&r[k])) != OWF_OK) {
             oc_undo_free(u);
             u = NULL;
         }
@@ -576,8 +621,7 @@ static int apply_style(oc_core *core, style_change *sc)
     for (k = 0; k < n && rc == OWF_OK; k++) {
         sc->range = &r[k];
         if (whole_cols(&r[k]) || whole_rows(&r[k])) {
-            /* whole rows or columns: the cells there are; whole columns: the columns' own style too
-               (rows have none in the book) */
+            /* whole rows or columns: the cells there are, and the columns' (rows') own style too */
             int count;
             unsigned *pos = cells_in(oc_sheet(core), &r[k], &count);
             if (count < 0) {
@@ -603,6 +647,16 @@ static int apply_style(oc_core *core, style_change *sc)
                             s->cols[i].style = idx;
                     }
                 cols_join(s);
+            } else if (r[k].last_row - r[k].first_row < OC_MAX_STYLED_ROWS) {
+                owf_sheet *s = oc_sheet(core);
+                unsigned row;
+                for (row = r[k].first_row; row <= r[k].last_row && rc == OWF_OK; row++) {
+                    int was = oc_row_style(s, row), idx;
+                    owf_cellstyle cs = core->book->styles[was > 0 && was < core->book->nstyles ? was : 0];
+                    change(&cs, sc, row, 0);
+                    if ((idx = owf_book_style(core->book, &cs)) < 0 || (idx != was && owf_sheet_set_row_style(s, row, idx) < 0))
+                        rc = OWF_ERR_MEMORY;
+                }
             }
         } else {
             unsigned row, col;
@@ -622,7 +676,7 @@ static int apply_style(oc_core *core, style_change *sc)
 void oc_core_current_style(const oc_core *core, owf_cellstyle *out)
 {
     const oc_sheetstate *st = oc_state_const(core);
-    *out = *oc_cell_style(core, oc_find(core, core->sheet, st->sel.row, st->sel.col), st->sel.col);
+    *out = *oc_cell_style(core, oc_find(core, core->sheet, st->sel.row, st->sel.col), st->sel.row, st->sel.col);
 }
 
 int oc_core_toggle_flags(oc_core *core, unsigned flags)

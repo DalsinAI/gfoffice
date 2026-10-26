@@ -2,9 +2,11 @@
 # GFOffice for Cradle's stove_build (target .): Cradle checks out this repository alone and sets STOVE and OUT,
 # so this fetches OpenLayout (DalsinAI/openamigalayout, the pages) into $OUT/deps at the commit
 # deps/openamigalayout.ref names (one line: a commit SHA, or a branch such as master), says which commit it
-# was, then runs build-os3.sh (OWConvert, OpenWrite and OpenCalc with libowf linked in) and build-library.sh
-# (owf.library and OWFLibTest, in $OUT/library). The sample documents go in $OUT/samples, for trying OpenWrite
-# in a lab. A local build can still run build-os3.sh itself with OS32_GCC16 and OPENLAYOUT_SRC set.
+# was, then runs build-os3.sh (OWConvert, OpenWrite and OpenCalc with libowf linked in), build-library.sh
+# (GFOffice's libraries, owf.library 2 and their tests, in $OUT/library) and build-os3.sh again for the programs
+# on those libraries (OWF=library, in $OUT/onlib: docs/suite/owf-libraries.md). The sample documents go in
+# $OUT/samples, for trying OpenWrite in a lab. A local build can still run build-os3.sh itself with OS32_GCC16
+# and OPENLAYOUT_SRC set.
 # MIT, Copyright (c) 2026 AmigaChrome Team (Team 5, 25 October 2026).
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -27,10 +29,13 @@ fi
 echo "build-amiga.sh: openamigalayout at $(git -C "$DEPS/openamigalayout" rev-parse --short HEAD) ($REF)"
 OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/openamigalayout" sh "$HERE/build-os3.sh" "$OUT"
 OS32_GCC16=$STOVE sh "$HERE/build-library.sh" "$OUT/library"
+OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/openamigalayout" OWF=library OWF_BUILD_LIBRARIES=no \
+    sh "$HERE/build-os3.sh" "$OUT/onlib"
 mkdir -p "$OUT/samples"
 for f in "$HERE"/samples/*.docx "$HERE"/samples/*.odt "$HERE"/samples/*.txt \
          "$HERE"/tests/book/fixtures/features-openpyxl.xlsx "$HERE"/tests/book/fixtures/charts-openpyxl.xlsx \
-         "$HERE"/tests/book/fixtures/validation-openpyxl.xlsx "$HERE"/tests/core/fixtures/*.docx; do
+         "$HERE"/tests/book/fixtures/validation-openpyxl.xlsx "$HERE"/tests/core/fixtures/*.docx \
+         "$HERE"/tests/core/fixtures/*.odt; do
     [ -f "$f" ] && cp "$f" "$OUT/samples/"   # the workbooks (OpenCalc's charts, validation and the rest) and the
                                              # layout fixtures (covers, contents, text round frames), for a lab
 done
