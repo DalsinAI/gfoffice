@@ -96,6 +96,7 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
 int owf_pdf_page_count(const owf_pdf *pdf);
 int owf_pdf_text_width(const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size);
 int owf_pdf_winansi(unsigned long codepoint);
+const char * owf_pdf_fallback(unsigned long codepoint);
 
 #ifdef __cplusplus
 }

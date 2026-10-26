@@ -82,4 +82,5 @@ owf_pdf_finish(pdf,title,data,length,report)(a0,a1,a2,a3,d0)
 owf_pdf_page_count(pdf)(a0)
 owf_pdf_text_width(utf8,length,kind,flags,size)(a0,d0,d1,d2,d3)
 owf_pdf_winansi(codepoint)(d0)
+owf_pdf_fallback(codepoint)(d0)
 ##end
