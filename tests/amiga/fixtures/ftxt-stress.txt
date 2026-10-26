@@ -1,0 +1,64 @@
+This first line selects no font: FTXT's default is font 1, times (proportional, serif).
+FTXT stress document
+Team 5, W142. Each section says what it tests; the text after each label is what a reader shows.
+
+1. Fonts (FONS and SGR 10-19)
+SGR 10: font 0, topaz (fixed, sans).
+SGR 11: font 1, times again.
+SGR 12: font 2, helvetica (proportional, sans).
+SGR 13: font 3, courier (fixed, serif).
+SGR 19: font 9, CGTimes (flags unknown).
+SGR 15: font 5, which no FONS names.
+Fonts change mid-line: topaz, times, helvetica.
+
+2. Rendition (SGR, ISO 6429)
+Plain, bold, italic, underlined.
+Bold, italic and underlined in one SGR (1;3;4), then reset by SGR 0.
+Bold, and italic, and underlined; reset by CSI m with no parameter.
+Bold on, 23 (not italic) leaves it bold, 22 ends it.
+Inverse (7), positive again (27).
+Faint (2), crossed out (9), doubly underlined (21), blinking (5).
+Concealed (8): shown here as text by a reader that keeps characters, revealed (28).
+
+3. Colours (SGR 30-37, 39, 40-47, 49)
+black red green yellow blue magenta cyan white 
+on black on red on green on yellow on blue on magenta on cyan on white 
+Red on yellow in one SGR (31;43), then plain.
+
+4. Lines
+CR LF ends this line once: CR is not a line end.
+A lone CR inside a line is skipped.
+Two blank lines follow.
+
+
+This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream. This paragraph is long, to test wrapping and long runs of text in one line of the stream.
+
+5. Reserved and unused controls (all skipped)
+ESC sequences: [] are empty.
+DCS, OSC, PM and APC strings: [] are empty.
+SS2 and SS3 then a letter: [AB] (each letter may also show as ?).
+Unused C0: []; unused C1: []; DEL: [].
+A tab is an unused C0 control too: [].
+CSI with a private parameter: []; with an intermediate: [].
+A malformed CSI cut by a G1 letter: [é]; a sequence never finished (CSI then a line end):
+The line after it is whole.
+
+6. ISO 6429 formatting (CSI ... SP final)
+GSS 240: 24-point text (240 decipoints).
+QUAD 2: this line is centred.
+QUAD 4: this line is flush right.
+QUAD 0: flush left again.
+
+7. ISO 8859-1 (G1, A0-FF)
+Café, naïve, Ærøskøbing, ¿Qué?, «guillemets», 1½ × 2¼, 90°, © ® § ¶ µ ß.
+A0:  ¡¢£¤¥¦§¨©ª«¬­®¯
+B0: °±²³´µ¶·¸¹º»¼½¾¿
+C0: ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ
+D0: ÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß
+E0: àáâãäåæçèéêëìíîï
+F0: ðñòóôõö÷øùúûüýþÿ
+8. This paragraph starts in one CHRS chunk and ends in the next; formatting carries over: bold set in this chunk
+is still bold on the next line, because a CHRS does not reset it.
+SGR 12 now: font 2 is garnet, renamed by a FONS between the chunks.
+9. After a nested FORM ILBM, an odd-length chunk.!
+10. The end, with no line feed after it.
