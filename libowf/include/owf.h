@@ -147,7 +147,10 @@ typedef struct {
      * in fmt already; a heading is written as its level's style whatever this says. */
     char *style;
     /* 1.4: the bookmarks at its start, their names between single spaces ("_Toc123 _Ref7"), NULL: none.
-     * DOCX's w:bookmarkStart and ODF's text:bookmark; a link into the document ("#_Toc123") goes to one. */
+     * DOCX's w:bookmarkStart and ODF's text:bookmark; a link into the document ("#_Toc123") goes to one.
+     * 2.0.21: a name may carry its place in the paragraph's text: '@' and the byte offset where it starts
+     * (in its text runs' bytes, in order; other runs count none), then '-' and where it ends when it isn't
+     * empty ("_Toc123@0-14 _Ref7@20"). A name without one is at the paragraph's start, empty, as before. */
     char *bookmarks;
 } owf_para;
 
@@ -382,6 +385,8 @@ typedef struct {
     unsigned row;
     int height;                  /* twips */
     int hidden;
+    int style;                   /* owf.library 2.1: the style of its cells that have none of their own (Excel's
+                                    customFormat row), over its columns'; 0 none */
 } owf_rowinfo;
 
 typedef struct {
@@ -547,6 +552,9 @@ void owf_cell_set_error(owf_cell *cell, int error);
 int owf_cell_set_formula(owf_cell *cell, const char *text);
 int owf_sheet_set_columns(owf_sheet *sheet, unsigned first, unsigned last, int width, int style, int hidden);
 int owf_sheet_set_row(owf_sheet *sheet, unsigned row, int height, int hidden);
+/* A row's style (owf_rowinfo.style), the row made at the sheet's height when it has no entry; -1 when memory
+ * runs out. */
+int owf_sheet_set_row_style(owf_sheet *sheet, unsigned row, int style);
 int owf_sheet_merge(owf_sheet *sheet, const owf_range *range);
 int owf_book_add_name(owf_book *book, const char *name, int sheet, const char *formula, int hidden);
 /* A new conditional format at the end of the sheet's, all zero (its

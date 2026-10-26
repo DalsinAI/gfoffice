@@ -710,7 +710,7 @@ static int test_names_editing(void)
     ow_selection sel;
     if (owf_import_file("tests/core/fixtures/contents.docx", NULL, &doc, NULL, NULL) != OWF_OK || !doc) return 2101;
     if (doc->body.nparas != 10 || !name_is(doc->body.paras[1].style, "TOC1") ||
-        !name_is(doc->body.paras[7].bookmarks, "_Toc2"))
+        !name_is(doc->body.paras[7].bookmarks, "_Toc2@0-24"))     /* 2.0.21: round its heading's text */
         return 2102;
     ed = ow_editor_new(doc);
     if (!ed) return 2103;
@@ -724,14 +724,15 @@ static int test_names_editing(void)
         doc->body.paras[2].bookmarks)
         return 2105;
     if (ow_editor_undo(ed) != 1 || doc->body.nparas != 10 || !name_is(doc->body.paras[2].style, "TOC2")) return 2106;
-    /* Backspace at the start of "1.1 Purpose": joined to "01 Executive summary", both bookmarks there */
+    /* Backspace at the start of "1.1 Purpose": joined to "01 Executive summary", both bookmarks there, the second
+     * round its text after the first's (2.0.21) */
     memset(&sel, 0, sizeof sel);
     sel.anchor.paragraph = sel.focus.paragraph = 7;
     ow_editor_set_selection(ed, &sel);
     if (ow_editor_backspace(ed) != OWF_OK || doc->body.nparas != 9) return 2107;
-    if (!name_is(doc->body.paras[6].bookmarks, "_Toc1 _Toc2")) return 2108;
-    if (ow_editor_undo(ed) != 1 || doc->body.nparas != 10 || !name_is(doc->body.paras[6].bookmarks, "_Toc1") ||
-        !name_is(doc->body.paras[7].bookmarks, "_Toc2"))
+    if (!name_is(doc->body.paras[6].bookmarks, "_Toc1@0-20 _Toc2@20-44")) return 2108;
+    if (ow_editor_undo(ed) != 1 || doc->body.nparas != 10 || !name_is(doc->body.paras[6].bookmarks, "_Toc1@0-20") ||
+        !name_is(doc->body.paras[7].bookmarks, "_Toc2@0-24"))
         return 2109;
     /* bold on part of an entry: every part still links to its heading (the link was lost) */
     {

@@ -80,4 +80,5 @@ owf_calc_cell_name(row,col,out)(d0,d1,a0)
 owf_calc_parse_cell(text,row,col)(a0,a1,a2)
 owf_calc_format(book,cell,out,size)(a0,a1,a2,d0)
 owf_calc_format_value(format,value,date1904,width,out,size,colour)(a0,a1,d0,d1,a2,d2,a3)
+owf_sheet_set_row_style(sheet,row,style)(a0,d0,d1)
 ##end
