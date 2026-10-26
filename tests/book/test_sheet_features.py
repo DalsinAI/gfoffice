@@ -756,6 +756,47 @@ def test_charts(work):
           (sheet_lines(got, 0, "chart"), sheet_lines(got, 7, "chart")))
 
 
+# ---- Formatting of whole rows ----
+
+def test_row_styles(work):
+    """A row's own formatting (Excel's customFormat row, ODS's row default cell style) read, kept on saving as
+    .xlsx and as .ods, and read back."""
+    with zipfile.ZipFile(FIX) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    sheet = parts["xl/worksheets/sheet1.xml"].decode()
+    sheet = sheet.replace('<row r="6" ht="27" customHeight="1">', '<row r="6" ht="27" customHeight="1" s="4" customFormat="1">')
+    check("row styles: the fixture made to have one", 'customFormat="1"' in sheet, "")
+    path = os.path.join(work, "row-style.xlsx")
+    write_zip(path, dict(parts, **{"xl/worksheets/sheet1.xml": sheet.encode()}))
+    got = dump(path)
+    a6 = [l for l in sheet_lines(got, 0, "cell") if l.startswith("cell 5,0 ")]
+    style = a6[0].split()[2].split("=")[1] if a6 else "?"
+    rows = [l for l in sheet_lines(got, 0, "row") if l.startswith("row 5 ")]
+    check("row styles: read (A6's style)", rows == ["row 5 height=540 hidden=0 style=%s" % style], (rows, a6))
+    check("row styles: no note that they are lost", "Formatting of whole rows" not in got, lines(got, "note"))
+    xlsx = os.path.join(work, "row-style-saved.xlsx")
+    convert(path, xlsx)
+    with zipfile.ZipFile(xlsx) as z:
+        written = z.read("xl/worksheets/sheet1.xml").decode()
+    check("row styles: written as Excel writes them", re.search(r'<row r="6" s="%s" customFormat="1" ht="27" customHeight="1"' % style,
+                                                               written) is not None, re.findall(r'<row r="6"[^>]*>', written))
+    check("row styles: the same after saving", [l for l in sheet_lines(dump(xlsx), 0, "row") if l.startswith("row 5 ")] == rows, "")
+    ods = os.path.join(work, "row-style.ods")
+    convert(path, ods)
+    with zipfile.ZipFile(ods) as z:
+        content = z.read("content.xml").decode()
+    check("row styles: ODS's row default cell style", 'table:default-cell-style-name="ce%s"' % style in content, "")
+    back = [l for l in sheet_lines(dump(ods), 0, "row") if l.startswith("row 5 ")]
+    check("row styles: and read back from ODS", len(back) == 1 and " style=" in back[0], back)
+    try:
+        import openpyxl
+    except ImportError:
+        openpyxl = None
+    if openpyxl:
+        rd = openpyxl.load_workbook(xlsx)["Systems"].row_dimensions[6]
+        check("row styles: openpyxl reads the row's style", rd.customFormat and rd.s and int(rd.s) == int(style), (rd.customFormat, rd.s))
+
+
 def damaged(work):
     """The first sheet's XML cut short and changed in what follows its cells (the conditional formats and
     the rest): book_dump answers with a book or an error, never a crash."""
@@ -815,6 +856,7 @@ def main():
         test_autofilter(work)
         test_drawings(work)
         test_charts(work)
+        test_row_styles(work)
         damaged(work)
     if failures:
         print("sheet features: %d of %d checks failed" % (len(failures), checks))

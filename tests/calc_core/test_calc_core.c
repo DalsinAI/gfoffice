@@ -2358,6 +2358,77 @@ static void test_charts(void)
     oc_core_free(core);
 }
 
+/* Formatting set on whole rows (a row's own style, over its columns') and whole columns: shown on the empty
+ * cells there, given to cells typed into them, set and cleared by selecting whole rows, undone, saved. */
+static void test_row_styles(void)
+{
+    static const char *const path = "build/host/calc-core-rows.xlsx";
+    oc_core *core = fresh();
+    owf_report *report = owf_report_new();
+    const owf_book_format *used = NULL;
+    oc_draw_list l;
+    const owf_sheet *s;
+    int i, styled;
+    if (!core || !report) {
+        oc_core_free(core);
+        owf_report_free(report);
+        return;
+    }
+    oc_draw_list_init(&l);
+    /* column C yellow, then row 3 green: C3 green (the row's over the column's), C2 and C4 yellow */
+    oc_core_select_cols(core);                   /* A1: column A */
+    go(core, "C1");
+    oc_core_select_cols(core);
+    CHECK(oc_core_set_fill(core, OWF_SHADE(0xFFFF00)) == OWF_OK);
+    go(core, "A3");
+    oc_core_select_rows(core);
+    CHECK(oc_core_set_fill(core, OWF_SHADE(0x00FF00)) == OWF_OK);
+    s = &oc_core_book(core)->sheets[0];
+    for (i = styled = 0; i < s->nrows; i++)
+        if (s->rows[i].row == 2 && s->rows[i].style > 0)
+            styled = 1;
+    CHECK(styled && s->ncells == 0);             /* the row's own style; no cells made */
+    go(core, "A1");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 2, 2) == 0x00FF00 && fill_of(&l, 2, 7) == 0x00FF00 && fill_of(&l, 1, 2) == 0xFFFF00 &&
+          fill_of(&l, 3, 2) == 0xFFFF00 && fill_of(&l, 1, 1) == -1);
+    /* typed into: the cell takes its row's style, else its column's */
+    enter_at(core, "E3", "12");
+    enter_at(core, "C9", "7");
+    enter_at(core, "B9", "8");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 2, 4) == 0x00FF00 && fill_of(&l, 8, 2) == 0xFFFF00 && fill_of(&l, 8, 1) == -1);
+    /* undone, the row loses it again; done again, back */
+    go(core, "A3");
+    oc_core_select_rows(core);
+    CHECK(oc_core_set_fill(core, OWF_SHADE(0x0000FF)) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 2, 7) == 0x0000FF && fill_of(&l, 2, 4) == 0x0000FF);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 2, 7) == 0x00FF00 && fill_of(&l, 2, 4) == 0x00FF00);
+    /* saved as .xlsx and opened again: the same */
+    CHECK(oc_core_save(core, path, "xlsx", report) == OWF_OK);
+    CHECK(oc_core_open(core, path, NULL, report, &used) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 2, 7) == 0x00FF00 && fill_of(&l, 1, 2) == 0xFFFF00 && fill_of(&l, 2, 2) == 0x00FF00);
+    /* a row put in above moves it down; its formats cleared, the row's own go too */
+    go(core, "A1");
+    oc_core_select_rows(core);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 3, 7) == 0x00FF00 && fill_of(&l, 2, 7) == -1);
+    go(core, "A4");
+    oc_core_select_rows(core);
+    CHECK(oc_core_clear(core, OC_CLEAR_FORMATS) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(fill_of(&l, 3, 7) == -1 && fill_of(&l, 3, 2) == 0xFFFF00);    /* C4: its column's again */
+    remove(path);
+    oc_draw_list_free(&l);
+    owf_report_free(report);
+    oc_core_free(core);
+}
+
 static void test_status(void)
 {
     oc_core *core = fresh();
@@ -2579,6 +2650,7 @@ int main(void)
     test_validation();
     test_autofilter();
     test_drawings_kept();
+    test_row_styles();
     test_charts();
     test_row_numbers();
     test_text_layout();

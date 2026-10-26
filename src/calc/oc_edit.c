@@ -266,7 +266,7 @@ static int commit_fill(oc_core *core, const char *text, int *bad)
                     owf_free(moved);
                     in = moved = with;
                 }
-                one = owf_calc_enter(core->calc, core->sheet, row, col, in);
+                one = oc_enter(core, core->sheet, row, col, in);
                 owf_free(moved);
                 if (one == OWF_ERR_FORMAT)
                     *bad = 1;
@@ -300,7 +300,7 @@ int oc_edit_commit(oc_core *core, int move)
             oc_undo_free(u);
             u = NULL;
         }
-        rc = owf_calc_enter(core->calc, core->sheet, st->sel.row, st->sel.col, text);
+        rc = oc_enter(core, core->sheet, st->sel.row, st->sel.col, text);
         if (rc == OWF_ERR_MEMORY) {
             oc_undo_free(u);
         } else {
@@ -430,7 +430,7 @@ int oc_core_set_input(oc_core *core, int sheet, unsigned row, unsigned col, cons
         oc_undo_free(u);
         u = NULL;
     }
-    rc = owf_calc_enter(core->calc, sheet, row, col, input);
+    rc = oc_enter(core, sheet, row, col, input);
     if (rc == OWF_ERR_MEMORY || rc == OWF_ERR_UNSUPPORTED) {
         oc_undo_free(u);
         return rc;

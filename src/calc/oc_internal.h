@@ -22,8 +22,12 @@ typedef struct {
     owf_cell *cells;
     int ncols;                      /* columns' styles for whole columns: the sheet's column list */
     owf_colinfo *cols;
-    int has_cols;
+    int has_cols;                   /* OC_SAVE_COLS, OC_SAVE_ROWS */
+    int nrows;                      /* rows' styles for whole rows: the sheet's row list */
+    owf_rowinfo *rows;
 } oc_cellsave;
+enum { OC_SAVE_COLS = 1, OC_SAVE_ROWS = 2 };
+#define OC_MAX_STYLED_ROWS 65536U        /* rows formatted whole at once (more: their cells only) */
 
 enum { OC_UNDO_CELLS, OC_UNDO_LAYOUT, OC_UNDO_BOOK, OC_UNDO_SHIFT };
 
@@ -149,12 +153,19 @@ void oc_collapse_to(oc_core *core, unsigned row, unsigned col);
 char *oc_strdup(const char *s);
 int oc_nav_key(oc_core *core, int key, unsigned mods);
 char *oc_cell_input(const oc_core *core, int sheet, unsigned row, unsigned col);
-const owf_cellstyle *oc_cell_style(const oc_core *core, const owf_cell *cell, unsigned col);
+/* A cell's style: its own, else (no cell) its row's, else its column's. */
+const owf_cellstyle *oc_cell_style(const oc_core *core, const owf_cell *cell, unsigned row, unsigned col);
 int oc_col_style(const owf_sheet *sheet, unsigned col);
+int oc_row_style(const owf_sheet *sheet, unsigned row);
+int oc_empty_style(const owf_sheet *sheet, unsigned row, unsigned col);
+/* Text entered into a cell through the engine; a cell it makes takes its row's or column's style, as a cell
+ * typed into in Excel does. */
+int oc_enter(oc_core *core, int sheet, unsigned row, unsigned col, const char *text);
 
 /* oc_undo.c */
 oc_undo *oc_undo_new(oc_core *core, int kind);
-int oc_undo_save_range(oc_core *core, oc_undo *u, int sheet, const owf_range *range, int with_cols);
+/* with: OC_SAVE_COLS, OC_SAVE_ROWS (the column and row lists too) */
+int oc_undo_save_range(oc_core *core, oc_undo *u, int sheet, const owf_range *range, int with);
 int oc_undo_save_layout(oc_core *core, oc_undo *u, int sheet);
 int oc_undo_save_book(oc_core *core, oc_undo *u);
 void oc_undo_push(oc_core *core, oc_undo *u);
