@@ -184,3 +184,51 @@ int owf_rt_vsnprintf(char *out, size_t size, const char *fmt, va_list ap)
     if (size) out[o.n < size ? o.n : size - 1] = 0;
     return o.n > (size_t)INT_MAX ? INT_MAX : (int)o.n;
 }
+
+/* ---- sscanf -------------------------------------------------------------- */
+
+int owf_rt_vsscanf(const char *s, const char *fmt, va_list ap)
+{
+    int count = 0;
+    while (*fmt) {
+        char *end;
+        int is_long = 0, base;
+        unsigned char conv;
+        if (is_space((unsigned char)*fmt)) {
+            while (is_space((unsigned char)*fmt)) fmt++;
+            while (is_space((unsigned char)*s)) s++;
+            continue;
+        }
+        if (*fmt != '%' || fmt[1] == '%') {
+            if (*fmt == '%') fmt++;
+            if (*s != *fmt) return count ? count : (*s ? 0 : -1);
+            s++;
+            fmt++;
+            continue;
+        }
+        fmt++;
+        if (*fmt == 'l') {
+            is_long = 1;
+            fmt++;
+        }
+        conv = (unsigned char)*fmt++;
+        base = conv == 'd' || conv == 'u' ? 10 : conv == 'x' || conv == 'X' ? 16 : conv == 'i' ? 0 : -1;
+        if (base < 0) return count;    /* a conversion this one doesn't do */
+        while (is_space((unsigned char)*s)) s++;
+        if (!*s) return count ? count : -1;
+        if (conv == 'd' || conv == 'i') {
+            long v = owf_rt_strtol(s, &end, base);
+            if (end == s) return count;
+            if (is_long) *va_arg(ap, long *) = v;
+            else *va_arg(ap, int *) = (int)v;
+        } else {
+            unsigned long v = owf_rt_strtoul(s, &end, base);
+            if (end == s) return count;
+            if (is_long) *va_arg(ap, unsigned long *) = v;
+            else *va_arg(ap, unsigned *) = (unsigned)v;
+        }
+        s = end;
+        count++;
+    }
+    return count;
+}

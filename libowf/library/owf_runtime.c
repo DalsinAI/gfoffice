@@ -4,8 +4,9 @@
  * caller's. The string calls are weblayout's (DalsinAI/openamigabrowser
  * src/weblayout/library/wl_runtime.c); printf, strtol and the case calls
  * are owf_libc.c's; the <math.h> calls and strtod are owf_libm.c's (the
- * formula engine's, since owf.library 2), and the double arithmetic under
- * them owf_softdouble.c's.
+ * formula engine's, since owf.library 2), named in owf_runtime_math.c so a
+ * library that does no maths links none of them, and the double arithmetic
+ * under them owf_softdouble.c's.
  *
  * Memory: one Exec pool for the library, behind a semaphore, with each
  * block's size in front of it. Every document's memory comes from it, and
@@ -306,47 +307,14 @@ int snprintf(char *out, size_t size, const char *fmt, ...)
     return n;
 }
 
-/* ---- maths (owf.library 2: the formula engine's) ----------------------------
- * Declared here, not through <math.h>, so no C library's header shapes them. */
+/* ---- sscanf (owfpresent.library: ODP's view boxes) -------------------------- */
 
-double fabs(double x);
-double floor(double x);
-double ceil(double x);
-double fmod(double x, double y);
-double sqrt(double x);
-double exp(double x);
-double log(double x);
-double log10(double x);
-double pow(double x, double y);
-double sin(double x);
-double cos(double x);
-double tan(double x);
-double asin(double x);
-double acos(double x);
-double atan(double x);
-double atan2(double y, double x);
-double sinh(double x);
-double cosh(double x);
-double tanh(double x);
-double strtod(const char *s, char **end);
-
-double fabs(double x) { return owf_rt_fabs(x); }
-double floor(double x) { return owf_rt_floor(x); }
-double ceil(double x) { return owf_rt_ceil(x); }
-double fmod(double x, double y) { return owf_rt_fmod(x, y); }
-double sqrt(double x) { return owf_rt_sqrt(x); }
-double exp(double x) { return owf_rt_exp(x); }
-double log(double x) { return owf_rt_log(x); }
-double log10(double x) { return owf_rt_log10(x); }
-double pow(double x, double y) { return owf_rt_pow(x, y); }
-double sin(double x) { return owf_rt_sin(x); }
-double cos(double x) { return owf_rt_cos(x); }
-double tan(double x) { return owf_rt_tan(x); }
-double asin(double x) { return owf_rt_asin(x); }
-double acos(double x) { return owf_rt_acos(x); }
-double atan(double x) { return owf_rt_atan(x); }
-double atan2(double y, double x) { return owf_rt_atan2(y, x); }
-double sinh(double x) { return owf_rt_sinh(x); }
-double cosh(double x) { return owf_rt_cosh(x); }
-double tanh(double x) { return owf_rt_tanh(x); }
-double strtod(const char *s, char **end) { return owf_rt_strtod(s, end); }
+int sscanf(const char *s, const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = owf_rt_vsscanf(s, fmt, ap);
+    va_end(ap);
+    return n;
+}

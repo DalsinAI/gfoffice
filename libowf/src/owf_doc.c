@@ -413,6 +413,11 @@ void owf_report_add(owf_report *report, owf_note_level level, const char *fmt, .
     report->count++;
 }
 
+void owf_report_text(owf_report *report, owf_note_level level, const char *text)
+{
+    owf_report_add(report, level, "%s", text);
+}
+
 int owf_report_count(const owf_report *report)
 {
     return report ? report->count : 0;
@@ -513,4 +518,57 @@ int owf_builder_done(owf_builder *b)
     owf_buf_free(&b->text);
     b->para = NULL;
     return b->failed ? OWF_ERR_MEMORY : OWF_OK;
+}
+
+/* 2.0.21: owf_para.bookmarks one by one ("_Toc1@0-14 _Ref2@20 Plain"). */
+int owf_marks_parse(const char *list, owf_mark *marks, int max)
+{
+    int n = 0;
+    while (list && *list && n < max) {
+        size_t len = strcspn(list, " "), name = len, k;
+        size_t start = 0, end = 0;
+        const char *at = NULL;
+        for (k = len; k > 0; --k)
+            if (list[k - 1] == '@') {
+                at = list + k - 1;
+                break;
+            }
+        if (at && at > list) {
+            const char *q = at + 1, *stop = list + len;
+            int ok = q < stop && *q >= '0' && *q <= '9';
+            start = 0;
+            while (ok && q < stop && *q >= '0' && *q <= '9') start = start * 10 + (size_t)(*q++ - '0');
+            end = start;
+            if (ok && q < stop && *q == '-') {
+                ++q;
+                ok = q < stop && *q >= '0' && *q <= '9';
+                end = 0;
+                while (ok && q < stop && *q >= '0' && *q <= '9') end = end * 10 + (size_t)(*q++ - '0');
+            }
+            if (ok && q == stop && end >= start) {
+                name = (size_t)(at - list);
+            } else {
+                start = end = 0;
+            }
+        }
+        if (name) {
+            marks[n].name = list;
+            marks[n].length = name;
+            marks[n].start = start;
+            marks[n].end = end;
+            ++n;
+        }
+        list += len;
+        while (*list == ' ') ++list;
+    }
+    return n;
+}
+
+size_t owf_para_text_bytes(const owf_para *p)
+{
+    size_t n = 0;
+    int i;
+    for (i = 0; p && i < p->nruns; ++i)
+        if (p->runs[i].kind == OWF_RUN_TEXT && p->runs[i].text) n += strlen(p->runs[i].text);
+    return n;
 }

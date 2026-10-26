@@ -205,7 +205,9 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_para *para, owf
         owf_put_points(&style, f->space_after);
         owf_buf_puts(&style, "; ");
     }
-    if (f->line_spacing && f->line_spacing != 100)
+    if (OWF_LINE_IS_HEIGHT(f->line_spacing))           /* 2.0.18: exactly (or at least) so high */
+        owf_buf_printf(&style, "line-height: %dpt; ", (OWF_LINE_HEIGHT(f->line_spacing) + 10) / 20);
+    else if (f->line_spacing && f->line_spacing != 100)
         owf_buf_printf(&style, "line-height: %d%%; ", f->line_spacing);
     if (OWF_SHADE_SET(f->shading))
         owf_buf_printf(&style, "background-color: #%06lx; ", OWF_SHADE_RGB(f->shading));
