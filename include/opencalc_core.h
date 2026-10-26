@@ -192,6 +192,32 @@ int oc_edit_wants_ref(const oc_core *core);
 /* Types a reference to the cell (or the range, when it is more than one). */
 int oc_edit_insert_ref(oc_core *core, const owf_range *range);
 
+/* ---- Data validation ----
+ * A value typed into a cell whose rule (Excel's data validation) has an
+ * error alert is checked as it is committed: one the rule refuses is taken
+ * back, editing goes on with the text, and oc_edit_commit (or the key that
+ * committed) returns OC_INVALID. oc_core_invalid says what the alert says
+ * (Excel's own words when the rule has none); its style, the buttons: Stop
+ * (Retry, Cancel), Warning ("Continue?" Yes, No, Cancel), Information (OK,
+ * Cancel). oc_edit_commit_anyway puts the text in all the same (a
+ * warning's Yes, an information's OK). Ctrl+Return's fill, paste and
+ * ARexx's SETCELL are not checked, as Excel's paste and macros aren't. */
+#define OC_INVALID 100
+typedef struct {
+    int style;                  /* OWF_DV_STOP, OWF_DV_WARNING, OWF_DV_INFORMATION */
+    const char *title, *message;
+    int move;                   /* the commit's move, for oc_edit_commit_anyway */
+} oc_alert;
+int oc_core_invalid(const oc_core *core, oc_alert *alert);
+int oc_edit_commit_anyway(oc_core *core, int move);
+/* A list rule's choices for the active cell (each owf_malloc'd, in a
+ * malloc'd array: oc_choices_free them); none when it has no list rule or
+ * its list is a formula that isn't a range. A list's dropdown shows for
+ * the active cell (OC_DRAW_DROPDOWN, OC_HIT_DROPDOWN) unless the rule
+ * hides it. */
+int oc_core_list_choices(oc_core *core, char ***items, int *n);
+void oc_choices_free(char **items, int n);
+
 /* The formula bar's text: what is being typed, or what the active cell
  * holds as one would type it ("=SUM(A1:A3)", "12.5", "'0123"). The
  * pointer is good until the next call into the core. */
@@ -343,7 +369,8 @@ void oc_view_show_cell(oc_core *core, unsigned row, unsigned col);
 enum {
     OC_HIT_NONE, OC_HIT_CELL, OC_HIT_COL_HEADER, OC_HIT_ROW_HEADER, OC_HIT_CORNER,
     OC_HIT_COL_EDGE,        /* a column letter's right edge: drag to size it */
-    OC_HIT_ROW_EDGE
+    OC_HIT_ROW_EDGE,
+    OC_HIT_DROPDOWN         /* the active cell's list's dropdown button (row, col: the cell) */
 };
 typedef struct {
     int kind;
@@ -373,8 +400,9 @@ enum {
     OC_DRAW_MARK,       /* a comment's mark: a triangle filling the top right half of the box x,y,w,h */
     OC_DRAW_FILTER,     /* an AutoFilter's button: the box x,y,w,h with an arrow down; flags 1: its column filters */
     OC_DRAW_SEGMENT,    /* a chart's line, 1 pixel, from x,y to x+w,y+h (either way), cut to the area: rgb */
-    OC_DRAW_POLY        /* a chart's filled polygon: points (x, y pairs), npoints; x,y,w,h around it; cut to the
+    OC_DRAW_POLY,       /* a chart's filled polygon: points (x, y pairs), npoints; x,y,w,h around it; cut to the
                            area (its right and bottom edges outside it, as a box's); rgb */
+    OC_DRAW_DROPDOWN    /* the active cell's list's dropdown button: the box x,y,w,h with an arrow down */
 };
 enum {
     OC_ROLE_PAPER,          /* the empty sheet (the window fills the area with it first) */

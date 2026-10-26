@@ -553,7 +553,7 @@ int owf_sheet_set_columns(owf_sheet *sheet, unsigned first, unsigned last, int w
     return 0;
 }
 
-int owf_sheet_set_row(owf_sheet *sheet, unsigned row, int height, int hidden)
+static owf_rowinfo *row_entry(owf_sheet *sheet, unsigned row)
 {
     int lo = 0, hi = sheet->nrows;
     owf_rowinfo *r;
@@ -564,17 +564,34 @@ int owf_sheet_set_row(owf_sheet *sheet, unsigned row, int height, int hidden)
         else
             hi = mid;
     }
-    if (lo < sheet->nrows && sheet->rows[lo].row == row) {
-        r = &sheet->rows[lo];
-    } else {
-        if (!grow((void **)&sheet->rows, sheet->nrows, &sheet->caprows, sizeof *r, 16))
-            return -1;
-        r = &sheet->rows[lo];
-        if (lo < sheet->nrows)
-            memmove(r + 1, r, (size_t)(sheet->nrows - lo) * sizeof *r);
-        sheet->nrows++;
-        r->row = row;
-    }
+    if (lo < sheet->nrows && sheet->rows[lo].row == row)
+        return &sheet->rows[lo];
+    if (!grow((void **)&sheet->rows, sheet->nrows, &sheet->caprows, sizeof *r, 16))
+        return NULL;
+    r = &sheet->rows[lo];
+    if (lo < sheet->nrows)
+        memmove(r + 1, r, (size_t)(sheet->nrows - lo) * sizeof *r);
+    sheet->nrows++;
+    memset(r, 0, sizeof *r);
+    r->row = row;
+    r->height = sheet->default_height;
+    return r;
+}
+
+int owf_sheet_set_row_style(owf_sheet *sheet, unsigned row, int style)
+{
+    owf_rowinfo *r = row_entry(sheet, row);
+    if (!r)
+        return -1;
+    r->style = style;
+    return 0;
+}
+
+int owf_sheet_set_row(owf_sheet *sheet, unsigned row, int height, int hidden)
+{
+    owf_rowinfo *r = row_entry(sheet, row);
+    if (!r)
+        return -1;
     r->height = height;
     r->hidden = hidden;
     return 0;

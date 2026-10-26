@@ -774,16 +774,20 @@ static void put_cols(xlsx_out *w, owf_buf *b, const owf_sheet *sh)
     free(cols);
 }
 
-static void put_row_start(owf_buf *b, const owf_sheet *sh, unsigned long row, int *ri)
+static void put_row_start(const xlsx_out *w, owf_buf *b, const owf_sheet *sh, unsigned long row, int *ri)
 {
     owf_buf_printf(b, "<row r=\"%lu\"", row + 1);
     while (*ri < sh->nrows && sh->rows[*ri].row < row)
         (*ri)++;
     if (*ri < sh->nrows && sh->rows[*ri].row == row) {
         const owf_rowinfo *r = &sh->rows[*ri];
-        owf_buf_puts(b, " ht=\"");
-        put_number(b, (r->height > 0 ? r->height : 0) / 20.0);
-        owf_buf_puts(b, "\" customHeight=\"1\"");
+        if (r->style > 0 && r->style < w->book->nstyles)       /* its own formatting, for its empty cells */
+            owf_buf_printf(b, " s=\"%d\" customFormat=\"1\"", r->style);
+        if (r->height != sh->default_height || r->hidden || !r->style) {
+            owf_buf_puts(b, " ht=\"");
+            put_number(b, (r->height > 0 ? r->height : 0) / 20.0);
+            owf_buf_puts(b, "\" customHeight=\"1\"");
+        }
         if (r->hidden)
             owf_buf_puts(b, " hidden=\"1\"");
     }
@@ -1185,13 +1189,13 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
             while (ri < sh->nrows && sh->rows[ri].row < c->row) {
                 if (sh->rows[ri].row < MAX_ROWS) {
                     int at = ri;
-                    put_row_start(b, sh, sh->rows[ri].row, &at);
+                    put_row_start(w, b, sh, sh->rows[ri].row, &at);
                     owf_buf_puts(b, "</row>");
                 }
                 ri++;
             }
             row = c->row;
-            put_row_start(b, sh, row, &ri);
+            put_row_start(w, b, sh, row, &ri);
             open = 1;
         }
         put_cell(w, b, sh, c);
@@ -1201,7 +1205,7 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
     for (; ri < sh->nrows; ri++)
         if (sh->rows[ri].row < MAX_ROWS && (!open || sh->rows[ri].row > row)) {
             int at = ri;
-            put_row_start(b, sh, sh->rows[ri].row, &at);
+            put_row_start(w, b, sh, sh->rows[ri].row, &at);
             owf_buf_puts(b, "</row>");
         }
     owf_buf_puts(b, "</sheetData>");

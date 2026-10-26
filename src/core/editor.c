@@ -431,6 +431,125 @@ static size_t para_text_length(const owf_para *p)
     return out;
 }
 
+/* ---- 2.0.21: a paragraph's bookmarks keep their places in its text (owf.h's owf_para.bookmarks:
+ * "name@start-end") as it is edited ---- */
+
+#define MAX_EDIT_MARKS 64
+typedef struct { const char *name; size_t length; size_t start, end; } ed_mark;
+
+static int marks_read(const char *list, ed_mark *m, int max)
+{
+    int n = 0;
+    while (list && *list && n < max) {
+        size_t len = strcspn(list, " "), name = len, k;
+        m[n].start = m[n].end = 0;
+        for (k = len; k > 1; --k)
+            if (list[k - 1] == '@') {
+                const char *q = list + k, *stop = list + len;
+                size_t a = 0, b;
+                int ok = q < stop && *q >= '0' && *q <= '9';
+                while (ok && q < stop && *q >= '0' && *q <= '9') a = a * 10 + (size_t)(*q++ - '0');
+                b = a;
+                if (ok && q < stop && *q == '-') {
+                    ++q;
+                    ok = q < stop && *q >= '0' && *q <= '9';
+                    b = 0;
+                    while (ok && q < stop && *q >= '0' && *q <= '9') b = b * 10 + (size_t)(*q++ - '0');
+                }
+                if (ok && q == stop && b >= a) {
+                    name = k - 1;
+                    m[n].start = a;
+                    m[n].end = b;
+                }
+                break;
+            }
+        m[n].name = list;
+        m[n].length = name;
+        ++n;
+        list += len;
+        while (*list == ' ') ++list;
+    }
+    return n;
+}
+
+/* The list again, into p->bookmarks; as it was when there is no memory for it. */
+static void marks_write(owf_para *p, const ed_mark *m, int n)
+{
+    size_t size = 1;
+    char *t, *o;
+    int i;
+    for (i = 0; i < n; ++i) size += m[i].length + 48;
+    if (!n) {
+        owf_free(p->bookmarks);
+        p->bookmarks = NULL;
+        return;
+    }
+    if (!(t = (char *)owf_malloc(size))) return;
+    for (o = t, i = 0; i < n; ++i) {
+        if (i) *o++ = ' ';
+        memcpy(o, m[i].name, m[i].length);
+        o += m[i].length;
+        if (m[i].end > m[i].start) o += sprintf(o, "@%lu-%lu", (unsigned long)m[i].start, (unsigned long)m[i].end);
+        else if (m[i].start) o += sprintf(o, "@%lu", (unsigned long)m[i].start);
+    }
+    *o = 0;
+    owf_free(p->bookmarks);
+    p->bookmarks = t;
+}
+
+/* An edit at text offset at: removed bytes went, inserted ones came. A place inside what went goes to at; one
+ * at at stays (text typed where a bookmark begins goes into it, where one ends doesn't). */
+static size_t mark_moved(size_t x, size_t at, size_t removed, size_t inserted)
+{
+    if (x <= at) return x;
+    if (x < at + removed) return at;
+    return x - removed + inserted;
+}
+
+static void marks_edit(owf_para *p, size_t at, size_t removed, size_t inserted)
+{
+    ed_mark m[MAX_EDIT_MARKS];
+    int i, n;
+    if (!p || !p->bookmarks || (!strchr(p->bookmarks, '@') && !removed && !at)) return;
+    n = marks_read(p->bookmarks, m, MAX_EDIT_MARKS);
+    for (i = 0; i < n; ++i) {
+        m[i].start = mark_moved(m[i].start, at, removed, inserted);
+        m[i].end = mark_moved(m[i].end, at, removed, inserted);
+    }
+    marks_write(p, m, n);
+}
+
+/* Return at text offset at: the bookmarks that begin there or after go with the text to np, the others end
+ * by at. */
+static void marks_split(owf_para *p, owf_para *np, size_t at)
+{
+    ed_mark m[MAX_EDIT_MARKS], keep[MAX_EDIT_MARKS], move[MAX_EDIT_MARKS];
+    int i, n, nk = 0, nm = 0;
+    memset(keep, 0, sizeof keep);
+    memset(move, 0, sizeof move);
+    char *old;
+    if (!p->bookmarks) return;
+    n = marks_read(p->bookmarks, m, MAX_EDIT_MARKS);
+    for (i = 0; i < n; ++i) {
+        if (m[i].start >= at) {
+            move[nm] = m[i];
+            move[nm].start -= at;
+            move[nm].end -= at;
+            ++nm;
+        } else {
+            keep[nk] = m[i];
+            if (keep[nk].end > at) keep[nk].end = at;
+            ++nk;
+        }
+    }
+    old = p->bookmarks;                              /* the names point into it: written last */
+    p->bookmarks = NULL;
+    marks_write(np, move, nm);
+    marks_write(p, keep, nk);
+    if (!p->bookmarks && nk) p->bookmarks = old;      /* no memory: as it was */
+    else owf_free(old);
+}
+
 static ow_position para_offset_position(ow_editor *editor, int paragraph,
                                         size_t offset)
 {
@@ -578,9 +697,29 @@ static int insert_run_at(owf_para *p, int index, const owf_charfmt *fmt,
     return 1;
 }
 
+static int insert_formatted_text_at(ow_editor *editor, ow_position pos,
+                                    const char *utf8, size_t length,
+                                    const owf_charfmt *fmt, ow_position *after);
+
+/* 2.0.21: with the paragraph's bookmarks moved on past the text */
 static int insert_formatted_text(ow_editor *editor, ow_position pos,
                                  const char *utf8, size_t length,
                                  const owf_charfmt *fmt, ow_position *after)
+{
+    owf_para *p;
+    size_t at;
+    if (!editor || !utf8 || !fmt) return 0;
+    pos = clamp_position(editor, pos);
+    p = &ed_story(editor)->paras[pos.paragraph];
+    at = para_text_offset(p, pos);
+    if (!insert_formatted_text_at(editor, pos, utf8, length, fmt, after)) return 0;
+    marks_edit(&ed_story(editor)->paras[pos.paragraph], at, 0, length);
+    return 1;
+}
+
+static int insert_formatted_text_at(ow_editor *editor, ow_position pos,
+                                    const char *utf8, size_t length,
+                                    const owf_charfmt *fmt, ow_position *after)
 {
     owf_para *p;
     owf_run *run;
@@ -671,9 +810,23 @@ static void free_para_runs(owf_para *p)
 }
 
 /* 2.0.12: what a paragraph merged into the one before it leaves it: its bookmarks, after the other's (the
- * contents' links still find the text); its style goes. */
-static void merge_names(owf_para *into, owf_para *from)
+ * contents' links still find the text); its style goes. 2.0.21: its bookmarks' places moved on by the other's
+ * text (offset), where its text now begins. */
+static void merge_names(owf_para *into, owf_para *from, size_t offset)
 {
+    if (from->bookmarks && offset) {
+        ed_mark m[MAX_EDIT_MARKS];
+        int i, n = marks_read(from->bookmarks, m, MAX_EDIT_MARKS);
+        char *old = from->bookmarks;
+        for (i = 0; i < n; ++i) {
+            m[i].start += offset;
+            m[i].end += offset;
+        }
+        from->bookmarks = NULL;
+        marks_write(from, m, n);
+        if (!from->bookmarks) from->bookmarks = old;
+        else owf_free(old);
+    }
     if (from->bookmarks) {
         if (!into->bookmarks) {
             into->bookmarks = from->bookmarks;
@@ -986,11 +1139,13 @@ static int merge_paragraph_with_previous(ow_editor *editor, int paragraph,
     owf_story *story = ed_story(editor);
     owf_para *prev, *cur;
     int boundary, i;
+    size_t offset;
 
     if (paragraph <= 0 || paragraph >= story->nparas) return 0;
     prev = &story->paras[paragraph - 1];
     cur = &story->paras[paragraph];
     boundary = prev->nruns;
+    offset = para_text_length(prev);
     if (!ensure_run_capacity(prev, prev->nruns + cur->nruns)) return -1;
     for (i = 0; i < cur->nruns; ++i) {
         prev->runs[prev->nruns++] = cur->runs[i];
@@ -999,7 +1154,7 @@ static int merge_paragraph_with_previous(ow_editor *editor, int paragraph,
     owf_free(cur->runs);
     cur->runs = NULL;
     cur->nruns = cur->capruns = 0;
-    merge_names(prev, cur);
+    merge_names(prev, cur, offset);
 
     if (paragraph + 1 < story->nparas)
         memmove(&story->paras[paragraph], &story->paras[paragraph + 1],
@@ -1031,11 +1186,13 @@ static int merge_paragraph_with_next(ow_editor *editor, int paragraph,
     owf_story *story = ed_story(editor);
     owf_para *cur, *next;
     int boundary, i;
+    size_t offset;
 
     if (paragraph < 0 || paragraph + 1 >= story->nparas) return 0;
     cur = &story->paras[paragraph];
     next = &story->paras[paragraph + 1];
     boundary = cur->nruns;
+    offset = para_text_length(cur);
     if (!ensure_run_capacity(cur, cur->nruns + next->nruns)) return -1;
     for (i = 0; i < next->nruns; ++i) {
         cur->runs[cur->nruns++] = next->runs[i];
@@ -1044,7 +1201,7 @@ static int merge_paragraph_with_next(ow_editor *editor, int paragraph,
     owf_free(next->runs);
     next->runs = NULL;
     next->nruns = next->capruns = 0;
-    merge_names(cur, next);
+    merge_names(cur, next, offset);
 
     if (paragraph + 2 < story->nparas)
         memmove(&story->paras[paragraph + 1], &story->paras[paragraph + 2],
@@ -1075,16 +1232,19 @@ static int delete_one_before(ow_editor *editor, ow_position *pos)
     owf_para *p;
     owf_run *r;
     int pr;
-    size_t from;
+    size_t from, at;
 
     *pos = clamp_position(editor, *pos);
     p = &ed_story(editor)->paras[pos->paragraph];
     r = &p->runs[pos->run];
 
     if (pos->byte_offset) {
+        size_t to = pos->byte_offset;
         from = utf8_prev(r->text, pos->byte_offset);
-        if (!replace_run_slice(r, from, pos->byte_offset, NULL, 0)) return -1;
         pos->byte_offset = from;
+        at = para_text_offset(p, *pos);
+        if (!replace_run_slice(r, from, to, NULL, 0)) return -1;
+        marks_edit(p, at, to - from, 0);             /* 2.0.21 */
         return 1;
     }
 
@@ -1092,12 +1252,14 @@ static int delete_one_before(ow_editor *editor, ow_position *pos)
     while (pr >= 0) {
         r = &p->runs[pr];
         if (strlen(r->text)) {
+            size_t to = strlen(r->text);
             pos->run = pr;
-            pos->byte_offset = strlen(r->text);
-            from = utf8_prev(r->text, pos->byte_offset);
-            if (!replace_run_slice(r, from, pos->byte_offset, NULL, 0))
-                return -1;
+            from = utf8_prev(r->text, to);
             pos->byte_offset = from;
+            at = para_text_offset(p, *pos);
+            if (!replace_run_slice(r, from, to, NULL, 0))
+                return -1;
+            marks_edit(p, at, to - from, 0);
             return 1;
         }
         pr = prev_text_run(p, pr);
@@ -1120,8 +1282,10 @@ static int delete_one_after(ow_editor *editor, ow_position *pos)
     r = &p->runs[pos->run];
 
     if (pos->byte_offset < strlen(r->text)) {
+        size_t at = para_text_offset(p, *pos);
         to = utf8_next(r->text, pos->byte_offset);
         if (!replace_run_slice(r, pos->byte_offset, to, NULL, 0)) return -1;
+        marks_edit(p, at, to - pos->byte_offset, 0); /* 2.0.21 */
         return 1;
     }
 
@@ -1129,8 +1293,14 @@ static int delete_one_after(ow_editor *editor, ow_position *pos)
     while (nr >= 0) {
         r = &p->runs[nr];
         if (strlen(r->text)) {
+            ow_position here = *pos;
+            size_t at;
+            here.run = nr;
+            here.byte_offset = 0;
+            at = para_text_offset(p, here);
             to = utf8_next(r->text, 0);
             if (!replace_run_slice(r, 0, to, NULL, 0)) return -1;
+            marks_edit(p, at, to, 0);
             return 1;
         }
         nr = next_text_run(p, nr);
@@ -1177,6 +1347,7 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     owf_parafmt para_fmt;
     char *left = NULL, *right = NULL;
     int moved, i;
+    size_t at;
 
     pos = clamp_position(editor, pos);
     p = &story->paras[pos.paragraph];
@@ -1189,10 +1360,11 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     if (!left || !right) goto fail;
 
     /* Insert first; p may move if the story reallocates. */
+    at = para_text_offset(p, pos);
     np = insert_paragraph(story, pos.paragraph + 1, &para_fmt);
     if (!np) goto fail;
     p = &story->paras[pos.paragraph];
-    if (p->style) np->style = copy_bytes(p->style, strlen(p->style));   /* 2.0.12: the style goes on, no bookmark */
+    if (p->style) np->style = copy_bytes(p->style, strlen(p->style));   /* 2.0.12: the style goes on */
     run = &p->runs[pos.run];
 
     moved = p->nruns - pos.run - 1;
@@ -1228,6 +1400,7 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
                sizeof(p->runs[pos.run + 1 + i]));
     }
     p->nruns = pos.run + 1;
+    marks_split(p, np, at);                          /* 2.0.21: the bookmarks after the caret go with the text */
 
     new_caret->paragraph = pos.paragraph + 1;
     new_caret->run = 0;
@@ -1585,6 +1758,13 @@ int ow_editor_toggle_list(ow_editor *editor, int ordered)
         paragraph_list_prefix(para, &old_kind, &old_len);
         if (old_len) {
             if (!replace_run_slice(&para->runs[r], 0, old_len, NULL, 0)) return OWF_ERR_MEMORY;
+            {   /* 2.0.21: the bookmarks after it move back */
+                ow_position at;
+                memset(&at, 0, sizeof at);
+                at.paragraph = p;
+                at.run = r;
+                marks_edit(para, para_text_offset(para, at), old_len, 0);
+            }
             changed = 1;
             if (old_a.paragraph == p) aoff = aoff > old_len ? aoff - old_len : 0;
             if (old_f.paragraph == p) foff = foff > old_len ? foff - old_len : 0;
@@ -1594,6 +1774,13 @@ int ow_editor_toggle_list(ow_editor *editor, int ordered)
             else snprintf(prefix, sizeof prefix, "%d. ", p - first + 1);
             add_len = strlen(prefix);
             if (!replace_run_slice(&para->runs[r], 0, 0, prefix, add_len)) return OWF_ERR_MEMORY;
+            {
+                ow_position at;
+                memset(&at, 0, sizeof at);
+                at.paragraph = p;
+                at.run = r;
+                marks_edit(para, para_text_offset(para, at), 0, add_len);
+            }
             if (old_a.paragraph == p) aoff += add_len;
             if (old_f.paragraph == p) foff += add_len;
             para->fmt.indent_left = 360;
@@ -2435,12 +2622,13 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
     owf_run *run;
     owf_charfmt fmt;
     char *right,*oldhref,*linked;
-    size_t right_len;
+    size_t right_len,link_at;
     int old_n,move;
     if(!editor||!text||!*text||!url||!*url)return OWF_ERR_FORMAT;
     editor->typing_group=0;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
     if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     pos=clamp_position(editor,editor->selection.focus);para=&ed_story(editor)->paras[pos.paragraph];run=&para->runs[pos.run];fmt=run->fmt;
+    link_at=para_text_offset(para,pos);
     right_len=strlen(run->text)-pos.byte_offset;right=copy_bytes(run->text+pos.byte_offset,right_len);oldhref=copy_cstr(run->href);linked=copy_bytes(text,strlen(text));
     if(!right||!linked||(run->href&&!oldhref)){owf_free(right);owf_free(oldhref);owf_free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     if(!replace_run_slice(run,pos.byte_offset,strlen(run->text),NULL,0)){owf_free(right);owf_free(oldhref);owf_free(linked);ow_editor_undo(editor);return OWF_ERR_MEMORY;}
@@ -2450,7 +2638,8 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
     para->runs[pos.run+1].kind=OWF_RUN_TEXT;para->runs[pos.run+1].fmt=fmt;para->runs[pos.run+1].text=linked;para->runs[pos.run+1].href=copy_cstr(url);
     para->runs[pos.run+2].kind=OWF_RUN_TEXT;para->runs[pos.run+2].fmt=fmt;para->runs[pos.run+2].text=right;para->runs[pos.run+2].href=oldhref;
     if(!para->runs[pos.run+1].href){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
-    para->nruns=old_n+2;pos.run+=2;pos.byte_offset=0;editor->selection.anchor=editor->selection.focus=pos;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    para->nruns=old_n+2;marks_edit(para,link_at,0,strlen(text));   /* 2.0.21: the bookmarks after it move on */
+    pos.run+=2;pos.byte_offset=0;editor->selection.anchor=editor->selection.focus=pos;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_insert_field(ow_editor *editor, owf_field field)
