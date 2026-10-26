@@ -777,7 +777,11 @@ def test_drawings(work):
         finally:
             shutil.rmtree(profile, ignore_errors=True)
     report = convert(FIX, os.path.join(work, "drawings.ods"))
-    check("drawings: ODS says it leaves them out", "Pictures and charts on sheets are kept in Excel workbooks" in report, report)
+    check("drawings: ODS keeps the fixture's chart, no note", "on sheets are kept in Excel workbooks" not in report, report)
+    report = convert(xlsx, os.path.join(work, "drawn.ods"))
+    check("drawings: ODS says it leaves the pictures out, not the chart",
+          "Pictures and shapes on sheets are kept in Excel workbooks (.xlsx) only, not yet in ODS: their charts are" in report and
+          len(lines(dump(os.path.join(work, "drawn.ods")), "chart")) == 1, report)
 
     # the chart's part missing: that drawing is left out whole (with a note), the other kept
     broken = dict(drawn)
@@ -981,6 +985,127 @@ def test_charts(work):
           (sheet_lines(got, 0, "chart"), sheet_lines(got, 7, "chart")))
 
 
+def chart_refs(text):
+    """Chart and series lines as compared through ODS: a sheet's name unquoted where it needs no quotes, and a
+    series' name and points (read from its cells there, the file's caches here) left aside."""
+    out = []
+    for l in text.splitlines():
+        if l.startswith("chart ") or l.startswith("series "):
+            l = re.sub(r"'([A-Za-z0-9_]+)'!", r"\1!", l)
+            out.append(re.sub(r' name "[^"]*"', "", l.split(" points")[0]))
+    return out
+
+
+def test_charts_ods(work):
+    """Charts through ODS (an embedded chart document each, in a frame in the cell it starts in; inside the frame in
+    a flat file) and back, the same; LibreOffice reading ours, us reading LibreOffice's; an .xlsx from them."""
+    src = dump(CHARTS)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "charts." + ext)
+        report = convert(CHARTS, ods)
+        check("charts ODS: no note they are left out (.%s)" % ext, "not yet in ODS" not in report, report)
+        got = dump(ods)
+        check("charts ODS: the same charts from .%s" % ext, chart_refs(got) == chart_refs(src),
+              "\n".join(chart_refs(got)) + "\n---\n" + "\n".join(chart_refs(src)))
+        check("charts ODS: series named and filled from their cells (.%s)" % ext,
+              lines(got, "series")[0].startswith('series 0 colour=- name "Amiga" from "Sales!B1"') and
+              lines(got, "series")[0].endswith('points 12="Jan" 15="Feb" 9="Mar" 18="Apr" 22="May" 25="Jun"'), lines(got, "series")[:1])
+    with zipfile.ZipFile(os.path.join(work, "charts.ods")) as z:
+        names = z.namelist()
+        manifest = z.read("META-INF/manifest.xml").decode()
+        content = z.read("content.xml").decode()
+        first = z.read("Object 1/content.xml").decode()
+    well_formed(os.path.join(work, "charts.ods"))
+    check("charts ODS: a chart document each, in the manifest", all("Object %d/content.xml" % i in names for i in range(1, 10)) and
+          manifest.count('manifest:media-type="application/vnd.oasis.opendocument.chart"') == 9, names)
+    check("charts ODS: a frame in the cell it starts in", re.search(r'<table:table-cell><draw:frame draw:z-index="0" draw:name="Chart 1" '
+          r'svg:width="15.000cm" svg:height="7.500cm" svg:x="0.000cm" svg:y="0.000cm"><draw:object xlink:href="./Object 1"', content)
+          is not None, content[content.find("<draw:frame"):][:300])
+    check("charts ODS: the chart as ODF says it", 'chart:class="chart:line"' in first and
+          '<chart:categories table:cell-range-address="$Sales.$A$2:.$A$7"/>' in first and
+          'chart:values-cell-range-address="$Sales.$B$2:.$B$7" chart:label-cell-address="$Sales.B1"' in first and
+          '<chart:title><text:p>Sales by month</text:p></chart:title>' in first, first[-1500:])
+    # Excel's own: a two-cell anchor, colours, a series of its own values (no cells), the axis's limits, a gap
+    with zipfile.ZipFile(FIX) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    p = dict(parts)
+    # with its labels' own number format and the value axis's, as Dale's workbook has one
+    p["xl/charts/chart1.xml"] = EXCEL_CHART.replace(
+        '<c:invertIfNegative val="0"/><c:cat>',
+        '<c:invertIfNegative val="0"/><c:dLbls><c:numFmt formatCode="0.0%" sourceLinked="0"/><c:showLegendKey val="0"/>'
+        '<c:showVal val="1"/></c:dLbls><c:cat>').replace(
+        '<c:delete val="0"/></c:valAx>', '<c:delete val="0"/><c:numFmt formatCode="#,##0" sourceLinked="0"/></c:valAx>').encode()
+    p["xl/drawings/drawing1.xml"] = p["xl/drawings/drawing1.xml"].replace(
+        b"<oneCellAnchor><from><col>3</col><colOff>0</colOff><row>1</row><rowOff>0</rowOff></from>"
+        b'<ext cx="5400000" cy="2700000"/>',
+        b"<twoCellAnchor><from><col>3</col><colOff>95250</colOff><row>1</row><rowOff>9525</rowOff></from>"
+        b"<to><col>10</col><colOff>0</colOff><row>16</row><rowOff>190500</rowOff></to>").replace(
+        b"</oneCellAnchor>", b"</twoCellAnchor>")
+    excel = os.path.join(work, "excel-chart-ods.xlsx")
+    write_zip(excel, p)
+    want = dump(excel)
+    check("charts ODS: the Excel chart's formats read", ' format "#,##0" ' in sheet_lines(want, 7, "chart")[0] and
+          ' lformat "0.0%"' in sheet_lines(want, 7, "series")[0], sheet_lines(want, 7, "chart") + sheet_lines(want, 7, "series"))
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "excel-chart." + ext)
+        convert(excel, ods)
+        got = dump(ods)
+        # a series of cells takes their values now (here not what Excel's cache made up); one of its own keeps its own
+        mine = lambda ls: [re.sub(r' name "[^"]*"', "", l.split(" points")[0] if ' values ""' not in l else l) for l in ls]
+        check("charts ODS: Excel's, the same from .%s" % ext, sheet_lines(got, 7, "chart") == sheet_lines(want, 7, "chart") and
+              mine(sheet_lines(got, 7, "series")) == mine(sheet_lines(want, 7, "series")),
+              "\n".join(sheet_lines(got, 7, "chart") + sheet_lines(got, 7, "series")) + "\n---\n" +
+              "\n".join(sheet_lines(want, 7, "chart") + sheet_lines(want, 7, "series")))
+    # an .xlsx from the ODS: its charts kept as Excel's parts, openpyxl reading them
+    back = os.path.join(work, "charts-from-ods.xlsx")
+    convert(os.path.join(work, "charts.ods"), back)
+    well_formed(back)
+    check("charts ODS: to .xlsx, the same charts", chart_refs(dump(back)) == chart_refs(src), "\n".join(chart_refs(dump(back))))
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(back)
+        check("charts ODS: openpyxl reads the .xlsx's nine", [len(ws._charts) for ws in wb.worksheets] == [3, 2, 1, 3],
+              [len(ws._charts) for ws in wb.worksheets])
+    except ImportError:
+        pass
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-charts-ods")
+            os.makedirs(outdir, exist_ok=True)
+            kinds = lambda text: sorted(re.sub(r" (from|to|size)=\S+| vary=1| hole=\d+", "", l) for l in lines(text, "chart"))
+            for ext in ("ods", "fods"):
+                subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                                "--outdir", outdir, os.path.join(work, "charts." + ext)], check=True, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=300)
+                theirs = dump(os.path.join(outdir, "charts.xlsx"))
+                check("charts ODS: LibreOffice reads ours (.%s): the nine, their kinds, titles and legends" % ext,
+                      kinds(theirs) == kinds(src), "\n".join(kinds(theirs)))
+                check("charts ODS: LibreOffice reads ours (.%s): the series' cells" % ext,
+                      'from "Sales!$B$1" values "Sales!$B$2:$B$7" categories "Sales!$A$2:$A$7"' in theirs, lines(theirs, "series")[:1])
+            # the formats of its own (not its values'), the axis's and the labels', as data styles LibreOffice reads
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                            "--outdir", outdir, os.path.join(work, "excel-chart.ods")], check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=300)
+            theirs = dump(os.path.join(outdir, "excel-chart.xlsx"))
+            check("charts ODS: LibreOffice reads ours: the axis's and the labels' number formats",
+                  ' format "#,##0" ' in (sheet_lines(theirs, 7, "chart") or [""])[0] and
+                  ' lformat "0.0%"' in (sheet_lines(theirs, 7, "series") or [""])[0],
+                  sheet_lines(theirs, 7, "chart") + sheet_lines(theirs, 7, "series"))
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "ods",
+                            "--outdir", outdir, CHARTS], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+            theirs = dump(os.path.join(outdir, "charts-openpyxl.ods"))
+            check("charts ODS: we read LibreOffice's: the nine, their kinds, titles and legends",
+                  kinds(theirs) == kinds(src), "\n".join(kinds(theirs)))
+            check("charts ODS: we read LibreOffice's: a scatter's x for each series, the pie's own slice colour",
+                  len([l for l in lines(theirs, "series") if ' x "Scatter!A2:A6"' in l]) == 2 and "9#C00000=" in theirs,
+                  lines(theirs, "series"))
+        except Exception as e:  # noqa: BLE001
+            check("charts ODS: LibreOffice converts them", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+
+
 # ---- Formatting of whole rows ----
 
 def test_row_styles(work):
@@ -1084,6 +1209,7 @@ def main():
         test_cf_kinds_ods(work)
         test_drawings(work)
         test_charts(work)
+        test_charts_ods(work)
         test_row_styles(work)
         damaged(work)
     if failures:

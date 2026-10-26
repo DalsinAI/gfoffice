@@ -35,6 +35,9 @@
     "xmlns:number=\"urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0\" " \
     "xmlns:of=\"urn:oasis:names:tc:opendocument:xmlns:of:1.2\" " \
     "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" " \
+    "xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" " \
+    "xmlns:xlink=\"http://www.w3.org/1999/xlink\" " \
+    "xmlns:chart=\"urn:oasis:names:tc:opendocument:xmlns:chart:1.0\" " \
     "xmlns:meta=\"urn:oasis:names:tc:opendocument:xmlns:meta:1.0\" " \
     "xmlns:config=\"urn:oasis:names:tc:opendocument:xmlns:config:1.0\" " \
     "xmlns:calcext=\"urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0\" " \
@@ -100,6 +103,11 @@ typedef struct {
     int (*row_styles)[2];        /* the row styles' height and hidden */
     int nrowstyles, caprowstyles;
     int val_base;                /* the sheet being written: its first rule is "val<val_base + 1>" */
+    owf_chart **charts;          /* each sheet's charts, from its drawing */
+    int *ncharts;
+    int *chart_base;             /* the sheet's first chart is "Object <chart_base + 1>" */
+    int nobjects;
+    int flat;                    /* .fods: the charts' documents inside their frames */
     int failed;
 } ods_out;
 
@@ -565,19 +573,18 @@ static void close_style(owf_buf *b, const numstyle *ns)
         owf_buf_printf(b, "<style:text-properties fo:color=\"#%06lx\"/>", (unsigned long)ns->colour);
 }
 
-/* The data style "N<i>" (and "N<i>P0"... for its other sections) for the
- * book's number format i, as LibreOffice lays such styles out. */
-static void number_style(ods_out *w, owf_buf *b, int index)
+/* The data style base (and base"P0"... for its other sections) for the
+ * number format code, as LibreOffice lays such styles out. */
+static void number_style_named(ods_out *w, owf_buf *b, const char *base, const char *code)
 {
     static const char *const conds[3][3] = { { "value()&gt;=0", NULL, NULL }, { "value()&gt;0", "value()&lt;0", NULL },
                                              { "value()&gt;0", "value()&lt;0", "value()=0" } };
-    const char *code = w->book->numfmts[index];
     section sec[4];
     numstyle ns[4];
-    char name[32];
+    char name[48];
     int n = split_sections(code, sec, 4), i, approx = 0;
     if (!strcmp(code, "\"TRUE\";\"TRUE\";\"FALSE\"")) {
-        owf_buf_printf(b, "<number:boolean-style style:name=\"N%d\" gfocalc:format-code=\"", index);
+        owf_buf_printf(b, "<number:boolean-style style:name=\"%s\" gfocalc:format-code=\"", base);
         attr(w, b, code);
         owf_buf_puts(b, "\"><number:boolean/></number:boolean-style>");
         return;
@@ -587,22 +594,21 @@ static void number_style(ods_out *w, owf_buf *b, int index)
         approx |= ns[i].approx;
     }
     for (i = 0; i + 1 < n; i++) {         /* the sections but the last, mapped */
-        snprintf(name, sizeof name, "N%dP%d", index, i);
+        snprintf(name, sizeof name, "%sP%d", base, i);
         open_style(b, name, &ns[i], 1);
         owf_buf_putc(b, '>');
         owf_buf_put(b, ns[i].body.data ? ns[i].body.data : (const unsigned char *)"", ns[i].body.length);
         close_style(b, &ns[i]);
         owf_buf_printf(b, "</number:%s>", style_elements[ns[i].kind]);
     }
-    snprintf(name, sizeof name, "N%d", index);
-    open_style(b, name, &ns[n - 1], 0);
+    open_style(b, base, &ns[n - 1], 0);
     owf_buf_puts(b, " gfocalc:format-code=\"");
     attr(w, b, code);
     owf_buf_puts(b, "\">");
     owf_buf_put(b, ns[n - 1].body.data ? ns[n - 1].body.data : (const unsigned char *)"", ns[n - 1].body.length);
     close_style(b, &ns[n - 1]);
     for (i = 0; i + 1 < n; i++)
-        owf_buf_printf(b, "<style:map style:condition=\"%s\" style:apply-style-name=\"N%dP%d\"/>", conds[n - 2][i], index, i);
+        owf_buf_printf(b, "<style:map style:condition=\"%s\" style:apply-style-name=\"%sP%d\"/>", conds[n - 2][i], base, i);
     owf_buf_printf(b, "</number:%s>", style_elements[ns[n - 1].kind]);
     for (i = 0; i < n; i++) {
         owf_buf_free(&ns[i].body);
@@ -610,6 +616,14 @@ static void number_style(ods_out *w, owf_buf *b, int index)
     }
     if (approx)
         owf_report_add(w->report, OWF_NOTE_APPROX, "Some parts of number formats (conditions, fill characters, eras) are shown approximately by other programs");
+}
+
+/* The data style "N<i>" for the book's number format i. */
+static void number_style(ods_out *w, owf_buf *b, int index)
+{
+    char base[24];
+    snprintf(base, sizeof base, "N%d", index);
+    number_style_named(w, b, base, w->book->numfmts[index]);
 }
 
 /* ---- Fonts and cell styles ---- */
@@ -1018,15 +1032,25 @@ static void put_annotation(ods_out *w, owf_buf *b, const owf_comment *note)
     owf_buf_puts(b, "</office:annotation>");
 }
 
-/* The end of a cell whose attributes are written: with its comment, or none. */
-static void close_cell(ods_out *w, owf_buf *b, const owf_comment *note, int covered)
+/* A chart anchored in a cell: the chart (charts[sheet][index]). */
+typedef struct {
+    unsigned row, col;
+    int index;
+} ods_anchor;
+
+static void put_frames(ods_out *w, owf_buf *b, int sheet, const ods_anchor *a, int n);
+
+/* The end of a cell whose attributes are written: with its comment and its charts, or none. */
+static void close_cell(ods_out *w, owf_buf *b, const owf_comment *note, int covered, int sheet, const ods_anchor *a, int na)
 {
-    if (!note) {
+    if (!note && !na) {
         owf_buf_puts(b, "/>");
         return;
     }
     owf_buf_putc(b, '>');
-    put_annotation(w, b, note);
+    if (note)
+        put_annotation(w, b, note);
+    put_frames(w, b, sheet, a, na);
     owf_buf_puts(b, covered ? "</table:covered-table-cell>" : "</table:table-cell>");
 }
 
@@ -1038,7 +1062,7 @@ static int val_at(const ods_out *w, const owf_sheet *sh, unsigned long row, unsi
 }
 
 static void put_cell(ods_out *w, owf_buf *b, const owf_sheet *sh, const owf_cell *c, const owf_range *merge, int covered,
-                     int val, const owf_comment *note)
+                     int val, const owf_comment *note, int sheet, const ods_anchor *a, int na)
 {
     char *of = NULL;
     int kind = numfmt_kind_of(w->book, c ? c->style : 0);
@@ -1049,7 +1073,7 @@ static void put_cell(ods_out *w, owf_buf *b, const owf_sheet *sh, const owf_cell
         if (merge && !covered)
             owf_buf_printf(b, " table:number-columns-spanned=\"%u\" table:number-rows-spanned=\"%u\"",
                            merge->last_col - merge->first_col + 1, merge->last_row - merge->first_row + 1);
-        close_cell(w, b, note, covered);
+        close_cell(w, b, note, covered, sheet, a, na);
         return;
     }
     if (c->style > 0 && c->style < w->book->nstyles)
@@ -1085,27 +1109,28 @@ static void put_cell(ods_out *w, owf_buf *b, const owf_sheet *sh, const owf_cell
             owf_buf_puts(b, " office:value-type=\"date\" office:date-value=\"");
             owf_put_iso_date(b, c->number + (w->book->date1904 ? 1462 : 0), 0);
             owf_buf_putc(b, '"');
-            close_cell(w, b, note, covered);
+            close_cell(w, b, note, covered, sheet, a, na);
         } else if (kind == OWF_NUMFMT_TIME && c->number > -1e7 && c->number < 1e7) {
             owf_buf_puts(b, " office:value-type=\"time\" office:time-value=\"");
             owf_put_iso_duration(b, c->number);
             owf_buf_putc(b, '"');
-            close_cell(w, b, note, covered);
+            close_cell(w, b, note, covered, sheet, a, na);
         } else {
             owf_buf_printf(b, " office:value-type=\"%s\" office:value=\"", kind == OWF_NUMFMT_PERCENT ? "percentage" : "float");
             put_number(b, c->number);
             owf_buf_putc(b, '"');
-            close_cell(w, b, note, covered);
+            close_cell(w, b, note, covered, sheet, a, na);
         }
         break;
     case OWF_VALUE_BOOL:
         owf_buf_printf(b, " office:value-type=\"boolean\" office:boolean-value=\"%s\"", c->number ? "true" : "false");
-        close_cell(w, b, note, covered);
+        close_cell(w, b, note, covered, sheet, a, na);
         break;
     case OWF_VALUE_ERROR:
         owf_buf_puts(b, " office:value-type=\"string\" office:string-value=\"\" calcext:value-type=\"error\">");
         if (note)
             put_annotation(w, b, note);
+        put_frames(w, b, sheet, a, na);
         owf_buf_printf(b, "<text:p>%s</text:p>", owf_xl_error_text(c->error));
         owf_buf_puts(b, covered ? "</table:covered-table-cell>" : "</table:table-cell>");
         break;
@@ -1113,11 +1138,12 @@ static void put_cell(ods_out *w, owf_buf *b, const owf_sheet *sh, const owf_cell
         owf_buf_puts(b, " office:value-type=\"string\">");
         if (note)
             put_annotation(w, b, note);
+        put_frames(w, b, sheet, a, na);
         put_paragraphs(w, b, c->text);
         owf_buf_puts(b, covered ? "</table:covered-table-cell>" : "</table:table-cell>");
         break;
     case OWF_VALUE_EMPTY:
-        close_cell(w, b, note, covered);
+        close_cell(w, b, note, covered, sheet, a, na);
         break;
     }
     free(of);
@@ -1331,6 +1357,432 @@ static char *of_expr(ods_out *w, const char *excel)
     if (of && !strncmp(of, "of:=", 4))
         memmove(of, of + 4, strlen(of + 4) + 1);
     return of;
+}
+
+/* ---- Charts: each an embedded chart document (Object <n>), in a frame in the cell it starts in ---- */
+
+#define EMU_PER_TWIP 635L
+#define EMU_PER_CM 360000.0
+
+/* A column's (row's) width in twips. */
+static long line_twips(const owf_sheet *s, int axis, unsigned i)
+{
+    int k;
+    if (axis) {
+        for (k = s->ncols - 1; k >= 0; k--)
+            if (i >= s->cols[k].first && i <= s->cols[k].last)
+                return s->cols[k].hidden ? 0 : s->cols[k].width > 0 ? s->cols[k].width : s->default_width;
+        return s->default_width;
+    }
+    for (k = 0; k < s->nrows; k++)
+        if (s->rows[k].row == i)
+            return s->rows[k].hidden ? 0 : s->rows[k].height > 0 ? s->rows[k].height : s->default_height;
+    return s->default_height;
+}
+
+/* From a cell and an offset to another's (EMU). */
+static double span_emu(const owf_sheet *s, int axis, unsigned from, long from_off, unsigned to, long to_off)
+{
+    double e = (double)to_off - (double)from_off;
+    unsigned i;
+    for (i = from; i < to && i - from < 100000U; i++)
+        e += (double)line_twips(s, axis, i) * EMU_PER_TWIP;
+    return e > 0 ? e : 0;
+}
+
+/* An Excel reference ("'Sales'!$B$2:$B$7") as ODF's cell range address ("$Sales.$B$2:.$B$7"), in out; 0 when it
+ * is not one range. */
+static int odf_range(ods_out *w, const char *excel, owf_buf *out)
+{
+    char *of = excel ? of_expr(w, excel) : NULL;
+    size_t n = of ? strlen(of) : 0;
+    int ok = n > 2 && of[0] == '[' && of[n - 1] == ']' && !memchr(of + 1, '[', n - 2);
+    if (ok)
+        owf_buf_put(out, of + 1, n - 2);
+    free(of);
+    return ok;
+}
+
+static void put_range_attr(ods_out *w, owf_buf *b, const char *name, const char *excel)
+{
+    owf_buf r;
+    owf_buf_init(&r);
+    if (odf_range(w, excel, &r) && !r.failed) {
+        owf_buf_putc(&r, 0);
+        owf_buf_printf(b, " %s=\"", name);
+        attr(w, b, (const char *)r.data);
+        owf_buf_putc(b, '"');
+    }
+    owf_buf_free(&r);
+}
+
+/* A length from EMU, exactly when it can be: in cm when it is a whole thousandth of one, else in points when a
+ * hundredth of one (a pixel's 9525 EMU is 0.75pt), else in cm near enough. */
+static void put_cm(owf_buf *b, const char *name, double emu)
+{
+    long e = (long)(emu + 0.5);
+    if (e % 360 == 0)
+        owf_buf_printf(b, " %s=\"%.3fcm\"", name, emu / EMU_PER_CM);
+    else if (e % 127 == 0)
+        owf_buf_printf(b, " %s=\"%.2fpt\"", name, emu / 12700.0);
+    else
+        owf_buf_printf(b, " %s=\"%.5fcm\"", name, emu / EMU_PER_CM);
+}
+
+static void put_gfo_text(ods_out *w, owf_buf *b, const char *name, const char *text)
+{
+    if (!text)
+        return;
+    owf_buf_printf(b, " gfocalc:%s=\"", name);
+    attr(w, b, text);
+    owf_buf_putc(b, '"');
+}
+
+/* The chart document: its styles (the plot's kind, the axes' limits, each series' look, labels and markers, a
+ * point's own colour) and its chart (title, legend, axes, series by their cells, the values they last had as its
+ * local table). libowf's own attributes keep what ODF has no words for. */
+static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double width, double height)
+{
+    static const char *const classes[] = { "chart:bar", "chart:bar", "chart:bar", "chart:line", "chart:area", "chart:circle",
+                                           "chart:scatter" };
+    static const char *const symbols[] = { "", "", "circle", "square", "diamond", "arrow-up", "x", "star", "plus",
+                                           "horizontal-bar", "circle" };
+    static const char *const places[] = { "", "center", "inside", "near-origin", "outside", "top", "bottom", "left", "right",
+                                          "avoid-overlap" };
+    const char *cls = c->kind == OWF_CHART_PIE && c->hole ? "chart:ring" :
+                      classes[c->kind >= 0 && c->kind <= OWF_CHART_SCATTER ? c->kind : 0];
+    int i, k, npoints = 0, pie = c->kind == OWF_CHART_PIE, scatter = c->kind == OWF_CHART_SCATTER;
+    char num[40];
+    const owf_chart_series *first = c->nseries ? &c->series[0] : NULL;
+
+    for (i = 0; i < c->nseries; i++)
+        if (c->series[i].npoints > npoints)
+            npoints = c->series[i].npoints;
+    owf_buf_puts(b, "<office:automatic-styles>");
+    if (c->value_format)                         /* the formats not the values' own: data styles, not linked to them */
+        number_style_named(w, b, "Ny", c->value_format);
+    if (scatter && c->x_format)
+        number_style_named(w, b, "Nx", c->x_format);
+    for (i = 0; i < c->nseries; i++)
+        if (c->series[i].label_format) {
+            char base[24];
+            snprintf(base, sizeof base, "Ns%d", i);
+            number_style_named(w, b, base, c->series[i].label_format);
+        }
+    owf_buf_puts(b, "<style:style style:name=\"plot\" style:family=\"chart\"><style:chart-properties");
+    if (c->kind == OWF_CHART_BAR)
+        owf_buf_puts(b, " chart:vertical=\"true\"");
+    if (c->grouping == OWF_CHART_STACKED)
+        owf_buf_puts(b, " chart:stacked=\"true\"");
+    else if (c->grouping == OWF_CHART_PERCENT)
+        owf_buf_puts(b, " chart:percentage=\"true\"");
+    if (pie)
+        owf_buf_printf(b, " chart:angle-offset=\"%d\"", ((90 - c->first_angle) % 360 + 360) % 360);
+    owf_buf_puts(b, "/></style:style>");
+    owf_buf_puts(b, "<style:style style:name=\"axy\" style:family=\"chart\"");
+    if (c->value_format)
+        owf_buf_puts(b, " style:data-style-name=\"Ny\"><style:chart-properties chart:link-data-style-to-source=\"false\"");
+    else
+        owf_buf_puts(b, "><style:chart-properties");
+    owf_buf_puts(b, " chart:display-label=\"true\"");
+    if (c->kind == OWF_CHART_COLUMN || c->kind == OWF_CHART_BAR)   /* where LibreOffice keeps the bars' gap */
+        owf_buf_printf(b, " chart:gap-width=\"%d\"", c->gap);
+    if (c->has_min) {
+        owf_number_exact(c->min, num);
+        owf_buf_printf(b, " chart:minimum=\"%s\"", num);
+    }
+    if (c->has_max) {
+        owf_number_exact(c->max, num);
+        owf_buf_printf(b, " chart:maximum=\"%s\"", num);
+    }
+    owf_buf_puts(b, "/></style:style><style:style style:name=\"axx\" style:family=\"chart\"");
+    if (scatter && c->x_format)
+        owf_buf_puts(b, " style:data-style-name=\"Nx\"><style:chart-properties chart:link-data-style-to-source=\"false\"");
+    else
+        owf_buf_puts(b, "><style:chart-properties");
+    owf_buf_puts(b, " chart:display-label=\"true\"");
+    if (scatter && c->has_xmin) {
+        owf_number_exact(c->xmin, num);
+        owf_buf_printf(b, " chart:minimum=\"%s\"", num);
+    }
+    if (scatter && c->has_xmax) {
+        owf_number_exact(c->xmax, num);
+        owf_buf_printf(b, " chart:maximum=\"%s\"", num);
+    }
+    owf_buf_puts(b, "/></style:style>");
+    for (i = 0; i < c->nseries; i++) {
+        const owf_chart_series *se = &c->series[i];
+        int lines = c->kind == OWF_CHART_LINE || scatter;
+        owf_buf_printf(b, "<style:style style:name=\"s%d\" style:family=\"chart\"", i);
+        if (se->label_format)
+            owf_buf_printf(b, " style:data-style-name=\"Ns%d\"><style:chart-properties chart:link-data-style-to-source=\"false\"", i);
+        else
+            owf_buf_puts(b, "><style:chart-properties");
+        if (se->labels) {
+            int v = se->labels & OWF_LABEL_VALUE, p = se->labels & OWF_LABEL_PERCENT;
+            owf_buf_printf(b, " chart:data-label-number=\"%s\"", v && p ? "value-and-percentage" : v ? "value" : p ? "percentage" : "none");
+            if (se->labels & OWF_LABEL_CATEGORY)
+                owf_buf_puts(b, " chart:data-label-text=\"true\"");
+            if (se->labels & OWF_LABEL_SERIES)
+                owf_buf_puts(b, " chart:data-label-series=\"true\"");
+            if (se->label_pos > 0 && se->label_pos <= OWF_LABEL_BEST_FIT)
+                owf_buf_printf(b, " chart:label-position=\"%s\"", places[se->label_pos]);
+        }
+        if (lines) {
+            if (se->marker == OWF_MARKER_NONE)
+                owf_buf_puts(b, " chart:symbol-type=\"none\"");
+            else if (se->marker > OWF_MARKER_NONE && se->marker <= OWF_MARKER_DOT)
+                owf_buf_printf(b, " chart:symbol-type=\"named-symbol\" chart:symbol-name=\"%s\"", symbols[se->marker]);
+            else
+                owf_buf_puts(b, " chart:symbol-type=\"automatic\"");
+            if (se->marker_size)
+                owf_buf_printf(b, " chart:symbol-width=\"%.3fcm\" chart:symbol-height=\"%.3fcm\"", se->marker_size * 2.54 / 72,
+                               se->marker_size * 2.54 / 72);
+        }
+        owf_buf_puts(b, "/>");
+        if (se->colour || (lines && !se->line)) {
+            owf_buf_puts(b, "<style:graphic-properties");
+            if (se->colour)
+                owf_buf_printf(b, " draw:fill-color=\"#%06lx\" svg:stroke-color=\"#%06lx\"", se->colour & 0xFFFFFFUL,
+                               se->colour & 0xFFFFFFUL);
+            if (lines && !se->line)
+                owf_buf_puts(b, " draw:stroke=\"none\"");
+            owf_buf_puts(b, "/>");
+        }
+        owf_buf_puts(b, "</style:style>");
+        for (k = 0; k < se->npoints; k++)
+            if (OWF_SHADE_SET(se->points[k].colour))
+                owf_buf_printf(b, "<style:style style:name=\"p%d_%d\" style:family=\"chart\"><style:graphic-properties "
+                                  "draw:fill-color=\"#%06lx\"/></style:style>", i, k, se->points[k].colour & 0xFFFFFFUL);
+    }
+    owf_buf_printf(b, "</office:automatic-styles><office:body><office:chart><chart:chart chart:class=\"%s\"", cls);
+    put_cm(b, "svg:width", width);
+    put_cm(b, "svg:height", height);
+    if (c->kind == OWF_CHART_OTHER)
+        owf_buf_puts(b, " gfocalc:other=\"true\"");
+    if (c->gap != 150)
+        owf_buf_printf(b, " gfocalc:gap=\"%d\"", c->gap);
+    if (c->hole)
+        owf_buf_printf(b, " gfocalc:hole=\"%d\"", c->hole);
+    if (c->vary != pie)
+        owf_buf_printf(b, " gfocalc:vary=\"%s\"", c->vary ? "true" : "false");
+    if (scatter && c->x_gridlines)
+        owf_buf_puts(b, " gfocalc:x-gridlines=\"true\"");
+    owf_buf_putc(b, '>');
+    if (c->title) {
+        owf_buf_puts(b, "<chart:title><text:p>");
+        put_xml(b, c->title, strlen(c->title), 0, &w->dropped);
+        owf_buf_puts(b, "</text:p></chart:title>");
+    }
+    if (c->legend)
+        owf_buf_printf(b, "<chart:legend chart:legend-position=\"%s\"/>",
+                       c->legend == 'l' ? "start" : c->legend == 't' ? "top" : c->legend == 'b' ? "bottom" : "end");
+    owf_buf_puts(b, "<chart:plot-area chart:style-name=\"plot\" chart:data-source-has-labels=\"none\"");
+    {                                                /* the cells it shows, all of them: LibreOffice's sign that the data */
+        owf_buf all, one;                            /* is the sheet's, not the chart's own */
+        int any = 0;
+        owf_buf_init(&all);
+        owf_buf_init(&one);
+        for (i = 0; i < c->nseries; i++) {
+            const char *refs[4];
+            refs[0] = c->series[i].categories;
+            refs[1] = c->series[i].x_values;
+            refs[2] = c->series[i].name_cell;
+            refs[3] = c->series[i].values;
+            for (k = 0; k < 4; k++) {
+                one.length = 0;
+                if (refs[k] && odf_range(w, refs[k], &one)) {
+                    if (any++)
+                        owf_buf_putc(&all, ' ');
+                    owf_buf_put(&all, one.data, one.length);
+                }
+            }
+        }
+        if (any && !all.failed) {
+            owf_buf_putc(&all, 0);
+            owf_buf_puts(b, " table:cell-range-address=\"");
+            attr(w, b, (const char *)all.data);
+            owf_buf_putc(b, '"');
+        }
+        owf_buf_free(&all);
+        owf_buf_free(&one);
+    }
+    owf_buf_putc(b, '>');
+    owf_buf_puts(b, "<chart:axis chart:dimension=\"x\" chart:name=\"primary-x\" chart:style-name=\"axx\">");
+    if (!scatter && first && first->categories) {
+        owf_buf_puts(b, "<chart:categories");
+        put_range_attr(w, b, "table:cell-range-address", first->categories);
+        owf_buf_puts(b, "/>");
+    }
+    if (scatter && c->x_gridlines)
+        owf_buf_puts(b, "<chart:grid chart:class=\"major\"/>");
+    owf_buf_puts(b, "</chart:axis>");
+    if (!pie) {
+        owf_buf_puts(b, "<chart:axis chart:dimension=\"y\" chart:name=\"primary-y\" chart:style-name=\"axy\">");
+        if (c->gridlines)
+            owf_buf_puts(b, "<chart:grid chart:class=\"major\"/>");
+        owf_buf_puts(b, "</chart:axis>");
+    }
+    for (i = 0; i < c->nseries; i++) {
+        const owf_chart_series *se = &c->series[i];
+        int run = 0;
+        owf_buf_printf(b, "<chart:series chart:style-name=\"s%d\" chart:class=\"%s\"", i, cls);
+        put_range_attr(w, b, "chart:values-cell-range-address", se->values);
+        put_range_attr(w, b, "chart:label-cell-address", se->name_cell);
+        if (se->index != i)
+            owf_buf_printf(b, " gfocalc:index=\"%d\"", se->index);
+        if (se->marker == OWF_MARKER_DOT)
+            owf_buf_puts(b, " gfocalc:marker=\"dot\"");
+        if (se->marker == OWF_MARKER_DASH)
+            owf_buf_puts(b, " gfocalc:marker=\"dash\"");
+        if (se->marker == OWF_MARKER_TRIANGLE)
+            owf_buf_puts(b, " gfocalc:marker=\"triangle\"");
+        if (se->marker_size)
+            owf_buf_printf(b, " gfocalc:marker-size=\"%d\"", se->marker_size);
+        put_gfo_text(w, b, "format", se->format);
+        if (!se->name_cell)
+            put_gfo_text(w, b, "name", se->name);
+        if (i && !scatter && (se->categories ? !first->categories || strcmp(se->categories, first->categories) : first->categories != NULL))
+        {                                            /* its own categories (none: empty) */
+            owf_buf_puts(b, " gfocalc:categories=\"");
+            if (se->categories)
+                attr(w, b, se->categories);
+            owf_buf_putc(b, '"');
+        }
+        owf_buf_putc(b, '>');
+        if (scatter && se->x_values) {
+            owf_buf_puts(b, "<chart:domain");
+            put_range_attr(w, b, "table:cell-range-address", se->x_values);
+            owf_buf_puts(b, "/>");
+        }
+        for (k = 0; k < se->npoints; k++) {          /* a point of its own colour has a style; the rest as runs */
+            if (!OWF_SHADE_SET(se->points[k].colour)) {
+                run++;
+                continue;
+            }
+            if (run)
+                owf_buf_printf(b, run > 1 ? "<chart:data-point chart:repeated=\"%d\"/>" : "<chart:data-point/>", run);
+            run = 0;
+            owf_buf_printf(b, "<chart:data-point chart:style-name=\"p%d_%d\"/>", i, k);
+        }
+        owf_buf_puts(b, "</chart:series>");
+    }
+    owf_buf_puts(b, "</chart:plot-area>");
+    /* the values the file last had: a column of categories (a scatter's x), one of values a series */
+    owf_buf_puts(b, "<table:table table:name=\"local-table\"><table:table-header-columns><table:table-column/>"
+                    "</table:table-header-columns><table:table-columns>");
+    if (c->nseries)
+        owf_buf_printf(b, c->nseries > 1 ? "<table:table-column table:number-columns-repeated=\"%d\"/>" : "<table:table-column/>",
+                       c->nseries);
+    owf_buf_puts(b, "</table:table-columns><table:table-header-rows><table:table-row><table:table-cell/>");
+    for (i = 0; i < c->nseries; i++) {
+        owf_buf_puts(b, "<table:table-cell office:value-type=\"string\"><text:p>");
+        if (c->series[i].name)
+            put_xml(b, c->series[i].name, strlen(c->series[i].name), 0, &w->dropped);
+        owf_buf_puts(b, "</text:p></table:table-cell>");
+    }
+    owf_buf_puts(b, "</table:table-row></table:table-header-rows><table:table-rows>");
+    for (k = 0; k < npoints; k++) {
+        const owf_chart_point *cat = first && k < first->npoints ? &first->points[k] : NULL;
+        owf_buf_puts(b, "<table:table-row>");
+        if (cat && cat->has_x) {
+            owf_number_exact(cat->x, num);
+            owf_buf_printf(b, "<table:table-cell office:value-type=\"float\" office:value=\"%s\"/>", num);
+        } else if (cat && cat->label) {
+            owf_buf_puts(b, "<table:table-cell office:value-type=\"string\"><text:p>");
+            put_xml(b, cat->label, strlen(cat->label), 0, &w->dropped);
+            owf_buf_puts(b, "</text:p></table:table-cell>");
+        } else {
+            owf_buf_puts(b, "<table:table-cell/>");
+        }
+        for (i = 0; i < c->nseries; i++) {
+            const owf_chart_series *se = &c->series[i];
+            if (k < se->npoints && se->points[k].has_value) {
+                owf_number_exact(se->points[k].value, num);
+                owf_buf_printf(b, "<table:table-cell office:value-type=\"float\" office:value=\"%s\"/>", num);
+            } else {
+                owf_buf_puts(b, "<table:table-cell/>");
+            }
+        }
+        owf_buf_puts(b, "</table:table-row>");
+    }
+    owf_buf_puts(b, "</table:table-rows></table:table></chart:chart></office:chart></office:body>");
+}
+
+/* The sheet's charts that start in a cell: a frame each, its chart in the package beside (Object <n>) or, in a
+ * flat file, inside it. */
+static void put_frames(ods_out *w, owf_buf *b, int sheet, const ods_anchor *a, int n)
+{
+    const owf_sheet *sh = &w->book->sheets[sheet];
+    int i;
+    for (i = 0; i < n; i++) {
+        const owf_chart *c = &w->charts[sheet][a[i].index];
+        int number = w->chart_base[sheet] + a[i].index + 1;
+        double width = c->sized ? (double)c->width : span_emu(sh, 1, c->from_col, c->from_col_off, c->to_col, c->to_col_off);
+        double height = c->sized ? (double)c->height : span_emu(sh, 0, c->from_row, c->from_row_off, c->to_row, c->to_row_off);
+        owf_buf_printf(b, "<draw:frame draw:z-index=\"%d\" draw:name=\"Chart %d\"", number - 1, number);
+        put_cm(b, "svg:width", width);
+        put_cm(b, "svg:height", height);
+        put_cm(b, "svg:x", (double)c->from_col_off);
+        put_cm(b, "svg:y", (double)c->from_row_off);
+        if (!c->sized) {
+            owf_buf_puts(b, " table:end-cell-address=\"");
+            put_address(w, b, sh->name, c->to_row, c->to_col, 0);
+            owf_buf_putc(b, '"');
+            put_cm(b, "table:end-x", (double)c->to_col_off);
+            put_cm(b, "table:end-y", (double)c->to_row_off);
+        }
+        if (w->flat) {
+            owf_buf_puts(b, "><draw:object><office:document office:mimetype=\"application/vnd.oasis.opendocument.chart\">");
+            put_chart_doc(w, b, c, width, height);
+            owf_buf_puts(b, "</office:document></draw:object></draw:frame>");
+        } else {
+            owf_buf_printf(b, "><draw:object xlink:href=\"./Object %d\" xlink:type=\"simple\" xlink:show=\"embed\" "
+                              "xlink:actuate=\"onLoad\"/></draw:frame>", number);
+        }
+    }
+}
+
+/* Whether a sheet's kept drawing has more than charts: a picture, a shape, a group, a connector. */
+static int drawing_has_others(const owf_book *book, const char *drawing)
+{
+    static const char *const others[] = { ":pic>", ":pic ", ":sp>", ":sp ", ":grpSp", ":cxnSp", "<pic>", "<pic ", "<sp>", "<sp " };
+    const owf_part *p = owf_book_part(book, drawing);
+    size_t i;
+    char *text;
+    int found = 0;
+    if (!p)
+        return 1;
+    if (!(text = malloc(p->length + 1)))
+        return 1;
+    memcpy(text, p->data, p->length);
+    text[p->length] = 0;
+    for (i = 0; i < sizeof others / sizeof others[0] && !found; i++)
+        found = strstr(text, others[i]) != NULL;
+    free(text);
+    return found;
+}
+
+/* Each sheet's charts, read from its drawing, numbered through the book. */
+static void load_charts(ods_out *w)
+{
+    const owf_book *book = w->book;
+    int i;
+    if (!book->nsheets)
+        return;
+    w->charts = calloc((size_t)book->nsheets, sizeof *w->charts);
+    w->ncharts = calloc((size_t)book->nsheets, sizeof *w->ncharts);
+    w->chart_base = calloc((size_t)book->nsheets, sizeof *w->chart_base);
+    if (!w->charts || !w->ncharts || !w->chart_base) {
+        w->failed = 1;
+        return;
+    }
+    for (i = 0; i < book->nsheets; i++) {
+        w->chart_base[i] = w->nobjects;
+        if (book->sheets[i].drawing && owf_sheet_charts(book, i, &w->charts[i], &w->ncharts[i]) != OWF_OK)
+            w->failed = 1;
+        w->nobjects += w->ncharts[i];
+    }
 }
 
 /* ---- Conditional formatting ---- */
@@ -1649,7 +2101,27 @@ static void put_sheet(ods_out *w, owf_buf *b, int index)
 {
     const owf_sheet *sh = &w->book->sheets[index];
     unsigned long width = 0, last_row = 0, row, col;
-    int i, ri = 0, ci = 0, any = 0;
+    int i, ri = 0, ci = 0, ai = 0, any = 0, na = w->ncharts ? w->ncharts[index] : 0;
+    ods_anchor *anchors = na ? malloc((size_t)na * sizeof *anchors) : NULL;
+
+    if (na && !anchors) {
+        w->failed = 1;
+        return;
+    }
+    for (i = 0; i < na; i++) {                       /* the charts' cells, by row and column */
+        int k;
+        ods_anchor a;
+        a.row = w->charts[index][i].from_row < MAX_ROWS ? w->charts[index][i].from_row : (unsigned)(MAX_ROWS - 1);
+        a.col = w->charts[index][i].from_col < MAX_COLS ? w->charts[index][i].from_col : (unsigned)(MAX_COLS - 1);
+        a.index = i;
+        for (k = i; k > 0 && (anchors[k - 1].row > a.row || (anchors[k - 1].row == a.row && anchors[k - 1].col > a.col)); k--)
+            anchors[k] = anchors[k - 1];
+        anchors[k] = a;
+        if ((unsigned long)a.col + 1 > width)
+            width = (unsigned long)a.col + 1;
+        if ((unsigned long)a.row + 1 > last_row)
+            last_row = (unsigned long)a.row + 1;
+    }
 
     for (i = 0; i < sh->ncells; i++) {
         if (sh->cells[i].col < MAX_COLS && sh->cells[i].col + 1 > width)
@@ -1688,8 +2160,12 @@ static void put_sheet(ods_out *w, owf_buf *b, int index)
                    sh->hidden ? "ta2" : "ta1", sh->default_width, sh->default_height);
     if (sh->hidden == 2)
         owf_report_add(w->report, OWF_NOTE_APPROX, "Very hidden sheets became hidden ones");
-    if (sh->drawing)
-        owf_report_add(w->report, OWF_NOTE_LOST, "Pictures and charts on sheets are kept in Excel workbooks (.xlsx) only, not yet in ODS");
+    if (na)
+        owf_report_add(w->report, OWF_NOTE_APPROX, "Charts keep their kind, series, titles, legends, axes and labels in ODS; "
+                                                   "the rest of Excel's chart (fonts, axis titles, a second kind of chart over the first) in .xlsx only");
+    if (sh->drawing && drawing_has_others(w->book, sh->drawing))
+        owf_report_add(w->report, OWF_NOTE_LOST, na ? "Pictures and shapes on sheets are kept in Excel workbooks (.xlsx) only, not yet in ODS: their charts are"
+                                                    : "Pictures and shapes on sheets are kept in Excel workbooks (.xlsx) only, not yet in ODS");
     put_columns(w, b, sh, width);
     i = 0;
     for (row = 0; row < last_row && !w->failed;) {
@@ -1700,10 +2176,14 @@ static void put_sheet(ods_out *w, owf_buf *b, int index)
             i++;
         while (ci < sh->ncomments && sh->comments[ci].row < row)
             ci++;
+        while (ai < na && anchors[ai].row < row)
+            ai++;
         if (i < sh->ncells && sh->cells[i].row < next)
             next = sh->cells[i].row;
         if (ci < sh->ncomments && sh->comments[ci].row < next)
             next = sh->comments[ci].row;
+        if (ai < na && anchors[ai].row < next)
+            next = anchors[ai].row;
         for (k = 0; k < sh->nrows; k++)
             if (sh->rows[k].row >= row && sh->rows[k].row < next)
                 next = sh->rows[k].row;
@@ -1738,23 +2218,29 @@ static void put_sheet(ods_out *w, owf_buf *b, int index)
             unsigned long cell_col = i < sh->ncells && sh->cells[i].row == row ? sh->cells[i].col : MAX_COLS;
             unsigned long merge_col = row_has_merge(sh, row) ? next_merge_col(sh, row, col) : MAX_COLS;
             unsigned long note_col = ci < sh->ncomments && sh->comments[ci].row == row ? sh->comments[ci].col : MAX_COLS;
+            unsigned long chart_col = ai < na && anchors[ai].row == row ? anchors[ai].col : MAX_COLS;
             unsigned long at = cell_col < merge_col ? cell_col : merge_col;
             const owf_range *m;
-            int covered;
+            int covered, charts = 0;
             if (note_col < at)
                 at = note_col;
+            if (chart_col < at)
+                at = chart_col;
             if (at >= MAX_COLS)
                 break;
             if (at > col)
                 put_empty_cells(w, b, sh, row, col, at);
+            while (ai + charts < na && anchors[ai + charts].row == row && anchors[ai + charts].col == at)
+                charts++;
             m = merge_at(sh, row, at, &covered);
             put_cell(w, b, sh, cell_col == at ? &sh->cells[i] : NULL, m, covered, val_at(w, sh, row, at),
-                     note_col == at ? &sh->comments[ci] : NULL);
+                     note_col == at ? &sh->comments[ci] : NULL, index, anchors + ai, charts);
             any = 1;
             if (cell_col == at)
                 i++;
             if (note_col == at)
                 ci++;
+            ai += charts;
             col = at + 1;
         }
         if (rules_end(sh, row) > col) {              /* the rules' empty cells after the last */
@@ -1768,8 +2254,11 @@ static void put_sheet(ods_out *w, owf_buf *b, int index)
             i++;
         while (ci < sh->ncomments && sh->comments[ci].row == row)
             ci++;
+        while (ai < na && anchors[ai].row == row)
+            ai++;
         row++;
     }
+    free(anchors);
     if (!last_row)
         owf_buf_printf(b, "<table:table-row table:style-name=\"ro%d\"><table:table-cell/></table:table-row>",
                        row_style(w, sh->default_height, 0) + 1);
@@ -2106,8 +2595,14 @@ static void finish_notes(ods_out *w)
 
 static void free_writer(ods_out *w)
 {
+    int i;
     free(w->col_widths);
     free(w->row_styles);
+    for (i = 0; w->charts && i < w->book->nsheets; i++)
+        owf_charts_free(w->charts[i], w->ncharts[i]);
+    free(w->charts);
+    free(w->ncharts);
+    free(w->chart_base);
 }
 
 /* ---- The two files ---- */
@@ -2126,7 +2621,7 @@ int owf_export_ods(const owf_book *book, unsigned char **data, size_t *length, o
     ods_out w;
     owf_buf out, part;
     owf_zip *zip;
-    int result = OWF_OK;
+    int result = OWF_OK, i, s;
 
     *data = NULL;
     *length = 0;
@@ -2142,13 +2637,20 @@ int owf_export_ods(const owf_book *book, unsigned char **data, size_t *length, o
         return OWF_ERR_MEMORY;
     }
     owf_zip_add(zip, "mimetype", MIME, sizeof MIME - 1, 0);
+    load_charts(&w);
     owf_buf_puts(&part, XML_HEAD "<manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\" manifest:version=\"1.2\">"
                         "<manifest:file-entry manifest:full-path=\"/\" manifest:version=\"1.2\" manifest:media-type=\"" MIME "\"/>"
                         "<manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/>"
                         "<manifest:file-entry manifest:full-path=\"styles.xml\" manifest:media-type=\"text/xml\"/>"
                         "<manifest:file-entry manifest:full-path=\"meta.xml\" manifest:media-type=\"text/xml\"/>"
-                        "<manifest:file-entry manifest:full-path=\"settings.xml\" manifest:media-type=\"text/xml\"/>"
-                        "</manifest:manifest>\n");
+                        "<manifest:file-entry manifest:full-path=\"settings.xml\" manifest:media-type=\"text/xml\"/>");
+    for (i = 1; i <= w.nobjects; i++)                /* the charts' documents */
+        owf_buf_printf(&part, "<manifest:file-entry manifest:full-path=\"Object %d/\" manifest:version=\"1.2\" "
+                              "manifest:media-type=\"application/vnd.oasis.opendocument.chart\"/>"
+                              "<manifest:file-entry manifest:full-path=\"Object %d/content.xml\" manifest:media-type=\"text/xml\"/>"
+                              "<manifest:file-entry manifest:full-path=\"Object %d/styles.xml\" manifest:media-type=\"text/xml\"/>",
+                       i, i, i);
+    owf_buf_puts(&part, "</manifest:manifest>\n");
     result = add(zip, &part, "META-INF/manifest.xml", result, 0);
     owf_buf_puts(&part, XML_HEAD "<office:document-meta " NS_DECLS ">");
     owf_buf_puts(&part, meta);
@@ -2169,6 +2671,22 @@ int owf_export_ods(const owf_book *book, unsigned char **data, size_t *length, o
     body(&w, &part);
     owf_buf_puts(&part, "</office:document-content>\n");
     result = add(zip, &part, "content.xml", result, w.failed);
+    for (s = 0; w.ncharts && s < book->nsheets && result == OWF_OK; s++)
+        for (i = 0; i < w.ncharts[s]; i++) {
+            const owf_chart *c = &w.charts[s][i];
+            const owf_sheet *sh = &book->sheets[s];
+            char name[48];
+            snprintf(name, sizeof name, "Object %d/content.xml", w.chart_base[s] + i + 1);
+            owf_buf_puts(&part, XML_HEAD "<office:document-content " NS_DECLS ">");
+            put_chart_doc(&w, &part, c,
+                          c->sized ? (double)c->width : span_emu(sh, 1, c->from_col, c->from_col_off, c->to_col, c->to_col_off),
+                          c->sized ? (double)c->height : span_emu(sh, 0, c->from_row, c->from_row_off, c->to_row, c->to_row_off));
+            owf_buf_puts(&part, "</office:document-content>\n");
+            result = add(zip, &part, name, result, w.failed);
+            snprintf(name, sizeof name, "Object %d/styles.xml", w.chart_base[s] + i + 1);
+            owf_buf_puts(&part, XML_HEAD "<office:document-styles " NS_DECLS "><office:styles/></office:document-styles>\n");
+            result = add(zip, &part, name, result, w.failed);
+        }
     owf_buf_free(&part);
     if (owf_zip_finish(zip) != OWF_OK && result == OWF_OK)
         result = OWF_ERR_MEMORY;
@@ -2192,7 +2710,9 @@ int owf_export_fods(const owf_book *book, unsigned char **data, size_t *length, 
     memset(&w, 0, sizeof w);
     w.book = book;
     w.report = report;
+    w.flat = 1;
     collect_layout(&w);
+    load_charts(&w);
     owf_buf_init(&out);
     owf_buf_puts(&out, XML_HEAD "<office:document " NS_DECLS " office:mimetype=\"" MIME "\">");
     owf_buf_puts(&out, meta);

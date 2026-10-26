@@ -307,6 +307,13 @@ int owf_ooxml_kind(const unsigned char *data, size_t length);
  * "xl/worksheets/sheet1.xml". 0 when it does not fit. */
 int owf_opc_part_name(char *out, size_t size, const char *dir, const char *target);
 
+/* A chart as an .xlsx's chart part (DrawingML's c:chartSpace), and a drawing part (xdr:wsDr) anchoring n
+ * charts, the k-th through its relationship "rId<k>" (owf_chart.c): what owf_sheet_charts reads back. */
+int owf_chart_part_xml(const owf_chart *c, owf_buf *b);
+int owf_chart_drawing_xml(const owf_chart *charts, int n, owf_buf *b);
+/* And a sheet's charts kept so, as an .xlsx's drawing is kept: its drawing, relationships and charts parts. */
+int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, int n);
+
 /* ---- Named styles (owf_style.c), for ODT and DOCX ---- */
 
 enum {

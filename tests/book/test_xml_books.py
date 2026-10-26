@@ -731,7 +731,7 @@ def test_hand_ods(work):
     check("hand.ods: book", b["line"] == "book format=ods sheets=3 active=2 date1904=0", b["line"])
     notes = "\n".join(b["notes"])
     for want in ("angle", "Conditional formatting", "Sheet protection", "Err:502", "Some formulas could not",
-                 "Pictures, charts", "split in two", "30 December 1899"):
+                 "Pictures on sheets", "split in two", "30 December 1899"):
         check("hand.ods: note " + want, want in notes, notes)
     for gone in ("Data validation", "Comments on cells", "AutoFilter"):
         check("hand.ods: read, not noted: " + gone, gone not in notes, notes)
