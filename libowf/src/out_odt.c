@@ -104,13 +104,19 @@ static int char_style(styles *s, const owf_charfmt *f)
     return s->nchars;
 }
 
-static void collect(styles *s, const owf_story *story)
+/* A story's styles; with frames (doc), its text boxes' too (2.0.20: a header's or footer's, whose styles go
+ * before them in styles.xml). A text box's own frames are left out, as put_para_odt leaves them out. */
+static void collect(styles *s, const owf_doc *doc, const owf_story *story)
 {
     int i, j;
     for (i = 0; i < story->nparas; i++) {
         para_style(s, &story->paras[i].fmt);
-        for (j = 0; j < story->paras[i].nruns; j++)
-            char_style(s, &story->paras[i].runs[j].fmt);
+        for (j = 0; j < story->paras[i].nruns; j++) {
+            const owf_run *run = &story->paras[i].runs[j];
+            char_style(s, &run->fmt);
+            if (doc && run->kind == OWF_RUN_FRAME && run->image >= 0 && run->image < doc->nframes)
+                collect(s, NULL, &doc->frames[run->image].story);
+        }
     }
 }
 
@@ -291,10 +297,10 @@ static void put_automatic_styles(owf_buf *out, const owf_doc *doc, const styles 
 
 /* Text: ODF collapses spaces, so the second and later of a row, and one at
  * the start, are written as <text:s/>. */
-static void put_text(owf_buf *out, const char *text, int *after_space)
+static void put_text(owf_buf *out, const char *text, size_t length, int *after_space)
 {
-    const char *p = text, *start = text;
-    while (*p) {
+    const char *p = text, *start = text, *stop = text + length;
+    while (p < stop) {
         if (*p == ' ') {
             int n = 0;
             owf_buf_put_xml(out, start, (size_t)(p - start));
@@ -302,7 +308,7 @@ static void put_text(owf_buf *out, const char *text, int *after_space)
                 owf_buf_putc(out, ' ');
                 p++;
             }
-            while (p[n] == ' ')
+            while (p + n < stop && p[n] == ' ')
                 n++;
             if (n)
                 owf_buf_printf(out, n > 1 ? "<text:s text:c=\"%d\"/>" : "<text:s/>", n);
@@ -368,6 +374,8 @@ static void put_frame_styles(owf_buf *out, const owf_doc *doc)
                             "style:wrap=\"%s\"", i + 1, wrap[fr->wrap <= OWF_WRAP_TOP_BOTTOM ? fr->wrap : 0]);
         if (fr->wrap == OWF_WRAP_NONE)
             owf_buf_printf(out, " style:run-through=\"%s\"", fr->behind ? "background" : "foreground");
+        if (fr->wrap == OWF_WRAP_TIGHT)              /* 2.0.20: round its outline, as ODF says it */
+            owf_buf_puts(out, " style:wrap-contour=\"true\"");
         odt_frame_place(doc, fr, 1, &pos, &rel, &at, &has_at);
         owf_buf_printf(out, " style:horizontal-pos=\"%s\" style:horizontal-rel=\"%s\"", pos, rel);
         odt_frame_place(doc, fr, 0, &pos, &rel, &at, &has_at);
@@ -428,28 +436,92 @@ static void put_frame_odt(owf_buf *out, const owf_doc *doc, int index, styles *s
     owf_buf_puts(out, "</draw:frame>");
 }
 
+/* 2.0.21: a paragraph's bookmarks as they are written: begun (1) or ended (2) */
+typedef struct {
+    owf_mark m[16];
+    unsigned char state[16];
+    int n;
+} odt_marks;
+
+/* The bookmarks at text offset at: the ones begun before that end here (text:bookmark-end), then (starts: text
+ * follows, or the paragraph ends) the ones that begin here, an empty one as a text:bookmark. */
+static void put_marks_odt(owf_buf *out, odt_marks *mk, size_t at, int starts)
+{
+    int i;
+    for (i = 0; i < mk->n; ++i)
+        if (mk->state[i] == 1 && mk->m[i].end <= at) {
+            owf_buf_puts(out, "<text:bookmark-end text:name=\"");
+            owf_buf_put_xml(out, mk->m[i].name, mk->m[i].length);
+            owf_buf_puts(out, "\"/>");
+            mk->state[i] = 2;
+        }
+    if (!starts)
+        return;
+    for (i = 0; i < mk->n; ++i)
+        if (mk->state[i] == 0 && mk->m[i].start <= at) {
+            int empty = mk->m[i].end <= at;
+            owf_buf_puts(out, empty ? "<text:bookmark text:name=\"" : "<text:bookmark-start text:name=\"");
+            owf_buf_put_xml(out, mk->m[i].name, mk->m[i].length);
+            owf_buf_puts(out, "\"/>");
+            mk->state[i] = empty ? 2 : 1;
+        }
+}
+
+/* Where a text run [at, at + len) is cut next after done, for a bookmark inside it: len when none. */
+static size_t next_cut_odt(const odt_marks *mk, const char *text, size_t at, size_t done, size_t len)
+{
+    size_t next = len;
+    int i;
+    for (i = 0; i < mk->n; ++i) {
+        if (mk->state[i] == 0 && mk->m[i].start > at + done && mk->m[i].start < at + len && mk->m[i].start - at < next)
+            next = mk->m[i].start - at;
+        if (mk->state[i] != 2 && mk->m[i].end > at + done && mk->m[i].end < at + len && mk->m[i].end - at < next)
+            next = mk->m[i].end - at;
+    }
+    while (next < len && ((unsigned char)text[next] & 0xC0) == 0x80)
+        ++next;
+    return next;
+}
+
 static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s)
 {
     static const char *fields[] = {
         "<text:page-number text:select-page=\"current\">1</text:page-number>",
         "<text:page-count>1</text:page-count>", "<text:date/>", "<text:time/>" };
     int heading=para->fmt.heading>=1&&para->fmt.heading<=6,after_space=1,j;
+    odt_marks mk;
+    size_t at = 0;
     if(heading)owf_buf_printf(out,"<text:h text:style-name=\"P%d\" text:outline-level=\"%d\">",para_style(s,&para->fmt),para->fmt.heading);
     else owf_buf_printf(out,"<text:p text:style-name=\"P%d\">",para_style(s,&para->fmt));
-    if(para->bookmarks){                             /* 1.4: its bookmarks, where links into the document go */
-        const char *b=para->bookmarks;
-        while(*b){size_t n=strcspn(b," ");owf_buf_puts(out,"<text:bookmark text:name=\"");owf_buf_put_xml(out,b,n);owf_buf_puts(out,"\"/>");b+=n;while(*b==' ')++b;}
-    }
+    /* 1.4: its bookmarks, where links into the document go; 2.0.21: each where it is in the text */
+    mk.n = para->bookmarks ? owf_marks_parse(para->bookmarks, mk.m, 16) : 0;
+    for (j = 0; j < mk.n; ++j) mk.state[j] = 0;
     for(j=0;j<para->nruns;++j){const owf_run *run=&para->runs[j];int t=char_style(s,&run->fmt);
+        put_marks_odt(out, &mk, at, run->kind == OWF_RUN_TEXT);
         if(run->kind==OWF_RUN_TEXT&&run->href){owf_buf_puts(out,"<text:a xlink:href=\"");owf_buf_puts_xml(out,run->href);owf_buf_puts(out,"\">");}
         if(t)owf_buf_printf(out,"<text:span text:style-name=\"T%d\">",t);
         switch(run->kind){
-        case OWF_RUN_TEXT:put_text(out,run->text,&after_space);break;
+        case OWF_RUN_TEXT: {
+            /* in pieces where bookmarks begin or end inside it */
+            const char *text = run->text ? run->text : "";
+            size_t len = strlen(text), done = 0;
+            while (done < len) {
+                size_t next = next_cut_odt(&mk, text, at, done, len);
+                put_text(out, text + done, next - done, &after_space);
+                done = next;
+                if (done < len) put_marks_odt(out, &mk, at + done, 1);
+            }
+            at += len;
+            break;
+        }
         case OWF_RUN_TAB:owf_buf_puts(out,"<text:tab/>");after_space=1;break;
         case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<text:line-break/>");after_space=1;break;
         case OWF_RUN_FIELD:owf_buf_puts(out,fields[run->field]);after_space=0;break;
         case OWF_RUN_FRAME:
-            if(doc&&para>=doc->body.paras&&para<doc->body.paras+doc->body.nparas){put_frame_odt(out,doc,run->image,s);after_space=0;}
+            /* the body's, a header's and a footer's (2.0.20); a text box's own are left out */
+            if(doc&&((para>=doc->body.paras&&para<doc->body.paras+doc->body.nparas)||
+                     (para>=doc->header.paras&&para<doc->header.paras+doc->header.nparas)||
+                     (para>=doc->footer.paras&&para<doc->footer.paras+doc->footer.nparas))){put_frame_odt(out,doc,run->image,s);after_space=0;}
             break;
         case OWF_RUN_IMAGE:
             if(doc&&run->image>=0&&run->image<doc->nimages){const owf_image *im=&doc->images[run->image];owf_buf_puts(out,"<draw:frame text:anchor-type=\"as-char\" svg:width=\"");owf_put_points(out,im->width);owf_buf_puts(out,"\" svg:height=\"");owf_put_points(out,im->height);owf_buf_printf(out,"\"><draw:image xlink:href=\"Pictures/image%d.%s\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/></draw:frame>",run->image+1,odt_image_ext(im));}
@@ -458,6 +530,8 @@ static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para,
         if(t)owf_buf_puts(out,"</text:span>");
         if(run->kind==OWF_RUN_TEXT&&run->href)owf_buf_puts(out,"</text:a>");
     }
+    put_marks_odt(out, &mk, at, 1);                  /* what is left: at the paragraph's end */
+    put_marks_odt(out, &mk, (size_t)-1, 0);
     owf_buf_puts(out,heading?"</text:h>":"</text:p>");
 }
 
@@ -516,8 +590,8 @@ static int build_styles_xml(const owf_doc *doc, owf_buf *out)
     styles s;
 
     memset(&s, 0, sizeof s);
-    collect(&s, &doc->header);
-    collect(&s, &doc->footer);
+    collect(&s, doc, &doc->header);
+    collect(&s, doc, &doc->footer);
 
     owf_buf_puts(out, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<office:document-styles " NS ">");
     put_font_faces(out, doc, NULL);

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Makes fixtures/features-openpyxl.xlsx and fixtures/charts-openpyxl.xlsx: make_feature_fixtures.py [OUTDIR]
+"""Makes fixtures/features-openpyxl.xlsx, fixtures/charts-openpyxl.xlsx and fixtures/validation-openpyxl.xlsx:
+make_feature_fixtures.py [OUTDIR] [validation]
 
 A workbook made up to have what the lab's yardstick has (a team's
 systems list, 25 October 2026, which stays private and is never put
@@ -14,7 +15,12 @@ of charts OpenCalc draws: lines, stacked bars and 100% columns over a
 table with frozen panes; a pie (one slice coloured by hand) and a
 doughnut; a scatter of two series, one markers only; data labels (values
 on columns, values above a line's markers, categories and shares on a
-pie) and axes' number formats (one set on the axis, one the cells').
+pie) and axes' number formats (one set on the axis, one the cells'). And
+a workbook of validation rules that alert, one to a row, to type into in
+a lab: lists (written out, from cells, from a name, without their arrow,
+without an alert), numbers, a date, a time, a text's length and a
+formula, with Stop, Warning and Information alerts. "validation" makes
+only that one.
 test_sheet_features.py checks what libowf reads of it and keeps on
 saving. openpyxl (pip install openpyxl) only makes the file; nothing of it
 is in libowf. Run it again after changing the sheets below, and change
@@ -30,6 +36,7 @@ from openpyxl.chart import BarChart, DoughnutChart, LineChart, PieChart, Referen
 from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.marker import DataPoint
 from openpyxl.comments import Comment
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.formatting.rule import CellIsRule, ColorScaleRule, DataBarRule, FormulaRule, Rule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.styles.colors import Color
@@ -282,5 +289,74 @@ def make_charts():
     wb.save(os.path.join(OUT, "charts-openpyxl.xlsx"))
 
 
+# What to type into column B, row by row: (what A says, the rule's arguments)
+CHECKS = [
+    ("Yes or No (list, Stop)",
+     dict(type="list", formula1='"Yes,No"', errorStyle="stop", errorTitle="Not a choice", error="Yes or No, please.")),
+    ("A team, from Teams!A1:A5 (list, Stop, the default alert)",
+     dict(type="list", formula1="Teams!$A$1:$A$5", errorStyle="stop")),
+    ("A team, by the name TeamNames (list, Stop)",
+     dict(type="list", formula1="TeamNames", errorStyle="stop", error="One of the teams.")),
+    ("A score, 1 to 10 (whole number, Warning)",
+     dict(type="whole", operator="between", formula1="1", formula2="10", errorStyle="warning", errorTitle="Score",
+          error="Scores run from 1 to 10.")),
+    ("A share, 0 to 1 (decimal, Stop)",
+     dict(type="decimal", operator="between", formula1="0", formula2="1", errorStyle="stop")),
+    ("A date from 1 Jan 2020 (date, Information)",
+     dict(type="date", operator="greaterThanOrEqual", formula1="DATE(2020,1,1)", errorStyle="information",
+          errorTitle="Date", error="Dates before 2020 are unusual here.")),
+    ("A time, 09:00 to 17:00 (time, Stop)",
+     dict(type="time", operator="between", formula1="TIME(9,0,0)", formula2="TIME(17,0,0)", errorStyle="stop")),
+    ("Up to 10 characters (text length, Stop)",
+     dict(type="textLength", operator="lessThanOrEqual", formula1="10", errorStyle="stop", error="10 characters at most.")),
+    ("No more than the score in C5 (formula, Stop)",
+     dict(type="custom", formula1="B10<=$C$5", errorStyle="stop", error="Not more than C5.")),
+    ("Yes or No, without its arrow (list, Stop)",
+     dict(type="list", formula1='"Yes,No"', errorStyle="stop", showDropDown=True)),
+    ("Red, Green or Blue, anything allowed (list, no alert)",
+     dict(type="list", formula1='"Red,Green,Blue"', showErrorMessage=False)),
+]
+
+
+def make_validation():
+    """validation-openpyxl.xlsx: CHECKS, a rule to a row in B2:B12, B and C alike (C2:C12 already filled in
+    with a value each rule takes), and the teams on their own sheet."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Checks"
+    ws["A1"], ws["B1"], ws["C1"] = "What to type into B", "Type here", "Takes"
+    for cell in (ws["A1"], ws["B1"], ws["C1"]):
+        cell.font = Font(bold=True)
+    ws.column_dimensions["A"].width = 52
+    ws.column_dimensions["B"].width = 16
+    ws.column_dimensions["C"].width = 16
+    takes = ["Yes", "Team 2", "Team 5", 7, 0.25, datetime.date(2024, 3, 1), datetime.time(10, 30), "Short", 4,
+             "No", "Purple"]
+    for i, ((what, rule), value) in enumerate(zip(CHECKS, takes)):
+        row = i + 2
+        ws.cell(row=row, column=1, value=what)
+        ws.cell(row=row, column=3, value=value)
+        if isinstance(value, datetime.date):
+            ws.cell(row=row, column=3).number_format = "d mmm yyyy"
+        elif isinstance(value, datetime.time):
+            ws.cell(row=row, column=3).number_format = "hh:mm"
+        args = dict(rule)
+        args.setdefault("showErrorMessage", True)
+        args.setdefault("allow_blank", True)
+        dv = DataValidation(**args)
+        ws.add_data_validation(dv)
+        dv.add("B%d:C%d" % (row, row))
+    teams = wb.create_sheet("Teams")
+    for r, v in enumerate(["Team 1", "Team 2", "Team 3", "Team 4", "Team 5"], 1):
+        teams.cell(row=r, column=1, value=v)
+    wb.defined_names["TeamNames"] = DefinedName("TeamNames", attr_text="Teams!$A$1:$A$5")
+    os.makedirs(OUT, exist_ok=True)
+    wb.save(os.path.join(OUT, "validation-openpyxl.xlsx"))
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 2 and sys.argv[2] == "validation":
+        make_validation()
+    else:
+        main()
+        make_validation()

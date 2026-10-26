@@ -124,7 +124,7 @@ char *oc_core_copy(oc_core *core, size_t *length)
     if (length)
         *length = 0;
     if (core->edit_mode)
-        oc_edit_commit(core, OC_MOVE_NONE);
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
     if (!copy_range(core, &r) || !(text = range_text(core, &r, &n)))
         return NULL;
     oc_clip_free(&core->clip);
@@ -157,7 +157,7 @@ char *oc_core_copy(oc_core *core, size_t *length)
         }
         d->row -= r.first_row;
         d->col -= r.first_col;
-        core->clip.styles[core->clip.ncells] = *oc_cell_style(core, c, c->col);
+        core->clip.styles[core->clip.ncells] = *oc_cell_style(core, c, c->row, c->col);
         core->clip.ncells++;
     }
     core->clip.valid = 1;
@@ -425,7 +425,7 @@ static int paste_text(oc_core *core, const char *text, size_t length)
     if (t.rows == 1 && t.cols == 1) {                    /* one value: into every cell of the target */
         for (r = target.first_row; r <= target.last_row && rc == OWF_OK; r++)
             for (c = target.first_col; c <= target.last_col; c++) {
-                int one = owf_calc_enter(core->calc, core->sheet, r, c, t.buf);
+                int one = oc_enter(core, core->sheet, r, c, t.buf);
                 if (one == OWF_ERR_FORMAT)
                     bad = 1;
                 else if (one != OWF_OK) {
@@ -439,7 +439,7 @@ static int paste_text(oc_core *core, const char *text, size_t length)
             for (c = 0; c < t.cols; c++) {
                 int one;
                 const char *in = c < t.row_fields[r] ? f : "";
-                one = owf_calc_enter(core->calc, core->sheet, target.first_row + r, target.first_col + c, in);
+                one = oc_enter(core, core->sheet, target.first_row + r, target.first_col + c, in);
                 if (c < t.row_fields[r])
                     f += strlen(f) + 1;
                 if (one == OWF_ERR_FORMAT)

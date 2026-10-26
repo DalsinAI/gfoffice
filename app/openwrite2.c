@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.18 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.22 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -1843,6 +1843,10 @@ static ow_layout *pages(void)
          * pools behind (MEMCHECK) on a 20-page document. */
         size_t had = pages_layout ? ol_display_count(ow_layout_body(pages_layout)) : 0;
         if (had && (had > pages_room || had < pages_room / 4)) pages_room = (had + had / 4 + 1023) / 1024 * 1024;
+        /* 2.0.22: a first layout's room from a guess at its ops (ow_layout_estimate_ops, a little more than it
+         * makes), not the last document's or none: its list is made once, not doubled from 64, and the next
+         * layouts keep that room while the list fits it */
+        if (!had) pages_room = (ow_layout_estimate_ops(ow_editor_document(editor)) + 1023) / 1024 * 1024;
     }
     pages_free();
     pages_layout = ow_layout_new_reserved(ow_editor_document(editor), measure_units, NULL, pages_room);
