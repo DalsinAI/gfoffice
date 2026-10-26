@@ -117,6 +117,16 @@ const char *oc_edit_text(const oc_core *core, size_t *caret)
     return core->edit;
 }
 
+int oc_edit_commit_anyway(oc_core *core, int move)
+{
+    int rc;
+    core->unchecked = 1;
+    rc = oc_edit_commit(core, move);
+    core->unchecked = 0;
+    core->invalid = 0;
+    return rc;
+}
+
 void oc_edit_cancel(oc_core *core)
 {
     oc_edit_free(core);
@@ -266,7 +276,7 @@ static int commit_fill(oc_core *core, const char *text, int *bad)
                     owf_free(moved);
                     in = moved = with;
                 }
-                one = owf_calc_enter(core->calc, core->sheet, row, col, in);
+                one = oc_enter(core, core->sheet, row, col, in);
                 owf_free(moved);
                 if (one == OWF_ERR_FORMAT)
                     *bad = 1;
@@ -300,7 +310,7 @@ int oc_edit_commit(oc_core *core, int move)
             oc_undo_free(u);
             u = NULL;
         }
-        rc = owf_calc_enter(core->calc, core->sheet, st->sel.row, st->sel.col, text);
+        rc = oc_enter(core, core->sheet, st->sel.row, st->sel.col, text);
         if (rc == OWF_ERR_MEMORY) {
             oc_undo_free(u);
         } else {
@@ -318,10 +328,30 @@ int oc_edit_commit(oc_core *core, int move)
         core->edit_mode = OC_EDIT_ENTER;
         return rc;
     }
-    free(text);
     oc_changed(core);
     if (oc_recalc(core, 0) == OWF_ERR_MEMORY)
         rc = OWF_ERR_MEMORY;
+    core->invalid = 0;
+    if (rc != OWF_ERR_MEMORY && move != OC_MOVE_FILL && !core->unchecked) {
+        /* its rule (with an error alert) refuses it: taken back, and the typing goes on */
+        const owf_validation *dv = owf_sheet_validation(oc_sheet(core), st->sel.row, st->sel.col);
+        if (dv && dv->show_error && !oc_valid_value(core, core->sheet, st->sel.row, st->sel.col, dv)) {
+            int sheet = core->sheet;
+            unsigned row = st->sel.row, col = st->sel.col;
+            oc_undo_take_back(core);
+            core->invalid = 1;
+            core->invalid_sheet = sheet;
+            core->invalid_row = row;
+            core->invalid_col = col;
+            core->invalid_move = move;
+            core->edit = text;
+            core->edit_len = core->caret = strlen(text);
+            core->edit_cap = core->edit_len + 1;
+            core->edit_mode = OC_EDIT_EDIT;
+            return OC_INVALID;
+        }
+    }
+    free(text);
     switch (move) {
     case OC_MOVE_DOWN:
         oc_nav_key(core, OC_KEY_RETURN, 0);
@@ -372,7 +402,7 @@ int oc_edit_key(oc_core *core, int key, unsigned mods)
         }
         if (enter) {                                     /* commit, then the arrow moves */
             int rc = oc_edit_commit(core, OC_MOVE_NONE);
-            if (rc == OWF_ERR_MEMORY)
+            if (rc == OWF_ERR_MEMORY || rc == OC_INVALID)
                 return rc;
             oc_nav_key(core, key, mods & ~(unsigned)OC_MOD_SHIFT);
             return rc;
@@ -406,7 +436,7 @@ int oc_edit_key(oc_core *core, int key, unsigned mods)
     case OC_KEY_PAGEUP:
     case OC_KEY_PAGEDOWN: {
         int rc = oc_edit_commit(core, OC_MOVE_NONE);
-        if (rc != OWF_ERR_MEMORY)
+        if (rc != OWF_ERR_MEMORY && rc != OC_INVALID)
             oc_nav_key(core, key, mods);
         return rc;
     }
@@ -422,7 +452,7 @@ int oc_core_set_input(oc_core *core, int sheet, unsigned row, unsigned col, cons
     if (sheet < 0 || sheet >= core->book->nsheets || row >= OC_MAX_ROWS || col >= OC_MAX_COLS)
         return OWF_ERR_UNSUPPORTED;
     if (core->edit_mode)
-        oc_edit_commit(core, OC_MOVE_NONE);
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
     u = oc_undo_new(core, OC_UNDO_CELLS);
     r.first_row = r.last_row = row;
     r.first_col = r.last_col = col;
@@ -430,7 +460,7 @@ int oc_core_set_input(oc_core *core, int sheet, unsigned row, unsigned col, cons
         oc_undo_free(u);
         u = NULL;
     }
-    rc = owf_calc_enter(core->calc, sheet, row, col, input);
+    rc = oc_enter(core, sheet, row, col, input);
     if (rc == OWF_ERR_MEMORY || rc == OWF_ERR_UNSUPPORTED) {
         oc_undo_free(u);
         return rc;

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.0.2"
+#define OW_CORE_VERSION "1.0.3"
 
 typedef struct ow_editor ow_editor;
 
@@ -16,6 +16,9 @@ typedef struct {
     int paragraph;
     int run;
     size_t byte_offset;
+    /* 2.0.15: the story the position is in: 0 the body, k the text box
+     * doc->frames[k - 1]'s paragraphs. A selection's two ends are in one. */
+    int box;
 } ow_position;
 
 typedef struct {

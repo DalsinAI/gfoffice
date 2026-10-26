@@ -236,7 +236,7 @@ static int test_cross_paragraph_selection(void)
 /* the position of a byte offset in a paragraph's text: the run it falls in, or the end of the one before */
 static ow_position position_at(const owf_doc *doc, int p, size_t offset)
 {
-    ow_position pos;
+    ow_position pos = { 0, 0, 0, 0 };
     size_t at = 0;
     int r;
     memset(&pos, 0, sizeof pos);
@@ -710,7 +710,7 @@ static int test_names_editing(void)
     ow_selection sel;
     if (owf_import_file("tests/core/fixtures/contents.docx", NULL, &doc, NULL, NULL) != OWF_OK || !doc) return 2101;
     if (doc->body.nparas != 10 || !name_is(doc->body.paras[1].style, "TOC1") ||
-        !name_is(doc->body.paras[7].bookmarks, "_Toc2"))
+        !name_is(doc->body.paras[7].bookmarks, "_Toc2@0-24"))     /* 2.0.21: round its heading's text */
         return 2102;
     ed = ow_editor_new(doc);
     if (!ed) return 2103;
@@ -724,14 +724,15 @@ static int test_names_editing(void)
         doc->body.paras[2].bookmarks)
         return 2105;
     if (ow_editor_undo(ed) != 1 || doc->body.nparas != 10 || !name_is(doc->body.paras[2].style, "TOC2")) return 2106;
-    /* Backspace at the start of "1.1 Purpose": joined to "01 Executive summary", both bookmarks there */
+    /* Backspace at the start of "1.1 Purpose": joined to "01 Executive summary", both bookmarks there, the second
+     * round its text after the first's (2.0.21) */
     memset(&sel, 0, sizeof sel);
     sel.anchor.paragraph = sel.focus.paragraph = 7;
     ow_editor_set_selection(ed, &sel);
     if (ow_editor_backspace(ed) != OWF_OK || doc->body.nparas != 9) return 2107;
-    if (!name_is(doc->body.paras[6].bookmarks, "_Toc1 _Toc2")) return 2108;
-    if (ow_editor_undo(ed) != 1 || doc->body.nparas != 10 || !name_is(doc->body.paras[6].bookmarks, "_Toc1") ||
-        !name_is(doc->body.paras[7].bookmarks, "_Toc2"))
+    if (!name_is(doc->body.paras[6].bookmarks, "_Toc1@0-20 _Toc2@20-44")) return 2108;
+    if (ow_editor_undo(ed) != 1 || doc->body.nparas != 10 || !name_is(doc->body.paras[6].bookmarks, "_Toc1@0-20") ||
+        !name_is(doc->body.paras[7].bookmarks, "_Toc2@0-24"))
         return 2109;
     /* bold on part of an entry: every part still links to its heading (the link was lost) */
     {
@@ -772,6 +773,118 @@ static int test_headers_fields(void)
     if(ow_editor_undo(ed)!=1)return 1459;
     if(doc->body.paras[0].nruns!=1||strcmp(doc->body.paras[0].runs[0].text,"Body"))return 1460;
     ow_editor_free(ed);owf_doc_free(doc);return 0;
+}
+
+/* 2.0.15: the caret in a text box: its text edited, undone and saved; the body as it was */
+static int box_text(const owf_doc *doc, char *out, size_t size)
+{
+    const owf_story *st = doc->nframes ? &doc->frames[0].story : NULL;
+    size_t used = 0;
+    int p, r;
+    out[0] = 0;
+    if (!st) return 0;
+    for (p = 0; p < st->nparas; ++p) {
+        for (r = 0; r < st->paras[p].nruns; ++r) {
+            const char *t = st->paras[p].runs[r].text;
+            size_t n = t ? strlen(t) : 0;
+            if (st->paras[p].runs[r].kind != OWF_RUN_TEXT || used + n + 2 > size) continue;
+            memcpy(out + used, t, n);
+            used += n;
+        }
+        if (p + 1 < st->nparas) out[used++] = '|';
+        out[used] = 0;
+    }
+    return 1;
+}
+
+static int test_text_box_editing(void)
+{
+    owf_doc *doc = doc_with("Body words"), *back = NULL;
+    owf_frame fr;
+    owf_charfmt cf;
+    owf_parafmt pf;
+    owf_para *bp;
+    ow_editor *ed;
+    ow_selection s;
+    char text[128], body[64];
+    char *copied;
+    size_t copied_len = 0;
+    int k;
+    const char *path = "/tmp/openwrite-core-textbox.docx";
+    if (!doc) return 2201;
+    memset(&fr, 0, sizeof fr);
+    fr.image = -1;
+    fr.width = 2880;
+    fr.height = 1440;
+    fr.wrap = OWF_WRAP_NONE;
+    owf_parafmt_init(&pf);
+    owf_charfmt_init(&cf);
+    bp = owf_story_add(&fr.story, &pf);
+    if (!bp || owf_para_add_text(bp, &cf, "Box text", 8) != OWF_OK) return 2202;
+    k = owf_doc_add_frame(doc, &fr);
+    if (k != 0 || owf_para_add_frame(&doc->body.paras[0], &cf, k) != OWF_OK) return 2203;
+    ed = ow_editor_new(doc);
+    if (!ed) return 2204;
+
+    /* into the box, after "Box": typing goes there */
+    memset(&s, 0, sizeof s);
+    s.anchor.box = s.focus.box = 1;
+    s.anchor.byte_offset = s.focus.byte_offset = 3;
+    ow_editor_set_selection(ed, &s);
+    if (ow_editor_selection(ed).focus.box != 1) return 2205;
+    if (ow_editor_insert_utf8(ed, "ed", 2) != OWF_OK) return 2206;
+    box_text(doc, text, sizeof text);
+    paragraph_text(doc, 0, body, sizeof body);
+    if (strcmp(text, "Boxed text") || strcmp(body, "Body words")) return 2207;
+    /* a new paragraph in it, and back */
+    if (ow_editor_newline(ed) != OWF_OK) return 2208;
+    box_text(doc, text, sizeof text);
+    if (strcmp(text, "Boxed| text") || doc->body.nparas != 1) return 2209;
+    if (ow_editor_backspace(ed) != OWF_OK) return 2210;
+    box_text(doc, text, sizeof text);
+    if (strcmp(text, "Boxed text")) return 2211;
+    /* select all: the box's text alone; bold on it */
+    ow_editor_select_all(ed);
+    copied = ow_editor_selection_text(ed, &copied_len);
+    if (!copied || strcmp(copied, "Boxed text")) return 2212;
+    free(copied);
+    if (ow_editor_toggle_char_flags(ed, OWF_BOLD) != OWF_OK) return 2213;
+    if (!(doc->frames[0].story.paras[0].runs[0].fmt.flags & OWF_BOLD) || (doc->body.paras[0].runs[0].fmt.flags & OWF_BOLD))
+        return 2214;
+    /* no page break in a box */
+    if (ow_editor_insert_page_break(ed) == OWF_OK) return 2215;
+    /* undo back to the start, the caret still in the box; redo */
+    while (ow_editor_can_undo(ed)) if (ow_editor_undo(ed) != 1) return 2216;
+    box_text(doc, text, sizeof text);
+    if (strcmp(text, "Box text") || ow_editor_selection(ed).focus.box != 1) return 2217;
+    if (ow_editor_redo(ed) != 1) return 2218;
+    box_text(doc, text, sizeof text);
+    if (strcmp(text, "Boxed text")) return 2219;
+    /* a selection from the box into the body is the box's caret; one in the body leaves the box */
+    memset(&s, 0, sizeof s);
+    s.anchor.box = 1;
+    s.focus.byte_offset = 4;
+    ow_editor_set_selection(ed, &s);
+    if (ow_editor_selection(ed).anchor.box != 0 || !ow_editor_selection_empty(ed)) return 2220;
+    if (ow_editor_insert_utf8(ed, "!", 1) != OWF_OK) return 2221;
+    paragraph_text(doc, 0, body, sizeof body);
+    box_text(doc, text, sizeof text);
+    if (strcmp(body, "Body! words") || strcmp(text, "Boxed text")) return 2222;
+    /* a box that isn't there: the body */
+    s.anchor.box = s.focus.box = 7;
+    ow_editor_set_selection(ed, &s);
+    if (ow_editor_selection(ed).focus.box != 0) return 2223;
+
+    /* saved: the box's new text comes back */
+    if (owf_export_file(doc, path, NULL, NULL) != OWF_OK) return 2224;
+    if (owf_import_file(path, NULL, &back, NULL, NULL) != OWF_OK || !back) return 2225;
+    box_text(back, text, sizeof text);
+    if (back->nframes != 1 || strcmp(text, "Boxed text")) return 2226;
+    owf_doc_free(back);
+    remove(path);
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
 }
 
 static int test_pdf_export(void)
@@ -826,6 +939,7 @@ int main(void)
     if ((rc = test_frames_undo())) goto fail;
     if ((rc = test_undo_memory())) goto fail;
     if ((rc = test_names_editing())) goto fail;
+    if ((rc = test_text_box_editing())) goto fail;
     if ((rc = test_pdf_export())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;

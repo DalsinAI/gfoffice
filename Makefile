@@ -12,14 +12,17 @@ OUT = build/host
 
 all: $(OUT)/owconvert
 
-$(OUT)/owconvert: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/src/owf_internal.h
-	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(OWC_DECK) tools/owconvert.c -lz -o $@
+# OWConvert: tools/owconvert.c and its parts, one per library on the Amiga (tools/owc.h), built together here
+OWC_SRC = tools/owconvert.c $(wildcard tools/owc_*.c)
 
-$(OUT)/owconvert-asan: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/src/owf_internal.h
+$(OUT)/owconvert: $(OWF_SRC) $(OWC_SRC) tools/owc.h libowf/include/owf.h libowf/src/owf_internal.h
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(OWC_DECK) $(OWC_SRC) -lz -o $@
+
+$(OUT)/owconvert-asan: $(OWF_SRC) $(OWC_SRC) tools/owc.h libowf/include/owf.h libowf/src/owf_internal.h
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
-		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(OWC_DECK) tools/owconvert.c -lz -o $@
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(OWC_DECK) $(OWC_SRC) -lz -o $@
 
 test: $(OUT)/owconvert $(OUT)/book-dump $(OUT)/test-calc
 	python3 tests/run_tests.py $(OUT)/owconvert
@@ -102,14 +105,14 @@ $(OUT)/test-inflate-asan: $(INFLATE_SRC) tests/inflate/test_inflate.c
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
 		-Ilibowf/include -Ilibowf/src libowf/src/owf_inflate.c tests/inflate/test_inflate.c -lz -o $@
 
-$(OUT)/owconvert-nozlibrary: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/src/owf_internal.h libowf/src/owf_zlib.h
+$(OUT)/owconvert-nozlibrary: $(OWF_SRC) $(OWC_SRC) tools/owc.h libowf/include/owf.h libowf/src/owf_internal.h libowf/src/owf_zlib.h
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -DOWF_TEST_NO_ZLIBRARY -Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/owconvert.c -lz -o $@
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -DOWF_TEST_NO_ZLIBRARY -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(OWC_SRC) -lz -o $@
 
-$(OUT)/owconvert-nozlibrary-asan: $(OWF_SRC) tools/owconvert.c libowf/include/owf.h libowf/src/owf_internal.h libowf/src/owf_zlib.h
+$(OUT)/owconvert-nozlibrary-asan: $(OWF_SRC) $(OWC_SRC) tools/owc.h libowf/include/owf.h libowf/src/owf_internal.h libowf/src/owf_zlib.h
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-		-DOWF_HAVE_ZLIB -DOWF_TEST_NO_ZLIBRARY -Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/owconvert.c -lz -o $@
+		-DOWF_HAVE_ZLIB -DOWF_TEST_NO_ZLIBRARY -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(OWC_SRC) -lz -o $@
 
 inflate-test: $(OUT)/test-inflate $(OUT)/owconvert $(OUT)/owconvert-nozlibrary
 	$(OUT)/test-inflate
@@ -142,12 +145,18 @@ $(OUT)/test-layout-asan: $(OWF_SRC) $(LAYOUT_SRC) $(CORE_SRC) tests/core/test_la
 layout-test: $(OUT)/test-layout
 	$(OUT)/test-layout samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx \
 		tests/core/fixtures/contents.docx tests/core/fixtures/cover.docx \
-		tests/core/fixtures/cover-wpg.docx tests/core/fixtures/wrap.docx
+		tests/core/fixtures/cover-wpg.docx tests/core/fixtures/wrap.docx tests/core/fixtures/header-frames.docx \
+		tests/core/fixtures/inline-box.docx tests/core/fixtures/line-rules.docx \
+		tests/core/fixtures/table-styles.docx tests/core/fixtures/frames.odt \
+		tests/core/fixtures/bookmarks.docx
 
 layout-check: $(OUT)/test-layout-asan
 	$(OUT)/test-layout-asan samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx \
 		tests/core/fixtures/contents.docx tests/core/fixtures/cover.docx \
-		tests/core/fixtures/cover-wpg.docx tests/core/fixtures/wrap.docx
+		tests/core/fixtures/cover-wpg.docx tests/core/fixtures/wrap.docx tests/core/fixtures/header-frames.docx \
+		tests/core/fixtures/inline-box.docx tests/core/fixtures/line-rules.docx \
+		tests/core/fixtures/table-styles.docx tests/core/fixtures/frames.odt \
+		tests/core/fixtures/bookmarks.docx
 
 .PHONY: layout-test layout-check
 

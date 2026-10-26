@@ -1387,6 +1387,17 @@ static void end_row(ods *o)
                 o->failed = 1;
         }
     }
+    if (o->row_cell_style) {                       /* the row's own formatting, for its empty cells */
+        int st = model_style(o, o->row_cell_style);
+        for (k = 0; st > 0 && k < n && !o->failed; k++) {
+            if (k && !o->row_budget--) {
+                owf_report_add(o->report, OWF_NOTE_LOST, "Some repeated rows' formatting was left out: too many of them");
+                break;
+            }
+            if (owf_sheet_set_row_style(o->sheet, (unsigned)(o->row + k), st) < 0)
+                o->failed = 1;
+        }
+    }
     /* a repeated row with cells: the cells again on each */
     if (n > 1 && last > first) {
         for (k = 1; k < n && !o->failed; k++)

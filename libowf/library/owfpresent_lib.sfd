@@ -1,0 +1,104 @@
+==id $Id: owfpresent_lib.sfd 3.0 (25.10.2026) $
+* "owfpresent.library" 3.0: OpenPresentation's part of libowf:
+* presentations. The deck model, its formats (ODP, flat ODP) and the page
+* PDF writer, with the document model its text uses.
+* Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).
+* The calls are libowf's, with its names and types; new calls go at the end.
+* The first 17, libowf's shared calls (memory, reports, kinds, zip), are the
+* same calls at the same offsets in all four of GFOffice's libraries
+* (docs/suite/owf-libraries.md). A double goes in two data registers, its
+* high word first, as mathieeedoubbas.library takes them.
+==base _OWFPresentBase
+==basetype struct Library *
+==libname owfpresent.library
+==bias 30
+==public
+==include <exec/types.h>
+==include <owf.h>
+==include <owf_deck.h>
+==include <owf_pdf.h>
+==include <owf_zip.h>
+==version 3
+* libowf's shared calls
+const char *owf_error_text(int error) (d0)
+const char *owf_error_name(int error) (d0)
+void *owf_malloc(size_t n) (d0)
+void *owf_calloc(size_t n, size_t size) (d0,d1)
+void *owf_realloc(void *p, size_t n) (a0,d0)
+void owf_free(void *p) (a0)
+owf_report *owf_report_new() ()
+void owf_report_free(owf_report *report) (a0)
+int owf_report_count(const owf_report *report) (a0)
+const char *owf_report_note(const owf_report *report, int n, owf_note_level *level, int *times) (a0,d0,a1,a2)
+void owf_report_text(owf_report *report, owf_note_level level, const char *text) (a0,d0,a1)
+unsigned long owf_struct_size(int which) (d0)
+owf_kind owf_file_kind(const unsigned char *data, size_t length) (a0,d0)
+int owf_unzip_open(owf_unzip *zip, const unsigned char *data, size_t length) (a0,a1,d0)
+int owf_unzip_has(const owf_unzip *zip, const char *name) (a0,a1)
+int owf_unzip_read(const owf_unzip *zip, const char *name, unsigned char **data, size_t *length) (a0,a1,a2,a3)
+int owf_inflate(unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length) (a0,d0,a1,d1)
+* the document model
+owf_doc *owf_doc_new() ()
+void owf_doc_free(owf_doc *doc) (a0)
+void owf_parafmt_init(owf_parafmt *fmt) (a0)
+void owf_charfmt_init(owf_charfmt *fmt) (a0)
+owf_para *owf_story_add(owf_story *story, const owf_parafmt *fmt) (a0,a1)
+int owf_para_add_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, size_t len) (a0,a1,a2,d0)
+int owf_para_add_link_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, size_t len, const char *href) (a0,a1,a2,d0,a3)
+int owf_para_add_special(owf_para *para, const owf_charfmt *fmt, owf_run_kind kind, owf_field field) (a0,a1,d0,d1)
+int owf_para_add_image(owf_para *para, const owf_charfmt *fmt, int image_index) (a0,a1,d0)
+int owf_doc_add_image(owf_doc *doc, const char *name, const char *mime, const void *data, size_t length, int width, int height, const char *alt) (a0,a1,a2,a3,d0,d1,d2,d3)
+int owf_doc_add_frame(owf_doc *doc, const owf_frame *frame) (a0,a1)
+int owf_para_add_frame(owf_para *para, const owf_charfmt *fmt, int frame_index) (a0,a1,d0)
+int owf_doc_font(owf_doc *doc, const char *name, owf_font_kind kind) (a0,a1,d0)
+int owf_doc_set_title(owf_doc *doc, const char *utf8) (a0,a1)
+const char *owf_font_modern(const char *name, owf_font_kind *kind) (a0,a1)
+* presentations and the page PDF writer
+owf_deck *owf_deck_new(int width, int height) (d0,d1)
+owf_deck *owf_deck_new_empty() ()
+void owf_deck_free(owf_deck *deck) (a0)
+owf_slide *owf_deck_add_slide(owf_deck *deck, int at, int layout) (a0,d0,d1)
+int owf_deck_delete_slide(owf_deck *deck, int index) (a0,d0)
+int owf_deck_move_slide(owf_deck *deck, int from, int to) (a0,d0,d1)
+owf_master *owf_deck_add_master(owf_deck *deck, const char *name) (a0,a1)
+owf_slide_layout *owf_deck_add_layout(owf_deck *deck, const char *name, int master) (a0,a1,d0)
+owf_obj *owf_slide_add(owf_slide *slide, owf_obj_kind kind) (a0,d0)
+owf_obj *owf_master_add(owf_master *master, owf_obj_kind kind) (a0,d0)
+owf_obj *owf_layout_add(owf_slide_layout *layout, owf_obj_kind kind) (a0,d0)
+int owf_slide_delete(owf_slide *slide, int index) (a0,d0)
+void owf_obj_init(owf_obj *obj, owf_obj_kind kind) (a0,d0)
+void owf_obj_clear(owf_obj *obj) (a0)
+void owf_textlevel_init(owf_textlevel *level) (a0)
+int owf_obj_level(const owf_obj *obj, int para) (a0,d0)
+int owf_obj_set_level(owf_obj *obj, int para, int level) (a0,d0,d1)
+int owf_deck_set_text(char **field, const char *utf8) (a0,a1)
+int owf_deck_keep(owf_deck *deck, owf_kept_kind kind, const char *xml, size_t length) (a0,d0,a1,d1)
+int owf_deck_add_part(owf_deck *deck, const char *name, const char *mime, const void *data, size_t length) (a0,a1,a2,a3,d0)
+int owf_deck_resolve(const owf_deck *deck, int slide, int obj, owf_obj *box, const owf_textlevel **levels) (a0,d0,d1,a1,a2)
+const owf_textlevel *owf_deck_para_level(const owf_deck *deck, const owf_master *master, const owf_obj *obj, int para) (a0,a1,a2,d0)
+owf_para *owf_deck_add_para(const owf_deck *deck, const owf_master *master, owf_obj *obj, int level) (a0,a1,a2,d0)
+const owf_master *owf_deck_slide_master(const owf_deck *deck, int slide) (a0,d0)
+int owf_deck_format_count() ()
+const owf_deck_format *owf_deck_format_at(int index) (d0)
+const owf_deck_format *owf_deck_format_named(const char *name) (a0)
+const owf_deck_format *owf_deck_format_for_filename(const char *filename) (a0)
+const owf_deck_format *owf_deck_format_detect(const unsigned char *data, size_t length) (a0,d0)
+int owf_import_deck_memory(const unsigned char *data, size_t length, const char *format, owf_deck **deck, owf_report *report, const owf_deck_format **used) (a0,d0,a1,a2,a3,d1)
+int owf_import_deck_file(const char *path, const char *format, owf_deck **deck, owf_report *report, const owf_deck_format **used) (a0,a1,a2,a3,d0)
+int owf_export_deck_file(const owf_deck *deck, const char *path, const char *format, owf_report *report) (a0,a1,a2,a3)
+owf_pdf *owf_pdf_new() ()
+void owf_pdf_free(owf_pdf *pdf) (a0)
+int owf_pdf_page(owf_pdf *pdf, int width, int height) (a0,d0,d1)
+int owf_pdf_text(owf_pdf *pdf, int x, int baseline, int width, const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size, unsigned long colour) (a0,d0,d1,d2,a1,d3,d4,d5,d6,d7)
+int owf_pdf_rect(owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width) (a0,d0,d1,d2,d3,d4,d5,d6)
+int owf_pdf_round_rect(owf_pdf *pdf, int x, int y, int w, int h, int radius, unsigned long fill, unsigned long line, int line_width) (a0,d0,d1,d2,d3,d4,d5,d6,d7)
+int owf_pdf_ellipse(owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width) (a0,d0,d1,d2,d3,d4,d5,d6)
+int owf_pdf_path(owf_pdf *pdf, const int *xy, int npoints, int closed, unsigned long fill, unsigned long line, int line_width) (a0,a1,d0,d1,d2,d3,d4)
+void owf_pdf_dash(owf_pdf *pdf, int dash) (a0,d0)
+int owf_pdf_image(owf_pdf *pdf, const owf_image *image, int x, int y, int w, int h, const int *clip) (a0,a1,d0,d1,d2,d3,a2)
+int owf_pdf_link(owf_pdf *pdf, int x, int y, int w, int h, const char *href) (a0,d0,d1,d2,d3,a1)
+int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t *length, owf_report *report) (a0,a1,a2,a3,d0)
+int owf_pdf_page_count(const owf_pdf *pdf) (a0)
+int owf_pdf_text_width(const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size) (a0,d0,d1,d2,d3)
+int owf_pdf_winansi(unsigned long codepoint) (d0)
+==end

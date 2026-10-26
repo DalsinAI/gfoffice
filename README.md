@@ -94,7 +94,7 @@ make check
 make libc-test
 ```
 
-`make libc-test` checks owf.library's own printf, strtol and case calls
+`make libc-test` checks the libraries' own printf, sscanf, strtol and case calls
 against the PC's C library. `make test` and `make check` include the
 workbook tests (`make book-test`, `make book-check`): Excel 97-2003 files
 read into the spreadsheet's model, and saved as CSV
@@ -120,7 +120,8 @@ if it is not in `~/AmigaChrome/stoves/os32-gcc16`):
 
 ```
 ./build-os3.sh                 # libowf linked into each program
-OWF=library ./build-os3.sh     # both programs on LIBS:owf.library
+OWF=library ./build-os3.sh     # each on its library: OpenWrite on owfwrite.library,
+                               # OpenCalc on owfcalc.library, OWConvert on all four
 ```
 
 This builds:
@@ -128,8 +129,13 @@ This builds:
 ```
 build/os3/OpenWrite
 build/os3/OWConvert
-build/os3/library/owf.library      (OWF=library)
-build/os3/library/tests/OWFLibTest (OWF=library)
+build/os3/library/owfwrite.library   (OWF=library: GFOffice's four libraries,
+build/os3/library/owfcalc.library     docs/suite/owf-libraries.md)
+build/os3/library/owfpub.library
+build/os3/library/owfpresent.library
+build/os3/library/owf.library        (OWF=library)
+build/os3/library/tests/OWFLibsTest  (OWF=library)
+build/os3/library/tests/OWFLibTest   (OWF=library)
 ```
 
 ODT and DOCX deflate and inflate through z.library, ours from
@@ -140,6 +146,38 @@ longer needed to read: without it in LIBS:, libowf inflates zip packages
 (`libowf/src/owf_inflate.c`, more slowly than z.library; tested by `make
 inflate-test` and `make inflate-check`, part of `make test` and `make
 check`). Files are then written stored, which every reader accepts.
+
+### GFOffice's libraries
+
+libowf is split along the programs' lines into four shared Amiga libraries
+(`docs/suite/owf-libraries.md`), each version 3.0:
+
+| Library | For | Holds |
+| --- | --- | --- |
+| `owfwrite.library` | OpenWrite | documents and their formats, PDF out |
+| `owfcalc.library` | OpenCalc | workbooks, their formats, charts, the formula engine |
+| `owfpub.library` | OpenPublisher | the .pub reader |
+| `owfpresent.library` | OpenPresentation | decks, ODP, the page PDF writer |
+
+`./build-library.sh [OUT_DIR]` builds them: libowf once into an archive,
+then each library from its own file in `libowf/library` (`<name>_library.c`,
+its calls in `<name>_calls.h`, which `scripts/gen-lib-calls.py` makes from
+its `<name>_lib.sfd`), so each takes only the files its calls reach. The
+first 17 calls (memory, reports, `owf_file_kind`, zip and inflate,
+`owf_struct_size`) are the same, at the same offsets, in all four. Each has
+its own memory pool: what a library allocates goes back through that
+library's `owf_free`.
+
+A program (or one file of it: one library per file) names its library with
+`OWF_USE_WRITE_LIBRARY`, `OWF_USE_CALC_LIBRARY`, `OWF_USE_PUB_LIBRARY` or
+`OWF_USE_PRESENT_LIBRARY`, includes `owf.h` and `owf_open.h`, and calls
+`owf_open()`, which opens it and checks the sizes of the structures that
+library shares. `OWFLibsTest` on an Amiga opens the four and checks each
+(`ONLY=write`, `calc`, `pub` or `present` for one alone), from two tasks at
+once; `make sfd-check` checks the SFDs, the generated glue and the SDK.
+
+owf.library 2.4, below, is still built beside them until OpenUp ships the
+four; then it goes.
 
 ### owf.library
 
