@@ -34,12 +34,12 @@ OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/openamigalayout" OWF=library OWF_BUILD_L
 mkdir -p "$OUT/samples"
 for f in "$HERE"/samples/*.docx "$HERE"/samples/*.odt "$HERE"/samples/*.txt \
          "$HERE"/tests/book/fixtures/features-openpyxl.xlsx "$HERE"/tests/book/fixtures/charts-openpyxl.xlsx \
-         "$HERE"/tests/core/fixtures/*.docx; do
+         "$HERE"/tests/core/fixtures/*.docx "$HERE"/tests/core/fixtures/*.odt; do
     [ -f "$f" ] && cp "$f" "$OUT/samples/"   # the workbooks (OpenCalc's charts and the rest) and the layout
                                              # fixtures (covers, contents, text round frames), for a lab
 done
 # and presentations for OpenPresentation: the deck tests' fixtures, made here (tests/deck/make_*fixtures.py)
-for f in pptx-talk.pptx pptx-plain.pptx odfpy.odp libreoffice.odp; do
+for f in pptx-talk.pptx pptx-plain.pptx pptx-text.pptx odfpy.odp libreoffice.odp; do
     [ -f "$HERE/tests/deck/fixtures/$f" ] && cp "$HERE/tests/deck/fixtures/$f" "$OUT/samples/"
 done
 rm -rf "$DEPS"   # the job's out/ keeps the programs, not the sources

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Makes the PPTX fixtures for OpenPresentation's PPTX reader:
 
-    make_pptx_fixtures.py [OUT_DIR]     (default: fixtures/ beside this file)
+    make_pptx_fixtures.py [OUT_DIR [NAME...]]   (default: fixtures/ beside this file, all three)
 
 Needs python-pptx (pip install python-pptx; it brings Pillow). The decks are
 made here from nothing, with python-pptx's own template (its masters and
@@ -16,6 +16,7 @@ layouts are PowerPoint's 4:3 ones); no one's documents are used.
   and slide 3 a fade (written into the slide's XML: python-pptx has no call
   for them).
 - pptx-plain.pptx: python-pptx's defaults as they are (4:3), two slides.
+- pptx-text.pptx: small and odd text as designed decks have it (text()).
 
 The fixtures are checked in; run this again only to change them, and
 update test_pptx.py's expectations with them.
@@ -192,11 +193,116 @@ def plain(path):
     prs.save(path)
 
 
+A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+
+def widen(prs):
+    """16:9, with the template's 4:3 master and layout boxes widened as PowerPoint does."""
+    prs.slide_width = Emu(12192000)
+    prs.slide_height = Emu(6858000)
+    for part in [prs.slide_master] + list(prs.slide_layouts):
+        for shape in part.shapes:
+            off = shape._element.find(f".//{{{A}}}off")
+            ext = shape._element.find(f".//{{{A}}}ext")
+            if off is not None and ext is not None:
+                off.set("x", str(int(off.get("x")) * 4 // 3))
+                ext.set("cx", str(int(ext.get("cx")) * 4 // 3))
+
+
+def box(slide, x, y, w, h, name, runs, align=None):
+    """A text box: runs are (text, points, {"b": bold, "cap": ..., "spc": ..., "rgb": ...}) on one paragraph,
+    or a list of such lists for several paragraphs."""
+    tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    tb.name = name
+    tf = tb.text_frame
+    tf.word_wrap = True
+    paras = runs if runs and isinstance(runs[0], list) else [runs]
+    for i, pr in enumerate(paras):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        if align is not None:
+            p.alignment = align
+        for text, size, opts in pr:
+            r = p.add_run()
+            r.text = text
+            r.font.size = Pt(size)
+            if opts.get("b"):
+                r.font.bold = True
+            if "rgb" in opts:
+                r.font.color.rgb = RGBColor.from_string(opts["rgb"])
+            rpr = r._r.get_or_add_rPr()
+            for k in ("cap", "spc"):
+                if k in opts:
+                    rpr.set(k, str(opts[k]))
+    return tb
+
+
+def text(path):
+    """pptx-text.pptx (25 October 2026, after a real deck's text came out unreadable in the lab): text as
+    designed decks have it. 16:9, three slides:
+    1. Blank: a letter-spaced all-caps label typed in lower case (cap="all", spc="100", 9 point bold), a
+       heading, a paragraph of 8 point text with its spaces, a 9 point bold run, 14 point mid-size text, bars
+       with 8 point labels beside them, and a 7 point footer.
+    2. Title Only: arrows and other characters outside ISO-8859-1 (U+2192 and its family, ticks and
+       crosses, the ellipsis, dashes, bullet, euro, trade mark, comparisons), and small capitals
+       (cap="small").
+    3. Title and Content: ten 24 point bullets that PowerPoint shrank to fit
+       (a:normAutofit fontScale="85000" lnSpcReduction="10000")."""
+    prs = Presentation()
+    prs.core_properties.title = "OpenPresentation text fixture"
+    widen(prs)
+    layouts = prs.slide_layouts
+    grey, navy = {"rgb": "595959"}, {"rgb": "1F3864"}
+
+    # 1: small text on a Blank slide
+    s = prs.slides.add_slide(layouts[6])
+    box(s, 0.5, 0.3, 6, 0.4, "Label", [("executive status", 9, {"b": 1, "cap": "all", "spc": 100, **grey})])
+    box(s, 0.5, 0.65, 9, 0.7, "Heading", [("Pilot summary", 24, {"b": 1, **navy})])
+    box(s, 0.5, 1.5, 5.5, 1.4, "Small", [[("Indicative European role-rate summary for the pilot phase, with the "
+                                            "cost of each role and the weeks it takes.", 8, {})],
+                                          [("Bold nine-point text beside the bars", 9, {"b": 1})]])
+    box(s, 0.5, 3.0, 5.5, 0.6, "Mid", [("Controlled pilot recommended for the first quarter", 14, {})])
+    for i, (label, width) in enumerate((("Discovery 2 weeks", 1.5), ("Build 6 weeks", 4.2), ("Test 3 weeks", 2.4))):
+        bar = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(7), Inches(1.6 + i * 0.6), Inches(width), Inches(0.35))
+        bar.name = f"Bar {i + 1}"
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = RGBColor(0x2F, 0x6F, 0xB3)
+        bar.line.fill.background()
+        box(s, 7 + width + 0.1, 1.6 + i * 0.6, 2.5, 0.35, f"Bar label {i + 1}", [(label, 8, {})])
+    box(s, 0.5, 7.0, 9, 0.3, "Footer", [("Confidential. Made for OpenPresentation's tests, 25 October 2026", 7, grey)])
+
+    # 2: characters outside Latin-1, and small capitals
+    s = prs.slides.add_slide(layouts[5])
+    s.shapes.title.text = "Arrows and marks"
+    box(s, 0.5, 1.6, 12, 0.7, "Arrows", [("discovery → architecture → build → test → release", 20, {})])
+    box(s, 0.5, 2.5, 12, 1.2, "Marks", [("← back  ↑ up  ↓ down  ⇒ so  ✓ done  ✗ not  "
+                                         "… more  – en  — em  • dot  €5  ™  ≤ 3  "
+                                         "≥ 4  ≠ 5  ≈ 6", 16, {})])
+    box(s, 0.5, 4.0, 12, 0.6, "Small caps", [("Small Capitals Heading", 16, {"cap": "small"})])
+
+    # 3: text PowerPoint shrank to fit
+    s = prs.slides.add_slide(layouts[1])
+    s.shapes.title.text = "Shrunk to fit"
+    tf = s.placeholders[1].text_frame
+    tf.text = "Point one of ten, long enough to wrap onto a second line in the box"
+    for i in range(2, 11):
+        tf.add_paragraph().text = f"Point {i} of ten"
+    for p in tf.paragraphs:
+        for r in p.runs:
+            r.font.size = Pt(24)
+    body = tf._txBody.find(f"{{{A}}}bodyPr")
+    for old in list(body):
+        body.remove(old)
+    body.append(etree.fromstring(f'<a:normAutofit xmlns:a="{A}" fontScale="85000" lnSpcReduction="10000"/>'))
+    prs.save(path)
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
-    talk(os.path.join(OUT, "pptx-talk.pptx"))
-    plain(os.path.join(OUT, "pptx-plain.pptx"))
-    print("wrote", os.path.join(OUT, "pptx-talk.pptx"), "and", os.path.join(OUT, "pptx-plain.pptx"))
+    only = sys.argv[2:]
+    for name, fn in (("pptx-talk.pptx", talk), ("pptx-plain.pptx", plain), ("pptx-text.pptx", text)):
+        if not only or name in only:
+            fn(os.path.join(OUT, name))
+            print("wrote", os.path.join(OUT, name))
 
 
 if __name__ == "__main__":

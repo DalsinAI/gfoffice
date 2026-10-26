@@ -616,8 +616,9 @@ enum {
     TP_MARL = 1 << 0, TP_INDENT = 1 << 1, TP_ALGN = 1 << 2, TP_BEFORE = 1 << 3, TP_AFTER = 1 << 4,
     TP_LINE = 1 << 5, TP_BULLET = 1 << 6, TP_BUFONT = 1 << 7, TP_BUSIZE = 1 << 8, TP_BUCOLOUR = 1 << 9,
     TP_SIZE = 1 << 10, TP_BOLD = 1 << 11, TP_ITALIC = 1 << 12, TP_UNDERLINE = 1 << 13, TP_STRIKE = 1 << 14,
-    TP_COLOUR = 1 << 15, TP_FONT = 1 << 16, TP_BASELINE = 1 << 17
+    TP_COLOUR = 1 << 15, TP_FONT = 1 << 16, TP_BASELINE = 1 << 17, TP_CAP = 1 << 18, TP_SPC = 1 << 19
 };
+enum { CAP_NONE, CAP_ALL, CAP_SMALL };
 enum { BU_NONE, BU_CHAR, BU_NUMBER };
 
 typedef struct {
@@ -636,6 +637,8 @@ typedef struct {
     unsigned long bu_colour;     /* 0xRRGGBB */
     int size;                    /* twips */
     int bold, italic, underline, strike, baseline;
+    int cap;                     /* CAP_... */
+    int spc;                     /* hundredths of a point between letters */
     unsigned long colour;        /* 0xRRGGBB */
     int font;
 } tprops;
@@ -693,6 +696,14 @@ static void read_rpr(textctx *t, const owf_xml_node *r, tprops *p)
     if (number_att(r, "baseline", &v)) {
         p->baseline = v > 0 ? 1 : v < 0 ? -1 : 0;
         p->has |= TP_BASELINE;
+    }
+    if ((s = att(r, "cap"))) {
+        p->cap = same(s, "all") ? CAP_ALL : same(s, "small") ? CAP_SMALL : CAP_NONE;
+        p->has |= TP_CAP;
+    }
+    if (number_att(r, "spc", &v)) {
+        p->spc = clamp(v, -400000, 400000);
+        p->has |= TP_SPC;
     }
     for (f = r->first; f; f = f->next) {
         if (isa(f, "solidFill") && colour_of(&t->cc, f, &rgb)) {
@@ -840,6 +851,8 @@ static void lay_over(tprops *dst, const tprops *src)
     if (h & TP_UNDERLINE) dst->underline = src->underline;
     if (h & TP_STRIKE) dst->strike = src->strike;
     if (h & TP_BASELINE) dst->baseline = src->baseline;
+    if (h & TP_CAP) dst->cap = src->cap;
+    if (h & TP_SPC) dst->spc = src->spc;
     if (h & TP_COLOUR) dst->colour = src->colour;
     if (h & TP_FONT) dst->font = src->font;
     dst->has |= h;
@@ -1075,6 +1088,7 @@ typedef struct {
     int has_inset[4], inset[4];  /* left, top, right, bottom: twips */
     int has_anchor, anchor;      /* OWF_VALIGN_... */
     int has_fit, fit;            /* OWF_AUTOFIT_... */
+    int font_scale, line_reduction; /* a:normAutofit's, percent; 0: none */
     int vertical;
 } body_look;
 
@@ -1095,9 +1109,22 @@ static void read_body(const owf_xml_node *bp, body_look *b)
         b->anchor = same(s, "ctr") ? OWF_VALIGN_CENTRE : same(s, "b") ? OWF_VALIGN_BOTTOM : OWF_VALIGN_TOP;
         b->has_anchor = 1;
     }
-    if (achild(bp, "normAutofit")) { b->fit = OWF_AUTOFIT_SHRINK; b->has_fit = 1; }
-    else if (achild(bp, "spAutoFit")) { b->fit = OWF_AUTOFIT_GROW; b->has_fit = 1; }
-    else if (achild(bp, "noAutofit")) { b->fit = OWF_AUTOFIT_NONE; b->has_fit = 1; }
+    if (achild(bp, "normAutofit")) {
+        const owf_xml_node *fit = achild(bp, "normAutofit");
+        b->fit = OWF_AUTOFIT_SHRINK;
+        b->has_fit = 1;
+        /* thousandths of a percent: 85000 is 85% */
+        b->font_scale = number_att(fit, "fontScale", &v) && v > 0 ? clamp(v / 1000, 1, 100) : 0;
+        b->line_reduction = number_att(fit, "lnSpcReduction", &v) && v > 0 ? clamp(v / 1000, 0, 90) : 0;
+    } else if (achild(bp, "spAutoFit")) {
+        b->fit = OWF_AUTOFIT_GROW;
+        b->has_fit = 1;
+        b->font_scale = b->line_reduction = 0;
+    } else if (achild(bp, "noAutofit")) {
+        b->fit = OWF_AUTOFIT_NONE;
+        b->has_fit = 1;
+        b->font_scale = b->line_reduction = 0;
+    }
     if ((s = att(bp, "vert")) && !same(s, "horz"))
         b->vertical = 1;
 }
@@ -1121,6 +1148,8 @@ static void apply_body(owf_obj *obj, const body_look *b)
         obj->inset[i] = b->has_inset[i] ? b->inset[i] : defaults[i];
     obj->valign = b->has_anchor ? (unsigned char)b->anchor : OWF_VALIGN_TOP;
     obj->autofit = b->has_fit ? (unsigned char)b->fit : OWF_AUTOFIT_NONE;
+    obj->font_scale = obj->autofit == OWF_AUTOFIT_SHRINK && b->font_scale < 100 ? b->font_scale : 0;
+    obj->line_reduction = obj->autofit == OWF_AUTOFIT_SHRINK ? b->line_reduction : 0;
 }
 
 /* The text style a placeholder's text starts from: the master's title,
@@ -1251,6 +1280,53 @@ static void to_charfmt(const tprops *r, owf_charfmt *cf, const owf_textlevel *lv
     }
 }
 
+/* The capital of a small letter, or 0 for a character that is none: the
+ * letters of ISO-8859-1, Latin Extended-A, Greek and Cyrillic. */
+static unsigned long capital_of(unsigned long c)
+{
+    if (c >= 'a' && c <= 'z') return c - 32;
+    if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return c - 32;
+    if (c == 0xFF) return 0x178;
+    if (((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) && (c & 1)) return c - 1;
+    if (((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) && !(c & 1)) return c - 1;
+    if (c == 0x3C2) return 0x3A3;
+    if (c >= 0x3B1 && c <= 0x3C9) return c - 32;
+    if (c >= 0x430 && c <= 0x44F) return c - 32;
+    if (c >= 0x450 && c <= 0x45F) return c - 80;
+    return 0;
+}
+
+/* A run PowerPoint shows in capitals (cap="all"), or in small capitals
+ * (cap="small": the small letters as capitals at four fifths of the size).
+ * The model has no such look, so the text is kept as the capitals it shows:
+ * a small-capitals run becomes runs of the two sizes. */
+static void add_capitals(textjob *j, owf_para *p, const owf_charfmt *cf, const tprops *r, const char *s, size_t n,
+                         const char *href)
+{
+    const unsigned char *q = (const unsigned char *)s, *end = q + n;
+    owf_charfmt small = *cf;
+    owf_buf part;
+    int part_small = 0;
+    owf_report_add(j->x->r.report, OWF_NOTE_APPROX, "Text in capitals or small capitals is kept as capital letters");
+    small.size = (r->size > 0 ? r->size : 18 * OWF_TWIPS_PER_POINT) * 4 / 5;
+    owf_buf_init(&part);
+    while (q < end) {
+        unsigned long c = owf_utf8_next(&q, end), up = capital_of(c);
+        int is_small = r->cap == CAP_SMALL && up != 0;
+        if (part.length && is_small != part_small) {
+            add_text(j, p, part_small ? &small : cf, (const char *)part.data, part.length, href);
+            part.length = 0;
+        }
+        part_small = is_small;
+        owf_buf_put_utf8(&part, up ? up : c);
+    }
+    if (part.failed)
+        j->x->r.failed = 1;
+    else if (part.length)
+        add_text(j, p, part_small ? &small : cf, (const char *)part.data, part.length, href);
+    owf_buf_free(&part);
+}
+
 /* One run, field or line break of a paragraph. */
 static void read_run(textjob *j, owf_para *p, const owf_xml_node *c, const tprops *para, const owf_textlevel *lv)
 {
@@ -1284,8 +1360,12 @@ static void read_run(textjob *j, owf_para *p, const owf_xml_node *c, const tprop
     for (t = c->first; t; t = t->next)
         if (isa(t, "t"))
             text_of(t, &text, 0);
+    if (r.spc && text.length)
+        owf_report_add(j->x->r.report, OWF_NOTE_APPROX, "Spacing between letters is drawn as normal");
     if (text.failed)
         j->x->r.failed = 1;
+    else if (text.length && r.cap != CAP_NONE)
+        add_capitals(j, p, &cf, &r, (const char *)text.data, text.length, href);
     else if (text.length)
         add_text(j, p, &cf, (const char *)text.data, text.length, href);
     owf_buf_free(&text);
@@ -1533,7 +1613,9 @@ static void read_look(objctx *c, owf_obj *obj, const owf_xml_node *shape, const 
             obj->look.line_width = clamp(v / EMU_PER_TWIP, 1, 2000);
             has_width = 1;
         }
-        obj->look.line_style = d && !same(att(d, "val"), "solid") ? OWF_LINE_DASHED : OWF_LINE_THIN;
+        /* a line's style only when there is a line to have it (ODP's reader has it so) */
+        if (OWF_SHADE_SET(obj->look.line))
+            obj->look.line_style = d && !same(att(d, "val"), "solid") ? OWF_LINE_DASHED : OWF_LINE_THIN;
         if (achild(ln, "headEnd") && !same(att(achild(ln, "headEnd"), "type"), "none"))
             obj->look.arrows |= OWF_ARROW_START;
         if (achild(ln, "tailEnd") && !same(att(achild(ln, "tailEnd"), "type"), "none"))

@@ -120,7 +120,8 @@ if it is not in `~/AmigaChrome/stoves/os32-gcc16`):
 
 ```
 ./build-os3.sh                 # libowf linked into each program
-OWF=library ./build-os3.sh     # both programs on LIBS:owf.library
+OWF=library ./build-os3.sh     # each on its library: OpenWrite on owfwrite.library,
+                               # OpenCalc on owfcalc.library, OWConvert on all four
 ```
 
 This builds:
@@ -262,7 +263,9 @@ part of P3 is in too: click in a slide's text box and type (Return, Backspace,
 Del, the arrow keys; Esc stops), with undo and redo
 (`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
 deck-edit-check`). Print hands the slides to OpenPrint as a PDF (`C:OpenPrint
-T:<name>.pdf`), and Export PDF writes one. The player (P2), New Slide, PPTX
+T:<name>.pdf`), and Export PDF writes one. View > Zoom In and Zoom Out (+
+and -) show the slide up to four times the window's fit, with scrollers; the
+window's zoom gadget fills the screen. The player (P2), New Slide, PPTX
 saving and the rest of the editor come next.
 
 ## Licence

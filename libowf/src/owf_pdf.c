@@ -285,6 +285,64 @@ int owf_pdf_winansi(unsigned long c)
     return 0;
 }
 
+const char *owf_pdf_fallback(unsigned long c)
+{
+    switch (c) {
+    case 0x2192: case 0x27F6: case 0x2794: case 0x279C: case 0x27A1: case 0x2B95: case 0x21E8: case 0x2799:
+    case 0x279D: case 0x27A4: case 0x21A6: case 0x2B62:
+        return "->";
+    case 0x2190: case 0x27F5: case 0x2B05: case 0x21E6: case 0x2B60: return "<-";
+    case 0x2194: case 0x27F7: case 0x2B0C: return "<->";
+    case 0x2191: case 0x2B06: case 0x21E7: return "^";
+    case 0x2193: case 0x2B07: case 0x21E9: return "v";
+    case 0x21D2: case 0x27F9: return "=>";
+    case 0x21D0: case 0x27F8: return "<=";
+    case 0x21D4: case 0x27FA: return "<=>";
+    case 0x2713: case 0x2714: case 0x2705: case 0x2611: return "v";
+    case 0x2717: case 0x2718: case 0x2715: case 0x2716: case 0x274C: case 0x2612: return "\xC3\x97";   /* x */
+    case 0x2264: return "<=";
+    case 0x2265: return ">=";
+    case 0x2260: return "!=";
+    case 0x2248: case 0x2243: case 0x223C: return "~";
+    case 0x221E: return "oo";
+    case 0x2605: case 0x2606: case 0x2731: return "*";
+    case 0x2032: return "'";
+    case 0x2033: return "\"";
+    case 0x2010: case 0x2011: case 0x2012: return "-";
+    case 0x2002: case 0x2003: case 0x2004: case 0x2005: case 0x2006: case 0x2007: case 0x2008: case 0x2009:
+    case 0x200A: case 0x202F: case 0x205F: case 0x3000:
+        return " ";
+    case 0x200B: case 0x200C: case 0x200D: case 0x2060: case 0xFEFF: return "";
+    case 0xFB01: return "fi";
+    case 0xFB02: return "fl";
+    case 0xFB00: return "ff";
+    case 0x2116: return "No";
+    case 0x2103: return "\xC2\xB0" "C";
+    default: return NULL;
+    }
+}
+
+/* The WinAnsi bytes a character is written as: its own, a fallback's, or '?'. n of them, up to 4. */
+static int winansi_bytes(unsigned long c, int out[4])
+{
+    const char *fb;
+    int b = owf_pdf_winansi(c), n = 0;
+    if (b) {
+        out[0] = b;
+        return 1;
+    }
+    if ((fb = owf_pdf_fallback(c)) != NULL) {
+        const unsigned char *q = (const unsigned char *)fb, *end = q + strlen(fb);
+        while (q < end && n < 4) {
+            int k = owf_pdf_winansi(owf_utf8_next(&q, end));
+            out[n++] = k ? k : '?';
+        }
+        return n;
+    }
+    out[0] = '?';
+    return 1;
+}
+
 static int face(owf_font_kind kind, unsigned flags)
 {
     int base = kind == OWF_FONT_MONO ? 8 : kind == OWF_FONT_SERIF ? 4 : 0;
@@ -301,12 +359,12 @@ static long natural_width(const char *s, size_t n, int f, int size)
     long long units = 0, w;
     while (p < end) {
         unsigned long c = owf_utf8_next(&p, end);
-        int b = owf_pdf_winansi(c);
+        int b[4], n, k;
         if (c == '\t' || c == '\n' || c == '\r')
             continue;
-        if (!b)
-            b = '?';
-        units += f >= 8 ? 600 : owf_pdf_widths[f][b - 32];
+        n = winansi_bytes(c, b);
+        for (k = 0; k < n; k++)
+            units += f >= 8 ? 600 : owf_pdf_widths[f][b[k] - 32];
     }
     w = (units * size + 500) / 1000;
     return (long)(w > 100000000 ? 100000000 : w);     /* past any page */
@@ -346,18 +404,18 @@ int owf_pdf_text(owf_pdf *pdf, int x, int baseline, int width, const char *utf8,
     owf_buf_puts(o, "Td (");
     while (s < end) {
         unsigned long c = owf_utf8_next(&s, end);
-        int b;
+        int b[4], n, k;
         if (c == '\t' || c == '\n' || c == '\r')
             c = ' ';
-        b = owf_pdf_winansi(c);
-        if (!b)
-            b = '?';
-        if (b == '(' || b == ')' || b == '\\')
-            owf_buf_printf(o, "\\%c", b);
-        else if (b >= 127)
-            owf_buf_printf(o, "\\%03o", b);
-        else
-            owf_buf_putc(o, b);
+        n = winansi_bytes(c, b);
+        for (k = 0; k < n; k++) {
+            if (b[k] == '(' || b[k] == ')' || b[k] == '\\')
+                owf_buf_printf(o, "\\%c", b[k]);
+            else if (b[k] >= 127)
+                owf_buf_printf(o, "\\%03o", b[k]);
+            else
+                owf_buf_putc(o, b[k]);
+        }
         any = 1;
     }
     owf_buf_puts(o, ") Tj ET\n");
