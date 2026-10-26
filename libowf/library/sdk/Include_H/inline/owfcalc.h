@@ -1368,4 +1368,21 @@ __owfcalc_owf_calc_format_value(void *__base, const char *format, const owf_cell
 #define owf_calc_format_value(format, value, date1904, width, out, size, colour) __owfcalc_owf_calc_format_value((OWFCALC_BASE_NAME), (const char *)(format), (const owf_cell *)(value), (int)(date1904), (int)(width), (char *)(out), (size_t)(size), (unsigned long *)(colour))
 #define __owf_calc_format_value_base(__in_base, format, value, date1904, width, out, size, colour) __owfcalc_owf_calc_format_value((__in_base), (const char *)(format), (const owf_cell *)(value), (int)(date1904), (int)(width), (char *)(out), (size_t)(size), (unsigned long *)(colour))
 
+static __inline__ int
+__owfcalc_owf_sheet_set_row_style(void *__base, owf_sheet *sheet, unsigned row, int style)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(sheet);
+	register ULONG _d0 __asm("d0") = (ULONG)(row);
+	register ULONG _d1 __asm("d1") = (ULONG)(style);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -492(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_sheet_set_row_style(sheet, row, style) __owfcalc_owf_sheet_set_row_style((OWFCALC_BASE_NAME), (owf_sheet *)(sheet), (unsigned)(row), (int)(style))
+#define __owf_sheet_set_row_style_base(__in_base, sheet, row, style) __owfcalc_owf_sheet_set_row_style((__in_base), (owf_sheet *)(sheet), (unsigned)(row), (int)(style))
+
 #endif /* INLINE_OWFCALC_H */
