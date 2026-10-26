@@ -1330,8 +1330,13 @@ static void test_sample(const char *path)
         if (strstr(path, "table-styles.docx")) table_style_checks(l, doc);
         if (strstr(path, "frames.odt")) frames_odt_checks(l, doc);
         if (strstr(path, "bookmarks.docx")) bookmark_checks(l, doc);
-        printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
-               checked, lists);
+        {   /* 2.0.22: the first layout's room, guessed: enough, and not twice as much */
+            size_t ops = ol_display_count(ow_layout_body(l)), guess = ow_layout_estimate_ops(doc);
+            CHECK(guess >= ops && guess <= ops * 2 + 128);
+        }
+        printf("ow_layout: %s, %d pages, %d caret positions, %d list items, %lu ops (guessed %lu)\n", path,
+               ow_layout_page_count(l), checked, lists, (unsigned long)ol_display_count(ow_layout_body(l)),
+               (unsigned long)ow_layout_estimate_ops(doc));
         ow_layout_free(l);
     }
     owf_doc_free(doc);
