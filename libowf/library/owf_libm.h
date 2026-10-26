@@ -1,7 +1,7 @@
 /*
  * owf.library's maths (owf_libm.c): the <math.h> calls the formula engine
  * makes, and strtod, named owf_rt_ so the PC's tests can hold them beside
- * the C library's; owf_runtime.c gives them their C names inside the
+ * the C library's; owf_runtime_math.c gives them their C names inside the
  * library. Plain C on doubles, with no FPU, no long double and no other
  * library; no state, so any number of tasks can call them at once.
  * MIT, Copyright (c) 2026 AmigaChrome Team.

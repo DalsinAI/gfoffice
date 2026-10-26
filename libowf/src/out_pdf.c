@@ -375,6 +375,10 @@ static int pdf_flush_line(pdf_layout *l, const owf_para *para, pdf_line *line,
     line_height = (line->max_size * 6 + 4) / 5;
     if (para->fmt.line_spacing > 0) line_height = line_height * para->fmt.line_spacing / 100;
     if (line_height < line->max_size + 1) line_height = line->max_size + 1;
+    if (OWF_LINE_IS_HEIGHT(para->fmt.line_spacing)) {   /* 2.0.18: points, from twips: exactly, or at least */
+        int h = (OWF_LINE_HEIGHT(para->fmt.line_spacing) + 10) / 20;
+        if (OWF_LINE_IS_EXACT(para->fmt.line_spacing) || h > line_height) line_height = h > 0 ? h : 1;
+    }
     if (l->y - line_height < l->bottom) {
         if (!pdf_new_page(l)) return 0;
     }

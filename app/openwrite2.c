@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.14 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.21 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -1307,6 +1307,7 @@ static int selection_for_run(int paragraph, int run, size_t len,
     ow_position a, b, rs, re;
     if (paragraph < 0 || !editor || ow_editor_selection_empty(editor)) return 0;
     sel = ow_editor_selection(editor);
+    if (sel.focus.box) return 0;                     /* 2.0.15: in a text box, not the body's */
     if (pos_compare(sel.anchor, sel.focus) <= 0) { a = sel.anchor; b = sel.focus; }
     else { a = sel.focus; b = sel.anchor; }
     rs.paragraph = re.paragraph = paragraph;
@@ -1351,7 +1352,7 @@ static void draw_caret_if_here(struct RastPort *rp, int paragraph, int run,
     if (paragraph < 0 || !editor || !ow_editor_selection_empty(editor)) return;
     sel = ow_editor_selection(editor);
     c = sel.focus;
-    if (c.paragraph != paragraph || c.run != run) return;
+    if (c.box || c.paragraph != paragraph || c.run != run) return;
     if (c.byte_offset < segment_start || c.byte_offset > segment_end) return;
     cx = x + text_width_n(rp, text + segment_start,
                           c.byte_offset - segment_start);
@@ -1576,6 +1577,7 @@ static int hit_position(int mx, int my, ow_position *out)
         if (d < best_dist) { best_dist = d; best = i; }
     }
     if (best < 0) return 0;
+    memset(out, 0, sizeof(*out));                    /* the body's (box 0) */
     {
         hit_span *h = &hits[best];
         const owf_run *run = &doc->body.paras[h->paragraph].runs[h->run];
@@ -1981,7 +1983,7 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     ol_unit size = t->style.font_size > 0 ? t->style.font_size : OL_POINT(12), tabs;
     char buf[256], file[72];
     size_t n, k, drawn;
-    int baseline = d->baseline, style = FS_NORMAL, para = -1, run = -1, target, placed, smear = 0;
+    int baseline = d->baseline, style = FS_NORMAL, para = -1, run = -1, nbox = 0, target, placed, smear = 0;
     ULONG sum;
     struct TextFont *f;
     LONG pen;
@@ -2032,10 +2034,15 @@ static void paint_text(page_paint *pp, const ol_device_op *d)
     /* bold of our own is always placed glyph by glyph; plain text when the font runs wider than the layout */
     placed = drawn && (smear || (int)TextLength(rp, (STRPTR)buf, drawn) > target + 1);
 
-    /* the selection under the text, and where the caret goes, measured as the text is drawn */
-    if (pp->body && ow_layout_node_run(pp->layout, t->node_id, &para, &run) && run >= 0 &&
-        doc->body.paras[para].runs[run].kind == OWF_RUN_TEXT) {
+    /* the selection under the text, and where the caret goes, measured as the text is drawn: the body's, or a
+     * text box's (2.0.15) */
+    if (pp->body && ow_layout_node_ref(pp->layout, t->node_id, &nbox, &para, &run) && run >= 0 &&
+        nbox == pp->caret.box && (nbox ? &doc->frames[nbox - 1].story : &doc->body)->paras[para].runs[run].kind ==
+        OWF_RUN_TEXT) {
         ow_position rs, re;
+        memset(&rs, 0, sizeof rs);
+        rs.box = nbox;
+        re = rs;
         rs.paragraph = re.paragraph = para;
         rs.run = re.run = run;
         rs.byte_offset = t->text_offset;
@@ -2126,7 +2133,9 @@ static void paint_op(void *userdata, const ol_device_op *d)
     }
     case OL_OP_IMAGE: {
         int index = d->op->u.image.image_id;
-        ow_image_cache *c = pp->thumb ? image_cache_peek(index) : image_cache_get(index);   /* 2.0.10 */
+        ow_image_cache *c;
+        if (index == OW_LAYOUT_NO_IMAGE) break;       /* 2.0.17: a text box's room in its line */
+        c = pp->thumb ? image_cache_peek(index) : image_cache_get(index);   /* 2.0.10 */
         if (d->box.width < 1 || d->box.height < 1) break;
         if (c && CyberGfxBase && screen_depth() > 8)
             draw_picture(rp, c, d->box.x, d->box.y, d->box.width, d->box.height, &pp->lim);
@@ -2184,7 +2193,8 @@ static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_sca
         pp.caret = sel.focus;
         pp.caret_on = !pp.has_sel && ow_layout_caret(l, sel.focus, &pp.caret_page, &pp.caret_box);
     }
-    ol_draw_page(pp.od, page, s, clip, paint_op, &pp);
+    /* 2.0.16: the header and the footer first, under the body (and its frames behind the text), as Word draws
+     * them: a header's picture over the page stays behind the body's text */
     for (k = 0; k < 2; ++k) {
         char date[32] = "", time_text[16] = "";
         time_t now = time(NULL);
@@ -2205,6 +2215,9 @@ static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_sca
         ol_draw_page(story, 0, &ss, clip, paint_op, &pp);
         ol_document_free(story);
     }
+    pp.od = ow_layout_body(l);
+    pp.body = 1;
+    ol_draw_page(pp.od, page, s, clip, paint_op, &pp);
     SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     if (pp.caret_on && pp.caret_page == page) {
         if (!pp.caret_done) {                        /* not in a word (an empty paragraph): where the layout says */
@@ -2258,7 +2271,8 @@ static int caret_line_move(int dir, int extend)
             ++np;
             y = 0;
         }
-        if (ow_layout_hit(l, np, box.x, y, &to) && ow_layout_caret(l, to, &found, &nb) &&
+        /* 2.0.15: in the story the caret is in (a text box's lines, not the body's beside it) */
+        if (ow_layout_hit(l, np, box.x, y, &to) && to.box == sel.focus.box && ow_layout_caret(l, to, &found, &nb) &&
             (found != page || nb.y != box.y))
             break;
     }
@@ -3092,7 +3106,8 @@ static int paragraph_requester(owf_parafmt *fmt)
     ADD_INT(gleft,5,"Left indent (mm)",126,twips_to_mm(fmt->indent_left));
     ADD_INT(gright,6,"Right indent (mm)",152,twips_to_mm(fmt->indent_right));
     ADD_INT(gfirst,7,"First line (mm)",178,twips_to_mm(fmt->indent_first));
-    ADD_INT(gline,8,"Line spacing (%)",204,fmt->line_spacing?fmt->line_spacing:100);
+    /* 2.0.18: a height (Word's exactly or at least) shows as 100 and stays unless the number is changed */
+    ADD_INT(gline,8,"Line spacing (%)",204,OWF_LINE_PERCENT(fmt->line_spacing));
 #undef ADD_INT
     ng.ng_Flags=0; ng.ng_TopEdge=218; ng.ng_Height=20; ng.ng_Width=78; ng.ng_LeftEdge=330;
     ng.ng_GadgetText=(STRPTR)"Apply"; ng.ng_GadgetID=9; last=gok=CreateGadget(BUTTON_KIND,last,&ng,TAG_DONE);
@@ -3114,9 +3129,12 @@ static int paragraph_requester(owf_parafmt *fmt)
         GT_GetGadgetAttrs(gleft,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->indent_left=mm_to_twips((int)v);
         GT_GetGadgetAttrs(gright,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->indent_right=mm_to_twips((int)v);
         GT_GetGadgetAttrs(gfirst,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->indent_first=mm_to_twips((int)v);
-        GT_GetGadgetAttrs(gline,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE); fmt->line_spacing=(int)v;
-        if (fmt->line_spacing < 50) fmt->line_spacing = 50;
-        if (fmt->line_spacing > 400) fmt->line_spacing = 400;
+        GT_GetGadgetAttrs(gline,rw,NULL,GTIN_Number,(ULONG)&v,TAG_DONE);
+        if (!OWF_LINE_IS_HEIGHT(fmt->line_spacing) || (int)v != OWF_LINE_PERCENT(fmt->line_spacing)) {
+            fmt->line_spacing=(int)v;
+            if (fmt->line_spacing < 50) fmt->line_spacing = 50;
+            if (fmt->line_spacing > 400) fmt->line_spacing = 400;
+        }
     }
 out:
     if (rw) CloseWindow(rw);
@@ -4006,7 +4024,7 @@ static int window_main(int argc, char **argv)
         goto out;
     }
     if (!owf_open()) {
-        tell("OpenWrite", "OpenWrite needs owf.library 1 in LIBS:.");
+        tell("OpenWrite", "OpenWrite needs " OWF_LIBRARY_NAME " in LIBS:.");
         rc = 20;
         goto out;
     }
