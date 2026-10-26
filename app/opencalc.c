@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.23 (25.10.2026)"
+#define VERSION_TEXT "OpenCalc 0.1.26 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -2587,7 +2587,7 @@ static int rexx_do_command(const char *command, char **result_out)
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
     else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
-                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK CHARTCHECK VALIDCHECK GETCOMMENT QUIT");
+                 "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK VALIDCHECK GETCOMMENT QUIT");
     else if (starts_word_ci(command, "ACTIVATE", &arg)) {
         if (win) { WindowToFront(win); ActivateWindow(win); }
     } else if (starts_word_ci(command, "ISDIRTY", &arg))
@@ -2670,6 +2670,12 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = oc_core_add_sheet(core, utf8) >= 0;
         owf_free(utf8);
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : "Failed");
+    } else if (starts_word_ci(command, "RENAMESHEET", &arg)) {   /* the sheet showing, as Rename... does */
+        char *utf8 = *arg ? from_latin1(arg) : NULL;
+        int rc = utf8 ? oc_core_rename_sheet(core, oc_core_sheet(core), utf8) : OWF_ERR_FORMAT;
+        owf_free(utf8);
+        ok = rc == OWF_OK;
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_FORMAT ? "Not a sheet name" : "Failed");
     } else if (starts_word_ci(command, "RECALC", &arg)) {
         ok = owf_calc_recalc_all(oc_core_calc(core)) == OWF_OK;
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : "Out of memory");

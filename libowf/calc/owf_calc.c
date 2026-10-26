@@ -1297,6 +1297,12 @@ static int shift_ref(void *user, int ref_sheet, int kind, unsigned *r0, unsigned
     return kind == RK_ROWS ? 1 : shift_span(j, c0, c1, kind == RK_CELL, CALC_MAX_COLS);
 }
 
+/* A chart's reference shifted as a formula's are. */
+static char *shift_chart_ref(void *user, const owf_book *book, int home, const char *ref)
+{
+    return calc_rewrite(book, home, home, ref, shift_ref, user);
+}
+
 static int rewrite_text(owf_book *book, int sheet, char **text, shift_job *job)
 {
     char *t = calc_rewrite(book, sheet, sheet, *text, shift_ref, job);
@@ -1447,6 +1453,13 @@ int owf_calc_shift(owf_calc *calc, int sheet, int axis, unsigned at, int count)
         s->has_autofilter = 0;
         free(s->autofilter_xml);
         s->autofilter_xml = NULL;
+    }
+    /* the charts (and pictures) kept as Excel's: their anchors move with the cells, their series' cells as
+       formulas' do */
+    if (!calc_charts_shift(book, sheet, axis, job.at, job.count, limit) ||
+        !calc_charts_refs(book, shift_chart_ref, &job)) {
+        calc->stale = 1;
+        return OWF_ERR_MEMORY;
     }
     return build(calc, 1);
 }
@@ -1620,6 +1633,19 @@ static int contains_nocase(const char *text, const char *word)
     return 0;
 }
 
+/* A chart's reference with a sheet's new name. */
+typedef struct {
+    const char *old_name, *new_name;
+} rename_job;
+
+static char *rename_chart_ref(void *user, const owf_book *book, int home, const char *ref)
+{
+    const rename_job *j = user;
+    (void)book;
+    (void)home;
+    return calc_rename_sheet_in(ref, j->old_name, j->new_name);
+}
+
 int owf_calc_rename_sheet(owf_calc *calc, int sheet, const char *name)
 {
     owf_book *book = calc->book;
@@ -1671,6 +1697,16 @@ int owf_calc_rename_sheet(owf_calc *calc, int sheet, const char *name)
             (strcmp(t, book->names[i].formula) ? !add_change(&ch, &book->names[i].formula, t, -1, 0, 0)
                                                 : (free(t), 0))) {
             free(t);
+            drop_changes(&ch);
+            free(new_name);
+            return OWF_ERR_MEMORY;
+        }
+    }
+    {                                            /* the charts' series, their name's cells... */
+        rename_job rj;
+        rj.old_name = old_name;
+        rj.new_name = name;
+        if (!calc_charts_refs(book, rename_chart_ref, &rj)) {
             drop_changes(&ch);
             free(new_name);
             return OWF_ERR_MEMORY;
@@ -1766,6 +1802,12 @@ static int take_cells(owf_sheet *s, const owf_range *r, owf_cell *out)
     return n;
 }
 
+/* A chart's reference following cells that moved, as a formula's does. */
+static char *move_chart_ref(void *user, const owf_book *book, int home, const char *ref)
+{
+    return calc_rewrite(book, home, home, ref, move_ref_job, user);
+}
+
 int owf_calc_move_range(owf_calc *calc, int sheet, const owf_range *range, int dsheet, int drow, int dcol)
 {
     owf_book *book = calc->book;
@@ -1857,6 +1899,11 @@ int owf_calc_move_range(owf_calc *calc, int sheet, const owf_range *range, int d
         c->flags = moved[i].flags;
     }
     free(moved);
+    if (!calc_charts_refs(book, move_chart_ref, &job)) {   /* the charts' series follow their cells */
+        drop_changes(&ch);
+        calc->stale = 1;
+        return OWF_ERR_MEMORY;
+    }
     if (names || calc->stale) {
         drop_changes(&ch);
         return build(calc, 1);

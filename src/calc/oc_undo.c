@@ -513,6 +513,8 @@ static int step_back(oc_core *core, oc_undo **from, int *nfrom, oc_undo **to, in
         return OWF_ERR_MEMORY;
     (*nfrom)--;
     whole = u->kind == OC_UNDO_BOOK;
+    if (whole || u->kind == OC_UNDO_SHIFT)
+        oc_charts_forget(core);                      /* their parts as they were: read again */
     restore(core, u, back);
     /* the sheets may have come or gone: a cursor for each (the step knows the one it left) */
     sheets = core->book->nsheets;

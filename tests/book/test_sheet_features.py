@@ -180,9 +180,58 @@ def test_condfmt(work):
         except Exception as e:  # noqa: BLE001
             check("cf: LibreOffice converts the file written", False, e)
 
-    # ODS: said to be left out
-    report = convert(FIX, os.path.join(work, "features.ods"))
-    check("cf: ODS says it leaves them out", "Conditional formatting is kept in Excel workbooks" in report, report)
+    # ODS and flat ODS: the same rules, as LibreOffice keeps them (and libowf's priority and stopIfTrue beside)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "features." + ext)
+        report = convert(FIX, ods)
+        check("cf: kept in ." + ext + ", no note", "Conditional formatting" not in report, report)
+        got = sheet_lines(dump(ods), 0, "cf")
+        check("cf: the same from ." + ext, got == cf, "\n".join(got) + "\n---\n" + "\n".join(cf))
+    with zipfile.ZipFile(os.path.join(work, "features.ods")) as z:
+        content, styles = z.read("content.xml").decode(), z.read("styles.xml").decode()
+    check("cf: after the rows, the rules over the same cells together",
+          content.rfind("</table:table-row>", 0, content.find("<calcext:conditional-formats>")) > 0 and
+          content.count("<calcext:conditional-format ") == 8 and content.count("<calcext:condition ") == 7 and
+          content.count("<calcext:color-scale ") == 2 and content.count("<calcext:data-bar ") == 1, content.count("<calcext:"))
+    check("cf: LibreOffice's words", 'calcext:value="between(100,200)"' in content and
+          'calcext:value="formula-is([.$D7]=&quot;No&quot;)"' in content and 'calcext:value="contains-text(&quot;Review&quot;)"' in content, "")
+    check("cf: each look a style of its own", styles.count('style:name="GfoCondition') == 7 and
+          '<style:style style:name="GfoCondition4" style:family="table-cell" style:parent-style-name="Default"><style:text-properties '
+          'fo:color="#808080" fo:font-style="italic"/></style:style>' in styles, styles[styles.find("GfoCondition"):][:600])
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-cf-ods")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                            "--outdir", outdir, os.path.join(work, "features.ods")], check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=300)
+            back = sheet_lines(dump(os.path.join(outdir, "features.xlsx")), 0, "cf")
+            looks = lambda ls: sorted(re.sub(r" priority=\d+ stop=\d", "", re.sub(r' xml ".*', "", l)) for l in ls)
+            check("cf: LibreOffice reads the ten from the ODS written, with their looks",
+                  len(back) == 10 and [l for l in looks(back) if "type=0" in l or "type=1" in l] ==
+                  [l for l in looks(cf) if "type=0" in l or "type=1" in l], "\n".join(back))
+        except Exception as e:  # noqa: BLE001
+            check("cf: LibreOffice converts the ODS written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+    # LibreOffice's own ODS of the fixture: its rules read (no priorities or stopIfTrue in it: in its order)
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-cf-theirs")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "ods",
+                            "--outdir", outdir, FIX], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+            theirs = dump(os.path.join(outdir, "features-openpyxl.ods"))
+            got = sheet_lines(theirs, 0, "cf")
+            same = lambda ls: sorted(re.sub(r" priority=\d+ stop=\d", "", l) for l in ls)
+            check("cf: LibreOffice's ODS read: the ten rules", same(got) == same(cf), "\n".join(got))
+            check("cf: LibreOffice's ODS read: no note", "Conditional formatting" not in "\n".join(lines(theirs, "note")), lines(theirs, "note"))
+        except Exception as e:  # noqa: BLE001
+            check("cf: LibreOffice converts the fixture", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
 
 
 # ---- Comments ----
@@ -237,8 +286,25 @@ def test_comments(work):
             check("comments: LibreOffice converts the file written", False, e)
         finally:
             shutil.rmtree(profile, ignore_errors=True)
-    report = convert(FIX, os.path.join(work, "comments.ods"))
-    check("comments: ODS says it leaves them out", "Comments on cells are kept in Excel workbooks" in report, report)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "comments." + ext)
+        report = convert(FIX, ods)
+        check("comments: kept in ." + ext + ", no note", "Comments on cells" not in report, report)
+        check("comments: the same from ." + ext, sheet_lines(dump(ods), 0, "comment") == want, sheet_lines(dump(ods), 0, "comment"))
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-comments-ods")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                            "--outdir", outdir, os.path.join(work, "comments.ods")], check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=300)
+            back = sheet_lines(dump(os.path.join(outdir, "comments.xlsx")), 0, "comment")
+            check("comments: LibreOffice reads the three from the ODS written", back == want, back)
+        except Exception as e:  # noqa: BLE001
+            check("comments: LibreOffice converts the ODS written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
 
 
 # ---- Data validation ----
@@ -301,8 +367,37 @@ def test_validation(work):
             check("validation: LibreOffice converts the file written", False, e)
         finally:
             shutil.rmtree(profile, ignore_errors=True)
-    report = convert(FIX, os.path.join(work, "validation.ods"))
-    check("validation: ODS says it leaves them out", "Data validation is kept in Excel workbooks" in report, report)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "validation." + ext)
+        report = convert(FIX, ods)
+        check("validation: kept in ." + ext + ", no note", "Data validation" not in report, report)
+        got = sheet_lines(dump(ods), 0, "validation")
+        check("validation: the seven from ." + ext, got == VALIDATIONS, "\n".join(got))
+    with zipfile.ZipFile(os.path.join(work, "validation.ods")) as z:
+        content = z.read("content.xml").decode()
+    check("validation: ODF's conditions", 'table:condition="of:cell-content-is-in-list(&quot;Yes&quot;;&quot;No&quot;)"' in content and
+          'table:condition="of:cell-content-is-decimal-number() and cell-content-is-between(0,100000)"' in content and
+          'table:condition="of:cell-content-text-length()&lt;=200"' in content and
+          'table:condition="of:is-true-formula(LEN([.A7])&gt;0)"' in content and
+          'table:condition="of:cell-content-is-in-list([$Lists.$A$1:.$A$5])"' in content, content[:2000])
+    check("validation: before the sheets; cells name them, empty ones too",
+          content.find("<table:content-validations>") < content.find("<table:table ") and
+          'table:content-validation-name="val' in content, "")
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-validation-ods")
+            os.makedirs(outdir, exist_ok=True)
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                            "--outdir", outdir, os.path.join(work, "validation.ods")], check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=300)
+            back = sheet_lines(dump(os.path.join(outdir, "validation.xlsx")), 0, "validation")
+            check("validation: LibreOffice reads the seven from the ODS written", len(back) == 7 and
+                  any('formula "\\"Yes,No\\""' in l and "ranges=6,3-241,3" in l for l in back), "\n".join(back))
+        except Exception as e:  # noqa: BLE001
+            check("validation: LibreOffice converts the ODS written", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
 
 
 # validation-openpyxl.xlsx: a rule that alerts to a row (lists written out, from cells, from a name, without the
@@ -392,8 +487,107 @@ def test_autofilter(work):
             check("autofilter: LibreOffice converts the file written", False, e)
         finally:
             shutil.rmtree(profile, ignore_errors=True)
-    report = convert(FIX, os.path.join(work, "autofilter.ods"))
-    check("autofilter: ODS says it leaves it out", "AutoFilters are kept in Excel workbooks" in report, report)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "autofilter." + ext)
+        report = convert(filtered, ods)
+        check("autofilter: the buttons and the filter kept in ." + ext + "; the sort said to be left out",
+              "AutoFilters are kept" not in report and "sorting are not kept" in report, report)
+        check("autofilter: the same from ." + ext + " but for the sort",
+              sheet_lines(dump(ods), 0, "autofilter") == [want[0].replace(AF_KEPT[AF_KEPT.find("<sortState"):].replace('"', '\\"'), "")],
+              sheet_lines(dump(ods), 0, "autofilter"))
+    with zipfile.ZipFile(os.path.join(work, "autofilter.ods")) as z:
+        content = z.read("content.xml").decode()
+    check("autofilter: as LibreOffice writes it", '<table:database-range table:name="__Anonymous_Sheet_DB__0" '
+          'table:target-range-address="Systems.A6:Systems.I242" table:display-filter-buttons="true"><table:filter>'
+          '<table:filter-condition table:field-number="3" table:value="Yes" table:operator="="/></table:filter>' in content,
+          content[content.find("<table:database-range"):][:400])
+
+
+def test_cf_kinds_ods(work):
+    """The kept rules LibreOffice has words for (an icon set, top and bottom tens, an average, duplicates and
+    uniques, a text's start, errors, a data bar from a number to a percentile) through ODS and back."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.formatting.rule import DataBarRule, IconSetRule, Rule
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.styles.differential import DifferentialStyle
+    except ImportError:
+        return
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Kinds"
+    for r in range(1, 21):
+        ws.append([r, r * 3 % 7, "a%d" % (r % 4), "x"])
+    red = DifferentialStyle(font=Font(color="9C0006"), fill=PatternFill(bgColor="FFC7CE"))
+    ws.conditional_formatting.add("A1:A20", IconSetRule("3Arrows", "percent", [0, 33, 67]))
+    ws.conditional_formatting.add("B1:B20", Rule(type="top10", rank=3, dxf=red))
+    ws.conditional_formatting.add("B1:B20", Rule(type="top10", rank=10, percent=True, bottom=True, dxf=red))
+    ws.conditional_formatting.add("A1:A20", Rule(type="aboveAverage", aboveAverage=False, equalAverage=True, dxf=red))
+    ws.conditional_formatting.add("C1:C20", Rule(type="duplicateValues", dxf=red))
+    ws.conditional_formatting.add("C1:C20", Rule(type="uniqueValues", dxf=red))
+    ws.conditional_formatting.add("C1:C20", Rule(type="beginsWith", operator="beginsWith", text="a1",
+                                                 formula=['LEFT(C1,LEN("a1"))="a1"'], dxf=red))
+    ws.conditional_formatting.add("C1:C20", Rule(type="containsErrors", formula=["ISERROR(C1)"], dxf=red))
+    ws.conditional_formatting.add("D1:D20", DataBarRule(start_type="num", start_value=1, end_type="percentile",
+                                                        end_value=90, color="FF00AA00"))
+    src = os.path.join(work, "kinds.xlsx")
+    wb.save(src)
+
+    def norm(l):                                     # a start tag's attributes in any order
+        return re.sub(r'(<cfRule)((?: \w+=\\"[^\\]*\\")*)', lambda m: m.group(1) + "".join(sorted(re.findall(r' \w+=\\"[^\\]*\\"', m.group(2)))), l)
+    want = [norm(l) for l in sheet_lines(dump(src), 0, "cf")]
+    check("cf kinds: nine read", len(want) == 9, want)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "kinds." + ext)
+        convert(src, ods)
+        got = [norm(l) for l in sheet_lines(dump(ods), 0, "cf")]
+        check("cf kinds: the same through ." + ext, got == want, "\n".join(got) + "\n---\n" + "\n".join(want))
+    with zipfile.ZipFile(os.path.join(work, "kinds.ods")) as z:
+        content = z.read("content.xml").decode()
+    for said in ('calcext:icon-set-type="3Arrows"', 'calcext:value="top-elements(3)"', 'calcext:value="bottom-percent(10)"',
+                 'calcext:value="below-equal-average"', 'calcext:value="duplicate"', 'calcext:value="unique"',
+                 'calcext:value="begins-with(&quot;a1&quot;)"', 'calcext:value="is-error"', 'calcext:type="percentile"'):
+        check("cf kinds: written as LibreOffice says it: " + said, said in content, "")
+
+
+def test_ods_quoted_sheet(work):
+    """A sheet whose name ODF quotes (a space, an apostrophe, a letter past ASCII): its rule's base cell, its
+    AutoFilter's range and its comment through ODS."""
+    try:
+        import openpyxl
+        from openpyxl.comments import Comment
+        from openpyxl.worksheet.datavalidation import DataValidation
+    except ImportError:
+        return
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Bob's \u03a9 list"
+    for r in range(1, 6):
+        ws.append(["n%d" % r, r, "Yes" if r % 2 else "No"])
+    ws.auto_filter.ref = "A1:C5"
+    ws.auto_filter.add_filter_column(2, ["Yes", "Maybe & so"])
+    dv = DataValidation(type="whole", operator="between", formula1="1", formula2="9", showErrorMessage=True,
+                        error="1 to 9")
+    ws.add_data_validation(dv)
+    dv.add("B2:B5")
+    ws["A3"].comment = Comment("Checked \u2713", "Zo\u00eb")
+    src = os.path.join(work, "quoted.xlsx")
+    wb.save(src)
+    before = dump(src)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "quoted." + ext)
+        convert(src, ods)
+        after = dump(ods)
+        for kind in ("autofilter", "validation", "comment"):
+            want = sheet_lines(before, 0, kind)
+            if kind == "autofilter":                 # openpyxl's defaults (buttons shown, no blanks) go without saying
+                want = [re.sub(r' (hiddenButton|showButton|blank)=\\"\d\\"', "", l) for l in want]
+            check("quoted sheet name: its %s through .%s" % (kind, ext), sheet_lines(after, 0, kind) == want,
+                  (want, sheet_lines(after, 0, kind)))
+    with zipfile.ZipFile(os.path.join(work, "quoted.ods")) as z:
+        content = z.read("content.xml").decode()
+    check("quoted sheet name: written as ODF quotes it", "table:target-range-address=\"'Bob''s \u03a9 list'.A1:'Bob''s \u03a9 list'.C5\"" in content and
+          "table:base-cell-address=\"'Bob''s \u03a9 list'.B2\"" in content, content[content.find("<table:database-range"):][:300])
 
 
 # ---- Pictures and charts ----
@@ -583,7 +777,11 @@ def test_drawings(work):
         finally:
             shutil.rmtree(profile, ignore_errors=True)
     report = convert(FIX, os.path.join(work, "drawings.ods"))
-    check("drawings: ODS says it leaves them out", "Pictures and charts on sheets are kept in Excel workbooks" in report, report)
+    check("drawings: ODS keeps the fixture's chart, no note", "on sheets are kept in Excel workbooks" not in report, report)
+    report = convert(xlsx, os.path.join(work, "drawn.ods"))
+    check("drawings: ODS says it leaves the pictures out, not the chart",
+          "Pictures and shapes on sheets are kept in Excel workbooks (.xlsx) only, not yet in ODS: their charts are" in report and
+          len(lines(dump(os.path.join(work, "drawn.ods")), "chart")) == 1, report)
 
     # the chart's part missing: that drawing is left out whole (with a note), the other kept
     broken = dict(drawn)
@@ -787,6 +985,127 @@ def test_charts(work):
           (sheet_lines(got, 0, "chart"), sheet_lines(got, 7, "chart")))
 
 
+def chart_refs(text):
+    """Chart and series lines as compared through ODS: a sheet's name unquoted where it needs no quotes, and a
+    series' name and points (read from its cells there, the file's caches here) left aside."""
+    out = []
+    for l in text.splitlines():
+        if l.startswith("chart ") or l.startswith("series "):
+            l = re.sub(r"'([A-Za-z0-9_]+)'!", r"\1!", l)
+            out.append(re.sub(r' name "[^"]*"', "", l.split(" points")[0]))
+    return out
+
+
+def test_charts_ods(work):
+    """Charts through ODS (an embedded chart document each, in a frame in the cell it starts in; inside the frame in
+    a flat file) and back, the same; LibreOffice reading ours, us reading LibreOffice's; an .xlsx from them."""
+    src = dump(CHARTS)
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "charts." + ext)
+        report = convert(CHARTS, ods)
+        check("charts ODS: no note they are left out (.%s)" % ext, "not yet in ODS" not in report, report)
+        got = dump(ods)
+        check("charts ODS: the same charts from .%s" % ext, chart_refs(got) == chart_refs(src),
+              "\n".join(chart_refs(got)) + "\n---\n" + "\n".join(chart_refs(src)))
+        check("charts ODS: series named and filled from their cells (.%s)" % ext,
+              lines(got, "series")[0].startswith('series 0 colour=- name "Amiga" from "Sales!B1"') and
+              lines(got, "series")[0].endswith('points 12="Jan" 15="Feb" 9="Mar" 18="Apr" 22="May" 25="Jun"'), lines(got, "series")[:1])
+    with zipfile.ZipFile(os.path.join(work, "charts.ods")) as z:
+        names = z.namelist()
+        manifest = z.read("META-INF/manifest.xml").decode()
+        content = z.read("content.xml").decode()
+        first = z.read("Object 1/content.xml").decode()
+    well_formed(os.path.join(work, "charts.ods"))
+    check("charts ODS: a chart document each, in the manifest", all("Object %d/content.xml" % i in names for i in range(1, 10)) and
+          manifest.count('manifest:media-type="application/vnd.oasis.opendocument.chart"') == 9, names)
+    check("charts ODS: a frame in the cell it starts in", re.search(r'<table:table-cell><draw:frame draw:z-index="0" draw:name="Chart 1" '
+          r'svg:width="15.000cm" svg:height="7.500cm" svg:x="0.000cm" svg:y="0.000cm"><draw:object xlink:href="./Object 1"', content)
+          is not None, content[content.find("<draw:frame"):][:300])
+    check("charts ODS: the chart as ODF says it", 'chart:class="chart:line"' in first and
+          '<chart:categories table:cell-range-address="$Sales.$A$2:.$A$7"/>' in first and
+          'chart:values-cell-range-address="$Sales.$B$2:.$B$7" chart:label-cell-address="$Sales.B1"' in first and
+          '<chart:title><text:p>Sales by month</text:p></chart:title>' in first, first[-1500:])
+    # Excel's own: a two-cell anchor, colours, a series of its own values (no cells), the axis's limits, a gap
+    with zipfile.ZipFile(FIX) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    p = dict(parts)
+    # with its labels' own number format and the value axis's, as Dale's workbook has one
+    p["xl/charts/chart1.xml"] = EXCEL_CHART.replace(
+        '<c:invertIfNegative val="0"/><c:cat>',
+        '<c:invertIfNegative val="0"/><c:dLbls><c:numFmt formatCode="0.0%" sourceLinked="0"/><c:showLegendKey val="0"/>'
+        '<c:showVal val="1"/></c:dLbls><c:cat>').replace(
+        '<c:delete val="0"/></c:valAx>', '<c:delete val="0"/><c:numFmt formatCode="#,##0" sourceLinked="0"/></c:valAx>').encode()
+    p["xl/drawings/drawing1.xml"] = p["xl/drawings/drawing1.xml"].replace(
+        b"<oneCellAnchor><from><col>3</col><colOff>0</colOff><row>1</row><rowOff>0</rowOff></from>"
+        b'<ext cx="5400000" cy="2700000"/>',
+        b"<twoCellAnchor><from><col>3</col><colOff>95250</colOff><row>1</row><rowOff>9525</rowOff></from>"
+        b"<to><col>10</col><colOff>0</colOff><row>16</row><rowOff>190500</rowOff></to>").replace(
+        b"</oneCellAnchor>", b"</twoCellAnchor>")
+    excel = os.path.join(work, "excel-chart-ods.xlsx")
+    write_zip(excel, p)
+    want = dump(excel)
+    check("charts ODS: the Excel chart's formats read", ' format "#,##0" ' in sheet_lines(want, 7, "chart")[0] and
+          ' lformat "0.0%"' in sheet_lines(want, 7, "series")[0], sheet_lines(want, 7, "chart") + sheet_lines(want, 7, "series"))
+    for ext in ("ods", "fods"):
+        ods = os.path.join(work, "excel-chart." + ext)
+        convert(excel, ods)
+        got = dump(ods)
+        # a series of cells takes their values now (here not what Excel's cache made up); one of its own keeps its own
+        mine = lambda ls: [re.sub(r' name "[^"]*"', "", l.split(" points")[0] if ' values ""' not in l else l) for l in ls]
+        check("charts ODS: Excel's, the same from .%s" % ext, sheet_lines(got, 7, "chart") == sheet_lines(want, 7, "chart") and
+              mine(sheet_lines(got, 7, "series")) == mine(sheet_lines(want, 7, "series")),
+              "\n".join(sheet_lines(got, 7, "chart") + sheet_lines(got, 7, "series")) + "\n---\n" +
+              "\n".join(sheet_lines(want, 7, "chart") + sheet_lines(want, 7, "series")))
+    # an .xlsx from the ODS: its charts kept as Excel's parts, openpyxl reading them
+    back = os.path.join(work, "charts-from-ods.xlsx")
+    convert(os.path.join(work, "charts.ods"), back)
+    well_formed(back)
+    check("charts ODS: to .xlsx, the same charts", chart_refs(dump(back)) == chart_refs(src), "\n".join(chart_refs(dump(back))))
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(back)
+        check("charts ODS: openpyxl reads the .xlsx's nine", [len(ws._charts) for ws in wb.worksheets] == [3, 2, 1, 3],
+              [len(ws._charts) for ws in wb.worksheets])
+    except ImportError:
+        pass
+    if SOFFICE:
+        profile = tempfile.mkdtemp(prefix="owf-lo-")
+        try:
+            outdir = os.path.join(work, "lo-charts-ods")
+            os.makedirs(outdir, exist_ok=True)
+            kinds = lambda text: sorted(re.sub(r" (from|to|size)=\S+| vary=1| hole=\d+", "", l) for l in lines(text, "chart"))
+            for ext in ("ods", "fods"):
+                subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                                "--outdir", outdir, os.path.join(work, "charts." + ext)], check=True, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=300)
+                theirs = dump(os.path.join(outdir, "charts.xlsx"))
+                check("charts ODS: LibreOffice reads ours (.%s): the nine, their kinds, titles and legends" % ext,
+                      kinds(theirs) == kinds(src), "\n".join(kinds(theirs)))
+                check("charts ODS: LibreOffice reads ours (.%s): the series' cells" % ext,
+                      'from "Sales!$B$1" values "Sales!$B$2:$B$7" categories "Sales!$A$2:$A$7"' in theirs, lines(theirs, "series")[:1])
+            # the formats of its own (not its values'), the axis's and the labels', as data styles LibreOffice reads
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "xlsx",
+                            "--outdir", outdir, os.path.join(work, "excel-chart.ods")], check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=300)
+            theirs = dump(os.path.join(outdir, "excel-chart.xlsx"))
+            check("charts ODS: LibreOffice reads ours: the axis's and the labels' number formats",
+                  ' format "#,##0" ' in (sheet_lines(theirs, 7, "chart") or [""])[0] and
+                  ' lformat "0.0%"' in (sheet_lines(theirs, 7, "series") or [""])[0],
+                  sheet_lines(theirs, 7, "chart") + sheet_lines(theirs, 7, "series"))
+            subprocess.run([SOFFICE, "-env:UserInstallation=file://" + profile, "--headless", "--convert-to", "ods",
+                            "--outdir", outdir, CHARTS], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+            theirs = dump(os.path.join(outdir, "charts-openpyxl.ods"))
+            check("charts ODS: we read LibreOffice's: the nine, their kinds, titles and legends",
+                  kinds(theirs) == kinds(src), "\n".join(kinds(theirs)))
+            check("charts ODS: we read LibreOffice's: a scatter's x for each series, the pie's own slice colour",
+                  len([l for l in lines(theirs, "series") if ' x "Scatter!A2:A6"' in l]) == 2 and "9#C00000=" in theirs,
+                  lines(theirs, "series"))
+        except Exception as e:  # noqa: BLE001
+            check("charts ODS: LibreOffice converts them", False, e)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+
+
 # ---- Formatting of whole rows ----
 
 def test_row_styles(work):
@@ -886,8 +1205,11 @@ def main():
         test_validation(work)
         test_validation_alerts(work)
         test_autofilter(work)
+        test_ods_quoted_sheet(work)
+        test_cf_kinds_ods(work)
         test_drawings(work)
         test_charts(work)
+        test_charts_ods(work)
         test_row_styles(work)
         damaged(work)
     if failures:

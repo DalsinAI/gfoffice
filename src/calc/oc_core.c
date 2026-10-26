@@ -400,6 +400,7 @@ int oc_core_rename_sheet(oc_core *core, int sheet, const char *name)
     }
     /* the engine renames it in every formula and name that refers to it */
     rc = owf_calc_rename_sheet(core->calc, sheet, name);
+    oc_charts_forget(core);                          /* their cells name it */
     if (rc != OWF_OK) {
         oc_undo_free(u);
         return rc;
