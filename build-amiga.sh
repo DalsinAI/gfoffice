@@ -34,7 +34,7 @@ OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/openamigalayout" OWF=library OWF_BUILD_L
 mkdir -p "$OUT/samples"
 for f in "$HERE"/samples/*.docx "$HERE"/samples/*.odt "$HERE"/samples/*.txt \
          "$HERE"/tests/book/fixtures/features-openpyxl.xlsx "$HERE"/tests/book/fixtures/charts-openpyxl.xlsx \
-         "$HERE"/tests/core/fixtures/*.docx; do
+         "$HERE"/tests/core/fixtures/*.docx "$HERE"/tests/core/fixtures/*.odt; do
     [ -f "$f" ] && cp "$f" "$OUT/samples/"   # the workbooks (OpenCalc's charts and the rest) and the layout
                                              # fixtures (covers, contents, text round frames), for a lab
 done

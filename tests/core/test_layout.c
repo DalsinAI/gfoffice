@@ -1087,6 +1087,107 @@ static void test_round_trip(const char *path)
     remove(out);
 }
 
+/* The frames a story's runs hold, in order: their indices into frames, how many. */
+static int story_frames(const owf_story *st, int *frames, int max)
+{
+    int i, j, n = 0;
+    for (i = 0; i < st->nparas; ++i)
+        for (j = 0; j < st->paras[i].nruns; ++j)
+            if (st->paras[i].runs[j].kind == OWF_RUN_FRAME && n < max) frames[n++] = st->paras[i].runs[j].image;
+    return n;
+}
+
+static int near_twips(int a, int b) { return a - b <= 2 && b - a <= 2; }
+
+/* 2.0.20: a document's frames through ODT and back (ODT reads them back as frames): every story's frames, in
+ * order, the same size, in the same place, wrapped and filled as before, with the same picture or text. */
+static void test_odt_frames(const char *path)
+{
+    owf_doc *a = NULL, *b = NULL;
+    const char *out = "/tmp/openwrite-layout-frames.odt";
+    int k, i, fa[32], fb[32], bad = 0;
+    if (!strstr(path, ".docx") || owf_import_file(path, NULL, &a, NULL, NULL) != OWF_OK) return;
+    if (!a->nframes) { owf_doc_free(a); return; }
+    CHECK(owf_export_file(a, out, "odt", NULL) == OWF_OK);
+    CHECK(owf_import_file(out, NULL, &b, NULL, NULL) == OWF_OK && b);
+    if (!b) { owf_doc_free(a); return; }
+    CHECK(a->nframes == b->nframes);
+    for (k = 0; k < 3; ++k) {
+        const owf_story *sa = k == 0 ? &a->body : k == 1 ? &a->header : &a->footer;
+        const owf_story *sb = k == 0 ? &b->body : k == 1 ? &b->header : &b->footer;
+        int na = story_frames(sa, fa, 32), nb = story_frames(sb, fb, 32);
+        CHECK(na == nb);
+        for (i = 0; i < na && i < nb; ++i) {
+            const owf_frame *x = &a->frames[fa[i]], *y = &b->frames[fb[i]];
+            int same = near_twips(x->width, y->width) && near_twips(x->height, y->height) &&
+                       near_twips(x->x, y->x) && near_twips(x->y, y->y) && x->x_from == y->x_from &&
+                       x->y_from == y->y_from && x->x_place == y->x_place && x->y_place == y->y_place &&
+                       x->behind == y->behind && x->wrap == y->wrap && x->in_line == y->in_line &&
+                       x->fill == y->fill && x->line == y->line && (x->image >= 0) == (y->image >= 0) &&
+                       x->story.nparas == y->story.nparas;
+            if (same && x->story.nparas) {
+                const owf_para *pa = &x->story.paras[0], *pb = &y->story.paras[0];
+                same = near_twips(x->inset[0], y->inset[0]) && near_twips(x->inset[3], y->inset[3]) &&
+                       pa->nruns && pb->nruns && pa->runs[0].text && pb->runs[0].text &&
+                       !strcmp(pa->runs[0].text, pb->runs[0].text);
+            }
+            if (!same) {
+                printf("odt frames %s: story %d frame %d: %dx%d at %d/%d/%d, %d/%d/%d wrap %d behind %d, back "
+                       "%dx%d at %d/%d/%d, %d/%d/%d wrap %d behind %d\n", path, k, i, x->width, x->height,
+                       x->x_from, x->x_place, x->x, x->y_from, x->y_place, x->y, x->wrap, x->behind, y->width,
+                       y->height, y->x_from, y->x_place, y->x, y->y_from, y->y_place, y->y, y->wrap, y->behind);
+                ++bad;
+            }
+        }
+    }
+    CHECK(bad == 0);
+    owf_doc_free(a);
+    owf_doc_free(b);
+    remove(out);
+}
+
+/* tests/core/fixtures/frames.odt (make_frames_odt.py): frames as Writer writes them (2.0.20), their places
+ * and looks from their styles and the common styles those are based on. */
+static void frames_odt_checks(const ow_layout *l, const owf_doc *doc)
+{
+    const owf_frame *f;
+    int body[8], header[4], n;
+    (void)l;
+    CHECK(doc->nframes == 4);
+    n = story_frames(&doc->body, body, 8);
+    CHECK(n == 3);
+    CHECK(story_frames(&doc->header, header, 4) == 1);
+    if (n != 3 || doc->nframes != 4 || doc->body.nparas < 3) return;
+    /* the page's picture: with the first paragraph, at its start, 1 inch from the page's corner, under the text */
+    CHECK(doc->body.paras[0].runs[0].kind == OWF_RUN_FRAME && doc->body.paras[0].runs[0].image == body[0]);
+    f = &doc->frames[body[0]];
+    CHECK(f->image >= 0 && !f->story.nparas && f->width == 2880 && f->height == 4032);
+    CHECK(f->x_from == OWF_FROM_PAGE && f->x_place == OWF_PLACE_AT && f->x == 1440);
+    CHECK(f->y_from == OWF_FROM_PAGE && f->y_place == OWF_PLACE_AT && f->y == 1440);
+    CHECK(f->wrap == OWF_WRAP_NONE && f->behind);
+    /* the text box: in the first paragraph after its text, centred in the paragraph, Frame's wrap, border and
+     * padding, its own fill, as high as its text box's least */
+    f = &doc->frames[body[1]];
+    CHECK(f->image < 0 && f->story.nparas == 2 && f->width == 4320 && f->height == 1080);
+    CHECK(f->x_from == OWF_FROM_PARAGRAPH && f->x_place == OWF_PLACE_CENTRE);
+    CHECK(f->y_from == OWF_FROM_PARAGRAPH && f->y_place == OWF_PLACE_START);
+    CHECK(f->wrap == OWF_WRAP_SQUARE && !f->behind && !f->in_line);
+    CHECK(f->fill == OWF_SHADE(0xFFF2CC) && f->line == OWF_SHADE(0));
+    CHECK(near_twips(f->inset[0], 85) && near_twips(f->inset[3], 85));
+    CHECK(f->story.paras[0].nruns && !strcmp(f->story.paras[0].runs[0].text, "Text in the box"));
+    /* the picture at the margin's right, wrapped round its outline: the JPEG after the SVG */
+    f = &doc->frames[body[2]];
+    CHECK(f->image >= 0 && !strcmp(doc->images[f->image].mime, "image/jpeg"));
+    CHECK(f->x_from == OWF_FROM_MARGIN && f->x_place == OWF_PLACE_END && f->wrap == OWF_WRAP_TIGHT);
+    CHECK(f->width == 1440 && f->height == 2016);
+    /* the picture as a character stays in the line */
+    CHECK(doc->body.paras[2].nruns >= 2 && doc->body.paras[2].runs[1].kind == OWF_RUN_IMAGE);
+    /* the header's box, 2 inches from the page's left, from its paragraph down, filled and outlined */
+    f = &doc->frames[header[0]];
+    CHECK(f->story.nparas == 1 && f->x_from == OWF_FROM_PAGE && f->x == 2880 && f->y_from == OWF_FROM_PARAGRAPH);
+    CHECK(f->width == 2880 && f->height == 432 && f->fill == OWF_SHADE(0xC00000) && f->wrap == OWF_WRAP_SQUARE);
+}
+
 static void test_sample(const char *path)
 {
     owf_doc *doc = NULL;
@@ -1136,6 +1237,7 @@ static void test_sample(const char *path)
         if (strstr(path, "inline-box.docx")) inline_checks(l, doc);
         if (strstr(path, "line-rules.docx")) line_checks(l, doc);
         if (strstr(path, "table-styles.docx")) table_style_checks(l, doc);
+        if (strstr(path, "frames.odt")) frames_odt_checks(l, doc);
         printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
                checked, lists);
         ow_layout_free(l);
@@ -1154,6 +1256,7 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; ++i)
         if (strstr(argv[i], "cover.docx") && !strstr(argv[i], "wpg")) test_box_caret(argv[i]);
     for (i = 1; i < argc; ++i) test_round_trip(argv[i]);
+    for (i = 1; i < argc; ++i) test_odt_frames(argv[i]);
     if (failures) {
         printf("ow_layout tests: %d failed\n", failures);
         return 1;
