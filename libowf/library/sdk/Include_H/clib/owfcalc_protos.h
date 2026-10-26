@@ -94,6 +94,8 @@ int owf_calc_parse_cell(const char *text, unsigned *row, unsigned *col);
 int owf_calc_format(const owf_book *book, const owf_cell *cell, char *out, size_t size);
 int owf_calc_format_value(const char *format, const owf_cell *value, int date1904, int width, char *out, size_t size, unsigned long *colour);
 int owf_sheet_set_row_style(owf_sheet *sheet, unsigned row, int style);
+int owf_calc_place_chart(owf_calc *calc, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off);
+int owf_calc_nudge_chart(owf_calc *calc, int sheet, int index, long dx, long dy);
 
 #ifdef __cplusplus
 }
