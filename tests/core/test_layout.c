@@ -273,8 +273,11 @@ static void contents_checks(const ow_layout *l, const owf_doc *doc)
     CHECK(same_name(doc->body.paras[0].style, "TOCHeading") && same_name(doc->body.paras[1].style, "TOC1") &&
           same_name(doc->body.paras[2].style, "TOC2") && same_name(doc->body.paras[4].style, "TOC1") &&
           doc->body.paras[5].style == NULL);
-    CHECK(same_name(doc->body.paras[6].bookmarks, "_Toc1") && same_name(doc->body.paras[7].bookmarks, "_Toc2") &&
-          same_name(doc->body.paras[8].bookmarks, "_Toc3 _Ref9") && same_name(doc->body.paras[9].bookmarks, "_Toc4") &&
+    /* 2.0.21: round their headings' text */
+    CHECK(same_name(doc->body.paras[6].bookmarks, "_Toc1@0-20") &&
+          same_name(doc->body.paras[7].bookmarks, "_Toc2@0-24") &&
+          same_name(doc->body.paras[8].bookmarks, "_Toc3@0-8 _Ref9@0-8") &&
+          same_name(doc->body.paras[9].bookmarks, "_Toc4@0-8") &&
           doc->body.paras[9].table_id >= 0 && doc->body.paras[1].bookmarks == NULL);
     CHECK(doc->body.paras[1].runs[0].href && !strcmp(doc->body.paras[1].runs[0].href, "#_Toc1"));
     /* the model: the style's stop, a paragraph's own added to it, one cleared for another */
@@ -1188,6 +1191,94 @@ static void frames_odt_checks(const ow_layout *l, const owf_doc *doc)
     CHECK(f->width == 2880 && f->height == 432 && f->fill == OWF_SHADE(0xC00000) && f->wrap == OWF_WRAP_SQUARE);
 }
 
+/* tests/core/fixtures/bookmarks.docx (make_bookmarks_docx.py): bookmarks at their places in the text (2.0.21),
+ * from DOCX and through DOCX and ODT. */
+static void bookmark_checks(const ow_layout *l, const owf_doc *doc)
+{
+    static const struct { int para; const char *marks; } want[] = {
+        { 0, "_Ref1@11-16 Point@21" },   /* round the bold word; empty, inside a run */
+        { 1, "_Toc5@0-7" },              /* round a heading's text */
+        { 2, "Inner@8-12" },             /* inside a link */
+        { 3, "Span@5-16" },              /* ending in the next paragraph: at this one's end */
+        { 4, NULL },
+        { 5, "Between@0-34" },           /* begun between the paragraphs */
+        { 6, "Accent@5-12" },            /* after a two-byte character */
+        { 8, "Cell@15-19" }              /* in a cell's second paragraph */
+    };
+    static const char *const paths[2] = { "/tmp/openwrite-bookmarks.docx", "/tmp/openwrite-bookmarks.odt" };
+    size_t i;
+    int k;
+    (void)l;
+    CHECK(doc->body.nparas == 10);
+    if (doc->body.nparas != 10) return;
+    for (i = 0; i < sizeof want / sizeof want[0]; ++i)
+        CHECK(same_name(doc->body.paras[want[i].para].bookmarks, want[i].marks));
+    for (k = 0; k < 2; ++k) {
+        owf_doc *back = NULL;
+        CHECK(owf_export_file(doc, paths[k], NULL, NULL) == OWF_OK);
+        CHECK(owf_import_file(paths[k], NULL, &back, NULL, NULL) == OWF_OK && back);
+        if (back && back->body.nparas == 10)
+            for (i = 0; i < sizeof want / sizeof want[0]; ++i)
+                CHECK(same_name(back->body.paras[want[i].para].bookmarks, want[i].marks));
+        else
+            CHECK(back && back->body.nparas == 10);
+        if (back) owf_doc_free(back);
+        remove(paths[k]);
+    }
+}
+
+/* 2.0.21: the bookmarks keep their places through typing, Return, Backspace and undo. */
+static void test_bookmark_edits(const char *path)
+{
+    owf_doc *doc = NULL;
+    ow_editor *ed;
+    ow_selection sel;
+    if (owf_import_file(path, NULL, &doc, NULL, NULL) != OWF_OK || !doc) {
+        CHECK(!"bookmarks.docx read");
+        return;
+    }
+    ed = ow_editor_new(doc);
+    CHECK(ed != NULL);
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@11-16 Point@21"));
+    /* typed before them: moved on */
+    memset(&sel, 0, sizeof sel);
+    ow_editor_set_selection(ed, &sel);
+    CHECK(ow_editor_insert_utf8(ed, "Our ", 4) == OWF_OK);
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@15-20 Point@25"));
+    /* Return just before the bold word: they go with the text */
+    CHECK(doc->body.paras[0].nruns >= 2 && !strcmp(doc->body.paras[0].runs[1].text, "first"));
+    sel.anchor.paragraph = sel.focus.paragraph = 0;
+    sel.anchor.run = sel.focus.run = 1;
+    sel.anchor.byte_offset = sel.focus.byte_offset = 0;
+    ow_editor_set_selection(ed, &sel);
+    CHECK(ow_editor_newline(ed) == OWF_OK);
+    CHECK(doc->body.paras[0].bookmarks == NULL);
+    CHECK(same_name(doc->body.paras[1].bookmarks, "_Ref1@0-5 Point@10"));
+    /* Backspace at the new paragraph's start: back where they were */
+    CHECK(ow_editor_backspace(ed) == OWF_OK);
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@15-20 Point@25"));
+    /* two characters of the bold word deleted: the range is shorter, the point after it moves back */
+    {
+        const owf_para *p = &doc->body.paras[0];
+        int r;
+        for (r = 0; r < p->nruns && !(p->runs[r].kind == OWF_RUN_TEXT && !strcmp(p->runs[r].text, "first")); ++r)
+            ;
+        CHECK(r < p->nruns);
+        sel.anchor.run = sel.focus.run = r;
+        sel.anchor.byte_offset = sel.focus.byte_offset = 5;
+        ow_editor_set_selection(ed, &sel);
+    }
+    CHECK(ow_editor_backspace(ed) == OWF_OK && ow_editor_backspace(ed) == OWF_OK);
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@15-18 Point@23"));
+    /* undone: as they were read */
+    while (ow_editor_undo(ed) == 1)
+        ;
+    CHECK(same_name(doc->body.paras[0].bookmarks, "_Ref1@11-16 Point@21"));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
 static void test_sample(const char *path)
 {
     owf_doc *doc = NULL;
@@ -1238,6 +1329,7 @@ static void test_sample(const char *path)
         if (strstr(path, "line-rules.docx")) line_checks(l, doc);
         if (strstr(path, "table-styles.docx")) table_style_checks(l, doc);
         if (strstr(path, "frames.odt")) frames_odt_checks(l, doc);
+        if (strstr(path, "bookmarks.docx")) bookmark_checks(l, doc);
         printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
                checked, lists);
         ow_layout_free(l);
@@ -1257,6 +1349,8 @@ int main(int argc, char **argv)
         if (strstr(argv[i], "cover.docx") && !strstr(argv[i], "wpg")) test_box_caret(argv[i]);
     for (i = 1; i < argc; ++i) test_round_trip(argv[i]);
     for (i = 1; i < argc; ++i) test_odt_frames(argv[i]);
+    for (i = 1; i < argc; ++i)
+        if (strstr(argv[i], "bookmarks.docx")) test_bookmark_edits(argv[i]);
     if (failures) {
         printf("ow_layout tests: %d failed\n", failures);
         return 1;

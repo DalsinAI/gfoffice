@@ -383,6 +383,13 @@ void owf_format_number(owf_buf *out, int n, owf_number_format format);
 /* The colours of ISO 6429 (and ANSI text), 0 to 7. */
 extern const unsigned long owf_iso_colours[8];
 
+/* 2.0.21: a paragraph's bookmarks one by one (owf_para.bookmarks): a name (not 0-terminated) and its place,
+ * start and end in the paragraph's text bytes (0 and 0 for a name without one). How many, up to max. */
+typedef struct { const char *name; size_t length; size_t start, end; } owf_mark;
+int owf_marks_parse(const char *list, owf_mark *marks, int max);
+/* The text bytes of a paragraph's text runs, in all. */
+size_t owf_para_text_bytes(const owf_para *p);
+
 /* Formatting state while text goes into a paragraph. */
 typedef struct {
     owf_doc *doc;

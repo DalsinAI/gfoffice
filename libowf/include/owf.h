@@ -147,7 +147,10 @@ typedef struct {
      * in fmt already; a heading is written as its level's style whatever this says. */
     char *style;
     /* 1.4: the bookmarks at its start, their names between single spaces ("_Toc123 _Ref7"), NULL: none.
-     * DOCX's w:bookmarkStart and ODF's text:bookmark; a link into the document ("#_Toc123") goes to one. */
+     * DOCX's w:bookmarkStart and ODF's text:bookmark; a link into the document ("#_Toc123") goes to one.
+     * 2.0.21: a name may carry its place in the paragraph's text: '@' and the byte offset where it starts
+     * (in its text runs' bytes, in order; other runs count none), then '-' and where it ends when it isn't
+     * empty ("_Toc123@0-14 _Ref7@20"). A name without one is at the paragraph's start, empty, as before. */
     char *bookmarks;
 } owf_para;
 
