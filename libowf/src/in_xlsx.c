@@ -1307,8 +1307,11 @@ static void sheet_element(xlsx *x, const owf_xml_event *e, cellstate *cs)
             if (owf_sheet_set_row(sh, (unsigned)cs->next_row, sh->default_height, 1) < 0)
                 x->failed = 1;
         }
-        if (xbool(ev_attr(e, "customFormat"), 0) && xlong(ev_attr(e, "s"), 0, 0, 0x7FFFFFFFL))
-            owf_report_add(x->report, OWF_NOTE_APPROX, "Formatting of whole rows is kept on their cells only");
+        if (xbool(ev_attr(e, "customFormat"), 0) && xlong(ev_attr(e, "s"), 0, 0, 0x7FFFFFFFL)) {
+            int st = style_of(x, ev_attr(e, "s"));        /* the row's own formatting, for its empty cells */
+            if (st > 0 && owf_sheet_set_row_style(sh, (unsigned)cs->next_row, st) < 0)
+                x->failed = 1;
+        }
     } else if (!strcmp(name, "c") && cs->in_data) {
         const char *ref = ev_attr(e, "r"), *t = ev_attr(e, "t");
         unsigned long row, col;

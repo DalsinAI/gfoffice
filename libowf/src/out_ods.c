@@ -982,6 +982,20 @@ static int array_size(const owf_sheet *sh, const owf_cell *c, unsigned long *row
 }
 
 /* The style a column gives its cells, 0 for none. */
+/* A row's own cell style (owf_rowinfo.style), or 0. */
+static int row_cell_style(const owf_sheet *sh, unsigned row)
+{
+    int lo = 0, hi = sh->nrows;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (sh->rows[mid].row < row)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < sh->nrows && sh->rows[lo].row == row ? sh->rows[lo].style : 0;
+}
+
 static int column_cell_style(const owf_sheet *sh, unsigned long col)
 {
     int i;
@@ -1040,8 +1054,8 @@ static void put_cell(ods_out *w, owf_buf *b, const owf_sheet *sh, const owf_cell
     }
     if (c->style > 0 && c->style < w->book->nstyles)
         owf_buf_printf(b, " table:style-name=\"ce%d\"", c->style);
-    else if (column_cell_style(sh, c->col) > 0)
-        owf_buf_puts(b, " table:style-name=\"Default\"");   /* not the column's */
+    else if (column_cell_style(sh, c->col) > 0 || row_cell_style(sh, c->row) > 0)
+        owf_buf_puts(b, " table:style-name=\"Default\"");   /* not the row's or the column's */
     if (merge && !covered)
         owf_buf_printf(b, " table:number-columns-spanned=\"%u\" table:number-rows-spanned=\"%u\"",
                        merge->last_col - merge->first_col + 1, merge->last_row - merge->first_row + 1);
@@ -1152,16 +1166,19 @@ static int row_has_merge(const owf_sheet *sh, unsigned long row)
 
 static void put_row_open(ods_out *w, owf_buf *b, const owf_sheet *sh, unsigned long row, unsigned long repeat, int *ri)
 {
-    int style, hidden = 0;
+    int style, hidden = 0, cells = 0;
     while (*ri < sh->nrows && sh->rows[*ri].row < row)
         (*ri)++;
     if (*ri < sh->nrows && sh->rows[*ri].row == row) {
-        style = row_style(w, sh->rows[*ri].height, 1);
+        style = row_style(w, sh->rows[*ri].height, sh->rows[*ri].height != sh->default_height || !sh->rows[*ri].style);
         hidden = sh->rows[*ri].hidden;
+        cells = sh->rows[*ri].style;
     } else {
         style = row_style(w, sh->default_height, 0);
     }
     owf_buf_printf(b, "<table:table-row table:style-name=\"ro%d\"", style + 1);
+    if (cells > 0 && cells < w->book->nstyles)       /* its own formatting, for its empty cells */
+        owf_buf_printf(b, " table:default-cell-style-name=\"ce%d\"", cells);
     if (repeat > 1)
         owf_buf_printf(b, " table:number-rows-repeated=\"%lu\"", repeat);
     if (hidden)

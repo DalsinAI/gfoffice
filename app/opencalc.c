@@ -290,6 +290,7 @@ static int tab_first, tab_end, tab_scroll, tab_shown_sheet = -1;
 
 static void draw_all(void);
 static void refresh(void);
+static void pick_from_list(int bx, int by, int bw, int bh);
 static void relayout(void);
 static void menu_action(ULONG id);
 
@@ -860,10 +861,47 @@ static const char *leaf(const char *path)
     return s && *s ? s : path;
 }
 
+static int result(int rc, const char *done);
+static int ask_window(const char *title, const char *text, const char *buttons);
+
+/* A typed value its cell's rule refused: the rule's alert, as Excel shows it. Stop: Retry goes on typing,
+ * Cancel puts the cell back. Warning ("Continue?"): Yes puts it in, No goes on typing, Cancel puts the cell
+ * back. Information: OK puts it in, Cancel puts the cell back. */
+static void validation_alert(void)
+{
+    oc_alert a;
+    char title[128], text[640];
+    struct EasyStruct es = { sizeof(struct EasyStruct), 0, NULL, (UBYTE *)"%s", NULL };
+    size_t n;
+    LONG pick;
+    if (!core || !oc_core_invalid(core, &a)) return;
+    to_latin1(a.title, strlen(a.title), title, sizeof title);
+    n = to_latin1(a.message, strlen(a.message), text, sizeof text - 16);
+    if (a.style == OWF_DV_WARNING) memcpy(text + n, "\n\nContinue?", 12);
+    es.es_Title = (UBYTE *)title;
+    es.es_GadgetFormat = (UBYTE *)(a.style == OWF_DV_WARNING ? "Yes|No|Cancel" : a.style == OWF_DV_INFORMATION ? "OK|Cancel"
+                                                                                                         : "Retry|Cancel");
+    pick = ask_window(title, text, (const char *)es.es_GadgetFormat);   /* EasyRequest cuts lines short on RTG */
+    if (pick < 0) pick = EasyRequest(win, &es, NULL, (ULONG)text);
+    ActivateWindow(win);                             /* typing goes on in the window, not in the Workbench */
+    if (a.style == OWF_DV_STOP) {
+        if (pick == 0) oc_edit_cancel(core);
+    } else if (a.style == OWF_DV_WARNING) {
+        if (pick == 1) result(oc_edit_commit_anyway(core, a.move), NULL);
+        else if (pick == 0) oc_edit_cancel(core);
+    } else {
+        if (pick == 1) result(oc_edit_commit_anyway(core, a.move), NULL);
+        else oc_edit_cancel(core);
+    }
+}
+
 /* What a core result means to the user; 1 when it went well. */
 static int result(int rc, const char *done)
 {
     switch (rc) {
+    case OC_INVALID:
+        validation_alert();
+        break;
     case OWF_OK:
         if (done) set_status(done);
         if (core && oc_core_undo_lost(core)) set_status("Done; it was too big to keep for Undo.");
@@ -1111,6 +1149,19 @@ static void paint_item(const canvas *cv, const oc_draw_item *it)
             xy[2 * k + 1] = cv->oy + py;
         }
         if (k == n) ogt_fill_poly(cv->rp, role_pen(it->role, it->rgb), xy, n);
+        break;
+    }
+    case OC_DRAW_DROPDOWN: {                         /* a list's button beside the active cell: Excel's grey box, an arrow */
+        int xy[6], a = it->w / 4 > 1 ? it->w / 4 : 1, cx = it->x + it->w / 2, cy = it->y + it->h / 2;
+        if (it->x < 0 || it->y < 0 || it->x + it->w > cv->w || it->y + it->h > cv->h) break;
+        fill_box(cv, rgb_pen(0xF3F3F3UL), it->x, it->y, it->w, it->h);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x, it->y, it->w, 1);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x, it->y + it->h - 1, it->w, 1);
+        fill_box(cv, rgb_pen(0xA6A6A6UL), it->x + it->w - 1, it->y, 1, it->h);
+        xy[0] = cv->ox + cx - a - 1; xy[1] = cv->oy + cy - a / 2;
+        xy[2] = cv->ox + cx + a + 1; xy[3] = cv->oy + cy - a / 2;
+        xy[4] = cv->ox + cx; xy[5] = cv->oy + cy + a;
+        ogt_fill_poly(cv->rp, rgb_pen(0x404040UL), xy, 3);
         break;
     }
     case OC_DRAW_MARK: {                             /* a comment's: the box's top right half, when it is all in view */
@@ -1773,7 +1824,8 @@ static void writable_formats(char *out, size_t size)
  * line in the window's font, up to three quarters of the screen (longer lines wrap at spaces), and as tall
  * as its lines, up to the screen (the rest left out, and said so); the OK button below the last line. A
  * line starting with NOTE_BULLET is a bulleted note: a round dot, its text (and the lines it wraps onto)
- * indented after it. Return, Escape, OK or the close gadget close it. */
+ * indented after it. Return, Escape, OK or the close gadget close it. ask_window is the same window with
+ * other buttons ("Retry|Cancel", as EasyRequest's), side by side under the text. */
 #define NOTE_LINES 48
 #define NOTE_TEXT 4096
 #define NOTE_BULLET '\001'
@@ -1828,19 +1880,33 @@ static int break_note_lines(struct RastPort *rp, const char *text, int maxw, int
     return n;
 }
 
-static void notes_window(const char *title, const char *text)
+#define ASK_BUTTONS 4
+
+/* The window with buttons, as EasyRequest's gadget format gives them ("Yes|No|Cancel"): which was chosen as
+ * EasyRequest says it (the first 1, the next 2..., the last 0). Return chooses the first; Escape and the close
+ * gadget the last. -1 when the window could not be opened (the caller asks otherwise). */
+static int ask_window(const char *title, const char *text, const char *buttons)
 {
     struct Gadget *list = NULL, *gok = NULL;
     struct NewGadget ng;
     struct Window *rw;
     struct RastPort trp;
-    char *buf;
+    char *buf, names[ASK_BUTTONS][32];
     note_line *line;
-    int n, i, ww = 0, wh, okw, okh = fh + 8, lh = fh + 2, maxw, maxlines, cut = 0, done = 0, text_h, indent;
-    if (!scr || !vi || !font) { tell(title, text); return; }
+    int n, i, ww = 0, wh, okw = 0, okh = fh + 8, lh = fh + 2, maxw, maxlines, cut = 0, done = 0, text_h, indent;
+    int nb = 0, row_w, chosen = 0;
+    const char *b = buttons;
+    while (*b && nb < ASK_BUTTONS) {                 /* "Retry|Cancel": the buttons' names */
+        size_t k = strcspn(b, "|");
+        snprintf(names[nb], sizeof names[nb], "%.*s", (int)(k < 31 ? k : 31), b);
+        nb++;
+        b += k;
+        if (*b == '|') b++;
+    }
+    if (!nb || !scr || !vi || !font) return -1;
     buf = malloc(NOTE_TEXT);
     line = malloc(NOTE_LINES * sizeof *line);
-    if (!buf || !line) { free(buf); free(line); tell(title, text); return; }
+    if (!buf || !line) { free(buf); free(line); return -1; }
     InitRastPort(&trp);
     SetFont(&trp, font);
     indent = fh;                                     /* the dot and a space */
@@ -1853,9 +1919,13 @@ static void notes_window(const char *title, const char *text)
         int w = line[i].indent + TextLength(&trp, (STRPTR)line[i].text, strlen(line[i].text));
         if (w > ww) ww = w;
     }
-    okw = TextLength(&trp, (STRPTR)"OK", 2) + 48;
+    for (i = 0; i < nb; i++) {                       /* the buttons alike, each as wide as the widest name */
+        int w = TextLength(&trp, (STRPTR)names[i], strlen(names[i])) + 48;
+        if (w > okw) okw = w;
+    }
+    row_w = nb * okw + (nb - 1) * 16;
     ww += 32;
-    if (ww < okw + 32) ww = okw + 32;
+    if (ww < row_w + 32) ww = row_w + 32;
     if (ww < 280) ww = 280;
     text_h = 14 + (n + cut) * lh;                    /* every line drawn, the "(and more)" too */
     wh = text_h + 12 + okh + 10;
@@ -1874,13 +1944,15 @@ static void notes_window(const char *title, const char *text)
         ng.ng_TextAttr = &font_attr;
         ng.ng_VisualInfo = vi;
         gok = CreateContext(&list);
-        ng.ng_LeftEdge = rw->BorderLeft + (ww - okw) / 2;
-        ng.ng_TopEdge = rw->BorderTop + text_h + 12;
-        ng.ng_Width = okw;
-        ng.ng_Height = okh;
-        ng.ng_GadgetText = (STRPTR)"OK";
-        ng.ng_GadgetID = 1;
-        gok = CreateGadget(BUTTON_KIND, gok, &ng, TAG_DONE);
+        for (i = 0; i < nb && gok; i++) {
+            ng.ng_LeftEdge = rw->BorderLeft + (ww - row_w) / 2 + i * (okw + 16);
+            ng.ng_TopEdge = rw->BorderTop + text_h + 12;
+            ng.ng_Width = okw;
+            ng.ng_Height = okh;
+            ng.ng_GadgetText = (STRPTR)names[i];
+            ng.ng_GadgetID = (UWORD)(i + 1);
+            gok = CreateGadget(BUTTON_KIND, gok, &ng, TAG_DONE);
+        }
         if (gok) AddGList(rw, list, (UWORD)~0, -1, NULL);
     }
     if (!rw || !gok) {
@@ -1888,8 +1960,7 @@ static void notes_window(const char *title, const char *text)
         if (list) FreeGadgets(list);
         free(buf);
         free(line);
-        tell(title, text);
-        return;
+        return -1;
     }
     while (!done) {
         struct IntuiMessage *m;
@@ -1914,9 +1985,11 @@ static void notes_window(const char *title, const char *text)
             while ((m = GT_GetIMsg(rw->UserPort))) {
                 ULONG cls = m->Class;
                 UWORD code = m->Code;
+                int id = cls == IDCMP_GADGETUP && m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
                 GT_ReplyIMsg(m);
-                if (cls == IDCMP_CLOSEWINDOW || cls == IDCMP_GADGETUP) done = 1;
-                else if (cls == IDCMP_VANILLAKEY && (code == 13 || code == 27)) done = 1;
+                if (cls == IDCMP_GADGETUP && id >= 1 && id <= nb) { chosen = id == nb ? 0 : id; done = 1; }
+                else if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { chosen = 0; done = 1; }
+                else if (cls == IDCMP_VANILLAKEY && code == 13) { chosen = nb > 1 ? 1 : 0; done = 1; }
                 else if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); redraw = 1; }
             }
             if (done || redraw) break;
@@ -1927,6 +2000,12 @@ static void notes_window(const char *title, const char *text)
     FreeGadgets(list);
     free(buf);
     free(line);
+    return chosen;
+}
+
+static void notes_window(const char *title, const char *text)
+{
+    if (ask_window(title, text, "OK") < 0) tell(title, text);
 }
 
 /* The report's notes, when they say something was left out or shown otherwise. */
@@ -2464,6 +2543,33 @@ static int chart_check(char *out, size_t size)
     return 1;
 }
 
+/* For the lab: VALIDCHECK: the sheet's data validation rules: each one's kind, its first range (and how many
+ * more), its alert when a typed value is refused, and for a list whether it has its arrow. */
+static int valid_check(char *out, size_t size)
+{
+    static const char *const kinds[] = { "any", "whole", "decimal", "list", "date", "time", "text length", "formula" };
+    static const char *const alerts[] = { "Stop", "Warning", "Information" };
+    const owf_book *b = oc_core_book(core);
+    const owf_sheet *sh = &b->sheets[oc_core_sheet(core)];
+    char buf[1024], a[16], z[16];
+    int i;
+    size_t k = (size_t)snprintf(buf, sizeof buf, "%d rule%s", sh->nvalidations, sh->nvalidations == 1 ? "" : "s");
+    for (i = 0; i < sh->nvalidations && k < sizeof buf; i++) {
+        const owf_validation *v = &sh->validations[i];
+        const owf_range *r = v->nranges ? &v->ranges[0] : NULL;
+        if (r) {
+            oc_cell_name(r->first_row, r->first_col, a);
+            oc_cell_name(r->last_row, r->last_col, z);
+        }
+        k += (size_t)snprintf(buf + k, sizeof buf - k, "; %s %s%s%s%s, %s%s", kinds[v->type >= 0 && v->type <= 7 ? v->type : 0],
+                              r ? a : "?", r ? ":" : "", r ? z : "", v->nranges > 1 ? " +more" : "",
+                              v->show_error ? alerts[v->error_style >= 0 && v->error_style <= 2 ? v->error_style : 0] : "no alert",
+                              v->type == OWF_DV_LIST ? (v->no_dropdown ? ", no arrow" : ", arrow") : "");
+    }
+    to_latin1(buf, strlen(buf), out, size);
+    return 1;
+}
+
 /* As the GFOffice ARexx conventions (docs/gfoffice/Design-Suite-Shared.md 6.3, proposed): 0 done, 5 not
  * possible now, 10 an error or an unknown command. */
 #define RX_OK 0
@@ -2481,7 +2587,7 @@ static int rexx_do_command(const char *command, char **result_out)
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
     else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
-                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK CHARTCHECK GETCOMMENT QUIT");
+                 "SETCELL GOTO SHEET SHEETS ADDSHEET RECALC COMMAND FONTCHECK CHARTCHECK VALIDCHECK GETCOMMENT QUIT");
     else if (starts_word_ci(command, "ACTIVATE", &arg)) {
         if (win) { WindowToFront(win); ActivateWindow(win); }
     } else if (starts_word_ci(command, "ISDIRTY", &arg))
@@ -2508,6 +2614,8 @@ static int rexx_do_command(const char *command, char **result_out)
         if (!font_check(arg, result_text, sizeof result_text)) ok = 0;
     } else if (starts_word_ci(command, "CHARTCHECK", &arg)) {
         if (!chart_check(result_text, sizeof result_text)) ok = 0;
+    } else if (starts_word_ci(command, "VALIDCHECK", &arg)) {
+        valid_check(result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCOMMENT", &arg)) {
         const owf_comment *cm;
         if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
@@ -2685,6 +2793,14 @@ static void raw_key(UWORD code, UWORD qual)
     }
     default: return;
     }
+    if ((m & OC_MOD_ALT) && !(m & OC_MOD_CTRL) && key == OC_KEY_DOWN && !oc_core_editing(core)) {
+        int i;                                       /* Alt+Down: the active cell's list, when it has one */
+        for (i = 0; i < dl.n; i++)
+            if (dl.items[i].kind == OC_DRAW_DROPDOWN) {
+                pick_from_list(grid_box.x + dl.items[i].x, grid_box.y + dl.items[i].y, dl.items[i].w, dl.items[i].h);
+                return;
+            }
+    }
     if ((m & OC_MOD_ALT) && !oc_core_editing(core) && (key == OC_KEY_UP || key == OC_KEY_DOWN || key == OC_KEY_LEFT || key == OC_KEY_RIGHT)) {
         if (m & OC_MOD_CTRL) key = key == OC_KEY_UP || key == OC_KEY_LEFT ? OC_KEY_HOME : OC_KEY_END;
         else {
@@ -2752,6 +2868,111 @@ static void bar_to_core(void)
     owf_free(utf8);
 }
 
+/* The active cell's list: its choices in a box under its button (bx, by, bw, bh: in the window), one picked
+ * with the pointer or the arrows and Return, put in the cell as if typed; Escape or a click elsewhere
+ * closes it. Up to 12 show at once, the rest by the arrows and the wheel. */
+#define LIST_SHOWN 12
+static void pick_from_list(int bx, int by, int bw, int bh)
+{
+    char **items = NULL, latin[256];
+    int n = 0, i, w = 0, ih = fh + 4, shown, top = 0, at = 0, done = 0, chosen = -1, lw, lh, lx, ly;
+    struct RastPort trp;
+    struct Window *pw;
+    const char *now;
+    if (!core || oc_core_list_choices(core, &items, &n) != OWF_OK || !n) {
+        oc_choices_free(items, n);
+        set_status(n ? "Not enough memory for the list." : "The list has no choices.");
+        return;
+    }
+    InitRastPort(&trp);
+    SetFont(&trp, font);
+    for (i = 0; i < n; i++) {
+        size_t k = to_latin1(items[i], strlen(items[i]), latin, sizeof latin);
+        int tw = TextLength(&trp, (STRPTR)latin, (ULONG)k);
+        if (tw > w) w = tw;
+    }
+    now = oc_core_input_text(core);                  /* the one the cell holds, chosen to start with */
+    for (i = 0; now && i < n; i++)
+        if (!strcmp(items[i], now)) { at = i; break; }
+    shown = n < LIST_SHOWN ? n : LIST_SHOWN;
+    lw = w + 16 < 120 ? 120 : w + 16;
+    lh = shown * ih + 2;
+    lx = win->LeftEdge + bx + bw - lw;
+    ly = win->TopEdge + by + bh;
+    if (lx < 0) lx = 0;
+    if (lx + lw > scr->Width) lx = scr->Width - lw;
+    if (ly + lh > scr->Height) ly = win->TopEdge + by - lh;     /* no room below: above the cell */
+    if (at >= shown) top = at - shown + 1;
+    pw = OpenWindowTags(NULL, WA_PubScreen, (ULONG)scr, WA_Left, lx, WA_Top, ly, WA_Width, lw, WA_Height, lh,
+                        WA_Borderless, TRUE, WA_Activate, TRUE, WA_RMBTrap, TRUE, WA_ReportMouse, TRUE,
+                        WA_SimpleRefresh, TRUE,
+                        WA_IDCMP, IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE | IDCMP_VANILLAKEY | IDCMP_RAWKEY |
+                                  IDCMP_INACTIVEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_EXTENDEDMOUSE,
+                        TAG_DONE);
+    if (!pw) {
+        oc_choices_free(items, n);
+        return;
+    }
+    while (!done) {
+        struct RastPort *rp = pw->RPort;
+        struct IntuiMessage *m;
+        SetFont(rp, font);
+        ogt_fill(&ctx, rp, "window", 0, 0, lw, lh);
+        ogt_box(rp, rgb_pen(0x808080UL), 0, 0, lw, 1);
+        ogt_box(rp, rgb_pen(0x808080UL), 0, lh - 1, lw, 1);
+        ogt_box(rp, rgb_pen(0x808080UL), 0, 0, 1, lh);
+        ogt_box(rp, rgb_pen(0x808080UL), lw - 1, 0, 1, lh);
+        for (i = 0; i < shown && top + i < n; i++) {
+            int y = 1 + i * ih, sel = top + i == at;
+            to_latin1(items[top + i], strlen(items[top + i]), latin, sizeof latin);
+            if (sel) ogt_fill(&ctx, rp, "accent", 1, y, lw - 2, ih);
+            ogt_text(rp, sel ? ogt_pen(&ctx, "accent.text") : ogt_pen(&ctx, "label"), 8, y + 2, latin, lw - 16);
+        }
+        for (;;) {
+            int redraw = 0;
+            Wait(1UL << pw->UserPort->mp_SigBit);
+            while ((m = (struct IntuiMessage *)GetMsg(pw->UserPort))) {
+                ULONG cls = m->Class;
+                UWORD code = m->Code;
+                int my = m->MouseY, mx = m->MouseX, row = my >= 1 ? (my - 1) / ih : -1, wheel_y = 0;
+                if (cls == IDCMP_EXTENDEDMOUSE && code == IMSGCODE_INTUIWHEELDATA && m->IAddress)
+                    wheel_y = ((struct IntuiWheelData *)m->IAddress)->WheelY;
+                ReplyMsg((struct Message *)m);
+                if (cls == IDCMP_INACTIVEWINDOW) done = 1;
+                else if (cls == IDCMP_REFRESHWINDOW) { BeginRefresh(pw); EndRefresh(pw, TRUE); redraw = 1; }
+                else if (cls == IDCMP_MOUSEMOVE && mx >= 0 && mx < lw && row >= 0 && row < shown && top + row < n &&
+                         top + row != at) { at = top + row; redraw = 1; }
+                else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTUP) {
+                    /* let go over a choice: it; elsewhere (the click on the button that opened the list): the
+                       list stays open, as Excel's does */
+                    if (mx >= 0 && mx < lw && row >= 0 && row < shown && top + row < n) { chosen = top + row; done = 1; }
+                } else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTDOWN &&
+                           (mx < 0 || mx >= lw || my < 0 || my >= lh)) done = 1;
+                else if (cls == IDCMP_MOUSEBUTTONS && code == MENUDOWN) done = 1;
+                else if (cls == IDCMP_VANILLAKEY && code == 13) { chosen = at; done = 1; }
+                else if (cls == IDCMP_VANILLAKEY && code == 27) done = 1;
+                else if ((cls == IDCMP_RAWKEY && (code == 0x4C || code == 0x4D)) || wheel_y) {
+                    int down = cls == IDCMP_RAWKEY ? code == 0x4D : wheel_y > 0;
+                    at = down ? (at + 1 < n ? at + 1 : at) : (at > 0 ? at - 1 : 0);
+                    if (at < top) top = at;
+                    if (at >= top + shown) top = at - shown + 1;
+                    redraw = 1;
+                }
+            }
+            if (done || redraw) break;
+        }
+    }
+    CloseWindow(pw);
+    if (chosen >= 0) {
+        unsigned row, col;
+        oc_core_active(core, &row, &col);
+        if (result(oc_core_set_input(core, oc_core_sheet(core), row, col, items[chosen]), NULL)) set_status("Chosen from the list.");
+    }
+    oc_choices_free(items, n);
+    ActivateWindow(win);
+    refresh();
+}
+
 static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
 {
     oc_hit hit;
@@ -2762,6 +2983,10 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
         bar_active = 0;
     }
     oc_view_hit(core, mx - grid_box.x, my - grid_box.y, &hit);
+    if (hit.kind == OC_HIT_DROPDOWN) {               /* the list's button: its choices */
+        pick_from_list(grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
+        return;
+    }
     if (hit.kind == OC_HIT_COL_EDGE || hit.kind == OC_HIT_ROW_EDGE) {
         resizing = 1;
         resize_axis = hit.kind == OC_HIT_COL_EDGE;
@@ -2998,7 +3223,7 @@ static int window_main(int argc, char **argv)
         goto out;
     }
     if (!owf_open()) {
-        tell("OpenCalc", "OpenCalc needs owf.library 1 in LIBS:.");
+        tell("OpenCalc", "OpenCalc needs " OWF_LIBRARY_NAME " in LIBS:.");
         rc = 20;
         goto out;
     }
