@@ -2358,6 +2358,207 @@ static void test_charts(void)
     oc_core_free(core);
 }
 
+/* A rule over one range of sheet 0, its error alert shown. */
+static owf_validation *add_rule(oc_core *core, const char *range, int type, int op, const char *f1, const char *f2, int style)
+{
+    owf_validation *dv = owf_sheet_add_validation(&oc_core_book(core)->sheets[0]);
+    owf_range r;
+    if (!dv || !oc_parse_range(range, &r))
+        return dv;
+    dv->ranges = malloc(sizeof *dv->ranges);
+    if (dv->ranges) {
+        dv->ranges[0] = r;
+        dv->nranges = 1;
+    }
+    dv->type = type;
+    dv->op = op;
+    dv->formula[0] = f1 ? dup_text(f1) : NULL;
+    dv->formula[1] = f2 ? dup_text(f2) : NULL;
+    dv->show_error = 1;
+    dv->error_style = style;
+    dv->allow_blank = 1;
+    return dv;
+}
+
+/* Typed into a cell and Return: the core's answer. */
+static int typed(oc_core *core, const char *cell, const char *text)
+{
+    go(core, cell);
+    type(core, text);
+    return oc_core_key(core, OC_KEY_RETURN, 0);
+}
+
+static void test_valid_typing(void)
+{
+    oc_core *core = fresh();
+    oc_alert a;
+    oc_draw_list l;
+    oc_hit hit;
+    owf_validation *dv;
+    char **items;
+    int n, i, buttons;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    add_rule(core, "B2:B9", OWF_DV_WHOLE, OWF_CF_BETWEEN, "1", "10", OWF_DV_STOP);
+    dv = add_rule(core, "C2:C9", OWF_DV_LIST, 0, "\"Yes, No\"", NULL, OWF_DV_WARNING);
+    dv->error_title = dup_text("Hosted");
+    dv->error = dup_text("Yes or No, please.");
+    add_rule(core, "D2:D9", OWF_DV_TEXT_LENGTH, OWF_CF_LESS_EQUAL, "3", NULL, OWF_DV_INFORMATION);
+    add_rule(core, "E2:E9", OWF_DV_DATE, OWF_CF_GREATER, "DATE(2026,1,1)", NULL, OWF_DV_STOP);
+    add_rule(core, "F2:F9", OWF_DV_CUSTOM, 0, "F2>B2", NULL, OWF_DV_STOP);
+    dv = add_rule(core, "G2:G9", OWF_DV_LIST, 0, "$K$1:$K$4", NULL, OWF_DV_STOP);
+    dv = add_rule(core, "H2:H9", OWF_DV_DECIMAL, OWF_CF_GREATER, "0", NULL, OWF_DV_STOP);
+    dv->show_error = 0;                                   /* no alert: anything goes in */
+    enter_at(core, "K1", "Red");
+    enter_at(core, "K2", "Green");
+    enter_at(core, "K3", "Blue");
+    /* a whole number between 1 and 10: 12 refused, the cell as it was, typing going on; 5 in */
+    CHECK(typed(core, "B2", "12") == OC_INVALID);
+    {
+        char *in = oc_core_cell_input(core, 0, 1, 1);
+        CHECK_STR(in, "");                                /* B2 as it was */
+        owf_free(in);
+    }
+    CHECK(oc_core_editing(core) && oc_core_invalid(core, &a) && a.style == OWF_DV_STOP &&
+          strstr(a.message, "data validation restrictions") && a.move == OC_MOVE_DOWN);
+    CHECK(!oc_core_can_redo(core));                       /* taken back for good */
+    {
+        size_t caret;
+        const char *t = oc_edit_text(core, &caret);
+        CHECK(t && !strcmp(t, "12"));
+    }
+    oc_edit_cancel(core);
+    CHECK(typed(core, "B2", "5") == OWF_OK && num(core, "B2") == 5);
+    CHECK(typed(core, "B3", "2.5") == OC_INVALID);       /* not whole */
+    oc_edit_cancel(core);
+    CHECK(typed(core, "B3", "abc") == OC_INVALID);       /* not a number */
+    /* a warning's Yes: in all the same, and the move made */
+    CHECK(oc_edit_commit_anyway(core, OC_MOVE_DOWN) == OWF_OK && !oc_core_editing(core));
+    {
+        unsigned row, col;
+        oc_core_active(core, &row, &col);
+        CHECK(row == 3 && col == 1);
+    }
+    /* a list: any case of its words; others refused, with the rule's own title and message */
+    CHECK(typed(core, "C2", "no") == OWF_OK);
+    CHECK(typed(core, "C3", "maybe") == OC_INVALID && oc_core_invalid(core, &a) && a.style == OWF_DV_WARNING &&
+          !strcmp(a.title, "Hosted") && !strcmp(a.message, "Yes or No, please."));
+    oc_edit_cancel(core);
+    /* a text's length, a date, a formula */
+    CHECK(typed(core, "D2", "abcd") == OC_INVALID);
+    oc_edit_cancel(core);
+    CHECK(typed(core, "D2", "abc") == OWF_OK);
+    CHECK(typed(core, "E2", "1/1/2020") == OC_INVALID);
+    oc_edit_cancel(core);
+    CHECK(typed(core, "E2", "2/2/2026") == OWF_OK);
+    CHECK(typed(core, "F2", "3") == OC_INVALID);         /* F2 > B2 (5) */
+    oc_edit_cancel(core);
+    CHECK(typed(core, "F2", "6") == OWF_OK);
+    /* a list from cells; no alert: anything; nothing typed: nothing checked */
+    CHECK(typed(core, "G2", "Pink") == OC_INVALID);
+    oc_edit_cancel(core);
+    CHECK(typed(core, "G2", "green") == OWF_OK);
+    CHECK(typed(core, "H2", "-4") == OWF_OK && num(core, "H2") == -4);
+    /* ARexx's SETCELL isn't checked, nor a click's commit when it is not refused */
+    CHECK(oc_core_set_input(core, 0, 1, 1, "99") == OWF_OK && num(core, "B2") == 99);
+    /* the choices: the cells', the words' (spaces round them gone) */
+    go(core, "G3");
+    CHECK(oc_core_list_choices(core, &items, &n) == OWF_OK && n == 3 && !strcmp(items[0], "Red") && !strcmp(items[2], "Blue"));
+    oc_choices_free(items, n);
+    go(core, "C4");
+    CHECK(oc_core_list_choices(core, &items, &n) == OWF_OK && n == 2 && !strcmp(items[1], "No"));
+    oc_choices_free(items, n);
+    go(core, "B4");
+    CHECK(oc_core_list_choices(core, &items, &n) == OWF_OK && n == 0);
+    oc_choices_free(items, n);
+    /* the dropdown button: beside a list's cell, not another's, not while typing, not when the rule hides it */
+    go(core, "C4");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = buttons = 0; i < l.n; i++)
+        if (l.items[i].kind == OC_DRAW_DROPDOWN) {
+            buttons++;
+            CHECK(l.items[i].x == 40 + 3 * 64 && l.items[i].y + l.items[i].h == 18 + 4 * 17);
+            CHECK(oc_view_hit(core, l.items[i].x + 3, l.items[i].y + 3, &hit) == OC_HIT_DROPDOWN && hit.row == 3 && hit.col == 2);
+        }
+    CHECK(buttons == 1);
+    go(core, "B4");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = buttons = 0; i < l.n; i++)
+        buttons += l.items[i].kind == OC_DRAW_DROPDOWN;
+    CHECK(buttons == 0);
+    CHECK(oc_view_hit(core, 40 + 3 * 64 + 3, 18 + 3 * 17 + 3, &hit) == OC_HIT_CELL);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
+/* The lab's workbook of rules (tests/book/fixtures/validation-openpyxl.xlsx, make_feature_fixtures.py): each
+ * row's rule takes what C says and refuses another value, with the rule's alert. */
+static void test_valid_fixture(void)
+{
+    static const struct {
+        const char *cell, *takes, *refused;
+        int style;
+        const char *title;
+    } rows[] = {
+        { "B2", "Yes", "Maybe", OWF_DV_STOP, "Not a choice" },
+        { "B3", "Team 2", "Team 9", OWF_DV_STOP, "OpenCalc" },
+        { "B4", "team 5", "Team 6", OWF_DV_STOP, "OpenCalc" },
+        { "B5", "7", "11", OWF_DV_WARNING, "Score" },
+        { "B6", "0.25", "1.5", OWF_DV_STOP, "OpenCalc" },
+        { "B7", "1/1/2024", "1/1/2019", OWF_DV_INFORMATION, "Date" },
+        { "B8", "10:30", "18:00", OWF_DV_STOP, "OpenCalc" },
+        { "B9", "Short", "Much too long", OWF_DV_STOP, "OpenCalc" },
+        { "B10", "7", "8", OWF_DV_STOP, "OpenCalc" },          /* no more than C5 (7) */
+        { "B11", "No", "Maybe", OWF_DV_STOP, "OpenCalc" },
+        { "B12", "Purple", NULL, 0, NULL },                     /* no alert: anything */
+    };
+    oc_core *core = fresh();
+    owf_report *report = owf_report_new();
+    const owf_book_format *used = NULL;
+    oc_draw_list l;
+    oc_alert a;
+    char **items;
+    int i, n, buttons;
+    if (!core || !report) {
+        oc_core_free(core);
+        owf_report_free(report);
+        return;
+    }
+    CHECK(oc_core_open(core, "tests/book/fixtures/validation-openpyxl.xlsx", NULL, report, &used) == OWF_OK);
+    for (i = 0; i < (int)(sizeof rows / sizeof rows[0]); i++) {
+        if (rows[i].refused) {
+            int got = typed(core, rows[i].cell, rows[i].refused);
+            CHECK(got == OC_INVALID && oc_core_invalid(core, &a) && a.style == rows[i].style && !strcmp(a.title, rows[i].title));
+            if (got != OC_INVALID)
+                fprintf(stderr, "  %s: %s not refused\n", rows[i].cell, rows[i].refused);
+            oc_edit_cancel(core);
+        }
+        if (typed(core, rows[i].cell, rows[i].takes) != OWF_OK) {
+            CHECK(0);
+            fprintf(stderr, "  %s: %s refused\n", rows[i].cell, rows[i].takes);
+            oc_edit_cancel(core);
+        }
+    }
+    /* a list by a name: the teams; the arrow beside B4, none beside B11 */
+    go(core, "B4");
+    CHECK(oc_core_list_choices(core, &items, &n) == OWF_OK && n == 5 && !strcmp(items[4], "Team 5"));
+    oc_choices_free(items, n);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = buttons = 0; i < l.n; i++)
+        buttons += l.items[i].kind == OC_DRAW_DROPDOWN;
+    CHECK(buttons == 1);
+    go(core, "B11");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    for (i = buttons = 0; i < l.n; i++)
+        buttons += l.items[i].kind == OC_DRAW_DROPDOWN;
+    CHECK(buttons == 0);
+    oc_draw_list_free(&l);
+    owf_report_free(report);
+    oc_core_free(core);
+}
+
 /* Formatting set on whole rows (a row's own style, over its columns') and whole columns: shown on the empty
  * cells there, given to cells typed into them, set and cleared by selecting whole rows, undone, saved. */
 static void test_row_styles(void)
@@ -2650,6 +2851,8 @@ int main(void)
     test_validation();
     test_autofilter();
     test_drawings_kept();
+    test_valid_typing();
+    test_valid_fixture();
     test_row_styles();
     test_charts();
     test_row_numbers();

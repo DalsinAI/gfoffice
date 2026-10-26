@@ -126,6 +126,12 @@ struct oc_core {
     unsigned long cf_stamp, cf_hash;
     int cf_sheet, cf_nr, cf_nc;
 
+    /* data validation: the cell whose typed value was refused (oc_core_invalid), and a commit not checked */
+    int invalid, invalid_sheet;
+    unsigned invalid_row, invalid_col;
+    int invalid_move;               /* the refused commit's move (OC_MOVE_...) */
+    int unchecked;
+
     /* the charts of the sheet showing (oc_core_charts), read once from its drawing, by the drawing's name */
     owf_chart *charts;
     int ncharts;
@@ -151,6 +157,9 @@ int oc_recalc(oc_core *core, int rebuild);
 void oc_changed(oc_core *core);
 void oc_collapse_to(oc_core *core, unsigned row, unsigned col);
 char *oc_strdup(const char *s);
+/* "Chart!$B$1:$B$4", "'My sheet'!B1:B4" (an "=" before it, "$"s in it, sheet names without case), or "B1:B4"
+ * on the sheet here (-1: a sheet is needed), as a sheet of the book and a range; 0 when it is none of those. */
+int oc_sheet_range(const owf_book *book, const char *ref, int here, int *sheet, owf_range *r);
 int oc_nav_key(oc_core *core, int key, unsigned mods);
 char *oc_cell_input(const oc_core *core, int sheet, unsigned row, unsigned col);
 /* A cell's style: its own, else (no cell) its row's, else its column's. */
@@ -200,6 +209,13 @@ int oc_chart_draw(oc_core *core, oc_draw_list *list, const owf_chart *chart, int
  * the next call); NULL when the sheet has no conditional formats (or memory ran out). */
 const oc_look *oc_cf_looks(oc_core *core, const oc_line *rl, int nr, const oc_line *cl, int nc);
 void oc_cf_forget(oc_core *core);
+
+/* oc_valid.c: whether a cell's value passes a rule (1: it does, or it can't be told); a list rule's choices */
+int oc_valid_value(oc_core *core, int sheet, unsigned row, unsigned col, const owf_validation *dv);
+int oc_list_choices(oc_core *core, int sheet, const owf_validation *dv, char ***items, int *n);
+
+/* oc_undo.c: the last step taken back for good (no redo of it); OWF_ERR_UNSUPPORTED when there is none */
+int oc_undo_take_back(oc_core *core);
 
 /* oc_clip.c */
 void oc_clip_free(oc_clip *clip);

@@ -551,6 +551,20 @@ static int step_back(oc_core *core, oc_undo **from, int *nfrom, oc_undo **to, in
     return OWF_OK;
 }
 
+int oc_undo_take_back(oc_core *core)
+{
+    int rc, dirty;
+    if (!core->nundo)
+        return OWF_ERR_UNSUPPORTED;
+    dirty = core->undo[core->nundo - 1]->dirty;
+    rc = step_back(core, core->undo, &core->nundo, core->redo, &core->nredo);
+    if (rc == OWF_OK && core->nredo) {
+        oc_undo_free(core->redo[--core->nredo]);         /* nothing to redo: it never happened */
+        core->dirty = dirty;
+    }
+    return rc;
+}
+
 int oc_core_undo(oc_core *core)
 {
     return step_back(core, core->undo, &core->nundo, core->redo, &core->nredo);

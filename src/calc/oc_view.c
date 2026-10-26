@@ -338,6 +338,9 @@ static int find_line(const oc_line *l, int n, int p)
     return -1;
 }
 
+static int dropdown_box(const oc_core *core, const oc_line *rl, int nr, const oc_line *cl, int nc, int *x, int *y, int *w,
+                        int *h);
+
 int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
 {
     oc_line *rl = malloc(MAX_LINES * sizeof *rl), *cl = malloc(MAX_LINES * sizeof *cl);
@@ -390,9 +393,16 @@ int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
                 hit->h = rl[ri - 1].size;
             }
         }
+    } else if (dropdown_box(core, rl, nr, cl, nc, &hit->x, &hit->y, &hit->w, &hit->h) && x >= hit->x &&
+               x < hit->x + hit->w && y >= hit->y && y < hit->y + hit->h) {
+        const oc_sheetstate *st = oc_state_const(core);
+        hit->kind = OC_HIT_DROPDOWN;                     /* the list's button, over the cell beside it */
+        hit->row = st->sel.row;
+        hit->col = st->sel.col;
     } else {
         ri = find_line(rl, nr, y);
         ci = find_line(cl, nc, x);
+        memset(hit, 0, sizeof *hit);
         if (ri >= 0 && ci >= 0) {
             hit->kind = OC_HIT_CELL;
             hit->row = rl[ri].index;
@@ -486,7 +496,7 @@ int oc_core_press(oc_core *core, const oc_hit *hit, int extend, int add)
             return OWF_OK;
         {
             int rc = oc_edit_commit(core, OC_MOVE_NONE);
-            if (rc == OWF_ERR_MEMORY)
+            if (rc == OWF_ERR_MEMORY || rc == OC_INVALID)    /* refused: the click goes nowhere */
                 return rc;
         }
     }
@@ -1543,6 +1553,46 @@ static int comment_note(drawing *d)
     return 1;
 }
 
+/* ---- A list's dropdown button ---- */
+
+/* The active cell's list's button: beside its right edge, at its foot, a row tall at most; 0 when it has
+ * none (no list rule, the rule hides it, typing, the cell not showing). */
+static int dropdown_box(const oc_core *core, const oc_line *rl, int nr, const oc_line *cl, int nc, int *x, int *y, int *w,
+                        int *h)
+{
+    const oc_sheetstate *st = oc_state_const(core);
+    const owf_sheet *s = oc_sheet(core);
+    const owf_validation *dv;
+    const owf_range *m;
+    unsigned last_row = st->sel.row, last_col = st->sel.col;
+    int i0, j0, i1, j1, bw = 16 * core->zoom / 100 + 1, bh;
+    if (core->edit_mode || !(dv = owf_sheet_validation(s, st->sel.row, st->sel.col)) || dv->type != OWF_DV_LIST ||
+        dv->no_dropdown)
+        return 0;
+    if ((m = oc_merge_at(s, st->sel.row, st->sel.col)) != NULL) {
+        last_row = m->last_row;
+        last_col = m->last_col;
+    }
+    i0 = line_of(rl, nr, st->sel.row);
+    j0 = line_of(cl, nc, st->sel.col);
+    for (i1 = -1; i1 < 0 && last_row >= st->sel.row; last_row--)
+        i1 = line_of(rl, nr, last_row);
+    for (j1 = -1; j1 < 0 && last_col >= st->sel.col; last_col--)
+        j1 = line_of(cl, nc, last_col);
+    if (i0 < 0 || j0 < 0 || i1 < 0 || j1 < 0)
+        return 0;
+    if (bw < 12)
+        bw = 12;
+    bh = rl[i1].pos + rl[i1].size - rl[i0].pos;
+    if (bh > 20 * core->zoom / 100 + 2)
+        bh = 20 * core->zoom / 100 + 2;
+    *x = cl[j1].pos + cl[j1].size;
+    *y = rl[i1].pos + rl[i1].size - bh;
+    *w = bw;
+    *h = bh;
+    return *x + *w <= core->width;
+}
+
 /* ---- Charts ---- */
 
 #define FAR_PX 16384L               /* what is further off the area than this (and a screen) doesn't show */
@@ -2011,6 +2061,13 @@ static int build(drawing *d)
                         return 0;
                 }
             }
+    }
+    /* the active cell's list's dropdown button */
+    {
+        int bx, by, bw, bh;
+        if (dropdown_box(core, d->rl, d->nr, d->cl, d->nc, &bx, &by, &bw, &bh) &&
+            !add_box(list, OC_DRAW_DROPDOWN, OC_ROLE_FILTER, bx, by, bw, bh))
+            return 0;
     }
     /* 10. the active cell's comment, on top of everything */
     return comment_note(d);
