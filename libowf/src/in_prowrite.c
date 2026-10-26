@@ -6,10 +6,14 @@
  * as a 68k C compiler lays them out: words on even offsets, so FONT's name
  * starts at byte 4. Measures are decipoints (1/720 inch, 2 twips).
  *
- * Still to confirm with real ProWrite files (docs/FORMATS.md): the style
- * bits (taken as graphics.library's FSF_UNDERLINED 1, FSF_BOLD 2,
- * FSF_ITALIC 4), what the right margin is measured from, and where tab
- * positions start.
+ * ProWrite 3's own files (Aminet text/misc/pwconv202, "Convert Notes")
+ * show: COLR holds ISO 6429 colour numbers, 30 to 37 (1E 25 1F 24 20 23 22
+ * 21: pens black, white, red, cyan, green, magenta, blue, yellow); the
+ * style bits are graphics.library's (FSF_UNDERLINED 1, FSF_BOLD 2,
+ * FSF_ITALIC 4); and PSET, a chunk the 1987 specification doesn't name,
+ * holds the page's width and height in decipoints (longs at 2 and 6;
+ * PREC repeats them). Still to confirm: what the right margin is measured
+ * from, and where tab positions start.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "owf_internal.h"
@@ -34,13 +38,28 @@ typedef struct {
     int size;                /* twips, or 0 */
 } font_entry;
 
+/* A header or footer section. The document holds one header and one
+ * footer, but the format allows several (for left, right or both pages):
+ * each goes into a scratch document's body, and the best is kept. */
+#define MAX_FURNITURE 8
+typedef struct {
+    owf_doc *doc;
+    owf_builder b;
+    int footer, type, first;
+} furniture;
+
 typedef struct {
     owf_doc *doc;
     owf_report *report;
     font_entry fonts[256];
     unsigned char colr[8];
     int have_colr;
-    owf_builder body, header, footer, *cur;
+    owf_builder body, *cur;
+    furniture furn[MAX_FURNITURE];
+    int nfurn;
+    owf_doc *spare;          /* sections past MAX_FURNITURE go here */
+    owf_builder spare_b;
+    int have_page;
     owf_buf scratch;
     /* PARA: what the next paragraphs start with */
     owf_parafmt parafmt;
@@ -67,7 +86,9 @@ static void char_format(reader *r, owf_charfmt *fmt, int font_num, int style, in
     else if (misc == 2)
         fmt->flags |= OWF_SUB;
     if (r->have_colr) {
-        unsigned iso = r->colr[colour & 7] & 7;
+        /* ISO 6429 colour numbers, 30-37; 0-7 taken as the same. */
+        unsigned v = r->colr[colour & 7];
+        unsigned iso = v >= 30 && v <= 37 ? v - 30 : v & 7;
         /* Black is the default colour, not a choice. */
         fmt->colour = iso == 0 ? OWF_COLOUR_AUTO : owf_iso_colours[iso];
     }
@@ -219,6 +240,49 @@ static void read_tabs(reader *r, const owf_iff_chunk *c)
     }
 }
 
+/* The header (footer 0) or footer (1) kept: for both pages before one for
+ * right pages (the first page is a right one) before one for left pages;
+ * none for "no pages". The others are left out and reported. */
+static int keep_furniture(reader *r, int footer)
+{
+    static const int rank[4] = { 0, 1, 2, 3 };     /* none, left, right, both */
+    owf_story *to = footer ? &r->doc->footer : &r->doc->header;
+    const char *what = footer ? "footer" : "header";
+    int i, best = -1, others = 0, result = OWF_OK;
+
+    for (i = 0; i < r->nfurn; i++) {
+        furniture *f = &r->furn[i];
+        if (f->footer != footer)
+            continue;
+        if (owf_builder_done(&f->b) != OWF_OK)
+            result = OWF_ERR_MEMORY;
+        if (!rank[f->type])
+            continue;
+        if (best < 0 || rank[f->type] > rank[r->furn[best].type]) {
+            if (best >= 0)
+                others++;
+            best = i;
+        } else {
+            others++;
+        }
+    }
+    if (best < 0)
+        return result;
+    *to = r->furn[best].doc->body;
+    memset(&r->furn[best].doc->body, 0, sizeof r->furn[best].doc->body);
+    if (footer)
+        r->doc->page.footer_on_first = r->furn[best].first;
+    else
+        r->doc->page.header_on_first = r->furn[best].first;
+    if (r->furn[best].type != 3)
+        owf_report_add(r->report, OWF_NOTE_APPROX, "A %s for %s pages only is shown on every page", what,
+                       r->furn[best].type == 1 ? "left" : "right");
+    if (others)
+        owf_report_add(r->report, OWF_NOTE_LOST, "%d more %s(s) for left or right pages were left out: a document here has one %s",
+                       others, what, what);
+    return result;
+}
+
 static int detect_prowrite(const unsigned char *data, size_t length)
 {
     return owf_iff_is_form(data, length, OWF_ID('W', 'O', 'R', 'D')) ? 100 : 0;
@@ -241,8 +305,12 @@ static int import_prowrite(const unsigned char *data, size_t length, owf_doc *do
     for (i = 0; i < 256; i++)
         r->fonts[i].font = -1;
     owf_builder_init(&r->body, doc, &doc->body);
-    owf_builder_init(&r->header, doc, &doc->header);
-    owf_builder_init(&r->footer, doc, &doc->footer);
+    r->spare = owf_doc_new();
+    if (!r->spare) {
+        free(r);
+        return OWF_ERR_MEMORY;
+    }
+    owf_builder_init(&r->spare_b, r->spare, &r->spare->body);
     owf_buf_init(&r->scratch);
     owf_parafmt_init(&r->parafmt);
     r->cur = &r->body;
@@ -272,14 +340,40 @@ static int import_prowrite(const unsigned char *data, size_t length, owf_doc *do
             break;
         case OWF_ID('H', 'E', 'A', 'D'):
         case OWF_ID('F', 'O', 'O', 'T'):
-            r->cur = c.id == OWF_ID('H', 'E', 'A', 'D') ? &r->header : &r->footer;
-            if (c.size >= 2) {
-                if (c.data[0] == 1 || c.data[0] == 2)
-                    owf_report_add(report, OWF_NOTE_APPROX, "A header or footer for left or right pages only is shown on every page");
-                if (c.id == OWF_ID('H', 'E', 'A', 'D'))
-                    doc->page.header_on_first = c.data[1] != 0;
-                else
-                    doc->page.footer_on_first = c.data[1] != 0;
+            r->cur = &r->spare_b;
+            if (r->nfurn < MAX_FURNITURE) {
+                furniture *f = &r->furn[r->nfurn];
+                f->doc = owf_doc_new();
+                if (!f->doc) {
+                    r->body.failed = 1;
+                    break;
+                }
+                r->nfurn++;
+                owf_builder_init(&f->b, f->doc, &f->doc->body);
+                f->footer = c.id == OWF_ID('F', 'O', 'O', 'T');
+                f->type = c.size >= 1 ? c.data[0] & 3 : 3;
+                f->first = c.size >= 2 ? c.data[1] != 0 : 1;
+                r->cur = &f->b;
+            }
+            break;
+        case OWF_ID('P', 'S', 'E', 'T'):
+        case OWF_ID('P', 'R', 'E', 'C'):
+            /* ProWrite 3: the page's size in decipoints (PSET's longs at 2
+             * and 6; PREC's words at 22 and 24), PSET first. */
+            if (!r->have_page || c.id == OWF_ID('P', 'S', 'E', 'T')) {
+                unsigned long w = 0, h = 0;
+                if (c.id == OWF_ID('P', 'S', 'E', 'T') && c.size >= 10) {
+                    w = OWF_BE32(c.data + 2);
+                    h = OWF_BE32(c.data + 6);
+                } else if (c.id == OWF_ID('P', 'R', 'E', 'C') && c.size >= 26) {
+                    w = OWF_BE16(c.data + 22);
+                    h = OWF_BE16(c.data + 24);
+                }
+                if (w >= 720 && w <= 20000 && h >= 720 && h <= 20000) {
+                    doc->page.width = (int)w * 2;
+                    doc->page.height = (int)h * 2;
+                    r->have_page = 1;
+                }
             }
             break;
         case OWF_ID('P', 'C', 'T', 'S'):
@@ -297,6 +391,9 @@ static int import_prowrite(const unsigned char *data, size_t length, owf_doc *do
         case OWF_ID('P', 'A', 'G', 'E'):
             if (r->cur->para)
                 owf_builder_end_para(r->cur);
+            /* Two breaks in a row: an empty page between them. */
+            else if (r->cur->parafmt.page_break_before)
+                owf_builder_end_para(r->cur);
             r->cur->parafmt.page_break_before = 1;
             break;
         case OWF_ID('T', 'E', 'X', 'T'):
@@ -313,11 +410,16 @@ static int import_prowrite(const unsigned char *data, size_t length, owf_doc *do
         owf_report_add(report, OWF_NOTE_LOST, "%d picture(s) are not brought across yet", r->pictures);
     if (iff.truncated)
         owf_report_add(report, OWF_NOTE_LOST, "The file is cut short; the text up to the cut was read");
-    owf_report_add(report, OWF_NOTE_INFO, "ProWrite files do not store the paper size; the default was used");
+    if (!r->have_page)
+        owf_report_add(report, OWF_NOTE_INFO, "This ProWrite file does not store the paper size; the default was used");
     owf_buf_free(&r->scratch);
     result = owf_builder_done(&r->body);
-    if (owf_builder_done(&r->header) != OWF_OK || owf_builder_done(&r->footer) != OWF_OK)
+    if (keep_furniture(r, 0) != OWF_OK || keep_furniture(r, 1) != OWF_OK)
         result = OWF_ERR_MEMORY;
+    owf_builder_done(&r->spare_b);
+    owf_doc_free(r->spare);
+    for (i = 0; i < r->nfurn; i++)
+        owf_doc_free(r->furn[i].doc);
     free(r);
     return result;
 }
