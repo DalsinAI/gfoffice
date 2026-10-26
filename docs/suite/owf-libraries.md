@@ -1,6 +1,6 @@
 # owf.library split into four libraries
 
-Version 0.1 | 25 October 2026 | AmigaChrome Team (Team 5), MIT
+Version 0.2 | 25 October 2026 | AmigaChrome Team (Team 5), MIT
 
 Dale decided, and confirmed at 14:2x, to split owf.library along the
 programs' lines: one library each for Write, Calc, Pub and Present. Today
@@ -288,41 +288,55 @@ follows:
 
 ## 7. Sizes
 
-Both columns were built with OpenAmigaGCC 16.2 (open3) and GFOffice's own
-flags, from main `2238c05` and this design's branch. They are file sizes in
-bytes. The implementation PRs give the os32-gcc16 stove's builds and the
-lab's `Avail` before and after.
+**Measured from the stove's builds.** These numbers are from the os32-gcc16 stove's builds:
+
+- "before" is main at `faa3613`, built with daletop's stove;
+- "after" is the implementation's stack at `0f3fb92`, Cradle job j20261025T162949-ffd4e7.
+
+They are file sizes in bytes. The design's first estimates (version 0.1 of this page) came from main at `2238c05`. Since then main gained OpenWrite 2.0.14, OpenCalc's charts and PPTX in, which is why the "before" sizes grew.
 
 **Before:**
 
 | File | Bytes | Notes |
 | --- | --- | --- |
-| owf.library 2.4 | 744,880 | |
-| OpenWrite on owf.library | 251,660 | as OpenUp ships it |
-| OpenCalc with libowf linked in | 1,046,476 | owf.library lacked its calls |
-| OWConvert with libowf linked in | 496,036 | as OpenUp ships it, with deck PDFs |
+| owf.library 2.4 | 749,088 | |
+| OpenWrite 2.0.14 on owf.library | 258,680 | as OpenUp ships it |
+| OpenCalc 0.1.21 with libowf linked in | 1,130,144 | owf.library lacked its calls |
+| OWConvert with libowf linked in | 538,824 | as OpenUp ships it, with deck PDFs |
 
 **After:**
 
 | File | Bytes |
 | --- | --- |
 | owfwrite.library 3.0 | 186,600 |
-| owfcalc.library 3.0 | 581,984 |
+| owfcalc.library 3.0 | 586,192 |
 | owfpub.library 3.0 | 67,384 |
-| owfpresent.library 3.0 | 231,248 |
-| OpenWrite on owfwrite.library | 253,564 |
-| OpenCalc on owfcalc.library | 250,884 |
+| owfpresent.library 3.0 (with PPTX in, #80) | 291,876 |
+| OpenWrite 2.0.14 on owfwrite.library | 258,680 |
+| OpenCalc 0.1.21 on owfcalc.library | 273,776 |
+| OWConvert on all four | 75,192 |
 
 **What each program loads (the program and its libraries):**
 
 | Program | Before | After | Change |
 | --- | --- | --- | --- |
-| OpenWrite | 996,540 | 440,164 | −556,376 (−56%) |
-| OpenCalc | 1,046,476 | 832,868 | −213,608 (−20%) |
-| OpenWrite and OpenCalc together | 2,043,016 | 1,273,032 | −769,984 (−38%) |
+| OpenWrite | 1,007,768 | 445,280 | −562,488 (−56%) |
+| OpenCalc | 1,130,144 | 859,968 | −270,176 (−24%) |
+| OpenWrite and OpenCalc together | 2,137,912 | 1,305,248 | −832,664 (−39%) |
+| OWConvert, a document | 538,824 | 261,792 | −277,032 (−51%) |
+| OWConvert, a workbook | 538,824 | 847,984 | +309,160 |
+| OWConvert, a presentation | 538,824 | 553,668 | +14,844 |
 
-OWConvert's numbers come with its PR: a document conversion loads
-owfwrite.library only.
+A workbook conversion now loads all of owfcalc.library: the formula engine and every workbook format. The linked OWConvert carried only what its conversions called.
+
+**In the lab** (t5-w137, a copy of Instance-32), `Avail` measured the memory in use with each program open. All of it came back after QUIT and `Avail FLUSH`.
+
+| Program, with | Before | After | Change |
+| --- | --- | --- | --- |
+| OpenWrite 2.0.14, Dale's plan (.docx) | 11,850,456 | 11,325,792 | −524,664 |
+| OpenWrite 2.0.14, no document | 1,694,560 | 1,173,072 | −521,488 |
+| OpenCalc 0.1.21, the Critical Systems workbook with its Cost chart shown | 4,909,720 | 4,398,816 | −510,904 |
+| OpenCalc 0.1.21, no workbook | 2,464,808 | 2,225,112 | −239,696 |
 
 ## 8. The PRs
 

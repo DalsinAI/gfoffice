@@ -47,6 +47,8 @@ typedef struct {
     char instr[32];
 } field_state;
 
+#define MAX_MARKS 32
+
 typedef struct {
     owf_doc *doc;
     owf_report *report;
@@ -73,7 +75,32 @@ typedef struct {
     const char *current_href;
     int next_table_id;
     const rels *rels_now;    /* the relationships of the part being read (a header's own); NULL: the document's */
+    const char *default_table;  /* the default table style's id (2.0.19) */
+    const struct table_style *tstyle;   /* the table being read's style, for its cells (2.0.19); NULL: none */
+    int t_row, t_col, t_rows, t_cols;   /* the cell being read, and its table's size */
+    /* 2.0.21: the bookmarks begun since the last paragraph was made, where in its text they begin and end */
+    struct { const char *name, *id; size_t start, end; int ended; } marks[MAX_MARKS];
+    int nmarks;
 } docx;
+
+/* 2.0.19: a table style (w:style w:type="table"), worked out for one table: what it gives its cells'
+ * paragraphs and text (pPr, rPr) and their fill (tcPr's shd), for the whole table and for each of its
+ * conditional parts (w:tblStylePr), in the order Word applies them; with its parents' (basedOn) first. */
+enum {
+    TS_WHOLE, TS_BAND1_VERT, TS_BAND2_VERT, TS_BAND1_HORZ, TS_BAND2_HORZ,
+    TS_FIRST_COL, TS_LAST_COL, TS_FIRST_ROW, TS_LAST_ROW, TS_PARTS
+};
+/* which parts a table uses (w:tblLook) */
+enum { TL_FIRST_ROW = 0x20, TL_LAST_ROW = 0x40, TL_FIRST_COL = 0x80, TL_LAST_COL = 0x100,
+       TL_NO_HBAND = 0x200, TL_NO_VBAND = 0x400 };
+typedef struct table_style {
+    owf_paraprops pp[TS_PARTS];
+    owf_charprops cp[TS_PARTS];
+    unsigned long shading[TS_PARTS];
+    unsigned char has_shading[TS_PARTS];
+    int row_band, col_band;  /* rows and columns in a band (tblStyleRowBandSize, ColBandSize) */
+    unsigned look;
+} table_style;
 
 /* ---- Small helpers ---- */
 
@@ -351,10 +378,15 @@ static void read_ppr(docx *d, const owf_xml_node *ppr, owf_paraprops *pp, const 
                 pp->mask |= OWF_PP_AFTER;
             }
             if (wint(d, n, "line", &v)) {
-                /* rounded (1.3.1): 259 (1.08) is 108, written back as 259, not 107, then 256 and 106... */
-                pp->fmt.line_spacing = (!rule || !strcmp(rule, "auto")) ? (v * 100 + 120) / 240 : 100;
-                if (pp->fmt.line_spacing < 50 || pp->fmt.line_spacing > 500)
-                    pp->fmt.line_spacing = 100;
+                if (rule && (!strcmp(rule, "exact") || !strcmp(rule, "atLeast")) && v > 0 && v < 0x8000) {
+                    /* 2.0.18: a height in twips, exactly or at least */
+                    pp->fmt.line_spacing = !strcmp(rule, "exact") ? OWF_LINE_EXACT(v) : OWF_LINE_AT_LEAST(v);
+                } else {
+                    /* rounded (1.3.1): 259 (1.08) is 108, written back as 259, not 107, then 256 and 106... */
+                    pp->fmt.line_spacing = (!rule || !strcmp(rule, "auto")) ? (v * 100 + 120) / 240 : 100;
+                    if (pp->fmt.line_spacing < 50 || pp->fmt.line_spacing > 500)
+                        pp->fmt.line_spacing = 100;
+                }
                 pp->mask |= OWF_PP_LINE;
             }
         } else if (!strcmp(n->name, "pageBreakBefore")) {
@@ -453,6 +485,9 @@ static void read_styles(docx *d)
             continue;
         type = owf_xml_attr(n, d->w, "type");
         id = owf_xml_attr(n, d->w, "styleId");
+        def = owf_xml_attr(n, d->w, "default");
+        if (type && !strcmp(type, "table") && id && def && (!strcmp(def, "1") || !strcmp(def, "true")))
+            d->default_table = id;           /* 2.0.19: read for each table that uses it (table_style_of) */
         family = type && !strcmp(type, "paragraph") ? OWF_FAMILY_PARAGRAPH
                : type && !strcmp(type, "character") ? OWF_FAMILY_TEXT : 0;
         if (!family || !id || !(st = owf_styles_add(&d->styles, id, family))) {
@@ -470,7 +505,6 @@ static void read_styles(docx *d)
                 st->pp.mask |= OWF_PP_HEADING;
             }
         }
-        def = owf_xml_attr(n, d->w, "default");
         if (family == OWF_FAMILY_PARAGRAPH && def && on_off(d, n) && (!strcmp(def, "1") || !strcmp(def, "true")))
             d->default_para = id;
     }
@@ -770,10 +804,14 @@ static int embed_image(docx *d, const owf_xml_node *blip, int w, int h)
 static void text_box_story(docx *d, const owf_xml_node *content, owf_story *into)
 {
     owf_builder b, *outer = d->b;
-    int break_next = d->break_next, nfields = d->nfields;
+    int break_next = d->break_next, nfields = d->nfields, nmarks = d->nmarks;
     const char *href = d->current_href;
+    void *marks = malloc(sizeof d->marks);           /* 2.0.21: the paragraph's own, round the box's */
+    if (marks) memcpy(marks, d->marks, sizeof d->marks);
+    else nmarks = 0;
     d->break_next = 0;
     d->nfields = 0;
+    d->nmarks = 0;
     d->current_href = NULL;
     owf_builder_init(&b, d->doc, into);
     d->b = &b;
@@ -784,10 +822,14 @@ static void text_box_story(docx *d, const owf_xml_node *content, owf_story *into
     d->break_next = break_next;
     d->nfields = nfields;
     d->current_href = href;
+    if (marks) memcpy(d->marks, marks, sizeof d->marks);
+    free(marks);
+    d->nmarks = nmarks;
 }
 
 /* wp:anchor: a picture or a shape (a text box, a filled box) placed on the page, as a frame anchored to
- * the paragraph being read. 0 when there is nothing to show. */
+ * the paragraph being read. 2.0.17: wp:inline's text box too (in_line), which has no place of its own (from
+ * its paragraph at 0, 0) and no wrap: it stays in the line. 0 when there is nothing to show. */
 static int import_anchor(docx *d, const owf_xml_node *anchor, const owf_charfmt *fmt)
 {
     const owf_xml_node *ext = local_child(anchor, "extent"), *graphic = local_child(anchor, "graphic");
@@ -809,7 +851,10 @@ static int import_anchor(docx *d, const owf_xml_node *anchor, const owf_charfmt 
     v = attr_any(anchor, "behindDoc");
     fr.behind = v && (!strcmp(v, "1") || !strcmp(v, "true"));
     v = attr_any(anchor, "simplePos");
-    if (v && (!strcmp(v, "1") || !strcmp(v, "true")) && (n = local_child(anchor, "simplePos"))) {
+    if (!strcmp(anchor->name, "inline")) {
+        fr.in_line = 1;
+        fr.x_from = fr.y_from = OWF_FROM_PARAGRAPH;
+    } else if (v && (!strcmp(v, "1") || !strcmp(v, "true")) && (n = local_child(anchor, "simplePos"))) {
         fr.x_from = fr.y_from = OWF_FROM_PAGE;
         fr.x = EMU_TWIPS(strtol(attr_any(n, "x") ? attr_any(n, "x") : "0", NULL, 10));
         fr.y = EMU_TWIPS(strtol(attr_any(n, "y") ? attr_any(n, "y") : "0", NULL, 10));
@@ -859,8 +904,8 @@ static int import_anchor(docx *d, const owf_xml_node *anchor, const owf_charfmt 
         d->failed = 1;
         return 0;
     }
-    if (fr.wrap != OWF_WRAP_NONE)
-        owf_report_add(d->report, OWF_NOTE_APPROX, "Text runs under or over pictures and text boxes placed on the page, not round them");
+    if (fr.wrap == OWF_WRAP_TIGHT)            /* 2.0.14 wraps text round frames: round their rectangles */
+        owf_report_add(d->report, OWF_NOTE_APPROX, "Text wraps round the rectangle of a picture wrapped tight, not its outline");
     set_fmt(d, fmt);
     owf_builder_frame(d->b, idx);
     return 1;
@@ -871,6 +916,8 @@ static int import_drawing(docx *d, const owf_xml_node *drawing, const owf_charfm
     const owf_xml_node *blip=find_local(drawing,"blip"),*ext=find_local(drawing,"extent");const char *id=attr_any(blip,"embed"),*target;char name[256];unsigned char *data=NULL;size_t length=0;int w=4320,h=2880,idx;long cx,cy;
     if (local_child(drawing, "anchor"))                  /* 1.3: placed on the page, not in the line */
         return import_anchor(d, local_child(drawing, "anchor"), fmt);
+    if (local_child(drawing, "inline") && find_local(local_child(drawing, "inline"), "wsp"))
+        return import_anchor(d, local_child(drawing, "inline"), fmt);   /* 2.0.17: a text box in the line */
     if(!id||(target=rel_by_id(d->rels_now?d->rels_now:&d->doc_rels,id))==NULL)return 0;
     part_name(name,sizeof name,d->base,target);
     if(owf_unzip_read(d->zip,name,&data,&length)!=OWF_OK)return 0;
@@ -1080,6 +1127,39 @@ static void run(docx *d, const owf_xml_node *r, const owf_charfmt *para_char)
     run_children(d, r, &f);
 }
 
+/* 2.0.21: where in the paragraph being made the text has got to: its text runs' bytes and the text waiting */
+static size_t text_offset(const docx *d)
+{
+    return owf_para_text_bytes(d->b->para) + d->b->text.length;
+}
+
+/* 2.0.21: a bookmark begins here (w:bookmarkStart); Word's own _GoBack is left out */
+static void mark_start(docx *d, const owf_xml_node *n)
+{
+    const char *name = owf_xml_attr(n, d->w, "name");
+    if (!name || !*name || !strcmp(name, "_GoBack") || strchr(name, ' ') || strchr(name, '@') ||
+        d->nmarks >= MAX_MARKS)
+        return;
+    d->marks[d->nmarks].name = name;
+    d->marks[d->nmarks].id = owf_xml_attr(n, d->w, "id");
+    d->marks[d->nmarks].start = d->marks[d->nmarks].end = text_offset(d);
+    d->marks[d->nmarks].ended = 0;
+    d->nmarks++;
+}
+
+/* and ends here (w:bookmarkEnd), when it began in this paragraph */
+static void mark_end(docx *d, const owf_xml_node *n)
+{
+    const char *id = owf_xml_attr(n, d->w, "id");
+    int i;
+    for (i = 0; id && i < d->nmarks; ++i)
+        if (!d->marks[i].ended && d->marks[i].id && !strcmp(d->marks[i].id, id)) {
+            d->marks[i].end = text_offset(d);
+            d->marks[i].ended = 1;
+            break;
+        }
+}
+
 /* Runs and the containers runs live in. */
 static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para_char)
 {
@@ -1089,8 +1169,11 @@ static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para
             continue;
         if (is_w(d, c, "r")) {
             run(d, c, para_char);
-        } else if (is_w(d, c, "pPr") || is_w(d, c, "del") || is_w(d, c, "moveFrom") ||
-                   is_w(d, c, "bookmarkStart") || is_w(d, c, "bookmarkEnd") || is_w(d, c, "proofErr") ||
+        } else if (is_w(d, c, "bookmarkStart")) {
+            mark_start(d, c);                        /* 2.0.21 */
+        } else if (is_w(d, c, "bookmarkEnd")) {
+            mark_end(d, c);
+        } else if (is_w(d, c, "pPr") || is_w(d, c, "del") || is_w(d, c, "moveFrom") || is_w(d, c, "proofErr") ||
                    is_w(d, c, "permStart") || is_w(d, c, "permEnd") || is_w(d, c, "commentRangeStart") ||
                    is_w(d, c, "commentRangeEnd")) {
             /* deleted text and marks */
@@ -1136,26 +1219,6 @@ static void start_para(docx *d, const owf_parafmt *pf)
     }
 }
 
-/* 1.4: the bookmarks begun in a paragraph or a cell (w:bookmarkStart, at any depth but a text box's or a
- * drawing's), their names between spaces; Word's own _GoBack is left out. */
-static void collect_bookmarks(docx *d, const owf_xml_node *n, owf_buf *out)
-{
-    const owf_xml_node *c;
-    for (c = n ? n->first : NULL; c; c = c->next) {
-        if (c->type != OWF_XML_ELEMENT) continue;
-        if (is_w(d, c, "bookmarkStart")) {
-            const char *name = owf_xml_attr(c, d->w, "name");
-            if (name && *name && strcmp(name, "_GoBack") && !strchr(name, ' ')) {
-                if (out->length) owf_buf_putc(out, ' ');
-                owf_buf_puts(out, name);
-            }
-        } else if (!is_w(d, c, "txbxContent") && !is_w(d, c, "drawing") && !is_w(d, c, "pict") &&
-                   !owf_xml_is(c, NS_MC, "AlternateContent")) {
-            collect_bookmarks(d, c, out);
-        }
-    }
-}
-
 static char *dup_str(const char *s, size_t n)
 {
     char *t = (char *)malloc(n + 1);
@@ -1166,16 +1229,34 @@ static char *dup_str(const char *s, size_t n)
     return t;
 }
 
-/* 1.4: the paragraph just made gets its style's id and the bookmarks begun in node. */
-static void para_names(docx *d, const char *style, const owf_xml_node *node)
+/* 1.4: the paragraph just made gets its style's id and the bookmarks begun since the paragraph before it
+ * (in it, or between the two). 2.0.21: each at its place in the text ("name@start-end", owf.h); one that ends
+ * in a later paragraph ends at this one's end. */
+static void para_names(docx *d, const char *style)
 {
     owf_story *st = d->b->story;
     owf_para *p = st && st->nparas ? &st->paras[st->nparas - 1] : NULL;
     owf_buf names;
-    if (!p) return;
+    size_t length;
+    int i;
+    if (!p) {
+        d->nmarks = 0;
+        return;
+    }
     if (style && *style && !p->style && !(p->style = dup_str(style, strlen(style)))) d->failed = 1;
+    length = owf_para_text_bytes(p);
     owf_buf_init(&names);
-    collect_bookmarks(d, node, &names);
+    for (i = 0; i < d->nmarks; ++i) {
+        size_t start = d->marks[i].start < length ? d->marks[i].start : length;
+        size_t end = d->marks[i].ended ? d->marks[i].end : length;
+        if (end > length) end = length;
+        if (end < start) end = start;
+        if (names.length) owf_buf_putc(&names, ' ');
+        owf_buf_puts(&names, d->marks[i].name);
+        if (end > start) owf_buf_printf(&names, "@%lu-%lu", (unsigned long)start, (unsigned long)end);
+        else if (start) owf_buf_printf(&names, "@%lu", (unsigned long)start);
+    }
+    d->nmarks = 0;
     if (names.failed) d->failed = 1;
     else if (names.length && !p->bookmarks && !(p->bookmarks = dup_str((const char *)names.data, names.length)))
         d->failed = 1;
@@ -1268,7 +1349,7 @@ static void paragraph(docx *d, const owf_xml_node *p)
     }
     para_content(d, p, &cf);
     owf_builder_end_para(d->b);
-    para_names(d, pstyle ? wval(d, pstyle) : NULL, p);
+    para_names(d, pstyle ? wval(d, pstyle) : NULL);
     if (wchild(d, ppr, "sectPr")) {
         d->break_next = 1;
         owf_report_add(d->report, OWF_NOTE_APPROX, "Section breaks became page breaks");
@@ -1277,14 +1358,173 @@ static void paragraph(docx *d, const owf_xml_node *p)
 
 static void blocks(docx *d, const owf_xml_node *n);
 
+/* ---- 2.0.19: table styles ---- */
+
+static const owf_xml_node *table_style_node(docx *d, const char *id)
+{
+    const owf_xml_node *n;
+    if (!id || !d->styles_xml)
+        return NULL;
+    for (n = owf_xml_root(d->styles_xml)->first; n; n = n->next) {
+        const char *type, *sid;
+        if (!is_w(d, n, "style"))
+            continue;
+        type = owf_xml_attr(n, d->w, "type");
+        sid = owf_xml_attr(n, d->w, "styleId");
+        if (type && sid && !strcmp(type, "table") && !strcmp(sid, id))
+            return n;
+    }
+    return NULL;
+}
+
+/* A part's pPr, rPr and tcPr's fill, over what the part has so far. */
+static void table_part(docx *d, table_style *ts, int part, const owf_xml_node *n)
+{
+    owf_paraprops pp;
+    owf_charprops cp;
+    const owf_xml_node *shd = wchild(d, wchild(d, n, "tcPr"), "shd");
+    memset(&pp, 0, sizeof pp);
+    memset(&cp, 0, sizeof cp);
+    read_ppr(d, wchild(d, n, "pPr"), &pp, NULL, NULL);
+    read_rpr(d, wchild(d, n, "rPr"), &cp);
+    owf_paraprops_apply(&ts->pp[part].fmt, &pp);
+    ts->pp[part].mask |= pp.mask;
+    owf_charprops_apply(&ts->cp[part].fmt, &cp);
+    ts->cp[part].mask |= cp.mask;
+    if (shd) {
+        ts->shading[part] = docx_fill(d, shd);
+        ts->has_shading[part] = 1;
+    }
+}
+
+static void table_style_add(docx *d, table_style *ts, const owf_xml_node *st, int depth)
+{
+    static const char *const parts[TS_PARTS] = {
+        "wholeTable", "band1Vert", "band2Vert", "band1Horz", "band2Horz", "firstCol", "lastCol", "firstRow", "lastRow"
+    };
+    const owf_xml_node *n, *based, *tblpr;
+    int i, v;
+    if (!st || depth > 16)                   /* depth: a style that is its own ancestor */
+        return;
+    based = wchild(d, st, "basedOn");
+    tblpr = wchild(d, st, "tblPr");
+    if (based && wval(d, based))
+        table_style_add(d, ts, table_style_node(d, wval(d, based)), depth + 1);
+    table_part(d, ts, TS_WHOLE, st);
+    if ((n = wchild(d, tblpr, "tblStyleRowBandSize")) && wval(d, n) && (v = atoi(wval(d, n))) > 0)
+        ts->row_band = v;
+    if ((n = wchild(d, tblpr, "tblStyleColBandSize")) && wval(d, n) && (v = atoi(wval(d, n))) > 0)
+        ts->col_band = v;
+    for (n = st->first; n; n = n->next) {
+        const char *type;
+        if (!is_w(d, n, "tblStylePr") || !(type = owf_xml_attr(n, d->w, "type")))
+            continue;
+        for (i = 0; i < TS_PARTS && strcmp(parts[i], type); i++)
+            ;
+        if (i < TS_PARTS)
+            table_part(d, ts, i, n);
+    }
+}
+
+/* The parts a table uses: w:tblLook's attributes (Word 2010 on), or its w:val (Word 2007's bits). A table
+ * without one uses none but the whole table's. */
+static unsigned table_look(docx *d, const owf_xml_node *look)
+{
+    static const struct { const char *name; unsigned bit; } attrs[] = {
+        { "firstRow", TL_FIRST_ROW }, { "lastRow", TL_LAST_ROW }, { "firstColumn", TL_FIRST_COL },
+        { "lastColumn", TL_LAST_COL }, { "noHBand", TL_NO_HBAND }, { "noVBand", TL_NO_VBAND }
+    };
+    const char *v;
+    unsigned bits = 0;
+    size_t i;
+    int named = 0;
+    if (!look)
+        return TL_NO_HBAND | TL_NO_VBAND;
+    for (i = 0; i < sizeof attrs / sizeof attrs[0]; i++)
+        if ((v = owf_xml_attr(look, d->w, attrs[i].name))) {
+            named = 1;
+            if (strcmp(v, "0") && strcmp(v, "false") && strcmp(v, "off"))
+                bits |= attrs[i].bit;
+        }
+    if (!named && (v = wval(d, look)))
+        bits = (unsigned)strtoul(v, NULL, 16);
+    return bits;
+}
+
+/* The table's style (its w:tblStyle, or the default table style), into ts: 0 when it has none. */
+static int table_style_of(docx *d, const owf_xml_node *t, table_style *ts)
+{
+    const owf_xml_node *tblpr = wchild(d, t, "tblPr"), *ref = wchild(d, tblpr, "tblStyle");
+    const owf_xml_node *st = table_style_node(d, ref ? wval(d, ref) : d->default_table);
+    if (!st)
+        return 0;
+    memset(ts, 0, sizeof *ts);
+    ts->row_band = ts->col_band = 1;
+    table_style_add(d, ts, st, 0);
+    ts->look = table_look(d, wchild(d, tblpr, "tblLook"));
+    return 1;
+}
+
+/* The parts of the table's style that the cell being read takes, in the order Word applies them. */
+static int table_parts(const docx *d, int *parts)
+{
+    const table_style *ts = d->tstyle;
+    int n = 0, first_row, last_row, first_col, last_col;
+    if (!ts)
+        return 0;
+    first_row = (ts->look & TL_FIRST_ROW) && d->t_row == 0;
+    last_row = (ts->look & TL_LAST_ROW) && d->t_row == d->t_rows - 1;
+    first_col = (ts->look & TL_FIRST_COL) && d->t_col == 0;
+    last_col = (ts->look & TL_LAST_COL) && d->t_col == d->t_cols - 1;
+    parts[n++] = TS_WHOLE;
+    if (!(ts->look & TL_NO_VBAND) && !first_col && !last_col) {
+        int c = d->t_col - ((ts->look & TL_FIRST_COL) ? 1 : 0);
+        parts[n++] = (c / ts->col_band) % 2 ? TS_BAND2_VERT : TS_BAND1_VERT;
+    }
+    if (!(ts->look & TL_NO_HBAND) && !first_row && !last_row) {
+        int r = d->t_row - ((ts->look & TL_FIRST_ROW) ? 1 : 0);
+        parts[n++] = (r / ts->row_band) % 2 ? TS_BAND2_HORZ : TS_BAND1_HORZ;
+    }
+    if (first_col) parts[n++] = TS_FIRST_COL;
+    if (last_col) parts[n++] = TS_LAST_COL;
+    if (first_row) parts[n++] = TS_FIRST_ROW;
+    if (last_row) parts[n++] = TS_LAST_ROW;
+    return n;
+}
+
+/* A cell's paragraph and text, before its paragraph style: the document's defaults, then its table's style
+ * (Word's order: defaults, table style, paragraph style, the paragraph's own). */
+static void cell_base(const docx *d, owf_parafmt *pf, owf_charfmt *cf)
+{
+    int parts[TS_PARTS], i, n = table_parts(d, parts);
+    *pf = d->base_para;
+    *cf = d->base_char;
+    for (i = 0; i < n; i++) {
+        owf_paraprops_apply(pf, &d->tstyle->pp[parts[i]]);
+        owf_charprops_apply(cf, &d->tstyle->cp[parts[i]]);
+    }
+}
+
+/* The cell's fill from its table's style; 0: none. */
+static unsigned long cell_style_shading(const docx *d)
+{
+    int parts[TS_PARTS], i, n = table_parts(d, parts);
+    unsigned long fill = 0;
+    for (i = 0; i < n; i++)
+        if (d->tstyle->has_shading[parts[i]])
+            fill = d->tstyle->shading[parts[i]];
+    return fill;
+}
+
 static void cell_content(docx *d, const owf_xml_node *n, int *first)
 {
     const owf_xml_node *c;
     for (c = n->first; c; c = c->next) {
         if (is_w(d, c, "p")) {
             const owf_xml_node *pstyle = wchild(d, wchild(d, c, "pPr"), "pStyle");
-            owf_parafmt pf = d->base_para;
-            owf_charfmt cf = d->base_char;
+            owf_parafmt pf;
+            owf_charfmt cf;
+            cell_base(d, &pf, &cf);
             owf_styles_resolve(d->tables, 1, pstyle ? wval(d, pstyle) : d->default_para, OWF_FAMILY_PARAGRAPH, &pf, &cf);
             if (!*first) {                           /* a cell holds one paragraph: the next starts a line */
                 set_fmt(d, &cf);
@@ -1292,6 +1532,10 @@ static void cell_content(docx *d, const owf_xml_node *n, int *first)
             }
             *first = 0;
             para_content(d, c, &cf);
+        } else if (is_w(d, c, "bookmarkStart")) {
+            mark_start(d, c);                        /* 2.0.21: in the cell, between its paragraphs */
+        } else if (is_w(d, c, "bookmarkEnd")) {
+            mark_end(d, c);
         } else if (c->type == OWF_XML_ELEMENT && !is_w(d, c, "tcPr")) {
             cell_content(d, c, first);
         }
@@ -1307,9 +1551,10 @@ static owf_parafmt cell_format(docx *d, const owf_xml_node *cell)
     const owf_xml_node *c, *ppr = NULL, *pstyle;
     const char *num_id = NULL;
     int num_level = 0;
-    owf_parafmt pf = d->base_para;
-    owf_charfmt cf = d->base_char;
+    owf_parafmt pf;
+    owf_charfmt cf;
     owf_paraprops pp;
+    cell_base(d, &pf, &cf);
     for (c = cell->first; c; c = c->next)
         if (is_w(d, c, "p")) {
             ppr = wchild(d, c, "pPr");
@@ -1328,7 +1573,18 @@ static owf_parafmt cell_format(docx *d, const owf_xml_node *cell)
 static void table(docx *d, const owf_xml_node *t)
 {
     const owf_xml_node *row, *cell;
-    int table_id = d->next_table_id++, row_index = 0;
+    int table_id = d->next_table_id++, row_index = 0, rows = 0;
+    /* 2.0.19: the table's style for its cells; rows in a w:sdt (read here too) keep their table's */
+    const table_style *outer = d->tstyle;
+    int outer_rows = d->t_rows, is_tbl = is_w(d, t, "tbl");
+    table_style *ts = is_tbl ? malloc(sizeof *ts) : NULL;
+    if (is_tbl)
+        d->tstyle = ts && table_style_of(d, t, ts) ? ts : NULL;
+    for (row = t->first; row; row = row->next)
+        if (is_w(d, row, "tr"))
+            ++rows;
+    if (is_tbl)
+        d->t_rows = rows;
     for (row = t->first; row; row = row->next) {
         int col = 0, cols = 0;
         if (!is_w(d, row, "tr")) {
@@ -1342,6 +1598,9 @@ static void table(docx *d, const owf_xml_node *t)
             int first = 1, before;
             owf_para *p;
             if (!is_w(d, cell, "tc")) continue;
+            d->t_row = row_index;
+            d->t_col = col;
+            d->t_cols = cols;
             {
                 owf_parafmt pf = cell_format(d, cell);
                 start_para(d, &pf);
@@ -1352,15 +1611,19 @@ static void table(docx *d, const owf_xml_node *t)
             if(d->b->story->nparas<=before)continue;
             {   /* 1.4: the first paragraph's style, the cell's bookmarks */
                 const owf_xml_node *fp = wchild(d, cell, "p"), *ps = wchild(d, wchild(d, fp, "pPr"), "pStyle");
-                para_names(d, ps ? wval(d, ps) : NULL, cell);
+                para_names(d, ps ? wval(d, ps) : NULL);
             }
             p=&d->b->story->paras[d->b->story->nparas-1];
             p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
-            { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd"); if (shd) p->cell_shading = docx_fill(d, shd); }
+            { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd");
+              p->cell_shading = shd ? docx_fill(d, shd) : cell_style_shading(d); }
             ++col;
         }
         ++row_index;
     }
+    free(ts);
+    d->tstyle = outer;
+    d->t_rows = outer_rows;
 }
 
 static void blocks(docx *d, const owf_xml_node *n)
@@ -1369,6 +1632,8 @@ static void blocks(docx *d, const owf_xml_node *n)
     for (c = n->first; c; c = c->next) {
         if (is_w(d, c, "p"))
             paragraph(d, c);
+        else if (is_w(d, c, "bookmarkStart"))      /* 2.0.21: between paragraphs: the next one's, at its start */
+            mark_start(d, c);
         else if (is_w(d, c, "tbl"))
             table(d, c);
         else if (is_w(d, c, "sdt") || is_w(d, c, "sdtContent") || is_w(d, c, "customXml") ||
@@ -1402,6 +1667,7 @@ static void story(docx *d, const char *id, owf_story *into)
     }
     owf_builder_init(&b, d->doc, into);
     d->b = &b;
+    d->nmarks = 0;                                   /* 2.0.21: the body's last, after its last paragraph */
     blocks(d, owf_xml_root(part));
     if (owf_builder_done(&b) != OWF_OK)
         d->failed = 1;

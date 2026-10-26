@@ -65,4 +65,10 @@ int owf_pdf_winansi(unsigned long codepoint);
 }
 #endif
 
+/* the library's calls, once every header with calls is complete (owf.h) */
+#define OWF_PDF_H_DONE
+#if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "owf_proto.h"
+#endif
+
 #endif

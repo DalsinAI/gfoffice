@@ -22,6 +22,8 @@ extern "C" {
 
 #define OW_LAYOUT_FONT(index) ((unsigned)((index) + 1))
 #define OW_LAYOUT_FONT_INDEX(number) ((int)(number) - 1)
+/* 2.0.17: the image number of a text box's room in its line (a picture of nothing: draw none) */
+#define OW_LAYOUT_NO_IMAGE (-1)
 
 typedef struct ow_layout ow_layout;
 
@@ -51,10 +53,14 @@ int ow_layout_from_text(const ow_layout *layout, const ol_text_position *in, ow_
 /* The body paragraph and run a node stands for: run -1 for a paragraph's
  * own block, a table's or a row's. 0 for a node outside the body. */
 int ow_layout_node_run(const ow_layout *layout, ol_id node_id, int *paragraph, int *run);
+/* 2.0.15: the same for any node of the body or of a text box in it: *box 0 for the body's, k for text box
+ * doc->frames[k - 1]'s (ow_position.box). ow_layout_node_run answers for the body's alone. */
+int ow_layout_node_ref(const ow_layout *layout, ol_id node_id, int *box, int *paragraph, int *run);
 
 /* The caret for an editor position: its page and box (page coordinates). */
 int ow_layout_caret(const ow_layout *layout, ow_position pos, int *page, ol_rect *box);
-/* The editor position nearest a point on a page. */
+/* The editor position nearest a point on a page: in the text box in front of the text under it, if there is
+ * one (2.0.15, pos->box), else in the body. */
 int ow_layout_hit(const ow_layout *layout, int page, ol_unit x, ol_unit y, ow_position *pos);
 
 /* The header or footer for one page, fields filled in (the page number in

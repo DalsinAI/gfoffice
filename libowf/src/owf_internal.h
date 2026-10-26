@@ -307,6 +307,13 @@ int owf_ooxml_kind(const unsigned char *data, size_t length);
  * "xl/worksheets/sheet1.xml". 0 when it does not fit. */
 int owf_opc_part_name(char *out, size_t size, const char *dir, const char *target);
 
+/* A chart as an .xlsx's chart part (DrawingML's c:chartSpace), and a drawing part (xdr:wsDr) anchoring n
+ * charts, the k-th through its relationship "rId<k>" (owf_chart.c): what owf_sheet_charts reads back. */
+int owf_chart_part_xml(const owf_chart *c, owf_buf *b);
+int owf_chart_drawing_xml(const owf_chart *charts, int n, owf_buf *b);
+/* And a sheet's charts kept so, as an .xlsx's drawing is kept: its drawing, relationships and charts parts. */
+int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, int n);
+
 /* ---- Named styles (owf_style.c), for ODT and DOCX ---- */
 
 enum {
@@ -382,6 +389,13 @@ void owf_format_number(owf_buf *out, int n, owf_number_format format);
 
 /* The colours of ISO 6429 (and ANSI text), 0 to 7. */
 extern const unsigned long owf_iso_colours[8];
+
+/* 2.0.21: a paragraph's bookmarks one by one (owf_para.bookmarks): a name (not 0-terminated) and its place,
+ * start and end in the paragraph's text bytes (0 and 0 for a name without one). How many, up to max. */
+typedef struct { const char *name; size_t length; size_t start, end; } owf_mark;
+int owf_marks_parse(const char *list, owf_mark *marks, int max);
+/* The text bytes of a paragraph's text runs, in all. */
+size_t owf_para_text_bytes(const owf_para *p);
 
 /* Formatting state while text goes into a paragraph. */
 typedef struct {
