@@ -122,6 +122,10 @@ typedef struct {
     struct owf_chart *chart;     /* OWF_OBJ_CHART (Design-Suite-Shared.md, 4): NULL until charts come */
     char *name, *alt;            /* UTF-8, may be NULL */
     int keep;                    /* into deck->kept; -1: none */
+    /* Text that shrinks to fit, as PowerPoint last fitted it (a:normAutofit fontScale and lnSpcReduction):
+       the percent of its size, and the points of percent taken off its line spacing; 0: not said. Shrinking
+       starts at font_scale. ODP has no place for them (LibreOffice works the fit out itself). */
+    int font_scale, line_reduction;
 } owf_obj;
 
 /* ---- Slides, masters, layouts ---- */

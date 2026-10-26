@@ -1,5 +1,5 @@
-==id $Id: owfpresent_lib.sfd 3.0 (25.10.2026) $
-* "owfpresent.library" 3.0: OpenPresentation's part of libowf:
+==id $Id: owfpresent_lib.sfd 3.1 (26.10.2026) $
+* "owfpresent.library" 3.1: OpenPresentation's part of libowf:
 * presentations. The deck model, its formats (ODP, flat ODP) and the page
 * PDF writer, with the document model its text uses.
 * Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).
@@ -101,4 +101,6 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
 int owf_pdf_page_count(const owf_pdf *pdf) (a0)
 int owf_pdf_text_width(const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size) (a0,d0,d1,d2,d3)
 int owf_pdf_winansi(unsigned long codepoint) (d0)
+* 3.1: the PDF's stand-in for a character WinAnsiEncoding hasn't (OpenPresentation 0.2.1)
+const char *owf_pdf_fallback(unsigned long codepoint) (d0)
 ==end

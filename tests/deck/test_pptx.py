@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """The PPTX reader's tests: test_pptx.py path/to/deck_dump path/to/owconvert
 
-Reads the PPTX fixtures (fixtures/pptx-talk.pptx and pptx-plain.pptx, made
-by make_pptx_fixtures.py with python-pptx) and checks what deck_dump prints
-of them. Then:
+Reads the PPTX fixtures (fixtures/pptx-talk.pptx, pptx-plain.pptx and
+pptx-text.pptx, made by make_pptx_fixtures.py with python-pptx) and checks
+what deck_dump prints of them. Then:
 
 - each saved as ODP and read back: the same slides, objects and text, and
   the ODP valid ODF (odf_check.py) when odfpy is installed;
@@ -31,6 +31,7 @@ DUMP = os.path.abspath(sys.argv[1])
 OWCONVERT = os.path.abspath(sys.argv[2])
 TALK = os.path.join(FIX, "pptx-talk.pptx")
 PLAIN = os.path.join(FIX, "pptx-plain.pptx")
+TEXT = os.path.join(FIX, "pptx-text.pptx")
 failures = []
 
 
@@ -117,6 +118,29 @@ def test_plain():
           re.search(r'para level=1 .*\n.*"One"', out) and re.search(r'para level=1 .*\n.*"Two"', out))
 
 
+def test_text():
+    rc, out, err = dump(TEXT)
+    check("text: read", rc == 0, out[-500:] + err)
+    check("text: layouts by name", 'layout 0 "Blank"' in out and 'layout 1 "Title Only"' in out and
+          'layout 2 "Title and Content"' in out, out[:2000])
+    s0 = section(out, "slide 0 ")
+    check("text: cap=all kept as capitals", 'size=180 flags=1 colour=595959 "EXECUTIVE STATUS"' in s0, s0[:600])
+    check("text: 8 point text with its spaces", 'size=160 flags=0 colour=auto "Indicative European role-rate summary '
+          'for the pilot phase, with the cost of each role and the weeks it takes."' in s0, s0)
+    check("text: a 9 point bold run", 'size=180 flags=1 colour=auto "Bold nine-point text beside the bars"' in s0)
+    check("text: the bars and their labels", s0.count("fill=2F6FB3") == 3 and '"Build 6 weeks"' in s0)
+    check("text: a 7 point footer", 'size=140 flags=0 colour=595959 "Confidential.' in s0)
+    s1 = section(out, "slide 1 ")
+    check("text: arrows kept as they are", '"discovery \u2192 architecture \u2192 build \u2192 test \u2192 release"' in s1, s1[:800])
+    check("text: small capitals, the small letters smaller", 'size=320 flags=0 colour=auto "S"' in s1 and
+          'size=256 flags=0 colour=auto "MALL"' in s1 and 'size=256 flags=0 colour=auto "EADING"' in s1, s1)
+    s2 = section(out, "slide 2 ")
+    check("text: PowerPoint's fit kept", "autofit=1 inset=144,72,144,72 fitted=85/10" in s2, s2[:600])
+    for note in ("Text in capitals or small capitals is kept as capital letters",
+                 "Spacing between letters is drawn as normal"):
+        check("text: the report says " + note, note in out)
+
+
 def model(text):
     lines = []
     for line in text.splitlines():
@@ -126,6 +150,7 @@ def model(text):
         line = re.sub(r' font=("[^"]*"|-) size=\d+', "", line)     # fonts are renamed, runs made relative
         line = re.sub(r" colour=(auto|[0-9A-F]{6})", "", line)
         line = re.sub(r" inset=\S+", "", line)
+        line = re.sub(r" fitted=\S+", "", line)                     # PowerPoint's fit: not in ODP
         line = re.sub(r" transition=fade/\d", " transition=fade", line)
         if " kind=5 " in line:
             line = re.sub(r" id=\d+", "", line)                          # ODP's groups have no id
@@ -296,15 +321,22 @@ def main():
     work = tempfile.mkdtemp(prefix="pptx-tests-")
     test_talk()
     test_plain()
+    test_text()
     talk_odp = round_trip(work, "talk", TALK)
     round_trip(work, "plain", PLAIN)
+    round_trip(work, "text", TEXT)
     test_pdf(work, "talk", TALK, 4, ["GFOffice on the Amiga", "OpenPresentation reads PowerPoint", "What it reads",
                                        "Titles and bullet lists", "A third level", "A text box with bold red words",
                                        "Second line, centred", "Rectangle", "Ellipse", "Next", "OpenPresentation PPTX ODP ODP"])
     if talk_odp:
         test_pdf(work, "talk-odp", talk_odp, 4, ["GFOffice on the Amiga", "A third level", "Rectangle"])
+    # the characters WinAnsi hasn't, as the standard fonts' nearest (owf_pdf_fallback), not "?"
+    test_pdf(work, "text", TEXT, 3, ["EXECUTIVE STATUS", "Indicative European role-rate summary",
+                                     "discovery -> architecture -> build -> test -> release",
+                                     "<- back ^ up v down => so v done \u00d7 not", "<= 3 >= 4 != 5 ~ 6",
+                                     "SMALL CAPITALS HEADING", "Point 10 of ten"])
     cases = hostile(work)
-    tried = cut_short(work, TALK) + cut_short(work, PLAIN)
+    tried = cut_short(work, TALK) + cut_short(work, PLAIN) + cut_short(work, TEXT)
     print(f"{tried} cut-short and {cases} damaged PPTX files tried")
     print(f"{'FAILED' if failures else 'passed'}: {len(failures)} failure(s); files in {work}")
     if not failures:

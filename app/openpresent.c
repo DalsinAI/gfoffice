@@ -27,6 +27,7 @@
 #include <exec/memory.h>
 #include <intuition/intuition.h>
 #include <intuition/gadgetclass.h>
+#include <intuition/icclass.h>
 #include <libraries/gadtools.h>
 #include <libraries/asl.h>
 #include <workbench/startup.h>
@@ -78,16 +79,17 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
 #define PROGRAM "OpenPresentation"
-#define VERSION_TEXT "OpenPresentation 0.2.0 (25.10.2026)"
+#define VERSION_TEXT "OpenPresentation 0.2.1 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
 enum { C_NEW = 1, C_OPEN, C_SAVE, C_PRINT, C_PDF, C_UNDO, C_REDO };
-enum { GID_TOOLBAR = 100, GID_SLIDES = 400 };
+enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501 };
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
-    M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT
+    M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
+    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT
 };
 
 static struct NewMenu menus[] = {
@@ -114,6 +116,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Previous Slide", "[", 0, 0, (APTR)M_PREV },
     { NM_ITEM, "Next Slide", "]", 0, 0, (APTR)M_NEXT },
     { NM_ITEM, "Last Slide", NULL, 0, 0, (APTR)M_LAST },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Zoom In", "+", 0, 0, (APTR)M_ZOOM_IN },
+    { NM_ITEM, "Zoom Out", "-", 0, 0, (APTR)M_ZOOM_OUT },
+    { NM_ITEM, "Fit Slide to Window", "0", 0, 0, (APTR)M_ZOOM_FIT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Buttons", NULL, 0, 0, NULL },
     { NM_SUB, "Icons and Text", NULL, CHECKIT, ~1 & 7, (APTR)M_TB_BOTH },
@@ -162,6 +168,13 @@ static int tb_style = OGT_TB_ICONS;
 static int quit_now;
 
 static box area, toolbar_box, strip_box, view_box, slide_box, status_box;
+/* Zoom: the slide at a percent of its size fitted to the view; larger than the view, it scrolls (pan, in
+ * pixels) with the scrollers along the view's right and bottom edges, and is drawn only inside slide_area. */
+static const int zooms[] = { 100, 150, 200, 300, 400 };
+static int zoom = 100, pan_x, pan_y;
+static box slide_area;
+static struct Gadget *hscroll, *vscroll;
+#define SCROLLER 14
 
 static owf_deck *deck;
 static int current;                                  /* the slide shown */
@@ -303,22 +316,58 @@ static void own_pen_free(void)
     own_pen_tried = 0;
 }
 
-/* UTF-8 to the Amiga fonts' ISO-8859-1, one character: its byte, the nearest one for common typography
- * outside it, '?' for the rest; 0 for one that draws nothing. */
-static unsigned char latin1_of(unsigned long cp)
+/* UTF-8 to the Amiga fonts' ISO-8859-1: a character as the bytes drawn for it, at most 4 (*n of them; 0 for
+ * one that draws nothing). Its own byte; the nearest for the typography PDF's WinAnsi has beyond ISO-8859-1
+ * (quotes, dashes, "..." for the ellipsis, "TM"); else the PDF writer's own stand-in (owf_pdf_fallback:
+ * "->" for an arrow, "v" for a tick, "<=" for less or equal), so the screen draws what the PDF prints, in
+ * the room the layout measured for it; '?' for the rest. */
+static void latin1_of(unsigned long cp, unsigned char out[4], int *n)
 {
-    if (cp < 0x80 || (cp >= 0xA0 && cp <= 0xFF)) return (unsigned char)cp;
-    switch (cp) {
-    case 0x2022: case 0x25CF: case 0x25AA: case 0x2219: case 0x25A0: case 0x25E6: case 0x27A2: return 0xB7;
-    case 0x2018: case 0x2019: case 0x201A: case 0x2032: return '\'';
-    case 0x201C: case 0x201D: case 0x201E: case 0x2033: return '"';
-    case 0x2013: case 0x2014: case 0x2212: case 0x2010: case 0x2011: return '-';
-    case 0x00A0: case 0x2002: case 0x2003: case 0x2009: case 0x202F: return ' ';
-    case 0x2026: return 0x2E;            /* an ellipsis: a full stop */
-    case 0x20AC: return 'E';
-    case 0xFEFF: case 0x200B: case 0x200D: case 0x00AD: return 0;
+    const char *s = NULL;
+    *n = 1;
+    if (cp < 0x80 || (cp >= 0xA0 && cp <= 0xFF)) {
+        out[0] = (unsigned char)cp;
+        return;
     }
-    return '?';
+    switch (cp) {
+    case 0x2022: case 0x25CF: case 0x25AA: case 0x2219: case 0x25A0: case 0x25E6: case 0x27A2: out[0] = 0xB7; return;
+    case 0x2018: case 0x2019: case 0x201A: case 0x2039: s = "'"; break;
+    case 0x201C: case 0x201D: case 0x201E: s = "\""; break;
+    case 0x203A: s = "'"; break;
+    case 0x2013: case 0x2212: s = "-"; break;
+    case 0x2014: s = "--"; break;                    /* drawn as wide as the PDF's dash */
+    case 0x2026: s = "..."; break;
+    case 0x2122: s = "TM"; break;
+    case 0x20AC: s = "E"; break;
+    case 0x2020: case 0x2021: s = "+"; break;
+    case 0x2030: s = "%"; break;
+    case 0x0152: s = "OE"; break;
+    case 0x0153: s = "oe"; break;
+    case 0x0160: s = "S"; break;
+    case 0x0161: s = "s"; break;
+    case 0x017D: s = "Z"; break;
+    case 0x017E: s = "z"; break;
+    case 0x0178: s = "Y"; break;
+    case 0x0192: s = "f"; break;
+    case 0x02C6: s = "^"; break;
+    case 0x02DC: s = "~"; break;
+    case 0x00AD: *n = 0; return;
+    default: s = owf_pdf_fallback(cp); break;
+    }
+    if (!s) {
+        out[0] = '?';
+        return;
+    }
+    /* the stand-ins are ASCII or ISO-8859-1 (x as U+00D7), in UTF-8 */
+    for (*n = 0; *s && *n < 4; ++s) {
+        unsigned char c = (unsigned char)*s;
+        if (c == 0xC2 || c == 0xC3) {
+            out[(*n)++] = (unsigned char)(((c & 3) << 6) | ((unsigned char)s[1] & 0x3F));
+            if (s[1]) ++s;
+        } else {
+            out[(*n)++] = c;
+        }
+    }
 }
 
 /* The code point at *at (moved on past it); a broken byte is U+FFFD. */
@@ -352,9 +401,9 @@ static unsigned long utf8_next(const char *s, size_t n, size_t *at)
  * small cache. */
 
 #define FONT_CACHE 20
-static struct { char file[40]; int pixels; struct TextFont *font; } fonts[FONT_CACHE];
+static struct { char file[40]; int pixels, style; struct TextFont *font; } fonts[FONT_CACHE];
 static int font_next;
-static struct { char file[40]; int pixels; } font_misses[16];
+static struct { char file[40]; int pixels, style; } font_misses[16];
 static int font_miss_next;
 static int diskfont_tried;
 
@@ -384,7 +433,9 @@ static struct TextFont *open_route(int route, struct TextAttr *ta, UBYTE flags)
     }
 }
 
-static struct TextFont *font_px(const char *file, int pixels)
+/* style: FSF_BOLD and FSF_ITALIC asked of the font itself (diskfont has an outline drawn bold or slanted by
+ * its engine, cleaner than graphics' smear at small sizes); what the font comes without is the caller's. */
+static struct TextFont *font_px(const char *file, int pixels, int style)
 {
     struct TextAttr ta;
     struct TextFont *f = NULL;
@@ -392,14 +443,17 @@ static struct TextFont *font_px(const char *file, int pixels)
     if (pixels < 4) pixels = 4;
     if (pixels > 160) pixels = 160;
     for (i = 0; i < FONT_CACHE; ++i) {
-        if (fonts[i].font && fonts[i].pixels == pixels && !strcmp(fonts[i].file, file)) return fonts[i].font;
+        if (fonts[i].font && fonts[i].pixels == pixels && fonts[i].style == style && !strcmp(fonts[i].file, file))
+            return fonts[i].font;
         if (!fonts[i].font && slot < 0) slot = i;
     }
     for (i = 0; i < 16; ++i)
-        if (font_misses[i].pixels == pixels && !strcmp(font_misses[i].file, file)) return NULL;
+        if (font_misses[i].pixels == pixels && font_misses[i].style == style && !strcmp(font_misses[i].file, file))
+            return NULL;
     memset(&ta, 0, sizeof ta);
     ta.ta_Name = (STRPTR)file;
     ta.ta_YSize = (UWORD)pixels;
+    ta.ta_Style = (UBYTE)style;
     for (route = 0; !f && route < 2; ++route)
         if ((f = open_route(route, &ta, FPF_DISKFONT)) && abs(f->tf_YSize - pixels) > pixels / 8 + 1) {
             CloseFont(f);
@@ -410,6 +464,7 @@ static struct TextFont *font_px(const char *file, int pixels)
     if (!f) {
         snprintf(font_misses[font_miss_next].file, sizeof font_misses[0].file, "%s", file);
         font_misses[font_miss_next].pixels = pixels;
+        font_misses[font_miss_next].style = style;
         font_miss_next = (font_miss_next + 1) % 16;
         return NULL;
     }
@@ -420,19 +475,21 @@ static struct TextFont *font_px(const char *file, int pixels)
     }
     snprintf(fonts[slot].file, sizeof fonts[slot].file, "%s", file);
     fonts[slot].pixels = pixels;
+    fonts[slot].style = style;
     fonts[slot].font = f;
     return f;
 }
 
-static struct TextFont *slide_font(const ol_style *st, int pixels)
+/* The font for a run at a pixel size, asked bold or italic as the run is (style: FSF_ bits). */
+static struct TextFont *slide_font(const ol_style *st, int pixels, int style)
 {
     int index = OW_LAYOUT_FONT_INDEX(OL_TEXT_FONT_OF(st->text_flags));
     owf_font_kind kind = (st->text_flags & OL_TEXT_MONO) ? OWF_FONT_MONO : opr_font_kind(deck, index);
     const char *file = kind == OWF_FONT_MONO ? "courier.font" : kind == OWF_FONT_SERIF ? "CGTimes.font"
                      : "CGTriumvirate.font";
-    struct TextFont *f = font_px(file, pixels);
-    if (!f && kind != OWF_FONT_SANS) f = font_px("CGTriumvirate.font", pixels);
-    if (!f) f = font_px("helvetica.font", pixels);
+    struct TextFont *f = font_px(file, pixels, style);
+    if (!f && kind != OWF_FONT_SANS) f = font_px("CGTriumvirate.font", pixels, style);
+    if (!f) f = font_px("helvetica.font", pixels, style);
     return f ? f : font;
 }
 
@@ -883,10 +940,66 @@ static void draw_bullet(struct RastPort *rp, LONG pen, int shape, int x, int bas
     }
 }
 
-/* A text run's words, measured before they are drawn. */
+/* A text run's words, measured before they are drawn: where the layout put each (x0 and x1, layout units from
+ * the run's start) and its bytes in the font's ISO-8859-1 (latin1_of). */
 #define RUN_WORDS 48
-typedef struct { int x0, x1, shape; unsigned short n; char text[64]; } run_word;
+typedef struct { int x0, x1, shape; unsigned short n; char text[96]; } run_word;
 static run_word run_words[RUN_WORDS];
+
+/* Text smaller than this many pixels is drawn as a line where its words are (View > Zoom In to read it). */
+#define GREEK_BELOW 5
+
+/* A space between words (no-break spaces keep words together). */
+static int is_gap(unsigned long cp)
+{
+    return cp == ' ' || cp == '\t' || (cp >= 0x2002 && cp <= 0x200A) || cp == 0x202F || cp == 0x205F || cp == 0x3000;
+}
+
+/* Text's width as Text() draws it: graphics' bold moves each letter on by the font's smear, which TextLength
+ * can leave out (as OpenWrite's text_length has it). */
+static int text_w(struct RastPort *rp, const char *s, int n)
+{
+    int w = TextLength(rp, (STRPTR)s, (UWORD)n);
+    if (rp->AlgoStyle & FSF_BOLD) {
+        int smear = rp->Font && rp->Font->tf_BoldSmear ? rp->Font->tf_BoldSmear : 1;
+        int plain;
+        SetSoftStyle(rp, rp->AlgoStyle & ~FSF_BOLD, FSF_BOLD);
+        plain = TextLength(rp, (STRPTR)s, (UWORD)n) + n * smear;
+        SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
+        if (plain > w) w = plain;
+    }
+    return w;
+}
+
+/* The run's font at px pixels: bold and italic asked of the font (its engine draws them), what it can't
+ * do added by graphics, but not graphics' bold below 12 pixels, where its smear closes the letters up. */
+static void use_font(struct RastPort *rp, const ol_style *st, int px, int style)
+{
+    struct TextFont *f = slide_font(st, px, style);
+    int soft = style & ~(f->tf_Style & (FSF_BOLD | FSF_ITALIC));
+    if (px < 12) soft &= ~FSF_BOLD;
+    SetFont(rp, f);
+    SetSoftStyle(rp, soft, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+}
+
+/* A word at x, as wide as the layout made it (fit pixels, no wider than room, the way to the next word):
+ * each letter where the font puts it, the gaps between letters a little wider or narrower. The font's own
+ * spacing is kept inside the word, and the spaces between words are the layout's. */
+static void draw_word(struct RastPort *rp, int x, int baseline, const char *s, int n, int fit, int room)
+{
+    int w = text_w(rp, s, n), k;
+    if (fit > room) fit = room;
+    if (n < 2 || fit <= 0 || w <= 0 || (w - fit <= 1 && fit - w <= 1)) {
+        Move(rp, x, baseline);
+        Text(rp, (STRPTR)s, (WORD)n);
+        return;
+    }
+    for (k = 0; k < n; ++k) {
+        int at = k ? text_w(rp, s, k) : 0;
+        Move(rp, x + (int)((long)at * fit / w), baseline);
+        Text(rp, (STRPTR)s + k, 1);
+    }
+}
 
 static void paint_text(painter *p, const ol_device_op *d)
 {
@@ -896,61 +1009,63 @@ static void paint_text(painter *p, const ol_device_op *d)
     const char *s = n ? ol_node_text(n) : NULL;
     size_t len = t->text_length, at = 0;
     LONG pen;
-    int style = FS_NORMAL, baseline = d->baseline;
+    int style = FS_NORMAL, baseline = d->baseline, px0 = d->font_pixels;
     if (!s || !len) return;
     s += t->text_offset;
     pen = (t->style.foreground >> 24) ? argb_pen(t->style.foreground) : argb_pen(0xff000000u);
-    if (p->thumb || d->font_pixels < 6) {
+    if (p->thumb || px0 < GREEK_BELOW) {
         /* too small to read: a line where the words are; but a bullet at a
            small relative size (LibreOffice's 45%) is still drawn */
         size_t k = len;
+        int hh = px0 / 3 > 0 ? px0 / 3 : 1;
         if (!p->thumb) {
             size_t b = 0;
             int shape = bullet_shape(utf8_next(s, len, &b));
             if (shape && (b >= len || s[b] == ' ' || s[b] == '\t')) {
-                draw_bullet(rp, pen, shape, d->box.x, baseline, d->font_pixels);
+                draw_bullet(rp, pen, shape, d->box.x, baseline, px0);
                 return;
             }
         }
-        int hh = d->font_pixels / 2 > 0 ? d->font_pixels / 2 : 1;
         while (k && (s[k - 1] == ' ' || s[k - 1] == '\t')) --k;
-        if (k) ogt_box(rp, pen, d->box.x, baseline - hh, (int)(d->box.width * (long)k / (long)len) + 1, hh);
+        if (k) ogt_box(rp, pen, d->box.x, baseline - px0 / 3 - hh / 2, (int)(d->box.width * (long)k / (long)len) + 1, hh);
         return;
     }
     if (t->style.text_flags & OL_TEXT_BOLD) style |= FSF_BOLD;
     if (t->style.text_flags & OL_TEXT_ITALIC) style |= FSF_ITALIC;
-    if (t->style.text_flags & OL_TEXT_SUPER) baseline -= d->font_pixels / 2;
-    else if (t->style.text_flags & OL_TEXT_SUB) baseline += d->font_pixels / 4;
-    SetFont(rp, slide_font(&t->style, d->font_pixels));
-    SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+    if (t->style.text_flags & OL_TEXT_SUPER) baseline -= px0 / 2;
+    else if (t->style.text_flags & OL_TEXT_SUB) baseline += px0 / 4;
     ogt_set_apen(rp, exact_pen(pen));
     SetDrMd(rp, JAM1);
-    /* Each word starts where the layout put it and is drawn with the font's
-       own spacing (placing every glyph by the layout's widths left gaps
-       inside words). The layout measures with the print (PDF) widths, and an
-       Amiga font's size counts more than its letters' em, so its words come
-       out narrower: the font is taken a size up until the words' widths match
-       the layout's, and the words don't sit apart. */
+    /* Each word starts where the layout put it. The layout measures with the print's (PDF) widths, and an
+       Amiga font's letters at a size aren't those: wider at small sizes, narrower at large ones. So the font is
+       taken at the size whose words are as wide as the layout's (60% to 140% of the run's), and a word still
+       wider than its room is drawn closer, so the spaces between words stay. */
     while (at < len) {
-        int nw = 0, k;
-        long layout_w = 0, screen_w = 0;
+        int nw = 0, k, px = px0, lo = px0 * 6 / 10 > GREEK_BELOW ? px0 * 6 / 10 : GREEK_BELOW, tries;
+        long layout_w = 0, screen_w = 0, want;
         while (at < len && nw < RUN_WORDS) {
             run_word *w = &run_words[nw];
             size_t start = at;
             unsigned long cp = utf8_next(s, len, &at);
-            unsigned char c = latin1_of(cp);
+            unsigned char b[4];
+            int nb, i;
             ol_text_metrics m;
-            if (c <= ' ' || c == 0x7F) continue;
+            if (is_gap(cp) || cp < ' ' || cp == 0x7F) continue;
             w->n = 0;
             w->shape = bullet_shape(cp);
-            if (!(w->shape && (at >= len || s[at] == ' ' || s[at] == '\t'))) {
+            if (w->shape && (at >= len || s[at] == ' ' || s[at] == '\t')) {
+                w->x0 = w->x1 = 0;
+            } else {
                 w->shape = 0;
-                w->text[w->n++] = (char)c;
-                while (at < len && w->n < sizeof w->text) {
-                    size_t here = at;
-                    c = latin1_of(utf8_next(s, len, &at));
-                    if (c <= ' ' || c == 0x7F) { at = here; break; }
-                    w->text[w->n++] = (char)c;
+                for (;;) {
+                    latin1_of(cp, b, &nb);
+                    for (i = 0; i < nb && w->n < sizeof w->text; ++i) w->text[w->n++] = (char)b[i];
+                    if (at >= len || w->n + 4 > sizeof w->text) break;
+                    {
+                        size_t here = at;
+                        cp = utf8_next(s, len, &at);
+                        if (is_gap(cp) || cp < ' ' || cp == 0x7F) { at = here; break; }
+                    }
                 }
             }
             m.width = 0;
@@ -958,37 +1073,48 @@ static void paint_text(painter *p, const ol_device_op *d)
             w->x0 = m.width;
             opr_measure((void *)deck, s, at, &t->style, &m);
             w->x1 = m.width;
-            if (!w->shape) {
-                layout_w += w->x1 - w->x0;
-                screen_w += TextLength(rp, (STRPTR)w->text, (UWORD)w->n);
-            }
             nw++;
         }
-        if (screen_w > 0) {
-            long want = ol_scale_length(&p->scale, (int)layout_w);
-            if (want * 100 > screen_w * 104) {
-                long px = (long)d->font_pixels * want / screen_w;
-                if (px > (long)d->font_pixels * 14 / 10) px = (long)d->font_pixels * 14 / 10;
-                SetFont(rp, slide_font(&t->style, (int)px));
-                SetSoftStyle(rp, style, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+        use_font(rp, &t->style, px, style);
+        for (k = 0; k < nw; ++k)
+            if (!run_words[k].shape && run_words[k].n) {
+                layout_w += run_words[k].x1 - run_words[k].x0;
+                screen_w += text_w(rp, run_words[k].text, run_words[k].n);
+            }
+        want = ol_scale_length(&p->scale, (int)layout_w);
+        if (screen_w > 0 && want > 0) {
+            long target = (long)px0 * want / screen_w;
+            if (target < lo) target = lo;
+            if (target > (long)px0 * 14 / 10) target = (long)px0 * 14 / 10;
+            for (tries = 0; tries < 4 && target != px; ++tries) {
+                long was = screen_w;
+                px = (int)target;
+                use_font(rp, &t->style, px, style);
+                for (k = 0, screen_w = 0; k < nw; ++k)
+                    if (!run_words[k].shape && run_words[k].n) screen_w += text_w(rp, run_words[k].text, run_words[k].n);
+                /* fonts don't grow evenly: a step down while still more than 3% too wide */
+                if (screen_w * 100 > want * 103 && px > lo) target = px - 1;
+                else if (screen_w == was) break;
             }
         }
         for (k = 0; k < nw; ++k) {
             const run_word *w = &run_words[k];
-            int x = ol_scale_x(&p->scale, t->bounds.x + w->x0);
+            int x = ol_scale_x(&p->scale, t->bounds.x + w->x0), room, gap = px / 5 > 1 ? px / 5 : 1;
             if (w->shape) {
                 /* a bullet on its own: drawn, as the fonts' middle dot is too small to see */
-                draw_bullet(rp, pen, w->shape, x, baseline, d->font_pixels);
+                draw_bullet(rp, pen, w->shape, x, baseline, px0);
                 ogt_set_apen(rp, exact_pen(pen));
                 continue;
             }
-            Move(rp, x, baseline);
-            Text(rp, (STRPTR)w->text, (WORD)w->n);
+            if (!w->n) continue;
+            room = k + 1 < nw ? ol_scale_x(&p->scale, t->bounds.x + run_words[k + 1].x0) - x - gap
+                              : ol_scale_x(&p->scale, t->bounds.x + w->x1) - x + gap;
+            draw_word(rp, x, baseline, w->text, w->n, ol_scale_x(&p->scale, t->bounds.x + w->x1) - x, room);
         }
     }
     SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     if (t->style.text_flags & OL_TEXT_UNDERLINE) ogt_hline(rp, pen, d->box.x, baseline + 1, d->box.width);
-    if (t->style.text_flags & OL_TEXT_STRIKE) ogt_hline(rp, pen, d->box.x, baseline - d->font_pixels / 3, d->box.width);
+    if (t->style.text_flags & OL_TEXT_STRIKE) ogt_hline(rp, pen, d->box.x, baseline - px0 / 3, d->box.width);
 }
 
 static void paint_op(void *userdata, const ol_device_op *d)
@@ -1098,11 +1224,19 @@ static void update_edit_tools(void)
     ogt_toolbar_enable(&tb, C_REDO, opr_redo_can(undo));
 }
 
-/* Where the slide goes in the view: as large as fits, its shape kept, centred. */
+/* Where the slide goes in the view: as large as fits, its shape kept, centred; zoomed, that size times the
+ * zoom, scrolled by the pan when larger than the view. */
 static void place_slide(void)
 {
-    int mw = view_box.w - 24, mh = view_box.h - 24, w, h;
-    if (!deck || mw < 16 || mh < 16) {
+    int mw, mh, w, h;
+    slide_area = view_box;
+    if (zoom > 100) {
+        slide_area.w -= SCROLLER;
+        slide_area.h -= SCROLLER;
+    }
+    mw = view_box.w - 24;
+    mh = view_box.h - 24;
+    if (!deck || mw < 16 || mh < 16 || slide_area.w < 16 || slide_area.h < 16) {
         slide_box = (box){ view_box.x, view_box.y, 0, 0 };
         return;
     }
@@ -1112,7 +1246,53 @@ static void place_slide(void)
         h = mh;
         w = (int)((long)h * deck->width / deck->height);
     }
-    slide_box = (box){ view_box.x + (view_box.w - w) / 2, view_box.y + (view_box.h - h) / 2, w, h };
+    w = (int)((long)w * zoom / 100);
+    h = (int)((long)h * zoom / 100);
+    if (w + 24 <= slide_area.w) {
+        pan_x = 0;
+        slide_box.x = slide_area.x + (slide_area.w - w) / 2;
+    } else {
+        int most = w + 24 - slide_area.w;
+        if (pan_x > most) pan_x = most;
+        if (pan_x < 0) pan_x = 0;
+        slide_box.x = slide_area.x + 12 - pan_x;
+    }
+    if (h + 24 <= slide_area.h) {
+        pan_y = 0;
+        slide_box.y = slide_area.y + (slide_area.h - h) / 2;
+    } else {
+        int most = h + 24 - slide_area.h;
+        if (pan_y > most) pan_y = most;
+        if (pan_y < 0) pan_y = 0;
+        slide_box.y = slide_area.y + 12 - pan_y;
+    }
+    slide_box.w = w;
+    slide_box.h = h;
+}
+
+static void free_scrollers(void)
+{
+    if (hscroll) { RemoveGadget(win, hscroll); DisposeObject(hscroll); hscroll = NULL; }
+    if (vscroll) { RemoveGadget(win, vscroll); DisposeObject(vscroll); vscroll = NULL; }
+}
+
+/* The scrollers of a zoomed slide (propgclass, telling the window as it moves). */
+static void make_scrollers(void)
+{
+    free_scrollers();
+    if (zoom <= 100 || slide_box.w <= 0) return;
+    hscroll = (struct Gadget *)NewObject(NULL, (UBYTE *)"propgclass",
+        GA_Left, slide_area.x, GA_Top, slide_area.y + slide_area.h + 1, GA_Width, slide_area.w, GA_Height, SCROLLER - 2,
+        GA_ID, GID_HSCROLL, GA_RelVerify, TRUE, GA_Immediate, TRUE, PGA_Freedom, FREEHORIZ, PGA_NewLook, TRUE,
+        PGA_Borderless, TRUE, PGA_Total, (ULONG)(slide_box.w + 24), PGA_Visible, (ULONG)slide_area.w,
+        PGA_Top, (ULONG)pan_x, ICA_TARGET, ICTARGET_IDCMP, TAG_DONE);
+    vscroll = (struct Gadget *)NewObject(NULL, (UBYTE *)"propgclass",
+        GA_Left, slide_area.x + slide_area.w + 1, GA_Top, slide_area.y, GA_Width, SCROLLER - 2, GA_Height, slide_area.h,
+        GA_ID, GID_VSCROLL, GA_RelVerify, TRUE, GA_Immediate, TRUE, PGA_Freedom, FREEVERT, PGA_NewLook, TRUE,
+        PGA_Borderless, TRUE, PGA_Total, (ULONG)(slide_box.h + 24), PGA_Visible, (ULONG)slide_area.h,
+        PGA_Top, (ULONG)pan_y, ICA_TARGET, ICTARGET_IDCMP, TAG_DONE);
+    if (hscroll) AddGadget(win, hscroll, (UWORD)~0);
+    if (vscroll) AddGadget(win, vscroll, (UWORD)~0);
 }
 
 static int thumb_height(void *user, int index)
@@ -1149,6 +1329,7 @@ static void thumb_draw(void *user, int index, struct RastPort *rp, int x, int y,
 static void free_gadgets(void)
 {
     if (!win) return;
+    free_scrollers();
     if (chain) { RemoveGList(win, chain, -1); chain = NULL; }
     if (strip) { ogt_list_free(strip); strip = NULL; }
 }
@@ -1177,36 +1358,66 @@ static void layout(void)
     place_slide();
     if ((chain = ogt_toolbar_gadgets(&tb, GID_TOOLBAR)))
         AddGList(win, chain, ~0, -1, NULL);
+    make_scrollers();
     if (stripw && (strip = ogt_list_new(win, &ctx, GID_SLIDES, thumb_height, thumb_draw, NULL, NULL, "list"))) {
         ogt_list_layout(strip, strip_box.x + 4, strip_box.y + 4, strip_box.w - 8, strip_box.h - 8);
         ogt_list_set_count(strip, deck ? deck->nslides : 0);
         ogt_list_select(strip, current);
     }
-    ogt_status_init(&sbar, win, &ctx, 4);
+    ogt_status_init(&sbar, win, &ctx, 5);
     ogt_status_layout(&sbar, status_box.x, status_box.y, status_box.w, status_box.h);
 }
 
-/* A layout's name in words. LibreOffice names its ODP layouts "AL<n>T<k>",
-   k being its layout number: those few that have plain names get them,
-   the rest show nothing rather than a code. */
+/* A layout's name in words. The file's own name, but for names that are codes: LibreOffice's ODP layouts
+ * ("AL1T0": the few with plain names get them, the rest nothing rather than a code), PresentationML's layout
+ * types that some programs use as names ("titleOnly"), and Google Slides' ("TITLE_AND_BODY"). */
 static const char *layout_words(const char *name)
 {
+    static const struct { const char *code, *words; } codes[] = {
+        { "blank", "Blank" }, { "title", "Title Slide" }, { "obj", "Title and Content" },
+        { "twoObj", "Two Content" }, { "titleOnly", "Title Only" }, { "secHead", "Section Header" },
+        { "tx", "Title and Text" }, { "twoTxTwoObj", "Comparison" }, { "objTx", "Content with Caption" },
+        { "picTx", "Picture with Caption" }, { "vertTx", "Title and Vertical Text" }, { "cust", "Custom" },
+        { "TITLE", "Title Slide" }, { "CAPTION_ONLY", "Caption" }
+    };
+    static char words[64];
     const char *p = name;
     long k;
-    if (!p || p[0] != 'A' || p[1] != 'L' || !isdigit((unsigned char)p[2])) return name;
-    for (p += 2; isdigit((unsigned char)*p); ++p) ;
-    if (*p != 'T' || !isdigit((unsigned char)p[1])) return name;
-    k = strtol(p + 1, (char **)&p, 10);
-    if (*p) return name;
-    switch (k) {
-    case 0: return "Title Slide";
-    case 1: return "Title, Content";
-    case 3: return "Title and 2 Content";
-    case 18: return "Title, 4 Content";
-    case 19: return "Title Only";
-    case 20: return "Blank";
-    default: return NULL;
+    size_t i;
+    int lower = 0, under = 0;
+    if (!p || !*p) return NULL;
+    for (i = 0; i < sizeof codes / sizeof codes[0]; ++i)
+        if (!strcmp(p, codes[i].code)) return codes[i].words;
+    if (p[0] == 'A' && p[1] == 'L' && isdigit((unsigned char)p[2])) {
+        for (p += 2; isdigit((unsigned char)*p); ++p) ;
+        if (*p == 'T' && isdigit((unsigned char)p[1])) {
+            k = strtol(p + 1, (char **)&p, 10);
+            if (!*p) {
+                switch (k) {
+                case 0: return "Title Slide";
+                case 1: return "Title, Content";
+                case 3: return "Title and 2 Content";
+                case 18: return "Title, 4 Content";
+                case 19: return "Title Only";
+                case 20: return "Blank";
+                default: return NULL;
+                }
+            }
+        }
+        p = name;
     }
+    /* SHOUTED_WITH_UNDERSCORES: "Title and body" */
+    for (i = 0; p[i]; ++i) {
+        if (islower((unsigned char)p[i])) lower = 1;
+        if (p[i] == '_') under = 1;
+    }
+    if (!lower && (under || strlen(p) > 1) && strlen(p) < sizeof words) {
+        for (i = 0; p[i]; ++i)
+            words[i] = p[i] == '_' ? ' ' : (char)(i ? tolower((unsigned char)p[i]) : p[i]);
+        words[i] = 0;
+        return words;
+    }
+    return name;
 }
 
 static void draw_status(void)
@@ -1224,7 +1435,13 @@ static void draw_status(void)
     ogt_status_set(&sbar, 0, s);
     ogt_status_set(&sbar, 1, lname ? lname : "");
     ogt_status_set(&sbar, 2, status);
-    ogt_status_set(&sbar, 3, current_format);
+    {
+        char z[16];
+        if (zoom == 100) snprintf(z, sizeof z, "Fit");
+        else snprintf(z, sizeof z, "%d%%", zoom);
+        ogt_status_set(&sbar, 3, z);
+    }
+    ogt_status_set(&sbar, 4, current_format);
 }
 
 /* The caret and the frame being typed in, over the slide. */
@@ -1264,14 +1481,27 @@ static void draw_slide_part(const box *part)
             ogt_text(rp, ogt_pen(&ctx, "muted"), view_box.x + 16, view_box.y + 16, "No slides.", view_box.w - 32);
             return;
         }
-        ogt_box(rp, ogt_pen(&ctx, "track"), slide_box.x + 4, slide_box.y + 4, slide_box.w, slide_box.h);
-        ogt_frame(rp, ogt_pen(&ctx, "group.line"), slide_box.x - 1, slide_box.y - 1, slide_box.w + 2, slide_box.h + 2);
+        if (slide_box.x > slide_area.x && slide_box.y > slide_area.y &&
+            slide_box.x + slide_box.w + 4 < slide_area.x + slide_area.w &&
+            slide_box.y + slide_box.h + 4 < slide_area.y + slide_area.h) {
+            ogt_box(rp, ogt_pen(&ctx, "track"), slide_box.x + 4, slide_box.y + 4, slide_box.w, slide_box.h);
+            ogt_frame(rp, ogt_pen(&ctx, "group.line"), slide_box.x - 1, slide_box.y - 1, slide_box.w + 2, slide_box.h + 2);
+        }
+        if (hscroll || vscroll) {
+            ogt_box(rp, ogt_pen(&ctx, "track"), slide_area.x + slide_area.w, slide_area.y + slide_area.h, SCROLLER, SCROLLER);
+            if (hscroll) RefreshGList(hscroll, win, NULL, 1);
+            if (vscroll) RefreshGList(vscroll, win, NULL, 1);
+        }
     }
     if (!deck || !deck->nslides || slide_box.w <= 0) return;
-    r.MinX = (WORD)slide_box.x;
-    r.MinY = (WORD)slide_box.y;
-    r.MaxX = (WORD)(slide_box.x + slide_box.w - 1);
-    r.MaxY = (WORD)(slide_box.y + slide_box.h - 1);
+    /* the slide, what of it is in the slide area */
+    r.MinX = (WORD)(slide_box.x > slide_area.x ? slide_box.x : slide_area.x);
+    r.MinY = (WORD)(slide_box.y > slide_area.y ? slide_box.y : slide_area.y);
+    r.MaxX = (WORD)(slide_box.x + slide_box.w < slide_area.x + slide_area.w ? slide_box.x + slide_box.w - 1
+                                                                            : slide_area.x + slide_area.w - 1);
+    r.MaxY = (WORD)(slide_box.y + slide_box.h < slide_area.y + slide_area.h ? slide_box.y + slide_box.h - 1
+                                                                            : slide_area.y + slide_area.h - 1);
+    if (r.MaxX < r.MinX || r.MaxY < r.MinY) return;
     if (part) {
         if (part->x > r.MinX) r.MinX = (WORD)part->x;
         if (part->y > r.MinY) r.MinY = (WORD)part->y;
@@ -1483,6 +1713,8 @@ static void slide_click(int mx, int my)
     box old;
     if (!s || mx < slide_box.x || my < slide_box.y || mx >= slide_box.x + slide_box.w || my >= slide_box.y + slide_box.h)
         return;
+    if (mx < slide_area.x || my < slide_area.y || mx >= slide_area.x + slide_area.w || my >= slide_area.y + slide_area.h)
+        return;                                      /* the part scrolled out of sight */
     ol_scale_fit(&sc, TW(deck->width), slide_box.w);
     sc.origin_x = slide_box.x;
     sc.origin_y = slide_box.y;
@@ -1753,6 +1985,46 @@ static void about(void)
 
 /* ---- Commands ---- */
 
+/* Zoom to z percent of the fitted size, the middle of what is shown kept in the middle. */
+static void set_zoom(int z)
+{
+    long fx = 500, fy = 500;                         /* the view's middle, in thousandths of the slide */
+    if (z == zoom) return;
+    if (slide_box.w > 0 && slide_box.h > 0) {
+        fx = (long)(slide_area.x + slide_area.w / 2 - slide_box.x) * 1000 / slide_box.w;
+        fy = (long)(slide_area.y + slide_area.h / 2 - slide_box.y) * 1000 / slide_box.h;
+    }
+    zoom = z;
+    place_slide();
+    pan_x = (int)(fx * slide_box.w / 1000) + 12 - slide_area.w / 2;
+    pan_y = (int)(fy * slide_box.h / 1000) + 12 - slide_area.h / 2;
+    relayout();
+}
+
+static void zoom_step(int dir)
+{
+    int i, n = (int)(sizeof zooms / sizeof zooms[0]), at = 0;
+    for (i = 0; i < n; ++i)
+        if (zooms[i] <= zoom) at = i;
+    at += dir;
+    if (at < 0) at = 0;
+    if (at >= n) at = n - 1;
+    set_zoom(zooms[at]);
+}
+
+/* The scrollers moved: the slide follows. */
+static void scrolled(void)
+{
+    ULONG top;
+    int moved = 0;
+    if (hscroll && GetAttr(PGA_Top, (Object *)hscroll, &top) && (int)top != pan_x) { pan_x = (int)top; moved = 1; }
+    if (vscroll && GetAttr(PGA_Top, (Object *)vscroll, &top) && (int)top != pan_y) { pan_y = (int)top; moved = 1; }
+    if (moved) {
+        place_slide();
+        draw_slide();
+    }
+}
+
 static void set_buttons(int style)
 {
     tb_style = style;
@@ -1780,6 +2052,9 @@ static void menu_action(ULONG id)
     case M_PREV: show_slide(current - 1); break;
     case M_NEXT: show_slide(current + 1); break;
     case M_LAST: show_slide(deck ? deck->nslides - 1 : 0); break;
+    case M_ZOOM_IN: zoom_step(1); break;
+    case M_ZOOM_OUT: zoom_step(-1); break;
+    case M_ZOOM_FIT: set_zoom(100); break;
     case M_TB_BOTH: set_buttons(OGT_TB_ICONS_TEXT); break;
     case M_TB_ICONS: set_buttons(OGT_TB_ICONS); break;
     case M_TB_TEXT: set_buttons(OGT_TB_TEXT); break;
@@ -1855,7 +2130,11 @@ static void events(void)
             break;
         case IDCMP_GADGETDOWN:
         case IDCMP_GADGETUP:
-            if (g && g->GadgetID >= GID_TOOLBAR && g->GadgetID < GID_SLIDES) toolbar_event(class, g);
+            if (g && (g == hscroll || g == vscroll)) scrolled();
+            else if (g && g->GadgetID >= GID_TOOLBAR && g->GadgetID < GID_SLIDES) toolbar_event(class, g);
+            break;
+        case IDCMP_IDCMPUPDATE:
+            scrolled();
             break;
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN) slide_click(mx, my);
@@ -1895,6 +2174,9 @@ static void events(void)
             if (edit_obj < 0) {
                 if (code == ' ') show_slide(current + 1);
                 else if (code == 8) show_slide(current - 1);
+                else if (code == '+' || code == '=') zoom_step(1);
+                else if (code == '-') zoom_step(-1);
+                else if (code == '0') set_zoom(100);
                 break;
             }
             if (code == 8 || code == 127 || code == 13) type_key(code);
@@ -1939,6 +2221,8 @@ static void free_area(int *l, int *t, int *w, int *h)
     *h = scr->Height - *t;
 }
 
+static WORD zoom_box[4];
+
 static int open_window(void)
 {
     int l, t, w, h, aw, ah;
@@ -1954,6 +2238,11 @@ static int open_window(void)
     /* 800 x 600 to start (the Open apps' rule), centred, never bigger than the screen allows */
     w = aw < 800 ? aw : 800;
     h = ah < 600 ? ah : 600;
+    /* the zoom gadget: the whole free area, and back */
+    zoom_box[0] = (WORD)l;
+    zoom_box[1] = (WORD)t;
+    zoom_box[2] = (WORD)aw;
+    zoom_box[3] = (WORD)ah;
     l += (aw - w) / 2;
     t += (ah - h) / 2;
     win = OpenWindowTags(NULL,
@@ -1961,7 +2250,7 @@ static int open_window(void)
         WA_ScreenTitle, (ULONG)VERSION_TEXT,
         WA_PubScreen, (ULONG)scr,
         WA_Left, l, WA_Top, t, WA_Width, w, WA_Height, h,
-        WA_MinWidth, w < 400 ? w : 400, WA_MinHeight, h < 280 ? h : 280,
+        WA_MinWidth, w < 400 ? w : 400, WA_MinHeight, h < 280 ? h : 280, WA_Zoom, (ULONG)zoom_box,
         WA_MaxWidth, ~0, WA_MaxHeight, ~0,
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
         WA_SizeGadget, TRUE, WA_SizeBBottom, TRUE,

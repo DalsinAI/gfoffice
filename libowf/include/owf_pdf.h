@@ -60,6 +60,12 @@ int owf_pdf_page_count(const owf_pdf *pdf);
 int owf_pdf_text_width(const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size);
 /* A character's byte in WinAnsiEncoding, or 0 when it has none. */
 int owf_pdf_winansi(unsigned long codepoint);
+/* For a character WinAnsiEncoding hasn't, the nearest the standard fonts
+ * have, as UTF-8 (U+2192 as "->", U+2713 as "v", U+2260 as "!="; "" for
+ * one that draws nothing), or NULL: drawn as '?'. owf_pdf_text writes it
+ * and owf_pdf_text_width measures it, so a screen that draws it too keeps
+ * the PDF's line breaks. */
+const char *owf_pdf_fallback(unsigned long codepoint);
 
 #ifdef __cplusplus
 }
