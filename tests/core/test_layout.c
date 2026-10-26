@@ -806,6 +806,96 @@ static int line_tops(const ow_layout *l, int para, ol_unit *tops, int max)
     return n;
 }
 
+/* A paragraph's first text run's format. */
+static owf_charfmt first_text_fmt(const owf_para *p)
+{
+    static const owf_charfmt none = { 0, -1, 0, OWF_COLOUR_AUTO };
+    int i;
+    for (i = 0; i < p->nruns; ++i)
+        if (p->runs[i].kind == OWF_RUN_TEXT) return p->runs[i].fmt;
+    return none;
+}
+
+/* tests/core/fixtures/table-styles.docx (make_tables_docx.py): Word's table styles (2.0.19), their pPr, rPr
+ * and fills given to the cells, under the cells' paragraph styles and their own formats. */
+static void table_style_checks(const ow_layout *l, const owf_doc *doc)
+{
+    const owf_para *p = doc->body.paras;
+    int i;
+    (void)l;
+    CHECK(doc->body.nparas == 20);
+    if (doc->body.nparas != 20) return;
+    /* outside: the document's defaults */
+    CHECK(p[0].fmt.space_after == 160 && p[0].fmt.line_spacing == 108);
+    /* Table Grid: no space after, single lines */
+    for (i = 1; i <= 4; ++i) {
+        CHECK(p[i].table_id >= 0);
+        CHECK(p[i].fmt.space_after == 0 && p[i].fmt.line_spacing == 100);
+        CHECK(p[i].fmt.align == OWF_ALIGN_LEFT && p[i].cell_shading == 0);
+    }
+    CHECK(p[5].table_id < 0 && p[5].fmt.space_after == 160);
+    /* Plan Table, on Table Grid: centred, 10 point, Table Grid's spacing */
+    for (i = 6; i <= 15; ++i) {
+        CHECK(p[i].table_id >= 0 && p[i].fmt.align == OWF_ALIGN_CENTRE);
+        CHECK(p[i].fmt.line_spacing == 100);
+        CHECK(first_text_fmt(&p[i]).size == 200);
+    }
+    /* its header row: bold, white on dark blue */
+    for (i = 6; i <= 7; ++i) {
+        owf_charfmt f = first_text_fmt(&p[i]);
+        CHECK(p[i].table_row == 0 && p[i].fmt.space_after == 0);
+        CHECK((f.flags & OWF_BOLD) && !(f.flags & OWF_ITALIC) && f.colour == 0xFFFFFFUL);
+        CHECK(p[i].cell_shading == OWF_SHADE(0x1F3864));
+    }
+    /* banded rows (light blue, white, light blue), banded columns off (no red) */
+    CHECK(p[8].cell_shading == OWF_SHADE(0xD9E2F3) && p[9].cell_shading == OWF_SHADE(0xD9E2F3));
+    CHECK(p[10].cell_shading == 0 && p[11].cell_shading == 0);
+    CHECK(p[12].cell_shading == OWF_SHADE(0xD9E2F3) && p[13].cell_shading == OWF_SHADE(0xD9E2F3));
+    CHECK(!(first_text_fmt(&p[8]).flags & OWF_BOLD) && first_text_fmt(&p[8]).colour != 0xFFFFFFUL);
+    /* the cell's own spacing, and a paragraph style's, over the table style's */
+    CHECK(p[8].fmt.space_after == 0);
+    CHECK(p[9].fmt.space_after == 120);
+    CHECK(p[11].fmt.space_after == 80);
+    /* the last row: italic, not banded */
+    for (i = 14; i <= 15; ++i) {
+        owf_charfmt f = first_text_fmt(&p[i]);
+        CHECK(p[i].table_row == 4 && (f.flags & OWF_ITALIC) && !(f.flags & OWF_BOLD));
+        CHECK(p[i].cell_shading == 0);
+    }
+    /* no style: the default table style (Normal Table), which gives nothing */
+    for (i = 17; i <= 18; ++i) {
+        CHECK(p[i].table_id >= 0 && p[i].fmt.space_after == 160 && p[i].fmt.line_spacing == 108);
+        CHECK(p[i].fmt.align == OWF_ALIGN_LEFT && p[i].cell_shading == 0);
+        CHECK(first_text_fmt(&p[i]).size == first_text_fmt(&p[0]).size && !(first_text_fmt(&p[i]).flags & OWF_BOLD));
+    }
+    CHECK(p[19].table_id < 0 && p[19].fmt.space_after == 160);
+    /* written back to DOCX (as the cells' own formats) and read again: the same. (ODT doesn't keep a cell's
+     * paragraph format yet, with a table style or without.) */
+    {
+        static const char *const paths[1] = { "/tmp/openwrite-table-styles.docx" };
+        int k;
+        for (k = 0; k < 1; ++k) {
+            owf_doc *back = NULL;
+            CHECK(owf_export_file(doc, paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_file(paths[k], NULL, &back, NULL, NULL) == OWF_OK && back);
+            if (back && back->body.nparas == 20) {
+                const owf_para *q = back->body.paras;
+                CHECK(q[1].fmt.space_after == 0 && q[1].fmt.line_spacing == 100);
+                CHECK(q[6].fmt.align == OWF_ALIGN_CENTRE && q[6].cell_shading == OWF_SHADE(0x1F3864));
+                CHECK((first_text_fmt(&q[6]).flags & OWF_BOLD) && first_text_fmt(&q[6]).colour == 0xFFFFFFUL);
+                CHECK(q[8].cell_shading == OWF_SHADE(0xD9E2F3) && q[10].cell_shading == 0);
+                CHECK(q[9].fmt.space_after == 120 && q[11].fmt.space_after == 80);
+                CHECK(first_text_fmt(&q[14]).flags & OWF_ITALIC);
+                CHECK(q[17].fmt.space_after == 160);
+            } else {
+                CHECK(back && back->body.nparas == 20);
+            }
+            if (back) owf_doc_free(back);
+            remove(paths[k]);
+        }
+    }
+}
+
 /* tests/core/fixtures/line-rules.docx (make_lines_docx.py): Word's exact and at least line spacing (2.0.18), read,
  * laid out (OpenLayout 0.7's exact lines) and written back to DOCX and ODT. */
 static void line_checks(const ow_layout *l, const owf_doc *doc)
@@ -1045,6 +1135,7 @@ static void test_sample(const char *path)
         if (strstr(path, "header-frames.docx")) header_checks(l, doc);
         if (strstr(path, "inline-box.docx")) inline_checks(l, doc);
         if (strstr(path, "line-rules.docx")) line_checks(l, doc);
+        if (strstr(path, "table-styles.docx")) table_style_checks(l, doc);
         printf("ow_layout: %s, %d pages, %d caret positions, %d list items\n", path, ow_layout_page_count(l),
                checked, lists);
         ow_layout_free(l);
