@@ -12,7 +12,15 @@
  *   WFSC  changes inside the WTXT before it: 12-byte entries, the offset
  *         (long), then font, style, misc, pen, paper
  *   WPAG  a page break; WHED and WFOT start the header and footer
- *   FORM  pictures and drawings (GTID, ILBM), not brought across yet
+ *   FORM GTID  the drawing layer: FORM GTIP holds objects (RECT, RRCT,
+ *         ELLP, CIRC, LINE, GROU, PICT, PTXT text, and text boxes: a WOWO
+ *         chunk, then a FORM WOWO with the box's own WPAR, WTXT, WFSC).
+ *         Each object starts with its place: x, y, width and height in
+ *         millipoints, longs at 2, 7, 12 and 17. Text boxes and PTXT text
+ *         (length word at 38, text at 40) become frames on the page,
+ *         anchored in reading order (top to bottom, then left to right);
+ *         shapes and pictures are counted and reported
+ *   FORM ILBM  pictures, not brought across yet
  * Style bits are graphics.library's: 1 underline, 2 bold, 4 italic.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
@@ -36,7 +44,14 @@ typedef struct {
     const unsigned char *text;
     unsigned long text_size;
     int pictures, tabs;
+    int shapes, boxes;       /* the drawing layer's */
 } reader;
+
+/* A text box or text object of the drawing layer, waiting to be anchored. */
+typedef struct {
+    int frame;               /* into doc->frames */
+    long x, y;
+} placed;
 
 static void char_format(reader *r, owf_charfmt *f, int font, int style, int pen)
 {
@@ -113,6 +128,236 @@ static void emit(reader *r, const unsigned char *fscc, unsigned long fscc_size)
     }
     put(r, r->text + start, r->text_size - start);
     r->text = NULL;
+}
+
+/* An object's place: x, y, width, height in millipoints (longs at 2, 7,
+ * 12 and 17), into a frame's twips. 0 when the chunk is too short. */
+static int object_place(const owf_iff_chunk *c, owf_frame *fr, long *x, long *y)
+{
+    long v[4];
+    int i;
+
+    if (c->size < 21)
+        return 0;
+    for (i = 0; i < 4; i++)
+        v[i] = (long)OWF_BE32(c->data + 2 + 5 * i);
+    if (v[0] < 0 || v[1] < 0 || v[2] <= 0 || v[3] <= 0 || v[0] > 4000000 || v[1] > 4000000 || v[2] > 4000000 ||
+        v[3] > 4000000)
+        return 0;
+    fr->x = (int)(v[0] / 50);                /* millipoints to twips */
+    fr->y = (int)(v[1] / 50);
+    fr->width = (int)(v[2] / 50);
+    fr->height = (int)(v[3] / 50);
+    *x = v[0];
+    *y = v[1];
+    return 1;
+}
+
+static void new_frame(owf_frame *fr)
+{
+    memset(fr, 0, sizeof *fr);
+    fr->image = -1;
+    fr->x_from = fr->y_from = OWF_FROM_PAGE;
+    fr->x_place = fr->y_place = OWF_PLACE_AT;
+    fr->wrap = OWF_WRAP_NONE;
+}
+
+static void emit(reader *r, const unsigned char *fscc, unsigned long fscc_size);
+
+/* A frame made from fr, its story built: kept in places, or freed when
+ * nothing came of it. */
+static void keep_frame(reader *r, owf_frame *fr, long x, long y, placed **places, int *nplaces, int *cap)
+{
+    int idx;
+
+    if (!fr->story.nparas)
+        return;
+    if (*nplaces == *cap) {
+        int want = *cap ? *cap * 2 : 16;
+        placed *p = realloc(*places, (size_t)want * sizeof *p);
+        if (!p) {
+            r->body.failed = 1;
+            return;
+        }
+        *places = p;
+        *cap = want;
+    }
+    idx = owf_doc_add_frame(r->doc, fr);
+    if (idx < 0) {
+        r->body.failed = 1;
+        return;
+    }
+    (*places)[*nplaces].frame = idx;
+    (*places)[*nplaces].x = x;
+    (*places)[*nplaces].y = y;
+    (*nplaces)++;
+    r->boxes++;
+}
+
+/* The drawing layer (FORM GTID and what it holds), depth-first. */
+static void read_drawing(reader *r, const unsigned char *data, unsigned long size, int depth, placed **places,
+                         int *nplaces, int *cap)
+{
+    owf_iff_reader iff;
+    owf_iff_chunk c;
+    owf_frame place;
+    long px = 0, py = 0;
+    int have_place = 0;
+
+    if (depth > 8 || size < 12)
+        return;
+    iff.pos = data + 12;
+    iff.end = data + 8 + (OWF_BE32(data + 4) < size - 8 ? OWF_BE32(data + 4) : size - 8);
+    iff.truncated = 0;
+    new_frame(&place);
+    while (owf_iff_next(&iff, &c)) {
+        if (c.id == OWF_ID('F', 'O', 'R', 'M') && c.size >= 4) {
+            unsigned long type = OWF_BE32(c.data);
+            if (type == OWF_ID('W', 'O', 'W', 'O')) {
+                /* A text box: its own paragraphs, in a frame at the place
+                 * the WOWO chunk before it gave. */
+                owf_frame fr;
+                owf_builder fb, *saved = r->cur;
+                int align = r->align, font = r->font, style = r->style, colour = r->colour;
+                owf_iff_reader box;
+                owf_iff_chunk bc;
+                new_frame(&fr);
+                if (have_place) {
+                    fr.x = place.x; fr.y = place.y;
+                    fr.width = place.width; fr.height = place.height;
+                }
+                owf_builder_init(&fb, r->doc, &fr.story);
+                r->cur = &fb;
+                r->text = NULL;
+                box.pos = c.data + 4;
+                box.end = c.data + c.size;
+                box.truncated = 0;
+                while (owf_iff_next(&box, &bc)) {
+                    if (bc.id == OWF_ID('W', 'F', 'S', 'C')) {
+                        emit(r, bc.data, bc.size);
+                        continue;
+                    }
+                    if (bc.id == OWF_ID('W', 'S', 'P', 'C'))
+                        continue;
+                    emit(r, NULL, 0);
+                    if (bc.id == OWF_ID('W', 'P', 'A', 'R') && bc.size >= 26) {
+                        r->align = bc.data[18];
+                        r->font = bc.data[21];
+                        r->style = bc.data[22];
+                        r->colour = bc.data[24];
+                    } else if (bc.id == OWF_ID('W', 'T', 'X', 'T')) {
+                        r->text = bc.data;
+                        r->text_size = bc.size;
+                    }
+                }
+                emit(r, NULL, 0);
+                if (fb.para || fb.text.length)
+                    owf_builder_end_para(&fb);
+                if (owf_builder_done(&fb) != OWF_OK)
+                    r->body.failed = 1;
+                /* A box of empty paragraphs is no text. */
+                {
+                    int i, any = 0;
+                    for (i = 0; i < fr.story.nparas && !any; i++)
+                        any = fr.story.paras[i].nruns > 0;
+                    if (!any) {
+                        for (i = 0; i < fr.story.nparas; i++)
+                            free(fr.story.paras[i].runs);
+                        free(fr.story.paras);
+                        fr.story.paras = NULL;
+                        fr.story.nparas = fr.story.capparas = 0;
+                    }
+                }
+                keep_frame(r, &fr, have_place ? px : 0, have_place ? py : 0, places, nplaces, cap);
+                r->cur = saved;
+                r->align = align; r->font = font; r->style = style; r->colour = colour;
+                have_place = 0;
+            } else if (type == OWF_ID('I', 'L', 'B', 'M')) {
+                r->pictures++;
+            } else {
+                read_drawing(r, c.data - 8, c.size + 8, depth + 1, places, nplaces, cap);
+            }
+            continue;
+        }
+        if (c.id == OWF_ID('W', 'O', 'W', 'O')) {
+            have_place = object_place(&c, &place, &px, &py);
+        } else if (c.id == OWF_ID('P', 'T', 'X', 'T') && c.size >= 40) {
+            /* A text object: its text, one paragraph, in a frame. */
+            unsigned long n = OWF_BE16(c.data + 38);
+            owf_frame fr;
+            long x = 0, y = 0;
+            new_frame(&fr);
+            object_place(&c, &fr, &x, &y);
+            if (n > c.size - 40)
+                n = c.size - 40;
+            if (n) {
+                owf_builder fb;
+                owf_builder_init(&fb, r->doc, &fr.story);
+                r->scratch.length = 0;
+                owf_buf_put_latin1(&r->scratch, c.data + 40, n);
+                if (r->scratch.failed)
+                    fb.failed = 1;
+                else
+                    owf_builder_text(&fb, (const char *)r->scratch.data, r->scratch.length);
+                owf_builder_end_para(&fb);
+                if (owf_builder_done(&fb) != OWF_OK)
+                    r->body.failed = 1;
+                keep_frame(r, &fr, x, y, places, nplaces, cap);
+            }
+        } else if (c.id == OWF_ID('R', 'E', 'C', 'T') || c.id == OWF_ID('R', 'R', 'C', 'T') ||
+                   c.id == OWF_ID('E', 'L', 'L', 'P') || c.id == OWF_ID('C', 'I', 'R', 'C') ||
+                   c.id == OWF_ID('L', 'I', 'N', 'E')) {
+            r->shapes++;
+        } else if (c.id == OWF_ID('P', 'I', 'C', 'T')) {
+            r->pictures++;
+        }
+    }
+}
+
+/* Reading order: top to bottom, then left to right, then file order. An
+ * insertion sort: there are few, and owf.library has no qsort. */
+static int before(const placed *p, const placed *q)
+{
+    if (p->y != q->y)
+        return p->y < q->y;
+    if (p->x != q->x)
+        return p->x < q->x;
+    return p->frame < q->frame;
+}
+
+static void sort_places(placed *p, int n)
+{
+    int i, j;
+    for (i = 1; i < n; i++) {
+        placed t = p[i];
+        for (j = i; j > 0 && before(&t, &p[j - 1]); j--)
+            p[j] = p[j - 1];
+        p[j] = t;
+    }
+}
+
+/* A FORM GTID: its text boxes and text as frames, anchored in the body's
+ * last paragraph (or a new one) in reading order. */
+static void drawing(reader *r, const owf_iff_chunk *c)
+{
+    placed *places = NULL;
+    int nplaces = 0, cap = 0, i;
+    owf_builder *b = &r->body;
+
+    read_drawing(r, c->data - 8, c->size + 8, 0, &places, &nplaces, &cap);
+    if (nplaces) {
+        sort_places(places, nplaces);
+        for (i = 0; i < nplaces; i++) {
+            owf_story *story = &r->doc->body;
+            if (!b->para && !b->text.length && story->nparas) {
+                if (owf_para_add_frame(&story->paras[story->nparas - 1], &b->charfmt, places[i].frame) < 0)
+                    b->failed = 1;
+            } else {
+                owf_builder_frame(b, places[i].frame);
+            }
+        }
+    }
+    free(places);
 }
 
 static void read_font(reader *r, const owf_iff_chunk *c)
@@ -247,7 +492,12 @@ static int import_wordworth(const unsigned char *data, size_t length, owf_doc *d
             }
             break;
         case OWF_ID('F', 'O', 'R', 'M'):
-            r->pictures++;
+            /* The drawing layer comes after the header and footer, but
+             * belongs to the pages: its frames go into the body. */
+            if (c.size >= 4 && OWF_BE32(c.data) == OWF_ID('G', 'T', 'I', 'D'))
+                drawing(r, &c);
+            else
+                r->pictures++;
             break;
         default:
             break;
@@ -261,6 +511,10 @@ static int import_wordworth(const unsigned char *data, size_t length, owf_doc *d
     }
     if (r->pictures)
         owf_report_add(report, OWF_NOTE_LOST, "%d picture(s) or drawing(s) are not brought across yet", r->pictures);
+    if (r->boxes)
+        owf_report_add(report, OWF_NOTE_APPROX, "%d text box(es) and text object(s) of the drawing layer became frames on the page", r->boxes);
+    if (r->shapes)
+        owf_report_add(report, OWF_NOTE_LOST, "%d drawn shape(s) (boxes, ellipses, lines) were left out", r->shapes);
     if (r->tabs)
         owf_report_add(report, OWF_NOTE_APPROX, "Tab stops are at the default positions");
     if (iff.truncated)
