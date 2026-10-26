@@ -85,5 +85,7 @@
 #pragma libcall OWFCalcBase owf_calc_format 1e0 0a9804
 #pragma libcall OWFCalcBase owf_calc_format_value 1e6 b2a109807
 #pragma libcall OWFCalcBase owf_sheet_set_row_style 1ec 10803
+#pragma libcall OWFCalcBase owf_calc_place_chart 1f2 543210807
+#pragma libcall OWFCalcBase owf_calc_nudge_chart 1f8 3210805
 
 #endif /* PRAGMAS_OWFCALC_PRAGMAS_H */

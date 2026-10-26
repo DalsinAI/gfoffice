@@ -1,5 +1,5 @@
-==id $Id: owfcalc_lib.sfd 3.1 (26.10.2026) $
-* "owfcalc.library" 3.1: OpenCalc's part of libowf: workbooks. The workbook
+==id $Id: owfcalc_lib.sfd 3.2 (26.10.2026) $
+* "owfcalc.library" 3.2: OpenCalc's part of libowf: workbooks. The workbook
 * model, its formats (XLSX, ODS, XLS, CSV), charts and the formula engine,
 * with the library's own double arithmetic and maths.
 * Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).
@@ -99,4 +99,7 @@ int owf_calc_format(const owf_book *book, const owf_cell *cell, char *out, size_
 int owf_calc_format_value(const char *format, const owf_cell *value, int date1904, int width, char *out, size_t size, unsigned long *colour) (a0,a1,d0,d1,a2,d2,a3)
 * 3.1: a row's own style (owf_rowinfo.style, OpenCalc 0.1.22)
 int owf_sheet_set_row_style(owf_sheet *sheet, unsigned row, int style) (a0,d0,d1)
+* 3.2: a chart moved to a cell, or by a distance (OpenCalc 0.1.27)
+int owf_calc_place_chart(owf_calc *calc, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off) (a0,d0,d1,d2,d3,d4,d5)
+int owf_calc_nudge_chart(owf_calc *calc, int sheet, int index, long dx, long dy) (a0,d0,d1,d2,d3)
 ==end

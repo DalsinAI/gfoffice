@@ -82,5 +82,7 @@ _LVOowf_calc_parse_cell	EQU	-474
 _LVOowf_calc_format	EQU	-480
 _LVOowf_calc_format_value	EQU	-486
 _LVOowf_sheet_set_row_style	EQU	-492
+_LVOowf_calc_place_chart	EQU	-498
+_LVOowf_calc_nudge_chart	EQU	-504
 
 	ENDC	; LVO_OWFCALC_LIB_I

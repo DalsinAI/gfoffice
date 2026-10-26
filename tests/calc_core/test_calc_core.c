@@ -2611,6 +2611,141 @@ static void test_anchor_kinds(void)
     oc_core_free(core);
 }
 
+/* The selected chart's marks: its frame (OC_ROLE_CURSOR) round x,y,w,h, and white handles. */
+static int marks(const oc_draw_list *l, int x, int y, int w, int h, int *handles)
+{
+    int i, frame = 0;
+    *handles = 0;
+    for (i = 0; i < l->n; i++) {
+        const oc_draw_item *it = &l->items[i];
+        if (it->kind == OC_DRAW_FRAME && it->role == OC_ROLE_CURSOR && it->x == x && it->y == y && it->w == w && it->h == h)
+            frame++;
+        if (it->kind == OC_DRAW_FILL && it->role == OC_ROLE_CHART && it->rgb == 0xFFFFFF && it->w <= 7 && it->h <= 7)
+            (*handles)++;
+    }
+    return frame;
+}
+
+/* A chart selected by a click on it and moved, as in Excel: by the pointer, by rows and columns, to a cell;
+ * its size as it was; undo and redo; saved. */
+static void test_chart_move(void)
+{
+    static const char *const path = "build/host/calc-core-chartmove.xlsx";
+    oc_core *core = fresh();
+    owf_report *report = owf_report_new();
+    owf_chart c;
+    oc_draw_list l;
+    int handles;
+    if (!core || !report) {
+        CHECK(0);
+        oc_core_free(core);
+        owf_report_free(report);
+        return;
+    }
+    oc_draw_list_init(&l);
+    chart_values(core);
+    put_chart(core, "<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/>" SERIES(0, "2025", "B", "")
+                    "<c:axId val=\"1\"/><c:axId val=\"2\"/></c:barChart>", "");
+    /* under the pointer: it, from B2 (104, 35) 256 by 170; not beside it, nor on the headers */
+    CHECK(oc_view_chart_at(core, 150, 100) == 0 && oc_view_chart_at(core, 104, 35) == 0 && oc_view_chart_at(core, 359, 204) == 0);
+    CHECK(oc_view_chart_at(core, 360, 100) == -1 && oc_view_chart_at(core, 103, 100) == -1 && oc_view_chart_at(core, 20, 100) == -1);
+    /* none selected: no marks, nothing moves */
+    CHECK(oc_core_selected_chart(core) == -1 && oc_core_move_chart(core, 10, 10) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && marks(&l, 104, 35, 256, 170, &handles) == 0 && handles == 0);
+    oc_core_select_chart(core, 0);
+    CHECK(oc_core_selected_chart(core) == 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && marks(&l, 104, 35, 256, 170, &handles) == 1 && handles == 8);
+    {
+        int bx = 0, by = 0, bw = 0, bh = 0;
+        CHECK(oc_view_chart_box(core, 0, &bx, &by, &bw, &bh) && bx == 104 && by == 35 && bw == 256 && bh == 170);
+        CHECK(!oc_view_chart_box(core, 1, &bx, &by, &bw, &bh));
+    }
+
+    /* by the pointer, a column and two rows: B2:F12 to C4:G14, the selection with it */
+    CHECK(oc_core_move_chart(core, 64, 34) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 2 && c.from_row == 3 && c.from_col_off == 0 && c.from_row_off == 0 &&
+          c.to_col == 6 && c.to_row == 13 && c.to_col_off == 0 && c.to_row_off == 0);
+    chart_free(&c);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && marks(&l, 104 + 64, 35 + 34, 256, 170, &handles) == 1 && handles == 8);
+    CHECK(oc_view_chart_at(core, 150, 50) == -1 && oc_view_chart_at(core, 200, 100) == 0);
+    CHECK(oc_core_book(core)->sheets[0].drawing && oc_core_is_dirty(core));
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 1 && c.from_row == 1 && c.to_col == 5 && c.to_row == 11);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 2 && c.from_row == 3 && c.to_col == 6 && c.to_row == 13);
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* a few pixels: offsets in its cells (9525 EMU a pixel at 100%), its end as far on */
+    CHECK(oc_core_move_chart(core, 10, 5) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 1 && c.from_col_off == 95250 && c.from_row == 1 &&
+          c.from_row_off == 47625 && c.to_col == 5 && c.to_col_off == 95250 && c.to_row == 11 && c.to_row_off == 47625);
+    chart_free(&c);
+    /* at 50%, ten pixels are twenty */
+    oc_view_set_zoom(core, 50);
+    CHECK(oc_core_move_chart(core, -10, 0) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 0 && c.from_col_off == 609600 - 95250 && c.to_col == 4);
+    chart_free(&c);
+    oc_view_set_zoom(core, 100);
+    /* past the sheet's top and left: it stops there, its size as it was */
+    CHECK(oc_core_move_chart(core, -5000, -5000) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 0 && c.from_row == 0 && c.from_col_off == 0 && c.from_row_off == 0 &&
+          c.to_col == 4 && c.to_row == 10 && c.to_col_off == 0 && c.to_row_off == 0);
+    chart_free(&c);
+    /* by rows and columns, and to a cell */
+    CHECK(oc_core_step_chart(core, 2, 1) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 1 && c.from_row == 2 && c.to_col == 5 && c.to_row == 12);
+    chart_free(&c);
+    CHECK(oc_core_step_chart(core, 0, -5) == OWF_OK);     /* no further than column A */
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 0 && c.to_col == 4);
+    chart_free(&c);
+    CHECK(oc_core_place_chart(core, 19, 3) == OWF_OK);    /* D20 */
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 3 && c.from_row == 19 && c.to_col == 7 && c.to_row == 29);
+    chart_free(&c);
+    /* column E wider: the chart over it wider (its two cells' anchor), and taken to A20 as wide: from A to
+       halfway across E */
+    go(core, "E1");
+    oc_core_set_col_width(core, 1920);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 3 && c.to_col == 7);
+    chart_free(&c);
+    CHECK(oc_core_place_chart(core, 19, 0) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 0 && c.to_col == 4 && c.to_col_off == 609600 && c.to_row == 29);
+    chart_free(&c);
+    /* deselected: no marks */
+    oc_core_select_chart(core, -1);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_FILL, 0xFFFFFF) == 1);
+    /* saved and read again where it went */
+    CHECK(oc_core_save(core, path, "xlsx", report) == OWF_OK);
+    CHECK(oc_core_open(core, path, NULL, report, NULL) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 0 && c.from_row == 19 && c.to_col == 4 && c.to_col_off == 609600);
+    chart_free(&c);
+    CHECK(oc_core_selected_chart(core) == -1);
+    remove(path);
+
+    /* the charts sample's one-cell anchors: the start moves, the size its own */
+    {
+        const owf_book_format *used = NULL;
+        owf_chart d;
+        CHECK(oc_core_open(core, "tests/book/fixtures/charts-openpyxl.xlsx", NULL, report, &used) == OWF_OK);
+        CHECK(charts_of(core, 0, &d) == 3 && d.sized && d.from_col == 5 && d.from_row == 1);
+        oc_core_select_chart(core, 0);
+        CHECK(oc_core_step_chart(core, 2, 0) == OWF_OK);
+        CHECK(charts_of(core, 0, &c) == 3 && c.sized && c.from_col == 5 && c.from_row == 3 && c.width == d.width &&
+              c.height == d.height);
+        chart_free(&c);
+        chart_free(&d);
+        /* another sheet: nothing selected there */
+        oc_core_set_sheet(core, 1);
+        CHECK(oc_core_selected_chart(core) == -1 && oc_core_step_chart(core, 1, 0) == OWF_ERR_UNSUPPORTED);
+        oc_core_set_sheet(core, 0);
+        CHECK(oc_core_selected_chart(core) == 0);
+    }
+    oc_draw_list_free(&l);
+    owf_report_free(report);
+    oc_core_free(core);
+}
+
 /* A rule over one range of sheet 0, its error alert shown. */
 static owf_validation *add_rule(oc_core *core, const char *range, int type, int op, const char *f1, const char *f2, int style)
 {
@@ -3110,6 +3245,7 @@ int main(void)
     test_charts();
     test_chart_refs();
     test_anchor_kinds();
+    test_chart_move();
     test_row_numbers();
     test_text_layout();
     test_tab_strip();

@@ -106,12 +106,14 @@ static int named(const xtok *t, const char *name)
     return t->nlen == strlen(name) && !memcmp(t->name, name, t->nlen);
 }
 
-/* An attribute's value in a start tag (its local name, any prefix), into out; 0 when it has none. */
-static int tag_attr(const char *s, const xtok *t, const char *name, char *out, size_t size)
+/* An attribute's value's bytes in a start tag (by its local name, any prefix), s[*va] to s[*vb - 1]; 0 when
+ * it has none. */
+static int attr_span(const char *s, const xtok *t, const char *name, size_t *va, size_t *vb)
 {
     size_t k = (size_t)(t->name - s) + t->nlen, len = strlen(name);
     while (k < t->b) {
-        size_t a, e;
+        size_t a, e, v;
+        const char *colon;
         char q;
         while (k < t->b && strchr(" \t\r\n", s[k]))
             k++;
@@ -125,24 +127,32 @@ static int tag_attr(const char *s, const xtok *t, const char *name, char *out, s
         if (k >= t->b || (s[k] != '"' && s[k] != '\''))
             return 0;
         q = s[k++];
-        {
-            size_t v = k, m;
-            const char *colon;
-            while (k < t->b && s[k] != q)
-                k++;
-            colon = memchr(s + a, ':', e - a);
-            if (colon)
-                a = (size_t)(colon + 1 - s);
-            if (e - a == len && !memcmp(s + a, name, len)) {
-                m = k - v < size - 1 ? k - v : size - 1;
-                memcpy(out, s + v, m);
-                out[m] = 0;
-                return 1;
-            }
+        v = k;
+        while (k < t->b && s[k] != q)
             k++;
+        colon = memchr(s + a, ':', e - a);
+        if (colon)
+            a = (size_t)(colon + 1 - s);
+        if (e - a == len && !memcmp(s + a, name, len)) {
+            *va = v;
+            *vb = k;
+            return 1;
         }
+        k++;
     }
     return 0;
+}
+
+/* An attribute's value, into out; 0 when it has none. */
+static int tag_attr(const char *s, const xtok *t, const char *name, char *out, size_t size)
+{
+    size_t a, b, m;
+    if (!attr_span(s, t, name, &a, &b))
+        return 0;
+    m = b - a < size - 1 ? b - a : size - 1;
+    memcpy(out, s + a, m);
+    out[m] = 0;
+    return 1;
 }
 
 /* XML's text with its entities undone, as a new string; NULL when memory ran out. */
@@ -322,11 +332,131 @@ int calc_charts_refs(owf_book *book, calc_chart_fix fix, void *user)
 
 /* ---- The anchors ---- */
 
-/* Where one edge of an anchor is along the axis: its cell, and the offset into it (EMU), as the text has them. */
+/* A number in the text: its value and its bytes. */
 typedef struct {
     int found;
+    long v;
+    size_t a, b;
+} num;
+
+enum { A_COL, A_COLOFF, A_ROW, A_ROWOFF };
+enum { K_TWO, K_ONE, K_ABSOLUTE };
+
+/* One anchor of a drawing, as its text has it. */
+typedef struct {
+    int kind;                    /* K_... */
+    char edit[16];               /* a two-cell one's editAs: "", "twoCell", "oneCell", "absolute" */
+    size_t start, end;           /* its bytes */
+    num at[2][4];                /* from and to: col, colOff, row, rowOff */
+    num pos[2];                  /* an absolute one's: x, y */
+    char rid[64];                /* the chart it shows (graphicFrame, graphic, graphicData, chart: its r:id), or "" */
+} anchor;
+
+static void read_num(const char *s, size_t a, size_t b, num *n)
+{
+    char t[32];
+    size_t len = b - a < sizeof t - 1 ? b - a : sizeof t - 1;
+    memcpy(t, s + a, len);
+    t[len] = 0;
+    n->v = strtol(t, NULL, 10);
+    n->a = a;
+    n->b = b;
+    n->found = 1;
+}
+
+static int field_of(const xtok *t)
+{
+    return named(t, "col") ? A_COL : named(t, "colOff") ? A_COLOFF : named(t, "row") ? A_ROW :
+           named(t, "rowOff") ? A_ROWOFF : -1;
+}
+
+static int is_anchor(const xtok *t)
+{
+    return named(t, "twoCellAnchor") || named(t, "oneCellAnchor") || named(t, "absoluteAnchor");
+}
+
+/* After an anchor's start tag t: the rest of it, read into a. 0 when the text is damaged. */
+static int read_anchor(xwalk *w, const xtok *t, anchor *a)
+{
+    xtok path[4];
+    int d = 0;
+    memset(a, 0, sizeof *a);
+    a->kind = named(t, "twoCellAnchor") ? K_TWO : named(t, "oneCellAnchor") ? K_ONE : K_ABSOLUTE;
+    a->start = t->a;
+    tag_attr(w->s, t, "editAs", a->edit, sizeof a->edit);
+    for (;;) {
+        xtok c;
+        if (xnext(w, &c) == X_END || c.kind == X_BAD)
+            return 0;
+        if (c.kind == X_CLOSE) {
+            if (!d) {
+                a->end = c.b;
+                return 1;
+            }
+            d--;
+        } else if (c.kind == X_TEXT) {
+            int e = d == 2 ? (named(&path[0], "from") ? 0 : named(&path[0], "to") ? 1 : -1) : -1, f;
+            if (e >= 0 && (f = field_of(&path[1])) >= 0)
+                read_num(w->s, c.a, c.b, &a->at[e][f]);
+        } else if (c.kind == X_START) {
+            size_t va, vb;
+            if (d == 0 && named(&c, "pos")) {
+                if (attr_span(w->s, &c, "x", &va, &vb))
+                    read_num(w->s, va, vb, &a->pos[0]);
+                if (attr_span(w->s, &c, "y", &va, &vb))
+                    read_num(w->s, va, vb, &a->pos[1]);
+            }
+            if (d == 3 && named(&c, "chart") && named(&path[0], "graphicFrame") && named(&path[1], "graphic") &&
+                named(&path[2], "graphicData"))
+                tag_attr(w->s, &c, "id", a->rid, sizeof a->rid);
+            if (!c.empty) {
+                if (d < 4)
+                    path[d] = c;
+                d++;
+            }
+        }
+    }
+}
+
+/* A number to write in place of the text's. */
+typedef struct {
+    size_t a, b;
+    long v;
+} change;
+
+static void add_change(change *c, int *n, const num *at, long v)
+{
+    if (at->found && at->v != v) {
+        c[*n].a = at->a;
+        c[*n].b = at->b;
+        c[*n].v = v;
+        (*n)++;
+    }
+}
+
+/* s[from] to s[to - 1] into b, with the numbers changed (in the text's order, whatever theirs). */
+static void put_changed(owf_buf *b, const char *s, size_t from, size_t to, change *c, int n)
+{
+    int i, j;
+    for (i = 1; i < n; i++)
+        for (j = i; j > 0 && c[j - 1].a > c[j].a; j--) {
+            change t = c[j];
+            c[j] = c[j - 1];
+            c[j - 1] = t;
+        }
+    for (i = 0; i < n; i++) {
+        char t[24];
+        owf_buf_put(b, s + from, c[i].a - from);
+        snprintf(t, sizeof t, "%ld", c[i].v);
+        owf_buf_puts(b, t);
+        from = c[i].b;
+    }
+    owf_buf_put(b, s + from, to - from);
+}
+
+/* Where one edge of an anchor is along an axis: its cell, and the offset into it (EMU). */
+typedef struct {
     long cell, off;
-    size_t cell_a, cell_b, off_a, off_b;         /* their texts' bytes */
 } edge;
 
 /* An edge moved: rows (columns) from at on are count further on, or (count < 0) gone. */
@@ -347,23 +477,16 @@ static void move_edge(edge *e, long at, long count, long limit)
     }
 }
 
-static void put_number(owf_buf *b, long v)
-{
-    char t[24];
-    snprintf(t, sizeof t, "%ld", v);
-    owf_buf_puts(b, t);
-}
-
 int calc_charts_shift(owf_book *book, int sheet, int axis, long at, long count, long limit)
 {
     owf_sheet *sh = &book->sheets[sheet];
     owf_part *p = sh->drawing ? part_named(book, sh->drawing) : NULL;
-    const char *cell_name = axis ? "col" : "row", *off_name = axis ? "colOff" : "rowOff";
+    int cf = axis ? A_COL : A_ROW, of = axis ? A_COLOFF : A_ROWOFF;
     xwalk w;
     xtok t;
     owf_buf b;
     size_t done = 0;
-    int changed = 0, depth = 0, ok;
+    int changed = 0, depth = 0, ok = 1;
     if (!p || !count)
         return 1;
     w.s = (const char *)p->data;
@@ -371,140 +494,250 @@ int calc_charts_shift(owf_book *book, int sheet, int axis, long at, long count, 
     w.i = 0;
     owf_buf_init(&b);
     while (xnext(&w, &t) != X_END && t.kind != X_BAD) {
-        edge ends[2];
-        char edit[32] = "";
-        size_t start = t.a;
-        int two, which = -1, d = 0, gone;
-        if (t.kind == X_START && !t.empty)
-            depth++;
-        else if (t.kind == X_CLOSE)
+        anchor a;
+        edge e[2], was[2];
+        change c[4];
+        int nc = 0, gone, two, k;
+        if (t.kind == X_CLOSE)
             depth--;
-        if (t.kind != X_START || t.empty || depth != 2 || (!named(&t, "twoCellAnchor") && !named(&t, "oneCellAnchor")))
+        if (t.kind != X_START || t.empty)
             continue;
-        two = named(&t, "twoCellAnchor");
-        tag_attr(w.s, &t, "editAs", edit, sizeof edit);
-        memset(ends, 0, sizeof ends);
-        /* its from and to: the cell and the offset along the axis */
-        for (;;) {
-            xtok c;
-            if (xnext(&w, &c) == X_END || c.kind == X_BAD) {
-                owf_buf_free(&b);
-                return 1;                        /* damaged: left as it is */
-            }
-            if (c.kind == X_START && !c.empty) {
-                d++;
-                if (d == 1)
-                    which = named(&c, "from") ? 0 : named(&c, "to") ? 1 : -1;
-                else if (d == 2 && which >= 0 && (named(&c, cell_name) || named(&c, off_name))) {
-                    int is_cell = named(&c, cell_name);
-                    xtok v;
-                    if (xnext(&w, &v) == X_TEXT) {
-                        char num[32];
-                        size_t len = v.b - v.a < sizeof num - 1 ? v.b - v.a : sizeof num - 1;
-                        memcpy(num, w.s + v.a, len);
-                        num[len] = 0;
-                        if (is_cell) {
-                            ends[which].cell = strtol(num, NULL, 10);
-                            ends[which].cell_a = v.a;
-                            ends[which].cell_b = v.b;
-                            ends[which].found = 1;
-                        } else {
-                            ends[which].off = strtol(num, NULL, 10);
-                            ends[which].off_a = v.a;
-                            ends[which].off_b = v.b;
-                        }
-                    } else if (v.kind == X_CLOSE) {
-                        d--;
-                    }
-                }
-            } else if (c.kind == X_CLOSE) {
-                if (d == 0) {
-                    t = c;                       /* the anchor's end */
-                    break;
-                }
-                d--;
-            }
+        if (++depth != 2 || !is_anchor(&t))
+            continue;
+        if (!read_anchor(&w, &t, &a)) {
+            owf_buf_free(&b);
+            return 1;                            /* damaged: left as it is */
         }
         depth--;
-        if (!ends[0].found || !strcmp(edit, "absolute"))
+        if (a.kind == K_ABSOLUTE || !a.at[0][cf].found || !strcmp(a.edit, "absolute"))
             continue;
-        {
-            edge was = ends[0], was_end = ends[1];
-            move_edge(&ends[0], at, count, limit);
-            if (two && ends[1].found) {
-                if (!strcmp(edit, "oneCell")) {  /* moved, not sized: the end as far as the start */
-                    ends[1].cell += ends[0].cell - was.cell;
-                    if (ends[1].cell >= limit)
-                        ends[1].cell = limit - 1;
-                    if (ends[1].cell < 0)
-                        ends[1].cell = 0;
-                } else {
-                    move_edge(&ends[1], at, count, limit);
-                }
-            }
-            /* all its rows (columns) deleted, it goes with them as Excel's does */
-            gone = count < 0 && two && ends[1].found && strcmp(edit, "oneCell") &&
-                   (ends[1].cell < ends[0].cell || (ends[1].cell == ends[0].cell && ends[1].off <= ends[0].off));
-            if (!gone && was.cell == ends[0].cell && was.off == ends[0].off && was_end.cell == ends[1].cell &&
-                was_end.off == ends[1].off)
-                continue;                        /* where it was: its text as it is */
+        two = a.kind == K_TWO && a.at[1][cf].found;
+        for (k = 0; k < 2; k++) {
+            e[k].cell = a.at[k][cf].v;
+            e[k].off = a.at[k][of].found ? a.at[k][of].v : 0;
+            was[k] = e[k];
         }
-        owf_buf_put(&b, w.s + done, start - done);
-        if (gone) {
-            done = t.b;
-            changed = 1;
-            continue;
+        move_edge(&e[0], at, count, limit);
+        if (two) {
+            if (!strcmp(a.edit, "oneCell")) {    /* moved, not sized: the end as far as the start */
+                e[1].cell += e[0].cell - was[0].cell;
+                if (e[1].cell >= limit)
+                    e[1].cell = limit - 1;
+                if (e[1].cell < 0)
+                    e[1].cell = 0;
+            } else {
+                move_edge(&e[1], at, count, limit);
+            }
         }
-        {
-            /* the anchor's text with its numbers changed, in order */
-            size_t marks[8], k = 0, m, from = start;
-            long values[4];
-            int e;
-            for (e = 0; e < 2; e++) {
-                if (!ends[e].found)
-                    continue;
-                marks[k] = ends[e].cell_a;
-                marks[k + 1] = ends[e].cell_b;
-                values[k / 2] = ends[e].cell;
-                k += 2;
-                if (ends[e].off_b) {
-                    marks[k] = ends[e].off_a;
-                    marks[k + 1] = ends[e].off_b;
-                    values[k / 2] = ends[e].off;
-                    k += 2;
-                }
-            }
-            for (m = 0; m < k; m += 2) {         /* in the text's order (from before to; cell, offset either way) */
-                size_t j, best = m;
-                for (j = m + 2; j < k; j += 2)
-                    if (marks[j] < marks[best])
-                        best = j;
-                if (best != m) {
-                    size_t ta = marks[m], tb = marks[m + 1];
-                    long tv = values[m / 2];
-                    marks[m] = marks[best];
-                    marks[m + 1] = marks[best + 1];
-                    values[m / 2] = values[best / 2];
-                    marks[best] = ta;
-                    marks[best + 1] = tb;
-                    values[best / 2] = tv;
-                }
-            }
-            for (m = 0; m < k; m += 2) {
-                owf_buf_put(&b, w.s + from, marks[m] - from);
-                put_number(&b, values[m / 2]);
-                from = marks[m + 1];
-            }
-            owf_buf_put(&b, w.s + from, t.b - from);
-            done = t.b;
-            changed = 1;
+        /* all its rows (columns) deleted, it goes with them as Excel's does */
+        gone = count < 0 && two && strcmp(a.edit, "oneCell") &&
+               (e[1].cell < e[0].cell || (e[1].cell == e[0].cell && e[1].off <= e[0].off));
+        for (k = 0; k < (two ? 2 : 1) && !gone; k++) {
+            add_change(c, &nc, &a.at[k][cf], e[k].cell);
+            add_change(c, &nc, &a.at[k][of], e[k].off);
         }
+        if (!gone && !nc)
+            continue;                            /* where it was: its text as it is */
+        owf_buf_put(&b, w.s + done, a.start - done);
+        if (!gone)
+            put_changed(&b, w.s, a.start, a.end, c, nc);
+        done = a.end;
+        changed = 1;
     }
-    ok = 1;
     if (changed) {
         owf_buf_put(&b, w.s + done, w.n - done);
         ok = replace_part(p, &b);
     }
     owf_buf_free(&b);
     return ok;
+}
+
+/* ---- A chart moved ---- */
+
+/* A column's (axis 1) or row's size in EMU, as the sheet has it (hidden: 0). */
+static long line_emu(const owf_sheet *s, int axis, unsigned i)
+{
+    int k;
+    long twips;
+    if (axis) {
+        twips = s->default_width;
+        for (k = s->ncols - 1; k >= 0; k--)
+            if (i >= s->cols[k].first && i <= s->cols[k].last) {
+                twips = s->cols[k].hidden ? 0 : s->cols[k].width > 0 ? s->cols[k].width : s->default_width;
+                break;
+            }
+    } else {
+        twips = s->default_height;
+        for (k = 0; k < s->nrows; k++)
+            if (s->rows[k].row == i) {
+                twips = s->rows[k].hidden ? 0 : s->rows[k].height > 0 ? s->rows[k].height : s->default_height;
+                break;
+            }
+    }
+    return twips * 635L;
+}
+
+/* An edge (a cell and an offset in it) as EMU from the sheet's top (left), and back. */
+static double edge_emu(const owf_sheet *s, int axis, long cell, long off)
+{
+    double e = (double)off;
+    long i;
+    for (i = 0; i < cell; i++)
+        e += (double)line_emu(s, axis, (unsigned)i);
+    return e;
+}
+
+static void emu_edge(const owf_sheet *s, int axis, double e, edge *out)
+{
+    long limit = axis ? (long)CALC_MAX_COLS : (long)CALC_MAX_ROWS, i = 0;
+    if (e < 0)
+        e = 0;
+    for (; i < limit - 1; i++) {
+        long l = line_emu(s, axis, (unsigned)i);
+        if (e < (double)l)
+            break;
+        e -= (double)l;
+    }
+    out->cell = i;
+    out->off = (long)(e + 0.5);
+}
+
+/* Whether a drawing's chart (its r:id) is one owf_sheet_charts reads: its part there, and read as XML. */
+static int chart_shown(const owf_book *book, const char *dir, const owf_xml *rels, const char *rid, int *failed)
+{
+    const owf_xml_node *n;
+    for (n = rels && *rid ? owf_xml_root(rels)->first : NULL; n; n = n->next) {
+        const char *id, *target, *mode;
+        const owf_part *cp;
+        char part[512];
+        owf_xml *x;
+        int e = OWF_OK;
+        if (n->type != OWF_XML_ELEMENT || strcmp(n->name, "Relationship"))
+            continue;
+        id = owf_xml_attr(n, "", "Id");
+        target = owf_xml_attr(n, "", "Target");
+        mode = owf_xml_attr(n, "", "TargetMode");
+        if (!id || !target || strcmp(id, rid) || (mode && !strcmp(mode, "External")))
+            continue;
+        if (!owf_opc_part_name(part, sizeof part, dir, target) || !(cp = owf_book_part(book, part)))
+            return 0;
+        if (!(x = owf_xml_parse((const char *)cp->data, cp->length, &e))) {
+            if (e == OWF_ERR_MEMORY)
+                *failed = 1;
+            return 0;
+        }
+        owf_xml_free(x);
+        return 1;
+    }
+    return 0;
+}
+
+#define MAX_SHOWN 64                             /* owf_sheet_charts' most on a sheet */
+
+/* Chart index (as owf_sheet_charts counts them) put with its top left corner at to (a cell and an offset in
+ * it, each axis), or (by) moved by dx, dy EMU; its size as it was. */
+static int place(owf_book *book, int sheet, int index, int by, const edge *to, long dx, long dy)
+{
+    owf_sheet *sh;
+    owf_part *p;
+    owf_xml *rels = NULL;
+    const owf_part *rp;
+    char dir[512], name[1100];
+    const char *slash;
+    xwalk w;
+    xtok t;
+    int depth = 0, n = 0, failed = 0, e = OWF_OK;
+    if (sheet < 0 || sheet >= book->nsheets || index < 0 || index >= MAX_SHOWN)
+        return OWF_ERR_UNSUPPORTED;
+    sh = &book->sheets[sheet];
+    if (!sh->drawing || !(p = part_named(book, sh->drawing)))
+        return OWF_ERR_UNSUPPORTED;
+    slash = strrchr(sh->drawing, '/');
+    snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - sh->drawing + 1) : 0, sh->drawing);
+    snprintf(name, sizeof name, "%s_rels/%s.rels", dir, slash ? slash + 1 : sh->drawing);
+    if ((rp = owf_book_part(book, name)) != NULL && !(rels = owf_xml_parse((const char *)rp->data, rp->length, &e)) &&
+        e == OWF_ERR_MEMORY)
+        return OWF_ERR_MEMORY;
+    w.s = (const char *)p->data;
+    w.n = p->length;
+    w.i = 0;
+    while (xnext(&w, &t) != X_END && t.kind != X_BAD) {
+        anchor a;
+        change c[8];
+        edge from[2], end[2];
+        int nc = 0, k;
+        owf_buf b;
+        if (t.kind == X_CLOSE)
+            depth--;
+        if (t.kind != X_START || t.empty)
+            continue;
+        if (++depth != 2 || !is_anchor(&t))
+            continue;
+        if (!read_anchor(&w, &t, &a))
+            break;
+        depth--;
+        if (!chart_shown(book, dir, rels, a.rid, &failed)) {
+            if (failed)
+                break;
+            continue;
+        }
+        if (n++ != index)
+            continue;
+        /* found: where it starts and ends now, along each axis (k 0 rows, 1 columns) */
+        for (k = 0; k < 2; k++) {
+            int cf = k ? A_COL : A_ROW, of = k ? A_COLOFF : A_ROWOFF;
+            double start, size = 0;
+            if (a.kind == K_ABSOLUTE) {
+                start = a.pos[k ? 0 : 1].found ? (double)a.pos[k ? 0 : 1].v : 0;
+            } else {
+                start = edge_emu(sh, k, a.at[0][cf].v, a.at[0][of].v);
+                if (a.kind == K_TWO)
+                    size = edge_emu(sh, k, a.at[1][cf].v, a.at[1][of].v) - start;
+            }
+            if (by)
+                emu_edge(sh, k, start + (double)(k ? dx : dy), &from[k]);
+            else
+                from[k] = to[k];
+            if (a.kind == K_TWO)
+                emu_edge(sh, k, edge_emu(sh, k, from[k].cell, from[k].off) + (size > 0 ? size : 0), &end[k]);
+            if (a.kind == K_ABSOLUTE) {
+                double at = edge_emu(sh, k, from[k].cell, from[k].off);
+                add_change(c, &nc, &a.pos[k ? 0 : 1], (long)(at + 0.5));
+            } else {
+                add_change(c, &nc, &a.at[0][cf], from[k].cell);
+                add_change(c, &nc, &a.at[0][of], from[k].off);
+                if (a.kind == K_TWO) {
+                    add_change(c, &nc, &a.at[1][cf], end[k].cell);
+                    add_change(c, &nc, &a.at[1][of], end[k].off);
+                }
+            }
+        }
+        owf_xml_free(rels);
+        if (!nc)
+            return OWF_OK;
+        owf_buf_init(&b);
+        owf_buf_put(&b, w.s, a.start);
+        put_changed(&b, w.s, a.start, a.end, c, nc);
+        owf_buf_put(&b, w.s + a.end, w.n - a.end);
+        e = replace_part(p, &b) ? OWF_OK : OWF_ERR_MEMORY;
+        owf_buf_free(&b);
+        return e;
+    }
+    owf_xml_free(rels);
+    return failed ? OWF_ERR_MEMORY : OWF_ERR_UNSUPPORTED;
+}
+
+int calc_chart_place(owf_book *book, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off)
+{
+    edge to[2];
+    to[0].cell = row < CALC_MAX_ROWS ? (long)row : (long)CALC_MAX_ROWS - 1;
+    to[0].off = row_off > 0 ? row_off : 0;
+    to[1].cell = col < CALC_MAX_COLS ? (long)col : (long)CALC_MAX_COLS - 1;
+    to[1].off = col_off > 0 ? col_off : 0;
+    return place(book, sheet, index, 0, to, 0, 0);
+}
+
+int calc_chart_nudge(owf_book *book, int sheet, int index, long dx, long dy)
+{
+    return place(book, sheet, index, 1, NULL, dx, dy);
 }

@@ -253,6 +253,11 @@ int calc_charts_refs(owf_book *book, calc_chart_fix fix, void *user);
 /* The anchors in a sheet's drawing moved as rows (axis 0) or columns go in (count > 0) at at, or (count < 0)
  * out: each edge with its cell; one wholly in deleted ones goes, as Excel's do. 0 when memory ran out. */
 int calc_charts_shift(owf_book *book, int sheet, int axis, long at, long count, long limit);
+/* A sheet's chart (index as owf_sheet_charts counts them) put with its top left corner at a cell and an offset
+ * in it (EMU), or moved by dx, dy EMU (no further than the sheet's top and left): its size as it was. OWF_OK,
+ * OWF_ERR_UNSUPPORTED (no such chart), OWF_ERR_MEMORY. */
+int calc_chart_place(owf_book *book, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off);
+int calc_chart_nudge(owf_book *book, int sheet, int index, long dx, long dy);
 
 /* ---- Functions (owf_calc_fn.c) ---- */
 

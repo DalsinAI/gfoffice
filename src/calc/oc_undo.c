@@ -226,7 +226,27 @@ void oc_undo_free(oc_undo *u)
     free(u->rows);
     owf_book_free(u->book);
     free(u->states);
+    free(u->part_name);
+    free(u->part_data);
     free(u);
+}
+
+int oc_undo_save_part(oc_core *core, oc_undo *u, const char *name)
+{
+    const owf_part *p = owf_book_part(core->book, name);
+    if (!p)
+        return OWF_ERR_UNSUPPORTED;
+    free(u->part_name);
+    free(u->part_data);
+    u->part_name = oc_strdup(name);
+    u->part_data = malloc(p->length ? p->length : 1);
+    if (!u->part_name || !u->part_data)
+        return OWF_ERR_MEMORY;
+    if (p->length)
+        memcpy(u->part_data, p->data, p->length);
+    u->part_length = p->length;
+    u->bytes += (long)p->length + 64;
+    return OWF_OK;
 }
 
 int oc_undo_save_range(oc_core *core, oc_undo *u, int sheet, const owf_range *range, int with)
@@ -405,6 +425,8 @@ static oc_undo *capture_like(oc_core *core, const oc_undo *u)
             goto fail;
     if (u->kind == OC_UNDO_LAYOUT && oc_undo_save_layout(core, r, u->lsheet) != OWF_OK)
         goto fail;
+    if (u->kind == OC_UNDO_PART && u->part_name && oc_undo_save_part(core, r, u->part_name) != OWF_OK)
+        goto fail;
     if (u->kind == OC_UNDO_SHIFT) {
         r->shift_sheet = u->shift_sheet;
         r->shift_axis = u->shift_axis;
@@ -481,6 +503,16 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
     }
     if (u->kind == OC_UNDO_SHIFT && u->shift_sheet < core->book->nsheets)
         owf_calc_shift(core->calc, u->shift_sheet, u->shift_axis, u->shift_at, u->shift_count);
+    if (u->kind == OC_UNDO_PART && u->part_data) {
+        for (i = 0; i < core->book->nparts; i++)
+            if (!strcmp(core->book->parts[i].name, u->part_name)) {
+                free(core->book->parts[i].data);           /* the step's text moves into the book */
+                core->book->parts[i].data = u->part_data;
+                core->book->parts[i].length = u->part_length;
+                u->part_data = NULL;
+                break;
+            }
+    }
     if (u->kind == OC_UNDO_BOOK && u->book) {
         owf_book t = *core->book;
         *core->book = *u->book;
@@ -513,7 +545,7 @@ static int step_back(oc_core *core, oc_undo **from, int *nfrom, oc_undo **to, in
         return OWF_ERR_MEMORY;
     (*nfrom)--;
     whole = u->kind == OC_UNDO_BOOK;
-    if (whole || u->kind == OC_UNDO_SHIFT)
+    if (whole || u->kind == OC_UNDO_SHIFT || u->kind == OC_UNDO_PART)
         oc_charts_forget(core);                      /* their parts as they were: read again */
     restore(core, u, back);
     /* the sheets may have come or gone: a cursor for each (the step knows the one it left) */

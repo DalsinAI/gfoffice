@@ -1385,4 +1385,44 @@ __owfcalc_owf_sheet_set_row_style(void *__base, owf_sheet *sheet, unsigned row, 
 #define owf_sheet_set_row_style(sheet, row, style) __owfcalc_owf_sheet_set_row_style((OWFCALC_BASE_NAME), (owf_sheet *)(sheet), (unsigned)(row), (int)(style))
 #define __owf_sheet_set_row_style_base(__in_base, sheet, row, style) __owfcalc_owf_sheet_set_row_style((__in_base), (owf_sheet *)(sheet), (unsigned)(row), (int)(style))
 
+static __inline__ int
+__owfcalc_owf_calc_place_chart(void *__base, owf_calc *calc, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _d1 __asm("d1") = (ULONG)(index);
+	register ULONG _d2 __asm("d2") = (ULONG)(row);
+	register ULONG _d3 __asm("d3") = (ULONG)(row_off);
+	register ULONG _d4 __asm("d4") = (ULONG)(col);
+	register ULONG _d5 __asm("d5") = (ULONG)(col_off);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -498(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3), "r" (_d4), "r" (_d5)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_place_chart(calc, sheet, index, row, row_off, col, col_off) __owfcalc_owf_calc_place_chart((OWFCALC_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (int)(index), (unsigned)(row), (long)(row_off), (unsigned)(col), (long)(col_off))
+#define __owf_calc_place_chart_base(__in_base, calc, sheet, index, row, row_off, col, col_off) __owfcalc_owf_calc_place_chart((__in_base), (owf_calc *)(calc), (int)(sheet), (int)(index), (unsigned)(row), (long)(row_off), (unsigned)(col), (long)(col_off))
+
+static __inline__ int
+__owfcalc_owf_calc_nudge_chart(void *__base, owf_calc *calc, int sheet, int index, long dx, long dy)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _d1 __asm("d1") = (ULONG)(index);
+	register ULONG _d2 __asm("d2") = (ULONG)(dx);
+	register ULONG _d3 __asm("d3") = (ULONG)(dy);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -504(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_nudge_chart(calc, sheet, index, dx, dy) __owfcalc_owf_calc_nudge_chart((OWFCALC_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (int)(index), (long)(dx), (long)(dy))
+#define __owf_calc_nudge_chart_base(__in_base, calc, sheet, index, dx, dy) __owfcalc_owf_calc_nudge_chart((__in_base), (owf_calc *)(calc), (int)(sheet), (int)(index), (long)(dx), (long)(dy))
+
 #endif /* INLINE_OWFCALC_H */
