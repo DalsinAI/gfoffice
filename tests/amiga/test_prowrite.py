@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """ProWrite's reader (libowf/src/in_prowrite.c): what ProWrite 3's own files
 hold beyond the 1987 specification.
+New Horizons' own Convert Notes (fixtures/convert-notes.pw) reads whole.
 
     test_prowrite.py path/to/owconvert
 
 - COLR holds ISO 6429 colour numbers, 30-37, as ProWrite writes them;
 - PSET holds the page's size in decipoints;
 - two page breaks in a row leave an empty page;
-- of several headers (left, right, both, none), one is kept;
-- New Horizons' own Convert Notes (fixtures/convert-notes.pw) reads whole.
+- of several headers (left, right, both, none), one is kept.
 Exits 1 on a failure. Team 5 (W142), 26 October 2026.
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
