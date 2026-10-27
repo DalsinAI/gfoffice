@@ -79,6 +79,20 @@ static void round_trip(const ow_layout *l, const owf_doc *doc, int pi, int *chec
     }
 }
 
+
+/* 2.0.23: whether a laid-out story shows a word */
+static int story_says(ol_document *story, const char *word)
+{
+    size_t k;
+    for (k = 0; k < ol_display_count(story); ++k) {
+        const ol_display_op *op = ol_display_get(story, k);
+        const char *t;
+        if (op->type != OL_OP_TEXT) continue;
+        t = ol_node_text(ol_node_by_id(story, op->u.text.node_id));
+        if (t && !strcmp(t, word)) return 1;
+    }
+    return 0;
+}
 static void test_built(void)
 {
     owf_doc *doc = owf_doc_new();
@@ -184,6 +198,35 @@ static void test_built(void)
         ol_document_free(story);
     }
     CHECK(ow_layout_story(l, OW_STORY_HEADER, 0, NULL, NULL, NULL, NULL) == NULL);
+
+    /* 2.0.23: left pages' own footer on the even-numbered pages, the footer on the odd; with the document
+     * starting at page 2, the first page is a left one */
+    {
+        owf_charfmt lf;
+        owf_para *lp = owf_story_add(&doc->footer_left, NULL);
+        owf_charfmt_init(&lf);
+        CHECK(lp && owf_para_add_text(lp, &lf, "Left", 4) == OWF_OK);
+        story = ow_layout_story(l, OW_STORY_FOOTER, 1, NULL, NULL, NULL, &sy);
+        CHECK(story != NULL && story_says(story, "Left") && !story_says(story, "2"));
+        CHECK(sy > ow_layout_page(l)->height - ow_layout_page(l)->margin_bottom);
+        ol_document_free(story);
+        story = ow_layout_story(l, OW_STORY_FOOTER, 0, NULL, NULL, NULL, NULL);
+        CHECK(story != NULL && !story_says(story, "Left") && story_says(story, "1"));
+        ol_document_free(story);
+        story = ow_layout_story(l, OW_STORY_FOOTER_LEFT, 0, NULL, NULL, NULL, NULL);
+        CHECK(story != NULL && story_says(story, "Left"));
+        ol_document_free(story);
+        doc->page.start_page = 2;
+        story = ow_layout_story(l, OW_STORY_FOOTER, 0, NULL, NULL, NULL, NULL);
+        CHECK(story != NULL && story_says(story, "Left"));
+        ol_document_free(story);
+        story = ow_layout_story(l, OW_STORY_FOOTER, 1, NULL, NULL, NULL, NULL);
+        CHECK(story != NULL && story_says(story, "3"));
+        ol_document_free(story);
+        doc->page.start_page = 1;
+        /* no header of its own on left pages, nor at all: none */
+        CHECK(ow_layout_story(l, OW_STORY_HEADER, 1, NULL, NULL, NULL, NULL) == NULL);
+    }
 
     /* a table cell's text is its paragraph's run; the table is no run */
     {

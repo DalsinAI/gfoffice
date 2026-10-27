@@ -69,7 +69,8 @@ int ow_layout_hit(const ow_layout *layout, int page, ol_unit x, ol_unit y, ow_po
 
 /* The header or footer for one page, fields filled in (the page number in
  * the document's style; date and time as given, may be NULL), laid out at
- * the body's width. *x, *y (either may be NULL) is where its top left goes
+ * the body's width. 2.0.23: on an even-numbered page, the left pages' own
+ * when the document has them (doc->header_left, footer_left). *x, *y (either may be NULL) is where its top left goes
  * on the page: the header half way into the top margin, the footer ending
  * half way into the bottom one. NULL when the story is empty or on a first
  * page that has none. ol_document_free() it. */

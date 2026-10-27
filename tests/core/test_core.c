@@ -775,6 +775,56 @@ static int test_headers_fields(void)
     ow_editor_free(ed);owf_doc_free(doc);return 0;
 }
 
+/* 2.0.23: left pages' own header: set, read, undone, removed, and drawn on the even-numbered pages */
+static char left_seen[256];
+static void on_left_text(void *userdata, int x, int y, const char *utf8, const owf_charfmt *fmt)
+{
+    size_t n = strlen(left_seen);
+    (void)userdata; (void)x; (void)y; (void)fmt;
+    if (n + strlen(utf8) + 2 < sizeof left_seen) { strcat(left_seen, utf8); strcat(left_seen, "|"); }
+}
+
+static int test_left_stories(void)
+{
+    owf_doc *doc = doc_with("Body text");
+    ow_editor *ed;
+    ow_renderer r;
+    ow_selection sel;
+    char *text;
+    if (!doc) return 2201;
+    ed = ow_editor_new(doc);
+    if (!ed) return 2202;
+    if (ow_editor_set_story_text(ed, OW_STORY_HEADER, "Right") != OWF_OK) return 2203;
+    if (ow_editor_set_story_text(ed, OW_STORY_HEADER_LEFT, "Left {PAGE}") != OWF_OK) return 2204;
+    if (doc->header_left.nparas != 1 || doc->header_left.paras[0].nruns != 2) return 2205;
+    text = ow_editor_story_text(ed, OW_STORY_HEADER_LEFT);
+    if (!text || strcmp(text, "Left {PAGE}")) { owf_free(text); return 2206; }
+    owf_free(text);
+    if (ow_editor_undo(ed) != 1 || doc->header_left.nparas != 0 || doc->header.nparas != 1) return 2207;
+    if (ow_editor_redo(ed) != 1 || doc->header_left.nparas != 1) return 2208;
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.byte_offset = sel.focus.byte_offset = 4;
+    ow_editor_set_selection(ed, &sel);
+    if (ow_editor_insert_page_break(ed) != OWF_OK || ow_editor_layout(ed) != OWF_OK) return 2209;
+    if (ow_editor_page_count(ed) != 2) return 2210;
+    memset(&r, 0, sizeof r);
+    r.text = on_left_text;
+    left_seen[0] = 0;
+    if (ow_editor_render_page(ed, 0, &r) != OWF_OK) return 2211;
+    if (!strstr(left_seen, "Right") || strstr(left_seen, "Left")) return 2212;
+    left_seen[0] = 0;
+    if (ow_editor_render_page(ed, 1, &r) != OWF_OK) return 2213;
+    if (!strstr(left_seen, "Left") || strstr(left_seen, "Right")) return 2214;
+    /* "" removes it: every page has the header again */
+    if (ow_editor_set_story_text(ed, OW_STORY_HEADER_LEFT, "") != OWF_OK || doc->header_left.nparas) return 2215;
+    left_seen[0] = 0;
+    if (ow_editor_render_page(ed, 1, &r) != OWF_OK || !strstr(left_seen, "Right")) return 2216;
+    if (ow_editor_set_story_text(ed, OW_STORY_FOOTER_LEFT, "Foot") != OWF_OK || doc->footer_left.nparas != 1) return 2217;
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
+}
+
 /* 2.0.15: the caret in a text box: its text edited, undone and saved; the body as it was */
 static int box_text(const owf_doc *doc, char *out, size_t size)
 {
@@ -936,6 +986,7 @@ int main(void)
     if ((rc = test_table_editing())) goto fail;
     if ((rc = test_page_setup_and_break())) goto fail;
     if ((rc = test_headers_fields())) goto fail;
+    if ((rc = test_left_stories())) goto fail;
     if ((rc = test_frames_undo())) goto fail;
     if ((rc = test_undo_memory())) goto fail;
     if ((rc = test_names_editing())) goto fail;

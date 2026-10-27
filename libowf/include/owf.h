@@ -239,6 +239,12 @@ typedef struct owf_doc {
     char *title;             /* UTF-8, may be NULL */
     int nframes, capframes;  /* 1.3 */
     owf_frame *frames;
+    /* 2.0.23: the header and footer of left pages, the even-numbered ones (Word's even headers, ODF's
+     * style:header-left; ProWrite's for left pages). Empty (nparas 0): left pages have header's and footer's,
+     * as before; header and footer are then the right pages' (the odd-numbered). A story of one empty
+     * paragraph is "nothing on these pages", in either. header_on_first and footer_on_first are for the
+     * first page, whichever its number makes it. */
+    owf_story header_left, footer_left;
 } owf_doc;
 
 /* ---- Memory ----

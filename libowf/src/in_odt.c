@@ -1068,6 +1068,16 @@ static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *li
 
 /* ---- The page, headers and footers ---- */
 
+/* Whether a header or footer element has a paragraph with anything in it. */
+static int holds_text(const owf_xml_node *m)
+{
+    const owf_xml_node *c;
+    for (c = m->first; c; c = c->next)
+        if (c->first && (owf_xml_is(c, NS_TEXT, "p") || owf_xml_is(c, NS_TEXT, "h")))
+            return 1;
+    return 0;
+}
+
 static void read_page(odt *o, const owf_xml_node *styles_root, const owf_xml_node *autos)
 {
     const owf_xml_node *master = owf_xml_child(owf_xml_child(styles_root, NS_OFFICE, "master-styles"), NS_STYLE, "master-page");
@@ -1124,15 +1134,34 @@ static void read_page(odt *o, const owf_xml_node *styles_root, const owf_xml_nod
         if (owf_builder_done(&b) != OWF_OK)
             o->failed = 1;
     }
-    /* A first-page header with nothing in it: no header on the first page. */
+    /* 2.0.23: left pages' own; one marked style:display="false" (LibreOffice's "same content") is none */
+    {
+        static const char *const side[2] = { "header-left", "footer-left" };
+        int k;
+        for (k = 0; k < 2; ++k) {
+            const char *display;
+            if (!(m = owf_xml_child(master, NS_STYLE, side[k])))
+                continue;
+            display = owf_xml_attr(m, NS_STYLE, "display");
+            if (display && !strcmp(display, "false"))
+                continue;
+            owf_builder_init(&b, o->doc, k ? &o->doc->footer_left : &o->doc->header_left);
+            o->b = &b;
+            blocks(o, m, -1, NULL);
+            if (owf_builder_done(&b) != OWF_OK)
+                o->failed = 1;
+        }
+    }
+    /* A first-page header with nothing in it: no header on the first page. 2.0.23: nothing is no paragraph or
+     * only empty ones (LibreOffice's, and ours: it drops every header for an empty element) */
     if ((m = owf_xml_child(master, NS_STYLE, "header-first"))) {
-        if (owf_xml_child(m, NS_TEXT, "p") || owf_xml_child(m, NS_TEXT, "h"))
+        if (holds_text(m))
             owf_report_add(o->report, OWF_NOTE_APPROX, "A different header or footer on the first page became the usual one");
         else
             o->doc->page.header_on_first = 0;
     }
     if ((m = owf_xml_child(master, NS_STYLE, "footer-first"))) {
-        if (owf_xml_child(m, NS_TEXT, "p") || owf_xml_child(m, NS_TEXT, "h"))
+        if (holds_text(m))
             owf_report_add(o->report, OWF_NOTE_APPROX, "A different header or footer on the first page became the usual one");
         else
             o->doc->page.footer_on_first = 0;

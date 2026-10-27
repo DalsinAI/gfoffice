@@ -73,6 +73,8 @@ static void clear_doc_data(owf_doc *doc)
     free_story_data(&doc->body);
     free_story_data(&doc->header);
     free_story_data(&doc->footer);
+    free_story_data(&doc->header_left);              /* 2.0.23 */
+    free_story_data(&doc->footer_left);
     for (i = 0; i < doc->nfonts; ++i) owf_free(doc->fonts[i].name);
     owf_free(doc->fonts);
     for (i = 0; i < doc->nimages; ++i) { owf_free(doc->images[i].name); owf_free(doc->images[i].mime); owf_free(doc->images[i].alt); owf_free(doc->images[i].data); }
@@ -153,7 +155,9 @@ static owf_doc *clone_doc(const owf_doc *src)
      * snapshot no longer copies them: one undo copied the plan's 0.5 MB cover JPEG and the rest each time. */
     if (!clone_story(&dst->body, &src->body) ||
         !clone_story(&dst->header, &src->header) ||
-        !clone_story(&dst->footer, &src->footer))
+        !clone_story(&dst->footer, &src->footer) ||
+        !clone_story(&dst->header_left, &src->header_left) ||          /* 2.0.23 */
+        !clone_story(&dst->footer_left, &src->footer_left))
         goto fail;
     if (src->nframes) {                              /* 2.0.10: frames, their text boxes' paragraphs too */
         dst->frames = (owf_frame *)owf_calloc((size_t)src->nframes, sizeof(*dst->frames));
@@ -210,7 +214,8 @@ static unsigned long story_bytes(const owf_story *story)
 static unsigned long doc_bytes(const owf_doc *doc)
 {
     unsigned long n = sizeof(owf_doc) + story_bytes(&doc->body) + story_bytes(&doc->header) +
-                      story_bytes(&doc->footer) + (unsigned long)doc->nfonts * (sizeof(owf_font) + 24);
+                      story_bytes(&doc->footer) + story_bytes(&doc->header_left) + story_bytes(&doc->footer_left) +
+                      (unsigned long)doc->nfonts * (sizeof(owf_font) + 24);
     int i;
     for (i = 0; i < doc->nframes; ++i) n += sizeof(owf_frame) + story_bytes(&doc->frames[i].story);
     return n;
@@ -2447,14 +2452,14 @@ static owf_story *story_for(ow_editor *editor, ow_story_kind which)
 {
     if (!editor || !editor->doc) return NULL;
     return which == OW_STORY_HEADER ? &editor->doc->header :
-           which == OW_STORY_FOOTER ? &editor->doc->footer : NULL;
+           which == OW_STORY_FOOTER ? &editor->doc->footer :
+           which == OW_STORY_HEADER_LEFT ? &editor->doc->header_left :     /* 2.0.23 */
+           which == OW_STORY_FOOTER_LEFT ? &editor->doc->footer_left : NULL;
 }
 
 static const owf_story *story_for_const(const ow_editor *editor, ow_story_kind which)
 {
-    if (!editor || !editor->doc) return NULL;
-    return which == OW_STORY_HEADER ? &editor->doc->header :
-           which == OW_STORY_FOOTER ? &editor->doc->footer : NULL;
+    return story_for((ow_editor *)editor, which);
 }
 
 char *ow_editor_story_text(const ow_editor *editor, ow_story_kind which)
@@ -2539,6 +2544,10 @@ int ow_editor_set_story_text(ow_editor *editor, ow_story_kind which, const char 
     editor->typing_group = 0;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     free_story_data(story);
+    if (!*text && (which == OW_STORY_HEADER_LEFT || which == OW_STORY_FOOTER_LEFT)) {
+        editor->dirty = 1; ++editor->changes;        /* 2.0.23: none of their own: left pages have the others */
+        return OWF_OK;
+    }
     fmt = editor->doc->base;
     line = p = text;
     for (;;) {
@@ -2746,6 +2755,7 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
                           const ow_renderer *renderer)
 {
     ow_page_info page;
+    const owf_story *header, *footer;
     int i, j;
     if (!editor || !editor->doc || !renderer) return OWF_ERR_FORMAT;
     if (page_index < 0 || page_index >= editor->pages) return OWF_ERR_FORMAT;
@@ -2755,8 +2765,14 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
     page.page_index = page_index;
     if (renderer->begin_page) renderer->begin_page(renderer->userdata, &page);
 
-    if ((page_index > 0 || editor->doc->page.header_on_first) && editor->doc->header.nparas)
-        render_story(editor, &editor->doc->header, -1000,
+    {
+        /* 2.0.23: an even-numbered page is a left one, with left pages' own when there are */
+        int number = (editor->doc->page.start_page > 0 ? editor->doc->page.start_page : 1) + page_index;
+        header = !(number & 1) && editor->doc->header_left.nparas ? &editor->doc->header_left : &editor->doc->header;
+        footer = !(number & 1) && editor->doc->footer_left.nparas ? &editor->doc->footer_left : &editor->doc->footer;
+    }
+    if ((page_index > 0 || editor->doc->page.header_on_first) && header->nparas)
+        render_story(editor, header, -1000,
                      editor->doc->page.margin_left,
                      editor->doc->page.margin_top / 3,
                      page_index, renderer);
@@ -2801,8 +2817,8 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
         }
     }
 
-    if ((page_index > 0 || editor->doc->page.footer_on_first) && editor->doc->footer.nparas)
-        render_story(editor, &editor->doc->footer, -2000,
+    if ((page_index > 0 || editor->doc->page.footer_on_first) && footer->nparas)
+        render_story(editor, footer, -2000,
                      editor->doc->page.margin_left,
                      editor->doc->page.height - editor->doc->page.margin_bottom / 2,
                      page_index, renderer);

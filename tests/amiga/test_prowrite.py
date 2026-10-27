@@ -8,15 +8,19 @@ New Horizons' own Convert Notes (fixtures/convert-notes.pw) reads whole.
 - COLR holds ISO 6429 colour numbers, 30-37, as ProWrite writes them;
 - PSET holds the page's size in decipoints;
 - two page breaks in a row leave an empty page;
-- of several headers (left, right, both, none), one is kept.
+- of several headers (left, right, both, none), the right pages' and the
+  left pages' are kept (2.0.23), and written to DOCX (even headers) and
+  ODT (style:header-left) and read back.
 Exits 1 on a failure. Team 5 (W142), 26 October 2026.
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
 import os
+import re
 import struct
 import subprocess
 import sys
 import tempfile
+import zipfile
 
 OWCONVERT = os.path.abspath(sys.argv[1])
 failures = []
@@ -62,6 +66,22 @@ def sample():
     ])
 
 
+def furniture(kinds):
+    """A small document whose headers and footers are kinds: (chunk id, page type, text)."""
+    chunks = [chunk("FONT", struct.pack(">BxH", 0x22, 12) + b"Times\0"),
+              chunk("DOC ", struct.pack(">HBxI", 1, 0, 0)),
+              para(), chunk("TEXT", b"Body"), chunk("PAGE", b""), para(), chunk("TEXT", b"Page two")]
+    for cid, kind, text in kinds:
+        chunks += [chunk(cid, struct.pack(">BBI", kind, 1, 0)), para(), chunk("TEXT", text.encode("latin-1"))]
+    return form("WORD", chunks)
+
+
+def div(h, cls):
+    """The text of the first <div class="cls"> in h, or None."""
+    m = re.search(r'<div class="%s"[^>]*>(.*?)</div>' % re.escape(cls), h, re.S)
+    return re.sub(r"<[^>]+>", "", m.group(1)).strip() if m else None
+
+
 def run(path, to):
     p = subprocess.run([OWCONVERT, "--report", path, to], capture_output=True, timeout=60)
     return p.returncode, p.stdout.decode("utf-8", "replace")
@@ -102,11 +122,58 @@ def main():
         check("PSET's page", "size: 612pt 792pt" in h, h[:400])
         check("no paper-size note", "does not store the paper size" not in report, report)
         check("two page breaks, an empty page", h.count('class="ow-page-break"') == 2, h[-1500:])
-        header = h[h.find('class="ow-header"'):]
-        header = header[:header.find("</div>")]
-        check("the right header kept", "Right header" in header and "Left header" not in header, header)
-        check("report: the left header", "1 more header(s)" in report, report)
-        check("a footer for no pages is none", "<div class=\"ow-footer\"" not in h and "Footer on no pages" not in h, h[-800:])
+        check("the right pages' header", div(h, "ow-header") == "Right header", h[-1500:])
+        check("the left pages' header", div(h, "ow-header-left") == "Left header", h[-1500:])
+        check("report: no header left out", "header(s)" not in report and "every page" not in report, report)
+        check("a footer for no pages is none", "<div class=\"ow-footer" not in h and "Footer on no pages" not in h, h[-800:])
+        # DOCX: Word's even header, with the setting that turns them on; and read back
+        docx = os.path.join(work, "out.docx")
+        rc, report = run(src, docx)
+        check("DOCX converts", rc == 0, report)
+        z = zipfile.ZipFile(docx) if rc == 0 else None
+        names = z.namelist() if z else []
+        doc_xml = z.read("word/document.xml").decode("utf-8") if z else ""
+        check("DOCX: an even header", 'w:headerReference w:type="even" r:id="rId4"' in doc_xml and
+              'w:headerReference w:type="default" r:id="rId2"' in doc_xml, doc_xml[-600:])
+        check("DOCX: header2.xml has the left one", "word/header2.xml" in names and
+              "Left header" in z.read("word/header2.xml").decode("utf-8"), str(names))
+        check("DOCX: evenAndOddHeaders", "word/settings.xml" in names and
+              "evenAndOddHeaders" in z.read("word/settings.xml").decode("utf-8"), str(names))
+        back = os.path.join(work, "back.html")
+        rc, report = run(docx, back)
+        hb = open(back, encoding="utf-8").read() if rc == 0 else ""
+        check("DOCX read back: both headers", div(hb, "ow-header") == "Right header" and
+              div(hb, "ow-header-left") == "Left header", hb[-1500:])
+        # ODT: style:header-left after style:header; and read back
+        odt = os.path.join(work, "out.odt")
+        rc, report = run(src, odt)
+        styles = zipfile.ZipFile(odt).read("styles.xml").decode("utf-8") if rc == 0 else ""
+        check("ODT: header-left", re.search(r"<style:header>.*Right header.*</style:header>"
+                                            r"<style:header-left>.*Left header.*</style:header-left>", styles) is not None,
+              styles[-900:])
+        rc, report = run(odt, back)
+        hb = open(back, encoding="utf-8").read() if rc == 0 else ""
+        check("ODT read back: both headers", div(hb, "ow-header") == "Right header" and
+              div(hb, "ow-header-left") == "Left header", hb[-1500:])
+        # one side only: the other side's is an empty paragraph (nothing there)
+        for name, kinds, right, left in (
+                ("right pages only", [("HEAD", 2, "R")], "R", ""),
+                ("left pages only", [("HEAD", 1, "L")], "", "L"),
+                ("both pages", [("HEAD", 3, "B")], "B", None),
+                ("footers, left and both", [("FOOT", 1, "FL"), ("FOOT", 3, "FB")], "FB", "FL")):
+            with open(src, "wb") as f:
+                f.write(furniture(kinds))
+            rc, report = run(src, out)
+            h = open(out, encoding="utf-8").read() if rc == 0 else ""
+            what = "ow-footer" if kinds[0][0] == "FOOT" else "ow-header"
+            check("%s: right pages" % name, div(h, what) == right, h[-900:])
+            check("%s: left pages" % name, div(h, what + "-left") == left, h[-900:])
+        with open(src, "wb") as f:
+            f.write(furniture([("HEAD", 3, "B"), ("HEAD", 1, "L"), ("HEAD", 2, "R"), ("HEAD", 2, "R2")]))
+        rc, report = run(src, out)
+        h = open(out, encoding="utf-8").read() if rc == 0 else ""
+        check("left, right and both: left and right kept", div(h, "ow-header") == "R" and div(h, "ow-header-left") == "L", h[-900:])
+        check("left, right and both: two left out", "2 more header(s) for the same pages" in report, report)
     if failures:
         print("%d failure(s)" % len(failures))
         sys.exit(1)

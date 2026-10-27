@@ -315,17 +315,27 @@ static int export_html(const owf_doc *doc, unsigned char **data, size_t *length,
                        ".ow-table { border-collapse: collapse; margin: 4pt 0; }\n"
                        ".ow-table td { border: 0.5pt solid #808080; padding: 2pt 4pt; vertical-align: top; }\n"
                        ".ow-table td > p, .ow-table td > h1, .ow-table td > h2, .ow-table td > h3 { margin: 0; }\n"
-                       ".ow-header, .ow-footer { color: #666; font-size: 90%; }\n"
+                       ".ow-header, .ow-footer, .ow-header-left, .ow-footer-left { color: #666; font-size: 90%; }\n"
                        "</style>\n</head>\n<body>\n");
     if (doc->header.nparas) {
         owf_buf_printf(&out, "<div class=\"ow-header\" data-first-page=\"%d\">\n", pg->header_on_first);
         put_story(&out, doc, &doc->header, report);
         owf_buf_puts(&out, "</div>\n");
     }
+    if (doc->header_left.nparas) {                   /* 2.0.23: left pages' own, after the right pages' */
+        owf_buf_printf(&out, "<div class=\"ow-header-left\" data-first-page=\"%d\">\n", pg->header_on_first);
+        put_story(&out, doc, &doc->header_left, report);
+        owf_buf_puts(&out, "</div>\n");
+    }
     put_story(&out, doc, &doc->body, report);
     if (doc->footer.nparas) {
         owf_buf_printf(&out, "<div class=\"ow-footer\" data-first-page=\"%d\">\n", pg->footer_on_first);
         put_story(&out, doc, &doc->footer, report);
+        owf_buf_puts(&out, "</div>\n");
+    }
+    if (doc->footer_left.nparas) {
+        owf_buf_printf(&out, "<div class=\"ow-footer-left\" data-first-page=\"%d\">\n", pg->footer_on_first);
+        put_story(&out, doc, &doc->footer_left, report);
         owf_buf_puts(&out, "</div>\n");
     }
     owf_buf_puts(&out, "</body>\n</html>\n");

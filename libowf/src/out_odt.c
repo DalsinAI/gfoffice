@@ -521,7 +521,9 @@ static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para,
             /* the body's, a header's and a footer's (2.0.20); a text box's own are left out */
             if(doc&&((para>=doc->body.paras&&para<doc->body.paras+doc->body.nparas)||
                      (para>=doc->header.paras&&para<doc->header.paras+doc->header.nparas)||
-                     (para>=doc->footer.paras&&para<doc->footer.paras+doc->footer.nparas))){put_frame_odt(out,doc,run->image,s);after_space=0;}
+                     (para>=doc->footer.paras&&para<doc->footer.paras+doc->footer.nparas)||
+                     (para>=doc->header_left.paras&&para<doc->header_left.paras+doc->header_left.nparas)||
+                     (para>=doc->footer_left.paras&&para<doc->footer_left.paras+doc->footer_left.nparas))){put_frame_odt(out,doc,run->image,s);after_space=0;}
             break;
         case OWF_RUN_IMAGE:
             if(doc&&run->image>=0&&run->image<doc->nimages){const owf_image *im=&doc->images[run->image];owf_buf_puts(out,"<draw:frame text:anchor-type=\"as-char\" svg:width=\"");owf_put_points(out,im->width);owf_buf_puts(out,"\" svg:height=\"");owf_put_points(out,im->height);owf_buf_printf(out,"\"><draw:image xlink:href=\"Pictures/image%d.%s\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/></draw:frame>",run->image+1,odt_image_ext(im));}
@@ -592,6 +594,8 @@ static int build_styles_xml(const owf_doc *doc, owf_buf *out)
     memset(&s, 0, sizeof s);
     collect(&s, doc, &doc->header);
     collect(&s, doc, &doc->footer);
+    collect(&s, doc, &doc->header_left);             /* 2.0.23 */
+    collect(&s, doc, &doc->footer_left);
 
     owf_buf_puts(out, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<office:document-styles " NS ">");
     put_font_faces(out, doc, NULL);
@@ -611,19 +615,37 @@ static int build_styles_xml(const owf_doc *doc, owf_buf *out)
                       "</style:page-layout>");
     owf_buf_puts(out, "</office:automatic-styles>");
     owf_buf_puts(out, "<office:master-styles><style:master-page style:name=\"Standard\" style:page-layout-name=\"pm1\">");
-    if (doc->header.nparas) {
+    /* 2.0.23: left pages' own as style:header-left, after style:header, which it needs: an empty paragraph
+     * there when only left pages have one */
+    if (doc->header.nparas || doc->header_left.nparas) {
         owf_buf_puts(out, "<style:header>");
-        put_story(out, doc, &doc->header, &s);
+        if (doc->header.nparas)
+            put_story(out, doc, &doc->header, &s);
+        else
+            owf_buf_puts(out, "<text:p text:style-name=\"Header\"/>");
         owf_buf_puts(out, "</style:header>");
-        if (!pg->header_on_first)
-            owf_buf_puts(out, "<style:header-first/>");
+        if (doc->header_left.nparas) {
+            owf_buf_puts(out, "<style:header-left>");
+            put_story(out, doc, &doc->header_left, &s);
+            owf_buf_puts(out, "</style:header-left>");
+        }
+        if (!pg->header_on_first)                    /* 2.0.23: an empty paragraph; LibreOffice drops every header for <style:header-first/> */
+            owf_buf_puts(out, "<style:header-first><text:p text:style-name=\"Header\"/></style:header-first>");
     }
-    if (doc->footer.nparas) {
+    if (doc->footer.nparas || doc->footer_left.nparas) {
         owf_buf_puts(out, "<style:footer>");
-        put_story(out, doc, &doc->footer, &s);
+        if (doc->footer.nparas)
+            put_story(out, doc, &doc->footer, &s);
+        else
+            owf_buf_puts(out, "<text:p text:style-name=\"Footer\"/>");
         owf_buf_puts(out, "</style:footer>");
+        if (doc->footer_left.nparas) {
+            owf_buf_puts(out, "<style:footer-left>");
+            put_story(out, doc, &doc->footer_left, &s);
+            owf_buf_puts(out, "</style:footer-left>");
+        }
         if (!pg->footer_on_first)
-            owf_buf_puts(out, "<style:footer-first/>");
+            owf_buf_puts(out, "<style:footer-first><text:p text:style-name=\"Footer\"/></style:footer-first>");
     }
     owf_buf_puts(out, "</style:master-page></office:master-styles></office:document-styles>\n");
     free_styles(&s);

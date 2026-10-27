@@ -1045,12 +1045,19 @@ ol_document *ow_layout_story(const ow_layout *l, ow_story_kind which, int page,
     ol_document *od;
     field_values fv;
     int first = l ? (l->doc->page.start_page > 0 ? l->doc->page.start_page : 1) : 1;
+    int head = which == OW_STORY_HEADER || which == OW_STORY_HEADER_LEFT;
 
     if (!l) return NULL;
-    story = which == OW_STORY_HEADER ? &l->doc->header : &l->doc->footer;
+    /* 2.0.23: an even-numbered page (as the document numbers it) is a left one, with left pages' own when
+     * there are; OW_STORY_HEADER_LEFT and OW_STORY_FOOTER_LEFT ask for those on any page */
+    if (which == OW_STORY_HEADER_LEFT || which == OW_STORY_FOOTER_LEFT)
+        story = head ? &l->doc->header_left : &l->doc->footer_left;
+    else if (!((first + page) & 1) && (head ? l->doc->header_left.nparas : l->doc->footer_left.nparas))
+        story = head ? &l->doc->header_left : &l->doc->footer_left;
+    else
+        story = head ? &l->doc->header : &l->doc->footer;
     if (!story->nparas) return NULL;
-    if (page == 0 && !(which == OW_STORY_HEADER ? l->doc->page.header_on_first
-                                                : l->doc->page.footer_on_first))
+    if (page == 0 && !(head ? l->doc->page.header_on_first : l->doc->page.footer_on_first))
         return NULL;
     ow_layout_page_number(&l->doc->page, first + page, fv.page, sizeof fv.page);
     ow_layout_page_number(&l->doc->page, first + ow_layout_page_count(l) - 1, fv.pages, sizeof fv.pages);
@@ -1068,7 +1075,7 @@ ol_document *ow_layout_story(const ow_layout *l, ow_story_kind which, int page,
     }
     /* half way into the top margin; the footer ends half way into the bottom one */
     fv.ox = l->page.margin_left;
-    fv.oy = which == OW_STORY_HEADER ? l->page.margin_top / 2
+    fv.oy = head ? l->page.margin_top / 2
                                      : l->page.height - l->page.margin_bottom / 2 - story_height(od);
     if (x) *x = fv.ox;
     if (y) *y = fv.oy;

@@ -172,7 +172,7 @@ static int export_utf8(const owf_doc *doc, unsigned char **data, size_t *length,
     put_story(&out, doc, &doc->body, &first);
     if (has_table)
         owf_report_add(report, OWF_NOTE_APPROX, "Tables are kept as rows with tabs between cells");
-    if (doc->header.nparas || doc->footer.nparas)
+    if (doc->header.nparas || doc->footer.nparas || doc->header_left.nparas || doc->footer_left.nparas)
         owf_report_add(report, OWF_NOTE_LOST, "Headers and footers are not kept in plain text");
     owf_report_add(report, OWF_NOTE_LOST, "Plain text keeps no formatting");
     return owf_buf_take(&out, data, length);
