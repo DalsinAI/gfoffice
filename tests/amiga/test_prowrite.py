@@ -7,7 +7,8 @@ hold beyond the 1987 specification.
 - COLR holds ISO 6429 colour numbers, 30-37, as ProWrite writes them;
 - PSET holds the page's size in decipoints;
 - two page breaks in a row leave an empty page;
-- of several headers (left, right, both, none), one is kept.
+- of several headers (left, right, both, none), one is kept;
+- New Horizons' own Convert Notes (fixtures/convert-notes.pw) reads whole.
 Exits 1 on a failure. Team 5 (W142), 26 October 2026.
 MIT, Copyright (c) 2026 AmigaChrome Team.
 """
@@ -66,8 +67,28 @@ def run(path, to):
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 
+def convert_notes(work):
+    """New Horizons' own file (fixtures/PROVENANCE.md): every paragraph, its
+    page, and its header and footer for no pages left out."""
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "convert-notes.pw")
+    out = os.path.join(work, "notes.txt")
+    rc, report = run(src, out)
+    check("Convert Notes converts", rc == 0 and "31 paragraph(s)" in report, report)
+    t = open(out, encoding="utf-8").read() if rc == 0 else ""
+    check("Convert Notes: its title", t.startswith("ProWrite File Convert\nVersion 2.0\n"), t[:200])
+    check("Convert Notes: New Horizons' notice", "Copyright \u00a9 1992, New Horizons Software, Inc." in t, t[:1200])
+    check("Convert Notes: its last paragraph", t.rstrip().endswith("only features currently implemented in ProWrite 3.2 are converted."), t[-300:])
+    out = os.path.join(work, "notes.html")
+    rc, report = run(src, out)
+    h = open(out, encoding="utf-8").read() if rc == 0 else ""
+    check("Convert Notes: US Letter from PSET", "size: 612pt 792pt" in h, h[:400])
+    check("Convert Notes: a page break", h.count('class="ow-page-break"') == 1, h[-800:])
+    check("Convert Notes: no header or footer", 'class="ow-header"' not in h and 'class="ow-footer"' not in h, h[-800:])
+
+
 def main():
     with tempfile.TemporaryDirectory() as work:
+        convert_notes(work)
         src = os.path.join(work, "pw.pw")
         with open(src, "wb") as f:
             f.write(sample())
