@@ -1681,7 +1681,8 @@ static void section(docx *d, const owf_xml_node *sect)
     owf_page *pg = &d->doc->page;
     const owf_xml_node *n;
     const char *head_default = NULL, *head_first = NULL, *foot_default = NULL, *foot_first = NULL;
-    int v, title_page = 0;
+    const char *head_even = NULL, *foot_even = NULL;
+    int v, title_page = 0, even_odd = 0, first_left;
 
     if (!sect)
         return;
@@ -1719,15 +1720,38 @@ static void section(docx *d, const owf_xml_node *sect)
             if (head) head_default = id; else foot_default = id;
         } else if (!strcmp(type, "first")) {
             if (head) head_first = id; else foot_first = id;
-        } else {
-            owf_report_add(d->report, OWF_NOTE_APPROX, "Different headers and footers on left and right pages became one");
+        } else if (!strcmp(type, "even")) {
+            if (head) head_even = id; else foot_even = id;
         }
+    }
+    {
+        /* 2.0.23: even pages' own when the settings say so (w:evenAndOddHeaders); Word ignores them otherwise */
+        owf_xml *settings = read_related(d, "/settings");
+        const owf_xml_node *eo = settings ? wchild(d, owf_xml_root(settings), "evenAndOddHeaders") : NULL;
+        even_odd = eo && on_off(d, eo);
+        owf_xml_free(settings);
     }
     story(d, head_default, &d->doc->header);
     story(d, foot_default, &d->doc->footer);
+    if (even_odd) {
+        /* an even part that is the default's: every page has it; none: nothing on even pages */
+        const char *hd = rel_by_id(&d->doc_rels, head_default), *he = rel_by_id(&d->doc_rels, head_even);
+        const char *fd = rel_by_id(&d->doc_rels, foot_default), *fe = rel_by_id(&d->doc_rels, foot_even);
+        if (he && !(hd && !strcmp(he, hd)))
+            story(d, head_even, &d->doc->header_left);
+        else if (!he && hd && !owf_story_add(&d->doc->header_left, NULL))
+            d->failed = 1;
+        if (fe && !(fd && !strcmp(fe, fd)))
+            story(d, foot_even, &d->doc->footer_left);
+        else if (!fe && fd && !owf_story_add(&d->doc->footer_left, NULL))
+            d->failed = 1;
+    }
+    first_left = even_odd && !(pg->start_page & 1);
     if (title_page) {
-        const char *hd = rel_by_id(&d->doc_rels, head_default), *hf = rel_by_id(&d->doc_rels, head_first);
-        const char *fd = rel_by_id(&d->doc_rels, foot_default), *ff = rel_by_id(&d->doc_rels, foot_first);
+        const char *hd = rel_by_id(&d->doc_rels, first_left && head_even ? head_even : head_default);
+        const char *hf = rel_by_id(&d->doc_rels, head_first);
+        const char *fd = rel_by_id(&d->doc_rels, first_left && foot_even ? foot_even : foot_default);
+        const char *ff = rel_by_id(&d->doc_rels, foot_first);
         pg->header_on_first = hf && hd && !strcmp(hf, hd);
         pg->footer_on_first = ff && fd && !strcmp(ff, fd);
         if ((hf && hd && strcmp(hf, hd)) || (ff && fd && strcmp(ff, fd)))

@@ -340,12 +340,17 @@ static void pdf_add_headers_footers(pdf_layout *l)
     int i, width = l->page_w - l->left - l->right;
     for (i = 0; i < l->npages; ++i) {
         owf_buf *out = &l->pages[i];
-        int shown = l->doc->page.start_page + i;
+        int shown = l->doc->page.start_page + i, left;
+        const owf_story *header, *footer;
         if (shown < 1) shown = i + 1;
-        if (l->doc->header.nparas && (i || l->doc->page.header_on_first))
-            pdf_story(out, l->doc, &l->doc->header, l->left, width, l->page_h - (l->top / 2), 0, shown, l->npages);
-        if (l->doc->footer.nparas && (i || l->doc->page.footer_on_first))
-            pdf_story(out, l->doc, &l->doc->footer, l->left, width, l->bottom / 2, 1, shown, l->npages);
+        /* 2.0.23: an even-numbered page is a left one, with left pages' own when there are */
+        left = !(shown & 1);
+        header = left && l->doc->header_left.nparas ? &l->doc->header_left : &l->doc->header;
+        footer = left && l->doc->footer_left.nparas ? &l->doc->footer_left : &l->doc->footer;
+        if (header->nparas && (i || l->doc->page.header_on_first))
+            pdf_story(out, l->doc, header, l->left, width, l->page_h - (l->top / 2), 0, shown, l->npages);
+        if (footer->nparas && (i || l->doc->page.footer_on_first))
+            pdf_story(out, l->doc, footer, l->left, width, l->bottom / 2, 1, shown, l->npages);
     }
 }
 

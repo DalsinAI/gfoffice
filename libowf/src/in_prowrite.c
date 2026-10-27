@@ -38,9 +38,9 @@ typedef struct {
     int size;                /* twips, or 0 */
 } font_entry;
 
-/* A header or footer section. The document holds one header and one
- * footer, but the format allows several (for left, right or both pages):
- * each goes into a scratch document's body, and the best is kept. */
+/* A header or footer section. The format allows several (for left, right
+ * or both pages): each goes into a scratch document's body, and one for
+ * right pages and one for left are kept (keep_furniture). */
 #define MAX_FURNITURE 8
 typedef struct {
     owf_doc *doc;
@@ -240,15 +240,17 @@ static void read_tabs(reader *r, const owf_iff_chunk *c)
     }
 }
 
-/* The header (footer 0) or footer (1) kept: for both pages before one for
- * right pages (the first page is a right one) before one for left pages;
- * none for "no pages". The others are left out and reported. */
+/* The headers (footer 0) or footers (1) kept, 2.0.23: one for right pages, the odd-numbered (a section for
+ * right pages, else one for both), and one for left pages (for left pages, else for both) into header_left;
+ * none for "no pages". When the two are the same section, header_left stays empty (every page has it); when
+ * only one side has one, the other side's story is an empty paragraph (nothing on those pages). The first of
+ * each kind is kept; the others are left out and reported. */
 static int keep_furniture(reader *r, int footer)
 {
-    static const int rank[4] = { 0, 1, 2, 3 };     /* none, left, right, both */
-    owf_story *to = footer ? &r->doc->footer : &r->doc->header;
+    owf_story *right = footer ? &r->doc->footer : &r->doc->header;
+    owf_story *left = footer ? &r->doc->footer_left : &r->doc->header_left;
     const char *what = footer ? "footer" : "header";
-    int i, best = -1, others = 0, result = OWF_OK;
+    int i, of[4] = { -1, -1, -1, -1 }, others = 0, result = OWF_OK, rs, ls, first_page_left;
 
     for (i = 0; i < r->nfurn; i++) {
         furniture *f = &r->furn[i];
@@ -256,29 +258,40 @@ static int keep_furniture(reader *r, int footer)
             continue;
         if (owf_builder_done(&f->b) != OWF_OK)
             result = OWF_ERR_MEMORY;
-        if (!rank[f->type])
+        if (!f->type)
             continue;
-        if (best < 0 || rank[f->type] > rank[r->furn[best].type]) {
-            if (best >= 0)
-                others++;
-            best = i;
-        } else {
+        if (of[f->type] < 0)
+            of[f->type] = i;
+        else
             others++;
-        }
     }
-    if (best < 0)
+    rs = of[2] >= 0 ? of[2] : of[3];                /* none, left, right, both */
+    ls = of[1] >= 0 ? of[1] : of[3];
+    if (of[1] >= 0 && of[2] >= 0 && of[3] >= 0)
+        others++;                                    /* both sides have their own: "both" is left out */
+    if (rs < 0 && ls < 0)
         return result;
-    *to = r->furn[best].doc->body;
-    memset(&r->furn[best].doc->body, 0, sizeof r->furn[best].doc->body);
-    if (footer)
-        r->doc->page.footer_on_first = r->furn[best].first;
-    else
-        r->doc->page.header_on_first = r->furn[best].first;
-    if (r->furn[best].type != 3)
-        owf_report_add(r->report, OWF_NOTE_APPROX, "A %s for %s pages only is shown on every page", what,
-                       r->furn[best].type == 1 ? "left" : "right");
+    if (rs >= 0) {
+        *right = r->furn[rs].doc->body;
+        memset(&r->furn[rs].doc->body, 0, sizeof r->furn[rs].doc->body);
+    } else if (!owf_story_add(right, NULL))
+        result = OWF_ERR_MEMORY;
+    if (ls >= 0 && ls != rs) {
+        *left = r->furn[ls].doc->body;
+        memset(&r->furn[ls].doc->body, 0, sizeof r->furn[ls].doc->body);
+    } else if (ls < 0 && !owf_story_add(left, NULL))
+        result = OWF_ERR_MEMORY;
+    /* the first page's own section says whether it has one there */
+    first_page_left = !(r->doc->page.start_page & 1);
+    i = first_page_left ? ls : rs;
+    if (i >= 0) {
+        if (footer)
+            r->doc->page.footer_on_first = r->furn[i].first;
+        else
+            r->doc->page.header_on_first = r->furn[i].first;
+    }
     if (others)
-        owf_report_add(r->report, OWF_NOTE_LOST, "%d more %s(s) for left or right pages were left out: a document here has one %s",
+        owf_report_add(r->report, OWF_NOTE_LOST, "%d more %s(s) for the same pages were left out: a document here has one %s for left pages and one for right",
                        others, what, what);
     return result;
 }

@@ -154,9 +154,11 @@ void ow_editor_page_setup(const ow_editor *editor, owf_page *page);
 int ow_editor_apply_page_setup(ow_editor *editor, const owf_page *page);
 int ow_editor_insert_page_break(ow_editor *editor);
 
-typedef enum { OW_STORY_HEADER = 1, OW_STORY_FOOTER = 2 } ow_story_kind;
+/* 2.0.23: the left pages' (the even-numbered) own, doc->header_left and footer_left */
+typedef enum { OW_STORY_HEADER = 1, OW_STORY_FOOTER = 2, OW_STORY_HEADER_LEFT = 3, OW_STORY_FOOTER_LEFT = 4 } ow_story_kind;
 /* Header/footer templates use {PAGE}, {PAGES}, {DATE} and {TIME}. Newlines
- * create separate paragraphs. The returned story text is malloc()'d. */
+ * create separate paragraphs. The returned story text is malloc()'d. Setting
+ * a left pages' one to "" removes it: left pages have the header or footer. */
 char *ow_editor_story_text(const ow_editor *editor, ow_story_kind story);
 int ow_editor_set_story_text(ow_editor *editor, ow_story_kind story, const char *text);
 int ow_editor_insert_field(ow_editor *editor, owf_field field);

@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 2.0.22 (25.10.2026)"
+#define VERSION_TEXT "OpenWrite 2.0.23 (27.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -104,7 +104,7 @@ enum {
     M_TABLE_NEXT, M_TABLE_PREV, M_TABLE_ROW_ADD, M_TABLE_ROW_DEL, M_TABLE_COL_ADD, M_TABLE_COL_DEL,
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT, M_ALIGN_JUSTIFY,
     M_STYLE_BODY, M_STYLE_H1, M_STYLE_H2, M_STYLE_H3, M_BULLETS, M_NUMBERING,
-    M_PAGE_SETUP, M_HEADER, M_FOOTER,
+    M_PAGE_SETUP, M_HEADER, M_FOOTER, M_HEADER_LEFT, M_FOOTER_LEFT,
     M_DATATYPES, M_OPENPRINT, M_SPELL,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT
@@ -207,6 +207,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Header...", NULL, 0, 0, (APTR)M_HEADER },
     { NM_ITEM, "Footer...", NULL, 0, 0, (APTR)M_FOOTER },
+    { NM_ITEM, "Left-Page Header...", NULL, 0, 0, (APTR)M_HEADER_LEFT },
+    { NM_ITEM, "Left-Page Footer...", NULL, 0, 0, (APTR)M_FOOTER_LEFT },
 
     { NM_TITLE, "Datatypes", NULL, 0, 0, NULL },
     { NM_ITEM, "OpenDatatypes...", NULL, 0, 0, (APTR)M_DATATYPES },
@@ -3464,18 +3466,24 @@ static void do_link(void)
     } else editor_result(ow_editor_set_link(editor,url),"Hyperlink applied.");
 }
 
+/* 2.0.23: the left pages' (even-numbered) own too; empty, left pages have the header or footer */
 static void do_story_edit(ow_story_kind which)
 {
+    static const char *const title[5] = { "", "Header", "Footer", "Left-Page Header (empty: the header)",
+                                          "Left-Page Footer (empty: the footer)" };
+    static const char *const done[5] = { "", "Header updated.", "Footer updated.", "Left-page header updated.",
+                                         "Left-page footer updated." };
     char *current = ow_editor_story_text(editor, which);
-    char value[512];
-    const char *title = which == OW_STORY_HEADER ? "Header" : "Footer";
+    char value[512], before[512];
     int i;
     if (!current) current = (char *)calloc(1, 1);
     snprintf(value, sizeof value, "%s", current ? current : "");
     free(current);
     for (i = 0; value[i]; ++i) if (value[i] == '\n' || value[i] == '\r') value[i] = ' ';
-    if (!text_requester(title, "Text / {PAGE} {PAGES} {DATE} {TIME}", value, value, sizeof value)) return;
-    if (editor_result(ow_editor_set_story_text(editor, which, value), which == OW_STORY_HEADER ? "Header updated." : "Footer updated.")) relayout();
+    memcpy(before, value, sizeof before);
+    if (!text_requester(title[which], "Text / {PAGE} {PAGES} {DATE} {TIME}", value, value, sizeof value)) return;
+    if (!strcmp(before, value)) return;          /* unchanged: a left page's "nothing" stays so */
+    if (editor_result(ow_editor_set_story_text(editor, which, value), done[which])) relayout();
 }
 
 static void do_command(int id)
@@ -3666,6 +3674,8 @@ static void menu_action(ULONG id)
     }
     case M_HEADER: do_story_edit(OW_STORY_HEADER); break;
     case M_FOOTER: do_story_edit(OW_STORY_FOOTER); break;
+    case M_HEADER_LEFT: do_story_edit(OW_STORY_HEADER_LEFT); break;
+    case M_FOOTER_LEFT: do_story_edit(OW_STORY_FOOTER_LEFT); break;
     case M_FIELD_PAGE: editor_result(ow_editor_insert_field(editor, OWF_FIELD_PAGE), "Page field inserted."); break;
     case M_FIELD_PAGES: editor_result(ow_editor_insert_field(editor, OWF_FIELD_PAGES), "Page-count field inserted."); break;
     case M_FIELD_DATE: editor_result(ow_editor_insert_field(editor, OWF_FIELD_DATE), "Date field inserted."); break;

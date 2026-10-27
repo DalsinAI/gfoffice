@@ -417,7 +417,8 @@ def main():
         check("prowrite odt content has " + want, want in c)
     for want in ("<style:header>", "Header ", "<style:footer>", "<text:date/>", "fo:page-width="):
         check("prowrite odt styles has " + want, want in s)
-    check("prowrite odt header not on first page", "<style:header-first/>" in s, s[-400:])
+    check("prowrite odt header not on first page",
+          "<style:header-first><text:p text:style-name=\"Header\"/></style:header-first>" in s, s[-400:])
 
     docx, report = convert(work, "sample.pw", "docx")
     parts = check_docx("prowrite", docx)

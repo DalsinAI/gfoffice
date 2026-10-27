@@ -100,6 +100,8 @@ void owf_doc_free(owf_doc *doc)
     free_story(&doc->body);
     free_story(&doc->header);
     free_story(&doc->footer);
+    free_story(&doc->header_left);                   /* 2.0.23 */
+    free_story(&doc->footer_left);
     for (i = 0; i < doc->nfonts; i++)
         free(doc->fonts[i].name);
     free(doc->fonts);

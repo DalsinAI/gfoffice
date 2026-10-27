@@ -292,6 +292,8 @@ static long bookmark_id(const owf_doc *doc, const owf_story *story, const owf_pa
     int i;
     if (story == &doc->header) base = 1000000L;
     else if (story == &doc->footer) base = 2000000L;
+    else if (story == &doc->header_left) base = 1500000L;   /* 2.0.23 */
+    else if (story == &doc->footer_left) base = 2500000L;
     else if (story != &doc->body)
         for (i = 0; i < doc->nframes; ++i)
             if (&doc->frames[i].story == story) base = 3000000L + (long)i * 10000L;
@@ -401,7 +403,8 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
             switch(run->kind){case OWF_RUN_TAB:owf_buf_puts(out,"<w:tab/>");break;case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<w:br/>");break;case OWF_RUN_IMAGE:put_drawing(out,doc,run->image);break;
                 case OWF_RUN_FRAME:
                     /* 2.0.16: a header's and a footer's too (their parts' relationships have the pictures' ids) */
-                    if (story == &doc->body || story == &doc->header || story == &doc->footer) {
+                    if (story == &doc->body || story == &doc->header || story == &doc->footer ||
+                        story == &doc->header_left || story == &doc->footer_left) {
                         put_frame(out, doc, run->image, report);
                     } else {
                         owf_report_add(report, OWF_NOTE_LOST, "Pictures and text boxes placed in a text box are left out");
@@ -487,9 +490,10 @@ static void put_own_styles(owf_buf *out, const owf_doc *doc)
 {
     const char *seen[64];
     int nseen = 0, s, i, k;
-    for (s = 0; s < 3 + doc->nframes; ++s) {
+    for (s = 0; s < 5 + doc->nframes; ++s) {
         const owf_story *st = s == 0 ? &doc->body : s == 1 ? &doc->header : s == 2 ? &doc->footer
-                            : &doc->frames[s - 3].story;
+                            : s == 3 ? &doc->header_left : s == 4 ? &doc->footer_left
+                            : &doc->frames[s - 5].story;
         for (i = 0; i < st->nparas && nseen < 64; ++i) {
             const char *id = st->paras[i].style;
             if (st->paras[i].fmt.heading >= 1 && st->paras[i].fmt.heading <= 6) continue;
@@ -537,23 +541,36 @@ static void build_document(owf_buf *out, const owf_doc *doc, owf_report *report)
 {
     static const char *num_fmt[] = { "decimal", "upperRoman", "lowerRoman", "upperLetter", "lowerLetter" };
     const owf_page *pg = &doc->page;
-    int title_page = (doc->header.nparas && !pg->header_on_first) || (doc->footer.nparas && !pg->footer_on_first);
+    int title_page = ((doc->header.nparas || doc->header_left.nparas) && !pg->header_on_first) ||
+                     ((doc->footer.nparas || doc->footer_left.nparas) && !pg->footer_on_first);
+    int even = doc->header_left.nparas || doc->footer_left.nparas;
+    int first_left = !(pg->start_page & 1);
 
     owf_buf_puts(out, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:document " W_NS "><w:body>");
     put_story(out, doc, &doc->body, report);
     owf_buf_puts(out, "<w:sectPr>");
     /* With a title page, Word shows the "first" header there: the same part
-     * when it is wanted on the first page, nothing when it is not. */
+     * when it is wanted on the first page, nothing when it is not. 2.0.23:
+     * with left pages' own (settings' w:evenAndOddHeaders), Word shows the
+     * "even" one on even-numbered pages: header2.xml, or the same part as
+     * the others' when only the footer differs; the first page's is the one
+     * its number gives it. */
     if (doc->header.nparas) {
         owf_buf_puts(out, "<w:headerReference w:type=\"default\" r:id=\"rId2\"/>");
-        if (title_page && pg->header_on_first)
-            owf_buf_puts(out, "<w:headerReference w:type=\"first\" r:id=\"rId2\"/>");
     }
+    if (doc->header_left.nparas || (even && doc->header.nparas))
+        owf_buf_printf(out, "<w:headerReference w:type=\"even\" r:id=\"rId%d\"/>", doc->header_left.nparas ? 4 : 2);
+    if (title_page && pg->header_on_first && (doc->header.nparas || doc->header_left.nparas))
+        owf_buf_printf(out, "<w:headerReference w:type=\"first\" r:id=\"rId%d\"/>",
+                       first_left && doc->header_left.nparas ? 4 : 2);
     if (doc->footer.nparas) {
         owf_buf_puts(out, "<w:footerReference w:type=\"default\" r:id=\"rId3\"/>");
-        if (title_page && pg->footer_on_first)
-            owf_buf_puts(out, "<w:footerReference w:type=\"first\" r:id=\"rId3\"/>");
     }
+    if (doc->footer_left.nparas || (even && doc->footer.nparas))
+        owf_buf_printf(out, "<w:footerReference w:type=\"even\" r:id=\"rId%d\"/>", doc->footer_left.nparas ? 5 : 3);
+    if (title_page && pg->footer_on_first && (doc->footer.nparas || doc->footer_left.nparas))
+        owf_buf_printf(out, "<w:footerReference w:type=\"first\" r:id=\"rId%d\"/>",
+                       first_left && doc->footer_left.nparas ? 5 : 3);
     owf_buf_printf(out, "<w:pgSz w:w=\"%d\" w:h=\"%d\"/>", pg->width, pg->height);
     owf_buf_printf(out, "<w:pgMar w:top=\"%d\" w:right=\"%d\" w:bottom=\"%d\" w:left=\"%d\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>",
                    pg->margin_top, pg->margin_right, pg->margin_bottom, pg->margin_left);
@@ -572,6 +589,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
     owf_zip *zip;
     int result;
     int header = doc->header.nparas > 0, footer = doc->footer.nparas > 0;
+    int header_left = doc->header_left.nparas > 0, footer_left = doc->footer_left.nparas > 0;   /* 2.0.23 */
 
     owf_buf_init(&out);
     owf_buf_init(&part);
@@ -589,6 +607,12 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Override PartName=\"/word/header1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>");
     if (footer)
         owf_buf_puts(&part, "<Override PartName=\"/word/footer1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>");
+    if (header_left)
+        owf_buf_puts(&part, "<Override PartName=\"/word/header2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>");
+    if (footer_left)
+        owf_buf_puts(&part, "<Override PartName=\"/word/footer2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>");
+    if (header_left || footer_left)
+        owf_buf_puts(&part, "<Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>");
     { int i; for(i=0;i<doc->nimages;++i){owf_buf_printf(&part,"<Override PartName=\"/word/media/image%d.%s\" ContentType=\"",i+1,docx_image_ext(&doc->images[i]));owf_buf_puts_xml(&part,doc->images[i].mime?doc->images[i].mime:"application/octet-stream");owf_buf_puts(&part,"\"/>");} }
     owf_buf_puts(&part, "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
                         "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>"
@@ -611,6 +635,12 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header1.xml\"/>");
     if (footer)
         owf_buf_puts(&part, "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" Target=\"footer1.xml\"/>");
+    if (header_left)
+        owf_buf_puts(&part, "<Relationship Id=\"rId4\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header2.xml\"/>");
+    if (footer_left)
+        owf_buf_puts(&part, "<Relationship Id=\"rId5\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" Target=\"footer2.xml\"/>");
+    if (header_left || footer_left)
+        owf_buf_puts(&part, "<Relationship Id=\"rId6\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/>");
     {
         int i,j;
         for(i=0;i<doc->body.nparas;++i)for(j=0;j<doc->body.paras[i].nruns;++j){
@@ -641,12 +671,15 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
 
     /* 1.3: a header's and a footer's pictures: their parts' own relationships, the same ids as the body's */
     {
+        static const char *const rels_part[4] = { "word/_rels/header1.xml.rels", "word/_rels/footer1.xml.rels",
+                                                  "word/_rels/header2.xml.rels", "word/_rels/footer2.xml.rels" };
+        const int has[4] = { header, footer, header_left, footer_left };
         int k;
-        for (k = 0; k < 2; ++k) {
-            if (!(k ? footer : header) || !doc->nimages) continue;
+        for (k = 0; k < 4; ++k) {
+            if (!has[k] || !doc->nimages) continue;
             put_image_rels(&part, doc);
             if (result == OWF_OK)
-                result = add_part(zip, &part, k ? "word/_rels/footer1.xml.rels" : "word/_rels/header1.xml.rels");
+                result = add_part(zip, &part, rels_part[k]);
         }
     }
     if (header) {
@@ -662,6 +695,28 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "</w:ftr>\n");
         if (result == OWF_OK)
             result = add_part(zip, &part, "word/footer1.xml");
+    }
+    /* 2.0.23: left pages' own, and the setting that has Word use them */
+    if (header_left) {
+        owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:hdr " W_NS ">");
+        put_story(&part, doc, &doc->header_left, report);
+        owf_buf_puts(&part, "</w:hdr>\n");
+        if (result == OWF_OK)
+            result = add_part(zip, &part, "word/header2.xml");
+    }
+    if (footer_left) {
+        owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:ftr " W_NS ">");
+        put_story(&part, doc, &doc->footer_left, report);
+        owf_buf_puts(&part, "</w:ftr>\n");
+        if (result == OWF_OK)
+            result = add_part(zip, &part, "word/footer2.xml");
+    }
+    if (header_left || footer_left) {
+        owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+                            "<w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">"
+                            "<w:evenAndOddHeaders/></w:settings>\n");
+        if (result == OWF_OK)
+            result = add_part(zip, &part, "word/settings.xml");
     }
 
     owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"

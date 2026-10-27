@@ -176,7 +176,7 @@ library shares. `OWFLibsTest` on an Amiga opens the four and checks each
 (`ONLY=write`, `calc`, `pub` or `present` for one alone), from two tasks at
 once; `make sfd-check` checks the SFDs, the generated glue and the SDK.
 
-owf.library 2.4, below, is still built beside them until OpenUp ships the
+owf.library 2.5, below, is still built beside them until OpenUp ships the
 four; then it goes.
 
 ### owf.library
