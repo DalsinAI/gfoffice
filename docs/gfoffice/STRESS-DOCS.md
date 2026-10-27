@@ -18,11 +18,11 @@ licence, is in `tests/amiga/fixtures/PROVENANCE.md` and
 
 | Format | Stress document | How it was made | In the repository |
 |---|---|---|---|
-| Microsoft Publisher (`.pub`) | `SampleNewsletter.pub`: 4 pages, 99 frames, 10 linked-frame chains, 9 pictures, WordArt; with the corpus's other samples for tables, hyperlinks, landscape pages and the 98, 2000 and 2007-2013 formats | Real: Apache POI's test data, saved by Publisher 2003 | Yes: `tests/pub/stress/` (Apache-2.0) |
+| Microsoft Publisher (`.pub`) | `SampleNewsletter.pub`: 4 pages, 99 frames, 10 linked-frame chains, 9 pictures, WordArt; `govdocs1-923566.pub`: a US government newsletter, 4 US Letter pages, 74 frames, 9 linked-frame chains, a table, 37 fonts; with the corpus's other samples for tables, hyperlinks, landscape pages and the 98, 2000 and 2007-2013 formats | Real: Apache POI's test data, saved by Publisher 2003; govdocs1, saved by Publisher 2003 (11.9999) | Yes: `tests/pub/stress/` (Apache-2.0; govdocs1's terms) |
 | PageStream (2 to 5) | 17 real documents: club newsletters with embedded pictures and articles over several pages, a periodic table (182 table cells), CD covers, character sheets, labels | Real: Aminet | No (licences not stated); listed, fetched by `tests/amiga/fetch_stress_samples.sh` |
 | Final Writer | 32 real documents: the four Amiga C Encyclopedia volumes (to 950 KB, 10 sections each), a manual with 32 pictures, 23 templates (text frames, tables, master pages), a table example | Real: Aminet | No; listed and fetched as above |
 | Wordworth | 10 real documents: two 300 KB manuals, text boxes linked in chains, drawings with text, a calendar | Real: Aminet | No; listed and fetched as above |
-| ProWrite | `prowrite-stress.pw`, every chunk of the 1987 specification; and New Horizons' own `Convert Notes` | Generated (`make_stress_prowrite.py`); real: Aminet | The generated one: `tests/amiga/fixtures/` |
+| ProWrite | `prowrite-stress.pw`, every chunk of the 1987 specification; and New Horizons' own `Convert Notes` (`convert-notes.pw`) | Generated (`make_stress_prowrite.py`); real: Aminet, shipped with ProWrite File Convert | Both: `tests/amiga/fixtures/` |
 | IFF FTXT | `ftxt-stress.ftxt` (and a `LIST` and a `CAT` of FTXT), every rule of the specification | Generated (`make_stress_ftxt.py`) | Yes: `tests/amiga/fixtures/` |
 
 Why some are real and some made: FTXT and ProWrite have published
@@ -43,13 +43,17 @@ sample was opened in LibreOffice (libmspub) to compare: the corpus has never
 been through another .pub reader.
 
 **The stress set:** `SampleNewsletter.pub`, now checked in, is the most
-complicated freely licensed .pub we know of. The rest of the set is the
+complicated freely licensed .pub we know of. `govdocs1-923566.pub`, the one
+Publisher file in govdocs1, is checked in beside it: the only sample saved
+by Publisher 2003's last build (11.9999) and a real document from outside
+POI's test data (`tests/pub/stress/PROVENANCE.md`). The rest of the set is the
 corpus already in `tests/pub/samples` (and fetched by
 `tests/pub/fetch_samples.sh`), each for what it adds:
 
 | Feature | Sample |
 |---|---|
 | Several pages, linked text frames (10 chains, 29 frames), WMF and JPEG pictures, WordArt, groups, lines | `SampleNewsletter.pub` (2003) |
+| A real newsletter on US Letter: one master page, 74 frames (54 text), 9 linked-frame chains, a table, a group, 37 fonts, WMF, JPEG and PNG pictures | `govdocs1-923566.pub` (2003, 11.9999) |
 | A4 landscape, 2 pages, GIF, JPEG and WMF, tabbed text | `SampleBrochure.pub` (2003) |
 | A table (3 x 2), two pages, a hyperlink | `Sample.pub` (2007), `Sample_2010.pub`, `Sample98.pub`, `Sample2000.pub` (the same document in four formats) |
 | Many shapes and lines in groups, US Letter | `60685.pub` (2013), `51318.pub` (2003) |
@@ -104,6 +108,8 @@ containers, for whoever writes the reader:
 
 ## 4. Final Writer
 
+*The table below is the reader before #105, which closed most of its gaps; #105's description has the before-and-after counts.*
+
 **What exists:** `libowf/src/in_finalwriter.c` and
 [../formats/finalwriter.md](../formats/finalwriter.md), from documents on
 Aminet. A document we wrote would only hold what that page already says, so
@@ -126,6 +132,8 @@ reader, freeware, run in the lab) gives a second reading.
 
 ## 5. Wordworth
 
+*The table below is the reader before #108, which closed most of its gaps; #108's description has the before-and-after counts.*
+
 **What exists:** `libowf/src/in_wordworth.c` and
 [../formats/wordworth.md](../formats/wordworth.md).
 
@@ -141,7 +149,9 @@ reader, freeware, run in the lab) gives a second reading.
 
 **What exists:** `libowf/src/in_prowrite.c`, written from New Horizons'
 published specification. `prowrite-stress.pw` holds every chunk that
-specification names; `Convert Notes` is a real ProWrite 3 file. New
+specification names; `Convert Notes` (`convert-notes.pw`, New Horizons' own
+file, checked in) is a real ProWrite 3 file, and `test_prowrite.py` reads
+it whole. New
 Horizons' own ProWrite 3.2.3 demo opens the stress file in a lab and shows
 it as meant (fonts, colours, the picture, Roman page numbers from VII,
 footer and header), and MultiRead (1996) reads all its text.
@@ -149,18 +159,20 @@ footer and header), and MultiRead (1996) reads all its text.
 | In the documents | Read | Notes |
 |---|---|---|
 | Fonts and sizes, bold, italic, underline, raised and lowered text, font changes inside a paragraph (120 in one) | Yes | |
-| **Colours** | **Wrong** | `COLR` holds ISO colour numbers 30-37 (ProWrite's own file has `1E 25 1F 24 20 23 22 21`); the reader takes them as 0-7, so black text comes out cyan and blue comes out green. ProWrite 3.2.3 shows the stress file's colours as they are meant |
+| Colours | Yes, since #106 | `COLR` holds ISO colour numbers 30-37 (ProWrite's own file has `1E 25 1F 24 20 23 22 21`); before #106 the reader took them as 0-7, so black text came out cyan and blue came out green |
 | Alignment (all four), double spacing, left indents, first-line and hanging indents | Yes | |
 | Right margin | Approximate | What it is measured from isn't said; ProWrite 3's own file has 360 where only "from the right" makes sense |
 | Tab stops: left, centre, right, decimal | Yes | A section without its own `TABS` keeps the previous section's |
 | Page number, date and time characters | Yes, as fields | |
 | Start page and its numbering (VII, Roman) | Yes | DOCX keeps both; ODT keeps the numbering, not the start |
-| Page breaks | Yes | Two in a row make one: the empty page is lost |
+| Page breaks | Yes | Two in a row leave an empty page, since #106 |
 | Headers for left and for right pages | Approximate | Both become one header, reported |
 | Pictures (`PCTS`, `PINF`, `BODY`: packed, with a transparent colour or a mask) | No | Counted and reported |
-| ProWrite 3's `PSET`, `PREC`, `SECT` (not in the 1987 specification) | No | `PREC` holds the page size (8.5 x 11 in in `Convert Notes`); the reader reports that ProWrite files don't store one |
+| ProWrite 3's `PSET`, `PREC`, `SECT` (not in the 1987 specification) | `PSET` yes, since #106; `PREC`, `SECT` no | `PSET` holds the page in decipoints (6120 x 7920, US Letter, in `Convert Notes`); a file without one, as the stress file, gets the default page, reported |
 
 ## 7. IFF FTXT
+
+*The table below is the reader before #107, which closed most of its gaps; #107's description has the before-and-after counts.*
 
 **What exists:** `libowf/src/in_ftxt.c`, written from the specification;
 FTXT is also the clipboard's format. `ftxt-stress.ftxt` holds each rule of
@@ -198,6 +210,8 @@ build/host/owconvert --report tests/amiga/fixtures/prowrite-stress.pw /tmp/pw.od
 build/host/owconvert --report tests/amiga/fixtures/ftxt-stress.ftxt /tmp/ftxt.txt
 diff tests/amiga/fixtures/ftxt-stress.txt /tmp/ftxt.txt              # the FTXT gaps
 build/host/pub-dump tests/pub/stress/SampleNewsletter.pub
+PUB_CORPUS=tests/pub/stress make pub-check                           # both .pub, and changed copies, under ASan
+python3 tests/amiga/test_prowrite.py build/host/owconvert            # Convert Notes and ProWrite's chunks
 sh tests/amiga/fetch_stress_samples.sh --extract DIR                 # the real documents, on a PC
 ```
 
@@ -220,7 +234,7 @@ most rows above are still gaps. A test can be added as each gap is closed.
   (Wordworth 2's cover-disk demo doesn't save; no Final Writer demo is
   there). Documents made to a recipe need Dale's own copies.
 - **Licences:** the real documents are kept out of the repository because
-  their readmes don't say they may be redistributed. If Dale decides that
-  Aminet's "freely distributable" custom is enough, the smaller ones
-  (`Convert Notes`, 4.7 KB, whose readme allows distribution with the
-  program) could be checked in.
+  their readmes don't say they may be redistributed. Dale decided on 27
+  October that `Convert Notes` (New Horizons' file, whose readme allows
+  distribution with the program) and govdocs1's Publisher file are checked
+  in, with their provenance; the others stay listed.

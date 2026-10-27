@@ -1,7 +1,7 @@
 # Where the Amiga stress documents come from
 
-Team 5 (W142), 26 October 2026. What the documents test, and what libowf
-reads of each, is in [docs/gfoffice/STRESS-DOCS.md](../../../docs/gfoffice/STRESS-DOCS.md).
+Team 5 (W142), 26 October 2026; Convert Notes added 27 October. What the
+documents test, and what libowf reads of each, is in [docs/gfoffice/STRESS-DOCS.md](../../../docs/gfoffice/STRESS-DOCS.md).
 Nothing here is from a private document.
 
 ## Checked in: made by our scripts
@@ -40,6 +40,22 @@ Licence: MIT, as the rest of this repository.
   the lab's viewer) opened `ftxt-stress.ftxt`: bold, italic, underline, inverse,
   colours and backgrounds shown, fonts not; controls the specification
   reserves show as boxes and the text of DCS strings shows.
+
+## Checked in: a real document
+
+| File | Source | Bytes | SHA-256 |
+|---|---|---|---|
+| `convert-notes.pw` | `Convert Notes`, New Horizons Software's own file, shipped with ProWrite's distribution: the notes for ProWrite File Convert 2.0.2, saved by ProWrite 3, from Aminet `text/misc/pwconv202.lha` (archive SHA-256 `6475cb1c2cb422730adbb13a80f4538c2a843785a6cf37700ba59bead547145d`), fetched 25 October 2026 | 4680 | `5ade458127e89efb1248f26985976c44caa95c7885dc10db0f42f05232acf281` |
+
+It is New Horizons' file, not ours, and is checked in byte for byte as it
+came. Its text says: "Copyright © 1992, New Horizons Software, Inc. All
+Rights Reserved. This program may be freely distributed so long as the
+original copyright notice is unaltered, and these notes are included." It
+is the only real ProWrite document in the repository: ProWrite 3's US
+Letter page in decipoints (`PSET` 6120 x 7920), its colour map (`COLR`
+30-37 in ProWrite's order), a `PREC` and a `SECT`, a header and a footer
+for no pages (page type 0), five fonts (Helvetica 24 and 18, Times 12,
+topaz and Pica 11), tab stops and bullets, and a page break. `tests/amiga/test_prowrite.py` reads it.
 
 ## Not checked in: real documents, listed
 
@@ -82,12 +98,6 @@ the archive's readme says.
 | `docs/misc/pwrdbamy.lha` | `PBALittle.ww`, `PoweredByAmiga.ww`: a logo, all text in drawing objects | 23396 each | "mailware" |
 | `text/dtp/WW-Farben.lha` | `WW-Farben`: 24 coloured boxes with text in them | 9024 | none stated |
 | `text/dtp/WordWorth2demo.lha` | `Wordworth2/AboutWordworth2`, from Digita's own demo | 866 | none stated (an Amiga Format cover disk) |
-
-### ProWrite (IFF `FORM WORD`), 1 document
-
-| Aminet path | Document | Bytes | Licence |
-|---|---|---|---|
-| `text/misc/pwconv202.lha` | `Convert Notes`: New Horizons' own notes for ProWrite File Convert 2.0.2, saved by ProWrite 3 | 4680 | "This program may be freely distributed so long as the original copyright notice is unaltered, and these notes are included" (Copyright 1992 New Horizons Software): the program with its notes, not the notes alone |
 
 ### Programs, for labs only
 
