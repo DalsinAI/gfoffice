@@ -283,8 +283,7 @@ static ow_spell *spell;
 static ow_autosave *autosave;
 static struct MsgPort *rexx_port;
 #define REXX_PORT_NAME "OPENWRITE"
-#define RECOVERY_FILE "T:OpenWrite-Recovery.odt"
-#define RECOVERY_META "T:OpenWrite-Recovery.meta"
+static ow_recovery recovery;                         /* the autosave's recovery copy (ow_autosave.h) */
 static char current_path[512];
 static char current_format[32] = "ODT";
 static char status[256] = "Ready.";
@@ -868,42 +867,32 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
     if (pv) ogt_pageview_scroll_to(pv, 0);
     snprintf(current_path, sizeof current_path, "%s", path ? path : "");
     snprintf(current_format, sizeof current_format, "%s", fmt && *fmt ? fmt : "ODT");
+    recovery.made = 0;                               /* a new editor counts its changes from 0 */
     update_window_title();
 }
 
 static void recovery_clear(void)
 {
-    DeleteFile((STRPTR)RECOVERY_FILE);
-    DeleteFile((STRPTR)RECOVERY_META);
+    ow_recovery_clear(&recovery);
 }
 
+/* Every minute: the recovery copy, when the document has changed since the last one (ow_autosave.h). */
 static void recovery_save(void)
 {
-    FILE *f;
     owf_report *report;
     int rc;
-    if (!doc || !editor || !ow_editor_is_dirty(editor)) return;
+    if (!doc || !editor || !ow_recovery_due(&recovery, ow_editor_is_dirty(editor), ow_editor_changes(editor))) return;
+    if (!ow_recovery_begin(&recovery)) return;
     report = owf_report_new();
-    rc = owf_export_file(doc, RECOVERY_FILE, "odt", report);
+    rc = owf_export_file(doc, recovery.name, "odt", report);
     owf_report_free(report);
     if (rc != OWF_OK) return;
-    f = fopen(RECOVERY_META, "w");
-    if (f) {
-        fprintf(f, "%s\n", current_path[0] ? current_path : "Untitled");
-        fclose(f);
-    }
+    ow_recovery_done(&recovery, current_path[0] ? current_path : "Untitled", ow_editor_changes(editor));
     set_status("Autosave recovery copy updated.");
     draw_status();
 }
 
-static int recovery_exists(void)
-{
-    BPTR lock = Lock((STRPTR)RECOVERY_FILE, ACCESS_READ);
-    if (!lock) return 0;
-    UnLock(lock);
-    return 1;
-}
-
+/* A recovery copy an interrupted session left (not another running OpenWrite's): offered, one after another. */
 static void recovery_offer(void)
 {
     struct EasyStruct es = {
@@ -911,31 +900,39 @@ static void recovery_offer(void)
         (UBYTE *)"OpenWrite found a recovery document from an interrupted session.\n\nRecover it?",
         (UBYTE *)"Recover|Discard"
     };
-    owf_doc *recovered = NULL;
-    owf_report *report;
-    const owf_format *used = NULL;
-    int answer, rc;
-    if (!recovery_exists()) return;
-    answer = EasyRequest(win, &es, NULL);
-    if (!answer) { recovery_clear(); return; }
-    report = owf_report_new();
-    rc = owf_import_file(RECOVERY_FILE, "odt", &recovered, report, &used);
-    owf_report_free(report);
-    if (rc != OWF_OK || !recovered) {
-        tell("OpenWrite Recovery", "The recovery copy could not be opened.");
-        recovery_clear();
+    char found[80];
+    int asked;
+    for (asked = 0; asked < 8 && ow_recovery_find(&recovery, found, sizeof found); asked++) {
+        owf_doc *recovered = NULL;
+        owf_report *report;
+        const owf_format *used = NULL;
+        int rc;
+        if (!EasyRequest(win, &es, NULL)) {
+            if (!ow_recovery_discard(found)) return;    /* it can't go: not asked about again */
+            continue;
+        }
+        report = owf_report_new();
+        rc = owf_import_file(found, "odt", &recovered, report, &used);
+        owf_report_free(report);
+        if (rc != OWF_OK || !recovered) {
+            tell("OpenWrite Recovery", "The recovery copy could not be opened.");
+            ow_recovery_discard(found);
+            return;
+        }
+        set_document(recovered, "", used ? used->name : "ODT");
+        if (editor) editor_result(ow_editor_insert_utf8(editor, "", 0), NULL);
+        /* Import creates a clean editor; mark it dirty so Save cannot silently
+         * lose the recovered work. */
+        if (editor) {
+            ow_editor_insert_utf8(editor, " ", 1);
+            ow_editor_backspace(editor);
+        }
+        recovery_save();                             /* this run's own copy of it, so the interrupted one's can go */
+        if (recovery.made) ow_recovery_discard(found);
+        set_status("Recovered document. Save it to keep the recovered work.");
+        relayout();
         return;
     }
-    set_document(recovered, "", used ? used->name : "ODT");
-    if (editor) editor_result(ow_editor_insert_utf8(editor, "", 0), NULL);
-    /* Import creates a clean editor; mark it dirty so Save cannot silently
-     * lose the recovered work. */
-    if (editor) {
-        ow_editor_insert_utf8(editor, " ", 1);
-        ow_editor_backspace(editor);
-    }
-    set_status("Recovered document. Save it to keep the recovered work.");
-    relayout();
 }
 
 static int ask_file(int save, char *out, size_t out_size)
@@ -4068,6 +4065,7 @@ static int window_main(int argc, char **argv)
         goto out;
     }
     rexx_open();
+    ow_recovery_init(&recovery, "OpenWrite", "odt");
     autosave = ow_autosave_open(60);
     if (first[0]) { open_document(first); relayout(); }
     else recovery_offer();
@@ -4087,6 +4085,7 @@ static int window_main(int argc, char **argv)
 
 out:
     if (autosave) { ow_autosave_close(autosave); autosave = NULL; }
+    ow_recovery_end(&recovery, editor && ow_editor_is_dirty(editor));   /* unsaved: the copy waits for the next start */
     rexx_close();
     close_window();
     if (spell) { ow_spell_close(spell); spell = NULL; }

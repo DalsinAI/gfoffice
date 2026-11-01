@@ -256,8 +256,7 @@ static ow_autosave *autosave;
 static struct MsgPort *rexx_port;
 static char rexx_name[16];                           /* OPENCALC, or OPENCALC.2 for a second copy */
 #define REXX_PORT_NAME "OPENCALC"
-#define RECOVERY_BASE "T:OpenCalc-Recovery"
-#define RECOVERY_META "T:OpenCalc-Recovery.meta"
+static ow_recovery recovery;                         /* the autosave's recovery copy (ow_autosave.h) */
 static char current_path[512];
 static char current_format[32] = "";
 static char status[256] = "Ready.";
@@ -2127,7 +2126,7 @@ static void do_open(void)
     if (ask_file(0, "Open workbook", "", path, sizeof path)) open_book(path);
 }
 
-/* ---- Recovery: the workbook kept in T: every minute while it has changes ---- */
+/* ---- Recovery: the workbook kept every minute while it has changes not yet kept (ow_autosave.h) ---- */
 
 /* The writable format that keeps most: ODS, XLSX, XLS, then CSV. */
 static const owf_book_format *recovery_format(void)
@@ -2141,70 +2140,45 @@ static const owf_book_format *recovery_format(void)
     return NULL;
 }
 
-static void recovery_path(const owf_book_format *f, char *out, size_t size)
-{
-    char ext[24];
-    snprintf(ext, sizeof ext, "%s", f->extensions);
-    if (strchr(ext, ' ')) *strchr(ext, ' ') = 0;
-    snprintf(out, size, "%s.%s", RECOVERY_BASE, ext);
-}
-
-static void recovery_clear(void)
-{
-    int i, n = owf_book_format_count();
-    char path[64];
-    for (i = 0; i < n; i++) {
-        const owf_book_format *f = owf_book_format_at(i);
-        if (!f || !f->export) continue;
-        recovery_path(f, path, sizeof path);
-        DeleteFile((STRPTR)path);
-    }
-    DeleteFile((STRPTR)RECOVERY_META);
-}
-
 static void recovery_save(void)
 {
     const owf_book_format *f = recovery_format();
     owf_report *report;
-    char path[64];
-    BPTR meta;
-    int was_dirty;
-    if (!core || !oc_core_is_dirty(core) || !f || oc_core_editing(core)) return;
-    recovery_path(f, path, sizeof path);
+    if (!core || !f || oc_core_editing(core) ||
+        !ow_recovery_due(&recovery, oc_core_is_dirty(core), oc_core_changes(core)) || !ow_recovery_begin(&recovery))
+        return;
     report = owf_report_new();
-    was_dirty = oc_core_is_dirty(core);
-    if (owf_export_book_file(oc_core_book(core), path, f->name, report) == OWF_OK) {
-        if ((meta = Open((STRPTR)RECOVERY_META, MODE_NEWFILE))) {
-            const char *name = current_path[0] ? current_path : "Untitled";
-            Write(meta, (APTR)name, strlen(name));
-            Write(meta, (APTR)"\n", 1);
-            Close(meta);
-        }
+    if (owf_export_book_file(oc_core_book(core), recovery.name, f->name, report) == OWF_OK) {
+        ow_recovery_done(&recovery, current_path[0] ? current_path : "Untitled", oc_core_changes(core));
         set_status("Autosave recovery copy updated.");
         draw_status();
     }
-    (void)was_dirty;
     owf_report_free(report);
 }
 
+/* A recovery copy an interrupted session left (not another running OpenCalc's): offered, one after another. */
 static void recovery_offer(void)
 {
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"OpenCalc Recovery",
         (UBYTE *)"OpenCalc found a recovery copy of a workbook from an interrupted session.\n\nRecover it?",
         (UBYTE *)"Recover|Discard" };
-    const owf_book_format *f = recovery_format();
-    char path[64];
-    BPTR lock;
-    if (!f) return;
-    recovery_path(f, path, sizeof path);
-    if (!(lock = Lock((STRPTR)path, ACCESS_READ))) return;
-    UnLock(lock);
-    if (!EasyRequest(win, &es, NULL)) { recovery_clear(); return; }
-    open_book(path);
-    current_path[0] = 0;                             /* it is not the file it came from: Save asks */
-    current_format[0] = 0;
-    oc_core_set_dirty(core);                         /* so that it can't be lost without asking */
-    set_status("Recovered workbook. Save it to keep the recovered work.");
+    char found[80];
+    int asked;
+    for (asked = 0; asked < 8 && ow_recovery_find(&recovery, found, sizeof found); asked++) {
+        if (!EasyRequest(win, &es, NULL)) {
+            if (!ow_recovery_discard(found)) return;    /* it can't go: not asked about again */
+            continue;
+        }
+        open_book(found);
+        if (strcmp(current_path, found)) return;     /* not opened (open_book said why): it stays for another try */
+        current_path[0] = 0;                         /* it is not the file it came from: Save asks */
+        current_format[0] = 0;
+        oc_core_set_dirty(core);                     /* so that it can't be lost without asking */
+        recovery_save();                             /* this run's own copy of it, so the interrupted one's can go */
+        if (recovery.made) ow_recovery_discard(found);
+        set_status("Recovered workbook. Save it to keep the recovered work.");
+        return;
+    }
 }
 
 /* ---- Commands ---- */
@@ -3374,6 +3348,13 @@ static int window_main(int argc, char **argv)
         goto out;
     }
     rexx_open();
+    {
+        const owf_book_format *f = recovery_format();
+        char ext[8];
+        snprintf(ext, sizeof ext, "%s", f ? f->extensions : "ods");
+        if (strchr(ext, ' ')) *strchr(ext, ' ') = 0;   /* the first of its names */
+        ow_recovery_init(&recovery, "OpenCalc", ext);
+    }
     autosave = ow_autosave_open(60);
     if (first[0]) open_book(first);
     else recovery_offer();
@@ -3391,10 +3372,10 @@ static int window_main(int argc, char **argv)
         if (got & rsig) rexx_messages();
         if ((got & asig) && ow_autosave_tick(autosave)) recovery_save();
     }
-    if (core && !oc_core_is_dirty(core)) recovery_clear();
 
 out:
     if (autosave) { ow_autosave_close(autosave); autosave = NULL; }
+    ow_recovery_end(&recovery, core && oc_core_is_dirty(core));        /* unsaved: the copy waits for the next start */
     rexx_close();
     close_window();
     oc_draw_list_free(&dl);
