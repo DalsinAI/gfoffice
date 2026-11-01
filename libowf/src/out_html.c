@@ -1,5 +1,5 @@
 /*
- * libowf: HTML out, in the shape the OpenWrite editor loads (DESIGN.md,
+ * libowf: HTML out, in the shape the GFOpenWrite editor loads (DESIGN.md,
  * section 5): page setup in @page, paragraphs with inline formatting, our
  * own parts as ow- classes. Reading HTML back comes with the editor.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
@@ -287,7 +287,7 @@ static int export_html(const owf_doc *doc, unsigned char **data, size_t *length,
 
     owf_buf_init(&out);
     owf_buf_puts(&out, "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n"
-                       "<meta name=\"generator\" content=\"OpenWrite libowf " OWF_VERSION "\">\n");
+                       "<meta name=\"generator\" content=\"GFOpenWrite libowf " OWF_VERSION "\">\n");
     owf_buf_puts(&out, "<title>");
     owf_buf_puts_xml(&out, doc->title ? doc->title : "");
     owf_buf_puts(&out, "</title>\n<style>\n@page { size: ");
@@ -343,5 +343,5 @@ static int export_html(const owf_doc *doc, unsigned char **data, size_t *length,
 }
 
 const owf_format owf_format_html = {
-    "html", "HTML (OpenWrite's editor shape)", "html htm", NULL, NULL, export_html
+    "html", "HTML (GFOpenWrite's editor shape)", "html htm", NULL, NULL, export_html
 };

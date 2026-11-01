@@ -1,6 +1,6 @@
 # Microsoft Publisher's .pub format: the clean-room notes
 
-OpenPublisher's record of what we know about .pub and where each fact came
+GFOpenPublisher's record of what we know about .pub and where each fact came
 from. Microsoft never published a specification of .pub. Everything below
 was worked out from sample files only: their bytes, their structure, and
 what Publisher itself shows for them (the thumbnail Publisher saves in each
@@ -425,7 +425,7 @@ path in section 5.1.
 ## 13. PageStream
 
 PageStream (Soft-Logik, later Grasshopper) is the Amiga's desktop
-publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. OpenPublisher will
+publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. GFOpenPublisher will
 import it (Design-OpenPublisher.md, section 9).
 
 No PageStream document was found on GitHub, the only place this session's

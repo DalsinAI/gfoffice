@@ -689,7 +689,7 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
         owf_buf_puts(&out, " >> >>\nendobj\n");
     }
     OBJ(info_obj);
-    owf_buf_puts(&out, "<< /Producer (OpenPresentation libowf)");
+    owf_buf_puts(&out, "<< /Producer (GFOpenPresentation libowf)");
     if (title && *title) {
         owf_buf_puts(&out, " /Title ");
         put_text_string(&out, title);

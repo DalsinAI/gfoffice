@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core: conditional formatting, as the grid shows it. For the
+ * GFOpenCalc's core: conditional formatting, as the grid shows it. For the
  * cells showing, the look each sheet rule (owf_condfmt) gives them: rules
  * in order of priority, the first that holds for a cell setting each part
  * of the look (the fill, the text's colour, bold, italic, underline,

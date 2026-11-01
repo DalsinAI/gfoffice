@@ -1,5 +1,5 @@
 /*
- * libowf: lightweight PDF export for OpenWrite.
+ * libowf: lightweight PDF export for GFOpenWrite.
  * Base-14 fonts keep output searchable and the 68000/68020 path FPU-free.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
@@ -526,7 +526,7 @@ static int export_pdf(const owf_doc *doc, unsigned char **data, size_t *length, 
     }
     obj_count=nextobj-1;
     offs=(unsigned long *)calloc((size_t)obj_count+1,sizeof(*offs));if(!offs){result=OWF_ERR_MEMORY;goto done;}
-    owf_buf_init(&out);owf_buf_puts(&out,"%PDF-1.4\n% OpenWrite PDF\n");
+    owf_buf_init(&out);owf_buf_puts(&out,"%PDF-1.4\n% GFOpenWrite PDF\n");
 #define OBJ(N) do{offs[(N)]=(unsigned long)out.length;owf_buf_printf(&out,"%d 0 obj\n",(N));}while(0)
     OBJ(1);owf_buf_puts(&out,"<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
     OBJ(2);owf_buf_printf(&out,"<< /Type /Pages /Count %d /Kids [",l.npages);for(i=0;i<l.npages;++i)owf_buf_printf(&out," %d 0 R",16+i*2);owf_buf_puts(&out," ] >>\nendobj\n");

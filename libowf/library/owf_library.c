@@ -1,7 +1,7 @@
 /*
  * owf.library 2.0: libowf, the GFOffice Suite's file formats, shared by
  * every program that reads or writes documents, workbooks or Publisher
- * files (OpenWrite, OpenCalc, OWConvert, datatypes, OpenBench search). The
+ * files (GFOpenWrite, GFOpenCalc, OWConvert, datatypes, GFOpenBench search). The
  * calls are owf.h's, owf_calc.h's, owf_zip.h's and owf_pub.h's
  * (owf_lib.sfd); each takes its arguments in the SFD's registers and runs
  * libowf's own function. Version 1's 29 calls keep their offsets; version
@@ -39,7 +39,7 @@
                                           checks their sizes; 2.3: libowf 1.3.1 (DOCX table cells, headings'
                                           spacing, line spacing, internal links), the same structures; 2.4:
                                           1.4's owf_para (its style and bookmarks); 2.5: owf_doc's
-                                          header_left and footer_left (OpenWrite 2.0.23) */
+                                          header_left and footer_left (GFOpenWrite 2.0.23) */
 
 struct OWFLibBase {
     struct Library lib;
@@ -54,7 +54,7 @@ int start(void) { return -1; }
 
 static const char lib_name[] = "owf.library";
 static const char lib_id[] =
-    "owf.library 2.5 (27.10.2026) libowf " OWF_VERSION ", AmigaChrome Team\r\n";
+    "owf.library 2.5 (27.10.2026) libowf " OWF_VERSION ", AmiCradle Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
     "$VER: owf.library 2.5 (27.10.2026) MIT, Copyright (c) 2026 AmigaChrome Team";
 

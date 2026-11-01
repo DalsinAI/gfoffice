@@ -1,10 +1,10 @@
-# OpenWrite 1.0.1 release notes
+# GFOpenWrite 1.0.1 release notes
 
 7 October 2026
 
-OpenWrite 1.0.1 fixes what showed when Word and ONLYOFFICE documents were
+GFOpenWrite 1.0.1 fixes what showed when Word and ONLYOFFICE documents were
 opened in 1.0 on AmigaOS 3.2.3. Nothing in the file formats changed; 1.0's
-notes (`RELEASE_NOTES_1.0.md`) still describe what OpenWrite does.
+notes (`RELEASE_NOTES_1.0.md`) still describe what GFOpenWrite does.
 
 ## Fixed
 
@@ -41,8 +41,8 @@ notes (`RELEASE_NOTES_1.0.md`) still describe what OpenWrite does.
 - core and spelling AddressSanitizer/UndefinedBehaviorSanitizer runs;
 - 3,205 corrupt/cut-short format cases;
 - m68k AmigaOS cross-build with Chromium's zlib 1.3.1;
-- on AmigaOS 3.2.3 (an AmigaChrome instance with OpenRTG and the Open look),
-  installed by OpenUp's OpenWrite part: a DOCX written for the test, two
+- on AmigaOS 3.2.3 (an AmiCradle instance with GFOpenRTG and the Open look),
+  installed by GFOpenUp's GFOpenWrite part: a DOCX written for the test, two
   Microsoft Word for Mac documents (16 and 28 pages) and an ONLYOFFICE
   document (30 pages) opened and drawn, and each converted by OWConvert on
   the Amiga.

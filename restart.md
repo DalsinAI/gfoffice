@@ -1,10 +1,10 @@
-# Restart: OpenWrite
+# Restart: GFOpenWrite
 
 _Written 7 October 2026 during the 1.0 release pass._
 
 ## What this repo is
 
-OpenWrite is the native AmigaOS 3.2 word processor. The GUI targets the 68040
+GFOpenWrite is the native AmigaOS 3.2 word processor. The GUI targets the 68040
 without an FPU requirement. libowf and C:OWConvert provide the shared document
 format/conversion layer; all are built as 68040 code.
 
@@ -19,7 +19,7 @@ recovery autosave, ARexx scripting and expanded DOCX/ODT round-tripping.
 
 The release gate on 7 October passed native core/spell tests, ASan/UBSan,
 3,206 corrupt/cut-short format cases, the m68k cross-build, and an
-AmigaOS 3.2.3 + OpenRTG/OpenLook SpeedLab smoke of the 1.0 binary.
+AmigaOS 3.2.3 + GFOpenRTG/GFOpenLook SpeedLab smoke of the 1.0 binary.
 
 ## Release sequence
 
@@ -31,8 +31,8 @@ AmigaOS 3.2.3 + OpenRTG/OpenLook SpeedLab smoke of the 1.0 binary.
 
 ## Post-1.0
 
-Do not refactor OpenWrite into the future shared OpenLayout engine as part of
-the 1.0 release. OpenWrite 1.0 is the regression oracle for that extraction.
+Do not refactor GFOpenWrite into the future shared GFOpenLayout engine as part of
+the 1.0 release. GFOpenWrite 1.0 is the regression oracle for that extraction.
 
 Post-1.0 layout work includes the shared display-list/incremental-reflow
 architecture, richer shaping/typography, fully unified graphics printing and

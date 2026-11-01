@@ -1,22 +1,22 @@
 #!/bin/sh
 # GFOffice for Cradle's stove_build (target .): Cradle checks out this repository alone and sets STOVE and OUT,
-# so this fetches OpenLayout (DalsinAI/openamigalayout, the pages) into $OUT/deps at the commit
+# so this fetches GFOpenLayout (DalsinAI/openamigalayout, the pages) into $OUT/deps at the commit
 # deps/openamigalayout.ref names (one line: a commit SHA, or a branch such as master), says which commit it
-# was, then runs build-os3.sh (OWConvert, OpenWrite and OpenCalc with libowf linked in), build-library.sh
+# was, then runs build-os3.sh (OWConvert, GFOpenWrite and GFOpenCalc with libowf linked in), build-library.sh
 # (GFOffice's libraries, owf.library 2 and their tests, in $OUT/library) and build-os3.sh again for the programs
 # on those libraries (OWF=library, in $OUT/onlib: docs/suite/owf-libraries.md). The sample documents go in
-# $OUT/samples, for trying OpenWrite in a lab. A local build can still run build-os3.sh itself with OS32_GCC16
+# $OUT/samples, for trying GFOpenWrite in a lab. A local build can still run build-os3.sh itself with OS32_GCC16
 # and OPENLAYOUT_SRC set.
 # MIT, Copyright (c) 2026 AmigaChrome Team (Team 5, 25 October 2026).
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 OUT=${OUT:-$HERE/build/os3}
-STOVE=${STOVE:-$HOME/AmigaChrome/stoves/os32-gcc16}
+STOVE=${STOVE:-$HOME/AmiCradle/stoves/os32-gcc16}
 DEPS=${DEPS:-$OUT/deps}
 GIT_BASE=${AMIGACHROME_GIT_BASE:-https://github.com/}
 mkdir -p "$DEPS"
-# OpenLayout pinned (Team 5, 25 October 2026): a build of a GFOffice commit always takes the same OpenLayout,
-# and a GFOffice pull request that needs an OpenLayout one names that one's head here, to be checked together.
+# GFOpenLayout pinned (Team 5, 25 October 2026): a build of a GFOffice commit always takes the same GFOpenLayout,
+# and a GFOffice pull request that needs a GFOpenLayout one names that one's head here, to be checked together.
 REF=master
 [ -f "$HERE/deps/openamigalayout.ref" ] && REF=$(head -n 1 "$HERE/deps/openamigalayout.ref" | tr -d '[:space:]')
 [ -n "$REF" ] || REF=master
@@ -36,10 +36,10 @@ for f in "$HERE"/samples/*.docx "$HERE"/samples/*.odt "$HERE"/samples/*.txt \
          "$HERE"/tests/book/fixtures/features-openpyxl.xlsx "$HERE"/tests/book/fixtures/charts-openpyxl.xlsx \
          "$HERE"/tests/book/fixtures/validation-openpyxl.xlsx "$HERE"/tests/core/fixtures/*.docx \
          "$HERE"/tests/core/fixtures/*.odt; do
-    [ -f "$f" ] && cp "$f" "$OUT/samples/"   # the workbooks (OpenCalc's charts, validation and the rest) and the
+    [ -f "$f" ] && cp "$f" "$OUT/samples/"   # the workbooks (GFOpenCalc's charts, validation and the rest) and the
                                              # layout fixtures (covers, contents, text round frames), for a lab
 done
-# and presentations for OpenPresentation: the deck tests' fixtures, made here (tests/deck/make_*fixtures.py)
+# and presentations for GFOpenPresentation: the deck tests' fixtures, made here (tests/deck/make_*fixtures.py)
 for f in pptx-talk.pptx pptx-plain.pptx pptx-text.pptx odfpy.odp libreoffice.odp; do
     [ -f "$HERE/tests/deck/fixtures/$f" ] && cp "$HERE/tests/deck/fixtures/$f" "$OUT/samples/"
 done

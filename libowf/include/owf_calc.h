@@ -1,5 +1,5 @@
 /*
- * libowf: the formula engine (OpenCalc's, in the GFOffice Suite). It
+ * libowf: the formula engine (GFOpenCalc's, in the GFOffice Suite). It
  * parses the formulas a book's cells hold (Excel's A1 syntax, without the
  * "="), keeps which cells each one reads, and works them out again, in
  * order, when cells change. Each result goes into its cell's value

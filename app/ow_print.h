@@ -4,9 +4,9 @@
 #include <stddef.h>
 #include "owf.h"
 
-/* Print the document. With OpenPrint on the disk (C:OpenPrint), the document
+/* Print the document. With GFOpenPrint on the disk (C:GFOpenPrint), the document
  * is exported as a PDF to T: (named after name, the document's file, when
- * given) and OpenPrint's Print window opens on it. Without it, the text goes
+ * given) and GFOpenPrint's Print window opens on it. Without it, the text goes
  * through classic printer.device and the driver the Printer preferences name.
  *
  * Returns 1 on success. On failure, status receives a short user-facing

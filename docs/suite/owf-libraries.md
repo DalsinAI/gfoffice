@@ -4,7 +4,7 @@ Version 0.2 | 25 October 2026 | AmigaChrome Team (Team 5), MIT
 
 Dale decided, and confirmed at 14:2x, to split owf.library along the
 programs' lines: one library each for Write, Calc, Pub and Present. Today
-owf.library 2.4 (libowf 1.4.0) is 744,880 bytes. OpenWrite loads all of it,
+owf.library 2.4 (libowf 1.4.0) is 744,880 bytes. GFOpenWrite loads all of it,
 although it uses only the document code. This page says what goes where and
 what the split costs and saves. The sizes were measured, not estimated (see
 section 7). It also covers names, versions and checks, what happens to
@@ -18,10 +18,10 @@ stay where they are: no file moves (section 6).
 
 | Library | For | Holds (libowf files) |
 | --- | --- | --- |
-| `owfwrite.library` | OpenWrite | The document model (`owf_doc.c`) and its formats (`owf_format.c`'s table): DOCX and ODT in and out, flat ODT, Final Writer, Wordworth, ProWrite, IFF FTXT, ANSI, text, HTML out, and PDF out (`out_pdf.c`). RTF has no reader in libowf yet; when it gets one, it goes here. |
-| `owfcalc.library` | OpenCalc | The workbook model (`owf_book.c`, `owf_booknum.c`), XLSX, ODS, flat ODS, XLS and CSV (with `owf_xlformula.c` and `owf_xlfunc.c`), charts (`owf_chart.c`), the formula engine (`libowf/calc`), and the library's own doubles and maths (`owf_softdouble.c`, `owf_libm.c`). |
-| `owfpub.library` | OpenPublisher | The `.pub` reader (`in_pub.c`) and its compound-file reader (`owf_cfb.c`), with the document model its stories use. |
-| `owfpresent.library` | OpenPresentation | The deck model (`owf_deck.c`), ODP and flat ODP (`in_odp.c`, `out_odp.c`, and W138's coming `in_pptx.c`), and the page PDF writer (`owf_pdf.c`, `owf_pdffonts.c`), with the document model its text frames use. |
+| `owfwrite.library` | GFOpenWrite | The document model (`owf_doc.c`) and its formats (`owf_format.c`'s table): DOCX and ODT in and out, flat ODT, Final Writer, Wordworth, ProWrite, IFF FTXT, ANSI, text, HTML out, and PDF out (`out_pdf.c`). RTF has no reader in libowf yet; when it gets one, it goes here. |
+| `owfcalc.library` | GFOpenCalc | The workbook model (`owf_book.c`, `owf_booknum.c`), XLSX, ODS, flat ODS, XLS and CSV (with `owf_xlformula.c` and `owf_xlfunc.c`), charts (`owf_chart.c`), the formula engine (`libowf/calc`), and the library's own doubles and maths (`owf_softdouble.c`, `owf_libm.c`). |
+| `owfpub.library` | GFOpenPublisher | The `.pub` reader (`in_pub.c`) and its compound-file reader (`owf_cfb.c`), with the document model its stories use. |
+| `owfpresent.library` | GFOpenPresentation | The deck model (`owf_deck.c`), ODP and flat ODP (`in_odp.c`, `out_odp.c`, and W138's coming `in_pptx.c`), and the page PDF writer (`owf_pdf.c`, `owf_pdffonts.c`), with the document model its text frames use. |
 
 These lists are not kept anywhere. Each library is built from one small file
 holding its call table. That file is linked against libowf compiled once into
@@ -58,8 +58,8 @@ through a base:
 
 | Programs running | Copies (recommended) | Fifth library | Fifth library against copies |
 | --- | --- | --- | --- |
-| OpenWrite alone | 186.6 KB | 199.6 KB | costs about 13 KB |
-| OpenWrite and OpenCalc | 768.6 KB | 752.6 KB | saves about 16 KB |
+| GFOpenWrite alone | 186.6 KB | 199.6 KB | costs about 13 KB |
+| GFOpenWrite and GFOpenCalc | 768.6 KB | 752.6 KB | saves about 16 KB |
 | All four | 1,067.2 KB | 999.4 KB | saves about 68 KB |
 
 Against those savings, a fifth library would cost:
@@ -77,13 +77,13 @@ Against those savings, a fifth library would cost:
   `snprintf` would stay in every library anyway.
 
 Revisit this if running several GFOffice programs at once becomes the usual
-case, for example with OpenBase.
+case, for example with GFOpenBase.
 
 **Copies that aren't the core.** owfpresent.library also carries 57 KB of
-OpenWrite's ODF text code: `in_odt.c`, `out_odt.c`, `out_html.c` for the
+GFOpenWrite's ODF text code: `in_odt.c`, `out_odt.c`, `out_html.c` for the
 paragraphs of slides, and `out_pdf.c` for pictures in PDFs. Splitting those
 helpers into files of their own would trim it. That is a later change in
-OpenPresentation's files, not part of this split.
+GFOpenPresentation's files, not part of this split.
 
 ### What changes in libowf for this
 
@@ -114,7 +114,7 @@ These changes are small, and they don't change behaviour:
 | `owfpresent.library` | `OWFPresentBase` | 3.0 | 79 | `<proto/owfpresent.h>` |
 
 **Version 3 for all four.** The four libraries continue owf.library 2, so
-their versions go on from it. OpenUp's GFOffice part takes its version from
+their versions go on from it. GFOpenUp's GFOffice part takes its version from
 the library, and a part's version only goes up: GFOffice 2.4 becomes 3.0.
 After the split, each library's revision moves on its own. A change to the
 workbook's structures bumps owfcalc.library alone.
@@ -136,9 +136,9 @@ After that block:
   owf.library didn't export `owf_doc_add_frame` and `owf_para_add_frame`;
   this block does.
 - Then each library's own calls follow.
-- owfcalc.library exports every workbook call OpenCalc makes. owf.library 2
+- owfcalc.library exports every workbook call GFOpenCalc makes. owf.library 2
   lacked seven of them (comments, validation, charts, kept parts and sheet
-  extras), so OpenCalc couldn't use the library.
+  extras), so GFOpenCalc couldn't use the library.
 
 The library side of each SFD, `<name>_calls.h`, is generated by
 `scripts/gen-lib-calls.py`. `scripts/gen-sdk.sh` makes it together with the
@@ -157,7 +157,7 @@ library's structures only:
 - owfpub.library checks the document model's and `owf_pub`'s.
 - owfpresent.library checks the document model's and the deck's.
 
-So a change to `owf_cell` doesn't stop OpenWrite. The deck's 11 structures
+So a change to `owf_cell` doesn't stop GFOpenWrite. The deck's 11 structures
 are added at the end of `owf.h`'s `OWF_STRUCT_*`, as new structures always
 are.
 
@@ -179,7 +179,7 @@ way:
 - packages (ODF by `mimetype`, OOXML by their main part);
 - compound files, including `.pub`;
 - flat ODF;
-- OpenBase databases.
+- GFOpenBase databases.
 
 Other files, such as plain text, IFF and raw BIFF, are judged by the
 library's own readers:
@@ -190,13 +190,13 @@ library's own readers:
 
 ## 4. owf.library 2: dropped
 
-**Recommended: drop it once OpenUp ships the four libraries.**
+**Recommended: drop it once GFOpenUp ships the four libraries.**
 
 We checked whether anything outside GFOffice uses it:
 
 - Nothing outside GFOffice opens it.
 - openamigaup is the only other repository that names it: `build_pack.py`'s
-  GFOffice part, its tests, `openup.readme` and `Install-OpenUp`.
+  GFOffice part, its tests, `openup.readme` and `Install-GFOpenUp`.
 - These 17 DalsinAI repositories have no code that names `owf.library`,
   `OWFBase`, `proto/owf.h` or libowf: amigachrome, amigachrome-guest,
   openamiga, openamigabase, openamigabench, openamigabrowser,
@@ -211,15 +211,15 @@ of its own for every structure change, for no user.
 The order of the changes:
 
 1. **This split's first PR** builds the four libraries next to owf.library
-   2.4. owf.library is unchanged, so OpenUp's `build_pack.py` keeps working.
+   2.4. owf.library is unchanged, so GFOpenUp's `build_pack.py` keeps working.
 2. **The programs move to their libraries**, each in a PR of its own.
-3. **The openamigaup PR**, after OpenUp 0.8.10, which W135 is building with
+3. **The openamigaup PR**, after GFOpenUp 0.8.10, which W135 is building with
    today's owf.library:
    - the GFOffice part ships `LIBS:owfwrite.library`, `owfcalc.library`,
      `owfpub.library` and `owfpresent.library`;
-   - it retires `LIBS:owf.library` (OpenUp's `retire` keeps the file aside);
+   - it retires `LIBS:owf.library` (GFOpenUp's `retire` keeps the file aside);
    - the part's version comes from owfwrite.library (3.0);
-   - OpenCalc comes from the library build.
+   - GFOpenCalc comes from the library build.
 4. **A last gfoffice PR** removes owf.library's build, its SFD and
    OWFLibTest. `OWF_USE_LIBRARY` alone then stops meaning owf.library.
 
@@ -235,8 +235,8 @@ it uses all four, and loads only the ones a conversion needs.
 | `tools/owconvert.c` | no library | The arguments, choosing a conversion, printing |
 | `tools/owc_doc.c` | `OWF_USE_WRITE_LIBRARY` | Documents, and `owf_file_kind` |
 | `tools/owc_book.c` | `OWF_USE_CALC_LIBRARY` | Workbooks |
-| `tools/owc_deck.c` | `OWF_USE_PRESENT_LIBRARY` | Presentations, and their PDFs through OpenLayout (`src/deck`, compiled for the same library) |
-| `tools/owc_pub.c` | `OWF_USE_PUB_LIBRARY` | `.pub` files: their version and pages. OWConvert can't convert them until OpenPublisher saves something. |
+| `tools/owc_deck.c` | `OWF_USE_PRESENT_LIBRARY` | Presentations, and their PDFs through GFOpenLayout (`src/deck`, compiled for the same library) |
+| `tools/owc_pub.c` | `OWF_USE_PUB_LIBRARY` | `.pub` files: their version and pages. OWConvert can't convert them until GFOpenPublisher saves something. |
 
 **How a conversion is chosen:**
 
@@ -273,11 +273,11 @@ built together with no library at all.
   - OWFLibTest stays as long as owf.library.
 
 `build-os3.sh`'s `OWF=library` builds each program on its own library:
-OpenWrite on owfwrite.library, OpenCalc on owfcalc.library, and OWConvert on
+GFOpenWrite on owfwrite.library, GFOpenCalc on owfcalc.library, and OWConvert on
 all four.
 
 **Why build-library.sh, owf.h and the tests change, not the programs.** W130
-(OpenWrite), W131 (OpenCalc) and W138 (OpenPresentation) keep working in
+(GFOpenWrite), W131 (GFOpenCalc) and W138 (GFOpenPresentation) keep working in
 `app/`, `src/` and the format files. This split changes those files only as
 follows:
 
@@ -293,16 +293,16 @@ follows:
 - "before" is main at `faa3613`, built with daletop's stove;
 - "after" is the implementation's stack at `0f3fb92`, Cradle job j20261025T162949-ffd4e7.
 
-They are file sizes in bytes. The design's first estimates (version 0.1 of this page) came from main at `2238c05`. Since then main gained OpenWrite 2.0.14, OpenCalc's charts and PPTX in, which is why the "before" sizes grew.
+They are file sizes in bytes. The design's first estimates (version 0.1 of this page) came from main at `2238c05`. Since then main gained GFOpenWrite 2.0.14, GFOpenCalc's charts and PPTX in, which is why the "before" sizes grew.
 
 **Before:**
 
 | File | Bytes | Notes |
 | --- | --- | --- |
 | owf.library 2.4 | 749,088 | |
-| OpenWrite 2.0.14 on owf.library | 258,680 | as OpenUp ships it |
-| OpenCalc 0.1.21 with libowf linked in | 1,130,144 | owf.library lacked its calls |
-| OWConvert with libowf linked in | 538,824 | as OpenUp ships it, with deck PDFs |
+| GFOpenWrite 2.0.14 on owf.library | 258,680 | as GFOpenUp ships it |
+| GFOpenCalc 0.1.21 with libowf linked in | 1,130,144 | owf.library lacked its calls |
+| OWConvert with libowf linked in | 538,824 | as GFOpenUp ships it, with deck PDFs |
 
 **After:**
 
@@ -312,17 +312,17 @@ They are file sizes in bytes. The design's first estimates (version 0.1 of this 
 | owfcalc.library 3.0 | 586,192 |
 | owfpub.library 3.0 | 67,384 |
 | owfpresent.library 3.0 (with PPTX in, #80) | 291,876 |
-| OpenWrite 2.0.14 on owfwrite.library | 258,680 |
-| OpenCalc 0.1.21 on owfcalc.library | 273,776 |
+| GFOpenWrite 2.0.14 on owfwrite.library | 258,680 |
+| GFOpenCalc 0.1.21 on owfcalc.library | 273,776 |
 | OWConvert on all four | 75,192 |
 
 **What each program loads (the program and its libraries):**
 
 | Program | Before | After | Change |
 | --- | --- | --- | --- |
-| OpenWrite | 1,007,768 | 445,280 | −562,488 (−56%) |
-| OpenCalc | 1,130,144 | 859,968 | −270,176 (−24%) |
-| OpenWrite and OpenCalc together | 2,137,912 | 1,305,248 | −832,664 (−39%) |
+| GFOpenWrite | 1,007,768 | 445,280 | −562,488 (−56%) |
+| GFOpenCalc | 1,130,144 | 859,968 | −270,176 (−24%) |
+| GFOpenWrite and GFOpenCalc together | 2,137,912 | 1,305,248 | −832,664 (−39%) |
 | OWConvert, a document | 538,824 | 261,792 | −277,032 (−51%) |
 | OWConvert, a workbook | 538,824 | 847,984 | +309,160 |
 | OWConvert, a presentation | 538,824 | 553,668 | +14,844 |
@@ -333,21 +333,21 @@ A workbook conversion now loads all of owfcalc.library: the formula engine and e
 
 | Program, with | Before | After | Change |
 | --- | --- | --- | --- |
-| OpenWrite 2.0.14, Dale's plan (.docx) | 11,850,456 | 11,325,792 | −524,664 |
-| OpenWrite 2.0.14, no document | 1,694,560 | 1,173,072 | −521,488 |
-| OpenCalc 0.1.21, the Critical Systems workbook with its Cost chart shown | 4,909,720 | 4,398,816 | −510,904 |
-| OpenCalc 0.1.21, no workbook | 2,464,808 | 2,225,112 | −239,696 |
+| GFOpenWrite 2.0.14, Dale's plan (.docx) | 11,850,456 | 11,325,792 | −524,664 |
+| GFOpenWrite 2.0.14, no document | 1,694,560 | 1,173,072 | −521,488 |
+| GFOpenCalc 0.1.21, the Critical Systems workbook with its Cost chart shown | 4,909,720 | 4,398,816 | −510,904 |
+| GFOpenCalc 0.1.21, no workbook | 2,464,808 | 2,225,112 | −239,696 |
 
 ## 8. The PRs
 
 1. **This design.**
 2. **The four libraries, their build and OWFLibsTest**, beside owf.library
    2.4. No program moves yet.
-3. **OpenWrite on owfwrite.library.** One message line in `app/openwrite2.c`.
-4. **OpenCalc on owfcalc.library.** `build-os3.sh` builds it in
+3. **GFOpenWrite on owfwrite.library.** One message line in `app/openwrite2.c`.
+4. **GFOpenCalc on owfcalc.library.** `build-os3.sh` builds it in
    `OWF=library` too.
 5. **OWConvert on all four** (section 5).
-6. **openamigaup, after OpenUp 0.8.10:** the GFOffice part ships the four
+6. **openamigaup, after GFOpenUp 0.8.10:** the GFOffice part ships the four
    libraries and retires owf.library (section 4).
 7. **gfoffice: owf.library 2's build removed.**
 

@@ -1,5 +1,5 @@
 /*
- * OpenWrite's text widths for the layout (ow_fontwidths.h).
+ * GFOpenWrite's text widths for the layout (ow_fontwidths.h).
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "ow_fontwidths.h"
@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define UNITS_PER_PIXEL 60           /* OpenLayout's units a pixel at 100% (15 twips) */
+#define UNITS_PER_PIXEL 60           /* GFOpenLayout's units a pixel at 100% (15 twips) */
 
 const char ow_fw_sample_text[] = "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789";
 

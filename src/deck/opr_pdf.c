@@ -1,7 +1,7 @@
 /*
- * OpenPresentation's core: the deck as a PDF, a page a slide, each slide
- * drawn from its OpenLayout display list into the page PDF writer
- * (owf_pdf.h), with what OpenLayout 0.2 can't draw (shapes other than
+ * GFOpenPresentation's core: the deck as a PDF, a page a slide, each slide
+ * drawn from its GFOpenLayout display list into the page PDF writer
+ * (owf_pdf.h), with what GFOpenLayout 0.2 can't draw (shapes other than
  * rectangles, a picture's crop) drawn at its frame's box.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
@@ -62,7 +62,7 @@ static int dashed(const owf_look *l)
            l->line_style == OWF_LINE_MEDIUM_DASHED || l->line_style >= OWF_LINE_DASH_DOT;
 }
 
-/* A shape OpenLayout 0.2 doesn't draw, at its box. */
+/* A shape GFOpenLayout 0.2 doesn't draw, at its box. */
 static void draw_shape(owf_pdf *pdf, const owf_obj *o)
 {
     int x = o->x, y = o->y, w = o->width, h = o->height, pts[16], k;

@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core: the charts' drawer that makes draw items (oc_gfx.h).
+ * GFOpenCalc's core: the charts' drawer that makes draw items (oc_gfx.h).
  * Lines are cut to the clip box (Cohen and Sutherland) and made of
  * 1-pixel segments (OC_DRAW_SEGMENT), a wide one of several side by side;
  * polygons are cut to it (Sutherland and Hodgman), a box becoming a fill

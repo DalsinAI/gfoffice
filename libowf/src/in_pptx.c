@@ -22,7 +22,7 @@
  *
  * What the model doesn't hold (charts, SmartArt, embedded objects, a
  * layout's own pictures, animations) is left out or shown as a box, and the
- * report says which. Nothing is kept for saving as PPTX yet: OpenPresentation
+ * report says which. Nothing is kept for saving as PPTX yet: GFOpenPresentation
  * saves what it read as ODP.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
@@ -2500,7 +2500,7 @@ static void read_slide(pptx *x, const char *name)
     s = &x->deck->slides[index];
     read_transition(root, s);
     if (s->transition.kind == OWF_TRANS_OTHER)
-        owf_report_add(x->r.report, OWF_NOTE_APPROX, "Transitions OpenPresentation doesn't show yet are shown as a cut");
+        owf_report_add(x->r.report, OWF_NOTE_APPROX, "Transitions GFOpenPresentation doesn't show yet are shown as a cut");
     if (pchild(root, "timing"))
         owf_report_add(x->r.report, OWF_NOTE_LOST, "Animations were left out");
     read_notes(x, &r, index, mp, &c.cc);

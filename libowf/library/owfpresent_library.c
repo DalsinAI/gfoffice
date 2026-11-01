@@ -1,5 +1,5 @@
 /*
- * owfpresent.library 3.2, OpenPresentation's part of libowf: presentations.
+ * owfpresent.library 3.2, GFOpenPresentation's part of libowf: presentations.
  * The deck model, its formats (ODP, flat ODP) and the page PDF writer, with
  * the document model its text uses.
  *
@@ -10,7 +10,7 @@
  *
  * 3.1: owf_obj.font_scale and line_reduction (PowerPoint's normAutofit), so
  * owf_obj is larger, and owf_pdf_fallback, the PDF's stand-ins for
- * characters WinAnsiEncoding hasn't (OpenPresentation 0.2.1).
+ * characters WinAnsiEncoding hasn't (GFOpenPresentation 0.2.1).
  *
  * 3.2: owf_doc.header_left and footer_left (owfwrite.library 3.2), so the
  * document model's owf_doc is larger and a program's size check refuses

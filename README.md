@@ -1,13 +1,13 @@
 # GFOffice
 
 This is the GFOffice Suite: native office apps for AmigaOS 3.2, all sharing
-one document library, **libowf**. Its apps keep their Open names:
+one document library, **libowf**. Its apps keep their GFOpen names:
 
-- **OpenWrite**, the word processor (released, below);
-- **OpenCalc**, the spreadsheet (the formula engine and its core are here; its
+- **GFOpenWrite**, the word processor (released, below);
+- **GFOpenCalc**, the spreadsheet (the formula engine and its core are here; its
   Amiga app is being built);
-- **OpenPresentation**, slides; **OpenPublisher**, desktop publishing that
-  opens Microsoft Publisher and PageStream files; **OpenBase**, the database
+- **GFOpenPresentation**, slides; **GFOpenPublisher**, desktop publishing that
+  opens Microsoft Publisher and PageStream files; **GFOpenBase**, the database
   (all being started).
 
 The suite aims at the features of Apache OpenOffice's apps. It is written from
@@ -17,19 +17,19 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-# OpenWrite
+# GFOpenWrite
 
-OpenWrite 1.0.3 is a native word processor for AmigaOS 3.2.
+GFOpenWrite 1.0.3 is a native word processor for AmigaOS 3.2.
 
-![OpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
+![GFOpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
 
-*OpenWrite on AmigaOS 3.2.3 (an AmigaChrome instance with OpenRTG and the Open look), opening a DOCX written in Word.*
+*GFOpenWrite on AmigaOS 3.2.3 (an AmiCradle instance with GFOpenRTG and the Open look), opening a DOCX written in Word.*
 
 It is a small 68040 C application with no FPU requirement and no browser,
 Unix GUI or JavaScript runtime dependency. The document/file layer is the
 separate C library **libowf**, and **C:OWConvert** converts from the Shell.
 
-OpenWrite 1.0 includes:
+GFOpenWrite 1.0 includes:
 
 - caret/selection editing with bounded grouped undo/redo;
 - bold, italic, underline, font family and point size;
@@ -48,9 +48,9 @@ OpenWrite 1.0 includes:
 - an ARexx port for scripted open/save/export/print/text/search/edit commands;
 - DOCX and ODT formatted import/export, including simple tables and inline images;
 - searchable direct PDF export;
-- Print: with OpenPrint on the disk, the document as laid out (a PDF, as Export PDF makes it) in OpenPrint's Print window, for an IPP printer or a saved PDF; without OpenPrint, its text through printer.device.
+- Print: with GFOpenPrint on the disk, the document as laid out (a PDF, as Export PDF makes it) in GFOpenPrint's Print window, for an IPP printer or a saved PDF; without GFOpenPrint, its text through printer.device.
 
-OpenWrite also opens ProWrite, Final Writer/Final Copy-family SWRT documents,
+GFOpenWrite also opens ProWrite, Final Writer/Final Copy-family SWRT documents,
 Wordworth, IFF FTXT, ANSI text and plain text. Import reports name
 approximations and unsupported material instead of silently pretending it was
 preserved.
@@ -59,19 +59,19 @@ The current native architecture is documented in
 `docs/architecture/NATIVE_CORE.md`; the interaction design is in
 `docs/UX_DESIGN.md`; the format matrix is in `docs/FORMATS.md`.
 
-## Open family integration
+## GFOpen family integration
 
-- **OpenGadTools/OpenLook**: application UI and themes.
-- **OpenRTG**: accelerated document-canvas path where available.
-- **OpenDatatypes / Amiga datatypes**: embedded image/media decoding.
-- **OpenPrint / printer.device**: print and output path.
+- **GFOpenGadTools/GFOpenLook**: application UI and themes.
+- **GFOpenRTG**: accelerated document-canvas path where available.
+- **GFOpenDatatypes / Amiga datatypes**: embedded image/media decoding.
+- **GFOpenPrint / printer.device**: print and output path.
 
 The same editor remains usable without accelerated RTG hardware; AGA/planar
 rendering is a supported fallback path.
 
 ## Requirements
 
-OpenWrite:
+GFOpenWrite:
 
 - AmigaOS 3.2 or later;
 - a 68040 (the builds are 68040 code);
@@ -79,7 +79,7 @@ OpenWrite:
 - small documents are intended to remain usable around 8 MB Fast RAM;
 - 16-32 MB Fast RAM is the comfortable target for ordinary work.
 
-OWConvert is 68040 code too and does not require the OpenWrite GUI.
+OWConvert is 68040 code too and does not require the GFOpenWrite GUI.
 
 ## Building and testing
 
@@ -105,29 +105,29 @@ programs wrote, packages written by hand from the specifications, round
 trips between the formats, and damaged and cut-short files.
 
 They include the formula engine's tests too (`make calc-test`, `make
-calc-check`): OpenCalc's engine in `libowf/calc` (calls in
+calc-check`): GFOpenCalc's engine in `libowf/calc` (calls in
 `libowf/include/owf_calc.h`; `docs/CALC_ENGINE.md`), with its functions
 checked one by one and against the results saved in the workbook fixtures.
 
-Pages are laid out by OpenLayout (DalsinAI/openamigalayout 0.2 or later).
+Pages are laid out by GFOpenLayout (DalsinAI/openamigalayout 0.2 or later).
 With it checked out beside this repository, or `OPENLAYOUT_SRC` pointing at
 it, `make layout-test` lays out a built document and the samples into pages
 and checks the caret and pointer mapping; `make layout-check` runs the same
 under the address and undefined-behaviour sanitizers.
 
-For AmigaOS 3.x with the os32-gcc16 stove (OpenAmigaGCC 16; set `OS32_GCC16`
-if it is not in `~/AmigaChrome/stoves/os32-gcc16`):
+For AmigaOS 3.x with the os32-gcc16 stove (GFOpenAmigaGCC 16; set `OS32_GCC16`
+if it is not in `~/AmiCradle/stoves/os32-gcc16`):
 
 ```
 ./build-os3.sh                 # libowf linked into each program
-OWF=library ./build-os3.sh     # each on its library: OpenWrite on owfwrite.library,
-                               # OpenCalc on owfcalc.library, OWConvert on all four
+OWF=library ./build-os3.sh     # each on its library: GFOpenWrite on owfwrite.library,
+                               # GFOpenCalc on owfcalc.library, OWConvert on all four
 ```
 
 This builds:
 
 ```
-build/os3/OpenWrite
+build/os3/GFOpenWrite
 build/os3/OWConvert
 build/os3/library/owfwrite.library   (OWF=library: GFOffice's four libraries,
 build/os3/library/owfcalc.library     docs/suite/owf-libraries.md)
@@ -154,10 +154,10 @@ libowf is split along the programs' lines into four shared Amiga libraries
 
 | Library | For | Holds |
 | --- | --- | --- |
-| `owfwrite.library` | OpenWrite | documents and their formats, PDF out |
-| `owfcalc.library` | OpenCalc | workbooks, their formats, charts, the formula engine |
-| `owfpub.library` | OpenPublisher | the .pub reader |
-| `owfpresent.library` | OpenPresentation | decks, ODP, the page PDF writer |
+| `owfwrite.library` | GFOpenWrite | documents and their formats, PDF out |
+| `owfcalc.library` | GFOpenCalc | workbooks, their formats, charts, the formula engine |
+| `owfpub.library` | GFOpenPublisher | the .pub reader |
+| `owfpresent.library` | GFOpenPresentation | decks, ODP, the page PDF writer |
 
 `./build-library.sh [OUT_DIR]` builds them: libowf once into an archive,
 then each library from its own file in `libowf/library` (`<name>_library.c`,
@@ -176,19 +176,19 @@ library shares. `OWFLibsTest` on an Amiga opens the four and checks each
 (`ONLY=write`, `calc`, `pub` or `present` for one alone), from two tasks at
 once; `make sfd-check` checks the SFDs, the generated glue and the SDK.
 
-owf.library 2.5, below, is still built beside them until OpenUp ships the
+owf.library 2.5, below, is still built beside them until GFOpenUp ships the
 four; then it goes.
 
 ### owf.library
 
 `owf.library` is libowf as a shared Amiga library: every program that reads
-or writes documents (OpenWrite, OWConvert, and the spreadsheet and
+or writes documents (GFOpenWrite, OWConvert, and the spreadsheet and
 presentation programs to come) opens one copy instead of linking its own.
 `./build-library.sh [OUT_DIR]` builds it on its own, with no C library: its
 memory comes from one Exec pool, and it carries its own string, printf and
 number calls (`libowf/library`). The calls are described in
 `libowf/library/owf_lib.sfd`; `scripts/gen-sdk.sh` makes its headers in
-`libowf/library/sdk` with OpenNDK's ndkgen.
+`libowf/library/sdk` with GFOpenNDK's ndkgen.
 
 A program uses it by defining `OWF_USE_LIBRARY`, including `owf.h` and
 `owf_open.h`, and calling `owf_open()` before anything else. Document memory
@@ -217,7 +217,7 @@ runs the engine's own tests on them, runs OWFLibTest's version-2 checks
 with libowf linked in, and checks the SFD against the headers, the glue's
 registers and the SDK (`tests/library/check_sfd.py`). OWFLibTest takes
 `FIXTURES=<dir>` too (build-library.sh puts `samples/` and `fixtures/`
-beside it). The deck calls (OpenPresentation) come in a later version.
+beside it). The deck calls (GFOpenPresentation) come in a later version.
 
 ## 1.0 validation
 
@@ -228,11 +228,11 @@ The 1.0 release gate includes:
 - AddressSanitizer and UndefinedBehaviorSanitizer runs;
 - the libowf normal and sanitizer corruption/cut-short corpus;
 - m68k AmigaOS cross-build;
-- real AmigaOS 3.2.3/OpenRTG bench validation.
+- real AmigaOS 3.2.3/GFOpenRTG bench validation.
 
-## OpenCalc
+## GFOpenCalc
 
-OpenCalc is the spreadsheet of the GFOffice Suite, beside OpenWrite in this
+GFOpenCalc is the spreadsheet of the GFOffice Suite, beside GFOpenWrite in this
 repository for now. Its portable core is `src/calc` (`include/opencalc_core.h`):
 the view, the selection, keys as Excel and LibreOffice have them, editing,
 fill, insert and delete, the clipboard, styles, bounded undo and the grid as a
@@ -242,27 +242,27 @@ window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
 by the engine in `libowf/include/owf_calc.h`.
 
-## OpenPresentation
+## GFOpenPresentation
 
-OpenPresentation is the GFOffice Suite's slide program, beside OpenWrite and
-OpenCalc here for now (`docs/gfoffice/Design-OpenPresentation.md`). Phase
+GFOpenPresentation is the GFOffice Suite's slide program, beside GFOpenWrite and
+GFOpenCalc here for now (`docs/gfoffice/Design-OpenPresentation.md`). Phase
 P1 is in: the deck model in libowf (`libowf/include/owf_deck.h`), ODP and
 flat ODP opened and saved, and a deck's PDF, its slides laid out by
-OpenLayout in its portable core (`src/deck`, `include/openpresentation_core.h`)
+GFOpenLayout in its portable core (`src/deck`, `include/openpresentation_core.h`)
 and drawn by the page PDF writer (`libowf/include/owf_pdf.h`).
 `OWConvert Talk.odp Talk.pdf` makes one. `make deck-test` and `make
 deck-check` (part of `make test` and `make check`) test them; with
-OpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
+GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (OpenPresentation 0.2), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.2), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: click in a slide's text box and type (Return, Backspace,
 Del, the arrow keys; Esc stops), with undo and redo
 (`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
-deck-edit-check`). Print hands the slides to OpenPrint as a PDF (`C:OpenPrint
+deck-edit-check`). Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
 T:<name>.pdf`), and Export PDF writes one. View > Zoom In and Zoom Out (+
 and -) show the slide up to four times the window's fit, with scrollers; the
 window's zoom gadget fills the screen. The player (P2), New Slide, PPTX
@@ -276,11 +276,11 @@ Third-party components and data retain their own licences and notices; see
 `THIRD_PARTY.md` and `licenses/`.
 
 If you use or build on this work, we ask, but do not require, that you credit
-the AmigaChrome Team, for example: "based on OpenWrite by the AmigaChrome
+the AmiCradle Team, for example: "based on GFOpenWrite by the AmiCradle
 Team".
 
 ## Contributors
 
-OpenWrite is created and maintained by
+GFOpenWrite is created and maintained by
 [SacredTrees](https://github.com/SacredTrees), copyright AmigaChrome Team.
 Everyone whose work it includes is credited in `CONTRIBUTORS.md`.

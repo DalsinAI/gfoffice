@@ -1,5 +1,5 @@
 ==id $Id: owfpub_lib.sfd 3.0 (25.10.2026) $
-* "owfpub.library" 3.0: OpenPublisher's part of libowf: Publisher files. The
+* "owfpub.library" 3.0: GFOpenPublisher's part of libowf: Publisher files. The
 * .pub reader and its compound-file reader, with the document model its text
 * uses.
 * Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).

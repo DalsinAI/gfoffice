@@ -1,5 +1,5 @@
 /*
- * OpenWrite's pages on OpenLayout (src/core/ow_layout.c): a document built
+ * GFOpenWrite's pages on GFOpenLayout (src/core/ow_layout.c): a document built
  * here and the sample documents, laid out into pages, with the caret and
  * the pointer mapped both ways.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
@@ -943,7 +943,7 @@ static void table_style_checks(const ow_layout *l, const owf_doc *doc)
 }
 
 /* tests/core/fixtures/line-rules.docx (make_lines_docx.py): Word's exact and at least line spacing (2.0.18), read,
- * laid out (OpenLayout 0.7's exact lines) and written back to DOCX and ODT. */
+ * laid out (GFOpenLayout 0.7's exact lines) and written back to DOCX and ODT. */
 static void line_checks(const ow_layout *l, const owf_doc *doc)
 {
     static const char *const paths[2] = { "/tmp/openwrite-line-rules.docx", "/tmp/openwrite-line-rules.odt" };

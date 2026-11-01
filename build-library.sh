@@ -1,20 +1,20 @@
 #!/bin/sh
 # GFOffice's libraries (docs/suite/owf-libraries.md): libowf split along the
 # programs' lines into four shared libraries, and their tests, for AmigaOS
-# 3.x on a 68040 (no FPU needed), with the os32-gcc16 stove (OpenAmigaGCC 16).
+# 3.x on a 68040 (no FPU needed), with the os32-gcc16 stove (GFOpenAmigaGCC 16).
 #
 #   build-library.sh [OUT_DIR]          (default build/library)
 #
-#   OUT_DIR/owfwrite.library     documents, OpenWrite's: DOCX, ODT, the Amiga
+#   OUT_DIR/owfwrite.library     documents, GFOpenWrite's: DOCX, ODT, the Amiga
 #                                word processors' files, text, HTML, PDF out
-#   OUT_DIR/owfcalc.library      workbooks, OpenCalc's: XLSX, ODS, XLS, CSV,
+#   OUT_DIR/owfcalc.library      workbooks, GFOpenCalc's: XLSX, ODS, XLS, CSV,
 #                                charts and the formula engine
-#   OUT_DIR/owfpub.library       Publisher files, OpenPublisher's
-#   OUT_DIR/owfpresent.library   presentations, OpenPresentation's: the deck
+#   OUT_DIR/owfpub.library       Publisher files, GFOpenPublisher's
+#   OUT_DIR/owfpresent.library   presentations, GFOpenPresentation's: the deck
 #                                model, ODP and the page PDF writer
 #   OUT_DIR/<name>.library.map   each one's linker map
 #   OUT_DIR/owf.library          owf.library 2, the one library before the
-#                                split, until OpenUp ships the four
+#                                split, until GFOpenUp ships the four
 #                                (OWF_LEGACY=no leaves it out)
 #   OUT_DIR/tests/OWFLibsTest    opens the four from LIBS: and runs their
 #                                calls, from two tasks at once
@@ -43,7 +43,7 @@
 # to edit here. owf_kind.c is built once per library, with the format
 # tables that library has (OWF_KIND_NO_DOCUMENTS, OWF_KIND_NO_WORKBOOKS).
 #
-#   OS32_GCC16 or STOVE   the stove (default ~/AmigaChrome/stoves/os32-gcc16)
+#   OS32_GCC16 or STOVE   the stove (default ~/AmiCradle/stoves/os32-gcc16)
 #   OPENSDK_SRC           an openamigasdk checkout: when set, the SDK headers
 #                         in libowf/library/sdk and libowf/amiga/sdk are
 #                         checked against their SFDs with its ndkgen.py, and
@@ -55,7 +55,7 @@
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-STOVE=${OS32_GCC16:-${STOVE:-$HOME/AmigaChrome/stoves/os32-gcc16}}
+STOVE=${OS32_GCC16:-${STOVE:-$HOME/AmiCradle/stoves/os32-gcc16}}
 BIN="$STOVE/prefix/bin"
 CC="$BIN/m68k-amigaos-gcc"
 GCCV=$("$CC" -dumpversion 2>/dev/null || echo 0)
@@ -130,7 +130,7 @@ for name in $LIBS; do
 done
 
 # ---- owf.library 2, the one library before the split -------------------------------------------------------------
-# Built as it was (every libowf file but the deck's) until OpenUp ships the four; OWF_LEGACY=no leaves it out.
+# Built as it was (every libowf file but the deck's) until GFOpenUp ships the four; OWF_LEGACY=no leaves it out.
 if [ "${OWF_LEGACY:-yes}" != no ]; then
     LSRC=""
     for f in "$OWF"/src/*.c; do

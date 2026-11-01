@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core: cut, copy and paste. The system clipboard gets the
+ * GFOpenCalc's core: cut, copy and paste. The system clipboard gets the
  * cells as tab separated text (as Excel and LibreOffice put them there);
  * the core keeps the cells themselves, with formulas and styles, and
  * pastes those when the clipboard still holds its own text.

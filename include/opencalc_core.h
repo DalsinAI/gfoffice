@@ -1,6 +1,6 @@
 /*
- * OpenCalc's portable core: the spreadsheet's editing model, as
- * openwrite_core.h is OpenWrite's. It owns a workbook (libowf's owf_book)
+ * GFOpenCalc's portable core: the spreadsheet's editing model, as
+ * openwrite_core.h is GFOpenWrite's. It owns a workbook (libowf's owf_book)
  * and its formula engine (owf_calc.h), and holds everything the Amiga
  * window would otherwise have to work out itself:
  *
@@ -40,7 +40,7 @@ extern "C" {
 #define OC_MAX_ROWS 1048576u
 #define OC_MAX_COLS 16384u
 
-/* Undo keeps at most OC_UNDO_LIMIT steps (OpenWrite keeps 16) and at most
+/* Undo keeps at most OC_UNDO_LIMIT steps (GFOpenWrite keeps 16) and at most
  * OC_UNDO_BUDGET bytes of saved cells across undo and redo; the oldest
  * steps go first. A change bigger than the budget is made, and clears the
  * undo history (oc_core_undo_lost says so). */
@@ -317,7 +317,7 @@ int oc_core_undo_lost(const oc_core *core);
 
 /* ---- The view ----
  * Pixels: the grid area's top left (the corner above the row numbers) is
- * 0,0. At 100% a pixel is 15 twips (96 dpi), as OpenWrite's pages. */
+ * 0,0. At 100% a pixel is 15 twips (96 dpi), as GFOpenWrite's pages. */
 
 /* Measures text in pixels at the view's zoom, in a cell's font (flags
  * OWF_BOLD..., font the book's font index or -1, size in twips, 0: the

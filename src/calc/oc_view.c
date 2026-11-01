@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core: the view. Which rows and columns show (frozen ones,
+ * GFOpenCalc's core: the view. Which rows and columns show (frozen ones,
  * then from the scroll position), at a zoom, in pixels; scrolling; what is
  * under the pointer and what a click does; and the grid as a list of
  * things to draw, so that the window only paints: cell fills, the

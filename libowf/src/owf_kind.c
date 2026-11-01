@@ -5,7 +5,7 @@
  * structures programs share with owf.library (owf_struct_size).
  *
  * It reads the document and workbook format tables' detectors, so a
- * program that links libowf in without one of them (OpenWrite's
+ * program that links libowf in without one of them (GFOpenWrite's
  * build-os3.sh list) leaves this file out too. GFOffice's libraries
  * (build-library.sh, docs/suite/owf-libraries.md) build it once for each:
  * OWF_KIND_NO_DOCUMENTS leaves out the document formats' scores (in
@@ -84,7 +84,7 @@ owf_kind owf_file_kind(const unsigned char *data, size_t length)
 
     if (!data || !length)
         return OWF_KIND_UNKNOWN;
-    /* OpenBase: SQLite's header, and PRAGMA application_id 0x4F414442 at 68 */
+    /* GFOpenBase: SQLite's header, and PRAGMA application_id 0x4F414442 at 68 */
     if (length >= 100 && !memcmp(data, "SQLite format 3", 16))
         return OWF_BE32(data + 68) == 0x4F414442UL ? OWF_KIND_DATABASE : OWF_KIND_UNKNOWN;
     if (length >= 4 && data[0] == 'P' && data[1] == 'K') {

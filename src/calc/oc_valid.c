@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core: data validation applied. A value typed into a cell is
+ * GFOpenCalc's core: data validation applied. A value typed into a cell is
  * checked against the cell's rule as Excel checks it (a whole number, a
  * decimal, a date or a time compared with the rule's bounds, a text's
  * length, one of a list, a formula that must be true), when the rule has
@@ -283,7 +283,7 @@ int oc_core_invalid(const oc_core *core, oc_alert *alert)
         return 0;
     alert->style = dv->error_style;
     alert->move = core->invalid_move;
-    alert->title = dv->error_title && *dv->error_title ? dv->error_title : "OpenCalc";
+    alert->title = dv->error_title && *dv->error_title ? dv->error_title : "GFOpenCalc";
     alert->message = dv->error && *dv->error ? dv->error
                                              : "This value doesn't match the data validation restrictions defined for this cell.";
     return 1;

@@ -1,14 +1,14 @@
 # Third-party parts
 
-OpenWrite's own code and documents are MIT, Copyright (c) 2026 AmigaChrome
+GFOpenWrite's own code and documents are MIT, Copyright (c) 2026 AmigaChrome
 Team (`LICENSE`). Third-party code, data and runtime services retain their
 own licences.
 
-## Included or linked in OpenWrite 1.0
+## Included or linked in GFOpenWrite 1.0
 
 | Part | What for | Licence | How |
 | --- | --- | --- | --- |
-| OpenGadTools (`DalsinAI/opengadtools`) | Native UI/theme drawing | MIT, AmigaChrome Team | Source copy under `third_party/opengadtools` |
+| GFOpenGadTools (`DalsinAI/opengadtools`) | Native UI/theme drawing | MIT, AmigaChrome Team | Source copy under `third_party/opengadtools` |
 | zlib | ZIP containers used by ODT and DOCX, in the PC build and tests | zlib | The system zlib, linked into the PC build only; the Amiga build uses our z.library (`DalsinAI/amigachrome-guest` `libraries/openzlib`) and carries no zlib source |
 | SCOWL/Aspell English word list | Bundled `en_GB.words` spelling dictionary | SCOWL/Aspell word-list permissions and upstream component notices | Shipped as data; full notice in `licenses/SCOWL-ASPELL-English.txt` |
 
@@ -23,17 +23,17 @@ own licences.
 
 | Part | What for | Licence | How |
 | --- | --- | --- | --- |
-| OpenRTG | Accelerated true-colour document canvas where installed | MIT, AmigaChrome Team | Runtime/system service |
-| Amiga datatypes / OpenDatatypes | Embedded image/media decoding | System/datatype-specific licences | Runtime service |
-| OpenPrint / OpenAmigaPrint | PDF/IPP/network printer backends when configured | Backend-specific licence | Selected through standard `printer.device` output |
+| GFOpenRTG | Accelerated true-colour document canvas where installed | MIT, AmigaChrome Team | Runtime/system service |
+| Amiga datatypes / GFOpenDatatypes | Embedded image/media decoding | System/datatype-specific licences | Runtime service |
+| GFOpenPrint / OpenAmigaPrint | PDF/IPP/network printer backends when configured | Backend-specific licence | Selected through standard `printer.device` output |
 
 No WebCore, JavaScriptCore, GTK, Qt or Unix GUI compatibility layer is required
-by OpenWrite 1.0.
+by GFOpenWrite 1.0.
 
 ## Reference only
 
 The following work was read for format understanding. Its source is not copied
-into OpenWrite unless separately identified above under a compatible licence.
+into GFOpenWrite unless separately identified above under a compatible licence.
 
 | Work | Licence/status | For |
 | --- | --- | --- |

@@ -1450,7 +1450,7 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
     result = add_part(zip, &part, "_rels/.rels", result);
 
     owf_buf_puts(&part, XML_HEAD "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\">"
-                        "<Application>OpenCalc libowf " OWF_VERSION "</Application></Properties>\n");
+                        "<Application>GFOpenCalc libowf " OWF_VERSION "</Application></Properties>\n");
     result = add_part(zip, &part, "docProps/app.xml", result);
     owf_buf_puts(&part, XML_HEAD "<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" "
                         "xmlns:dc=\"http://purl.org/dc/elements/1.1/\"/>\n");

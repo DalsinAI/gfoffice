@@ -22,19 +22,19 @@ int ow_autosave_tick(ow_autosave *timer);
  * the extension): that is how another copy, starting, tells a running one's copy from one an interrupted session
  * left. (Not a file held open: Cradle's folder drives let another program read a file that is open for writing.)
  * A copy is made only when the document has changed since the last (its change count has moved). Before, every
- * copy of OpenWrite shared one name in T: (RAM, gone at a reboot) and wrote the whole document every minute,
+ * copy of GFOpenWrite shared one name in T: (RAM, gone at a reboot) and wrote the whole document every minute,
  * changed or not. */
 typedef struct ow_recovery {
-    char name[64];              /* the copy: PROGDIR:Recovery/OpenWrite-0012a4b8.odt; "" before ow_recovery_init */
+    char name[64];              /* the copy: PROGDIR:Recovery/GFOpenWrite-0012a4b8.odt; "" before ow_recovery_init */
     char meta[64];              /* beside it, the document's own name */
     char program[16], ext[8];
-    char live_name[64];         /* the semaphore's name: PROGDIR:Recovery/OpenWrite-0012a4b8 */
+    char live_name[64];         /* the semaphore's name: PROGDIR:Recovery/GFOpenWrite-0012a4b8 */
     int added;                  /* the semaphore is in the system's list */
     unsigned long changes;      /* the change count the last copy was made at */
     int made;                   /* a copy made since the document was opened, saved or made new */
 } ow_recovery;
 
-/* This run's names (nothing written yet): program "OpenWrite", ext "odt". */
+/* This run's names (nothing written yet): program "GFOpenWrite", ext "odt". */
 void ow_recovery_init(ow_recovery *r, const char *program, const char *ext);
 /* 1 when a copy is wanted: the document has unsaved changes (dirty) and its change count has moved. */
 int ow_recovery_due(const ow_recovery *r, int dirty, unsigned long changes);
@@ -46,7 +46,7 @@ void ow_recovery_done(ow_recovery *r, const char *docname, unsigned long changes
 void ow_recovery_clear(ow_recovery *r);
 /* At the end: keep, the copy stays for the next start (unsaved changes); else it goes. */
 void ow_recovery_end(ow_recovery *r, int keep);
-/* A copy an interrupted session left (not a running copy's): its name in out, 1; else 0. OpenWrite and OpenCalc
+/* A copy an interrupted session left (not a running copy's): its name in out, 1; else 0. GFOpenWrite and GFOpenCalc
  * up to 1 November 2026 named theirs <program>-Recovery in T:, which is found too. */
 int ow_recovery_find(const ow_recovery *r, char *out, size_t size);
 /* A found copy deleted, and its .meta: 1 when it went. */

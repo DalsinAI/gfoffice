@@ -1,5 +1,5 @@
 /*
- * libowf: the formula engine (OpenCalc's). Each formula cell is a node:
+ * libowf: the formula engine (GFOpenCalc's). Each formula cell is a node:
  * its compiled code and the areas it reads. An index finds, for any cell,
  * the formulas that read it: one bucket per cell for single-cell
  * references, one per column for narrow ranges, one per sheet for wide

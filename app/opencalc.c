@@ -1,9 +1,9 @@
 /*
- * OpenCalc - the spreadsheet of the GFOffice Suite, beside OpenWrite.
+ * GFOpenCalc - the spreadsheet of the GFOffice Suite, beside GFOpenWrite.
  *
- * The window: OpenGadTools chrome as OpenWrite 2's (app/openwrite2.c), a
+ * The window: GFOpenGadTools chrome as GFOpenWrite 2's (app/openwrite2.c), a
  * formula bar (the cell's name and what it holds), the grid, sheet tabs
- * and a status line. Everything about the sheet is OpenCalc's portable
+ * and a status line. Everything about the sheet is GFOpenCalc's portable
  * core (src/calc, include/opencalc_core.h): this file maps keys, the
  * pointer and the menus to it and paints the list of things it says to
  * draw, into an off-screen bitmap when there is memory for one (so the
@@ -70,9 +70,9 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenCalc 0.1.27 (25.10.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.27 (25.10.2026)"
 static const char version[] __attribute__((used)) =
-    "$VER: " VERSION_TEXT " OpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
+    "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
 
 #ifndef IDCMP_EXTENDEDMOUSE                      /* OS 3.2's wheel messages (intuition/intuition.h V47) */
 #define IDCMP_EXTENDEDMOUSE 0x80000000
@@ -254,8 +254,8 @@ static oc_core *core;
 static oc_draw_list dl;
 static ow_autosave *autosave;
 static struct MsgPort *rexx_port;
-static char rexx_name[16];                           /* OPENCALC, or OPENCALC.2 for a second copy */
-#define REXX_PORT_NAME "OPENCALC"
+static char rexx_name[16];                           /* GFOPENCALC, or GFOPENCALC.2 for a second copy */
+#define REXX_PORT_NAME "GFOPENCALC"
 static ow_recovery recovery;                         /* the autosave's recovery copy (ow_autosave.h) */
 static char current_path[512];
 static char current_format[32] = "";
@@ -302,7 +302,7 @@ static const char classic_theme[] =
 /* ---- Text: the model is UTF-8, Amiga fonts and gadgets ISO-8859-1 ---- */
 
 /* Latin-1 for the screen: common typography outside it to the nearest
- * Latin-1, as OpenWrite shows it, anything else '?'. */
+ * Latin-1, as GFOpenWrite shows it, anything else '?'. */
 static size_t to_latin1(const char *s, size_t n, char *out, size_t cap)
 {
     size_t i = 0, o = 0;
@@ -336,7 +336,7 @@ static char *from_latin1(const char *s)
     return oc_text_from_latin1(s, strlen(s), NULL);
 }
 
-/* TextLength with a system-made bold's smear counted (as OpenWrite 2 measures). */
+/* TextLength with a system-made bold's smear counted (as GFOpenWrite 2 measures). */
 static int text_length(struct RastPort *rp, const char *s, size_t m)
 {
     struct TextFont *f = rp->Font;
@@ -359,8 +359,8 @@ static ULONG soft_style(unsigned flags)
  * A cell's text is drawn and measured in its own font at its own size (the core's oc_font_px: 11 points is a
  * 15-pixel em at 100%). The book's font is taken to an Amiga family by its name and kind (CGTriumvirate for
  * Arial, Calibri, Helvetica and the other sans fonts, CGTimes for serif ones, courier for fixed ones); the face
- * that draws it is OpenWrite's choice (app/ow_fontwidths.c, ow_fw_face): that family when it opens, else the
- * first of its kind's that does (openfont.library can't read OS 3.2's Intellifont CGTriumvirate, which has no
+ * that draws it is GFOpenWrite's choice (app/ow_fontwidths.c, ow_fw_face): that family when it opens, else the
+ * first of its kind's that does (gfopenfont.library can't read OS 3.2's Intellifont CGTriumvirate, which has no
  * bitmap sizes: DejaVu Sans, Liberation Sans, helvetica...), else the window's font. openfont makes a face at
  * a size of its own reckoning (the lab's DejaVu Sans asked for 15 drew capitals 13 high, as large as its 13
  * points of the window's font): the face is made again at the size whose capitals are 0.716 em, Arial's, when
@@ -444,7 +444,7 @@ static const char *cell_font_file(int index)
 }
 
 /* An Amiga font at a size: an outline font (FONTS:name.otag) made at exactly that size, a bitmap one at its
- * nearest designed size (scaled only when it has none). Through openfont.library, then diskfont.library (the
+ * nearest designed size (scaled only when it has none). Through gfopenfont.library, then diskfont.library (the
  * lab's openfont can't read OS 3.2's Intellifont outlines, which diskfont makes through bullet.library, and
  * finds none of SYS:Fonts' bitmap families). NULL when neither has it. */
 static struct TextFont *open_font_px(const char *file, int pixels)
@@ -810,8 +810,8 @@ static void load_theme(void)
         strcpy(theme_name, "Classic");
     }
     free(text);
-    /* OpenGadTools' status bar (ogt_status) fills with "panel", a key no theme has (THEME_SPEC.md 5): ogt_pen
-     * then gives pen 1, black, under the status line's dark text. Until OpenGadTools takes a key themes
+    /* GFOpenGadTools' status bar (ogt_status) fills with "panel", a key no theme has (THEME_SPEC.md 5): ogt_pen
+     * then gives pen 1, black, under the status line's dark text. Until GFOpenGadTools takes a key themes
      * have, "panel" is the window's colour here. */
     ogt_theme_override(&theme, "panel", NULL);
     {
@@ -823,7 +823,7 @@ static void load_theme(void)
 
 static void read_theme_choice(void)
 {
-    char *s = read_file("ENV:OpenGadTools/Theme");
+    char *s = read_file("ENV:GFOpenGadTools/Theme");
     if (!s) return;
     {
         char *nl = strchr(s, '\n');
@@ -908,7 +908,7 @@ static int result(int rc, const char *done)
         if (core && oc_core_undo_lost(core)) set_status("Done; it was too big to keep for Undo.");
         return 1;
     case OWF_ERR_MEMORY:
-        tell("OpenCalc", "There is not enough memory to complete that.");
+        tell("GFOpenCalc", "There is not enough memory to complete that.");
         break;
     case OWF_ERR_FORMAT:
         set_status("The formula has an error: it is kept, and shows #NAME?.");
@@ -1427,7 +1427,7 @@ static void update_window_title(void)
 {
     static char title[sizeof current_path + 16];  /* static: Intuition keeps the pointer */
     const char *name = current_path[0] ? leaf(current_path) : "Untitled";
-    snprintf(title, sizeof title, "%s%s - OpenCalc", core && oc_core_is_dirty(core) ? "*" : "", name);
+    snprintf(title, sizeof title, "%s%s - GFOpenCalc", core && oc_core_is_dirty(core) ? "*" : "", name);
     if (win) SetWindowTitles(win, (STRPTR)title, (STRPTR)-1);
 }
 
@@ -1576,8 +1576,8 @@ static void apply_theme(const char *name)
     if (win) relayout();
 }
 
-/* The part of the screen a full-size window may have (OpenWrite 2's free_area()): below the title bar,
- * less OpenDock's strip; ENV:OpenDock/Free wins when the dock publishes one. */
+/* The part of the screen a full-size window may have (GFOpenWrite 2's free_area()): below the title bar,
+ * less GFOpenDock's strip; ENV:GFOpenDock/Free wins when the dock publishes one. */
 static void free_area(int *l, int *t, int *w, int *h)
 {
     char buf[48];
@@ -1585,7 +1585,7 @@ static void free_area(int *l, int *t, int *w, int *h)
     ULONG lock;
     LONG got;
     int top = scr->BarHeight + 1, bottom = scr->Height, left = 0, right = scr->Width, a, b, c, d;
-    got = GetVar((STRPTR)"OpenDock/Free", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY);
+    got = GetVar((STRPTR)"GFOpenDock/Free", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY);
     if (got > 0 && sscanf(buf, "%d %d %d %d", &a, &b, &c, &d) == 4 && c >= 400 && d >= 200 && a >= 0 && b >= 0 &&
         a + c <= scr->Width && b + d <= scr->Height) {
         *l = a;
@@ -1596,7 +1596,7 @@ static void free_area(int *l, int *t, int *w, int *h)
     }
     lock = LockIBase(0);
     for (dw = scr->FirstWindow; dw; dw = dw->NextWindow) {
-        if (!dw->ScreenTitle || strncmp((const char *)dw->ScreenTitle, "OpenDock", 8) != 0)
+        if (!dw->ScreenTitle || strncmp((const char *)dw->ScreenTitle, "GFOpenDock", 10) != 0)
             continue;
         if (dw->Width >= dw->Height) {
             if (dw->TopEdge + dw->Height / 2 > scr->Height / 2) {
@@ -1623,7 +1623,7 @@ static void free_area(int *l, int *t, int *w, int *h)
     *h = bottom - top;
 }
 
-/* The first size, every Open app's (10 October 2026): 800 x 600 centred in the free area, never bigger. */
+/* The first size, every GFOpen app's (10 October 2026): 800 x 600 centred in the free area, never bigger. */
 #define START_W 800
 #define START_H 600
 static void start_box(int *l, int *t, int *w, int *h)
@@ -1653,7 +1653,7 @@ static int open_window(void)
     if (menu) LayoutMenus(menu, vi, GTMN_NewLookMenus, TRUE, TAG_DONE);
     start_box(&l, &t, &w, &h);
     win = OpenWindowTags(NULL,
-        WA_Title, (ULONG)"OpenCalc",
+        WA_Title, (ULONG)"GFOpenCalc",
         WA_ScreenTitle, (ULONG)VERSION_TEXT,
         WA_PubScreen, (ULONG)scr,
         WA_Width, w, WA_Height, h,
@@ -1693,7 +1693,7 @@ static void close_window(void)
     if (scr) { UnlockPubScreen(NULL, scr); scr = NULL; }
 }
 
-/* A one-line requester (OpenWrite 2's): the text in Latin-1, as typed. 1 for OK. */
+/* A one-line requester (GFOpenWrite 2's): the text in Latin-1, as typed. 1 for OK. */
 static int text_requester(const char *title, const char *label, const char *initial, char *out, size_t out_size)
 {
     struct Gadget *list = NULL, *last, *gtext, *gok, *gcancel;
@@ -1758,7 +1758,7 @@ out:
 
 static int confirm_discard_changes(void)
 {
-    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"OpenCalc",
+    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenCalc",
                              (UBYTE *)"The workbook has unsaved changes.\n\nDiscard them?", (UBYTE *)"Discard|Cancel" };
     if (!core || !oc_core_is_dirty(core)) return 1;
     return EasyRequest(win, &es, NULL) != 0;
@@ -1769,7 +1769,7 @@ static int ask_file(int save, const char *title, const char *initial, char *out,
     struct FileRequester *fr;
     char last[512];
     int ok = 0;
-    lastdir_get("OpenCalc", last, sizeof last);
+    lastdir_get("GFOpenCalc", last, sizeof last);
     fr = AllocAslRequestTags(ASL_FileRequest,
         ASLFR_TitleText, (ULONG)title,
         ASLFR_InitialDrawer, (ULONG)last,
@@ -1782,7 +1782,7 @@ static int ask_file(int save, const char *title, const char *initial, char *out,
     if (!fr) return 0;
     if (AslRequestTags(fr, TAG_DONE) && fr->fr_File[0]) {
         snprintf(out, out_size, "%s", fr->fr_Drawer);
-        lastdir_put("OpenCalc", (const char *)fr->fr_Drawer);
+        lastdir_put("GFOpenCalc", (const char *)fr->fr_Drawer);
         AddPart((STRPTR)out, fr->fr_File, out_size);
         ok = 1;
     }
@@ -1820,7 +1820,7 @@ static void writable_formats(char *out, size_t size)
 }
 
 /* ---- The notes requester ----
- * What a file's import or export left out, in OpenCalc's own window: EasyRequest cut its lines short on the
+ * What a file's import or export left out, in GFOpenCalc's own window: EasyRequest cut its lines short on the
  * lab's RTG screen ("Formatting of whole rows is kept on their cel"). The window is as wide as its widest
  * line in the window's font, up to three quarters of the screen (longer lines wrap at spaces), and as tall
  * as its lines, up to the screen (the rest left out, and said so); the OK button below the last line. A
@@ -2045,7 +2045,7 @@ static void open_book(const char *path)
     char msg[600];
     int rc = oc_core_open(core, path, NULL, report, &used);
     if (rc != OWF_OK) {
-        snprintf(msg, sizeof msg, "OpenCalc could not open the workbook.\n\n%s", owf_error_text(rc));
+        snprintf(msg, sizeof msg, "GFOpenCalc could not open the workbook.\n\n%s", owf_error_text(rc));
         tell("Open workbook", msg);
         owf_report_free(report);
         return;
@@ -2069,9 +2069,9 @@ static int save_book_as(const char *path, const char *format, int keep_name)
     if (rc != OWF_OK) {
         writable_formats(list, sizeof list);
         if (rc == OWF_ERR_FORMAT || rc == OWF_ERR_UNSUPPORTED)
-            snprintf(msg, sizeof msg, "OpenCalc can't write that kind of file yet.\n\nIt can write: %s.", list);
+            snprintf(msg, sizeof msg, "GFOpenCalc can't write that kind of file yet.\n\nIt can write: %s.", list);
         else
-            snprintf(msg, sizeof msg, "OpenCalc could not save the workbook.\n\n%s", owf_error_text(rc));
+            snprintf(msg, sizeof msg, "GFOpenCalc could not save the workbook.\n\n%s", owf_error_text(rc));
         tell("Save workbook", msg);
         owf_report_free(report);
         return 0;
@@ -2092,7 +2092,7 @@ static void do_save_as(void)
 {
     char path[512], initial[160];
     with_extension(current_path, "csv", initial, sizeof initial);
-    if (ask_file(1, "Save OpenCalc workbook", initial, path, sizeof path))
+    if (ask_file(1, "Save GFOpenCalc workbook", initial, path, sizeof path))
         save_book_as(path, NULL, 1);
 }
 
@@ -2156,11 +2156,11 @@ static void recovery_save(void)
     owf_report_free(report);
 }
 
-/* A recovery copy an interrupted session left (not another running OpenCalc's): offered, one after another. */
+/* A recovery copy an interrupted session left (not another running GFOpenCalc's): offered, one after another. */
 static void recovery_offer(void)
 {
-    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"OpenCalc Recovery",
-        (UBYTE *)"OpenCalc found a recovery copy of a workbook from an interrupted session.\n\nRecover it?",
+    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenCalc Recovery",
+        (UBYTE *)"GFOpenCalc found a recovery copy of a workbook from an interrupted session.\n\nRecover it?",
         (UBYTE *)"Recover|Discard" };
     char found[80];
     int asked;
@@ -2185,10 +2185,10 @@ static void recovery_offer(void)
 
 static void about(void)
 {
-    tell("OpenCalc",
+    tell("GFOpenCalc",
          VERSION_TEXT "\n\n"
-         "OpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
-         "OpenGadTools interface\n"
+         "GFOpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
+         "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n\n"
          "MIT licence, Copyright (c) 2026 AmigaChrome Team.");
 }
@@ -2414,7 +2414,7 @@ static void menu_action(ULONG id)
     }
 }
 
-/* ---- ARexx: the OPENCALC port ---- */
+/* ---- ARexx: the GFOPENCALC port ---- */
 
 static const char *skip_space(const char *s)
 {
@@ -2694,7 +2694,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "QUIT", &arg)) {
         if (oc_core_is_dirty(core) && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "Unsaved changes"); }
         else { quit_now = 1; snprintf(result_text, sizeof result_text, "Quitting"); }
-    } else { ok = 0; snprintf(result_text, sizeof result_text, "Unknown OpenCalc ARexx command"); }
+    } else { ok = 0; snprintf(result_text, sizeof result_text, "Unknown GFOpenCalc ARexx command"); }
     if (result_out) {
         *result_out = (char *)malloc(strlen(result_text) + 1);
         if (*result_out) strcpy(*result_out, result_text);
@@ -2727,7 +2727,7 @@ static void rexx_open(void)
     if (!(p = CreateMsgPort())) return;
     p->mp_Node.ln_Pri = 0;
     Forbid();
-    for (n = 1; n < 10; n++) {                       /* OPENCALC, then OPENCALC.2 for a second copy */
+    for (n = 1; n < 10; n++) {                       /* GFOPENCALC, then GFOPENCALC.2 for a second copy */
         if (n == 1) snprintf(rexx_name, sizeof rexx_name, "%s", REXX_PORT_NAME);
         else snprintf(rexx_name, sizeof rexx_name, "%s.%d", REXX_PORT_NAME, n);
         if (!FindPort((STRPTR)rexx_name)) break;
@@ -3317,12 +3317,12 @@ static int window_main(int argc, char **argv)
     char first[512] = "";
     if (!(GadToolsBase = OpenLibrary((STRPTR)"gadtools.library", 39)) ||
         !(AslBase = OpenLibrary((STRPTR)"asl.library", 38))) {
-        if (argc) PutStr((STRPTR)"OpenCalc needs AmigaOS 3.0 or later\n");
+        if (argc) PutStr((STRPTR)"GFOpenCalc needs AmigaOS 3.0 or later\n");
         rc = 20;
         goto out;
     }
     if (!owf_open()) {
-        tell("OpenCalc", "OpenCalc needs " OWF_LIBRARY_NAME " in LIBS:.");
+        tell("GFOpenCalc", "GFOpenCalc needs " OWF_LIBRARY_NAME " in LIBS:.");
         rc = 20;
         goto out;
     }
@@ -3343,7 +3343,7 @@ static int window_main(int argc, char **argv)
             AddPart((STRPTR)first, w->sm_ArgList[1].wa_Name, sizeof first);
     }
     if (!open_window()) {
-        if (argc) PutStr((STRPTR)"OpenCalc: the window could not open\n");
+        if (argc) PutStr((STRPTR)"GFOpenCalc: the window could not open\n");
         rc = 20;
         goto out;
     }
@@ -3353,7 +3353,7 @@ static int window_main(int argc, char **argv)
         char ext[8];
         snprintf(ext, sizeof ext, "%s", f ? f->extensions : "ods");
         if (strchr(ext, ' ')) *strchr(ext, ' ') = 0;   /* the first of its names */
-        ow_recovery_init(&recovery, "OpenCalc", ext);
+        ow_recovery_init(&recovery, "GFOpenCalc", ext);
     }
     autosave = ow_autosave_open(60);
     if (first[0]) open_book(first);

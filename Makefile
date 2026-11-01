@@ -1,4 +1,4 @@
-# OpenWrite's filters (libowf) and OWConvert, for this computer (the tests
+# GFOpenWrite's filters (libowf) and OWConvert, for this computer (the tests
 # run here). For AmigaOS 3.x use build-os3.sh.
 #   make            build/host/owconvert
 #   make test       the tests (needs python3)
@@ -127,7 +127,7 @@ check: inflate-check
 
 .PHONY: inflate-test inflate-check
 
-# OpenWrite's pages on OpenLayout (DalsinAI/openamigalayout 0.2 or later)
+# GFOpenWrite's pages on GFOpenLayout (DalsinAI/openamigalayout 0.2 or later)
 OPENLAYOUT_SRC ?= ../openamigalayout
 LAYOUT_SRC = src/core/ow_layout.c $(OPENLAYOUT_SRC)/src/openlayout.c
 
@@ -160,7 +160,7 @@ layout-check: $(OUT)/test-layout-asan
 
 .PHONY: layout-test layout-check
 
-# OpenWrite's text widths for the layout (app/ow_fontwidths.c, 2.0.3): the face that draws the text when the
+# GFOpenWrite's text widths for the layout (app/ow_fontwidths.c, 2.0.3): the face that draws the text when the
 # document's doesn't open, and widths at the size asked or scaled to it (tests/core/test_fontwidths.c)
 FONTW_SRC = app/ow_fontwidths.c app/ow_fontwidths.h tests/core/test_fontwidths.c
 
@@ -266,7 +266,7 @@ book-check: features-check
 
 .PHONY: features-test features-check
 
-# The formula engine (OpenCalc's): libowf/calc, linked only by what
+# The formula engine (GFOpenCalc's): libowf/calc, linked only by what
 # calculates (it needs -lm). tests/calc/test_calc.c checks it, and works out
 # the fixtures' formulas again against the results saved in them
 # (tests/calc/make_calc_fixtures.py makes calc.xls with LibreOffice).
@@ -288,7 +288,7 @@ calc-test: $(OUT)/test-calc
 calc-check: $(OUT)/test-calc-asan
 	$(OUT)/test-calc-asan $(CALC_FIXTURES)
 
-# OpenCalc's core (src/calc) on the formula engine (libowf/calc, CALC_SRC
+# GFOpenCalc's core (src/calc) on the formula engine (libowf/calc, CALC_SRC
 # above): tests/calc_core
 OPENCALC_SRC = $(wildcard src/calc/*.c)
 OPENCALC_DEPS = $(OWF_SRC) $(CALC_SRC) $(OPENCALC_SRC) tests/calc_core/test_calc_core.c include/opencalc_core.h \
@@ -331,11 +331,11 @@ check: calc-expect
 
 .PHONY: calc-expect
 
-# OpenPresentation (GFOffice's slides): the deck model and ODP in libowf
-# (owf_deck.h), the slides laid out by OpenLayout and drawn into the page
+# GFOpenPresentation (GFOffice's slides): the deck model and ODP in libowf
+# (owf_deck.h), the slides laid out by GFOpenLayout and drawn into the page
 # PDF writer in src/deck. tests/deck/test_decks.py reads, writes and checks
 # the fixtures (odfpy and pypdf when installed, for the tests only). With
-# OpenLayout (OPENLAYOUT_SRC), OWConvert exports decks to PDF and the PDF
+# GFOpenLayout (OPENLAYOUT_SRC), OWConvert exports decks to PDF and the PDF
 # and layout tests run too; without it they are skipped, and say so.
 DECK_SRC = $(wildcard src/deck/*.c) src/core/ow_layout.c
 DECK_DEPS = $(OWF_SRC) libowf/include/owf.h libowf/include/owf_deck.h libowf/include/owf_pdf.h libowf/src/owf_internal.h \
@@ -379,8 +379,8 @@ check: deck-check
 
 .PHONY: deck-test deck-check
 
-# Typing in a slide's text (src/deck/opr_edit.c): the caret and the pointer go through OpenLayout's
-# display list, so these run when OpenLayout is there.
+# Typing in a slide's text (src/deck/opr_edit.c): the caret and the pointer go through GFOpenLayout's
+# display list, so these run when GFOpenLayout is there.
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
 $(OUT)/test-opr-edit: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_edit.c
 	mkdir -p $(OUT)
@@ -404,7 +404,7 @@ check: deck-edit-check
 .PHONY: deck-edit-test deck-edit-check
 endif
 
-# OpenPublisher's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
+# GFOpenPublisher's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
 # compares pub_dump's output with tests/pub/expected and reads cut-short and
 # changed copies of every sample (more of them under ASan/UBSan).
 PUB_DEPS = $(OWF_SRC) tests/pub/pub_dump.c libowf/include/owf.h libowf/include/owf_pub.h libowf/src/owf_internal.h

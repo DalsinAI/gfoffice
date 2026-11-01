@@ -1,5 +1,5 @@
 /*
- * libowf: OpenWrite's file formats. One document model; importers build it,
+ * libowf: GFOpenWrite's file formats. One document model; importers build it,
  * exporters write it. Plain C99, zlib optional; runs on any Amiga and on the
  * PC, where the tests run.
  *
@@ -10,7 +10,7 @@
  * the library its calls go to with OWF_USE_WRITE_LIBRARY,
  * OWF_USE_CALC_LIBRARY, OWF_USE_PUB_LIBRARY or OWF_USE_PRESENT_LIBRARY, and
  * opens it with owf_open() (owf_open.h). OWF_USE_LIBRARY alone is
- * owf.library 2, the one library before the split, until OpenUp ships the
+ * owf.library 2, the one library before the split, until GFOpenUp ships the
  * four. The types are the same either way.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
@@ -221,7 +221,7 @@ typedef struct {
     unsigned char behind;    /* behind the text, else in front of it */
     unsigned char wrap;      /* owf_frame_wrap: how text goes round it */
     unsigned char in_line;   /* 2.0.17: a text box in the line (Word's wp:inline), not placed on the page: placed
-                                from its paragraph at 0, 0, with no wrap; OpenWrite puts it where its run is */
+                                from its paragraph at 0, 0, with no wrap; GFOpenWrite puts it where its run is */
     unsigned char reserved[1];
     int inset[4];            /* a text box's inner margins, twips: top, right, bottom, left */
     unsigned long fill;      /* OWF_SHADE(0xRRGGBB) inside it; 0: none */
@@ -250,7 +250,7 @@ typedef struct owf_doc {
 /* ---- Memory ----
  * Everything an owf_doc holds (stories, paragraphs, runs, their text,
  * fonts, images, the title) comes from these, and a program that changes a
- * document's arrays itself (OpenWrite's editor) uses them too, so that
+ * document's arrays itself (GFOpenWrite's editor) uses them too, so that
  * owf.library and the program agree on whose memory it is. Linked in, they
  * are malloc, calloc, realloc and free. */
 void *owf_malloc(size_t n);
@@ -690,7 +690,7 @@ int owf_export_book_file(const owf_book *book, const char *path, const char *for
 /* ---- What a file is (owf.library 2) ----
  * Which of the suite's programs a file is for, from its bytes: ODF
  * packages by their mimetype, OOXML packages by their main part, compound
- * files by their streams (Publisher's by owf_pub_detect), OpenBase's
+ * files by their streams (Publisher's by owf_pub_detect), GFOpenBase's
  * databases by SQLite's header and their application id ("OADB"); any
  * other file by the best score of the document and workbook format
  * tables. Plain text is a document, CSV included: the bytes can't tell

@@ -1,6 +1,6 @@
 /*
  * OWConvert's Publisher files, on owfpub.library (OWF_USE_PUB_LIBRARY) or
- * with libowf linked in. libowf reads .pub (OpenPublisher's reader) but
+ * with libowf linked in. libowf reads .pub (GFOpenPublisher's reader) but
  * writes no format a .pub could become yet, so OWConvert says what the file
  * is, and that it can't convert it.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
@@ -52,7 +52,7 @@ int owc_pub_convert(const char *from, int show_report)
     if (result != OWF_OK) {
         printf("OWConvert: %s: %s\n", from, owf_error_text(result));
     } else {
-        printf("%s (%s, %d page(s), %d text(s)): OWConvert can't convert Publisher files yet; OpenPublisher "
+        printf("%s (%s, %d page(s), %d text(s)): OWConvert can't convert Publisher files yet; GFOpenPublisher "
                "reads them\n", from, owf_pub_version_name(pub->version), pub->npages, pub->nstories);
         owf_pub_free(pub);
     }

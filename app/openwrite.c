@@ -1,9 +1,9 @@
 /*
- * OpenWrite - the native OpenAmigaWriter shell.
+ * GFOpenWrite - the native OpenAmigaWriter shell.
  *
- * First build: OpenGadTools chrome, libowf documents, a lightweight native
+ * First build: GFOpenGadTools chrome, libowf documents, a lightweight native
  * page canvas, DOCX/ODT/classic-Amiga Open/Save, navigator, inspector and
- * status line.  OpenRTG is used by OpenGadTools automatically on true-colour
+ * status line.  GFOpenRTG is used by GFOpenGadTools automatically on true-colour
  * screens; the page renderer remains portable to AGA.
  *
  * MIT, Copyright (c) 2026 AmigaChrome Team.
@@ -67,7 +67,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "OpenWrite 1.0.7 (25.10.2026)"
+#define VERSION_TEXT "GFOpenWrite 1.0.7 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -196,15 +196,15 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Footer...", NULL, 0, 0, (APTR)M_FOOTER },
 
     { NM_TITLE, "Datatypes", NULL, 0, 0, NULL },
-    { NM_ITEM, "OpenDatatypes...", NULL, 0, 0, (APTR)M_DATATYPES },
+    { NM_ITEM, "GFOpenDatatypes...", NULL, 0, 0, (APTR)M_DATATYPES },
 
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Spell Check...", NULL, 0, 0, (APTR)M_SPELL },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
-    { NM_ITEM, "OpenPrint...", NULL, 0, 0, (APTR)M_OPENPRINT },
+    { NM_ITEM, "GFOpenPrint...", NULL, 0, 0, (APTR)M_OPENPRINT },
 
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
-    { NM_ITEM, "About OpenWrite...", NULL, 0, 0, (APTR)M_ABOUT },
+    { NM_ITEM, "About GFOpenWrite...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -254,9 +254,9 @@ static ow_editor *editor;
 static ow_spell *spell;
 static ow_autosave *autosave;
 static struct MsgPort *rexx_port;
-#define REXX_PORT_NAME "OPENWRITE"
-#define RECOVERY_FILE "T:OpenWrite-Recovery.odt"
-#define RECOVERY_META "T:OpenWrite-Recovery.meta"
+#define REXX_PORT_NAME "GFOPENWRITE"
+#define RECOVERY_FILE "T:GFOpenWrite-Recovery.odt"
+#define RECOVERY_META "T:GFOpenWrite-Recovery.meta"
 static char current_path[512];
 static char current_format[32] = "ODT";
 static char status[256] = "Ready.";
@@ -472,7 +472,7 @@ static void load_theme(void)
 
 static void read_theme_choice(void)
 {
-    char *s = read_file("ENV:OpenGadTools/Theme");
+    char *s = read_file("ENV:GFOpenGadTools/Theme");
     if (!s) return;
     {
         char *nl = strchr(s, '\n');
@@ -547,9 +547,9 @@ static owf_doc *blank_document(void)
 
 static void update_window_title(void)
 {
-    char title[sizeof current_path + 16];       /* "*", the name and " - OpenWrite" */
+    char title[sizeof current_path + 16];       /* "*", the name and " - GFOpenWrite" */
     const char *name = current_path[0] ? leaf(current_path) : "Untitled";
-    snprintf(title, sizeof title, "%s%s - OpenWrite",
+    snprintf(title, sizeof title, "%s%s - GFOpenWrite",
              editor && ow_editor_is_dirty(editor) ? "*" : "", name);
     if (win) SetWindowTitles(win, (STRPTR)title, (STRPTR)-1);
 }
@@ -573,7 +573,7 @@ static ow_image_cache *image_cache_get(int index)
     for(i=0;i<image_cache_n;++i)if(image_cache[i].index==index)return &image_cache[i];
     if(image_cache_n>=16)return NULL;
     im=&doc->images[index];
-    snprintf(tmp,sizeof tmp,"T:OpenWrite-Image-%ld-%d.tmp",(long)FindTask(NULL),index);
+    snprintf(tmp,sizeof tmp,"T:GFOpenWrite-Image-%ld-%d.tmp",(long)FindTask(NULL),index);
     f=Open((STRPTR)tmp,MODE_NEWFILE);if(!f)return NULL;if(Write(f,(APTR)im->data,(LONG)im->length)!=(LONG)im->length){Close(f);DeleteFile((STRPTR)tmp);return NULL;}Close(f);
     o=NewDTObject((APTR)tmp,DTA_GroupID,GID_PICTURE,PDTA_DestMode,PMODE_V43,PDTA_Remap,FALSE,TAG_DONE);if(!o){DeleteFile((STRPTR)tmp);return NULL;}
     GetDTAttrs(o,PDTA_BitMapHeader,(ULONG)&bmh,TAG_DONE);DoMethod(o,DTM_PROCLAYOUT,NULL,1);
@@ -649,8 +649,8 @@ static int recovery_exists(void)
 static void recovery_offer(void)
 {
     struct EasyStruct es = {
-        sizeof(struct EasyStruct), 0, (UBYTE *)"OpenWrite Recovery",
-        (UBYTE *)"OpenWrite found a recovery document from an interrupted session.\n\nRecover it?",
+        sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenWrite Recovery",
+        (UBYTE *)"GFOpenWrite found a recovery document from an interrupted session.\n\nRecover it?",
         (UBYTE *)"Recover|Discard"
     };
     owf_doc *recovered = NULL;
@@ -664,7 +664,7 @@ static void recovery_offer(void)
     rc = owf_import_file(RECOVERY_FILE, "odt", &recovered, report, &used);
     owf_report_free(report);
     if (rc != OWF_OK || !recovered) {
-        tell("OpenWrite Recovery", "The recovery copy could not be opened.");
+        tell("GFOpenWrite Recovery", "The recovery copy could not be opened.");
         recovery_clear();
         return;
     }
@@ -685,9 +685,9 @@ static int ask_file(int save, char *out, size_t out_size)
     struct FileRequester *fr;
     char last[512];
     int ok = 0;
-    lastdir_get("OpenWrite", last, sizeof last);         /* 1.0.4: where the last document was */
+    lastdir_get("GFOpenWrite", last, sizeof last);         /* 1.0.4: where the last document was */
     fr = AllocAslRequestTags(ASL_FileRequest,
-        ASLFR_TitleText, (ULONG)(save ? "Save OpenWrite document" : "Open document"),
+        ASLFR_TitleText, (ULONG)(save ? "Save GFOpenWrite document" : "Open document"),
         ASLFR_InitialDrawer, (ULONG)last,
         ASLFR_Window, (ULONG)win,
         ASLFR_SleepWindow, TRUE,
@@ -698,7 +698,7 @@ static int ask_file(int save, char *out, size_t out_size)
     if (!fr) return 0;
     if (AslRequestTags(fr, TAG_DONE) && fr->fr_File[0]) {
         snprintf(out, out_size, "%s", fr->fr_Drawer);
-        lastdir_put("OpenWrite", (const char *)fr->fr_Drawer);
+        lastdir_put("GFOpenWrite", (const char *)fr->fr_Drawer);
         AddPart((STRPTR)out, fr->fr_File, out_size);
         ok = 1;
     }
@@ -714,7 +714,7 @@ static void open_document(const char *path)
     char msg[256];
     int rc = owf_import_file(path, NULL, &newdoc, report, &used);
     if (rc != OWF_OK) {
-        snprintf(msg, sizeof msg, "OpenWrite could not open the document.\n\n%s", owf_error_text(rc));
+        snprintf(msg, sizeof msg, "GFOpenWrite could not open the document.\n\n%s", owf_error_text(rc));
         tell("Open document", msg);
         owf_report_free(report);
         return;
@@ -737,7 +737,7 @@ static void save_document_as(const char *path)
     if (!doc) return;
     rc = owf_export_file(doc, path, NULL, report);
     if (rc != OWF_OK) {
-        snprintf(msg, sizeof msg, "OpenWrite could not save this document.\n\n%s", owf_error_text(rc));
+        snprintf(msg, sizeof msg, "GFOpenWrite could not save this document.\n\n%s", owf_error_text(rc));
         tell("Save document", msg);
         owf_report_free(report);
         return;
@@ -1385,7 +1385,7 @@ static void draw_navigator(void)
 static void draw_inspector(void)
 {
     struct RastPort *rp = win->RPort;
-    const char *tabs[] = { "Properties", "Styles", "Datatypes", "OpenPrint" };
+    const char *tabs[] = { "Properties", "Styles", "Datatypes", "GFOpenPrint" };
     int x, y, fw;
     char buf[96];
     if (!inspector_box.w) return;
@@ -1424,12 +1424,12 @@ static void draw_inspector(void)
     ogt_text(rp, ogt_pen(&ctx, "label"), x, y, "Open stack", fw);
     ogt_bold(rp, 0);
     y += fh + 7;
-    snprintf(buf, sizeof buf, "OpenRTG    %s", screen_depth() > 8 ? "true-colour" : "AGA");
+    snprintf(buf, sizeof buf, "GFOpenRTG    %s", screen_depth() > 8 ? "true-colour" : "AGA");
     ogt_text(rp, ogt_pen(&ctx, "label"), x + 3, y, buf, fw - 6);
     y += fh + 5;
     ogt_text(rp, ogt_pen(&ctx, "label"), x + 3, y, "Datatypes  ready", fw - 6);
     y += fh + 5;
-    ogt_text(rp, ogt_pen(&ctx, "label"), x + 3, y, "OpenPrint  ready", fw - 6);
+    ogt_text(rp, ogt_pen(&ctx, "label"), x + 3, y, "GFOpenPrint  ready", fw - 6);
     y += fh + 13;
     ogt_hline(rp, ogt_pen(&ctx, "group.line"), x, y, fw);
     y += 7;
@@ -1613,7 +1613,7 @@ static void draw_status(void)
     snprintf(left, sizeof left, " Page %d of %d  |  %d words  |  %s  |  %s",
              page_index + 1, pages, word_count(), current_format, status);
     snprintf(right, sizeof right, "%s  |  %d%% ",
-             screen_depth() > 8 ? "OpenRTG" : "AGA", zoom);
+             screen_depth() > 8 ? "GFOpenRTG" : "AGA", zoom);
     field(rp, "string", status_box.x, status_box.y, status_box.w, status_box.h);
     ogt_text(rp, ogt_pen(&ctx, "label"), status_box.x + 4,
              status_box.y + (status_box.h - fh) / 2, left,
@@ -1750,9 +1750,9 @@ static void apply_theme(const char *name)
 }
 
 /* The part of the screen a full-size window may have: below the title bar,
- * less the strip OpenDock takes along an edge (OpenFiles' free_area(), copied
- * here). OpenDock's window is the one whose screen title starts "OpenDock";
- * an ENV:OpenDock/Free of "left top width height" wins when the dock
+ * less the strip GFOpenDock takes along an edge (GFOpenFiles' free_area(), copied
+ * here). GFOpenDock's window is the one whose screen title starts "GFOpenDock";
+ * an ENV:GFOpenDock/Free of "left top width height" wins when the dock
  * publishes one. Without a dock it is the screen less its title bar. */
 static void free_area(int *l, int *t, int *w, int *h)
 {
@@ -1761,7 +1761,7 @@ static void free_area(int *l, int *t, int *w, int *h)
     ULONG lock;
     LONG got;
     int top = scr->BarHeight + 1, bottom = scr->Height, left = 0, right = scr->Width, a, b, c, d;
-    got = GetVar((STRPTR)"OpenDock/Free", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY);
+    got = GetVar((STRPTR)"GFOpenDock/Free", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY);
     if (got > 0 && sscanf(buf, "%d %d %d %d", &a, &b, &c, &d) == 4 && c >= 400 && d >= 200 && a >= 0 && b >= 0 &&
         a + c <= scr->Width && b + d <= scr->Height) {
         *l = a;
@@ -1772,7 +1772,7 @@ static void free_area(int *l, int *t, int *w, int *h)
     }
     lock = LockIBase(0);
     for (dw = scr->FirstWindow; dw; dw = dw->NextWindow) {
-        if (!dw->ScreenTitle || strncmp((const char *)dw->ScreenTitle, "OpenDock", 8) != 0)
+        if (!dw->ScreenTitle || strncmp((const char *)dw->ScreenTitle, "GFOpenDock", 10) != 0)
             continue;
         if (dw->Width >= dw->Height) {              /* along the top or the bottom */
             if (dw->TopEdge + dw->Height / 2 > scr->Height / 2) {
@@ -1801,10 +1801,10 @@ static void free_area(int *l, int *t, int *w, int *h)
     *h = bottom - top;
 }
 
-/* The first size (the user, 10 October 2026, as in OpenFiles 0.2.3): 800 x
+/* The first size (the user, 10 October 2026, as in GFOpenFiles 0.2.3): 800 x
  * 600, centred in the free area, and never bigger than it, so on a screen
  * smaller than 800 x 600 it is the free area itself. A size the user gives
- * the window is kept and given back by OpenWindows. */
+ * the window is kept and given back by GFOpenWindows. */
 #define START_W 800
 #define START_H 600
 static void start_box(int *l, int *t, int *w, int *h)
@@ -1832,7 +1832,7 @@ static int open_window(void)
     start_box(&l, &t, &w, &h);     /* 800 x 600 in the free area, or the free area when smaller */
 
     win = OpenWindowTags(NULL,
-        WA_Title, (ULONG)"OpenWrite — OpenAmigaWriter",
+        WA_Title, (ULONG)"GFOpenWrite — OpenAmigaWriter",
         WA_ScreenTitle, (ULONG)VERSION_TEXT,
         WA_PubScreen, (ULONG)scr,
         WA_Width, w, WA_Height, h,
@@ -2031,7 +2031,7 @@ static int ensure_spell(void)
     int i;
     if(spell)return 1;
     for(i=0;paths[i];++i){spell=ow_spell_open(paths[i],"PROGDIR:Dictionaries/user.words",msg,sizeof msg);if(spell){set_status(msg);return 1;}}
-    tell("Spell Check","No OpenWrite dictionary was found. Install Dictionaries/en_GB.words beside OpenWrite.");
+    tell("Spell Check","No GFOpenWrite dictionary was found. Install Dictionaries/en_GB.words beside GFOpenWrite.");
     return 0;
 }
 
@@ -2180,7 +2180,7 @@ static int confirm_discard_changes(void)
 {
     struct EasyStruct es = {
         sizeof(struct EasyStruct), 0,
-        (UBYTE *)"OpenWrite",
+        (UBYTE *)"GFOpenWrite",
         (UBYTE *)"The document has unsaved changes.\n\nDiscard them?",
         (UBYTE *)"Discard|Cancel"
     };
@@ -2244,9 +2244,9 @@ static void do_export_pdf(void)
         if (dot) initial[(size_t)(dot - initial)] = 0;
         if (strlen(initial) + 4 < sizeof initial) strcat(initial, ".pdf");
     }
-    lastdir_get("OpenWrite-PDF", pdf_last, sizeof pdf_last);
+    lastdir_get("GFOpenWrite-PDF", pdf_last, sizeof pdf_last);
     fr = AllocAslRequestTags(ASL_FileRequest,
-        ASLFR_TitleText, (ULONG)"Export OpenWrite PDF",
+        ASLFR_TitleText, (ULONG)"Export GFOpenWrite PDF",
         ASLFR_InitialDrawer, (ULONG)pdf_last,
         ASLFR_Window, (ULONG)win, ASLFR_SleepWindow, TRUE,
         ASLFR_DoSaveMode, TRUE, ASLFR_InitialFile, (ULONG)initial,
@@ -2254,7 +2254,7 @@ static void do_export_pdf(void)
     if (!fr) { tell("Export PDF", "The file requester could not be opened."); return; }
     if (!AslRequestTags(fr, TAG_DONE) || !fr->fr_File[0]) { FreeAslRequest(fr); return; }
     snprintf(path, sizeof path, "%s", fr->fr_Drawer);
-    lastdir_put("OpenWrite-PDF", (const char *)fr->fr_Drawer);
+    lastdir_put("GFOpenWrite-PDF", (const char *)fr->fr_Drawer);
     AddPart((STRPTR)path, fr->fr_File, sizeof path);
     FreeAslRequest(fr);
     name = FilePart((STRPTR)path);
@@ -2265,7 +2265,7 @@ static void do_export_pdf(void)
     report = owf_report_new();
     rc = owf_export_file(doc, path, "pdf", report);
     if (rc != OWF_OK) {
-        snprintf(msg, sizeof msg, "OpenWrite could not export the PDF.\n\n%s", owf_error_text(rc));
+        snprintf(msg, sizeof msg, "GFOpenWrite could not export the PDF.\n\n%s", owf_error_text(rc));
         tell("Export PDF", msg);
     } else {
         snprintf(msg, sizeof msg, "%s exported as searchable PDF.", leaf(path));
@@ -2276,13 +2276,13 @@ static void do_export_pdf(void)
 
 static void about(void)
 {
-    tell("OpenWrite",
+    tell("GFOpenWrite",
          VERSION_TEXT "\n\n"
          "A lightweight native word processor for AmigaOS.\n\n"
-         "OpenGadTools interface\n"
+         "GFOpenGadTools interface\n"
          "libowf DOCX/ODT/Amiga compatibility\n"
-         "OpenRTG-ready page canvas\n"
-         "OpenDatatypes and OpenPrint integration points\n\n"
+         "GFOpenRTG-ready page canvas\n"
+         "GFOpenDatatypes and GFOpenPrint integration points\n\n"
          "MIT licence, Copyright (c) 2026 AmigaChrome Team.");
 }
 
@@ -2379,9 +2379,9 @@ static int editor_result(int rc, const char *message)
         return 1;
     }
     if (rc == OWF_ERR_MEMORY)
-        tell("OpenWrite", "There is not enough memory to complete that edit.");
+        tell("GFOpenWrite", "There is not enough memory to complete that edit.");
     else
-        tell("OpenWrite", owf_error_text(rc));
+        tell("GFOpenWrite", owf_error_text(rc));
     return 0;
 }
 
@@ -2396,7 +2396,7 @@ static int copy_selection_to_clipboard(void)
     }
     text = ow_editor_selection_text(editor, &len);
     if (!text) {
-        tell("Clipboard", "OpenWrite could not copy the selected text.");
+        tell("Clipboard", "GFOpenWrite could not copy the selected text.");
         return 0;
     }
     if (!clipboard_set_text(text, len)) {
@@ -2526,10 +2526,10 @@ static const char *image_mime_name(const char *path)
 static int ask_image_file(char *out,size_t out_size)
 {
     struct FileRequester *fr;int ok=0;static char last[512];
-    lastdir_get("OpenWrite-images",last,sizeof last);
+    lastdir_get("GFOpenWrite-images",last,sizeof last);
     fr=AllocAslRequestTags(ASL_FileRequest,ASLFR_InitialDrawer,(ULONG)last,ASLFR_TitleText,(ULONG)"Insert Image",ASLFR_Window,(ULONG)win,ASLFR_SleepWindow,TRUE,ASLFR_DoSaveMode,FALSE,ASLFR_PositiveText,(ULONG)"Insert",TAG_DONE);
     if(!fr)return 0;
-    if(AslRequestTags(fr,TAG_DONE)&&fr->fr_File[0]){snprintf(out,out_size,"%s",fr->fr_Drawer);lastdir_put("OpenWrite-images",(const char *)fr->fr_Drawer);AddPart((STRPTR)out,fr->fr_File,out_size);ok=1;}
+    if(AslRequestTags(fr,TAG_DONE)&&fr->fr_File[0]){snprintf(out,out_size,"%s",fr->fr_Drawer);lastdir_put("GFOpenWrite-images",(const char *)fr->fr_Drawer);AddPart((STRPTR)out,fr->fr_File,out_size);ok=1;}
     FreeAslRequest(fr);return ok;
 }
 
@@ -2541,7 +2541,7 @@ static void do_image(void)
     if(DataTypesBase){o=NewDTObject((APTR)path,DTA_GroupID,GID_PICTURE,PDTA_DestMode,PMODE_V43,PDTA_Remap,FALSE,TAG_DONE);if(o){GetDTAttrs(o,PDTA_BitMapHeader,(ULONG)&bmh,TAG_DONE);if(bmh&&bmh->bmh_Width&&bmh->bmh_Height){width=(int)bmh->bmh_Width*15;height=(int)bmh->bmh_Height*15;}DisposeDTObject(o);}}
     maxw=doc->page.width-doc->page.margin_left-doc->page.margin_right;if(width>maxw&&width>0){height=(int)((long)height*maxw/width);width=maxw;}
     strlcpy(alt,leaf(path),sizeof alt);idx=owf_doc_add_image(doc,leaf(path),image_mime_name(path),data,(size_t)size,width,height,alt);free(data);if(idx<0){tell("Insert Image","There is not enough memory to add the image.");return;}
-    image_cache_clear();if(editor_result(ow_editor_insert_image(editor,idx),"Image inserted through OpenDatatypes."))relayout();
+    image_cache_clear();if(editor_result(ow_editor_insert_image(editor,idx),"Image inserted through GFOpenDatatypes."))relayout();
 }
 
 static void do_table(void)
@@ -2841,7 +2841,7 @@ static int rexx_do_command(const char *command, char **result_out)
         if(ok&&!result[0])snprintf(result,sizeof result,"OK");
     }
     else if(starts_word_ci(command,"QUIT",&arg)){if(editor&&ow_editor_is_dirty(editor)){ok=0;snprintf(result,sizeof result,"Unsaved changes");}else{quit_now=1;snprintf(result,sizeof result,"Quitting");}}
-    else {ok=0;snprintf(result,sizeof result,"Unknown OpenWrite ARexx command");}
+    else {ok=0;snprintf(result,sizeof result,"Unknown GFOpenWrite ARexx command");}
     if(result_out){if(dynamic)*result_out=dynamic;else{*result_out=(char*)malloc(strlen(result)+1);if(*result_out)strcpy(*result_out,result);else ok=0;}}
     return ok;
 }
@@ -3006,7 +3006,7 @@ static int window_main(int argc, char **argv)
     char first[512] = "";
     if (!(GadToolsBase = OpenLibrary((STRPTR)"gadtools.library", 39)) ||
         !(AslBase = OpenLibrary((STRPTR)"asl.library", 38))) {
-        if (argc) PutStr((STRPTR)"OpenWrite needs AmigaOS 3.0 or later\n");
+        if (argc) PutStr((STRPTR)"GFOpenWrite needs AmigaOS 3.0 or later\n");
         rc = 20;
         goto out;
     }
@@ -3030,7 +3030,7 @@ static int window_main(int argc, char **argv)
     }
 
     if (!open_window()) {
-        if (argc) PutStr((STRPTR)"OpenWrite: the window could not open\n");
+        if (argc) PutStr((STRPTR)"GFOpenWrite: the window could not open\n");
         rc = 20;
         goto out;
     }

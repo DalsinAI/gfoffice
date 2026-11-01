@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core: editing a cell. The text being typed and its caret, the
+ * GFOpenCalc's core: editing a cell. The text being typed and its caret, the
  * keys while typing (Excel's "enter" and "edit" modes, and pointing at
  * cells with the arrows in a formula), and committing it through the
  * engine.

@@ -83,7 +83,7 @@ Only Publisher can make these (section 9).
 
 **What exists:** nothing reads PageStream yet (Design-OpenPublisher.md,
 section 9: import in P2). OWConvert answers "not a document format
-OpenWrite knows" for all 17 documents. What the samples show of the
+GFOpenWrite knows" for all 17 documents. What the samples show of the
 containers, for whoever writes the reader:
 
 - **PageStream 1 and 2** start with the bytes `07 23 19 92` (7 files).

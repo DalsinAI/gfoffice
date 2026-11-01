@@ -707,7 +707,7 @@ static int keep_xml(odp *o, owf_kept_kind kind, const owf_xml_node *n)
     }
     k = owf_deck_keep(o->deck, kind, (const char *)o->scratch.data, o->scratch.length);
     if (k < 0)
-        owf_report_add(o->report, OWF_NOTE_LOST, "Objects beyond what OpenPresentation keeps (8 MB) were left out");
+        owf_report_add(o->report, OWF_NOTE_LOST, "Objects beyond what GFOpenPresentation keeps (8 MB) were left out");
     else
         o->deck->kept_format = OWF_KEPT_ODP;
     return k;
@@ -830,7 +830,7 @@ static void keep_part(odp *o, const char *href)
         size_t length;
         if (owf_unzip_read(o->zip, path, &data, &length) == OWF_OK) {
             if (owf_deck_add_part(o->deck, path, manifest_type(o, path), data, length) < 0)
-                owf_report_add(o->report, OWF_NOTE_LOST, "Objects beyond what OpenPresentation keeps (8 MB) were left out");
+                owf_report_add(o->report, OWF_NOTE_LOST, "Objects beyond what GFOpenPresentation keeps (8 MB) were left out");
             free(data);
         }
         return;
@@ -852,7 +852,7 @@ static void keep_part(odp *o, const char *href)
         }
         if (owf_unzip_read(o->zip, p, &data, &length) == OWF_OK) {
             if (owf_deck_add_part(o->deck, p, attr(e, NS_MANIFEST, "media-type"), data, length) < 0)
-                owf_report_add(o->report, OWF_NOTE_LOST, "Objects beyond what OpenPresentation keeps (8 MB) were left out");
+                owf_report_add(o->report, OWF_NOTE_LOST, "Objects beyond what GFOpenPresentation keeps (8 MB) were left out");
             free(data);
         }
     }
@@ -1784,7 +1784,7 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
         read_look(o, obj, st, 1);
         what = is(n, NS_DRAW, "connector") ? "Connectors"
              : is(n, NS_DRAW, "polyline") || is(n, NS_DRAW, "path") ? "Freeform lines and curves"
-             : "Objects OpenPresentation doesn't draw yet";
+             : "Objects GFOpenPresentation doesn't draw yet";
         if (is(n, NS_DRAW, "connector") || is(n, NS_DRAW, "measure")) {
             int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
             length_attr(n, NS_SVG, "x1", &x1);
@@ -1906,7 +1906,7 @@ static void read_transition(odp *o, owf_slide *s, const gstyle *st)
         }
         if (!o->scratch.failed && o->scratch.length)
             t->keep = owf_deck_keep(o->deck, OWF_KEPT_ATTRIBUTES, (const char *)o->scratch.data, o->scratch.length);
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Transitions OpenPresentation doesn't show yet are kept, and shown as a cut");
+        owf_report_add(o->report, OWF_NOTE_APPROX, "Transitions GFOpenPresentation doesn't show yet are kept, and shown as a cut");
     }
     t->duration = same(speed, "slow") ? 2000 : same(speed, "fast") ? 500 : same(speed, "medium") ? 1000 : 0;
     t->advance_after = -1;

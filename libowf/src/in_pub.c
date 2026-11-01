@@ -1,5 +1,5 @@
 /*
- * libowf: Microsoft Publisher files (.pub), OpenPublisher's phase 0 reader.
+ * libowf: Microsoft Publisher files (.pub), GFOpenPublisher's phase 0 reader.
  *
  * .pub has no published specification. What this file knows was worked out
  * from sample files' bytes alone (a clean room): docs/gfoffice/PUB-FORMAT.md
