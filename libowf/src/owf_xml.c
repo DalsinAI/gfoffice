@@ -306,7 +306,8 @@ owf_xml *owf_xml_parse(const char *text, size_t length, int *error)
                 ;
             if (c == qname)
                 goto corrupt;
-            depth++;
+            if (++depth > OWF_XML_MAX_DEPTH)
+                goto corrupt;     /* deeper than any real document: the readers recurse */
             /* Attributes: name="value" or name='value'. */
             for (;;) {
                 char *an, *av, quote, *close;
