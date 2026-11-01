@@ -6,7 +6,7 @@
  * (<c:f>: its values, categories, name) change as a formula's references
  * do; when a sheet is renamed, its new name goes in them. The parts' XML
  * is changed only there: all else in them stays as the file had it.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_int.h"
 

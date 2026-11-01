@@ -9,7 +9,7 @@ other-book references, 3-D ranges, deleted sheets, unions, array
 constants, a chart sheet. Checks what book_dump prints. Then feeds every
 cut-short and damaged copy to book_dump, which must answer with a book or
 an error, never a crash (make book-check runs it under AddressSanitizer).
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import random

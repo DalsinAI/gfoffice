@@ -12,7 +12,7 @@ OpenWrite 2.0.16 and earlier dropped such text boxes. test_layout.c (make
 layout-test) and test_core.c read it: the boxes kept, in their lines, and
 written back as wp:inline. Run it again after changing it, and commit the
 file.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import sys

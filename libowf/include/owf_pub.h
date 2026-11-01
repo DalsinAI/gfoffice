@@ -16,7 +16,7 @@
  * GFOpenPresentation's deck model (owf_deck.h: owf_obj) once that is on
  * main: the same kinds, boxes in twips from the page's top left, text as an
  * owf_story, pictures in an owf_doc's images.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_PUB_H
 #define OWF_PUB_H

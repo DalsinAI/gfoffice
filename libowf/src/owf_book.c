@@ -1,7 +1,7 @@
 /*
  * libowf: the workbook model (the spreadsheet's), numbers as text, and the
  * table of workbook formats.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

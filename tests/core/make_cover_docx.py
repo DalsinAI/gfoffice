@@ -24,7 +24,7 @@ filled band with no text. Its first paragraph is single spaced and holds the
 picture, the title, the version box and the band in runs of 36 points; the
 subtitle and the date are anchored in the next paragraph and placed from it,
 so typing in the first must leave them where they are (2.0.11).
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import base64
 import os

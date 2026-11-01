@@ -1,4 +1,4 @@
-/* Run GFOpenWrite's UI on a useful stack. MIT, Copyright (c) 2026 AmigaChrome Team. */
+/* Run GFOpenWrite's UI on a useful stack. MIT, Copyright (c) 2026 AmiCradle Team. */
 #include "ow_stack.h"
 #include <exec/memory.h>
 #include <exec/tasks.h>

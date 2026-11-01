@@ -7,7 +7,7 @@
  * over empty neighbours as Excel's does), the row numbers and column
  * letters, the active cell, frozen pane lines and the text being typed.
  * Integer arithmetic only.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
 

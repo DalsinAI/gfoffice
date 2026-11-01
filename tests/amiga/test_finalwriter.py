@@ -7,7 +7,7 @@ sections, its paragraphs' indents, alignment and tab stops, and its page.
 Builds the document from docs/formats/finalwriter.md, as Final Writer lays
 its sections out (SHD1, TBDY, the body, then RMST and LMST, for each
 section), converts it to text and HTML and checks them. Exits 1 on a failure.
-Team 5 (W142), 26 October 2026. MIT, Copyright (c) 2026 AmigaChrome Team.
+Team 5 (W142), 26 October 2026. MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import struct

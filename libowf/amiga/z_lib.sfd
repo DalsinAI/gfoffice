@@ -3,7 +3,7 @@
 * (DalsinAI/amigachrome-guest libraries/openzlib, z.lvo). libowf calls it
 * for ODT, DOCX and PDF; only the slots up to the last one it calls are
 * named for what they are, the rest are listed so the offsets hold.
-* Copyright (c) 2026 AmigaChrome Team. MIT licence.
+* Copyright (c) 2026 AmiCradle Team. MIT licence.
 ==base _ZBase
 ==basetype struct Library *
 ==libname z.library

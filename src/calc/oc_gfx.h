@@ -5,7 +5,7 @@
  * for the core's own without the charts changing. The core's own
  * (oc_gfx.c) makes the draw list's items, cut to a pane, for the window
  * to paint.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OC_GFX_H
 #define OC_GFX_H

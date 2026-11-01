@@ -12,7 +12,7 @@
  * FTXT are read FORM by FORM. Kept beyond the specification, for the files
  * programs write: ESC [ as CSI, tab, form feed (a page break) and vertical
  * tab (a line break).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

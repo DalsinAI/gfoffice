@@ -5,7 +5,7 @@
  * TIMEVALUE, DATEVALUE. Serial dates as the rest of the engine has them
  * (Excel's 29 February 1900 included). Excel's names, argument counts and
  * errors (owf_calc_fn.h).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_fn.h"
 

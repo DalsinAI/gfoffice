@@ -26,7 +26,7 @@
  *     in double-double.
  * The constants are worked out at 420 digits by
  * tests/library/gen_libm_tables.py, which `make test` runs to check them.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_libm.h"
 #include "owf_internal.h"

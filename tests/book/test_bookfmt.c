@@ -9,7 +9,7 @@
  *   test_bookfmt --parse    reads numbers a line at a time and prints each
  *                           as libowf reads it (hex bits) and writes it,
  *                           for test_xml_books.py to hold against Python's
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

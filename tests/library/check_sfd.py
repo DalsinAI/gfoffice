@@ -25,7 +25,7 @@ And for the four: each <name>_calls.h is what scripts/gen-lib-calls.py
 makes from its SFD now, and their first 17 calls (the shared ones) are the
 same calls in the same registers in all four.
 Prints what differs; exit status 1 when anything does.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import re

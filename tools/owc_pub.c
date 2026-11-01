@@ -3,7 +3,7 @@
  * with libowf linked in. libowf reads .pub (GFOpenPublisher's reader) but
  * writes no format a .pub could become yet, so OWConvert says what the file
  * is, and that it can't convert it.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #if defined(OWF_USE_LIBRARY) && !defined(OWF_USE_PUB_LIBRARY)
 #error "owc_pub.c is built for owfpub.library (OWF_USE_PUB_LIBRARY)"

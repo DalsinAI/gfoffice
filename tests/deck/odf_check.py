@@ -14,7 +14,7 @@
 
 Prints one line per problem; exit 1 when there is any. Used by
 test_decks.py; odfpy is for the tests only (pip install odfpy).
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import io
 import sys

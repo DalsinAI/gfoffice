@@ -2,7 +2,7 @@
  * owf.library's own printf, sscanf, strtol, strtoul and case calls
  * (libowf/library/owf_libc.c) against the C library's, on the PC, for every
  * format libowf writes and the numbers its readers parse.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_libc.h"
 

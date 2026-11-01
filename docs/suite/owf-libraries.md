@@ -1,6 +1,6 @@
 # owf.library split into four libraries
 
-Version 0.2 | 25 October 2026 | AmigaChrome Team (Team 5), MIT
+Version 0.2 | 25 October 2026 | AmiCradle Team (Team 5), MIT
 
 Dale decided, and confirmed at 14:2x, to split owf.library along the
 programs' lines: one library each for Write, Calc, Pub and Present. Today

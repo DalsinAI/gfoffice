@@ -17,7 +17,7 @@ OpenWrite 2.0.18 and earlier left table styles out: the cells' paragraphs
 were spaced as the body's, and the header row plain. test_layout.c (make
 layout-test) reads it.
 Run it again after changing it, and commit the file.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import sys

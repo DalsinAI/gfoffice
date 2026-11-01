@@ -4,7 +4,7 @@
  * (owf_lib_book_checks: that file built with OWF_LIB_CHECKS_PART 1 for this
  * library): the fixture workbook as XLS, XLSX and ODS, saved and read back,
  * and the formula engine on a new book, through the library's own maths.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf.h"
 #include "owf_open.h"

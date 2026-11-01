@@ -11,7 +11,7 @@ only makes the test file; nothing of it is in libowf.
 The formulas below are in Excel's syntax, as the engine reads them; this
 script turns them into OpenFormula for the .fods. Column A of the Calc
 sheet holds each formula's text, column B the formula.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import re

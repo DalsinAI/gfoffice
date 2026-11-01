@@ -1,6 +1,6 @@
 # GFOffice: the shared pieces, and what GFOpenWrite must change
 
-Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmigaChrome Team, MIT
+Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmiCradle Team, MIT
 
 The **GFOffice Suite** (Dale, 25 October 2026, 01:31) is four GFOpen apps:
 GFOpenWrite (exists), GFOpenCalc (being written: W105 the formula engine, W106

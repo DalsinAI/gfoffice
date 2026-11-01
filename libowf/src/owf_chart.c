@@ -10,7 +10,7 @@
  *
  * Small parts, read as trees. Damaged ones give fewer charts, never an
  * error; only memory running out is one.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

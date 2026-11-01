@@ -3,7 +3,7 @@
 * document model and its formats: DOCX, ODT, the Amiga word processors'
 * files (Final Writer, Wordworth, ProWrite, IFF FTXT), text, ANSI and HTML,
 * and PDF out.
-* Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).
+* Copyright (c) 2026 AmiCradle Team. MIT licence (see LICENSE).
 * The calls are libowf's, with its names and types; new calls go at the end.
 * The first 17, libowf's shared calls (memory, reports, kinds, zip), are the
 * same calls at the same offsets in all four of GFOffice's libraries

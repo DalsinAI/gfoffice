@@ -12,7 +12,7 @@ New Horizons' own Convert Notes (fixtures/convert-notes.pw) reads whole.
   left pages' are kept (2.0.23), and written to DOCX (even headers) and
   ODT (style:header-left) and read back.
 Exits 1 on a failure. Team 5 (W142), 26 October 2026.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import re

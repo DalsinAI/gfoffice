@@ -6,7 +6,7 @@
  * fractions, dates and times, "@", up to four sections with colours and
  * conditions. Digits come from the number's 15 significant digits, as
  * Excel shows them, so 2.675 with two decimals is 2.68.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_int.h"
 

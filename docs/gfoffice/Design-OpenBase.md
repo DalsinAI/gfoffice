@@ -1,6 +1,6 @@
 # GFOpenBase: design
 
-Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmigaChrome Team, MIT
+Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmiCradle Team, MIT
 
 ## 0. This is the first written design
 

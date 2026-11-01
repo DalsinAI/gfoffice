@@ -21,7 +21,7 @@
  * (tests/calc_core). Plain C99, no floating point of its own (the engine's
  * doubles aside), memory bounded by the book and OC_UNDO_BUDGET.
  *
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OPENCALC_CORE_H
 #define OPENCALC_CORE_H

@@ -7,7 +7,7 @@
  * as the text Excel shows ("SUM(A1:A3)"), with their last results as the
  * cells' values. Excel 5 and 95 workbooks and password-protected ones are
  * recognised but not read yet.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

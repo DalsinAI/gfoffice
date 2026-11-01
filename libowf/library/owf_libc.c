@@ -1,6 +1,6 @@
 /*
  * owf.library's own C library calls (owf_libc.h).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_libc.h"
 

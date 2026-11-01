@@ -1,6 +1,6 @@
 # GFOffice's stress documents
 
-26 October 2026 | Team 5 (W142) | AmigaChrome Team, MIT
+26 October 2026 | Team 5 (W142) | AmiCradle Team, MIT
 
 Dale, 26 October 2026: "generate a really complicated pptx with animations
 etc to test presenter ... Same for Publisher and PageStream, Final Writer

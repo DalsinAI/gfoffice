@@ -18,7 +18,7 @@
  * font's nearest, when it can't be scaled) are scaled to the size asked,
  * never taken as they are.
  *
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OW_FONTWIDTHS_H
 #define OW_FONTWIDTHS_H

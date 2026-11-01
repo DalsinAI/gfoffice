@@ -11,7 +11,7 @@ from owfwrite_lib.sfd, and so on.
 A double comes in two data registers, its high word first, and is put
 together here (as owf.library's own glue did). scripts/gen-sdk.sh runs this
 with ndkgen.py; tests/library/check_sfd.py checks the output is current.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import re

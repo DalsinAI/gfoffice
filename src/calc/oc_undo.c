@@ -6,7 +6,7 @@
  * book. Undoing keeps the present state of the same things for redo first.
  * Bounded by OC_UNDO_LIMIT steps and OC_UNDO_BUDGET bytes, as GFOpenWrite's
  * undo is bounded by its 16 steps.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
 

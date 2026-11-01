@@ -14,7 +14,7 @@
  * Small rather than fast: codes are read a bit at a time (RFC 1951,
  * 3.2.2), with no lookup tables. z.library, when there is one, is the
  * faster path (owf_unzip.c).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_inflate.h"
 #include "owf.h"

@@ -23,7 +23,7 @@
  * document needs inflate or deflate. A document, book, deck or .pub
  * belongs to the task using it; libowf keeps no state between calls.
  *
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #ifndef OWF_LIBBASE_H
 #define OWF_LIBBASE_H
@@ -67,7 +67,7 @@ static const char lib_name[] = OWF_LIB_NAME;
 static const char lib_id[] =
     OWF_LIB_NAME " " OWF_LIB_VERS " (" OWF_LIB_DATE ") libowf " OWF_VERSION ", AmiCradle Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
-    "$VER: " OWF_LIB_NAME " " OWF_LIB_VERS " (" OWF_LIB_DATE ") MIT, Copyright (c) 2026 AmigaChrome Team";
+    "$VER: " OWF_LIB_NAME " " OWF_LIB_VERS " (" OWF_LIB_DATE ") MIT, Copyright (c) 2026 AmiCradle Team";
 
 static struct Library *lib_init(REG(d0, struct OWFLibBase *base), REG(a0, BPTR seglist),
                                 REG(a6, struct ExecBase *sys));

@@ -20,7 +20,7 @@
  *     arrows, lines, polygons) are drawn at their frame's box, and so are
  *     a picture's crop and an object kept but not drawn (as a labelled box).
  *
- * Plain C99, no floating point. MIT, Copyright (c) 2026 AmigaChrome Team.
+ * Plain C99, no floating point. MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OPENPRESENTATION_CORE_H
 #define OPENPRESENTATION_CORE_H

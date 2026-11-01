@@ -2,7 +2,7 @@
  * GFOpenWrite's pages on GFOpenLayout (src/core/ow_layout.c): a document built
  * here and the sample documents, laid out into pages, with the caret and
  * the pointer mapped both ways.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "ow_layout.h"
 

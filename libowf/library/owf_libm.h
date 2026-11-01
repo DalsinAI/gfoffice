@@ -4,7 +4,7 @@
  * the C library's; owf_runtime_math.c gives them their C names inside the
  * library. Plain C on doubles, with no FPU, no long double and no other
  * library; no state, so any number of tasks can call them at once.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_LIBM_H
 #define OWF_LIBM_H

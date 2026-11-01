@@ -24,7 +24,7 @@
  * layout's own pictures, animations) is left out or shown as a box, and the
  * report says which. Nothing is kept for saving as PPTX yet: GFOpenPresentation
  * saves what it read as ODP.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_deck_int.h"
 

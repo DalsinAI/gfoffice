@@ -1,7 +1,7 @@
 /*
  * GFOpenPresentation's core: a slide laid out by GFOpenLayout (see
  * openpresentation_core.h).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "openpresentation_core.h"
 #include "ow_layout.h"

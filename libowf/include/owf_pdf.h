@@ -13,7 +13,7 @@
  * measured (PDF's horizontal scaling), so the PDF breaks lines where the
  * layout did, whatever fonts the layout measured with. Pictures: JPEG as
  * it is, PNG decoded (as out_pdf.c does). No floating point.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_PDF_H
 #define OWF_PDF_H

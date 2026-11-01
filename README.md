@@ -270,7 +270,7 @@ saving and the rest of the editor come next.
 
 ## Licence
 
-MIT, Copyright (c) 2026 AmigaChrome Team (`LICENSE`).
+MIT, Copyright (c) 2026 AmiCradle Team (`LICENSE`).
 
 Third-party components and data retain their own licences and notices; see
 `THIRD_PARTY.md` and `licenses/`.
@@ -282,5 +282,5 @@ Team".
 ## Contributors
 
 GFOpenWrite is created and maintained by
-[SacredTrees](https://github.com/SacredTrees), copyright AmigaChrome Team.
+[SacredTrees](https://github.com/SacredTrees), copyright AmiCradle Team.
 Everyone whose work it includes is credited in `CONTRIBUTORS.md`.

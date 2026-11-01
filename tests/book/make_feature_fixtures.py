@@ -25,7 +25,7 @@ test_sheet_features.py checks what libowf reads of it and keeps on
 saving. openpyxl (pip install openpyxl) only makes the file; nothing of it
 is in libowf. Run it again after changing the sheets below, and change
 test_sheet_features.py to match.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import datetime
 import os

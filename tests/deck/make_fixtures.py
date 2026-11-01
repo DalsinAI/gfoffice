@@ -11,7 +11,7 @@
 Run it again after changing odp-hand or the slides below, and change
 test_decks.py to match. odfpy, PIL and LibreOffice only make the test
 files; nothing of them is in OpenPresentation.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import shutil

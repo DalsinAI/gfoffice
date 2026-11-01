@@ -12,7 +12,7 @@
  * opens it with owf_open() (owf_open.h). OWF_USE_LIBRARY alone is
  * owf.library 2, the one library before the split, until GFOpenUp ships the
  * four. The types are the same either way.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_H
 #define OWF_H

@@ -1,7 +1,7 @@
 /*
  * libowf's own inflate (owf_inflate.c): raw DEFLATE (RFC 1951), as zip
  * entries hold it, with no z.library and no zlib.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_INFLATE_H
 #define OWF_INFLATE_H

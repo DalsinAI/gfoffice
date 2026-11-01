@@ -1,7 +1,7 @@
 /*
  * OWConvert's workbooks, on owfcalc.library (OWF_USE_CALC_LIBRARY) or with
  * libowf linked in: the workbook formats and converting between them.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #if defined(OWF_USE_LIBRARY) && !defined(OWF_USE_CALC_LIBRARY)
 #error "owc_book.c is built for owfcalc.library (OWF_USE_CALC_LIBRARY)"

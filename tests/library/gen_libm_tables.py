@@ -7,7 +7,7 @@ right bits) and split into doubles.
 
 prints the C tables owf_libm.c holds; `--check FILE` instead checks that
 FILE (owf_libm.c) holds exactly these, as `make test` runs it.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import sys
 from decimal import Decimal as D, getcontext

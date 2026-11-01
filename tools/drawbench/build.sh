@@ -8,7 +8,7 @@
 #   OPENAMIGARTG  an openamigartg checkout (required)
 #   OUT           where the programs go (default tools/drawbench/build)
 #
-# MIT, Copyright (c) 2026 AmigaChrome Team.
+# MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 S=${OS32_GCC16:-"$HOME/AmiCradle/stoves/os32-gcc16"}/prefix

@@ -16,7 +16,7 @@
  * (owf_softdouble.c, owf_libm.c): no mathieee library is opened, so no
  * caller's FPCR is touched.
  *
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #include <exec/types.h>
 #include <exec/resident.h>
@@ -56,7 +56,7 @@ static const char lib_name[] = "owf.library";
 static const char lib_id[] =
     "owf.library 2.5 (27.10.2026) libowf " OWF_VERSION ", AmiCradle Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
-    "$VER: owf.library 2.5 (27.10.2026) MIT, Copyright (c) 2026 AmigaChrome Team";
+    "$VER: owf.library 2.5 (27.10.2026) MIT, Copyright (c) 2026 AmiCradle Team";
 
 static struct Library *lib_init(REG(d0, struct OWFLibBase *base), REG(a0, BPTR seglist),
                                 REG(a6, struct ExecBase *sys));

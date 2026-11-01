@@ -20,7 +20,7 @@ repository); it borrows make_cover_docx.py's JPEG. On A4:
 OpenWrite 2.0.19 and earlier left text boxes out and put every picture in
 its line. test_layout.c (make layout-test) reads it.
 Run it again after changing it, and commit the file.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import sys

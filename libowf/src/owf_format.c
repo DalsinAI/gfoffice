@@ -1,7 +1,7 @@
 /*
  * libowf: the table of formats, finding a file's format, and reading and
  * writing files.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

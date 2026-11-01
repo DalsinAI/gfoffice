@@ -2,7 +2,7 @@
  * OWConvert's documents, on owfwrite.library (OWF_USE_WRITE_LIBRARY) or
  * with libowf linked in: the document formats, converting between them,
  * and what a file is (owf_file_kind), which OWConvert asks first.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #if defined(OWF_USE_LIBRARY) && !defined(OWF_USE_WRITE_LIBRARY)
 #error "owc_doc.c is built for owfwrite.library (OWF_USE_WRITE_LIBRARY)"

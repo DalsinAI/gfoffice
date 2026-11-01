@@ -4,7 +4,7 @@
  * back; a new deck with a slide and a paragraph of text; a page drawn by
  * the page PDF writer, which hands back memory the program frees with
  * owf_free.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf.h"
 #include "owf_open.h"

@@ -18,7 +18,7 @@
 # OWFLibsTest and OWFLibTest are built too). Either way ODT and DOCX deflate and inflate
 # through z.library, ours (amigachrome-guest libraries/openzlib), opened
 # when a document first needs it; there is no zlib source in the build.
-# MIT, Copyright (c) 2026 AmigaChrome Team.
+# MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)

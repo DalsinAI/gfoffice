@@ -5,7 +5,7 @@
  * tasks at once; test_owf_lib_checks.c runs the same ones on the PC with
  * libowf linked in and the library's own maths (make libtest-host), so
  * their expected answers are proven before an Amiga runs them.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_LIB_CHECKS_H
 #define OWF_LIB_CHECKS_H

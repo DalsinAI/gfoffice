@@ -6,7 +6,7 @@
  * of the same deck print the same even when their tables are in another
  * order. Exit 0 when the file was read (and written), 10 when it was
  * refused (with the reason), never a crash, cut short or not.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_deck.h"
 

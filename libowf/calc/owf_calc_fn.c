@@ -4,7 +4,7 @@
  * empty cells and errors in a reference, in an array and given directly.
  * The table at the end is in alphabetical order (the compiler finds a
  * name by halves); a function that is not in it gives #NAME?.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_fn.h"
 

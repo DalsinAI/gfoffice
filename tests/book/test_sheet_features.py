@@ -23,7 +23,7 @@ what it leaves out.
     reach them; a drawing whose parts are missing left out whole;
   - charts: what owf_sheet_charts reads of them (where, kind, title,
     legend, axis, and each series' cells, colour and cached values).
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import re

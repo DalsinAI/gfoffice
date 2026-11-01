@@ -8,7 +8,7 @@
  * numbers: the document's font index plus one (OW_LAYOUT_FONT), 0 being
  * the document's default font.
  *
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OW_LAYOUT_H
 #define OW_LAYOUT_H

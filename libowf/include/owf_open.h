@@ -22,7 +22,7 @@
  * split (docs/suite/owf-libraries.md), until GFOpenUp ships the four; it
  * checks every structure.
  *
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_OPEN_H
 #define OWF_OPEN_H

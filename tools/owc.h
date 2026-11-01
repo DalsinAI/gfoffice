@@ -6,7 +6,7 @@
  * one library's calls per file). With libowf linked in they are built
  * together, with no library. Each part opens its library when it is first
  * asked for, so a conversion loads only the libraries it needs.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWC_H
 #define OWC_H

@@ -1,7 +1,7 @@
 /*
  * libowf's files and clock over dos.library, for owf.library (which has no
  * C library). The C library's version is ../src/owf_sys.c.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

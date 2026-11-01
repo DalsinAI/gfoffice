@@ -1,4 +1,4 @@
-# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmigaChrome Team.
+# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmiCradle Team.
 # Escher (OfficeArt-style) record tree: u16 (version low 4 bits, instance
 # high 12), u16 type, u32 length; version 0xF holds child records.
 import sys, struct

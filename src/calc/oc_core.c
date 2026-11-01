@@ -2,7 +2,7 @@
  * GFOpenCalc's core: the book and its engine, sheets, cell names, the active
  * cell and the selection, and moving them with the keys as Excel and
  * LibreOffice do.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
 

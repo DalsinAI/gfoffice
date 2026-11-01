@@ -7,7 +7,7 @@
  * left beside it. A save that works replaces the file and leaves nothing
  * else; a drawer or a file that can't be written over is not replaced.
  * Runs in a new drawer under /tmp (or TMPDIR), removed at the end.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #define _POSIX_C_SOURCE 200809L
 #include "owf_internal.h"

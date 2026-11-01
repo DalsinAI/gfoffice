@@ -11,7 +11,7 @@
  * checks (owf_lib_pub_checks), for owfpub.library: OWFLibsTest builds it
  * twice so (build-library.sh). Without it, owf_lib_run_checks runs them
  * all, and what files are, zips and inflate.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf.h"
 #include "owf_calc.h"

@@ -3,7 +3,7 @@
  * keys while typing (Excel's "enter" and "edit" modes, and pointing at
  * cells with the arrows in a formula), and committing it through the
  * engine.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
 

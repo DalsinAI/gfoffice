@@ -1,4 +1,4 @@
-# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmigaChrome Team.
+# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmiCradle Team.
 # The tagged values of a .pub Contents stream, as worked out from the
 # corpus's bytes (docs/gfoffice/PUB-FORMAT.md): (id, type) byte pairs; the
 # type gives the size of what follows.

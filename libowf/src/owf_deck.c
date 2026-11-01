@@ -1,7 +1,7 @@
 /*
  * libowf: decks (owf_deck.h): building, changing and freeing them, what an
  * object takes from its layout and master, and the deck formats' table.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_deck_int.h"
 

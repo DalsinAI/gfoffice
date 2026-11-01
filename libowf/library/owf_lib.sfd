@@ -1,6 +1,6 @@
 ==id $Id: owf_lib.sfd 2.0 (25.10.2026) $
 * "owf.library": libowf, GFOpenWrite's file formats, as a shared library.
-* Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).
+* Copyright (c) 2026 AmiCradle Team. MIT licence (see LICENSE).
 * The calls are owf.h's, with its names and types; new calls go at the end.
 * Version 2 adds workbooks (owf.h), the formula engine (owf_calc.h), what a
 * file is and the structures' sizes (owf.h), zip and inflate (owf_zip.h) and

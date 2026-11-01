@@ -24,7 +24,7 @@
  * libowf/calc: a program that calculates compiles them with libowf's own
  * and links the maths library (-lm on the PC, libnix's soft maths on the
  * Amiga), or opens owf.library 2, which holds them and their maths.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_CALC_H
 #define OWF_CALC_H

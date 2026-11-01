@@ -4,7 +4,7 @@
  * CONCAT, UNICHAR, UNICODE, FIXED, DOLLAR, NUMBERVALUE; IFS, SWITCH;
  * ISFORMULA, ISREF, ISEVEN, ISODD, TYPE, ERROR.TYPE, CELL, SHEET, SHEETS.
  * Excel's names, argument counts and errors (owf_calc_fn.h).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_fn.h"
 

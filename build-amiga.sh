@@ -7,7 +7,7 @@
 # on those libraries (OWF=library, in $OUT/onlib: docs/suite/owf-libraries.md). The sample documents go in
 # $OUT/samples, for trying GFOpenWrite in a lab. A local build can still run build-os3.sh itself with OS32_GCC16
 # and OPENLAYOUT_SRC set.
-# MIT, Copyright (c) 2026 AmigaChrome Team (Team 5, 25 October 2026).
+# MIT, Copyright (c) 2026 AmiCradle Team (Team 5, 25 October 2026).
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 OUT=${OUT:-$HERE/build/os3}

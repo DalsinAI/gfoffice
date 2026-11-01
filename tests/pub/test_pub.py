@@ -16,7 +16,7 @@
 3. With PUB_CORPUS set to a folder (tests/pub/fetch_samples.sh fills one),
    every .pub there is read the same way, and a summary is printed.
 
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import random

@@ -5,7 +5,7 @@
  * the first time libowf needs it. Without z.library, zip entries are read
  * with libowf's own inflate (owf_inflate.c) and written stored, and PNG
  * pictures are left out of PDFs; everything else works.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_ZLIB_H
 #define OWF_ZLIB_H

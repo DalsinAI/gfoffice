@@ -11,7 +11,7 @@ entries link to, on a page of their own, each with its bookmark (Word's
 _GoBack beside one, and a second bookmark), the last in a table's cell.
 test_layout.c (make layout-test) reads it. Run it again after changing it,
 and commit the file.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import sys

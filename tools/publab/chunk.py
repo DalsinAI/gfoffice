@@ -1,4 +1,4 @@
-# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmigaChrome Team.
+# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmiCradle Team.
 import os, sys, struct
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tlv import walk, block_at

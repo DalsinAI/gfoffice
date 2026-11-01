@@ -13,7 +13,7 @@
  *     fit, and the deck's PDF a page a slide, hidden ones left out.
  *
  * Prints what fails; exit 1 when anything did.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_deck.h"
 #include "owf_pdf.h"

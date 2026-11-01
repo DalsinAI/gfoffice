@@ -3,7 +3,7 @@
  * fixtures and on files made here (ODP and PPTX packages, flat ODF, an
  * GFOpenBase header), and owf_struct_size against sizeof. Run from the
  * repository's top: make kind-test.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf.h"
 #include "owf_internal.h"

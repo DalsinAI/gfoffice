@@ -1,6 +1,6 @@
 # GFOpenPublisher: design
 
-Version 0.1, draft for Dale's approval | 25 October 2026 | AmigaChrome Team, MIT
+Version 0.1, draft for Dale's approval | 25 October 2026 | AmiCradle Team, MIT
 
 GFOpenPublisher is the GFOffice Suite's desktop-publishing program. Dale, 25
 October 2026, 01:36-01:40: it is "a microsoft publisher 100% compatible app".

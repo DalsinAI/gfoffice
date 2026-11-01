@@ -14,7 +14,7 @@
  * 3.2: owf_calc_place_chart and owf_calc_nudge_chart, a chart moved
  * (GFOpenCalc 0.1.27).
  *
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfcalc.library"
 #define OWF_LIB_VERSION 3

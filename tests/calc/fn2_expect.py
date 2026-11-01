@@ -20,7 +20,7 @@ expected, tolerance). Tolerance 0: the result shown as the engine shows
 it (General, 15 significant digits) must be the same text. Otherwise the
 result must be a number within that relative distance of the expected one
 (the iterative functions, the distributions and floating-point matrices).
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import datetime
 import math

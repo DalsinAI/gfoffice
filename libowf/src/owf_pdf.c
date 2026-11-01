@@ -3,7 +3,7 @@
  * a content stream; the standard fonts, pictures and links are objects
  * written once at the end. Numbers are written in hundredths of a point,
  * from twips (a twip is five hundredths), with no floating point.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_pdf.h"
 #include "owf_internal.h"

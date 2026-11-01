@@ -15,7 +15,7 @@
  * value, operators and functions pop theirs and push one. Nothing recurses
  * while it runs; the parser is an operator-precedence (shunting-yard) one
  * with its stacks on the heap.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_CALC_INT_H
 #define OWF_CALC_INT_H

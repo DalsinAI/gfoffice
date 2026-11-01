@@ -12,7 +12,7 @@
  * series and its continued fraction; the regularised incomplete beta
  * function by its continued fraction (DLMF 8.17.22), worked by Lentz's
  * method; inverses by Halley's or Newton's method inside a bracket.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_fn.h"
 

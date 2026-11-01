@@ -1,6 +1,6 @@
 # GFOpenCalc: the formula engine
 
-Version 0.2 | 25 October 2026 | AmigaChrome Team, MIT
+Version 0.2 | 25 October 2026 | AmiCradle Team, MIT
 
 The formula engine works out the formulas of a workbook (`owf_book`) for
 GFOpenCalc, the spreadsheet of the GFOffice Suite. It is part of libowf: the

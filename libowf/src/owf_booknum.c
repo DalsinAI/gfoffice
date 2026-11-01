@@ -7,7 +7,7 @@
  * The exact work is whole-number arithmetic on 16-bit pieces, as
  * owf_number_text does it; the system's doubles only take values apart and
  * put them together by powers of two, which never round.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

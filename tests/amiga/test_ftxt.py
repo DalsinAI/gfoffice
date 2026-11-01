@@ -13,7 +13,7 @@
    tab, which libowf keeps (as a tab, a page break and a line break) though
    the specification leaves them unused, are taken out of the file first.
 Exits 1 on a failure. Team 5 (W142), 26 October 2026.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import struct

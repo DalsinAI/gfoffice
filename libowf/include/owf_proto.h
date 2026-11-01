@@ -13,7 +13,7 @@
  * owf_report_add takes "...", which a library call can't: on a library it
  * is formatted here, with the program's own vsnprintf, and handed over as
  * text (owf_report_text). A note is cut at 255 bytes.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #if defined(OWF_USE_LIBRARY) && !defined(OWF_LIBRARY_BUILD) && !defined(OWF_PROTO_H) && defined(OWF_H_DONE) && \
     defined(OWF_CALC_H_DONE) && defined(OWF_PUB_H_DONE) && defined(OWF_ZIP_H_DONE) && defined(OWF_DECK_H_DONE) && \

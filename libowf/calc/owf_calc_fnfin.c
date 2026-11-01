@@ -6,7 +6,7 @@
  *
  * RATE, IRR and XIRR use Newton's method from the guess, to 1e-10, with
  * Excel's documented limits on tries (20, 20 and 100); past them, #NUM!.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_fn.h"
 

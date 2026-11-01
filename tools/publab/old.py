@@ -1,4 +1,4 @@
-# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmigaChrome Team.
+# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmiCradle Team.
 # Publisher 98/2000-format Contents (header 22 00 2c 01): the directory at
 # the header's u32 0x16, a u16 count and 10-byte entries.
 import sys, struct

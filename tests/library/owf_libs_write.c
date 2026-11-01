@@ -5,7 +5,7 @@
  * the sample DOCX and ODT; frees memory the library allocated with owf_free
  * and grows a document's runs with owf_realloc, as the editor does (as
  * OWFLibTest does for owf.library 2).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf.h"
 #include "owf_open.h"

@@ -3,7 +3,7 @@
  * calls, Publisher's detector, then owf_lib_checks.c's .pub check
  * (owf_lib_pub_checks: that file built with OWF_LIB_CHECKS_PART 3 for this
  * library): Sample.pub read, its pages and version.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf.h"
 #include "owf_open.h"

@@ -11,7 +11,7 @@
 # reads one. Aminet is not reachable from the agents' shell; run it on a PC.
 #
 # Needs curl and sha256sum (or shasum).
-# MIT, Copyright (c) 2026 AmigaChrome Team.
+# MIT, Copyright (c) 2026 AmiCradle Team.
 set -u
 
 EXTRACT=0

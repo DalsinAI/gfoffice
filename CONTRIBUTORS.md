@@ -14,14 +14,14 @@ We are The AmiCradle Team, who build AmiCradle alongside SacredTrees:
 
 ## Copyright holder
 
-GFOpenWrite's own code and documents are Copyright (c) 2026 AmigaChrome Team,
+GFOpenWrite's own code and documents are Copyright (c) 2026 AmiCradle Team,
 released under the MIT licence (`LICENSE`). `THIRD_PARTY.md` lists the
 libraries and fonts GFOpenWrite uses at build and run time, each under its own
 licence.
 
 ## From our other repositories
 
-- **GFOpenGadTools** (`DalsinAI/opengadtools`): its link library, copied from main `d5f4dff` into `third_party/opengadtools` (MIT, AmigaChrome Team).
+- **GFOpenGadTools** (`DalsinAI/opengadtools`): its link library, copied from main `d5f4dff` into `third_party/opengadtools` (MIT, AmiCradle Team).
 
 ## Work we learned from
 

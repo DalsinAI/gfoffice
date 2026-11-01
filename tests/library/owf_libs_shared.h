@@ -4,7 +4,7 @@
  * 17 calls all four libraries share (memory, reports, kinds, zip and
  * inflate, the structures' sizes), reading a file into that library's
  * memory, and the file's owf_libs_unit (OWF_LIBS_UNIT).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_LIBS_SHARED_H
 #define OWF_LIBS_SHARED_H

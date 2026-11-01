@@ -21,7 +21,7 @@
  * (ogt_iconset_attach), status bar and list, in the theme
  * (opengadtools docs/style/README.md). 68040, no FPU needed.
  *
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -81,7 +81,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define PROGRAM "GFOpenPresentation"
 #define VERSION_TEXT "GFOpenPresentation 0.2.1 (25.10.2026)"
 static const char version[] __attribute__((used)) =
-    "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
+    "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
 enum { C_NEW = 1, C_OPEN, C_SAVE, C_PRINT, C_PDF, C_UNDO, C_REDO };
 enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501 };
@@ -1978,7 +1978,7 @@ static void about(void)
     char text[400];
     snprintf(text, sizeof text,
              VERSION_TEXT "\nThe GFOffice Suite's slides.\n\nOpens ODP and PPTX, saves ODP, exports PDF,\n"
-             "prints through GFOpenPrint.\n\nCore %s, libowf %s, GFOpenLayout %s.\nMIT, Copyright (c) 2026 AmigaChrome Team.",
+             "prints through GFOpenPrint.\n\nCore %s, libowf %s, GFOpenLayout %s.\nMIT, Copyright (c) 2026 AmiCradle Team.",
              OPR_CORE_VERSION, OWF_VERSION, OL_VERSION);
     tell("About " PROGRAM, text);
 }
