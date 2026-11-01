@@ -6,7 +6,7 @@
  * pointer are mapped through the slide's GFOpenLayout display list: each
  * paragraph is a block of the frame, each run a node after it (after the
  * bullet and its tab, for a list paragraph), as opr_layout.c builds them.
- * Plain C99, no floating point. MIT, Copyright (c) 2026 AmigaChrome Team.
+ * Plain C99, no floating point. MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "openpresentation_core.h"
 

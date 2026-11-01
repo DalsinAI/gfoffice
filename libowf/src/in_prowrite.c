@@ -14,7 +14,7 @@
  * holds the page's width and height in decipoints (longs at 2 and 6;
  * PREC repeats them). Still to confirm: what the right margin is measured
  * from, and where tab positions start.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

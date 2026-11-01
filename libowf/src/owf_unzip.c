@@ -5,7 +5,7 @@
  * own inflate (owf_inflate.c), so no package needs z.library to be read.
  * Sizes are capped and CRCs checked, so a damaged or hostile archive gives
  * an error, not a crash or a flood of memory.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 #include "owf_inflate.h"

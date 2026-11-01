@@ -14,7 +14,7 @@ sheets below, and change test_xml_books.py to match.
 The names of Excel's functions in OpenFormula that owf_xlformula.c uses
 were found the same way: a workbook calling each function, saved by
 LibreOffice as ODS (functions_odf() below writes it; see --functions).
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import datetime
 import os

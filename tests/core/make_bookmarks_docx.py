@@ -17,7 +17,7 @@ parts.
 OpenWrite 2.0.20 and earlier kept every bookmark at its paragraph's start.
 test_layout.c (make layout-test) and run_tests.py read it.
 Run it again after changing it, and commit the file.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import sys

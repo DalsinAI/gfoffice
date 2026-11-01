@@ -3,7 +3,7 @@
  * ([MS-CFB]) through libowf's own reader (owf_cfb.c), and with OUTDIR each
  * stream written out under it, for looking at a .pub's bytes. Part of the
  * format lab (docs/gfoffice/PUB-FORMAT.md, section 1).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

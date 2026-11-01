@@ -8,7 +8,7 @@
  * (Kahn's algorithm), and what is left when no formula is ready is a loop:
  * its strongly connected parts (Tarjan's algorithm, with its own stack)
  * get #REF!, and the formulas after them go on from there.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_int.h"
 

@@ -3,7 +3,7 @@
  * workbooks and Word 97-2003 documents. Streams are read whole into memory;
  * a chain that runs off the end of the file gives the bytes there are, with
  * cut_short set, so a damaged file still shows what it can.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

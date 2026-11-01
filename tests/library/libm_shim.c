@@ -5,7 +5,7 @@
  * call and strtod the engine makes through the library's own code
  * (make libm-calc-test). Built with -fno-builtin so the compiler keeps the
  * calls.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_libm.h"
 

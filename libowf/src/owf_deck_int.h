@@ -1,7 +1,7 @@
 /*
  * libowf: what the deck code shares inside the library (owf_deck.c,
  * in_odp.c, out_odp.c). Not part of the public interface.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_DECK_INT_H
 #define OWF_DECK_INT_H

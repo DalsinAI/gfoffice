@@ -23,7 +23,7 @@
  *
  * Built with -DOSD_HOST_TEST the functions are named osd_* and work on the
  * bits, for the tests.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 
 typedef unsigned long long osd_u64;

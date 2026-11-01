@@ -4,7 +4,7 @@
  * names, and matching format names and extensions. They were owf_format.c's
  * and owf_book.c's; here, a library without the document or workbook
  * format tables links none of them.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

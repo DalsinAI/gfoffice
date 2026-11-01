@@ -13,7 +13,7 @@
  *
  * Each sheet's XML is made and packed in turn, so only one sheet's text is
  * in memory beside the file.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

@@ -2,7 +2,7 @@
  * GFOpenCalc's core on the PC: navigation, editing, undo, fill, insert and
  * delete, the clipboard's text, styles, sheets, files and the draw list.
  * Run from the repository's top (make calc-test, make calc-check).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <math.h>
 #include <stdio.h>

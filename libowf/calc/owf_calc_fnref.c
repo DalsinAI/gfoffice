@@ -7,7 +7,7 @@
  * OFFSET and INDIRECT make references as they are worked out: they are
  * volatile (as in Excel), and tell the engine what they reached
  * (calc_note_reach) so that a formula there is worked out first.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_fn.h"
 

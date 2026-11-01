@@ -5,7 +5,7 @@
  * polygons are cut to it (Sutherland and Hodgman), a box becoming a fill
  * (OC_DRAW_FILL) and anything else a polygon (OC_DRAW_POLY) the window
  * fills; text is an OC_DRAW_TEXT item in its box.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_gfx.h"
 

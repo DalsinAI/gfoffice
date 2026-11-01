@@ -5,7 +5,7 @@
  * has them.
  *
  *   test-owf-lib-checks FIXTURES_DIR TEMP_PREFIX
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf.h"
 #include "owf_lib_checks.h"

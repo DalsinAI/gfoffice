@@ -11,7 +11,7 @@
  * times ("2026-10-21", "2026-10-21 13:45"), TRUE and FALSE, Excel's error
  * names, or text. A field starting with "=" stays text: CSV is data, and
  * a formula in it would be worked out from another program's text.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

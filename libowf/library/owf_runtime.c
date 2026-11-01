@@ -13,7 +13,7 @@
  * programs give it back through owf_free() (GFOpenWrite's editor grows a
  * document's arrays itself), so any task may free what another allocated.
  *
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <exec/types.h>
 #include <exec/memory.h>

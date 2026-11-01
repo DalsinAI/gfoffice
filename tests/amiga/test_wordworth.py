@@ -8,7 +8,7 @@ box's place, then its FORM WOWO), a PTXT text object and two shapes, laid
 out as Wordworth 6 and 7 write them (docs/formats/wordworth.md). Their text
 must come out as frames, in reading order (top to bottom, then left to
 right), and the shapes be reported. Exits 1 on a failure.
-Team 5 (W142), 26 October 2026. MIT, Copyright (c) 2026 AmigaChrome Team.
+Team 5 (W142), 26 October 2026. MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import struct

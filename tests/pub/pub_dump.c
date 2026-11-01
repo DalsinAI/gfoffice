@@ -4,7 +4,7 @@
  * format notes (docs/gfoffice/PUB-FORMAT.md). Exit 0 when the file was
  * read, 10 when it was refused (with the reason), never a crash, cut short
  * or not.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_pub.h"
 

@@ -10,7 +10,7 @@
 # reads every .pub in DIR as well.
 #
 # Needs git and curl; python3 for the bug tracker's attachments.
-# MIT, Copyright (c) 2026 AmigaChrome Team.
+# MIT, Copyright (c) 2026 AmiCradle Team.
 set -u
 
 [ $# -eq 1 ] || { echo "usage: $0 DIR" >&2; exit 2; }

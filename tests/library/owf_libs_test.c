@@ -17,7 +17,7 @@
  * z.library (ours, openzlib) is optional: without it the libraries read
  * zip packages with their own inflate, and write them stored.
  *
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_libs.h"
 

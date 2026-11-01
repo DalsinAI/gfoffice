@@ -3,7 +3,7 @@
  * them, quotes where a value needs them, CR LF after each row, UTF-8.
  * A formula's cell gives its last result; numbers are written as a formula
  * would write them, unformatted.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

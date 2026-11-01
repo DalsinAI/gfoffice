@@ -18,7 +18,7 @@
  *
  * Big parts (the sheets, the shared strings) are read as a stream, element
  * by element, so a sheet's memory is its cells', not a tree of its XML.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

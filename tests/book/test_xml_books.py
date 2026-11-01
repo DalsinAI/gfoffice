@@ -18,7 +18,7 @@ written by libowf:
   - every file cut short and damaged, at the zip's level and inside its
     XML: book_dump must answer with a book or an error, never a crash
     (make book-check runs it under AddressSanitizer and UBSan).
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import io
 import os

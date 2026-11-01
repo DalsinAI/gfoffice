@@ -18,7 +18,7 @@ and checks what deck_dump prints of them. Then:
 
 With DECK_LIBREOFFICE=1 and LibreOffice installed, LibreOffice opens the
 ODP written from each fixture too.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import io
 import os

@@ -11,7 +11,7 @@
  * libowf's (owf_book) and their formulas the engine's (owf_calc.h).
  * 68040 code, no FPU needed (libowf's doubles are soft maths).
  *
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <exec/types.h>
 #include <intuition/intuition.h>
@@ -72,7 +72,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #define VERSION_TEXT "GFOpenCalc 0.1.27 (25.10.2026)"
 static const char version[] __attribute__((used)) =
-    "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmigaChrome Team";
+    "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
 #ifndef IDCMP_EXTENDEDMOUSE                      /* OS 3.2's wheel messages (intuition/intuition.h V47) */
 #define IDCMP_EXTENDEDMOUSE 0x80000000
@@ -2190,7 +2190,7 @@ static void about(void)
          "GFOpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
          "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n\n"
-         "MIT licence, Copyright (c) 2026 AmigaChrome Team.");
+         "MIT licence, Copyright (c) 2026 AmiCradle Team.");
 }
 
 static void do_copy(int cut)

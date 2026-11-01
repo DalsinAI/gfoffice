@@ -24,7 +24,7 @@
  * converts documents; owfcalc.library, owfpresent.library and owfpub.library
  * are opened only when a conversion needs them. With libowf linked in the
  * same files are built together.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf.h"
 #include "owc.h"

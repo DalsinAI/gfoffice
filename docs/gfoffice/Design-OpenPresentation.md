@@ -1,6 +1,6 @@
 # GFOpenPresentation: design
 
-Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmigaChrome Team, MIT
+Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmiCradle Team, MIT
 
 Dale, 25 October 2026, 01:10: "ok, get going, we will need to enhance
 openwrite, but go". The suite is the **GFOffice Suite** (Dale, 01:31): the

@@ -3,7 +3,7 @@
  * drawn from its GFOpenLayout display list into the page PDF writer
  * (owf_pdf.h), with what GFOpenLayout 0.2 can't draw (shapes other than
  * rectangles, a picture's crop) drawn at its frame's box.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "openpresentation_core.h"
 #include "ow_layout.h"

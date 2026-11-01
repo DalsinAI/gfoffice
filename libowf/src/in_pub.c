@@ -9,7 +9,7 @@
  *
  * Every read is bounded by what the file holds: a damaged or cut-short file
  * gives what can be read, with notes, never a read past the end.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 #include "owf_inflate.h"

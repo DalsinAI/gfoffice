@@ -2,7 +2,7 @@
  * GFOpenCalc's core: the commands on the selection. Fill, insert and delete
  * rows and columns, clear, styles, column widths and row heights, hiding,
  * frozen panes. Each one is one undo step.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
 

@@ -2,7 +2,7 @@
 * "owfcalc.library" 3.2: GFOpenCalc's part of libowf: workbooks. The workbook
 * model, its formats (XLSX, ODS, XLS, CSV), charts and the formula engine,
 * with the library's own double arithmetic and maths.
-* Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).
+* Copyright (c) 2026 AmiCradle Team. MIT licence (see LICENSE).
 * The calls are libowf's, with its names and types; new calls go at the end.
 * The first 17, libowf's shared calls (memory, reports, kinds, zip), are the
 * same calls at the same offsets in all four of GFOffice's libraries

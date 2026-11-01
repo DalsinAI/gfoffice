@@ -9,7 +9,7 @@
  * the results its writer saved, every formula is worked out again, and
  * the two are compared; a difference not on the known list fails. Last, a
  * speed note: 10,000 formulas worked out.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf.h"
 #include "owf_calc.h"

@@ -4,7 +4,7 @@
  * decimal, a date or a time compared with the rule's bounds, a text's
  * length, one of a list, a formula that must be true), when the rule has
  * an error alert; a list's choices, for its dropdown.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
 

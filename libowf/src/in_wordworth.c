@@ -22,7 +22,7 @@
  *         shapes and pictures are counted and reported
  *   FORM ILBM  pictures, not brought across yet
  * Style bits are graphics.library's: 1 underline, 2 bold, 4 italic.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

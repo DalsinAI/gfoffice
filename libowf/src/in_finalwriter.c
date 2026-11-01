@@ -27,7 +27,7 @@
  *         section's right one becomes the header (labels keep everything
  *         there); later sections' are left out
  * Bold and italic come from the font's name ("SoftSans_Bold").
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

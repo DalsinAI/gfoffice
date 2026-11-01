@@ -14,7 +14,7 @@ what deck_dump prints of them. Then:
   missing, relationships that point nowhere or in a circle), read to an
   answer, never a crash (make deck-check runs this under AddressSanitizer
   and UBSan).
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import random

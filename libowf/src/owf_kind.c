@@ -14,7 +14,7 @@
  * so each library judges the files no package, compound file or header
  * tells apart by its own readers only. Publisher's detector is here, not
  * with its reader (in_pub.c), so every library knows a .pub.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 #include "owf_pub.h"

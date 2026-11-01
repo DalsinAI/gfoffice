@@ -12,7 +12,7 @@
  * colour scale colours each number by where it falls between its points.
  * The looks are kept until the book, the sheet or the cells showing
  * change, so that moving the cursor doesn't work them out again.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
 

@@ -14,7 +14,7 @@
  *   - the edited deck saved as ODP and read back with the new text.
  *
  * Prints what fails; exit 1 when anything did.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "openpresentation_core.h"
 

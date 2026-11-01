@@ -2,7 +2,7 @@
  * libowf: HTML out, in the shape the GFOpenWrite editor loads (DESIGN.md,
  * section 5): page setup in @page, paragraphs with inline formatting, our
  * own parts as ow- classes. Reading HTML back comes with the editor.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

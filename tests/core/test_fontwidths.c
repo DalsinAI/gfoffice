@@ -11,7 +11,7 @@
  * the widths are never the window font's taken as they are (GFOpenWrite
  * 2.0.3's first build: 81 pages, not 32; its second: drawn 1.5 times as wide
  * as laid out).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "ow_fontwidths.h"
 

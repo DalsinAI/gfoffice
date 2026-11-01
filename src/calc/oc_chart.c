@@ -10,7 +10,7 @@
  *
  * All of it through the drawer (oc_gfx.h): lines, filled polygons and
  * text, so another can stand in for the core's own.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_gfx.h"
 

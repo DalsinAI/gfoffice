@@ -4,7 +4,7 @@
  * loop over the instructions with a stack of values, no recursion. Working
  * values (text made on the way, arrays) come from an arena that is emptied
  * after each formula, with a limit, so one formula's memory is bounded.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_int.h"
 

@@ -20,7 +20,7 @@
  * What the model doesn't edit (other shapes, embedded charts and objects,
  * animations, rare transitions) is kept as the file's XML, with the styles,
  * drawing definitions and package members it refers to, and written back.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_deck_int.h"
 

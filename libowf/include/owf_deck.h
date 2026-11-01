@@ -18,7 +18,7 @@
  * own XML and written back on save.
  *
  * docs/gfoffice/Design-OpenPresentation.md, section 3, is the design.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_DECK_H
 #define OWF_DECK_H

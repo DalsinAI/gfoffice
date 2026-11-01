@@ -14,7 +14,7 @@
  * Each function has Excel's name, argument count and value rules; where
  * Excel's documentation and OpenFormula (ODF 1.2 part 2) differ, the
  * function follows Excel's and its comment says so.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_CALC_FN_H
 #define OWF_CALC_FN_H

@@ -2,7 +2,7 @@
  * z.library for libowf on the Amiga: opened the first time a document needs
  * deflate or inflate, closed by owf_z_close() (owf.library's expunge, or a
  * program's exit when libowf is linked in).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_zlib.h"
 

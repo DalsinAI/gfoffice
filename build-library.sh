@@ -51,7 +51,7 @@
 #                         scripts/gen-lib-calls.py
 #   OWF_LEGACY            no: owf.library 2 and OWFLibTest are not built
 #
-# MIT, Copyright (c) 2026 AmigaChrome Team.
+# MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)

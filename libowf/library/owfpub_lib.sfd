@@ -2,7 +2,7 @@
 * "owfpub.library" 3.0: GFOpenPublisher's part of libowf: Publisher files. The
 * .pub reader and its compound-file reader, with the document model its text
 * uses.
-* Copyright (c) 2026 AmigaChrome Team. MIT licence (see LICENSE).
+* Copyright (c) 2026 AmiCradle Team. MIT licence (see LICENSE).
 * The calls are libowf's, with its names and types; new calls go at the end.
 * The first 17, libowf's shared calls (memory, reports, kinds, zip), are the
 * same calls at the same offsets in all four of GFOffice's libraries

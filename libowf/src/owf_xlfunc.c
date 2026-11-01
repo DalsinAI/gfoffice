@@ -3,7 +3,7 @@
  * ([MS-XLS] 2.5.198.17, Ftab), and column names. The reader turns a
  * formula's numbers into names with this table; the writer and the
  * spreadsheet's calculation will go the other way.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

@@ -3,7 +3,7 @@
  * them beside the real ones; owf_runtime.c gives them their C names inside
  * the library. Taken from weblayout's (DalsinAI/openamigabrowser
  * src/weblayout/wl_libc.c), with %o and strtoul added for libowf.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_LIBC_H
 #define OWF_LIBC_H

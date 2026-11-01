@@ -14,7 +14,7 @@
  *
  * Build: tools/drawbench/build.sh (the os32-gcc16 stove). Results: docs/suite/cairo-rendering.md, section 6.
  * NO_CAIRO builds it without cairo, to weigh what cairo adds to a program.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
 #include <stdlib.h>

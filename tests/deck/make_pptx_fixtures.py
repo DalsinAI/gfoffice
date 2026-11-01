@@ -20,7 +20,7 @@ layouts are PowerPoint's 4:3 ones); no one's documents are used.
 
 The fixtures are checked in; run this again only to change them, and
 update test_pptx.py's expectations with them.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import io
 import os

@@ -6,7 +6,7 @@
  * Deflated members inflate through z.library when it is in LIBS: (zlib on
  * the PC), and with libowf's own inflate (owf_inflate.c, RFC 1951) when it
  * is not, so a program reads any zip package on any install.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_ZIP_H
 #define OWF_ZIP_H

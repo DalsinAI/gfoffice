@@ -14,7 +14,7 @@ On A4 with inch margins, in Trebuchet MS 11 point:
   wrapSquare, that the lines of whatever paragraph reaches it go round.
 test_layout.c (make layout-test) reads it: no body text under a frame.
 Run it again after changing it, and commit the file.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import sys

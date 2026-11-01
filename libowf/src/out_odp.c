@@ -11,7 +11,7 @@
  * from the file the deck came from, which are written back as they were.
  * Lengths are written in points with two decimals: exactly the twips the
  * deck holds.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_deck_int.h"
 

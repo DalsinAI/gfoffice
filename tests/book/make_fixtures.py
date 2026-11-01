@@ -8,7 +8,7 @@ it is in OpenWrite. Run it again after changing the sheets below, and change
 test_books.py to match. (Frozen panes do not survive a conversion without a
 window; test_books.py builds its own workbook for those and the records
 LibreOffice does not write.)
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import shutil

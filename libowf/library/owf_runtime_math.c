@@ -4,7 +4,7 @@
  * own (owf_libm.c), over its own double arithmetic (owf_softdouble.c). A
  * file of their own, so a library whose code calls none of them (built
  * from an archive by build-library.sh) links none of the maths either.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_libm.h"
 

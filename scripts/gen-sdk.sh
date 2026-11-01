@@ -11,7 +11,7 @@
 #
 #   OPENSDK_SRC   an openamigasdk checkout (default ../openamigasdk)
 #
-# MIT, Copyright (c) 2026 AmigaChrome Team.
+# MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SDK=${OPENSDK_SRC:-"$HERE/../openamigasdk"}

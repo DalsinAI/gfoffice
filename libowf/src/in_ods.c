@@ -21,7 +21,7 @@
  * cells'. Repeated rows and cells (number-rows-repeated, the empty rows to
  * the end of a sheet) cost nothing unless they hold something, and what
  * they may make is bounded.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

@@ -5,7 +5,7 @@
  * on each paragraph and run, as Word itself does for direct formatting.
  * Elements inside w:pPr and w:rPr follow the schema's order, which Word
  * insists on.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

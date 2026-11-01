@@ -8,7 +8,7 @@
  * The arithmetic and compare checks are amigachrome-guest's
  * tests/native/open_softdouble_test.c (main, blob f069118), unchanged; the
  * conversion checks are new here, with owf_softdouble.c's conversions.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
 #include <stdlib.h>

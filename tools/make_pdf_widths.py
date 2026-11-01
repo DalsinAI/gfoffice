@@ -12,7 +12,7 @@ WinAnsiEncoding from 32 to 255. Courier's are all 600.
 FONTDIR is where LiberationSans-Regular.ttf and the others are
 (default /usr/share/fonts/truetype/liberation). Needs fontTools (tests and
 tools only; pip install fonttools).
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import sys
@@ -55,7 +55,7 @@ def main():
         " * 255. Made by tools/make_pdf_widths.py from the Liberation fonts' advance",
         " * widths (SIL Open Font Licence 1.1), which match Helvetica's and Times'.",
         " * Courier's are all 600. Do not edit: run the tool again.",
-        " * MIT, Copyright (c) 2026 AmigaChrome Team.",
+        " * MIT, Copyright (c) 2026 AmiCradle Team.",
         " */",
         '#include "owf_internal.h"',
         "",

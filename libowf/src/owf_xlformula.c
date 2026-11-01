@@ -13,7 +13,7 @@
  * formula engine's, owf_calc). Function names that the formats spell
  * differently were found by saving each name in both formats with another
  * program (tests/book/make_xml_fixtures.py keeps the evidence).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

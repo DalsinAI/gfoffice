@@ -2,7 +2,7 @@
  * libowf's files and clock over the C library: the PC (where the tests
  * run) and Amiga programs that link libowf in. owf.library has its own over
  * dos.library (library/owf_sys_dos.c).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

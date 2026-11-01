@@ -5,7 +5,7 @@
  * are on the heap, so a deeply nested formula costs memory, not stack; and
  * the rewriter adjusts the references in a formula's text for copy, fill
  * and inserted or deleted rows and columns.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_int.h"
 

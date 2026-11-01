@@ -1,6 +1,6 @@
 # GFOpenWrite: formats
 
-Version 1.0 | 7 October 2026 | AmigaChrome Team, MIT
+Version 1.0 | 7 October 2026 | AmiCradle Team, MIT
 
 Every format GFOpenWrite opens or saves, what we know about it, and where that
 knowledge comes from. The design is in [../DESIGN.md](../DESIGN.md), section 4.

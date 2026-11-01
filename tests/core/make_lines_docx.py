@@ -14,7 +14,7 @@ OpenWrite 2.0.17 and earlier read exact and atLeast as single spacing.
 test_layout.c (make layout-test) reads it: the lines that far apart, and
 the spacing written back to DOCX and ODT and read again.
 Run it again after changing it, and commit the file.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import sys

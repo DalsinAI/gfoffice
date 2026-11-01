@@ -16,7 +16,7 @@
  * height. Those go in attributes of libowf's own namespace beside ODF's,
  * which other programs ignore, as ODF lets them, and which libowf reads
  * back, so that a workbook goes through ODS unchanged.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

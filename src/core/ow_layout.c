@@ -1,7 +1,7 @@
 /*
  * GFOpenWrite's pages on GFOpenLayout (ow_layout.h): the owf_doc as
  * GFOpenLayout's tree, laid out into pages, and positions both ways.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "ow_layout.h"
 

@@ -1,4 +1,4 @@
-# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmigaChrome Team.
+# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmiCradle Team.
 # Property set stream reader after [MS-OLEPS] (Microsoft's published spec).
 import sys, struct
 NAMES = {1:'codepage',2:'title',3:'subject',4:'author',5:'keywords',6:'comments',7:'template',8:'lastauthor',

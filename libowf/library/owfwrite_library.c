@@ -17,7 +17,7 @@
  * 2.0.23), at its end, so owf_doc is larger and a program's size check
  * refuses 3.1. No call changes.
  *
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3

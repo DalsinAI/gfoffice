@@ -1,6 +1,6 @@
 # GFOpenPresentation and Apache OpenOffice Impress: a feature checklist
 
-Version 0.1 | 25 October 2026 | AmigaChrome Team, MIT
+Version 0.1 | 25 October 2026 | AmiCradle Team, MIT
 
 Dale, 25 October 2026: "The spec we are chasing is to mirror what Apache
 OpenOffice does in all its apps." This is the list for Impress, which

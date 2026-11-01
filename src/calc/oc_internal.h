@@ -1,6 +1,6 @@
 /*
  * GFOpenCalc's core: what its files share (not for the window).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OC_INTERNAL_H
 #define OC_INTERNAL_H

@@ -4,7 +4,7 @@
  * functions, sums of squares, number bases and Roman numerals, the inverse
  * hyperbolic functions, matrices and SUBTOTAL. Excel's names, argument
  * counts and errors (owf_calc_fn.h).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_calc_fn.h"
 

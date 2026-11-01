@@ -16,7 +16,7 @@
  * document model's owf_doc is larger and a program's size check refuses
  * 3.1. No call changes.
  *
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3

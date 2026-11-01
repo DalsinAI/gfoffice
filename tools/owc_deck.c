@@ -3,7 +3,7 @@
  * or with libowf linked in: to ODP or flat ODP, and to PDF, a page a slide,
  * laid out by GFOpenLayout (GFOpenPresentation's core, src/deck, built in when
  * OWC_DECK_PDF is defined, for the same library as this file).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #if defined(OWF_USE_LIBRARY) && !defined(OWF_USE_PRESENT_LIBRARY)
 #error "owc_deck.c is built for owfpresent.library (OWF_USE_PRESENT_LIBRARY)"

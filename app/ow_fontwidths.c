@@ -1,6 +1,6 @@
 /*
  * GFOpenWrite's text widths for the layout (ow_fontwidths.h).
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "ow_fontwidths.h"
 

@@ -12,7 +12,7 @@
  * then answers that must be exact (10^15, LOG10(1000), sqrt(2)^2...).
  * strtod: random decimal numbers of up to 40 digits, bit for bit with the
  * C library's, and where it stops.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_libm.h"
 

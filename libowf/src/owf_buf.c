@@ -1,6 +1,6 @@
 /*
  * libowf: growing buffers, UTF-8 and the character sets.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 

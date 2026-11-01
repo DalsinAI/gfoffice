@@ -14,7 +14,7 @@ On A4 with inch margins:
 test_layout.c (make layout-test) reads it: every page's header and footer
 have their frames where Word puts them.
 Run it again after changing it, and commit the file.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import os
 import sys

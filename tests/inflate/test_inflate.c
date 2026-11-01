@@ -13,7 +13,7 @@
  * 3. damaged streams (bits flipped, bytes changed, cut short, random),
  *    whose verdict and bytes must be zlib's. Run under ASan and UBSan by
  *    make check, with buffers of exactly the stated sizes.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #define _POSIX_C_SOURCE 199309L   /* clock_gettime */
 

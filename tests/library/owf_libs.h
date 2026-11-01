@@ -3,7 +3,7 @@
  * programs use them (docs/suite/owf-libraries.md). Each library's calls are
  * in a file of their own, built for that library (owf_proto.h: one
  * library's calls per file), which gives the test one of these.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_LIBS_H
 #define OWF_LIBS_H

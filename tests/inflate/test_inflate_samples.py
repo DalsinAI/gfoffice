@@ -19,7 +19,7 @@ writes every entry stored.
    CRC or broken deflate data, "damaged"; another compression method or an
    encrypted entry, "cannot do that". Cut-short and bit-flipped copies of
    every sample give an answer, never a crash.
-MIT, Copyright (c) 2026 AmigaChrome Team.
+MIT, Copyright (c) 2026 AmiCradle Team.
 """
 import glob
 import io

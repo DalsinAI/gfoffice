@@ -4,7 +4,7 @@
  * 255. Made by tools/make_pdf_widths.py from the Liberation fonts' advance
  * widths (SIL Open Font Licence 1.1), which match Helvetica's and Times'.
  * Courier's are all 600. Do not edit: run the tool again.
- * MIT, Copyright (c) 2026 AmigaChrome Team.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
 
