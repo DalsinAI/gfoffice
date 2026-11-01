@@ -33,13 +33,13 @@ static int import_ole(const unsigned char *data, size_t length, owf_doc *doc, ow
 {
     (void)doc;
     if (has_utf16_name(data, length, "EncryptedPackage"))
-        owf_report_add(report, OWF_NOTE_LOST, "This document is protected with a password; OpenWrite cannot open protected documents yet");
+        owf_report_add(report, OWF_NOTE_LOST, "This document is protected with a password; GFOpenWrite cannot open protected documents yet");
     else if (has_utf16_name(data, length, "Workbook") || has_utf16_name(data, length, "Book"))
         owf_report_add(report, OWF_NOTE_LOST, "This is an Excel workbook (.xls), not a document; OWConvert can save its sheet as CSV");
     else if (has_utf16_name(data, length, "WordDocument"))
-        owf_report_add(report, OWF_NOTE_LOST, "This is a Word 97-2003 document (.doc); OpenWrite cannot open these yet. Word or LibreOffice can save it as DOCX");
+        owf_report_add(report, OWF_NOTE_LOST, "This is a Word 97-2003 document (.doc); GFOpenWrite cannot open these yet. Word or LibreOffice can save it as DOCX");
     else
-        owf_report_add(report, OWF_NOTE_LOST, "This is an Office file of a kind OpenWrite does not open");
+        owf_report_add(report, OWF_NOTE_LOST, "This is an Office file of a kind GFOpenWrite does not open");
     return OWF_ERR_UNSUPPORTED;
 }
 

@@ -67,7 +67,7 @@ static void paragraph_text(const owf_doc *doc, int p, char *out, size_t size)
 
 static int test_render(void)
 {
-    owf_doc *doc = doc_with("OpenWrite");
+    owf_doc *doc = doc_with("GFOpenWrite");
     ow_editor *ed;
     ow_renderer r;
     if (!doc) return 101;
@@ -454,7 +454,7 @@ static int test_automatic_pagination(void)
     ow_editor *ed;
     ow_renderer r;
     int i, pages;
-    const char *line = "This is a reasonably long paragraph used to exercise automatic page layout in OpenWrite. It should wrap onto several visual lines on an A4 page.";
+    const char *line = "This is a reasonably long paragraph used to exercise automatic page layout in GFOpenWrite. It should wrap onto several visual lines on an A4 page.";
     if (!doc) return 1201;
     owf_parafmt_init(&pf); owf_charfmt_init(&cf);
     for (i = 0; i < 40; ++i) {
@@ -763,10 +763,10 @@ static int test_headers_fields(void)
     ow_selection sel;
     if(!doc)return 1451;
     ed=ow_editor_new(doc);if(!ed)return 1452;
-    if(ow_editor_set_story_text(ed,OW_STORY_HEADER,"OpenWrite  {PAGE}/{PAGES}")!=OWF_OK)return 1453;
+    if(ow_editor_set_story_text(ed,OW_STORY_HEADER,"GFOpenWrite  {PAGE}/{PAGES}")!=OWF_OK)return 1453;
     if(doc->header.nparas!=1||doc->header.paras[0].nruns<3)return 1454;
     text=ow_editor_story_text(ed,OW_STORY_HEADER);if(!text)return 1455;
-    if(strcmp(text,"OpenWrite  {PAGE}/{PAGES}")){free(text);return 1456;}free(text);
+    if(strcmp(text,"GFOpenWrite  {PAGE}/{PAGES}")){free(text);return 1456;}free(text);
     memset(&sel,0,sizeof sel);sel.anchor.paragraph=sel.focus.paragraph=0;sel.anchor.run=sel.focus.run=0;sel.anchor.byte_offset=sel.focus.byte_offset=4;ow_editor_set_selection(ed,&sel);
     if(ow_editor_insert_field(ed,OWF_FIELD_DATE)!=OWF_OK)return 1457;
     if(doc->body.paras[0].nruns<3||doc->body.paras[0].runs[1].kind!=OWF_RUN_FIELD||doc->body.paras[0].runs[1].field!=OWF_FIELD_DATE)return 1458;
@@ -951,7 +951,7 @@ static int test_pdf_export(void)
     cf.flags = OWF_BOLD; cf.size = 14 * OWF_TWIPS_PER_POINT;
     for (i = 0; i < 55; ++i) {
         owf_para *p = owf_story_add(&doc->body, &pf);
-        if (!p || owf_para_add_text(p, &cf, "OpenWrite searchable PDF output with formatting and automatic pagination.", 70) != OWF_OK) return 1502;
+        if (!p || owf_para_add_text(p, &cf, "GFOpenWrite searchable PDF output with formatting and automatic pagination.", 70) != OWF_OK) return 1502;
     }
     if (owf_export_file(doc, "/tmp/openwrite-core.pdf", "pdf", NULL) != OWF_OK) return 1503;
     f = fopen("/tmp/openwrite-core.pdf", "rb"); if (!f) return 1504;
@@ -962,7 +962,7 @@ static int test_pdf_export(void)
     if(strncmp(data,"%PDF-1.4",8)){free(data);return 1508;}
     if(!strstr(data,"/Type /Pages /Count ")){free(data);return 1509;}
     if(!strstr(data,"Helvetica-Bold") && !strstr(data,"Times-Bold")){free(data);return 1510;}
-    if(!strstr(data,"(OpenWrite)") || !strstr(data,"(searchable)")){free(data);return 1511;}
+    if(!strstr(data,"(GFOpenWrite)") || !strstr(data,"(searchable)")){free(data);return 1511;}
     free(data);remove("/tmp/openwrite-core.pdf");owf_doc_free(doc);return 0;
 }
 

@@ -127,7 +127,7 @@ static const char *kind_names[NKINDS] = { "random", "text", "xml", "runs", "peri
 
 static void make_data(int kind, unsigned char *d, size_t n)
 {
-    static const char *words[] = { "the ", "Amiga ", "document ", "OpenWrite ", "and ", "of ", "workbench ",
+    static const char *words[] = { "the ", "Amiga ", "document ", "GFOpenWrite ", "and ", "of ", "workbench ",
                                    "68040 ", "chip ", "RAM ", "\n", "paragraph. ", "z.library ", "a " };
     static const char *tags[] = { "<text:p text:style-name=\"P1\">", "</text:p>", "<w:r><w:t>", "</w:t></w:r>",
                                   "<table:table-cell office:value-type=\"float\" office:value=\"", "\"/>", "Hello ",

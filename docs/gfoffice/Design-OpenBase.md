@@ -1,11 +1,11 @@
-# OpenBase: design
+# GFOpenBase: design
 
 Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmigaChrome Team, MIT
 
 ## 0. This is the first written design
 
-OpenBase's README (DalsinAI/openamigabase) says: "**Design complete.
-Implementation queued behind OpenWrite.**" There was no design document behind
+GFOpenBase's README (DalsinAI/openamigabase) says: "**Design complete.
+Implementation queued behind GFOpenWrite.**" There was no design document behind
 it:
 
 - The repository's whole history, on both of its branches (`main` and
@@ -15,25 +15,25 @@ it:
 - amigachrome's `docs/project/Project-openamigabase.md` (7 October) searched
   too and found none: "Where the design lives is unknown."
 
-So this is OpenBase's first written design. The README's "Direction" list
+So this is GFOpenBase's first written design. The README's "Direction" list
 (SQLite `.oadb` projects, visual table, relationship, query, form and report
-designers, Datatype object fields, OpenWrite and OpenPrint for output, ARexx,
+designers, Datatype object fields, GFOpenWrite and GFOpenPrint for output, ARexx,
 a runtime mode) is its starting point. Everything else here is new, and is
 for Dale to approve before code. The README's "design complete" line should
 point here once this is merged.
 
-OpenBase is written from scratch. No LibreOffice Base, OpenOffice or other
+GFOpenBase is written from scratch. No LibreOffice Base, OpenOffice or other
 database front-end code is read, copied or ported. SQLite is used as a
 library, built by openamigasqlite from the pinned upstream amalgamation.
 
-The pieces OpenBase shares with OpenWrite, OpenCalc and OpenPresentation
+The pieces GFOpenBase shares with GFOpenWrite, GFOpenCalc and GFOpenPresentation
 (owf.library, the PDF writer, the clipboard, spelling, the Open requester) are
 in [Design-Suite-Shared.md](Design-Suite-Shared.md).
 
 ## 1. What it is
 
 The relational database and front-end builder of the GFOffice Suite (the
-Open apps OpenWrite, OpenCalc, OpenPresentation and OpenBase), for AmigaOS
+GFOpen apps GFOpenWrite, GFOpenCalc, GFOpenPresentation and GFOpenBase), for AmigaOS
 3.2:
 
 - a project is one SQLite file, `.oadb`, holding the data and the design;
@@ -41,9 +41,9 @@ Open apps OpenWrite, OpenCalc, OpenPresentation and OpenBase), for AmigaOS
   hold any Datatype object (a picture, a sound, a document);
 - a visual query designer that writes SQL, and shows it;
 - forms (fields bound to a table or query, subforms for related rows) and
-  banded reports, printed and exported through OpenWrite's document model,
-  GFOffice's PDF writer and OpenPrint;
-- CSV and DBF import, CSV export, and sheets to and from OpenCalc;
+  banded reports, printed and exported through GFOpenWrite's document model,
+  GFOffice's PDF writer and GFOpenPrint;
+- CSV and DBF import, CSV export, and sheets to and from GFOpenCalc;
 - an ARexx port, and a runtime mode for finished front ends.
 
 Its targets are GFOffice's: AmigaOS 3.2, 68040 code, no FPU required, usable
@@ -51,28 +51,28 @@ at 8 MB, comfortable at 16-32 MB.
 
 ### 1.1 The README's gate is met
 
-The README queues OpenBase until OpenWrite has "a stable native baseline".
+The README queues GFOpenBase until GFOpenWrite has "a stable native baseline".
 Each item of its gate, as of 25 October 2026:
 
 | Gate item | State | Evidence |
 | --- | --- | --- |
-| Native application and editor shell | Done | OpenWrite 2.0.1 (`app/openwrite2.c`), in OpenUp's OpenWrite Part |
-| OpenGadTools UI conventions | Done | `docs/UX_DESIGN.md`; `third_party/opengadtools` |
+| Native application and editor shell | Done | GFOpenWrite 2.0.1 (`app/openwrite2.c`), in GFOpenUp's GFOpenWrite Part |
+| GFOpenGadTools UI conventions | Done | `docs/UX_DESIGN.md`; `third_party/opengadtools` |
 | DOCX and ODT core workflow | Done | `README.md`, `docs/FORMATS.md` |
-| OpenPrint integration | Done | openamigawrite #32 merged: Print hands OpenPrint the PDF (`app/ow_print.c`) |
+| GFOpenPrint integration | Done | openamigawrite #32 merged: Print hands GFOpenPrint the PDF (`app/ow_print.c`) |
 | Shared build and tooling conventions | Done | GCC 16 only (#25), 68040 only (#24), host tests and sanitizers |
 
 ## 2. What exists to build on
 
-| Piece | Where (checked) | Gives OpenBase |
+| Piece | Where (checked) | Gives GFOpenBase |
 | --- | --- | --- |
 | SQLite 3.53.4 | openamigasqlite: `build.sh`, `SOURCES` (pinned by SHA-256), `patches/`, `compat/` | The database engine (section 11 for what must change) |
 | `owf_doc` and its exporters | openamigawrite `libowf`: ODT, DOCX, HTML, PDF, text | Reports as documents |
 | `owf_book` and its formats | `libowf`: XLS in, CSV out; ODS and XLSX coming (W106) | Sheets in and out |
-| OpenWrite's editor core | `src/core/editor.c` | A multi-line memo field (GadTools has none) |
-| OpenGadTools copy | `third_party/opengadtools`: `ogt_sections` (labelled field rows), `ogt_list` (owner-drawn rows), `ogt_tabs`, `ogt_toolbar`, `ogt_status`, `ogt_pageview` | Forms, datasheets, designers, report preview |
-| Datatypes | The OS; OpenWrite's way of decoding a picture from memory (`app/openwrite2.c`, `image_cache_get`: to `T:`, then `NewDTObject`) | Datatype object fields |
-| OpenPrint | `C:OpenPrint <pdf> [printer-uri]` (openamigaprint `src/amiga/main.c`), started as OpenWrite's `app/ow_print.c` does | Printing reports |
+| GFOpenWrite's editor core | `src/core/editor.c` | A multi-line memo field (GadTools has none) |
+| GFOpenGadTools copy | `third_party/opengadtools`: `ogt_sections` (labelled field rows), `ogt_list` (owner-drawn rows), `ogt_tabs`, `ogt_toolbar`, `ogt_status`, `ogt_pageview` | Forms, datasheets, designers, report preview |
+| Datatypes | The OS; GFOpenWrite's way of decoding a picture from memory (`app/openwrite2.c`, `image_cache_get`: to `T:`, then `NewDTObject`) | Datatype object fields |
+| GFOpenPrint | `C:GFOpenPrint <pdf> [printer-uri]` (openamigaprint `src/amiga/main.c`), started as GFOpenWrite's `app/ow_print.c` does | Printing reports |
 
 ## 3. Projects: `.oadb` files
 
@@ -82,12 +82,12 @@ A project is one SQLite database file named `<name>.oadb`.
 
 - **Your tables are ordinary SQL tables.** Any SQLite tool on any computer
   reads the data.
-- **OpenBase's own design** is in tables whose names start with `oadb_`:
+- **GFOpenBase's own design** is in tables whose names start with `oadb_`:
 
 | Table | Holds |
 | --- | --- |
 | `oadb_meta` | The file's format version, the project's title, its start form, its options |
-| `oadb_fields` | What SQL can't say about a field: its OpenBase type (Currency, Date, Datatype object...), its label, its display format, its choice list |
+| `oadb_fields` | What SQL can't say about a field: its GFOpenBase type (Currency, Date, Datatype object...), its label, its display format, its choice list |
 | `oadb_queries` | Each saved query: its designer grid and its SQL |
 | `oadb_forms` | Each form's layout, as text |
 | `oadb_reports` | Each report's bands and fields, as text |
@@ -98,19 +98,19 @@ A project is one SQLite database file named `<name>.oadb`.
   as a project by its header, and `PRAGMA user_version` holds the format
   version.
 - Relationships are real `FOREIGN KEY` clauses, so SQLite enforces them;
-  OpenBase turns `PRAGMA foreign_keys` on for each connection (SQLite has it
+  GFOpenBase turns `PRAGMA foreign_keys` on for each connection (SQLite has it
   off by default).
 
 ### 3.2 Safety
 
 - **Locking.** Our SQLite build uses the `unix-none` VFS: no locking at all,
   because libnix has no POSIX file locks (openamigasqlite README). Two
-  programs writing one database will damage it. OpenBase will:
+  programs writing one database will damage it. GFOpenBase will:
   1. try SQLite's `unix-dotfile` VFS in B0, which locks with an entry beside
      the database instead of POSIX locks;
   2. if that fails on AmigaDOS, hold a public Exec semaphore named after the
-     file's full path while the project is open, so a second OpenBase or
-     OpenBaseRun on the same machine says "open in another program" instead
+     file's full path while the project is open, so a second GFOpenBase or
+     GFOpenBaseRun on the same machine says "open in another program" instead
      of writing.
 - **Journal.** SQLite's rollback journal stays (WAL is left out of our
   build). B0 measures `journal_mode=TRUNCATE` against the default `DELETE`,
@@ -128,11 +128,11 @@ A project is one SQLite database file named `<name>.oadb`.
 
 ### 4.1 Field types
 
-| OpenBase type | SQL column | Stored as | Form gadget | Notes |
+| GFOpenBase type | SQL column | Stored as | Form gadget | Notes |
 | --- | --- | --- | --- | --- |
 | Counter | `INTEGER PRIMARY KEY` | 64-bit integer, SQLite's rowid | Text, read only | Every new table gets one, named `id` |
 | Text | `TEXT` | UTF-8 | String | A maximum length is a `CHECK (length(x) <= n)` |
-| Memo | `TEXT` | UTF-8, any length | OpenWrite's editor core in a box | Plain text in B2; formatted text later |
+| Memo | `TEXT` | UTF-8, any length | GFOpenWrite's editor core in a box | Plain text in B2; formatted text later |
 | Integer | `INTEGER` | 64-bit integer | Integer | |
 | Number | `REAL` | IEEE double | String, checked as a number | Soft-float maths on a machine without an FPU (11.3) |
 | Currency | `INTEGER` | Pence or cents | String, shown as 1,234.50 | Exact, and no floating point at all |
@@ -144,7 +144,7 @@ A project is one SQLite database file named `<name>.oadb`.
 | Datatype object | `BLOB`, plus its name and type in `oadb_fields`' companion columns | The file's bytes | A box showing it (4.3) | Any picture, sound, text or animation a datatype reads |
 
 Required means `NOT NULL`; a default is a `DEFAULT`; a rule is a `CHECK`.
-OpenBase writes these for you and shows its errors in plain words ("Price
+GFOpenBase writes these for you and shows its errors in plain words ("Price
 must be a number", not "CHECK constraint failed").
 
 ### 4.2 Keys and relationships
@@ -156,7 +156,7 @@ must be a number", not "CHECK constraint failed").
   `FOREIGN KEY` with a rule for deletes: refuse, delete the related rows too,
   or clear them.
 - **Changing a table.** SQLite's `ALTER TABLE` adds, renames and drops
-  columns, but can't change a column's type or rules. For those, OpenBase does
+  columns, but can't change a column's type or rules. For those, GFOpenBase does
   what SQLite's documentation describes: make the new table, copy the rows,
   drop the old, rename the new, in one transaction, with foreign-key checks
   off and checked again after.
@@ -164,13 +164,13 @@ must be a number", not "CHECK constraint failed").
 ### 4.3 Datatype object fields
 
 - The field holds the file's bytes in a `BLOB`.
-- To show it, OpenBase streams the blob to a file in `T:` with
+- To show it, GFOpenBase streams the blob to a file in `T:` with
   `sqlite3_blob_open` and `sqlite3_blob_read`, in pieces, so it is never
-  in memory twice, then opens it with `NewDTObject`, as OpenWrite does with a
+  in memory twice, then opens it with `NewDTObject`, as GFOpenWrite does with a
   picture.
 - On a form it is drawn by its group: a picture scaled into its box (through
   GFOffice's picture cache, Shared E9); a sound with a Play button; anything
-  else as an icon with Show (OpenView).
+  else as an icon with Show (GFOpenView).
 - Load..., Save As..., Paste and Copy (ILBM, through the datatype) on its menu.
 - A size limit per object is in Prefs, 4 MB to start, so one photo can't fill
   an 8 MB machine.
@@ -225,7 +225,7 @@ beside the grid and can be edited.
 
 - The SQL view is always there. A query the grid can't show (a sub-select, a
   `UNION`) is kept as SQL only, and the grid says so.
-- OpenBase reads back only SQL it wrote itself, by keeping the grid with it in
+- GFOpenBase reads back only SQL it wrote itself, by keeping the grid with it in
   `oadb_queries`. It doesn't try to parse any SQL into a grid.
 - Saving a query can also make a `VIEW`, so other SQLite tools see it.
 
@@ -247,7 +247,7 @@ fixture database, and the rows compared.
 ### 6.1 Auto forms
 
 One click on a table makes a form: one row a field, label on the left, as
-OpenWrite's inspector lays out its fields (`ogt_sections`). `ogt_sections`
+GFOpenWrite's inspector lays out its fields (`ogt_sections`). `ogt_sections`
 holds 8 sections of 12 rows (`OGT_SEC_MAX`, `OGT_SEC_ROWS`); a table with more
 fields gets tabs (`ogt_tabs`).
 
@@ -258,7 +258,7 @@ fields gets tabs (`ogt_tabs`).
   pixels, so a form survives a change of font or theme.
 - A form is saved as text in `oadb_forms`.
 - A field's gadget follows its type (4.1): GadTools string, integer, checkbox,
-  cycle and listview gadgets in the OpenGadTools look; a memo is OpenWrite's
+  cycle and listview gadgets in the GFOpenGadTools look; a memo is GFOpenWrite's
   editor core in a box; a Datatype object is its own box.
 
 ### 6.3 Bound fields
@@ -280,9 +280,9 @@ table's own form.
 
 ### 6.5 Buttons and events
 
-OpenBase has no language of its own. A button, or a form's "on open", "before
+GFOpenBase has no language of its own. A button, or a form's "on open", "before
 save" and "after save", runs an ARexx script: one kept in the project
-(`oadb_scripts`) or a file. The script talks back to OpenBase through its port
+(`oadb_scripts`) or a file. The script talks back to GFOpenBase through its port
 (section 9). A built-in action (go to a record, open a form, run a report,
 print) needs no script.
 
@@ -295,7 +295,7 @@ detail, page footer, report footer. Each band holds fields, labels and
 totals (Sum, Count, Average, Min, Max, over the group or the report). A
 report's records come from a table or a query, sorted and grouped.
 
-### 7.2 Output through OpenWrite's document model
+### 7.2 Output through GFOpenWrite's document model
 
 Running a report builds an `owf_doc`:
 
@@ -308,18 +308,18 @@ Then the document goes where the user asks:
 
 | To | How |
 | --- | --- |
-| The screen | A preview, drawn as OpenWrite draws pages (OpenLayout) |
+| The screen | A preview, drawn as GFOpenWrite draws pages (GFOpenLayout) |
 | PDF | GFOffice's page-drawing PDF writer (Shared E4). Today's `out_pdf.c` would put a body table's cells one under another, not side by side, so reports wait for E4 |
-| A printer | That PDF to `C:OpenPrint`, as OpenWrite prints |
+| A printer | That PDF to `C:GFOpenPrint`, as GFOpenWrite prints |
 | ODT or DOCX | libowf's exporters, as they are |
-| OpenWrite | Saved as ODT in `T:` and opened there, to edit before sending |
+| GFOpenWrite | Saved as ODT in `T:` and opened there, to edit before sending |
 
 ### 7.3 Labels and letters
 
 - **Labels** are a report whose detail is a grid of cells on the page (3 x 8,
   2 x 7...), built as a table.
-- **Letters** (mail merge) are an ODT or DOCX made in OpenWrite with named
-  merge fields. OpenBase fills them in, one letter a record, separated by page
+- **Letters** (mail merge) are an ODT or DOCX made in GFOpenWrite with named
+  merge fields. GFOpenBase fills them in, one letter a record, separated by page
   breaks, or one file each. This needs merge fields in the document model
   (Shared E13).
 
@@ -340,15 +340,15 @@ whole document, is a later step if the limit bites.
 | SQL text | Yes | Yes | B4 | `CREATE` and `INSERT` statements, our own writer |
 | Superbase and other Amiga database programs | No | No | Later | No specification we know of; only with samples from the format lab |
 
-**OpenCalc.** Send to OpenCalc makes a book of the current table or query,
-saves it as ODS in `T:`, and opens it in OpenCalc (by ARexx when OpenCalc is
+**GFOpenCalc.** Send to GFOpenCalc makes a book of the current table or query,
+saves it as ODS in `T:`, and opens it in GFOpenCalc (by ARexx when GFOpenCalc is
 running, else by starting it), as the Open requester hands a file on (Shared,
-2). From OpenCalc to OpenBase is the import above, from the saved sheet, or
+2). From GFOpenCalc to GFOpenBase is the import above, from the saved sheet, or
 from the clipboard (Shared, 5).
 
 ## 9. ARexx
 
-The port is `OPENBASE`, following GFOffice's conventions (Shared, 6).
+The port is `GFOPENBASE`, following GFOffice's conventions (Shared, 6).
 
 | Command | Template | Does |
 | --- | --- | --- |
@@ -361,7 +361,7 @@ The port is `OPENBASE`, following GFOffice's conventions (Shared, 6).
 | GETFIELD, SETFIELD | FIELD/A; FIELD/A,VALUE/A | The open form's current record |
 | GOTO, FIND | RECORD/A/N; FIELD/A,TEXT/A | Moves the open form |
 | NEWRECORD, SAVERECORD, DELETERECORD | | |
-| REPORT | NAME/A,TO/K,FORMAT/K,PRINT/S | To a PDF, ODT or DOCX file, or to OpenPrint |
+| REPORT | NAME/A,TO/K,FORMAT/K,PRINT/S | To a PDF, ODT or DOCX file, or to GFOpenPrint |
 | IMPORT, EXPORT | FILE/A,TABLE/A,FORMAT/K | CSV, DBF, sheets |
 | QUIT | FORCE/S | |
 
@@ -373,13 +373,13 @@ in a value can't break the SQL.
 
 A finished front end opens like an application:
 
-- `OpenBase Shop.oadb RUNTIME`, or the project's icon with the tool type
+- `GFOpenBase Shop.oadb RUNTIME`, or the project's icon with the tool type
   `RUNTIME`, or a project option, opens its start form (`oadb_meta`).
 - The design menus, the object browser and the designers are gone; the menu
   strip holds the project's own menu (`oadb_menus`: its forms, reports and
   scripts), and Quit.
 - The window title is the project's title.
-- **OpenBaseRun**, a second, smaller program without the designers, can be
+- **GFOpenBaseRun**, a second, smaller program without the designers, can be
   given away with a front end. Whether to make it is a question (section 15).
 - `READONLY` opens the database read only (`SQLITE_OPEN_READONLY`), for a
   kiosk or a CD.
@@ -403,24 +403,24 @@ From openamigasqlite (`README.md`, `build.sh`, `restart.md`):
 | AmigaDOS names | A patch keeps names as given (`T:a.db`) |
 | Tested | The smoke test on Instance-24 (AC090, 68040 with FPU, 256 MB), 4 October 2026; never on real hardware |
 | Known issue | A fresh database in `RAM:` fails |
-| Owner | The OpenBrowser (JSC) thread (`restart.md`) |
+| Owner | The GFOpenBrowser (JSC) thread (`restart.md`) |
 
 The smoke test resets the FPU's control register first, because "ROM
 mathieeesingbas.library leaves the FPU in single precision" in every task that
 opens it (`tests/sqlitetest.c`).
 
-### 11.2 What OpenBase needs changed
+### 11.2 What GFOpenBase needs changed
 
 | Change | Why |
 | --- | --- |
-| A soft-float flavour of the build, with OpenWrite's specs (`specs/m68k-soft-m68040.specs`) | GFOffice runs on a 68040 without an FPU |
-| `SQLITE_THREADSAFE=0` | OpenBase uses one connection from one task; no libpthread to link |
+| A soft-float flavour of the build, with GFOpenWrite's specs (`specs/m68k-soft-m68040.specs`) | GFOffice runs on a 68040 without an FPU |
+| `SQLITE_THREADSAFE=0` | GFOpenBase uses one connection from one task; no libpthread to link |
 | `SQLITE_OMIT_JSON`, and other options B0 shows are safe to leave out | Smaller code |
-| `sqlite3_temp_directory` set by OpenBase | SQLite's Unix code looks for a temporary folder through Unix paths and environment variables, which mean nothing on AmigaDOS; OpenBase names a folder on disk (beside the project, or `T:` once the RAM: issue is understood) |
-| A stack of at least 64 KB | SQLite's parser and planner recurse; OpenPrint asks for 65,536 bytes the same way (`oap_main_with_stack`) |
+| `sqlite3_temp_directory` set by GFOpenBase | SQLite's Unix code looks for a temporary folder through Unix paths and environment variables, which mean nothing on AmigaDOS; GFOpenBase names a folder on disk (beside the project, or `T:` once the RAM: issue is understood) |
+| A stack of at least 64 KB | SQLite's parser and planner recurse; GFOpenPrint asks for 65,536 bytes the same way (`oap_main_with_stack`) |
 
 The soft-float flavour goes into openamigasqlite as a second build
-(`FLOAT=soft`), so OpenBrowser's hard-float build is untouched.
+(`FLOAT=soft`), so GFOpenBrowser's hard-float build is untouched.
 
 ### 11.3 Size, memory and speed
 
@@ -428,9 +428,9 @@ The soft-float flavour goes into openamigasqlite as a second build
   be less than 900KiB", depending on the platform and compiler settings
   (sqlite.org, About SQLite). Our 68k library's size isn't recorded anywhere
   (`build.sh` prints it, but no run is kept), and this session can't build
-  it. B0 measures it. Plan on about 1 MB of OpenBase being SQLite.
+  it. B0 measures it. Plan on about 1 MB of GFOpenBase being SQLite.
 - **Memory.** SQLite's page cache defaults to about 2 MB (`cache_size`
-  -2000). OpenBase sets it from free memory when a project opens: 256 KB on
+  -2000). GFOpenBase sets it from free memory when a project opens: 256 KB on
   an 8 MB machine, 1 to 2 MB at 16 to 32 MB. `sqlite3_soft_heap_limit64` caps
   SQLite as a whole. Datasheets read rows a page at a time (5.4), and blobs
   are streamed (4.3), so a big table or a big picture doesn't spike memory.
@@ -469,7 +469,7 @@ In DalsinAI/openamigabase, as its README always said:
 | What | Where |
 | --- | --- |
 | Portable core: projects, schema, field types, query model and SQL generator, CSV and DBF, report building into an `owf_doc` | `src/core/`, host-tested with SQLite on the PC |
-| Amiga program | `app/` (OpenGadTools) |
+| Amiga program | `app/` (GFOpenGadTools) |
 | Tests | `tests/` |
 
 It links owf.library (reports, sheets) and the soft-float SQLite. On the PC,
@@ -480,11 +480,11 @@ committed, as the Team's third-party rule says.
 
 | Phase | Delivers | Tested by |
 | --- | --- | --- |
-| **B0, SQLite for OpenBase** | The soft-float build flavour; `unix-dotfile` locking tried; the RAM: issue looked into; the size and speed of 11.3 measured | The smoke test and the B0 benchmark on the lab's 68040, both builds; results written into this design |
+| **B0, SQLite for GFOpenBase** | The soft-float build flavour; `unix-dotfile` locking tried; the RAM: issue looked into; the size and speed of 11.3 measured | The smoke test and the B0 benchmark on the lab's 68040, both builds; results written into this design |
 | **B1, the core** | `.oadb` projects; field types; table create and change (the copy-and-rename way); relationships; CSV import and export; the query model and SQL generator. No window | Host: schema changes keep every row; CSV round trips; SQL golden files; ASan and UBSan; every cut-short `.oadb` and CSV gives an error, never a crash |
 | **B2, the program** | The object browser; table designer; datasheets; auto forms; relationships view; Datatype object fields | Lab: make a project, add tables and rows, a relationship that refuses an orphan, a picture field; quit and reopen |
-| **B3, designers and output** | Query designer; form designer with subforms; reports to PDF, ODT, DOCX and OpenPrint; labels; DBF import; sheets in and out | Host: report building into an `owf_doc` compared with expected paragraphs; DBF fixtures. Lab: an invoice report printed through OpenPrint to a saved PDF |
-| **B4, scripting and runtime** | The ARexx port; form events; runtime mode; OpenBaseRun if wanted; letters (merge fields); SQL text; the OpenUp Part | Host: the ARexx command parser. Lab: a script that imports a CSV, runs a report to PDF and quits; a front end in runtime mode |
+| **B3, designers and output** | Query designer; form designer with subforms; reports to PDF, ODT, DOCX and GFOpenPrint; labels; DBF import; sheets in and out | Host: report building into an `owf_doc` compared with expected paragraphs; DBF fixtures. Lab: an invoice report printed through GFOpenPrint to a saved PDF |
+| **B4, scripting and runtime** | The ARexx port; form events; runtime mode; GFOpenBaseRun if wanted; letters (merge fields); SQL text; the GFOpenUp Part | Host: the ARexx command parser. Lab: a script that imports a CSV, runs a report to PDF and quits; a front end in runtime mode |
 
 What B1-B4 need from the shared work: E3 (owf.library with the workbook
 calls) for sheets, E4 (the PDF writer) for reports, E6 (the editor on any
@@ -500,19 +500,19 @@ story) for memo fields, E9 (the picture cache) for Datatype fields, E13
 - **Soft float.** A `REAL`-heavy database is slower without an FPU; Currency
   as integers avoids the common case.
 - **Reports in memory.** Section 7.4.
-- **Scope.** Access and Base grew over decades. OpenBase aims at the jobs
+- **Scope.** Access and Base grew over decades. GFOpenBase aims at the jobs
   people did with Superbase on the Amiga: a catalogue, a club's members, a
   shop's stock and invoices, labels and letters.
 
 ## 15. Questions for Dale
 
-1. Start OpenBase now, in DalsinAI/openamigabase (the README's gate is met, section 1.1)?
-2. Add a soft-float, single-thread flavour to openamigasqlite's build for OpenBase?
+1. Start GFOpenBase now, in DalsinAI/openamigabase (the README's gate is met, section 1.1)?
+2. Add a soft-float, single-thread flavour to openamigasqlite's build for GFOpenBase?
 3. Locking: try SQLite's dot-file locking, else one program per project through an Exec semaphore. Agreed?
-4. Scripting in forms through ARexx only, with no language of OpenBase's own?
-5. Runtime: a separate smaller OpenBaseRun as well, or only a RUNTIME switch on OpenBase?
+4. Scripting in forms through ARexx only, with no language of GFOpenBase's own?
+5. Runtime: a separate smaller GFOpenBaseRun as well, or only a RUNTIME switch on GFOpenBase?
 6. DBF: import only, or export too?
 7. Do you have Superbase or other Amiga database files for the format lab?
-8. Reports built whole in memory as an OpenWrite document for B3, with page-by-page PDF later if needed?
+8. Reports built whole in memory as a GFOpenWrite document for B3, with page-by-page PDF later if needed?
 9. Currency stored as whole pence or cents (exact, no floating point)?
 10. No passwords or encryption in `.oadb` files. Agreed?

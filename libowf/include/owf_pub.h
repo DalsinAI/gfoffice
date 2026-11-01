@@ -1,5 +1,5 @@
 /*
- * libowf: Microsoft Publisher files (.pub), read for OpenPublisher.
+ * libowf: Microsoft Publisher files (.pub), read for GFOpenPublisher.
  *
  * Phase 0's reader (docs/gfoffice/Design-OpenPublisher.md): it tells the
  * version, gives the page size, the pages and master pages, each page's
@@ -13,7 +13,7 @@
  * there is marked verified (on how many samples) or a hypothesis.
  *
  * The model is a small one of its own for now. It is shaped to move onto
- * OpenPresentation's deck model (owf_deck.h: owf_obj) once that is on
+ * GFOpenPresentation's deck model (owf_deck.h: owf_obj) once that is on
  * main: the same kinds, boxes in twips from the page's top left, text as an
  * owf_story, pictures in an owf_doc's images.
  * MIT, Copyright (c) 2026 AmigaChrome Team.

@@ -1,5 +1,5 @@
 ==id $Id: owfwrite_lib.sfd 3.0 (25.10.2026) $
-* "owfwrite.library" 3.0: OpenWrite's part of libowf: documents. The
+* "owfwrite.library" 3.0: GFOpenWrite's part of libowf: documents. The
 * document model and its formats: DOCX, ODT, the Amiga word processors'
 * files (Final Writer, Wordworth, ProWrite, IFF FTXT), text, ANSI and HTML,
 * and PDF out.

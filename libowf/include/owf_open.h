@@ -16,10 +16,10 @@
  * with (owf_struct_size, owf.h); when they are not, it closes the library
  * again, sets owf_open_sizes_differ and returns 0, so the program says so
  * instead of reading the wrong bytes. Only that library's structures are
- * checked, so a change to a workbook's structures doesn't stop OpenWrite.
+ * checked, so a change to a workbook's structures doesn't stop GFOpenWrite.
  *
  * OWF_USE_LIBRARY alone is owf.library 2, the one library before the
- * split (docs/suite/owf-libraries.md), until OpenUp ships the four; it
+ * split (docs/suite/owf-libraries.md), until GFOpenUp ships the four; it
  * checks every structure.
  *
  * MIT, Copyright (c) 2026 AmigaChrome Team.

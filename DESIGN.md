@@ -1,21 +1,21 @@
-# OpenWrite: design
+# GFOpenWrite: design
 
 Version 0.1 | 4 October 2026 | First design | AmigaChrome Team, MIT
 
 > **Architecture update, 6 October 2026:** the WebCore-first editor in this
-> original design is superseded as the baseline. OpenWrite now uses the small
+> original design is superseded as the baseline. GFOpenWrite now uses the small
 > native C editor described in `docs/architecture/NATIVE_CORE.md`, with the UI
 > in `docs/UX_DESIGN.md`. WebCore remains an optional future component. The
 > product goals and format research below remain useful historical context.
 
-We, 4 October 2026: "let's do the OpenWrite project", a word processor
+We, 4 October 2026: "let's do the GFOpenWrite project", a word processor
 "that can import any of the Amiga formats, along with DOCX and the
 OpenDocument formats". It follows from the browser work: WebKit on AmigaOS
 3.2 sets us up for a lot more app porting, and a word processor is the first
 app to build on it.
 
 **Decided** (We, 4 October 2026):
-- **The name:** OpenWrite. **Repository:** `DalsinAI/openamigawrite`, renamed
+- **The name:** GFOpenWrite. **Repository:** `DalsinAI/openamigawrite`, renamed
   `DalsinAI/gfoffice` on 25 October 2026, when it became the GFOffice Suite's home.
 - **The engine (superseded 6 October):** the first design chose WebCore. The
   shipping baseline is now the native C editor; WebCore is optional, not required.
@@ -27,7 +27,7 @@ app to build on it.
 - The format filters are a separate C library with a Shell converter, so they
   are useful on any Amiga long before the editor is (section 3.1).
 
-## 1. What OpenWrite is
+## 1. What GFOpenWrite is
 
 A word processor for AmigaOS 3.2 that:
 - opens and saves the documents people exchange today (DOCX and ODT), with
@@ -39,14 +39,14 @@ A word processor for AmigaOS 3.2 that:
 - looks and behaves like an Amiga program: a GadTools window, Amiga keys,
   OS 3.2-style icons, an ARexx port and the clipboard.
 
-It follows the Open app rules (OpenGadTools' design, section 0): obvious,
+It follows the GFOpen app rules (GFOpenGadTools' design, section 0): obvious,
 icon-driven toolbars with text by default, everything visible as a button or
 a menu item.
 
 ## 2. Why WebCore, and what it does not give us
 
 WebCore is the engine inside WebKit. Its editing code is what Apple Mail's
-compose window and every `contenteditable` page uses. OpenBrowser's port
+compose window and every `contenteditable` page uses. GFOpenBrowser's port
 (`DalsinAI/openamigabrowser`) already draws real pages on AmigaOS 3.2.3 with
 cairo, FreeType and HarfBuzz, and its editor client
 (`src/webcore/AmigaEditorClient.cpp`) already turns typing and editing keys
@@ -77,15 +77,15 @@ into WebCore's commands.
 ## 3. Architecture
 
 ```
-   OpenWrite (the window, C)                C:OWConvert (Shell, C)
+   GFOpenWrite (the window, C)                C:OWConvert (Shell, C)
    menus, toolbars, dialogs, status bar              |
           |                                          |
    ob_webview + editing calls                        |
-   (C++, WebCore; shared with OpenBrowser)           |
+   (C++, WebCore; shared with GFOpenBrowser)           |
           |                                          |
           +------------------+-----------------------+
                              |
-               libowf: the OpenWrite filters (C99, zlib only)
+               libowf: the GFOpenWrite filters (C99, zlib only)
          importers --> one document model --> exporters
 ```
 
@@ -115,9 +115,9 @@ stove, and for Linux, where the tests run. They never touch WebCore.
 
 ### 3.2 The editing view
 
-OpenWrite uses OpenBrowser's page layer, `ob_webview.h`: a C interface to one
+GFOpenWrite uses GFOpenBrowser's page layer, `ob_webview.h`: a C interface to one
 WebCore page that paints into a 32-bit buffer and takes the mouse and keys.
-It needs a few more calls, which also serve OpenMail's rich compose window
+It needs a few more calls, which also serve GFOpenMail's rich compose window
 later:
 
 | Call | What |
@@ -130,15 +130,15 @@ later:
 | `ob_webview_print(view, page setup, callbacks)` | Lays the document out in pages and draws each one onto a cairo surface (PDF or bitmap) |
 | `selection_changed`, `content_changed` callbacks | So the window updates its toolbar and knows the document is unsaved |
 
-Beside those, the editing view needs three things that OpenBrowser needs too:
+Beside those, the editing view needs three things that GFOpenBrowser needs too:
 an **undo stack** in the editor client, the **Amiga clipboard** behind
 WebCore's pasteboard (IFF FTXT on `clipboard.device`, with a UTF-8 chunk and
-our own HTML chunk so formatting survives a copy from OpenWrite to OpenWrite
-or to OpenMail), and **spelling** through WebCore's text checker (Hunspell,
+our own HTML chunk so formatting survives a copy from GFOpenWrite to GFOpenWrite
+or to GFOpenMail), and **spelling** through WebCore's text checker (Hunspell,
 phase W5).
 
-**Who writes them:** the OpenBrowser work owns `src/webcore` and adds them
-there (one shared page layer, not a second copy in OpenWrite), after its
+**Who writes them:** the GFOpenBrowser work owns `src/webcore` and adds them
+there (one shared page layer, not a second copy in GFOpenWrite), after its
 current milestone, Microsoft's sign-in page. Every piece needs the WebKit
 build to compile and test, and the undo stack, the clipboard and printing
 touch its WebKit patches too. Appendix A is the shape we propose for it to
@@ -146,7 +146,7 @@ implement against.
 
 ### 3.3 The window
 
-GadTools through OpenGadTools: a menu strip, a toolbar, a format bar, the
+GadTools through GFOpenGadTools: a menu strip, a toolbar, a format bar, the
 document, and a status bar. Section 6 has the detail.
 
 ### 3.4 C:OWConvert
@@ -160,14 +160,14 @@ OWConvert FROM/A,TO/A,FORMAT/K,REPORT/S
 1> OWConvert Work:Story.fw Story.docx REPORT
 ```
 
-It is built as 68040 code, as every build. On AmigaChrome, Cradle can use the same
+It is built as 68040 code, as every build. On AmiCradle, Cradle can use the same
 filters' Linux build for its own document jobs.
 
 ### 3.5 ARexx
 
-A port named `OPENWRITE`: `OPEN`, `SAVE`, `SAVEAS`, `EXPORT`, `PRINT`,
+A port named `GFOPENWRITE`: `OPEN`, `SAVE`, `SAVEAS`, `EXPORT`, `PRINT`,
 `INSERTTEXT`, `GETTEXT`, `FIND`, `COMMAND` (any editing command), `QUIT`.
-Enough for mail merge and for other programs to hand OpenWrite a document.
+Enough for mail merge and for other programs to hand GFOpenWrite a document.
 
 ## 4. Formats
 
@@ -190,9 +190,9 @@ comes from, is in [docs/FORMATS.md](docs/FORMATS.md). In short:
 
 **ODT** (OpenDocument Text, ISO/IEC 26300): an open standard that LibreOffice,
 Word and Google Docs all open, so a document written on the Amiga goes
-anywhere without a "Save as" step. Everything OpenWrite can make maps onto
-ODT, and the tests check that ODT → OpenWrite → ODT keeps it. Until the ODT
-filter passes those tests (phase W1), OpenWrite saves HTML.
+anywhere without a "Save as" step. Everything GFOpenWrite can make maps onto
+ODT, and the tests check that ODT → GFOpenWrite → ODT keeps it. Until the ODT
+filter passes those tests (phase W1), GFOpenWrite saves HTML.
 
 ### 4.2 The Amiga formats
 
@@ -208,7 +208,7 @@ groups:
    Pen Pal, Protext, BeckerText, WordPerfect for the Amiga and others.
 
 **The format lab:** for groups 2 and 3 we learn each format from documents we
-make ourselves. An AmigaChrome instance runs the original programs; the same
+make ourselves. An AmiCradle instance runs the original programs; the same
 test document (headings, the styles, fonts and sizes, tabs, a header and
 footer, a page break, a picture) is typed into each one, then saved again
 with one change at a time, and the files are compared. Where a program can
@@ -232,7 +232,7 @@ filters can read it back exactly:
 
 - `<head>` holds a `<style>` with the page setup (`@page`) and one CSS class
   per named style (`p.Body`, `h1.Heading1`, `span.Emphasis`...), and a
-  `<meta name="generator" content="OpenWrite">`.
+  `<meta name="generator" content="GFOpenWrite">`.
 - Paragraphs are `<p>` and `<h1>`-`<h6>` with their style's class; direct
   formatting is an inline `style`.
 - Lists are `<ol>`/`<ul>`, tables `<table>`, pictures `<img>` with the
@@ -247,10 +247,10 @@ and gives it to the filters.
 ## 6. The window
 
 **First size:** 800 x 600, centred in the screen's free area (below the title
-bar and beside OpenDock), and never larger than that area, so on a screen
-smaller than 800 x 600 it is the whole free area (the rule for every Open app,
-10 October 2026, as in OpenFiles 0.2.3). A size the user gives the window is
-kept: OpenWindows remembers it. At 800 wide the inspector starts hidden (it
+bar and beside GFOpenDock), and never larger than that area, so on a screen
+smaller than 800 x 600 it is the whole free area (the rule for every GFOpen app,
+10 October 2026, as in GFOpenFiles 0.2.3). A size the user gives the window is
+kept: GFOpenWindows remembers it. At 800 wide the inspector starts hidden (it
 shows from 900); making the window wider brings it back.
 
 **Menus** (Amiga keys in brackets):
@@ -265,10 +265,10 @@ shows from 900); making the window wider brings it back.
 - **Format:** Font..., Paragraph..., Styles..., Bullets and Numbering...,
   Columns..., Page...
 - **Tools:** Word Count, Spelling..., Preferences...
-- **Help:** OpenWrite Guide (AmigaGuide).
+- **Help:** GFOpenWrite Guide (AmigaGuide).
 
 **Toolbar:** New, Open, Save, Print, PDF | Cut, Copy, Paste | Undo, Redo |
-Find. Icons only by default (every Open app starts with icons, the Team's rule
+Find. Icons only by default (every GFOpen app starts with icons, the Team's rule
 of 10 October 2026); icons and text or text only from the View menu.
 
 **Format bar:** style (cycle), font (a list from fontconfig), size, bold,
@@ -296,19 +296,19 @@ program; one running copy, with a new window per document.
 WebCore lays the document out in pages (`PrintContext`), and we draw each
 page, with its header and footer, onto a cairo surface:
 - **Save as PDF:** a cairo PDF surface, written to the file.
-- **Print to a modern printer:** the same PDF, handed to **OpenPrint**, which
+- **Print to a modern printer:** the same PDF, handed to **GFOpenPrint**, which
   sends it over IPP.
 - **Print to a printer on the parallel port:** each page drawn into a bitmap
   and sent through `printer.device`, so the printer drivers Amiga users have
   keep working.
 
 Our cairo build (`DalsinAI/openamigacairo`) has image surfaces only today;
-OpenWrite needs its PDF surface turned on (section 10).
+GFOpenWrite needs its PDF surface turned on (section 10).
 
 ## 8. Fonts
 
 WebCore draws with TrueType and OpenType fonts through FreeType and
-fontconfig, not with Amiga bitmap fonts. OpenWrite ships the fonts that make
+fontconfig, not with Amiga bitmap fonts. GFOpenWrite ships the fonts that make
 exchanged documents look right:
 - **Liberation** Serif, Sans and Mono: the same widths as Times New Roman,
   Arial and Courier New, so a DOCX keeps its line breaks;
@@ -318,7 +318,7 @@ exchanged documents look right:
 
 Any TrueType or OpenType font the user adds to `FONTS:` is found too. The ASL
 font requester lists only Amiga fonts, so the font dialog is our own list
-(OpenGadTools).
+(GFOpenGadTools).
 
 **Amiga font names** in imported documents are mapped: Times and CG Times to
 Liberation Serif; Helvetica and CG Triumvirate to Liberation Sans; Courier
@@ -327,7 +327,7 @@ noted in the import report.
 
 ## 9. Platform, size and speed
 
-- **The editor** needs what OpenBrowser needs: AmigaOS 3.2, a 68020 or better
+- **The editor** needs what GFOpenBrowser needs: AmigaOS 3.2, a 68020 or better
   with an FPU (a 68040 or 68060, an AC090 or a PiStorm in practice), and a
   lot of Fast RAM: 128 MB at the least, 256 MB recommended. A graphics card
   screen (RTG) looks best; on AGA the page is dithered to the screen's pens.
@@ -336,7 +336,7 @@ noted in the import report.
   1. ICU's data as one shared file (for example `LIBS:icudt78b.dat`) instead
      of a copy in every program: 33 MB less each.
   2. ICU trimmed to the languages and data we use.
-  3. One shared WebCore for OpenBrowser, OpenWrite and OpenMail's rich
+  3. One shared WebCore for GFOpenBrowser, GFOpenWrite and GFOpenMail's rich
      compose: a `webcore.library` with data per opener (base-relative data
      across WebCore and JavaScriptCore, an experiment), or one WebCore task
      that the programs talk to through message ports. Worth doing once the
@@ -345,24 +345,24 @@ noted in the import report.
   Turning off the network and media code saves only a few MB.
 - **The filters and C:OWConvert** are built for the 68040 and need about 1 MB.
 
-## 10. What OpenWrite needs from the rest of the Open family
+## 10. What GFOpenWrite needs from the rest of the GFOpen family
 
 | From | What | State |
 | --- | --- | --- |
-| OpenBrowser (`openamigabrowser`) | WebCore in a window; the editing calls (Appendix A), undo stack, Amiga clipboard and print to cairo; ICU data as a shared file | WebCore draws pages; the window is being brought up. The editing calls come after its sign-in milestone |
+| GFOpenBrowser (`openamigabrowser`) | WebCore in a window; the editing calls (Appendix A), undo stack, Amiga clipboard and print to cairo; ICU data as a shared file | WebCore draws pages; the window is being brought up. The editing calls come after its sign-in milestone |
 | `openamigacairo` | The PDF surface | Image surfaces only; we turn the PDF surface on (agreed with the browser work) |
-| OpenGadTools | Toolbar (0.1 has it), a font list, a ruler gadget, a colour picker | 0.1 in review |
-| OpenPrint | PDF jobs in, IPP out | Takes PDF jobs |
+| GFOpenGadTools | Toolbar (0.1 has it), a font list, a ruler gadget, a colour picker | 0.1 in review |
+| GFOpenPrint | PDF jobs in, IPP out | Takes PDF jobs |
 | `openamigaimage` | libpng and libjpeg for pictures in documents | Built |
 | Datatypes | Pictures in, in every format the user has | In the OS |
-| OpenTypes | OpenWrite as the default app for documents | Specified |
-| OpenFiles | Previews of documents through libowf | Specified |
-| OpenUp | Ships OpenWrite | Specified |
+| GFOpenTypes | GFOpenWrite as the default app for documents | Specified |
+| GFOpenFiles | Previews of documents through libowf | Specified |
+| GFOpenUp | Ships GFOpenWrite | Specified |
 
 ## 11. Phases
 
 **W0, set up (now).** This design, the formats list, the repository, and the
-editing calls agreed with the OpenBrowser work.
+editing calls agreed with the GFOpenBrowser work.
 
 **W1, the filters and C:OWConvert (starts now; needs no WebCore).**
 1. The document model, the zip, XML and IFF readers, character sets.
@@ -384,7 +384,7 @@ Amiga.
 *Exit:* every format in FORMATS.md marked "sample" opens with its text and
 basic formatting, and its sample files are in the tests.
 
-**W3, the editor (needs WebCore in OpenBrowser's window).**
+**W3, the editor (needs WebCore in GFOpenBrowser's window).**
 1. The window, menus, toolbar, format bar, status bar.
 2. The editing calls, open and save through libowf, undo and redo,
    clipboard, find and replace, the Amiga keys.
@@ -395,18 +395,18 @@ on the PC.
 **W4, a word processor.**
 1. Styles, lists, tables, pictures, page setup.
 2. The page layout view, headers, footers and page numbers, notes, tab stops.
-3. Save as PDF and print (OpenPrint, `printer.device`), word count, zoom.
+3. Save as PDF and print (GFOpenPrint, `printer.device`), word count, zoom.
 
 **W5, release.**
 1. Spelling (Hunspell and free dictionaries), templates, the ARexx port,
    preferences, the AmigaGuide help.
-2. Icons (OS 3.2 style), an Installer script, the Aminet release, OpenUp.
+2. Icons (OS 3.2 style), an Installer script, the Aminet release, GFOpenUp.
 3. Size and start-up time.
 
 ## 12. Risks
 
 - **Size and speed.** WebCore on a 68k is large and its JavaScript is slow.
-  OpenWrite runs no JavaScript, and editing exercises less of WebCore than
+  GFOpenWrite runs no JavaScript, and editing exercises less of WebCore than
   browsing; we measure typing speed on a long document early in W3.
 - **Undocumented formats.** Some Amiga formats may only give up their text.
   The format lab tells us early, and the import report says so honestly.
@@ -414,7 +414,7 @@ on the PC.
   actually write (text, styles, lists, tables, pictures, headers and footers),
   test against real files, and report what was dropped.
 - **Licences.** Our code is MIT. A program built with WebCore includes LGPL
-  code, so it ships with the source and relinking notes, as OpenBrowser does.
+  code, so it ships with the source and relinking notes, as GFOpenBrowser does.
   The fonts are free: Liberation and Carlito under the SIL Open Font
   Licence, Caladea under Apache 2.0, DejaVu under its own free licence.
   Hunspell is used under the MPL.
@@ -422,7 +422,7 @@ on the PC.
 ## 13. Questions for us
 
 1. **The repository:** create `DalsinAI/openamigawrite` (public, like the
-   other Open apps, or private until there is code?). This design is ready to
+   other GFOpen apps, or private until there is code?). This design is ready to
    go in.
 2. **The format lab:** which Amiga word processors do we own (Wordworth,
    Final Writer, Final Copy, ProWrite, Excellence!...) to install in a lab
@@ -434,7 +434,7 @@ on the PC.
 
 ## Appendix A: proposed editing calls for `ob_webview.h`
 
-For the OpenBrowser work to implement in `src/webcore`, beside the calls
+For the GFOpenBrowser work to implement in `src/webcore`, beside the calls
 `ob_webview.h` has today. Names and shapes are a proposal; the browser work
 may change them, and this appendix follows.
 
@@ -459,7 +459,7 @@ enum { OB_COMMAND_ENABLED = 1 << 0, OB_COMMAND_ON = 1 << 1 };
 int ob_webview_command_state(OBWebView *view, const char *name, char *value, int valueSize);
 
 /* Paragraph styles: sets the class of every block in the selection
- * (OpenWrite's styles are CSS classes, DESIGN.md section 5), and reads the
+ * (GFOpenWrite's styles are CSS classes, DESIGN.md section 5), and reads the
  * class of the block at the caret. */
 void ob_webview_set_block_class(OBWebView *view, const char *tagName, const char *className);
 int ob_webview_block_class(OBWebView *view, char *className, int size);

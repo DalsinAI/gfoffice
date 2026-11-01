@@ -1,12 +1,12 @@
 /*
- * OpenWrite's Print.
+ * GFOpenWrite's Print.
  *
- * With OpenPrint on the disk (C:OpenPrint), Print exports the document as a
+ * With GFOpenPrint on the disk (C:GFOpenPrint), Print exports the document as a
  * PDF, laid out as on the page (the same export as Export PDF), to T: and
- * opens OpenPrint's Print window on it: the printer, copies and pages are
+ * opens GFOpenPrint's Print window on it: the printer, copies and pages are
  * chosen there, and it goes to an IPP printer or is saved as a PDF
- * (24 October 2026: AmigaChrome retires the OS's printer drivers in favour of
- * OpenPrint). Without OpenPrint (OpenWrite on its own), the document's text
+ * (24 October 2026: AmiCradle retires the OS's printer drivers in favour of
+ * GFOpenPrint). Without GFOpenPrint (GFOpenWrite on its own), the document's text
  * goes to printer.device, as before, and whatever printer driver the
  * Printer preferences name prints it.
  */
@@ -24,9 +24,9 @@
 
 #include "ow_print.h"
 
-#define OW_OPENPRINT "C:OpenPrint"
+#define OW_OPENPRINT "C:GFOpenPrint"
 
-/* OpenPrint's Print window on file, started on its own (asynchronous): 1 started */
+/* GFOpenPrint's Print window on file, started on its own (asynchronous): 1 started */
 static int run_openprint(const char *file)
 {
     char cmd[300];
@@ -55,7 +55,7 @@ static int have_openprint(void)
     return lock != 0;
 }
 
-/* T:<the document's name>.pdf (OpenPrint shows the file's name), or T:OpenWrite-Print.pdf when it has none */
+/* T:<the document's name>.pdf (GFOpenPrint shows the file's name), or T:GFOpenWrite-Print.pdf when it has none */
 static void print_path(const char *name, char *path, size_t cap)
 {
     char stem[64];
@@ -69,7 +69,7 @@ static void print_path(const char *name, char *path, size_t cap)
         stem[n - 4] = 0;
     else if (n > 5 && !strcmp(stem + n - 5, ".docx"))
         stem[n - 5] = 0;
-    snprintf(path, cap, "T:%s.pdf", stem[0] ? stem : "OpenWrite-Print");
+    snprintf(path, cap, "T:%s.pdf", stem[0] ? stem : "GFOpenWrite-Print");
 }
 
 static int print_with_openprint(const owf_doc *doc, const char *name, char *status, size_t status_size)
@@ -87,10 +87,10 @@ static int print_with_openprint(const owf_doc *doc, const char *name, char *stat
         return 0;
     }
     if (!run_openprint(path)) {
-        if (status && status_size) snprintf(status, status_size, "OpenPrint couldn't be started (%s).", OW_OPENPRINT);
+        if (status && status_size) snprintf(status, status_size, "GFOpenPrint couldn't be started (%s).", OW_OPENPRINT);
         return 0;
     }
-    if (status && status_size) snprintf(status, status_size, "OpenPrint's Print window is open for this document.");
+    if (status && status_size) snprintf(status, status_size, "GFOpenPrint's Print window is open for this document.");
     return 1;
 }
 

@@ -1,5 +1,5 @@
 /*
- * OpenWrite's text widths for the layout (2.0.3), apart from graphics.library
+ * GFOpenWrite's text widths for the layout (2.0.3), apart from graphics.library
  * so that the host tests run them (tests/core/test_fontwidths.c).
  *
  * The rule: the widths a word is laid out with are the widths of the font it
@@ -13,7 +13,7 @@
  * kind's that does (ow_fw_face), then the window's theme face, then the
  * window's own font (on an Amiga whose only fonts are bitmaps, the screen's
  * font, which diskfont scales). OS 3.2's Intellifont outlines
- * (CGTriumvirate, CGTimes) don't open through openfont.library, and have
+ * (CGTriumvirate, CGTimes) don't open through gfopenfont.library, and have
  * no bitmap sizes. Widths a font gives at another size than asked (a bitmap
  * font's nearest, when it can't be scaled) are scaled to the size asked,
  * never taken as they are.
@@ -80,7 +80,7 @@ void ow_fw_init(ow_fontwidths *fw, const ow_fw_backend *be, const char *theme_fa
 /* Forgets the faces, widths and fits found (a new theme, new fonts). */
 void ow_fw_reset(ow_fontwidths *fw);
 
-/* The pixel size text of size units (OpenLayout's, 60 a pixel) is drawn
+/* The pixel size text of size units (GFOpenLayout's, 60 a pixel) is drawn
  * at at 100%: 4 to 128. */
 int ow_fw_pixels(long size_units);
 /* ... and at zoom percent (at least 1). */
@@ -105,7 +105,7 @@ int ow_fw_text(ow_fontwidths *fw, void *font, const char *s, int n, int bold);
  * down to three quarters. The answer is kept. */
 int ow_fw_fit(ow_fontwidths *fw, const ow_fw_table *t, int pixels, long laid);
 
-/* The sample laid out and drawn at a zoom, as OpenWrite does it (FONTCHECK
+/* The sample laid out and drawn at a zoom, as GFOpenWrite does it (FONTCHECK
  * prints it; the tests check drawn against laid). */
 typedef struct {
     char face[OW_FW_NAME];

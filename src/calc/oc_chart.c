@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core: the charts on the sheet showing, drawn as Excel draws a
+ * GFOpenCalc's core: the charts on the sheet showing, drawn as Excel draws a
  * plain one. Read once from the sheet's kept drawing (owf_sheet_charts),
  * their values each time from the cells their series come from, so a
  * chart follows what is typed; from the values the file last had when the

@@ -1,8 +1,8 @@
 /* lastdir.h: the drawer a program last browsed, so its file requester opens there next time (the user,
  * 10 October 2026: "apps should remember the last folder they were browsing, right now they all suffer
- * amnesia"). Kept in ENV:OpenApps/<program>.drawer for the session and ENVARC: for the next boot; a drawer
+ * amnesia"). Kept in ENV:GFOpenApps/<program>.drawer for the session and ENVARC: for the next boot; a drawer
  * that is no longer there (a volume taken out) is forgotten without a requester asking for it.
- * The same file in every Open app. MIT, Copyright (c) 2026 AmigaChrome Team. */
+ * The same file in every GFOpen app. MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OPENAPPS_LASTDIR_H
 #define OPENAPPS_LASTDIR_H
 
@@ -17,7 +17,7 @@
 /* buf: the drawer last used by app, or "" (none kept, or no longer there). */
 static void lastdir_get(const char *app, char *buf, int size)
 {
-    static const char *const where[2] = { "ENV:OpenApps/", "ENVARC:OpenApps/" };
+    static const char *const where[2] = { "ENV:GFOpenApps/", "ENVARC:GFOpenApps/" };
     struct Process *me = (struct Process *)FindTask(NULL);
     APTR was = me->pr_WindowPtr;
     char name[80];
@@ -45,7 +45,7 @@ static void lastdir_get(const char *app, char *buf, int size)
 /* Keeps drawer as app's last, in ENV: and ENVARC:. */
 static void lastdir_put(const char *app, const char *drawer)
 {
-    static const char *const base[2] = { "ENV:OpenApps", "ENVARC:OpenApps" };
+    static const char *const base[2] = { "ENV:GFOpenApps", "ENVARC:GFOpenApps" };
     char name[80];
     BPTR f, d;
     int i;

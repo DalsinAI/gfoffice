@@ -2,8 +2,8 @@
  * libowf: the page-drawing PDF writer (Design-Suite-Shared.md, 9.2, E4),
  * its first part: pages of a given size, and text, rectangles, rounded
  * rectangles, ellipses, lines, polygons, pictures and links placed where
- * a layout put them. OpenPresentation draws its slides into it, from
- * OpenLayout's display list; the other GFOffice programs are to follow.
+ * a layout put them. GFOpenPresentation draws its slides into it, from
+ * GFOpenLayout's display list; the other GFOffice programs are to follow.
  *
  * Positions and sizes are twips from the page's top left corner; colours
  * are OWF_SHADE(0xRRGGBB), 0 for none. Text is in PDF's standard fonts

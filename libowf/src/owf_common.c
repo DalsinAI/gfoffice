@@ -15,10 +15,10 @@ const char *owf_error_text(int error)
     switch (error) {
     case OWF_OK: return "no error";
     case OWF_ERR_IO: return "the file could not be read or written";
-    case OWF_ERR_FORMAT: return "not a document format OpenWrite knows";
+    case OWF_ERR_FORMAT: return "not a document format GFOpenWrite knows";
     case OWF_ERR_CORRUPT: return "the document is damaged";
     case OWF_ERR_MEMORY: return "not enough memory";
-    case OWF_ERR_UNSUPPORTED: return "OpenWrite cannot do that with this format yet";
+    case OWF_ERR_UNSUPPORTED: return "GFOpenWrite cannot do that with this format yet";
     default: return "unknown error";
     }
 }

@@ -41,7 +41,7 @@ SAMPLES = sys.argv[3:] or [p for pattern in ("samples/*.docx", "samples/*.odt", 
                            for p in sorted(glob.glob(os.path.join(ROOT, pattern)))]
 WORKBOOK = (".xlsx", ".ods")
 DAMAGED = "the document is damaged"
-UNSUPPORTED = "OpenWrite cannot do that with this format yet"
+UNSUPPORTED = "GFOpenWrite cannot do that with this format yet"
 failures = []
 
 

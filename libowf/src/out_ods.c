@@ -2585,7 +2585,7 @@ static void settings(ods_out *w, owf_buf *b)
                     "</config:config-item-set></office:settings>");
 }
 
-static const char meta[] = "<office:meta><meta:generator>OpenCalc libowf " OWF_VERSION "</meta:generator></office:meta>";
+static const char meta[] = "<office:meta><meta:generator>GFOpenCalc libowf " OWF_VERSION "</meta:generator></office:meta>";
 
 static void finish_notes(ods_out *w)
 {

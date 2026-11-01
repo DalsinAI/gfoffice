@@ -1,10 +1,10 @@
-# OpenWrite user interface design
+# GFOpenWrite user interface design
 
 Version 0.2 | 6 October 2026
 
 ## Design thesis
 
-OpenWrite should look like a word processor that evolved on the Amiga, not a
+GFOpenWrite should look like a word processor that evolved on the Amiga, not a
 Windows or Linux office suite dropped on top of it.
 
 The operating system supplies the visual identity. The document gets the
@@ -12,31 +12,31 @@ modern rendering.
 
 That means:
 
-- OpenLook owns the title bar, window border, system gadgets and system theme.
-- OpenGadTools owns application controls, toolbars, fields, tabs and layout.
-- OpenRTG owns the high-quality page canvas and accelerated compositing path.
-- OpenDatatypes owns document objects and media.
-- OpenPrint owns print preview, printer/PDF profiles and output.
+- GFOpenLook owns the title bar, window border, system gadgets and system theme.
+- GFOpenGadTools owns application controls, toolbars, fields, tabs and layout.
+- GFOpenRTG owns the high-quality page canvas and accelerated compositing path.
+- GFOpenDatatypes owns document objects and media.
+- GFOpenPrint owns print preview, printer/PDF profiles and output.
 - libowf owns document compatibility.
-- OpenWrite owns editing, pagination, selection and document workflow.
+- GFOpenWrite owns editing, pagination, selection and document workflow.
 
-No OpenWrite-specific skin is painted over the operating system.
+No GFOpenWrite-specific skin is painted over the operating system.
 
 ## Visual character
 
-The default marketing/reference appearance is the Open light theme. OpenWrite
+The default marketing/reference appearance is the Open light theme. GFOpenWrite
 must also look correct in Graphite, Ember, Clear, dark variants and Classic.
 
-The current OpenLook conventions are part of the product:
+The current GFOpenLook conventions are part of the product:
 
 - proportional window titles;
 - CGTriumvirate 13 as the preferred proportional system font;
 - approximately three pixels of breathing room above and below title text;
 - theme-owned borders, close/depth/size gadgets, scroller tracks and knobs;
-- system theme accent rather than an OpenWrite accent colour;
+- system theme accent rather than a GFOpenWrite accent colour;
 - Classic remains the OS's own appearance.
 
-A screenshot used to review OpenWrite should always show an OpenGadTools theme,
+A screenshot used to review GFOpenWrite should always show a GFOpenGadTools theme,
 unless the screenshot is explicitly demonstrating Classic compatibility.
 
 ## Primary window
@@ -44,7 +44,7 @@ unless the screenshot is explicitly demonstrating Classic compatibility.
 At normal desktop widths:
 
     +-------------------------------------------------------------------+
-    | OpenWrite - document.docx                                  system |
+    | GFOpenWrite - document.docx                                  system |
     +-------------------------------------------------------------------+
     | Project Edit View Insert Format Layout Datatypes Tools Help        |
     +-------------------------------------------------------------------+
@@ -55,27 +55,27 @@ At normal desktop widths:
     | Pages        | ruler                             | Properties     |
     | Outline      +-----------------------------------+ Styles         |
     | Styles       |                                   | Datatypes      |
-    | Assets       |          document page            | OpenPrint      |
+    | Assets       |          document page            | GFOpenPrint      |
     |              |                                   |                |
     | thumbnails   |                                   | inspector      |
     |              |                                   |                |
     +--------------+-----------------------------------+----------------+
-    | Page 1 of N | words | format | status     OpenRTG | zoom          |
+    | Page 1 of N | words | format | status     GFOpenRTG | zoom          |
     +-------------------------------------------------------------------+
 
 The page is the visual focus. Application chrome is compact.
 
 The window first opens at 800 x 600, centred in the screen's free area (below
-the title bar and beside OpenDock), and never larger than that area: on a
+the title bar and beside GFOpenDock), and never larger than that area: on a
 screen smaller than 800 x 600 it fills the free area. A size the user gives
-the window is kept (OpenWindows remembers it). This is the rule for every Open
+the window is kept (GFOpenWindows remembers it). This is the rule for every Open
 app (10 October 2026).
 
 ## Toolbar
 
 The main toolbar follows the Open-app rule:
 
-- Icons only is the default: every Open app starts with icons, not icons
+- Icons only is the default: every GFOpen app starts with icons, not icons
   and text (the Team's rule, 10 October 2026).
 - View can select icons and text, icons only, or text only.
 - Every action remains available from a menu.
@@ -139,7 +139,7 @@ single compact "Pages v" selector so labels do not collapse into unreadable
 fragments.
 
 Page thumbnails are rendered from the real page display list, preferably
-through OpenRTG. They are not separate document interpretations.
+through GFOpenRTG. They are not separate document interpretations.
 
 The navigator may be hidden from View.
 
@@ -150,18 +150,18 @@ The right inspector has:
 - Properties
 - Styles
 - Datatypes
-- OpenPrint
+- GFOpenPrint
 
 It appears automatically where there is enough width and may be hidden by the
 user.
 
-Properties contains page/document controls using ordinary sunken OpenGadTools
+Properties contains page/document controls using ordinary sunken GFOpenGadTools
 fields with aligned labels rather than large cards.
 
 Datatypes shows object type, dimensions, metadata, wrapping, alt text and
 rendering information for the selected embedded object.
 
-OpenPrint shows the active printer/profile and provides a direct route into
+GFOpenPrint shows the active printer/profile and provides a direct route into
 print preview and output settings.
 
 ## Canvas and ruler
@@ -176,7 +176,7 @@ The document sits on a neutral workspace with:
 - horizontal ruler;
 - margin and tab marks in later milestones.
 
-OpenRTG should be used for:
+GFOpenRTG should be used for:
 
 - true-colour page caches;
 - anti-aliased/scalable document text;
@@ -191,7 +191,7 @@ integer zoom.
 
 ## Responsive behaviour
 
-OpenWrite must be genuinely usable on classic screen sizes.
+GFOpenWrite must be genuinely usable on classic screen sizes.
 
 At approximately 900 pixels and wider:
 
@@ -216,7 +216,7 @@ The document model and feature set do not change with screen size.
 
 The bottom status line is always visible and compact:
 
-    Page 1 of 4 | 1,254 words | DOCX | Ready.      OpenRTG | 100%
+    Page 1 of 4 | 1,254 words | DOCX | Ready.      GFOpenRTG | 100%
 
 It reports state without becoming a notification panel.
 
@@ -235,19 +235,19 @@ than pretending the legacy file can be reproduced losslessly.
 
 Compatibility notes are surfaced in plain language.
 
-## OpenDatatypes
+## GFOpenDatatypes
 
-Image and object insertion uses OpenDatatypes. The user sees one Insert
+Image and object insertion uses GFOpenDatatypes. The user sees one Insert
 workflow rather than a list of decoder libraries.
 
 Unknown objects are preserved where feasible and displayed as labelled
 placeholders rather than discarded.
 
-## OpenPrint
+## GFOpenPrint
 
-Print..., PDF... and print preview converge on OpenPrint.
+Print..., PDF... and print preview converge on GFOpenPrint.
 
-OpenWrite owns page geometry and pagination. OpenPrint owns device discovery,
+GFOpenWrite owns page geometry and pagination. GFOpenPrint owns device discovery,
 profiles, PDF generation, network/IPP transport, duplex and booklet policy.
 
 The same page display list should feed screen preview and output.
@@ -261,19 +261,19 @@ The visual design must never make the program feel heavy.
 - side panels do not force document reflow;
 - page thumbnails are generated incrementally;
 - typing invalidates only affected layout ranges;
-- OpenRTG acceleration is an enhancement, not a semantic requirement.
+- GFOpenRTG acceleration is an enhancement, not a semantic requirement.
 
 The target feeling is immediate classic software with modern output quality.
 
 ## Current native build
 
 The native editor builds as a 68040 AmigaOS program and has been run on the
-scratch OS 3.2.3/OpenRTG/OpenLook bench.
+scratch OS 3.2.3/GFOpenRTG/GFOpenLook bench.
 
 Implemented and exercised in the current editor build:
 
-- OpenLook-native window;
-- OpenGadTools main toolbar;
+- GFOpenLook-native window;
+- GFOpenGadTools main toolbar;
 - compact format row;
 - responsive Pages navigator;
 - native page canvas and ruler;
@@ -300,7 +300,7 @@ selection replacement and right-Amiga-Z Undo on AmigaOS 3.2.3.
 
 ## 1.0 release milestone
 
-OpenWrite 1.0 completes the first native office-document release:
+GFOpenWrite 1.0 completes the first native office-document release:
 
 - character bold/italic/underline, font choice and point size;
 - paragraph styles, alignment, indents, first-line indent, spacing and line spacing;
@@ -318,7 +318,7 @@ OpenWrite 1.0 completes the first native office-document release:
 - spelling with a bundled en_GB dictionary and persistent user dictionary;
 - recovery autosave and interrupted-session recovery;
 - ARexx scripting for document, export, print, text and search operations;
-- standard printer.device output, making OpenAmigaPrint/OpenPrint a normal backend;
+- standard printer.device output, making OpenAmigaPrint/GFOpenPrint a normal backend;
 - direct searchable PDF export from the libowf document model;
 - DOCX and ODT round-trip coverage for common text formatting, simple tables and inline images.
 

@@ -1,8 +1,8 @@
-# OpenWrite 1.0 release notes
+# GFOpenWrite 1.0 release notes
 
 7 October 2026
 
-OpenWrite 1.0 is the first public native-office release of the AmigaOS 3.2
+GFOpenWrite 1.0 is the first public native-office release of the AmigaOS 3.2
 editor and libowf document stack.
 
 ## Highlights
@@ -32,17 +32,17 @@ The 1.0 candidate passed:
 - core and spelling AddressSanitizer/UndefinedBehaviorSanitizer runs;
 - 3,206 corrupt/cut-short format cases under the normal and sanitizer gates;
 - m68k AmigaOS cross-build with zlib;
-- AmigaOS 3.2.3 + OpenRTG/OpenLook SpeedLab smoke using the release binary and
+- AmigaOS 3.2.3 + GFOpenRTG/GFOpenLook SpeedLab smoke using the release binary and
   a multi-page document, with no release-blocking alert/fault reported.
 
 Release binary sizes at qualification:
 
-- OpenWrite: approximately 302 KiB;
+- GFOpenWrite: approximately 302 KiB;
 - OWConvert: approximately 162 KiB.
 
 ## Known 1.0 boundaries
 
-OpenWrite 1.0 intentionally does not claim full desktop-publishing layout.
+GFOpenWrite 1.0 intentionally does not claim full desktop-publishing layout.
 
 - simple tables are supported; merged/nested/advanced Office tables may be
   approximated;
@@ -60,7 +60,7 @@ OpenWrite 1.0 intentionally does not claim full desktop-publishing layout.
 
 ## Licence
 
-OpenWrite is MIT, Copyright (c) 2026 AmigaChrome Team.
+GFOpenWrite is MIT, Copyright (c) 2026 AmigaChrome Team.
 
 Third-party code/data keep their own licences and notices; see
 `THIRD_PARTY.md` and `licenses/`.

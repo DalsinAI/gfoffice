@@ -1,5 +1,5 @@
 /*
- * OpenPresentation's core: a slide laid out by OpenLayout (see
+ * GFOpenPresentation's core: a slide laid out by GFOpenLayout (see
  * openpresentation_core.h).
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
@@ -84,7 +84,7 @@ int opr_measure(void *userdata, const char *utf8, size_t length, const ol_style 
     return 1;
 }
 
-/* ---- A frame's text, made ready for OpenWrite's paragraph code ---- */
+/* ---- A frame's text, made ready for GFOpenWrite's paragraph code ---- */
 
 typedef struct {
     owf_story story;             /* paragraphs sharing the object's text */
@@ -354,7 +354,7 @@ static int is_shape_drawn_by_us(const owf_obj *o)
     return o && o->kind == OWF_OBJ_SHAPE && o->shape != OWF_SHAPE_RECT;
 }
 
-/* A frame's block at its box, with its fill and line when OpenLayout draws
+/* A frame's block at its box, with its fill and line when GFOpenLayout draws
  * them (rectangles and text frames). */
 static ol_node *frame_node(builder *b, opr_frame *f, int x, int y, int w, int h, const owf_obj *o)
 {

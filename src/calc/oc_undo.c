@@ -1,10 +1,10 @@
 /*
- * OpenCalc's core: undo and redo. A step keeps what it is about to change:
+ * GFOpenCalc's core: undo and redo. A step keeps what it is about to change:
  * the cells of some ranges (an edit, a fill, a paste, a style), a sheet's
  * column and row lists (widths, heights, frozen panes), or, for what moves
  * cells and references about (deleting rows, sheets), a copy of the whole
  * book. Undoing keeps the present state of the same things for redo first.
- * Bounded by OC_UNDO_LIMIT steps and OC_UNDO_BUDGET bytes, as OpenWrite's
+ * Bounded by OC_UNDO_LIMIT steps and OC_UNDO_BUDGET bytes, as GFOpenWrite's
  * undo is bounded by its 16 steps.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */

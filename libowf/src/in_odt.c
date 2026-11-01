@@ -589,7 +589,7 @@ static void text_box_story(odt *o, const owf_xml_node *box, owf_story *into)
     o->nmarks = nmarks;
 }
 
-/* A frame (a picture, or a text box) as OpenWrite's: its size, its place from its anchor's style and its
+/* A frame (a picture, or a text box) as GFOpenWrite's: its size, its place from its anchor's style and its
  * own svg:x and svg:y, whether text goes round it, under or over it, its fill, line and insets. -1 when there
  * is nothing to show, or it is a picture in the line (as-char: in_line), which stays OWF_RUN_IMAGE. */
 static int import_frame(odt *o, const owf_xml_node *c)

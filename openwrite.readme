@@ -1,30 +1,30 @@
 Short:        Native word processor for DOCX, ODT and Amiga documents
 Uploader:     (fill in at upload time)
-Author:       AmigaChrome Team
+Author:       AmiCradle Team
 Type:         text/edit
 Version:      1.0.3
 Architecture: m68k-amigaos >= 3.2.0
 Distribution: Aminet
 
-OpenWrite 1.0.3 is a native word processor for AmigaOS 3.2.
+GFOpenWrite 1.0.3 is a native word processor for AmigaOS 3.2.
 
 It opens and saves DOCX and ODT documents with text and common formatting,
 simple tables, inline pictures, headers, footers and page setup. It exports
 searchable PDF and prints through standard printer.device, so configured
-OpenAmigaPrint/OpenPrint output works as a normal printer backend.
+OpenAmigaPrint/GFOpenPrint output works as a normal printer backend.
 
 The editor includes selection, undo/redo, character and paragraph formatting,
 lists, tables, embedded images, clipboard cut/copy/paste, find/replace,
 automatic pagination, page setup, multi-page navigation, spelling, recovery
 autosave and an ARexx port.
 
-OpenWrite also opens ProWrite, Final Writer/Final Copy-family SWRT documents,
+GFOpenWrite also opens ProWrite, Final Writer/Final Copy-family SWRT documents,
 Wordworth, IFF FTXT, ANSI text and plain text. Unsupported or approximated
 features are named in the import report.
 
 C:OWConvert converts supported document formats from Shell scripts.
 
-OpenWrite and OWConvert need AmigaOS 3.2 and a 68040. No FPU is required.
+GFOpenWrite and OWConvert need AmigaOS 3.2 and a 68040. No FPU is required.
 Small documents are intended to remain usable with about 8 MB Fast RAM;
 16-32 MB is the comfortable target for ordinary work.
 
@@ -37,8 +37,8 @@ its own licence.
 Source: https://github.com/DalsinAI/gfoffice
 
 New in 1.0.3 (10 October 2026): the window first opens at 800 x 600, in
-the middle of the space beside OpenDock (or all of that space on a smaller
-screen), and the toolbar starts with icons only, as in every Open app. A
+the middle of the space beside GFOpenDock (or all of that space on a smaller
+screen), and the toolbar starts with icons only, as in every GFOpen app. A
 size you give the window is kept. View > Toolbar still chooses icons and
 text, or text only.
 

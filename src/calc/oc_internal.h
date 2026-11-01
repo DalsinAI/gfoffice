@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core: what its files share (not for the window).
+ * GFOpenCalc's core: what its files share (not for the window).
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #ifndef OC_INTERNAL_H

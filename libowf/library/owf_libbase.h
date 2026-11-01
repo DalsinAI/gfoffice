@@ -65,7 +65,7 @@ int start(void) { return -1; }
 
 static const char lib_name[] = OWF_LIB_NAME;
 static const char lib_id[] =
-    OWF_LIB_NAME " " OWF_LIB_VERS " (" OWF_LIB_DATE ") libowf " OWF_VERSION ", AmigaChrome Team\r\n";
+    OWF_LIB_NAME " " OWF_LIB_VERS " (" OWF_LIB_DATE ") libowf " OWF_VERSION ", AmiCradle Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
     "$VER: " OWF_LIB_NAME " " OWF_LIB_VERS " (" OWF_LIB_DATE ") MIT, Copyright (c) 2026 AmigaChrome Team";
 

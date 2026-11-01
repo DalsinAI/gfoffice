@@ -1,8 +1,8 @@
-# OpenWrite: formats
+# GFOpenWrite: formats
 
 Version 1.0 | 7 October 2026 | AmigaChrome Team, MIT
 
-Every format OpenWrite opens or saves, what we know about it, and where that
+Every format GFOpenWrite opens or saves, what we know about it, and where that
 knowledge comes from. The design is in [../DESIGN.md](../DESIGN.md), section 4.
 
 **Where the knowledge comes from:**
@@ -14,7 +14,7 @@ knowledge comes from. The design is in [../DESIGN.md](../DESIGN.md), section 4.
 
 **State:** *To do* until a filter is written; then *Text* (the text comes
 back), *Formatting* (paragraphs and character formatting) and *Full* (all
-that the format holds and OpenWrite can show).
+that the format holds and GFOpenWrite can show).
 
 ## 1. Today's documents
 
@@ -23,10 +23,10 @@ that the format holds and OpenWrite can show).
 | ODT, OpenDocument Text (`.odt`), its template (`.ott`) and flat XML (`.fodt`) | Yes | Yes | Spec: OASIS ODF 1.2 and 1.3, ISO/IEC 26300 | W1 | Formatting both ways: styles through parents, paragraphs, character formatting, tabs, headers, footers (left pages' own as `style:header-left`), fields and page setup. Simple tables are native editable tables and inline pictures are embedded; lists remain represented by their visible numbers/bullets; notes are appended to the document |
 | DOCX, Office Open XML (`.docx`) and its template (`.dotx`) | Yes | Yes | Spec: ECMA-376 / ISO/IEC 29500 (transitional and strict) | W1 | Formatting both ways: styles/theme fonts, paragraphs, character formatting, tabs, headers, footers (even pages' own with `w:evenAndOddHeaders`), fields, hyperlinks, page setup, simple native tables and inline embedded pictures. Tracked changes are accepted on import; notes are appended. Unsupported advanced Office objects are reported |
 | RTF (`.rtf`) | No | No | Spec: Microsoft's RTF 1.9.1 | Later | To do |
-| HTML (`.html`) | No | Yes | Spec: HTML and CSS | W1 | Export with document formatting; HTML import is reserved for the OpenHTML/html.datatype work |
+| HTML (`.html`) | No | Yes | Spec: HTML and CSS | W1 | Export with document formatting; HTML import is reserved for the GFOpenHTML/html.datatype work |
 | Plain text (`.txt`), Amiga ISO-8859-1 or UTF-8 | Yes | Yes | n/a | W1 | Full (libowf 0.1) |
 | Markdown (`.md`) | No | No | Spec: CommonMark (a subset) | Later | To do |
-| PDF | No | Yes, and print | Direct OpenWrite/libowf PDF exporter | W1 | Searchable PDF export is live; Print hands that PDF to OpenPrint (printer.device's text only without OpenPrint) |
+| PDF | No | Yes, and print | Direct GFOpenWrite/libowf PDF exporter | W1 | Searchable PDF export is live; Print hands that PDF to GFOpenPrint (printer.device's text only without GFOpenPrint) |
 | Word 97-2003 (`.doc`) | Later | No | Spec: Microsoft's [MS-DOC] | Later | Recognised (and password-protected Office files), with a clear message; not read yet |
 | AbiWord (`.abw`), which was on AmigaOS 4 | No | No | Its XML, read from samples | Later | To do |
 
@@ -85,7 +85,7 @@ double (up to 17), and read exactly.
   cannot tell apart stay what they look like (the text `007` is the number
   7).
 
-## 1b. Presentations (OpenPresentation's)
+## 1b. Presentations (GFOpenPresentation's)
 
 Decks have their own model in libowf (`owf_deck`, in
 `libowf/include/owf_deck.h`: slides, masters with their text levels and
@@ -99,7 +99,7 @@ a deck when the file it is given is one (by its contents).
 | Format | Open | Save | Knowledge | Phase | State |
 | --- | --- | --- | --- | --- | --- |
 | ODP, OpenDocument Presentation (`.odp`, `.otp`; flat `.fodp`) | Yes | Yes | Spec: OASIS ODF 1.2 (presentation and drawing); LibreOffice's ODF 1.3 `style:shrink-to-fit` read and written | P1 | Masters and their presentation styles (title, subtitle, outline levels with their bullets, notes), layouts, slides, text frames, pictures (cropped too), tables, rectangles, rounded rectangles, ellipses, lines and arrows, polygons, the custom shapes we model (triangle, diamond, block arrow), groups, notes, footer, date and number fields, backgrounds, hidden slides, transitions and timings. Kept and written back as they were: other shapes, connectors, embedded charts and objects with their parts, animations, rare transitions, custom shows and the show's settings. Gradients and hatching are drawn in one colour |
-| PDF | No | Export | Our page-drawing PDF writer (`owf_pdf.h`, Shared E4) | P1 | A page a slide at the slide's size, laid out by OpenLayout (`src/deck`); text searchable in the standard fonts, characters they lack written as their nearest (an arrow as `->`, a tick as `v`, less or equal as `<=`: `owf_pdf_fallback`), measured so for the layout too; JPEG and PNG pictures; hidden slides left out. Built into OWConvert when OpenLayout is there |
+| PDF | No | Export | Our page-drawing PDF writer (`owf_pdf.h`, Shared E4) | P1 | A page a slide at the slide's size, laid out by GFOpenLayout (`src/deck`); text searchable in the standard fonts, characters they lack written as their nearest (an arrow as `->`, a tick as `v`, less or equal as `<=`: `owf_pdf_fallback`), measured so for the layout too; JPEG and PNG pictures; hidden slides left out. Built into OWConvert when GFOpenLayout is there |
 | PPTX, Office Open XML (`.pptx`; `.potx`, `.ppsx`, `.pptm`) | Yes | Later | Spec: ECMA-376 Part 1, PresentationML and DrawingML; tested with decks made by python-pptx (`tests/deck/make_pptx_fixtures.py`) | P2 | Read (`libowf/src/in_pptx.c`): the slide size, masters, layouts and slides with their placeholders matched by index and kind, text style inheritance (the presentation's defaults, the master's title, body and other styles, placeholders' and shapes' list styles, paragraphs and runs), the theme's colours (with tint, shade, luminance and the master's colour map) and its major and minor fonts, style references (`fillRef`, `lnRef`, `fontRef`), text boxes and their insets and anchoring, autofit (shrinking starts at the size PowerPoint shrank the text to, `a:normAutofit fontScale`), pictures (cropped too), tables (cells' fills and borders; table styles as PowerPoint's default one), the shapes the model has (rectangle, rounded rectangle, ellipse, triangle, diamond, block arrow, simple polygons, line and connector), groups (their child transforms), `mc:AlternateContent`'s fallback, notes, footer, date and slide number, backgrounds, hidden slides, and the transitions the model has. Approximated and reported: text in capitals or small capitals (`cap`, kept as capital letters, small capitals' small letters at four fifths of the size), spacing between letters (`spc`, drawn as normal), freeform and other shapes (drawn as rectangles), gradient and pattern fills (one colour), rotated objects (drawn unrotated), vertical text, bent and curved connectors, merged table cells, theme colours (read as fixed colours). Left out and reported: animations, ink, linked pictures, a layout's own pictures and shapes. Saved as ODP |
 | PowerPoint 97-2003 (`.ppt`) | Later | No | Spec: Microsoft's [MS-PPT] | Later | To do |
 
@@ -131,7 +131,7 @@ here.
 
 | Program | Maker, years | Container | What we know | Phase | State |
 | --- | --- | --- | --- | --- | --- |
-| ProWrite | New Horizons Software, 1987-1993 | IFF `FORM WORD` | Spec (New Horizons, 1987): `FONT`, `COLR`, `DOC`, `HEAD`, `FOOT`, `PARA`, `TABS`, `PAGE`, `TEXT`, `FSCC` (font, style and colour changes), `PCTS`/`PINF` with an ILBM `BODY` for pictures; measures in decipoints (1/720 inch) | W2 | Formatting (libowf 0.1, from the spec; pictures not yet). New Horizons' own ProWrite 3 file (Aminet `text/misc/pwconv202`) confirmed the style bits and showed `COLR` holding ISO colours 30-37 and `PSET` the page size, both read. Headers and footers for right pages and for left pages are kept apart (OpenWrite 2.0.23), as Word's even headers and ODF's left ones; one for both pages is on every page. To confirm: what the right margin is measured from, where tab positions start |
+| ProWrite | New Horizons Software, 1987-1993 | IFF `FORM WORD` | Spec (New Horizons, 1987): `FONT`, `COLR`, `DOC`, `HEAD`, `FOOT`, `PARA`, `TABS`, `PAGE`, `TEXT`, `FSCC` (font, style and colour changes), `PCTS`/`PINF` with an ILBM `BODY` for pictures; measures in decipoints (1/720 inch) | W2 | Formatting (libowf 0.1, from the spec; pictures not yet). New Horizons' own ProWrite 3 file (Aminet `text/misc/pwconv202`) confirmed the style bits and showed `COLR` holding ISO colours 30-37 and `PSET` the page size, both read. Headers and footers for right pages and for left pages are kept apart (GFOpenWrite 2.0.23), as Word's even headers and ODF's left ones; one for both pages is on every page. To confirm: what the right margin is measured from, where tab positions start |
 | QuickWrite | New Horizons Software | Probably IFF `FORM WORD` | To confirm from a sample | W2 | To do |
 | Final Writer, Final Copy and Final Copy II | SoftWood, 1990-1997 | IFF `FORM SWRT` | Real documents from Aminet; fw2odf (MIT) for the fonts and `ATTR`; notes in [formats/finalwriter.md](formats/finalwriter.md) | W2 | Text and character formatting (libowf 0.1): fonts, sizes, bold and italic, underline, tabs, text frames, table cells, master-page text as the header, the Symbol font. Alignment, indents and tab positions not yet |
 | Wordworth | Digita, 1992-1999 | IFF `FORM WOWO` | Real documents from Aminet (a 300 KB manual among them); notes in [formats/wordworth.md](formats/wordworth.md) | W2 | Text and character formatting (libowf 0.1): fonts, sizes, bold, italic, underline, colours, centred paragraphs, page breaks, headers and footers. Indents, margins and tab positions not yet |
@@ -156,12 +156,12 @@ here.
 4. Set this table's state, and the import report lists anything the filter
    cannot bring across.
 
-## 5. Publications (OpenPublisher's)
+## 5. Publications (GFOpenPublisher's)
 
-OpenPublisher is the GFOffice Suite's desktop publisher
+GFOpenPublisher is the GFOffice Suite's desktop publisher
 ([gfoffice/Design-OpenPublisher.md](gfoffice/Design-OpenPublisher.md)).
 Its files are read into their own model (`libowf/include/owf_pub.h`), not
-into OpenWrite's documents.
+into GFOpenWrite's documents.
 
 | Format | Open | Save | Knowledge | Phase | State |
 | --- | --- | --- | --- | --- | --- |

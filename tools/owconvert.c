@@ -1,5 +1,5 @@
 /*
- * OWConvert: converts documents with OpenWrite's filters, from a Shell.
+ * OWConvert: converts documents with GFOpenWrite's filters, from a Shell.
  *
  *   OWConvert FROM,TO,FORMAT/K,REPORT/S,FORMATS/S
  *   1> OWConvert Work:Letters/Bank.pw RAM:Bank.odt
@@ -13,7 +13,7 @@
  *   1> OWConvert Accounts.xls RAM:Accounts.csv
  *
  * Presentations, when FROM is one (ODP, flat ODP): to ODP or flat ODP,
- * and to PDF, a page a slide, laid out by OpenLayout (OpenPresentation's
+ * and to PDF, a page a slide, laid out by GFOpenLayout (GFOpenPresentation's
  * core, src/deck; built in when OWC_DECK_PDF is defined):
  *   1> OWConvert Talk.odp RAM:Talk.pdf
  *
@@ -35,7 +35,7 @@
 
 #ifdef __amigaos__
 #include <proto/dos.h>
-static const char version[] __attribute__((used)) = "$VER: OWConvert " OWF_VERSION " (25.10.2026) AmigaChrome Team";
+static const char version[] __attribute__((used)) = "$VER: OWConvert " OWF_VERSION " (25.10.2026) AmiCradle Team";
 #endif
 
 int owc_ends_with(const char *s, const char *tail)

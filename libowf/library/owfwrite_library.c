@@ -1,5 +1,5 @@
 /*
- * owfwrite.library 3.2, OpenWrite's part of libowf: documents. The document
+ * owfwrite.library 3.2, GFOpenWrite's part of libowf: documents. The document
  * model and its formats: DOCX, ODT, the Amiga word processors' files (Final
  * Writer, Wordworth, ProWrite, IFF FTXT), text, ANSI and HTML, and PDF out.
  *
@@ -9,11 +9,11 @@
  * (docs/suite/owf-libraries.md).
  *
  * 3.1: owf_frame.in_line (a byte that was reserved), set by the DOCX reader for
- * Word's text box in the line (OpenWrite 2.0.17); the structure's size is the
+ * Word's text box in the line (GFOpenWrite 2.0.17); the structure's size is the
  * same.
  *
  * 3.2: owf_doc.header_left and footer_left, left pages' own header and
- * footer (ProWrite's, Word's even ones, ODF's style:header-left; OpenWrite
+ * footer (ProWrite's, Word's even ones, ODF's style:header-left; GFOpenWrite
  * 2.0.23), at its end, so owf_doc is larger and a program's size check
  * refuses 3.1. No call changes.
  *

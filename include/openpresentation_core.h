@@ -1,21 +1,21 @@
 /*
- * OpenPresentation's portable core (src/deck), as openwrite_core.h is
- * OpenWrite's and opencalc_core.h OpenCalc's: what the Amiga program, the
+ * GFOpenPresentation's portable core (src/deck), as openwrite_core.h is
+ * GFOpenWrite's and opencalc_core.h GFOpenCalc's: what the Amiga program, the
  * show and OWConvert share, built and tested on the PC.
  *
  * Phase P1 (docs/gfoffice/Design-OpenPresentation.md, 12) is here:
  *
- *   - a slide laid out by OpenLayout: one ol_document a slide, one page the
+ *   - a slide laid out by GFOpenLayout: one ol_document a slide, one page the
  *     slide's size, a frame (OL_BOX_ABSOLUTE) for the background and for
- *     each object, back to front; a frame's text made by OpenWrite's
+ *     each object, back to front; a frame's text made by GFOpenWrite's
  *     paragraph code (ow_layout_add_story, Shared E5), with each run's font,
  *     size and colour from its level when it has none, and its list's
  *     bullet or number in front;
  *   - text anchored to the middle or bottom of its box, and text that
  *     shrinks to fit (up to four times by 90%), by laying out again
- *     (OpenLayout 0.2 has neither: section 5.2 and 5.3);
+ *     (GFOpenLayout 0.2 has neither: section 5.2 and 5.3);
  *   - the deck as a PDF, one page a slide, drawn from that display list
- *     through the page PDF writer (owf_pdf.h); shapes OpenLayout 0.2
+ *     through the page PDF writer (owf_pdf.h); shapes GFOpenLayout 0.2
  *     can't draw (ellipses, rounded rectangles, triangles, diamonds,
  *     arrows, lines, polygons) are drawn at their frame's box, and so are
  *     a picture's crop and an object kept but not drawn (as a labelled box).
@@ -46,7 +46,7 @@ typedef struct {
 } opr_frame;
 
 typedef struct {
-    ol_document *doc;            /* OpenLayout units; page 0 is the slide */
+    ol_document *doc;            /* GFOpenLayout units; page 0 is the slide */
     const owf_deck *deck;
     int slide;
     int nframes;

@@ -1,5 +1,5 @@
 /*
- * libowf: decks, OpenPresentation's model, and their formats.
+ * libowf: decks, GFOpenPresentation's model, and their formats.
  *
  * A deck holds slides; each slide uses a layout and a master. Masters hold
  * the background, fixed art, the placeholders' boxes and the look of each
@@ -13,7 +13,7 @@
  * count and a capacity, lengths in twips, text in UTF-8, memory from
  * owf_malloc. A frame's text is an owf_story; the deck's fonts, pictures
  * and default format live in one owf_doc of its own (res), whose stories
- * stay empty, so libowf's paragraph calls and OpenWrite's layout work on a
+ * stay empty, so libowf's paragraph calls and GFOpenWrite's layout work on a
  * frame's text unchanged. What the model cannot edit is kept as the file's
  * own XML and written back on save.
  *

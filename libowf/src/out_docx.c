@@ -733,7 +733,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
 
     owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
                         "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\">"
-                        "<Application>OpenWrite libowf " OWF_VERSION "</Application></Properties>\n");
+                        "<Application>GFOpenWrite libowf " OWF_VERSION "</Application></Properties>\n");
     if (result == OWF_OK)
         result = add_part(zip, &part, "docProps/app.xml");
     if(result==OWF_OK){int i;char name[96];for(i=0;i<doc->nimages&&result==OWF_OK;++i){snprintf(name,sizeof name,"word/media/image%d.%s",i+1,docx_image_ext(&doc->images[i]));result=owf_zip_add(zip,name,doc->images[i].data,doc->images[i].length,1);}}

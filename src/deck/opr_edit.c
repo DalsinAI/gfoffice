@@ -1,9 +1,9 @@
 /*
- * OpenPresentation's core: editing a text frame's text (see
+ * GFOpenPresentation's core: editing a text frame's text (see
  * openpresentation_core.h, "Editing"). Positions are a paragraph and a
  * byte offset into its text as opr_para_text gives it; text goes into the
  * text run at the position, so it takes that run's look. The caret and the
- * pointer are mapped through the slide's OpenLayout display list: each
+ * pointer are mapped through the slide's GFOpenLayout display list: each
  * paragraph is a block of the frame, each run a node after it (after the
  * bullet and its tab, for a list paragraph), as opr_layout.c builds them.
  * Plain C99, no floating point. MIT, Copyright (c) 2026 AmigaChrome Team.

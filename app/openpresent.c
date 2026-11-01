@@ -1,23 +1,23 @@
 /*
- * OpenPresentation - the GFOffice Suite's slides, on AmigaOS 3.2.
+ * GFOpenPresentation - the GFOffice Suite's slides, on AmigaOS 3.2.
  *
  * P2's program, with P3's first editing (Design-OpenPresentation.md, 12):
  * opens ODP and PPTX (libowf's deck formats), shows the slide at the
  * window's size with a strip of the slides beside it, lets a text box's
  * text be typed in (src/deck/opr_edit.c: the caret, backspace and delete,
  * new paragraphs, undo), saves ODP, exports PDF and prints through
- * OpenPrint (the deck's PDF to T:, then C:OpenPrint on it, as OpenWrite
+ * GFOpenPrint (the deck's PDF to T:, then C:GFOpenPrint on it, as GFOpenWrite
  * does).
  *
- * The slide is laid out by OpenLayout through the core (opr_slide_layout),
+ * The slide is laid out by GFOpenLayout through the core (opr_slide_layout),
  * measured with the PDF's standard fonts' widths, and drawn here from its
  * display list at the screen's pixels: each glyph where the layout put it,
- * so the screen, the caret and the PDF agree. Shapes OpenLayout doesn't draw
+ * so the screen, the caret and the PDF agree. Shapes GFOpenLayout doesn't draw
  * (ellipses, triangles, arrows, lines...) are drawn here, at their frame's
  * place in the drawing order, as the PDF writer draws them. Pictures go
- * through datatypes, as OpenWrite's do.
+ * through datatypes, as GFOpenWrite's do.
  *
- * Chrome: OpenGadTools' toolbar with the Chrome icon set
+ * Chrome: GFOpenGadTools' toolbar with the Chrome icon set
  * (ogt_iconset_attach), status bar and list, in the theme
  * (opengadtools docs/style/README.md). 68040, no FPU needed.
  *
@@ -78,8 +78,8 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, *LayersBase = NULL;
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
-#define PROGRAM "OpenPresentation"
-#define VERSION_TEXT "OpenPresentation 0.2.1 (25.10.2026)"
+#define PROGRAM "GFOpenPresentation"
+#define VERSION_TEXT "GFOpenPresentation 0.2.1 (25.10.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmigaChrome Team";
 
@@ -127,7 +127,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Text", NULL, CHECKIT, ~4 & 7, (APTR)M_TB_TEXT },
 
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
-    { NM_ITEM, "About OpenPresentation...", NULL, 0, 0, (APTR)M_ABOUT },
+    { NM_ITEM, "About GFOpenPresentation...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -232,7 +232,7 @@ static void load_theme(void)
 
 static void read_theme_choice(void)
 {
-    char *s = read_file("ENV:OpenGadTools/Theme");
+    char *s = read_file("ENV:GFOpenGadTools/Theme");
     if (!s) return;
     {
         char *nl = strchr(s, '\n');
@@ -396,8 +396,8 @@ static unsigned long utf8_next(const char *s, size_t n, size_t *at)
 
 /* ---- Fonts ----
  * A deck's faces drawn with the Amiga's: sans as CGTriumvirate, serif as CGTimes, mono as courier (OS 3.2's
- * Intellifont outlines and bitmaps, as OpenWrite maps them), at the pixel size the scale gives, through
- * openfont.library, else diskfont (which scales and draws outlines), else the fonts in memory. Kept open in a
+ * Intellifont outlines and bitmaps, as GFOpenWrite maps them), at the pixel size the scale gives, through
+ * gfopenfont.library, else diskfont (which scales and draws outlines), else the fonts in memory. Kept open in a
  * small cache. */
 
 #define FONT_CACHE 20
@@ -493,7 +493,7 @@ static struct TextFont *slide_font(const ol_style *st, int pixels, int style)
     return f ? f : font;
 }
 
-/* ---- Pictures, through datatypes (as OpenWrite's image cache) ---- */
+/* ---- Pictures, through datatypes (as GFOpenWrite's image cache) ---- */
 
 #define IMAGE_SLOTS 12
 #define IMAGE_MAX_PIXELS (1024UL * 1024UL)
@@ -582,7 +582,7 @@ static picture *picture_get(int index)
             return pictures[i].argb ? &pictures[i] : NULL;
         }
     im = &deck->res->images[index];
-    snprintf(tmp, sizeof tmp, "T:OpenPresentation-Picture-%ld-%d.tmp", (long)FindTask(NULL), index);
+    snprintf(tmp, sizeof tmp, "T:GFOpenPresentation-Picture-%ld-%d.tmp", (long)FindTask(NULL), index);
     f = im->data && im->length ? Open((STRPTR)tmp, MODE_NEWFILE) : 0;
     if (f) {
         ok = Write(f, (APTR)im->data, (LONG)im->length) == (LONG)im->length;
@@ -794,7 +794,7 @@ static void arrowhead(struct RastPort *rp, LONG pen, int x1, int y1, int x2, int
     ogt_fill_poly(rp, pen, pts, 3);
 }
 
-/* A shape OpenLayout doesn't draw, at its box, as the PDF writer draws it (src/deck/opr_pdf.c). */
+/* A shape GFOpenLayout doesn't draw, at its box, as the PDF writer draws it (src/deck/opr_pdf.c). */
 static void draw_shape(const painter *p, const owf_obj *o)
 {
     int x = px_x(p, o->x), y = px_y(p, o->y), x2 = px_x(p, o->x + o->width), y2 = px_y(p, o->y + o->height);
@@ -956,7 +956,7 @@ static int is_gap(unsigned long cp)
 }
 
 /* Text's width as Text() draws it: graphics' bold moves each letter on by the font's smear, which TextLength
- * can leave out (as OpenWrite's text_length has it). */
+ * can leave out (as GFOpenWrite's text_length has it). */
 static int text_w(struct RastPort *rp, const char *s, int n)
 {
     int w = TextLength(rp, (STRPTR)s, (UWORD)n);
@@ -1351,7 +1351,7 @@ static void layout(void)
     status_box = (box){ area.x, area.y + area.h - fh - 10, area.w, fh + 10 };
     body_y = toolbar_box.y + toolbar_box.h;
     body_h = status_box.y - body_y;
-    /* the slides beside the slide, hidden in a narrow window (as OpenWrite's navigator) */
+    /* the slides beside the slide, hidden in a narrow window (as GFOpenWrite's navigator) */
     stripw = area.w >= 480 ? (area.w < 1000 ? 140 : area.w / 7) : 0;
     strip_box = (box){ area.x, body_y, stripw, body_h };
     view_box = (box){ area.x + stripw + (stripw ? 1 : 0), body_y, area.w - stripw - (stripw ? 1 : 0), body_h };
@@ -1824,7 +1824,7 @@ static void open_deck(const char *path)
     int rc = owf_import_deck_file(path, NULL, &d, report, &used);
     if (rc != OWF_OK || !d) {
         snprintf(msg, sizeof msg, PROGRAM " could not open %.200s.\n\n%.200s", leaf(path),
-                 rc == OWF_ERR_FORMAT ? "It is not a presentation OpenPresentation reads (ODP or PPTX)." : owf_error_text(rc));
+                 rc == OWF_ERR_FORMAT ? "It is not a presentation GFOpenPresentation reads (ODP or PPTX)." : owf_error_text(rc));
         tell("Open", msg);
         owf_report_free(report);
         return;
@@ -1934,9 +1934,9 @@ static void do_export_pdf(void)
     draw_status();
 }
 
-/* Print: the slides as a PDF in T:, and OpenPrint's Print window on it, started on its own (OpenWrite's way,
- * app/ow_print.c). OpenPrint chooses the printer, or saves the PDF. */
-#define OPENPRINT "C:OpenPrint"
+/* Print: the slides as a PDF in T:, and GFOpenPrint's Print window on it, started on its own (GFOpenWrite's way,
+ * app/ow_print.c). GFOpenPrint chooses the printer, or saves the PDF. */
+#define OPENPRINT "C:GFOpenPrint"
 static void do_print(void)
 {
     char path[160], name[128], cmd[300];
@@ -1948,7 +1948,7 @@ static void do_print(void)
     lock = Lock((STRPTR)OPENPRINT, ACCESS_READ);
     me->pr_WindowPtr = was;
     if (!lock) {
-        tell("Print", "Printing needs OpenPrint (C:OpenPrint).\n\nExport PDF still works.");
+        tell("Print", "Printing needs GFOpenPrint (C:GFOpenPrint).\n\nExport PDF still works.");
         return;
     }
     UnLock(lock);
@@ -1966,9 +1966,9 @@ static void do_print(void)
                                   TAG_DONE) == -1) {
         if (in) Close(in);
         if (out) Close(out);
-        set_status("OpenPrint couldn't be started.");
+        set_status("GFOpenPrint couldn't be started.");
     } else {
-        set_status("OpenPrint's Print window is open for these slides.");
+        set_status("GFOpenPrint's Print window is open for these slides.");
     }
     draw_status();
 }
@@ -1978,7 +1978,7 @@ static void about(void)
     char text[400];
     snprintf(text, sizeof text,
              VERSION_TEXT "\nThe GFOffice Suite's slides.\n\nOpens ODP and PPTX, saves ODP, exports PDF,\n"
-             "prints through OpenPrint.\n\nCore %s, libowf %s, OpenLayout %s.\nMIT, Copyright (c) 2026 AmigaChrome Team.",
+             "prints through GFOpenPrint.\n\nCore %s, libowf %s, GFOpenLayout %s.\nMIT, Copyright (c) 2026 AmigaChrome Team.",
              OPR_CORE_VERSION, OWF_VERSION, OL_VERSION);
     tell("About " PROGRAM, text);
 }
@@ -2200,13 +2200,13 @@ static void events(void)
 
 /* ---- Opening and closing ---- */
 
-/* The part of the screen a window may have: below the title bar, less OpenDock's strip when it publishes
- * one (ENV:OpenDock/Free), as OpenWrite's free_area. */
+/* The part of the screen a window may have: below the title bar, less GFOpenDock's strip when it publishes
+ * one (ENV:GFOpenDock/Free), as GFOpenWrite's free_area. */
 static void free_area(int *l, int *t, int *w, int *h)
 {
     char buf[48];
     int a, b, c, d;
-    LONG got = GetVar((STRPTR)"OpenDock/Free", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY);
+    LONG got = GetVar((STRPTR)"GFOpenDock/Free", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY);
     if (got > 0 && sscanf(buf, "%d %d %d %d", &a, &b, &c, &d) == 4 && c >= 400 && d >= 200 && a >= 0 && b >= 0 &&
         a + c <= scr->Width && b + d <= scr->Height) {
         *l = a;
@@ -2235,7 +2235,7 @@ static int open_window(void)
     menu = CreateMenus(menus, TAG_DONE);
     if (menu) LayoutMenus(menu, vi, GTMN_NewLookMenus, TRUE, TAG_DONE);
     free_area(&l, &t, &aw, &ah);
-    /* 800 x 600 to start (the Open apps' rule), centred, never bigger than the screen allows */
+    /* 800 x 600 to start (the GFOpen apps' rule), centred, never bigger than the screen allows */
     w = aw < 800 ? aw : 800;
     h = ah < 600 ? ah : 600;
     /* the zoom gadget: the whole free area, and back */

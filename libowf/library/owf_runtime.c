@@ -10,7 +10,7 @@
  *
  * Memory: one Exec pool for the library, behind a semaphore, with each
  * block's size in front of it. Every document's memory comes from it, and
- * programs give it back through owf_free() (OpenWrite's editor grows a
+ * programs give it back through owf_free() (GFOpenWrite's editor grows a
  * document's arrays itself), so any task may free what another allocated.
  *
  * MIT, Copyright (c) 2026 AmigaChrome Team.

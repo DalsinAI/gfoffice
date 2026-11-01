@@ -1,10 +1,10 @@
 /*
- * OpenWrite's pages on OpenLayout: an owf_doc as OpenLayout's tree (each
+ * GFOpenWrite's pages on GFOpenLayout: an owf_doc as GFOpenLayout's tree (each
  * paragraph a block, each run an inline node, tables as grids), laid out
  * into pages at full resolution, and the editor's positions mapped to
- * OpenLayout's and back, for the caret and the pointer.
+ * GFOpenLayout's and back, for the caret and the pointer.
  *
- * Fonts reach the measure callback and the renderer as OpenLayout font
+ * Fonts reach the measure callback and the renderer as GFOpenLayout font
  * numbers: the document's font index plus one (OW_LAYOUT_FONT), 0 being
  * the document's default font.
  *
@@ -27,12 +27,12 @@ extern "C" {
 
 typedef struct ow_layout ow_layout;
 
-/* The document's body as OpenLayout's tree, laid out into its pages.
+/* The document's body as GFOpenLayout's tree, laid out into its pages.
  * The document must not change while the layout is used; lay it out again
  * after an edit. NULL when memory runs out. */
 ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure,
                          void *measure_userdata);
-/* 2.0.13: the same, with room for ops display ops made before anything else (OpenLayout 0.5's
+/* 2.0.13: the same, with room for ops display ops made before anything else (GFOpenLayout 0.5's
  * ol_document_new_reserved; 0: none): a program that lays its document out again after each change, the
  * last layout freed just before, can give the same room each time, a little more than the last layout's
  * ol_display_count, and its display list takes back the block the last one had (on an Amiga libnix's
@@ -47,10 +47,10 @@ void ow_layout_free(ow_layout *layout);
 
 ol_document *ow_layout_body(const ow_layout *layout);
 int ow_layout_page_count(const ow_layout *layout);
-/* The page in OpenLayout units (twips times 4). */
+/* The page in GFOpenLayout units (twips times 4). */
 const ol_page *ow_layout_page(const ow_layout *layout);
 
-/* An editor position to OpenLayout's, and back. 0 when there is none. */
+/* An editor position to GFOpenLayout's, and back. 0 when there is none. */
 int ow_layout_to_text(const ow_layout *layout, ow_position pos, ol_text_position *out);
 int ow_layout_from_text(const ow_layout *layout, const ol_text_position *in, ow_position *out);
 
@@ -77,7 +77,7 @@ int ow_layout_hit(const ow_layout *layout, int page, ol_unit x, ol_unit y, ow_po
 ol_document *ow_layout_story(const ow_layout *layout, ow_story_kind which, int page,
                              const char *date, const char *time, ol_unit *x, ol_unit *y);
 
-/* Any story into any OpenLayout node (Shared E5): its paragraphs as
+/* Any story into any GFOpenLayout node (Shared E5): its paragraphs as
  * blocks and its tables as grids, appended to parent (NULL: the root), with
  * the fonts, default format and pictures of doc. fields: the text of the
  * page number, page count, date and time fields (NULL, or any of them NULL:

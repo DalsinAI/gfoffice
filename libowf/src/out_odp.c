@@ -937,7 +937,7 @@ static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int in
         if (o->keep >= 0 && o->keep < w->deck->nkept && w->deck->kept[o->keep].kind == OWF_KEPT_OBJECT)
             owf_buf_puts(out, w->deck->kept[o->keep].xml);
         else
-            owf_report_add(w->report, OWF_NOTE_LOST, "Objects OpenPresentation can't save were left out");
+            owf_report_add(w->report, OWF_NOTE_LOST, "Objects GFOpenPresentation can't save were left out");
         return;
     }
     if (o->kind == OWF_OBJ_GROUP) {
@@ -1407,7 +1407,7 @@ static int build_styles(odpw *w, owf_buf *out)
 
 static void put_meta(odpw *w, owf_buf *out)
 {
-    owf_buf_puts(out, "<office:meta><meta:generator>OpenPresentation/" OWF_VERSION " libowf</meta:generator>");
+    owf_buf_puts(out, "<office:meta><meta:generator>GFOpenPresentation/" OWF_VERSION " libowf</meta:generator>");
     if (w->deck->res->title) {
         owf_buf_puts(out, "<dc:title>");
         owf_buf_puts_xml(out, w->deck->res->title);

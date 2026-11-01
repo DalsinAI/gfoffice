@@ -3,14 +3,14 @@
  *
  * What GFOffice's page drawing would cost on a 68040 through cairo 1.18.6 and
  * pixman 0.46.4 (openamigacairo, linked statically, CAIRO_FONTS=user) and
- * through OpenGPU's stream v1.6 vector commands (openamigartg's ogpu_core.c,
- * the code opengpu.library's 68k back end runs, linked here so the batch
- * always runs on the 68k; and opengpu.library itself, as it routes the
- * batch), beside what OpenWrite and OpenCalc do today (point sampling, 1-pixel
+ * through GFOpenGPU's stream v1.6 vector commands (openamigartg's ogpu_core.c,
+ * the code gfopengpu.library's 68k back end runs, linked here so the batch
+ * always runs on the 68k; and gfopengpu.library itself, as it routes the
+ * batch), beside what GFOpenWrite and GFOpenCalc do today (point sampling, 1-pixel
  * lines). Everything is drawn into ARGB32 memory; nothing is put on a screen.
  *
  *   drawbench [ROUNDS] [png] [work=MB]   png: each result also as RAM:db-*.png;
- *                                        work: OpenGPU's work memory (default 1 MB)
+ *                                        work: GFOpenGPU's work memory (default 1 MB)
  *
  * Build: tools/drawbench/build.sh (the os32-gcc16 stove). Results: docs/suite/cairo-rendering.md, section 6.
  * NO_CAIRO builds it without cairo, to weigh what cairo adds to a program.
@@ -67,7 +67,7 @@ static void clear(target *t, ULONG argb)
         t->px[i] = argb;
 }
 
-/* ---- the OpenGPU core, linked ---- */
+/* ---- the GFOpenGPU core, linked ---- */
 
 static struct ogpu_core core;
 static ogpu_u8 *map_id(void *user, ogpu_u32 address, ogpu_u32 length)
@@ -85,7 +85,7 @@ static ULONG *batch_buf, *path_buf, *grad_buf;
 static UBYTE *work;
 static struct OGPUBatch B, P[PATHS], G;
 static int npaths;
-static int use_lib;                     /* 1: OGPU_Submit, as opengpu.library routes it */
+static int use_lib;                     /* 1: OGPU_Submit, as gfopengpu.library routes it */
 
 static void ob_begin(target *t)
 {
@@ -287,7 +287,7 @@ static long gradient_ogpu(target *t)
 /* ---- scene 4: a full-page picture, scaled ---- */
 
 #define PIC_W 860
-#define PIC_H 1216                      /* about OpenWrite's megapixel cap, an A4 page's shape */
+#define PIC_H 1216                      /* about GFOpenWrite's megapixel cap, an A4 page's shape */
 static target pic;
 
 static void make_picture(void)
@@ -302,7 +302,7 @@ static void make_picture(void)
         }
 }
 
-/* today: OpenWrite 2.0.13's draw_picture, each target pixel picked from the cached picture */
+/* today: GFOpenWrite 2.0.13's draw_picture, each target pixel picked from the cached picture */
 static long picture_point(target *t)
 {
     static UWORD xs[2048];
@@ -339,7 +339,7 @@ static long picture_ogpu(target *t)
 }
 
 /* the same picture through COMPOSITE's bilinear scale: straight colour, which is the same as premultiplied for an
- * opaque picture (OpenWrite blends a picture's alpha onto the paper once, when it caches it) */
+ * opaque picture (GFOpenWrite blends a picture's alpha onto the paper once, when it caches it) */
 static long picture_composite(target *t)
 {
     ob_begin(t);
@@ -566,20 +566,20 @@ int main(int argc, char **argv)
     make_series();
     make_picture();
     mem1 = AvailMem(MEMF_ANY);
-    printf("drawbench: %d rounds, %lu KB of OpenGPU work memory, E-clock %lu Hz, free memory %lu KB, %lu KB after the buffers\n", rounds, WORK_BYTES >> 10,
+    printf("drawbench: %d rounds, %lu KB of GFOpenGPU work memory, E-clock %lu Hz, free memory %lu KB, %lu KB after the buffers\n", rounds, WORK_BYTES >> 10,
            (unsigned long)efreq, (unsigned long)(mem0 >> 10), (unsigned long)(mem1 >> 10));
-    OpenGPUBase = OpenLibrary((STRPTR)"opengpu.library", 0);
+    OpenGPUBase = OpenLibrary((STRPTR)"gfopengpu.library", 0);
     if (OpenGPUBase) {
         ULONG q = OGPU_Query(OGPU_OP_PATH_FILL, OGPU_FMT_ARGB32);
         STRPTR be = OGPU_BackEndName((ULONG)OGPU_BACKEND(q));
-        printf("opengpu.library %d.%d: PATH_FILL on ARGB32 answers %d by back end %d (%s)\n", OpenGPUBase->lib_Version,
+        printf("gfopengpu.library %d.%d: PATH_FILL on ARGB32 answers %d by back end %d (%s)\n", OpenGPUBase->lib_Version,
                OpenGPUBase->lib_Revision, OGPU_ANSWER(q), OGPU_BACKEND(q), be ? (char *)be : "?");
         if (OGPU_ANSWER(q) == OGPU_NONE) {
             CloseLibrary(OpenGPUBase);
             OpenGPUBase = NULL;
         }
     } else
-        printf("no opengpu.library\n");
+        printf("no gfopengpu.library\n");
     printf("\n");
 
     use_lib = 0;
@@ -591,7 +591,7 @@ int main(int argc, char **argv)
 #endif
     if (OpenGPUBase) {
         use_lib = 1;
-        timeit("pie", "opengpu.library", pie_ogpu, &chart);
+        timeit("pie", "gfopengpu.library", pie_ogpu, &chart);
         use_lib = 0;
     }
 
@@ -604,7 +604,7 @@ int main(int argc, char **argv)
 #endif
     if (OpenGPUBase) {
         use_lib = 1;
-        timeit("lines", "opengpu.library", lines_ogpu, &chart);
+        timeit("lines", "gfopengpu.library", lines_ogpu, &chart);
         use_lib = 0;
     }
 
@@ -616,7 +616,7 @@ int main(int argc, char **argv)
 #endif
     if (OpenGPUBase) {
         use_lib = 1;
-        timeit("gradient", "opengpu.library", gradient_ogpu, &chart);
+        timeit("gradient", "gfopengpu.library", gradient_ogpu, &chart);
         use_lib = 0;
     }
 
@@ -644,8 +644,8 @@ int main(int argc, char **argv)
 #endif
             if (OpenGPUBase) {
                 use_lib = 1;
-                timeit(names[j], "opengpu.library", picture_ogpu, ts[j]);
-                timeit(names[j], "opengpu.library-composite", picture_composite, ts[j]);
+                timeit(names[j], "gfopengpu.library", picture_ogpu, ts[j]);
+                timeit(names[j], "gfopengpu.library-composite", picture_composite, ts[j]);
                 use_lib = 0;
             }
         }

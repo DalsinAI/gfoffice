@@ -1,5 +1,5 @@
 /*
- * owfpub.library 3.1, OpenPublisher's part of libowf: Publisher files. The
+ * owfpub.library 3.1, GFOpenPublisher's part of libowf: Publisher files. The
  * .pub reader and its compound-file reader, with the document model its text
  * uses.
  *

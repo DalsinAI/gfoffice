@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core on the PC: navigation, editing, undo, fill, insert and
+ * GFOpenCalc's core on the PC: navigation, editing, undo, fill, insert and
  * delete, the clipboard's text, styles, sheets, files and the draw list.
  * Run from the repository's top (make calc-test, make calc-check).
  * MIT, Copyright (c) 2026 AmigaChrome Team.
@@ -2890,15 +2890,15 @@ static void test_valid_fixture(void)
         const char *title;
     } rows[] = {
         { "B2", "Yes", "Maybe", OWF_DV_STOP, "Not a choice" },
-        { "B3", "Team 2", "Team 9", OWF_DV_STOP, "OpenCalc" },
-        { "B4", "team 5", "Team 6", OWF_DV_STOP, "OpenCalc" },
+        { "B3", "Team 2", "Team 9", OWF_DV_STOP, "GFOpenCalc" },
+        { "B4", "team 5", "Team 6", OWF_DV_STOP, "GFOpenCalc" },
         { "B5", "7", "11", OWF_DV_WARNING, "Score" },
-        { "B6", "0.25", "1.5", OWF_DV_STOP, "OpenCalc" },
+        { "B6", "0.25", "1.5", OWF_DV_STOP, "GFOpenCalc" },
         { "B7", "1/1/2024", "1/1/2019", OWF_DV_INFORMATION, "Date" },
-        { "B8", "10:30", "18:00", OWF_DV_STOP, "OpenCalc" },
-        { "B9", "Short", "Much too long", OWF_DV_STOP, "OpenCalc" },
-        { "B10", "7", "8", OWF_DV_STOP, "OpenCalc" },          /* no more than C5 (7) */
-        { "B11", "No", "Maybe", OWF_DV_STOP, "OpenCalc" },
+        { "B8", "10:30", "18:00", OWF_DV_STOP, "GFOpenCalc" },
+        { "B9", "Short", "Much too long", OWF_DV_STOP, "GFOpenCalc" },
+        { "B10", "7", "8", OWF_DV_STOP, "GFOpenCalc" },          /* no more than C5 (7) */
+        { "B11", "No", "Maybe", OWF_DV_STOP, "GFOpenCalc" },
         { "B12", "Purple", NULL, 0, NULL },                     /* no alert: anything */
     };
     oc_core *core = fresh();

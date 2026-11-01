@@ -1,12 +1,12 @@
-# OpenCalc: the formula engine
+# GFOpenCalc: the formula engine
 
 Version 0.2 | 25 October 2026 | AmigaChrome Team, MIT
 
 The formula engine works out the formulas of a workbook (`owf_book`) for
-OpenCalc, the spreadsheet of the GFOffice Suite. It is part of libowf: the
+GFOpenCalc, the spreadsheet of the GFOffice Suite. It is part of libowf: the
 calls are in `libowf/include/owf_calc.h`, the sources in `libowf/calc/`.
 A program that calculates compiles `libowf/calc/*.c` with libowf's own
-sources and links the maths library. OpenWrite, OWConvert and owf.library
+sources and links the maths library. GFOpenWrite, OWConvert and owf.library
 do not take the engine in yet (their builds take `libowf/src/*.c` only);
 owf.library gets its calls later.
 

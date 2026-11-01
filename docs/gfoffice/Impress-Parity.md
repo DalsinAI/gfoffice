@@ -1,18 +1,18 @@
-# OpenPresentation and Apache OpenOffice Impress: a feature checklist
+# GFOpenPresentation and Apache OpenOffice Impress: a feature checklist
 
 Version 0.1 | 25 October 2026 | AmigaChrome Team, MIT
 
 Dale, 25 October 2026: "The spec we are chasing is to mirror what Apache
 OpenOffice does in all its apps." This is the list for Impress, which
-OpenPresentation answers to. It is made from Impress's documented,
+GFOpenPresentation answers to. It is made from Impress's documented,
 user-facing behaviour: Apache OpenOffice 4.1's Help, the AOO4 user guides
 on wiki.openoffice.org (*Getting Started with Impress*, the *Impress Guide*)
 and OASIS ODF 1.2 for what the files hold. No OpenOffice or LibreOffice code
 was read. Parity is in features, not in Impress's size or look: the program
-stays a small 68040 one with the Amiga's look (OpenGadTools).
+stays a small 68040 one with the Amiga's look (GFOpenGadTools).
 
 Each row says what Impress does, the phase that brings it to
-OpenPresentation (Design-OpenPresentation.md, section 12), and where phase
+GFOpenPresentation (Design-OpenPresentation.md, section 12), and where phase
 P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 
 **P1 column:**
@@ -76,11 +76,11 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Text boxes, placeholder text | P1 | Yes |
-| Typing in a text box: click to put the caret, type, Return, Backspace, Del, arrow keys | P3 | No in P1. P3's first part: Yes, in OpenPresentation 0.2 (`opr_edit.c`); selecting text and changing its look next |
+| Typing in a text box: click to put the caret, type, Return, Backspace, Del, arrow keys | P3 | No in P1. P3's first part: Yes, in GFOpenPresentation 0.2 (`opr_edit.c`); selecting text and changing its look next |
 | Font, size, bold, italic, underline, strike-through, raised and lowered, colour | P1 | Yes |
 | Shadow, outline, relief, character spacing, highlighting, case | Later | No |
 | Paragraph alignment, indents, spacing above and below, line spacing, tabs | P1 | Yes |
-| Paragraph background and borders | P1 | Yes (as OpenWrite holds them) |
+| Paragraph background and borders | P1 | Yes (as GFOpenWrite holds them) |
 | Bullets and numbering: character bullets, numbers (1, a, A, i, I) with prefix and suffix, start value, size, colour, bullet font | P1 | Yes |
 | Picture bullets | Later | Approx.: a round bullet |
 | Outline levels 1-9, promote and demote | P1 (levels), P3 (commands) | Yes (until Shared E8 puts levels in paragraphs, a frame holds its paragraphs' levels) |
@@ -161,7 +161,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Notes view, notes pages printed | P3, P4 | No |
 | Handouts: 1, 2, 3, 4, 6 or 9 slides a page | P4 (P1 design asks for them) | No |
 | Outline view | P4 | No |
-| Print slides, notes, handouts, outline (through OpenPrint) | P2 (slides), P4 | No (PDF export only). P2: slides, through OpenPrint (OpenPresentation 0.2) |
+| Print slides, notes, handouts, outline (through GFOpenPrint) | P2 (slides), P4 | No (PDF export only). P2: slides, through GFOpenPrint (GFOpenPresentation 0.2) |
 
 ## 10. Slide show
 
@@ -207,7 +207,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Undo and redo | P3 (per slide) | No. P3's first part: typing in text boxes undone and redone (`opr_edit.c`) |
 | Clipboard: objects and slides | P3 (Shared E10) | No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
-| ARexx port `OPENPRESENTATION` | P4 | No |
+| ARexx port `GFOPENPRESENTATION` | P4 | No |
 
 ## Sources
 

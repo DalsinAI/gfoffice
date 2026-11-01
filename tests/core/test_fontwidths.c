@@ -1,14 +1,14 @@
 /*
- * OpenWrite's text widths for the layout (app/ow_fontwidths.c), on fonts
+ * GFOpenWrite's text widths for the layout (app/ow_fontwidths.c), on fonts
  * made up here, as the lab's Amiga has them (25 October 2026): OS 3.2's
- * Intellifont CGTriumvirate and CGTimes, which don't open (openfont.library
+ * Intellifont CGTriumvirate and CGTimes, which don't open (gfopenfont.library
  * can't read Intellifont, and they have no bitmap sizes); bitmap families
  * with a few designed sizes (helvetica 11, 13, 15, 18, 24), which diskfont
  * scales to any other; no DejaVu or Liberation file; and the window's font
  * from the ROM at one size (23 pixels). The rule: what a word is laid out
  * with is what it is drawn with. At 100% the sample of letters and digits is
  * drawn exactly as wide as it is laid out, at every other zoom no wider, and
- * the widths are never the window font's taken as they are (OpenWrite
+ * the widths are never the window font's taken as they are (GFOpenWrite
  * 2.0.3's first build: 81 pages, not 32; its second: drawn 1.5 times as wide
  * as laid out).
  * MIT, Copyright (c) 2026 AmigaChrome Team.
@@ -126,7 +126,7 @@ static void init(ow_fontwidths *fw, const char *theme, const char *window)
     ow_fw_init(fw, &be, theme, window);
 }
 
-/* The rule, for a style at the zooms OpenWrite offers and a few between. */
+/* The rule, for a style at the zooms GFOpenWrite offers and a few between. */
 static void check_rule(ow_fontwidths *fw, const char *file, int bold, long size, const char *face)
 {
     static const int zooms[] = { 100, 25, 50, 60, 75, 90, 110, 125, 150, 200 };

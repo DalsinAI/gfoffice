@@ -1,7 +1,7 @@
 /*
  * owf_file_kind (libowf/src/owf_kind.c) on the repository's samples and
  * fixtures and on files made here (ODP and PPTX packages, flat ODF, an
- * OpenBase header), and owf_struct_size against sizeof. Run from the
+ * GFOpenBase header), and owf_struct_size against sizeof. Run from the
  * repository's top: make kind-test.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
@@ -107,9 +107,9 @@ int main(void)
     expect("FODT made here", owf_file_kind((const unsigned char *)fodt, sizeof fodt - 1), OWF_KIND_DOCUMENT);
     memset(sqlite, 0, sizeof sqlite);
     memcpy(sqlite, "SQLite format 3", 16);
-    expect("SQLite, not OpenBase's", owf_file_kind(sqlite, sizeof sqlite), OWF_KIND_UNKNOWN);
+    expect("SQLite, not GFOpenBase's", owf_file_kind(sqlite, sizeof sqlite), OWF_KIND_UNKNOWN);
     memcpy(sqlite + 68, "OADB", 4);
-    expect("OpenBase's database", owf_file_kind(sqlite, sizeof sqlite), OWF_KIND_DATABASE);
+    expect("GFOpenBase's database", owf_file_kind(sqlite, sizeof sqlite), OWF_KIND_DATABASE);
     expect("nothing", owf_file_kind(sqlite, 0), OWF_KIND_UNKNOWN);
     expect("NULL", owf_file_kind(NULL, 10), OWF_KIND_UNKNOWN);
     expect("binary", owf_file_kind((const unsigned char *)"\x01\x02\x00\x7F", 4), OWF_KIND_UNKNOWN);

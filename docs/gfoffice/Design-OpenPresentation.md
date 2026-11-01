@@ -1,10 +1,10 @@
-# OpenPresentation: design
+# GFOpenPresentation: design
 
 Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmigaChrome Team, MIT
 
 Dale, 25 October 2026, 01:10: "ok, get going, we will need to enhance
 openwrite, but go". The suite is the **GFOffice Suite** (Dale, 01:31): the
-Open apps OpenWrite, OpenCalc, OpenPresentation and OpenBase. OpenPresentation
+GFOpen apps GFOpenWrite, GFOpenCalc, GFOpenPresentation and GFOpenBase. GFOpenPresentation
 is its slide program. This document says what it is, what it is
 built from, and in what order. The pieces the four programs share (owf.library,
 the PDF writer, charts, the clipboard, spelling, the Open requester) are in
@@ -25,26 +25,26 @@ A native presentation program for AmigaOS 3.2 that:
 
 - opens and saves ODP and PPTX, with slides, layouts, masters, text, pictures,
   basic shapes, tables, notes and transitions;
-- exports PDF, and prints slides and handouts through OpenPrint;
+- exports PDF, and prints slides and handouts through GFOpenPrint;
 - shows a deck full screen, on its own screen or on the Workbench screen;
 - has an ARexx port, so a script can build or run a deck.
 
-It is built like OpenWrite:
+It is built like GFOpenWrite:
 
-| Layer | OpenWrite | OpenPresentation |
+| Layer | GFOpenWrite | GFOpenPresentation |
 | --- | --- | --- |
 | Model and formats | libowf `owf_doc` | libowf `owf_deck` (new), reusing `owf_doc`'s paragraphs and runs |
-| Geometry | OpenLayout 0.2 pages, through `src/core/ow_layout.c` | OpenLayout frames, one page per slide |
+| Geometry | GFOpenLayout 0.2 pages, through `src/core/ow_layout.c` | GFOpenLayout frames, one page per slide |
 | Portable core, host-tested | `src/core` | `src/deck` (new) |
-| Amiga program | `app/openwrite2.c` (OpenGadTools) | `app/openpresent*.c` (new, OpenGadTools) |
-| Output | PDF to `C:OpenPrint` (`app/ow_print.c`) | the same route |
+| Amiga program | `app/openwrite2.c` (GFOpenGadTools) | `app/openpresent*.c` (new, GFOpenGadTools) |
+| Output | PDF to `C:GFOpenPrint` (`app/ow_print.c`) | the same route |
 
-It targets what OpenWrite targets (README, Requirements): AmigaOS 3.2, 68040
+It targets what GFOpenWrite targets (README, Requirements): AmigaOS 3.2, 68040
 code, no FPU, usable at 8 MB of Fast RAM, comfortable at 16-32 MB.
 
 ## 2. What exists to build on
 
-| Piece | Where (checked) | What it gives OpenPresentation | What it lacks for slides |
+| Piece | Where (checked) | What it gives GFOpenPresentation | What it lacks for slides |
 | --- | --- | --- | --- |
 | Paragraphs and runs | `owf.h`: `owf_para`, `owf_run`, `owf_story` | A text frame's text, with fonts, sizes, colours, alignment, spacing, links, fields, inline pictures | A paragraph's list level and bullet: lists are kept as visible bullet text today (`FORMATS.md` 1, `ow_editor_toggle_list`) |
 | The builder | `owf_internal.h`: `owf_builder_init(b, doc, story)` | Importers can write into any story, so into a frame | Nothing |
@@ -52,11 +52,11 @@ code, no FPU, usable at 8 MB of Fast RAM, comfortable at 16-32 MB.
 | ODT and DOCX readers | `in_odt.c`, `in_docx.c` | ODF text and styles, DrawingML theme fonts, `draw:frame` pictures | Nothing presentation-specific |
 | Tables | `owf_para.table_id`, `table_row`, `table_col`, `table_cols`, `cell_shading` | Slide tables as native editable tables | Column widths (the model has none) |
 | PDF writer | `out_pdf.c` | PDF objects, base-14 fonts, JPEG passed through and PNG decoded | It lays out one `owf_doc` by itself, top to bottom; it cannot place a frame at a position (Shared, E4) |
-| OpenLayout 0.2 | openamigalayout `include/openlayout.h` | Frames out of the flow (`OL_BOX_ABSOLUTE`), pages, grid tables, tab stops, `ol_scale` and `ol_draw_page` | Display ops are text, filled rectangle, image and rule only: no ellipses, rounded corners, lines at an angle or polygons; no rotation ("rotated frames" is on its still-to-come list); no vertical anchoring; no clipping |
-| OpenWrite's layout | `src/core/ow_layout.c` | An `owf_doc` as an OpenLayout tree, the caret and hit-testing | It lays out `doc->body` only (Shared, E5) |
-| OpenWrite's editor core | `src/core/editor.c` | Caret, selection, typing, formatting, tables, undo | It edits `doc->body` only; undo keeps up to 16 whole-document copies, picture bytes included (`clone_doc`, `OW_UNDO_LIMIT`) (Shared, E6 and E7) |
-| Printing | `app/ow_print.c` | A PDF in `T:`, then `C:OpenPrint <file>` started on its own | Nothing |
-| OpenGadTools copy | `third_party/opengadtools` | Toolbar, list (thumbnails), page view, inspector sections, tabs, status line, ruler | Nothing for P1-P3 |
+| GFOpenLayout 0.2 | openamigalayout `include/openlayout.h` | Frames out of the flow (`OL_BOX_ABSOLUTE`), pages, grid tables, tab stops, `ol_scale` and `ol_draw_page` | Display ops are text, filled rectangle, image and rule only: no ellipses, rounded corners, lines at an angle or polygons; no rotation ("rotated frames" is on its still-to-come list); no vertical anchoring; no clipping |
+| GFOpenWrite's layout | `src/core/ow_layout.c` | An `owf_doc` as a GFOpenLayout tree, the caret and hit-testing | It lays out `doc->body` only (Shared, E5) |
+| GFOpenWrite's editor core | `src/core/editor.c` | Caret, selection, typing, formatting, tables, undo | It edits `doc->body` only; undo keeps up to 16 whole-document copies, picture bytes included (`clone_doc`, `OW_UNDO_LIMIT`) (Shared, E6 and E7) |
+| Printing | `app/ow_print.c` | A PDF in `T:`, then `C:GFOpenPrint <file>` started on its own | Nothing |
+| GFOpenGadTools copy | `third_party/opengadtools` | Toolbar, list (thumbnails), page view, inspector sections, tabs, status line, ruler | Nothing for P1-P3 |
 
 ## 3. The deck model: `owf_deck` in libowf
 
@@ -67,13 +67,13 @@ code, no FPU, usable at 8 MB of Fast RAM, comfortable at 16-32 MB.
   `owf_malloc`.
 - **A frame's text is an `owf_story`.** The deck's fonts, pictures and default
   text format live in one `owf_doc` of its own (`res`), whose stories stay
-  empty. So libowf's builder and paragraph calls, OpenWrite's layout and its
+  empty. So libowf's builder and paragraph calls, GFOpenWrite's layout and its
   editor all work on a frame's text unchanged (once Shared E5 and E6 are done).
 - **Pictures stay compressed in memory**, as an `owf_doc`'s do (`owf_image`
   holds the file's bytes). They are decoded only to be drawn (section 10).
 - **What we don't edit, we keep where we can.** An object or transition we
   can't draw keeps the file's own XML (`keep`), and is written back on save.
-  The import report names it, as OpenWrite's does.
+  The import report names it, as GFOpenWrite's does.
 - Slide sizes are twips. PPTX measures in EMU: 914,400 to the inch, so a twip
   is exactly 635 EMU. ODP measures in cm, mm, in or pt, which
   `owf_parse_length` already turns into twips.
@@ -248,10 +248,10 @@ Both formats work the same way, so one model serves both:
    (`OWF_OBJ_INHERIT_BOX`), the layout's box is used, then the master's.
 
 `owf_deck_resolve` does that lookup, once, for every reader of the model: the
-layout to OpenLayout, the PDF, the show.
+layout to GFOpenLayout, the PDF, the show.
 
 **Lists.** Body text needs a level and a bullet on each paragraph. `owf_para`
-has neither: OpenWrite keeps lists as visible bullet and number text. Shared
+has neither: GFOpenWrite keeps lists as visible bullet and number text. Shared
 E8 adds `level` and `bullet` to `owf_parafmt`. That changes a structure that
 programs index through owf.library, so it goes into owf.library 2 with the
 other structure changes (Design-Suite-Shared.md, 1).
@@ -303,7 +303,7 @@ placeholder, text in `p:txBody`, pictures in `p:pic`, tables in a
 chart part. Transitions are `p:transition`. Theme colours and fonts come from
 the theme part, which `in_docx.c` already reads for DOCX's theme fonts.
 
-**Saving.** Opening a PPTX and saving does not turn it into ODP, as OpenWrite
+**Saving.** Opening a PPTX and saving does not turn it into ODP, as GFOpenWrite
 does not turn DOCX into ODT (`UX_DESIGN.md`, File workflow). PPTX saving writes
 a complete package: content types, relationships, presentation, one master
 per master we hold, our layouts, a theme made from the master's colours and
@@ -312,22 +312,22 @@ are resolved to fixed colours on import; the report says so.
 
 **The default for a new deck** is a question for Dale (section 14).
 
-## 5. Layout through OpenLayout 0.2
+## 5. Layout through GFOpenLayout 0.2
 
-### 5.1 A slide is one OpenLayout page
+### 5.1 A slide is one GFOpenLayout page
 
 - One `ol_document` per slide, laid out with `ol_layout_pages` on an `ol_page`
   the slide's size, margins 0.
 - The root holds one frame per object, back to front: a block with
   `OL_BOX_ABSOLUTE` and `box.frame` set to the object's box (twips times
-  `OL_UNITS_PER_TWIP`, 4). OpenLayout lays frames out "last, above the flow"
+  `OL_UNITS_PER_TWIP`, 4). GFOpenLayout lays frames out "last, above the flow"
   (`openlayout.c`, `layout_block` and `layout_galley`), in tree order, so
   drawing order is the deck's order.
-- A text frame holds its story's paragraphs as blocks, made by OpenWrite's
+- A text frame holds its story's paragraphs as blocks, made by GFOpenWrite's
   paragraph code (Shared E5). The insets become the frame's padding.
 - A picture is an image node in its frame (`ol_node_set_image`).
 - A table is a grid table node in its frame (`ol_node_set_columns`), as
-  `ow_layout.c`'s `add_table` makes for OpenWrite.
+  `ow_layout.c`'s `add_table` makes for GFOpenWrite.
 - A filled and outlined rectangle needs nothing new: the frame's
   `style.background` and its box border (`border_width`, `border_argb`,
   `border_sides`) draw it.
@@ -338,26 +338,26 @@ are resolved to fixed colours on import; the report says so.
 A slide is laid out again only when it changes. The show lays the next slide
 out while the current one is shown.
 
-### 5.2 What OpenLayout needs: 0.3
+### 5.2 What GFOpenLayout needs: 0.3
 
-OpenLayout's design says its display list will gain "clip push/pop,
+GFOpenLayout's design says its display list will gain "clip push/pop,
 transformed image, glyph run and path primitives where evidence requires
 them" (`DESIGN.md` 7), and its rule is to "add layout capability because a
-real Open app needs it". Slides are that evidence:
+real GFOpen app needs it". Slides are that evidence:
 
-| Need | Why | Proposal for OpenLayout 0.3 | Without it |
+| Need | Why | Proposal for GFOpenLayout 0.3 | Without it |
 | --- | --- | --- | --- |
 | Shapes other than rectangles | Ellipses, rounded rectangles, lines at an angle, arrows, polygons; chart wedges and lines (Shared, 4) | `OL_OP_SHAPE`: a kind, a box, points, fill and stroke colour, stroke width; made for a frame given a shape style | P1 draws only rectangles; other shapes are their box |
 | Vertical anchoring | Titles are centred top to bottom in their box | `OL_BOX_VALIGN_CENTRE` and `_BOTTOM` flags | The deck lays out, reads the content height, moves the content |
 | Clipping | Text that overflows a fixed box | `OL_BOX_CLIP` | Overflow is drawn |
 | Rotation | Rotated text and pictures | Not in 0.3 | Drawn unrotated, kept for save, named in the report |
 
-These additions are small and keep OpenLayout's ABI rule (new calls and flags
+These additions are small and keep GFOpenLayout's ABI rule (new calls and flags
 after the old ones). They are asked of openamigalayout, not made in a fork.
 
 ### 5.3 Autofit
 
-"Shrink text on overflow" is done by the deck, not by OpenLayout: lay out,
+"Shrink text on overflow" is done by the deck, not by GFOpenLayout: lay out,
 and if the text is taller than the box, lay out again at 90% of the size, up
 to four times, then stop. That is at most five layouts of one frame, only
 when its text changes.
@@ -367,12 +367,12 @@ when its text changes.
 ### 6.1 The window
 
 The Open-app rules from `UX_DESIGN.md` hold: 800 x 600 on first opening,
-icons-only toolbar, every action in a menu, OpenLook's frame, a compact
+icons-only toolbar, every action in a menu, GFOpenLook's frame, a compact
 status line.
 
 ```
 +---------------------------------------------------------------------+
-| OpenPresentation - Talk.pptx                                 system |
+| GFOpenPresentation - Talk.pptx                                 system |
 +---------------------------------------------------------------------+
 | Project Edit View Insert Slide Format Arrange Show Tools Help       |
 +---------------------------------------------------------------------+
@@ -388,22 +388,22 @@ status line.
 |           +-------------------------------------+  inspector        |
 |           | notes for this slide                |                   |
 +-----------+-------------------------------------+-------------------+
-| Slide 2 of 14 | Title and Content | PPTX | Ready.   OpenRTG | 75%   |
+| Slide 2 of 14 | Title and Content | PPTX | Ready.   GFOpenRTG | 75%   |
 +---------------------------------------------------------------------+
 ```
 
 - **Left, the slides:** thumbnails drawn from each slide's display list
-  (OpenGadTools' list, as OpenWrite's page navigator draws pages). Drag to
+  (GFOpenGadTools' list, as GFOpenWrite's page navigator draws pages). Drag to
   reorder; Delete deletes; Amiga-D duplicates.
-- **Centre, the slide:** OpenGadTools' page view with one page.
-- **Below it, the notes:** the slide's notes story, edited with OpenWrite's
+- **Centre, the slide:** GFOpenGadTools' page view with one page.
+- **Below it, the notes:** the slide's notes story, edited with GFOpenWrite's
   core.
-- **Right, the inspector** (`ogt_sections`, as OpenWrite's): Slide (layout,
+- **Right, the inspector** (`ogt_sections`, as GFOpenWrite's): Slide (layout,
   background, transition, timing, hidden), Object (position, size, fill, line,
   crop, alt text), Text (level, bullet, alignment, spacing, font), Datatypes
-  (the picture's type, size and details, as OpenWrite shows them).
+  (the picture's type, size and details, as GFOpenWrite shows them).
 - Below about 900 pixels the inspector hides; below about 560 the slide list
-  hides too, as in OpenWrite.
+  hides too, as in GFOpenWrite.
 
 ### 6.2 Views
 
@@ -421,7 +421,7 @@ status line.
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys
   move one pixel, Shift and an arrow ten.
-- A double-click or Return on a text object starts typing in it: OpenWrite's
+- A double-click or Return on a text object starts typing in it: GFOpenWrite's
   editor core on that frame's story (Shared E6). Esc stops typing.
 - Tab and Shift-Tab step through the slide's objects.
 - Insert: New Slide (with a layout chooser), Duplicate Slide, Text Box,
@@ -430,7 +430,7 @@ status line.
   centre, right, top, middle, bottom; Distribute; Group, Ungroup; a snap grid.
 - **Undo** is per slide: before an edit, a copy of that slide's objects and
   stories, never of the pictures (they are shared by index, and a picture no
-  longer used is dropped only on save). Sixteen steps, as OpenWrite.
+  longer used is dropped only on save). Sixteen steps, as GFOpenWrite.
 - **Clipboard:** objects and slides go out as FTXT (their text, for every
   Amiga program) with GFOffice's private chunk inside the same FORM, so
   another GFOffice program gets them whole (Shared, 5). A picture alone goes out
@@ -501,9 +501,9 @@ show has a menu (right button): Next, Previous, Go to Slide, Black, End.
 
 Each step is timed. When a step takes longer than its share of the duration,
 the rest are skipped and the slide appears: a slow machine shows a cut, never
-a slow crawl. Nothing new is asked of OpenRTG: the show uses graphics.library
-and cybergraphics.library calls, as OpenGadTools already does. If OpenGfx
-(opengpu.library) later offers blending, fades use it. OpenRTG is Team 4's
+a slow crawl. Nothing new is asked of GFOpenRTG: the show uses graphics.library
+and cybergraphics.library calls, as GFOpenGadTools already does. If GFOpenGfx
+(gfopengpu.library) later offers blending, fades use it. GFOpenRTG is Team 4's
 area, and this design doesn't touch it.
 
 ## 8. Printing and PDF
@@ -513,10 +513,10 @@ area, and this design doesn't touch it.
   display list as the screen, so a PDF looks like the slide. Text stays
   searchable (base-14 fonts, as now); JPEG goes in as it is and PNG is
   decoded, as `out_pdf.c` does today.
-- **Print...** does what OpenWrite does (`app/ow_print.c`): the PDF to
-  `T:<name>.pdf`, then `C:OpenPrint <file>` started on its own. OpenPrint's
-  window chooses the printer, copies and pages. Without OpenPrint, Print says
-  it needs OpenPrint and Export PDF still works. There is no printer.device
+- **Print...** does what GFOpenWrite does (`app/ow_print.c`): the PDF to
+  `T:<name>.pdf`, then `C:GFOpenPrint <file>` started on its own. GFOpenPrint's
+  window chooses the printer, copies and pages. Without GFOpenPrint, Print says
+  it needs GFOpenPrint and Export PDF still works. There is no printer.device
   text route for slides: their text alone is not a printout.
 - **Handouts:**
 
@@ -525,24 +525,24 @@ area, and this design doesn't touch it.
 | 1, 2, 4, 6 or 9 slides a page | Slides in a grid, framed, numbered |
 | 3 slides a page | Slides on the left, ruled lines for notes on the right |
 | Notes pages | The slide on the top half, its notes below |
-| Outline | Titles and body text as an OpenWrite document, then its PDF |
+| Outline | Titles and body text as a GFOpenWrite document, then its PDF |
 
 A4 or Letter, portrait or landscape, a header and footer with the date and
 page number (`notes_page`).
 
 ## 9. ARexx
 
-The port is `OPENPRESENTATION`, following GFOffice's conventions (Shared, 6):
+The port is `GFOPENPRESENTATION`, following GFOffice's conventions (Shared, 6):
 commands read with `ReadArgs` templates, results in `RESULT`, return codes 0,
 5, 10 and 20.
 
 | Command | Template | Does |
 | --- | --- | --- |
 | VERSION | | The version string |
-| OPEN | FILE/A | Opens a deck (refused with unsaved changes, as OpenWrite) |
+| OPEN | FILE/A | Opens a deck (refused with unsaved changes, as GFOpenWrite) |
 | SAVE / SAVEAS | SAVEAS FILE/A | Saves |
 | EXPORT | FILE/A,FORMAT/K | PDF, ODP, PPTX, or ILBM pictures to a drawer (P4) |
-| PRINT | HANDOUT/K/N,NOTES/S | Through OpenPrint |
+| PRINT | HANDOUT/K/N,NOTES/S | Through GFOpenPrint |
 | SLIDECOUNT | | The number of slides |
 | GOTOSLIDE | NUMBER/A/N | Shows a slide in the editor |
 | NEWSLIDE | LAYOUT/K,AT/K/N | Adds a slide |
@@ -569,13 +569,13 @@ measures on the lab's 68040.
 
 **Pictures are the cost.** Text and structure are small: a 40-slide text deck
 is tens of KB. A picture is held compressed, as `owf_doc` holds it. To draw
-it, OpenWrite today writes it to `T:`, decodes it with a datatype and reads
+it, GFOpenWrite today writes it to `T:`, decodes it with a datatype and reads
 it as ARGB at full size, `width x height x 4` bytes, keeping up to 16 such
 pictures (`app/openwrite2.c`, `image_cache_get`). A 12-megapixel phone photo
 is 48 MB that way, more than a 32 MB machine has. So:
 
 1. Before decoding, read the size from the picture's header (the datatype's
-   `BitMapHeader`, as OpenWrite does on Insert).
+   `BitMapHeader`, as GFOpenWrite does on Insert).
 2. Decode only if the full size fits in a quarter of the largest free block.
    Scale it at once to the size the slide needs on this screen; free the full
    size.
@@ -586,24 +586,24 @@ is 48 MB that way, more than a 32 MB machine has. So:
    3000: too big for this machine's memory"). Insert Picture offers to store
    a smaller copy instead.
 
-This picture cache is the same one OpenWrite needs (Shared E9). Whether to
+This picture cache is the same one GFOpenWrite needs (Shared E9). Whether to
 write our own JPEG decoder that decodes at 1/2, 1/4 or 1/8 size (so a big
 photo never needs its full size in memory) is a question for Dale.
 
 **Thumbnails** are 128 x 96 at 8 bits (12 KB each), drawn for the slides in
 view and kept in a cache with a limit.
 
-**Size.** The same goal as OpenWrite (`NATIVE_CORE.md` 12): the program under
+**Size.** The same goal as GFOpenWrite (`NATIVE_CORE.md` 12): the program under
 2 MB, with owf.library shared.
 
 ## 11. Where the code lives
 
-For now, in openamigawrite beside OpenWrite and OpenCalc, as OpenCalc is:
+For now, in openamigawrite beside GFOpenWrite and GFOpenCalc, as GFOpenCalc is:
 
 | What | Where |
 | --- | --- |
 | Model and formats | `libowf/src/owf_deck.c`, `in_odp.c`, `out_odp.c`, `in_pptx.c`, `out_pptx.c` |
-| Portable core: editing, slide layout to OpenLayout, show timing, handout geometry | `src/deck/` |
+| Portable core: editing, slide layout to GFOpenLayout, show timing, handout geometry | `src/deck/` |
 | Amiga program | `app/openpresent*.c` |
 | Tests | `tests/deck/` (`make deck-test`, `make deck-check`) |
 
@@ -614,8 +614,8 @@ A repository of its own can come later (section 14).
 | Phase | Delivers | Tested by | Needs first (Shared) |
 | --- | --- | --- | --- |
 | **P1, the model and ODP** | `owf_deck`; ODP open and save; PDF export of slides and handouts; `OWConvert Talk.odp Talk.pdf`. No window | Host tests: fixtures made by `make_fixtures.py` (a flat ODP written by hand, then saved as ODP and PPTX by LibreOffice, as `tests/book/make_fixtures.py` does for `book.xls`); ODP to ODP round trips; every cut-short copy of each sample gives an answer, never a crash (as `tests/run_tests.py` does); ASan and UBSan; the PDFs checked with `qpdf --check` and `pdfinfo` | E1, E3 (owf.library 2), E4, E5, E8 |
-| **P2, PPTX and the player** | PPTX open and save; OpenLayout 0.3 shapes; a player: open, full-screen show with cut, wipe, push and dissolve, keys, timings, loop; Print through OpenPrint; New deck from pictures | Host: PPTX fixtures and round trips, PPTX to ODP to PPTX; slide geometry checked numerically (op positions per slide, as OpenLayout's `tests/test_document.c` does); the show's timing logic host-tested. Lab: a PPTX made in PowerPoint shown on an RTG screen and on AGA | E2 (inflate), E9 |
-| **P3, the editor** | Normal, Slide Sorter and Notes views; inspector; text editing with OpenWrite's core; pictures, shapes, tables; per-slide undo; clipboard; save | Host: editing operations and undo in `src/deck` tests. Lab: build a 10-slide deck from nothing, save as PPTX and ODP, reopen | E6, E7, E10 |
+| **P2, PPTX and the player** | PPTX open and save; GFOpenLayout 0.3 shapes; a player: open, full-screen show with cut, wipe, push and dissolve, keys, timings, loop; Print through GFOpenPrint; New deck from pictures | Host: PPTX fixtures and round trips, PPTX to ODP to PPTX; slide geometry checked numerically (op positions per slide, as GFOpenLayout's `tests/test_document.c` does); the show's timing logic host-tested. Lab: a PPTX made in PowerPoint shown on an RTG screen and on AGA | E2 (inflate), E9 |
+| **P3, the editor** | Normal, Slide Sorter and Notes views; inspector; text editing with GFOpenWrite's core; pictures, shapes, tables; per-slide undo; clipboard; save | Host: editing operations and undo in `src/deck` tests. Lab: build a 10-slide deck from nothing, save as PPTX and ODP, reopen | E6, E7, E10 |
 | **P4, the rest** | Master and Outline views; every transition in 7.5 including fades; builds (appear, fade in); Rehearse Timings; every handout; the whole ARexx port; slides as ILBM pictures; AGA tuning | Host: the ARexx command parser; handout geometry. Lab: fades timed on RTG and AGA; a script that builds and shows a deck | E14 |
 
 ## 13. Risks
@@ -623,7 +623,7 @@ A repository of its own can come later (section 14).
 - **PPTX is wide.** We aim at the decks people make (titles, bullets,
   pictures, simple shapes, tables), test against real files, and name in the
   report what was dropped or only kept.
-- **Fonts.** A PPTX in Calibri is drawn with the Amiga fonts OpenWrite maps
+- **Fonts.** A PPTX in Calibri is drawn with the Amiga fonts GFOpenWrite maps
   to (`document_font_file`: courier, CGTimes, helvetica, CGTriumvirate). Lines
   may break differently from PowerPoint and text may overflow its box.
   Autofit and the report help; metric-compatible fonts are a later step.
@@ -635,13 +635,13 @@ A repository of its own can come later (section 14).
 
 ## 14. Questions for Dale
 
-1. A new deck saves as ODP (as OpenWrite's default is ODT), or as PPTX?
-2. The code lives in openamigawrite beside OpenWrite and OpenCalc for now, or in a new repository (`DalsinAI/openamigapresentation`)?
-3. Keep the name OpenPresentation and the ARexx port `OPENPRESENTATION`?
+1. A new deck saves as ODP (as GFOpenWrite's default is ODT), or as PPTX?
+2. The code lives in openamigawrite beside GFOpenWrite and GFOpenCalc for now, or in a new repository (`DalsinAI/openamigapresentation`)?
+3. Keep the name GFOpenPresentation and the ARexx port `GFOPENPRESENTATION`?
 4. Ship the player (P2: open, show, print) before the editor (P3)?
 5. The show's default place: its own screen, or the Workbench screen when that is RTG?
 6. Photos too big for memory: refuse with a message, or write our own JPEG decoder that decodes at reduced size (about 1,000 lines, from ITU-T T.81)?
 7. Do you have Scala or other Amiga presentation programs or files for the format lab? If not, we leave them out.
-8. May we add the shape op, vertical anchoring and clipping to openamigalayout as OpenLayout 0.3?
+8. May we add the shape op, vertical anchoring and clipping to openamigalayout as GFOpenLayout 0.3?
 9. PPTX and ODP output must be checked in PowerPoint or LibreOffice: will you open our test files, or may we use LibreOffice on your PC (as `make_fixtures.py` does)?
 10. Builds: only "appear" and "fade in" played in P4, the rest kept but not played. Is that enough?

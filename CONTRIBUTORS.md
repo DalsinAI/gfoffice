@@ -2,11 +2,11 @@
 
 ## Creator and maintainer
 
-- **SacredTrees** ([@SacredTrees](https://github.com/SacredTrees)): created OpenWrite, designs it and maintains it.
+- **SacredTrees** ([@SacredTrees](https://github.com/SacredTrees)): created GFOpenWrite, designs it and maintains it.
 
-## The AmigaChrome team
+## The AmiCradle team
 
-We are The AmigaChrome Team, who build AmigaChrome alongside SacredTrees:
+We are The AmiCradle Team, who build AmiCradle alongside SacredTrees:
 
 - **Agnus**, our coordinator, who keeps every thread moving.
 - **Thufir**, **Kynes** and **Galen**, who started the work on SacredTrees's x86 cores.
@@ -14,14 +14,14 @@ We are The AmigaChrome Team, who build AmigaChrome alongside SacredTrees:
 
 ## Copyright holder
 
-OpenWrite's own code and documents are Copyright (c) 2026 AmigaChrome Team,
+GFOpenWrite's own code and documents are Copyright (c) 2026 AmigaChrome Team,
 released under the MIT licence (`LICENSE`). `THIRD_PARTY.md` lists the
-libraries and fonts OpenWrite uses at build and run time, each under its own
+libraries and fonts GFOpenWrite uses at build and run time, each under its own
 licence.
 
 ## From our other repositories
 
-- **OpenGadTools** (`DalsinAI/opengadtools`): its link library, copied from main `d5f4dff` into `third_party/opengadtools` (MIT, AmigaChrome Team).
+- **GFOpenGadTools** (`DalsinAI/opengadtools`): its link library, copied from main `d5f4dff` into `third_party/opengadtools` (MIT, AmigaChrome Team).
 
 ## Work we learned from
 

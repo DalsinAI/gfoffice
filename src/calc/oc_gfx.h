@@ -1,5 +1,5 @@
 /*
- * OpenCalc's core: what a chart is drawn with. Lines, filled polygons and
+ * GFOpenCalc's core: what a chart is drawn with. Lines, filled polygons and
  * one line of text at a time, in the grid's pixels, and how wide a text
  * is: nothing else, so that another drawer (Cairo's, say) can stand in
  * for the core's own without the charts changing. The core's own

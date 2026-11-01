@@ -1,6 +1,6 @@
 /*
- * OpenWrite's pages on OpenLayout (ow_layout.h): the owf_doc as
- * OpenLayout's tree, laid out into pages, and positions both ways.
+ * GFOpenWrite's pages on GFOpenLayout (ow_layout.h): the owf_doc as
+ * GFOpenLayout's tree, laid out into pages, and positions both ways.
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
 #include "ow_layout.h"
@@ -14,7 +14,7 @@
 #define BORDER_WIDTH OL_POINT(1) / 2
 #define WRAP_GAP 180                /* twips: Word's distL and distR, 114300 EMU */
 
-/* What an OpenLayout node is in the document: run -1 is the paragraph's
+/* What a GFOpenLayout node is in the document: run -1 is the paragraph's
  * own block; paragraph -1 is a table, row or cell. box: the body's (0) or
  * a text box's (k, doc->frames[k - 1]), 2.0.15. */
 typedef struct {
@@ -142,7 +142,7 @@ static void para_style(const owf_doc *doc, const owf_para *p, ol_style *s, ol_bo
     ol_box_style_init(b);
     b->flags = OL_BOX_EMPTY_LINE;
     if (OWF_LINE_IS_HEIGHT(f->line_spacing)) {
-        /* 2.0.18: Word's exact line spacing, every line so high (OpenLayout 0.7), or its at least */
+        /* 2.0.18: Word's exact line spacing, every line so high (GFOpenLayout 0.7), or its at least */
         ol_unit h = TW(OWF_LINE_HEIGHT(f->line_spacing));
         if (OWF_LINE_IS_EXACT(f->line_spacing)) {
             s->line_height = h;
@@ -169,7 +169,7 @@ static void para_style(const owf_doc *doc, const owf_para *p, ol_style *s, ol_bo
 static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, const owf_story *story,
                      int record, const field_values *fv);
 
-/* 2.0.10: where a frame goes, across (x) or down (y): OpenLayout 0.4's anchor (from the page, its margins or
+/* 2.0.10: where a frame goes, across (x) or down (y): GFOpenLayout 0.4's anchor (from the page, its margins or
  * the paragraph) and the offset from there, its alignment worked out against the area it is aligned in. */
 static ol_unit frame_at(const ol_page *pg, const owf_frame *fr, int across, uint32_t *anchor)
 {
@@ -198,10 +198,10 @@ static ol_unit frame_at(const ol_page *pg, const owf_frame *fr, int across, uint
     }
 }
 
-/* 2.0.10: a picture or a text box placed on the page (owf_frame, Word's wp:anchor) as OpenLayout's anchored
+/* 2.0.10: a picture or a text box placed on the page (owf_frame, Word's wp:anchor) as GFOpenLayout's anchored
  * frame, in the paragraph it is anchored to: behind the text or in front of it, its picture filling it, a
  * text box's paragraphs inside its insets. 2.0.14: the body's text goes round it as Word's wrap says
- * (OpenLayout 0.6): square and tight beside it, top and bottom above and below it, Word's usual eighth of an
+ * (GFOpenLayout 0.6): square and tight beside it, top and bottom above and below it, Word's usual eighth of an
  * inch from its sides; with no wrap (behind or in front of the text), it moves no line. */
 static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *block, const owf_frame *fr,
                      const field_values *fv)
@@ -317,7 +317,7 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
     ol_node_set_style(block, &s);
     ol_node_set_box(block, &b);
     if (p->fmt.ntabs > 0) {
-        /* left, centred, right and decimal stops, with their leaders (OpenLayout 0.3) */
+        /* left, centred, right and decimal stops, with their leaders (GFOpenLayout 0.3) */
         ol_tab_stop stops[OL_MAX_TABS];
         int k, n = p->fmt.ntabs < OL_MAX_TABS ? p->fmt.ntabs : OL_MAX_TABS;
         for (k = 0; k < n; ++k) {
@@ -474,7 +474,7 @@ static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
     return 1;
 }
 
-/* 2.0.22: the ops one story's paragraphs make, about: OpenLayout makes a text op a word (with the spaces after
+/* 2.0.22: the ops one story's paragraphs make, about: GFOpenLayout makes a text op a word (with the spaces after
  * it), one more where a run ends inside a word, one a tab, a field and a picture, a frame's few, and a little
  * a paragraph (an empty one's line, a fill and borders) and a table's cell (its fill and rules). */
 static size_t story_ops(const owf_story *st)
@@ -605,7 +605,7 @@ static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, vo
     int k;
 
     if (!doc) return NULL;
-    /* 2.0.13: the pages' display list before anything else (OpenLayout 0.5's ol_document_new_reserved) */
+    /* 2.0.13: the pages' display list before anything else (GFOpenLayout 0.5's ol_document_new_reserved) */
     body = ops ? ol_document_new_reserved(ops) : ol_document_new();
     if (!body) return NULL;
     l = (ow_layout *)calloc(1, sizeof(*l));

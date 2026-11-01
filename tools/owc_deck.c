@@ -1,7 +1,7 @@
 /*
  * OWConvert's presentations, on owfpresent.library (OWF_USE_PRESENT_LIBRARY)
  * or with libowf linked in: to ODP or flat ODP, and to PDF, a page a slide,
- * laid out by OpenLayout (OpenPresentation's core, src/deck, built in when
+ * laid out by GFOpenLayout (GFOpenPresentation's core, src/deck, built in when
  * OWC_DECK_PDF is defined, for the same library as this file).
  * MIT, Copyright (c) 2026 AmigaChrome Team.
  */
@@ -100,7 +100,7 @@ int owc_deck_convert(const unsigned char *data, size_t n, const char *from, cons
             owf_free(pdf);              /* the page PDF writer's, from the library's memory */
         }
 #else
-        printf("OWConvert: this OWConvert was built without OpenLayout, which presentations' PDFs need\n");
+        printf("OWConvert: this OWConvert was built without GFOpenLayout, which presentations' PDFs need\n");
         result = OWF_ERR_UNSUPPORTED;
 #endif
     } else {

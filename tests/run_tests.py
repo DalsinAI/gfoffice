@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenWrite's filter tests: run_tests.py path/to/owconvert
+"""GFOpenWrite's filter tests: run_tests.py path/to/owconvert
 
 Builds sample documents from the formats' specifications (IFF FTXT, ProWrite's
 IFF WORD, ANSI and plain text), converts each to text, HTML, ODT and FTXT,

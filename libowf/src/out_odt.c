@@ -711,7 +711,7 @@ static int export_odt(const owf_doc *doc, unsigned char **data, size_t *length, 
     part.length = 0;
 
     owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<office:document-meta " NS "><office:meta>"
-                        "<meta:generator>OpenWrite/" OWF_VERSION " libowf</meta:generator>");
+                        "<meta:generator>GFOpenWrite/" OWF_VERSION " libowf</meta:generator>");
     if (doc->title) {
         owf_buf_puts(&part, "<dc:title>");
         owf_buf_puts_xml(&part, doc->title);

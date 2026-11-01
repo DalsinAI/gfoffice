@@ -1,4 +1,4 @@
-# OpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmigaChrome Team.
+# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmigaChrome Team.
 # The bitmap inside a .pub thumbnail WMF (META_DIBBITBLT / META_STRETCHDIB, [MS-WMF]) as a PNG.
 import sys, struct, io
 from PIL import Image
