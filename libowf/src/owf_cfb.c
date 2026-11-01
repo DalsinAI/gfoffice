@@ -74,7 +74,7 @@ int owf_cfb_detect(const unsigned char *data, size_t length)
 int owf_cfb_open(owf_cfb *cfb, const unsigned char *data, size_t length)
 {
     unsigned shift;
-    unsigned long nfatsect, difat, ndifat, per, i, k = 0, root_start, root_size;
+    unsigned long nfatsect, difat, ndifat, per, i, k = 0, walked = 0, root_start, root_size;
     owf_buf buf;
     int result;
 
@@ -110,7 +110,10 @@ int owf_cfb_open(owf_cfb *cfb, const unsigned char *data, size_t length)
     }
     difat = le32(data + 0x44);
     ndifat = le32(data + 0x48);
-    while (k < nfatsect && ndifat-- && difat != END_OF_CHAIN) {
+    /* The chain's sectors are the file's: no more of them than it holds (a chain that comes back on
+     * itself, with the header's count at 0xFFFFFFFF, went round 4 billion times), and a FAT sector
+     * that is not in the file ends the FAT there. */
+    while (k < nfatsect && ndifat-- && difat != END_OF_CHAIN && ++walked <= cfb->nsectors) {
         const unsigned char *d = sector(cfb, difat);
         if (!d)
             break;
@@ -122,6 +125,8 @@ int owf_cfb_open(owf_cfb *cfb, const unsigned char *data, size_t length)
             for (j = 0; j < per; j++)
                 cfb->fat[k * per + j] = le32(s + 4 * j);
         }
+        if (i + 1 < per && k < nfatsect)
+            break;                               /* stopped at a FAT sector not in the file */
         difat = le32(d + 4 * (per - 1));
     }
     if (k < nfatsect) {

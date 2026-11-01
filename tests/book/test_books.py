@@ -495,6 +495,34 @@ def test_refused(work):
         check("refused " + name, rc == 10 and want in out and "error" in out, out + err)
 
 
+def difat_loop():
+    """1 KB: one sector after the header, the header's FAT sectors none of them in the file, and a DIFAT
+    chain of 0xFFFFFFFF sectors starting at sector 0, whose FAT entries are not in the file either and
+    whose next link is itself."""
+    header = (bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) + bytes(16)
+              + struct.pack("<HHHHH", 0x3E, 3, 0xFFFE, 9, 6) + bytes(6)
+              + struct.pack("<IIIIIIIII", 0, 1, 0, 0, 4096, 0xFFFFFFFE, 0, 0, 0xFFFFFFFF)
+              + struct.pack("<109I", *([0xFFFFFFFF] * 109)))
+    return header + struct.pack("<128I", *([0xFFFFFFFF] * 127 + [0]))
+
+
+def test_difat_loop(work):
+    """A DIFAT chain that comes back on itself (1 Nov 2026): it went round as many times as the header
+    said, 4 billion, on any open or format probe. It must be refused at once (it took 14 s and more here)."""
+    path = os.path.join(work, "difat-loop.xls")
+    with open(path, "wb") as f:
+        f.write(difat_loop())
+    progs = [("book_dump", [DUMP, path])]
+    if OWCONVERT:
+        progs.append(("owconvert", [OWCONVERT, path, os.path.join(work, "difat-loop.csv")]))
+    for name, args in progs:
+        try:
+            p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+            check("difat loop refused by " + name, p.returncode == 10, "exit %d %s" % (p.returncode, (p.stdout + p.stderr)[-400:]))
+        except subprocess.TimeoutExpired:
+            check("difat loop refused by " + name, False, "still reading after 5 s")
+
+
 def test_damaged(paths):
     """Every file cut short at many places, and with bytes changed, must
     give a book or an error."""
@@ -527,6 +555,7 @@ def main():
         test_libreoffice_book()
         built = test_built_book(work)
         test_refused(work)
+        test_difat_loop(work)
         test_damaged([os.path.join(HERE, "fixtures", "book.xls"), built])
     if failures:
         print("%d workbook check(s) failed" % len(failures))
