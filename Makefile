@@ -184,6 +184,30 @@ check: fontwidths-check
 
 .PHONY: fontwidths-test fontwidths-check
 
+# Saving (libowf/src/owf_sys.c): a save that fails, as on a full disk, leaves the file as it was
+# (tests/core/test_save.c)
+SAVE_SRC = libowf/src/owf_sys.c libowf/src/owf_internal.h libowf/include/owf.h tests/core/test_save.c
+
+$(OUT)/test-save: $(SAVE_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -Ilibowf/include -Ilibowf/src libowf/src/owf_sys.c tests/core/test_save.c -o $@
+
+$(OUT)/test-save-asan: $(SAVE_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-Ilibowf/include -Ilibowf/src libowf/src/owf_sys.c tests/core/test_save.c -o $@
+
+save-test: $(OUT)/test-save
+	$(OUT)/test-save
+
+save-check: $(OUT)/test-save-asan
+	$(OUT)/test-save-asan
+
+test: save-test
+check: save-check
+
+.PHONY: save-test save-check
+
 # Workbooks (the spreadsheet's files): tests/book/test_books.py
 $(OUT)/book-dump: $(OWF_SRC) tests/book/book_dump.c libowf/include/owf.h libowf/src/owf_internal.h
 	mkdir -p $(OUT)
