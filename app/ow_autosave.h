@@ -18,15 +18,18 @@ int ow_autosave_tick(ow_autosave *timer);
 /* ---- The recovery copy (1 November 2026) ----
  * One for each running copy of a program, on disk: in PROGDIR:Recovery (T: when that drawer can't be had), as
  * <program>-<eight hex digits>.<ext>, the task's address, with the document's own name in a .meta file beside
- * it. A running copy holds its .meta open from its first recovery copy on: that is how another copy, starting,
- * tells a running one's copy from one an interrupted session left. A copy is made only when the document has
- * changed since the last (its change count has moved). Before, every copy of OpenWrite shared one name in T:
- * (RAM, gone at a reboot) and wrote the whole document every minute, changed or not. */
+ * it. From its first recovery copy on, a running copy has a public semaphore named as its files are (without
+ * the extension): that is how another copy, starting, tells a running one's copy from one an interrupted session
+ * left. (Not a file held open: Cradle's folder drives let another program read a file that is open for writing.)
+ * A copy is made only when the document has changed since the last (its change count has moved). Before, every
+ * copy of OpenWrite shared one name in T: (RAM, gone at a reboot) and wrote the whole document every minute,
+ * changed or not. */
 typedef struct ow_recovery {
     char name[64];              /* the copy: PROGDIR:Recovery/OpenWrite-0012a4b8.odt; "" before ow_recovery_init */
     char meta[64];              /* beside it, the document's own name */
     char program[16], ext[8];
-    BPTR meta_fh;               /* the .meta, held open while this copy has a recovery copy */
+    char live_name[64];         /* the semaphore's name: PROGDIR:Recovery/OpenWrite-0012a4b8 */
+    int added;                  /* the semaphore is in the system's list */
     unsigned long changes;      /* the change count the last copy was made at */
     int made;                   /* a copy made since the document was opened, saved or made new */
 } ow_recovery;
@@ -35,7 +38,7 @@ typedef struct ow_recovery {
 void ow_recovery_init(ow_recovery *r, const char *program, const char *ext);
 /* 1 when a copy is wanted: the document has unsaved changes (dirty) and its change count has moved. */
 int ow_recovery_due(const ow_recovery *r, int dirty, unsigned long changes);
-/* Before r->name is written: the names claimed (the .meta held open). 0: no copy now. */
+/* Before r->name is written: the names claimed (the semaphore made public). 0: no copy now. */
 int ow_recovery_begin(ow_recovery *r);
 /* After r->name was written: the document's own name in the .meta, and the count. */
 void ow_recovery_done(ow_recovery *r, const char *docname, unsigned long changes);

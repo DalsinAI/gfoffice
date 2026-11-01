@@ -1,6 +1,8 @@
 #include "ow_autosave.h"
 
 #include <exec/io.h>
+#include <exec/memory.h>
+#include <exec/semaphores.h>
 #include <exec/ports.h>
 #include <devices/timer.h>
 #include <dos/dosextens.h>
@@ -125,9 +127,31 @@ void ow_recovery_init(ow_recovery *r, const char *program, const char *ext)
     for (i = 0; i < 64; i++, id++) {                   /* never a name another copy, running or not, has */
         snprintf(r->name, sizeof r->name, "%s%s-%08lx.%s", dir, program, (unsigned long)id, ext);
         snprintf(r->meta, sizeof r->meta, "%s%s-%08lx.meta", dir, program, (unsigned long)id);
-        if (name_free(r->name) && name_free(r->meta)) return;
+        if (name_free(r->name) && name_free(r->meta)) {
+            snprintf(r->live_name, sizeof r->live_name, "%s%s-%08lx", dir, program, (unsigned long)id);
+            return;
+        }
     }
     r->name[0] = r->meta[0] = 0;                       /* none: no recovery copies this run */
+}
+
+/* This program's semaphore, with its name after it, in memory of its own: if the program ends some other way
+ * (libnix's exit on CTRL-C), at_exit takes it out, and if it doesn't even run, what the list holds stays valid. */
+static struct SignalSemaphore *live_sem;
+
+static void at_exit(void)
+{
+    if (!live_sem) return;
+    RemSemaphore(live_sem);
+    FreeVec(live_sem);
+    live_sem = NULL;
+}
+
+/* This copy's semaphore out of the system's list. */
+static void not_live(ow_recovery *r)
+{
+    at_exit();
+    r->added = 0;
 }
 
 int ow_recovery_due(const ow_recovery *r, int dirty, unsigned long changes)
@@ -137,17 +161,26 @@ int ow_recovery_due(const ow_recovery *r, int dirty, unsigned long changes)
 
 int ow_recovery_begin(ow_recovery *r)
 {
-    if (r->name[0] && !r->meta_fh)
-        r->meta_fh = Open((STRPTR)r->meta, MODE_NEWFILE);   /* exclusive: another copy sees it in use */
-    return r->meta_fh != 0;
+    static int registered;
+    if (r->name[0] && !r->added && !live_sem &&
+        (live_sem = AllocVec(sizeof *live_sem + strlen(r->live_name) + 1, MEMF_PUBLIC | MEMF_CLEAR))) {
+        char *name = (char *)(live_sem + 1);
+        strcpy(name, r->live_name);
+        live_sem->ss_Link.ln_Name = name;
+        AddSemaphore(live_sem);                        /* another copy starting sees this one running */
+        if (!registered++) atexit(at_exit);
+        r->added = 1;
+    }
+    return r->added;
 }
 
 void ow_recovery_done(ow_recovery *r, const char *docname, unsigned long changes)
 {
-    if (r->meta_fh && Seek(r->meta_fh, 0, OFFSET_BEGINNING) >= 0) {
-        Write(r->meta_fh, (APTR)docname, (LONG)strlen(docname));
-        Write(r->meta_fh, (APTR)"\n", 1);
-        SetFileSize(r->meta_fh, 0, OFFSET_CURRENT);
+    BPTR fh = Open((STRPTR)r->meta, MODE_NEWFILE);
+    if (fh) {
+        Write(fh, (APTR)docname, (LONG)strlen(docname));
+        Write(fh, (APTR)"\n", 1);
+        Close(fh);
     }
     r->changes = changes;
     r->made = 1;
@@ -155,8 +188,7 @@ void ow_recovery_done(ow_recovery *r, const char *docname, unsigned long changes
 
 void ow_recovery_clear(ow_recovery *r)
 {
-    if (r->meta_fh) Close(r->meta_fh);
-    r->meta_fh = 0;
+    not_live(r);
     r->made = 0;
     if (!r->name[0]) return;                           /* (DeleteFile("") is the current drawer) */
     DeleteFile((STRPTR)r->name);
@@ -166,8 +198,7 @@ void ow_recovery_clear(ow_recovery *r)
 void ow_recovery_end(ow_recovery *r, int keep)
 {
     if (keep && r->made) {
-        if (r->meta_fh) Close(r->meta_fh);
-        r->meta_fh = 0;
+        not_live(r);                                   /* the copy stays, as an interrupted session's */
         return;
     }
     {
@@ -198,16 +229,17 @@ int ow_recovery_find(const ow_recovery *r, char *out, size_t size)
             while (!found && ExNext(l, fib)) {
                 const char *n = (const char *)fib->fib_FileName;
                 size_t len = strlen(n);
-                char meta[80];
-                BPTR m;
+                char base[80];
+                int running;
                 /* <program>-<eight characters>.<ext> */
                 if (fib->fib_DirEntryType >= 0 || len != plen + 10 + elen || strncmp(n, r->program, plen) ||
                     n[plen] != '-' || n[plen + 9] != '.' || strcmp(n + plen + 10, r->ext))
                     continue;
-                snprintf(meta, sizeof meta, "%s%.*s.meta", dirs[d], (int)(plen + 9), n);
-                m = quiet_lock(meta, SHARED_LOCK, &err);
-                if (m) UnLock(m);
-                else if (err == ERROR_OBJECT_IN_USE) continue;      /* a running copy's */
+                snprintf(base, sizeof base, "%s%.*s", dirs[d], (int)(plen + 9), n);
+                Forbid();
+                running = FindSemaphore((STRPTR)base) != NULL;
+                Permit();
+                if (running) continue;                     /* a running copy's */
                 if ((size_t)snprintf(out, size, "%s%s", dirs[d], n) < size && strcmp(out, r->name))
                     found = 1;
             }
