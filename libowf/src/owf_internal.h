@@ -254,6 +254,13 @@ typedef struct owf_xml_node {
 } owf_xml_node;
 
 typedef struct owf_xml owf_xml;
+/* Elements nest at most this deep; deeper is a damaged document (OWF_ERR_CORRUPT). The readers walk the
+ * tree by recursion, on the applications' 64 KB stacks (ow_run_with_stack), and take up to 700 bytes a
+ * level on a 68k (DOCX's rows in content controls; 500 for cells, runs, ODT's tables), so this is what
+ * bounds them: 45 KB at most at 64. Real documents nest far less: Word's and LibreOffice's 10 to 25, a
+ * LibreOffice ODT of 8 tables one in another with a 10-level list in the last 48. The scanner (sheets)
+ * does not recurse and keeps its own 256. */
+#define OWF_XML_MAX_DEPTH 64
 owf_xml *owf_xml_parse(const char *text, size_t length, int *error);
 void owf_xml_free(owf_xml *xml);
 owf_xml_node *owf_xml_root(const owf_xml *xml);

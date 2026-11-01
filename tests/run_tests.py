@@ -331,6 +331,37 @@ FODT = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+def nested_docx(levels):
+    """A Word document whose paragraph sits in levels content controls, one in another (two elements each)."""
+    body = "<w:sdt><w:sdtContent>" * levels + "<w:p><w:r><w:t>Deep</w:t></w:r></w:p>" + "</w:sdtContent></w:sdt>" * levels
+    files = {
+        "[Content_Types].xml": '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/></Types>',
+        "_rels/.rels": '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+        "word/document.xml": f'<?xml version="1.0" encoding="UTF-8"?><w:document {W}><w:body>{body}</w:body></w:document>',
+    }
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        for name, text in files.items():
+            z.writestr(name, text.encode("utf-8"))
+    return out.getvalue()
+
+
+def nested_odt(levels):
+    """An ODT whose paragraph sits in levels sections, one in another."""
+    content = ('<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+               'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.3"><office:body><office:text>'
+               + "<text:section>" * levels + "<text:p>Deep</text:p>" + "</text:section>" * levels
+               + "</office:text></office:body></office:document-content>")
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        z.writestr(zipfile.ZipInfo("mimetype"), b"application/vnd.oasis.opendocument.text")
+        z.writestr("content.xml", content.encode("utf-8"))
+    return out.getvalue()
+
+
 def png_rgba(w=4, h=3):
     """A small PNG with an alpha channel (half see-through)."""
     import struct, zlib
@@ -559,6 +590,23 @@ def main():
         if r.returncode not in (0, 10):
             check(f"fodt fuzz {i}", False, f"exit {r.returncode}: {(r.stdout + r.stderr)[-400:]!r}")
             break
+
+    # Nesting (1 Nov 2026): the readers recurse once per element, on the applications' 64 KB stacks, so
+    # owf_xml_parse refuses elements nested deeper than OWF_XML_MAX_DEPTH (64) as a damaged document. A few
+    # KB of zipped content controls or sections, 400000 deep, overflowed even the PC's 8 MB stack. At the
+    # limit they still read: document, body, 29 controls (58 elements), paragraph, run and text are 63
+    # deep, 30 controls 65; content, body, text, 60 sections and the paragraph 64, 61 sections 65.
+    for name, data, want in (("deep.docx", nested_docx(400000), 10), ("deep.odt", nested_odt(400000), 10),
+                             ("deep-ok.docx", nested_docx(29), 0), ("deep-over.docx", nested_docx(30), 10),
+                             ("deep-ok.odt", nested_odt(60), 0), ("deep-over.odt", nested_odt(61), 10)):
+        with open(os.path.join(work, name), "wb") as f:
+            f.write(data)
+        r = run(os.path.join(work, name), os.path.join(work, name + ".txt"))
+        check(f"nesting {name} exit {want}", r.returncode == want and (want or b"damaged" not in r.stdout + r.stderr),
+              f"exit {r.returncode}: {(r.stdout + r.stderr)[-400:]!r}")
+        if want == 0:
+            with open(os.path.join(work, name + ".txt"), "rb") as f:
+                check(f"nesting {name} text", f.read() == b"Deep\n")
 
     # Real-world documents, when a folder of them is given (not in the repository).
     # Folders of them, separated by ":"; every file is tried, Amiga files
