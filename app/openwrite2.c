@@ -223,7 +223,7 @@ static struct NewMenu menus[] = {
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
-/* 2.0.5: the pictures are the Chrome icon set's (opengadtools docs/style/README.md; Images/Toolbar/), by name;
+/* 2.0.5: the pictures are the Chrome icon set's (gfopengadtools docs/style/README.md; Images/Toolbar/), by name;
  * the vector icons are drawn when the set can't be (no strips, four colours, the Classic theme). */
 static const ogt_tool tools[] = {
     { C_NEW,   "New",    OGT_ICON_FILE,    0, 0, 0, "new" },

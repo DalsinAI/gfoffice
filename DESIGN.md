@@ -47,7 +47,7 @@ a menu item.
 
 WebCore is the engine inside WebKit. Its editing code is what Apple Mail's
 compose window and every `contenteditable` page uses. GFOpenBrowser's port
-(`DalsinAI/openamigabrowser`) already draws real pages on AmigaOS 3.2.3 with
+(`DalsinAI/gfopenbrowser`) already draws real pages on AmigaOS 3.2.3 with
 cairo, FreeType and HarfBuzz, and its editor client
 (`src/webcore/AmigaEditorClient.cpp`) already turns typing and editing keys
 into WebCore's commands.
@@ -302,7 +302,7 @@ page, with its header and footer, onto a cairo surface:
   and sent through `printer.device`, so the printer drivers Amiga users have
   keep working.
 
-Our cairo build (`DalsinAI/openamigacairo`) has image surfaces only today;
+Our cairo build (`DalsinAI/gfopencairo`) has image surfaces only today;
 GFOpenWrite needs its PDF surface turned on (section 10).
 
 ## 8. Fonts
@@ -349,11 +349,11 @@ noted in the import report.
 
 | From | What | State |
 | --- | --- | --- |
-| GFOpenBrowser (`openamigabrowser`) | WebCore in a window; the editing calls (Appendix A), undo stack, Amiga clipboard and print to cairo; ICU data as a shared file | WebCore draws pages; the window is being brought up. The editing calls come after its sign-in milestone |
-| `openamigacairo` | The PDF surface | Image surfaces only; we turn the PDF surface on (agreed with the browser work) |
+| GFOpenBrowser (`gfopenbrowser`) | WebCore in a window; the editing calls (Appendix A), undo stack, Amiga clipboard and print to cairo; ICU data as a shared file | WebCore draws pages; the window is being brought up. The editing calls come after its sign-in milestone |
+| `gfopencairo` | The PDF surface | Image surfaces only; we turn the PDF surface on (agreed with the browser work) |
 | GFOpenGadTools | Toolbar (0.1 has it), a font list, a ruler gadget, a colour picker | 0.1 in review |
 | GFOpenPrint | PDF jobs in, IPP out | Takes PDF jobs |
-| `openamigaimage` | libpng and libjpeg for pictures in documents | Built |
+| `gfopenimage` | libpng and libjpeg for pictures in documents | Built |
 | Datatypes | Pictures in, in every format the user has | In the OS |
 | GFOpenTypes | GFOpenWrite as the default app for documents | Specified |
 | GFOpenFiles | Previews of documents through libowf | Specified |

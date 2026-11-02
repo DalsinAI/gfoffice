@@ -16,7 +16,7 @@ read, copied or ported. The formats come from their published specifications:
 OASIS ODF 1.2 for ODP, ECMA-376 (PresentationML and DrawingML) for PPTX.
 
 Every statement about existing code was checked against `main` of
-openamigawrite (`51fb1d2`), openamigalayout (`48e5cfc`) and openamigaprint
+openamigawrite (`51fb1d2`), gfopenlayout (`48e5cfc`) and gfopenprint
 (`47eddaa`) on 25 October 2026.
 
 ## 1. What it is
@@ -52,7 +52,7 @@ code, no FPU, usable at 8 MB of Fast RAM, comfortable at 16-32 MB.
 | ODT and DOCX readers | `in_odt.c`, `in_docx.c` | ODF text and styles, DrawingML theme fonts, `draw:frame` pictures | Nothing presentation-specific |
 | Tables | `owf_para.table_id`, `table_row`, `table_col`, `table_cols`, `cell_shading` | Slide tables as native editable tables | Column widths (the model has none) |
 | PDF writer | `out_pdf.c` | PDF objects, base-14 fonts, JPEG passed through and PNG decoded | It lays out one `owf_doc` by itself, top to bottom; it cannot place a frame at a position (Shared, E4) |
-| GFOpenLayout 0.2 | openamigalayout `include/openlayout.h` | Frames out of the flow (`OL_BOX_ABSOLUTE`), pages, grid tables, tab stops, `ol_scale` and `ol_draw_page` | Display ops are text, filled rectangle, image and rule only: no ellipses, rounded corners, lines at an angle or polygons; no rotation ("rotated frames" is on its still-to-come list); no vertical anchoring; no clipping |
+| GFOpenLayout 0.2 | gfopenlayout `include/openlayout.h` | Frames out of the flow (`OL_BOX_ABSOLUTE`), pages, grid tables, tab stops, `ol_scale` and `ol_draw_page` | Display ops are text, filled rectangle, image and rule only: no ellipses, rounded corners, lines at an angle or polygons; no rotation ("rotated frames" is on its still-to-come list); no vertical anchoring; no clipping |
 | GFOpenWrite's layout | `src/core/ow_layout.c` | An `owf_doc` as a GFOpenLayout tree, the caret and hit-testing | It lays out `doc->body` only (Shared, E5) |
 | GFOpenWrite's editor core | `src/core/editor.c` | Caret, selection, typing, formatting, tables, undo | It edits `doc->body` only; undo keeps up to 16 whole-document copies, picture bytes included (`clone_doc`, `OW_UNDO_LIMIT`) (Shared, E6 and E7) |
 | Printing | `app/ow_print.c` | A PDF in `T:`, then `C:GFOpenPrint <file>` started on its own | Nothing |
@@ -353,7 +353,7 @@ real GFOpen app needs it". Slides are that evidence:
 | Rotation | Rotated text and pictures | Not in 0.3 | Drawn unrotated, kept for save, named in the report |
 
 These additions are small and keep GFOpenLayout's ABI rule (new calls and flags
-after the old ones). They are asked of openamigalayout, not made in a fork.
+after the old ones). They are asked of gfopenlayout, not made in a fork.
 
 ### 5.3 Autofit
 
@@ -642,6 +642,6 @@ A repository of its own can come later (section 14).
 5. The show's default place: its own screen, or the Workbench screen when that is RTG?
 6. Photos too big for memory: refuse with a message, or write our own JPEG decoder that decodes at reduced size (about 1,000 lines, from ITU-T T.81)?
 7. Do you have Scala or other Amiga presentation programs or files for the format lab? If not, we leave them out.
-8. May we add the shape op, vertical anchoring and clipping to openamigalayout as GFOpenLayout 0.3?
+8. May we add the shape op, vertical anchoring and clipping to gfopenlayout as GFOpenLayout 0.3?
 9. PPTX and ODP output must be checked in PowerPoint or LibreOffice: will you open our test files, or may we use LibreOffice on your PC (as `make_fixtures.py` does)?
 10. Builds: only "appear" and "fade in" played in P4, the rest kept but not played. Is that enough?

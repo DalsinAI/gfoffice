@@ -195,14 +195,14 @@ library's own readers:
 We checked whether anything outside GFOffice uses it:
 
 - Nothing outside GFOffice opens it.
-- openamigaup is the only other repository that names it: `build_pack.py`'s
+- gfopenup is the only other repository that names it: `build_pack.py`'s
   GFOffice part, its tests, `openup.readme` and `Install-GFOpenUp`.
 - These 17 DalsinAI repositories have no code that names `owf.library`,
-  `OWFBase`, `proto/owf.h` or libowf: amigachrome, amigachrome-guest,
-  openamiga, openamigabase, openamigabench, openamigabrowser,
-  openamigacompress, openamigaedit, openamigafilemanager, openamigaimage,
-  openamigamail, openamigamui, openamigaprefs, openamigaprint,
-  openamigaservice, openamigaxml and opendatatypes. (amigachrome's design
+  `OWFBase`, `proto/owf.h` or libowf: amicradle, amicradle-guest,
+  gfopenamiga, gfopenbase, gfopenbench, gfopenbrowser,
+  gfopencompress, gfopenedit, gfopenfilemanager, gfopenimage,
+  gfopenmail, gfopenmui, gfopenprefs, gfopenprint,
+  gfopenservice, gfopenxml and gfopendatatypes. (amicradle's design
   documents mention libowf, but no code does.)
 
 Keeping owf.library would cost 745 KB on every install, and a revision bump
@@ -213,7 +213,7 @@ The order of the changes:
 1. **This split's first PR** builds the four libraries next to owf.library
    2.4. owf.library is unchanged, so GFOpenUp's `build_pack.py` keeps working.
 2. **The programs move to their libraries**, each in a PR of its own.
-3. **The openamigaup PR**, after GFOpenUp 0.8.10, which W135 is building with
+3. **The gfopenup PR**, after GFOpenUp 0.8.10, which W135 is building with
    today's owf.library:
    - the GFOffice part ships `LIBS:owfwrite.library`, `owfcalc.library`,
      `owfpub.library` and `owfpresent.library`;
@@ -347,7 +347,7 @@ A workbook conversion now loads all of owfcalc.library: the formula engine and e
 4. **GFOpenCalc on owfcalc.library.** `build-os3.sh` builds it in
    `OWF=library` too.
 5. **OWConvert on all four** (section 5).
-6. **openamigaup, after GFOpenUp 0.8.10:** the GFOffice part ships the four
+6. **gfopenup, after GFOpenUp 0.8.10:** the GFOffice part ships the four
    libraries and retires owf.library (section 4).
 7. **gfoffice: owf.library 2's build removed.**
 

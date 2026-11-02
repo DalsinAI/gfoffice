@@ -1,6 +1,6 @@
 ==id $Id: z_lib.sfd 53.12 (21.10.2026) $
 * "z.library": zlib as a shared library, as GFOpenZlib builds it
-* (DalsinAI/amigachrome-guest libraries/openzlib, z.lvo). libowf calls it
+* (DalsinAI/amicradle-guest libraries/openzlib, z.lvo). libowf calls it
 * for ODT, DOCX and PDF; only the slots up to the last one it calls are
 * named for what they are, the rest are listed so the offsets hold.
 * Copyright (c) 2026 AmiCradle Team. MIT licence.

@@ -76,7 +76,7 @@ static void page_pdf(const owf_libs_env *e)
         owf_pdf_rect(pdf, 720, 720, 12960, 1440, OWF_SHADE(0xDDE4F0), OWF_SHADE(0x203040), 20);
         owf_pdf_text(pdf, 1000, 1700, width, "Slide one", 9, OWF_FONT_SANS, OWF_BOLD, 640, OWF_SHADE(0x000000));
         owf_pdf_ellipse(pdf, 2000, 4000, 3000, 2000, OWF_SHADE(0xF0C000), 0, 0);
-        owf_pdf_link(pdf, 720, 720, 2000, 400, "https://amigachrome.com/");
+        owf_pdf_link(pdf, 720, 720, 2000, 400, "https://amicradle.com/");
         r = owf_pdf_finish(pdf, "OWFLibsTest", &data, &length, report);
     }
     LCHECK(e, width > 0 && r == OWF_OK && data && length > 400 && !memcmp(data, "%PDF-", 5) &&

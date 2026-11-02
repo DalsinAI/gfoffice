@@ -4,7 +4,7 @@
  *
  * Why its own: libnix's maths call mathieeedoubtrans.library and
  * mathieeedoubbas.library from the program's task, and those set FPCR in
- * the task that opens them (openamigagcc docs/libnix-fpcr.md); owf.library
+ * the task that opens them (gfopengcc docs/libnix-fpcr.md); owf.library
  * runs in every caller's task. These are plain C on doubles (the
  * arithmetic is owf_softdouble.c's), so they need no FPU and no library,
  * keep no state, and are tested on the PC against its C library

@@ -109,7 +109,7 @@ calc-check`): GFOpenCalc's engine in `libowf/calc` (calls in
 `libowf/include/owf_calc.h`; `docs/CALC_ENGINE.md`), with its functions
 checked one by one and against the results saved in the workbook fixtures.
 
-Pages are laid out by GFOpenLayout (DalsinAI/openamigalayout 0.2 or later).
+Pages are laid out by GFOpenLayout (DalsinAI/gfopenlayout 0.2 or later).
 With it checked out beside this repository, or `OPENLAYOUT_SRC` pointing at
 it, `make layout-test` lays out a built document and the samples into pages
 and checks the caret and pointer mapping; `make layout-check` runs the same
@@ -139,7 +139,7 @@ build/os3/library/tests/OWFLibTest   (OWF=library)
 ```
 
 ODT and DOCX deflate and inflate through z.library, ours from
-amigachrome-guest (`libraries/openzlib`), opened the first time a document
+amicradle-guest (`libraries/openzlib`), opened the first time a document
 needs it. There is no zlib source in the Amiga build. z.library is no
 longer needed to read: without it in LIBS:, libowf inflates zip packages
 (ODT, DOCX, XLSX, ODS) with its own inflater, written from RFC 1951
@@ -210,7 +210,7 @@ structures' sizes are part of its ABI: `owf_open()` opens version 2 and
 refuses a library whose sizes differ from the program's. The workbook and
 engine code brings doubles into the library, which links no C library:
 it carries its own soft double arithmetic (`owf_softdouble.c`, from
-amigachrome-guest) and maths and `strtod` (`owf_libm.c`), and opens no
+amicradle-guest) and maths and `strtod` (`owf_libm.c`), and opens no
 mathieee library, so it needs no FPU and never touches a caller's FPCR.
 `make library-test` (part of `make test`) checks them against the PC's,
 runs the engine's own tests on them, runs OWFLibTest's version-2 checks

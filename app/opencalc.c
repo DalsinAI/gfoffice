@@ -213,7 +213,7 @@ static struct NewMenu menus[] = {
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
-/* 0.1.12: the pictures are the Chrome icon set's (opengadtools docs/style/README.md; Images/Toolbar/), by name;
+/* 0.1.12: the pictures are the Chrome icon set's (gfopengadtools docs/style/README.md; Images/Toolbar/), by name;
  * the vector icons are drawn when the set can't be (no strips, four colours, the Classic theme). */
 static const ogt_tool tools[] = {
     { C_NEW,   "New",     OGT_ICON_FILE,    0, 0, 0, "new" },
@@ -1248,7 +1248,7 @@ static void draw_tab_arrow(struct RastPort *rp, int x, int y, int w, int h, int 
     xy[3] = cy + a;
     xy[4] = right ? cx + a / 2 + 1 : cx - a / 2 - 1;
     xy[5] = cy;
-    /* dimmed: the theme's muted (the style guide, opengadtools #85, 4.2): in the Open theme #4a5663 on the tabs'
+    /* dimmed: the theme's muted (the style guide, gfopengadtools #85, 4.2): in the Open theme #4a5663 on the tabs'
        #dde2e8 in the light mode (5.8:1, against tab.text's 12:1), #a9b4bf on #313c48 in the dark (5.3:1 against
        9.2:1); in Chrome 4.4:1 light and 5.3:1 dark, against tab.text's 8.3 and 8.0: dimmer than the arrow that
        works in both */

@@ -44,19 +44,19 @@ Checked on 25 October 2026 against:
 
 | Repository | Commit | Note |
 | --- | --- | --- |
-| openamigabrowser | main `15f5f2d` | PR #104 at `1f74570` |
-| openamigacairo | `20a18bb` | |
-| openamigapixman | master `f29a8de` | |
-| openamigartg | main `8a45a37` | |
-| openamigagfx | main `6c8b6d9` | |
-| openamigalayout | `1375bd7` | |
+| gfopenbrowser | main `15f5f2d` | PR #104 at `1f74570` |
+| gfopencairo | `20a18bb` | |
+| gfopenpixman | master `f29a8de` | |
+| gfopenrtg | main `8a45a37` | |
+| gfopengfx | main `6c8b6d9` | |
+| gfopenlayout | `1375bd7` | |
 | gfoffice | `2238c05` | |
 
 A lab copy of Instance-32 (t5-w139) ran the proof program.
 
 "Wired into opengfx" covers four separate pieces.
 
-### 1.1 Cairo and Pixman as libraries (openamigacairo)
+### 1.1 Cairo and Pixman as libraries (gfopencairo)
 
 - **Versions:** cairo 1.18.6 and pixman 0.46.4, with no source changes. Both
   are built as static link libraries for GCC programs.
@@ -79,7 +79,7 @@ A lab copy of Instance-32 (t5-w139) ran the proof program.
 - **State:** merged. The smoke test ran on Instance-24 on 4 October. Today
   GFOpenBrowser's engine is the only user.
 
-### 1.2 pixman.library 2.0 (openamigapixman)
+### 1.2 pixman.library 2.0 (gfopenpixman)
 
 - **What it is:** 25 of Pixman's calls as an Amiga library of 16 KB. It
   contains no Pixman: each call becomes a GFOpenGPU batch.
@@ -88,7 +88,7 @@ A lab copy of Instance-32 (t5-w139) ran the proof program.
   22 October decision says nothing in the browser uses pixman.library. It's a
   dead end for GFOffice.
 
-### 1.3 gfopengpu.library: where Cairo's job went (openamigartg)
+### 1.3 gfopengpu.library: where Cairo's job went (gfopenrtg)
 
 gfopengpu.library is the one home for pixel work (Dale, 22 October). GFOpenGfx's
 calls (`OGFX_*`) live in it too.
@@ -142,7 +142,7 @@ turns it into pens itself.
 - As far as I can find, that is the first check of v1.6 on an Amiga.
 - No real 68040 has run it yet.
 
-### 1.4 GFOpenGfx itself (openamigagfx)
+### 1.4 GFOpenGfx itself (gfopengfx)
 
 - **graphics.library 47.100** is clean room, with the OS 3.2 API, planar and
   chunky. It is in the ROM.
@@ -182,7 +182,7 @@ the link (6.6).
 
 | Piece | Merged | On an Amiga |
 | --- | --- | --- |
-| openamigacairo (static Cairo and Pixman) | yes | smoke test, Instance-24, 4 October; inside the browser engine |
+| gfopencairo (static Cairo and Pixman) | yes | smoke test, Instance-24, 4 October; inside the browser engine |
 | pixman.library 2.0 | yes | PixBench on the AC090, 17 October; no users |
 | gfopengpu.library 0.18 vectors (v1.6) | yes, 23 October | in the ROM as 0.20; first run by this assessment's lab, 25 October, on the AC090 only |
 | GFOpenBrowser patch 0076 (GraphicsContextOpenGPU) | no (PR #104) | not built |
@@ -384,7 +384,7 @@ The order:
 **What has to land in other teams' repositories first.** That is their work,
 asked of them, not done in a fork.
 
-- **openamigartg (GFOpenGPU, Teams 3 and 4):**
+- **gfopenrtg (GFOpenGPU, Teams 3 and 4):**
   - an Amiga-side test of v1.6, at least qemu-m68k in CI and a run on a real
     68040 or a PiStorm;
   - 68k fast paths in `ogpu_core.c`: an axis-aligned bilinear scale with
@@ -396,13 +396,13 @@ asked of them, not done in a fork.
 - **GFOpenRTG and GFOpenLayers (Team 4):** a way to point a GFOpenGPU batch at a
   window's own surface, clipped by its layer. Then GFOffice could draw
   straight into the window instead of a band plus `WritePixelArray`.
-  openamigapixman's gap 12 asks the same for screens.
-- **openamigabrowser (Team 3):** nothing is required. If `OpenGPUPaintAmiga.c`
+  gfopenpixman's gap 12 asks the same for screens.
+- **gfopenbrowser (Team 3):** nothing is required. If `OpenGPUPaintAmiga.c`
   stays a plain C file, GFOffice could share it rather than write its own
   fills and pictures.
-- **openamigalayout:** `OL_OP_SHAPE` with curves, for slides. This one is
+- **gfopenlayout:** `OL_OP_SHAPE` with curves, for slides. This one is
   ours to write.
-- **openamigacairo:** nothing, unless Dale wants Cairo after all (question 1).
+- **gfopencairo:** nothing, unless Dale wants Cairo after all (question 1).
 
 ## 5. Questions for Dale
 
@@ -415,7 +415,7 @@ asked of them, not done in a fork.
 3. Palette and AGA screens: keep today's drawing there (no anti-aliasing,
    pictures as labelled frames)? Or is dithered pictures on AGA wanted?
 4. May Team 5 ask Teams 3 and 4 for the 68k fast paths and for a GFOpenGPU
-   target for a window? Or should Team 5 write them in openamigartg, under
+   target for a window? Or should Team 5 write them in gfopenrtg, under
    their review?
 5. Text: crisp 1-bit as now, or anti-aliased later through GFOpenFont and
    GFOpenGPU, once the browser's glyph runs exist?
@@ -491,10 +491,10 @@ page50    gfopengpu.library            2000      2002
 ## 7. Reproducing
 
 ```sh
-# openamigacairo at 20a18bb, tarballs from its SOURCES
+# gfopencairo at 20a18bb, tarballs from its SOURCES
 CAIRO_FONTS=user DEPS_PREFIX=$STOVE/prefix/m68k-amigaos/port-deps \
   PREFIX=$PWD/out-user ./build.sh
-# openamigartg at 8a45a37
+# gfopenrtg at 8a45a37
 CAIRO=<that PREFIX> OPENAMIGARTG=<checkout> tools/drawbench/build.sh
 ```
 

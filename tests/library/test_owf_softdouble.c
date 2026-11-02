@@ -5,7 +5,7 @@
  *
  *   test-owf-softdouble [count]
  *
- * The arithmetic and compare checks are amigachrome-guest's
+ * The arithmetic and compare checks are amicradle-guest's
  * tests/native/open_softdouble_test.c (main, blob f069118), unchanged; the
  * conversion checks are new here, with owf_softdouble.c's conversions.
  * MIT, Copyright (c) 2026 AmiCradle Team.

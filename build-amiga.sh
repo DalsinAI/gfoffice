@@ -1,6 +1,6 @@
 #!/bin/sh
 # GFOffice for Cradle's stove_build (target .): Cradle checks out this repository alone and sets STOVE and OUT,
-# so this fetches GFOpenLayout (DalsinAI/openamigalayout, the pages) into $OUT/deps at the commit
+# so this fetches GFOpenLayout (DalsinAI/gfopenlayout, the pages) into $OUT/deps at the commit
 # deps/openamigalayout.ref names (one line: a commit SHA, or a branch such as master), says which commit it
 # was, then runs build-os3.sh (OWConvert, GFOpenWrite and GFOpenCalc with libowf linked in), build-library.sh
 # (GFOffice's libraries, owf.library 2 and their tests, in $OUT/library) and build-os3.sh again for the programs
@@ -20,16 +20,16 @@ mkdir -p "$DEPS"
 REF=master
 [ -f "$HERE/deps/openamigalayout.ref" ] && REF=$(head -n 1 "$HERE/deps/openamigalayout.ref" | tr -d '[:space:]')
 [ -n "$REF" ] || REF=master
-if [ ! -d "$DEPS/openamigalayout/.git" ]; then
-    git init -q "$DEPS/openamigalayout" &&
-        git -C "$DEPS/openamigalayout" fetch -q --depth 1 "${GIT_BASE}DalsinAI/openamigalayout" "$REF" &&
-        git -C "$DEPS/openamigalayout" checkout -q FETCH_HEAD ||
-        { echo "build-amiga.sh: couldn't fetch DalsinAI/openamigalayout at $REF" >&2; exit 1; }
+if [ ! -d "$DEPS/gfopenlayout/.git" ]; then
+    git init -q "$DEPS/gfopenlayout" &&
+        git -C "$DEPS/gfopenlayout" fetch -q --depth 1 "${GIT_BASE}DalsinAI/gfopenlayout" "$REF" &&
+        git -C "$DEPS/gfopenlayout" checkout -q FETCH_HEAD ||
+        { echo "build-amiga.sh: couldn't fetch DalsinAI/gfopenlayout at $REF" >&2; exit 1; }
 fi
-echo "build-amiga.sh: openamigalayout at $(git -C "$DEPS/openamigalayout" rev-parse --short HEAD) ($REF)"
-OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/openamigalayout" sh "$HERE/build-os3.sh" "$OUT"
+echo "build-amiga.sh: gfopenlayout at $(git -C "$DEPS/gfopenlayout" rev-parse --short HEAD) ($REF)"
+OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/gfopenlayout" sh "$HERE/build-os3.sh" "$OUT"
 OS32_GCC16=$STOVE sh "$HERE/build-library.sh" "$OUT/library"
-OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/openamigalayout" OWF=library OWF_BUILD_LIBRARIES=no \
+OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/gfopenlayout" OWF=library OWF_BUILD_LIBRARIES=no \
     sh "$HERE/build-os3.sh" "$OUT/onlib"
 mkdir -p "$OUT/samples"
 for f in "$HERE"/samples/*.docx "$HERE"/samples/*.odt "$HERE"/samples/*.txt \

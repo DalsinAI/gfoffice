@@ -127,8 +127,8 @@ check: inflate-check
 
 .PHONY: inflate-test inflate-check
 
-# GFOpenWrite's pages on GFOpenLayout (DalsinAI/openamigalayout 0.2 or later)
-OPENLAYOUT_SRC ?= ../openamigalayout
+# GFOpenWrite's pages on GFOpenLayout (DalsinAI/gfopenlayout 0.2 or later)
+OPENLAYOUT_SRC ?= ../gfopenlayout
 LAYOUT_SRC = src/core/ow_layout.c $(OPENLAYOUT_SRC)/src/openlayout.c
 
 $(OUT)/test-layout: $(OWF_SRC) $(LAYOUT_SRC) $(CORE_SRC) tests/core/test_layout.c include/ow_layout.h
