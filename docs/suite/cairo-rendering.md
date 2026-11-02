@@ -100,7 +100,7 @@ calls (`OGFX_*`) live in it too.
   waits for it.
 - `OGPU_BackEndName`, `OGPU_ModuleOpen` and `OGPU_ModuleClose`.
 
-A program writes its batch with the builders in `opengpu/build.h`
+A program writes its batch with the builders in `gfopengpu/build.h`
 (`ogpu_build.c`, 5.6 KB of code linked into the program). Building a batch
 makes no library calls.
 
