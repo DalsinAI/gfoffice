@@ -19,7 +19,7 @@ For every call in each SFD:
   - no call takes a6 or a7, no register twice, and a double only in two
     data registers;
   - the committed LVO file (sdk/Include_I/lvo/<name>_lib.i) has the SFD's
-    offsets, so a stale SDK shows here without an openamigasdk checkout
+    offsets, so a stale SDK shows here without a gfopensdk checkout
     (build-library.sh checks the whole SDK with ndkgen when it has one).
 And for the four: each <name>_calls.h is what scripts/gen-lib-calls.py
 makes from its SFD now, and their first 17 calls (the shared ones) are the

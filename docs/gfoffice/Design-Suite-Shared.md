@@ -14,7 +14,7 @@ change in GFOpenWrite and libowf, in order (section 13). The changes are
 numbered E1 to E16; the other two designs refer to them by those numbers.
 
 Every statement about existing code was checked against `main` of
-openamigawrite (`51fb1d2`), openamigalayout (`48e5cfc`), openamigaprint
+openamigawrite (`51fb1d2`), gfopenlayout (`48e5cfc`), gfopenprint
 (`47eddaa`) and the GFOpenUp checkout's `tools/build_pack.py` on 25 October
 2026.
 
@@ -243,8 +243,8 @@ frame; GFOpenGadTools the controls; the Open, Graphite, Ember, Clear and Classic
 themes; 800 x 600 on first opening; an icons-only toolbar; every action in a
 menu; help bubbles; "..." on commands that open a requester; panels that hide
 on narrow screens; a status line. The four programs in this repository share
-its one GFOpenGadTools copy (`third_party/opengadtools`, from opengadtools
-`d5f4dff` with the PR #71 font files); changes go to opengadtools first, as
+its one GFOpenGadTools copy (`third_party/opengadtools`, from gfopengadtools
+`d5f4dff` with the PR #71 font files); changes go to gfopengadtools first, as
 that copy's README says.
 
 ### 6.2 Menus
@@ -268,7 +268,7 @@ the previous and next page, sheet or slide.
 Today GFOpenWrite's port is `GFOPENWRITE`. If that name is taken, a second copy
 opens no port at all (`rexx_open`). Commands are matched by hand
 (`starts_word_ci`), and every failure, an unknown command included, returns
-10. GFOpenView (openamigaprint) does it differently: each window has
+10. GFOpenView (gfopenprint) does it differently: each window has
 `MULTIVIEW.n`, the first also `GFOPENVIEW`, 5 means "not supported" and 10
 "unknown command".
 
@@ -319,7 +319,7 @@ GFOpenWrite moves to these, keeping its commands' names (`WORDCOUNT`,
 ### 8.1 Today
 
 - On the Amiga, libowf deflates and inflates through z.library 53 (ours, from
-  amigachrome-guest's `libraries/openzlib`), opened the first time a document
+  amicradle-guest's `libraries/openzlib`), opened the first time a document
   needs it (`libowf/amiga/owf_zlib_amiga.c`).
 - Without it, reading a deflated zip member gives `OWF_ERR_UNSUPPORTED`
   (`owf_unzip.c`), and files are written stored (`README.md`).

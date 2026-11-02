@@ -1,19 +1,19 @@
 #!/bin/sh
 # drawbench, the proof program of docs/suite/cairo-rendering.md: built with the
-# os32-gcc16 stove against openamigacairo's CAIRO_FONTS=user build and
-# openamigartg's GFOpenGPU core (linked in, so its batches run on the 68k).
+# os32-gcc16 stove against gfopencairo's CAIRO_FONTS=user build and
+# gfopenrtg's GFOpenGPU core (linked in, so its batches run on the 68k).
 #
 #   OS32_GCC16    stove root (default ~/AmiCradle/stoves/os32-gcc16)
-#   CAIRO         openamigacairo's PREFIX, with include/cairo and lib (required)
-#   OPENAMIGARTG  an openamigartg checkout (required)
+#   CAIRO         gfopencairo's PREFIX, with include/cairo and lib (required)
+#   OPENAMIGARTG  a gfopenrtg checkout (required)
 #   OUT           where the programs go (default tools/drawbench/build)
 #
 # MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 S=${OS32_GCC16:-"$HOME/AmiCradle/stoves/os32-gcc16"}/prefix
-R=${OPENAMIGARTG:?set OPENAMIGARTG to an openamigartg checkout}
-C=${CAIRO:?set CAIRO to the PREFIX openamigacairo built into}
+R=${OPENAMIGARTG:?set OPENAMIGARTG to a gfopenrtg checkout}
+C=${CAIRO:?set CAIRO to the PREFIX gfopencairo built into}
 OUT=${OUT:-"$HERE/build"}
 CC=$S/bin/m68k-amigaos-gcc
 CF="-O2 -m68040 -m68881 -mcrt=nix20 -fno-delete-null-pointer-checks -Wall"

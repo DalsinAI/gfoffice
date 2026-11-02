@@ -4,17 +4,17 @@
 # owfcalc.library, owfpub.library and owfpresent.library from their
 # <name>_lib.sfd, and owf.library 2 from owf_lib.sfd) and for the z.library
 # calls libowf makes (libowf/amiga/sdk, from z_lib.sfd), with GFOpenSDK's
-# generator (DalsinAI/openamigasdk OpenNDK/tools/ndkgen.py), as GFOpenNDK
+# generator (DalsinAI/gfopensdk OpenNDK/tools/ndkgen.py), as GFOpenNDK
 # makes its own; and each of the four libraries' calls (<name>_calls.h,
 # the library side of its SFD) with scripts/gen-lib-calls.py. Edit an SFD,
 # then run this.
 #
-#   OPENSDK_SRC   an openamigasdk checkout (default ../openamigasdk)
+#   OPENSDK_SRC   a gfopensdk checkout (default ../gfopensdk)
 #
 # MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-SDK=${OPENSDK_SRC:-"$HERE/../openamigasdk"}
+SDK=${OPENSDK_SRC:-"$HERE/../gfopensdk"}
 LIB="$HERE/libowf/library"
 python3 "$SDK/OpenNDK/tools/ndkgen.py" --out "$LIB/sdk" "$LIB/owf_lib.sfd" "$LIB/owfwrite_lib.sfd" \
     "$LIB/owfcalc_lib.sfd" "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd"

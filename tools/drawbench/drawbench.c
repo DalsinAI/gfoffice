@@ -2,8 +2,8 @@
  * drawbench: W139's proof program for docs/suite/cairo-rendering.md.
  *
  * What GFOffice's page drawing would cost on a 68040 through cairo 1.18.6 and
- * pixman 0.46.4 (openamigacairo, linked statically, CAIRO_FONTS=user) and
- * through GFOpenGPU's stream v1.6 vector commands (openamigartg's ogpu_core.c,
+ * pixman 0.46.4 (gfopencairo, linked statically, CAIRO_FONTS=user) and
+ * through GFOpenGPU's stream v1.6 vector commands (gfopenrtg's ogpu_core.c,
  * the code gfopengpu.library's 68k back end runs, linked here so the batch
  * always runs on the 68k; and gfopengpu.library itself, as it routes the
  * batch), beside what GFOpenWrite and GFOpenCalc do today (point sampling, 1-pixel

@@ -1,7 +1,7 @@
 /*
  * owf.library's own C library calls, named owf_rt_ so the PC tests can hold
  * them beside the real ones; owf_runtime.c gives them their C names inside
- * the library. Taken from weblayout's (DalsinAI/openamigabrowser
+ * the library. Taken from weblayout's (DalsinAI/gfopenbrowser
  * src/weblayout/wl_libc.c), with %o and strtoul added for libowf.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */

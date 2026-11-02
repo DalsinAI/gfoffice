@@ -27,7 +27,7 @@
 # semaphore for every document's memory (one per library: what a library
 # allocates goes back to the same library's owf_free) and its own string,
 # printf and sscanf calls (owf_runtime.c, owf_libc.c). Deflate and inflate
-# are z.library's, ours (amigachrome-guest libraries/openzlib), opened when
+# are z.library's, ours (amicradle-guest libraries/openzlib), opened when
 # first needed; without it, packages inflate with libowf's own
 # (owf_inflate.c). Doubles (workbooks, the formula engine, .pub) use the
 # library's own soft double arithmetic (owf_softdouble.c: this toolchain's
@@ -44,7 +44,7 @@
 # tables that library has (OWF_KIND_NO_DOCUMENTS, OWF_KIND_NO_WORKBOOKS).
 #
 #   OS32_GCC16 or STOVE   the stove (default ~/AmiCradle/stoves/os32-gcc16)
-#   OPENSDK_SRC           an openamigasdk checkout: when set, the SDK headers
+#   OPENSDK_SRC           a gfopensdk checkout: when set, the SDK headers
 #                         in libowf/library/sdk and libowf/amiga/sdk are
 #                         checked against their SFDs with its ndkgen.py, and
 #                         the libraries' calls (<name>_calls.h) with

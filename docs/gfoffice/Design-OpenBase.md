@@ -4,7 +4,7 @@ Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmiCradle
 
 ## 0. This is the first written design
 
-GFOpenBase's README (DalsinAI/openamigabase) says: "**Design complete.
+GFOpenBase's README (DalsinAI/gfopenbase) says: "**Design complete.
 Implementation queued behind GFOpenWrite.**" There was no design document behind
 it:
 
@@ -12,7 +12,7 @@ it:
   `docs/licence-20261023`), holds five files: `README.md`, `CONTRIBUTORS.md`,
   `LICENSE`, `restart.md` and the repo-guard workflow. Checked by cloning it in
   full on 25 October 2026.
-- amigachrome's `docs/project/Project-openamigabase.md` (7 October) searched
+- amicradle's `docs/project/Project-openamigabase.md` (7 October) searched
   too and found none: "Where the design lives is unknown."
 
 So this is GFOpenBase's first written design. The README's "Direction" list
@@ -24,7 +24,7 @@ point here once this is merged.
 
 GFOpenBase is written from scratch. No LibreOffice Base, OpenOffice or other
 database front-end code is read, copied or ported. SQLite is used as a
-library, built by openamigasqlite from the pinned upstream amalgamation.
+library, built by gfopensqlite from the pinned upstream amalgamation.
 
 The pieces GFOpenBase shares with GFOpenWrite, GFOpenCalc and GFOpenPresentation
 (owf.library, the PDF writer, the clipboard, spelling, the Open requester) are
@@ -66,13 +66,13 @@ Each item of its gate, as of 25 October 2026:
 
 | Piece | Where (checked) | Gives GFOpenBase |
 | --- | --- | --- |
-| SQLite 3.53.4 | openamigasqlite: `build.sh`, `SOURCES` (pinned by SHA-256), `patches/`, `compat/` | The database engine (section 11 for what must change) |
+| SQLite 3.53.4 | gfopensqlite: `build.sh`, `SOURCES` (pinned by SHA-256), `patches/`, `compat/` | The database engine (section 11 for what must change) |
 | `owf_doc` and its exporters | openamigawrite `libowf`: ODT, DOCX, HTML, PDF, text | Reports as documents |
 | `owf_book` and its formats | `libowf`: XLS in, CSV out; ODS and XLSX coming (W106) | Sheets in and out |
 | GFOpenWrite's editor core | `src/core/editor.c` | A multi-line memo field (GadTools has none) |
 | GFOpenGadTools copy | `third_party/opengadtools`: `ogt_sections` (labelled field rows), `ogt_list` (owner-drawn rows), `ogt_tabs`, `ogt_toolbar`, `ogt_status`, `ogt_pageview` | Forms, datasheets, designers, report preview |
 | Datatypes | The OS; GFOpenWrite's way of decoding a picture from memory (`app/openwrite2.c`, `image_cache_get`: to `T:`, then `NewDTObject`) | Datatype object fields |
-| GFOpenPrint | `C:GFOpenPrint <pdf> [printer-uri]` (openamigaprint `src/amiga/main.c`), started as GFOpenWrite's `app/ow_print.c` does | Printing reports |
+| GFOpenPrint | `C:GFOpenPrint <pdf> [printer-uri]` (gfopenprint `src/amiga/main.c`), started as GFOpenWrite's `app/ow_print.c` does | Printing reports |
 
 ## 3. Projects: `.oadb` files
 
@@ -104,7 +104,7 @@ A project is one SQLite database file named `<name>.oadb`.
 ### 3.2 Safety
 
 - **Locking.** Our SQLite build uses the `unix-none` VFS: no locking at all,
-  because libnix has no POSIX file locks (openamigasqlite README). Two
+  because libnix has no POSIX file locks (gfopensqlite README). Two
   programs writing one database will damage it. GFOpenBase will:
   1. try SQLite's `unix-dotfile` VFS in B0, which locks with an entry beside
      the database instead of POSIX locks;
@@ -121,7 +121,7 @@ A project is one SQLite database file named `<name>.oadb`.
 - **Copies.** Project > Save a Copy uses `VACUUM INTO`; Tools > Compact uses
   `VACUUM`.
 - **RAM:.** In `RAM:` (`T:`) a fresh database fails with "file is not a
-  database" (openamigasqlite README, Known issues, not investigated).
+  database" (gfopensqlite README, Known issues, not investigated).
   Projects stay on disk until B0 finds the cause.
 
 ## 4. Tables, fields, keys and relationships
@@ -391,7 +391,7 @@ A finished front end opens like an application:
 
 ### 11.1 The build we have
 
-From openamigasqlite (`README.md`, `build.sh`, `restart.md`):
+From gfopensqlite (`README.md`, `build.sh`, `restart.md`):
 
 | | Today |
 | --- | --- |
@@ -419,7 +419,7 @@ opens it (`tests/sqlitetest.c`).
 | `sqlite3_temp_directory` set by GFOpenBase | SQLite's Unix code looks for a temporary folder through Unix paths and environment variables, which mean nothing on AmigaDOS; GFOpenBase names a folder on disk (beside the project, or `T:` once the RAM: issue is understood) |
 | A stack of at least 64 KB | SQLite's parser and planner recurse; GFOpenPrint asks for 65,536 bytes the same way (`oap_main_with_stack`) |
 
-The soft-float flavour goes into openamigasqlite as a second build
+The soft-float flavour goes into gfopensqlite as a second build
 (`FLOAT=soft`), so GFOpenBrowser's hard-float build is untouched.
 
 ### 11.3 Size, memory and speed
@@ -464,7 +464,7 @@ The soft-float flavour goes into openamigasqlite as a second build
 
 ## 12. Where the code lives
 
-In DalsinAI/openamigabase, as its README always said:
+In DalsinAI/gfopenbase, as its README always said:
 
 | What | Where |
 | --- | --- |
@@ -506,8 +506,8 @@ story) for memo fields, E9 (the picture cache) for Datatype fields, E13
 
 ## 15. Questions for Dale
 
-1. Start GFOpenBase now, in DalsinAI/openamigabase (the README's gate is met, section 1.1)?
-2. Add a soft-float, single-thread flavour to openamigasqlite's build for GFOpenBase?
+1. Start GFOpenBase now, in DalsinAI/gfopenbase (the README's gate is met, section 1.1)?
+2. Add a soft-float, single-thread flavour to gfopensqlite's build for GFOpenBase?
 3. Locking: try SQLite's dot-file locking, else one program per project through an Exec semaphore. Agreed?
 4. Scripting in forms through ARexx only, with no language of GFOpenBase's own?
 5. Runtime: a separate smaller GFOpenBaseRun as well, or only a RUNTIME switch on GFOpenBase?

@@ -1,7 +1,7 @@
 /*
  * owf.library's C library: the calls libowf and the compiler use, so the
  * library links with no C library (-nostdlib) and never depends on a
- * caller's. The string calls are weblayout's (DalsinAI/openamigabrowser
+ * caller's. The string calls are weblayout's (DalsinAI/gfopenbrowser
  * src/weblayout/library/wl_runtime.c); printf, strtol and the case calls
  * are owf_libc.c's; the <math.h> calls and strtod are owf_libm.c's (the
  * formula engine's, since owf.library 2), named in owf_runtime_math.c so a

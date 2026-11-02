@@ -21,7 +21,7 @@ licence.
 
 ## From our other repositories
 
-- **GFOpenGadTools** (`DalsinAI/opengadtools`): its link library, copied from main `d5f4dff` into `third_party/opengadtools` (MIT, AmiCradle Team).
+- **GFOpenGadTools** (`DalsinAI/gfopengadtools`): its link library, copied from main `d5f4dff` into `third_party/opengadtools` (MIT, AmiCradle Team).
 
 ## Work we learned from
 

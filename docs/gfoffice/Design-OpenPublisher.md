@@ -134,7 +134,7 @@ more from GFOpenLayout than slides do:
 | Vertical anchoring, clipping, shapes | As GFOpenPresentation | As GFOpenPresentation 5.2 | As GFOpenPresentation |
 | Rotation | Rotated frames | Not in 0.3 | Drawn unrotated, named in the report |
 
-These are asked of openamigalayout, not made in a fork.
+These are asked of gfopenlayout, not made in a fork.
 
 ## 6. Fonts
 

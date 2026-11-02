@@ -6,14 +6,14 @@
  * In this toolchain libgcc has no double arithmetic: programs get __adddf3
  * and the rest from libnix's libm, which calls mathieeedoubbas.library in
  * the program's own task. A shared library can't do that: those libraries
- * set FPCR in the task that opens them (openamigagcc docs/libnix-fpcr.md),
+ * set FPCR in the task that opens them (gfopengcc docs/libnix-fpcr.md),
  * and owf.library runs in its callers' tasks. These work on the bits, so
  * they need no FPU and no other library, give the same answers in every
  * task, and are tested bit for bit against the PC's doubles
  * (tests/library/test_owf_softdouble.c).
  *
  * Add, subtract, multiply, divide, negate and the compares are
- * amigachrome-guest's libraries/common/open_softdouble.c (main, blob
+ * amicradle-guest's libraries/common/open_softdouble.c (main, blob
  * e5c2e17, last changed in 21d15ec), unchanged below its header: correctly
  * rounded, to nearest with ties to even, with subnormals, infinities and
  * NaNs as IEEE 754 has them. The conversions to and from int, unsigned and

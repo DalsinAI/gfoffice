@@ -52,7 +52,7 @@ static owf_doc *make_document(void)
     cf.flags = OWF_ITALIC;
     cf.font = owf_doc_font(doc, "Liberation Serif", OWF_FONT_SERIF);
     if (owf_para_add_text(p, &cf, "italic", 6) < 0) goto fail;
-    if (owf_para_add_link_text(p, &cf, " and a link", 11, "https://amigachrome.com/") < 0) goto fail;
+    if (owf_para_add_link_text(p, &cf, " and a link", 11, "https://amicradle.com/") < 0) goto fail;
     p = owf_story_add(&doc->body, &pf);
     if (!p || owf_para_add_special(p, &cf, OWF_RUN_FIELD, OWF_FIELD_PAGE) < 0) goto fail;
     return doc;

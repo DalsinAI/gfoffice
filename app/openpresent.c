@@ -19,7 +19,7 @@
  *
  * Chrome: GFOpenGadTools' toolbar with the Chrome icon set
  * (ogt_iconset_attach), status bar and list, in the theme
- * (opengadtools docs/style/README.md). 68040, no FPU needed.
+ * (gfopengadtools docs/style/README.md). 68040, no FPU needed.
  *
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -132,7 +132,7 @@ static struct NewMenu menus[] = {
 };
 
 /* The Chrome icon set's pictures by name, the vector icons as their fallback. The set has no Show or New
- * Slide picture yet (they are asked of opengadtools): those come with the player. */
+ * Slide picture yet (they are asked of gfopengadtools): those come with the player. */
 static const ogt_tool tools[] = {
     { C_NEW,   "New",       OGT_ICON_FILE,    0, 0, 0, "new" },
     { C_OPEN,  "Open...",   OGT_ICON_OPEN,    0, 0, 0, "open" },

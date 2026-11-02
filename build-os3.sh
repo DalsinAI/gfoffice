@@ -16,7 +16,7 @@
 # libowf, the file formats, is linked into each program (OWF=linked, the
 # default) or opened as GFOffice's libraries (OWF=library: the libraries,
 # OWFLibsTest and OWFLibTest are built too). Either way ODT and DOCX deflate and inflate
-# through z.library, ours (amigachrome-guest libraries/openzlib), opened
+# through z.library, ours (amicradle-guest libraries/openzlib), opened
 # when a document first needs it; there is no zlib source in the build.
 # MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
@@ -78,10 +78,10 @@ for f in $OWFSRC; do
     esac
 done
 
-# The pages are GFOpenLayout's (DalsinAI/openamigalayout 0.2 or later): OPENLAYOUT_SRC, else beside this
+# The pages are GFOpenLayout's (DalsinAI/gfopenlayout 0.2 or later): OPENLAYOUT_SRC, else beside this
 # repository.
-OPENLAYOUT_SRC=${OPENLAYOUT_SRC:-$HERE/../openamigalayout}
-[ -f "$OPENLAYOUT_SRC/src/openlayout.c" ] || { echo "GFOpenLayout not found: set OPENLAYOUT_SRC to an openamigalayout checkout"; exit 2; }
+OPENLAYOUT_SRC=${OPENLAYOUT_SRC:-$HERE/../gfopenlayout}
+[ -f "$OPENLAYOUT_SRC/src/openlayout.c" ] || { echo "GFOpenLayout not found: set OPENLAYOUT_SRC to a gfopenlayout checkout"; exit 2; }
 
 # OWConvert: 68040, as every build, with presentations' PDFs through GFOpenPresentation's core (src/deck) on
 # GFOpenLayout. Its parts are one file per library (tools/owc.h, docs/suite/owf-libraries.md section 5): with
@@ -170,7 +170,7 @@ echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
 fi
 
 # The toolbars' pictures: the Chrome icon set's strips beside the programs, where they look first
-# (PROGDIR:Images/Toolbar/; opengadtools lib/ogt_iconset.c). Made by opengadtools' tools/iconset.
+# (PROGDIR:Images/Toolbar/; gfopengadtools lib/ogt_iconset.c). Made by gfopengadtools' tools/iconset.
 mkdir -p "$OUT/Images/Toolbar"
 cp "$HERE"/Images/Toolbar/*.ilbm "$OUT/Images/Toolbar/"
 
