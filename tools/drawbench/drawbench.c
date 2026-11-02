@@ -31,9 +31,9 @@
 #include <cairo.h>
 #endif
 #include "ogpu_core.h"
-#include <opengpu/build.h>
-#include <opengpu/opengpu.h>
-#include <inline/opengpu.h>
+#include <gfopengpu/build.h>
+#include <gfopengpu/gfopengpu.h>
+#include <inline/gfopengpu.h>
 
 struct Library *OpenGPUBase;
 struct Device *TimerBase;
