@@ -14,7 +14,7 @@
 #define OW_LAYOUT_H
 
 #include "openwrite_core.h"
-#include "openlayout.h"
+#include "gfopenlayout.h"
 
 #ifdef __cplusplus
 extern "C" {
