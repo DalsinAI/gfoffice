@@ -26,7 +26,7 @@
 #define OPENPRESENTATION_CORE_H
 
 #include "owf_deck.h"
-#include "openlayout.h"
+#include "gfopenlayout.h"
 
 #ifdef __cplusplus
 extern "C" {
