@@ -82,6 +82,12 @@ done
 # repository.
 OPENLAYOUT_SRC=${OPENLAYOUT_SRC:-$HERE/../gfopenlayout}
 [ -f "$OPENLAYOUT_SRC/src/openlayout.c" ] || { echo "GFOpenLayout not found: set OPENLAYOUT_SRC to a gfopenlayout checkout"; exit 2; }
+# GFOpenLayout's own sources: openlayout.c and, since gfopenlayout 4b03625 (1 Nov), the GFCSS engine it styles
+# documents with (its build-amiga.sh's CSS list); an older checkout without them still builds
+OL_C="$OPENLAYOUT_SRC/src/openlayout.c"
+for f in gfcss_parse gfcss_values gfcss_select openlayout_css; do
+    [ -f "$OPENLAYOUT_SRC/src/$f.c" ] && OL_C="$OL_C $OPENLAYOUT_SRC/src/$f.c"
+done
 
 # OWConvert: 68040, as every build, with presentations' PDFs through GFOpenPresentation's core (src/deck) on
 # GFOpenLayout. Its parts are one file per library (tools/owc.h, docs/suite/owf-libraries.md section 5): with
@@ -89,7 +95,7 @@ OPENLAYOUT_SRC=${OPENLAYOUT_SRC:-$HERE/../gfopenlayout}
 # owfwrite.library, owc_book.c owfcalc, owc_pub.c owfpub, owc_deck.c and the deck's PDF owfpresent), so a
 # conversion opens only the libraries it needs.
 OWC_DECK="-DOWC_DECK_PDF -I$HERE/include -I$OPENLAYOUT_SRC/include"
-OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/core/ow_layout.c $OPENLAYOUT_SRC/src/openlayout.c"
+OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/core/ow_layout.c $OL_C"
 OWCFLAGS="$CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS -I$HERE/tools"
 if [ "$OWF" = library ]; then
     OWC_OBJ="$OUT/obj-owconvert"
@@ -115,7 +121,7 @@ fi
 APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $HERE/app/ow_stack.c $HERE/app/ow_fontwidths.c"
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DOCS "$HERE"/src/core/*.c "$OPENLAYOUT_SRC/src/openlayout.c" "$HERE/app/openwrite2.c" $APP_COMMON \
+    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_C "$HERE/app/openwrite2.c" $APP_COMMON \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenWrite"
 
@@ -125,7 +131,7 @@ if [ "${OW1:-}" = yes ] && [ "$OWF" = library ]; then
 elif [ "${OW1:-}" = yes ]; then
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DOCS "$HERE"/src/core/*.c "$OPENLAYOUT_SRC/src/openlayout.c" "$HERE/app/openwrite.c" $APP_COMMON \
+    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_C "$HERE/app/openwrite.c" $APP_COMMON \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenWrite1"
 echo "$OUT/GFOpenWrite1 ($(wc -c < "$OUT/GFOpenWrite1") bytes)"
@@ -163,7 +169,7 @@ done
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DECK "$HERE"/src/deck/*.c "$HERE/src/core/ow_layout.c" "$OPENLAYOUT_SRC/src/openlayout.c" \
+    $OWFSRC_DECK "$HERE"/src/deck/*.c "$HERE/src/core/ow_layout.c" $OL_C \
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenPresentation"
 echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
