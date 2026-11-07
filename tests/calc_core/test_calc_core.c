@@ -665,6 +665,28 @@ static void test_merge_command(void)
     oc_core_free(core);
 }
 
+static void test_comment_command(void)
+{
+    oc_core *core = fresh();
+    const owf_comment *comment;
+    if (!core) return;
+    go(core, "C4");
+    CHECK(oc_core_set_comment(core, "Dale", "Check this total.") == OWF_OK);
+    comment = oc_core_comment(core, 0, 3, 2);
+    CHECK(comment && !strcmp(comment->author, "Dale") && !strcmp(comment->text, "Check this total."));
+    CHECK(oc_core_set_comment(core, "Dale", "Checked.") == OWF_OK);
+    comment = oc_core_comment(core, 0, 3, 2);
+    CHECK(comment && !strcmp(comment->text, "Checked."));
+    CHECK(oc_core_undo(core) == OWF_OK);
+    comment = oc_core_comment(core, 0, 3, 2);
+    CHECK(comment && !strcmp(comment->text, "Check this total."));
+    CHECK(oc_core_set_comment(core, NULL, "") == OWF_OK);
+    CHECK(oc_core_comment(core, 0, 3, 2) == NULL);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_comment(core, 0, 3, 2) != NULL);
+    oc_core_free(core);
+}
+
 static void test_insert_delete(void)
 {
     oc_core *core = fresh();
@@ -3313,6 +3335,7 @@ int main(void)
     test_fill();
     test_sort();
     test_merge_command();
+    test_comment_command();
     test_insert_delete();
     test_clear_and_styles();
     test_clipboard();

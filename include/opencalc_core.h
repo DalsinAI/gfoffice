@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.1.2"
+#define OC_CORE_VERSION "0.1.3"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -260,6 +260,10 @@ int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header)
  * again with discard nonzero to proceed. Undoable as one step. */
 #define OC_MERGE_CONTENT 101
 int oc_core_merge(oc_core *core, int merge, int discard);
+
+/* Sets the active cell's comment (Excel note); NULL or empty text removes it.
+ * The strings are copied. Undoable as one step. */
+int oc_core_set_comment(oc_core *core, const char *author, const char *text);
 
 /* ---- Clipboard ----
  * Copy keeps the selection (its first range) inside the core, with

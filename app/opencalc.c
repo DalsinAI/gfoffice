@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.29 (7.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.30 (7.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -91,7 +91,7 @@ enum {
     M_SELECT_ALL, M_SELECT_ROWS, M_SELECT_COLS, M_GOTO,
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
-    M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS,
+    M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -153,6 +153,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Rows", NULL, 0, 0, (APTR)M_INS_ROWS },
     { NM_ITEM, "Columns", NULL, 0, 0, (APTR)M_INS_COLS },
     { NM_ITEM, "Sheet", NULL, 0, 0, (APTR)M_INS_SHEET },
+    { NM_ITEM, "Comment...", NULL, 0, 0, (APTR)M_COMMENT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Delete Rows", NULL, 0, 0, (APTR)M_DEL_ROWS },
     { NM_ITEM, "Delete Columns", NULL, 0, 0, (APTR)M_DEL_COLS },
@@ -2302,6 +2303,23 @@ static void do_delete_sheet(void)
     if (EasyRequest(win, &es, NULL, (ULONG)latin)) result(oc_core_delete_sheet(core, s), "Sheet deleted.");
 }
 
+static void do_comment(void)
+{
+    unsigned row, col;
+    const owf_comment *comment;
+    char initial[512], entered[512];
+    char *utf8;
+    oc_core_active(core, &row, &col);
+    comment = oc_core_comment(core, oc_core_sheet(core), row, col);
+    to_latin1(comment && comment->text ? comment->text : "",
+              comment && comment->text ? strlen(comment->text) : 0, initial, sizeof initial);
+    if (!text_requester("Cell Comment", "Comment (empty removes)", initial, entered, sizeof entered)) return;
+    if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
+    result(oc_core_set_comment(core, comment && comment->author ? comment->author : "GFOpenCalc", utf8),
+           *utf8 ? "Comment saved." : "Comment removed.");
+    owf_free(utf8);
+}
+
 static void do_command(int id)
 {
     switch (id) {
@@ -2429,6 +2447,7 @@ static void menu_action(ULONG id)
         else set_status("Columns inserted.");
         break;
     case M_INS_SHEET: if (oc_core_add_sheet(core, NULL) < 0) result(OWF_ERR_MEMORY, NULL); else set_status("Sheet added."); break;
+    case M_COMMENT: do_comment(); break;
     case M_DEL_ROWS: result(oc_core_delete(core, 0), "Rows deleted."); break;
     case M_DEL_COLS: result(oc_core_delete(core, 1), "Columns deleted."); break;
     case M_BOLD: result(oc_core_toggle_flags(core, OWF_BOLD), NULL); break;
