@@ -3853,6 +3853,11 @@ static int rexx_do_command(const char *command, char **result_out)
     const char *arg="";char result[512];int ok=1;char *dynamic=NULL;
     result[0]=0;command=skip_space(command);
     if(starts_word_ci(command,"VERSION",&arg))snprintf(result,sizeof result,"%s",VERSION_TEXT);
+    /* ACTIVATE, HELP and FAULT: with VERSION and QUIT, the commands every Open app's port has */
+    else if(starts_word_ci(command,"ACTIVATE",&arg)){if(win){ScreenToFront(win->WScreen);WindowToFront(win);ActivateWindow(win);}}
+    else if(starts_word_ci(command,"HELP",&arg))snprintf(result,sizeof result,"VERSION ACTIVATE HELP FAULT WORDCOUNT PAGECOUNT FONTCHECK MEMCHECK "
+        "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND QUIT");
+    else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
     else if(starts_word_ci(command,"FONTCHECK",&arg))font_check(arg,result,sizeof result);

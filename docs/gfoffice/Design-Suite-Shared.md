@@ -280,10 +280,12 @@ The GFOffice conventions:
 | Arguments | Each command has a `ReadArgs` template, so quotes and keywords work as in the Shell. `HELP` lists the commands; `HELP <command>` gives its template |
 | Results | In `RESULT` when the script asks (`OPTIONS RESULTS`) |
 | Return codes | 0 done; 5 not possible now (unsaved changes, nothing selected, not supported); 10 error (bad arguments, an unknown command, a failure); 20 fatal |
-| Common commands | `VERSION`, `OPEN`, `SAVE`, `SAVEAS`, `EXPORT`, `PRINT`, `QUIT [FORCE]`, `HELP`, `ACTIVATE`, `GETFILE`, `ISDIRTY` |
+| Common commands | `VERSION`, `OPEN`, `SAVE`, `SAVEAS`, `EXPORT`, `PRINT`, `QUIT [FORCE]`, `HELP`, `ACTIVATE`, `FAULT <code>`, `GETFILE`, `ISDIRTY` |
 
 GFOpenWrite moves to these, keeping its commands' names (`WORDCOUNT`,
-`PAGECOUNT`, `INSERTTEXT`, `FIND`, `GETTEXT`, `COMMAND`).
+`PAGECOUNT`, `INSERTTEXT`, `FIND`, `GETTEXT`, `COMMAND`). Since 7 November 2026
+GFOpenWrite and GFOpenCalc both answer `VERSION`, `HELP`, `ACTIVATE` and `FAULT`, the
+commands every Open app's port has; `Rexx/` holds an example script for each.
 
 ## 7. Spelling (E11)
 
