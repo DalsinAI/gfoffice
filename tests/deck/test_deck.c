@@ -277,11 +277,19 @@ static int xref_ok(const unsigned char *pdf, size_t n)
 
 static void test_pdf_writer(void)
 {
+    static const unsigned char indexed_png_without_palette[] = {
+        0x89, 'P', 'N', 'G', 13, 10, 26, 10,
+        0, 0, 0, 13, 'I', 'H', 'D', 'R',
+        0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 10, 'I', 'D', 'A', 'T',
+        0x78, 0x9C, 0x63, 0x60, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0,
+        0, 0, 0, 0, 'I', 'E', 'N', 'D', 0, 0, 0, 0
+    };
     owf_pdf *pdf = owf_pdf_new();
     unsigned char *data = NULL;
     size_t length = 0;
     int pts[6] = { 100, 100, 1000, 100, 500, 900 }, clip[4] = { 0, 0, 500, 500 };
-    owf_image im;
+    owf_image im, bad_png;
     int r;
 
     CHECK(owf_pdf_text_width("Hello", 5, OWF_FONT_SANS, 0, 240) == ((722 + 556 + 222 + 222 + 556) * 240 + 500) / 1000,
@@ -295,6 +303,9 @@ static void test_pdf_writer(void)
     memset(&im, 0, sizeof im);
     im.data = (unsigned char *)"not a picture";
     im.length = 13;
+    memset(&bad_png, 0, sizeof bad_png);
+    bad_png.data = (unsigned char *)indexed_png_without_palette;
+    bad_png.length = sizeof indexed_png_without_palette;
     owf_pdf_page(pdf, 11906, 16838);
     owf_pdf_text(pdf, 1440, 1440, 3000, "Caf\xc3\xa9 (\xe2\x82\xac) \\", 13, OWF_FONT_SERIF, OWF_BOLD | OWF_UNDERLINE, 240, 0x112233);
     owf_pdf_rect(pdf, 100, 100, 500, 500, OWF_SHADE(0xFF0000), OWF_SHADE(0), 20);
@@ -304,6 +315,7 @@ static void test_pdf_writer(void)
     owf_pdf_path(pdf, pts, 3, 1, OWF_SHADE(0xFFFF00), OWF_SHADE(0), 10);
     owf_pdf_dash(pdf, 0);
     owf_pdf_image(pdf, &im, 0, 0, 100, 100, clip);
+    owf_pdf_image(pdf, &bad_png, 0, 0, 100, 100, clip);
     owf_pdf_link(pdf, 1440, 1200, 3000, 300, "https://example.org/(x)");
     owf_pdf_page(pdf, 14400, 10800);
     owf_pdf_text(pdf, 0, 500, 0, "page two", 8, OWF_FONT_MONO, 0, 200, 0);
@@ -317,6 +329,7 @@ static void test_pdf_writer(void)
         CHECK(find(data, length, "/URI (https://example.org/\\(x\\))") != NULL, "a link");
         CHECK(find(data, length, "/Title <FEFF005400ED00740075006C006F>") != NULL, "title as UTF-16");
         CHECK(!find(data, length, "/Im1 Do"), "a picture it can't hold is left out");
+        CHECK(!find(data, length, "/Subtype /Image"), "an indexed PNG without a palette is left out");
     }
     free(data);
     owf_pdf_free(pdf);

@@ -522,6 +522,9 @@ ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure, void *m
     return ow_layout_new_reserved(doc, measure, measure_userdata, 0);
 }
 
+static int uniform_body_columns(const owf_doc *doc, int *count, int *gap);
+static int body_page_sections(const ow_layout *layout, ol_page_section **out, int *count);
+
 static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
                               const ol_unit *inline_dx, const ol_unit *inline_dy);
 
@@ -664,11 +667,111 @@ static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, vo
             ow_layout_free(l);
             return NULL;
         }
-    if (!ol_layout_pages(l->body, &l->page, measure, measure_userdata)) {
-        ow_layout_free(l);
-        return NULL;
+    {
+        ol_page_section *sections = NULL;
+        int section_count = 0;
+        int section_result = body_page_sections(l, &sections, &section_count);
+        int columns = 1, gap = 0;
+        int uniform = uniform_body_columns(doc, &columns, &gap);
+        int laid_out;
+        if (section_result < 0) {
+            ow_layout_free(l);
+            return NULL;
+        }
+        if (section_result > 0)
+            laid_out = ol_layout_pages_sections(l->body, &l->page, sections, section_count,
+                                                measure, measure_userdata);
+        else if (uniform && columns > 1)
+            laid_out = ol_layout_pages_columns(l->body, &l->page, columns, TW(gap),
+                                               measure, measure_userdata);
+        else
+            laid_out = ol_layout_pages(l->body, &l->page, measure, measure_userdata);
+        /* A continuous boundary whose preceding columns require balancing is
+         * not representable yet. Preserve the document and retain the former
+         * ordinary-page rendering rather than failing to open it. */
+        if (!laid_out && section_result > 0)
+            laid_out = ol_layout_pages(l->body, &l->page, measure, measure_userdata);
+        free(sections);
+        if (!laid_out) {
+            ow_layout_free(l);
+            return NULL;
+        }
     }
     return l;
+}
+
+/* GFOpenLayout's reusable column paginator currently lays one uniform column
+ * geometry through the body.  Use it only when every explicit section marker
+ * agrees with the first section.  A later differing marker is deliberately
+ * left to ordinary pages until the section-region API can represent it; that
+ * is safer than painting text with the wrong section geometry. */
+static int uniform_body_columns(const owf_doc *doc, int *count, int *gap)
+{
+    int c = 1, g = 0, i;
+    if (!doc || !count || !gap) return 0;
+    if (doc->body.nparas > 0 && doc->body.paras[0].section_columns) {
+        c = doc->body.paras[0].section_columns;
+        g = doc->body.paras[0].section_gap;
+    }
+    if (c < 1 || c > 16 || g < 0) return 0;
+    for (i = 1; i < doc->body.nparas; ++i) {
+        const owf_para *p = &doc->body.paras[i];
+        if (p->section_columns &&
+            (p->section_columns != c || p->section_gap != g))
+            return 0;
+    }
+    *count = c;
+    *gap = g;
+    return 1;
+}
+
+/* Section changes use GFOpenLayout's variable region paginator. Continuous
+ * changes share a rectangular lower band; the caller falls back when the
+ * preceding section instead needs end-of-section column balancing. */
+static int body_page_sections(const ow_layout *l, ol_page_section **out, int *count)
+{
+    const owf_story *story;
+    const ol_node *root;
+    ol_page_section *spec;
+    int i, n = 1, at = 0;
+    if (!l || !out || !count) return 0;
+    *out = NULL;
+    *count = 0;
+    story = &l->doc->body;
+    if (story->nparas < 1) return 0;
+    for (i = 1; i < story->nparas; ++i)
+        if (story->paras[i].section_columns > 0) ++n;
+    if (n < 2) return 0;
+    root = ol_document_root_const(l->body);
+    if (!root || ol_node_parent(ol_node_by_id(l->body, l->blocks[0])) != root) return 0;
+    spec = (ol_page_section *)calloc((size_t)n, sizeof(*spec));
+    if (!spec) return -1;
+    spec[0].first_node = l->blocks[0];
+    spec[0].columns = story->paras[0].section_columns > 0 ? story->paras[0].section_columns : 1;
+    spec[0].gap = TW(story->paras[0].section_gap);
+    spec[0].break_before = OL_SECTION_CONTINUOUS;
+    at = 1;
+    for (i = 1; i < story->nparas; ++i) {
+        const owf_para *p = &story->paras[i];
+        const ol_node *node;
+        if (p->section_columns <= 0) continue;
+        node = ol_node_by_id(l->body, l->blocks[i]);
+        if (!node || ol_node_parent(node) != root) {
+            free(spec);
+            return 0;
+        }
+        spec[at].first_node = l->blocks[i];
+        spec[at].columns = p->section_columns;
+        spec[at].gap = TW(p->section_gap);
+        spec[at].break_before = p->section_break == OWF_SECTION_CONTINUOUS ? OL_SECTION_CONTINUOUS
+                              : p->section_break == OWF_SECTION_ODD_PAGE ? OL_SECTION_ODD_PAGE
+                              : p->section_break == OWF_SECTION_EVEN_PAGE ? OL_SECTION_EVEN_PAGE
+                              : OL_SECTION_NEW_PAGE;
+        ++at;
+    }
+    *out = spec;
+    *count = at;
+    return 1;
 }
 
 void ow_layout_free(ow_layout *l)
@@ -712,6 +815,14 @@ int ow_layout_page_count(const ow_layout *l)
 const ol_page *ow_layout_page(const ow_layout *l)
 {
     return l ? &l->page : NULL;
+}
+
+int ow_layout_paragraph_box(const ow_layout *l, int paragraph,
+                            int *page, ol_rect *box)
+{
+    if (!l || !box || paragraph < 0 || paragraph >= l->doc->body.nparas || !l->blocks[paragraph])
+        return 0;
+    return ol_node_page_box(l->body, l->blocks[paragraph], page, box);
 }
 
 int ow_layout_to_text(const ow_layout *l, ow_position pos, ol_text_position *out)
@@ -959,6 +1070,36 @@ int ow_layout_hit(const ow_layout *l, int page, ol_unit x, ol_unit y, ow_positio
     t.node_id = ol_node_id(n);
     t.offset = 0;
     return ow_layout_from_text(l, &t, pos);
+}
+
+int ow_layout_frame_rect(const ow_layout *l, int frame_index,
+                         int *page, ol_rect *rect)
+{
+    const ol_node *frame;
+    if (!l || frame_index < 0 || frame_index >= l->nboxes ||
+        !l->box_frame || !l->box_frame[frame_index])
+        return 0;
+    frame = ol_node_by_id(l->body, l->box_frame[frame_index]);
+    return frame && ol_frame_place(l->body, frame, page, rect);
+}
+
+int ow_layout_hit_frame(const ow_layout *l, int page, ol_unit x, ol_unit y,
+                        int *frame_index, ol_rect *rect)
+{
+    int k;
+    if (!l || page < 0 || page >= ow_layout_page_count(l)) return 0;
+    /* Frames later in the model draw over earlier ones, so test them first. */
+    for (k = l->nboxes - 1; k >= 0; --k) {
+        ol_rect at;
+        int fp;
+        if (!ow_layout_frame_rect(l, k, &fp, &at) || fp != page) continue;
+        if (x < at.x || y < at.y || x >= at.x + at.width || y >= at.y + at.height)
+            continue;
+        if (frame_index) *frame_index = k;
+        if (rect) *rect = at;
+        return 1;
+    }
+    return 0;
 }
 
 static void roman(int n, int lower, char *out, size_t size)

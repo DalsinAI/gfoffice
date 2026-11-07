@@ -81,6 +81,8 @@ typedef struct {
     /* 2.0.21: the bookmarks begun since the last paragraph was made, where in its text they begin and end */
     struct { const char *name, *id; size_t start, end; int ended; } marks[MAX_MARKS];
     int nmarks;
+    int section_start;        /* 2.0.25: first body paragraph of the section being read */
+    unsigned char section_break; /* the break before it (owf_section_break) */
 } docx;
 
 /* 2.0.19: a table style (w:style w:type="table"), worked out for one table: what it gives its cells'
@@ -1288,6 +1290,44 @@ static void list_prefix(docx *d, int li, int level, owf_buf *out)
     }
 }
 
+/* Word puts a section's properties at its end. Store them on the first
+ * paragraph of that section, which is the native model's stable marker. */
+static void record_section_columns(docx *d, const owf_xml_node *sect)
+{
+    const owf_xml_node *cols, *type, *c;
+    owf_para *p;
+    int count = 1, gap = 720, explicit_count = 0, v;
+    unsigned char next_break = OWF_SECTION_NEW_PAGE;
+    if (!sect || d->section_start < 0 || d->section_start >= d->doc->body.nparas)
+        return;
+    cols = wchild(d, sect, "cols");
+    if (cols) {
+        if (wint(d, cols, "num", &v) && v > 0) count = v;
+        if (wint(d, cols, "space", &v) && v >= 0) gap = v;
+        for (c = cols->first; c; c = c->next)
+            if (is_w(d, c, "col")) ++explicit_count;
+        if (explicit_count) count = explicit_count;
+        if (count > 16) count = 16;
+        if (explicit_count > 1)
+            owf_report_add(d->report, OWF_NOTE_APPROX,
+                           "Unequal section columns use equal widths with their original gap");
+    }
+    p = &d->doc->body.paras[d->section_start];
+    p->section_columns = count;
+    p->section_gap = gap;
+    p->section_break = d->section_break;
+    type = wchild(d, sect, "type");
+    if (type) {
+        const char *name = wval(d, type);
+        if (name && (!strcmp(name, "continuous") || !strcmp(name, "nextColumn")))
+            next_break = OWF_SECTION_CONTINUOUS;
+        else if (name && !strcmp(name, "oddPage")) next_break = OWF_SECTION_ODD_PAGE;
+        else if (name && !strcmp(name, "evenPage")) next_break = OWF_SECTION_EVEN_PAGE;
+    }
+    d->section_start = d->doc->body.nparas;
+    d->section_break = next_break;
+}
+
 static void paragraph(docx *d, const owf_xml_node *p)
 {
     const owf_xml_node *ppr = wchild(d, p, "pPr");
@@ -1351,8 +1391,13 @@ static void paragraph(docx *d, const owf_xml_node *p)
     owf_builder_end_para(d->b);
     para_names(d, pstyle ? wval(d, pstyle) : NULL);
     if (wchild(d, ppr, "sectPr")) {
-        d->break_next = 1;
-        owf_report_add(d->report, OWF_NOTE_APPROX, "Section breaks became page breaks");
+        const owf_xml_node *sect = wchild(d, ppr, "sectPr");
+        record_section_columns(d, sect);
+        if (d->section_break != OWF_SECTION_CONTINUOUS) {
+            d->break_next = 1;
+            owf_report_add(d->report, OWF_NOTE_APPROX,
+                           "Section page-style changes use a page break; column metadata is preserved");
+        }
     }
 }
 
@@ -1852,6 +1897,7 @@ static int read_docx(docx *d)
         }
     }
     result = owf_builder_done(&b);
+    record_section_columns(d, n);
     section(d, n);    /* headers and footers use their own builders */
 
     if (d->failed || d->notes.failed || d->scratch.failed)

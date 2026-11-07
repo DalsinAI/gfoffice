@@ -119,7 +119,12 @@ fi
 # 2026: "the rewrite is GFOpenWrite, not a second program"); the same core and filters.
 # shellcheck disable=SC2086
 APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $HERE/app/ow_stack.c $HERE/app/ow_fontwidths.c"
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE \
+# GFOpenWrite has no floating-point work. The soft-68040 flavour is a complete
+# libnix archive, including its allocator; the current stove's default
+# libgfmalloc would define the same calls. Select the flavour's allocator and
+# do not inject the otherwise unused fpuauto maths. Calc and the converter keep
+# their explicit -lm paths.
+"$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_C "$HERE/app/openwrite2.c" $APP_COMMON \
     "$HERE"/third_party/opengadtools/*.c -lamiga \

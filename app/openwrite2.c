@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.23 (27.10.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.25 (7.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -99,12 +99,13 @@ enum {
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_ZOOM_FIT_PAGE, M_ZOOM_FIT_WIDTH,
     M_PAGE_FIRST, M_PAGE_PREV, M_PAGE_NEXT, M_PAGE_LAST,
     M_NAV, M_INSPECTOR,
-    M_IMAGE, M_TABLE, M_LINK, M_PAGE_BREAK, M_FIELD_PAGE, M_FIELD_PAGES, M_FIELD_DATE, M_FIELD_TIME,
+    M_IMAGE, M_IMAGE_FLOAT, M_TEXT_BOX, M_TABLE, M_LINK, M_PAGE_BREAK,
+    M_FIELD_PAGE, M_FIELD_PAGES, M_FIELD_DATE, M_FIELD_TIME,
     M_PARAGRAPH, M_BOLD, M_ITALIC, M_UNDERLINE,
-    M_TABLE_NEXT, M_TABLE_PREV, M_TABLE_ROW_ADD, M_TABLE_ROW_DEL, M_TABLE_COL_ADD, M_TABLE_COL_DEL,
+    M_TABLE_NEXT, M_TABLE_PREV, M_TABLE_STYLE, M_TABLE_ROW_ADD, M_TABLE_ROW_DEL, M_TABLE_COL_ADD, M_TABLE_COL_DEL,
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT, M_ALIGN_JUSTIFY,
     M_STYLE_BODY, M_STYLE_H1, M_STYLE_H2, M_STYLE_H3, M_BULLETS, M_NUMBERING,
-    M_PAGE_SETUP, M_HEADER, M_FOOTER, M_HEADER_LEFT, M_FOOTER_LEFT,
+    M_PAGE_SETUP, M_COLUMNS, M_FRAME, M_HEADER, M_FOOTER, M_HEADER_LEFT, M_FOOTER_LEFT,
     M_DATATYPES, M_OPENPRINT, M_SPELL,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT
@@ -163,6 +164,8 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Insert", NULL, 0, 0, NULL },
     { NM_ITEM, "Image...", NULL, 0, 0, (APTR)M_IMAGE },
+    { NM_ITEM, "Floating Image...", NULL, 0, 0, (APTR)M_IMAGE_FLOAT },
+    { NM_ITEM, "Text Box...", NULL, 0, 0, (APTR)M_TEXT_BOX },
     { NM_ITEM, "Table...", NULL, 0, 0, (APTR)M_TABLE },
     { NM_ITEM, "Link...", NULL, 0, 0, (APTR)M_LINK },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -196,6 +199,7 @@ static struct NewMenu menus[] = {
     { NM_TITLE, "Table", NULL, 0, 0, NULL },
     { NM_ITEM, "Next Cell", NULL, 0, 0, (APTR)M_TABLE_NEXT },
     { NM_ITEM, "Previous Cell", NULL, 0, 0, (APTR)M_TABLE_PREV },
+    { NM_ITEM, "Cell Style...", NULL, 0, 0, (APTR)M_TABLE_STYLE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Insert Row Below", NULL, 0, 0, (APTR)M_TABLE_ROW_ADD },
     { NM_ITEM, "Delete Row", NULL, 0, 0, (APTR)M_TABLE_ROW_DEL },
@@ -204,6 +208,8 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Layout", NULL, 0, 0, NULL },
     { NM_ITEM, "Page Setup...", NULL, 0, 0, (APTR)M_PAGE_SETUP },
+    { NM_ITEM, "Document Columns...", NULL, 0, 0, (APTR)M_COLUMNS },
+    { NM_ITEM, "Frame...", NULL, 0, 0, (APTR)M_FRAME },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Header...", NULL, 0, 0, (APTR)M_HEADER },
     { NM_ITEM, "Footer...", NULL, 0, 0, (APTR)M_FOOTER },
@@ -291,6 +297,7 @@ static char last_find[160] = "", last_replace[160] = "";
 static int zoom = 100;
 static int show_nav = 1, show_inspector = 1;
 static int page_index;
+static int selected_frame = -1;                      /* a floating, non-text frame selected on the page */
 
 static box area, toolbar_box, format_box, navigator_box, canvas_box;
 static box ruler_box, page_box, page_view_box, inspector_box, status_box;
@@ -324,6 +331,9 @@ static ow_image_cache image_cache[IMAGE_CACHE_SLOTS];
 static int image_cache_n;
 static ULONG image_cache_tick;
 static int mouse_selecting;
+static int frame_dragging, frame_drag_frame = -1, frame_drag_page, frame_drag_mode;
+static int frame_drag_start_x, frame_drag_start_y, frame_drag_x, frame_drag_y;
+static ol_rect frame_drag_rect;
 static int defer_repaint, repaint_pending;
 
 /* 2.1: the pages are GFOpenLayout's: the body laid out once at full resolution (units, twips x 4) and drawn
@@ -340,6 +350,10 @@ static void layout(void);
 static void pages_changed(void);
 static void pages_free(void);
 static int page_hit(int mx, int my, ow_position *out);
+static int page_frame_hit(int mx, int my, int *frame_index, ol_rect *rect);
+static int frame_drag_begin(int mx, int my);
+static void frame_drag_update(int mx, int my);
+static void frame_drag_finish(int mx, int my);
 static void follow_caret_page(void);
 static void set_page_view(int page);
 static void scroll_page(int dx, int dy);
@@ -351,6 +365,7 @@ static void doc_font_cache_clear(void);
 static void image_cache_clear(void);
 static void editor_repaint(const char *message);
 static int editor_result(int rc, const char *message);
+static int mm_to_twips(int mm);
 
 static const char classic_theme[] =
     "name Classic\nversion 1\nfont system\ntitle.align left\npassthrough yes\n[four]\n"
@@ -863,6 +878,9 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
         ow_editor_mark_saved(editor);
     }
     page_index = 0;
+    selected_frame = -1;
+    frame_dragging = 0;
+    frame_drag_frame = -1;
     pages_changed();
     if (pv) ogt_pageview_scroll_to(pv, 0);
     snprintf(current_path, sizeof current_path, "%s", path ? path : "");
@@ -1605,6 +1623,17 @@ static void mouse_set_selection(int mx, int my, int extend)
         int cx, cy;
         if (!pv || !ogt_pageview_to_content(pv, mx, my, &cx, &cy) || ogt_pageview_page_at(pv, cy) < 0) return;
     }
+    if (!extend) {
+        int frame_index;
+        if (page_frame_hit(mx, my, &frame_index, NULL) && frame_index >= 0 &&
+            frame_index < doc->nframes && doc->frames[frame_index].story.nparas == 0) {
+            selected_frame = frame_index;
+            set_status("Floating frame selected; use Layout / Frame to move or resize it.");
+            request_document_redraw();
+            return;
+        }
+        selected_frame = -1;
+    }
     if (!page_hit(mx, my, &p) && !hit_position(mx, my, &p)) return;
     sel = ow_editor_selection(editor);
     if (!extend) sel.anchor = p;
@@ -2230,6 +2259,31 @@ static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_sca
         }
         ogt_vline(rp, ogt_pen(&ctx, "accent"), pp.caret_x, pp.caret_y, pp.caret_h > 1 ? pp.caret_h - 1 : 1);
     }
+    if (!thumb && selected_frame >= 0) {
+        int fp;
+        ol_rect at;
+        if (ow_layout_frame_rect(l, selected_frame, &fp, &at) && fp == page) {
+            ol_pixel_rect box = ol_scale_rect(s, at);
+            int hs = 5;
+            LONG pen = ogt_pen(&ctx, "accent");
+            if (frame_dragging && frame_drag_frame == selected_frame && frame_drag_page == page) {
+                int dx = frame_drag_x - frame_drag_start_x;
+                int dy = frame_drag_y - frame_drag_start_y;
+                ow_frame_adjust_rect(&box.x, &box.y, &box.width, &box.height,
+                                     (ow_frame_handle)frame_drag_mode, dx, dy, 8, 8);
+            }
+            ogt_frame(rp, pen, box.x, box.y, box.width, box.height);
+            ogt_set_apen(rp, pen);
+            RectFill(rp, box.x - hs / 2, box.y - hs / 2,
+                     box.x + hs / 2, box.y + hs / 2);
+            RectFill(rp, box.x + box.width - hs / 2, box.y - hs / 2,
+                     box.x + box.width + hs / 2, box.y + hs / 2);
+            RectFill(rp, box.x - hs / 2, box.y + box.height - hs / 2,
+                     box.x + hs / 2, box.y + box.height + hs / 2);
+            RectFill(rp, box.x + box.width - hs / 2, box.y + box.height - hs / 2,
+                     box.x + box.width + hs / 2, box.y + box.height + hs / 2);
+        }
+    }
 }
 
 /* The editor position under the pointer (window coordinates). */
@@ -2243,6 +2297,94 @@ static int page_hit(int mx, int my, ow_position *out)
     if (page < 0) return 0;
     page_scale(&s, PAGE_MARGIN, ogt_pageview_page_top(pv, page));
     return ow_layout_hit(l, page, ol_unscale_x(&s, cx), ol_unscale_y(&s, cy), out);
+}
+
+/* The topmost authored frame under the pointer. GFOpenLayout resolves the
+ * anchor, wrapping and pagination; the application only converts coordinates. */
+static int page_frame_hit(int mx, int my, int *frame_index, ol_rect *rect)
+{
+    ow_layout *l = pages();
+    int cx, cy, page;
+    ol_scale s;
+    if (!l || !pv || !ogt_pageview_to_content(pv, mx, my, &cx, &cy)) return 0;
+    page = ogt_pageview_page_at(pv, cy);
+    if (page < 0) return 0;
+    page_scale(&s, PAGE_MARGIN, ogt_pageview_page_top(pv, page));
+    return ow_layout_hit_frame(l, page, ol_unscale_x(&s, cx), ol_unscale_y(&s, cy),
+                               frame_index, rect);
+}
+
+/* A drag previews in page-view pixels and commits once on release, so a move
+ * or resize is one core edit and therefore one Undo step. */
+static int frame_drag_begin(int mx, int my)
+{
+    ow_layout *l = pages();
+    int cx, cy, page, frame_index, near = 7;
+    ol_scale s;
+    ol_rect at;
+    ol_pixel_rect box;
+    if (!l || !doc || !pv || !ogt_pageview_to_content(pv, mx, my, &cx, &cy)) return 0;
+    page = ogt_pageview_page_at(pv, cy);
+    if (page < 0) return 0;
+    page_scale(&s, PAGE_MARGIN, ogt_pageview_page_top(pv, page));
+    if (!ow_layout_hit_frame(l, page, ol_unscale_x(&s, cx), ol_unscale_y(&s, cy),
+                             &frame_index, &at) || frame_index != selected_frame ||
+        frame_index < 0 || frame_index >= doc->nframes ||
+        doc->frames[frame_index].story.nparas != 0)
+        return 0;
+    box = ol_scale_rect(&s, at);
+    frame_drag_mode = OW_FRAME_MOVE;
+    if (abs(cx - box.x) <= near && abs(cy - box.y) <= near) frame_drag_mode = OW_FRAME_RESIZE_NW;
+    else if (abs(cx - (box.x + box.width)) <= near && abs(cy - box.y) <= near) frame_drag_mode = OW_FRAME_RESIZE_NE;
+    else if (abs(cx - box.x) <= near && abs(cy - (box.y + box.height)) <= near) frame_drag_mode = OW_FRAME_RESIZE_SW;
+    else if (abs(cx - (box.x + box.width)) <= near &&
+             abs(cy - (box.y + box.height)) <= near) frame_drag_mode = OW_FRAME_RESIZE_SE;
+    frame_dragging = 1;
+    frame_drag_frame = frame_index;
+    frame_drag_page = page;
+    frame_drag_start_x = frame_drag_x = cx;
+    frame_drag_start_y = frame_drag_y = cy;
+    frame_drag_rect = at;
+    return 1;
+}
+
+static void frame_drag_update(int mx, int my)
+{
+    int cx, cy;
+    if (!frame_dragging || !pv || !ogt_pageview_to_content(pv, mx, my, &cx, &cy)) return;
+    frame_drag_x = cx;
+    frame_drag_y = cy;
+    request_document_redraw();
+}
+
+static void frame_drag_finish(int mx, int my)
+{
+    ol_scale s;
+    int dx, dy, x, y, width, height, min_size = mm_to_twips(10), rc;
+    owf_frame_wrap wrap;
+    if (!frame_dragging) return;
+    frame_drag_update(mx, my);
+    page_scale(&s, PAGE_MARGIN, ogt_pageview_page_top(pv, frame_drag_page));
+    dx = (int)(ol_unscale_x(&s, s.origin_x + frame_drag_x - frame_drag_start_x) /
+               OL_UNITS_PER_TWIP);
+    dy = (int)(ol_unscale_y(&s, s.origin_y + frame_drag_y - frame_drag_start_y) /
+               OL_UNITS_PER_TWIP);
+    x = (int)(frame_drag_rect.x / OL_UNITS_PER_TWIP);
+    y = (int)(frame_drag_rect.y / OL_UNITS_PER_TWIP);
+    width = (int)(frame_drag_rect.width / OL_UNITS_PER_TWIP);
+    height = (int)(frame_drag_rect.height / OL_UNITS_PER_TWIP);
+    ow_frame_adjust_rect(&x, &y, &width, &height,
+                         (ow_frame_handle)frame_drag_mode, dx, dy, min_size, min_size);
+    wrap = (owf_frame_wrap)doc->frames[frame_drag_frame].wrap;
+    frame_dragging = 0;
+    frame_drag_mode = 0;
+    if (!dx && !dy) { request_document_redraw(); return; }
+    rc = ow_editor_apply_frame_geometry(editor, frame_drag_frame, x, y, width, height, wrap);
+    if (rc == OWF_OK) {
+        pages_changed();
+        editor_repaint("Frame moved or resized; Undo restores its previous geometry.");
+    } else if (rc == OWF_ERR_MEMORY) tell("Frame", "There is not enough memory to update the frame.");
+    else tell("Frame", "The frame geometry is not valid.");
 }
 
 /* Up and down a line, from where the caret is drawn: the nearest place on the line above or below, on
@@ -3431,7 +3573,7 @@ static int ask_image_file(char *out,size_t out_size)
     FreeAslRequest(fr);return ok;
 }
 
-static void do_image(void)
+static void do_image(int floating)
 {
     char path[512],alt[160]="";BPTR f;LONG size,got;unsigned char *data;int width=4320,height=2880,idx,maxw;Object *o=NULL;struct BitMapHeader *bmh=NULL;
     if(!doc||!editor||!ask_image_file(path,sizeof path))return;
@@ -3439,7 +3581,144 @@ static void do_image(void)
     if(DataTypesBase){o=NewDTObject((APTR)path,DTA_GroupID,GID_PICTURE,PDTA_DestMode,PMODE_V43,PDTA_Remap,FALSE,TAG_DONE);if(o){GetDTAttrs(o,PDTA_BitMapHeader,(ULONG)&bmh,TAG_DONE);if(bmh&&bmh->bmh_Width&&bmh->bmh_Height){width=(int)bmh->bmh_Width*15;height=(int)bmh->bmh_Height*15;}DisposeDTObject(o);}}
     maxw=doc->page.width-doc->page.margin_left-doc->page.margin_right;if(width>maxw&&width>0){height=(int)((long)height*maxw/width);width=maxw;}
     strlcpy(alt,leaf(path),sizeof alt);idx=owf_doc_add_image(doc,leaf(path),image_mime_name(path),data,(size_t)size,width,height,alt);free(data);if(idx<0){tell("Insert Image","There is not enough memory to add the image.");return;}
-    image_cache_clear();if(editor_result(ow_editor_insert_image(editor,idx),"Image inserted through GFOpenDatatypes."))relayout();
+    image_cache_clear();
+    if(editor_result(floating ? ow_editor_insert_floating_image(editor,idx,OWF_WRAP_SQUARE)
+                              : ow_editor_insert_image(editor,idx),
+                     floating ? "Floating image inserted; text wraps around it."
+                              : "Image inserted through GFOpenDatatypes.")) {
+        selected_frame = floating ? doc->nframes - 1 : -1;
+        relayout();
+    }
+}
+
+static void do_text_box(void)
+{
+    char text[512]="Text box",ws[16]="76",hs[16]="25";
+    int width,height;
+    if(!editor)return;
+    if(!text_requester("Insert Text Box","Initial text",text,text,sizeof text))return;
+    if(!text_requester("Insert Text Box","Width (mm)",ws,ws,sizeof ws))return;
+    if(!text_requester("Insert Text Box","Height (mm)",hs,hs,sizeof hs))return;
+    width=mm_to_twips(atoi(ws));height=mm_to_twips(atoi(hs));
+    if(width<mm_to_twips(10)||height<mm_to_twips(10)||
+       width>mm_to_twips(500)||height>mm_to_twips(500)){
+        tell("Insert Text Box","Width and height must be between 10 and 500 mm.");return;
+    }
+    if(editor_result(ow_editor_insert_text_box(editor,text,width,height,OWF_WRAP_SQUARE),
+                     "Text box inserted; type in it or click it again to edit."))relayout();
+}
+
+static int current_frame_index(void)
+{
+    ow_selection sel;
+    if (!editor || !doc) return -1;
+    sel = ow_editor_selection(editor);
+    if (sel.focus.box > 0 && sel.focus.box <= doc->nframes) return sel.focus.box - 1;
+    if (selected_frame >= 0 && selected_frame < doc->nframes) return selected_frame;
+    return -1;
+}
+
+static void do_frame_properties(void)
+{
+    static const char *wrap_name[] = { "none", "square", "tight", "top-bottom" };
+    char xs[24], ys[24], ws[24], hs[24], wrap[24];
+    int frame_index = current_frame_index(), frame_page, x, y, width, height, rc;
+    owf_frame_wrap mode;
+    ol_rect at;
+    ow_layout *l;
+    if (frame_index < 0) {
+        tell("Frame", "Select a floating image, or put the caret in a text box, first.");
+        return;
+    }
+    l = pages();
+    if (!l || !ow_layout_frame_rect(l, frame_index, &frame_page, &at)) {
+        tell("Frame", "This frame is not currently placed on a page.");
+        return;
+    }
+    (void)frame_page;
+    snprintf(xs, sizeof xs, "%d", twips_to_mm((int)(at.x / OL_UNITS_PER_TWIP)));
+    snprintf(ys, sizeof ys, "%d", twips_to_mm((int)(at.y / OL_UNITS_PER_TWIP)));
+    snprintf(ws, sizeof ws, "%d", twips_to_mm((int)(at.width / OL_UNITS_PER_TWIP)));
+    snprintf(hs, sizeof hs, "%d", twips_to_mm((int)(at.height / OL_UNITS_PER_TWIP)));
+    mode = (owf_frame_wrap)doc->frames[frame_index].wrap;
+    if (mode > OWF_WRAP_TOP_BOTTOM) mode = OWF_WRAP_NONE;
+    strlcpy(wrap, wrap_name[mode], sizeof wrap);
+    if (!text_requester("Frame", "X from page (mm)", xs, xs, sizeof xs) ||
+        !text_requester("Frame", "Y from page (mm)", ys, ys, sizeof ys) ||
+        !text_requester("Frame", "Width (mm)", ws, ws, sizeof ws) ||
+        !text_requester("Frame", "Height (mm)", hs, hs, sizeof hs) ||
+        !text_requester("Frame", "Wrap: none / square / tight / top-bottom", wrap, wrap, sizeof wrap))
+        return;
+    x = mm_to_twips(atoi(xs)); y = mm_to_twips(atoi(ys));
+    width = mm_to_twips(atoi(ws)); height = mm_to_twips(atoi(hs));
+    if (width < mm_to_twips(10) || height < mm_to_twips(10) ||
+        width > mm_to_twips(500) || height > mm_to_twips(500)) {
+        tell("Frame", "Width and height must be between 10 and 500 mm.");
+        return;
+    }
+    if (!strcasecmp(wrap, "none")) mode = OWF_WRAP_NONE;
+    else if (!strcasecmp(wrap, "square")) mode = OWF_WRAP_SQUARE;
+    else if (!strcasecmp(wrap, "tight")) mode = OWF_WRAP_TIGHT;
+    else if (!strcasecmp(wrap, "top-bottom") || !strcasecmp(wrap, "top bottom"))
+        mode = OWF_WRAP_TOP_BOTTOM;
+    else {
+        tell("Frame", "Wrap must be none, square, tight, or top-bottom.");
+        return;
+    }
+    rc = ow_editor_apply_frame_geometry(editor, frame_index, x, y, width, height, mode);
+    if (rc == OWF_OK) {
+        selected_frame = frame_index;
+        pages_changed();
+        editor_repaint("Frame position, size and wrapping updated.");
+    } else if (rc == OWF_ERR_MEMORY) tell("Frame", "There is not enough memory to update the frame.");
+    else tell("Frame", "The frame geometry is not valid.");
+}
+
+static int selected_frame_key(UWORD code, UWORD qualifier)
+{
+    ow_layout *l;
+    ol_rect at;
+    int page, x, y, width, height, step, dx = 0, dy = 0, rc;
+    owf_frame_wrap wrap;
+    if (!doc || !editor || selected_frame < 0 || selected_frame >= doc->nframes ||
+        doc->frames[selected_frame].story.nparas != 0)
+        return 0;
+    if (code == 0x45) {                              /* Escape: return to text editing */
+        selected_frame = -1;
+        request_document_redraw();
+        return 1;
+    }
+    if (code == 0x46) {                              /* Delete */
+        rc = ow_editor_delete_frame(editor, selected_frame);
+        if (rc == OWF_OK) {
+            selected_frame = -1;
+            pages_changed();
+            editor_repaint("Frame deleted; Undo restores it.");
+        } else if (rc == OWF_ERR_MEMORY) tell("Frame", "There is not enough memory to delete the frame.");
+        return 1;
+    }
+    step = mm_to_twips((qualifier & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) ? 5 : 1);
+    if (code == 0x4f) dx = -step;
+    else if (code == 0x4e) dx = step;
+    else if (code == 0x4c) dy = -step;
+    else if (code == 0x4d) dy = step;
+    else return 0;
+    l = pages();
+    if (!l || !ow_layout_frame_rect(l, selected_frame, &page, &at)) return 1;
+    (void)page;
+    x = (int)(at.x / OL_UNITS_PER_TWIP);
+    y = (int)(at.y / OL_UNITS_PER_TWIP);
+    width = (int)(at.width / OL_UNITS_PER_TWIP);
+    height = (int)(at.height / OL_UNITS_PER_TWIP);
+    ow_frame_adjust_rect(&x, &y, &width, &height, OW_FRAME_MOVE, dx, dy, 1, 1);
+    wrap = (owf_frame_wrap)doc->frames[selected_frame].wrap;
+    rc = ow_editor_apply_frame_geometry(editor, selected_frame, x, y, width, height, wrap);
+    if (rc == OWF_OK) {
+        pages_changed();
+        editor_repaint((qualifier & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT))
+                       ? "Frame moved 5 mm." : "Frame moved 1 mm.");
+    } else if (rc == OWF_ERR_MEMORY) tell("Frame", "There is not enough memory to move the frame.");
+    return 1;
 }
 
 static void do_table(void)
@@ -3450,6 +3729,102 @@ static void do_table(void)
     rows=atoi(rs);cols=atoi(cs);
     if(rows<1||rows>64||cols<1||cols>32){tell("Insert Table","Rows must be 1-64 and columns 1-32.");return;}
     if(editor_result(ow_editor_insert_table(editor,rows,cols),"Table inserted."))relayout();
+}
+
+static int parse_style_colour(const char *text, unsigned long *shade)
+{
+    char *end;
+    unsigned long rgb;
+    if (!text || !shade) return 0;
+    while (*text && isspace((unsigned char)*text)) ++text;
+    if (!strcasecmp(text, "none") || !strcasecmp(text, "automatic")) {
+        *shade = 0;
+        return 1;
+    }
+    if (*text == '#') ++text;
+    if (strlen(text) != 6) return 0;
+    rgb = strtoul(text, &end, 16);
+    if (*end) return 0;
+    *shade = OWF_SHADE(rgb);
+    return 1;
+}
+
+static void do_table_style(void)
+{
+    char scope_text[24] = "cell", fill_text[24] = "none", border_text[24] = "#000000";
+    ow_table_scope scope;
+    unsigned long fill, border;
+    int borders, rc;
+    if (!editor || !ow_editor_in_table(editor)) {
+        tell("Cell Style", "Put the caret in a table cell first.");
+        return;
+    }
+    if (!text_requester("Cell Style", "Apply to: cell / row / table",
+                        scope_text, scope_text, sizeof scope_text) ||
+        !text_requester("Cell Style", "Fill: #RRGGBB or none",
+                        fill_text, fill_text, sizeof fill_text) ||
+        !text_requester("Cell Style", "Border: #RRGGBB or none",
+                        border_text, border_text, sizeof border_text))
+        return;
+    if (!strcasecmp(scope_text, "cell")) scope = OW_TABLE_CELL;
+    else if (!strcasecmp(scope_text, "row")) scope = OW_TABLE_ROW;
+    else if (!strcasecmp(scope_text, "table") || !strcasecmp(scope_text, "all")) scope = OW_TABLE_ALL;
+    else { tell("Cell Style", "Scope must be cell, row, or table."); return; }
+    if (!parse_style_colour(fill_text, &fill) || !parse_style_colour(border_text, &border)) {
+        tell("Cell Style", "Colours must be #RRGGBB or none.");
+        return;
+    }
+    borders = border ? OWF_BORDER_TOP | OWF_BORDER_LEFT | OWF_BORDER_BOTTOM | OWF_BORDER_RIGHT : 0;
+    rc = ow_editor_table_apply_style(editor, scope, fill, borders, border);
+    if (rc == OWF_OK) {
+        pages_changed();
+        editor_repaint("Table cell style updated.");
+    } else if (rc == OWF_ERR_MEMORY) tell("Cell Style", "There is not enough memory to style the table.");
+    else tell("Cell Style", "The table style could not be applied.");
+}
+
+static void do_document_columns(void)
+{
+    char columns_text[16], gap_text[24];
+    char *end;
+    long gap_mm;
+    int columns = 1, gap = 0, i;
+    if (!editor || !doc || doc->body.nparas < 1) return;
+    if (doc->body.paras[0].section_columns > 0) {
+        columns = doc->body.paras[0].section_columns;
+        gap = doc->body.paras[0].section_gap;
+    }
+    snprintf(columns_text, sizeof columns_text, "%d", columns);
+    snprintf(gap_text, sizeof gap_text, "%ld", ((long)gap * 254 + 7200) / 14400);
+    if (!text_requester("Document Columns", "Columns (1-16)",
+                        columns_text, columns_text, sizeof columns_text) ||
+        !text_requester("Document Columns", "Gap in millimetres (0-100)",
+                        gap_text, gap_text, sizeof gap_text))
+        return;
+    columns = (int)strtol(columns_text, &end, 10);
+    if (*end || columns < 1 || columns > 16) {
+        tell("Document Columns", "Columns must be a whole number from 1 to 16.");
+        return;
+    }
+    gap_mm = strtol(gap_text, &end, 10);
+    if (*end || gap_mm < 0 || gap_mm > 100) {
+        tell("Document Columns", "The gap must be from 0 to 100 millimetres.");
+        return;
+    }
+    for (i = 1; i < doc->body.nparas; ++i)
+        if (doc->body.paras[i].section_columns) {
+            struct EasyStruct es = {
+                sizeof(struct EasyStruct), 0, (UBYTE *)"Document Columns",
+                (UBYTE *)"This document has later section column settings.\n"
+                         "Applying document columns replaces those settings.\n\nContinue?",
+                (UBYTE *)"Apply|Cancel"
+            };
+            if (!EasyRequest(win, &es, NULL)) return;
+            break;
+        }
+    gap = (int)((gap_mm * 14400 + 127) / 254);
+    editor_result(ow_editor_apply_document_columns(editor, columns, gap),
+                  columns == 1 ? "Document set to one column." : "Document columns updated.");
 }
 
 static void do_link(void)
@@ -3502,7 +3877,7 @@ static void do_command(int id)
     case C_REDO:
         if (editor && ow_editor_redo(editor) > 0) editor_repaint("Redo.");
         break;
-    case C_IMAGE: do_image(); break;
+    case C_IMAGE: do_image(0); break;
     case C_TABLE: do_table(); break;
     case C_PDF: do_export_pdf(); break;
     }
@@ -3626,6 +4001,8 @@ static void menu_action(ULONG id)
     case M_NAV: show_nav = !show_nav; relayout(); break;
     case M_INSPECTOR: show_inspector = !show_inspector; relayout(); break;
     case M_IMAGE: do_command(C_IMAGE); break;
+    case M_IMAGE_FLOAT: do_image(1); break;
+    case M_TEXT_BOX: do_text_box(); break;
     case M_TABLE: do_command(C_TABLE); break;
     case M_LINK: do_link(); break;
     case M_PAGE_BREAK: editor_result(ow_editor_insert_page_break(editor), "Page break inserted."); break;
@@ -3652,6 +4029,7 @@ static void menu_action(ULONG id)
     }
     case M_TABLE_NEXT: if(!ow_editor_table_move(editor,1))set_status("Last table cell."); request_document_redraw(); break;
     case M_TABLE_PREV: if(!ow_editor_table_move(editor,-1))set_status("First table cell."); request_document_redraw(); break;
+    case M_TABLE_STYLE: do_table_style(); break;
     case M_TABLE_ROW_ADD: editor_result(ow_editor_table_insert_row(editor),"Table row inserted."); break;
     case M_TABLE_ROW_DEL: editor_result(ow_editor_table_delete_row(editor),"Table row deleted."); break;
     case M_TABLE_COL_ADD: editor_result(ow_editor_table_insert_column(editor),"Table column inserted."); break;
@@ -3669,6 +4047,8 @@ static void menu_action(ULONG id)
         }
         break;
     }
+    case M_COLUMNS: do_document_columns(); break;
+    case M_FRAME: do_frame_properties(); break;
     case M_HEADER: do_story_edit(OW_STORY_HEADER); break;
     case M_FOOTER: do_story_edit(OW_STORY_FOOTER); break;
     case M_HEADER_LEFT: do_story_edit(OW_STORY_HEADER_LEFT); break;
@@ -3912,9 +4292,22 @@ static void events(void)
         if (pv) {
             r = ogt_pageview_event(pv, class, code, ia, mx, my, &cx, &cy);
             if (r == OGT_PV_SCROLLED) { page_index = ogt_pageview_page(pv); if (nav) { ogt_list_select(nav, page_index); ogt_list_show(nav, page_index); } draw_status(); handled = 1; }
-            else if (r == OGT_PV_PRESS) { mouse_selecting = 1; mouse_set_selection(mx, my, (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0); handled = 1; }
-            else if (r == OGT_PV_DRAG) { if (mouse_selecting) mouse_set_selection(mx, my, 1); handled = 1; }
-            else if (r == OGT_PV_RELEASE) { if (mouse_selecting) { mouse_set_selection(mx, my, 1); mouse_selecting = 0; } handled = 1; }
+            else if (r == OGT_PV_PRESS) {
+                mouse_set_selection(mx, my, (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0);
+                if (frame_drag_begin(mx, my)) mouse_selecting = 0;
+                else mouse_selecting = 1;
+                handled = 1;
+            }
+            else if (r == OGT_PV_DRAG) {
+                if (frame_dragging) frame_drag_update(mx, my);
+                else if (mouse_selecting) mouse_set_selection(mx, my, 1);
+                handled = 1;
+            }
+            else if (r == OGT_PV_RELEASE) {
+                if (frame_dragging) frame_drag_finish(mx, my);
+                else if (mouse_selecting) { mouse_set_selection(mx, my, 1); mouse_selecting = 0; }
+                handled = 1;
+            }
         }
         if (!handled && nav) {
             r = ogt_list_event(nav, class, code, ia, mx, my, secs, micros, &row);
@@ -3954,7 +4347,8 @@ static void events(void)
             break;
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTUP) {
-                if (mouse_selecting) { mouse_set_selection(mx, my, 1); mouse_selecting = 0; }
+                if (frame_dragging) frame_drag_finish(mx, my);
+                else if (mouse_selecting) { mouse_set_selection(mx, my, 1); mouse_selecting = 0; }
                 if (tb.pressed >= 0) {
                     ogt_toolbar_draw_one(&tb, &ctx, win->RPort, tb.pressed, 0, "window");
                     tb.pressed = -1;
@@ -3962,7 +4356,8 @@ static void events(void)
             }
             break;
         case IDCMP_MOUSEMOVE:
-            if (mouse_selecting) mouse_set_selection(mx, my, 1);
+            if (frame_dragging) frame_drag_update(mx, my);
+            else if (mouse_selecting) mouse_set_selection(mx, my, 1);
             break;
         case IDCMP_RAWKEY:
             if (!(code & 0x80) && editor) {
@@ -3980,6 +4375,8 @@ static void events(void)
                     else if (code == 0x4c) set_page_view(page_index - 1);
                     else if (code == 0x4d) set_page_view(page_index + 1);
                     else if (code == 0x44) editor_result(ow_editor_insert_page_break(editor), "Page break inserted.");
+                } else if (selected_frame_key(code, qual)) {
+                    /* A selected floating frame takes arrows; Escape returns them to the caret. */
                 } else switch (code) {
                 case 0x4f: ow_editor_move_caret(editor, OW_MOVE_LEFT, extend); bring_focus_into_view(); break;
                 case 0x4e: ow_editor_move_caret(editor, OW_MOVE_RIGHT, extend); bring_focus_into_view(); break;

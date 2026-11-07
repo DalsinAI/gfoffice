@@ -4,11 +4,12 @@ This is the GFOffice Suite: native office apps for AmigaOS 3.2, all sharing
 one document library, **libowf**. Its apps keep their GFOpen names:
 
 - **GFOpenWrite**, the word processor (released, below);
-- **GFOpenCalc**, the spreadsheet (the formula engine and its core are here; its
-  Amiga app is being built);
-- **GFOpenPresentation**, slides; **GFOpenPublisher**, desktop publishing that
-  opens Microsoft Publisher and PageStream files; **GFOpenBase**, the database
-  (all being started).
+- **GFOpenCalc**, the spreadsheet (an early Amiga application with its formula
+  engine and portable core);
+- **GFOpenPresentation**, the early slide viewer and editor;
+- **GFOpenPublisher**, a desktop-publishing model and Microsoft Publisher reader
+  without an application yet;
+- **GFOpenBase**, the database, currently at the design stage.
 
 The suite aims at the features of Apache OpenOffice's apps. It is written from
 the file formats' specifications and our own code, never from OpenOffice's
@@ -19,7 +20,7 @@ redirects the old name.
 
 # GFOpenWrite
 
-GFOpenWrite 1.0.3 is a native word processor for AmigaOS 3.2.
+GFOpenWrite 2.0.25 is a native word processor for AmigaOS 3.2.
 
 ![GFOpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
 
@@ -29,24 +30,37 @@ It is a small 68040 C application with no FPU requirement and no browser,
 Unix GUI or JavaScript runtime dependency. The document/file layer is the
 separate C library **libowf**, and **C:OWConvert** converts from the Shell.
 
-GFOpenWrite 1.0 includes:
+GFOpenWrite includes:
 
 - caret/selection editing with bounded grouped undo/redo;
 - bold, italic, underline, font family and point size;
 - paragraph styles, alignment, indents, spacing and line spacing;
 - bullets and numbering;
-- native simple tables with row/column editing and Tab/Shift-Tab navigation;
+- native tables with row/column editing, Tab/Shift-Tab navigation, and
+  undoable cell/row/table fills and borders that round-trip through DOCX/ODT;
 - embedded inline images, decoded for display through Amiga datatypes;
+- floating images with square text wrapping, and editable anchored text boxes,
+  through GFOpenLayout's frame placement and hit testing; click and drag a
+  floating image to move it, drag a corner handle to resize it, or use
+  **Layout / Frame...** for exact undoable page position, size and wrap controls
+  (the same command edits the text box containing the caret); arrow keys nudge
+  a selected image 1 mm, Shift+arrow 5 mm, Delete removes it, and Escape returns
+  to text editing;
 - headers and footers in the document model and rendered pages;
 - clipboard.device cut/copy/paste using FTXT-compatible text;
 - Find, Find Again, Find Previous, Replace and Replace All;
 - automatic pagination and explicit page breaks;
+- undoable whole-document newspaper columns (1-16, with an editable gap),
+  plus imported mixed-column sections with continuous, new-page, odd-page and
+  even-page boundaries; paginated, rendered and hit-tested by GFOpenLayout and
+  preserved in DOCX/ODT;
 - A4/Letter page setup, portrait/landscape and margins;
 - multi-page navigation, scrolling, 100%, Fit Page and Fit Width views;
 - spelling against the bundled en_GB dictionary plus a user dictionary;
 - 60-second recovery autosave and interrupted-session recovery;
 - an ARexx port for scripted open/save/export/print/text/search/edit commands;
 - DOCX and ODT formatted import/export, including simple tables and inline images;
+- RTF import and export with text and basic character, paragraph and page formatting;
 - searchable direct PDF export;
 - Print: with GFOpenPrint on the disk, the document as laid out (a PDF, as Export PDF makes it) in GFOpenPrint's Print window, for an IPP printer or a saved PDF; without GFOpenPrint, its text through printer.device.
 
@@ -57,7 +71,9 @@ preserved.
 
 The current native architecture is documented in
 `docs/architecture/NATIVE_CORE.md`; the interaction design is in
-`docs/UX_DESIGN.md`; the format matrix is in `docs/FORMATS.md`.
+`docs/UX_DESIGN.md`; the format matrix is in `docs/FORMATS.md`. How Writer
+uses GFOpenLayout now, and the next shared layout services, is in
+`docs/architecture/GFOPENLAYOUT_WRITER.md`.
 
 ## GFOpen family integration
 

@@ -67,14 +67,30 @@ static void put_rpr(owf_buf *out, const owf_doc *doc, const owf_charfmt *f, owf_
     owf_buf_puts(out, "</w:rPr>");
 }
 
-static void put_ppr(owf_buf *out, const owf_parafmt *f, const char *style)
+static void put_section_columns(owf_buf *out, const owf_doc *doc,
+                                const owf_para *section, int break_kind)
+{
+    static const char *type[] = { "continuous", "nextPage", "oddPage", "evenPage" };
+    int columns = section && section->section_columns > 0 ? section->section_columns : 1;
+    int gap = section && section->section_gap > 0 ? section->section_gap : 720;
+    const owf_page *pg = &doc->page;
+    if (break_kind >= OWF_SECTION_CONTINUOUS && break_kind <= OWF_SECTION_EVEN_PAGE)
+        owf_buf_printf(out, "<w:type w:val=\"%s\"/>", type[break_kind]);
+    owf_buf_printf(out, "<w:pgSz w:w=\"%d\" w:h=\"%d\"/>", pg->width, pg->height);
+    owf_buf_printf(out, "<w:pgMar w:top=\"%d\" w:right=\"%d\" w:bottom=\"%d\" w:left=\"%d\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>",
+                   pg->margin_top, pg->margin_right, pg->margin_bottom, pg->margin_left);
+    owf_buf_printf(out, "<w:cols w:num=\"%d\" w:space=\"%d\"/>", columns, gap);
+}
+
+static void put_ppr(owf_buf *out, const owf_doc *doc, const owf_parafmt *f, const char *style,
+                    int section_end, const owf_para *section, int next_break)
 {
     static const char *tab_val[] = { "left", "center", "right", "decimal" };
     static const char *jc[] = { "left", "center", "right", "both" };
     int i, spacing = f->space_before || f->space_after || (f->line_spacing && f->line_spacing != 100);
     int ind = f->indent_left || f->indent_right || f->indent_first;
 
-    if (!style && !f->page_break_before && !f->ntabs && !spacing && !ind && f->align == OWF_ALIGN_LEFT &&
+    if (!style && !section_end && !f->page_break_before && !f->ntabs && !spacing && !ind && f->align == OWF_ALIGN_LEFT &&
         !f->borders && !OWF_SHADE_SET(f->shading))
         return;
     owf_buf_puts(out, "<w:pPr>");
@@ -139,6 +155,11 @@ static void put_ppr(owf_buf *out, const owf_parafmt *f, const char *style)
     }
     if (f->align != OWF_ALIGN_LEFT)
         owf_buf_printf(out, "<w:jc w:val=\"%s\"/>", jc[f->align]);
+    if (section_end) {
+        owf_buf_puts(out, "<w:sectPr>");
+        put_section_columns(out, doc, section, next_break);
+        owf_buf_puts(out, "</w:sectPr>");
+    }
     owf_buf_puts(out, "</w:pPr>");
 }
 
@@ -171,7 +192,8 @@ static void put_drawing(owf_buf *out,const owf_doc *doc,int index)
 }
 
 static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
-                     const owf_para *para, owf_report *report);
+                     const owf_para *para, owf_report *report,
+                     int section_end, const owf_para *section, int next_break);
 
 /* 1.3: wp:positionH or wp:positionV for a frame: from where, and at an offset or aligned. */
 static void put_frame_position(owf_buf *out, const owf_frame *fr, int across)
@@ -261,7 +283,7 @@ drawn_place:
         if (fr->story.nparas) {
             owf_buf_puts(out, "<wps:txbx><w:txbxContent>");
             for (k = 0; k < fr->story.nparas; ++k)
-                put_para(out, doc, &fr->story, &fr->story.paras[k], report);
+                put_para(out, doc, &fr->story, &fr->story.paras[k], report, 0, NULL, 0);
             owf_buf_puts(out, "</w:txbxContent></wps:txbx>");
         }
         owf_buf_puts(out, "<wps:bodyPr rot=\"0\" vert=\"horz\" wrap=\"square\"");
@@ -351,7 +373,8 @@ static size_t next_cut(const docx_marks *mk, const char *text, size_t at, size_t
 }
 
 static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
-                     const owf_para *para, owf_report *report)
+                      const owf_para *para, owf_report *report,
+                      int section_end, const owf_para *section, int next_break)
 {
     static const char *field_instr[] = { " PAGE ", " NUMPAGES ", " DATE ", " TIME " };
     static const char *field_shown[] = { "1", "1", "", "" };
@@ -365,7 +388,7 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     } else if (own_style(para->style)) {
         pstyle = para->style;                        /* 1.4: TOC1 and the like, so Word's contents update */
     }
-    owf_buf_puts(out, "<w:p>"); put_ppr(out, &para->fmt, pstyle);
+    owf_buf_puts(out, "<w:p>"); put_ppr(out, doc, &para->fmt, pstyle, section_end, section, next_break);
     /* 1.4: its bookmarks, where the contents' links go; 2.0.21: each where it is in the text */
     mk.n = para->bookmarks ? owf_marks_parse(para->bookmarks, mk.m, 16) : 0;
     for (j = 0; j < mk.n; ++j) {
@@ -424,21 +447,37 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
 
 static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, owf_report *report)
 {
-    int i=0;
-    while(i<story->nparas){
-        const owf_para *p=&story->paras[i];
-        if(story==&doc->body&&p->table_id>=0){
-            int id=p->table_id,row=-1;
+    const owf_para *section = NULL;
+    int i = 0, body = story == &doc->body;
+    while (i < story->nparas) {
+        const owf_para *p = &story->paras[i];
+        if (body && p->section_columns > 0) section = p;
+        if (body && p->table_id >= 0) {
+            int id = p->table_id, row = -1;
             owf_buf_puts(out,"<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr>");
-            while(i<story->nparas&&story->paras[i].table_id==id){
+            while (i < story->nparas && story->paras[i].table_id == id) {
                 p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</w:tr>");owf_buf_puts(out,"<w:tr>");row=p->table_row;}
                 owf_buf_puts(out,"<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/>");
                 if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"%06lX\"/>",OWF_SHADE_RGB(p->cell_shading));
-                owf_buf_puts(out,"</w:tcPr>");put_para(out,doc,story,p,report);owf_buf_puts(out,"</w:tc>");++i;
+                owf_buf_puts(out,"</w:tcPr>");put_para(out,doc,story,p,report,0,NULL,0);owf_buf_puts(out,"</w:tc>");++i;
             }
             if(row>=0)owf_buf_puts(out,"</w:tr>");
             owf_buf_puts(out,"</w:tbl>");
-        }else{put_para(out,doc,story,p,report);++i;}
+            /* Word cannot put a section break inside a table cell. Put an
+             * empty boundary paragraph after the table when the next section starts. */
+            if (i < story->nparas && story->paras[i].section_columns > 0) {
+                owf_parafmt empty;
+                owf_parafmt_init(&empty);
+                owf_buf_puts(out, "<w:p>");
+                put_ppr(out, doc, &empty, NULL, 1, section, story->paras[i].section_break);
+                owf_buf_puts(out, "</w:p>");
+            }
+        } else {
+            int boundary = body && i + 1 < story->nparas && story->paras[i + 1].section_columns > 0;
+            int next_break = boundary ? story->paras[i + 1].section_break : 0;
+            put_para(out, doc, story, p, report, boundary, section, next_break);
+            ++i;
+        }
     }
 }
 
@@ -545,6 +584,13 @@ static void build_document(owf_buf *out, const owf_doc *doc, owf_report *report)
                      ((doc->footer.nparas || doc->footer_left.nparas) && !pg->footer_on_first);
     int even = doc->header_left.nparas || doc->footer_left.nparas;
     int first_left = !(pg->start_page & 1);
+    int columns = 1, column_gap = 720, i;
+
+    for (i = 0; i < doc->body.nparas; ++i)
+        if (doc->body.paras[i].section_columns > 0) {
+            columns = doc->body.paras[i].section_columns;
+            column_gap = doc->body.paras[i].section_gap > 0 ? doc->body.paras[i].section_gap : 720;
+        }
 
     owf_buf_puts(out, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:document " W_NS "><w:body>");
     put_story(out, doc, &doc->body, report);
@@ -574,6 +620,7 @@ static void build_document(owf_buf *out, const owf_doc *doc, owf_report *report)
     owf_buf_printf(out, "<w:pgSz w:w=\"%d\" w:h=\"%d\"/>", pg->width, pg->height);
     owf_buf_printf(out, "<w:pgMar w:top=\"%d\" w:right=\"%d\" w:bottom=\"%d\" w:left=\"%d\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>",
                    pg->margin_top, pg->margin_right, pg->margin_bottom, pg->margin_left);
+    owf_buf_printf(out, "<w:cols w:num=\"%d\" w:space=\"%d\"/>", columns, column_gap);
     owf_buf_printf(out, "<w:pgNumType w:fmt=\"%s\"", num_fmt[pg->pagenum_style]);
     if (pg->start_page != 1)
         owf_buf_printf(out, " w:start=\"%d\"", pg->start_page);

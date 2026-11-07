@@ -143,6 +143,13 @@ typedef struct {
      * coordinates. table_id < 0 means a normal paragraph. */
     int table_id, table_row, table_col, table_cols;
     unsigned long cell_shading;  /* a table cell's OWF_SHADE(0xRRGGBB); 0: none */
+    /* 2.0.25: a body section starts here when section_columns is nonzero.
+     * 1 is an explicit one-column section; 2+ are newspaper columns.
+     * section_gap is the gap in twips (0: the format/application default).
+     * section_break is owf_section_break and is ignored on the first section. */
+    int section_columns, section_gap;
+    unsigned char section_break;
+    unsigned char section_reserved[3];
     /* 1.4: the paragraph's style as its file names it (DOCX's w:pStyle id, "TOC1"), NULL: none. Its format is
      * in fmt already; a heading is written as its level's style whatever this says. */
     char *style;
@@ -153,6 +160,11 @@ typedef struct {
      * empty ("_Toc123@0-14 _Ref7@20"). A name without one is at the paragraph's start, empty, as before. */
     char *bookmarks;
 } owf_para;
+
+typedef enum {
+    OWF_SECTION_CONTINUOUS, OWF_SECTION_NEW_PAGE, OWF_SECTION_ODD_PAGE,
+    OWF_SECTION_EVEN_PAGE
+} owf_section_break;
 
 /* A run of paragraphs: the body, a header or a footer. */
 typedef struct {

@@ -175,8 +175,14 @@ def test_condfmt(work):
         try:
             mine = lo_formats(xlsx, os.path.join(work, "lo-mine"))
             theirs = lo_formats(FIX, os.path.join(work, "lo-fixture"))
-            check("cf: LibreOffice reads the rules written as it reads openpyxl's", mine == theirs and
-                  mine["conditional-format "] == 8 and mine["condition "] == 7 and mine["data-bar "] == 1, "%s\n%s" % (mine, theirs))
+            # LibreOffice versions differ in whether rules over the same range
+            # share one conditional-format wrapper. The rule kinds and their
+            # entries, rather than that package grouping, carry the meaning.
+            kinds = ("condition ", "color-scale ", "data-bar ", "color-scale-entry ")
+            check("cf: LibreOffice reads the same rule kinds from ours and openpyxl's",
+                  all(mine[k] == theirs[k] for k in kinds) and
+                  mine["condition "] == 7 and mine["data-bar "] == 1 and mine["color-scale-entry "] == 5,
+                  "%s\n%s" % (mine, theirs))
         except Exception as e:  # noqa: BLE001
             check("cf: LibreOffice converts the file written", False, e)
 
@@ -1173,6 +1179,17 @@ def damaged(work):
                 bad += 1
                 check("damaged sheet read safely (cut at %d)" % cut, False, err[-800:])
     check("damaged sheets read safely", bad == 0, bad)
+    # A text conditional-format rule without its required text attribute is
+    # malformed, but saving it must not read uninitialised stack memory.
+    missing_text = sheet.replace(b' text="Review"', b'', 1)
+    check("damaged conditional format fixture changed", missing_text != sheet, "text attribute not found")
+    path = os.path.join(work, "conditional-format-without-text.xlsx")
+    write_zip(path, dict(parts, **{"xl/worksheets/sheet1.xml": missing_text}))
+    saved = os.path.join(work, "conditional-format-without-text.ods")
+    rc, out, err = run([OWCONVERT, path, saved])
+    check("conditional format without text written safely", rc == 0, out[-800:] + err[-800:])
+    if rc == 0:
+        well_formed(saved)
     # the drawings' relationships and content types cut short or changed: read, and written, safely
     drawn = drawn_book(parts)
     bad = 0

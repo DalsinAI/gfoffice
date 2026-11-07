@@ -539,14 +539,20 @@ static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para,
 
 static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, styles *s)
 {
-    int i=0;
+    int i=0, section_open=0, body=story==&doc->body;
     while(i<story->nparas){const owf_para *p=&story->paras[i];
+        if(body&&p->section_columns>0){
+            if(section_open)owf_buf_puts(out,"</text:section>");
+            owf_buf_printf(out,"<text:section text:name=\"Section%d\" text:style-name=\"Sect%d\">",i+1,i+1);
+            section_open=1;
+        }
         if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
             while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
             if(row>=0)owf_buf_puts(out,"</table:table-row>");
             owf_buf_puts(out,"</table:table>");
         }else{put_para_odt(out,doc,p,s);++i;}
     }
+    if(section_open)owf_buf_puts(out,"</text:section>");
 }
 
 static void put_named_styles(owf_buf *out, const owf_doc *doc)
@@ -668,6 +674,18 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
     put_font_faces(out, doc, report);
     owf_buf_puts(out, "<office:automatic-styles>");
     put_automatic_styles(out, doc, &s);
+    {
+        int i;
+        for (i = 0; i < doc->body.nparas; ++i) {
+            const owf_para *p = &doc->body.paras[i];
+            if (p->section_columns <= 0) continue;
+            owf_buf_printf(out, "<style:style style:name=\"Sect%d\" style:family=\"section\">"
+                                "<style:section-properties><style:columns fo:column-count=\"%d\" fo:column-gap=\"",
+                           i + 1, p->section_columns);
+            owf_put_points(out, p->section_gap > 0 ? p->section_gap : 720);
+            owf_buf_puts(out, "\"/></style:section-properties></style:style>");
+        }
+    }
     owf_buf_puts(out, "</office:automatic-styles><office:body><office:text>");
     if (body.length)
         owf_buf_put(out, body.data, body.length);

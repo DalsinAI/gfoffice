@@ -49,6 +49,10 @@ ol_document *ow_layout_body(const ow_layout *layout);
 int ow_layout_page_count(const ow_layout *layout);
 /* The page in GFOpenLayout units (twips times 4). */
 const ol_page *ow_layout_page(const ow_layout *layout);
+/* The first rendered box of a body paragraph, in physical page coordinates.
+ * This is suitable for navigators, generated references and heading links. */
+int ow_layout_paragraph_box(const ow_layout *layout, int paragraph,
+                            int *page, ol_rect *box);
 
 /* An editor position to GFOpenLayout's, and back. 0 when there is none. */
 int ow_layout_to_text(const ow_layout *layout, ow_position pos, ol_text_position *out);
@@ -66,6 +70,13 @@ int ow_layout_caret(const ow_layout *layout, ow_position pos, int *page, ol_rect
 /* The editor position nearest a point on a page: in the text box in front of the text under it, if there is
  * one (2.0.15, pos->box), else in the body. */
 int ow_layout_hit(const ow_layout *layout, int page, ol_unit x, ol_unit y, ow_position *pos);
+/* An authored/imported frame's authoritative page rectangle, and the topmost
+ * frame under a point. These are adapters over GFOpenLayout's frame placement;
+ * applications do not reproduce anchor or pagination arithmetic. */
+int ow_layout_frame_rect(const ow_layout *layout, int frame_index,
+                         int *page, ol_rect *rect);
+int ow_layout_hit_frame(const ow_layout *layout, int page, ol_unit x, ol_unit y,
+                        int *frame_index, ol_rect *rect);
 
 /* The header or footer for one page, fields filled in (the page number in
  * the document's style; date and time as given, may be NULL), laid out at

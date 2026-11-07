@@ -1,1 +1,1 @@
-error not a document format OpenWrite knows
+error not a document format GFOpenWrite knows

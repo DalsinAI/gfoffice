@@ -141,12 +141,32 @@ def finalwriter_sample():
     ])
 
 
+def rtf_sample():
+    """An RTF document exercising the shared importer's first parity slice."""
+    png = (b"89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de"
+           b"0000000c4944415408d763f8cfc000000301010018dd8db00000000049454e44ae426082")
+    return (br"{\rtf1\ansi\deff0"
+            br"{\fonttbl{\f0\froman Times New Roman;}{\f1\fswiss Arial;}}"
+            br"{\colortbl;\red255\green0\blue0;}"
+            br"\paperw12240\paperh15840\margl1440\margr1440\margt720\margb720"
+            br"{\header Running head \chpgn\par}{\footer Page \chpgn\par}"
+            br"\qc\f1\b\fs32 Heading\par"
+            br"\pard\ql\f0\b0\fs24 Plain \i italic\i0, \ul under\ulnone, \strike struck\strike0, \cf1 red\cf0.\par"
+            br" Unicode \u8364? and caf\'e9.\par"
+            br" Tabs:\tab one\line next\par"
+            br"\trowd\cellx2000\cellx4000\intbl A1\cell B1\cell\row"
+            br"\trowd\cellx2000\cellx4000\intbl A2\cell B2\cell\row"
+            br"\pard{\pict\pngblip\picw1\pich1\picwgoal300\pichgoal300 " + png +
+            br"}\par\page Page two\par}")
+
+
 SAMPLES = {
     "sample.ftxt": ftxt_sample(),
     "sample.pw": prowrite_sample(),
     "sample.ans": b"\x1b[1mBold\x1b[0m normal \x1b[32mgreen\x1b[0m\n",
     "sample.ww": wordworth_sample(),
     "sample.fw": finalwriter_sample(),
+    "sample.rtf": rtf_sample(),
     "latin1.txt": b"Caf\xe9\r\nLine two\r\n",
     "utf8.txt": "﻿Café — UTF-8\n".encode("utf-8"),
 }
@@ -410,6 +430,24 @@ def main():
         with open(os.path.join(work, name), "wb") as f:
             f.write(data)
     os.chdir(work)
+
+    # Rich Text Format: a user-facing Writer format implemented in libowf,
+    # and therefore shared by GFOpenWrite, OWConvert and owfwrite.library.
+    text, report = convert(work, "sample.rtf", "txt")
+    check("rtf text", text == "Heading\nPlain italic, under, struck, red.\nUnicode € and café.\nTabs:\tone\nnext\nA1\tB1\nA2\tB2\n[image]\n\fPage two\n".encode(), repr(text))
+    check("rtf report", "Read Rich Text Format text and basic formatting" in report, report)
+    html, _ = convert(work, "sample.rtf", "html")
+    h = html.decode()
+    for want in ("text-align: center", "<b>Heading</b>", "font-size: 16pt", "<i>italic</i>", "<u>under</u>",
+                 "<s>struck</s>", "color: #ff0000", "café", "€", "class=\"ow-page-break\"", "class=\"ow-tab\"",
+                 "class=\"ow-header\"", "Running head", "class=\"ow-footer\"", "<table class=\"ow-table\">"):
+        check("rtf html has " + want, want in h)
+    check("rtf html has inline picture", "<img " in h and "data:image/png;base64," in h, h[-1000:])
+    rtf, _ = convert(work, "sample.rtf", "rtf")
+    check("rtf output signature", rtf.startswith(b"{\\rtf1\\ansi"), repr(rtf[:40]))
+    check("rtf output formatting", all(x in rtf for x in (b"\\fonttbl", b"\\colortbl", b"\\qc", b"\\b", b"\\i", b"\\ul", b"\\strike", b"\\cf1", b"\\page", b"\\pict\\pngblip")), rtf[:1000])
+    round_text, _ = convert(work, "sample.rtf.rtf", "txt")
+    check("rtf round trip text", round_text == text, repr(round_text))
 
     # IFF FTXT
     text, _ = convert(work, "sample.ftxt", "txt")

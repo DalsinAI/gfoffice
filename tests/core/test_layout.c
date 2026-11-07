@@ -265,6 +265,143 @@ static void test_page_numbers(void)
     CHECK(!strcmp(out, "c"));
 }
 
+/* A body whose section geometry is uniformly two columns is paginated by
+ * GFOpenLayout's column regions, including Writer's caret and pointer maps. */
+static void test_columns(void)
+{
+    owf_doc *doc = owf_doc_new();
+    ow_layout *l;
+    const ol_document *od;
+    const ol_display_op *second = NULL;
+    const ol_page *pg;
+    ol_unit second_x;
+    size_t first, count, i;
+    int p = -1, r = -1, caret_page = -1;
+    ow_position pos = { 0, 0, 0, 0 }, back = { 0, 0, 0, 0 };
+    ol_rect caret;
+
+    CHECK(doc != NULL);
+    if (!doc) return;
+    doc->page.width = 6000;
+    doc->page.height = 6000;
+    doc->page.margin_top = doc->page.margin_right = 600;
+    doc->page.margin_bottom = doc->page.margin_left = 600;
+    for (i = 0; i < 18; ++i)
+        para(doc, NULL, 0,
+             "A newspaper column paragraph with enough words to wrap repeatedly in its narrow measure.", 240);
+    doc->body.paras[0].section_columns = 2;
+    doc->body.paras[0].section_gap = 360;
+
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (!l) { owf_doc_free(doc); return; }
+    od = ow_layout_body(l);
+    pg = ow_layout_page(l);
+    second_x = pg->margin_left +
+               (pg->width - pg->margin_left - pg->margin_right - 360 * OL_UNITS_PER_TWIP) / 2 +
+               360 * OL_UNITS_PER_TWIP;
+    CHECK(ow_layout_page_count(l) >= 2);
+    CHECK(ol_display_page_range(od, 0, &first, &count));
+    for (i = first; i < first + count; ++i) {
+        const ol_display_op *op = ol_display_get(od, i);
+        if (op->type == OL_OP_TEXT && op->u.text.bounds.x >= second_x) {
+            second = op;
+            break;
+        }
+    }
+    CHECK(second != NULL);
+    if (second) {
+        CHECK(ow_layout_node_run(l, second->u.text.node_id, &p, &r));
+        CHECK(p > 0 && r >= 0);
+        pos.paragraph = p;
+        pos.run = r;
+        pos.byte_offset = second->u.text.text_offset;
+        CHECK(ow_layout_caret(l, pos, &caret_page, &caret));
+        CHECK(caret_page == 0 && caret.x == second->u.text.bounds.x && caret.x >= second_x);
+        CHECK(ow_layout_paragraph_box(l, p, &caret_page, &caret));
+        CHECK(caret_page == 0 && caret.x == second->u.text.bounds.x && caret.x >= second_x);
+        CHECK(ow_layout_hit(l, 0, second->u.text.bounds.x + 10 * OL_UNITS_PER_TWIP,
+                            second->u.text.bounds.y + second->u.text.bounds.height / 2, &back));
+        CHECK(back.paragraph == p && back.run == r);
+    }
+    ow_layout_free(l);
+    owf_doc_free(doc);
+
+    doc = owf_doc_new();
+    CHECK(doc != NULL);
+    if (!doc) return;
+    doc->page.width = 6000;
+    doc->page.height = 6000;
+    doc->page.margin_top = doc->page.margin_right = 600;
+    doc->page.margin_bottom = doc->page.margin_left = 600;
+    for (i = 0; i < 18; ++i)
+        para(doc, NULL, 0, i < 2 ? "Short." :
+             "Wide section text becomes narrow after the section break.", 240);
+    doc->body.paras[0].section_columns = 1;
+    doc->body.paras[2].section_columns = 2;
+    doc->body.paras[2].section_gap = 360;
+    doc->body.paras[2].section_break = OWF_SECTION_NEW_PAGE;
+    doc->body.paras[2].fmt.page_break_before = 1;
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        int mixed_page = -1, saw_right = 0;
+        od = ow_layout_body(l);
+        pg = ow_layout_page(l);
+        second_x = pg->margin_left +
+                   (pg->width - pg->margin_left - pg->margin_right - 360 * OL_UNITS_PER_TWIP) / 2 +
+                   360 * OL_UNITS_PER_TWIP;
+        CHECK(ow_layout_paragraph_box(l, 2, &mixed_page, &caret));
+        CHECK(mixed_page > 0 && caret.x == pg->margin_left);
+        CHECK(ol_display_page_range(od, mixed_page, &first, &count));
+        for (i = first; i < first + count; ++i) {
+            const ol_display_op *op = ol_display_get(od, i);
+            if (op->type == OL_OP_TEXT && op->u.text.bounds.x >= second_x) saw_right = 1;
+        }
+        CHECK(saw_right);
+        CHECK(ol_hit_test_page(od, mixed_page, second_x - 180 * OL_UNITS_PER_TWIP,
+                               pg->margin_top + 10 * OL_UNITS_PER_TWIP) == NULL);
+        ow_layout_free(l);
+    }
+    doc->body.paras[2].section_break = OWF_SECTION_CONTINUOUS;
+    doc->body.paras[2].fmt.page_break_before = 0;
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        int continuous_page = -1;
+        CHECK(ow_layout_paragraph_box(l, 2, &continuous_page, &caret));
+        CHECK(continuous_page == 0);
+        CHECK(caret.y > ow_layout_page(l)->margin_top);
+        ow_layout_free(l);
+    }
+
+    /* A continuous section also follows the balanced lower edge of a
+     * multi-column predecessor instead of forcing the ordinary-page
+     * fallback. The two short paragraphs occupy separate columns. */
+    doc->body.paras[0].section_columns = 2;
+    doc->body.paras[0].section_gap = 360;
+    doc->body.paras[2].section_columns = 1;
+    doc->body.paras[2].section_gap = 0;
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        ol_rect left, right, below;
+        int left_page = -1, right_page = -1, below_page = -1;
+        pg = ow_layout_page(l);
+        second_x = pg->margin_left +
+                   (pg->width - pg->margin_left - pg->margin_right - 360 * OL_UNITS_PER_TWIP) / 2 +
+                   360 * OL_UNITS_PER_TWIP;
+        CHECK(ow_layout_paragraph_box(l, 0, &left_page, &left));
+        CHECK(ow_layout_paragraph_box(l, 1, &right_page, &right));
+        CHECK(ow_layout_paragraph_box(l, 2, &below_page, &below));
+        CHECK(left_page == 0 && right_page == 0 && below_page == 0);
+        CHECK(left.x == pg->margin_left && right.x >= second_x);
+        CHECK(below.y > left.y && below.y > right.y);
+        ow_layout_free(l);
+    }
+    owf_doc_free(doc);
+}
+
 /* The end of a paragraph's run on the page: its caret after its last byte. */
 static int run_end(const ow_layout *l, const owf_doc *doc, int para, int run, int *page, ol_rect *box)
 {
@@ -1373,6 +1510,27 @@ static void test_sample(const char *path)
         if (strstr(path, "table-styles.docx")) table_style_checks(l, doc);
         if (strstr(path, "frames.odt")) frames_odt_checks(l, doc);
         if (strstr(path, "bookmarks.docx")) bookmark_checks(l, doc);
+        if (strstr(path, "columns.docx")) {
+            ol_rect first_section, next_section;
+            int first_page = -1, next_page = -1;
+            CHECK(doc->body.nparas == 3 && doc->body.paras[0].section_columns == 2 &&
+                  doc->body.paras[2].section_columns == 3 &&
+                  doc->body.paras[2].section_break == OWF_SECTION_CONTINUOUS);
+            CHECK(ow_layout_paragraph_box(l, 0, &first_page, &first_section));
+            CHECK(ow_layout_paragraph_box(l, 2, &next_page, &next_section));
+            CHECK(first_page == 0 && next_page == 0 && next_section.y > first_section.y);
+        }
+        if (doc->nframes) {   /* object selection uses GFOpenLayout's placed rectangle */
+            int frame = -1, hit = -1, page;
+            ol_rect at, found;
+            for (i = 0; i < doc->nframes; ++i)
+                if (ow_layout_frame_rect(l, i, &page, &at)) { frame = i; break; }
+            if (frame >= 0) {
+                CHECK(ow_layout_hit_frame(l, page, at.x + at.width / 2,
+                                          at.y + at.height / 2, &hit, &found));
+                CHECK(hit >= frame && found.width > 0 && found.height > 0);
+            }
+        }
         {   /* 2.0.22: the first layout's room, guessed: enough, and not twice as much */
             size_t ops = ol_display_count(ow_layout_body(l)), guess = ow_layout_estimate_ops(doc);
             CHECK(guess >= ops && guess <= ops * 2 + 128);
@@ -1390,6 +1548,7 @@ int main(int argc, char **argv)
     int i;
     test_page_numbers();
     test_built();
+    test_columns();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)
         if (strstr(argv[i], "cover-wpg.docx")) test_cover_typing(argv[i]);

@@ -437,6 +437,7 @@ int owf_import_odt(const unsigned char *data, size_t length, owf_doc *doc, owf_r
 int owf_detect_odt(const unsigned char *data, size_t length);
 int owf_import_docx(const unsigned char *data, size_t length, owf_doc *doc, owf_report *report);
 int owf_detect_docx(const unsigned char *data, size_t length);
+int owf_export_rtf(const owf_doc *doc, unsigned char **data, size_t *length, owf_report *report);
 
 /* ODF text as ODT reads it, for the other ODF readers (in_odt.c; ODP's
  * text boxes): fonts, paragraph and text styles, and one paragraph at a
@@ -477,6 +478,7 @@ extern const unsigned short owf_pdf_widths[8][224];
 /* The formats. */
 extern const owf_format owf_format_fodt, owf_format_wordworth, owf_format_finalwriter;
 extern const owf_format owf_format_text, owf_format_amiga_text, owf_format_ftxt,
-    owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_pdf, owf_format_odt, owf_format_docx;
+    owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_pdf, owf_format_odt, owf_format_docx,
+    owf_format_rtf;
 
 #endif

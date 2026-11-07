@@ -192,7 +192,10 @@ static int png_decode(const unsigned char *d, size_t n, pdf_image *img)
     }
     (void)ntrns;
     if (w <= 0 || h <= 0 || w > 8192 || h > 8192 || inter || !z) goto out;
-    if (type == 3) { if (depth != 1 && depth != 2 && depth != 4 && depth != 8) goto out; }
+    if (type == 3) {
+        if ((depth != 1 && depth != 2 && depth != 4 && depth != 8) || !nplte)
+            goto out;
+    }
     else if (depth != 8) goto out;
     ch = type == 0 ? 1 : type == 2 ? 3 : type == 3 ? 1 : type == 4 ? 2 : type == 6 ? 4 : 0;
     if (!ch) goto out;

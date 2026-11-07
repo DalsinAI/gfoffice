@@ -129,7 +129,12 @@ check: inflate-check
 
 # GFOpenWrite's pages on GFOpenLayout (DalsinAI/gfopenlayout 0.2 or later)
 OPENLAYOUT_SRC ?= ../gfopenlayout
-LAYOUT_SRC = src/core/ow_layout.c $(OPENLAYOUT_SRC)/src/openlayout.c
+OPENLAYOUT_ENGINE_SRC = $(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c) \
+	$(wildcard $(OPENLAYOUT_SRC)/src/gfcss_parse.c) \
+	$(wildcard $(OPENLAYOUT_SRC)/src/gfcss_values.c) \
+	$(wildcard $(OPENLAYOUT_SRC)/src/gfcss_select.c) \
+	$(wildcard $(OPENLAYOUT_SRC)/src/openlayout_css.c)
+LAYOUT_SRC = src/core/ow_layout.c $(OPENLAYOUT_ENGINE_SRC)
 
 $(OUT)/test-layout: $(OWF_SRC) $(LAYOUT_SRC) $(CORE_SRC) tests/core/test_layout.c include/ow_layout.h
 	mkdir -p $(OUT)
@@ -148,7 +153,7 @@ layout-test: $(OUT)/test-layout
 		tests/core/fixtures/cover-wpg.docx tests/core/fixtures/wrap.docx tests/core/fixtures/header-frames.docx \
 		tests/core/fixtures/inline-box.docx tests/core/fixtures/line-rules.docx \
 		tests/core/fixtures/table-styles.docx tests/core/fixtures/frames.odt \
-		tests/core/fixtures/bookmarks.docx
+		tests/core/fixtures/bookmarks.docx tests/core/fixtures/columns.docx
 
 layout-check: $(OUT)/test-layout-asan
 	$(OUT)/test-layout-asan samples/OpenWrite-Tour.odt samples/OpenWrite-Tour.docx samples/AmigaChrome-Feature-Tata.docx \
@@ -156,7 +161,7 @@ layout-check: $(OUT)/test-layout-asan
 		tests/core/fixtures/cover-wpg.docx tests/core/fixtures/wrap.docx tests/core/fixtures/header-frames.docx \
 		tests/core/fixtures/inline-box.docx tests/core/fixtures/line-rules.docx \
 		tests/core/fixtures/table-styles.docx tests/core/fixtures/frames.odt \
-		tests/core/fixtures/bookmarks.docx
+		tests/core/fixtures/bookmarks.docx tests/core/fixtures/columns.docx
 
 .PHONY: layout-test layout-check
 
@@ -341,9 +346,9 @@ DECK_SRC = $(wildcard src/deck/*.c) src/core/ow_layout.c
 DECK_DEPS = $(OWF_SRC) libowf/include/owf.h libowf/include/owf_deck.h libowf/include/owf_pdf.h libowf/src/owf_internal.h \
 	libowf/src/owf_deck_int.h
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
-OWC_DECK = -DOWC_DECK_PDF -Iinclude -I$(OPENLAYOUT_SRC)/include $(DECK_SRC) $(OPENLAYOUT_SRC)/src/openlayout.c
-DECK_LAYOUT = -DOPR_WITH_LAYOUT -Iinclude -I$(OPENLAYOUT_SRC)/include $(DECK_SRC) $(OPENLAYOUT_SRC)/src/openlayout.c
-$(OUT)/owconvert $(OUT)/owconvert-asan: $(DECK_SRC) include/openpresentation_core.h include/ow_layout.h
+OWC_DECK = -DOWC_DECK_PDF -Iinclude -I$(OPENLAYOUT_SRC)/include $(DECK_SRC) $(OPENLAYOUT_ENGINE_SRC)
+DECK_LAYOUT = -DOPR_WITH_LAYOUT -Iinclude -I$(OPENLAYOUT_SRC)/include $(DECK_SRC) $(OPENLAYOUT_ENGINE_SRC)
+$(OUT)/owconvert $(OUT)/owconvert-asan: $(DECK_SRC) $(OPENLAYOUT_ENGINE_SRC) include/openpresentation_core.h include/ow_layout.h
 endif
 
 $(OUT)/deck-dump: $(DECK_DEPS) tests/deck/deck_dump.c
@@ -355,11 +360,11 @@ $(OUT)/deck-dump-asan: $(DECK_DEPS) tests/deck/deck_dump.c
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/deck/deck_dump.c -lz -o $@
 
-$(OUT)/test-deck: $(DECK_DEPS) $(DECK_SRC) tests/deck/test_deck.c
+$(OUT)/test-deck: $(DECK_DEPS) $(DECK_SRC) $(OPENLAYOUT_ENGINE_SRC) tests/deck/test_deck.c
 	mkdir -p $(OUT)
 	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_deck.c -lz -o $@
 
-$(OUT)/test-deck-asan: $(DECK_DEPS) $(DECK_SRC) tests/deck/test_deck.c
+$(OUT)/test-deck-asan: $(DECK_DEPS) $(DECK_SRC) $(OPENLAYOUT_ENGINE_SRC) tests/deck/test_deck.c
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_deck.c -lz -o $@

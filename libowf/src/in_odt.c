@@ -476,7 +476,7 @@ static const char *image_mime(const char *name)
 
 static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *list_name);
 
-static const owf_xml_node *graphic_style(const odt *o, const char *name)
+static const owf_xml_node *named_style(const odt *o, const char *name, const char *family)
 {
     const owf_xml_node *containers[2], *n;
     int k;
@@ -491,10 +491,15 @@ static const owf_xml_node *graphic_style(const odt *o, const char *name)
                 continue;
             nm = owf_xml_attr(n, NS_STYLE, "name");
             fam = owf_xml_attr(n, NS_STYLE, "family");
-            if (nm && fam && !strcmp(nm, name) && !strcmp(fam, "graphic"))
+            if (nm && fam && !strcmp(nm, name) && !strcmp(fam, family))
                 return n;
         }
     return NULL;
+}
+
+static const owf_xml_node *graphic_style(const odt *o, const char *name)
+{
+    return named_style(o, name, "graphic");
 }
 
 /* A frame's graphic property: from its style, else its parents', else the graphic default style. */
@@ -1049,6 +1054,23 @@ static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *li
             list(o, c, list_level < 0 ? 0 : list_level, list_name);
         } else if (owf_xml_is(c, NS_TABLE, "table")) {
             table_rows(o, c);
+        } else if (owf_xml_is(c, NS_TEXT, "section")) {
+            const char *name = owf_xml_attr(c, NS_TEXT, "style-name");
+            const owf_xml_node *st = named_style(o, name, "section");
+            const owf_xml_node *props = owf_xml_child(st, NS_STYLE, "section-properties");
+            const owf_xml_node *cols = owf_xml_child(props, NS_STYLE, "columns");
+            int before = o->b->story->nparas, count = 1, gap = 0, v;
+            const char *ncol = owf_xml_attr(cols, NS_FO, "column-count");
+            if (ncol && atoi(ncol) > 0) count = atoi(ncol);
+            if (count > 16) count = 16;
+            if (owf_parse_length(owf_xml_attr(cols, NS_FO, "column-gap"), &v) && v >= 0) gap = v;
+            blocks(o, c, list_level, list_name);
+            if (o->b->story == &o->doc->body && before < o->b->story->nparas) {
+                owf_para *first = &o->b->story->paras[before];
+                first->section_columns = count;
+                first->section_gap = gap;
+                first->section_break = OWF_SECTION_CONTINUOUS;
+            }
         } else if (owf_xml_is(c, NS_TEXT, "tracked-changes") || owf_xml_is(c, NS_TEXT, "sequence-decls") ||
                    owf_xml_is(c, NS_TEXT, "variable-decls") || owf_xml_is(c, NS_TEXT, "user-field-decls") ||
                    owf_xml_is(c, NS_OFFICE, "forms") || owf_xml_is(c, NS_TEXT, "index-title-template") ||

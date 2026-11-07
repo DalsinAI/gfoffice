@@ -560,12 +560,22 @@ static int test_table_editing(void)
     if(ow_editor_table_delete_column(ed)!=OWF_OK)return 1662;
     cells=0;for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
     if(cells!=6)return 1663;
-    if(ow_editor_table_delete_row(ed)!=OWF_OK)return 1664;
-    cells=0;for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
-    if(cells!=4)return 1665;
+    if(ow_editor_table_apply_style(ed,OW_TABLE_ALL,OWF_SHADE(0xDDEEFF),
+                                   OWF_BORDER_TOP|OWF_BORDER_LEFT|OWF_BORDER_BOTTOM|OWF_BORDER_RIGHT,
+                                   OWF_SHADE(0x224466))!=OWF_OK)return 1664;
+    for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0&&
+       (doc->body.paras[i].cell_shading!=OWF_SHADE(0xDDEEFF)||
+        doc->body.paras[i].fmt.borders!=15||
+        doc->body.paras[i].fmt.border_colour!=OWF_SHADE(0x224466)))return 1665;
     if(ow_editor_undo(ed)!=1)return 1666;
+    for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0&&
+       (doc->body.paras[i].cell_shading||doc->body.paras[i].fmt.borders))return 1667;
+    if(ow_editor_table_delete_row(ed)!=OWF_OK)return 1668;
     cells=0;for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
-    if(cells!=6)return 1667;
+    if(cells!=4)return 1669;
+    if(ow_editor_undo(ed)!=1)return 1670;
+    cells=0;for(i=0;i<doc->body.nparas;++i)if(doc->body.paras[i].table_id>=0)++cells;
+    if(cells!=6)return 1671;
     ow_editor_free(ed);owf_doc_free(doc);return 0;
 }
 
@@ -937,6 +947,166 @@ static int test_text_box_editing(void)
     return 0;
 }
 
+/* Frames that GFOpenLayout already knows how to place, wrap and hit-test can
+ * be authored through the portable editor too, not only imported from DOCX. */
+static int test_frame_geometry_helper(void)
+{
+    int x = 10, y = 20, w = 100, h = 80;
+    ow_frame_adjust_rect(&x, &y, &w, &h, OW_FRAME_MOVE, 7, -3, 20, 20);
+    if (x != 17 || y != 17 || w != 100 || h != 80) return 2220;
+    ow_frame_adjust_rect(&x, &y, &w, &h, OW_FRAME_RESIZE_NW, 90, 70, 20, 20);
+    if (x != 97 || y != 77 || w != 20 || h != 20) return 2221;
+    x = 10; y = 20; w = 100; h = 80;
+    ow_frame_adjust_rect(&x, &y, &w, &h, OW_FRAME_RESIZE_NE, 25, 10, 20, 20);
+    if (x != 10 || y != 30 || w != 125 || h != 70) return 2222;
+    x = 10; y = 20; w = 100; h = 80;
+    ow_frame_adjust_rect(&x, &y, &w, &h, OW_FRAME_RESIZE_SW, 15, 9, 20, 20);
+    if (x != 25 || y != 20 || w != 85 || h != 89) return 2223;
+    x = 10; y = 20; w = 100; h = 80;
+    ow_frame_adjust_rect(&x, &y, &w, &h, OW_FRAME_RESIZE_SE, -95, -75, 20, 20);
+    if (x != 10 || y != 20 || w != 20 || h != 20) return 2224;
+    return 0;
+}
+
+static int test_frame_authoring(void)
+{
+    static const unsigned char picture[] = { 0x89, 'P', 'N', 'G' };
+    owf_doc *doc = doc_with("Anchor paragraph with enough words to wrap.");
+    ow_editor *ed;
+    ow_selection selection;
+    char text[64];
+    int image, i, frame_runs = 0;
+    if (!doc) return 2230;
+    ed = ow_editor_new(doc);
+    if (!ed) return 2231;
+    if (ow_editor_insert_text_box(ed, "Editable", 2880, 1440, OWF_WRAP_SQUARE) != OWF_OK)
+        return 2232;
+    selection = ow_editor_selection(ed);
+    if (doc->nframes != 1 || selection.focus.box != 1 ||
+        doc->frames[0].width != 2880 || doc->frames[0].height != 1440 ||
+        doc->frames[0].wrap != OWF_WRAP_SQUARE || !doc->frames[0].story.nparas)
+        return 2233;
+    box_text(doc, text, sizeof text);
+    if (strcmp(text, "Editable")) return 2234;
+    if (ow_editor_insert_utf8(ed, "!", 1) != OWF_OK) return 2235;
+    box_text(doc, text, sizeof text);
+    if (strcmp(text, "Editable!")) return 2236;
+    if (ow_editor_undo(ed) != 1 || ow_editor_undo(ed) != 1 || doc->nframes != 0)
+        return 2237;
+    for (i = 0; i < doc->body.paras[0].nruns; ++i)
+        frame_runs += doc->body.paras[0].runs[i].kind == OWF_RUN_FRAME;
+    if (frame_runs) return 2238;
+
+    image = owf_doc_add_image(doc, "float.png", "image/png", picture, sizeof picture,
+                              2160, 1440, "Floating");
+    if (image < 0) return 2239;
+    if (ow_editor_insert_floating_image(ed, image, OWF_WRAP_SQUARE) != OWF_OK)
+        return 2240;
+    selection = ow_editor_selection(ed);
+    if (doc->nframes != 1 || doc->frames[0].image != image ||
+        doc->frames[0].width != 2160 || doc->frames[0].height != 1440 ||
+        doc->frames[0].wrap != OWF_WRAP_SQUARE || selection.focus.box != 0)
+        return 2241;
+    if (ow_editor_layout(ed) != OWF_OK) return 2242;
+    if (ow_editor_apply_frame_geometry(ed, 0, 720, 1080, 3000, 1800,
+                                       OWF_WRAP_TOP_BOTTOM) != OWF_OK ||
+        doc->frames[0].x != 720 || doc->frames[0].y != 1080 ||
+        doc->frames[0].width != 3000 || doc->frames[0].height != 1800 ||
+        doc->frames[0].x_from != OWF_FROM_PAGE || doc->frames[0].y_from != OWF_FROM_PAGE ||
+        doc->frames[0].wrap != OWF_WRAP_TOP_BOTTOM)
+        return 2243;
+    if (ow_editor_undo(ed) != 1 || doc->frames[0].width != 2160 ||
+        doc->frames[0].wrap != OWF_WRAP_SQUARE)
+        return 2244;
+    if (ow_editor_redo(ed) != 1 || doc->frames[0].width != 3000) return 2245;
+    if (ow_editor_delete_frame(ed, 0) != OWF_OK || doc->nframes != 0)
+        return 2246;
+    frame_runs = 0;
+    for (i = 0; i < doc->body.paras[0].nruns; ++i)
+        frame_runs += doc->body.paras[0].runs[i].kind == OWF_RUN_FRAME;
+    if (frame_runs || ow_editor_undo(ed) != 1 || doc->nframes != 1 ||
+        doc->frames[0].width != 3000)
+        return 2247;
+    if (ow_editor_undo(ed) != 1 || ow_editor_undo(ed) != 1 || doc->nframes != 0)
+        return 2248;
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
+}
+
+static int test_section_columns_import(void)
+{
+    owf_doc *doc = NULL, *round = NULL;
+    ow_editor *ed;
+    ow_selection sel;
+    if (owf_import_file("tests/core/fixtures/columns.docx", NULL, &doc, NULL, NULL) != OWF_OK || !doc)
+        return 2250;
+    if (doc->body.nparas != 3 ||
+        doc->body.paras[0].section_columns != 2 || doc->body.paras[0].section_gap != 360 ||
+        doc->body.paras[0].section_break != OWF_SECTION_CONTINUOUS ||
+        doc->body.paras[1].section_columns != 0 ||
+        doc->body.paras[2].section_columns != 3 || doc->body.paras[2].section_gap != 480 ||
+        doc->body.paras[2].section_break != OWF_SECTION_CONTINUOUS)
+        return 2251;
+    ed = ow_editor_new(doc);
+    if (!ed) return 2252;
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.paragraph = sel.focus.paragraph = 2;
+    sel.anchor.run = sel.focus.run = 0;
+    sel.anchor.byte_offset = sel.focus.byte_offset = strlen(doc->body.paras[2].runs[0].text);
+    ow_editor_set_selection(ed, &sel);
+    if (ow_editor_insert_utf8(ed, "!", 1) != OWF_OK || ow_editor_undo(ed) != 1 ||
+        doc->body.paras[0].section_columns != 2 || doc->body.paras[2].section_columns != 3)
+        return 2253;
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.paragraph = sel.focus.paragraph = 1;
+    ow_editor_set_selection(ed, &sel);
+    if (ow_editor_apply_section(ed, 4, 600, OWF_SECTION_NEW_PAGE) != OWF_OK ||
+        doc->body.paras[1].section_columns != 4 || doc->body.paras[1].section_gap != 600 ||
+        doc->body.paras[1].section_break != OWF_SECTION_NEW_PAGE ||
+        !doc->body.paras[1].fmt.page_break_before)
+        return 2254;
+    {
+        int start, columns, gap;
+        owf_section_break kind;
+        if (!ow_editor_current_section(ed, &start, &columns, &gap, &kind) ||
+            start != 1 || columns != 4 || gap != 600 || kind != OWF_SECTION_NEW_PAGE)
+            return 2255;
+    }
+    if (ow_editor_undo(ed) != 1 || doc->body.paras[1].section_columns != 0)
+        return 2256;
+    if (ow_editor_apply_document_columns(ed, 2, 720) != OWF_OK ||
+        doc->body.paras[0].section_columns != 2 || doc->body.paras[0].section_gap != 720 ||
+        doc->body.paras[2].section_columns != 0)
+        return 2261;
+    if (ow_editor_undo(ed) != 1 || doc->body.paras[0].section_gap != 360 ||
+        doc->body.paras[2].section_columns != 3 || doc->body.paras[2].section_gap != 480)
+        return 2262;
+    ow_editor_free(ed);
+    if (owf_export_file(doc, "/tmp/openwrite-sections.docx", "docx", NULL) != OWF_OK ||
+        owf_import_file("/tmp/openwrite-sections.docx", NULL, &round, NULL, NULL) != OWF_OK || !round)
+        return 2257;
+    if (round->body.nparas != 3 || round->body.paras[0].section_columns != 2 ||
+        round->body.paras[0].section_gap != 360 ||
+        round->body.paras[2].section_columns != 3 || round->body.paras[2].section_gap != 480 ||
+        round->body.paras[2].section_break != OWF_SECTION_CONTINUOUS)
+        return 2258;
+    owf_doc_free(round);
+    remove("/tmp/openwrite-sections.docx");
+    round = NULL;
+    if (owf_export_file(doc, "/tmp/openwrite-sections.odt", "odt", NULL) != OWF_OK ||
+        owf_import_file("/tmp/openwrite-sections.odt", NULL, &round, NULL, NULL) != OWF_OK || !round)
+        return 2259;
+    if (round->body.nparas != 3 || round->body.paras[0].section_columns != 2 ||
+        round->body.paras[0].section_gap != 360 ||
+        round->body.paras[2].section_columns != 3 || round->body.paras[2].section_gap != 480)
+        return 2260;
+    owf_doc_free(round);
+    remove("/tmp/openwrite-sections.odt");
+    owf_doc_free(doc);
+    return 0;
+}
+
 static int test_pdf_export(void)
 {
     owf_doc *doc = owf_doc_new();
@@ -991,6 +1161,9 @@ int main(void)
     if ((rc = test_undo_memory())) goto fail;
     if ((rc = test_names_editing())) goto fail;
     if ((rc = test_text_box_editing())) goto fail;
+    if ((rc = test_frame_geometry_helper())) goto fail;
+    if ((rc = test_frame_authoring())) goto fail;
+    if ((rc = test_section_columns_import())) goto fail;
     if ((rc = test_pdf_export())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;

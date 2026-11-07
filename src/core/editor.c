@@ -100,6 +100,9 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->table_id = sp->table_id; dp->table_row = sp->table_row;
         dp->table_col = sp->table_col; dp->table_cols = sp->table_cols;
         dp->cell_shading = sp->cell_shading;         /* 2.0.10: undo kept no cell colour */
+        dp->section_columns = sp->section_columns;   /* 2.0.25: section starts survive undo */
+        dp->section_gap = sp->section_gap;
+        dp->section_break = sp->section_break;
         dp->style = NULL;                            /* 2.0.12: its style and bookmarks too */
         dp->bookmarks = NULL;
         if (sp->style && !(dp->style = copy_bytes(sp->style, strlen(sp->style)))) return 0;
@@ -2338,6 +2341,78 @@ int ow_editor_apply_page_setup(ow_editor *editor, const owf_page *page)
     return ow_editor_layout(editor);
 }
 
+int ow_editor_current_section(const ow_editor *editor, int *start_paragraph,
+                              int *columns, int *gap, owf_section_break *break_kind)
+{
+    const owf_story *story;
+    int p, start = 0, cols = 1, space = 0;
+    owf_section_break kind = OWF_SECTION_CONTINUOUS;
+    if (!editor || !editor->doc || editor->selection.focus.box) return 0;
+    story = &editor->doc->body;
+    if (!story->nparas) return 0;
+    p = editor->selection.focus.paragraph;
+    if (p < 0) p = 0;
+    if (p >= story->nparas) p = story->nparas - 1;
+    for (; p >= 0; --p)
+        if (story->paras[p].section_columns > 0) {
+            start = p;
+            cols = story->paras[p].section_columns;
+            space = story->paras[p].section_gap;
+            kind = (owf_section_break)story->paras[p].section_break;
+            break;
+        }
+    if (start_paragraph) *start_paragraph = start;
+    if (columns) *columns = cols;
+    if (gap) *gap = space;
+    if (break_kind) *break_kind = kind;
+    return 1;
+}
+
+int ow_editor_apply_section(ow_editor *editor, int columns, int gap,
+                            owf_section_break break_kind)
+{
+    owf_para *p;
+    int at;
+    if (!editor || !editor->doc || editor->selection.focus.box ||
+        columns < 1 || columns > 16 || gap < 0 ||
+        break_kind < OWF_SECTION_CONTINUOUS || break_kind > OWF_SECTION_EVEN_PAGE)
+        return OWF_ERR_FORMAT;
+    at = editor->selection.focus.paragraph;
+    if (at < 0 || at >= editor->doc->body.nparas) return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    p = &editor->doc->body.paras[at];
+    p->section_columns = columns;
+    p->section_gap = gap;
+    p->section_break = at ? (unsigned char)break_kind : OWF_SECTION_CONTINUOUS;
+    if (at && break_kind != OWF_SECTION_CONTINUOUS) p->fmt.page_break_before = 1;
+    else if (at) p->fmt.page_break_before = 0;
+    editor->dirty = 1;
+    ++editor->changes;
+    return ow_editor_layout(editor);
+}
+
+int ow_editor_apply_document_columns(ow_editor *editor, int columns, int gap)
+{
+    int i;
+    if (!editor || !editor->doc || columns < 1 || columns > 16 || gap < 0 ||
+        editor->doc->body.nparas < 1)
+        return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    for (i = 0; i < editor->doc->body.nparas; ++i) {
+        owf_para *p = &editor->doc->body.paras[i];
+        p->section_columns = 0;
+        p->section_gap = 0;
+        p->section_break = OWF_SECTION_CONTINUOUS;
+    }
+    editor->doc->body.paras[0].section_columns = columns;
+    editor->doc->body.paras[0].section_gap = gap;
+    editor->dirty = 1;
+    ++editor->changes;
+    return ow_editor_layout(editor);
+}
+
 int ow_editor_insert_page_break(ow_editor *editor)
 {
     ow_position pos, next;
@@ -2367,6 +2442,39 @@ static int current_table_cell(const ow_editor *editor,int *id,int *row,int *col,
 }
 
 int ow_editor_in_table(const ow_editor *editor){return current_table_cell(editor,NULL,NULL,NULL,NULL);}
+
+int ow_editor_table_apply_style(ow_editor *editor, ow_table_scope scope,
+                                unsigned long shading, int borders,
+                                unsigned long border_colour)
+{
+    owf_story *story;
+    int id, row, col, i, changed = 0;
+    if (!current_table_cell(editor, &id, &row, &col, NULL) ||
+        scope < OW_TABLE_CELL || scope > OW_TABLE_ALL ||
+        (borders & ~(OWF_BORDER_TOP | OWF_BORDER_LEFT | OWF_BORDER_BOTTOM | OWF_BORDER_RIGHT)))
+        return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    story = ed_story(editor);
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        if (p->table_id != id ||
+            (scope == OW_TABLE_ROW && p->table_row != row) ||
+            (scope == OW_TABLE_CELL && (p->table_row != row || p->table_col != col)))
+            continue;
+        p->cell_shading = shading;
+        p->fmt.borders = borders;
+        p->fmt.border_colour = border_colour;
+        changed = 1;
+    }
+    if (!changed) {
+        ow_editor_undo(editor);
+        return OWF_ERR_FORMAT;
+    }
+    editor->dirty = 1;
+    ++editor->changes;
+    return ow_editor_layout(editor);
+}
 
 static void free_para_one(owf_para *p)
 {
@@ -2420,6 +2528,232 @@ int ow_editor_insert_image(ow_editor *editor, int image_index)
     pos=editor->selection.focus;rc=split_paragraph(editor,pos,&after);if(rc<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     story=ed_story(editor);base=after.paragraph;p=insert_paragraph(story,base,NULL);if(!p||owf_para_add_image(p,&editor->typing_fmt,image_index)!=OWF_OK){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     caret=after;caret.paragraph=base+1;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+}
+
+/* Add a page-anchored frame to the current body paragraph. GFOpenLayout
+ * already places it from that paragraph, wraps the following body lines and
+ * hit-tests a text-box story; the editor only has to make the native model
+ * object and put its frame run on the anchor paragraph. */
+static int insert_anchored_frame(ow_editor *editor, owf_frame *frame, int enter_story)
+{
+    ow_position body_caret;
+    owf_para *anchor;
+    int frame_index;
+    if (!editor || !editor->doc || !frame || editor->selection.focus.box)
+        return OWF_ERR_FORMAT;
+    if (frame->width <= 0 || frame->height <= 0 ||
+        frame->wrap > OWF_WRAP_TOP_BOTTOM)
+        return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    if (!ow_editor_selection_empty(editor) && delete_selection_internal(editor) < 0) {
+        ow_editor_undo(editor);
+        return OWF_ERR_MEMORY;
+    }
+    body_caret = clamp_position(editor, editor->selection.focus);
+    anchor = &editor->doc->body.paras[body_caret.paragraph];
+    frame_index = owf_doc_add_frame(editor->doc, frame);
+    if (frame_index < 0 ||
+        owf_para_add_frame(anchor, &editor->typing_fmt, frame_index) != OWF_OK) {
+        if (frame_index < 0) free_story_data(&frame->story);
+        else memset(&frame->story, 0, sizeof frame->story); /* now owned by doc; undo frees it */
+        ow_editor_undo(editor);
+        return OWF_ERR_MEMORY;
+    }
+    memset(&frame->story, 0, sizeof frame->story);         /* ownership moved to doc */
+    if (enter_story) {
+        const owf_story *story = &editor->doc->frames[frame_index].story;
+        ow_position box_caret;
+        memset(&box_caret, 0, sizeof box_caret);
+        box_caret.box = frame_index + 1;
+        if (story->nparas && story->paras[0].nruns) {
+            const owf_run *run = &story->paras[0].runs[0];
+            box_caret.byte_offset = run->kind == OWF_RUN_TEXT && run->text ? strlen(run->text) : 0;
+        }
+        editor->selection.anchor = editor->selection.focus = box_caret;
+    } else {
+        editor->selection.anchor = editor->selection.focus = body_caret;
+    }
+    editor->dirty = 1;
+    ++editor->changes;
+    return ow_editor_layout(editor);
+}
+
+int ow_editor_insert_text_box(ow_editor *editor, const char *utf8,
+                              int width, int height, owf_frame_wrap wrap)
+{
+    owf_frame frame;
+    owf_para *para;
+    owf_parafmt pf;
+    owf_charfmt cf;
+    size_t length;
+    if (!editor || !utf8) return OWF_ERR_FORMAT;
+    memset(&frame, 0, sizeof frame);
+    frame.image = -1;
+    frame.width = width;
+    frame.height = height;
+    frame.x_from = OWF_FROM_MARGIN;
+    frame.y_from = OWF_FROM_PARAGRAPH;
+    frame.x_place = OWF_PLACE_END;
+    frame.y_place = OWF_PLACE_AT;
+    frame.wrap = (unsigned char)wrap;
+    frame.inset[0] = frame.inset[1] = frame.inset[2] = frame.inset[3] = 120;
+    frame.line = OWF_SHADE(0x000000UL);
+    owf_parafmt_init(&pf);
+    cf = editor->typing_fmt_set ? editor->typing_fmt : editor->doc->base;
+    para = owf_story_add(&frame.story, &pf);
+    length = strlen(utf8);
+    if (!para || owf_para_add_text(para, &cf, utf8, length) != OWF_OK) {
+        free_story_data(&frame.story);
+        return OWF_ERR_MEMORY;
+    }
+    return insert_anchored_frame(editor, &frame, 1);
+}
+
+int ow_editor_insert_floating_image(ow_editor *editor, int image_index,
+                                    owf_frame_wrap wrap)
+{
+    owf_frame frame;
+    const owf_image *image;
+    if (!editor || !editor->doc || image_index < 0 || image_index >= editor->doc->nimages)
+        return OWF_ERR_FORMAT;
+    image = &editor->doc->images[image_index];
+    memset(&frame, 0, sizeof frame);
+    frame.image = image_index;
+    frame.width = image->width > 0 ? image->width : 4320;
+    frame.height = image->height > 0 ? image->height : 2880;
+    frame.x_from = OWF_FROM_MARGIN;
+    frame.y_from = OWF_FROM_PARAGRAPH;
+    frame.x_place = OWF_PLACE_END;
+    frame.y_place = OWF_PLACE_AT;
+    frame.wrap = (unsigned char)wrap;
+    return insert_anchored_frame(editor, &frame, 0);
+}
+
+void ow_frame_adjust_rect(int *x, int *y, int *width, int *height,
+                          ow_frame_handle handle, int dx, int dy,
+                          int min_width, int min_height)
+{
+    int right, bottom;
+    if (!x || !y || !width || !height || handle < OW_FRAME_MOVE ||
+        handle > OW_FRAME_RESIZE_SE)
+        return;
+    if (min_width < 1) min_width = 1;
+    if (min_height < 1) min_height = 1;
+    right = *x + *width;
+    bottom = *y + *height;
+    switch (handle) {
+    case OW_FRAME_MOVE: *x += dx; *y += dy; break;
+    case OW_FRAME_RESIZE_NW: *x += dx; *y += dy; *width -= dx; *height -= dy; break;
+    case OW_FRAME_RESIZE_NE: *y += dy; *width += dx; *height -= dy; break;
+    case OW_FRAME_RESIZE_SW: *x += dx; *width -= dx; *height += dy; break;
+    case OW_FRAME_RESIZE_SE: *width += dx; *height += dy; break;
+    }
+    if (*width < min_width) {
+        if (handle == OW_FRAME_RESIZE_NW || handle == OW_FRAME_RESIZE_SW)
+            *x = right - min_width;
+        *width = min_width;
+    }
+    if (*height < min_height) {
+        if (handle == OW_FRAME_RESIZE_NW || handle == OW_FRAME_RESIZE_NE)
+            *y = bottom - min_height;
+        *height = min_height;
+    }
+}
+
+int ow_editor_apply_frame_geometry(ow_editor *editor, int frame_index,
+                                   int x, int y, int width, int height,
+                                   owf_frame_wrap wrap)
+{
+    owf_frame *frame;
+    if (!editor || !editor->doc || frame_index < 0 || frame_index >= editor->doc->nframes ||
+        width <= 0 || height <= 0 || wrap > OWF_WRAP_TOP_BOTTOM)
+        return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    frame = &editor->doc->frames[frame_index];
+    frame->x = x;
+    frame->y = y;
+    frame->width = width;
+    frame->height = height;
+    frame->x_from = OWF_FROM_PAGE;
+    frame->y_from = OWF_FROM_PAGE;
+    frame->x_place = OWF_PLACE_AT;
+    frame->y_place = OWF_PLACE_AT;
+    frame->in_line = 0;
+    frame->wrap = (unsigned char)wrap;
+    editor->dirty = 1;
+    ++editor->changes;
+    return ow_editor_layout(editor);
+}
+
+static int remove_frame_refs(ow_editor *editor, owf_story *story,
+                             int frame_index, int body, int *anchor_para)
+{
+    int i, j;
+    if (!story) return 1;
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *para = &story->paras[i];
+        for (j = para->nruns - 1; j >= 0; --j) {
+            owf_run *run = &para->runs[j];
+            if (run->kind != OWF_RUN_FRAME) continue;
+            if (run->image > frame_index) {
+                --run->image;
+                continue;
+            }
+            if (run->image != frame_index) continue;
+            if (body && anchor_para && *anchor_para < 0) *anchor_para = i;
+            owf_free(run->text);
+            owf_free(run->href);
+            if (j + 1 < para->nruns)
+                memmove(&para->runs[j], &para->runs[j + 1],
+                        (size_t)(para->nruns - j - 1) * sizeof(*para->runs));
+            --para->nruns;
+            memset(&para->runs[para->nruns], 0, sizeof(*para->runs));
+        }
+        if (body && !para->nruns && !append_empty_text_run(para, &editor->typing_fmt))
+            return 0;
+    }
+    return 1;
+}
+
+int ow_editor_delete_frame(ow_editor *editor, int frame_index)
+{
+    owf_doc *doc;
+    owf_story *fixed[5];
+    int i, anchor = -1;
+    if (!editor || !editor->doc || frame_index < 0 || frame_index >= editor->doc->nframes)
+        return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    doc = editor->doc;
+    fixed[0] = &doc->body; fixed[1] = &doc->header; fixed[2] = &doc->footer;
+    fixed[3] = &doc->header_left; fixed[4] = &doc->footer_left;
+    for (i = 0; i < 5; ++i)
+        if (!remove_frame_refs(editor, fixed[i], frame_index, i == 0, &anchor)) {
+            ow_editor_undo(editor);
+            return OWF_ERR_MEMORY;
+        }
+    for (i = 0; i < doc->nframes; ++i)
+        if (i != frame_index &&
+            !remove_frame_refs(editor, &doc->frames[i].story, frame_index, 0, NULL)) {
+            ow_editor_undo(editor);
+            return OWF_ERR_MEMORY;
+        }
+    free_story_data(&doc->frames[frame_index].story);
+    if (frame_index + 1 < doc->nframes)
+        memmove(&doc->frames[frame_index], &doc->frames[frame_index + 1],
+                (size_t)(doc->nframes - frame_index - 1) * sizeof(*doc->frames));
+    --doc->nframes;
+    memset(&doc->frames[doc->nframes], 0, sizeof(*doc->frames));
+    if (anchor < 0) anchor = editor->selection.focus.paragraph;
+    if (anchor < 0) anchor = 0;
+    if (anchor >= doc->body.nparas) anchor = doc->body.nparas - 1;
+    editor->selection.anchor.box = editor->selection.focus.box = 0;
+    caret_to_para(editor, anchor);
+    editor->dirty = 1;
+    ++editor->changes;
+    return ow_editor_layout(editor);
 }
 
 int ow_editor_insert_table(ow_editor *editor, int rows, int cols)

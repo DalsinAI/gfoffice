@@ -1947,9 +1947,11 @@ static int put_cf_rule(ods_out *w, owf_buf *b, const owf_sheet *sh, int sheet, i
     } else if (!strcmp(type, "containsText") || !strcmp(type, "notContainsText") || !strcmp(type, "beginsWith") ||
                !strcmp(type, "endsWith")) {
         ok = rule_attr(cf->xml, "text", text, sizeof text);
-        owf_buf_puts(&v, type[0] == 'c' ? "contains-text(" : type[0] == 'n' ? "not-contains-text(" : type[0] == 'b' ? "begins-with(" : "ends-with(");
-        put_of_string(&v, text);
-        owf_buf_putc(&v, ')');
+        if (ok) {
+            owf_buf_puts(&v, type[0] == 'c' ? "contains-text(" : type[0] == 'n' ? "not-contains-text(" : type[0] == 'b' ? "begins-with(" : "ends-with(");
+            put_of_string(&v, text);
+            owf_buf_putc(&v, ')');
+        }
     } else if (!strcmp(type, "duplicateValues") || !strcmp(type, "uniqueValues")) {
         owf_buf_puts(&v, type[0] == 'd' ? "duplicate" : "unique");
     } else if (!strcmp(type, "top10")) {

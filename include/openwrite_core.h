@@ -152,6 +152,15 @@ int ow_editor_page_count(const ow_editor *editor);
 int ow_editor_current_page(const ow_editor *editor);
 void ow_editor_page_setup(const ow_editor *editor, owf_page *page);
 int ow_editor_apply_page_setup(ow_editor *editor, const owf_page *page);
+/* The effective body section at the caret, and an undoable section start at
+ * the current paragraph. columns 1-16; gap is twips (0: default). */
+int ow_editor_current_section(const ow_editor *editor, int *start_paragraph,
+                              int *columns, int *gap, owf_section_break *break_kind);
+int ow_editor_apply_section(ow_editor *editor, int columns, int gap,
+                            owf_section_break break_kind);
+/* Apply one uniform column geometry to the whole body, removing explicit
+ * later section column markers. Undo restores the original sections. */
+int ow_editor_apply_document_columns(ow_editor *editor, int columns, int gap);
 int ow_editor_insert_page_break(ow_editor *editor);
 
 /* 2.0.23: the left pages' (the even-numbered) own, doc->header_left and footer_left */
@@ -166,7 +175,39 @@ int ow_editor_set_link(ow_editor *editor, const char *url);
 int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url);
 int ow_editor_insert_table(ow_editor *editor, int rows, int cols);
 int ow_editor_insert_image(ow_editor *editor, int image_index);
+/* Anchored objects use the document's native frames and GFOpenLayout's page
+ * anchoring, wrapping and text-box hit testing. Text boxes are inserted at the
+ * current body paragraph and leave the caret in their editable story. Floating
+ * images stay anchored to the current paragraph and leave the body caret where
+ * it was. Nested frames inside a text box are deliberately not created. */
+int ow_editor_insert_text_box(ow_editor *editor, const char *utf8,
+                              int width, int height, owf_frame_wrap wrap);
+int ow_editor_insert_floating_image(ow_editor *editor, int image_index,
+                                    owf_frame_wrap wrap);
+/* Front ends use the same handle geometry for live previews and committed
+ * edits. Coordinates may be pixels, twips or layout units as long as every
+ * argument uses the same unit. */
+typedef enum {
+    OW_FRAME_MOVE = 1, OW_FRAME_RESIZE_NW, OW_FRAME_RESIZE_NE,
+    OW_FRAME_RESIZE_SW, OW_FRAME_RESIZE_SE
+} ow_frame_handle;
+void ow_frame_adjust_rect(int *x, int *y, int *width, int *height,
+                          ow_frame_handle handle, int dx, int dy,
+                          int min_width, int min_height);
+/* Move/resize an existing frame to a rectangle measured from the page in
+ * twips. It remains attached to its anchor paragraph's page and is undoable. */
+int ow_editor_apply_frame_geometry(ow_editor *editor, int frame_index,
+                                   int x, int y, int width, int height,
+                                   owf_frame_wrap wrap);
+/* Remove a frame and its anchor run, renumbering later frame references. */
+int ow_editor_delete_frame(ow_editor *editor, int frame_index);
 int ow_editor_in_table(const ow_editor *editor);
+typedef enum { OW_TABLE_CELL, OW_TABLE_ROW, OW_TABLE_ALL } ow_table_scope;
+/* Cell fill plus paragraph borders for the current cell, row or table.
+ * Colours use OWF_SHADE; zero clears the fill or selects automatic black. */
+int ow_editor_table_apply_style(ow_editor *editor, ow_table_scope scope,
+                                unsigned long shading, int borders,
+                                unsigned long border_colour);
 int ow_editor_table_move(ow_editor *editor, int delta);
 int ow_editor_table_insert_row(ow_editor *editor);
 int ow_editor_table_delete_row(ow_editor *editor);
