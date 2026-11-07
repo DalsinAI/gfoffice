@@ -2565,10 +2565,13 @@ static int rexx_do_command(const char *command, char **result_out)
     command = skip_space(command);
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
     else if (starts_word_ci(command, "HELP", &arg))
-        snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
+        snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE FAULT ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
                  "VALIDCHECK GETCOMMENT QUIT");
-    else if (starts_word_ci(command, "ACTIVATE", &arg)) {
+    else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
+        if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
+        else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "ACTIVATE", &arg)) {
         if (win) { WindowToFront(win); ActivateWindow(win); }
     } else if (starts_word_ci(command, "ISDIRTY", &arg))
         snprintf(result_text, sizeof result_text, "%d", oc_core_is_dirty(core) ? 1 : 0);

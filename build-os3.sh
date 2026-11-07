@@ -179,6 +179,9 @@ fi
 # (PROGDIR:Images/Toolbar/; gfopengadtools lib/ogt_iconset.c). Made by gfopengadtools' tools/iconset.
 mkdir -p "$OUT/Images/Toolbar"
 cp "$HERE"/Images/Toolbar/*.ilbm "$OUT/Images/Toolbar/"
+# the ARexx examples (docs/gfoffice/Design-Suite-Shared.md: ARexx)
+mkdir -p "$OUT/Rexx"
+cp "$HERE"/Rexx/*.rexx "$OUT/Rexx/"
 
 echo "$OUT/OWConvert ($(wc -c < "$OUT/OWConvert") bytes)"
 echo "$OUT/GFOpenWrite ($(wc -c < "$OUT/GFOpenWrite") bytes)"
