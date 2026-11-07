@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.28 (7.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.29 (7.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -100,7 +100,7 @@ enum {
     M_BORDER_ALL = 180, M_BORDER_OUTLINE, M_BORDER_BOTTOM, M_BORDER_NONE,
     M_COL_WIDTH = 190, M_ROW_HEIGHT, M_HIDE_COLS, M_SHOW_COLS, M_HIDE_ROWS, M_SHOW_ROWS,
     M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
-    M_SORT_ASC, M_SORT_DESC
+    M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE
 };
 
 static struct NewMenu menus[] = {
@@ -197,6 +197,8 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Outline", NULL, 0, 0, (APTR)M_BORDER_OUTLINE },
     { NM_SUB, "Bottom", NULL, 0, 0, (APTR)M_BORDER_BOTTOM },
     { NM_SUB, "None", NULL, 0, 0, (APTR)M_BORDER_NONE },
+    { NM_ITEM, "Merge Cells...", NULL, 0, 0, (APTR)M_MERGE },
+    { NM_ITEM, "Unmerge Cells", NULL, 0, 0, (APTR)M_UNMERGE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Column Width...", NULL, 0, 0, (APTR)M_COL_WIDTH },
     { NM_ITEM, "Row Height...", NULL, 0, 0, (APTR)M_ROW_HEIGHT },
@@ -2354,6 +2356,22 @@ static void do_sort(int direction)
         result(rc, direction == OC_SORT_ASCENDING ? "Rows sorted ascending." : "Rows sorted descending.");
 }
 
+static void do_merge(int merge)
+{
+    int rc = oc_core_merge(core, merge, 0);
+    if (rc == OC_MERGE_CONTENT) {
+        struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"Merge Cells",
+                                 (UBYTE *)"Only the upper-left value is kept. Continue?",
+                                 (UBYTE *)"Merge|Cancel" };
+        if (EasyRequest(win, &es, NULL) == 1) rc = oc_core_merge(core, 1, 1);
+        else return;
+    }
+    if (rc == OWF_ERR_UNSUPPORTED)
+        set_status(merge ? "Select one unmerged rectangular range." : "Select merged cells to unmerge.");
+    else
+        result(rc, merge ? "Cells merged." : "Cells unmerged.");
+}
+
 static void menu_action(ULONG id)
 {
     static const unsigned long fills[] = { 0, 0xFFF2A8UL, 0xCDEBC5UL, 0xC9DDF2UL, 0xE0E0E0UL, 0xF6C8C8UL };
@@ -2432,6 +2450,8 @@ static void menu_action(ULONG id)
     case M_SHOW_ROWS: result(oc_core_hide(core, 0, 0), "Rows shown."); break;
     case M_SORT_ASC: do_sort(OC_SORT_ASCENDING); break;
     case M_SORT_DESC: do_sort(OC_SORT_DESCENDING); break;
+    case M_MERGE: do_merge(1); break;
+    case M_UNMERGE: do_merge(0); break;
     case M_SHEET_RENAME: do_rename_sheet(oc_core_sheet(core)); break;
     case M_SHEET_DELETE: do_delete_sheet(); break;
     case M_SHEET_NEXT: oc_core_key(core, OC_KEY_PAGEDOWN, OC_MOD_CTRL); break;

@@ -255,7 +255,9 @@ fill, insert and delete, the clipboard, styles, bounded undo and the grid as a
 list of things to draw. Its reusable core also sorts a selected range by the
 active column, ascending or descending, with an optional header row; formulas,
 direct formatting and comments move with their rows and the operation is one
-undo step. It is tested on the PC with `make calc-test` and
+undo step. Merge and unmerge are native editing commands too, with a warning
+before a merge would discard values outside the upper-left cell. It is tested
+on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out

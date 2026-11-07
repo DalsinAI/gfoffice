@@ -634,6 +634,37 @@ static void test_sort(void)
     oc_core_free(core);
 }
 
+static void test_merge_command(void)
+{
+    oc_core *core = fresh();
+    owf_sheet *sheet;
+    if (!core) return;
+    enter_at(core, "A1", "kept");
+    enter_at(core, "B1", "discarded");
+    enter_at(core, "A3", "outside");
+    go(core, "A1:B2");
+    CHECK(oc_core_merge(core, 1, 0) == OC_MERGE_CONTENT);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->nmerges == 0 && !empty(core, "B1"));
+    CHECK(oc_core_merge(core, 1, 1) == OWF_OK);
+    CHECK(sheet->nmerges == 1 && sheet->merges[0].first_row == 0 &&
+          sheet->merges[0].last_row == 1 && sheet->merges[0].last_col == 1);
+    CHECK_STR(text(core, "A1"), "kept");
+    CHECK(empty(core, "B1") && !empty(core, "A3"));
+    CHECK(oc_core_undo(core) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->nmerges == 0);
+    CHECK_STR(text(core, "B1"), "discarded");
+    CHECK(oc_core_redo(core) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->nmerges == 1 && empty(core, "B1"));
+    CHECK(oc_core_merge(core, 0, 0) == OWF_OK);
+    CHECK(oc_core_book(core)->sheets[0].nmerges == 0);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_book(core)->sheets[0].nmerges == 1);
+    oc_core_free(core);
+}
+
 static void test_insert_delete(void)
 {
     oc_core *core = fresh();
@@ -3281,6 +3312,7 @@ int main(void)
     test_undo();
     test_fill();
     test_sort();
+    test_merge_command();
     test_insert_delete();
     test_clear_and_styles();
     test_clipboard();

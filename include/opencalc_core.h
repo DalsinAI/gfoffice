@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.1.1"
+#define OC_CORE_VERSION "0.1.2"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -252,6 +252,14 @@ int oc_core_clear(oc_core *core, unsigned what);
  * Undoable as one step. */
 enum { OC_SORT_ASCENDING, OC_SORT_DESCENDING };
 int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header);
+
+/* Merges the selection's one rectangular range, or unmerges every merged
+ * range it touches. A merge keeps the top-left cell. When another nonempty
+ * cell would be discarded and discard is zero, nothing changes and
+ * OC_MERGE_CONTENT is returned so an application can ask the user; call
+ * again with discard nonzero to proceed. Undoable as one step. */
+#define OC_MERGE_CONTENT 101
+int oc_core_merge(oc_core *core, int merge, int discard);
 
 /* ---- Clipboard ----
  * Copy keeps the selection (its first range) inside the core, with
