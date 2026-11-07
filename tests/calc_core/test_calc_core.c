@@ -687,6 +687,29 @@ static void test_comment_command(void)
     oc_core_free(core);
 }
 
+static void test_find_command(void)
+{
+    oc_core *core = fresh();
+    if (!core) return;
+    enter_at(core, "A1", "Alpha");
+    enter_at(core, "A2", "beta alpha");
+    enter_at(core, "B2", "Alpha exact");
+    enter_at(core, "C1", "=A1");
+    go(core, "A3");
+    CHECK(oc_core_find(core, "alpha", 0, 0, 0) == OWF_OK);
+    CHECK_STR(active_name(core), "A1");
+    CHECK(oc_core_find(core, "alpha", 0, 0, 0) == OWF_OK);
+    CHECK_STR(active_name(core), "C1");                    /* its displayed formula result is Alpha */
+    CHECK(oc_core_find(core, "Alpha", 1, 0, 0) == OWF_OK);
+    CHECK_STR(active_name(core), "B2");
+    CHECK(oc_core_find(core, "A1", 1, 1, 0) == OWF_OK);
+    CHECK_STR(active_name(core), "C1");
+    CHECK(oc_core_find(core, "beta", 0, 0, 1) == OWF_OK);
+    CHECK_STR(active_name(core), "A2");
+    CHECK(oc_core_find(core, "missing", 0, 0, 0) == OWF_ERR_UNSUPPORTED);
+    oc_core_free(core);
+}
+
 static void test_insert_delete(void)
 {
     oc_core *core = fresh();
@@ -3336,6 +3359,7 @@ int main(void)
     test_sort();
     test_merge_command();
     test_comment_command();
+    test_find_command();
     test_insert_delete();
     test_clear_and_styles();
     test_clipboard();

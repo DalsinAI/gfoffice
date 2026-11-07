@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.30 (7.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.31 (7.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -87,7 +87,8 @@ enum { GID_TOOLBAR = 100, GID_NAME = 300, GID_INPUT, GID_VSCROLL, GID_HSCROLL };
 
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_EXPORT_CSV, M_PRINT, M_ABOUT, M_QUIT,
-    M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FILL_DOWN, M_FILL_RIGHT, M_CLEAR, M_CLEAR_FORMATS, M_CLEAR_ALL,
+    M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FIND, M_FIND_NEXT,
+    M_FILL_DOWN, M_FILL_RIGHT, M_CLEAR, M_CLEAR_FORMATS, M_CLEAR_ALL,
     M_SELECT_ALL, M_SELECT_ROWS, M_SELECT_COLS, M_GOTO,
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
@@ -123,6 +124,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Cut", "X", 0, 0, (APTR)M_CUT },
     { NM_ITEM, "Copy", "C", 0, 0, (APTR)M_COPY },
     { NM_ITEM, "Paste", "V", 0, 0, (APTR)M_PASTE },
+    { NM_ITEM, "Find...", "F", 0, 0, (APTR)M_FIND },
+    { NM_ITEM, "Find Next", "G", 0, 0, (APTR)M_FIND_NEXT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Fill Down", "D", 0, 0, (APTR)M_FILL_DOWN },
     { NM_ITEM, "Fill Right", "R", 0, 0, (APTR)M_FILL_RIGHT },
@@ -266,6 +269,7 @@ static char rexx_name[16];                           /* GFOPENCALC, or GFOPENCAL
 #define REXX_PORT_NAME "GFOPENCALC"
 static ow_recovery recovery;                         /* the autosave's recovery copy (ow_autosave.h) */
 static char current_path[512];
+static char find_text[256];
 static char current_format[32] = "";
 static char status[256] = "Ready.";
 
@@ -2320,6 +2324,31 @@ static void do_comment(void)
     owf_free(utf8);
 }
 
+static void do_find(int ask)
+{
+    char initial[256], entered[256];
+    char *utf8;
+    unsigned row, col;
+    int rc;
+    if (ask || !find_text[0]) {
+        to_latin1(find_text, strlen(find_text), initial, sizeof initial);
+        if (!text_requester("Find", "Text", initial, entered, sizeof entered)) return;
+        if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
+        snprintf(find_text, sizeof find_text, "%s", utf8);
+        owf_free(utf8);
+    }
+    if (!find_text[0]) return;
+    rc = oc_core_find(core, find_text, 0, 0, 0);
+    if (rc == OWF_OK) {
+        oc_core_active(core, &row, &col);
+        oc_view_show_cell(core, row, col);
+        set_status("Found.");
+    } else if (rc == OWF_ERR_UNSUPPORTED)
+        set_status("Text not found.");
+    else
+        result(rc, NULL);
+}
+
 static void do_command(int id)
 {
     switch (id) {
@@ -2420,6 +2449,8 @@ static void menu_action(ULONG id)
     case M_CUT: do_copy(1); break;
     case M_COPY: do_copy(0); break;
     case M_PASTE: do_paste(); break;
+    case M_FIND: do_find(1); break;
+    case M_FIND_NEXT: do_find(0); break;
     case M_FILL_DOWN: result(oc_core_fill(core, OC_FILL_DOWN), "Filled down."); break;
     case M_FILL_RIGHT: result(oc_core_fill(core, OC_FILL_RIGHT), "Filled right."); break;
     case M_CLEAR: result(oc_core_clear(core, OC_CLEAR_CONTENTS), "Cleared."); break;

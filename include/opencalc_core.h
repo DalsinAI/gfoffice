@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.1.3"
+#define OC_CORE_VERSION "0.1.4"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -264,6 +264,13 @@ int oc_core_merge(oc_core *core, int merge, int discard);
 /* Sets the active cell's comment (Excel note); NULL or empty text removes it.
  * The strings are copied. Undoable as one step. */
 int oc_core_set_comment(oc_core *core, const char *author, const char *text);
+
+/* Finds the next (backwards: previous) nonempty cell containing needle,
+ * wraps at the sheet's ends, selects it and scrolls it into view. With input
+ * nonzero, searches what would appear in the formula bar; otherwise searches
+ * the formatted value shown in the grid. OWF_OK when found,
+ * OWF_ERR_UNSUPPORTED when not found. */
+int oc_core_find(oc_core *core, const char *needle, int match_case, int input, int backwards);
 
 /* ---- Clipboard ----
  * Copy keeps the selection (its first range) inside the core, with
