@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.2.1"
+#define OPR_CORE_VERSION "0.2.2"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -124,14 +124,23 @@ int opr_text_move(const owf_deck *deck, int slide, int obj, opr_pos *at, opr_mov
  * run's look kept for all of it. */
 int opr_text_set(owf_deck *deck, int slide, int obj, const char *utf8);
 
-/* Undo: up to 16 copies of an object's text, taken before each change
- * (opr_undo_push); opr_undo_undo and opr_undo_redo put one back and say which
- * object it was. */
+/* Undo: up to 16 text or slide-structure changes. Text editing takes a copy
+ * before each change with opr_undo_push. The slide commands below perform the
+ * change and add its undo step themselves. opr_undo_undo and opr_undo_redo put
+ * a state back and say which slide to select; obj is -1 after a structural
+ * change. */
 typedef struct opr_undo opr_undo;
 opr_undo *opr_undo_new(void);
 void opr_undo_free(opr_undo *u);
 void opr_undo_clear(opr_undo *u);
 int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj);
+/* Insert at (outside 0..n: the end), delete index, or move from to to. selected
+ * is optional; on entry it is the selected slide and on return it follows the
+ * change. A deck may have no slides at core level; the application may keep
+ * one. 0 on success, -1 for a bad index or memory failure. */
+int opr_slide_insert(opr_undo *u, owf_deck *deck, int at, int layout, int *selected);
+int opr_slide_delete(opr_undo *u, owf_deck *deck, int index, int *selected);
+int opr_slide_move(opr_undo *u, owf_deck *deck, int from, int to, int *selected);
 int opr_undo_can(const opr_undo *u);
 int opr_redo_can(const opr_undo *u);
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj);

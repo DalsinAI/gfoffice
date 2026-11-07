@@ -286,11 +286,12 @@ beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: click in a slide's text box and type (Return, Backspace,
 Del, the arrow keys; Esc stops), with undo and redo
 (`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
-deck-edit-check`). Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
+deck-edit-check`). Slide > New Slide, Delete Slide, Move Slide Up and Move
+Slide Down are undoable through that same reusable core. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
 T:<name>.pdf`), and Export PDF writes one. View > Zoom In and Zoom Out (+
 and -) show the slide up to four times the window's fit, with scrollers; the
-window's zoom gadget fills the screen. The player (P2), New Slide, PPTX
-saving and the rest of the editor come next.
+window's zoom gadget fills the screen. The player (P2), duplicate/rename slide,
+PPTX saving and the rest of the editor come next.
 
 ## Licence
 

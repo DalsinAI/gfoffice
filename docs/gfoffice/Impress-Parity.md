@@ -49,8 +49,8 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| New slide, delete, duplicate, rename | P3 | Model (`owf_deck_add_slide`, `_delete_slide`; names kept) |
-| Move slides (Slide Sorter, drag) | P3 | Model (`owf_deck_move_slide`) |
+| New slide, delete, duplicate, rename | P3 | New and delete: Yes in GFOpenPresentation 0.2.2, undoable through `opr_slide_insert` / `_delete`; duplicate and rename: model only |
+| Move slides (Slide Sorter, drag) | P3 | Move up/down: Yes in GFOpenPresentation 0.2.2, undoable through `opr_slide_move`; drag: No |
 | Hide and show a slide | P2 (show), P3 (edit) | Yes: read, written, left out of the PDF |
 | Slide layouts (Blank, Title Slide, Title Content, Title and 2 Content, Title Only, Centered Text, and the rest) | P3 | Model: a new deck has six; a file's layouts are read and written with their placeholders |
 | Page setup: slide size (Screen 4:3, 16:9, 16:10, A4, Letter, custom), orientation, numbering format | P3 | Model: any size, orientation from it; numbering format No |
@@ -204,7 +204,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Master view | P4 | No |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
-| Undo and redo | P3 (per slide) | No. P3's first part: typing in text boxes undone and redone (`opr_edit.c`) |
+| Undo and redo | P3 (per slide) | Text editing and slide insertion, deletion and movement: Yes (`opr_edit.c`); other object edits: No |
 | Clipboard: objects and slides | P3 (Shared E10) | No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
 | ARexx port `GFOPENPRESENTATION` | P4 | No |

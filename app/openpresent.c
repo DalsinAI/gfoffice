@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.2.1 (25.10.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.2.2 (7.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -88,6 +88,7 @@ enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
+    M_NEW_SLIDE, M_DELETE_SLIDE, M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT
 };
@@ -110,6 +111,13 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Redo", NULL, 0, 0, (APTR)M_REDO },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
+
+    { NM_TITLE, "Slide", NULL, 0, 0, NULL },
+    { NM_ITEM, "New Slide", "M", 0, 0, (APTR)M_NEW_SLIDE },
+    { NM_ITEM, "Delete Slide", NULL, 0, 0, (APTR)M_DELETE_SLIDE },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Move Slide Up", NULL, 0, 0, (APTR)M_MOVE_SLIDE_UP },
+    { NM_ITEM, "Move Slide Down", NULL, 0, 0, (APTR)M_MOVE_SLIDE_DOWN },
 
     { NM_TITLE, "View", NULL, 0, 0, NULL },
     { NM_ITEM, "First Slide", NULL, 0, 0, (APTR)M_FIRST },
@@ -1590,6 +1598,70 @@ static void show_slide(int index)
     draw_status();
 }
 
+/* A structural edit changes slide indexes as well as the selected slide, so
+ * every cached layout and version belongs to the old structure. */
+static void structure_changed(int selected, const char *message)
+{
+    stop_typing();
+    laid_clear();
+    free(versions);
+    versions = NULL;
+    nversions = 0;
+    if (!deck || !deck->nslides) current = 0;
+    else if (selected < 0) current = 0;
+    else if (selected >= deck->nslides) current = deck->nslides - 1;
+    else current = selected;
+    dirty = 1;
+    update_window_title();
+    set_status(message);
+    relayout();
+}
+
+static void new_slide(void)
+{
+    int layout = -1, selected = current;
+    if (!deck) return;
+    if (deck->nslides && current >= 0 && current < deck->nslides)
+        layout = deck->slides[current].layout;
+    if (layout < 0 || layout >= deck->nlayouts)
+        layout = deck->nlayouts > 2 ? 2 : (deck->nlayouts ? 0 : -1);
+    if (opr_slide_insert(undo, deck, deck->nslides ? current + 1 : 0, layout, &selected) < 0) {
+        tell(PROGRAM, "There is not enough memory for a new slide.");
+        return;
+    }
+    structure_changed(selected, "New slide inserted.");
+}
+
+static void delete_slide(void)
+{
+    int selected = current;
+    if (!deck || !deck->nslides) return;
+    if (deck->nslides == 1) {
+        tell(PROGRAM, "A presentation must keep at least one slide.");
+        return;
+    }
+    if (opr_slide_delete(undo, deck, current, &selected) < 0) {
+        tell(PROGRAM, "The slide could not be deleted.");
+        return;
+    }
+    structure_changed(selected, "Slide deleted.");
+}
+
+static void move_slide(int direction)
+{
+    int selected = current, to = current + direction;
+    if (!deck || to < 0 || to >= deck->nslides) {
+        set_status(direction < 0 ? "This is already the first slide." : "This is already the last slide.");
+        draw_status();
+        return;
+    }
+    if (opr_slide_move(undo, deck, current, to, &selected) < 0) {
+        tell(PROGRAM, "The slide could not be moved.");
+        return;
+    }
+    structure_changed(selected, direction < 0 ? "Slide moved up." : "Slide moved down.");
+}
+
 /* The pixel box of the object typed in, and around it, as laid out now: what a keystroke redraws. */
 static int edit_area(box *b)
 {
@@ -1739,6 +1811,10 @@ static void do_undo(int redo)
 {
     int slide = -1, obj = -1;
     if ((redo ? opr_undo_redo(undo, deck, &slide, &obj) : opr_undo_undo(undo, deck, &slide, &obj)) < 0) return;
+    if (obj < 0) {
+        structure_changed(slide, redo ? "Slide change redone." : "Slide change undone.");
+        return;
+    }
     slide_changed(slide);
     dirty = 1;
     update_window_title();
@@ -2048,6 +2124,10 @@ static void menu_action(ULONG id)
         stop_typing();
         draw_slide();
         break;
+    case M_NEW_SLIDE: new_slide(); break;
+    case M_DELETE_SLIDE: delete_slide(); break;
+    case M_MOVE_SLIDE_UP: move_slide(-1); break;
+    case M_MOVE_SLIDE_DOWN: move_slide(1); break;
     case M_FIRST: show_slide(0); break;
     case M_PREV: show_slide(current - 1); break;
     case M_NEXT: show_slide(current + 1); break;

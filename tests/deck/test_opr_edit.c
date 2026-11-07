@@ -7,7 +7,8 @@
  *     their list level; backspace and delete, joining paragraphs at their
  *     ends; moving by characters across paragraphs, UTF-8 whole;
  *   - an empty placeholder takes its first paragraph at its kind's level;
- *   - undo and redo, sixteen steps;
+ *   - undo and redo, sixteen steps, including inserting, deleting and moving
+ *     whole slides without losing their content;
  *   - the caret and the pointer through the laid-out slide: the caret moves
  *     right as the offset grows, and a click on the caret gives the same
  *     position back, in a bulleted paragraph too;
@@ -168,6 +169,60 @@ static void empty_placeholders(void)
     owf_deck_free(d);
 }
 
+static void structural_slides(void)
+{
+    owf_deck *d = owf_deck_new(OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT);
+    opr_undo *u = opr_undo_new();
+    int selected = -1, slide = -2, obj = -2;
+
+    CHECK(d && u, "a deck and structural undo");
+    if (!d || !u) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    CHECK(!opr_slide_insert(u, d, 0, 1, &selected) && d->nslides == 1 && selected == 0,
+          "insert the first slide");
+    owf_deck_set_text(&d->slides[0].name, "Opening");
+    owf_deck_set_text(&d->slides[0].footer, "Kept footer");
+    CHECK(!opr_text_set(d, 0, 0, "Opening title"), "give it content");
+
+    CHECK(!opr_slide_insert(u, d, 1, 2, &selected) && d->nslides == 2 && selected == 1,
+          "insert a content slide");
+    owf_deck_set_text(&d->slides[1].name, "Content");
+    CHECK(!opr_text_set(d, 1, 0, "Second title"), "give the second slide content");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && d->nslides == 1 && slide == 0 && obj == -1,
+          "undo an insertion and select the previous slide");
+    CHECK(!strcmp(d->slides[0].name, "Opening") && !strcmp(text(d, 0, 0), "Opening title"),
+          "the preceding slide is untouched");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && d->nslides == 2 && slide == 1 && obj == -1 &&
+          !strcmp(d->slides[1].name, "Content") && !strcmp(text(d, 1, 0), "Second title"),
+          "redo restores the inserted slide and all its content");
+
+    selected = 0;
+    CHECK(!opr_slide_delete(u, d, 0, &selected) && d->nslides == 1 && selected == 0 &&
+          !strcmp(d->slides[0].name, "Content"), "delete a slide");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && d->nslides == 2 && slide == 0 &&
+          !strcmp(d->slides[0].name, "Opening") && !strcmp(d->slides[0].footer, "Kept footer") &&
+          !strcmp(text(d, 0, 0), "Opening title"), "undo restores the complete deleted slide");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && d->nslides == 1 && !strcmp(d->slides[0].name, "Content"),
+          "redo deletes it again");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && d->nslides == 2, "restore it for moving");
+
+    selected = 0;
+    CHECK(!opr_slide_move(u, d, 0, 1, &selected) && selected == 1 && !strcmp(d->slides[0].name, "Content") &&
+          !strcmp(d->slides[1].name, "Opening"), "move a slide and follow it");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 0 && !strcmp(d->slides[0].name, "Opening"),
+          "undo the move");
+    CHECK(opr_redo_can(u), "the move can be redone");
+    selected = 0;
+    CHECK(!opr_slide_insert(u, d, 1, 0, &selected) && !opr_redo_can(u),
+          "a new structural edit clears redo");
+
+    opr_undo_free(u);
+    owf_deck_free(d);
+}
+
 static void caret_and_pointer(owf_deck *d)
 {
     int title = obj_named(d, 0, "Title 1"), body = obj_named(d, 1, "Content Placeholder 2"), f, k;
@@ -250,6 +305,7 @@ int main(int argc, char **argv)
     saved(d);
     owf_deck_free(d);
     empty_placeholders();
+    structural_slides();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

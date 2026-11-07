@@ -586,14 +586,29 @@ int opr_text_set(owf_deck *deck, int slide, int obj, const char *utf8)
     return opr_text_insert(deck, slide, obj, &at, utf8, strlen(utf8));
 }
 
-/* ---- Undo: copies of an object's text ---- */
+/* ---- Undo: text and slide-structure changes ---- */
+
+typedef enum {
+    SNAP_TEXT,
+    SNAP_SLIDE,
+    SNAP_MOVE
+} snapshot_kind;
 
 typedef struct {
+    snapshot_kind kind;
     int slide, obj;
     owf_story text;
     unsigned char *levels;
     int caplevels;
     unsigned flags;
+    /* SNAP_SLIDE owns saved when saved_present is set. The saved slide and
+     * the deck's slot change places on undo/redo, so no deep copy is needed. */
+    owf_slide saved;
+    int saved_present;
+    /* The selection belonging to the saved and live states. */
+    int focus, other_focus;
+    /* SNAP_MOVE: the next move to apply; swapped after it is applied. */
+    int from, to;
 } snapshot;
 
 #define UNDO_STEPS 16
@@ -616,6 +631,19 @@ static void story_free(owf_story *s)
         owf_free(s->paras[i].bookmarks);
     }
     owf_free(s->paras);
+    memset(s, 0, sizeof *s);
+}
+
+static void slide_free(owf_slide *s)
+{
+    int i;
+    for (i = 0; i < s->nobjs; i++)
+        owf_obj_clear(&s->objs[i]);
+    owf_free(s->objs);
+    story_free(&s->notes);
+    owf_free(s->name);
+    owf_free(s->footer);
+    owf_free(s->date_text);
     memset(s, 0, sizeof *s);
 }
 
@@ -658,8 +686,12 @@ static int story_copy(owf_story *to, const owf_story *from)
 
 static void snap_free(snapshot *s)
 {
-    story_free(&s->text);
-    owf_free(s->levels);
+    if (s->kind == SNAP_TEXT) {
+        story_free(&s->text);
+        owf_free(s->levels);
+    } else if (s->kind == SNAP_SLIDE && s->saved_present) {
+        slide_free(&s->saved);
+    }
     memset(s, 0, sizeof *s);
 }
 
@@ -669,6 +701,7 @@ static int snap_take(snapshot *s, const owf_deck *deck, int slide, int obj)
     memset(s, 0, sizeof *s);
     if (!o)
         return -1;
+    s->kind = SNAP_TEXT;
     s->slide = slide;
     s->obj = obj;
     s->flags = o->flags;
@@ -688,28 +721,82 @@ static int snap_take(snapshot *s, const owf_deck *deck, int slide, int obj)
     return 0;
 }
 
-/* The object's text and the snapshot's change places. */
-static int snap_swap(snapshot *s, owf_deck *deck)
+/* Take a slide out without freeing it: the caller owns *out. */
+static int slide_detach(owf_deck *deck, int index, owf_slide *out)
 {
-    owf_obj *o = object(deck, s->slide, s->obj);
-    owf_story t;
-    unsigned char *l;
-    int cap;
-    unsigned flags;
-    if (!o)
+    if (!deck || !out || index < 0 || index >= deck->nslides)
         return -1;
-    t = o->text;
-    o->text = s->text;
-    s->text = t;
-    l = o->levels;
-    o->levels = s->levels;
-    s->levels = l;
-    cap = o->caplevels;
-    o->caplevels = s->caplevels;
-    s->caplevels = cap;
-    flags = o->flags;
-    o->flags = (o->flags & ~(unsigned)OWF_OBJ_EMPTY) | (s->flags & OWF_OBJ_EMPTY);
-    s->flags = flags;
+    *out = deck->slides[index];
+    memmove(&deck->slides[index], &deck->slides[index + 1],
+            (size_t)(deck->nslides - index - 1) * sizeof *deck->slides);
+    deck->nslides--;
+    memset(&deck->slides[deck->nslides], 0, sizeof *deck->slides);
+    return 0;
+}
+
+/* Put an owned slide into a deck, transferring ownership. */
+static int slide_attach(owf_deck *deck, int index, owf_slide *in)
+{
+    owf_slide *slot;
+    if (!deck || !in || index < 0 || index > deck->nslides)
+        return -1;
+    slot = owf_deck_add_slide(deck, index, -1);
+    if (!slot)
+        return -1;
+    *slot = *in;
+    memset(in, 0, sizeof *in);
+    return 0;
+}
+
+/* The saved state and the deck's current state change places. */
+static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
+{
+    int f;
+    if (s->kind == SNAP_TEXT) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        owf_story t;
+        unsigned char *l;
+        int cap;
+        unsigned flags;
+        if (!o)
+            return -1;
+        t = o->text;
+        o->text = s->text;
+        s->text = t;
+        l = o->levels;
+        o->levels = s->levels;
+        s->levels = l;
+        cap = o->caplevels;
+        o->caplevels = s->caplevels;
+        s->caplevels = cap;
+        flags = o->flags;
+        o->flags = (o->flags & ~(unsigned)OWF_OBJ_EMPTY) | (s->flags & OWF_OBJ_EMPTY);
+        s->flags = flags;
+        if (focus) *focus = s->slide;
+        return 0;
+    }
+    f = s->focus;
+    if (s->kind == SNAP_SLIDE) {
+        if (s->saved_present) {
+            if (slide_attach(deck, s->slide, &s->saved) < 0)
+                return -1;
+            s->saved_present = 0;
+        } else {
+            if (slide_detach(deck, s->slide, &s->saved) < 0)
+                return -1;
+            s->saved_present = 1;
+        }
+    } else {
+        int k;
+        if (owf_deck_move_slide(deck, s->from, s->to) < 0)
+            return -1;
+        k = s->from;
+        s->from = s->to;
+        s->to = k;
+    }
+    s->focus = s->other_focus;
+    s->other_focus = f;
+    if (focus) *focus = f;
     return 0;
 }
 
@@ -738,8 +825,11 @@ void opr_undo_free(opr_undo *u)
 
 int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj)
 {
+    snapshot s;
     int i;
     if (!u)
+        return -1;
+    if (snap_take(&s, deck, slide, obj) < 0)
         return -1;
     for (i = 0; i < u->nredo; i++)
         snap_free(&u->redo[i]);
@@ -749,9 +839,105 @@ int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj)
         memmove(&u->undo[0], &u->undo[1], (UNDO_STEPS - 1) * sizeof u->undo[0]);
         u->nundo--;
     }
-    if (snap_take(&u->undo[u->nundo], deck, slide, obj) < 0)
+    u->undo[u->nundo++] = s;
+    return 0;
+}
+
+/* Add an already performed structural change to the undo stack. */
+static void structural_push(opr_undo *u, snapshot *s)
+{
+    int i;
+    for (i = 0; i < u->nredo; i++)
+        snap_free(&u->redo[i]);
+    u->nredo = 0;
+    if (u->nundo == UNDO_STEPS) {
+        snap_free(&u->undo[0]);
+        memmove(&u->undo[0], &u->undo[1], (UNDO_STEPS - 1) * sizeof u->undo[0]);
+        u->nundo--;
+    }
+    u->undo[u->nundo++] = *s;
+    memset(s, 0, sizeof *s);
+}
+
+static int selected_before(const owf_deck *deck, const int *selected, int fallback)
+{
+    int s = selected ? *selected : fallback;
+    if (!deck || !deck->nslides)
         return -1;
-    u->nundo++;
+    if (s < 0) s = 0;
+    if (s >= deck->nslides) s = deck->nslides - 1;
+    return s;
+}
+
+int opr_slide_insert(opr_undo *u, owf_deck *deck, int at, int layout, int *selected)
+{
+    snapshot s;
+    int before, index;
+    if (!u || !deck || layout < -1 || layout >= deck->nlayouts)
+        return -1;
+    before = selected_before(deck, selected, at);
+    index = at < 0 || at > deck->nslides ? deck->nslides : at;
+    if (!owf_deck_add_slide(deck, index, layout))
+        return -1;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_SLIDE;
+    s.slide = index;
+    s.obj = -1;
+    s.focus = before;
+    s.other_focus = index;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
+int opr_slide_delete(opr_undo *u, owf_deck *deck, int index, int *selected)
+{
+    snapshot s;
+    int before, after;
+    if (!u || !deck || index < 0 || index >= deck->nslides)
+        return -1;
+    before = selected_before(deck, selected, index);
+    after = index < deck->nslides - 1 ? index : deck->nslides - 2;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_SLIDE;
+    s.slide = index;
+    s.obj = -1;
+    s.focus = before;
+    s.other_focus = after;
+    if (slide_detach(deck, index, &s.saved) < 0)
+        return -1;
+    s.saved_present = 1;
+    structural_push(u, &s);
+    if (selected) *selected = after;
+    return 0;
+}
+
+int opr_slide_move(opr_undo *u, owf_deck *deck, int from, int to, int *selected)
+{
+    snapshot s;
+    int before, after;
+    if (!u || !deck || from < 0 || from >= deck->nslides || to < 0 || to >= deck->nslides)
+        return -1;
+    before = selected_before(deck, selected, from);
+    after = before;
+    if (before == from) after = to;
+    else if (from < to && before > from && before <= to) after--;
+    else if (to < from && before >= to && before < from) after++;
+    if (from == to) {
+        if (selected) *selected = after;
+        return 0;
+    }
+    if (owf_deck_move_slide(deck, from, to) < 0)
+        return -1;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_MOVE;
+    s.obj = -1;
+    s.from = to;
+    s.to = from;
+    s.focus = before;
+    s.other_focus = after;
+    structural_push(u, &s);
+    if (selected) *selected = after;
     return 0;
 }
 
@@ -769,13 +955,14 @@ int opr_redo_can(const opr_undo *u)
 static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *deck, int *slide, int *obj)
 {
     snapshot *s;
+    int focus;
     if (!*nfrom)
         return -1;
     s = &from[*nfrom - 1];
-    if (snap_swap(s, deck) < 0)
+    if (snap_swap(s, deck, &focus) < 0)
         return -1;
-    if (slide) *slide = s->slide;
-    if (obj) *obj = s->obj;
+    if (slide) *slide = focus;
+    if (obj) *obj = s->kind == SNAP_TEXT ? s->obj : -1;
     if (*nto == UNDO_STEPS) {
         snap_free(&to[0]);
         memmove(&to[0], &to[1], (UNDO_STEPS - 1) * sizeof to[0]);
