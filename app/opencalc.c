@@ -70,7 +70,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.27 (25.10.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.28 (7.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -99,7 +99,8 @@ enum {
     M_COL_AUTO = 170, M_COL_RED, M_COL_BLUE, M_COL_GREEN,
     M_BORDER_ALL = 180, M_BORDER_OUTLINE, M_BORDER_BOTTOM, M_BORDER_NONE,
     M_COL_WIDTH = 190, M_ROW_HEIGHT, M_HIDE_COLS, M_SHOW_COLS, M_HIDE_ROWS, M_SHOW_ROWS,
-    M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_NEXT, M_SHEET_PREV
+    M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
+    M_SORT_ASC, M_SORT_DESC
 };
 
 static struct NewMenu menus[] = {
@@ -203,6 +204,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Show Columns", NULL, 0, 0, (APTR)M_SHOW_COLS },
     { NM_ITEM, "Hide Rows", NULL, 0, 0, (APTR)M_HIDE_ROWS },
     { NM_ITEM, "Show Rows", NULL, 0, 0, (APTR)M_SHOW_ROWS },
+
+    { NM_TITLE, "Data", NULL, 0, 0, NULL },
+    { NM_ITEM, "Sort Ascending...", NULL, 0, 0, (APTR)M_SORT_ASC },
+    { NM_ITEM, "Sort Descending...", NULL, 0, 0, (APTR)M_SORT_DESC },
 
     { NM_TITLE, "Sheet", NULL, 0, 0, NULL },
     { NM_ITEM, "Rename...", NULL, 0, 0, (APTR)M_SHEET_RENAME },
@@ -2331,6 +2336,24 @@ static void set_zoom(int z)
     oc_view_show_cell(core, row, col);
 }
 
+static void do_sort(int direction)
+{
+    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"Sort Rows",
+                             (UBYTE *)"Is the first selected row a header?",
+                             (UBYTE *)"Yes|No|Cancel" };
+    unsigned row, col;
+    int pick = EasyRequest(win, &es, NULL);
+    int rc;
+    (void)row;
+    if (!pick) return;
+    oc_core_active(core, &row, &col);
+    rc = oc_core_sort(core, col, direction, pick == 1);
+    if (rc == OWF_ERR_UNSUPPORTED)
+        set_status("Select one unmerged range with at least two data rows.");
+    else
+        result(rc, direction == OC_SORT_ASCENDING ? "Rows sorted ascending." : "Rows sorted descending.");
+}
+
 static void menu_action(ULONG id)
 {
     static const unsigned long fills[] = { 0, 0xFFF2A8UL, 0xCDEBC5UL, 0xC9DDF2UL, 0xE0E0E0UL, 0xF6C8C8UL };
@@ -2407,6 +2430,8 @@ static void menu_action(ULONG id)
     case M_SHOW_COLS: result(oc_core_hide(core, 1, 0), "Columns shown."); break;
     case M_HIDE_ROWS: result(oc_core_hide(core, 0, 1), "Rows hidden."); break;
     case M_SHOW_ROWS: result(oc_core_hide(core, 0, 0), "Rows shown."); break;
+    case M_SORT_ASC: do_sort(OC_SORT_ASCENDING); break;
+    case M_SORT_DESC: do_sort(OC_SORT_DESCENDING); break;
     case M_SHEET_RENAME: do_rename_sheet(oc_core_sheet(core)); break;
     case M_SHEET_DELETE: do_delete_sheet(); break;
     case M_SHEET_NEXT: oc_core_key(core, OC_KEY_PAGEDOWN, OC_MOD_CTRL); break;

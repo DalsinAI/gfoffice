@@ -581,6 +581,59 @@ static void test_fill(void)
     oc_core_free(core);
 }
 
+static void test_sort(void)
+{
+    oc_core *core = fresh();
+    owf_sheet *sheet;
+    owf_cellstyle style;
+    if (!core) return;
+    enter_at(core, "A1", "Name");
+    enter_at(core, "B1", "Score");
+    enter_at(core, "C1", "Next");
+    enter_at(core, "A2", "Beta");
+    enter_at(core, "B2", "20");
+    enter_at(core, "C2", "=B2+1");
+    enter_at(core, "A3", "Alpha");
+    enter_at(core, "B3", "10");
+    enter_at(core, "C3", "=B3+1");
+    enter_at(core, "A4", "No score");
+    enter_at(core, "C4", "=1");
+    go(core, "A3:C3");
+    CHECK(oc_core_set_fill(core, OWF_SHADE(0x00FF00)) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(owf_sheet_set_comment(sheet, 2, 0, "Calc", "moves with Alpha") == 0);
+
+    go(core, "A1:C4");
+    CHECK(oc_core_sort(core, 1, OC_SORT_ASCENDING, 1) == OWF_OK);
+    CHECK_STR(text(core, "A1"), "Name");
+    CHECK_STR(text(core, "A2"), "Alpha");
+    CHECK_STR(text(core, "A3"), "Beta");
+    CHECK_STR(text(core, "A4"), "No score");             /* empty key stays last */
+    CHECK_STR(formula(core, "C2"), "B2+1");              /* relative reference followed its row */
+    CHECK_STR(formula(core, "C3"), "B3+1");
+    CHECK(num(core, "C2") == 11 && num(core, "C3") == 21);
+    go(core, "A2");
+    oc_core_current_style(core, &style);
+    CHECK(OWF_SHADE_RGB(style.fill) == 0x00FF00);
+    CHECK(oc_core_comment(core, 0, 1, 0) &&
+          !strcmp(oc_core_comment(core, 0, 1, 0)->text, "moves with Alpha"));
+
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "Beta");
+    CHECK_STR(text(core, "A3"), "Alpha");
+    CHECK(oc_core_comment(core, 0, 2, 0) != NULL);
+    CHECK(oc_core_sort(core, 1, OC_SORT_DESCENDING, 1) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "Beta");
+    CHECK_STR(text(core, "A3"), "Alpha");
+    CHECK_STR(text(core, "A4"), "No score");
+
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(owf_sheet_merge(&oc_core_book(core)->sheets[0], &(owf_range){ 1, 2, 0, 0 }) == 0);
+    go(core, "A1:C4");
+    CHECK(oc_core_sort(core, 1, OC_SORT_ASCENDING, 1) == OWF_ERR_UNSUPPORTED);
+    oc_core_free(core);
+}
+
 static void test_insert_delete(void)
 {
     oc_core *core = fresh();
@@ -3227,6 +3280,7 @@ int main(void)
     test_editing();
     test_undo();
     test_fill();
+    test_sort();
     test_insert_delete();
     test_clear_and_styles();
     test_clipboard();
