@@ -2039,6 +2039,73 @@ static void test_validation(void)
     oc_core_free(core);
 }
 
+static void test_validation_authoring(void)
+{
+    static const char *const xlsx = "build/host/calc-core-validation.xlsx";
+    static const char *const ods = "build/host/calc-core-validation.ods";
+    oc_core *core = fresh();
+    oc_validation_spec list = { 0 }, whole = { 0 }, got;
+    owf_sheet *sheet;
+    const owf_validation *v;
+    char **items = NULL;
+    int n = 0;
+    if (!core) return;
+    list.type = OWF_DV_LIST;
+    list.allow_blank = 1;
+    list.show_prompt = list.show_error = 1;
+    list.error_style = OWF_DV_STOP;
+    list.formula[0] = "\"Yes,No\"";
+    list.prompt_title = "Choice";
+    list.prompt = "Choose Yes or No";
+    list.error_title = "Not a choice";
+    list.error = "Use the dropdown";
+    go(core, "B2:D4");
+    CHECK(oc_core_set_validation(core, &list) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->nvalidations == 1 && sheet->validations[0].nranges == 1);
+    CHECK(oc_core_get_validation(core, &got) && got.type == OWF_DV_LIST && got.allow_blank && got.show_prompt &&
+          got.formula[0] && !strcmp(got.formula[0], "\"Yes,No\"") && !strcmp(got.prompt, "Choose Yes or No"));
+    CHECK(oc_core_list_choices(core, &items, &n) == OWF_OK && n == 2 && !strcmp(items[0], "Yes"));
+    oc_choices_free(items, n);
+
+    whole.type = OWF_DV_WHOLE;
+    whole.op = OWF_CF_BETWEEN;
+    whole.allow_blank = 1;
+    whole.show_error = 1;
+    whole.error_style = OWF_DV_WARNING;
+    whole.formula[0] = "1";
+    whole.formula[1] = "10";
+    go(core, "C3");
+    CHECK(oc_core_set_validation(core, &whole) == OWF_OK);
+    CHECK(sheet->nvalidations == 2 && sheet->validations[0].nranges == 4);
+    v = owf_sheet_validation(sheet, 2, 2);
+    CHECK(v && v->type == OWF_DV_WHOLE && v->op == OWF_CF_BETWEEN && !strcmp(v->formula[1], "10"));
+    CHECK(owf_sheet_validation(sheet, 1, 2)->type == OWF_DV_LIST &&
+          owf_sheet_validation(sheet, 2, 1)->type == OWF_DV_LIST &&
+          owf_sheet_validation(sheet, 2, 3)->type == OWF_DV_LIST &&
+          owf_sheet_validation(sheet, 3, 2)->type == OWF_DV_LIST);
+    CHECK(oc_core_undo(core) == OWF_OK && owf_sheet_validation(&oc_core_book(core)->sheets[0], 2, 2)->type == OWF_DV_LIST);
+    CHECK(oc_core_redo(core) == OWF_OK && owf_sheet_validation(&oc_core_book(core)->sheets[0], 2, 2)->type == OWF_DV_WHOLE);
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(owf_sheet_validation(sheet, 2, 2) && owf_sheet_validation(sheet, 2, 2)->type == OWF_DV_WHOLE &&
+          owf_sheet_validation(sheet, 1, 1) && owf_sheet_validation(sheet, 1, 1)->type == OWF_DV_LIST);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(owf_sheet_validation(sheet, 2, 2) && owf_sheet_validation(sheet, 2, 2)->type == OWF_DV_WHOLE &&
+          owf_sheet_validation(sheet, 1, 1) && owf_sheet_validation(sheet, 1, 1)->type == OWF_DV_LIST);
+    go(core, "C3");
+    CHECK(oc_core_set_validation(core, NULL) == OWF_OK && !owf_sheet_validation(sheet, 2, 2) &&
+          owf_sheet_validation(sheet, 2, 1)->type == OWF_DV_LIST);
+    CHECK(oc_core_undo(core) == OWF_OK && owf_sheet_validation(&oc_core_book(core)->sheets[0], 2, 2)->type == OWF_DV_WHOLE);
+    whole.formula[0] = NULL;
+    CHECK(oc_core_set_validation(core, &whole) == OWF_ERR_FORMAT);
+    CHECK(!oc_core_get_validation(NULL, &got) && !oc_core_get_validation(core, NULL));
+    oc_core_free(core);
+}
+
 static void test_autofilter(void)
 {
     oc_core *core = fresh();
@@ -3820,6 +3887,7 @@ int main(void)
     test_font_caps();
     test_comments();
     test_validation();
+    test_validation_authoring();
     test_autofilter();
     test_filter_commands();
     test_filter_ranking();

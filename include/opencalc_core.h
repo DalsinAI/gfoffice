@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.3.0"
+#define OC_CORE_VERSION "0.4.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -238,6 +238,20 @@ int oc_edit_commit_anyway(oc_core *core, int move);
  * hides it. */
 int oc_core_list_choices(oc_core *core, char ***items, int *n);
 void oc_choices_free(char **items, int n);
+/* An editable validation rule. String pointers passed to set are copied;
+ * pointers returned by get belong to the workbook. A NULL rule clears
+ * validation from every selected range. Existing rules are split as needed
+ * so cells outside the selection retain them. */
+typedef struct {
+    int type;                    /* OWF_DV_... */
+    int op;                      /* OWF_CF_... for numeric/date/time/length */
+    int allow_blank, no_dropdown;
+    int show_prompt, show_error, error_style;
+    const char *formula[2];
+    const char *prompt_title, *prompt, *error_title, *error;
+} oc_validation_spec;
+int oc_core_get_validation(const oc_core *core, oc_validation_spec *out);
+int oc_core_set_validation(oc_core *core, const oc_validation_spec *rule);
 
 /* The formula bar's text: what is being typed, or what the active cell
  * holds as one would type it ("=SUM(A1:A3)", "12.5", "'0123"). The

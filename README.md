@@ -265,7 +265,11 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.38 can create and
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.39 can author,
+replace and clear list, whole-number, decimal, date, time, text-length and
+custom-formula validation over selected cells. Existing surrounding rules are
+preserved when a smaller selection replaces part of one, and authored rules
+are enforced immediately and saved to XLSX/ODS. It can also create and
 remove an AutoFilter, filter a table by any distinct displayed value from a
 heading's arrow, combine exact-value conditions across columns, clear one
 column or show all rows, and apply one or two same-column Standard Filter

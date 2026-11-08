@@ -14,6 +14,214 @@
 
 #define MAX_CHOICES 1000
 
+typedef struct {
+    owf_range *v;
+    int n, cap;
+} range_list;
+
+static int ranges_add(range_list *list, owf_range range)
+{
+    owf_range *grown;
+    if (list->n == list->cap) {
+        int cap = list->cap ? list->cap * 2 : 4;
+        grown = realloc(list->v, (size_t)cap * sizeof *grown);
+        if (!grown) return 0;
+        list->v = grown;
+        list->cap = cap;
+    }
+    list->v[list->n++] = range;
+    return 1;
+}
+
+static int range_touches(const owf_range *a, const owf_range *b)
+{
+    return a->first_row <= b->last_row && a->last_row >= b->first_row &&
+           a->first_col <= b->last_col && a->last_col >= b->first_col;
+}
+
+/* Append the parts of source outside cut: top, bottom, then the middle's
+ * left and right. The pieces do not overlap. */
+static int range_subtract(range_list *out, const owf_range *source, const owf_range *cut)
+{
+    owf_range intersection, part;
+    if (!range_touches(source, cut)) return ranges_add(out, *source);
+    intersection.first_row = source->first_row > cut->first_row ? source->first_row : cut->first_row;
+    intersection.last_row = source->last_row < cut->last_row ? source->last_row : cut->last_row;
+    intersection.first_col = source->first_col > cut->first_col ? source->first_col : cut->first_col;
+    intersection.last_col = source->last_col < cut->last_col ? source->last_col : cut->last_col;
+    if (source->first_row < intersection.first_row) {
+        part = *source; part.last_row = intersection.first_row - 1;
+        if (!ranges_add(out, part)) return 0;
+    }
+    if (intersection.last_row < source->last_row) {
+        part = *source; part.first_row = intersection.last_row + 1;
+        if (!ranges_add(out, part)) return 0;
+    }
+    if (source->first_col < intersection.first_col) {
+        part = intersection; part.first_col = source->first_col; part.last_col = intersection.first_col - 1;
+        if (!ranges_add(out, part)) return 0;
+    }
+    if (intersection.last_col < source->last_col) {
+        part = intersection; part.first_col = intersection.last_col + 1; part.last_col = source->last_col;
+        if (!ranges_add(out, part)) return 0;
+    }
+    return 1;
+}
+
+static char *valid_copy(const char *s, int *failed)
+{
+    char *p = NULL;
+    if (s && !(p = oc_strdup(s))) *failed = 1;
+    return p;
+}
+
+static int validation_copy(owf_validation *dst, const owf_validation *src,
+                           const owf_range *ranges, int nranges)
+{
+    int failed = 0;
+    memset(dst, 0, sizeof *dst);
+    *dst = *src;
+    dst->ranges = NULL;
+    dst->formula[0] = dst->formula[1] = NULL;
+    dst->prompt_title = dst->prompt = dst->error_title = dst->error = NULL;
+    dst->nranges = nranges;
+    if (nranges && !(dst->ranges = malloc((size_t)nranges * sizeof *dst->ranges))) failed = 1;
+    if (!failed && nranges) memcpy(dst->ranges, ranges, (size_t)nranges * sizeof *ranges);
+    dst->formula[0] = valid_copy(src->formula[0], &failed);
+    dst->formula[1] = valid_copy(src->formula[1], &failed);
+    dst->prompt_title = valid_copy(src->prompt_title, &failed);
+    dst->prompt = valid_copy(src->prompt, &failed);
+    dst->error_title = valid_copy(src->error_title, &failed);
+    dst->error = valid_copy(src->error, &failed);
+    if (failed) { owf_validation_free(dst); return 0; }
+    return 1;
+}
+
+static int validation_add(owf_validation **rules, int *n, int *cap,
+                          const owf_validation *src, const owf_range *ranges, int nranges)
+{
+    owf_validation *grown;
+    if (!nranges) return 1;
+    if (*n == *cap) {
+        int size = *cap ? *cap * 2 : 4;
+        grown = realloc(*rules, (size_t)size * sizeof *grown);
+        if (!grown) return 0;
+        *rules = grown;
+        *cap = size;
+    }
+    if (!validation_copy(&(*rules)[*n], src, ranges, nranges)) return 0;
+    (*n)++;
+    return 1;
+}
+
+static void validations_free(owf_validation *rules, int n)
+{
+    int i;
+    for (i = 0; i < n; ++i) owf_validation_free(&rules[i]);
+    free(rules);
+}
+
+static int validation_spec_ok(const oc_validation_spec *rule)
+{
+    int two;
+    if (!rule) return 1;
+    if (rule->type < OWF_DV_ANY || rule->type > OWF_DV_CUSTOM ||
+        rule->error_style < OWF_DV_STOP || rule->error_style > OWF_DV_INFORMATION)
+        return 0;
+    if (rule->type == OWF_DV_ANY) return 1;
+    if (!rule->formula[0] || !*rule->formula[0]) return 0;
+    if (rule->type == OWF_DV_LIST || rule->type == OWF_DV_CUSTOM) return 1;
+    if (rule->op < OWF_CF_BETWEEN || rule->op > OWF_CF_LESS_EQUAL) return 0;
+    two = rule->op == OWF_CF_BETWEEN || rule->op == OWF_CF_NOT_BETWEEN;
+    return !two || (rule->formula[1] && *rule->formula[1]);
+}
+
+int oc_core_get_validation(const oc_core *core, oc_validation_spec *out)
+{
+    const oc_sheetstate *state;
+    const owf_validation *v;
+    if (!core || !out) return 0;
+    state = &core->states[core->sheet];
+    v = owf_sheet_validation(&core->book->sheets[core->sheet], state->sel.row, state->sel.col);
+    if (!v) return 0;
+    memset(out, 0, sizeof *out);
+    out->type = v->type;
+    out->op = v->op;
+    out->allow_blank = v->allow_blank;
+    out->no_dropdown = v->no_dropdown;
+    out->show_prompt = v->show_prompt;
+    out->show_error = v->show_error;
+    out->error_style = v->error_style;
+    out->formula[0] = v->formula[0];
+    out->formula[1] = v->formula[1];
+    out->prompt_title = v->prompt_title;
+    out->prompt = v->prompt;
+    out->error_title = v->error_title;
+    out->error = v->error;
+    return 1;
+}
+
+int oc_core_set_validation(oc_core *core, const oc_validation_spec *rule)
+{
+    owf_sheet *sheet;
+    owf_validation *fresh = NULL;
+    owf_validation made;
+    owf_range targets[OC_MAX_RANGES];
+    int ntargets = 0, nfresh = 0, capfresh = 0, i, r, t, rc = OWF_OK;
+    oc_undo *undo;
+    if (!core || !validation_spec_ok(rule)) return OWF_ERR_FORMAT;
+    if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    for (i = 0; i < oc_state(core)->sel.nranges; ++i)
+        if (oc_range_clip(core, &oc_state(core)->sel.ranges[i], &targets[ntargets])) ntargets++;
+    if (!ntargets) return OWF_ERR_UNSUPPORTED;
+    sheet = oc_sheet(core);
+    for (i = 0; i < sheet->nvalidations; ++i) {
+        range_list remaining = { 0 };
+        for (r = 0; r < sheet->validations[i].nranges; ++r)
+            if (!ranges_add(&remaining, sheet->validations[i].ranges[r])) { rc = OWF_ERR_MEMORY; break; }
+        for (t = 0; rc == OWF_OK && t < ntargets; ++t) {
+            range_list next = { 0 };
+            for (r = 0; r < remaining.n; ++r)
+                if (!range_subtract(&next, &remaining.v[r], &targets[t])) { rc = OWF_ERR_MEMORY; break; }
+            free(remaining.v);
+            remaining = next;
+        }
+        if (rc == OWF_OK && !validation_add(&fresh, &nfresh, &capfresh, &sheet->validations[i],
+                                             remaining.v, remaining.n))
+            rc = OWF_ERR_MEMORY;
+        free(remaining.v);
+        if (rc != OWF_OK) break;
+    }
+    if (rc == OWF_OK && rule) {
+        memset(&made, 0, sizeof made);
+        made.type = rule->type;
+        made.op = rule->op;
+        made.allow_blank = !!rule->allow_blank;
+        made.no_dropdown = !!rule->no_dropdown;
+        made.show_prompt = !!rule->show_prompt;
+        made.show_error = !!rule->show_error;
+        made.error_style = rule->error_style;
+        made.formula[0] = (char *)rule->formula[0];
+        made.formula[1] = (char *)rule->formula[1];
+        made.prompt_title = (char *)rule->prompt_title;
+        made.prompt = (char *)rule->prompt;
+        made.error_title = (char *)rule->error_title;
+        made.error = (char *)rule->error;
+        if (!validation_add(&fresh, &nfresh, &capfresh, &made, targets, ntargets)) rc = OWF_ERR_MEMORY;
+    }
+    if (rc != OWF_OK) { validations_free(fresh, nfresh); return rc; }
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
+    for (i = 0; i < sheet->nvalidations; ++i) owf_validation_free(&sheet->validations[i]);
+    free(sheet->validations);
+    sheet->validations = fresh;
+    sheet->nvalidations = nfresh;
+    sheet->capvalidations = capfresh;
+    oc_undo_push(core, undo);
+    oc_changed(core);
+    return OWF_OK;
+}
+
 /* A rule's formula k worked out at a cell (moved from the rule's first cell, as Excel keeps it). 0 when it
  * can't be (a text result is the caller's to free). */
 static int bound(oc_core *core, int sheet, const owf_validation *dv, int k, unsigned row, unsigned col, owf_cell *out)

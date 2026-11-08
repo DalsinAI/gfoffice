@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.38 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.39 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -103,7 +103,7 @@ enum {
     M_COL_WIDTH = 190, M_ROW_HEIGHT, M_HIDE_COLS, M_SHOW_COLS, M_HIDE_ROWS, M_SHOW_ROWS,
     M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE,
-    M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR
+    M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR
 };
 
 static struct NewMenu menus[] = {
@@ -221,6 +221,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "AutoFilter", NULL, 0, 0, (APTR)M_AUTOFILTER },
     { NM_ITEM, "Filter by Active Cell", NULL, 0, 0, (APTR)M_FILTER_ACTIVE },
     { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_FILTER_CLEAR },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
+    { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
 
     { NM_TITLE, "Sheet", NULL, 0, 0, NULL },
     { NM_ITEM, "Rename...", NULL, 0, 0, (APTR)M_SHEET_RENAME },
@@ -2283,6 +2286,7 @@ static void about(void)
          "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n"
          "Stable multi-key row sorting\n"
+         "Editable XLSX/ODS data validation\n"
          "Value, compound Standard and Top/Bottom AutoFilters\n"
          "Searchable PDF export and GFOpenPrint printing\n\n"
          "MIT licence, Copyright (c) 2026 AmiCradle Team.");
@@ -2585,6 +2589,109 @@ static void do_filter_active(void)
                                                                 : "Rows filtered to blanks.");
 }
 
+static const char *valid_kind_name(int type)
+{
+    static const char *const names[] = { "any", "whole", "decimal", "list", "date", "time", "length", "custom" };
+    return type >= OWF_DV_ANY && type <= OWF_DV_CUSTOM ? names[type] : "list";
+}
+
+static void validity_initial(const oc_validation_spec *v, char *out, size_t size)
+{
+    static const char *const ops[] = { "..", " not ", "=", "<>", ">", "<", ">=", "<=" };
+    const char *a = v->formula[0] ? v->formula[0] : "", *b = v->formula[1] ? v->formula[1] : "";
+    if (v->type == OWF_DV_LIST && a[0] == '"') {
+        size_t n = strlen(a);
+        snprintf(out, size, "list: %.*s", (int)(n > 1 && a[n - 1] == '"' ? n - 2 : n - 1), a + 1);
+    } else if (v->type == OWF_DV_LIST)
+        snprintf(out, size, "list: =%s", a);
+    else if (v->type == OWF_DV_CUSTOM)
+        snprintf(out, size, "custom: =%s", a);
+    else if (v->op == OWF_CF_BETWEEN)
+        snprintf(out, size, "%s: %s..%s", valid_kind_name(v->type), a, b);
+    else if (v->op == OWF_CF_NOT_BETWEEN)
+        snprintf(out, size, "%s: not %s..%s", valid_kind_name(v->type), a, b);
+    else
+        snprintf(out, size, "%s: %s%s", valid_kind_name(v->type),
+                 v->op >= OWF_CF_EQUAL && v->op <= OWF_CF_LESS_EQUAL ? ops[v->op] : "=", a);
+}
+
+static char *trim_text(char *s)
+{
+    char *end;
+    while (*s == ' ' || *s == '\t') s++;
+    end = s + strlen(s);
+    while (end > s && (end[-1] == ' ' || end[-1] == '\t')) *--end = 0;
+    return s;
+}
+
+static int validity_parse(char *text, oc_validation_spec *v, char *one, size_t one_size,
+                          char *two, size_t two_size)
+{
+    static const char *const names[] = { "whole", "decimal", "list", "date", "time", "length", "custom" };
+    static const int types[] = { OWF_DV_WHOLE, OWF_DV_DECIMAL, OWF_DV_LIST, OWF_DV_DATE,
+                                 OWF_DV_TIME, OWF_DV_TEXT_LENGTH, OWF_DV_CUSTOM };
+    char *colon = strchr(text, ':'), *value, *dots;
+    int i;
+    if (!colon) return 0;
+    *colon = 0;
+    text = trim_text(text);
+    value = trim_text(colon + 1);
+    for (i = 0; i < 7 && strcasecmp(text, names[i]); i++) ;
+    if (i == 7 || !*value) return 0;
+    v->type = types[i];
+    v->op = OWF_CF_EQUAL;
+    if (v->type == OWF_DV_LIST) {
+        if (*value == '=') snprintf(one, one_size, "%s", value + 1);
+        else snprintf(one, one_size, "\"%s\"", value);
+    } else {
+        if (*value == '=') value++;
+        dots = strstr(value, "..");
+        if (dots) {
+            *dots = 0;
+            v->op = OWF_CF_BETWEEN;
+            value = trim_text(value);
+            if (!strncasecmp(value, "not ", 4)) { v->op = OWF_CF_NOT_BETWEEN; value = trim_text(value + 4); }
+            snprintf(two, two_size, "%s", trim_text(dots + 2));
+            if (!*value || !*two) return 0;
+        } else if (!strncmp(value, "<=", 2)) { v->op = OWF_CF_LESS_EQUAL; value += 2; }
+        else if (!strncmp(value, ">=", 2)) { v->op = OWF_CF_GREATER_EQUAL; value += 2; }
+        else if (!strncmp(value, "<>", 2) || !strncmp(value, "!=", 2)) { v->op = OWF_CF_NOT_EQUAL; value += 2; }
+        else if (*value == '<') { v->op = OWF_CF_LESS; value++; }
+        else if (*value == '>') { v->op = OWF_CF_GREATER; value++; }
+        value = trim_text(value);
+        if (!*value) return 0;
+        snprintf(one, one_size, "%s", value);
+    }
+    v->formula[0] = one;
+    v->formula[1] = two[0] ? two : NULL;
+    return 1;
+}
+
+static void do_validity(void)
+{
+    oc_validation_spec v;
+    char initial[256] = "list: Yes, No", entered[256], one[256] = "", two[256] = "";
+    char *utf8 = NULL, *utf8b = NULL;
+    int had = oc_core_get_validation(core, &v), rc;
+    if (had) validity_initial(&v, initial, sizeof initial);
+    else {
+        memset(&v, 0, sizeof v);
+        v.allow_blank = v.show_error = 1;
+        v.error_style = OWF_DV_STOP;
+    }
+    if (!text_requester("Validity", "list/whole/decimal/date/time/length/custom", initial, entered, sizeof entered)) return;
+    if (!validity_parse(entered, &v, one, sizeof one, two, sizeof two)) {
+        set_status("Use list: Yes, No; whole: 1..10; decimal: >=0; or custom: =A1>0.");
+        return;
+    }
+    utf8 = from_latin1(v.formula[0]);
+    utf8b = v.formula[1] ? from_latin1(v.formula[1]) : NULL;
+    if (!utf8 || (v.formula[1] && !utf8b)) rc = OWF_ERR_MEMORY;
+    else { v.formula[0] = utf8; v.formula[1] = utf8b; rc = oc_core_set_validation(core, &v); }
+    owf_free(utf8); owf_free(utf8b);
+    result(rc, had ? "Validity changed." : "Validity added.");
+}
+
 static void menu_action(ULONG id)
 {
     static const unsigned long fills[] = { 0, 0xFFF2A8UL, 0xCDEBC5UL, 0xC9DDF2UL, 0xE0E0E0UL, 0xF6C8C8UL };
@@ -2678,6 +2785,8 @@ static void menu_action(ULONG id)
         }
         break;
     case M_FILTER_ACTIVE: do_filter_active(); break;
+    case M_VALIDITY: do_validity(); break;
+    case M_VALIDITY_CLEAR: result(oc_core_set_validation(core, NULL), "Validity cleared from the selection."); break;
     case M_FILTER_CLEAR:
         if (!oc_core_has_autofilter(core)) set_status("This sheet has no AutoFilter.");
         else result(oc_core_filter_clear(core), "Every AutoFilter row is shown.");
