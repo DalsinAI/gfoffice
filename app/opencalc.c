@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.43 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.44 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -93,7 +93,7 @@ enum {
     M_SELECT_ALL, M_SELECT_ROWS, M_SELECT_COLS, M_GOTO,
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
-    M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT,
+    M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -161,6 +161,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Columns", NULL, 0, 0, (APTR)M_INS_COLS },
     { NM_ITEM, "Sheet", NULL, 0, 0, (APTR)M_INS_SHEET },
     { NM_ITEM, "Comment...", NULL, 0, 0, (APTR)M_COMMENT },
+    { NM_ITEM, "Chart...", NULL, 0, 0, (APTR)M_CHART },
+    { NM_ITEM, "Delete Selected Chart", NULL, 0, 0, (APTR)M_CHART_DELETE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Delete Rows", NULL, 0, 0, (APTR)M_DEL_ROWS },
     { NM_ITEM, "Delete Columns", NULL, 0, 0, (APTR)M_DEL_COLS },
@@ -2892,6 +2894,54 @@ static void do_conditional_format(void)
     result(rc, "Conditional format added.");
 }
 
+/* "column Annual sales", "stacked bar Costs", "line Trend", "area",
+ * "pie Share" or "scatter Measurements". The selected table's first row
+ * names its series and its first column names its categories. */
+static void do_insert_chart(void)
+{
+    char entered[192], *p, *word, *title;
+    char *utf8 = NULL;
+    oc_chart_spec spec;
+    int rc;
+    if (!text_requester("Insert Chart", "column/bar/line/area/pie/scatter [title]",
+                        "column", entered, sizeof entered)) return;
+    memset(&spec, 0, sizeof spec);
+    spec.grouping = OWF_CHART_CLUSTERED;
+    spec.first_row_labels = spec.first_col_categories = 1;
+    spec.legend = spec.gridlines = 1;
+    p = trim_text(entered);
+    word = p;
+    while (*p && !isspace((unsigned char)*p)) p++;
+    if (*p) *p++ = 0;
+    p = trim_text(p);
+    if (!strcasecmp(word, "stacked") || !strcasecmp(word, "percent")) {
+        spec.grouping = !strcasecmp(word, "stacked") ? OWF_CHART_STACKED : OWF_CHART_PERCENT;
+        word = p;
+        while (*p && !isspace((unsigned char)*p)) p++;
+        if (*p) *p++ = 0;
+        p = trim_text(p);
+    }
+    if (!strcasecmp(word, "column")) spec.kind = OWF_CHART_COLUMN;
+    else if (!strcasecmp(word, "bar")) spec.kind = OWF_CHART_BAR;
+    else if (!strcasecmp(word, "line")) spec.kind = OWF_CHART_LINE;
+    else if (!strcasecmp(word, "area")) spec.kind = OWF_CHART_AREA;
+    else if (!strcasecmp(word, "pie")) spec.kind = OWF_CHART_PIE;
+    else if (!strcasecmp(word, "scatter")) spec.kind = OWF_CHART_SCATTER;
+    else {
+        set_status("Use column, bar, line, area, pie or scatter; optionally start with stacked or percent.");
+        return;
+    }
+    title = p;
+    if (*title && !(utf8 = from_latin1(title))) { result(OWF_ERR_MEMORY, NULL); return; }
+    spec.title = utf8;
+    rc = oc_core_add_chart(core, &spec);
+    if (rc == OWF_ERR_UNSUPPORTED)
+        set_status("Select one table with headings and data; drawings with pictures or shapes are kept unchanged.");
+    else
+        result(rc, "Chart inserted; drag it or use Delete Selected Chart.");
+    owf_free(utf8);
+}
+
 static void menu_action(ULONG id)
 {
     static const unsigned long fills[] = { 0, 0xFFF2A8UL, 0xCDEBC5UL, 0xC9DDF2UL, 0xE0E0E0UL, 0xF6C8C8UL };
@@ -2954,6 +3004,11 @@ static void menu_action(ULONG id)
         break;
     case M_INS_SHEET: if (oc_core_add_sheet(core, NULL) < 0) result(OWF_ERR_MEMORY, NULL); else set_status("Sheet added."); break;
     case M_COMMENT: do_comment(); break;
+    case M_CHART: do_insert_chart(); break;
+    case M_CHART_DELETE:
+        if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
+        else result(oc_core_delete_chart(core, -1), "Chart deleted.");
+        break;
     case M_DEL_ROWS: result(oc_core_delete(core, 0), "Rows deleted."); break;
     case M_DEL_COLS: result(oc_core_delete(core, 1), "Columns deleted."); break;
     case M_BOLD: result(oc_core_toggle_flags(core, OWF_BOLD), NULL); break;

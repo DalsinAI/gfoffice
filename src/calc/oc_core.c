@@ -580,7 +580,7 @@ static int part_has(const owf_part *part, const char *text)
     return 0;
 }
 
-static int drawing_has_nonchart(const owf_book *book, const owf_sheet *sheet)
+int oc_drawing_has_nonchart(const owf_book *book, const owf_sheet *sheet)
 {
     const owf_part *part = sheet->drawing ? owf_book_part(book, sheet->drawing) : NULL;
     return part && (part_has(part, "<xdr:pic") || part_has(part, "<xdr:sp ") || part_has(part, "<xdr:sp>") ||
@@ -600,7 +600,7 @@ int oc_core_duplicate_sheet(oc_core *core, int sheet, const char *name)
     if (!core || sheet < 0 || sheet >= core->book->nsheets || !name || !name_ok(core->book, name, -1))
         return OWF_ERR_FORMAT;
     book = core->book;
-    if (book->sheets[sheet].drawing && drawing_has_nonchart(book, &book->sheets[sheet]))
+    if (book->sheets[sheet].drawing && oc_drawing_has_nonchart(book, &book->sheets[sheet]))
         return OWF_ERR_UNSUPPORTED;
     if (!(copy = oc_book_copy(book)))
         return OWF_ERR_MEMORY;

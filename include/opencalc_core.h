@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.8.0"
+#define OC_CORE_VERSION "0.9.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -656,6 +656,27 @@ int oc_core_selected_chart(oc_core *core);            /* on the sheet showing, o
 int oc_core_move_chart(oc_core *core, int dx, int dy);
 int oc_core_step_chart(oc_core *core, int drow, int dcol);
 int oc_core_place_chart(oc_core *core, unsigned row, unsigned col);
+
+/* Creates a chart from the current single rectangular selection. Headings
+ * and categories describe the first row/column when non-zero. Normally each
+ * remaining column is a series; series_by_rows transposes that interpretation.
+ * Scatter charts use the first data series as X values. Pie charts use the
+ * first value series. The chart is selected after insertion. */
+typedef struct {
+    int kind;                       /* OWF_CHART_COLUMN ... OWF_CHART_SCATTER */
+    int grouping;                   /* OWF_CHART_CLUSTERED/STACKED/PERCENT */
+    int first_row_labels;
+    int first_col_categories;
+    int series_by_rows;
+    const char *title;              /* UTF-8, copied; NULL/empty: none */
+    int legend;                     /* non-zero: right */
+    int gridlines;
+} oc_chart_spec;
+/* OWF_OK, OWF_ERR_FORMAT (bad spec/range), OWF_ERR_UNSUPPORTED (multiple
+ * ranges, too little data, 64 charts/series, or a drawing with shapes), or
+ * OWF_ERR_MEMORY. */
+int oc_core_add_chart(oc_core *core, const oc_chart_spec *spec);
+int oc_core_delete_chart(oc_core *core, int index); /* -1: selected */
 
 /* ---- The status line ---- */
 

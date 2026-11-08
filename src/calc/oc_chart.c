@@ -28,6 +28,9 @@
 
 static const unsigned long accents[6] = { 0x4472C4UL, 0xED7D31UL, 0xA5A5A5UL, 0xFFC000UL, 0x5B9BD5UL, 0x70AD47UL };
 
+#define MAX_AUTHORED_SERIES 64
+#define MAX_AUTHORED_POINTS 4096
+
 /* ---- The charts of the sheet showing, read once ---- */
 
 void oc_charts_forget(oc_core *core)
@@ -157,6 +160,241 @@ int oc_core_place_chart(oc_core *core, unsigned row, unsigned col)
     t[2] = col < OC_MAX_COLS ? (long)col : (long)OC_MAX_COLS - 1;
     t[3] = 0;
     return move_selected(core, to_cell, t);
+}
+
+/* ---- Creating and deleting charts ---- */
+
+static char *chart_cell_ref(const char *sheet, unsigned r1, unsigned c1, unsigned r2, unsigned c2)
+{
+    char a[16], b[16], *out, *p;
+    size_t i, n = strlen(sheet);
+    oc_col_name(c1, a);
+    oc_col_name(c2, b);
+    if (!(out = owf_malloc(n * 2 + 64)))
+        return NULL;
+    p = out;
+    *p++ = '\'';
+    for (i = 0; i < n; i++) {
+        *p++ = sheet[i];
+        if (sheet[i] == '\'') *p++ = '\'';
+    }
+    *p++ = '\''; *p++ = '!';
+    p += sprintf(p, "$%s$%u", a, r1 + 1);
+    if (r1 != r2 || c1 != c2)
+        p += sprintf(p, ":$%s$%u", b, r2 + 1);
+    *p = 0;
+    return out;
+}
+
+static char *chart_label(const owf_cell *c)
+{
+    char number[40];
+    if (!c || c->type == OWF_VALUE_EMPTY || c->type == OWF_VALUE_ERROR)
+        return oc_strdup("");
+    if (c->type == OWF_VALUE_TEXT)
+        return oc_strdup(c->text ? c->text : "");
+    if (c->type == OWF_VALUE_BOOL)
+        return oc_strdup(c->number ? "TRUE" : "FALSE");
+    owf_number_text(c->number, number);
+    return oc_strdup(number);
+}
+
+static void chart_point_value(const owf_cell *c, owf_chart_point *p, int x)
+{
+    if (!c || (c->type != OWF_VALUE_NUMBER && c->type != OWF_VALUE_BOOL))
+        return;
+    if (x) { p->x = c->number; p->has_x = 1; }
+    else { p->value = c->number; p->has_value = 1; }
+}
+
+static void authored_chart_free(owf_chart *chart)
+{
+    int s, p;
+    if (!chart) return;
+    for (s = 0; s < chart->nseries; s++) {
+        owf_chart_series *se = &chart->series[s];
+        for (p = 0; p < se->npoints; p++) owf_free(se->points[p].label);
+        owf_free(se->points); owf_free(se->name); owf_free(se->name_cell);
+        owf_free(se->values); owf_free(se->categories); owf_free(se->x_values);
+        owf_free(se->label_format); owf_free(se->format);
+    }
+    owf_free(chart->series); owf_free(chart->title);
+    owf_free(chart->value_format); owf_free(chart->x_format);
+    memset(chart, 0, sizeof *chart);
+}
+
+static int authored_chart(const oc_core *core, const oc_chart_spec *spec, const owf_range *r, owf_chart *chart)
+{
+    const char *sheet = core->book->sheets[core->sheet].name;
+    unsigned data_r = r->first_row + !!spec->first_row_labels;
+    unsigned data_c = r->first_col + !!spec->first_col_categories;
+    unsigned vectors, points, first_series = 0, s, k;
+    int scatter = spec->kind == OWF_CHART_SCATTER;
+    memset(chart, 0, sizeof *chart);
+    if (data_r > r->last_row || data_c > r->last_col)
+        return OWF_ERR_UNSUPPORTED;
+    vectors = spec->series_by_rows ? r->last_row - data_r + 1 : r->last_col - data_c + 1;
+    points = spec->series_by_rows ? r->last_col - data_c + 1 : r->last_row - data_r + 1;
+    if (scatter) first_series = 1;
+    if (vectors <= first_series || !points || vectors - first_series > MAX_AUTHORED_SERIES || points > MAX_AUTHORED_POINTS)
+        return OWF_ERR_UNSUPPORTED;
+    chart->kind = spec->kind;
+    chart->grouping = spec->grouping;
+    chart->gap = 150;
+    chart->legend = spec->legend ? 'r' : 0;
+    chart->gridlines = !!spec->gridlines;
+    chart->vary = spec->kind == OWF_CHART_PIE;
+    chart->from_col = r->first_col;
+    chart->from_row = r->last_row + 2 < OC_MAX_ROWS ? r->last_row + 2 : r->first_row;
+    chart->to_col = chart->from_col + 8 < OC_MAX_COLS ? chart->from_col + 8 : OC_MAX_COLS - 1;
+    chart->to_row = chart->from_row + 16 < OC_MAX_ROWS ? chart->from_row + 16 : OC_MAX_ROWS - 1;
+    if (spec->title && *spec->title && !(chart->title = oc_strdup(spec->title)))
+        return OWF_ERR_MEMORY;
+    chart->nseries = spec->kind == OWF_CHART_PIE ? 1 : (int)(vectors - first_series);
+    if (!(chart->series = owf_calloc((size_t)chart->nseries, sizeof *chart->series)))
+        return OWF_ERR_MEMORY;
+    for (s = 0; s < (unsigned)chart->nseries; s++) {
+        unsigned vector = s + first_series;
+        owf_chart_series *se = &chart->series[s];
+        se->index = (int)s;
+        se->line = 1;
+        se->marker = OWF_MARKER_AUTO;
+        se->npoints = (int)points;
+        if (!(se->points = owf_calloc(points, sizeof *se->points)))
+            return OWF_ERR_MEMORY;
+        if (spec->series_by_rows) {
+            unsigned row = data_r + vector;
+            se->values = chart_cell_ref(sheet, row, data_c, row, r->last_col);
+            if (spec->first_col_categories)
+                se->name_cell = chart_cell_ref(sheet, row, r->first_col, row, r->first_col);
+            if (!scatter && spec->first_row_labels)
+                se->categories = chart_cell_ref(sheet, r->first_row, data_c, r->first_row, r->last_col);
+            if (scatter)
+                se->x_values = chart_cell_ref(sheet, data_r, data_c, data_r, r->last_col);
+        } else {
+            unsigned col = data_c + vector;
+            se->values = chart_cell_ref(sheet, data_r, col, r->last_row, col);
+            if (spec->first_row_labels)
+                se->name_cell = chart_cell_ref(sheet, r->first_row, col, r->first_row, col);
+            if (!scatter && spec->first_col_categories)
+                se->categories = chart_cell_ref(sheet, data_r, r->first_col, r->last_row, r->first_col);
+            if (scatter)
+                se->x_values = chart_cell_ref(sheet, data_r, data_c, r->last_row, data_c);
+        }
+        if (!se->values || (scatter && !se->x_values) ||
+            ((spec->series_by_rows ? spec->first_col_categories : spec->first_row_labels) && !se->name_cell) ||
+            ((!scatter && (spec->series_by_rows ? spec->first_row_labels : spec->first_col_categories)) && !se->categories))
+            return OWF_ERR_MEMORY;
+        for (k = 0; k < points; k++) {
+            unsigned row = spec->series_by_rows ? data_r + vector : data_r + k;
+            unsigned col = spec->series_by_rows ? data_c + k : data_c + vector;
+            chart_point_value(oc_find(core, core->sheet, row, col), &se->points[k], 0);
+            if (scatter) {
+                row = spec->series_by_rows ? data_r : data_r + k;
+                col = spec->series_by_rows ? data_c + k : data_c;
+                chart_point_value(oc_find(core, core->sheet, row, col), &se->points[k], 1);
+            } else if (spec->series_by_rows ? spec->first_row_labels : spec->first_col_categories) {
+                row = spec->series_by_rows ? r->first_row : data_r + k;
+                col = spec->series_by_rows ? data_c + k : r->first_col;
+                if (!(se->points[k].label = chart_label(oc_find(core, core->sheet, row, col))))
+                    return OWF_ERR_MEMORY;
+            }
+        }
+    }
+    return OWF_OK;
+}
+
+/* Replaces a chart-only drawing. Existing package parts deliberately remain
+ * unreferenced; exporters include only parts reachable from the sheet. */
+static int keep_authored_charts(oc_core *core, owf_chart *charts, int n, oc_undo *undo)
+{
+    owf_sheet *sheet = oc_sheet(core);
+    char *old = sheet->drawing;
+    int rc;
+    sheet->drawing = NULL;
+    rc = n ? owf_sheet_keep_charts(core->book, core->sheet, charts, n) : OWF_OK;
+    if (rc != OWF_OK) {
+        owf_free(sheet->drawing);
+        sheet->drawing = old;
+        oc_undo_free(undo);
+        return rc;
+    }
+    owf_free(old);
+    oc_undo_push(core, undo);
+    oc_charts_forget(core);
+    core->chart_sel = n ? n : 0;
+    core->chart_sel_sheet = core->sheet;
+    oc_changed(core);
+    return OWF_OK;
+}
+
+int oc_core_add_chart(oc_core *core, const oc_chart_spec *spec)
+{
+    owf_chart *charts = NULL, made;
+    const oc_sheetstate *state;
+    oc_undo *undo;
+    int n = 0, rc;
+    if (!core || !spec || spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER ||
+        spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)
+        return OWF_ERR_FORMAT;
+    state = oc_state_const(core);
+    if (state->sel.nranges != 1 || (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core))))
+        return OWF_ERR_UNSUPPORTED;
+    memset(&made, 0, sizeof made);
+    if ((rc = authored_chart(core, spec, &state->sel.ranges[0], &made)) != OWF_OK) {
+        authored_chart_free(&made);
+        return rc;
+    }
+    if ((rc = owf_sheet_charts(core->book, core->sheet, &charts, &n)) != OWF_OK || n >= 64) {
+        authored_chart_free(&made);
+        owf_charts_free(charts, n);
+        return rc != OWF_OK ? rc : OWF_ERR_UNSUPPORTED;
+    }
+    {
+        owf_chart *p = owf_realloc(charts, (size_t)(n + 1) * sizeof *charts);
+        if (!p) {
+            authored_chart_free(&made);
+            owf_charts_free(charts, n);
+            return OWF_ERR_MEMORY;
+        }
+        charts = p;
+        charts[n++] = made;
+    }
+    if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
+    rc = keep_authored_charts(core, charts, n, undo);
+    owf_charts_free(charts, n);
+    return rc;
+}
+
+int oc_core_delete_chart(oc_core *core, int index)
+{
+    owf_chart *old = NULL, *kept = NULL;
+    oc_undo *undo;
+    int n = 0, out = 0, i, rc;
+    if (!core || (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core))))
+        return OWF_ERR_UNSUPPORTED;
+    if (index < 0) index = oc_core_selected_chart(core);
+    if ((rc = owf_sheet_charts(core->book, core->sheet, &old, &n)) != OWF_OK)
+        return rc;
+    if (index < 0 || index >= n) { owf_charts_free(old, n); return OWF_ERR_UNSUPPORTED; }
+    if (n > 1 && !(kept = owf_calloc((size_t)(n - 1), sizeof *kept))) {
+        owf_charts_free(old, n);
+        return OWF_ERR_MEMORY;
+    }
+    for (i = 0; i < n; i++) if (i != index) {
+        kept[out++] = old[i];
+        memset(&old[i], 0, sizeof old[i]);
+    }
+    owf_charts_free(old, n);
+    if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
+    rc = keep_authored_charts(core, kept, out, undo);
+    owf_charts_free(kept, out);
+    if (rc == OWF_OK) core->chart_sel = 0;
+    return rc;
 }
 
 /* ---- The values: from the cells, else as the file last had them ---- */

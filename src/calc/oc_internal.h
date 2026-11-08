@@ -165,6 +165,9 @@ int oc_recalc(oc_core *core, int rebuild);
 void oc_changed(oc_core *core);
 void oc_collapse_to(oc_core *core, unsigned row, unsigned col);
 char *oc_strdup(const char *s);
+/* A kept sheet drawing contains pictures/shapes which chart-only rewriting
+ * cannot preserve yet. */
+int oc_drawing_has_nonchart(const owf_book *book, const owf_sheet *sheet);
 /* "Chart!$B$1:$B$4", "'My sheet'!B1:B4" (an "=" before it, "$"s in it, sheet names without case), or "B1:B4"
  * on the sheet here (-1: a sheet is needed), as a sheet of the book and a range; 0 when it is none of those. */
 int oc_sheet_range(const owf_book *book, const char *ref, int here, int *sheet, owf_range *r);

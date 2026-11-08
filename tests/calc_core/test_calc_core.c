@@ -3233,6 +3233,108 @@ static int same(const char *a, const char *b)
     return a && b && !strcmp(a, b);
 }
 
+/* A selected table becomes a native chart: series and cached values, live
+ * rendering, multiple charts, delete/undo/redo, and both package formats. */
+static void test_chart_authoring(void)
+{
+    static const char *const xlsx = "build/host/calc-core-authored-chart.xlsx";
+    static const char *const ods = "build/host/calc-core-authored-chart.ods";
+    oc_chart_spec spec;
+    oc_core *core = fresh();
+    owf_chart c;
+    oc_draw_list l;
+    int before, after;
+    if (!core) return;
+    enter_at(core, "A1", "Region"); enter_at(core, "B1", "2025"); enter_at(core, "C1", "2026");
+    enter_at(core, "A2", "North"); enter_at(core, "B2", "10"); enter_at(core, "C2", "15");
+    enter_at(core, "A3", "South"); enter_at(core, "B3", "20"); enter_at(core, "C3", "25");
+    enter_at(core, "A4", "West"); enter_at(core, "B4", "30"); enter_at(core, "C4", "35");
+    go(core, "A1:C4");
+    memset(&spec, 0, sizeof spec);
+    spec.kind = OWF_CHART_COLUMN;
+    spec.grouping = OWF_CHART_CLUSTERED;
+    spec.first_row_labels = spec.first_col_categories = 1;
+    spec.title = "Annual sales";
+    spec.legend = spec.gridlines = 1;
+    CHECK(oc_core_add_chart(core, &spec) == OWF_OK && oc_core_selected_chart(core) == 0);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_COLUMN && c.nseries == 2 &&
+          same(c.title, "Annual sales") && c.legend == 'r' && c.gridlines &&
+          same(c.series[0].name_cell, "'Sheet1'!$B$1") &&
+          same(c.series[0].categories, "'Sheet1'!$A$2:$A$4") &&
+          same(c.series[0].values, "'Sheet1'!$B$2:$B$4") && c.series[0].npoints == 3 &&
+          c.series[0].points[2].has_value && c.series[0].points[2].value == 30 &&
+          same(c.series[0].points[1].label, "South"));
+    chart_free(&c);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    before = biggest(&l, 0x4472C4, 0);
+    enter_at(core, "B4", "60");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    after = biggest(&l, 0x4472C4, 0);
+    CHECK(before > 0 && after > before && find_text(&l, "Annual sales"));
+    oc_draw_list_free(&l);
+
+    spec.kind = OWF_CHART_LINE;
+    spec.title = "Trend";
+    CHECK(oc_core_add_chart(core, &spec) == OWF_OK && oc_core_selected_chart(core) == 1);
+    CHECK(charts_of(core, 0, &c) == 2 && c.kind == OWF_CHART_COLUMN);
+    chart_free(&c);
+    CHECK(oc_core_delete_chart(core, 0) == OWF_OK && oc_core_selected_chart(core) == -1);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && same(c.title, "Trend"));
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 2 && c.kind == OWF_CHART_COLUMN);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE);
+    chart_free(&c);
+
+    CHECK(oc_core_save(core, xlsx, "xlsx", NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2 &&
+          same(c.series[1].values, "'Sheet1'!$C$2:$C$4"));
+    chart_free(&c);
+    CHECK(oc_core_save(core, ods, "ods", NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2);
+    chart_free(&c);
+    remove(xlsx); remove(ods);
+
+    /* Scatter uses the first numeric column for X; pie uses the first value
+       column. A one-cell selection has no table. */
+    CHECK(oc_core_delete_chart(core, 0) == OWF_OK);
+    go(core, "A1:C4");
+    spec.kind = OWF_CHART_SCATTER;
+    spec.title = "Measurements";
+    CHECK(oc_core_add_chart(core, &spec) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.nseries == 1 &&
+          same(c.series[0].x_values, "'Sheet1'!$B$2:$B$4") &&
+          same(c.series[0].values, "'Sheet1'!$C$2:$C$4"));
+    chart_free(&c);
+    CHECK(oc_core_delete_chart(core, 0) == OWF_OK);
+    spec.kind = OWF_CHART_PIE;
+    spec.title = "Share";
+    CHECK(oc_core_add_chart(core, &spec) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_PIE && c.nseries == 1 &&
+          same(c.series[0].values, "'Sheet1'!$B$2:$B$4"));
+    chart_free(&c);
+    go(core, "A1");
+    CHECK(oc_core_add_chart(core, &spec) == OWF_ERR_UNSUPPORTED);
+
+    /* A non-chart drawing is preserved rather than destructively rewritten. */
+    CHECK(oc_core_set_book(core, NULL) == OWF_OK);
+    enter_at(core, "A1", "Name"); enter_at(core, "B1", "Value");
+    enter_at(core, "A2", "One"); enter_at(core, "B2", "1");
+    CHECK(owf_book_keep_part(oc_core_book(core), "xl/drawings/drawing1.xml",
+                             "application/vnd.openxmlformats-officedocument.drawing+xml",
+                             "<xdr:wsDr><xdr:twoCellAnchor><xdr:pic/></xdr:twoCellAnchor></xdr:wsDr>",
+                             strlen("<xdr:wsDr><xdr:twoCellAnchor><xdr:pic/></xdr:twoCellAnchor></xdr:wsDr>")) == 0);
+    oc_core_book(core)->sheets[0].drawing = dup_text("xl/drawings/drawing1.xml");
+    go(core, "A1:B2");
+    spec.kind = OWF_CHART_COLUMN;
+    CHECK(oc_core_add_chart(core, &spec) == OWF_ERR_UNSUPPORTED &&
+          same(oc_core_book(core)->sheets[0].drawing, "xl/drawings/drawing1.xml"));
+    oc_core_free(core);
+}
+
 /* Charts follow the sheet as Excel's do: rows and columns in and out move their anchors and the cells their
  * series name, a sheet renamed is renamed in them, cells cut and pasted take their series with them, a chart
  * whose rows all go goes; undo puts all back, and saving keeps it. */
@@ -4160,6 +4262,7 @@ int main(void)
     test_row_styles();
     test_charts();
     test_chart_refs();
+    test_chart_authoring();
     test_anchor_kinds();
     test_chart_move();
     test_row_numbers();

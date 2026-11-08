@@ -265,7 +265,14 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.43 can deep-copy
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.44 can turn a
+selected table into a column, bar, line, area, pie or scatter chart from its
+native Insert menu. The reusable core builds series/category references and
+cached values, supports clustered, stacked and percent grouping, keeps charts
+live as cells change, and creates/deletes them as undoable whole-workbook
+steps. Authored charts can be selected, dragged, printed and saved through
+XLSX and ODS. Drawings containing pictures or shapes are refused rather than
+destructively rewritten. It can also deep-copy
 a sheet's cells, formats, comments, rules, filters, local names, cursor and
 supported charts, with independent chart package parts supplied by reusable
 `owfcalc.library` 3.4. Duplication is undoable and round-trips through XLSX/ODS;
