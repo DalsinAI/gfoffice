@@ -288,12 +288,26 @@ static void structural_slides(void)
           "empty and out-of-slide object boxes are refused");
 
     {
-        owf_obj *shape = owf_slide_add(&d->slides[1], OWF_OBJ_SHAPE);
-        CHECK(shape != NULL, "add a shape for rotation editing");
-        if (shape) {
-            shape_obj = d->slides[1].nobjs - 1;
-            shape->shape = OWF_SHAPE_RECT;
-            shape->x = 4000; shape->y = 3000; shape->width = 2400; shape->height = 1200;
+        opr_shape_spec spec;
+        int before = d->slides[1].nobjs;
+        memset(&spec, 0, sizeof spec);
+        spec.shape = OWF_SHAPE_ROUNDRECT;
+        spec.x = 4000; spec.y = 3000; spec.width = 2400; spec.height = 1200;
+        spec.radius = 200;
+        spec.look.fill = OWF_SHADE(0x729fcf);
+        spec.look.line = OWF_SHADE(0x203040);
+        spec.look.line_width = 20;
+        CHECK(!opr_obj_insert_shape(u, d, 1, &spec, &shape_obj) && shape_obj == before &&
+              d->slides[1].nobjs == before + 1 && d->slides[1].objs[shape_obj].shape == OWF_SHAPE_ROUNDRECT &&
+              d->slides[1].objs[shape_obj].radius == 200,
+              "insert and select a styled shape");
+        CHECK(!opr_undo_undo(u, d, &slide, &obj) && d->slides[1].nobjs == before && obj == -1,
+              "undo shape insertion");
+        CHECK(!opr_undo_redo(u, d, &slide, &obj) && d->slides[1].nobjs == before + 1 &&
+              obj == shape_obj && d->slides[1].objs[shape_obj].look.fill == spec.look.fill,
+              "redo shape insertion with its style");
+        if (shape_obj >= 0) {
+            owf_obj *shape = &d->slides[1].objs[shape_obj];
             CHECK(!opr_obj_set_rotation(u, d, 1, shape_obj, 150) && shape->rotation == 150,
                   "rotate a shape anticlockwise");
             CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 1 && obj == shape_obj &&
@@ -302,10 +316,24 @@ static void structural_slides(void)
                   shape->rotation == 150, "redo shape rotation");
             CHECK(!opr_obj_set_rotation(u, d, 1, shape_obj, -150) && shape->rotation == 3450,
                   "normalize a clockwise shape rotation");
+            CHECK(!opr_obj_delete(u, d, 1, shape_obj) && d->slides[1].nobjs == before,
+                  "delete a shape as one edit");
+            CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == shape_obj &&
+                  d->slides[1].nobjs == before + 1 && d->slides[1].objs[shape_obj].rotation == 3450,
+                  "undo restores the complete deleted shape");
         }
     }
     CHECK(opr_obj_set_rotation(u, d, 1, 0, 150) == -2,
           "refuse rotation for a non-shape object");
+    CHECK(opr_obj_delete(u, d, 1, -1) == -1, "refuse deletion of a missing object");
+    {
+        int before = d->slides[0].nobjs;
+        CHECK(!opr_obj_delete(u, d, 0, 0) && d->slides[0].nobjs == before - 1,
+              "delete an object that owns text");
+        CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 0 && obj == 0 &&
+              d->slides[0].nobjs == before && !strcmp(text(d, 0, 0), "Opening title"),
+              "undo restores an object's owned text");
+    }
 
     memset(&transition, 0, sizeof transition);
     transition.kind = OWF_TRANS_WIPE;

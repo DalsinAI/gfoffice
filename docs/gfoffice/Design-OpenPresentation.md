@@ -432,6 +432,13 @@ normalized shape operations. The Amiga screen and PDF renderer now consume the
 same geometry, fill, stroke, dash and arrow metadata; GFOpenPublisher inherits
 that path without a Publisher-specific drawing implementation.
 
+GFOpenPresentation 0.3.8 adds the first authored drawing-object lifecycle:
+the Insert menu creates any supported primitive shape in the reusable editor
+core, selects it for the existing move/resize/rotation tools, and Object >
+Delete removes an ungrouped object. Insertion and deletion are ownership-safe
+undo steps; undoing a deletion restores the complete object, and ODP round-trip
+tests cover the authored shape.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

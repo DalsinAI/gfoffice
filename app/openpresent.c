@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.1.2 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.1.3 (8.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.3.7 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.3.8 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -109,7 +109,9 @@ enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
-    M_ROTATE_LEFT, M_ROTATE_RIGHT,
+    M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
+    M_INSERT_DIAMOND, M_INSERT_ARROW, M_INSERT_LINE,
+    M_ROTATE_LEFT, M_ROTATE_RIGHT, M_DELETE_OBJECT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
@@ -136,9 +138,20 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
 
+    { NM_TITLE, "Insert", NULL, 0, 0, NULL },
+    { NM_ITEM, "Rectangle", NULL, 0, 0, (APTR)M_INSERT_RECT },
+    { NM_ITEM, "Rounded Rectangle", NULL, 0, 0, (APTR)M_INSERT_ROUNDRECT },
+    { NM_ITEM, "Ellipse", NULL, 0, 0, (APTR)M_INSERT_ELLIPSE },
+    { NM_ITEM, "Triangle", NULL, 0, 0, (APTR)M_INSERT_TRIANGLE },
+    { NM_ITEM, "Diamond", NULL, 0, 0, (APTR)M_INSERT_DIAMOND },
+    { NM_ITEM, "Right Arrow", NULL, 0, 0, (APTR)M_INSERT_ARROW },
+    { NM_ITEM, "Line", NULL, 0, 0, (APTR)M_INSERT_LINE },
+
     { NM_TITLE, "Object", NULL, 0, 0, NULL },
     { NM_ITEM, "Rotate Left 15 Degrees", NULL, 0, 0, (APTR)M_ROTATE_LEFT },
     { NM_ITEM, "Rotate Right 15 Degrees", NULL, 0, 0, (APTR)M_ROTATE_RIGHT },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_DELETE_OBJECT },
 
     { NM_TITLE, UNIT, NULL, 0, 0, NULL },
     { NM_ITEM, "New " UNIT, "M", 0, 0, (APTR)M_NEW_SLIDE },
@@ -2681,6 +2694,66 @@ static void rotate_selected(int delta_tenths)
     draw_status();
 }
 
+static void insert_shape(owf_shape kind)
+{
+    opr_shape_spec spec;
+    int selected = -1;
+    if (!deck || current < 0 || current >= deck->nslides)
+        return;
+    memset(&spec, 0, sizeof spec);
+    spec.shape = kind;
+    spec.width = deck->width / 3;
+    spec.height = kind == OWF_SHAPE_LINE ? deck->height / 5 : deck->height / 3;
+    spec.x = (deck->width - spec.width) / 2;
+    spec.y = (deck->height - spec.height) / 2;
+    spec.look.fill = kind == OWF_SHAPE_LINE ? 0 : OWF_SHADE(0x729fcf);
+    spec.look.line = OWF_SHADE(0x203040);
+    spec.look.line_width = 20;
+    if (kind == OWF_SHAPE_ROUNDRECT)
+        spec.radius = (spec.width < spec.height ? spec.width : spec.height) / 6;
+    if (opr_obj_insert_shape(undo, deck, current, &spec, &selected) < 0) {
+        set_status("The shape could not be inserted.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    selected_obj = selected;
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Shape inserted; drag it or use Object to rotate it.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
+static void delete_selected_object(void)
+{
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select an object to delete.");
+        draw_status();
+        return;
+    }
+    if (opr_obj_delete(undo, deck, current, selected_obj) < 0) {
+        set_status("That grouped object cannot be deleted yet.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    selected_obj = -1;
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Object deleted.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static void do_undo(int redo)
 {
     int slide = -1, obj = -1;
@@ -3035,8 +3108,16 @@ static void menu_action(ULONG id)
         stop_typing();
         draw_slide();
         break;
+    case M_INSERT_RECT: insert_shape(OWF_SHAPE_RECT); break;
+    case M_INSERT_ROUNDRECT: insert_shape(OWF_SHAPE_ROUNDRECT); break;
+    case M_INSERT_ELLIPSE: insert_shape(OWF_SHAPE_ELLIPSE); break;
+    case M_INSERT_TRIANGLE: insert_shape(OWF_SHAPE_TRIANGLE); break;
+    case M_INSERT_DIAMOND: insert_shape(OWF_SHAPE_DIAMOND); break;
+    case M_INSERT_ARROW: insert_shape(OWF_SHAPE_ARROW); break;
+    case M_INSERT_LINE: insert_shape(OWF_SHAPE_LINE); break;
     case M_ROTATE_LEFT: rotate_selected(150); break;
     case M_ROTATE_RIGHT: rotate_selected(-150); break;
+    case M_DELETE_OBJECT: delete_selected_object(); break;
     case M_NEW_SLIDE: new_slide(); break;
     case M_DUPLICATE_SLIDE: duplicate_current_slide(); break;
     case M_RENAME_SLIDE: rename_current_slide(); break;
@@ -3191,7 +3272,8 @@ static void events(void)
                 break;
             }
             if (edit_obj < 0) {
-                if (code == ' ') show_slide(current + 1);
+                if (code == 127 && selected_obj >= 0) delete_selected_object();
+                else if (code == ' ') show_slide(current + 1);
                 else if (code == 8) show_slide(current - 1);
                 else if (code == '+' || code == '=') zoom_step(1);
                 else if (code == '-') zoom_step(-1);

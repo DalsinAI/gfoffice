@@ -97,12 +97,12 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Rectangle, square, rounded rectangle | P1 | Yes |
-| Ellipse, circle | P1 | Yes |
+| Rectangle, square, rounded rectangle | P1 | Yes; rectangle and rounded rectangle can also be inserted and deleted with undo/redo in 0.3.8 |
+| Ellipse, circle | P1 | Yes; ellipse can also be inserted and deleted with undo/redo in 0.3.8 |
 | Arcs, segments, sections of circles | Later | Kept |
 | Lines, with arrowheads | P1 | Yes |
-| Basic shapes: triangle, diamond | P1 | Yes |
-| Block arrows: right and left | P1 | Yes |
+| Basic shapes: triangle, diamond | P1 | Yes; both can also be inserted and deleted with undo/redo in 0.3.8 |
+| Block arrows: right and left | P1 | Yes; a right arrow can also be inserted and deleted with undo/redo in 0.3.8 |
 | Other basic shapes, symbol shapes, block arrows, flowchart, callouts, stars and banners | Later | Kept (drawn as their box with their fill) |
 | Polygons | P1 | Yes |
 | Polylines, curves, freeform lines | Later | Kept |
@@ -161,7 +161,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Notes view, notes pages printed | P3, P4 | No |
 | Handouts: 1, 2, 3, 4, 6 or 9 slides a page | P4 (P1 design asks for them) | No |
 | Outline view | P4 | No |
-| Print slides, notes, handouts, outline (through GFOpenPrint) | P2 (slides), P4 | No (PDF export only). P2: slides, through GFOpenPrint (GFOpenPresentation 0.2) |
+| Print slides, notes, handouts, outline (through GFOpenPrint) | P2 (slides), P4 | Slides: Yes, through GFOpenPrint; notes, handouts and outline: No |
 
 ## 10. Slide show
 
@@ -204,7 +204,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Master view | P4 | No |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
-| Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object position/size: Yes (`opr_edit.c`); other object edits: No |
+| Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/deletion/position/size/shape rotation: Yes (`opr_edit.c`); other object edits: No |
 | Clipboard: objects and slides | P3 (Shared E10) | No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
 | ARexx port `GFOPENPRESENTATION` | P4 | No |

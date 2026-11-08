@@ -18,12 +18,14 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.1.0 is the first P1a application. Its portable core turns
+GFOpenPublisher 0.1.3 is the current P1a application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
 pictures through GFOpenLayout, exports PDF, prints through GFOpenPrint and can
-save the imported page model as ODP. Publisher formatting, linked text frames,
+save the imported page model as ODP. It inherits undoable shape insertion,
+selection, movement, resizing, rotation and deletion from the shared
+Presentation editor. Publisher formatting, linked text frames,
 columns, wrap, shape appearance and WMF/EMF playback remain later P1 work.
 
 # GFOpenWrite

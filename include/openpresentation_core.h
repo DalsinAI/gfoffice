@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.3.7"
+#define OPR_CORE_VERSION "0.3.8"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -153,6 +153,21 @@ int opr_slide_set_hidden(opr_undo *u, owf_deck *deck, int index, int hidden, int
  * invalid transition data. */
 int opr_slide_set_transition(opr_undo *u, owf_deck *deck, int index, const owf_transition *transition,
                              int apply_all, int *selected);
+/* A new shape's complete reusable specification. Coordinates and radius are
+ * slide twips; look carries fill, stroke, dash and arrow style. */
+typedef struct {
+    owf_shape shape;
+    int x, y, width, height;
+    int radius;
+    owf_look look;
+} opr_shape_spec;
+/* Append a shape to a slide and select it, as one undo step. -2 means an
+ * unsupported kind or invalid box; -1 means bad input or no memory. */
+int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
+                         const opr_shape_spec *spec, int *selected);
+/* Delete one ungrouped object, as one undo step. Undo restores all data owned
+ * by the object. A group or an object with children returns -2. */
+int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj);
 /* Give one slide object an explicit box in slide twips, as one undo step.
  * Moving an inherited placeholder clears OWF_OBJ_INHERIT_BOX; undo restores
  * both its former coordinates and inheritance. -2 means an empty or out-of-
