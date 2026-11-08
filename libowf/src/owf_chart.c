@@ -296,7 +296,7 @@ static void read_labels(owf_chart_series *s, const owf_xml_node *d, int *failed)
 
 static int read_series(owf_chart_series *s, const owf_xml_node *ser, int kind, int number, int *failed)
 {
-    const owf_xml_node *f, *cat_cache, *val_cache, *name_cache, *p, *m, *ln;
+    const owf_xml_node *f, *cat_cache, *val_cache, *name_cache, *p, *m, *ln, *trend;
     char buf[256];
     int n, scatter = kind == OWF_CHART_SCATTER;
     long most = -1;
@@ -347,6 +347,21 @@ static int read_series(owf_chart_series *s, const owf_xml_node *ser, int kind, i
             s->format = dup_str(buf, failed);
     }
     read_labels(s, child(ser, ns_c, "dLbls"), failed);
+    trend = child(ser, ns_c, "trendline");
+    if (trend) {
+        static const char *const types[] = { "", "linear", "exp", "log", "poly", "power", "movingAvg" };
+        const char *type = val(child(trend, ns_c, "trendlineType"));
+        size_t i;
+        for (i = 1; type && i < sizeof types / sizeof *types; i++)
+            if (!strcmp(type, types[i])) { s->trendline = (int)i; break; }
+        s->trend_order = (int)attr_long(child(trend, ns_c, "order"), "val", 2);
+        if (s->trend_order < 2 || s->trend_order > 6) s->trend_order = 2;
+        s->trend_period = (int)attr_long(child(trend, ns_c, "period"), "val", 2);
+        if (s->trend_period < 2 || s->trend_period > MAX_POINTS) s->trend_period = 2;
+        s->trend_display_equation = flag_set(trend, "dispEq");
+        s->trend_display_r2 = flag_set(trend, "dispRSqr");
+        s->trend_colour = colour_in(child(child(child(trend, ns_c, "spPr"), ns_a, "ln"), ns_a, "solidFill"));
+    }
     n = point_count(val_cache);
     if (point_count(cat_cache) > n)
         n = point_count(cat_cache);
@@ -853,6 +868,23 @@ static void put_series(owf_buf *b, const owf_chart *c, const owf_chart_series *s
             owf_buf_puts(b, "</c:spPr></c:dPt>");
         }
     put_labels(b, s);
+    if (s->trendline > OWF_TREND_NONE && s->trendline <= OWF_TREND_MOVING_AVERAGE) {
+        static const char *const types[] = { "", "linear", "exp", "log", "poly", "power", "movingAvg" };
+        owf_buf_puts(b, "<c:trendline>");
+        if (s->trend_colour) {
+            owf_buf_puts(b, "<c:spPr><a:ln>");
+            put_rgb(b, s->trend_colour);
+            owf_buf_puts(b, "</a:ln></c:spPr>");
+        }
+        owf_buf_printf(b, "<c:trendlineType val=\"%s\"/>", types[s->trendline]);
+        if (s->trendline == OWF_TREND_POLYNOMIAL)
+            owf_buf_printf(b, "<c:order val=\"%d\"/>", s->trend_order >= 2 && s->trend_order <= 6 ? s->trend_order : 2);
+        if (s->trendline == OWF_TREND_MOVING_AVERAGE)
+            owf_buf_printf(b, "<c:period val=\"%d\"/>", s->trend_period >= 2 ? s->trend_period : 2);
+        if (s->trend_display_r2) owf_buf_puts(b, "<c:dispRSqr val=\"1\"/>");
+        if (s->trend_display_equation) owf_buf_puts(b, "<c:dispEq val=\"1\"/>");
+        owf_buf_puts(b, "</c:trendline>");
+    }
     if (c->kind == OWF_CHART_SCATTER) {
         put_source(b, "xVal", s->x_values, s, 3, NULL);
         put_source(b, "yVal", s->values, s, 2, s->format);

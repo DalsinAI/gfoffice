@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.19.0"
+#define OC_CORE_VERSION "0.20.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -698,6 +698,8 @@ int oc_core_delete_chart(oc_core *core, int index); /* -1: selected */
  * and copied number format (NULL/empty: the values' own format).
  * Plot options set a column/bar gap percentage, or a pie/doughnut starting
  * angle, hole percentage and whether points vary in colour.
+ * Trendline selects a zero-based series, OWF_TREND_... kind, polynomial
+ * order, moving-average period, equation/R-squared flags and colour.
  * A set minimum must be less than a set maximum. */
 enum {
     OC_CHART_SET_KIND = 1u << 0,
@@ -714,7 +716,8 @@ enum {
     OC_CHART_SET_POINT_COLOUR = 1u << 11,
     OC_CHART_SET_AXIS_FORMATS = 1u << 12,
     OC_CHART_SET_SERIES_LABELS = 1u << 13,
-    OC_CHART_SET_PLOT_OPTIONS = 1u << 14
+    OC_CHART_SET_PLOT_OPTIONS = 1u << 14,
+    OC_CHART_SET_TRENDLINE = 1u << 15
 };
 typedef struct {
     unsigned set;
@@ -741,6 +744,9 @@ typedef struct {
     const char *x_format;            /* scatter X axis, or NULL/empty: linked */
     const char *label_format;        /* selected series, or NULL/empty: linked */
     int gap, first_angle, hole, vary;
+    int trendline, trend_order, trend_period;
+    int trend_display_equation, trend_display_r2;
+    unsigned long trend_colour;
 } oc_chart_edit_spec;
 int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spec); /* -1: selected */
 

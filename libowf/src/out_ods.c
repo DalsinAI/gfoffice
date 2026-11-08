@@ -1513,6 +1513,16 @@ static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double wid
     for (i = 0; i < c->nseries; i++) {
         const owf_chart_series *se = &c->series[i];
         int lines = c->kind == OWF_CHART_LINE || scatter;
+        if (se->trendline > OWF_TREND_NONE && se->trendline <= OWF_TREND_MOVING_AVERAGE) {
+            static const char *const regression[] = { "", "linear", "exponential", "logarithmic", "polynomial",
+                                                       "power", "moving-average" };
+            owf_buf_printf(b, "<style:style style:name=\"tr%d\" style:family=\"chart\"><style:chart-properties "
+                              "chart:regression-type=\"%s\"/>", i, regression[se->trendline]);
+            if (se->trend_colour)
+                owf_buf_printf(b, "<style:graphic-properties draw:stroke=\"solid\" svg:stroke-color=\"#%06lx\"/>",
+                               se->trend_colour & 0xFFFFFFUL);
+            owf_buf_puts(b, "</style:style>");
+        }
         owf_buf_printf(b, "<style:style style:name=\"s%d\" style:family=\"chart\"", i);
         if (se->label_format)
             owf_buf_printf(b, " style:data-style-name=\"Ns%d\"><style:chart-properties chart:link-data-style-to-source=\"false\"", i);
@@ -1664,6 +1674,11 @@ static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double wid
             owf_buf_puts(b, "<chart:domain");
             put_range_attr(w, b, "table:cell-range-address", se->x_values);
             owf_buf_puts(b, "/>");
+        }
+        if (se->trendline > OWF_TREND_NONE && se->trendline <= OWF_TREND_MOVING_AVERAGE) {
+            owf_buf_printf(b, "<chart:regression-curve chart:style-name=\"tr%d\" gfocalc:order=\"%d\" "
+                              "gfocalc:period=\"%d\" gfocalc:display-equation=\"%d\" gfocalc:display-r2=\"%d\"/>",
+                           i, se->trend_order, se->trend_period, !!se->trend_display_equation, !!se->trend_display_r2);
         }
         for (k = 0; k < se->npoints; k++) {          /* a point of its own colour has a style; the rest as runs */
             if (!OWF_SHADE_SET(se->points[k].colour)) {

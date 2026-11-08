@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.54 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.55 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -95,7 +95,7 @@ enum {
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
     M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE, M_CHART_POINT_COLOUR, M_CHART_AXIS_FORMATS,
-    M_CHART_SERIES_LABELS, M_CHART_PLOT_OPTIONS,
+    M_CHART_SERIES_LABELS, M_CHART_PLOT_OPTIONS, M_CHART_TRENDLINE,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -219,6 +219,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Chart Axis Number Formats...", NULL, 0, 0, (APTR)M_CHART_AXIS_FORMATS },
     { NM_ITEM, "Chart Series Data Labels...", NULL, 0, 0, (APTR)M_CHART_SERIES_LABELS },
     { NM_ITEM, "Chart Plot Options...", NULL, 0, 0, (APTR)M_CHART_PLOT_OPTIONS },
+    { NM_ITEM, "Chart Series Trendline...", NULL, 0, 0, (APTR)M_CHART_TRENDLINE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3562,6 +3563,94 @@ static void do_chart_plot_options(void)
     result(oc_core_update_chart(core, index, &edit), "Chart plot options changed.");
 }
 
+static void do_chart_trendline(void)
+{
+    static const char *const types[] = { "none", "linear", "exponential", "logarithmic", "polynomial", "power",
+                                         "moving-average" };
+    owf_chart *charts = NULL;
+    const owf_chart_series *series;
+    oc_chart_edit_spec edit;
+    char number[24] = "1", label[48], initial[192], entered[224], colour[32], *p, *token, *end;
+    long chosen, value;
+    int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, type;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Trendline."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL);
+        else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    if (charts[index].kind == OWF_CHART_PIE || !charts[index].nseries) {
+        owf_charts_free(charts, n);
+        set_status("Trendlines need a non-pie chart with at least one series.");
+        return;
+    }
+    snprintf(label, sizeof label, "Series number (1-%d)", charts[index].nseries);
+    if (!text_requester("Chart Series Trendline", label, number, number, sizeof number)) {
+        owf_charts_free(charts, n);
+        return;
+    }
+    chosen = strtol(trim_text(number), &end, 10);
+    if (*end || chosen < 1 || chosen > charts[index].nseries) {
+        owf_charts_free(charts, n);
+        set_status("Choose an existing series number.");
+        return;
+    }
+    series = &charts[index].series[chosen - 1];
+    type = series->trendline >= OWF_TREND_NONE && series->trendline <= OWF_TREND_MOVING_AVERAGE ?
+           series->trendline : OWF_TREND_NONE;
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_TRENDLINE;
+    edit.series = (int)chosen - 1;
+    edit.trendline = type;
+    edit.trend_order = series->trend_order >= 2 ? series->trend_order : 2;
+    edit.trend_period = series->trend_period >= 2 ? series->trend_period : 2;
+    edit.trend_display_equation = !!series->trend_display_equation;
+    edit.trend_display_r2 = !!series->trend_display_r2;
+    edit.trend_colour = series->trend_colour;
+    if (edit.trend_colour) snprintf(colour, sizeof colour, "#%06lx", OWF_SHADE_RGB(edit.trend_colour));
+    else strcpy(colour, "auto");
+    snprintf(initial, sizeof initial, "%s order=%d period=%d colour=%s %s %s", types[type], edit.trend_order,
+             edit.trend_period, colour,
+             edit.trend_display_equation ? "equation" : "noequation", edit.trend_display_r2 ? "r2" : "nor2");
+    owf_charts_free(charts, n);
+    if (!text_requester("Chart Series Trendline", "none/linear/... order=2-6 period=2+ colour=...",
+                        initial, entered, sizeof entered)) return;
+    p = trim_text(entered);
+    token = p;
+    while (*p && !isspace((unsigned char)*p)) p++;
+    if (*p) *p++ = 0;
+    for (type = OWF_TREND_NONE; type <= OWF_TREND_MOVING_AVERAGE; type++)
+        if (!strcasecmp(token, types[type])) { edit.trendline = type; break; }
+    if (type > OWF_TREND_MOVING_AVERAGE) bad = 1;
+    p = trim_text(p);
+    while (*p && !bad) {
+        token = p;
+        while (*p && !isspace((unsigned char)*p)) p++;
+        if (*p) *p++ = 0;
+        p = trim_text(p);
+        if (!strncasecmp(token, "order=", 6)) {
+            value = strtol(token + 6, &end, 10);
+            if (*end || value < 2 || value > 6) bad = 1; else edit.trend_order = (int)value;
+        } else if (!strncasecmp(token, "period=", 7)) {
+            value = strtol(token + 7, &end, 10);
+            if (*end || value < 2 || value > 4096) bad = 1; else edit.trend_period = (int)value;
+        } else if (!strncasecmp(token, "colour=", 7))
+            bad = !chart_series_colour(token + 7, &edit.trend_colour);
+        else if (!strcasecmp(token, "equation")) edit.trend_display_equation = 1;
+        else if (!strcasecmp(token, "noequation")) edit.trend_display_equation = 0;
+        else if (!strcasecmp(token, "r2")) edit.trend_display_r2 = 1;
+        else if (!strcasecmp(token, "nor2")) edit.trend_display_r2 = 0;
+        else bad = 1;
+    }
+    if (bad) {
+        set_status("Use a trend type, order=2-6, period=2+, colour=auto/#RRGGBB, equation/noequation and r2/nor2.");
+        return;
+    }
+    result(oc_core_update_chart(core, index, &edit), "Chart series trendline changed.");
+}
+
 static void do_chart_data(void)
 {
     oc_chart_data_spec spec;
@@ -3679,6 +3768,7 @@ static void menu_action(ULONG id)
     case M_CHART_AXIS_FORMATS: do_chart_axis_formats(); break;
     case M_CHART_SERIES_LABELS: do_chart_series_labels(); break;
     case M_CHART_PLOT_OPTIONS: do_chart_plot_options(); break;
+    case M_CHART_TRENDLINE: do_chart_trendline(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");

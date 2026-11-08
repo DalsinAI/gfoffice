@@ -3379,6 +3379,25 @@ static void test_chart_authoring(void)
     CHECK(oc_core_redo(core) == OWF_OK);
 
     memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_TRENDLINE;
+    edit.series = 0;
+    edit.trendline = OWF_TREND_LINEAR;
+    edit.trend_order = edit.trend_period = 2;
+    edit.trend_display_equation = edit.trend_display_r2 = 1;
+    edit.trend_colour = OWF_SHADE(0x7030A0);
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[0].trendline == OWF_TREND_LINEAR && c.series[0].trend_display_equation &&
+          c.series[0].trend_display_r2 && c.series[0].trend_colour == OWF_SHADE(0x7030A0));
+    chart_free(&c);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_SEGMENT, 0x7030A0) >= 1);
+    oc_draw_list_free(&l);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[0].trendline == OWF_TREND_NONE);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+
+    memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_SERIES_STYLE;
     edit.series = 1;
     edit.series_colour = OWF_SHADE(0x00A050);
@@ -3471,6 +3490,15 @@ static void test_chart_authoring(void)
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
     edit.gap = 501;
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_TRENDLINE;
+    edit.series = 2;
+    edit.trendline = OWF_TREND_LINEAR;
+    edit.trend_order = edit.trend_period = 2;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
+    edit.series = 0;
+    edit.trend_colour = 0x7030A0;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
 
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_VALUE_AXIS;
@@ -3491,6 +3519,8 @@ static void test_chart_authoring(void)
           same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP") &&
           same(c.value_format, "$0.0") && !c.x_format &&
           c.series[0].labels == OWF_LABEL_VALUE && !c.series[0].label_format &&
+          c.series[0].trendline == OWF_TREND_LINEAR && c.series[0].trend_display_equation &&
+          c.series[0].trend_display_r2 && c.series[0].trend_colour == OWF_SHADE(0x7030A0) &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
           c.series[1].labels == (OWF_LABEL_CATEGORY | OWF_LABEL_VALUE) &&
@@ -3506,6 +3536,8 @@ static void test_chart_authoring(void)
           same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP") &&
           same(c.value_format, "$0.0") && !c.x_format &&
           c.series[0].labels == OWF_LABEL_VALUE && !c.series[0].label_format &&
+          c.series[0].trendline == OWF_TREND_LINEAR && c.series[0].trend_display_equation &&
+          c.series[0].trend_display_r2 && c.series[0].trend_colour == OWF_SHADE(0x7030A0) &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
           c.series[1].labels == (OWF_LABEL_CATEGORY | OWF_LABEL_VALUE) &&
@@ -3592,6 +3624,11 @@ static void test_chart_authoring(void)
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_AXIS_FORMATS;
     edit.value_format = "0.0";
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_ERR_UNSUPPORTED);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_TRENDLINE;
+    edit.trendline = OWF_TREND_LINEAR;
+    edit.trend_order = edit.trend_period = 2;
     CHECK(oc_core_update_chart(core, -1, &edit) == OWF_ERR_UNSUPPORTED);
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_SERIES_STYLE;

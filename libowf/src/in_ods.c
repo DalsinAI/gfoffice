@@ -3279,6 +3279,25 @@ static int read_odf_chart(ods *o, const owf_xml_node *root, owf_chart *c, int ho
                     se->label_pos = k;
         if (!chart_numfmt(o, styles, style, &se->label_format))
             return 0;
+        {
+            const owf_xml_node *reg = owf_xml_child(ser, NS_CHART, "regression-curve");
+            if (reg) {
+                static const char *const regression[] = { "", "linear", "exponential", "logarithmic", "polynomial",
+                                                           "power", "moving-average" };
+                const char *rstyle = owf_xml_attr(reg, NS_CHART, "style-name");
+                const owf_xml_node *rp = chart_props(styles, rstyle, "chart-properties");
+                const owf_xml_node *rg = chart_props(styles, rstyle, "graphic-properties");
+                const char *type = prop(rp, NS_CHART, "regression-type");
+                for (k = 1; type && k <= OWF_TREND_MOVING_AVERAGE; k++)
+                    if (!strcmp(type, regression[k])) { se->trendline = k; break; }
+                se->trend_order = (int)whole(owf_xml_attr(reg, ext, "order"), 2, 2, 6);
+                se->trend_period = (int)whole(owf_xml_attr(reg, ext, "period"), 2, 2, 4096);
+                se->trend_display_equation = !!whole(owf_xml_attr(reg, ext, "display-equation"), 0, 0, 1);
+                se->trend_display_r2 = !!whole(owf_xml_attr(reg, ext, "display-r2"), 0, 0, 1);
+                if (rg && owf_parse_colour(prop(rg, NS_SVG, "stroke-color"), &rgb))
+                    se->trend_colour = OWF_SHADE(rgb);
+            }
+        }
         if ((v = owf_xml_attr(ser, ext, "format")) != NULL && !(se->format = copy(o, v)))
             return 0;
         if ((v = owf_xml_attr(ser, ext, "name")) != NULL && !(se->name = copy(o, v)))

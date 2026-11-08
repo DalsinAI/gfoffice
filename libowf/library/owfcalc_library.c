@@ -1,5 +1,5 @@
 /*
- * owfcalc.library 3.6, GFOpenCalc's part of libowf: workbooks. The workbook
+ * owfcalc.library 3.7, GFOpenCalc's part of libowf: workbooks. The workbook
  * model, its formats (XLSX, ODS, XLS, CSV), charts, formula engine and shared
  * page PDF writer, with the library's own double arithmetic and maths.
  *
@@ -17,13 +17,14 @@
  * 3.4: owf_sheet_keep_charts, independent chart parts for sheet duplication.
  * 3.5: owf_calc_transform_chart, atomic chart movement and resizing.
  * 3.6: axis titles in the shared owf_chart model (GFOpenCalc 0.1.49).
+ * 3.7: trendlines in the shared owf_chart_series model (GFOpenCalc 0.1.55).
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfcalc.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 6
-#define OWF_LIB_VERS "3.6"
+#define OWF_LIB_REVISION 7
+#define OWF_LIB_VERS "3.7"
 #define OWF_LIB_DATE "8.11.2026"
 #define OWF_LIB_CALLS_H "owfcalc_calls.h"
 #include "owf_libbase.h"

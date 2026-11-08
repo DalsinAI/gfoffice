@@ -620,6 +620,9 @@ enum { OWF_LABEL_AUTO, OWF_LABEL_CENTRE, OWF_LABEL_INSIDE_END, OWF_LABEL_INSIDE_
 /* a point's marker: AUTO, the chart's own */
 enum { OWF_MARKER_AUTO, OWF_MARKER_NONE, OWF_MARKER_CIRCLE, OWF_MARKER_SQUARE, OWF_MARKER_DIAMOND, OWF_MARKER_TRIANGLE,
        OWF_MARKER_X, OWF_MARKER_STAR, OWF_MARKER_PLUS, OWF_MARKER_DASH, OWF_MARKER_DOT };
+/* a series' trendline; NONE or the OOXML/ODF regression kinds */
+enum { OWF_TREND_NONE, OWF_TREND_LINEAR, OWF_TREND_EXPONENTIAL, OWF_TREND_LOGARITHMIC, OWF_TREND_POLYNOMIAL,
+       OWF_TREND_POWER, OWF_TREND_MOVING_AVERAGE };
 typedef struct {
     double value;
     int has_value;               /* 0: none (a gap) */
@@ -644,6 +647,11 @@ typedef struct {
     int label_pos;               /* OWF_LABEL_AUTO... */
     char *label_format;          /* their number format, or NULL: the values' own */
     char *format;                /* the values' number format as the file last had them, or NULL */
+    int trendline;               /* OWF_TREND_... */
+    int trend_order;             /* polynomial: 2-6 */
+    int trend_period;            /* moving average: 2 or more */
+    int trend_display_equation, trend_display_r2;
+    unsigned long trend_colour;  /* OWF_SHADE(rgb), or 0: the series' colour */
 } owf_chart_series;
 typedef struct {
     int kind, grouping;          /* OWF_CHART_... */

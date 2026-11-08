@@ -265,7 +265,7 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.54 can turn a
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.55 can turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and
 cached values, supports clustered, stacked and percent grouping, keeps charts
@@ -289,7 +289,7 @@ applies those settings in the same one-step chart-edit transaction, preserving
 them through XLSX/ODS. Format > Chart Axis Titles adds, changes or clears the
 category/X and value/Y titles. Reusable core API 0.14.0 and the shared
 `owf_chart` model preserve those titles through native rendering, undo/redo,
-XLSX and ODS; the structure-size guard makes this `owfcalc.library` 3.6.
+XLSX and ODS; that structure change made `owfcalc.library` 3.6.
 Format > Chart Series Style selects a series and edits its automatic or RGB
 colour, plus line visibility, marker shape and marker size on line/scatter
 charts. Reusable core API 0.15.0 applies the complete style in one undoable
@@ -308,6 +308,11 @@ changing other series; native rendering, undo/redo and XLSX/ODS preserve it.
 Format > Chart Plot Options and reusable core API 0.19.0 edit column/bar gap
 width or pie/doughnut starting angle, hole size and varying slice colours in
 one undoable transaction, with native rendering and XLSX/ODS persistence.
+Format > Chart Series Trendline and reusable core API 0.20.0 add or remove a
+series trendline, including fit type, polynomial order, moving-average period,
+equation/R-squared flags and colour. Linear fits render natively; the expanded
+shared model round-trips all represented types through XLSX and ODS. This
+makes `owfcalc.library` 3.7.
 Drawings containing pictures or shapes are refused rather than
 destructively rewritten. It can also deep-copy
 a sheet's cells, formats, comments, rules, filters, local names, cursor and

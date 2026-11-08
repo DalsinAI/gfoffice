@@ -439,7 +439,7 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
                        OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS |
                        OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES | OC_CHART_SET_AXIS_TITLES |
                        OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR | OC_CHART_SET_AXIS_FORMATS |
-                       OC_CHART_SET_SERIES_LABELS | OC_CHART_SET_PLOT_OPTIONS)) ||
+                       OC_CHART_SET_SERIES_LABELS | OC_CHART_SET_PLOT_OPTIONS | OC_CHART_SET_TRENDLINE)) ||
         ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
         ((spec->set & OC_CHART_SET_GROUPING) &&
          (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
@@ -467,7 +467,13 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
           (spec->point_colour && !OWF_SHADE_SET(spec->point_colour)))) ||
         ((spec->set & OC_CHART_SET_PLOT_OPTIONS) &&
          (spec->gap < 0 || spec->gap > 500 || spec->first_angle < 0 || spec->first_angle > 359 ||
-          spec->hole < 0 || spec->hole > 90 || (spec->vary != 0 && spec->vary != 1))))
+          spec->hole < 0 || spec->hole > 90 || (spec->vary != 0 && spec->vary != 1))) ||
+        ((spec->set & OC_CHART_SET_TRENDLINE) &&
+         (spec->series < 0 || spec->trendline < OWF_TREND_NONE || spec->trendline > OWF_TREND_MOVING_AVERAGE ||
+          spec->trend_order < 2 || spec->trend_order > 6 || spec->trend_period < 2 || spec->trend_period > 4096 ||
+          (spec->trend_display_equation != 0 && spec->trend_display_equation != 1) ||
+          (spec->trend_display_r2 != 0 && spec->trend_display_r2 != 1) ||
+          (spec->trend_colour && !OWF_SHADE_SET(spec->trend_colour)))))
         return OWF_ERR_FORMAT;
     if (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core)))
         return OWF_ERR_UNSUPPORTED;
@@ -493,7 +499,8 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         return OWF_ERR_MEMORY;
     }
     chart = &charts[index];
-    if ((spec->set & (OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR | OC_CHART_SET_SERIES_LABELS)) &&
+    if ((spec->set & (OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR | OC_CHART_SET_SERIES_LABELS |
+                      OC_CHART_SET_TRENDLINE)) &&
         spec->series >= chart->nseries) {
         owf_charts_free(charts, n);
         owf_free(title);
@@ -513,6 +520,12 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_COLUMN &&
         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_BAR &&
         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_PIE) {
+        owf_charts_free(charts, n);
+        owf_free(title); owf_free(category_title); owf_free(value_title);
+        return OWF_ERR_UNSUPPORTED;
+    }
+    if ((spec->set & OC_CHART_SET_TRENDLINE) &&
+        ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) == OWF_CHART_PIE) {
         owf_charts_free(charts, n);
         owf_free(title); owf_free(category_title); owf_free(value_title);
         return OWF_ERR_UNSUPPORTED;
@@ -634,6 +647,15 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         owf_free(series->label_format);
         series->label_format = label_format;
         label_format = NULL;
+    }
+    if (spec->set & OC_CHART_SET_TRENDLINE) {
+        owf_chart_series *series = &chart->series[spec->series];
+        series->trendline = spec->trendline;
+        series->trend_order = spec->trend_order;
+        series->trend_period = spec->trend_period;
+        series->trend_display_equation = spec->trend_display_equation;
+        series->trend_display_r2 = spec->trend_display_r2;
+        series->trend_colour = spec->trend_colour;
     }
     if (spec->set & OC_CHART_SET_LABELS)
         for (i = 0; i < chart->nseries; i++) {
@@ -1256,6 +1278,26 @@ static void point_label(render *r, const char *s, int x, int y, int m, int pos)
     }
 }
 
+/* y = intercept + slope*x for a series' visible numeric points. Category
+ * charts use 1..n as x; scatters use their cached x values. */
+static int linear_trend(const chartdata *cd, int series, int scatter_values, double *intercept, double *slope)
+{
+    double sx = 0, sy = 0, sxx = 0, sxy = 0, den;
+    int k, n = 0;
+    for (k = 0; k < cd->n; k++) {
+        size_t at = (size_t)series * (size_t)cd->n + (size_t)k;
+        double x;
+        if (!cd->has[at]) continue;
+        x = scatter_values ? cd->x[at] : k + 1.0;
+        sx += x; sy += cd->v[at]; sxx += x * x; sxy += x * cd->v[at]; n++;
+    }
+    den = n * sxx - sx * sx;
+    if (n < 2 || fabs(den) < 1e-200) return 0;
+    *slope = (n * sxy - sx * sy) / den;
+    *intercept = (sy - *slope * sx) / n;
+    return 1;
+}
+
 /* ---- Columns, bars and lines over categories ---- */
 
 static int categories(render *r)
@@ -1494,6 +1536,27 @@ static int categories(render *r)
         free(sum);
         free(all);
     }
+    if (!percent)
+        for (s = 0; s < cd->ns; s++) {
+            const owf_chart_series *se = &ch->series[s];
+            double intercept, slope, v0, v1;
+            int x0, y0, x1, y1, width;
+            if (se->trendline != OWF_TREND_LINEAR || !linear_trend(cd, s, 0, &intercept, &slope)) continue;
+            v0 = intercept + slope;
+            v1 = intercept + slope * cd->n;
+            v0 = v0 < from ? from : v0 > to ? to : v0;
+            v1 = v1 < from ? from : v1 > to ? to : v1;
+            if (horizontal) {
+                x0 = POS(v0); y0 = ay1 - (int)floor(0.5 * sw + 0.5);
+                x1 = POS(v1); y1 = ay1 - (int)floor((cd->n - 0.5) * sw + 0.5);
+            } else {
+                x0 = ax0 + (int)floor(0.5 * sw + 0.5); y0 = POS(v0);
+                x1 = ax0 + (int)floor((cd->n - 0.5) * sw + 0.5); y1 = POS(v1);
+            }
+            width = 2 * core->zoom / 100;
+            g->line(g, x0, y0, x1, y1, width > 0 ? width : 1,
+                    se->trend_colour ? OWF_SHADE_RGB(se->trend_colour) : series_rgb(se));
+        }
     (void)across;
     return 1;
 }
@@ -1593,6 +1656,20 @@ static int scatter(render *r)
             marker(g, se->marker, ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5),
                    ay1 - (int)floor((yv - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5), px, point_rgb(ch, s, k));
         }
+    }
+    for (s = 0; s < cd->ns; s++) {
+        const owf_chart_series *se = &ch->series[s];
+        double intercept, slope, y0, y1;
+        int width;
+        if (se->trendline != OWF_TREND_LINEAR || !linear_trend(cd, s, 1, &intercept, &slope)) continue;
+        y0 = intercept + slope * xfrom;
+        y1 = intercept + slope * xto;
+        y0 = y0 < yfrom ? yfrom : y0 > yto ? yto : y0;
+        y1 = y1 < yfrom ? yfrom : y1 > yto ? yto : y1;
+        width = 2 * core->zoom / 100;
+        g->line(g, ax0, ay1 - (int)floor((y0 - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5),
+                ax1, ay1 - (int)floor((y1 - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5),
+                width > 0 ? width : 1, se->trend_colour ? OWF_SHADE_RGB(se->trend_colour) : series_rgb(se));
     }
     for (s = 0; s < cd->ns; s++) {               /* the labels over everything: a scatter's category is its x */
         const owf_chart_series *se = &ch->series[s];
