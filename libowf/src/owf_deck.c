@@ -256,9 +256,11 @@ fail:
     return -1;
 }
 
-static int obj_copy(owf_obj *to, const owf_obj *from)
+int owf_obj_copy(owf_obj *to, const owf_obj *from)
 {
     size_t n;
+    if (!to || !from || to == from)
+        return -1;
     *to = *from;
     /* File-local IDs must not occur twice after the duplicate is saved. */
     to->id = 0;
@@ -322,7 +324,7 @@ static int slide_copy(owf_slide *to, const owf_slide *from)
             goto fail;
         to->capobjs = from->nobjs;
         for (i = 0; i < from->nobjs; i++) {
-            if (obj_copy(&to->objs[i], &from->objs[i]) < 0)
+            if (owf_obj_copy(&to->objs[i], &from->objs[i]) < 0)
                 goto fail;
             to->nobjs = i + 1;
         }

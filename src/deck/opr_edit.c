@@ -1293,6 +1293,57 @@ int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
     return 0;
 }
 
+int opr_obj_duplicate(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      int offset_x, int offset_y, int *selected)
+{
+    snapshot s;
+    owf_obj copy, resolved, *source, *added;
+    int i, index;
+    long long x, y;
+    if (!u || !deck || slide < 0 || slide >= deck->nslides ||
+        !(source = object(deck, slide, obj)))
+        return -1;
+    if (source->kind == OWF_OBJ_GROUP || source->parent >= 0)
+        return -2;
+    for (i = obj + 1; i < deck->slides[slide].nobjs; i++)
+        if (deck->slides[slide].objs[i].parent == obj)
+            return -2;
+    if (owf_deck_resolve(deck, slide, obj, &resolved, NULL) < 0 ||
+        resolved.width < 1 || resolved.height < 1 ||
+        resolved.width > deck->width || resolved.height > deck->height)
+        return -2;
+    memset(&copy, 0, sizeof copy);
+    if (owf_obj_copy(&copy, source) < 0)
+        return -1;
+    x = (long long)resolved.x + offset_x;
+    y = (long long)resolved.y + offset_y;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if ((long)x + resolved.width > deck->width) x = deck->width - resolved.width;
+    if ((long)y + resolved.height > deck->height) y = deck->height - resolved.height;
+    copy.x = (int)x;
+    copy.y = (int)y;
+    copy.width = resolved.width;
+    copy.height = resolved.height;
+    copy.flags &= ~(unsigned)OWF_OBJ_INHERIT_BOX;
+    copy.parent = -1;
+    index = deck->slides[slide].nobjs;
+    added = owf_slide_add(&deck->slides[slide], copy.kind);
+    if (!added) {
+        owf_obj_clear(&copy);
+        return -1;
+    }
+    *added = copy;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_PRESENCE;
+    s.slide = slide;
+    s.obj = index;
+    s.focus = s.other_focus = slide;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
 int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj)
 {
     snapshot s;

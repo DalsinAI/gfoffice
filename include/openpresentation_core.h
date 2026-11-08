@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.3.8"
+#define OPR_CORE_VERSION "0.3.9"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -165,6 +165,11 @@ typedef struct {
  * unsupported kind or invalid box; -1 means bad input or no memory. */
 int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
                          const opr_shape_spec *spec, int *selected);
+/* Deep-copy one ungrouped object, offset its resolved box by the requested
+ * twips (clamped to the slide), append and select it as one undo step. Owned
+ * text, points, lists, table widths and metadata are independent. */
+int opr_obj_duplicate(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      int offset_x, int offset_y, int *selected);
 /* Delete one ungrouped object, as one undo step. Undo restores all data owned
  * by the object. A group or an object with children returns -2. */
 int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj);

@@ -270,6 +270,10 @@ owf_obj *owf_layout_add(owf_slide_layout *layout, owf_obj_kind kind);
 int owf_slide_delete(owf_slide *slide, int index);
 void owf_obj_init(owf_obj *obj, owf_obj_kind kind);
 void owf_obj_clear(owf_obj *obj);     /* frees what it holds; init again to reuse */
+/* Deep-copy one object into fresh storage. File-local IDs are cleared so a
+ * saved duplicate cannot reuse them. The destination must not own data yet;
+ * clear it first when reusing an object. */
+int owf_obj_copy(owf_obj *to, const owf_obj *from);
 void owf_textlevel_init(owf_textlevel *level);
 /* A paragraph's list level (0 for none), and setting it (grows levels). */
 int owf_obj_level(const owf_obj *obj, int para);

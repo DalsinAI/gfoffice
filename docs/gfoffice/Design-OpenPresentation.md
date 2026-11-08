@@ -439,6 +439,12 @@ Delete removes an ungrouped object. Insertion and deletion are ownership-safe
 undo steps; undoing a deletion restores the complete object, and ODP round-trip
 tests cover the authored shape.
 
+GFOpenPresentation 0.3.9 adds Object > Duplicate to that lifecycle. The
+portable libowf 1.4.2 model deep-copies every allocation owned by an object,
+clears file-local IDs, and the presentation core resolves inherited geometry,
+offsets and clamps the independent copy, selects it, and records the insertion
+as one undoable presence change. GFOpenPublisher 0.1.4 consumes the same path.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

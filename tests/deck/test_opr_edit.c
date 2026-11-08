@@ -179,7 +179,7 @@ static void structural_slides(void)
     owf_deck *back = NULL;
     owf_obj resolved;
     owf_transition transition;
-    int selected = -1, slide = -2, obj = -2, shape_obj = -1;
+    int selected = -1, slide = -2, obj = -2, shape_obj = -1, duplicate_obj = -1;
     int old_x, old_y, old_width, old_height;
     unsigned old_flags;
 
@@ -328,6 +328,31 @@ static void structural_slides(void)
     CHECK(opr_obj_delete(u, d, 1, -1) == -1, "refuse deletion of a missing object");
     {
         int before = d->slides[0].nobjs;
+        owf_obj resolved;
+        char *source_text;
+        CHECK(owf_deck_resolve(d, 0, 0, &resolved, NULL) >= 0,
+              "resolve an inherited object before duplicating it");
+        source_text = d->slides[0].objs[0].text.paras[0].runs[0].text;
+        CHECK(owf_obj_copy(NULL, &d->slides[0].objs[0]) < 0 &&
+              owf_obj_copy(&d->slides[0].objs[0], &d->slides[0].objs[0]) < 0,
+              "the reusable object copier refuses invalid destinations");
+        CHECK(!opr_obj_duplicate(u, d, 0, 0, 240, 240, &duplicate_obj) &&
+              duplicate_obj == before && d->slides[0].nobjs == before + 1 &&
+              !strcmp(text(d, 0, duplicate_obj), "Opening title") &&
+              d->slides[0].objs[duplicate_obj].text.paras[0].runs[0].text != source_text &&
+              d->slides[0].objs[duplicate_obj].id == 0 &&
+              !(d->slides[0].objs[duplicate_obj].flags & OWF_OBJ_INHERIT_BOX) &&
+              d->slides[0].objs[duplicate_obj].width == resolved.width,
+              "duplicate an object with independent owned text and a resolved box");
+        CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == -1 &&
+              d->slides[0].nobjs == before, "undo removes the object duplicate");
+        CHECK(!opr_undo_redo(u, d, &slide, &obj) && obj == duplicate_obj &&
+              d->slides[0].nobjs == before + 1 &&
+              !strcmp(text(d, 0, duplicate_obj), "Opening title"),
+              "redo restores the complete independent duplicate");
+    }
+    {
+        int before = d->slides[0].nobjs;
         CHECK(!opr_obj_delete(u, d, 0, 0) && d->slides[0].nobjs == before - 1,
               "delete an object that owns text");
         CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 0 && obj == 0 &&
@@ -396,6 +421,11 @@ static void structural_slides(void)
             CHECK(back->slides[1].objs[shape_obj].kind == OWF_OBJ_SHAPE &&
                   back->slides[1].objs[shape_obj].rotation == 3450,
                   "edited shape rotation survives the ODP round trip");
+        if (duplicate_obj >= 0)
+            CHECK(duplicate_obj < back->slides[0].nobjs &&
+                  !strcmp(text(back, 0, duplicate_obj), "Opening title") &&
+                  !(back->slides[0].objs[duplicate_obj].flags & OWF_OBJ_INHERIT_BOX),
+                  "the duplicated object survives the ODP round trip");
     }
 
     owf_deck_free(back);
