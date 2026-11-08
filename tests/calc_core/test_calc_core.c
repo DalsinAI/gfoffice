@@ -1201,6 +1201,83 @@ static void test_sheets(void)
     oc_core_free(core);
 }
 
+static void test_sheet_organisation(void)
+{
+    static const char *const xlsx = "build/host/calc-core-sheets.xlsx";
+    static const char *const ods = "build/host/calc-core-sheets.ods";
+    oc_core *core = fresh();
+    owf_book *book;
+    const owf_defname *name;
+    int i, local_scope = -2;
+    if (!core)
+        return;
+    CHECK(oc_core_rename_sheet(core, 0, "One") == OWF_OK);
+    enter_at(core, "A1", "1");
+    CHECK(oc_core_add_sheet(core, "Two") == 1);
+    enter_at(core, "A1", "=One!A1+1");
+    go(core, "B2");
+    CHECK(oc_core_define_selection(core, "LocalPoint", 1) == OWF_OK);
+    CHECK(oc_core_add_sheet(core, "Three") == 2);
+    enter_at(core, "A1", "3");
+    go(core, "C3");
+    CHECK(oc_core_define_selection(core, "ThreePoint", -1) == OWF_OK);
+
+    CHECK(oc_core_move_sheet(core, 2, 0) == OWF_OK);
+    book = oc_core_book(core);
+    CHECK(!strcmp(book->sheets[0].name, "Three") && !strcmp(book->sheets[1].name, "One") &&
+          !strcmp(book->sheets[2].name, "Two"));
+    CHECK(oc_core_sheet(core) == 0 && !strcmp(active_name(core), "C3"));
+    CHECK(oc_core_goto(core, "ThreePoint") == OWF_OK && oc_core_sheet(core) == 0 && !strcmp(active_name(core), "C3"));
+    CHECK(oc_core_set_sheet(core, 2) == OWF_OK && num(core, "A1") == 2);
+    CHECK(oc_core_goto(core, "LocalPoint") == OWF_OK && !strcmp(active_name(core), "B2"));
+
+    CHECK(oc_core_move_sheet(core, 2, 1) == OWF_OK);
+    book = oc_core_book(core);
+    CHECK(!strcmp(book->sheets[0].name, "Three") && !strcmp(book->sheets[1].name, "Two") &&
+          !strcmp(book->sheets[2].name, "One") && oc_core_sheet(core) == 1);
+    for (i = 0; i < book->nnames; i++)
+        if (!strcmp(book->names[i].name, "LocalPoint")) local_scope = book->names[i].sheet;
+    CHECK(local_scope == 1);
+    CHECK(oc_core_undo(core) == OWF_OK && !strcmp(oc_core_book(core)->sheets[1].name, "One") &&
+          oc_core_sheet(core) == 2);
+    CHECK(oc_core_redo(core) == OWF_OK && !strcmp(oc_core_book(core)->sheets[1].name, "Two") &&
+          oc_core_sheet(core) == 1);
+
+    CHECK(oc_core_set_sheet_hidden(core, 1, 1) == OWF_OK);
+    book = oc_core_book(core);
+    CHECK(book->sheets[1].hidden && oc_core_sheet(core) == 2);
+    CHECK(oc_core_undo(core) == OWF_OK && !oc_core_book(core)->sheets[1].hidden && oc_core_sheet(core) == 1);
+    CHECK(oc_core_redo(core) == OWF_OK && oc_core_book(core)->sheets[1].hidden && oc_core_sheet(core) == 2);
+    CHECK(oc_core_set_sheet_hidden(core, 1, 0) == OWF_OK);
+    CHECK(oc_core_set_sheet_hidden(core, 0, 1) == OWF_OK);
+    CHECK(oc_core_set_sheet_hidden(core, 1, 1) == OWF_OK);
+    CHECK(oc_core_set_sheet_hidden(core, 2, 1) == OWF_ERR_UNSUPPORTED); /* keep one visible */
+    CHECK(oc_core_set_sheet_hidden(core, 0, 0) == OWF_OK);
+
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    book = oc_core_book(core);
+    CHECK(book->nsheets == 3 && !strcmp(book->sheets[0].name, "Three") &&
+          !strcmp(book->sheets[1].name, "Two") && !strcmp(book->sheets[2].name, "One") &&
+          book->sheets[1].hidden);
+    local_scope = -2;
+    for (i = 0; i < oc_core_name_count(core); i++) {
+        name = oc_core_name_at(core, i);
+        if (name && !strcmp(name->name, "LocalPoint")) local_scope = name->sheet;
+    }
+    CHECK(local_scope == 1);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    book = oc_core_book(core);
+    CHECK(book->nsheets == 3 && !strcmp(book->sheets[0].name, "Three") &&
+          !strcmp(book->sheets[1].name, "Two") && !strcmp(book->sheets[2].name, "One") &&
+          book->sheets[1].hidden);
+    CHECK(oc_core_move_sheet(core, -1, 0) == OWF_ERR_FORMAT);
+    CHECK(oc_core_move_sheet(core, 0, 99) == OWF_ERR_FORMAT);
+    CHECK(oc_core_set_sheet_hidden(core, 99, 1) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 /* ---- The draw list ---- */
 
 static int count_kind(const oc_draw_list *l, int kind, int role)
@@ -4018,6 +4095,7 @@ int main(void)
     test_clear_and_styles();
     test_clipboard();
     test_sheets();
+    test_sheet_organisation();
     test_draw();
     test_borders();
     test_condfmt();

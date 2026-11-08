@@ -470,6 +470,105 @@ int oc_core_delete_sheet(oc_core *core, int sheet)
     return OWF_OK;
 }
 
+static int moved_sheet_index(int index, int from, int to)
+{
+    if (index == from)
+        return to;
+    if (from < to && index > from && index <= to)
+        return index - 1;
+    if (to < from && index >= to && index < from)
+        return index + 1;
+    return index;
+}
+
+int oc_core_move_sheet(oc_core *core, int sheet, int to)
+{
+    owf_book *book;
+    owf_sheet moved;
+    oc_sheetstate state;
+    oc_undo *undo;
+    int i, rc;
+    if (!core || sheet < 0 || to < 0 || sheet >= core->book->nsheets || to >= core->book->nsheets)
+        return OWF_ERR_FORMAT;
+    if (sheet == to)
+        return OWF_OK;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+        oc_undo_free(undo);
+        undo = NULL;
+    }
+    book = core->book;
+    moved = book->sheets[sheet];
+    state = core->states[sheet];
+    if (sheet < to) {
+        memmove(&book->sheets[sheet], &book->sheets[sheet + 1],
+                (size_t)(to - sheet) * sizeof book->sheets[0]);
+        memmove(&core->states[sheet], &core->states[sheet + 1],
+                (size_t)(to - sheet) * sizeof core->states[0]);
+    } else {
+        memmove(&book->sheets[to + 1], &book->sheets[to],
+                (size_t)(sheet - to) * sizeof book->sheets[0]);
+        memmove(&core->states[to + 1], &core->states[to],
+                (size_t)(sheet - to) * sizeof core->states[0]);
+    }
+    book->sheets[to] = moved;
+    core->states[to] = state;
+    for (i = 0; i < book->nnames; i++)
+        if (book->names[i].sheet >= 0)
+            book->names[i].sheet = moved_sheet_index(book->names[i].sheet, sheet, to);
+    book->active = moved_sheet_index(book->active, sheet, to);
+    core->sheet = moved_sheet_index(core->sheet, sheet, to);
+    core->chart_sel_sheet = moved_sheet_index(core->chart_sel_sheet, sheet, to);
+    oc_charts_forget(core);
+    core->chart_sel = 0;
+    if (core->clip.valid)
+        core->clip.cut = 0;
+    rc = oc_recalc(core, 1);
+    oc_undo_push(core, undo);
+    oc_changed(core);
+    return rc;
+}
+
+int oc_core_set_sheet_hidden(oc_core *core, int sheet, int hidden)
+{
+    owf_book *book;
+    oc_undo *undo;
+    int i, visible = 0, next = -1;
+    if (!core || sheet < 0 || sheet >= core->book->nsheets)
+        return OWF_ERR_FORMAT;
+    book = core->book;
+    hidden = hidden != 0;
+    if ((book->sheets[sheet].hidden != 0) == hidden)
+        return OWF_OK;
+    for (i = 0; i < book->nsheets; i++)
+        if (!book->sheets[i].hidden)
+            visible++;
+    if (hidden && visible <= 1)
+        return OWF_ERR_UNSUPPORTED;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+        oc_undo_free(undo);
+        undo = NULL;
+    }
+    book->sheets[sheet].hidden = hidden;
+    if (hidden && core->sheet == sheet) {
+        for (i = sheet + 1; i < book->nsheets; i++)
+            if (!book->sheets[i].hidden) { next = i; break; }
+        if (next < 0)
+            for (i = sheet - 1; i >= 0; i--)
+                if (!book->sheets[i].hidden) { next = i; break; }
+        core->sheet = next;
+    }
+    book->active = core->sheet;
+    oc_undo_push(core, undo);
+    oc_changed(core);
+    return OWF_OK;
+}
+
 /* ---- Names of cells ---- */
 
 void oc_col_name(unsigned col, char *out)

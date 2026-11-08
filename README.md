@@ -265,7 +265,11 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.41 can create,
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.42 can reorder,
+hide and show sheets while preserving each sheet's content, cursor and local
+name scopes; these operations are undoable and persist through XLSX/ODS. Its
+reusable sheet API keeps formula-engine indexes coherent, while the native
+Sheet menu exposes the commands. It can create,
 update, delete and navigate workbook and sheet-local named ranges. The reusable
 API accepts arbitrary name formulas or defines the current selection, rebuilds
 dependent formulas immediately, and makes each change undoable; the native

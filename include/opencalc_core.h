@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.6.0"
+#define OC_CORE_VERSION "0.7.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -122,6 +122,13 @@ int oc_core_add_sheet(oc_core *core, const char *name);
 int oc_core_rename_sheet(oc_core *core, int sheet, const char *name);
 /* Deletes a sheet (never the last one). Undoable. */
 int oc_core_delete_sheet(oc_core *core, int sheet);
+/* Moves a sheet and everything belonging to it to a new zero-based position.
+ * Sheet-local name scopes and every sheet's cursor move with it. Undoable. */
+int oc_core_move_sheet(oc_core *core, int sheet, int to);
+/* Hides (hidden != 0) or shows a sheet. The last visible sheet cannot be
+ * hidden; hiding the current one selects the next visible sheet, or the
+ * previous one at the end. Undoable. */
+int oc_core_set_sheet_hidden(oc_core *core, int sheet, int hidden);
 
 /* ---- Names of cells ---- */
 
