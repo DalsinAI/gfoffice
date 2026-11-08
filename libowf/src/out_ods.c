@@ -2431,7 +2431,7 @@ static int filter_val(const char *p, const char *end, const char **v, size_t *le
  * as a set. 0 when it filters otherwise (a custom filter, a top ten, a colour, blanks, dates by group). */
 static int af_column(owf_buf *b, const char *x, const char *end)
 {
-    static const char *const others[] = { "customFilters", "top10", "dynamicFilter", "colorFilter", "iconFilter",
+    static const char *const others[] = { "top10", "dynamicFilter", "colorFilter", "iconFilter",
                                           "dateGroupItem", "blank=\"1\"", "blank='1'" };
     const char *id = strstr(x, "colId="), *p = x, *v, *next;
     size_t len, i;
@@ -2444,6 +2444,41 @@ static int af_column(owf_buf *b, const char *x, const char *end)
         const char *o = strstr(x, others[i]);
         if (o && o < end)
             return 0;
+    }
+    {
+        static const char *const xlops[] = {
+            "equal", "notEqual", "lessThan", "lessThanOrEqual", "greaterThan", "greaterThanOrEqual"
+        };
+        static const char *const odfops[] = { "=", "!=", "&lt;", "&lt;=", ">", ">=" };
+        const char *cf = strstr(x, "<customFilter ");
+        if (cf && cf < end) {
+            const char *close = strchr(cf, '>'), *at, *op_at;
+            char quote;
+            size_t op;
+            if (!close || close > end || ((next = strstr(cf + 1, "<customFilter ")) && next < end) ||
+                !(at = strstr(cf, "val=")) || at > close || ((quote = at[4]) != '"' && quote != '\''))
+                return 0;
+            v = at + 5;
+            if (!(next = strchr(v, quote)) || next > close)
+                return 0;
+            len = (size_t)(next - v);
+            op_at = strstr(cf, "operator=");
+            op = 0;
+            if (op_at && op_at < close) {
+                char oq = op_at[9];
+                const char *name = op_at + 10;
+                if (oq != '"' && oq != '\'') return 0;
+                for (op = 0; op < sizeof xlops / sizeof xlops[0]; op++) {
+                    size_t z = strlen(xlops[op]);
+                    if (name + z < close && !memcmp(name, xlops[op], z) && name[z] == oq) break;
+                }
+                if (op == sizeof xlops / sizeof xlops[0]) return 0;
+            }
+            owf_buf_printf(b, "<table:filter-condition table:field-number=\"%ld\" table:value=\"", field);
+            owf_buf_put(b, v, len);
+            owf_buf_printf(b, "\" table:operator=\"%s\"/>", odfops[op]);
+            return 1;
+        }
     }
     while (filter_val(p, end, &v, &len, &next)) {
         if (!n++) {

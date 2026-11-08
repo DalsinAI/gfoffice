@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.34 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.35 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -2282,7 +2282,7 @@ static void about(void)
          "GFOpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
          "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n"
-         "Editable multi-column AutoFilter value lists\n"
+         "Editable multi-column and Standard AutoFilters\n"
          "Searchable PDF export and GFOpenPrint printing\n\n"
          "MIT licence, Copyright (c) 2026 AmiCradle Team.");
 }
@@ -3227,7 +3227,22 @@ static void pick_from_list(int bx, int by, int bw, int bh)
     refresh();
 }
 
-/* An AutoFilter heading's arrow: every distinct displayed value, plus All.
+static int filter_condition_text(const char *text, int *op, const char **value)
+{
+    while (*text == ' ' || *text == '\t') text++;
+    if (!strncmp(text, "<=", 2)) { *op = OC_FILTER_LESS_EQUAL; text += 2; }
+    else if (!strncmp(text, ">=", 2)) { *op = OC_FILTER_GREATER_EQUAL; text += 2; }
+    else if (!strncmp(text, "<>", 2) || !strncmp(text, "!=", 2)) { *op = OC_FILTER_NOT_EQUAL; text += 2; }
+    else if (*text == '<') { *op = OC_FILTER_LESS; text++; }
+    else if (*text == '>') { *op = OC_FILTER_GREATER; text++; }
+    else { *op = OC_FILTER_EQUAL; if (*text == '=') text++; }
+    while (*text == ' ' || *text == '\t') text++;
+    *value = text;
+    return *text != 0;
+}
+
+/* An AutoFilter heading's arrow: every distinct displayed value, plus All
+ * and a Standard Filter comparison entered as, for example, >= 100.
  * A blank value has a visible label but remains an empty string in the core. */
 static void pick_filter(unsigned col, int bx, int by, int bw, int bh)
 {
@@ -3238,18 +3253,33 @@ static void pick_filter(unsigned col, int bx, int by, int bw, int bh)
         result(rc, NULL);
         return;
     }
-    shown = malloc((size_t)(n + 1) * sizeof *shown);
+    shown = malloc((size_t)(n + 2) * sizeof *shown);
     if (!shown) {
         oc_choices_free(items, n);
         result(OWF_ERR_MEMORY, NULL);
         return;
     }
     shown[0] = (char *)"(All)";
-    for (i = 0; i < n; i++) shown[i + 1] = items[i][0] ? items[i] : (char *)"(Blanks)";
-    chosen = choice_popup(bx, by, bw, bh, shown, n + 1, NULL);
+    shown[1] = (char *)"(Standard Filter...)";
+    for (i = 0; i < n; i++) shown[i + 2] = items[i][0] ? items[i] : (char *)"(Blanks)";
+    chosen = choice_popup(bx, by, bw, bh, shown, n + 2, NULL);
     if (chosen >= 0) {
-        rc = oc_core_filter_value(core, col, chosen ? items[chosen - 1] : NULL);
-        result(rc, chosen ? "Rows filtered by value." : "This column's filter is cleared.");
+        if (chosen == 1) {
+            char entered[256], *utf8;
+            const char *value;
+            int op;
+            if (text_requester("Standard Filter", "Condition", "= ", entered, sizeof entered) &&
+                filter_condition_text(entered, &op, &value)) {
+                if (!(utf8 = from_latin1(value))) result(OWF_ERR_MEMORY, NULL);
+                else {
+                    result(oc_core_filter_condition(core, col, op, utf8), "Standard Filter applied.");
+                    owf_free(utf8);
+                }
+            }
+        } else {
+            rc = oc_core_filter_value(core, col, chosen ? items[chosen - 2] : NULL);
+            result(rc, chosen ? "Rows filtered by value." : "This column's filter is cleared.");
+        }
     }
     free(shown);
     oc_choices_free(items, n);

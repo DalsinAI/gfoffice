@@ -2070,10 +2070,9 @@ static void filter_start(ods *o, const owf_xml_event *e)
     o->af_or = o->af_approx = 0;
 }
 
-/* The XML of a filterColumn's value: as escaped in an attribute. */
-static void af_value(ods *o, const char *v)
+/* A filter value escaped for an OOXML attribute. */
+static void af_escaped(ods *o, const char *v)
 {
-    owf_buf_puts(&o->af_xml, "<filter val=\"");
     for (; *v; v++) {
         switch (*v) {
         case '&': owf_buf_puts(&o->af_xml, "&amp;"); break;
@@ -2083,6 +2082,13 @@ static void af_value(ods *o, const char *v)
         default: owf_buf_putc(&o->af_xml, *v);
         }
     }
+}
+
+/* The XML of a filterColumn's exact value. */
+static void af_value(ods *o, const char *v)
+{
+    owf_buf_puts(&o->af_xml, "<filter val=\"");
+    af_escaped(o, v);
     owf_buf_puts(&o->af_xml, "\"/>");
 }
 
@@ -2093,12 +2099,27 @@ static void filter_child(ods *o, const owf_xml_event *e)
         o->af_or = 1;
     } else if (is(e, NS_TABLE, "filter-condition")) {
         const char *op = ev(e, NS_TABLE, "operator"), *val = ev(e, NS_TABLE, "value");
+        const char *xlop = NULL;
         long field = whole(ev(e, NS_TABLE, "field-number"), -1, 0, (long)MAX_COLS);
         if (o->af_field >= 0)
             owf_buf_puts(&o->af_xml, "</filters></filterColumn>");
         o->af_field = -1;
-        if (!op || strcmp(op, "=") || field < 0 || !val) {
+        if (op) {
+            if (!strcmp(op, "=")) xlop = "equal";
+            else if (!strcmp(op, "!=")) xlop = "notEqual";
+            else if (!strcmp(op, "<")) xlop = "lessThan";
+            else if (!strcmp(op, "<=")) xlop = "lessThanOrEqual";
+            else if (!strcmp(op, ">")) xlop = "greaterThan";
+            else if (!strcmp(op, ">=")) xlop = "greaterThanOrEqual";
+        }
+        if (!xlop || field < 0 || !val) {
             o->af_approx = 1;
+            return;
+        }
+        if (strcmp(op, "=")) {
+            owf_buf_printf(&o->af_xml, "<filterColumn colId=\"%ld\"><customFilters><customFilter operator=\"%s\" val=\"", field, xlop);
+            af_escaped(o, val);
+            owf_buf_puts(&o->af_xml, "\"/></customFilters></filterColumn>");
             return;
         }
         o->af_field = (int)field;

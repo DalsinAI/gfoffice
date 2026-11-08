@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.1.7"
+#define OC_CORE_VERSION "0.1.8"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -290,6 +290,15 @@ int oc_core_filter_choices(oc_core *core, unsigned col, char ***items, int *n);
  * insensitive), in addition to every other column's condition. NULL removes
  * this column's condition but leaves the others and the buttons. */
 int oc_core_filter_value(oc_core *core, unsigned col, const char *value);
+enum {
+    OC_FILTER_EQUAL, OC_FILTER_NOT_EQUAL,
+    OC_FILTER_LESS, OC_FILTER_LESS_EQUAL,
+    OC_FILTER_GREATER, OC_FILTER_GREATER_EQUAL
+};
+/* Applies one Standard Filter comparison to a column. Ordering compares
+ * numbers when both displayed values are numbers, otherwise text without
+ * ASCII case. Conditions on different columns combine with AND. */
+int oc_core_filter_condition(oc_core *core, unsigned col, int op, const char *value);
 /* Removes every column condition and shows the table again, leaving its
  * buttons. Filtering changes are undoable and written to XLSX/ODS. */
 int oc_core_filter_clear(oc_core *core);

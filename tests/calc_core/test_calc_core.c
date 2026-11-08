@@ -2122,6 +2122,31 @@ static void test_filter_commands(void)
           strstr(sheet->autofilter_xml, "R&amp;D") && !strstr(sheet->autofilter_xml, "colId=\"2\""));
     CHECK(oc_core_filter_clear(core) == OWF_OK && sheet->has_autofilter && !sheet->autofilter_xml);
     CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && !row_hidden(core, 3) && !row_hidden(core, 4));
+    CHECK(oc_core_filter_condition(core, 2, OC_FILTER_LESS_EQUAL, "20") == OWF_OK);
+    CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(oc_core_filter_condition(core, 2, OC_FILTER_LESS, "20") == OWF_OK);
+    CHECK(!row_hidden(core, 1) && row_hidden(core, 2) && row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(oc_core_filter_condition(core, 2, OC_FILTER_GREATER_EQUAL, "30") == OWF_OK);
+    CHECK(row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) && !row_hidden(core, 4));
+    CHECK(oc_core_filter_condition(core, 2, OC_FILTER_GREATER, "20") == OWF_OK);
+    CHECK(row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) && !row_hidden(core, 4));
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "<customFilters>") &&
+          strstr(sheet->autofilter_xml, "operator=\"greaterThan\"") && strstr(sheet->autofilter_xml, "val=\"20\""));
+    CHECK(oc_core_filter_condition(core, 1, OC_FILTER_NOT_EQUAL, "R&D") == OWF_OK);
+    CHECK(row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "operator=\"notEqual\"") &&
+          strstr(sheet->autofilter_xml, "val=\"R&amp;D\""));
+    CHECK(oc_core_save(core, path, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "operator=\"greaterThan\"") &&
+          strstr(sheet->autofilter_xml, "operator=\"notEqual\"") && !row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "operator=\"greaterThan\"") &&
+          strstr(sheet->autofilter_xml, "operator=\"notEqual\"") && !row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(oc_core_filter_clear(core) == OWF_OK);
     CHECK(owf_sheet_set_row(sheet, 3, sheet->default_height, 1) == 0); /* a manually hidden matching row */
     CHECK(oc_core_filter_value(core, 1, "West") == OWF_OK && row_hidden(core, 2) && row_hidden(core, 3) && row_hidden(core, 4));
     CHECK(oc_core_filter_value(core, 1, NULL) == OWF_OK && !row_hidden(core, 2) && row_hidden(core, 3) && !row_hidden(core, 4));

@@ -264,13 +264,14 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.34 can create and
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.35 can create and
 remove an AutoFilter, filter a table by any distinct displayed value from a
 heading's arrow, combine exact-value conditions across columns, clear one
-column or show all rows, and undo or redo each operation. A heading lists the
-values still possible under the other columns. The portable API writes the
-same filter range, AND-composed conditions and hidden rows to XLSX and ODS. It
-also exports every
+column or show all rows, and apply a Standard Filter comparison (`=`, `<>`,
+`<`, `<=`, `>` or `>=`). Conditions across columns combine with AND, numeric
+ordering compares numerically, and a heading lists the values still possible
+under the other columns. The portable API writes the same filter range,
+conditions and hidden rows to XLSX and ODS. It also exports every
 visible sheet as a searchable, paginated A4 PDF, fitted one page wide by
 default, from the same reusable draw list as the window; it keeps cell and
 conditional formatting, merged cells, borders, frozen panes and imported
