@@ -10,12 +10,23 @@ one document library, **libowf**. Its apps keep their GFOpen names:
 - **GFOpenPublisher**, an early desktop-publishing viewer that opens Microsoft
   Publisher pages through the suite's shared layout, PDF and printing stack;
 - **GFOpenBase**, the database, currently at the design stage;
-- **GFOpenDraw**, planned from the existing `DalsinAI/gfopenpaint` DPaint port
-  and the suite's shared drawing/page model.
+- **GFOpenDraw**, the DPaint-inspired indexed paint editor from
+  `DalsinAI/gfopendraw`, with GadTools and OpenLayout UI front ends and a
+  reusable painting-engine library. Its vector-document work will sit on the
+  suite's shared page/object model rather than duplicating OpenLayout.
 
 GFOpenMath is not in the target suite; equation editing is deliberately out of
 scope while the five document applications and GFOpenDraw reach practical
 parity.
+
+GFOpenDraw 0.2.0 RC2 is now a separately versioned suite application. The
+former `gfopenpaint` repository was renamed with redirects preserved. It ships
+`GFOpenDraw`, `GFOpenDrawOL`, the `GFOPENDRAW` ARexx host and an m68k
+`libgfopendraw.a` SDK; both applications link the same reusable engine. The
+suite build pins its source commit and includes both binaries and SDK. Current
+paint tools are practical, but Apache Draw-style multi-page vector documents,
+connectors, text, layers and ODG/SVG interchange remain the next major block;
+see `docs/gfoffice/Design-OpenDraw.md`.
 
 The suite aims at the features of Apache OpenOffice's apps. It is written from
 the file formats' specifications and our own code, never from OpenOffice's
