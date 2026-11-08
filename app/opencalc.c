@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.42 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.43 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -101,7 +101,7 @@ enum {
     M_COL_AUTO = 170, M_COL_RED, M_COL_BLUE, M_COL_GREEN,
     M_BORDER_ALL = 180, M_BORDER_OUTLINE, M_BORDER_BOTTOM, M_BORDER_NONE,
     M_COL_WIDTH = 190, M_ROW_HEIGHT, M_HIDE_COLS, M_SHOW_COLS, M_HIDE_ROWS, M_SHOW_ROWS,
-    M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_LEFT, M_SHEET_RIGHT, M_SHEET_HIDE, M_SHEET_SHOW,
+    M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_DUPLICATE, M_SHEET_LEFT, M_SHEET_RIGHT, M_SHEET_HIDE, M_SHEET_SHOW,
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR
@@ -232,6 +232,7 @@ static struct NewMenu menus[] = {
     { NM_TITLE, "Sheet", NULL, 0, 0, NULL },
     { NM_ITEM, "Rename...", NULL, 0, 0, (APTR)M_SHEET_RENAME },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_SHEET_DELETE },
+    { NM_ITEM, "Duplicate...", NULL, 0, 0, (APTR)M_SHEET_DUPLICATE },
     { NM_ITEM, "Move Left", NULL, 0, 0, (APTR)M_SHEET_LEFT },
     { NM_ITEM, "Move Right", NULL, 0, 0, (APTR)M_SHEET_RIGHT },
     { NM_ITEM, "Hide Sheet", NULL, 0, 0, (APTR)M_SHEET_HIDE },
@@ -2298,7 +2299,7 @@ static void about(void)
          "libowf workbooks and formula engine\n"
          "Stable multi-key row sorting\n"
          "Workbook and sheet-local named ranges\n"
-         "Reorderable and hideable sheets\n"
+         "Duplicate, reorder and hide sheets\n"
          "Editable XLSX/ODS data validation\n"
          "Layered conditional formatting\n"
          "Value, compound Standard and Top/Bottom AutoFilters\n"
@@ -2429,6 +2430,26 @@ static void do_show_sheet(void)
         if (rc == OWF_OK) rc = oc_core_set_sheet(core, found);
         result(rc, "Sheet shown.");
     }
+    owf_free(utf8);
+}
+
+static void do_duplicate_sheet(void)
+{
+    owf_book *book = oc_core_book(core);
+    int sheet = oc_core_sheet(core), rc;
+    char initial[96], entered[96], latin[72];
+    char *utf8;
+    to_latin1(book->sheets[sheet].name, strlen(book->sheets[sheet].name), latin, sizeof latin);
+    snprintf(initial, sizeof initial, "%s Copy", latin);
+    if (!text_requester("Duplicate Sheet", "New name", initial, entered, sizeof entered)) return;
+    if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
+    rc = oc_core_duplicate_sheet(core, sheet, utf8);
+    if (rc == OWF_ERR_FORMAT)
+        set_status("Use a new legal sheet name (1-31 characters, without [ ] : * ? / \\).");
+    else if (rc == OWF_ERR_UNSUPPORTED)
+        set_status("A sheet with pictures or shapes cannot yet be duplicated; supported charts can.");
+    else
+        result(rc, "Sheet duplicated.");
     owf_free(utf8);
 }
 
@@ -2976,6 +2997,7 @@ static void menu_action(ULONG id)
     case M_CONDFMT_CLEAR: result(oc_core_clear_condfmt(core), "Conditional formatting cleared from the selection."); break;
     case M_SHEET_RENAME: do_rename_sheet(oc_core_sheet(core)); break;
     case M_SHEET_DELETE: do_delete_sheet(); break;
+    case M_SHEET_DUPLICATE: do_duplicate_sheet(); break;
     case M_SHEET_LEFT:
         if (!oc_core_sheet(core)) set_status("This sheet is already first.");
         else result(oc_core_move_sheet(core, oc_core_sheet(core), oc_core_sheet(core) - 1), "Sheet moved left.");

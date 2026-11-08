@@ -103,5 +103,6 @@
 #pragma libcall OWFCalcBase owf_pdf_text_width 24c 3210805
 #pragma libcall OWFCalcBase owf_pdf_winansi 252 001
 #pragma libcall OWFCalcBase owf_pdf_fallback 258 001
+#pragma libcall OWFCalcBase owf_sheet_keep_charts 25e 190804
 
 #endif /* PRAGMAS_OWFCALC_PRAGMAS_H */

@@ -569,6 +569,117 @@ int oc_core_set_sheet_hidden(oc_core *core, int sheet, int hidden)
     return OWF_OK;
 }
 
+static int part_has(const owf_part *part, const char *text)
+{
+    size_t i, n = strlen(text);
+    if (!part || n > part->length)
+        return 0;
+    for (i = 0; i + n <= part->length; i++)
+        if (!memcmp(part->data + i, text, n))
+            return 1;
+    return 0;
+}
+
+static int drawing_has_nonchart(const owf_book *book, const owf_sheet *sheet)
+{
+    const owf_part *part = sheet->drawing ? owf_book_part(book, sheet->drawing) : NULL;
+    return part && (part_has(part, "<xdr:pic") || part_has(part, "<xdr:sp ") || part_has(part, "<xdr:sp>") ||
+                    part_has(part, "<xdr:cxnSp") || part_has(part, "<xdr:grpSp") ||
+                    part_has(part, "<xdr:contentPart"));
+}
+
+int oc_core_duplicate_sheet(oc_core *core, int sheet, const char *name)
+{
+    owf_book *book, *copy;
+    owf_calc *copy_calc = NULL;
+    owf_sheet cloned, blank;
+    owf_chart *charts = NULL;
+    oc_sheetstate state;
+    oc_undo *undo;
+    int ncharts = 0, at, i, rc = OWF_OK;
+    if (!core || sheet < 0 || sheet >= core->book->nsheets || !name || !name_ok(core->book, name, -1))
+        return OWF_ERR_FORMAT;
+    book = core->book;
+    if (book->sheets[sheet].drawing && drawing_has_nonchart(book, &book->sheets[sheet]))
+        return OWF_ERR_UNSUPPORTED;
+    if (!(copy = oc_book_copy(book)))
+        return OWF_ERR_MEMORY;
+    if (!(copy_calc = owf_calc_new(copy))) {
+        owf_book_free(copy);
+        return OWF_ERR_MEMORY;
+    }
+    if ((rc = owf_calc_rename_sheet(copy_calc, sheet, name)) != OWF_OK)
+        goto prepared;
+    if (copy->sheets[sheet].drawing) {
+        rc = owf_sheet_charts(copy, sheet, &charts, &ncharts);
+        if (rc != OWF_OK || !ncharts) {
+            if (rc == OWF_OK) rc = OWF_ERR_UNSUPPORTED;
+            goto prepared;
+        }
+    }
+    cloned = copy->sheets[sheet];
+    memset(&copy->sheets[sheet], 0, sizeof copy->sheets[sheet]);
+    if (cloned.drawing) {
+        owf_free(cloned.drawing);
+        cloned.drawing = NULL;                 /* charts get new, unshared package parts below */
+    }
+    state = core->states[sheet];
+    at = sheet + 1;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+        oc_undo_free(undo);
+        undo = NULL;
+    }
+    if (!owf_book_add_sheet(book, name)) {
+        oc_undo_free(undo);
+        owf_sheet_free_extras(&cloned);
+        owf_free(cloned.name); owf_free(cloned.cells); owf_free(cloned.cols); owf_free(cloned.rows); owf_free(cloned.merges);
+        rc = OWF_ERR_MEMORY;
+        goto prepared;
+    }
+    blank = book->sheets[book->nsheets - 1];
+    book->sheets[book->nsheets - 1] = cloned;
+    owf_free(blank.name);
+    if (!states_fit(core)) {
+        oc_undo_free(undo);
+        rc = OWF_ERR_MEMORY;
+        goto prepared;
+    }
+    for (i = book->nsheets - 1; i > at; i--) {
+        book->sheets[i] = book->sheets[i - 1];
+        core->states[i] = core->states[i - 1];
+    }
+    book->sheets[at] = cloned;
+    core->states[at] = state;
+    for (i = 0; i < book->nnames; i++)
+        if (book->names[i].sheet >= at)
+            book->names[i].sheet++;
+    for (i = 0; i < copy->nnames; i++)
+        if (copy->names[i].sheet == sheet &&
+            owf_book_add_name(book, copy->names[i].name, at, copy->names[i].formula, copy->names[i].hidden) < 0) {
+            rc = OWF_ERR_MEMORY;
+            break;
+        }
+    if (rc == OWF_OK && ncharts)
+        rc = owf_sheet_keep_charts(book, at, charts, ncharts);
+    core->sheet = book->active = at;
+    oc_charts_forget(core);
+    core->chart_sel = 0;
+    if (core->clip.valid)
+        core->clip.cut = 0;
+    if (rc == OWF_OK)
+        rc = oc_recalc(core, 1);
+    oc_undo_push(core, undo);
+    oc_changed(core);
+prepared:
+    owf_charts_free(charts, ncharts);
+    owf_calc_free(copy_calc);
+    owf_book_free(copy);
+    return rc;
+}
+
 /* ---- Names of cells ---- */
 
 void oc_col_name(unsigned col, char *out)

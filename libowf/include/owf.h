@@ -674,6 +674,10 @@ typedef struct {
  * or OWF_ERR_MEMORY. */
 int owf_sheet_charts(const owf_book *book, int sheet, owf_chart **charts, int *count);
 void owf_charts_free(owf_chart *charts, int count);
+/* Keeps charts on a sheet as independent drawing/chart package parts. The
+ * sheet must not already have a drawing. Used by sheet duplication and chart
+ * authoring; OWF_OK or an OWF_ERR_*. */
+int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, int count);
 
 /* A number as a formula or a file writes it: up to 15 significant digits,
  * "0.1", "12", "1.5E+20". out holds at least 32 bytes. */

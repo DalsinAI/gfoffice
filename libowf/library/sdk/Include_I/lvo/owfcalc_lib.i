@@ -100,5 +100,6 @@ _LVOowf_pdf_page_count	EQU	-582
 _LVOowf_pdf_text_width	EQU	-588
 _LVOowf_pdf_winansi	EQU	-594
 _LVOowf_pdf_fallback	EQU	-600
+_LVOowf_sheet_keep_charts	EQU	-606
 
 	ENDC	; LVO_OWFCALC_LIB_I

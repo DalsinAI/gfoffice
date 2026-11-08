@@ -51,7 +51,11 @@ given ends in a workbook format's extension.
 | XLSX, Office Open XML (`.xlsx`; `.xltx`, `.xlsm`, `.xltm` open only) | Yes | Yes | Spec: ECMA-376 (transitional; strict's namespaces read) and [MS-XLSX]'s `_xlfn.` names | S2 | Full both ways, as the model holds it (notes below). Macros, comments, pictures, charts, conditional formats, validation, tables and pivot tables are reported. Binary `.xlsb` is recognised with a clear message |
 | ODS, OpenDocument Spreadsheet (`.ods`, `.ots` opens; flat `.fods`) | Yes | Yes | Spec: OASIS ODF 1.2 and OpenFormula; LibreOffice's 1.3 additions read | S2 | Full both ways, as the model holds it (notes below), formulas translated to and from OpenFormula. Comments, pictures, charts, conditional formats and validation are reported |
 
-GFOpenCalc 0.1.42 can move, hide and show sheets with undo, preserving sheet-
+GFOpenCalc 0.1.43 can duplicate sheets with deep-copied cells, formatting,
+comments, rules, filters, local names and supported charts. Chart package parts
+are independent through `owfcalc.library` 3.4; unsupported picture/shape
+drawings are refused instead of lost. Copies are undoable and persist through
+XLSX/ODS. It can move, hide and show sheets with undo, preserving sheet-
 local name scopes, per-sheet cursors and formula dependencies across XLSX/ODS
 round trips. It can author workbook and sheet-local named ranges from the
 current selection, update and delete them with undo, use them in formulas and

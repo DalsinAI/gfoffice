@@ -265,8 +265,12 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.42 can reorder,
-hide and show sheets while preserving each sheet's content, cursor and local
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.43 can deep-copy
+a sheet's cells, formats, comments, rules, filters, local names, cursor and
+supported charts, with independent chart package parts supplied by reusable
+`owfcalc.library` 3.4. Duplication is undoable and round-trips through XLSX/ODS;
+drawings with unsupported pictures or shapes are refused rather than silently
+discarded. It can reorder, hide and show sheets while preserving each sheet's content, cursor and local
 name scopes; these operations are undoable and persist through XLSX/ODS. Its
 reusable sheet API keeps formula-engine indexes coherent, while the native
 Sheet menu exposes the commands. It can create,

@@ -1278,6 +1278,51 @@ static void test_sheet_organisation(void)
     oc_core_free(core);
 }
 
+static void test_sheet_duplicate(void)
+{
+    static const char *const xlsx = "build/host/calc-core-duplicate.xlsx";
+    static const char *const ods = "build/host/calc-core-duplicate.ods";
+    oc_core *core = fresh();
+    owf_book *book;
+    int i, local = 0;
+    if (!core)
+        return;
+    enter_at(core, "A1", "4");
+    enter_at(core, "A2", "=Sheet1!A1*2");
+    go(core, "B2");
+    CHECK(oc_core_set_fill(core, OWF_SHADE(0xABCDEF)) == OWF_OK);
+    CHECK(oc_core_set_comment(core, "Tester", "Copied note") == OWF_OK);
+    go(core, "A1:A2");
+    CHECK(oc_core_define_selection(core, "LocalPoint", 0) == OWF_OK);
+    CHECK(oc_core_duplicate_sheet(core, 0, "Copy") == OWF_OK);
+    book = oc_core_book(core);
+    CHECK(book->nsheets == 2 && oc_core_sheet(core) == 1 && !strcmp(book->sheets[1].name, "Copy"));
+    CHECK(num(core, "A1") == 4 && num(core, "A2") == 8 && strstr(formula(core, "A2"), "Copy!A1"));
+    CHECK(book->sheets[1].ncomments == 1 && !strcmp(book->sheets[1].comments[0].text, "Copied note"));
+    CHECK(owf_sheet_find(&book->sheets[1], 1, 1) &&
+          book->styles[owf_sheet_find(&book->sheets[1], 1, 1)->style].fill == OWF_SHADE(0xABCDEF));
+    for (i = 0; i < book->nnames; i++)
+        if (book->names[i].sheet == 1 && !strcmp(book->names[i].name, "LocalPoint") &&
+            strstr(book->names[i].formula, "Copy")) local = 1;
+    CHECK(local);
+    enter_at(core, "A1", "10");
+    CHECK(num(core, "A2") == 20);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK && num(core, "A1") == 4 && num(core, "A2") == 8);
+    CHECK(oc_core_undo(core) == OWF_OK);                /* the edit on the copy */
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_book(core)->nsheets == 1);
+    CHECK(oc_core_redo(core) == OWF_OK && oc_core_book(core)->nsheets == 2);
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 2 && !strcmp(oc_core_book(core)->sheets[1].name, "Copy") &&
+          oc_core_book(core)->sheets[1].ncomments == 1);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 2 && !strcmp(oc_core_book(core)->sheets[1].name, "Copy"));
+    CHECK(oc_core_duplicate_sheet(core, 0, "Copy") == OWF_ERR_FORMAT);
+    CHECK(oc_core_duplicate_sheet(core, -1, "Bad") == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 /* ---- The draw list ---- */
 
 static int count_kind(const oc_draw_list *l, int kind, int role)
@@ -4096,6 +4141,7 @@ int main(void)
     test_clipboard();
     test_sheets();
     test_sheet_organisation();
+    test_sheet_duplicate();
     test_draw();
     test_borders();
     test_condfmt();

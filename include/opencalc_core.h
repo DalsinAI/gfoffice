@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.7.0"
+#define OC_CORE_VERSION "0.8.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -129,6 +129,12 @@ int oc_core_move_sheet(oc_core *core, int sheet, int to);
  * hidden; hiding the current one selects the next visible sheet, or the
  * previous one at the end. Undoable. */
 int oc_core_set_sheet_hidden(oc_core *core, int sheet, int hidden);
+/* Duplicates a sheet immediately after itself and shows the copy. Cells,
+ * formatting, merges, comments, validation, conditional formatting, filters,
+ * sheet-local names, cursor state and supported charts are deep-copied. name
+ * must be a new legal sheet name. A drawing containing pictures or shapes is
+ * currently refused rather than silently losing it. Undoable. */
+int oc_core_duplicate_sheet(oc_core *core, int sheet, const char *name);
 
 /* ---- Names of cells ---- */
 
