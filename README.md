@@ -265,7 +265,13 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.40 can add layered
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.41 can create,
+update, delete and navigate workbook and sheet-local named ranges. The reusable
+API accepts arbitrary name formulas or defines the current selection, rebuilds
+dependent formulas immediately, and makes each change undoable; the native
+Sheet menu exposes selection-based definition and scoped deletion, and the
+name box and Go To resolve local names before workbook names. Names round-trip
+through XLSX and ODS. GFOpenCalc can also add layered
 cell-comparison, formula and two/three-colour-scale conditional formats, clear
 them from selected cells without losing their surrounding ranges, render them
 immediately, undo them and save them through XLSX/ODS. It can also author,

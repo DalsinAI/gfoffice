@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.5.0"
+#define OC_CORE_VERSION "0.6.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -133,6 +133,19 @@ void oc_cell_name(unsigned row, unsigned col, char *out);
  * or 0. */
 int oc_parse_range(const char *text, owf_range *range);
 
+/* Workbook and sheet-local defined names. A sheet of -1 is workbook-wide;
+ * otherwise it is the zero-based sheet that owns the local name. set updates
+ * an existing name in the same scope (case-insensitively), or adds it. The
+ * formula is Excel syntax without the leading '=' (one is accepted and
+ * removed). All changes are undoable and rebuild the formula engine. */
+int oc_core_name_count(const oc_core *core);
+const owf_defname *oc_core_name_at(const oc_core *core, int index);
+int oc_core_set_name(oc_core *core, const char *name, int sheet, const char *formula);
+int oc_core_delete_name(oc_core *core, const char *name, int sheet);
+/* Defines the current, single-range selection with an absolute reference to
+ * its sheet. */
+int oc_core_define_selection(oc_core *core, const char *name, int sheet);
+
 /* ---- The active cell and the selection ---- */
 
 typedef struct {
@@ -153,7 +166,9 @@ void oc_core_select_range(oc_core *core, const owf_range *range);
 void oc_core_select_rows(oc_core *core);
 void oc_core_select_cols(oc_core *core);
 void oc_core_select_all(oc_core *core);
-/* The name box: "B12", "A1:C5", "C:C"... OWF_OK or OWF_ERR_FORMAT. */
+/* The name box / Go To: "B12", "A1:C5", "C:C", or a defined name. A
+ * sheet-local name on the current sheet takes precedence over a workbook
+ * name. Names whose formula is not a cell or range cannot be navigated to. */
 int oc_core_goto(oc_core *core, const char *name);
 /* The name box's text: "B12", or "B2:D8" while a range is selected. */
 void oc_core_name_box(const oc_core *core, char *out, size_t size);

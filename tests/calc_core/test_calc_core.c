@@ -358,6 +358,87 @@ static void test_navigation(void)
     oc_core_free(core);
 }
 
+static void test_defined_names(void)
+{
+    static const char *const xlsx = "build/host/calc-core-names.xlsx";
+    static const char *const ods = "build/host/calc-core-names.ods";
+    oc_core *core = fresh();
+    const owf_defname *name;
+    int second, i, found_global, found_local;
+    if (!core)
+        return;
+
+    enter_at(core, "B2", "2");
+    enter_at(core, "B3", "3");
+    go(core, "B2:B3");
+    CHECK(oc_core_define_selection(core, "Sales", -1) == OWF_OK);
+    CHECK(oc_core_name_count(core) == 1);
+    name = oc_core_name_at(core, 0);
+    CHECK(name && !strcmp(name->name, "Sales") && name->sheet == -1 &&
+          !strcmp(name->formula, "'Sheet1'!$B$2:$B$3"));
+    enter_at(core, "D1", "=SUM(Sales)");
+    CHECK(num(core, "D1") == 5);
+    go(core, "A1");
+    CHECK(oc_core_goto(core, "sales") == OWF_OK && !strcmp(name_box(core), "B2:B3"));
+
+    second = oc_core_add_sheet(core, "Second Sheet");
+    CHECK(second == 1);
+    enter_at(core, "C2", "7");
+    enter_at(core, "C3", "8");
+    go(core, "C2:C3");
+    CHECK(oc_core_define_selection(core, "Sales", second) == OWF_OK);
+    CHECK(oc_core_name_count(core) == 2);
+    enter_at(core, "D1", "=SUM(Sales)");
+    CHECK(num(core, "D1") == 15);                    /* local shadows workbook */
+    go(core, "A1");
+    CHECK(oc_core_goto(core, "SALES") == OWF_OK && oc_core_sheet(core) == second &&
+          !strcmp(name_box(core), "C2:C3"));
+
+    /* Updating one scope neither adds another entry nor leaves dependent
+     * formulas stale. It is one whole-book undo step. */
+    go(core, "A1");
+    enter_at(core, "A1", "9");
+    CHECK(oc_core_define_selection(core, "sales", second) == OWF_OK);
+    CHECK(oc_core_name_count(core) == 2 && num(core, "D1") == 9);
+    CHECK(oc_core_undo(core) == OWF_OK && num(core, "D1") == 15);
+    CHECK(oc_core_redo(core) == OWF_OK && num(core, "D1") == 9);
+
+    CHECK(oc_core_set_name(core, "Rate", -1, "=0.5") == OWF_OK);
+    CHECK(oc_core_goto(core, "Rate") == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_delete_name(core, "missing", -1) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_delete_name(core, "Sales", second) == OWF_OK);
+    CHECK(oc_core_name_count(core) == 2);             /* workbook Sales and Rate */
+    CHECK(oc_core_goto(core, "Sales") == OWF_OK && oc_core_sheet(core) == 0 &&
+          !strcmp(name_box(core), "B2:B3"));
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_name_count(core) == 3);
+
+    CHECK(oc_core_set_sheet(core, second) == OWF_OK);
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    found_global = found_local = 0;
+    for (i = 0; i < oc_core_name_count(core); i++) {
+        name = oc_core_name_at(core, i);
+        if (name && !strcmp(name->name, "Sales") && name->sheet == -1) found_global = 1;
+        if (name && !strcmp(name->name, "sales") && name->sheet == 1) found_local = 1;
+    }
+    CHECK(found_global && found_local);
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK && oc_core_goto(core, "Sales") == OWF_OK &&
+          oc_core_sheet(core) == 1 && !strcmp(name_box(core), "A1"));
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_name_count(core) == 3);
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK && oc_core_goto(core, "Sales") == OWF_OK &&
+          oc_core_sheet(core) == 1 && !strcmp(name_box(core), "A1"));
+
+    CHECK(oc_core_set_name(core, "A1", -1, "Sheet1!A1") == OWF_ERR_FORMAT);
+    CHECK(oc_core_set_name(core, "1bad", -1, "Sheet1!A1") == OWF_ERR_FORMAT);
+    CHECK(oc_core_set_name(core, "bad name", -1, "Sheet1!A1") == OWF_ERR_FORMAT);
+    CHECK(oc_core_set_name(core, "", -1, "Sheet1!A1") == OWF_ERR_FORMAT);
+    CHECK(oc_core_set_name(core, "Good", 99, "Sheet1!A1") == OWF_ERR_FORMAT);
+    CHECK(!oc_core_name_at(core, -1) && !oc_core_name_at(core, 99));
+    oc_core_free(core);
+}
+
 static void test_editing(void)
 {
     oc_core *core = fresh();
@@ -3924,6 +4005,7 @@ int main(void)
     test_latin1();
     test_names();
     test_navigation();
+    test_defined_names();
     test_editing();
     test_undo();
     test_fill();

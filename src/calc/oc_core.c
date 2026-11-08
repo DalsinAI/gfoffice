@@ -593,6 +593,185 @@ static void range_name(const owf_range *r, char *out)
     }
 }
 
+/* ---- Defined names ---- */
+
+static int defined_name_ok(const char *name)
+{
+    const unsigned char *p = (const unsigned char *)name;
+    owf_range range;
+    if (!p || !*p || oc_parse_range(name, &range))
+        return 0;
+    if (!(p[0] == '_' || p[0] == '\\' || (p[0] >= 'A' && p[0] <= 'Z') ||
+          (p[0] >= 'a' && p[0] <= 'z') || p[0] >= 0x80))
+        return 0;
+    for (p++; *p; p++)
+        if (!(*p == '_' || *p == '\\' || *p == '.' || (*p >= 'A' && *p <= 'Z') ||
+              (*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p >= 0x80))
+            return 0;
+    return 1;
+}
+
+static int defined_name_index(const owf_book *book, const char *name, int sheet)
+{
+    int i;
+    for (i = 0; i < book->nnames; i++)
+        if (book->names[i].sheet == sheet && same_name(book->names[i].name, name))
+            return i;
+    return -1;
+}
+
+static oc_undo *name_undo(oc_core *core)
+{
+    oc_undo *undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+        oc_undo_free(undo);
+        undo = NULL;
+    }
+    return undo;
+}
+
+int oc_core_name_count(const oc_core *core)
+{
+    return core ? core->book->nnames : 0;
+}
+
+const owf_defname *oc_core_name_at(const oc_core *core, int index)
+{
+    if (!core || index < 0 || index >= core->book->nnames)
+        return NULL;
+    return &core->book->names[index];
+}
+
+int oc_core_set_name(oc_core *core, const char *name, int sheet, const char *formula)
+{
+    owf_book *book;
+    oc_undo *undo;
+    char *new_name, *new_formula;
+    int at, rc;
+    if (!core || !defined_name_ok(name) || !formula)
+        return OWF_ERR_FORMAT;
+    while (*formula == ' ')
+        formula++;
+    if (*formula == '=')
+        formula++;
+    while (*formula == ' ')
+        formula++;
+    if (!*formula || (sheet < -1 || sheet >= core->book->nsheets))
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    book = core->book;
+    at = defined_name_index(book, name, sheet);
+    new_name = oc_strdup(name);
+    new_formula = oc_strdup(formula);
+    if (!new_name || !new_formula) {
+        owf_free(new_name);
+        owf_free(new_formula);
+        return OWF_ERR_MEMORY;
+    }
+    undo = name_undo(core);
+    if (at >= 0) {
+        owf_free(book->names[at].name);
+        owf_free(book->names[at].formula);
+        book->names[at].name = new_name;
+        book->names[at].formula = new_formula;
+    } else {
+        /* owf_book_add_name owns its own copies. */
+        if (owf_book_add_name(book, new_name, sheet, new_formula, 0) < 0) {
+            owf_free(new_name);
+            owf_free(new_formula);
+            oc_undo_free(undo);
+            return OWF_ERR_MEMORY;
+        }
+        owf_free(new_name);
+        owf_free(new_formula);
+    }
+    rc = oc_recalc(core, 1);
+    if (rc != OWF_OK) {
+        oc_undo_free(undo);
+        return rc;
+    }
+    oc_undo_push(core, undo);
+    oc_changed(core);
+    return OWF_OK;
+}
+
+int oc_core_delete_name(oc_core *core, const char *name, int sheet)
+{
+    owf_book *book;
+    oc_undo *undo;
+    int at, rc;
+    if (!core || !name || sheet < -1 || sheet >= core->book->nsheets)
+        return OWF_ERR_FORMAT;
+    book = core->book;
+    at = defined_name_index(book, name, sheet);
+    if (at < 0)
+        return OWF_ERR_UNSUPPORTED;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    undo = name_undo(core);
+    owf_free(book->names[at].name);
+    owf_free(book->names[at].formula);
+    if (at + 1 < book->nnames)
+        memmove(&book->names[at], &book->names[at + 1],
+                (size_t)(book->nnames - at - 1) * sizeof book->names[0]);
+    book->nnames--;
+    rc = oc_recalc(core, 1);
+    if (rc != OWF_OK) {
+        oc_undo_free(undo);
+        return rc;
+    }
+    oc_undo_push(core, undo);
+    oc_changed(core);
+    return OWF_OK;
+}
+
+/* Always quote the sheet: doubled apostrophes make every legal sheet name
+ * unambiguous, and both the Excel and OpenDocument writers understand it. */
+int oc_core_define_selection(oc_core *core, const char *name, int sheet)
+{
+    const oc_sheetstate *state;
+    const owf_range *range;
+    const char *sheet_name;
+    char a[16], b[16], *formula, *p;
+    size_t n, i;
+    int rc;
+    if (!core || !defined_name_ok(name) || sheet < -1 || sheet >= core->book->nsheets)
+        return OWF_ERR_FORMAT;
+    state = oc_state_const(core);
+    if (state->sel.nranges != 1)
+        return OWF_ERR_UNSUPPORTED;
+    range = &state->sel.ranges[0];
+    sheet_name = core->book->sheets[core->sheet].name;
+    oc_col_name(range->first_col, a);
+    oc_col_name(range->last_col, b);
+    n = strlen(sheet_name);
+    formula = owf_malloc(n * 2 + 64);
+    if (!formula)
+        return OWF_ERR_MEMORY;
+    p = formula;
+    *p++ = '\'';
+    for (i = 0; i < n; i++) {
+        *p++ = sheet_name[i];
+        if (sheet_name[i] == '\'')
+            *p++ = '\'';
+    }
+    *p++ = '\''; *p++ = '!';
+    if (range->first_row == 0 && range->last_row == OC_MAX_ROWS - 1) {
+        p += sprintf(p, "$%s:$%s", a, b);
+    } else if (range->first_col == 0 && range->last_col == OC_MAX_COLS - 1) {
+        p += sprintf(p, "$%u:$%u", range->first_row + 1, range->last_row + 1);
+    } else {
+        p += sprintf(p, "$%s$%u", a, range->first_row + 1);
+        if (range->first_row != range->last_row || range->first_col != range->last_col)
+            p += sprintf(p, ":$%s$%u", b, range->last_row + 1);
+    }
+    *p = 0;
+    rc = oc_core_set_name(core, name, sheet, formula);
+    owf_free(formula);
+    return rc;
+}
+
 /* ---- The selection ---- */
 
 const owf_range *oc_merge_at(const owf_sheet *sheet, unsigned row, unsigned col)
@@ -751,8 +930,31 @@ void oc_core_select_all(oc_core *core)
 int oc_core_goto(oc_core *core, const char *name)
 {
     owf_range r;
-    if (!oc_parse_range(name, &r))
+    const owf_defname *defined = NULL;
+    int i, sheet;
+    if (!core || !name)
         return OWF_ERR_FORMAT;
+    if (!oc_parse_range(name, &r)) {
+        /* The current sheet's local name shadows the workbook name. */
+        for (i = 0; i < core->book->nnames; i++)
+            if (core->book->names[i].sheet == core->sheet && same_name(core->book->names[i].name, name)) {
+                defined = &core->book->names[i];
+                break;
+            }
+        if (!defined)
+            for (i = 0; i < core->book->nnames; i++)
+                if (core->book->names[i].sheet == -1 && same_name(core->book->names[i].name, name)) {
+                    defined = &core->book->names[i];
+                    break;
+                }
+        if (!defined)
+            return OWF_ERR_FORMAT;
+        if (!oc_sheet_range(core->book, defined->formula,
+                            defined->sheet >= 0 ? defined->sheet : core->sheet, &sheet, &r))
+            return OWF_ERR_UNSUPPORTED;
+        if (oc_core_set_sheet(core, sheet) != OWF_OK)
+            return OWF_ERR_UNSUPPORTED;
+    }
     if (core->edit_mode)
         oc_edit_commit_anyway(core, OC_MOVE_NONE);
     oc_core_select_range(core, &r);

@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.40 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.41 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -101,7 +101,7 @@ enum {
     M_COL_AUTO = 170, M_COL_RED, M_COL_BLUE, M_COL_GREEN,
     M_BORDER_ALL = 180, M_BORDER_OUTLINE, M_BORDER_BOTTOM, M_BORDER_NONE,
     M_COL_WIDTH = 190, M_ROW_HEIGHT, M_HIDE_COLS, M_SHOW_COLS, M_HIDE_ROWS, M_SHOW_ROWS,
-    M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
+    M_SHEET_RENAME = 200, M_SHEET_DELETE, M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR
 };
@@ -231,6 +231,9 @@ static struct NewMenu menus[] = {
     { NM_TITLE, "Sheet", NULL, 0, 0, NULL },
     { NM_ITEM, "Rename...", NULL, 0, 0, (APTR)M_SHEET_RENAME },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_SHEET_DELETE },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Define Name...", NULL, 0, 0, (APTR)M_NAME_DEFINE },
+    { NM_ITEM, "Delete Name...", NULL, 0, 0, (APTR)M_NAME_DELETE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Next Sheet", "]", 0, 0, (APTR)M_SHEET_NEXT },
     { NM_ITEM, "Previous Sheet", "[", 0, 0, (APTR)M_SHEET_PREV },
@@ -2289,6 +2292,7 @@ static void about(void)
          "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n"
          "Stable multi-key row sorting\n"
+         "Workbook and sheet-local named ranges\n"
          "Editable XLSX/ODS data validation\n"
          "Layered conditional formatting\n"
          "Value, compound Standard and Top/Bottom AutoFilters\n"
@@ -2318,9 +2322,9 @@ static void do_paste(void)
 
 static void do_goto(void)
 {
-    char name[40] = "";
-    if (text_requester("Go To", "Cell", "", name, sizeof name) && oc_core_goto(core, name) != OWF_OK)
-        set_status("That is not a cell or a range.");
+    char name[96] = "";
+    if (text_requester("Go To", "Cell or name", "", name, sizeof name) && oc_core_goto(core, name) != OWF_OK)
+        set_status("That is not a cell, range, or navigable name.");
 }
 
 /* "12.5" as hundredths (no floating point): 1250. -1 when it isn't a number. */
@@ -2396,6 +2400,59 @@ static void do_delete_sheet(void)
     if (book->nsheets < 2) { set_status("A workbook keeps at least one sheet."); return; }
     to_latin1(book->sheets[s].name, strlen(book->sheets[s].name), latin, sizeof latin);
     if (EasyRequest(win, &es, NULL, (ULONG)latin)) result(oc_core_delete_sheet(core, s), "Sheet deleted.");
+}
+
+static void do_define_name(void)
+{
+    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"Define Name",
+                             (UBYTE *)"Where can formulas use this name?", (UBYTE *)"Workbook|Sheet|Cancel" };
+    char entered[96];
+    char *utf8;
+    int pick, scope, rc;
+    if (!text_requester("Define Name", "Name for selection", "", entered, sizeof entered)) return;
+    if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
+    pick = EasyRequest(win, &es, NULL);
+    if (!pick) { owf_free(utf8); return; }
+    scope = pick == 1 ? -1 : oc_core_sheet(core);
+    rc = oc_core_define_selection(core, utf8, scope);
+    if (rc == OWF_ERR_FORMAT)
+        set_status("A name starts with a letter, underscore or backslash, contains no spaces, and cannot be a cell address.");
+    else if (rc == OWF_ERR_UNSUPPORTED)
+        set_status("Select one rectangular range before defining its name.");
+    else
+        result(rc, scope < 0 ? "Workbook name defined." : "Sheet name defined.");
+    owf_free(utf8);
+}
+
+static void do_delete_name(void)
+{
+    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"Delete Name",
+                             (UBYTE *)"This name exists in both scopes. Which one?", (UBYTE *)"Sheet|Workbook|Cancel" };
+    char entered[96];
+    char *utf8;
+    const owf_defname *name;
+    int i, local = 0, global = 0, scope, pick;
+    if (!text_requester("Delete Name", "Name", "", entered, sizeof entered)) return;
+    if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
+    for (i = 0; i < oc_core_name_count(core); i++) {
+        name = oc_core_name_at(core, i);
+        if (!name || strcasecmp(name->name, utf8)) continue;
+        if (name->sheet == oc_core_sheet(core)) local = 1;
+        if (name->sheet == -1) global = 1;
+    }
+    if (!local && !global) {
+        set_status("There is no workbook or current-sheet name by that name.");
+        owf_free(utf8);
+        return;
+    }
+    if (local && global) {
+        pick = EasyRequest(win, &es, NULL);
+        if (!pick) { owf_free(utf8); return; }
+        scope = pick == 1 ? oc_core_sheet(core) : -1;
+    } else
+        scope = local ? oc_core_sheet(core) : -1;
+    result(oc_core_delete_name(core, utf8, scope), scope < 0 ? "Workbook name deleted." : "Sheet name deleted.");
+    owf_free(utf8);
 }
 
 static void do_comment(void)
@@ -2889,6 +2946,8 @@ static void menu_action(ULONG id)
     case M_CONDFMT_CLEAR: result(oc_core_clear_condfmt(core), "Conditional formatting cleared from the selection."); break;
     case M_SHEET_RENAME: do_rename_sheet(oc_core_sheet(core)); break;
     case M_SHEET_DELETE: do_delete_sheet(); break;
+    case M_NAME_DEFINE: do_define_name(); break;
+    case M_NAME_DELETE: do_delete_name(); break;
     case M_SHEET_NEXT: oc_core_key(core, OC_KEY_PAGEDOWN, OC_MOD_CTRL); break;
     case M_SHEET_PREV: oc_core_key(core, OC_KEY_PAGEUP, OC_MOD_CTRL); break;
     }
@@ -3874,7 +3933,7 @@ static void events(void)
             } else if (g == g_name) {
                 STRPTR v = NULL;
                 GT_GetGadgetAttrs(g_name, win, NULL, GTST_String, (ULONG)&v, TAG_DONE);
-                if (v && oc_core_goto(core, (const char *)v) != OWF_OK) set_status("That is not a cell or a range.");
+                if (v && oc_core_goto(core, (const char *)v) != OWF_OK) set_status("That is not a cell, range, or navigable name.");
                 shown_name[0] = 1;
                 refresh();
             } else if (g == g_vscroll || g == g_hscroll) {
