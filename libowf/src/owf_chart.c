@@ -456,9 +456,9 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
         { "bubbleChart", OWF_CHART_OTHER }, { "stockChart", OWF_CHART_OTHER }, { "surfaceChart", OWF_CHART_OTHER },
         { "surface3DChart", OWF_CHART_OTHER }
     };
-    const owf_xml_node *chart = child(space, ns_c, "chart"), *plot = child(chart, ns_c, "plotArea"), *g = NULL, *n, *ser;
+    const owf_xml_node *chart = child(space, ns_c, "chart"), *plot = child(chart, ns_c, "plotArea"), *g = NULL, *n, *ser, *gn;
     const owf_xml_node *title = child(chart, ns_c, "title"), *legend = child(chart, ns_c, "legend"), *ax;
-    const char *v;
+    const char *v, *gname = NULL, *primary_y = NULL;
     int count = 0;
     size_t i;
 
@@ -466,6 +466,7 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
         for (i = 0; i < sizeof groups / sizeof *groups; i++)
             if (is(n, ns_c, groups[i].name)) {
                 g = n;
+                gname = groups[i].name;
                 c->kind = groups[i].kind;
                 break;
             }
@@ -480,8 +481,14 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
             c->gap = (int)attr_long(child(g, ns_c, "gapWidth"), "val", 150);
         if (c->gap < 0 || c->gap > 500)
             c->gap = 150;
-        for (ser = child(g, ns_c, "ser"); ser && count < MAX_SERIES; ser = next(ser, ns_c, "ser"))
-            count++;
+        {
+            const owf_xml_node *first_axis = child(g, ns_c, "axId");
+            primary_y = val(next(first_axis, ns_c, "axId"));
+        }
+        for (gn = g; gn; gn = gn->next)
+            if (is(gn, ns_c, gname))
+                for (ser = child(gn, ns_c, "ser"); ser && count < MAX_SERIES; ser = next(ser, ns_c, "ser"))
+                    count++;
         if (count) {
             c->series = calloc((size_t)count, sizeof *c->series);
             if (!c->series) {
@@ -489,11 +496,38 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
                 return;
             }
         }
-        for (ser = child(g, ns_c, "ser"); ser && c->nseries < count && !*failed; ser = next(ser, ns_c, "ser")) {
-            owf_chart_series *s = &c->series[c->nseries];
-            read_labels(s, child(g, ns_c, "dLbls"), failed);       /* the group's, then the series' own */
-            read_series(s, ser, c->kind, c->nseries, failed);
-            c->nseries++;
+        for (gn = g; gn && c->nseries < count && !*failed; gn = gn->next)
+            if (is(gn, ns_c, gname)) {
+                const owf_xml_node *first_axis = child(gn, ns_c, "axId");
+                const char *group_y = val(next(first_axis, ns_c, "axId"));
+                int secondary = primary_y && group_y && strcmp(primary_y, group_y);
+                for (ser = child(gn, ns_c, "ser"); ser && c->nseries < count && !*failed;
+                     ser = next(ser, ns_c, "ser")) {
+                    owf_chart_series *s = &c->series[c->nseries];
+                    read_labels(s, child(gn, ns_c, "dLbls"), failed); /* group's, then series' own */
+                    read_series(s, ser, c->kind, c->nseries, failed);
+                    s->axis = secondary ? OWF_AXIS_SECONDARY : OWF_AXIS_PRIMARY;
+                    if (c->kind == OWF_CHART_LINE && (v = val(child(gn, ns_c, "marker"))) != NULL &&
+                        (!strcmp(v, "0") || !strcmp(v, "false")) && s->marker == OWF_MARKER_AUTO)
+                        s->marker = OWF_MARKER_NONE;
+                    if (c->kind == OWF_CHART_SCATTER && (v = val(child(gn, ns_c, "scatterStyle"))) != NULL) {
+                        if ((!strcmp(v, "line") || !strcmp(v, "smooth")) && s->marker == OWF_MARKER_AUTO)
+                            s->marker = OWF_MARKER_NONE;
+                        if (!strcmp(v, "marker") || !strcmp(v, "none"))
+                            s->line = 0;
+                    }
+                    c->nseries++;
+                }
+            }
+        /* Axis groups split one logical series list. Restore its original order. */
+        for (count = 1; count < c->nseries; count++) {
+            owf_chart_series keep = c->series[count];
+            int at = count;
+            while (at > 0 && c->series[at - 1].index > keep.index) {
+                c->series[at] = c->series[at - 1];
+                at--;
+            }
+            c->series[at] = keep;
         }
         /* pies: the hole, the first slice's angle, a colour each */
         if (is(g, ns_c, "doughnutChart")) {
@@ -508,19 +542,6 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
             c->vary = !(v = val(child(g, ns_c, "varyColors"))) || !strcmp(v, "1") || !strcmp(v, "true");
         else
             c->vary = c->kind == OWF_CHART_PIE;
-        /* lines' markers (a line chart's c:marker 0: none), a scatter's style (lines only, markers only) */
-        for (count = 0; count < c->nseries; count++) {
-            owf_chart_series *s = &c->series[count];
-            if (c->kind == OWF_CHART_LINE && (v = val(child(g, ns_c, "marker"))) != NULL &&
-                (!strcmp(v, "0") || !strcmp(v, "false")) && s->marker == OWF_MARKER_AUTO)
-                s->marker = OWF_MARKER_NONE;
-            if (c->kind == OWF_CHART_SCATTER && (v = val(child(g, ns_c, "scatterStyle"))) != NULL) {
-                if ((!strcmp(v, "line") || !strcmp(v, "smooth")) && s->marker == OWF_MARKER_AUTO)
-                    s->marker = OWF_MARKER_NONE;
-                if (!strcmp(v, "marker") || !strcmp(v, "none"))
-                    s->line = 0;
-            }
-        }
     }
     /* the title: its text, a reference's cache, or (none given) the only series' name */
     if (title && !*failed) {
@@ -542,6 +563,8 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
         const char *pos = val(child(ax, ns_c, "axPos")), *id = val(child(ax, ns_c, "axId"));
         int x_axis = c->kind == OWF_CHART_SCATTER &&
                      (v && id ? !strcmp(v, id) : pos ? !strcmp(pos, "b") || !strcmp(pos, "t") : count == 0);
+        int primary_axis = primary_y && id ? !strcmp(primary_y, id) :
+                           c->kind == OWF_CHART_SCATTER ? count == 1 : count == 0;
         if (x_axis) {
             free(c->category_title);
             c->category_title = title_text(child(ax, ns_c, "title"), failed);
@@ -549,7 +572,7 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
             c->x_gridlines = child(ax, ns_c, "majorGridlines") != NULL;
             c->has_xmin = attr_double(child(sc, ns_c, "min"), &c->xmin);
             c->has_xmax = attr_double(child(sc, ns_c, "max"), &c->xmax);
-        } else if (c->kind == OWF_CHART_SCATTER || count == 0) {          /* others: the first, the primary */
+        } else if (primary_axis) {
             free(c->value_title);
             c->value_title = title_text(child(ax, ns_c, "title"), failed);
             free(c->value_format);
@@ -557,6 +580,14 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
             c->gridlines = child(ax, ns_c, "majorGridlines") != NULL;
             c->has_min = attr_double(child(sc, ns_c, "min"), &c->min);
             c->has_max = attr_double(child(sc, ns_c, "max"), &c->max);
+        } else {
+            free(c->secondary_title);
+            c->secondary_title = title_text(child(ax, ns_c, "title"), failed);
+            free(c->secondary_format);
+            c->secondary_format = format_of(child(ax, ns_c, "numFmt"), failed);
+            c->secondary_gridlines = child(ax, ns_c, "majorGridlines") != NULL;
+            c->has_secondary_min = attr_double(child(sc, ns_c, "min"), &c->secondary_min);
+            c->has_secondary_max = attr_double(child(sc, ns_c, "max"), &c->secondary_max);
         }
     }
     if (c->kind != OWF_CHART_SCATTER && !*failed) {
@@ -672,6 +703,8 @@ void owf_charts_free(owf_chart *charts, int count)
         free(charts[i].x_format);
         free(charts[i].category_title);
         free(charts[i].value_title);
+        free(charts[i].secondary_format);
+        free(charts[i].secondary_title);
     }
     free(charts);
 }
@@ -1012,10 +1045,43 @@ static void put_value_axis(owf_buf *b, int id, int cross, const char *pos, int g
     owf_buf_puts(b, "</c:valAx>");
 }
 
-int owf_chart_part_xml(const owf_chart *c, owf_buf *b)
+static void put_chart_group(owf_buf *b, const owf_chart *c, const char *g, int grouping, int axis)
 {
     static const char *const groupings[] = { "clustered", "stacked", "percentStacked" };
     int i, pie = c->kind == OWF_CHART_PIE, scatter = c->kind == OWF_CHART_SCATTER;
+    owf_buf_printf(b, "<c:%s>", g);
+    if (!strcmp(g, "barChart"))
+        owf_buf_printf(b, "<c:barDir val=\"%s\"/>", c->kind == OWF_CHART_BAR ? "bar" : "col");
+    if (scatter)
+        owf_buf_puts(b, "<c:scatterStyle val=\"lineMarker\"/>");
+    else if (!pie)
+        owf_buf_printf(b, "<c:grouping val=\"%s\"/>", c->kind == OWF_CHART_COLUMN || c->kind == OWF_CHART_BAR || grouping ?
+                                                      groupings[grouping] : "standard");
+    owf_buf_printf(b, "<c:varyColors val=\"%d\"/>", c->vary ? 1 : 0);
+    for (i = 0; i < c->nseries; i++)
+        if (pie || c->series[i].axis == axis)
+            put_series(b, c, &c->series[i], i);
+    if (!strcmp(g, "barChart")) {
+        owf_buf_printf(b, "<c:gapWidth val=\"%d\"/>", c->gap > 0 ? c->gap : 150);
+        if (grouping)
+            owf_buf_puts(b, "<c:overlap val=\"100\"/>");
+    }
+    if (c->kind == OWF_CHART_LINE)
+        owf_buf_puts(b, "<c:marker val=\"1\"/>");
+    if (pie) {
+        owf_buf_printf(b, "<c:firstSliceAng val=\"%d\"/>", c->first_angle);
+        if (c->hole)
+            owf_buf_printf(b, "<c:holeSize val=\"%d\"/>", c->hole);
+    } else {
+        owf_buf_printf(b, "<c:axId val=\"500000001\"/><c:axId val=\"%d\"/>",
+                       axis == OWF_AXIS_SECONDARY ? 500000003 : 500000002);
+    }
+    owf_buf_printf(b, "</c:%s>", g);
+}
+
+int owf_chart_part_xml(const owf_chart *c, owf_buf *b)
+{
+    int i, pie = c->kind == OWF_CHART_PIE, scatter = c->kind == OWF_CHART_SCATTER, secondary = 0;
     const char *g = c->kind == OWF_CHART_LINE ? "lineChart" : c->kind == OWF_CHART_AREA ? "areaChart" :
                     pie ? (c->hole ? "doughnutChart" : "pieChart") : scatter ? "scatterChart" : "barChart";
     int grouping = c->grouping >= 0 && c->grouping <= OWF_CHART_PERCENT ? c->grouping : 0;
@@ -1031,37 +1097,20 @@ int owf_chart_part_xml(const owf_chart *c, owf_buf *b)
     } else {
         owf_buf_puts(b, "<c:autoTitleDeleted val=\"1\"/>");
     }
-    owf_buf_printf(b, "<c:plotArea><c:layout/><c:%s>", g);
-    if (!strcmp(g, "barChart"))
-        owf_buf_printf(b, "<c:barDir val=\"%s\"/>", c->kind == OWF_CHART_BAR ? "bar" : "col");
-    if (scatter)
-        owf_buf_printf(b, "<c:scatterStyle val=\"lineMarker\"/>");
-    else if (!pie)
-        owf_buf_printf(b, "<c:grouping val=\"%s\"/>", c->kind == OWF_CHART_COLUMN || c->kind == OWF_CHART_BAR || grouping ?
-                                                      groupings[grouping] : "standard");
-    owf_buf_printf(b, "<c:varyColors val=\"%d\"/>", c->vary ? 1 : 0);
     for (i = 0; i < c->nseries; i++)
-        put_series(b, c, &c->series[i], i);
-    if (!strcmp(g, "barChart")) {
-        owf_buf_printf(b, "<c:gapWidth val=\"%d\"/>", c->gap > 0 ? c->gap : 150);
-        if (grouping)
-            owf_buf_puts(b, "<c:overlap val=\"100\"/>");
-    }
-    if (c->kind == OWF_CHART_LINE)
-        owf_buf_puts(b, "<c:marker val=\"1\"/>");
-    if (pie) {
-        owf_buf_printf(b, "<c:firstSliceAng val=\"%d\"/>", c->first_angle);
-        if (c->hole)
-            owf_buf_printf(b, "<c:holeSize val=\"%d\"/>", c->hole);
-    } else {
-        owf_buf_puts(b, "<c:axId val=\"500000001\"/><c:axId val=\"500000002\"/>");
-    }
-    owf_buf_printf(b, "</c:%s>", g);
+        if (c->series[i].axis == OWF_AXIS_SECONDARY) secondary = 1;
+    owf_buf_puts(b, "<c:plotArea><c:layout/>");
+    put_chart_group(b, c, g, grouping, OWF_AXIS_PRIMARY);
+    if (secondary && !pie)
+        put_chart_group(b, c, g, grouping, OWF_AXIS_SECONDARY);
     if (scatter) {                                   /* x the group's first axis, along the bottom */
         put_value_axis(b, 500000001, 500000002, "b", c->x_gridlines, c->has_xmin, c->xmin, c->has_xmax, c->xmax, c->x_format,
                        c->category_title);
         put_value_axis(b, 500000002, 500000001, "l", c->gridlines, c->has_min, c->min, c->has_max, c->max, c->value_format,
                        c->value_title);
+        if (secondary)
+            put_value_axis(b, 500000003, 500000001, "r", c->secondary_gridlines, c->has_secondary_min, c->secondary_min,
+                           c->has_secondary_max, c->secondary_max, c->secondary_format, c->secondary_title);
     } else if (!pie) {
         int bar = c->kind == OWF_CHART_BAR;
         owf_buf_printf(b, "<c:catAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling>"
@@ -1073,6 +1122,10 @@ int owf_chart_part_xml(const owf_chart *c, owf_buf *b)
                           "<c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/></c:catAx>");
         put_value_axis(b, 500000002, 500000001, bar ? "b" : "l", c->gridlines, c->has_min, c->min, c->has_max, c->max,
                        c->value_format, c->value_title);
+        if (secondary)
+            put_value_axis(b, 500000003, 500000001, bar ? "t" : "r", c->secondary_gridlines, c->has_secondary_min,
+                           c->secondary_min, c->has_secondary_max, c->secondary_max, c->secondary_format,
+                           c->secondary_title);
     }
     owf_buf_puts(b, "</c:plotArea>");
     if (c->legend)

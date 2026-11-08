@@ -3140,8 +3140,8 @@ static int read_odf_chart(ods *o, const owf_xml_node *root, owf_chart *c, int ho
     const owf_xml_node *ch = owf_xml_child(owf_xml_child(owf_xml_child(root, NS_OFFICE, "body"), NS_OFFICE, "chart"), NS_CHART, "chart");
     const owf_xml_node *plot = owf_xml_child(ch, NS_CHART, "plot-area"), *n, *ax, *plotp, *ser, *title, *legend;
     const char *cls = ch ? owf_xml_attr(ch, NS_CHART, "class") : NULL, *v, *cats = NULL, *last_x = NULL;
-    const char *ext = o->ext_ns;
-    int count = 0, i, scatter;
+    const char *ext = o->ext_ns, *primary_y_name = NULL;
+    int count = 0, i, scatter, y_axes = 0;
     if (!ch)
         return 1;
     plotp = chart_props(styles, owf_xml_attr(plot, NS_CHART, "style-name"), "chart-properties");
@@ -3212,28 +3212,34 @@ static int read_odf_chart(ods *o, const owf_xml_node *root, owf_chart *c, int ho
                     c->has_xmax = 1;
                 }
             }
-        } else if (!strcmp(dim, "y") && !c->gridlines && !c->has_min && !c->has_max && !c->value_format) {
-            if (at && !c->value_title) {
+        } else if (!strcmp(dim, "y")) {
+            const char *axis_name = owf_xml_attr(ax, NS_CHART, "name");
+            int secondary = y_axes++ > 0 || (axis_name && !strcmp(axis_name, "secondary-y"));
+            if (!secondary) primary_y_name = axis_name;
+            char **axis_title = secondary ? &c->secondary_title : &c->value_title;
+            char **axis_format = secondary ? &c->secondary_format : &c->value_format;
+            if (at && !*axis_title) {
                 owf_buf t;
                 owf_buf_init(&t);
                 all_text_of(at, &t);
                 owf_buf_putc(&t, 0);
-                if (!t.failed) c->value_title = copy(o, (const char *)t.data);
+                if (!t.failed) *axis_title = copy(o, (const char *)t.data);
                 owf_buf_free(&t);
-                if (!c->value_title) return 0;
+                if (!*axis_title) return 0;
             }
-            c->gridlines = grid;
+            if (secondary) c->secondary_gridlines = grid;
+            else c->gridlines = grid;
             if (!owf_xml_attr(ch, ext, "gap") && (v = prop(ap, NS_CHART, "gap-width")) != NULL)
                 c->gap = (int)whole(v, 150, 0, 500);   /* LibreOffice's place for it */
-            if (!chart_numfmt(o, styles, owf_xml_attr(ax, NS_CHART, "style-name"), &c->value_format))
+            if (!chart_numfmt(o, styles, owf_xml_attr(ax, NS_CHART, "style-name"), axis_format))
                 return 0;
             if ((v = prop(ap, NS_CHART, "minimum")) != NULL && owf_number_parse(v, strlen(v), &d)) {
-                c->min = d;
-                c->has_min = 1;
+                if (secondary) { c->secondary_min = d; c->has_secondary_min = 1; }
+                else { c->min = d; c->has_min = 1; }
             }
             if ((v = prop(ap, NS_CHART, "maximum")) != NULL && owf_number_parse(v, strlen(v), &d)) {
-                c->max = d;
-                c->has_max = 1;
+                if (secondary) { c->secondary_max = d; c->has_secondary_max = 1; }
+                else { c->max = d; c->has_max = 1; }
             }
         }
     }
@@ -3251,6 +3257,9 @@ static int read_odf_chart(ods *o, const owf_xml_node *root, owf_chart *c, int ho
         const char *x = dom ? owf_xml_attr(dom, NS_TABLE, "cell-range-address") : last_x, *mycats = cats;
         unsigned long rgb;
         int lines = c->kind == OWF_CHART_LINE || scatter, k;
+        v = owf_xml_attr(ser, NS_CHART, "attached-axis");
+        se->axis = v && (primary_y_name ? strcmp(v, primary_y_name) : strcmp(v, "primary-y")) ?
+                   OWF_AXIS_SECONDARY : OWF_AXIS_PRIMARY;
         se->index = (int)whole(owf_xml_attr(ser, ext, "index"), c->nseries, 0, 0x7FFF);
         se->line = !(gp && (v = prop(gp, NS_DRAW, "stroke")) != NULL && !strcmp(v, "none"));
         if (gp && owf_parse_colour(prop(gp, lines ? NS_SVG : NS_DRAW, lines ? "stroke-color" : "fill-color"), &rgb))

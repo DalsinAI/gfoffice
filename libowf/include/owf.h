@@ -627,6 +627,7 @@ enum { OWF_TREND_NONE, OWF_TREND_LINEAR, OWF_TREND_EXPONENTIAL, OWF_TREND_LOGARI
 enum { OWF_ERROR_NONE, OWF_ERROR_CONSTANT, OWF_ERROR_PERCENTAGE, OWF_ERROR_STANDARD_ERROR, OWF_ERROR_VARIANCE,
        OWF_ERROR_STANDARD_DEVIATION, OWF_ERROR_MARGIN, OWF_ERROR_CELL_RANGE };
 enum { OWF_ERROR_BOTH, OWF_ERROR_PLUS, OWF_ERROR_MINUS };
+enum { OWF_AXIS_PRIMARY, OWF_AXIS_SECONDARY };
 typedef struct {
     double value;
     int has_value;               /* 0: none (a gap) */
@@ -662,6 +663,7 @@ typedef struct {
     double error_plus, error_minus; /* constants/percentage/margin; plus and minus may differ */
     char *error_plus_range, *error_minus_range; /* CELL_RANGE, or NULL */
     unsigned long error_colour;  /* OWF_SHADE(rgb), or 0: the series' colour */
+    int axis;                    /* OWF_AXIS_PRIMARY or OWF_AXIS_SECONDARY value axis */
 } owf_chart_series;
 typedef struct {
     int kind, grouping;          /* OWF_CHART_... */
@@ -689,6 +691,11 @@ typedef struct {
     char *x_format;              /* a scatter's x axis's */
     char *category_title;        /* category axis, or a scatter's X axis; NULL: none */
     char *value_title;           /* value axis, or a scatter's Y axis; NULL: none */
+    int secondary_gridlines;
+    int has_secondary_min, has_secondary_max;
+    double secondary_min, secondary_max;
+    char *secondary_format;      /* secondary value/Y axis format, or NULL: linked */
+    char *secondary_title;       /* secondary value/Y axis title, or NULL */
 } owf_chart;
 /* The sheet's charts (none: *count 0), freed with owf_charts_free. OWF_OK,
  * or OWF_ERR_MEMORY. */

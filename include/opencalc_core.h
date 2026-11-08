@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.23.0"
+#define OC_CORE_VERSION "0.24.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -700,6 +700,8 @@ int oc_core_delete_chart(oc_core *core, int index); /* -1: selected */
  * angle, hole percentage and whether points vary in colour.
  * Trendline selects a zero-based series, OWF_TREND_... kind, polynomial
  * order, moving-average period, equation/R-squared flags and colour.
+ * Series axis selects the primary or secondary value axis. Secondary-axis
+ * bounds, gridlines, copied format and copied title are one chart edit.
  * A set minimum must be less than a set maximum. */
 enum {
     OC_CHART_SET_KIND = 1u << 0,
@@ -718,7 +720,9 @@ enum {
     OC_CHART_SET_SERIES_LABELS = 1u << 13,
     OC_CHART_SET_PLOT_OPTIONS = 1u << 14,
     OC_CHART_SET_TRENDLINE = 1u << 15,
-    OC_CHART_SET_ERROR_BARS = 1u << 16
+    OC_CHART_SET_ERROR_BARS = 1u << 16,
+    OC_CHART_SET_SERIES_AXIS = 1u << 17,
+    OC_CHART_SET_SECONDARY_AXIS = 1u << 18
 };
 typedef struct {
     unsigned set;
@@ -752,6 +756,12 @@ typedef struct {
     double error_plus, error_minus;
     const char *error_plus_range, *error_minus_range; /* copied; required for cell-range */
     unsigned long error_colour;
+    int series_axis;                 /* OWF_AXIS_PRIMARY/SECONDARY */
+    int secondary_gridlines;
+    int has_secondary_min, has_secondary_max;
+    double secondary_min, secondary_max;
+    const char *secondary_format;    /* copied; NULL/empty: linked */
+    const char *secondary_title;     /* copied; NULL/empty: clears */
 } oc_chart_edit_spec;
 int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spec); /* -1: selected */
 

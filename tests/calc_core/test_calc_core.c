@@ -3377,7 +3377,6 @@ static void test_chart_authoring(void)
     CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && !c.category_title && !c.value_title);
     chart_free(&c);
     CHECK(oc_core_redo(core) == OWF_OK);
-
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_AXIS_FORMATS;
     edit.value_format = "$0.0";
@@ -3445,6 +3444,38 @@ static void test_chart_authoring(void)
     CHECK(oc_core_redo(core) == OWF_OK);
 
     memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_AXIS | OC_CHART_SET_SECONDARY_AXIS;
+    edit.series = 0;
+    edit.series_axis = OWF_AXIS_SECONDARY;
+    edit.secondary_gridlines = 1;
+    edit.has_secondary_min = edit.has_secondary_max = 1;
+    edit.secondary_min = 0;
+    edit.secondary_max = 100;
+    edit.secondary_format = "0.0";
+    edit.secondary_title = "Secondary units";
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[0].axis == OWF_AXIS_SECONDARY && c.series[1].axis == OWF_AXIS_PRIMARY &&
+          c.secondary_gridlines && c.has_secondary_min && c.secondary_min == 0 &&
+          c.has_secondary_max && c.secondary_max == 100 && same(c.secondary_format, "0.0") &&
+          same(c.secondary_title, "Secondary units"));
+    chart_free(&c);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && find_text(&l, "Secondary units") && find_text(&l, "100.0"));
+    oc_draw_list_free(&l);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[0].axis == OWF_AXIS_PRIMARY && !c.secondary_title);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_KIND;
+    edit.kind = OWF_CHART_BAR;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && find_text(&l, "100.0"));
+    oc_draw_list_free(&l);
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_SERIES_STYLE;
     edit.series = 1;
     edit.series_colour = OWF_SHADE(0x00A050);
@@ -3489,7 +3520,7 @@ static void test_chart_authoring(void)
     edit.series = 2;
     edit.label_pos = OWF_LABEL_AUTO;
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
-    edit.series = 0;
+    edit.series = 1;
     edit.labels = 32;
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
 
@@ -3546,6 +3577,17 @@ static void test_chart_authoring(void)
     edit.series = 0;
     edit.trend_colour = 0x7030A0;
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_AXIS;
+    edit.series = 1;
+    edit.series_axis = OWF_AXIS_SECONDARY;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SECONDARY_AXIS;
+    edit.secondary_gridlines = 1;
+    edit.has_secondary_min = edit.has_secondary_max = 1;
+    edit.secondary_min = edit.secondary_max = 10;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
 
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_VALUE_AXIS;
@@ -3571,6 +3613,9 @@ static void test_chart_authoring(void)
           c.series[0].error_kind == OWF_ERROR_CONSTANT && c.series[0].error_direction == OWF_ERROR_BOTH &&
           c.series[0].error_cap && c.series[0].error_plus == 4.5 && c.series[0].error_minus == 2.5 &&
           c.series[0].error_colour == OWF_SHADE(0xC00000) &&
+          c.series[0].axis == OWF_AXIS_SECONDARY && c.secondary_gridlines &&
+          c.has_secondary_min && c.secondary_min == 0 && c.has_secondary_max && c.secondary_max == 100 &&
+          same(c.secondary_format, "0.0") && same(c.secondary_title, "Secondary units") &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
           c.series[1].labels == (OWF_LABEL_CATEGORY | OWF_LABEL_VALUE) &&
@@ -3591,6 +3636,9 @@ static void test_chart_authoring(void)
           c.series[0].error_kind == OWF_ERROR_CONSTANT && c.series[0].error_direction == OWF_ERROR_BOTH &&
           c.series[0].error_cap && c.series[0].error_plus == 4.5 && c.series[0].error_minus == 2.5 &&
           c.series[0].error_colour == OWF_SHADE(0xC00000) &&
+          c.series[0].axis == OWF_AXIS_SECONDARY && c.secondary_gridlines &&
+          c.has_secondary_min && c.secondary_min == 0 && c.has_secondary_max && c.secondary_max == 100 &&
+          same(c.secondary_format, "0.0") && same(c.secondary_title, "Secondary units") &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
           c.series[1].labels == (OWF_LABEL_CATEGORY | OWF_LABEL_VALUE) &&
@@ -3602,13 +3650,15 @@ static void test_chart_authoring(void)
     /* Scatter uses the first numeric column for X; pie uses the first value
        column. A one-cell selection has no table. */
     CHECK(oc_core_delete_chart(core, 0) == OWF_OK);
-    go(core, "A1:C4");
+    enter_at(core, "D1", "Humidity"); enter_at(core, "D2", "60");
+    enter_at(core, "D3", "70"); enter_at(core, "D4", "80");
+    go(core, "A1:D4");
     spec.kind = OWF_CHART_SCATTER;
     spec.title = "Measurements";
     CHECK(oc_core_add_chart(core, &spec) == OWF_OK);
-    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.nseries == 1 &&
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.nseries == 2 &&
           same(c.series[0].x_values, "'Sheet1'!$B$2:$B$4") &&
-          same(c.series[0].values, "'Sheet1'!$C$2:$C$4"));
+          same(c.series[0].values, "'Sheet1'!$C$2:$C$4") && same(c.series[1].values, "'Sheet1'!$D$2:$D$4"));
     chart_free(&c);
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_AXIS_TITLES;
@@ -3636,19 +3686,26 @@ static void test_chart_authoring(void)
     CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
           same(c.value_format, "0.0") && same(c.x_format, "0.00"));
     chart_free(&c);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_AXIS | OC_CHART_SET_SECONDARY_AXIS;
+    edit.series = 1; edit.series_axis = OWF_AXIS_SECONDARY;
+    edit.has_secondary_min = edit.has_secondary_max = 1;
+    edit.secondary_min = 0; edit.secondary_max = 100;
+    edit.secondary_format = "0.0"; edit.secondary_title = "Humidity scale";
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK);
     oc_draw_list_init(&l);
-    CHECK(oc_view_draw(core, &l) == OWF_OK && find_text(&l, "5.0") && find_text(&l, "8.00"));
+    CHECK(oc_view_draw(core, &l) == OWF_OK && find_text(&l, "5.0") && find_text(&l, "8.00") &&
+          find_text(&l, "Humidity scale") && find_text(&l, "100.0"));
     oc_draw_list_free(&l);
-    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && !c.value_format && !c.x_format);
-    chart_free(&c);
-    CHECK(oc_core_redo(core) == OWF_OK);
     CHECK(oc_core_save(core, xlsx, "xlsx", NULL) == OWF_OK && oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK &&
-          charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.series[0].x_values &&
-          same(c.value_format, "0.0") && same(c.x_format, "0.00"));
+          charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.nseries == 2 && c.series[0].x_values &&
+          same(c.value_format, "0.0") && same(c.x_format, "0.00") &&
+          c.series[1].axis == OWF_AXIS_SECONDARY && same(c.secondary_title, "Humidity scale"));
     chart_free(&c);
     CHECK(oc_core_save(core, ods, "ods", NULL) == OWF_OK && oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK &&
-          charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.series[0].x_values &&
-          same(c.value_format, "0.0") && same(c.x_format, "0.00"));
+          charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.nseries == 2 && c.series[0].x_values &&
+          same(c.value_format, "0.0") && same(c.x_format, "0.00") &&
+          c.series[1].axis == OWF_AXIS_SECONDARY && same(c.secondary_title, "Humidity scale"));
     chart_free(&c);
     remove(xlsx); remove(ods);
     memset(&edit, 0, sizeof edit);

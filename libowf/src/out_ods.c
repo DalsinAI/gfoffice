@@ -1461,6 +1461,8 @@ static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double wid
     owf_buf_puts(b, "<office:automatic-styles>");
     if (c->value_format)                         /* the formats not the values' own: data styles, not linked to them */
         number_style_named(w, b, "Ny", c->value_format);
+    if (c->secondary_format)
+        number_style_named(w, b, "Ny2", c->secondary_format);
     if (scatter && c->x_format)
         number_style_named(w, b, "Nx", c->x_format);
     for (i = 0; i < c->nseries; i++)
@@ -1507,6 +1509,21 @@ static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double wid
     }
     if (scatter && c->has_xmax) {
         owf_number_exact(c->xmax, num);
+        owf_buf_printf(b, " chart:maximum=\"%s\"", num);
+    }
+    owf_buf_puts(b, "/></style:style>");
+    owf_buf_puts(b, "<style:style style:name=\"axy2\" style:family=\"chart\"");
+    if (c->secondary_format)
+        owf_buf_puts(b, " style:data-style-name=\"Ny2\"><style:chart-properties chart:link-data-style-to-source=\"false\"");
+    else
+        owf_buf_puts(b, "><style:chart-properties");
+    owf_buf_puts(b, " chart:display-label=\"true\"");
+    if (c->has_secondary_min) {
+        owf_number_exact(c->secondary_min, num);
+        owf_buf_printf(b, " chart:minimum=\"%s\"", num);
+    }
+    if (c->has_secondary_max) {
+        owf_number_exact(c->secondary_max, num);
         owf_buf_printf(b, " chart:maximum=\"%s\"", num);
     }
     owf_buf_puts(b, "/></style:style>");
@@ -1667,11 +1684,26 @@ static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double wid
         if (c->gridlines)
             owf_buf_puts(b, "<chart:grid chart:class=\"major\"/>");
         owf_buf_puts(b, "</chart:axis>");
+        for (i = 0; i < c->nseries; i++)
+            if (c->series[i].axis == OWF_AXIS_SECONDARY) {
+                owf_buf_puts(b, "<chart:axis chart:dimension=\"y\" chart:name=\"secondary-y\" chart:style-name=\"axy2\">");
+                if (c->secondary_title) {
+                    owf_buf_puts(b, "<chart:title><text:p>");
+                    put_xml(b, c->secondary_title, strlen(c->secondary_title), 0, &w->dropped);
+                    owf_buf_puts(b, "</text:p></chart:title>");
+                }
+                if (c->secondary_gridlines)
+                    owf_buf_puts(b, "<chart:grid chart:class=\"major\"/>");
+                owf_buf_puts(b, "</chart:axis>");
+                break;
+            }
     }
     for (i = 0; i < c->nseries; i++) {
         const owf_chart_series *se = &c->series[i];
         int run = 0;
         owf_buf_printf(b, "<chart:series chart:style-name=\"s%d\" chart:class=\"%s\"", i, cls);
+        if (se->axis == OWF_AXIS_SECONDARY)
+            owf_buf_puts(b, " chart:attached-axis=\"secondary-y\"");
         put_range_attr(w, b, "chart:values-cell-range-address", se->values);
         put_range_attr(w, b, "chart:label-cell-address", se->name_cell);
         if (se->index != i)

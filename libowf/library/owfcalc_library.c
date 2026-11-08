@@ -1,5 +1,5 @@
 /*
- * owfcalc.library 3.8, GFOpenCalc's part of libowf: workbooks. The workbook
+ * owfcalc.library 3.9, GFOpenCalc's part of libowf: workbooks. The workbook
  * model, its formats (XLSX, ODS, XLS, CSV), charts, formula engine and shared
  * page PDF writer, with the library's own double arithmetic and maths.
  *
@@ -19,13 +19,14 @@
  * 3.6: axis titles in the shared owf_chart model (GFOpenCalc 0.1.49).
  * 3.7: trendlines in the shared owf_chart_series model (GFOpenCalc 0.1.55).
  * 3.8: Y error bars in the shared owf_chart_series model (GFOpenCalc 0.1.58).
+ * 3.9: secondary value axes in the shared chart model (GFOpenCalc 0.1.59).
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfcalc.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 8
-#define OWF_LIB_VERS "3.8"
+#define OWF_LIB_REVISION 9
+#define OWF_LIB_VERS "3.9"
 #define OWF_LIB_DATE "8.11.2026"
 #define OWF_LIB_CALLS_H "owfcalc_calls.h"
 #include "owf_libbase.h"

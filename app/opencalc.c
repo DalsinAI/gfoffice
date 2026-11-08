@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.58 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.59 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -95,7 +95,7 @@ enum {
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
     M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE, M_CHART_POINT_COLOUR, M_CHART_AXIS_FORMATS,
-    M_CHART_SERIES_LABELS, M_CHART_PLOT_OPTIONS, M_CHART_TRENDLINE, M_CHART_ERROR_BARS,
+    M_CHART_SERIES_LABELS, M_CHART_PLOT_OPTIONS, M_CHART_TRENDLINE, M_CHART_ERROR_BARS, M_CHART_SERIES_AXIS,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -221,6 +221,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Chart Plot Options...", NULL, 0, 0, (APTR)M_CHART_PLOT_OPTIONS },
     { NM_ITEM, "Chart Series Trendline...", NULL, 0, 0, (APTR)M_CHART_TRENDLINE },
     { NM_ITEM, "Chart Series Y Error Bars...", NULL, 0, 0, (APTR)M_CHART_ERROR_BARS },
+    { NM_ITEM, "Chart Series Value Axis...", NULL, 0, 0, (APTR)M_CHART_SERIES_AXIS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3737,6 +3738,96 @@ static void do_chart_error_bars(void)
     result(oc_core_update_chart(core, index, &edit), "Chart series Y error bars changed.");
 }
 
+static void do_chart_series_axis(void)
+{
+    owf_chart *charts = NULL;
+    const owf_chart *chart;
+    const owf_chart_series *series;
+    oc_chart_edit_spec edit;
+    char number[24] = "1", label[48], initial[384], entered[384], min[48], max[48];
+    char *p, *token, *end, *split, *title;
+    long chosen;
+    double value;
+    int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, secondary;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Value Axis."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL); else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    chart = &charts[index];
+    if (chart->kind == OWF_CHART_PIE || chart->nseries < 2) {
+        owf_charts_free(charts, n);
+        set_status("A secondary value axis needs a non-pie chart with at least two series.");
+        return;
+    }
+    snprintf(label, sizeof label, "Series number (1-%d)", chart->nseries);
+    if (!text_requester("Chart Series Value Axis", label, number, number, sizeof number)) {
+        owf_charts_free(charts, n); return;
+    }
+    chosen = strtol(trim_text(number), &end, 10);
+    if (*end || chosen < 1 || chosen > chart->nseries) {
+        owf_charts_free(charts, n); set_status("Choose an existing series number."); return;
+    }
+    series = &chart->series[chosen - 1];
+    if (chart->has_secondary_min) owf_number_text(chart->secondary_min, min); else strcpy(min, "auto");
+    if (chart->has_secondary_max) owf_number_text(chart->secondary_max, max); else strcpy(max, "auto");
+    snprintf(initial, sizeof initial, "%s min=%s max=%s %s format=%s | %s",
+             series->axis == OWF_AXIS_SECONDARY ? "secondary" : "primary", min, max,
+             chart->secondary_gridlines ? "grid" : "nogrid",
+             chart->secondary_format ? chart->secondary_format : "auto",
+             chart->secondary_title ? chart->secondary_title : "");
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_AXIS;
+    edit.series = (int)chosen - 1;
+    edit.secondary_gridlines = chart->secondary_gridlines;
+    edit.has_secondary_min = chart->has_secondary_min;
+    edit.has_secondary_max = chart->has_secondary_max;
+    edit.secondary_min = chart->secondary_min;
+    edit.secondary_max = chart->secondary_max;
+    owf_charts_free(charts, n);
+    if (!text_requester("Chart Series Value Axis", "primary/secondary min=auto/# max=auto/# grid/nogrid format=... | title",
+                        initial, entered, sizeof entered)) return;
+    split = strchr(entered, '|');
+    title = NULL;
+    if (split) { *split++ = 0; title = trim_text(split); }
+    p = trim_text(entered); token = p;
+    while (*p && !isspace((unsigned char)*p)) p++;
+    if (*p) *p++ = 0;
+    if (!strcasecmp(token, "primary")) secondary = 0;
+    else if (!strcasecmp(token, "secondary")) secondary = 1;
+    else secondary = bad = 1;
+    edit.series_axis = secondary ? OWF_AXIS_SECONDARY : OWF_AXIS_PRIMARY;
+    for (p = trim_text(p); *p && !bad; p = trim_text(p)) {
+        token = p; while (*p && !isspace((unsigned char)*p)) p++;
+        if (*p) *p++ = 0;
+        if (!strncasecmp(token, "min=", 4)) {
+            if (!strcasecmp(token + 4, "auto")) edit.has_secondary_min = 0;
+            else if (chart_number(token + 4, &value)) { edit.secondary_min = value; edit.has_secondary_min = 1; }
+            else bad = 1;
+        } else if (!strncasecmp(token, "max=", 4)) {
+            if (!strcasecmp(token + 4, "auto")) edit.has_secondary_max = 0;
+            else if (chart_number(token + 4, &value)) { edit.secondary_max = value; edit.has_secondary_max = 1; }
+            else bad = 1;
+        } else if (!strcasecmp(token, "grid")) edit.secondary_gridlines = 1;
+        else if (!strcasecmp(token, "nogrid")) edit.secondary_gridlines = 0;
+        else if (!strncasecmp(token, "format=", 7))
+            edit.secondary_format = !strcasecmp(token + 7, "auto") ? NULL : token + 7;
+        else bad = 1;
+    }
+    if (edit.has_secondary_min && edit.has_secondary_max && !(edit.secondary_min < edit.secondary_max)) bad = 1;
+    if (bad) {
+        set_status("Use primary/secondary, min=/max=auto or a number, grid/nogrid, format=auto/text, then | title.");
+        return;
+    }
+    if (secondary) {
+        edit.set |= OC_CHART_SET_SECONDARY_AXIS;
+        edit.secondary_title = title && *title ? title : NULL;
+    }
+    result(oc_core_update_chart(core, index, &edit), "Chart series value axis changed.");
+}
+
 static void do_chart_data(void)
 {
     oc_chart_data_spec spec;
@@ -3856,6 +3947,7 @@ static void menu_action(ULONG id)
     case M_CHART_PLOT_OPTIONS: do_chart_plot_options(); break;
     case M_CHART_TRENDLINE: do_chart_trendline(); break;
     case M_CHART_ERROR_BARS: do_chart_error_bars(); break;
+    case M_CHART_SERIES_AXIS: do_chart_series_axis(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");

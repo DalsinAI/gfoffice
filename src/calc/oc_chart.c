@@ -238,6 +238,7 @@ static void authored_series_free(owf_chart_series *series, int nseries)
         owf_free(se->points); owf_free(se->name); owf_free(se->name_cell);
         owf_free(se->values); owf_free(se->categories); owf_free(se->x_values);
         owf_free(se->label_format); owf_free(se->format);
+        owf_free(se->error_plus_range); owf_free(se->error_minus_range);
     }
     owf_free(series);
 }
@@ -249,6 +250,7 @@ static void authored_chart_free(owf_chart *chart)
     owf_free(chart->title);
     owf_free(chart->value_format); owf_free(chart->x_format);
     owf_free(chart->category_title); owf_free(chart->value_title);
+    owf_free(chart->secondary_format); owf_free(chart->secondary_title);
     memset(chart, 0, sizeof *chart);
 }
 
@@ -434,6 +436,7 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     char *title = NULL, *category_title = NULL, *value_title = NULL;
     char *value_format = NULL, *x_format = NULL, *label_format = NULL;
     char *error_plus_range = NULL, *error_minus_range = NULL;
+    char *secondary_format = NULL, *secondary_title = NULL;
     int n = 0, rc, i;
     if (!core || !spec || !spec->set ||
         (spec->set & ~(OC_CHART_SET_KIND | OC_CHART_SET_GROUPING | OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND |
@@ -441,7 +444,7 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
                        OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES | OC_CHART_SET_AXIS_TITLES |
                        OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR | OC_CHART_SET_AXIS_FORMATS |
                        OC_CHART_SET_SERIES_LABELS | OC_CHART_SET_PLOT_OPTIONS | OC_CHART_SET_TRENDLINE |
-                       OC_CHART_SET_ERROR_BARS)) ||
+                       OC_CHART_SET_ERROR_BARS | OC_CHART_SET_SERIES_AXIS | OC_CHART_SET_SECONDARY_AXIS)) ||
         ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
         ((spec->set & OC_CHART_SET_GROUPING) &&
          (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
@@ -485,7 +488,15 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
           (spec->error_colour && !OWF_SHADE_SET(spec->error_colour)) ||
           (spec->error_kind == OWF_ERROR_CELL_RANGE &&
            ((!spec->error_plus_range || !*spec->error_plus_range) ||
-            (!spec->error_minus_range || !*spec->error_minus_range))))))
+            (!spec->error_minus_range || !*spec->error_minus_range))))) ||
+        ((spec->set & OC_CHART_SET_SERIES_AXIS) &&
+         (spec->series < 0 || (spec->series_axis != OWF_AXIS_PRIMARY && spec->series_axis != OWF_AXIS_SECONDARY))) ||
+        ((spec->set & OC_CHART_SET_SECONDARY_AXIS) &&
+         ((spec->secondary_gridlines != 0 && spec->secondary_gridlines != 1) ||
+          (spec->has_secondary_min && !(spec->secondary_min >= -1e200 && spec->secondary_min <= 1e200)) ||
+          (spec->has_secondary_max && !(spec->secondary_max >= -1e200 && spec->secondary_max <= 1e200)) ||
+          (spec->has_secondary_min && spec->has_secondary_max &&
+           !(spec->secondary_min < spec->secondary_max)))))
         return OWF_ERR_FORMAT;
     if (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core)))
         return OWF_ERR_UNSUPPORTED;
@@ -512,7 +523,7 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     }
     chart = &charts[index];
     if ((spec->set & (OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR | OC_CHART_SET_SERIES_LABELS |
-                      OC_CHART_SET_TRENDLINE | OC_CHART_SET_ERROR_BARS)) &&
+                      OC_CHART_SET_TRENDLINE | OC_CHART_SET_ERROR_BARS | OC_CHART_SET_SERIES_AXIS)) &&
         spec->series >= chart->nseries) {
         owf_charts_free(charts, n);
         owf_free(title);
@@ -528,6 +539,17 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         owf_free(value_title);
         return OWF_ERR_UNSUPPORTED;
     }
+    if ((spec->set & OC_CHART_SET_SERIES_AXIS) && spec->series_axis == OWF_AXIS_SECONDARY &&
+        chart->series[spec->series].axis == OWF_AXIS_PRIMARY) {
+        int primary = 0;
+        for (i = 0; i < chart->nseries; i++)
+            if (chart->series[i].axis == OWF_AXIS_PRIMARY) primary++;
+        if (primary <= 1) {
+            owf_charts_free(charts, n);
+            owf_free(title); owf_free(category_title); owf_free(value_title);
+            return OWF_ERR_UNSUPPORTED;
+        }
+    }
     if ((spec->set & OC_CHART_SET_PLOT_OPTIONS) &&
         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_COLUMN &&
         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_BAR &&
@@ -536,7 +558,8 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         owf_free(title); owf_free(category_title); owf_free(value_title);
         return OWF_ERR_UNSUPPORTED;
     }
-    if ((spec->set & (OC_CHART_SET_TRENDLINE | OC_CHART_SET_ERROR_BARS)) &&
+    if ((spec->set & (OC_CHART_SET_TRENDLINE | OC_CHART_SET_ERROR_BARS | OC_CHART_SET_SERIES_AXIS |
+                      OC_CHART_SET_SECONDARY_AXIS)) &&
         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) == OWF_CHART_PIE) {
         owf_charts_free(charts, n);
         owf_free(title); owf_free(category_title); owf_free(value_title);
@@ -594,6 +617,22 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
             return OWF_ERR_MEMORY;
         }
     }
+    if ((spec->set & OC_CHART_SET_SECONDARY_AXIS) && spec->secondary_format && *spec->secondary_format &&
+        !(secondary_format = oc_strdup(spec->secondary_format))) {
+        owf_charts_free(charts, n);
+        owf_free(title); owf_free(category_title); owf_free(value_title);
+        owf_free(value_format); owf_free(x_format); owf_free(label_format);
+        owf_free(error_plus_range); owf_free(error_minus_range);
+        return OWF_ERR_MEMORY;
+    }
+    if ((spec->set & OC_CHART_SET_SECONDARY_AXIS) && spec->secondary_title && *spec->secondary_title &&
+        !(secondary_title = oc_strdup(spec->secondary_title))) {
+        owf_charts_free(charts, n);
+        owf_free(title); owf_free(category_title); owf_free(value_title);
+        owf_free(value_format); owf_free(x_format); owf_free(label_format);
+        owf_free(error_plus_range); owf_free(error_minus_range); owf_free(secondary_format);
+        return OWF_ERR_MEMORY;
+    }
     if (spec->set & OC_CHART_SET_KIND) {
         int was_scatter = chart->kind == OWF_CHART_SCATTER;
         int is_scatter = spec->kind == OWF_CHART_SCATTER;
@@ -612,7 +651,10 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         chart->kind = spec->kind;
         if (is_scatter || chart->kind == OWF_CHART_LINE)
             for (i = 0; i < chart->nseries; i++) chart->series[i].line = 1;
-        if (chart->kind == OWF_CHART_PIE) chart->vary = 1;
+        if (chart->kind == OWF_CHART_PIE) {
+            chart->vary = 1;
+            for (i = 0; i < chart->nseries; i++) chart->series[i].axis = OWF_AXIS_PRIMARY;
+        }
     }
     if (spec->set & OC_CHART_SET_GROUPING) chart->grouping = spec->grouping;
     if (spec->set & OC_CHART_SET_TITLE) { owf_free(chart->title); chart->title = title; title = NULL; }
@@ -694,6 +736,20 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         series->error_minus_range = error_minus_range;
         error_plus_range = error_minus_range = NULL;
     }
+    if (spec->set & OC_CHART_SET_SERIES_AXIS)
+        chart->series[spec->series].axis = spec->series_axis;
+    if (spec->set & OC_CHART_SET_SECONDARY_AXIS) {
+        chart->secondary_gridlines = spec->secondary_gridlines;
+        chart->has_secondary_min = !!spec->has_secondary_min;
+        chart->has_secondary_max = !!spec->has_secondary_max;
+        chart->secondary_min = spec->secondary_min;
+        chart->secondary_max = spec->secondary_max;
+        owf_free(chart->secondary_format);
+        owf_free(chart->secondary_title);
+        chart->secondary_format = secondary_format;
+        chart->secondary_title = secondary_title;
+        secondary_format = secondary_title = NULL;
+    }
     if (spec->set & OC_CHART_SET_LABELS)
         for (i = 0; i < chart->nseries; i++) {
             chart->series[i].labels = spec->labels;
@@ -712,6 +768,8 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     owf_free(label_format);
     owf_free(error_plus_range);
     owf_free(error_minus_range);
+    owf_free(secondary_format);
+    owf_free(secondary_title);
     return rc;
 }
 
@@ -1270,6 +1328,25 @@ static const char *axis_format(const render *r)
     return r->cd.ns > 0 ? r->cd.fmts[0] : NULL;
 }
 
+static const char *secondary_axis_format(const render *r)
+{
+    int s;
+    if (r->ch->grouping == OWF_CHART_PERCENT && r->ch->kind != OWF_CHART_SCATTER)
+        return "0%";
+    if (r->ch->secondary_format)
+        return r->ch->secondary_format;
+    for (s = 0; s < r->cd.ns; s++)
+        if (r->ch->series[s].axis == OWF_AXIS_SECONDARY)
+            return r->cd.fmts[s];
+    return NULL;
+}
+
+static int value_pixel(int across, int a0, int a1, double from, double to, double v)
+{
+    return across ? a0 + (int)floor((v - from) * (a1 - a0) / (to - from) + 0.5)
+                  : a1 - (int)floor((v - from) * (a1 - a0) / (to - from) + 0.5);
+}
+
 /* The widest of an axis's labels. */
 static int labels_width(render *r, double from, double to, double step, const char *fmt)
 {
@@ -1289,7 +1366,7 @@ static int labels_width(render *r, double from, double to, double step, const ch
 #define POS(v) (across ? a0 + (int)floor(((v) - from) * (a1 - a0) / (to - from) + 0.5) \
                        : a1 - (int)floor(((v) - from) * (a1 - a0) / (to - from) + 0.5))
 static void axis(render *r, int across, int a0, int a1, int c0, int c1, double from, double to, double step, int grid,
-                 const char *fmt, int lw)
+                 const char *fmt, int lw, int far)
 {
     char buf[64];
     double v;
@@ -1300,12 +1377,14 @@ static void axis(render *r, int across, int a0, int a1, int c0, int c1, double f
         if (across) {
             if (grid)
                 r->g->line(r->g, at, c0, at, c1, 1, RGB_CHART_LINE);
-            text(r, buf, at - 40 * r->core->zoom / 100, c1 + 2, 80 * r->core->zoom / 100, r->lh, OC_ALIGN_CENTRE,
+            text(r, buf, at - 40 * r->core->zoom / 100, far ? c0 - r->lh - 2 : c1 + 2,
+                 80 * r->core->zoom / 100, r->lh, OC_ALIGN_CENTRE,
                  LABEL_TWIPS, 0);
         } else {
             if (grid)
                 r->g->line(r->g, c0, at, c1 - 1, at, 1, RGB_CHART_LINE);
-            text(r, buf, c0 - 4 - lw, at - r->lh / 2, lw, r->lh, OC_ALIGN_RIGHT, LABEL_TWIPS, 0);
+            text(r, buf, far ? c1 + 4 : c0 - 4 - lw, at - r->lh / 2, lw, r->lh,
+                 far ? OC_ALIGN_LEFT : OC_ALIGN_RIGHT, LABEL_TWIPS, 0);
         }
     }
 }
@@ -1663,6 +1742,35 @@ static int moving_average(const chartdata *cd, int series, int at, int period, d
 
 /* ---- Columns, bars and lines over categories ---- */
 
+static void category_limits(const chartdata *cd, const owf_chart *ch, int axis_number, int percent, int stacked,
+                            double *lo, double *hi)
+{
+    int s, k, any = 0;
+    *lo = *hi = 0;
+    for (k = 0; k < cd->n; k++) {
+        double pos = 0, neg = 0, all = 0;
+        for (s = 0; s < cd->ns; s++) {
+            size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
+            double v;
+            if (ch->series[s].axis != axis_number || !cd->has[at]) continue;
+            v = cd->v[at];
+            if (!stacked) {
+                if (!any || v < *lo) *lo = v;
+                if (!any || v > *hi) *hi = v;
+                any = 1;
+            } else if (v >= 0) pos += v;
+            else neg += v;
+            all += fabs(v);
+        }
+        if (percent && all > 0) { pos /= all; neg /= all; }
+        if (stacked) {
+            if (neg < *lo) *lo = neg;
+            if (pos > *hi) *hi = pos;
+        }
+    }
+    if (stacked && *lo > 0) *lo = 0;
+}
+
 static int categories(render *r)
 {
     const owf_chart *ch = r->ch;
@@ -1671,8 +1779,10 @@ static int categories(render *r)
     oc_core *core = r->core;
     int s, k, horizontal = ch->kind == OWF_CHART_BAR, lh = r->lh, t;
     int percent = ch->grouping == OWF_CHART_PERCENT, stacked = ch->grouping != OWF_CHART_CLUSTERED;
-    int along, want, vw, cwid = 0, n = cd->n ? cd->n : 1, every = 1, slot, ax0, ax1, ay0, ay1, a0, a1, across;
-    double lo = 0, hi = 0, from, to, step, v, sw, bw, gap = ch->gap / 100.0, val0;
+    int along, want, vw, vw2 = 0, cwid = 0, n = cd->n ? cd->n : 1, every = 1, slot, ax0, ax1, ay0, ay1, a0, a1, across;
+    int secondary = 0;
+    double lo = 0, hi = 0, lo2 = 0, hi2 = 0, from, to, step, from2 = 0, to2 = 1, step2 = 1;
+    double v, sw, bw, gap = ch->gap / 100.0, val0, val02 = 0;
     unsigned long *rgb = malloc((size_t)(cd->ns ? cd->ns : 1) * sizeof *rgb);
 
     if (!rgb)
@@ -1682,43 +1792,20 @@ static int categories(render *r)
     legend(r, cd->names, rgb, NULL, cd->ns);
     free(rgb);
 
-    /* the values' range: each point's, or each category's sums when stacked; percentages for 100% */
-    for (k = 0; k < cd->n; k++) {
-        double pos = 0, neg = 0, all = 0;
-        for (s = 0; s < cd->ns; s++) {
-            size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
-            if (!cd->has[at])
-                continue;
-            v = cd->v[at];
-            if (!stacked) {
-                if (v < lo || (k == 0 && s == 0))
-                    lo = v;
-                if (v > hi || (k == 0 && s == 0))
-                    hi = v;
-            } else if (v >= 0) {
-                pos += v;
-            } else {
-                neg += v;
-            }
-            all += fabs(v);
-        }
-        if (percent && all > 0) {
-            pos /= all;
-            neg /= all;
-        }
-        if (stacked) {
-            if (neg < lo)
-                lo = neg;
-            if (pos > hi)
-                hi = pos;
-        }
-    }
-    if (stacked)                                 /* sums run from 0 */
-        lo = lo > 0 ? 0 : lo;
+    for (s = 0; s < cd->ns; s++)
+        if (ch->series[s].axis == OWF_AXIS_SECONDARY) secondary = 1;
+    category_limits(cd, ch, OWF_AXIS_PRIMARY, percent, stacked, &lo, &hi);
+    if (secondary)
+        category_limits(cd, ch, OWF_AXIS_SECONDARY, percent, stacked, &lo2, &hi2);
     along = horizontal ? r->x1 - r->x0 : r->y1 - r->y0;
     want = along / (horizontal ? 60 * core->zoom / 100 + 1 : lh * 3 / 2 + 1);
     scale(ch->has_min, ch->min, ch->has_max, ch->max, lo, hi, want < 2 ? 2 : want > 10 ? 10 : want, &from, &to, &step);
     vw = labels_width(r, from, to, step, axis_format(r));
+    if (secondary) {
+        scale(ch->has_secondary_min, ch->secondary_min, ch->has_secondary_max, ch->secondary_max, lo2, hi2,
+              want < 2 ? 2 : want > 10 ? 10 : want, &from2, &to2, &step2);
+        vw2 = labels_width(r, from2, to2, step2, secondary_axis_format(r));
+    }
     for (k = 0; k < cd->n; k++)
         if ((t = width_of(r, cd->labels[k])) > cwid)
             cwid = t;
@@ -1726,12 +1813,12 @@ static int categories(render *r)
         if (cwid > (r->x1 - r->x0) / 3)
             cwid = (r->x1 - r->x0) / 3;
         ax0 = r->x0 + cwid + 4;
-        ax1 = r->x1 - vw / 2;
-        ay0 = r->y0;
+        ax1 = r->x1 - (vw > vw2 ? vw : vw2) / 2;
+        ay0 = r->y0 + (secondary ? lh + 2 : 0);
         ay1 = r->y1 - lh - 2;
     } else {
         ax0 = r->x0 + vw + 4;
-        ax1 = r->x1;
+        ax1 = r->x1 - (secondary ? vw2 + 4 : 0);
         ay0 = r->y0 + lh / 2;
         ay1 = r->y1 - lh - 2;
     }
@@ -1741,11 +1828,20 @@ static int categories(render *r)
     a0 = horizontal ? ax0 : ay0;
     a1 = horizontal ? ax1 : ay1;
     if (horizontal)
-        axis(r, 1, ax0, ax1, ay0, ay1, from, to, step, ch->gridlines, axis_format(r), 0);
+        axis(r, 1, ax0, ax1, ay0, ay1, from, to, step, ch->gridlines, axis_format(r), 0, 0);
     else
-        axis(r, 0, ay0, ay1, ax0, ax1, from, to, step, ch->gridlines, axis_format(r), vw);
+        axis(r, 0, ay0, ay1, ax0, ax1, from, to, step, ch->gridlines, axis_format(r), vw, 0);
+    if (secondary) {
+        if (horizontal)
+            axis(r, 1, ax0, ax1, ay0, ay1, from2, to2, step2, ch->secondary_gridlines,
+                 secondary_axis_format(r), 0, 1);
+        else
+            axis(r, 0, ay0, ay1, ax0, ax1, from2, to2, step2, ch->secondary_gridlines,
+                 secondary_axis_format(r), vw2, 1);
+    }
     /* the category axis, along 0 (or the scale's end nearest it) */
     val0 = from > 0 ? from : to < 0 ? to : 0;
+    val02 = from2 > 0 ? from2 : to2 < 0 ? to2 : 0;
     if (horizontal)
         g->line(g, POS(val0), ay0, POS(val0), ay1, 1, RGB_AXIS_LINE);
     else
@@ -1772,38 +1868,41 @@ static int categories(render *r)
         bw = stacked ? sw / (1 + gap) : sw / (cd->ns + gap);
         for (pass = 0; pass < 2; pass++)         /* the bars, then their labels over them all */
         for (k = 0; k < cd->n; k++) {
-            double all = 0, pos = 0, neg = 0, start = k * sw + (sw - (stacked ? bw : bw * cd->ns)) / 2;
+            double all[2] = { 0, 0 }, pos[2] = { 0, 0 }, neg[2] = { 0, 0 };
+            double start = k * sw + (sw - (stacked ? bw : bw * cd->ns)) / 2;
             for (s = 0; s < cd->ns; s++)
                 if (cd->has[(size_t)s * cd->n + k])
-                    all += fabs(cd->v[(size_t)s * cd->n + k]);
+                    all[ch->series[s].axis == OWF_AXIS_SECONDARY] += fabs(cd->v[(size_t)s * cd->n + k]);
             for (s = 0; s < cd->ns; s++) {
                 size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
+                int axisno = ch->series[s].axis == OWF_AXIS_SECONDARY;
+                double sf = axisno ? from2 : from, st = axisno ? to2 : to, sv0 = axisno ? val02 : val0;
                 double base, top, a, b;
                 int i0, i1, v0, v1;
                 if (!cd->has[at])
                     continue;
                 v = cd->v[at];
                 if (percent)
-                    v = all > 0 ? v / all : 0;
+                    v = all[axisno] > 0 ? v / all[axisno] : 0;
                 if (stacked) {
-                    base = v >= 0 ? pos : neg;
+                    base = v >= 0 ? pos[axisno] : neg[axisno];
                     top = base + v;
                     if (v >= 0)
-                        pos = top;
+                        pos[axisno] = top;
                     else
-                        neg = top;
+                        neg[axisno] = top;
                 } else {
-                    base = val0;
+                    base = sv0;
                     top = v;
                 }
-                top = top < from ? from : top > to ? to : top;
-                base = base < from ? from : base > to ? to : base;
+                top = top < sf ? sf : top > st ? st : top;
+                base = base < sf ? sf : base > st ? st : base;
                 a = start + (stacked ? 0 : s * bw);
                 b = a + bw;
                 i0 = (int)floor(a + 0.5);
                 i1 = (int)floor(b + 0.5);
-                v0 = POS(base);
-                v1 = POS(top);
+                v0 = value_pixel(horizontal, a0, a1, sf, st, base);
+                v1 = value_pixel(horizontal, a0, a1, sf, st, top);
                 if (pass == 0) {
                     if (horizontal)
                         oc_gfx_box(g, v0 < v1 ? v0 : v1, ay1 - i1, abs(v1 - v0), i1 - i0, point_rgb(ch, s, k));
@@ -1815,9 +1914,10 @@ static int categories(render *r)
                         double em = se->error_direction == OWF_ERROR_PLUS ? 0 : error_amount(r, s, k, 0);
                         double low = top - em, high = top + ep;
                         int plo, phi, fixed = horizontal ? ay1 - (i0 + i1) / 2 : ax0 + (i0 + i1) / 2;
-                        low = low < from ? from : low > to ? to : low;
-                        high = high < from ? from : high > to ? to : high;
-                        plo = POS(high); phi = POS(low);
+                        low = low < sf ? sf : low > st ? st : low;
+                        high = high < sf ? sf : high > st ? st : high;
+                        plo = value_pixel(horizontal, a0, a1, sf, st, high);
+                        phi = value_pixel(horizontal, a0, a1, sf, st, low);
                         error_pixels(r, se, horizontal, fixed, horizontal ? phi : plo, horizontal ? plo : phi);
                     }
                 } else if (ch->series[s].labels) {
@@ -1825,7 +1925,8 @@ static int categories(render *r)
                     char buf[160];
                     int pos = ch->series[s].label_pos, mid = (i0 + i1) / 2, up = horizontal ? v1 >= v0 : v1 <= v0;
                     int end = v1, startp = v0, lh2 = lh / 2 + 1;
-                    label_text(r, s, k, cd->v[at], all > 0 ? fabs(cd->v[at]) / all : 0, NULL, buf, sizeof buf);
+                    label_text(r, s, k, cd->v[at], all[axisno] > 0 ? fabs(cd->v[at]) / all[axisno] : 0,
+                               NULL, buf, sizeof buf);
                     if (pos == OWF_LABEL_AUTO || pos == OWF_LABEL_BEST_FIT)
                         pos = stacked ? OWF_LABEL_CENTRE : OWF_LABEL_OUTSIDE_END;
                     if (horizontal) {
@@ -1855,20 +1956,25 @@ static int categories(render *r)
     } else {                                     /* lines (and areas, as their lines) through the categories' middles */
         int lt = 3 * core->zoom / 100 > 1 ? 3 * core->zoom / 100 : 1;
         double *sum = calloc((size_t)n, sizeof *sum), *all = calloc((size_t)n, sizeof *all);
-        if (!sum || !all) {
-            free(sum);
-            free(all);
+        double *sum2 = calloc((size_t)n, sizeof *sum2), *all2 = calloc((size_t)n, sizeof *all2);
+        if (!sum || !all || !sum2 || !all2) {
+            free(sum); free(all); free(sum2); free(all2);
             return 0;
         }
         for (k = 0; k < cd->n; k++)
             for (s = 0; s < cd->ns; s++)
                 if (cd->has[(size_t)s * cd->n + k])
-                    all[k] += fabs(cd->v[(size_t)s * cd->n + k]);
+                    (ch->series[s].axis == OWF_AXIS_SECONDARY ? all2 : all)[k] +=
+                        fabs(cd->v[(size_t)s * cd->n + k]);
         int pass;
         for (pass = 0; pass < 3; pass++) {       /* the lines, their markers, their labels */
             memset(sum, 0, (size_t)n * sizeof *sum);
+            memset(sum2, 0, (size_t)n * sizeof *sum2);
             for (s = 0; s < cd->ns; s++) {
                 const owf_chart_series *se = &ch->series[s];
+                int axisno = se->axis == OWF_AXIS_SECONDARY;
+                double sf = axisno ? from2 : from, st = axisno ? to2 : to;
+                double *series_sum = axisno ? sum2 : sum, *series_all = axisno ? all2 : all;
                 int has_last = 0, lx = 0, lyy = 0, mark = ch->kind == OWF_CHART_LINE ? se->marker : OWF_MARKER_NONE;
                 int mpx = mark == OWF_MARKER_NONE ? 0 : marker_px(core, se);
                 for (k = 0; k < cd->n; k++) {
@@ -1880,14 +1986,14 @@ static int categories(render *r)
                     }
                     v = cd->v[at];
                     if (percent)
-                        v = all[k] > 0 ? v / all[k] : 0;
+                        v = series_all[k] > 0 ? v / series_all[k] : 0;
                     if (stacked) {
-                        sum[k] += v;
-                        v = sum[k];
+                        series_sum[k] += v;
+                        v = series_sum[k];
                     }
-                    v = v < from ? from : v > to ? to : v;
+                    v = v < sf ? sf : v > st ? st : v;
                     xx = ax0 + (int)floor((k + 0.5) * sw + 0.5);
-                    yy = POS(v);
+                    yy = value_pixel(0, a0, a1, sf, st, v);
                     if (pass == 0) {
                         if (has_last && se->line)
                             g->line(g, lx, lyy, xx, yy, lt, series_rgb(se));
@@ -1900,16 +2006,18 @@ static int categories(render *r)
                             double em = se->error_direction == OWF_ERROR_PLUS ? 0 : error_amount(r, s, k, 0);
                             double low = v - em, high = v + ep;
                             int plo, phi;
-                            low = low < from ? from : low > to ? to : low;
-                            high = high < from ? from : high > to ? to : high;
-                            plo = POS(high); phi = POS(low);
+                            low = low < sf ? sf : low > st ? st : low;
+                            high = high < sf ? sf : high > st ? st : high;
+                            plo = value_pixel(0, a0, a1, sf, st, high);
+                            phi = value_pixel(0, a0, a1, sf, st, low);
                             error_pixels(r, se, 0, xx, plo, phi);
                         }
                         if (mark != OWF_MARKER_NONE)
                             marker(g, mark, xx, yy, mpx, point_rgb(ch, s, k));
                     } else if (pass == 2 && se->labels) {
                         char buf[160];
-                        label_text(r, s, k, cd->v[at], all[k] > 0 ? fabs(cd->v[at]) / all[k] : 0, NULL, buf, sizeof buf);
+                        label_text(r, s, k, cd->v[at], series_all[k] > 0 ? fabs(cd->v[at]) / series_all[k] : 0,
+                                   NULL, buf, sizeof buf);
                         point_label(r, buf, xx, yy, mpx ? mpx : lt, se->label_pos);
                     }
                     lx = xx;
@@ -1918,14 +2026,14 @@ static int categories(render *r)
                 }
             }
         }
-        free(sum);
-        free(all);
+        free(sum); free(all); free(sum2); free(all2);
     }
     if (!percent)
         for (s = 0; s < cd->ns; s++) {
             const owf_chart_series *se = &ch->series[s];
             trendfit fit;
-            double last_v = 0;
+            double last_v = 0, sf = se->axis == OWF_AXIS_SECONDARY ? from2 : from;
+            double st = se->axis == OWF_AXIS_SECONDARY ? to2 : to;
             int has_last = 0, last_x = 0, last_y = 0, width = 2 * core->zoom / 100;
             unsigned long colour = se->trend_colour ? OWF_SHADE_RGB(se->trend_colour) : series_rgb(se);
             int samples = cd->n * 8;
@@ -1934,13 +2042,13 @@ static int categories(render *r)
                     double raw, shown;
                     int xx, yy;
                     if (!moving_average(cd, s, k, se->trend_period, &raw)) { has_last = 0; continue; }
-                    shown = raw < from ? from : raw > to ? to : raw;
+                    shown = raw < sf ? sf : raw > st ? st : raw;
                     if (horizontal) {
-                        xx = POS(shown); yy = ay1 - (int)floor((k + 0.5) * sw + 0.5);
+                        xx = value_pixel(1, a0, a1, sf, st, shown); yy = ay1 - (int)floor((k + 0.5) * sw + 0.5);
                     } else {
-                        xx = ax0 + (int)floor((k + 0.5) * sw + 0.5); yy = POS(shown);
+                        xx = ax0 + (int)floor((k + 0.5) * sw + 0.5); yy = value_pixel(0, a0, a1, sf, st, shown);
                     }
-                    if (has_last && !((last_v < from && raw < from) || (last_v > to && raw > to)))
+                    if (has_last && !((last_v < sf && raw < sf) || (last_v > st && raw > st)))
                         g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
                     last_x = xx; last_y = yy; last_v = raw; has_last = 1;
                 }
@@ -1953,13 +2061,13 @@ static int categories(render *r)
                 double x = 1 + (cd->n - 1.0) * k / samples, raw, shown;
                 int xx, yy;
                 if (!trend_value(&fit, x, &raw)) { has_last = 0; continue; }
-                shown = raw < from ? from : raw > to ? to : raw;
+                shown = raw < sf ? sf : raw > st ? st : raw;
                 if (horizontal) {
-                    xx = POS(shown); yy = ay1 - (int)floor((x - 0.5) * sw + 0.5);
+                    xx = value_pixel(1, a0, a1, sf, st, shown); yy = ay1 - (int)floor((x - 0.5) * sw + 0.5);
                 } else {
-                    xx = ax0 + (int)floor((x - 0.5) * sw + 0.5); yy = POS(shown);
+                    xx = ax0 + (int)floor((x - 0.5) * sw + 0.5); yy = value_pixel(0, a0, a1, sf, st, shown);
                 }
-                if (has_last && !((last_v < from && raw < from) || (last_v > to && raw > to)))
+                if (has_last && !((last_v < sf && raw < sf) || (last_v > st && raw > st)))
                     g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
                 last_x = xx; last_y = yy; last_v = raw; has_last = 1;
             }
@@ -1977,8 +2085,10 @@ static int scatter(render *r)
     chartdata *cd = &r->cd;
     oc_gfx *g = r->g;
     oc_core *core = r->core;
-    int s, k, lh = r->lh, any = 0, want, vw, a0, a1, across, ax0, ax1, ay0, ay1, lt;
-    double xlo = 0, xhi = 0, ylo = 0, yhi = 0, xfrom, xto, xstep, yfrom, yto, ystep, from, to;
+    int s, k, lh = r->lh, any = 0, anyy = 0, any2 = 0, secondary = 0, want, vw, vw2 = 0;
+    int a0, a1, across, ax0, ax1, ay0, ay1, lt;
+    double xlo = 0, xhi = 0, ylo = 0, yhi = 0, ylo2 = 0, yhi2 = 0;
+    double xfrom, xto, xstep, yfrom, yto, ystep, yfrom2 = 0, yto2 = 1, ystep2 = 1, from, to;
     unsigned long *rgb = malloc((size_t)(cd->ns ? cd->ns : 1) * sizeof *rgb);
     int *marks = malloc((size_t)(cd->ns ? cd->ns : 1) * sizeof *marks);
 
@@ -2003,17 +2113,27 @@ static int scatter(render *r)
                 xlo = cd->x[at];
             if (!any || cd->x[at] > xhi)
                 xhi = cd->x[at];
-            if (!any || cd->v[at] < ylo)
-                ylo = cd->v[at];
-            if (!any || cd->v[at] > yhi)
-                yhi = cd->v[at];
+            if (ch->series[s].axis == OWF_AXIS_SECONDARY) {
+                if (!any2 || cd->v[at] < ylo2) ylo2 = cd->v[at];
+                if (!any2 || cd->v[at] > yhi2) yhi2 = cd->v[at];
+                any2 = secondary = 1;
+            } else {
+                if (!anyy || cd->v[at] < ylo) ylo = cd->v[at];
+                if (!anyy || cd->v[at] > yhi) yhi = cd->v[at];
+                anyy = 1;
+            }
             any = 1;
         }
     want = (r->y1 - r->y0) / (lh * 3 / 2 + 1);
     scale(ch->has_min, ch->min, ch->has_max, ch->max, ylo, yhi, want < 2 ? 2 : want > 10 ? 10 : want, &yfrom, &yto, &ystep);
     vw = labels_width(r, yfrom, yto, ystep, axis_format(r));
+    if (secondary) {
+        scale(ch->has_secondary_min, ch->secondary_min, ch->has_secondary_max, ch->secondary_max, ylo2, yhi2,
+              want < 2 ? 2 : want > 10 ? 10 : want, &yfrom2, &yto2, &ystep2);
+        vw2 = labels_width(r, yfrom2, yto2, ystep2, secondary_axis_format(r));
+    }
     ax0 = r->x0 + vw + 4;
-    ax1 = r->x1;
+    ax1 = r->x1 - (secondary ? vw2 + 4 : 0);
     want = (ax1 - ax0) / (60 * core->zoom / 100 + 1);
     scale(ch->has_xmin, ch->xmin, ch->has_xmax, ch->xmax, xlo, xhi, want < 2 ? 2 : want > 10 ? 10 : want, &xfrom, &xto, &xstep);
     ax1 -= labels_width(r, xfrom, xto, xstep, ch->x_format ? ch->x_format : cd->xfmt) / 2;
@@ -2021,8 +2141,11 @@ static int scatter(render *r)
     ay1 = r->y1 - lh - 2;
     if (ax1 - ax0 < 8 || ay1 - ay0 < 8)
         return 1;
-    axis(r, 1, ax0, ax1, ay0, ay1, xfrom, xto, xstep, ch->x_gridlines, ch->x_format ? ch->x_format : cd->xfmt, 0);
-    axis(r, 0, ay0, ay1, ax0, ax1, yfrom, yto, ystep, ch->gridlines, axis_format(r), vw);
+    axis(r, 1, ax0, ax1, ay0, ay1, xfrom, xto, xstep, ch->x_gridlines, ch->x_format ? ch->x_format : cd->xfmt, 0, 0);
+    axis(r, 0, ay0, ay1, ax0, ax1, yfrom, yto, ystep, ch->gridlines, axis_format(r), vw, 0);
+    if (secondary)
+        axis(r, 0, ay0, ay1, ax0, ax1, yfrom2, yto2, ystep2, ch->secondary_gridlines,
+             secondary_axis_format(r), vw2, 1);
     across = 0;                                  /* the x axis along y's 0 (or its end nearest it) */
     a0 = ay0;
     a1 = ay1;
@@ -2035,6 +2158,8 @@ static int scatter(render *r)
     lt = 3 * core->zoom / 100 > 1 ? 3 * core->zoom / 100 : 1;
     for (s = 0; s < cd->ns; s++) {
         const owf_chart_series *se = &ch->series[s];
+        double sf = se->axis == OWF_AXIS_SECONDARY ? yfrom2 : yfrom;
+        double st = se->axis == OWF_AXIS_SECONDARY ? yto2 : yto;
         int has_last = 0, lx = 0, ly = 0, px = marker_px(core, se);
         for (k = 0; k < cd->n; k++) {
             size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
@@ -2045,9 +2170,9 @@ static int scatter(render *r)
                 continue;
             }
             xv = cd->x[at] < xfrom ? xfrom : cd->x[at] > xto ? xto : cd->x[at];
-            yv = cd->v[at] < yfrom ? yfrom : cd->v[at] > yto ? yto : cd->v[at];
+            yv = cd->v[at] < sf ? sf : cd->v[at] > st ? st : cd->v[at];
             xx = ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5);
-            yy = ay1 - (int)floor((yv - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5);
+            yy = value_pixel(0, ay0, ay1, sf, st, yv);
             if (has_last && se->line)
                 g->line(g, lx, ly, xx, yy, lt, series_rgb(se));
             lx = xx;
@@ -2064,11 +2189,11 @@ static int scatter(render *r)
                 ep = se->error_direction == OWF_ERROR_MINUS ? 0 : error_amount(r, s, k, 1);
                 em = se->error_direction == OWF_ERROR_PLUS ? 0 : error_amount(r, s, k, 0);
                 low = cd->v[at] - em; high = cd->v[at] + ep;
-                low = low < yfrom ? yfrom : low > yto ? yto : low;
-                high = high < yfrom ? yfrom : high > yto ? yto : high;
+                low = low < sf ? sf : low > st ? st : low;
+                high = high < sf ? sf : high > st ? st : high;
                 xx = ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5);
-                plo = ay1 - (int)floor((high - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5);
-                phi = ay1 - (int)floor((low - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5);
+                plo = value_pixel(0, ay0, ay1, sf, st, high);
+                phi = value_pixel(0, ay0, ay1, sf, st, low);
                 error_pixels(r, se, 0, xx, plo, phi);
             }
         for (k = 0; k < cd->n; k++) {            /* the markers over the lines */
@@ -2077,15 +2202,16 @@ static int scatter(render *r)
             if (!cd->has[at] || se->marker == OWF_MARKER_NONE)
                 continue;
             xv = cd->x[at] < xfrom ? xfrom : cd->x[at] > xto ? xto : cd->x[at];
-            yv = cd->v[at] < yfrom ? yfrom : cd->v[at] > yto ? yto : cd->v[at];
+            yv = cd->v[at] < sf ? sf : cd->v[at] > st ? st : cd->v[at];
             marker(g, se->marker, ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5),
-                   ay1 - (int)floor((yv - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5), px, point_rgb(ch, s, k));
+                   value_pixel(0, ay0, ay1, sf, st, yv), px, point_rgb(ch, s, k));
         }
     }
     for (s = 0; s < cd->ns; s++) {
         const owf_chart_series *se = &ch->series[s];
         trendfit fit;
-        double last_v = 0;
+        double last_v = 0, sf = se->axis == OWF_AXIS_SECONDARY ? yfrom2 : yfrom;
+        double st = se->axis == OWF_AXIS_SECONDARY ? yto2 : yto;
         int has_last = 0, last_x = 0, last_y = 0, width = 2 * core->zoom / 100;
         unsigned long colour = se->trend_colour ? OWF_SHADE_RGB(se->trend_colour) : series_rgb(se);
         if (se->trendline == OWF_TREND_MOVING_AVERAGE) {
@@ -2095,10 +2221,10 @@ static int scatter(render *r)
                 int xx, yy;
                 if (!moving_average(cd, s, k, se->trend_period, &raw) || !cd->has[at]) { has_last = 0; continue; }
                 xv = cd->x[at] < xfrom ? xfrom : cd->x[at] > xto ? xto : cd->x[at];
-                shown = raw < yfrom ? yfrom : raw > yto ? yto : raw;
+                shown = raw < sf ? sf : raw > st ? st : raw;
                 xx = ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5);
-                yy = ay1 - (int)floor((shown - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5);
-                if (has_last && !((last_v < yfrom && raw < yfrom) || (last_v > yto && raw > yto)))
+                yy = value_pixel(0, ay0, ay1, sf, st, shown);
+                if (has_last && !((last_v < sf && raw < sf) || (last_v > st && raw > st)))
                     g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
                 last_x = xx; last_y = yy; last_v = raw; has_last = 1;
             }
@@ -2110,10 +2236,10 @@ static int scatter(render *r)
                 double xv = xfrom + (xto - xfrom) * sample / 128, raw, shown;
                 int xx, yy;
                 if (!trend_value(&fit, xv, &raw)) { has_last = 0; continue; }
-                shown = raw < yfrom ? yfrom : raw > yto ? yto : raw;
+                shown = raw < sf ? sf : raw > st ? st : raw;
                 xx = ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5);
-                yy = ay1 - (int)floor((shown - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5);
-                if (has_last && !((last_v < yfrom && raw < yfrom) || (last_v > yto && raw > yto)))
+                yy = value_pixel(0, ay0, ay1, sf, st, shown);
+                if (has_last && !((last_v < sf && raw < sf) || (last_v > st && raw > st)))
                     g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
                 last_x = xx; last_y = yy; last_v = raw; has_last = 1;
             }
@@ -2122,6 +2248,8 @@ static int scatter(render *r)
     }
     for (s = 0; s < cd->ns; s++) {               /* the labels over everything: a scatter's category is its x */
         const owf_chart_series *se = &ch->series[s];
+        double sf = se->axis == OWF_AXIS_SECONDARY ? yfrom2 : yfrom;
+        double st = se->axis == OWF_AXIS_SECONDARY ? yto2 : yto;
         int px = se->marker == OWF_MARKER_NONE ? lt : marker_px(core, se);
         if (!se->labels)
             continue;
@@ -2132,11 +2260,11 @@ static int scatter(render *r)
             if (!cd->has[at])
                 continue;
             xv = cd->x[at] < xfrom ? xfrom : cd->x[at] > xto ? xto : cd->x[at];
-            yv = cd->v[at] < yfrom ? yfrom : cd->v[at] > yto ? yto : cd->v[at];
+            yv = cd->v[at] < sf ? sf : cd->v[at] > st ? st : cd->v[at];
             number_text(core, cd->x[at], ch->x_format ? ch->x_format : cd->xfmt, xs, sizeof xs);
             label_text(r, s, k, cd->v[at], 0, xs, buf, sizeof buf);
             point_label(r, buf, ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5),
-                        ay1 - (int)floor((yv - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5), px, se->label_pos);
+                        value_pixel(0, ay0, ay1, sf, st, yv), px, se->label_pos);
         }
     }
     (void)across;
@@ -2316,6 +2444,11 @@ int oc_chart_render(oc_core *core, oc_gfx *g, const owf_chart *ch, int x, int y,
     }
     if (ch->kind != OWF_CHART_PIE && ch->value_title && *ch->value_title && r.y1 - r.y0 > r.lh * 3) {
         text(&r, ch->value_title, r.x0, r.y0, r.x1 - r.x0, r.lh, OC_ALIGN_LEFT, LABEL_TWIPS, OWF_BOLD);
+        if (ch->secondary_title && *ch->secondary_title)
+            text(&r, ch->secondary_title, r.x0, r.y0, r.x1 - r.x0, r.lh, OC_ALIGN_RIGHT, LABEL_TWIPS, OWF_BOLD);
+        r.y0 += r.lh + r.pad / 2;
+    } else if (ch->kind != OWF_CHART_PIE && ch->secondary_title && *ch->secondary_title && r.y1 - r.y0 > r.lh * 3) {
+        text(&r, ch->secondary_title, r.x0, r.y0, r.x1 - r.x0, r.lh, OC_ALIGN_RIGHT, LABEL_TWIPS, OWF_BOLD);
         r.y0 += r.lh + r.pad / 2;
     }
     if (ch->kind != OWF_CHART_PIE && ch->category_title && *ch->category_title && r.y1 - r.y0 > r.lh * 3) {
