@@ -220,7 +220,7 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | Facing pages, two-page spreads | Not yet (SampleNewsletter's pages alternate left and right on the workspace: a hypothesis) | P1 | P2 | |
 | Master pages | Names, which page uses which | P1 (their frames) | P2 | The samples' masters are empty: samples needed |
 | Text boxes | Boxes and text | P1 | P2 | |
-| Linked text frames (overflow chains) | No | P1c | P2 | GFOpenLayout's galley chain (5) |
+| Linked text frames (overflow chains) | Yes: shared story IDs identify chains | Yes: text continues at GFOpenLayout's exact page cut and fixed frames clip | P2 | Screen and PDF are correct; preserving editable links in ODP save is still open |
 | Columns in a text box | No | P1c | P2 | |
 | Character and paragraph formatting, styles | No (fonts listed) | P1b | P2 | Quill's STSH, FDPC, FDPP (PUB-FORMAT 6.2) |
 | Colour schemes, font schemes | Scheme colours seen | P1b | P2 | |
@@ -280,7 +280,7 @@ it and starts typing immediately. Movement, resize, exact geometry, appearance,
 arranging, alignment, duplication, deletion and ODP persistence then use the
 same reusable object lifecycle as imported publication frames.
 
-GFOpenPublisher 0.2.1 adds Insert > Picture through that same core. The native
+GFOpenPublisher 0.2.1 added Insert > Picture through that same core. The native
 file requester and Amiga datatypes discover the picture and its natural size;
 one transactional portable-core operation copies its compressed bytes,
 metadata, alt text and page geometry into the shared model, selects it and
@@ -288,9 +288,19 @@ records one undo step. Failed inserts leave neither a frame nor an orphaned
 resource. The existing OpenLayout screen/PDF path, movement, resize,
 duplication and ODP persistence then handle the authored picture.
 
-This is a functional P1a base, not a claim of faithful Publisher appearance:
+GFOpenPublisher 0.2.2 adds linked text flow without a private line breaker.
+The `.pub` reader's shared story number becomes `owf_obj.flow_story`; the
+portable Publisher core verifies chains, and the positioned-page adapter asks
+GFOpenLayout where page zero ended for each fixed frame. The suffix begins in
+the next frame, in page/object order, and every imported Publisher text frame
+clips at its box. `SampleNewsletter.pub` is the regression: 10 chains, 29
+frames, and the second frame no longer repeats the first frame's opening.
+ODP export still needs to write `draw:chain-next-name` so editable links survive
+a save; that is a serialization gap, not another layout implementation.
+
+This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded text/paragraph formatting, fill and line colours, crops,
-wrap, columns or linked frames, and the PDF picture encoder does not yet play
+wrap or columns, and the PDF picture encoder does not yet play
 WMF/EMF. The import report calls the plain styling approximation out.
 
 `in_pub.c` needs `owf_cfb.c`, which GFOpenWrite's own build and owf.library

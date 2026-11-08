@@ -86,6 +86,7 @@ static int fill_object(owf_obj *o, const owf_pub_frame *f, const owf_pub *pub, i
     o->width = f->width > 0 ? f->width : 1;
     o->height = f->height > 0 ? f->height : 1;
     o->image = f->image >= 0 && f->image < pub->res->nimages ? f->image : -1;
+    o->flow_story = f->story;
     if (f->kind == OWF_PUB_LINE) {
         o->shape = OWF_SHAPE_LINE;
         o->look.line = OWF_SHADE(0x000000);
@@ -97,6 +98,37 @@ static int fill_object(owf_obj *o, const owf_pub_frame *f, const owf_pub *pub, i
     if (f->story >= 0 && f->story < pub->nstories && copy_story(&o->text, &pub->stories[f->story]) < 0)
         return -1;
     return 0;
+}
+
+int opp_flow_chain_count(const owf_deck *deck, int *frames)
+{
+    int page, object, chains = 0, linked = 0;
+    if (frames) *frames = 0;
+    if (!deck) return 0;
+    for (page = 0; page < deck->nslides; page++) {
+        const owf_slide *slide = &deck->slides[page];
+        for (object = 0; object < slide->nobjs; object++) {
+            const owf_obj *o = &slide->objs[object];
+            int p, i, before = 0, total = 0;
+            if (o->kind != OWF_OBJ_TEXT || o->flow_story < 0) continue;
+            for (p = 0; p < deck->nslides; p++) {
+                const owf_slide *s = &deck->slides[p];
+                for (i = 0; i < s->nobjs; i++) {
+                    const owf_obj *q = &s->objs[i];
+                    if (q->kind == OWF_OBJ_TEXT && q->flow_story == o->flow_story) {
+                        total++;
+                        if (p < page || (p == page && i < object)) before++;
+                    }
+                }
+            }
+            if (total > 1 && before == 0) {
+                chains++;
+                linked += total;
+            }
+        }
+    }
+    if (frames) *frames = linked;
+    return chains;
 }
 
 static int fill_objects(owf_obj *(*add)(void *, owf_obj_kind), void *owner,

@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define OPP_CORE_VERSION "0.1.0"
+#define OPP_CORE_VERSION "0.2.0"
 
 /* A deep conversion: pub remains owned by the caller and may be freed at
  * once.  The returned deck owns independent fonts, pictures and stories.
@@ -22,6 +22,13 @@ extern "C" {
  * text, tables' dimensions and pictures; formatting is a later reader step. */
 int opp_pub_to_deck(const owf_pub *pub, owf_deck **deck, owf_report *report);
 int opp_import_pub_file(const char *path, owf_deck **deck, owf_report *report, int *version);
+
+/* Count shared text flows in a publication deck. A flow is two or more
+ * text objects with the same non-negative owf_obj.flow_story, in page/object
+ * order. When frames is not NULL it receives the number of frames belonging
+ * to those flows. Masters are deliberately excluded: their objects repeat
+ * on pages rather than continuing a page story. */
+int opp_flow_chain_count(const owf_deck *deck, int *frames);
 
 #ifdef __cplusplus
 }

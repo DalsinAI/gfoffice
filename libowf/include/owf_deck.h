@@ -126,6 +126,12 @@ typedef struct {
        the percent of its size, and the points of percent taken off its line spacing; 0: not said. Shrinking
        starts at font_scale. ODP has no place for them (LibreOffice works the fit out itself). */
     int font_scale, line_reduction;
+    /* A positioned publication's shared text story. Objects with the same
+       non-negative value are frames in one continuous flow, in page/object
+       order. -1 for ordinary independent deck objects. Kept in the shared
+       model so Publisher, Draw and future report designers use one chain
+       representation rather than private copies. */
+    int flow_story;
 } owf_obj;
 
 /* ---- Slides, masters, layouts ---- */

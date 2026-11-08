@@ -312,6 +312,8 @@ typedef struct {
     opr_slide *out;
     int capframes;
     const int *scales;           /* per frame, from the last pass; NULL: 100 */
+    ol_measure_text_fn measure;
+    void *measure_userdata;
     const char *fields[4];
     char number[16], pages[16], date[64];
 } builder;
@@ -477,6 +479,8 @@ static ol_node *frame_node(builder *b, opr_frame *f, int x, int y, int w, int h,
         o->crop[0] + o->crop[2] < OL_SHAPE_COORDS &&
         o->crop[1] + o->crop[3] < OL_SHAPE_COORDS)
         box.flags |= OL_BOX_CLIP_CONTENT;
+    if (o && o->kind == OWF_OBJ_TEXT && o->flow_story >= 0)
+        box.flags |= OL_BOX_CLIP_CONTENT;
     if (o && o->kind != OWF_OBJ_PICTURE && o->kind != OWF_OBJ_GROUP) {
         s.padding_left = TW(o->inset[0]);
         s.padding_top = TW(o->inset[1]);
@@ -498,15 +502,263 @@ static ol_node *frame_node(builder *b, opr_frame *f, int x, int y, int w, int h,
     return n;
 }
 
-static int add_text(builder *b, opr_frame *f, ol_node *n, const owf_obj *o, const owf_story *story, int with_levels)
+/* ---- Linked publication stories ----
+ *
+ * Publisher stores one story once and points several frames at it. The
+ * imported deck deliberately keeps a copy in each object for ordinary deck
+ * editing, plus flow_story as their shared identity. The adapter below uses
+ * GFOpenLayout's real page cut to split the prepared story; it does not
+ * estimate characters or reproduce line breaking. */
+
+static void owned_story_free(owf_story *story)
+{
+    int i, j;
+    if (!story) return;
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        for (j = 0; j < p->nruns; ++j) {
+            free(p->runs[j].text);
+            free(p->runs[j].href);
+        }
+        free(p->runs);
+        free(p->style);
+        free(p->bookmarks);
+    }
+    free(story->paras);
+    memset(story, 0, sizeof *story);
+}
+
+static int copy_run_part(owf_para *to, const owf_run *r, size_t first, size_t last)
+{
+    size_t length = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 0;
+    if (r->kind == OWF_RUN_TEXT) {
+        if (first > length) first = length;
+        if (last > length) last = length;
+        if (last < first) last = first;
+        return r->href ? owf_para_add_link_text(to, &r->fmt, r->text ? r->text + first : "",
+                                                last - first, r->href)
+                       : owf_para_add_text(to, &r->fmt, r->text ? r->text + first : "", last - first);
+    }
+    if (first) return 0;
+    if (r->kind == OWF_RUN_IMAGE) return owf_para_add_image(to, &r->fmt, r->image);
+    if (r->kind == OWF_RUN_FRAME) return owf_para_add_frame(to, &r->fmt, r->image);
+    return owf_para_add_special(to, &r->fmt, r->kind, r->field);
+}
+
+static int copy_para_shell(owf_story *to, const owf_para *from, owf_para **out)
+{
+    owf_para *p = owf_story_add(to, &from->fmt);
+    if (!p) return 0;
+    p->table_id = from->table_id;
+    p->table_row = from->table_row;
+    p->table_col = from->table_col;
+    p->table_cols = from->table_cols;
+    p->cell_shading = from->cell_shading;
+    p->section_columns = from->section_columns;
+    p->section_gap = from->section_gap;
+    p->section_break = from->section_break;
+    *out = p;
+    return 1;
+}
+
+static int story_copy_all(owf_story *to, const owf_story *from)
+{
+    int i, j;
+    memset(to, 0, sizeof *to);
+    for (i = 0; i < from->nparas; ++i) {
+        owf_para *p;
+        if (!copy_para_shell(to, &from->paras[i], &p)) goto fail;
+        for (j = 0; j < from->paras[i].nruns; ++j) {
+            const owf_run *r = &from->paras[i].runs[j];
+            size_t n = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 1;
+            if (copy_run_part(p, r, 0, n) < 0) goto fail;
+        }
+    }
+    return 1;
+fail:
+    owned_story_free(to);
+    return 0;
+}
+
+static int position_ends_para(const owf_story *story, const ow_position *at)
+{
+    const owf_para *p;
+    const owf_run *r;
+    size_t n;
+    if (!story || !at || at->paragraph < 0 || at->paragraph >= story->nparas) return 1;
+    p = &story->paras[at->paragraph];
+    if (at->run < 0 || at->run >= p->nruns) return p->nruns == 0;
+    if (at->run + 1 < p->nruns) return 0;
+    r = &p->runs[at->run];
+    n = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 1;
+    return at->byte_offset >= n;
+}
+
+/* Split at an exclusive position. Both results own all their storage. */
+static int story_split(const owf_story *story, const ow_position *at,
+                       owf_story *prefix, owf_story *suffix)
+{
+    int i, j, suffix_first;
+    memset(prefix, 0, sizeof *prefix);
+    memset(suffix, 0, sizeof *suffix);
+    if (!story || !at || at->paragraph < 0 || at->paragraph >= story->nparas) return 0;
+    for (i = 0; i <= at->paragraph; ++i) {
+        const owf_para *src = &story->paras[i];
+        owf_para *dst;
+        int last_run = i == at->paragraph ? at->run : src->nruns - 1;
+        if (!copy_para_shell(prefix, src, &dst)) goto fail;
+        for (j = 0; j < src->nruns && j <= last_run; ++j) {
+            const owf_run *r = &src->runs[j];
+            size_t n = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 1;
+            size_t end = i == at->paragraph && j == at->run ? at->byte_offset : n;
+            if (copy_run_part(dst, r, 0, end) < 0) goto fail;
+        }
+    }
+    suffix_first = at->paragraph + (position_ends_para(story, at) ? 1 : 0);
+    for (i = suffix_first; i < story->nparas; ++i) {
+        const owf_para *src = &story->paras[i];
+        owf_para *dst;
+        int first_run = i == at->paragraph ? at->run : 0;
+        if (!copy_para_shell(suffix, src, &dst)) goto fail;
+        for (j = first_run; j < src->nruns; ++j) {
+            const owf_run *r = &src->runs[j];
+            size_t n = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 1;
+            size_t start = i == at->paragraph && j == at->run ? at->byte_offset : 0;
+            if (copy_run_part(dst, r, start, n) < 0) goto fail;
+        }
+    }
+    return 1;
+fail:
+    owned_story_free(prefix);
+    owned_story_free(suffix);
+    return 0;
+}
+
+static ow_position story_end(const owf_story *story)
+{
+    ow_position p;
+    const owf_para *para;
+    const owf_run *run;
+    memset(&p, 0, sizeof p);
+    if (!story || story->nparas <= 0) return p;
+    p.paragraph = story->nparas - 1;
+    para = &story->paras[p.paragraph];
+    if (para->nruns <= 0) { p.run = -1; return p; }
+    p.run = para->nruns - 1;
+    run = &para->runs[p.run];
+    p.byte_offset = run->kind == OWF_RUN_TEXT && run->text ? strlen(run->text) : 1;
+    return p;
+}
+
+static int flow_fit_end(const builder *b, const owf_story *story, const owf_obj *frame,
+                        ow_position *end)
+{
+    owf_doc doc;
+    ow_layout *layout;
+    int width = frame->width - frame->inset[0] - frame->inset[2];
+    int height = frame->height - frame->inset[1] - frame->inset[3];
+    if (width < 1) width = 1;
+    if (height < 1) height = 1;
+    doc = *b->deck->res;
+    doc.body = *story;
+    memset(&doc.header, 0, sizeof doc.header);
+    memset(&doc.footer, 0, sizeof doc.footer);
+    memset(&doc.header_left, 0, sizeof doc.header_left);
+    memset(&doc.footer_left, 0, sizeof doc.footer_left);
+    doc.nframes = doc.capframes = 0;
+    doc.frames = NULL;
+    memset(&doc.page, 0, sizeof doc.page);
+    doc.page.width = width;
+    doc.page.height = height;
+    layout = ow_layout_new(&doc, b->measure, b->measure_userdata);
+    if (!layout) return 0;
+    if (ow_layout_page_count(layout) <= 1)
+        *end = story_end(story);
+    else if (!ow_layout_page_end(layout, 0, end)) {
+        ow_layout_free(layout);
+        return 0;
+    }
+    ow_layout_free(layout);
+    return 1;
+}
+
+/* The part of prepared that belongs in this object. */
+static int linked_story_slice(const builder *b, int slide_index, int obj_index,
+                              const owf_obj *object, const owf_story *prepared,
+                              owf_story *out, int *linked)
+{
+    owf_story remaining;
+    int page, index, total = 0;
+    *linked = 0;
+    memset(out, 0, sizeof *out);
+    if (!object || object->flow_story < 0 || slide_index < 0) return 1;
+    for (page = 0; page < b->deck->nslides; ++page)
+        for (index = 0; index < b->deck->slides[page].nobjs; ++index) {
+            const owf_obj *o = &b->deck->slides[page].objs[index];
+            if (o->kind == OWF_OBJ_TEXT && o->flow_story == object->flow_story) total++;
+        }
+    if (total < 2) return 1;
+    *linked = 1;
+    if (!story_copy_all(&remaining, prepared)) return 0;
+    for (page = 0; page < b->deck->nslides; ++page) {
+        const owf_slide *slide = &b->deck->slides[page];
+        for (index = 0; index < slide->nobjs; ++index) {
+            const owf_obj *o = &slide->objs[index];
+            ow_position end;
+            owf_story prefix, suffix;
+            int is_target, later = 0, p, k;
+            if (o->kind != OWF_OBJ_TEXT || o->flow_story != object->flow_story) continue;
+            is_target = page == slide_index && index == obj_index;
+            for (p = page; p < b->deck->nslides && !later; ++p) {
+                int from = p == page ? index + 1 : 0;
+                for (k = from; k < b->deck->slides[p].nobjs; ++k) {
+                    const owf_obj *q = &b->deck->slides[p].objs[k];
+                    if (q->kind == OWF_OBJ_TEXT && q->flow_story == object->flow_story) { later = 1; break; }
+                }
+            }
+            if (is_target && !later) { *out = remaining; return 1; }
+            if (!remaining.nparas) {
+                if (is_target) return 1;
+                continue;
+            }
+            if (!flow_fit_end(b, &remaining, o, &end) ||
+                !story_split(&remaining, &end, &prefix, &suffix)) {
+                owned_story_free(&remaining);
+                return 0;
+            }
+            owned_story_free(&remaining);
+            if (is_target) {
+                owned_story_free(&suffix);
+                *out = prefix;
+                return 1;
+            }
+            owned_story_free(&prefix);
+            remaining = suffix;
+        }
+    }
+    owned_story_free(&remaining);
+    return 0;
+}
+
+static int add_text(builder *b, opr_frame *f, ol_node *n, const owf_obj *o, const owf_story *story, int with_levels,
+                    int slide_index, int obj_index)
 {
     frame_text t;
+    owf_story slice;
+    const owf_story *draw;
+    int linked = 0;
     int ok;
     if (!story->nparas)
         return 1;
     if (!prepare_text(b->deck, b->master, o, story, with_levels, f->scale, b->fields, &t))
         return 0;
-    ok = ow_layout_add_story(b->out->doc, n, b->deck->res, &t.story, b->fields);
+    if (!linked_story_slice(b, slide_index, obj_index, o, &t.story, &slice, &linked)) {
+        frame_text_free(&t);
+        return 0;
+    }
+    draw = linked ? &slice : &t.story;
+    ok = ow_layout_add_story(b->out->doc, n, b->deck->res, draw, b->fields);
+    if (linked) owned_story_free(&slice);
     frame_text_free(&t);
     return ok;
 }
@@ -642,18 +894,18 @@ static int add_object(builder *b, const owf_obj *o, int from_master, int slide_i
             ol_node_set_box(n, &bs);
             if (!add_label(b, n, other_label(b->deck, o)))
                 return 0;
-        } else if (!add_text(b, f, n, o, &o->text, 1)) {
+        } else if (!add_text(b, f, n, o, &o->text, 1, slide_index, obj_index)) {
             return 0;
         }
         break;
     case OWF_OBJ_TABLE:
-        if (!add_text(b, f, n, o, &o->text, 0))
+        if (!add_text(b, f, n, o, &o->text, 0, slide_index, obj_index))
             return 0;
         f->end = last_node(b);
         table_columns(b, f, o);
         break;
     default:
-        if (!(o->flags & OWF_OBJ_EMPTY) && !add_text(b, f, n, o, &o->text, 1))
+        if (!(o->flags & OWF_OBJ_EMPTY) && !add_text(b, f, n, o, &o->text, 1, slide_index, obj_index))
             return 0;
         break;
     }
@@ -700,7 +952,7 @@ static int add_field(builder *b, const owf_obj *o, const char *text)
     story.nparas = story.capparas = 1;
     copy.levels = NULL;
     copy.caplevels = 0;
-    ok = add_text(b, f, n, &copy, &story, 0);
+    ok = add_text(b, f, n, &copy, &story, 0, -1, -1);
     f->end = last_node(b);
     return ok;
 }
@@ -836,6 +1088,8 @@ opr_slide *opr_slide_layout(const owf_deck *deck, int slide, ol_measure_text_fn 
     b.index = slide;
     b.master = owf_deck_slide_master(deck, slide);
     b.out = s;
+    b.measure = measure;
+    b.measure_userdata = userdata;
     snprintf(b.number, sizeof b.number, "%d", slide + 1);
     if (today) {
         snprintf(b.date, sizeof b.date, "%s", today);

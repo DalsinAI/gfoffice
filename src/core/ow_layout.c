@@ -825,6 +825,34 @@ int ow_layout_paragraph_box(const ow_layout *l, int paragraph,
     return ol_node_page_box(l->body, l->blocks[paragraph], page, box);
 }
 
+int ow_layout_page_end(const ow_layout *l, int page, ow_position *end)
+{
+    size_t first = 0, count = 0, i;
+    int found = 0;
+    ow_position best;
+    if (!l || !end || page < 0 ||
+        !ol_display_page_range(l->body, page, &first, &count)) return 0;
+    memset(&best, 0, sizeof best);
+    for (i = first; i < first + count; ++i) {
+        const ol_display_op *op = ol_display_get(l->body, i);
+        ol_text_position at;
+        ow_position p;
+        if (!op || op->type != OL_OP_TEXT) continue;
+        at.node_id = op->u.text.node_id;
+        at.offset = op->u.text.text_offset + op->u.text.text_length;
+        if (!ow_layout_from_text(l, &at, &p) || p.box) continue;
+        if (!found || p.paragraph > best.paragraph ||
+            (p.paragraph == best.paragraph && p.run > best.run) ||
+            (p.paragraph == best.paragraph && p.run == best.run &&
+             p.byte_offset > best.byte_offset)) {
+            best = p;
+            found = 1;
+        }
+    }
+    if (found) *end = best;
+    return found;
+}
+
 int ow_layout_to_text(const ow_layout *l, ow_position pos, ol_text_position *out)
 {
     const owf_para *p;

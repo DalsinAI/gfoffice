@@ -67,7 +67,7 @@ corpus already in `tests/pub/samples` (and fetched by
 | Version, page size (A4), 4 pages, master page | Yes | |
 | 99 frames: 63 text, 10 pictures, 13 shapes, 9 groups, 4 lines | Yes | Boxes to 0.1 mm, kinds, groups' members |
 | Text of 45 stories, tabs and line breaks in it | Yes | |
-| Linked text frames | No | Each of a chain's frames shows the whole story: 29 frames in 10 chains repeat their text |
+| Linked text frames | Yes | 29 frames in 10 chains share story IDs and continue at GFOpenLayout's exact page cut; the rendered second frame is checked not to repeat the first frame's opening |
 | WordArt ("Liberty") | Text only | Not its shape or font |
 | 9 pictures (8 WMF, 1 JPEG) | Yes, as data | Not drawn yet (P1) |
 | Fonts | The list | Not which text uses which |

@@ -54,6 +54,11 @@ const ol_page *ow_layout_page(const ow_layout *layout);
 int ow_layout_paragraph_box(const ow_layout *layout, int paragraph,
                             int *page, ol_rect *box);
 
+/* The last laid-out text position on a physical page, exclusive. This is
+ * the shared continuation boundary used by text-frame chains: callers can
+ * put the suffix in the next region without repeating or dropping bytes. */
+int ow_layout_page_end(const ow_layout *layout, int page, ow_position *end);
+
 /* An editor position to GFOpenLayout's, and back. 0 when there is none. */
 int ow_layout_to_text(const ow_layout *layout, ow_position pos, ol_text_position *out);
 int ow_layout_from_text(const ow_layout *layout, const ol_text_position *in, ow_position *out);

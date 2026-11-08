@@ -17,6 +17,31 @@ static int text_has(const owf_story *s, const char *word)
     return 0;
 }
 
+static int frame_text_ops(const opr_slide *laid, int frame, const char *starts)
+{
+    size_t i;
+    int count = 0, found = 0;
+    for (i = 0; i < ol_display_count(laid->doc); ++i) {
+        const ol_display_op *op = ol_display_get(laid->doc, i);
+        const ol_node *node;
+        const char *text;
+        if (!op || op->type != OL_OP_TEXT || opr_slide_frame_of(laid, op) != frame) continue;
+        count++;
+        node = ol_node_by_id(laid->doc, op->u.text.node_id);
+        text = node ? ol_node_text(node) : NULL;
+        if (text && starts && op->u.text.text_offset == 0 && strstr(text, starts)) found = 1;
+    }
+    return starts ? found : count;
+}
+
+static int frame_for_object(const opr_slide *laid, const owf_obj *object)
+{
+    int i;
+    for (i = 0; i < laid->nframes; ++i)
+        if (laid->frames[i].obj == object && !laid->frames[i].from_master) return i;
+    return -1;
+}
+
 int main(void)
 {
     static const char *const corpus[] = {
@@ -76,6 +101,28 @@ int main(void)
     CHECK(pictures >= 3);
     CHECK(opr_export_pdf(deck, NULL, &pdf, &length, report) == OWF_OK && length > 1000 && !memcmp(pdf, "%PDF-", 5));
     free(pdf); owf_deck_free(deck); deck = NULL;
+
+    CHECK(opp_import_pub_file("tests/pub/stress/SampleNewsletter.pub", &deck, report, &version) == OWF_OK);
+    if (deck) {
+        int linked = 0;
+        CHECK(opp_flow_chain_count(deck, &linked) == 10);
+        CHECK(linked == 29);
+        CHECK(deck->slides[0].objs[0].flow_story == deck->slides[0].objs[1].flow_story);
+        CHECK(deck->slides[0].objs[0].flow_story >= 0);
+        laid = opr_slide_layout(deck, 0, NULL, NULL, NULL);
+        CHECK(laid != NULL);
+        if (laid) {
+            int first = frame_for_object(laid, &deck->slides[0].objs[0]);
+            int second = frame_for_object(laid, &deck->slides[0].objs[1]);
+            CHECK(first >= 0 && second >= 0);
+            CHECK(frame_text_ops(laid, first, NULL) > 0);
+            CHECK(frame_text_ops(laid, second, NULL) > 0);
+            CHECK(frame_text_ops(laid, first, "This week in class"));
+            CHECK(!frame_text_ops(laid, second, "This week in class"));
+        }
+        opr_slide_free(laid); laid = NULL;
+    }
+    owf_deck_free(deck); deck = NULL;
 
     for (i = 0; i < (int)(sizeof corpus / sizeof *corpus); i++) {
         char path[256];

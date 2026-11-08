@@ -83,6 +83,7 @@ void owf_obj_init(owf_obj *obj, owf_obj_kind kind)
     memset(obj, 0, sizeof *obj);
     obj->kind = kind;
     obj->parent = -1;
+    obj->flow_story = -1;
     obj->image = -1;
     obj->keep = -1;
     obj->valign = OWF_VALIGN_TOP;
@@ -103,6 +104,7 @@ void owf_obj_clear(owf_obj *obj)
     free(obj->xml_id);
     memset(obj, 0, sizeof *obj);
     obj->parent = -1;
+    obj->flow_story = -1;
     obj->image = -1;
     obj->keep = -1;
 }
