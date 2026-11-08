@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.49 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.50 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -94,7 +94,7 @@ enum {
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
-    M_CHART_DATA, M_CHART_AXIS_TITLES,
+    M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -213,6 +213,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Chart...", NULL, 0, 0, (APTR)M_CHART_FORMAT },
     { NM_ITEM, "Chart Data...", NULL, 0, 0, (APTR)M_CHART_DATA },
     { NM_ITEM, "Chart Axis Titles...", NULL, 0, 0, (APTR)M_CHART_AXIS_TITLES },
+    { NM_ITEM, "Chart Series Style...", NULL, 0, 0, (APTR)M_CHART_SERIES_STYLE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3165,6 +3166,112 @@ static void do_chart_axis_titles(void)
     result(rc, "Chart axis titles changed.");
 }
 
+static int chart_series_colour(const char *text, unsigned long *colour)
+{
+    static const char *const names[] = { "red", "green", "blue", "orange", "yellow", "grey", "purple" };
+    static const unsigned long rgb[] = { 0xC00000UL, 0x00A050UL, 0x4472C4UL, 0xED7D31UL,
+                                         0xFFC000UL, 0xA5A5A5UL, 0x7030A0UL };
+    char *end;
+    unsigned long value;
+    int i;
+    if (!strcasecmp(text, "auto")) { *colour = 0; return 1; }
+    for (i = 0; i < 7; i++)
+        if (!strcasecmp(text, names[i])) { *colour = OWF_SHADE(rgb[i]); return 1; }
+    if (*text != '#' || strlen(text) != 7)
+        return 0;
+    value = strtoul(text + 1, &end, 16);
+    if (*end)
+        return 0;
+    *colour = OWF_SHADE(value);
+    return 1;
+}
+
+static int chart_series_marker(const char *text, int *marker)
+{
+    static const char *const names[] = { "auto", "none", "circle", "square", "diamond", "triangle", "x", "star",
+                                         "plus", "dash", "dot" };
+    int i;
+    for (i = OWF_MARKER_AUTO; i <= OWF_MARKER_DOT; i++)
+        if (!strcasecmp(text, names[i])) { *marker = i; return 1; }
+    return 0;
+}
+
+static void do_chart_series_style(void)
+{
+    static const char *const markers[] = { "auto", "none", "circle", "square", "diamond", "triangle", "x", "star",
+                                           "plus", "dash", "dot" };
+    owf_chart *charts = NULL;
+    const owf_chart_series *series;
+    oc_chart_edit_spec edit;
+    char number[24] = "1", label[48], initial[160], entered[192], *p, *token, *end;
+    long chosen, size;
+    int index = oc_core_selected_chart(core), n = 0, rc, bad = 0;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Style."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL);
+        else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    if (!charts[index].nseries) {
+        owf_charts_free(charts, n);
+        set_status("This chart has no series to format.");
+        return;
+    }
+    snprintf(label, sizeof label, "Series number (1-%d)", charts[index].nseries);
+    if (!text_requester("Chart Series", label, number, number, sizeof number)) {
+        owf_charts_free(charts, n);
+        return;
+    }
+    chosen = strtol(trim_text(number), &end, 10);
+    if (*end || chosen < 1 || chosen > charts[index].nseries) {
+        owf_charts_free(charts, n);
+        set_status("Choose an existing series number.");
+        return;
+    }
+    series = &charts[index].series[chosen - 1];
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_STYLE;
+    edit.series = (int)chosen - 1;
+    edit.series_colour = series->colour;
+    edit.series_line = !!series->line;
+    edit.series_marker = series->marker;
+    edit.series_marker_size = series->marker_size;
+    if (OWF_SHADE_SET(series->colour))
+        snprintf(initial, sizeof initial, "colour=#%06lx %s marker=%s size=%d", OWF_SHADE_RGB(series->colour),
+                 series->line ? "line" : "noline", markers[series->marker >= OWF_MARKER_AUTO &&
+                 series->marker <= OWF_MARKER_DOT ? series->marker : OWF_MARKER_AUTO], series->marker_size);
+    else
+        snprintf(initial, sizeof initial, "colour=auto %s marker=%s size=%d", series->line ? "line" : "noline",
+                 markers[series->marker >= OWF_MARKER_AUTO && series->marker <= OWF_MARKER_DOT ?
+                         series->marker : OWF_MARKER_AUTO], series->marker_size);
+    owf_charts_free(charts, n);
+    if (!text_requester("Chart Series Style", "colour=#RRGGBB; line/marker for line or scatter",
+                        initial, entered, sizeof entered)) return;
+    p = trim_text(entered);
+    while (*p && !bad) {
+        token = p;
+        while (*p && !isspace((unsigned char)*p)) p++;
+        if (*p) *p++ = 0;
+        p = trim_text(p);
+        if (!strncasecmp(token, "colour=", 7)) bad = !chart_series_colour(token + 7, &edit.series_colour);
+        else if (!strcasecmp(token, "line")) edit.series_line = 1;
+        else if (!strcasecmp(token, "noline")) edit.series_line = 0;
+        else if (!strncasecmp(token, "marker=", 7)) bad = !chart_series_marker(token + 7, &edit.series_marker);
+        else if (!strncasecmp(token, "size=", 5)) {
+            size = strtol(token + 5, &end, 10);
+            if (*end || size < 0 || size > 72) bad = 1;
+            else edit.series_marker_size = (int)size;
+        } else bad = 1;
+    }
+    if (bad) {
+        set_status("Use colour=auto/#RRGGBB, line/noline, marker=auto/none/circle/... and size=0-72.");
+        return;
+    }
+    result(oc_core_update_chart(core, index, &edit), "Chart series style changed.");
+}
+
 static void do_chart_data(void)
 {
     oc_chart_data_spec spec;
@@ -3277,6 +3384,7 @@ static void menu_action(ULONG id)
     case M_CHART_FORMAT: do_format_chart(); break;
     case M_CHART_DATA: do_chart_data(); break;
     case M_CHART_AXIS_TITLES: do_chart_axis_titles(); break;
+    case M_CHART_SERIES_STYLE: do_chart_series_style(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");

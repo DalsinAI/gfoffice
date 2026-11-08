@@ -828,7 +828,7 @@ static void put_series(owf_buf *b, const owf_chart *c, const owf_chart_series *s
     }
     if (s->colour || (lines && !s->line)) {
         owf_buf_puts(b, "<c:spPr>");
-        if (s->colour && !lines)
+        if (s->colour && (!lines || !s->line))
             put_rgb(b, s->colour);
         if (lines) {
             owf_buf_puts(b, "<a:ln>");

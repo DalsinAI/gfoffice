@@ -3358,6 +3358,35 @@ static void test_chart_authoring(void)
     CHECK(oc_core_redo(core) == OWF_OK);
 
     memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_STYLE;
+    edit.series = 1;
+    edit.series_colour = OWF_SHADE(0x00A050);
+    edit.series_line = 0;
+    edit.series_marker = OWF_MARKER_DIAMOND;
+    edit.series_marker_size = 9;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
+          c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9);
+    chart_free(&c);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_POLY, 0x00A050) >= 3 &&
+          chart_items(&l, OC_DRAW_SEGMENT, 0x00A050) == 0);
+    oc_draw_list_free(&l);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && !c.series[1].colour &&
+          c.series[1].line && c.series[1].marker == OWF_MARKER_AUTO && !c.series[1].marker_size);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_STYLE;
+    edit.series = 2;
+    edit.series_line = 1;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
+    edit.series = 0;
+    edit.series_colour = 0x00A050;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
+
+    memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_VALUE_AXIS;
     edit.has_min = edit.has_max = 1;
     edit.min = edit.max = 10;
@@ -3374,6 +3403,8 @@ static void test_chart_authoring(void)
           same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE &&
           c.series[0].label_pos == OWF_LABEL_ABOVE && c.has_min && c.min == 0 && c.has_max && c.max == 80 &&
           same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP") &&
+          c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
+          c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
           same(c.series[1].values, "'Sheet1'!$C$2:$C$4"));
     chart_free(&c);
     CHECK(oc_core_save(core, ods, "ods", NULL) == OWF_OK);
@@ -3381,7 +3412,9 @@ static void test_chart_authoring(void)
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2 &&
           same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE &&
           c.has_min && c.min == 0 && c.has_max && c.max == 80 &&
-          same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP"));
+          same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP") &&
+          c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
+          c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9);
     chart_free(&c);
     remove(xlsx); remove(ods);
 
@@ -3437,6 +3470,15 @@ static void test_chart_authoring(void)
     edit.set = OC_CHART_SET_AXIS_TITLES;
     edit.category_title = "No axis";
     CHECK(oc_core_update_chart(core, -1, &edit) == OWF_ERR_UNSUPPORTED);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_STYLE;
+    edit.series_colour = OWF_SHADE(0xC00000);
+    edit.series_marker = OWF_MARKER_AUTO;
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_ERR_UNSUPPORTED); /* noline has no meaning on a pie */
+    edit.series_line = 1;
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[0].colour == OWF_SHADE(0xC00000));
+    chart_free(&c);
     go(core, "A1");
     CHECK(oc_core_add_chart(core, &spec) == OWF_ERR_UNSUPPORTED);
 

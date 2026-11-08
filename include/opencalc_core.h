@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.14.0"
+#define OC_CORE_VERSION "0.15.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -687,6 +687,9 @@ int oc_core_delete_chart(oc_core *core, int index); /* -1: selected */
  * OWF_LABEL_* mask applied to every series; label_pos is OWF_LABEL_AUTO... .
  * Axis bounds are automatic when their has_* flag is zero; X-axis properties
  * apply to scatter charts. Axis titles are copied; NULL/empty clears them.
+ * Series style selects a zero-based series and sets its colour (0: automatic),
+ * line, marker and marker size (0: automatic). Line and marker choices apply
+ * to line and scatter charts; other kinds accept their default values only.
  * A set minimum must be less than a set maximum. */
 enum {
     OC_CHART_SET_KIND = 1u << 0,
@@ -698,7 +701,8 @@ enum {
     OC_CHART_SET_VALUE_AXIS = 1u << 6,
     OC_CHART_SET_X_AXIS = 1u << 7,
     OC_CHART_SET_X_GRIDLINES = 1u << 8,
-    OC_CHART_SET_AXIS_TITLES = 1u << 9
+    OC_CHART_SET_AXIS_TITLES = 1u << 9,
+    OC_CHART_SET_SERIES_STYLE = 1u << 10
 };
 typedef struct {
     unsigned set;
@@ -715,6 +719,10 @@ typedef struct {
     int x_gridlines;
     const char *category_title;     /* category axis, or scatter X */
     const char *value_title;        /* value axis, or scatter Y */
+    int series;
+    unsigned long series_colour;    /* OWF_SHADE(rgb), or 0: automatic */
+    int series_line;
+    int series_marker, series_marker_size;
 } oc_chart_edit_spec;
 int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spec); /* -1: selected */
 

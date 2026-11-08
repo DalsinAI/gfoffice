@@ -436,7 +436,8 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     if (!core || !spec || !spec->set ||
         (spec->set & ~(OC_CHART_SET_KIND | OC_CHART_SET_GROUPING | OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND |
                        OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS |
-                       OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES | OC_CHART_SET_AXIS_TITLES)) ||
+                       OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES | OC_CHART_SET_AXIS_TITLES |
+                       OC_CHART_SET_SERIES_STYLE)) ||
         ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
         ((spec->set & OC_CHART_SET_GROUPING) &&
          (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
@@ -452,7 +453,12 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         ((spec->set & OC_CHART_SET_X_AXIS) &&
          ((spec->has_xmin && !(spec->xmin >= -1e200 && spec->xmin <= 1e200)) ||
           (spec->has_xmax && !(spec->xmax >= -1e200 && spec->xmax <= 1e200)) ||
-          (spec->has_xmin && spec->has_xmax && !(spec->xmin < spec->xmax)))))
+          (spec->has_xmin && spec->has_xmax && !(spec->xmin < spec->xmax)))) ||
+        ((spec->set & OC_CHART_SET_SERIES_STYLE) &&
+         (spec->series < 0 || (spec->series_colour && !OWF_SHADE_SET(spec->series_colour)) ||
+          (spec->series_line != 0 && spec->series_line != 1) ||
+          spec->series_marker < OWF_MARKER_AUTO || spec->series_marker > OWF_MARKER_DOT ||
+          spec->series_marker_size < 0 || spec->series_marker_size > 72)))
         return OWF_ERR_FORMAT;
     if (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core)))
         return OWF_ERR_UNSUPPORTED;
@@ -478,6 +484,23 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         return OWF_ERR_MEMORY;
     }
     chart = &charts[index];
+    if ((spec->set & OC_CHART_SET_SERIES_STYLE) && spec->series >= chart->nseries) {
+        owf_charts_free(charts, n);
+        owf_free(title);
+        owf_free(category_title);
+        owf_free(value_title);
+        return OWF_ERR_UNSUPPORTED;
+    }
+    if ((spec->set & OC_CHART_SET_SERIES_STYLE) &&
+        ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_LINE &&
+        ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_SCATTER &&
+        (!spec->series_line || spec->series_marker != OWF_MARKER_AUTO || spec->series_marker_size)) {
+        owf_charts_free(charts, n);
+        owf_free(title);
+        owf_free(category_title);
+        owf_free(value_title);
+        return OWF_ERR_UNSUPPORTED;
+    }
     if (((spec->set & (OC_CHART_SET_VALUE_AXIS | OC_CHART_SET_AXIS_TITLES)) &&
          ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) == OWF_CHART_PIE) ||
         ((spec->set & (OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES)) &&
@@ -532,6 +555,13 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         chart->xmax = spec->xmax;
     }
     if (spec->set & OC_CHART_SET_X_GRIDLINES) chart->x_gridlines = !!spec->x_gridlines;
+    if (spec->set & OC_CHART_SET_SERIES_STYLE) {
+        owf_chart_series *series = &chart->series[spec->series];
+        series->colour = spec->series_colour;
+        series->line = spec->series_line;
+        series->marker = spec->series_marker;
+        series->marker_size = spec->series_marker_size;
+    }
     if (spec->set & OC_CHART_SET_LABELS)
         for (i = 0; i < chart->nseries; i++) {
             chart->series[i].labels = spec->labels;
@@ -1367,9 +1397,10 @@ static int categories(render *r)
                     xx = ax0 + (int)floor((k + 0.5) * sw + 0.5);
                     yy = POS(v);
                     if (pass == 0) {
-                        if (has_last)
+                        if (has_last && se->line)
                             g->line(g, lx, lyy, xx, yy, lt, series_rgb(se));
-                        else if (mark == OWF_MARKER_NONE && (k + 1 >= cd->n || !cd->has[at + 1]))   /* alone: a dot */
+                        else if (se->line && mark == OWF_MARKER_NONE &&
+                                 (k + 1 >= cd->n || !cd->has[at + 1]))   /* alone: a dot */
                             oc_gfx_box(g, xx - lt, yy - lt, 2 * lt + 1, 2 * lt + 1, series_rgb(se));
                     } else if (pass == 1 && mark != OWF_MARKER_NONE) {
                         marker(g, mark, xx, yy, mpx, point_rgb(ch, s, k));
