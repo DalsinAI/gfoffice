@@ -51,7 +51,11 @@ given ends in a workbook format's extension.
 | XLSX, Office Open XML (`.xlsx`; `.xltx`, `.xlsm`, `.xltm` open only) | Yes | Yes | Spec: ECMA-376 (transitional; strict's namespaces read) and [MS-XLSX]'s `_xlfn.` names | S2 | Full both ways, as the model holds it (notes below). Macros, comments, pictures, charts, conditional formats, validation, tables and pivot tables are reported. Binary `.xlsb` is recognised with a clear message |
 | ODS, OpenDocument Spreadsheet (`.ods`, `.ots` opens; flat `.fods`) | Yes | Yes | Spec: OASIS ODF 1.2 and OpenFormula; LibreOffice's 1.3 additions read | S2 | Full both ways, as the model holds it (notes below), formulas translated to and from OpenFormula. Comments, pictures, charts, conditional formats and validation are reported |
 
-GFOpenCalc 0.1.39 can author, replace and clear list, numeric, date, time,
+GFOpenCalc 0.1.40 can author layered value-comparison, formula and two/three-
+colour-scale conditional formatting, with immediate rendering, selection-only
+clearing, undo and XLSX/ODS round trips. Its reusable API also exposes font
+effects, text/fill colours, priority and stop-if-true. It can author, replace
+and clear list, numeric, date, time,
 text-length and custom-formula data validation over selected cells. Rules are
 enforced immediately and round-trip through XLSX and ODS; replacement splits
 an older rule so cells outside the selection retain it. It also stably sorts a

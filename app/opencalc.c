@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.39 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.40 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -102,7 +102,7 @@ enum {
     M_BORDER_ALL = 180, M_BORDER_OUTLINE, M_BORDER_BOTTOM, M_BORDER_NONE,
     M_COL_WIDTH = 190, M_ROW_HEIGHT, M_HIDE_COLS, M_SHOW_COLS, M_HIDE_ROWS, M_SHOW_ROWS,
     M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
-    M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE,
+    M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR
 };
 
@@ -206,6 +206,9 @@ static struct NewMenu menus[] = {
     { NM_SUB, "None", NULL, 0, 0, (APTR)M_BORDER_NONE },
     { NM_ITEM, "Merge Cells...", NULL, 0, 0, (APTR)M_MERGE },
     { NM_ITEM, "Unmerge Cells", NULL, 0, 0, (APTR)M_UNMERGE },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
+    { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Column Width...", NULL, 0, 0, (APTR)M_COL_WIDTH },
     { NM_ITEM, "Row Height...", NULL, 0, 0, (APTR)M_ROW_HEIGHT },
@@ -2287,6 +2290,7 @@ static void about(void)
          "libowf workbooks and formula engine\n"
          "Stable multi-key row sorting\n"
          "Editable XLSX/ODS data validation\n"
+         "Layered conditional formatting\n"
          "Value, compound Standard and Top/Bottom AutoFilters\n"
          "Searchable PDF export and GFOpenPrint printing\n\n"
          "MIT licence, Copyright (c) 2026 AmiCradle Team.");
@@ -2692,6 +2696,94 @@ static void do_validity(void)
     result(rc, had ? "Validity changed." : "Validity added.");
 }
 
+static unsigned long conditional_colour(const char *name)
+{
+    static const char *const names[] = { "red", "green", "yellow", "blue", "grey", "orange", "white" };
+    static const unsigned long rgb[] = { 0xF6C8C8UL, 0xCDEBC5UL, 0xFFF2A8UL, 0xC9DDF2UL,
+                                         0xE0E0E0UL, 0xF4C7A1UL, 0xFFFFFFUL };
+    int i;
+    for (i = 0; i < 7; ++i) if (!strcasecmp(name, names[i])) return OWF_SHADE(rgb[i]);
+    return 0;
+}
+
+static int conditional_parse(char *text, oc_condfmt_spec *rule)
+{
+    char *p, *join = NULL, *value, *dots;
+    memset(rule, 0, sizeof *rule);
+    text = trim_text(text);
+    if (!strncasecmp(text, "scale ", 6)) {
+        char *words[3]; int n = 0;
+        p = trim_text(text + 6);
+        while (*p && n < 3) {
+            words[n++] = p;
+            while (*p && *p != ' ' && *p != '\t') p++;
+            if (*p) *p++ = 0;
+            p = trim_text(p);
+        }
+        if (*p || n < 2) return 0;
+        rule->type = OWF_CF_COLOUR_SCALE; rule->npoints = n;
+        rule->points[0].kind = OWF_CFV_MIN;
+        rule->points[n - 1].kind = OWF_CFV_MAX;
+        if (n == 3) { rule->points[1].kind = OWF_CFV_PERCENTILE; rule->points[1].value = "50"; }
+        for (n = 0; n < rule->npoints; ++n)
+            if (!(rule->points[n].colour = conditional_colour(words[n]))) return 0;
+        return 1;
+    }
+    for (p = text; *p; ++p) if (!strncasecmp(p, " if ", 4)) { join = p; break; }
+    if (!join) return 0;
+    *join = 0;
+    if (!(rule->fill = conditional_colour(trim_text(text)))) return 0;
+    value = trim_text(join + 4);
+    if (!strncasecmp(value, "formula ", 8)) {
+        value = trim_text(value + 8);
+        if (*value == '=') value++;
+        if (!*value) return 0;
+        rule->type = OWF_CF_EXPRESSION; rule->formula[0] = value;
+        return 1;
+    }
+    rule->type = OWF_CF_CELL_IS;
+    dots = strstr(value, "..");
+    if (dots) {
+        *dots = 0; rule->op = OWF_CF_BETWEEN;
+        value = trim_text(value);
+        if (!strncasecmp(value, "not ", 4)) { rule->op = OWF_CF_NOT_BETWEEN; value = trim_text(value + 4); }
+        rule->formula[1] = trim_text(dots + 2);
+        if (!*value || !*rule->formula[1]) return 0;
+    } else if (!strncmp(value, "<=", 2)) { rule->op = OWF_CF_LESS_EQUAL; value += 2; }
+    else if (!strncmp(value, ">=", 2)) { rule->op = OWF_CF_GREATER_EQUAL; value += 2; }
+    else if (!strncmp(value, "<>", 2) || !strncmp(value, "!=", 2)) { rule->op = OWF_CF_NOT_EQUAL; value += 2; }
+    else if (*value == '<') { rule->op = OWF_CF_LESS; value++; }
+    else if (*value == '>') { rule->op = OWF_CF_GREATER; value++; }
+    else { rule->op = OWF_CF_EQUAL; if (*value == '=') value++; }
+    value = trim_text(value);
+    if (!*value) return 0;
+    rule->formula[0] = value;
+    return 1;
+}
+
+static void do_conditional_format(void)
+{
+    char entered[256], *utf8 = NULL, *utf8b = NULL;
+    oc_condfmt_spec rule;
+    int rc;
+    if (!text_requester("Conditional Format", "red if >10; green if formula A1>0; scale red blue",
+                        "red if > 10", entered, sizeof entered)) return;
+    if (!conditional_parse(entered, &rule)) {
+        set_status("Use red if > 10, green if formula A1>0, or scale red yellow green.");
+        return;
+    }
+    if (rule.formula[0]) utf8 = from_latin1(rule.formula[0]);
+    if (rule.formula[1]) utf8b = from_latin1(rule.formula[1]);
+    if ((rule.formula[0] && !utf8) || (rule.formula[1] && !utf8b)) rc = OWF_ERR_MEMORY;
+    else {
+        if (utf8) rule.formula[0] = utf8;
+        if (utf8b) rule.formula[1] = utf8b;
+        rc = oc_core_add_condfmt(core, &rule);
+    }
+    owf_free(utf8); owf_free(utf8b);
+    result(rc, "Conditional format added.");
+}
+
 static void menu_action(ULONG id)
 {
     static const unsigned long fills[] = { 0, 0xFFF2A8UL, 0xCDEBC5UL, 0xC9DDF2UL, 0xE0E0E0UL, 0xF6C8C8UL };
@@ -2793,6 +2885,8 @@ static void menu_action(ULONG id)
         break;
     case M_MERGE: do_merge(1); break;
     case M_UNMERGE: do_merge(0); break;
+    case M_CONDFMT: do_conditional_format(); break;
+    case M_CONDFMT_CLEAR: result(oc_core_clear_condfmt(core), "Conditional formatting cleared from the selection."); break;
     case M_SHEET_RENAME: do_rename_sheet(oc_core_sheet(core)); break;
     case M_SHEET_DELETE: do_delete_sheet(); break;
     case M_SHEET_NEXT: oc_core_key(core, OC_KEY_PAGEDOWN, OC_MOD_CTRL); break;

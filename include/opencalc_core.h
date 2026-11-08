@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.4.0"
+#define OC_CORE_VERSION "0.5.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -252,6 +252,26 @@ typedef struct {
 } oc_validation_spec;
 int oc_core_get_validation(const oc_core *core, oc_validation_spec *out);
 int oc_core_set_validation(oc_core *core, const oc_validation_spec *rule);
+
+/* ---- Conditional formatting authoring ----
+ * Adds a rule over every selected range. Strings are copied. Rules may be
+ * layered; clear removes their effect only from selected cells and splits
+ * their ranges so surrounding cells retain it. Both operations are one-step
+ * undoable and use the same model written to XLSX and ODS. */
+typedef struct {
+    int type, op, stop;          /* OWF_CF_* */
+    const char *formula[2];
+    unsigned font_set, font_flags;
+    unsigned long font_colour, fill;
+    int npoints;
+    struct {
+        int kind;                /* OWF_CFV_* */
+        const char *value;
+        unsigned long colour;
+    } points[3];
+} oc_condfmt_spec;
+int oc_core_add_condfmt(oc_core *core, const oc_condfmt_spec *rule);
+int oc_core_clear_condfmt(oc_core *core);
 
 /* The formula bar's text: what is being typed, or what the active cell
  * holds as one would type it ("=SUM(A1:A3)", "12.5", "'0123"). The

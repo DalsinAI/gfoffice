@@ -1831,6 +1831,61 @@ static void test_condfmt(void)
     oc_core_free(core);
 }
 
+static void test_condfmt_authoring(void)
+{
+    static const char *const xlsx = "build/host/calc-core-condfmt.xlsx";
+    static const char *const ods = "build/host/calc-core-condfmt.ods";
+    oc_core *core = fresh();
+    oc_draw_list l;
+    oc_condfmt_spec red = { 0 }, bold = { 0 }, scale = { 0 };
+    const oc_draw_item *it;
+    owf_sheet *sheet;
+    if (!core) return;
+    oc_draw_list_init(&l);
+    enter_at(core, "A1", "5"); enter_at(core, "A2", "15"); enter_at(core, "A3", "25");
+    enter_at(core, "C1", "0"); enter_at(core, "C2", "50"); enter_at(core, "C3", "100");
+    red.type = OWF_CF_CELL_IS; red.op = OWF_CF_GREATER; red.formula[0] = "10"; red.fill = OWF_SHADE(0xFF0000);
+    go(core, "A1:A3");
+    CHECK(oc_core_add_condfmt(core, &red) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && fill_of(&l, 0, 0) == -1 &&
+          fill_of(&l, 1, 0) == 0xFF0000 && fill_of(&l, 2, 0) == 0xFF0000);
+    go(core, "A2");
+    CHECK(oc_core_clear_condfmt(core) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->ncondfmts == 1 && sheet->condfmts[0].nranges == 2);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && fill_of(&l, 1, 0) == -1 && fill_of(&l, 2, 0) == 0xFF0000);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && fill_of(&l, 1, 0) == 0xFF0000);
+
+    bold.type = OWF_CF_EXPRESSION; bold.formula[0] = "A1>=25";
+    bold.font_set = bold.font_flags = OWF_BOLD;
+    go(core, "A1:A3");
+    CHECK(oc_core_add_condfmt(core, &bold) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    it = text_of(&l, 2, 0);
+    CHECK(it && (it->flags & OWF_BOLD) && fill_of(&l, 2, 0) == 0xFF0000);
+
+    scale.type = OWF_CF_COLOUR_SCALE; scale.npoints = 2;
+    scale.points[0].kind = OWF_CFV_MIN; scale.points[0].colour = OWF_SHADE(0xFFFFFF);
+    scale.points[1].kind = OWF_CFV_MAX; scale.points[1].colour = OWF_SHADE(0x0000FF);
+    go(core, "C1:C3");
+    CHECK(oc_core_add_condfmt(core, &scale) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && fill_of(&l, 0, 2) == 0xFFFFFF &&
+          fill_of(&l, 1, 2) == 0x8080FF && fill_of(&l, 2, 2) == 0x0000FF);
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && fill_of(&l, 1, 0) == 0xFF0000 && fill_of(&l, 2, 2) == 0x0000FF);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && fill_of(&l, 1, 0) == 0xFF0000 && fill_of(&l, 2, 2) == 0x0000FF);
+    CHECK(oc_core_add_condfmt(NULL, &red) == OWF_ERR_FORMAT);
+    red.formula[0] = NULL;
+    CHECK(oc_core_add_condfmt(core, &red) == OWF_ERR_FORMAT);
+    CHECK(oc_core_clear_condfmt(NULL) == OWF_ERR_FORMAT);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 /* Made-up faces for oc_font_size_for_caps: the capitals' height at each size, and the sizes asked for. */
 typedef struct {
     int kind;                    /* 0 capitals = size; 1 two thirds of it; 2 never made; 3 bitmap sizes only */
@@ -3884,6 +3939,7 @@ int main(void)
     test_draw();
     test_borders();
     test_condfmt();
+    test_condfmt_authoring();
     test_font_caps();
     test_comments();
     test_validation();

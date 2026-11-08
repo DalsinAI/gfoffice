@@ -19,6 +19,183 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct { owf_range *v; int n, cap; } cf_ranges;
+
+static int cf_range_add(cf_ranges *a, owf_range r)
+{
+    owf_range *p;
+    if (a->n == a->cap) {
+        int cap = a->cap ? a->cap * 2 : 4;
+        if (!(p = realloc(a->v, (size_t)cap * sizeof *p))) return 0;
+        a->v = p; a->cap = cap;
+    }
+    a->v[a->n++] = r;
+    return 1;
+}
+
+static int cf_touches(const owf_range *a, const owf_range *b)
+{
+    return a->first_row <= b->last_row && a->last_row >= b->first_row &&
+           a->first_col <= b->last_col && a->last_col >= b->first_col;
+}
+
+static int cf_subtract(cf_ranges *out, const owf_range *source, const owf_range *cut)
+{
+    owf_range x, p;
+    if (!cf_touches(source, cut)) return cf_range_add(out, *source);
+    x.first_row = source->first_row > cut->first_row ? source->first_row : cut->first_row;
+    x.last_row = source->last_row < cut->last_row ? source->last_row : cut->last_row;
+    x.first_col = source->first_col > cut->first_col ? source->first_col : cut->first_col;
+    x.last_col = source->last_col < cut->last_col ? source->last_col : cut->last_col;
+    if (source->first_row < x.first_row) { p = *source; p.last_row = x.first_row - 1; if (!cf_range_add(out, p)) return 0; }
+    if (x.last_row < source->last_row) { p = *source; p.first_row = x.last_row + 1; if (!cf_range_add(out, p)) return 0; }
+    if (source->first_col < x.first_col) { p = x; p.first_col = source->first_col; p.last_col = x.first_col - 1; if (!cf_range_add(out, p)) return 0; }
+    if (x.last_col < source->last_col) { p = x; p.first_col = x.last_col + 1; p.last_col = source->last_col; if (!cf_range_add(out, p)) return 0; }
+    return 1;
+}
+
+static char *cf_copy_text(const char *s, int *failed)
+{
+    char *p = NULL;
+    if (s && !(p = oc_strdup(s))) *failed = 1;
+    return p;
+}
+
+static int cf_copy(owf_condfmt *dst, const owf_condfmt *src, const owf_range *ranges, int nranges)
+{
+    int failed = 0, i;
+    memset(dst, 0, sizeof *dst);
+    *dst = *src;
+    dst->ranges = NULL; dst->formula[0] = dst->formula[1] = dst->xml = NULL;
+    for (i = 0; i < 3; ++i) dst->points[i].value = NULL;
+    dst->nranges = nranges;
+    if (nranges && !(dst->ranges = malloc((size_t)nranges * sizeof *dst->ranges))) failed = 1;
+    if (!failed && nranges) memcpy(dst->ranges, ranges, (size_t)nranges * sizeof *ranges);
+    dst->formula[0] = cf_copy_text(src->formula[0], &failed);
+    dst->formula[1] = cf_copy_text(src->formula[1], &failed);
+    dst->xml = cf_copy_text(src->xml, &failed);
+    for (i = 0; i < 3; ++i) dst->points[i].value = cf_copy_text(src->points[i].value, &failed);
+    if (failed) { owf_condfmt_free(dst); return 0; }
+    return 1;
+}
+
+static int cf_add_copy(owf_condfmt **rules, int *n, int *cap, const owf_condfmt *src,
+                       const owf_range *ranges, int nranges)
+{
+    owf_condfmt *p;
+    if (!nranges) return 1;
+    if (*n == *cap) {
+        int size = *cap ? *cap * 2 : 4;
+        if (!(p = realloc(*rules, (size_t)size * sizeof *p))) return 0;
+        *rules = p; *cap = size;
+    }
+    if (!cf_copy(&(*rules)[*n], src, ranges, nranges)) return 0;
+    (*n)++;
+    return 1;
+}
+
+static void cf_rules_free(owf_condfmt *rules, int n)
+{
+    int i;
+    for (i = 0; i < n; ++i) owf_condfmt_free(&rules[i]);
+    free(rules);
+}
+
+static int cf_spec_ok(const oc_condfmt_spec *r)
+{
+    int i, two;
+    if (!r || r->type < OWF_CF_CELL_IS || r->type > OWF_CF_COLOUR_SCALE) return 0;
+    if (r->type == OWF_CF_COLOUR_SCALE) {
+        if (r->npoints < 2 || r->npoints > 3) return 0;
+        for (i = 0; i < r->npoints; ++i) {
+            if (r->points[i].kind < OWF_CFV_MIN || r->points[i].kind > OWF_CFV_FORMULA ||
+                !OWF_SHADE_SET(r->points[i].colour)) return 0;
+            if (r->points[i].kind >= OWF_CFV_NUMBER && (!r->points[i].value || !*r->points[i].value)) return 0;
+        }
+        return 1;
+    }
+    if (!r->formula[0] || !*r->formula[0]) return 0;
+    if (r->type == OWF_CF_EXPRESSION) return 1;
+    if (r->op < OWF_CF_BETWEEN || r->op > OWF_CF_LESS_EQUAL) return 0;
+    two = r->op == OWF_CF_BETWEEN || r->op == OWF_CF_NOT_BETWEEN;
+    return !two || (r->formula[1] && *r->formula[1]);
+}
+
+static int cf_targets(oc_core *core, owf_range *targets)
+{
+    int i, n = 0;
+    for (i = 0; i < oc_state(core)->sel.nranges; ++i)
+        if (oc_range_clip(core, &oc_state(core)->sel.ranges[i], &targets[n])) n++;
+    return n;
+}
+
+int oc_core_add_condfmt(oc_core *core, const oc_condfmt_spec *rule)
+{
+    owf_sheet *sheet;
+    owf_condfmt made, *dst;
+    owf_range targets[OC_MAX_RANGES];
+    oc_undo *undo;
+    int n, i, priority = 0;
+    if (!core || !cf_spec_ok(rule)) return OWF_ERR_FORMAT;
+    if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    if (!(n = cf_targets(core, targets))) return OWF_ERR_UNSUPPORTED;
+    sheet = oc_sheet(core);
+    memset(&made, 0, sizeof made);
+    made.type = rule->type; made.op = rule->op; made.stop = !!rule->stop;
+    made.formula[0] = (char *)rule->formula[0]; made.formula[1] = (char *)rule->formula[1];
+    made.font_set = rule->font_set; made.font_flags = rule->font_flags;
+    made.font_colour = rule->font_colour; made.fill = rule->fill; made.npoints = rule->npoints;
+    for (i = 0; i < rule->npoints; ++i) {
+        made.points[i].kind = rule->points[i].kind;
+        made.points[i].value = (char *)rule->points[i].value;
+        made.points[i].colour = rule->points[i].colour;
+    }
+    for (i = 0; i < sheet->ncondfmts; ++i) if (sheet->condfmts[i].priority > priority) priority = sheet->condfmts[i].priority;
+    made.priority = priority + 1;
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
+    if (!(dst = owf_sheet_add_condfmt(sheet)) || !cf_copy(dst, &made, targets, n)) {
+        if (dst) sheet->ncondfmts--;
+        oc_undo_free(undo);
+        return OWF_ERR_MEMORY;
+    }
+    oc_undo_push(core, undo); oc_changed(core); oc_cf_forget(core);
+    return OWF_OK;
+}
+
+int oc_core_clear_condfmt(oc_core *core)
+{
+    owf_sheet *sheet;
+    owf_condfmt *fresh = NULL;
+    owf_range targets[OC_MAX_RANGES];
+    int ntargets, nfresh = 0, cap = 0, i, r, t, rc = OWF_OK;
+    oc_undo *undo;
+    if (!core) return OWF_ERR_FORMAT;
+    if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    if (!(ntargets = cf_targets(core, targets))) return OWF_ERR_UNSUPPORTED;
+    sheet = oc_sheet(core);
+    for (i = 0; i < sheet->ncondfmts; ++i) {
+        cf_ranges remain = { 0 };
+        for (r = 0; r < sheet->condfmts[i].nranges; ++r)
+            if (!cf_range_add(&remain, sheet->condfmts[i].ranges[r])) { rc = OWF_ERR_MEMORY; break; }
+        for (t = 0; rc == OWF_OK && t < ntargets; ++t) {
+            cf_ranges next = { 0 };
+            for (r = 0; r < remain.n; ++r) if (!cf_subtract(&next, &remain.v[r], &targets[t])) { rc = OWF_ERR_MEMORY; break; }
+            free(remain.v); remain = next;
+        }
+        if (rc == OWF_OK && !cf_add_copy(&fresh, &nfresh, &cap, &sheet->condfmts[i], remain.v, remain.n)) rc = OWF_ERR_MEMORY;
+        free(remain.v);
+        if (rc != OWF_OK) break;
+    }
+    if (rc != OWF_OK) { cf_rules_free(fresh, nfresh); return rc; }
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
+    for (i = 0; i < sheet->ncondfmts; ++i) owf_condfmt_free(&sheet->condfmts[i]);
+    free(sheet->condfmts); sheet->condfmts = fresh; sheet->ncondfmts = nfresh; sheet->capcondfmts = cap;
+    oc_undo_push(core, undo); oc_changed(core); oc_cf_forget(core);
+    return OWF_OK;
+}
+
 /* A formula's value at a cell: 1 and *out (its text from owf_malloc), or 0 (no value: it won't parse, or
  * memory). The moved text of the last one is kept: a rule whose formula moves the same way along a row
  * ($D7) is worked out once a row. */
