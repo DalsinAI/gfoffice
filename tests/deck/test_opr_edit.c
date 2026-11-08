@@ -179,7 +179,8 @@ static void structural_slides(void)
     owf_deck *back = NULL;
     owf_obj resolved;
     owf_transition transition;
-    int selected = -1, slide = -2, obj = -2, old_x, old_y, old_width, old_height;
+    int selected = -1, slide = -2, obj = -2, shape_obj = -1;
+    int old_x, old_y, old_width, old_height;
     unsigned old_flags;
 
     CHECK(d && u, "a deck and structural undo");
@@ -286,6 +287,26 @@ static void structural_slides(void)
           opr_obj_set_box(u, d, 1, 0, 0, 0, 0, 100) == -2,
           "empty and out-of-slide object boxes are refused");
 
+    {
+        owf_obj *shape = owf_slide_add(&d->slides[1], OWF_OBJ_SHAPE);
+        CHECK(shape != NULL, "add a shape for rotation editing");
+        if (shape) {
+            shape_obj = d->slides[1].nobjs - 1;
+            shape->shape = OWF_SHAPE_RECT;
+            shape->x = 4000; shape->y = 3000; shape->width = 2400; shape->height = 1200;
+            CHECK(!opr_obj_set_rotation(u, d, 1, shape_obj, 150) && shape->rotation == 150,
+                  "rotate a shape anticlockwise");
+            CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 1 && obj == shape_obj &&
+                  shape->rotation == 0, "undo shape rotation");
+            CHECK(!opr_undo_redo(u, d, &slide, &obj) && obj == shape_obj &&
+                  shape->rotation == 150, "redo shape rotation");
+            CHECK(!opr_obj_set_rotation(u, d, 1, shape_obj, -150) && shape->rotation == 3450,
+                  "normalize a clockwise shape rotation");
+        }
+    }
+    CHECK(opr_obj_set_rotation(u, d, 1, 0, 150) == -2,
+          "refuse rotation for a non-shape object");
+
     memset(&transition, 0, sizeof transition);
     transition.kind = OWF_TRANS_WIPE;
     transition.direction = OWF_DIR_RIGHT;
@@ -343,6 +364,10 @@ static void structural_slides(void)
               back->slides[1].objs[0].width == 3000 && back->slides[1].objs[0].height == 1200 &&
               !(back->slides[1].objs[0].flags & OWF_OBJ_INHERIT_BOX),
               "the explicit object box survives the ODP round trip");
+        if (shape_obj >= 0)
+            CHECK(back->slides[1].objs[shape_obj].kind == OWF_OBJ_SHAPE &&
+                  back->slides[1].objs[shape_obj].rotation == 3450,
+                  "edited shape rotation survives the ODP round trip");
     }
 
     owf_deck_free(back);

@@ -596,7 +596,8 @@ typedef enum {
     SNAP_NAME,
     SNAP_HIDDEN,
     SNAP_TRANSITION,
-    SNAP_OBJ_BOX
+    SNAP_OBJ_BOX,
+    SNAP_OBJ_ROTATION
 } snapshot_kind;
 
 typedef struct {
@@ -624,6 +625,8 @@ typedef struct {
     /* SNAP_OBJ_BOX: the object's explicit box and inheritance state. */
     int box_x, box_y, box_width, box_height;
     unsigned box_flags;
+    /* SNAP_OBJ_ROTATION: the shape's rotation in tenths of a degree. */
+    int rotation;
 } snapshot;
 
 #define UNDO_STEPS 16
@@ -849,6 +852,14 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         value = o->width; o->width = s->box_width; s->box_width = value;
         value = o->height; o->height = s->box_height; s->box_height = value;
         flags = o->flags; o->flags = s->box_flags; s->box_flags = flags;
+    } else if (s->kind == SNAP_OBJ_ROTATION) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        int value;
+        if (!o || o->kind != OWF_OBJ_SHAPE)
+            return -1;
+        value = o->rotation;
+        o->rotation = s->rotation;
+        s->rotation = value;
     } else
         return -1;
     s->focus = s->other_focus;
@@ -1187,6 +1198,31 @@ int opr_obj_set_box(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_obj_set_rotation(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         int rotation_tenths)
+{
+    snapshot s;
+    owf_obj *o = object(deck, slide, obj);
+    if (!u || !o)
+        return -1;
+    if (o->kind != OWF_OBJ_SHAPE)
+        return -2;
+    rotation_tenths %= 3600;
+    if (rotation_tenths < 0)
+        rotation_tenths += 3600;
+    if (o->rotation == rotation_tenths)
+        return 0;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_ROTATION;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    s.rotation = o->rotation;
+    o->rotation = rotation_tenths;
+    structural_push(u, &s);
+    return 0;
+}
+
 int opr_undo_can(const opr_undo *u)
 {
     return u && u->nundo > 0;
@@ -1208,7 +1244,8 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
     if (snap_swap(s, deck, &focus) < 0)
         return -1;
     if (slide) *slide = focus;
-    if (obj) *obj = s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX ? s->obj : -1;
+    if (obj) *obj = s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX ||
+                    s->kind == SNAP_OBJ_ROTATION ? s->obj : -1;
     if (*nto == UNDO_STEPS) {
         snap_free(&to[0]);
         memmove(&to[0], &to[1], (UNDO_STEPS - 1) * sizeof to[0]);

@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.1.1 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.1.2 (8.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.3.6 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.3.7 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -109,6 +109,7 @@ enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
+    M_ROTATE_LEFT, M_ROTATE_RIGHT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
@@ -134,6 +135,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Redo", NULL, 0, 0, (APTR)M_REDO },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
+
+    { NM_TITLE, "Object", NULL, 0, 0, NULL },
+    { NM_ITEM, "Rotate Left 15 Degrees", NULL, 0, 0, (APTR)M_ROTATE_LEFT },
+    { NM_ITEM, "Rotate Right 15 Degrees", NULL, 0, 0, (APTR)M_ROTATE_RIGHT },
 
     { NM_TITLE, UNIT, NULL, 0, 0, NULL },
     { NM_ITEM, "New " UNIT, "M", 0, 0, (APTR)M_NEW_SLIDE },
@@ -2643,6 +2648,39 @@ static void nudge_selected(int dx, int dy, int pixels)
     draw_status();
 }
 
+static void rotate_selected(int delta_tenths)
+{
+    owf_obj *o;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select a shape to rotate.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->kind != OWF_OBJ_SHAPE) {
+        set_status("Only shape objects can be rotated.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    if (opr_obj_set_rotation(undo, deck, current, selected_obj,
+                             o->rotation + delta_tenths) < 0) {
+        set_status("The shape could not be rotated.");
+        draw_status();
+        return;
+    }
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status(delta_tenths > 0 ? "Shape rotated left 15 degrees."
+                                : "Shape rotated right 15 degrees.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static void do_undo(int redo)
 {
     int slide = -1, obj = -1;
@@ -2997,6 +3035,8 @@ static void menu_action(ULONG id)
         stop_typing();
         draw_slide();
         break;
+    case M_ROTATE_LEFT: rotate_selected(150); break;
+    case M_ROTATE_RIGHT: rotate_selected(-150); break;
     case M_NEW_SLIDE: new_slide(); break;
     case M_DUPLICATE_SLIDE: duplicate_current_slide(); break;
     case M_RENAME_SLIDE: rename_current_slide(); break;

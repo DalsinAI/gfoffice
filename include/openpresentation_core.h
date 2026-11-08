@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.3.5"
+#define OPR_CORE_VERSION "0.3.7"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -159,6 +159,11 @@ int opr_slide_set_transition(opr_undo *u, owf_deck *deck, int index, const owf_t
  * slide box, -1 bad input. */
 int opr_obj_set_box(opr_undo *u, owf_deck *deck, int slide, int obj,
                     int x, int y, int width, int height);
+/* Set a shape object's anticlockwise rotation in tenths of a degree, as one
+ * undo step. The value is normalized to 0..3599. -2 means the object is not
+ * a shape; -1 means bad input. */
+int opr_obj_set_rotation(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         int rotation_tenths);
 int opr_undo_can(const opr_undo *u);
 int opr_redo_can(const opr_undo *u);
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj);

@@ -111,7 +111,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Line: colour, width, solid or dashed; area: colour | P1 | Yes |
 | Area: gradient, hatching, bitmap, transparency; shadow | Later | Approx.: one colour; transparency and shadow No |
 | Position and size | P1 | Yes in GFOpenPresentation 0.3.4: single-object selection, drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; exact numeric entry, multi-selection and aspect lock remain |
-| Rotation | P1 (kept), Later (drawn) | Model: kept and written back; drawn unrotated |
+| Rotation | P1 | Shape outlines are rotated through OpenLayout 0.14 and saved to ODP; GFOpenPresentation 0.3.7 adds undoable 15-degree left/right rotation for a selected shape. Shape text, pictures, groups, exact angle entry and rotation handles remain |
 | Flip, slant | P1 (flip of lines and arrows) | Lines and arrows yes; slant: Approx. (drawn in its box) |
 | Text in shapes | P1 | Yes |
 | Group, ungroup, enter group | P1 (groups), P3 (commands) | Yes |
