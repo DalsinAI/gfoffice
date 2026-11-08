@@ -105,10 +105,69 @@ static void timings(void)
     owf_deck_free(deck);
 }
 
+static void transitions(void)
+{
+    opr_transition_frame f;
+    opr_blit tile;
+    int seen[24] = { 0 }, i, area = 0;
+    CHECK(opr_transition_frame_at(OWF_TRANS_WIPE, OWF_DIR_LEFT, 120, 80, 1, 4, &f) == 0 &&
+          !f.have_old && f.have_new && f.new_part.source_x == 0 && f.new_part.dest_x == 0 &&
+          f.new_part.width == 30 && f.new_part.height == 80, "wipe from the left");
+    CHECK(!opr_transition_frame_at(OWF_TRANS_WIPE, OWF_DIR_RIGHT, 120, 80, 1, 4, &f) &&
+          f.new_part.source_x == 90 && f.new_part.dest_x == 90 && f.new_part.width == 30,
+          "wipe from the right");
+    CHECK(!opr_transition_frame_at(OWF_TRANS_WIPE, OWF_DIR_UP, 120, 80, 1, 4, &f) &&
+          f.new_part.source_y == 0 && f.new_part.height == 20 && f.new_part.width == 120,
+          "wipe from above");
+    CHECK(!opr_transition_frame_at(OWF_TRANS_WIPE, OWF_DIR_DOWN, 120, 80, 1, 4, &f) &&
+          f.new_part.source_y == 60 && f.new_part.dest_y == 60 && f.new_part.height == 20,
+          "wipe from below");
+
+    CHECK(!opr_transition_frame_at(OWF_TRANS_PUSH, OWF_DIR_LEFT, 120, 80, 1, 4, &f) &&
+          f.have_old && f.have_new && f.new_part.source_x == 90 && f.new_part.dest_x == 0 &&
+          f.new_part.width == 30 && f.old_part.source_x == 0 && f.old_part.dest_x == 30 &&
+          f.old_part.width == 90, "push from the left");
+    CHECK(!opr_transition_frame_at(OWF_TRANS_PUSH, OWF_DIR_RIGHT, 120, 80, 1, 4, &f) &&
+          f.old_part.source_x == 30 && f.old_part.dest_x == 0 && f.old_part.width == 90 &&
+          f.new_part.source_x == 0 && f.new_part.dest_x == 90 && f.new_part.width == 30,
+          "push from the right");
+    CHECK(!opr_transition_frame_at(OWF_TRANS_PUSH, OWF_DIR_UP, 120, 80, 1, 4, &f) &&
+          f.new_part.source_y == 60 && f.new_part.dest_y == 0 && f.new_part.height == 20 &&
+          f.old_part.dest_y == 20 && f.old_part.height == 60, "push from above");
+    CHECK(!opr_transition_frame_at(OWF_TRANS_PUSH, OWF_DIR_DOWN, 120, 80, 1, 4, &f) &&
+          f.old_part.source_y == 20 && f.old_part.dest_y == 0 && f.old_part.height == 60 &&
+          f.new_part.dest_y == 60 && f.new_part.height == 20, "push from below");
+    CHECK(!opr_transition_frame_at(OWF_TRANS_PUSH, OWF_DIR_DOWN, 120, 80, 4, 4, &f) &&
+          !f.have_old && f.have_new && f.new_part.dest_y == 0 && f.new_part.width == 120 &&
+          f.new_part.height == 80, "a push ends with the complete new screen");
+    CHECK(opr_transition_frame_at(OWF_TRANS_DISSOLVE, OWF_DIR_LEFT, 120, 80, 1, 4, &f) < 0 &&
+          opr_transition_frame_at(OWF_TRANS_WIPE, OWF_DIR_LEFT, 0, 80, 1, 4, &f) < 0 &&
+          opr_transition_frame_at(OWF_TRANS_WIPE, OWF_DIR_LEFT, 120, 80, 0, 4, &f) < 0,
+          "bad transition frames are refused");
+
+    CHECK(opr_transition_tile_count(83, 50) == 24, "a dissolve's tile count");
+    for (i = 0; i < 24; i++) {
+        int cell;
+        CHECK(!opr_transition_tile_at(83, 50, i, &tile), "dissolve tile %d", i);
+        cell = tile.dest_y / 16 * 6 + tile.dest_x / 16;
+        CHECK(cell >= 0 && cell < 24 && !seen[cell], "dissolve tile %d is unique", i);
+        if (cell >= 0 && cell < 24) seen[cell] = 1;
+        CHECK(tile.source_x == tile.dest_x && tile.source_y == tile.dest_y && tile.width > 0 && tile.height > 0 &&
+              tile.dest_x + tile.width <= 83 && tile.dest_y + tile.height <= 50,
+              "dissolve tile %d stays on screen", i);
+        area += tile.width * tile.height;
+    }
+    CHECK(area == 83 * 50, "dissolve tiles cover every pixel once: %d", area);
+    CHECK(opr_transition_tile_at(83, 50, -1, &tile) < 0 &&
+          opr_transition_tile_at(83, 50, 24, &tile) < 0 &&
+          opr_transition_tile_count(0, 50) < 0, "bad dissolve tiles are refused");
+}
+
 int main(void)
 {
     navigation();
     timings();
+    transitions();
     printf("test_opr_show: %d checks, %d failed\n", checks, failures);
     return failures != 0;
 }

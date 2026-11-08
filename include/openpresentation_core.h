@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.3.0"
+#define OPR_CORE_VERSION "0.3.1"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -194,6 +194,24 @@ int opr_show_next_hidden(opr_show *show);
  * timing expires. 0 means it is still showing; 1 means it advanced; -1 means
  * the show ended or the input/state was invalid. */
 int opr_show_tick(opr_show *show, unsigned long milliseconds);
+
+/* Backend-independent transition geometry. A frame describes which rectangle
+ * of the old and new full-screen bitmap to copy and where. Wipe has only a
+ * new_part (the old screen remains underneath); push has both. Dissolve asks
+ * for its 16 x 16 tiles in deterministic shuffled order. */
+typedef struct {
+    int source_x, source_y, dest_x, dest_y, width, height;
+} opr_blit;
+
+typedef struct {
+    int have_old, have_new;
+    opr_blit old_part, new_part;
+} opr_transition_frame;
+
+int opr_transition_frame_at(owf_transition_kind kind, int direction, int width, int height,
+                            int step, int steps, opr_transition_frame *frame);
+int opr_transition_tile_count(int width, int height);
+int opr_transition_tile_at(int width, int height, int index, opr_blit *tile);
 
 #ifdef __cplusplus
 }

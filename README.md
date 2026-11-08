@@ -293,12 +293,15 @@ F5 starts a borderless full-screen show from the first visible slide and
 Shift-F5 from the current slide. The reusable `opr_show` state machine skips
 hidden slides, follows automatic timings, loops when asked and handles first,
 last, next, previous, numbered and explicit hidden-slide navigation. The
-player also has black and white screens; its first backend uses cut transitions
-on the public screen. `make deck-show-test` tests the show rules. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
+player also has black and white screens. Its public-screen backend plays cut,
+directional wipe, push and deterministic dissolve transitions through two
+off-screen bitmaps, with a cut fallback when memory or frame time is short.
+Reusable transition geometry sits beside the show state and is host-tested by
+`make deck-show-test`. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
 T:<name>.pdf`), and Export PDF writes one. View > Zoom In and Zoom Out (+
 and -) show the slide up to four times the window's fit, with scrollers; the
-window's zoom gadget fills the screen. Animated transitions, an optional own
-screen, PPTX saving and the rest of the editor come next.
+window's zoom gadget fills the screen. The remaining transitions, an optional
+own screen, PPTX saving and the rest of the editor come next.
 
 ## Licence
 

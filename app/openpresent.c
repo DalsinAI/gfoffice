@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.3.0 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.3.1 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -1836,23 +1836,22 @@ static void set_current_hidden(int hidden)
  * player backend. It uses the same laid-out slides and painter as the editor,
  * and opr_show owns all navigation/timing decisions. A later own-screen
  * backend can therefore change display setup without changing show rules. */
-static void show_draw(struct Window *sw, const opr_show *show, int blank, int number)
+static void show_paint(struct RastPort *rp, int width, int height, const opr_show *show, int blank, int number)
 {
-    struct RastPort *rp = sw->RPort;
     ol_pixel_rect clip;
     int w, h, x, y;
     char digits[24];
     LONG background = blank == 2 ? argb_pen(0xffffffffu) : argb_pen(0xff000000u);
-    ogt_box(rp, background, 0, 0, sw->Width, sw->Height);
+    ogt_box(rp, background, 0, 0, width, height);
     if (!blank && show && show->deck) {
-        w = sw->Width;
+        w = width;
         h = (int)((long)w * show->deck->height / show->deck->width);
-        if (h > sw->Height) {
-            h = sw->Height;
+        if (h > height) {
+            h = height;
             w = (int)((long)h * show->deck->width / show->deck->height);
         }
-        x = (sw->Width - w) / 2;
-        y = (sw->Height - h) / 2;
+        x = (width - w) / 2;
+        y = (height - h) / 2;
         clip.x = x;
         clip.y = y;
         clip.width = w;
@@ -1863,8 +1862,134 @@ static void show_draw(struct Window *sw, const opr_show *show, int blank, int nu
         snprintf(digits, sizeof digits, "%d", number);
         SetFont(rp, font);
         ogt_text(rp, blank == 2 ? argb_pen(0xff000000u) : argb_pen(0xffffffffu),
-                 sw->Width - ogt_text_width(rp, digits) - 16, 12, digits, 0);
+                 width - ogt_text_width(rp, digits) - 16, 12, digits, 0);
     }
+}
+
+static void show_draw(struct Window *sw, const opr_show *show, int blank, int number)
+{
+    show_paint(sw->RPort, sw->Width, sw->Height, show, blank, number);
+}
+
+typedef struct {
+    struct BitMap *old_bitmap, *new_bitmap;
+    struct RastPort old_rp, new_rp;
+} show_buffers;
+
+static int show_buffers_open(show_buffers *b, int width, int height)
+{
+    int depth = screen_depth();
+    memset(b, 0, sizeof *b);
+    b->old_bitmap = AllocBitMap((ULONG)width, (ULONG)height, (ULONG)depth, BMF_CLEAR | BMF_DISPLAYABLE,
+                                scr->RastPort.BitMap);
+    b->new_bitmap = AllocBitMap((ULONG)width, (ULONG)height, (ULONG)depth, BMF_CLEAR | BMF_DISPLAYABLE,
+                                scr->RastPort.BitMap);
+    if (!b->old_bitmap || !b->new_bitmap) {
+        if (b->old_bitmap) FreeBitMap(b->old_bitmap);
+        if (b->new_bitmap) FreeBitMap(b->new_bitmap);
+        memset(b, 0, sizeof *b);
+        return 0;
+    }
+    InitRastPort(&b->old_rp);
+    InitRastPort(&b->new_rp);
+    b->old_rp.BitMap = b->old_bitmap;
+    b->new_rp.BitMap = b->new_bitmap;
+    return 1;
+}
+
+static void show_buffers_close(show_buffers *b)
+{
+    if (!b) return;
+    if (b->old_bitmap) FreeBitMap(b->old_bitmap);
+    if (b->new_bitmap) FreeBitMap(b->new_bitmap);
+    memset(b, 0, sizeof *b);
+}
+
+static int show_pause(const struct DateStamp *started, int duration, int steps)
+{
+    struct DateStamp now;
+    int milliseconds = duration > 0 ? duration : 500;
+    ULONG ticks = (ULONG)((milliseconds + steps * 10) / (steps * 20));
+    LONG elapsed;
+    if (!ticks) ticks = 1;
+    DateStamp(&now);
+    elapsed = (now.ds_Days - started->ds_Days) * 24L * 60L * TICKS_PER_SECOND * 60L +
+              (now.ds_Minute - started->ds_Minute) * TICKS_PER_SECOND * 60L +
+              now.ds_Tick - started->ds_Tick;
+    if (elapsed >= (LONG)ticks)
+        return 0;                           /* this machine needs a cut, not a crawl */
+    Delay(ticks - (ULONG)(elapsed > 0 ? elapsed : 0));
+    return 1;
+}
+
+static void show_blit(struct BitMap *bitmap, struct RastPort *rp, const opr_blit *part)
+{
+    if (part->width > 0 && part->height > 0)
+        BltBitMapRastPort(bitmap, part->source_x, part->source_y, rp, part->dest_x, part->dest_y,
+                          part->width, part->height, 0xC0);
+}
+
+/* Animate the incoming slide's transition. Rendering remains shared with the
+ * editor; when two screen-sized friend bitmaps do not fit, this deliberately
+ * falls back to a cut rather than making a low-memory Amiga crawl. */
+static void show_transition(struct Window *sw, show_buffers *b, const opr_show *show, int old_slide)
+{
+    const owf_transition *transition;
+    opr_show old_show;
+    int kind, direction, duration, steps = 12, i, width = sw->Width, height = sw->Height;
+    if (!b->old_bitmap || !b->new_bitmap || old_slide < 0 || old_slide == show->slide) {
+        show_draw(sw, show, 0, 0);
+        return;
+    }
+    transition = &show->deck->slides[show->slide].transition;
+    kind = transition->kind;
+    if (kind != OWF_TRANS_WIPE && kind != OWF_TRANS_PUSH && kind != OWF_TRANS_DISSOLVE) {
+        show_draw(sw, show, 0, 0);
+        return;
+    }
+    direction = transition->direction;
+    duration = transition->duration;
+    old_show = *show;
+    old_show.slide = old_slide;
+    show_paint(&b->old_rp, width, height, &old_show, 0, 0);
+    show_paint(&b->new_rp, width, height, show, 0, 0);
+    BltBitMapRastPort(b->old_bitmap, 0, 0, sw->RPort, 0, 0, width, height, 0xC0);
+
+    if (kind == OWF_TRANS_WIPE) {
+        for (i = 1; i <= steps; i++) {
+            opr_transition_frame frame;
+            struct DateStamp started;
+            DateStamp(&started);
+            if (opr_transition_frame_at(kind, direction, width, height, i, steps, &frame) < 0) break;
+            if (frame.have_new) show_blit(b->new_bitmap, sw->RPort, &frame.new_part);
+            if (!show_pause(&started, duration, steps)) break;
+        }
+    } else if (kind == OWF_TRANS_PUSH) {
+        for (i = 1; i <= steps; i++) {
+            opr_transition_frame frame;
+            struct DateStamp started;
+            DateStamp(&started);
+            if (opr_transition_frame_at(kind, direction, width, height, i, steps, &frame) < 0) break;
+            if (frame.have_old) show_blit(b->old_bitmap, sw->RPort, &frame.old_part);
+            if (frame.have_new) show_blit(b->new_bitmap, sw->RPort, &frame.new_part);
+            if (!show_pause(&started, duration, steps)) break;
+        }
+    } else {
+        int total = opr_transition_tile_count(width, height), done = 0;
+        for (i = 1; i <= steps; i++) {
+            struct DateStamp started;
+            int until = total * i / steps;
+            DateStamp(&started);
+            while (done < until) {
+                opr_blit tile;
+                if (opr_transition_tile_at(width, height, done, &tile) == 0)
+                    show_blit(b->new_bitmap, sw->RPort, &tile);
+                done++;
+            }
+            if (!show_pause(&started, duration, steps)) break;
+        }
+    }
+    BltBitMapRastPort(b->new_bitmap, 0, 0, sw->RPort, 0, 0, width, height, 0xC0);
 }
 
 static ULONG show_tick_delta(ULONG seconds, ULONG micros, ULONG *last_seconds, ULONG *last_micros, int *have_time)
@@ -1892,7 +2017,8 @@ static void run_show(int from, int loop)
     struct Window *sw;
     struct IntuiMessage *im;
     opr_show show;
-    int running = 1, blank = 0, number = 0, have_time = 0;
+    show_buffers buffers;
+    int running = 1, blank = 0, number = 0, have_time = 0, drawn_slide, drawn_blank = 0;
     ULONG last_seconds = 0, last_micros = 0;
     if (!deck || opr_show_begin(&show, deck, from, loop) < 0) {
         tell("Slide Show", "There is no visible slide to show.");
@@ -1911,7 +2037,9 @@ static void run_show(int from, int loop)
         tell("Slide Show", "The full-screen show window could not open.");
         return;
     }
+    show_buffers_open(&buffers, sw->Width, sw->Height);
     show_draw(sw, &show, blank, number);
+    drawn_slide = show.slide;
     while (running) {
         ULONG signals = Wait((1UL << sw->UserPort->mp_SigBit) | SIGBREAKF_CTRL_C);
         if (signals & SIGBREAKF_CTRL_C) break;
@@ -1970,9 +2098,17 @@ static void run_show(int from, int loop)
                     opr_show_next_hidden(&show); blank = number = 0; redraw = 1;
                 }
             }
-            if (running && redraw) show_draw(sw, &show, blank, number);
+            if (running && redraw) {
+                if (!blank && !drawn_blank && drawn_slide != show.slide && number == 0)
+                    show_transition(sw, &buffers, &show, drawn_slide);
+                else
+                    show_draw(sw, &show, blank, number);
+                drawn_slide = show.slide;
+                drawn_blank = blank;
+            }
         }
     }
+    show_buffers_close(&buffers);
     CloseWindow(sw);
     show_slide(show.slide);
     ActivateWindow(win);

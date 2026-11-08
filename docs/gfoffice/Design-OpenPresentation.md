@@ -439,9 +439,12 @@ status line.
 
 ## 7. The show
 
-GFOpenPresentation 0.3.0 delivers the first player backend: a borderless
-public-screen window using the editor's exact slide painter, with cut
-transitions. `src/deck/opr_show.c` is the reusable, host-tested state machine
+GFOpenPresentation 0.3.1 delivers the first player backend: a borderless
+public-screen window using the editor's exact slide painter, with cut,
+directional wipe, push and deterministic dissolve transitions. Two off-screen
+friend bitmaps are used when they fit; allocation failure or an over-budget
+frame becomes a cut rather than a slow crawl. `src/deck/opr_show.c` is the
+reusable, host-tested state machine and transition-geometry layer
 for visible/hidden navigation, looping and automatic timing; the later
 own-screen, transition and ARexx backends use it rather than duplicating those
 rules. The remaining subsections describe that delivered base and the still

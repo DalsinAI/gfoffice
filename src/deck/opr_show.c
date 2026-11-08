@@ -143,3 +143,102 @@ int opr_show_tick(opr_show *show, unsigned long milliseconds)
         return 0;
     return opr_show_next(show);
 }
+
+int opr_transition_frame_at(owf_transition_kind kind, int direction, int width, int height,
+                            int step, int steps, opr_transition_frame *frame)
+{
+    int amount;
+    if (!frame || width <= 0 || height <= 0 || step < 1 || steps < 1 || step > steps ||
+        direction < OWF_DIR_LEFT || direction > OWF_DIR_DOWN ||
+        (kind != OWF_TRANS_WIPE && kind != OWF_TRANS_PUSH))
+        return -1;
+    memset(frame, 0, sizeof *frame);
+    if (direction == OWF_DIR_LEFT || direction == OWF_DIR_RIGHT) {
+        amount = (int)((long)width * step / steps);
+        if (kind == OWF_TRANS_WIPE) {
+            frame->have_new = amount > 0;
+            frame->new_part.source_x = frame->new_part.dest_x = direction == OWF_DIR_RIGHT ? width - amount : 0;
+            frame->new_part.width = amount;
+            frame->new_part.height = height;
+        } else if (direction == OWF_DIR_LEFT) {
+            frame->have_new = amount > 0;
+            frame->new_part.source_x = width - amount;
+            frame->new_part.width = amount;
+            frame->new_part.height = height;
+            frame->have_old = amount < width;
+            frame->old_part.dest_x = amount;
+            frame->old_part.width = width - amount;
+            frame->old_part.height = height;
+        } else {
+            frame->have_old = amount < width;
+            frame->old_part.source_x = amount;
+            frame->old_part.width = width - amount;
+            frame->old_part.height = height;
+            frame->have_new = amount > 0;
+            frame->new_part.dest_x = width - amount;
+            frame->new_part.width = amount;
+            frame->new_part.height = height;
+        }
+    } else {
+        amount = (int)((long)height * step / steps);
+        if (kind == OWF_TRANS_WIPE) {
+            frame->have_new = amount > 0;
+            frame->new_part.source_y = frame->new_part.dest_y = direction == OWF_DIR_DOWN ? height - amount : 0;
+            frame->new_part.width = width;
+            frame->new_part.height = amount;
+        } else if (direction == OWF_DIR_UP) {
+            frame->have_new = amount > 0;
+            frame->new_part.source_y = height - amount;
+            frame->new_part.width = width;
+            frame->new_part.height = amount;
+            frame->have_old = amount < height;
+            frame->old_part.dest_y = amount;
+            frame->old_part.width = width;
+            frame->old_part.height = height - amount;
+        } else {
+            frame->have_old = amount < height;
+            frame->old_part.source_y = amount;
+            frame->old_part.width = width;
+            frame->old_part.height = height - amount;
+            frame->have_new = amount > 0;
+            frame->new_part.dest_y = height - amount;
+            frame->new_part.width = width;
+            frame->new_part.height = amount;
+        }
+    }
+    return 0;
+}
+
+int opr_transition_tile_count(int width, int height)
+{
+    int cols, rows;
+    if (width <= 0 || height <= 0 || width > INT_MAX - 15 || height > INT_MAX - 15)
+        return -1;
+    cols = (width + 15) / 16;
+    rows = (height + 15) / 16;
+    if (rows > INT_MAX / cols)
+        return -1;
+    return cols * rows;
+}
+
+static int transition_gcd(int a, int b)
+{
+    while (b) { int r = a % b; a = b; b = r; }
+    return a;
+}
+
+int opr_transition_tile_at(int width, int height, int index, opr_blit *tile)
+{
+    int total = opr_transition_tile_count(width, height), cols, multiplier = 37, shuffled;
+    if (!tile || total <= 0 || index < 0 || index >= total)
+        return -1;
+    cols = (width + 15) / 16;
+    while (transition_gcd(multiplier, total) != 1) multiplier += 2;
+    shuffled = (index * multiplier + 17) % total;
+    memset(tile, 0, sizeof *tile);
+    tile->source_x = tile->dest_x = shuffled % cols * 16;
+    tile->source_y = tile->dest_y = shuffled / cols * 16;
+    tile->width = tile->source_x + 16 <= width ? 16 : width - tile->source_x;
+    tile->height = tile->source_y + 16 <= height ? 16 : height - tile->source_y;
+    return 0;
+}

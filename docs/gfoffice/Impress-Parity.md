@@ -182,7 +182,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Transitions per slide, apply to all | P1 (data), P3 (editing) | Model |
-| Cut, wipe, push, cover, uncover, split, blinds, dissolve | P2 (wipe, push, dissolve), P4 (the rest) | Cut: Yes; the others remain model-only |
+| Cut, wipe, push, cover, uncover, split, blinds, dissolve | P2 (wipe, push, dissolve), P4 (the rest) | Cut, directional wipe, push and dissolve: Yes in GFOpenPresentation 0.3.1; the others remain model-only |
 | Fade smoothly, fade through black | P4 | Model |
 | The other effects (wheel, shape, box, checkerboard, circle, newsflash, random...) | Later | Kept, shown as a cut |
 | Speed (slow, medium, fast) | P2 | Model |
