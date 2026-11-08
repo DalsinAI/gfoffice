@@ -248,6 +248,7 @@ static void authored_chart_free(owf_chart *chart)
     authored_series_free(chart->series, chart->nseries);
     owf_free(chart->title);
     owf_free(chart->value_format); owf_free(chart->x_format);
+    owf_free(chart->category_title); owf_free(chart->value_title);
     memset(chart, 0, sizeof *chart);
 }
 
@@ -430,12 +431,12 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     owf_chart *charts = NULL;
     owf_chart *chart;
     oc_undo *undo;
-    char *title = NULL;
+    char *title = NULL, *category_title = NULL, *value_title = NULL;
     int n = 0, rc, i;
     if (!core || !spec || !spec->set ||
         (spec->set & ~(OC_CHART_SET_KIND | OC_CHART_SET_GROUPING | OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND |
                        OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS |
-                       OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES)) ||
+                       OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES | OC_CHART_SET_AXIS_TITLES)) ||
         ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
         ((spec->set & OC_CHART_SET_GROUPING) &&
          (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
@@ -463,13 +464,28 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         owf_charts_free(charts, n);
         return OWF_ERR_MEMORY;
     }
+    if ((spec->set & OC_CHART_SET_AXIS_TITLES) && spec->category_title && *spec->category_title &&
+        !(category_title = oc_strdup(spec->category_title))) {
+        owf_charts_free(charts, n);
+        owf_free(title);
+        return OWF_ERR_MEMORY;
+    }
+    if ((spec->set & OC_CHART_SET_AXIS_TITLES) && spec->value_title && *spec->value_title &&
+        !(value_title = oc_strdup(spec->value_title))) {
+        owf_charts_free(charts, n);
+        owf_free(title);
+        owf_free(category_title);
+        return OWF_ERR_MEMORY;
+    }
     chart = &charts[index];
-    if (((spec->set & OC_CHART_SET_VALUE_AXIS) &&
+    if (((spec->set & (OC_CHART_SET_VALUE_AXIS | OC_CHART_SET_AXIS_TITLES)) &&
          ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) == OWF_CHART_PIE) ||
         ((spec->set & (OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES)) &&
          ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_SCATTER)) {
         owf_charts_free(charts, n);
         owf_free(title);
+        owf_free(category_title);
+        owf_free(value_title);
         return OWF_ERR_UNSUPPORTED;
     }
     if (spec->set & OC_CHART_SET_KIND) {
@@ -494,6 +510,13 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     }
     if (spec->set & OC_CHART_SET_GROUPING) chart->grouping = spec->grouping;
     if (spec->set & OC_CHART_SET_TITLE) { owf_free(chart->title); chart->title = title; title = NULL; }
+    if (spec->set & OC_CHART_SET_AXIS_TITLES) {
+        owf_free(chart->category_title);
+        owf_free(chart->value_title);
+        chart->category_title = category_title;
+        chart->value_title = value_title;
+        category_title = value_title = NULL;
+    }
     if (spec->set & OC_CHART_SET_LEGEND) chart->legend = spec->legend;
     if (spec->set & OC_CHART_SET_GRIDLINES) chart->gridlines = !!spec->gridlines;
     if (spec->set & OC_CHART_SET_VALUE_AXIS) {
@@ -520,6 +543,8 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     rc = keep_authored_charts(core, charts, n, index, undo);
     owf_charts_free(charts, n);
     owf_free(title);
+    owf_free(category_title);
+    owf_free(value_title);
     return rc;
 }
 
@@ -1655,6 +1680,15 @@ int oc_chart_render(oc_core *core, oc_gfx *g, const owf_chart *ch, int x, int y,
     if (ch->title && *ch->title) {
         text(&r, ch->title, r.x0, r.y0, r.x1 - r.x0, r.th, OC_ALIGN_CENTRE, TITLE_TWIPS, OWF_BOLD);
         r.y0 += r.th + r.pad / 2;
+    }
+    if (ch->kind != OWF_CHART_PIE && ch->value_title && *ch->value_title && r.y1 - r.y0 > r.lh * 3) {
+        text(&r, ch->value_title, r.x0, r.y0, r.x1 - r.x0, r.lh, OC_ALIGN_LEFT, LABEL_TWIPS, OWF_BOLD);
+        r.y0 += r.lh + r.pad / 2;
+    }
+    if (ch->kind != OWF_CHART_PIE && ch->category_title && *ch->category_title && r.y1 - r.y0 > r.lh * 3) {
+        r.y1 -= r.lh;
+        text(&r, ch->category_title, r.x0, r.y1, r.x1 - r.x0, r.lh, OC_ALIGN_CENTRE, LABEL_TWIPS, OWF_BOLD);
+        r.y1 -= r.pad / 2;
     }
     if (ch->kind == OWF_CHART_OTHER || !ch->nseries) {
         text(&r, !ch->nseries ? "This chart has no data" : "This kind of chart is not drawn yet", r.x0, (r.y0 + r.y1 - r.lh) / 2,

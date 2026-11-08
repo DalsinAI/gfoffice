@@ -3336,7 +3336,8 @@ static void test_chart_authoring(void)
     chart_free(&c);
 
     memset(&edit, 0, sizeof edit);
-    edit.set = OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS;
+    edit.set = OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS |
+               OC_CHART_SET_AXIS_TITLES;
     edit.title = "Edited trend";
     edit.legend = 't';
     edit.labels = OWF_LABEL_VALUE;
@@ -3344,7 +3345,17 @@ static void test_chart_authoring(void)
     edit.has_min = edit.has_max = 1;
     edit.min = 0;
     edit.max = 80;
+    edit.category_title = "Quarter";
+    edit.value_title = "Revenue GBP";
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP"));
+    chart_free(&c);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && find_text(&l, "Quarter") && find_text(&l, "Revenue GBP"));
+    oc_draw_list_free(&l);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && !c.category_title && !c.value_title);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
 
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_VALUE_AXIS;
@@ -3362,13 +3373,15 @@ static void test_chart_authoring(void)
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2 &&
           same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE &&
           c.series[0].label_pos == OWF_LABEL_ABOVE && c.has_min && c.min == 0 && c.has_max && c.max == 80 &&
+          same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP") &&
           same(c.series[1].values, "'Sheet1'!$C$2:$C$4"));
     chart_free(&c);
     CHECK(oc_core_save(core, ods, "ods", NULL) == OWF_OK);
     CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2 &&
           same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE &&
-          c.has_min && c.min == 0 && c.has_max && c.max == 80);
+          c.has_min && c.min == 0 && c.has_max && c.max == 80 &&
+          same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP"));
     chart_free(&c);
     remove(xlsx); remove(ods);
 
@@ -3382,6 +3395,13 @@ static void test_chart_authoring(void)
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.nseries == 1 &&
           same(c.series[0].x_values, "'Sheet1'!$B$2:$B$4") &&
           same(c.series[0].values, "'Sheet1'!$C$2:$C$4"));
+    chart_free(&c);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_AXIS_TITLES;
+    edit.category_title = "Distance";
+    edit.value_title = "Temperature";
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          same(c.category_title, "Distance") && same(c.value_title, "Temperature"));
     chart_free(&c);
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_VALUE_AXIS | OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES;
@@ -3413,6 +3433,10 @@ static void test_chart_authoring(void)
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_PIE && c.nseries == 1 &&
           same(c.series[0].values, "'Sheet1'!$B$2:$B$4"));
     chart_free(&c);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_AXIS_TITLES;
+    edit.category_title = "No axis";
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_ERR_UNSUPPORTED);
     go(core, "A1");
     CHECK(oc_core_add_chart(core, &spec) == OWF_ERR_UNSUPPORTED);
 

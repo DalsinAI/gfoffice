@@ -152,6 +152,25 @@ static char *dup_str(const char *t, int *failed)
     return s;
 }
 
+static const owf_xml_node *data_source(const owf_xml_node *n, const owf_xml_node **f);
+
+/* A chart or axis title's literal/rich text, or a reference's cached text. */
+static char *title_text(const owf_xml_node *title, int *failed)
+{
+    const owf_xml_node *f, *tx = child(title, ns_c, "tx"), *cache = data_source(tx, &f);
+    owf_buf b;
+    char *out = NULL;
+    owf_buf_init(&b);
+    if (cache)
+        all_text(cache, &b);
+    else
+        all_text(child(tx, ns_c, "rich"), &b);
+    if (b.length || b.failed)
+        out = dup_buf(&b, failed);
+    owf_buf_free(&b);
+    return out;
+}
+
 /* A colour from an element holding a:srgbClr or a:schemeClr (an accent, by Office's theme), as
  * OWF_SHADE(rgb); 0 when none. */
 static unsigned long colour_in(const owf_xml_node *fill)
@@ -451,20 +470,12 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
     }
     /* the title: its text, a reference's cache, or (none given) the only series' name */
     if (title && !*failed) {
-        owf_buf b;
-        const owf_xml_node *f, *tx = child(title, ns_c, "tx"), *cache = data_source(tx, &f);
-        owf_buf_init(&b);
-        if (cache)
-            all_text(cache, &b);
-        else
-            all_text(child(tx, ns_c, "rich"), &b);
-        if (b.length || b.failed)
-            c->title = dup_buf(&b, failed);
-        else if (c->nseries == 1 && c->series[0].name)
+        const owf_xml_node *tx = child(title, ns_c, "tx");
+        c->title = title_text(title, failed);
+        if (!c->title && !*failed && c->nseries == 1 && c->series[0].name)
             c->title = dup_str(c->series[0].name, failed);
-        else if (!tx)
+        else if (!c->title && !*failed && !tx)
             c->title = dup_str("Chart Title", failed);
-        owf_buf_free(&b);
     }
     if (legend) {
         v = val(child(legend, ns_c, "legendPos"));
@@ -478,17 +489,25 @@ static void read_chart(owf_chart *c, const owf_xml_node *space, int *failed)
         int x_axis = c->kind == OWF_CHART_SCATTER &&
                      (v && id ? !strcmp(v, id) : pos ? !strcmp(pos, "b") || !strcmp(pos, "t") : count == 0);
         if (x_axis) {
+            free(c->category_title);
+            c->category_title = title_text(child(ax, ns_c, "title"), failed);
             c->x_format = format_of(child(ax, ns_c, "numFmt"), failed);
             c->x_gridlines = child(ax, ns_c, "majorGridlines") != NULL;
             c->has_xmin = attr_double(child(sc, ns_c, "min"), &c->xmin);
             c->has_xmax = attr_double(child(sc, ns_c, "max"), &c->xmax);
         } else if (c->kind == OWF_CHART_SCATTER || count == 0) {          /* others: the first, the primary */
+            free(c->value_title);
+            c->value_title = title_text(child(ax, ns_c, "title"), failed);
             free(c->value_format);
             c->value_format = format_of(child(ax, ns_c, "numFmt"), failed);
             c->gridlines = child(ax, ns_c, "majorGridlines") != NULL;
             c->has_min = attr_double(child(sc, ns_c, "min"), &c->min);
             c->has_max = attr_double(child(sc, ns_c, "max"), &c->max);
         }
+    }
+    if (c->kind != OWF_CHART_SCATTER && !*failed) {
+        ax = child(plot, ns_c, "catAx");
+        c->category_title = title_text(child(ax, ns_c, "title"), failed);
     }
 }
 
@@ -595,6 +614,8 @@ void owf_charts_free(owf_chart *charts, int count)
         free(charts[i].title);
         free(charts[i].value_format);
         free(charts[i].x_format);
+        free(charts[i].category_title);
+        free(charts[i].value_title);
     }
     free(charts);
 }
@@ -844,8 +865,17 @@ static void put_series(owf_buf *b, const owf_chart *c, const owf_chart_series *s
     owf_buf_puts(b, "</c:ser>");
 }
 
+static void put_axis_title(owf_buf *b, const char *title)
+{
+    if (!title || !*title)
+        return;
+    owf_buf_puts(b, "<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>");
+    put_text(b, title);
+    owf_buf_puts(b, "</a:t></a:r></a:p></c:rich></c:tx><c:overlay val=\"0\"/></c:title>");
+}
+
 static void put_value_axis(owf_buf *b, int id, int cross, const char *pos, int gridlines, int has_min, double min, int has_max,
-                           double max, const char *format)
+                           double max, const char *format, const char *title)
 {
     char num[40];
     owf_buf_printf(b, "<c:valAx><c:axId val=\"%d\"/><c:scaling><c:orientation val=\"minMax\"/>", id);
@@ -860,6 +890,7 @@ static void put_value_axis(owf_buf *b, int id, int cross, const char *pos, int g
     owf_buf_printf(b, "</c:scaling><c:delete val=\"0\"/><c:axPos val=\"%s\"/>", pos);
     if (gridlines)
         owf_buf_puts(b, "<c:majorGridlines/>");
+    put_axis_title(b, title);
     if (format) {
         owf_buf_puts(b, "<c:numFmt formatCode=\"");
         put_text(b, format);
@@ -917,17 +948,21 @@ int owf_chart_part_xml(const owf_chart *c, owf_buf *b)
     }
     owf_buf_printf(b, "</c:%s>", g);
     if (scatter) {                                   /* x the group's first axis, along the bottom */
-        put_value_axis(b, 500000001, 500000002, "b", c->x_gridlines, c->has_xmin, c->xmin, c->has_xmax, c->xmax, c->x_format);
-        put_value_axis(b, 500000002, 500000001, "l", c->gridlines, c->has_min, c->min, c->has_max, c->max, c->value_format);
+        put_value_axis(b, 500000001, 500000002, "b", c->x_gridlines, c->has_xmin, c->xmin, c->has_xmax, c->xmax, c->x_format,
+                       c->category_title);
+        put_value_axis(b, 500000002, 500000001, "l", c->gridlines, c->has_min, c->min, c->has_max, c->max, c->value_format,
+                       c->value_title);
     } else if (!pie) {
         int bar = c->kind == OWF_CHART_BAR;
         owf_buf_printf(b, "<c:catAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling>"
-                          "<c:delete val=\"0\"/><c:axPos val=\"%s\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>"
+                          "<c:delete val=\"0\"/><c:axPos val=\"%s\"/>", bar ? "l" : "b");
+        put_axis_title(b, c->category_title);
+        owf_buf_puts(b, "<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>"
                           "<c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>"
                           "<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/>"
-                          "<c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/></c:catAx>", bar ? "l" : "b");
+                          "<c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/></c:catAx>");
         put_value_axis(b, 500000002, 500000001, bar ? "b" : "l", c->gridlines, c->has_min, c->min, c->has_max, c->max,
-                       c->value_format);
+                       c->value_format, c->value_title);
     }
     owf_buf_puts(b, "</c:plotArea>");
     if (c->legend)

@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.48 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.49 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -94,7 +94,7 @@ enum {
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
-    M_CHART_DATA,
+    M_CHART_DATA, M_CHART_AXIS_TITLES,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -212,6 +212,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Unmerge Cells", NULL, 0, 0, (APTR)M_UNMERGE },
     { NM_ITEM, "Chart...", NULL, 0, 0, (APTR)M_CHART_FORMAT },
     { NM_ITEM, "Chart Data...", NULL, 0, 0, (APTR)M_CHART_DATA },
+    { NM_ITEM, "Chart Axis Titles...", NULL, 0, 0, (APTR)M_CHART_AXIS_TITLES },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3110,6 +3111,60 @@ static void do_format_chart(void)
     result(rc, "Chart formatted.");
 }
 
+static void do_chart_axis_titles(void)
+{
+    owf_chart *charts = NULL;
+    oc_chart_edit_spec edit;
+    char initial[384], entered[384], category[176], value[176], *separator, *category_text, *value_text;
+    char *category_utf8 = NULL, *value_utf8 = NULL;
+    int index = oc_core_selected_chart(core), n = 0, rc;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Axis Titles."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL);
+        else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    if (charts[index].kind == OWF_CHART_PIE) {
+        owf_charts_free(charts, n);
+        set_status("Pie and doughnut charts do not have axes.");
+        return;
+    }
+    to_latin1(charts[index].category_title ? charts[index].category_title : "",
+              charts[index].category_title ? strlen(charts[index].category_title) : 0, category, sizeof category);
+    to_latin1(charts[index].value_title ? charts[index].value_title : "",
+              charts[index].value_title ? strlen(charts[index].value_title) : 0, value, sizeof value);
+    owf_charts_free(charts, n);
+    snprintf(initial, sizeof initial, "%s | %s", category, value);
+    if (!text_requester("Chart Axis Titles", "Category/X title | Value/Y title", initial, entered, sizeof entered)) return;
+    separator = strchr(entered, '|');
+    if (!separator) {
+        set_status("Separate the two titles with |; leave either side empty to clear it.");
+        return;
+    }
+    *separator++ = 0;
+    category_text = trim_text(entered);
+    value_text = trim_text(separator);
+    if (*category_text && !(category_utf8 = from_latin1(category_text))) {
+        result(OWF_ERR_MEMORY, NULL);
+        return;
+    }
+    if (*value_text && !(value_utf8 = from_latin1(value_text))) {
+        owf_free(category_utf8);
+        result(OWF_ERR_MEMORY, NULL);
+        return;
+    }
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_AXIS_TITLES;
+    edit.category_title = category_utf8;
+    edit.value_title = value_utf8;
+    rc = oc_core_update_chart(core, index, &edit);
+    owf_free(category_utf8);
+    owf_free(value_utf8);
+    result(rc, "Chart axis titles changed.");
+}
+
 static void do_chart_data(void)
 {
     oc_chart_data_spec spec;
@@ -3221,6 +3276,7 @@ static void menu_action(ULONG id)
     case M_CHART: do_insert_chart(); break;
     case M_CHART_FORMAT: do_format_chart(); break;
     case M_CHART_DATA: do_chart_data(); break;
+    case M_CHART_AXIS_TITLES: do_chart_axis_titles(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");

@@ -669,6 +669,8 @@ typedef struct {
     double xmin, xmax;
     char *value_format;          /* the value axis's number format, or NULL: the values' own */
     char *x_format;              /* a scatter's x axis's */
+    char *category_title;        /* category axis, or a scatter's X axis; NULL: none */
+    char *value_title;           /* value axis, or a scatter's Y axis; NULL: none */
 } owf_chart;
 /* The sheet's charts (none: *count 0), freed with owf_charts_free. OWF_OK,
  * or OWF_ERR_MEMORY. */

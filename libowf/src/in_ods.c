@@ -3171,12 +3171,22 @@ static int read_odf_chart(ods *o, const owf_xml_node *root, owf_chart *c, int ho
     for (ax = owf_xml_child(plot, NS_CHART, "axis"); ax; ax = owf_xml_next(ax, NS_CHART, "axis")) {
         const char *dim = owf_xml_attr(ax, NS_CHART, "dimension");
         const owf_xml_node *ap = chart_props(styles, owf_xml_attr(ax, NS_CHART, "style-name"), "chart-properties");
+        const owf_xml_node *at = owf_xml_child(ax, NS_CHART, "title");
         int grid = owf_xml_child(ax, NS_CHART, "grid") != NULL;
         double d;
         if (!dim)
             continue;
         if (!strcmp(dim, "x")) {
             const owf_xml_node *cat = owf_xml_child(ax, NS_CHART, "categories");
+            if (at && !c->category_title) {
+                owf_buf t;
+                owf_buf_init(&t);
+                all_text_of(at, &t);
+                owf_buf_putc(&t, 0);
+                if (!t.failed) c->category_title = copy(o, (const char *)t.data);
+                owf_buf_free(&t);
+                if (!c->category_title) return 0;
+            }
             if (cat)
                 cats = owf_xml_attr(cat, NS_TABLE, "cell-range-address");
             if (scatter) {
@@ -3193,6 +3203,15 @@ static int read_odf_chart(ods *o, const owf_xml_node *root, owf_chart *c, int ho
                 }
             }
         } else if (!strcmp(dim, "y") && !c->gridlines && !c->has_min && !c->has_max && !c->value_format) {
+            if (at && !c->value_title) {
+                owf_buf t;
+                owf_buf_init(&t);
+                all_text_of(at, &t);
+                owf_buf_putc(&t, 0);
+                if (!t.failed) c->value_title = copy(o, (const char *)t.data);
+                owf_buf_free(&t);
+                if (!c->value_title) return 0;
+            }
             c->gridlines = grid;
             if (!owf_xml_attr(ch, ext, "gap") && (v = prop(ap, NS_CHART, "gap-width")) != NULL)
                 c->gap = (int)whole(v, 150, 0, 500);   /* LibreOffice's place for it */

@@ -1609,6 +1609,11 @@ static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double wid
     }
     owf_buf_putc(b, '>');
     owf_buf_puts(b, "<chart:axis chart:dimension=\"x\" chart:name=\"primary-x\" chart:style-name=\"axx\">");
+    if (c->category_title) {
+        owf_buf_puts(b, "<chart:title><text:p>");
+        put_xml(b, c->category_title, strlen(c->category_title), 0, &w->dropped);
+        owf_buf_puts(b, "</text:p></chart:title>");
+    }
     if (!scatter && first && first->categories) {
         owf_buf_puts(b, "<chart:categories");
         put_range_attr(w, b, "table:cell-range-address", first->categories);
@@ -1619,6 +1624,11 @@ static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double wid
     owf_buf_puts(b, "</chart:axis>");
     if (!pie) {
         owf_buf_puts(b, "<chart:axis chart:dimension=\"y\" chart:name=\"primary-y\" chart:style-name=\"axy\">");
+        if (c->value_title) {
+            owf_buf_puts(b, "<chart:title><text:p>");
+            put_xml(b, c->value_title, strlen(c->value_title), 0, &w->dropped);
+            owf_buf_puts(b, "</text:p></chart:title>");
+        }
         if (c->gridlines)
             owf_buf_puts(b, "<chart:grid chart:class=\"major\"/>");
         owf_buf_puts(b, "</chart:axis>");

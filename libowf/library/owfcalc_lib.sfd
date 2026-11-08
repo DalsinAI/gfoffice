@@ -1,5 +1,5 @@
-==id $Id: owfcalc_lib.sfd 3.5 (8.11.2026) $
-* "owfcalc.library" 3.5: GFOpenCalc's part of libowf: workbooks. The workbook
+==id $Id: owfcalc_lib.sfd 3.6 (8.11.2026) $
+* "owfcalc.library" 3.6: GFOpenCalc's part of libowf: workbooks. The workbook
 * model, its formats (XLSX, ODS, XLS, CSV), charts, formula engine and shared
 * page PDF writer, with the library's own double arithmetic and maths.
 * Copyright (c) 2026 AmiCradle Team. MIT licence (see LICENSE).
@@ -124,4 +124,5 @@ const char *owf_pdf_fallback(unsigned long codepoint) (d0)
 int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, int count) (a0,d0,a1,d1)
 * 3.5: atomically move and resize a chart (GFOpenCalc 0.1.47)
 int owf_calc_transform_chart(owf_calc *calc, int sheet, int index, long dx, long dy, long width, long height) (a0,d0,d1,d2,d3,d4,d5)
+* 3.6: owf_chart carries category/X and value/Y axis titles (GFOpenCalc 0.1.49)
 ==end
