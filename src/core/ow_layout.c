@@ -1170,6 +1170,7 @@ static ol_unit story_height(const ol_document *od)
         case OL_OP_TEXT: b = op->u.text.bounds.y + op->u.text.bounds.height; break;
         case OL_OP_FILL_RECT: b = op->u.fill_rect.bounds.y + op->u.fill_rect.bounds.height; break;
         case OL_OP_IMAGE: b = op->u.image.bounds.y + op->u.image.bounds.height; break;
+        case OL_OP_SHAPE: b = op->u.fill_rect.bounds.y + op->u.fill_rect.bounds.height; break;
         case OL_OP_RULE: b = (op->u.rule.y1 > op->u.rule.y2 ? op->u.rule.y1 : op->u.rule.y2) +
                              op->u.rule.thickness; break;
         default: b = 0; break;

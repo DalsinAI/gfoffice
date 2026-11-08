@@ -222,21 +222,23 @@ static void draw_op(void *userdata, const ol_device_op *dop)
     }
     case OL_OP_IMAGE: {
         int image = op->u.image.image_id;
-        const owf_obj *o = frame >= 0 ? d->slide->frames[frame].obj : NULL;
+        const ol_image_crop *crop = op->graphic ? &op->graphic->crop : NULL;
         if (image < 0 || image >= d->deck->res->nimages)
             break;
-        if (o && o->kind == OWF_OBJ_PICTURE && (o->crop[0] || o->crop[1] || o->crop[2] || o->crop[3]) &&
-            o->crop[0] + o->crop[2] < 1000 && o->crop[1] + o->crop[3] < 1000) {
+        if (crop && (crop->left || crop->top || crop->right || crop->bottom)) {
             /* the whole picture, larger, shown only inside its box */
             int clip[4], w, h;
             clip[0] = dop->box.x;
             clip[1] = dop->box.y;
             clip[2] = dop->box.width;
             clip[3] = dop->box.height;
-            w = (int)((long long)clip[2] * 1000 / (1000 - o->crop[0] - o->crop[2]));
-            h = (int)((long long)clip[3] * 1000 / (1000 - o->crop[1] - o->crop[3]));
-            owf_pdf_image(d->pdf, &d->deck->res->images[image], clip[0] - (int)((long long)w * o->crop[0] / 1000),
-                          clip[1] - (int)((long long)h * o->crop[1] / 1000), w, h, clip);
+            w = (int)((long long)clip[2] * OL_SHAPE_COORDS /
+                      (OL_SHAPE_COORDS - crop->left - crop->right));
+            h = (int)((long long)clip[3] * OL_SHAPE_COORDS /
+                      (OL_SHAPE_COORDS - crop->top - crop->bottom));
+            owf_pdf_image(d->pdf, &d->deck->res->images[image],
+                          clip[0] - (int)((long long)w * crop->left / OL_SHAPE_COORDS),
+                          clip[1] - (int)((long long)h * crop->top / OL_SHAPE_COORDS), w, h, clip);
         } else {
             owf_pdf_image(d->pdf, &d->deck->res->images[image], dop->box.x, dop->box.y, dop->box.width,
                           dop->box.height, NULL);

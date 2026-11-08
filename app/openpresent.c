@@ -1378,7 +1378,7 @@ static void paint_op(void *userdata, const ol_device_op *d)
     }
     case OL_OP_IMAGE: {
         int index = d->op->u.image.image_id;
-        const owf_obj *o = frame >= 0 ? p->s->frames[frame].obj : NULL;
+        const ol_image_crop *crop = d->op->graphic ? &d->op->graphic->crop : NULL;
         picture *c = p->thumb ? NULL : picture_get(index);
         if (d->box.width < 1 || d->box.height < 1) break;
         if (c && CyberGfxBase && screen_depth() > 8) {
@@ -1389,12 +1389,13 @@ static void paint_op(void *userdata, const ol_device_op *d)
             if (lim.y < d->box.y) { lim.height -= d->box.y - lim.y; lim.y = d->box.y; }
             if (lim.x + lim.width > d->box.x + d->box.width) lim.width = d->box.x + d->box.width - lim.x;
             if (lim.y + lim.height > d->box.y + d->box.height) lim.height = d->box.y + d->box.height - lim.y;
-            if (o && o->kind == OWF_OBJ_PICTURE && (o->crop[0] || o->crop[1] || o->crop[2] || o->crop[3]) &&
-                o->crop[0] + o->crop[2] < 1000 && o->crop[1] + o->crop[3] < 1000) {
-                bw = (int)((long)d->box.width * 1000 / (1000 - o->crop[0] - o->crop[2]));
-                bh = (int)((long)d->box.height * 1000 / (1000 - o->crop[1] - o->crop[3]));
-                bx = d->box.x - (int)((long)bw * o->crop[0] / 1000);
-                by = d->box.y - (int)((long)bh * o->crop[1] / 1000);
+            if (crop && (crop->left || crop->top || crop->right || crop->bottom)) {
+                bw = (int)((long)d->box.width * OL_SHAPE_COORDS /
+                           (OL_SHAPE_COORDS - crop->left - crop->right));
+                bh = (int)((long)d->box.height * OL_SHAPE_COORDS /
+                           (OL_SHAPE_COORDS - crop->top - crop->bottom));
+                bx = d->box.x - (int)((long)bw * crop->left / OL_SHAPE_COORDS);
+                by = d->box.y - (int)((long)bh * crop->top / OL_SHAPE_COORDS);
             }
             draw_picture(rp, c, bx, by, bw, bh, &lim);
         } else {
@@ -1406,6 +1407,9 @@ static void paint_op(void *userdata, const ol_device_op *d)
         }
         break;
     }
+    case OL_OP_SHAPE:
+        /* Presentation shapes are still painted by shapes_up_to(). */
+        break;
     }
 }
 

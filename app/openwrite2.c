@@ -2185,6 +2185,9 @@ static void paint_op(void *userdata, const ol_device_op *d)
         }
         break;
     }
+    case OL_OP_SHAPE:
+        /* OpenWrite does not currently put drawing nodes in its document. */
+        break;
     }
 }
 

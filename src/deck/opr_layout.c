@@ -371,6 +371,12 @@ static ol_node *frame_node(builder *b, opr_frame *f, int x, int y, int w, int h,
     box.frame.y = TW(y);
     box.frame.width = TW(w > 0 ? w : 1);
     box.frame.height = TW(h > 0 ? h : 1);
+    if (o && o->kind == OWF_OBJ_PICTURE &&
+        (o->crop[0] || o->crop[1] || o->crop[2] || o->crop[3]) &&
+        o->crop[0] >= 0 && o->crop[1] >= 0 && o->crop[2] >= 0 && o->crop[3] >= 0 &&
+        o->crop[0] + o->crop[2] < OL_SHAPE_COORDS &&
+        o->crop[1] + o->crop[3] < OL_SHAPE_COORDS)
+        box.flags |= OL_BOX_CLIP_CONTENT;
     if (o && o->kind != OWF_OBJ_PICTURE && o->kind != OWF_OBJ_GROUP) {
         s.padding_left = TW(o->inset[0]);
         s.padding_top = TW(o->inset[1]);
@@ -427,7 +433,7 @@ static void table_columns(builder *b, const opr_frame *f, const owf_obj *o)
 }
 
 /* A picture's image node, filling the frame. */
-static int add_picture(builder *b, ol_node *n, int image, int w, int h)
+static int add_picture(builder *b, ol_node *n, int image, const int *crop, int w, int h)
 {
     ol_node *img;
     ol_style s;
@@ -440,6 +446,15 @@ static int add_picture(builder *b, ol_node *n, int image, int w, int h)
     s.display = OL_DISPLAY_INLINE;
     ol_node_set_style(img, &s);
     ol_node_set_image(img, image, TW(w > 0 ? w : 1), TW(h > 0 ? h : 1));
+    if (crop && (crop[0] || crop[1] || crop[2] || crop[3])) {
+        ol_image_crop c;
+        c.left = crop[0];
+        c.top = crop[1];
+        c.right = crop[2];
+        c.bottom = crop[3];
+        if (!ol_node_set_image_crop(img, &c))
+            return 0;
+    }
     return 1;
 }
 
@@ -502,13 +517,13 @@ static int add_object(builder *b, const owf_obj *o, int from_master, int slide_i
     f->first = ol_node_id(n) + 1;
     switch (o->kind) {
     case OWF_OBJ_PICTURE:
-        if (!add_picture(b, n, o->image, box.width, box.height))
+        if (!add_picture(b, n, o->image, o->crop, box.width, box.height))
             return 0;
         break;
     case OWF_OBJ_OTHER:
     case OWF_OBJ_CHART:
         if (o->image >= 0) {
-            if (!add_picture(b, n, o->image, box.width, box.height))
+            if (!add_picture(b, n, o->image, o->crop, box.width, box.height))
                 return 0;
         } else if (!OWF_SHADE_SET(o->look.fill) && !OWF_SHADE_SET(o->look.line) && !o->text.nparas) {
             /* a labelled box */
@@ -618,7 +633,7 @@ static int build(builder *b)
         ol_node_set_style(n, &st);
     }
     f->first = ol_node_id(n) + 1;
-    if (bg_image >= 0 && !add_picture(b, n, bg_image, d->width, d->height))
+    if (bg_image >= 0 && !add_picture(b, n, bg_image, NULL, d->width, d->height))
         return 0;
     f->end = f->first + (bg_image >= 0 ? 1 : 0);
 
@@ -812,6 +827,7 @@ int opr_slide_frame_of(const opr_slide *s, const ol_display_op *op)
     case OL_OP_FILL_RECT: id = op->u.fill_rect.node_id; break;
     case OL_OP_IMAGE: id = op->u.image.node_id; break;
     case OL_OP_RULE: id = op->u.rule.node_id; break;
+    case OL_OP_SHAPE: id = op->u.fill_rect.node_id; break;
     default: return -1;
     }
     root = ol_document_root_const(s->doc);

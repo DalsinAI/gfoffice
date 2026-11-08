@@ -458,9 +458,17 @@ static void test_layout(void)
         }
         opr_slide_free(s);
     }
+    for (k = 0; k < d->slides[1].nobjs; ++k)
+        if (d->slides[1].objs[k].kind == OWF_OBJ_PICTURE) {
+            d->slides[1].objs[k].crop[0] = 100;
+            d->slides[1].objs[k].crop[1] = 50;
+            d->slides[1].objs[k].crop[2] = 200;
+            d->slides[1].objs[k].crop[3] = 150;
+        }
     s = opr_slide_layout(d, 1, NULL, NULL, NULL);
     CHECK(s != NULL, "slide 2 laid out");
     if (s) {
+        const ol_display_op *cropped = NULL;
         for (k = 0; k < s->nframes; k++)
             if (s->frames[k].obj && s->frames[k].obj->placeholder == OWF_PH_BODY)
                 body = k;
@@ -469,6 +477,8 @@ static void test_layout(void)
             const ol_display_op *op = ol_display_get(s->doc, i);
             const ol_node *node;
             const char *t;
+            if (op->type == OL_OP_IMAGE && op->graphic && op->graphic->crop.left == 100)
+                cropped = op;
             if (op->type != OL_OP_TEXT || opr_slide_frame_of(s, op) != body)
                 continue;
             node = ol_node_by_id(s->doc, op->u.text.node_id);
@@ -479,6 +489,9 @@ static void test_layout(void)
                 text_x = op->u.text.bounds.x;
         }
         CHECK(bullet_x >= 0 && text_x > bullet_x, "a bullet before its text: %d %d", (int)bullet_x, (int)text_x);
+        CHECK(cropped && cropped->graphic->crop.top == 50 && cropped->graphic->crop.right == 200 &&
+              cropped->graphic->crop.bottom == 150 && cropped->clip.width == OL_TWIP(1440) &&
+              cropped->clip.height == OL_TWIP(1440), "picture crop and clip are in OpenLayout");
         opr_slide_free(s);
     }
     /* text that doesn't fit shrinks */
