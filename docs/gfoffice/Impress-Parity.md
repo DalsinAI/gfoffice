@@ -108,7 +108,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Polylines, curves, freeform lines | Later | Kept |
 | Connectors, glue points | Later | Kept |
 | 3-D objects, extrusion | Not planned | Kept |
-| Line: colour, width, solid or dashed; area: colour | P1 | Yes |
+| Line: colour, width, solid or dashed; area: colour | P1 | Yes in the model and renderer; GFOpenPresentation 0.5.0 adds undoable UI editing of solid fill, line colour/width, solid/dashed/dotted/dash-dot style and start/end arrowheads for one top-level text box or shape |
 | Area: gradient, hatching, bitmap, transparency; shadow | Later | Approx.: one colour; transparency and shadow No |
 | Position and size | P1 | Yes in GFOpenPresentation 0.3.4: single-object selection, drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo. 0.3.9 adds independent deep-copy duplication with an offset, clamped to the slide; exact numeric entry, multi-selection and aspect lock remain |
 | Rotation | P1 | Shape outlines are rotated through OpenLayout 0.14 and saved to ODP; GFOpenPresentation 0.3.7 adds undoable 15-degree left/right rotation for a selected shape. Shape text, pictures, groups, exact angle entry and rotation handles remain |
@@ -204,7 +204,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Master view | P4 | No |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
-| Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/duplication/deletion/position/size/shape rotation/drawing order: Yes (`opr_edit.c`); other object edits: No |
+| Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/duplication/deletion/position/size/shape rotation/drawing order/alignment/appearance: Yes (`opr_edit.c`); other object edits: No |
 | Clipboard: objects and slides | P3 (Shared E10) | Direct object and slide duplication: Yes; system clipboard copy/cut/paste: No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
 | ARexx port `GFOPENPRESENTATION` | P4 | No |

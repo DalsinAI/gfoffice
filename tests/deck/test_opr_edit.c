@@ -580,6 +580,75 @@ static void object_alignment(void)
     owf_deck_free(d);
 }
 
+static void object_appearance(void)
+{
+    owf_deck *d = owf_deck_new(10000, 8000);
+    owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    opr_undo *u = opr_undo_new();
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_deck *back = NULL;
+    owf_obj *o;
+    owf_look look, invalid;
+    int slide = -1, obj = -1;
+    CHECK(d && s && u, "a deck for object appearance");
+    if (!d || !s || !u) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    o = owf_slide_add(s, OWF_OBJ_SHAPE);
+    CHECK(o != NULL, "a shape whose appearance can change");
+    if (!o) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    o->shape = OWF_SHAPE_ARROW;
+    o->x = 100; o->y = 200; o->width = 2000; o->height = 1000;
+    memset(&look, 0, sizeof look);
+    look.fill = OWF_SHADE(0x000000);
+    look.line = OWF_SHADE(0xc03020);
+    look.line_width = 60;
+    look.line_style = OWF_LINE_DASHED;
+    look.arrows = OWF_ARROW_START | OWF_ARROW_END;
+    CHECK(!opr_obj_set_look(u, d, 0, 0, &look) && !memcmp(&o->look, &look, sizeof look),
+          "set a shape's complete fill and stroke appearance");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 0 && obj == 0 &&
+          !o->look.fill && !o->look.line, "undo object appearance");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && obj == 0 &&
+          !memcmp(&o->look, &look, sizeof look), "redo object appearance");
+    opr_undo_clear(u);
+    CHECK(!opr_obj_set_look(u, d, 0, 0, &look) && !opr_undo_can(u),
+          "setting the existing appearance is not an edit");
+    invalid = look; invalid.line_width = 10001;
+    CHECK(opr_obj_set_look(u, d, 0, 0, &invalid) == -2,
+          "an excessive line width is refused");
+    invalid = look; invalid.fill = 0x2000000UL;
+    CHECK(opr_obj_set_look(u, d, 0, 0, &invalid) == -2,
+          "an invalid fill shade is refused");
+    o = owf_slide_add(s, OWF_OBJ_GROUP);
+    CHECK(o && opr_obj_set_look(u, d, 0, 1, &look) == -2,
+          "group appearance waits for whole-group editing");
+
+    CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
+          "the styled object saves as ODP");
+    CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
+          "the styled object reads back");
+    if (back) {
+        const owf_look *saved = &back->slides[0].objs[0].look;
+        CHECK(back->slides[0].nobjs >= 1 && saved->fill == look.fill && saved->line == look.line &&
+              saved->line_width == look.line_width && saved->line_style == OWF_LINE_DASHED &&
+              saved->arrows == look.arrows,
+              "fill, stroke, dash and arrowheads survive the ODP round trip");
+    }
+    owf_deck_free(back);
+    free(data);
+    opr_undo_free(u);
+    owf_deck_free(d);
+}
+
 static void caret_and_pointer(owf_deck *d)
 {
     int title = obj_named(d, 0, "Title 1"), body = obj_named(d, 1, "Content Placeholder 2"), f, k;
@@ -665,6 +734,7 @@ int main(int argc, char **argv)
     structural_slides();
     object_order();
     object_alignment();
+    object_appearance();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

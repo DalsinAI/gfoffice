@@ -599,7 +599,8 @@ typedef enum {
     SNAP_OBJ_BOX,
     SNAP_OBJ_ROTATION,
     SNAP_OBJ_PRESENCE,
-    SNAP_OBJ_ORDER
+    SNAP_OBJ_ORDER,
+    SNAP_OBJ_LOOK
 } snapshot_kind;
 
 typedef struct {
@@ -629,6 +630,8 @@ typedef struct {
     unsigned box_flags;
     /* SNAP_OBJ_ROTATION: the shape's rotation in tenths of a degree. */
     int rotation;
+    /* SNAP_OBJ_LOOK: complete fill/stroke appearance. */
+    owf_look look;
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
     owf_obj saved_obj;
     int saved_obj_present;
@@ -963,6 +966,14 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         k = s->from;
         s->from = s->to;
         s->to = k;
+    } else if (s->kind == SNAP_OBJ_LOOK) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        owf_look look;
+        if (!o)
+            return -1;
+        look = o->look;
+        o->look = s->look;
+        s->look = look;
     } else
         return -1;
     s->focus = s->other_focus;
@@ -1500,6 +1511,37 @@ int opr_obj_align(opr_undo *u, owf_deck *deck, int slide, int obj,
                            resolved.width, resolved.height);
 }
 
+static int valid_shade(unsigned long shade)
+{
+    return !shade || (OWF_SHADE_SET(shade) && !(shade & ~0x1ffffffUL));
+}
+
+int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
+                     const owf_look *look)
+{
+    snapshot s;
+    owf_obj *o = object(deck, slide, obj);
+    if (!u || !o || !look)
+        return -1;
+    if (o->parent >= 0 || (o->kind != OWF_OBJ_TEXT && o->kind != OWF_OBJ_SHAPE) ||
+        !valid_shade(look->fill) || !valid_shade(look->line) ||
+        look->line_width < 0 || look->line_width > 10000 ||
+        look->line_style > OWF_LINE_SLANTED_DASH_DOT ||
+        (look->arrows & ~(OWF_ARROW_START | OWF_ARROW_END)))
+        return -2;
+    if (!memcmp(&o->look, look, sizeof *look))
+        return 0;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_LOOK;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    s.look = o->look;
+    o->look = *look;
+    structural_push(u, &s);
+    return 0;
+}
+
 int opr_obj_set_rotation(opr_undo *u, owf_deck *deck, int slide, int obj,
                          int rotation_tenths)
 {
@@ -1547,7 +1589,8 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
         return -1;
     if (slide) *slide = focus;
     if (obj) {
-        if (s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX || s->kind == SNAP_OBJ_ROTATION)
+        if (s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX || s->kind == SNAP_OBJ_ROTATION ||
+            s->kind == SNAP_OBJ_LOOK)
             *obj = s->obj;
         else if (s->kind == SNAP_OBJ_ORDER)
             *obj = s->from;

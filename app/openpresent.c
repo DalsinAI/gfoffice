@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.1.6 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.1.7 (8.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.4.1 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.5.0 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -115,7 +115,7 @@ enum {
     M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
-    M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
+    M_APPEARANCE, M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
@@ -167,6 +167,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Align Middle", NULL, 0, 0, (APTR)M_ALIGN_MIDDLE },
     { NM_ITEM, "Align Bottom", NULL, 0, 0, (APTR)M_ALIGN_BOTTOM },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Appearance...", NULL, 0, 0, (APTR)M_APPEARANCE },
     { NM_ITEM, "Duplicate", NULL, 0, 0, (APTR)M_DUPLICATE_OBJECT },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_DELETE_OBJECT },
 
@@ -656,6 +657,148 @@ static int transition_requester(owf_transition *transition, int *apply_all)
 out:
     if (rw) CloseWindow(rw);
     if (list) FreeGadgets(list);
+    return ok;
+}
+
+static void shade_text(unsigned long shade, char out[7])
+{
+    snprintf(out, 7, "%06lx", OWF_SHADE_SET(shade) ? OWF_SHADE_RGB(shade) : 0UL);
+}
+
+static int shade_from_text(const char *text, unsigned long *shade)
+{
+    char *end;
+    unsigned long rgb;
+    size_t n;
+    if (!text || !shade) return 0;
+    if (*text == '#') text++;
+    n = strlen(text);
+    if (n != 6) return 0;
+    rgb = strtoul(text, &end, 16);
+    if (end != text + 6 || *end) return 0;
+    *shade = OWF_SHADE(rgb);
+    return 1;
+}
+
+static int appearance_style_index(unsigned char style)
+{
+    if (style == OWF_LINE_DASHED || style == OWF_LINE_MEDIUM_DASHED) return 1;
+    if (style == OWF_LINE_DOTTED) return 2;
+    if (style == OWF_LINE_DASH_DOT || style == OWF_LINE_MEDIUM_DASH_DOT ||
+        style == OWF_LINE_DASH_DOT_DOT || style == OWF_LINE_MEDIUM_DASH_DOT_DOT ||
+        style == OWF_LINE_SLANTED_DASH_DOT) return 3;
+    return 0;
+}
+
+static int appearance_requester(owf_look *look)
+{
+    static STRPTR style_labels[] = {
+        (STRPTR)"Solid", (STRPTR)"Dashed", (STRPTR)"Dotted", (STRPTR)"Dash-dot", NULL
+    };
+    static STRPTR arrow_labels[] = {
+        (STRPTR)"None", (STRPTR)"Start", (STRPTR)"End", (STRPTR)"Both", NULL
+    };
+    static const unsigned char styles[] = {
+        OWF_LINE_THIN, OWF_LINE_DASHED, OWF_LINE_DOTTED, OWF_LINE_DASH_DOT
+    };
+    struct Gadget *list = NULL, *last, *gfill, *gnofill, *gline, *gnoline;
+    struct Gadget *gwidth, *gstyle, *garrows, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    STRPTR fill_value = NULL, line_value = NULL;
+    char fill_text[7], line_text[7];
+    LONG v;
+    int done = 0, ok = 0, invalid = 0, ww = 520, wh = 238;
+    if (!look || !scr || !vi) return 0;
+    shade_text(look->fill, fill_text);
+    shade_text(look->line, line_text);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    last = CreateContext(&list);
+
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_LeftEdge = 190; ng.ng_TopEdge = 14;
+    ng.ng_Width = 105; ng.ng_Height = 18; ng.ng_GadgetText = (STRPTR)"Fill colour (RRGGBB)"; ng.ng_GadgetID = 1;
+    last = gfill = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)fill_text,
+                                GTST_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 330; ng.ng_Width = 22; ng.ng_Height = 14;
+    ng.ng_GadgetText = (STRPTR)"No fill"; ng.ng_GadgetID = 2;
+    last = gnofill = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, !OWF_SHADE_SET(look->fill), TAG_DONE);
+
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_LeftEdge = 190; ng.ng_TopEdge = 48;
+    ng.ng_Width = 105; ng.ng_Height = 18; ng.ng_GadgetText = (STRPTR)"Line colour (RRGGBB)"; ng.ng_GadgetID = 3;
+    last = gline = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)line_text,
+                                GTST_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 330; ng.ng_Width = 22; ng.ng_Height = 14;
+    ng.ng_GadgetText = (STRPTR)"No line"; ng.ng_GadgetID = 4;
+    last = gnoline = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, !OWF_SHADE_SET(look->line), TAG_DONE);
+
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_LeftEdge = 190; ng.ng_TopEdge = 82;
+    ng.ng_Width = 105; ng.ng_Height = 18; ng.ng_GadgetText = (STRPTR)"Line width (twips)"; ng.ng_GadgetID = 5;
+    last = gwidth = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)look->line_width,
+                                 GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 116; ng.ng_Width = 180; ng.ng_GadgetText = (STRPTR)"Line style"; ng.ng_GadgetID = 6;
+    last = gstyle = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)style_labels,
+                                 GTCY_Active, appearance_style_index(look->line_style), TAG_DONE);
+    ng.ng_TopEdge = 150; ng.ng_GadgetText = (STRPTR)"Arrowheads"; ng.ng_GadgetID = 7;
+    last = garrows = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)arrow_labels,
+                                  GTCY_Active, (ULONG)(look->arrows & 3), TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge = 194; ng.ng_Height = 20; ng.ng_Width = 78; ng.ng_LeftEdge = 340;
+    ng.ng_GadgetText = (STRPTR)"Apply"; ng.ng_GadgetID = 8;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 424; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 9;
+    gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gfill || !gnofill || !gline || !gnoline || !gwidth || !gstyle || !garrows || !gok || !gcancel) goto out;
+    rw = OpenWindowTags(NULL, WA_Title, (ULONG)"Object Appearance", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh, WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+        WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | STRINGIDCMP |
+                  INTEGERIDCMP | CYCLEIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD id = m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 8) { ok = 1; done = 1; }
+                else if (id == 9) done = 1;
+            }
+        }
+    }
+    if (ok) {
+        GT_GetGadgetAttrs(gnofill, rw, NULL, GTCB_Checked, (ULONG)&v, TAG_DONE);
+        if (v) look->fill = 0;
+        else {
+            GT_GetGadgetAttrs(gfill, rw, NULL, GTST_String, (ULONG)&fill_value, TAG_DONE);
+            if (!shade_from_text((char *)fill_value, &look->fill)) invalid = 1;
+        }
+        GT_GetGadgetAttrs(gnoline, rw, NULL, GTCB_Checked, (ULONG)&v, TAG_DONE);
+        if (v) look->line = 0;
+        else {
+            GT_GetGadgetAttrs(gline, rw, NULL, GTST_String, (ULONG)&line_value, TAG_DONE);
+            if (!shade_from_text((char *)line_value, &look->line)) invalid = 1;
+        }
+        GT_GetGadgetAttrs(gwidth, rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); look->line_width = (int)v;
+        GT_GetGadgetAttrs(gstyle, rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE);
+        look->line_style = styles[v >= 0 && v < 4 ? v : 0];
+        GT_GetGadgetAttrs(garrows, rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE);
+        look->arrows = (unsigned char)(v >= 0 && v < 4 ? v : 0);
+        if (look->line_width < 0 || look->line_width > 10000) invalid = 1;
+        if (invalid) ok = 0;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    if (invalid)
+        tell("Object Appearance", "Colours must be six hexadecimal digits (RRGGBB). Line width must be 0 to 10000 twips.");
     return ok;
 }
 
@@ -2861,6 +3004,48 @@ static void align_selected_object(opr_align how, const char *message)
     draw_status();
 }
 
+static void edit_selected_appearance(void)
+{
+    owf_look before, edited;
+    owf_obj *o;
+    int rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select a text box or shape to format.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->parent >= 0 || (o->kind != OWF_OBJ_TEXT && o->kind != OWF_OBJ_SHAPE)) {
+        set_status("Appearance editing currently supports top-level text boxes and shapes.");
+        draw_status();
+        return;
+    }
+    before = edited = o->look;
+    if (!appearance_requester(&edited)) return;
+    rc = opr_obj_set_look(undo, deck, current, selected_obj, &edited);
+    if (rc < 0) {
+        set_status(rc == -2 ? "That appearance is not valid for this object."
+                            : "The object's appearance could not be changed.");
+        draw_status();
+        return;
+    }
+    if (!memcmp(&before, &edited, sizeof before)) {
+        set_status("The object's appearance is unchanged.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Object appearance changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static void do_undo(int redo)
 {
     int slide = -1, obj = -1;
@@ -3234,6 +3419,7 @@ static void menu_action(ULONG id)
     case M_ALIGN_TOP: align_selected_object(OPR_ALIGN_TOP, "Object aligned top."); break;
     case M_ALIGN_MIDDLE: align_selected_object(OPR_ALIGN_MIDDLE, "Object centred vertically."); break;
     case M_ALIGN_BOTTOM: align_selected_object(OPR_ALIGN_BOTTOM, "Object aligned bottom."); break;
+    case M_APPEARANCE: edit_selected_appearance(); break;
     case M_DUPLICATE_OBJECT: duplicate_selected_object(); break;
     case M_DELETE_OBJECT: delete_selected_object(); break;
     case M_NEW_SLIDE: new_slide(); break;

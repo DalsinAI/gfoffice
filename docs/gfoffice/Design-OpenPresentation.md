@@ -457,6 +457,13 @@ resolves an inherited box, changes only the required axis through the existing
 one-step geometry history, and makes the result explicit for ODP persistence.
 No-op alignment consumes no undo entry. Multi-object alignment remains later.
 
+GFOpenPresentation 0.5.0 and GFOpenPublisher 0.1.7 add Object > Appearance for
+a selected top-level text box or shape. The shared requester edits solid fill,
+stroke colour and width, solid/dashed/dotted/dash-dot line style and start/end
+arrowheads. The portable core validates and swaps the complete `owf_look` as
+one undo/redo step; ODP round-trip tests cover every edited field. Group-wide
+appearance and richer fills remain later work.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys
