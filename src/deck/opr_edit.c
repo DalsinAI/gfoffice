@@ -1312,6 +1312,19 @@ int opr_obj_set_box(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+static int valid_shade(unsigned long shade)
+{
+    return !shade || (OWF_SHADE_SET(shade) && !(shade & ~0x1ffffffUL));
+}
+
+static int valid_look(const owf_look *look)
+{
+    return look && valid_shade(look->fill) && valid_shade(look->line) &&
+           look->line_width >= 0 && look->line_width <= 10000 &&
+           look->line_style <= OWF_LINE_SLANTED_DASH_DOT &&
+           !(look->arrows & ~(OWF_ARROW_START | OWF_ARROW_END));
+}
+
 int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
                          const opr_shape_spec *spec, int *selected)
 {
@@ -1323,7 +1336,8 @@ int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
     if (spec->shape < OWF_SHAPE_RECT || spec->shape > OWF_SHAPE_ARROW ||
         spec->x < 0 || spec->y < 0 || spec->width < 1 || spec->height < 1 ||
         (long)spec->x + spec->width > deck->width ||
-        (long)spec->y + spec->height > deck->height || spec->radius < 0)
+        (long)spec->y + spec->height > deck->height || spec->radius < 0 ||
+        !valid_look(&spec->look))
         return -2;
     index = deck->slides[slide].nobjs;
     o = owf_slide_add(&deck->slides[slide], OWF_OBJ_SHAPE);
@@ -1336,6 +1350,66 @@ int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
     o->height = spec->height;
     o->radius = spec->radius;
     o->look = spec->look;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_PRESENCE;
+    s.slide = slide;
+    s.obj = index;
+    s.focus = s.other_focus = slide;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
+int opr_obj_insert_textbox(opr_undo *u, owf_deck *deck, int slide,
+                           const opr_textbox_spec *spec, int *selected)
+{
+    snapshot s;
+    owf_obj *o;
+    owf_para *p;
+    owf_charfmt chars;
+    const owf_textlevel *level;
+    const owf_master *master;
+    int index, i;
+    if (!u || !deck || !spec || slide < 0 || slide >= deck->nslides)
+        return -1;
+    if (spec->x < 0 || spec->y < 0 || spec->width < 1 || spec->height < 1 ||
+        (long)spec->x + spec->width > deck->width ||
+        (long)spec->y + spec->height > deck->height ||
+        spec->valign > OWF_VALIGN_BOTTOM || !valid_look(&spec->look))
+        return -2;
+    for (i = 0; i < 4; i++)
+        if (spec->inset[i] < 0)
+            return -2;
+    if ((long)spec->inset[0] + spec->inset[2] >= spec->width ||
+        (long)spec->inset[1] + spec->inset[3] >= spec->height)
+        return -2;
+    index = deck->slides[slide].nobjs;
+    o = owf_slide_add(&deck->slides[slide], OWF_OBJ_TEXT);
+    if (!o)
+        return -1;
+    o->x = spec->x;
+    o->y = spec->y;
+    o->width = spec->width;
+    o->height = spec->height;
+    o->look = spec->look;
+    o->valign = spec->valign;
+    memcpy(o->inset, spec->inset, sizeof o->inset);
+    master = owf_deck_slide_master(deck, slide);
+    p = owf_deck_add_para(deck, master, o, 0);
+    if (!p) {
+        owf_slide_delete(&deck->slides[slide], index);
+        return -1;
+    }
+    level = owf_deck_para_level(deck, master, o, 0);
+    if (level)
+        chars = level->chars;
+    else
+        owf_charfmt_init(&chars);
+    if (spec->text && *spec->text &&
+        owf_para_add_text(p, &chars, spec->text, strlen(spec->text)) < 0) {
+        owf_slide_delete(&deck->slides[slide], index);
+        return -1;
+    }
     memset(&s, 0, sizeof s);
     s.kind = SNAP_OBJ_PRESENCE;
     s.slide = slide;
@@ -1511,11 +1585,6 @@ int opr_obj_align(opr_undo *u, owf_deck *deck, int slide, int obj,
                            resolved.width, resolved.height);
 }
 
-static int valid_shade(unsigned long shade)
-{
-    return !shade || (OWF_SHADE_SET(shade) && !(shade & ~0x1ffffffUL));
-}
-
 int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
                      const owf_look *look)
 {
@@ -1524,10 +1593,7 @@ int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
     if (!u || !o || !look)
         return -1;
     if (o->parent >= 0 || (o->kind != OWF_OBJ_TEXT && o->kind != OWF_OBJ_SHAPE) ||
-        !valid_shade(look->fill) || !valid_shade(look->line) ||
-        look->line_width < 0 || look->line_width > 10000 ||
-        look->line_style > OWF_LINE_SLANTED_DASH_DOT ||
-        (look->arrows & ~(OWF_ARROW_START | OWF_ARROW_END)))
+        !valid_look(look))
         return -2;
     if (!memcmp(&o->look, look, sizeof *look))
         return 0;

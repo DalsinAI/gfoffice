@@ -273,6 +273,13 @@ from Presentation. Imported Publisher rectangles and lines now travel through
 the same normalized geometry and screen/PDF renderers as ODP and PPTX shapes;
 the Publisher core test verifies that the adapter produces that display data.
 
+GFOpenPublisher 0.2.0 begins native publication authoring with Insert > Text
+Box. The shared Presentation/Publisher core creates the complete owned frame
+and story as one undoable operation, while the native Publisher window selects
+it and starts typing immediately. Movement, resize, exact geometry, appearance,
+arranging, alignment, duplication, deletion and ODP persistence then use the
+same reusable object lifecycle as imported publication frames.
+
 This is a functional P1a base, not a claim of faithful Publisher appearance:
 P0 has not decoded text/paragraph formatting, fill and line colours, crops,
 wrap, columns or linked frames, and the PDF picture encoder does not yet play

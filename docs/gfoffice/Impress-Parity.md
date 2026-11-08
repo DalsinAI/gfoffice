@@ -75,7 +75,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Text boxes, placeholder text | P1 | Yes |
+| Text boxes, placeholder text | P1 | Yes; GFOpenPresentation 0.6.0 adds native Insert > Text Box with immediate typing, one-step undo/redo and ODP persistence |
 | Typing in a text box: click to put the caret, type, Return, Backspace, Del, arrow keys | P3 | No in P1. P3's first part: Yes, in GFOpenPresentation 0.2 (`opr_edit.c`); selecting text and changing its look next |
 | Font, size, bold, italic, underline, strike-through, raised and lowered, colour | P1 | Yes |
 | Shadow, outline, relief, character spacing, highlighting, case | Later | No |

@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.5.0"
+#define OPR_CORE_VERSION "0.6.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -165,6 +165,19 @@ typedef struct {
  * unsupported kind or invalid box; -1 means bad input or no memory. */
 int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
                          const opr_shape_spec *spec, int *selected);
+/* A new editable text frame. Coordinates and insets are slide twips; text is
+ * copied as UTF-8 into its first paragraph (NULL: empty). */
+typedef struct {
+    int x, y, width, height;
+    int inset[4];
+    unsigned char valign;
+    owf_look look;
+    const char *text;
+} opr_textbox_spec;
+/* Append a text box and select it, as one undo step. -2 means invalid box,
+ * inset, vertical alignment or look; -1 means bad input or no memory. */
+int opr_obj_insert_textbox(opr_undo *u, owf_deck *deck, int slide,
+                           const opr_textbox_spec *spec, int *selected);
 /* Deep-copy one ungrouped object, offset its resolved box by the requested
  * twips (clamped to the slide), append and select it as one undo step. Owned
  * text, points, lists, table widths and metadata are independent. */

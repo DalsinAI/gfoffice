@@ -649,6 +649,79 @@ static void object_appearance(void)
     owf_deck_free(d);
 }
 
+static void textbox_insertion(void)
+{
+    owf_deck *d = owf_deck_new(10000, 8000);
+    owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    opr_undo *u = opr_undo_new();
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    opr_textbox_spec spec, invalid;
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_deck *back = NULL;
+    char *text = NULL;
+    int selected = -1, slide = -1, obj = -1;
+    CHECK(d && s && u, "a deck for text-box insertion");
+    if (!d || !s || !u) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    memset(&spec, 0, sizeof spec);
+    spec.x = 1000; spec.y = 1200; spec.width = 4200; spec.height = 1800;
+    spec.inset[0] = spec.inset[2] = 120;
+    spec.inset[1] = spec.inset[3] = 80;
+    spec.valign = OWF_VALIGN_CENTRE;
+    spec.look.fill = OWF_SHADE(0xffffdd);
+    spec.look.line = OWF_SHADE(0x303030);
+    spec.look.line_width = 20;
+    spec.look.line_style = OWF_LINE_THIN;
+    spec.text = "Publisher story";
+    CHECK(!opr_obj_insert_textbox(u, d, 0, &spec, &selected) && selected == 0 &&
+          s->nobjs == 1 && s->objs[0].kind == OWF_OBJ_TEXT,
+          "insert and select an editable text box");
+    text = opr_text_get(d, 0, 0);
+    CHECK(text && !strcmp(text, "Publisher story") && s->objs[0].x == 1000 &&
+          s->objs[0].width == 4200 && s->objs[0].valign == OWF_VALIGN_CENTRE &&
+          s->objs[0].inset[0] == 120 && s->objs[0].look.fill == spec.look.fill,
+          "the text box owns its story, geometry, insets and look");
+    free(text);
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 0 && obj == -1 && !s->nobjs,
+          "undo text-box insertion removes it");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && obj == 0 && s->nobjs == 1 &&
+          s->objs[0].kind == OWF_OBJ_TEXT,
+          "redo text-box insertion restores and selects it");
+    opr_undo_clear(u);
+    invalid = spec; invalid.width = 0;
+    CHECK(opr_obj_insert_textbox(u, d, 0, &invalid, &selected) == -2 && s->nobjs == 1,
+          "an empty text box is refused without changing the slide");
+    invalid = spec; invalid.inset[0] = spec.width;
+    CHECK(opr_obj_insert_textbox(u, d, 0, &invalid, &selected) == -2 && s->nobjs == 1,
+          "text-box insets must leave room for its story");
+    invalid = spec; invalid.valign = 99;
+    CHECK(opr_obj_insert_textbox(u, d, 0, &invalid, &selected) == -2,
+          "an invalid text-box alignment is refused");
+
+    CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
+          "the authored text box saves as ODP");
+    CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
+          "the authored text box reads back");
+    if (back) {
+        text = opr_text_get(back, 0, 0);
+        CHECK(back->slides[0].nobjs == 1 && back->slides[0].objs[0].kind == OWF_OBJ_TEXT &&
+              text && !strcmp(text, "Publisher story") &&
+              back->slides[0].objs[0].x == spec.x &&
+              back->slides[0].objs[0].inset[0] == spec.inset[0] &&
+              back->slides[0].objs[0].look.fill == spec.look.fill,
+              "the complete text box survives the ODP round trip");
+        free(text);
+    }
+    owf_deck_free(back);
+    free(data);
+    opr_undo_free(u);
+    owf_deck_free(d);
+}
+
 static void caret_and_pointer(owf_deck *d)
 {
     int title = obj_named(d, 0, "Title 1"), body = obj_named(d, 1, "Content Placeholder 2"), f, k;
@@ -735,6 +808,7 @@ int main(int argc, char **argv)
     object_order();
     object_alignment();
     object_appearance();
+    textbox_insertion();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

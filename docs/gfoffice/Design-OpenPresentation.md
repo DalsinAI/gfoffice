@@ -471,6 +471,13 @@ validated against the page bounds, and committed as one undo step. An inherited
 placeholder becomes an explicit box. Multi-selection and aspect locking remain
 later work.
 
+GFOpenPresentation 0.6.0 and GFOpenPublisher 0.2.0 add Insert > Text Box. The
+portable core creates an owned `OWF_OBJ_TEXT` with validated page geometry,
+insets, vertical alignment, fill/stroke look and an independent UTF-8 story as
+one object-presence undo step. The native shared window selects it and enters
+typing immediately. ODP round-trip coverage verifies the authored frame rather
+than only imported text.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.1.8 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.2.0 (8.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.5.1 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.0 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -109,7 +109,7 @@ enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
-    M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
+    M_INSERT_TEXTBOX, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
     M_INSERT_DIAMOND, M_INSERT_ARROW, M_INSERT_LINE,
     M_ROTATE_LEFT, M_ROTATE_RIGHT,
     M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
@@ -143,6 +143,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
 
     { NM_TITLE, "Insert", NULL, 0, 0, NULL },
+    { NM_ITEM, "Text Box", NULL, 0, 0, (APTR)M_INSERT_TEXTBOX },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Rectangle", NULL, 0, 0, (APTR)M_INSERT_RECT },
     { NM_ITEM, "Rounded Rectangle", NULL, 0, 0, (APTR)M_INSERT_ROUNDRECT },
     { NM_ITEM, "Ellipse", NULL, 0, 0, (APTR)M_INSERT_ELLIPSE },
@@ -2962,6 +2964,42 @@ static void insert_shape(owf_shape kind)
     draw_status();
 }
 
+static void insert_textbox(void)
+{
+    opr_textbox_spec spec;
+    int selected = -1;
+    if (!deck || current < 0 || current >= deck->nslides)
+        return;
+    memset(&spec, 0, sizeof spec);
+    spec.width = deck->width / 2;
+    spec.height = deck->height / 4;
+    spec.x = (deck->width - spec.width) / 2;
+    spec.y = (deck->height - spec.height) / 2;
+    spec.inset[0] = spec.inset[2] = 120;
+    spec.inset[1] = spec.inset[3] = 80;
+    spec.valign = OWF_VALIGN_TOP;
+    if (opr_obj_insert_textbox(undo, deck, current, &spec, &selected) < 0) {
+        set_status("The text box could not be inserted.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    selected_obj = selected;
+    edit_obj = selected;
+    caret.para = 0;
+    caret.offset = 0;
+    edit_grouped = 0;
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Text box inserted. Type its text; Esc stops.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static void delete_selected_object(void)
 {
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
@@ -3520,6 +3558,7 @@ static void menu_action(ULONG id)
         stop_typing();
         draw_slide();
         break;
+    case M_INSERT_TEXTBOX: insert_textbox(); break;
     case M_INSERT_RECT: insert_shape(OWF_SHAPE_RECT); break;
     case M_INSERT_ROUNDRECT: insert_shape(OWF_SHAPE_ROUNDRECT); break;
     case M_INSERT_ELLIPSE: insert_shape(OWF_SHAPE_ELLIPSE); break;

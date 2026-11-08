@@ -9,7 +9,13 @@ one document library, **libowf**. Its apps keep their GFOpen names:
 - **GFOpenPresentation**, the early slide viewer and editor;
 - **GFOpenPublisher**, an early desktop-publishing viewer that opens Microsoft
   Publisher pages through the suite's shared layout, PDF and printing stack;
-- **GFOpenBase**, the database, currently at the design stage.
+- **GFOpenBase**, the database, currently at the design stage;
+- **GFOpenDraw**, planned from the existing `DalsinAI/gfopenpaint` DPaint port
+  and the suite's shared drawing/page model.
+
+GFOpenMath is not in the target suite; equation editing is deliberately out of
+scope while the five document applications and GFOpenDraw reach practical
+parity.
 
 The suite aims at the features of Apache OpenOffice's apps. It is written from
 the file formats' specifications and our own code, never from OpenOffice's
@@ -18,16 +24,17 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.1.8 is the current P1a application. Its portable core turns
+GFOpenPublisher 0.2.0 is the current P1a application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
 pictures through GFOpenLayout, exports PDF, prints through GFOpenPrint and can
-save the imported page model as ODP. It inherits undoable shape insertion,
-selection, movement, resizing, exact numeric position and size, rotation,
-arranging, alignment, fill and stroke appearance, deep-copy duplication and
-deletion from the shared Presentation editor. Publisher text-frame formatting,
-linked text frames, columns, wrap and WMF/EMF playback remain later P1 work.
+save the imported page model as ODP. It can insert a native editable text box
+and immediately type into it, and inherits undoable shape insertion, selection,
+movement, resizing, exact numeric position and size, rotation, arranging,
+alignment, fill and stroke appearance, deep-copy duplication and deletion from
+the shared Presentation editor. Publisher text-frame formatting, linked text
+frames, columns, wrap and WMF/EMF playback remain later P1 work.
 
 # GFOpenWrite
 
@@ -390,10 +397,11 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.5.1), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.0), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
-part of P3 is in too: click in a slide's text box and type (Return, Backspace,
+part of P3 is in too: Insert > Text Box creates an undoable native frame and
+starts typing in it. Click in any slide text box and type (Return, Backspace,
 Del, the arrow keys; Esc stops), with undo and redo
 (`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
 deck-edit-check`). Click any slide object to select it, drag it to move it,
