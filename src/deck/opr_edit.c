@@ -1467,6 +1467,39 @@ int opr_obj_arrange(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_obj_align(opr_undo *u, owf_deck *deck, int slide, int obj,
+                  opr_align how)
+{
+    owf_obj resolved, *o;
+    int x, y;
+    if (!u || !deck || slide < 0 || slide >= deck->nslides ||
+        !(o = object(deck, slide, obj)))
+        return -1;
+    if (how < OPR_ALIGN_LEFT || how > OPR_ALIGN_BOTTOM ||
+        o->parent >= 0 || o->kind == OWF_OBJ_GROUP)
+        return -2;
+    if (owf_deck_resolve(deck, slide, obj, &resolved, NULL) < 0 ||
+        resolved.width < 1 || resolved.height < 1 ||
+        resolved.width > deck->width || resolved.height > deck->height)
+        return -2;
+    x = resolved.x;
+    y = resolved.y;
+    if (how == OPR_ALIGN_LEFT)
+        x = 0;
+    else if (how == OPR_ALIGN_CENTRE)
+        x = (deck->width - resolved.width) / 2;
+    else if (how == OPR_ALIGN_RIGHT)
+        x = deck->width - resolved.width;
+    else if (how == OPR_ALIGN_TOP)
+        y = 0;
+    else if (how == OPR_ALIGN_MIDDLE)
+        y = (deck->height - resolved.height) / 2;
+    else
+        y = deck->height - resolved.height;
+    return opr_obj_set_box(u, deck, slide, obj, x, y,
+                           resolved.width, resolved.height);
+}
+
 int opr_obj_set_rotation(opr_undo *u, owf_deck *deck, int slide, int obj,
                          int rotation_tenths)
 {

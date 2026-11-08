@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.4.0"
+#define OPR_CORE_VERSION "0.4.1"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -178,6 +178,14 @@ typedef enum {
  * undo step. Group blocks crossed by the move remain intact. */
 int opr_obj_arrange(opr_undo *u, owf_deck *deck, int slide, int obj,
                     opr_arrange how, int *selected);
+typedef enum {
+    OPR_ALIGN_LEFT, OPR_ALIGN_CENTRE, OPR_ALIGN_RIGHT,
+    OPR_ALIGN_TOP, OPR_ALIGN_MIDDLE, OPR_ALIGN_BOTTOM
+} opr_align;
+/* Align one ungrouped top-level object's resolved box to the slide/page as one
+ * undo step. An inherited placeholder becomes an explicit independent box. */
+int opr_obj_align(opr_undo *u, owf_deck *deck, int slide, int obj,
+                  opr_align how);
 /* Delete one ungrouped object, as one undo step. Undo restores all data owned
  * by the object. A group or an object with children returns -2. */
 int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj);

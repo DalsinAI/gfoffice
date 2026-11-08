@@ -512,6 +512,74 @@ static void object_order(void)
     owf_deck_free(d);
 }
 
+static void object_alignment(void)
+{
+    owf_deck *d = owf_deck_new(10000, 8000);
+    owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    opr_undo *u = opr_undo_new();
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_deck *back = NULL;
+    owf_obj *o;
+    int slide = -1, obj = -1;
+    CHECK(d && s && u, "a deck for object alignment");
+    if (!d || !s || !u) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    o = owf_slide_add(s, OWF_OBJ_SHAPE);
+    CHECK(o != NULL, "an object to align");
+    if (!o) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    o->shape = OWF_SHAPE_RECT;
+    o->x = 100; o->y = 200; o->width = 2000; o->height = 1000;
+    o->look.fill = OWF_SHADE(0x729fcf);
+
+    CHECK(!opr_obj_align(u, d, 0, 0, OPR_ALIGN_LEFT) && o->x == 0 && o->y == 200,
+          "align an object left");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 0 && obj == 0 &&
+          o->x == 100 && o->y == 200, "undo alignment");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && obj == 0 && o->x == 0,
+          "redo alignment");
+    CHECK(!opr_obj_align(u, d, 0, 0, OPR_ALIGN_RIGHT) && o->x == 8000,
+          "align an object right");
+    CHECK(!opr_obj_align(u, d, 0, 0, OPR_ALIGN_CENTRE) && o->x == 4000,
+          "centre an object horizontally");
+    CHECK(!opr_obj_align(u, d, 0, 0, OPR_ALIGN_TOP) && o->y == 0,
+          "align an object to the top");
+    CHECK(!opr_obj_align(u, d, 0, 0, OPR_ALIGN_BOTTOM) && o->y == 7000,
+          "align an object to the bottom");
+    CHECK(!opr_obj_align(u, d, 0, 0, OPR_ALIGN_MIDDLE) && o->y == 3500,
+          "centre an object vertically");
+    opr_undo_clear(u);
+    CHECK(!opr_obj_align(u, d, 0, 0, OPR_ALIGN_MIDDLE) && !opr_undo_can(u),
+          "alignment already satisfied is not an edit");
+    CHECK(opr_obj_align(u, d, 0, 0, (opr_align)99) == -2,
+          "an invalid alignment is refused");
+    o = owf_slide_add(s, OWF_OBJ_GROUP);
+    CHECK(o && opr_obj_align(u, d, 0, 1, OPR_ALIGN_LEFT) == -2,
+          "whole-group alignment waits for group editing");
+
+    CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
+          "the aligned object saves as ODP");
+    CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
+          "the aligned object reads back");
+    if (back)
+        CHECK(back->slides[0].nobjs >= 1 && back->slides[0].objs[0].x == 4000 &&
+              back->slides[0].objs[0].y == 3500 && back->slides[0].objs[0].width == 2000 &&
+              back->slides[0].objs[0].height == 1000,
+              "the aligned box survives the ODP round trip");
+    owf_deck_free(back);
+    free(data);
+    opr_undo_free(u);
+    owf_deck_free(d);
+}
+
 static void caret_and_pointer(owf_deck *d)
 {
     int title = obj_named(d, 0, "Title 1"), body = obj_named(d, 1, "Content Placeholder 2"), f, k;
@@ -596,6 +664,7 @@ int main(int argc, char **argv)
     empty_placeholders();
     structural_slides();
     object_order();
+    object_alignment();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

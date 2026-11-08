@@ -115,7 +115,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Flip, slant | P1 (flip of lines and arrows) | Lines and arrows yes; slant: Approx. (drawn in its box) |
 | Text in shapes | P1 | Yes |
 | Group, ungroup, enter group | P1 (groups), P3 (commands) | Yes |
-| Arrange (front, back), align, distribute | P3 | Bring to Front, Bring Forward, Send Backward and Send to Back: Yes in 0.4.0 for one top-level object, undoable and group-block safe; align and distribute: No |
+| Arrange (front, back), align, distribute | P3 | Bring to Front, Bring Forward, Send Backward and Send to Back: Yes in 0.4.0 for one top-level object, undoable and group-block safe. Align Left/Centre/Right/Top/Middle/Bottom to the slide/page: Yes in 0.4.1. Multi-object align and distribute: No |
 | Combine, split, shape operations (merge, subtract, intersect) | Not planned | No |
 | Name and description (alt text) | P1 | Yes |
 | Snap, grid, guides, rulers | P3 | No |

@@ -451,6 +451,12 @@ portable core moves one top-level object as a single undo step, repairs group
 parent indexes, and crosses a group only as a complete block. Group and child
 selection remain deliberately refused until whole-group editing is delivered.
 
+GFOpenPresentation 0.4.1 and GFOpenPublisher 0.1.6 add Align Left, Centre,
+Right, Top, Middle and Bottom against the slide/page. The reusable core
+resolves an inherited box, changes only the required axis through the existing
+one-step geometry history, and makes the result explicit for ODP persistence.
+No-op alignment consumes no undo entry. Multi-object alignment remains later.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

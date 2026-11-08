@@ -18,13 +18,13 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.1.5 is the current P1a application. Its portable core turns
+GFOpenPublisher 0.1.6 is the current P1a application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
 pictures through GFOpenLayout, exports PDF, prints through GFOpenPrint and can
 save the imported page model as ODP. It inherits undoable shape insertion,
-selection, movement, resizing, rotation, arranging, deep-copy duplication and deletion
+selection, movement, resizing, rotation, arranging, alignment, deep-copy duplication and deletion
 from the shared Presentation editor. Publisher formatting, linked text frames,
 columns, wrap, shape appearance and WMF/EMF playback remain later P1 work.
 
@@ -389,7 +389,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.4.0), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.4.1), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: click in a slide's text box and type (Return, Backspace,

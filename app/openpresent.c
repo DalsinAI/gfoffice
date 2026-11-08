@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.1.5 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.1.6 (8.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.4.0 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.4.1 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -113,6 +113,8 @@ enum {
     M_INSERT_DIAMOND, M_INSERT_ARROW, M_INSERT_LINE,
     M_ROTATE_LEFT, M_ROTATE_RIGHT,
     M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
+    M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
+    M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
     M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
@@ -157,6 +159,13 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Bring Forward", NULL, 0, 0, (APTR)M_BRING_FORWARD },
     { NM_ITEM, "Send Backward", NULL, 0, 0, (APTR)M_SEND_BACKWARD },
     { NM_ITEM, "Send to Back", NULL, 0, 0, (APTR)M_SEND_BACK },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Align Left", NULL, 0, 0, (APTR)M_ALIGN_LEFT },
+    { NM_ITEM, "Align Centre", NULL, 0, 0, (APTR)M_ALIGN_CENTRE },
+    { NM_ITEM, "Align Right", NULL, 0, 0, (APTR)M_ALIGN_RIGHT },
+    { NM_ITEM, "Align Top", NULL, 0, 0, (APTR)M_ALIGN_TOP },
+    { NM_ITEM, "Align Middle", NULL, 0, 0, (APTR)M_ALIGN_MIDDLE },
+    { NM_ITEM, "Align Bottom", NULL, 0, 0, (APTR)M_ALIGN_BOTTOM },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Duplicate", NULL, 0, 0, (APTR)M_DUPLICATE_OBJECT },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_DELETE_OBJECT },
@@ -2819,6 +2828,39 @@ static void arrange_selected_object(opr_arrange how, const char *message)
     draw_status();
 }
 
+static void align_selected_object(opr_align how, const char *message)
+{
+    owf_obj before, after;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs ||
+        owf_deck_resolve(deck, current, selected_obj, &before, NULL) < 0) {
+        set_status("Select an object to align.");
+        draw_status();
+        return;
+    }
+    if (opr_obj_align(undo, deck, current, selected_obj, how) < 0) {
+        set_status("That grouped object cannot be aligned yet.");
+        draw_status();
+        return;
+    }
+    if (owf_deck_resolve(deck, current, selected_obj, &after, NULL) >= 0 &&
+        before.x == after.x && before.y == after.y &&
+        before.width == after.width && before.height == after.height) {
+        set_status("The object is already aligned there.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status(message);
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static void do_undo(int redo)
 {
     int slide = -1, obj = -1;
@@ -3186,6 +3228,12 @@ static void menu_action(ULONG id)
     case M_BRING_FORWARD: arrange_selected_object(OPR_ARRANGE_FORWARD, "Object brought forward."); break;
     case M_SEND_BACKWARD: arrange_selected_object(OPR_ARRANGE_BACKWARD, "Object sent backward."); break;
     case M_SEND_BACK: arrange_selected_object(OPR_ARRANGE_BACK, "Object sent to back."); break;
+    case M_ALIGN_LEFT: align_selected_object(OPR_ALIGN_LEFT, "Object aligned left."); break;
+    case M_ALIGN_CENTRE: align_selected_object(OPR_ALIGN_CENTRE, "Object centred horizontally."); break;
+    case M_ALIGN_RIGHT: align_selected_object(OPR_ALIGN_RIGHT, "Object aligned right."); break;
+    case M_ALIGN_TOP: align_selected_object(OPR_ALIGN_TOP, "Object aligned top."); break;
+    case M_ALIGN_MIDDLE: align_selected_object(OPR_ALIGN_MIDDLE, "Object centred vertically."); break;
+    case M_ALIGN_BOTTOM: align_selected_object(OPR_ALIGN_BOTTOM, "Object aligned bottom."); break;
     case M_DUPLICATE_OBJECT: duplicate_selected_object(); break;
     case M_DELETE_OBJECT: delete_selected_object(); break;
     case M_NEW_SLIDE: new_slide(); break;
