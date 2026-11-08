@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.2.3 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.3.0 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -88,9 +88,11 @@ enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
-    M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
+    M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE,
+    M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
-    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT
+    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
+    M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP
 };
 
 static struct NewMenu menus[] = {
@@ -117,6 +119,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Duplicate Slide", NULL, 0, 0, (APTR)M_DUPLICATE_SLIDE },
     { NM_ITEM, "Rename Slide...", NULL, 0, 0, (APTR)M_RENAME_SLIDE },
     { NM_ITEM, "Delete Slide", NULL, 0, 0, (APTR)M_DELETE_SLIDE },
+    { NM_ITEM, "Hide Slide", NULL, 0, 0, (APTR)M_HIDE_SLIDE },
+    { NM_ITEM, "Show Slide", NULL, 0, 0, (APTR)M_SHOW_SLIDE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Move Slide Up", NULL, 0, 0, (APTR)M_MOVE_SLIDE_UP },
     { NM_ITEM, "Move Slide Down", NULL, 0, 0, (APTR)M_MOVE_SLIDE_DOWN },
@@ -136,13 +140,18 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Icons", NULL, CHECKIT | CHECKED, ~2 & 7, (APTR)M_TB_ICONS },
     { NM_SUB, "Text", NULL, CHECKIT, ~4 & 7, (APTR)M_TB_TEXT },
 
+    { NM_TITLE, "Show", NULL, 0, 0, NULL },
+    { NM_ITEM, "Start from First", NULL, 0, 0, (APTR)M_SHOW_FIRST },
+    { NM_ITEM, "Start from Current", NULL, 0, 0, (APTR)M_SHOW_CURRENT },
+    { NM_ITEM, "Loop from First", NULL, 0, 0, (APTR)M_SHOW_LOOP },
+
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
     { NM_ITEM, "About GFOpenPresentation...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
 /* The Chrome icon set's pictures by name, the vector icons as their fallback. The set has no Show or New
- * Slide picture yet (they are asked of gfopengadtools): those come with the player. */
+ * Slide picture yet, so the first player is reached through its menu and F5. */
 static const ogt_tool tools[] = {
     { C_NEW,   "New",       OGT_ICON_FILE,    0, 0, 0, "new" },
     { C_OPEN,  "Open...",   OGT_ICON_OPEN,    0, 0, 0, "open" },
@@ -1804,6 +1813,172 @@ static void move_slide(int direction)
     structure_changed(selected, direction < 0 ? "Slide moved up." : "Slide moved down.");
 }
 
+static void set_current_hidden(int hidden)
+{
+    int selected = current;
+    if (!deck || current < 0 || current >= deck->nslides) return;
+    hidden = hidden != 0;
+    if (deck->slides[current].hidden == hidden) {
+        set_status(hidden ? "This slide is already hidden." : "This slide is already shown.");
+        draw_status();
+        return;
+    }
+    if (opr_slide_set_hidden(undo, deck, current, hidden, &selected) < 0) {
+        tell(PROGRAM, "The slide's show setting could not be changed.");
+        return;
+    }
+    structure_changed(selected, hidden ? "Slide hidden from the show." : "Slide included in the show.");
+}
+
+/* ---- Full-screen show ----
+ *
+ * A borderless window on the presentation's public screen is the first
+ * player backend. It uses the same laid-out slides and painter as the editor,
+ * and opr_show owns all navigation/timing decisions. A later own-screen
+ * backend can therefore change display setup without changing show rules. */
+static void show_draw(struct Window *sw, const opr_show *show, int blank, int number)
+{
+    struct RastPort *rp = sw->RPort;
+    ol_pixel_rect clip;
+    int w, h, x, y;
+    char digits[24];
+    LONG background = blank == 2 ? argb_pen(0xffffffffu) : argb_pen(0xff000000u);
+    ogt_box(rp, background, 0, 0, sw->Width, sw->Height);
+    if (!blank && show && show->deck) {
+        w = sw->Width;
+        h = (int)((long)w * show->deck->height / show->deck->width);
+        if (h > sw->Height) {
+            h = sw->Height;
+            w = (int)((long)h * show->deck->width / show->deck->height);
+        }
+        x = (sw->Width - w) / 2;
+        y = (sw->Height - h) / 2;
+        clip.x = x;
+        clip.y = y;
+        clip.width = w;
+        clip.height = h;
+        paint_slide(rp, laid_get(show->slide), x, y, w, &clip, 0, NULL);
+    }
+    if (number > 0) {
+        snprintf(digits, sizeof digits, "%d", number);
+        SetFont(rp, font);
+        ogt_text(rp, blank == 2 ? argb_pen(0xff000000u) : argb_pen(0xffffffffu),
+                 sw->Width - ogt_text_width(rp, digits) - 16, 12, digits, 0);
+    }
+}
+
+static ULONG show_tick_delta(ULONG seconds, ULONG micros, ULONG *last_seconds, ULONG *last_micros, int *have_time)
+{
+    ULONG delta;
+    if (!*have_time) {
+        *have_time = 1;
+        *last_seconds = seconds;
+        *last_micros = micros;
+        return 100;                         /* one Intuition tick, approximately */
+    }
+    if (seconds < *last_seconds) delta = 0;
+    else {
+        delta = (seconds - *last_seconds) * 1000UL;
+        if (micros >= *last_micros) delta += (micros - *last_micros) / 1000UL;
+        else if (delta >= 1000) delta = delta - 1000UL + (1000000UL + micros - *last_micros) / 1000UL;
+    }
+    *last_seconds = seconds;
+    *last_micros = micros;
+    return delta;
+}
+
+static void run_show(int from, int loop)
+{
+    struct Window *sw;
+    struct IntuiMessage *im;
+    opr_show show;
+    int running = 1, blank = 0, number = 0, have_time = 0;
+    ULONG last_seconds = 0, last_micros = 0;
+    if (!deck || opr_show_begin(&show, deck, from, loop) < 0) {
+        tell("Slide Show", "There is no visible slide to show.");
+        return;
+    }
+    stop_typing();
+    sw = OpenWindowTags(NULL,
+        WA_PubScreen, (ULONG)scr,
+        WA_Left, 0, WA_Top, 0, WA_Width, scr->Width, WA_Height, scr->Height,
+        WA_Borderless, TRUE, WA_Backdrop, TRUE, WA_Activate, TRUE,
+        WA_RMBTrap, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_REFRESHWINDOW | IDCMP_MOUSEBUTTONS | IDCMP_VANILLAKEY |
+                  IDCMP_RAWKEY | IDCMP_INTUITICKS,
+        TAG_DONE);
+    if (!sw) {
+        tell("Slide Show", "The full-screen show window could not open.");
+        return;
+    }
+    show_draw(sw, &show, blank, number);
+    while (running) {
+        ULONG signals = Wait((1UL << sw->UserPort->mp_SigBit) | SIGBREAKF_CTRL_C);
+        if (signals & SIGBREAKF_CTRL_C) break;
+        while ((im = (struct IntuiMessage *)GetMsg(sw->UserPort)) != NULL) {
+            ULONG class = im->Class, seconds = im->Seconds, micros = im->Micros;
+            UWORD code = im->Code;
+            int redraw = 0, rc = 0;
+            ReplyMsg((struct Message *)im);
+            if (class == IDCMP_REFRESHWINDOW) {
+                BeginRefresh(sw);
+                show_draw(sw, &show, blank, number);
+                EndRefresh(sw, TRUE);
+                continue;
+            }
+            if (class == IDCMP_INTUITICKS) {
+                rc = opr_show_tick(&show, show_tick_delta(seconds, micros, &last_seconds, &last_micros, &have_time));
+                if (rc < 0) running = 0;
+                else if (rc > 0) { blank = number = 0; redraw = 1; }
+            } else if (class == IDCMP_MOUSEBUTTONS && code == SELECTDOWN) {
+                rc = opr_show_next(&show);
+                if (rc < 0) running = 0;
+                else { blank = number = 0; redraw = 1; }
+            } else if (class == IDCMP_RAWKEY && !(code & 0x80)) {
+                if (code == 0x4e || code == 0x4d || code == 0x49) {
+                    rc = opr_show_next(&show);
+                    if (rc < 0) running = 0;
+                    else { blank = number = 0; redraw = 1; }
+                } else if (code == 0x4f || code == 0x4c || code == 0x48) {
+                    opr_show_previous(&show); blank = number = 0; redraw = 1;
+                } else if (code == 0x70) {
+                    opr_show_first(&show); blank = number = 0; redraw = 1;
+                } else if (code == 0x71) {
+                    opr_show_last(&show); blank = number = 0; redraw = 1;
+                }
+            } else if (class == IDCMP_VANILLAKEY) {
+                if (code == 27) running = 0;
+                else if (code >= '0' && code <= '9') {
+                    if (number < 100000) number = number * 10 + code - '0';
+                    redraw = 1;
+                } else if (code == 13) {
+                    if (number > 0) opr_show_goto(&show, number - 1);
+                    else if (opr_show_next(&show) < 0) running = 0;
+                    blank = number = 0; redraw = 1;
+                } else if (code == ' ') {
+                    if (opr_show_next(&show) < 0) running = 0;
+                    blank = number = 0; redraw = 1;
+                } else if (code == 8) {
+                    if (number > 0) number /= 10;
+                    else { opr_show_previous(&show); blank = 0; }
+                    redraw = 1;
+                } else if (code == 'b' || code == 'B') {
+                    blank = blank == 1 ? 0 : 1; number = 0; redraw = 1;
+                } else if (code == 'w' || code == 'W') {
+                    blank = blank == 2 ? 0 : 2; number = 0; redraw = 1;
+                } else if (code == 'h' || code == 'H') {
+                    opr_show_next_hidden(&show); blank = number = 0; redraw = 1;
+                }
+            }
+            if (running && redraw) show_draw(sw, &show, blank, number);
+        }
+    }
+    CloseWindow(sw);
+    show_slide(show.slide);
+    ActivateWindow(win);
+    draw_all();
+}
+
 /* The pixel box of the object typed in, and around it, as laid out now: what a keystroke redraws. */
 static int edit_area(box *b)
 {
@@ -2196,7 +2371,9 @@ static void about(void)
     char text[400];
     snprintf(text, sizeof text,
              VERSION_TEXT "\nThe GFOffice Suite's slides.\n\nOpens ODP and PPTX, saves ODP, exports PDF,\n"
-             "prints through GFOpenPrint.\n\nCore %s, libowf %s, GFOpenLayout %s.\nMIT, Copyright (c) 2026 AmiCradle Team.",
+             "prints through GFOpenPrint, and runs a full-screen show.\n"
+             "F5: first; Shift-F5: current; Esc: end.\n\nCore %s, libowf %s, GFOpenLayout %s.\n"
+             "MIT, Copyright (c) 2026 AmiCradle Team.",
              OPR_CORE_VERSION, OWF_VERSION, OL_VERSION);
     tell("About " PROGRAM, text);
 }
@@ -2270,6 +2447,8 @@ static void menu_action(ULONG id)
     case M_DUPLICATE_SLIDE: duplicate_current_slide(); break;
     case M_RENAME_SLIDE: rename_current_slide(); break;
     case M_DELETE_SLIDE: delete_slide(); break;
+    case M_HIDE_SLIDE: set_current_hidden(1); break;
+    case M_SHOW_SLIDE: set_current_hidden(0); break;
     case M_MOVE_SLIDE_UP: move_slide(-1); break;
     case M_MOVE_SLIDE_DOWN: move_slide(1); break;
     case M_FIRST: show_slide(0); break;
@@ -2282,6 +2461,9 @@ static void menu_action(ULONG id)
     case M_TB_BOTH: set_buttons(OGT_TB_ICONS_TEXT); break;
     case M_TB_ICONS: set_buttons(OGT_TB_ICONS); break;
     case M_TB_TEXT: set_buttons(OGT_TB_TEXT); break;
+    case M_SHOW_FIRST: run_show(0, 0); break;
+    case M_SHOW_CURRENT: run_show(current, 0); break;
+    case M_SHOW_LOOP: run_show(0, 1); break;
     }
 }
 
@@ -2369,7 +2551,9 @@ static void events(void)
             break;
         case IDCMP_RAWKEY:
             if (code & 0x80) break;
-            if (edit_obj >= 0 && !(qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT))) {
+            if (code == 0x54) {                 /* F5; Shift-F5 starts here */
+                run_show(qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT) ? current : 0, 0);
+            } else if (edit_obj >= 0 && !(qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT))) {
                 switch (code) {
                 case 0x4f: opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_LEFT); caret_moved(); break;
                 case 0x4e: opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_RIGHT); caret_moved(); break;

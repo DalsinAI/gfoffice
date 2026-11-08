@@ -403,10 +403,27 @@ deck-edit-test: $(OUT)/test-opr-edit
 deck-edit-check: $(OUT)/test-opr-edit-asan
 	$(OUT)/test-opr-edit-asan tests/deck/fixtures/pptx-talk.pptx
 
-test: deck-edit-test
-check: deck-edit-check
+$(OUT)/test-opr-show: $(DECK_DEPS) src/deck/opr_show.c include/openpresentation_core.h tests/deck/test_opr_show.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
+		$(OWF_SRC) src/deck/opr_show.c tests/deck/test_opr_show.c -lz -o $@
 
-.PHONY: deck-edit-test deck-edit-check
+$(OUT)/test-opr-show-asan: $(DECK_DEPS) src/deck/opr_show.c include/openpresentation_core.h tests/deck/test_opr_show.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
+		$(OWF_SRC) src/deck/opr_show.c tests/deck/test_opr_show.c -lz -o $@
+
+deck-show-test: $(OUT)/test-opr-show
+	$(OUT)/test-opr-show
+
+deck-show-check: $(OUT)/test-opr-show-asan
+	$(OUT)/test-opr-show-asan
+
+test: deck-edit-test deck-show-test
+check: deck-edit-check deck-show-check
+
+.PHONY: deck-edit-test deck-edit-check deck-show-test deck-show-check
 endif
 
 # GFOpenPublisher's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py

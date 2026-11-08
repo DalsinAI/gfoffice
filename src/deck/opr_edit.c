@@ -593,7 +593,8 @@ typedef enum {
     SNAP_TEXT,
     SNAP_SLIDE,
     SNAP_MOVE,
-    SNAP_NAME
+    SNAP_NAME,
+    SNAP_HIDDEN
 } snapshot_kind;
 
 typedef struct {
@@ -613,6 +614,8 @@ typedef struct {
     int from, to;
     /* SNAP_NAME: the name belonging to the saved state. */
     char *name;
+    /* SNAP_HIDDEN: the visibility belonging to the saved state. */
+    int hidden;
 } snapshot;
 
 #define UNDO_STEPS 16
@@ -808,6 +811,13 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         name = deck->slides[s->slide].name;
         deck->slides[s->slide].name = s->name;
         s->name = name;
+    } else if (s->kind == SNAP_HIDDEN) {
+        int hidden;
+        if (!deck || s->slide < 0 || s->slide >= deck->nslides)
+            return -1;
+        hidden = deck->slides[s->slide].hidden;
+        deck->slides[s->slide].hidden = s->hidden;
+        s->hidden = hidden;
     } else
         return -1;
     s->focus = s->other_focus;
@@ -1033,6 +1043,28 @@ int opr_slide_rename(opr_undo *u, owf_deck *deck, int index, const char *name, i
     s.name = deck->slides[index].name;
     s.focus = s.other_focus = index;
     deck->slides[index].name = copy;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
+int opr_slide_set_hidden(opr_undo *u, owf_deck *deck, int index, int hidden, int *selected)
+{
+    snapshot s;
+    if (!u || !deck || index < 0 || index >= deck->nslides)
+        return -1;
+    hidden = hidden != 0;
+    if (deck->slides[index].hidden == hidden) {
+        if (selected) *selected = index;
+        return 0;
+    }
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_HIDDEN;
+    s.slide = index;
+    s.obj = -1;
+    s.hidden = deck->slides[index].hidden;
+    s.focus = s.other_focus = index;
+    deck->slides[index].hidden = hidden;
     structural_push(u, &s);
     if (selected) *selected = index;
     return 0;

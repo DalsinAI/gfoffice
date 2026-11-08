@@ -242,6 +242,19 @@ static void structural_slides(void)
           opr_slide_rename(u, d, 1, "", &selected) == -2 &&
           !strcmp(d->slides[1].name, "Opening Copy Renamed"), "empty and duplicate slide names are refused");
 
+    CHECK(!opr_slide_set_hidden(u, d, 1, 1, &selected) && selected == 1 && d->slides[1].hidden,
+          "hide a slide");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 1 && !d->slides[1].hidden,
+          "undo hiding a slide");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && d->slides[1].hidden,
+          "redo hiding a slide");
+    CHECK(!opr_slide_set_hidden(u, d, 1, 0, &selected) && !d->slides[1].hidden,
+          "show a slide");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && d->slides[1].hidden,
+          "undo showing a slide");
+    CHECK(!opr_slide_set_hidden(u, d, 1, 1, &selected) && d->slides[1].hidden,
+          "setting the same visibility is harmless");
+
     opr_undo_free(u);
     owf_deck_free(d);
 }

@@ -280,19 +280,25 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.2), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.3), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: click in a slide's text box and type (Return, Backspace,
 Del, the arrow keys; Esc stops), with undo and redo
 (`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
 deck-edit-check`). Slide > New Slide, Duplicate Slide, Rename Slide, Delete
-Slide, Move Slide Up and Move Slide Down are undoable through that same
-reusable core; duplication uses libowf's deep-copy deck primitive. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
+Slide, Hide/Show Slide, Move Slide Up and Move Slide Down are undoable through
+that same reusable core; duplication uses libowf's deep-copy deck primitive.
+F5 starts a borderless full-screen show from the first visible slide and
+Shift-F5 from the current slide. The reusable `opr_show` state machine skips
+hidden slides, follows automatic timings, loops when asked and handles first,
+last, next, previous, numbered and explicit hidden-slide navigation. The
+player also has black and white screens; its first backend uses cut transitions
+on the public screen. `make deck-show-test` tests the show rules. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
 T:<name>.pdf`), and Export PDF writes one. View > Zoom In and Zoom Out (+
 and -) show the slide up to four times the window's fit, with scrollers; the
-window's zoom gadget fills the screen. The player (P2), PPTX saving and the
-rest of the editor come next.
+window's zoom gadget fills the screen. Animated transitions, an optional own
+screen, PPTX saving and the rest of the editor come next.
 
 ## Licence
 

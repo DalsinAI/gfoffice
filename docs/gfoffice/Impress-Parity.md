@@ -51,7 +51,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | --- | --- | --- |
 | New slide, delete, duplicate, rename | P3 | Yes in GFOpenPresentation 0.2.3; all undoable, with deep-copy duplication in libowf |
 | Move slides (Slide Sorter, drag) | P3 | Move up/down: Yes in GFOpenPresentation 0.2.3, undoable through `opr_slide_move`; drag: No |
-| Hide and show a slide | P2 (show), P3 (edit) | Yes: read, written, left out of the PDF |
+| Hide and show a slide | P2 (show), P3 (edit) | Yes in GFOpenPresentation 0.3.0: read, written, omitted from PDF and normal show navigation, and edited with undo/redo |
 | Slide layouts (Blank, Title Slide, Title Content, Title and 2 Content, Title Only, Centered Text, and the rest) | P3 | Model: a new deck has six; a file's layouts are read and written with their placeholders |
 | Page setup: slide size (Screen 4:3, 16:9, 16:10, A4, Letter, custom), orientation, numbering format | P3 | Model: any size, orientation from it; numbering format No |
 | Slide background: colour | P1 | Yes |
@@ -167,13 +167,13 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Start from the first slide, from the current | P2 | No |
-| Next, previous, first, last, go to a slide by number, black and white screen, end | P2 | No |
-| Advance on click, or automatically after a time | P2 | Model |
+| Start from the first slide, from the current | P2 | Yes: Show menu, F5 and Shift-F5 |
+| Next, previous, first, last, go to a slide by number, black and white screen, end | P2 | Yes in the borderless public-screen player; H explicitly visits the next hidden slide |
+| Advance on click, or automatically after a time | P2 | Yes, through the host-tested reusable `opr_show` state machine |
 | Rehearse timings | P4 | No |
-| Slide show settings: range, loop with a pause, pointer visible, pen, navigator, animations allowed, slides change on click, always on top | P2, P4 | Kept |
+| Slide show settings: range, loop with a pause, pointer visible, pen, navigator, animations allowed, slides change on click, always on top | P2, P4 | Loop and first/current range: Yes; the rest kept or No |
 | Custom slide shows | Later | Kept |
-| Hidden slides left out of the show | P2 | Model (and left out of the PDF) |
+| Hidden slides left out of the show | P2 | Yes; normal movement skips them and H visits the next one explicitly |
 | Presenter console | Not planned | No |
 | Interactions (on click: go to a slide, open a file, play a sound, end the show) | Later | No |
 
@@ -182,7 +182,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Transitions per slide, apply to all | P1 (data), P3 (editing) | Model |
-| Cut, wipe, push, cover, uncover, split, blinds, dissolve | P2 (wipe, push, dissolve), P4 (the rest) | Model |
+| Cut, wipe, push, cover, uncover, split, blinds, dissolve | P2 (wipe, push, dissolve), P4 (the rest) | Cut: Yes; the others remain model-only |
 | Fade smoothly, fade through black | P4 | Model |
 | The other effects (wheel, shape, box, checkerboard, circle, newsflash, random...) | Later | Kept, shown as a cut |
 | Speed (slow, medium, fast) | P2 | Model |

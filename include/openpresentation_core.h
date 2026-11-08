@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.2.3"
+#define OPR_CORE_VERSION "0.3.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -145,6 +145,8 @@ int opr_slide_move(opr_undo *u, owf_deck *deck, int from, int to, int *selected)
 /* Rename one slide. A nonempty name must be unique in the deck. -2 means the
  * name is empty, too long or already used; -1 means bad input or no memory. */
 int opr_slide_rename(opr_undo *u, owf_deck *deck, int index, const char *name, int *selected);
+/* Hide or show a slide, as one undoable structural edit. */
+int opr_slide_set_hidden(opr_undo *u, owf_deck *deck, int index, int hidden, int *selected);
 int opr_undo_can(const opr_undo *u);
 int opr_redo_can(const opr_undo *u);
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj);
@@ -165,6 +167,33 @@ int opr_hit_frame(const opr_slide *s, int frame, ol_unit x, ol_unit y, ol_measur
 /* The frame of a slide's own object under a point (the frontmost), and the
  * position in its text (at may be NULL); -1 when there is none. */
 int opr_hit(const opr_slide *s, ol_unit x, ol_unit y, ol_measure_text_fn measure, void *userdata, opr_pos *at);
+
+/* ---- Portable slide-show state (opr_show.c) ----
+ *
+ * The Amiga player, ARexx and host tests use the same navigation and timing
+ * rules. Normal movement skips hidden slides; an explicit numbered jump may
+ * show one, and opr_show_next_hidden implements the show command for doing so.
+ * Navigation resets elapsed time. Calls return 1 when the slide changed, 0
+ * when it stayed put, and -1 for bad input or when forward movement reaches
+ * the end of a non-looping show. */
+typedef struct {
+    const owf_deck *deck;
+    int slide;
+    int loop;
+    unsigned long elapsed_ms;
+} opr_show;
+
+int opr_show_begin(opr_show *show, const owf_deck *deck, int from, int loop);
+int opr_show_next(opr_show *show);
+int opr_show_previous(opr_show *show);
+int opr_show_first(opr_show *show);
+int opr_show_last(opr_show *show);
+int opr_show_goto(opr_show *show, int slide);
+int opr_show_next_hidden(opr_show *show);
+/* Add elapsed milliseconds and advance once when this slide's automatic
+ * timing expires. 0 means it is still showing; 1 means it advanced; -1 means
+ * the show ended or the input/state was invalid. */
+int opr_show_tick(opr_show *show, unsigned long milliseconds);
 
 #ifdef __cplusplus
 }
