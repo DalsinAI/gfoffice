@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.1.4 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.1.5 (8.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.3.9 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.4.0 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -111,7 +111,9 @@ enum {
     M_UNDO, M_REDO, M_STOP,
     M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
     M_INSERT_DIAMOND, M_INSERT_ARROW, M_INSERT_LINE,
-    M_ROTATE_LEFT, M_ROTATE_RIGHT, M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
+    M_ROTATE_LEFT, M_ROTATE_RIGHT,
+    M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
+    M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
@@ -150,6 +152,11 @@ static struct NewMenu menus[] = {
     { NM_TITLE, "Object", NULL, 0, 0, NULL },
     { NM_ITEM, "Rotate Left 15 Degrees", NULL, 0, 0, (APTR)M_ROTATE_LEFT },
     { NM_ITEM, "Rotate Right 15 Degrees", NULL, 0, 0, (APTR)M_ROTATE_RIGHT },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Bring to Front", NULL, 0, 0, (APTR)M_BRING_FRONT },
+    { NM_ITEM, "Bring Forward", NULL, 0, 0, (APTR)M_BRING_FORWARD },
+    { NM_ITEM, "Send Backward", NULL, 0, 0, (APTR)M_SEND_BACKWARD },
+    { NM_ITEM, "Send to Back", NULL, 0, 0, (APTR)M_SEND_BACK },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Duplicate", NULL, 0, 0, (APTR)M_DUPLICATE_OBJECT },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_DELETE_OBJECT },
@@ -2781,6 +2788,37 @@ static void duplicate_selected_object(void)
     draw_status();
 }
 
+static void arrange_selected_object(opr_arrange how, const char *message)
+{
+    int selected = selected_obj;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select an object to arrange.");
+        draw_status();
+        return;
+    }
+    if (opr_obj_arrange(undo, deck, current, selected_obj, how, &selected) < 0) {
+        set_status("That grouped object cannot be arranged yet.");
+        draw_status();
+        return;
+    }
+    if (selected == selected_obj) {
+        set_status("The object is already at that layer.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    selected_obj = selected;
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status(message);
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static void do_undo(int redo)
 {
     int slide = -1, obj = -1;
@@ -3144,6 +3182,10 @@ static void menu_action(ULONG id)
     case M_INSERT_LINE: insert_shape(OWF_SHAPE_LINE); break;
     case M_ROTATE_LEFT: rotate_selected(150); break;
     case M_ROTATE_RIGHT: rotate_selected(-150); break;
+    case M_BRING_FRONT: arrange_selected_object(OPR_ARRANGE_FRONT, "Object brought to front."); break;
+    case M_BRING_FORWARD: arrange_selected_object(OPR_ARRANGE_FORWARD, "Object brought forward."); break;
+    case M_SEND_BACKWARD: arrange_selected_object(OPR_ARRANGE_BACKWARD, "Object sent backward."); break;
+    case M_SEND_BACK: arrange_selected_object(OPR_ARRANGE_BACK, "Object sent to back."); break;
     case M_DUPLICATE_OBJECT: duplicate_selected_object(); break;
     case M_DELETE_OBJECT: delete_selected_object(); break;
     case M_NEW_SLIDE: new_slide(); break;

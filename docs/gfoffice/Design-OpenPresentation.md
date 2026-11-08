@@ -445,6 +445,12 @@ clears file-local IDs, and the presentation core resolves inherited geometry,
 offsets and clamps the independent copy, selects it, and records the insertion
 as one undoable presence change. GFOpenPublisher 0.1.4 consumes the same path.
 
+GFOpenPresentation 0.4.0 and GFOpenPublisher 0.1.5 add the four drawing-order
+commands: Bring to Front, Bring Forward, Send Backward and Send to Back. The
+portable core moves one top-level object as a single undo step, repairs group
+parent indexes, and crosses a group only as a complete block. Group and child
+selection remain deliberately refused until whole-group editing is delivered.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

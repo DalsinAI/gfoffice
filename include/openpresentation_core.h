@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.3.9"
+#define OPR_CORE_VERSION "0.4.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -170,6 +170,14 @@ int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
  * text, points, lists, table widths and metadata are independent. */
 int opr_obj_duplicate(opr_undo *u, owf_deck *deck, int slide, int obj,
                       int offset_x, int offset_y, int *selected);
+typedef enum {
+    OPR_ARRANGE_FRONT, OPR_ARRANGE_FORWARD,
+    OPR_ARRANGE_BACKWARD, OPR_ARRANGE_BACK
+} opr_arrange;
+/* Change one ungrouped top-level object's back-to-front drawing order as one
+ * undo step. Group blocks crossed by the move remain intact. */
+int opr_obj_arrange(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    opr_arrange how, int *selected);
 /* Delete one ungrouped object, as one undo step. Undo restores all data owned
  * by the object. A group or an object with children returns -2. */
 int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj);

@@ -434,6 +434,84 @@ static void structural_slides(void)
     owf_deck_free(d);
 }
 
+static int named_at(const owf_slide *s, int index, const char *name)
+{
+    return s && index >= 0 && index < s->nobjs && s->objs[index].name &&
+           !strcmp(s->objs[index].name, name);
+}
+
+static void object_order(void)
+{
+    owf_deck *d = owf_deck_new(OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT);
+    owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    opr_undo *u = opr_undo_new();
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_deck *back = NULL;
+    owf_obj *o;
+    int selected = -1, slide = -1, obj = -1;
+    CHECK(d && s && u, "a deck for object arranging");
+    if (!d || !s || !u) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    o = owf_slide_add(s, OWF_OBJ_TEXT); if (o) owf_deck_set_text(&o->name, "A");
+    o = owf_slide_add(s, OWF_OBJ_TEXT); if (o) owf_deck_set_text(&o->name, "B");
+    o = owf_slide_add(s, OWF_OBJ_GROUP); if (o) owf_deck_set_text(&o->name, "G");
+    o = owf_slide_add(s, OWF_OBJ_TEXT);
+    if (o) { owf_deck_set_text(&o->name, "C"); o->parent = 2; }
+    o = owf_slide_add(s, OWF_OBJ_TEXT); if (o) owf_deck_set_text(&o->name, "D");
+    CHECK(s->nobjs == 5 && named_at(s, 0, "A") && named_at(s, 2, "G") &&
+          named_at(s, 3, "C") && s->objs[3].parent == 2, "the initial drawing order and group");
+    CHECK(!opr_obj_arrange(u, d, 0, 0, OPR_ARRANGE_BACK, &selected) && selected == 0 &&
+          !opr_undo_can(u), "arranging an object already at that layer is not an edit");
+
+    CHECK(!opr_obj_arrange(u, d, 0, 0, OPR_ARRANGE_FORWARD, &selected) && selected == 1 &&
+          named_at(s, 0, "B") && named_at(s, 1, "A") && named_at(s, 2, "G") &&
+          named_at(s, 3, "C") && s->objs[3].parent == 2,
+          "bring an object forward one top-level layer");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 0 && obj == 0 &&
+          named_at(s, 0, "A") && named_at(s, 1, "B"), "undo object arranging");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && obj == 1 &&
+          named_at(s, 0, "B") && named_at(s, 1, "A"), "redo object arranging");
+
+    CHECK(!opr_obj_arrange(u, d, 0, 1, OPR_ARRANGE_FRONT, &selected) && selected == 4 &&
+          named_at(s, 0, "B") && named_at(s, 1, "G") && named_at(s, 2, "C") &&
+          s->objs[2].parent == 1 && named_at(s, 4, "A"),
+          "bring to front across a complete group block");
+    CHECK(!opr_obj_arrange(u, d, 0, 4, OPR_ARRANGE_BACKWARD, &selected) && selected == 3 &&
+          named_at(s, 1, "G") && named_at(s, 2, "C") && s->objs[2].parent == 1 &&
+          named_at(s, 3, "A") && named_at(s, 4, "D"), "send backward one layer");
+    CHECK(!opr_obj_arrange(u, d, 0, 3, OPR_ARRANGE_BACK, &selected) && selected == 0 &&
+          named_at(s, 0, "A") && named_at(s, 1, "B") && named_at(s, 2, "G") &&
+          named_at(s, 3, "C") && s->objs[3].parent == 2, "send an object to the back");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == 3 && named_at(s, 3, "A") &&
+          named_at(s, 1, "G") && named_at(s, 2, "C") && s->objs[2].parent == 1,
+          "undo send to back without breaking the crossed group");
+    CHECK(opr_obj_arrange(u, d, 0, 1, OPR_ARRANGE_FRONT, &selected) == -2 &&
+          opr_obj_arrange(u, d, 0, 2, OPR_ARRANGE_FRONT, &selected) == -2,
+          "groups and their children wait for whole-group arranging");
+    CHECK(opr_obj_arrange(u, d, 0, 0, (opr_arrange)99, &selected) == -2,
+          "an invalid arrange command is refused");
+    CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
+          "the rearranged drawing order saves as ODP");
+    CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
+          "the rearranged drawing order reads back");
+    if (back) {
+        const owf_slide *saved = &back->slides[0];
+        CHECK(saved->nobjs == 5 && named_at(saved, 0, "B") && named_at(saved, 1, "G") &&
+              named_at(saved, 2, "C") && saved->objs[2].parent == 1 &&
+              named_at(saved, 3, "A") && named_at(saved, 4, "D"),
+              "drawing order and the intact group survive the ODP round trip");
+    }
+    owf_deck_free(back);
+    free(data);
+    opr_undo_free(u);
+    owf_deck_free(d);
+}
+
 static void caret_and_pointer(owf_deck *d)
 {
     int title = obj_named(d, 0, "Title 1"), body = obj_named(d, 1, "Content Placeholder 2"), f, k;
@@ -517,6 +595,7 @@ int main(int argc, char **argv)
     owf_deck_free(d);
     empty_placeholders();
     structural_slides();
+    object_order();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

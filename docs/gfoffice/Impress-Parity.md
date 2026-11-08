@@ -115,7 +115,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Flip, slant | P1 (flip of lines and arrows) | Lines and arrows yes; slant: Approx. (drawn in its box) |
 | Text in shapes | P1 | Yes |
 | Group, ungroup, enter group | P1 (groups), P3 (commands) | Yes |
-| Arrange (front, back), align, distribute | P3 | Model (back-to-front order) |
+| Arrange (front, back), align, distribute | P3 | Bring to Front, Bring Forward, Send Backward and Send to Back: Yes in 0.4.0 for one top-level object, undoable and group-block safe; align and distribute: No |
 | Combine, split, shape operations (merge, subtract, intersect) | Not planned | No |
 | Name and description (alt text) | P1 | Yes |
 | Snap, grid, guides, rulers | P3 | No |
@@ -204,7 +204,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Master view | P4 | No |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
-| Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/duplication/deletion/position/size/shape rotation: Yes (`opr_edit.c`); other object edits: No |
+| Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/duplication/deletion/position/size/shape rotation/drawing order: Yes (`opr_edit.c`); other object edits: No |
 | Clipboard: objects and slides | P3 (Shared E10) | Direct object and slide duplication: Yes; system clipboard copy/cut/paste: No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
 | ARexx port `GFOPENPRESENTATION` | P4 | No |

@@ -598,7 +598,8 @@ typedef enum {
     SNAP_TRANSITION,
     SNAP_OBJ_BOX,
     SNAP_OBJ_ROTATION,
-    SNAP_OBJ_PRESENCE
+    SNAP_OBJ_PRESENCE,
+    SNAP_OBJ_ORDER
 } snapshot_kind;
 
 typedef struct {
@@ -614,7 +615,7 @@ typedef struct {
     int saved_present;
     /* The selection belonging to the saved and live states. */
     int focus, other_focus;
-    /* SNAP_MOVE: the next move to apply; swapped after it is applied. */
+    /* SNAP_MOVE/SNAP_OBJ_ORDER: the next move to apply; swapped afterward. */
     int from, to;
     /* SNAP_NAME: the name belonging to the saved state. */
     char *name;
@@ -823,6 +824,40 @@ static int obj_attach(owf_deck *deck, int slide, int index, owf_obj *in)
     return 0;
 }
 
+/* Move one object to a final array index and repair every group parent index.
+ * Callers keep group blocks intact by choosing only their boundaries. */
+static int obj_reorder(owf_deck *deck, int slide, int from, int to)
+{
+    owf_slide *s;
+    owf_obj moved;
+    int i, parent;
+    if (!deck || slide < 0 || slide >= deck->nslides)
+        return -1;
+    s = &deck->slides[slide];
+    if (from < 0 || from >= s->nobjs || to < 0 || to >= s->nobjs)
+        return -1;
+    if (from == to)
+        return 0;
+    moved = s->objs[from];
+    if (from < to)
+        memmove(&s->objs[from], &s->objs[from + 1],
+                (size_t)(to - from) * sizeof *s->objs);
+    else
+        memmove(&s->objs[to + 1], &s->objs[to],
+                (size_t)(from - to) * sizeof *s->objs);
+    s->objs[to] = moved;
+    for (i = 0; i < s->nobjs; i++) {
+        parent = s->objs[i].parent;
+        if (parent == from)
+            s->objs[i].parent = to;
+        else if (from < to && parent > from && parent <= to)
+            s->objs[i].parent--;
+        else if (to < from && parent >= to && parent < from)
+            s->objs[i].parent++;
+    }
+    return 0;
+}
+
 /* The saved state and the deck's current state change places. */
 static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
 {
@@ -921,6 +956,13 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
                 return -1;
             s->saved_obj_present = 1;
         }
+    } else if (s->kind == SNAP_OBJ_ORDER) {
+        int k;
+        if (obj_reorder(deck, s->slide, s->from, s->to) < 0)
+            return -1;
+        k = s->from;
+        s->from = s->to;
+        s->to = k;
     } else
         return -1;
     s->focus = s->other_focus;
@@ -1368,6 +1410,63 @@ int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj)
     return 0;
 }
 
+int opr_obj_arrange(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    opr_arrange how, int *selected)
+{
+    snapshot s;
+    owf_slide *sl;
+    owf_obj *o;
+    int i, target = obj;
+    if (!u || !deck || slide < 0 || slide >= deck->nslides ||
+        obj < 0 || obj >= deck->slides[slide].nobjs)
+        return -1;
+    if (how < OPR_ARRANGE_FRONT || how > OPR_ARRANGE_BACK)
+        return -2;
+    sl = &deck->slides[slide];
+    o = &sl->objs[obj];
+    if (o->parent >= 0 || o->kind == OWF_OBJ_GROUP)
+        return -2;
+    if (how == OPR_ARRANGE_FRONT) {
+        target = sl->nobjs - 1;
+    } else if (how == OPR_ARRANGE_BACK) {
+        target = 0;
+    } else if (how == OPR_ARRANGE_FORWARD) {
+        int next = -1;
+        for (i = obj + 1; i < sl->nobjs; i++)
+            if (sl->objs[i].parent < 0) {
+                next = i;
+                break;
+            }
+        if (next >= 0) {
+            for (i = next + 1; i < sl->nobjs && sl->objs[i].parent >= 0; i++)
+                ;
+            target = i - 1;
+        }
+    } else {
+        for (i = obj - 1; i >= 0; i--)
+            if (sl->objs[i].parent < 0) {
+                target = i;
+                break;
+            }
+    }
+    if (target == obj) {
+        if (selected) *selected = obj;
+        return 0;
+    }
+    if (obj_reorder(deck, slide, obj, target) < 0)
+        return -1;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_ORDER;
+    s.slide = slide;
+    s.obj = target;
+    s.from = target;
+    s.to = obj;
+    s.focus = s.other_focus = slide;
+    structural_push(u, &s);
+    if (selected) *selected = target;
+    return 0;
+}
+
 int opr_obj_set_rotation(opr_undo *u, owf_deck *deck, int slide, int obj,
                          int rotation_tenths)
 {
@@ -1417,6 +1516,8 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
     if (obj) {
         if (s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX || s->kind == SNAP_OBJ_ROTATION)
             *obj = s->obj;
+        else if (s->kind == SNAP_OBJ_ORDER)
+            *obj = s->from;
         else if (s->kind == SNAP_OBJ_PRESENCE && !s->saved_obj_present)
             *obj = s->obj;
         else
