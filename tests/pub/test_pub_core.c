@@ -19,6 +19,12 @@ static int text_has(const owf_story *s, const char *word)
 
 int main(void)
 {
+    static const char *const corpus[] = {
+        "51318.pub", "60685.pub", "Sample.pub", "Sample2000.pub", "Sample98.pub",
+        "SampleBrochure.pub", "Sample_2010.pub", "Simple.pub",
+        "clusterfuzz-testcase-minimized-POIHPBFFuzzer-4918886059278336.pub",
+        "clusterfuzz-testcase-minimized-POIHPBFFuzzer-6325615354773504.pub", "mimetype-pub.pub"
+    };
     owf_deck *deck = NULL;
     owf_report *report = owf_report_new();
     unsigned char *pdf = NULL;
@@ -28,6 +34,7 @@ int main(void)
     const owf_deck_format *format = owf_deck_format_named("odp"), *used = NULL;
     int version = 0, i, pictures = 0;
     CHECK(report != NULL);
+    CHECK(opp_pub_to_deck(NULL, &deck, report) == OWF_ERR_FORMAT && deck == NULL);
     CHECK(opp_import_pub_file("tests/pub/samples/Simple.pub", &deck, report, &version) == OWF_OK);
     CHECK(deck && version == OWF_PUB_2007 && deck->nslides == 1 && deck->nmasters == 1);
     CHECK(deck && deck->width == 11906 && deck->height == 16838 && deck->slides[0].nobjs == 2);
@@ -50,7 +57,25 @@ int main(void)
         }
     CHECK(pictures >= 3);
     CHECK(opr_export_pdf(deck, NULL, &pdf, &length, report) == OWF_OK && length > 1000 && !memcmp(pdf, "%PDF-", 5));
-    free(pdf); owf_deck_free(deck); owf_report_free(report);
+    free(pdf); owf_deck_free(deck); deck = NULL;
+
+    for (i = 0; i < (int)(sizeof corpus / sizeof *corpus); i++) {
+        char path[256];
+        int rc;
+        snprintf(path, sizeof path, "tests/pub/samples/%s", corpus[i]);
+        version = -1;
+        rc = opp_import_pub_file(path, &deck, report, &version);
+        CHECK(rc == OWF_OK || rc == OWF_ERR_FORMAT || rc == OWF_ERR_CORRUPT);
+        CHECK((rc == OWF_OK) == (deck != NULL));
+        if (deck) {
+            CHECK(deck->width > 0 && deck->height > 0 && deck->nslides >= 0 && deck->nmasters > 0);
+            owf_deck_free(deck);
+            deck = NULL;
+        } else {
+            CHECK(version == OWF_PUB_UNKNOWN);
+        }
+    }
+    owf_report_free(report);
     printf("openpublisher core tests passed (%d checks)\n", checks);
     return failed ? 1 : 0;
 }

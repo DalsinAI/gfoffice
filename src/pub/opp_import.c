@@ -124,8 +124,13 @@ int opp_pub_to_deck(const owf_pub *pub, owf_deck **out, owf_report *report)
 {
     owf_deck *deck;
     int i, masters;
-    if (!pub || !out || pub->width <= 0 || pub->height <= 0) return OWF_ERR_FORMAT;
+    if (!out) return OWF_ERR_FORMAT;
     *out = NULL;
+    if (!pub || !pub->res || pub->width <= 0 || pub->height <= 0 ||
+        pub->npages < 0 || pub->nmasters < 0 || pub->nstories < 0 ||
+        (pub->npages && !pub->pages) || (pub->nmasters && !pub->masters) ||
+        (pub->nstories && !pub->stories))
+        return OWF_ERR_FORMAT;
     deck = owf_deck_new_empty();
     if (!deck) return OWF_ERR_MEMORY;
     deck->width = pub->width;
@@ -160,10 +165,11 @@ int opp_import_pub_file(const char *path, owf_deck **deck, owf_report *report, i
     int rc;
     if (!deck) return OWF_ERR_FORMAT;
     *deck = NULL;
+    if (version) *version = OWF_PUB_UNKNOWN;
     rc = owf_pub_read_file(path, &pub, report);
     if (rc == OWF_OK) {
-        if (version) *version = pub->version;
         rc = opp_pub_to_deck(pub, deck, report);
+        if (rc == OWF_OK && version) *version = pub->version;
     }
     owf_pub_free(pub);
     return rc;
