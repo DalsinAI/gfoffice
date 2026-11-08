@@ -121,6 +121,7 @@ typedef struct {
     int crop[4];                 /* thousandths cut from left, top, right, bottom */
     struct owf_chart *chart;     /* OWF_OBJ_CHART (Design-Suite-Shared.md, 4): NULL until charts come */
     char *name, *alt;            /* UTF-8, may be NULL */
+    char *flow_next;             /* ODF draw:chain-next-name; NULL when unlinked */
     int keep;                    /* into deck->kept; -1: none */
     /* Text that shrinks to fit, as PowerPoint last fitted it (a:normAutofit fontScale and lnSpcReduction):
        the percent of its size, and the points of percent taken off its line spacing; 0: not said. Shrinking

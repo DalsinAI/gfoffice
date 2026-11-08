@@ -740,6 +740,20 @@ static int linked_story_slice(const builder *b, int slide_index, int obj_index,
     return 0;
 }
 
+static const owf_story *linked_story_source(const builder *b, const owf_obj *object,
+                                            const owf_story *own)
+{
+    int page, index;
+    if (!object || object->flow_story < 0 || own->nparas) return own;
+    for (page = 0; page < b->deck->nslides; ++page)
+        for (index = 0; index < b->deck->slides[page].nobjs; ++index) {
+            const owf_obj *o = &b->deck->slides[page].objs[index];
+            if (o->kind == OWF_OBJ_TEXT && o->flow_story == object->flow_story && o->text.nparas)
+                return &o->text;
+        }
+    return own;
+}
+
 static int add_text(builder *b, opr_frame *f, ol_node *n, const owf_obj *o, const owf_story *story, int with_levels,
                     int slide_index, int obj_index)
 {
@@ -748,6 +762,7 @@ static int add_text(builder *b, opr_frame *f, ol_node *n, const owf_obj *o, cons
     const owf_story *draw;
     int linked = 0;
     int ok;
+    story = linked_story_source(b, o, story);
     if (!story->nparas)
         return 1;
     if (!prepare_text(b->deck, b->master, o, story, with_levels, f->scale, b->fields, &t))

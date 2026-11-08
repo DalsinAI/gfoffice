@@ -101,6 +101,7 @@ void owf_obj_clear(owf_obj *obj)
     free(obj->col_widths);
     free(obj->name);
     free(obj->alt);
+    free(obj->flow_next);
     free(obj->xml_id);
     memset(obj, 0, sizeof *obj);
     obj->parent = -1;
@@ -274,6 +275,7 @@ int owf_obj_copy(owf_obj *to, const owf_obj *from)
     to->col_widths = NULL;
     to->name = NULL;
     to->alt = NULL;
+    to->flow_next = NULL;
     if (story_copy(&to->text, &from->text) < 0)
         goto fail;
     if (from->points && from->npoints > 0) {
@@ -304,7 +306,8 @@ int owf_obj_copy(owf_obj *to, const owf_obj *from)
     }
     to->name = from->name ? owf_deck_strdup(from->name, strlen(from->name)) : NULL;
     to->alt = from->alt ? owf_deck_strdup(from->alt, strlen(from->alt)) : NULL;
-    if ((from->name && !to->name) || (from->alt && !to->alt))
+    to->flow_next = from->flow_next ? owf_deck_strdup(from->flow_next, strlen(from->flow_next)) : NULL;
+    if ((from->name && !to->name) || (from->alt && !to->alt) || (from->flow_next && !to->flow_next))
         goto fail;
     return 0;
 fail:

@@ -220,7 +220,7 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | Facing pages, two-page spreads | Not yet (SampleNewsletter's pages alternate left and right on the workspace: a hypothesis) | P1 | P2 | |
 | Master pages | Names, which page uses which | P1 (their frames) | P2 | The samples' masters are empty: samples needed |
 | Text boxes | Boxes and text | P1 | P2 | |
-| Linked text frames (overflow chains) | Yes: shared story IDs identify chains | Yes: text continues at GFOpenLayout's exact page cut and fixed frames clip | P2 | Screen and PDF are correct; preserving editable links in ODP save is still open |
+| Linked text frames (overflow chains) | Yes: shared story IDs and ODF named chains | Yes: text continues at GFOpenLayout's exact page cut and fixed frames clip | P2 | Screen, PDF and ODP save/reload preserve the chain; interactive link/unlink commands remain |
 | Columns in a text box | No | P1c | P2 | |
 | Character and paragraph formatting, styles | No (fonts listed) | P1b | P2 | Quill's STSH, FDPC, FDPP (PUB-FORMAT 6.2) |
 | Colour schemes, font schemes | Scheme colours seen | P1b | P2 | |
@@ -295,8 +295,12 @@ GFOpenLayout where page zero ended for each fixed frame. The suffix begins in
 the next frame, in page/object order, and every imported Publisher text frame
 clips at its box. `SampleNewsletter.pub` is the regression: 10 chains, 29
 frames, and the second frame no longer repeats the first frame's opening.
-ODP export still needs to write `draw:chain-next-name` so editable links survive
-a save; that is a serialization gap, not another layout implementation.
+GFOpenPublisher 0.2.3 preserves the links on save/reload. ODP export writes a
+unique `draw:name` for every linked frame, `draw:chain-next-name` to its
+successor, and the story once in the chain head. ODP import resolves arbitrary
+named chains across pages (with bounded handling for damaged cycles) back into
+the shared flow identity. The real newsletter is exported, imported again and
+rechecked as 10 chains/29 frames with the same rendered continuation.
 
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded text/paragraph formatting, fill and line colours, crops,

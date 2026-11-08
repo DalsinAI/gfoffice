@@ -793,7 +793,7 @@ static void put_geometry(owf_buf *out, const owf_obj *o)
 
 static void put_common(odpw *w, owf_buf *out, const owf_obj *o)
 {
-    if (o->name) {
+    if (o->name && o->flow_story < 0) {
         owf_buf_puts(out, " draw:name=\"");
         owf_buf_puts_xml(out, o->name);
         owf_buf_putc(out, '"');
@@ -813,6 +813,42 @@ static void put_common(odpw *w, owf_buf *out, const owf_obj *o)
     owf_buf_printf(out, " draw:layer=\"%s\"", w->on_master ? "backgroundobjects" : "layout");
     if (o->flags & OWF_OBJ_HIDDEN)
         owf_buf_puts(out, " draw:display=\"none\"");
+}
+
+static const char *flow_name(const owf_obj *obj, int ordinal, char name[64])
+{
+    if (obj->name) return obj->name;
+    snprintf(name, 64, "gf-flow-%d-%d", obj->flow_story, ordinal + 1);
+    return name;
+}
+
+static void put_flow_attrs(odpw *w, owf_buf *out, const owf_obj *object,
+                           int *ordinal, int *total)
+{
+    const owf_obj *next = NULL;
+    int page, index, seen = 0, found = 0, next_ordinal = -1;
+    char own_buf[64], next_buf[64];
+    *ordinal = -1;
+    *total = 0;
+    if (!object || object->kind != OWF_OBJ_TEXT || object->flow_story < 0) return;
+    for (page = 0; page < w->deck->nslides; ++page)
+        for (index = 0; index < w->deck->slides[page].nobjs; ++index) {
+            const owf_obj *o = &w->deck->slides[page].objs[index];
+            if (o->kind != OWF_OBJ_TEXT || o->flow_story != object->flow_story) continue;
+            if (o == object) { *ordinal = seen; found = 1; }
+            else if (found && !next) { next = o; next_ordinal = seen; }
+            seen++;
+        }
+    *total = seen;
+    if (*ordinal < 0) return;
+    owf_buf_puts(out, " draw:name=\"");
+    owf_buf_puts_xml(out, flow_name(object, *ordinal, own_buf));
+    owf_buf_putc(out, '"');
+    if (next) {
+        owf_buf_puts(out, " draw:chain-next-name=\"");
+        owf_buf_puts_xml(out, flow_name(next, next_ordinal, next_buf));
+        owf_buf_putc(out, '"');
+    }
 }
 
 static void put_alt(owf_buf *out, const owf_obj *o)
@@ -929,7 +965,7 @@ static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int in
     const owf_obj *o = &objs[index];
     const char *cls = class_name(o->placeholder);
     char style[32];
-    int presentation = o->placeholder != OWF_PH_NONE;
+    int presentation = o->placeholder != OWF_PH_NONE, flow_ordinal = -1, flow_total = 0;
 
     if (depth > OWF_DECK_MAX_DEPTH)
         return;
@@ -1002,6 +1038,7 @@ static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int in
     /* frames: text, pictures, tables */
     owf_buf_printf(out, "<draw:frame %s=\"%s\"", presentation ? "presentation:style-name" : "draw:style-name", style);
     put_common(w, out, o);
+    put_flow_attrs(w, out, o, &flow_ordinal, &flow_total);
     put_geometry(out, o);
     if (cls) {
         owf_buf_printf(out, " presentation:class=\"%s\"", cls);
@@ -1019,7 +1056,8 @@ static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int in
         put_table(w, out, o);
     } else {
         owf_buf_puts(out, "<draw:text-box>");
-        if (!(o->flags & OWF_OBJ_EMPTY) || o->text.nparas)
+        if ((flow_total < 2 || flow_ordinal == 0) &&
+            (!(o->flags & OWF_OBJ_EMPTY) || o->text.nparas))
             put_story(w, out, o, &o->text, 1);
         owf_buf_puts(out, "</draw:text-box>");
     }

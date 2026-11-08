@@ -121,6 +121,24 @@ int main(void)
             CHECK(!frame_text_ops(laid, second, "This week in class"));
         }
         opr_slide_free(laid); laid = NULL;
+        CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK && odp_length > 1000);
+        CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
+        if (roundtrip) {
+            int linked_again = 0;
+            CHECK(opp_flow_chain_count(roundtrip, &linked_again) == 10);
+            CHECK(linked_again == 29);
+            laid = opr_slide_layout(roundtrip, 0, NULL, NULL, NULL);
+            CHECK(laid != NULL);
+            if (laid) {
+                int first = frame_for_object(laid, &roundtrip->slides[0].objs[0]);
+                int second = frame_for_object(laid, &roundtrip->slides[0].objs[1]);
+                CHECK(frame_text_ops(laid, first, "This week in class"));
+                CHECK(!frame_text_ops(laid, second, "This week in class"));
+            }
+            opr_slide_free(laid); laid = NULL;
+        }
+        free(odp); odp = NULL; odp_length = 0;
+        owf_deck_free(roundtrip); roundtrip = NULL;
     }
     owf_deck_free(deck); deck = NULL;
 

@@ -1189,6 +1189,7 @@ static void read_ids(odp *o, owf_obj *obj, const owf_xml_node *n)
 {
     const char *id = attr(n, NS_XML, "id");
     const char *name = attr(n, NS_DRAW, "name");
+    const char *next = attr(n, NS_DRAW, "chain-next-name");
     const owf_xml_node *title = owf_xml_child(n, NS_SVG, "title"), *desc = owf_xml_child(n, NS_SVG, "desc");
     if (!id)
         id = attr(n, NS_DRAW, "id");
@@ -1199,11 +1200,76 @@ static void read_ids(odp *o, owf_obj *obj, const owf_xml_node *n)
     }
     if (name && owf_deck_set_text(&obj->name, name) < 0)
         o->failed = 1;
+    if (next && owf_deck_set_text(&obj->flow_next, next) < 0)
+        o->failed = 1;
     if (desc || title) {
         obj->alt = node_text(o, desc ? desc : title);
     }
     if (same(attr(n, NS_DRAW, "display"), "none"))
         obj->flags |= OWF_OBJ_HIDDEN;
+}
+
+static owf_obj *flow_named(owf_deck *deck, const char *name)
+{
+    int page, object;
+    if (!name) return NULL;
+    for (page = 0; page < deck->nslides; ++page)
+        for (object = 0; object < deck->slides[page].nobjs; ++object) {
+            owf_obj *o = &deck->slides[page].objs[object];
+            if (o->kind == OWF_OBJ_TEXT && o->name && !strcmp(o->name, name)) return o;
+        }
+    return NULL;
+}
+
+static int flow_name_is_target(const owf_deck *deck, const char *name)
+{
+    int page, object;
+    if (!name) return 0;
+    for (page = 0; page < deck->nslides; ++page)
+        for (object = 0; object < deck->slides[page].nobjs; ++object) {
+            const owf_obj *o = &deck->slides[page].objs[object];
+            if (o->flow_next && !strcmp(o->flow_next, name)) return 1;
+        }
+    return 0;
+}
+
+static void resolve_flow(odp *o, owf_obj *head, int id, int limit)
+{
+    owf_obj *at = head;
+    int steps = 0;
+    while (at && steps++ < limit) {
+        owf_obj *next;
+        at->flow_story = id;
+        if (!at->flow_next) break;
+        next = flow_named(o->deck, at->flow_next);
+        if (!next) {
+            owf_report_add(o->report, OWF_NOTE_LOST,
+                           "A linked text frame's target was not found");
+            break;
+        }
+        if (next->flow_story == id) break;
+        at = next;
+    }
+}
+
+static void resolve_flows(odp *o)
+{
+    int page, object, id = 0, total = 0;
+    for (page = 0; page < o->deck->nslides; ++page) total += o->deck->slides[page].nobjs;
+    for (page = 0; page < o->deck->nslides; ++page)
+        for (object = 0; object < o->deck->slides[page].nobjs; ++object) {
+            owf_obj *obj = &o->deck->slides[page].objs[object];
+            if (obj->kind == OWF_OBJ_TEXT && obj->flow_next && obj->flow_story < 0 &&
+                (!obj->name || !flow_name_is_target(o->deck, obj->name)))
+                resolve_flow(o, obj, id++, total + 1);
+        }
+    /* Damaged cyclic chains have no head. Keep them finite and editable. */
+    for (page = 0; page < o->deck->nslides; ++page)
+        for (object = 0; object < o->deck->slides[page].nobjs; ++object) {
+            owf_obj *obj = &o->deck->slides[page].objs[object];
+            if (obj->kind == OWF_OBJ_TEXT && obj->flow_next && obj->flow_story < 0)
+                resolve_flow(o, obj, id++, total + 1);
+        }
 }
 
 /* Fill, line, insets, alignment and fitting from the object's style. */
@@ -2282,6 +2348,8 @@ static int read_deck(odp *o, const owf_xml_node *content_root, const owf_xml_nod
             if (keep_xml(o, OWF_KEPT_SETTINGS, c) >= 0 && owf_xml_child(c, NS_PRES, "show"))
                 owf_report_add(o->report, OWF_NOTE_APPROX, "Custom shows are kept, not shown");
         }
+    if (!o->failed)
+        resolve_flows(o);
 
     if (meta_root && (t = owf_xml_child(owf_xml_child(meta_root, NS_OFFICE, "meta"), NS_DC, "title"))) {
         char *title = node_text(o, t);
