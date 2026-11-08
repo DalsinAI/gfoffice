@@ -439,7 +439,7 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
                        OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS |
                        OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES | OC_CHART_SET_AXIS_TITLES |
                        OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR | OC_CHART_SET_AXIS_FORMATS |
-                       OC_CHART_SET_SERIES_LABELS)) ||
+                       OC_CHART_SET_SERIES_LABELS | OC_CHART_SET_PLOT_OPTIONS)) ||
         ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
         ((spec->set & OC_CHART_SET_GROUPING) &&
          (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
@@ -464,7 +464,10 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
           spec->series_marker_size < 0 || spec->series_marker_size > 72)) ||
         ((spec->set & OC_CHART_SET_POINT_COLOUR) &&
          (spec->series < 0 || spec->point < 0 ||
-          (spec->point_colour && !OWF_SHADE_SET(spec->point_colour)))))
+          (spec->point_colour && !OWF_SHADE_SET(spec->point_colour)))) ||
+        ((spec->set & OC_CHART_SET_PLOT_OPTIONS) &&
+         (spec->gap < 0 || spec->gap > 500 || spec->first_angle < 0 || spec->first_angle > 359 ||
+          spec->hole < 0 || spec->hole > 90 || (spec->vary != 0 && spec->vary != 1))))
         return OWF_ERR_FORMAT;
     if (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core)))
         return OWF_ERR_UNSUPPORTED;
@@ -504,6 +507,14 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         owf_free(title);
         owf_free(category_title);
         owf_free(value_title);
+        return OWF_ERR_UNSUPPORTED;
+    }
+    if ((spec->set & OC_CHART_SET_PLOT_OPTIONS) &&
+        ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_COLUMN &&
+        ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_BAR &&
+        ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_PIE) {
+        owf_charts_free(charts, n);
+        owf_free(title); owf_free(category_title); owf_free(value_title);
         return OWF_ERR_UNSUPPORTED;
     }
     if ((spec->set & OC_CHART_SET_SERIES_STYLE) &&
@@ -597,6 +608,15 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         chart->value_format = value_format;
         chart->x_format = x_format;
         value_format = x_format = NULL;
+    }
+    if (spec->set & OC_CHART_SET_PLOT_OPTIONS) {
+        if (chart->kind == OWF_CHART_COLUMN || chart->kind == OWF_CHART_BAR)
+            chart->gap = spec->gap;
+        else {
+            chart->first_angle = spec->first_angle;
+            chart->hole = spec->hole;
+            chart->vary = spec->vary;
+        }
     }
     if (spec->set & OC_CHART_SET_SERIES_STYLE) {
         owf_chart_series *series = &chart->series[spec->series];

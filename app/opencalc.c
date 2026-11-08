@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.53 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.54 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -95,7 +95,7 @@ enum {
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
     M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE, M_CHART_POINT_COLOUR, M_CHART_AXIS_FORMATS,
-    M_CHART_SERIES_LABELS,
+    M_CHART_SERIES_LABELS, M_CHART_PLOT_OPTIONS,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -218,6 +218,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Chart Data Point Colour...", NULL, 0, 0, (APTR)M_CHART_POINT_COLOUR },
     { NM_ITEM, "Chart Axis Number Formats...", NULL, 0, 0, (APTR)M_CHART_AXIS_FORMATS },
     { NM_ITEM, "Chart Series Data Labels...", NULL, 0, 0, (APTR)M_CHART_SERIES_LABELS },
+    { NM_ITEM, "Chart Plot Options...", NULL, 0, 0, (APTR)M_CHART_PLOT_OPTIONS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3495,6 +3496,72 @@ static void do_chart_series_labels(void)
     result(rc, "Chart series data labels changed.");
 }
 
+static void do_chart_plot_options(void)
+{
+    owf_chart *charts = NULL;
+    oc_chart_edit_spec edit;
+    char initial[128], entered[160], *p, *token, *end;
+    long value;
+    int index = oc_core_selected_chart(core), n = 0, rc, kind, bad = 0;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Plot Options."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL);
+        else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    kind = charts[index].kind;
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_PLOT_OPTIONS;
+    edit.gap = charts[index].gap;
+    edit.first_angle = charts[index].first_angle;
+    edit.hole = charts[index].hole;
+    edit.vary = !!charts[index].vary;
+    if (kind == OWF_CHART_COLUMN || kind == OWF_CHART_BAR)
+        snprintf(initial, sizeof initial, "gap=%d", edit.gap);
+    else if (kind == OWF_CHART_PIE)
+        snprintf(initial, sizeof initial, "angle=%d hole=%d %s", edit.first_angle, edit.hole,
+                 edit.vary ? "vary" : "same");
+    else {
+        owf_charts_free(charts, n);
+        set_status("Plot options currently apply to column, bar, pie and doughnut charts.");
+        return;
+    }
+    owf_charts_free(charts, n);
+    if (!text_requester("Chart Plot Options",
+                        kind == OWF_CHART_PIE ? "angle=0-359 hole=0-90 vary/same" : "gap=0-500 percent",
+                        initial, entered, sizeof entered)) return;
+    p = trim_text(entered);
+    while (*p && !bad) {
+        token = p;
+        while (*p && !isspace((unsigned char)*p)) p++;
+        if (*p) *p++ = 0;
+        p = trim_text(p);
+        if (!strncasecmp(token, "gap=", 4) && (kind == OWF_CHART_COLUMN || kind == OWF_CHART_BAR)) {
+            value = strtol(token + 4, &end, 10);
+            if (*end || value < 0 || value > 500) bad = 1;
+            else edit.gap = (int)value;
+        } else if (!strncasecmp(token, "angle=", 6) && kind == OWF_CHART_PIE) {
+            value = strtol(token + 6, &end, 10);
+            if (*end || value < 0 || value > 359) bad = 1;
+            else edit.first_angle = (int)value;
+        } else if (!strncasecmp(token, "hole=", 5) && kind == OWF_CHART_PIE) {
+            value = strtol(token + 5, &end, 10);
+            if (*end || value < 0 || value > 90) bad = 1;
+            else edit.hole = (int)value;
+        } else if (!strcasecmp(token, "vary") && kind == OWF_CHART_PIE) edit.vary = 1;
+        else if (!strcasecmp(token, "same") && kind == OWF_CHART_PIE) edit.vary = 0;
+        else bad = 1;
+    }
+    if (bad) {
+        set_status(kind == OWF_CHART_PIE ? "Use angle=0-359 hole=0-90 and vary or same."
+                                        : "Use gap=0-500.");
+        return;
+    }
+    result(oc_core_update_chart(core, index, &edit), "Chart plot options changed.");
+}
+
 static void do_chart_data(void)
 {
     oc_chart_data_spec spec;
@@ -3611,6 +3678,7 @@ static void menu_action(ULONG id)
     case M_CHART_POINT_COLOUR: do_chart_point_colour(); break;
     case M_CHART_AXIS_FORMATS: do_chart_axis_formats(); break;
     case M_CHART_SERIES_LABELS: do_chart_series_labels(); break;
+    case M_CHART_PLOT_OPTIONS: do_chart_plot_options(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");

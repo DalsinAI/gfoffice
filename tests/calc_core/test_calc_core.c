@@ -3268,6 +3268,14 @@ static void test_chart_authoring(void)
           c.series[0].points[2].has_value && c.series[0].points[2].value == 30 &&
           same(c.series[0].points[1].label, "South"));
     chart_free(&c);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_PLOT_OPTIONS;
+    edit.gap = 80;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 && c.gap == 80);
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && c.gap == 150);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
     oc_draw_list_init(&l);
     CHECK(oc_view_draw(core, &l) == OWF_OK);
     before = biggest(&l, 0x4472C4, 0);
@@ -3457,6 +3465,12 @@ static void test_chart_authoring(void)
     edit.value_format = "0.0";
     edit.x_format = "0.00";
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_PLOT_OPTIONS;
+    edit.gap = 80;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
+    edit.gap = 501;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
 
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_VALUE_AXIS;
@@ -3596,6 +3610,24 @@ static void test_chart_authoring(void)
     CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
           c.series[0].points[1].colour == OWF_SHADE(0x4472C4));
     chart_free(&c);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_PLOT_OPTIONS;
+    edit.first_angle = 30;
+    edit.hole = 45;
+    edit.vary = 0;
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.first_angle == 30 && c.hole == 45 && !c.vary);
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && !c.first_angle && !c.hole && c.vary);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+    CHECK(oc_core_save(core, xlsx, "xlsx", NULL) == OWF_OK && oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK &&
+          charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_PIE && c.first_angle == 30 && c.hole == 45 && !c.vary);
+    chart_free(&c);
+    CHECK(oc_core_save(core, ods, "ods", NULL) == OWF_OK && oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK &&
+          charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_PIE && c.first_angle == 30 && c.hole == 45 && !c.vary);
+    chart_free(&c);
+    remove(xlsx); remove(ods);
     go(core, "A1");
     CHECK(oc_core_add_chart(core, &spec) == OWF_ERR_UNSUPPORTED);
 

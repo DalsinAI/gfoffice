@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.18.0"
+#define OC_CORE_VERSION "0.19.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -696,6 +696,8 @@ int oc_core_delete_chart(oc_core *core, int index); /* -1: selected */
  * The X-axis format applies to scatter charts only.
  * Series labels select a zero-based series and set its label mask, position
  * and copied number format (NULL/empty: the values' own format).
+ * Plot options set a column/bar gap percentage, or a pie/doughnut starting
+ * angle, hole percentage and whether points vary in colour.
  * A set minimum must be less than a set maximum. */
 enum {
     OC_CHART_SET_KIND = 1u << 0,
@@ -711,7 +713,8 @@ enum {
     OC_CHART_SET_SERIES_STYLE = 1u << 10,
     OC_CHART_SET_POINT_COLOUR = 1u << 11,
     OC_CHART_SET_AXIS_FORMATS = 1u << 12,
-    OC_CHART_SET_SERIES_LABELS = 1u << 13
+    OC_CHART_SET_SERIES_LABELS = 1u << 13,
+    OC_CHART_SET_PLOT_OPTIONS = 1u << 14
 };
 typedef struct {
     unsigned set;
@@ -737,6 +740,7 @@ typedef struct {
     const char *value_format;        /* value/Y axis, or NULL/empty: linked */
     const char *x_format;            /* scatter X axis, or NULL/empty: linked */
     const char *label_format;        /* selected series, or NULL/empty: linked */
+    int gap, first_angle, hole, vary;
 } oc_chart_edit_spec;
 int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spec); /* -1: selected */
 
