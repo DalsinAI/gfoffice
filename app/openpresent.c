@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.3.1 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.3.2 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -88,7 +88,7 @@ enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
-    M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE,
+    M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
@@ -121,6 +121,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Delete Slide", NULL, 0, 0, (APTR)M_DELETE_SLIDE },
     { NM_ITEM, "Hide Slide", NULL, 0, 0, (APTR)M_HIDE_SLIDE },
     { NM_ITEM, "Show Slide", NULL, 0, 0, (APTR)M_SHOW_SLIDE },
+    { NM_ITEM, "Slide Transition...", NULL, 0, 0, (APTR)M_TRANSITION },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Move Slide Up", NULL, 0, 0, (APTR)M_MOVE_SLIDE_UP },
     { NM_ITEM, "Move Slide Down", NULL, 0, 0, (APTR)M_MOVE_SLIDE_DOWN },
@@ -501,6 +502,96 @@ static int text_requester(const char *title, const char *label, const char *init
         GT_GetGadgetAttrs(gtext, rw, NULL, GTST_String, (ULONG)&value, TAG_DONE);
         snprintf(out, out_size, "%s", value ? (char *)value : "");
         if (!out[0]) ok = 0;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    return ok;
+}
+
+static int transition_requester(owf_transition *transition, int *apply_all)
+{
+    static STRPTR effect_labels[] = {
+        (STRPTR)"None", (STRPTR)"Fade", (STRPTR)"Fade through Black", (STRPTR)"Wipe", (STRPTR)"Push",
+        (STRPTR)"Cover", (STRPTR)"Uncover", (STRPTR)"Split", (STRPTR)"Blinds", (STRPTR)"Dissolve",
+        (STRPTR)"Other (kept)", NULL
+    };
+    static STRPTR direction_labels[] = {
+        (STRPTR)"From Left", (STRPTR)"From Right", (STRPTR)"From Top", (STRPTR)"From Bottom", NULL
+    };
+    struct Gadget *list = NULL, *last, *geffect, *gdirection, *gduration, *gauto, *gdelay, *gall, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    LONG v;
+    int done = 0, ok = 0, ww = 500, wh = 230;
+    if (!transition || !apply_all || !scr || !vi) return 0;
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    last = CreateContext(&list);
+
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_LeftEdge = 185; ng.ng_TopEdge = 14; ng.ng_Width = 230; ng.ng_Height = 18;
+    ng.ng_GadgetText = (STRPTR)"Effect"; ng.ng_GadgetID = 1;
+    last = geffect = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)effect_labels,
+                                  GTCY_Active, (ULONG)(transition->kind <= OWF_TRANS_OTHER ? transition->kind : 0),
+                                  TAG_DONE);
+    ng.ng_TopEdge = 46; ng.ng_GadgetText = (STRPTR)"Direction"; ng.ng_GadgetID = 2;
+    last = gdirection = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)direction_labels,
+                                     GTCY_Active, (ULONG)(transition->direction <= OWF_DIR_DOWN ? transition->direction : 0),
+                                     TAG_DONE);
+    ng.ng_TopEdge = 78; ng.ng_Width = 100; ng.ng_GadgetText = (STRPTR)"Duration ms (0 default)"; ng.ng_GadgetID = 3;
+    last = gduration = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)transition->duration,
+                                    GTIN_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 185; ng.ng_TopEdge = 112; ng.ng_Width = 22; ng.ng_Height = 14;
+    ng.ng_GadgetText = (STRPTR)"Advance automatically"; ng.ng_GadgetID = 4;
+    last = gauto = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, transition->advance_after >= 0, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_LeftEdge = 185; ng.ng_TopEdge = 142; ng.ng_Width = 100; ng.ng_Height = 18;
+    ng.ng_GadgetText = (STRPTR)"Advance after (ms)"; ng.ng_GadgetID = 5;
+    last = gdelay = CreateGadget(INTEGER_KIND, last, &ng,
+                                 GTIN_Number, (LONG)(transition->advance_after >= 0 ? transition->advance_after : 5000),
+                                 GTIN_MaxChars, 8, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 185; ng.ng_TopEdge = 175; ng.ng_Width = 22; ng.ng_Height = 14;
+    ng.ng_GadgetText = (STRPTR)"Apply to all slides"; ng.ng_GadgetID = 6;
+    last = gall = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, FALSE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge = 198; ng.ng_Height = 20; ng.ng_Width = 78; ng.ng_LeftEdge = 330;
+    ng.ng_GadgetText = (STRPTR)"Apply"; ng.ng_GadgetID = 7;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 414; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 8;
+    gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!geffect || !gdirection || !gduration || !gauto || !gdelay || !gall || !gok || !gcancel) goto out;
+    rw = OpenWindowTags(NULL, WA_Title, (ULONG)"Slide Transition", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh, WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+        WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | INTEGERIDCMP | CYCLEIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD id = m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 7) { ok = 1; done = 1; }
+                else if (id == 8) done = 1;
+            }
+        }
+    }
+    if (ok) {
+        GT_GetGadgetAttrs(geffect, rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE); transition->kind = (owf_transition_kind)v;
+        GT_GetGadgetAttrs(gdirection, rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE); transition->direction = (unsigned char)v;
+        GT_GetGadgetAttrs(gduration, rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); transition->duration = (int)v;
+        GT_GetGadgetAttrs(gauto, rw, NULL, GTCB_Checked, (ULONG)&v, TAG_DONE);
+        if (v) {
+            GT_GetGadgetAttrs(gdelay, rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE);
+            transition->advance_after = (int)v;
+        } else transition->advance_after = -1;
+        GT_GetGadgetAttrs(gall, rw, NULL, GTCB_Checked, (ULONG)&v, TAG_DONE); *apply_all = v != 0;
     }
 out:
     if (rw) CloseWindow(rw);
@@ -1830,6 +1921,25 @@ static void set_current_hidden(int hidden)
     structure_changed(selected, hidden ? "Slide hidden from the show." : "Slide included in the show.");
 }
 
+static void edit_current_transition(void)
+{
+    owf_transition transition;
+    int apply_all = 0, selected = current, rc;
+    if (!deck || current < 0 || current >= deck->nslides) return;
+    transition = deck->slides[current].transition;
+    if (!transition_requester(&transition, &apply_all)) return;
+    rc = opr_slide_set_transition(undo, deck, current, &transition, apply_all, &selected);
+    if (rc == -2) {
+        tell("Slide Transition", "Duration must be 0 to 600000 ms and automatic advance 0 to 86399999 ms.");
+        return;
+    }
+    if (rc < 0) {
+        tell(PROGRAM, "There is not enough memory to change the slide transition.");
+        return;
+    }
+    structure_changed(selected, apply_all ? "Transition applied to all slides." : "Slide transition changed.");
+}
+
 /* ---- Full-screen show ----
  *
  * A borderless window on the presentation's public screen is the first
@@ -2585,6 +2695,7 @@ static void menu_action(ULONG id)
     case M_DELETE_SLIDE: delete_slide(); break;
     case M_HIDE_SLIDE: set_current_hidden(1); break;
     case M_SHOW_SLIDE: set_current_hidden(0); break;
+    case M_TRANSITION: edit_current_transition(); break;
     case M_MOVE_SLIDE_UP: move_slide(-1); break;
     case M_MOVE_SLIDE_DOWN: move_slide(1); break;
     case M_FIRST: show_slide(0); break;

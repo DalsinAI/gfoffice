@@ -296,6 +296,9 @@ last, next, previous, numbered and explicit hidden-slide navigation. The
 player also has black and white screens. Its public-screen backend plays cut,
 directional wipe, push and deterministic dissolve transitions through two
 off-screen bitmaps, with a cut fallback when memory or frame time is short.
+Slide > Slide Transition edits each slide's effect, direction, duration and
+automatic advance delay, can apply the settings to every slide, and is one
+undoable operation. These settings are saved in ODP and drive the player.
 Reusable transition geometry sits beside the show state and is host-tested by
 `make deck-show-test`. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
 T:<name>.pdf`), and Export PDF writes one. View > Zoom In and Zoom Out (+

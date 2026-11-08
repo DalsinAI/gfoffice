@@ -450,6 +450,13 @@ own-screen, transition and ARexx backends use it rather than duplicating those
 rules. The remaining subsections describe that delivered base and the still
 planned own-screen and animated-transition extensions.
 
+GFOpenPresentation 0.3.2 adds the editor side: Slide > Slide Transition sets
+the effect, direction, duration and optional automatic advance delay for one
+slide or every slide. `opr_slide_set_transition` validates and applies that
+state as one reusable undo step, including apply-to-all restoration of each
+slide's former setting. ODP save/readback and host tests cover the edited
+state; the player consumes the same model without a second settings layer.
+
 ### 7.1 Where it shows
 
 | Choice | When | How |

@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.3.1"
+#define OPR_CORE_VERSION "0.3.2"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -147,6 +147,13 @@ int opr_slide_move(opr_undo *u, owf_deck *deck, int from, int to, int *selected)
 int opr_slide_rename(opr_undo *u, owf_deck *deck, int index, const char *name, int *selected);
 /* Hide or show a slide, as one undoable structural edit. */
 int opr_slide_set_hidden(opr_undo *u, owf_deck *deck, int index, int hidden, int *selected);
+/* Set one slide's transition, or every slide's when apply_all is nonzero, as
+ * one undo step. Editable transitions are NONE through DISSOLVE; an imported
+ * OTHER may be retained when its kept-attribute index is valid. Duration is
+ * 0..600000 ms and advance_after is -1 (click) or 0..86399999 ms. -2 means
+ * invalid transition data. */
+int opr_slide_set_transition(opr_undo *u, owf_deck *deck, int index, const owf_transition *transition,
+                             int apply_all, int *selected);
 int opr_undo_can(const opr_undo *u);
 int opr_redo_can(const opr_undo *u);
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj);

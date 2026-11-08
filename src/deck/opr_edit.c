@@ -594,7 +594,8 @@ typedef enum {
     SNAP_SLIDE,
     SNAP_MOVE,
     SNAP_NAME,
-    SNAP_HIDDEN
+    SNAP_HIDDEN,
+    SNAP_TRANSITION
 } snapshot_kind;
 
 typedef struct {
@@ -616,6 +617,9 @@ typedef struct {
     char *name;
     /* SNAP_HIDDEN: the visibility belonging to the saved state. */
     int hidden;
+    /* SNAP_TRANSITION: one or all slides' transition state. */
+    int transition_first, transition_count;
+    owf_transition *transitions;
 } snapshot;
 
 #define UNDO_STEPS 16
@@ -702,6 +706,8 @@ static void snap_free(snapshot *s)
         slide_free(&s->saved);
     } else if (s->kind == SNAP_NAME) {
         owf_free(s->name);
+    } else if (s->kind == SNAP_TRANSITION) {
+        owf_free(s->transitions);
     }
     memset(s, 0, sizeof *s);
 }
@@ -818,6 +824,16 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         hidden = deck->slides[s->slide].hidden;
         deck->slides[s->slide].hidden = s->hidden;
         s->hidden = hidden;
+    } else if (s->kind == SNAP_TRANSITION) {
+        int i;
+        if (!deck || !s->transitions || s->transition_first < 0 || s->transition_count < 1 ||
+            s->transition_first + s->transition_count > deck->nslides)
+            return -1;
+        for (i = 0; i < s->transition_count; i++) {
+            owf_transition transition = deck->slides[s->transition_first + i].transition;
+            deck->slides[s->transition_first + i].transition = s->transitions[i];
+            s->transitions[i] = transition;
+        }
     } else
         return -1;
     s->focus = s->other_focus;
@@ -1065,6 +1081,60 @@ int opr_slide_set_hidden(opr_undo *u, owf_deck *deck, int index, int hidden, int
     s.hidden = deck->slides[index].hidden;
     s.focus = s.other_focus = index;
     deck->slides[index].hidden = hidden;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
+static int transition_equal(const owf_transition *a, const owf_transition *b)
+{
+    return a->kind == b->kind && a->direction == b->direction && a->duration == b->duration &&
+           a->advance_after == b->advance_after && a->keep == b->keep;
+}
+
+int opr_slide_set_transition(opr_undo *u, owf_deck *deck, int index, const owf_transition *transition,
+                             int apply_all, int *selected)
+{
+    snapshot s;
+    owf_transition edited;
+    int first, count, i, changed = 0;
+    if (!u || !deck || index < 0 || index >= deck->nslides || !transition)
+        return -1;
+    if (transition->kind < OWF_TRANS_NONE || transition->kind > OWF_TRANS_OTHER ||
+        transition->direction > OWF_DIR_DOWN || transition->duration < 0 || transition->duration > 600000 ||
+        transition->advance_after < -1 || transition->advance_after >= 86400000 ||
+        (transition->kind == OWF_TRANS_OTHER &&
+         (transition->keep < 0 || transition->keep >= deck->nkept ||
+          deck->kept[transition->keep].kind != OWF_KEPT_ATTRIBUTES)))
+        return -2;
+    edited = *transition;
+    if (edited.kind != OWF_TRANS_OTHER)
+        edited.keep = -1;                   /* edited state no longer uses kept foreign attributes */
+    first = apply_all ? 0 : index;
+    count = apply_all ? deck->nslides : 1;
+    for (i = 0; i < count; i++)
+        if (!transition_equal(&deck->slides[first + i].transition, &edited)) {
+            changed = 1;
+            break;
+        }
+    if (!changed) {
+        if (selected) *selected = index;
+        return 0;
+    }
+    memset(&s, 0, sizeof s);
+    s.transitions = owf_malloc((size_t)count * sizeof *s.transitions);
+    if (!s.transitions)
+        return -1;
+    s.kind = SNAP_TRANSITION;
+    s.slide = index;
+    s.obj = -1;
+    s.focus = s.other_focus = index;
+    s.transition_first = first;
+    s.transition_count = count;
+    for (i = 0; i < count; i++) {
+        s.transitions[i] = deck->slides[first + i].transition;
+        deck->slides[first + i].transition = edited;
+    }
     structural_push(u, &s);
     if (selected) *selected = index;
     return 0;

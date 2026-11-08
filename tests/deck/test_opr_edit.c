@@ -173,6 +173,11 @@ static void structural_slides(void)
 {
     owf_deck *d = owf_deck_new(OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT);
     opr_undo *u = opr_undo_new();
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_deck *back = NULL;
+    owf_transition transition;
     int selected = -1, slide = -2, obj = -2;
 
     CHECK(d && u, "a deck and structural undo");
@@ -255,6 +260,62 @@ static void structural_slides(void)
     CHECK(!opr_slide_set_hidden(u, d, 1, 1, &selected) && d->slides[1].hidden,
           "setting the same visibility is harmless");
 
+    memset(&transition, 0, sizeof transition);
+    transition.kind = OWF_TRANS_WIPE;
+    transition.direction = OWF_DIR_RIGHT;
+    transition.duration = 500;
+    transition.advance_after = 2500;
+    transition.keep = 99;
+    CHECK(!opr_slide_set_transition(u, d, 1, &transition, 0, &selected) && selected == 1 &&
+          d->slides[1].transition.kind == OWF_TRANS_WIPE &&
+          d->slides[1].transition.direction == OWF_DIR_RIGHT &&
+          d->slides[1].transition.duration == 500 && d->slides[1].transition.advance_after == 2500 &&
+          d->slides[1].transition.keep == -1, "edit one slide's transition and discard kept foreign attributes");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 1 &&
+          d->slides[1].transition.kind == OWF_TRANS_NONE && d->slides[1].transition.advance_after == -1,
+          "undo a transition edit");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && d->slides[1].transition.kind == OWF_TRANS_WIPE &&
+          d->slides[1].transition.advance_after == 2500, "redo a transition edit");
+
+    transition.kind = OWF_TRANS_DISSOLVE;
+    transition.direction = OWF_DIR_LEFT;
+    transition.duration = 1000;
+    transition.advance_after = -1;
+    CHECK(!opr_slide_set_transition(u, d, 1, &transition, 1, &selected) &&
+          d->slides[0].transition.kind == OWF_TRANS_DISSOLVE &&
+          d->slides[d->nslides - 1].transition.kind == OWF_TRANS_DISSOLVE,
+          "apply a transition to every slide as one edit");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && d->slides[0].transition.kind == OWF_TRANS_NONE &&
+          d->slides[1].transition.kind == OWF_TRANS_WIPE &&
+          d->slides[d->nslides - 1].transition.kind == OWF_TRANS_NONE,
+          "undo apply-to-all restores every slide's own transition");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && d->slides[0].transition.kind == OWF_TRANS_DISSOLVE &&
+          d->slides[d->nslides - 1].transition.kind == OWF_TRANS_DISSOLVE,
+          "redo apply-to-all");
+    transition.kind = OWF_TRANS_OTHER;
+    CHECK(opr_slide_set_transition(u, d, 1, &transition, 0, &selected) == -2,
+          "an uneditable kept transition cannot be invented");
+    transition.kind = OWF_TRANS_PUSH;
+    transition.duration = 600001;
+    CHECK(opr_slide_set_transition(u, d, 1, &transition, 0, &selected) == -2,
+          "an invalid transition duration is refused");
+    transition.duration = 1000;
+    transition.advance_after = 86400000;
+    CHECK(opr_slide_set_transition(u, d, 1, &transition, 0, &selected) == -2,
+          "an invalid automatic delay is refused");
+
+    CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
+          "the deck with edited transitions saves as ODP");
+    CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
+          "the deck with edited transitions reads back");
+    if (back)
+        CHECK(back->nslides == d->nslides && back->slides[0].transition.kind == OWF_TRANS_DISSOLVE &&
+              back->slides[0].transition.duration == 1000 && back->slides[0].transition.advance_after == -1 &&
+              back->slides[back->nslides - 1].transition.kind == OWF_TRANS_DISSOLVE,
+              "edited transitions survive the ODP round trip");
+
+    owf_deck_free(back);
+    free(data);
     opr_undo_free(u);
     owf_deck_free(d);
 }
