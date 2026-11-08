@@ -51,10 +51,12 @@ given ends in a workbook format's extension.
 | XLSX, Office Open XML (`.xlsx`; `.xltx`, `.xlsm`, `.xltm` open only) | Yes | Yes | Spec: ECMA-376 (transitional; strict's namespaces read) and [MS-XLSX]'s `_xlfn.` names | S2 | Full both ways, as the model holds it (notes below). Macros, comments, pictures, charts, conditional formats, validation, tables and pivot tables are reported. Binary `.xlsb` is recognised with a clear message |
 | ODS, OpenDocument Spreadsheet (`.ods`, `.ots` opens; flat `.fods`) | Yes | Yes | Spec: OASIS ODF 1.2 and OpenFormula; LibreOffice's 1.3 additions read | S2 | Full both ways, as the model holds it (notes below), formulas translated to and from OpenFormula. Comments, pictures, charts, conditional formats and validation are reported |
 
-GFOpenCalc 0.1.36 can create, remove and apply displayed-value or Standard
+GFOpenCalc 0.1.37 can create, remove and apply displayed-value or Standard
 AutoFilters from the Data menu or heading arrows. Standard Filter supports
-`=`, `<>`, `<`, `<=`, `>` and `>=`, with numeric ordering when both operands
-are numbers. Nonblank and top/bottom 1–500 values or 1–100 percent filters are
+one or two same-column comparisons joined by AND or OR: `=`, `<>`, `<`, `<=`,
+`>` and `>=`, with numeric ordering when both operands are numbers. Equality
+accepts Excel wildcards (`*`, `?`, and `~` quoting). Nonblank and top/bottom
+1–500 values or 1–100 percent filters are
 also available, with ties included. Conditions on several columns combine
 with AND; a column's list reflects the other active columns, and either one
 column or every condition can be cleared. The filter range, conditions and

@@ -19,6 +19,8 @@ typedef struct {
     int kind;                     /* 0 comparison, 1 top/bottom */
     int op;                       /* OC_FILTER_* */
     char *value;                  /* displayed value, decoded UTF-8 */
+    int has_second, op2, use_or;
+    char *value2;
     unsigned rank;
     int bottom, percent, threshold_valid;
     double threshold;
@@ -72,30 +74,86 @@ static int number_text(const char *s, double *value)
     return !*end;
 }
 
-static int compare_value(const char *shown, const filter_rule *rule)
+static const char *next_utf8(const char *s)
+{
+    if (!*s) return s;
+    s++;
+    while (((unsigned char)*s & 0xc0) == 0x80) s++;
+    return s;
+}
+
+static int wild_literal(int a, int b)
+{
+    if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+    if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+    return a == b;
+}
+
+static int wild_match(const char *pattern, const char *text)
+{
+    while (*pattern) {
+        if (*pattern == '*') {
+            while (*pattern == '*') pattern++;
+            if (!*pattern) return 1;
+            do {
+                if (wild_match(pattern, text)) return 1;
+                if (!*text) break;
+                text = next_utf8(text);
+            } while (1);
+            return 0;
+        }
+        if (!*text)
+            return 0;
+        if (*pattern == '?') {
+            pattern++;
+            text = next_utf8(text);
+            continue;
+        }
+        if (*pattern == '~' && (pattern[1] == '*' || pattern[1] == '?' || pattern[1] == '~'))
+            pattern++;
+        if (!wild_literal((unsigned char)*pattern, (unsigned char)*text))
+            return 0;
+        pattern++;
+        text++;
+    }
+    return !*text;
+}
+
+static int compare_one(const char *shown, int op, const char *value)
 {
     double a, b;
     int cmp;
-    if (rule->kind) {
-        if (!rule->threshold_valid || !number_text(shown, &a))
-            return 0;
-        return rule->bottom ? a <= rule->threshold : a >= rule->threshold;
+    if (op == OC_FILTER_EQUAL || op == OC_FILTER_NOT_EQUAL) {
+        int equal = wild_match(value, shown);
+        return op == OC_FILTER_EQUAL ? equal : !equal;
     }
-    if (rule->op == OC_FILTER_EQUAL)
-        return same_text(shown, rule->value);
-    if (rule->op == OC_FILTER_NOT_EQUAL)
-        return !same_text(shown, rule->value);
-    if (number_text(shown, &a) && number_text(rule->value, &b))
+    if (number_text(shown, &a) && number_text(value, &b))
         cmp = a < b ? -1 : a > b ? 1 : 0;
     else
-        cmp = compare_ci(shown, rule->value);
-    switch (rule->op) {
+        cmp = compare_ci(shown, value);
+    switch (op) {
     case OC_FILTER_LESS: return cmp < 0;
     case OC_FILTER_LESS_EQUAL: return cmp <= 0;
     case OC_FILTER_GREATER: return cmp > 0;
     case OC_FILTER_GREATER_EQUAL: return cmp >= 0;
     default: return 0;
     }
+}
+
+static int compare_value(const char *shown, const filter_rule *rule)
+{
+    int first, second;
+    double a;
+    if (rule->kind) {
+        if (!rule->threshold_valid || !number_text(shown, &a))
+            return 0;
+        return rule->bottom ? a <= rule->threshold : a >= rule->threshold;
+    }
+    first = compare_one(shown, rule->op, rule->value);
+    if (!rule->has_second)
+        return first;
+    second = compare_one(shown, rule->op2, rule->value2);
+    return rule->use_or ? first || second : first && second;
 }
 
 static int compare_double(const void *aa, const void *bb)
@@ -183,8 +241,10 @@ static oc_undo *filter_step(oc_core *core)
 static void rules_free(filter_rule *rules, int n)
 {
     int i;
-    for (i = 0; i < n; i++)
+    for (i = 0; i < n; i++) {
         owf_free(rules[i].value);
+        owf_free(rules[i].value2);
+    }
     free(rules);
 }
 
@@ -284,7 +344,18 @@ static int xml_bool_attr(const char *tag, const char *close, const char *name, i
     return fallback;
 }
 
-/* The editable subset: one value comparison per filterColumn. Other imported
+static int parse_custom_tag(const char *tag, const char *limit, int *op, char **value, const char **tag_end)
+{
+    const char *at;
+    if (!tag || tag >= limit || !(*tag_end = strchr(tag, '>')) || *tag_end > limit ||
+        (*op = custom_op(tag, *tag_end)) < 0 || !(at = xml_attr_at(tag, *tag_end, "val")))
+        return 0;
+    if (!(*value = xml_value(at, *tag_end)))
+        return -1;
+    return 1;
+}
+
+/* The editable subset: up to two comparisons per filterColumn. Other imported
  * conditions remain safely preserved until the user edits filtering. */
 static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
 {
@@ -295,10 +366,12 @@ static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
     *count = 0;
     while (p && *p) {
         const char *fc = strstr(p, "<filterColumn"), *open, *end, *id, *digits, *tail, *fv, *at, *next, *tag_end, *top;
+        const char *set, *set_end;
         char *number_end;
         unsigned long offset;
-        char quote, *value = NULL;
-        int kind = 0, op = OC_FILTER_EQUAL, bottom = 0, percent = 0;
+        char quote, *value = NULL, *value2 = NULL;
+        int kind = 0, op = OC_FILTER_EQUAL, op2 = OC_FILTER_EQUAL, has_second = 0, use_or = 0;
+        int bottom = 0, percent = 0;
         unsigned rank = 0;
         filter_rule *grown;
         int i;
@@ -332,21 +405,36 @@ static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
         } else {
             fv = strstr(open, "<filter ");
             if (!fv || fv > end) {
+                int parsed;
+                set = strstr(open, "<customFilters");
+                if (!set || set > end || !(set_end = strchr(set, '>')) || set_end > end)
+                    goto unsupported;
                 fv = strstr(open, "<customFilter ");
-                if (!fv || fv > end || !(tag_end = strchr(fv, '>')) || tag_end > end ||
-                    (op = custom_op(fv, tag_end)) < 0)
+                parsed = parse_custom_tag(fv, end, &op, &value, &tag_end);
+                if (parsed < 0) { rules_free(rules, n); return OWF_ERR_MEMORY; }
+                if (!parsed)
                     goto unsupported;
                 next = strstr(fv + 1, "<customFilter ");
+                if (next && next < end) {
+                    const char *third;
+                    parsed = parse_custom_tag(next, end, &op2, &value2, &tag_end);
+                    if (parsed < 0) { owf_free(value); rules_free(rules, n); return OWF_ERR_MEMORY; }
+                    if (!parsed) { owf_free(value); goto unsupported; }
+                    third = strstr(next + 1, "<customFilter ");
+                    if (third && third < end) { owf_free(value); owf_free(value2); goto unsupported; }
+                    has_second = 1;
+                    use_or = !xml_bool_attr(set, set_end, "and", 0);
+                }
             } else {
                 tag_end = strchr(fv, '>');
                 next = strstr(fv + 1, "<filter ");
-            }
-            if (!tag_end || tag_end > end || (next && next < end) ||
-                !(at = strstr(fv, "val=")) || at > tag_end || (at[4] != '"' && at[4] != '\''))
-                goto unsupported;
-            if (!(value = xml_value(at + 4, tag_end))) {
-                rules_free(rules, n);
-                return OWF_ERR_MEMORY;
+                if (!tag_end || tag_end > end || (next && next < end) ||
+                    !(at = strstr(fv, "val=")) || at > tag_end || (at[4] != '"' && at[4] != '\''))
+                    goto unsupported;
+                if (!(value = xml_value(at + 4, tag_end))) {
+                    rules_free(rules, n);
+                    return OWF_ERR_MEMORY;
+                }
             }
         }
         for (i = 0; i < n; i++)
@@ -354,9 +442,14 @@ static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
                 break;
         if (i < n) {
             owf_free(rules[i].value);
+            owf_free(rules[i].value2);
             rules[i].kind = kind;
             rules[i].op = op;
             rules[i].value = value;
+            rules[i].has_second = has_second;
+            rules[i].op2 = op2;
+            rules[i].value2 = value2;
+            rules[i].use_or = use_or;
             rules[i].rank = rank;
             rules[i].bottom = bottom;
             rules[i].percent = percent;
@@ -364,6 +457,7 @@ static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
             grown = realloc(rules, (size_t)(n + 1) * sizeof *grown);
             if (!grown) {
                 owf_free(value);
+                owf_free(value2);
                 rules_free(rules, n);
                 return OWF_ERR_MEMORY;
             }
@@ -372,6 +466,10 @@ static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
             rules[n].kind = kind;
             rules[n].op = op;
             rules[n].value = value;
+            rules[n].has_second = has_second;
+            rules[n].op2 = op2;
+            rules[n].value2 = value2;
+            rules[n].use_or = use_or;
             rules[n].rank = rank;
             rules[n].bottom = bottom;
             rules[n].percent = percent;
@@ -588,6 +686,8 @@ static char *rules_xml(const owf_sheet *sheet, filter_rule *rules, int n)
     static const char exact_before[] = "<filterColumn colId=\"%u\"><filters><filter val=\"";
     static const char exact_after[] = "\"/></filters></filterColumn>";
     static const char custom_before[] = "<filterColumn colId=\"%u\"><customFilters><customFilter operator=\"%s\" val=\"";
+    static const char pair_before[] = "<filterColumn colId=\"%u\"><customFilters and=\"%d\"><customFilter operator=\"%s\" val=\"";
+    static const char pair_between[] = "\"/><customFilter operator=\"%s\" val=\"";
     static const char custom_after[] = "\"/></customFilters></filterColumn>";
     static const char top_fmt[] = "<filterColumn colId=\"%u\"><top10 val=\"%u\" top=\"%d\" percent=\"%d\"/></filterColumn>";
     static const char *const names[] = {
@@ -601,7 +701,9 @@ static char *rules_xml(const owf_sheet *sheet, filter_rule *rules, int n)
     if (n > 1)
         qsort(rules, (size_t)n, sizeof *rules, compare_rule);
     for (i = 0; i < n; i++)
-        cap += sizeof custom_before + sizeof custom_after + sizeof top_fmt + 96 + escaped_size(rules[i].value);
+        cap += sizeof custom_before + sizeof pair_before + sizeof pair_between + sizeof custom_after +
+               sizeof top_fmt + 128 + escaped_size(rules[i].value) +
+               (rules[i].has_second ? escaped_size(rules[i].value2) : 0);
     if (!(out = malloc(cap)))
         return NULL;
     p = out;
@@ -613,6 +715,17 @@ static char *rules_xml(const owf_sheet *sheet, filter_rule *rules, int n)
                          rules[i].col - sheet->autofilter.first_col, rules[i].rank,
                          !rules[i].bottom, rules[i].percent);
             p += k;
+            continue;
+        } else if (rules[i].has_second) {
+            k = snprintf(p, cap - (size_t)(p - out), pair_before,
+                         rules[i].col - sheet->autofilter.first_col, !rules[i].use_or, names[rules[i].op]);
+            p += k;
+            p = put_escaped(p, rules[i].value);
+            k = snprintf(p, cap - (size_t)(p - out), pair_between, names[rules[i].op2]);
+            p += k;
+            p = put_escaped(p, rules[i].value2);
+            memcpy(p, custom_after, sizeof custom_after - 1);
+            p += sizeof custom_after - 1;
             continue;
         } else if (rules[i].op == OC_FILTER_EQUAL) {
             k = snprintf(p, cap - (size_t)(p - out), exact_before, rules[i].col - sheet->autofilter.first_col);
@@ -641,6 +754,7 @@ static int update_rule(filter_rule **rules, int *n, unsigned col, int op, const 
         if (i == *n)
             return OWF_OK;
         owf_free(p[i].value);
+        owf_free(p[i].value2);
         if (i + 1 < *n)
             memmove(&p[i], &p[i + 1], (size_t)(*n - i - 1) * sizeof *p);
         (*n)--;
@@ -650,9 +764,13 @@ static int update_rule(filter_rule **rules, int *n, unsigned col, int op, const 
         return OWF_ERR_MEMORY;
     if (i < *n) {
         owf_free(p[i].value);
+        owf_free(p[i].value2);
         p[i].kind = 0;
         p[i].op = op;
         p[i].value = copy;
+        p[i].has_second = p[i].use_or = 0;
+        p[i].op2 = OC_FILTER_EQUAL;
+        p[i].value2 = NULL;
         p[i].rank = 0;
         p[i].bottom = p[i].percent = p[i].threshold_valid = 0;
         return OWF_OK;
@@ -666,10 +784,31 @@ static int update_rule(filter_rule **rules, int *n, unsigned col, int op, const 
     p[*n].kind = 0;
     p[*n].op = op;
     p[*n].value = copy;
+    p[*n].has_second = p[*n].use_or = 0;
+    p[*n].op2 = OC_FILTER_EQUAL;
+    p[*n].value2 = NULL;
     p[*n].rank = 0;
     p[*n].bottom = p[*n].percent = p[*n].threshold_valid = 0;
     *rules = p;
     (*n)++;
+    return OWF_OK;
+}
+
+static int add_second_rule(filter_rule *rules, int n, unsigned col, int op, const char *value, int use_or)
+{
+    char *copy;
+    int i;
+    if (!(copy = oc_strdup(value)))
+        return OWF_ERR_MEMORY;
+    for (i = 0; i < n && rules[i].col != col; i++) ;
+    if (i == n) {
+        owf_free(copy);
+        return OWF_ERR_UNSUPPORTED;
+    }
+    rules[i].has_second = 1;
+    rules[i].op2 = op;
+    rules[i].value2 = copy;
+    rules[i].use_or = !!use_or;
     return OWF_OK;
 }
 
@@ -691,11 +830,15 @@ static int update_top_rule(filter_rule **rules, int *n, unsigned col, unsigned r
         (*n)++;
     } else {
         owf_free(p[i].value);
+        owf_free(p[i].value2);
     }
     p[i].col = col;
     p[i].kind = 1;
     p[i].op = OC_FILTER_EQUAL;
     p[i].value = empty;
+    p[i].has_second = p[i].use_or = 0;
+    p[i].op2 = OC_FILTER_EQUAL;
+    p[i].value2 = NULL;
     p[i].rank = rank;
     p[i].bottom = !!bottom;
     p[i].percent = !!percent;
@@ -782,6 +925,37 @@ int oc_core_filter_condition(oc_core *core, unsigned col, int op, const char *va
         n = 0;
     }
     rc = update_rule(&rules, &n, col, op, value);
+    if (rc == OWF_OK)
+        rc = apply_rules(core, sheet, rules, n);
+    rules_free(rules, n);
+    return rc;
+}
+
+int oc_core_filter_conditions(oc_core *core, unsigned col,
+                              int op1, const char *value1, int op2, const char *value2, int use_or)
+{
+    owf_sheet *sheet;
+    filter_rule *rules = NULL;
+    int n = 0, rc;
+    if (!core || !value1 || !value2 || op1 < OC_FILTER_EQUAL || op1 > OC_FILTER_GREATER_EQUAL ||
+        op2 < OC_FILTER_EQUAL || op2 > OC_FILTER_GREATER_EQUAL)
+        return OWF_ERR_UNSUPPORTED;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    sheet = oc_sheet(core);
+    if (!sheet->has_autofilter || col < sheet->autofilter.first_col || col > sheet->autofilter.last_col)
+        return OWF_ERR_UNSUPPORTED;
+    rc = parse_rules(sheet, &rules, &n);
+    if (rc == OWF_ERR_MEMORY)
+        return rc;
+    if (rc == OWF_ERR_UNSUPPORTED) {
+        rules_free(rules, n);
+        rules = NULL;
+        n = 0;
+    }
+    rc = update_rule(&rules, &n, col, op1, value1);
+    if (rc == OWF_OK)
+        rc = add_second_rule(rules, n, col, op2, value2, use_or);
     if (rc == OWF_OK)
         rc = apply_rules(core, sheet, rules, n);
     rules_free(rules, n);

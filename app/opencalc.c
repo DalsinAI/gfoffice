@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.36 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.37 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -2282,7 +2282,7 @@ static void about(void)
          "GFOpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
          "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n"
-         "Value, Standard and Top/Bottom AutoFilters\n"
+         "Value, compound Standard and Top/Bottom AutoFilters\n"
          "Searchable PDF export and GFOpenPrint printing\n\n"
          "MIT licence, Copyright (c) 2026 AmiCradle Team.");
 }
@@ -3241,6 +3241,34 @@ static int filter_condition_text(const char *text, int *op, const char **value)
     return *text != 0;
 }
 
+/* Split a Standard Filter into the two comparisons Excel permits for one
+ * column. The spaces keep words inside values from being mistaken for joins. */
+static int filter_conditions_text(char *text, int *op1, const char **value1,
+                                  int *op2, const char **value2, int *use_or)
+{
+    char *p, *join = NULL;
+    size_t join_len = 0;
+    for (p = text; *p; p++) {
+        if (!strncasecmp(p, " and ", 5)) {
+            join = p;
+            join_len = 5;
+            *use_or = 0;
+            break;
+        }
+        if (!strncasecmp(p, " or ", 4)) {
+            join = p;
+            join_len = 4;
+            *use_or = 1;
+            break;
+        }
+    }
+    if (!join)
+        return 0;
+    *join = 0;
+    return filter_condition_text(text, op1, value1) &&
+           filter_condition_text(join + join_len, op2, value2) ? 1 : -1;
+}
+
 static int filter_rank_text(const char *text, unsigned *count, int *bottom, int *percent)
 {
     char *end;
@@ -3297,15 +3325,27 @@ static void pick_filter(unsigned col, int bx, int by, int bw, int bh)
     chosen = choice_popup(bx, by, bw, bh, shown, n + 4, NULL);
     if (chosen >= 0) {
         if (chosen == 1) {
-            char entered[256], *utf8;
-            const char *value;
-            int op;
-            if (text_requester("Standard Filter", "Condition", "= ", entered, sizeof entered) &&
-                filter_condition_text(entered, &op, &value)) {
-                if (!(utf8 = from_latin1(value))) result(OWF_ERR_MEMORY, NULL);
-                else {
-                    result(oc_core_filter_condition(core, col, op, utf8), "Standard Filter applied.");
+            char entered[256], *utf8, *utf8b;
+            const char *value, *value2;
+            int op, op2, use_or, pair;
+            if (text_requester("Standard Filter", "Condition (* ? ~; and/or)", "= ", entered, sizeof entered)) {
+                pair = filter_conditions_text(entered, &op, &value, &op2, &value2, &use_or);
+                if (pair > 0) {
+                    utf8 = from_latin1(value);
+                    utf8b = from_latin1(value2);
+                    if (!utf8 || !utf8b) result(OWF_ERR_MEMORY, NULL);
+                    else result(oc_core_filter_conditions(core, col, op, utf8, op2, utf8b, use_or),
+                                "Compound Standard Filter applied.");
                     owf_free(utf8);
+                    owf_free(utf8b);
+                } else if (!pair && filter_condition_text(entered, &op, &value)) {
+                    if (!(utf8 = from_latin1(value))) result(OWF_ERR_MEMORY, NULL);
+                    else {
+                        result(oc_core_filter_condition(core, col, op, utf8), "Standard Filter applied.");
+                        owf_free(utf8);
+                    }
+                } else {
+                    set_status("Use >= 10 and <= 20, = A* or = *Ltd, or one comparison.");
                 }
             }
         } else if (chosen == 2) {

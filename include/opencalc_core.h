@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.1.9"
+#define OC_CORE_VERSION "0.2.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -297,8 +297,15 @@ enum {
 };
 /* Applies one Standard Filter comparison to a column. Ordering compares
  * numbers when both displayed values are numbers, otherwise text without
- * ASCII case. Conditions on different columns combine with AND. */
+ * ASCII case. Equality and inequality accept Excel wildcards: * for any text,
+ * ? for one UTF-8 character and ~ to quote *, ? or ~. Conditions on different
+ * columns combine with AND. */
 int oc_core_filter_condition(oc_core *core, unsigned col, int op, const char *value);
+/* Applies two comparisons to one column, joined by AND (use_or == 0) or OR.
+ * Equality and inequality accept Excel wildcards: * for any text, ? for one
+ * UTF-8 character and ~ to quote *, ? or ~. */
+int oc_core_filter_conditions(oc_core *core, unsigned col,
+                              int op1, const char *value1, int op2, const char *value2, int use_or);
 /* Keeps the highest or lowest count numeric values in a column. With percent,
  * count is 1..100 percent; otherwise it is 1..500 rows. Ties at the boundary
  * are included. Conditions on other columns remain active. */

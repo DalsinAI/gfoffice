@@ -2233,6 +2233,100 @@ static void test_filter_ranking(void)
     oc_core_free(core);
 }
 
+static void test_filter_compound(void)
+{
+    static const char *const cells[][2] = {
+        { "A1", "Name" },       { "B1", "Amount" },
+        { "A2", "Alice" },      { "B2", "10" },
+        { "A3", "Alicia" },     { "B3", "20" },
+        { "A4", "Bob" },        { "B4", "30" },
+        { "A5", "Bobby" },      { "B5", "40" },
+        { "A6", "a*literal" },  { "B6", "50" },
+        { "A7", "\xc3\x85ke" }, { "B7", "60" }
+    };
+    static const char *const xlsx = "build/host/calc-core-compound.xlsx";
+    static const char *const ods = "build/host/calc-core-compound.ods";
+    oc_core *core = fresh();
+    owf_sheet *sheet;
+    char **items = NULL;
+    int n = 0, i;
+    if (!core) return;
+    for (i = 0; i < (int)(sizeof cells / sizeof cells[0]); i++)
+        enter_at(core, cells[i][0], cells[i][1]);
+    go(core, "A1:B7");
+    CHECK(oc_core_set_autofilter(core, 1) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+
+    CHECK(oc_core_filter_condition(core, 0, OC_FILTER_EQUAL, "Ali*") == OWF_OK);
+    CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && row_hidden(core, 3) &&
+          row_hidden(core, 4) && row_hidden(core, 5) && row_hidden(core, 6));
+    CHECK(oc_core_filter_condition(core, 0, OC_FILTER_EQUAL, "A?ice") == OWF_OK);
+    CHECK(!row_hidden(core, 1) && row_hidden(core, 2));
+    CHECK(oc_core_filter_condition(core, 0, OC_FILTER_EQUAL, "a~*literal") == OWF_OK);
+    CHECK(row_hidden(core, 1) && !row_hidden(core, 5));
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "val=\"a~*literal\"") &&
+          row_hidden(core, 1) && !row_hidden(core, 5));
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "val=\"a~*literal\"") &&
+          row_hidden(core, 1) && !row_hidden(core, 5));
+    CHECK(oc_core_filter_condition(core, 0, OC_FILTER_EQUAL, "?ke") == OWF_OK);
+    CHECK(row_hidden(core, 5) && !row_hidden(core, 6));
+    CHECK(oc_core_filter_condition(core, 0, OC_FILTER_NOT_EQUAL, "*ob*") == OWF_OK);
+    CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && row_hidden(core, 3) &&
+          row_hidden(core, 4) && !row_hidden(core, 5) && !row_hidden(core, 6));
+
+    CHECK(oc_core_filter_conditions(core, 1, OC_FILTER_GREATER_EQUAL, "20",
+                                    OC_FILTER_LESS_EQUAL, "40", 0) == OWF_OK);
+    CHECK(row_hidden(core, 1) && !row_hidden(core, 2) && row_hidden(core, 3) &&
+          row_hidden(core, 4) && row_hidden(core, 5) && row_hidden(core, 6));
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "and=\"1\"") &&
+          strstr(sheet->autofilter_xml, "greaterThanOrEqual") &&
+          strstr(sheet->autofilter_xml, "lessThanOrEqual"));
+    CHECK(oc_core_filter_choices(core, 0, &items, &n) == OWF_OK && n == 3);
+    oc_choices_free(items, n);
+    items = NULL;
+    n = 0;
+
+    CHECK(oc_core_filter_conditions(core, 1, OC_FILTER_LESS, "20",
+                                    OC_FILTER_GREATER, "40", 1) == OWF_OK);
+    CHECK(!row_hidden(core, 1) && row_hidden(core, 2) && row_hidden(core, 3) &&
+          row_hidden(core, 4) && !row_hidden(core, 5) && !row_hidden(core, 6));
+    CHECK(strstr(sheet->autofilter_xml, "and=\"0\"") &&
+          strstr(sheet->autofilter_xml, "lessThan") && strstr(sheet->autofilter_xml, "greaterThan"));
+    CHECK(oc_core_filter_conditions(core, 0, OC_FILTER_EQUAL, "Ali*",
+                                    OC_FILTER_EQUAL, "*by", 1) == OWF_OK);
+    CHECK(!row_hidden(core, 1) && row_hidden(core, 2) && row_hidden(core, 3) &&
+          row_hidden(core, 4) && row_hidden(core, 5) && row_hidden(core, 6));
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(!row_hidden(core, 1) && row_hidden(core, 2) && row_hidden(core, 3) &&
+          row_hidden(core, 4) && !row_hidden(core, 5) && !row_hidden(core, 6));
+    CHECK(oc_core_redo(core) == OWF_OK && !row_hidden(core, 1) && row_hidden(core, 4));
+
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "and=\"0\"") &&
+          strstr(sheet->autofilter_xml, "val=\"Ali*\"") && strstr(sheet->autofilter_xml, "val=\"*by\"") &&
+          !row_hidden(core, 1) && row_hidden(core, 2) && row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "and=\"0\"") &&
+          strstr(sheet->autofilter_xml, "val=\"Ali*\"") && strstr(sheet->autofilter_xml, "val=\"*by\"") &&
+          !row_hidden(core, 1) && row_hidden(core, 2) && row_hidden(core, 3) && row_hidden(core, 4));
+
+    CHECK(oc_core_filter_conditions(NULL, 0, OC_FILTER_EQUAL, "a", OC_FILTER_EQUAL, "b", 0) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_filter_conditions(core, 0, -1, "a", OC_FILTER_EQUAL, "b", 0) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_filter_conditions(core, 0, OC_FILTER_EQUAL, NULL, OC_FILTER_EQUAL, "b", 0) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_filter_conditions(core, 0, OC_FILTER_EQUAL, "a", OC_FILTER_EQUAL, NULL, 0) == OWF_ERR_UNSUPPORTED);
+    oc_core_free(core);
+}
+
 /* Whether a saved file (a zip) holds a part. */
 static int saved_has(const char *path, const char *part)
 {
@@ -3668,6 +3762,7 @@ int main(void)
     test_autofilter();
     test_filter_commands();
     test_filter_ranking();
+    test_filter_compound();
     test_drawings_kept();
     test_valid_typing();
     test_valid_fixture();

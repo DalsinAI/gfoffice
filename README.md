@@ -264,11 +264,13 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.36 can create and
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.37 can create and
 remove an AutoFilter, filter a table by any distinct displayed value from a
 heading's arrow, combine exact-value conditions across columns, clear one
-column or show all rows, and apply a Standard Filter comparison (`=`, `<>`,
-`<`, `<=`, `>` or `>=`). It can also select nonblank cells or the top/bottom
+column or show all rows, and apply one or two same-column Standard Filter
+comparisons (`=`, `<>`, `<`, `<=`, `>` or `>=`) joined by AND or OR. Equality
+supports Excel wildcards (`*`, `?`, with `~` to quote them). It can also select
+nonblank cells or the top/bottom
 1–500 numeric values or 1–100 percent, including ties at the boundary.
 Conditions across columns combine with AND, numeric ordering compares
 numerically, and a heading lists the values still possible under the other

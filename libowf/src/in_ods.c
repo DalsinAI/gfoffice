@@ -239,6 +239,9 @@ typedef struct {
     owf_sheet *af_sheet;
     owf_buf af_xml;
     int af_field, af_values, af_or, af_approx;
+    int af_ngroups, af_group_depth[4], af_group_or[4];
+    int af_pending, af_pending_field, af_pending_op, af_pending_group, af_pending_or;
+    char *af_pending_value;
     char *af_value;                      /* the filter-condition's own value, for one without a set */
     /* conditional formatting: the ranges of the conditional-format being read, the rules' priorities so far,
      * the data bar or icon set being read (its rule, -1 none) and its cfvo elements */
@@ -2068,6 +2071,10 @@ static void filter_start(ods *o, const owf_xml_event *e)
     o->af_xml.failed = 0;
     o->af_field = -1;
     o->af_or = o->af_approx = 0;
+    o->af_ngroups = 0;
+    o->af_pending = 0;
+    free(o->af_pending_value);
+    o->af_pending_value = NULL;
 }
 
 /* A filter value escaped for an OOXML attribute. */
@@ -2092,47 +2099,143 @@ static void af_value(ods *o, const char *v)
     owf_buf_puts(&o->af_xml, "\"/>");
 }
 
+static const char *af_op_name(int op)
+{
+    static const char *const names[] = {
+        "equal", "notEqual", "lessThan", "lessThanOrEqual", "greaterThan", "greaterThanOrEqual"
+    };
+    return op >= 0 && op < 6 ? names[op] : "equal";
+}
+
+static void af_put_custom(ods *o, int op, const char *value)
+{
+    owf_buf_printf(&o->af_xml, "<customFilter operator=\"%s\" val=\"", af_op_name(op));
+    af_escaped(o, value);
+    owf_buf_puts(&o->af_xml, "\"/>");
+}
+
+static void af_flush_pending(ods *o)
+{
+    if (!o->af_pending)
+        return;
+    owf_buf_printf(&o->af_xml, "<filterColumn colId=\"%d\"><customFilters>", o->af_pending_field);
+    af_put_custom(o, o->af_pending_op, o->af_pending_value ? o->af_pending_value : "");
+    owf_buf_puts(&o->af_xml, "</customFilters></filterColumn>");
+    free(o->af_pending_value);
+    o->af_pending_value = NULL;
+    o->af_pending = 0;
+}
+
+static void af_custom_condition(ods *o, int field, int op, const char *value)
+{
+    int group = o->af_ngroups ? o->af_group_depth[o->af_ngroups - 1] : 0;
+    int use_or = o->af_ngroups ? o->af_group_or[o->af_ngroups - 1] : 0;
+    if (o->af_pending) {
+        if (o->af_pending_field == field && o->af_pending_group == group) {
+            owf_buf_printf(&o->af_xml, "<filterColumn colId=\"%d\"><customFilters and=\"%d\">",
+                           field, !use_or);
+            af_put_custom(o, o->af_pending_op, o->af_pending_value ? o->af_pending_value : "");
+            af_put_custom(o, op, value);
+            owf_buf_puts(&o->af_xml, "</customFilters></filterColumn>");
+            free(o->af_pending_value);
+            o->af_pending_value = NULL;
+            o->af_pending = 0;
+            return;
+        }
+        if (o->af_pending_group == group && (o->af_pending_or || use_or))
+            o->af_or = 1;                         /* OR across fields is outside the core's AND-column model */
+        af_flush_pending(o);
+    }
+    o->af_pending_value = copy(o, value);
+    if (!o->af_pending_value)
+        return;
+    o->af_pending = 1;
+    o->af_pending_field = field;
+    o->af_pending_op = op;
+    o->af_pending_group = group;
+    o->af_pending_or = use_or;
+}
+
+static char *regex_to_wild(ods *o, const char *regex)
+{
+    size_t n = strlen(regex), i, k = 0;
+    char *out;
+    if (n < 2 || regex[0] != '^' || regex[n - 1] != '$')
+        return NULL;
+    if (!(out = malloc(n * 2 + 1))) {
+        o->failed = 1;
+        return NULL;
+    }
+    for (i = 1; i + 1 < n; i++) {
+        char c = regex[i];
+        if (c == '.' && i + 2 < n && regex[i + 1] == '*') { out[k++] = '*'; i++; continue; }
+        if (c == '.') { out[k++] = '?'; continue; }
+        if (c == '\\' && i + 2 < n) {
+            c = regex[++i];
+            if (c == '*' || c == '?' || c == '~') out[k++] = '~';
+            out[k++] = c;
+            continue;
+        }
+        if (strchr("*+()[]{}|", c)) { free(out); return NULL; }
+        out[k++] = c;
+    }
+    out[k] = 0;
+    return out;
+}
+
 /* Inside it: table:filter-or, table:filter-condition (a field equal to a value, or to one of a set). */
 static void filter_child(ods *o, const owf_xml_event *e)
 {
-    if (is(e, NS_TABLE, "filter-or")) {
-        o->af_or = 1;
+    if (is(e, NS_TABLE, "filter-or") || is(e, NS_TABLE, "filter-and")) {
+        if (o->af_ngroups < 4) {
+            o->af_group_depth[o->af_ngroups] = e->depth;
+            o->af_group_or[o->af_ngroups] = is(e, NS_TABLE, "filter-or");
+            o->af_ngroups++;
+        } else {
+            o->af_approx = 1;
+        }
     } else if (is(e, NS_TABLE, "filter-condition")) {
         const char *op = ev(e, NS_TABLE, "operator"), *val = ev(e, NS_TABLE, "value");
         const char *xlop = NULL;
-        int top = -1, percent = 0;
+        char *wild = NULL;
+        int custom = -1, top = -1, percent = 0;
         long field = whole(ev(e, NS_TABLE, "field-number"), -1, 0, (long)MAX_COLS);
         if (o->af_field >= 0)
             owf_buf_puts(&o->af_xml, "</filters></filterColumn>");
         o->af_field = -1;
         if (op) {
-            if (!strcmp(op, "=")) xlop = "equal";
-            else if (!strcmp(op, "!=")) xlop = "notEqual";
-            else if (!strcmp(op, "<")) xlop = "lessThan";
-            else if (!strcmp(op, "<=")) xlop = "lessThanOrEqual";
-            else if (!strcmp(op, ">")) xlop = "greaterThan";
-            else if (!strcmp(op, ">=")) xlop = "greaterThanOrEqual";
+            if (!strcmp(op, "=")) { xlop = "equal"; custom = 0; }
+            else if (!strcmp(op, "!=")) { xlop = "notEqual"; custom = 1; }
+            else if (!strcmp(op, "<")) { xlop = "lessThan"; custom = 2; }
+            else if (!strcmp(op, "<=")) { xlop = "lessThanOrEqual"; custom = 3; }
+            else if (!strcmp(op, ">")) { xlop = "greaterThan"; custom = 4; }
+            else if (!strcmp(op, ">=")) { xlop = "greaterThanOrEqual"; custom = 5; }
+            else if (!strcmp(op, "match")) { xlop = "equal"; custom = 0; wild = regex_to_wild(o, val ? val : ""); }
+            else if (!strcmp(op, "nomatch")) { xlop = "notEqual"; custom = 1; wild = regex_to_wild(o, val ? val : ""); }
             else if (!strcmp(op, "top values")) { top = 1; percent = 0; }
             else if (!strcmp(op, "bottom values")) { top = 0; percent = 0; }
             else if (!strcmp(op, "top percent")) { top = 1; percent = 1; }
             else if (!strcmp(op, "bottom percent")) { top = 0; percent = 1; }
         }
-        if ((!xlop && top < 0) || field < 0 || !val) {
+        if ((!xlop && top < 0) || field < 0 || !val ||
+            ((!strcmp(op ? op : "", "match") || !strcmp(op ? op : "", "nomatch")) && !wild)) {
+            free(wild);
             o->af_approx = 1;
             return;
         }
         if (top >= 0) {
+            af_flush_pending(o);
             owf_buf_printf(&o->af_xml, "<filterColumn colId=\"%ld\"><top10 val=\"", field);
             af_escaped(o, val);
             owf_buf_printf(&o->af_xml, "\" top=\"%d\" percent=\"%d\"/></filterColumn>", top, percent);
             return;
         }
-        if (strcmp(op, "=")) {
-            owf_buf_printf(&o->af_xml, "<filterColumn colId=\"%ld\"><customFilters><customFilter operator=\"%s\" val=\"", field, xlop);
-            af_escaped(o, val);
-            owf_buf_puts(&o->af_xml, "\"/></customFilters></filterColumn>");
+        if (strcmp(op, "=") || wild) {
+            af_custom_condition(o, (int)field, custom, wild ? wild : val);
+            free(wild);
             return;
         }
+        af_flush_pending(o);
         o->af_field = (int)field;
         o->af_values = 0;
         owf_buf_printf(&o->af_xml, "<filterColumn colId=\"%ld\"><filters>", field);
@@ -2158,11 +2261,20 @@ static void filter_condition_end(ods *o)
     o->af_value = NULL;
 }
 
+static void filter_group_end(ods *o, const owf_xml_event *e)
+{
+    if (o->af_ngroups && o->af_group_depth[o->af_ngroups - 1] == e->depth) {
+        af_flush_pending(o);
+        o->af_ngroups--;
+    }
+}
+
 static void filter_end(ods *o)
 {
     owf_sheet *sh = o->af_sheet;
     if (o->af_field >= 0)
         owf_buf_puts(&o->af_xml, "</filters></filterColumn>");
+    af_flush_pending(o);
     o->af_sheet = NULL;
     if (o->af_or || o->af_approx)
         owf_report_add(o->report, OWF_NOTE_APPROX, "Some AutoFilters' conditions (other than a column's values) are left out: their buttons are kept");
@@ -3505,6 +3617,8 @@ static void body_end(ods *o, const owf_xml_event *e)
                 filter_end(o);
             else if (is(e, NS_TABLE, "filter-condition"))
                 filter_condition_end(o);
+            else if (is(e, NS_TABLE, "filter-and") || is(e, NS_TABLE, "filter-or"))
+                filter_group_end(o, e);
         }
         return;
     }
@@ -3728,6 +3842,7 @@ static void free_reader(ods *o)
     owf_buf_free(&o->note_author);
     owf_buf_free(&o->af_xml);
     free(o->af_value);
+    free(o->af_pending_value);
     free(o->cf_ranges);
     owf_buf_free(&o->cf_xml);
     for (i = 0; i < o->nframes; i++) {

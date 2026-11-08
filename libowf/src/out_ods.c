@@ -2459,6 +2459,71 @@ static int filter_bool(const char *tag, const char *close, const char *name, int
     return fallback;
 }
 
+static int xml_has_wild(const char *v, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n; i++) {
+        if (v[i] == '~' && i + 1 < n && (v[i + 1] == '*' || v[i + 1] == '?' || v[i + 1] == '~')) {
+            return 1;
+        }
+        if (v[i] == '*' || v[i] == '?') return 1;
+    }
+    return 0;
+}
+
+static void put_wild_regex(owf_buf *b, const char *v, size_t n)
+{
+    size_t i;
+    owf_buf_putc(b, '^');
+    for (i = 0; i < n; i++) {
+        int quoted = v[i] == '~' && i + 1 < n && (v[i + 1] == '*' || v[i + 1] == '?' || v[i + 1] == '~');
+        char c = quoted ? v[++i] : v[i];
+        if (!quoted && c == '*') { owf_buf_puts(b, ".*"); continue; }
+        if (!quoted && c == '?') { owf_buf_putc(b, '.'); continue; }
+        if (strchr("\\.^$+()[]{}|*?", c)) owf_buf_putc(b, '\\');
+        owf_buf_putc(b, c);
+    }
+    owf_buf_putc(b, '$');
+}
+
+static int put_custom_filter(owf_buf *b, const char *cf, const char *end, long field, int force_match)
+{
+    static const char *const xlops[] = {
+        "equal", "notEqual", "lessThan", "lessThanOrEqual", "greaterThan", "greaterThanOrEqual"
+    };
+    static const char *const odfops[] = { "=", "!=", "&lt;", "&lt;=", ">", ">=" };
+    const char *close = strchr(cf, '>'), *at, *op_at, *v, *tail;
+    char quote;
+    size_t op, len;
+    if (!close || close > end || !(at = strstr(cf, "val=")) || at > close ||
+        ((quote = at[4]) != '"' && quote != '\''))
+        return 0;
+    v = at + 5;
+    if (!(tail = strchr(v, quote)) || tail > close)
+        return 0;
+    len = (size_t)(tail - v);
+    op_at = strstr(cf, "operator=");
+    op = 0;
+    if (op_at && op_at < close) {
+        char oq = op_at[9];
+        const char *name = op_at + 10;
+        if (oq != '"' && oq != '\'') return 0;
+        for (op = 0; op < sizeof xlops / sizeof xlops[0]; op++) {
+            size_t z = strlen(xlops[op]);
+            if (name + z < close && !memcmp(name, xlops[op], z) && name[z] == oq) break;
+        }
+        if (op == sizeof xlops / sizeof xlops[0]) return 0;
+    }
+    owf_buf_printf(b, "<table:filter-condition table:field-number=\"%ld\" table:value=\"", field);
+    if (op <= 1 && (force_match || xml_has_wild(v, len)))
+        put_wild_regex(b, v, len);
+    else
+        owf_buf_put(b, v, len);
+    owf_buf_printf(b, "\" table:operator=\"%s\"/>",
+                   op <= 1 && (force_match || xml_has_wild(v, len)) ? (op ? "nomatch" : "match") : odfops[op]);
+    return 1;
+}
+
 /* One Excel filterColumn (x up to end, its close) as ODF's condition on that field: values, one custom
  * comparison, or top/bottom rank. 0 for colours, icons, dates by group and other complex conditions. */
 static int af_column(owf_buf *b, const char *x, const char *end)
@@ -2493,37 +2558,24 @@ static int af_column(owf_buf *b, const char *x, const char *end)
         }
     }
     {
-        static const char *const xlops[] = {
-            "equal", "notEqual", "lessThan", "lessThanOrEqual", "greaterThan", "greaterThanOrEqual"
-        };
-        static const char *const odfops[] = { "=", "!=", "&lt;", "&lt;=", ">", ">=" };
-        const char *cf = strstr(x, "<customFilter ");
+        const char *set = strstr(x, "<customFilters"), *set_close;
+        const char *cf = strstr(x, "<customFilter "), *second, *third;
         if (cf && cf < end) {
-            const char *close = strchr(cf, '>'), *at, *op_at;
-            char quote;
-            size_t op;
-            if (!close || close > end || ((next = strstr(cf + 1, "<customFilter ")) && next < end) ||
-                !(at = strstr(cf, "val=")) || at > close || ((quote = at[4]) != '"' && quote != '\''))
+            if (!set || set > cf || !(set_close = strchr(set, '>')) || set_close > cf)
                 return 0;
-            v = at + 5;
-            if (!(next = strchr(v, quote)) || next > close)
-                return 0;
-            len = (size_t)(next - v);
-            op_at = strstr(cf, "operator=");
-            op = 0;
-            if (op_at && op_at < close) {
-                char oq = op_at[9];
-                const char *name = op_at + 10;
-                if (oq != '"' && oq != '\'') return 0;
-                for (op = 0; op < sizeof xlops / sizeof xlops[0]; op++) {
-                    size_t z = strlen(xlops[op]);
-                    if (name + z < close && !memcmp(name, xlops[op], z) && name[z] == oq) break;
-                }
-                if (op == sizeof xlops / sizeof xlops[0]) return 0;
+            second = strstr(cf + 1, "<customFilter ");
+            if (second && second < end) {
+                third = strstr(second + 1, "<customFilter ");
+                if (third && third < end)
+                    return 0;
+                owf_buf_printf(b, "<table:filter-%s>", filter_bool(set, set_close, "and", 0) ? "and" : "or");
+                if (!put_custom_filter(b, cf, end, field, 1) || !put_custom_filter(b, second, end, field, 1))
+                    return 0;
+                owf_buf_printf(b, "</table:filter-%s>", filter_bool(set, set_close, "and", 0) ? "and" : "or");
+            } else {
+                if (!put_custom_filter(b, cf, end, field, 0))
+                    return 0;
             }
-            owf_buf_printf(b, "<table:filter-condition table:field-number=\"%ld\" table:value=\"", field);
-            owf_buf_put(b, v, len);
-            owf_buf_printf(b, "\" table:operator=\"%s\"/>", odfops[op]);
             return 1;
         }
     }
