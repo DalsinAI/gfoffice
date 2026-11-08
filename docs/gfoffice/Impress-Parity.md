@@ -110,7 +110,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | 3-D objects, extrusion | Not planned | Kept |
 | Line: colour, width, solid or dashed; area: colour | P1 | Yes |
 | Area: gradient, hatching, bitmap, transparency; shadow | Later | Approx.: one colour; transparency and shadow No |
-| Position and size | P1 | Yes |
+| Position and size | P1 | Yes in GFOpenPresentation 0.3.4: single-object selection, drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; exact numeric entry, multi-selection and aspect lock remain |
 | Rotation | P1 (kept), Later (drawn) | Model: kept and written back; drawn unrotated |
 | Flip, slant | P1 (flip of lines and arrows) | Lines and arrows yes; slant: Approx. (drawn in its box) |
 | Text in shapes | P1 | Yes |
@@ -204,7 +204,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Master view | P4 | No |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
-| Undo and redo | P3 (per slide) | Text editing and slide insertion, deletion and movement: Yes (`opr_edit.c`); other object edits: No |
+| Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object position/size: Yes (`opr_edit.c`); other object edits: No |
 | Clipboard: objects and slides | P3 (Shared E10) | No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
 | ARexx port `GFOPENPRESENTATION` | P4 | No |

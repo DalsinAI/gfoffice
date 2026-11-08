@@ -418,6 +418,14 @@ status line.
 
 ### 6.3 Editing
 
+GFOpenPresentation 0.3.4 delivers the first object-editing slice from this
+design: a click selects one slide object; dragging moves it; eight handles
+resize it; arrow keys nudge by one screen pixel and Shift-arrow by ten. A
+completed gesture is one reusable `opr_obj_set_box` undo step, and ODP
+round-trip tests cover its explicit geometry. Multi-selection, drag selection,
+aspect-ratio locking, Tab traversal, arrange/align/group commands and the
+inspector described below remain planned.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

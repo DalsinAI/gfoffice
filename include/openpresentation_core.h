@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.3.3"
+#define OPR_CORE_VERSION "0.3.4"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -154,6 +154,12 @@ int opr_slide_set_hidden(opr_undo *u, owf_deck *deck, int index, int hidden, int
  * invalid transition data. */
 int opr_slide_set_transition(opr_undo *u, owf_deck *deck, int index, const owf_transition *transition,
                              int apply_all, int *selected);
+/* Give one slide object an explicit box in slide twips, as one undo step.
+ * Moving an inherited placeholder clears OWF_OBJ_INHERIT_BOX; undo restores
+ * both its former coordinates and inheritance. -2 means an empty or out-of-
+ * slide box, -1 bad input. */
+int opr_obj_set_box(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int x, int y, int width, int height);
 int opr_undo_can(const opr_undo *u);
 int opr_redo_can(const opr_undo *u);
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj);

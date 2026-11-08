@@ -595,7 +595,8 @@ typedef enum {
     SNAP_MOVE,
     SNAP_NAME,
     SNAP_HIDDEN,
-    SNAP_TRANSITION
+    SNAP_TRANSITION,
+    SNAP_OBJ_BOX
 } snapshot_kind;
 
 typedef struct {
@@ -620,6 +621,9 @@ typedef struct {
     /* SNAP_TRANSITION: one or all slides' transition state. */
     int transition_first, transition_count;
     owf_transition *transitions;
+    /* SNAP_OBJ_BOX: the object's explicit box and inheritance state. */
+    int box_x, box_y, box_width, box_height;
+    unsigned box_flags;
 } snapshot;
 
 #define UNDO_STEPS 16
@@ -834,6 +838,17 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
             deck->slides[s->transition_first + i].transition = s->transitions[i];
             s->transitions[i] = transition;
         }
+    } else if (s->kind == SNAP_OBJ_BOX) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        int value;
+        unsigned flags;
+        if (!o)
+            return -1;
+        value = o->x; o->x = s->box_x; s->box_x = value;
+        value = o->y; o->y = s->box_y; s->box_y = value;
+        value = o->width; o->width = s->box_width; s->box_width = value;
+        value = o->height; o->height = s->box_height; s->box_height = value;
+        flags = o->flags; o->flags = s->box_flags; s->box_flags = flags;
     } else
         return -1;
     s->focus = s->other_focus;
@@ -1140,6 +1155,38 @@ int opr_slide_set_transition(opr_undo *u, owf_deck *deck, int index, const owf_t
     return 0;
 }
 
+int opr_obj_set_box(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int x, int y, int width, int height)
+{
+    snapshot s;
+    owf_obj *o = object(deck, slide, obj);
+    if (!u || !o)
+        return -1;
+    if (x < 0 || y < 0 || width < 1 || height < 1 ||
+        (long)x + width > deck->width || (long)y + height > deck->height)
+        return -2;
+    if (!(o->flags & OWF_OBJ_INHERIT_BOX) && o->x == x && o->y == y &&
+        o->width == width && o->height == height)
+        return 0;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_BOX;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    s.box_x = o->x;
+    s.box_y = o->y;
+    s.box_width = o->width;
+    s.box_height = o->height;
+    s.box_flags = o->flags;
+    o->x = x;
+    o->y = y;
+    o->width = width;
+    o->height = height;
+    o->flags &= ~(unsigned)OWF_OBJ_INHERIT_BOX;
+    structural_push(u, &s);
+    return 0;
+}
+
 int opr_undo_can(const opr_undo *u)
 {
     return u && u->nundo > 0;
@@ -1161,7 +1208,7 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
     if (snap_swap(s, deck, &focus) < 0)
         return -1;
     if (slide) *slide = focus;
-    if (obj) *obj = s->kind == SNAP_TEXT ? s->obj : -1;
+    if (obj) *obj = s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX ? s->obj : -1;
     if (*nto == UNDO_STEPS) {
         snap_free(&to[0]);
         memmove(&to[0], &to[1], (UNDO_STEPS - 1) * sizeof to[0]);

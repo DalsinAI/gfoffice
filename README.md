@@ -286,7 +286,11 @@ beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: click in a slide's text box and type (Return, Backspace,
 Del, the arrow keys; Esc stops), with undo and redo
 (`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
-deck-edit-check`). Slide > New Slide, Duplicate Slide, Rename Slide, Delete
+deck-edit-check`). Click any slide object to select it, drag it to move it,
+drag one of its eight handles to resize it, or use the arrow keys to nudge it
+one screen pixel (Shift: ten); each completed move or resize is a single
+undoable core operation and inherited layout-placeholder geometry becomes an
+explicit ODP box. Slide > New Slide, Duplicate Slide, Rename Slide, Delete
 Slide, Hide/Show Slide, Move Slide Up and Move Slide Down are undoable through
 that same reusable core; duplication uses libowf's deep-copy deck primitive.
 F5 starts a borderless full-screen show from the first visible slide and
@@ -304,8 +308,8 @@ Reusable transition plans and ordered-fade masks sit beside the show state and
 are host-tested by `make deck-show-test`. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
 T:<name>.pdf`), and Export PDF writes one. View > Zoom In and Zoom Out (+
 and -) show the slide up to four times the window's fit, with scrollers; the
-window's zoom gadget fills the screen. The remaining transitions, an optional
-own screen, PPTX saving and the rest of the editor come next.
+window's zoom gadget fills the screen. An optional own screen, PPTX saving,
+content insertion and the rest of the editor come next.
 
 ## Licence
 

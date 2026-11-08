@@ -81,7 +81,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.3.3 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.3.4 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -206,11 +206,20 @@ static int dirty;
 static char status[320] = "Ready.";
 static opr_undo *undo;
 
-/* Typing: the object typed in (-1: none), the caret, and whether its text changed since the caret was put
- * there (an undo step then). */
+/* The selected slide object, and typing within it. */
+static int selected_obj = -1;
 static int edit_obj = -1;
 static opr_pos caret;
 static int edit_grouped;
+
+enum {
+    DRAG_NONE, DRAG_MOVE, DRAG_NW, DRAG_N, DRAG_NE, DRAG_E,
+    DRAG_SE, DRAG_S, DRAG_SW, DRAG_W
+};
+static struct {
+    int active, moved, mode, obj, mouse_x, mouse_y;
+    owf_obj original, preview;
+} object_drag;
 
 static void draw_all(void);
 static void draw_slide(void);
@@ -1657,17 +1666,55 @@ static void draw_status(void)
 }
 
 /* The caret and the frame being typed in, over the slide. */
+static int object_pixel_box(int obj, box *b)
+{
+    owf_obj resolved;
+    ol_scale sc;
+    int x2, y2;
+    if (!deck || current < 0 || current >= deck->nslides || obj < 0 ||
+        obj >= deck->slides[current].nobjs || owf_deck_resolve(deck, current, obj, &resolved, NULL) < 0)
+        return 0;
+    ol_scale_fit(&sc, TW(deck->width), slide_box.w);
+    sc.origin_x = slide_box.x;
+    sc.origin_y = slide_box.y;
+    b->x = ol_scale_x(&sc, TW(resolved.x));
+    b->y = ol_scale_y(&sc, TW(resolved.y));
+    x2 = ol_scale_x(&sc, TW(resolved.x + resolved.width));
+    y2 = ol_scale_y(&sc, TW(resolved.y + resolved.height));
+    b->w = x2 - b->x;
+    b->h = y2 - b->y;
+    return b->w > 0 && b->h > 0;
+}
+
+static void selection_points(const box *b, int x[8], int y[8])
+{
+    int cx = b->x + b->w / 2, cy = b->y + b->h / 2;
+    x[0] = b->x; x[1] = cx; x[2] = b->x + b->w; x[3] = b->x + b->w;
+    x[4] = b->x + b->w; x[5] = cx; x[6] = b->x; x[7] = b->x;
+    y[0] = b->y; y[1] = b->y; y[2] = b->y; y[3] = cy;
+    y[4] = b->y + b->h; y[5] = b->y + b->h; y[6] = b->y + b->h; y[7] = cy;
+}
+
+static void draw_selection(void)
+{
+    box b;
+    int x[8], y[8], i;
+    LONG accent;
+    if (selected_obj < 0 || !object_pixel_box(selected_obj, &b)) return;
+    accent = ogt_pen(&ctx, "accent");
+    ogt_frame(win->RPort, accent, b.x - 2, b.y - 2, b.w + 4, b.h + 4);
+    selection_points(&b, x, y);
+    for (i = 0; i < 8; i++) {
+        ogt_box(win->RPort, ogt_pen(&ctx, "window"), x[i] - 4, y[i] - 4, 9, 9);
+        ogt_frame(win->RPort, accent, x[i] - 4, y[i] - 4, 9, 9);
+    }
+}
+
 static void draw_caret(const opr_slide *s, const ol_scale *sc)
 {
     int frame;
     ol_rect b;
     if (edit_obj < 0 || !s || (frame = opr_slide_frame_for(s, edit_obj)) < 0) return;
-    {
-        const owf_obj *o = &deck->slides[current].objs[edit_obj];
-        int x = ol_scale_x(sc, TW(o->x)), y = ol_scale_y(sc, TW(o->y));
-        int x2 = ol_scale_x(sc, TW(o->x + o->width)), y2 = ol_scale_y(sc, TW(o->y + o->height));
-        ogt_frame(win->RPort, ogt_pen(&ctx, "accent"), x - 2, y - 2, x2 - x + 4, y2 - y + 4);
-    }
     if (opr_caret_box(s, frame, caret, NULL, NULL, &b)) {
         int x = ol_scale_x(sc, b.x), y = ol_scale_y(sc, b.y), h = ol_scale_length(sc, b.height);
         ogt_box(win->RPort, ogt_pen(&ctx, "accent"), x, y, 2, h > 2 ? h : 2);
@@ -1738,6 +1785,7 @@ static void draw_slide_part(const box *part)
     if (!s)
         ogt_text(rp, ogt_pen(&ctx, "muted"), slide_box.x + 8, slide_box.y + 8, "Not enough memory to show this slide.",
                  slide_box.w - 16);
+    draw_selection();
     draw_caret(s, &sc);
     if (region) {
         InstallClipRegion(win->WLayer, old);
@@ -1781,12 +1829,19 @@ static void stop_typing(void)
     edit_grouped = 0;
 }
 
+static void clear_object_selection(void)
+{
+    stop_typing();
+    selected_obj = -1;
+    memset(&object_drag, 0, sizeof object_drag);
+}
+
 static void show_slide(int index)
 {
     if (!deck || !deck->nslides) return;
     if (index < 0) index = 0;
     if (index >= deck->nslides) index = deck->nslides - 1;
-    if (index != current) stop_typing();
+    if (index != current) clear_object_selection();
     current = index;
     if (strip) {
         ogt_list_select(strip, current);
@@ -1806,7 +1861,7 @@ static void show_slide(int index)
  * every cached layout and version belongs to the old structure. */
 static void structure_changed(int selected, const char *message)
 {
-    stop_typing();
+    clear_object_selection();
     laid_clear();
     free(versions);
     versions = NULL;
@@ -2302,9 +2357,14 @@ static int edit_area(box *b)
     sc.origin_y = slide_box.y;
     r = ol_node_bounds(ol_node_by_id(s->doc, s->frames[frame].node));
     {
+        owf_obj resolved;
         const owf_obj *o = &deck->slides[current].objs[edit_obj];
-        int x = ol_scale_x(&sc, TW(o->x)), y = ol_scale_y(&sc, TW(o->y));
-        int x2 = ol_scale_x(&sc, TW(o->x + o->width)), y2 = ol_scale_y(&sc, TW(o->y + o->height));
+        int x, y, x2, y2;
+        if (owf_deck_resolve(deck, current, edit_obj, &resolved, NULL) >= 0) o = &resolved;
+        x = ol_scale_x(&sc, TW(o->x));
+        y = ol_scale_y(&sc, TW(o->y));
+        x2 = ol_scale_x(&sc, TW(o->x + o->width));
+        y2 = ol_scale_y(&sc, TW(o->y + o->height));
         int ry2 = ol_scale_y(&sc, r.y + r.height);
         if (ry2 > y2) y2 = ry2;
         /* the text may have run below its box, and the caret and frame are drawn around it */
@@ -2402,41 +2462,248 @@ static void caret_line(int dir)
     caret_moved();
 }
 
-/* A click on the slide: typing starts in the text box under it, at the place clicked. */
-static void slide_click(int mx, int my)
+static int on_visible_slide(int mx, int my)
+{
+    return deck && deck->nslides && mx >= slide_box.x && my >= slide_box.y &&
+           mx < slide_box.x + slide_box.w && my < slide_box.y + slide_box.h &&
+           mx >= slide_area.x && my >= slide_area.y &&
+           mx < slide_area.x + slide_area.w && my < slide_area.y + slide_area.h;
+}
+
+static void current_slide_scale(ol_scale *sc)
+{
+    ol_scale_fit(sc, TW(deck->width), slide_box.w);
+    sc->origin_x = slide_box.x;
+    sc->origin_y = slide_box.y;
+}
+
+static int selection_handle(int mx, int my)
+{
+    static const int mode[8] = { DRAG_NW, DRAG_N, DRAG_NE, DRAG_E, DRAG_SE, DRAG_S, DRAG_SW, DRAG_W };
+    box b;
+    int x[8], y[8], i;
+    if (selected_obj < 0 || !object_pixel_box(selected_obj, &b)) return DRAG_NONE;
+    selection_points(&b, x, y);
+    for (i = 0; i < 8; i++)
+        if (mx >= x[i] - 5 && mx <= x[i] + 5 && my >= y[i] - 5 && my <= y[i] + 5)
+            return mode[i];
+    return DRAG_NONE;
+}
+
+static int hit_slide_object(int mx, int my, opr_pos *at)
 {
     opr_slide *s = laid_get(current);
     ol_scale sc;
-    opr_pos at;
-    int frame, obj, was = edit_obj;
-    box old;
-    if (!s || mx < slide_box.x || my < slide_box.y || mx >= slide_box.x + slide_box.w || my >= slide_box.y + slide_box.h)
+    int frame;
+    if (!s || !on_visible_slide(mx, my)) return -1;
+    current_slide_scale(&sc);
+    frame = opr_hit(s, ol_unscale_x(&sc, mx), ol_unscale_y(&sc, my), NULL, NULL, at);
+    return frame >= 0 ? opr_frame_obj(s, frame) : -1;
+}
+
+static void start_object_drag(int obj, int mode, int mx, int my)
+{
+    owf_obj resolved;
+    if (obj < 0 || obj >= deck->slides[current].nobjs ||
+        owf_deck_resolve(deck, current, obj, &resolved, NULL) < 0)
         return;
-    if (mx < slide_area.x || my < slide_area.y || mx >= slide_area.x + slide_area.w || my >= slide_area.y + slide_area.h)
-        return;                                      /* the part scrolled out of sight */
-    ol_scale_fit(&sc, TW(deck->width), slide_box.w);
-    sc.origin_x = slide_box.x;
-    sc.origin_y = slide_box.y;
-    if (!edit_area(&old)) old.w = 0;
-    frame = opr_hit(s, ol_unscale_x(&sc, mx), ol_unscale_y(&sc, my), NULL, NULL, &at);
-    obj = frame >= 0 ? opr_frame_obj(s, frame) : -1;
-    if (obj >= 0 && opr_obj_editable(deck, current, obj)) {
+    memset(&object_drag, 0, sizeof object_drag);
+    object_drag.active = 1;
+    object_drag.mode = mode;
+    object_drag.obj = obj;
+    object_drag.mouse_x = mx;
+    object_drag.mouse_y = my;
+    object_drag.original = deck->slides[current].objs[obj];
+    object_drag.preview = resolved;
+}
+
+static void slide_mouse_down(int mx, int my)
+{
+    opr_pos at;
+    int obj, handle;
+    if (!on_visible_slide(mx, my)) return;
+    handle = selection_handle(mx, my);
+    if (handle != DRAG_NONE) {
+        stop_typing();
+        start_object_drag(selected_obj, handle, mx, my);
+        set_status("Resize the selected object.");
+        draw_status();
+        return;
+    }
+    obj = hit_slide_object(mx, my, &at);
+    stop_typing();
+    if (obj < 0) {
+        selected_obj = -1;
+        memset(&object_drag, 0, sizeof object_drag);
+        set_status("Ready.");
+        draw_slide();
+        draw_status();
+        return;
+    }
+    selected_obj = obj;
+    start_object_drag(obj, DRAG_MOVE, mx, my);
+    set_status("Drag to move; release over text to type.");
+    draw_slide();
+    draw_status();
+}
+
+static int twip_delta_x(const ol_scale *sc, int from, int to)
+{
+    return (int)((ol_unscale_x(sc, to) - ol_unscale_x(sc, from)) / OL_UNITS_PER_TWIP);
+}
+
+static int twip_delta_y(const ol_scale *sc, int from, int to)
+{
+    return (int)((ol_unscale_y(sc, to) - ol_unscale_y(sc, from)) / OL_UNITS_PER_TWIP);
+}
+
+static void preview_object_drag(int mx, int my)
+{
+    owf_obj *o;
+    ol_scale sc;
+    int dx, dy, left, top, right, bottom;
+    int minimum_w, minimum_h;
+    if (!object_drag.active || object_drag.obj < 0 || object_drag.obj >= deck->slides[current].nobjs)
+        return;
+    if (!object_drag.moved && abs(mx - object_drag.mouse_x) < 3 && abs(my - object_drag.mouse_y) < 3)
+        return;
+    object_drag.moved = 1;
+    current_slide_scale(&sc);
+    dx = twip_delta_x(&sc, object_drag.mouse_x, mx);
+    dy = twip_delta_y(&sc, object_drag.mouse_y, my);
+    left = object_drag.preview.x;
+    top = object_drag.preview.y;
+    right = left + object_drag.preview.width;
+    bottom = top + object_drag.preview.height;
+    minimum_w = deck->width < 120 ? deck->width : 120;
+    minimum_h = deck->height < 120 ? deck->height : 120;
+    if (object_drag.mode == DRAG_MOVE) {
+        left += dx; right += dx; top += dy; bottom += dy;
+        if (left < 0) { right -= left; left = 0; }
+        if (top < 0) { bottom -= top; top = 0; }
+        if (right > deck->width) { left -= right - deck->width; right = deck->width; }
+        if (bottom > deck->height) { top -= bottom - deck->height; bottom = deck->height; }
+    } else {
+        if (object_drag.mode == DRAG_NW || object_drag.mode == DRAG_W || object_drag.mode == DRAG_SW) left += dx;
+        if (object_drag.mode == DRAG_NE || object_drag.mode == DRAG_E || object_drag.mode == DRAG_SE) right += dx;
+        if (object_drag.mode == DRAG_NW || object_drag.mode == DRAG_N || object_drag.mode == DRAG_NE) top += dy;
+        if (object_drag.mode == DRAG_SW || object_drag.mode == DRAG_S || object_drag.mode == DRAG_SE) bottom += dy;
+        if (left < 0) left = 0;
+        if (top < 0) top = 0;
+        if (right > deck->width) right = deck->width;
+        if (bottom > deck->height) bottom = deck->height;
+        if (right - left < minimum_w) {
+            if (object_drag.mode == DRAG_NW || object_drag.mode == DRAG_W || object_drag.mode == DRAG_SW)
+                left = right - minimum_w;
+            else right = left + minimum_w;
+        }
+        if (bottom - top < minimum_h) {
+            if (object_drag.mode == DRAG_NW || object_drag.mode == DRAG_N || object_drag.mode == DRAG_NE)
+                top = bottom - minimum_h;
+            else bottom = top + minimum_h;
+        }
+        /* Enforcing the minimum can move the opposite edge back outside a
+         * very small slide. Keep the final preview inside the model's box
+         * invariant before handing it to opr_obj_set_box(). */
+        if (left < 0) { left = 0; right = minimum_w; }
+        if (top < 0) { top = 0; bottom = minimum_h; }
+        if (right > deck->width) { right = deck->width; left = right - minimum_w; }
+        if (bottom > deck->height) { bottom = deck->height; top = bottom - minimum_h; }
+    }
+    o = &deck->slides[current].objs[object_drag.obj];
+    o->x = left;
+    o->y = top;
+    o->width = right - left;
+    o->height = bottom - top;
+    o->flags &= ~(unsigned)OWF_OBJ_INHERIT_BOX;
+    slide_changed(current);
+    {
+        char message[96];
+        snprintf(message, sizeof message, "%s: %d, %d; %d x %d twips.",
+                 object_drag.mode == DRAG_MOVE ? "Position" : "Size", o->x, o->y, o->width, o->height);
+        set_status(message);
+    }
+    draw_slide();
+    draw_status();
+}
+
+static void finish_object_drag(int mx, int my)
+{
+    int obj, rc;
+    owf_obj target, original;
+    opr_pos at;
+    if (!object_drag.active) return;
+    obj = object_drag.obj;
+    target = deck->slides[current].objs[obj];
+    original = object_drag.original;
+    if (object_drag.moved) {
+        owf_obj *o = &deck->slides[current].objs[obj];
+        o->x = original.x; o->y = original.y; o->width = original.width; o->height = original.height;
+        o->flags = original.flags;
+        rc = opr_obj_set_box(undo, deck, current, obj, target.x, target.y, target.width, target.height);
+        if (rc < 0) {
+            set_status("The object could not be moved or resized.");
+        } else {
+            dirty = 1;
+            update_window_title();
+            set_status(object_drag.mode == DRAG_MOVE ? "Object moved." : "Object resized.");
+        }
+        slide_changed(current);
+        if (strip) ogt_list_draw_row(strip, current);
+        update_edit_tools();
+        ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    } else if (obj == hit_slide_object(mx, my, &at) && opr_obj_editable(deck, current, obj)) {
         edit_obj = obj;
         caret = at;
         edit_grouped = 0;
         set_status("Typing: Esc stops.");
     } else {
-        stop_typing();
-        set_status(obj >= 0 ? "Only text boxes and shapes take typing yet." : "Ready.");
+        set_status("Object selected.");
     }
-    if (was >= 0 && old.w) draw_slide_part(&old);
-    caret_moved();
+    memset(&object_drag, 0, sizeof object_drag);
+    draw_slide();
+    draw_status();
+}
+
+static void nudge_selected(int dx, int dy, int pixels)
+{
+    owf_obj box, before;
+    ol_scale sc;
+    int tx, ty;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs ||
+        owf_deck_resolve(deck, current, selected_obj, &box, NULL) < 0)
+        return;
+    before = box;
+    current_slide_scale(&sc);
+    tx = twip_delta_x(&sc, slide_box.x, slide_box.x + pixels);
+    ty = twip_delta_y(&sc, slide_box.y, slide_box.y + pixels);
+    if (tx < 1) tx = 1;
+    if (ty < 1) ty = 1;
+    box.x += dx * tx;
+    box.y += dy * ty;
+    if (box.x < 0) box.x = 0;
+    if (box.y < 0) box.y = 0;
+    if (box.x + box.width > deck->width) box.x = deck->width - box.width;
+    if (box.y + box.height > deck->height) box.y = deck->height - box.height;
+    if (box.x == before.x && box.y == before.y)
+        return;
+    if (opr_obj_set_box(undo, deck, current, selected_obj, box.x, box.y, box.width, box.height) < 0)
+        return;
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Object nudged.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
     draw_status();
 }
 
 static void do_undo(int redo)
 {
     int slide = -1, obj = -1;
+    int was_typing = edit_obj >= 0;
     if ((redo ? opr_undo_redo(undo, deck, &slide, &obj) : opr_undo_undo(undo, deck, &slide, &obj)) < 0) return;
     if (obj < 0) {
         structure_changed(slide, redo ? "Slide change redone." : "Slide change undone.");
@@ -2446,9 +2713,11 @@ static void do_undo(int redo)
     dirty = 1;
     update_window_title();
     if (slide != current) show_slide(slide);
-    edit_obj = obj;
+    selected_obj = obj;
+    edit_obj = was_typing && opr_obj_editable(deck, current, obj) ? obj : -1;
     edit_grouped = 0;
-    opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_TEXT_END);
+    if (edit_obj >= 0)
+        opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_TEXT_END);
     set_status(redo ? "Redone." : "Undone.");
     draw_slide();
     if (strip) ogt_list_draw_row(strip, current);
@@ -2471,7 +2740,7 @@ static void set_deck(owf_deck *d, const char *path, const char *format)
     nversions = 0;
     current = 0;
     dirty = 0;
-    stop_typing();
+    clear_object_selection();
     snprintf(current_path, sizeof current_path, "%s", path ? path : "");
     snprintf(current_format, sizeof current_format, "%s", format ? format : "ODP");
     update_window_title();
@@ -2854,11 +3123,17 @@ static void events(void)
             scrolled();
             break;
         case IDCMP_MOUSEBUTTONS:
-            if (code == SELECTDOWN) slide_click(mx, my);
-            else if (code == SELECTUP && tb.pressed >= 0) {
-                ogt_toolbar_draw_one(&tb, &ctx, win->RPort, tb.pressed, 0, "window");
-                tb.pressed = -1;
+            if (code == SELECTDOWN) slide_mouse_down(mx, my);
+            else if (code == SELECTUP) {
+                if (object_drag.active) finish_object_drag(mx, my);
+                if (tb.pressed >= 0) {
+                    ogt_toolbar_draw_one(&tb, &ctx, win->RPort, tb.pressed, 0, "window");
+                    tb.pressed = -1;
+                }
             }
+            break;
+        case IDCMP_MOUSEMOVE:
+            if (object_drag.active) preview_object_drag(mx, my);
             break;
         case IDCMP_RAWKEY:
             if (code & 0x80) break;
@@ -2871,6 +3146,11 @@ static void events(void)
                 case 0x4c: caret_line(-1); break;
                 case 0x4d: caret_line(1); break;
                 }                               /* Del comes as a vanilla key (127) */
+            } else if (selected_obj >= 0 &&
+                       (code == 0x4c || code == 0x4d || code == 0x4e || code == 0x4f)) {
+                int pixels = qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT) ? 10 : 1;
+                nudge_selected(code == 0x4f ? -1 : code == 0x4e ? 1 : 0,
+                               code == 0x4c ? -1 : code == 0x4d ? 1 : 0, pixels);
             } else if (code == 0x4c || code == 0x4f) {
                 show_slide(current - 1);     /* up, left, or with Shift while typing: the slide before */
             } else if (code == 0x4d || code == 0x4e) {
@@ -2886,6 +3166,11 @@ static void events(void)
                     stop_typing();
                     set_status("Ready.");
                     if (had) draw_slide_part(&b);
+                    draw_status();
+                } else if (selected_obj >= 0) {
+                    selected_obj = -1;
+                    set_status("Ready.");
+                    draw_slide();
                     draw_status();
                 }
                 break;

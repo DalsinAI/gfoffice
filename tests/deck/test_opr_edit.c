@@ -177,8 +177,10 @@ static void structural_slides(void)
     unsigned char *data = NULL;
     size_t length = 0;
     owf_deck *back = NULL;
+    owf_obj resolved;
     owf_transition transition;
-    int selected = -1, slide = -2, obj = -2;
+    int selected = -1, slide = -2, obj = -2, old_x, old_y, old_width, old_height;
+    unsigned old_flags;
 
     CHECK(d && u, "a deck and structural undo");
     if (!d || !u) {
@@ -260,6 +262,30 @@ static void structural_slides(void)
     CHECK(!opr_slide_set_hidden(u, d, 1, 1, &selected) && d->slides[1].hidden,
           "setting the same visibility is harmless");
 
+    old_x = d->slides[1].objs[0].x;
+    old_y = d->slides[1].objs[0].y;
+    old_width = d->slides[1].objs[0].width;
+    old_height = d->slides[1].objs[0].height;
+    old_flags = d->slides[1].objs[0].flags;
+    CHECK(owf_deck_resolve(d, 1, 0, &resolved, NULL) > 0 && resolved.width > 0 && resolved.height > 0,
+          "resolve an inherited object box before moving it");
+    CHECK(!opr_obj_set_box(u, d, 1, 0, 100, 200, 3000, 1200) &&
+          d->slides[1].objs[0].x == 100 && d->slides[1].objs[0].y == 200 &&
+          d->slides[1].objs[0].width == 3000 && d->slides[1].objs[0].height == 1200 &&
+          !(d->slides[1].objs[0].flags & OWF_OBJ_INHERIT_BOX),
+          "moving an inherited object makes its new box explicit");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 1 && obj == 0 &&
+          d->slides[1].objs[0].x == old_x && d->slides[1].objs[0].y == old_y &&
+          d->slides[1].objs[0].width == old_width && d->slides[1].objs[0].height == old_height &&
+          d->slides[1].objs[0].flags == old_flags, "undo restores the object's inherited box");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && obj == 0 && d->slides[1].objs[0].x == 100 &&
+          d->slides[1].objs[0].width == 3000 && !(d->slides[1].objs[0].flags & OWF_OBJ_INHERIT_BOX),
+          "redo restores the explicit object box");
+    CHECK(opr_obj_set_box(u, d, 1, 0, -1, 0, 100, 100) == -2 &&
+          opr_obj_set_box(u, d, 1, 0, d->width - 10, 0, 20, 100) == -2 &&
+          opr_obj_set_box(u, d, 1, 0, 0, 0, 0, 100) == -2,
+          "empty and out-of-slide object boxes are refused");
+
     memset(&transition, 0, sizeof transition);
     transition.kind = OWF_TRANS_WIPE;
     transition.direction = OWF_DIR_RIGHT;
@@ -308,11 +334,16 @@ static void structural_slides(void)
           "the deck with edited transitions saves as ODP");
     CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
           "the deck with edited transitions reads back");
-    if (back)
+    if (back) {
         CHECK(back->nslides == d->nslides && back->slides[0].transition.kind == OWF_TRANS_DISSOLVE &&
               back->slides[0].transition.duration == 1000 && back->slides[0].transition.advance_after == -1 &&
               back->slides[back->nslides - 1].transition.kind == OWF_TRANS_DISSOLVE,
               "edited transitions survive the ODP round trip");
+        CHECK(back->slides[1].objs[0].x == 100 && back->slides[1].objs[0].y == 200 &&
+              back->slides[1].objs[0].width == 3000 && back->slides[1].objs[0].height == 1200 &&
+              !(back->slides[1].objs[0].flags & OWF_OBJ_INHERIT_BOX),
+              "the explicit object box survives the ODP round trip");
+    }
 
     owf_deck_free(back);
     free(data);
