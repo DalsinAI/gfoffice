@@ -178,6 +178,18 @@ done
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenPresentation"
 echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
+
+# GFOpenPublisher P1a: the clean-room .pub reader adapted to the same positioned-page model and
+# GFOpenLayout/PDF/screen renderer as Presentation.  This first build is linked: owfpub.library's
+# ABI still exposes the P0 model only, and the deck bridge is intentionally kept in the portable core.
+OWFSRC_PUB="$OWFSRC_DECK $HERE/libowf/src/owf_cfb.c $HERE/libowf/src/in_pub.c"
+# shellcheck disable=SC2086
+"$CC" $CFLAGS_COMMON -DOPENPUBLISHER -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+    -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
+    $OWFSRC_PUB "$HERE"/src/deck/*.c "$HERE/src/pub/opp_import.c" "$HERE/src/core/ow_layout.c" $OL_C \
+    "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
+    -o "$OUT/GFOpenPublisher"
+echo "$OUT/GFOpenPublisher ($(wc -c < "$OUT/GFOpenPublisher") bytes)"
 fi
 
 # The toolbars' pictures: the Chrome icon set's strips beside the programs, where they look first

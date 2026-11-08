@@ -454,6 +454,34 @@ pub-check: $(OUT)/pub-dump-asan
 test: pub-test
 check: pub-check
 
+ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
+PUB_CORE_SRC = src/pub/opp_import.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c
+PUB_CORE_DEPS = $(PUB_DEPS) $(PUB_CORE_SRC) include/openpublisher_core.h include/openpresentation_core.h \
+	libowf/include/owf_deck.h $(OPENLAYOUT_ENGINE_SRC)
+
+$(OUT)/test-publisher-core: $(PUB_CORE_DEPS) tests/pub/test_pub_core.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
+		$(OWF_SRC) $(PUB_CORE_SRC) $(OPENLAYOUT_ENGINE_SRC) tests/pub/test_pub_core.c -lz -o $@
+
+$(OUT)/test-publisher-core-asan: $(PUB_CORE_DEPS) tests/pub/test_pub_core.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
+		$(OWF_SRC) $(PUB_CORE_SRC) $(OPENLAYOUT_ENGINE_SRC) tests/pub/test_pub_core.c -lz -o $@
+
+publisher-core-test: $(OUT)/test-publisher-core
+	$(OUT)/test-publisher-core
+
+publisher-core-check: $(OUT)/test-publisher-core-asan
+	$(OUT)/test-publisher-core-asan
+
+test: publisher-core-test
+check: publisher-core-check
+
+.PHONY: publisher-core-test publisher-core-check
+endif
+
 .PHONY: pub-test pub-check
 
 # owf.library 2 (libowf/library): the library's own double arithmetic

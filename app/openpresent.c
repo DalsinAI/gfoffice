@@ -64,6 +64,9 @@
 #include <clib/alib_protos.h>
 
 #include "openpresentation_core.h"
+#ifdef OPENPUBLISHER
+#include "openpublisher_core.h"
+#endif
 #include "ow_layout.h"
 #include "owf_pdf.h"
 #include "ow_stack.h"
@@ -80,8 +83,25 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, *LayersBase = NULL;
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
+#ifdef OPENPUBLISHER
+#define PROGRAM "GFOpenPublisher"
+#define VERSION_TEXT "GFOpenPublisher 0.1.0 (8.11.2026)"
+#define UNIT "Page"
+#define UNIT_LOWER "page"
+#define UNITS_LOWER "pages"
+#define DOCUMENT_LOWER "publication"
+#define TRANSITION_TITLE "Page Transition"
+#define SHOW_TITLE "Page Preview"
+#else
 #define PROGRAM "GFOpenPresentation"
 #define VERSION_TEXT "GFOpenPresentation 0.3.4 (8.11.2026)"
+#define UNIT "Slide"
+#define UNIT_LOWER "slide"
+#define UNITS_LOWER "slides"
+#define DOCUMENT_LOWER "presentation"
+#define TRANSITION_TITLE "Slide Transition"
+#define SHOW_TITLE "Slide Show"
+#endif
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -116,27 +136,27 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
 
-    { NM_TITLE, "Slide", NULL, 0, 0, NULL },
-    { NM_ITEM, "New Slide", "M", 0, 0, (APTR)M_NEW_SLIDE },
-    { NM_ITEM, "Duplicate Slide", NULL, 0, 0, (APTR)M_DUPLICATE_SLIDE },
-    { NM_ITEM, "Rename Slide...", NULL, 0, 0, (APTR)M_RENAME_SLIDE },
-    { NM_ITEM, "Delete Slide", NULL, 0, 0, (APTR)M_DELETE_SLIDE },
-    { NM_ITEM, "Hide Slide", NULL, 0, 0, (APTR)M_HIDE_SLIDE },
-    { NM_ITEM, "Show Slide", NULL, 0, 0, (APTR)M_SHOW_SLIDE },
-    { NM_ITEM, "Slide Transition...", NULL, 0, 0, (APTR)M_TRANSITION },
+    { NM_TITLE, UNIT, NULL, 0, 0, NULL },
+    { NM_ITEM, "New " UNIT, "M", 0, 0, (APTR)M_NEW_SLIDE },
+    { NM_ITEM, "Duplicate " UNIT, NULL, 0, 0, (APTR)M_DUPLICATE_SLIDE },
+    { NM_ITEM, "Rename " UNIT "...", NULL, 0, 0, (APTR)M_RENAME_SLIDE },
+    { NM_ITEM, "Delete " UNIT, NULL, 0, 0, (APTR)M_DELETE_SLIDE },
+    { NM_ITEM, "Hide " UNIT, NULL, 0, 0, (APTR)M_HIDE_SLIDE },
+    { NM_ITEM, "Show " UNIT, NULL, 0, 0, (APTR)M_SHOW_SLIDE },
+    { NM_ITEM, UNIT " Transition...", NULL, 0, 0, (APTR)M_TRANSITION },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
-    { NM_ITEM, "Move Slide Up", NULL, 0, 0, (APTR)M_MOVE_SLIDE_UP },
-    { NM_ITEM, "Move Slide Down", NULL, 0, 0, (APTR)M_MOVE_SLIDE_DOWN },
+    { NM_ITEM, "Move " UNIT " Up", NULL, 0, 0, (APTR)M_MOVE_SLIDE_UP },
+    { NM_ITEM, "Move " UNIT " Down", NULL, 0, 0, (APTR)M_MOVE_SLIDE_DOWN },
 
     { NM_TITLE, "View", NULL, 0, 0, NULL },
-    { NM_ITEM, "First Slide", NULL, 0, 0, (APTR)M_FIRST },
-    { NM_ITEM, "Previous Slide", "[", 0, 0, (APTR)M_PREV },
-    { NM_ITEM, "Next Slide", "]", 0, 0, (APTR)M_NEXT },
-    { NM_ITEM, "Last Slide", NULL, 0, 0, (APTR)M_LAST },
+    { NM_ITEM, "First " UNIT, NULL, 0, 0, (APTR)M_FIRST },
+    { NM_ITEM, "Previous " UNIT, "[", 0, 0, (APTR)M_PREV },
+    { NM_ITEM, "Next " UNIT, "]", 0, 0, (APTR)M_NEXT },
+    { NM_ITEM, "Last " UNIT, NULL, 0, 0, (APTR)M_LAST },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Zoom In", "+", 0, 0, (APTR)M_ZOOM_IN },
     { NM_ITEM, "Zoom Out", "-", 0, 0, (APTR)M_ZOOM_OUT },
-    { NM_ITEM, "Fit Slide to Window", "0", 0, 0, (APTR)M_ZOOM_FIT },
+    { NM_ITEM, "Fit " UNIT " to Window", "0", 0, 0, (APTR)M_ZOOM_FIT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Buttons", NULL, 0, 0, NULL },
     { NM_SUB, "Icons and Text", NULL, CHECKIT, ~1 & 7, (APTR)M_TB_BOTH },
@@ -149,7 +169,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Loop from First", NULL, 0, 0, (APTR)M_SHOW_LOOP },
 
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
-    { NM_ITEM, "About GFOpenPresentation...", NULL, 0, 0, (APTR)M_ABOUT },
+    { NM_ITEM, "About " PROGRAM "...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -562,7 +582,7 @@ static int transition_requester(owf_transition *transition, int *apply_all)
                                  GTIN_Number, (LONG)(transition->advance_after >= 0 ? transition->advance_after : 5000),
                                  GTIN_MaxChars, 8, GA_TabCycle, TRUE, TAG_DONE);
     ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 185; ng.ng_TopEdge = 175; ng.ng_Width = 22; ng.ng_Height = 14;
-    ng.ng_GadgetText = (STRPTR)"Apply to all slides"; ng.ng_GadgetID = 6;
+    ng.ng_GadgetText = (STRPTR)"Apply to all " UNITS_LOWER; ng.ng_GadgetID = 6;
     last = gall = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, FALSE, TAG_DONE);
     ng.ng_Flags = 0; ng.ng_TopEdge = 198; ng.ng_Height = 20; ng.ng_Width = 78; ng.ng_LeftEdge = 330;
     ng.ng_GadgetText = (STRPTR)"Apply"; ng.ng_GadgetID = 7;
@@ -570,7 +590,7 @@ static int transition_requester(owf_transition *transition, int *apply_all)
     ng.ng_LeftEdge = 414; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 8;
     gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
     if (!geffect || !gdirection || !gduration || !gauto || !gdelay || !gall || !gok || !gcancel) goto out;
-    rw = OpenWindowTags(NULL, WA_Title, (ULONG)"Slide Transition", WA_PubScreen, (ULONG)scr,
+    rw = OpenWindowTags(NULL, WA_Title, (ULONG)TRANSITION_TITLE, WA_PubScreen, (ULONG)scr,
         WA_InnerWidth, ww, WA_InnerHeight, wh, WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
         WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
         WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
@@ -1643,12 +1663,12 @@ static void draw_status(void)
     if (!win) return;
     if (deck && deck->nslides) {
         int l = deck->slides[current].layout;
-        snprintf(s, sizeof s, "Slide %d of %d", current + 1, deck->nslides);
+        snprintf(s, sizeof s, UNIT " %d of %d", current + 1, deck->nslides);
         if (deck->slides[current].name)
             name_to_latin1(deck->slides[current].name, slide_name, sizeof slide_name);
         if (l >= 0 && l < deck->nlayouts) lname = layout_words(deck->layouts[l].name);
     } else {
-        snprintf(s, sizeof s, "No slides");
+        snprintf(s, sizeof s, "No " UNITS_LOWER);
     }
     ogt_status_set(&sbar, 0, s);
     if (slide_name[0] && lname) snprintf(detail, sizeof detail, "%s - %s", slide_name, lname);
@@ -1737,7 +1757,7 @@ static void draw_slide_part(const box *part)
         /* the window's own colour around the slide, so the slide stands out */
         ogt_fill(&ctx, rp, "window", view_box.x, view_box.y, view_box.w, view_box.h);
         if (!deck || !deck->nslides || slide_box.w <= 0) {
-            ogt_text(rp, ogt_pen(&ctx, "muted"), view_box.x + 16, view_box.y + 16, "No slides.", view_box.w - 32);
+            ogt_text(rp, ogt_pen(&ctx, "muted"), view_box.x + 16, view_box.y + 16, "No " UNITS_LOWER ".", view_box.w - 32);
             return;
         }
         if (slide_box.x > slide_area.x && slide_box.y > slide_area.y &&
@@ -1783,7 +1803,7 @@ static void draw_slide_part(const box *part)
     s = laid_get(current);
     paint_slide(rp, s, slide_box.x, slide_box.y, slide_box.w, &clip, 0, &sc);
     if (!s)
-        ogt_text(rp, ogt_pen(&ctx, "muted"), slide_box.x + 8, slide_box.y + 8, "Not enough memory to show this slide.",
+        ogt_text(rp, ogt_pen(&ctx, "muted"), slide_box.x + 8, slide_box.y + 8, "Not enough memory to show this " UNIT_LOWER ".",
                  slide_box.w - 16);
     draw_selection();
     draw_caret(s, &sc);
@@ -1850,7 +1870,7 @@ static void show_slide(int index)
     }
     {
         char msg[64];
-        snprintf(msg, sizeof msg, "Slide %d.", current + 1);
+        snprintf(msg, sizeof msg, UNIT " %d.", current + 1);
         set_status(msg);
     }
     draw_slide();
@@ -1885,10 +1905,10 @@ static void new_slide(void)
     if (layout < 0 || layout >= deck->nlayouts)
         layout = deck->nlayouts > 2 ? 2 : (deck->nlayouts ? 0 : -1);
     if (opr_slide_insert(undo, deck, deck->nslides ? current + 1 : 0, layout, &selected) < 0) {
-        tell(PROGRAM, "There is not enough memory for a new slide.");
+        tell(PROGRAM, "There is not enough memory for a new " UNIT_LOWER ".");
         return;
     }
-    structure_changed(selected, "New slide inserted.");
+    structure_changed(selected, "New " UNIT_LOWER " inserted.");
 }
 
 static void duplicate_current_slide(void)
@@ -1896,10 +1916,10 @@ static void duplicate_current_slide(void)
     int selected = current;
     if (!deck || current < 0 || current >= deck->nslides) return;
     if (opr_slide_duplicate(undo, deck, current, current + 1, &selected) < 0) {
-        tell(PROGRAM, "There is not enough memory to duplicate the slide.");
+        tell(PROGRAM, "There is not enough memory to duplicate the " UNIT_LOWER ".");
         return;
     }
-    structure_changed(selected, "Slide duplicated.");
+    structure_changed(selected, UNIT " duplicated.");
 }
 
 static void rename_current_slide(void)
@@ -1911,24 +1931,24 @@ static void rename_current_slide(void)
     if (deck->slides[current].name)
         name_to_latin1(deck->slides[current].name, initial, sizeof initial);
     else
-        snprintf(initial, sizeof initial, "Slide %d", current + 1);
-    if (!text_requester("Rename Slide", "Name", initial, entered, sizeof entered)) return;
+        snprintf(initial, sizeof initial, UNIT " %d", current + 1);
+    if (!text_requester("Rename " UNIT, "Name", initial, entered, sizeof entered)) return;
     utf8 = name_from_latin1(entered);
     if (!utf8) {
-        tell(PROGRAM, "There is not enough memory to rename the slide.");
+        tell(PROGRAM, "There is not enough memory to rename the " UNIT_LOWER ".");
         return;
     }
     rc = opr_slide_rename(undo, deck, current, utf8, &selected);
     owf_free(utf8);
     if (rc == -2) {
-        tell("Rename Slide", "A slide name must be unique and between 1 and 255 UTF-8 bytes.");
+        tell("Rename " UNIT, "A " UNIT_LOWER " name must be unique and between 1 and 255 UTF-8 bytes.");
         return;
     }
     if (rc < 0) {
-        tell(PROGRAM, "The slide could not be renamed.");
+        tell(PROGRAM, "The " UNIT_LOWER " could not be renamed.");
         return;
     }
-    structure_changed(selected, "Slide renamed.");
+    structure_changed(selected, UNIT " renamed.");
 }
 
 static void delete_slide(void)
@@ -1936,29 +1956,29 @@ static void delete_slide(void)
     int selected = current;
     if (!deck || !deck->nslides) return;
     if (deck->nslides == 1) {
-        tell(PROGRAM, "A presentation must keep at least one slide.");
+        tell(PROGRAM, "A " DOCUMENT_LOWER " must keep at least one " UNIT_LOWER ".");
         return;
     }
     if (opr_slide_delete(undo, deck, current, &selected) < 0) {
-        tell(PROGRAM, "The slide could not be deleted.");
+        tell(PROGRAM, "The " UNIT_LOWER " could not be deleted.");
         return;
     }
-    structure_changed(selected, "Slide deleted.");
+    structure_changed(selected, UNIT " deleted.");
 }
 
 static void move_slide(int direction)
 {
     int selected = current, to = current + direction;
     if (!deck || to < 0 || to >= deck->nslides) {
-        set_status(direction < 0 ? "This is already the first slide." : "This is already the last slide.");
+        set_status(direction < 0 ? "This is already the first " UNIT_LOWER "." : "This is already the last " UNIT_LOWER ".");
         draw_status();
         return;
     }
     if (opr_slide_move(undo, deck, current, to, &selected) < 0) {
-        tell(PROGRAM, "The slide could not be moved.");
+        tell(PROGRAM, "The " UNIT_LOWER " could not be moved.");
         return;
     }
-    structure_changed(selected, direction < 0 ? "Slide moved up." : "Slide moved down.");
+    structure_changed(selected, direction < 0 ? UNIT " moved up." : UNIT " moved down.");
 }
 
 static void set_current_hidden(int hidden)
@@ -1967,15 +1987,15 @@ static void set_current_hidden(int hidden)
     if (!deck || current < 0 || current >= deck->nslides) return;
     hidden = hidden != 0;
     if (deck->slides[current].hidden == hidden) {
-        set_status(hidden ? "This slide is already hidden." : "This slide is already shown.");
+        set_status(hidden ? "This " UNIT_LOWER " is already hidden." : "This " UNIT_LOWER " is already shown.");
         draw_status();
         return;
     }
     if (opr_slide_set_hidden(undo, deck, current, hidden, &selected) < 0) {
-        tell(PROGRAM, "The slide's show setting could not be changed.");
+        tell(PROGRAM, "The " UNIT_LOWER "'s show setting could not be changed.");
         return;
     }
-    structure_changed(selected, hidden ? "Slide hidden from the show." : "Slide included in the show.");
+    structure_changed(selected, hidden ? UNIT " hidden from the show." : UNIT " included in the show.");
 }
 
 static void edit_current_transition(void)
@@ -1987,14 +2007,14 @@ static void edit_current_transition(void)
     if (!transition_requester(&transition, &apply_all)) return;
     rc = opr_slide_set_transition(undo, deck, current, &transition, apply_all, &selected);
     if (rc == -2) {
-        tell("Slide Transition", "Duration must be 0 to 600000 ms and automatic advance 0 to 86399999 ms.");
+        tell(TRANSITION_TITLE, "Duration must be 0 to 600000 ms and automatic advance 0 to 86399999 ms.");
         return;
     }
     if (rc < 0) {
-        tell(PROGRAM, "There is not enough memory to change the slide transition.");
+        tell(PROGRAM, "There is not enough memory to change the " UNIT_LOWER " transition.");
         return;
     }
-    structure_changed(selected, apply_all ? "Transition applied to all slides." : "Slide transition changed.");
+    structure_changed(selected, apply_all ? "Transition applied to all " UNITS_LOWER "." : UNIT " transition changed.");
 }
 
 /* ---- Full-screen show ----
@@ -2250,7 +2270,7 @@ static void run_show(int from, int loop)
     int running = 1, blank = 0, number = 0, have_time = 0, drawn_slide, drawn_blank = 0;
     ULONG last_seconds = 0, last_micros = 0;
     if (!deck || opr_show_begin(&show, deck, from, loop) < 0) {
-        tell("Slide Show", "There is no visible slide to show.");
+        tell(SHOW_TITLE, "There is no visible " UNIT_LOWER " to show.");
         return;
     }
     stop_typing();
@@ -2263,7 +2283,7 @@ static void run_show(int from, int loop)
                   IDCMP_RAWKEY | IDCMP_INTUITICKS,
         TAG_DONE);
     if (!sw) {
-        tell("Slide Show", "The full-screen show window could not open.");
+        tell(SHOW_TITLE, "The full-screen show window could not open.");
         return;
     }
     show_buffers_open(&buffers, sw->Width, sw->Height);
@@ -2706,7 +2726,7 @@ static void do_undo(int redo)
     int was_typing = edit_obj >= 0;
     if ((redo ? opr_undo_redo(undo, deck, &slide, &obj) : opr_undo_undo(undo, deck, &slide, &obj)) < 0) return;
     if (obj < 0) {
-        structure_changed(slide, redo ? "Slide change redone." : "Slide change undone.");
+        structure_changed(slide, redo ? UNIT " change redone." : UNIT " change undone.");
         return;
     }
     slide_changed(slide);
@@ -2749,7 +2769,7 @@ static void set_deck(owf_deck *d, const char *path, const char *format)
 static int confirm_discard(void)
 {
     if (!dirty) return 1;
-    return ask(PROGRAM, "The presentation has changes that are not saved.\n\nLose them?", "Lose Them|Cancel") == 1;
+    return ask(PROGRAM, "The " DOCUMENT_LOWER " has changes that are not saved.\n\nLose them?", "Lose Them|Cancel") == 1;
 }
 
 static int ask_file(int save, const char *title, const char *initial, char *out, size_t out_size)
@@ -2791,19 +2811,37 @@ static void open_deck(const char *path)
 {
     owf_deck *d = NULL;
     owf_report *report = owf_report_new();
+#ifdef OPENPUBLISHER
+    int version = OWF_PUB_UNKNOWN;
+#else
     const owf_deck_format *used = NULL;
+#endif
     char msg[600];
+#ifdef OPENPUBLISHER
+    int rc = opp_import_pub_file(path, &d, report, &version);
+#else
     int rc = owf_import_deck_file(path, NULL, &d, report, &used);
+#endif
     if (rc != OWF_OK || !d) {
         snprintf(msg, sizeof msg, PROGRAM " could not open %.200s.\n\n%.200s", leaf(path),
+#ifdef OPENPUBLISHER
+                 rc == OWF_ERR_FORMAT ? "It is not a Microsoft Publisher file GFOpenPublisher reads." : owf_error_text(rc));
+#else
                  rc == OWF_ERR_FORMAT ? "It is not a presentation GFOpenPresentation reads (ODP or PPTX)." : owf_error_text(rc));
+#endif
         tell("Open", msg);
         owf_report_free(report);
         return;
     }
+#ifdef OPENPUBLISHER
+    set_deck(d, path, "PUB");
+    snprintf(msg, sizeof msg, "%s, %d page%s%s.", owf_pub_version_name(version), d->nslides,
+             d->nslides == 1 ? "" : "s", owf_report_count(report) ? "; some parts shown simpler" : "");
+#else
     set_deck(d, path, used && !strcmp(used->name, "pptx") ? "PPTX" : "ODP");
     snprintf(msg, sizeof msg, "%d slide%s%s.", d->nslides, d->nslides == 1 ? "" : "s",
              owf_report_count(report) ? "; some parts shown simpler" : "");
+#endif
     set_status(msg);
     owf_report_free(report);
 }
@@ -2812,14 +2850,20 @@ static void new_deck(void)
 {
     owf_deck *d;
     if (!confirm_discard()) return;
-    d = owf_deck_new(OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT);
+    d = owf_deck_new(
+#ifdef OPENPUBLISHER
+                     11906, 16838
+#else
+                     OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT
+#endif
+                     );
     if (!d || !owf_deck_add_slide(d, -1, 1)) {      /* a title slide */
         owf_deck_free(d);
-        tell(PROGRAM, "There is not enough memory for a new presentation.");
+        tell(PROGRAM, "There is not enough memory for a new " DOCUMENT_LOWER ".");
         return;
     }
     set_deck(d, "", "ODP");
-    set_status("A new presentation: click a box to type in it.");
+    set_status("A new " DOCUMENT_LOWER ": click a box to type in it.");
     relayout();
 }
 
@@ -2827,7 +2871,7 @@ static void do_open(void)
 {
     char path[512];
     if (!confirm_discard()) return;
-    if (!ask_file(0, "Open a presentation", NULL, path, sizeof path)) return;
+    if (!ask_file(0, "Open a " DOCUMENT_LOWER, NULL, path, sizeof path)) return;
     open_deck(path);
     relayout();
 }
@@ -2858,7 +2902,7 @@ static void do_save_as(void)
     char path[512], name[128];
     if (!deck) return;
     with_extension(current_path, "odp", name, sizeof name);
-    if (ask_file(1, "Save the presentation as ODP", name, path, sizeof path)) {
+    if (ask_file(1, "Save the " DOCUMENT_LOWER " as ODP", name, path, sizeof path)) {
         size_t n = strlen(path);
         if (n < 4 || (strcmp(path + n - 4, ".odp") && strcmp(path + n - 4, ".ODP")))
             snprintf(path + n, sizeof path - n, ".odp");
@@ -2899,8 +2943,8 @@ static void do_export_pdf(void)
     char path[512], name[128], msg[600];
     if (!deck) return;
     with_extension(current_path, "pdf", name, sizeof name);
-    if (!ask_file(1, "Export the slides as PDF", name, path, sizeof path)) return;
-    if (write_pdf(path)) snprintf(msg, sizeof msg, "%.200s written: a page a slide.", leaf(path));
+    if (!ask_file(1, "Export the " UNITS_LOWER " as PDF", name, path, sizeof path)) return;
+    if (write_pdf(path)) snprintf(msg, sizeof msg, "%.200s written: one PDF page per %s.", leaf(path), UNIT_LOWER);
     else snprintf(msg, sizeof msg, "%.200s could not be written.", leaf(path));
     set_status(msg);
     draw_status();
@@ -2927,7 +2971,7 @@ static void do_print(void)
     with_extension(current_path, "pdf", name, sizeof name);
     snprintf(path, sizeof path, "T:%s", name);
     if (!write_pdf(path)) {
-        set_status("The slides couldn't be made ready to print.");
+        set_status("The " UNITS_LOWER " couldn't be made ready to print.");
         draw_status();
         return;
     }
@@ -2940,7 +2984,7 @@ static void do_print(void)
         if (out) Close(out);
         set_status("GFOpenPrint couldn't be started.");
     } else {
-        set_status("GFOpenPrint's Print window is open for these slides.");
+        set_status("GFOpenPrint's Print window is open for these " UNITS_LOWER ".");
     }
     draw_status();
 }
@@ -2948,12 +2992,20 @@ static void do_print(void)
 static void about(void)
 {
     char text[400];
+#ifdef OPENPUBLISHER
+    snprintf(text, sizeof text,
+             VERSION_TEXT "\nThe GFOffice Suite's desktop publisher.\n\nOpens Microsoft Publisher files as positioned pages,\n"
+             "saves ODP, exports PDF and prints through GFOpenPrint.\n\nPublisher core %s, presentation core %s, libowf %s, GFOpenLayout %s.\n"
+             "MIT, Copyright (c) 2026 AmiCradle Team.",
+             OPP_CORE_VERSION, OPR_CORE_VERSION, OWF_VERSION, OL_VERSION);
+#else
     snprintf(text, sizeof text,
              VERSION_TEXT "\nThe GFOffice Suite's slides.\n\nOpens ODP and PPTX, saves ODP, exports PDF,\n"
              "prints through GFOpenPrint, and runs a full-screen show.\n"
              "F5: first; Shift-F5: current; Esc: end.\n\nCore %s, libowf %s, GFOpenLayout %s.\n"
              "MIT, Copyright (c) 2026 AmiCradle Team.",
              OPR_CORE_VERSION, OWF_VERSION, OL_VERSION);
+#endif
     tell("About " PROGRAM, text);
 }
 
@@ -3312,7 +3364,13 @@ static int window_main(int argc, char **argv)
             AddPart((STRPTR)first, w->sm_ArgList[1].wa_Name, sizeof first);
     }
     {
-        owf_deck *d = owf_deck_new(OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT);
+        owf_deck *d = owf_deck_new(
+#ifdef OPENPUBLISHER
+                                      11906, 16838
+#else
+                                      OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT
+#endif
+                                      );
         if (!d || !owf_deck_add_slide(d, -1, 1) || !undo) {
             owf_deck_free(d);
             rc = 20;

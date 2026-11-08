@@ -252,7 +252,7 @@ into GFOpenWrite's documents.
 
 | Format | Open | Save | Knowledge | Phase | State |
 | --- | --- | --- | --- | --- | --- |
-| Microsoft Publisher (`.pub`), 2002/2003 to 2013 and later | Yes (P0 reader) | P3, if wanted | No published spec: learnt from samples alone, in [MS-CFB] compound files; [gfoffice/PUB-FORMAT.md](gfoffice/PUB-FORMAT.md) | P0-P1 | The version, page size, pages, master pages, frames (boxes and kinds: text, picture, table, line, shape, group), text as paragraphs, tables' and WordArt's text, fonts, pictures (PNG, JPEG, GIF, DIB, WMF). Formatting, wrap and linked frames: P1. Not shown yet (P1) |
+| Microsoft Publisher (`.pub`), 2002/2003 to 2013 and later | Yes (P0 reader and GFOpenPublisher 0.1.0) | ODP and PDF from the imported model; `.pub` P3, if wanted | No published spec: learnt from samples alone, in [MS-CFB] compound files; [gfoffice/PUB-FORMAT.md](gfoffice/PUB-FORMAT.md) | P1a | The version, page size, pages, master pages, ordered/grouped frames, plain text, table dimensions, WordArt text, fonts and supported pictures enter the shared positioned-page model. The native app views pages, exports PDF and prints. Formatting, wrap, linked frames, columns, shape appearance and WMF/EMF playback remain P1. |
 | Microsoft Publisher 98 and 2000 formats | Yes (P0 reader) | No | The same | P0-P1 | Version, page size, pages, frames, text, tables. Master pages and pictures: P1 |
 | Microsoft Publisher 97 and older | Version and page size | No | One sample | P1 | To do |
 | PageStream 1-5 (Amiga) | P2, import only | No | Samples needed (none found on GitHub) | P2 | To do |

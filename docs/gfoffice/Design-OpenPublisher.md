@@ -254,7 +254,24 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | `tests/pub/` | Samples, expected dumps, `pub_dump.c`, `test_pub.py`, `CORPUS.md`, `fetch_samples.sh` |
 | `tools/publab/` | The format lab's tools (PUB-FORMAT 1) |
 | `src/pub/` (P1) | GFOpenPublisher's portable core, host-tested, as `src/calc` |
-| `app/openpublisher*.c` (P1) | The Amiga program (GFOpenGadTools) |
+| `app/openpresent.c` with `OPENPUBLISHER` (P1a) | The Amiga page window, sharing Presentation's GFOpenLayout renderer rather than copying it |
+
+### P1a delivered base (8 November 2026)
+
+`include/openpublisher_core.h` and `src/pub/opp_import.c` deep-convert P0's
+publication into the shared deck/page model: page size and order, master
+assignment and master frames, back-to-front frame order, groups, boxes, plain
+stories, table column counts, fonts and pictures. The source `owf_pub` remains
+independently owned. `app/openpresent.c` builds a separately branded
+GFOpenPublisher 0.1.0 with page menus; it opens `.pub` directly and inherits
+the shared screen renderer, page strip, PDF export, GFOpenPrint path and ODP
+save. `make publisher-core-test` and `publisher-core-check` verify conversion
+and real PDF output on both text-only and picture-rich publications.
+
+This is a functional P1a base, not a claim of faithful Publisher appearance:
+P0 has not decoded text/paragraph formatting, fill and line colours, crops,
+wrap, columns or linked frames, and the PDF picture encoder does not yet play
+WMF/EMF. The import report calls the plain styling approximation out.
 
 `in_pub.c` needs `owf_cfb.c`, which GFOpenWrite's own build and owf.library
 leave out, so P0 leaves `in_pub.c` out of those two builds too
