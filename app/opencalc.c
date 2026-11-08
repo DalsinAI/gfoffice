@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.33 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.34 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -2282,7 +2282,7 @@ static void about(void)
          "GFOpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
          "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n"
-         "Editable AutoFilter value lists\n"
+         "Editable multi-column AutoFilter value lists\n"
          "Searchable PDF export and GFOpenPrint printing\n\n"
          "MIT licence, Copyright (c) 2026 AmiCradle Team.");
 }
@@ -2620,8 +2620,7 @@ static void menu_action(ULONG id)
     case M_FILTER_ACTIVE: do_filter_active(); break;
     case M_FILTER_CLEAR:
         if (!oc_core_has_autofilter(core)) set_status("This sheet has no AutoFilter.");
-        else result(oc_core_filter_value(core, oc_core_book(core)->sheets[oc_core_sheet(core)].autofilter.first_col, NULL),
-                    "Every AutoFilter row is shown.");
+        else result(oc_core_filter_clear(core), "Every AutoFilter row is shown.");
         break;
     case M_MERGE: do_merge(1); break;
     case M_UNMERGE: do_merge(0); break;
@@ -3250,7 +3249,7 @@ static void pick_filter(unsigned col, int bx, int by, int bw, int bh)
     chosen = choice_popup(bx, by, bw, bh, shown, n + 1, NULL);
     if (chosen >= 0) {
         rc = oc_core_filter_value(core, col, chosen ? items[chosen - 1] : NULL);
-        result(rc, chosen ? "Rows filtered by value." : "Every AutoFilter row is shown.");
+        result(rc, chosen ? "Rows filtered by value." : "This column's filter is cleared.");
     }
     free(shown);
     oc_choices_free(items, n);

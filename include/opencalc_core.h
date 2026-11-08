@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.1.6"
+#define OC_CORE_VERSION "0.1.7"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -282,14 +282,17 @@ int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header)
 int oc_core_has_autofilter(const oc_core *core);
 int oc_core_set_autofilter(oc_core *core, int enabled);
 /* Distinct displayed values below the heading for one of the AutoFilter's
- * columns, sorted as text. The strings and array are freed with
- * oc_choices_free. At most 1000 are returned. */
+ * columns, sorted as text. Rows excluded by another column are left out;
+ * this column's own condition is ignored. The strings and array are freed
+ * with oc_choices_free. At most 1000 are returned. */
 int oc_core_filter_choices(oc_core *core, unsigned col, char ***items, int *n);
 /* Shows only rows whose displayed value in col equals value (ASCII case
- * insensitive). NULL removes the value condition but leaves the buttons.
- * The current implementation has one value condition at a time; choosing
- * another column replaces it. Undoable and written to XLSX/ODS. */
+ * insensitive), in addition to every other column's condition. NULL removes
+ * this column's condition but leaves the others and the buttons. */
 int oc_core_filter_value(oc_core *core, unsigned col, const char *value);
+/* Removes every column condition and shows the table again, leaving its
+ * buttons. Filtering changes are undoable and written to XLSX/ODS. */
+int oc_core_filter_clear(oc_core *core);
 
 /* Merges the selection's one rectangular range, or unmerges every merged
  * range it touches. A merge keeps the top-left cell. When another nonempty

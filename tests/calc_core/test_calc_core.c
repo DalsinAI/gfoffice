@@ -2073,6 +2073,24 @@ static void test_filter_commands(void)
           strstr(sheet->autofilter_xml, "val=\"West\""));
     CHECK(oc_core_filter_choices(core, 1, &items, &n) == OWF_OK && n == 3); /* hidden values remain choices */
     oc_choices_free(items, n);
+    items = NULL;
+    n = 0;
+    CHECK(oc_core_filter_choices(core, 2, &items, &n) == OWF_OK && n == 2); /* other column narrows the list */
+    if (n == 2) {
+        CHECK_STR(items[0], "10");
+        CHECK_STR(items[1], "30");
+    }
+    oc_choices_free(items, n);
+    CHECK(oc_core_filter_value(core, 2, "30") == OWF_OK);          /* Region=West AND Amount=30 */
+    CHECK(row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "colId=\"1\"") &&
+          strstr(sheet->autofilter_xml, "colId=\"2\"") && strstr(sheet->autofilter_xml, "val=\"30\""));
+    CHECK(oc_core_filter_clear(core) == OWF_OK && !sheet->autofilter_xml);
+    CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && !row_hidden(core, 3) && !row_hidden(core, 4));
+    CHECK(oc_core_undo(core) == OWF_OK);                           /* both conditions return */
+    CHECK(row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(oc_core_filter_value(core, 2, NULL) == OWF_OK);          /* All in Amount, keep Region */
+    CHECK(!row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) && row_hidden(core, 4));
 
     CHECK(oc_core_filter_value(core, 1, "R&D") == OWF_OK);
     CHECK(row_hidden(core, 1) && row_hidden(core, 2) && row_hidden(core, 3) && !row_hidden(core, 4));
@@ -2084,18 +2102,25 @@ static void test_filter_commands(void)
     CHECK(oc_core_redo(core) == OWF_OK);
     sheet = &oc_core_book(core)->sheets[0];
     CHECK(row_hidden(core, 1) && !row_hidden(core, 4) && strstr(sheet->autofilter_xml, "R&amp;D"));
+    CHECK(oc_core_filter_value(core, 2, "40") == OWF_OK);         /* two columns survive both formats */
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "colId=\"1\"") &&
+          strstr(sheet->autofilter_xml, "colId=\"2\"") && strstr(sheet->autofilter_xml, "val=\"40\""));
     CHECK(oc_core_save(core, path, NULL, NULL) == OWF_OK);
     CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK);
     sheet = &oc_core_book(core)->sheets[0];
     CHECK(sheet->has_autofilter && sheet->autofilter_xml && strstr(sheet->autofilter_xml, "R&amp;D") &&
+          strstr(sheet->autofilter_xml, "colId=\"2\"") && strstr(sheet->autofilter_xml, "val=\"40\"") &&
           row_hidden(core, 1) && !row_hidden(core, 4));
     CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
     CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
     sheet = &oc_core_book(core)->sheets[0];
     CHECK(sheet->has_autofilter && sheet->autofilter_xml && strstr(sheet->autofilter_xml, "R&amp;D") &&
+          strstr(sheet->autofilter_xml, "colId=\"2\"") && strstr(sheet->autofilter_xml, "val=\"40\"") &&
           row_hidden(core, 1) && !row_hidden(core, 4));
 
-    CHECK(oc_core_filter_value(core, 1, NULL) == OWF_OK && sheet->has_autofilter && !sheet->autofilter_xml);
+    CHECK(oc_core_filter_value(core, 2, NULL) == OWF_OK && sheet->has_autofilter && sheet->autofilter_xml &&
+          strstr(sheet->autofilter_xml, "R&amp;D") && !strstr(sheet->autofilter_xml, "colId=\"2\""));
+    CHECK(oc_core_filter_clear(core) == OWF_OK && sheet->has_autofilter && !sheet->autofilter_xml);
     CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && !row_hidden(core, 3) && !row_hidden(core, 4));
     CHECK(owf_sheet_set_row(sheet, 3, sheet->default_height, 1) == 0); /* a manually hidden matching row */
     CHECK(oc_core_filter_value(core, 1, "West") == OWF_OK && row_hidden(core, 2) && row_hidden(core, 3) && row_hidden(core, 4));
