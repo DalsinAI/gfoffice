@@ -124,7 +124,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Insert picture from file | P3 | Model |
+| Insert picture from file | P3 | Yes in GFOpenPresentation 0.6.1: datatype-supported files are embedded, aspect-fitted, selected, undoable and saved to ODP through the shared Presentation/Publisher core |
 | Crop | P1 | Yes: read, written, and drawn on screen and in PDF from shared OpenLayout metadata |
 | Resize, keep ratio | P3 | Model |
 | Colour modes (greyscale, black and white, watermark), filters, transparency | Later | No |

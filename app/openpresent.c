@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.2.0 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.2.1 (8.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.0 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.1 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -109,7 +109,7 @@ enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
-    M_INSERT_TEXTBOX, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
+    M_INSERT_TEXTBOX, M_INSERT_PICTURE, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
     M_INSERT_DIAMOND, M_INSERT_ARROW, M_INSERT_LINE,
     M_ROTATE_LEFT, M_ROTATE_RIGHT,
     M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
@@ -144,6 +144,7 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Insert", NULL, 0, 0, NULL },
     { NM_ITEM, "Text Box", NULL, 0, 0, (APTR)M_INSERT_TEXTBOX },
+    { NM_ITEM, "Picture...", NULL, 0, 0, (APTR)M_INSERT_PICTURE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Rectangle", NULL, 0, 0, (APTR)M_INSERT_RECT },
     { NM_ITEM, "Rounded Rectangle", NULL, 0, 0, (APTR)M_INSERT_ROUNDRECT },
@@ -283,6 +284,7 @@ static void draw_all(void);
 static void draw_slide(void);
 static void draw_status(void);
 static void layout(void);
+static void insert_picture(void);
 
 /* ---- Small helpers ---- */
 
@@ -3282,6 +3284,123 @@ static int ask_file(int save, const char *title, const char *initial, char *out,
     return ok;
 }
 
+static const char *picture_mime(const char *path)
+{
+    const char *e = path ? strrchr(path, '.') : NULL;
+    if (!e) return "application/octet-stream";
+    if (!strcasecmp(e, ".png")) return "image/png";
+    if (!strcasecmp(e, ".jpg") || !strcasecmp(e, ".jpeg")) return "image/jpeg";
+    if (!strcasecmp(e, ".gif")) return "image/gif";
+    if (!strcasecmp(e, ".webp")) return "image/webp";
+    if (!strcasecmp(e, ".bmp")) return "image/bmp";
+    if (!strcasecmp(e, ".iff") || !strcasecmp(e, ".ilbm") || !strcasecmp(e, ".lbm"))
+        return "image/iff";
+    return "application/octet-stream";
+}
+
+static int picture_file(const char *path, unsigned char **data, size_t *length)
+{
+    BPTR f;
+    LONG size, got;
+    unsigned char *p;
+    *data = NULL;
+    *length = 0;
+    f = Open((STRPTR)path, MODE_OLDFILE);
+    if (!f) return 0;
+    Seek(f, 0, OFFSET_END);
+    size = Seek(f, 0, OFFSET_BEGINNING);
+    if (size <= 0 || size > 32 * 1024 * 1024) {
+        Close(f);
+        return 0;
+    }
+    p = (unsigned char *)malloc((size_t)size);
+    if (!p) {
+        Close(f);
+        return 0;
+    }
+    got = Read(f, p, size);
+    Close(f);
+    if (got != size) {
+        free(p);
+        return 0;
+    }
+    *data = p;
+    *length = (size_t)size;
+    return 1;
+}
+
+static void insert_picture(void)
+{
+    char path[512];
+    unsigned char *data = NULL;
+    size_t length = 0;
+    Object *dto = NULL;
+    struct BitMapHeader *bmh = NULL;
+    opr_picture_spec spec;
+    int natural_w = 4320, natural_h = 2880, max_w, max_h, selected = -1;
+    if (!deck || current < 0 || current >= deck->nslides)
+        return;
+    if (!ask_file(0, "Insert a picture", NULL, path, sizeof path))
+        return;
+    if (!picture_file(path, &data, &length)) {
+        tell("Insert Picture", "The picture is empty, larger than 32 MB, or could not be read.");
+        return;
+    }
+    if (DataTypesBase) {
+        dto = NewDTObject((APTR)path, DTA_GroupID, GID_PICTURE,
+                          PDTA_DestMode, PMODE_V43, PDTA_Remap, FALSE, TAG_DONE);
+        if (dto) {
+            GetDTAttrs(dto, PDTA_BitMapHeader, (ULONG)&bmh, TAG_DONE);
+            if (bmh && bmh->bmh_Width && bmh->bmh_Height) {
+                natural_w = (int)bmh->bmh_Width * 15;
+                natural_h = (int)bmh->bmh_Height * 15;
+            }
+            DisposeDTObject(dto);
+        }
+    }
+    memset(&spec, 0, sizeof spec);
+    spec.width = natural_w;
+    spec.height = natural_h;
+    max_w = deck->width * 2 / 3;
+    max_h = deck->height * 2 / 3;
+    if (spec.width > max_w) {
+        spec.height = (int)((long long)spec.height * max_w / spec.width);
+        spec.width = max_w;
+    }
+    if (spec.height > max_h) {
+        spec.width = (int)((long long)spec.width * max_h / spec.height);
+        spec.height = max_h;
+    }
+    if (spec.width < 1) spec.width = 1;
+    if (spec.height < 1) spec.height = 1;
+    spec.x = (deck->width - spec.width) / 2;
+    spec.y = (deck->height - spec.height) / 2;
+    spec.name = leaf(path);
+    spec.mime = picture_mime(path);
+    spec.alt = leaf(path);
+    spec.data = data;
+    spec.length = length;
+    spec.natural_width = natural_w;
+    spec.natural_height = natural_h;
+    if (opr_obj_insert_picture(undo, deck, current, &spec, &selected) < 0) {
+        free(data);
+        tell("Insert Picture", "The picture could not be embedded in this " DOCUMENT_LOWER ".");
+        return;
+    }
+    free(data);
+    stop_typing();
+    selected_obj = selected;
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Picture embedded; drag it or use Object to position and size it.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 /* The file's name with another extension: "Talk.pptx" as "Talk.odp". */
 static void with_extension(const char *path, const char *ext, char *out, size_t size)
 {
@@ -3559,6 +3678,7 @@ static void menu_action(ULONG id)
         draw_slide();
         break;
     case M_INSERT_TEXTBOX: insert_textbox(); break;
+    case M_INSERT_PICTURE: insert_picture(); break;
     case M_INSERT_RECT: insert_shape(OWF_SHAPE_RECT); break;
     case M_INSERT_ROUNDRECT: insert_shape(OWF_SHAPE_ROUNDRECT); break;
     case M_INSERT_ELLIPSE: insert_shape(OWF_SHAPE_ELLIPSE); break;

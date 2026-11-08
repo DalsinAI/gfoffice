@@ -1420,6 +1420,59 @@ int opr_obj_insert_textbox(opr_undo *u, owf_deck *deck, int slide,
     return 0;
 }
 
+int opr_obj_insert_picture(opr_undo *u, owf_deck *deck, int slide,
+                           const opr_picture_spec *spec, int *selected)
+{
+    snapshot s;
+    owf_obj *o;
+    int image, index, i;
+    if (!u || !deck || !deck->res || !spec || slide < 0 || slide >= deck->nslides)
+        return -1;
+    if (spec->x < 0 || spec->y < 0 || spec->width < 1 || spec->height < 1 ||
+        (long)spec->x + spec->width > deck->width ||
+        (long)spec->y + spec->height > deck->height ||
+        !spec->data || !spec->length || spec->natural_width < 1 ||
+        spec->natural_height < 1 || !spec->name || !*spec->name ||
+        !spec->mime || !*spec->mime)
+        return -2;
+    for (i = 0; i < 4; i++)
+        if (spec->crop[i] < 0 || spec->crop[i] >= 1000)
+            return -2;
+    if (spec->crop[0] + spec->crop[2] >= 1000 ||
+        spec->crop[1] + spec->crop[3] >= 1000)
+        return -2;
+    index = deck->slides[slide].nobjs;
+    o = owf_slide_add(&deck->slides[slide], OWF_OBJ_PICTURE);
+    if (!o)
+        return -1;
+    o->x = spec->x;
+    o->y = spec->y;
+    o->width = spec->width;
+    o->height = spec->height;
+    memcpy(o->crop, spec->crop, sizeof o->crop);
+    if (owf_deck_set_text(&o->name, spec->name) < 0 ||
+        owf_deck_set_text(&o->alt, spec->alt) < 0) {
+        owf_slide_delete(&deck->slides[slide], index);
+        return -1;
+    }
+    image = owf_doc_add_image(deck->res, spec->name, spec->mime,
+                              spec->data, spec->length,
+                              spec->natural_width, spec->natural_height, spec->alt);
+    if (image < 0) {
+        owf_slide_delete(&deck->slides[slide], index);
+        return -1;
+    }
+    o->image = image;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_PRESENCE;
+    s.slide = slide;
+    s.obj = index;
+    s.focus = s.other_focus = slide;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
 int opr_obj_duplicate(opr_undo *u, owf_deck *deck, int slide, int obj,
                       int offset_x, int offset_y, int *selected)
 {

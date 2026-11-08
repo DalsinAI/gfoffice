@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.6.0"
+#define OPR_CORE_VERSION "0.7.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -178,6 +178,23 @@ typedef struct {
  * inset, vertical alignment or look; -1 means bad input or no memory. */
 int opr_obj_insert_textbox(opr_undo *u, owf_deck *deck, int slide,
                            const opr_textbox_spec *spec, int *selected);
+/* A new embedded picture. The resource bytes and metadata are copied into
+ * deck->res; coordinates are slide twips and crop is thousandths cut from
+ * left, top, right and bottom. */
+typedef struct {
+    int x, y, width, height;
+    int crop[4];
+    const char *name, *mime, *alt;
+    const void *data;
+    size_t length;
+    int natural_width, natural_height; /* picture's uncropped size, twips */
+} opr_picture_spec;
+/* Append a picture and select it, as one undo step. The operation is
+ * transactional: invalid input or an allocation failure leaves neither an
+ * object nor an embedded resource behind. -2 means invalid geometry, crop or
+ * resource metadata; -1 means bad input or no memory. */
+int opr_obj_insert_picture(opr_undo *u, owf_deck *deck, int slide,
+                           const opr_picture_spec *spec, int *selected);
 /* Deep-copy one ungrouped object, offset its resolved box by the requested
  * twips (clamped to the slide), append and select it as one undo step. Owned
  * text, points, lists, table widths and metadata are independent. */

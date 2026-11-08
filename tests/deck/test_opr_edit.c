@@ -9,6 +9,8 @@
  *   - an empty placeholder takes its first paragraph at its kind's level;
  *   - undo and redo, sixteen steps, including inserting, deleting and moving
  *     whole slides without losing their content;
+ *   - authored text boxes and embedded pictures, transactional validation,
+ *     object-presence undo/redo and ODP round trips;
  *   - the caret and the pointer through the laid-out slide: the caret moves
  *     right as the offset grows, and a click on the caret gives the same
  *     position back, in a bulleted paragraph too;
@@ -722,6 +724,94 @@ static void textbox_insertion(void)
     owf_deck_free(d);
 }
 
+static void picture_insertion(void)
+{
+    static const unsigned char png[] = {
+        0x89, 'P', 'N', 'G', 13, 10, 26, 10, 0, 0, 0, 13, 'I', 'H', 'D', 'R',
+        0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0, 0x90, 0x77, 0x53, 0xde,
+        0, 0, 0, 12, 'I', 'D', 'A', 'T', 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0,
+        0, 0, 0x03, 0x01, 0x01, 0, 0x18, 0xdd, 0x8d, 0xb0,
+        0, 0, 0, 0, 'I', 'E', 'N', 'D', 0xae, 0x42, 0x60, 0x82
+    };
+    owf_deck *d = owf_deck_new(10000, 8000);
+    owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    opr_undo *u = opr_undo_new();
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    opr_picture_spec spec, invalid;
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_deck *back = NULL;
+    int selected = -1, slide = -1, obj = -1;
+    CHECK(d && s && u, "a deck for picture insertion");
+    if (!d || !s || !u) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    memset(&spec, 0, sizeof spec);
+    spec.x = 900; spec.y = 700; spec.width = 4800; spec.height = 3200;
+    /* Multiples representable by this deliberately tiny 1px fixture. */
+    spec.crop[0] = 67; spec.crop[1] = 67; spec.crop[2] = 67; spec.crop[3] = 133;
+    spec.name = "tiny.png"; spec.mime = "image/png"; spec.alt = "Tiny test picture";
+    spec.data = png; spec.length = sizeof png;
+    spec.natural_width = 1440; spec.natural_height = 960;
+    CHECK(!opr_obj_insert_picture(u, d, 0, &spec, &selected) && selected == 0 &&
+          s->nobjs == 1 && d->res->nimages == 1 && s->objs[0].kind == OWF_OBJ_PICTURE,
+          "insert, embed and select a picture");
+    CHECK(s->objs[0].image == 0 && s->objs[0].x == spec.x &&
+          s->objs[0].width == spec.width && s->objs[0].crop[3] == 133 &&
+          s->objs[0].name && !strcmp(s->objs[0].name, spec.name) &&
+          s->objs[0].alt && !strcmp(s->objs[0].alt, spec.alt) &&
+          d->res->images[0].length == sizeof png &&
+          !memcmp(d->res->images[0].data, png, sizeof png),
+          "the picture owns its geometry, crop, description and resource bytes");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == -1 && !s->nobjs,
+          "undo picture insertion removes the object");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && obj == 0 && s->nobjs == 1 &&
+          s->objs[0].kind == OWF_OBJ_PICTURE && s->objs[0].image == 0,
+          "redo picture insertion restores and selects it");
+    opr_undo_clear(u);
+    invalid = spec; invalid.data = NULL;
+    CHECK(opr_obj_insert_picture(u, d, 0, &invalid, &selected) == -2 &&
+          s->nobjs == 1 && d->res->nimages == 1,
+          "missing picture bytes are refused without orphaning a resource");
+    invalid = spec; invalid.crop[0] = 950; invalid.crop[2] = 50;
+    CHECK(opr_obj_insert_picture(u, d, 0, &invalid, &selected) == -2 &&
+          s->nobjs == 1 && d->res->nimages == 1,
+          "a crop that removes the picture is refused transactionally");
+    invalid = spec; invalid.x = d->width - spec.width + 1;
+    CHECK(opr_obj_insert_picture(u, d, 0, &invalid, &selected) == -2 &&
+          s->nobjs == 1 && d->res->nimages == 1,
+          "an out-of-page picture is refused transactionally");
+
+    CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
+          "the authored picture saves as ODP");
+    CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
+          "the authored picture reads back");
+    if (back) {
+        const owf_obj *saved = &back->slides[0].objs[0];
+        CHECK(back->slides[0].nobjs == 1 && saved->kind == OWF_OBJ_PICTURE &&
+              saved->image >= 0 && saved->image < back->res->nimages,
+              "the picture object and resource survive the ODP round trip");
+        CHECK(saved->x == spec.x && saved->width == spec.width,
+              "picture geometry survives the ODP round trip: %d/%d, %d/%d",
+              saved->x, spec.x, saved->width, spec.width);
+        CHECK(saved->crop[0] == spec.crop[0] && saved->crop[3] == spec.crop[3],
+              "picture crop survives the ODP round trip: %d/%d, %d/%d",
+              saved->crop[0], spec.crop[0], saved->crop[3], spec.crop[3]);
+        CHECK(saved->alt && !strcmp(saved->alt, spec.alt),
+              "picture description survives the ODP round trip: %s",
+              saved->alt ? saved->alt : "(null)");
+        CHECK(saved->image >= 0 && saved->image < back->res->nimages &&
+              back->res->images[saved->image].length == sizeof png,
+              "picture bytes survive the ODP round trip");
+    }
+    owf_deck_free(back);
+    free(data);
+    opr_undo_free(u);
+    owf_deck_free(d);
+}
+
 static void caret_and_pointer(owf_deck *d)
 {
     int title = obj_named(d, 0, "Title 1"), body = obj_named(d, 1, "Content Placeholder 2"), f, k;
@@ -809,6 +899,7 @@ int main(int argc, char **argv)
     object_alignment();
     object_appearance();
     textbox_insertion();
+    picture_insertion();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

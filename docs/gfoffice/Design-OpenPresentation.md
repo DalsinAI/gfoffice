@@ -478,6 +478,15 @@ one object-presence undo step. The native shared window selects it and enters
 typing immediately. ODP round-trip coverage verifies the authored frame rather
 than only imported text.
 
+GFOpenPresentation 0.6.1 and GFOpenPublisher 0.2.1 add Insert > Picture. The
+shared native requester reads up to 32 MB, asks datatypes for the natural
+dimensions, preserves the aspect ratio while fitting the picture to the
+slide/page and calls `opr_obj_insert_picture`. That portable operation owns
+the compressed resource bytes, name, MIME type, alt text, geometry and crop,
+and commits object plus resource transactionally as one undoable presence
+change. The authored picture uses the existing OpenLayout crop/display data,
+datatype screen cache, PDF renderer and ODP round trip.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

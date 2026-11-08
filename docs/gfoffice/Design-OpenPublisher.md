@@ -280,6 +280,14 @@ it and starts typing immediately. Movement, resize, exact geometry, appearance,
 arranging, alignment, duplication, deletion and ODP persistence then use the
 same reusable object lifecycle as imported publication frames.
 
+GFOpenPublisher 0.2.1 adds Insert > Picture through that same core. The native
+file requester and Amiga datatypes discover the picture and its natural size;
+one transactional portable-core operation copies its compressed bytes,
+metadata, alt text and page geometry into the shared model, selects it and
+records one undo step. Failed inserts leave neither a frame nor an orphaned
+resource. The existing OpenLayout screen/PDF path, movement, resize,
+duplication and ODP persistence then handle the authored picture.
+
 This is a functional P1a base, not a claim of faithful Publisher appearance:
 P0 has not decoded text/paragraph formatting, fill and line colours, crops,
 wrap, columns or linked frames, and the PDF picture encoder does not yet play
