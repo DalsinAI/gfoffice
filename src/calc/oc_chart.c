@@ -1279,9 +1279,12 @@ static void point_label(render *r, const char *s, int x, int y, int m, int pos)
 }
 
 typedef struct {
-    int kind, degree;
-    double c[7], centre, scale;
+    int kind, degree, has_r2;
+    double c[7], centre, scale, r2;
 } trendfit;
+
+static int trend_value(const trendfit *fit, double x, double *out);
+static void trend_quality(const chartdata *cd, int series, int scatter_values, trendfit *fit);
 
 /* Least-squares fitting over a series' visible numeric points. Category
  * charts use 1..n as x; scatters use their cached x values. */
@@ -1378,16 +1381,21 @@ static int polynomial_trend(const chartdata *cd, int series, int scatter_values,
 static int make_trend(const chartdata *cd, int series, int scatter_values, const owf_chart_series *se, trendfit *fit)
 {
     double a, b;
+    int ok;
     memset(fit, 0, sizeof *fit);
     fit->kind = se->trendline;
     if (se->trendline == OWF_TREND_POLYNOMIAL)
-        return polynomial_trend(cd, series, scatter_values,
-                                se->trend_order >= 2 && se->trend_order <= 6 ? se->trend_order : 2, fit);
-    if (se->trendline < OWF_TREND_LINEAR || se->trendline > OWF_TREND_POWER ||
-        !trend_linear(cd, series, scatter_values, se->trendline, &a, &b)) return 0;
-    fit->c[0] = se->trendline == OWF_TREND_EXPONENTIAL || se->trendline == OWF_TREND_POWER ? exp(a) : a;
-    fit->c[1] = b;
-    return fit->c[0] > -1e200 && fit->c[0] < 1e200;
+        ok = polynomial_trend(cd, series, scatter_values,
+                              se->trend_order >= 2 && se->trend_order <= 6 ? se->trend_order : 2, fit);
+    else {
+        if (se->trendline < OWF_TREND_LINEAR || se->trendline > OWF_TREND_POWER ||
+            !trend_linear(cd, series, scatter_values, se->trendline, &a, &b)) return 0;
+        fit->c[0] = se->trendline == OWF_TREND_EXPONENTIAL || se->trendline == OWF_TREND_POWER ? exp(a) : a;
+        fit->c[1] = b;
+        ok = fit->c[0] > -1e200 && fit->c[0] < 1e200;
+    }
+    if (ok) trend_quality(cd, series, scatter_values, fit);
+    return ok;
 }
 
 static int trend_value(const trendfit *fit, double x, double *out)
@@ -1413,6 +1421,131 @@ static int trend_value(const trendfit *fit, double x, double *out)
     if (!(y > -1e200 && y < 1e200)) return 0;
     *out = y;
     return 1;
+}
+
+/* Office's exponential and power fits are linear regressions in logarithmic
+ * space, so their displayed coefficient of determination is measured there. */
+static void trend_quality(const chartdata *cd, int series, int scatter_values, trendfit *fit)
+{
+    double sum = 0, sum2 = 0, error = 0;
+    int k, n = 0;
+    for (k = 0; k < cd->n; k++) {
+        size_t at = (size_t)series * (size_t)cd->n + (size_t)k;
+        double x, y, predicted;
+        if (!cd->has[at]) continue;
+        x = scatter_values ? cd->x[at] : k + 1.0;
+        y = cd->v[at];
+        if ((fit->kind == OWF_TREND_LOGARITHMIC && x <= 0) ||
+            (fit->kind == OWF_TREND_EXPONENTIAL && y <= 0) ||
+            (fit->kind == OWF_TREND_POWER && (x <= 0 || y <= 0)) || !trend_value(fit, x, &predicted)) continue;
+        if (fit->kind == OWF_TREND_EXPONENTIAL || fit->kind == OWF_TREND_POWER) {
+            if (predicted <= 0) continue;
+            y = log(y);
+            predicted = log(predicted);
+        }
+        sum += y;
+        sum2 += y * y;
+        error += (y - predicted) * (y - predicted);
+        n++;
+    }
+    if (n >= 2) {
+        double total = sum2 - sum * sum / n;
+        fit->r2 = total > 1e-200 ? 1 - error / total : error < 1e-20 ? 1 : 0;
+        if (fit->r2 > 1 && fit->r2 < 1 + 1e-9) fit->r2 = 1;
+        fit->has_r2 = fit->r2 > -1e200 && fit->r2 < 1e200;
+    }
+}
+
+static int choose(int n, int k)
+{
+    static const int binomial[7][7] = {
+        { 1 }, { 1, 1 }, { 1, 2, 1 }, { 1, 3, 3, 1 }, { 1, 4, 6, 4, 1 },
+        { 1, 5, 10, 10, 5, 1 }, { 1, 6, 15, 20, 15, 6, 1 }
+    };
+    return n >= 0 && n <= 6 && k >= 0 && k <= n ? binomial[n][k] : 0;
+}
+
+static void append_text(char *out, size_t size, const char *s)
+{
+    size_t at = strlen(out);
+    if (at + 1 < size) strncat(out, s, size - at - 1);
+}
+
+static void append_number(char *out, size_t size, double value)
+{
+    char number[40];
+    if (fabs(value) < 5e-12) value = 0;
+    snprintf(number, sizeof number, "%.4g", value);
+    append_text(out, size, number);
+}
+
+static void append_term(char *out, size_t size, double coefficient, int power, int *first)
+{
+    double a = fabs(coefficient);
+    if (a < 5e-12) return;
+    if (!*first) append_text(out, size, coefficient < 0 ? " - " : " + ");
+    else if (coefficient < 0) append_text(out, size, "-");
+    append_number(out, size, a);
+    if (power) {
+        append_text(out, size, "x");
+        if (power > 1) {
+            char p[16];
+            snprintf(p, sizeof p, "^%d", power);
+            append_text(out, size, p);
+        }
+    }
+    *first = 0;
+}
+
+static int trend_equation(const trendfit *fit, char *out, size_t size)
+{
+    double c[7];
+    int first = 1, i, j;
+    memset(c, 0, sizeof c);
+    strcpy(out, "y = ");
+    if (fit->kind == OWF_TREND_EXPONENTIAL) {
+        append_number(out, size, fit->c[0]); append_text(out, size, "e^(");
+        append_number(out, size, fit->c[1]); append_text(out, size, "x)");
+        return 1;
+    }
+    if (fit->kind == OWF_TREND_LOGARITHMIC) {
+        append_number(out, size, fit->c[1]); append_text(out, size, "ln(x)");
+        if (fit->c[0] < 0) append_text(out, size, " - "); else append_text(out, size, " + ");
+        append_number(out, size, fabs(fit->c[0]));
+        return 1;
+    }
+    if (fit->kind == OWF_TREND_POWER) {
+        append_number(out, size, fit->c[0]); append_text(out, size, "x^");
+        append_number(out, size, fit->c[1]);
+        return 1;
+    }
+    if (fit->kind == OWF_TREND_LINEAR) {
+        c[0] = fit->c[0]; c[1] = fit->c[1];
+    } else if (fit->kind == OWF_TREND_POLYNOMIAL) {
+        for (i = 0; i <= fit->degree; i++) {
+            double scale = pow(fit->scale, i);
+            for (j = 0; j <= i; j++)
+                c[j] += fit->c[i] * choose(i, j) * pow(-fit->centre, i - j) / scale;
+        }
+    } else return 0;
+    for (i = fit->kind == OWF_TREND_LINEAR ? 1 : fit->degree; i >= 0; i--)
+        append_term(out, size, c[i], i, &first);
+    if (first) append_text(out, size, "0");
+    return 1;
+}
+
+static void trend_annotation(render *r, const owf_chart_series *se, const trendfit *fit, int x, int y, int width)
+{
+    char buf[320];
+    if (se->trend_display_equation && trend_equation(fit, buf, sizeof buf)) {
+        text(r, buf, x, y, width, r->lh, OC_ALIGN_LEFT, LABEL_TWIPS, 0);
+        y += r->lh;
+    }
+    if (se->trend_display_r2 && fit->has_r2) {
+        strcpy(buf, "R^2 = ");
+        append_number(buf, sizeof buf, fit->r2);
+        text(r, buf, x, y, width, r->lh, OC_ALIGN_LEFT, LABEL_TWIPS, 0);
+    }
 }
 
 static int moving_average(const chartdata *cd, int series, int at, int period, double *out)
@@ -1710,6 +1843,7 @@ static int categories(render *r)
                     g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
                 last_x = xx; last_y = yy; last_v = raw; has_last = 1;
             }
+            trend_annotation(r, se, &fit, ax0 + 4, ay0 + 2 + s * r->lh * 2, ax1 - ax0 - 8);
         }
     (void)across;
     return 1;
@@ -1846,6 +1980,7 @@ static int scatter(render *r)
                     g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
                 last_x = xx; last_y = yy; last_v = raw; has_last = 1;
             }
+            trend_annotation(r, se, &fit, ax0 + 4, ay0 + 2 + s * r->lh * 2, ax1 - ax0 - 8);
         }
     }
     for (s = 0; s < cd->ns; s++) {               /* the labels over everything: a scatter's category is its x */

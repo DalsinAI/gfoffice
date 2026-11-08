@@ -2877,6 +2877,19 @@ static const oc_draw_item *find_text(const oc_draw_list *l, const char *s)
     return NULL;
 }
 
+static const oc_draw_item *find_text_prefix(const oc_draw_list *l, const char *s)
+{
+    int i, chart = 0;
+    size_t n = strlen(s);
+    for (i = 0; i < l->n; i++) {
+        if (l->items[i].kind == OC_DRAW_FILL && l->items[i].role == OC_ROLE_CHART && l->items[i].rgb == 0xFFFFFF)
+            chart = 1;
+        if (chart && l->items[i].kind == OC_DRAW_TEXT && l->items[i].text && !strncmp(l->items[i].text, s, n))
+            return &l->items[i];
+    }
+    return NULL;
+}
+
 /* Whether a fill of a colour is about a part of the tallest one (h * times = tall * parts). */
 static int has_bar(const oc_draw_list *l, unsigned long rgb, int tall, int parts, int times)
 {
@@ -3390,7 +3403,8 @@ static void test_chart_authoring(void)
           c.series[0].trend_display_r2 && c.series[0].trend_colour == OWF_SHADE(0x7030A0));
     chart_free(&c);
     oc_draw_list_init(&l);
-    CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_SEGMENT, 0x7030A0) >= 1);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_SEGMENT, 0x7030A0) >= 1 &&
+          find_text_prefix(&l, "y = 25x - 20") && find_text_prefix(&l, "R^2 = 0.8929"));
     oc_draw_list_free(&l);
     CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 &&
           c.series[0].trendline == OWF_TREND_NONE);
@@ -3400,7 +3414,9 @@ static void test_chart_authoring(void)
         edit.trendline = trend_type;
         CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK);
         oc_draw_list_init(&l);
-        CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_SEGMENT, 0x7030A0) >= 1);
+        CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_SEGMENT, 0x7030A0) >= 1 &&
+              (trend_type == OWF_TREND_MOVING_AVERAGE ? !find_text_prefix(&l, "y = ") :
+               find_text_prefix(&l, "y = ") && find_text_prefix(&l, "R^2 = ")));
         oc_draw_list_free(&l);
     }
     edit.trendline = OWF_TREND_LINEAR;
