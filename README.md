@@ -294,13 +294,14 @@ Shift-F5 from the current slide. The reusable `opr_show` state machine skips
 hidden slides, follows automatic timings, loops when asked and handles first,
 last, next, previous, numbered and explicit hidden-slide navigation. The
 player also has black and white screens. Its public-screen backend plays cut,
-directional wipe, push and deterministic dissolve transitions through two
+ordered crossfade and fade-through-black, directional wipe, push, cover,
+uncover, centre split, eight-strip blinds and deterministic dissolve through
 off-screen bitmaps, with a cut fallback when memory or frame time is short.
 Slide > Slide Transition edits each slide's effect, direction, duration and
 automatic advance delay, can apply the settings to every slide, and is one
 undoable operation. These settings are saved in ODP and drive the player.
-Reusable transition geometry sits beside the show state and is host-tested by
-`make deck-show-test`. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
+Reusable transition plans and ordered-fade masks sit beside the show state and
+are host-tested by `make deck-show-test`. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
 T:<name>.pdf`), and Export PDF writes one. View > Zoom In and Zoom Out (+
 and -) show the slide up to four times the window's fit, with scrollers; the
 window's zoom gadget fills the screen. The remaining transitions, an optional

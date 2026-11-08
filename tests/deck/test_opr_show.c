@@ -105,11 +105,31 @@ static void timings(void)
     owf_deck_free(deck);
 }
 
+static int transition_part_inside(const opr_blit *part, int width, int height)
+{
+    return part->source_x >= 0 && part->source_y >= 0 && part->dest_x >= 0 && part->dest_y >= 0 &&
+           part->width > 0 && part->height > 0 && part->source_x + part->width <= width &&
+           part->dest_x + part->width <= width && part->source_y + part->height <= height &&
+           part->dest_y + part->height <= height;
+}
+
+static int transition_visible_new(const opr_transition_plan *plan, int width, int height)
+{
+    int i, area = plan->base_new ? width * height : 0;
+    if (plan->base_new)
+        for (i = 0; i < plan->old_count; i++) area -= plan->old_parts[i].width * plan->old_parts[i].height;
+    else
+        for (i = 0; i < plan->new_count; i++) area += plan->new_parts[i].width * plan->new_parts[i].height;
+    return area;
+}
+
 static void transitions(void)
 {
     opr_transition_frame f;
+    opr_transition_plan plan;
     opr_blit tile;
-    int seen[24] = { 0 }, i, area = 0;
+    unsigned short pattern[4], previous[4] = { 0, 0, 0, 0 };
+    int seen[24] = { 0 }, i, j, area = 0;
     CHECK(opr_transition_frame_at(OWF_TRANS_WIPE, OWF_DIR_LEFT, 120, 80, 1, 4, &f) == 0 &&
           !f.have_old && f.have_new && f.new_part.source_x == 0 && f.new_part.dest_x == 0 &&
           f.new_part.width == 30 && f.new_part.height == 80, "wipe from the left");
@@ -145,6 +165,83 @@ static void transitions(void)
           opr_transition_frame_at(OWF_TRANS_WIPE, OWF_DIR_LEFT, 120, 80, 0, 4, &f) < 0,
           "bad transition frames are refused");
 
+    CHECK(!opr_transition_plan_at(OWF_TRANS_COVER, OWF_DIR_LEFT, 120, 80, 1, 4, &plan) &&
+          !plan.base_new && !plan.old_count && plan.new_count == 1 &&
+          plan.new_parts[0].source_x == 90 && plan.new_parts[0].dest_x == 0 &&
+          plan.new_parts[0].width == 30, "cover slides the new screen over the old one");
+    CHECK(!opr_transition_plan_at(OWF_TRANS_UNCOVER, OWF_DIR_RIGHT, 120, 80, 1, 4, &plan) &&
+          plan.base_new && plan.old_count == 1 && !plan.new_count &&
+          plan.old_parts[0].source_x == 30 && plan.old_parts[0].dest_x == 0 &&
+          plan.old_parts[0].width == 90, "uncover moves the old screen off the new one");
+    CHECK(!opr_transition_plan_at(OWF_TRANS_SPLIT, OWF_DIR_LEFT, 120, 80, 2, 4, &plan) &&
+          !plan.base_new && plan.new_count == 1 && plan.new_parts[0].source_x == 30 &&
+          plan.new_parts[0].dest_x == 30 && plan.new_parts[0].width == 60 &&
+          plan.new_parts[0].height == 80, "a vertical split opens from the centre");
+    CHECK(!opr_transition_plan_at(OWF_TRANS_SPLIT, OWF_DIR_UP, 120, 80, 2, 4, &plan) &&
+          plan.new_count == 1 && plan.new_parts[0].source_y == 20 &&
+          plan.new_parts[0].height == 40 && plan.new_parts[0].width == 120,
+          "a horizontal split opens from the centre");
+    CHECK(!opr_transition_plan_at(OWF_TRANS_BLINDS, OWF_DIR_LEFT, 80, 40, 1, 2, &plan) &&
+          plan.new_count == 8, "vertical blinds have eight strips");
+    area = 0;
+    for (i = 0; i < plan.new_count; i++) {
+        CHECK(plan.new_parts[i].source_x == i * 10 && plan.new_parts[i].dest_x == i * 10 &&
+              plan.new_parts[i].width == 5 && plan.new_parts[i].height == 40,
+              "vertical blind strip %d", i);
+        area += plan.new_parts[i].width * plan.new_parts[i].height;
+    }
+    CHECK(area == 80 * 40 / 2, "half-open blinds reveal half the screen: %d", area);
+    CHECK(!opr_transition_plan_at(OWF_TRANS_BLINDS, OWF_DIR_DOWN, 80, 80, 2, 2, &plan) &&
+          plan.new_count == 8 && plan.new_parts[0].dest_y == 0 && plan.new_parts[7].dest_y == 70,
+          "horizontal blinds finish with eight complete strips");
+    CHECK(opr_transition_plan_at(OWF_TRANS_FADE, OWF_DIR_LEFT, 120, 80, 1, 4, &plan) < 0 &&
+          opr_transition_plan_at(OWF_TRANS_COVER, OWF_DIR_LEFT, -1, 80, 1, 4, &plan) < 0,
+          "bad geometric transition plans are refused");
+
+    for (i = OWF_TRANS_WIPE; i <= OWF_TRANS_BLINDS; i++) {
+        int direction;
+        for (direction = OWF_DIR_LEFT; direction <= OWF_DIR_DOWN; direction++) {
+            int previous_area = -1, step;
+            for (step = 1; step <= 4; step++) {
+                int visible;
+                CHECK(!opr_transition_plan_at((owf_transition_kind)i, direction, 83, 50, step, 4, &plan),
+                      "transition %d direction %d frame %d has a plan", i, direction, step);
+                CHECK(plan.old_count >= 0 && plan.old_count <= OPR_TRANSITION_MAX_PARTS &&
+                      plan.new_count >= 0 && plan.new_count <= OPR_TRANSITION_MAX_PARTS,
+                      "transition %d direction %d frame %d has bounded parts", i, direction, step);
+                for (j = 0; j < plan.old_count; j++)
+                    CHECK(transition_part_inside(&plan.old_parts[j], 83, 50),
+                          "transition %d direction %d old part %d is on screen", i, direction, j);
+                for (j = 0; j < plan.new_count; j++)
+                    CHECK(transition_part_inside(&plan.new_parts[j], 83, 50),
+                          "transition %d direction %d new part %d is on screen", i, direction, j);
+                visible = transition_visible_new(&plan, 83, 50);
+                CHECK(visible >= previous_area && visible >= 0 && visible <= 83 * 50,
+                      "transition %d direction %d frame %d reveals monotonically: %d", i, direction, step, visible);
+                previous_area = visible;
+            }
+            CHECK(previous_area == 83 * 50, "transition %d direction %d ends completely new", i, direction);
+        }
+    }
+
+    for (i = 1; i <= 16; i++) {
+        int bits = 0;
+        CHECK(!opr_transition_pattern_at(i, 16, pattern), "fade pattern %d", i);
+        for (j = 0; j < 4; j++) {
+            unsigned short newly_cleared = (unsigned short)(previous[j] & (unsigned short)~pattern[j]);
+            unsigned short word = pattern[j];
+            CHECK(!newly_cleared, "fade pattern %d row %d is monotonic", i, j);
+            while (word) { bits += word & 1u; word >>= 1; }
+            previous[j] = pattern[j];
+        }
+        CHECK(bits == i * 4, "fade pattern %d sets %d repeated bits", i, bits);
+    }
+    CHECK(pattern[0] == 0xffffu && pattern[1] == 0xffffu && pattern[2] == 0xffffu && pattern[3] == 0xffffu,
+          "the last fade pattern is solid");
+    CHECK(opr_transition_pattern_at(0, 16, pattern) < 0 && opr_transition_pattern_at(1, 0, pattern) < 0,
+          "bad fade patterns are refused");
+
+    area = 0;
     CHECK(opr_transition_tile_count(83, 50) == 24, "a dissolve's tile count");
     for (i = 0; i < 24; i++) {
         int cell;

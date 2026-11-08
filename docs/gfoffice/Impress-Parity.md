@@ -182,8 +182,8 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Transitions per slide, apply to all | P1 (data), P3 (editing) | Yes in GFOpenPresentation 0.3.2: effect, direction, duration and automatic delay are editable per slide or for every slide as one undoable operation, and saved in ODP |
-| Cut, wipe, push, cover, uncover, split, blinds, dissolve | P2 (wipe, push, dissolve), P4 (the rest) | Cut, directional wipe, push and dissolve: Yes in GFOpenPresentation 0.3.2; the others can be selected and saved but remain cut in the player |
-| Fade smoothly, fade through black | P4 | Model |
+| Cut, wipe, push, cover, uncover, split, blinds, dissolve | P2 (wipe, push, dissolve), P4 (the rest) | Yes in GFOpenPresentation 0.3.3: directional geometric effects and deterministic dissolve are animated by reusable frame plans |
+| Fade smoothly, fade through black | P4 | Yes in GFOpenPresentation 0.3.3, as ordered masked fades that work on planar and RTG screens |
 | The other effects (wheel, shape, box, checkerboard, circle, newsflash, random...) | Later | Kept, shown as a cut |
 | Speed (slow, medium, fast) | P2 | Yes as an exact editable duration in milliseconds |
 | Sound with a transition | Later | No |

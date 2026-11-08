@@ -144,67 +144,146 @@ int opr_show_tick(opr_show *show, unsigned long milliseconds)
     return opr_show_next(show);
 }
 
-int opr_transition_frame_at(owf_transition_kind kind, int direction, int width, int height,
-                            int step, int steps, opr_transition_frame *frame)
+static void transition_part(opr_blit *part, int sx, int sy, int dx, int dy, int width, int height)
 {
-    int amount;
-    if (!frame || width <= 0 || height <= 0 || step < 1 || steps < 1 || step > steps ||
-        direction < OWF_DIR_LEFT || direction > OWF_DIR_DOWN ||
-        (kind != OWF_TRANS_WIPE && kind != OWF_TRANS_PUSH))
+    part->source_x = sx;
+    part->source_y = sy;
+    part->dest_x = dx;
+    part->dest_y = dy;
+    part->width = width;
+    part->height = height;
+}
+
+int opr_transition_plan_at(owf_transition_kind kind, int direction, int width, int height,
+                           int step, int steps, opr_transition_plan *plan)
+{
+    int amount, i;
+    if (!plan || width <= 0 || height <= 0 || step < 1 || steps < 1 || step > steps ||
+        direction < OWF_DIR_LEFT || direction > OWF_DIR_DOWN || kind < OWF_TRANS_WIPE ||
+        kind > OWF_TRANS_BLINDS)
         return -1;
-    memset(frame, 0, sizeof *frame);
+    memset(plan, 0, sizeof *plan);
     if (direction == OWF_DIR_LEFT || direction == OWF_DIR_RIGHT) {
         amount = (int)((long)width * step / steps);
         if (kind == OWF_TRANS_WIPE) {
-            frame->have_new = amount > 0;
-            frame->new_part.source_x = frame->new_part.dest_x = direction == OWF_DIR_RIGHT ? width - amount : 0;
-            frame->new_part.width = amount;
-            frame->new_part.height = height;
-        } else if (direction == OWF_DIR_LEFT) {
-            frame->have_new = amount > 0;
-            frame->new_part.source_x = width - amount;
-            frame->new_part.width = amount;
-            frame->new_part.height = height;
-            frame->have_old = amount < width;
-            frame->old_part.dest_x = amount;
-            frame->old_part.width = width - amount;
-            frame->old_part.height = height;
-        } else {
-            frame->have_old = amount < width;
-            frame->old_part.source_x = amount;
-            frame->old_part.width = width - amount;
-            frame->old_part.height = height;
-            frame->have_new = amount > 0;
-            frame->new_part.dest_x = width - amount;
-            frame->new_part.width = amount;
-            frame->new_part.height = height;
+            if (amount > 0)
+                transition_part(&plan->new_parts[plan->new_count++], direction == OWF_DIR_RIGHT ? width - amount : 0,
+                                0, direction == OWF_DIR_RIGHT ? width - amount : 0, 0, amount, height);
+        } else if (kind == OWF_TRANS_PUSH || kind == OWF_TRANS_COVER) {
+            if (kind == OWF_TRANS_PUSH && amount < width) {
+                if (direction == OWF_DIR_LEFT)
+                    transition_part(&plan->old_parts[plan->old_count++], 0, 0, amount, 0, width - amount, height);
+                else
+                    transition_part(&plan->old_parts[plan->old_count++], amount, 0, 0, 0, width - amount, height);
+            }
+            if (amount > 0) {
+                if (direction == OWF_DIR_LEFT)
+                    transition_part(&plan->new_parts[plan->new_count++], width - amount, 0, 0, 0, amount, height);
+                else
+                    transition_part(&plan->new_parts[plan->new_count++], 0, 0, width - amount, 0, amount, height);
+            }
+        } else if (kind == OWF_TRANS_UNCOVER) {
+            plan->base_new = 1;
+            if (amount < width) {
+                if (direction == OWF_DIR_LEFT)
+                    transition_part(&plan->old_parts[plan->old_count++], 0, 0, amount, 0, width - amount, height);
+                else
+                    transition_part(&plan->old_parts[plan->old_count++], amount, 0, 0, 0, width - amount, height);
+            }
+        } else if (kind == OWF_TRANS_SPLIT) {
+            int start = (width - amount) / 2;
+            if (amount > 0)
+                transition_part(&plan->new_parts[plan->new_count++], start, 0, start, 0, amount, height);
+        } else { /* vertical blinds */
+            for (i = 0; i < OPR_TRANSITION_MAX_PARTS; i++) {
+                int start = width * i / OPR_TRANSITION_MAX_PARTS;
+                int end = width * (i + 1) / OPR_TRANSITION_MAX_PARTS;
+                int reveal = (end - start) * step / steps;
+                int x = direction == OWF_DIR_RIGHT ? end - reveal : start;
+                if (reveal > 0)
+                    transition_part(&plan->new_parts[plan->new_count++], x, 0, x, 0, reveal, height);
+            }
         }
     } else {
         amount = (int)((long)height * step / steps);
         if (kind == OWF_TRANS_WIPE) {
-            frame->have_new = amount > 0;
-            frame->new_part.source_y = frame->new_part.dest_y = direction == OWF_DIR_DOWN ? height - amount : 0;
-            frame->new_part.width = width;
-            frame->new_part.height = amount;
-        } else if (direction == OWF_DIR_UP) {
-            frame->have_new = amount > 0;
-            frame->new_part.source_y = height - amount;
-            frame->new_part.width = width;
-            frame->new_part.height = amount;
-            frame->have_old = amount < height;
-            frame->old_part.dest_y = amount;
-            frame->old_part.width = width;
-            frame->old_part.height = height - amount;
-        } else {
-            frame->have_old = amount < height;
-            frame->old_part.source_y = amount;
-            frame->old_part.width = width;
-            frame->old_part.height = height - amount;
-            frame->have_new = amount > 0;
-            frame->new_part.dest_y = height - amount;
-            frame->new_part.width = width;
-            frame->new_part.height = amount;
+            if (amount > 0)
+                transition_part(&plan->new_parts[plan->new_count++], 0,
+                                direction == OWF_DIR_DOWN ? height - amount : 0, 0,
+                                direction == OWF_DIR_DOWN ? height - amount : 0, width, amount);
+        } else if (kind == OWF_TRANS_PUSH || kind == OWF_TRANS_COVER) {
+            if (kind == OWF_TRANS_PUSH && amount < height) {
+                if (direction == OWF_DIR_UP)
+                    transition_part(&plan->old_parts[plan->old_count++], 0, 0, 0, amount, width, height - amount);
+                else
+                    transition_part(&plan->old_parts[plan->old_count++], 0, amount, 0, 0, width, height - amount);
+            }
+            if (amount > 0) {
+                if (direction == OWF_DIR_UP)
+                    transition_part(&plan->new_parts[plan->new_count++], 0, height - amount, 0, 0, width, amount);
+                else
+                    transition_part(&plan->new_parts[plan->new_count++], 0, 0, 0, height - amount, width, amount);
+            }
+        } else if (kind == OWF_TRANS_UNCOVER) {
+            plan->base_new = 1;
+            if (amount < height) {
+                if (direction == OWF_DIR_UP)
+                    transition_part(&plan->old_parts[plan->old_count++], 0, 0, 0, amount, width, height - amount);
+                else
+                    transition_part(&plan->old_parts[plan->old_count++], 0, amount, 0, 0, width, height - amount);
+            }
+        } else if (kind == OWF_TRANS_SPLIT) {
+            int start = (height - amount) / 2;
+            if (amount > 0)
+                transition_part(&plan->new_parts[plan->new_count++], 0, start, 0, start, width, amount);
+        } else { /* horizontal blinds */
+            for (i = 0; i < OPR_TRANSITION_MAX_PARTS; i++) {
+                int start = height * i / OPR_TRANSITION_MAX_PARTS;
+                int end = height * (i + 1) / OPR_TRANSITION_MAX_PARTS;
+                int reveal = (end - start) * step / steps;
+                int y = direction == OWF_DIR_DOWN ? end - reveal : start;
+                if (reveal > 0)
+                    transition_part(&plan->new_parts[plan->new_count++], 0, y, 0, y, width, reveal);
+            }
         }
+    }
+    return 0;
+}
+
+int opr_transition_frame_at(owf_transition_kind kind, int direction, int width, int height,
+                            int step, int steps, opr_transition_frame *frame)
+{
+    opr_transition_plan plan;
+    if (!frame || (kind != OWF_TRANS_WIPE && kind != OWF_TRANS_PUSH) ||
+        opr_transition_plan_at(kind, direction, width, height, step, steps, &plan) < 0)
+        return -1;
+    memset(frame, 0, sizeof *frame);
+    if (plan.old_count) {
+        frame->have_old = 1;
+        frame->old_part = plan.old_parts[0];
+    }
+    if (plan.new_count) {
+        frame->have_new = 1;
+        frame->new_part = plan.new_parts[0];
+    }
+    return 0;
+}
+
+int opr_transition_pattern_at(int step, int steps, unsigned short pattern[4])
+{
+    static const unsigned char order[4][4] = {
+        { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 }
+    };
+    int level, x, y;
+    if (!pattern || step < 1 || steps < 1 || step > steps)
+        return -1;
+    level = (16 * step + steps - 1) / steps;
+    for (y = 0; y < 4; y++) {
+        unsigned short bits = 0;
+        for (x = 0; x < 16; x++)
+            if (order[y][x & 3] < level)
+                bits |= (unsigned short)(1u << (15 - x));
+        pattern[y] = bits;
     }
     return 0;
 }

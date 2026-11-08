@@ -446,9 +446,9 @@ friend bitmaps are used when they fit; allocation failure or an over-budget
 frame becomes a cut rather than a slow crawl. `src/deck/opr_show.c` is the
 reusable, host-tested state machine and transition-geometry layer
 for visible/hidden navigation, looping and automatic timing; the later
-own-screen, transition and ARexx backends use it rather than duplicating those
+own-screen and ARexx backends use it rather than duplicating those
 rules. The remaining subsections describe that delivered base and the still
-planned own-screen and animated-transition extensions.
+planned own-screen extension.
 
 GFOpenPresentation 0.3.2 adds the editor side: Slide > Slide Transition sets
 the effect, direction, duration and optional automatic advance delay for one
@@ -456,6 +456,16 @@ slide or every slide. `opr_slide_set_transition` validates and applies that
 state as one reusable undo step, including apply-to-all restoration of each
 slide's former setting. ODP save/readback and host tests cover the edited
 state; the player consumes the same model without a second settings layer.
+
+GFOpenPresentation 0.3.3 completes the modelled transition player set. The
+portable core produces complete per-frame plans for wipe, push, cover,
+uncover, centre split and eight-strip blinds, including each direction, and a
+four-row ordered-dither mask for crossfade and fade-through-black. The Amiga
+backend executes those plans against the two rendered slide bitmaps; dissolve
+retains its deterministic shuffled tiles. This keeps the semantics host-
+testable while supporting planar and RTG screens without requiring an alpha
+compositor. Allocation failure or a frame that misses its budget still falls
+back to the complete new slide.
 
 ### 7.1 Where it shows
 
@@ -514,8 +524,8 @@ show has a menu (right button): Next, Previous, Go to Slide, Black, End.
 | Cut | One copy | Yes | Yes |
 | Wipe, Push, Cover, Uncover, Split, Blinds | Rectangles copied from the two bitmaps (`BltBitMapRastPort`), 12 to 20 steps | Yes | Yes |
 | Dissolve | 16 x 16 blocks in a fixed shuffled order | Yes | Yes |
-| Fade through black | AGA and 8-bit screens: the palette stepped to black and back (`LoadRGB32`), almost free. RTG: each pixel blended per step | Yes | Where a step fits the frame time |
-| Fade (one slide into the next) | Each pixel blended per step | No: shown as fade through black | Where a step fits |
+| Fade through black | A four-row ordered mask fills black, then mask-blits the new bitmap (`BltMaskBitMapRastPort`) | Yes | Yes |
+| Fade (one slide into the next) | The same monotonically growing ordered mask blits the new bitmap over the old | Yes | Yes |
 | Others in the file | Shown as a cut, kept for save | | |
 
 Each step is timed. When a step takes longer than its share of the duration,

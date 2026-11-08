@@ -36,7 +36,9 @@
 #include <dos/var.h>
 #include <graphics/text.h>
 #include <graphics/gfx.h>
+#include <graphics/gfxmacros.h>
 #include <graphics/regions.h>
+#include <hardware/blit.h>
 #include <devices/inputevent.h>
 #include <datatypes/datatypes.h>
 #include <datatypes/datatypesclass.h>
@@ -79,7 +81,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.3.2 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.3.3 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -1982,8 +1984,8 @@ static void show_draw(struct Window *sw, const opr_show *show, int blank, int nu
 }
 
 typedef struct {
-    struct BitMap *old_bitmap, *new_bitmap;
-    struct RastPort old_rp, new_rp;
+    struct BitMap *old_bitmap, *new_bitmap, *mask_bitmap;
+    struct RastPort old_rp, new_rp, mask_rp;
 } show_buffers;
 
 static int show_buffers_open(show_buffers *b, int width, int height)
@@ -2004,6 +2006,11 @@ static int show_buffers_open(show_buffers *b, int width, int height)
     InitRastPort(&b->new_rp);
     b->old_rp.BitMap = b->old_bitmap;
     b->new_rp.BitMap = b->new_bitmap;
+    b->mask_bitmap = AllocBitMap((ULONG)width, (ULONG)height, 1, BMF_CLEAR, scr->RastPort.BitMap);
+    if (b->mask_bitmap) {
+        InitRastPort(&b->mask_rp);
+        b->mask_rp.BitMap = b->mask_bitmap;
+    }
     return 1;
 }
 
@@ -2012,6 +2019,7 @@ static void show_buffers_close(show_buffers *b)
     if (!b) return;
     if (b->old_bitmap) FreeBitMap(b->old_bitmap);
     if (b->new_bitmap) FreeBitMap(b->new_bitmap);
+    if (b->mask_bitmap) FreeBitMap(b->mask_bitmap);
     memset(b, 0, sizeof *b);
 }
 
@@ -2039,6 +2047,47 @@ static void show_blit(struct BitMap *bitmap, struct RastPort *rp, const opr_blit
                           part->width, part->height, 0xC0);
 }
 
+static void show_plan(struct Window *sw, const show_buffers *b, const opr_transition_plan *plan,
+                      int width, int height)
+{
+    int i;
+    BltBitMapRastPort(plan->base_new ? b->new_bitmap : b->old_bitmap, 0, 0, sw->RPort, 0, 0,
+                      width, height, 0xC0);
+    for (i = 0; i < plan->old_count; i++) show_blit(b->old_bitmap, sw->RPort, &plan->old_parts[i]);
+    for (i = 0; i < plan->new_count; i++) show_blit(b->new_bitmap, sw->RPort, &plan->new_parts[i]);
+}
+
+static int show_mask(show_buffers *b, int width, int height, int step, int steps)
+{
+    unsigned short pattern[4];
+    if (!b->mask_bitmap || opr_transition_pattern_at(step, steps, pattern) < 0)
+        return 0;
+    SetRast(&b->mask_rp, 0);
+    SetAPen(&b->mask_rp, 1);
+    SetDrMd(&b->mask_rp, JAM1);
+    SetAfPt(&b->mask_rp, pattern, 2);
+    RectFill(&b->mask_rp, 0, 0, width - 1, height - 1);
+    SetAfPt(&b->mask_rp, NULL, 0);
+    return 1;
+}
+
+static void show_masked_new(struct Window *sw, const show_buffers *b, int width, int height)
+{
+    BltMaskBitMapRastPort(b->new_bitmap, 0, 0, sw->RPort, 0, 0, width, height, ABC | ABNC | ANBC,
+                          b->mask_bitmap->Planes[0]);
+}
+
+static void show_fade_black(struct Window *sw, int width, int height, int step, int steps)
+{
+    unsigned short pattern[4];
+    if (opr_transition_pattern_at(step, steps, pattern) < 0) return;
+    ogt_set_apen(sw->RPort, argb_pen(0xff000000u));
+    SetDrMd(sw->RPort, JAM1);
+    SetAfPt(sw->RPort, pattern, 2);
+    RectFill(sw->RPort, 0, 0, width - 1, height - 1);
+    SetAfPt(sw->RPort, NULL, 0);
+}
+
 /* Animate the incoming slide's transition. Rendering remains shared with the
  * editor; when two screen-sized friend bitmaps do not fit, this deliberately
  * falls back to a cut rather than making a low-memory Amiga crawl. */
@@ -2053,7 +2102,8 @@ static void show_transition(struct Window *sw, show_buffers *b, const opr_show *
     }
     transition = &show->deck->slides[show->slide].transition;
     kind = transition->kind;
-    if (kind != OWF_TRANS_WIPE && kind != OWF_TRANS_PUSH && kind != OWF_TRANS_DISSOLVE) {
+    if (kind < OWF_TRANS_FADE || kind > OWF_TRANS_DISSOLVE ||
+        ((kind == OWF_TRANS_FADE || kind == OWF_TRANS_FADE_BLACK) && !b->mask_bitmap)) {
         show_draw(sw, show, 0, 0);
         return;
     }
@@ -2065,26 +2115,40 @@ static void show_transition(struct Window *sw, show_buffers *b, const opr_show *
     show_paint(&b->new_rp, width, height, show, 0, 0);
     BltBitMapRastPort(b->old_bitmap, 0, 0, sw->RPort, 0, 0, width, height, 0xC0);
 
-    if (kind == OWF_TRANS_WIPE) {
+    if (kind >= OWF_TRANS_WIPE && kind <= OWF_TRANS_BLINDS) {
         for (i = 1; i <= steps; i++) {
-            opr_transition_frame frame;
+            opr_transition_plan plan;
             struct DateStamp started;
             DateStamp(&started);
-            if (opr_transition_frame_at(kind, direction, width, height, i, steps, &frame) < 0) break;
-            if (frame.have_new) show_blit(b->new_bitmap, sw->RPort, &frame.new_part);
+            if (opr_transition_plan_at(kind, direction, width, height, i, steps, &plan) < 0) break;
+            show_plan(sw, b, &plan, width, height);
             if (!show_pause(&started, duration, steps)) break;
         }
-    } else if (kind == OWF_TRANS_PUSH) {
+    } else if (kind == OWF_TRANS_FADE) {
         for (i = 1; i <= steps; i++) {
-            opr_transition_frame frame;
             struct DateStamp started;
             DateStamp(&started);
-            if (opr_transition_frame_at(kind, direction, width, height, i, steps, &frame) < 0) break;
-            if (frame.have_old) show_blit(b->old_bitmap, sw->RPort, &frame.old_part);
-            if (frame.have_new) show_blit(b->new_bitmap, sw->RPort, &frame.new_part);
+            if (!show_mask(b, width, height, i, steps)) break;
+            show_masked_new(sw, b, width, height);
             if (!show_pause(&started, duration, steps)) break;
         }
-    } else {
+    } else if (kind == OWF_TRANS_FADE_BLACK) {
+        int half = steps / 2;
+        for (i = 1; i <= half; i++) {
+            struct DateStamp started;
+            DateStamp(&started);
+            show_fade_black(sw, width, height, i, half);
+            if (!show_pause(&started, duration, steps)) break;
+        }
+        if (i > half)
+            for (i = 1; i <= steps - half; i++) {
+                struct DateStamp started;
+                DateStamp(&started);
+                if (!show_mask(b, width, height, i, steps - half)) break;
+                show_masked_new(sw, b, width, height);
+                if (!show_pause(&started, duration, steps)) break;
+            }
+    } else { /* dissolve */
         int total = opr_transition_tile_count(width, height), done = 0;
         for (i = 1; i <= steps; i++) {
             struct DateStamp started;

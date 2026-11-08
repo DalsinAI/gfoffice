@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.3.2"
+#define OPR_CORE_VERSION "0.3.3"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -204,8 +204,7 @@ int opr_show_tick(opr_show *show, unsigned long milliseconds);
 
 /* Backend-independent transition geometry. A frame describes which rectangle
  * of the old and new full-screen bitmap to copy and where. Wipe has only a
- * new_part (the old screen remains underneath); push has both. Dissolve asks
- * for its 16 x 16 tiles in deterministic shuffled order. */
+ * new_part (the old screen remains underneath); push has both. */
 typedef struct {
     int source_x, source_y, dest_x, dest_y, width, height;
 } opr_blit;
@@ -217,6 +216,26 @@ typedef struct {
 
 int opr_transition_frame_at(owf_transition_kind kind, int direction, int width, int height,
                             int step, int steps, opr_transition_frame *frame);
+
+/* A complete frame plan for every geometric transition. base_new selects the
+ * bitmap copied before its parts (old otherwise); push parts cover the whole
+ * frame, while cover, uncover, split and blinds use that base. */
+#define OPR_TRANSITION_MAX_PARTS 8
+typedef struct {
+    int base_new, old_count, new_count;
+    opr_blit old_parts[OPR_TRANSITION_MAX_PARTS];
+    opr_blit new_parts[OPR_TRANSITION_MAX_PARTS];
+} opr_transition_plan;
+
+int opr_transition_plan_at(owf_transition_kind kind, int direction, int width, int height,
+                           int step, int steps, opr_transition_plan *plan);
+
+/* A four-row, 4 x 4 ordered-dither mask repeated across a bitmap. Bits grow
+ * monotonically from the first step to a completely set last step, so a
+ * backend can mask-blit a crossfade or fade through black efficiently. */
+int opr_transition_pattern_at(int step, int steps, unsigned short pattern[4]);
+
+/* Dissolve asks for its 16 x 16 tiles in deterministic shuffled order. */
 int opr_transition_tile_count(int width, int height);
 int opr_transition_tile_at(int width, int height, int index, opr_blit *tile);
 
