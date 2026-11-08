@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.57 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.58 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -95,7 +95,7 @@ enum {
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
     M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE, M_CHART_POINT_COLOUR, M_CHART_AXIS_FORMATS,
-    M_CHART_SERIES_LABELS, M_CHART_PLOT_OPTIONS, M_CHART_TRENDLINE,
+    M_CHART_SERIES_LABELS, M_CHART_PLOT_OPTIONS, M_CHART_TRENDLINE, M_CHART_ERROR_BARS,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -220,6 +220,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Chart Series Data Labels...", NULL, 0, 0, (APTR)M_CHART_SERIES_LABELS },
     { NM_ITEM, "Chart Plot Options...", NULL, 0, 0, (APTR)M_CHART_PLOT_OPTIONS },
     { NM_ITEM, "Chart Series Trendline...", NULL, 0, 0, (APTR)M_CHART_TRENDLINE },
+    { NM_ITEM, "Chart Series Y Error Bars...", NULL, 0, 0, (APTR)M_CHART_ERROR_BARS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3651,6 +3652,91 @@ static void do_chart_trendline(void)
     result(oc_core_update_chart(core, index, &edit), "Chart series trendline changed.");
 }
 
+static void do_chart_error_bars(void)
+{
+    static const char *const types[] = { "none", "constant", "percentage", "standard-error", "variance",
+                                         "standard-deviation", "error-margin", "cell-range" };
+    owf_chart *charts = NULL;
+    const owf_chart_series *series;
+    oc_chart_edit_spec edit;
+    char number[24] = "1", label[48], initial[512], entered[512], colour[32], *p, *token, *end;
+    long chosen;
+    double value;
+    int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, type;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Y Error Bars."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL); else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    if (charts[index].kind == OWF_CHART_PIE || !charts[index].nseries) {
+        owf_charts_free(charts, n); set_status("Y error bars need a non-pie chart with at least one series."); return;
+    }
+    snprintf(label, sizeof label, "Series number (1-%d)", charts[index].nseries);
+    if (!text_requester("Chart Series Y Error Bars", label, number, number, sizeof number)) {
+        owf_charts_free(charts, n); return;
+    }
+    chosen = strtol(trim_text(number), &end, 10);
+    if (*end || chosen < 1 || chosen > charts[index].nseries) {
+        owf_charts_free(charts, n); set_status("Choose an existing series number."); return;
+    }
+    series = &charts[index].series[chosen - 1];
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_ERROR_BARS;
+    edit.series = (int)chosen - 1;
+    edit.error_kind = series->error_kind;
+    edit.error_direction = series->error_direction;
+    edit.error_cap = series->error_cap;
+    edit.error_plus = series->error_plus;
+    edit.error_minus = series->error_minus;
+    edit.error_plus_range = series->error_plus_range;
+    edit.error_minus_range = series->error_minus_range;
+    edit.error_colour = series->error_colour;
+    if (edit.error_colour) snprintf(colour, sizeof colour, "#%06lx", OWF_SHADE_RGB(edit.error_colour));
+    else strcpy(colour, "auto");
+    snprintf(initial, sizeof initial, "%s plus=%.15g minus=%.15g direction=%s %s colour=%s plus-range=%s minus-range=%s",
+             types[edit.error_kind >= OWF_ERROR_NONE && edit.error_kind <= OWF_ERROR_CELL_RANGE ? edit.error_kind : 0],
+             edit.error_plus, edit.error_minus,
+             edit.error_direction == OWF_ERROR_PLUS ? "plus" : edit.error_direction == OWF_ERROR_MINUS ? "minus" : "both",
+             edit.error_cap ? "cap" : "nocap", colour,
+             edit.error_plus_range ? edit.error_plus_range : "-", edit.error_minus_range ? edit.error_minus_range : "-");
+    owf_charts_free(charts, n);
+    if (!text_requester("Chart Series Y Error Bars", "type plus= minus= direction= cap/nocap colour= ranges=",
+                        initial, entered, sizeof entered)) return;
+    p = trim_text(entered); token = p;
+    while (*p && !isspace((unsigned char)*p)) p++;
+    if (*p) *p++ = 0;
+    for (type = OWF_ERROR_NONE; type <= OWF_ERROR_CELL_RANGE; type++)
+        if (!strcasecmp(token, types[type])) { edit.error_kind = type; break; }
+    if (type > OWF_ERROR_CELL_RANGE) bad = 1;
+    for (p = trim_text(p); *p && !bad; p = trim_text(p)) {
+        token = p; while (*p && !isspace((unsigned char)*p)) p++;
+        if (*p) *p++ = 0;
+        if (!strncasecmp(token, "plus=", 5) || !strncasecmp(token, "minus=", 6)) {
+            int plus = tolower((unsigned char)token[0]) == 'p';
+            value = strtod(token + (plus ? 5 : 6), &end);
+            if (*end || !(value >= 0 && value <= 1e200)) bad = 1;
+            else if (plus) edit.error_plus = value; else edit.error_minus = value;
+        } else if (!strncasecmp(token, "direction=", 10)) {
+            const char *d = token + 10;
+            if (!strcasecmp(d, "both")) edit.error_direction = OWF_ERROR_BOTH;
+            else if (!strcasecmp(d, "plus")) edit.error_direction = OWF_ERROR_PLUS;
+            else if (!strcasecmp(d, "minus")) edit.error_direction = OWF_ERROR_MINUS; else bad = 1;
+        } else if (!strcasecmp(token, "cap")) edit.error_cap = 1;
+        else if (!strcasecmp(token, "nocap")) edit.error_cap = 0;
+        else if (!strncasecmp(token, "colour=", 7)) bad = !chart_series_colour(token + 7, &edit.error_colour);
+        else if (!strncasecmp(token, "plus-range=", 11)) edit.error_plus_range = token[11] == '-' && !token[12] ? NULL : token + 11;
+        else if (!strncasecmp(token, "minus-range=", 12)) edit.error_minus_range = token[12] == '-' && !token[13] ? NULL : token + 12;
+        else bad = 1;
+    }
+    if (bad || (edit.error_kind == OWF_ERROR_CELL_RANGE && (!edit.error_plus_range || !edit.error_minus_range))) {
+        set_status("Use type, plus=/minus=, direction=both/plus/minus, cap/nocap, colour=auto/#RRGGBB and ranges.");
+        return;
+    }
+    result(oc_core_update_chart(core, index, &edit), "Chart series Y error bars changed.");
+}
+
 static void do_chart_data(void)
 {
     oc_chart_data_spec spec;
@@ -3769,6 +3855,7 @@ static void menu_action(ULONG id)
     case M_CHART_SERIES_LABELS: do_chart_series_labels(); break;
     case M_CHART_PLOT_OPTIONS: do_chart_plot_options(); break;
     case M_CHART_TRENDLINE: do_chart_trendline(); break;
+    case M_CHART_ERROR_BARS: do_chart_error_bars(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");

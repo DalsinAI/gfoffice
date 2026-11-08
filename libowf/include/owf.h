@@ -623,6 +623,10 @@ enum { OWF_MARKER_AUTO, OWF_MARKER_NONE, OWF_MARKER_CIRCLE, OWF_MARKER_SQUARE, O
 /* a series' trendline; NONE or the OOXML/ODF regression kinds */
 enum { OWF_TREND_NONE, OWF_TREND_LINEAR, OWF_TREND_EXPONENTIAL, OWF_TREND_LOGARITHMIC, OWF_TREND_POLYNOMIAL,
        OWF_TREND_POWER, OWF_TREND_MOVING_AVERAGE };
+/* a series' Y error bars and which side of each point they show */
+enum { OWF_ERROR_NONE, OWF_ERROR_CONSTANT, OWF_ERROR_PERCENTAGE, OWF_ERROR_STANDARD_ERROR, OWF_ERROR_VARIANCE,
+       OWF_ERROR_STANDARD_DEVIATION, OWF_ERROR_MARGIN, OWF_ERROR_CELL_RANGE };
+enum { OWF_ERROR_BOTH, OWF_ERROR_PLUS, OWF_ERROR_MINUS };
 typedef struct {
     double value;
     int has_value;               /* 0: none (a gap) */
@@ -652,6 +656,12 @@ typedef struct {
     int trend_period;            /* moving average: 2 or more */
     int trend_display_equation, trend_display_r2;
     unsigned long trend_colour;  /* OWF_SHADE(rgb), or 0: the series' colour */
+    int error_kind;              /* OWF_ERROR_... */
+    int error_direction;         /* OWF_ERROR_BOTH/PLUS/MINUS */
+    int error_cap;               /* draw a cap at each shown end */
+    double error_plus, error_minus; /* constants/percentage/margin; plus and minus may differ */
+    char *error_plus_range, *error_minus_range; /* CELL_RANGE, or NULL */
+    unsigned long error_colour;  /* OWF_SHADE(rgb), or 0: the series' colour */
 } owf_chart_series;
 typedef struct {
     int kind, grouping;          /* OWF_CHART_... */

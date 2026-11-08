@@ -433,13 +433,15 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     oc_undo *undo;
     char *title = NULL, *category_title = NULL, *value_title = NULL;
     char *value_format = NULL, *x_format = NULL, *label_format = NULL;
+    char *error_plus_range = NULL, *error_minus_range = NULL;
     int n = 0, rc, i;
     if (!core || !spec || !spec->set ||
         (spec->set & ~(OC_CHART_SET_KIND | OC_CHART_SET_GROUPING | OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND |
                        OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS |
                        OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES | OC_CHART_SET_AXIS_TITLES |
                        OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR | OC_CHART_SET_AXIS_FORMATS |
-                       OC_CHART_SET_SERIES_LABELS | OC_CHART_SET_PLOT_OPTIONS | OC_CHART_SET_TRENDLINE)) ||
+                       OC_CHART_SET_SERIES_LABELS | OC_CHART_SET_PLOT_OPTIONS | OC_CHART_SET_TRENDLINE |
+                       OC_CHART_SET_ERROR_BARS)) ||
         ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
         ((spec->set & OC_CHART_SET_GROUPING) &&
          (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
@@ -473,7 +475,17 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
           spec->trend_order < 2 || spec->trend_order > 6 || spec->trend_period < 2 || spec->trend_period > 4096 ||
           (spec->trend_display_equation != 0 && spec->trend_display_equation != 1) ||
           (spec->trend_display_r2 != 0 && spec->trend_display_r2 != 1) ||
-          (spec->trend_colour && !OWF_SHADE_SET(spec->trend_colour)))))
+          (spec->trend_colour && !OWF_SHADE_SET(spec->trend_colour)))) ||
+        ((spec->set & OC_CHART_SET_ERROR_BARS) &&
+         (spec->series < 0 || spec->error_kind < OWF_ERROR_NONE || spec->error_kind > OWF_ERROR_CELL_RANGE ||
+          spec->error_direction < OWF_ERROR_BOTH || spec->error_direction > OWF_ERROR_MINUS ||
+          (spec->error_cap != 0 && spec->error_cap != 1) ||
+          !(spec->error_plus >= 0.0 && spec->error_plus <= 1e200) ||
+          !(spec->error_minus >= 0.0 && spec->error_minus <= 1e200) ||
+          (spec->error_colour && !OWF_SHADE_SET(spec->error_colour)) ||
+          (spec->error_kind == OWF_ERROR_CELL_RANGE &&
+           ((!spec->error_plus_range || !*spec->error_plus_range) ||
+            (!spec->error_minus_range || !*spec->error_minus_range))))))
         return OWF_ERR_FORMAT;
     if (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core)))
         return OWF_ERR_UNSUPPORTED;
@@ -500,7 +512,7 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     }
     chart = &charts[index];
     if ((spec->set & (OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR | OC_CHART_SET_SERIES_LABELS |
-                      OC_CHART_SET_TRENDLINE)) &&
+                      OC_CHART_SET_TRENDLINE | OC_CHART_SET_ERROR_BARS)) &&
         spec->series >= chart->nseries) {
         owf_charts_free(charts, n);
         owf_free(title);
@@ -524,7 +536,7 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         owf_free(title); owf_free(category_title); owf_free(value_title);
         return OWF_ERR_UNSUPPORTED;
     }
-    if ((spec->set & OC_CHART_SET_TRENDLINE) &&
+    if ((spec->set & (OC_CHART_SET_TRENDLINE | OC_CHART_SET_ERROR_BARS)) &&
         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) == OWF_CHART_PIE) {
         owf_charts_free(charts, n);
         owf_free(title); owf_free(category_title); owf_free(value_title);
@@ -570,6 +582,17 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         owf_free(title); owf_free(category_title); owf_free(value_title);
         owf_free(value_format); owf_free(x_format);
         return OWF_ERR_MEMORY;
+    }
+    if ((spec->set & OC_CHART_SET_ERROR_BARS) && spec->error_kind == OWF_ERROR_CELL_RANGE) {
+        error_plus_range = oc_strdup(spec->error_plus_range);
+        error_minus_range = oc_strdup(spec->error_minus_range);
+        if (!error_plus_range || !error_minus_range) {
+            owf_charts_free(charts, n);
+            owf_free(title); owf_free(category_title); owf_free(value_title);
+            owf_free(value_format); owf_free(x_format); owf_free(label_format);
+            owf_free(error_plus_range); owf_free(error_minus_range);
+            return OWF_ERR_MEMORY;
+        }
     }
     if (spec->set & OC_CHART_SET_KIND) {
         int was_scatter = chart->kind == OWF_CHART_SCATTER;
@@ -657,6 +680,20 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         series->trend_display_r2 = spec->trend_display_r2;
         series->trend_colour = spec->trend_colour;
     }
+    if (spec->set & OC_CHART_SET_ERROR_BARS) {
+        owf_chart_series *series = &chart->series[spec->series];
+        series->error_kind = spec->error_kind;
+        series->error_direction = spec->error_direction;
+        series->error_cap = spec->error_cap;
+        series->error_plus = spec->error_plus;
+        series->error_minus = spec->error_minus;
+        series->error_colour = spec->error_colour;
+        owf_free(series->error_plus_range);
+        owf_free(series->error_minus_range);
+        series->error_plus_range = error_plus_range;
+        series->error_minus_range = error_minus_range;
+        error_plus_range = error_minus_range = NULL;
+    }
     if (spec->set & OC_CHART_SET_LABELS)
         for (i = 0; i < chart->nseries; i++) {
             chart->series[i].labels = spec->labels;
@@ -673,6 +710,8 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     owf_free(value_format);
     owf_free(x_format);
     owf_free(label_format);
+    owf_free(error_plus_range);
+    owf_free(error_minus_range);
     return rc;
 }
 
@@ -964,6 +1003,74 @@ static unsigned long series_rgb(const owf_chart_series *s)
     return OWF_SHADE_SET(s->colour) ? OWF_SHADE_RGB(s->colour) : accent_rgb(s->index);
 }
 
+typedef struct render {
+    oc_core *core;
+    oc_gfx *g;
+    const owf_chart *ch;
+    chartdata cd;
+    int pad, th, lh, swatch;
+    int x0, y0, x1, y1;
+} render;
+
+static double error_amount(const render *r, int s, int k, int plus)
+{
+    const owf_chart_series *se = &r->ch->series[s];
+    const chartdata *cd = &r->cd;
+    const char *ref = plus ? se->error_plus_range : se->error_minus_range;
+    double mean = 0, variance = 0, most = 0, amount = plus ? se->error_plus : se->error_minus;
+    int i, n = 0, sheet;
+    owf_range range;
+    if (se->error_kind == OWF_ERROR_CELL_RANGE) {
+        unsigned row, col;
+        const owf_cell *cell;
+        if (!chart_ref(r->core->book, ref, &sheet, &range) || k >= range_cells(&range)) return 0;
+        range_at(&range, k, &row, &col);
+        cell = oc_find(r->core, sheet, row, col);
+        return cell && cell->type == OWF_VALUE_NUMBER ? fabs(cell->number) : 0;
+    }
+    if (se->error_kind == OWF_ERROR_CONSTANT) return amount;
+    if (se->error_kind == OWF_ERROR_PERCENTAGE)
+        return fabs(cd->v[(size_t)s * cd->n + k]) * amount / 100.0;
+    for (i = 0; i < cd->n; i++)
+        if (cd->has[(size_t)s * cd->n + i]) {
+            double v = cd->v[(size_t)s * cd->n + i];
+            mean += v; n++;
+            if (fabs(v) > most) most = fabs(v);
+        }
+    if (!n) return 0;
+    if (se->error_kind == OWF_ERROR_MARGIN) return most * amount / 100.0;
+    mean /= n;
+    for (i = 0; i < cd->n; i++)
+        if (cd->has[(size_t)s * cd->n + i]) {
+            double d = cd->v[(size_t)s * cd->n + i] - mean;
+            variance += d * d;
+        }
+    variance /= n;
+    if (se->error_kind == OWF_ERROR_VARIANCE) return variance;
+    if (se->error_kind == OWF_ERROR_STANDARD_ERROR) return sqrt(variance / n);
+    return sqrt(variance);
+}
+
+static void error_pixels(render *r, const owf_chart_series *se, int horizontal, int fixed, int lo, int hi)
+{
+    int cap = 4 * r->core->zoom / 100;
+    unsigned long colour = se->error_colour ? OWF_SHADE_RGB(se->error_colour) : series_rgb(se);
+    if (cap < 2) cap = 2;
+    if (horizontal) {
+        r->g->line(r->g, lo, fixed, hi, fixed, 1, colour);
+        if (se->error_cap) {
+            if (se->error_direction != OWF_ERROR_PLUS) r->g->line(r->g, lo, fixed - cap, lo, fixed + cap, 1, colour);
+            if (se->error_direction != OWF_ERROR_MINUS) r->g->line(r->g, hi, fixed - cap, hi, fixed + cap, 1, colour);
+        }
+    } else {
+        r->g->line(r->g, fixed, lo, fixed, hi, 1, colour);
+        if (se->error_cap) {
+            if (se->error_direction != OWF_ERROR_MINUS) r->g->line(r->g, fixed - cap, lo, fixed + cap, lo, 1, colour);
+            if (se->error_direction != OWF_ERROR_PLUS) r->g->line(r->g, fixed - cap, hi, fixed + cap, hi, 1, colour);
+        }
+    }
+}
+
 /* A point's colour: its own, else its series', else (colours by point) the accents in turn. */
 static unsigned long point_rgb(const owf_chart *ch, int s, int k)
 {
@@ -974,15 +1081,6 @@ static unsigned long point_rgb(const owf_chart *ch, int s, int k)
 }
 
 /* ---- Drawing, through the drawer (oc_gfx.h) only ---- */
-
-typedef struct {
-    oc_core *core;
-    oc_gfx *g;
-    const owf_chart *ch;
-    chartdata cd;
-    int pad, th, lh, swatch;
-    int x0, y0, x1, y1;          /* what is left for the plot */
-} render;
 
 static void text(render *r, const char *s, int x, int y, int w, int h, int align, int twips, unsigned flags)
 {
@@ -1711,6 +1809,17 @@ static int categories(render *r)
                         oc_gfx_box(g, v0 < v1 ? v0 : v1, ay1 - i1, abs(v1 - v0), i1 - i0, point_rgb(ch, s, k));
                     else
                         oc_gfx_box(g, ax0 + i0, v0 < v1 ? v0 : v1, i1 - i0, abs(v1 - v0), point_rgb(ch, s, k));
+                    if (ch->series[s].error_kind != OWF_ERROR_NONE) {
+                        const owf_chart_series *se = &ch->series[s];
+                        double ep = se->error_direction == OWF_ERROR_MINUS ? 0 : error_amount(r, s, k, 1);
+                        double em = se->error_direction == OWF_ERROR_PLUS ? 0 : error_amount(r, s, k, 0);
+                        double low = top - em, high = top + ep;
+                        int plo, phi, fixed = horizontal ? ay1 - (i0 + i1) / 2 : ax0 + (i0 + i1) / 2;
+                        low = low < from ? from : low > to ? to : low;
+                        high = high < from ? from : high > to ? to : high;
+                        plo = POS(high); phi = POS(low);
+                        error_pixels(r, se, horizontal, fixed, horizontal ? phi : plo, horizontal ? plo : phi);
+                    }
                 } else if (ch->series[s].labels) {
                     /* where: at its end outside it (clustered) or in its middle (stacked), unless the file says */
                     char buf[160];
@@ -1785,8 +1894,19 @@ static int categories(render *r)
                         else if (se->line && mark == OWF_MARKER_NONE &&
                                  (k + 1 >= cd->n || !cd->has[at + 1]))   /* alone: a dot */
                             oc_gfx_box(g, xx - lt, yy - lt, 2 * lt + 1, 2 * lt + 1, series_rgb(se));
-                    } else if (pass == 1 && mark != OWF_MARKER_NONE) {
-                        marker(g, mark, xx, yy, mpx, point_rgb(ch, s, k));
+                    } else if (pass == 1) {
+                        if (se->error_kind != OWF_ERROR_NONE) {
+                            double ep = se->error_direction == OWF_ERROR_MINUS ? 0 : error_amount(r, s, k, 1);
+                            double em = se->error_direction == OWF_ERROR_PLUS ? 0 : error_amount(r, s, k, 0);
+                            double low = v - em, high = v + ep;
+                            int plo, phi;
+                            low = low < from ? from : low > to ? to : low;
+                            high = high < from ? from : high > to ? to : high;
+                            plo = POS(high); phi = POS(low);
+                            error_pixels(r, se, 0, xx, plo, phi);
+                        }
+                        if (mark != OWF_MARKER_NONE)
+                            marker(g, mark, xx, yy, mpx, point_rgb(ch, s, k));
                     } else if (pass == 2 && se->labels) {
                         char buf[160];
                         label_text(r, s, k, cd->v[at], all[k] > 0 ? fabs(cd->v[at]) / all[k] : 0, NULL, buf, sizeof buf);
@@ -1934,6 +2054,23 @@ static int scatter(render *r)
             ly = yy;
             has_last = 1;
         }
+        if (se->error_kind != OWF_ERROR_NONE)
+            for (k = 0; k < cd->n; k++) {
+                size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
+                double xv, ep, em, low, high;
+                int xx, plo, phi;
+                if (!cd->has[at]) continue;
+                xv = cd->x[at] < xfrom ? xfrom : cd->x[at] > xto ? xto : cd->x[at];
+                ep = se->error_direction == OWF_ERROR_MINUS ? 0 : error_amount(r, s, k, 1);
+                em = se->error_direction == OWF_ERROR_PLUS ? 0 : error_amount(r, s, k, 0);
+                low = cd->v[at] - em; high = cd->v[at] + ep;
+                low = low < yfrom ? yfrom : low > yto ? yto : low;
+                high = high < yfrom ? yfrom : high > yto ? yto : high;
+                xx = ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5);
+                plo = ay1 - (int)floor((high - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5);
+                phi = ay1 - (int)floor((low - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5);
+                error_pixels(r, se, 0, xx, plo, phi);
+            }
         for (k = 0; k < cd->n; k++) {            /* the markers over the lines */
             size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
             double xv, yv;

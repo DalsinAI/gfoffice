@@ -3423,6 +3423,28 @@ static void test_chart_authoring(void)
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK);
 
     memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_ERROR_BARS;
+    edit.series = 0;
+    edit.error_kind = OWF_ERROR_CONSTANT;
+    edit.error_direction = OWF_ERROR_BOTH;
+    edit.error_cap = 1;
+    edit.error_plus = 4.5;
+    edit.error_minus = 2.5;
+    edit.error_colour = OWF_SHADE(0xC00000);
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[0].error_kind == OWF_ERROR_CONSTANT && c.series[0].error_direction == OWF_ERROR_BOTH &&
+          c.series[0].error_cap && c.series[0].error_plus == 4.5 && c.series[0].error_minus == 2.5 &&
+          c.series[0].error_colour == OWF_SHADE(0xC00000));
+    chart_free(&c);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_SEGMENT, 0xC00000) >= 3);
+    oc_draw_list_free(&l);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[0].error_kind == OWF_ERROR_NONE);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+
+    memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_SERIES_STYLE;
     edit.series = 1;
     edit.series_colour = OWF_SHADE(0x00A050);
@@ -3546,6 +3568,9 @@ static void test_chart_authoring(void)
           c.series[0].labels == OWF_LABEL_VALUE && !c.series[0].label_format &&
           c.series[0].trendline == OWF_TREND_LINEAR && c.series[0].trend_display_equation &&
           c.series[0].trend_display_r2 && c.series[0].trend_colour == OWF_SHADE(0x7030A0) &&
+          c.series[0].error_kind == OWF_ERROR_CONSTANT && c.series[0].error_direction == OWF_ERROR_BOTH &&
+          c.series[0].error_cap && c.series[0].error_plus == 4.5 && c.series[0].error_minus == 2.5 &&
+          c.series[0].error_colour == OWF_SHADE(0xC00000) &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
           c.series[1].labels == (OWF_LABEL_CATEGORY | OWF_LABEL_VALUE) &&
@@ -3563,6 +3588,9 @@ static void test_chart_authoring(void)
           c.series[0].labels == OWF_LABEL_VALUE && !c.series[0].label_format &&
           c.series[0].trendline == OWF_TREND_LINEAR && c.series[0].trend_display_equation &&
           c.series[0].trend_display_r2 && c.series[0].trend_colour == OWF_SHADE(0x7030A0) &&
+          c.series[0].error_kind == OWF_ERROR_CONSTANT && c.series[0].error_direction == OWF_ERROR_BOTH &&
+          c.series[0].error_cap && c.series[0].error_plus == 4.5 && c.series[0].error_minus == 2.5 &&
+          c.series[0].error_colour == OWF_SHADE(0xC00000) &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
           c.series[1].labels == (OWF_LABEL_CATEGORY | OWF_LABEL_VALUE) &&

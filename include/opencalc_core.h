@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.22.0"
+#define OC_CORE_VERSION "0.23.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -717,7 +717,8 @@ enum {
     OC_CHART_SET_AXIS_FORMATS = 1u << 12,
     OC_CHART_SET_SERIES_LABELS = 1u << 13,
     OC_CHART_SET_PLOT_OPTIONS = 1u << 14,
-    OC_CHART_SET_TRENDLINE = 1u << 15
+    OC_CHART_SET_TRENDLINE = 1u << 15,
+    OC_CHART_SET_ERROR_BARS = 1u << 16
 };
 typedef struct {
     unsigned set;
@@ -747,6 +748,10 @@ typedef struct {
     int trendline, trend_order, trend_period;
     int trend_display_equation, trend_display_r2;
     unsigned long trend_colour;
+    int error_kind, error_direction, error_cap;
+    double error_plus, error_minus;
+    const char *error_plus_range, *error_minus_range; /* copied; required for cell-range */
+    unsigned long error_colour;
 } oc_chart_edit_spec;
 int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spec); /* -1: selected */
 

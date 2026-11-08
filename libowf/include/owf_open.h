@@ -50,7 +50,7 @@
 #elif defined(OWF_USE_CALC_LIBRARY)
 #define OWF_LIBRARY_NAME "owfcalc.library"
 #define OWF_LIBRARY_VERSION 3
-#define OWF_LIBRARY_REVISION 7
+#define OWF_LIBRARY_REVISION 8
 #define OWF_LIBRARY_BASE OWFCalcBase
 #define OWF_OPEN_SIZES                                                                                     \
     { OWF_STRUCT_CHARFMT, sizeof(owf_charfmt) }, { OWF_STRUCT_CELL, sizeof(owf_cell) },                   \

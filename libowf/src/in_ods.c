@@ -317,6 +317,16 @@ static long whole(const char *v, long def, long min, long max)
     return n;
 }
 
+static double real_number(const char *v, double def)
+{
+    char *end;
+    double d;
+    if (!v)
+        return def;
+    d = strtod(v, &end);
+    return end == v || *end || !(d >= 0.0 && d <= 1e200) ? def : d;
+}
+
 /* A length ("2.258cm", "0.74pt") as twips; 0 when it is not one. Lengths
  * with more than six digits before the point are not lengths a sheet has. */
 static int length(const char *s, int *twips)
@@ -3279,6 +3289,36 @@ static int read_odf_chart(ods *o, const owf_xml_node *root, owf_chart *c, int ho
                     se->label_pos = k;
         if (!chart_numfmt(o, styles, style, &se->label_format))
             return 0;
+        {
+            static const char *const errors[] = { "none", "constant", "percentage", "standard-error", "variance",
+                                                   "standard-deviation", "error-margin", "cell-range" };
+            const char *kind = prop(sp, NS_CHART, "error-category");
+            for (k = 1; kind && k <= OWF_ERROR_CELL_RANGE; k++)
+                if (!strcmp(kind, errors[k])) { se->error_kind = k; break; }
+            se->error_direction = prop(sp, NS_CHART, "error-upper-indicator") &&
+                                      !prop_true(sp, NS_CHART, "error-upper-indicator") ? OWF_ERROR_MINUS :
+                                      prop(sp, NS_CHART, "error-lower-indicator") &&
+                                      !prop_true(sp, NS_CHART, "error-lower-indicator") ? OWF_ERROR_PLUS : OWF_ERROR_BOTH;
+            se->error_cap = 1;
+            se->error_plus = real_number(prop(sp, NS_CHART, se->error_kind == OWF_ERROR_CONSTANT ?
+                                                "error-upper-limit" : se->error_kind == OWF_ERROR_MARGIN ?
+                                                "error-margin" : "error-percentage"), 0.0);
+            se->error_minus = real_number(prop(sp, NS_CHART, "error-lower-limit"), se->error_plus);
+            if (prop(sp, NS_GFO, "error-kind")) {
+                se->error_kind = (int)whole(prop(sp, NS_GFO, "error-kind"), se->error_kind, OWF_ERROR_NONE,
+                                            OWF_ERROR_CELL_RANGE);
+                se->error_direction = (int)whole(prop(sp, NS_GFO, "error-direction"), se->error_direction,
+                                                 OWF_ERROR_BOTH, OWF_ERROR_MINUS);
+                se->error_cap = !!whole(prop(sp, NS_GFO, "error-cap"), se->error_cap, 0, 1);
+                se->error_plus = real_number(prop(sp, NS_GFO, "error-plus"), se->error_plus);
+                se->error_minus = real_number(prop(sp, NS_GFO, "error-minus"), se->error_minus);
+                se->error_colour = (unsigned long)whole(prop(sp, NS_GFO, "error-colour"), 0, 0, 0x1FFFFFFUL);
+            }
+            if ((v = owf_xml_attr(ser, ext, "error-plus-range")) != NULL && *v &&
+                !(se->error_plus_range = copy(o, v))) return 0;
+            if ((v = owf_xml_attr(ser, ext, "error-minus-range")) != NULL && *v &&
+                !(se->error_minus_range = copy(o, v))) return 0;
+        }
         {
             const owf_xml_node *reg = owf_xml_child(ser, NS_CHART, "regression-curve");
             if (reg) {

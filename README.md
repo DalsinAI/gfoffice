@@ -265,7 +265,7 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.57 can turn a
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.58 can turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and
 cached values, supports clustered, stacked and percent grouping, keeps charts
@@ -315,6 +315,11 @@ polynomial, power and moving-average fits render natively; the shared model
 round-trips them through XLSX and ODS. Regression equations and R-squared
 values render in the chart when requested; moving averages have no regression
 equation. The model change makes `owfcalc.library` 3.7.
+Format > Chart Series Y Error Bars and reusable core API 0.23.0 add constant,
+percentage, standard-error, variance, standard-deviation, error-margin and
+cell-range errors, in both, positive-only or negative-only directions, with
+optional caps and a chosen colour. They render natively and round-trip through
+XLSX and ODS; the reusable series extension makes `owfcalc.library` 3.8.
 Drawings containing pictures or shapes are refused rather than
 destructively rewritten. It can also deep-copy
 a sheet's cells, formats, comments, rules, filters, local names, cursor and

@@ -1538,6 +1538,31 @@ static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double wid
             if (se->label_pos > 0 && se->label_pos <= OWF_LABEL_BEST_FIT)
                 owf_buf_printf(b, " chart:label-position=\"%s\"", places[se->label_pos]);
         }
+        if (se->error_kind > OWF_ERROR_NONE && se->error_kind <= OWF_ERROR_CELL_RANGE) {
+            static const char *const errors[] = { "none", "constant", "percentage", "standard-error", "variance",
+                                                   "standard-deviation", "error-margin", "cell-range" };
+            char plus[48], minus[48];
+            owf_number_exact(se->error_plus, plus);
+            owf_number_exact(se->error_minus, minus);
+            owf_buf_printf(b, " chart:error-category=\"%s\" chart:error-upper-indicator=\"%s\" "
+                              "chart:error-lower-indicator=\"%s\"",
+                           errors[se->error_kind], se->error_direction == OWF_ERROR_MINUS ? "false" : "true",
+                           se->error_direction == OWF_ERROR_PLUS ? "false" : "true");
+            if (se->error_kind == OWF_ERROR_CONSTANT)
+                owf_buf_printf(b, " chart:error-upper-limit=\"%s\" chart:error-lower-limit=\"%s\"", plus, minus);
+            else if (se->error_kind == OWF_ERROR_PERCENTAGE)
+                owf_buf_printf(b, " chart:error-percentage=\"%s\"", plus);
+            else if (se->error_kind == OWF_ERROR_MARGIN)
+                owf_buf_printf(b, " chart:error-margin=\"%s\"", plus);
+            else if (se->error_kind == OWF_ERROR_CELL_RANGE) {
+                put_range_attr(w, b, "chart:error-upper-range", se->error_plus_range);
+                put_range_attr(w, b, "chart:error-lower-range", se->error_minus_range);
+            }
+            owf_buf_printf(b, " gfocalc:error-kind=\"%d\" gfocalc:error-direction=\"%d\" "
+                              "gfocalc:error-cap=\"%d\" gfocalc:error-plus=\"%s\" gfocalc:error-minus=\"%s\" "
+                              "gfocalc:error-colour=\"%lu\"",
+                           se->error_kind, se->error_direction, !!se->error_cap, plus, minus, se->error_colour);
+        }
         if (lines) {
             if (se->marker == OWF_MARKER_NONE)
                 owf_buf_puts(b, " chart:symbol-type=\"none\"");
@@ -1659,6 +1684,8 @@ static void put_chart_doc(ods_out *w, owf_buf *b, const owf_chart *c, double wid
             owf_buf_puts(b, " gfocalc:marker=\"triangle\"");
         if (se->marker_size)
             owf_buf_printf(b, " gfocalc:marker-size=\"%d\"", se->marker_size);
+        put_gfo_text(w, b, "error-plus-range", se->error_plus_range);
+        put_gfo_text(w, b, "error-minus-range", se->error_minus_range);
         put_gfo_text(w, b, "format", se->format);
         if (!se->name_cell)
             put_gfo_text(w, b, "name", se->name);

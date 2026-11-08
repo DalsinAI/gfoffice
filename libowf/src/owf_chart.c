@@ -22,6 +22,7 @@
 #define MAX_SERIES 64
 #define MAX_CHARTS 64                    /* a sheet's */
 #define EMU_PER_TWIP 635L
+#define NS_GFO "urn:org:amigachrome:names:experimental:gfoffice:xmlns:calc:1.0"
 
 /* The namespaces, transitional and strict. */
 static const char *const ns_xdr[2] = { "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
@@ -102,6 +103,12 @@ static long attr_long(const owf_xml_node *n, const char *name, long def)
 static int attr_double(const owf_xml_node *n, double *d)
 {
     const char *s = val(n);
+    return s && owf_number_parse(s, strlen(s), d);
+}
+
+static int named_double(const owf_xml_node *n, const char *name, double *d)
+{
+    const char *s = n ? owf_xml_attr(n, "", name) : NULL;
     return s && owf_number_parse(s, strlen(s), d);
 }
 
@@ -296,7 +303,7 @@ static void read_labels(owf_chart_series *s, const owf_xml_node *d, int *failed)
 
 static int read_series(owf_chart_series *s, const owf_xml_node *ser, int kind, int number, int *failed)
 {
-    const owf_xml_node *f, *cat_cache, *val_cache, *name_cache, *p, *m, *ln, *trend;
+    const owf_xml_node *f, *cat_cache, *val_cache, *name_cache, *p, *m, *ln, *trend, *err;
     char buf[256];
     int n, scatter = kind == OWF_CHART_SCATTER;
     long most = -1;
@@ -361,6 +368,38 @@ static int read_series(owf_chart_series *s, const owf_xml_node *ser, int kind, i
         s->trend_display_equation = flag_set(trend, "dispEq");
         s->trend_display_r2 = flag_set(trend, "dispRSqr");
         s->trend_colour = colour_in(child(child(child(trend, ns_c, "spPr"), ns_a, "ln"), ns_a, "solidFill"));
+    }
+    err = child(ser, ns_c, "errBars");
+    if (err) {
+        const char *type = val(child(err, ns_c, "errValType")), *direction = val(child(err, ns_c, "errBarType"));
+        const owf_xml_node *exts = child(err, ns_c, "extLst"), *ext = child(exts, ns_c, "ext");
+        const owf_xml_node *custom = owf_xml_child(ext, NS_GFO, "error");
+        const owf_xml_node *source;
+        double value = 0;
+        s->error_cap = !flag_set(err, "noEndCap");
+        s->error_direction = direction && !strcmp(direction, "plus") ? OWF_ERROR_PLUS :
+                             direction && !strcmp(direction, "minus") ? OWF_ERROR_MINUS : OWF_ERROR_BOTH;
+        s->error_kind = type && !strcmp(type, "fixedVal") ? OWF_ERROR_CONSTANT :
+                        type && !strcmp(type, "percentage") ? OWF_ERROR_PERCENTAGE :
+                        type && !strcmp(type, "stdErr") ? OWF_ERROR_STANDARD_ERROR :
+                        type && !strcmp(type, "stdDev") ? OWF_ERROR_STANDARD_DEVIATION :
+                        type && !strcmp(type, "cust") ? OWF_ERROR_CELL_RANGE : OWF_ERROR_NONE;
+        if (attr_double(child(err, ns_c, "val"), &value)) s->error_plus = s->error_minus = value;
+        source = data_source(child(err, ns_c, "plus"), &f);
+        (void)source;
+        if (f) { text_of(f, buf, sizeof buf); s->error_plus_range = dup_str(buf, failed); }
+        source = data_source(child(err, ns_c, "minus"), &f);
+        (void)source;
+        if (f) { text_of(f, buf, sizeof buf); s->error_minus_range = dup_str(buf, failed); }
+        s->error_colour = colour_in(child(child(child(err, ns_c, "spPr"), ns_a, "ln"), ns_a, "solidFill"));
+        if (custom) {
+            s->error_kind = (int)attr_long(custom, "kind", s->error_kind);
+            s->error_direction = (int)attr_long(custom, "direction", s->error_direction);
+            s->error_cap = !!attr_long(custom, "cap", s->error_cap);
+            named_double(custom, "plus", &s->error_plus);
+            named_double(custom, "minus", &s->error_minus);
+            s->error_colour = (unsigned long)attr_long(custom, "colour", (long)s->error_colour);
+        }
     }
     n = point_count(val_cache);
     if (point_count(cat_cache) > n)
@@ -624,6 +663,8 @@ void owf_charts_free(owf_chart *charts, int count)
             free(s->x_values);
             free(s->values);
             free(s->categories);
+            free(s->error_plus_range);
+            free(s->error_minus_range);
         }
         free(charts[i].series);
         free(charts[i].title);
@@ -826,6 +867,14 @@ static void put_labels(owf_buf *b, const owf_chart_series *s)
                    !!(s->labels & OWF_LABEL_PERCENT));
 }
 
+static void put_error_source(owf_buf *b, const char *name, const char *range)
+{
+    if (!range) return;
+    owf_buf_printf(b, "<c:%s><c:numRef><c:f>", name);
+    put_text(b, range);
+    owf_buf_printf(b, "</c:f></c:numRef></c:%s>", name);
+}
+
 static void put_series(owf_buf *b, const owf_chart *c, const owf_chart_series *s, int number)
 {
     static const char *const markers[] = { "auto", "none", "circle", "square", "diamond", "triangle", "x", "star", "plus",
@@ -884,6 +933,34 @@ static void put_series(owf_buf *b, const owf_chart *c, const owf_chart_series *s
         if (s->trend_display_r2) owf_buf_puts(b, "<c:dispRSqr val=\"1\"/>");
         if (s->trend_display_equation) owf_buf_puts(b, "<c:dispEq val=\"1\"/>");
         owf_buf_puts(b, "</c:trendline>");
+    }
+    if (s->error_kind > OWF_ERROR_NONE && s->error_kind <= OWF_ERROR_CELL_RANGE) {
+        const char *type = s->error_kind == OWF_ERROR_CONSTANT ? "fixedVal" :
+                           s->error_kind == OWF_ERROR_PERCENTAGE || s->error_kind == OWF_ERROR_MARGIN ? "percentage" :
+                           s->error_kind == OWF_ERROR_STANDARD_ERROR ? "stdErr" :
+                           s->error_kind == OWF_ERROR_CELL_RANGE ? "cust" : "stdDev";
+        const char *direction = s->error_direction == OWF_ERROR_PLUS ? "plus" :
+                                s->error_direction == OWF_ERROR_MINUS ? "minus" : "both";
+        char plus[48], minus[48];
+        owf_number_exact(s->error_plus, plus);
+        owf_number_exact(s->error_minus, minus);
+        owf_buf_printf(b, "<c:errBars><c:errDir val=\"y\"/><c:errBarType val=\"%s\"/><c:errValType val=\"%s\"/>",
+                       direction, type);
+        if (!s->error_cap) owf_buf_puts(b, "<c:noEndCap val=\"1\"/>");
+        if (s->error_kind == OWF_ERROR_CELL_RANGE) {
+            put_error_source(b, "plus", s->error_plus_range);
+            put_error_source(b, "minus", s->error_minus_range);
+        } else if (s->error_kind != OWF_ERROR_STANDARD_ERROR)
+            owf_buf_printf(b, "<c:val val=\"%s\"/>", plus);
+        if (s->error_colour) {
+            owf_buf_puts(b, "<c:spPr><a:ln>");
+            put_rgb(b, s->error_colour);
+            owf_buf_puts(b, "</a:ln></c:spPr>");
+        }
+        owf_buf_printf(b, "<c:extLst><c:ext uri=\"{AFE12CEB-884F-4D36-99D6-2715E8665EBC}\">"
+                          "<gfocalc:error kind=\"%d\" direction=\"%d\" cap=\"%d\" plus=\"%s\" minus=\"%s\" "
+                          "colour=\"%lu\"/></c:ext></c:extLst></c:errBars>",
+                       s->error_kind, s->error_direction, !!s->error_cap, plus, minus, s->error_colour);
     }
     if (c->kind == OWF_CHART_SCATTER) {
         put_source(b, "xVal", s->x_values, s, 3, NULL);
@@ -945,7 +1022,8 @@ int owf_chart_part_xml(const owf_chart *c, owf_buf *b)
     owf_buf_puts(b, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
                     "<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" "
                     "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" "
-                    "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><c:chart>");
+                    "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+                    "xmlns:gfocalc=\"" NS_GFO "\"><c:chart>");
     if (c->title) {
         owf_buf_puts(b, "<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>");
         put_text(b, c->title);
