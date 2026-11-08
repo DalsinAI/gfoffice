@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.0.3"
+#define OW_CORE_VERSION "1.1.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -162,6 +162,19 @@ int ow_editor_apply_section(ow_editor *editor, int columns, int gap,
  * later section column markers. Undo restores the original sections. */
 int ow_editor_apply_document_columns(ow_editor *editor, int columns, int gap);
 int ow_editor_insert_page_break(ow_editor *editor);
+
+/* Build an undoable table of contents from the document's heading paragraphs.
+ * The resolver receives the document after the TOC placeholders have been
+ * inserted and returns each heading's zero-based physical page. This keeps
+ * pagination in GFOpenLayout (or another caller-owned layout service) while
+ * the editor owns document semantics, bookmarks, links and undo. max_level is
+ * 1-6. OWF_ERR_UNSUPPORTED means that the document has no matching headings. */
+typedef int (*ow_toc_pages_fn)(void *userdata, const owf_doc *doc,
+                               const int *heading_paragraphs, int count,
+                               int *pages);
+int ow_editor_insert_table_of_contents(ow_editor *editor, int max_level,
+                                       ow_toc_pages_fn resolve_pages,
+                                       void *userdata);
 
 /* 2.0.23: the left pages' (the even-numbered) own, doc->header_left and footer_left */
 typedef enum { OW_STORY_HEADER = 1, OW_STORY_FOOTER = 2, OW_STORY_HEADER_LEFT = 3, OW_STORY_FOOTER_LEFT = 4 } ow_story_kind;

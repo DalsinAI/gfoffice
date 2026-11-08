@@ -53,7 +53,7 @@ and WMF/EMF playback remain later P1 work.
 
 # GFOpenWrite
 
-GFOpenWrite 2.0.25 is a native word processor for AmigaOS 3.2.
+GFOpenWrite 2.0.26 is a native word processor for AmigaOS 3.2.
 
 ![GFOpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
 
@@ -82,6 +82,8 @@ GFOpenWrite includes:
 - headers and footers in the document model and rendered pages;
 - clipboard.device cut/copy/paste using FTXT-compatible text;
 - Find, Find Again, Find Previous, Replace and Replace All;
+- undoable Table of Contents generation from Heading 1-3, with dot leaders,
+  internal heading links and page numbers resolved by GFOpenLayout;
 - automatic pagination and explicit page breaks;
 - undoable whole-document newspaper columns (1-16, with an editable gap),
   plus imported mixed-column sections with continuous, new-page, odd-page and

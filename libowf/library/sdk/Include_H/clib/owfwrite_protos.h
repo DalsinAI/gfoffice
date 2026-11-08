@@ -54,6 +54,7 @@ const owf_format * owf_format_for_filename(const char *filename);
 int owf_import_memory(const unsigned char *data, size_t length, const char *format, owf_doc **doc, owf_report *report, const owf_format **used);
 int owf_import_file(const char *path, const char *format, owf_doc **doc, owf_report *report, const owf_format **used);
 int owf_export_file(const owf_doc *doc, const char *path, const char *format, owf_report *report);
+void owf_page_number(const owf_page *page, int number, char *out, size_t size);
 
 #ifdef __cplusplus
 }

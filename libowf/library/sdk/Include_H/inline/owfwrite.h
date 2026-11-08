@@ -703,4 +703,21 @@ __owfwrite_owf_export_file(void *__base, const owf_doc *doc, const char *path, c
 #define owf_export_file(doc, path, format, report) __owfwrite_owf_export_file((OWFWRITE_BASE_NAME), (const owf_doc *)(doc), (const char *)(path), (const char *)(format), (owf_report *)(report))
 #define __owf_export_file_base(__in_base, doc, path, format, report) __owfwrite_owf_export_file((__in_base), (const owf_doc *)(doc), (const char *)(path), (const char *)(format), (owf_report *)(report))
 
+static __inline__ void
+__owfwrite_owf_page_number(void *__base, const owf_page *page, int number, char *out, size_t size)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(page);
+	register ULONG _d0 __asm("d0") = (ULONG)(number);
+	register ULONG _a1 __asm("a1") = (ULONG)(out);
+	register ULONG _d1 __asm("d1") = (ULONG)(size);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -264(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_page_number(page, number, out, size) __owfwrite_owf_page_number((OWFWRITE_BASE_NAME), (const owf_page *)(page), (int)(number), (char *)(out), (size_t)(size))
+#define __owf_page_number_base(__in_base, page, number, out, size) __owfwrite_owf_page_number((__in_base), (const owf_page *)(page), (int)(number), (char *)(out), (size_t)(size))
+
 #endif /* INLINE_OWFWRITE_H */

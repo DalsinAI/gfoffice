@@ -21,7 +21,7 @@ The integration uses:
 - uniform newspaper-column pagination, physical-page display lists, caret
   placement and pointer hit testing.
 
-GFOpenWrite 2.0.25 exposes capabilities that previously worked only for
+GFOpenWrite 2.0.26 exposes capabilities that previously worked only for
 imported documents: `ow_editor_insert_text_box()` and
 `ow_editor_insert_floating_image()`. They create native `owf_frame` objects;
 GFOpenLayout places them and reflows body text around them. The Amiga window's
@@ -49,13 +49,15 @@ anchor feedback while each keeps its own document transaction and undo model.
 
 ### 2. Node-to-page and generated-reference results
 
-`ol_node_page_box()` now exposes the physical page and first rectangle for a
-stable node ID, and `ow_layout_paragraph_box()` maps that service to Writer's
-body paragraphs. It deliberately ignores separately anchored descendants when
-locating their paragraph. The next layer can build TOCs, indexes, captions and
-cross-references from headings/bookmarks without inspecting the display list or
-duplicating pagination; page-number style belongs in that generated-reference
-layer.
+`ol_node_page_box()` exposes the physical page and first rectangle for a stable
+node ID, and `ow_layout_paragraph_box()` maps that service to Writer's body
+paragraphs. It deliberately ignores separately anchored descendants when
+locating their paragraph. GFOpenWrite 2.0.26 now consumes that contract for its
+undoable Table of Contents command: the editor core creates heading bookmarks,
+linked entries and dot-leader tabs, while a callback resolves every heading's
+real physical page through GFOpenLayout. Indexes, captions and general
+cross-references can reuse the same split instead of inspecting the display
+list or duplicating pagination.
 
 ### 3. Section regions and newspaper columns
 
@@ -105,7 +107,8 @@ typing should not reconstruct an entire long document.
 ## Integration order
 
 1. Object manipulation geometry, then Writer move/resize/wrap controls.
-2. Node-to-page results (landed), then TOC/caption/cross-reference generation.
+2. Node-to-page results and TOC generation (landed), then captions, indexes and
+   general cross-references.
 3. Section regions and columns, then Writer page styles.
 4. Footnote regions, then native notes in `libowf` and the editor.
 5. Table and text-service improvements.

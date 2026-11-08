@@ -43,5 +43,6 @@ _LVOowf_format_for_filename	EQU	-240
 _LVOowf_import_memory	EQU	-246
 _LVOowf_import_file	EQU	-252
 _LVOowf_export_file	EQU	-258
+_LVOowf_page_number	EQU	-264
 
 	ENDC	; LVO_OWFWRITE_LIB_I

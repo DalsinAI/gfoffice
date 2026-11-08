@@ -78,7 +78,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.25 (7.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.26 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -99,7 +99,7 @@ enum {
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_ZOOM_FIT_PAGE, M_ZOOM_FIT_WIDTH,
     M_PAGE_FIRST, M_PAGE_PREV, M_PAGE_NEXT, M_PAGE_LAST,
     M_NAV, M_INSPECTOR,
-    M_IMAGE, M_IMAGE_FLOAT, M_TEXT_BOX, M_TABLE, M_LINK, M_PAGE_BREAK,
+    M_IMAGE, M_IMAGE_FLOAT, M_TEXT_BOX, M_TABLE, M_LINK, M_CONTENTS, M_PAGE_BREAK,
     M_FIELD_PAGE, M_FIELD_PAGES, M_FIELD_DATE, M_FIELD_TIME,
     M_PARAGRAPH, M_BOLD, M_ITALIC, M_UNDERLINE,
     M_TABLE_NEXT, M_TABLE_PREV, M_TABLE_STYLE, M_TABLE_ROW_ADD, M_TABLE_ROW_DEL, M_TABLE_COL_ADD, M_TABLE_COL_DEL,
@@ -168,6 +168,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Text Box...", NULL, 0, 0, (APTR)M_TEXT_BOX },
     { NM_ITEM, "Table...", NULL, 0, 0, (APTR)M_TABLE },
     { NM_ITEM, "Link...", NULL, 0, 0, (APTR)M_LINK },
+    { NM_ITEM, "Table of Contents", NULL, 0, 0, (APTR)M_CONTENTS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Page Break", NULL, 0, 0, (APTR)M_PAGE_BREAK },
     { NM_ITEM, "Field", NULL, 0, 0, NULL },
@@ -1848,6 +1849,27 @@ static int measure_units(void *userdata, const char *utf8, size_t length, const 
     m->ascent = (ol_unit)t->ascent * WIDTH_UNITS;
     m->descent = (ol_unit)t->descent * WIDTH_UNITS;
     return 1;
+}
+
+/* The editor owns TOC semantics and undo; this adapter asks GFOpenLayout for
+ * the real physical page of each heading after the entries have been inserted. */
+static int resolve_toc_pages(void *userdata, const owf_doc *document,
+                             const int *paragraphs, int count, int *page_numbers)
+{
+    ow_layout *layout;
+    int i, ok = 1;
+    (void)userdata;
+    layout = ow_layout_new(document, measure_units, NULL);
+    if (!layout) return 0;
+    for (i = 0; i < count; ++i) {
+        ol_rect box;
+        if (!ow_layout_paragraph_box(layout, paragraphs[i], &page_numbers[i], &box)) {
+            ok = 0;
+            break;
+        }
+    }
+    ow_layout_free(layout);
+    return ok;
 }
 
 static void pages_free(void)
@@ -4008,6 +4030,20 @@ static void menu_action(ULONG id)
     case M_TEXT_BOX: do_text_box(); break;
     case M_TABLE: do_command(C_TABLE); break;
     case M_LINK: do_link(); break;
+    case M_CONTENTS: {
+        int rc = ow_editor_insert_table_of_contents(editor, 3, resolve_toc_pages, NULL);
+        if (rc == OWF_OK) {
+            pages_changed();
+            editor_repaint("Table of contents inserted from Heading 1-3; Undo removes it.");
+        } else if (rc == OWF_ERR_UNSUPPORTED) {
+            tell("Table of Contents", "This document has no Heading 1, Heading 2 or Heading 3 paragraphs.");
+        } else if (rc == OWF_ERR_MEMORY) {
+            tell("Table of Contents", "There is not enough memory to build the table of contents.");
+        } else {
+            tell("Table of Contents", "Place the caret in an ordinary body paragraph, outside a table or text box.");
+        }
+        break;
+    }
     case M_PAGE_BREAK: editor_result(ow_editor_insert_page_break(editor), "Page break inserted."); break;
     case M_BOLD: editor_result(ow_editor_toggle_char_flags(editor, OWF_BOLD), "Bold."); break;
     case M_ITALIC: editor_result(ow_editor_toggle_char_flags(editor, OWF_ITALIC), "Italic."); break;

@@ -1107,6 +1107,96 @@ static int test_section_columns_import(void)
     return 0;
 }
 
+static int resolve_test_toc(void *userdata, const owf_doc *doc,
+                            const int *paragraphs, int count, int *pages)
+{
+    char text[80];
+    int *calls = (int *)userdata;
+    if (count != 2 || paragraphs[0] < 0 || paragraphs[1] <= paragraphs[0]) return 0;
+    paragraph_text(doc, paragraphs[0], text, sizeof text);
+    if (strcmp(text, "First heading")) return 0;
+    paragraph_text(doc, paragraphs[1], text, sizeof text);
+    if (strcmp(text, "Second heading")) return 0;
+    pages[0] = 1;
+    pages[1] = 4;
+    ++*calls;
+    return 1;
+}
+
+static int toc_roundtrip_ok(const owf_doc *doc, int named_styles)
+{
+    const owf_para *one, *two;
+    char text[80];
+    if (!doc || doc->body.nparas != 8) return 0;
+    one = &doc->body.paras[2];
+    two = &doc->body.paras[3];
+    paragraph_text(doc, 1, text, sizeof text);
+    if (strcmp(text, "Contents") ||
+        (named_styles && (!one->style || strcmp(one->style, "TOC1") ||
+                          !two->style || strcmp(two->style, "TOC2"))) || one->fmt.ntabs != 1 ||
+        one->fmt.tabs[0].kind != OWF_TAB_RIGHT || one->fmt.tabs[0].leader != OWF_LEADER_DOT ||
+        one->nruns != 3 || two->nruns != 3 || one->runs[1].kind != OWF_RUN_TAB ||
+        !one->runs[0].href || strcmp(one->runs[0].href, "#_GFTOC1") ||
+        !one->runs[2].href || strcmp(one->runs[2].href, "#_GFTOC1") ||
+        !two->runs[0].href || strcmp(two->runs[0].href, "#_GFTOC2") ||
+        !doc->body.paras[5].bookmarks || !strstr(doc->body.paras[5].bookmarks, "_GFTOC1@0-13") ||
+        !doc->body.paras[7].bookmarks || !strstr(doc->body.paras[7].bookmarks, "_GFTOC2@0-14"))
+        return 0;
+    paragraph_text(doc, 2, text, sizeof text);
+    if (strcmp(text, "First headingiv")) return 0;
+    paragraph_text(doc, 3, text, sizeof text);
+    return !strcmp(text, "Second headingvii");
+}
+
+static int test_table_of_contents(void)
+{
+    static const struct { int heading; const char *text; } extra[] = {
+        { 1, "First heading" }, { 0, "Body paragraph" }, { 2, "Second heading" }
+    };
+    owf_doc *doc = doc_with("Intro"), *round = NULL;
+    ow_editor *ed;
+    owf_charfmt cf;
+    owf_parafmt pf;
+    int i, calls = 0;
+    if (!doc) return 2270;
+    owf_charfmt_init(&cf);
+    for (i = 0; i < 3; ++i) {
+        owf_para *p;
+        owf_parafmt_init(&pf);
+        pf.heading = extra[i].heading;
+        p = owf_story_add(&doc->body, &pf);
+        if (!p || owf_para_add_text(p, &cf, extra[i].text, strlen(extra[i].text)) != OWF_OK)
+            return 2271;
+    }
+    doc->page.start_page = 3;
+    doc->page.pagenum_style = OWF_PAGENUM_ROMAN_LOWER;
+    ed = ow_editor_new(doc);
+    if (!ed) return 2272;
+    if (ow_editor_insert_table_of_contents(ed, 3, resolve_test_toc, &calls) != OWF_OK ||
+        calls != 1 || !toc_roundtrip_ok(doc, 1))
+        return 2273;
+    if (ow_editor_undo(ed) != 1 || doc->body.nparas != 4 ||
+        doc->body.paras[1].bookmarks || doc->body.paras[3].bookmarks)
+        return 2274;
+    if (ow_editor_redo(ed) != 1 || !toc_roundtrip_ok(doc, 1)) return 2275;
+    ow_editor_free(ed);
+    if (owf_export_file(doc, "/tmp/openwrite-toc.docx", "docx", NULL) != OWF_OK ||
+        owf_import_file("/tmp/openwrite-toc.docx", NULL, &round, NULL, NULL) != OWF_OK ||
+        !toc_roundtrip_ok(round, 1))
+        return 2276;
+    owf_doc_free(round);
+    round = NULL;
+    remove("/tmp/openwrite-toc.docx");
+    if (owf_export_file(doc, "/tmp/openwrite-toc.odt", "odt", NULL) != OWF_OK ||
+        owf_import_file("/tmp/openwrite-toc.odt", NULL, &round, NULL, NULL) != OWF_OK ||
+        !toc_roundtrip_ok(round, 0))
+        return 2277;
+    owf_doc_free(round);
+    remove("/tmp/openwrite-toc.odt");
+    owf_doc_free(doc);
+    return 0;
+}
+
 static int test_pdf_export(void)
 {
     owf_doc *doc = owf_doc_new();
@@ -1164,6 +1254,7 @@ int main(void)
     if ((rc = test_frame_geometry_helper())) goto fail;
     if ((rc = test_frame_authoring())) goto fail;
     if ((rc = test_section_columns_import())) goto fail;
+    if ((rc = test_table_of_contents())) goto fail;
     if ((rc = test_pdf_export())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;

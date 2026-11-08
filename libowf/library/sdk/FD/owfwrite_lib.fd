@@ -42,4 +42,5 @@ owf_format_for_filename(filename)(a0)
 owf_import_memory(data,length,format,doc,report,used)(a0,d0,a1,a2,a3,d1)
 owf_import_file(path,format,doc,report,used)(a0,a1,a2,a3,d0)
 owf_export_file(doc,path,format,report)(a0,a1,a2,a3)
+owf_page_number(page,number,out,size)(a0,d0,a1,d1)
 ##end

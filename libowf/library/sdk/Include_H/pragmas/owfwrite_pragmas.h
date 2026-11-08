@@ -48,5 +48,6 @@
 #pragma libcall OWFWriteBase owf_import_memory f6 1ba90806
 #pragma libcall OWFWriteBase owf_import_file fc 0ba9805
 #pragma libcall OWFWriteBase owf_export_file 102 ba9804
+#pragma libcall OWFWriteBase owf_page_number 108 190804
 
 #endif /* PRAGMAS_OWFWRITE_PRAGMAS_H */

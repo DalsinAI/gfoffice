@@ -1,5 +1,5 @@
 /*
- * owfwrite.library 3.2, GFOpenWrite's part of libowf: documents. The document
+ * owfwrite.library 3.3, GFOpenWrite's part of libowf: documents. The document
  * model and its formats: DOCX, ODT, the Amiga word processors' files (Final
  * Writer, Wordworth, ProWrite, IFF FTXT), text, ANSI and HTML, and PDF out.
  *
@@ -17,12 +17,15 @@
  * 2.0.23), at its end, so owf_doc is larger and a program's size check
  * refuses 3.1. No call changes.
  *
+ * 3.3: owf_page_number(), the shared page-label service used by OpenLayout,
+ * generated references and GFOpenWrite 2.0.26's Table of Contents.
+ *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 2
-#define OWF_LIB_VERS "3.2"
-#define OWF_LIB_DATE "27.10.2026"
+#define OWF_LIB_REVISION 3
+#define OWF_LIB_VERS "3.3"
+#define OWF_LIB_DATE "8.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

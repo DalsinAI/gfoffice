@@ -204,7 +204,8 @@ feature, not by the vague claim "supports DOCX".
 - floating images;
 - multi-column sections;
 - footnotes/endnotes;
-- TOC fields;
+- live imported TOC-field refresh (native generated TOCs are editable linked
+  paragraphs from 2.0.26);
 - character styles.
 
 ### Tier C: preserve-but-not-edit initially

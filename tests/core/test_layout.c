@@ -32,6 +32,19 @@ static int measure(void *userdata, const char *utf8, size_t length,
     return 1;
 }
 
+static int resolve_toc_with_layout(void *userdata, const owf_doc *doc,
+                                   const int *paragraphs, int count, int *pages)
+{
+    ow_layout *layout = ow_layout_new(doc, measure, userdata);
+    int i, ok = layout != NULL;
+    for (i = 0; ok && i < count; ++i) {
+        ol_rect box;
+        ok = ow_layout_paragraph_box(layout, paragraphs[i], &pages[i], &box);
+    }
+    ow_layout_free(layout);
+    return ok;
+}
+
 static owf_para *para(owf_doc *doc, owf_story *story, int heading, const char *text, int size)
 {
     owf_parafmt pf;
@@ -242,6 +255,54 @@ static void test_built(void)
     ow_layout_free(l);
     owf_doc_free(doc);
     printf("ow_layout: built document, %d caret positions\n", checked);
+}
+
+static void test_generated_toc(void)
+{
+    owf_doc *doc = owf_doc_new();
+    ow_editor *editor;
+    int i, heading = 0;
+    CHECK(doc != NULL);
+    if (!doc) return;
+    doc->page.width = 5000;
+    doc->page.height = 3600;
+    doc->page.margin_left = doc->page.margin_right = 400;
+    doc->page.margin_top = doc->page.margin_bottom = 400;
+    para(doc, NULL, 0, "Insert contents here", 240);
+    para(doc, NULL, 1, "First chapter", 320);
+    for (i = 0; i < 16; ++i)
+        para(doc, NULL, 0, "A body paragraph long enough to wrap over several lines on this deliberately small page.", 240);
+    para(doc, NULL, 2, "Second chapter", 280);
+    editor = ow_editor_new(doc);
+    CHECK(editor != NULL);
+    if (!editor) { owf_doc_free(doc); return; }
+    CHECK(ow_editor_insert_table_of_contents(editor, 3, resolve_toc_with_layout, NULL) == OWF_OK);
+    CHECK(doc->body.nparas == 23);
+    CHECK(doc->body.paras[2].fmt.tabs[0].leader == OWF_LEADER_DOT &&
+          doc->body.paras[3].fmt.tabs[0].kind == OWF_TAB_RIGHT);
+    {
+        ow_layout *layout = ow_layout_new(doc, measure, NULL);
+        CHECK(layout != NULL);
+        for (i = 0; layout && i < doc->body.nparas; ++i) {
+            const owf_para *p = &doc->body.paras[i];
+            if (p->fmt.heading > 0) {
+                const owf_para *entry = &doc->body.paras[2 + heading];
+                ol_rect box;
+                int page = -1;
+                char number[20];
+                CHECK(ow_layout_paragraph_box(layout, i, &page, &box));
+                snprintf(number, sizeof number, "%d", page + 1);
+                CHECK(entry->nruns == 3 && entry->runs[2].text &&
+                      !strcmp(entry->runs[2].text, number));
+                ++heading;
+            }
+        }
+        CHECK(heading == 2);
+        ow_layout_free(layout);
+    }
+    CHECK(ow_editor_undo(editor) == 1 && doc->body.nparas == 19);
+    ow_editor_free(editor);
+    owf_doc_free(doc);
 }
 
 static void test_page_numbers(void)
@@ -1549,6 +1610,7 @@ int main(int argc, char **argv)
     test_page_numbers();
     test_built();
     test_columns();
+    test_generated_toc();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)
         if (strstr(argv[i], "cover-wpg.docx")) test_cover_typing(argv[i]);

@@ -108,7 +108,7 @@ These changes are small, and they don't change behaviour:
 
 | Library | Base | Version | Calls | Proto |
 | --- | --- | --- | --- | --- |
-| `owfwrite.library` | `OWFWriteBase` | 3.2 | 39 | `<proto/owfwrite.h>` |
+| `owfwrite.library` | `OWFWriteBase` | 3.3 | 40 | `<proto/owfwrite.h>` |
 | `owfcalc.library` | `OWFCalcBase` | 3.9 | 98 | `<proto/owfcalc.h>` |
 | `owfpub.library` | `OWFPubBase` | 3.1 | 37 | `<proto/owfpub.h>` |
 | `owfpresent.library` | `OWFPresentBase` | 3.3 | 81 | `<proto/owfpresent.h>` |

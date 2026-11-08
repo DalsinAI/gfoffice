@@ -135,7 +135,8 @@ static void run(const owf_libs_env *e)
 {
     static const char *const formats[] = { "odt", "docx", "html", "pdf", "text" };
     static const char *const exts[] = { "odt", "docx", "html", "pdf", "txt" };
-    char path[96];
+    char path[96], page[24];
+    owf_page numbering;
     owf_doc *doc;
     int i;
 
@@ -143,6 +144,10 @@ static void run(const owf_libs_env *e)
     LCHECK(e, owf_format_count() >= 10 && owf_format_at(0) && owf_format_named("docx") &&
            owf_format_for_filename("Letter.ODT") == owf_format_named("odt"),
            "%s: document formats listed, by name and by file name", e->tag);
+    memset(&numbering, 0, sizeof numbering);
+    numbering.pagenum_style = OWF_PAGENUM_ROMAN_LOWER;
+    owf_page_number(&numbering, 27, page, sizeof page);
+    LCHECK(e, !strcmp(page, "xxvii"), "%s: shared page numbering through owfwrite.library 3.3", e->tag);
     doc = make_document();
     LCHECK(e, doc != NULL && doc->body.nparas == 3, "%s: document built through the library", e->tag);
     if (!doc)

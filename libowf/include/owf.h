@@ -194,6 +194,10 @@ typedef struct {
     int header_on_first, footer_on_first;
 } owf_page;
 
+/* A physical page number in the document's selected style: 1, iv, IV, d or
+ * D. Shared by layout fields, generated references and front ends. */
+void owf_page_number(const owf_page *page, int number, char *out, size_t size);
+
 typedef struct {
     char *name, *mime, *alt;
     unsigned char *data;

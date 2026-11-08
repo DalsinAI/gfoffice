@@ -2436,6 +2436,209 @@ int ow_editor_insert_page_break(ow_editor *editor)
     return ow_editor_layout(editor);
 }
 
+typedef struct {
+    int paragraph;
+    int level;
+    char *text;
+    char *bookmark;
+} ow_toc_heading;
+
+static void toc_headings_free(ow_toc_heading *headings, int count)
+{
+    int i;
+    if (!headings) return;
+    for (i = 0; i < count; ++i) {
+        owf_free(headings[i].text);
+        owf_free(headings[i].bookmark);
+    }
+    owf_free(headings);
+}
+
+static char *toc_paragraph_text(const owf_para *para)
+{
+    size_t length = 0, at = 0;
+    char *text;
+    int i;
+    if (!para) return NULL;
+    for (i = 0; i < para->nruns; ++i) {
+        const owf_run *run = &para->runs[i];
+        if (run->kind == OWF_RUN_TEXT && run->text) length += strlen(run->text);
+        else if (run->kind == OWF_RUN_TAB || run->kind == OWF_RUN_LINEBREAK) ++length;
+    }
+    text = (char *)owf_malloc(length + 1);
+    if (!text) return NULL;
+    for (i = 0; i < para->nruns; ++i) {
+        const owf_run *run = &para->runs[i];
+        size_t n;
+        if (run->kind == OWF_RUN_TEXT && run->text) {
+            n = strlen(run->text);
+            memcpy(text + at, run->text, n);
+            at += n;
+        } else if (run->kind == OWF_RUN_TAB || run->kind == OWF_RUN_LINEBREAK) {
+            text[at++] = ' ';
+        }
+    }
+    while (at && text[at - 1] == ' ') --at;
+    text[at] = 0;
+    return text;
+}
+
+static int toc_bookmark_exists(const owf_doc *doc, const char *name)
+{
+    size_t wanted = strlen(name);
+    int i;
+    for (i = 0; i < doc->body.nparas; ++i) {
+        const char *p = doc->body.paras[i].bookmarks;
+        while (p && *p) {
+            const char *end = strchr(p, ' ');
+            const char *place = strchr(p, '@');
+            size_t n = (size_t)((place && (!end || place < end) ? place : end ? end : p + strlen(p)) - p);
+            if (n == wanted && !memcmp(p, name, n)) return 1;
+            p = end ? end + 1 : NULL;
+        }
+    }
+    return 0;
+}
+
+static int toc_add_bookmark(owf_para *para, const char *name, size_t text_length)
+{
+    size_t old = para->bookmarks ? strlen(para->bookmarks) : 0;
+    size_t need = old + (old ? 1 : 0) + strlen(name) + 2 + 2 * sizeof(size_t) * 3;
+    char *marks = (char *)owf_malloc(need);
+    if (!marks) return 0;
+    snprintf(marks, need, "%s%s%s@0-%lu", para->bookmarks ? para->bookmarks : "",
+             old ? " " : "", name, (unsigned long)text_length);
+    owf_free(para->bookmarks);
+    para->bookmarks = marks;
+    return 1;
+}
+
+static char *toc_href(const char *bookmark)
+{
+    size_t n = strlen(bookmark);
+    char *href = (char *)owf_malloc(n + 2);
+    if (!href) return NULL;
+    href[0] = '#';
+    memcpy(href + 1, bookmark, n + 1);
+    return href;
+}
+
+int ow_editor_insert_table_of_contents(ow_editor *editor, int max_level,
+                                       ow_toc_pages_fn resolve_pages,
+                                       void *userdata)
+{
+    ow_toc_heading *headings = NULL;
+    int *paragraphs = NULL, *pages = NULL;
+    ow_position after;
+    owf_story *story;
+    owf_parafmt title_fmt, entry_fmt;
+    owf_charfmt title_cf, entry_cf;
+    int base, count = 0, capacity = 0, i, rc = OWF_ERR_MEMORY, inserted;
+    unsigned bookmark_number = 1;
+    if (!editor || !editor->doc || !resolve_pages || max_level < 1 || max_level > 6 ||
+        editor->selection.focus.box || editor->selection.anchor.box)
+        return OWF_ERR_FORMAT;
+    story = &editor->doc->body;
+    if (!ow_editor_selection_empty(editor) || !story->nparas || editor->selection.focus.paragraph < 0 ||
+        editor->selection.focus.paragraph >= story->nparas ||
+        story->paras[editor->selection.focus.paragraph].table_id >= 0 ||
+        story->paras[editor->selection.focus.paragraph].fmt.heading ||
+        editor->selection.focus.run < 0 ||
+        editor->selection.focus.run >= story->paras[editor->selection.focus.paragraph].nruns ||
+        story->paras[editor->selection.focus.paragraph].runs[editor->selection.focus.run].kind != OWF_RUN_TEXT ||
+        !story->paras[editor->selection.focus.paragraph].runs[editor->selection.focus.run].text)
+        return OWF_ERR_FORMAT;
+    for (i = 0; i < story->nparas; ++i)
+        if (story->paras[i].fmt.heading > 0 && story->paras[i].fmt.heading <= max_level)
+            ++count;
+    if (!count) return OWF_ERR_UNSUPPORTED;
+    capacity = count;
+    headings = (ow_toc_heading *)owf_calloc((size_t)count, sizeof(*headings));
+    paragraphs = (int *)owf_malloc((size_t)count * sizeof(*paragraphs));
+    pages = (int *)owf_malloc((size_t)count * sizeof(*pages));
+    if (!headings || !paragraphs || !pages) goto done;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) goto done;
+    if (split_paragraph(editor, editor->selection.focus, &after) < 0) goto undo;
+    story = &editor->doc->body;
+    base = after.paragraph;
+    for (i = 0, count = 0; i < story->nparas; ++i) {
+        owf_para *para = &story->paras[i];
+        char name[40];
+        if (para->fmt.heading < 1 || para->fmt.heading > max_level) continue;
+        headings[count].paragraph = i;
+        headings[count].level = para->fmt.heading;
+        headings[count].text = toc_paragraph_text(para);
+        if (!headings[count].text) goto undo;
+        do {
+            snprintf(name, sizeof name, "_GFTOC%u", bookmark_number++);
+        } while (toc_bookmark_exists(editor->doc, name));
+        headings[count].bookmark = copy_bytes(name, strlen(name));
+        if (!headings[count].bookmark ||
+            !toc_add_bookmark(para, name, strlen(headings[count].text))) goto undo;
+        ++count;
+    }
+    inserted = count + 1;
+    owf_parafmt_init(&title_fmt);
+    title_cf = editor->doc->base;
+    title_cf.flags |= OWF_BOLD;
+    if (!title_cf.size || title_cf.size < 320) title_cf.size = 320;
+    {
+        owf_para *title = insert_paragraph(story, base, &title_fmt);
+        if (!title || !(title->style = copy_bytes("TOCHeading", 10)) ||
+            owf_para_add_text(title, &title_cf, "Contents", 8) != OWF_OK) goto undo;
+    }
+    for (i = 0; i < count; ++i) {
+        owf_para *entry;
+        owf_run *run;
+        char style[16];
+        owf_parafmt_init(&entry_fmt);
+        entry_fmt.indent_left = (headings[i].level - 1) * 360;
+        entry_fmt.ntabs = 1;
+        entry_fmt.tabs[0].position = editor->doc->page.width - editor->doc->page.margin_left -
+                                     editor->doc->page.margin_right - entry_fmt.indent_left;
+        if (entry_fmt.tabs[0].position < 720) entry_fmt.tabs[0].position = 720;
+        entry_fmt.tabs[0].kind = OWF_TAB_RIGHT;
+        entry_fmt.tabs[0].leader = OWF_LEADER_DOT;
+        entry = insert_paragraph(story, base + 1 + i, &entry_fmt);
+        snprintf(style, sizeof style, "TOC%d", headings[i].level);
+        if (!entry || !(entry->style = copy_bytes(style, strlen(style)))) goto undo;
+        entry_cf = editor->doc->base;
+        if (owf_para_add_text(entry, &entry_cf, headings[i].text, strlen(headings[i].text)) != OWF_OK)
+            goto undo;
+        run = &entry->runs[entry->nruns - 1];
+        run->href = toc_href(headings[i].bookmark);
+        if (!run->href || owf_para_add_special(entry, &entry_cf, OWF_RUN_TAB, OWF_FIELD_PAGE) != OWF_OK)
+            goto undo;
+        if (headings[i].paragraph >= base) headings[i].paragraph += inserted;
+        paragraphs[i] = headings[i].paragraph;
+    }
+    if (!resolve_pages(userdata, editor->doc, paragraphs, count, pages)) goto undo;
+    for (i = 0; i < count; ++i) {
+        owf_para *entry = &story->paras[base + 1 + i];
+        char label[48];
+        int first = editor->doc->page.start_page > 0 ? editor->doc->page.start_page : 1;
+        if (pages[i] < 0) goto undo;
+        owf_page_number(&editor->doc->page, first + pages[i], label, sizeof label);
+        if (owf_para_add_text(entry, &entry_cf, label, strlen(label)) != OWF_OK) goto undo;
+        entry->runs[entry->nruns - 1].href = toc_href(headings[i].bookmark);
+        if (!entry->runs[entry->nruns - 1].href) goto undo;
+    }
+    after.paragraph += inserted;
+    editor->selection.anchor = editor->selection.focus = after;
+    editor->dirty = 1;
+    ++editor->changes;
+    rc = ow_editor_layout(editor);
+    goto done;
+undo:
+    ow_editor_undo(editor);
+done:
+    toc_headings_free(headings, capacity);
+    owf_free(paragraphs);
+    owf_free(pages);
+    return rc;
+}
+
 static int current_table_cell(const ow_editor *editor,int *id,int *row,int *col,int *cols)
 {
     int p;if(!editor||!editor->doc)return 0;p=editor->selection.focus.paragraph;if(p<0||p>=ed_story(editor)->nparas||ed_story(editor)->paras[p].table_id<0)return 0;if(id)*id=ed_story(editor)->paras[p].table_id;if(row)*row=ed_story(editor)->paras[p].table_row;if(col)*col=ed_story(editor)->paras[p].table_col;if(cols)*cols=ed_story(editor)->paras[p].table_cols;return 1;

@@ -4,6 +4,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_pagenum_impl.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +57,11 @@ void *owf_realloc(void *p, size_t n)
 void owf_free(void *p)
 {
     free(p);
+}
+
+void owf_page_number(const owf_page *page, int number, char *out, size_t size)
+{
+    owf_page_number_impl(page, number, out, size);
 }
 
 owf_doc *owf_doc_new(void)

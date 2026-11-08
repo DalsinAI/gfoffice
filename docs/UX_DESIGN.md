@@ -322,8 +322,10 @@ GFOpenWrite 1.0 completes the first native office-document release:
 - direct searchable PDF export from the libowf document model;
 - DOCX and ODT round-trip coverage for common text formatting, simple tables and inline images.
 
-The 1.0 boundary remains deliberately word-processor sized. Later work may
+The 1.0 boundary remains deliberately word-processor sized. Since that release,
+GFOpenWrite 2.0.26 has added generated, linked Tables of Contents whose page
+numbers come from GFOpenLayout. Later work may
 improve visual-line-aware vertical movement, font shaping, the incremental
 display-list layout engine, fully WYSIWYG graphics printing, floating objects,
-multi-column sections, footnotes/endnotes, generated TOCs and grammar
+multi-column sections, footnotes/endnotes, indexes/captions and grammar
 services. Those are post-1.0 improvements rather than hidden 1.0 claims.
