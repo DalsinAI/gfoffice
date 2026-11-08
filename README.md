@@ -252,10 +252,11 @@ GFOpenCalc is the spreadsheet of the GFOffice Suite, beside GFOpenWrite in this
 repository for now. Its portable core is `src/calc` (`include/opencalc_core.h`):
 the view, the selection, keys as Excel and LibreOffice have them, editing,
 fill, insert and delete, the clipboard, styles, bounded undo and the grid as a
-list of things to draw. Its reusable core also sorts a selected range by the
-active column, ascending or descending, with an optional header row; formulas,
-direct formatting and comments move with their rows and the operation is one
-undo step. Merge and unmerge are native editing commands too, with a warning
+list of things to draw. Its reusable core also stably sorts a selected range
+by up to eight native-UI keys (the API accepts any unique selected columns),
+each ascending or descending, with an optional header row; formulas, direct
+formatting and comments move with their rows and the operation is one undo
+step. Merge and unmerge are native editing commands too, with a warning
 before a merge would discard values outside the upper-left cell. Cell comments
 can be added, edited and removed with undo, using the same model that imports,
 renders and exports them. Worksheet Find wraps through formatted cell values;
@@ -264,7 +265,7 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.37 can create and
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.38 can create and
 remove an AutoFilter, filter a table by any distinct displayed value from a
 heading's arrow, combine exact-value conditions across columns, clear one
 column or show all rows, and apply one or two same-column Standard Filter

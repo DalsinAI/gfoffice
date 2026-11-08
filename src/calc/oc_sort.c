@@ -12,8 +12,8 @@
 
 typedef struct {
     oc_core *core;
-    unsigned key_col;
-    int descending;
+    const oc_sort_key *keys;
+    unsigned nkeys;
 } sort_context;
 
 /* Empty keys always follow nonempty ones. Numbers and booleans sort before
@@ -39,10 +39,10 @@ static int text_compare(const char *a, const char *b)
     return *p == *q ? 0 : *p ? 1 : -1;
 }
 
-static int row_compare(const sort_context *ctx, unsigned a, unsigned b)
+static int cell_compare(const sort_context *ctx, unsigned a, unsigned b, const oc_sort_key *key)
 {
-    const owf_cell *ca = oc_find(ctx->core, ctx->core->sheet, a, ctx->key_col);
-    const owf_cell *cb = oc_find(ctx->core, ctx->core->sheet, b, ctx->key_col);
+    const owf_cell *ca = oc_find(ctx->core, ctx->core->sheet, a, key->col);
+    const owf_cell *cb = oc_find(ctx->core, ctx->core->sheet, b, key->col);
     int ra = cell_rank(ca), rb = cell_rank(cb), result = 0;
     if (ra == 4 || rb == 4) return ra == rb ? 0 : ra == 4 ? 1 : -1;
     if (ra != rb)
@@ -56,7 +56,17 @@ static int row_compare(const sort_context *ctx, unsigned a, unsigned b)
         int x = ca ? ca->error : 0, y = cb ? cb->error : 0;
         result = x < y ? -1 : x > y ? 1 : 0;
     }
-    return ctx->descending ? -result : result;
+    return key->direction == OC_SORT_DESCENDING ? -result : result;
+}
+
+static int row_compare(const sort_context *ctx, unsigned a, unsigned b)
+{
+    unsigned i;
+    for (i = 0; i < ctx->nkeys; ++i) {
+        int result = cell_compare(ctx, a, b, &ctx->keys[i]);
+        if (result) return result;
+    }
+    return 0;
 }
 
 static void merge_rows(const sort_context *ctx, unsigned *rows, unsigned *tmp,
@@ -95,7 +105,7 @@ static int merge_touches(const owf_range *a, const owf_range *b)
            a->first_col <= b->last_col && a->last_col >= b->first_col;
 }
 
-int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header)
+int oc_core_sort_keys(oc_core *core, const oc_sort_key *keys, unsigned nkeys, int has_header)
 {
     oc_sheetstate *st;
     owf_sheet *sheet;
@@ -109,13 +119,22 @@ int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header)
     oc_undo *undo;
     sort_context ctx;
 
-    if (!core || (direction != OC_SORT_ASCENDING && direction != OC_SORT_DESCENDING))
+    if (!core || !keys || !nkeys)
         return OWF_ERR_FORMAT;
     if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
     st = oc_state(core);
-    if (st->sel.nranges != 1 || !oc_range_clip(core, &st->sel.ranges[0], &range) ||
-        key_col < range.first_col || key_col > range.last_col)
+    if (st->sel.nranges != 1 || !oc_range_clip(core, &st->sel.ranges[0], &range))
         return OWF_ERR_UNSUPPORTED;
+    if (nkeys > range.last_col - range.first_col + 1)
+        return OWF_ERR_UNSUPPORTED;
+    for (k = 0; k < nkeys; ++k) {
+        unsigned j;
+        if (keys[k].col < range.first_col || keys[k].col > range.last_col ||
+            (keys[k].direction != OC_SORT_ASCENDING && keys[k].direction != OC_SORT_DESCENDING))
+            return OWF_ERR_UNSUPPORTED;
+        for (j = 0; j < k; ++j)
+            if (keys[j].col == keys[k].col) return OWF_ERR_UNSUPPORTED;
+    }
     first = range.first_row + (has_header ? 1u : 0u);
     if (first >= range.last_row) return OWF_ERR_UNSUPPORTED;
     count = range.last_row - first + 1;
@@ -131,8 +150,8 @@ int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header)
     if (!rows || !tmp || !destination) { rc = OWF_ERR_MEMORY; goto done; }
     for (k = 0; k < count; ++k) rows[k] = first + k;
     ctx.core = core;
-    ctx.key_col = key_col;
-    ctx.descending = direction == OC_SORT_DESCENDING;
+    ctx.keys = keys;
+    ctx.nkeys = nkeys;
     stable_sort_rows(&ctx, rows, tmp, 0, count);
     for (k = 0; k < count; ++k) destination[rows[k] - first] = first + k;
 
@@ -207,4 +226,12 @@ done:
     free(tmp);
     free(rows);
     return rc;
+}
+
+int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header)
+{
+    oc_sort_key key;
+    key.col = key_col;
+    key.direction = direction;
+    return oc_core_sort_keys(core, &key, 1, has_header);
 }

@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.2.0"
+#define OC_CORE_VERSION "0.3.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -265,13 +265,19 @@ int oc_core_delete(oc_core *core, int axis);
 enum { OC_CLEAR_CONTENTS = 1, OC_CLEAR_FORMATS = 2, OC_CLEAR_ALL = 3 };
 int oc_core_clear(oc_core *core, unsigned what);
 
-/* Sorts the rows of the selection's one range by an absolute sheet column.
+/* Sorts the rows of the selection's one range by absolute sheet columns.
  * The first row stays in place when has_header is nonzero. Cell contents,
  * formulas, direct formatting and comments move with their rows; relative
  * references in moved formulas follow the move. Empty keys stay last in
  * either direction. Merged ranges that touch the selection are refused.
  * Undoable as one step. */
 enum { OC_SORT_ASCENDING, OC_SORT_DESCENDING };
+typedef struct {
+    unsigned col;
+    int direction;
+} oc_sort_key;
+int oc_core_sort_keys(oc_core *core, const oc_sort_key *keys, unsigned nkeys, int has_header);
+/* One-key compatibility entry point. */
 int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header);
 
 /* ---- AutoFilter ----

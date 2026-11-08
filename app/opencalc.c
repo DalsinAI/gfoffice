@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.37 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.38 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -2282,6 +2282,7 @@ static void about(void)
          "GFOpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
          "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n"
+         "Stable multi-key row sorting\n"
          "Value, compound Standard and Top/Bottom AutoFilters\n"
          "Searchable PDF export and GFOpenPrint printing\n\n"
          "MIT licence, Copyright (c) 2026 AmiCradle Team.");
@@ -2467,22 +2468,81 @@ static void set_zoom(int z)
     oc_view_show_cell(core, row, col);
 }
 
+static int sort_keys_text(const char *text, oc_sort_key *keys, unsigned capacity, unsigned *count)
+{
+    const char *p = text;
+    unsigned n = 0;
+    while (1) {
+        unsigned column = 0, i;
+        const char *word;
+        size_t length;
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p || n == capacity || !isalpha((unsigned char)*p)) return 0;
+        while (isalpha((unsigned char)*p)) {
+            unsigned letter = (unsigned)(toupper((unsigned char)*p) - 'A' + 1);
+            if (letter < 1 || letter > 26 || column > (OC_MAX_COLS - letter) / 26) return 0;
+            column = column * 26 + letter;
+            p++;
+        }
+        if (!column || column > OC_MAX_COLS) return 0;
+        keys[n].col = column - 1;
+        keys[n].direction = OC_SORT_ASCENDING;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p && *p != ',') {
+            word = p;
+            while (*p && *p != ',' && *p != ' ' && *p != '\t') p++;
+            length = (size_t)(p - word);
+            if ((length == 3 && !strncasecmp(word, "asc", 3)) ||
+                (length == 9 && !strncasecmp(word, "ascending", 9)))
+                keys[n].direction = OC_SORT_ASCENDING;
+            else if ((length == 4 && !strncasecmp(word, "desc", 4)) ||
+                     (length == 10 && !strncasecmp(word, "descending", 10)))
+                keys[n].direction = OC_SORT_DESCENDING;
+            else
+                return 0;
+            while (*p == ' ' || *p == '\t') p++;
+        }
+        for (i = 0; i < n; ++i)
+            if (keys[i].col == keys[n].col) return 0;
+        n++;
+        if (!*p) break;
+        if (*p++ != ',') return 0;
+    }
+    *count = n;
+    return 1;
+}
+
 static void do_sort(int direction)
 {
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"Sort Rows",
                              (UBYTE *)"Is the first selected row a header?",
                              (UBYTE *)"Yes|No|Cancel" };
+    oc_sort_key keys[8];
+    char entered[256], initial[32], column[16], message[64];
     unsigned row, col;
+    unsigned nkeys;
     int pick = EasyRequest(win, &es, NULL);
     int rc;
     (void)row;
     if (!pick) return;
     oc_core_active(core, &row, &col);
-    rc = oc_core_sort(core, col, direction, pick == 1);
+    oc_col_name(col, column);
+    snprintf(initial, sizeof initial, "%s %s", column,
+             direction == OC_SORT_ASCENDING ? "asc" : "desc");
+    if (!text_requester("Sort Rows", "Keys: B asc, A desc (up to 8)", initial, entered, sizeof entered))
+        return;
+    if (!sort_keys_text(entered, keys, sizeof keys / sizeof keys[0], &nkeys)) {
+        set_status("Use column letters and directions, for example B asc, A desc.");
+        return;
+    }
+    rc = oc_core_sort_keys(core, keys, nkeys, pick == 1);
     if (rc == OWF_ERR_UNSUPPORTED)
-        set_status("Select one unmerged range with at least two data rows.");
-    else
-        result(rc, direction == OC_SORT_ASCENDING ? "Rows sorted ascending." : "Rows sorted descending.");
+        set_status("Select one unmerged range containing every unique sort key and at least two data rows.");
+    else {
+        snprintf(message, sizeof message, "Rows sorted by %lu key%s.",
+                 (unsigned long)nkeys, nkeys == 1 ? "" : "s");
+        result(rc, message);
+    }
 }
 
 static void do_merge(int merge)

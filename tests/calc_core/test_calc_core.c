@@ -668,6 +668,66 @@ static void test_sort(void)
     oc_core_free(core);
 }
 
+static void test_sort_keys(void)
+{
+    static const char *const cells[][2] = {
+        { "A1", "Department" }, { "B1", "Person" }, { "C1", "Score" },
+        { "A2", "East" }, { "B2", "Bob" },   { "C2", "10" },
+        { "A3", "West" }, { "B3", "Cara" },  { "C3", "20" },
+        { "A4", "East" }, { "B4", "Dan" },   { "C4", "20" },
+        { "A5", "East" }, { "B5", "Alice" }, { "C5", "20" },
+        { "A6", "West" }, { "B6", "Eve" },   { "C6", "20" },
+        { "A7", "East" }, { "B7", "Zed" },
+        { "A8", "West" }, { "B8", "Amy" },   { "C8", "30" }
+    };
+    const oc_sort_key three[] = {
+        { 0, OC_SORT_ASCENDING },
+        { 2, OC_SORT_DESCENDING },
+        { 1, OC_SORT_ASCENDING }
+    };
+    const oc_sort_key two[] = {
+        { 0, OC_SORT_ASCENDING },
+        { 2, OC_SORT_DESCENDING }
+    };
+    const oc_sort_key duplicate[] = {
+        { 0, OC_SORT_ASCENDING },
+        { 0, OC_SORT_DESCENDING }
+    };
+    const oc_sort_key outside[] = { { 4, OC_SORT_ASCENDING } };
+    const oc_sort_key bad_direction[] = { { 0, 99 } };
+    oc_core *core = fresh();
+    int i;
+    if (!core) return;
+    for (i = 0; i < (int)(sizeof cells / sizeof cells[0]); ++i)
+        enter_at(core, cells[i][0], cells[i][1]);
+    go(core, "A1:C8");
+    CHECK(oc_core_sort_keys(core, three, 3, 1) == OWF_OK);
+    CHECK_STR(text(core, "B2"), "Alice");
+    CHECK_STR(text(core, "B3"), "Dan");
+    CHECK_STR(text(core, "B4"), "Bob");
+    CHECK_STR(text(core, "B5"), "Zed");                 /* empty secondary key remains last */
+    CHECK_STR(text(core, "B6"), "Amy");
+    CHECK_STR(text(core, "B7"), "Cara");
+    CHECK_STR(text(core, "B8"), "Eve");
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK_STR(text(core, "B4"), "Dan");
+    CHECK_STR(text(core, "B5"), "Alice");
+
+    CHECK(oc_core_sort_keys(core, two, 2, 1) == OWF_OK);
+    CHECK_STR(text(core, "B2"), "Dan");                 /* equal rows remain stable */
+    CHECK_STR(text(core, "B3"), "Alice");
+    CHECK_STR(text(core, "B4"), "Bob");
+    CHECK_STR(text(core, "B5"), "Zed");
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_sort_keys(core, duplicate, 2, 1) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_sort_keys(core, outside, 1, 1) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_sort_keys(core, bad_direction, 1, 1) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_sort_keys(core, NULL, 1, 1) == OWF_ERR_FORMAT);
+    CHECK(oc_core_sort_keys(core, three, 0, 1) == OWF_ERR_FORMAT);
+    CHECK(oc_core_sort_keys(NULL, three, 3, 1) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 static void test_merge_command(void)
 {
     oc_core *core = fresh();
@@ -3746,6 +3806,7 @@ int main(void)
     test_undo();
     test_fill();
     test_sort();
+    test_sort_keys();
     test_merge_command();
     test_comment_command();
     test_find_command();
