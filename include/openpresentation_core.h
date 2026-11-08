@@ -15,10 +15,9 @@
  *     shrinks to fit (up to four times by 90%), by laying out again
  *     (GFOpenLayout 0.2 has neither: section 5.2 and 5.3);
  *   - the deck as a PDF, one page a slide, drawn from that display list
- *     through the page PDF writer (owf_pdf.h); shapes GFOpenLayout 0.2
- *     can't draw (ellipses, rounded rectangles, triangles, diamonds,
- *     arrows, lines, polygons) are drawn at their frame's box, and so are
- *     a picture's crop and an object kept but not drawn (as a labelled box).
+ *     through the page PDF writer (owf_pdf.h); OpenLayout 13 carries the
+ *     shared shape paths, styles, arrows and picture crops used by both the
+ *     screen and PDF renderers.
  *
  * Plain C99, no floating point. MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -32,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.3.4"
+#define OPR_CORE_VERSION "0.3.5"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */

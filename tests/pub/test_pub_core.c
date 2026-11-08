@@ -31,6 +31,7 @@ int main(void)
     unsigned char *odp = NULL;
     size_t length = 0, odp_length = 0;
     owf_deck *roundtrip = NULL;
+    opr_slide *laid = NULL;
     const owf_deck_format *format = owf_deck_format_named("odp"), *used = NULL;
     int version = 0, i, pictures = 0;
     CHECK(report != NULL);
@@ -46,6 +47,23 @@ int main(void)
           roundtrip && roundtrip->nslides == 1 && roundtrip->slides[0].nobjs == 2);
     free(odp); owf_deck_free(roundtrip);
     free(pdf); pdf = NULL; owf_deck_free(deck); deck = NULL;
+
+    CHECK(opp_import_pub_file("tests/pub/samples/Sample.pub", &deck, report, &version) == OWF_OK);
+    laid = deck && deck->nslides > 1 ? opr_slide_layout(deck, 1, NULL, NULL, NULL) : NULL;
+    CHECK(laid != NULL);
+    if (laid) {
+        int shapes = 0;
+        size_t k;
+        for (k = 0; k < ol_display_count(laid->doc); k++) {
+            const ol_display_op *op = ol_display_get(laid->doc, k);
+            if (op && op->type == OL_OP_SHAPE && op->graphic &&
+                op->graphic->shape.type == OL_SHAPE_RECT)
+                shapes++;
+        }
+        CHECK(shapes >= 1);
+    }
+    opr_slide_free(laid); laid = NULL;
+    owf_deck_free(deck); deck = NULL;
 
     CHECK(opp_import_pub_file("tests/pub/samples/SampleBrochure.pub", &deck, report, &version) == OWF_OK);
     CHECK(deck && deck->nslides == 2 && deck->res->nimages == 8);

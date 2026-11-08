@@ -125,7 +125,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Insert picture from file | P3 | Model |
-| Crop | P1 | Yes: read, written, drawn in the PDF |
+| Crop | P1 | Yes: read, written, and drawn on screen and in PDF from shared OpenLayout metadata |
 | Resize, keep ratio | P3 | Model |
 | Colour modes (greyscale, black and white, watermark), filters, transparency | Later | No |
 | Linked pictures | Later | No (reported) |

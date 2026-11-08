@@ -414,6 +414,82 @@ static void test_pdf_writer(void)
 }
 
 #ifdef OPR_WITH_LAYOUT
+static void test_shape_layout(void)
+{
+    owf_deck *d = owf_deck_new(10000, 8000);
+    owf_slide *slide;
+    opr_slide *laid;
+    unsigned char *pdf = NULL;
+    size_t length = 0, i;
+    int kind, shapes = 0, rects = 0, rounds = 0, ellipses = 0, lines = 0, polygons = 0;
+    static const int polygon[] = {0, 1000, 500, 0, 1000, 1000};
+    CHECK(d != NULL, "shape deck");
+    if (!d) return;
+    slide = owf_deck_add_slide(d, -1, 0);
+    CHECK(slide != NULL, "shape slide");
+    if (!slide) { owf_deck_free(d); return; }
+    for (kind = OWF_SHAPE_RECT; kind <= OWF_SHAPE_POLYGON; kind++) {
+        owf_obj *o = owf_slide_add(slide, OWF_OBJ_SHAPE);
+        CHECK(o != NULL, "shape %d added", kind);
+        if (!o) continue;
+        o->shape = (owf_shape)kind;
+        o->x = 500 + kind * 1000;
+        o->y = 500;
+        o->width = o->height = 800;
+        o->look.fill = OWF_SHADE(0x224466 + kind);
+        o->look.line = OWF_SHADE(0x101010);
+        o->look.line_width = 20;
+        if (kind == OWF_SHAPE_ROUNDRECT) o->radius = 200;
+        if (kind == OWF_SHAPE_LINE) {
+            o->flags |= OWF_OBJ_FLIP_H;
+            o->look.fill = 0;
+            o->look.line_style = OWF_LINE_DASH_DOT;
+            o->look.arrows = OWF_ARROW_START | OWF_ARROW_END;
+        }
+        if (kind == OWF_SHAPE_POLYGON) {
+            o->points = malloc(sizeof polygon);
+            if (o->points) {
+                memcpy(o->points, polygon, sizeof polygon);
+                o->npoints = 3;
+            }
+        }
+    }
+    laid = opr_slide_layout(d, 0, NULL, NULL, NULL);
+    CHECK(laid != NULL, "all shapes laid out");
+    if (laid) {
+        for (i = 0; i < ol_display_count(laid->doc); i++) {
+            const ol_display_op *op = ol_display_get(laid->doc, i);
+            if (!op || op->type != OL_OP_SHAPE || !op->graphic) continue;
+            shapes++;
+            switch (op->graphic->shape.type) {
+            case OL_SHAPE_RECT: rects++; break;
+            case OL_SHAPE_ROUND_RECT:
+                rounds++;
+                CHECK(op->graphic->shape.radius_permille == 250, "round radius normalized");
+                break;
+            case OL_SHAPE_ELLIPSE: ellipses++; break;
+            case OL_SHAPE_LINE:
+                lines++;
+                CHECK(op->graphic->shape.stroke_style == OL_STROKE_DASH_DOT &&
+                      op->graphic->shape.flags == (OL_SHAPE_ARROW_START | OL_SHAPE_ARROW_END) &&
+                      op->graphic->point_count == 2 && op->graphic->points[0].x == OL_SHAPE_COORDS,
+                      "line dash, arrows and flip normalized");
+                break;
+            case OL_SHAPE_POLYGON: polygons++; break;
+            default: break;
+            }
+        }
+        CHECK(shapes == 8 && rects == 1 && rounds == 1 && ellipses == 1 && lines == 1 && polygons == 4,
+              "all deck shapes use OpenLayout: %d %d %d %d %d %d",
+              shapes, rects, rounds, ellipses, lines, polygons);
+        opr_slide_free(laid);
+    }
+    CHECK(opr_export_pdf(d, NULL, &pdf, &length, NULL) == OWF_OK && xref_ok(pdf, length),
+          "shared shapes rendered into PDF");
+    free(pdf);
+    owf_deck_free(d);
+}
+
 static void test_layout(void)
 {
     owf_deck *d = build_deck();
@@ -469,6 +545,7 @@ static void test_layout(void)
     CHECK(s != NULL, "slide 2 laid out");
     if (s) {
         const ol_display_op *cropped = NULL;
+        const ol_display_op *shape = NULL;
         for (k = 0; k < s->nframes; k++)
             if (s->frames[k].obj && s->frames[k].obj->placeholder == OWF_PH_BODY)
                 body = k;
@@ -479,6 +556,8 @@ static void test_layout(void)
             const char *t;
             if (op->type == OL_OP_IMAGE && op->graphic && op->graphic->crop.left == 100)
                 cropped = op;
+            if (op->type == OL_OP_SHAPE && op->graphic && op->graphic->shape.type == OL_SHAPE_ELLIPSE)
+                shape = op;
             if (op->type != OL_OP_TEXT || opr_slide_frame_of(s, op) != body)
                 continue;
             node = ol_node_by_id(s->doc, op->u.text.node_id);
@@ -492,6 +571,12 @@ static void test_layout(void)
         CHECK(cropped && cropped->graphic->crop.top == 50 && cropped->graphic->crop.right == 200 &&
               cropped->graphic->crop.bottom == 150 && cropped->clip.width == OL_TWIP(1440) &&
               cropped->clip.height == OL_TWIP(1440), "picture crop and clip are in OpenLayout");
+        CHECK(shape && shape->graphic->shape.fill_argb == 0xff336699u &&
+              shape->graphic->shape.stroke_argb == 0xff000000u &&
+              shape->graphic->shape.stroke_width == OL_TWIP(20) &&
+              shape->u.fill_rect.bounds.x == OL_TWIP(12000) &&
+              shape->u.fill_rect.bounds.width == OL_TWIP(3000),
+              "ellipse geometry and look are in OpenLayout");
         opr_slide_free(s);
     }
     /* text that doesn't fit shrinks */
@@ -541,6 +626,7 @@ int main(void)
     test_odp();
     test_pdf_writer();
 #ifdef OPR_WITH_LAYOUT
+    test_shape_layout();
     test_layout();
 #else
     printf("test_deck: built without OpenLayout: the layout and PDF tests were skipped\n");

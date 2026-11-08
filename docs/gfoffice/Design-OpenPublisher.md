@@ -268,6 +268,11 @@ the shared screen renderer, page strip, PDF export, GFOpenPrint path and ODP
 save. `make publisher-core-test` and `publisher-core-check` verify conversion
 and real PDF output on both text-only and picture-rich publications.
 
+GFOpenPublisher 0.1.1 inherits OpenLayout 13's shared shape display operations
+from Presentation. Imported Publisher rectangles and lines now travel through
+the same normalized geometry and screen/PDF renderers as ODP and PPTX shapes;
+the Publisher core test verifies that the adapter produces that display data.
+
 This is a functional P1a base, not a claim of faithful Publisher appearance:
 P0 has not decoded text/paragraph formatting, fill and line colours, crops,
 wrap, columns or linked frames, and the PDF picture encoder does not yet play

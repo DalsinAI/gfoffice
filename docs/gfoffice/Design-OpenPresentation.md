@@ -426,6 +426,12 @@ round-trip tests cover its explicit geometry. Multi-selection, drag selection,
 aspect-ratio locking, Tab traversal, arrange/align/group commands and the
 inspector described below remain planned.
 
+GFOpenPresentation 0.3.5 moves rectangles, rounded rectangles, ellipses,
+triangles, diamonds, block arrows, lines and polygons into OpenLayout 13's
+normalized shape operations. The Amiga screen and PDF renderer now consume the
+same geometry, fill, stroke, dash and arrow metadata; GFOpenPublisher inherits
+that path without a Publisher-specific drawing implementation.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

@@ -349,9 +349,108 @@ static opr_frame *add_frame(builder *b, const owf_obj *obj, int from_master)
     return f;
 }
 
-static int is_shape_drawn_by_us(const owf_obj *o)
+static int is_openlayout_shape(const owf_obj *o)
 {
-    return o && o->kind == OWF_OBJ_SHAPE && o->shape != OWF_SHAPE_RECT;
+    return o && o->kind == OWF_OBJ_SHAPE;
+}
+
+static unsigned shape_stroke_style(unsigned char line)
+{
+    switch (line) {
+    case OWF_LINE_DOTTED:
+        return OL_STROKE_DOTTED;
+    case OWF_LINE_DASH_DOT:
+    case OWF_LINE_MEDIUM_DASH_DOT:
+    case OWF_LINE_DASH_DOT_DOT:
+    case OWF_LINE_MEDIUM_DASH_DOT_DOT:
+    case OWF_LINE_SLANTED_DASH_DOT:
+        return OL_STROKE_DASH_DOT;
+    case OWF_LINE_DASHED:
+    case OWF_LINE_MEDIUM_DASHED:
+        return OL_STROKE_DASHED;
+    default:
+        return OL_STROKE_SOLID;
+    }
+}
+
+/* Put the deck's shape into the shared, normalized OpenLayout geometry.
+ * Screen, PDF and every deck consumer then see exactly the same path. */
+static int set_shape(ol_node *node, const owf_obj *o)
+{
+    ol_shape_style s;
+    ol_point points[OL_MAX_SHAPE_POINTS];
+    int count = 0, k, w, h;
+    static const ol_point triangle[] = {{500, 0}, {1000, 1000}, {0, 1000}};
+    static const ol_point diamond[] = {{500, 0}, {1000, 500}, {500, 1000}, {0, 500}};
+    static const ol_point arrow[] = {
+        {0, 250}, {750, 250}, {750, 0}, {1000, 500}, {750, 1000}, {750, 750}, {0, 750}
+    };
+
+    if (!is_openlayout_shape(o))
+        return 1;
+    ol_shape_style_init(&s);
+    s.fill_argb = OWF_SHADE_SET(o->look.fill) ? argb(o->look.fill) : 0;
+    s.stroke_argb = OWF_SHADE_SET(o->look.line) ? argb(o->look.line) : 0;
+    s.stroke_width = TW(o->look.line_width > 0 ? o->look.line_width : 5);
+    s.stroke_style = shape_stroke_style(o->look.line_style);
+    if (o->look.arrows & OWF_ARROW_START) s.flags |= OL_SHAPE_ARROW_START;
+    if (o->look.arrows & OWF_ARROW_END) s.flags |= OL_SHAPE_ARROW_END;
+    w = o->width > 0 ? o->width : 1;
+    h = o->height > 0 ? o->height : 1;
+    switch (o->shape) {
+    case OWF_SHAPE_RECT:
+        s.type = OL_SHAPE_RECT;
+        break;
+    case OWF_SHAPE_ROUNDRECT:
+        s.type = OL_SHAPE_ROUND_RECT;
+        s.radius_permille = bound((int)((long long)o->radius * OL_SHAPE_COORDS / (w < h ? w : h)), 0, 500);
+        break;
+    case OWF_SHAPE_ELLIPSE:
+        s.type = OL_SHAPE_ELLIPSE;
+        break;
+    case OWF_SHAPE_TRIANGLE:
+        s.type = OL_SHAPE_POLYGON;
+        memcpy(points, triangle, sizeof triangle);
+        count = (int)(sizeof triangle / sizeof *triangle);
+        break;
+    case OWF_SHAPE_DIAMOND:
+        s.type = OL_SHAPE_POLYGON;
+        memcpy(points, diamond, sizeof diamond);
+        count = (int)(sizeof diamond / sizeof *diamond);
+        break;
+    case OWF_SHAPE_ARROW:
+        s.type = OL_SHAPE_POLYGON;
+        memcpy(points, arrow, sizeof arrow);
+        count = (int)(sizeof arrow / sizeof *arrow);
+        break;
+    case OWF_SHAPE_LINE:
+        s.type = OL_SHAPE_LINE;
+        points[0].x = (o->flags & OWF_OBJ_FLIP_H) ? OL_SHAPE_COORDS : 0;
+        points[0].y = (o->flags & OWF_OBJ_FLIP_V) ? OL_SHAPE_COORDS : 0;
+        points[1].x = OL_SHAPE_COORDS - points[0].x;
+        points[1].y = OL_SHAPE_COORDS - points[0].y;
+        count = 2;
+        break;
+    case OWF_SHAPE_POLYGON:
+        if (!o->points || o->npoints < 3)
+            return 1;
+        s.type = OL_SHAPE_POLYGON;
+        count = o->npoints < OL_MAX_SHAPE_POINTS ? o->npoints : OL_MAX_SHAPE_POINTS;
+        for (k = 0; k < count; k++) {
+            points[k].x = (int32_t)((long long)o->points[k * 2] * OL_SHAPE_COORDS / w);
+            points[k].y = (int32_t)((long long)o->points[k * 2 + 1] * OL_SHAPE_COORDS / h);
+        }
+        break;
+    default:
+        return 1;
+    }
+    if (o->shape != OWF_SHAPE_LINE) {
+        for (k = 0; k < count; k++) {
+            if (o->flags & OWF_OBJ_FLIP_H) points[k].x = OL_SHAPE_COORDS - points[k].x;
+            if (o->flags & OWF_OBJ_FLIP_V) points[k].y = OL_SHAPE_COORDS - points[k].y;
+        }
+    }
+    return ol_node_set_shape(node, &s, count, count ? points : NULL);
 }
 
 /* A frame's block at its box, with its fill and line when GFOpenLayout draws
@@ -383,7 +482,7 @@ static ol_node *frame_node(builder *b, opr_frame *f, int x, int y, int w, int h,
         s.padding_right = TW(o->inset[2]);
         s.padding_bottom = TW(o->inset[3]);
     }
-    if (o && !is_shape_drawn_by_us(o) && o->kind != OWF_OBJ_PICTURE) {
+    if (o && !is_openlayout_shape(o) && o->kind != OWF_OBJ_PICTURE) {
         if (OWF_SHADE_SET(o->look.fill))
             s.background = argb(o->look.fill);
         if (OWF_SHADE_SET(o->look.line)) {
@@ -513,6 +612,8 @@ static int add_object(builder *b, const owf_obj *o, int from_master, int slide_i
     f->box = box;
     n = frame_node(b, f, box.x, box.y, box.width, box.height, o);
     if (!n)
+        return 0;
+    if (!set_shape(n, &box))
         return 0;
     f->first = ol_node_id(n) + 1;
     switch (o->kind) {

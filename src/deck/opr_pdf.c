@@ -1,8 +1,7 @@
 /*
  * GFOpenPresentation's core: the deck as a PDF, a page a slide, each slide
  * drawn from its GFOpenLayout display list into the page PDF writer
- * (owf_pdf.h), with what GFOpenLayout 0.2 can't draw (shapes other than
- * rectangles, a picture's crop) drawn at its frame's box.
+ * (owf_pdf.h). OpenLayout owns the shared shape and crop geometry.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "openpresentation_core.h"
@@ -56,87 +55,59 @@ static void arrowhead(owf_pdf *pdf, int x1, int y1, int x2, int y2, int width, u
     owf_pdf_path(pdf, pts, 3, 1, colour, 0, 0);
 }
 
-static int dashed(const owf_look *l)
+static int dashed(const ol_shape_style *s)
 {
-    return l->line_style == OWF_LINE_DASHED || l->line_style == OWF_LINE_DOTTED ||
-           l->line_style == OWF_LINE_MEDIUM_DASHED || l->line_style >= OWF_LINE_DASH_DOT;
+    return s->stroke_style != OL_STROKE_SOLID;
 }
 
-/* A shape GFOpenLayout 0.2 doesn't draw, at its box. */
-static void draw_shape(owf_pdf *pdf, const owf_obj *o)
+/* Draw the normalized OpenLayout shape into a PDF page. */
+static int draw_shape(owf_pdf *pdf, const ol_device_op *dop)
 {
-    int x = o->x, y = o->y, w = o->width, h = o->height, pts[16], k;
-    unsigned long fill = o->look.fill, line = o->look.line;
-    int lw = o->look.line_width;
-    owf_pdf_dash(pdf, dashed(&o->look));
-    switch (o->shape) {
-    case OWF_SHAPE_ROUNDRECT:
-        owf_pdf_round_rect(pdf, x, y, w, h, o->radius, fill, line, lw);
+    const ol_graphic *g = dop->op->graphic;
+    const ol_shape_style *s;
+    int xy[OL_MAX_SHAPE_POINTS * 2], count, k, closed = 0, rc = 0;
+    int x = dop->box.x, y = dop->box.y, w = dop->box.width, h = dop->box.height;
+    unsigned long fill, line;
+    if (!g || g->shape.type == OL_SHAPE_NONE)
+        return 0;
+    s = &g->shape;
+    fill = shade_of(s->fill_argb);
+    line = shade_of(s->stroke_argb);
+    owf_pdf_dash(pdf, dashed(s));
+    switch (s->type) {
+    case OL_SHAPE_RECT:
+        rc = owf_pdf_rect(pdf, x, y, w, h, fill, line, dop->thickness);
         break;
-    case OWF_SHAPE_ELLIPSE:
-        owf_pdf_ellipse(pdf, x, y, w, h, fill, line, lw);
+    case OL_SHAPE_ROUND_RECT:
+        rc = owf_pdf_round_rect(pdf, x, y, w, h,
+                                (w < h ? w : h) * s->radius_permille / OL_SHAPE_COORDS,
+                                fill, line, dop->thickness);
         break;
-    case OWF_SHAPE_TRIANGLE:
-        pts[0] = x + w / 2; pts[1] = y;
-        pts[2] = x + w; pts[3] = y + h;
-        pts[4] = x; pts[5] = y + h;
-        if (o->flags & OWF_OBJ_FLIP_V) {
-            pts[1] = y + h;
-            pts[3] = pts[5] = y;
+    case OL_SHAPE_ELLIPSE:
+        rc = owf_pdf_ellipse(pdf, x, y, w, h, fill, line, dop->thickness);
+        break;
+    case OL_SHAPE_LINE:
+    case OL_SHAPE_POLYLINE:
+    case OL_SHAPE_POLYGON:
+        count = g->point_count < OL_MAX_SHAPE_POINTS ? g->point_count : OL_MAX_SHAPE_POINTS;
+        for (k = 0; k < count; k++) {
+            xy[k * 2] = x + (int)((long long)w * g->points[k].x / OL_SHAPE_COORDS);
+            xy[k * 2 + 1] = y + (int)((long long)h * g->points[k].y / OL_SHAPE_COORDS);
         }
-        owf_pdf_path(pdf, pts, 3, 1, fill, line, lw);
-        break;
-    case OWF_SHAPE_DIAMOND:
-        pts[0] = x + w / 2; pts[1] = y;
-        pts[2] = x + w; pts[3] = y + h / 2;
-        pts[4] = x + w / 2; pts[5] = y + h;
-        pts[6] = x; pts[7] = y + h / 2;
-        owf_pdf_path(pdf, pts, 4, 1, fill, line, lw);
-        break;
-    case OWF_SHAPE_ARROW: {
-        /* a block arrow pointing right (left when flipped) */
-        static const int ax[7] = { 0, 750, 750, 1000, 750, 750, 0 };
-        static const int ay[7] = { 250, 250, 0, 500, 1000, 750, 750 };
-        for (k = 0; k < 7; k++) {
-            int px = (int)((long long)w * ax[k] / 1000);
-            pts[k * 2] = (o->flags & OWF_OBJ_FLIP_H) ? x + w - px : x + px;
-            pts[k * 2 + 1] = y + (int)((long long)h * ay[k] / 1000);
-        }
-        owf_pdf_path(pdf, pts, 7, 1, fill, line, lw);
-        break;
-    }
-    case OWF_SHAPE_LINE: {
-        int x1 = x, y1 = y, x2 = x + w, y2 = y + h;
-        if (o->flags & OWF_OBJ_FLIP_H) { x1 = x + w; x2 = x; }
-        if (o->flags & OWF_OBJ_FLIP_V) { y1 = y + h; y2 = y; }
-        pts[0] = x1; pts[1] = y1; pts[2] = x2; pts[3] = y2;
-        owf_pdf_path(pdf, pts, 2, 0, 0, line, lw);
+        closed = s->type == OL_SHAPE_POLYGON;
+        rc = owf_pdf_path(pdf, xy, count, closed, closed ? fill : 0, line, dop->thickness);
         owf_pdf_dash(pdf, 0);
-        if (OWF_SHADE_SET(line) && (o->look.arrows & OWF_ARROW_END))
-            arrowhead(pdf, x1, y1, x2, y2, lw, line);
-        if (OWF_SHADE_SET(line) && (o->look.arrows & OWF_ARROW_START))
-            arrowhead(pdf, x2, y2, x1, y1, lw, line);
+        if (count >= 2 && OWF_SHADE_SET(line) && (s->flags & OL_SHAPE_ARROW_END))
+            arrowhead(pdf, xy[(count - 2) * 2], xy[(count - 2) * 2 + 1],
+                      xy[(count - 1) * 2], xy[(count - 1) * 2 + 1], dop->thickness, line);
+        if (count >= 2 && OWF_SHADE_SET(line) && (s->flags & OL_SHAPE_ARROW_START))
+            arrowhead(pdf, xy[2], xy[3], xy[0], xy[1], dop->thickness, line);
         break;
-    }
-    case OWF_SHAPE_POLYGON: {
-        int *xy;
-        if (o->npoints < 2)
-            break;
-        xy = malloc((size_t)o->npoints * 2 * sizeof *xy);
-        if (!xy)
-            break;
-        for (k = 0; k < o->npoints; k++) {
-            xy[k * 2] = x + o->points[k * 2];
-            xy[k * 2 + 1] = y + o->points[k * 2 + 1];
-        }
-        owf_pdf_path(pdf, xy, o->npoints, 1, fill, line, lw);
-        free(xy);
-        break;
-    }
     default:
         break;
     }
     owf_pdf_dash(pdf, 0);
+    return rc;
 }
 
 /* A text piece with something to see in it. */
@@ -153,25 +124,13 @@ typedef struct {
     owf_pdf *pdf;
     const opr_slide *slide;
     const owf_deck *deck;
-    int next_frame;              /* the first frame whose shape is still to draw */
     int failed;
 } drawing;
-
-static void shapes_up_to(drawing *d, int frame)
-{
-    for (; d->next_frame <= frame && d->next_frame < d->slide->nframes; d->next_frame++) {
-        const opr_frame *f = &d->slide->frames[d->next_frame];
-        if (f->obj && f->obj->kind == OWF_OBJ_SHAPE && f->obj->shape != OWF_SHAPE_RECT)
-            draw_shape(d->pdf, &f->box);
-    }
-}
 
 static void draw_op(void *userdata, const ol_device_op *dop)
 {
     drawing *d = (drawing *)userdata;
     const ol_display_op *op = dop->op;
-    int frame = opr_slide_frame_of(d->slide, op);
-    shapes_up_to(d, frame);
     switch (op->type) {
     case OL_OP_FILL_RECT:
         owf_pdf_rect(d->pdf, dop->box.x, dop->box.y, dop->box.width, dop->box.height,
@@ -245,6 +204,10 @@ static void draw_op(void *userdata, const ol_device_op *dop)
         }
         break;
     }
+    case OL_OP_SHAPE:
+        if (draw_shape(d->pdf, dop) < 0)
+            d->failed = 1;
+        break;
     default:
         break;
     }
@@ -284,7 +247,6 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
         d.slide = laid;
         d.deck = deck;
         ol_draw_page(laid->doc, 0, &scale, NULL, draw_op, &d);
-        shapes_up_to(&d, laid->nframes);
         overflow |= laid->overflow;
         opr_slide_free(laid);
         if (d.failed) {

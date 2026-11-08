@@ -12,10 +12,9 @@
  * The slide is laid out by GFOpenLayout through the core (opr_slide_layout),
  * measured with the PDF's standard fonts' widths, and drawn here from its
  * display list at the screen's pixels: each glyph where the layout put it,
- * so the screen, the caret and the PDF agree. Shapes GFOpenLayout doesn't draw
- * (ellipses, triangles, arrows, lines...) are drawn here, at their frame's
- * place in the drawing order, as the PDF writer draws them. Pictures go
- * through datatypes, as GFOpenWrite's do.
+ * so the screen, the caret and the PDF agree. Shapes and crop are consumed
+ * from OpenLayout's shared display metadata. Pictures go through datatypes,
+ * as GFOpenWrite's do.
  *
  * Chrome: GFOpenGadTools' toolbar with the Chrome icon set
  * (ogt_iconset_attach), status bar and list, in the theme
@@ -85,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.1.0 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.1.1 (8.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -94,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.3.4 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.3.5 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -330,11 +329,6 @@ static int screen_depth(void)
 static LONG argb_pen(uint32_t argb)
 {
     return ogt_pen_rgb(&ctx, (ogt_rgb){ (UBYTE)(argb >> 16), (UBYTE)(argb >> 8), (UBYTE)argb });
-}
-
-static LONG shade_pen(unsigned long shade)
-{
-    return argb_pen(0xff000000u | (uint32_t)OWF_SHADE_RGB(shade));
 }
 
 /* Text and lines need a real pen, and on an RTG screen the shared palette
@@ -979,40 +973,43 @@ typedef struct {
     ol_scale scale;
     ol_pixel_rect lim;           /* the slide, and of it what is being drawn */
     int thumb;                   /* a thumbnail: text as lines */
-    int next_frame;              /* the first frame whose shape is still to draw */
 } painter;
 
 /* cos and sin of 0, 15, ... 90 degrees, in thousandths */
 static const int cos15[7] = { 1000, 966, 866, 707, 500, 259, 0 };
 
-static int px_x(const painter *p, int twips) { return ol_scale_x(&p->scale, TW(twips)); }
-static int px_y(const painter *p, int twips) { return ol_scale_y(&p->scale, TW(twips)); }
-
-static void outline(struct RastPort *rp, LONG pen, int *xy, int n, int width)
+static UWORD shape_pattern(unsigned style)
 {
-    int k;
-    if (n < 2) return;
-    pen = exact_pen(pen);
-    xy[n * 2] = xy[0];
-    xy[n * 2 + 1] = xy[1];
-    ogt_poly_outline(rp, pen, xy, n + 1);
-    for (k = 1; k < width && k < 4; ++k) {   /* a thicker line: drawn again, a pixel along */
-        int i, moved[2 * 66];
-        for (i = 0; i <= n && i < 65; ++i) {
-            moved[i * 2] = xy[i * 2] + (k & 1);
-            moved[i * 2 + 1] = xy[i * 2 + 1] + (k >> 1 ? 1 : 0) + (k == 2);
-        }
-        ogt_poly_outline(rp, pen, moved, n + 1 < 65 ? n + 1 : 65);
+    switch (style) {
+    case OL_STROKE_DASHED: return 0xF0F0u;
+    case OL_STROKE_DOTTED: return 0xCCCCu;
+    case OL_STROKE_DASH_DOT: return 0xFF18u;
+    default: return 0xFFFFu;
     }
 }
 
-static void shape_poly(const painter *p, const owf_obj *o, int *xy, int n)
+static void outline(struct RastPort *rp, LONG pen, const int *xy, int n, int width, int closed, unsigned style)
 {
-    LONG fill = OWF_SHADE_SET(o->look.fill) ? shade_pen(o->look.fill) : -1;
-    LONG line = OWF_SHADE_SET(o->look.line) ? shade_pen(o->look.line) : -1;
-    int width = o->look.line_width > 0 ? ol_scale_length(&p->scale, TW(o->look.line_width)) : 1;
-    if (fill >= 0 && n >= 3) ogt_fill_poly(p->rp, fill, xy, n);
-    if (line >= 0) outline(p->rp, line, xy, n, width);
+    int i, k;
+    UWORD pattern = shape_pattern(style);
+    if (n < 2) return;
+    pen = exact_pen(pen);
+    ogt_set_apen(rp, pen);
+    SetDrPt(rp, pattern);
+    Move(rp, xy[0], xy[1]);
+    for (i = 1; i < n; i++) Draw(rp, xy[i * 2], xy[i * 2 + 1]);
+    if (closed) Draw(rp, xy[0], xy[1]);
+    for (k = 1; k < width && k < 4; ++k) {   /* a thicker line: drawn again, a pixel along */
+        int moved[2 * OL_MAX_SHAPE_POINTS];
+        for (i = 0; i < n && i < OL_MAX_SHAPE_POINTS; ++i) {
+            moved[i * 2] = xy[i * 2] + (k & 1);
+            moved[i * 2 + 1] = xy[i * 2 + 1] + (k >> 1 ? 1 : 0) + (k == 2);
+        }
+        Move(rp, moved[0], moved[1]);
+        for (i = 1; i < n; i++) Draw(rp, moved[i * 2], moved[i * 2 + 1]);
+        if (closed) Draw(rp, moved[0], moved[1]);
+    }
+    SetDrPt(rp, 0xFFFFu);
 }
 
 static void arrowhead(struct RastPort *rp, LONG pen, int x1, int y1, int x2, int y2, int size)
@@ -1030,14 +1027,30 @@ static void arrowhead(struct RastPort *rp, LONG pen, int x1, int y1, int x2, int
     ogt_fill_poly(rp, pen, pts, 3);
 }
 
-/* A shape GFOpenLayout doesn't draw, at its box, as the PDF writer draws it (src/deck/opr_pdf.c). */
-static void draw_shape(const painter *p, const owf_obj *o)
+/* The same normalized OpenLayout geometry that the PDF renderer consumes. */
+static void draw_shape(const painter *p, const ol_device_op *d)
 {
-    int x = px_x(p, o->x), y = px_y(p, o->y), x2 = px_x(p, o->x + o->width), y2 = px_y(p, o->y + o->height);
-    int w = x2 - x, h = y2 - y, xy[2 * 66], k, n = 0;
+    const ol_graphic *g = d->op->graphic;
+    const ol_shape_style *s;
+    int x = d->box.x, y = d->box.y, w = d->box.width, h = d->box.height;
+    int xy[2 * OL_MAX_SHAPE_POINTS], k, n = 0, closed = 0;
+    int width = d->thickness > 0 ? d->thickness : 1;
+    LONG fill, line;
+    if (!g || g->shape.type == OL_SHAPE_NONE) return;
+    s = &g->shape;
+    fill = (s->fill_argb >> 24) ? argb_pen(s->fill_argb) : -1;
+    line = (s->stroke_argb >> 24) && s->stroke_width > 0 ? argb_pen(s->stroke_argb) : -1;
     if (w < 1 && h < 1) return;
-    switch (o->shape) {
-    case OWF_SHAPE_ELLIPSE: {
+    switch (s->type) {
+    case OL_SHAPE_RECT:
+        xy[0] = x; xy[1] = y;
+        xy[2] = x + w - 1; xy[3] = y;
+        xy[4] = x + w - 1; xy[5] = y + h - 1;
+        xy[6] = x; xy[7] = y + h - 1;
+        n = 4;
+        closed = 1;
+        break;
+    case OL_SHAPE_ELLIPSE: {
         static const int s24[24][2] = {
             { 1000, 0 }, { 966, 259 }, { 866, 500 }, { 707, 707 }, { 500, 866 }, { 259, 966 }, { 0, 1000 },
             { -259, 966 }, { -500, 866 }, { -707, 707 }, { -866, 500 }, { -966, 259 }, { -1000, 0 },
@@ -1048,11 +1061,13 @@ static void draw_shape(const painter *p, const owf_obj *o)
             xy[n * 2 + 1] = y + h / 2 + (int)((long)h * s24[k][1] / 2000);
             n++;
         }
+        closed = 1;
         break;
     }
-    case OWF_SHAPE_ROUNDRECT: {
+    case OL_SHAPE_ROUND_RECT: {
         /* the corners clockwise from the top right, each a quarter circle in 15-degree steps */
-        int r = ol_scale_length(&p->scale, TW(o->radius)), right = x + w - 1 - r, bottom = y + h - 1 - r;
+        int r = (w < h ? w : h) * s->radius_permille / OL_SHAPE_COORDS;
+        int right = x + w - 1 - r, bottom = y + h - 1 - r;
         if (r * 2 > w) r = w / 2;
         if (r * 2 > h) r = h / 2;
         right = x + w - 1 - r;
@@ -1073,69 +1088,29 @@ static void draw_shape(const painter *p, const owf_obj *o)
             xy[n * 2] = x + r - r * cos15[k] / 1000;
             xy[n * 2 + 1] = y + r - r * cos15[6 - k] / 1000;
         }
+        closed = 1;
         break;
     }
-    case OWF_SHAPE_TRIANGLE:
-        xy[0] = x + w / 2; xy[1] = (o->flags & OWF_OBJ_FLIP_V) ? y + h : y;
-        xy[2] = x + w; xy[3] = (o->flags & OWF_OBJ_FLIP_V) ? y : y + h;
-        xy[4] = x; xy[5] = xy[3];
-        n = 3;
-        break;
-    case OWF_SHAPE_DIAMOND:
-        xy[0] = x + w / 2; xy[1] = y;
-        xy[2] = x + w; xy[3] = y + h / 2;
-        xy[4] = x + w / 2; xy[5] = y + h;
-        xy[6] = x; xy[7] = y + h / 2;
-        n = 4;
-        break;
-    case OWF_SHAPE_ARROW: {
-        static const int ax[7] = { 0, 750, 750, 1000, 750, 750, 0 };
-        static const int ay[7] = { 250, 250, 0, 500, 1000, 750, 750 };
-        for (k = 0; k < 7; ++k) {
-            int dx = (int)((long)w * ax[k] / 1000);
-            xy[k * 2] = (o->flags & OWF_OBJ_FLIP_H) ? x + w - dx : x + dx;
-            xy[k * 2 + 1] = y + (int)((long)h * ay[k] / 1000);
+    case OL_SHAPE_LINE:
+    case OL_SHAPE_POLYLINE:
+    case OL_SHAPE_POLYGON:
+        n = g->point_count < OL_MAX_SHAPE_POINTS ? g->point_count : OL_MAX_SHAPE_POINTS;
+        for (k = 0; k < n; ++k) {
+            xy[k * 2] = x + (int)((long)w * g->points[k].x / OL_SHAPE_COORDS);
+            xy[k * 2 + 1] = y + (int)((long)h * g->points[k].y / OL_SHAPE_COORDS);
         }
-        n = 7;
+        closed = s->type == OL_SHAPE_POLYGON;
         break;
-    }
-    case OWF_SHAPE_POLYGON:
-        for (k = 0; k < o->npoints && k < 64; ++k) {
-            xy[k * 2] = px_x(p, o->x + o->points[k * 2]);
-            xy[k * 2 + 1] = px_y(p, o->y + o->points[k * 2 + 1]);
-        }
-        n = k;
-        break;
-    case OWF_SHAPE_LINE: {
-        int ax1 = (o->flags & OWF_OBJ_FLIP_H) ? x + w : x, ax2 = (o->flags & OWF_OBJ_FLIP_H) ? x : x + w;
-        int ay1 = (o->flags & OWF_OBJ_FLIP_V) ? y + h : y, ay2 = (o->flags & OWF_OBJ_FLIP_V) ? y : y + h;
-        int width = o->look.line_width > 0 ? ol_scale_length(&p->scale, TW(o->look.line_width)) : 1;
-        LONG pen;
-        if (!OWF_SHADE_SET(o->look.line)) return;
-        pen = shade_pen(o->look.line);
-        ogt_set_apen(p->rp, exact_pen(pen));
-        for (k = 0; k < width && k < 6; ++k) {
-            int off = k - width / 2;
-            if (abs(ax2 - ax1) >= abs(ay2 - ay1)) { Move(p->rp, ax1, ay1 + off); Draw(p->rp, ax2, ay2 + off); }
-            else { Move(p->rp, ax1 + off, ay1); Draw(p->rp, ax2 + off, ay2); }
-        }
-        if (o->look.arrows & OWF_ARROW_END) arrowhead(p->rp, pen, ax1, ay1, ax2, ay2, width * 3 > 6 ? width * 3 : 6);
-        if (o->look.arrows & OWF_ARROW_START) arrowhead(p->rp, pen, ax2, ay2, ax1, ay1, width * 3 > 6 ? width * 3 : 6);
-        return;
-    }
     default:
         return;
     }
-    shape_poly(p, o, xy, n);
-}
-
-static void shapes_up_to(painter *p, int frame)
-{
-    for (; p->next_frame <= frame && p->next_frame < p->s->nframes; p->next_frame++) {
-        const opr_frame *f = &p->s->frames[p->next_frame];
-        if (f->obj && f->obj->kind == OWF_OBJ_SHAPE && f->obj->shape != OWF_SHAPE_RECT)
-            draw_shape(p, &f->box);
-    }
+    if (fill >= 0 && closed && n >= 3) ogt_fill_poly(p->rp, fill, xy, n);
+    if (line >= 0) outline(p->rp, line, xy, n, width, closed, s->stroke_style);
+    if (line >= 0 && n >= 2 && (s->flags & OL_SHAPE_ARROW_END))
+        arrowhead(p->rp, line, xy[(n - 2) * 2], xy[(n - 2) * 2 + 1], xy[(n - 1) * 2], xy[(n - 1) * 2 + 1],
+                  width * 3 > 6 ? width * 3 : 6);
+    if (line >= 0 && n >= 2 && (s->flags & OL_SHAPE_ARROW_START))
+        arrowhead(p->rp, line, xy[2], xy[3], xy[0], xy[1], width * 3 > 6 ? width * 3 : 6);
 }
 
 /* The list bullets drawn as shapes: 1 a dot, 2 a square, 3 a ring, 4 a big
@@ -1357,8 +1332,6 @@ static void paint_op(void *userdata, const ol_device_op *d)
 {
     painter *p = (painter *)userdata;
     struct RastPort *rp = p->rp;
-    int frame = opr_slide_frame_of(p->s, d->op);
-    shapes_up_to(p, frame);
     switch (d->op->type) {
     case OL_OP_TEXT:
         paint_text(p, d);
@@ -1408,7 +1381,7 @@ static void paint_op(void *userdata, const ol_device_op *d)
         break;
     }
     case OL_OP_SHAPE:
-        /* Presentation shapes are still painted by shapes_up_to(). */
+        draw_shape(p, d);
         break;
     }
 }
@@ -1444,7 +1417,6 @@ static void paint_slide(struct RastPort *rp, const opr_slide *s, int x, int y, i
         return;
     }
     ol_draw_page(s->doc, 0, &p.scale, &p.lim, paint_op, &p);
-    shapes_up_to(&p, s->nframes);
     SetFont(rp, font);
 }
 
