@@ -306,7 +306,7 @@ static int authored_chart(const oc_core *core, const oc_chart_spec *spec, const 
 
 /* Replaces a chart-only drawing. Existing package parts deliberately remain
  * unreferenced; exporters include only parts reachable from the sheet. */
-static int keep_authored_charts(oc_core *core, owf_chart *charts, int n, oc_undo *undo)
+static int keep_authored_charts(oc_core *core, owf_chart *charts, int n, int selected, oc_undo *undo)
 {
     owf_sheet *sheet = oc_sheet(core);
     char *old = sheet->drawing;
@@ -322,7 +322,7 @@ static int keep_authored_charts(oc_core *core, owf_chart *charts, int n, oc_undo
     owf_free(old);
     oc_undo_push(core, undo);
     oc_charts_forget(core);
-    core->chart_sel = n ? n : 0;
+    core->chart_sel = selected >= 0 && selected < n ? selected + 1 : 0;
     core->chart_sel_sheet = core->sheet;
     oc_changed(core);
     return OWF_OK;
@@ -363,7 +363,7 @@ int oc_core_add_chart(oc_core *core, const oc_chart_spec *spec)
     if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
     undo = oc_undo_new(core, OC_UNDO_BOOK);
     if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
-    rc = keep_authored_charts(core, charts, n, undo);
+    rc = keep_authored_charts(core, charts, n, n - 1, undo);
     owf_charts_free(charts, n);
     return rc;
 }
@@ -391,9 +391,77 @@ int oc_core_delete_chart(oc_core *core, int index)
     if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
     undo = oc_undo_new(core, OC_UNDO_BOOK);
     if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
-    rc = keep_authored_charts(core, kept, out, undo);
+    rc = keep_authored_charts(core, kept, out, -1, undo);
     owf_charts_free(kept, out);
     if (rc == OWF_OK) core->chart_sel = 0;
+    return rc;
+}
+
+int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spec)
+{
+    owf_chart *charts = NULL;
+    owf_chart *chart;
+    oc_undo *undo;
+    char *title = NULL;
+    int n = 0, rc, i;
+    if (!core || !spec || !spec->set ||
+        (spec->set & ~(OC_CHART_SET_KIND | OC_CHART_SET_GROUPING | OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND |
+                       OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS)) ||
+        ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
+        ((spec->set & OC_CHART_SET_GROUPING) &&
+         (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
+        ((spec->set & OC_CHART_SET_LEGEND) && spec->legend && spec->legend != 'r' && spec->legend != 'l' &&
+         spec->legend != 't' && spec->legend != 'b') ||
+        ((spec->set & OC_CHART_SET_LABELS) &&
+         (spec->label_pos < OWF_LABEL_AUTO || spec->label_pos > OWF_LABEL_BEST_FIT ||
+          (spec->labels & ~(OWF_LABEL_VALUE | OWF_LABEL_PERCENT | OWF_LABEL_CATEGORY | OWF_LABEL_SERIES)))))
+        return OWF_ERR_FORMAT;
+    if (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core)))
+        return OWF_ERR_UNSUPPORTED;
+    if (index < 0) index = oc_core_selected_chart(core);
+    if ((rc = owf_sheet_charts(core->book, core->sheet, &charts, &n)) != OWF_OK)
+        return rc;
+    if (index < 0 || index >= n) { owf_charts_free(charts, n); return OWF_ERR_UNSUPPORTED; }
+    if ((spec->set & OC_CHART_SET_TITLE) && spec->title && *spec->title && !(title = oc_strdup(spec->title))) {
+        owf_charts_free(charts, n);
+        return OWF_ERR_MEMORY;
+    }
+    chart = &charts[index];
+    if (spec->set & OC_CHART_SET_KIND) {
+        int was_scatter = chart->kind == OWF_CHART_SCATTER;
+        int is_scatter = spec->kind == OWF_CHART_SCATTER;
+        if (was_scatter != is_scatter)
+            for (i = 0; i < chart->nseries; i++) {
+                if (is_scatter) {
+                    owf_free(chart->series[i].x_values);
+                    chart->series[i].x_values = chart->series[i].categories;
+                    chart->series[i].categories = NULL;
+                } else {
+                    owf_free(chart->series[i].categories);
+                    chart->series[i].categories = chart->series[i].x_values;
+                    chart->series[i].x_values = NULL;
+                }
+            }
+        chart->kind = spec->kind;
+        if (is_scatter || chart->kind == OWF_CHART_LINE)
+            for (i = 0; i < chart->nseries; i++) chart->series[i].line = 1;
+        if (chart->kind == OWF_CHART_PIE) chart->vary = 1;
+    }
+    if (spec->set & OC_CHART_SET_GROUPING) chart->grouping = spec->grouping;
+    if (spec->set & OC_CHART_SET_TITLE) { owf_free(chart->title); chart->title = title; title = NULL; }
+    if (spec->set & OC_CHART_SET_LEGEND) chart->legend = spec->legend;
+    if (spec->set & OC_CHART_SET_GRIDLINES) chart->gridlines = !!spec->gridlines;
+    if (spec->set & OC_CHART_SET_LABELS)
+        for (i = 0; i < chart->nseries; i++) {
+            chart->series[i].labels = spec->labels;
+            chart->series[i].label_pos = spec->label_pos;
+        }
+    if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
+    rc = keep_authored_charts(core, charts, n, index, undo);
+    owf_charts_free(charts, n);
+    owf_free(title);
     return rc;
 }
 

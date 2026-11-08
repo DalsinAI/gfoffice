@@ -3240,6 +3240,7 @@ static void test_chart_authoring(void)
     static const char *const xlsx = "build/host/calc-core-authored-chart.xlsx";
     static const char *const ods = "build/host/calc-core-authored-chart.ods";
     oc_chart_spec spec;
+    oc_chart_edit_spec edit;
     oc_core *core = fresh();
     owf_chart c;
     oc_draw_list l;
@@ -3274,6 +3275,25 @@ static void test_chart_authoring(void)
     CHECK(before > 0 && after > before && find_text(&l, "Annual sales"));
     oc_draw_list_free(&l);
 
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_KIND | OC_CHART_SET_GROUPING | OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND |
+               OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS;
+    edit.kind = OWF_CHART_BAR;
+    edit.grouping = OWF_CHART_STACKED;
+    edit.title = "Quarterly sales";
+    edit.legend = 'b';
+    edit.labels = OWF_LABEL_VALUE | OWF_LABEL_CATEGORY;
+    edit.label_pos = OWF_LABEL_OUTSIDE_END;
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK && oc_core_selected_chart(core) == 0);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_BAR && c.grouping == OWF_CHART_STACKED &&
+          same(c.title, "Quarterly sales") && c.legend == 'b' && !c.gridlines &&
+          c.series[0].labels == (OWF_LABEL_VALUE | OWF_LABEL_CATEGORY) &&
+          c.series[0].label_pos == OWF_LABEL_OUTSIDE_END);
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_COLUMN &&
+          same(c.title, "Annual sales") && c.legend == 'r' && c.gridlines && !c.series[0].labels);
+    chart_free(&c);
+
     spec.kind = OWF_CHART_LINE;
     spec.title = "Trend";
     CHECK(oc_core_add_chart(core, &spec) == OWF_OK && oc_core_selected_chart(core) == 1);
@@ -3287,14 +3307,24 @@ static void test_chart_authoring(void)
     CHECK(oc_core_redo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE);
     chart_free(&c);
 
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND | OC_CHART_SET_LABELS;
+    edit.title = "Edited trend";
+    edit.legend = 't';
+    edit.labels = OWF_LABEL_VALUE;
+    edit.label_pos = OWF_LABEL_ABOVE;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK);
+
     CHECK(oc_core_save(core, xlsx, "xlsx", NULL) == OWF_OK);
     CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2 &&
-          same(c.series[1].values, "'Sheet1'!$C$2:$C$4"));
+          same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE &&
+          c.series[0].label_pos == OWF_LABEL_ABOVE && same(c.series[1].values, "'Sheet1'!$C$2:$C$4"));
     chart_free(&c);
     CHECK(oc_core_save(core, ods, "ods", NULL) == OWF_OK);
     CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
-    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2 &&
+          same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE);
     chart_free(&c);
     remove(xlsx); remove(ods);
 
@@ -3308,6 +3338,17 @@ static void test_chart_authoring(void)
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.nseries == 1 &&
           same(c.series[0].x_values, "'Sheet1'!$B$2:$B$4") &&
           same(c.series[0].values, "'Sheet1'!$C$2:$C$4"));
+    chart_free(&c);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_KIND | OC_CHART_SET_TITLE;
+    edit.kind = OWF_CHART_LINE;
+    edit.title = "Converted";
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && same(c.title, "Converted") &&
+          same(c.series[0].categories, "'Sheet1'!$B$2:$B$4") && !c.series[0].x_values && c.series[0].line);
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER &&
+          same(c.series[0].x_values, "'Sheet1'!$B$2:$B$4"));
     chart_free(&c);
     CHECK(oc_core_delete_chart(core, 0) == OWF_OK);
     spec.kind = OWF_CHART_PIE;

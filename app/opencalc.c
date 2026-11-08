@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.44 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.45 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -93,7 +93,7 @@ enum {
     M_SELECT_ALL, M_SELECT_ROWS, M_SELECT_COLS, M_GOTO,
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
-    M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE,
+    M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -209,6 +209,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "None", NULL, 0, 0, (APTR)M_BORDER_NONE },
     { NM_ITEM, "Merge Cells...", NULL, 0, 0, (APTR)M_MERGE },
     { NM_ITEM, "Unmerge Cells", NULL, 0, 0, (APTR)M_UNMERGE },
+    { NM_ITEM, "Chart...", NULL, 0, 0, (APTR)M_CHART_FORMAT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -2942,6 +2943,118 @@ static void do_insert_chart(void)
     owf_free(utf8);
 }
 
+static void chart_initial(char *out, size_t size, const owf_chart *chart)
+{
+    static const char *const kinds[] = { "other", "column", "bar", "line", "area", "pie", "scatter" };
+    static const char *const groups[] = { "clustered", "stacked", "percent" };
+    char title[160];
+    size_t n;
+    unsigned labels = chart->nseries ? chart->series[0].labels : 0;
+    int pos = chart->nseries ? chart->series[0].label_pos : OWF_LABEL_AUTO;
+    to_latin1(chart->title ? chart->title : "", chart->title ? strlen(chart->title) : 0, title, sizeof title);
+    n = (size_t)snprintf(out, size, "%s %s legend-%c %s ",
+                         kinds[chart->kind >= OWF_CHART_COLUMN && chart->kind <= OWF_CHART_SCATTER ? chart->kind : 0],
+                         groups[chart->grouping >= OWF_CHART_CLUSTERED && chart->grouping <= OWF_CHART_PERCENT ?
+                                chart->grouping : OWF_CHART_CLUSTERED],
+                         chart->legend == 'l' || chart->legend == 't' || chart->legend == 'b' ? chart->legend : 'r',
+                         chart->gridlines ? "grid" : "nogrid");
+    if (!chart->legend && n < size) n += (size_t)snprintf(out + n, size - n, "nolegend ");
+    if (n < size) n += (size_t)snprintf(out + n, size - n, "nolabels ");
+    if ((labels & OWF_LABEL_VALUE) && n < size) n += (size_t)snprintf(out + n, size - n, "values ");
+    if ((labels & OWF_LABEL_PERCENT) && n < size) n += (size_t)snprintf(out + n, size - n, "percent-labels ");
+    if ((labels & OWF_LABEL_CATEGORY) && n < size) n += (size_t)snprintf(out + n, size - n, "categories ");
+    if ((labels & OWF_LABEL_SERIES) && n < size) n += (size_t)snprintf(out + n, size - n, "series ");
+    if (labels && n < size) {
+        static const char *const positions[] = { "auto", "centre", "inside-end", "inside-base", "outside", "above",
+                                                 "below", "left", "right", "best" };
+        n += (size_t)snprintf(out + n, size - n, "%s ", positions[pos >= OWF_LABEL_AUTO && pos <= OWF_LABEL_BEST_FIT ? pos : 0]);
+    }
+    if (n < size) snprintf(out + n, size - n, "title=%s", title);
+}
+
+static void do_format_chart(void)
+{
+    owf_chart *charts = NULL;
+    oc_chart_edit_spec edit;
+    char initial[384], entered[384], *p, *token, *title = NULL, *utf8 = NULL;
+    unsigned current_labels;
+    int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, current_pos;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL);
+        else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    current_labels = charts[index].nseries ? charts[index].series[0].labels : 0;
+    current_pos = charts[index].nseries ? charts[index].series[0].label_pos : OWF_LABEL_AUTO;
+    chart_initial(initial, sizeof initial, &charts[index]);
+    owf_charts_free(charts, n);
+    if (!text_requester("Format Chart", "type/group legend grid labels title=...", initial, entered, sizeof entered)) return;
+    memset(&edit, 0, sizeof edit);
+    edit.labels = current_labels;
+    edit.label_pos = current_pos;
+    p = trim_text(entered);
+    while (*p && !bad) {
+        char *end;
+        token = p;
+        if (!strncasecmp(token, "title=", 6)) { title = token + 6; edit.set |= OC_CHART_SET_TITLE; break; }
+        end = p;
+        while (*end && !isspace((unsigned char)*end)) end++;
+        if (*end) *end++ = 0;
+        p = trim_text(end);
+        if (!strcasecmp(token, "column")) { edit.kind = OWF_CHART_COLUMN; edit.set |= OC_CHART_SET_KIND; }
+        else if (!strcasecmp(token, "bar")) { edit.kind = OWF_CHART_BAR; edit.set |= OC_CHART_SET_KIND; }
+        else if (!strcasecmp(token, "line")) { edit.kind = OWF_CHART_LINE; edit.set |= OC_CHART_SET_KIND; }
+        else if (!strcasecmp(token, "area")) { edit.kind = OWF_CHART_AREA; edit.set |= OC_CHART_SET_KIND; }
+        else if (!strcasecmp(token, "pie")) { edit.kind = OWF_CHART_PIE; edit.set |= OC_CHART_SET_KIND; }
+        else if (!strcasecmp(token, "scatter")) { edit.kind = OWF_CHART_SCATTER; edit.set |= OC_CHART_SET_KIND; }
+        else if (!strcasecmp(token, "clustered")) { edit.grouping = OWF_CHART_CLUSTERED; edit.set |= OC_CHART_SET_GROUPING; }
+        else if (!strcasecmp(token, "stacked")) { edit.grouping = OWF_CHART_STACKED; edit.set |= OC_CHART_SET_GROUPING; }
+        else if (!strcasecmp(token, "percent")) { edit.grouping = OWF_CHART_PERCENT; edit.set |= OC_CHART_SET_GROUPING; }
+        else if (!strcasecmp(token, "legend-r") || !strcasecmp(token, "legend-right"))
+            { edit.legend = 'r'; edit.set |= OC_CHART_SET_LEGEND; }
+        else if (!strcasecmp(token, "legend-l") || !strcasecmp(token, "legend-left"))
+            { edit.legend = 'l'; edit.set |= OC_CHART_SET_LEGEND; }
+        else if (!strcasecmp(token, "legend-t") || !strcasecmp(token, "legend-top"))
+            { edit.legend = 't'; edit.set |= OC_CHART_SET_LEGEND; }
+        else if (!strcasecmp(token, "legend-b") || !strcasecmp(token, "legend-bottom"))
+            { edit.legend = 'b'; edit.set |= OC_CHART_SET_LEGEND; }
+        else if (!strcasecmp(token, "nolegend")) { edit.legend = 0; edit.set |= OC_CHART_SET_LEGEND; }
+        else if (!strcasecmp(token, "grid")) { edit.gridlines = 1; edit.set |= OC_CHART_SET_GRIDLINES; }
+        else if (!strcasecmp(token, "nogrid")) { edit.gridlines = 0; edit.set |= OC_CHART_SET_GRIDLINES; }
+        else if (!strcasecmp(token, "nolabels")) { edit.labels = 0; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "values")) { edit.labels |= OWF_LABEL_VALUE; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "percent-labels")) { edit.labels |= OWF_LABEL_PERCENT; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "categories")) { edit.labels |= OWF_LABEL_CATEGORY; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "series")) { edit.labels |= OWF_LABEL_SERIES; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "auto")) { edit.label_pos = OWF_LABEL_AUTO; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "centre")) { edit.label_pos = OWF_LABEL_CENTRE; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "inside-end")) { edit.label_pos = OWF_LABEL_INSIDE_END; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "inside-base")) { edit.label_pos = OWF_LABEL_INSIDE_BASE; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "outside")) { edit.label_pos = OWF_LABEL_OUTSIDE_END; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "above")) { edit.label_pos = OWF_LABEL_ABOVE; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "below")) { edit.label_pos = OWF_LABEL_BELOW; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "left")) { edit.label_pos = OWF_LABEL_LEFT; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "right")) { edit.label_pos = OWF_LABEL_RIGHT; edit.set |= OC_CHART_SET_LABELS; }
+        else if (!strcasecmp(token, "best")) { edit.label_pos = OWF_LABEL_BEST_FIT; edit.set |= OC_CHART_SET_LABELS; }
+        else bad = 1;
+    }
+    if (bad || !edit.set) {
+        set_status("Use type, clustered/stacked/percent, legend-*, grid/nogrid, label options and title=...");
+        return;
+    }
+    if ((edit.set & OC_CHART_SET_TITLE) && title && *title && !(utf8 = from_latin1(title))) {
+        result(OWF_ERR_MEMORY, NULL);
+        return;
+    }
+    edit.title = utf8;
+    rc = oc_core_update_chart(core, index, &edit);
+    owf_free(utf8);
+    result(rc, "Chart formatted.");
+}
+
 static void menu_action(ULONG id)
 {
     static const unsigned long fills[] = { 0, 0xFFF2A8UL, 0xCDEBC5UL, 0xC9DDF2UL, 0xE0E0E0UL, 0xF6C8C8UL };
@@ -3005,6 +3118,7 @@ static void menu_action(ULONG id)
     case M_INS_SHEET: if (oc_core_add_sheet(core, NULL) < 0) result(OWF_ERR_MEMORY, NULL); else set_status("Sheet added."); break;
     case M_COMMENT: do_comment(); break;
     case M_CHART: do_insert_chart(); break;
+    case M_CHART_FORMAT: do_format_chart(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");
