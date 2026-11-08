@@ -3246,7 +3246,7 @@ static void test_chart_authoring(void)
     oc_core *core = fresh();
     owf_chart c;
     oc_draw_list l;
-    int before, after;
+    int before, after, trend_type;
     if (!core) return;
     enter_at(core, "A1", "Region"); enter_at(core, "B1", "2025"); enter_at(core, "C1", "2026");
     enter_at(core, "A2", "North"); enter_at(core, "B2", "10"); enter_at(core, "C2", "15");
@@ -3396,6 +3396,15 @@ static void test_chart_authoring(void)
           c.series[0].trendline == OWF_TREND_NONE);
     chart_free(&c);
     CHECK(oc_core_redo(core) == OWF_OK);
+    for (trend_type = OWF_TREND_EXPONENTIAL; trend_type <= OWF_TREND_MOVING_AVERAGE; trend_type++) {
+        edit.trendline = trend_type;
+        CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK);
+        oc_draw_list_init(&l);
+        CHECK(oc_view_draw(core, &l) == OWF_OK && chart_items(&l, OC_DRAW_SEGMENT, 0x7030A0) >= 1);
+        oc_draw_list_free(&l);
+    }
+    edit.trendline = OWF_TREND_LINEAR;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK);
 
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_SERIES_STYLE;

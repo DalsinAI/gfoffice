@@ -265,7 +265,7 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.55 can turn a
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.56 can turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and
 cached values, supports clustered, stacked and percent grouping, keeps charts
@@ -308,11 +308,13 @@ changing other series; native rendering, undo/redo and XLSX/ODS preserve it.
 Format > Chart Plot Options and reusable core API 0.19.0 edit column/bar gap
 width or pie/doughnut starting angle, hole size and varying slice colours in
 one undoable transaction, with native rendering and XLSX/ODS persistence.
-Format > Chart Series Trendline and reusable core API 0.20.0 add or remove a
+Format > Chart Series Trendline and reusable core API 0.21.0 add or remove a
 series trendline, including fit type, polynomial order, moving-average period,
-equation/R-squared flags and colour. Linear fits render natively; the expanded
-shared model round-trips all represented types through XLSX and ODS. This
-makes `owfcalc.library` 3.7.
+equation/R-squared flags and colour. Linear, exponential, logarithmic,
+polynomial, power and moving-average fits render natively; the shared model
+round-trips them through XLSX and ODS. Equation/R-squared flags are preserved,
+but their annotations are not yet drawn. The model change makes
+`owfcalc.library` 3.7.
 Drawings containing pictures or shapes are refused rather than
 destructively rewritten. It can also deep-copy
 a sheet's cells, formats, comments, rules, filters, local names, cursor and

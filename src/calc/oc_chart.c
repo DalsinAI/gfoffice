@@ -1278,23 +1278,155 @@ static void point_label(render *r, const char *s, int x, int y, int m, int pos)
     }
 }
 
-/* y = intercept + slope*x for a series' visible numeric points. Category
+typedef struct {
+    int kind, degree;
+    double c[7], centre, scale;
+} trendfit;
+
+/* Least-squares fitting over a series' visible numeric points. Category
  * charts use 1..n as x; scatters use their cached x values. */
-static int linear_trend(const chartdata *cd, int series, int scatter_values, double *intercept, double *slope)
+static int trend_linear(const chartdata *cd, int series, int scatter_values, int kind, double *intercept, double *slope)
 {
     double sx = 0, sy = 0, sxx = 0, sxy = 0, den;
     int k, n = 0;
     for (k = 0; k < cd->n; k++) {
         size_t at = (size_t)series * (size_t)cd->n + (size_t)k;
-        double x;
+        double x, y;
         if (!cd->has[at]) continue;
         x = scatter_values ? cd->x[at] : k + 1.0;
-        sx += x; sy += cd->v[at]; sxx += x * x; sxy += x * cd->v[at]; n++;
+        y = cd->v[at];
+        if (kind == OWF_TREND_EXPONENTIAL) {
+            if (y <= 0) continue;
+            y = log(y);
+        } else if (kind == OWF_TREND_LOGARITHMIC) {
+            if (x <= 0) continue;
+            x = log(x);
+        } else if (kind == OWF_TREND_POWER) {
+            if (x <= 0 || y <= 0) continue;
+            x = log(x);
+            y = log(y);
+        }
+        sx += x; sy += y; sxx += x * x; sxy += x * y; n++;
     }
     den = n * sxx - sx * sx;
     if (n < 2 || fabs(den) < 1e-200) return 0;
     *slope = (n * sxy - sx * sy) / den;
     *intercept = (sy - *slope * sx) / n;
+    return 1;
+}
+
+/* Polynomial coefficients use x normalised to -1..1, which keeps orders up
+ * to six useful on both small category numbers and large scatter values. */
+static int polynomial_trend(const chartdata *cd, int series, int scatter_values, int degree, trendfit *fit)
+{
+    double a[7][7], b[7], power[13], lo = 0, hi = 0;
+    int col, i, j, k, n = 0, row;
+    memset(a, 0, sizeof a);
+    memset(b, 0, sizeof b);
+    for (k = 0; k < cd->n; k++) {
+        size_t at = (size_t)series * (size_t)cd->n + (size_t)k;
+        double x;
+        if (!cd->has[at]) continue;
+        x = scatter_values ? cd->x[at] : k + 1.0;
+        if (!n || x < lo) lo = x;
+        if (!n || x > hi) hi = x;
+        n++;
+    }
+    if (degree < 2 || degree > 6 || n <= degree || hi <= lo) return 0;
+    fit->centre = (lo + hi) / 2;
+    fit->scale = (hi - lo) / 2;
+    for (k = 0; k < cd->n; k++) {
+        size_t at = (size_t)series * (size_t)cd->n + (size_t)k;
+        double x;
+        if (!cd->has[at]) continue;
+        x = ((scatter_values ? cd->x[at] : k + 1.0) - fit->centre) / fit->scale;
+        power[0] = 1;
+        for (i = 1; i <= degree * 2; i++) power[i] = power[i - 1] * x;
+        for (i = 0; i <= degree; i++) {
+            b[i] += cd->v[at] * power[i];
+            for (j = 0; j <= degree; j++) a[i][j] += power[i + j];
+        }
+    }
+    for (col = 0; col <= degree; col++) {
+        int pivot = col;
+        for (row = col + 1; row <= degree; row++)
+            if (fabs(a[row][col]) > fabs(a[pivot][col])) pivot = row;
+        if (fabs(a[pivot][col]) < 1e-12) return 0;
+        if (pivot != col) {
+            double t = b[col];
+            b[col] = b[pivot]; b[pivot] = t;
+            for (j = 0; j <= degree; j++) {
+                t = a[col][j]; a[col][j] = a[pivot][j]; a[pivot][j] = t;
+            }
+        }
+        {
+            double d = a[col][col];
+            for (j = col; j <= degree; j++) a[col][j] /= d;
+            b[col] /= d;
+        }
+        for (row = 0; row <= degree; row++) if (row != col) {
+            double f = a[row][col];
+            for (j = col; j <= degree; j++) a[row][j] -= f * a[col][j];
+            b[row] -= f * b[col];
+        }
+    }
+    for (i = 0; i <= degree; i++) fit->c[i] = b[i];
+    fit->degree = degree;
+    return 1;
+}
+
+static int make_trend(const chartdata *cd, int series, int scatter_values, const owf_chart_series *se, trendfit *fit)
+{
+    double a, b;
+    memset(fit, 0, sizeof *fit);
+    fit->kind = se->trendline;
+    if (se->trendline == OWF_TREND_POLYNOMIAL)
+        return polynomial_trend(cd, series, scatter_values,
+                                se->trend_order >= 2 && se->trend_order <= 6 ? se->trend_order : 2, fit);
+    if (se->trendline < OWF_TREND_LINEAR || se->trendline > OWF_TREND_POWER ||
+        !trend_linear(cd, series, scatter_values, se->trendline, &a, &b)) return 0;
+    fit->c[0] = se->trendline == OWF_TREND_EXPONENTIAL || se->trendline == OWF_TREND_POWER ? exp(a) : a;
+    fit->c[1] = b;
+    return fit->c[0] > -1e200 && fit->c[0] < 1e200;
+}
+
+static int trend_value(const trendfit *fit, double x, double *out)
+{
+    double y;
+    int i;
+    switch (fit->kind) {
+    case OWF_TREND_LINEAR: y = fit->c[0] + fit->c[1] * x; break;
+    case OWF_TREND_EXPONENTIAL: y = fit->c[0] * exp(fit->c[1] * x); break;
+    case OWF_TREND_LOGARITHMIC:
+        if (x <= 0) return 0;
+        y = fit->c[0] + fit->c[1] * log(x); break;
+    case OWF_TREND_POWER:
+        if (x <= 0) return 0;
+        y = fit->c[0] * pow(x, fit->c[1]); break;
+    case OWF_TREND_POLYNOMIAL:
+        x = (x - fit->centre) / fit->scale;
+        y = fit->c[fit->degree];
+        for (i = fit->degree - 1; i >= 0; i--) y = y * x + fit->c[i];
+        break;
+    default: return 0;
+    }
+    if (!(y > -1e200 && y < 1e200)) return 0;
+    *out = y;
+    return 1;
+}
+
+static int moving_average(const chartdata *cd, int series, int at, int period, double *out)
+{
+    double sum = 0;
+    int k;
+    if (period < 2) period = 2;
+    if (at + 1 < period) return 0;
+    for (k = at - period + 1; k <= at; k++) {
+        size_t p = (size_t)series * (size_t)cd->n + (size_t)k;
+        if (!cd->has[p]) return 0;
+        sum += cd->v[p];
+    }
+    *out = sum / period;
     return 1;
 }
 
@@ -1539,23 +1671,45 @@ static int categories(render *r)
     if (!percent)
         for (s = 0; s < cd->ns; s++) {
             const owf_chart_series *se = &ch->series[s];
-            double intercept, slope, v0, v1;
-            int x0, y0, x1, y1, width;
-            if (se->trendline != OWF_TREND_LINEAR || !linear_trend(cd, s, 0, &intercept, &slope)) continue;
-            v0 = intercept + slope;
-            v1 = intercept + slope * cd->n;
-            v0 = v0 < from ? from : v0 > to ? to : v0;
-            v1 = v1 < from ? from : v1 > to ? to : v1;
-            if (horizontal) {
-                x0 = POS(v0); y0 = ay1 - (int)floor(0.5 * sw + 0.5);
-                x1 = POS(v1); y1 = ay1 - (int)floor((cd->n - 0.5) * sw + 0.5);
-            } else {
-                x0 = ax0 + (int)floor(0.5 * sw + 0.5); y0 = POS(v0);
-                x1 = ax0 + (int)floor((cd->n - 0.5) * sw + 0.5); y1 = POS(v1);
+            trendfit fit;
+            double last_v = 0;
+            int has_last = 0, last_x = 0, last_y = 0, width = 2 * core->zoom / 100;
+            unsigned long colour = se->trend_colour ? OWF_SHADE_RGB(se->trend_colour) : series_rgb(se);
+            int samples = cd->n * 8;
+            if (se->trendline == OWF_TREND_MOVING_AVERAGE) {
+                for (k = 0; k < cd->n; k++) {
+                    double raw, shown;
+                    int xx, yy;
+                    if (!moving_average(cd, s, k, se->trend_period, &raw)) { has_last = 0; continue; }
+                    shown = raw < from ? from : raw > to ? to : raw;
+                    if (horizontal) {
+                        xx = POS(shown); yy = ay1 - (int)floor((k + 0.5) * sw + 0.5);
+                    } else {
+                        xx = ax0 + (int)floor((k + 0.5) * sw + 0.5); yy = POS(shown);
+                    }
+                    if (has_last && !((last_v < from && raw < from) || (last_v > to && raw > to)))
+                        g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
+                    last_x = xx; last_y = yy; last_v = raw; has_last = 1;
+                }
+                continue;
             }
-            width = 2 * core->zoom / 100;
-            g->line(g, x0, y0, x1, y1, width > 0 ? width : 1,
-                    se->trend_colour ? OWF_SHADE_RGB(se->trend_colour) : series_rgb(se));
+            if (!make_trend(cd, s, 0, se, &fit)) continue;
+            if (samples < 32) samples = 32;
+            if (samples > 128) samples = 128;
+            for (k = 0; k <= samples; k++) {
+                double x = 1 + (cd->n - 1.0) * k / samples, raw, shown;
+                int xx, yy;
+                if (!trend_value(&fit, x, &raw)) { has_last = 0; continue; }
+                shown = raw < from ? from : raw > to ? to : raw;
+                if (horizontal) {
+                    xx = POS(shown); yy = ay1 - (int)floor((x - 0.5) * sw + 0.5);
+                } else {
+                    xx = ax0 + (int)floor((x - 0.5) * sw + 0.5); yy = POS(shown);
+                }
+                if (has_last && !((last_v < from && raw < from) || (last_v > to && raw > to)))
+                    g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
+                last_x = xx; last_y = yy; last_v = raw; has_last = 1;
+            }
         }
     (void)across;
     return 1;
@@ -1659,17 +1813,40 @@ static int scatter(render *r)
     }
     for (s = 0; s < cd->ns; s++) {
         const owf_chart_series *se = &ch->series[s];
-        double intercept, slope, y0, y1;
-        int width;
-        if (se->trendline != OWF_TREND_LINEAR || !linear_trend(cd, s, 1, &intercept, &slope)) continue;
-        y0 = intercept + slope * xfrom;
-        y1 = intercept + slope * xto;
-        y0 = y0 < yfrom ? yfrom : y0 > yto ? yto : y0;
-        y1 = y1 < yfrom ? yfrom : y1 > yto ? yto : y1;
-        width = 2 * core->zoom / 100;
-        g->line(g, ax0, ay1 - (int)floor((y0 - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5),
-                ax1, ay1 - (int)floor((y1 - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5),
-                width > 0 ? width : 1, se->trend_colour ? OWF_SHADE_RGB(se->trend_colour) : series_rgb(se));
+        trendfit fit;
+        double last_v = 0;
+        int has_last = 0, last_x = 0, last_y = 0, width = 2 * core->zoom / 100;
+        unsigned long colour = se->trend_colour ? OWF_SHADE_RGB(se->trend_colour) : series_rgb(se);
+        if (se->trendline == OWF_TREND_MOVING_AVERAGE) {
+            for (k = 0; k < cd->n; k++) {
+                size_t at = (size_t)s * (size_t)cd->n + (size_t)k;
+                double raw, xv, shown;
+                int xx, yy;
+                if (!moving_average(cd, s, k, se->trend_period, &raw) || !cd->has[at]) { has_last = 0; continue; }
+                xv = cd->x[at] < xfrom ? xfrom : cd->x[at] > xto ? xto : cd->x[at];
+                shown = raw < yfrom ? yfrom : raw > yto ? yto : raw;
+                xx = ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5);
+                yy = ay1 - (int)floor((shown - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5);
+                if (has_last && !((last_v < yfrom && raw < yfrom) || (last_v > yto && raw > yto)))
+                    g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
+                last_x = xx; last_y = yy; last_v = raw; has_last = 1;
+            }
+            continue;
+        }
+        if (make_trend(cd, s, 1, se, &fit)) {
+            int sample;
+            for (sample = 0; sample <= 128; sample++) {
+                double xv = xfrom + (xto - xfrom) * sample / 128, raw, shown;
+                int xx, yy;
+                if (!trend_value(&fit, xv, &raw)) { has_last = 0; continue; }
+                shown = raw < yfrom ? yfrom : raw > yto ? yto : raw;
+                xx = ax0 + (int)floor((xv - xfrom) * (ax1 - ax0) / (xto - xfrom) + 0.5);
+                yy = ay1 - (int)floor((shown - yfrom) * (ay1 - ay0) / (yto - yfrom) + 0.5);
+                if (has_last && !((last_v < yfrom && raw < yfrom) || (last_v > yto && raw > yto)))
+                    g->line(g, last_x, last_y, xx, yy, width > 0 ? width : 1, colour);
+                last_x = xx; last_y = yy; last_v = raw; has_last = 1;
+            }
+        }
     }
     for (s = 0; s < cd->ns; s++) {               /* the labels over everything: a scatter's category is its x */
         const owf_chart_series *se = &ch->series[s];

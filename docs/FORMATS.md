@@ -51,7 +51,7 @@ given ends in a workbook format's extension.
 | XLSX, Office Open XML (`.xlsx`; `.xltx`, `.xlsm`, `.xltm` open only) | Yes | Yes | Spec: ECMA-376 (transitional; strict's namespaces read) and [MS-XLSX]'s `_xlfn.` names | S2 | Full both ways, as the model holds it (notes below). Macros, comments, pictures, charts, conditional formats, validation, tables and pivot tables are reported. Binary `.xlsb` is recognised with a clear message |
 | ODS, OpenDocument Spreadsheet (`.ods`, `.ots` opens; flat `.fods`) | Yes | Yes | Spec: OASIS ODF 1.2 and OpenFormula; LibreOffice's 1.3 additions read | S2 | Full both ways, as the model holds it (notes below), formulas translated to and from OpenFormula. Comments, pictures, charts, conditional formats and validation are reported |
 
-GFOpenCalc 0.1.55 can author column, bar, line, area, pie and scatter charts
+GFOpenCalc 0.1.56 can author column, bar, line, area, pie and scatter charts
 from a selected table, with live cell references, cached values, native
 selection/dragging, undoable deletion and XLSX/ODS round trips. Selected
 charts can change type/grouping, title, legend, gridlines and data labels
@@ -83,10 +83,12 @@ series, with native rendering, undo/redo and XLSX/ODS persistence.
 Format > Chart Plot Options and reusable core API 0.19.0 edit column/bar gap
 width or pie/doughnut starting angle, hole and varying point colours, with
 native rendering, undo/redo and XLSX/ODS persistence.
-Format > Chart Series Trendline and reusable core API 0.20.0 author trendline
-type, order/period, equation/R-squared flags and colour. Linear trendlines
-render natively; the expanded shared series model preserves the represented
-types in XLSX/ODS and is guarded by `owfcalc.library` 3.7.
+Format > Chart Series Trendline and reusable core API 0.21.0 author trendline
+type, order/period, equation/R-squared flags and colour. Linear, exponential,
+logarithmic, polynomial, power and moving-average trendlines render natively;
+the expanded shared series model preserves them in XLSX/ODS. Equation/R-
+squared flags are preserved but their annotations are not yet drawn. The
+model is guarded by `owfcalc.library` 3.7.
 Drawings containing pictures or shapes are preserved
 by refusing chart-only rewrites. It can also duplicate sheets with deep-copied cells, formatting,
 comments, rules, filters, local names and supported charts. Chart package parts
