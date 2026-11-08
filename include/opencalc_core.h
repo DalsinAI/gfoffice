@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.11.0"
+#define OC_CORE_VERSION "0.12.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -654,6 +654,9 @@ void oc_core_select_chart(oc_core *core, int index);  /* -1: none */
 int oc_core_selected_chart(oc_core *core);            /* on the sheet showing, or -1 */
 /* OWF_OK, OWF_ERR_UNSUPPORTED (none selected), OWF_ERR_MEMORY */
 int oc_core_move_chart(oc_core *core, int dx, int dy);
+/* Moves its top-left corner by dx,dy and sets its displayed width and
+ * height, all in pixels at the current zoom, as one undoable operation. */
+int oc_core_transform_chart(oc_core *core, int dx, int dy, int width, int height);
 int oc_core_step_chart(oc_core *core, int drow, int dcol);
 int oc_core_place_chart(oc_core *core, unsigned row, unsigned col);
 

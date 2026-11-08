@@ -349,6 +349,7 @@ typedef struct {
     size_t start, end;           /* its bytes */
     num at[2][4];                /* from and to: col, colOff, row, rowOff */
     num pos[2];                  /* an absolute one's: x, y */
+    num ext[2];                  /* a one-cell/absolute one's: cx, cy */
     char rid[64];                /* the chart it shows (graphicFrame, graphic, graphicData, chart: its r:id), or "" */
 } anchor;
 
@@ -405,6 +406,12 @@ static int read_anchor(xwalk *w, const xtok *t, anchor *a)
                     read_num(w->s, va, vb, &a->pos[0]);
                 if (attr_span(w->s, &c, "y", &va, &vb))
                     read_num(w->s, va, vb, &a->pos[1]);
+            }
+            if (d == 0 && named(&c, "ext")) {
+                if (attr_span(w->s, &c, "cx", &va, &vb))
+                    read_num(w->s, va, vb, &a->ext[0]);
+                if (attr_span(w->s, &c, "cy", &va, &vb))
+                    read_num(w->s, va, vb, &a->ext[1]);
             }
             if (d == 3 && named(&c, "chart") && named(&path[0], "graphicFrame") && named(&path[1], "graphic") &&
                 named(&path[2], "graphicData"))
@@ -636,7 +643,8 @@ static int chart_shown(const owf_book *book, const char *dir, const owf_xml *rel
 
 /* Chart index (as owf_sheet_charts counts them) put with its top left corner at to (a cell and an offset in
  * it, each axis), or (by) moved by dx, dy EMU; its size as it was. */
-static int place(owf_book *book, int sheet, int index, int by, const edge *to, long dx, long dy)
+static int place(owf_book *book, int sheet, int index, int by, const edge *to, long dx, long dy,
+                 int resize, long width, long height)
 {
     owf_sheet *sh;
     owf_part *p;
@@ -663,7 +671,7 @@ static int place(owf_book *book, int sheet, int index, int by, const edge *to, l
     w.i = 0;
     while (xnext(&w, &t) != X_END && t.kind != X_BAD) {
         anchor a;
-        change c[8];
+        change c[10];
         edge from[2], end[2];
         int nc = 0, k;
         owf_buf b;
@@ -698,6 +706,8 @@ static int place(owf_book *book, int sheet, int index, int by, const edge *to, l
                 emu_edge(sh, k, start + (double)(k ? dx : dy), &from[k]);
             else
                 from[k] = to[k];
+            if (resize)
+                size = k ? width : height;
             if (a.kind == K_TWO)
                 emu_edge(sh, k, edge_emu(sh, k, from[k].cell, from[k].off) + (size > 0 ? size : 0), &end[k]);
             if (a.kind == K_ABSOLUTE) {
@@ -711,6 +721,8 @@ static int place(owf_book *book, int sheet, int index, int by, const edge *to, l
                     add_change(c, &nc, &a.at[1][of], end[k].off);
                 }
             }
+            if (resize && a.kind != K_TWO)
+                add_change(c, &nc, &a.ext[k ? 0 : 1], k ? width : height);
         }
         owf_xml_free(rels);
         if (!nc)
@@ -734,10 +746,17 @@ int calc_chart_place(owf_book *book, int sheet, int index, unsigned row, long ro
     to[0].off = row_off > 0 ? row_off : 0;
     to[1].cell = col < CALC_MAX_COLS ? (long)col : (long)CALC_MAX_COLS - 1;
     to[1].off = col_off > 0 ? col_off : 0;
-    return place(book, sheet, index, 0, to, 0, 0);
+    return place(book, sheet, index, 0, to, 0, 0, 0, 0, 0);
 }
 
 int calc_chart_nudge(owf_book *book, int sheet, int index, long dx, long dy)
 {
-    return place(book, sheet, index, 1, NULL, dx, dy);
+    return place(book, sheet, index, 1, NULL, dx, dy, 0, 0, 0);
+}
+
+int calc_chart_transform(owf_book *book, int sheet, int index, long dx, long dy, long width, long height)
+{
+    if (width <= 0 || height <= 0)
+        return OWF_ERR_FORMAT;
+    return place(book, sheet, index, 1, NULL, dx, dy, 1, width, height);
 }

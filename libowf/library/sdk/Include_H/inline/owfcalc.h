@@ -1748,4 +1748,25 @@ __owfcalc_owf_sheet_keep_charts(void *__base, owf_book *book, int sheet, const o
 #define owf_sheet_keep_charts(book, sheet, charts, count) __owfcalc_owf_sheet_keep_charts((OWFCALC_BASE_NAME), (owf_book *)(book), (int)(sheet), (const owf_chart *)(charts), (int)(count))
 #define __owf_sheet_keep_charts_base(__in_base, book, sheet, charts, count) __owfcalc_owf_sheet_keep_charts((__in_base), (owf_book *)(book), (int)(sheet), (const owf_chart *)(charts), (int)(count))
 
+static __inline__ int
+__owfcalc_owf_calc_transform_chart(void *__base, owf_calc *calc, int sheet, int index, long dx, long dy, long width, long height)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(calc);
+	register ULONG _d0 __asm("d0") = (ULONG)(sheet);
+	register ULONG _d1 __asm("d1") = (ULONG)(index);
+	register ULONG _d2 __asm("d2") = (ULONG)(dx);
+	register ULONG _d3 __asm("d3") = (ULONG)(dy);
+	register ULONG _d4 __asm("d4") = (ULONG)(width);
+	register ULONG _d5 __asm("d5") = (ULONG)(height);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -612(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3), "r" (_d4), "r" (_d5)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_calc_transform_chart(calc, sheet, index, dx, dy, width, height) __owfcalc_owf_calc_transform_chart((OWFCALC_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (int)(index), (long)(dx), (long)(dy), (long)(width), (long)(height))
+#define __owf_calc_transform_chart_base(__in_base, calc, sheet, index, dx, dy, width, height) __owfcalc_owf_calc_transform_chart((__in_base), (owf_calc *)(calc), (int)(sheet), (int)(index), (long)(dx), (long)(dy), (long)(width), (long)(height))
+
 #endif /* INLINE_OWFCALC_H */

@@ -108,10 +108,10 @@ These changes are small, and they don't change behaviour:
 
 | Library | Base | Version | Calls | Proto |
 | --- | --- | --- | --- | --- |
-| `owfwrite.library` | `OWFWriteBase` | 3.0 | 39 | `<proto/owfwrite.h>` |
-| `owfcalc.library` | `OWFCalcBase` | 3.0 | 77 | `<proto/owfcalc.h>` |
-| `owfpub.library` | `OWFPubBase` | 3.0 | 37 | `<proto/owfpub.h>` |
-| `owfpresent.library` | `OWFPresentBase` | 3.0 | 79 | `<proto/owfpresent.h>` |
+| `owfwrite.library` | `OWFWriteBase` | 3.2 | 39 | `<proto/owfwrite.h>` |
+| `owfcalc.library` | `OWFCalcBase` | 3.5 | 98 | `<proto/owfcalc.h>` |
+| `owfpub.library` | `OWFPubBase` | 3.1 | 37 | `<proto/owfpub.h>` |
+| `owfpresent.library` | `OWFPresentBase` | 3.3 | 81 | `<proto/owfpresent.h>` |
 
 **Version 3 for all four.** The four libraries continue owf.library 2, so
 their versions go on from it. GFOpenUp's GFOffice part takes its version from
@@ -149,8 +149,9 @@ So adding a call means adding one SFD line and running `gen-sdk.sh`.
 out goes back through that library's `owf_free`.
 
 **Checks when a program opens a library.** `owf_open()` (`owf_open.h`)
-opens the library the file was built for. It then checks the sizes of that
-library's structures only:
+opens the library the file was built for. It requires at least the revision
+whose vectors that program uses, then checks the sizes of that library's
+structures only:
 
 - owfwrite.library checks the document model's.
 - owfcalc.library checks the workbook's and the charts'.

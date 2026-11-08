@@ -3666,6 +3666,8 @@ static void test_chart_move(void)
     CHECK(oc_view_chart_at(core, 360, 100) == -1 && oc_view_chart_at(core, 103, 100) == -1 && oc_view_chart_at(core, 20, 100) == -1);
     /* none selected: no marks, nothing moves */
     CHECK(oc_core_selected_chart(core) == -1 && oc_core_move_chart(core, 10, 10) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_transform_chart(core, 0, 0, 300, 200) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_transform_chart(core, 0, 0, 0, 200) == OWF_ERR_FORMAT);
     CHECK(oc_view_draw(core, &l) == OWF_OK && marks(&l, 104, 35, 256, 170, &handles) == 0 && handles == 0);
     oc_core_select_chart(core, 0);
     CHECK(oc_core_selected_chart(core) == 0);
@@ -3675,6 +3677,22 @@ static void test_chart_move(void)
         CHECK(oc_view_chart_box(core, 0, &bx, &by, &bw, &bh) && bx == 104 && by == 35 && bw == 256 && bh == 170);
         CHECK(!oc_view_chart_box(core, 1, &bx, &by, &bw, &bh));
     }
+
+    /* Its bottom-right handle makes it five columns by twelve rows; a left/top
+       handle can move those edges while the opposite corner stays put. */
+    CHECK(oc_core_transform_chart(core, 0, 0, 320, 204) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 1 && c.from_row == 1 && c.to_col == 6 && c.to_row == 13 &&
+          c.to_col_off == 0 && c.to_row_off == 0);
+    chart_free(&c);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && marks(&l, 104, 35, 320, 204, &handles) == 1 && handles == 8);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 1 && c.from_row == 1 && c.to_col == 5 && c.to_row == 11);
+    chart_free(&c);
+    CHECK(oc_core_transform_chart(core, 64, 17, 192, 153) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.from_col == 2 && c.from_row == 2 && c.to_col == 5 && c.to_row == 11 &&
+          c.to_col_off == 0 && c.to_row_off == 0);
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK);
 
     /* by the pointer, a column and two rows: B2:F12 to C4:G14, the selection with it */
     CHECK(oc_core_move_chart(core, 64, 34) == OWF_OK);
@@ -3749,12 +3767,59 @@ static void test_chart_move(void)
         CHECK(charts_of(core, 0, &c) == 3 && c.sized && c.from_col == 5 && c.from_row == 3 && c.width == d.width &&
               c.height == d.height);
         chart_free(&c);
+        CHECK(oc_core_transform_chart(core, 10, 5, 300, 200) == OWF_OK);
+        CHECK(charts_of(core, 0, &c) == 3 && c.sized && c.from_col == 5 && c.from_row == 3 &&
+              c.from_col_off == 95250 && c.from_row_off == 47625 && c.width == 2857500 && c.height == 1905000);
+        chart_free(&c);
+        CHECK(oc_core_save(core, path, "xlsx", report) == OWF_OK);
+        CHECK(oc_core_open(core, path, NULL, report, NULL) == OWF_OK);
+        CHECK(charts_of(core, 0, &c) == 3 && c.sized && c.from_col == 5 && c.from_row == 3 &&
+              c.from_col_off == 95250 && c.from_row_off == 47625 && c.width == 2857500 && c.height == 1905000);
+        chart_free(&c);
+        remove(path);
+        CHECK(oc_core_selected_chart(core) == -1);
+        oc_core_select_chart(core, 0);
         chart_free(&d);
         /* another sheet: nothing selected there */
         oc_core_set_sheet(core, 1);
         CHECK(oc_core_selected_chart(core) == -1 && oc_core_step_chart(core, 1, 0) == OWF_ERR_UNSUPPORTED);
         oc_core_set_sheet(core, 0);
         CHECK(oc_core_selected_chart(core) == 0);
+    }
+    /* An absolute anchor uses pos and ext rather than cells at both edges. */
+    {
+        static const char drawing[] =
+            "<xdr:wsDr xmlns:xdr=\"" XDR "\" xmlns:a=\"" DML "\"><xdr:absoluteAnchor>"
+            "<xdr:pos x=\"609600\" y=\"161925\"/><xdr:ext cx=\"2438400\" cy=\"1619250\"/>"
+            "<xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"2\" name=\"Chart 1\"/>"
+            "<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm/><a:graphic><a:graphicData uri=\"" CML "\">"
+            "<c:chart xmlns:c=\"" CML "\" xmlns:r=\"" RNS "\" r:id=\"rId1\"/></a:graphicData></a:graphic>"
+            "</xdr:graphicFrame><xdr:clientData/></xdr:absoluteAnchor></xdr:wsDr>";
+        owf_part *part;
+        unsigned char *data;
+        CHECK(oc_core_set_book(core, NULL) == OWF_OK);
+        chart_values(core);
+        put_chart(core, "<c:pieChart>" SERIES(0, "2025", "B", "") "</c:pieChart>", "");
+        part = (owf_part *)owf_book_part(oc_core_book(core), "xl/drawings/drawing1.xml");
+        data = malloc(strlen(drawing));
+        CHECK(part && data);
+        if (part && data) {
+            memcpy(data, drawing, strlen(drawing));
+            free(part->data);
+            part->data = data;
+            part->length = strlen(drawing);
+        } else free(data);
+        CHECK(charts_of(core, 0, &c) == 1 && c.sized && c.from_col == 1 && c.from_row == 1 &&
+              c.width == 2438400 && c.height == 1619250);
+        chart_free(&c);
+        oc_core_select_chart(core, 0);
+        CHECK(oc_core_transform_chart(core, 1, 2, 300, 200) == OWF_OK);
+        CHECK(charts_of(core, 0, &c) == 1 && c.sized && c.from_col == 1 && c.from_row == 1 &&
+              c.from_col_off == 9525 && c.from_row_off == 19050 && c.width == 2857500 && c.height == 1905000);
+        chart_free(&c);
+        CHECK(oc_core_undo(core) == OWF_OK);
+        CHECK(charts_of(core, 0, &c) == 1 && c.width == 2438400 && c.height == 1619250);
+        chart_free(&c);
     }
     oc_draw_list_free(&l);
     owf_report_free(report);

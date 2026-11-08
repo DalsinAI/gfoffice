@@ -114,6 +114,7 @@ int owf_pdf_text_width(const char *utf8, size_t length, owf_font_kind kind, unsi
 int owf_pdf_winansi(unsigned long codepoint);
 const char * owf_pdf_fallback(unsigned long codepoint);
 int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, int count);
+int owf_calc_transform_chart(owf_calc *calc, int sheet, int index, long dx, long dy, long width, long height);
 
 #ifdef __cplusplus
 }

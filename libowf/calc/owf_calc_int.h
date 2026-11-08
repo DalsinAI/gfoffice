@@ -258,6 +258,7 @@ int calc_charts_shift(owf_book *book, int sheet, int axis, long at, long count, 
  * OWF_ERR_UNSUPPORTED (no such chart), OWF_ERR_MEMORY. */
 int calc_chart_place(owf_book *book, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off);
 int calc_chart_nudge(owf_book *book, int sheet, int index, long dx, long dy);
+int calc_chart_transform(owf_book *book, int sheet, int index, long dx, long dy, long width, long height);
 
 /* ---- Functions (owf_calc_fn.c) ---- */
 

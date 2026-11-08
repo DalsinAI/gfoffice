@@ -265,7 +265,7 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.46 can turn a
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.47 can turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and
 cached values, supports clustered, stacked and percent grouping, keeps charts
@@ -279,11 +279,14 @@ it through XLSX/ODS. Format > Chart Data can rebind the selected chart to a
 different range and switch between series-by-columns and series-by-rows, with
 independent heading and category detection. Reusable core API 0.11.0 rebuilds
 live references and cached values while preserving the chart's presentation
-and placement as one undoable step. Drawings containing pictures or shapes are refused rather than
+and placement as one undoable step. Selected charts can also be resized from
+all eight native handles. Reusable core API 0.12.0 transforms a chart's
+position and size atomically, with undo/redo and XLSX/ODS round trips, through
+`owfcalc.library` 3.5 for two-cell, one-cell and absolute anchors. Drawings containing pictures or shapes are refused rather than
 destructively rewritten. It can also deep-copy
 a sheet's cells, formats, comments, rules, filters, local names, cursor and
 supported charts, with independent chart package parts supplied by reusable
-`owfcalc.library` 3.4. Duplication is undoable and round-trips through XLSX/ODS;
+`owfcalc.library` 3.5. Duplication is undoable and round-trips through XLSX/ODS;
 drawings with unsupported pictures or shapes are refused rather than silently
 discarded. It can reorder, hide and show sheets while preserving each sheet's content, cursor and local
 name scopes; these operations are undoable and persist through XLSX/ODS. Its

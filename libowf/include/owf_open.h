@@ -44,11 +44,13 @@
 #if defined(OWF_USE_WRITE_LIBRARY)
 #define OWF_LIBRARY_NAME "owfwrite.library"
 #define OWF_LIBRARY_VERSION 3
+#define OWF_LIBRARY_REVISION 2
 #define OWF_LIBRARY_BASE OWFWriteBase
 #define OWF_OPEN_SIZES OWF_OPEN_DOC_SIZES, { OWF_STRUCT_FORMAT, sizeof(owf_format) }
 #elif defined(OWF_USE_CALC_LIBRARY)
 #define OWF_LIBRARY_NAME "owfcalc.library"
 #define OWF_LIBRARY_VERSION 3
+#define OWF_LIBRARY_REVISION 5
 #define OWF_LIBRARY_BASE OWFCalcBase
 #define OWF_OPEN_SIZES                                                                                     \
     { OWF_STRUCT_CHARFMT, sizeof(owf_charfmt) }, { OWF_STRUCT_CELL, sizeof(owf_cell) },                   \
@@ -63,6 +65,7 @@
 #elif defined(OWF_USE_PUB_LIBRARY)
 #define OWF_LIBRARY_NAME "owfpub.library"
 #define OWF_LIBRARY_VERSION 3
+#define OWF_LIBRARY_REVISION 1
 #define OWF_LIBRARY_BASE OWFPubBase
 #define OWF_OPEN_SIZES                                                                                     \
     OWF_OPEN_DOC_SIZES, { OWF_STRUCT_PUB, sizeof(owf_pub) }, { OWF_STRUCT_PUB_PAGE, sizeof(owf_pub_page) }, \
@@ -70,6 +73,7 @@
 #elif defined(OWF_USE_PRESENT_LIBRARY)
 #define OWF_LIBRARY_NAME "owfpresent.library"
 #define OWF_LIBRARY_VERSION 3
+#define OWF_LIBRARY_REVISION 3
 #define OWF_LIBRARY_BASE OWFPresentBase
 #define OWF_OPEN_SIZES                                                                                     \
     OWF_OPEN_DOC_SIZES, { OWF_STRUCT_LOOK, sizeof(owf_look) }, { OWF_STRUCT_TEXTLEVEL, sizeof(owf_textlevel) }, \
@@ -81,6 +85,7 @@
 #else
 #define OWF_LIBRARY_NAME "owf.library"
 #define OWF_LIBRARY_VERSION 2
+#define OWF_LIBRARY_REVISION 5
 #define OWF_LIBRARY_BASE OWFBase
 #endif
 
@@ -107,6 +112,11 @@ static inline int owf_open(void)
     int i;
     if (!OWF_LIBRARY_BASE) {
         OWF_LIBRARY_BASE = OpenLibrary((CONST_STRPTR)OWF_LIBRARY_NAME, OWF_LIBRARY_VERSION);
+        if (OWF_LIBRARY_BASE && OWF_LIBRARY_BASE->lib_Version == OWF_LIBRARY_VERSION &&
+            OWF_LIBRARY_BASE->lib_Revision < OWF_LIBRARY_REVISION) {
+            CloseLibrary(OWF_LIBRARY_BASE);
+            OWF_LIBRARY_BASE = NULL;
+        }
         for (i = 0; OWF_LIBRARY_BASE && i < count; i++) {
             if (owf_struct_size(OWF_OPEN_WHICH(i)) != OWF_OPEN_SIZE(i)) {
                 CloseLibrary(OWF_LIBRARY_BASE);

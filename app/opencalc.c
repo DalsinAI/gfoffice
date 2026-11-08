@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.46 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.47 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -313,8 +313,14 @@ static int buf_w, buf_h;
 
 /* the pointer */
 static int mouse_down, resizing, resize_axis;
-/* a chart being dragged: where the pointer went down, and the outline showing (its box, -1 none) */
-static int chart_drag, chart_from_x, chart_from_y, outline_x = -1, outline_y, outline_w, outline_h;
+/* A chart being moved or resized: where it and the pointer began, the handle
+ * (-1 moves), and the outline showing (its box, -1 none). */
+#define CHART_HANDLE 7
+#define CHART_MIN_W 32
+#define CHART_MIN_H 24
+static int chart_drag, chart_handle = -1, chart_from_x, chart_from_y;
+static int chart_start_x, chart_start_y, chart_start_w, chart_start_h;
+static int outline_x = -1, outline_y, outline_w, outline_h;
 static unsigned resize_index;
 static int resize_from, resize_size;
 static ULONG click_secs, click_micros;
@@ -3985,15 +3991,41 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
         bar_to_core();
         bar_active = 0;
     }
-    if (!oc_core_editing(core)) {                   /* a chart under the pointer: it is selected, to drag */
-        int k = oc_view_chart_at(core, mx - grid_box.x, my - grid_box.y);
-        if (k >= 0) {
-            oc_core_select_chart(core, k);
+    if (!oc_core_editing(core)) {                   /* a selected handle resizes; a chart's body moves */
+        int selected = oc_core_selected_chart(core), h = -1, k;
+        if (selected >= 0 && oc_view_chart_box(core, selected, &chart_start_x, &chart_start_y,
+                                               &chart_start_w, &chart_start_h)) {
+            int px = mx - grid_box.x, py = my - grid_box.y, n;
+            for (n = 0; n < 9; n++) {
+                int hx, hy;
+                if (n == 4) continue;
+                hx = chart_start_x + (n % 3) * (chart_start_w - 1) / 2 - CHART_HANDLE / 2;
+                hy = chart_start_y + (n / 3) * (chart_start_h - 1) / 2 - CHART_HANDLE / 2;
+                if (px >= hx && px < hx + CHART_HANDLE && py >= hy && py < hy + CHART_HANDLE) {
+                    h = n;
+                    break;
+                }
+            }
+        }
+        if (h >= 0) {
             chart_drag = 1;
+            chart_handle = h;
             chart_from_x = mx;
             chart_from_y = my;
             mouse_down = 1;
-            set_status("Chart selected: drag it, or move it with the arrow keys.");
+            set_status("Resize chart: drag the handle.");
+            return;
+        }
+        k = oc_view_chart_at(core, mx - grid_box.x, my - grid_box.y);
+        if (k >= 0) {
+            oc_core_select_chart(core, k);
+            chart_drag = 1;
+            chart_handle = -1;
+            chart_from_x = mx;
+            chart_from_y = my;
+            oc_view_chart_box(core, k, &chart_start_x, &chart_start_y, &chart_start_w, &chart_start_h);
+            mouse_down = 1;
+            set_status("Chart selected: drag it or its handles; arrow keys move it.");
             refresh();
             return;
         }
@@ -4075,11 +4107,30 @@ static void outline_off(void)
 
 static void chart_drag_to(int mx, int my)
 {
-    int x, y, w, h, k = oc_core_selected_chart(core);
+    int dx = mx - chart_from_x, dy = my - chart_from_y;
+    int x = chart_start_x, y = chart_start_y, w = chart_start_w, h = chart_start_h;
     outline_off();
-    if (k < 0 || !oc_view_chart_box(core, k, &x, &y, &w, &h)) return;
-    outline_x = x + mx - chart_from_x;
-    outline_y = y + my - chart_from_y;
+    if (oc_core_selected_chart(core) < 0 || w < 1 || h < 1) return;
+    if (chart_handle < 0) {
+        x += dx;
+        y += dy;
+    } else {
+        int col = chart_handle % 3, row = chart_handle / 3;
+        if (col == 0) { x += dx; w -= dx; }
+        else if (col == 2) w += dx;
+        if (row == 0) { y += dy; h -= dy; }
+        else if (row == 2) h += dy;
+        if (w < CHART_MIN_W) {
+            if (col == 0) x = chart_start_x + chart_start_w - CHART_MIN_W;
+            w = CHART_MIN_W;
+        }
+        if (h < CHART_MIN_H) {
+            if (row == 0) y = chart_start_y + chart_start_h - CHART_MIN_H;
+            h = CHART_MIN_H;
+        }
+    }
+    outline_x = x;
+    outline_y = y;
     outline_w = w;
     outline_h = h;
     outline(outline_x, outline_y, outline_w, outline_h);
@@ -4113,12 +4164,21 @@ static void grid_drag(int mx, int my)
 
 static void grid_release(int mx, int my)
 {
-    if (chart_drag) {                                /* where the chart was dropped: moved there */
-        int dx = mx - chart_from_x, dy = my - chart_from_y;
+    if (chart_drag) {                                /* where the chart was dropped: move/resize there */
+        int x, y, w, h, dx, dy, handle = chart_handle;
+        chart_drag_to(mx, my);
+        x = outline_x; y = outline_y; w = outline_w; h = outline_h;
         outline_off();
         chart_drag = 0;
+        chart_handle = -1;
         mouse_down = 0;
-        if (dx * dx + dy * dy >= 9) {
+        if (x == -1) return;
+        dx = x - chart_start_x;
+        dy = y - chart_start_y;
+        if (handle >= 0 && (dx || dy || w != chart_start_w || h != chart_start_h)) {
+            result(oc_core_transform_chart(core, dx, dy, w, h), "Chart resized.");
+            refresh();
+        } else if (handle < 0 && dx * dx + dy * dy >= 9) {
             result(oc_core_move_chart(core, dx, dy), "Chart moved.");
             refresh();
         }

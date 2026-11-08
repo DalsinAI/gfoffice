@@ -116,6 +116,16 @@ static int by_pixels(oc_core *core, int index, const void *how)
                                 (long)d[1] * 9525L * 100L / zoom);
 }
 
+static int transform_pixels(oc_core *core, int index, const void *how)
+{
+    const int *d = how;
+    int zoom = core->zoom > 0 ? core->zoom : 100;
+    long unit = 9525L * 100L;
+    return owf_calc_transform_chart(core->calc, core->sheet, index,
+                                    (long)d[0] * unit / zoom, (long)d[1] * unit / zoom,
+                                    (long)d[2] * unit / zoom, (long)d[3] * unit / zoom);
+}
+
 int oc_core_move_chart(oc_core *core, int dx, int dy)
 {
     int d[2];
@@ -124,6 +134,18 @@ int oc_core_move_chart(oc_core *core, int dx, int dy)
     if (!dx && !dy)
         return oc_core_selected_chart(core) < 0 ? OWF_ERR_UNSUPPORTED : OWF_OK;
     return move_selected(core, by_pixels, d);
+}
+
+int oc_core_transform_chart(oc_core *core, int dx, int dy, int width, int height)
+{
+    int d[4];
+    if (width <= 0 || height <= 0)
+        return OWF_ERR_FORMAT;
+    d[0] = dx;
+    d[1] = dy;
+    d[2] = width;
+    d[3] = height;
+    return move_selected(core, transform_pixels, d);
 }
 
 /* to: row, column and their offsets; step: by rows and columns from where it is */

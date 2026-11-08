@@ -140,6 +140,9 @@ int owf_calc_rename_sheet(owf_calc *calc, int sheet, const char *name);
  * chart; OWF_ERR_MEMORY (nothing changes). */
 int owf_calc_place_chart(owf_calc *calc, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off);
 int owf_calc_nudge_chart(owf_calc *calc, int sheet, int index, long dx, long dy);
+/* Moves the top-left corner by dx,dy EMU and sets the displayed size in
+ * EMU, atomically. Works for two-cell, one-cell and absolute anchors. */
+int owf_calc_transform_chart(owf_calc *calc, int sheet, int index, long dx, long dy, long width, long height);
 
 /* Cut and paste: the cells of range on sheet move by (drow, dcol) to
  * dsheet, as Excel moves them. The cells there before are replaced; the

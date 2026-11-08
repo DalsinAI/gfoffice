@@ -1643,6 +1643,11 @@ int owf_calc_nudge_chart(owf_calc *calc, int sheet, int index, long dx, long dy)
     return calc_chart_nudge(calc->book, sheet, index, dx, dy);
 }
 
+int owf_calc_transform_chart(owf_calc *calc, int sheet, int index, long dx, long dy, long width, long height)
+{
+    return calc_chart_transform(calc->book, sheet, index, dx, dy, width, height);
+}
+
 /* A chart's reference with a sheet's new name. */
 typedef struct {
     const char *old_name, *new_name;
