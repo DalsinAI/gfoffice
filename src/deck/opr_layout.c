@@ -393,6 +393,7 @@ static int set_shape(ol_node *node, const owf_obj *o)
     s.stroke_argb = OWF_SHADE_SET(o->look.line) ? argb(o->look.line) : 0;
     s.stroke_width = TW(o->look.line_width > 0 ? o->look.line_width : 5);
     s.stroke_style = shape_stroke_style(o->look.line_style);
+    s.rotation_tenths = o->rotation;
     if (o->look.arrows & OWF_ARROW_START) s.flags |= OL_SHAPE_ARROW_START;
     if (o->look.arrows & OWF_ARROW_END) s.flags |= OL_SHAPE_ARROW_END;
     w = o->width > 0 ? o->width : 1;

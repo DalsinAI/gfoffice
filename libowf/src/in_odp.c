@@ -1177,7 +1177,10 @@ static void read_box(odp *o, owf_obj *obj, const owf_xml_node *n)
             obj->y = (int)(ty + (cy + 8192) / 16384 - obj->height / 2);
             obj->rotation = rot;
             if (rot)
-                owf_report_add(o->report, OWF_NOTE_APPROX, "Rotated objects are drawn unrotated (their rotation is kept)");
+                owf_report_add(o->report, OWF_NOTE_APPROX,
+                               obj->kind == OWF_OBJ_SHAPE
+                               ? "Rotated shape outlines are drawn; their text remains unrotated"
+                               : "Rotated objects are drawn unrotated (their rotation is kept)");
         }
     }
 }

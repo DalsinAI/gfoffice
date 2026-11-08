@@ -98,7 +98,7 @@ typedef struct {
     char *xml_id;                /* an ODP id that is not "id<number>", or NULL */
     int parent;                  /* a group's index in the same array; -1: on the slide */
     int x, y, width, height;     /* twips from the slide's top left, unrotated */
-    int rotation;                /* tenths of a degree, anticlockwise: kept, drawn unrotated */
+    int rotation;                /* tenths anticlockwise; shape outline rotated, text is not */
     unsigned flags;              /* OWF_OBJ_... */
     owf_placeholder placeholder;
     int ph_index;                /* which of its layout's placeholders of that kind */

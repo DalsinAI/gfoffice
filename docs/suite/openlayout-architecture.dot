@@ -1,0 +1,171 @@
+digraph GFOfficeOpenLayout {
+    graph [
+        rankdir=TB,
+        newrank=true,
+        bgcolor="white",
+        fontname="DejaVu Sans",
+        fontsize=22,
+        labelloc=t,
+        label="GFOffice / GFOpenLayout stack",
+        pad=0.35,
+        nodesep=0.35,
+        ranksep=0.7,
+        splines=ortho
+    ];
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="#f8fafc",
+        color="#475569",
+        fontcolor="#0f172a",
+        fontname="DejaVu Sans",
+        fontsize=12,
+        margin="0.16,0.11"
+    ];
+    edge [
+        color="#64748b",
+        fontcolor="#334155",
+        fontname="DejaVu Sans",
+        fontsize=10,
+        arrowsize=0.7
+    ];
+
+    subgraph cluster_apps {
+        label="GFOffice applications";
+        color="#cbd5e1";
+        style="rounded,filled";
+        fillcolor="#f8fafc";
+        apps_anchor [shape=point, width=0, style=invis];
+        Writer [label="OpenWriter"];
+        Calc [label="OpenCalc"];
+        Present [label="OpenPresentation"];
+        Publisher [label="OpenPublisher"];
+        { rank=same; apps_anchor; Writer; Calc; Present; Publisher; }
+    }
+
+    subgraph cluster_shared {
+        label="Shared office libraries";
+        color="#93c5fd";
+        style="rounded,filled";
+        fillcolor="#eff6ff";
+        shared_anchor [shape=point, width=0, style=invis];
+        OWF [label="libowf\ndocument · workbook · deck models\nimport · export · searchable PDF", fillcolor="#dbeafe"];
+        OL [label="GFOpenLayout 0.14\nnode tree → integer layout → display list\nclip · shape path · rotation", fillcolor="#bfdbfe"];
+        OGT [label="GFOpenGadTools\nmenus · toolbars · gadgets · icons", fillcolor="#dbeafe"];
+        { rank=same; shared_anchor; OWF; OL; OGT; }
+    }
+
+    subgraph cluster_backends {
+        label="Application adapters and rendering services";
+        color="#86efac";
+        style="rounded,filled";
+        fillcolor="#f0fdf4";
+        backends_anchor [shape=point, width=0, style=invis];
+        WriterCanvas [label="Writer page canvas"];
+        CalcCanvas [label="Calc grid / charts"];
+        DeckCanvas [label="Presentation / Publisher canvas"];
+        PrintPDF [label="GFOpenPrint / PDF"];
+        Media [label="GFOpenDatatypes adapter\npicture decode · metadata"];
+        Fonts [label="GFOpenFont / diskfont adapter\nmeasure · TextFont draw"];
+        GPUAdapter [label="Optional GFOpenRTG / GFOpenGPU\ncomposite · scale · paths · cache", fillcolor="#dcfce7"];
+        { rank=same; backends_anchor; WriterCanvas; CalcCanvas; DeckCanvas; PrintPDF; }
+        { rank=same; Media; Fonts; GPUAdapter; }
+    }
+
+    subgraph cluster_os {
+        label="AmigaOS service layer";
+        color="#fcd34d";
+        style="rounded,filled";
+        fillcolor="#fffbeb";
+        os_anchor [shape=point, width=0, style=invis];
+        ExecDOS [label="exec.library · dos.library", fillcolor="#fef3c7"];
+        UI [label="intuition.library · gadtools.library\nasl.library"];
+        Raster [label="graphics.library · layers.library\nRastPort · BitMap · regions · blits"];
+        DT [label="datatypes.library\n+ picture datatype classes"];
+        FontOS [label="diskfont.library\n+ font engines"];
+        RTG [label="cybergraphics.library / RTG API\nchunky pixels · ScalePixelArray"];
+        GPU [label="gfopengpu.library\ncapability-gated command batches"];
+        { rank=same; os_anchor; UI; Raster; DT; FontOS; }
+        { rank=same; RTG; GPU; ExecDOS; }
+    }
+
+    subgraph cluster_drivers {
+        label="Display and accelerator drivers";
+        color="#d8b4fe";
+        style="rounded,filled";
+        fillcolor="#faf5ff";
+        drivers_anchor [shape=point, width=0, style=invis];
+        PlanarDriver [label="Native planar chipset driver"];
+        RTGDriver [label="CyberGraphX / Picasso96-class RTG driver"];
+        ACRTG [label="AmiCradle ACRTG.gpu"];
+        PiStorm [label="PiStorm / accelerated host driver"];
+        { rank=same; drivers_anchor; PlanarDriver; RTGDriver; ACRTG; PiStorm; }
+    }
+
+    subgraph cluster_hardware {
+        label="Boards and display hardware";
+        color="#fca5a5";
+        style="rounded,filled";
+        fillcolor="#fff1f2";
+        hardware_anchor [shape=point, width=0, style=invis];
+        Native [label="OCS · ECS · AGA"];
+        Zorro [label="Zorro RTG boards\nPicasso IV · CyberVision family"];
+        PCI [label="PCI RTG boards\nRadeon · Voodoo families"];
+        Hosted [label="PiStorm · AmiCradle hosted graphics"];
+        { rank=same; hardware_anchor; Native; Zorro; PCI; Hosted; }
+    }
+
+    apps_anchor -> shared_anchor -> backends_anchor -> os_anchor -> drivers_anchor -> hardware_anchor
+        [style=invis, weight=10000, minlen=2];
+
+    Writer -> OWF;
+    Calc -> OWF;
+    Present -> OWF;
+    Publisher -> OWF;
+    Writer -> OL;
+    Present -> OL;
+    Publisher -> OL;
+    Writer -> OGT;
+    Calc -> OGT;
+    Present -> OGT;
+    Publisher -> OGT;
+
+    OL -> WriterCanvas;
+    OL -> DeckCanvas;
+    OWF -> CalcCanvas;
+    OWF -> PrintPDF;
+    OGT -> UI;
+
+    WriterCanvas -> Raster;
+    CalcCanvas -> Raster;
+    DeckCanvas -> Raster;
+    WriterCanvas -> Media;
+    DeckCanvas -> Media;
+    WriterCanvas -> Fonts;
+    CalcCanvas -> Fonts;
+    DeckCanvas -> Fonts;
+    WriterCanvas -> GPUAdapter [style=dashed];
+    CalcCanvas -> GPUAdapter [style=dashed];
+    DeckCanvas -> GPUAdapter [style=dashed];
+    PrintPDF -> ExecDOS;
+    Media -> DT;
+    Fonts -> FontOS;
+    GPUAdapter -> RTG;
+    GPUAdapter -> GPU [style=dashed];
+
+    UI -> ExecDOS;
+    Raster -> ExecDOS;
+    DT -> ExecDOS;
+    FontOS -> ExecDOS;
+    Raster -> PlanarDriver;
+    Raster -> RTGDriver;
+    RTG -> RTGDriver;
+    GPU -> ACRTG;
+    GPU -> PiStorm;
+
+    PlanarDriver -> Native;
+    RTGDriver -> Zorro;
+    RTGDriver -> PCI;
+    ACRTG -> Hosted;
+    PiStorm -> Hosted;
+}

@@ -1545,7 +1545,10 @@ static void read_box(objctx *c, owf_obj *obj, const owf_xml_node *xfrm, const ow
         long long tenths = (rot / 6000) % 3600;
         obj->rotation = (int)((3600 - tenths) % 3600);
         if (obj->rotation)
-            owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Rotated objects are drawn unrotated (their rotation is kept)");
+            owf_report_add(c->x->r.report, OWF_NOTE_APPROX,
+                           obj->kind == OWF_OBJ_SHAPE
+                           ? "Rotated shape outlines are drawn; their text remains unrotated"
+                           : "Rotated objects are drawn unrotated (their rotation is kept)");
     }
     if (xfrm && (same(att(xfrm, "flipH"), "1") || same(att(xfrm, "flipH"), "true")))
         obj->flags |= OWF_OBJ_FLIP_H;

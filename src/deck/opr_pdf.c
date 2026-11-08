@@ -65,6 +65,8 @@ static int draw_shape(owf_pdf *pdf, const ol_device_op *dop)
 {
     const ol_graphic *g = dop->op->graphic;
     const ol_shape_style *s;
+    ol_rect bounds;
+    ol_point path[OL_MAX_SHAPE_POINTS];
     int xy[OL_MAX_SHAPE_POINTS * 2], count, k, closed = 0, rc = 0;
     int x = dop->box.x, y = dop->box.y, w = dop->box.width, h = dop->box.height;
     unsigned long fill, line;
@@ -74,38 +76,39 @@ static int draw_shape(owf_pdf *pdf, const ol_device_op *dop)
     fill = shade_of(s->fill_argb);
     line = shade_of(s->stroke_argb);
     owf_pdf_dash(pdf, dashed(s));
-    switch (s->type) {
-    case OL_SHAPE_RECT:
-        rc = owf_pdf_rect(pdf, x, y, w, h, fill, line, dop->thickness);
-        break;
-    case OL_SHAPE_ROUND_RECT:
-        rc = owf_pdf_round_rect(pdf, x, y, w, h,
-                                (w < h ? w : h) * s->radius_permille / OL_SHAPE_COORDS,
-                                fill, line, dop->thickness);
-        break;
-    case OL_SHAPE_ELLIPSE:
-        rc = owf_pdf_ellipse(pdf, x, y, w, h, fill, line, dop->thickness);
-        break;
-    case OL_SHAPE_LINE:
-    case OL_SHAPE_POLYLINE:
-    case OL_SHAPE_POLYGON:
-        count = g->point_count < OL_MAX_SHAPE_POINTS ? g->point_count : OL_MAX_SHAPE_POINTS;
-        for (k = 0; k < count; k++) {
-            xy[k * 2] = x + (int)((long long)w * g->points[k].x / OL_SHAPE_COORDS);
-            xy[k * 2 + 1] = y + (int)((long long)h * g->points[k].y / OL_SHAPE_COORDS);
+    if (!s->rotation_tenths) {
+        if (s->type == OL_SHAPE_RECT) {
+            rc = owf_pdf_rect(pdf, x, y, w, h, fill, line, dop->thickness);
+            goto done;
         }
-        closed = s->type == OL_SHAPE_POLYGON;
-        rc = owf_pdf_path(pdf, xy, count, closed, closed ? fill : 0, line, dop->thickness);
-        owf_pdf_dash(pdf, 0);
-        if (count >= 2 && OWF_SHADE_SET(line) && (s->flags & OL_SHAPE_ARROW_END))
-            arrowhead(pdf, xy[(count - 2) * 2], xy[(count - 2) * 2 + 1],
-                      xy[(count - 1) * 2], xy[(count - 1) * 2 + 1], dop->thickness, line);
-        if (count >= 2 && OWF_SHADE_SET(line) && (s->flags & OL_SHAPE_ARROW_START))
-            arrowhead(pdf, xy[2], xy[3], xy[0], xy[1], dop->thickness, line);
-        break;
-    default:
-        break;
+        if (s->type == OL_SHAPE_ROUND_RECT) {
+            rc = owf_pdf_round_rect(pdf, x, y, w, h,
+                                    (w < h ? w : h) * s->radius_permille / OL_SHAPE_COORDS,
+                                    fill, line, dop->thickness);
+            goto done;
+        }
+        if (s->type == OL_SHAPE_ELLIPSE) {
+            rc = owf_pdf_ellipse(pdf, x, y, w, h, fill, line, dop->thickness);
+            goto done;
+        }
     }
+    bounds.x = x;
+    bounds.y = y;
+    bounds.width = w;
+    bounds.height = h;
+    count = ol_shape_path(g, &bounds, path, OL_MAX_SHAPE_POINTS, &closed);
+    for (k = 0; k < count; k++) {
+        xy[k * 2] = path[k].x;
+        xy[k * 2 + 1] = path[k].y;
+    }
+    if (count > 0)
+        rc = owf_pdf_path(pdf, xy, count, closed, closed ? fill : 0, line, dop->thickness);
+    if (count >= 2 && OWF_SHADE_SET(line) && (s->flags & OL_SHAPE_ARROW_END))
+        arrowhead(pdf, xy[(count - 2) * 2], xy[(count - 2) * 2 + 1],
+                  xy[(count - 1) * 2], xy[(count - 1) * 2 + 1], dop->thickness, line);
+    if (count >= 2 && OWF_SHADE_SET(line) && (s->flags & OL_SHAPE_ARROW_START))
+        arrowhead(pdf, xy[2], xy[3], xy[0], xy[1], dop->thickness, line);
+done:
     owf_pdf_dash(pdf, 0);
     return rc;
 }

@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.3.5 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.3.6 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -975,9 +975,6 @@ typedef struct {
     int thumb;                   /* a thumbnail: text as lines */
 } painter;
 
-/* cos and sin of 0, 15, ... 90 degrees, in thousandths */
-static const int cos15[7] = { 1000, 966, 866, 707, 500, 259, 0 };
-
 static UWORD shape_pattern(unsigned style)
 {
     switch (style) {
@@ -1033,7 +1030,9 @@ static void draw_shape(const painter *p, const ol_device_op *d)
     const ol_graphic *g = d->op->graphic;
     const ol_shape_style *s;
     int x = d->box.x, y = d->box.y, w = d->box.width, h = d->box.height;
-    int xy[2 * OL_MAX_SHAPE_POINTS], k, n = 0, closed = 0;
+    ol_rect bounds;
+    ol_point path[OL_MAX_SHAPE_POINTS];
+    int xy[2 * OL_MAX_SHAPE_POINTS], k, n, closed = 0;
     int width = d->thickness > 0 ? d->thickness : 1;
     LONG fill, line;
     if (!g || g->shape.type == OL_SHAPE_NONE) return;
@@ -1041,68 +1040,16 @@ static void draw_shape(const painter *p, const ol_device_op *d)
     fill = (s->fill_argb >> 24) ? argb_pen(s->fill_argb) : -1;
     line = (s->stroke_argb >> 24) && s->stroke_width > 0 ? argb_pen(s->stroke_argb) : -1;
     if (w < 1 && h < 1) return;
-    switch (s->type) {
-    case OL_SHAPE_RECT:
-        xy[0] = x; xy[1] = y;
-        xy[2] = x + w - 1; xy[3] = y;
-        xy[4] = x + w - 1; xy[5] = y + h - 1;
-        xy[6] = x; xy[7] = y + h - 1;
-        n = 4;
-        closed = 1;
-        break;
-    case OL_SHAPE_ELLIPSE: {
-        static const int s24[24][2] = {
-            { 1000, 0 }, { 966, 259 }, { 866, 500 }, { 707, 707 }, { 500, 866 }, { 259, 966 }, { 0, 1000 },
-            { -259, 966 }, { -500, 866 }, { -707, 707 }, { -866, 500 }, { -966, 259 }, { -1000, 0 },
-            { -966, -259 }, { -866, -500 }, { -707, -707 }, { -500, -866 }, { -259, -966 }, { 0, -1000 },
-            { 259, -966 }, { 500, -866 }, { 707, -707 }, { 866, -500 }, { 966, -259 } };
-        for (k = 0; k < 24; ++k) {
-            xy[n * 2] = x + w / 2 + (int)((long)w * s24[k][0] / 2000);
-            xy[n * 2 + 1] = y + h / 2 + (int)((long)h * s24[k][1] / 2000);
-            n++;
-        }
-        closed = 1;
-        break;
-    }
-    case OL_SHAPE_ROUND_RECT: {
-        /* the corners clockwise from the top right, each a quarter circle in 15-degree steps */
-        int r = (w < h ? w : h) * s->radius_permille / OL_SHAPE_COORDS;
-        int right = x + w - 1 - r, bottom = y + h - 1 - r;
-        if (r * 2 > w) r = w / 2;
-        if (r * 2 > h) r = h / 2;
-        right = x + w - 1 - r;
-        bottom = y + h - 1 - r;
-        for (k = 0; k < 7; ++k, ++n) {
-            xy[n * 2] = right + r * cos15[6 - k] / 1000;
-            xy[n * 2 + 1] = y + r - r * cos15[k] / 1000;
-        }
-        for (k = 0; k < 7; ++k, ++n) {
-            xy[n * 2] = right + r * cos15[k] / 1000;
-            xy[n * 2 + 1] = bottom + r * cos15[6 - k] / 1000;
-        }
-        for (k = 0; k < 7; ++k, ++n) {
-            xy[n * 2] = x + r - r * cos15[6 - k] / 1000;
-            xy[n * 2 + 1] = bottom + r * cos15[k] / 1000;
-        }
-        for (k = 0; k < 7; ++k, ++n) {
-            xy[n * 2] = x + r - r * cos15[k] / 1000;
-            xy[n * 2 + 1] = y + r - r * cos15[6 - k] / 1000;
-        }
-        closed = 1;
-        break;
-    }
-    case OL_SHAPE_LINE:
-    case OL_SHAPE_POLYLINE:
-    case OL_SHAPE_POLYGON:
-        n = g->point_count < OL_MAX_SHAPE_POINTS ? g->point_count : OL_MAX_SHAPE_POINTS;
-        for (k = 0; k < n; ++k) {
-            xy[k * 2] = x + (int)((long)w * g->points[k].x / OL_SHAPE_COORDS);
-            xy[k * 2 + 1] = y + (int)((long)h * g->points[k].y / OL_SHAPE_COORDS);
-        }
-        closed = s->type == OL_SHAPE_POLYGON;
-        break;
-    default:
-        return;
+    bounds.x = x;
+    bounds.y = y;
+    /* RastPort's last pixel is inclusive; preserve the old screen bounds. */
+    bounds.width = w > 0 ? w - 1 : 0;
+    bounds.height = h > 0 ? h - 1 : 0;
+    n = ol_shape_path(g, &bounds, path, OL_MAX_SHAPE_POINTS, &closed);
+    if (n <= 0) return;
+    for (k = 0; k < n; ++k) {
+        xy[k * 2] = path[k].x;
+        xy[k * 2 + 1] = path[k].y;
     }
     if (fill >= 0 && closed && n >= 3) ogt_fill_poly(p->rp, fill, xy, n);
     if (line >= 0) outline(p->rp, line, xy, n, width, closed, s->stroke_style);

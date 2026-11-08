@@ -439,6 +439,7 @@ static void test_shape_layout(void)
         o->look.fill = OWF_SHADE(0x224466 + kind);
         o->look.line = OWF_SHADE(0x101010);
         o->look.line_width = 20;
+        if (kind == OWF_SHAPE_RECT) o->rotation = 900;
         if (kind == OWF_SHAPE_ROUNDRECT) o->radius = 200;
         if (kind == OWF_SHAPE_LINE) {
             o->flags |= OWF_OBJ_FLIP_H;
@@ -462,7 +463,11 @@ static void test_shape_layout(void)
             if (!op || op->type != OL_OP_SHAPE || !op->graphic) continue;
             shapes++;
             switch (op->graphic->shape.type) {
-            case OL_SHAPE_RECT: rects++; break;
+            case OL_SHAPE_RECT:
+                rects++;
+                CHECK(op->graphic->shape.rotation_tenths == 900,
+                      "shape rotation carried by OpenLayout");
+                break;
             case OL_SHAPE_ROUND_RECT:
                 rounds++;
                 CHECK(op->graphic->shape.radius_permille == 250, "round radius normalized");
