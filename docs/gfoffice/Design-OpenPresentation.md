@@ -464,6 +464,13 @@ arrowheads. The portable core validates and swaps the complete `owf_look` as
 one undo/redo step; ODP round-trip tests cover every edited field. Group-wide
 appearance and richer fills remain later work.
 
+GFOpenPresentation 0.5.1 and GFOpenPublisher 0.1.8 expose the existing reusable
+box-edit operation as Object > Position and Size. A selected top-level object's
+resolved left, top, width and height are entered exactly in slide/page twips,
+validated against the page bounds, and committed as one undo step. An inherited
+placeholder becomes an explicit box. Multi-selection and aspect locking remain
+later work.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

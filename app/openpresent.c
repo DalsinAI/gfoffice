@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.1.7 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.1.8 (8.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.5.0 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.5.1 (8.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -115,7 +115,7 @@ enum {
     M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
-    M_APPEARANCE, M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
+    M_POSITION_SIZE, M_APPEARANCE, M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
@@ -167,6 +167,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Align Middle", NULL, 0, 0, (APTR)M_ALIGN_MIDDLE },
     { NM_ITEM, "Align Bottom", NULL, 0, 0, (APTR)M_ALIGN_BOTTOM },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Position and Size...", NULL, 0, 0, (APTR)M_POSITION_SIZE },
     { NM_ITEM, "Appearance...", NULL, 0, 0, (APTR)M_APPEARANCE },
     { NM_ITEM, "Duplicate", NULL, 0, 0, (APTR)M_DUPLICATE_OBJECT },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_DELETE_OBJECT },
@@ -688,6 +689,78 @@ static int appearance_style_index(unsigned char style)
         style == OWF_LINE_DASH_DOT_DOT || style == OWF_LINE_MEDIUM_DASH_DOT_DOT ||
         style == OWF_LINE_SLANTED_DASH_DOT) return 3;
     return 0;
+}
+
+static int geometry_requester(owf_obj *box)
+{
+    struct Gadget *list = NULL, *last, *gx, *gy, *gw, *gh, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    LONG x, y, width, height;
+    int done = 0, ok = 0, ww = 430, wh = 196;
+    if (!box || !scr || !vi) return 0;
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = 176;
+    ng.ng_Width = 122;
+    ng.ng_Height = 18;
+    last = CreateContext(&list);
+
+    ng.ng_TopEdge = 14; ng.ng_GadgetText = (STRPTR)"Left (twips)"; ng.ng_GadgetID = 1;
+    last = gx = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)box->x,
+                             GTIN_MaxChars, 8, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 48; ng.ng_GadgetText = (STRPTR)"Top (twips)"; ng.ng_GadgetID = 2;
+    last = gy = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)box->y,
+                             GTIN_MaxChars, 8, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 82; ng.ng_GadgetText = (STRPTR)"Width (twips)"; ng.ng_GadgetID = 3;
+    last = gw = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)box->width,
+                             GTIN_MaxChars, 8, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 116; ng.ng_GadgetText = (STRPTR)"Height (twips)"; ng.ng_GadgetID = 4;
+    last = gh = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)box->height,
+                             GTIN_MaxChars, 8, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge = 154; ng.ng_Height = 20; ng.ng_Width = 78; ng.ng_LeftEdge = 252;
+    ng.ng_GadgetText = (STRPTR)"Apply"; ng.ng_GadgetID = 5;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 336; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 6;
+    gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gx || !gy || !gw || !gh || !gok || !gcancel) goto out;
+    rw = OpenWindowTags(NULL, WA_Title, (ULONG)"Position and Size", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh, WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+        WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | INTEGERIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD id = m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 5) { ok = 1; done = 1; }
+                else if (id == 6) done = 1;
+            }
+        }
+    }
+    if (ok) {
+        GT_GetGadgetAttrs(gx, rw, NULL, GTIN_Number, (ULONG)&x, TAG_DONE);
+        GT_GetGadgetAttrs(gy, rw, NULL, GTIN_Number, (ULONG)&y, TAG_DONE);
+        GT_GetGadgetAttrs(gw, rw, NULL, GTIN_Number, (ULONG)&width, TAG_DONE);
+        GT_GetGadgetAttrs(gh, rw, NULL, GTIN_Number, (ULONG)&height, TAG_DONE);
+        box->x = (int)x; box->y = (int)y;
+        box->width = (int)width; box->height = (int)height;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    return ok;
 }
 
 static int appearance_requester(owf_look *look)
@@ -3046,6 +3119,53 @@ static void edit_selected_appearance(void)
     draw_status();
 }
 
+static void edit_selected_geometry(void)
+{
+    owf_obj before, edited, *o;
+    int rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select an object to position or size.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->parent >= 0 || o->kind == OWF_OBJ_GROUP ||
+        owf_deck_resolve(deck, current, selected_obj, &before, NULL) < 0) {
+        set_status("Position and Size currently supports one top-level object.");
+        draw_status();
+        return;
+    }
+    edited = before;
+    if (!geometry_requester(&edited)) return;
+    rc = opr_obj_set_box(undo, deck, current, selected_obj,
+                         edited.x, edited.y, edited.width, edited.height);
+    if (rc < 0) {
+        if (rc == -2)
+            tell("Position and Size", "The object must have a positive size and remain wholly inside the slide or page.");
+        else
+            set_status("The object's position and size could not be changed.");
+        draw_status();
+        return;
+    }
+    if (before.x == edited.x && before.y == edited.y &&
+        before.width == edited.width && before.height == edited.height &&
+        !(before.flags & OWF_OBJ_INHERIT_BOX)) {
+        set_status("The object's position and size are unchanged.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Object position and size changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static void do_undo(int redo)
 {
     int slide = -1, obj = -1;
@@ -3419,6 +3539,7 @@ static void menu_action(ULONG id)
     case M_ALIGN_TOP: align_selected_object(OPR_ALIGN_TOP, "Object aligned top."); break;
     case M_ALIGN_MIDDLE: align_selected_object(OPR_ALIGN_MIDDLE, "Object centred vertically."); break;
     case M_ALIGN_BOTTOM: align_selected_object(OPR_ALIGN_BOTTOM, "Object aligned bottom."); break;
+    case M_POSITION_SIZE: edit_selected_geometry(); break;
     case M_APPEARANCE: edit_selected_appearance(); break;
     case M_DUPLICATE_OBJECT: duplicate_selected_object(); break;
     case M_DELETE_OBJECT: delete_selected_object(); break;

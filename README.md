@@ -18,16 +18,16 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.1.7 is the current P1a application. Its portable core turns
+GFOpenPublisher 0.1.8 is the current P1a application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
 pictures through GFOpenLayout, exports PDF, prints through GFOpenPrint and can
 save the imported page model as ODP. It inherits undoable shape insertion,
-selection, movement, resizing, rotation, arranging, alignment, fill and stroke
-appearance, deep-copy duplication and deletion from the shared Presentation
-editor. Publisher text-frame formatting, linked text frames, columns, wrap and
-WMF/EMF playback remain later P1 work.
+selection, movement, resizing, exact numeric position and size, rotation,
+arranging, alignment, fill and stroke appearance, deep-copy duplication and
+deletion from the shared Presentation editor. Publisher text-frame formatting,
+linked text frames, columns, wrap and WMF/EMF playback remain later P1 work.
 
 # GFOpenWrite
 
@@ -390,7 +390,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.5.0), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.5.1), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: click in a slide's text box and type (Return, Backspace,
@@ -418,7 +418,8 @@ Reusable transition plans and ordered-fade masks sit beside the show state and
 are host-tested by `make deck-show-test`. Print hands the slides to GFOpenPrint as a PDF (`C:GFOpenPrint
 T:<name>.pdf`), and Export PDF writes one. View > Zoom In and Zoom Out (+
 and -) show the slide up to four times the window's fit, with scrollers; the
-window's zoom gadget fills the screen. Object > Appearance edits a selected
+window's zoom gadget fills the screen. Object > Position and Size provides
+exact slide-unit geometry for one top-level object. Object > Appearance edits a selected
 top-level text box or shape's solid fill, stroke colour and width, line style
 and arrowheads as one undoable operation, with ODP persistence. An optional
 own screen, PPTX saving, richer fills and the rest of the editor come next.
