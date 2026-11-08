@@ -1425,4 +1425,310 @@ __owfcalc_owf_calc_nudge_chart(void *__base, owf_calc *calc, int sheet, int inde
 #define owf_calc_nudge_chart(calc, sheet, index, dx, dy) __owfcalc_owf_calc_nudge_chart((OWFCALC_BASE_NAME), (owf_calc *)(calc), (int)(sheet), (int)(index), (long)(dx), (long)(dy))
 #define __owf_calc_nudge_chart_base(__in_base, calc, sheet, index, dx, dy) __owfcalc_owf_calc_nudge_chart((__in_base), (owf_calc *)(calc), (int)(sheet), (int)(index), (long)(dx), (long)(dy))
 
+static __inline__ owf_pdf *
+__owfcalc_owf_pdf_new(void *__base)
+{
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -510(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (owf_pdf *)_d0;
+}
+#define owf_pdf_new() __owfcalc_owf_pdf_new((OWFCALC_BASE_NAME))
+#define __owf_pdf_new_base(__in_base) __owfcalc_owf_pdf_new((__in_base))
+
+static __inline__ void
+__owfcalc_owf_pdf_free(void *__base, owf_pdf *pdf)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -516(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_pdf_free(pdf) __owfcalc_owf_pdf_free((OWFCALC_BASE_NAME), (owf_pdf *)(pdf))
+#define __owf_pdf_free_base(__in_base, pdf) __owfcalc_owf_pdf_free((__in_base), (owf_pdf *)(pdf))
+
+static __inline__ int
+__owfcalc_owf_pdf_page(void *__base, owf_pdf *pdf, int width, int height)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _d0 __asm("d0") = (ULONG)(width);
+	register ULONG _d1 __asm("d1") = (ULONG)(height);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -522(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_page(pdf, width, height) __owfcalc_owf_pdf_page((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (int)(width), (int)(height))
+#define __owf_pdf_page_base(__in_base, pdf, width, height) __owfcalc_owf_pdf_page((__in_base), (owf_pdf *)(pdf), (int)(width), (int)(height))
+
+static __inline__ int
+__owfcalc_owf_pdf_text(void *__base, owf_pdf *pdf, int x, int baseline, int width, const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size, unsigned long colour)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _d0 __asm("d0") = (ULONG)(x);
+	register ULONG _d1 __asm("d1") = (ULONG)(baseline);
+	register ULONG _d2 __asm("d2") = (ULONG)(width);
+	register ULONG _a1 __asm("a1") = (ULONG)(utf8);
+	register ULONG _d3 __asm("d3") = (ULONG)(length);
+	register ULONG _d4 __asm("d4") = (ULONG)(kind);
+	register ULONG _d5 __asm("d5") = (ULONG)(flags);
+	register ULONG _d6 __asm("d6") = (ULONG)(size);
+	register ULONG _d7 __asm("d7") = (ULONG)(colour);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -528(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3), "r" (_d4), "r" (_d5), "r" (_d6), "r" (_d7)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_text(pdf, x, baseline, width, utf8, length, kind, flags, size, colour) __owfcalc_owf_pdf_text((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (int)(x), (int)(baseline), (int)(width), (const char *)(utf8), (size_t)(length), (owf_font_kind)(kind), (unsigned)(flags), (int)(size), (unsigned long)(colour))
+#define __owf_pdf_text_base(__in_base, pdf, x, baseline, width, utf8, length, kind, flags, size, colour) __owfcalc_owf_pdf_text((__in_base), (owf_pdf *)(pdf), (int)(x), (int)(baseline), (int)(width), (const char *)(utf8), (size_t)(length), (owf_font_kind)(kind), (unsigned)(flags), (int)(size), (unsigned long)(colour))
+
+static __inline__ int
+__owfcalc_owf_pdf_rect(void *__base, owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _d0 __asm("d0") = (ULONG)(x);
+	register ULONG _d1 __asm("d1") = (ULONG)(y);
+	register ULONG _d2 __asm("d2") = (ULONG)(w);
+	register ULONG _d3 __asm("d3") = (ULONG)(h);
+	register ULONG _d4 __asm("d4") = (ULONG)(fill);
+	register ULONG _d5 __asm("d5") = (ULONG)(line);
+	register ULONG _d6 __asm("d6") = (ULONG)(line_width);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -534(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3), "r" (_d4), "r" (_d5), "r" (_d6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_rect(pdf, x, y, w, h, fill, line, line_width) __owfcalc_owf_pdf_rect((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (int)(x), (int)(y), (int)(w), (int)(h), (unsigned long)(fill), (unsigned long)(line), (int)(line_width))
+#define __owf_pdf_rect_base(__in_base, pdf, x, y, w, h, fill, line, line_width) __owfcalc_owf_pdf_rect((__in_base), (owf_pdf *)(pdf), (int)(x), (int)(y), (int)(w), (int)(h), (unsigned long)(fill), (unsigned long)(line), (int)(line_width))
+
+static __inline__ int
+__owfcalc_owf_pdf_round_rect(void *__base, owf_pdf *pdf, int x, int y, int w, int h, int radius, unsigned long fill, unsigned long line, int line_width)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _d0 __asm("d0") = (ULONG)(x);
+	register ULONG _d1 __asm("d1") = (ULONG)(y);
+	register ULONG _d2 __asm("d2") = (ULONG)(w);
+	register ULONG _d3 __asm("d3") = (ULONG)(h);
+	register ULONG _d4 __asm("d4") = (ULONG)(radius);
+	register ULONG _d5 __asm("d5") = (ULONG)(fill);
+	register ULONG _d6 __asm("d6") = (ULONG)(line);
+	register ULONG _d7 __asm("d7") = (ULONG)(line_width);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -540(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3), "r" (_d4), "r" (_d5), "r" (_d6), "r" (_d7)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_round_rect(pdf, x, y, w, h, radius, fill, line, line_width) __owfcalc_owf_pdf_round_rect((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (int)(x), (int)(y), (int)(w), (int)(h), (int)(radius), (unsigned long)(fill), (unsigned long)(line), (int)(line_width))
+#define __owf_pdf_round_rect_base(__in_base, pdf, x, y, w, h, radius, fill, line, line_width) __owfcalc_owf_pdf_round_rect((__in_base), (owf_pdf *)(pdf), (int)(x), (int)(y), (int)(w), (int)(h), (int)(radius), (unsigned long)(fill), (unsigned long)(line), (int)(line_width))
+
+static __inline__ int
+__owfcalc_owf_pdf_ellipse(void *__base, owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _d0 __asm("d0") = (ULONG)(x);
+	register ULONG _d1 __asm("d1") = (ULONG)(y);
+	register ULONG _d2 __asm("d2") = (ULONG)(w);
+	register ULONG _d3 __asm("d3") = (ULONG)(h);
+	register ULONG _d4 __asm("d4") = (ULONG)(fill);
+	register ULONG _d5 __asm("d5") = (ULONG)(line);
+	register ULONG _d6 __asm("d6") = (ULONG)(line_width);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -546(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3), "r" (_d4), "r" (_d5), "r" (_d6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_ellipse(pdf, x, y, w, h, fill, line, line_width) __owfcalc_owf_pdf_ellipse((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (int)(x), (int)(y), (int)(w), (int)(h), (unsigned long)(fill), (unsigned long)(line), (int)(line_width))
+#define __owf_pdf_ellipse_base(__in_base, pdf, x, y, w, h, fill, line, line_width) __owfcalc_owf_pdf_ellipse((__in_base), (owf_pdf *)(pdf), (int)(x), (int)(y), (int)(w), (int)(h), (unsigned long)(fill), (unsigned long)(line), (int)(line_width))
+
+static __inline__ int
+__owfcalc_owf_pdf_path(void *__base, owf_pdf *pdf, const int *xy, int npoints, int closed, unsigned long fill, unsigned long line, int line_width)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _a1 __asm("a1") = (ULONG)(xy);
+	register ULONG _d0 __asm("d0") = (ULONG)(npoints);
+	register ULONG _d1 __asm("d1") = (ULONG)(closed);
+	register ULONG _d2 __asm("d2") = (ULONG)(fill);
+	register ULONG _d3 __asm("d3") = (ULONG)(line);
+	register ULONG _d4 __asm("d4") = (ULONG)(line_width);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -552(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3), "r" (_d4)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_path(pdf, xy, npoints, closed, fill, line, line_width) __owfcalc_owf_pdf_path((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (const int *)(xy), (int)(npoints), (int)(closed), (unsigned long)(fill), (unsigned long)(line), (int)(line_width))
+#define __owf_pdf_path_base(__in_base, pdf, xy, npoints, closed, fill, line, line_width) __owfcalc_owf_pdf_path((__in_base), (owf_pdf *)(pdf), (const int *)(xy), (int)(npoints), (int)(closed), (unsigned long)(fill), (unsigned long)(line), (int)(line_width))
+
+static __inline__ void
+__owfcalc_owf_pdf_dash(void *__base, owf_pdf *pdf, int dash)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _d0 __asm("d0") = (ULONG)(dash);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -558(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_pdf_dash(pdf, dash) __owfcalc_owf_pdf_dash((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (int)(dash))
+#define __owf_pdf_dash_base(__in_base, pdf, dash) __owfcalc_owf_pdf_dash((__in_base), (owf_pdf *)(pdf), (int)(dash))
+
+static __inline__ int
+__owfcalc_owf_pdf_image(void *__base, owf_pdf *pdf, const owf_image *image, int x, int y, int w, int h, const int *clip)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _a1 __asm("a1") = (ULONG)(image);
+	register ULONG _d0 __asm("d0") = (ULONG)(x);
+	register ULONG _d1 __asm("d1") = (ULONG)(y);
+	register ULONG _d2 __asm("d2") = (ULONG)(w);
+	register ULONG _d3 __asm("d3") = (ULONG)(h);
+	register ULONG _a2 __asm("a2") = (ULONG)(clip);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -564(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6), "r" (_d2), "r" (_d3)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_image(pdf, image, x, y, w, h, clip) __owfcalc_owf_pdf_image((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (const owf_image *)(image), (int)(x), (int)(y), (int)(w), (int)(h), (const int *)(clip))
+#define __owf_pdf_image_base(__in_base, pdf, image, x, y, w, h, clip) __owfcalc_owf_pdf_image((__in_base), (owf_pdf *)(pdf), (const owf_image *)(image), (int)(x), (int)(y), (int)(w), (int)(h), (const int *)(clip))
+
+static __inline__ int
+__owfcalc_owf_pdf_link(void *__base, owf_pdf *pdf, int x, int y, int w, int h, const char *href)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _d0 __asm("d0") = (ULONG)(x);
+	register ULONG _d1 __asm("d1") = (ULONG)(y);
+	register ULONG _d2 __asm("d2") = (ULONG)(w);
+	register ULONG _d3 __asm("d3") = (ULONG)(h);
+	register ULONG _a1 __asm("a1") = (ULONG)(href);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -570(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_link(pdf, x, y, w, h, href) __owfcalc_owf_pdf_link((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (int)(x), (int)(y), (int)(w), (int)(h), (const char *)(href))
+#define __owf_pdf_link_base(__in_base, pdf, x, y, w, h, href) __owfcalc_owf_pdf_link((__in_base), (owf_pdf *)(pdf), (int)(x), (int)(y), (int)(w), (int)(h), (const char *)(href))
+
+static __inline__ int
+__owfcalc_owf_pdf_finish(void *__base, owf_pdf *pdf, const char *title, unsigned char **data, size_t *length, owf_report *report)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _a1 __asm("a1") = (ULONG)(title);
+	register ULONG _a2 __asm("a2") = (ULONG)(data);
+	register ULONG _a3 __asm("a3") = (ULONG)(length);
+	register ULONG _d0 __asm("d0") = (ULONG)(report);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -576(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a3), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_finish(pdf, title, data, length, report) __owfcalc_owf_pdf_finish((OWFCALC_BASE_NAME), (owf_pdf *)(pdf), (const char *)(title), (unsigned char **)(data), (size_t *)(length), (owf_report *)(report))
+#define __owf_pdf_finish_base(__in_base, pdf, title, data, length, report) __owfcalc_owf_pdf_finish((__in_base), (owf_pdf *)(pdf), (const char *)(title), (unsigned char **)(data), (size_t *)(length), (owf_report *)(report))
+
+static __inline__ int
+__owfcalc_owf_pdf_page_count(void *__base, const owf_pdf *pdf)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -582(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_page_count(pdf) __owfcalc_owf_pdf_page_count((OWFCALC_BASE_NAME), (const owf_pdf *)(pdf))
+#define __owf_pdf_page_count_base(__in_base, pdf) __owfcalc_owf_pdf_page_count((__in_base), (const owf_pdf *)(pdf))
+
+static __inline__ int
+__owfcalc_owf_pdf_text_width(void *__base, const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(utf8);
+	register ULONG _d0 __asm("d0") = (ULONG)(length);
+	register ULONG _d1 __asm("d1") = (ULONG)(kind);
+	register ULONG _d2 __asm("d2") = (ULONG)(flags);
+	register ULONG _d3 __asm("d3") = (ULONG)(size);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -588(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_text_width(utf8, length, kind, flags, size) __owfcalc_owf_pdf_text_width((OWFCALC_BASE_NAME), (const char *)(utf8), (size_t)(length), (owf_font_kind)(kind), (unsigned)(flags), (int)(size))
+#define __owf_pdf_text_width_base(__in_base, utf8, length, kind, flags, size) __owfcalc_owf_pdf_text_width((__in_base), (const char *)(utf8), (size_t)(length), (owf_font_kind)(kind), (unsigned)(flags), (int)(size))
+
+static __inline__ int
+__owfcalc_owf_pdf_winansi(void *__base, unsigned long codepoint)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(codepoint);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -594(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_winansi(codepoint) __owfcalc_owf_pdf_winansi((OWFCALC_BASE_NAME), (unsigned long)(codepoint))
+#define __owf_pdf_winansi_base(__in_base, codepoint) __owfcalc_owf_pdf_winansi((__in_base), (unsigned long)(codepoint))
+
+static __inline__ const char *
+__owfcalc_owf_pdf_fallback(void *__base, unsigned long codepoint)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(codepoint);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -600(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (const char *)_d0;
+}
+#define owf_pdf_fallback(codepoint) __owfcalc_owf_pdf_fallback((OWFCALC_BASE_NAME), (unsigned long)(codepoint))
+#define __owf_pdf_fallback_base(__in_base, codepoint) __owfcalc_owf_pdf_fallback((__in_base), (unsigned long)(codepoint))
+
 #endif /* INLINE_OWFCALC_H */

@@ -87,5 +87,21 @@
 #pragma libcall OWFCalcBase owf_sheet_set_row_style 1ec 10803
 #pragma libcall OWFCalcBase owf_calc_place_chart 1f2 543210807
 #pragma libcall OWFCalcBase owf_calc_nudge_chart 1f8 3210805
+#pragma libcall OWFCalcBase owf_pdf_new 1fe 00
+#pragma libcall OWFCalcBase owf_pdf_free 204 801
+#pragma libcall OWFCalcBase owf_pdf_page 20a 10803
+#pragma libcall OWFCalcBase owf_pdf_text 210 76543921080a
+#pragma libcall OWFCalcBase owf_pdf_rect 216 6543210808
+#pragma libcall OWFCalcBase owf_pdf_round_rect 21c 76543210809
+#pragma libcall OWFCalcBase owf_pdf_ellipse 222 6543210808
+#pragma libcall OWFCalcBase owf_pdf_path 228 432109807
+#pragma libcall OWFCalcBase owf_pdf_dash 22e 0802
+#pragma libcall OWFCalcBase owf_pdf_image 234 a32109807
+#pragma libcall OWFCalcBase owf_pdf_link 23a 93210806
+#pragma libcall OWFCalcBase owf_pdf_finish 240 0ba9805
+#pragma libcall OWFCalcBase owf_pdf_page_count 246 801
+#pragma libcall OWFCalcBase owf_pdf_text_width 24c 3210805
+#pragma libcall OWFCalcBase owf_pdf_winansi 252 001
+#pragma libcall OWFCalcBase owf_pdf_fallback 258 001
 
 #endif /* PRAGMAS_OWFCALC_PRAGMAS_H */

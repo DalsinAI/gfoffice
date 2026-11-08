@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.1.4"
+#define OC_CORE_VERSION "0.1.5"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -80,6 +80,27 @@ int oc_core_save(oc_core *core, const char *path, const char *format, owf_report
 
 /* The same, as a copy (Export): the book stays as unsaved as it was. */
 int oc_core_export(oc_core *core, const char *path, const char *format, owf_report *report);
+
+/* A reusable printed-sheet renderer. It lays out the core's own display
+ * list into A4 PDF pages, so native and future front ends print the same
+ * cell formats, conditional formats, borders, merged cells and charts
+ * that they show. sheet is an index, or -1 for every visible sheet.
+ * fit_width shrinks (never enlarges) each sheet to at most one page wide;
+ * gridlines and headings select the ordinary cell grid and A/B/C, 1/2/3
+ * headings. landscape swaps A4's dimensions. Free the returned PDF with
+ * owf_free (which is also correct for a library-backed core). A NULL
+ * options pointer uses the defaults below. */
+typedef struct {
+    int sheet;
+    int landscape;
+    int fit_width;
+    int gridlines;
+    int headings;
+} oc_pdf_options;
+
+void oc_pdf_options_init(oc_pdf_options *options);
+int oc_core_pdf(const oc_core *core, const oc_pdf_options *options,
+                unsigned char **data, size_t *length, owf_report *report);
 
 int oc_core_is_dirty(const oc_core *core);
 void oc_core_mark_saved(oc_core *core);

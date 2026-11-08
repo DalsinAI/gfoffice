@@ -8,6 +8,7 @@
 #include <exec/types.h>
 #include <owf.h>
 #include <owf_calc.h>
+#include <owf_pdf.h>
 #include <owf_zip.h>
 
 #ifdef __cplusplus
@@ -96,6 +97,22 @@ int owf_calc_format_value(const char *format, const owf_cell *value, int date190
 int owf_sheet_set_row_style(owf_sheet *sheet, unsigned row, int style);
 int owf_calc_place_chart(owf_calc *calc, int sheet, int index, unsigned row, long row_off, unsigned col, long col_off);
 int owf_calc_nudge_chart(owf_calc *calc, int sheet, int index, long dx, long dy);
+owf_pdf * owf_pdf_new(VOID);
+void owf_pdf_free(owf_pdf *pdf);
+int owf_pdf_page(owf_pdf *pdf, int width, int height);
+int owf_pdf_text(owf_pdf *pdf, int x, int baseline, int width, const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size, unsigned long colour);
+int owf_pdf_rect(owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width);
+int owf_pdf_round_rect(owf_pdf *pdf, int x, int y, int w, int h, int radius, unsigned long fill, unsigned long line, int line_width);
+int owf_pdf_ellipse(owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width);
+int owf_pdf_path(owf_pdf *pdf, const int *xy, int npoints, int closed, unsigned long fill, unsigned long line, int line_width);
+void owf_pdf_dash(owf_pdf *pdf, int dash);
+int owf_pdf_image(owf_pdf *pdf, const owf_image *image, int x, int y, int w, int h, const int *clip);
+int owf_pdf_link(owf_pdf *pdf, int x, int y, int w, int h, const char *href);
+int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t *length, owf_report *report);
+int owf_pdf_page_count(const owf_pdf *pdf);
+int owf_pdf_text_width(const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size);
+int owf_pdf_winansi(unsigned long codepoint);
+const char * owf_pdf_fallback(unsigned long codepoint);
 
 #ifdef __cplusplus
 }

@@ -133,6 +133,28 @@ static oc_core *fresh(void)
     return core;
 }
 
+static int bytes_have(const unsigned char *data, size_t length, const char *needle)
+{
+    size_t n = strlen(needle), i;
+    if (!data || n > length)
+        return 0;
+    for (i = 0; i + n <= length; i++)
+        if (!memcmp(data + i, needle, n))
+            return 1;
+    return 0;
+}
+
+static int pdf_pages(const unsigned char *data, size_t length)
+{
+    const char *mark = "/Type /Page ";
+    size_t n = strlen(mark), i;
+    int pages = 0;
+    for (i = 0; data && i + n <= length; i++)
+        if (!memcmp(data + i, mark, n))
+            pages++;
+    return pages;
+}
+
 /* ---- Tests ---- */
 
 static void test_names(void)
@@ -3347,6 +3369,65 @@ static void test_more(void)
     oc_core_free(core);
 }
 
+static void test_pdf(void)
+{
+    oc_core *core = fresh();
+    oc_pdf_options o;
+    unsigned char *pdf = NULL, *plain = NULL;
+    size_t length = 0, plain_length = 0;
+    unsigned top, left;
+    if (!core)
+        return;
+    enter_at(core, "A1", "Hello PDF");
+    enter_at(core, "C70", "Last page");
+    CHECK(oc_core_add_sheet(core, "Hidden") == 1);
+    oc_core_book(core)->sheets[1].hidden = 1;
+    CHECK(oc_core_add_sheet(core, "Summary") == 2);
+    enter_at(core, "B2", "Visible sheet");
+    oc_core_set_sheet(core, 0);
+    oc_view_scroll_to(core, 12, 4);
+    oc_pdf_options_init(&o);
+    CHECK(o.sheet == -1 && o.fit_width && o.gridlines && !o.landscape && !o.headings);
+    CHECK(oc_core_pdf(core, &o, &pdf, &length, NULL) == OWF_OK);
+    CHECK(pdf && length > 1000 && length >= 5 && !memcmp(pdf, "%PDF-", 5));
+    CHECK(pdf_pages(pdf, length) == 3);                 /* two Sheet1 pages, hidden skipped, Summary */
+    CHECK(bytes_have(pdf, length, "Hello PDF") && bytes_have(pdf, length, "Last page") &&
+          bytes_have(pdf, length, "Visible sheet"));
+    CHECK(!bytes_have(pdf, length, "Hidden"));
+    {
+        FILE *f = fopen("build/host/opencalc-print-test.pdf", "wb");
+        CHECK(f && fwrite(pdf, 1, length, f) == length);
+        if (f) fclose(f);
+    }
+    CHECK(oc_core_sheet(core) == 0);
+    oc_view_scroll_pos(core, &top, &left);
+    CHECK(top == 12 && left == 4);                     /* exporting cloned rather than disturbing the live view */
+
+    o.sheet = 1;                                      /* an explicitly selected hidden sheet still prints */
+    o.gridlines = 0;
+    o.landscape = 1;
+    CHECK(oc_core_pdf(core, &o, &plain, &plain_length, NULL) == OWF_OK);
+    CHECK(pdf_pages(plain, plain_length) == 1 && bytes_have(plain, plain_length, "Hidden"));
+    owf_free(plain);
+    plain = NULL;
+    o.sheet = 99;
+    CHECK(oc_core_pdf(core, &o, &plain, &plain_length, NULL) == OWF_ERR_FORMAT && !plain);
+    owf_free(pdf);
+
+    /* Imported charts travel through the same draw list into the PDF. */
+    CHECK(oc_core_open(core, "tests/book/fixtures/charts-openpyxl.xlsx", NULL, NULL, NULL) == OWF_OK);
+    oc_pdf_options_init(&o);
+    o.sheet = 0;
+    CHECK(oc_core_pdf(core, &o, &pdf, &length, NULL) == OWF_OK && pdf_pages(pdf, length) >= 1 && length > 10000);
+    {
+        FILE *f = fopen("build/host/opencalc-chart-print-test.pdf", "wb");
+        CHECK(f && fwrite(pdf, 1, length, f) == length);
+        if (f) fclose(f);
+    }
+    owf_free(pdf);
+    oc_core_free(core);
+}
+
 int main(void)
 {
     test_more();
@@ -3384,6 +3465,7 @@ int main(void)
     test_tab_strip();
     test_status();
     test_files();
+    test_pdf();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);
         return 1;

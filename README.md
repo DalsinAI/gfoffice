@@ -264,7 +264,12 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`.
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.32 exports every
+visible sheet as a searchable, paginated A4 PDF, fitted one page wide by
+default, from the same reusable draw list as the window; it keeps cell and
+conditional formatting, merged cells, borders, frozen panes and imported
+charts. Print passes that PDF to GFOpenPrint. The renderer is the portable
+`oc_core_pdf` API, and the page PDF calls are also in `owfcalc.library` 3.3.
 
 ## GFOpenPresentation
 

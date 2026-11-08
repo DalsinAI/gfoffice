@@ -21,6 +21,7 @@
 #include <libraries/asl.h>
 #include <workbench/startup.h>
 #include <dos/dos.h>
+#include <dos/dostags.h>
 #include <dos/var.h>
 #include <graphics/text.h>
 #include <graphics/gfx.h>
@@ -70,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.31 (7.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.32 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -86,7 +87,7 @@ enum { C_NEW = 1, C_OPEN, C_SAVE, C_UNDO, C_REDO, C_CUT, C_COPY, C_PASTE, C_BOLD
 enum { GID_TOOLBAR = 100, GID_NAME = 300, GID_INPUT, GID_VSCROLL, GID_HSCROLL };
 
 enum {
-    M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_EXPORT_CSV, M_PRINT, M_ABOUT, M_QUIT,
+    M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FIND, M_FIND_NEXT,
     M_FILL_DOWN, M_FILL_RIGHT, M_CLEAR, M_CLEAR_FORMATS, M_CLEAR_ALL,
     M_SELECT_ALL, M_SELECT_ROWS, M_SELECT_COLS, M_GOTO,
@@ -111,8 +112,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Save", "S", 0, 0, (APTR)M_SAVE },
     { NM_ITEM, "Save As...", NULL, 0, 0, (APTR)M_SAVE_AS },
     { NM_ITEM, "Export CSV...", NULL, 0, 0, (APTR)M_EXPORT_CSV },
+    { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_EXPORT_PDF },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
-    { NM_ITEM, "Print...", "P", NM_ITEMDISABLED, 0, (APTR)M_PRINT },
+    { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "About...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_ITEM, "Quit", "Q", 0, 0, (APTR)M_QUIT },
@@ -2123,6 +2125,79 @@ static void do_export_csv(void)
         save_book_as(path, "csv", 0);
 }
 
+/* The same reusable core renderer backs Export PDF and Print. By default
+ * all visible sheets are printed, fitted to one page wide with gridlines;
+ * the core paginates long sheets and leaves this live view untouched. */
+static int write_pdf(const char *path, const char *report_title)
+{
+    oc_pdf_options options;
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_report *report = owf_report_new();
+    BPTR f = 0;
+    int rc, ok = 0;
+    oc_pdf_options_init(&options);
+    rc = oc_core_pdf(core, &options, &data, &length, report);
+    if (rc == OWF_OK && length <= 0x7FFFFFFFUL && (f = Open((STRPTR)path, MODE_NEWFILE))) {
+        ok = Write(f, data, (LONG)length) == (LONG)length;
+        Close(f);
+    }
+    if (report_title)
+        show_report(report_title, report);
+    owf_report_free(report);
+    owf_free(data);
+    return ok;
+}
+
+static void do_export_pdf(void)
+{
+    char path[512], initial[160], msg[600];
+    with_extension(current_path, "pdf", initial, sizeof initial);
+    if (!ask_file(1, "Export workbook as PDF", initial, path, sizeof path))
+        return;
+    if (write_pdf(path, "Export PDF"))
+        snprintf(msg, sizeof msg, "%.200s written: all visible sheets, fitted one page wide.", leaf(path));
+    else
+        snprintf(msg, sizeof msg, "%.200s could not be written.", leaf(path));
+    set_status(msg);
+}
+
+/* As the rest of GFOffice: make a temporary PDF, then let GFOpenPrint own
+ * preview, printer selection and physical/network output. */
+#define OPENPRINT "C:GFOpenPrint"
+static void do_print(void)
+{
+    char path[200], name[160], cmd[360];
+    struct Process *me = (struct Process *)FindTask(NULL);
+    APTR was = me->pr_WindowPtr;
+    BPTR lock, in, out;
+    me->pr_WindowPtr = (APTR)-1;
+    lock = Lock((STRPTR)OPENPRINT, ACCESS_READ);
+    me->pr_WindowPtr = was;
+    if (!lock) {
+        tell("Print", "Printing needs GFOpenPrint (C:GFOpenPrint).\n\nExport PDF still works.");
+        return;
+    }
+    UnLock(lock);
+    with_extension(current_path, "pdf", name, sizeof name);
+    snprintf(path, sizeof path, "T:%s", name);
+    if (!write_pdf(path, "Print")) {
+        set_status("The workbook couldn't be made ready to print.");
+        return;
+    }
+    snprintf(cmd, sizeof cmd, "%s \"%s\"", OPENPRINT, path);
+    in = Open((STRPTR)"NIL:", MODE_OLDFILE);
+    out = Open((STRPTR)"NIL:", MODE_NEWFILE);
+    if (!in || !out || SystemTags((STRPTR)cmd, SYS_Asynch, TRUE, SYS_Input, in, SYS_Output, out,
+                                  NP_StackSize, 65536, TAG_DONE) == -1) {
+        if (in) Close(in);
+        if (out) Close(out);
+        set_status("GFOpenPrint couldn't be started.");
+    } else {
+        set_status("GFOpenPrint's Print window is open for this workbook.");
+    }
+}
+
 static void new_book(void)
 {
     if (!confirm_discard_changes()) return;
@@ -2201,7 +2276,8 @@ static void about(void)
          VERSION_TEXT "\n\n"
          "GFOpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
          "GFOpenGadTools interface\n"
-         "libowf workbooks and formula engine\n\n"
+         "libowf workbooks and formula engine\n"
+         "Searchable PDF export and GFOpenPrint printing\n\n"
          "MIT licence, Copyright (c) 2026 AmiCradle Team.");
 }
 
@@ -2442,6 +2518,8 @@ static void menu_action(ULONG id)
     case M_SAVE: do_save(); break;
     case M_SAVE_AS: do_save_as(); break;
     case M_EXPORT_CSV: do_export_csv(); break;
+    case M_EXPORT_PDF: do_export_pdf(); break;
+    case M_PRINT: do_print(); break;
     case M_ABOUT: about(); break;
     case M_QUIT: if (confirm_discard_changes()) quit_now = 1; break;
     case M_UNDO: do_command(C_UNDO); break;

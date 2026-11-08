@@ -51,6 +51,12 @@ given ends in a workbook format's extension.
 | XLSX, Office Open XML (`.xlsx`; `.xltx`, `.xlsm`, `.xltm` open only) | Yes | Yes | Spec: ECMA-376 (transitional; strict's namespaces read) and [MS-XLSX]'s `_xlfn.` names | S2 | Full both ways, as the model holds it (notes below). Macros, comments, pictures, charts, conditional formats, validation, tables and pivot tables are reported. Binary `.xlsb` is recognised with a clear message |
 | ODS, OpenDocument Spreadsheet (`.ods`, `.ots` opens; flat `.fods`) | Yes | Yes | Spec: OASIS ODF 1.2 and OpenFormula; LibreOffice's 1.3 additions read | S2 | Full both ways, as the model holds it (notes below), formulas translated to and from OpenFormula. Comments, pictures, charts, conditional formats and validation are reported |
 
+GFOpenCalc 0.1.32 also exports workbooks to searchable A4 PDF and prints that
+PDF through GFOpenPrint. All visible sheets are paginated and fitted one page
+wide by default from the same core draw list used by the window, including
+cell and conditional formatting, merged cells, borders, frozen panes and
+imported charts. PDF is an output format, not a workbook input format.
+
 What each keeps, both ways: sheets and their names; values (numbers,
 text, booleans, errors; XLSX's shared strings and rich text flattened);
 formulas as Excel's text with their last results; cell styles (fonts,

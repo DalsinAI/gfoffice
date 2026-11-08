@@ -84,5 +84,21 @@ _LVOowf_calc_format_value	EQU	-486
 _LVOowf_sheet_set_row_style	EQU	-492
 _LVOowf_calc_place_chart	EQU	-498
 _LVOowf_calc_nudge_chart	EQU	-504
+_LVOowf_pdf_new	EQU	-510
+_LVOowf_pdf_free	EQU	-516
+_LVOowf_pdf_page	EQU	-522
+_LVOowf_pdf_text	EQU	-528
+_LVOowf_pdf_rect	EQU	-534
+_LVOowf_pdf_round_rect	EQU	-540
+_LVOowf_pdf_ellipse	EQU	-546
+_LVOowf_pdf_path	EQU	-552
+_LVOowf_pdf_dash	EQU	-558
+_LVOowf_pdf_image	EQU	-564
+_LVOowf_pdf_link	EQU	-570
+_LVOowf_pdf_finish	EQU	-576
+_LVOowf_pdf_page_count	EQU	-582
+_LVOowf_pdf_text_width	EQU	-588
+_LVOowf_pdf_winansi	EQU	-594
+_LVOowf_pdf_fallback	EQU	-600
 
 	ENDC	; LVO_OWFCALC_LIB_I

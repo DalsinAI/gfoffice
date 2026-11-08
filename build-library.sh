@@ -8,7 +8,7 @@
 #   OUT_DIR/owfwrite.library     documents, GFOpenWrite's: DOCX, ODT, the Amiga
 #                                word processors' files, text, HTML, PDF out
 #   OUT_DIR/owfcalc.library      workbooks, GFOpenCalc's: XLSX, ODS, XLS, CSV,
-#                                charts and the formula engine
+#                                charts, the formula engine and page PDF writer
 #   OUT_DIR/owfpub.library       Publisher files, GFOpenPublisher's
 #   OUT_DIR/owfpresent.library   presentations, GFOpenPresentation's: the deck
 #                                model, ODP and the page PDF writer

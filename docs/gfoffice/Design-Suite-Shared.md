@@ -397,7 +397,8 @@ It is made from `out_pdf.c`'s object, font and picture code. Then:
 - GFOpenWrite's Export PDF and Print draw its GFOpenLayout pages into it: the PDF
   is the screen's pages, tables included;
 - GFOpenPresentation draws slides and handouts; GFOpenBase reports; GFOpenCalc
-  printed sheets;
+  draws printed sheets through its reusable `oc_core_pdf` paginator (live in
+  GFOpenCalc 0.1.32, including formatted cells, merged cells and charts);
 - the old `pdf` format stays for OWConvert, drawn through the same writer
   from a layout made without a screen.
 
