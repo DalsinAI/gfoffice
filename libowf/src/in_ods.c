@@ -2100,6 +2100,7 @@ static void filter_child(ods *o, const owf_xml_event *e)
     } else if (is(e, NS_TABLE, "filter-condition")) {
         const char *op = ev(e, NS_TABLE, "operator"), *val = ev(e, NS_TABLE, "value");
         const char *xlop = NULL;
+        int top = -1, percent = 0;
         long field = whole(ev(e, NS_TABLE, "field-number"), -1, 0, (long)MAX_COLS);
         if (o->af_field >= 0)
             owf_buf_puts(&o->af_xml, "</filters></filterColumn>");
@@ -2111,9 +2112,19 @@ static void filter_child(ods *o, const owf_xml_event *e)
             else if (!strcmp(op, "<=")) xlop = "lessThanOrEqual";
             else if (!strcmp(op, ">")) xlop = "greaterThan";
             else if (!strcmp(op, ">=")) xlop = "greaterThanOrEqual";
+            else if (!strcmp(op, "top values")) { top = 1; percent = 0; }
+            else if (!strcmp(op, "bottom values")) { top = 0; percent = 0; }
+            else if (!strcmp(op, "top percent")) { top = 1; percent = 1; }
+            else if (!strcmp(op, "bottom percent")) { top = 0; percent = 1; }
         }
-        if (!xlop || field < 0 || !val) {
+        if ((!xlop && top < 0) || field < 0 || !val) {
             o->af_approx = 1;
+            return;
+        }
+        if (top >= 0) {
+            owf_buf_printf(&o->af_xml, "<filterColumn colId=\"%ld\"><top10 val=\"", field);
+            af_escaped(o, val);
+            owf_buf_printf(&o->af_xml, "\" top=\"%d\" percent=\"%d\"/></filterColumn>", top, percent);
             return;
         }
         if (strcmp(op, "=")) {

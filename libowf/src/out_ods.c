@@ -2427,11 +2427,43 @@ static int filter_val(const char *p, const char *end, const char **v, size_t *le
     return 1;
 }
 
-/* One Excel filterColumn (x up to end, its close) as ODF's condition on that field: its value, or its values
- * as a set. 0 when it filters otherwise (a custom filter, a top ten, a colour, blanks, dates by group). */
+static int filter_attr(const char *tag, const char *close, const char *name, const char **value, size_t *len)
+{
+    const char *p = tag;
+    size_t n = strlen(name);
+    char quote;
+    while ((p = strstr(p, name)) != NULL && p < close) {
+        if ((p == tag || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\r' || p[-1] == '\n') &&
+            p + n < close && p[n] == '=')
+            break;
+        p += n;
+    }
+    if (!p || p >= close || ((quote = p[n + 1]) != '"' && quote != '\''))
+        return 0;
+    *value = p + n + 2;
+    p = strchr(*value, quote);
+    if (!p || p > close)
+        return 0;
+    *len = (size_t)(p - *value);
+    return 1;
+}
+
+static int filter_bool(const char *tag, const char *close, const char *name, int fallback)
+{
+    const char *v;
+    size_t n;
+    if (!filter_attr(tag, close, name, &v, &n))
+        return fallback;
+    if ((n == 1 && v[0] == '1') || (n == 4 && !memcmp(v, "true", 4))) return 1;
+    if ((n == 1 && v[0] == '0') || (n == 5 && !memcmp(v, "false", 5))) return 0;
+    return fallback;
+}
+
+/* One Excel filterColumn (x up to end, its close) as ODF's condition on that field: values, one custom
+ * comparison, or top/bottom rank. 0 for colours, icons, dates by group and other complex conditions. */
 static int af_column(owf_buf *b, const char *x, const char *end)
 {
-    static const char *const others[] = { "top10", "dynamicFilter", "colorFilter", "iconFilter",
+    static const char *const others[] = { "dynamicFilter", "colorFilter", "iconFilter",
                                           "dateGroupItem", "blank=\"1\"", "blank='1'" };
     const char *id = strstr(x, "colId="), *p = x, *v, *next;
     size_t len, i;
@@ -2444,6 +2476,21 @@ static int af_column(owf_buf *b, const char *x, const char *end)
         const char *o = strstr(x, others[i]);
         if (o && o < end)
             return 0;
+    }
+    {
+        const char *top = strstr(x, "<top10"), *close, *rank;
+        size_t rank_len;
+        if (top && top < end) {
+            int highest, percent;
+            if (!(close = strchr(top, '>')) || close > end || !filter_attr(top, close, "val", &rank, &rank_len))
+                return 0;
+            highest = filter_bool(top, close, "top", 1);
+            percent = filter_bool(top, close, "percent", 0);
+            owf_buf_printf(b, "<table:filter-condition table:field-number=\"%ld\" table:value=\"", field);
+            owf_buf_put(b, rank, rank_len);
+            owf_buf_printf(b, "\" table:operator=\"%s %s\"/>", highest ? "top" : "bottom", percent ? "percent" : "values");
+            return 1;
+        }
     }
     {
         static const char *const xlops[] = {
@@ -2544,7 +2591,7 @@ static void put_autofilters(ods_out *w, owf_buf *b)
         if (sh->autofilter_xml && strstr(sh->autofilter_xml, "<sortState"))
             approx = 1;
         if (approx)
-            owf_report_add(w->report, OWF_NOTE_APPROX, "Some AutoFilters' conditions (custom, top ten, colours) and sorting are not kept in ODS: their buttons are");
+            owf_report_add(w->report, OWF_NOTE_APPROX, "Some AutoFilters' conditions (complex pairs, colours, icons or dates) and sorting are not kept in ODS: their buttons are");
         if (n && !conds.failed) {
             owf_buf_puts(b, "><table:filter>");
             if (n > 1)

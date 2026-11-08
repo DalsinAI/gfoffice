@@ -2162,6 +2162,77 @@ static void test_filter_commands(void)
     oc_core_free(core);
 }
 
+static void test_filter_ranking(void)
+{
+    static const char *const cells[][2] = {
+        { "A1", "Value" }, { "B1", "Group" },
+        { "A2", "10" }, { "B2", "Keep" },
+        { "A3", "20" }, { "B3", "Drop" },
+        { "A4", "30" }, { "B4", "Keep" },
+        { "A5", "30" }, { "B5", "Keep" },
+        { "A6", "40" }, { "B6", "Keep" },
+        { "A7", "text" }, { "B7", "Text" },
+        { "B8", "Blank" }
+    };
+    static const char *const xlsx = "build/host/calc-core-top.xlsx";
+    static const char *const ods = "build/host/calc-core-top.ods";
+    oc_core *core = fresh();
+    owf_sheet *sheet;
+    int i;
+    if (!core) return;
+    for (i = 0; i < (int)(sizeof cells / sizeof cells[0]); i++)
+        enter_at(core, cells[i][0], cells[i][1]);
+    go(core, "A1:B8");
+    CHECK(oc_core_set_autofilter(core, 1) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+
+    CHECK(oc_core_filter_condition(core, 0, OC_FILTER_NOT_EQUAL, "") == OWF_OK);
+    CHECK(!row_hidden(core, 1) && !row_hidden(core, 6) && row_hidden(core, 7));
+    CHECK(oc_core_filter_value(core, 0, "") == OWF_OK);
+    CHECK(row_hidden(core, 1) && row_hidden(core, 6) && !row_hidden(core, 7));
+    CHECK(oc_core_filter_clear(core) == OWF_OK);
+
+    CHECK(oc_core_filter_top(core, 0, 2, 0, 0) == OWF_OK);
+    CHECK(row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) &&
+          !row_hidden(core, 4) && !row_hidden(core, 5) && row_hidden(core, 6) && row_hidden(core, 7));
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "<top10") &&
+          strstr(sheet->autofilter_xml, "val=\"2\"") && strstr(sheet->autofilter_xml, "top=\"1\""));
+    {
+        char **items = NULL;
+        int n = 0;
+        CHECK(oc_core_filter_choices(core, 1, &items, &n) == OWF_OK && n == 1);
+        if (n == 1) CHECK_STR(items[0], "Keep");
+        oc_choices_free(items, n);
+    }
+    CHECK(oc_core_filter_top(core, 0, 2, 1, 0) == OWF_OK);
+    CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && row_hidden(core, 3) &&
+          row_hidden(core, 4) && row_hidden(core, 5) && row_hidden(core, 6) && row_hidden(core, 7));
+    CHECK(oc_core_filter_top(core, 0, 20, 0, 1) == OWF_OK);
+    CHECK(row_hidden(core, 1) && row_hidden(core, 2) && row_hidden(core, 3) &&
+          row_hidden(core, 4) && !row_hidden(core, 5) && row_hidden(core, 6) && row_hidden(core, 7));
+    CHECK(oc_core_undo(core) == OWF_OK && !row_hidden(core, 1) && !row_hidden(core, 2));
+    CHECK(oc_core_filter_top(core, 0, 2, 0, 0) == OWF_OK);
+    CHECK(oc_core_filter_value(core, 1, "Keep") == OWF_OK);
+    CHECK(row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) &&
+          !row_hidden(core, 4) && !row_hidden(core, 5) && row_hidden(core, 6) && row_hidden(core, 7));
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "<top10") &&
+          strstr(sheet->autofilter_xml, "val=\"2\"") && strstr(sheet->autofilter_xml, "val=\"Keep\"") &&
+          !row_hidden(core, 3) && row_hidden(core, 6));
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "<top10") &&
+          strstr(sheet->autofilter_xml, "val=\"2\"") && strstr(sheet->autofilter_xml, "val=\"Keep\"") &&
+          !row_hidden(core, 3) && row_hidden(core, 6));
+    CHECK(oc_core_filter_top(core, 0, 0, 0, 0) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_filter_top(core, 0, 501, 0, 0) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_filter_top(core, 0, 101, 0, 1) == OWF_ERR_UNSUPPORTED);
+    oc_core_free(core);
+}
+
 /* Whether a saved file (a zip) holds a part. */
 static int saved_has(const char *path, const char *part)
 {
@@ -3596,6 +3667,7 @@ int main(void)
     test_validation();
     test_autofilter();
     test_filter_commands();
+    test_filter_ranking();
     test_drawings_kept();
     test_valid_typing();
     test_valid_fixture();

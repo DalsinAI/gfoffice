@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.35 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.36 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -2282,7 +2282,7 @@ static void about(void)
          "GFOpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
          "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n"
-         "Editable multi-column and Standard AutoFilters\n"
+         "Value, Standard and Top/Bottom AutoFilters\n"
          "Searchable PDF export and GFOpenPrint printing\n\n"
          "MIT licence, Copyright (c) 2026 AmiCradle Team.");
 }
@@ -3241,8 +3241,38 @@ static int filter_condition_text(const char *text, int *op, const char **value)
     return *text != 0;
 }
 
+static int filter_rank_text(const char *text, unsigned *count, int *bottom, int *percent)
+{
+    char *end;
+    unsigned long n;
+    while (*text == ' ' || *text == '\t') text++;
+    if (!strncasecmp(text, "top", 3) && (text[3] == ' ' || text[3] == '\t')) {
+        *bottom = 0;
+        text += 3;
+    } else if (!strncasecmp(text, "bottom", 6) && (text[6] == ' ' || text[6] == '\t')) {
+        *bottom = 1;
+        text += 6;
+    } else {
+        return 0;
+    }
+    while (*text == ' ' || *text == '\t') text++;
+    n = strtoul(text, &end, 10);
+    if (end == text || !n)
+        return 0;
+    while (*end == ' ' || *end == '\t') end++;
+    *percent = *end == '%';
+    if (*percent) {
+        end++;
+        while (*end == ' ' || *end == '\t') end++;
+    }
+    if (*end || n > (*percent ? 100UL : 500UL))
+        return 0;
+    *count = (unsigned)n;
+    return 1;
+}
+
 /* An AutoFilter heading's arrow: every distinct displayed value, plus All
- * and a Standard Filter comparison entered as, for example, >= 100.
+ * and Standard and Top/Bottom filters.
  * A blank value has a visible label but remains an empty string in the core. */
 static void pick_filter(unsigned col, int bx, int by, int bw, int bh)
 {
@@ -3253,7 +3283,7 @@ static void pick_filter(unsigned col, int bx, int by, int bw, int bh)
         result(rc, NULL);
         return;
     }
-    shown = malloc((size_t)(n + 2) * sizeof *shown);
+    shown = malloc((size_t)(n + 4) * sizeof *shown);
     if (!shown) {
         oc_choices_free(items, n);
         result(OWF_ERR_MEMORY, NULL);
@@ -3261,8 +3291,10 @@ static void pick_filter(unsigned col, int bx, int by, int bw, int bh)
     }
     shown[0] = (char *)"(All)";
     shown[1] = (char *)"(Standard Filter...)";
-    for (i = 0; i < n; i++) shown[i + 2] = items[i][0] ? items[i] : (char *)"(Blanks)";
-    chosen = choice_popup(bx, by, bw, bh, shown, n + 2, NULL);
+    shown[2] = (char *)"(Nonblanks)";
+    shown[3] = (char *)"(Top/Bottom...)";
+    for (i = 0; i < n; i++) shown[i + 4] = items[i][0] ? items[i] : (char *)"(Blanks)";
+    chosen = choice_popup(bx, by, bw, bh, shown, n + 4, NULL);
     if (chosen >= 0) {
         if (chosen == 1) {
             char entered[256], *utf8;
@@ -3276,8 +3308,20 @@ static void pick_filter(unsigned col, int bx, int by, int bw, int bh)
                     owf_free(utf8);
                 }
             }
+        } else if (chosen == 2) {
+            result(oc_core_filter_condition(core, col, OC_FILTER_NOT_EQUAL, ""), "Blank rows filtered out.");
+        } else if (chosen == 3) {
+            char entered[64];
+            unsigned count;
+            int bottom, percent;
+            if (text_requester("Top/Bottom Filter", "Rank", "top 10", entered, sizeof entered)) {
+                if (filter_rank_text(entered, &count, &bottom, &percent))
+                    result(oc_core_filter_top(core, col, count, bottom, percent), "Top/Bottom Filter applied.");
+                else
+                    set_status("Use top 10, bottom 5, top 10% or bottom 20%.");
+            }
         } else {
-            rc = oc_core_filter_value(core, col, chosen ? items[chosen - 2] : NULL);
+            rc = oc_core_filter_value(core, col, chosen ? items[chosen - 4] : NULL);
             result(rc, chosen ? "Rows filtered by value." : "This column's filter is cleared.");
         }
     }

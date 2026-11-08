@@ -1,5 +1,5 @@
 /*
- * GFOpenCalc's core: AutoFilter creation, displayed-value and Standard Filters.
+ * GFOpenCalc's core: displayed-value, Standard and Top/Bottom AutoFilters.
  * More than one column can filter a table; rows must satisfy every column.
  * The criteria are the workbook model's ordinary XLSX filterColumn XML, so
  * XLSX, ODS, the native UI and future front ends share one representation.
@@ -16,9 +16,15 @@
 
 typedef struct {
     unsigned col;                 /* absolute sheet column */
+    int kind;                     /* 0 comparison, 1 top/bottom */
     int op;                       /* OC_FILTER_* */
     char *value;                  /* displayed value, decoded UTF-8 */
+    unsigned rank;
+    int bottom, percent, threshold_valid;
+    double threshold;
 } filter_rule;
+
+static const char *shown_at(const oc_core *core, unsigned row, unsigned col, char *buf, size_t size);
 
 static const owf_rowinfo *row_info(const owf_sheet *sheet, unsigned row)
 {
@@ -70,6 +76,11 @@ static int compare_value(const char *shown, const filter_rule *rule)
 {
     double a, b;
     int cmp;
+    if (rule->kind) {
+        if (!rule->threshold_valid || !number_text(shown, &a))
+            return 0;
+        return rule->bottom ? a <= rule->threshold : a >= rule->threshold;
+    }
     if (rule->op == OC_FILTER_EQUAL)
         return same_text(shown, rule->value);
     if (rule->op == OC_FILTER_NOT_EQUAL)
@@ -85,6 +96,47 @@ static int compare_value(const char *shown, const filter_rule *rule)
     case OC_FILTER_GREATER_EQUAL: return cmp >= 0;
     default: return 0;
     }
+}
+
+static int compare_double(const void *aa, const void *bb)
+{
+    double a = *(const double *)aa, b = *(const double *)bb;
+    return a < b ? -1 : a > b;
+}
+
+/* Top/bottom thresholds are column properties: as in spreadsheet AutoFilter,
+ * each is ranked over the filter range and the resulting column conditions
+ * are then ANDed. */
+static int prepare_rules(const oc_core *core, filter_rule *rules, int n)
+{
+    const owf_sheet *sheet = oc_sheet(core);
+    int i;
+    for (i = 0; i < n; i++) {
+        double *values;
+        unsigned row, used = 0, take;
+        char shown[256];
+        if (!rules[i].kind)
+            continue;
+        rules[i].threshold_valid = 0;
+        values = malloc((size_t)(sheet->autofilter.last_row - sheet->autofilter.first_row) * sizeof *values);
+        if (!values)
+            return OWF_ERR_MEMORY;
+        for (row = sheet->autofilter.first_row + 1; row <= sheet->autofilter.last_row; row++) {
+            double value;
+            if (number_text(shown_at(core, row, rules[i].col, shown, sizeof shown), &value))
+                values[used++] = value;
+        }
+        if (used) {
+            qsort(values, used, sizeof *values, compare_double);
+            take = rules[i].percent ? (used * rules[i].rank + 99) / 100 : rules[i].rank;
+            if (!take) take = 1;
+            if (take > used) take = used;
+            rules[i].threshold = values[rules[i].bottom ? take - 1 : used - take];
+            rules[i].threshold_valid = 1;
+        }
+        free(values);
+    }
+    return OWF_OK;
 }
 
 static const char *shown_at(const oc_core *core, unsigned row, unsigned col, char *buf, size_t size)
@@ -187,6 +239,51 @@ static int custom_op(const char *tag, const char *close)
     return -1;
 }
 
+static const char *xml_attr_at(const char *tag, const char *close, const char *name)
+{
+    size_t n = strlen(name);
+    const char *p = tag;
+    while ((p = strstr(p, name)) != NULL && p < close) {
+        if ((p == tag || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\r' || p[-1] == '\n') &&
+            p + n < close && p[n] == '=')
+            return p + n + 1;
+        p += n;
+    }
+    return NULL;
+}
+
+static int xml_unsigned_attr(const char *tag, const char *close, const char *name, unsigned *value)
+{
+    const char *p = xml_attr_at(tag, close, name);
+    char *tail;
+    unsigned long v;
+    char quote;
+    if (!p || ((quote = *p++) != '"' && quote != '\''))
+        return 0;
+    v = strtoul(p, &tail, 10);
+    if (tail == p || tail >= close || *tail != quote || v > 1000000UL)
+        return 0;
+    *value = (unsigned)v;
+    return 1;
+}
+
+static int xml_bool_attr(const char *tag, const char *close, const char *name, int fallback)
+{
+    const char *p = xml_attr_at(tag, close, name);
+    char quote;
+    if (!p)
+        return fallback;
+    if ((quote = *p++) != '"' && quote != '\'')
+        return fallback;
+    if ((*p == '1' && p + 1 < close && p[1] == quote) ||
+        (p + 4 < close && !memcmp(p, "true", 4) && p[4] == quote))
+        return 1;
+    if ((*p == '0' && p + 1 < close && p[1] == quote) ||
+        (p + 5 < close && !memcmp(p, "false", 5) && p[5] == quote))
+        return 0;
+    return fallback;
+}
+
 /* The editable subset: one value comparison per filterColumn. Other imported
  * conditions remain safely preserved until the user edits filtering. */
 static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
@@ -197,11 +294,12 @@ static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
     *out = NULL;
     *count = 0;
     while (p && *p) {
-        const char *fc = strstr(p, "<filterColumn"), *open, *end, *id, *digits, *tail, *fv, *at, *next, *tag_end;
+        const char *fc = strstr(p, "<filterColumn"), *open, *end, *id, *digits, *tail, *fv, *at, *next, *tag_end, *top;
         char *number_end;
         unsigned long offset;
-        char quote, *value;
-        int op = OC_FILTER_EQUAL;
+        char quote, *value = NULL;
+        int kind = 0, op = OC_FILTER_EQUAL, bottom = 0, percent = 0;
+        unsigned rank = 0;
         filter_rule *grown;
         int i;
         if (!fc)
@@ -217,31 +315,51 @@ static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
         if (tail == digits || tail > open || *tail != quote ||
             offset > sheet->autofilter.last_col - sheet->autofilter.first_col)
             goto unsupported;
-        fv = strstr(open, "<filter ");
-        if (!fv || fv > end) {
-            fv = strstr(open, "<customFilter ");
-            if (!fv || fv > end || !(tag_end = strchr(fv, '>')) || tag_end > end ||
-                (op = custom_op(fv, tag_end)) < 0)
+        top = strstr(open, "<top10");
+        if (top && top < end) {
+            if (!(tag_end = strchr(top, '>')) || tag_end > end ||
+                !xml_unsigned_attr(top, tag_end, "val", &rank) || !rank || rank > 500)
                 goto unsupported;
-            next = strstr(fv + 1, "<customFilter ");
+            kind = 1;
+            bottom = !xml_bool_attr(top, tag_end, "top", 1);
+            percent = xml_bool_attr(top, tag_end, "percent", 0);
+            if (percent && rank > 100)
+                goto unsupported;
+            if (!(value = oc_strdup(""))) {
+                rules_free(rules, n);
+                return OWF_ERR_MEMORY;
+            }
         } else {
-            tag_end = strchr(fv, '>');
-            next = strstr(fv + 1, "<filter ");
-        }
-        if (!tag_end || tag_end > end || (next && next < end) ||
-            !(at = strstr(fv, "val=")) || at > tag_end || (at[4] != '"' && at[4] != '\''))
-            goto unsupported;
-        if (!(value = xml_value(at + 4, tag_end))) {
-            rules_free(rules, n);
-            return OWF_ERR_MEMORY;
+            fv = strstr(open, "<filter ");
+            if (!fv || fv > end) {
+                fv = strstr(open, "<customFilter ");
+                if (!fv || fv > end || !(tag_end = strchr(fv, '>')) || tag_end > end ||
+                    (op = custom_op(fv, tag_end)) < 0)
+                    goto unsupported;
+                next = strstr(fv + 1, "<customFilter ");
+            } else {
+                tag_end = strchr(fv, '>');
+                next = strstr(fv + 1, "<filter ");
+            }
+            if (!tag_end || tag_end > end || (next && next < end) ||
+                !(at = strstr(fv, "val=")) || at > tag_end || (at[4] != '"' && at[4] != '\''))
+                goto unsupported;
+            if (!(value = xml_value(at + 4, tag_end))) {
+                rules_free(rules, n);
+                return OWF_ERR_MEMORY;
+            }
         }
         for (i = 0; i < n; i++)
             if (rules[i].col == sheet->autofilter.first_col + (unsigned)offset)
                 break;
         if (i < n) {
             owf_free(rules[i].value);
+            rules[i].kind = kind;
             rules[i].op = op;
             rules[i].value = value;
+            rules[i].rank = rank;
+            rules[i].bottom = bottom;
+            rules[i].percent = percent;
         } else {
             grown = realloc(rules, (size_t)(n + 1) * sizeof *grown);
             if (!grown) {
@@ -251,8 +369,12 @@ static int parse_rules(const owf_sheet *sheet, filter_rule **out, int *count)
             }
             rules = grown;
             rules[n].col = sheet->autofilter.first_col + (unsigned)offset;
+            rules[n].kind = kind;
             rules[n].op = op;
             rules[n].value = value;
+            rules[n].rank = rank;
+            rules[n].bottom = bottom;
+            rules[n].percent = percent;
             n++;
         }
         p = end + 15;
@@ -279,13 +401,17 @@ static int row_matches(const oc_core *core, unsigned row, const filter_rule *rul
 
 /* In the live core bit 0 is a row hidden by the user and bit 1 one hidden by
  * the current filter. File writers treat either as hidden. Parsing the saved
- * exact criteria recovers filter-hidden rows after an XLSX/ODS round trip. */
+ * criteria recovers filter-hidden rows after an XLSX/ODS round trip. */
 static int mark_filter_rows(oc_core *core, owf_sheet *sheet)
 {
     filter_rule *rules = NULL;
     int n = 0, rc = parse_rules(sheet, &rules, &n), i;
     if (rc != OWF_OK)
         return 0;
+    if (prepare_rules(core, rules, n) != OWF_OK) {
+        rules_free(rules, n);
+        return 0;
+    }
     for (i = 0; i < sheet->nrows; i++) {
         unsigned row = sheet->rows[i].row;
         if (sheet->rows[i].hidden && row > sheet->autofilter.first_row && row <= sheet->autofilter.last_row &&
@@ -407,6 +533,10 @@ int oc_core_filter_choices(oc_core *core, unsigned col, char ***items, int *n)
     parsed = parse_rules(sheet, &rules, &nrules);
     if (parsed == OWF_ERR_MEMORY)
         return parsed;
+    if (parsed == OWF_OK && (rc = prepare_rules(core, rules, nrules)) != OWF_OK) {
+        rules_free(rules, nrules);
+        return rc;
+    }
     for (row = sheet->autofilter.first_row + 1; row <= sheet->autofilter.last_row; row++) {
         const char *display;
         if (parsed == OWF_OK && !row_matches(core, row, rules, nrules, (int)col))
@@ -459,6 +589,7 @@ static char *rules_xml(const owf_sheet *sheet, filter_rule *rules, int n)
     static const char exact_after[] = "\"/></filters></filterColumn>";
     static const char custom_before[] = "<filterColumn colId=\"%u\"><customFilters><customFilter operator=\"%s\" val=\"";
     static const char custom_after[] = "\"/></customFilters></filterColumn>";
+    static const char top_fmt[] = "<filterColumn colId=\"%u\"><top10 val=\"%u\" top=\"%d\" percent=\"%d\"/></filterColumn>";
     static const char *const names[] = {
         "equal", "notEqual", "lessThan", "lessThanOrEqual", "greaterThan", "greaterThanOrEqual"
     };
@@ -470,14 +601,20 @@ static char *rules_xml(const owf_sheet *sheet, filter_rule *rules, int n)
     if (n > 1)
         qsort(rules, (size_t)n, sizeof *rules, compare_rule);
     for (i = 0; i < n; i++)
-        cap += sizeof custom_before + sizeof custom_after + 64 + escaped_size(rules[i].value);
+        cap += sizeof custom_before + sizeof custom_after + sizeof top_fmt + 96 + escaped_size(rules[i].value);
     if (!(out = malloc(cap)))
         return NULL;
     p = out;
     for (i = 0; i < n; i++) {
         const char *after;
         int k;
-        if (rules[i].op == OC_FILTER_EQUAL) {
+        if (rules[i].kind) {
+            k = snprintf(p, cap - (size_t)(p - out), top_fmt,
+                         rules[i].col - sheet->autofilter.first_col, rules[i].rank,
+                         !rules[i].bottom, rules[i].percent);
+            p += k;
+            continue;
+        } else if (rules[i].op == OC_FILTER_EQUAL) {
             k = snprintf(p, cap - (size_t)(p - out), exact_before, rules[i].col - sheet->autofilter.first_col);
             after = exact_after;
         } else {
@@ -513,8 +650,11 @@ static int update_rule(filter_rule **rules, int *n, unsigned col, int op, const 
         return OWF_ERR_MEMORY;
     if (i < *n) {
         owf_free(p[i].value);
+        p[i].kind = 0;
         p[i].op = op;
         p[i].value = copy;
+        p[i].rank = 0;
+        p[i].bottom = p[i].percent = p[i].threshold_valid = 0;
         return OWF_OK;
     }
     p = realloc(p, (size_t)(*n + 1) * sizeof *p);
@@ -523,10 +663,43 @@ static int update_rule(filter_rule **rules, int *n, unsigned col, int op, const 
         return OWF_ERR_MEMORY;
     }
     p[*n].col = col;
+    p[*n].kind = 0;
     p[*n].op = op;
     p[*n].value = copy;
+    p[*n].rank = 0;
+    p[*n].bottom = p[*n].percent = p[*n].threshold_valid = 0;
     *rules = p;
     (*n)++;
+    return OWF_OK;
+}
+
+static int update_top_rule(filter_rule **rules, int *n, unsigned col, unsigned rank, int bottom, int percent)
+{
+    filter_rule *p = *rules;
+    char *empty;
+    int i;
+    for (i = 0; i < *n && p[i].col != col; i++) ;
+    if (!(empty = oc_strdup("")))
+        return OWF_ERR_MEMORY;
+    if (i == *n) {
+        p = realloc(p, (size_t)(*n + 1) * sizeof *p);
+        if (!p) {
+            owf_free(empty);
+            return OWF_ERR_MEMORY;
+        }
+        *rules = p;
+        (*n)++;
+    } else {
+        owf_free(p[i].value);
+    }
+    p[i].col = col;
+    p[i].kind = 1;
+    p[i].op = OC_FILTER_EQUAL;
+    p[i].value = empty;
+    p[i].rank = rank;
+    p[i].bottom = !!bottom;
+    p[i].percent = !!percent;
+    p[i].threshold_valid = 0;
     return OWF_OK;
 }
 
@@ -545,6 +718,11 @@ static int apply_rules(oc_core *core, owf_sheet *sheet, filter_rule *rules, int 
     if (nrules && count && !(hidden = malloc(count))) {
         free(xml);
         return OWF_ERR_MEMORY;
+    }
+    if ((rc = prepare_rules(core, rules, nrules)) != OWF_OK) {
+        free(hidden);
+        free(xml);
+        return rc;
     }
     for (row = first; nrules && row <= last; row++)
         hidden[row - first] = (unsigned char)!row_matches(core, row, rules, nrules, -1);
@@ -604,6 +782,33 @@ int oc_core_filter_condition(oc_core *core, unsigned col, int op, const char *va
         n = 0;
     }
     rc = update_rule(&rules, &n, col, op, value);
+    if (rc == OWF_OK)
+        rc = apply_rules(core, sheet, rules, n);
+    rules_free(rules, n);
+    return rc;
+}
+
+int oc_core_filter_top(oc_core *core, unsigned col, unsigned count, int bottom, int percent)
+{
+    owf_sheet *sheet;
+    filter_rule *rules = NULL;
+    int n = 0, rc;
+    if (!core || !count || count > (percent ? 100U : 500U))
+        return OWF_ERR_UNSUPPORTED;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    sheet = oc_sheet(core);
+    if (!sheet->has_autofilter || col < sheet->autofilter.first_col || col > sheet->autofilter.last_col)
+        return OWF_ERR_UNSUPPORTED;
+    rc = parse_rules(sheet, &rules, &n);
+    if (rc == OWF_ERR_MEMORY)
+        return rc;
+    if (rc == OWF_ERR_UNSUPPORTED) {
+        rules_free(rules, n);
+        rules = NULL;
+        n = 0;
+    }
+    rc = update_top_rule(&rules, &n, col, count, bottom, percent);
     if (rc == OWF_OK)
         rc = apply_rules(core, sheet, rules, n);
     rules_free(rules, n);
