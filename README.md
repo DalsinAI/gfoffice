@@ -265,7 +265,7 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.47 can turn a
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.48 can turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and
 cached values, supports clustered, stacked and percent grouping, keeps charts
@@ -282,7 +282,11 @@ live references and cached values while preserving the chart's presentation
 and placement as one undoable step. Selected charts can also be resized from
 all eight native handles. Reusable core API 0.12.0 transforms a chart's
 position and size atomically, with undo/redo and XLSX/ODS round trips, through
-`owfcalc.library` 3.5 for two-cell, one-cell and absolute anchors. Drawings containing pictures or shapes are refused rather than
+`owfcalc.library` 3.5 for two-cell, one-cell and absolute anchors. Format >
+Chart also controls automatic or fixed value-axis bounds and, for scatter
+charts, X-axis bounds and gridlines. Reusable core API 0.13.0 validates and
+applies those settings in the same one-step chart-edit transaction, preserving
+them through XLSX/ODS. Drawings containing pictures or shapes are refused rather than
 destructively rewritten. It can also deep-copy
 a sheet's cells, formats, comments, rules, filters, local names, cursor and
 supported charts, with independent chart package parts supplied by reusable

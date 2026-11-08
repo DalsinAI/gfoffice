@@ -51,7 +51,7 @@ given ends in a workbook format's extension.
 | XLSX, Office Open XML (`.xlsx`; `.xltx`, `.xlsm`, `.xltm` open only) | Yes | Yes | Spec: ECMA-376 (transitional; strict's namespaces read) and [MS-XLSX]'s `_xlfn.` names | S2 | Full both ways, as the model holds it (notes below). Macros, comments, pictures, charts, conditional formats, validation, tables and pivot tables are reported. Binary `.xlsb` is recognised with a clear message |
 | ODS, OpenDocument Spreadsheet (`.ods`, `.ots` opens; flat `.fods`) | Yes | Yes | Spec: OASIS ODF 1.2 and OpenFormula; LibreOffice's 1.3 additions read | S2 | Full both ways, as the model holds it (notes below), formulas translated to and from OpenFormula. Comments, pictures, charts, conditional formats and validation are reported |
 
-GFOpenCalc 0.1.47 can author column, bar, line, area, pie and scatter charts
+GFOpenCalc 0.1.48 can author column, bar, line, area, pie and scatter charts
 from a selected table, with live cell references, cached values, native
 selection/dragging, undoable deletion and XLSX/ODS round trips. Selected
 charts can change type/grouping, title, legend, gridlines and data labels
@@ -61,7 +61,9 @@ core API 0.11.0 can replace the source range, switch series between columns
 and rows, and rebuild live references/caches without changing presentation or
 placement. Charts can be resized from all eight native handles; reusable core
 API 0.12.0 and `owfcalc.library` 3.5 atomically move and resize two-cell,
-one-cell and absolute anchors with undo/redo. Drawings containing pictures or shapes are preserved
+one-cell and absolute anchors with undo/redo. Format > Chart and reusable core
+API 0.13.0 edit automatic/fixed value-axis limits and scatter X-axis limits
+and gridlines, with validation, undo and XLSX/ODS persistence. Drawings containing pictures or shapes are preserved
 by refusing chart-only rewrites. It can also duplicate sheets with deep-copied cells, formatting,
 comments, rules, filters, local names and supported charts. Chart package parts
 are independent through `owfcalc.library` 3.5; unsupported picture/shape

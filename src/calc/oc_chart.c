@@ -434,7 +434,8 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     int n = 0, rc, i;
     if (!core || !spec || !spec->set ||
         (spec->set & ~(OC_CHART_SET_KIND | OC_CHART_SET_GROUPING | OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND |
-                       OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS)) ||
+                       OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS |
+                       OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES)) ||
         ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
         ((spec->set & OC_CHART_SET_GROUPING) &&
          (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
@@ -442,7 +443,15 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
          spec->legend != 't' && spec->legend != 'b') ||
         ((spec->set & OC_CHART_SET_LABELS) &&
          (spec->label_pos < OWF_LABEL_AUTO || spec->label_pos > OWF_LABEL_BEST_FIT ||
-          (spec->labels & ~(OWF_LABEL_VALUE | OWF_LABEL_PERCENT | OWF_LABEL_CATEGORY | OWF_LABEL_SERIES)))))
+          (spec->labels & ~(OWF_LABEL_VALUE | OWF_LABEL_PERCENT | OWF_LABEL_CATEGORY | OWF_LABEL_SERIES)))) ||
+        ((spec->set & OC_CHART_SET_VALUE_AXIS) &&
+         ((spec->has_min && !(spec->min >= -1e200 && spec->min <= 1e200)) ||
+          (spec->has_max && !(spec->max >= -1e200 && spec->max <= 1e200)) ||
+          (spec->has_min && spec->has_max && !(spec->min < spec->max)))) ||
+        ((spec->set & OC_CHART_SET_X_AXIS) &&
+         ((spec->has_xmin && !(spec->xmin >= -1e200 && spec->xmin <= 1e200)) ||
+          (spec->has_xmax && !(spec->xmax >= -1e200 && spec->xmax <= 1e200)) ||
+          (spec->has_xmin && spec->has_xmax && !(spec->xmin < spec->xmax)))))
         return OWF_ERR_FORMAT;
     if (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core)))
         return OWF_ERR_UNSUPPORTED;
@@ -455,6 +464,14 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         return OWF_ERR_MEMORY;
     }
     chart = &charts[index];
+    if (((spec->set & OC_CHART_SET_VALUE_AXIS) &&
+         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) == OWF_CHART_PIE) ||
+        ((spec->set & (OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES)) &&
+         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_SCATTER)) {
+        owf_charts_free(charts, n);
+        owf_free(title);
+        return OWF_ERR_UNSUPPORTED;
+    }
     if (spec->set & OC_CHART_SET_KIND) {
         int was_scatter = chart->kind == OWF_CHART_SCATTER;
         int is_scatter = spec->kind == OWF_CHART_SCATTER;
@@ -479,6 +496,19 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     if (spec->set & OC_CHART_SET_TITLE) { owf_free(chart->title); chart->title = title; title = NULL; }
     if (spec->set & OC_CHART_SET_LEGEND) chart->legend = spec->legend;
     if (spec->set & OC_CHART_SET_GRIDLINES) chart->gridlines = !!spec->gridlines;
+    if (spec->set & OC_CHART_SET_VALUE_AXIS) {
+        chart->has_min = !!spec->has_min;
+        chart->has_max = !!spec->has_max;
+        chart->min = spec->min;
+        chart->max = spec->max;
+    }
+    if (spec->set & OC_CHART_SET_X_AXIS) {
+        chart->has_xmin = !!spec->has_xmin;
+        chart->has_xmax = !!spec->has_xmax;
+        chart->xmin = spec->xmin;
+        chart->xmax = spec->xmax;
+    }
+    if (spec->set & OC_CHART_SET_X_GRIDLINES) chart->x_gridlines = !!spec->x_gridlines;
     if (spec->set & OC_CHART_SET_LABELS)
         for (i = 0; i < chart->nseries; i++) {
             chart->series[i].labels = spec->labels;

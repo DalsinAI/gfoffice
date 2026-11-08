@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.12.0"
+#define OC_CORE_VERSION "0.13.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -684,14 +684,19 @@ int oc_core_delete_chart(oc_core *core, int index); /* -1: selected */
 /* Changes only the properties selected in set, preserving the chart's data,
  * anchor and every property not named. A kind change between scatter and
  * another chart moves its X/category references appropriately. labels is an
- * OWF_LABEL_* mask applied to every series; label_pos is OWF_LABEL_AUTO... . */
+ * OWF_LABEL_* mask applied to every series; label_pos is OWF_LABEL_AUTO... .
+ * Axis bounds are automatic when their has_* flag is zero; X-axis properties
+ * apply to scatter charts. A set minimum must be less than a set maximum. */
 enum {
     OC_CHART_SET_KIND = 1u << 0,
     OC_CHART_SET_GROUPING = 1u << 1,
     OC_CHART_SET_TITLE = 1u << 2,
     OC_CHART_SET_LEGEND = 1u << 3,
     OC_CHART_SET_GRIDLINES = 1u << 4,
-    OC_CHART_SET_LABELS = 1u << 5
+    OC_CHART_SET_LABELS = 1u << 5,
+    OC_CHART_SET_VALUE_AXIS = 1u << 6,
+    OC_CHART_SET_X_AXIS = 1u << 7,
+    OC_CHART_SET_X_GRIDLINES = 1u << 8
 };
 typedef struct {
     unsigned set;
@@ -701,6 +706,11 @@ typedef struct {
     int gridlines;
     unsigned labels;
     int label_pos;
+    int has_min, has_max;
+    double min, max;
+    int has_xmin, has_xmax;
+    double xmin, xmax;
+    int x_gridlines;
 } oc_chart_edit_spec;
 int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spec); /* -1: selected */
 

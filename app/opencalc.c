@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.47 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.48 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -2955,7 +2955,7 @@ static void chart_initial(char *out, size_t size, const owf_chart *chart)
 {
     static const char *const kinds[] = { "other", "column", "bar", "line", "area", "pie", "scatter" };
     static const char *const groups[] = { "clustered", "stacked", "percent" };
-    char title[160];
+    char title[160], number[40];
     size_t n;
     unsigned labels = chart->nseries ? chart->series[0].labels : 0;
     int pos = chart->nseries ? chart->series[0].label_pos : OWF_LABEL_AUTO;
@@ -2977,16 +2977,36 @@ static void chart_initial(char *out, size_t size, const owf_chart *chart)
                                                  "below", "left", "right", "best" };
         n += (size_t)snprintf(out + n, size - n, "%s ", positions[pos >= OWF_LABEL_AUTO && pos <= OWF_LABEL_BEST_FIT ? pos : 0]);
     }
+    if (chart->kind != OWF_CHART_PIE) {
+        if (chart->has_min) { owf_number_text(chart->min, number); if (n < size) n += (size_t)snprintf(out + n, size - n, "min=%s ", number); }
+        else if (n < size) n += (size_t)snprintf(out + n, size - n, "auto-min ");
+        if (chart->has_max) { owf_number_text(chart->max, number); if (n < size) n += (size_t)snprintf(out + n, size - n, "max=%s ", number); }
+        else if (n < size) n += (size_t)snprintf(out + n, size - n, "auto-max ");
+    }
+    if (chart->kind == OWF_CHART_SCATTER) {
+        if (chart->has_xmin) { owf_number_text(chart->xmin, number); if (n < size) n += (size_t)snprintf(out + n, size - n, "xmin=%s ", number); }
+        else if (n < size) n += (size_t)snprintf(out + n, size - n, "auto-xmin ");
+        if (chart->has_xmax) { owf_number_text(chart->xmax, number); if (n < size) n += (size_t)snprintf(out + n, size - n, "xmax=%s ", number); }
+        else if (n < size) n += (size_t)snprintf(out + n, size - n, "auto-xmax ");
+        if (n < size) n += (size_t)snprintf(out + n, size - n, "%s ", chart->x_gridlines ? "xgrid" : "noxgrid");
+    }
     if (n < size) snprintf(out + n, size - n, "title=%s", title);
+}
+
+static int chart_number(const char *text, double *value)
+{
+    char *end;
+    *value = strtod(text, &end);
+    return end != text && !*end && *value >= -1e200 && *value <= 1e200;
 }
 
 static void do_format_chart(void)
 {
     owf_chart *charts = NULL;
     oc_chart_edit_spec edit;
-    char initial[384], entered[384], *p, *token, *title = NULL, *utf8 = NULL;
+    char initial[512], entered[512], *p, *token, *title = NULL, *utf8 = NULL;
     unsigned current_labels;
-    int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, current_pos;
+    int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, current_pos, current_kind;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart."); return; }
     rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
     if (rc != OWF_OK || index >= n) {
@@ -2997,9 +3017,10 @@ static void do_format_chart(void)
     }
     current_labels = charts[index].nseries ? charts[index].series[0].labels : 0;
     current_pos = charts[index].nseries ? charts[index].series[0].label_pos : OWF_LABEL_AUTO;
+    current_kind = charts[index].kind;
     chart_initial(initial, sizeof initial, &charts[index]);
     owf_charts_free(charts, n);
-    if (!text_requester("Format Chart", "type/group legend grid labels title=...", initial, entered, sizeof entered)) return;
+    if (!text_requester("Format Chart", "type/group legend grid min/max labels title=...", initial, entered, sizeof entered)) return;
     memset(&edit, 0, sizeof edit);
     edit.labels = current_labels;
     edit.label_pos = current_pos;
@@ -3032,6 +3053,28 @@ static void do_format_chart(void)
         else if (!strcasecmp(token, "nolegend")) { edit.legend = 0; edit.set |= OC_CHART_SET_LEGEND; }
         else if (!strcasecmp(token, "grid")) { edit.gridlines = 1; edit.set |= OC_CHART_SET_GRIDLINES; }
         else if (!strcasecmp(token, "nogrid")) { edit.gridlines = 0; edit.set |= OC_CHART_SET_GRIDLINES; }
+        else if (!strcasecmp(token, "xgrid")) { edit.x_gridlines = 1; edit.set |= OC_CHART_SET_X_GRIDLINES; }
+        else if (!strcasecmp(token, "noxgrid")) { edit.x_gridlines = 0; edit.set |= OC_CHART_SET_X_GRIDLINES; }
+        else if (!strncasecmp(token, "min=", 4)) {
+            if (chart_number(token + 4, &edit.min)) { edit.has_min = 1; edit.set |= OC_CHART_SET_VALUE_AXIS; }
+            else bad = 1;
+        }
+        else if (!strncasecmp(token, "max=", 4)) {
+            if (chart_number(token + 4, &edit.max)) { edit.has_max = 1; edit.set |= OC_CHART_SET_VALUE_AXIS; }
+            else bad = 1;
+        }
+        else if (!strcasecmp(token, "auto-min")) { edit.has_min = 0; edit.set |= OC_CHART_SET_VALUE_AXIS; }
+        else if (!strcasecmp(token, "auto-max")) { edit.has_max = 0; edit.set |= OC_CHART_SET_VALUE_AXIS; }
+        else if (!strncasecmp(token, "xmin=", 5)) {
+            if (chart_number(token + 5, &edit.xmin)) { edit.has_xmin = 1; edit.set |= OC_CHART_SET_X_AXIS; }
+            else bad = 1;
+        }
+        else if (!strncasecmp(token, "xmax=", 5)) {
+            if (chart_number(token + 5, &edit.xmax)) { edit.has_xmax = 1; edit.set |= OC_CHART_SET_X_AXIS; }
+            else bad = 1;
+        }
+        else if (!strcasecmp(token, "auto-xmin")) { edit.has_xmin = 0; edit.set |= OC_CHART_SET_X_AXIS; }
+        else if (!strcasecmp(token, "auto-xmax")) { edit.has_xmax = 0; edit.set |= OC_CHART_SET_X_AXIS; }
         else if (!strcasecmp(token, "nolabels")) { edit.labels = 0; edit.set |= OC_CHART_SET_LABELS; }
         else if (!strcasecmp(token, "values")) { edit.labels |= OWF_LABEL_VALUE; edit.set |= OC_CHART_SET_LABELS; }
         else if (!strcasecmp(token, "percent-labels")) { edit.labels |= OWF_LABEL_PERCENT; edit.set |= OC_CHART_SET_LABELS; }
@@ -3049,8 +3092,12 @@ static void do_format_chart(void)
         else if (!strcasecmp(token, "best")) { edit.label_pos = OWF_LABEL_BEST_FIT; edit.set |= OC_CHART_SET_LABELS; }
         else bad = 1;
     }
+    if (((edit.set & OC_CHART_SET_KIND) ? edit.kind : current_kind) != OWF_CHART_SCATTER)
+        edit.set &= ~(OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES);
+    if (((edit.set & OC_CHART_SET_KIND) ? edit.kind : current_kind) == OWF_CHART_PIE)
+        edit.set &= ~OC_CHART_SET_VALUE_AXIS;
     if (bad || !edit.set) {
-        set_status("Use type, clustered/stacked/percent, legend-*, grid/nogrid, label options and title=...");
+        set_status("Use type/group, legend-*, grid, min=/max= (x equivalents), labels and title=...");
         return;
     }
     if ((edit.set & OC_CHART_SET_TITLE) && title && *title && !(utf8 = from_latin1(title))) {

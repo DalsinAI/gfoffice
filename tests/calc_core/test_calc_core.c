@@ -3336,23 +3336,39 @@ static void test_chart_authoring(void)
     chart_free(&c);
 
     memset(&edit, 0, sizeof edit);
-    edit.set = OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND | OC_CHART_SET_LABELS;
+    edit.set = OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS;
     edit.title = "Edited trend";
     edit.legend = 't';
     edit.labels = OWF_LABEL_VALUE;
     edit.label_pos = OWF_LABEL_ABOVE;
+    edit.has_min = edit.has_max = 1;
+    edit.min = 0;
+    edit.max = 80;
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK);
+
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_VALUE_AXIS;
+    edit.has_min = edit.has_max = 1;
+    edit.min = edit.max = 10;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_X_AXIS;
+    edit.has_xmin = 1;
+    edit.xmin = 0;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
 
     CHECK(oc_core_save(core, xlsx, "xlsx", NULL) == OWF_OK);
     CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2 &&
           same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE &&
-          c.series[0].label_pos == OWF_LABEL_ABOVE && same(c.series[1].values, "'Sheet1'!$C$2:$C$4"));
+          c.series[0].label_pos == OWF_LABEL_ABOVE && c.has_min && c.min == 0 && c.has_max && c.max == 80 &&
+          same(c.series[1].values, "'Sheet1'!$C$2:$C$4"));
     chart_free(&c);
     CHECK(oc_core_save(core, ods, "ods", NULL) == OWF_OK);
     CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && c.nseries == 2 &&
-          same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE);
+          same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE &&
+          c.has_min && c.min == 0 && c.has_max && c.max == 80);
     chart_free(&c);
     remove(xlsx); remove(ods);
 
@@ -3367,6 +3383,18 @@ static void test_chart_authoring(void)
           same(c.series[0].x_values, "'Sheet1'!$B$2:$B$4") &&
           same(c.series[0].values, "'Sheet1'!$C$2:$C$4"));
     chart_free(&c);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_VALUE_AXIS | OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES;
+    edit.has_min = edit.has_max = edit.has_xmin = edit.has_xmax = 1;
+    edit.min = 5; edit.max = 40; edit.xmin = 8; edit.xmax = 65; edit.x_gridlines = 1;
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.has_min && c.min == 5 && c.has_max && c.max == 40 &&
+          c.has_xmin && c.xmin == 8 && c.has_xmax && c.xmax == 65 && c.x_gridlines);
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && !c.has_min && !c.has_max &&
+          !c.has_xmin && !c.has_xmax && !c.x_gridlines);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_KIND | OC_CHART_SET_TITLE;
     edit.kind = OWF_CHART_LINE;
