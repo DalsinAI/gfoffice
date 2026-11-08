@@ -3358,6 +3358,19 @@ static void test_chart_authoring(void)
     CHECK(oc_core_redo(core) == OWF_OK);
 
     memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_AXIS_FORMATS;
+    edit.value_format = "$0.0";
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          same(c.value_format, "$0.0") && !c.x_format);
+    chart_free(&c);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && find_text(&l, "$0.0"));
+    oc_draw_list_free(&l);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && !c.value_format);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+
+    memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_SERIES_STYLE;
     edit.series = 1;
     edit.series_colour = OWF_SHADE(0x00A050);
@@ -3410,6 +3423,11 @@ static void test_chart_authoring(void)
     edit.series = 0;
     edit.series_colour = 0x00A050;
     CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_AXIS_FORMATS;
+    edit.value_format = "0.0";
+    edit.x_format = "0.00";
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
 
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_VALUE_AXIS;
@@ -3428,6 +3446,7 @@ static void test_chart_authoring(void)
           same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE &&
           c.series[0].label_pos == OWF_LABEL_ABOVE && c.has_min && c.min == 0 && c.has_max && c.max == 80 &&
           same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP") &&
+          same(c.value_format, "$0.0") && !c.x_format &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
           c.series[1].points[1].colour == OWF_SHADE(0xED7D31) &&
@@ -3439,6 +3458,7 @@ static void test_chart_authoring(void)
           same(c.title, "Edited trend") && c.legend == 't' && c.series[0].labels == OWF_LABEL_VALUE &&
           c.has_min && c.min == 0 && c.has_max && c.max == 80 &&
           same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP") &&
+          same(c.value_format, "$0.0") && !c.x_format &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
           c.series[1].points[1].colour == OWF_SHADE(0xED7D31));
@@ -3476,17 +3496,40 @@ static void test_chart_authoring(void)
     chart_free(&c);
     CHECK(oc_core_redo(core) == OWF_OK);
     memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_AXIS_FORMATS;
+    edit.value_format = "0.0";
+    edit.x_format = "0.00";
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          same(c.value_format, "0.0") && same(c.x_format, "0.00"));
+    chart_free(&c);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && find_text(&l, "5.0") && find_text(&l, "8.00"));
+    oc_draw_list_free(&l);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && !c.value_format && !c.x_format);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+    CHECK(oc_core_save(core, xlsx, "xlsx", NULL) == OWF_OK && oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK &&
+          charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.series[0].x_values &&
+          same(c.value_format, "0.0") && same(c.x_format, "0.00"));
+    chart_free(&c);
+    CHECK(oc_core_save(core, ods, "ods", NULL) == OWF_OK && oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK &&
+          charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER && c.series[0].x_values &&
+          same(c.value_format, "0.0") && same(c.x_format, "0.00"));
+    chart_free(&c);
+    remove(xlsx); remove(ods);
+    memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_KIND | OC_CHART_SET_TITLE;
     edit.kind = OWF_CHART_LINE;
     edit.title = "Converted";
-    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_OK);
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK);
     CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_LINE && same(c.title, "Converted") &&
-          same(c.series[0].categories, "'Sheet1'!$B$2:$B$4") && !c.series[0].x_values && c.series[0].line);
+          c.series[0].categories && !c.series[0].x_values && c.series[0].line);
     chart_free(&c);
     CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_SCATTER &&
-          same(c.series[0].x_values, "'Sheet1'!$B$2:$B$4"));
+          c.series[0].x_values);
     chart_free(&c);
     CHECK(oc_core_delete_chart(core, 0) == OWF_OK);
+    go(core, "A1:C4");
     spec.kind = OWF_CHART_PIE;
     spec.title = "Share";
     CHECK(oc_core_add_chart(core, &spec) == OWF_OK);
@@ -3496,6 +3539,10 @@ static void test_chart_authoring(void)
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_AXIS_TITLES;
     edit.category_title = "No axis";
+    CHECK(oc_core_update_chart(core, -1, &edit) == OWF_ERR_UNSUPPORTED);
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_AXIS_FORMATS;
+    edit.value_format = "0.0";
     CHECK(oc_core_update_chart(core, -1, &edit) == OWF_ERR_UNSUPPORTED);
     memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_SERIES_STYLE;

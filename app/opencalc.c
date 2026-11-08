@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.51 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.52 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -94,7 +94,7 @@ enum {
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
-    M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE, M_CHART_POINT_COLOUR,
+    M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE, M_CHART_POINT_COLOUR, M_CHART_AXIS_FORMATS,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -215,6 +215,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Chart Axis Titles...", NULL, 0, 0, (APTR)M_CHART_AXIS_TITLES },
     { NM_ITEM, "Chart Series Style...", NULL, 0, 0, (APTR)M_CHART_SERIES_STYLE },
     { NM_ITEM, "Chart Data Point Colour...", NULL, 0, 0, (APTR)M_CHART_POINT_COLOUR },
+    { NM_ITEM, "Chart Axis Number Formats...", NULL, 0, 0, (APTR)M_CHART_AXIS_FORMATS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3167,6 +3168,50 @@ static void do_chart_axis_titles(void)
     result(rc, "Chart axis titles changed.");
 }
 
+static void do_chart_axis_formats(void)
+{
+    owf_chart *charts = NULL;
+    oc_chart_edit_spec edit;
+    char initial[384], entered[384], *separator, *value, *x;
+    int index = oc_core_selected_chart(core), n = 0, rc, scatter;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Axis Number Formats."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL);
+        else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    if (charts[index].kind == OWF_CHART_PIE) {
+        owf_charts_free(charts, n);
+        set_status("Pie and doughnut charts do not have value axes to format.");
+        return;
+    }
+    scatter = charts[index].kind == OWF_CHART_SCATTER;
+    snprintf(initial, sizeof initial, "%s | %s", charts[index].value_format ? charts[index].value_format : "",
+             charts[index].x_format ? charts[index].x_format : "");
+    owf_charts_free(charts, n);
+    if (!text_requester("Chart Axis Number Formats", "Value/Y format | Scatter X format",
+                        initial, entered, sizeof entered)) return;
+    separator = strchr(entered, '|');
+    if (!separator) {
+        set_status("Separate the two formats with |; leave either side empty to inherit the data format.");
+        return;
+    }
+    *separator++ = 0;
+    value = trim_text(entered);
+    x = trim_text(separator);
+    if (!scatter && *x) {
+        set_status("Only scatter charts have a numeric X-axis format; leave the right side empty.");
+        return;
+    }
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_AXIS_FORMATS;
+    edit.value_format = value;
+    edit.x_format = x;
+    result(oc_core_update_chart(core, index, &edit), "Chart axis number formats changed.");
+}
+
 static int chart_series_colour(const char *text, unsigned long *colour)
 {
     static const char *const names[] = { "red", "green", "blue", "orange", "yellow", "grey", "purple" };
@@ -3458,6 +3503,7 @@ static void menu_action(ULONG id)
     case M_CHART_AXIS_TITLES: do_chart_axis_titles(); break;
     case M_CHART_SERIES_STYLE: do_chart_series_style(); break;
     case M_CHART_POINT_COLOUR: do_chart_point_colour(); break;
+    case M_CHART_AXIS_FORMATS: do_chart_axis_formats(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");

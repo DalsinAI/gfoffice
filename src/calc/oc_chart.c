@@ -432,12 +432,13 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     owf_chart *chart;
     oc_undo *undo;
     char *title = NULL, *category_title = NULL, *value_title = NULL;
+    char *value_format = NULL, *x_format = NULL;
     int n = 0, rc, i;
     if (!core || !spec || !spec->set ||
         (spec->set & ~(OC_CHART_SET_KIND | OC_CHART_SET_GROUPING | OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND |
                        OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS |
                        OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES | OC_CHART_SET_AXIS_TITLES |
-                       OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR)) ||
+                       OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR | OC_CHART_SET_AXIS_FORMATS)) ||
         ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
         ((spec->set & OC_CHART_SET_GROUPING) &&
          (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
@@ -513,15 +514,29 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         owf_free(value_title);
         return OWF_ERR_UNSUPPORTED;
     }
-    if (((spec->set & (OC_CHART_SET_VALUE_AXIS | OC_CHART_SET_AXIS_TITLES)) &&
+    if (((spec->set & (OC_CHART_SET_VALUE_AXIS | OC_CHART_SET_AXIS_TITLES | OC_CHART_SET_AXIS_FORMATS)) &&
          ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) == OWF_CHART_PIE) ||
         ((spec->set & (OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES)) &&
+         ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_SCATTER) ||
+        ((spec->set & OC_CHART_SET_AXIS_FORMATS) && spec->x_format && *spec->x_format &&
          ((spec->set & OC_CHART_SET_KIND) ? spec->kind : chart->kind) != OWF_CHART_SCATTER)) {
         owf_charts_free(charts, n);
         owf_free(title);
         owf_free(category_title);
         owf_free(value_title);
         return OWF_ERR_UNSUPPORTED;
+    }
+    if ((spec->set & OC_CHART_SET_AXIS_FORMATS) && spec->value_format && *spec->value_format &&
+        !(value_format = oc_strdup(spec->value_format))) {
+        owf_charts_free(charts, n);
+        owf_free(title); owf_free(category_title); owf_free(value_title);
+        return OWF_ERR_MEMORY;
+    }
+    if ((spec->set & OC_CHART_SET_AXIS_FORMATS) && spec->x_format && *spec->x_format &&
+        !(x_format = oc_strdup(spec->x_format))) {
+        owf_charts_free(charts, n);
+        owf_free(title); owf_free(category_title); owf_free(value_title); owf_free(value_format);
+        return OWF_ERR_MEMORY;
     }
     if (spec->set & OC_CHART_SET_KIND) {
         int was_scatter = chart->kind == OWF_CHART_SCATTER;
@@ -567,6 +582,13 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         chart->xmax = spec->xmax;
     }
     if (spec->set & OC_CHART_SET_X_GRIDLINES) chart->x_gridlines = !!spec->x_gridlines;
+    if (spec->set & OC_CHART_SET_AXIS_FORMATS) {
+        owf_free(chart->value_format);
+        owf_free(chart->x_format);
+        chart->value_format = value_format;
+        chart->x_format = x_format;
+        value_format = x_format = NULL;
+    }
     if (spec->set & OC_CHART_SET_SERIES_STYLE) {
         owf_chart_series *series = &chart->series[spec->series];
         series->colour = spec->series_colour;
@@ -589,6 +611,8 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     owf_free(title);
     owf_free(category_title);
     owf_free(value_title);
+    owf_free(value_format);
+    owf_free(x_format);
     return rc;
 }
 
