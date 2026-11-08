@@ -207,18 +207,24 @@ static void chart_point_value(const owf_cell *c, owf_chart_point *p, int x)
     else { p->value = c->number; p->has_value = 1; }
 }
 
-static void authored_chart_free(owf_chart *chart)
+static void authored_series_free(owf_chart_series *series, int nseries)
 {
     int s, p;
-    if (!chart) return;
-    for (s = 0; s < chart->nseries; s++) {
-        owf_chart_series *se = &chart->series[s];
+    for (s = 0; series && s < nseries; s++) {
+        owf_chart_series *se = &series[s];
         for (p = 0; p < se->npoints; p++) owf_free(se->points[p].label);
         owf_free(se->points); owf_free(se->name); owf_free(se->name_cell);
         owf_free(se->values); owf_free(se->categories); owf_free(se->x_values);
         owf_free(se->label_format); owf_free(se->format);
     }
-    owf_free(chart->series); owf_free(chart->title);
+    owf_free(series);
+}
+
+static void authored_chart_free(owf_chart *chart)
+{
+    if (!chart) return;
+    authored_series_free(chart->series, chart->nseries);
+    owf_free(chart->title);
     owf_free(chart->value_format); owf_free(chart->x_format);
     memset(chart, 0, sizeof *chart);
 }
@@ -462,6 +468,49 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
     rc = keep_authored_charts(core, charts, n, index, undo);
     owf_charts_free(charts, n);
     owf_free(title);
+    return rc;
+}
+
+int oc_core_set_chart_data(oc_core *core, int index, const owf_range *range, const oc_chart_data_spec *spec)
+{
+    owf_chart *charts = NULL, made;
+    owf_chart *chart;
+    oc_chart_spec build;
+    oc_undo *undo;
+    int n = 0, rc;
+    if (!core || !range || !spec || range->first_row > range->last_row || range->first_col > range->last_col ||
+        range->last_row >= OC_MAX_ROWS || range->last_col >= OC_MAX_COLS)
+        return OWF_ERR_FORMAT;
+    if (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core)))
+        return OWF_ERR_UNSUPPORTED;
+    if (index < 0) index = oc_core_selected_chart(core);
+    if ((rc = owf_sheet_charts(core->book, core->sheet, &charts, &n)) != OWF_OK)
+        return rc;
+    if (index < 0 || index >= n) { owf_charts_free(charts, n); return OWF_ERR_UNSUPPORTED; }
+    chart = &charts[index];
+    memset(&build, 0, sizeof build);
+    build.kind = chart->kind;
+    build.grouping = chart->grouping;
+    build.first_row_labels = !!spec->first_row_labels;
+    build.first_col_categories = !!spec->first_col_categories;
+    build.series_by_rows = !!spec->series_by_rows;
+    memset(&made, 0, sizeof made);
+    if ((rc = authored_chart(core, &build, range, &made)) != OWF_OK) {
+        owf_charts_free(charts, n);
+        authored_chart_free(&made);
+        return rc;
+    }
+    authored_series_free(chart->series, chart->nseries);
+    chart->series = made.series;
+    chart->nseries = made.nseries;
+    made.series = NULL;
+    made.nseries = 0;
+    authored_chart_free(&made);
+    if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
+    rc = keep_authored_charts(core, charts, n, index, undo);
+    owf_charts_free(charts, n);
     return rc;
 }
 

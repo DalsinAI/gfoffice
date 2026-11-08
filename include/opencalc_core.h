@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.10.0"
+#define OC_CORE_VERSION "0.11.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -700,6 +700,19 @@ typedef struct {
     int label_pos;
 } oc_chart_edit_spec;
 int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spec); /* -1: selected */
+
+/* Rebuilds an existing chart's series from a range on the current sheet,
+ * preserving its presentation and placement. With series_by_rows, the first
+ * column names series and the first row supplies categories; otherwise the
+ * first row names series and the first column supplies categories. Scatter
+ * charts use the first data vector as X values. One undo step. */
+typedef struct {
+    int first_row_labels;
+    int first_col_categories;
+    int series_by_rows;
+} oc_chart_data_spec;
+int oc_core_set_chart_data(oc_core *core, int index, const owf_range *range,
+                           const oc_chart_data_spec *spec); /* -1: selected */
 
 /* ---- The status line ---- */
 

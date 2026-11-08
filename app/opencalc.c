@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.45 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.46 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -94,6 +94,7 @@ enum {
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
+    M_CHART_DATA,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -210,6 +211,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Merge Cells...", NULL, 0, 0, (APTR)M_MERGE },
     { NM_ITEM, "Unmerge Cells", NULL, 0, 0, (APTR)M_UNMERGE },
     { NM_ITEM, "Chart...", NULL, 0, 0, (APTR)M_CHART_FORMAT },
+    { NM_ITEM, "Chart Data...", NULL, 0, 0, (APTR)M_CHART_DATA },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3055,6 +3057,52 @@ static void do_format_chart(void)
     result(rc, "Chart formatted.");
 }
 
+static void do_chart_data(void)
+{
+    oc_chart_data_spec spec;
+    owf_range range;
+    char initial[128], entered[192], name[32], *p, *token;
+    int index = oc_core_selected_chart(core), bad = 0, rc;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Data."); return; }
+    oc_core_name_box(core, name, sizeof name);
+    snprintf(initial, sizeof initial, "%s columns headings categories", name);
+    if (!text_requester("Chart Data", "range columns/rows headings categories", initial, entered, sizeof entered)) return;
+    memset(&spec, 0, sizeof spec);
+    spec.first_row_labels = spec.first_col_categories = 1;
+    p = trim_text(entered);
+    token = p;
+    while (*p && !isspace((unsigned char)*p)) p++;
+    if (*p) *p++ = 0;
+    if (!oc_parse_range(token, &range)) {
+        set_status("Start with a cell range on this sheet, such as A1:D12.");
+        return;
+    }
+    p = trim_text(p);
+    while (*p && !bad) {
+        char *end = p;
+        token = p;
+        while (*end && !isspace((unsigned char)*end)) end++;
+        if (*end) *end++ = 0;
+        p = trim_text(end);
+        if (!strcasecmp(token, "columns")) spec.series_by_rows = 0;
+        else if (!strcasecmp(token, "rows")) spec.series_by_rows = 1;
+        else if (!strcasecmp(token, "headings")) spec.first_row_labels = 1;
+        else if (!strcasecmp(token, "noheadings")) spec.first_row_labels = 0;
+        else if (!strcasecmp(token, "categories")) spec.first_col_categories = 1;
+        else if (!strcasecmp(token, "nocategories")) spec.first_col_categories = 0;
+        else bad = 1;
+    }
+    if (bad) {
+        set_status("After the range use columns/rows, headings/noheadings and categories/nocategories.");
+        return;
+    }
+    rc = oc_core_set_chart_data(core, index, &range, &spec);
+    if (rc == OWF_ERR_UNSUPPORTED)
+        set_status("That range does not contain enough data for this chart type.");
+    else
+        result(rc, "Chart data changed.");
+}
+
 static void menu_action(ULONG id)
 {
     static const unsigned long fills[] = { 0, 0xFFF2A8UL, 0xCDEBC5UL, 0xC9DDF2UL, 0xE0E0E0UL, 0xF6C8C8UL };
@@ -3119,6 +3167,7 @@ static void menu_action(ULONG id)
     case M_COMMENT: do_comment(); break;
     case M_CHART: do_insert_chart(); break;
     case M_CHART_FORMAT: do_format_chart(); break;
+    case M_CHART_DATA: do_chart_data(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");

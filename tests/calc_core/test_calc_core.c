@@ -3241,6 +3241,8 @@ static void test_chart_authoring(void)
     static const char *const ods = "build/host/calc-core-authored-chart.ods";
     oc_chart_spec spec;
     oc_chart_edit_spec edit;
+    oc_chart_data_spec data_spec;
+    owf_range data_range;
     oc_core *core = fresh();
     owf_chart c;
     oc_draw_list l;
@@ -3293,6 +3295,32 @@ static void test_chart_authoring(void)
     CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_COLUMN &&
           same(c.title, "Annual sales") && c.legend == 'r' && c.gridlines && !c.series[0].labels);
     chart_free(&c);
+
+    enter_at(core, "E1", "Month"); enter_at(core, "F1", "Plan"); enter_at(core, "G1", "Actual");
+    enter_at(core, "E2", "Jan"); enter_at(core, "F2", "40"); enter_at(core, "G2", "42");
+    enter_at(core, "E3", "Feb"); enter_at(core, "F3", "50"); enter_at(core, "G3", "47");
+    memset(&data_spec, 0, sizeof data_spec);
+    data_spec.first_row_labels = data_spec.first_col_categories = 1;
+    CHECK(oc_parse_range("E1:G3", &data_range));
+    CHECK(oc_core_set_chart_data(core, -1, &data_range, &data_spec) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.kind == OWF_CHART_COLUMN && same(c.title, "Annual sales") &&
+          c.from_col == 0 && c.from_row == 5 && c.nseries == 2 &&
+          same(c.series[0].name_cell, "'Sheet1'!$F$1") &&
+          same(c.series[0].categories, "'Sheet1'!$E$2:$E$3") &&
+          same(c.series[1].values, "'Sheet1'!$G$2:$G$3") && c.series[1].points[0].value == 42);
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          same(c.series[0].values, "'Sheet1'!$B$2:$B$4"));
+    chart_free(&c);
+    CHECK(oc_parse_range("A1:C4", &data_range));
+    data_spec.series_by_rows = 1;
+    CHECK(oc_core_set_chart_data(core, -1, &data_range, &data_spec) == OWF_OK);
+    CHECK(charts_of(core, 0, &c) == 1 && c.nseries == 3 &&
+          same(c.series[0].name_cell, "'Sheet1'!$A$2") &&
+          same(c.series[0].categories, "'Sheet1'!$B$1:$C$1") &&
+          same(c.series[2].values, "'Sheet1'!$B$4:$C$4"));
+    chart_free(&c);
+    CHECK(oc_core_undo(core) == OWF_OK);
 
     spec.kind = OWF_CHART_LINE;
     spec.title = "Trend";
