@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.1.5"
+#define OC_CORE_VERSION "0.1.6"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -274,6 +274,23 @@ int oc_core_clear(oc_core *core, unsigned what);
 enum { OC_SORT_ASCENDING, OC_SORT_DESCENDING };
 int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header);
 
+/* ---- AutoFilter ----
+ * Turns the selection into a table with filter buttons. A one-cell
+ * selection uses the sheet's used rectangle; otherwise one rectangular
+ * selection with a heading row and at least one data row is required.
+ * Turning it off also shows rows hidden by its value filter. Undoable. */
+int oc_core_has_autofilter(const oc_core *core);
+int oc_core_set_autofilter(oc_core *core, int enabled);
+/* Distinct displayed values below the heading for one of the AutoFilter's
+ * columns, sorted as text. The strings and array are freed with
+ * oc_choices_free. At most 1000 are returned. */
+int oc_core_filter_choices(oc_core *core, unsigned col, char ***items, int *n);
+/* Shows only rows whose displayed value in col equals value (ASCII case
+ * insensitive). NULL removes the value condition but leaves the buttons.
+ * The current implementation has one value condition at a time; choosing
+ * another column replaces it. Undoable and written to XLSX/ODS. */
+int oc_core_filter_value(oc_core *core, unsigned col, const char *value);
+
 /* Merges the selection's one rectangular range, or unmerges every merged
  * range it touches. A merge keeps the top-left cell. When another nonempty
  * cell would be discarded and discard is zero, nothing changes and
@@ -419,7 +436,8 @@ enum {
     OC_HIT_NONE, OC_HIT_CELL, OC_HIT_COL_HEADER, OC_HIT_ROW_HEADER, OC_HIT_CORNER,
     OC_HIT_COL_EDGE,        /* a column letter's right edge: drag to size it */
     OC_HIT_ROW_EDGE,
-    OC_HIT_DROPDOWN         /* the active cell's list's dropdown button (row, col: the cell) */
+    OC_HIT_DROPDOWN,        /* the active cell's list's dropdown button (row, col: the cell) */
+    OC_HIT_FILTER           /* an AutoFilter button (row: heading, col: filtered column) */
 };
 typedef struct {
     int kind;

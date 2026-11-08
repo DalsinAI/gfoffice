@@ -400,17 +400,35 @@ int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
         hit->row = st->sel.row;
         hit->col = st->sel.col;
     } else {
+        const owf_sheet *sheet = oc_sheet(core);
         ri = find_line(rl, nr, y);
         ci = find_line(cl, nc, x);
         memset(hit, 0, sizeof *hit);
         if (ri >= 0 && ci >= 0) {
-            hit->kind = OC_HIT_CELL;
             hit->row = rl[ri].index;
             hit->col = cl[ci].index;
             hit->x = cl[ci].pos;
             hit->y = rl[ri].pos;
             hit->w = cl[ci].size;
             hit->h = rl[ri].size;
+            if (sheet->has_autofilter && hit->row == sheet->autofilter.first_row &&
+                hit->col >= sheet->autofilter.first_col && hit->col <= sheet->autofilter.last_col) {
+                int size = hit->h - 3, cap = 17 * core->zoom / 100;
+                int fx, fy;
+                if (size > cap) size = cap;
+                if (size > hit->w - 2) size = hit->w - 2;
+                fx = hit->x + hit->w - 2 - size;
+                fy = hit->y + hit->h - 2 - size;
+                hit->kind = size >= 5 && x >= fx && x < fx + size && y >= fy && y < fy + size
+                                ? OC_HIT_FILTER : OC_HIT_CELL;
+                if (hit->kind == OC_HIT_FILTER) {
+                    hit->x = fx;
+                    hit->y = fy;
+                    hit->w = hit->h = size;
+                }
+            } else {
+                hit->kind = OC_HIT_CELL;
+            }
         }
     }
     free(rl);

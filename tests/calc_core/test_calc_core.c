@@ -82,6 +82,18 @@ static int empty(oc_core *core, const char *cell)
     return !c || (c->type == OWF_VALUE_EMPTY && !c->formula);
 }
 
+static int row_hidden(const oc_core *core, unsigned row)
+{
+    const owf_sheet *sheet = &oc_core_book(core)->sheets[oc_core_sheet(core)];
+    int lo = 0, hi = sheet->nrows;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (sheet->rows[mid].row < row) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo < sheet->nrows && sheet->rows[lo].row == row && sheet->rows[lo].hidden;
+}
+
 static const char *active_name(oc_core *core)
 {
     static char name[16];
@@ -2019,6 +2031,87 @@ static void test_autofilter(void)
     oc_core_free(core);
 }
 
+static void test_filter_commands(void)
+{
+    static const char *const cells[][2] = {
+        { "A1", "Name" }, { "B1", "Region" }, { "C1", "Amount" },
+        { "A2", "Alice" }, { "B2", "West" }, { "C2", "10" },
+        { "A3", "Bob" }, { "B3", "East" }, { "C3", "20" },
+        { "A4", "Cara" }, { "B4", "West" }, { "C4", "30" },
+        { "A5", "Dan" }, { "B5", "R&D" }, { "C5", "40" }
+    };
+    static const char *const path = "build/host/calc-core-filter.xlsx";
+    static const char *const ods = "build/host/calc-core-filter.ods";
+    oc_core *core = fresh();
+    owf_sheet *sheet;
+    oc_hit hit;
+    char **items = NULL;
+    int n = 0, i;
+    if (!core) return;
+    for (i = 0; i < (int)(sizeof cells / sizeof cells[0]); i++)
+        enter_at(core, cells[i][0], cells[i][1]);
+    go(core, "A1:C5");
+    CHECK(!oc_core_has_autofilter(core));
+    CHECK(oc_core_set_autofilter(core, 1) == OWF_OK && oc_core_has_autofilter(core));
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->autofilter.first_row == 0 && sheet->autofilter.last_row == 4 &&
+          sheet->autofilter.first_col == 0 && sheet->autofilter.last_col == 2);
+    CHECK(oc_view_hit(core, 40 + 64 - 10, 18 + 5, &hit) == OC_HIT_FILTER && hit.row == 0 && hit.col == 0);
+    CHECK(oc_core_filter_choices(core, 1, &items, &n) == OWF_OK && n == 3);
+    if (n == 3) {
+        CHECK_STR(items[0], "East");
+        CHECK_STR(items[1], "R&D");
+        CHECK_STR(items[2], "West");
+    }
+    oc_choices_free(items, n);
+    items = NULL;
+    n = 0;
+
+    CHECK(oc_core_filter_value(core, 1, "West") == OWF_OK);
+    CHECK(!row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "colId=\"1\"") &&
+          strstr(sheet->autofilter_xml, "val=\"West\""));
+    CHECK(oc_core_filter_choices(core, 1, &items, &n) == OWF_OK && n == 3); /* hidden values remain choices */
+    oc_choices_free(items, n);
+
+    CHECK(oc_core_filter_value(core, 1, "R&D") == OWF_OK);
+    CHECK(row_hidden(core, 1) && row_hidden(core, 2) && row_hidden(core, 3) && !row_hidden(core, 4));
+    CHECK(sheet->autofilter_xml && strstr(sheet->autofilter_xml, "val=\"R&amp;D\""));
+    CHECK(oc_core_undo(core) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(!row_hidden(core, 1) && row_hidden(core, 2) && !row_hidden(core, 3) && row_hidden(core, 4) &&
+          sheet->autofilter_xml && strstr(sheet->autofilter_xml, "val=\"West\""));
+    CHECK(oc_core_redo(core) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(row_hidden(core, 1) && !row_hidden(core, 4) && strstr(sheet->autofilter_xml, "R&amp;D"));
+    CHECK(oc_core_save(core, path, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->has_autofilter && sheet->autofilter_xml && strstr(sheet->autofilter_xml, "R&amp;D") &&
+          row_hidden(core, 1) && !row_hidden(core, 4));
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    sheet = &oc_core_book(core)->sheets[0];
+    CHECK(sheet->has_autofilter && sheet->autofilter_xml && strstr(sheet->autofilter_xml, "R&amp;D") &&
+          row_hidden(core, 1) && !row_hidden(core, 4));
+
+    CHECK(oc_core_filter_value(core, 1, NULL) == OWF_OK && sheet->has_autofilter && !sheet->autofilter_xml);
+    CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && !row_hidden(core, 3) && !row_hidden(core, 4));
+    CHECK(owf_sheet_set_row(sheet, 3, sheet->default_height, 1) == 0); /* a manually hidden matching row */
+    CHECK(oc_core_filter_value(core, 1, "West") == OWF_OK && row_hidden(core, 2) && row_hidden(core, 3) && row_hidden(core, 4));
+    CHECK(oc_core_filter_value(core, 1, NULL) == OWF_OK && !row_hidden(core, 2) && row_hidden(core, 3) && !row_hidden(core, 4));
+    CHECK(owf_sheet_set_row(sheet, 3, sheet->default_height, 0) == 0);
+    CHECK(oc_core_set_autofilter(core, 0) == OWF_OK && !oc_core_has_autofilter(core));
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_has_autofilter(core));
+    oc_core_free(core);
+
+    core = fresh();
+    if (!core) return;
+    enter_at(core, "A1", "Only");
+    CHECK(oc_core_set_autofilter(core, 1) == OWF_ERR_UNSUPPORTED); /* no data row */
+    oc_core_free(core);
+}
+
 /* Whether a saved file (a zip) holds a part. */
 static int saved_has(const char *path, const char *part)
 {
@@ -3452,6 +3545,7 @@ int main(void)
     test_comments();
     test_validation();
     test_autofilter();
+    test_filter_commands();
     test_drawings_kept();
     test_valid_typing();
     test_valid_fixture();

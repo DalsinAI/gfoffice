@@ -40,12 +40,15 @@ typedef struct oc_undo {
     /* CELLS */
     int nsaves;
     oc_cellsave *saves;
-    /* LAYOUT: a sheet's column and row lists and frozen panes */
+    /* LAYOUT: a sheet's column and row lists, frozen panes and AutoFilter */
     int lsheet;
     int ncols, nrows;
     owf_colinfo *cols;
     owf_rowinfo *rows;
     unsigned freeze_rows, freeze_cols;
+    int has_autofilter;
+    owf_range autofilter;
+    char *autofilter_xml;
     /* SHIFT: rows or columns to insert (count > 0) or delete to go back
        (the step of an insert: what went in is empty again when it is undone) */
     int shift_sheet, shift_axis, shift_count;

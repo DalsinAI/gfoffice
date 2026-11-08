@@ -224,6 +224,7 @@ void oc_undo_free(oc_undo *u)
     free(u->saves);
     free(u->cols);
     free(u->rows);
+    free(u->autofilter_xml);
     owf_book_free(u->book);
     free(u->states);
     free(u->part_name);
@@ -317,7 +318,13 @@ int oc_undo_save_layout(oc_core *core, oc_undo *u, int sheet)
     u->nrows = s->nrows;
     u->freeze_rows = s->freeze_rows;
     u->freeze_cols = s->freeze_cols;
+    u->has_autofilter = s->has_autofilter;
+    u->autofilter = s->autofilter;
+    if (s->autofilter_xml && !(u->autofilter_xml = oc_strdup(s->autofilter_xml)))
+        return OWF_ERR_MEMORY;
     u->bytes += (long)s->ncols * (long)sizeof *s->cols + (long)s->nrows * (long)sizeof *s->rows;
+    if (u->autofilter_xml)
+        u->bytes += (long)strlen(u->autofilter_xml) + 1;
     return OWF_OK;
 }
 
@@ -500,6 +507,11 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
         }
         sheet->freeze_rows = u->freeze_rows;
         sheet->freeze_cols = u->freeze_cols;
+        sheet->has_autofilter = u->has_autofilter;
+        sheet->autofilter = u->autofilter;
+        free(sheet->autofilter_xml);
+        sheet->autofilter_xml = u->autofilter_xml;
+        u->autofilter_xml = NULL;
     }
     if (u->kind == OC_UNDO_SHIFT && u->shift_sheet < core->book->nsheets)
         owf_calc_shift(core->calc, u->shift_sheet, u->shift_axis, u->shift_at, u->shift_count);

@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.32 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.33 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -102,7 +102,8 @@ enum {
     M_BORDER_ALL = 180, M_BORDER_OUTLINE, M_BORDER_BOTTOM, M_BORDER_NONE,
     M_COL_WIDTH = 190, M_ROW_HEIGHT, M_HIDE_COLS, M_SHOW_COLS, M_HIDE_ROWS, M_SHOW_ROWS,
     M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
-    M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE
+    M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE,
+    M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR
 };
 
 static struct NewMenu menus[] = {
@@ -216,6 +217,10 @@ static struct NewMenu menus[] = {
     { NM_TITLE, "Data", NULL, 0, 0, NULL },
     { NM_ITEM, "Sort Ascending...", NULL, 0, 0, (APTR)M_SORT_ASC },
     { NM_ITEM, "Sort Descending...", NULL, 0, 0, (APTR)M_SORT_DESC },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "AutoFilter", NULL, 0, 0, (APTR)M_AUTOFILTER },
+    { NM_ITEM, "Filter by Active Cell", NULL, 0, 0, (APTR)M_FILTER_ACTIVE },
+    { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_FILTER_CLEAR },
 
     { NM_TITLE, "Sheet", NULL, 0, 0, NULL },
     { NM_ITEM, "Rename...", NULL, 0, 0, (APTR)M_SHEET_RENAME },
@@ -2277,6 +2282,7 @@ static void about(void)
          "GFOpenCalc, the spreadsheet of the GFOffice Suite.\n\n"
          "GFOpenGadTools interface\n"
          "libowf workbooks and formula engine\n"
+         "Editable AutoFilter value lists\n"
          "Searchable PDF export and GFOpenPrint printing\n\n"
          "MIT licence, Copyright (c) 2026 AmiCradle Team.");
 }
@@ -2495,6 +2501,30 @@ static void do_merge(int merge)
         result(rc, merge ? "Cells merged." : "Cells unmerged.");
 }
 
+static void do_filter_active(void)
+{
+    const owf_sheet *sheet = &oc_core_book(core)->sheets[oc_core_sheet(core)];
+    const owf_cell *cell;
+    const char *display;
+    unsigned row, col;
+    char value[256];
+    oc_core_active(core, &row, &col);
+    if (!sheet->has_autofilter || row <= sheet->autofilter.first_row || row > sheet->autofilter.last_row ||
+        col < sheet->autofilter.first_col || col > sheet->autofilter.last_col) {
+        set_status("Select a data cell inside an AutoFilter range.");
+        return;
+    }
+    cell = owf_sheet_find(sheet, row, col);
+    if (cell && cell->type == OWF_VALUE_TEXT)
+        display = cell->text ? cell->text : "";
+    else {
+        oc_core_cell_text(core, oc_core_sheet(core), row, col, value, sizeof value);
+        display = value;
+    }
+    result(oc_core_filter_value(core, col, display), display[0] ? "Rows filtered by the active value."
+                                                                : "Rows filtered to blanks.");
+}
+
 static void menu_action(ULONG id)
 {
     static const unsigned long fills[] = { 0, 0xFFF2A8UL, 0xCDEBC5UL, 0xC9DDF2UL, 0xE0E0E0UL, 0xF6C8C8UL };
@@ -2578,6 +2608,21 @@ static void menu_action(ULONG id)
     case M_SHOW_ROWS: result(oc_core_hide(core, 0, 0), "Rows shown."); break;
     case M_SORT_ASC: do_sort(OC_SORT_ASCENDING); break;
     case M_SORT_DESC: do_sort(OC_SORT_DESCENDING); break;
+    case M_AUTOFILTER:
+        if (oc_core_has_autofilter(core))
+            result(oc_core_set_autofilter(core, 0), "AutoFilter removed; every row is shown.");
+        else {
+            int rc = oc_core_set_autofilter(core, 1);
+            if (rc == OWF_ERR_UNSUPPORTED) set_status("Select a table with a heading row and at least one data row.");
+            else result(rc, "AutoFilter added. Click a heading's arrow to choose a value.");
+        }
+        break;
+    case M_FILTER_ACTIVE: do_filter_active(); break;
+    case M_FILTER_CLEAR:
+        if (!oc_core_has_autofilter(core)) set_status("This sheet has no AutoFilter.");
+        else result(oc_core_filter_value(core, oc_core_book(core)->sheets[oc_core_sheet(core)].autofilter.first_col, NULL),
+                    "Every AutoFilter row is shown.");
+        break;
     case M_MERGE: do_merge(1); break;
     case M_UNMERGE: do_merge(0); break;
     case M_SHEET_RENAME: do_rename_sheet(oc_core_sheet(core)); break;
@@ -3070,22 +3115,17 @@ static void bar_to_core(void)
     owf_free(utf8);
 }
 
-/* The active cell's list: its choices in a box under its button (bx, by, bw, bh: in the window), one picked
- * with the pointer or the arrows and Return, put in the cell as if typed; Escape or a click elsewhere
- * closes it. Up to 12 show at once, the rest by the arrows and the wheel. */
+/* Choices in a box under a button (bx, by, bw, bh: in the window). Escape
+ * or a click elsewhere returns -1. Up to 12 show at once, the rest by the
+ * arrows and the wheel. */
 #define LIST_SHOWN 12
-static void pick_from_list(int bx, int by, int bw, int bh)
+static int choice_popup(int bx, int by, int bw, int bh, char **items, int n, const char *now)
 {
-    char **items = NULL, latin[256];
-    int n = 0, i, w = 0, ih = fh + 4, shown, top = 0, at = 0, done = 0, chosen = -1, lw, lh, lx, ly;
+    char latin[256];
+    int i, w = 0, ih = fh + 4, shown, top = 0, at = 0, done = 0, chosen = -1, lw, lh, lx, ly;
     struct RastPort trp;
     struct Window *pw;
-    const char *now;
-    if (!core || oc_core_list_choices(core, &items, &n) != OWF_OK || !n) {
-        oc_choices_free(items, n);
-        set_status(n ? "Not enough memory for the list." : "The list has no choices.");
-        return;
-    }
+    if (!items || n <= 0) return -1;
     InitRastPort(&trp);
     SetFont(&trp, font);
     for (i = 0; i < n; i++) {
@@ -3093,7 +3133,6 @@ static void pick_from_list(int bx, int by, int bw, int bh)
         int tw = TextLength(&trp, (STRPTR)latin, (ULONG)k);
         if (tw > w) w = tw;
     }
-    now = oc_core_input_text(core);                  /* the one the cell holds, chosen to start with */
     for (i = 0; now && i < n; i++)
         if (!strcmp(items[i], now)) { at = i; break; }
     shown = n < LIST_SHOWN ? n : LIST_SHOWN;
@@ -3112,8 +3151,7 @@ static void pick_from_list(int bx, int by, int bw, int bh)
                                   IDCMP_INACTIVEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_EXTENDEDMOUSE,
                         TAG_DONE);
     if (!pw) {
-        oc_choices_free(items, n);
-        return;
+        return -1;
     }
     while (!done) {
         struct RastPort *rp = pw->RPort;
@@ -3165,13 +3203,57 @@ static void pick_from_list(int bx, int by, int bw, int bh)
         }
     }
     CloseWindow(pw);
+    ActivateWindow(win);
+    return chosen;
+}
+
+/* The active cell's validation list: a choice is put in the cell as if typed. */
+static void pick_from_list(int bx, int by, int bw, int bh)
+{
+    char **items = NULL;
+    int n = 0, chosen;
+    if (!core || oc_core_list_choices(core, &items, &n) != OWF_OK || !n) {
+        oc_choices_free(items, n);
+        set_status(n ? "Not enough memory for the list." : "The list has no choices.");
+        return;
+    }
+    chosen = choice_popup(bx, by, bw, bh, items, n, oc_core_input_text(core));
     if (chosen >= 0) {
         unsigned row, col;
         oc_core_active(core, &row, &col);
-        if (result(oc_core_set_input(core, oc_core_sheet(core), row, col, items[chosen]), NULL)) set_status("Chosen from the list.");
+        if (result(oc_core_set_input(core, oc_core_sheet(core), row, col, items[chosen]), NULL))
+            set_status("Chosen from the list.");
     }
     oc_choices_free(items, n);
-    ActivateWindow(win);
+    refresh();
+}
+
+/* An AutoFilter heading's arrow: every distinct displayed value, plus All.
+ * A blank value has a visible label but remains an empty string in the core. */
+static void pick_filter(unsigned col, int bx, int by, int bw, int bh)
+{
+    char **items = NULL, **shown = NULL;
+    int n = 0, i, chosen, rc = oc_core_filter_choices(core, col, &items, &n);
+    if (rc != OWF_OK) {
+        oc_choices_free(items, n);
+        result(rc, NULL);
+        return;
+    }
+    shown = malloc((size_t)(n + 1) * sizeof *shown);
+    if (!shown) {
+        oc_choices_free(items, n);
+        result(OWF_ERR_MEMORY, NULL);
+        return;
+    }
+    shown[0] = (char *)"(All)";
+    for (i = 0; i < n; i++) shown[i + 1] = items[i][0] ? items[i] : (char *)"(Blanks)";
+    chosen = choice_popup(bx, by, bw, bh, shown, n + 1, NULL);
+    if (chosen >= 0) {
+        rc = oc_core_filter_value(core, col, chosen ? items[chosen - 1] : NULL);
+        result(rc, chosen ? "Rows filtered by value." : "Every AutoFilter row is shown.");
+    }
+    free(shown);
+    oc_choices_free(items, n);
     refresh();
 }
 
@@ -3204,6 +3286,10 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
     oc_view_hit(core, mx - grid_box.x, my - grid_box.y, &hit);
     if (hit.kind == OC_HIT_DROPDOWN) {               /* the list's button: its choices */
         pick_from_list(grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
+        return;
+    }
+    if (hit.kind == OC_HIT_FILTER) {                 /* an AutoFilter heading's distinct values */
+        pick_filter(hit.col, grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
         return;
     }
     if (hit.kind == OC_HIT_COL_EDGE || hit.kind == OC_HIT_ROW_EDGE) {
