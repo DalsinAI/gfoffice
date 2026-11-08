@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.50 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.51 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -94,7 +94,7 @@ enum {
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
-    M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE,
+    M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE, M_CHART_POINT_COLOUR,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -214,6 +214,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Chart Data...", NULL, 0, 0, (APTR)M_CHART_DATA },
     { NM_ITEM, "Chart Axis Titles...", NULL, 0, 0, (APTR)M_CHART_AXIS_TITLES },
     { NM_ITEM, "Chart Series Style...", NULL, 0, 0, (APTR)M_CHART_SERIES_STYLE },
+    { NM_ITEM, "Chart Data Point Colour...", NULL, 0, 0, (APTR)M_CHART_POINT_COLOUR },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3272,6 +3273,77 @@ static void do_chart_series_style(void)
     result(oc_core_update_chart(core, index, &edit), "Chart series style changed.");
 }
 
+static void do_chart_point_colour(void)
+{
+    owf_chart *charts = NULL;
+    const owf_chart_series *series;
+    oc_chart_edit_spec edit;
+    char entered[32] = "1", label[48], colour[32], *end;
+    unsigned long chosen_colour;
+    long chosen_series, chosen_point;
+    int index = oc_core_selected_chart(core), n = 0, rc;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Data Point Colour."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL);
+        else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    if (!charts[index].nseries) {
+        owf_charts_free(charts, n);
+        set_status("This chart has no series to format.");
+        return;
+    }
+    snprintf(label, sizeof label, "Series number (1-%d)", charts[index].nseries);
+    if (!text_requester("Chart Data Point", label, entered, entered, sizeof entered)) {
+        owf_charts_free(charts, n);
+        return;
+    }
+    chosen_series = strtol(trim_text(entered), &end, 10);
+    if (*end || chosen_series < 1 || chosen_series > charts[index].nseries) {
+        owf_charts_free(charts, n);
+        set_status("Choose an existing series number.");
+        return;
+    }
+    series = &charts[index].series[chosen_series - 1];
+    if (!series->npoints) {
+        owf_charts_free(charts, n);
+        set_status("That series has no data points to format.");
+        return;
+    }
+    strcpy(entered, "1");
+    snprintf(label, sizeof label, "Point number (1-%d)", series->npoints);
+    if (!text_requester("Chart Data Point", label, entered, entered, sizeof entered)) {
+        owf_charts_free(charts, n);
+        return;
+    }
+    chosen_point = strtol(trim_text(entered), &end, 10);
+    if (*end || chosen_point < 1 || chosen_point > series->npoints) {
+        owf_charts_free(charts, n);
+        set_status("Choose an existing data point number.");
+        return;
+    }
+    chosen_colour = series->points[chosen_point - 1].colour;
+    if (OWF_SHADE_SET(chosen_colour))
+        snprintf(colour, sizeof colour, "#%06lx", OWF_SHADE_RGB(chosen_colour));
+    else
+        strcpy(colour, "auto");
+    owf_charts_free(charts, n);
+    if (!text_requester("Chart Data Point Colour", "auto, #RRGGBB or a named colour",
+                        colour, colour, sizeof colour)) return;
+    if (!chart_series_colour(trim_text(colour), &chosen_colour)) {
+        set_status("Use auto, #RRGGBB, red, green, blue, orange, yellow, grey or purple.");
+        return;
+    }
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_POINT_COLOUR;
+    edit.series = (int)chosen_series - 1;
+    edit.point = (int)chosen_point - 1;
+    edit.point_colour = chosen_colour;
+    result(oc_core_update_chart(core, index, &edit), "Chart data point colour changed.");
+}
+
 static void do_chart_data(void)
 {
     oc_chart_data_spec spec;
@@ -3385,6 +3457,7 @@ static void menu_action(ULONG id)
     case M_CHART_DATA: do_chart_data(); break;
     case M_CHART_AXIS_TITLES: do_chart_axis_titles(); break;
     case M_CHART_SERIES_STYLE: do_chart_series_style(); break;
+    case M_CHART_POINT_COLOUR: do_chart_point_colour(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");

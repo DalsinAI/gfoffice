@@ -437,7 +437,7 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         (spec->set & ~(OC_CHART_SET_KIND | OC_CHART_SET_GROUPING | OC_CHART_SET_TITLE | OC_CHART_SET_LEGEND |
                        OC_CHART_SET_GRIDLINES | OC_CHART_SET_LABELS | OC_CHART_SET_VALUE_AXIS |
                        OC_CHART_SET_X_AXIS | OC_CHART_SET_X_GRIDLINES | OC_CHART_SET_AXIS_TITLES |
-                       OC_CHART_SET_SERIES_STYLE)) ||
+                       OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR)) ||
         ((spec->set & OC_CHART_SET_KIND) && (spec->kind < OWF_CHART_COLUMN || spec->kind > OWF_CHART_SCATTER)) ||
         ((spec->set & OC_CHART_SET_GROUPING) &&
          (spec->grouping < OWF_CHART_CLUSTERED || spec->grouping > OWF_CHART_PERCENT)) ||
@@ -458,7 +458,10 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
          (spec->series < 0 || (spec->series_colour && !OWF_SHADE_SET(spec->series_colour)) ||
           (spec->series_line != 0 && spec->series_line != 1) ||
           spec->series_marker < OWF_MARKER_AUTO || spec->series_marker > OWF_MARKER_DOT ||
-          spec->series_marker_size < 0 || spec->series_marker_size > 72)))
+          spec->series_marker_size < 0 || spec->series_marker_size > 72)) ||
+        ((spec->set & OC_CHART_SET_POINT_COLOUR) &&
+         (spec->series < 0 || spec->point < 0 ||
+          (spec->point_colour && !OWF_SHADE_SET(spec->point_colour)))))
         return OWF_ERR_FORMAT;
     if (oc_sheet(core)->drawing && oc_drawing_has_nonchart(core->book, oc_sheet(core)))
         return OWF_ERR_UNSUPPORTED;
@@ -484,7 +487,16 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         return OWF_ERR_MEMORY;
     }
     chart = &charts[index];
-    if ((spec->set & OC_CHART_SET_SERIES_STYLE) && spec->series >= chart->nseries) {
+    if ((spec->set & (OC_CHART_SET_SERIES_STYLE | OC_CHART_SET_POINT_COLOUR)) &&
+        spec->series >= chart->nseries) {
+        owf_charts_free(charts, n);
+        owf_free(title);
+        owf_free(category_title);
+        owf_free(value_title);
+        return OWF_ERR_UNSUPPORTED;
+    }
+    if ((spec->set & OC_CHART_SET_POINT_COLOUR) &&
+        spec->point >= chart->series[spec->series].npoints) {
         owf_charts_free(charts, n);
         owf_free(title);
         owf_free(category_title);
@@ -562,6 +574,8 @@ int oc_core_update_chart(oc_core *core, int index, const oc_chart_edit_spec *spe
         series->marker = spec->series_marker;
         series->marker_size = spec->series_marker_size;
     }
+    if (spec->set & OC_CHART_SET_POINT_COLOUR)
+        chart->series[spec->series].points[spec->point].colour = spec->point_colour;
     if (spec->set & OC_CHART_SET_LABELS)
         for (i = 0; i < chart->nseries; i++) {
             chart->series[i].labels = spec->labels;

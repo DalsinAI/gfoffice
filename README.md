@@ -265,7 +265,7 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.50 can turn a
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.51 can turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and
 cached values, supports clustered, stacked and percent grouping, keeps charts
@@ -293,9 +293,12 @@ XLSX and ODS; the structure-size guard makes this `owfcalc.library` 3.6.
 Format > Chart Series Style selects a series and edits its automatic or RGB
 colour, plus line visibility, marker shape and marker size on line/scatter
 charts. Reusable core API 0.15.0 applies the complete style in one undoable
-transaction; the existing
-shared chart model, native renderer and XLSX/ODS writers carry it without a
-new library ABI. Marker-only line and scatter series keep their chosen colour.
+transaction; the existing shared chart model, native renderer and XLSX/ODS
+writers carry it without a new library ABI. Marker-only line and scatter
+series keep their chosen colour.
+Format > Chart Data Point Colour and reusable core API 0.16.0 can override or
+restore the inherited colour of one point or pie slice, with native rendering,
+undo/redo and XLSX/ODS persistence through the existing shared point model.
 Drawings containing pictures or shapes are refused rather than
 destructively rewritten. It can also deep-copy
 a sheet's cells, formats, comments, rules, filters, local names, cursor and
