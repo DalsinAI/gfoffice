@@ -254,6 +254,11 @@ void owf_deck_free(owf_deck *deck);
  * index is out of range; the deck stays valid. A pointer to a slide or an
  * object stays good until the next one is added to the same array. */
 owf_slide *owf_deck_add_slide(owf_deck *deck, int at, int layout);   /* at -1: the end; layout -1: none */
+/* A deep copy of index, inserted at (outside 0..n: the end). Pictures,
+ * imported XML and package parts remain shared by their immutable deck
+ * indexes; every allocation owned by the slide and its objects is copied.
+ * File-local object IDs are cleared so a saved duplicate does not reuse them. */
+owf_slide *owf_deck_duplicate_slide(owf_deck *deck, int index, int at);
 int owf_deck_delete_slide(owf_deck *deck, int index);
 int owf_deck_move_slide(owf_deck *deck, int from, int to);
 owf_master *owf_deck_add_master(owf_deck *deck, const char *name);

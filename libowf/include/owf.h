@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.4.0"
+#define OWF_VERSION "1.4.1"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \

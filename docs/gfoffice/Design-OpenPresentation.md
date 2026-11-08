@@ -213,6 +213,7 @@ typedef struct owf_deck {
 owf_deck *owf_deck_new(int width, int height);   /* one master, the standard layouts */
 void owf_deck_free(owf_deck *deck);
 owf_slide *owf_deck_add_slide(owf_deck *deck, int at, int layout);   /* at -1: the end */
+owf_slide *owf_deck_duplicate_slide(owf_deck *deck, int index, int at);
 int owf_deck_delete_slide(owf_deck *deck, int index);
 int owf_deck_move_slide(owf_deck *deck, int from, int to);
 owf_obj *owf_slide_add(owf_slide *slide, owf_obj_kind kind);

@@ -89,5 +89,6 @@
 #pragma libcall OWFPresentBase owf_pdf_text_width 1ec 3210805
 #pragma libcall OWFPresentBase owf_pdf_winansi 1f2 001
 #pragma libcall OWFPresentBase owf_pdf_fallback 1f8 001
+#pragma libcall OWFPresentBase owf_deck_duplicate_slide 1fe 10803
 
 #endif /* PRAGMAS_OWFPRESENT_PRAGMAS_H */

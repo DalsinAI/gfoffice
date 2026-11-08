@@ -16,12 +16,14 @@
  * document model's owf_doc is larger and a program's size check refuses
  * 3.1. No call changes.
  *
+ * 3.3: owf_deck_duplicate_slide, a deep-copy primitive for the editor.
+ *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 2
-#define OWF_LIB_VERS "3.2"
-#define OWF_LIB_DATE "27.10.2026"
+#define OWF_LIB_REVISION 3
+#define OWF_LIB_VERS "3.3"
+#define OWF_LIB_DATE "8.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"

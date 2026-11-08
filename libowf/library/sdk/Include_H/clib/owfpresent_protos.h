@@ -97,6 +97,7 @@ int owf_pdf_page_count(const owf_pdf *pdf);
 int owf_pdf_text_width(const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size);
 int owf_pdf_winansi(unsigned long codepoint);
 const char * owf_pdf_fallback(unsigned long codepoint);
+owf_slide * owf_deck_duplicate_slide(owf_deck *deck, int index, int at);
 
 #ifdef __cplusplus
 }

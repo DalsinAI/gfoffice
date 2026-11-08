@@ -219,6 +219,29 @@ static void structural_slides(void)
     CHECK(!opr_slide_insert(u, d, 1, 0, &selected) && !opr_redo_can(u),
           "a new structural edit clears redo");
 
+    selected = 0;
+    CHECK(!opr_slide_duplicate(u, d, 0, 1, &selected) && selected == 1 && d->nslides == 4 &&
+          d->slides[1].name && !strcmp(d->slides[1].name, "Opening Copy") &&
+          !strcmp(text(d, 1, 0), "Opening title"), "duplicate a complete slide with a unique name");
+    CHECK(d->slides[1].objs != d->slides[0].objs &&
+          d->slides[1].objs[0].text.paras[0].runs[0].text != d->slides[0].objs[0].text.paras[0].runs[0].text,
+          "the duplicate owns its objects and text");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && d->nslides == 3 && slide == 0,
+          "undo removes the duplicate");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && d->nslides == 4 && slide == 1 &&
+          !strcmp(d->slides[1].name, "Opening Copy"), "redo restores the duplicate");
+
+    selected = 1;
+    CHECK(!opr_slide_rename(u, d, 1, "Opening Copy Renamed", &selected) && selected == 1 &&
+          !strcmp(d->slides[1].name, "Opening Copy Renamed"), "rename a slide");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && slide == 1 && !strcmp(d->slides[1].name, "Opening Copy"),
+          "undo the rename");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) && !strcmp(d->slides[1].name, "Opening Copy Renamed"),
+          "redo the rename");
+    CHECK(opr_slide_rename(u, d, 1, "Opening", &selected) == -2 &&
+          opr_slide_rename(u, d, 1, "", &selected) == -2 &&
+          !strcmp(d->slides[1].name, "Opening Copy Renamed"), "empty and duplicate slide names are refused");
+
     opr_undo_free(u);
     owf_deck_free(d);
 }

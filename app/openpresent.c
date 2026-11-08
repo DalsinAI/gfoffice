@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.2.2 (7.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.2.3 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -88,7 +88,7 @@ enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
-    M_NEW_SLIDE, M_DELETE_SLIDE, M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
+    M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT
 };
@@ -114,6 +114,8 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Slide", NULL, 0, 0, NULL },
     { NM_ITEM, "New Slide", "M", 0, 0, (APTR)M_NEW_SLIDE },
+    { NM_ITEM, "Duplicate Slide", NULL, 0, 0, (APTR)M_DUPLICATE_SLIDE },
+    { NM_ITEM, "Rename Slide...", NULL, 0, 0, (APTR)M_RENAME_SLIDE },
     { NM_ITEM, "Delete Slide", NULL, 0, 0, (APTR)M_DELETE_SLIDE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Move Slide Up", NULL, 0, 0, (APTR)M_MOVE_SLIDE_UP },
@@ -400,6 +402,101 @@ static unsigned long utf8_next(const char *s, size_t n, size_t *at)
     }
     *at += (size_t)len;
     return cp;
+}
+
+/* Slide names use UTF-8 in the model and ISO-8859-1 in an Amiga string
+ * gadget, as the text painter does. */
+static void name_to_latin1(const char *utf8, char *out, size_t cap)
+{
+    size_t at = 0, n = utf8 ? strlen(utf8) : 0, used = 0;
+    if (!cap) return;
+    while (at < n && used + 1 < cap) {
+        unsigned char bytes[4];
+        int k, count;
+        latin1_of(utf8_next(utf8, n, &at), bytes, &count);
+        for (k = 0; k < count && used + 1 < cap; k++)
+            out[used++] = (char)bytes[k];
+    }
+    out[used] = 0;
+}
+
+static char *name_from_latin1(const char *latin)
+{
+    size_t i, n = latin ? strlen(latin) : 0, at = 0;
+    char *utf8 = owf_malloc(n * 2 + 1);
+    if (!utf8) return NULL;
+    for (i = 0; i < n; i++) {
+        unsigned c = (unsigned char)latin[i];
+        if (c < 0x80) utf8[at++] = (char)c;
+        else {
+            utf8[at++] = (char)(0xC0 | (c >> 6));
+            utf8[at++] = (char)(0x80 | (c & 0x3F));
+        }
+    }
+    utf8[at] = 0;
+    return utf8;
+}
+
+/* A modal one-line GadTools requester. */
+static int text_requester(const char *title, const char *label, const char *initial, char *out, size_t out_size)
+{
+    struct Gadget *list = NULL, *last, *gtext, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    STRPTR value = NULL;
+    int done = 0, ok = 0, ww = 430, wh, lw;
+    if (!scr || !vi || !win || !out || out_size < 2) return 0;
+    lw = TextLength(win->RPort, (STRPTR)label, strlen(label)) + 16;
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    last = CreateContext(&list);
+    ng.ng_LeftEdge = lw; ng.ng_TopEdge = 15; ng.ng_Width = ww - lw - 18; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)label; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_LEFT;
+    last = gtext = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)(initial ? initial : ""),
+                                GTST_MaxChars, (ULONG)(out_size - 1), GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_GadgetText = (STRPTR)"OK"; ng.ng_GadgetID = 2;
+    ng.ng_LeftEdge = ww - 188; ng.ng_TopEdge = 48; ng.ng_Width = 78; ng.ng_Height = fh + 8;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 3; ng.ng_LeftEdge = ww - 98;
+    gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gtext || !gok || !gcancel) goto out;
+    wh = 48 + fh + 8 + 14;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | STRINGIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    ActivateGadget(gtext, rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD id = m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 1 || id == 2) { ok = 1; done = 1; }
+                else if (id == 3) done = 1;
+            }
+        }
+    }
+    if (ok) {
+        GT_GetGadgetAttrs(gtext, rw, NULL, GTST_String, (ULONG)&value, TAG_DONE);
+        snprintf(out, out_size, "%s", value ? (char *)value : "");
+        if (!out[0]) ok = 0;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    return ok;
 }
 
 /* ---- Fonts ----
@@ -1430,18 +1527,23 @@ static const char *layout_words(const char *name)
 
 static void draw_status(void)
 {
-    char s[96];
+    char s[96], detail[128] = "", slide_name[80] = "";
     const char *lname = NULL;
     if (!win) return;
     if (deck && deck->nslides) {
         int l = deck->slides[current].layout;
         snprintf(s, sizeof s, "Slide %d of %d", current + 1, deck->nslides);
+        if (deck->slides[current].name)
+            name_to_latin1(deck->slides[current].name, slide_name, sizeof slide_name);
         if (l >= 0 && l < deck->nlayouts) lname = layout_words(deck->layouts[l].name);
     } else {
         snprintf(s, sizeof s, "No slides");
     }
     ogt_status_set(&sbar, 0, s);
-    ogt_status_set(&sbar, 1, lname ? lname : "");
+    if (slide_name[0] && lname) snprintf(detail, sizeof detail, "%s - %s", slide_name, lname);
+    else if (slide_name[0]) snprintf(detail, sizeof detail, "%s", slide_name);
+    else if (lname) snprintf(detail, sizeof detail, "%s", lname);
+    ogt_status_set(&sbar, 1, detail);
     ogt_status_set(&sbar, 2, status);
     {
         char z[16];
@@ -1630,6 +1732,46 @@ static void new_slide(void)
         return;
     }
     structure_changed(selected, "New slide inserted.");
+}
+
+static void duplicate_current_slide(void)
+{
+    int selected = current;
+    if (!deck || current < 0 || current >= deck->nslides) return;
+    if (opr_slide_duplicate(undo, deck, current, current + 1, &selected) < 0) {
+        tell(PROGRAM, "There is not enough memory to duplicate the slide.");
+        return;
+    }
+    structure_changed(selected, "Slide duplicated.");
+}
+
+static void rename_current_slide(void)
+{
+    char initial[256], entered[256];
+    char *utf8;
+    int rc, selected = current;
+    if (!deck || current < 0 || current >= deck->nslides) return;
+    if (deck->slides[current].name)
+        name_to_latin1(deck->slides[current].name, initial, sizeof initial);
+    else
+        snprintf(initial, sizeof initial, "Slide %d", current + 1);
+    if (!text_requester("Rename Slide", "Name", initial, entered, sizeof entered)) return;
+    utf8 = name_from_latin1(entered);
+    if (!utf8) {
+        tell(PROGRAM, "There is not enough memory to rename the slide.");
+        return;
+    }
+    rc = opr_slide_rename(undo, deck, current, utf8, &selected);
+    owf_free(utf8);
+    if (rc == -2) {
+        tell("Rename Slide", "A slide name must be unique and between 1 and 255 UTF-8 bytes.");
+        return;
+    }
+    if (rc < 0) {
+        tell(PROGRAM, "The slide could not be renamed.");
+        return;
+    }
+    structure_changed(selected, "Slide renamed.");
 }
 
 static void delete_slide(void)
@@ -2125,6 +2267,8 @@ static void menu_action(ULONG id)
         draw_slide();
         break;
     case M_NEW_SLIDE: new_slide(); break;
+    case M_DUPLICATE_SLIDE: duplicate_current_slide(); break;
+    case M_RENAME_SLIDE: rename_current_slide(); break;
     case M_DELETE_SLIDE: delete_slide(); break;
     case M_MOVE_SLIDE_UP: move_slide(-1); break;
     case M_MOVE_SLIDE_DOWN: move_slide(1); break;

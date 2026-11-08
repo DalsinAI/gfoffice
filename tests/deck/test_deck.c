@@ -170,6 +170,84 @@ static void test_model(void)
     owf_deck_free(NULL);
 }
 
+static void test_duplicate(void)
+{
+    owf_deck *d = build_deck();
+    owf_slide *source, *copy;
+    owf_obj *o, *c;
+    owf_para *p;
+    int old_n;
+    CHECK(d != NULL, "a deck to duplicate");
+    if (!d)
+        return;
+    source = &d->slides[1];
+    owf_deck_set_text(&source->name, "Content slide");
+    owf_deck_set_text(&source->footer, "Duplicated footer");
+    owf_deck_set_text(&source->date_text, "8 November 2026");
+    o = &source->objs[2];
+    o->id = 77;
+    owf_deck_set_text(&o->xml_id, "shape77");
+    owf_deck_set_text(&o->name, "An oval");
+    owf_deck_set_text(&o->alt, "Alternative text");
+    o->npoints = 2;
+    o->points = malloc(4 * sizeof *o->points);
+    o->caplevels = 3;
+    o->levels = malloc(3);
+    o->list = malloc(OWF_TEXT_LEVELS * sizeof *o->list);
+    o->ncols = 2;
+    o->col_widths = malloc(2 * sizeof *o->col_widths);
+    CHECK(o->points && o->levels && o->list && o->col_widths, "duplicate fixture allocations");
+    if (!o->points || !o->levels || !o->list || !o->col_widths) {
+        owf_deck_free(d);
+        return;
+    }
+    o->points[0] = 11; o->points[1] = 22; o->points[2] = 33; o->points[3] = 44;
+    o->levels[0] = 1; o->levels[1] = 2; o->levels[2] = 3;
+    memset(o->list, 0, OWF_TEXT_LEVELS * sizeof *o->list);
+    o->list[1].bullet = 0x2022;
+    o->col_widths[0] = 1234; o->col_widths[1] = 2345;
+    p = &source->objs[1].text.paras[0];
+    owf_deck_set_text(&p->style, "Body Style");
+    owf_deck_set_text(&p->bookmarks, "point1@0-5");
+    owf_deck_set_text(&p->runs[0].href, "https://example.invalid/");
+
+    old_n = d->nslides;
+    copy = owf_deck_duplicate_slide(d, 1, 2);
+    CHECK(copy && d->nslides == old_n + 1 && copy == &d->slides[2], "a duplicate inserted after its source");
+    if (copy) {
+        source = &d->slides[1];
+        c = &copy->objs[2];
+        CHECK(copy->objs != source->objs && copy->notes.paras != source->notes.paras &&
+              copy->name != source->name && copy->footer != source->footer && copy->date_text != source->date_text,
+              "slide-owned allocations are independent");
+        CHECK(c->points != source->objs[2].points && c->levels != source->objs[2].levels &&
+              c->list != source->objs[2].list && c->col_widths != source->objs[2].col_widths &&
+              c->name != source->objs[2].name && c->alt != source->objs[2].alt,
+              "object-owned allocations are independent");
+        CHECK(c->id == 0 && c->xml_id == NULL, "file-local object IDs are not duplicated");
+        CHECK(c->points[3] == 44 && c->levels[2] == 3 && c->list[1].bullet == 0x2022 &&
+              c->col_widths[1] == 2345 && !strcmp(c->name, "An oval") && !strcmp(c->alt, "Alternative text"),
+              "object metadata was copied");
+        CHECK(copy->objs[1].text.paras[0].runs != source->objs[1].text.paras[0].runs &&
+              copy->objs[1].text.paras[0].runs[0].text != source->objs[1].text.paras[0].runs[0].text &&
+              !strcmp(copy->objs[1].text.paras[0].style, "Body Style") &&
+              !strcmp(copy->objs[1].text.paras[0].bookmarks, "point1@0-5") &&
+              !strcmp(copy->objs[1].text.paras[0].runs[0].href, "https://example.invalid/"),
+              "paragraphs, runs, styles, bookmarks and links were copied");
+        source->objs[2].points[3] = 99;
+        source->objs[1].text.paras[0].runs[0].text[0] = 'X';
+        CHECK(c->points[3] == 44 && copy->objs[1].text.paras[0].runs[0].text[0] == 'f',
+              "changing the source does not change the duplicate");
+    }
+    copy = owf_deck_duplicate_slide(d, 1, 0);
+    CHECK(copy == &d->slides[0] && copy->name && !strcmp(copy->name, "Content slide") &&
+          d->slides[2].name && !strcmp(d->slides[2].name, "Content slide") && copy->objs != d->slides[2].objs,
+          "a duplicate inserted before its source is independent too");
+    CHECK(owf_deck_duplicate_slide(d, -1, 0) == NULL && owf_deck_duplicate_slide(d, 99, 0) == NULL,
+          "bad duplicate sources are refused");
+    owf_deck_free(d);
+}
+
 static void compare_decks(const char *what, const owf_deck *a, const owf_deck *b)
 {
     int i, j, k;
@@ -446,6 +524,7 @@ static void test_layout(void)
 int main(void)
 {
     test_model();
+    test_duplicate();
     test_odp();
     test_pdf_writer();
 #ifdef OPR_WITH_LAYOUT

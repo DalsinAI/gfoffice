@@ -1,7 +1,8 @@
 /*
  * OWFLibsTest: owfpresent.library (built with OWF_USE_PRESENT_LIBRARY): the
  * shared calls, then decks: the fixture ODP opened, saved in T: and read
- * back; a new deck with a slide and a paragraph of text; a page drawn by
+ * back; a new deck with a slide and a paragraph of text, deeply duplicated;
+ * a page drawn by
  * the page PDF writer, which hands back memory the program frees with
  * owf_free.
  * MIT, Copyright (c) 2026 AmiCradle Team.
@@ -48,7 +49,10 @@ static void new_deck(const owf_libs_env *e)
     owf_deck *deck = owf_deck_new(OWF_DECK_4_3_WIDTH, OWF_DECK_4_3_HEIGHT);
     const owf_master *master;
     owf_slide *slide;
+    owf_slide *duplicate;
     owf_obj *obj;
+    owf_obj *source_objs;
+    char *source_text;
     owf_para *para;
     owf_charfmt cf;
     int ok;
@@ -61,6 +65,13 @@ static void new_deck(const owf_libs_env *e)
     ok = para && owf_para_add_text(para, &cf, "Through owfpresent.library", 26) >= 0;
     LCHECK(e, deck && deck->nmasters >= 1 && deck->nlayouts >= 1 && deck->nslides == 1 && master && ok &&
            obj->text.nparas == 1, "%s: a new deck, a slide and its text", e->tag);
+    source_objs = slide ? slide->objs : NULL;
+    source_text = ok ? obj->text.paras[0].runs[0].text : NULL;
+    duplicate = deck ? owf_deck_duplicate_slide(deck, 0, 1) : NULL;
+    LCHECK(e, duplicate && deck->nslides == 2 && duplicate->objs != source_objs && duplicate->nobjs == 1 &&
+           duplicate->objs[0].text.paras[0].runs[0].text != source_text &&
+           !strcmp(duplicate->objs[0].text.paras[0].runs[0].text, "Through owfpresent.library"),
+           "%s: a slide deep-copied through the library", e->tag);
     owf_deck_free(deck);
 }
 

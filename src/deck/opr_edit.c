@@ -10,6 +10,7 @@
  */
 #include "openpresentation_core.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -591,7 +592,8 @@ int opr_text_set(owf_deck *deck, int slide, int obj, const char *utf8)
 typedef enum {
     SNAP_TEXT,
     SNAP_SLIDE,
-    SNAP_MOVE
+    SNAP_MOVE,
+    SNAP_NAME
 } snapshot_kind;
 
 typedef struct {
@@ -609,6 +611,8 @@ typedef struct {
     int focus, other_focus;
     /* SNAP_MOVE: the next move to apply; swapped after it is applied. */
     int from, to;
+    /* SNAP_NAME: the name belonging to the saved state. */
+    char *name;
 } snapshot;
 
 #define UNDO_STEPS 16
@@ -666,6 +670,8 @@ static int story_copy(owf_story *to, const owf_story *from)
         q->style = p->style ? copy_text(p->style, strlen(p->style)) : NULL;
         q->bookmarks = p->bookmarks ? copy_text(p->bookmarks, strlen(p->bookmarks)) : NULL;
         to->nparas = i + 1;
+        if ((p->style && !q->style) || (p->bookmarks && !q->bookmarks))
+            return -1;
         if (p->nruns) {
             q->runs = owf_calloc((size_t)p->nruns, sizeof *q->runs);
             if (!q->runs)
@@ -691,6 +697,8 @@ static void snap_free(snapshot *s)
         owf_free(s->levels);
     } else if (s->kind == SNAP_SLIDE && s->saved_present) {
         slide_free(&s->saved);
+    } else if (s->kind == SNAP_NAME) {
+        owf_free(s->name);
     }
     memset(s, 0, sizeof *s);
 }
@@ -786,14 +794,22 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
                 return -1;
             s->saved_present = 1;
         }
-    } else {
+    } else if (s->kind == SNAP_MOVE) {
         int k;
         if (owf_deck_move_slide(deck, s->from, s->to) < 0)
             return -1;
         k = s->from;
         s->from = s->to;
         s->to = k;
-    }
+    } else if (s->kind == SNAP_NAME) {
+        char *name;
+        if (!deck || s->slide < 0 || s->slide >= deck->nslides)
+            return -1;
+        name = deck->slides[s->slide].name;
+        deck->slides[s->slide].name = s->name;
+        s->name = name;
+    } else
+        return -1;
     s->focus = s->other_focus;
     s->other_focus = f;
     if (focus) *focus = f;
@@ -912,6 +928,58 @@ int opr_slide_delete(opr_undo *u, owf_deck *deck, int index, int *selected)
     return 0;
 }
 
+static int slide_name_exists(const owf_deck *deck, int except, const char *name)
+{
+    int i;
+    for (i = 0; deck && name && i < deck->nslides; i++)
+        if (i != except && deck->slides[i].name && !strcmp(deck->slides[i].name, name))
+            return 1;
+    return 0;
+}
+
+static int duplicate_name(owf_deck *deck, int source, int copy)
+{
+    const char *base = deck->slides[source < copy ? source : source + 1].name;
+    char name[256];
+    int n;
+    if (base && *base)
+        snprintf(name, sizeof name, "%.220s Copy", base);
+    else
+        snprintf(name, sizeof name, "Slide %d Copy", source + 1);
+    for (n = 2; slide_name_exists(deck, copy, name) && n < 10000; n++) {
+        if (base && *base)
+            snprintf(name, sizeof name, "%.210s Copy %d", base, n);
+        else
+            snprintf(name, sizeof name, "Slide %d Copy %d", source + 1, n);
+    }
+    return n < 10000 && owf_deck_set_text(&deck->slides[copy].name, name) == 0 ? 0 : -1;
+}
+
+int opr_slide_duplicate(opr_undo *u, owf_deck *deck, int index, int at, int *selected)
+{
+    snapshot s;
+    int before, copy;
+    if (!u || !deck || index < 0 || index >= deck->nslides)
+        return -1;
+    before = selected_before(deck, selected, index);
+    copy = at < 0 || at > deck->nslides ? deck->nslides : at;
+    if (!owf_deck_duplicate_slide(deck, index, copy))
+        return -1;
+    if (duplicate_name(deck, index, copy) < 0) {
+        owf_deck_delete_slide(deck, copy);
+        return -1;
+    }
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_SLIDE;
+    s.slide = copy;
+    s.obj = -1;
+    s.focus = before;
+    s.other_focus = copy;
+    structural_push(u, &s);
+    if (selected) *selected = copy;
+    return 0;
+}
+
 int opr_slide_move(opr_undo *u, owf_deck *deck, int from, int to, int *selected)
 {
     snapshot s;
@@ -938,6 +1006,35 @@ int opr_slide_move(opr_undo *u, owf_deck *deck, int from, int to, int *selected)
     s.other_focus = after;
     structural_push(u, &s);
     if (selected) *selected = after;
+    return 0;
+}
+
+int opr_slide_rename(opr_undo *u, owf_deck *deck, int index, const char *name, int *selected)
+{
+    snapshot s;
+    char *copy;
+    size_t n;
+    if (!u || !deck || index < 0 || index >= deck->nslides || !name)
+        return -1;
+    n = strlen(name);
+    if (!n || n > 255 || slide_name_exists(deck, index, name))
+        return -2;
+    if (deck->slides[index].name && !strcmp(deck->slides[index].name, name)) {
+        if (selected) *selected = index;
+        return 0;
+    }
+    copy = copy_text(name, n);
+    if (!copy)
+        return -1;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_NAME;
+    s.slide = index;
+    s.obj = -1;
+    s.name = deck->slides[index].name;
+    s.focus = s.other_focus = index;
+    deck->slides[index].name = copy;
+    structural_push(u, &s);
+    if (selected) *selected = index;
     return 0;
 }
 

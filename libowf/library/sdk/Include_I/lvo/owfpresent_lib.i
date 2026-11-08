@@ -84,5 +84,6 @@ _LVOowf_pdf_page_count	EQU	-486
 _LVOowf_pdf_text_width	EQU	-492
 _LVOowf_pdf_winansi	EQU	-498
 _LVOowf_pdf_fallback	EQU	-504
+_LVOowf_deck_duplicate_slide	EQU	-510
 
 	ENDC	; LVO_OWFPRESENT_LIB_I

@@ -211,6 +211,135 @@ static void slide_clear(owf_slide *s)
     free(s->date_text);
 }
 
+/* The allocations owned by a story, object and slide. Deck-wide resources
+ * (fonts, pictures, kept XML and package parts) are referred to by index and
+ * deliberately remain shared. */
+static int story_copy(owf_story *to, const owf_story *from)
+{
+    int i, j;
+    memset(to, 0, sizeof *to);
+    if (!from->nparas)
+        return 0;
+    to->paras = calloc((size_t)from->nparas, sizeof *to->paras);
+    if (!to->paras)
+        return -1;
+    to->capparas = from->nparas;
+    for (i = 0; i < from->nparas; i++) {
+        const owf_para *p = &from->paras[i];
+        owf_para *q = &to->paras[i];
+        *q = *p;
+        q->runs = NULL;
+        q->nruns = q->capruns = 0;
+        q->style = p->style ? owf_deck_strdup(p->style, strlen(p->style)) : NULL;
+        q->bookmarks = p->bookmarks ? owf_deck_strdup(p->bookmarks, strlen(p->bookmarks)) : NULL;
+        to->nparas = i + 1;
+        if ((p->style && !q->style) || (p->bookmarks && !q->bookmarks))
+            goto fail;
+        if (!p->nruns)
+            continue;
+        q->runs = calloc((size_t)p->nruns, sizeof *q->runs);
+        if (!q->runs)
+            goto fail;
+        q->capruns = p->nruns;
+        for (j = 0; j < p->nruns; j++) {
+            q->runs[j] = p->runs[j];
+            q->runs[j].text = p->runs[j].text ? owf_deck_strdup(p->runs[j].text, strlen(p->runs[j].text)) : NULL;
+            q->runs[j].href = p->runs[j].href ? owf_deck_strdup(p->runs[j].href, strlen(p->runs[j].href)) : NULL;
+            q->nruns = j + 1;
+            if ((p->runs[j].text && !q->runs[j].text) || (p->runs[j].href && !q->runs[j].href))
+                goto fail;
+        }
+    }
+    return 0;
+fail:
+    owf_deck_free_story(to);
+    return -1;
+}
+
+static int obj_copy(owf_obj *to, const owf_obj *from)
+{
+    size_t n;
+    *to = *from;
+    /* File-local IDs must not occur twice after the duplicate is saved. */
+    to->id = 0;
+    to->xml_id = NULL;
+    to->points = NULL;
+    memset(&to->text, 0, sizeof to->text);
+    to->levels = NULL;
+    to->list = NULL;
+    to->col_widths = NULL;
+    to->name = NULL;
+    to->alt = NULL;
+    if (story_copy(&to->text, &from->text) < 0)
+        goto fail;
+    if (from->points && from->npoints > 0) {
+        if ((size_t)from->npoints > (size_t)-1 / (2 * sizeof *from->points)) goto fail;
+        n = (size_t)from->npoints * 2 * sizeof *from->points;
+        to->points = malloc(n);
+        if (!to->points) goto fail;
+        memcpy(to->points, from->points, n);
+    }
+    if (from->levels && from->caplevels > 0) {
+        n = (size_t)from->caplevels;
+        to->levels = malloc(n);
+        if (!to->levels) goto fail;
+        memcpy(to->levels, from->levels, n);
+    }
+    if (from->list) {
+        n = OWF_TEXT_LEVELS * sizeof *from->list;
+        to->list = malloc(n);
+        if (!to->list) goto fail;
+        memcpy(to->list, from->list, n);
+    }
+    if (from->col_widths && from->ncols > 0) {
+        if ((size_t)from->ncols > (size_t)-1 / sizeof *from->col_widths) goto fail;
+        n = (size_t)from->ncols * sizeof *from->col_widths;
+        to->col_widths = malloc(n);
+        if (!to->col_widths) goto fail;
+        memcpy(to->col_widths, from->col_widths, n);
+    }
+    to->name = from->name ? owf_deck_strdup(from->name, strlen(from->name)) : NULL;
+    to->alt = from->alt ? owf_deck_strdup(from->alt, strlen(from->alt)) : NULL;
+    if ((from->name && !to->name) || (from->alt && !to->alt))
+        goto fail;
+    return 0;
+fail:
+    owf_obj_clear(to);
+    return -1;
+}
+
+static int slide_copy(owf_slide *to, const owf_slide *from)
+{
+    int i;
+    *to = *from;
+    to->objs = NULL;
+    to->nobjs = to->capobjs = 0;
+    memset(&to->notes, 0, sizeof to->notes);
+    to->name = to->footer = to->date_text = NULL;
+    if (from->nobjs) {
+        to->objs = calloc((size_t)from->nobjs, sizeof *to->objs);
+        if (!to->objs)
+            goto fail;
+        to->capobjs = from->nobjs;
+        for (i = 0; i < from->nobjs; i++) {
+            if (obj_copy(&to->objs[i], &from->objs[i]) < 0)
+                goto fail;
+            to->nobjs = i + 1;
+        }
+    }
+    if (story_copy(&to->notes, &from->notes) < 0)
+        goto fail;
+    to->name = from->name ? owf_deck_strdup(from->name, strlen(from->name)) : NULL;
+    to->footer = from->footer ? owf_deck_strdup(from->footer, strlen(from->footer)) : NULL;
+    to->date_text = from->date_text ? owf_deck_strdup(from->date_text, strlen(from->date_text)) : NULL;
+    if ((from->name && !to->name) || (from->footer && !to->footer) || (from->date_text && !to->date_text))
+        goto fail;
+    return 0;
+fail:
+    slide_clear(to);
+    return -1;
+}
+
 static void master_clear(owf_master *m)
 {
     int i;
@@ -354,6 +483,24 @@ owf_slide *owf_deck_add_slide(owf_deck *deck, int at, int layout)
         }
     }
     return s;
+}
+
+owf_slide *owf_deck_duplicate_slide(owf_deck *deck, int index, int at)
+{
+    owf_slide copy, *slot;
+    if (!deck || index < 0 || index >= deck->nslides)
+        return NULL;
+    if (at < 0 || at > deck->nslides)
+        at = deck->nslides;
+    if (slide_copy(&copy, &deck->slides[index]) < 0)
+        return NULL;
+    slot = owf_deck_add_slide(deck, at, -1);
+    if (!slot) {
+        slide_clear(&copy);
+        return NULL;
+    }
+    *slot = copy;
+    return slot;
 }
 
 int owf_deck_delete_slide(owf_deck *deck, int index)

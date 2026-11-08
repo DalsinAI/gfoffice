@@ -1439,4 +1439,21 @@ __owfpresent_owf_pdf_fallback(void *__base, unsigned long codepoint)
 #define owf_pdf_fallback(codepoint) __owfpresent_owf_pdf_fallback((OWFPRESENT_BASE_NAME), (unsigned long)(codepoint))
 #define __owf_pdf_fallback_base(__in_base, codepoint) __owfpresent_owf_pdf_fallback((__in_base), (unsigned long)(codepoint))
 
+static __inline__ owf_slide *
+__owfpresent_owf_deck_duplicate_slide(void *__base, owf_deck *deck, int index, int at)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(deck);
+	register ULONG _d0 __asm("d0") = (ULONG)(index);
+	register ULONG _d1 __asm("d1") = (ULONG)(at);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -510(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (owf_slide *)_d0;
+}
+#define owf_deck_duplicate_slide(deck, index, at) __owfpresent_owf_deck_duplicate_slide((OWFPRESENT_BASE_NAME), (owf_deck *)(deck), (int)(index), (int)(at))
+#define __owf_deck_duplicate_slide_base(__in_base, deck, index, at) __owfpresent_owf_deck_duplicate_slide((__in_base), (owf_deck *)(deck), (int)(index), (int)(at))
+
 #endif /* INLINE_OWFPRESENT_H */

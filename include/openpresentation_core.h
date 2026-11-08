@@ -32,7 +32,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.2.2"
+#define OPR_CORE_VERSION "0.2.3"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -139,8 +139,12 @@ int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj);
  * change. A deck may have no slides at core level; the application may keep
  * one. 0 on success, -1 for a bad index or memory failure. */
 int opr_slide_insert(opr_undo *u, owf_deck *deck, int at, int layout, int *selected);
+int opr_slide_duplicate(opr_undo *u, owf_deck *deck, int index, int at, int *selected);
 int opr_slide_delete(opr_undo *u, owf_deck *deck, int index, int *selected);
 int opr_slide_move(opr_undo *u, owf_deck *deck, int from, int to, int *selected);
+/* Rename one slide. A nonempty name must be unique in the deck. -2 means the
+ * name is empty, too long or already used; -1 means bad input or no memory. */
+int opr_slide_rename(opr_undo *u, owf_deck *deck, int index, const char *name, int *selected);
 int opr_undo_can(const opr_undo *u);
 int opr_redo_can(const opr_undo *u);
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj);
