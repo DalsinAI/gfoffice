@@ -3391,6 +3391,35 @@ static void test_chart_authoring(void)
     CHECK(oc_core_redo(core) == OWF_OK);
 
     memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_LABELS;
+    edit.series = 1;
+    edit.labels = OWF_LABEL_CATEGORY | OWF_LABEL_VALUE;
+    edit.label_pos = OWF_LABEL_BELOW;
+    edit.label_format = "0.00";
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[0].labels == OWF_LABEL_VALUE && c.series[0].label_pos == OWF_LABEL_ABOVE &&
+          !c.series[0].label_format && c.series[1].labels == (OWF_LABEL_CATEGORY | OWF_LABEL_VALUE) &&
+          c.series[1].label_pos == OWF_LABEL_BELOW && same(c.series[1].label_format, "0.00"));
+    chart_free(&c);
+    oc_draw_list_init(&l);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && find_text(&l, "South, 25.00"));
+    oc_draw_list_free(&l);
+    CHECK(oc_core_undo(core) == OWF_OK && charts_of(core, 0, &c) == 1 &&
+          c.series[1].labels == OWF_LABEL_VALUE && c.series[1].label_pos == OWF_LABEL_ABOVE &&
+          !c.series[1].label_format);
+    chart_free(&c);
+    CHECK(oc_core_redo(core) == OWF_OK);
+
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_LABELS;
+    edit.series = 2;
+    edit.label_pos = OWF_LABEL_AUTO;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_UNSUPPORTED);
+    edit.series = 0;
+    edit.labels = 32;
+    CHECK(oc_core_update_chart(core, 0, &edit) == OWF_ERR_FORMAT);
+
+    memset(&edit, 0, sizeof edit);
     edit.set = OC_CHART_SET_POINT_COLOUR;
     edit.series = 1;
     edit.point = 1;
@@ -3447,8 +3476,11 @@ static void test_chart_authoring(void)
           c.series[0].label_pos == OWF_LABEL_ABOVE && c.has_min && c.min == 0 && c.has_max && c.max == 80 &&
           same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP") &&
           same(c.value_format, "$0.0") && !c.x_format &&
+          c.series[0].labels == OWF_LABEL_VALUE && !c.series[0].label_format &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
+          c.series[1].labels == (OWF_LABEL_CATEGORY | OWF_LABEL_VALUE) &&
+          c.series[1].label_pos == OWF_LABEL_BELOW && same(c.series[1].label_format, "0.00") &&
           c.series[1].points[1].colour == OWF_SHADE(0xED7D31) &&
           same(c.series[1].values, "'Sheet1'!$C$2:$C$4"));
     chart_free(&c);
@@ -3459,8 +3491,11 @@ static void test_chart_authoring(void)
           c.has_min && c.min == 0 && c.has_max && c.max == 80 &&
           same(c.category_title, "Quarter") && same(c.value_title, "Revenue GBP") &&
           same(c.value_format, "$0.0") && !c.x_format &&
+          c.series[0].labels == OWF_LABEL_VALUE && !c.series[0].label_format &&
           c.series[1].colour == OWF_SHADE(0x00A050) && !c.series[1].line &&
           c.series[1].marker == OWF_MARKER_DIAMOND && c.series[1].marker_size == 9 &&
+          c.series[1].labels == (OWF_LABEL_CATEGORY | OWF_LABEL_VALUE) &&
+          c.series[1].label_pos == OWF_LABEL_BELOW && same(c.series[1].label_format, "0.00") &&
           c.series[1].points[1].colour == OWF_SHADE(0xED7D31));
     chart_free(&c);
     remove(xlsx); remove(ods);

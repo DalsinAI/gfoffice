@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.52 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.53 (8.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -95,6 +95,7 @@ enum {
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_INS_ROWS, M_INS_COLS, M_INS_SHEET, M_DEL_ROWS, M_DEL_COLS, M_COMMENT, M_CHART, M_CHART_DELETE, M_CHART_FORMAT,
     M_CHART_DATA, M_CHART_AXIS_TITLES, M_CHART_SERIES_STYLE, M_CHART_POINT_COLOUR, M_CHART_AXIS_FORMATS,
+    M_CHART_SERIES_LABELS,
     M_BOLD, M_ITALIC, M_UNDERLINE,
     M_AL_GENERAL, M_AL_LEFT, M_AL_CENTRE, M_AL_RIGHT,
     M_NUMFMT = 100,                                  /* + oc_number_formats' index */
@@ -216,6 +217,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Chart Series Style...", NULL, 0, 0, (APTR)M_CHART_SERIES_STYLE },
     { NM_ITEM, "Chart Data Point Colour...", NULL, 0, 0, (APTR)M_CHART_POINT_COLOUR },
     { NM_ITEM, "Chart Axis Number Formats...", NULL, 0, 0, (APTR)M_CHART_AXIS_FORMATS },
+    { NM_ITEM, "Chart Series Data Labels...", NULL, 0, 0, (APTR)M_CHART_SERIES_LABELS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Conditional Format...", NULL, 0, 0, (APTR)M_CONDFMT },
     { NM_ITEM, "Clear Conditional Formatting", NULL, 0, 0, (APTR)M_CONDFMT_CLEAR },
@@ -3389,6 +3391,110 @@ static void do_chart_point_colour(void)
     result(oc_core_update_chart(core, index, &edit), "Chart data point colour changed.");
 }
 
+static void do_chart_series_labels(void)
+{
+    static const char *const positions[] = { "auto", "centre", "inside-end", "inside-base", "outside", "above",
+                                             "below", "left", "right", "best" };
+    owf_chart *charts = NULL;
+    const owf_chart_series *series;
+    oc_chart_edit_spec edit;
+    char number[24] = "1", label[48], initial[384], entered[384], format[192];
+    char *flags, *position, *fmt, *separator, *p, *token, *end, *utf8 = NULL;
+    size_t at = 0;
+    long chosen;
+    int index = oc_core_selected_chart(core), n = 0, rc, i, bad = 0;
+    if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Data Labels."); return; }
+    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    if (rc != OWF_OK || index >= n) {
+        owf_charts_free(charts, n);
+        if (rc != OWF_OK) result(rc, NULL);
+        else set_status("The selected chart is no longer on this sheet.");
+        return;
+    }
+    if (!charts[index].nseries) {
+        owf_charts_free(charts, n);
+        set_status("This chart has no series to format.");
+        return;
+    }
+    snprintf(label, sizeof label, "Series number (1-%d)", charts[index].nseries);
+    if (!text_requester("Chart Series Data Labels", label, number, number, sizeof number)) {
+        owf_charts_free(charts, n);
+        return;
+    }
+    chosen = strtol(trim_text(number), &end, 10);
+    if (*end || chosen < 1 || chosen > charts[index].nseries) {
+        owf_charts_free(charts, n);
+        set_status("Choose an existing series number.");
+        return;
+    }
+    series = &charts[index].series[chosen - 1];
+    initial[0] = 0;
+    if (!series->labels) at += (size_t)snprintf(initial + at, sizeof initial - at, "none ");
+    if ((series->labels & OWF_LABEL_VALUE) && at < sizeof initial)
+        at += (size_t)snprintf(initial + at, sizeof initial - at, "value ");
+    if ((series->labels & OWF_LABEL_PERCENT) && at < sizeof initial)
+        at += (size_t)snprintf(initial + at, sizeof initial - at, "percent ");
+    if ((series->labels & OWF_LABEL_CATEGORY) && at < sizeof initial)
+        at += (size_t)snprintf(initial + at, sizeof initial - at, "category ");
+    if ((series->labels & OWF_LABEL_SERIES) && at < sizeof initial)
+        at += (size_t)snprintf(initial + at, sizeof initial - at, "series ");
+    to_latin1(series->label_format ? series->label_format : "",
+              series->label_format ? strlen(series->label_format) : 0, format, sizeof format);
+    if (at < sizeof initial)
+        snprintf(initial + at, sizeof initial - at, "| %s | %s",
+                 positions[series->label_pos >= OWF_LABEL_AUTO && series->label_pos <= OWF_LABEL_BEST_FIT ?
+                           series->label_pos : OWF_LABEL_AUTO], *format ? format : "auto");
+    owf_charts_free(charts, n);
+    if (!text_requester("Chart Series Data Labels", "value/percent/category/series | position | format",
+                        initial, entered, sizeof entered)) return;
+    flags = entered;
+    separator = strchr(flags, '|');
+    if (!separator) bad = 1;
+    else {
+        *separator++ = 0;
+        position = separator;
+        separator = strchr(position, '|');
+        if (!separator) bad = 1;
+        else { *separator++ = 0; fmt = trim_text(separator); }
+    }
+    memset(&edit, 0, sizeof edit);
+    edit.set = OC_CHART_SET_SERIES_LABELS;
+    edit.series = (int)chosen - 1;
+    flags = trim_text(flags);
+    p = flags;
+    while (*p && !bad) {
+        token = p;
+        while (*p && !isspace((unsigned char)*p)) p++;
+        if (*p) *p++ = 0;
+        p = trim_text(p);
+        if (!strcasecmp(token, "none")) edit.labels = 0;
+        else if (!strcasecmp(token, "value")) edit.labels |= OWF_LABEL_VALUE;
+        else if (!strcasecmp(token, "percent")) edit.labels |= OWF_LABEL_PERCENT;
+        else if (!strcasecmp(token, "category")) edit.labels |= OWF_LABEL_CATEGORY;
+        else if (!strcasecmp(token, "series")) edit.labels |= OWF_LABEL_SERIES;
+        else bad = 1;
+    }
+    if (!*flags) bad = 1;
+    if (!bad) {
+        position = trim_text(position);
+        for (i = OWF_LABEL_AUTO; i <= OWF_LABEL_BEST_FIT; i++)
+            if (!strcasecmp(position, positions[i])) { edit.label_pos = i; break; }
+        if (i > OWF_LABEL_BEST_FIT) bad = 1;
+    }
+    if (!bad && strcasecmp(fmt, "auto") && *fmt && !(utf8 = from_latin1(fmt))) {
+        result(OWF_ERR_MEMORY, NULL);
+        return;
+    }
+    if (bad) {
+        set_status("Use label flags | auto/centre/inside-end/.../best | auto or a number format.");
+        return;
+    }
+    edit.label_format = utf8;
+    rc = oc_core_update_chart(core, index, &edit);
+    owf_free(utf8);
+    result(rc, "Chart series data labels changed.");
+}
+
 static void do_chart_data(void)
 {
     oc_chart_data_spec spec;
@@ -3504,6 +3610,7 @@ static void menu_action(ULONG id)
     case M_CHART_SERIES_STYLE: do_chart_series_style(); break;
     case M_CHART_POINT_COLOUR: do_chart_point_colour(); break;
     case M_CHART_AXIS_FORMATS: do_chart_axis_formats(); break;
+    case M_CHART_SERIES_LABELS: do_chart_series_labels(); break;
     case M_CHART_DELETE:
         if (oc_core_selected_chart(core) < 0) set_status("Click a chart first, then choose Delete Selected Chart.");
         else result(oc_core_delete_chart(core, -1), "Chart deleted.");
