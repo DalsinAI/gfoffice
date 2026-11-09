@@ -225,7 +225,7 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | Character and paragraph formatting, styles | No (fonts listed) | P1b | P2 | Quill's STSH, FDPC, FDPP (PUB-FORMAT 6.2) |
 | Colour schemes, font schemes | Scheme colours seen | P1b | P2 | |
 | Pictures (PNG, JPEG, GIF, DIB, WMF) | Yes, bytes and formats | P1 (WMF: P1d) | P2 | Datatypes, metafile player (7) |
-| Picture crop, recolour, transparency | No | P1d | P2 | |
+| Picture crop, recolour, transparency | No original PUB decoding yet | Authored/imported pictures render crop; recolour/transparency remain P1d | Crop editing delivered; recolour/transparency remain P2 | Object > Picture Crop shares core 0.19.0 and existing OpenLayout/ODP crop handling |
 | Shapes (AutoShapes), lines, arrows | Kinds and boxes | P1d | P2 | GFOpenLayout shapes (5) |
 | Fills, gradients, line styles | Colour values seen | P1d | P2 | |
 | WordArt | Text | P1d (styled text in its box), later its shapes | P2 | |
@@ -400,6 +400,15 @@ the same box-local line fitter as Square and retain independent top, right,
 bottom and left distances. Pictures, open lines and unavailable geometry fall
 back to Square. ODP writes and reads the standard `style:wrap-contour`
 attribute, and the existing object snapshot supplies Undo/Redo.
+
+GFOpenPublisher 0.3.5, GFOpenPresentation 0.6.11 and shared core 0.19.0 add
+Object > Picture Crop. A selected top-level picture exposes left, top, right
+and bottom crop values in thousandths; validation prevents either opposing
+pair from removing the complete source area. The four edges change as one
+Undo/Redo snapshot. Rendering and ODP persistence continue through the
+existing shared crop fields and OpenLayout picture operation, so this adds no
+Publisher-only image geometry. Original PUB crop-record decoding, recolour
+and transparency remain separate import/rendering work.
 
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,

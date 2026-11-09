@@ -541,6 +541,12 @@ slice, but imported ODP objects marked `style:wrap-contour` now retain Tight
 distinctly and use the same reusable ellipse/polygon/rotation geometry as
 Publisher instead of a rectangular approximation.
 
+GFOpenPresentation 0.6.11 and GFOpenPublisher 0.3.5 carry shared core 0.19.0
+and expose Object > Picture Crop. The command validates and changes all four
+crop edges as one Undo/Redo snapshot, then relies on the existing OpenLayout
+picture crop operation and ODP interchange. Presentation and Publisher
+therefore share the authoring command as well as the model and renderer.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys
