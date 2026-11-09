@@ -1,8 +1,8 @@
 # GFOffice gap analysis against Apache OpenOffice and Microsoft Publisher
 
-Verified 9 November 2026 against GFOffice `main` through implementation commit
-`ac49ab4508e3d4278ee062f6853a0a5d0ba31cd2` (post-RC69 shared rich-text
-candidate), GFOpenLayout `58c3ae5645b1676124abe20588cc472f48585977`, and GFOpenDraw
+Verified 9 November 2026 against GFOffice `main` through candidate commit
+`dce017c44b38722570b82547d73be9f11502f7df` (RC70 shared rich-text and
+text-frame work), GFOpenLayout `58c3ae5645b1676124abe20588cc472f48585977`, and GFOpenDraw
 `ca07afc25e793e4c4fdc5ae16979bebccd203eaa`.
 
 This replaces older phase/checklist impressions with the current code, tests,
@@ -140,31 +140,33 @@ the same geometry or flow rule.
 
 ## Validation status
 
-Current-session RC69 candidate host evidence at this revision is the complete
+Current-session RC70 candidate host evidence at this revision is the complete
 normal GFOffice suite, including 1,606 Calc-core checks, 10,491 formula/oracle
-checks, 271 shared deck-editor/interchange checks, 67 Publisher-adapter checks, the
+checks, 279 shared deck-editor/interchange checks, 67 Publisher-adapter checks, the
 ODP/PPTX/PUB damaged-input corpora, library ABI checks and 3,943 cut-short
 document trials. All passed against the pinned GFOpenLayout 0.16 RC1 commit.
-The new 271-check path also passed ASan/UBSan with leak detection disabled;
+The 279-check path also passed ASan/UBSan with leak detection disabled;
 LeakSanitizer cannot run under this environment's tracer. Optional `odfpy` and
 `openpyxl` third-party read-back checks were skipped because those packages are
 not installed. A clean Open6 build from the exact pinned GFOpenLayout,
-GFOpenDraw and GFOpenGadTools commits rebuilt the complete RC69 source: all
-linked applications including GFOpenPublisher 0.2.7, Draw/DrawOL, OWConvert,
+GFOpenDraw and GFOpenGadTools commits rebuilt the complete RC70 candidate: all
+linked applications including GFOpenPublisher 0.3.1 and GFOpenPresentation
+0.6.7, Draw/DrawOL, OWConvert,
 five resident libraries, both library tests and the supported library-linked
-variants, with warnings treated as errors. RC69 was published from source
+variants, with warnings treated as errors using GFOpenAmigaGCC 16.2.0-open6.
+
+RC69 was published from source
 commit `5f893c52a1e01c1b66b3fd1dca4003903b1e3fa3`; its public archive downloaded
 back with SHA-256
 `bbcf66de86a977a9d8773b6b336c14fc8ec976ed05441379cfd0cbcb06c0f11a`,
 and all 80 files covered by its internal manifest verified. This packaging
 evidence does not imply application runtime behaviour.
 
-There is no recorded Dale on-Amiga smoke test for RC69. Host and cross-build
-evidence must not be reported as Amiga runtime evidence.
+There is no recorded Dale on-Amiga smoke test for RC69 or the RC70 candidate.
+Host and cross-build evidence must not be reported as Amiga runtime evidence.
 
-Post-RC69 Publisher 0.3.1/Presentation 0.6.7 evidence adds a focused 279-check
-normal and ASan/UBSan deck-editor/interchange pass. It covers independent wrap
-distances plus atomic column count, exact gap and four frame margins, invalid
-geometry, exact RGB text colour, named font family, Undo/Redo and ODP round trip. A warnings-as-errors Open6 build also
-compiled both updated native applications and all linked suite applications.
-This is candidate evidence, not part of the immutable RC69 archive above.
+RC70 candidate coverage adds independent wrap distances plus atomic column
+count, exact gap and four frame margins, invalid geometry, exact RGB text
+colour, named font family, Undo/Redo and ODP round trip. This remains candidate
+evidence until the RC70 archive is published and downloaded back for external
+manifest verification.
