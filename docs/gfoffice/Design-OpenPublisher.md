@@ -466,15 +466,16 @@ precedence when grid snapping is also on. The signed, thresholded box-anchor
 calculation is portable core code; guide drawing and toggle state remain
 shared editor chrome. Custom ruler guides and a baseline grid still remain.
 
-GFOpenPublisher 0.3.14 and GFOpenPresentation 0.6.20 carry shared core 0.28.0
+GFOpenPublisher 0.3.15 and GFOpenPresentation 0.6.21 carry shared core 0.29.0
 and add Insert > Table for one to 32 rows and columns. Creation uses the same
 tagged cell paragraphs as imported ODP/PPTX tables and the same OpenLayout
 grid renderer. Each cell is editable through the existing rich-text engine;
 Tab and Shift-Tab navigate cells, while Backspace/Delete and replacement are
 guarded from collapsing separate cells. The first row receives a neutral
 header shade, insertion is one Undo step, and ODP save/reopen preserves the
-authored table. Object > Table Rows inserts below or deletes the active row as
-one Undo step; column structure editing, merges and table styles remain.
+authored table. Object > Table Rows and Table Columns insert beside or delete
+the active cell as one Undo step. Column width is redistributed without
+changing the table box; merges, explicit row heights and table styles remain.
 
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
