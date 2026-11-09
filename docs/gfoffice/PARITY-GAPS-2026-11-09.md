@@ -148,11 +148,12 @@ The new 259-check path also passed ASan/UBSan with leak detection disabled;
 LeakSanitizer cannot run under this environment's tracer. Optional `odfpy` and
 `openpyxl` third-party read-back checks were skipped because those packages are
 not installed. A clean Open6 build from the exact pinned GFOpenLayout,
-GFOpenDraw and GFOpenGadTools commits rebuilt the RC67 suite. For the RC68
-flow change, the Open6 application build has rebuilt all linked applications,
-including GFOpenPublisher 0.2.6 with warnings treated as errors. A clean full
-pinned suite build and public archive download/hash verification remain release
-tasks and must not be inferred from the host or application-build evidence.
+GFOpenDraw and GFOpenGadTools commits rebuilt the complete RC68 suite: all
+linked applications including GFOpenPublisher 0.2.6, Draw/DrawOL, OWConvert,
+five resident libraries, both library tests and the supported library-linked
+variants, with warnings treated as errors. Public archive download/hash
+verification remains a release task and must not be inferred from the host or
+cross-build evidence.
 
 There is no recorded Dale on-Amiga smoke test for RC68. Host and cross-build
 evidence must not be reported as Amiga runtime evidence.
