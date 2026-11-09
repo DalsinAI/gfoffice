@@ -1,7 +1,7 @@
 # GFOffice gap analysis against Apache OpenOffice and Microsoft Publisher
 
 Verified 9 November 2026 against GFOffice `main` through implementation commit
-`da7fb2526197eab8ad916fec57c8516ce998054c` (GFOffice 2.0.25 RC65 candidate),
+`146b15780789dec3e161362a6741a8f28664ebde` (GFOffice 2.0.25 RC66 candidate),
 GFOpenLayout `5f76a31c7514f2da01ad8c482043b8f3a4dc3b2d`, and GFOpenDraw
 `ca07afc25e793e4c4fdc5ae16979bebccd203eaa`.
 
