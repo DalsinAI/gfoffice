@@ -547,6 +547,12 @@ crop edges as one Undo/Redo snapshot, then relies on the existing OpenLayout
 picture crop operation and ODP interchange. Presentation and Publisher
 therefore share the authoring command as well as the model and renderer.
 
+GFOpenPresentation 0.6.12 and GFOpenPublisher 0.3.6 carry shared core 0.20.0
+and add exact text Cut, Copy and Paste. Cross-paragraph selection extraction
+is portable deck-core code; the Amiga applications share the FTXT device
+adapter with GFOpenWrite. Paste reuses the current range-replacement path and
+OpenLayout caret map rather than introducing another text model.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

@@ -1,8 +1,8 @@
 # GFOffice gap analysis against Apache OpenOffice and Microsoft Publisher
 
 Verified 9 November 2026 against GFOffice `main` through implementation commit
-`ef263c97e0115916ace5fcdd04147617cba5b999` (RC71 plus shared undoable
-picture-crop authoring), GFOpenLayout
+`d8295ea25bd90914fce5c43268f0e493f46b3d93` (RC71 plus shared undoable
+picture-crop authoring and exact text clipboard exchange), GFOpenLayout
 `2fb0eaee2f135fb6d94ef0ac88f3c32e2679cbce`, and GFOpenDraw
 `ca07afc25e793e4c4fdc5ae16979bebccd203eaa`.
 
@@ -22,8 +22,8 @@ edits, saves, reloads and undoes correctly.
 | --- | --- | ---: | --- | --- | --- |
 | GFOpenWrite 2.0.26 | Writer | **63%** | Medium-high | Native text editing; character and paragraph formatting; styles; lists; editable tables; inline/floating pictures; text boxes; headers/footers; TOC; sections and newspaper columns; DOCX/ODT/RTF; PDF/print; spelling, recovery and ARexx | Track changes; comments/review UI; mail merge/labels/envelopes; alphabetical and object indexes/bibliography; master documents; forms; richer style families; advanced tables; embedded charts/sheets/media; autocorrect/thesaurus/hyphenation |
 | GFOpenCalc 0.1.67 | Calc | **62%** | High for delivered core, medium overall | XLS/XLSX/ODS/FODS/CSV; 277-function formula engine; editing/formatting; sort/filter; comments, validation and conditional formatting; charts; subtotals; refreshable pivot summaries; Goal Seek; durable, manually refreshable one/two-variable and multi-formula Multiple Operations; PDF/print; robust host corpus | Automatic data-table recalc and native Excel/Calc data-table metadata; full Pivot Table field layout/filter/drill/multiple data fields; Solver; scenarios; consolidation; richer database filters/functions; external data/links; sharing/change tracking; macro recorder/IDE; more chart/graphics editing |
-| GFOpenPresentation 0.6.11 | Impress | **59%** | Medium-high | ODP/FODP read/write, PPTX import; slide CRUD/reorder/hide; masters/layout model; drag/Shift/Select-All character ranges with replacement typing and exact bold/italic/underline/size/RGB/font formatting; paragraph alignment; editable 1-16 column count, exact gap and four frame margins with ODP persistence/PPTX import; shared imported object-wrap rendering including ODF Tight contours; inserted text boxes/pictures/shapes; undoable four-edge picture crop; object move/resize/rotate/arrange/align/appearance; transitions; slideshow; PDF/print; undo | PPT/PPTX export; Normal/Outline/Notes/Handout/Sorter views; notes editing and notes/handout printing; multi-selection/distribute; master editing; richer fills/transparency/shadows; table structure editing; charts/OLE/media editing; custom animation; clipboard; find/spell; ARexx |
-| GFOpenPublisher 0.3.5 | Microsoft Publisher 2021 | **51%** | Medium | PUB import; positioned multi-page display; exact linked-story continuation across pages; ordered middle/tail detach and insertion with Undo and ODP persistence; layout-derived selected-frame overflow badge; drag/Shift/Select-All character ranges, replacement typing and exact run formatting; editable 1-16 column count, exact gap and four frame margins; undoable Square, Tight and Top/Bottom wrap with per-side distance and ODP persistence; Tight reuses GFOpenLayout 0.17 closed-shape paths for ellipses, rounded rectangles, polygons and rotation; editable inserted picture/shape objects; undoable four-edge picture crop; move/resize/rotate/arrange/align/look; ODP save; PDF/print | Native PUB save; decode original PUB formatting/columns/wrap/crop; picture-alpha/custom contours; master pages and facing-page publications; guides/snap/rulers/baselines; templates/building blocks; recolour/transparency; richer tables; mail/catalog merge; commercial-print/preflight/design checker |
+| GFOpenPresentation 0.6.12 | Impress | **60%** | Medium-high | ODP/FODP read/write, PPTX import; slide CRUD/reorder/hide; masters/layout model; drag/Shift/Select-All character ranges with replacement typing and exact bold/italic/underline/size/RGB/font formatting; exact cross-paragraph FTXT Cut/Copy/Paste; paragraph alignment; editable 1-16 column count, exact gap and four frame margins with ODP persistence/PPTX import; shared imported object-wrap rendering including ODF Tight contours; inserted text boxes/pictures/shapes; undoable four-edge picture crop; object move/resize/rotate/arrange/align/appearance; transitions; slideshow; PDF/print; undo | PPT/PPTX export; Normal/Outline/Notes/Handout/Sorter views; notes editing and notes/handout printing; multi-selection/distribute; master editing; richer fills/transparency/shadows; table structure editing; charts/OLE/media editing; custom animation; object/slide clipboard formats; find/spell; ARexx |
+| GFOpenPublisher 0.3.6 | Microsoft Publisher 2021 | **52%** | Medium | PUB import; positioned multi-page display; exact linked-story continuation across pages; ordered middle/tail detach and insertion with Undo and ODP persistence; layout-derived selected-frame overflow badge; drag/Shift/Select-All character ranges, replacement typing, exact run formatting and cross-paragraph FTXT Cut/Copy/Paste; editable 1-16 column count, exact gap and four frame margins; undoable Square, Tight and Top/Bottom wrap with per-side distance and ODP persistence; Tight reuses GFOpenLayout 0.17 closed-shape paths for ellipses, rounded rectangles, polygons and rotation; editable inserted picture/shape objects; undoable four-edge picture crop; move/resize/rotate/arrange/align/look; ODP save; PDF/print | Native PUB save; decode original PUB formatting/columns/wrap/crop; picture-alpha/custom contours; master pages and facing-page publications; guides/snap/rulers/baselines; templates/building blocks; object clipboard; recolour/transparency; richer tables; mail/catalog merge; commercial-print/preflight/design checker |
 | GFOpenDraw 0.2.0 RC2 | Draw | **19%** | High | Practical indexed-raster paint editor; two native front ends; ARexx; reusable host/m68k painting library; suite packaging | Multi-page vector document shell; ODG/SVG; editable text/shapes/pictures; layers/master pages; connectors/glue points; curves; multi-selection/grouping; snap/grid/guides; dimensions; technical drawing; vector PDF/clipboard. Raster-side text, polygons/curves, gradients, symmetry, spare page and CRNG persistence also remain |
 | GFOpenBase design 0.1 | Base | **4%** | High | Current design, SQLite/OADB architecture and reusable suite components are documented | No executable or core yet. Required baseline: project create/open; table designer and datasheet CRUD; keys/relationships; SQL/query designer; forms/subforms; reports; CSV/DBF/Calc exchange; locking/recovery; ARexx/runtime |
 
@@ -121,10 +121,10 @@ the same geometry or flow rule.
    and Presentation share model, Undo/Redo and ODP interchange.
    Character-range selection, replacement and exact run formatting are now
    delivered in the shared deck editor, as is ordered middle-chain detach and
-   insertion. Contour wrap and editable picture crop are now delivered; next
-   add clipboard exchange. Editable frame margins, column gaps, per-side wrap
-   distances, safe tail link/unlink and a layout-derived overflow badge are
-   also delivered.
+   insertion. Contour wrap, editable picture crop and exact text clipboard
+   exchange are now delivered; next add object clipboard exchange. Editable
+   frame margins, column gaps, per-side wrap distances, safe tail link/unlink
+   and a layout-derived overflow badge are also delivered.
 3. **Writer W-review — tracked changes first, mail merge second.** Preserve
    revisions as editable review records rather than accepting them on import;
    then build CSV/Calc-field merge as a reusable document-generation service
@@ -177,13 +177,15 @@ RC71 was published from source commit
 back with SHA-256
 `2c47a365cb5f6b7abed73a0ac92afb52705cf9007a9e4e53e8430cf297879cbb`, and
 all 80 files covered by its internal manifest verified. Post-RC71 picture-crop
-commit `ef263c97e0115916ace5fcdd04147617cba5b999` passed 301 focused optimized
-checks and the same checks under ASan/UBSan with leak detection disabled for
-the tracer. A clean exact-pinned Open6 build then rebuilt all five linked apps;
-that crop work is published on `main` but is not part of immutable RC71.
+and clipboard work through commit `d8295ea25bd90914fce5c43268f0e493f46b3d93`
+passed 302 focused optimized checks and the same checks under ASan/UBSan with
+leak detection disabled for the tracer. A clean Open6 build rebuilt all five
+linked apps with warnings as errors: Calc 1,474,596 bytes, Presentation
+793,560, Publisher 827,140, Writer 625,356 and OWConvert 752,528. That work is
+published on `main` but is not part of immutable RC71.
 
 There is no recorded Dale on-Amiga smoke test for RC70, RC71 or the post-RC71
-crop work.
+crop/clipboard work.
 Host tests and cross-build success must not be reported as Amiga runtime
 evidence. RC71 still requires launching Publisher and Presentation, comparing
 Square and Tight around an ellipse or rotated polygon, editing distances,
