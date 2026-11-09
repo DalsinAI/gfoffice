@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.2.5 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.2.6 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -120,6 +120,7 @@ enum {
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
     M_POSITION_SIZE, M_APPEARANCE, M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
+    M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
@@ -197,6 +198,11 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Position and Size...", NULL, 0, 0, (APTR)M_POSITION_SIZE },
     { NM_ITEM, "Appearance...", NULL, 0, 0, (APTR)M_APPEARANCE },
+#ifdef OPENPUBLISHER
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Link to Next Empty Text Box", NULL, 0, 0, (APTR)M_LINK_TEXT_NEXT },
+    { NM_ITEM, "Remove Tail from Text Flow", NULL, 0, 0, (APTR)M_UNLINK_TEXT },
+#endif
     { NM_ITEM, "Duplicate", NULL, 0, 0, (APTR)M_DUPLICATE_OBJECT },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_DELETE_OBJECT },
 
@@ -1918,10 +1924,10 @@ static void selection_points(const box *b, int x[8], int y[8])
     y[4] = b->y + b->h; y[5] = b->y + b->h; y[6] = b->y + b->h; y[7] = cy;
 }
 
-static void draw_selection(void)
+static void draw_selection(const opr_slide *s)
 {
     box b;
-    int x[8], y[8], i;
+    int x[8], y[8], i, frame;
     LONG accent;
     if (selected_obj < 0 || !object_pixel_box(selected_obj, &b)) return;
     accent = ogt_pen(&ctx, "accent");
@@ -1930,6 +1936,15 @@ static void draw_selection(void)
     for (i = 0; i < 8; i++) {
         ogt_box(win->RPort, ogt_pen(&ctx, "window"), x[i] - 4, y[i] - 4, 9, 9);
         ogt_frame(win->RPort, accent, x[i] - 4, y[i] - 4, 9, 9);
+    }
+    frame = s ? opr_slide_frame_for(s, selected_obj) : -1;
+    if (frame >= 0 && opr_frame_text_overflow((opr_slide *)s, frame, NULL, NULL) > 0) {
+        int ox = b.x + b.w - 20, oy = b.y + b.h - 12;
+        ogt_box(win->RPort, ogt_pen(&ctx, "window"), ox, oy, 18, 10);
+        ogt_frame(win->RPort, accent, ox, oy, 18, 10);
+        ogt_box(win->RPort, accent, ox + 4, oy + 5, 2, 2);
+        ogt_box(win->RPort, accent, ox + 8, oy + 5, 2, 2);
+        ogt_box(win->RPort, accent, ox + 12, oy + 5, 2, 2);
     }
 }
 
@@ -2008,7 +2023,7 @@ static void draw_slide_part(const box *part)
     if (!s)
         ogt_text(rp, ogt_pen(&ctx, "muted"), slide_box.x + 8, slide_box.y + 8, "Not enough memory to show this " UNIT_LOWER ".",
                  slide_box.w - 16);
-    draw_selection();
+    draw_selection(s);
     draw_caret(s, &sc);
     if (region) {
         InstallClipRegion(win->WLayer, old);
@@ -3053,6 +3068,100 @@ static void set_selected_text_columns(int columns)
     draw_status();
 }
 
+#ifdef OPENPUBLISHER
+static int empty_text_frame(int slide, int obj)
+{
+    char *text = opr_text_get(deck, slide, obj);
+    int empty = text && !*text;
+    owf_free(text);
+    return empty;
+}
+
+static void link_selected_text_frame(void)
+{
+    owf_obj *source;
+    int page, obj, target_page = -1, target_obj = -1, rc;
+    char message[96];
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select the text box that should flow first.");
+        draw_status();
+        return;
+    }
+    source = &deck->slides[current].objs[selected_obj];
+    if (source->kind != OWF_OBJ_TEXT || source->parent >= 0) {
+        set_status("Only a top-level text box can start or extend a text flow.");
+        draw_status();
+        return;
+    }
+    for (page = current; page < deck->nslides && target_page < 0; ++page) {
+        int first = page == current ? selected_obj + 1 : 0;
+        for (obj = first; obj < deck->slides[page].nobjs; ++obj) {
+            const owf_obj *candidate = &deck->slides[page].objs[obj];
+            if (candidate->kind == OWF_OBJ_TEXT && candidate->parent < 0 &&
+                !(candidate->flags & OWF_OBJ_HIDDEN) && candidate->flow_story < 0 &&
+                empty_text_frame(page, obj)) {
+                target_page = page;
+                target_obj = obj;
+                break;
+            }
+        }
+    }
+    if (target_page < 0) {
+        set_status("No later empty text box is available; insert one after this box.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    rc = opr_obj_link_text_frame(undo, deck, current, selected_obj, target_page, target_obj);
+    if (rc < 0) {
+        set_status(rc == -2 ? "Select the last box in the flow before adding another."
+                            : "The text boxes could not be linked.");
+        draw_status();
+        return;
+    }
+    laid_clear();
+    dirty = 1;
+    update_window_title();
+    snprintf(message, sizeof message, "Text now continues into page %d's empty box.", target_page + 1);
+    set_status(message);
+    draw_slide();
+    if (strip) {
+        ogt_list_draw_row(strip, current);
+        if (target_page != current) ogt_list_draw_row(strip, target_page);
+    }
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
+static void unlink_selected_text_frame(void)
+{
+    int rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select the final text box in a linked flow.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    rc = opr_obj_unlink_text_frame(undo, deck, current, selected_obj);
+    if (rc < 0) {
+        set_status(rc == -2 ? "Only the final box can be removed from a linked flow."
+                            : "The text box could not be unlinked.");
+        draw_status();
+        return;
+    }
+    laid_clear();
+    dirty = 1;
+    update_window_title();
+    set_status("Final text box removed; excess text is shown as overflow in the preceding box.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+#endif
+
 static void insert_shape(owf_shape kind)
 {
     opr_shape_spec spec;
@@ -3838,6 +3947,10 @@ static void menu_action(ULONG id)
     case M_ALIGN_BOTTOM: align_selected_object(OPR_ALIGN_BOTTOM, "Object aligned bottom."); break;
     case M_POSITION_SIZE: edit_selected_geometry(); break;
     case M_APPEARANCE: edit_selected_appearance(); break;
+#ifdef OPENPUBLISHER
+    case M_LINK_TEXT_NEXT: link_selected_text_frame(); break;
+    case M_UNLINK_TEXT: unlink_selected_text_frame(); break;
+#endif
     case M_DUPLICATE_OBJECT: duplicate_selected_object(); break;
     case M_DELETE_OBJECT: delete_selected_object(); break;
     case M_NEW_SLIDE: new_slide(); break;

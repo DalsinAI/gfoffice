@@ -220,8 +220,8 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | Facing pages, two-page spreads | Not yet (SampleNewsletter's pages alternate left and right on the workspace: a hypothesis) | P1 | P2 | |
 | Master pages | Names, which page uses which | P1 (their frames) | P2 | The samples' masters are empty: samples needed |
 | Text boxes | Boxes and text | P1 | P2 | |
-| Linked text frames (overflow chains) | Yes: shared story IDs and ODF named chains | Yes: text continues at GFOpenLayout's exact page cut and fixed frames clip | P2 | Screen, PDF and ODP save/reload preserve the chain; interactive link/unlink commands remain |
-| Columns in a text box | No | P1c | P2 | |
+| Linked text frames (overflow chains) | Yes: shared story IDs and ODF named chains | Yes: text continues at GFOpenLayout's exact page cut and fixed frames clip | Yes for appending/removing the flow tail | Screen, PDF and ODP save/reload preserve the chain; a selected overset frame has a layout-derived badge |
+| Columns in a text box | No original PUB decoding yet | Yes for authored and ODP/PPTX-imported frames | Yes: one/two/three equal columns | Custom gap/margins remain |
 | Character and paragraph formatting, styles | No (fonts listed) | P1b | P2 | Quill's STSH, FDPC, FDPP (PUB-FORMAT 6.2) |
 | Colour schemes, font schemes | Scheme colours seen | P1b | P2 | |
 | Pictures (PNG, JPEG, GIF, DIB, WMF) | Yes, bytes and formats | P1 (WMF: P1d) | P2 | Datatypes, metafile player (7) |
@@ -319,8 +319,21 @@ layout, frame-height column breaks, clipping, caret and hit testing. ODP writes
 and reads standard `style:columns`, PPTX imports DrawingML `numCol`/`spcCol`,
 and linked-story fitting counts every column before handing the suffix to the
 next frame. Remaining work includes an interactive/custom gap and margin
-surface, decoding column settings from original PUB records, overflow and
-link/unlink controls, and wrap/exclusion around other page objects.
+surface, decoding column settings from original PUB records, and
+wrap/exclusion around other page objects.
+
+GFOpenPublisher 0.2.6 and shared core 0.11.0 add the first safe authoring
+surface for Publisher text flows. Object > Link to Next Empty Text Box appends
+the next later empty top-level frame to an unlinked frame or the current flow
+tail. Remove Tail from Text Flow reverses that operation without discarding
+story bytes: continuation becomes overflow in the preceding frame. Both
+changes swap the affected flow identities atomically through Undo/Redo and ODP
+save/reload already writes the resulting named chain. The selected frame's
+three-dot overflow badge comes from a lazily cached GFOpenLayout galley fit,
+so ordinary slide/page layout does not pay for an extra fit per frame and the
+application never estimates a character count. Arbitrary middle-chain surgery
+remains deliberately refused until it can materialize every affected slice
+without losing visible text.
 
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,

@@ -601,7 +601,8 @@ typedef enum {
     SNAP_OBJ_PRESENCE,
     SNAP_OBJ_ORDER,
     SNAP_OBJ_LOOK,
-    SNAP_OBJ_COLUMNS
+    SNAP_OBJ_COLUMNS,
+    SNAP_OBJ_FLOW
 } snapshot_kind;
 
 typedef struct {
@@ -635,6 +636,8 @@ typedef struct {
     owf_look look;
     /* SNAP_OBJ_COLUMNS: equal text-frame columns and their gap. */
     int text_columns, text_column_gap;
+    /* SNAP_OBJ_FLOW: the one or two flow identities changed atomically. */
+    int flow_count, flow_slide[2], flow_obj[2], flow_story[2];
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
     owf_obj saved_obj;
     int saved_obj_present;
@@ -984,6 +987,19 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
             return -1;
         value = o->text_columns; o->text_columns = s->text_columns; s->text_columns = value;
         value = o->text_column_gap; o->text_column_gap = s->text_column_gap; s->text_column_gap = value;
+    } else if (s->kind == SNAP_OBJ_FLOW) {
+        int i;
+        if (s->flow_count < 1 || s->flow_count > 2)
+            return -1;
+        for (i = 0; i < s->flow_count; ++i) {
+            owf_obj *o = object(deck, s->flow_slide[i], s->flow_obj[i]);
+            int value;
+            if (!o || o->kind != OWF_OBJ_TEXT)
+                return -1;
+            value = o->flow_story;
+            o->flow_story = s->flow_story[i];
+            s->flow_story[i] = value;
+        }
     } else
         return -1;
     s->focus = s->other_focus;
@@ -1763,6 +1779,117 @@ int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
     s.text_column_gap = o->text_column_gap;
     o->text_columns = stored_columns;
     o->text_column_gap = stored_gap;
+    structural_push(u, &s);
+    return 0;
+}
+
+static int story_has_content(const owf_story *story)
+{
+    int p, r;
+    for (p = 0; story && p < story->nparas; ++p)
+        for (r = 0; r < story->paras[p].nruns; ++r) {
+            const owf_run *run = &story->paras[p].runs[r];
+            if (run->kind != OWF_RUN_TEXT || (run->text && *run->text))
+                return 1;
+        }
+    return 0;
+}
+
+int opr_obj_link_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj,
+                            int target_slide, int target_obj)
+{
+    snapshot s;
+    owf_obj *source = object(deck, slide, obj);
+    owf_obj *target = object(deck, target_slide, target_obj);
+    int page, index, id, max_id = -1, changes = 0;
+    if (!u || !deck || !source || !target)
+        return -1;
+    if (source == target || source->kind != OWF_OBJ_TEXT || target->kind != OWF_OBJ_TEXT ||
+        source->parent >= 0 || target->parent >= 0 ||
+        target_slide < slide || (target_slide == slide && target_obj <= obj) ||
+        target->flow_story >= 0 || story_has_content(&target->text))
+        return -2;
+    if (source->flow_story >= 0) {
+        for (page = slide; page < deck->nslides; ++page) {
+            int first = page == slide ? obj + 1 : 0;
+            for (index = first; index < deck->slides[page].nobjs; ++index)
+                if (deck->slides[page].objs[index].kind == OWF_OBJ_TEXT &&
+                    deck->slides[page].objs[index].flow_story == source->flow_story)
+                    return -2;              /* append only at the current tail */
+        }
+        id = source->flow_story;
+    } else {
+        for (page = 0; page < deck->nslides; ++page)
+            for (index = 0; index < deck->slides[page].nobjs; ++index)
+                if (deck->slides[page].objs[index].flow_story > max_id)
+                    max_id = deck->slides[page].objs[index].flow_story;
+        if (max_id == 0x7fffffff)
+            return -2;
+        id = max_id + 1;
+    }
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_FLOW;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    if (source->flow_story < 0) {
+        s.flow_slide[changes] = slide;
+        s.flow_obj[changes] = obj;
+        s.flow_story[changes++] = source->flow_story;
+        source->flow_story = id;
+    }
+    s.flow_slide[changes] = target_slide;
+    s.flow_obj[changes] = target_obj;
+    s.flow_story[changes++] = target->flow_story;
+    target->flow_story = id;
+    s.flow_count = changes;
+    structural_push(u, &s);
+    return 0;
+}
+
+int opr_obj_unlink_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj)
+{
+    snapshot s;
+    owf_obj *selected = object(deck, slide, obj), *other = NULL;
+    int page, index, count = 0, last_slide = -1, last_obj = -1;
+    int other_slide = -1, other_obj = -1;
+    if (!u || !deck || !selected)
+        return -1;
+    if (selected->kind != OWF_OBJ_TEXT || selected->parent >= 0 || selected->flow_story < 0)
+        return -2;
+    for (page = 0; page < deck->nslides; ++page)
+        for (index = 0; index < deck->slides[page].nobjs; ++index) {
+            owf_obj *candidate = &deck->slides[page].objs[index];
+            if (candidate->kind != OWF_OBJ_TEXT || candidate->flow_story != selected->flow_story)
+                continue;
+            count++;
+            last_slide = page;
+            last_obj = index;
+            if (candidate != selected) {
+                other = candidate;
+                other_slide = page;
+                other_obj = index;
+            }
+        }
+    if (count < 2 || last_slide != slide || last_obj != obj)
+        return -2;                          /* detach only the tail, without losing order */
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_FLOW;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    s.flow_slide[0] = slide;
+    s.flow_obj[0] = obj;
+    s.flow_story[0] = selected->flow_story;
+    s.flow_count = 1;
+    selected->flow_story = -1;
+    if (count == 2 && other) {
+        s.flow_slide[1] = other_slide;
+        s.flow_obj[1] = other_obj;
+        s.flow_story[1] = other->flow_story;
+        s.flow_count = 2;
+        other->flow_story = -1;             /* one frame alone is not a flow */
+    }
     structural_push(u, &s);
     return 0;
 }

@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.10.0"
+#define OPR_CORE_VERSION "0.11.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -42,6 +42,7 @@ typedef struct {
     owf_obj box;                 /* obj with its box resolved (owf_deck_resolve) */
     int scale;                   /* percent its text was laid out at (shrink to fit) */
     ol_id first, end;            /* the nodes made for its content */
+    int text_overflow;           /* cached: -1 unknown, 0 fits, 1 overset */
 } opr_frame;
 
 typedef struct {
@@ -236,6 +237,14 @@ int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
  * values. The change is one undo step. */
 int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
                              int columns, int gap);
+/* Link a top-level text frame to a later empty top-level text frame, or remove
+ * the final frame from a flow. A linked source must be the current tail and a
+ * target must not already belong to another flow. Unlinking returns its text
+ * to overflow in the preceding frame; no story bytes are discarded. Both are
+ * one undo step. -2 means the requested relationship is not valid. */
+int opr_obj_link_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj,
+                            int target_slide, int target_obj);
+int opr_obj_unlink_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj);
 /* Delete one ungrouped object, as one undo step. Undo restores all data owned
  * by the object. A group or an object with children returns -2. */
 int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj);
@@ -260,6 +269,12 @@ int opr_undo_redo(opr_undo *u, owf_deck *deck, int *slide, int *obj);
  * the object a frame shows (-1: the master's, or the background). */
 int opr_slide_frame_for(const opr_slide *s, int obj);
 int opr_frame_obj(const opr_slide *s, int frame);
+/* Whether prepared text remains beyond a bounded frame. The result is cached
+ * in the frame, so the extra narrow-galley fit runs only for a frame whose
+ * overflow indicator is actually requested. -1 means an invalid frame or an
+ * allocation/layout failure. */
+int opr_frame_text_overflow(opr_slide *s, int frame,
+                            ol_measure_text_fn measure, void *userdata);
 /* The caret for a position: a box in the slide's units, page 0. 0 when
  * the frame shows no such paragraph. */
 int opr_caret_box(const opr_slide *s, int frame, opr_pos at, ol_measure_text_fn measure, void *userdata,

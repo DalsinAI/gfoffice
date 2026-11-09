@@ -657,7 +657,7 @@ static void textbox_insertion(void)
     owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
     opr_undo *u = opr_undo_new();
     const owf_deck_format *odp = owf_deck_format_named("odp");
-    opr_textbox_spec spec, invalid;
+    opr_textbox_spec spec, invalid, tail;
     unsigned char *data = NULL;
     size_t length = 0;
     owf_deck *back = NULL;
@@ -754,6 +754,25 @@ static void textbox_insertion(void)
     CHECK(opr_obj_insert_textbox(u, d, 0, &invalid, &selected) == -2,
           "an invalid text-box alignment is refused");
 
+    tail = spec;
+    tail.y = 4000;
+    tail.height = 1200;
+    tail.text = NULL;
+    CHECK(!opr_obj_insert_textbox(u, d, 0, &tail, &selected) && selected == 1 && s->nobjs == 2,
+          "insert an empty continuation text box");
+    opr_undo_clear(u);
+    CHECK(!opr_obj_link_text_frame(u, d, 0, 0, 0, 1) &&
+          s->objs[0].flow_story >= 0 && s->objs[1].flow_story == s->objs[0].flow_story,
+          "link a Publisher story to the next empty frame");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == -1 &&
+          s->objs[0].flow_story < 0 && s->objs[1].flow_story < 0 &&
+          !opr_undo_redo(u, d, &slide, &obj) && obj == -1 &&
+          s->objs[0].flow_story >= 0 && s->objs[1].flow_story == s->objs[0].flow_story,
+          "linked text frames participate atomically in Undo and Redo");
+    CHECK(opr_obj_link_text_frame(u, d, 0, 0, 0, 1) == -2 &&
+          opr_obj_unlink_text_frame(u, d, 0, 0) == -2,
+          "a linked target cannot be reused and only the flow tail can be detached");
+
     CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
           "the authored text box saves as ODP");
     CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
@@ -766,13 +785,15 @@ static void textbox_insertion(void)
                              saved->text.paras[0].runs[0].fmt.size :
                              level ? level->chars.size : 0;
         text = opr_text_get(back, 0, 0);
-        CHECK(back->slides[0].nobjs == 1 && back->slides[0].objs[0].kind == OWF_OBJ_TEXT &&
+        CHECK(back->slides[0].nobjs == 2 && back->slides[0].objs[0].kind == OWF_OBJ_TEXT &&
               text && !strcmp(text, "Publisher story") &&
               back->slides[0].objs[0].x == spec.x &&
               back->slides[0].objs[0].inset[0] == spec.inset[0] &&
               back->slides[0].objs[0].look.fill == spec.look.fill &&
               back->slides[0].objs[0].text_columns == 2 &&
               back->slides[0].objs[0].text_column_gap == 240 &&
+              back->slides[0].objs[0].flow_story >= 0 &&
+              back->slides[0].objs[1].flow_story == back->slides[0].objs[0].flow_story &&
               back->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT &&
               effective_size == 360 &&
               (back->slides[0].objs[0].text.paras[0].runs[0].fmt.flags &
@@ -785,6 +806,46 @@ static void textbox_insertion(void)
     }
     owf_deck_free(back);
     free(data);
+    opr_undo_clear(u);
+    CHECK(!opr_text_set(d, 0, 0,
+          "This intentionally long Publisher story must continue well beyond a shallow frame. "
+          "It repeats enough ordinary words to require several lines and expose overset text. "
+          "The layout service, not the application, decides the exact line and frame cut. "
+          "More text follows to force another group of lines past the bottom edge. "
+          "Publisher must mark that hidden continuation without guessing character counts.") &&
+          !opr_obj_set_box(u, d, 0, 0, 1000, 1200, 900, 300) &&
+          !opr_obj_set_text_columns(u, d, 0, 0, 1, 0),
+          "prepare a shallow linked frame with an overflowing story");
+    CHECK(!opr_obj_unlink_text_frame(u, d, 0, 1) &&
+          s->objs[0].flow_story < 0 && s->objs[1].flow_story < 0,
+          "removing the tail returns continuation text to the preceding frame");
+    {
+        opr_slide *laid = opr_slide_layout(d, 0, NULL, NULL, NULL);
+        int frame = laid ? opr_slide_frame_for(laid, 0) : -1;
+        CHECK(frame >= 0 && opr_frame_text_overflow(laid, frame, NULL, NULL) > 0,
+              "the laid-out frame reports visible overflow after its tail is removed");
+        opr_slide_free(laid);
+    }
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[0].flow_story >= 0 && s->objs[1].flow_story == s->objs[0].flow_story,
+          "undo restores the linked continuation after overflow inspection");
+    opr_undo_clear(u);
+    tail.y = 6000;
+    tail.height = 1000;
+    CHECK(!opr_obj_insert_textbox(u, d, 0, &tail, &selected) && selected == 2,
+          "insert a third empty frame for extending an existing flow");
+    opr_undo_clear(u);
+    CHECK(!opr_obj_link_text_frame(u, d, 0, 1, 0, 2) &&
+          s->objs[2].flow_story == s->objs[0].flow_story,
+          "append an empty frame at the current flow tail");
+    CHECK(opr_obj_link_text_frame(u, d, 0, 0, 0, 2) == -2,
+          "a frame in the middle of a flow cannot append another target");
+    CHECK(!opr_obj_unlink_text_frame(u, d, 0, 2) && s->objs[2].flow_story < 0 &&
+          s->objs[0].flow_story >= 0 && s->objs[1].flow_story == s->objs[0].flow_story,
+          "detaching a three-frame flow's tail keeps the preceding chain linked");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[2].flow_story == s->objs[0].flow_story,
+          "undo restores the appended third frame atomically");
     opr_undo_free(u);
     owf_deck_free(d);
 }

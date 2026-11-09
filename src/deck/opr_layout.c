@@ -340,6 +340,7 @@ static opr_frame *add_frame(builder *b, const owf_obj *obj, int from_master)
     }
     f = &b->out->frames[b->out->nframes++];
     memset(f, 0, sizeof *f);
+    f->text_overflow = -1;
     f->obj = obj;
     f->from_master = from_master;
     /* text PowerPoint shrank to fit starts at the size it shrank it to */
@@ -656,7 +657,7 @@ static ow_position story_end(const owf_story *story)
 }
 
 static int flow_fit_end(const builder *b, const owf_story *story, const owf_obj *frame,
-                        ow_position *end)
+                        ow_position *end, int *fits)
 {
     owf_doc doc;
     ow_layout *layout;
@@ -683,6 +684,7 @@ static int flow_fit_end(const builder *b, const owf_story *story, const owf_obj 
     doc.page.height = height;
     layout = ow_layout_new(&doc, b->measure, b->measure_userdata);
     if (!layout) return 0;
+    if (fits) *fits = ow_layout_page_count(layout) <= columns;
     if (ow_layout_page_count(layout) <= columns)
         *end = story_end(story);
     else if (!ow_layout_page_end(layout, columns - 1, end)) {
@@ -732,7 +734,7 @@ static int linked_story_slice(const builder *b, int slide_index, int obj_index,
                 if (is_target) return 1;
                 continue;
             }
-            if (!flow_fit_end(b, &remaining, o, &end) ||
+            if (!flow_fit_end(b, &remaining, o, &end, NULL) ||
                 !story_split(&remaining, &end, &prefix, &suffix)) {
                 owned_story_free(&remaining);
                 return 0;
@@ -787,6 +789,68 @@ static int add_text(builder *b, opr_frame *f, ol_node *n, const owf_obj *o, cons
     if (linked) owned_story_free(&slice);
     frame_text_free(&t);
     return ok;
+}
+
+int opr_frame_text_overflow(opr_slide *s, int frame,
+                            ol_measure_text_fn measure, void *userdata)
+{
+    opr_frame *f;
+    builder b;
+    frame_text prepared;
+    owf_story slice;
+    const owf_story *story, *draw;
+    ow_position end;
+    char number[24], pages[24];
+    int linked = 0, fits = 1, obj_index;
+    if (!s || frame < 0 || frame >= s->nframes)
+        return -1;
+    f = &s->frames[frame];
+    if (f->text_overflow >= 0)
+        return f->text_overflow;
+    if (!f->obj || f->from_master || f->obj->kind != OWF_OBJ_TEXT) {
+        f->text_overflow = 0;
+        return 0;
+    }
+    if (!measure) {
+        measure = opr_measure;
+        userdata = (void *)s->deck;
+    }
+    memset(&b, 0, sizeof b);
+    b.deck = s->deck;
+    b.slide = &s->deck->slides[s->slide];
+    b.index = s->slide;
+    b.master = owf_deck_slide_master(s->deck, s->slide);
+    b.out = s;
+    b.measure = measure;
+    b.measure_userdata = userdata;
+    snprintf(number, sizeof number, "%d", s->slide + 1);
+    snprintf(pages, sizeof pages, "%d", s->deck->nslides);
+    b.fields[0] = number;
+    b.fields[1] = pages;
+    b.fields[2] = "";
+    b.fields[3] = NULL;
+    obj_index = (int)(f->obj - b.slide->objs);
+    story = linked_story_source(&b, f->obj, &f->obj->text);
+    if (!story->nparas) {
+        f->text_overflow = 0;
+        return 0;
+    }
+    if (!prepare_text(b.deck, b.master, f->obj, story, 1, f->scale, b.fields, &prepared))
+        return -1;
+    if (!linked_story_slice(&b, s->slide, obj_index, f->obj, &prepared.story, &slice, &linked)) {
+        frame_text_free(&prepared);
+        return -1;
+    }
+    draw = linked ? &slice : &prepared.story;
+    if (!flow_fit_end(&b, draw, &f->box, &end, &fits)) {
+        if (linked) owned_story_free(&slice);
+        frame_text_free(&prepared);
+        return -1;
+    }
+    if (linked) owned_story_free(&slice);
+    frame_text_free(&prepared);
+    f->text_overflow = !fits;
+    return f->text_overflow;
 }
 
 /* A table's column widths onto its grid. */
