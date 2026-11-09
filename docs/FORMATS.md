@@ -57,13 +57,15 @@ which makes a formula reach a target, including cross-sheet dependencies,
 then applies an accepted result as one undoable edit. The search itself does
 not change the workbook.
 
-GFOpenCalc 0.1.66 supports column, row and two-variable Data > Multiple
+GFOpenCalc 0.1.67 supports column, row and two-variable Data > Multiple
 Operations, including a horizontal or vertical range of formulas for the
-one-variable forms. Reusable core 0.31.0 evaluates selected trial tables on
+one-variable forms. Reusable core 0.32.0 evaluates selected trial tables on
 private workbooks and writes every result series atomically as one Undo step.
-Output is ordinary numeric cells and therefore needs no special XLSX or ODS
-extension. Native Excel/Calc data-table metadata is not authored, so these
-tables are static snapshots rather than recalculating formula arrays.
+Output is ordinary numeric cells. Hidden sheet-scoped definitions preserve
+the table, formula and input references through XLSX and ODS, allowing manual
+**Refresh Multiple Operations** after model edits as another atomic Undo step.
+Native Excel/Calc data-table metadata is not authored, so ordinary workbook
+recalculation does not yet refresh these tables automatically.
 
 GFOpenCalc 0.1.61 adds Data > Subtotals. Reusable core 0.26.0 inserts bold
 group rows and a grand total using the workbook's real SUBTOTAL formulas for

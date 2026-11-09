@@ -6,9 +6,127 @@
 #include "oc_internal.h"
 
 #include <float.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define MULTIOP_MAX_TRIALS 65536u
+
+#define MULTIOP_TABLE_PREFIX "_GF_MULTIOP_TABLE_"
+#define MULTIOP_FORMULAS_PREFIX "_GF_MULTIOP_FORMULAS_"
+#define MULTIOP_ROW_INPUT_PREFIX "_GF_MULTIOP_ROW_INPUT_"
+#define MULTIOP_COLUMN_INPUT_PREFIX "_GF_MULTIOP_COLUMN_INPUT_"
+#define MULTIOP_CONFIG_PREFIX "_GF_MULTIOP_CONFIG_"
+
+enum { MULTIOP_META_COLUMN, MULTIOP_META_ROW, MULTIOP_META_2D };
+
+static int same_range(const owf_range *a, const owf_range *b)
+{
+    return a->first_row == b->first_row && a->last_row == b->last_row &&
+           a->first_col == b->first_col && a->last_col == b->last_col;
+}
+
+static int reference_formula(const owf_book *book, int sheet, const owf_range *range,
+                             char *out, size_t size)
+{
+    const char *name;
+    char first[8], last[8], *p = out;
+    size_t left = size, i;
+    int n;
+    if (!book || sheet < 0 || sheet >= book->nsheets || !range || left < 4)
+        return 0;
+    name = book->sheets[sheet].name;
+    *p++ = '\''; left--;
+    for (i = 0; name[i]; ++i) {
+        if (left <= (name[i] == '\'' ? 2u : 1u)) return 0;
+        *p++ = name[i]; left--;
+        if (name[i] == '\'') { *p++ = '\''; left--; }
+    }
+    if (left < 3) return 0;
+    *p++ = '\''; *p++ = '!'; left -= 2;
+    oc_col_name(range->first_col, first);
+    oc_col_name(range->last_col, last);
+    n = snprintf(p, left, "$%s$%u:$%s$%u", first, range->first_row + 1u,
+                 last, range->last_row + 1u);
+    return n >= 0 && (size_t)n < left;
+}
+
+static owf_defname *metadata_name(owf_book *book, int sheet, const char *name)
+{
+    int i;
+    for (i = 0; i < book->nnames; ++i)
+        if (book->names[i].sheet == sheet && !strcmp(book->names[i].name, name))
+            return &book->names[i];
+    return NULL;
+}
+
+static int set_metadata_name(owf_book *book, int sheet, const char *name, const char *formula)
+{
+    owf_defname *item = metadata_name(book, sheet, name);
+    char *copy;
+    if (!item)
+        return owf_book_add_name(book, name, sheet, formula, 1) < 0 ? OWF_ERR_MEMORY : OWF_OK;
+    copy = malloc(strlen(formula) + 1u);
+    if (!copy)
+        return OWF_ERR_MEMORY;
+    strcpy(copy, formula);
+    free(item->formula);
+    item->formula = copy;
+    item->hidden = 1;
+    return OWF_OK;
+}
+
+static int metadata_id(owf_book *book, int table_sheet, const owf_range *table)
+{
+    size_t prefix = strlen(MULTIOP_TABLE_PREFIX);
+    unsigned max_id = 0, id;
+    int i, sheet;
+    owf_range found;
+    for (i = 0; i < book->nnames; ++i) {
+        const owf_defname *item = &book->names[i];
+        if (item->sheet != table_sheet || strncmp(item->name, MULTIOP_TABLE_PREFIX, prefix) ||
+            sscanf(item->name + prefix, "%u", &id) != 1)
+            continue;
+        if (id > max_id) max_id = id;
+        if (oc_sheet_range(book, item->formula, table_sheet, &sheet, &found) &&
+            sheet == table_sheet && same_range(&found, table))
+            return (int)id;
+    }
+    return max_id == 999999u ? -1 : (int)(max_id + 1u);
+}
+
+static int add_metadata(owf_book *book, int table_sheet, const owf_range *table,
+                        int formula_sheet, const owf_range *formulas,
+                        int row_input_sheet, const owf_range *row_input,
+                        int column_input_sheet, const owf_range *column_input,
+                        int config)
+{
+    char table_ref[160], formulas_ref[160], row_ref[160] = "\"\"";
+    char column_ref[160] = "\"\"", value[32], name[64];
+    int id, rc;
+    if (!reference_formula(book, table_sheet, table, table_ref, sizeof table_ref) ||
+        !reference_formula(book, formula_sheet, formulas, formulas_ref, sizeof formulas_ref) ||
+        (row_input && !reference_formula(book, row_input_sheet, row_input, row_ref, sizeof row_ref)) ||
+        (column_input && !reference_formula(book, column_input_sheet, column_input,
+                                            column_ref, sizeof column_ref)))
+        return OWF_ERR_FORMAT;
+    id = metadata_id(book, table_sheet, table);
+    if (id < 1)
+        return OWF_ERR_UNSUPPORTED;
+#define SET_META(prefix_, formula_) do { \
+    snprintf(name, sizeof name, "%s%d", prefix_, id); \
+    rc = set_metadata_name(book, table_sheet, name, formula_); \
+    if (rc != OWF_OK) return rc; \
+} while (0)
+    SET_META(MULTIOP_TABLE_PREFIX, table_ref);
+    SET_META(MULTIOP_FORMULAS_PREFIX, formulas_ref);
+    SET_META(MULTIOP_ROW_INPUT_PREFIX, row_ref);
+    SET_META(MULTIOP_COLUMN_INPUT_PREFIX, column_ref);
+    snprintf(value, sizeof value, "\"%d\"", config);
+    SET_META(MULTIOP_CONFIG_PREFIX, value);
+#undef SET_META
+    return OWF_OK;
+}
 
 static int finite_number(double value)
 {
@@ -27,7 +145,7 @@ int oc_core_multiple_operations(oc_core *core,
 {
     const oc_selection *selection;
     const owf_cell *formula_cell, *input_cell, *trial, *result;
-    owf_range source, output, expanded;
+    owf_range source, output, expanded, formula_range, input_range;
     owf_book *scratch = NULL, *work = NULL, *old_book;
     owf_calc *scratch_calc = NULL, *work_calc = NULL, *old_calc;
     oc_undo *undo = NULL;
@@ -106,6 +224,15 @@ int oc_core_multiple_operations(oc_core *core,
     }
     rc = owf_calc_recalc(work_calc);
     if (rc != OWF_OK) goto done;
+    expanded = source;
+    expanded.last_col++;
+    formula_range.first_row = formula_range.last_row = formula_row;
+    formula_range.first_col = formula_range.last_col = formula_col;
+    input_range.first_row = input_range.last_row = input_row;
+    input_range.first_col = input_range.last_col = input_col;
+    rc = add_metadata(work, sheet_index, &expanded, formula_sheet, &formula_range,
+                      -1, NULL, input_sheet, &input_range, MULTIOP_META_COLUMN);
+    if (rc != OWF_OK) goto done;
 
     undo = oc_undo_new(core, OC_UNDO_BOOK);
     if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
@@ -129,8 +256,6 @@ int oc_core_multiple_operations(oc_core *core,
     core->unchecked = 0;
     if (core->clip.valid)
         core->clip.cut = 0;
-    expanded = source;
-    expanded.last_col++;
     oc_core_select_range(core, &expanded);
     rc = OWF_OK;
 done:
@@ -152,7 +277,7 @@ int oc_core_multiple_operations_2d(oc_core *core,
 {
     const oc_selection *selection;
     const owf_cell *formula_cell, *input_cell, *trial, *result;
-    owf_range table;
+    owf_range table, formula_range, row_input_range, column_input_range;
     owf_book *scratch = NULL, *work = NULL, *old_book;
     owf_calc *scratch_calc = NULL, *work_calc = NULL, *old_calc;
     oc_undo *undo = NULL;
@@ -273,6 +398,16 @@ int oc_core_multiple_operations_2d(oc_core *core,
             if (rc != OWF_OK) goto done;
         }
     rc = owf_calc_recalc(work_calc);
+    if (rc != OWF_OK) goto done;
+    formula_range.first_row = formula_range.last_row = formula_row;
+    formula_range.first_col = formula_range.last_col = formula_col;
+    row_input_range.first_row = row_input_range.last_row = row_input_row;
+    row_input_range.first_col = row_input_range.last_col = row_input_col;
+    column_input_range.first_row = column_input_range.last_row = column_input_row;
+    column_input_range.first_col = column_input_range.last_col = column_input_col;
+    rc = add_metadata(work, sheet_index, &table, formula_sheet, &formula_range,
+                      row_input_sheet, &row_input_range,
+                      column_input_sheet, &column_input_range, MULTIOP_META_2D);
     if (rc != OWF_OK) goto done;
 
     undo = oc_undo_new(core, OC_UNDO_BOOK);
@@ -434,6 +569,19 @@ int oc_core_multiple_operations_multi(oc_core *core,
         }
     rc = owf_calc_recalc(work_calc);
     if (rc != OWF_OK) goto done;
+    {
+        owf_range input_range;
+        input_range.first_row = input_range.last_row = input_row;
+        input_range.first_col = input_range.last_col = input_col;
+        rc = add_metadata(work, sheet_index, &table, formula_sheet, formulas,
+                          trial_axis == OC_MULTIOP_TRIALS_ROW ? input_sheet : -1,
+                          trial_axis == OC_MULTIOP_TRIALS_ROW ? &input_range : NULL,
+                          trial_axis == OC_MULTIOP_TRIALS_COLUMN ? input_sheet : -1,
+                          trial_axis == OC_MULTIOP_TRIALS_COLUMN ? &input_range : NULL,
+                          trial_axis == OC_MULTIOP_TRIALS_COLUMN ?
+                          MULTIOP_META_COLUMN : MULTIOP_META_ROW);
+        if (rc != OWF_OK) goto done;
+    }
 
     undo = oc_undo_new(core, OC_UNDO_BOOK);
     if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
@@ -467,5 +615,95 @@ done:
     owf_book_free(work);
     free(trials);
     free(results);
+    return rc;
+}
+
+int oc_core_refresh_multiple_operations(oc_core *core)
+{
+    const owf_defname *table_name = NULL, *formulas_name, *row_name, *column_name, *config_name;
+    oc_selection old_selection;
+    owf_range table, formulas, row_input, column_input;
+    char name[64];
+    size_t prefix = strlen(MULTIOP_TABLE_PREFIX);
+    unsigned active_row, active_col, id = 0, candidate;
+    unsigned long best_cells = 0;
+    int i, used, table_sheet, formula_sheet, row_sheet = -1, column_sheet = -1;
+    int config, rc = OWF_ERR_UNSUPPORTED;
+
+    if (!core)
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    oc_core_active(core, &active_row, &active_col);
+    for (i = 0; i < core->book->nnames; ++i) {
+        const owf_defname *item = &core->book->names[i];
+        owf_range candidate_range;
+        unsigned long cells;
+        if (item->sheet != core->sheet || strncmp(item->name, MULTIOP_TABLE_PREFIX, prefix) ||
+            sscanf(item->name + prefix, "%u%n", &candidate, &used) != 1 ||
+            item->name[prefix + (size_t)used] || !candidate ||
+            !oc_sheet_range(core->book, item->formula, core->sheet,
+                            &table_sheet, &candidate_range) || table_sheet != core->sheet ||
+            active_row < candidate_range.first_row || active_row > candidate_range.last_row ||
+            active_col < candidate_range.first_col || active_col > candidate_range.last_col)
+            continue;
+        cells = (unsigned long)(candidate_range.last_row - candidate_range.first_row + 1u) *
+                (candidate_range.last_col - candidate_range.first_col + 1u);
+        if (!table_name || cells < best_cells) {
+            table_name = item;
+            table = candidate_range;
+            best_cells = cells;
+            id = candidate;
+        }
+    }
+    if (!table_name)
+        return OWF_ERR_UNSUPPORTED;
+#define GET_META(prefix_) \
+    (snprintf(name, sizeof name, "%s%u", prefix_, id), metadata_name(core->book, core->sheet, name))
+    formulas_name = GET_META(MULTIOP_FORMULAS_PREFIX);
+    row_name = GET_META(MULTIOP_ROW_INPUT_PREFIX);
+    column_name = GET_META(MULTIOP_COLUMN_INPUT_PREFIX);
+    config_name = GET_META(MULTIOP_CONFIG_PREFIX);
+#undef GET_META
+    if (!formulas_name || !row_name || !column_name || !config_name ||
+        sscanf(config_name->formula, "\"%d\"%n", &config, &used) != 1 ||
+        config_name->formula[used] || config < MULTIOP_META_COLUMN || config > MULTIOP_META_2D ||
+        !oc_sheet_range(core->book, formulas_name->formula, core->sheet,
+                        &formula_sheet, &formulas))
+        return OWF_ERR_FORMAT;
+    if (config == MULTIOP_META_ROW || config == MULTIOP_META_2D) {
+        if (!oc_sheet_range(core->book, row_name->formula, core->sheet,
+                            &row_sheet, &row_input) ||
+            row_input.first_row != row_input.last_row ||
+            row_input.first_col != row_input.last_col)
+            return OWF_ERR_FORMAT;
+    }
+    if (config == MULTIOP_META_COLUMN || config == MULTIOP_META_2D) {
+        if (!oc_sheet_range(core->book, column_name->formula, core->sheet,
+                            &column_sheet, &column_input) ||
+            column_input.first_row != column_input.last_row ||
+            column_input.first_col != column_input.last_col)
+            return OWF_ERR_FORMAT;
+    }
+    old_selection = oc_state_const(core)->sel;
+    oc_core_select_range(core, &table);
+    if (config == MULTIOP_META_2D) {
+        if (formulas.first_row != formulas.last_row || formulas.first_col != formulas.last_col)
+            rc = OWF_ERR_FORMAT;
+        else
+            rc = oc_core_multiple_operations_2d(core,
+                    formula_sheet, formulas.first_row, formulas.first_col,
+                    row_sheet, row_input.first_row, row_input.first_col,
+                    column_sheet, column_input.first_row, column_input.first_col);
+    } else {
+        rc = oc_core_multiple_operations_multi(core, formula_sheet, &formulas,
+                config == MULTIOP_META_COLUMN ? column_sheet : row_sheet,
+                config == MULTIOP_META_COLUMN ? column_input.first_row : row_input.first_row,
+                config == MULTIOP_META_COLUMN ? column_input.first_col : row_input.first_col,
+                config == MULTIOP_META_COLUMN ? OC_MULTIOP_TRIALS_COLUMN :
+                                                OC_MULTIOP_TRIALS_ROW);
+    }
+    if (rc != OWF_OK)
+        oc_state(core)->sel = old_selection;
     return rc;
 }

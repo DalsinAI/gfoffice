@@ -32,10 +32,10 @@ reported rather than committed.
 
 ## Multiple Operations
 
-GFOpenCalc 0.1.66 supports the column, row and two-variable forms of Apache
+GFOpenCalc 0.1.67 supports the column, row and two-variable forms of Apache
 Calc's Data > Multiple Operations. Portable-core API
 `oc_core_multiple_operations`
-(`opencalc_core.h` 0.31.0) takes a formula cell and one input cell while the
+(`opencalc_core.h` 0.32.0) takes a formula cell and one input cell while the
 current selection supplies one column of up to 65,536 numeric trial values.
 `oc_core_multiple_operations_2d` takes a formula plus distinct row and column
 input cells. Its selected matrix supplies row-input trials across the top after
@@ -53,11 +53,13 @@ right of one-variable trials, or the complete two-variable matrix interior.
 Only after every trial and write succeeds does that book replace the live one,
 as one Undo step. Formula and input cells may be on a different sheet, their
 original values are not changed, and an invalid trial or nonnumeric result
-leaves the live book untouched. Output is ordinary numeric cells rather than
-opaque private metadata, so it round-trips through XLSX and ODS.
-Unlike Apache Calc's native formula arrays, these are currently static numeric
-snapshots: changing their source model does not automatically recalculate the
-table.
+leaves the live book untouched. Output remains ordinary numeric cells. Hidden
+sheet-scoped names retain each table's formula and input references, so
+**Data > Refresh Multiple Operations** can rebuild it after model changes.
+Those durable definitions and results round-trip through XLSX and ODS, and a
+refresh is another atomic Undo step. Unlike Apache Calc's native formula
+arrays, refresh is currently manual rather than part of ordinary workbook
+recalculation.
 
 ## Grouped subtotal authoring
 

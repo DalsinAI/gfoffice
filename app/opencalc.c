@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.66 (9.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.67 (9.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH
 };
 
 static struct NewMenu menus[] = {
@@ -244,6 +244,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
+    { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
     { NM_ITEM, "Pivot Summary...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
     { NM_ITEM, "Refresh Pivot Summary", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
@@ -4311,6 +4312,17 @@ static void menu_action(ULONG id)
     case M_FILTER_ACTIVE: do_filter_active(); break;
     case M_GOAL_SEEK: do_goal_seek(); break;
     case M_MULTIPLE_OPS: do_multiple_operations(); break;
+    case M_MULTIPLE_REFRESH:
+        {
+            int rc = oc_core_refresh_multiple_operations(core);
+            if (rc == OWF_ERR_UNSUPPORTED)
+                set_status("The active cell is not inside a refreshable Multiple Operations table.");
+            else if (rc == OWF_ERR_FORMAT)
+                set_status("The Multiple Operations formula, input or table definition is no longer valid.");
+            else
+                result(rc, "Multiple Operations refreshed from the model; Undo restores the previous results.");
+        }
+        break;
     case M_SUBTOTALS: do_subtotals(); break;
     case M_PIVOT_SUMMARY: do_pivot_summary(); break;
     case M_PIVOT_REFRESH:

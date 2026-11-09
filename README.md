@@ -306,14 +306,16 @@ variable cell; the reusable core 0.25.0 searches a private deep copy of the
 workbook, reports the achieved value and applies the candidate only after
 confirmation as one undoable edit. Linear, nonlinear and cross-sheet formula
 dependencies are supported without leaving trial values in the live book.
-GFOpenCalc 0.1.66 supports the column, row and two-variable forms of Data >
+GFOpenCalc 0.1.67 supports the column, row and two-variable forms of Data >
 Multiple Operations. A selected one-variable table can drive a horizontal or
 vertical range of formulas, producing all result series simultaneously; a
 two-variable matrix takes trials from its top and left edges. Reusable core
-0.31.0 evaluates every form on private workbooks and commits the complete
+0.32.0 evaluates every form on private workbooks and commits the complete
 numeric result as one Undo step. Formula and inputs may be on another sheet,
-and failures leave the live workbook untouched. Results are currently static
-numeric snapshots rather than Apache Calc's recalculating formula arrays.
+and failures leave the live workbook untouched. Hidden definitions preserve
+the table, formula and input references through XLSX and ODS; Data > Refresh
+Multiple Operations rebuilds results after model edits as another Undo step.
+Refresh is manual rather than part of ordinary workbook recalculation.
 GFOpenCalc 0.1.61 also adds Data > Subtotals. Select a headed table, choose a
 group column, one or more value columns and any of the eleven SUBTOTAL
 aggregates; reusable core 0.26.0 atomically inserts bold per-group formula rows

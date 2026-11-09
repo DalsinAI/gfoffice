@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.31.0"
+#define OC_CORE_VERSION "0.32.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -361,6 +361,10 @@ int oc_core_multiple_operations_multi(oc_core *core,
                                       int formula_sheet, const owf_range *formulas,
                                       int input_sheet, unsigned input_row,
                                       unsigned input_col, int trial_axis);
+/* Refreshes the durable Multiple Operations table containing the active cell.
+ * Table/formula/input references are stored as hidden sheet-scoped names and
+ * follow structural edits through XLSX/ODS. One whole-book Undo step. */
+int oc_core_refresh_multiple_operations(oc_core *core);
 
 /* ---- Commands on the selection (each one undo step) ---- */
 

@@ -4813,7 +4813,19 @@ static void test_multiple_operations_2d(void)
     CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
     CHECK(fabs(num(core, "D1")) < 1e-12 && fabs(num(core, "E1")) < 1e-12 &&
           fabs(num(core, "C1")) < 1e-12);
+    CHECK(oc_core_set_input(core, 1, 0, 2, "=D1*1000+E1") == OWF_OK);
     CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    oc_core_select_cell(core, 1, 1, 0, 0);
+    changes = oc_core_changes(core);
+    CHECK(oc_core_refresh_multiple_operations(core) == OWF_OK &&
+          fabs(num(core, "B2") - 1010.0) < 1e-12 &&
+          fabs(num(core, "C2") - 2010.0) < 1e-12 &&
+          fabs(num(core, "B3") - 1020.0) < 1e-12 &&
+          fabs(num(core, "C3") - 2020.0) < 1e-12 &&
+          oc_core_changes(core) == changes + 1);
+    CHECK(oc_core_undo(core) == OWF_OK && fabs(num(core, "B2") - 110.0) < 1e-12 &&
+          fabs(num(core, "C3") - 220.0) < 1e-12);
+    CHECK(oc_core_undo(core) == OWF_OK); /* formula edit */
     CHECK(oc_core_undo(core) == OWF_OK && fabs(num(core, "B2") - 99.0) < 1e-12 &&
           empty(core, "C2") && empty(core, "B3") && empty(core, "C3"));
 
@@ -4835,6 +4847,7 @@ static void test_multiple_operations_multi(void)
     oc_core *core = fresh();
     owf_range selected, formulas;
     unsigned long changes;
+    int n, metadata;
     if (!core)
         return;
     enter_at(core, "D2", "1");
@@ -4860,8 +4873,62 @@ static void test_multiple_operations_multi(void)
           fabs(num(core, "E4") - 40.0) < 1e-12 &&
           fabs(num(core, "F4") - 16.0) < 1e-12 &&
           oc_core_changes(core) == changes + 1);
+    metadata = 0;
+    for (n = 0; n < oc_core_book(core)->nnames; ++n)
+        if (!strncmp(oc_core_book(core)->names[n].name, "_GF_MULTIOP_", 12) &&
+            oc_core_book(core)->names[n].hidden)
+            metadata++;
+    CHECK(metadata == 5);
     CHECK(oc_core_set_sheet(core, 1) == OWF_OK && fabs(num(core, "B4")) < 1e-12);
+    CHECK(oc_core_set_input(core, 1, 4, 2, "=B4*B4*B4") == OWF_OK);
     CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    oc_core_select_cell(core, 2, 4, 0, 0);
+    changes = oc_core_changes(core);
+    CHECK(oc_core_refresh_multiple_operations(core) == OWF_OK &&
+          fabs(num(core, "E2") - 10.0) < 1e-12 &&
+          fabs(num(core, "F2") - 1.0) < 1e-12 &&
+          fabs(num(core, "E3") - 20.0) < 1e-12 &&
+          fabs(num(core, "F3") - 8.0) < 1e-12 &&
+          fabs(num(core, "E4") - 40.0) < 1e-12 &&
+          fabs(num(core, "F4") - 64.0) < 1e-12 &&
+          oc_core_changes(core) == changes + 1);
+    {
+        static const char *const paths[] = {
+            "/tmp/opencalc-multiple-operations.xlsx",
+            "/tmp/opencalc-multiple-operations.ods"
+        };
+        int k;
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            oc_core *round_core;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK &&
+                  round && round->nnames >= 5);
+            round_core = oc_core_new(round);
+            round = NULL;
+            CHECK(round_core && oc_core_set_input(round_core, 1, 4, 2, "=B4+1") == OWF_OK &&
+                  oc_core_set_sheet(round_core, 0) == OWF_OK);
+            if (round_core) {
+                oc_core_select_cell(round_core, 2, 4, 0, 0);
+                CHECK(oc_core_refresh_multiple_operations(round_core) == OWF_OK &&
+                      fabs(num(round_core, "F2") - 2.0) < 1e-12 &&
+                      fabs(num(round_core, "F3") - 3.0) < 1e-12 &&
+                      fabs(num(round_core, "F4") - 5.0) < 1e-12);
+            }
+            oc_core_free(round_core);
+            remove(paths[k]);
+        }
+    }
+    CHECK(oc_core_set_input(core, 0, 2, 3, "bad trial") == OWF_OK);
+    oc_core_select_cell(core, 2, 4, 0, 0);
+    changes = oc_core_changes(core);
+    CHECK(oc_core_refresh_multiple_operations(core) == OWF_ERR_UNSUPPORTED &&
+          fabs(num(core, "F3") - 8.0) < 1e-12 && oc_core_changes(core) == changes);
+    CHECK(oc_core_undo(core) == OWF_OK); /* invalid trial edit */
+    oc_core_select_cell(core, 0, 0, 0, 0);
+    CHECK(oc_core_refresh_multiple_operations(core) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_undo(core) == OWF_OK && fabs(num(core, "F3") - 4.0) < 1e-12); /* refresh */
+    CHECK(oc_core_undo(core) == OWF_OK); /* formula edit */
     CHECK(oc_core_undo(core) == OWF_OK && empty(core, "E2") && empty(core, "F2") &&
           fabs(num(core, "E3") - 99.0) < 1e-12 && empty(core, "F3") &&
           empty(core, "E4") && empty(core, "F4"));
