@@ -384,6 +384,15 @@ including ranges across paragraphs, and ODP preserves those run boundaries.
 The native highlight is derived from the existing GFOpenLayout caret map, so
 this editing feature adds no second line or column geometry path.
 
+GFOpenPublisher 0.3.3 advances shared core to 0.17.0 and removes the tail-only
+restriction from linked-frame authoring. Any non-first frame can be detached;
+the frames before and after it remain in one ordered flow. An empty frame can
+then be inserted before the selected frame's current successor. Both changes
+are one flow snapshot for Undo/Redo and change only the existing `flow_story`
+membership, so story bytes, ODP persistence and GFOpenLayout continuation stay
+on their established paths. The first frame remains protected because it owns
+the story.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap records or original PUB column records, and the PDF picture encoder does not yet play

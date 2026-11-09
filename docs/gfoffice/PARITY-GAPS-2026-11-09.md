@@ -1,8 +1,8 @@
 # GFOffice gap analysis against Apache OpenOffice and Microsoft Publisher
 
 Verified 9 November 2026 against GFOffice `main` through implementation commit
-`b32478df85e215045fad4a85702f66c1cd1df55d` (post-RC70 shared character-range
-editing), GFOpenLayout
+`f589cc83c67e178c58ee81449f78dead0560af48` (post-RC70 character-range editing
+and linked-flow middle surgery), GFOpenLayout
 `58c3ae5645b1676124abe20588cc472f48585977`, and GFOpenDraw
 `ca07afc25e793e4c4fdc5ae16979bebccd203eaa`.
 
@@ -22,8 +22,8 @@ edits, saves, reloads and undoes correctly.
 | --- | --- | ---: | --- | --- | --- |
 | GFOpenWrite 2.0.26 | Writer | **63%** | Medium-high | Native text editing; character and paragraph formatting; styles; lists; editable tables; inline/floating pictures; text boxes; headers/footers; TOC; sections and newspaper columns; DOCX/ODT/RTF; PDF/print; spelling, recovery and ARexx | Track changes; comments/review UI; mail merge/labels/envelopes; alphabetical and object indexes/bibliography; master documents; forms; richer style families; advanced tables; embedded charts/sheets/media; autocorrect/thesaurus/hyphenation |
 | GFOpenCalc 0.1.67 | Calc | **62%** | High for delivered core, medium overall | XLS/XLSX/ODS/FODS/CSV; 277-function formula engine; editing/formatting; sort/filter; comments, validation and conditional formatting; charts; subtotals; refreshable pivot summaries; Goal Seek; durable, manually refreshable one/two-variable and multi-formula Multiple Operations; PDF/print; robust host corpus | Automatic data-table recalc and native Excel/Calc data-table metadata; full Pivot Table field layout/filter/drill/multiple data fields; Solver; scenarios; consolidation; richer database filters/functions; external data/links; sharing/change tracking; macro recorder/IDE; more chart/graphics editing |
-| GFOpenPresentation 0.6.8 | Impress | **58%** | Medium-high | ODP/FODP read/write, PPTX import; slide CRUD/reorder/hide; masters/layout model; drag/Shift/Select-All character ranges with replacement typing and exact bold/italic/underline/size/RGB/font formatting; paragraph alignment; editable 1-16 column count, exact gap and four frame margins with ODP persistence/PPTX import; shared imported object-wrap rendering; inserted text boxes/pictures/shapes; object move/resize/rotate/arrange/align/appearance; transitions; slideshow; PDF/print; undo | PPT/PPTX export; Normal/Outline/Notes/Handout/Sorter views; notes editing and notes/handout printing; multi-selection/distribute; master editing; richer fills/transparency/shadows; table structure editing; charts/OLE/media editing; custom animation; clipboard; find/spell; ARexx |
-| GFOpenPublisher 0.3.2 | Microsoft Publisher 2021 | **48%** | Medium | PUB import; positioned multi-page display; exact linked-story continuation across pages; safe tail link/unlink authoring with Undo and ODP persistence; layout-derived selected-frame overflow badge; drag/Shift/Select-All character ranges, replacement typing and exact run formatting; editable 1-16 column count, exact gap and four frame margins; undoable square and top/bottom text wrap around pictures/shapes through GFOpenLayout 0.16; editable per-side wrap distances and ODP persistence; editable inserted picture/shape objects; move/resize/rotate/arrange/align/look; ODP save; PDF/print | Native PUB save; decode original PUB formatting/columns/wrap; arbitrary middle-chain surgery; contour/tight wrap; master pages and facing-page publications; guides/snap/rulers/baselines; templates/building blocks; crop/recolour/transparency; richer tables; mail/catalog merge; commercial-print/preflight/design checker |
+| GFOpenPresentation 0.6.9 | Impress | **58%** | Medium-high | ODP/FODP read/write, PPTX import; slide CRUD/reorder/hide; masters/layout model; drag/Shift/Select-All character ranges with replacement typing and exact bold/italic/underline/size/RGB/font formatting; paragraph alignment; editable 1-16 column count, exact gap and four frame margins with ODP persistence/PPTX import; shared imported object-wrap rendering; inserted text boxes/pictures/shapes; object move/resize/rotate/arrange/align/appearance; transitions; slideshow; PDF/print; undo | PPT/PPTX export; Normal/Outline/Notes/Handout/Sorter views; notes editing and notes/handout printing; multi-selection/distribute; master editing; richer fills/transparency/shadows; table structure editing; charts/OLE/media editing; custom animation; clipboard; find/spell; ARexx |
+| GFOpenPublisher 0.3.3 | Microsoft Publisher 2021 | **49%** | Medium | PUB import; positioned multi-page display; exact linked-story continuation across pages; ordered middle/tail detach and insertion with Undo and ODP persistence; layout-derived selected-frame overflow badge; drag/Shift/Select-All character ranges, replacement typing and exact run formatting; editable 1-16 column count, exact gap and four frame margins; undoable square and top/bottom text wrap around pictures/shapes through GFOpenLayout 0.16; editable per-side wrap distances and ODP persistence; editable inserted picture/shape objects; move/resize/rotate/arrange/align/look; ODP save; PDF/print | Native PUB save; decode original PUB formatting/columns/wrap; contour/tight wrap; master pages and facing-page publications; guides/snap/rulers/baselines; templates/building blocks; crop/recolour/transparency; richer tables; mail/catalog merge; commercial-print/preflight/design checker |
 | GFOpenDraw 0.2.0 RC2 | Draw | **19%** | High | Practical indexed-raster paint editor; two native front ends; ARexx; reusable host/m68k painting library; suite packaging | Multi-page vector document shell; ODG/SVG; editable text/shapes/pictures; layers/master pages; connectors/glue points; curves; multi-selection/grouping; snap/grid/guides; dimensions; technical drawing; vector PDF/clipboard. Raster-side text, polygons/curves, gradients, symmetry, spare page and CRNG persistence also remain |
 | GFOpenBase design 0.1 | Base | **4%** | High | Current design, SQLite/OADB architecture and reusable suite components are documented | No executable or core yet. Required baseline: project create/open; table designer and datasheet CRUD; keys/relationships; SQL/query designer; forms/subforms; reports; CSV/DBF/Calc exchange; locking/recovery; ARexx/runtime |
 
@@ -119,8 +119,8 @@ the same geometry or flow rule.
    owns fixed-height multi-column flow and scoped exclusion fitting; Publisher
    and Presentation share model, Undo/Redo and ODP interchange. Next add
    Character-range selection, replacement and exact run formatting are now
-   delivered in the shared deck editor. Next add arbitrary middle-chain
-   surgery, followed by contour wrap and clipboard exchange. Editable frame margins, column gaps,
+   delivered in the shared deck editor, as is ordered middle-chain detach and
+   insertion. Next add contour wrap and clipboard exchange. Editable frame margins, column gaps,
    per-side wrap distances, safe
    tail link/unlink and a layout-derived overflow badge are also delivered.
 3. **Writer W-review — tracked changes first, mail merge second.** Preserve
@@ -175,11 +175,12 @@ downloaded back with SHA-256
 `bbcedb75f99cf7fef39095168f74382551064a8ac9f629b34d6cab9c85ede9ad`,
 and all 80 files covered by its internal manifest verified.
 
-Post-RC70 Publisher 0.3.2/Presentation 0.6.8 candidate evidence adds a
-293-check optimized and ASan/UBSan deck-editor/interchange pass. It covers
+Post-RC70 Publisher 0.3.3/Presentation 0.6.9 candidate evidence adds a
+295-check optimized and ASan/UBSan deck-editor/interchange pass. It covers
 forward and cross-paragraph ranges, partial run boundaries, exact character
-formatting, replacement/deletion, Undo/Redo and ODP round trip. A clean
+formatting, replacement/deletion, middle-flow detach/insertion, Undo/Redo and
+ODP round trip. A clean
 warnings-as-errors Open6 build at implementation commit
-`b32478df85e215045fad4a85702f66c1cd1df55d` rebuilt both updated native
+`f589cc83c67e178c58ee81449f78dead0560af48` rebuilt both updated native
 applications and the linked suite applications. This candidate work is newer
 than the immutable RC70 archive and has no recorded on-Amiga runtime test.

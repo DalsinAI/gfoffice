@@ -530,6 +530,11 @@ italic, underline, size, RGB colour and font family, while paragraph alignment
 continues to apply to the paragraphs touched by the range. Highlight geometry
 comes from GFOpenLayout's existing caret positions.
 
+GFOpenPresentation 0.6.9 carries shared core 0.17.0, whose ordered linked-frame
+membership now supports Publisher's middle detach and insertion commands. This
+does not add a Presentation-facing flow menu or an OpenLayout API; it keeps the
+common deck model and ODP continuation semantics aligned between the apps.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

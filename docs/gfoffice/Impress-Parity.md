@@ -92,6 +92,8 @@ GFOpenPresentation 0.6.7 adds named Font Family authoring through shared core
 GFOpenPresentation 0.6.8 adds exact character-range selection through shared
 core 0.16.0: mouse drag, Shift+Arrow, Select All Text, replacement typing,
 cross-paragraph deletion, run-level formatting, Undo/Redo and ODP round trip.
+GFOpenPresentation 0.6.9 carries shared core 0.17.0's ordered linked-frame
+membership for Publisher; it adds no Impress-facing command.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
