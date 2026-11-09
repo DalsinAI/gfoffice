@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.64 (9.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.65 (9.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -3090,13 +3090,18 @@ static void do_goal_seek(void)
 static void do_multiple_operations(void)
 {
     oc_selection selection;
-    char formula_ref[24] = "", input_ref[24] = "";
+    char formula_ref[24] = "", input_ref[24] = "", column_input_ref[24] = "";
     unsigned formula_row, formula_col, input_row, input_col;
+    unsigned column_input_row, column_input_col;
     int rc, sheet = oc_core_sheet(core);
     oc_core_selection(core, &selection);
-    if (selection.nranges != 1 ||
+    if (selection.nranges != 1) {
+        set_status("Select one trial column or one row-and-column trial matrix first.");
+        return;
+    }
+    if (selection.ranges[0].first_row == selection.ranges[0].last_row &&
         selection.ranges[0].first_col != selection.ranges[0].last_col) {
-        set_status("Select one column of numeric trial values first.");
+        set_status("A matrix needs a top trial row and a left trial column.");
         return;
     }
     if (!text_requester("Multiple Operations", "Formula cell", "", formula_ref, sizeof formula_ref)) return;
@@ -3104,19 +3109,35 @@ static void do_multiple_operations(void)
         set_status("Multiple Operations needs one formula cell, such as D1.");
         return;
     }
-    if (!text_requester("Multiple Operations", "Input cell", "", input_ref, sizeof input_ref)) return;
+    if (!text_requester("Multiple Operations",
+                        selection.ranges[0].first_col == selection.ranges[0].last_col ?
+                        "Input cell" : "Row input cell", "", input_ref, sizeof input_ref)) return;
     if (!one_cell_ref(input_ref, &input_row, &input_col)) {
         set_status("Multiple Operations needs one input cell, such as C1.");
         return;
     }
-    rc = oc_core_multiple_operations(core, sheet, formula_row, formula_col,
-                                     sheet, input_row, input_col);
+    if (selection.ranges[0].first_col == selection.ranges[0].last_col)
+        rc = oc_core_multiple_operations(core, sheet, formula_row, formula_col,
+                                         sheet, input_row, input_col);
+    else {
+        if (!text_requester("Multiple Operations", "Column input cell", "",
+                            column_input_ref, sizeof column_input_ref)) return;
+        if (!one_cell_ref(column_input_ref, &column_input_row, &column_input_col)) {
+            set_status("Multiple Operations needs one column input cell, such as E1.");
+            return;
+        }
+        rc = oc_core_multiple_operations_2d(core, sheet, formula_row, formula_col,
+                                            sheet, input_row, input_col,
+                                            sheet, column_input_row, column_input_col);
+    }
     if (rc == OWF_ERR_FORMAT)
-        set_status("Use distinct formula/input cells outside the trial and output columns.");
+        set_status("Use distinct formula/input cells outside the selected trial table.");
     else if (rc == OWF_ERR_UNSUPPORTED)
-        set_status("Every trial and calculated result must be numeric; use at most 65,536 trials.");
+        set_status("Every trial and result must be numeric; the output table may hold 262,144 cells.");
     else
-        result(rc, "Multiple Operations results filled the next column; Undo removes them.");
+        result(rc, selection.ranges[0].first_col == selection.ranges[0].last_col ?
+               "Multiple Operations results filled the next column; Undo removes them." :
+               "Multiple Operations filled the matrix interior; Undo restores it.");
 }
 
 static int column_word(const char *text, size_t length, unsigned *column)

@@ -1,5 +1,5 @@
 /*
- * GFOpenCalc's portable core: one-variable Data > Multiple Operations.
+ * GFOpenCalc's portable core: one- and two-variable Multiple Operations.
  * Trial evaluation and output construction both happen off the live book.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -140,5 +140,173 @@ done:
     owf_calc_free(work_calc);
     owf_book_free(work);
     free(values);
+    return rc;
+}
+
+int oc_core_multiple_operations_2d(oc_core *core,
+                                   int formula_sheet, unsigned formula_row, unsigned formula_col,
+                                   int row_input_sheet, unsigned row_input_row,
+                                   unsigned row_input_col,
+                                   int column_input_sheet, unsigned column_input_row,
+                                   unsigned column_input_col)
+{
+    const oc_selection *selection;
+    const owf_cell *formula_cell, *input_cell, *trial, *result;
+    owf_range table;
+    owf_book *scratch = NULL, *work = NULL, *old_book;
+    owf_calc *scratch_calc = NULL, *work_calc = NULL, *old_calc;
+    oc_undo *undo = NULL;
+    double *row_values = NULL, *column_values = NULL, *results = NULL;
+    unsigned rows, cols, row, col, r, c;
+    size_t cells;
+    int rc = OWF_ERR_FORMAT, sheet_index;
+    char number[48];
+
+    if (!core || formula_sheet < 0 || formula_sheet >= core->book->nsheets ||
+        row_input_sheet < 0 || row_input_sheet >= core->book->nsheets ||
+        column_input_sheet < 0 || column_input_sheet >= core->book->nsheets ||
+        formula_row >= OC_MAX_ROWS || formula_col >= OC_MAX_COLS ||
+        row_input_row >= OC_MAX_ROWS || row_input_col >= OC_MAX_COLS ||
+        column_input_row >= OC_MAX_ROWS || column_input_col >= OC_MAX_COLS ||
+        (formula_sheet == row_input_sheet && formula_row == row_input_row &&
+         formula_col == row_input_col) ||
+        (formula_sheet == column_input_sheet && formula_row == column_input_row &&
+         formula_col == column_input_col) ||
+        (row_input_sheet == column_input_sheet && row_input_row == column_input_row &&
+         row_input_col == column_input_col))
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    selection = &oc_state_const(core)->sel;
+    if (selection->nranges != 1)
+        return OWF_ERR_UNSUPPORTED;
+    table = selection->ranges[0];
+    if (table.first_row == table.last_row || table.first_col == table.last_col)
+        return OWF_ERR_FORMAT;
+    rows = table.last_row - table.first_row;
+    cols = table.last_col - table.first_col;
+    if (rows > (unsigned long)OC_MAX_RANGE_CELLS / cols)
+        return OWF_ERR_UNSUPPORTED;
+    cells = (size_t)rows * (size_t)cols;
+    if (!cells || cells > (size_t)OC_MAX_RANGE_CELLS)
+        return OWF_ERR_UNSUPPORTED;
+    sheet_index = core->sheet;
+    if (in_range(formula_sheet, formula_row, formula_col, sheet_index, &table) ||
+        in_range(row_input_sheet, row_input_row, row_input_col, sheet_index, &table) ||
+        in_range(column_input_sheet, column_input_row, column_input_col,
+                 sheet_index, &table))
+        return OWF_ERR_FORMAT;
+    formula_cell = owf_sheet_find(&core->book->sheets[formula_sheet], formula_row, formula_col);
+    if (!formula_cell || !formula_cell->formula)
+        return OWF_ERR_FORMAT;
+    input_cell = owf_sheet_find(&core->book->sheets[row_input_sheet],
+                                row_input_row, row_input_col);
+    if (input_cell && (input_cell->formula ||
+        (input_cell->type != OWF_VALUE_EMPTY && input_cell->type != OWF_VALUE_NUMBER)))
+        return OWF_ERR_FORMAT;
+    input_cell = owf_sheet_find(&core->book->sheets[column_input_sheet],
+                                column_input_row, column_input_col);
+    if (input_cell && (input_cell->formula ||
+        (input_cell->type != OWF_VALUE_EMPTY && input_cell->type != OWF_VALUE_NUMBER)))
+        return OWF_ERR_FORMAT;
+
+    row_values = malloc((size_t)cols * sizeof *row_values);
+    column_values = malloc((size_t)rows * sizeof *column_values);
+    results = malloc(cells * sizeof *results);
+    if (!row_values || !column_values || !results) {
+        rc = OWF_ERR_MEMORY;
+        goto done;
+    }
+    scratch = oc_book_copy(core->book);
+    if (!scratch) { rc = OWF_ERR_MEMORY; goto done; }
+    scratch_calc = owf_calc_new(scratch);
+    if (!scratch_calc) { rc = OWF_ERR_MEMORY; goto done; }
+    rc = owf_calc_recalc_all(scratch_calc);
+    if (rc != OWF_OK) goto done;
+    for (c = 0, col = table.first_col + 1u; c < cols; ++c, ++col) {
+        trial = owf_sheet_find(&scratch->sheets[sheet_index], table.first_row, col);
+        if (!trial || trial->type != OWF_VALUE_NUMBER || !finite_number(trial->number)) {
+            rc = OWF_ERR_UNSUPPORTED;
+            goto done;
+        }
+        row_values[c] = trial->number;
+    }
+    for (r = 0, row = table.first_row + 1u; r < rows; ++r, ++row) {
+        trial = owf_sheet_find(&scratch->sheets[sheet_index], row, table.first_col);
+        if (!trial || trial->type != OWF_VALUE_NUMBER || !finite_number(trial->number)) {
+            rc = OWF_ERR_UNSUPPORTED;
+            goto done;
+        }
+        column_values[r] = trial->number;
+    }
+    for (r = 0; r < rows; ++r) {
+        owf_number_text(column_values[r], number);
+        rc = owf_calc_enter(scratch_calc, column_input_sheet, column_input_row,
+                            column_input_col, number);
+        if (rc != OWF_OK) goto done;
+        for (c = 0; c < cols; ++c) {
+            owf_number_text(row_values[c], number);
+            rc = owf_calc_enter(scratch_calc, row_input_sheet, row_input_row,
+                                row_input_col, number);
+            if (rc != OWF_OK) goto done;
+            rc = owf_calc_recalc(scratch_calc);
+            if (rc != OWF_OK) goto done;
+            result = owf_sheet_find(&scratch->sheets[formula_sheet],
+                                    formula_row, formula_col);
+            if (!result || result->type != OWF_VALUE_NUMBER ||
+                !finite_number(result->number)) {
+                rc = OWF_ERR_UNSUPPORTED;
+                goto done;
+            }
+            results[(size_t)r * cols + c] = result->number;
+        }
+    }
+
+    work = oc_book_copy(core->book);
+    if (!work) { rc = OWF_ERR_MEMORY; goto done; }
+    work_calc = owf_calc_new(work);
+    if (!work_calc) { rc = OWF_ERR_MEMORY; goto done; }
+    for (r = 0, row = table.first_row + 1u; r < rows; ++r, ++row)
+        for (c = 0, col = table.first_col + 1u; c < cols; ++c, ++col) {
+            owf_number_text(results[(size_t)r * cols + c], number);
+            rc = owf_calc_enter(work_calc, sheet_index, row, col, number);
+            if (rc != OWF_OK) goto done;
+        }
+    rc = owf_calc_recalc(work_calc);
+    if (rc != OWF_OK) goto done;
+
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+        oc_undo_free(undo);
+        undo = NULL;
+    }
+    oc_cf_forget(core);
+    oc_charts_forget(core);
+    old_book = core->book;
+    old_calc = core->calc;
+    core->book = work;
+    core->calc = work_calc;
+    work = NULL;
+    work_calc = NULL;
+    owf_calc_free(old_calc);
+    owf_book_free(old_book);
+    oc_undo_push(core, undo);
+    undo = NULL;
+    oc_changed(core);
+    core->used_valid = 0;
+    core->unchecked = 0;
+    if (core->clip.valid)
+        core->clip.cut = 0;
+    oc_core_select_range(core, &table);
+    rc = OWF_OK;
+done:
+    oc_undo_free(undo);
+    owf_calc_free(scratch_calc);
+    owf_book_free(scratch);
+    owf_calc_free(work_calc);
+    owf_book_free(work);
+    free(row_values);
+    free(column_values);
+    free(results);
     return rc;
 }

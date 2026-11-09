@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.29.0"
+#define OC_CORE_VERSION "0.30.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -337,6 +337,19 @@ int oc_core_goal_seek(const oc_core *core,
 int oc_core_multiple_operations(oc_core *core,
                                 int formula_sheet, unsigned formula_row, unsigned formula_col,
                                 int input_sheet, unsigned input_row, unsigned input_col);
+
+/* Two-variable Data > Multiple Operations. The current selection must be a
+ * matrix of at least two rows and two columns. Its top row after the corner
+ * supplies values for row_input; its first column after the corner supplies
+ * values for column_input. Numeric results fill the matrix interior. The
+ * formula and both inputs may be on other sheets. Evaluation and construction
+ * are private, then the complete table is committed as one Undo step. */
+int oc_core_multiple_operations_2d(oc_core *core,
+                                   int formula_sheet, unsigned formula_row, unsigned formula_col,
+                                   int row_input_sheet, unsigned row_input_row,
+                                   unsigned row_input_col,
+                                   int column_input_sheet, unsigned column_input_row,
+                                   unsigned column_input_col);
 
 /* ---- Commands on the selection (each one undo step) ---- */
 
