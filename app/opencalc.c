@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.60 (9.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.61 (9.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -106,7 +106,7 @@ enum {
     M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_DUPLICATE, M_SHEET_LEFT, M_SHEET_RIGHT, M_SHEET_HIDE, M_SHEET_SHOW,
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
-    M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK
+    M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS
 };
 
 static struct NewMenu menus[] = {
@@ -242,6 +242,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_FILTER_CLEAR },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
+    { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -3082,6 +3083,112 @@ static void do_goal_seek(void)
         set_status("Goal Seek solution not applied.");
 }
 
+static int column_word(const char *text, size_t length, unsigned *column)
+{
+    char cell[12];
+    owf_range range;
+    size_t i;
+    if (!length || length + 2 >= sizeof cell)
+        return 0;
+    for (i = 0; i < length; ++i)
+        if (!isalpha((unsigned char)text[i]))
+            return 0;
+        else
+            cell[i] = (char)toupper((unsigned char)text[i]);
+    cell[length] = '1';
+    cell[length + 1] = 0;
+    if (!oc_parse_range(cell, &range))
+        return 0;
+    *column = range.first_col;
+    return 1;
+}
+
+static int column_list(const char *text, unsigned *columns, unsigned capacity, unsigned *count)
+{
+    const char *p = text;
+    unsigned n = 0;
+    while (*p) {
+        const char *start;
+        while (*p == ' ' || *p == '\t' || *p == ',') ++p;
+        if (!*p) break;
+        start = p;
+        while (isalpha((unsigned char)*p)) ++p;
+        if (start == p || n == capacity || !column_word(start, (size_t)(p - start), &columns[n]))
+            return 0;
+        ++n;
+        while (*p == ' ' || *p == '\t') ++p;
+        if (*p && *p != ',') return 0;
+    }
+    *count = n;
+    return n != 0;
+}
+
+static int subtotal_function(const char *text)
+{
+    static const struct { const char *name; int function; } names[] = {
+        { "average", OC_SUBTOTAL_AVERAGE }, { "count", OC_SUBTOTAL_COUNT },
+        { "counta", OC_SUBTOTAL_COUNTA }, { "max", OC_SUBTOTAL_MAX },
+        { "min", OC_SUBTOTAL_MIN }, { "product", OC_SUBTOTAL_PRODUCT },
+        { "stdev", OC_SUBTOTAL_STDEV }, { "stdevp", OC_SUBTOTAL_STDEVP },
+        { "sum", OC_SUBTOTAL_SUM }, { "var", OC_SUBTOTAL_VAR }, { "varp", OC_SUBTOTAL_VARP }
+    };
+    unsigned i;
+    for (i = 0; i < sizeof names / sizeof names[0]; ++i)
+        if (!strcasecmp(text, names[i].name))
+            return names[i].function;
+    return 0;
+}
+
+static void do_subtotals(void)
+{
+    oc_selection selection;
+    char group_text[12], values_text[256], function_text[24], name[8];
+    unsigned group_col, columns[64], ncolumns = 0, col;
+    int function, rc;
+    oc_core_selection(core, &selection);
+    if (selection.nranges != 1 || selection.ranges[0].first_row >= selection.ranges[0].last_row ||
+        selection.ranges[0].first_col >= selection.ranges[0].last_col) {
+        set_status("Select one table with a heading row and at least two columns.");
+        return;
+    }
+    oc_col_name(selection.ranges[0].first_col, group_text);
+    if (!text_requester("Subtotals", "Group column", group_text, group_text, sizeof group_text)) return;
+    if (!column_word(group_text, strlen(group_text), &group_col) ||
+        group_col < selection.ranges[0].first_col || group_col > selection.ranges[0].last_col) {
+        set_status("The group column must be inside the selected table.");
+        return;
+    }
+    values_text[0] = 0;
+    for (col = selection.ranges[0].first_col; col <= selection.ranges[0].last_col; ++col)
+        if (col != group_col) {
+            size_t used = strlen(values_text), needed;
+            oc_col_name(col, name);
+            needed = strlen(name) + (used ? 1u : 0u);
+            if (used + needed + 1 >= sizeof values_text)
+                break;
+            snprintf(values_text + used, sizeof values_text - used, "%s%s", used ? "," : "", name);
+        }
+    if (!text_requester("Subtotals", "Calculate columns", values_text, values_text, sizeof values_text)) return;
+    if (!column_list(values_text, columns, 64, &ncolumns)) {
+        set_status("List value columns as letters separated by commas, for example B,C.");
+        return;
+    }
+    if (!text_requester("Subtotals", "sum/average/count/counta/max/min/...", "sum",
+                        function_text, sizeof function_text)) return;
+    function = subtotal_function(function_text);
+    if (!function) {
+        set_status("Use sum, average, count, counta, max, min, product, stdev, stdevp, var or varp.");
+        return;
+    }
+    rc = oc_core_subtotals(core, group_col, columns, ncolumns, function, 1, 1);
+    if (rc == OWF_ERR_FORMAT)
+        set_status("Subtotals need heading, group and value columns inside the selected table.");
+    else if (rc == OWF_ERR_UNSUPPORTED)
+        set_status("Subtotals need one rectangular selection.");
+    else
+        result(rc, "Group subtotals and a grand total were inserted; Undo removes them.");
+}
+
 static void do_format_chart(void)
 {
     owf_chart *charts = NULL;
@@ -4056,6 +4163,7 @@ static void menu_action(ULONG id)
         break;
     case M_FILTER_ACTIVE: do_filter_active(); break;
     case M_GOAL_SEEK: do_goal_seek(); break;
+    case M_SUBTOTALS: do_subtotals(); break;
     case M_VALIDITY: do_validity(); break;
     case M_VALIDITY_CLEAR: result(oc_core_set_validation(core, NULL), "Validity cleared from the selection."); break;
     case M_FILTER_CLEAR:

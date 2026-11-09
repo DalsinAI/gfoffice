@@ -4745,6 +4745,76 @@ static void test_goal_seek(void)
     oc_core_free(core);
 }
 
+static void test_subtotals(void)
+{
+    static const char *const rows[][3] = {
+        { "Group", "Amount", "Units" },
+        { "A", "10", "1" }, { "A", "20", "2" },
+        { "B", "1", "3" }, { "B", "2", "4" }, { "B", "3", "5" }
+    };
+    const unsigned values[] = { 1, 2 };
+    oc_core *core = fresh();
+    owf_range selected;
+    int r, c;
+    if (!core)
+        return;
+    for (r = 0; r < 6; ++r)
+        for (c = 0; c < 3; ++c) {
+            char cell[16];
+            oc_cell_name((unsigned)r, (unsigned)c, cell);
+            enter_at(core, cell, rows[r][c]);
+        }
+    CHECK(oc_core_add_sheet(core, "Summary") == 1);
+    enter_at(core, "A1", "=Sheet1!B6");
+    CHECK(fabs(num(core, "A1") - 3.0) < 1e-12);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_parse_range("A1:C6", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_subtotals(core, 0, values, 2, OC_SUBTOTAL_SUM, 1, 1) == OWF_OK);
+    CHECK_STR(text(core, "A4"), "A Total");
+    CHECK_STR(text(core, "A8"), "B Total");
+    CHECK_STR(text(core, "A9"), "Grand Total");
+    CHECK_STR(formula(core, "B4"), "SUBTOTAL(9,B2:B3)");
+    CHECK_STR(formula(core, "B8"), "SUBTOTAL(9,B5:B7)");
+    CHECK_STR(formula(core, "B9"), "SUBTOTAL(9,B2:B8)");
+    CHECK(fabs(num(core, "B4") - 30.0) < 1e-12 && fabs(num(core, "C4") - 3.0) < 1e-12);
+    CHECK(fabs(num(core, "B8") - 6.0) < 1e-12 && fabs(num(core, "C8") - 12.0) < 1e-12);
+    CHECK(fabs(num(core, "B9") - 36.0) < 1e-12 && fabs(num(core, "C9") - 15.0) < 1e-12);
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(fabs(num(core, "A1") - 3.0) < 1e-12 && strstr(formula(core, "A1"), "B7") != NULL);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    {
+        static const char *const paths[] = { "/tmp/opencalc-subtotals.xlsx", "/tmp/opencalc-subtotals.ods" };
+        int k;
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            const owf_cell *subtotal, *grand;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round != NULL);
+            subtotal = round ? owf_sheet_find(&round->sheets[0], 3, 1) : NULL;
+            grand = round ? owf_sheet_find(&round->sheets[0], 8, 1) : NULL;
+            CHECK(subtotal && subtotal->formula && !strcmp(subtotal->formula, "SUBTOTAL(9,B2:B3)") &&
+                  fabs(subtotal->number - 30.0) < 1e-12 && subtotal->style >= 0 &&
+                  subtotal->style < round->nstyles && (round->styles[subtotal->style].font.flags & OWF_BOLD));
+            CHECK(grand && grand->formula && !strcmp(grand->formula, "SUBTOTAL(9,B2:B8)") &&
+                  fabs(grand->number - 36.0) < 1e-12);
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK_STR(text(core, "A4"), "B");
+    CHECK(fabs(num(core, "B6") - 3.0) < 1e-12 && empty(core, "A7"));
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK_STR(formula(core, "A1"), "Sheet1!B6");
+    CHECK(fabs(num(core, "A1") - 3.0) < 1e-12);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_subtotals(core, 0, values, 0, OC_SUBTOTAL_SUM, 1, 1) == OWF_ERR_FORMAT);
+    CHECK(oc_core_subtotals(core, 1, values, 2, OC_SUBTOTAL_SUM, 1, 1) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 static void test_pdf(void)
 {
     oc_core *core = fresh();
@@ -4852,6 +4922,7 @@ int main(void)
     test_status();
     test_files();
     test_goal_seek();
+    test_subtotals();
     test_pdf();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);

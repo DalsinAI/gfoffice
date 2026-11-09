@@ -306,6 +306,11 @@ variable cell; the reusable core 0.25.0 searches a private deep copy of the
 workbook, reports the achieved value and applies the candidate only after
 confirmation as one undoable edit. Linear, nonlinear and cross-sheet formula
 dependencies are supported without leaving trial values in the live book.
+GFOpenCalc 0.1.61 also adds Data > Subtotals. Select a headed table, choose a
+group column, one or more value columns and any of the eleven SUBTOTAL
+aggregates; reusable core 0.26.0 atomically inserts bold per-group formula rows
+and a nested-safe grand total. Cross-sheet references follow inserted rows,
+and the complete transformation is one Undo step.
 GFOpenCalc can also turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and

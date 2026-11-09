@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.25.0"
+#define OC_CORE_VERSION "0.26.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -357,6 +357,23 @@ typedef struct {
 int oc_core_sort_keys(oc_core *core, const oc_sort_key *keys, unsigned nkeys, int has_header);
 /* One-key compatibility entry point. */
 int oc_core_sort(oc_core *core, unsigned key_col, int direction, int has_header);
+
+/* Inserts a subtotal row after every contiguous group in the selected table,
+ * plus an optional grand-total row. The selection must be one rectangular
+ * range with at least one data row after its heading when has_header is set.
+ * group_col and value_cols are absolute sheet columns inside that range; a
+ * value column cannot also be the group column. Each generated value is a
+ * SUBTOTAL formula, so a grand total ignores the group subtotals. The whole
+ * operation is prepared on a private workbook and committed as one Undo step. */
+enum {
+    OC_SUBTOTAL_AVERAGE = 1, OC_SUBTOTAL_COUNT, OC_SUBTOTAL_COUNTA,
+    OC_SUBTOTAL_MAX, OC_SUBTOTAL_MIN, OC_SUBTOTAL_PRODUCT,
+    OC_SUBTOTAL_STDEV, OC_SUBTOTAL_STDEVP, OC_SUBTOTAL_SUM,
+    OC_SUBTOTAL_VAR, OC_SUBTOTAL_VARP
+};
+int oc_core_subtotals(oc_core *core, unsigned group_col,
+                      const unsigned *value_cols, unsigned nvalue_cols,
+                      int function, int has_header, int grand_total);
 
 /* ---- AutoFilter ----
  * Turns the selection into a table with filter buttons. A one-cell

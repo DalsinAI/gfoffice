@@ -30,6 +30,22 @@ the value actually achieved and the iteration count. Formula variables,
 non-numeric results, non-finite values and searches which do not converge are
 reported rather than committed.
 
+## Grouped subtotal authoring
+
+GFOpenCalc 0.1.61's Data > Subtotals reuses the engine's existing `SUBTOTAL`
+implementation rather than calculating totals in the window. Portable-core
+API `oc_core_subtotals` (`opencalc_core.h` 0.26.0) takes the current headed
+table selection, an absolute group column, one or more value columns and any
+SUBTOTAL function from AVERAGE through VARP. Contiguous equal keys become
+groups. It inserts a bold labelled formula row after every group and can add a
+grand total whose SUBTOTAL formulas safely ignore the nested group totals.
+
+The transformation is built and recalculated on a deep copy. Only a complete
+result replaces the live workbook, as one whole-book Undo step. Ordinary row
+shift semantics update formulas and names elsewhere in the workbook,
+including cross-sheet references; allocation, formula or recalculation
+failure leaves the live workbook untouched.
+
 ## How it works
 
 - **Parsing.** A formula is Excel's A1 text as the files keep it, without

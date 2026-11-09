@@ -57,6 +57,12 @@ which makes a formula reach a target, including cross-sheet dependencies,
 then applies an accepted result as one undoable edit. The search itself does
 not change the workbook.
 
+GFOpenCalc 0.1.61 adds Data > Subtotals. Reusable core 0.26.0 inserts bold
+group rows and a grand total using the workbook's real SUBTOTAL formulas for
+AVERAGE, COUNT/COUNTA, MAX/MIN, PRODUCT, STDEV/STDEVP, SUM and VAR/VARP. The
+private-copy transaction is one Undo step, nested totals are ignored by the
+grand total, and formula references across the workbook follow the new rows.
+
 GFOpenCalc can author column, bar, line, area, pie and scatter charts
 from a selected table, with live cell references, cached values, native
 selection/dragging, undoable deletion and XLSX/ODS round trips. Selected
