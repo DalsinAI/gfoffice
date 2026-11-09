@@ -967,6 +967,7 @@ static void object_wrapping(void)
     owf_deck *back = NULL;
     int selected = -1, slide = -1, obj = -1;
     int gap[4] = {100, 100, 100, 100};
+    int edited_gap[4] = {250, 300, 350, 400};
     int bad_gap[4] = {100, -1, 100, 100};
     opr_slide *laid;
     int frame;
@@ -1009,6 +1010,12 @@ static void object_wrapping(void)
     CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == 1 && s->objs[1].wrap == OWF_WRAP_NONE &&
           !opr_undo_redo(u, d, &slide, &obj) && obj == 1 && s->objs[1].wrap == OWF_WRAP_SQUARE,
           "object wrapping participates in Undo and Redo");
+    CHECK(!opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_SQUARE, edited_gap) &&
+          s->objs[1].wrap_gap[0] == 250 && s->objs[1].wrap_gap[3] == 400,
+          "change four wrap distances without changing the wrap kind");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && s->objs[1].wrap_gap[0] == 100 &&
+          !opr_undo_redo(u, d, &slide, &obj) && s->objs[1].wrap_gap[3] == 400,
+          "wrap-distance editing is one object-focused Undo and Redo step");
     CHECK(opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_SQUARE, bad_gap) == -2,
           "negative wrap distances are rejected");
     CHECK(!opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_TOP_BOTTOM, gap),

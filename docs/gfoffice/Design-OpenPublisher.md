@@ -347,6 +347,13 @@ the setting on save/reload. The native menu currently uses a sensible default
 distance; an interactive four-side distance surface, contour/tight geometry
 and decoding original PUB wrap records remain.
 
+GFOpenPublisher 0.2.8 exposes the four persisted distances through Object >
+Text Wrap Distance. Top, right, bottom and left are edited independently in
+twips and applied through the same `opr_obj_set_wrap` operation, so the change
+is one object-focused Undo/Redo step and needs no new layout API or model. The
+command requires Square or Top and Bottom wrapping first and rejects values
+outside 0 to 20000 twips.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap records or original PUB column records, and the PDF picture encoder does not yet play

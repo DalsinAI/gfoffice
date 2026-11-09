@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.2.7 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.2.8 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -120,7 +120,7 @@ enum {
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
     M_POSITION_SIZE, M_APPEARANCE, M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
-    M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TOP_BOTTOM,
+    M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TOP_BOTTOM, M_WRAP_DISTANCE,
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
@@ -205,6 +205,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "None", NULL, 0, 0, (APTR)M_WRAP_NONE },
     { NM_SUB, "Square", NULL, 0, 0, (APTR)M_WRAP_SQUARE },
     { NM_SUB, "Top and Bottom", NULL, 0, 0, (APTR)M_WRAP_TOP_BOTTOM },
+    { NM_ITEM, "Text Wrap Distance...", NULL, 0, 0, (APTR)M_WRAP_DISTANCE },
     { NM_ITEM, "Link to Next Empty Text Box", NULL, 0, 0, (APTR)M_LINK_TEXT_NEXT },
     { NM_ITEM, "Remove Tail from Text Flow", NULL, 0, 0, (APTR)M_UNLINK_TEXT },
 #endif
@@ -802,6 +803,80 @@ out:
     if (list) FreeGadgets(list);
     return ok;
 }
+
+#ifdef OPENPUBLISHER
+static int wrap_distance_requester(int gap[4])
+{
+    struct Gadget *list = NULL, *last, *gtop, *gright, *gbottom, *gleft, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    LONG top, right, bottom, left;
+    int done = 0, ok = 0, ww = 430, wh = 196;
+    if (!gap || !scr || !vi) return 0;
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = 205;
+    ng.ng_Width = 110;
+    ng.ng_Height = 18;
+    last = CreateContext(&list);
+
+    ng.ng_TopEdge = 14; ng.ng_GadgetText = (STRPTR)"Top distance (twips)"; ng.ng_GadgetID = 1;
+    last = gtop = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)gap[0],
+                               GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 48; ng.ng_GadgetText = (STRPTR)"Right distance (twips)"; ng.ng_GadgetID = 2;
+    last = gright = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)gap[1],
+                                 GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 82; ng.ng_GadgetText = (STRPTR)"Bottom distance (twips)"; ng.ng_GadgetID = 3;
+    last = gbottom = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)gap[2],
+                                  GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 116; ng.ng_GadgetText = (STRPTR)"Left distance (twips)"; ng.ng_GadgetID = 4;
+    last = gleft = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)gap[3],
+                                GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge = 154; ng.ng_Height = 20; ng.ng_Width = 78; ng.ng_LeftEdge = 252;
+    ng.ng_GadgetText = (STRPTR)"Apply"; ng.ng_GadgetID = 5;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 336; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 6;
+    gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gtop || !gright || !gbottom || !gleft || !gok || !gcancel) goto out;
+    rw = OpenWindowTags(NULL, WA_Title, (ULONG)"Text Wrap Distance", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh, WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+        WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | INTEGERIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD id = m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 5) { ok = 1; done = 1; }
+                else if (id == 6) done = 1;
+            }
+        }
+    }
+    if (ok) {
+        GT_GetGadgetAttrs(gtop, rw, NULL, GTIN_Number, (ULONG)&top, TAG_DONE);
+        GT_GetGadgetAttrs(gright, rw, NULL, GTIN_Number, (ULONG)&right, TAG_DONE);
+        GT_GetGadgetAttrs(gbottom, rw, NULL, GTIN_Number, (ULONG)&bottom, TAG_DONE);
+        GT_GetGadgetAttrs(gleft, rw, NULL, GTIN_Number, (ULONG)&left, TAG_DONE);
+        gap[0] = (int)top; gap[1] = (int)right;
+        gap[2] = (int)bottom; gap[3] = (int)left;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    return ok;
+}
+#endif
 
 static int appearance_requester(owf_look *look)
 {
@@ -3109,6 +3184,51 @@ static void set_selected_wrap(owf_frame_wrap wrap)
     draw_status();
 }
 
+static void edit_selected_wrap_distance(void)
+{
+    owf_obj *o;
+    int before[4], gaps[4], rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select an object whose text wrap distance should change.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->wrap == OWF_WRAP_NONE) {
+        set_status("Choose Square or Top and Bottom wrapping first.");
+        draw_status();
+        return;
+    }
+    memcpy(before, o->wrap_gap, sizeof before);
+    memcpy(gaps, o->wrap_gap, sizeof gaps);
+    if (!wrap_distance_requester(gaps)) return;
+    if (!memcmp(before, gaps, sizeof gaps)) {
+        set_status("Text wrap distances are unchanged.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    rc = opr_obj_set_wrap(undo, deck, current, selected_obj,
+                          (owf_frame_wrap)o->wrap, gaps);
+    if (rc < 0) {
+        if (rc == -2)
+            tell("Text Wrap Distance", "Each distance must be between 0 and 20000 twips.");
+        else
+            set_status("Text wrap distances could not be changed.");
+        draw_status();
+        return;
+    }
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Text wrap distances changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static int empty_text_frame(int slide, int obj)
 {
     char *text = opr_text_get(deck, slide, obj);
@@ -3991,6 +4111,7 @@ static void menu_action(ULONG id)
     case M_WRAP_NONE: set_selected_wrap(OWF_WRAP_NONE); break;
     case M_WRAP_SQUARE: set_selected_wrap(OWF_WRAP_SQUARE); break;
     case M_WRAP_TOP_BOTTOM: set_selected_wrap(OWF_WRAP_TOP_BOTTOM); break;
+    case M_WRAP_DISTANCE: edit_selected_wrap_distance(); break;
     case M_LINK_TEXT_NEXT: link_selected_text_frame(); break;
     case M_UNLINK_TEXT: unlink_selected_text_frame(); break;
 #endif

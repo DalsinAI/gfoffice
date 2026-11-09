@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.2.7 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.2.8 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -62,9 +62,10 @@ badge calculated from the shared layout cut; the application does not estimate
 characters. Object > Text Wrapping now makes a selected picture or shape a
 square or top-and-bottom exclusion for every overlapping text frame. The model
 change is undoable, survives ODP save/reload, and delegates line fitting to
-GFOpenLayout 0.16's reusable box-local exclusion service. Character-range
-selection, decoding original PUB formatting and wrap records, custom wrap
-distances, contour wrapping and WMF/EMF playback remain later P1 work.
+GFOpenLayout 0.16's reusable box-local exclusion service. Text Wrap Distance
+edits the top, right, bottom and left clearance as another atomic Undo/Redo
+step. Character-range selection, decoding original PUB formatting and wrap
+records, contour wrapping and WMF/EMF playback remain later P1 work.
 
 # GFOpenWrite
 
