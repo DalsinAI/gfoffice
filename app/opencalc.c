@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.59 (8.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.60 (9.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -106,7 +106,7 @@ enum {
     M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_DUPLICATE, M_SHEET_LEFT, M_SHEET_RIGHT, M_SHEET_HIDE, M_SHEET_SHOW,
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
-    M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR
+    M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK
 };
 
 static struct NewMenu menus[] = {
@@ -240,6 +240,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "AutoFilter", NULL, 0, 0, (APTR)M_AUTOFILTER },
     { NM_ITEM, "Filter by Active Cell", NULL, 0, 0, (APTR)M_FILTER_ACTIVE },
     { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_FILTER_CLEAR },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -3010,6 +3012,76 @@ static int chart_number(const char *text, double *value)
     return end != text && !*end && *value >= -1e200 && *value <= 1e200;
 }
 
+static int one_cell_ref(const char *text, unsigned *row, unsigned *col)
+{
+    owf_range range;
+    if (!oc_parse_range(text, &range) || range.first_row != range.last_row ||
+        range.first_col != range.last_col)
+        return 0;
+    *row = range.first_row;
+    *col = range.first_col;
+    return 1;
+}
+
+static void do_goal_seek(void)
+{
+    char result_ref[24], variable_ref[24], target_text[48];
+    char solution_text[48], achieved_text[48], message[320];
+    unsigned result_row, result_col, variable_row, variable_col;
+    double target, solution, achieved;
+    int iterations, rc, sheet = oc_core_sheet(core);
+
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); return; }
+    if (rc == OWF_ERR_MEMORY) { result(rc, NULL); return; }
+    oc_core_active(core, &result_row, &result_col);
+    oc_cell_name(result_row, result_col, result_ref);
+    if (!text_requester("Goal Seek", "Formula cell", result_ref, result_ref, sizeof result_ref)) return;
+    if (!one_cell_ref(result_ref, &result_row, &result_col)) {
+        set_status("Goal Seek needs one formula cell, such as C12.");
+        return;
+    }
+    if (!text_requester("Goal Seek", "Target value", "0", target_text, sizeof target_text)) return;
+    if (!chart_number(target_text, &target)) {
+        set_status("The Goal Seek target must be a number.");
+        return;
+    }
+    if (!text_requester("Goal Seek", "Variable cell", "", variable_ref, sizeof variable_ref)) return;
+    if (!one_cell_ref(variable_ref, &variable_row, &variable_col)) {
+        set_status("Goal Seek needs one variable cell, such as B12.");
+        return;
+    }
+    rc = oc_core_goal_seek(core, sheet, result_row, result_col, target,
+                           sheet, variable_row, variable_col, 0.0, 100,
+                           &solution, &achieved, &iterations);
+    if (rc == OWF_ERR_FORMAT) {
+        tell("Goal Seek", "The formula cell must contain a numeric formula.\n\n"
+                          "The variable cell must be empty or a number, not a formula.");
+        return;
+    }
+    if (rc == OWF_ERR_UNSUPPORTED) {
+        tell("Goal Seek", "No numeric solution was found in 100 iterations.\n\n"
+                          "Check that the formula depends on the variable cell and can reach the target.");
+        return;
+    }
+    if (rc != OWF_OK) { result(rc, NULL); return; }
+    owf_number_text(solution, solution_text);
+    owf_number_text(achieved, achieved_text);
+    snprintf(message, sizeof message,
+             "A solution was found in %d iteration%s.\n\n"
+             "Variable %s = %s\nFormula %s = %s\n\nApply this value?",
+             iterations, iterations == 1 ? "" : "s", variable_ref, solution_text,
+             result_ref, achieved_text);
+    if (ask_window("Goal Seek", message, "Apply|Cancel") == 1) {
+        if (result(oc_core_set_input(core, sheet, variable_row, variable_col, solution_text),
+                   "Goal Seek solution applied; Undo restores the old value.")) {
+            oc_core_select_cell(core, variable_row, variable_col, 0, 0);
+            oc_view_show_cell(core, variable_row, variable_col);
+        }
+    } else
+        set_status("Goal Seek solution not applied.");
+}
+
 static void do_format_chart(void)
 {
     owf_chart *charts = NULL;
@@ -3983,6 +4055,7 @@ static void menu_action(ULONG id)
         }
         break;
     case M_FILTER_ACTIVE: do_filter_active(); break;
+    case M_GOAL_SEEK: do_goal_seek(); break;
     case M_VALIDITY: do_validity(); break;
     case M_VALIDITY_CLEAR: result(oc_core_set_validation(core, NULL), "Validity cleared from the selection."); break;
     case M_FILTER_CLEAR:

@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.24.0"
+#define OC_CORE_VERSION "0.25.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -311,6 +311,22 @@ char *oc_core_cell_input(const oc_core *core, int sheet, unsigned row, unsigned 
 int oc_core_cell_text(const oc_core *core, int sheet, unsigned row, unsigned col, char *out, size_t size);
 /* Puts typed input in a cell, as editing would (undoable): for ARexx. */
 int oc_core_set_input(oc_core *core, int sheet, unsigned row, unsigned col, const char *input);
+
+/* Find a numeric constant for one cell that makes another cell's formula
+ * reach target. The search runs on a deep copy of the workbook: the live
+ * book, its dirty flag and Undo are untouched. The variable must be empty or
+ * a numeric constant (not a formula); the result cell must hold a formula
+ * whose calculated value is numeric. tolerance <= 0 selects a scale-aware
+ * default; max_iterations <= 0 selects 100. OWF_OK means solution/achieved
+ * and iterations were filled. OWF_ERR_FORMAT means the two cells are not a
+ * valid goal-seek pair; OWF_ERR_UNSUPPORTED means no numeric solution was
+ * found within the limit; OWF_ERR_MEMORY means the private copy failed. */
+int oc_core_goal_seek(const oc_core *core,
+                      int result_sheet, unsigned result_row, unsigned result_col,
+                      double target,
+                      int variable_sheet, unsigned variable_row, unsigned variable_col,
+                      double tolerance, int max_iterations,
+                      double *solution, double *achieved, int *iterations);
 
 /* ---- Commands on the selection (each one undo step) ---- */
 

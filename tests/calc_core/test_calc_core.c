@@ -4688,6 +4688,63 @@ static void test_more(void)
     oc_core_free(core);
 }
 
+static void test_goal_seek(void)
+{
+    oc_core *core = fresh();
+    double solution = 0.0, achieved = 0.0;
+    int iterations = -1;
+    unsigned long changes;
+    if (!core)
+        return;
+
+    enter_at(core, "B1", "2");
+    enter_at(core, "A1", "=B1*3+1");
+    changes = oc_core_changes(core);
+    CHECK(oc_core_goal_seek(core, 0, 0, 0, 16.0, 0, 0, 1,
+                            0.0, 0, &solution, &achieved, &iterations) == OWF_OK);
+    CHECK(fabs(solution - 5.0) < 1e-7 && fabs(achieved - 16.0) < 1e-7 && iterations > 0);
+    CHECK(fabs(num(core, "B1") - 2.0) < 1e-12 && fabs(num(core, "A1") - 7.0) < 1e-12);
+    CHECK(oc_core_changes(core) == changes);             /* solving did not add another edit */
+
+    {
+        char value[48];
+        owf_number_text(solution, value);
+        CHECK(oc_core_set_input(core, 0, 0, 1, value) == OWF_OK);
+    }
+    CHECK(fabs(num(core, "B1") - 5.0) < 1e-7 && fabs(num(core, "A1") - 16.0) < 1e-7);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(fabs(num(core, "B1") - 2.0) < 1e-12 && fabs(num(core, "A1") - 7.0) < 1e-12);
+
+    enter_at(core, "B2", "1");
+    enter_at(core, "A2", "=B2*B2");
+    CHECK(oc_core_goal_seek(core, 0, 1, 0, 81.0, 0, 1, 1,
+                            1e-8, 100, &solution, &achieved, &iterations) == OWF_OK);
+    CHECK(fabs(solution - 9.0) < 1e-6 && fabs(achieved - 81.0) < 1e-8);
+
+    CHECK(oc_core_add_sheet(core, "Inputs") == 1);
+    enter_at(core, "C3", "4");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    enter_at(core, "A3", "=Inputs!C3*10");
+    CHECK(oc_core_goal_seek(core, 0, 2, 0, 125.0, 1, 2, 2,
+                            0.0, 0, &solution, &achieved, &iterations) == OWF_OK);
+    CHECK(fabs(solution - 12.5) < 1e-7 && fabs(achieved - 125.0) < 1e-7);
+    CHECK(fabs(oc_core_book(core)->sheets[1].cells[0].number - 4.0) < 1e-12);
+
+    enter_at(core, "A4", "42");
+    enter_at(core, "B4", "1");
+    CHECK(oc_core_goal_seek(core, 0, 3, 0, 1.0, 0, 3, 1,
+                            0.0, 20, &solution, &achieved, &iterations) == OWF_ERR_FORMAT);
+    enter_at(core, "A4", "=42");
+    CHECK(oc_core_goal_seek(core, 0, 3, 0, 1.0, 0, 3, 1,
+                            0.0, 20, &solution, &achieved, &iterations) == OWF_ERR_UNSUPPORTED);
+    enter_at(core, "B4", "=1+1");
+    CHECK(oc_core_goal_seek(core, 0, 3, 0, 42.0, 0, 3, 1,
+                            0.0, 20, &solution, &achieved, &iterations) == OWF_ERR_FORMAT);
+    CHECK(oc_core_goal_seek(core, 0, 3, 0, 42.0, 0, 3, 0,
+                            0.0, 20, &solution, &achieved, &iterations) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 static void test_pdf(void)
 {
     oc_core *core = fresh();
@@ -4794,6 +4851,7 @@ int main(void)
     test_tab_strip();
     test_status();
     test_files();
+    test_goal_seek();
     test_pdf();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);

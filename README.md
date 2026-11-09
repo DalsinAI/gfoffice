@@ -300,7 +300,13 @@ formula-bar input. It is tested on the PC with `make calc-test` and
 `make calc-check` (both part of `make test` and `make check`). The Amiga
 window is `app/opencalc.c`, built by `build-os3.sh` with libowf linked in
 (OWF=linked). Workbooks are libowf's `owf_book`; their formulas are worked out
-by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.59 can turn a
+by the engine in `libowf/include/owf_calc.h`. GFOpenCalc 0.1.60 adds Data >
+Goal Seek: choose a numeric formula cell, a target and one empty/numeric
+variable cell; the reusable core 0.25.0 searches a private deep copy of the
+workbook, reports the achieved value and applies the candidate only after
+confirmation as one undoable edit. Linear, nonlinear and cross-sheet formula
+dependencies are supported without leaving trial values in the live book.
+GFOpenCalc can also turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and
 cached values, supports clustered, stacked and percent grouping, keeps charts

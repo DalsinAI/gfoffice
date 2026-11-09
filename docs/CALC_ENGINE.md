@@ -1,6 +1,6 @@
 # GFOpenCalc: the formula engine
 
-Version 0.2 | 25 October 2026 | AmiCradle Team, MIT
+Version 0.3 | 9 November 2026 | AmiCradle Team, MIT
 
 The formula engine works out the formulas of a workbook (`owf_book`) for
 GFOpenCalc, the spreadsheet of the GFOffice Suite. It is part of libowf: the
@@ -12,6 +12,23 @@ owf.library gets its calls later.
 
 It is plain C99 with doubles and `<math.h>` (soft maths on an Amiga
 without an FPU), written for a 68040 with a small stack and 8 to 32 MB.
+
+## Goal Seek
+
+GFOpenCalc 0.1.60's Data > Goal Seek is a client of the same dependency and
+recalculation engine. Reusable portable-core API
+`oc_core_goal_seek` (`include/opencalc_core.h` 0.25.0) takes a numeric formula
+cell, a target value and one empty or numeric constant cell. It deep-copies the
+workbook, then uses safeguarded secant steps and a bracketed fallback while
+the ordinary engine recalculates the formula graph for every candidate.
+
+The live workbook is never used as numerical scratch space. A failed or
+cancelled search changes neither cells nor Undo; an accepted result goes
+through `oc_core_set_input` as one normal undoable edit. The API supports
+formula and variable cells on different sheets and returns the candidate,
+the value actually achieved and the iteration count. Formula variables,
+non-numeric results, non-finite values and searches which do not converge are
+reported rather than committed.
 
 ## How it works
 

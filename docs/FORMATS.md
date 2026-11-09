@@ -51,7 +51,13 @@ given ends in a workbook format's extension.
 | XLSX, Office Open XML (`.xlsx`; `.xltx`, `.xlsm`, `.xltm` open only) | Yes | Yes | Spec: ECMA-376 (transitional; strict's namespaces read) and [MS-XLSX]'s `_xlfn.` names | S2 | Full both ways, as the model holds it (notes below). Macros, comments, pictures, charts, conditional formats, validation, tables and pivot tables are reported. Binary `.xlsb` is recognised with a clear message |
 | ODS, OpenDocument Spreadsheet (`.ods`, `.ots` opens; flat `.fods`) | Yes | Yes | Spec: OASIS ODF 1.2 and OpenFormula; LibreOffice's 1.3 additions read | S2 | Full both ways, as the model holds it (notes below), formulas translated to and from OpenFormula. Comments, pictures, charts, conditional formats and validation are reported |
 
-GFOpenCalc 0.1.59 can author column, bar, line, area, pie and scatter charts
+GFOpenCalc 0.1.60 adds Data > Goal Seek on the existing formula engine. The
+reusable core 0.25.0 searches a private deep copy for the numeric constant
+which makes a formula reach a target, including cross-sheet dependencies,
+then applies an accepted result as one undoable edit. The search itself does
+not change the workbook.
+
+GFOpenCalc can author column, bar, line, area, pie and scatter charts
 from a selected table, with live cell references, cached values, native
 selection/dragging, undoable deletion and XLSX/ODS round trips. Selected
 charts can change type/grouping, title, legend, gridlines and data labels
