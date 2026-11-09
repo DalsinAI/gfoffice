@@ -1053,16 +1053,16 @@ static int frame_accepts_exclusions(const owf_obj *o)
                  (o->kind == OWF_OBJ_SHAPE && o->shape != OWF_SHAPE_LINE && o->text.nparas));
 }
 
-/* GFOpenLayout 0.16 owns the line fitting. The deck adapter only translates
- * overlapping page objects into rectangles local to each affected text
- * frame; the object itself remains a single frame in the display list. */
+/* GFOpenLayout owns both the line fitting and, from 0.17, closed-shape
+ * contour bands. The deck adapter only translates page coordinates into
+ * each affected text frame; the object remains one display-list frame. */
 static int apply_exclusions(builder *b)
 {
     ol_exclusion *items;
     int target, obstacle;
     if (b->out->nframes <= 0)
         return 1;
-    items = malloc((size_t)b->out->nframes * sizeof *items);
+    items = malloc((size_t)OL_MAX_EXCLUSIONS * sizeof *items);
     if (!items)
         return 0;
     for (target = 0; target < b->out->nframes; ++target) {
@@ -1083,6 +1083,43 @@ static int apply_exclusions(builder *b)
             ol_exclusion *e;
             if (obstacle == target || !of->obj || o->wrap == OWF_WRAP_NONE)
                 continue;
+            if (o->wrap == OWF_WRAP_TIGHT && o->kind == OWF_OBJ_SHAPE &&
+                o->shape != OWF_SHAPE_LINE) {
+                const ol_node *shape = ol_node_by_id(b->out->doc, of->node);
+                ol_rect bounds;
+                ol_unit gap[4];
+                ol_exclusion contour[OL_CONTOUR_BANDS_DEFAULT];
+                int made, k;
+                bounds.x = TW(o->x - tf->box.x);
+                bounds.y = TW(o->y - tf->box.y);
+                bounds.width = TW(o->width > 0 ? o->width : 1);
+                bounds.height = TW(o->height > 0 ? o->height : 1);
+                for (k = 0; k < 4; ++k) gap[k] = TW(o->wrap_gap[k]);
+                made = ol_node_shape_exclusions(shape, &bounds, gap,
+                                                 OL_CONTOUR_BANDS_DEFAULT,
+                                                 contour,
+                                                 OL_CONTOUR_BANDS_DEFAULT);
+                if (made > 0) {
+                    for (k = 0; k < made; ++k) {
+                        const ol_exclusion *ce = &contour[k];
+                        int64_t x0 = (int64_t)ce->bounds.x - ce->gap[3];
+                        int64_t y0 = (int64_t)ce->bounds.y - ce->gap[0];
+                        int64_t x1 = (int64_t)ce->bounds.x + ce->bounds.width + ce->gap[1];
+                        int64_t y1 = (int64_t)ce->bounds.y + ce->bounds.height + ce->gap[2];
+                        if (x1 <= 0 || y1 <= 0 || x0 >= TW(tf->box.width) ||
+                            y0 >= TW(tf->box.height))
+                            continue;
+                        if (count >= OL_MAX_EXCLUSIONS) {
+                            free(items);
+                            return 0;
+                        }
+                        items[count++] = *ce;
+                    }
+                    continue;
+                }
+                /* Unknown or unusable geometry falls back to the safe
+                 * square exclusion below. */
+            }
             left = (long)o->x - o->wrap_gap[3];
             top = (long)o->y - o->wrap_gap[0];
             right = (long)o->x + o->width + o->wrap_gap[1];

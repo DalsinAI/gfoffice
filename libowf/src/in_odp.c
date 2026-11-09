@@ -1329,6 +1329,9 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
         obj->wrap = OWF_WRAP_TOP_BOTTOM;
     else
         obj->wrap = OWF_WRAP_NONE;
+    if (obj->wrap == OWF_WRAP_SQUARE &&
+        same(prop(o, st, "graphic-properties", NS_STYLE, "wrap-contour"), "true"))
+        obj->wrap = OWF_WRAP_TIGHT;
     if (obj->wrap != OWF_WRAP_NONE) {
         int side;
         parse_len(prop(o, st, "graphic-properties", NS_FO, "margin-top"), &obj->wrap_gap[0]);

@@ -723,6 +723,8 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
     }
     if (o->wrap == OWF_WRAP_SQUARE || o->wrap == OWF_WRAP_TIGHT) {
         owf_buf_puts(&body, " style:wrap=\"parallel\" style:number-wrapped-paragraphs=\"no-limit\"");
+        if (o->wrap == OWF_WRAP_TIGHT)
+            owf_buf_puts(&body, " style:wrap-contour=\"true\"");
     } else if (o->wrap == OWF_WRAP_TOP_BOTTOM) {
         owf_buf_puts(&body, " style:wrap=\"none\"");
     } else {

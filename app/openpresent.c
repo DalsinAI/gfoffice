@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.3 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.4 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.9 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.10 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -121,7 +121,7 @@ enum {
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
     M_POSITION_SIZE, M_APPEARANCE, M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
-    M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TOP_BOTTOM, M_WRAP_DISTANCE,
+    M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TIGHT, M_WRAP_TOP_BOTTOM, M_WRAP_DISTANCE,
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
@@ -209,6 +209,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Text Wrapping", NULL, 0, 0, NULL },
     { NM_SUB, "None", NULL, 0, 0, (APTR)M_WRAP_NONE },
     { NM_SUB, "Square", NULL, 0, 0, (APTR)M_WRAP_SQUARE },
+    { NM_SUB, "Tight", NULL, 0, 0, (APTR)M_WRAP_TIGHT },
     { NM_SUB, "Top and Bottom", NULL, 0, 0, (APTR)M_WRAP_TOP_BOTTOM },
     { NM_ITEM, "Text Wrap Distance...", NULL, 0, 0, (APTR)M_WRAP_DISTANCE },
     { NM_ITEM, "Link to Next Empty Text Box", NULL, 0, 0, (APTR)M_LINK_TEXT_NEXT },
@@ -3543,7 +3544,7 @@ static void edit_selected_wrap_distance(void)
     }
     o = &deck->slides[current].objs[selected_obj];
     if (o->wrap == OWF_WRAP_NONE) {
-        set_status("Choose Square or Top and Bottom wrapping first.");
+        set_status("Choose Square, Tight or Top and Bottom wrapping first.");
         draw_status();
         return;
     }
@@ -4464,6 +4465,7 @@ static void menu_action(ULONG id)
 #ifdef OPENPUBLISHER
     case M_WRAP_NONE: set_selected_wrap(OWF_WRAP_NONE); break;
     case M_WRAP_SQUARE: set_selected_wrap(OWF_WRAP_SQUARE); break;
+    case M_WRAP_TIGHT: set_selected_wrap(OWF_WRAP_TIGHT); break;
     case M_WRAP_TOP_BOTTOM: set_selected_wrap(OWF_WRAP_TOP_BOTTOM); break;
     case M_WRAP_DISTANCE: edit_selected_wrap_distance(); break;
     case M_LINK_TEXT_NEXT: link_selected_text_frame(); break;

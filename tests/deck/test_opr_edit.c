@@ -1110,6 +1110,34 @@ static int text_crosses(const opr_slide *laid, int frame,
     return 0;
 }
 
+static ol_unit text_left_segment_edge(const opr_slide *laid, int frame,
+                                      ol_unit y0, ol_unit y1, ol_unit xlimit)
+{
+    ol_unit right = 0;
+    ol_unit first_y = INT32_MAX;
+    size_t i;
+    for (i = 0; laid && i < ol_display_count(laid->doc); ++i) {
+        const ol_display_op *op = ol_display_get(laid->doc, i);
+        ol_rect r;
+        if (op->type != OL_OP_TEXT || opr_slide_frame_of(laid, op) != frame)
+            continue;
+        r = op->u.text.bounds;
+        if (r.y < y1 && r.y + r.height > y0 && r.y < first_y)
+            first_y = r.y;
+    }
+    for (i = 0; laid && i < ol_display_count(laid->doc); ++i) {
+        const ol_display_op *op = ol_display_get(laid->doc, i);
+        ol_rect r;
+        if (op->type != OL_OP_TEXT || opr_slide_frame_of(laid, op) != frame)
+            continue;
+        r = op->u.text.bounds;
+        if (r.y == first_y && r.x < xlimit &&
+            r.x + r.width > right)
+            right = r.x + r.width;
+    }
+    return right;
+}
+
 static void object_wrapping(void)
 {
     owf_deck *d = owf_deck_new(10000, 8000);
@@ -1123,10 +1151,13 @@ static void object_wrapping(void)
     owf_deck *back = NULL;
     int selected = -1, slide = -1, obj = -1;
     int gap[4] = {100, 100, 100, 100};
+    int square_gap[4] = {400, 400, 400, 400};
+    int tight_gap[4] = {0, 0, 0, 0};
     int edited_gap[4] = {250, 300, 350, 400};
     int bad_gap[4] = {100, -1, 100, 100};
     opr_slide *laid;
     int frame;
+    ol_unit square_top_right = 0, tight_top_right;
     ol_unit x0 = (ol_unit)3400 * OL_UNITS_PER_TWIP;
     ol_unit y0 = (ol_unit)900 * OL_UNITS_PER_TWIP;
     ol_unit x1 = (ol_unit)5100 * OL_UNITS_PER_TWIP;
@@ -1142,26 +1173,30 @@ static void object_wrapping(void)
     text_spec.x = 1000; text_spec.y = 1000;
     text_spec.width = 6000; text_spec.height = 3200;
     text_spec.text =
-        "One two three four five six seven eight nine ten eleven twelve thirteen fourteen "
-        "fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three "
-        "twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty.";
+        "a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a "
+        "a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a "
+        "a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a";
     CHECK(!opr_obj_insert_textbox(u, d, 0, &text_spec, &selected) && selected == 0,
           "insert the text frame that will flow around an object");
     memset(&shape_spec, 0, sizeof shape_spec);
-    shape_spec.shape = OWF_SHAPE_RECT;
+    shape_spec.shape = OWF_SHAPE_ELLIPSE;
     shape_spec.x = 3500; shape_spec.y = 1000;
     shape_spec.width = 1500; shape_spec.height = 1400;
     shape_spec.look.fill = OWF_SHADE(0x6699cc);
     CHECK(!opr_obj_insert_shape(u, d, 0, &shape_spec, &selected) && selected == 1,
           "insert the overlapping shape");
     opr_undo_clear(u);
-    CHECK(!opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_SQUARE, gap) &&
-          s->objs[1].wrap == OWF_WRAP_SQUARE && s->objs[1].wrap_gap[0] == 100,
+    CHECK(!opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_SQUARE, square_gap) &&
+          s->objs[1].wrap == OWF_WRAP_SQUARE && s->objs[1].wrap_gap[0] == 400,
           "make the shape a square exclusion");
     laid = opr_slide_layout(d, 0, NULL, NULL, NULL);
     frame = laid ? opr_slide_frame_for(laid, 0) : -1;
     CHECK(frame >= 0 && !text_crosses(laid, frame, x0, y0, x1, y1),
           "GFOpenLayout keeps frame text outside the square exclusion");
+    square_top_right = text_left_segment_edge(laid, frame,
+                                              (ol_unit)900 * OL_UNITS_PER_TWIP,
+                                              (ol_unit)1500 * OL_UNITS_PER_TWIP,
+                                              (ol_unit)4250 * OL_UNITS_PER_TWIP);
     opr_slide_free(laid);
     CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == 1 && s->objs[1].wrap == OWF_WRAP_NONE &&
           !opr_undo_redo(u, d, &slide, &obj) && obj == 1 && s->objs[1].wrap == OWF_WRAP_SQUARE,
@@ -1169,7 +1204,7 @@ static void object_wrapping(void)
     CHECK(!opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_SQUARE, edited_gap) &&
           s->objs[1].wrap_gap[0] == 250 && s->objs[1].wrap_gap[3] == 400,
           "change four wrap distances without changing the wrap kind");
-    CHECK(!opr_undo_undo(u, d, &slide, &obj) && s->objs[1].wrap_gap[0] == 100 &&
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && s->objs[1].wrap_gap[0] == 400 &&
           !opr_undo_redo(u, d, &slide, &obj) && s->objs[1].wrap_gap[3] == 400,
           "wrap-distance editing is one object-focused Undo and Redo step");
     CHECK(opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_SQUARE, bad_gap) == -2,
@@ -1184,16 +1219,33 @@ static void object_wrapping(void)
           "top-and-bottom wrapping leaves no frame text beside the shape");
     opr_slide_free(laid);
 
+    CHECK(!opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_TIGHT, tight_gap),
+          "switch the ellipse to tight contour wrapping");
+    laid = opr_slide_layout(d, 0, NULL, NULL, NULL);
+    frame = laid ? opr_slide_frame_for(laid, 0) : -1;
+    tight_top_right = text_left_segment_edge(laid, frame,
+                                             (ol_unit)900 * OL_UNITS_PER_TWIP,
+                                             (ol_unit)1500 * OL_UNITS_PER_TWIP,
+                                             (ol_unit)4250 * OL_UNITS_PER_TWIP);
+    CHECK(frame >= 0 && tight_top_right > square_top_right,
+          "tight wrapping uses more of the ellipse corner: %ld > %ld",
+          (long)tight_top_right, (long)square_top_right);
+    CHECK(frame >= 0 && !text_crosses(laid, frame,
+          (ol_unit)4100 * OL_UNITS_PER_TWIP, (ol_unit)1200 * OL_UNITS_PER_TWIP,
+          (ol_unit)4500 * OL_UNITS_PER_TWIP, (ol_unit)2200 * OL_UNITS_PER_TWIP),
+          "tight wrapping still keeps text out of the ellipse contour");
+    opr_slide_free(laid);
+
     CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
           "the wrapped publication saves as ODP");
     CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
           "the wrapped publication reads back");
     if (back)
         CHECK(back->slides[0].nobjs == 2 &&
-              back->slides[0].objs[1].wrap == OWF_WRAP_TOP_BOTTOM &&
-              back->slides[0].objs[1].wrap_gap[0] == 100 &&
-              back->slides[0].objs[1].wrap_gap[3] == 100,
-              "wrap kind and distances survive the ODP round trip");
+              back->slides[0].objs[1].wrap == OWF_WRAP_TIGHT &&
+              back->slides[0].objs[1].wrap_gap[0] == 0 &&
+              back->slides[0].objs[1].wrap_gap[3] == 0,
+              "tight wrap kind and distances survive the ODP round trip");
     owf_deck_free(back);
     free(data);
     opr_undo_free(u);
