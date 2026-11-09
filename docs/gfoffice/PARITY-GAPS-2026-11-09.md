@@ -143,45 +143,36 @@ the same geometry or flow rule.
 
 ## Validation status
 
-Current-session RC70 host evidence at this revision is the complete
-normal GFOffice suite, including 1,606 Calc-core checks, 10,491 formula/oracle
-checks, 279 shared deck-editor/interchange checks, 67 Publisher-adapter checks, the
-ODP/PPTX/PUB damaged-input corpora, library ABI checks and 3,943 cut-short
-document trials. All passed against the pinned GFOpenLayout 0.16 RC1 commit.
-The 279-check path also passed ASan/UBSan with leak detection disabled;
-LeakSanitizer cannot run under this environment's tracer. Optional `odfpy` and
-`openpyxl` third-party read-back checks were skipped because those packages are
-not installed. A clean Open6 build from the exact pinned GFOpenLayout,
-GFOpenDraw and GFOpenGadTools commits rebuilt the complete RC70 source: all
-linked applications including GFOpenPublisher 0.3.1 and GFOpenPresentation
-0.6.7, Draw/DrawOL, OWConvert,
-five resident libraries, both library tests and the supported library-linked
-variants, with warnings treated as errors using GFOpenAmigaGCC 16.2.0-open6.
-
-RC69 was published from source
-commit `5f893c52a1e01c1b66b3fd1dca4003903b1e3fa3`; its public archive downloaded
+The immutable RC70 evidence remains the complete normal GFOffice host suite:
+1,606 Calc-core checks, 10,491 formula/oracle checks, 279 shared deck-editor
+checks, 67 Publisher-adapter checks, the damaged-input corpora, library ABI
+checks and 3,943 cut-short document trials. RC70 was published from source
+commit `1c08bb427230b412f937bb343742dc65895f2d76`; its public archive downloaded
 back with SHA-256
-`bbcf66de86a977a9d8773b6b336c14fc8ec976ed05441379cfd0cbcb06c0f11a`,
-and all 80 files covered by its internal manifest verified. This packaging
-evidence does not imply application runtime behaviour.
-
-There is no recorded Dale on-Amiga smoke test for RC69 or the RC70 candidate.
-Host and cross-build evidence must not be reported as Amiga runtime evidence.
-
-RC70 coverage adds independent wrap distances plus atomic column
-count, exact gap and four frame margins, invalid geometry, exact RGB text
-colour, named font family, Undo/Redo and ODP round trip. RC70 was published from
-source commit `1c08bb427230b412f937bb343742dc65895f2d76`; its public archive
-downloaded back with SHA-256
 `bbcedb75f99cf7fef39095168f74382551064a8ac9f629b34d6cab9c85ede9ad`,
 and all 80 files covered by its internal manifest verified.
 
-Post-RC70 Publisher 0.3.3/Presentation 0.6.9 candidate evidence adds a
-295-check optimized and ASan/UBSan deck-editor/interchange pass. It covers
-forward and cross-paragraph ranges, partial run boundaries, exact character
-formatting, replacement/deletion, middle-flow detach/insertion, Undo/Redo and
-ODP round trip. A clean
-warnings-as-errors Open6 build at implementation commit
-`f589cc83c67e178c58ee81449f78dead0560af48` rebuilt both updated native
-applications and the linked suite applications. This candidate work is newer
-than the immutable RC70 archive and has no recorded on-Amiga runtime test.
+Current-session RC71 candidate evidence is newer and focused on the post-RC70
+work. The shared deck editor/interchange path passed 298 optimized checks and
+the same 298 checks under ASan/UBSan with leak detection disabled because
+LeakSanitizer cannot run under the environment's tracer. These checks cover
+character ranges, ordered linked-flow surgery, Square/Top-Bottom/Tight wrap,
+measured ellipse corner gain, central contour exclusion, per-side distances,
+Undo/Redo and ODP `style:wrap-contour` round trip. The deck core passed 201
+checks; 1,250 cut-short plus 67 damaged ODP cases and 905 cut-short plus 95
+damaged PPTX cases passed. Optional `odfpy` grammar validation was unavailable.
+
+A clean exact-pinned GFOpenAmigaGCC 16.2.0-open6 build at implementation
+commit `c092aeceb8c404d2c73b3ee95b48f5cfac0e3720` rebuilt all five linked
+applications, Draw/DrawOL, OWConvert, five GFOffice resident libraries, both
+library tests and the supported library-linked variants with warnings as
+errors. It fetched GFOpenLayout 0.17 commit
+`2fb0eaee2f135fb6d94ef0ac88f3c32e2679cbce`, GFOpenDraw
+`ca07afc25e793e4c4fdc5ae16979bebccd203eaa` and GFOpenGadTools
+`01c1fd9a7881863e3a2c462348f6eb373fb00c5c` from their recorded pins.
+
+There is no recorded Dale on-Amiga smoke test for RC70 or the RC71 candidate.
+Host tests and cross-build success must not be reported as Amiga runtime
+evidence. RC71 still requires launching Publisher and Presentation, comparing
+Square and Tight around an ellipse or rotated polygon, editing distances,
+checking Undo/Redo, and saving/reopening ODP before promotion.
