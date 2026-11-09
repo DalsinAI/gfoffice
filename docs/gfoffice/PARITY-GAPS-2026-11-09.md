@@ -240,9 +240,17 @@ formatted runs. A fresh warnings-as-errors Open6 build produced Calc 1,474,596
 bytes, Presentation 805,972, Publisher 840,452, Writer 625,356 and OWConvert
 752,528. The feature is published on `main` but is not part of immutable RC74.
 
-There is no recorded Dale on-Amiga smoke test for RC70 through RC74.
+RC75 packages that replacement work from source commit
+`54e88d5ad612703afdb252dd0ef797718f7a4afa`. Its public 4,551,833-byte
+archive downloaded back with SHA-256
+`b55e1fb611265a8fd80e8191488c73f709b40c6b7bd51f4e9914396d8b7f0a83`, and
+all 80 files covered by its internal manifest verified. The live annotated tag
+peels to the source commit and the GitHub release remains marked prerelease.
+
+There is no recorded Dale on-Amiga smoke test for RC70 through RC75.
 Host tests and cross-build success must not be reported as Amiga runtime
-evidence. RC74 still requires launching Publisher, Presentation and Writer;
-checking cross-app object and FTXT Cut/Copy/Paste plus Undo/Redo, Find across
-objects/pages, all three ruler markers, picture crop, Square versus Tight wrap,
-and ODP save/reopen before promotion.
+evidence. RC75 still requires launching Publisher, Presentation and Writer;
+checking Replace/Replace All on plain and mixed-format text, cross-app object
+and FTXT Cut/Copy/Paste plus Undo/Redo, Find across objects/pages, all three
+ruler markers, picture crop, Square versus Tight wrap, and ODP save/reopen
+before promotion.
