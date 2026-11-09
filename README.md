@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.3.13 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.3.14 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -94,10 +94,12 @@ not OpenLayout or exported-document state.
 Shared core 0.26.0 adds margin and page-centre guide snapping for object
 starts, centres, ends and active resize edges. Guide display and snapping are
 independent View toggles and take precedence over grid snapping.
-Insert > Table creates a native 1-32 by 1-32 table through shared core 0.27.0,
+Insert > Table creates a native 1-32 by 1-32 table through shared core 0.28.0,
 then enters its first cell. Cell text uses the existing rich-text editor,
 Tab/Shift-Tab navigates cells, boundaries cannot be accidentally joined, and
 the table survives ODP save/reopen through the established interchange path.
+Object > Table Rows inserts a row below the active cell or deletes the active
+row, repairing cell coordinates with one-step Undo/Redo.
 Decoding original PUB formatting,
 columns and wrap records, picture-alpha/custom contours and WMF/EMF playback
 remain later P1 work.
@@ -498,7 +500,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.19), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.20), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and
@@ -530,8 +532,8 @@ View also shares Publisher's optional half-inch grid and move/resize snapping
 through portable core 0.25.0; completed geometry uses the existing Undo path.
 Core 0.26.0 also shares Publisher's margin/page-centre layout guides and
 guide-priority snapping without adding editor state to exported files.
-Insert > Table shares core 0.27.0's native cell paragraphs, safe cell editing,
-Tab navigation, one-step insertion Undo and ODP round trip with Publisher.
+Insert > Table shares core 0.28.0's native cell paragraphs, safe cell editing,
+Tab navigation, one-step row insertion/deletion and ODP round trip with Publisher.
 The same menu applies one, two or three equal text columns;
 Presentation and Publisher share the command, model, ODP/PPTX interchange and
 GFOpenLayout implementation. Text Frame additionally edits the exact column
