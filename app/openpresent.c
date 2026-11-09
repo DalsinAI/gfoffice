@@ -86,7 +86,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.15 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.16 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -95,7 +95,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.21 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.22 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -125,6 +125,7 @@ enum {
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
     M_POSITION_SIZE, M_APPEARANCE, M_PICTURE_CROP,
     M_TABLE_INSERT_ROW, M_TABLE_DELETE_ROW, M_TABLE_INSERT_COLUMN, M_TABLE_DELETE_COLUMN,
+    M_TABLE_STYLE,
     M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
     M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TIGHT, M_WRAP_TOP_BOTTOM, M_WRAP_DISTANCE,
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
@@ -225,6 +226,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Table Columns", NULL, 0, 0, NULL },
     { NM_SUB, "Insert Column Right", NULL, 0, 0, (APTR)M_TABLE_INSERT_COLUMN },
     { NM_SUB, "Delete Current Column", NULL, 0, 0, (APTR)M_TABLE_DELETE_COLUMN },
+    { NM_ITEM, "Table Cell Style...", NULL, 0, 0, (APTR)M_TABLE_STYLE },
 #ifdef OPENPUBLISHER
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Text Wrapping", NULL, 0, 0, NULL },
@@ -4486,6 +4488,92 @@ static void edit_table_column(int deleting)
     draw_status();
 }
 
+static int parse_table_colour(const char *text, unsigned long *shade)
+{
+    while (text && *text && isspace((unsigned char)*text)) ++text;
+    if (!text || !shade) return 0;
+    if (!strcasecmp(text, "none") || !strcasecmp(text, "automatic")) {
+        *shade = 0;
+        return 1;
+    }
+    return shade_from_text(text, shade);
+}
+
+static void edit_table_style(void)
+{
+    owf_obj *o;
+    owf_para *p;
+    opr_table_scope scope;
+    char scope_text[24] = "cell", fill_text[24], border_text[24];
+    unsigned long fill, border;
+    int obj = selected_table_object(), row = 0, column = 0, para, borders, rc;
+    if (obj < 0) {
+        set_status("Select a table or click in one of its cells first.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[obj];
+    if (edit_obj == obj && caret.para >= 0 && caret.para < o->text.nparas) {
+        row = o->text.paras[caret.para].table_row;
+        column = o->text.paras[caret.para].table_col;
+    }
+    para = table_first_para_in_cell(o, row, column);
+    if (para < 0) {
+        set_status("The active table cell is not editable.");
+        draw_status();
+        return;
+    }
+    p = &o->text.paras[para];
+    if (OWF_SHADE_SET(p->cell_shading))
+        snprintf(fill_text, sizeof fill_text, "#%06lx", OWF_SHADE_RGB(p->cell_shading));
+    else strcpy(fill_text, "none");
+    if (p->fmt.borders && OWF_SHADE_SET(p->fmt.border_colour))
+        snprintf(border_text, sizeof border_text, "#%06lx", OWF_SHADE_RGB(p->fmt.border_colour));
+    else strcpy(border_text, "none");
+    if (!text_requester("Table Cell Style", "Apply to: cell / row / table",
+                        scope_text, scope_text, sizeof scope_text) ||
+        !text_requester("Table Cell Style", "Fill: #RRGGBB or none",
+                        fill_text, fill_text, sizeof fill_text) ||
+        !text_requester("Table Cell Style", "Border: #RRGGBB or none",
+                        border_text, border_text, sizeof border_text))
+        return;
+    if (!strcasecmp(scope_text, "cell")) scope = OPR_TABLE_CELL;
+    else if (!strcasecmp(scope_text, "row")) scope = OPR_TABLE_ROW;
+    else if (!strcasecmp(scope_text, "table") || !strcasecmp(scope_text, "all"))
+        scope = OPR_TABLE_ALL;
+    else {
+        set_status("Table style scope must be cell, row or table.");
+        draw_status();
+        return;
+    }
+    if (!parse_table_colour(fill_text, &fill) ||
+        !parse_table_colour(border_text, &border)) {
+        set_status("Table colours must be #RRGGBB or none.");
+        draw_status();
+        return;
+    }
+    borders = border ? OWF_BORDER_TOP | OWF_BORDER_LEFT |
+                       OWF_BORDER_BOTTOM | OWF_BORDER_RIGHT : 0;
+    rc = opr_table_apply_style(undo, deck, current, obj, row, column, scope,
+                               fill, borders, border);
+    if (rc < 0) {
+        set_status(rc == -2 ? "That table style cannot be applied here." :
+                              "There is not enough memory to style the table.");
+        draw_status();
+        return;
+    }
+    selected_obj = edit_obj = obj;
+    caret.para = para;
+    caret.offset = 0;
+    collapse_text_selection();
+    edit_grouped = 0;
+    text_changed(NULL);
+    set_status(scope == OPR_TABLE_CELL ? "Table cell style updated." :
+               scope == OPR_TABLE_ROW ? "Table row style updated." :
+                                        "Whole table style updated.");
+    draw_status();
+}
+
 static void delete_selected_object(void)
 {
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
@@ -5262,6 +5350,7 @@ static void menu_action(ULONG id)
     case M_TABLE_DELETE_ROW: edit_table_row(1); break;
     case M_TABLE_INSERT_COLUMN: edit_table_column(0); break;
     case M_TABLE_DELETE_COLUMN: edit_table_column(1); break;
+    case M_TABLE_STYLE: edit_table_style(); break;
 #ifdef OPENPUBLISHER
     case M_WRAP_NONE: set_selected_wrap(OWF_WRAP_NONE); break;
     case M_WRAP_SQUARE: set_selected_wrap(OWF_WRAP_SQUARE); break;

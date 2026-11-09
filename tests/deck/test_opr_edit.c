@@ -1192,13 +1192,39 @@ static void table_insertion(void)
     CHECK(!opr_table_delete_column(u, d, 0, 0, 3) &&
           s->objs[0].ncols == 3 && s->objs[0].text.nparas == 6,
           "delete the final native table column and preserve the grid");
+    CHECK(!opr_table_apply_style(u, d, 0, 0, 1, 1, OPR_TABLE_CELL,
+                                 OWF_SHADE(0xffcc00),
+                                 OWF_BORDER_TOP | OWF_BORDER_LEFT |
+                                 OWF_BORDER_BOTTOM | OWF_BORDER_RIGHT,
+                                 OWF_SHADE(0x336699)) &&
+          s->objs[0].text.paras[4].cell_shading == OWF_SHADE(0xffcc00) &&
+          s->objs[0].text.paras[4].fmt.border_colour == OWF_SHADE(0x336699) &&
+          !s->objs[0].text.paras[3].cell_shading,
+          "apply native fill and border colour to one table cell");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          !s->objs[0].text.paras[4].cell_shading &&
+          !opr_undo_redo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[4].cell_shading == OWF_SHADE(0xffcc00),
+          "cell style is one Undo and Redo step");
+    CHECK(!opr_table_apply_style(u, d, 0, 0, 1, 0, OPR_TABLE_ROW,
+                                 OWF_SHADE(0xddeeff), 0, 0) &&
+          s->objs[0].text.paras[3].cell_shading == OWF_SHADE(0xddeeff) &&
+          s->objs[0].text.paras[4].cell_shading == OWF_SHADE(0xddeeff) &&
+          s->objs[0].text.paras[5].cell_shading == OWF_SHADE(0xddeeff) &&
+          s->objs[0].text.paras[2].fmt.borders,
+          "apply a fill and clear borders across one table row");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[4].cell_shading == OWF_SHADE(0xffcc00),
+          "undo row styling restores the earlier per-cell style");
     free(data); data = NULL; length = 0;
     CHECK(odp->export(d, &data, &length, NULL) == OWF_OK &&
           owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back &&
           back->slides[0].objs[0].ncols == 3 &&
           back->slides[0].objs[0].text.nparas == 6 &&
-          back->slides[0].objs[0].text.paras[3].table_row == 1,
-          "row-edited table structure survives ODP save/reopen");
+          back->slides[0].objs[0].text.paras[3].table_row == 1 &&
+          back->slides[0].objs[0].text.paras[4].cell_shading == OWF_SHADE(0xffcc00) &&
+          back->slides[0].objs[0].text.paras[4].fmt.border_colour == OWF_SHADE(0x336699),
+          "row/column structure and cell style survive ODP save/reopen");
     owf_deck_free(back); back = NULL;
     CHECK(opr_table_delete_row(u, d, 0, 0, -1) == -2 &&
           opr_table_insert_row(u, d, 0, 0, 33) == -2 &&

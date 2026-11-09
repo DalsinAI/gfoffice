@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.29.0"
+#define OPR_CORE_VERSION "0.30.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -269,6 +269,17 @@ int opr_table_insert_column(opr_undo *u, owf_deck *deck, int slide, int obj,
                             int column);
 int opr_table_delete_column(opr_undo *u, owf_deck *deck, int slide, int obj,
                             int column);
+typedef enum {
+    OPR_TABLE_CELL,
+    OPR_TABLE_ROW,
+    OPR_TABLE_ALL
+} opr_table_scope;
+/* Apply a fill and four-edge paragraph border to one cell, row or whole
+ * table. Zero shading clears fill; zero borders clears the cell grid. */
+int opr_table_apply_style(opr_undo *u, owf_deck *deck, int slide, int obj,
+                          int row, int column, opr_table_scope scope,
+                          unsigned long shading, int borders,
+                          unsigned long border_colour);
 /* A new embedded picture. The resource bytes and metadata are copied into
  * deck->res; coordinates are slide twips and crop is thousandths cut from
  * left, top, right and bottom. */

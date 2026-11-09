@@ -2426,6 +2426,57 @@ int opr_table_delete_column(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_table_apply_style(opr_undo *u, owf_deck *deck, int slide, int obj,
+                          int row, int column, opr_table_scope scope,
+                          unsigned long shading, int borders,
+                          unsigned long border_colour)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int i, changed = 0, found = 0;
+    const int all_borders = OWF_BORDER_TOP | OWF_BORDER_LEFT |
+                            OWF_BORDER_BOTTOM | OWF_BORDER_RIGHT;
+    if (!u || !deck || !o)
+        return -1;
+    if (o->kind != OWF_OBJ_TABLE || row < 0 || column < 0 ||
+        scope < OPR_TABLE_CELL || scope > OPR_TABLE_ALL ||
+        (borders & ~all_borders) ||
+        (shading && !OWF_SHADE_SET(shading)) ||
+        (border_colour && !OWF_SHADE_SET(border_colour)))
+        return -2;
+    for (i = 0; i < o->text.nparas; ++i) {
+        const owf_para *p = &o->text.paras[i];
+        if (p->table_id < 0 ||
+            (scope == OPR_TABLE_ROW && p->table_row != row) ||
+            (scope == OPR_TABLE_CELL &&
+             (p->table_row != row || p->table_col != column)))
+            continue;
+        found = 1;
+        if (p->cell_shading != shading || p->fmt.borders != borders ||
+            p->fmt.border_colour != border_colour)
+            changed = 1;
+    }
+    if (!found)
+        return -2;
+    if (!changed)
+        return 0;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    for (i = 0; i < o->text.nparas; ++i) {
+        owf_para *p = &o->text.paras[i];
+        if (p->table_id < 0 ||
+            (scope == OPR_TABLE_ROW && p->table_row != row) ||
+            (scope == OPR_TABLE_CELL &&
+             (p->table_row != row || p->table_col != column)))
+            continue;
+        p->cell_shading = shading;
+        p->fmt.borders = borders;
+        p->fmt.border_colour = border_colour;
+    }
+    structural_push(u, &before);
+    return 0;
+}
+
 int opr_obj_insert_picture(opr_undo *u, owf_deck *deck, int slide,
                            const opr_picture_spec *spec, int *selected)
 {
