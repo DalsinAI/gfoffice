@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.21.0"
+#define OPR_CORE_VERSION "0.22.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -177,6 +177,12 @@ int opr_text_set_font(opr_undo *u, owf_deck *deck, int slide, int obj,
                       int first_para, int last_para, const char *family);
 int opr_text_set_alignment(opr_undo *u, owf_deck *deck, int slide, int obj,
                            int first_para, int last_para, owf_align alignment);
+/* Paragraph indents in twips: first is relative to left, as in owf_parafmt.
+ * Left and right must be non-negative; a hanging first line may be negative
+ * down to -left. */
+int opr_text_set_indents(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         int first_para, int last_para,
+                         int left, int first, int right);
 /* Character formatting over an exact, non-empty selection. Paragraph
  * alignment still uses opr_text_set_alignment because it is paragraph state. */
 int opr_text_toggle_flags_selection(opr_undo *u, owf_deck *deck, int slide, int obj,

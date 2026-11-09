@@ -1538,6 +1538,37 @@ int opr_text_set_alignment(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_text_set_indents(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         int first_para, int last_para,
+                         int left, int first, int right)
+{
+    owf_obj *o = format_object(deck, slide, obj, first_para, last_para);
+    owf_obj resolved;
+    int usable;
+    int p, changed = 0;
+    if (!u || !o || left < 0 || right < 0 || first < -left ||
+        left > 1000000 || first > 1000000 || right > 1000000)
+        return -2;
+    if (owf_deck_resolve(deck, slide, obj, &resolved, NULL) < 0)
+        return -2;
+    usable = resolved.width - resolved.inset[0] - resolved.inset[2];
+    if (usable <= 0 || left + right >= usable || left + first + right >= usable)
+        return -2;
+    for (p = first_para; p <= last_para; ++p)
+        if (o->text.paras[p].fmt.indent_left != left ||
+            o->text.paras[p].fmt.indent_first != first ||
+            o->text.paras[p].fmt.indent_right != right)
+            changed = 1;
+    if (!changed) return 0;
+    if (opr_undo_push(u, deck, slide, obj) < 0) return -1;
+    for (p = first_para; p <= last_para; ++p) {
+        o->text.paras[p].fmt.indent_left = left;
+        o->text.paras[p].fmt.indent_first = first;
+        o->text.paras[p].fmt.indent_right = right;
+    }
+    return 0;
+}
+
 /* Add an already performed structural change to the undo stack. */
 static void structural_push(opr_undo *u, snapshot *s)
 {

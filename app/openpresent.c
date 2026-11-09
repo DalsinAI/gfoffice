@@ -79,13 +79,14 @@
 #include "ogt_font.h"
 #include "ogt_list.h"
 #include "ogt_status.h"
+#include "ogt_ruler.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, *LayersBase = NULL;
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.7 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.8 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -94,7 +95,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.13 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.14 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -287,6 +288,7 @@ static struct Menu *menu;
 static struct Gadget *chain;
 static ogt_list *strip;                              /* the slides, a thumbnail each */
 static ogt_status sbar;
+static ogt_ruler ruler;
 static struct TextFont *font;
 static struct TextAttr font_attr;
 static int fh;
@@ -298,7 +300,7 @@ static int theme_mode = OGT_LIGHT;
 static int tb_style = OGT_TB_ICONS;
 static int quit_now;
 
-static box area, toolbar_box, strip_box, view_box, slide_box, status_box;
+static box area, toolbar_box, strip_box, ruler_box, view_box, slide_box, status_box;
 /* Zoom: the slide at a percent of its size fitted to the view; larger than the view, it scrolls (pan, in
  * pixels) with the scrollers along the view's right and bottom edges, and is drawn only inside slide_area. */
 static const int zooms[] = { 100, 150, 200, 300, 400 };
@@ -338,6 +340,7 @@ static void draw_slide(void);
 static void draw_status(void);
 static void layout(void);
 static void insert_picture(void);
+static void update_ruler(void);
 
 /* ---- Small helpers ---- */
 
@@ -1964,6 +1967,40 @@ static void place_slide(void)
     slide_box.h = h;
 }
 
+/* The ruler is the existing OpenGadTools control. In text-editing mode its
+ * scale covers the selected frame's inner width, so its values are exactly
+ * owf_parafmt indents rather than page-relative approximations. */
+static void update_ruler(void)
+{
+    int page_x = slide_box.x, page_w = deck ? deck->width : 11906;
+    int left = 0, first = 0, right = 0;
+    int num = slide_box.w > 0 ? slide_box.w : 1;
+    int den = deck && deck->width > 0 ? deck->width : 1;
+    if (deck && current >= 0 && current < deck->nslides && edit_obj >= 0 &&
+        edit_obj < deck->slides[current].nobjs && slide_box.w > 0) {
+        owf_obj resolved;
+        owf_obj *o = &deck->slides[current].objs[edit_obj];
+        int para = caret.para;
+        if (owf_deck_resolve(deck, current, edit_obj, &resolved, NULL) >= 0 &&
+            opr_obj_editable(deck, current, edit_obj) && o->text.nparas > 0) {
+            int content_x = resolved.x + resolved.inset[0];
+            int content_w = resolved.width - resolved.inset[0] - resolved.inset[2];
+            if (para < 0) para = 0;
+            if (para >= o->text.nparas) para = o->text.nparas - 1;
+            if (content_w > 0) {
+                page_x = slide_box.x + (int)((long)content_x * num / den);
+                page_w = content_w;
+            }
+            left = o->text.paras[para].fmt.indent_left;
+            first = o->text.paras[para].fmt.indent_first;
+            right = o->text.paras[para].fmt.indent_right;
+        }
+    }
+    ogt_ruler_layout(&ruler, ruler_box.x, ruler_box.y, ruler_box.w, ruler_box.h, page_x);
+    ogt_ruler_set_page(&ruler, page_w, 0, 0, num, den, OGT_RULER_CM);
+    ogt_ruler_set_indents(&ruler, left, first, right);
+}
+
 static void free_scrollers(void)
 {
     if (hscroll) { RemoveGadget(win, hscroll); DisposeObject(hscroll); hscroll = NULL; }
@@ -2031,7 +2068,7 @@ static void free_gadgets(void)
 static void layout(void)
 {
     struct RastPort *rp = win->RPort;
-    int tbh, stripw, body_y, body_h;
+    int tbh, stripw, body_y, body_h, view_x, view_w, ruler_h;
     free_gadgets();
     area.x = win->BorderLeft;
     area.y = win->BorderTop;
@@ -2048,8 +2085,14 @@ static void layout(void)
     /* the slides beside the slide, hidden in a narrow window (as GFOpenWrite's navigator) */
     stripw = area.w >= 480 ? (area.w < 1000 ? 140 : area.w / 7) : 0;
     strip_box = (box){ area.x, body_y, stripw, body_h };
-    view_box = (box){ area.x + stripw + (stripw ? 1 : 0), body_y, area.w - stripw - (stripw ? 1 : 0), body_h };
+    view_x = area.x + stripw + (stripw ? 1 : 0);
+    view_w = area.w - stripw - (stripw ? 1 : 0);
+    ruler_h = fh + 12;
+    if (ruler_h > body_h / 3) ruler_h = body_h / 3;
+    ruler_box = (box){ view_x, body_y, view_w, ruler_h };
+    view_box = (box){ view_x, body_y + ruler_h, view_w, body_h - ruler_h };
     place_slide();
+    update_ruler();
     if ((chain = ogt_toolbar_gadgets(&tb, GID_TOOLBAR)))
         AddGList(win, chain, ~0, -1, NULL);
     make_scrollers();
@@ -2338,6 +2381,8 @@ static void draw_slide_part(const box *part)
         InstallClipRegion(win->WLayer, old);
         DisposeRegion(region);
     }
+    update_ruler();
+    ogt_ruler_draw(&ruler);
 }
 
 static void draw_slide(void)
@@ -3290,6 +3335,48 @@ static void format_text_alignment(owf_align alignment, const char *message)
     rc = opr_text_set_alignment(undo, deck, current, edit_obj,
                                 first, last, alignment);
     format_finish(rc, &before, message);
+}
+
+static void apply_ruler_change(int marker)
+{
+    box before;
+    int first_para, last_para, rc;
+    const char *message = marker == OGT_RULER_LEFT ? "Left paragraph indent changed." :
+                          marker == OGT_RULER_FIRST ? "First-line paragraph indent changed." :
+                                                    "Right paragraph indent changed.";
+    if (edit_obj < 0 || !deck) {
+        update_ruler();
+        ogt_ruler_draw(&ruler);
+        return;
+    }
+    if (!edit_area(&before)) before.w = 0;
+    if (opr_text_selection_empty(&text_selection)) {
+        first_para = last_para = caret.para;
+    } else {
+        first_para = text_selection.anchor.para;
+        last_para = text_selection.focus.para;
+        if (first_para > last_para) {
+            int swap = first_para;
+            first_para = last_para;
+            last_para = swap;
+        }
+    }
+    edit_grouped = 0;
+    rc = opr_text_set_indents(undo, deck, current, edit_obj,
+                              first_para, last_para,
+                              ruler.left_twips, ruler.first_twips,
+                              ruler.right_twips);
+    if (rc < 0) {
+        set_status(rc == -2 ? "That indent would leave no usable text width." :
+                             "There is not enough memory to change the paragraph indent.");
+        update_ruler();
+        ogt_ruler_draw(&ruler);
+        draw_status();
+        return;
+    }
+    text_changed(before.w ? &before : NULL);
+    set_status(message);
+    draw_status();
 }
 
 static int on_visible_slide(int mx, int my)
@@ -4790,6 +4877,13 @@ static void events(void)
             if (r == OGT_LIST_PICKED || r == OGT_LIST_OPENED) { show_slide(row); handled = 1; }
             else if (r == OGT_LIST_SCROLLED) handled = 1;
         }
+        if (!handled && (edit_obj >= 0 || ruler.dragging) &&
+            (class == IDCMP_MOUSEBUTTONS || class == IDCMP_MOUSEMOVE)) {
+            int was_dragging = ruler.dragging;
+            r = ogt_ruler_event(&ruler, class, code, mx, my);
+            if (was_dragging || ruler.dragging || r != OGT_RULER_NONE) handled = 1;
+            if (r != OGT_RULER_NONE) apply_ruler_change(r);
+        }
         GT_ReplyIMsg(im);
         if (handled) continue;
         switch (class) {
@@ -4965,6 +5059,7 @@ static int open_window(void)
         TAG_DONE);
     if (!win) return 0;
     if (menu) SetMenuStrip(win, menu);
+    ogt_ruler_init(&ruler, win, &ctx);
     update_window_title();
     relayout();
     return 1;

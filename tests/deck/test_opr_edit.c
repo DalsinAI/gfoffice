@@ -776,11 +776,27 @@ static void textbox_insertion(void)
           !opr_undo_redo(u, d, &slide, &obj) &&
           s->objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT,
           "paragraph alignment participates in Undo and Redo");
+    CHECK(!opr_text_set_indents(u, d, 0, 0, 0, 0, 360, -180, 240) &&
+          s->objs[0].text.paras[0].fmt.indent_left == 360 &&
+          s->objs[0].text.paras[0].fmt.indent_first == -180 &&
+          s->objs[0].text.paras[0].fmt.indent_right == 240,
+          "set left, hanging first-line and right paragraph indents");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].fmt.indent_left == 0 &&
+          !opr_undo_redo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].fmt.indent_left == 360,
+          "paragraph indents participate in Undo and Redo");
+    opr_undo_clear(u);
+    CHECK(!opr_text_set_indents(u, d, 0, 0, 0, 0, 360, -180, 240) &&
+          !opr_undo_can(u), "setting existing paragraph indents is not an edit");
     CHECK(opr_text_toggle_flags(u, d, 0, 0, 0, 1, OWF_BOLD) == -2 &&
           opr_text_set_size(u, d, 0, 0, 0, 0, 0) == -2 &&
           opr_text_set_colour(u, d, 0, 0, 0, 0, 0x1000000UL) == -2 &&
           opr_text_set_font(u, d, 0, 0, 0, 0, "") == -2 &&
-          opr_text_set_alignment(u, d, 0, 0, 0, 0, (owf_align)99) == -2,
+          opr_text_set_alignment(u, d, 0, 0, 0, 0, (owf_align)99) == -2 &&
+          opr_text_set_indents(u, d, 0, 0, 0, 0, 100, -101, 0) == -2 &&
+          opr_text_set_indents(u, d, 0, 0, 0, 0, -1, 0, 0) == -2 &&
+          opr_text_set_indents(u, d, 0, 0, 0, 0, 4100, 0, 100) == -2,
           "invalid formatting ranges and values are rejected");
     opr_undo_clear(u);
     CHECK(!opr_obj_set_text_columns(u, d, 0, 0, 2, 240) &&
@@ -871,6 +887,9 @@ static void textbox_insertion(void)
               back->slides[0].objs[0].flow_story >= 0 &&
               back->slides[0].objs[1].flow_story == back->slides[0].objs[0].flow_story &&
               back->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT &&
+              back->slides[0].objs[0].text.paras[0].fmt.indent_left == 360 &&
+              back->slides[0].objs[0].text.paras[0].fmt.indent_first == -180 &&
+              back->slides[0].objs[0].text.paras[0].fmt.indent_right == 240 &&
               effective_size == 360 &&
               back->slides[0].objs[0].text.paras[0].runs[0].fmt.colour == 0x336699UL &&
               saved_font >= 0 && saved_font < back->res->nfonts &&
