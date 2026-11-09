@@ -598,14 +598,16 @@ with guides preferred over the grid. The core supplies reusable box-anchor
 geometry while the native shell retains overlay/toggle state. Custom guides
 and baseline-grid authoring remain separate work.
 
-GFOpenPresentation 0.6.21 and GFOpenPublisher 0.3.15 carry shared core 0.29.0
+GFOpenPresentation 0.6.22 and GFOpenPublisher 0.3.16 carry shared core 0.30.0
 and add native table creation plus row/column insertion/deletion. The portable commands build the existing
 tagged-cell story model transactionally; OpenLayout renders it through its
 existing table role. Native cell text is editable, Tab/Shift-Tab navigates,
 cross-cell collapsing edits are refused, insertion is one Undo step and ODP
 round trip preserves the table. Structural edits repair later coordinates,
 redistribute column width without changing the table box and use one Undo
-step. Merges, explicit row heights and table styles remain.
+step. Cell Style applies fill and four-edge border colour to one cell, a row
+or the whole table with the same Undo and ODP persistence. Merges, explicit
+row heights and design templates/banding remain.
 
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.

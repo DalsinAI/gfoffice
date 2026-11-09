@@ -109,9 +109,10 @@ resize handles. The grid is editor chrome and is not exported.
 GFOpenPresentation 0.6.18 carries shared core 0.26.0 and adds fixed half-inch
 margin and page-centre guides. Move snaps start/centre/end and resize snaps the
 active edge; custom guides remain.
-GFOpenPresentation 0.6.21 carries shared core 0.29.0 and adds native 1-32 by
+GFOpenPresentation 0.6.22 carries shared core 0.30.0 and adds native 1-32 by
 1-32 table insertion, editable cell text, Tab/Shift-Tab cell navigation,
-one-step insertion plus row/column insertion/deletion Undo and ODP persistence.
+one-step insertion, row/column insertion/deletion and scoped cell styling with
+Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
@@ -177,11 +178,11 @@ one-step insertion plus row/column insertion/deletion Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Insert a table, type in its cells | P1 (data), P3 (editing) | Yes in 0.6.21: native Insert Table, cell-safe rich-text editing, Tab navigation, Undo/Redo and ODP persistence |
+| Insert a table, type in its cells | P1 (data), P3 (editing) | Yes in 0.6.22: native Insert Table, cell-safe rich-text editing, Tab navigation, Undo/Redo and ODP persistence |
 | Column widths | P1 | Yes |
 | Cell fill | P1 | Yes |
 | Merge and split cells | Later | Approx.: shown apart |
-| Borders per cell, table designs (templates), banding | Later | Approx.: thin borders on every cell |
+| Borders per cell, table designs (templates), banding | Later | Partial in 0.6.22: fill and four-edge border colour apply to a cell, row or table; named designs and banding remain |
 | Insert and delete rows and columns, row heights | P3 | Partial in 0.6.21: insert/delete rows and columns are undoable and persist; explicit row heights remain |
 
 ## 8. Charts, objects, media
