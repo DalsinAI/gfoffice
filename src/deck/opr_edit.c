@@ -29,7 +29,7 @@ int opr_obj_editable(const owf_deck *deck, int slide, int obj)
     const owf_obj *o = object((owf_deck *)deck, slide, obj);
     if (!o || (o->flags & OWF_OBJ_HIDDEN))
         return 0;
-    if (o->kind == OWF_OBJ_TEXT)
+    if (o->kind == OWF_OBJ_TEXT || o->kind == OWF_OBJ_TABLE)
         return 1;
     /* a shape's text, but not a line's */
     return o->kind == OWF_OBJ_SHAPE && o->shape != OWF_SHAPE_LINE;
@@ -645,6 +645,12 @@ static size_t utf8_forward(const char *s, size_t at, size_t n)
     return at;
 }
 
+static int same_table_cell(const owf_para *a, const owf_para *b)
+{
+    return a && b && a->table_id >= 0 && a->table_id == b->table_id &&
+           a->table_row == b->table_row && a->table_col == b->table_col;
+}
+
 int opr_text_backspace(owf_deck *deck, int slide, int obj, opr_pos *at)
 {
     owf_obj *o = object(deck, slide, obj);
@@ -664,6 +670,9 @@ int opr_text_backspace(owf_deck *deck, int slide, int obj, opr_pos *at)
         return 0;
     }
     if (at->para == 0)
+        return 0;
+    if (o->kind == OWF_OBJ_TABLE &&
+        !same_table_cell(&o->text.paras[at->para - 1], &o->text.paras[at->para]))
         return 0;
     at->offset = opr_para_length(&o->text.paras[at->para - 1]);
     at->para--;
@@ -690,6 +699,9 @@ int opr_text_delete(owf_deck *deck, int slide, int obj, opr_pos *at)
     }
     if (at->para + 1 >= o->text.nparas)
         return 0;
+    if (o->kind == OWF_OBJ_TABLE &&
+        !same_table_cell(&o->text.paras[at->para], &o->text.paras[at->para + 1]))
+        return 0;
     return join(o, at->para);
 }
 
@@ -713,6 +725,9 @@ int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
         selection->anchor = selection->focus = start;
         return 0;
     }
+    if (o->kind == OWF_OBJ_TABLE &&
+        !same_table_cell(&o->text.paras[start.para], &o->text.paras[end.para]))
+        return -2;
     if (start.para == end.para) {
         remove_bytes(&o->text.paras[start.para], start.offset, end.offset);
     } else {
@@ -2054,6 +2069,68 @@ int opr_obj_insert_textbox(opr_undo *u, owf_deck *deck, int slide,
         owf_slide_delete(&deck->slides[slide], index);
         return -1;
     }
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_PRESENCE;
+    s.slide = slide;
+    s.obj = index;
+    s.focus = s.other_focus = slide;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
+int opr_obj_insert_table(opr_undo *u, owf_deck *deck, int slide,
+                         const opr_table_spec *spec, int *selected)
+{
+    snapshot s;
+    owf_obj *o;
+    const owf_master *master;
+    int index, row, col, remainder;
+    if (!u || !deck || !spec || slide < 0 || slide >= deck->nslides)
+        return -1;
+    if (spec->x < 0 || spec->y < 0 || spec->width < 1 || spec->height < 1 ||
+        (long)spec->x + spec->width > deck->width ||
+        (long)spec->y + spec->height > deck->height ||
+        spec->rows < 1 || spec->rows > 32 ||
+        spec->columns < 1 || spec->columns > 32)
+        return -2;
+    index = deck->slides[slide].nobjs;
+    o = owf_slide_add(&deck->slides[slide], OWF_OBJ_TABLE);
+    if (!o)
+        return -1;
+    o->x = spec->x;
+    o->y = spec->y;
+    o->width = spec->width;
+    o->height = spec->height;
+    o->ncols = spec->columns;
+    o->col_widths = owf_calloc((size_t)o->ncols, sizeof *o->col_widths);
+    if (!o->col_widths) {
+        owf_slide_delete(&deck->slides[slide], index);
+        return -1;
+    }
+    remainder = spec->width;
+    for (col = 0; col < o->ncols; ++col) {
+        o->col_widths[col] = remainder / (o->ncols - col);
+        remainder -= o->col_widths[col];
+    }
+    master = owf_deck_slide_master(deck, slide);
+    for (row = 0; row < spec->rows; ++row)
+        for (col = 0; col < spec->columns; ++col) {
+            owf_para *p = owf_deck_add_para(deck, master, o, 0);
+            if (!p) {
+                owf_slide_delete(&deck->slides[slide], index);
+                return -1;
+            }
+            p->table_id = 0;
+            p->table_row = row;
+            p->table_col = col;
+            p->table_cols = spec->columns;
+            p->fmt.borders = OWF_BORDER_TOP | OWF_BORDER_LEFT |
+                             OWF_BORDER_BOTTOM | OWF_BORDER_RIGHT;
+            p->fmt.border_colour = OWF_SHADE(0x808080);
+            if (spec->header_row && row == 0)
+                p->cell_shading = OWF_SHADE(0xd9e2f3);
+        }
     memset(&s, 0, sizeof s);
     s.kind = SNAP_OBJ_PRESENCE;
     s.slide = slide;

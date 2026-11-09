@@ -86,7 +86,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.12 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.13 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -95,7 +95,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.18 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.19 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -117,7 +117,7 @@ enum {
     M_TEXT_FONT, M_TEXT_COLOUR,
     M_TEXT_ALIGN_LEFT, M_TEXT_ALIGN_CENTRE, M_TEXT_ALIGN_RIGHT, M_TEXT_ALIGN_JUSTIFY,
     M_TEXT_COLUMNS_1, M_TEXT_COLUMNS_2, M_TEXT_COLUMNS_3, M_TEXT_FRAME,
-    M_INSERT_TEXTBOX, M_INSERT_PICTURE, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
+    M_INSERT_TEXTBOX, M_INSERT_TABLE, M_INSERT_PICTURE, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
     M_INSERT_DIAMOND, M_INSERT_ARROW, M_INSERT_LINE,
     M_ROTATE_LEFT, M_ROTATE_RIGHT,
     M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
@@ -187,6 +187,7 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Insert", NULL, 0, 0, NULL },
     { NM_ITEM, "Text Box", NULL, 0, 0, (APTR)M_INSERT_TEXTBOX },
+    { NM_ITEM, "Table...", NULL, 0, 0, (APTR)M_INSERT_TABLE },
     { NM_ITEM, "Picture...", NULL, 0, 0, (APTR)M_INSERT_PICTURE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Rectangle", NULL, 0, 0, (APTR)M_INSERT_RECT },
@@ -3080,10 +3081,58 @@ static void caret_moved(int extend_selection)
     if (edit_area(&b)) draw_slide_part(&b);
 }
 
+static int table_cross_cell_selection(void)
+{
+    const owf_obj *o;
+    const owf_para *a, *b;
+    if (!deck || edit_obj < 0 || edit_obj >= deck->slides[current].nobjs)
+        return 0;
+    o = &deck->slides[current].objs[edit_obj];
+    if (o->kind != OWF_OBJ_TABLE || opr_text_selection_empty(&text_selection) ||
+        text_selection.anchor.para < 0 || text_selection.focus.para < 0 ||
+        text_selection.anchor.para >= o->text.nparas ||
+        text_selection.focus.para >= o->text.nparas)
+        return 0;
+    a = &o->text.paras[text_selection.anchor.para];
+    b = &o->text.paras[text_selection.focus.para];
+    return a->table_row != b->table_row || a->table_col != b->table_col;
+}
+
+static void table_next_cell(int backwards)
+{
+    const owf_obj *o;
+    const owf_para *from;
+    int i, step;
+    if (!deck || edit_obj < 0 || edit_obj >= deck->slides[current].nobjs)
+        return;
+    o = &deck->slides[current].objs[edit_obj];
+    if (o->kind != OWF_OBJ_TABLE || !o->text.nparas)
+        return;
+    if (caret.para < 0 || caret.para >= o->text.nparas)
+        caret.para = 0;
+    from = &o->text.paras[caret.para];
+    step = backwards ? -1 : 1;
+    for (i = caret.para + step; i >= 0 && i < o->text.nparas; i += step)
+        if (o->text.paras[i].table_row != from->table_row ||
+            o->text.paras[i].table_col != from->table_col)
+            break;
+    if (i < 0) i = o->text.nparas - 1;
+    if (i >= o->text.nparas) i = 0;
+    caret.para = i;
+    caret.offset = 0;
+    caret_moved(0);
+    set_status("Table cell selected; type, or press Tab for the next cell.");
+    draw_status();
+}
+
 static void type_text(const char *utf8, size_t n)
 {
     box b;
     if (edit_obj < 0) return;
+    if (table_cross_cell_selection()) {
+        tell("Table", "Replacement cannot collapse text from different cells.");
+        return;
+    }
     before_change(&b);
     if (!opr_text_selection_empty(&text_selection)) {
         if (opr_text_delete_selection(deck, current, edit_obj, &text_selection) < 0) {
@@ -3105,6 +3154,10 @@ static void type_key(int key)
     box b;
     int rc = 0;
     if (edit_obj < 0) return;
+    if (table_cross_cell_selection()) {
+        tell("Table", "Deletion cannot collapse text from different cells.");
+        return;
+    }
     before_change(&b);
     if (!opr_text_selection_empty(&text_selection)) {
         rc = opr_text_delete_selection(deck, current, edit_obj, &text_selection);
@@ -3114,7 +3167,8 @@ static void type_key(int key)
     } else if (key == 8) rc = opr_text_backspace(deck, current, edit_obj, &caret);
     else if (key == 127) rc = opr_text_delete(deck, current, edit_obj, &caret);
     else if (key == 13) rc = opr_text_newline(deck, current, edit_obj, &caret);
-    if (rc < 0) tell(PROGRAM, "There is not enough memory for that.");
+    if (rc < 0) tell(PROGRAM, rc == -2 ? "That table edit would cross cell boundaries."
+                                       : "There is not enough memory for that.");
     collapse_text_selection();
     text_changed(b.w ? &b : NULL);
 }
@@ -4269,6 +4323,56 @@ static void insert_textbox(void)
     draw_status();
 }
 
+static void insert_table(void)
+{
+    opr_table_spec spec;
+    char entered[24], extra;
+    int selected = -1;
+    if (!deck || current < 0 || current >= deck->nslides)
+        return;
+    if (!text_requester("Insert Table", "Rows (1-32)", "3", entered, sizeof entered))
+        return;
+    if (sscanf(entered, "%d %c", &spec.rows, &extra) != 1 ||
+        spec.rows < 1 || spec.rows > 32) {
+        set_status("Table rows must be from 1 to 32.");
+        draw_status();
+        return;
+    }
+    if (!text_requester("Insert Table", "Columns (1-32)", "3", entered, sizeof entered))
+        return;
+    if (sscanf(entered, "%d %c", &spec.columns, &extra) != 1 ||
+        spec.columns < 1 || spec.columns > 32) {
+        set_status("Table columns must be from 1 to 32.");
+        draw_status();
+        return;
+    }
+    spec.width = deck->width * 3 / 4;
+    spec.height = deck->height / 2;
+    spec.x = (deck->width - spec.width) / 2;
+    spec.y = (deck->height - spec.height) / 2;
+    spec.header_row = 1;
+    if (opr_obj_insert_table(undo, deck, current, &spec, &selected) < 0) {
+        set_status("The table could not be inserted.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    selected_obj = edit_obj = selected;
+    caret.para = 0;
+    caret.offset = 0;
+    collapse_text_selection();
+    edit_grouped = 0;
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Table inserted. Type in a cell; Tab moves to the next cell.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static void delete_selected_object(void)
 {
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
@@ -5017,6 +5121,7 @@ static void menu_action(ULONG id)
     case M_TEXT_COLUMNS_3: set_selected_text_columns(3); break;
     case M_TEXT_FRAME: edit_selected_text_frame(); break;
     case M_INSERT_TEXTBOX: insert_textbox(); break;
+    case M_INSERT_TABLE: insert_table(); break;
     case M_INSERT_PICTURE: insert_picture(); break;
     case M_INSERT_RECT: insert_shape(OWF_SHAPE_RECT); break;
     case M_INSERT_ROUNDRECT: insert_shape(OWF_SHAPE_ROUNDRECT); break;
@@ -5249,7 +5354,9 @@ static void events(void)
                 else if (code == '0') set_zoom(100);
                 break;
             }
-            if (code == 8 || code == 127 || code == 13) type_key(code);
+            if (code == 9 && deck->slides[current].objs[edit_obj].kind == OWF_OBJ_TABLE) {
+                table_next_cell((qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0);
+            } else if (code == 8 || code == 127 || code == 13) type_key(code);
             else if (code == 9 || (code >= 32 && code < 256 && code != 127)) {
                 char u[3];
                 int n = vanilla_utf8(code, u);

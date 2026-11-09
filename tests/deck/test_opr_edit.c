@@ -55,7 +55,7 @@ static void typing(owf_deck *d)
     int body = obj_named(d, 1, "Content Placeholder 2"), note = obj_named(d, 2, "Note");
 
     CHECK(body >= 0 && note >= 0, "the fixture's objects");
-    CHECK(opr_obj_editable(d, 1, body) && !opr_obj_editable(d, 3, obj_named(d, 3, "Table 3")) &&
+    CHECK(opr_obj_editable(d, 1, body) && opr_obj_editable(d, 3, obj_named(d, 3, "Table 3")) &&
           !opr_obj_editable(d, 2, obj_named(d, 2, "Line")), "what can be typed in");
     CHECK(!strcmp(text(d, 1, body), "Titles and bullet lists\nA second level\nA third level\nText boxes and shapes\n"
                                     "Pictures and tables"), "the body's text: %s", text(d, 1, body));
@@ -1080,6 +1080,70 @@ static void character_selection_ranges(void)
     owf_deck_free(d);
 }
 
+static void table_insertion(void)
+{
+    owf_deck *d = owf_deck_new(10000, 8000), *back = NULL;
+    owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    opr_undo *u = opr_undo_new();
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    opr_table_spec spec, invalid;
+    opr_selection selection;
+    opr_pos at;
+    unsigned char *data = NULL;
+    size_t length = 0;
+    int selected = -1, slide = -1, obj = -1, widths = 0, i;
+    CHECK(d && s && u && odp, "a deck for native table insertion");
+    if (!d || !s || !u || !odp) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    memset(&spec, 0, sizeof spec);
+    spec.x = 1000; spec.y = 1200; spec.width = 6000; spec.height = 3000;
+    spec.rows = 2; spec.columns = 3; spec.header_row = 1;
+    CHECK(!opr_obj_insert_table(u, d, 0, &spec, &selected) && selected == 0 &&
+          s->nobjs == 1 && s->objs[0].kind == OWF_OBJ_TABLE &&
+          s->objs[0].ncols == 3 && s->objs[0].text.nparas == 6 &&
+          opr_obj_editable(d, 0, 0),
+          "insert and select a native editable table");
+    for (i = 0; i < s->objs[0].ncols; ++i) widths += s->objs[0].col_widths[i];
+    CHECK(widths == spec.width && s->objs[0].text.paras[0].table_row == 0 &&
+          s->objs[0].text.paras[2].table_col == 2 &&
+          s->objs[0].text.paras[3].table_row == 1 &&
+          OWF_SHADE_SET(s->objs[0].text.paras[0].cell_shading) &&
+          !s->objs[0].text.paras[3].cell_shading,
+          "table cells carry equal widths, grid coordinates and header shading");
+    at.para = 0; at.offset = 0;
+    CHECK(!opr_text_insert(d, 0, 0, &at, "Heading", 7) && at.offset == 7,
+          "type into the first native table cell");
+    at.para = 1; at.offset = 0;
+    CHECK(!opr_text_backspace(d, 0, 0, &at) && at.para == 1 && at.offset == 0,
+          "Backspace cannot join two table cells");
+    at.para = 0; at.offset = 7;
+    CHECK(!opr_text_delete(d, 0, 0, &at) && s->objs[0].text.nparas == 6,
+          "Delete cannot join two table cells");
+    selection.anchor.para = 0; selection.anchor.offset = 0;
+    selection.focus.para = 1; selection.focus.offset = 0;
+    CHECK(opr_text_delete_selection(d, 0, 0, &selection) == -2 &&
+          s->objs[0].text.nparas == 6,
+          "a replacement selection cannot collapse distinct table cells");
+    CHECK(odp->export(d, &data, &length, NULL) == OWF_OK &&
+          owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back &&
+          back->slides[0].nobjs == 1 && back->slides[0].objs[0].kind == OWF_OBJ_TABLE &&
+          back->slides[0].objs[0].ncols == 3 && back->slides[0].objs[0].text.nparas == 6,
+          "an authored table and its cells survive ODP save/reopen");
+    owf_deck_free(back); back = NULL;
+    free(data); data = NULL;
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && !s->nobjs && obj == -1 &&
+          !opr_undo_redo(u, d, &slide, &obj) && s->nobjs == 1 && obj == 0,
+          "table insertion is one Undo and Redo step");
+    invalid = spec; invalid.rows = 0;
+    CHECK(opr_obj_insert_table(u, d, 0, &invalid, &selected) == -2 && s->nobjs == 1,
+          "invalid table dimensions leave the slide unchanged");
+    opr_undo_free(u);
+    owf_deck_free(d);
+}
+
 static void picture_insertion(void)
 {
     static const unsigned char png[] = {
@@ -1491,6 +1555,7 @@ int main(int argc, char **argv)
     object_appearance();
     textbox_insertion();
     character_selection_ranges();
+    table_insertion();
     picture_insertion();
     object_clipboard_paste();
     object_wrapping();
