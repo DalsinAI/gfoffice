@@ -233,7 +233,7 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | Text wrap around frames | No original PUB decoding yet | Yes: Square, Tight and Top/Bottom with per-side distance | Yes | GFOpenLayout 0.16 exclusions and 0.17 contours (5) |
 | Layering (back to front), grouping | Order and groups | P1 | P2 | |
 | Rotation, flips | No | Later (drawn unrotated, reported) | Later | GFOpenLayout |
-| Rulers, layout and ruler guides, baseline guides, snap | No | Paragraph ruler: Yes; guides/baselines/snap: No | P2 | Shared OpenGadTools ruler + deck core 0.22.0 |
+| Rulers, layout and ruler guides, baseline guides, snap | No | Paragraph ruler and optional half-inch grid/snap: Yes; arbitrary layout/ruler guides and baseline grid: No | P2 | Shared OpenGadTools ruler + deck cores 0.22.0/0.25.0 |
 | Scratch area | Found, counted | P2 (shown in the editor) | P2 | |
 | Headers, footers, page numbers, fields | No | P1b | P2 | Quill's TOKN [H] |
 | Hyperlinks | No | P1b (live in the PDF) | P2 | |
@@ -448,6 +448,15 @@ fixed the shared byte-removal primitive so clearing text split over several
 formatted runs cannot leave the preceding run behind. Search and mutation use
 the deck story; OpenLayout remains responsible only for caret/selection
 geometry and reflow.
+
+GFOpenPublisher 0.3.11 and GFOpenPresentation 0.6.17 carry shared core 0.25.0
+and add independent View toggles for a half-inch grid and magnetic grid
+snapping. Dragged objects snap their top-left position; every resize handle
+snaps only the edges it controls, using a six-screen-pixel threshold before
+the existing page bounds/minimum-size validation. The portable core owns the
+signed, thresholded coordinate arithmetic. The Amiga shell owns overlay dots
+and transient toggle state, so neither OpenLayout nor ODP/PDF contains editor
+grid policy. A completed drag still enters the existing one-step box Undo.
 
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,

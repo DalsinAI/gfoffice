@@ -583,6 +583,14 @@ fixes deletion across adjacent formatted runs. OpenLayout continues to supply
 only the resolved frame, caret/selection geometry and reflow; search and text
 mutation remain in the shared deck editor.
 
+GFOpenPresentation 0.6.17 and GFOpenPublisher 0.3.11 carry shared core 0.25.0
+and add optional half-inch grid display and move/resize snapping. The pure
+core helper supplies signed threshold geometry; the shared native shell draws
+the editor-only dots and applies snapping to the dragged position or active
+resize edges. The grid is not document content and therefore does not belong
+in OpenLayout or ODP/PDF. Completed object geometry continues through the
+existing one-step box Undo command.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys
