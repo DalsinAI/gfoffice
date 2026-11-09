@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.2.9 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.0 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.5 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.6 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -111,6 +111,7 @@ enum {
     M_UNDO, M_REDO, M_STOP,
     M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
     M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
+    M_TEXT_COLOUR,
     M_TEXT_ALIGN_LEFT, M_TEXT_ALIGN_CENTRE, M_TEXT_ALIGN_RIGHT, M_TEXT_ALIGN_JUSTIFY,
     M_TEXT_COLUMNS_1, M_TEXT_COLUMNS_2, M_TEXT_COLUMNS_3, M_TEXT_FRAME,
     M_INSERT_TEXTBOX, M_INSERT_PICTURE, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
@@ -159,6 +160,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "18 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_18 },
     { NM_SUB, "24 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_24 },
     { NM_SUB, "36 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_36 },
+    { NM_ITEM, "Text Colour...", NULL, 0, 0, (APTR)M_TEXT_COLOUR },
     { NM_ITEM, "Paragraph Alignment", NULL, 0, 0, NULL },
     { NM_SUB, "Left", NULL, 0, 0, (APTR)M_TEXT_ALIGN_LEFT },
     { NM_SUB, "Centre", NULL, 0, 0, (APTR)M_TEXT_ALIGN_CENTRE },
@@ -2909,6 +2911,32 @@ static void format_text_size(int points)
     format_finish(rc, &before, message);
 }
 
+static void format_text_colour(void)
+{
+    box before;
+    owf_obj *o;
+    unsigned long colour = 0, shade;
+    char initial[8], entered[16];
+    int rc;
+    if (!format_begin(&before)) return;
+    o = &deck->slides[current].objs[edit_obj];
+    if (caret.para >= 0 && caret.para < o->text.nparas &&
+        o->text.paras[caret.para].nruns > 0 &&
+        o->text.paras[caret.para].runs[0].fmt.colour != OWF_COLOUR_AUTO)
+        colour = o->text.paras[caret.para].runs[0].fmt.colour;
+    snprintf(initial, sizeof initial, "%06lx", colour & 0xFFFFFFUL);
+    if (!text_requester("Text Colour", "RGB (RRGGBB)", initial,
+                        entered, sizeof entered))
+        return;
+    if (!shade_from_text(entered, &shade)) {
+        tell("Text Colour", "Enter exactly six hexadecimal digits, for example 336699.");
+        return;
+    }
+    rc = opr_text_set_colour(undo, deck, current, edit_obj,
+                             caret.para, caret.para, OWF_SHADE_RGB(shade));
+    format_finish(rc, &before, "Current paragraph text colour changed.");
+}
+
 static void format_text_alignment(owf_align alignment, const char *message)
 {
     box before;
@@ -4207,6 +4235,7 @@ static void menu_action(ULONG id)
     case M_TEXT_SIZE_18: format_text_size(18); break;
     case M_TEXT_SIZE_24: format_text_size(24); break;
     case M_TEXT_SIZE_36: format_text_size(36); break;
+    case M_TEXT_COLOUR: format_text_colour(); break;
     case M_TEXT_ALIGN_LEFT: format_text_alignment(OWF_ALIGN_LEFT, "Current paragraph aligned left."); break;
     case M_TEXT_ALIGN_CENTRE: format_text_alignment(OWF_ALIGN_CENTRE, "Current paragraph centred."); break;
     case M_TEXT_ALIGN_RIGHT: format_text_alignment(OWF_ALIGN_RIGHT, "Current paragraph aligned right."); break;

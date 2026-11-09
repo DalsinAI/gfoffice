@@ -513,6 +513,10 @@ settings through portable core 0.13.0: column count, exact column gap and four
 internal margins change atomically. Existing ODP padding/column persistence and
 GFOpenLayout frame geometry remain the single interchange and layout paths.
 
+GFOpenPresentation 0.6.6 and GFOpenPublisher 0.3.0 add exact RGB text colour
+through portable core 0.14.0, the existing character-run renderer and ODP
+interchange. It is undoable and reaches screen and PDF from the same model.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

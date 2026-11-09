@@ -362,6 +362,12 @@ as one Undo/Redo step. Existing ODP padding and column-gap interchange and the
 GFOpenLayout bounded-frame path consume the result; the applications do not
 reimplement either persistence or layout.
 
+GFOpenPublisher 0.3.0 and GFOpenPresentation 0.6.6 add Text Colour through
+shared core 0.14.0. An exact six-digit RGB value formats the current paragraph
+as one text-snapshot Undo/Redo step. The existing character-run renderer and
+ODP colour interchange carry it to screen, PDF and reload; the applications do
+not keep a separate colour overlay.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap records or original PUB column records, and the PDF picture encoder does not yet play

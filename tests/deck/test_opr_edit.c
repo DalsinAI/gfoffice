@@ -714,6 +714,14 @@ static void textbox_insertion(void)
     CHECK(!opr_text_set_size(u, d, 0, 0, 0, 0, 360) &&
           s->objs[0].text.paras[0].runs[0].fmt.size == 360,
           "set the paragraph to 18 point text");
+    CHECK(!opr_text_set_colour(u, d, 0, 0, 0, 0, 0x336699UL) &&
+          s->objs[0].text.paras[0].runs[0].fmt.colour == 0x336699UL,
+          "set the paragraph text colour in the shared rich-text core");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].runs[0].fmt.colour == OWF_COLOUR_AUTO &&
+          !opr_undo_redo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].runs[0].fmt.colour == 0x336699UL,
+          "text colour participates in Undo and Redo");
     CHECK(!opr_text_set_alignment(u, d, 0, 0, 0, 0, OWF_ALIGN_RIGHT) &&
           s->objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT,
           "right-align the current paragraph");
@@ -724,6 +732,7 @@ static void textbox_insertion(void)
           "paragraph alignment participates in Undo and Redo");
     CHECK(opr_text_toggle_flags(u, d, 0, 0, 0, 1, OWF_BOLD) == -2 &&
           opr_text_set_size(u, d, 0, 0, 0, 0, 0) == -2 &&
+          opr_text_set_colour(u, d, 0, 0, 0, 0, 0x1000000UL) == -2 &&
           opr_text_set_alignment(u, d, 0, 0, 0, 0, (owf_align)99) == -2,
           "invalid formatting ranges and values are rejected");
     opr_undo_clear(u);
@@ -811,6 +820,7 @@ static void textbox_insertion(void)
               back->slides[0].objs[1].flow_story == back->slides[0].objs[0].flow_story &&
               back->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT &&
               effective_size == 360 &&
+              back->slides[0].objs[0].text.paras[0].runs[0].fmt.colour == 0x336699UL &&
               (back->slides[0].objs[0].text.paras[0].runs[0].fmt.flags &
                (OWF_ITALIC | OWF_UNDERLINE)) == (OWF_ITALIC | OWF_UNDERLINE),
               "the complete rich text box survives the ODP round trip: align %d size %d flags %u",

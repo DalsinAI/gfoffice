@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.2.9 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.3.0 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -65,9 +65,11 @@ change is undoable, survives ODP save/reload, and delegates line fitting to
 GFOpenLayout 0.16's reusable box-local exclusion service. Text Wrap Distance
 edits the top, right, bottom and left clearance as another atomic Undo/Redo
 step. Format > Text Frame edits the column count, custom gap and four internal
-margins together through shared core 0.13.0. Character-range selection,
-decoding original PUB formatting and wrap records, contour wrapping and
-WMF/EMF playback remain later P1 work.
+margins together through shared core 0.13.0. Text Colour applies an exact RGB
+colour through shared core 0.14.0 with
+Undo/Redo and ODP persistence. Character-range selection, decoding original
+PUB formatting and wrap records, contour wrapping and WMF/EMF playback remain
+later P1 work.
 
 # GFOpenWrite
 
@@ -465,7 +467,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.5), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.6), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and
@@ -475,7 +477,8 @@ Del, the arrow keys; Esc stops), with undo and redo
 (`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
 deck-edit-check`). Format applies bold, italic, underline, six font sizes and
 left/centre/right/justified alignment to the current paragraph as an undoable
-shared-core edit. The same menu applies one, two or three equal text columns;
+shared-core edit. Text Colour adds an exact RGB colour with ODP persistence.
+The same menu applies one, two or three equal text columns;
 Presentation and Publisher share the command, model, ODP/PPTX interchange and
 GFOpenLayout implementation. Text Frame additionally edits the exact column
 gap and all four internal margins as one undoable operation. Click any slide object to select it, drag it to move it,

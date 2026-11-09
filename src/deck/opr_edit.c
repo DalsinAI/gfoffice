@@ -1122,6 +1122,26 @@ int opr_text_set_size(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_text_set_colour(opr_undo *u, owf_deck *deck, int slide, int obj,
+                        int first_para, int last_para, unsigned long colour)
+{
+    owf_obj *o = format_object(deck, slide, obj, first_para, last_para);
+    int p, r, runs = 0, changed = 0;
+    if (!u || !o || (colour > 0xFFFFFFUL && colour != OWF_COLOUR_AUTO)) return -2;
+    for (p = first_para; p <= last_para; ++p)
+        for (r = 0; r < o->text.paras[p].nruns; ++r) {
+            runs++;
+            if (o->text.paras[p].runs[r].fmt.colour != colour) changed = 1;
+        }
+    if (!runs) return -2;
+    if (!changed) return 0;
+    if (opr_undo_push(u, deck, slide, obj) < 0) return -1;
+    for (p = first_para; p <= last_para; ++p)
+        for (r = 0; r < o->text.paras[p].nruns; ++r)
+            o->text.paras[p].runs[r].fmt.colour = colour;
+    return 0;
+}
+
 int opr_text_set_alignment(opr_undo *u, owf_deck *deck, int slide, int obj,
                            int first_para, int last_para, owf_align alignment)
 {

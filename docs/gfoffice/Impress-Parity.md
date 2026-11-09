@@ -85,6 +85,8 @@ exposes the authoring menu; Presentation renders imported settings.
 GFOpenPresentation 0.6.5 adds a shared core 0.13.0 Text Frame dialog for one to
 sixteen columns, exact gap and four internal margins, with one-step Undo/Redo
 and the existing ODP/GFOpenLayout paths.
+GFOpenPresentation 0.6.6 adds exact RGB Text Colour through shared core 0.14.0,
+with Undo/Redo, screen/PDF rendering and ODP round trip.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
