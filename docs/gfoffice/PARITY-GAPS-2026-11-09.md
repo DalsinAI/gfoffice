@@ -1,8 +1,8 @@
 # GFOffice gap analysis against Apache OpenOffice and Microsoft Publisher
 
-Verified 9 November 2026 against GFOffice `main` through candidate commit
-`dce017c44b38722570b82547d73be9f11502f7df` (RC70 shared rich-text and
-text-frame work), GFOpenLayout `58c3ae5645b1676124abe20588cc472f48585977`, and GFOpenDraw
+Verified 9 November 2026 against GFOffice RC70 source commit
+`1c08bb427230b412f937bb343742dc65895f2d76`, GFOpenLayout
+`58c3ae5645b1676124abe20588cc472f48585977`, and GFOpenDraw
 `ca07afc25e793e4c4fdc5ae16979bebccd203eaa`.
 
 This replaces older phase/checklist impressions with the current code, tests,
@@ -140,7 +140,7 @@ the same geometry or flow rule.
 
 ## Validation status
 
-Current-session RC70 candidate host evidence at this revision is the complete
+Current-session RC70 host evidence at this revision is the complete
 normal GFOffice suite, including 1,606 Calc-core checks, 10,491 formula/oracle
 checks, 279 shared deck-editor/interchange checks, 67 Publisher-adapter checks, the
 ODP/PPTX/PUB damaged-input corpora, library ABI checks and 3,943 cut-short
@@ -149,7 +149,7 @@ The 279-check path also passed ASan/UBSan with leak detection disabled;
 LeakSanitizer cannot run under this environment's tracer. Optional `odfpy` and
 `openpyxl` third-party read-back checks were skipped because those packages are
 not installed. A clean Open6 build from the exact pinned GFOpenLayout,
-GFOpenDraw and GFOpenGadTools commits rebuilt the complete RC70 candidate: all
+GFOpenDraw and GFOpenGadTools commits rebuilt the complete RC70 source: all
 linked applications including GFOpenPublisher 0.3.1 and GFOpenPresentation
 0.6.7, Draw/DrawOL, OWConvert,
 five resident libraries, both library tests and the supported library-linked
@@ -165,8 +165,10 @@ evidence does not imply application runtime behaviour.
 There is no recorded Dale on-Amiga smoke test for RC69 or the RC70 candidate.
 Host and cross-build evidence must not be reported as Amiga runtime evidence.
 
-RC70 candidate coverage adds independent wrap distances plus atomic column
+RC70 coverage adds independent wrap distances plus atomic column
 count, exact gap and four frame margins, invalid geometry, exact RGB text
-colour, named font family, Undo/Redo and ODP round trip. This remains candidate
-evidence until the RC70 archive is published and downloaded back for external
-manifest verification.
+colour, named font family, Undo/Redo and ODP round trip. RC70 was published from
+source commit `1c08bb427230b412f937bb343742dc65895f2d76`; its public archive
+downloaded back with SHA-256
+`bbcedb75f99cf7fef39095168f74382551064a8ac9f629b34d6cab9c85ede9ad`,
+and all 80 files covered by its internal manifest verified.
