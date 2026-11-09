@@ -508,6 +508,11 @@ imported square and top-and-bottom exclusions through GFOpenLayout 0.16. The
 deck adapter supplies only overlapping geometry and does not implement a
 second line fitter.
 
+GFOpenPresentation 0.6.5 and GFOpenPublisher 0.2.9 add shared Text Frame
+settings through portable core 0.13.0: column count, exact column gap and four
+internal margins change atomically. Existing ODP padding/column persistence and
+GFOpenLayout frame geometry remain the single interchange and layout paths.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

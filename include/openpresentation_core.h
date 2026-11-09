@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.12.0"
+#define OPR_CORE_VERSION "0.13.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -237,6 +237,11 @@ int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
  * values. The change is one undo step. */
 int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
                              int columns, int gap);
+/* Set columns, their gap and left/top/right/bottom text-frame insets together.
+ * Values are twips; columns is 1..16. Geometry must leave a positive text
+ * area. The complete change is one undo step. */
+int opr_obj_set_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj,
+                           int columns, int gap, const int inset[4]);
 /* Make one top-level object an exclusion for overlapping text frames. wrap
  * is OWF_WRAP_NONE, SQUARE/TIGHT or TOP_BOTTOM; gaps are top, right,
  * bottom and left twips. The operation is one undo step. */

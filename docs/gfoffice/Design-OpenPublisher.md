@@ -354,6 +354,14 @@ is one object-focused Undo/Redo step and needs no new layout API or model. The
 command requires Square or Top and Bottom wrapping first and rejects values
 outside 0 to 20000 twips.
 
+GFOpenPublisher 0.2.9 and GFOpenPresentation 0.6.5 add Format > Text Frame on
+shared core 0.13.0. One dialog edits one to sixteen columns, their exact gap,
+and the left, top, right and bottom internal margins. The portable operation
+validates that a positive text area remains and snapshots the complete setting
+as one Undo/Redo step. Existing ODP padding and column-gap interchange and the
+GFOpenLayout bounded-frame path consume the result; the applications do not
+reimplement either persistence or layout.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap records or original PUB column records, and the PDF picture encoder does not yet play

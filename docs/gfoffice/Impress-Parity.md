@@ -82,6 +82,9 @@ ODP save/reload and PPTX column import.
 GFOpenPresentation 0.6.4 shares core 0.12.0's object-wrap model, ODP
 interchange and GFOpenLayout 0.16 exclusion rendering with Publisher. Publisher
 exposes the authoring menu; Presentation renders imported settings.
+GFOpenPresentation 0.6.5 adds a shared core 0.13.0 Text Frame dialog for one to
+sixteen columns, exact gap and four internal margins, with one-step Undo/Redo
+and the existing ODP/GFOpenLayout paths.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |

@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.2.8 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.2.9 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.4 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.5 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -112,7 +112,7 @@ enum {
     M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
     M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
     M_TEXT_ALIGN_LEFT, M_TEXT_ALIGN_CENTRE, M_TEXT_ALIGN_RIGHT, M_TEXT_ALIGN_JUSTIFY,
-    M_TEXT_COLUMNS_1, M_TEXT_COLUMNS_2, M_TEXT_COLUMNS_3,
+    M_TEXT_COLUMNS_1, M_TEXT_COLUMNS_2, M_TEXT_COLUMNS_3, M_TEXT_FRAME,
     M_INSERT_TEXTBOX, M_INSERT_PICTURE, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
     M_INSERT_DIAMOND, M_INSERT_ARROW, M_INSERT_LINE,
     M_ROTATE_LEFT, M_ROTATE_RIGHT,
@@ -168,6 +168,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "One", NULL, 0, 0, (APTR)M_TEXT_COLUMNS_1 },
     { NM_SUB, "Two", NULL, 0, 0, (APTR)M_TEXT_COLUMNS_2 },
     { NM_SUB, "Three", NULL, 0, 0, (APTR)M_TEXT_COLUMNS_3 },
+    { NM_ITEM, "Text Frame...", NULL, 0, 0, (APTR)M_TEXT_FRAME },
 
     { NM_TITLE, "Insert", NULL, 0, 0, NULL },
     { NM_ITEM, "Text Box", NULL, 0, 0, (APTR)M_INSERT_TEXTBOX },
@@ -797,6 +798,87 @@ static int geometry_requester(owf_obj *box)
         GT_GetGadgetAttrs(gh, rw, NULL, GTIN_Number, (ULONG)&height, TAG_DONE);
         box->x = (int)x; box->y = (int)y;
         box->width = (int)width; box->height = (int)height;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    return ok;
+}
+
+static int text_frame_requester(int *columns, int *gap, int inset[4])
+{
+    struct Gadget *list = NULL, *last, *gcolumns, *ggap, *gleft, *gtop, *gright, *gbottom, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    LONG values[6];
+    int done = 0, ok = 0, ww = 460, wh = 274;
+    if (!columns || !gap || !inset || !scr || !vi) return 0;
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = 222;
+    ng.ng_Width = 110;
+    ng.ng_Height = 18;
+    last = CreateContext(&list);
+
+    ng.ng_TopEdge = 14; ng.ng_GadgetText = (STRPTR)"Columns (1-16)"; ng.ng_GadgetID = 1;
+    last = gcolumns = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)*columns,
+                                   GTIN_MaxChars, 2, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 48; ng.ng_GadgetText = (STRPTR)"Column gap (twips)"; ng.ng_GadgetID = 2;
+    last = ggap = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)*gap,
+                               GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 82; ng.ng_GadgetText = (STRPTR)"Left margin (twips)"; ng.ng_GadgetID = 3;
+    last = gleft = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)inset[0],
+                                GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 116; ng.ng_GadgetText = (STRPTR)"Top margin (twips)"; ng.ng_GadgetID = 4;
+    last = gtop = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)inset[1],
+                               GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 150; ng.ng_GadgetText = (STRPTR)"Right margin (twips)"; ng.ng_GadgetID = 5;
+    last = gright = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)inset[2],
+                                 GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 184; ng.ng_GadgetText = (STRPTR)"Bottom margin (twips)"; ng.ng_GadgetID = 6;
+    last = gbottom = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)inset[3],
+                                  GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge = 226; ng.ng_Height = 20; ng.ng_Width = 78; ng.ng_LeftEdge = 282;
+    ng.ng_GadgetText = (STRPTR)"Apply"; ng.ng_GadgetID = 7;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 366; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 8;
+    gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gcolumns || !ggap || !gleft || !gtop || !gright || !gbottom || !gok || !gcancel) goto out;
+    rw = OpenWindowTags(NULL, WA_Title, (ULONG)"Text Frame", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh, WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+        WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | INTEGERIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD id = m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 7) { ok = 1; done = 1; }
+                else if (id == 8) done = 1;
+            }
+        }
+    }
+    if (ok) {
+        GT_GetGadgetAttrs(gcolumns, rw, NULL, GTIN_Number, (ULONG)&values[0], TAG_DONE);
+        GT_GetGadgetAttrs(ggap, rw, NULL, GTIN_Number, (ULONG)&values[1], TAG_DONE);
+        GT_GetGadgetAttrs(gleft, rw, NULL, GTIN_Number, (ULONG)&values[2], TAG_DONE);
+        GT_GetGadgetAttrs(gtop, rw, NULL, GTIN_Number, (ULONG)&values[3], TAG_DONE);
+        GT_GetGadgetAttrs(gright, rw, NULL, GTIN_Number, (ULONG)&values[4], TAG_DONE);
+        GT_GetGadgetAttrs(gbottom, rw, NULL, GTIN_Number, (ULONG)&values[5], TAG_DONE);
+        *columns = (int)values[0]; *gap = (int)values[1];
+        inset[0] = (int)values[2]; inset[1] = (int)values[3];
+        inset[2] = (int)values[4]; inset[3] = (int)values[5];
     }
 out:
     if (rw) CloseWindow(rw);
@@ -3148,6 +3230,54 @@ static void set_selected_text_columns(int columns)
     draw_status();
 }
 
+static void edit_selected_text_frame(void)
+{
+    owf_obj *o;
+    int columns, gap, inset[4], rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select a text frame to format.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (!opr_obj_editable(deck, current, selected_obj) || o->parent >= 0) {
+        set_status("Only a top-level text frame or text-bearing shape can be formatted.");
+        draw_status();
+        return;
+    }
+    columns = o->text_columns >= 2 ? o->text_columns : 1;
+    gap = columns == 1 ? 0 : o->text_column_gap;
+    memcpy(inset, o->inset, sizeof inset);
+    if (!text_frame_requester(&columns, &gap, inset)) return;
+    if (o->text_columns == (columns == 1 ? 0 : columns) &&
+        o->text_column_gap == (columns == 1 ? 0 : gap) &&
+        !memcmp(o->inset, inset, sizeof inset)) {
+        set_status("Text-frame settings are unchanged.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    rc = opr_obj_set_text_frame(undo, deck, current, selected_obj,
+                                columns, gap, inset);
+    if (rc < 0) {
+        if (rc == -2)
+            tell("Text Frame", "Use 1 to 16 columns and non-negative margins and gap that leave room for text.");
+        else
+            set_status("The text-frame settings could not be changed.");
+        draw_status();
+        return;
+    }
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Text-frame columns, gap and margins changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 #ifdef OPENPUBLISHER
 static void set_selected_wrap(owf_frame_wrap wrap)
 {
@@ -4084,6 +4214,7 @@ static void menu_action(ULONG id)
     case M_TEXT_COLUMNS_1: set_selected_text_columns(1); break;
     case M_TEXT_COLUMNS_2: set_selected_text_columns(2); break;
     case M_TEXT_COLUMNS_3: set_selected_text_columns(3); break;
+    case M_TEXT_FRAME: edit_selected_text_frame(); break;
     case M_INSERT_TEXTBOX: insert_textbox(); break;
     case M_INSERT_PICTURE: insert_picture(); break;
     case M_INSERT_RECT: insert_shape(OWF_SHAPE_RECT); break;

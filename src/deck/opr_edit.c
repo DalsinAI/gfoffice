@@ -635,8 +635,9 @@ typedef struct {
     int rotation;
     /* SNAP_OBJ_LOOK: complete fill/stroke appearance. */
     owf_look look;
-    /* SNAP_OBJ_COLUMNS: equal text-frame columns and their gap. */
+    /* SNAP_OBJ_COLUMNS: complete text-frame columns, gap and insets. */
     int text_columns, text_column_gap;
+    int inset[4];
     /* SNAP_OBJ_WRAP: object exclusion kind and top/right/bottom/left gaps. */
     unsigned char wrap;
     int wrap_gap[4];
@@ -986,11 +987,14 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         s->look = look;
     } else if (s->kind == SNAP_OBJ_COLUMNS) {
         owf_obj *o = object(deck, s->slide, s->obj);
-        int value;
+        int value, insets[4];
         if (!o || !opr_obj_editable(deck, s->slide, s->obj))
             return -1;
         value = o->text_columns; o->text_columns = s->text_columns; s->text_columns = value;
         value = o->text_column_gap; o->text_column_gap = s->text_column_gap; s->text_column_gap = value;
+        memcpy(insets, o->inset, sizeof insets);
+        memcpy(o->inset, s->inset, sizeof o->inset);
+        memcpy(s->inset, insets, sizeof s->inset);
     } else if (s->kind == SNAP_OBJ_WRAP) {
         owf_obj *o = object(deck, s->slide, s->obj);
         unsigned char wrap;
@@ -1769,22 +1773,29 @@ int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
-int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
-                             int columns, int gap)
+int opr_obj_set_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj,
+                           int columns, int gap, const int inset[4])
 {
     snapshot s;
     owf_obj *o = object(deck, slide, obj);
     owf_obj resolved;
     int stored_columns = columns == 1 ? 0 : columns;
     int stored_gap = columns == 1 ? 0 : gap;
-    if (!u || !o)
+    int side;
+    if (!u || !o || !inset)
         return -1;
+    for (side = 0; side < 4; ++side)
+        if (inset[side] < 0 || inset[side] > 20000)
+            return -2;
     if (!opr_obj_editable(deck, slide, obj) || o->parent >= 0 ||
         columns < 1 || columns > 16 || gap < 0 || gap > 20000 ||
         owf_deck_resolve(deck, slide, obj, &resolved, NULL) < 0 ||
-        (long)gap * (columns - 1) >= resolved.width - resolved.inset[0] - resolved.inset[2])
+        (long)inset[0] + inset[2] >= resolved.width ||
+        (long)inset[1] + inset[3] >= resolved.height ||
+        (long)gap * (columns - 1) >= resolved.width - inset[0] - inset[2])
         return -2;
-    if (o->text_columns == stored_columns && o->text_column_gap == stored_gap)
+    if (o->text_columns == stored_columns && o->text_column_gap == stored_gap &&
+        !memcmp(o->inset, inset, sizeof o->inset))
         return 0;
     memset(&s, 0, sizeof s);
     s.kind = SNAP_OBJ_COLUMNS;
@@ -1793,10 +1804,19 @@ int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
     s.focus = s.other_focus = slide;
     s.text_columns = o->text_columns;
     s.text_column_gap = o->text_column_gap;
+    memcpy(s.inset, o->inset, sizeof s.inset);
     o->text_columns = stored_columns;
     o->text_column_gap = stored_gap;
+    memcpy(o->inset, inset, sizeof o->inset);
     structural_push(u, &s);
     return 0;
+}
+
+int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             int columns, int gap)
+{
+    owf_obj *o = object(deck, slide, obj);
+    return o ? opr_obj_set_text_frame(u, deck, slide, obj, columns, gap, o->inset) : -1;
 }
 
 int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,

@@ -663,6 +663,9 @@ static void textbox_insertion(void)
     owf_deck *back = NULL;
     char *text = NULL;
     int selected = -1, slide = -1, obj = -1;
+    int frame_inset[4] = {200, 150, 300, 250};
+    int bad_inset[4] = {4200, 0, 0, 0};
+    int shallow_inset[4] = {120, 80, 120, 80};
     CHECK(d && s && u, "a deck for text-box insertion");
     if (!d || !s || !u) {
         opr_undo_free(u);
@@ -740,9 +743,20 @@ static void textbox_insertion(void)
     CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == 0 && !s->objs[0].text_columns &&
           !opr_undo_redo(u, d, &slide, &obj) && obj == 0 && s->objs[0].text_columns == 2,
           "text columns participate in Undo and Redo");
+    CHECK(!opr_obj_set_text_frame(u, d, 0, 0, 3, 160, frame_inset) &&
+          s->objs[0].text_columns == 3 && s->objs[0].text_column_gap == 160 &&
+          s->objs[0].inset[0] == 200 && s->objs[0].inset[3] == 250,
+          "set columns, custom gap and four frame margins atomically");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == 0 &&
+          s->objs[0].text_columns == 2 && s->objs[0].text_column_gap == 240 &&
+          s->objs[0].inset[0] == 120 &&
+          !opr_undo_redo(u, d, &slide, &obj) && obj == 0 &&
+          s->objs[0].text_columns == 3 && s->objs[0].inset[3] == 250,
+          "complete text-frame settings are one object-focused Undo and Redo step");
     CHECK(opr_obj_set_text_columns(u, d, 0, 0, 17, 0) == -2 &&
-          opr_obj_set_text_columns(u, d, 0, 0, 3, spec.width) == -2,
-          "invalid text-column geometry is rejected");
+          opr_obj_set_text_columns(u, d, 0, 0, 3, spec.width) == -2 &&
+          opr_obj_set_text_frame(u, d, 0, 0, 2, 100, bad_inset) == -2,
+          "invalid text-column and margin geometry is rejected");
     opr_undo_clear(u);
     invalid = spec; invalid.width = 0;
     CHECK(opr_obj_insert_textbox(u, d, 0, &invalid, &selected) == -2 && s->nobjs == 1,
@@ -788,10 +802,11 @@ static void textbox_insertion(void)
         CHECK(back->slides[0].nobjs == 2 && back->slides[0].objs[0].kind == OWF_OBJ_TEXT &&
               text && !strcmp(text, "Publisher story") &&
               back->slides[0].objs[0].x == spec.x &&
-              back->slides[0].objs[0].inset[0] == spec.inset[0] &&
+              back->slides[0].objs[0].inset[0] == frame_inset[0] &&
+              back->slides[0].objs[0].inset[3] == frame_inset[3] &&
               back->slides[0].objs[0].look.fill == spec.look.fill &&
-              back->slides[0].objs[0].text_columns == 2 &&
-              back->slides[0].objs[0].text_column_gap == 240 &&
+              back->slides[0].objs[0].text_columns == 3 &&
+              back->slides[0].objs[0].text_column_gap == 160 &&
               back->slides[0].objs[0].flow_story >= 0 &&
               back->slides[0].objs[1].flow_story == back->slides[0].objs[0].flow_story &&
               back->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT &&
@@ -814,7 +829,7 @@ static void textbox_insertion(void)
           "More text follows to force another group of lines past the bottom edge. "
           "Publisher must mark that hidden continuation without guessing character counts.") &&
           !opr_obj_set_box(u, d, 0, 0, 1000, 1200, 900, 300) &&
-          !opr_obj_set_text_columns(u, d, 0, 0, 1, 0),
+          !opr_obj_set_text_frame(u, d, 0, 0, 1, 0, shallow_inset),
           "prepare a shallow linked frame with an overflowing story");
     CHECK(!opr_obj_unlink_text_frame(u, d, 0, 1) &&
           s->objs[0].flow_story < 0 && s->objs[1].flow_story < 0,
