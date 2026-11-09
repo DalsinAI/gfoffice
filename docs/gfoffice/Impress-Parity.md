@@ -106,6 +106,9 @@ existing exact selection/story model and OpenLayout reflow.
 GFOpenPresentation 0.6.17 carries shared core 0.25.0 and adds optional
 half-inch grid display plus magnetic snapping for object moves and all eight
 resize handles. The grid is editor chrome and is not exported.
+GFOpenPresentation 0.6.18 carries shared core 0.26.0 and adds fixed half-inch
+margin and page-centre guides. Move snaps start/centre/end and resize snaps the
+active edge; custom guides remain.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
@@ -144,7 +147,7 @@ resize handles. The grid is editor chrome and is not exported.
 | 3-D objects, extrusion | Not planned | Kept |
 | Line: colour, width, solid or dashed; area: colour | P1 | Yes in the model and renderer; GFOpenPresentation 0.5.0 adds undoable UI editing of solid fill, line colour/width, solid/dashed/dotted/dash-dot style and start/end arrowheads for one top-level text box or shape |
 | Area: gradient, hatching, bitmap, transparency; shadow | Later | Approx.: one colour; transparency and shadow No |
-| Position and size | P1 | Yes: GFOpenPresentation 0.3.4 added single-object drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; 0.3.9 added independent deep-copy duplication with a clamped offset; 0.5.1 adds exact numeric left, top, width and height; 0.6.17 adds an optional half-inch grid with move/resize snapping. Multi-selection, arbitrary guides and aspect lock remain |
+| Position and size | P1 | Yes: GFOpenPresentation 0.3.4 added single-object drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; 0.3.9 added independent deep-copy duplication with a clamped offset; 0.5.1 adds exact numeric left, top, width and height; 0.6.17 adds an optional half-inch grid with move/resize snapping; 0.6.18 adds fixed margin/centre guides. Multi-selection, custom guides and aspect lock remain |
 | Rotation | P1 | Shape outlines are rotated through OpenLayout 0.14 and saved to ODP; GFOpenPresentation 0.3.7 adds undoable 15-degree left/right rotation for a selected shape. Shape text, pictures, groups, exact angle entry and rotation handles remain |
 | Flip, slant | P1 (flip of lines and arrows) | Lines and arrows yes; slant: Approx. (drawn in its box) |
 | Text in shapes | P1 | Yes |

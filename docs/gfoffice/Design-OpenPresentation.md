@@ -591,6 +591,13 @@ resize edges. The grid is not document content and therefore does not belong
 in OpenLayout or ODP/PDF. Completed object geometry continues through the
 existing one-step box Undo command.
 
+GFOpenPresentation 0.6.18 and GFOpenPublisher 0.3.12 carry shared core 0.26.0
+and add fixed page guides at both half-inch margins and both page centres.
+Objects snap their start, centre or end; resize handles snap the active edge,
+with guides preferred over the grid. The core supplies reusable box-anchor
+geometry while the native shell retains overlay/toggle state. Custom guides
+and baseline-grid authoring remain separate work.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

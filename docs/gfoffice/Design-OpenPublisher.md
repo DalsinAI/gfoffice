@@ -233,7 +233,7 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | Text wrap around frames | No original PUB decoding yet | Yes: Square, Tight and Top/Bottom with per-side distance | Yes | GFOpenLayout 0.16 exclusions and 0.17 contours (5) |
 | Layering (back to front), grouping | Order and groups | P1 | P2 | |
 | Rotation, flips | No | Later (drawn unrotated, reported) | Later | GFOpenLayout |
-| Rulers, layout and ruler guides, baseline guides, snap | No | Paragraph ruler and optional half-inch grid/snap: Yes; arbitrary layout/ruler guides and baseline grid: No | P2 | Shared OpenGadTools ruler + deck cores 0.22.0/0.25.0 |
+| Rulers, layout and ruler guides, baseline guides, snap | No | Paragraph ruler, half-inch grid/snap and fixed margin/centre guides: Yes; custom ruler guides and baseline grid: No | P2 | Shared OpenGadTools ruler + deck cores 0.22.0/0.25.0/0.26.0 |
 | Scratch area | Found, counted | P2 (shown in the editor) | P2 | |
 | Headers, footers, page numbers, fields | No | P1b | P2 | Quill's TOKN [H] |
 | Hyperlinks | No | P1b (live in the PDF) | P2 | |
@@ -457,6 +457,14 @@ the existing page bounds/minimum-size validation. The portable core owns the
 signed, thresholded coordinate arithmetic. The Amiga shell owns overlay dots
 and transient toggle state, so neither OpenLayout nor ODP/PDF contains editor
 grid policy. A completed drag still enters the existing one-step box Undo.
+
+GFOpenPublisher 0.3.12 and GFOpenPresentation 0.6.18 carry shared core 0.26.0
+and add fixed page layout guides at both half-inch margins and the horizontal
+and vertical centres. Moves can align an object's start, centre or end to the
+nearest guide; resize handles align their active edge. Guide hits take
+precedence when grid snapping is also on. The signed, thresholded box-anchor
+calculation is portable core code; guide drawing and toggle state remain
+shared editor chrome. Custom ruler guides and a baseline grid still remain.
 
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
