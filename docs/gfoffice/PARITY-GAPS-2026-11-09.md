@@ -281,11 +281,18 @@ save/reopen. A fresh warnings-as-errors Open6 build produced Calc 1,474,596
 bytes, Presentation 812,684, Publisher 847,124, Writer 625,356 and OWConvert
 752,528. This work is published on `main` but is not part of immutable RC76.
 
-There is no recorded Dale on-Amiga smoke test for RC70 through RC76.
+RC77 packages the fixed-guide and native-table work from source commit
+`fb3150597171c81277ee4bfe3cbc91e3c6e94904`. Its public 4,559,780-byte
+archive downloaded back with SHA-256
+`d15b50f49db7ca3c8a73ab12ceb113eb82c664db286bf3df81c1de9ab403c642`, and
+all 80 files covered by its internal manifest verified. The live annotated tag
+peels to the source commit and the GitHub release remains marked prerelease.
+
+There is no recorded Dale on-Amiga smoke test for RC70 through RC77.
 Host tests and cross-build success must not be reported as Amiga runtime
-evidence. RC76 still requires launching Publisher, Presentation and Writer;
-checking grid display and move/resize snapping at several zoom levels,
-Replace/Replace All on plain and mixed-format text, cross-app object and FTXT
-Cut/Copy/Paste plus Undo/Redo, Find across objects/pages, all three ruler
-markers, picture crop, Square versus Tight wrap, and ODP save/reopen before
-promotion.
+evidence. RC77 still requires launching Publisher, Presentation and Writer;
+checking layout guides and grid snapping at several zoom levels, inserting and
+typing through tables with Tab/Shift-Tab, Replace/Replace All on plain and
+mixed-format text, cross-app object and FTXT Cut/Copy/Paste plus Undo/Redo,
+Find, ruler markers, picture crop, Square versus Tight wrap, and ODP
+save/reopen before promotion.
