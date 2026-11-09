@@ -87,6 +87,8 @@ sixteen columns, exact gap and four internal margins, with one-step Undo/Redo
 and the existing ODP/GFOpenLayout paths.
 GFOpenPresentation 0.6.6 adds exact RGB Text Colour through shared core 0.14.0,
 with Undo/Redo, screen/PDF rendering and ODP round trip.
+GFOpenPresentation 0.6.7 adds named Font Family authoring through shared core
+0.15.0, the existing deck font table and ODP font-face round trip.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |

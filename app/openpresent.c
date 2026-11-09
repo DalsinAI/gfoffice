@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.0 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.1 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.6 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.7 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -111,7 +111,7 @@ enum {
     M_UNDO, M_REDO, M_STOP,
     M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
     M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
-    M_TEXT_COLOUR,
+    M_TEXT_FONT, M_TEXT_COLOUR,
     M_TEXT_ALIGN_LEFT, M_TEXT_ALIGN_CENTRE, M_TEXT_ALIGN_RIGHT, M_TEXT_ALIGN_JUSTIFY,
     M_TEXT_COLUMNS_1, M_TEXT_COLUMNS_2, M_TEXT_COLUMNS_3, M_TEXT_FRAME,
     M_INSERT_TEXTBOX, M_INSERT_PICTURE, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
@@ -160,6 +160,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "18 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_18 },
     { NM_SUB, "24 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_24 },
     { NM_SUB, "36 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_36 },
+    { NM_ITEM, "Font Family...", NULL, 0, 0, (APTR)M_TEXT_FONT },
     { NM_ITEM, "Text Colour...", NULL, 0, 0, (APTR)M_TEXT_COLOUR },
     { NM_ITEM, "Paragraph Alignment", NULL, 0, 0, NULL },
     { NM_SUB, "Left", NULL, 0, 0, (APTR)M_TEXT_ALIGN_LEFT },
@@ -2911,6 +2912,29 @@ static void format_text_size(int points)
     format_finish(rc, &before, message);
 }
 
+static void format_text_font(void)
+{
+    box before;
+    owf_obj *o;
+    int font = -1, rc;
+    char initial[96] = "Liberation Sans", entered[96];
+    if (!format_begin(&before)) return;
+    o = &deck->slides[current].objs[edit_obj];
+    if (caret.para >= 0 && caret.para < o->text.nparas &&
+        o->text.paras[caret.para].nruns > 0)
+        font = o->text.paras[caret.para].runs[0].fmt.font;
+    if (font < 0 && deck->res) font = deck->res->base.font;
+    if (deck->res && font >= 0 && font < deck->res->nfonts &&
+        deck->res->fonts[font].name)
+        snprintf(initial, sizeof initial, "%s", deck->res->fonts[font].name);
+    if (!text_requester("Font Family", "Family", initial,
+                        entered, sizeof entered))
+        return;
+    rc = opr_text_set_font(undo, deck, current, edit_obj,
+                           caret.para, caret.para, entered);
+    format_finish(rc, &before, "Current paragraph font family changed.");
+}
+
 static void format_text_colour(void)
 {
     box before;
@@ -4235,6 +4259,7 @@ static void menu_action(ULONG id)
     case M_TEXT_SIZE_18: format_text_size(18); break;
     case M_TEXT_SIZE_24: format_text_size(24); break;
     case M_TEXT_SIZE_36: format_text_size(36); break;
+    case M_TEXT_FONT: format_text_font(); break;
     case M_TEXT_COLOUR: format_text_colour(); break;
     case M_TEXT_ALIGN_LEFT: format_text_alignment(OWF_ALIGN_LEFT, "Current paragraph aligned left."); break;
     case M_TEXT_ALIGN_CENTRE: format_text_alignment(OWF_ALIGN_CENTRE, "Current paragraph centred."); break;

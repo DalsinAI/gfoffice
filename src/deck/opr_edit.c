@@ -1142,6 +1142,29 @@ int opr_text_set_colour(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_text_set_font(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      int first_para, int last_para, const char *family)
+{
+    owf_obj *o = format_object(deck, slide, obj, first_para, last_para);
+    int p, r, runs = 0, changed = 0, font;
+    if (!u || !o || !deck->res || !family || !*family || strlen(family) > 255)
+        return -2;
+    for (p = first_para; p <= last_para; ++p)
+        runs += o->text.paras[p].nruns;
+    if (!runs) return -2;
+    font = owf_doc_font(deck->res, family, OWF_FONT_ANY);
+    if (font < 0) return -1;
+    for (p = first_para; p <= last_para; ++p)
+        for (r = 0; r < o->text.paras[p].nruns; ++r)
+            if (o->text.paras[p].runs[r].fmt.font != font) changed = 1;
+    if (!changed) return 0;
+    if (opr_undo_push(u, deck, slide, obj) < 0) return -1;
+    for (p = first_para; p <= last_para; ++p)
+        for (r = 0; r < o->text.paras[p].nruns; ++r)
+            o->text.paras[p].runs[r].fmt.font = font;
+    return 0;
+}
+
 int opr_text_set_alignment(opr_undo *u, owf_deck *deck, int slide, int obj,
                            int first_para, int last_para, owf_align alignment)
 {

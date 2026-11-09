@@ -368,6 +368,13 @@ as one text-snapshot Undo/Redo step. The existing character-run renderer and
 ODP colour interchange carry it to screen, PDF and reload; the applications do
 not keep a separate colour overlay.
 
+GFOpenPublisher 0.3.1 and GFOpenPresentation 0.6.7 add Font Family through
+shared core 0.15.0. The name is interned once in the deck's existing font
+resources and assigned to the current paragraph's runs as one undoable text
+snapshot. Existing font resolution, screen/PDF rendering and ODP font-face
+interchange consume the same resource; Undo does not duplicate or discard
+shared font records.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap records or original PUB column records, and the PDF picture encoder does not yet play

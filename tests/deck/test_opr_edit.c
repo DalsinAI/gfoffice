@@ -663,6 +663,7 @@ static void textbox_insertion(void)
     owf_deck *back = NULL;
     char *text = NULL;
     int selected = -1, slide = -1, obj = -1;
+    int initial_font;
     int frame_inset[4] = {200, 150, 300, 250};
     int bad_inset[4] = {4200, 0, 0, 0};
     int shallow_inset[4] = {120, 80, 120, 80};
@@ -722,6 +723,17 @@ static void textbox_insertion(void)
           !opr_undo_redo(u, d, &slide, &obj) &&
           s->objs[0].text.paras[0].runs[0].fmt.colour == 0x336699UL,
           "text colour participates in Undo and Redo");
+    initial_font = s->objs[0].text.paras[0].runs[0].fmt.font;
+    CHECK(!opr_text_set_font(u, d, 0, 0, 0, 0, "Liberation Serif") &&
+          s->objs[0].text.paras[0].runs[0].fmt.font >= 0 &&
+          !strcmp(d->res->fonts[s->objs[0].text.paras[0].runs[0].fmt.font].name,
+                  "Liberation Serif"),
+          "set the paragraph font family through the shared deck resources");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].runs[0].fmt.font == initial_font &&
+          !opr_undo_redo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].runs[0].fmt.font >= 0,
+          "font family participates in Undo and Redo");
     CHECK(!opr_text_set_alignment(u, d, 0, 0, 0, 0, OWF_ALIGN_RIGHT) &&
           s->objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT,
           "right-align the current paragraph");
@@ -733,6 +745,7 @@ static void textbox_insertion(void)
     CHECK(opr_text_toggle_flags(u, d, 0, 0, 0, 1, OWF_BOLD) == -2 &&
           opr_text_set_size(u, d, 0, 0, 0, 0, 0) == -2 &&
           opr_text_set_colour(u, d, 0, 0, 0, 0, 0x1000000UL) == -2 &&
+          opr_text_set_font(u, d, 0, 0, 0, 0, "") == -2 &&
           opr_text_set_alignment(u, d, 0, 0, 0, 0, (owf_align)99) == -2,
           "invalid formatting ranges and values are rejected");
     opr_undo_clear(u);
@@ -807,6 +820,9 @@ static void textbox_insertion(void)
         int effective_size = saved->text.paras[0].runs[0].fmt.size > 0 ?
                              saved->text.paras[0].runs[0].fmt.size :
                              level ? level->chars.size : 0;
+        int saved_font = saved->text.paras[0].runs[0].fmt.font >= 0 ?
+                         saved->text.paras[0].runs[0].fmt.font :
+                         level ? level->chars.font : -1;
         text = opr_text_get(back, 0, 0);
         CHECK(back->slides[0].nobjs == 2 && back->slides[0].objs[0].kind == OWF_OBJ_TEXT &&
               text && !strcmp(text, "Publisher story") &&
@@ -821,6 +837,8 @@ static void textbox_insertion(void)
               back->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT &&
               effective_size == 360 &&
               back->slides[0].objs[0].text.paras[0].runs[0].fmt.colour == 0x336699UL &&
+              saved_font >= 0 && saved_font < back->res->nfonts &&
+              !strcmp(back->res->fonts[saved_font].name, "Liberation Serif") &&
               (back->slides[0].objs[0].text.paras[0].runs[0].fmt.flags &
                (OWF_ITALIC | OWF_UNDERLINE)) == (OWF_ITALIC | OWF_UNDERLINE),
               "the complete rich text box survives the ODP round trip: align %d size %d flags %u",

@@ -517,6 +517,11 @@ GFOpenPresentation 0.6.6 and GFOpenPublisher 0.3.0 add exact RGB text colour
 through portable core 0.14.0, the existing character-run renderer and ODP
 interchange. It is undoable and reaches screen and PDF from the same model.
 
+GFOpenPresentation 0.6.7 and GFOpenPublisher 0.3.1 add named Font Family
+authoring through portable core 0.15.0 and the deck's existing shared font
+table. The existing screen/PDF font resolver and ODP font-face interchange
+remain authoritative.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

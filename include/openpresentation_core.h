@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.14.0"
+#define OPR_CORE_VERSION "0.15.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -145,6 +145,8 @@ int opr_text_set_size(opr_undo *u, owf_deck *deck, int slide, int obj,
                       int first_para, int last_para, int twips);
 int opr_text_set_colour(opr_undo *u, owf_deck *deck, int slide, int obj,
                         int first_para, int last_para, unsigned long colour);
+int opr_text_set_font(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      int first_para, int last_para, const char *family);
 int opr_text_set_alignment(opr_undo *u, owf_deck *deck, int slide, int obj,
                            int first_para, int last_para, owf_align alignment);
 /* Insert at (outside 0..n: the end), delete index, or move from to to. selected
