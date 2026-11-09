@@ -330,9 +330,17 @@ save/reopen. A fresh warnings-as-errors Open6 build produced Calc 1,474,596
 bytes, Presentation 821,988, Publisher 856,428, Writer 625,356 and OWConvert
 752,528. This work is published on `main` but is not part of immutable RC79.
 
-There is no recorded Dale on-Amiga smoke test for RC70 through RC79.
+RC80 packages the table-style work from source commit
+`7c622f3dee37f68d4e084cfc5c597ff0a5e718d8`. Its public 4,568,976-byte
+archive downloaded back with SHA-256
+`5789534c45f0d6ff5e163ae78f1f5ff693379b09260f4fcc1b212200fab54ba6`, matching
+the locally verified archive whose 80-file internal manifest passed. The live
+annotated tag peels to the source commit and the GitHub release remains marked
+prerelease.
+
+There is no recorded Dale on-Amiga smoke test for RC70 through RC80.
 Host tests and cross-build success must not be reported as Amiga runtime
-evidence. RC79 still requires launching Publisher, Presentation and Writer;
+evidence. RC80 still requires launching Publisher, Presentation and Writer;
 checking layout guides and grid snapping at several zoom levels, inserting and
 typing through tables with Tab/Shift-Tab, inserting/deleting rows and columns,
 Replace/Replace All on plain and mixed-format text, cross-app object and FTXT
