@@ -553,6 +553,11 @@ is portable deck-core code; the Amiga applications share the FTXT device
 adapter with GFOpenWrite. Paste reuses the current range-replacement path and
 OpenLayout caret map rather than introducing another text model.
 
+GFOpenPresentation 0.6.13 and GFOpenPublisher 0.3.7 carry shared core 0.21.0
+and add Find/Find Next across editable text objects and slides/pages. Search
+wraps once and returns the existing exact selection type, which the current
+OpenLayout-derived highlight reveals without new geometry.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

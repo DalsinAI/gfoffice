@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.3.6 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.3.7 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -474,7 +474,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.12), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.13), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and
@@ -491,6 +491,8 @@ one validated Undo/Redo operation and preserves it in ODP.
 Edit > Cut, Copy and Paste exchange exact selected text through the Amiga FTXT
 clipboard. Cross-paragraph extraction lives in shared deck core 0.20.0; the
 UTF-8/Latin-1 clipboard adapter is also used by GFOpenWrite.
+Find and Find Next use shared core 0.21.0 to search editable text across every
+page or slide, wrap once and expose the match as the existing exact selection.
 The same menu applies one, two or three equal text columns;
 Presentation and Publisher share the command, model, ODP/PPTX interchange and
 GFOpenLayout implementation. Text Frame additionally edits the exact column

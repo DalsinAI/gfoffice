@@ -418,6 +418,12 @@ cut or paste is one Undo step. A shared Amiga adapter exchanges UTF-8 with
 clipboard.device's FTXT/CHRS Latin-1 form and replaces Writer's former private
 device implementation; clipboard transport is not an OpenLayout concern.
 
+GFOpenPublisher 0.3.7 and GFOpenPresentation 0.6.13 carry shared core 0.21.0
+and add Find/Find Next. The portable command scans editable text in object and
+page order, folds ASCII case, wraps once and returns an exact `opr_selection`.
+The applications reveal that result with their existing OpenLayout caret and
+selection geometry; search does not add another text layout path.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap records or original PUB column records, and the PDF picture encoder does not yet play
