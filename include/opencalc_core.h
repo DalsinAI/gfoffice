@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.30.0"
+#define OC_CORE_VERSION "0.31.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -350,6 +350,17 @@ int oc_core_multiple_operations_2d(oc_core *core,
                                    unsigned row_input_col,
                                    int column_input_sheet, unsigned column_input_row,
                                    unsigned column_input_col);
+
+/* One-variable, one-or-more-formula Multiple Operations. With column trials,
+ * formulas is one row and the selected table is trial values in its first
+ * column plus one output column per formula. With row trials, formulas is one
+ * column and the table is trials in its first row plus one output row per
+ * formula. All results commit atomically as one Undo step. */
+enum { OC_MULTIOP_TRIALS_COLUMN, OC_MULTIOP_TRIALS_ROW };
+int oc_core_multiple_operations_multi(oc_core *core,
+                                      int formula_sheet, const owf_range *formulas,
+                                      int input_sheet, unsigned input_row,
+                                      unsigned input_col, int trial_axis);
 
 /* ---- Commands on the selection (each one undo step) ---- */
 

@@ -57,13 +57,13 @@ which makes a formula reach a target, including cross-sheet dependencies,
 then applies an accepted result as one undoable edit. The search itself does
 not change the workbook.
 
-GFOpenCalc 0.1.65 supports one- and two-variable, single-formula Data > Multiple
-Operations. Reusable core 0.30.0 evaluates a selected trial column, or the top
-and left trial edges of a selected matrix, against a formula and one or two
-input cells on private workbooks. The complete result column or matrix interior
-is written atomically as one Undo step. Output is ordinary numeric cells and
-therefore needs no special XLSX or ODS extension; native Excel/Calc data-table
-metadata and Apache Calc's multiple-formula form are not authored.
+GFOpenCalc 0.1.66 supports column, row and two-variable Data > Multiple
+Operations, including a horizontal or vertical range of formulas for the
+one-variable forms. Reusable core 0.31.0 evaluates selected trial tables on
+private workbooks and writes every result series atomically as one Undo step.
+Output is ordinary numeric cells and therefore needs no special XLSX or ODS
+extension. Native Excel/Calc data-table metadata is not authored, so these
+tables are static snapshots rather than recalculating formula arrays.
 
 GFOpenCalc 0.1.61 adds Data > Subtotals. Reusable core 0.26.0 inserts bold
 group rows and a grand total using the workbook's real SUBTOTAL formulas for

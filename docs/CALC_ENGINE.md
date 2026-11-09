@@ -32,15 +32,21 @@ reported rather than committed.
 
 ## Multiple Operations
 
-GFOpenCalc 0.1.65 supports both one- and two-variable, single-formula forms of
-Apache Calc's Data > Multiple Operations. Portable-core API
+GFOpenCalc 0.1.66 supports the column, row and two-variable forms of Apache
+Calc's Data > Multiple Operations. Portable-core API
 `oc_core_multiple_operations`
-(`opencalc_core.h` 0.30.0) takes a formula cell and one input cell while the
+(`opencalc_core.h` 0.31.0) takes a formula cell and one input cell while the
 current selection supplies one column of up to 65,536 numeric trial values.
 `oc_core_multiple_operations_2d` takes a formula plus distinct row and column
 input cells. Its selected matrix supplies row-input trials across the top after
 the corner, column-input trials down the left after the corner, and receives
 results in its interior, up to 262,144 output cells.
+
+`oc_core_multiple_operations_multi` takes one input plus a horizontal or
+vertical formula range. For column trials, the selected table holds trials in
+its first column and one output column per formula. For row trials, it holds
+trials in its first row and one output row per formula. This matches Apache's
+simultaneous-formulas table arrangement and supports up to 262,144 results.
 
 A second deep copy receives the complete result column immediately to the
 right of one-variable trials, or the complete two-variable matrix interior.
@@ -49,7 +55,9 @@ as one Undo step. Formula and input cells may be on a different sheet, their
 original values are not changed, and an invalid trial or nonnumeric result
 leaves the live book untouched. Output is ordinary numeric cells rather than
 opaque private metadata, so it round-trips through XLSX and ODS.
-Apache Calc's multiple-formula table form is not yet implemented.
+Unlike Apache Calc's native formula arrays, these are currently static numeric
+snapshots: changing their source model does not automatically recalculate the
+table.
 
 ## Grouped subtotal authoring
 

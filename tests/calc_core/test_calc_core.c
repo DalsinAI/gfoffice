@@ -4830,6 +4830,73 @@ static void test_multiple_operations_2d(void)
     oc_core_free(core);
 }
 
+static void test_multiple_operations_multi(void)
+{
+    oc_core *core = fresh();
+    owf_range selected, formulas;
+    unsigned long changes;
+    if (!core)
+        return;
+    enter_at(core, "D2", "1");
+    enter_at(core, "D3", "2");
+    enter_at(core, "D4", "4");
+    enter_at(core, "E3", "99");
+    CHECK(oc_core_add_sheet(core, "Model") == 1);
+    enter_at(core, "B4", "0");
+    enter_at(core, "B5", "=B4*10");
+    enter_at(core, "C5", "=B4*B4");
+    enter_at(core, "B6", "=B4+100");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_parse_range("D2:F4", &selected));
+    CHECK(oc_parse_range("B5:C5", &formulas));
+    oc_core_select_range(core, &selected);
+    changes = oc_core_changes(core);
+    CHECK(oc_core_multiple_operations_multi(core, 1, &formulas, 1, 3, 1,
+                                             OC_MULTIOP_TRIALS_COLUMN) == OWF_OK);
+    CHECK(fabs(num(core, "E2") - 10.0) < 1e-12 &&
+          fabs(num(core, "F2") - 1.0) < 1e-12 &&
+          fabs(num(core, "E3") - 20.0) < 1e-12 &&
+          fabs(num(core, "F3") - 4.0) < 1e-12 &&
+          fabs(num(core, "E4") - 40.0) < 1e-12 &&
+          fabs(num(core, "F4") - 16.0) < 1e-12 &&
+          oc_core_changes(core) == changes + 1);
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK && fabs(num(core, "B4")) < 1e-12);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK && empty(core, "E2") && empty(core, "F2") &&
+          fabs(num(core, "E3") - 99.0) < 1e-12 && empty(core, "F3") &&
+          empty(core, "E4") && empty(core, "F4"));
+
+    enter_at(core, "D6", "1");
+    enter_at(core, "E6", "2");
+    enter_at(core, "F6", "4");
+    enter_at(core, "E7", "77");
+    CHECK(oc_parse_range("D6:F8", &selected));
+    CHECK(oc_parse_range("B5:B6", &formulas));
+    oc_core_select_range(core, &selected);
+    changes = oc_core_changes(core);
+    CHECK(oc_core_multiple_operations_multi(core, 1, &formulas, 1, 3, 1,
+                                             OC_MULTIOP_TRIALS_ROW) == OWF_OK);
+    CHECK(fabs(num(core, "D7") - 10.0) < 1e-12 &&
+          fabs(num(core, "E7") - 20.0) < 1e-12 &&
+          fabs(num(core, "F7") - 40.0) < 1e-12 &&
+          fabs(num(core, "D8") - 101.0) < 1e-12 &&
+          fabs(num(core, "E8") - 102.0) < 1e-12 &&
+          fabs(num(core, "F8") - 104.0) < 1e-12 &&
+          oc_core_changes(core) == changes + 1);
+    CHECK(oc_core_undo(core) == OWF_OK && empty(core, "D7") &&
+          fabs(num(core, "E7") - 77.0) < 1e-12 && empty(core, "F7") &&
+          empty(core, "D8") && empty(core, "E8") && empty(core, "F8"));
+
+    enter_at(core, "E6", "bad trial");
+    oc_core_select_range(core, &selected);
+    changes = oc_core_changes(core);
+    CHECK(oc_core_multiple_operations_multi(core, 1, &formulas, 1, 3, 1,
+                                             OC_MULTIOP_TRIALS_ROW) == OWF_ERR_UNSUPPORTED);
+    CHECK(empty(core, "D7") && fabs(num(core, "E7") - 77.0) < 1e-12 &&
+          empty(core, "F7") && oc_core_changes(core) == changes);
+    oc_core_free(core);
+}
+
 static void test_subtotals(void)
 {
     static const char *const rows[][3] = {
@@ -5125,6 +5192,7 @@ int main(void)
     test_goal_seek();
     test_multiple_operations();
     test_multiple_operations_2d();
+    test_multiple_operations_multi();
     test_subtotals();
     test_pivot_summary();
     test_pdf();
