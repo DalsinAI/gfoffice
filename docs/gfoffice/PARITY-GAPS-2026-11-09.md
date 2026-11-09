@@ -256,10 +256,18 @@ bytes, Presentation 807,796, Publisher 842,296, Writer 625,356 and OWConvert
 object boxes enter the existing Undo and document paths. This work is
 published on `main` but is not part of immutable RC75.
 
-There is no recorded Dale on-Amiga smoke test for RC70 through RC75.
+RC76 packages that grid/snap work from source commit
+`3b40018783cebb50116362c466fbdcf02e81ab4f`. Its public 4,554,137-byte
+archive downloaded back with SHA-256
+`7ef4ed996e2cac4b8083b0f5f5533ed5e713142051d0377a38b73d82485ed643`, and
+all 80 files covered by its internal manifest verified. The live annotated tag
+peels to the source commit and the GitHub release remains marked prerelease.
+
+There is no recorded Dale on-Amiga smoke test for RC70 through RC76.
 Host tests and cross-build success must not be reported as Amiga runtime
-evidence. RC75 still requires launching Publisher, Presentation and Writer;
-checking Replace/Replace All on plain and mixed-format text, cross-app object
-and FTXT Cut/Copy/Paste plus Undo/Redo, Find across objects/pages, all three
-ruler markers, picture crop, Square versus Tight wrap, and ODP save/reopen
-before promotion.
+evidence. RC76 still requires launching Publisher, Presentation and Writer;
+checking grid display and move/resize snapping at several zoom levels,
+Replace/Replace All on plain and mixed-format text, cross-app object and FTXT
+Cut/Copy/Paste plus Undo/Redo, Find across objects/pages, all three ruler
+markers, picture crop, Square versus Tight wrap, and ODP save/reopen before
+promotion.
