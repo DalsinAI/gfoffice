@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.28.0"
+#define OPR_CORE_VERSION "0.29.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -263,6 +263,12 @@ int opr_table_insert_row(opr_undo *u, owf_deck *deck, int slide, int obj,
                          int row);
 int opr_table_delete_row(opr_undo *u, owf_deck *deck, int slide, int obj,
                          int row);
+/* Insert an empty column before column (0..current column count), or delete an
+ * existing column. Width is redistributed without changing the table box. */
+int opr_table_insert_column(opr_undo *u, owf_deck *deck, int slide, int obj,
+                            int column);
+int opr_table_delete_column(opr_undo *u, owf_deck *deck, int slide, int obj,
+                            int column);
 /* A new embedded picture. The resource bytes and metadata are copied into
  * deck->res; coordinates are slide twips and crop is thousandths cut from
  * left, top, right and bottom. */

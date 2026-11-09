@@ -842,6 +842,9 @@ typedef struct {
     unsigned char *levels;
     int caplevels;
     unsigned flags;
+    /* SNAP_TEXT also owns table grid geometry when its object is a table. */
+    int table_ncols;
+    int *table_col_widths;
     /* SNAP_SLIDE owns saved when saved_present is set. The saved slide and
      * the deck's slot change places on undo/redo, so no deep copy is needed. */
     owf_slide saved;
@@ -959,6 +962,7 @@ static void snap_free(snapshot *s)
     if (s->kind == SNAP_TEXT) {
         story_free(&s->text);
         owf_free(s->levels);
+        owf_free(s->table_col_widths);
     } else if (s->kind == SNAP_SLIDE && s->saved_present) {
         slide_free(&s->saved);
     } else if (s->kind == SNAP_NAME) {
@@ -981,6 +985,7 @@ static int snap_take(snapshot *s, const owf_deck *deck, int slide, int obj)
     s->slide = slide;
     s->obj = obj;
     s->flags = o->flags;
+    s->table_ncols = o->ncols;
     if (story_copy(&s->text, &o->text) < 0) {
         snap_free(s);
         return -1;
@@ -993,6 +998,15 @@ static int snap_take(snapshot *s, const owf_deck *deck, int slide, int obj)
         }
         memcpy(s->levels, o->levels, (size_t)o->caplevels);
         s->caplevels = o->caplevels;
+    }
+    if (o->col_widths && o->ncols > 0) {
+        s->table_col_widths = owf_malloc((size_t)o->ncols * sizeof *s->table_col_widths);
+        if (!s->table_col_widths) {
+            snap_free(s);
+            return -1;
+        }
+        memcpy(s->table_col_widths, o->col_widths,
+               (size_t)o->ncols * sizeof *s->table_col_widths);
     }
     return 0;
 }
@@ -1112,6 +1126,8 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         owf_story t;
         unsigned char *l;
         int cap;
+        int ncols;
+        int *widths;
         unsigned flags;
         if (!o)
             return -1;
@@ -1124,6 +1140,12 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         cap = o->caplevels;
         o->caplevels = s->caplevels;
         s->caplevels = cap;
+        ncols = o->ncols;
+        o->ncols = s->table_ncols;
+        s->table_ncols = ncols;
+        widths = o->col_widths;
+        o->col_widths = s->table_col_widths;
+        s->table_col_widths = widths;
         flags = o->flags;
         o->flags = (o->flags & ~(unsigned)OWF_OBJ_EMPTY) | (s->flags & OWF_OBJ_EMPTY);
         s->flags = flags;
@@ -2143,7 +2165,9 @@ int opr_obj_insert_table(opr_undo *u, owf_deck *deck, int slide,
 
 static int table_dimensions(const owf_obj *o, int *rows, int *columns)
 {
-    int i, max_row = -1;
+    unsigned char seen[32][32];
+    int i, row, column, max_row = -1;
+    memset(seen, 0, sizeof seen);
     if (!o || o->kind != OWF_OBJ_TABLE || o->ncols < 1 || o->ncols > 32 ||
         !o->text.nparas)
         return -2;
@@ -2154,12 +2178,28 @@ static int table_dimensions(const owf_obj *o, int *rows, int *columns)
             return -2;
         if (p->table_row > max_row)
             max_row = p->table_row;
+        if (p->table_row < 32)
+            seen[p->table_row][p->table_col] = 1;
     }
     if (max_row < 0 || max_row >= 32)
         return -2;
+    for (row = 0; row <= max_row; ++row)
+        for (column = 0; column < o->ncols; ++column)
+            if (!seen[row][column])
+                return -2; /* merged or incomplete grids need a merge-aware command */
     if (rows) *rows = max_row + 1;
     if (columns) *columns = o->ncols;
     return 0;
+}
+
+static int table_column_width(const owf_obj *o, int column)
+{
+    int base, extra;
+    if (o->col_widths)
+        return o->col_widths[column];
+    base = o->width / o->ncols;
+    extra = o->width % o->ncols;
+    return base + (column < extra ? 1 : 0);
 }
 
 /* owf_deck_add_para provides the same inherited text look as an authored
@@ -2259,6 +2299,129 @@ int opr_table_delete_row(opr_undo *u, owf_deck *deck, int slide, int obj,
     for (i = 0; i < o->text.nparas; ++i)
         if (o->text.paras[i].table_row > row)
             --o->text.paras[i].table_row;
+    structural_push(u, &before);
+    return 0;
+}
+
+int opr_table_insert_column(opr_undo *u, owf_deck *deck, int slide, int obj,
+                            int column)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int *widths;
+    int rows, columns, row, i, position, source_width;
+    if (!u || !deck || !o)
+        return -1;
+    if (table_dimensions(o, &rows, &columns) < 0 || column < 0 ||
+        column > columns || columns >= 32)
+        return -2;
+    if (column == columns)
+        source_width = table_column_width(o, columns - 1);
+    else
+        source_width = table_column_width(o, column);
+    if (source_width < 2)
+        return -2;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    widths = owf_malloc((size_t)(columns + 1) * sizeof *widths);
+    if (!widths) {
+        snap_free(&before);
+        return -1;
+    }
+    for (i = 0; i < columns + 1; ++i) {
+        if (i < column)
+            widths[i] = table_column_width(o, i);
+        else if (i == column) {
+            int source = column == columns ? columns - 1 : column;
+            widths[i] = source_width / 2;
+            if (column == columns)
+                widths[source] -= widths[i];
+        } else if (i == column + 1 && column < columns)
+            widths[i] = source_width - widths[column];
+        else
+            widths[i] = table_column_width(o, i - 1);
+    }
+    if (column == columns) {
+        for (i = 0; i < columns - 1; ++i)
+            widths[i] = table_column_width(o, i);
+        widths[columns - 1] = source_width - widths[columns];
+    }
+    owf_free(o->col_widths);
+    o->col_widths = widths;
+    o->ncols = columns + 1;
+    for (i = 0; i < o->text.nparas; ++i) {
+        if (o->text.paras[i].table_col >= column)
+            ++o->text.paras[i].table_col;
+        o->text.paras[i].table_cols = o->ncols;
+    }
+    for (row = rows - 1; row >= 0; --row) {
+        owf_para look;
+        int look_at = -1, row_end = -1;
+        position = o->text.nparas;
+        for (i = 0; i < o->text.nparas; ++i) {
+            if (o->text.paras[i].table_row != row)
+                continue;
+            row_end = i + 1;
+            if (o->text.paras[i].table_col == (column < columns ? column + 1 : column - 1))
+                look_at = i;
+            if (o->text.paras[i].table_col > column && position == o->text.nparas)
+                position = i;
+        }
+        if (position == o->text.nparas && row_end >= 0)
+            position = row_end;
+        if (look_at < 0) {
+            snap_swap(&before, deck, NULL);
+            snap_free(&before);
+            return -2;
+        }
+        look = o->text.paras[look_at];
+        if (table_insert_empty_cell(deck, slide, o, position, row, column, &look) < 0) {
+            snap_swap(&before, deck, NULL);
+            snap_free(&before);
+            return -1;
+        }
+    }
+    structural_push(u, &before);
+    return 0;
+}
+
+int opr_table_delete_column(opr_undo *u, owf_deck *deck, int slide, int obj,
+                            int column)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int *widths;
+    int columns, i, out = 0;
+    if (!u || !deck || !o)
+        return -1;
+    if (table_dimensions(o, NULL, &columns) < 0 || column < 0 ||
+        column >= columns || columns <= 1)
+        return -2;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    widths = owf_malloc((size_t)(columns - 1) * sizeof *widths);
+    if (!widths) {
+        snap_free(&before);
+        return -1;
+    }
+    for (i = 0; i < columns; ++i)
+        if (i != column)
+            widths[out++] = table_column_width(o, i);
+    if (column < columns - 1)
+        widths[column] += table_column_width(o, column);
+    else
+        widths[columns - 2] += table_column_width(o, column);
+    owf_free(o->col_widths);
+    o->col_widths = widths;
+    o->ncols = columns - 1;
+    for (i = o->text.nparas - 1; i >= 0; --i)
+        if (o->text.paras[i].table_col == column)
+            remove_para(o, i);
+    for (i = 0; i < o->text.nparas; ++i) {
+        if (o->text.paras[i].table_col > column)
+            --o->text.paras[i].table_col;
+        o->text.paras[i].table_cols = o->ncols;
+    }
     structural_push(u, &before);
     return 0;
 }

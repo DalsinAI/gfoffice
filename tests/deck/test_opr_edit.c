@@ -1160,16 +1160,51 @@ static void table_insertion(void)
     CHECK(!opr_undo_undo(u, d, &slide, &obj) && s->objs[0].text.nparas == 9 &&
           !opr_undo_redo(u, d, &slide, &obj) && s->objs[0].text.nparas == 6,
           "row deletion is one Undo and Redo step");
+    widths = 0;
+    CHECK(!opr_table_insert_column(u, d, 0, 0, 1) &&
+          s->objs[0].ncols == 4 && s->objs[0].text.nparas == 8 &&
+          s->objs[0].text.paras[1].table_col == 1 &&
+          s->objs[0].text.paras[2].table_col == 2 &&
+          s->objs[0].text.paras[5].table_row == 1,
+          "insert an empty native table column before an existing column");
+    for (i = 0; i < s->objs[0].ncols; ++i) widths += s->objs[0].col_widths[i];
+    CHECK(widths == spec.width &&
+          !opr_undo_undo(u, d, &slide, &obj) && s->objs[0].ncols == 3 &&
+          s->objs[0].text.nparas == 6 &&
+          !opr_undo_redo(u, d, &slide, &obj) && s->objs[0].ncols == 4 &&
+          s->objs[0].text.nparas == 8,
+          "column insertion preserves table width and one-step Undo/Redo geometry");
+    CHECK(!opr_table_delete_column(u, d, 0, 0, 1) &&
+          s->objs[0].ncols == 3 && s->objs[0].text.nparas == 6 &&
+          s->objs[0].text.paras[1].table_col == 1 &&
+          s->objs[0].text.paras[3].table_row == 1,
+          "delete a native table column and repair following coordinates");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && s->objs[0].ncols == 4 &&
+          s->objs[0].text.nparas == 8 &&
+          !opr_undo_redo(u, d, &slide, &obj) && s->objs[0].ncols == 3 &&
+          s->objs[0].text.nparas == 6,
+          "column deletion is one Undo and Redo step");
+    CHECK(!opr_table_insert_column(u, d, 0, 0, 3) &&
+          s->objs[0].ncols == 4 && s->objs[0].text.nparas == 8 &&
+          s->objs[0].text.paras[3].table_col == 3 &&
+          s->objs[0].text.paras[7].table_col == 3,
+          "append a native table column after the final column");
+    CHECK(!opr_table_delete_column(u, d, 0, 0, 3) &&
+          s->objs[0].ncols == 3 && s->objs[0].text.nparas == 6,
+          "delete the final native table column and preserve the grid");
     free(data); data = NULL; length = 0;
     CHECK(odp->export(d, &data, &length, NULL) == OWF_OK &&
           owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back &&
+          back->slides[0].objs[0].ncols == 3 &&
           back->slides[0].objs[0].text.nparas == 6 &&
           back->slides[0].objs[0].text.paras[3].table_row == 1,
           "row-edited table structure survives ODP save/reopen");
     owf_deck_free(back); back = NULL;
     CHECK(opr_table_delete_row(u, d, 0, 0, -1) == -2 &&
-          opr_table_insert_row(u, d, 0, 0, 33) == -2,
-          "invalid row edits leave a table unchanged");
+          opr_table_insert_row(u, d, 0, 0, 33) == -2 &&
+          opr_table_delete_column(u, d, 0, 0, 3) == -2 &&
+          opr_table_insert_column(u, d, 0, 0, 33) == -2,
+          "invalid row and column edits leave a table unchanged");
     invalid = spec; invalid.rows = 0;
     CHECK(opr_obj_insert_table(u, d, 0, &invalid, &selected) == -2 && s->nobjs == 1,
           "invalid table dimensions leave the slide unchanged");

@@ -86,7 +86,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.14 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.15 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -95,7 +95,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.20 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.21 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -123,7 +123,8 @@ enum {
     M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
-    M_POSITION_SIZE, M_APPEARANCE, M_PICTURE_CROP, M_TABLE_INSERT_ROW, M_TABLE_DELETE_ROW,
+    M_POSITION_SIZE, M_APPEARANCE, M_PICTURE_CROP,
+    M_TABLE_INSERT_ROW, M_TABLE_DELETE_ROW, M_TABLE_INSERT_COLUMN, M_TABLE_DELETE_COLUMN,
     M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
     M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TIGHT, M_WRAP_TOP_BOTTOM, M_WRAP_DISTANCE,
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
@@ -221,6 +222,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Table Rows", NULL, 0, 0, NULL },
     { NM_SUB, "Insert Row Below", NULL, 0, 0, (APTR)M_TABLE_INSERT_ROW },
     { NM_SUB, "Delete Current Row", NULL, 0, 0, (APTR)M_TABLE_DELETE_ROW },
+    { NM_ITEM, "Table Columns", NULL, 0, 0, NULL },
+    { NM_SUB, "Insert Column Right", NULL, 0, 0, (APTR)M_TABLE_INSERT_COLUMN },
+    { NM_SUB, "Delete Current Column", NULL, 0, 0, (APTR)M_TABLE_DELETE_COLUMN },
 #ifdef OPENPUBLISHER
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Text Wrapping", NULL, 0, 0, NULL },
@@ -4396,6 +4400,16 @@ static int table_first_para_in_row(const owf_obj *o, int row)
     return -1;
 }
 
+static int table_first_para_in_cell(const owf_obj *o, int row, int column)
+{
+    int i;
+    for (i = 0; o && i < o->text.nparas; ++i)
+        if (o->text.paras[i].table_row == row &&
+            o->text.paras[i].table_col == column)
+            return i;
+    return -1;
+}
+
 static void edit_table_row(int deleting)
 {
     owf_obj *o;
@@ -4430,6 +4444,45 @@ static void edit_table_row(int deleting)
     text_changed(NULL);
     set_status(deleting ? "Table row deleted; Undo restores it." :
                           "Table row inserted; type in its first cell.");
+    draw_status();
+}
+
+static void edit_table_column(int deleting)
+{
+    owf_obj *o;
+    int obj = selected_table_object(), row = 0, column = 0, target, para, rc;
+    if (obj < 0) {
+        set_status("Select a table or click in one of its cells first.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[obj];
+    if (edit_obj == obj && caret.para >= 0 && caret.para < o->text.nparas) {
+        row = o->text.paras[caret.para].table_row;
+        column = o->text.paras[caret.para].table_col;
+    }
+    target = deleting ? column : column + 1;
+    rc = deleting ? opr_table_delete_column(undo, deck, current, obj, target) :
+                    opr_table_insert_column(undo, deck, current, obj, target);
+    if (rc < 0) {
+        set_status(rc == -2 && deleting ? "A table must keep at least one column." :
+                   rc == -2 ? "That column cannot be inserted." :
+                   "There is not enough memory to edit the table column.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[obj];
+    if (target >= o->ncols)
+        target = o->ncols - 1;
+    para = table_first_para_in_cell(o, row, target);
+    selected_obj = edit_obj = obj;
+    caret.para = para >= 0 ? para : 0;
+    caret.offset = 0;
+    collapse_text_selection();
+    edit_grouped = 0;
+    text_changed(NULL);
+    set_status(deleting ? "Table column deleted; Undo restores it." :
+                          "Table column inserted; type in its active-row cell.");
     draw_status();
 }
 
@@ -5207,6 +5260,8 @@ static void menu_action(ULONG id)
     case M_PICTURE_CROP: edit_selected_picture_crop(); break;
     case M_TABLE_INSERT_ROW: edit_table_row(0); break;
     case M_TABLE_DELETE_ROW: edit_table_row(1); break;
+    case M_TABLE_INSERT_COLUMN: edit_table_column(0); break;
+    case M_TABLE_DELETE_COLUMN: edit_table_column(1); break;
 #ifdef OPENPUBLISHER
     case M_WRAP_NONE: set_selected_wrap(OWF_WRAP_NONE); break;
     case M_WRAP_SQUARE: set_selected_wrap(OWF_WRAP_SQUARE); break;
