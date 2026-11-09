@@ -220,8 +220,8 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | Facing pages, two-page spreads | Not yet (SampleNewsletter's pages alternate left and right on the workspace: a hypothesis) | P1 | P2 | |
 | Master pages | Names, which page uses which | P1 (their frames) | P2 | The samples' masters are empty: samples needed |
 | Text boxes | Boxes and text | P1 | P2 | |
-| Linked text frames (overflow chains) | Yes: shared story IDs and ODF named chains | Yes: text continues at GFOpenLayout's exact page cut and fixed frames clip | Yes for appending/removing the flow tail | Screen, PDF and ODP save/reload preserve the chain; a selected overset frame has a layout-derived badge |
-| Columns in a text box | No original PUB decoding yet | Yes for authored and ODP/PPTX-imported frames | Yes: one/two/three equal columns | Custom gap/margins remain |
+| Linked text frames (overflow chains) | Yes: shared story IDs and ODF named chains | Yes: text continues at GFOpenLayout's exact page cut and fixed frames clip | Yes: append, middle insertion and any non-first detach | Screen, PDF and ODP save/reload preserve the chain; a selected overset frame has a layout-derived badge |
+| Columns in a text box | No original PUB decoding yet | Yes for authored and ODP/PPTX-imported frames | Yes: 1-16 columns with exact gap and four margins | |
 | Character and paragraph formatting, styles | No (fonts listed) | P1b | P2 | Quill's STSH, FDPC, FDPP (PUB-FORMAT 6.2) |
 | Colour schemes, font schemes | Scheme colours seen | P1b | P2 | |
 | Pictures (PNG, JPEG, GIF, DIB, WMF) | Yes, bytes and formats | P1 (WMF: P1d) | P2 | Datatypes, metafile player (7) |
@@ -230,7 +230,7 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | Fills, gradients, line styles | Colour values seen | P1d | P2 | |
 | WordArt | Text | P1d (styled text in its box), later its shapes | P2 | |
 | Tables | Rows, columns, cell text | P1d (cells, borders, shading) | P2 | |
-| Text wrap around frames | No | P1c | P2 | GFOpenLayout exclusions (5) |
+| Text wrap around frames | No original PUB decoding yet | Yes: Square, Tight and Top/Bottom with per-side distance | Yes | GFOpenLayout 0.16 exclusions and 0.17 contours (5) |
 | Layering (back to front), grouping | Order and groups | P1 | P2 | |
 | Rotation, flips | No | Later (drawn unrotated, reported) | Later | GFOpenLayout |
 | Rulers, layout and ruler guides, baseline guides, snap | No | P2 (shown in the editor) | P2 | |
@@ -344,8 +344,7 @@ into a local exclusion for each overlapping text frame; GFOpenLayout 0.16 owns
 the actual line fitting, scoping and paged behaviour. The object remains a
 single display object. Standard ODP `style:wrap` and per-side margins preserve
 the setting on save/reload. The native menu currently uses a sensible default
-distance; an interactive four-side distance surface, contour/tight geometry
-and decoding original PUB wrap records remain.
+distance; decoding original PUB wrap records remains.
 
 GFOpenPublisher 0.2.8 exposes the four persisted distances through Object >
 Text Wrap Distance. Top, right, bottom and left are edited independently in
@@ -392,6 +391,15 @@ are one flow snapshot for Undo/Redo and change only the existing `flow_story`
 membership, so story bytes, ODP persistence and GFOpenLayout continuation stay
 on their established paths. The first frame remains protected because it owns
 the story.
+
+GFOpenPublisher 0.3.4 and shared core 0.18.0 add Object > Text Wrapping >
+Tight. The deck adapter asks GFOpenLayout 0.17 to flatten the selected closed
+shape's existing node-owned path into conservative horizontal exclusion bands;
+it does not reproduce ellipse, polygon or rotation geometry. Those bands use
+the same box-local line fitter as Square and retain independent top, right,
+bottom and left distances. Pictures, open lines and unavailable geometry fall
+back to Square. ODP writes and reads the standard `style:wrap-contour`
+attribute, and the existing object snapshot supplies Undo/Redo.
 
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,

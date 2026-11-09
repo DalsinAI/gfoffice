@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.3.1 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.3.4 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -60,17 +60,21 @@ empty text box or remove the final box again, atomically with Undo/Redo. A
 selected frame whose prepared story does not fit carries a three-dot overflow
 badge calculated from the shared layout cut; the application does not estimate
 characters. Object > Text Wrapping now makes a selected picture or shape a
-square or top-and-bottom exclusion for every overlapping text frame. The model
-change is undoable, survives ODP save/reload, and delegates line fitting to
-GFOpenLayout 0.16's reusable box-local exclusion service. Text Wrap Distance
+Square, Tight, or Top and Bottom exclusion for every overlapping text frame.
+Tight follows closed ellipses, rounded rectangles, polygons and rotated shapes
+through GFOpenLayout 0.17's reusable contour-band service; pictures and
+unknown/open geometry safely fall back to Square. The model change is undoable
+and the standard ODF contour attribute preserves it on ODP save/reload. Text Wrap Distance
 edits the top, right, bottom and left clearance as another atomic Undo/Redo
 step. Format > Text Frame edits the column count, custom gap and four internal
 margins together through shared core 0.13.0. Text Colour applies an exact RGB
 colour through shared core 0.14.0 with
 Undo/Redo and ODP persistence. Font Family adds or reuses the named family in
 the shared deck resources through core 0.15.0 and persists it in ODP.
-Character-range selection, decoding original PUB formatting and wrap records,
-contour wrapping and WMF/EMF playback remain later P1 work.
+Character-range selection now includes drag, Shift+Arrow and Select All with
+replacement typing and exact run formatting. Decoding original PUB formatting,
+columns and wrap records, picture-alpha/custom contours and WMF/EMF playback
+remain later P1 work.
 
 # GFOpenWrite
 
@@ -468,7 +472,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.7), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.10), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and

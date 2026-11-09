@@ -535,6 +535,12 @@ membership now supports Publisher's middle detach and insertion commands. This
 does not add a Presentation-facing flow menu or an OpenLayout API; it keeps the
 common deck model and ODP continuation semantics aligned between the apps.
 
+GFOpenPresentation 0.6.10 carries shared core 0.18.0 and GFOpenLayout 0.17's
+closed-shape contour service. Presentation has no new authoring menu in this
+slice, but imported ODP objects marked `style:wrap-contour` now retain Tight
+distinctly and use the same reusable ellipse/polygon/rotation geometry as
+Publisher instead of a rectangular approximation.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys
