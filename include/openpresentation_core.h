@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.27.0"
+#define OPR_CORE_VERSION "0.28.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -256,6 +256,13 @@ typedef struct {
  * row receives a neutral header shade when header_row is nonzero. */
 int opr_obj_insert_table(opr_undo *u, owf_deck *deck, int slide,
                          const opr_table_spec *spec, int *selected);
+/* Insert an empty row before row (0..current row count), or delete an existing
+ * row. Cell coordinates and any following rows are repaired atomically; a
+ * table always keeps at least one row. Each operation is one Undo step. */
+int opr_table_insert_row(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         int row);
+int opr_table_delete_row(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         int row);
 /* A new embedded picture. The resource bytes and metadata are copied into
  * deck->res; coordinates are slide twips and crop is thousandths cut from
  * left, top, right and bottom. */

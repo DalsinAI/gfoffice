@@ -2141,6 +2141,128 @@ int opr_obj_insert_table(opr_undo *u, owf_deck *deck, int slide,
     return 0;
 }
 
+static int table_dimensions(const owf_obj *o, int *rows, int *columns)
+{
+    int i, max_row = -1;
+    if (!o || o->kind != OWF_OBJ_TABLE || o->ncols < 1 || o->ncols > 32 ||
+        !o->text.nparas)
+        return -2;
+    for (i = 0; i < o->text.nparas; ++i) {
+        const owf_para *p = &o->text.paras[i];
+        if (p->table_id < 0 || p->table_row < 0 || p->table_col < 0 ||
+            p->table_col >= o->ncols || p->table_cols != o->ncols)
+            return -2;
+        if (p->table_row > max_row)
+            max_row = p->table_row;
+    }
+    if (max_row < 0 || max_row >= 32)
+        return -2;
+    if (rows) *rows = max_row + 1;
+    if (columns) *columns = o->ncols;
+    return 0;
+}
+
+/* owf_deck_add_para provides the same inherited text look as an authored
+ * table cell, but appends. Move that owned paragraph into the requested grid
+ * position and keep the parallel list-level array aligned. */
+static int table_insert_empty_cell(owf_deck *deck, int slide, owf_obj *o,
+                                   int index, int row, int column,
+                                   const owf_para *look)
+{
+    const owf_master *master = owf_deck_slide_master(deck, slide);
+    owf_para made, *p;
+    int count;
+    p = owf_deck_add_para(deck, master, o, 0);
+    if (!p)
+        return -1;
+    count = o->text.nparas;
+    made = o->text.paras[count - 1];
+    if (index < count - 1)
+        memmove(&o->text.paras[index + 1], &o->text.paras[index],
+                (size_t)(count - index - 1) * sizeof *o->text.paras);
+    o->text.paras[index] = made;
+    if (shift_levels(o, index, 1) < 0 || owf_obj_set_level(o, index, 0) < 0)
+        return -1;
+    p = &o->text.paras[index];
+    if (look) {
+        p->fmt = look->fmt;
+        p->cell_shading = look->cell_shading;
+    }
+    p->table_id = look ? look->table_id : 0;
+    p->table_row = row;
+    p->table_col = column;
+    p->table_cols = o->ncols;
+    p->fmt.borders = OWF_BORDER_TOP | OWF_BORDER_LEFT |
+                     OWF_BORDER_BOTTOM | OWF_BORDER_RIGHT;
+    if (!OWF_SHADE_SET(p->fmt.border_colour))
+        p->fmt.border_colour = OWF_SHADE(0x808080);
+    return 0;
+}
+
+int opr_table_insert_row(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         int row)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    owf_para look;
+    int rows, columns, index, i, column, have_look = 0;
+    if (!u || !deck || !o)
+        return -1;
+    if (table_dimensions(o, &rows, &columns) < 0 || row < 0 || row > rows || rows >= 32)
+        return -2;
+    index = o->text.nparas;
+    for (i = 0; i < o->text.nparas; ++i) {
+        if (!have_look && o->text.paras[i].table_row == (row < rows ? row : rows - 1)) {
+            look = o->text.paras[i];
+            have_look = 1;
+        }
+        if (o->text.paras[i].table_row >= row && index == o->text.nparas)
+            index = i;
+    }
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    for (i = 0; i < o->text.nparas; ++i)
+        if (o->text.paras[i].table_row >= row)
+            ++o->text.paras[i].table_row;
+    for (column = 0; column < columns; ++column)
+        if (table_insert_empty_cell(deck, slide, o, index + column, row, column,
+                                    have_look ? &look : NULL) < 0) {
+            snap_swap(&before, deck, NULL);
+            snap_free(&before);
+            return -1;
+        }
+    structural_push(u, &before);
+    return 0;
+}
+
+int opr_table_delete_row(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         int row)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int rows, i, found = 0;
+    if (!u || !deck || !o)
+        return -1;
+    if (table_dimensions(o, &rows, NULL) < 0 || row < 0 || row >= rows || rows <= 1)
+        return -2;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    for (i = o->text.nparas - 1; i >= 0; --i)
+        if (o->text.paras[i].table_row == row) {
+            remove_para(o, i);
+            found = 1;
+        }
+    if (!found) {
+        snap_free(&before);
+        return -2;
+    }
+    for (i = 0; i < o->text.nparas; ++i)
+        if (o->text.paras[i].table_row > row)
+            --o->text.paras[i].table_row;
+    structural_push(u, &before);
+    return 0;
+}
+
 int opr_obj_insert_picture(opr_undo *u, owf_deck *deck, int slide,
                            const opr_picture_spec *spec, int *selected)
 {

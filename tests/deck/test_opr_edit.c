@@ -1090,6 +1090,7 @@ static void table_insertion(void)
     opr_selection selection;
     opr_pos at;
     unsigned char *data = NULL;
+    char *plain = NULL;
     size_t length = 0;
     int selected = -1, slide = -1, obj = -1, widths = 0, i;
     CHECK(d && s && u && odp, "a deck for native table insertion");
@@ -1137,10 +1138,43 @@ static void table_insertion(void)
     CHECK(!opr_undo_undo(u, d, &slide, &obj) && !s->nobjs && obj == -1 &&
           !opr_undo_redo(u, d, &slide, &obj) && s->nobjs == 1 && obj == 0,
           "table insertion is one Undo and Redo step");
+    CHECK(!opr_table_insert_row(u, d, 0, 0, 1) &&
+          s->objs[0].text.nparas == 9 &&
+          s->objs[0].text.paras[3].table_row == 1 &&
+          s->objs[0].text.paras[3].table_col == 0 &&
+          s->objs[0].text.paras[6].table_row == 2 &&
+          !s->objs[0].text.paras[3].cell_shading,
+          "insert an empty native table row before an existing row");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[0].text.nparas == 6 && s->objs[0].text.paras[3].table_row == 1 &&
+          !opr_undo_redo(u, d, &slide, &obj) &&
+          s->objs[0].text.nparas == 9 && s->objs[0].text.paras[6].table_row == 2,
+          "row insertion is one Undo and Redo step");
+    CHECK(!opr_table_delete_row(u, d, 0, 0, 1) &&
+          s->objs[0].text.nparas == 6 &&
+          s->objs[0].text.paras[3].table_row == 1 &&
+          (plain = opr_para_text(&s->objs[0].text.paras[0], &length)) != NULL &&
+          !strcmp(plain, "Heading"),
+          "delete a native table row and repair following coordinates");
+    free(plain); plain = NULL;
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && s->objs[0].text.nparas == 9 &&
+          !opr_undo_redo(u, d, &slide, &obj) && s->objs[0].text.nparas == 6,
+          "row deletion is one Undo and Redo step");
+    free(data); data = NULL; length = 0;
+    CHECK(odp->export(d, &data, &length, NULL) == OWF_OK &&
+          owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back &&
+          back->slides[0].objs[0].text.nparas == 6 &&
+          back->slides[0].objs[0].text.paras[3].table_row == 1,
+          "row-edited table structure survives ODP save/reopen");
+    owf_deck_free(back); back = NULL;
+    CHECK(opr_table_delete_row(u, d, 0, 0, -1) == -2 &&
+          opr_table_insert_row(u, d, 0, 0, 33) == -2,
+          "invalid row edits leave a table unchanged");
     invalid = spec; invalid.rows = 0;
     CHECK(opr_obj_insert_table(u, d, 0, &invalid, &selected) == -2 && s->nobjs == 1,
           "invalid table dimensions leave the slide unchanged");
     opr_undo_free(u);
+    free(data);
     owf_deck_free(d);
 }
 
