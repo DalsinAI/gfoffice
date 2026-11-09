@@ -73,6 +73,10 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 
 ## 4. Text
 
+GFOpenPresentation 0.6.2 edits the current caret paragraph's bold, italic,
+underline, font size and alignment through reusable core 0.9.0, with Undo and
+ODP persistence. Character-range selection and font/colour requesters remain.
+
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Text boxes, placeholder text | P1 | Yes; GFOpenPresentation 0.6.0 adds native Insert > Text Box with immediate typing, one-step undo/redo and ODP persistence |

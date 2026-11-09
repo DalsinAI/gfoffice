@@ -693,6 +693,36 @@ static void textbox_insertion(void)
     CHECK(!opr_undo_redo(u, d, &slide, &obj) && obj == 0 && s->nobjs == 1 &&
           s->objs[0].kind == OWF_OBJ_TEXT,
           "redo text-box insertion restores and selects it");
+    CHECK(!opr_text_toggle_flags(u, d, 0, 0, 0, 0, OWF_BOLD) &&
+          (s->objs[0].text.paras[0].runs[0].fmt.flags & OWF_BOLD),
+          "bold the current paragraph as one reusable rich-text edit");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == 0 &&
+          !(s->objs[0].text.paras[0].runs[0].fmt.flags & OWF_BOLD),
+          "undo restores the paragraph's character formatting");
+    CHECK(!opr_undo_redo(u, d, &slide, &obj) &&
+          (s->objs[0].text.paras[0].runs[0].fmt.flags & OWF_BOLD),
+          "redo restores the bold formatting");
+    CHECK(!opr_text_toggle_flags(u, d, 0, 0, 0, 0, OWF_BOLD) &&
+          !(s->objs[0].text.paras[0].runs[0].fmt.flags & OWF_BOLD),
+          "toggling an entirely bold range clears it");
+    CHECK(!opr_text_toggle_flags(u, d, 0, 0, 0, 0, OWF_ITALIC | OWF_UNDERLINE) &&
+          (s->objs[0].text.paras[0].runs[0].fmt.flags & (OWF_ITALIC | OWF_UNDERLINE)) ==
+          (OWF_ITALIC | OWF_UNDERLINE), "italic and underline can be applied together");
+    CHECK(!opr_text_set_size(u, d, 0, 0, 0, 0, 360) &&
+          s->objs[0].text.paras[0].runs[0].fmt.size == 360,
+          "set the paragraph to 18 point text");
+    CHECK(!opr_text_set_alignment(u, d, 0, 0, 0, 0, OWF_ALIGN_RIGHT) &&
+          s->objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT,
+          "right-align the current paragraph");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].fmt.align != OWF_ALIGN_RIGHT &&
+          !opr_undo_redo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT,
+          "paragraph alignment participates in Undo and Redo");
+    CHECK(opr_text_toggle_flags(u, d, 0, 0, 0, 1, OWF_BOLD) == -2 &&
+          opr_text_set_size(u, d, 0, 0, 0, 0, 0) == -2 &&
+          opr_text_set_alignment(u, d, 0, 0, 0, 0, (owf_align)99) == -2,
+          "invalid formatting ranges and values are rejected");
     opr_undo_clear(u);
     invalid = spec; invalid.width = 0;
     CHECK(opr_obj_insert_textbox(u, d, 0, &invalid, &selected) == -2 && s->nobjs == 1,
@@ -709,13 +739,26 @@ static void textbox_insertion(void)
     CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
           "the authored text box reads back");
     if (back) {
+        const owf_obj *saved = &back->slides[0].objs[0];
+        const owf_textlevel *level = owf_deck_para_level(back,
+                                      owf_deck_slide_master(back, 0), saved, 0);
+        int effective_size = saved->text.paras[0].runs[0].fmt.size > 0 ?
+                             saved->text.paras[0].runs[0].fmt.size :
+                             level ? level->chars.size : 0;
         text = opr_text_get(back, 0, 0);
         CHECK(back->slides[0].nobjs == 1 && back->slides[0].objs[0].kind == OWF_OBJ_TEXT &&
               text && !strcmp(text, "Publisher story") &&
               back->slides[0].objs[0].x == spec.x &&
               back->slides[0].objs[0].inset[0] == spec.inset[0] &&
-              back->slides[0].objs[0].look.fill == spec.look.fill,
-              "the complete text box survives the ODP round trip");
+              back->slides[0].objs[0].look.fill == spec.look.fill &&
+              back->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT &&
+              effective_size == 360 &&
+              (back->slides[0].objs[0].text.paras[0].runs[0].fmt.flags &
+               (OWF_ITALIC | OWF_UNDERLINE)) == (OWF_ITALIC | OWF_UNDERLINE),
+              "the complete rich text box survives the ODP round trip: align %d size %d flags %u",
+              back->slides[0].objs[0].text.paras[0].fmt.align,
+              effective_size,
+              back->slides[0].objs[0].text.paras[0].runs[0].fmt.flags);
         free(text);
     }
     owf_deck_free(back);

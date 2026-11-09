@@ -487,6 +487,13 @@ and commits object plus resource transactionally as one undoable presence
 change. The authored picture uses the existing OpenLayout crop/display data,
 datatype screen cache, PDF renderer and ODP round trip.
 
+GFOpenPresentation 0.6.2 and GFOpenPublisher 0.2.4 add shared paragraph-range
+rich-text commands in portable core 0.9.0. Bold, italic and underline toggle
+as one text-snapshot Undo step; font size and left, centre, right or justified
+alignment are set explicitly. The native Format menu applies them to the
+current caret paragraph. Existing OpenLayout run/paragraph styling renders the
+result and ODP round-trip tests verify its effective appearance.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

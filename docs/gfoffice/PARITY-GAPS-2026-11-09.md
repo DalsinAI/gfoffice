@@ -21,8 +21,8 @@ edits, saves, reloads and undoes correctly.
 | --- | --- | ---: | --- | --- | --- |
 | GFOpenWrite 2.0.26 | Writer | **63%** | Medium-high | Native text editing; character and paragraph formatting; styles; lists; editable tables; inline/floating pictures; text boxes; headers/footers; TOC; sections and newspaper columns; DOCX/ODT/RTF; PDF/print; spelling, recovery and ARexx | Track changes; comments/review UI; mail merge/labels/envelopes; alphabetical and object indexes/bibliography; master documents; forms; richer style families; advanced tables; embedded charts/sheets/media; autocorrect/thesaurus/hyphenation |
 | GFOpenCalc 0.1.67 | Calc | **62%** | High for delivered core, medium overall | XLS/XLSX/ODS/FODS/CSV; 277-function formula engine; editing/formatting; sort/filter; comments, validation and conditional formatting; charts; subtotals; refreshable pivot summaries; Goal Seek; durable, manually refreshable one/two-variable and multi-formula Multiple Operations; PDF/print; robust host corpus | Automatic data-table recalc and native Excel/Calc data-table metadata; full Pivot Table field layout/filter/drill/multiple data fields; Solver; scenarios; consolidation; richer database filters/functions; external data/links; sharing/change tracking; macro recorder/IDE; more chart/graphics editing |
-| GFOpenPresentation 0.6.1 | Impress | **52%** | Medium-high | ODP/FODP read/write, PPTX import; slide CRUD/reorder/hide; masters/layout model; text editing; inserted text boxes/pictures/shapes; object move/resize/rotate/arrange/align/appearance; transitions; slideshow; PDF/print; undo | PPT/PPTX export; Normal/Outline/Notes/Handout/Sorter views; notes editing and notes/handout printing; multi-selection/distribute; master editing; richer fills/transparency/shadows; table structure editing; charts/OLE/media editing; custom animation; clipboard; find/spell; ARexx |
-| GFOpenPublisher 0.2.3 | Microsoft Publisher 2021 | **36%** | Medium | PUB import; positioned multi-page display; exact linked-story continuation across pages; editable inserted text/picture/shape objects; move/resize/rotate/arrange/align/look; ODP save; PDF/print | Native PUB save; full imported-text editing/formatting; interactive link/unlink and overflow UI; columns/autofit/margins within text boxes; wrap/exclusion flow; master pages and facing-page publications; guides/snap/rulers/baselines; templates/building blocks; crop/recolour/transparency; richer tables; mail/catalog merge; commercial-print/preflight/design checker |
+| GFOpenPresentation 0.6.2 | Impress | **53%** | Medium-high | ODP/FODP read/write, PPTX import; slide CRUD/reorder/hide; masters/layout model; text editing plus paragraph-level bold/italic/underline/size/alignment; inserted text boxes/pictures/shapes; object move/resize/rotate/arrange/align/appearance; transitions; slideshow; PDF/print; undo | PPT/PPTX export; character-range selection and font/colour UI; Normal/Outline/Notes/Handout/Sorter views; notes editing and notes/handout printing; multi-selection/distribute; master editing; richer fills/transparency/shadows; table structure editing; charts/OLE/media editing; custom animation; clipboard; find/spell; ARexx |
+| GFOpenPublisher 0.2.4 | Microsoft Publisher 2021 | **38%** | Medium | PUB import; positioned multi-page display; exact linked-story continuation across pages; editable text with paragraph-level bold/italic/underline/size/alignment; editable inserted picture/shape objects; move/resize/rotate/arrange/align/look; ODP save; PDF/print | Native PUB save; decode original PUB formatting and add character-range/font/colour editing; interactive link/unlink and overflow UI; columns/autofit/margins within text boxes; wrap/exclusion flow; master pages and facing-page publications; guides/snap/rulers/baselines; templates/building blocks; crop/recolour/transparency; richer tables; mail/catalog merge; commercial-print/preflight/design checker |
 | GFOpenDraw 0.2.0 RC2 | Draw | **19%** | High | Practical indexed-raster paint editor; two native front ends; ARexx; reusable host/m68k painting library; suite packaging | Multi-page vector document shell; ODG/SVG; editable text/shapes/pictures; layers/master pages; connectors/glue points; curves; multi-selection/grouping; snap/grid/guides; dimensions; technical drawing; vector PDF/clipboard. Raster-side text, polygons/curves, gradients, symmetry, spare page and CRNG persistence also remain |
 | GFOpenBase design 0.1 | Base | **4%** | High | Current design, SQLite/OADB architecture and reusable suite components are documented | No executable or core yet. Required baseline: project create/open; table designer and datasheet CRUD; keys/relationships; SQL/query designer; forms/subforms; reports; CSV/DBF/Calc exchange; locking/recovery; ARexx/runtime |
 
@@ -108,15 +108,16 @@ the same geometry or flow rule.
 
 ## Ranked closure plan
 
-1. **Calc C14 — durable what-if tables.** Store Multiple Operations table,
+1. **Calc C14 — durable what-if tables (delivered in RC65).** Store Multiple Operations table,
    formula and input references in hidden sheet-scoped names, survive XLSX/ODS,
    refresh atomically after source changes, then integrate refresh with normal
    recalculation. This closes the only known semantic weakness in RC64's newly
    delivered feature without adding anything to OpenLayout.
-2. **Publisher P1c — rich text frames on OpenLayout.** Add bounded columns and
-   exclusion/wrap services to GFOpenLayout with compatibility tests, then
-   remove Publisher-local approximations and expose text-frame formatting and
-   interactive link/unlink in the shared deck editor.
+2. **Publisher P1c — rich text frames on OpenLayout (format controls now
+   delivered).** Existing OpenLayout styling now has native paragraph-level
+   editor commands. Next add bounded columns and exclusion/wrap services to
+   GFOpenLayout with compatibility tests, then interactive link/unlink and
+   character-range formatting in the shared deck editor.
 3. **Writer W-review — tracked changes first, mail merge second.** Preserve
    revisions as editable review records rather than accepting them on import;
    then build CSV/Calc-field merge as a reusable document-generation service

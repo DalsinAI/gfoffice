@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.2.3 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.2.4 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -48,8 +48,11 @@ alignment, fill and stroke appearance, deep-copy duplication and deletion from
 the shared Presentation editor. Publisher stories shared by several frames now
 continue at GFOpenLayout's exact page-cut position instead of restarting in
 every frame. ODP save/reload preserves those editable links as native
-`draw:chain-next-name` chains. Publisher text-frame formatting, columns, wrap
-and WMF/EMF playback remain later P1 work.
+`draw:chain-next-name` chains. Format now edits the current paragraph's bold,
+italic, underline, font size and alignment through reusable undoable core
+commands, with screen/PDF rendering and ODP persistence supplied by the
+existing OpenLayout/deck path. Character-range selection, decoding original
+PUB formatting, columns, wrap and WMF/EMF playback remain later P1 work.
 
 # GFOpenWrite
 
@@ -447,7 +450,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.1), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.2), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and
@@ -455,7 +458,9 @@ starts typing in it; Insert > Picture embeds a file through datatypes, fits it
 to the slide and selects it for positioning. Click in any slide text box and type (Return, Backspace,
 Del, the arrow keys; Esc stops), with undo and redo
 (`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
-deck-edit-check`). Click any slide object to select it, drag it to move it,
+deck-edit-check`). Format applies bold, italic, underline, six font sizes and
+left/centre/right/justified alignment to the current paragraph as an undoable
+shared-core edit. Click any slide object to select it, drag it to move it,
 drag one of its eight handles to resize it, or use the arrow keys to nudge it
 one screen pixel (Shift: ten); each completed move or resize is a single
 undoable core operation and inherited layout-placeholder geometry becomes an

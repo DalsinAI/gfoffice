@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.2.3 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.2.4 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.1 (8.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.2 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -109,6 +109,9 @@ enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_STOP,
+    M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
+    M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
+    M_TEXT_ALIGN_LEFT, M_TEXT_ALIGN_CENTRE, M_TEXT_ALIGN_RIGHT, M_TEXT_ALIGN_JUSTIFY,
     M_INSERT_TEXTBOX, M_INSERT_PICTURE, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
     M_INSERT_DIAMOND, M_INSERT_ARROW, M_INSERT_LINE,
     M_ROTATE_LEFT, M_ROTATE_RIGHT,
@@ -141,6 +144,23 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Redo", NULL, 0, 0, (APTR)M_REDO },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
+
+    { NM_TITLE, "Format", NULL, 0, 0, NULL },
+    { NM_ITEM, "Bold", "B", 0, 0, (APTR)M_TEXT_BOLD },
+    { NM_ITEM, "Italic", "I", 0, 0, (APTR)M_TEXT_ITALIC },
+    { NM_ITEM, "Underline", "U", 0, 0, (APTR)M_TEXT_UNDERLINE },
+    { NM_ITEM, "Font Size", NULL, 0, 0, NULL },
+    { NM_SUB, "10 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_10 },
+    { NM_SUB, "12 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_12 },
+    { NM_SUB, "14 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_14 },
+    { NM_SUB, "18 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_18 },
+    { NM_SUB, "24 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_24 },
+    { NM_SUB, "36 pt", NULL, 0, 0, (APTR)M_TEXT_SIZE_36 },
+    { NM_ITEM, "Paragraph Alignment", NULL, 0, 0, NULL },
+    { NM_SUB, "Left", NULL, 0, 0, (APTR)M_TEXT_ALIGN_LEFT },
+    { NM_SUB, "Centre", NULL, 0, 0, (APTR)M_TEXT_ALIGN_CENTRE },
+    { NM_SUB, "Right", NULL, 0, 0, (APTR)M_TEXT_ALIGN_RIGHT },
+    { NM_SUB, "Justify", NULL, 0, 0, (APTR)M_TEXT_ALIGN_JUSTIFY },
 
     { NM_TITLE, "Insert", NULL, 0, 0, NULL },
     { NM_ITEM, "Text Box", NULL, 0, 0, (APTR)M_INSERT_TEXTBOX },
@@ -2660,6 +2680,63 @@ static void caret_line(int dir)
     caret_moved();
 }
 
+static int format_begin(box *before)
+{
+    if (edit_obj < 0) {
+        set_status("Click inside an editable text box before formatting text.");
+        draw_status();
+        return 0;
+    }
+    edit_grouped = 0;
+    if (!edit_area(before)) before->w = 0;
+    return 1;
+}
+
+static void format_finish(int rc, const box *before, const char *message)
+{
+    if (rc < 0) {
+        set_status(rc == -2 ? "That text formatting cannot be applied here." :
+                             "There is not enough memory to format the text.");
+        draw_status();
+        return;
+    }
+    text_changed(before && before->w ? before : NULL);
+    set_status(message);
+    draw_status();
+}
+
+static void format_text_flags(unsigned flags, const char *message)
+{
+    box before;
+    int rc;
+    if (!format_begin(&before)) return;
+    rc = opr_text_toggle_flags(undo, deck, current, edit_obj,
+                               caret.para, caret.para, flags);
+    format_finish(rc, &before, message);
+}
+
+static void format_text_size(int points)
+{
+    box before;
+    char message[64];
+    int rc;
+    if (!format_begin(&before)) return;
+    rc = opr_text_set_size(undo, deck, current, edit_obj,
+                           caret.para, caret.para, points * OWF_TWIPS_PER_POINT);
+    snprintf(message, sizeof message, "Current paragraph set to %d point text.", points);
+    format_finish(rc, &before, message);
+}
+
+static void format_text_alignment(owf_align alignment, const char *message)
+{
+    box before;
+    int rc;
+    if (!format_begin(&before)) return;
+    rc = opr_text_set_alignment(undo, deck, current, edit_obj,
+                                caret.para, caret.para, alignment);
+    format_finish(rc, &before, message);
+}
+
 static int on_visible_slide(int mx, int my)
 {
     return deck && deck->nslides && mx >= slide_box.x && my >= slide_box.y &&
@@ -3677,6 +3754,19 @@ static void menu_action(ULONG id)
         stop_typing();
         draw_slide();
         break;
+    case M_TEXT_BOLD: format_text_flags(OWF_BOLD, "Bold toggled for the current paragraph."); break;
+    case M_TEXT_ITALIC: format_text_flags(OWF_ITALIC, "Italic toggled for the current paragraph."); break;
+    case M_TEXT_UNDERLINE: format_text_flags(OWF_UNDERLINE, "Underline toggled for the current paragraph."); break;
+    case M_TEXT_SIZE_10: format_text_size(10); break;
+    case M_TEXT_SIZE_12: format_text_size(12); break;
+    case M_TEXT_SIZE_14: format_text_size(14); break;
+    case M_TEXT_SIZE_18: format_text_size(18); break;
+    case M_TEXT_SIZE_24: format_text_size(24); break;
+    case M_TEXT_SIZE_36: format_text_size(36); break;
+    case M_TEXT_ALIGN_LEFT: format_text_alignment(OWF_ALIGN_LEFT, "Current paragraph aligned left."); break;
+    case M_TEXT_ALIGN_CENTRE: format_text_alignment(OWF_ALIGN_CENTRE, "Current paragraph centred."); break;
+    case M_TEXT_ALIGN_RIGHT: format_text_alignment(OWF_ALIGN_RIGHT, "Current paragraph aligned right."); break;
+    case M_TEXT_ALIGN_JUSTIFY: format_text_alignment(OWF_ALIGN_JUSTIFY, "Current paragraph justified."); break;
     case M_INSERT_TEXTBOX: insert_textbox(); break;
     case M_INSERT_PICTURE: insert_picture(); break;
     case M_INSERT_RECT: insert_shape(OWF_SHAPE_RECT); break;

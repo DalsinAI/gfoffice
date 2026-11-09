@@ -1025,6 +1025,72 @@ int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj)
     return 0;
 }
 
+static owf_obj *format_object(owf_deck *deck, int slide, int obj,
+                              int first_para, int last_para)
+{
+    owf_obj *o = object(deck, slide, obj);
+    if (!o || !opr_obj_editable(deck, slide, obj) || first_para < 0 ||
+        last_para < first_para || last_para >= o->text.nparas)
+        return NULL;
+    return o;
+}
+
+int opr_text_toggle_flags(opr_undo *u, owf_deck *deck, int slide, int obj,
+                          int first_para, int last_para, unsigned flags)
+{
+    const unsigned allowed = OWF_BOLD | OWF_ITALIC | OWF_UNDERLINE | OWF_STRIKE;
+    owf_obj *o = format_object(deck, slide, obj, first_para, last_para);
+    int p, r, all_set = 1, runs = 0;
+    if (!u || !o || !flags || (flags & ~allowed)) return -2;
+    for (p = first_para; p <= last_para; ++p)
+        for (r = 0; r < o->text.paras[p].nruns; ++r) {
+            runs++;
+            if ((o->text.paras[p].runs[r].fmt.flags & flags) != flags) all_set = 0;
+        }
+    if (!runs) return -2;
+    if (opr_undo_push(u, deck, slide, obj) < 0) return -1;
+    for (p = first_para; p <= last_para; ++p)
+        for (r = 0; r < o->text.paras[p].nruns; ++r)
+            if (all_set) o->text.paras[p].runs[r].fmt.flags &= ~flags;
+            else o->text.paras[p].runs[r].fmt.flags |= flags;
+    return 0;
+}
+
+int opr_text_set_size(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      int first_para, int last_para, int twips)
+{
+    owf_obj *o = format_object(deck, slide, obj, first_para, last_para);
+    int p, r, runs = 0, changed = 0;
+    if (!u || !o || twips < 1 || twips > 20000) return -2;
+    for (p = first_para; p <= last_para; ++p)
+        for (r = 0; r < o->text.paras[p].nruns; ++r) {
+            runs++;
+            if (o->text.paras[p].runs[r].fmt.size != twips) changed = 1;
+        }
+    if (!runs) return -2;
+    if (!changed) return 0;
+    if (opr_undo_push(u, deck, slide, obj) < 0) return -1;
+    for (p = first_para; p <= last_para; ++p)
+        for (r = 0; r < o->text.paras[p].nruns; ++r)
+            o->text.paras[p].runs[r].fmt.size = twips;
+    return 0;
+}
+
+int opr_text_set_alignment(opr_undo *u, owf_deck *deck, int slide, int obj,
+                           int first_para, int last_para, owf_align alignment)
+{
+    owf_obj *o = format_object(deck, slide, obj, first_para, last_para);
+    int p, changed = 0;
+    if (!u || !o || alignment < OWF_ALIGN_LEFT || alignment > OWF_ALIGN_JUSTIFY) return -2;
+    for (p = first_para; p <= last_para; ++p)
+        if (o->text.paras[p].fmt.align != alignment) changed = 1;
+    if (!changed) return 0;
+    if (opr_undo_push(u, deck, slide, obj) < 0) return -1;
+    for (p = first_para; p <= last_para; ++p)
+        o->text.paras[p].fmt.align = alignment;
+    return 0;
+}
+
 /* Add an already performed structural change to the undo stack. */
 static void structural_push(opr_undo *u, snapshot *s)
 {

@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.8.1"
+#define OPR_CORE_VERSION "0.9.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -133,6 +133,17 @@ opr_undo *opr_undo_new(void);
 void opr_undo_free(opr_undo *u);
 void opr_undo_clear(opr_undo *u);
 int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj);
+/* Rich-text formatting over an inclusive paragraph range. These commands
+ * share the text snapshot Undo used by typing and return -2 for an invalid
+ * object/range/value, -1 for memory failure, or 0. Toggle sets the requested
+ * flags on the whole range unless every run already has them, then clears
+ * them. Size is in twips; alignment is OWF_ALIGN_*. */
+int opr_text_toggle_flags(opr_undo *u, owf_deck *deck, int slide, int obj,
+                          int first_para, int last_para, unsigned flags);
+int opr_text_set_size(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      int first_para, int last_para, int twips);
+int opr_text_set_alignment(opr_undo *u, owf_deck *deck, int slide, int obj,
+                           int first_para, int last_para, owf_align alignment);
 /* Insert at (outside 0..n: the end), delete index, or move from to to. selected
  * is optional; on entry it is the selected slide and on return it follows the
  * change. A deck may have no slides at core level; the application may keep

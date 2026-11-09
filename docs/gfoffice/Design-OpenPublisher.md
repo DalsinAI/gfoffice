@@ -302,8 +302,17 @@ named chains across pages (with bounded handling for damaged cycles) back into
 the shared flow identity. The real newsletter is exported, imported again and
 rechecked as 10 chains/29 frames with the same rendered continuation.
 
+GFOpenPublisher 0.2.4 adds the first authored rich-text controls without
+duplicating layout code. The shared Presentation/Publisher core 0.9.0 applies
+bold, italic, underline, explicit font size and paragraph alignment to an
+inclusive paragraph range, with the existing text snapshot Undo. The native
+Format menu applies those commands to the paragraph containing the caret.
+GFOpenLayout already consumes the resulting run and paragraph styles, and ODP
+save/reload preserves their effective appearance. Character-range selection,
+font/colour choosers and decoding the original PUB formatting records remain.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
-P0 has not decoded text/paragraph formatting, fill and line colours, crops,
+P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap or columns, and the PDF picture encoder does not yet play
 WMF/EMF. The import report calls the plain styling approximation out.
 
