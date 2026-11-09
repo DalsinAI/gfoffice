@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.3.8 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.3.9 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -78,7 +78,11 @@ replacement typing and exact run formatting. Cut/Copy/Paste exchange exact
 cross-paragraph FTXT text, Find/Find Next wraps through the publication, and
 the shared OpenGadTools ruler now drags left, first-line/hanging and right
 paragraph indents through reusable deck core 0.22.0 with Undo/Redo and ODP
-persistence. Decoding original PUB formatting,
+persistence. Outside text-editing mode, Cut/Copy/Paste now exchanges supported
+top-level objects with Presentation through a custom IFF clipboard form. Its
+ODP payload preserves text, formatting, fonts and embedded pictures; shared
+core 0.23.0 remaps resources and inserts the pasted object as one Undo step.
+Decoding original PUB formatting,
 columns and wrap records, picture-alpha/custom contours and WMF/EMF playback
 remain later P1 work.
 
@@ -478,7 +482,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.14), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.15), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and
@@ -500,6 +504,10 @@ page or slide, wrap once and expose the match as the existing exact selection.
 Shared core 0.22.0 and the existing OpenGadTools ruler add direct left,
 first-line/hanging and right paragraph-indent editing to both Presentation and
 Publisher; each drag is one Undo step and the ODP round trip keeps the values.
+When no text box is being edited, Cut/Copy/Paste exchanges a selected top-level
+object between Presentation and Publisher. A custom IFF clipboard form carries
+ODP plus the source object index; core 0.23.0 remaps its fonts and pictures into
+the destination deck and makes Paste one undoable object insertion.
 The same menu applies one, two or three equal text columns;
 Presentation and Publisher share the command, model, ODP/PPTX interchange and
 GFOpenLayout implementation. Text Frame additionally edits the exact column

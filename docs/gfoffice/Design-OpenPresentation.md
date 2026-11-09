@@ -565,6 +565,15 @@ or right marker applies one paragraph-range Undo step and reflows through the
 existing OpenLayout path. The command and ODP persistence live in the deck
 core/model; the ruler is UI chrome, so neither belongs in a new OpenLayout API.
 
+GFOpenPresentation 0.6.15 and GFOpenPublisher 0.3.9 carry shared core 0.23.0
+and add system clipboard Cut/Copy/Paste for one supported top-level object.
+The Amiga adapter stores an ODP document plus source slide/object indexes in a
+custom IFF form; the portable paste command deep-copies the selected object,
+remaps referenced fonts and embedded pictures into the destination deck,
+offsets it and adds one object-presence Undo step. Text editing continues to
+use standard FTXT. Groups, charts and opaque kept-package objects remain
+refused until their dependent parts have portable copiers.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

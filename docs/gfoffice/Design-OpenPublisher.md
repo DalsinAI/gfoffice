@@ -431,6 +431,14 @@ hanging, and right marker drags are validated, undoable and preserved by ODP.
 OpenLayout receives the resulting paragraph format during its normal reflow;
 the ruler itself remains shared UI chrome rather than layout-engine policy.
 
+GFOpenPublisher 0.3.9 and GFOpenPresentation 0.6.15 carry shared core 0.23.0
+and add system clipboard Cut/Copy/Paste for supported top-level objects. A
+custom GFOffice IFF form carries ODP bytes and the source object index while
+ordinary text remains standard FTXT. Paste imports the payload, remaps fonts
+and picture bytes into the destination deck and records one object-presence
+Undo step. Groups, charts and opaque kept-package objects are deliberately
+refused until their dependent resources have portable copy contracts.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap records or original PUB column records, and the PDF picture encoder does not yet play

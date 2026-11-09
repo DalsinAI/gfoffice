@@ -97,6 +97,9 @@ membership for Publisher; it adds no Impress-facing command.
 GFOpenPresentation 0.6.14 carries shared core 0.22.0 and reuses the
 OpenGadTools ruler for undoable left, first-line/hanging and right paragraph
 indents, including ODP persistence.
+GFOpenPresentation 0.6.15 carries shared core 0.23.0 and exchanges one
+supported top-level object with Publisher through the Amiga system clipboard,
+including font and embedded-picture resource remapping and Undo/Redo.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
@@ -230,7 +233,7 @@ indents, including ODP persistence.
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
 | Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/duplication/deletion/position/size/shape rotation/drawing order/alignment/appearance: Yes (`opr_edit.c`); other object edits: No |
-| Clipboard: objects and slides | P3 (Shared E10) | Direct object and slide duplication: Yes; system clipboard copy/cut/paste: No |
+| Clipboard: objects and slides | P3 (Shared E10) | Top-level supported objects: system Cut/Copy/Paste Yes in 0.6.15; groups/charts/opaque objects and slide clipboard: No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
 | ARexx port `GFOPENPRESENTATION` | P4 | No |
 
