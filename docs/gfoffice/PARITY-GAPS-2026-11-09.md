@@ -146,8 +146,11 @@ document trials. All passed against the pinned GFOpenLayout 0.15 candidate.
 The new 246-check path also passed ASan/UBSan with leak detection disabled;
 LeakSanitizer cannot run under this environment's tracer. Optional `odfpy` and
 `openpyxl` third-party read-back checks were skipped because those packages are
-not installed. A clean pinned Open6 rebuild and public archive verification
-remain release tasks and must not be inferred from the host evidence above.
+not installed. A clean Open6 build from the exact pinned GFOpenLayout,
+GFOpenDraw and GFOpenGadTools commits rebuilt all six apps, Draw/DrawOL,
+OWConvert, five resident libraries, both library tests and the supported
+library-linked variants. Public archive download/hash verification remains a
+release task and must not be inferred from the build evidence above.
 
 There is no recorded Dale on-Amiga smoke test for RC67. Host and cross-build
 evidence must not be reported as Amiga runtime evidence.
