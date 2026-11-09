@@ -172,7 +172,7 @@ for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c; do
     OWFSRC_DECK="$OWFSRC_DECK $HERE/libowf/src/$f"
 done
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+"$CC" $CFLAGS_COMMON -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     $OWFSRC_DECK "$HERE"/src/deck/*.c "$HERE/src/core/ow_layout.c" $OL_C \
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
@@ -184,7 +184,7 @@ echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
 # ABI still exposes the P0 model only, and the deck bridge is intentionally kept in the portable core.
 OWFSRC_PUB="$OWFSRC_DECK $HERE/libowf/src/owf_cfb.c $HERE/libowf/src/in_pub.c"
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -DOPENPUBLISHER -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+"$CC" $CFLAGS_COMMON -DOPENPUBLISHER -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     $OWFSRC_PUB "$HERE"/src/deck/*.c "$HERE/src/pub/opp_import.c" "$HERE/src/core/ow_layout.c" $OL_C \
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \

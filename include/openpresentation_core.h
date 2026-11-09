@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.22.0"
+#define OPR_CORE_VERSION "0.23.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -260,6 +260,13 @@ int opr_obj_insert_picture(opr_undo *u, owf_deck *deck, int slide,
  * text, points, lists, table widths and metadata are independent. */
 int opr_obj_duplicate(opr_undo *u, owf_deck *deck, int slide, int obj,
                       int offset_x, int offset_y, int *selected);
+/* Paste one top-level object from another deck, remapping its font and image
+ * resources into the destination. The source remains untouched. Imported
+ * opaque objects, charts, groups and inline frames are refused until their
+ * dependent package parts have a portable copier. */
+int opr_obj_paste(opr_undo *u, owf_deck *deck, int slide,
+                  const owf_deck *source_deck, int source_slide, int source_obj,
+                  int offset_x, int offset_y, int *selected);
 typedef enum {
     OPR_ARRANGE_FRONT, OPR_ARRANGE_FORWARD,
     OPR_ARRANGE_BACKWARD, OPR_ARRANGE_BACK

@@ -2068,6 +2068,131 @@ int opr_obj_duplicate(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+static int paste_font(owf_doc *to, const owf_doc *from, int font)
+{
+    if (font < 0)
+        return -1;
+    if (!to || !from || font >= from->nfonts || !from->fonts[font].name)
+        return -2;
+    return owf_doc_font(to, from->fonts[font].name, from->fonts[font].kind);
+}
+
+static int paste_image(owf_doc *to, const owf_doc *from, int image)
+{
+    const owf_image *im;
+    if (!to || !from || image < 0 || image >= from->nimages)
+        return -2;
+    im = &from->images[image];
+    if (!im->data || !im->length)
+        return -2;
+    return owf_doc_add_image(to, im->name, im->mime, im->data, im->length,
+                             im->width, im->height, im->alt);
+}
+
+static int paste_object_resources(owf_obj *o, owf_doc *to, const owf_doc *from)
+{
+    int p, r, i, mapped;
+    if (!o || !to || !from)
+        return -2;
+    if (o->kind == OWF_OBJ_PICTURE && o->image >= 0) {
+        mapped = paste_image(to, from, o->image);
+        if (mapped < 0) return mapped;
+        o->image = mapped;
+    }
+    for (p = 0; p < o->text.nparas; ++p)
+        for (r = 0; r < o->text.paras[p].nruns; ++r) {
+            owf_run *run = &o->text.paras[p].runs[r];
+            if (run->fmt.font >= 0) {
+                mapped = paste_font(to, from, run->fmt.font);
+                if (mapped < 0) return mapped;
+                run->fmt.font = mapped;
+            }
+            if (run->kind == OWF_RUN_IMAGE) {
+                mapped = paste_image(to, from, run->image);
+                if (mapped < 0) return mapped;
+                run->image = mapped;
+            } else if (run->kind == OWF_RUN_FRAME) {
+                return -2;
+            }
+        }
+    if (o->list)
+        for (i = 0; i < OWF_TEXT_LEVELS; ++i) {
+            if (o->list[i].chars.font >= 0) {
+                mapped = paste_font(to, from, o->list[i].chars.font);
+                if (mapped < 0) return mapped;
+                o->list[i].chars.font = mapped;
+            }
+            if (o->list[i].bullet_font >= 0) {
+                mapped = paste_font(to, from, o->list[i].bullet_font);
+                if (mapped < 0) return mapped;
+                o->list[i].bullet_font = mapped;
+            }
+        }
+    return 0;
+}
+
+int opr_obj_paste(opr_undo *u, owf_deck *deck, int slide,
+                  const owf_deck *source_deck, int source_slide, int source_obj,
+                  int offset_x, int offset_y, int *selected)
+{
+    snapshot s;
+    owf_obj copy, resolved, *added;
+    const owf_obj *source;
+    long long x, y;
+    int index, rc;
+    if (!u || !deck || !deck->res || slide < 0 || slide >= deck->nslides ||
+        !source_deck || !source_deck->res || source_slide < 0 ||
+        source_slide >= source_deck->nslides || source_obj < 0 ||
+        source_obj >= source_deck->slides[source_slide].nobjs)
+        return -1;
+    source = &source_deck->slides[source_slide].objs[source_obj];
+    if (source->kind == OWF_OBJ_GROUP || source->kind == OWF_OBJ_CHART ||
+        source->parent >= 0 || source->keep >= 0)
+        return -2;
+    if (owf_deck_resolve(source_deck, source_slide, source_obj, &resolved, NULL) < 0 ||
+        resolved.width < 1 || resolved.height < 1 ||
+        resolved.width > deck->width || resolved.height > deck->height)
+        return -2;
+    memset(&copy, 0, sizeof copy);
+    if (owf_obj_copy(&copy, source) < 0)
+        return -1;
+    rc = paste_object_resources(&copy, deck->res, source_deck->res);
+    if (rc < 0) {
+        owf_obj_clear(&copy);
+        return rc;
+    }
+    x = (long long)resolved.x + offset_x;
+    y = (long long)resolved.y + offset_y;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x + resolved.width > deck->width) x = deck->width - resolved.width;
+    if (y + resolved.height > deck->height) y = deck->height - resolved.height;
+    copy.x = (int)x;
+    copy.y = (int)y;
+    copy.width = resolved.width;
+    copy.height = resolved.height;
+    copy.flags &= ~(unsigned)OWF_OBJ_INHERIT_BOX;
+    copy.parent = -1;
+    copy.flow_story = -1;
+    free(copy.flow_next);
+    copy.flow_next = NULL;
+    index = deck->slides[slide].nobjs;
+    added = owf_slide_add(&deck->slides[slide], copy.kind);
+    if (!added) {
+        owf_obj_clear(&copy);
+        return -1;
+    }
+    *added = copy;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_PRESENCE;
+    s.slide = slide;
+    s.obj = index;
+    s.focus = s.other_focus = slide;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
 int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj)
 {
     snapshot s;

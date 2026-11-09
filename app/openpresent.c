@@ -86,7 +86,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.8 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.9 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -95,7 +95,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.14 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.15 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -341,6 +341,7 @@ static void draw_status(void);
 static void layout(void);
 static void insert_picture(void);
 static void update_ruler(void);
+static void delete_selected_object(void);
 
 /* ---- Small helpers ---- */
 
@@ -3088,6 +3089,48 @@ static int copy_text_selection(void)
     return 1;
 }
 
+static int copy_object_selection(void)
+{
+    const owf_deck_format *format = owf_deck_format_named("odp");
+    const owf_obj *o;
+    unsigned char *data = NULL;
+    size_t length = 0;
+    int ok;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select one object to copy.");
+        draw_status();
+        return 0;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->parent >= 0 || o->kind == OWF_OBJ_GROUP || o->kind == OWF_OBJ_CHART || o->keep >= 0) {
+        set_status("That object still depends on unsupported grouped or imported package data.");
+        draw_status();
+        return 0;
+    }
+    if (!format || !format->export ||
+        format->export(deck, &data, &length, NULL) != OWF_OK || !data) {
+        tell("Clipboard", "The object could not be prepared as an ODP clipboard fragment.");
+        free(data);
+        return 0;
+    }
+    ok = ow_clipboard_set_deck_object(data, length, current, selected_obj);
+    free(data);
+    if (!ok) {
+        tell("Clipboard", "clipboard.device could not accept the selected object.");
+        return 0;
+    }
+    set_status("Copied the selected object to the clipboard.");
+    draw_status();
+    return 1;
+}
+
+static int copy_selection(void)
+{
+    if (edit_obj >= 0)
+        return copy_text_selection();
+    return copy_object_selection();
+}
+
 static void cut_text_selection(void)
 {
     box before;
@@ -3102,6 +3145,19 @@ static void cut_text_selection(void)
     edit_grouped = 0;
     set_status("Cut selected text to the clipboard.");
     text_changed(before.w ? &before : NULL);
+    draw_status();
+}
+
+static void cut_selection(void)
+{
+    if (edit_obj >= 0) {
+        cut_text_selection();
+        return;
+    }
+    if (!copy_object_selection())
+        return;
+    delete_selected_object();
+    set_status("Cut the selected object to the clipboard.");
     draw_status();
 }
 
@@ -3125,6 +3181,57 @@ static void paste_text(void)
     edit_grouped = 0;
     set_status("Pasted text from the clipboard.");
     draw_status();
+}
+
+static void paste_object(void)
+{
+    unsigned char *data;
+    size_t length = 0;
+    int source_slide = -1, source_obj = -1, selected = -1, rc;
+    owf_deck *source = NULL;
+    if (!deck || !deck->nslides) return;
+    data = ow_clipboard_get_deck_object(&length, &source_slide, &source_obj);
+    if (!data) {
+        set_status("The clipboard has no GFOffice deck object.");
+        draw_status();
+        return;
+    }
+    rc = owf_import_deck_memory(data, length, "odp", &source, NULL, NULL);
+    free(data);
+    if (rc != OWF_OK || !source) {
+        owf_deck_free(source);
+        set_status("The clipboard's deck object is damaged or unsupported.");
+        draw_status();
+        return;
+    }
+    rc = opr_obj_paste(undo, deck, current, source, source_slide, source_obj,
+                       240, 240, &selected);
+    owf_deck_free(source);
+    if (rc < 0) {
+        set_status(rc == -2 ? "That clipboard object still has unsupported package dependencies." :
+                             "There is not enough memory to paste that object.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    selected_obj = selected;
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Pasted the object from the clipboard.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
+static void paste_selection(void)
+{
+    if (edit_obj >= 0)
+        paste_text();
+    else
+        paste_object();
 }
 
 static void find_next_text(int ask_text)
@@ -4735,9 +4842,9 @@ static void menu_action(ULONG id)
     case M_QUIT: if (confirm_discard()) quit_now = 1; break;
     case M_UNDO: do_undo(0); break;
     case M_REDO: do_undo(1); break;
-    case M_CUT: cut_text_selection(); break;
-    case M_COPY: copy_text_selection(); break;
-    case M_PASTE: paste_text(); break;
+    case M_CUT: cut_selection(); break;
+    case M_COPY: copy_selection(); break;
+    case M_PASTE: paste_selection(); break;
     case M_FIND: find_next_text(1); break;
     case M_FIND_NEXT: find_next_text(0); break;
     case M_SELECT_ALL: select_all_text(); break;

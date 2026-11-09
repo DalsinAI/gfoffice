@@ -1141,6 +1141,70 @@ static void picture_insertion(void)
     owf_deck_free(d);
 }
 
+static void object_clipboard_paste(void)
+{
+    static const unsigned char image_bytes[] = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
+    owf_deck *source = owf_deck_new(10000, 8000);
+    owf_deck *dest = owf_deck_new(10000, 8000);
+    owf_deck *round = NULL;
+    owf_slide *ss = source ? owf_deck_add_slide(source, -1, -1) : NULL;
+    owf_slide *ds = dest ? owf_deck_add_slide(dest, -1, -1) : NULL;
+    opr_undo *su = opr_undo_new(), *du = opr_undo_new();
+    opr_textbox_spec text_spec;
+    opr_picture_spec picture_spec;
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    unsigned char *data = NULL;
+    size_t data_length = 0;
+    int selected = -1, font, slide = -1, obj = -1;
+    CHECK(source && dest && ss && ds && su && du, "decks for cross-document object paste");
+    if (!source || !dest || !ss || !ds || !su || !du) goto out;
+    memset(&text_spec, 0, sizeof text_spec);
+    text_spec.x = 600; text_spec.y = 700; text_spec.width = 3200; text_spec.height = 1200;
+    text_spec.inset[0] = text_spec.inset[2] = 100;
+    text_spec.inset[1] = text_spec.inset[3] = 60;
+    text_spec.text = "Clipboard object";
+    CHECK(!opr_obj_insert_textbox(su, source, 0, &text_spec, &selected) && selected == 0,
+          "prepare a source text object");
+    font = owf_doc_font(source->res, "Clipboard Serif", OWF_FONT_SERIF);
+    CHECK(font >= 0, "prepare a source-only font resource");
+    if (font >= 0) ss->objs[0].text.paras[0].runs[0].fmt.font = font;
+    memset(&picture_spec, 0, sizeof picture_spec);
+    picture_spec.x = 4200; picture_spec.y = 900; picture_spec.width = 1800; picture_spec.height = 1400;
+    picture_spec.name = "clipboard.png"; picture_spec.mime = "image/png";
+    picture_spec.data = image_bytes; picture_spec.length = sizeof image_bytes;
+    picture_spec.natural_width = 1800; picture_spec.natural_height = 1400;
+    CHECK(!opr_obj_insert_picture(su, source, 0, &picture_spec, &selected) && selected == 1,
+          "prepare a source picture object");
+    CHECK(odp && odp->export && odp->export(source, &data, &data_length, NULL) == OWF_OK && data_length > 0 &&
+          owf_import_deck_memory(data, data_length, "odp", &round, NULL, NULL) == OWF_OK && round,
+          "round-trip the object clipboard's ODP transport");
+    if (!round) goto out;
+    selected = -1;
+    CHECK(!opr_obj_paste(du, dest, 0, round, 0, 0, 240, 240, &selected) && selected == 0 &&
+          ds->nobjs == 1 && ds->objs[0].x == text_spec.x + 240 &&
+          ds->objs[0].text.paras[0].runs[0].fmt.font >= 0 &&
+          !strcmp(dest->res->fonts[ds->objs[0].text.paras[0].runs[0].fmt.font].name,
+                  "Clipboard Serif"),
+          "paste text with an independently remapped font resource");
+    CHECK(!opr_obj_paste(du, dest, 0, round, 0, 1, 240, 240, &selected) && selected == 1 &&
+          ds->nobjs == 2 && ds->objs[1].image >= 0 &&
+          dest->res->images[ds->objs[1].image].length == sizeof image_bytes &&
+          !memcmp(dest->res->images[ds->objs[1].image].data, image_bytes, sizeof image_bytes),
+          "paste a picture with independent embedded resource bytes");
+    CHECK(!opr_undo_undo(du, dest, &slide, &obj) && ds->nobjs == 1 && obj == -1 &&
+          !opr_undo_redo(du, dest, &slide, &obj) && ds->nobjs == 2 && obj == 1,
+          "pasted object presence participates in Undo and Redo");
+    CHECK(opr_obj_paste(du, dest, 0, round, 0, 99, 0, 0, &selected) == -1,
+          "object paste rejects an invalid source index");
+out:
+    opr_undo_free(su);
+    opr_undo_free(du);
+    free(data);
+    owf_deck_free(round);
+    owf_deck_free(source);
+    owf_deck_free(dest);
+}
+
 static int text_crosses(const opr_slide *laid, int frame,
                         ol_unit x0, ol_unit y0, ol_unit x1, ol_unit y1)
 {
@@ -1388,6 +1452,7 @@ int main(int argc, char **argv)
     textbox_insertion();
     character_selection_ranges();
     picture_insertion();
+    object_clipboard_paste();
     object_wrapping();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
