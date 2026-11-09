@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.63 (9.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.64 (9.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS
 };
 
 static struct NewMenu menus[] = {
@@ -243,6 +243,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_FILTER_CLEAR },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
+    { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
     { NM_ITEM, "Pivot Summary...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
     { NM_ITEM, "Refresh Pivot Summary", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
@@ -3086,6 +3087,38 @@ static void do_goal_seek(void)
         set_status("Goal Seek solution not applied.");
 }
 
+static void do_multiple_operations(void)
+{
+    oc_selection selection;
+    char formula_ref[24] = "", input_ref[24] = "";
+    unsigned formula_row, formula_col, input_row, input_col;
+    int rc, sheet = oc_core_sheet(core);
+    oc_core_selection(core, &selection);
+    if (selection.nranges != 1 ||
+        selection.ranges[0].first_col != selection.ranges[0].last_col) {
+        set_status("Select one column of numeric trial values first.");
+        return;
+    }
+    if (!text_requester("Multiple Operations", "Formula cell", "", formula_ref, sizeof formula_ref)) return;
+    if (!one_cell_ref(formula_ref, &formula_row, &formula_col)) {
+        set_status("Multiple Operations needs one formula cell, such as D1.");
+        return;
+    }
+    if (!text_requester("Multiple Operations", "Input cell", "", input_ref, sizeof input_ref)) return;
+    if (!one_cell_ref(input_ref, &input_row, &input_col)) {
+        set_status("Multiple Operations needs one input cell, such as C1.");
+        return;
+    }
+    rc = oc_core_multiple_operations(core, sheet, formula_row, formula_col,
+                                     sheet, input_row, input_col);
+    if (rc == OWF_ERR_FORMAT)
+        set_status("Use distinct formula/input cells outside the trial and output columns.");
+    else if (rc == OWF_ERR_UNSUPPORTED)
+        set_status("Every trial and calculated result must be numeric; use at most 65,536 trials.");
+    else
+        result(rc, "Multiple Operations results filled the next column; Undo removes them.");
+}
+
 static int column_word(const char *text, size_t length, unsigned *column)
 {
     char cell[12];
@@ -4234,6 +4267,7 @@ static void menu_action(ULONG id)
         break;
     case M_FILTER_ACTIVE: do_filter_active(); break;
     case M_GOAL_SEEK: do_goal_seek(); break;
+    case M_MULTIPLE_OPS: do_multiple_operations(); break;
     case M_SUBTOTALS: do_subtotals(); break;
     case M_PIVOT_SUMMARY: do_pivot_summary(); break;
     case M_PIVOT_REFRESH:

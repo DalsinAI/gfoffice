@@ -4745,6 +4745,43 @@ static void test_goal_seek(void)
     oc_core_free(core);
 }
 
+static void test_multiple_operations(void)
+{
+    oc_core *core = fresh();
+    owf_range selected;
+    unsigned long changes;
+    if (!core)
+        return;
+    enter_at(core, "A1", "1");
+    enter_at(core, "A2", "2");
+    enter_at(core, "A3", "3");
+    enter_at(core, "B2", "99");
+    CHECK(oc_core_add_sheet(core, "Model") == 1);
+    enter_at(core, "D1", "0");
+    enter_at(core, "C1", "=D1*D1+1");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_parse_range("A1:A3", &selected));
+    oc_core_select_range(core, &selected);
+    changes = oc_core_changes(core);
+    CHECK(oc_core_multiple_operations(core, 1, 0, 2, 1, 0, 3) == OWF_OK);
+    CHECK(fabs(num(core, "B1") - 2.0) < 1e-12 && fabs(num(core, "B2") - 5.0) < 1e-12 &&
+          fabs(num(core, "B3") - 10.0) < 1e-12 && oc_core_changes(core) == changes + 1);
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(fabs(num(core, "D1")) < 1e-12 && fabs(num(core, "C1") - 1.0) < 1e-12);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK && empty(core, "B1") &&
+          fabs(num(core, "B2") - 99.0) < 1e-12 && empty(core, "B3"));
+
+    enter_at(core, "A2", "not a number");
+    oc_core_select_range(core, &selected);
+    changes = oc_core_changes(core);
+    CHECK(oc_core_multiple_operations(core, 1, 0, 2, 1, 0, 3) == OWF_ERR_UNSUPPORTED);
+    CHECK(empty(core, "B1") && fabs(num(core, "B2") - 99.0) < 1e-12 &&
+          empty(core, "B3") && oc_core_changes(core) == changes);
+    CHECK(oc_core_multiple_operations(core, 0, 0, 0, 1, 0, 3) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 static void test_subtotals(void)
 {
     static const char *const rows[][3] = {
@@ -5038,6 +5075,7 @@ int main(void)
     test_status();
     test_files();
     test_goal_seek();
+    test_multiple_operations();
     test_subtotals();
     test_pivot_summary();
     test_pdf();

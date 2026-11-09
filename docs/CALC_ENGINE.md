@@ -30,6 +30,22 @@ the value actually achieved and the iteration count. Formula variables,
 non-numeric results, non-finite values and searches which do not converge are
 reported rather than committed.
 
+## Multiple Operations
+
+GFOpenCalc 0.1.64 adds the one-variable form of Apache Calc's Data > Multiple
+Operations. Portable-core API `oc_core_multiple_operations`
+(`opencalc_core.h` 0.29.0) takes a formula cell and an input cell while the
+current selection supplies one column of up to 65,536 numeric trial values.
+For each trial, a private workbook receives the input and the ordinary formula
+engine recalculates; numeric results are collected before any output is built.
+
+A second deep copy receives the complete result column immediately to the
+right of the trials. Only after every trial and write succeeds does that book
+replace the live one, as one Undo step. Formula and input cells may be on a
+different sheet, the original input is not changed, and an invalid trial or
+nonnumeric result leaves the live book untouched. The two-variable matrix form
+of Multiple Operations remains to be implemented.
+
 ## Grouped subtotal authoring
 
 GFOpenCalc 0.1.61's Data > Subtotals reuses the engine's existing `SUBTOTAL`

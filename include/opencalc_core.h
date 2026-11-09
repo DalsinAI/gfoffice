@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.28.0"
+#define OC_CORE_VERSION "0.29.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -327,6 +327,16 @@ int oc_core_goal_seek(const oc_core *core,
                       int variable_sheet, unsigned variable_row, unsigned variable_col,
                       double tolerance, int max_iterations,
                       double *solution, double *achieved, int *iterations);
+
+/* One-variable Data > Multiple Operations. The current selection must be one
+ * column of at most 65,536 numeric trial values; results are written into the
+ * column immediately to its right. For every trial value a private workbook
+ * puts it in the input cell, recalculates, and records the numeric formula
+ * result. Formula/input may be on different sheets. Evaluation never touches
+ * the live book; all output values are committed together as one Undo step. */
+int oc_core_multiple_operations(oc_core *core,
+                                int formula_sheet, unsigned formula_row, unsigned formula_col,
+                                int input_sheet, unsigned input_row, unsigned input_col);
 
 /* ---- Commands on the selection (each one undo step) ---- */
 

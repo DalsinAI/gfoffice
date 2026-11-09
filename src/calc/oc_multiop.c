@@ -1,0 +1,144 @@
+/*
+ * GFOpenCalc's portable core: one-variable Data > Multiple Operations.
+ * Trial evaluation and output construction both happen off the live book.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
+ */
+#include "oc_internal.h"
+
+#include <float.h>
+#include <stdlib.h>
+
+#define MULTIOP_MAX_TRIALS 65536u
+
+static int finite_number(double value)
+{
+    return value == value && value <= DBL_MAX && value >= -DBL_MAX;
+}
+
+static int in_range(int sheet, unsigned row, unsigned col, int wanted_sheet, const owf_range *range)
+{
+    return sheet == wanted_sheet && row >= range->first_row && row <= range->last_row &&
+           col >= range->first_col && col <= range->last_col;
+}
+
+int oc_core_multiple_operations(oc_core *core,
+                                int formula_sheet, unsigned formula_row, unsigned formula_col,
+                                int input_sheet, unsigned input_row, unsigned input_col)
+{
+    const oc_selection *selection;
+    const owf_cell *formula_cell, *input_cell, *trial, *result;
+    owf_range source, output, expanded;
+    owf_book *scratch = NULL, *work = NULL, *old_book;
+    owf_calc *scratch_calc = NULL, *work_calc = NULL, *old_calc;
+    oc_undo *undo = NULL;
+    double *values = NULL;
+    unsigned count, i, row;
+    int rc = OWF_ERR_FORMAT, sheet_index;
+    char number[48];
+
+    if (!core || formula_sheet < 0 || formula_sheet >= core->book->nsheets ||
+        input_sheet < 0 || input_sheet >= core->book->nsheets ||
+        formula_row >= OC_MAX_ROWS || formula_col >= OC_MAX_COLS ||
+        input_row >= OC_MAX_ROWS || input_col >= OC_MAX_COLS ||
+        (formula_sheet == input_sheet && formula_row == input_row && formula_col == input_col))
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    selection = &oc_state_const(core)->sel;
+    if (selection->nranges != 1)
+        return OWF_ERR_UNSUPPORTED;
+    source = selection->ranges[0];
+    if (source.first_col != source.last_col || source.last_col + 1u >= OC_MAX_COLS)
+        return OWF_ERR_FORMAT;
+    count = source.last_row - source.first_row + 1u;
+    if (!count || count > MULTIOP_MAX_TRIALS)
+        return OWF_ERR_UNSUPPORTED;
+    sheet_index = core->sheet;
+    output = source;
+    output.first_col = output.last_col = source.last_col + 1u;
+    if (in_range(formula_sheet, formula_row, formula_col, sheet_index, &source) ||
+        in_range(formula_sheet, formula_row, formula_col, sheet_index, &output) ||
+        in_range(input_sheet, input_row, input_col, sheet_index, &source) ||
+        in_range(input_sheet, input_row, input_col, sheet_index, &output))
+        return OWF_ERR_FORMAT;
+    formula_cell = owf_sheet_find(&core->book->sheets[formula_sheet], formula_row, formula_col);
+    input_cell = owf_sheet_find(&core->book->sheets[input_sheet], input_row, input_col);
+    if (!formula_cell || !formula_cell->formula ||
+        (input_cell && (input_cell->formula ||
+         (input_cell->type != OWF_VALUE_EMPTY && input_cell->type != OWF_VALUE_NUMBER))))
+        return OWF_ERR_FORMAT;
+    values = malloc((size_t)count * sizeof *values);
+    if (!values)
+        return OWF_ERR_MEMORY;
+    scratch = oc_book_copy(core->book);
+    if (!scratch) { rc = OWF_ERR_MEMORY; goto done; }
+    scratch_calc = owf_calc_new(scratch);
+    if (!scratch_calc) { rc = OWF_ERR_MEMORY; goto done; }
+    rc = owf_calc_recalc_all(scratch_calc);
+    if (rc != OWF_OK) goto done;
+    for (i = 0, row = source.first_row; i < count; ++i, ++row) {
+        trial = owf_sheet_find(&scratch->sheets[sheet_index], row, source.first_col);
+        if (!trial || trial->type != OWF_VALUE_NUMBER || !finite_number(trial->number)) {
+            rc = OWF_ERR_UNSUPPORTED;
+            goto done;
+        }
+        owf_number_text(trial->number, number);
+        rc = owf_calc_enter(scratch_calc, input_sheet, input_row, input_col, number);
+        if (rc != OWF_OK) goto done;
+        rc = owf_calc_recalc(scratch_calc);
+        if (rc != OWF_OK) goto done;
+        result = owf_sheet_find(&scratch->sheets[formula_sheet], formula_row, formula_col);
+        if (!result || result->type != OWF_VALUE_NUMBER || !finite_number(result->number)) {
+            rc = OWF_ERR_UNSUPPORTED;
+            goto done;
+        }
+        values[i] = result->number;
+    }
+
+    work = oc_book_copy(core->book);
+    if (!work) { rc = OWF_ERR_MEMORY; goto done; }
+    work_calc = owf_calc_new(work);
+    if (!work_calc) { rc = OWF_ERR_MEMORY; goto done; }
+    for (i = 0, row = source.first_row; i < count; ++i, ++row) {
+        owf_number_text(values[i], number);
+        rc = owf_calc_enter(work_calc, sheet_index, row, output.first_col, number);
+        if (rc != OWF_OK) goto done;
+    }
+    rc = owf_calc_recalc(work_calc);
+    if (rc != OWF_OK) goto done;
+
+    undo = oc_undo_new(core, OC_UNDO_BOOK);
+    if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+        oc_undo_free(undo);
+        undo = NULL;
+    }
+    oc_cf_forget(core);
+    oc_charts_forget(core);
+    old_book = core->book;
+    old_calc = core->calc;
+    core->book = work;
+    core->calc = work_calc;
+    work = NULL;
+    work_calc = NULL;
+    owf_calc_free(old_calc);
+    owf_book_free(old_book);
+    oc_undo_push(core, undo);
+    undo = NULL;
+    oc_changed(core);
+    core->used_valid = 0;
+    core->unchecked = 0;
+    if (core->clip.valid)
+        core->clip.cut = 0;
+    expanded = source;
+    expanded.last_col++;
+    oc_core_select_range(core, &expanded);
+    rc = OWF_OK;
+done:
+    oc_undo_free(undo);
+    owf_calc_free(scratch_calc);
+    owf_book_free(scratch);
+    owf_calc_free(work_calc);
+    owf_book_free(work);
+    free(values);
+    return rc;
+}
