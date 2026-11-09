@@ -1020,6 +1020,8 @@ static void picture_insertion(void)
     opr_undo *u = opr_undo_new();
     const owf_deck_format *odp = owf_deck_format_named("odp");
     opr_picture_spec spec, invalid;
+    int edited_crop[4] = {133, 67, 200, 200};
+    int bad_crop[4] = {600, 0, 400, 0};
     unsigned char *data = NULL;
     size_t length = 0;
     owf_deck *back = NULL;
@@ -1053,6 +1055,17 @@ static void picture_insertion(void)
           s->objs[0].kind == OWF_OBJ_PICTURE && s->objs[0].image == 0,
           "redo picture insertion restores and selects it");
     opr_undo_clear(u);
+    CHECK(!opr_obj_set_picture_crop(u, d, 0, 0, edited_crop) &&
+          !memcmp(s->objs[0].crop, edited_crop, sizeof edited_crop),
+          "edit all four picture crop edges as one operation");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == 0 &&
+          s->objs[0].crop[0] == spec.crop[0] && s->objs[0].crop[3] == spec.crop[3] &&
+          !opr_undo_redo(u, d, &slide, &obj) && obj == 0 &&
+          !memcmp(s->objs[0].crop, edited_crop, sizeof edited_crop),
+          "picture crop has one Undo and Redo snapshot");
+    CHECK(opr_obj_set_picture_crop(u, d, 0, 0, bad_crop) == -2 &&
+          !memcmp(s->objs[0].crop, edited_crop, sizeof edited_crop),
+          "a crop that removes the source area is rejected transactionally");
     invalid = spec; invalid.data = NULL;
     CHECK(opr_obj_insert_picture(u, d, 0, &invalid, &selected) == -2 &&
           s->nobjs == 1 && d->res->nimages == 1,
@@ -1078,9 +1091,9 @@ static void picture_insertion(void)
         CHECK(saved->x == spec.x && saved->width == spec.width,
               "picture geometry survives the ODP round trip: %d/%d, %d/%d",
               saved->x, spec.x, saved->width, spec.width);
-        CHECK(saved->crop[0] == spec.crop[0] && saved->crop[3] == spec.crop[3],
+        CHECK(saved->crop[0] == edited_crop[0] && saved->crop[3] == edited_crop[3],
               "picture crop survives the ODP round trip: %d/%d, %d/%d",
-              saved->crop[0], spec.crop[0], saved->crop[3], spec.crop[3]);
+              saved->crop[0], edited_crop[0], saved->crop[3], edited_crop[3]);
         CHECK(saved->alt && !strcmp(saved->alt, spec.alt),
               "picture description survives the ODP round trip: %s",
               saved->alt ? saved->alt : "(null)");

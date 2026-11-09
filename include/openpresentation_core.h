@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.18.0"
+#define OPR_CORE_VERSION "0.19.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -273,6 +273,12 @@ int opr_obj_set_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj,
  * bottom and left twips. The operation is one undo step. */
 int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,
                      owf_frame_wrap wrap, const int gap[4]);
+/* Crop one top-level picture by thousandths from left, top, right and bottom.
+ * Opposite sides must leave a positive source area. The four values change as
+ * one undo step; existing OpenLayout crop rendering and ODP interchange
+ * consume them. */
+int opr_obj_set_picture_crop(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             const int crop[4]);
 /* Link a top-level text frame to a later empty top-level text frame, or remove
  * any non-first frame from a flow. A target must not already belong to another
  * flow; an insertion before a source's existing successor closes into the

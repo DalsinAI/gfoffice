@@ -671,6 +671,7 @@ typedef enum {
     SNAP_OBJ_LOOK,
     SNAP_OBJ_COLUMNS,
     SNAP_OBJ_WRAP,
+    SNAP_OBJ_CROP,
     SNAP_OBJ_FLOW
 } snapshot_kind;
 
@@ -709,6 +710,8 @@ typedef struct {
     /* SNAP_OBJ_WRAP: object exclusion kind and top/right/bottom/left gaps. */
     unsigned char wrap;
     int wrap_gap[4];
+    /* SNAP_OBJ_CROP: left/top/right/bottom thousandths removed. */
+    int crop[4];
     /* SNAP_OBJ_FLOW: the one or two flow identities changed atomically. */
     int flow_count, flow_slide[2], flow_obj[2], flow_story[2];
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
@@ -1075,6 +1078,14 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         memcpy(o->wrap_gap, s->wrap_gap, sizeof o->wrap_gap);
         s->wrap = wrap;
         memcpy(s->wrap_gap, gaps, sizeof s->wrap_gap);
+    } else if (s->kind == SNAP_OBJ_CROP) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        int crop[4];
+        if (!o || o->kind != OWF_OBJ_PICTURE)
+            return -1;
+        memcpy(crop, o->crop, sizeof crop);
+        memcpy(o->crop, s->crop, sizeof o->crop);
+        memcpy(s->crop, crop, sizeof s->crop);
     } else if (s->kind == SNAP_OBJ_FLOW) {
         int i;
         if (s->flow_count < 1 || s->flow_count > 2)
@@ -2102,6 +2113,34 @@ int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_obj_set_picture_crop(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             const int crop[4])
+{
+    snapshot s;
+    owf_obj *o = object(deck, slide, obj);
+    int side;
+    if (!u || !o || !crop)
+        return -1;
+    if (o->parent >= 0 || o->kind != OWF_OBJ_PICTURE)
+        return -2;
+    for (side = 0; side < 4; ++side)
+        if (crop[side] < 0 || crop[side] >= 1000)
+            return -2;
+    if (crop[0] + crop[2] >= 1000 || crop[1] + crop[3] >= 1000)
+        return -2;
+    if (!memcmp(o->crop, crop, sizeof o->crop))
+        return 0;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_CROP;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    memcpy(s.crop, o->crop, sizeof s.crop);
+    memcpy(o->crop, crop, sizeof o->crop);
+    structural_push(u, &s);
+    return 0;
+}
+
 static int story_has_content(const owf_story *story)
 {
     int p, r;
@@ -2272,7 +2311,8 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
     if (slide) *slide = focus;
     if (obj) {
         if (s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX || s->kind == SNAP_OBJ_ROTATION ||
-            s->kind == SNAP_OBJ_LOOK || s->kind == SNAP_OBJ_COLUMNS || s->kind == SNAP_OBJ_WRAP)
+            s->kind == SNAP_OBJ_LOOK || s->kind == SNAP_OBJ_COLUMNS || s->kind == SNAP_OBJ_WRAP ||
+            s->kind == SNAP_OBJ_CROP)
             *obj = s->obj;
         else if (s->kind == SNAP_OBJ_ORDER)
             *obj = s->from;
