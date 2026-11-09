@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.3.7 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.3.8 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -74,7 +74,11 @@ colour through shared core 0.14.0 with
 Undo/Redo and ODP persistence. Font Family adds or reuses the named family in
 the shared deck resources through core 0.15.0 and persists it in ODP.
 Character-range selection now includes drag, Shift+Arrow and Select All with
-replacement typing and exact run formatting. Decoding original PUB formatting,
+replacement typing and exact run formatting. Cut/Copy/Paste exchange exact
+cross-paragraph FTXT text, Find/Find Next wraps through the publication, and
+the shared OpenGadTools ruler now drags left, first-line/hanging and right
+paragraph indents through reusable deck core 0.22.0 with Undo/Redo and ODP
+persistence. Decoding original PUB formatting,
 columns and wrap records, picture-alpha/custom contours and WMF/EMF playback
 remain later P1 work.
 
@@ -474,7 +478,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.13), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.14), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and
@@ -493,6 +497,9 @@ clipboard. Cross-paragraph extraction lives in shared deck core 0.20.0; the
 UTF-8/Latin-1 clipboard adapter is also used by GFOpenWrite.
 Find and Find Next use shared core 0.21.0 to search editable text across every
 page or slide, wrap once and expose the match as the existing exact selection.
+Shared core 0.22.0 and the existing OpenGadTools ruler add direct left,
+first-line/hanging and right paragraph-indent editing to both Presentation and
+Publisher; each drag is one Undo step and the ODP round trip keeps the values.
 The same menu applies one, two or three equal text columns;
 Presentation and Publisher share the command, model, ODP/PPTX interchange and
 GFOpenLayout implementation. Text Frame additionally edits the exact column

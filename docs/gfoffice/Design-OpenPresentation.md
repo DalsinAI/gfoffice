@@ -558,6 +558,13 @@ and add Find/Find Next across editable text objects and slides/pages. Search
 wraps once and returns the existing exact selection type, which the current
 OpenLayout-derived highlight reveals without new geometry.
 
+GFOpenPresentation 0.6.14 and GFOpenPublisher 0.3.8 carry shared core 0.22.0
+and reuse OpenGadTools' existing horizontal ruler. While typing, its scale is
+the resolved text frame's inner width; dragging its left, first-line/hanging
+or right marker applies one paragraph-range Undo step and reflows through the
+existing OpenLayout path. The command and ODP persistence live in the deck
+core/model; the ruler is UI chrome, so neither belongs in a new OpenLayout API.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

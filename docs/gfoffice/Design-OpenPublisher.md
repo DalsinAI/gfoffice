@@ -233,7 +233,7 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | Text wrap around frames | No original PUB decoding yet | Yes: Square, Tight and Top/Bottom with per-side distance | Yes | GFOpenLayout 0.16 exclusions and 0.17 contours (5) |
 | Layering (back to front), grouping | Order and groups | P1 | P2 | |
 | Rotation, flips | No | Later (drawn unrotated, reported) | Later | GFOpenLayout |
-| Rulers, layout and ruler guides, baseline guides, snap | No | P2 (shown in the editor) | P2 | |
+| Rulers, layout and ruler guides, baseline guides, snap | No | Paragraph ruler: Yes; guides/baselines/snap: No | P2 | Shared OpenGadTools ruler + deck core 0.22.0 |
 | Scratch area | Found, counted | P2 (shown in the editor) | P2 | |
 | Headers, footers, page numbers, fields | No | P1b | P2 | Quill's TOKN [H] |
 | Hyperlinks | No | P1b (live in the PDF) | P2 | |
@@ -423,6 +423,13 @@ and add Find/Find Next. The portable command scans editable text in object and
 page order, folds ASCII case, wraps once and returns an exact `opr_selection`.
 The applications reveal that result with their existing OpenLayout caret and
 selection geometry; search does not add another text layout path.
+
+GFOpenPublisher 0.3.8 and GFOpenPresentation 0.6.14 carry shared core 0.22.0
+and reuse OpenGadTools' horizontal ruler for paragraph indents. In text-editing
+mode the ruler covers the resolved frame's inner width; left, first-line or
+hanging, and right marker drags are validated, undoable and preserved by ODP.
+OpenLayout receives the resulting paragraph format during its normal reflow;
+the ruler itself remains shared UI chrome rather than layout-engine policy.
 
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,

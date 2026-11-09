@@ -94,6 +94,9 @@ core 0.16.0: mouse drag, Shift+Arrow, Select All Text, replacement typing,
 cross-paragraph deletion, run-level formatting, Undo/Redo and ODP round trip.
 GFOpenPresentation 0.6.9 carries shared core 0.17.0's ordered linked-frame
 membership for Publisher; it adds no Impress-facing command.
+GFOpenPresentation 0.6.14 carries shared core 0.22.0 and reuses the
+OpenGadTools ruler for undoable left, first-line/hanging and right paragraph
+indents, including ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
@@ -140,7 +143,7 @@ membership for Publisher; it adds no Impress-facing command.
 | Arrange (front, back), align, distribute | P3 | Bring to Front, Bring Forward, Send Backward and Send to Back: Yes in 0.4.0 for one top-level object, undoable and group-block safe. Align Left/Centre/Right/Top/Middle/Bottom to the slide/page: Yes in 0.4.1. Multi-object align and distribute: No |
 | Combine, split, shape operations (merge, subtract, intersect) | Not planned | No |
 | Name and description (alt text) | P1 | Yes |
-| Snap, grid, guides, rulers | P3 | No |
+| Snap, grid, guides, rulers | P3 | Text-indent ruler: Yes; snap, grid and guides: No |
 
 ## 6. Pictures
 
