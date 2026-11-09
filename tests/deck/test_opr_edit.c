@@ -952,6 +952,8 @@ static void character_selection_ranges(void)
     opr_undo *u = opr_undo_new();
     opr_textbox_spec spec;
     opr_selection selection;
+    opr_find_result found;
+    opr_pos find_start = {0, 0};
     char *plain = NULL;
     int selected = -1, slide = -1, obj = -1;
     CHECK(d && s && u, "a deck for cross-paragraph text selection");
@@ -971,6 +973,15 @@ static void character_selection_ranges(void)
     CHECK(!opr_text_set(d, 0, 0, "One\nTwo\nThree") &&
           s->objs[0].text.nparas == 3,
           "make three paragraphs for the cross-paragraph range");
+    CHECK(opr_text_find(d, 0, 0, find_start, "two", 0, &found) == 1 &&
+          found.slide == 0 && found.obj == 0 &&
+          found.selection.anchor.para == 1 && found.selection.anchor.offset == 0 &&
+          found.selection.focus.offset == 3,
+          "case-insensitive Find returns an exact deck selection");
+    find_start = found.selection.focus;
+    CHECK(opr_text_find(d, 0, 0, find_start, "One", 1, &found) == 1 &&
+          found.selection.anchor.para == 0 && found.selection.anchor.offset == 0,
+          "Find Next wraps once through the deck");
     opr_undo_clear(u);
     selection.anchor.para = 0; selection.anchor.offset = 2;
     selection.focus.para = 2; selection.focus.offset = 2;

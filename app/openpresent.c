@@ -85,7 +85,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.6 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.7 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -94,7 +94,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.12 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.13 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -109,7 +109,7 @@ enum { C_NEW = 1, C_OPEN, C_SAVE, C_PRINT, C_PDF, C_UNDO, C_REDO };
 enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501 };
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
-    M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_SELECT_ALL, M_STOP,
+    M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FIND, M_FIND_NEXT, M_SELECT_ALL, M_STOP,
     M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
     M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
     M_TEXT_FONT, M_TEXT_COLOUR,
@@ -150,6 +150,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Cut", "X", 0, 0, (APTR)M_CUT },
     { NM_ITEM, "Copy", "C", 0, 0, (APTR)M_COPY },
     { NM_ITEM, "Paste", "V", 0, 0, (APTR)M_PASTE },
+    { NM_ITEM, "Find...", "F", 0, 0, (APTR)M_FIND },
+    { NM_ITEM, "Find Next", "G", 0, 0, (APTR)M_FIND_NEXT },
     { NM_ITEM, "Select All Text", "A", 0, 0, (APTR)M_SELECT_ALL },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
@@ -320,6 +322,7 @@ static opr_pos caret;
 static opr_selection text_selection;
 static int text_selecting;
 static int edit_grouped;
+static char find_text[160];
 
 enum {
     DRAG_NONE, DRAG_MOVE, DRAG_NW, DRAG_N, DRAG_NE, DRAG_E,
@@ -3079,6 +3082,51 @@ static void paste_text(void)
     draw_status();
 }
 
+static void find_next_text(int ask_text)
+{
+    opr_find_result found;
+    opr_pos start;
+    char entered[sizeof find_text];
+    int start_obj, rc;
+    if (!deck || !deck->nslides)
+        return;
+    if (ask_text) {
+        if (!text_requester("Find", "Text", find_text, entered, sizeof entered))
+            return;
+        snprintf(find_text, sizeof find_text, "%s", entered);
+    }
+    if (!find_text[0]) {
+        set_status("Enter text to find.");
+        draw_status();
+        return;
+    }
+    start_obj = edit_obj >= 0 ? edit_obj : selected_obj >= 0 ? selected_obj : 0;
+    if (edit_obj >= 0)
+        start = text_selection.focus;
+    else {
+        start.para = 0;
+        start.offset = 0;
+    }
+    rc = opr_text_find(deck, current, start_obj, start, find_text, 0, &found);
+    if (rc < 0) {
+        tell("Find", "There is not enough memory to search this " DOCUMENT_LOWER ".");
+        return;
+    }
+    if (!rc) {
+        set_status("Text not found.");
+        draw_status();
+        return;
+    }
+    show_slide(found.slide);
+    selected_obj = edit_obj = found.obj;
+    text_selection = found.selection;
+    caret = found.selection.focus;
+    edit_grouped = 0;
+    set_status("Found text; Find Next continues through the " DOCUMENT_LOWER ".");
+    draw_slide();
+    draw_status();
+}
+
 /* Up or down a line: the place nearest the caret on the line above or below, in the same text. */
 static void caret_line(int dir, int extend_selection)
 {
@@ -4603,6 +4651,8 @@ static void menu_action(ULONG id)
     case M_CUT: cut_text_selection(); break;
     case M_COPY: copy_text_selection(); break;
     case M_PASTE: paste_text(); break;
+    case M_FIND: find_next_text(1); break;
+    case M_FIND_NEXT: find_next_text(0); break;
     case M_SELECT_ALL: select_all_text(); break;
     case M_STOP:
         stop_typing();

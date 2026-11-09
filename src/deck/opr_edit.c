@@ -375,6 +375,93 @@ char *opr_text_selection_get(const owf_deck *deck, int slide, int obj,
     return out;
 }
 
+static unsigned char find_fold(unsigned char c)
+{
+    return c >= 'A' && c <= 'Z' ? (unsigned char)(c + ('a' - 'A')) : c;
+}
+
+static int find_equal(const char *text, const char *needle, size_t length,
+                      int match_case)
+{
+    size_t i;
+    for (i = 0; i < length; ++i) {
+        unsigned char a = (unsigned char)text[i];
+        unsigned char b = (unsigned char)needle[i];
+        if (match_case ? a != b : find_fold(a) != find_fold(b))
+            return 0;
+    }
+    return 1;
+}
+
+static int find_position_compare(int slide, int obj, int para, size_t offset,
+                                 int other_slide, int other_obj, int other_para,
+                                 size_t other_offset)
+{
+    if (slide != other_slide) return slide < other_slide ? -1 : 1;
+    if (obj != other_obj) return obj < other_obj ? -1 : 1;
+    if (para != other_para) return para < other_para ? -1 : 1;
+    if (offset != other_offset) return offset < other_offset ? -1 : 1;
+    return 0;
+}
+
+int opr_text_find(const owf_deck *deck, int start_slide, int start_obj,
+                  opr_pos start, const char *needle, int match_case,
+                  opr_find_result *result)
+{
+    opr_find_result first, after;
+    size_t needle_length;
+    int have_first = 0, have_after = 0, slide, obj, para;
+    if (!deck || !needle || !*needle || !result || strchr(needle, '\n') || strchr(needle, '\r'))
+        return -1;
+    needle_length = strlen(needle);
+    if (start_slide < 0 || start_slide >= deck->nslides) {
+        start_slide = 0;
+        start_obj = 0;
+        start.para = 0;
+        start.offset = 0;
+    }
+    for (slide = 0; slide < deck->nslides; ++slide) {
+        const owf_slide *s = &deck->slides[slide];
+        for (obj = 0; obj < s->nobjs; ++obj) {
+            const owf_obj *o = &s->objs[obj];
+            if (!opr_obj_editable(deck, slide, obj))
+                continue;
+            for (para = 0; para < o->text.nparas; ++para) {
+                size_t n, offset;
+                char *text = opr_para_text(&o->text.paras[para], &n);
+                if (!text)
+                    return -1;
+                for (offset = 0; needle_length <= n && offset <= n - needle_length; ++offset) {
+                    opr_find_result found;
+                    if (!find_equal(text + offset, needle, needle_length, match_case))
+                        continue;
+                    found.slide = slide;
+                    found.obj = obj;
+                    found.selection.anchor.para = found.selection.focus.para = para;
+                    found.selection.anchor.offset = offset;
+                    found.selection.focus.offset = offset + needle_length;
+                    if (!have_first) {
+                        first = found;
+                        have_first = 1;
+                    }
+                    if (find_position_compare(slide, obj, para, offset,
+                                              start_slide, start_obj,
+                                              start.para, start.offset) >= 0 &&
+                        !have_after) {
+                        after = found;
+                        have_after = 1;
+                    }
+                }
+                owf_free(text);
+            }
+        }
+    }
+    if (!have_after && !have_first)
+        return 0;
+    *result = have_after ? after : first;
+    return 1;
+}
+
 int opr_text_newline(owf_deck *deck, int slide, int obj, opr_pos *at)
 {
     owf_obj *o = object(deck, slide, obj);

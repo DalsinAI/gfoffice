@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.20.0"
+#define OPR_CORE_VERSION "0.21.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -133,6 +133,17 @@ int opr_text_selection_empty(const opr_selection *selection);
  * buffer. NULL means invalid input or memory failure. */
 char *opr_text_selection_get(const owf_deck *deck, int slide, int obj,
                              const opr_selection *selection, size_t *length);
+typedef struct {
+    int slide, obj;
+    opr_selection selection;
+} opr_find_result;
+/* Find the first occurrence at or after start, wrapping once through all
+ * editable objects and slides. Search does not cross paragraph separators.
+ * match_case 0 folds ASCII letters while retaining exact UTF-8 bytes for the
+ * rest. Returns 1 found, 0 absent, or -1 for invalid input/memory failure. */
+int opr_text_find(const owf_deck *deck, int start_slide, int start_obj,
+                  opr_pos start, const char *needle, int match_case,
+                  opr_find_result *result);
 /* Delete exactly the selected characters and paragraph separators. Both ends
  * collapse to the start. The caller owns the Undo snapshot, as for typing. */
 int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
