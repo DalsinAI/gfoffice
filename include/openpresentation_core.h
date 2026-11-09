@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.16.0"
+#define OPR_CORE_VERSION "0.17.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -274,10 +274,11 @@ int opr_obj_set_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj,
 int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,
                      owf_frame_wrap wrap, const int gap[4]);
 /* Link a top-level text frame to a later empty top-level text frame, or remove
- * the final frame from a flow. A linked source must be the current tail and a
- * target must not already belong to another flow. Unlinking returns its text
- * to overflow in the preceding frame; no story bytes are discarded. Both are
- * one undo step. -2 means the requested relationship is not valid. */
+ * any non-first frame from a flow. A target must not already belong to another
+ * flow; an insertion before a source's existing successor closes into the
+ * ordered chain. Unlinking closes the remaining chain around the removed box;
+ * no story bytes are discarded. Both are one undo step. -2 means the requested
+ * relationship is not valid. */
 int opr_obj_link_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj,
                             int target_slide, int target_obj);
 int opr_obj_unlink_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj);

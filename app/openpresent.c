@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.2 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.3 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.8 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.9 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -212,7 +212,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Top and Bottom", NULL, 0, 0, (APTR)M_WRAP_TOP_BOTTOM },
     { NM_ITEM, "Text Wrap Distance...", NULL, 0, 0, (APTR)M_WRAP_DISTANCE },
     { NM_ITEM, "Link to Next Empty Text Box", NULL, 0, 0, (APTR)M_LINK_TEXT_NEXT },
-    { NM_ITEM, "Remove Tail from Text Flow", NULL, 0, 0, (APTR)M_UNLINK_TEXT },
+    { NM_ITEM, "Remove Box from Text Flow", NULL, 0, 0, (APTR)M_UNLINK_TEXT },
 #endif
     { NM_ITEM, "Duplicate", NULL, 0, 0, (APTR)M_DUPLICATE_OBJECT },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_DELETE_OBJECT },
@@ -3622,7 +3622,7 @@ static void link_selected_text_frame(void)
     stop_typing();
     rc = opr_obj_link_text_frame(undo, deck, current, selected_obj, target_page, target_obj);
     if (rc < 0) {
-        set_status(rc == -2 ? "Select the last box in the flow before adding another."
+        set_status(rc == -2 ? "The empty box must be the next box after the selected flow position."
                             : "The text boxes could not be linked.");
         draw_status();
         return;
@@ -3646,14 +3646,14 @@ static void unlink_selected_text_frame(void)
 {
     int rc;
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
-        set_status("Select the final text box in a linked flow.");
+        set_status("Select a non-first text box in a linked flow.");
         draw_status();
         return;
     }
     stop_typing();
     rc = opr_obj_unlink_text_frame(undo, deck, current, selected_obj);
     if (rc < 0) {
-        set_status(rc == -2 ? "Only the final box can be removed from a linked flow."
+        set_status(rc == -2 ? "The first box owns the story; select a later box to remove."
                             : "The text box could not be unlinked.");
         draw_status();
         return;
@@ -3661,7 +3661,7 @@ static void unlink_selected_text_frame(void)
     laid_clear();
     dirty = 1;
     update_window_title();
-    set_status("Final text box removed; excess text is shown as overflow in the preceding box.");
+    set_status("Text box removed from the flow; the remaining boxes close the gap.");
     draw_slide();
     if (strip) ogt_list_draw_row(strip, current);
     update_edit_tools();

@@ -2121,6 +2121,7 @@ int opr_obj_link_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj,
     owf_obj *source = object(deck, slide, obj);
     owf_obj *target = object(deck, target_slide, target_obj);
     int page, index, id, max_id = -1, changes = 0;
+    int next_slide = -1, next_obj = -1;
     if (!u || !deck || !source || !target)
         return -1;
     if (source == target || source->kind != OWF_OBJ_TEXT || target->kind != OWF_OBJ_TEXT ||
@@ -2133,9 +2134,17 @@ int opr_obj_link_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj,
             int first = page == slide ? obj + 1 : 0;
             for (index = first; index < deck->slides[page].nobjs; ++index)
                 if (deck->slides[page].objs[index].kind == OWF_OBJ_TEXT &&
-                    deck->slides[page].objs[index].flow_story == source->flow_story)
-                    return -2;              /* append only at the current tail */
+                    deck->slides[page].objs[index].flow_story == source->flow_story) {
+                    next_slide = page;
+                    next_obj = index;
+                    break;
+                }
+            if (next_slide >= 0) break;
         }
+        if (next_slide >= 0 &&
+            (target_slide > next_slide ||
+             (target_slide == next_slide && target_obj > next_obj)))
+            return -2;                      /* insert before the source's current successor */
         id = source->flow_story;
     } else {
         for (page = 0; page < deck->nslides; ++page)
@@ -2170,7 +2179,7 @@ int opr_obj_unlink_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj)
 {
     snapshot s;
     owf_obj *selected = object(deck, slide, obj), *other = NULL;
-    int page, index, count = 0, last_slide = -1, last_obj = -1;
+    int page, index, count = 0, first_slide = -1, first_obj = -1;
     int other_slide = -1, other_obj = -1;
     if (!u || !deck || !selected)
         return -1;
@@ -2181,17 +2190,19 @@ int opr_obj_unlink_text_frame(opr_undo *u, owf_deck *deck, int slide, int obj)
             owf_obj *candidate = &deck->slides[page].objs[index];
             if (candidate->kind != OWF_OBJ_TEXT || candidate->flow_story != selected->flow_story)
                 continue;
+            if (!count) {
+                first_slide = page;
+                first_obj = index;
+            }
             count++;
-            last_slide = page;
-            last_obj = index;
             if (candidate != selected) {
                 other = candidate;
                 other_slide = page;
                 other_obj = index;
             }
         }
-    if (count < 2 || last_slide != slide || last_obj != obj)
-        return -2;                          /* detach only the tail, without losing order */
+    if (count < 2 || (first_slide == slide && first_obj == obj))
+        return -2;                          /* the story-owning first frame stays attached */
     memset(&s, 0, sizeof s);
     s.kind = SNAP_OBJ_FLOW;
     s.slide = slide;

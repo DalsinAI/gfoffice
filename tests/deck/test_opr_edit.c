@@ -841,7 +841,7 @@ static void textbox_insertion(void)
           "linked text frames participate atomically in Undo and Redo");
     CHECK(opr_obj_link_text_frame(u, d, 0, 0, 0, 1) == -2 &&
           opr_obj_unlink_text_frame(u, d, 0, 0) == -2,
-          "a linked target cannot be reused and only the flow tail can be detached");
+          "a linked target cannot be reused and the story-owning first frame stays attached");
 
     CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
           "the authored text box saves as ODP");
@@ -923,13 +923,24 @@ static void textbox_insertion(void)
           s->objs[2].flow_story == s->objs[0].flow_story,
           "append an empty frame at the current flow tail");
     CHECK(opr_obj_link_text_frame(u, d, 0, 0, 0, 2) == -2,
-          "a frame in the middle of a flow cannot append another target");
-    CHECK(!opr_obj_unlink_text_frame(u, d, 0, 2) && s->objs[2].flow_story < 0 &&
-          s->objs[0].flow_story >= 0 && s->objs[1].flow_story == s->objs[0].flow_story,
-          "detaching a three-frame flow's tail keeps the preceding chain linked");
+          "an existing linked target cannot be reused");
+    CHECK(!opr_obj_unlink_text_frame(u, d, 0, 1) && s->objs[1].flow_story < 0 &&
+          s->objs[0].flow_story >= 0 && s->objs[2].flow_story == s->objs[0].flow_story,
+          "detaching a middle frame closes the remaining flow around it");
     CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[1].flow_story == s->objs[0].flow_story &&
           s->objs[2].flow_story == s->objs[0].flow_story,
-          "undo restores the appended third frame atomically");
+          "undo restores the detached middle frame atomically");
+    CHECK(!opr_obj_unlink_text_frame(u, d, 0, 1) &&
+          !opr_obj_link_text_frame(u, d, 0, 0, 0, 1) &&
+          s->objs[1].flow_story == s->objs[0].flow_story &&
+          s->objs[2].flow_story == s->objs[0].flow_story,
+          "an empty frame can be inserted before the source's current successor");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && s->objs[1].flow_story < 0 &&
+          s->objs[2].flow_story == s->objs[0].flow_story &&
+          !opr_undo_redo(u, d, &slide, &obj) &&
+          s->objs[1].flow_story == s->objs[0].flow_story,
+          "middle insertion participates atomically in Undo and Redo");
     opr_undo_free(u);
     owf_deck_free(d);
 }
