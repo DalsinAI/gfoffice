@@ -574,6 +574,15 @@ offsets it and adds one object-presence Undo step. Text editing continues to
 use standard FTXT. Groups, charts and opaque kept-package objects remain
 refused until their dependent parts have portable copiers.
 
+GFOpenPresentation 0.6.16 and GFOpenPublisher 0.3.10 carry shared core 0.24.0
+and add Edit > Replace plus Replace All in Text Box. The one-match command
+reuses wrapped Find and exact selection replacement. The portable all-match
+command scans one editable object, folds ASCII case, continues after inserted
+text and commits the entire mutation as one Undo snapshot. Its regression also
+fixes deletion across adjacent formatted runs. OpenLayout continues to supply
+only the resolved frame, caret/selection geometry and reflow; search and text
+mutation remain in the shared deck editor.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

@@ -439,6 +439,16 @@ and picture bytes into the destination deck and records one object-presence
 Undo step. Groups, charts and opaque kept-package objects are deliberately
 refused until their dependent resources have portable copy contracts.
 
+GFOpenPublisher 0.3.10 and GFOpenPresentation 0.6.16 carry shared core 0.24.0
+and add Edit > Replace plus Replace All in Text Box. Replace uses the existing
+wrapped deck search and exact selection replacement. Replace All is a portable
+case-insensitive pass over one editable frame, skips replacement text when
+continuing, and records every match in one Undo snapshot. The regression also
+fixed the shared byte-removal primitive so clearing text split over several
+formatted runs cannot leave the preceding run behind. Search and mutation use
+the deck story; OpenLayout remains responsible only for caret/selection
+geometry and reflow.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap records or original PUB column records, and the PDF picture encoder does not yet play

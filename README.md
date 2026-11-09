@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.3.9 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.3.10 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -82,6 +82,11 @@ persistence. Outside text-editing mode, Cut/Copy/Paste now exchanges supported
 top-level objects with Presentation through a custom IFF clipboard form. Its
 ODP payload preserves text, formatting, fonts and embedded pictures; shared
 core 0.23.0 remaps resources and inserts the pasted object as one Undo step.
+Edit > Replace changes the next wrapped match, while Replace All in Text Box
+uses shared core 0.24.0 to change every non-overlapping match in the active
+story frame as one Undo step. The same portable command is used by
+Presentation, and a corrected formatted-run deletion primitive prevents stale
+bytes when replacing text split across styled runs.
 Decoding original PUB formatting,
 columns and wrap records, picture-alpha/custom contours and WMF/EMF playback
 remain later P1 work.
@@ -482,7 +487,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.15), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.16), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and
@@ -508,6 +513,8 @@ When no text box is being edited, Cut/Copy/Paste exchanges a selected top-level
 object between Presentation and Publisher. A custom IFF clipboard form carries
 ODP plus the source object index; core 0.23.0 remaps its fonts and pictures into
 the destination deck and makes Paste one undoable object insertion.
+Edit > Replace changes the next wrapped match and Replace All in Text Box uses
+core 0.24.0 for an atomic, case-insensitive replacement pass with one Undo.
 The same menu applies one, two or three equal text columns;
 Presentation and Publisher share the command, model, ODP/PPTX interchange and
 GFOpenLayout implementation. Text Frame additionally edits the exact column

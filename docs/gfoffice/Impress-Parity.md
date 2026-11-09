@@ -100,6 +100,9 @@ indents, including ODP persistence.
 GFOpenPresentation 0.6.15 carries shared core 0.23.0 and exchanges one
 supported top-level object with Publisher through the Amiga system clipboard,
 including font and embedded-picture resource remapping and Undo/Redo.
+GFOpenPresentation 0.6.16 carries shared core 0.24.0 and adds Replace plus an
+atomic, case-insensitive Replace All for the active text box. Both use the
+existing exact selection/story model and OpenLayout reflow.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
@@ -118,7 +121,7 @@ including font and embedded-picture resource remapping and Undo/Redo.
 | Hyperlinks in text | P1 | Yes, and links in the PDF |
 | Fields: date, time, slide number, slide count, author, file name | P1 (date, number, count) | Date, number and count yes; others No |
 | Text animation (scrolling text), Fontwork | Later | No (Fontwork shapes are kept) |
-| Find and replace, spelling, autocorrect, thesaurus, hyphenation | P3, P4 (Shared E11) | No |
+| Find and replace, spelling, autocorrect, thesaurus, hyphenation | P3, P4 (Shared E11) | Find/Find Next across the deck and Replace/Replace All in the active text box: Yes in 0.6.16; spelling, autocorrect, thesaurus and hyphenation: No |
 | Pictures inside text | Later | No (reported) |
 
 ## 5. Drawing objects
