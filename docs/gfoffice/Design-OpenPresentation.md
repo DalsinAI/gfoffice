@@ -522,6 +522,14 @@ authoring through portable core 0.15.0 and the deck's existing shared font
 table. The existing screen/PDF font resolver and ODP font-face interchange
 remain authoritative.
 
+GFOpenPresentation 0.6.8 and GFOpenPublisher 0.3.2 add character-range
+selection through portable core 0.16.0. Drag selection, Shift+Arrow and Select
+All share one anchor/focus model; replacement typing and cross-paragraph
+deletion use the existing text snapshot Undo. Exact run slices receive bold,
+italic, underline, size, RGB colour and font family, while paragraph alignment
+continues to apply to the paragraphs touched by the range. Highlight geometry
+comes from GFOpenLayout's existing caret positions.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

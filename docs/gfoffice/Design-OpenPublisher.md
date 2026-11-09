@@ -375,6 +375,15 @@ snapshot. Existing font resolution, screen/PDF rendering and ODP font-face
 interchange consume the same resource; Undo does not duplicate or discard
 shared font records.
 
+GFOpenPublisher 0.3.2 and GFOpenPresentation 0.6.8 add exact character-range
+selection through shared core 0.16.0. Mouse drag, Shift+Arrow and Edit > Select
+All Text maintain a fixed anchor and moving focus; typing, Backspace, Delete or
+Return replaces the range as one text-snapshot Undo step. Bold, italic,
+underline, size, RGB colour and font family split only the affected run slices,
+including ranges across paragraphs, and ODP preserves those run boundaries.
+The native highlight is derived from the existing GFOpenLayout caret map, so
+this editing feature adds no second line or column geometry path.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
 wrap records or original PUB column records, and the PDF picture encoder does not yet play

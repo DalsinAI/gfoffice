@@ -89,11 +89,14 @@ GFOpenPresentation 0.6.6 adds exact RGB Text Colour through shared core 0.14.0,
 with Undo/Redo, screen/PDF rendering and ODP round trip.
 GFOpenPresentation 0.6.7 adds named Font Family authoring through shared core
 0.15.0, the existing deck font table and ODP font-face round trip.
+GFOpenPresentation 0.6.8 adds exact character-range selection through shared
+core 0.16.0: mouse drag, Shift+Arrow, Select All Text, replacement typing,
+cross-paragraph deletion, run-level formatting, Undo/Redo and ODP round trip.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Text boxes, placeholder text | P1 | Yes; GFOpenPresentation 0.6.0 adds native Insert > Text Box with immediate typing, one-step undo/redo and ODP persistence |
-| Typing in a text box: click to put the caret, type, Return, Backspace, Del, arrow keys | P3 | No in P1. P3's first part: Yes, in GFOpenPresentation 0.2 (`opr_edit.c`); selecting text and changing its look next |
+| Typing in a text box: click to put the caret, select, type, Return, Backspace, Del, arrow keys | P3 | Yes: caret typing plus drag/Shift+Arrow/Select All ranges, replacement typing and exact run formatting in GFOpenPresentation 0.6.8 (`opr_edit.c`) |
 | Font, size, bold, italic, underline, strike-through, raised and lowered, colour | P1 | Yes |
 | Shadow, outline, relief, character spacing, highlighting, case | Later | No |
 | Paragraph alignment, indents, spacing above and below, line spacing, tabs | P1 | Yes |
