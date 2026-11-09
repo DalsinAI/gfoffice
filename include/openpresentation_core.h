@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.11.0"
+#define OPR_CORE_VERSION "0.12.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -237,6 +237,11 @@ int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
  * values. The change is one undo step. */
 int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
                              int columns, int gap);
+/* Make one top-level object an exclusion for overlapping text frames. wrap
+ * is OWF_WRAP_NONE, SQUARE/TIGHT or TOP_BOTTOM; gaps are top, right,
+ * bottom and left twips. The operation is one undo step. */
+int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,
+                     owf_frame_wrap wrap, const int gap[4]);
 /* Link a top-level text frame to a later empty top-level text frame, or remove
  * the final frame from a flow. A linked source must be the current tail and a
  * target must not already belong to another flow. Unlinking returns its text

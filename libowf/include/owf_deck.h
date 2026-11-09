@@ -135,6 +135,12 @@ typedef struct {
        model so Publisher, Draw and future report designers use one chain
        representation rather than private copies. */
     int flow_story;
+    /* Text in overlapping publication frames flows around this object.
+       OWF_WRAP_NONE, _SQUARE/_TIGHT (the same rectangular exclusion), or
+       _TOP_BOTTOM. Distances are twips: top, right, bottom, left. Appended
+       in owfpresent.library 3.5 so every earlier field keeps its offset. */
+    unsigned char wrap;
+    int wrap_gap[4];
 } owf_obj;
 
 /* ---- Slides, masters, layouts ---- */

@@ -938,6 +938,105 @@ static void picture_insertion(void)
     owf_deck_free(d);
 }
 
+static int text_crosses(const opr_slide *laid, int frame,
+                        ol_unit x0, ol_unit y0, ol_unit x1, ol_unit y1)
+{
+    size_t i;
+    for (i = 0; laid && i < ol_display_count(laid->doc); ++i) {
+        const ol_display_op *op = ol_display_get(laid->doc, i);
+        ol_rect r;
+        if (op->type != OL_OP_TEXT || opr_slide_frame_of(laid, op) != frame)
+            continue;
+        r = op->u.text.bounds;
+        if (r.x < x1 && r.x + r.width > x0 && r.y < y1 && r.y + r.height > y0)
+            return 1;
+    }
+    return 0;
+}
+
+static void object_wrapping(void)
+{
+    owf_deck *d = owf_deck_new(10000, 8000);
+    owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    opr_undo *u = opr_undo_new();
+    opr_textbox_spec text_spec;
+    opr_shape_spec shape_spec;
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_deck *back = NULL;
+    int selected = -1, slide = -1, obj = -1;
+    int gap[4] = {100, 100, 100, 100};
+    int bad_gap[4] = {100, -1, 100, 100};
+    opr_slide *laid;
+    int frame;
+    ol_unit x0 = (ol_unit)3400 * OL_UNITS_PER_TWIP;
+    ol_unit y0 = (ol_unit)900 * OL_UNITS_PER_TWIP;
+    ol_unit x1 = (ol_unit)5100 * OL_UNITS_PER_TWIP;
+    ol_unit y1 = (ol_unit)2500 * OL_UNITS_PER_TWIP;
+
+    CHECK(d && s && u, "a deck for object text wrapping");
+    if (!d || !s || !u) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    memset(&text_spec, 0, sizeof text_spec);
+    text_spec.x = 1000; text_spec.y = 1000;
+    text_spec.width = 6000; text_spec.height = 3200;
+    text_spec.text =
+        "One two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+        "fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three "
+        "twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty.";
+    CHECK(!opr_obj_insert_textbox(u, d, 0, &text_spec, &selected) && selected == 0,
+          "insert the text frame that will flow around an object");
+    memset(&shape_spec, 0, sizeof shape_spec);
+    shape_spec.shape = OWF_SHAPE_RECT;
+    shape_spec.x = 3500; shape_spec.y = 1000;
+    shape_spec.width = 1500; shape_spec.height = 1400;
+    shape_spec.look.fill = OWF_SHADE(0x6699cc);
+    CHECK(!opr_obj_insert_shape(u, d, 0, &shape_spec, &selected) && selected == 1,
+          "insert the overlapping shape");
+    opr_undo_clear(u);
+    CHECK(!opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_SQUARE, gap) &&
+          s->objs[1].wrap == OWF_WRAP_SQUARE && s->objs[1].wrap_gap[0] == 100,
+          "make the shape a square exclusion");
+    laid = opr_slide_layout(d, 0, NULL, NULL, NULL);
+    frame = laid ? opr_slide_frame_for(laid, 0) : -1;
+    CHECK(frame >= 0 && !text_crosses(laid, frame, x0, y0, x1, y1),
+          "GFOpenLayout keeps frame text outside the square exclusion");
+    opr_slide_free(laid);
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == 1 && s->objs[1].wrap == OWF_WRAP_NONE &&
+          !opr_undo_redo(u, d, &slide, &obj) && obj == 1 && s->objs[1].wrap == OWF_WRAP_SQUARE,
+          "object wrapping participates in Undo and Redo");
+    CHECK(opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_SQUARE, bad_gap) == -2,
+          "negative wrap distances are rejected");
+    CHECK(!opr_obj_set_wrap(u, d, 0, 1, OWF_WRAP_TOP_BOTTOM, gap),
+          "switch the same object to top-and-bottom wrapping");
+    laid = opr_slide_layout(d, 0, NULL, NULL, NULL);
+    frame = laid ? opr_slide_frame_for(laid, 0) : -1;
+    CHECK(frame >= 0 && !text_crosses(laid, frame,
+          (ol_unit)1000 * OL_UNITS_PER_TWIP, y0,
+          (ol_unit)7000 * OL_UNITS_PER_TWIP, y1),
+          "top-and-bottom wrapping leaves no frame text beside the shape");
+    opr_slide_free(laid);
+
+    CHECK(odp && odp->export && odp->export(d, &data, &length, NULL) == OWF_OK,
+          "the wrapped publication saves as ODP");
+    CHECK(owf_import_deck_memory(data, length, "odp", &back, NULL, NULL) == OWF_OK && back,
+          "the wrapped publication reads back");
+    if (back)
+        CHECK(back->slides[0].nobjs == 2 &&
+              back->slides[0].objs[1].wrap == OWF_WRAP_TOP_BOTTOM &&
+              back->slides[0].objs[1].wrap_gap[0] == 100 &&
+              back->slides[0].objs[1].wrap_gap[3] == 100,
+              "wrap kind and distances survive the ODP round trip");
+    owf_deck_free(back);
+    free(data);
+    opr_undo_free(u);
+    owf_deck_free(d);
+}
+
 static void caret_and_pointer(owf_deck *d)
 {
     int title = obj_named(d, 0, "Title 1"), body = obj_named(d, 1, "Content Placeholder 2"), f, k;
@@ -1026,6 +1125,7 @@ int main(int argc, char **argv)
     object_appearance();
     textbox_insertion();
     picture_insertion();
+    object_wrapping();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

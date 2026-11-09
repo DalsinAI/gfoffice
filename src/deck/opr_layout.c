@@ -1047,6 +1047,75 @@ static int add_field(builder *b, const owf_obj *o, const char *text)
     return ok;
 }
 
+static int frame_accepts_exclusions(const owf_obj *o)
+{
+    return o && (o->kind == OWF_OBJ_TEXT ||
+                 (o->kind == OWF_OBJ_SHAPE && o->shape != OWF_SHAPE_LINE && o->text.nparas));
+}
+
+/* GFOpenLayout 0.16 owns the line fitting. The deck adapter only translates
+ * overlapping page objects into rectangles local to each affected text
+ * frame; the object itself remains a single frame in the display list. */
+static int apply_exclusions(builder *b)
+{
+    ol_exclusion *items;
+    int target, obstacle;
+    if (b->out->nframes <= 0)
+        return 1;
+    items = malloc((size_t)b->out->nframes * sizeof *items);
+    if (!items)
+        return 0;
+    for (target = 0; target < b->out->nframes; ++target) {
+        const opr_frame *tf = &b->out->frames[target];
+        ol_node *node;
+        int count = 0;
+        if (!frame_accepts_exclusions(tf->obj))
+            continue;
+        node = (ol_node *)ol_node_by_id(b->out->doc, tf->node);
+        if (!node) {
+            free(items);
+            return 0;
+        }
+        for (obstacle = 0; obstacle < b->out->nframes; ++obstacle) {
+            const opr_frame *of = &b->out->frames[obstacle];
+            const owf_obj *o = &of->box;
+            long left, top, right, bottom;
+            ol_exclusion *e;
+            if (obstacle == target || !of->obj || o->wrap == OWF_WRAP_NONE)
+                continue;
+            left = (long)o->x - o->wrap_gap[3];
+            top = (long)o->y - o->wrap_gap[0];
+            right = (long)o->x + o->width + o->wrap_gap[1];
+            bottom = (long)o->y + o->height + o->wrap_gap[2];
+            if (right <= tf->box.x || bottom <= tf->box.y ||
+                left >= (long)tf->box.x + tf->box.width ||
+                top >= (long)tf->box.y + tf->box.height)
+                continue;
+            if (count >= OL_MAX_EXCLUSIONS) {
+                free(items);
+                return 0;
+            }
+            e = &items[count++];
+            memset(e, 0, sizeof *e);
+            e->bounds.x = TW(o->x - tf->box.x);
+            e->bounds.y = TW(o->y - tf->box.y);
+            e->bounds.width = TW(o->width > 0 ? o->width : 1);
+            e->bounds.height = TW(o->height > 0 ? o->height : 1);
+            e->wrap = o->wrap == OWF_WRAP_TOP_BOTTOM ? OL_WRAP_TOP_BOTTOM : OL_WRAP_SQUARE;
+            e->gap[0] = TW(o->wrap_gap[0]);
+            e->gap[1] = TW(o->wrap_gap[1]);
+            e->gap[2] = TW(o->wrap_gap[2]);
+            e->gap[3] = TW(o->wrap_gap[3]);
+        }
+        if (count && !ol_node_set_exclusions(node, count, items)) {
+            free(items);
+            return 0;
+        }
+    }
+    free(items);
+    return 1;
+}
+
 static int build(builder *b)
 {
     const owf_deck *d = b->deck;
@@ -1111,7 +1180,7 @@ static int build(builder *b)
     for (i = 0; i < s->nobjs; i++)
         if (!add_object(b, &s->objs[i], 0, b->index, i))
             return 0;
-    return 1;
+    return apply_exclusions(b);
 }
 
 /* How tall a frame's content is, and how tall it may be. */

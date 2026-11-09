@@ -501,6 +501,13 @@ Format commands, Undo/Redo snapshot, resolved object geometry, ODP
 adapter passes column count and gap to the layout box; the applications do not
 split lines or position column glyphs themselves.
 
+GFOpenPresentation 0.6.4 and GFOpenPublisher 0.2.7 share object wrap metadata,
+Undo/Redo, ODP interchange and deck-to-layout translation through portable
+core 0.12.0. Publisher exposes the authoring menu; both applications render
+imported square and top-and-bottom exclusions through GFOpenLayout 0.16. The
+deck adapter supplies only overlapping geometry and does not implement a
+second line fitter.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

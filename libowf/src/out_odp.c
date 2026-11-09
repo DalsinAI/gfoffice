@@ -721,6 +721,19 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
         owf_buf_puts(&body, " draw:marker-end=\"op-arrow\"");
         len_attr(&body, "draw:marker-end-width", o->look.line_width * 3 > 200 ? o->look.line_width * 3 : 200);
     }
+    if (o->wrap == OWF_WRAP_SQUARE || o->wrap == OWF_WRAP_TIGHT) {
+        owf_buf_puts(&body, " style:wrap=\"parallel\" style:number-wrapped-paragraphs=\"no-limit\"");
+    } else if (o->wrap == OWF_WRAP_TOP_BOTTOM) {
+        owf_buf_puts(&body, " style:wrap=\"none\"");
+    } else {
+        owf_buf_puts(&body, " style:wrap=\"run-through\" style:run-through=\"foreground\"");
+    }
+    if (o->wrap != OWF_WRAP_NONE) {
+        len_attr(&body, "fo:margin-top", o->wrap_gap[0]);
+        len_attr(&body, "fo:margin-right", o->wrap_gap[1]);
+        len_attr(&body, "fo:margin-bottom", o->wrap_gap[2]);
+        len_attr(&body, "fo:margin-left", o->wrap_gap[3]);
+    }
     len_attr(&body, "fo:padding-left", o->inset[0]);
     len_attr(&body, "fo:padding-top", o->inset[1]);
     len_attr(&body, "fo:padding-right", o->inset[2]);

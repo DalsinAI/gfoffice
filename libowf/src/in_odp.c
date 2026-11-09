@@ -1321,6 +1321,23 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
         obj->look.arrows |= OWF_ARROW_START;
     if ((v = prop(o, st, "graphic-properties", NS_DRAW, "marker-end")) && *v)
         obj->look.arrows |= OWF_ARROW_END;
+    v = prop(o, st, "graphic-properties", NS_STYLE, "wrap");
+    if (same(v, "parallel") || same(v, "dynamic") || same(v, "left") ||
+        same(v, "right") || same(v, "biggest"))
+        obj->wrap = OWF_WRAP_SQUARE;
+    else if (same(v, "none"))
+        obj->wrap = OWF_WRAP_TOP_BOTTOM;
+    else
+        obj->wrap = OWF_WRAP_NONE;
+    if (obj->wrap != OWF_WRAP_NONE) {
+        int side;
+        parse_len(prop(o, st, "graphic-properties", NS_FO, "margin-top"), &obj->wrap_gap[0]);
+        parse_len(prop(o, st, "graphic-properties", NS_FO, "margin-right"), &obj->wrap_gap[1]);
+        parse_len(prop(o, st, "graphic-properties", NS_FO, "margin-bottom"), &obj->wrap_gap[2]);
+        parse_len(prop(o, st, "graphic-properties", NS_FO, "margin-left"), &obj->wrap_gap[3]);
+        for (side = 0; side < 4; ++side)
+            if (obj->wrap_gap[side] < 0) obj->wrap_gap[side] = 0;
+    }
     if (parse_len(prop(o, st, "graphic-properties", NS_FO, "padding"), &pad))
         obj->inset[0] = obj->inset[1] = obj->inset[2] = obj->inset[3] = pad;
     parse_len(prop(o, st, "graphic-properties", NS_FO, "padding-left"), &obj->inset[0]);

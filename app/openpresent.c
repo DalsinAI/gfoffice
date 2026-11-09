@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.2.6 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.2.7 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.3 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.4 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -120,6 +120,7 @@ enum {
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
     M_POSITION_SIZE, M_APPEARANCE, M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
+    M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TOP_BOTTOM,
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
@@ -200,6 +201,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Appearance...", NULL, 0, 0, (APTR)M_APPEARANCE },
 #ifdef OPENPUBLISHER
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Text Wrapping", NULL, 0, 0, NULL },
+    { NM_SUB, "None", NULL, 0, 0, (APTR)M_WRAP_NONE },
+    { NM_SUB, "Square", NULL, 0, 0, (APTR)M_WRAP_SQUARE },
+    { NM_SUB, "Top and Bottom", NULL, 0, 0, (APTR)M_WRAP_TOP_BOTTOM },
     { NM_ITEM, "Link to Next Empty Text Box", NULL, 0, 0, (APTR)M_LINK_TEXT_NEXT },
     { NM_ITEM, "Remove Tail from Text Flow", NULL, 0, 0, (APTR)M_UNLINK_TEXT },
 #endif
@@ -3069,6 +3074,41 @@ static void set_selected_text_columns(int columns)
 }
 
 #ifdef OPENPUBLISHER
+static void set_selected_wrap(owf_frame_wrap wrap)
+{
+    owf_obj *o;
+    int gaps[4] = {120, 120, 120, 120};
+    int rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select the object that text should wrap around.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->wrap != OWF_WRAP_NONE)
+        memcpy(gaps, o->wrap_gap, sizeof gaps);
+    stop_typing();
+    rc = opr_obj_set_wrap(undo, deck, current, selected_obj, wrap,
+                          wrap == OWF_WRAP_NONE ? NULL : gaps);
+    if (rc < 0) {
+        set_status(rc == -2 ? "That object cannot be used for text wrapping."
+                            : "Text wrapping could not be changed.");
+        draw_status();
+        return;
+    }
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status(wrap == OWF_WRAP_NONE ? "Text wrapping removed."
+               : wrap == OWF_WRAP_TOP_BOTTOM ? "Text now stays above and below the object."
+                                             : "Text now wraps around the object.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static int empty_text_frame(int slide, int obj)
 {
     char *text = opr_text_get(deck, slide, obj);
@@ -3948,6 +3988,9 @@ static void menu_action(ULONG id)
     case M_POSITION_SIZE: edit_selected_geometry(); break;
     case M_APPEARANCE: edit_selected_appearance(); break;
 #ifdef OPENPUBLISHER
+    case M_WRAP_NONE: set_selected_wrap(OWF_WRAP_NONE); break;
+    case M_WRAP_SQUARE: set_selected_wrap(OWF_WRAP_SQUARE); break;
+    case M_WRAP_TOP_BOTTOM: set_selected_wrap(OWF_WRAP_TOP_BOTTOM); break;
     case M_LINK_TEXT_NEXT: link_selected_text_frame(); break;
     case M_UNLINK_TEXT: unlink_selected_text_frame(); break;
 #endif

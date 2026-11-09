@@ -335,9 +335,20 @@ application never estimates a character count. Arbitrary middle-chain surgery
 remains deliberately refused until it can materialize every affected slice
 without losing visible text.
 
+GFOpenPublisher 0.2.7 and shared core 0.12.0 add object-driven text wrapping
+without a Publisher-only line fitter. Object > Text Wrapping makes a selected
+picture or non-line shape a square or top-and-bottom obstacle, with one
+undoable model change. The deck adapter translates the object's page geometry
+into a local exclusion for each overlapping text frame; GFOpenLayout 0.16 owns
+the actual line fitting, scoping and paged behaviour. The object remains a
+single display object. Standard ODP `style:wrap` and per-side margins preserve
+the setting on save/reload. The native menu currently uses a sensible default
+distance; an interactive four-side distance surface, contour/tight geometry
+and decoding original PUB wrap records remain.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
-wrap or original PUB column records, and the PDF picture encoder does not yet play
+wrap records or original PUB column records, and the PDF picture encoder does not yet play
 WMF/EMF. The import report calls the plain styling approximation out.
 
 `in_pub.c` needs `owf_cfb.c`, which GFOpenWrite's own build and owf.library

@@ -602,6 +602,7 @@ typedef enum {
     SNAP_OBJ_ORDER,
     SNAP_OBJ_LOOK,
     SNAP_OBJ_COLUMNS,
+    SNAP_OBJ_WRAP,
     SNAP_OBJ_FLOW
 } snapshot_kind;
 
@@ -636,6 +637,9 @@ typedef struct {
     owf_look look;
     /* SNAP_OBJ_COLUMNS: equal text-frame columns and their gap. */
     int text_columns, text_column_gap;
+    /* SNAP_OBJ_WRAP: object exclusion kind and top/right/bottom/left gaps. */
+    unsigned char wrap;
+    int wrap_gap[4];
     /* SNAP_OBJ_FLOW: the one or two flow identities changed atomically. */
     int flow_count, flow_slide[2], flow_obj[2], flow_story[2];
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
@@ -987,6 +991,18 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
             return -1;
         value = o->text_columns; o->text_columns = s->text_columns; s->text_columns = value;
         value = o->text_column_gap; o->text_column_gap = s->text_column_gap; s->text_column_gap = value;
+    } else if (s->kind == SNAP_OBJ_WRAP) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        unsigned char wrap;
+        int gaps[4];
+        if (!o)
+            return -1;
+        wrap = o->wrap;
+        memcpy(gaps, o->wrap_gap, sizeof gaps);
+        o->wrap = s->wrap;
+        memcpy(o->wrap_gap, s->wrap_gap, sizeof o->wrap_gap);
+        s->wrap = wrap;
+        memcpy(s->wrap_gap, gaps, sizeof s->wrap_gap);
     } else if (s->kind == SNAP_OBJ_FLOW) {
         int i;
         if (s->flow_count < 1 || s->flow_count > 2)
@@ -1783,6 +1799,42 @@ int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,
+                     owf_frame_wrap wrap, const int gap[4])
+{
+    snapshot s;
+    owf_obj *o = object(deck, slide, obj);
+    int stored[4] = {0, 0, 0, 0};
+    int side;
+    if (!u || !o)
+        return -1;
+    if (o->parent >= 0 || (o->flags & OWF_OBJ_HIDDEN) || o->kind == OWF_OBJ_GROUP ||
+        (o->kind == OWF_OBJ_SHAPE && o->shape == OWF_SHAPE_LINE) ||
+        (wrap != OWF_WRAP_NONE && wrap != OWF_WRAP_SQUARE &&
+         wrap != OWF_WRAP_TIGHT && wrap != OWF_WRAP_TOP_BOTTOM))
+        return -2;
+    if (wrap != OWF_WRAP_NONE) {
+        if (!gap) return -2;
+        for (side = 0; side < 4; ++side) {
+            if (gap[side] < 0 || gap[side] > 20000) return -2;
+            stored[side] = gap[side];
+        }
+    }
+    if (o->wrap == wrap && !memcmp(o->wrap_gap, stored, sizeof stored))
+        return 0;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_WRAP;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    s.wrap = o->wrap;
+    memcpy(s.wrap_gap, o->wrap_gap, sizeof s.wrap_gap);
+    o->wrap = (unsigned char)wrap;
+    memcpy(o->wrap_gap, stored, sizeof o->wrap_gap);
+    structural_push(u, &s);
+    return 0;
+}
+
 static int story_has_content(const owf_story *story)
 {
     int p, r;
@@ -1942,7 +1994,7 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
     if (slide) *slide = focus;
     if (obj) {
         if (s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX || s->kind == SNAP_OBJ_ROTATION ||
-            s->kind == SNAP_OBJ_LOOK || s->kind == SNAP_OBJ_COLUMNS)
+            s->kind == SNAP_OBJ_LOOK || s->kind == SNAP_OBJ_COLUMNS || s->kind == SNAP_OBJ_WRAP)
             *obj = s->obj;
         else if (s->kind == SNAP_OBJ_ORDER)
             *obj = s->from;

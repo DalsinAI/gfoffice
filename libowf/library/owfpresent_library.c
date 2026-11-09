@@ -21,12 +21,15 @@
  * 3.4: owf_obj.text_columns and text_column_gap, so the public object model
  * is larger. No call changes.
  *
+ * 3.5: owf_obj.wrap and wrap_gap, the shared publication/deck exclusion
+ * metadata consumed by GFOpenLayout 0.16. No call changes.
+ *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 4
-#define OWF_LIB_VERS "3.4"
+#define OWF_LIB_REVISION 5
+#define OWF_LIB_VERS "3.5"
 #define OWF_LIB_DATE "9.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"
