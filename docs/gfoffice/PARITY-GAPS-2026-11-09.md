@@ -176,17 +176,22 @@ RC71 was published from source commit
 `13001f4aa46e59d0d962c88bc53623d526fc8695`; its public archive downloaded
 back with SHA-256
 `2c47a365cb5f6b7abed73a0ac92afb52705cf9007a9e4e53e8430cf297879cbb`, and
-all 80 files covered by its internal manifest verified. Post-RC71 picture-crop
-and clipboard work through commit `d8295ea25bd90914fce5c43268f0e493f46b3d93`
-passed 302 focused optimized checks and the same checks under ASan/UBSan with
-leak detection disabled for the tracer. A clean Open6 build rebuilt all five
-linked apps with warnings as errors: Calc 1,474,596 bytes, Presentation
-793,560, Publisher 827,140, Writer 625,356 and OWConvert 752,528. That work is
-published on `main` but is not part of immutable RC71.
+all 80 files covered by its internal manifest verified.
 
-There is no recorded Dale on-Amiga smoke test for RC70, RC71 or the post-RC71
-crop/clipboard work.
+RC72 packages the post-RC71 picture-crop and clipboard work. Commit
+`d8295ea25bd90914fce5c43268f0e493f46b3d93` passed 302 focused optimized
+checks and the same checks under ASan/UBSan with leak detection disabled for
+the tracer. A clean Open6 build rebuilt all five linked apps with warnings as
+errors: Calc 1,474,596 bytes, Presentation 793,560, Publisher 827,140, Writer
+625,356 and OWConvert 752,528. RC72 was published from source commit
+`f21a16b55430987f3308dd3488f4d5b8af501a24`; its public archive downloaded
+back with SHA-256
+`e1a6a24d761d922b868f37cac59f44869e91e77d533a64d5d5115605abe08908`, and
+all 80 files covered by its internal manifest verified.
+
+There is no recorded Dale on-Amiga smoke test for RC70, RC71 or RC72.
 Host tests and cross-build success must not be reported as Amiga runtime
-evidence. RC71 still requires launching Publisher and Presentation, comparing
-Square and Tight around an ellipse or rotated polygon, editing distances,
-checking Undo/Redo, and saving/reopening ODP before promotion.
+evidence. RC72 still requires launching Publisher, Presentation and Writer;
+checking cross-application FTXT copy/paste and Cut/Paste Undo/Redo; cropping a
+picture; comparing Square and Tight around an ellipse or rotated polygon; and
+saving/reopening ODP before promotion.
