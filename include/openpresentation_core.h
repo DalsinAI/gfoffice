@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.15.0"
+#define OPR_CORE_VERSION "0.16.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -95,6 +95,13 @@ typedef struct {
     size_t offset;
 } opr_pos;
 
+/* A text selection keeps its fixed anchor and moving focus in the same
+ * editable object. Positions may be in either order. */
+typedef struct {
+    opr_pos anchor;
+    opr_pos focus;
+} opr_selection;
+
 typedef enum {
     OPR_MOVE_LEFT, OPR_MOVE_RIGHT,           /* a character, across paragraphs */
     OPR_MOVE_PARA_START, OPR_MOVE_PARA_END,
@@ -120,6 +127,11 @@ int opr_text_backspace(owf_deck *deck, int slide, int obj, opr_pos *at);
 /* The character after *at; at a paragraph's end, the next one joined on. */
 int opr_text_delete(owf_deck *deck, int slide, int obj, opr_pos *at);
 int opr_text_move(const owf_deck *deck, int slide, int obj, opr_pos *at, opr_move how);
+int opr_text_selection_empty(const opr_selection *selection);
+/* Delete exactly the selected characters and paragraph separators. Both ends
+ * collapse to the start. The caller owns the Undo snapshot, as for typing. */
+int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
+                              opr_selection *selection);
 /* The whole text replaced: the first paragraph's format, level and first
  * run's look kept for all of it. */
 int opr_text_set(owf_deck *deck, int slide, int obj, const char *utf8);
@@ -149,6 +161,16 @@ int opr_text_set_font(opr_undo *u, owf_deck *deck, int slide, int obj,
                       int first_para, int last_para, const char *family);
 int opr_text_set_alignment(opr_undo *u, owf_deck *deck, int slide, int obj,
                            int first_para, int last_para, owf_align alignment);
+/* Character formatting over an exact, non-empty selection. Paragraph
+ * alignment still uses opr_text_set_alignment because it is paragraph state. */
+int opr_text_toggle_flags_selection(opr_undo *u, owf_deck *deck, int slide, int obj,
+                                    const opr_selection *selection, unsigned flags);
+int opr_text_set_size_selection(opr_undo *u, owf_deck *deck, int slide, int obj,
+                                const opr_selection *selection, int twips);
+int opr_text_set_colour_selection(opr_undo *u, owf_deck *deck, int slide, int obj,
+                                  const opr_selection *selection, unsigned long colour);
+int opr_text_set_font_selection(opr_undo *u, owf_deck *deck, int slide, int obj,
+                                const opr_selection *selection, const char *family);
 /* Insert at (outside 0..n: the end), delete index, or move from to to. selected
  * is optional; on entry it is the selected slide and on return it follows the
  * change. A deck may have no slides at core level; the application may keep

@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.1 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.2 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.7 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.8 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -108,7 +108,7 @@ enum { C_NEW = 1, C_OPEN, C_SAVE, C_PRINT, C_PDF, C_UNDO, C_REDO };
 enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501 };
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
-    M_UNDO, M_REDO, M_STOP,
+    M_UNDO, M_REDO, M_SELECT_ALL, M_STOP,
     M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
     M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
     M_TEXT_FONT, M_TEXT_COLOUR,
@@ -146,6 +146,7 @@ static struct NewMenu menus[] = {
     { NM_TITLE, "Edit", NULL, 0, 0, NULL },
     { NM_ITEM, "Undo", "Z", 0, 0, (APTR)M_UNDO },
     { NM_ITEM, "Redo", NULL, 0, 0, (APTR)M_REDO },
+    { NM_ITEM, "Select All Text", "A", 0, 0, (APTR)M_SELECT_ALL },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
 
@@ -310,6 +311,8 @@ static opr_undo *undo;
 static int selected_obj = -1;
 static int edit_obj = -1;
 static opr_pos caret;
+static opr_selection text_selection;
+static int text_selecting;
 static int edit_grouped;
 
 enum {
@@ -2113,6 +2116,65 @@ static void draw_selection(const opr_slide *s)
     }
 }
 
+static int app_compare_pos(opr_pos a, opr_pos b)
+{
+    if (a.para != b.para) return a.para < b.para ? -1 : 1;
+    if (a.offset != b.offset) return a.offset < b.offset ? -1 : 1;
+    return 0;
+}
+
+/* Complement each selected character cell after the slide is painted. The
+ * caret mapping comes from the same OpenLayout plan as the glyphs, so wrapping,
+ * columns and object exclusions need no second geometry implementation. */
+static void draw_text_selection(const opr_slide *s, const ol_scale *sc)
+{
+    opr_pos at, end;
+    int frame, guard = 0;
+    struct RastPort *rp = win ? win->RPort : NULL;
+    if (!rp || edit_obj < 0 || !s || opr_text_selection_empty(&text_selection) ||
+        (frame = opr_slide_frame_for(s, edit_obj)) < 0)
+        return;
+    at = text_selection.anchor;
+    end = text_selection.focus;
+    if (app_compare_pos(at, end) > 0) {
+        opr_pos swap = at;
+        at = end;
+        end = swap;
+    }
+    SetAPen(rp, (ULONG)ogt_pen(&ctx, "accent"));
+    SetDrMd(rp, COMPLEMENT);
+    while (app_compare_pos(at, end) < 0 && guard++ < 1000000) {
+        opr_pos next = at;
+        ol_rect a, b;
+        int x, y, w, h;
+        if (opr_text_move(deck, current, edit_obj, &next, OPR_MOVE_RIGHT) < 0 ||
+            app_compare_pos(next, at) <= 0)
+            break;
+        if (app_compare_pos(next, end) > 0)
+            next = end;
+        if (!opr_caret_box(s, frame, at, NULL, NULL, &a) ||
+            !opr_caret_box(s, frame, next, NULL, NULL, &b)) {
+            at = next;
+            continue;
+        }
+        x = ol_scale_x(sc, a.x);
+        y = ol_scale_y(sc, a.y);
+        h = ol_scale_length(sc, a.height);
+        if (h < 2) h = 2;
+        if (a.y == b.y) {
+            int bx = ol_scale_x(sc, b.x);
+            w = bx - x;
+            if (w < 0) { x = bx; w = -w; }
+        } else {
+            w = h / 2;                 /* paragraph mark or a wrapped final glyph */
+        }
+        if (w < 1) w = 1;
+        RectFill(rp, x, y, x + w - 1, y + h - 1);
+        at = next;
+    }
+    SetDrMd(rp, JAM1);
+}
+
 static void draw_caret(const opr_slide *s, const ol_scale *sc)
 {
     int frame;
@@ -2189,6 +2251,7 @@ static void draw_slide_part(const box *part)
         ogt_text(rp, ogt_pen(&ctx, "muted"), slide_box.x + 8, slide_box.y + 8, "Not enough memory to show this " UNIT_LOWER ".",
                  slide_box.w - 16);
     draw_selection(s);
+    draw_text_selection(s, &sc);
     draw_caret(s, &sc);
     if (region) {
         InstallClipRegion(win->WLayer, old);
@@ -2229,6 +2292,7 @@ static void relayout(void)
 static void stop_typing(void)
 {
     edit_obj = -1;
+    text_selecting = 0;
     edit_grouped = 0;
 }
 
@@ -2819,10 +2883,18 @@ static void before_change(box *b)
     }
 }
 
-static void caret_moved(void)
+static void collapse_text_selection(void)
+{
+    text_selection.anchor = text_selection.focus = caret;
+}
+
+static void caret_moved(int extend_selection)
 {
     box b;
     edit_grouped = 0;
+    text_selection.focus = caret;
+    if (!extend_selection)
+        text_selection.anchor = caret;
     if (edit_area(&b)) draw_slide_part(&b);
 }
 
@@ -2831,10 +2903,18 @@ static void type_text(const char *utf8, size_t n)
     box b;
     if (edit_obj < 0) return;
     before_change(&b);
+    if (!opr_text_selection_empty(&text_selection)) {
+        if (opr_text_delete_selection(deck, current, edit_obj, &text_selection) < 0) {
+            tell(PROGRAM, "There is not enough memory for that.");
+            return;
+        }
+        caret = text_selection.focus;
+    }
     if (opr_text_insert(deck, current, edit_obj, &caret, utf8, n) < 0) {
         tell(PROGRAM, "There is not enough memory for that.");
         return;
     }
+    collapse_text_selection();
     text_changed(b.w ? &b : NULL);
 }
 
@@ -2844,15 +2924,21 @@ static void type_key(int key)
     int rc = 0;
     if (edit_obj < 0) return;
     before_change(&b);
-    if (key == 8) rc = opr_text_backspace(deck, current, edit_obj, &caret);
+    if (!opr_text_selection_empty(&text_selection)) {
+        rc = opr_text_delete_selection(deck, current, edit_obj, &text_selection);
+        caret = text_selection.focus;
+        if (!rc && key == 13)
+            rc = opr_text_newline(deck, current, edit_obj, &caret);
+    } else if (key == 8) rc = opr_text_backspace(deck, current, edit_obj, &caret);
     else if (key == 127) rc = opr_text_delete(deck, current, edit_obj, &caret);
     else if (key == 13) rc = opr_text_newline(deck, current, edit_obj, &caret);
     if (rc < 0) tell(PROGRAM, "There is not enough memory for that.");
+    collapse_text_selection();
     text_changed(b.w ? &b : NULL);
 }
 
 /* Up or down a line: the place nearest the caret on the line above or below, in the same text. */
-static void caret_line(int dir)
+static void caret_line(int dir, int extend_selection)
 {
     opr_slide *s = laid_get(current);
     int frame;
@@ -2862,7 +2948,7 @@ static void caret_line(int dir)
         return;
     if (opr_hit_frame(s, frame, b.x, dir < 0 ? b.y - b.height / 2 : b.y + b.height + b.height / 2, NULL, NULL, &to))
         caret = to;
-    caret_moved();
+    caret_moved(extend_selection);
 }
 
 static int format_begin(box *before)
@@ -2875,6 +2961,29 @@ static int format_begin(box *before)
     edit_grouped = 0;
     if (!edit_area(before)) before->w = 0;
     return 1;
+}
+
+static void select_all_text(void)
+{
+    owf_obj *o;
+    box b;
+    if (edit_obj < 0 || !deck) {
+        set_status("Click inside an editable text box before selecting text.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[edit_obj];
+    if (!o->text.nparas)
+        return;
+    text_selection.anchor.para = 0;
+    text_selection.anchor.offset = 0;
+    text_selection.focus.para = o->text.nparas - 1;
+    text_selection.focus.offset = opr_para_length(&o->text.paras[o->text.nparas - 1]);
+    caret = text_selection.focus;
+    edit_grouped = 0;
+    set_status("All text in the current frame is selected.");
+    if (edit_area(&b)) draw_slide_part(&b);
+    draw_status();
 }
 
 static void format_finish(int rc, const box *before, const char *message)
@@ -2895,8 +3004,12 @@ static void format_text_flags(unsigned flags, const char *message)
     box before;
     int rc;
     if (!format_begin(&before)) return;
-    rc = opr_text_toggle_flags(undo, deck, current, edit_obj,
-                               caret.para, caret.para, flags);
+    if (opr_text_selection_empty(&text_selection))
+        rc = opr_text_toggle_flags(undo, deck, current, edit_obj,
+                                   caret.para, caret.para, flags);
+    else
+        rc = opr_text_toggle_flags_selection(undo, deck, current, edit_obj,
+                                             &text_selection, flags);
     format_finish(rc, &before, message);
 }
 
@@ -2906,9 +3019,14 @@ static void format_text_size(int points)
     char message[64];
     int rc;
     if (!format_begin(&before)) return;
-    rc = opr_text_set_size(undo, deck, current, edit_obj,
-                           caret.para, caret.para, points * OWF_TWIPS_PER_POINT);
-    snprintf(message, sizeof message, "Current paragraph set to %d point text.", points);
+    if (opr_text_selection_empty(&text_selection))
+        rc = opr_text_set_size(undo, deck, current, edit_obj,
+                               caret.para, caret.para, points * OWF_TWIPS_PER_POINT);
+    else
+        rc = opr_text_set_size_selection(undo, deck, current, edit_obj,
+                                         &text_selection, points * OWF_TWIPS_PER_POINT);
+    snprintf(message, sizeof message, "%s set to %d point text.",
+             opr_text_selection_empty(&text_selection) ? "Current paragraph" : "Selection", points);
     format_finish(rc, &before, message);
 }
 
@@ -2930,9 +3048,14 @@ static void format_text_font(void)
     if (!text_requester("Font Family", "Family", initial,
                         entered, sizeof entered))
         return;
-    rc = opr_text_set_font(undo, deck, current, edit_obj,
-                           caret.para, caret.para, entered);
-    format_finish(rc, &before, "Current paragraph font family changed.");
+    if (opr_text_selection_empty(&text_selection))
+        rc = opr_text_set_font(undo, deck, current, edit_obj,
+                               caret.para, caret.para, entered);
+    else
+        rc = opr_text_set_font_selection(undo, deck, current, edit_obj,
+                                         &text_selection, entered);
+    format_finish(rc, &before, opr_text_selection_empty(&text_selection) ?
+                  "Current paragraph font family changed." : "Selection font family changed.");
 }
 
 static void format_text_colour(void)
@@ -2956,18 +3079,26 @@ static void format_text_colour(void)
         tell("Text Colour", "Enter exactly six hexadecimal digits, for example 336699.");
         return;
     }
-    rc = opr_text_set_colour(undo, deck, current, edit_obj,
-                             caret.para, caret.para, OWF_SHADE_RGB(shade));
-    format_finish(rc, &before, "Current paragraph text colour changed.");
+    if (opr_text_selection_empty(&text_selection))
+        rc = opr_text_set_colour(undo, deck, current, edit_obj,
+                                 caret.para, caret.para, OWF_SHADE_RGB(shade));
+    else
+        rc = opr_text_set_colour_selection(undo, deck, current, edit_obj,
+                                           &text_selection, OWF_SHADE_RGB(shade));
+    format_finish(rc, &before, opr_text_selection_empty(&text_selection) ?
+                  "Current paragraph text colour changed." : "Selection text colour changed.");
 }
 
 static void format_text_alignment(owf_align alignment, const char *message)
 {
     box before;
-    int rc;
+    int rc, first, last;
     if (!format_begin(&before)) return;
+    first = text_selection.anchor.para;
+    last = text_selection.focus.para;
+    if (first > last) { int swap = first; first = last; last = swap; }
     rc = opr_text_set_alignment(undo, deck, current, edit_obj,
-                                caret.para, caret.para, alignment);
+                                first, last, alignment);
     format_finish(rc, &before, message);
 }
 
@@ -3010,6 +3141,30 @@ static int hit_slide_object(int mx, int my, opr_pos *at)
     return frame >= 0 ? opr_frame_obj(s, frame) : -1;
 }
 
+static int hit_edit_text(int mx, int my, opr_pos *at)
+{
+    opr_slide *s = laid_get(current);
+    ol_scale sc;
+    int frame;
+    if (!s || edit_obj < 0 || !on_visible_slide(mx, my) ||
+        (frame = opr_slide_frame_for(s, edit_obj)) < 0)
+        return 0;
+    current_slide_scale(&sc);
+    return opr_hit_frame(s, frame, ol_unscale_x(&sc, mx), ol_unscale_y(&sc, my),
+                         NULL, NULL, at);
+}
+
+static void drag_text_selection(int mx, int my)
+{
+    opr_pos at;
+    box b;
+    if (!text_selecting || !hit_edit_text(mx, my, &at) ||
+        app_compare_pos(at, text_selection.focus) == 0)
+        return;
+    caret = text_selection.focus = at;
+    if (edit_area(&b)) draw_slide_part(&b);
+}
+
 static void start_object_drag(int obj, int mode, int mx, int my)
 {
     owf_obj resolved;
@@ -3031,6 +3186,16 @@ static void slide_mouse_down(int mx, int my)
     opr_pos at;
     int obj, handle;
     if (!on_visible_slide(mx, my)) return;
+    if (edit_obj >= 0 && hit_edit_text(mx, my, &at)) {
+        caret = at;
+        text_selection.anchor = text_selection.focus = at;
+        text_selecting = 1;
+        edit_grouped = 0;
+        set_status("Drag to select text; Shift+Arrow extends the selection.");
+        caret_moved(1);
+        draw_status();
+        return;
+    }
     handle = selection_handle(mx, my);
     if (handle != DRAG_NONE) {
         stop_typing();
@@ -3164,6 +3329,7 @@ static void finish_object_drag(int mx, int my)
     } else if (obj == hit_slide_object(mx, my, &at) && opr_obj_editable(deck, current, obj)) {
         edit_obj = obj;
         caret = at;
+        collapse_text_selection();
         edit_grouped = 0;
         set_status("Typing: Esc stops.");
     } else {
@@ -3563,6 +3729,7 @@ static void insert_textbox(void)
     edit_obj = selected;
     caret.para = 0;
     caret.offset = 0;
+    collapse_text_selection();
     edit_grouped = 0;
     slide_changed(current);
     dirty = 1;
@@ -3797,6 +3964,7 @@ static void do_undo(int redo)
     edit_grouped = 0;
     if (edit_obj >= 0)
         opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_TEXT_END);
+    collapse_text_selection();
     set_status(redo ? "Redone." : "Undone.");
     draw_slide();
     if (strip) ogt_list_draw_row(strip, current);
@@ -4246,13 +4414,14 @@ static void menu_action(ULONG id)
     case M_QUIT: if (confirm_discard()) quit_now = 1; break;
     case M_UNDO: do_undo(0); break;
     case M_REDO: do_undo(1); break;
+    case M_SELECT_ALL: select_all_text(); break;
     case M_STOP:
         stop_typing();
         draw_slide();
         break;
-    case M_TEXT_BOLD: format_text_flags(OWF_BOLD, "Bold toggled for the current paragraph."); break;
-    case M_TEXT_ITALIC: format_text_flags(OWF_ITALIC, "Italic toggled for the current paragraph."); break;
-    case M_TEXT_UNDERLINE: format_text_flags(OWF_UNDERLINE, "Underline toggled for the current paragraph."); break;
+    case M_TEXT_BOLD: format_text_flags(OWF_BOLD, "Bold toggled for the selection or current paragraph."); break;
+    case M_TEXT_ITALIC: format_text_flags(OWF_ITALIC, "Italic toggled for the selection or current paragraph."); break;
+    case M_TEXT_UNDERLINE: format_text_flags(OWF_UNDERLINE, "Underline toggled for the selection or current paragraph."); break;
     case M_TEXT_SIZE_10: format_text_size(10); break;
     case M_TEXT_SIZE_12: format_text_size(12); break;
     case M_TEXT_SIZE_14: format_text_size(14); break;
@@ -4405,7 +4574,13 @@ static void events(void)
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN) slide_mouse_down(mx, my);
             else if (code == SELECTUP) {
-                if (object_drag.active) finish_object_drag(mx, my);
+                if (text_selecting) {
+                    drag_text_selection(mx, my);
+                    text_selecting = 0;
+                    set_status(opr_text_selection_empty(&text_selection) ?
+                               "Typing: Esc stops." : "Text selected; type to replace or choose a format.");
+                    draw_status();
+                } else if (object_drag.active) finish_object_drag(mx, my);
                 if (tb.pressed >= 0) {
                     ogt_toolbar_draw_one(&tb, &ctx, win->RPort, tb.pressed, 0, "window");
                     tb.pressed = -1;
@@ -4413,18 +4588,20 @@ static void events(void)
             }
             break;
         case IDCMP_MOUSEMOVE:
-            if (object_drag.active) preview_object_drag(mx, my);
+            if (text_selecting) drag_text_selection(mx, my);
+            else if (object_drag.active) preview_object_drag(mx, my);
             break;
         case IDCMP_RAWKEY:
             if (code & 0x80) break;
             if (code == 0x54) {                 /* F5; Shift-F5 starts here */
                 run_show(qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT) ? current : 0, 0);
-            } else if (edit_obj >= 0 && !(qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT))) {
+            } else if (edit_obj >= 0) {
+                int extend = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
                 switch (code) {
-                case 0x4f: opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_LEFT); caret_moved(); break;
-                case 0x4e: opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_RIGHT); caret_moved(); break;
-                case 0x4c: caret_line(-1); break;
-                case 0x4d: caret_line(1); break;
+                case 0x4f: opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_LEFT); caret_moved(extend); break;
+                case 0x4e: opr_text_move(deck, current, edit_obj, &caret, OPR_MOVE_RIGHT); caret_moved(extend); break;
+                case 0x4c: caret_line(-1, extend); break;
+                case 0x4d: caret_line(1, extend); break;
                 }                               /* Del comes as a vanilla key (127) */
             } else if (selected_obj >= 0 &&
                        (code == 0x4c || code == 0x4d || code == 0x4e || code == 0x4f)) {

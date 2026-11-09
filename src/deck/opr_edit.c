@@ -305,6 +305,20 @@ static void clamp_pos(const owf_obj *o, opr_pos *at)
         at->offset = n;
 }
 
+static int compare_pos(opr_pos a, opr_pos b)
+{
+    if (a.para != b.para)
+        return a.para < b.para ? -1 : 1;
+    if (a.offset != b.offset)
+        return a.offset < b.offset ? -1 : 1;
+    return 0;
+}
+
+int opr_text_selection_empty(const opr_selection *selection)
+{
+    return !selection || compare_pos(selection->anchor, selection->focus) == 0;
+}
+
 int opr_text_newline(owf_deck *deck, int slide, int obj, opr_pos *at)
 {
     owf_obj *o = object(deck, slide, obj);
@@ -449,6 +463,23 @@ static int join(owf_obj *o, int index)
     return shift_levels(o, index + 1, 0);
 }
 
+static void remove_para(owf_obj *o, int index)
+{
+    owf_para *p = &o->text.paras[index];
+    int j;
+    for (j = 0; j < p->nruns; ++j) {
+        owf_free(p->runs[j].text);
+        owf_free(p->runs[j].href);
+    }
+    owf_free(p->runs);
+    owf_free(p->style);
+    owf_free(p->bookmarks);
+    memmove(&o->text.paras[index], &o->text.paras[index + 1],
+            (size_t)(o->text.nparas - index - 1) * sizeof *o->text.paras);
+    o->text.nparas--;
+    shift_levels(o, index, 0);
+}
+
 static size_t utf8_back(const char *s, size_t at)
 {
     if (!at)
@@ -515,6 +546,43 @@ int opr_text_delete(owf_deck *deck, int slide, int obj, opr_pos *at)
     if (at->para + 1 >= o->text.nparas)
         return 0;
     return join(o, at->para);
+}
+
+int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
+                              opr_selection *selection)
+{
+    owf_obj *o = object(deck, slide, obj);
+    opr_pos start, end;
+    if (!o || !selection || !o->text.nparas)
+        return -1;
+    start = selection->anchor;
+    end = selection->focus;
+    clamp_pos(o, &start);
+    clamp_pos(o, &end);
+    if (compare_pos(start, end) > 0) {
+        opr_pos swap = start;
+        start = end;
+        end = swap;
+    }
+    if (compare_pos(start, end) == 0) {
+        selection->anchor = selection->focus = start;
+        return 0;
+    }
+    if (start.para == end.para) {
+        remove_bytes(&o->text.paras[start.para], start.offset, end.offset);
+    } else {
+        remove_bytes(&o->text.paras[start.para], start.offset,
+                     opr_para_length(&o->text.paras[start.para]));
+        remove_bytes(&o->text.paras[end.para], 0, end.offset);
+        while (end.para > start.para + 1) {
+            remove_para(o, start.para + 1);
+            end.para--;
+        }
+        if (join(o, start.para) < 0)
+            return -1;
+    }
+    selection->anchor = selection->focus = start;
+    return 0;
 }
 
 int opr_text_move(const owf_deck *deck, int slide, int obj, opr_pos *at, opr_move how)
@@ -1079,6 +1147,142 @@ static owf_obj *format_object(owf_deck *deck, int slide, int obj,
         last_para < first_para || last_para >= o->text.nparas)
         return NULL;
     return o;
+}
+
+enum selection_format_kind {
+    SEL_FORMAT_FLAGS,
+    SEL_FORMAT_SIZE,
+    SEL_FORMAT_COLOUR,
+    SEL_FORMAT_FONT
+};
+
+static owf_obj *selection_object(owf_deck *deck, int slide, int obj,
+                                 const opr_selection *selection,
+                                 opr_pos *start, opr_pos *end)
+{
+    owf_obj *o = object(deck, slide, obj);
+    if (!o || !selection || !opr_obj_editable(deck, slide, obj) ||
+        !o->text.nparas)
+        return NULL;
+    *start = selection->anchor;
+    *end = selection->focus;
+    clamp_pos(o, start);
+    clamp_pos(o, end);
+    if (compare_pos(*start, *end) > 0) {
+        opr_pos swap = *start;
+        *start = *end;
+        *end = swap;
+    }
+    return compare_pos(*start, *end) < 0 ? o : NULL;
+}
+
+static int selection_run_touched(size_t run_start, size_t run_length,
+                                 size_t from, size_t to)
+{
+    return run_length && run_start < to && run_start + run_length > from;
+}
+
+static int format_selection(opr_undo *u, owf_deck *deck, int slide, int obj,
+                            const opr_selection *selection,
+                            enum selection_format_kind kind,
+                            unsigned long value)
+{
+    owf_obj *o;
+    opr_pos start, end;
+    int p, r, touched = 0, changed = 0, all_set = 1;
+    o = selection_object(deck, slide, obj, selection, &start, &end);
+    if (!u || !o)
+        return -2;
+
+    for (p = start.para; p <= end.para; ++p) {
+        owf_para *para = &o->text.paras[p];
+        size_t at = 0;
+        size_t from = p == start.para ? start.offset : 0;
+        size_t to = p == end.para ? end.offset : opr_para_length(para);
+        for (r = 0; r < para->nruns; ++r) {
+            size_t n = run_length(&para->runs[r]);
+            if (selection_run_touched(at, n, from, to)) {
+                touched++;
+                if (kind == SEL_FORMAT_FLAGS) {
+                    if ((para->runs[r].fmt.flags & (unsigned)value) != (unsigned)value)
+                        all_set = 0;
+                } else if ((kind == SEL_FORMAT_SIZE && para->runs[r].fmt.size != (int)value) ||
+                           (kind == SEL_FORMAT_COLOUR && para->runs[r].fmt.colour != value) ||
+                           (kind == SEL_FORMAT_FONT && para->runs[r].fmt.font != (int)value)) {
+                    changed = 1;
+                }
+            }
+            at += n;
+        }
+    }
+    if (!touched)
+        return -2;
+    if (kind != SEL_FORMAT_FLAGS && !changed)
+        return 0;
+    if (opr_undo_push(u, deck, slide, obj) < 0)
+        return -1;
+
+    for (p = start.para; p <= end.para; ++p) {
+        owf_para *para = &o->text.paras[p];
+        size_t from = p == start.para ? start.offset : 0;
+        size_t to = p == end.para ? end.offset : opr_para_length(para);
+        int first, after;
+        if (to <= from)
+            continue;
+        if (split_run_at(para, from, &first) < 0 ||
+            split_run_at(para, to, &after) < 0)
+            return -1;
+        for (r = first; r < after; ++r) {
+            if (kind == SEL_FORMAT_FLAGS) {
+                if (all_set) para->runs[r].fmt.flags &= ~(unsigned)value;
+                else para->runs[r].fmt.flags |= (unsigned)value;
+            } else if (kind == SEL_FORMAT_SIZE) {
+                para->runs[r].fmt.size = (int)value;
+            } else if (kind == SEL_FORMAT_COLOUR) {
+                para->runs[r].fmt.colour = value;
+            } else {
+                para->runs[r].fmt.font = (int)value;
+            }
+        }
+    }
+    return 0;
+}
+
+int opr_text_toggle_flags_selection(opr_undo *u, owf_deck *deck, int slide, int obj,
+                                    const opr_selection *selection, unsigned flags)
+{
+    const unsigned allowed = OWF_BOLD | OWF_ITALIC | OWF_UNDERLINE | OWF_STRIKE;
+    if (!flags || (flags & ~allowed)) return -2;
+    return format_selection(u, deck, slide, obj, selection, SEL_FORMAT_FLAGS, flags);
+}
+
+int opr_text_set_size_selection(opr_undo *u, owf_deck *deck, int slide, int obj,
+                                const opr_selection *selection, int twips)
+{
+    if (twips < 1 || twips > 20000) return -2;
+    return format_selection(u, deck, slide, obj, selection, SEL_FORMAT_SIZE,
+                            (unsigned long)twips);
+}
+
+int opr_text_set_colour_selection(opr_undo *u, owf_deck *deck, int slide, int obj,
+                                  const opr_selection *selection, unsigned long colour)
+{
+    if (colour > 0xFFFFFFUL && colour != OWF_COLOUR_AUTO) return -2;
+    return format_selection(u, deck, slide, obj, selection, SEL_FORMAT_COLOUR, colour);
+}
+
+int opr_text_set_font_selection(opr_undo *u, owf_deck *deck, int slide, int obj,
+                                const opr_selection *selection, const char *family)
+{
+    opr_pos start, end;
+    int font;
+    if (!u || !deck || !deck->res || !family || !*family || strlen(family) > 255 ||
+        !selection_object(deck, slide, obj, selection, &start, &end))
+        return -2;
+    font = owf_doc_font(deck->res, family, OWF_FONT_ANY);
+    if (font < 0) return -1;
+    return format_selection(u, deck, slide, obj, selection, SEL_FORMAT_FONT,
+                            (unsigned long)font);
 }
 
 int opr_text_toggle_flags(opr_undo *u, owf_deck *deck, int slide, int obj,

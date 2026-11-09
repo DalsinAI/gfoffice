@@ -662,6 +662,7 @@ static void textbox_insertion(void)
     size_t length = 0;
     owf_deck *back = NULL;
     char *text = NULL;
+    opr_selection selection;
     int selected = -1, slide = -1, obj = -1;
     int initial_font;
     int frame_inset[4] = {200, 150, 300, 250};
@@ -734,6 +735,39 @@ static void textbox_insertion(void)
           !opr_undo_redo(u, d, &slide, &obj) &&
           s->objs[0].text.paras[0].runs[0].fmt.font >= 0,
           "font family participates in Undo and Redo");
+    selection.anchor.para = selection.focus.para = 0;
+    selection.anchor.offset = 0;
+    selection.focus.offset = 9;
+    CHECK(!opr_text_toggle_flags_selection(u, d, 0, 0, &selection, OWF_BOLD) &&
+          s->objs[0].text.paras[0].nruns >= 2 &&
+          (s->objs[0].text.paras[0].runs[0].fmt.flags & OWF_BOLD) &&
+          !(s->objs[0].text.paras[0].runs[s->objs[0].text.paras[0].nruns - 1].fmt.flags & OWF_BOLD),
+          "character selection formats Publisher without formatting story");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].nruns == 1 &&
+          !opr_undo_redo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].nruns >= 2,
+          "exact-range formatting is one Undo and Redo step");
+    selection.anchor.offset = 10;
+    selection.focus.offset = 15;
+    CHECK(!opr_text_set_size_selection(u, d, 0, 0, &selection, 480) &&
+          !opr_text_set_colour_selection(u, d, 0, 0, &selection, 0xcc3300UL) &&
+          !opr_text_set_font_selection(u, d, 0, 0, &selection, "DejaVu Sans") &&
+          s->objs[0].text.paras[0].runs[s->objs[0].text.paras[0].nruns - 1].fmt.size == 480 &&
+          s->objs[0].text.paras[0].runs[s->objs[0].text.paras[0].nruns - 1].fmt.colour == 0xcc3300UL,
+          "size, colour and font family apply to the exact selected characters");
+    CHECK(!opr_undo_push(u, d, 0, 0), "snapshot selected-text deletion");
+    selection.anchor.offset = 0;
+    selection.focus.offset = 10;
+    CHECK(!opr_text_delete_selection(d, 0, 0, &selection) &&
+          opr_text_selection_empty(&selection) &&
+          (text = opr_text_get(d, 0, 0)) != NULL && !strcmp(text, "story"),
+          "typing replacement can delete an exact selection");
+    free(text); text = NULL;
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          (text = opr_text_get(d, 0, 0)) != NULL && !strcmp(text, "Publisher story"),
+          "Undo restores selected text and its split formatting");
+    free(text); text = NULL;
     CHECK(!opr_text_set_alignment(u, d, 0, 0, 0, 0, OWF_ALIGN_RIGHT) &&
           s->objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT,
           "right-align the current paragraph");
@@ -823,6 +857,8 @@ static void textbox_insertion(void)
         int saved_font = saved->text.paras[0].runs[0].fmt.font >= 0 ?
                          saved->text.paras[0].runs[0].fmt.font :
                          level ? level->chars.font : -1;
+        int selected_font = saved->text.paras[0].nruns > 0 ?
+                            saved->text.paras[0].runs[saved->text.paras[0].nruns - 1].fmt.font : -1;
         text = opr_text_get(back, 0, 0);
         CHECK(back->slides[0].nobjs == 2 && back->slides[0].objs[0].kind == OWF_OBJ_TEXT &&
               text && !strcmp(text, "Publisher story") &&
@@ -839,6 +875,11 @@ static void textbox_insertion(void)
               back->slides[0].objs[0].text.paras[0].runs[0].fmt.colour == 0x336699UL &&
               saved_font >= 0 && saved_font < back->res->nfonts &&
               !strcmp(back->res->fonts[saved_font].name, "Liberation Serif") &&
+              saved->text.paras[0].nruns >= 3 &&
+              saved->text.paras[0].runs[saved->text.paras[0].nruns - 1].fmt.size == 480 &&
+              saved->text.paras[0].runs[saved->text.paras[0].nruns - 1].fmt.colour == 0xcc3300UL &&
+              selected_font >= 0 && selected_font < back->res->nfonts &&
+              !strcmp(back->res->fonts[selected_font].name, "DejaVu Sans") &&
               (back->slides[0].objs[0].text.paras[0].runs[0].fmt.flags &
                (OWF_ITALIC | OWF_UNDERLINE)) == (OWF_ITALIC | OWF_UNDERLINE),
               "the complete rich text box survives the ODP round trip: align %d size %d flags %u",
@@ -889,6 +930,67 @@ static void textbox_insertion(void)
     CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
           s->objs[2].flow_story == s->objs[0].flow_story,
           "undo restores the appended third frame atomically");
+    opr_undo_free(u);
+    owf_deck_free(d);
+}
+
+static void character_selection_ranges(void)
+{
+    owf_deck *d = owf_deck_new(10000, 8000);
+    owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    opr_undo *u = opr_undo_new();
+    opr_textbox_spec spec;
+    opr_selection selection;
+    char *plain = NULL;
+    int selected = -1, slide = -1, obj = -1;
+    CHECK(d && s && u, "a deck for cross-paragraph text selection");
+    if (!d || !s || !u) {
+        opr_undo_free(u);
+        owf_deck_free(d);
+        return;
+    }
+    memset(&spec, 0, sizeof spec);
+    spec.x = spec.y = 400;
+    spec.width = 5000;
+    spec.height = 3000;
+    spec.valign = OWF_VALIGN_TOP;
+    spec.text = NULL;
+    CHECK(!opr_obj_insert_textbox(u, d, 0, &spec, &selected) && selected == 0,
+          "insert a text box for a range spanning separators");
+    CHECK(!opr_text_set(d, 0, 0, "One\nTwo\nThree") &&
+          s->objs[0].text.nparas == 3,
+          "make three paragraphs for the cross-paragraph range");
+    opr_undo_clear(u);
+    selection.anchor.para = 0; selection.anchor.offset = 2;
+    selection.focus.para = 2; selection.focus.offset = 2;
+    CHECK(!opr_text_toggle_flags_selection(u, d, 0, 0, &selection, OWF_BOLD) &&
+          s->objs[0].text.paras[0].nruns == 2 &&
+          !(s->objs[0].text.paras[0].runs[0].fmt.flags & OWF_BOLD) &&
+          (s->objs[0].text.paras[0].runs[1].fmt.flags & OWF_BOLD) &&
+          (s->objs[0].text.paras[1].runs[0].fmt.flags & OWF_BOLD) &&
+          s->objs[0].text.paras[2].nruns == 2 &&
+          (s->objs[0].text.paras[2].runs[0].fmt.flags & OWF_BOLD) &&
+          !(s->objs[0].text.paras[2].runs[1].fmt.flags & OWF_BOLD),
+          "a cross-paragraph selection formats only its two partial ends and full middle");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          s->objs[0].text.paras[0].nruns == 1 && s->objs[0].text.paras[2].nruns == 1 &&
+          !opr_undo_redo(u, d, &slide, &obj),
+          "cross-paragraph range formatting has one Undo and Redo snapshot");
+    CHECK(!opr_undo_push(u, d, 0, 0) &&
+          !opr_text_delete_selection(d, 0, 0, &selection) &&
+          opr_text_selection_empty(&selection) && selection.focus.para == 0 &&
+          selection.focus.offset == 2 &&
+          (plain = opr_text_get(d, 0, 0)) != NULL && !strcmp(plain, "Onree"),
+          "deleting across paragraphs joins the two unselected tails once");
+    free(plain); plain = NULL;
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          (plain = opr_text_get(d, 0, 0)) != NULL && !strcmp(plain, "One\nTwo\nThree"),
+          "Undo restores cross-paragraph text and formatting");
+    free(plain);
+    selection.anchor.para = selection.focus.para = 1;
+    selection.anchor.offset = selection.focus.offset = 1;
+    CHECK(opr_text_toggle_flags_selection(u, d, 0, 0, &selection, OWF_BOLD) == -2,
+          "an empty character selection is left to the caller's typing format policy");
     opr_undo_free(u);
     owf_deck_free(d);
 }
@@ -1174,6 +1276,7 @@ int main(int argc, char **argv)
     object_alignment();
     object_appearance();
     textbox_insertion();
+    character_selection_ranges();
     picture_insertion();
     object_wrapping();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
