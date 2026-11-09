@@ -745,7 +745,15 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
             owf_buf_puts(&body, ")\"");
         }
     }
-    owf_buf_puts(&body, "/>");
+    if (text_frame && o->text_columns >= 2 && o->text_columns <= 16 && o->text_column_gap >= 0) {
+        owf_buf_puts(&body, "><style:columns fo:column-count=\"");
+        owf_buf_printf(&body, "%d", o->text_columns);
+        owf_buf_puts(&body, "\" fo:column-gap=\"");
+        put_len(&body, o->text_column_gap);
+        owf_buf_puts(&body, "\"/></style:graphic-properties>");
+    } else {
+        owf_buf_puts(&body, "/>");
+    }
     if (presentation) {
         master_kind_style(w->master, o->placeholder, parent, sizeof parent);
         reg_style(w->reg, EL_STYLE, "presentation", "pr", parent, &body, name);

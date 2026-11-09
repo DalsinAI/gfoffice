@@ -76,6 +76,9 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 GFOpenPresentation 0.6.2 edits the current caret paragraph's bold, italic,
 underline, font size and alignment through reusable core 0.9.0, with Undo and
 ODP persistence. Character-range selection and font/colour requesters remain.
+GFOpenPresentation 0.6.3 adds one, two and three equal columns to selected text
+frames through shared core 0.10.0 and GFOpenLayout 0.15, including Undo/Redo,
+ODP save/reload and PPTX column import.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |

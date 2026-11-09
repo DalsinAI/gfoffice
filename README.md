@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.2.4 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.2.5 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -51,8 +51,12 @@ every frame. ODP save/reload preserves those editable links as native
 `draw:chain-next-name` chains. Format now edits the current paragraph's bold,
 italic, underline, font size and alignment through reusable undoable core
 commands, with screen/PDF rendering and ODP persistence supplied by the
-existing OpenLayout/deck path. Character-range selection, decoding original
-PUB formatting, columns, wrap and WMF/EMF playback remain later P1 work.
+existing OpenLayout/deck path. Format > Text Columns now makes an editable
+frame one, two or three columns through GFOpenLayout 0.15's bounded-column
+service. The setting participates in Undo and Redo, survives ODP save/reload,
+imports from ODP and PPTX, and is included when linked Publisher stories are
+fitted across frames. Character-range selection, decoding original PUB
+formatting, wrap and WMF/EMF playback remain later P1 work.
 
 # GFOpenWrite
 
@@ -450,7 +454,7 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.2), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.3), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
 beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and
@@ -460,7 +464,9 @@ Del, the arrow keys; Esc stops), with undo and redo
 (`src/deck/opr_edit.c`, tested by `make deck-edit-test` and `make
 deck-edit-check`). Format applies bold, italic, underline, six font sizes and
 left/centre/right/justified alignment to the current paragraph as an undoable
-shared-core edit. Click any slide object to select it, drag it to move it,
+shared-core edit. The same menu applies one, two or three equal text columns;
+Presentation and Publisher share the command, model, ODP/PPTX interchange and
+GFOpenLayout implementation. Click any slide object to select it, drag it to move it,
 drag one of its eight handles to resize it, or use the arrow keys to nudge it
 one screen pixel (Shift: ten); each completed move or resize is a single
 undoable core operation and inherited layout-placeholder geometry becomes an

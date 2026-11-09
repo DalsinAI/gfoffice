@@ -409,6 +409,23 @@ static const owf_xml_node *style_list(const odp *o, const gstyle *s)
     return NULL;
 }
 
+/* A style child inside graphic-properties, through parents and the graphic
+ * default. ODF uses this for style:columns in text frames. */
+static const owf_xml_node *graphic_child(const odp *o, const gstyle *s,
+                                         const char *ns, const char *name)
+{
+    const gstyle *c[MAX_CHAIN];
+    const owf_xml_node *d, *g, *v;
+    int i, n = chain(o, s, c);
+    for (i = 0; i < n; ++i) {
+        g = owf_xml_child(c[i]->node, NS_STYLE, "graphic-properties");
+        if ((v = owf_xml_child(g, ns, name))) return v;
+    }
+    d = s ? default_style(o, s->family) : NULL;
+    g = owf_xml_child(d, NS_STYLE, "graphic-properties");
+    return owf_xml_child(g, ns, name);
+}
+
 /* Text and paragraph properties onto pf and cf: the family's default and
  * the parents first, or (own) the style's own only. */
 static void apply_text(odp *o, const gstyle *s, owf_parafmt *pf, owf_charfmt *cf, int own)
@@ -1278,6 +1295,7 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
     const char *fill = prop(o, st, "graphic-properties", NS_DRAW, "fill");
     const char *stroke = prop(o, st, "graphic-properties", NS_DRAW, "stroke");
     const char *v;
+    const owf_xml_node *cols;
     int pad;
 
     if (fill && !strcmp(fill, "solid"))
@@ -1322,6 +1340,18 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
     else if (same(prop(o, st, "graphic-properties", NS_DRAW, "auto-grow-height"), "true") && !is_shape &&
              obj->placeholder == OWF_PH_NONE)
         obj->autofit = OWF_AUTOFIT_GROW;
+    cols = graphic_child(o, st, NS_STYLE, "columns");
+    if (cols) {
+        const char *value = attr(cols, NS_FO, "column-count");
+        char *end;
+        long count = value ? strtol(value, &end, 10) : 0;
+        if (value && end != value && !*end && count >= 2 && count <= 16) {
+            obj->text_columns = (int)count;
+            if (!parse_len(attr(cols, NS_FO, "column-gap"), &obj->text_column_gap) ||
+                obj->text_column_gap < 0)
+                obj->text_column_gap = 0;
+        }
+    }
 }
 
 /* The look of a list level for this object: its own list's, else its

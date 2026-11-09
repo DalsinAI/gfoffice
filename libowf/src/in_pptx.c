@@ -1089,6 +1089,7 @@ typedef struct {
     int has_anchor, anchor;      /* OWF_VALIGN_... */
     int has_fit, fit;            /* OWF_AUTOFIT_... */
     int font_scale, line_reduction; /* a:normAutofit's, percent; 0: none */
+    int has_columns, columns, column_gap;
     int vertical;
 } body_look;
 
@@ -1127,6 +1128,12 @@ static void read_body(const owf_xml_node *bp, body_look *b)
     }
     if ((s = att(bp, "vert")) && !same(s, "horz"))
         b->vertical = 1;
+    if (number_att(bp, "numCol", &v) && v >= 1 && v <= 16) {
+        b->columns = (int)v;
+        b->has_columns = 1;
+    }
+    if (number_att(bp, "spcCol", &v) && v >= 0)
+        b->column_gap = clamp(emu_to_twips(v), 0, 20000);
 }
 
 static const owf_xml_node *body_of(const owf_xml_node *shape)
@@ -1150,6 +1157,8 @@ static void apply_body(owf_obj *obj, const body_look *b)
     obj->autofit = b->has_fit ? (unsigned char)b->fit : OWF_AUTOFIT_NONE;
     obj->font_scale = obj->autofit == OWF_AUTOFIT_SHRINK && b->font_scale < 100 ? b->font_scale : 0;
     obj->line_reduction = obj->autofit == OWF_AUTOFIT_SHRINK ? b->line_reduction : 0;
+    obj->text_columns = b->has_columns ? b->columns : 0;
+    obj->text_column_gap = b->has_columns ? b->column_gap : 0;
 }
 
 /* The text style a placeholder's text starts from: the master's title,

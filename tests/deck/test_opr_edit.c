@@ -724,6 +724,26 @@ static void textbox_insertion(void)
           opr_text_set_alignment(u, d, 0, 0, 0, 0, (owf_align)99) == -2,
           "invalid formatting ranges and values are rejected");
     opr_undo_clear(u);
+    CHECK(!opr_obj_set_text_columns(u, d, 0, 0, 2, 240) &&
+          s->objs[0].text_columns == 2 && s->objs[0].text_column_gap == 240,
+          "set two columns and their gap on the shared text-frame model");
+    {
+        opr_slide *laid = opr_slide_layout(d, 0, NULL, NULL, NULL);
+        int frame = laid ? opr_slide_frame_for(laid, 0) : -1;
+        const ol_box_style *box = frame >= 0 ?
+            ol_node_box(ol_node_by_id(laid->doc, laid->frames[frame].node)) : NULL;
+        CHECK(box && box->text_columns == 2 &&
+              box->text_column_gap == (ol_unit)240 * OL_UNITS_PER_TWIP,
+              "GFOpenLayout receives the deck object's columns once");
+        opr_slide_free(laid);
+    }
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && obj == 0 && !s->objs[0].text_columns &&
+          !opr_undo_redo(u, d, &slide, &obj) && obj == 0 && s->objs[0].text_columns == 2,
+          "text columns participate in Undo and Redo");
+    CHECK(opr_obj_set_text_columns(u, d, 0, 0, 17, 0) == -2 &&
+          opr_obj_set_text_columns(u, d, 0, 0, 3, spec.width) == -2,
+          "invalid text-column geometry is rejected");
+    opr_undo_clear(u);
     invalid = spec; invalid.width = 0;
     CHECK(opr_obj_insert_textbox(u, d, 0, &invalid, &selected) == -2 && s->nobjs == 1,
           "an empty text box is refused without changing the slide");
@@ -751,6 +771,8 @@ static void textbox_insertion(void)
               back->slides[0].objs[0].x == spec.x &&
               back->slides[0].objs[0].inset[0] == spec.inset[0] &&
               back->slides[0].objs[0].look.fill == spec.look.fill &&
+              back->slides[0].objs[0].text_columns == 2 &&
+              back->slides[0].objs[0].text_column_gap == 240 &&
               back->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_RIGHT &&
               effective_size == 360 &&
               (back->slides[0].objs[0].text.paras[0].runs[0].fmt.flags &

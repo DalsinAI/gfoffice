@@ -117,6 +117,8 @@ typedef struct {
     unsigned char valign;        /* OWF_VALIGN_TOP, _CENTRE, _BOTTOM */
     unsigned char autofit;       /* OWF_AUTOFIT_... */
     int inset[4];                /* twips: left, top, right, bottom */
+    int text_columns;            /* 0 or 1: one; otherwise 2..16 equal text-frame columns */
+    int text_column_gap;         /* twips between text columns; 0: no gap */
     int image;                   /* OWF_OBJ_PICTURE: into res->images; -1: none */
     int crop[4];                 /* thousandths cut from left, top, right, bottom */
     struct owf_chart *chart;     /* OWF_OBJ_CHART (Design-Suite-Shared.md, 4): NULL until charts come */

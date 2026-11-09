@@ -84,7 +84,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.2.4 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.2.5 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +93,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.2 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.3 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -112,6 +112,7 @@ enum {
     M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
     M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
     M_TEXT_ALIGN_LEFT, M_TEXT_ALIGN_CENTRE, M_TEXT_ALIGN_RIGHT, M_TEXT_ALIGN_JUSTIFY,
+    M_TEXT_COLUMNS_1, M_TEXT_COLUMNS_2, M_TEXT_COLUMNS_3,
     M_INSERT_TEXTBOX, M_INSERT_PICTURE, M_INSERT_RECT, M_INSERT_ROUNDRECT, M_INSERT_ELLIPSE, M_INSERT_TRIANGLE,
     M_INSERT_DIAMOND, M_INSERT_ARROW, M_INSERT_LINE,
     M_ROTATE_LEFT, M_ROTATE_RIGHT,
@@ -161,6 +162,10 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Centre", NULL, 0, 0, (APTR)M_TEXT_ALIGN_CENTRE },
     { NM_SUB, "Right", NULL, 0, 0, (APTR)M_TEXT_ALIGN_RIGHT },
     { NM_SUB, "Justify", NULL, 0, 0, (APTR)M_TEXT_ALIGN_JUSTIFY },
+    { NM_ITEM, "Text Columns", NULL, 0, 0, NULL },
+    { NM_SUB, "One", NULL, 0, 0, (APTR)M_TEXT_COLUMNS_1 },
+    { NM_SUB, "Two", NULL, 0, 0, (APTR)M_TEXT_COLUMNS_2 },
+    { NM_SUB, "Three", NULL, 0, 0, (APTR)M_TEXT_COLUMNS_3 },
 
     { NM_TITLE, "Insert", NULL, 0, 0, NULL },
     { NM_ITEM, "Text Box", NULL, 0, 0, (APTR)M_INSERT_TEXTBOX },
@@ -3008,6 +3013,46 @@ static void rotate_selected(int delta_tenths)
     draw_status();
 }
 
+static void set_selected_text_columns(int columns)
+{
+    owf_obj *o;
+    int gap, rc;
+    char message[96];
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select a text frame for columns.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (!opr_obj_editable(deck, current, selected_obj)) {
+        set_status("Only text frames and text-bearing shapes can have columns.");
+        draw_status();
+        return;
+    }
+    gap = columns == 1 ? 0 : o->text_column_gap > 0 ? o->text_column_gap : 180;
+    stop_typing();
+    rc = opr_obj_set_text_columns(undo, deck, current, selected_obj, columns, gap);
+    if (rc < 0) {
+        set_status(rc == -2 ? "Those columns do not fit inside the text frame."
+                            : "The text columns could not be changed.");
+        draw_status();
+        return;
+    }
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    if (columns == 1)
+        snprintf(message, sizeof message, "Text frame set to one column.");
+    else
+        snprintf(message, sizeof message, "Text frame set to %d columns.", columns);
+    set_status(message);
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
 static void insert_shape(owf_shape kind)
 {
     opr_shape_spec spec;
@@ -3767,6 +3812,9 @@ static void menu_action(ULONG id)
     case M_TEXT_ALIGN_CENTRE: format_text_alignment(OWF_ALIGN_CENTRE, "Current paragraph centred."); break;
     case M_TEXT_ALIGN_RIGHT: format_text_alignment(OWF_ALIGN_RIGHT, "Current paragraph aligned right."); break;
     case M_TEXT_ALIGN_JUSTIFY: format_text_alignment(OWF_ALIGN_JUSTIFY, "Current paragraph justified."); break;
+    case M_TEXT_COLUMNS_1: set_selected_text_columns(1); break;
+    case M_TEXT_COLUMNS_2: set_selected_text_columns(2); break;
+    case M_TEXT_COLUMNS_3: set_selected_text_columns(3); break;
     case M_INSERT_TEXTBOX: insert_textbox(); break;
     case M_INSERT_PICTURE: insert_picture(); break;
     case M_INSERT_RECT: insert_shape(OWF_SHAPE_RECT); break;

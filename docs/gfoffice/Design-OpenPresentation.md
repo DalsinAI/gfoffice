@@ -494,6 +494,13 @@ alignment are set explicitly. The native Format menu applies them to the
 current caret paragraph. Existing OpenLayout run/paragraph styling renders the
 result and ODP round-trip tests verify its effective appearance.
 
+GFOpenPresentation 0.6.3 and GFOpenPublisher 0.2.5 add equal text-frame columns
+through shared core 0.10.0 and GFOpenLayout 0.15. The one/two/three-column
+Format commands, Undo/Redo snapshot, resolved object geometry, ODP
+`style:columns` persistence and PPTX DrawingML import are common. The deck
+adapter passes column count and gap to the layout box; the applications do not
+split lines or position column glyphs themselves.
+
 - A click selects an object; Shift-click adds to the selection; a drag on the
   empty slide draws a selection box.
 - A drag moves; eight handles resize; Shift keeps the shape; the arrow keys

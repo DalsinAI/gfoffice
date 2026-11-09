@@ -111,7 +111,7 @@ These changes are small, and they don't change behaviour:
 | `owfwrite.library` | `OWFWriteBase` | 3.3 | 40 | `<proto/owfwrite.h>` |
 | `owfcalc.library` | `OWFCalcBase` | 3.9 | 98 | `<proto/owfcalc.h>` |
 | `owfpub.library` | `OWFPubBase` | 3.1 | 37 | `<proto/owfpub.h>` |
-| `owfpresent.library` | `OWFPresentBase` | 3.3 | 81 | `<proto/owfpresent.h>` |
+| `owfpresent.library` | `OWFPresentBase` | 3.4 | 81 | `<proto/owfpresent.h>` |
 
 **Version 3 for all four.** The four libraries continue owf.library 2, so
 their versions go on from it. GFOpenUp's GFOffice part takes its version from

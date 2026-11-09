@@ -600,7 +600,8 @@ typedef enum {
     SNAP_OBJ_ROTATION,
     SNAP_OBJ_PRESENCE,
     SNAP_OBJ_ORDER,
-    SNAP_OBJ_LOOK
+    SNAP_OBJ_LOOK,
+    SNAP_OBJ_COLUMNS
 } snapshot_kind;
 
 typedef struct {
@@ -632,6 +633,8 @@ typedef struct {
     int rotation;
     /* SNAP_OBJ_LOOK: complete fill/stroke appearance. */
     owf_look look;
+    /* SNAP_OBJ_COLUMNS: equal text-frame columns and their gap. */
+    int text_columns, text_column_gap;
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
     owf_obj saved_obj;
     int saved_obj_present;
@@ -974,6 +977,13 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         look = o->look;
         o->look = s->look;
         s->look = look;
+    } else if (s->kind == SNAP_OBJ_COLUMNS) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        int value;
+        if (!o || !opr_obj_editable(deck, s->slide, s->obj))
+            return -1;
+        value = o->text_columns; o->text_columns = s->text_columns; s->text_columns = value;
+        value = o->text_column_gap; o->text_column_gap = s->text_column_gap; s->text_column_gap = value;
     } else
         return -1;
     s->focus = s->other_focus;
@@ -1727,6 +1737,36 @@ int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             int columns, int gap)
+{
+    snapshot s;
+    owf_obj *o = object(deck, slide, obj);
+    owf_obj resolved;
+    int stored_columns = columns == 1 ? 0 : columns;
+    int stored_gap = columns == 1 ? 0 : gap;
+    if (!u || !o)
+        return -1;
+    if (!opr_obj_editable(deck, slide, obj) || o->parent >= 0 ||
+        columns < 1 || columns > 16 || gap < 0 || gap > 20000 ||
+        owf_deck_resolve(deck, slide, obj, &resolved, NULL) < 0 ||
+        (long)gap * (columns - 1) >= resolved.width - resolved.inset[0] - resolved.inset[2])
+        return -2;
+    if (o->text_columns == stored_columns && o->text_column_gap == stored_gap)
+        return 0;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_COLUMNS;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    s.text_columns = o->text_columns;
+    s.text_column_gap = o->text_column_gap;
+    o->text_columns = stored_columns;
+    o->text_column_gap = stored_gap;
+    structural_push(u, &s);
+    return 0;
+}
+
 int opr_obj_set_rotation(opr_undo *u, owf_deck *deck, int slide, int obj,
                          int rotation_tenths)
 {
@@ -1775,7 +1815,7 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
     if (slide) *slide = focus;
     if (obj) {
         if (s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX || s->kind == SNAP_OBJ_ROTATION ||
-            s->kind == SNAP_OBJ_LOOK)
+            s->kind == SNAP_OBJ_LOOK || s->kind == SNAP_OBJ_COLUMNS)
             *obj = s->obj;
         else if (s->kind == SNAP_OBJ_ORDER)
             *obj = s->from;

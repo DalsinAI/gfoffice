@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.9.0"
+#define OPR_CORE_VERSION "0.10.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -231,6 +231,11 @@ int opr_obj_align(opr_undo *u, owf_deck *deck, int slide, int obj,
  * one undo step. -2 means an unsupported object or invalid look. */
 int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
                      const owf_look *look);
+/* Set equal columns inside one top-level text frame or text-bearing shape.
+ * columns is 1..16 and gap is twips. One column stores the canonical zero
+ * values. The change is one undo step. */
+int opr_obj_set_text_columns(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             int columns, int gap);
 /* Delete one ungrouped object, as one undo step. Undo restores all data owned
  * by the object. A group or an object with children returns -2. */
 int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj);

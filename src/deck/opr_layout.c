@@ -481,6 +481,11 @@ static ol_node *frame_node(builder *b, opr_frame *f, int x, int y, int w, int h,
         box.flags |= OL_BOX_CLIP_CONTENT;
     if (o && o->kind == OWF_OBJ_TEXT && o->flow_story >= 0)
         box.flags |= OL_BOX_CLIP_CONTENT;
+    if (o && o->text_columns >= 2 && o->text_columns <= 16 && o->text_column_gap >= 0) {
+        box.text_columns = o->text_columns;
+        box.text_column_gap = TW(o->text_column_gap);
+        box.flags |= OL_BOX_CLIP_CONTENT;
+    }
     if (o && o->kind != OWF_OBJ_PICTURE && o->kind != OWF_OBJ_GROUP) {
         s.padding_left = TW(o->inset[0]);
         s.padding_top = TW(o->inset[1]);
@@ -657,8 +662,14 @@ static int flow_fit_end(const builder *b, const owf_story *story, const owf_obj 
     ow_layout *layout;
     int width = frame->width - frame->inset[0] - frame->inset[2];
     int height = frame->height - frame->inset[1] - frame->inset[3];
+    int columns = frame->text_columns >= 2 && frame->text_columns <= 16 ? frame->text_columns : 1;
+    int gap = frame->text_column_gap > 0 ? frame->text_column_gap : 0;
     if (width < 1) width = 1;
     if (height < 1) height = 1;
+    if (columns > 1 && width > gap * (columns - 1))
+        width = (width - gap * (columns - 1)) / columns;
+    else
+        columns = 1;
     doc = *b->deck->res;
     doc.body = *story;
     memset(&doc.header, 0, sizeof doc.header);
@@ -672,9 +683,9 @@ static int flow_fit_end(const builder *b, const owf_story *story, const owf_obj 
     doc.page.height = height;
     layout = ow_layout_new(&doc, b->measure, b->measure_userdata);
     if (!layout) return 0;
-    if (ow_layout_page_count(layout) <= 1)
+    if (ow_layout_page_count(layout) <= columns)
         *end = story_end(story);
-    else if (!ow_layout_page_end(layout, 0, end)) {
+    else if (!ow_layout_page_end(layout, columns - 1, end)) {
         ow_layout_free(layout);
         return 0;
     }

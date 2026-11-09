@@ -311,9 +311,20 @@ GFOpenLayout already consumes the resulting run and paragraph styles, and ODP
 save/reload preserves their effective appearance. Character-range selection,
 font/colour choosers and decoding the original PUB formatting records remain.
 
+GFOpenPublisher 0.2.5 and shared Presentation/Publisher core 0.10.0 add equal
+columns to bounded text frames through GFOpenLayout 0.15. Format > Text Columns
+offers one, two and three columns with one undoable model change; one column is
+stored canonically as no column split. GFOpenLayout owns the narrow-galley
+layout, frame-height column breaks, clipping, caret and hit testing. ODP writes
+and reads standard `style:columns`, PPTX imports DrawingML `numCol`/`spcCol`,
+and linked-story fitting counts every column before handing the suffix to the
+next frame. Remaining work includes an interactive/custom gap and margin
+surface, decoding column settings from original PUB records, overflow and
+link/unlink controls, and wrap/exclusion around other page objects.
+
 This is a functional P1 base, not a claim of faithful Publisher appearance:
 P0 has not decoded original PUB text/paragraph formatting, fill and line colours, crops,
-wrap or columns, and the PDF picture encoder does not yet play
+wrap or original PUB column records, and the PDF picture encoder does not yet play
 WMF/EMF. The import report calls the plain styling approximation out.
 
 `in_pub.c` needs `owf_cfb.c`, which GFOpenWrite's own build and owf.library

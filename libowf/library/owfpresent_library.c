@@ -1,5 +1,5 @@
 /*
- * owfpresent.library 3.2, GFOpenPresentation's part of libowf: presentations.
+ * owfpresent.library 3.4, GFOpenPresentation's part of libowf: presentations.
  * The deck model, its formats (ODP, flat ODP) and the page PDF writer, with
  * the document model its text uses.
  *
@@ -18,12 +18,15 @@
  *
  * 3.3: owf_deck_duplicate_slide, a deep-copy primitive for the editor.
  *
+ * 3.4: owf_obj.text_columns and text_column_gap, so the public object model
+ * is larger. No call changes.
+ *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 3
-#define OWF_LIB_VERS "3.3"
-#define OWF_LIB_DATE "8.11.2026"
+#define OWF_LIB_REVISION 4
+#define OWF_LIB_VERS "3.4"
+#define OWF_LIB_DATE "9.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"
