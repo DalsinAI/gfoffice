@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.25.0"
+#define OPR_CORE_VERSION "0.26.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -337,6 +337,11 @@ int opr_obj_set_box(opr_undo *u, owf_deck *deck, int slide, int obj,
  * it lies within threshold twips. Invalid step/threshold values leave it
  * unchanged. Pure editor geometry: OpenLayout is not involved. */
 int opr_grid_snap(int value, int step, int threshold);
+/* Move an axis-aligned box start so its start, centre or end meets the nearest
+ * guide within threshold. length 0 snaps a single resize edge. *matched is
+ * the guide coordinate, or -1. Invalid input leaves start unchanged. */
+int opr_guide_snap_axis(int start, int length, const int *guides, int count,
+                        int threshold, int *matched);
 /* Set a shape object's anticlockwise rotation in tenths of a degree, as one
  * undo step. The value is normalized to 0..3599. -2 means the object is not
  * a shape; -1 means bad input. */

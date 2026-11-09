@@ -10,6 +10,7 @@
  */
 #include "openpresentation_core.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1925,6 +1926,34 @@ int opr_grid_snap(int value, int step, int threshold)
     if (distance_upper < distance_lower && distance_upper <= threshold)
         return (int)upper;
     return value;
+}
+
+int opr_guide_snap_axis(int start, int length, const int *guides, int count,
+                        int threshold, int *matched)
+{
+    long long best_distance = (long long)threshold + 1, best_start = start;
+    int anchors[3], a, g;
+    if (matched) *matched = -1;
+    if (length < 0 || !guides || count < 1 || threshold < 0)
+        return start;
+    anchors[0] = 0;
+    anchors[1] = length / 2;
+    anchors[2] = length;
+    for (a = 0; a < 3; ++a) {
+        long long position = (long long)start + anchors[a];
+        for (g = 0; g < count; ++g) {
+            long long delta = (long long)guides[g] - position;
+            long long distance = delta < 0 ? -delta : delta;
+            long long candidate = (long long)start + delta;
+            if (distance < best_distance && distance <= threshold &&
+                candidate >= INT_MIN && candidate <= INT_MAX) {
+                best_distance = distance;
+                best_start = candidate;
+                if (matched) *matched = guides[g];
+            }
+        }
+    }
+    return (int)best_start;
 }
 
 static int valid_shade(unsigned long shade)

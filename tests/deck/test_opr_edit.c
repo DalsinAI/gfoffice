@@ -295,6 +295,16 @@ static void structural_slides(void)
           opr_grid_snap(360, 720, 400) == 0 &&
           opr_grid_snap(710, 0, 20) == 710,
           "portable grid snapping handles thresholds, ties and negative coordinates");
+    {
+        const int guides[] = { 720, 5000, 9280 };
+        int matched = -1;
+        CHECK(opr_guide_snap_axis(680, 1200, guides, 3, 50, &matched) == 720 && matched == 720 &&
+              opr_guide_snap_axis(4370, 1200, guides, 3, 50, &matched) == 4400 && matched == 5000 &&
+              opr_guide_snap_axis(8030, 1200, guides, 3, 50, &matched) == 8080 && matched == 9280 &&
+              opr_guide_snap_axis(4000, 0, guides, 3, 50, &matched) == 4000 && matched == -1 &&
+              opr_guide_snap_axis(4000, -1, guides, 3, 50, &matched) == 4000,
+              "portable page guides snap box starts, centres, ends and resize edges");
+    }
 
     {
         opr_shape_spec spec;
