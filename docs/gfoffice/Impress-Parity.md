@@ -109,6 +109,9 @@ resize handles. The grid is editor chrome and is not exported.
 GFOpenPresentation 0.6.18 carries shared core 0.26.0 and adds fixed half-inch
 margin and page-centre guides. Move snaps start/centre/end and resize snaps the
 active edge; custom guides remain.
+GFOpenPresentation 0.6.19 carries shared core 0.27.0 and adds native 1-32 by
+1-32 table insertion, editable cell text, Tab/Shift-Tab cell navigation,
+one-step insertion Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
@@ -174,7 +177,7 @@ active edge; custom guides remain.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Insert a table, type in its cells | P1 (data), P3 (editing) | Yes |
+| Insert a table, type in its cells | P1 (data), P3 (editing) | Yes in 0.6.19: native Insert Table, cell-safe rich-text editing, Tab navigation, Undo/Redo and ODP persistence |
 | Column widths | P1 | Yes |
 | Cell fill | P1 | Yes |
 | Merge and split cells | Later | Approx.: shown apart |
