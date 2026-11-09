@@ -4815,6 +4815,99 @@ static void test_subtotals(void)
     oc_core_free(core);
 }
 
+static void test_pivot_summary(void)
+{
+    static const char *const rows[][3] = {
+        { "Region", "Product", "Sales" },
+        { "East", "A", "10" }, { "East", "B", "20" },
+        { "West", "A", "5" }, { "West", "A", "15" },
+        { "West", "B", "25" }, { "West", "B", "" },
+        { "North", "B", "30" }
+    };
+    static const struct { int function; double total; } aggregates[] = {
+        { OC_SUBTOTAL_AVERAGE, 17.5 }, { OC_SUBTOTAL_COUNT, 6.0 },
+        { OC_SUBTOTAL_COUNTA, 6.0 }, { OC_SUBTOTAL_MAX, 30.0 },
+        { OC_SUBTOTAL_MIN, 5.0 }, { OC_SUBTOTAL_PRODUCT, 11250000.0 },
+        { OC_SUBTOTAL_STDEV, 0.0 }, { OC_SUBTOTAL_STDEVP, 0.0 },
+        { OC_SUBTOTAL_SUM, 105.0 }, { OC_SUBTOTAL_VAR, 87.5 },
+        { OC_SUBTOTAL_VARP, 437.5 / 6.0 }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    int r, c, k;
+    if (!core)
+        return;
+    for (r = 0; r < 8; ++r)
+        for (c = 0; c < 3; ++c) {
+            char cell[16];
+            oc_cell_name((unsigned)r, (unsigned)c, cell);
+            enter_at(core, cell, rows[r][c]);
+        }
+    CHECK(oc_parse_range("A1:C8", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_pivot_summary(core, 0, 1, 2, OC_SUBTOTAL_SUM) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 2 && oc_core_sheet(core) == 1);
+    CHECK_STR(text(core, "A1"), "Region");
+    CHECK_STR(text(core, "B1"), "A");
+    CHECK_STR(text(core, "C1"), "B");
+    CHECK_STR(text(core, "D1"), "Grand Total");
+    CHECK_STR(text(core, "A2"), "East");
+    CHECK_STR(text(core, "A3"), "West");
+    CHECK_STR(text(core, "A4"), "North");
+    CHECK_STR(text(core, "A5"), "Grand Total");
+    CHECK(fabs(num(core, "B2") - 10.0) < 1e-12 && fabs(num(core, "C2") - 20.0) < 1e-12 &&
+          fabs(num(core, "D2") - 30.0) < 1e-12);
+    CHECK(fabs(num(core, "B3") - 20.0) < 1e-12 && fabs(num(core, "C3") - 25.0) < 1e-12 &&
+          fabs(num(core, "D3") - 45.0) < 1e-12);
+    CHECK(empty(core, "B4") && fabs(num(core, "C4") - 30.0) < 1e-12 &&
+          fabs(num(core, "D4") - 30.0) < 1e-12);
+    CHECK(fabs(num(core, "B5") - 30.0) < 1e-12 && fabs(num(core, "C5") - 75.0) < 1e-12 &&
+          fabs(num(core, "D5") - 105.0) < 1e-12);
+    {
+        const owf_cell *header = owf_sheet_find(&oc_core_book(core)->sheets[1], 0, 0);
+        const owf_cell *grand = owf_sheet_find(&oc_core_book(core)->sheets[1], 4, 3);
+        CHECK(header && header->style >= 0 &&
+              (oc_core_book(core)->styles[header->style].font.flags & OWF_BOLD));
+        CHECK(grand && grand->style >= 0 &&
+              (oc_core_book(core)->styles[grand->style].font.flags & OWF_BOLD));
+    }
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot.xlsx", "/tmp/opencalc-pivot.ods" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            const owf_cell *grand;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK &&
+                  round && round->nsheets == 2 && !strcmp(round->sheets[1].name, "Pivot"));
+            grand = round ? owf_sheet_find(&round->sheets[1], 4, 3) : NULL;
+            CHECK(grand && grand->type == OWF_VALUE_NUMBER && fabs(grand->number - 105.0) < 1e-12 &&
+                  grand->style >= 0 && grand->style < round->nstyles &&
+                  (round->styles[grand->style].font.flags & OWF_BOLD));
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 1 && oc_core_sheet(core) == 0 &&
+          !strcmp(oc_core_book(core)->sheets[0].name, "Sheet1"));
+
+    for (k = 0; k < (int)(sizeof aggregates / sizeof aggregates[0]); ++k) {
+        double expected = aggregates[k].total;
+        oc_core_select_range(core, &selected);
+        CHECK(oc_core_pivot_summary(core, 0, OC_PIVOT_NO_COLUMN, 2, aggregates[k].function) == OWF_OK);
+        if (aggregates[k].function == OC_SUBTOTAL_STDEV)
+            expected = sqrt(87.5);
+        else if (aggregates[k].function == OC_SUBTOTAL_STDEVP)
+            expected = sqrt(437.5 / 6.0);
+        CHECK(fabs(num(core, "B5") - expected) < 1e-8);
+        CHECK(oc_core_undo(core) == OWF_OK && oc_core_book(core)->nsheets == 1);
+    }
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_pivot_summary(core, 0, 0, 2, OC_SUBTOTAL_SUM) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_summary(core, 0, 1, 1, OC_SUBTOTAL_SUM) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 static void test_pdf(void)
 {
     oc_core *core = fresh();
@@ -4923,6 +5016,7 @@ int main(void)
     test_files();
     test_goal_seek();
     test_subtotals();
+    test_pivot_summary();
     test_pdf();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);

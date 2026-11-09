@@ -63,6 +63,14 @@ AVERAGE, COUNT/COUNTA, MAX/MIN, PRODUCT, STDEV/STDEVP, SUM and VAR/VARP. The
 private-copy transaction is one Undo step, nested totals are ignored by the
 grand total, and formula references across the workbook follow the new rows.
 
+GFOpenCalc 0.1.62 adds Data > Pivot Summary. Reusable core 0.27.0 groups a
+selected headed table by a row field and optional column field, applies any of
+the eleven aggregates to a value field and creates an ordinary-cell summary
+sheet with row, column and grand totals. The static output round-trips through
+XLSX and ODS and creation is one Undo step. Refreshable pivot definitions,
+field filtering and pivot-cache interchange are not authored yet; imported
+pivot metadata continues to be reported rather than silently discarded.
+
 GFOpenCalc can author column, bar, line, area, pie and scatter charts
 from a selected table, with live cell references, cached values, native
 selection/dragging, undoable deletion and XLSX/ODS round trips. Selected

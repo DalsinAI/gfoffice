@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.61 (9.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.62 (9.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -106,7 +106,8 @@ enum {
     M_SHEET_RENAME = 200, M_SHEET_DELETE, M_SHEET_DUPLICATE, M_SHEET_LEFT, M_SHEET_RIGHT, M_SHEET_HIDE, M_SHEET_SHOW,
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
-    M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS
+    M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
+    M_PIVOT_SUMMARY
 };
 
 static struct NewMenu menus[] = {
@@ -243,6 +244,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
+    { NM_ITEM, "Pivot Summary...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -3189,6 +3191,74 @@ static void do_subtotals(void)
         result(rc, "Group subtotals and a grand total were inserted; Undo removes them.");
 }
 
+static void do_pivot_summary(void)
+{
+    oc_selection selection;
+    char row_text[12], column_text[12], value_text[12], function_text[24];
+    unsigned row_col, column_col = OC_PIVOT_NO_COLUMN, value_col, candidate;
+    int function, rc;
+    oc_core_selection(core, &selection);
+    if (selection.nranges != 1 || selection.ranges[0].first_row >= selection.ranges[0].last_row ||
+        selection.ranges[0].first_col >= selection.ranges[0].last_col) {
+        set_status("Select one headed table with at least one data row and two columns.");
+        return;
+    }
+    oc_col_name(selection.ranges[0].first_col, row_text);
+    if (!text_requester("Pivot Summary", "Row field column", row_text,
+                        row_text, sizeof row_text)) return;
+    if (!column_word(row_text, strlen(row_text), &row_col) ||
+        row_col < selection.ranges[0].first_col || row_col > selection.ranges[0].last_col) {
+        set_status("The pivot row field must be a column inside the selected table.");
+        return;
+    }
+    candidate = row_col == selection.ranges[0].first_col ? row_col + 1u : selection.ranges[0].first_col;
+    if (selection.ranges[0].last_col - selection.ranges[0].first_col >= 2u)
+        oc_col_name(candidate, column_text);
+    else
+        snprintf(column_text, sizeof column_text, "none");
+    if (!text_requester("Pivot Summary", "Column field, or none", column_text,
+                        column_text, sizeof column_text)) return;
+    if (strcasecmp(column_text, "none")) {
+        if (!column_word(column_text, strlen(column_text), &column_col) ||
+            column_col < selection.ranges[0].first_col || column_col > selection.ranges[0].last_col ||
+            column_col == row_col) {
+            set_status("Use a different table column for the column field, or type none.");
+            return;
+        }
+    }
+    value_col = selection.ranges[0].last_col;
+    if (value_col == row_col || value_col == column_col) {
+        for (candidate = selection.ranges[0].first_col; candidate <= selection.ranges[0].last_col; ++candidate)
+            if (candidate != row_col && candidate != column_col) {
+                value_col = candidate;
+                break;
+            }
+    }
+    oc_col_name(value_col, value_text);
+    if (!text_requester("Pivot Summary", "Value field column", value_text,
+                        value_text, sizeof value_text)) return;
+    if (!column_word(value_text, strlen(value_text), &value_col) ||
+        value_col < selection.ranges[0].first_col || value_col > selection.ranges[0].last_col ||
+        value_col == row_col || value_col == column_col) {
+        set_status("The value field must be a different column inside the selected table.");
+        return;
+    }
+    if (!text_requester("Pivot Summary", "sum/average/count/counta/max/min/...", "sum",
+                        function_text, sizeof function_text)) return;
+    function = subtotal_function(function_text);
+    if (!function) {
+        set_status("Use sum, average, count, counta, max, min, product, stdev, stdevp, var or varp.");
+        return;
+    }
+    rc = oc_core_pivot_summary(core, row_col, column_col, value_col, function);
+    if (rc == OWF_ERR_FORMAT)
+        set_status("Pivot Summary needs distinct heading, row, column and value fields inside the selection.");
+    else if (rc == OWF_ERR_UNSUPPORTED)
+        set_status("That pivot would be too large, or the selection is not one rectangular table.");
+    else
+        result(rc, "Pivot summary created on a new sheet; Undo removes it.");
+}
+
 static void do_format_chart(void)
 {
     owf_chart *charts = NULL;
@@ -4164,6 +4234,7 @@ static void menu_action(ULONG id)
     case M_FILTER_ACTIVE: do_filter_active(); break;
     case M_GOAL_SEEK: do_goal_seek(); break;
     case M_SUBTOTALS: do_subtotals(); break;
+    case M_PIVOT_SUMMARY: do_pivot_summary(); break;
     case M_VALIDITY: do_validity(); break;
     case M_VALIDITY_CLEAR: result(oc_core_set_validation(core, NULL), "Validity cleared from the selection."); break;
     case M_FILTER_CLEAR:

@@ -311,6 +311,12 @@ group column, one or more value columns and any of the eleven SUBTOTAL
 aggregates; reusable core 0.26.0 atomically inserts bold per-group formula rows
 and a nested-safe grand total. Cross-sheet references follow inserted rows,
 and the complete transformation is one Undo step.
+GFOpenCalc 0.1.62 adds Data > Pivot Summary. A selected headed table can be
+cross-tabulated by a row field and optional column field, with any of the same
+eleven aggregates over a value field. Reusable core 0.27.0 creates an ordinary
+cell-based summary sheet with row, column and grand totals as one Undo step;
+the static result round-trips through XLSX and ODS. This is the aggregation
+layer for DataPilot-style work, not yet a stored, refreshable pivot definition.
 GFOpenCalc can also turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and

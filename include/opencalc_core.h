@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.26.0"
+#define OC_CORE_VERSION "0.27.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -374,6 +374,18 @@ enum {
 int oc_core_subtotals(oc_core *core, unsigned group_col,
                       const unsigned *value_cols, unsigned nvalue_cols,
                       int function, int has_header, int grand_total);
+
+/* Builds a static pivot-summary snapshot from the selected headed table on a
+ * new sheet. row_col, column_col and value_col are absolute source columns;
+ * use OC_PIVOT_NO_COLUMN for a one-dimensional summary. function is one of
+ * OC_SUBTOTAL_* above. Categories keep their first-occurrence order, blank
+ * categories are included, and row/column/grand totals are written. The
+ * source is untouched and creating the summary is one whole-book Undo step.
+ * This is the reusable aggregation layer for DataPilot-style work; it does
+ * not yet store a refreshable pivot definition in the document. */
+#define OC_PIVOT_NO_COLUMN ((unsigned)-1)
+int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
+                          unsigned value_col, int function);
 
 /* ---- AutoFilter ----
  * Turns the selection into a table with filter buttons. A one-cell

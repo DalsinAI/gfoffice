@@ -46,6 +46,24 @@ shift semantics update formulas and names elsewhere in the workbook,
 including cross-sheet references; allocation, formula or recalculation
 failure leaves the live workbook untouched.
 
+## Pivot-summary aggregation
+
+GFOpenCalc 0.1.62's Data > Pivot Summary is the first DataPilot-style vertical
+slice. Portable-core API `oc_core_pivot_summary` (`opencalc_core.h` 0.27.0)
+takes a selected headed table, a row field, an optional column field, a value
+field and any of the eleven aggregate modes used by Subtotals. Categories are
+typed values and retain first-occurrence order; blank categories participate.
+The result is a cross-tab on a new sheet with bold headings and row, column and
+grand totals. A one-dimensional form is available when no column field is
+wanted.
+
+Aggregation uses numerically stable online mean and variance accumulation.
+The new sheet contains ordinary text and numeric cells, so it survives XLSX
+and ODS save/reload without a private format. The source table is untouched
+and the entire sheet creation is one whole-book Undo step. It is deliberately
+called a static summary: storing source metadata, refresh, field filtering and
+ODF/OOXML pivot-cache interchange remain work for full DataPilot parity.
+
 ## How it works
 
 - **Parsing.** A formula is Excel's A1 text as the files keep it, without
