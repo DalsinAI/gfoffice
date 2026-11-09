@@ -200,56 +200,105 @@ static void pivot_name(const owf_book *book, char *out, size_t size)
     } while (found);
 }
 
-int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
-                          unsigned value_col, int function)
+#define PIVOT_SOURCE_NAME "_GF_PIVOT_SOURCE"
+#define PIVOT_CONFIG_NAME "_GF_PIVOT_CONFIG"
+
+static int pivot_args_ok(const owf_book *book, int source_index, const owf_range *range,
+                         unsigned row_col, unsigned column_col, unsigned value_col, int function)
 {
-    const oc_selection *selection;
-    const owf_range *range;
-    const owf_sheet *source;
+    return book && source_index >= 0 && source_index < book->nsheets && range &&
+           function >= OC_SUBTOTAL_AVERAGE && function <= OC_SUBTOTAL_VARP &&
+           range->first_row < range->last_row &&
+           row_col >= range->first_col && row_col <= range->last_col &&
+           value_col >= range->first_col && value_col <= range->last_col && row_col != value_col &&
+           (column_col == OC_PIVOT_NO_COLUMN ||
+            (column_col >= range->first_col && column_col <= range->last_col &&
+             column_col != row_col && column_col != value_col));
+}
+
+static int source_formula(const owf_book *book, int source_index, const owf_range *range,
+                          char *out, size_t size)
+{
+    const char *name = book->sheets[source_index].name;
+    char first[8], last[8], *p = out;
+    size_t left = size, i;
+    int n;
+    if (left < 4) return 0;
+    *p++ = '\''; left--;
+    for (i = 0; name[i]; ++i) {
+        if (left <= (name[i] == '\'' ? 2u : 1u)) return 0;
+        *p++ = name[i]; left--;
+        if (name[i] == '\'') { *p++ = '\''; left--; }
+    }
+    if (left < 3) return 0;
+    *p++ = '\''; *p++ = '!'; left -= 2;
+    oc_col_name(range->first_col, first);
+    oc_col_name(range->last_col, last);
+    n = snprintf(p, left, "$%s$%u:$%s$%u", first, range->first_row + 1u,
+                 last, range->last_row + 1u);
+    return n >= 0 && (size_t)n < left;
+}
+
+static int add_metadata(owf_book *book, int output_index, int source_index, const owf_range *range,
+                        unsigned row_col, unsigned column_col, unsigned value_col, int function)
+{
+    char source[128], config[80];
+    int column = column_col == OC_PIVOT_NO_COLUMN ? -1 : (int)column_col;
+    if (!source_formula(book, source_index, range, source, sizeof source))
+        return OWF_ERR_FORMAT;
+    snprintf(config, sizeof config, "\"%u,%d,%u,%d\"", row_col, column, value_col, function);
+    if (owf_book_add_name(book, PIVOT_SOURCE_NAME, output_index, source, 1) < 0 ||
+        owf_book_add_name(book, PIVOT_CONFIG_NAME, output_index, config, 1) < 0)
+        return OWF_ERR_MEMORY;
+    return OWF_OK;
+}
+
+static void clear_output(owf_calc *calc, owf_book *book, int sheet_index)
+{
+    owf_sheet *sheet = &book->sheets[sheet_index];
+    int i;
+    for (i = 0; i < sheet->ncells; ++i) {
+        unsigned row = sheet->cells[i].row, col = sheet->cells[i].col;
+        owf_calc_enter(calc, sheet_index, row, col, "");
+        sheet->cells[i].style = 0;
+    }
+    free(sheet->merges);
+    sheet->merges = NULL;
+    sheet->nmerges = sheet->capmerges = 0;
+}
+
+/* Transforms an already private workbook. output_index < 0 creates a new
+ * summary and its metadata; otherwise the existing output is refreshed. */
+static int pivot_transform(owf_book *work, int source_index, const owf_range *range,
+                           unsigned row_col, unsigned column_col, unsigned value_col, int function,
+                           int *output_index, unsigned *made_rows, unsigned *made_cols,
+                           owf_calc **made_calc)
+{
+    const owf_sheet *source = &work->sheets[source_index];
     pivot_category *rows = NULL, *cols = NULL;
     pivot_bucket *matrix = NULL, *row_totals = NULL, *col_totals = NULL;
     pivot_bucket grand = { 0 };
-    owf_book *work = NULL, *old_book;
-    owf_calc *calc = NULL, *old_calc;
+    owf_calc *calc = NULL;
     owf_sheet *output;
-    oc_undo *undo = NULL;
-    oc_sheetstate *states;
     unsigned nrows = 0, ncols = 0, row_capacity = 0, col_capacity = 0;
     unsigned row, r, c, out_cols, out_rows;
-    int ri, ci, rc = OWF_ERR_FORMAT, output_index, source_index;
+    int ri, ci, rc = OWF_ERR_FORMAT, created = *output_index < 0;
     int value_style = 0;
     char name[32], heading[112];
 
-    if (!core || function < OC_SUBTOTAL_AVERAGE || function > OC_SUBTOTAL_VARP)
-        return OWF_ERR_FORMAT;
-    if (core->edit_mode)
-        oc_edit_commit_anyway(core, OC_MOVE_NONE);
-    selection = &oc_state_const(core)->sel;
-    if (selection->nranges != 1)
-        return OWF_ERR_UNSUPPORTED;
-    range = &selection->ranges[0];
-    if (range->first_row >= range->last_row || row_col < range->first_col || row_col > range->last_col ||
-        value_col < range->first_col || value_col > range->last_col || row_col == value_col ||
-        (column_col != OC_PIVOT_NO_COLUMN &&
-         (column_col < range->first_col || column_col > range->last_col ||
-          column_col == row_col || column_col == value_col)))
-        return OWF_ERR_FORMAT;
-
-    source_index = core->sheet;
-    source = &core->book->sheets[source_index];
     for (row = range->first_row + 1; row <= range->last_row; ++row) {
         const owf_cell *row_cell = owf_sheet_find(source, row, row_col);
         const owf_cell *col_cell = column_col == OC_PIVOT_NO_COLUMN ? NULL : owf_sheet_find(source, row, column_col);
         const owf_cell *value_cell = owf_sheet_find(source, row, value_col);
-        ri = category_index(core->book, &rows, &nrows, &row_capacity, row_cell);
+        ri = category_index(work, &rows, &nrows, &row_capacity, row_cell);
         if (ri < 0) { rc = OWF_ERR_MEMORY; goto done; }
         if (column_col == OC_PIVOT_NO_COLUMN)
             ci = 0;
         else {
-            ci = category_index(core->book, &cols, &ncols, &col_capacity, col_cell);
+            ci = category_index(work, &cols, &ncols, &col_capacity, col_cell);
             if (ci < 0) { rc = OWF_ERR_MEMORY; goto done; }
         }
-        if (value_cell && value_cell->style >= 0 && value_cell->style < core->book->nstyles)
+        if (value_cell && value_cell->style >= 0 && value_cell->style < work->nstyles)
             value_style = value_cell->style;
     }
     if (!nrows) { rc = OWF_ERR_FORMAT; goto done; }
@@ -264,7 +313,6 @@ int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
     row_totals = calloc(nrows, sizeof *row_totals);
     col_totals = calloc(ncols, sizeof *col_totals);
     if (!matrix || !row_totals || !col_totals) { rc = OWF_ERR_MEMORY; goto done; }
-
     for (row = range->first_row + 1; row <= range->last_row; ++row) {
         const owf_cell *row_cell = owf_sheet_find(source, row, row_col);
         const owf_cell *col_cell = column_col == OC_PIVOT_NO_COLUMN ? NULL : owf_sheet_find(source, row, column_col);
@@ -280,60 +328,66 @@ int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
         bucket_add(&grand, value_cell);
     }
 
-    work = oc_book_copy(core->book);
-    if (!work) { rc = OWF_ERR_MEMORY; goto done; }
-    pivot_name(work, name, sizeof name);
-    output = owf_book_add_sheet(work, name);
-    if (!output) { rc = OWF_ERR_MEMORY; goto done; }
-    output_index = work->nsheets - 1;
-    work->active = output_index;
+    if (created) {
+        pivot_name(work, name, sizeof name);
+        output = owf_book_add_sheet(work, name);
+        if (!output) { rc = OWF_ERR_MEMORY; goto done; }
+        *output_index = work->nsheets - 1;
+        source = &work->sheets[source_index];
+        rc = add_metadata(work, *output_index, source_index, range,
+                          row_col, column_col, value_col, function);
+        if (rc != OWF_OK) goto done;
+    } else
+        output = &work->sheets[*output_index];
+    work->active = *output_index;
     calc = owf_calc_new(work);
     if (!calc) { rc = OWF_ERR_MEMORY; goto done; }
+    if (!created)
+        clear_output(calc, work, *output_index);
 
-    category_label(core->book, owf_sheet_find(source, range->first_row, row_col), heading, sizeof heading);
+    category_label(work, owf_sheet_find(source, range->first_row, row_col), heading, sizeof heading);
     if (!strcmp(heading, "(blank)")) snprintf(heading, sizeof heading, "Rows");
-    if ((rc = put_text(calc, output_index, 0, 0, heading)) != OWF_OK) goto done;
+    if ((rc = put_text(calc, *output_index, 0, 0, heading)) != OWF_OK) goto done;
     if (column_col == OC_PIVOT_NO_COLUMN) {
         char value_heading[80];
-        category_label(core->book, owf_sheet_find(source, range->first_row, value_col), value_heading, sizeof value_heading);
+        category_label(work, owf_sheet_find(source, range->first_row, value_col), value_heading, sizeof value_heading);
         snprintf(heading, sizeof heading, "%s of %s", function_name(function),
                  !strcmp(value_heading, "(blank)") ? "Value" : value_heading);
-        if ((rc = put_text(calc, output_index, 0, 1, heading)) != OWF_OK) goto done;
+        if ((rc = put_text(calc, *output_index, 0, 1, heading)) != OWF_OK) goto done;
     } else {
         for (c = 0; c < ncols; ++c)
-            if ((rc = put_text(calc, output_index, 0, c + 1u, cols[c].label)) != OWF_OK) goto done;
-        if ((rc = put_text(calc, output_index, 0, ncols + 1u, "Grand Total")) != OWF_OK) goto done;
+            if ((rc = put_text(calc, *output_index, 0, c + 1u, cols[c].label)) != OWF_OK) goto done;
+        if ((rc = put_text(calc, *output_index, 0, ncols + 1u, "Grand Total")) != OWF_OK) goto done;
     }
-
     for (r = 0; r < nrows; ++r) {
-        if ((rc = put_text(calc, output_index, r + 1u, 0, rows[r].label)) != OWF_OK) goto done;
+        if ((rc = put_text(calc, *output_index, r + 1u, 0, rows[r].label)) != OWF_OK) goto done;
         for (c = 0; c < ncols; ++c) {
             double value;
             if (bucket_value(&matrix[r * ncols + c], function, &value)) {
-                if ((rc = put_number(calc, output_index, r + 1u, c + 1u, value)) != OWF_OK) goto done;
+                if ((rc = put_number(calc, *output_index, r + 1u, c + 1u, value)) != OWF_OK) goto done;
                 owf_sheet_cell(output, r + 1u, c + 1u, 0)->style = value_style;
             }
         }
         if (column_col != OC_PIVOT_NO_COLUMN) {
             double value;
             if (bucket_value(&row_totals[r], function, &value)) {
-                if ((rc = put_number(calc, output_index, r + 1u, ncols + 1u, value)) != OWF_OK) goto done;
+                if ((rc = put_number(calc, *output_index, r + 1u, ncols + 1u, value)) != OWF_OK) goto done;
                 owf_sheet_cell(output, r + 1u, ncols + 1u, 0)->style = value_style;
             }
         }
     }
-    if ((rc = put_text(calc, output_index, nrows + 1u, 0, "Grand Total")) != OWF_OK) goto done;
+    if ((rc = put_text(calc, *output_index, nrows + 1u, 0, "Grand Total")) != OWF_OK) goto done;
     for (c = 0; c < ncols; ++c) {
         double value;
         if (bucket_value(&col_totals[c], function, &value)) {
-            if ((rc = put_number(calc, output_index, nrows + 1u, c + 1u, value)) != OWF_OK) goto done;
+            if ((rc = put_number(calc, *output_index, nrows + 1u, c + 1u, value)) != OWF_OK) goto done;
             owf_sheet_cell(output, nrows + 1u, c + 1u, 0)->style = value_style;
         }
     }
     if (column_col != OC_PIVOT_NO_COLUMN) {
         double value;
         if (bucket_value(&grand, function, &value)) {
-            if ((rc = put_number(calc, output_index, nrows + 1u, ncols + 1u, value)) != OWF_OK) goto done;
+            if ((rc = put_number(calc, *output_index, nrows + 1u, ncols + 1u, value)) != OWF_OK) goto done;
             owf_sheet_cell(output, nrows + 1u, ncols + 1u, 0)->style = value_style;
         }
     }
@@ -347,14 +401,37 @@ int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
         for (r = 1; r + 1u < out_rows; ++r)
             if ((rc = bold_cell(work, output, r, out_cols - 1u)) != OWF_OK) goto done;
     if ((rc = owf_calc_recalc(calc)) != OWF_OK) goto done;
+    *made_rows = out_rows;
+    *made_cols = out_cols;
+    *made_calc = calc;
+    calc = NULL;
+    rc = OWF_OK;
+done:
+    owf_calc_free(calc);
+    free(rows);
+    free(cols);
+    free(matrix);
+    free(row_totals);
+    free(col_totals);
+    return rc;
+}
 
-    undo = oc_undo_new(core, OC_UNDO_BOOK);
+static int pivot_commit(oc_core *core, owf_book *work, owf_calc *calc,
+                        int output_index, unsigned out_rows, unsigned out_cols)
+{
+    owf_book *old_book;
+    owf_calc *old_calc;
+    oc_undo *undo = oc_undo_new(core, OC_UNDO_BOOK);
+    oc_sheetstate *states;
     if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
         oc_undo_free(undo);
         undo = NULL;
     }
     states = realloc(core->states, (size_t)work->nsheets * sizeof *states);
-    if (!states) { rc = OWF_ERR_MEMORY; goto done; }
+    if (!states) {
+        oc_undo_free(undo);
+        return OWF_ERR_MEMORY;
+    }
     core->states = states;
     memset(&core->states[output_index], 0, sizeof core->states[output_index]);
     core->states[output_index].sel.nranges = 1;
@@ -362,7 +439,6 @@ int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
     core->states[output_index].sel.ranges[0].last_col = out_cols - 1u;
     core->states[output_index].tab_col = -1;
     core->nstates = work->nsheets;
-
     oc_cf_forget(core);
     oc_charts_forget(core);
     old_book = core->book;
@@ -370,26 +446,96 @@ int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
     core->book = work;
     core->calc = calc;
     core->sheet = output_index;
-    work = NULL;
-    calc = NULL;
     owf_calc_free(old_calc);
     owf_book_free(old_book);
     oc_undo_push(core, undo);
-    undo = NULL;
     oc_changed(core);
     core->used_valid = 0;
     core->unchecked = 0;
     if (core->clip.valid)
         core->clip.cut = 0;
-    rc = OWF_OK;
-done:
-    oc_undo_free(undo);
-    owf_calc_free(calc);
-    owf_book_free(work);
-    free(rows);
-    free(cols);
-    free(matrix);
-    free(row_totals);
-    free(col_totals);
+    return OWF_OK;
+}
+
+int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
+                          unsigned value_col, int function)
+{
+    const oc_selection *selection;
+    const owf_range *range;
+    owf_book *work;
+    owf_calc *calc = NULL;
+    unsigned out_rows = 0, out_cols = 0;
+    int output_index = -1, rc, source_index;
+    if (!core)
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    selection = &oc_state_const(core)->sel;
+    if (selection->nranges != 1)
+        return OWF_ERR_UNSUPPORTED;
+    range = &selection->ranges[0];
+    source_index = core->sheet;
+    if (!pivot_args_ok(core->book, source_index, range, row_col, column_col, value_col, function))
+        return OWF_ERR_FORMAT;
+    work = oc_book_copy(core->book);
+    if (!work)
+        return OWF_ERR_MEMORY;
+    rc = pivot_transform(work, source_index, range, row_col, column_col, value_col, function,
+                         &output_index, &out_rows, &out_cols, &calc);
+    if (rc == OWF_OK)
+        rc = pivot_commit(core, work, calc, output_index, out_rows, out_cols);
+    if (rc != OWF_OK) {
+        owf_calc_free(calc);
+        owf_book_free(work);
+    }
+    return rc;
+}
+
+static const owf_defname *pivot_name_at(const owf_book *book, int sheet, const char *wanted)
+{
+    int i;
+    for (i = 0; i < book->nnames; ++i)
+        if (book->names[i].sheet == sheet && !strcmp(book->names[i].name, wanted))
+            return &book->names[i];
+    return NULL;
+}
+
+int oc_core_refresh_pivot(oc_core *core)
+{
+    const owf_defname *source_name, *config_name;
+    owf_range range;
+    owf_book *work;
+    owf_calc *calc = NULL;
+    unsigned row_col, value_col, out_rows = 0, out_cols = 0;
+    int column, function, used = 0, source_index, output_index, rc;
+    if (!core)
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    output_index = core->sheet;
+    source_name = pivot_name_at(core->book, output_index, PIVOT_SOURCE_NAME);
+    config_name = pivot_name_at(core->book, output_index, PIVOT_CONFIG_NAME);
+    if (!source_name || !config_name)
+        return OWF_ERR_UNSUPPORTED;
+    if (!oc_sheet_range(core->book, source_name->formula, output_index, &source_index, &range) ||
+        sscanf(config_name->formula, "\"%u,%d,%u,%d\"%n",
+               &row_col, &column, &value_col, &function, &used) != 4 ||
+        config_name->formula[used] || column < -1 || source_index == output_index)
+        return OWF_ERR_FORMAT;
+    if (!pivot_args_ok(core->book, source_index, &range, row_col,
+                       column < 0 ? OC_PIVOT_NO_COLUMN : (unsigned)column, value_col, function))
+        return OWF_ERR_FORMAT;
+    work = oc_book_copy(core->book);
+    if (!work)
+        return OWF_ERR_MEMORY;
+    rc = pivot_transform(work, source_index, &range, row_col,
+                         column < 0 ? OC_PIVOT_NO_COLUMN : (unsigned)column, value_col, function,
+                         &output_index, &out_rows, &out_cols, &calc);
+    if (rc == OWF_OK)
+        rc = pivot_commit(core, work, calc, output_index, out_rows, out_cols);
+    if (rc != OWF_OK) {
+        owf_calc_free(calc);
+        owf_book_free(work);
+    }
     return rc;
 }

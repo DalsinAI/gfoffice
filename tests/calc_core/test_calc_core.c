@@ -4876,6 +4876,9 @@ static void test_pivot_summary(void)
         for (k = 0; k < 2; ++k) {
             owf_book *round = NULL;
             const owf_cell *grand;
+            const owf_defname *source_name = NULL, *config_name = NULL;
+            oc_core *round_core;
+            int n;
             CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
             CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK &&
                   round && round->nsheets == 2 && !strcmp(round->sheets[1].name, "Pivot"));
@@ -4883,10 +4886,29 @@ static void test_pivot_summary(void)
             CHECK(grand && grand->type == OWF_VALUE_NUMBER && fabs(grand->number - 105.0) < 1e-12 &&
                   grand->style >= 0 && grand->style < round->nstyles &&
                   (round->styles[grand->style].font.flags & OWF_BOLD));
-            owf_book_free(round);
+            if (round) {
+                for (n = 0; n < round->nnames; ++n)
+                    if (round->names[n].sheet == 1 && !strcmp(round->names[n].name, "_GF_PIVOT_SOURCE"))
+                        source_name = &round->names[n];
+                    else if (round->names[n].sheet == 1 && !strcmp(round->names[n].name, "_GF_PIVOT_CONFIG"))
+                        config_name = &round->names[n];
+            }
+            CHECK(source_name && config_name && strstr(source_name->formula, "$A$1:$C$8") &&
+                  !strcmp(config_name->formula, "\"0,1,2,9\""));
+            round_core = oc_core_new(round);
+            round = NULL;
+            CHECK(round_core && oc_core_set_input(round_core, 0, 1, 2, "40") == OWF_OK &&
+                  oc_core_set_sheet(round_core, 1) == OWF_OK && oc_core_refresh_pivot(round_core) == OWF_OK);
+            CHECK(round_core && fabs(num(round_core, "D5") - 135.0) < 1e-12);
+            oc_core_free(round_core);
             remove(paths[k]);
         }
     }
+    CHECK(oc_core_set_input(core, 0, 1, 2, "40") == OWF_OK);
+    CHECK(fabs(num(core, "D5") - 105.0) < 1e-12);       /* a static summary until refreshed */
+    CHECK(oc_core_refresh_pivot(core) == OWF_OK && fabs(num(core, "D5") - 135.0) < 1e-12);
+    CHECK(oc_core_undo(core) == OWF_OK && fabs(num(core, "D5") - 105.0) < 1e-12);
+    CHECK(oc_core_undo(core) == OWF_OK);                 /* source edit */
     CHECK(oc_core_undo(core) == OWF_OK);
     CHECK(oc_core_book(core)->nsheets == 1 && oc_core_sheet(core) == 0 &&
           !strcmp(oc_core_book(core)->sheets[0].name, "Sheet1"));
@@ -4905,6 +4927,7 @@ static void test_pivot_summary(void)
     oc_core_select_range(core, &selected);
     CHECK(oc_core_pivot_summary(core, 0, 0, 2, OC_SUBTOTAL_SUM) == OWF_ERR_FORMAT);
     CHECK(oc_core_pivot_summary(core, 0, 1, 1, OC_SUBTOTAL_SUM) == OWF_ERR_FORMAT);
+    CHECK(oc_core_refresh_pivot(core) == OWF_ERR_UNSUPPORTED);
     oc_core_free(core);
 }
 

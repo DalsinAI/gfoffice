@@ -60,9 +60,22 @@ wanted.
 Aggregation uses numerically stable online mean and variance accumulation.
 The new sheet contains ordinary text and numeric cells, so it survives XLSX
 and ODS save/reload without a private format. The source table is untouched
-and the entire sheet creation is one whole-book Undo step. It is deliberately
-called a static summary: storing source metadata, refresh, field filtering and
-ODF/OOXML pivot-cache interchange remain work for full DataPilot parity.
+and the entire sheet creation is one whole-book Undo step. Version 0.1.62
+initially made this a static summary; native ODF/OOXML pivot-cache interchange
+and interactive field filtering remain work for full DataPilot parity.
+
+GFOpenCalc 0.1.63 and portable core 0.28.0 add refresh. A generated sheet owns
+two internal sheet-scoped defined names: one holds the quoted absolute source
+range and one holds the row, optional column, value and aggregate fields. The
+formula engine's normal reference rewriting keeps the source range aligned as
+rows or columns move. Both names round-trip through XLSX and ODS, allowing a
+reloaded summary to refresh without application-private file parts.
+
+`oc_core_refresh_pivot` rebuilds the active summary on a deep workbook copy,
+clears stale cells when the result shrinks and swaps the complete result only
+after success. Refresh is one whole-book Undo step. The summary cells remain a
+snapshot between refreshes; interactive field filtering and native ODF/OOXML
+pivot-cache definitions are still outside this vertical slice.
 
 ## How it works
 

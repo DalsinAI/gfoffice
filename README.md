@@ -316,7 +316,13 @@ cross-tabulated by a row field and optional column field, with any of the same
 eleven aggregates over a value field. Reusable core 0.27.0 creates an ordinary
 cell-based summary sheet with row, column and grand totals as one Undo step;
 the static result round-trips through XLSX and ODS. This is the aggregation
-layer for DataPilot-style work, not yet a stored, refreshable pivot definition.
+layer for DataPilot-style work; the output is not a native pivot definition.
+GFOpenCalc 0.1.63 and reusable core 0.28.0 add Refresh Pivot Summary. Each
+generated sheet stores its source range and field configuration as internal
+sheet-scoped defined names. The source reference follows ordinary row/column
+edits, survives XLSX and ODS, and refresh replaces the summary atomically as
+one Undo step. Interactive field filters and native pivot-cache interchange
+remain later DataPilot work.
 GFOpenCalc can also turn a
 selected table into a column, bar, line, area, pie or scatter chart from its
 native Insert menu. The reusable core builds series/category references and

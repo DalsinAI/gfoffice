@@ -71,6 +71,13 @@ XLSX and ODS and creation is one Undo step. Refreshable pivot definitions,
 field filtering and pivot-cache interchange are not authored yet; imported
 pivot metadata continues to be reported rather than silently discarded.
 
+GFOpenCalc 0.1.63 and reusable core 0.28.0 add Refresh Pivot Summary. Internal
+sheet-scoped defined names retain the source range and field configuration;
+they survive both XLSX and ODS, and source references follow row/column edits.
+Refresh atomically replaces the ordinary-cell snapshot as one Undo step. These
+names describe GFOpenCalc summaries, not native Excel pivot caches or ODF
+DataPilot tables, which are still not authored.
+
 GFOpenCalc can author column, bar, line, area, pie and scatter charts
 from a selected table, with live cell references, cached values, native
 selection/dragging, undoable deletion and XLSX/ODS round trips. Selected

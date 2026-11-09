@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.27.0"
+#define OC_CORE_VERSION "0.28.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -386,6 +386,12 @@ int oc_core_subtotals(oc_core *core, unsigned group_col,
 #define OC_PIVOT_NO_COLUMN ((unsigned)-1)
 int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
                           unsigned value_col, int function);
+/* Rebuilds the active Pivot Summary from its stored source/configuration.
+ * The source range follows ordinary row/column edits through a hidden defined
+ * name and survives XLSX/ODS. Refresh replaces the summary cells atomically
+ * as one Undo step. OWF_ERR_UNSUPPORTED means the active sheet is not a Pivot
+ * Summary made by this core. */
+int oc_core_refresh_pivot(oc_core *core);
 
 /* ---- AutoFilter ----
  * Turns the selection into a table with filter buttons. A one-cell

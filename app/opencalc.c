@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.62 (9.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.63 (9.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH
 };
 
 static struct NewMenu menus[] = {
@@ -245,6 +245,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
     { NM_ITEM, "Pivot Summary...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
+    { NM_ITEM, "Refresh Pivot Summary", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -4235,6 +4236,17 @@ static void menu_action(ULONG id)
     case M_GOAL_SEEK: do_goal_seek(); break;
     case M_SUBTOTALS: do_subtotals(); break;
     case M_PIVOT_SUMMARY: do_pivot_summary(); break;
+    case M_PIVOT_REFRESH:
+        {
+            int rc = oc_core_refresh_pivot(core);
+            if (rc == OWF_ERR_UNSUPPORTED)
+                set_status("The active sheet is not a refreshable GFOpenCalc Pivot Summary.");
+            else if (rc == OWF_ERR_FORMAT)
+                set_status("The Pivot Summary source or fields are no longer valid.");
+            else
+                result(rc, "Pivot summary refreshed from its source; Undo restores the previous summary.");
+        }
+        break;
     case M_VALIDITY: do_validity(); break;
     case M_VALIDITY_CLEAR: result(oc_core_set_validation(core, NULL), "Validity cleared from the selection."); break;
     case M_FILTER_CLEAR:
