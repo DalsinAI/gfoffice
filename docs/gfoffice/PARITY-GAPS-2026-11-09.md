@@ -224,9 +224,16 @@ build produced Calc 1,474,596 bytes, Presentation 803,256, Publisher 836,968,
 Writer 625,356 and OWConvert 752,528. The feature is published on `main` but
 is not part of immutable RC73.
 
-There is no recorded Dale on-Amiga smoke test for RC70, RC71, RC72 or RC73.
+RC74 packages that object-clipboard work from source commit
+`c88499764d69e51ba5f21e97516526372cf632e4`. Its public 4,541,227-byte archive
+downloaded back with SHA-256
+`2ec34e2dc4b6fac3f673c68ad4626998590da0193ce14359841ab7946a28ae78`, and
+all 80 files covered by its internal manifest verified. The live annotated tag
+peels to the source commit and the GitHub release remains marked prerelease.
+
+There is no recorded Dale on-Amiga smoke test for RC70 through RC74.
 Host tests and cross-build success must not be reported as Amiga runtime
-evidence. RC73 still requires launching Publisher, Presentation and Writer;
-checking Find across objects/pages, all three ruler markers and their
-Undo/Redo, cross-application FTXT copy/paste, picture crop, Square versus Tight
-wrap, and ODP save/reopen before promotion.
+evidence. RC74 still requires launching Publisher, Presentation and Writer;
+checking cross-app object and FTXT Cut/Copy/Paste plus Undo/Redo, Find across
+objects/pages, all three ruler markers, picture crop, Square versus Tight wrap,
+and ODP save/reopen before promotion.
