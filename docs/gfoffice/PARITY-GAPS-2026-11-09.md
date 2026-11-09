@@ -1,8 +1,8 @@
 # GFOffice gap analysis against Apache OpenOffice and Microsoft Publisher
 
 Verified 9 November 2026 against GFOffice `main` through implementation commit
-`11f975fc59f29f77050b48d6d0a4a55a676d07fa` (GFOffice 2.0.25 RC68 candidate),
-GFOpenLayout `08e9e98bd91c19f02369bda7511027bcdb4359ea`, and GFOpenDraw
+`6493e3cd7fcdc9ec794ba8fc028ddcbb2a360ab1` (GFOffice 2.0.25 RC69 feature
+candidate), GFOpenLayout `58c3ae5645b1676124abe20588cc472f48585977`, and GFOpenDraw
 `ca07afc25e793e4c4fdc5ae16979bebccd203eaa`.
 
 This replaces older phase/checklist impressions with the current code, tests,
@@ -21,8 +21,8 @@ edits, saves, reloads and undoes correctly.
 | --- | --- | ---: | --- | --- | --- |
 | GFOpenWrite 2.0.26 | Writer | **63%** | Medium-high | Native text editing; character and paragraph formatting; styles; lists; editable tables; inline/floating pictures; text boxes; headers/footers; TOC; sections and newspaper columns; DOCX/ODT/RTF; PDF/print; spelling, recovery and ARexx | Track changes; comments/review UI; mail merge/labels/envelopes; alphabetical and object indexes/bibliography; master documents; forms; richer style families; advanced tables; embedded charts/sheets/media; autocorrect/thesaurus/hyphenation |
 | GFOpenCalc 0.1.67 | Calc | **62%** | High for delivered core, medium overall | XLS/XLSX/ODS/FODS/CSV; 277-function formula engine; editing/formatting; sort/filter; comments, validation and conditional formatting; charts; subtotals; refreshable pivot summaries; Goal Seek; durable, manually refreshable one/two-variable and multi-formula Multiple Operations; PDF/print; robust host corpus | Automatic data-table recalc and native Excel/Calc data-table metadata; full Pivot Table field layout/filter/drill/multiple data fields; Solver; scenarios; consolidation; richer database filters/functions; external data/links; sharing/change tracking; macro recorder/IDE; more chart/graphics editing |
-| GFOpenPresentation 0.6.3 | Impress | **54%** | Medium-high | ODP/FODP read/write, PPTX import; slide CRUD/reorder/hide; masters/layout model; text editing plus paragraph-level bold/italic/underline/size/alignment; bounded equal text columns with ODP persistence/PPTX import; inserted text boxes/pictures/shapes; object move/resize/rotate/arrange/align/appearance; transitions; slideshow; PDF/print; undo | PPT/PPTX export; character-range selection and font/colour UI; Normal/Outline/Notes/Handout/Sorter views; notes editing and notes/handout printing; multi-selection/distribute; master editing; richer fills/transparency/shadows; table structure editing; charts/OLE/media editing; custom animation; clipboard; find/spell; ARexx |
-| GFOpenPublisher 0.2.6 | Microsoft Publisher 2021 | **41%** | Medium | PUB import; positioned multi-page display; exact linked-story continuation across pages; safe tail link/unlink authoring with Undo and ODP persistence; layout-derived selected-frame overflow badge; editable text with paragraph-level bold/italic/underline/size/alignment; one/two/three-column bounded frames through GFOpenLayout with Undo and ODP persistence; PPTX/ODP column import; editable inserted picture/shape objects; move/resize/rotate/arrange/align/look; ODP save; PDF/print | Native PUB save; decode original PUB formatting/columns and add character-range/font/colour editing; arbitrary middle-chain surgery; custom gaps/autofit/margins within text boxes; wrap/exclusion flow; master pages and facing-page publications; guides/snap/rulers/baselines; templates/building blocks; crop/recolour/transparency; richer tables; mail/catalog merge; commercial-print/preflight/design checker |
+| GFOpenPresentation 0.6.4 | Impress | **54%** | Medium-high | ODP/FODP read/write, PPTX import; slide CRUD/reorder/hide; masters/layout model; text editing plus paragraph-level bold/italic/underline/size/alignment; bounded equal text columns with ODP persistence/PPTX import; shared imported object-wrap rendering; inserted text boxes/pictures/shapes; object move/resize/rotate/arrange/align/appearance; transitions; slideshow; PDF/print; undo | PPT/PPTX export; character-range selection and font/colour UI; Normal/Outline/Notes/Handout/Sorter views; notes editing and notes/handout printing; multi-selection/distribute; master editing; richer fills/transparency/shadows; table structure editing; charts/OLE/media editing; custom animation; clipboard; find/spell; ARexx |
+| GFOpenPublisher 0.2.7 | Microsoft Publisher 2021 | **43%** | Medium | PUB import; positioned multi-page display; exact linked-story continuation across pages; safe tail link/unlink authoring with Undo and ODP persistence; layout-derived selected-frame overflow badge; editable text with paragraph-level bold/italic/underline/size/alignment; one/two/three-column bounded frames; undoable square and top/bottom text wrap around pictures/shapes through GFOpenLayout 0.16; ODP wrap persistence; editable inserted picture/shape objects; move/resize/rotate/arrange/align/look; ODP save; PDF/print | Native PUB save; decode original PUB formatting/columns/wrap and add character-range/font/colour editing; arbitrary middle-chain surgery; custom column gaps, text-box margins and per-side wrap distances; contour/tight wrap; master pages and facing-page publications; guides/snap/rulers/baselines; templates/building blocks; crop/recolour/transparency; richer tables; mail/catalog merge; commercial-print/preflight/design checker |
 | GFOpenDraw 0.2.0 RC2 | Draw | **19%** | High | Practical indexed-raster paint editor; two native front ends; ARexx; reusable host/m68k painting library; suite packaging | Multi-page vector document shell; ODG/SVG; editable text/shapes/pictures; layers/master pages; connectors/glue points; curves; multi-selection/grouping; snap/grid/guides; dimensions; technical drawing; vector PDF/clipboard. Raster-side text, polygons/curves, gradients, symmetry, spare page and CRNG persistence also remain |
 | GFOpenBase design 0.1 | Base | **4%** | High | Current design, SQLite/OADB architecture and reusable suite components are documented | No executable or core yet. Required baseline: project create/open; table designer and datasheet CRUD; keys/relationships; SQL/query designer; forms/subforms; reports; CSV/DBF/Calc exchange; locking/recovery; ARexx/runtime |
 
@@ -96,7 +96,7 @@ the same geometry or flow rule.
 | Gap | Put in GFOpenLayout? | Reason |
 | --- | --- | --- |
 | Publisher columns inside bounded linked frames | **Delivered in GFOpenLayout 0.15** | General bounded multi-column story flow also serves Writer text boxes and presentation frames |
-| Publisher wrap around frames and shapes | **Yes** | Exclusion geometry and line fitting are renderer/layout concerns shared with Writer |
+| Publisher wrap around frames and shapes | **Delivered in GFOpenLayout 0.16** | Box-local exclusion geometry and line fitting reuse the established Writer wrap fitter without affecting sibling flows |
 | Footnote/endnote page allocation | **Yes** | It changes pagination and region allocation, independent of Writer UI |
 | Rich table pagination, repeated headings, split/keep rules | **Yes** | Shared document layout and PDF/screen fidelity |
 | Incremental reflow and reusable thumbnail/page plans | **Yes** | Cross-app performance service with stable invalidation contracts |
@@ -113,13 +113,13 @@ the same geometry or flow rule.
    refresh atomically after source changes, then integrate refresh with normal
    recalculation. This closes the only known semantic weakness in RC64's newly
    delivered feature without adding anything to OpenLayout.
-2. **Publisher P1c — rich text frames on OpenLayout (format controls and
-   bounded columns delivered).** GFOpenLayout 0.15 now owns fixed-height
-   multi-column flow, clipping, hit testing and caret placement; Publisher and
-   Presentation share commands, Undo/Redo and ODP/PPTX interchange. Next add
-   exclusion/wrap services to GFOpenLayout, then arbitrary middle-chain
-   surgery and character-range formatting in the shared deck editor. Safe
-   tail link/unlink and a layout-derived overflow badge are now delivered.
+2. **Publisher P1c — rich text frames on OpenLayout (format controls, bounded
+   columns and rectangular object wrap delivered).** GFOpenLayout 0.16 now
+   owns fixed-height multi-column flow and scoped exclusion fitting; Publisher
+   and Presentation share model, Undo/Redo and ODP interchange. Next add
+   arbitrary middle-chain surgery and character-range formatting in the shared
+   deck editor, followed by contour wrap and editable per-side distances. Safe
+   tail link/unlink and a layout-derived overflow badge are also delivered.
 3. **Writer W-review — tracked changes first, mail merge second.** Preserve
    revisions as editable review records rather than accepting them on import;
    then build CSV/Calc-field merge as a reusable document-generation service
@@ -139,21 +139,21 @@ the same geometry or flow rule.
 
 ## Validation status
 
-Current-session RC67 host evidence at this revision is the complete normal
-GFOffice suite, including 1,606 Calc-core checks, 10,491 formula/oracle checks,
-259 shared deck-editor/interchange checks, 67 Publisher-adapter checks, the
+Current-session RC69 candidate host evidence at this revision is the complete
+normal GFOffice suite, including 1,606 Calc-core checks, 10,491 formula/oracle
+checks, 271 shared deck-editor/interchange checks, 67 Publisher-adapter checks, the
 ODP/PPTX/PUB damaged-input corpora, library ABI checks and 3,943 cut-short
-document trials. All passed against the pinned GFOpenLayout 0.15 candidate.
-The new 259-check path also passed ASan/UBSan with leak detection disabled;
+document trials. All passed against the pinned GFOpenLayout 0.16 RC1 commit.
+The new 271-check path also passed ASan/UBSan with leak detection disabled;
 LeakSanitizer cannot run under this environment's tracer. Optional `odfpy` and
 `openpyxl` third-party read-back checks were skipped because those packages are
 not installed. A clean Open6 build from the exact pinned GFOpenLayout,
-GFOpenDraw and GFOpenGadTools commits rebuilt the complete RC68 suite: all
-linked applications including GFOpenPublisher 0.2.6, Draw/DrawOL, OWConvert,
+GFOpenDraw and GFOpenGadTools commits rebuilt the complete RC69 candidate: all
+linked applications including GFOpenPublisher 0.2.7, Draw/DrawOL, OWConvert,
 five resident libraries, both library tests and the supported library-linked
 variants, with warnings treated as errors. Public archive download/hash
 verification remains a release task and must not be inferred from the host or
 cross-build evidence.
 
-There is no recorded Dale on-Amiga smoke test for RC68. Host and cross-build
+There is no recorded Dale on-Amiga smoke test for RC69. Host and cross-build
 evidence must not be reported as Amiga runtime evidence.

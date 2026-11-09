@@ -79,6 +79,9 @@ ODP persistence. Character-range selection and font/colour requesters remain.
 GFOpenPresentation 0.6.3 adds one, two and three equal columns to selected text
 frames through shared core 0.10.0 and GFOpenLayout 0.15, including Undo/Redo,
 ODP save/reload and PPTX column import.
+GFOpenPresentation 0.6.4 shares core 0.12.0's object-wrap model, ODP
+interchange and GFOpenLayout 0.16 exclusion rendering with Publisher. Publisher
+exposes the authoring menu; Presentation renders imported settings.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |

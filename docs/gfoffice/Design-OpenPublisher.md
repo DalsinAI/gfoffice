@@ -320,7 +320,8 @@ and reads standard `style:columns`, PPTX imports DrawingML `numCol`/`spcCol`,
 and linked-story fitting counts every column before handing the suffix to the
 next frame. Remaining work includes an interactive/custom gap and margin
 surface, decoding column settings from original PUB records, and
-wrap/exclusion around other page objects.
+custom frame margins and column gaps. Rectangular wrap/exclusion around other
+page objects is delivered in 0.2.7; contour wrap remains.
 
 GFOpenPublisher 0.2.6 and shared core 0.11.0 add the first safe authoring
 surface for Publisher text flows. Object > Link to Next Empty Text Box appends

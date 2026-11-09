@@ -1,5 +1,5 @@
 /*
- * owfpresent.library 3.4, GFOpenPresentation's part of libowf: presentations.
+ * owfpresent.library 3.5, GFOpenPresentation's part of libowf: presentations.
  * The deck model, its formats (ODP, flat ODP) and the page PDF writer, with
  * the document model its text uses.
  *

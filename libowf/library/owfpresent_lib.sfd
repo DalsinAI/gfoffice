@@ -1,5 +1,5 @@
-==id $Id: owfpresent_lib.sfd 3.4 (9.11.2026) $
-* "owfpresent.library" 3.4: GFOpenPresentation's part of libowf:
+==id $Id: owfpresent_lib.sfd 3.5 (9.11.2026) $
+* "owfpresent.library" 3.5: GFOpenPresentation's part of libowf:
 * presentations. The deck model, its formats (ODP, flat ODP) and the page
 * PDF writer, with the document model its text uses.
 * Copyright (c) 2026 AmiCradle Team. MIT licence (see LICENSE).
@@ -105,5 +105,6 @@ int owf_pdf_winansi(unsigned long codepoint) (d0)
 const char *owf_pdf_fallback(unsigned long codepoint) (d0)
 * 3.3: deep-copy a slide for GFOpenPresentation's Duplicate Slide command
 * 3.4: owf_obj text-frame column count and gap; no call changes
+* 3.5: owf_obj wrap kind and per-side gaps; no call changes
 owf_slide *owf_deck_duplicate_slide(owf_deck *deck, int index, int at) (a0,d0,d1)
 ==end
