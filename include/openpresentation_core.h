@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.23.0"
+#define OPR_CORE_VERSION "0.24.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -162,6 +162,13 @@ opr_undo *opr_undo_new(void);
 void opr_undo_free(opr_undo *u);
 void opr_undo_clear(opr_undo *u);
 int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj);
+/* Replace every non-overlapping match in one editable text object. The whole
+ * operation is one Undo step. match_case 0 folds ASCII letters, as Find does;
+ * replacement may be empty. Returns -2 for invalid input, -1 for memory
+ * failure, or 0 (including no matches). */
+int opr_text_replace_all(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         const char *needle, const char *replacement,
+                         int match_case, int *replacements, opr_pos *after);
 /* Rich-text formatting over an inclusive paragraph range. These commands
  * share the text snapshot Undo used by typing and return -2 for an invalid
  * object/range/value, -1 for memory failure, or 0. Toggle sets the requested

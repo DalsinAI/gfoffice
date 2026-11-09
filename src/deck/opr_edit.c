@@ -559,7 +559,7 @@ static void remove_bytes(owf_para *p, size_t from, size_t to)
 {
     while (to > from) {
         size_t cum = 0;
-        int j;
+        int changed = 0, j;
         for (j = 0; j < p->nruns; j++) {
             size_t k = run_length(&p->runs[j]);
             if (to > cum && to <= cum + k && k) {
@@ -570,11 +570,12 @@ static void remove_bytes(owf_para *p, size_t from, size_t to)
                     remove_run(p, j);
                 }
                 to = cum + a;
+                changed = 1;
                 break;
             }
             cum += k;
         }
-        if (j == p->nruns)
+        if (!changed)
             break;
     }
     /* text runs that are now empty go, but a paragraph keeps one run for its look */
@@ -1583,6 +1584,58 @@ static void structural_push(opr_undo *u, snapshot *s)
     }
     u->undo[u->nundo++] = *s;
     memset(s, 0, sizeof *s);
+}
+
+int opr_text_replace_all(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         const char *needle, const char *replacement,
+                         int match_case, int *replacements, opr_pos *after)
+{
+    snapshot before;
+    opr_find_result found;
+    opr_selection selection;
+    opr_pos start = { 0, 0 }, last = start;
+    owf_obj *o = object(deck, slide, obj);
+    int count = 0, rc;
+    if (replacements) *replacements = 0;
+    if (after) *after = start;
+    if (!u || !o || !opr_obj_editable(deck, slide, obj) || !needle || !*needle ||
+        !replacement || strchr(needle, '\n') || strchr(needle, '\r'))
+        return -2;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    for (;;) {
+        rc = opr_text_find(deck, slide, obj, start, needle, match_case, &found);
+        if (rc < 0)
+            goto fail;
+        if (!rc || found.slide != slide || found.obj != obj ||
+            (count && find_position_compare(slide, obj,
+                                            found.selection.anchor.para,
+                                            found.selection.anchor.offset,
+                                            slide, obj, start.para,
+                                            start.offset) < 0))
+            break;
+        selection = found.selection;
+        if (opr_text_delete_selection(deck, slide, obj, &selection) < 0)
+            goto fail;
+        last = selection.focus;
+        if (*replacement && opr_text_insert(deck, slide, obj, &last,
+                                            replacement, strlen(replacement)) < 0)
+            goto fail;
+        start = last;
+        count++;
+    }
+    if (count)
+        structural_push(u, &before);
+    else
+        snap_free(&before);
+    if (replacements) *replacements = count;
+    if (after) *after = last;
+    return 0;
+
+fail:
+    (void)snap_swap(&before, deck, NULL);
+    snap_free(&before);
+    return -1;
 }
 
 static int selected_before(const owf_deck *deck, const int *selected, int fallback)

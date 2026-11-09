@@ -974,7 +974,7 @@ static void character_selection_ranges(void)
     opr_find_result found;
     opr_pos find_start = {0, 0};
     char *plain = NULL;
-    int selected = -1, slide = -1, obj = -1;
+    int selected = -1, slide = -1, obj = -1, replacements = 0;
     CHECK(d && s && u, "a deck for cross-paragraph text selection");
     if (!d || !s || !u) {
         opr_undo_free(u);
@@ -1031,11 +1031,34 @@ static void character_selection_ranges(void)
     CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
           (plain = opr_text_get(d, 0, 0)) != NULL && !strcmp(plain, "One\nTwo\nThree"),
           "Undo restores cross-paragraph text and formatting");
-    free(plain);
+    free(plain); plain = NULL;
     selection.anchor.para = selection.focus.para = 1;
     selection.anchor.offset = selection.focus.offset = 1;
     CHECK(opr_text_toggle_flags_selection(u, d, 0, 0, &selection, OWF_BOLD) == -2,
           "an empty character selection is left to the caller's typing format policy");
+    opr_undo_clear(u);
+    CHECK(!opr_text_set(d, 0, 0, "One two TWO two"), "set Replace All source text");
+    plain = opr_text_get(d, 0, 0);
+    CHECK(plain && !strcmp(plain, "One two TWO two"),
+          "replacing prior formatted content leaves no stale run bytes");
+    free(plain); plain = NULL;
+    CHECK(!opr_text_replace_all(u, d, 0, 0, "two", "second", 0,
+                                &replacements, &find_start) &&
+          replacements == 3 && find_start.para == 0 && find_start.offset == 24 &&
+          (plain = opr_text_get(d, 0, 0)) != NULL &&
+          !strcmp(plain, "One second second second"),
+          "Replace All folds ASCII case and reports the final caret");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) &&
+          (free(plain), plain = opr_text_get(d, 0, 0)) != NULL &&
+          !strcmp(plain, "One two TWO two") &&
+          !opr_undo_redo(u, d, &slide, &obj) &&
+          (free(plain), plain = opr_text_get(d, 0, 0)) != NULL &&
+          !strcmp(plain, "One second second second"),
+          "all replacements share one Undo and Redo snapshot");
+    CHECK(opr_text_replace_all(u, d, 0, 0, "", "x", 0,
+                               &replacements, &find_start) == -2,
+          "Replace All rejects an empty search without changing text");
+    free(plain);
     opr_undo_free(u);
     owf_deck_free(d);
 }

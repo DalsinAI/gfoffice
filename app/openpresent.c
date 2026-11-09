@@ -86,7 +86,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.9 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.10 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -95,7 +95,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.15 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.16 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -110,7 +110,7 @@ enum { C_NEW = 1, C_OPEN, C_SAVE, C_PRINT, C_PDF, C_UNDO, C_REDO };
 enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501 };
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
-    M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FIND, M_FIND_NEXT, M_SELECT_ALL, M_STOP,
+    M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FIND, M_FIND_NEXT, M_REPLACE, M_REPLACE_ALL, M_SELECT_ALL, M_STOP,
     M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
     M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
     M_TEXT_FONT, M_TEXT_COLOUR,
@@ -153,6 +153,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Paste", "V", 0, 0, (APTR)M_PASTE },
     { NM_ITEM, "Find...", "F", 0, 0, (APTR)M_FIND },
     { NM_ITEM, "Find Next", "G", 0, 0, (APTR)M_FIND_NEXT },
+    { NM_ITEM, "Replace...", NULL, 0, 0, (APTR)M_REPLACE },
+    { NM_ITEM, "Replace All in Text Box...", NULL, 0, 0, (APTR)M_REPLACE_ALL },
     { NM_ITEM, "Select All Text", "A", 0, 0, (APTR)M_SELECT_ALL },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
@@ -325,6 +327,7 @@ static opr_selection text_selection;
 static int text_selecting;
 static int edit_grouped;
 static char find_text[160];
+static char replacement_text[160];
 
 enum {
     DRAG_NONE, DRAG_MOVE, DRAG_NW, DRAG_N, DRAG_NE, DRAG_E,
@@ -3234,23 +3237,23 @@ static void paste_selection(void)
         paste_object();
 }
 
-static void find_next_text(int ask_text)
+static int find_next_text(int ask_text)
 {
     opr_find_result found;
     opr_pos start;
     char entered[sizeof find_text];
     int start_obj, rc;
     if (!deck || !deck->nslides)
-        return;
+        return 0;
     if (ask_text) {
         if (!text_requester("Find", "Text", find_text, entered, sizeof entered))
-            return;
+            return 0;
         snprintf(find_text, sizeof find_text, "%s", entered);
     }
     if (!find_text[0]) {
         set_status("Enter text to find.");
         draw_status();
-        return;
+        return 0;
     }
     start_obj = edit_obj >= 0 ? edit_obj : selected_obj >= 0 ? selected_obj : 0;
     if (edit_obj >= 0)
@@ -3262,12 +3265,12 @@ static void find_next_text(int ask_text)
     rc = opr_text_find(deck, current, start_obj, start, find_text, 0, &found);
     if (rc < 0) {
         tell("Find", "There is not enough memory to search this " DOCUMENT_LOWER ".");
-        return;
+        return 0;
     }
     if (!rc) {
         set_status("Text not found.");
         draw_status();
-        return;
+        return 0;
     }
     show_slide(found.slide);
     selected_obj = edit_obj = found.obj;
@@ -3277,6 +3280,65 @@ static void find_next_text(int ask_text)
     set_status("Found text; Find Next continues through the " DOCUMENT_LOWER ".");
     draw_slide();
     draw_status();
+    return 1;
+}
+
+static void replace_text_command(int all)
+{
+    char entered[sizeof find_text], replacement[sizeof replacement_text];
+    if (!deck || !deck->nslides) return;
+    if (all && edit_obj < 0) {
+        set_status("Click inside an editable text box before Replace All.");
+        draw_status();
+        return;
+    }
+    if (!text_requester(all ? "Replace All in Text Box" : "Replace", "Find", find_text,
+                        entered, sizeof entered))
+        return;
+    if (!entered[0]) {
+        set_status("Enter non-empty text to replace.");
+        draw_status();
+        return;
+    }
+    if (!text_requester(all ? "Replace All in Text Box" : "Replace", "Replace with",
+                        replacement_text, replacement, sizeof replacement))
+        return;
+    snprintf(find_text, sizeof find_text, "%s", entered);
+    snprintf(replacement_text, sizeof replacement_text, "%s", replacement);
+    if (!all) {
+        if (!find_next_text(0)) return;
+        type_text(replacement_text, strlen(replacement_text));
+        edit_grouped = 0;
+        set_status("Replaced one match; Undo restores it.");
+        draw_status();
+        return;
+    }
+    {
+        box before;
+        opr_pos after;
+        int count = 0, rc;
+        if (!edit_area(&before)) before.w = 0;
+        edit_grouped = 0;
+        rc = opr_text_replace_all(undo, deck, current, edit_obj, find_text,
+                                  replacement_text, 0, &count, &after);
+        if (rc < 0) {
+            tell("Replace All", rc == -1 ? "There is not enough memory to replace the text."
+                                           : "That text box cannot be edited.");
+            return;
+        }
+        if (count) {
+            char message[96];
+            caret = after;
+            text_selection.anchor = text_selection.focus = after;
+            text_changed(before.w ? &before : NULL);
+            snprintf(message, sizeof message, "Replaced %d match%s in this text box; one Undo restores them.",
+                     count, count == 1 ? "" : "es");
+            set_status(message);
+        } else {
+            set_status("Text not found in this text box.");
+        }
+        draw_status();
+    }
 }
 
 /* Up or down a line: the place nearest the caret on the line above or below, in the same text. */
@@ -4847,6 +4909,8 @@ static void menu_action(ULONG id)
     case M_PASTE: paste_selection(); break;
     case M_FIND: find_next_text(1); break;
     case M_FIND_NEXT: find_next_text(0); break;
+    case M_REPLACE: replace_text_command(0); break;
+    case M_REPLACE_ALL: replace_text_command(1); break;
     case M_SELECT_ALL: select_all_text(); break;
     case M_STOP:
         stop_typing();
