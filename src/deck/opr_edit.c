@@ -319,6 +319,62 @@ int opr_text_selection_empty(const opr_selection *selection)
     return !selection || compare_pos(selection->anchor, selection->focus) == 0;
 }
 
+char *opr_text_selection_get(const owf_deck *deck, int slide, int obj,
+                             const opr_selection *selection, size_t *length)
+{
+    const owf_obj *o = object((owf_deck *)deck, slide, obj);
+    opr_pos start, end;
+    size_t total = 0, at = 0;
+    char *out;
+    int para;
+    if (length)
+        *length = 0;
+    if (!o || !selection || !o->text.nparas)
+        return NULL;
+    start = selection->anchor;
+    end = selection->focus;
+    clamp_pos(o, &start);
+    clamp_pos(o, &end);
+    if (compare_pos(start, end) > 0) {
+        opr_pos swap = start;
+        start = end;
+        end = swap;
+    }
+    for (para = start.para; para <= end.para; ++para) {
+        size_t begin = para == start.para ? start.offset : 0;
+        size_t finish = para == end.para ? end.offset : opr_para_length(&o->text.paras[para]);
+        if (finish > begin)
+            total += finish - begin;
+        if (para < end.para)
+            ++total;
+    }
+    out = owf_malloc(total + 1);
+    if (!out)
+        return NULL;
+    for (para = start.para; para <= end.para; ++para) {
+        size_t n, begin = para == start.para ? start.offset : 0;
+        size_t finish = para == end.para ? end.offset : opr_para_length(&o->text.paras[para]);
+        char *text = opr_para_text(&o->text.paras[para], &n);
+        if (!text) {
+            owf_free(out);
+            return NULL;
+        }
+        if (finish > n)
+            finish = n;
+        if (begin > finish)
+            begin = finish;
+        memcpy(out + at, text + begin, finish - begin);
+        at += finish - begin;
+        owf_free(text);
+        if (para < end.para)
+            out[at++] = '\n';
+    }
+    out[at] = 0;
+    if (length)
+        *length = at;
+    return out;
+}
+
 int opr_text_newline(owf_deck *deck, int slide, int obj, opr_pos *at)
 {
     owf_obj *o = object(deck, slide, obj);

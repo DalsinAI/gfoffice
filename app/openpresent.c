@@ -63,6 +63,7 @@
 #include <clib/alib_protos.h>
 
 #include "openpresentation_core.h"
+#include "ow_clipboard.h"
 #ifdef OPENPUBLISHER
 #include "openpublisher_core.h"
 #endif
@@ -84,7 +85,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.5 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.6 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -93,7 +94,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.11 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.12 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -108,7 +109,7 @@ enum { C_NEW = 1, C_OPEN, C_SAVE, C_PRINT, C_PDF, C_UNDO, C_REDO };
 enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501 };
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
-    M_UNDO, M_REDO, M_SELECT_ALL, M_STOP,
+    M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_SELECT_ALL, M_STOP,
     M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
     M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
     M_TEXT_FONT, M_TEXT_COLOUR,
@@ -146,6 +147,9 @@ static struct NewMenu menus[] = {
     { NM_TITLE, "Edit", NULL, 0, 0, NULL },
     { NM_ITEM, "Undo", "Z", 0, 0, (APTR)M_UNDO },
     { NM_ITEM, "Redo", NULL, 0, 0, (APTR)M_REDO },
+    { NM_ITEM, "Cut", "X", 0, 0, (APTR)M_CUT },
+    { NM_ITEM, "Copy", "C", 0, 0, (APTR)M_COPY },
+    { NM_ITEM, "Paste", "V", 0, 0, (APTR)M_PASTE },
     { NM_ITEM, "Select All Text", "A", 0, 0, (APTR)M_SELECT_ALL },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Stop Typing", NULL, 0, 0, (APTR)M_STOP },
@@ -3011,6 +3015,70 @@ static void type_key(int key)
     text_changed(b.w ? &b : NULL);
 }
 
+static int copy_text_selection(void)
+{
+    char *text;
+    size_t length = 0;
+    if (edit_obj < 0 || opr_text_selection_empty(&text_selection)) {
+        set_status("Select text to copy.");
+        draw_status();
+        return 0;
+    }
+    text = opr_text_selection_get(deck, current, edit_obj, &text_selection, &length);
+    if (!text) {
+        tell("Clipboard", "There is not enough memory to copy that text.");
+        return 0;
+    }
+    if (!ow_clipboard_set_text(text, length)) {
+        free(text);
+        tell("Clipboard", "clipboard.device could not accept the selected text.");
+        return 0;
+    }
+    free(text);
+    set_status("Copied selected text to the clipboard.");
+    draw_status();
+    return 1;
+}
+
+static void cut_text_selection(void)
+{
+    box before;
+    if (!copy_text_selection())
+        return;
+    before_change(&before);
+    if (opr_text_delete_selection(deck, current, edit_obj, &text_selection) < 0) {
+        tell("Clipboard", "There is not enough memory to cut that text.");
+        return;
+    }
+    caret = text_selection.focus;
+    edit_grouped = 0;
+    set_status("Cut selected text to the clipboard.");
+    text_changed(before.w ? &before : NULL);
+    draw_status();
+}
+
+static void paste_text(void)
+{
+    char *text;
+    size_t length = 0;
+    if (edit_obj < 0) {
+        set_status("Click inside an editable text box before pasting text.");
+        draw_status();
+        return;
+    }
+    text = ow_clipboard_get_text(&length);
+    if (!text) {
+        set_status("The clipboard has no FTXT text.");
+        draw_status();
+        return;
+    }
+    type_text(text, length);
+    free(text);
+    edit_grouped = 0;
+    set_status("Pasted text from the clipboard.");
+    draw_status();
+}
+
 /* Up or down a line: the place nearest the caret on the line above or below, in the same text. */
 static void caret_line(int dir, int extend_selection)
 {
@@ -4532,6 +4600,9 @@ static void menu_action(ULONG id)
     case M_QUIT: if (confirm_discard()) quit_now = 1; break;
     case M_UNDO: do_undo(0); break;
     case M_REDO: do_undo(1); break;
+    case M_CUT: cut_text_selection(); break;
+    case M_COPY: copy_text_selection(); break;
+    case M_PASTE: paste_text(); break;
     case M_SELECT_ALL: select_all_text(); break;
     case M_STOP:
         stop_typing();

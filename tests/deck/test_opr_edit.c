@@ -974,6 +974,10 @@ static void character_selection_ranges(void)
     opr_undo_clear(u);
     selection.anchor.para = 0; selection.anchor.offset = 2;
     selection.focus.para = 2; selection.focus.offset = 2;
+    plain = opr_text_selection_get(d, 0, 0, &selection, NULL);
+    CHECK(plain && !strcmp(plain, "e\nTwo\nTh"),
+          "extract exact cross-paragraph selection for clipboard exchange");
+    free(plain); plain = NULL;
     CHECK(!opr_text_toggle_flags_selection(u, d, 0, 0, &selection, OWF_BOLD) &&
           s->objs[0].text.paras[0].nruns == 2 &&
           !(s->objs[0].text.paras[0].runs[0].fmt.flags & OWF_BOLD) &&

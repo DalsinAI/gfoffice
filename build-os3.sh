@@ -118,7 +118,7 @@ fi
 # GFOpenWrite: the GFOpenGadTools shell (app/openwrite2.c) is GFOpenWrite since 2.0.1 (the user, 10 October
 # 2026: "the rewrite is GFOpenWrite, not a second program"); the same core and filters.
 # shellcheck disable=SC2086
-APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $HERE/app/ow_stack.c $HERE/app/ow_fontwidths.c"
+APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $HERE/app/ow_stack.c $HERE/app/ow_fontwidths.c $HERE/app/ow_clipboard.c"
 # GFOpenWrite has no floating-point work. The soft-68040 flavour is a complete
 # libnix archive, including its allocator; the current stove's default
 # libgfmalloc would define the same calls. Select the flavour's allocator and
@@ -175,7 +175,7 @@ done
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     $OWFSRC_DECK "$HERE"/src/deck/*.c "$HERE/src/core/ow_layout.c" $OL_C \
-    "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
+    "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenPresentation"
 echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
 
@@ -187,7 +187,7 @@ OWFSRC_PUB="$OWFSRC_DECK $HERE/libowf/src/owf_cfb.c $HERE/libowf/src/in_pub.c"
 "$CC" $CFLAGS_COMMON -DOPENPUBLISHER -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     $OWFSRC_PUB "$HERE"/src/deck/*.c "$HERE/src/pub/opp_import.c" "$HERE/src/core/ow_layout.c" $OL_C \
-    "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
+    "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenPublisher"
 echo "$OUT/GFOpenPublisher ($(wc -c < "$OUT/GFOpenPublisher") bytes)"
 fi

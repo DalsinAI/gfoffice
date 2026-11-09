@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.19.0"
+#define OPR_CORE_VERSION "0.20.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -128,6 +128,11 @@ int opr_text_backspace(owf_deck *deck, int slide, int obj, opr_pos *at);
 int opr_text_delete(owf_deck *deck, int slide, int obj, opr_pos *at);
 int opr_text_move(const owf_deck *deck, int slide, int obj, opr_pos *at, opr_move how);
 int opr_text_selection_empty(const opr_selection *selection);
+/* Exact selected plain text, with '\n' between paragraphs. The returned
+ * UTF-8 buffer is owf_malloc-owned; an empty selection returns an empty
+ * buffer. NULL means invalid input or memory failure. */
+char *opr_text_selection_get(const owf_deck *deck, int slide, int obj,
+                             const opr_selection *selection, size_t *length);
 /* Delete exactly the selected characters and paragraph separators. Both ends
  * collapse to the start. The caller owns the Undo snapshot, as for typing. */
 int opr_text_delete_selection(owf_deck *deck, int slide, int obj,

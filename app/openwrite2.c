@@ -42,6 +42,7 @@
 #include <proto/gadtools.h>
 #include <proto/asl.h>
 #include "ogt_openfont.h"
+#include "ow_clipboard.h"
 #include <proto/diskfont.h>
 #include <proto/layers.h>
 
@@ -371,133 +372,6 @@ static int mm_to_twips(int mm);
 static const char classic_theme[] =
     "name Classic\nversion 1\nfont system\ntitle.align left\npassthrough yes\n[four]\n"
     "pens #aaaaaa #000000 #ffffff #6688bb\ntitle.active.fill 3\ntitle.active.text 1\nfill.text 1\n";
-
-#define OW_ID(a,b,c,d) ((ULONG)(a) << 24 | (ULONG)(b) << 16 | (ULONG)(c) << 8 | (ULONG)(d))
-#define OW_ID_FORM OW_ID('F','O','R','M')
-#define OW_ID_FTXT OW_ID('F','T','X','T')
-#define OW_ID_CHRS OW_ID('C','H','R','S')
-#define OW_MAX_CLIP (1UL << 20)
-
-typedef struct ow_clipboard {
-    struct MsgPort *port;
-    struct IOClipReq *io;
-} ow_clipboard;
-
-static int clipboard_open(ow_clipboard *c)
-{
-    memset(c, 0, sizeof(*c));
-    c->port = CreateMsgPort();
-    if (!c->port) return 0;
-    c->io = (struct IOClipReq *)CreateIORequest(c->port, sizeof(*c->io));
-    if (!c->io) return 0;
-    if (OpenDevice((STRPTR)"clipboard.device", PRIMARY_CLIP,
-                   (struct IORequest *)c->io, 0)) {
-        c->io->io_Device = NULL;
-        return 0;
-    }
-    return 1;
-}
-
-static void clipboard_close(ow_clipboard *c)
-{
-    if (!c) return;
-    if (c->io) {
-        if (c->io->io_Device) CloseDevice((struct IORequest *)c->io);
-        DeleteIORequest((struct IORequest *)c->io);
-    }
-    if (c->port) DeleteMsgPort(c->port);
-    memset(c, 0, sizeof(*c));
-}
-
-static LONG clipboard_read_bytes(ow_clipboard *c, void *buf, LONG len)
-{
-    c->io->io_Command = CMD_READ;
-    c->io->io_Data = (STRPTR)buf;
-    c->io->io_Length = len;
-    DoIO((struct IORequest *)c->io);
-    return c->io->io_Error ? -1 : (LONG)c->io->io_Actual;
-}
-
-static void clipboard_read_done(ow_clipboard *c)
-{
-    UBYTE dummy[64];
-    while (clipboard_read_bytes(c, dummy, sizeof dummy) > 0) ;
-}
-
-static char *clipboard_get_text(size_t *out_len)
-{
-    ow_clipboard c;
-    ULONG head[3], chunk[2], total = 0;
-    char *text = NULL;
-    if (out_len) *out_len = 0;
-    if (!clipboard_open(&c)) { clipboard_close(&c); return NULL; }
-    c.io->io_Offset = 0;
-    c.io->io_ClipID = 0;
-    if (clipboard_read_bytes(&c, head, 12) != 12 || head[0] != OW_ID_FORM ||
-        head[2] != OW_ID_FTXT || head[1] > OW_MAX_CLIP + 64) {
-        clipboard_read_done(&c);
-        clipboard_close(&c);
-        return NULL;
-    }
-    text = (char *)malloc((size_t)head[1] + 1);
-    if (!text) { clipboard_read_done(&c); clipboard_close(&c); return NULL; }
-    while (clipboard_read_bytes(&c, chunk, 8) == 8) {
-        ULONG size = chunk[1], padded = size + (size & 1);
-        if (chunk[0] == OW_ID_CHRS && total + size <= head[1]) {
-            if (clipboard_read_bytes(&c, text + total, (LONG)size) != (LONG)size) break;
-            total += size;
-            if (size & 1) { UBYTE pad; clipboard_read_bytes(&c, &pad, 1); }
-        } else {
-            UBYTE skip[64];
-            while (padded) {
-                LONG n = padded < sizeof skip ? (LONG)padded : (LONG)sizeof skip;
-                if (clipboard_read_bytes(&c, skip, n) != n) break;
-                padded -= (ULONG)n;
-            }
-        }
-    }
-    clipboard_read_done(&c);
-    clipboard_close(&c);
-    text[total] = 0;
-    if (out_len) *out_len = total;
-    return text;
-}
-
-static int clipboard_set_text(const char *text, size_t len)
-{
-    ow_clipboard c;
-    ULONG form[3], chunk[2];
-    UBYTE pad = 0;
-    if (!text || len > OW_MAX_CLIP) return 0;
-    if (!clipboard_open(&c)) { clipboard_close(&c); return 0; }
-    form[0] = OW_ID_FORM;
-    form[1] = 4 + 8 + (ULONG)len + ((ULONG)len & 1);
-    form[2] = OW_ID_FTXT;
-    chunk[0] = OW_ID_CHRS;
-    chunk[1] = (ULONG)len;
-    c.io->io_Offset = 0;
-    c.io->io_ClipID = 0;
-    c.io->io_Error = 0;
-#define CLIP_WRITE(ptr,n) do { \
-    c.io->io_Command = CMD_WRITE; c.io->io_Data = (STRPTR)(ptr); \
-    c.io->io_Length = (n); DoIO((struct IORequest *)c.io); \
-    if (c.io->io_Error) goto write_fail; \
-} while (0)
-    CLIP_WRITE(form, 12);
-    CLIP_WRITE(chunk, 8);
-    if (len) CLIP_WRITE(text, (ULONG)len);
-    if (len & 1) CLIP_WRITE(&pad, 1);
-    c.io->io_Command = CMD_UPDATE;
-    DoIO((struct IORequest *)c.io);
-    if (c.io->io_Error) goto write_fail;
-#undef CLIP_WRITE
-    clipboard_close(&c);
-    return 1;
-write_fail:
-#undef CLIP_WRITE
-    clipboard_close(&c);
-    return 0;
-}
 
 static char *read_file(const char *path)
 {
@@ -3521,7 +3395,7 @@ static int copy_selection_to_clipboard(void)
         tell("Clipboard", "GFOpenWrite could not copy the selected text.");
         return 0;
     }
-    if (!clipboard_set_text(text, len)) {
+    if (!ow_clipboard_set_text(text, len)) {
         free(text);
         tell("Clipboard", "clipboard.device could not accept the selected text.");
         return 0;
@@ -3547,7 +3421,7 @@ static void do_paste(void)
 {
     char *text;
     size_t len = 0;
-    text = clipboard_get_text(&len);
+    text = ow_clipboard_get_text(&len);
     if (!text) {
         set_status("Clipboard has no FTXT text.");
         request_document_redraw();
