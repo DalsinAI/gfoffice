@@ -205,12 +205,18 @@ for the tracer. A fresh warnings-as-errors Open6 build produced Calc 1,474,596
 bytes, Presentation 797,972, Publisher 831,560, Writer 625,356 and OWConvert
 752,528. The existing OpenGadTools ruler is now shared by Presentation and
 Publisher; deck core 0.22.0 owns validated paragraph-range indents, Undo/Redo
-and ODP persistence. This work is published on `main` but is not part of
-immutable RC72.
+and ODP persistence.
 
-There is no recorded Dale on-Amiga smoke test for RC70, RC71 or RC72.
+RC73 packages the post-RC72 Find/Find Next and paragraph-ruler work from source
+commit `5e39ca8565ab97c4c4dd6bd60c8cb7dddef67179`. Its public 4,536,661-byte
+archive downloaded back with SHA-256
+`c5ef4cef625951702faab30f9da02ee35d01083877310305413d87c29c0d9f94`, and
+all 80 files covered by its internal manifest verified. The live annotated tag
+peels to the source commit and the GitHub release remains marked prerelease.
+
+There is no recorded Dale on-Amiga smoke test for RC70, RC71, RC72 or RC73.
 Host tests and cross-build success must not be reported as Amiga runtime
-evidence. RC72 still requires launching Publisher, Presentation and Writer;
-checking cross-application FTXT copy/paste and Cut/Paste Undo/Redo; cropping a
-picture; comparing Square and Tight around an ellipse or rotated polygon; and
-saving/reopening ODP before promotion.
+evidence. RC73 still requires launching Publisher, Presentation and Writer;
+checking Find across objects/pages, all three ruler markers and their
+Undo/Redo, cross-application FTXT copy/paste, picture crop, Square versus Tight
+wrap, and ODP save/reopen before promotion.
