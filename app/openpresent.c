@@ -86,7 +86,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.10 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.11 (9.11.2026)"
 #define UNIT "Page"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
@@ -95,7 +95,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.16 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.17 (9.11.2026)"
 #define UNIT "Slide"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
@@ -103,6 +103,7 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define TRANSITION_TITLE "Slide Transition"
 #define SHOW_TITLE "Slide Show"
 #endif
+#define GRID_TWIPS 720
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -127,7 +128,8 @@ enum {
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
-    M_FIRST, M_PREV, M_NEXT, M_LAST, M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
+    M_FIRST, M_PREV, M_NEXT, M_LAST, M_SHOW_GRID, M_SNAP_GRID,
+    M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP
 };
@@ -250,6 +252,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Zoom Out", "-", 0, 0, (APTR)M_ZOOM_OUT },
     { NM_ITEM, "Fit " UNIT " to Window", "0", 0, 0, (APTR)M_ZOOM_FIT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Show 1/2 Inch Grid", NULL, CHECKIT, 0, (APTR)M_SHOW_GRID },
+    { NM_ITEM, "Snap to 1/2 Inch Grid", NULL, CHECKIT, 0, (APTR)M_SNAP_GRID },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Buttons", NULL, 0, 0, NULL },
     { NM_SUB, "Icons and Text", NULL, CHECKIT, ~1 & 7, (APTR)M_TB_BOTH },
     { NM_SUB, "Icons", NULL, CHECKIT | CHECKED, ~2 & 7, (APTR)M_TB_ICONS },
@@ -326,6 +331,8 @@ static opr_pos caret;
 static opr_selection text_selection;
 static int text_selecting;
 static int edit_grouped;
+static int show_grid;
+static int snap_grid;
 static char find_text[160];
 static char replacement_text[160];
 
@@ -2314,6 +2321,22 @@ static void draw_caret(const opr_slide *s, const ol_scale *sc)
     }
 }
 
+static void draw_grid(const ol_scale *sc)
+{
+    struct RastPort *rp = win ? win->RPort : NULL;
+    int x, y;
+    if (!rp || !show_grid || !deck || GRID_TWIPS <= 0)
+        return;
+    SetAPen(rp, (ULONG)ogt_pen(&ctx, "group.line"));
+    for (y = GRID_TWIPS; y < deck->height; y += GRID_TWIPS) {
+        int sy = ol_scale_y(sc, (ol_unit)y * OL_UNITS_PER_TWIP);
+        for (x = GRID_TWIPS; x < deck->width; x += GRID_TWIPS) {
+            int sx = ol_scale_x(sc, (ol_unit)x * OL_UNITS_PER_TWIP);
+            WritePixel(rp, sx, sy);
+        }
+    }
+}
+
 /* The slide, or only what of it is in the rectangle (the frame being typed in: no flicker elsewhere), drawn
  * through a clip region, so nothing a slide holds is drawn outside it. */
 static void draw_slide_part(const box *part)
@@ -2378,6 +2401,7 @@ static void draw_slide_part(const box *part)
     if (!s)
         ogt_text(rp, ogt_pen(&ctx, "muted"), slide_box.x + 8, slide_box.y + 8, "Not enough memory to show this " UNIT_LOWER ".",
                  slide_box.w - 16);
+    draw_grid(&sc);
     draw_selection(s);
     draw_text_selection(s, &sc);
     draw_caret(s, &sc);
@@ -3682,7 +3706,7 @@ static void preview_object_drag(int mx, int my)
     owf_obj *o;
     ol_scale sc;
     int dx, dy, left, top, right, bottom;
-    int minimum_w, minimum_h;
+    int minimum_w, minimum_h, snap_x, snap_y;
     if (!object_drag.active || object_drag.obj < 0 || object_drag.obj >= deck->slides[current].nobjs)
         return;
     if (!object_drag.moved && abs(mx - object_drag.mouse_x) < 3 && abs(my - object_drag.mouse_y) < 3)
@@ -3691,6 +3715,10 @@ static void preview_object_drag(int mx, int my)
     current_slide_scale(&sc);
     dx = twip_delta_x(&sc, object_drag.mouse_x, mx);
     dy = twip_delta_y(&sc, object_drag.mouse_y, my);
+    snap_x = abs(twip_delta_x(&sc, 0, 6));
+    snap_y = abs(twip_delta_y(&sc, 0, 6));
+    if (snap_x < 1) snap_x = 1;
+    if (snap_y < 1) snap_y = 1;
     left = object_drag.preview.x;
     top = object_drag.preview.y;
     right = left + object_drag.preview.width;
@@ -3698,7 +3726,15 @@ static void preview_object_drag(int mx, int my)
     minimum_w = deck->width < 120 ? deck->width : 120;
     minimum_h = deck->height < 120 ? deck->height : 120;
     if (object_drag.mode == DRAG_MOVE) {
-        left += dx; right += dx; top += dy; bottom += dy;
+        int width = right - left, height = bottom - top;
+        left += dx;
+        top += dy;
+        if (snap_grid) {
+            left = opr_grid_snap(left, GRID_TWIPS, snap_x);
+            top = opr_grid_snap(top, GRID_TWIPS, snap_y);
+        }
+        right = left + width;
+        bottom = top + height;
         if (left < 0) { right -= left; left = 0; }
         if (top < 0) { bottom -= top; top = 0; }
         if (right > deck->width) { left -= right - deck->width; right = deck->width; }
@@ -3708,6 +3744,16 @@ static void preview_object_drag(int mx, int my)
         if (object_drag.mode == DRAG_NE || object_drag.mode == DRAG_E || object_drag.mode == DRAG_SE) right += dx;
         if (object_drag.mode == DRAG_NW || object_drag.mode == DRAG_N || object_drag.mode == DRAG_NE) top += dy;
         if (object_drag.mode == DRAG_SW || object_drag.mode == DRAG_S || object_drag.mode == DRAG_SE) bottom += dy;
+        if (snap_grid) {
+            if (object_drag.mode == DRAG_NW || object_drag.mode == DRAG_W || object_drag.mode == DRAG_SW)
+                left = opr_grid_snap(left, GRID_TWIPS, snap_x);
+            if (object_drag.mode == DRAG_NE || object_drag.mode == DRAG_E || object_drag.mode == DRAG_SE)
+                right = opr_grid_snap(right, GRID_TWIPS, snap_x);
+            if (object_drag.mode == DRAG_NW || object_drag.mode == DRAG_N || object_drag.mode == DRAG_NE)
+                top = opr_grid_snap(top, GRID_TWIPS, snap_y);
+            if (object_drag.mode == DRAG_SW || object_drag.mode == DRAG_S || object_drag.mode == DRAG_SE)
+                bottom = opr_grid_snap(bottom, GRID_TWIPS, snap_y);
+        }
         if (left < 0) left = 0;
         if (top < 0) top = 0;
         if (right > deck->width) right = deck->width;
@@ -4986,6 +5032,16 @@ static void menu_action(ULONG id)
     case M_ZOOM_IN: zoom_step(1); break;
     case M_ZOOM_OUT: zoom_step(-1); break;
     case M_ZOOM_FIT: set_zoom(100); break;
+    case M_SHOW_GRID:
+        show_grid = !show_grid;
+        set_status(show_grid ? "Half-inch grid shown." : "Grid hidden.");
+        draw_slide(); draw_status();
+        break;
+    case M_SNAP_GRID:
+        snap_grid = !snap_grid;
+        set_status(snap_grid ? "Move and resize snap to the half-inch grid." : "Grid snapping off.");
+        draw_status();
+        break;
     case M_TB_BOTH: set_buttons(OGT_TB_ICONS_TEXT); break;
     case M_TB_ICONS: set_buttons(OGT_TB_ICONS); break;
     case M_TB_TEXT: set_buttons(OGT_TB_TEXT); break;

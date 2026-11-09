@@ -288,6 +288,13 @@ static void structural_slides(void)
           opr_obj_set_box(u, d, 1, 0, d->width - 10, 0, 20, 100) == -2 &&
           opr_obj_set_box(u, d, 1, 0, 0, 0, 0, 100) == -2,
           "empty and out-of-slide object boxes are refused");
+    CHECK(opr_grid_snap(710, 720, 20) == 720 &&
+          opr_grid_snap(690, 720, 20) == 690 &&
+          opr_grid_snap(1435, 720, 20) == 1440 &&
+          opr_grid_snap(-10, 720, 20) == 0 &&
+          opr_grid_snap(360, 720, 400) == 0 &&
+          opr_grid_snap(710, 0, 20) == 710,
+          "portable grid snapping handles thresholds, ties and negative coordinates");
 
     {
         opr_shape_spec spec;

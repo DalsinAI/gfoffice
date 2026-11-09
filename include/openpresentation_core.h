@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.24.0"
+#define OPR_CORE_VERSION "0.25.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -333,6 +333,10 @@ int opr_obj_delete(opr_undo *u, owf_deck *deck, int slide, int obj);
  * slide box, -1 bad input. */
 int opr_obj_set_box(opr_undo *u, owf_deck *deck, int slide, int obj,
                     int x, int y, int width, int height);
+/* Snap one slide/page coordinate to the nearest positive grid multiple when
+ * it lies within threshold twips. Invalid step/threshold values leave it
+ * unchanged. Pure editor geometry: OpenLayout is not involved. */
+int opr_grid_snap(int value, int step, int threshold);
 /* Set a shape object's anticlockwise rotation in tenths of a degree, as one
  * undo step. The value is normalized to 0..3599. -2 means the object is not
  * a shape; -1 means bad input. */

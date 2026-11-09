@@ -1909,6 +1909,24 @@ int opr_obj_set_box(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_grid_snap(int value, int step, int threshold)
+{
+    long long lower, upper, distance_lower, distance_upper, v = value;
+    if (step <= 0 || threshold < 0)
+        return value;
+    lower = (v / step) * step;
+    if (v < 0 && v % step)
+        lower -= step;
+    upper = lower + step;
+    distance_lower = v - lower;
+    distance_upper = upper - v;
+    if (distance_lower <= distance_upper && distance_lower <= threshold)
+        return (int)lower;
+    if (distance_upper < distance_lower && distance_upper <= threshold)
+        return (int)upper;
+    return value;
+}
+
 static int valid_shade(unsigned long shade)
 {
     return !shade || (OWF_SHADE_SET(shade) && !(shade & ~0x1ffffffUL));
