@@ -1,8 +1,10 @@
-==id $Id: z_lib.sfd 53.12 (21.10.2026) $
+==id $Id: z_lib.sfd 53.13 (10.11.2026) $
 * "z.library": zlib as a shared library, as GFOpenZlib builds it
-* (DalsinAI/amicradle-guest libraries/openzlib, z.lvo). libowf calls it
-* for ODT, DOCX and PDF; only the slots up to the last one it calls are
-* named for what they are, the rest are listed so the offsets hold.
+* (DalsinAI/amicradle-guest libraries/openzlib, z.lvo): from 53.13 the
+* Aminet z.library's order and registers (its z_lib.sfd), -30 to -270,
+* then GFOpenZlib's own four from -276. Up to 53.12 this file followed
+* zlib.h's order, which z.library never had from -102 on: DeflateBound
+* reached InflateSetDictionary, and so on. Made from z.lvo line by line.
 * Copyright (c) 2026 AmiCradle Team. MIT licence.
 ==base _ZBase
 ==basetype struct Library *
@@ -23,30 +25,37 @@ LONG DeflateSetDictionary(z_stream *strm, CONST UBYTE *dict, ULONG len) (a0,a1,d
 LONG DeflateCopy(z_stream *dest, z_stream *source) (a0,a1)
 LONG DeflateReset(z_stream *strm) (a0)
 LONG DeflateParams(z_stream *strm, LONG level, LONG strategy) (a0,d0,d1)
-LONG DeflateTune(z_stream *strm, LONG good, LONG lazy, LONG nice, LONG chain) (a0,d0,d1,d2,d3)
-ULONG DeflateBound(z_stream *strm, ULONG sourceLen) (a0,d0)
-LONG DeflatePending(z_stream *strm, ULONG *pending, LONG *bits) (a0,a1,a2)
-LONG DeflatePrime(z_stream *strm, LONG bits, LONG value) (a0,d0,d1)
-LONG DeflateSetHeader(z_stream *strm, APTR head) (a0,a1)
 LONG InflateInit2(z_stream *strm, LONG windowBits) (a0,d0)
 LONG InflateSetDictionary(z_stream *strm, CONST UBYTE *dict, ULONG len) (a0,a1,d0)
-LONG InflateGetDictionary(z_stream *strm, UBYTE *dict, ULONG *len) (a0,a1,a2)
-LONG InflateSync(z_stream *strm) (a0)
-LONG InflateCopy(z_stream *dest, z_stream *source) (a0,a1)
 LONG InflateReset(z_stream *strm) (a0)
-LONG InflateReset2(z_stream *strm, LONG windowBits) (a0,d0)
-LONG InflatePrime(z_stream *strm, LONG bits, LONG value) (a0,d0,d1)
-LONG InflateMark(z_stream *strm) (a0)
-LONG InflateGetHeader(z_stream *strm, APTR head) (a0,a1)
-ULONG ZlibCompileFlags() ()
 LONG Compress(UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG sourceLen) (a0,a1,a2,d0)
+LONG Uncompress(UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG sourceLen) (a0,a1,a2,d0)
+ULONG Adler32(ULONG adler, CONST UBYTE *buf, ULONG len) (d0,a0,d1)
+ULONG CRC32(ULONG crc, CONST UBYTE *buf, ULONG len) (d0,a0,d1)
+LONG InflateSync(z_stream *strm) (a0)
+LONG DeflateTune(z_stream *strm, LONG good, LONG lazy, LONG nice, LONG chain) (a0,d0,d1,d2,d3)
+ULONG DeflateBound(z_stream *strm, ULONG sourceLen) (a0,d0)
+LONG DeflatePrime(z_stream *strm, LONG bits, LONG value) (a0,d0,d1)
+LONG DeflateSetHeader(z_stream *strm, APTR head) (a0,a1)
+LONG InflateCopy(z_stream *dest, z_stream *source) (a0,a1)
+LONG InflatePrime(z_stream *strm, LONG bits, LONG value) (a0,d0,d1)
+LONG InflateGetHeader(z_stream *strm, APTR head) (a0,a1)
+LONG InflateBackInit(z_stream *strm, LONG windowBits, UBYTE *window) (a0,d0,a1)
+LONG InflateBack(z_stream *strm, APTR in, APTR in_desc, APTR out, APTR out_desc) (a0,a1,d0,a2,d1)
+LONG InflateBackEnd(z_stream *strm) (a0)
+ULONG Adler32Combine(ULONG adler1, ULONG adler2, LONG len2) (d0,d1,d2)
+ULONG CRC32Combine(ULONG crc1, ULONG crc2, LONG len2) (d0,d1,d2)
 LONG Compress2(UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG sourceLen, LONG level) (a0,a1,a2,d0,d1)
 ULONG CompressBound(ULONG sourceLen) (d0)
-LONG Uncompress(UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG sourceLen) (a0,a1,a2,d0)
+LONG InflateGetDictionary(z_stream *strm, UBYTE *dict, ULONG *len) (a0,a1,a2)
+CONST_STRPTR ZError(LONG err) (d0)
 LONG Uncompress2(UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG *sourceLen) (a0,a1,a2,a3)
-ULONG Adler32(ULONG adler, CONST UBYTE *buf, ULONG len) (d0,a0,d1)
-ULONG Crc32(ULONG crc, CONST UBYTE *buf, ULONG len) (d0,a0,d1)
-ULONG Adler32Combine(ULONG adler1, ULONG adler2, LONG len2) (d0,d1,d2)
-ULONG Crc32Combine(ULONG crc1, ULONG crc2, LONG len2) (d0,d1,d2)
+LONG InflateReset2(z_stream *strm, LONG windowBits) (a0,d0)
+LONG InflateValidate(z_stream *strm, LONG check) (a0,d0)
+ULONG CRC32CombineGen(LONG len2) (d0)
+ULONG CRC32CombineOp(ULONG crc1, ULONG crc2, ULONG op) (d0,d1,d2)
+LONG DeflatePending(z_stream *strm, ULONG *pending, LONG *bits) (a0,a1,a2)
+LONG InflateMark(z_stream *strm) (a0)
+ULONG ZlibCompileFlags() ()
 LONG DeflateGetDictionary(z_stream *strm, UBYTE *dict, ULONG *len) (a0,a1,a2)
 ==end
