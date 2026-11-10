@@ -313,6 +313,10 @@ def built_book(filepass=False, biff5=False):
              formula(7, 4, pstr(""), result=("empty", 0)),
              formula(7, 5, bytes([0x43]) + struct.pack("<I", 1) + funcvar(1, 4), 10),
              rec(0x00E5, struct.pack("<H", 1) + struct.pack("<HHHH", 9, 10, 0, 1)),        # MERGEDCELLS A10:B11
+             # past column IV, Excel 97's last: a damaged file's cells and merge, dropped
+             rec(0x0203, cellhdr(30, 300) + struct.pack("<d", 9)),
+             rec(0x00BD, struct.pack("<HH", 31, 254) + b"".join(struct.pack("<HI", 15, rk_int(n)) for n in (4, 5, 6)) + struct.pack("<H", 256)),
+             rec(0x00E5, struct.pack("<H", 1) + struct.pack("<HHHH", 32, 33, 250, 0xFF00)),  # MERGEDCELLS IQ33:?34
              rec(0x001C, cellhdr(0, 0)[:4] + struct.pack("<HH", 0, 1) + short_str("me")),  # NOTE
              rec(0x005D, struct.pack("<HHHH", 0x15, 0x12, 0x08, 1) + bytes(14)),          # OBJ, a picture
              rec(0x023E, struct.pack("<HHHI", 0x06B6 | 0x08, 0, 0, 64) + bytes(8)),       # WINDOW2, frozen
@@ -434,7 +438,12 @@ def test_built_book(work):
                  "Pictures, charts and drawings", "Data tables keep their values",
                  "Some formulas could not be read", "Patterned cell backgrounds"):
         check("built: note " + want, want in notes, notes)
+    check("built: note cells past IV", "3 cells past column IV dropped" in notes, notes)
     first = b["sheets"][0]
+    past = [rc for rc in first["cells"] if rc[1] > 255] + [m for m in first["merges"] if "65280" in m]
+    check("built: nothing past column IV", not past, past)
+    kept = sorted(rc for rc in first["cells"] if rc[0] == 31)
+    check("built: MULRK up to IV kept", kept == [(31, 254), (31, 255)], kept)
     check("built: sheet", first["line"] == 'sheet 0 "First" hidden=0 width=1200 height=300 freeze=2,1', first["line"])
     check("built: columns", first["cols"] == ["col 1-2 width=210 style=1 hidden=1"], first["cols"])
     check("built: row", first["rows"] == ["row 1 height=600 hidden=0"], first["rows"])

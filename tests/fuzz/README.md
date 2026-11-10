@@ -15,5 +15,10 @@ input being tried in `DIR/last`, so the one that crashed is there.
     build/fuzz/fuzz_doc tests/docs/*.rtf
     build/fuzz/fuzz_book -w /tmp/w -m 200 1 tests/book/fixtures/book.xls
 
+`seeds/` holds inputs that once crashed or hung a filter, to be added to
+any corpus: `xls-past-column-iv.xls` has a cell at row 32513, column 65279,
+far past Excel 97's column IV (the CSV save padded it to billions of
+commas; the cell is now dropped with a note).
+
 A harness built with clang can also run under libFuzzer
 (`-fsanitize=fuzzer`): both define `LLVMFuzzerTestOneInput`.
