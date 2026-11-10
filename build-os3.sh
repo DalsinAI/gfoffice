@@ -153,10 +153,8 @@ else
     OCSRC="$OWFSRC $HERE/libowf/calc/*.c"
     OWF_CALC=""
 fi
-# NO_GFMALLOC: with the stove's gfmalloc, any save gurus (#81000005, lab 10 November 2026); libnix's allocator
-# saves. Until the overrun is found (amicradle-teams teams/team2/inbox/20261110-1528-from-team5.md).
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -DNO_GFMALLOC -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_CALC \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_CALC \
     -I"$HERE/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" -I"$HERE/third_party/opengadtools" \
     $OCSRC "$HERE"/src/calc/*.c "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_fontwidths.c" \
     "$HERE"/third_party/opengadtools/*.c -lamiga -lm \
