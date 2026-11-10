@@ -2144,7 +2144,8 @@ static void put_condformats(ods_out *w, owf_buf *b, int sheet)
 }
 
 /* The empty cells of row from column from up to to: a cell repeated for each run alike in its rule. */
-static void put_empty_cells(ods_out *w, owf_buf *b, const owf_sheet *sh, unsigned long row, unsigned long from, unsigned long to)
+static void put_cells_run(ods_out *w, owf_buf *b, const owf_sheet *sh, unsigned long row, unsigned long from,
+                          unsigned long to, int covered)
 {
     while (from < to) {
         unsigned long end = to;
@@ -2159,7 +2160,7 @@ static void put_empty_cells(ods_out *w, owf_buf *b, const owf_sheet *sh, unsigne
                 if ((unsigned long)r->last_col + 1 > from && (unsigned long)r->last_col + 1 < end)
                     end = (unsigned long)r->last_col + 1;
             }
-        owf_buf_puts(b, "<table:table-cell");
+        owf_buf_puts(b, covered ? "<table:covered-table-cell" : "<table:table-cell");
         if (end - from > 1)
             owf_buf_printf(b, " table:number-columns-repeated=\"%lu\"", end - from);
         if (val)
@@ -2167,6 +2168,34 @@ static void put_empty_cells(ods_out *w, owf_buf *b, const owf_sheet *sh, unsigne
         owf_buf_puts(b, "/>");
         from = end;
     }
+}
+
+static void put_empty_cells(ods_out *w, owf_buf *b, const owf_sheet *sh, unsigned long row, unsigned long from, unsigned long to)
+{
+    put_cells_run(w, b, sh, row, from, to, 0);
+}
+
+/* Where the empty cells covered by merges, from col in row, stop: at the
+ * end of the merge covering col, or where another merge starts. */
+static unsigned long covered_end(const owf_sheet *sh, unsigned long row, unsigned long col, unsigned long limit)
+{
+    unsigned long end = col + 1;
+    int i;
+    for (i = 0; i < sh->nmerges; i++) {
+        const owf_range *m = &sh->merges[i];
+        if (row >= m->first_row && row <= m->last_row && col >= m->first_col && col <= m->last_col
+            && (unsigned long)m->last_col + 1 > end)
+            end = (unsigned long)m->last_col + 1;
+    }
+    if (end > limit)
+        end = limit;
+    for (i = 0; i < sh->nmerges; i++) {
+        const owf_range *m = &sh->merges[i];
+        if (row >= m->first_row && row <= m->last_row && m->first_col > col && m->first_col < end
+            && row == m->first_row)
+            end = m->first_col;
+    }
+    return end;
 }
 
 /* The column after the last one a rule covers in row, 0 none. */
@@ -2319,6 +2348,20 @@ static void put_sheet(ods_out *w, owf_buf *b, int index)
             while (ai + charts < na && anchors[ai + charts].row == row && anchors[ai + charts].col == at)
                 charts++;
             m = merge_at(sh, row, at, &covered);
+            if (!m && covered && cell_col != at && note_col != at && !charts) {
+                /* a merge's covered cells, many at once: a merge thousands of
+                   columns wide is one element, not thousands */
+                unsigned long limit = cell_col < note_col ? cell_col : note_col, end;
+                if (chart_col < limit)
+                    limit = chart_col;
+                if (MAX_COLS < limit)
+                    limit = MAX_COLS;
+                end = covered_end(sh, row, at, limit);
+                put_cells_run(w, b, sh, row, at, end, 1);
+                any = 1;
+                col = end;
+                continue;
+            }
             put_cell(w, b, sh, cell_col == at ? &sh->cells[i] : NULL, m, covered, val_at(w, sh, row, at),
                      note_col == at ? &sh->comments[ci] : NULL, index, anchors + ai, charts);
             any = 1;
