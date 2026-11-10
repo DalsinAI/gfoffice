@@ -279,13 +279,17 @@ The GFOffice conventions:
 | Port | `GFOPENWRITE`, `GFOPENCALC`, `GFOPENPRESENTATION`, `GFOPENBASE` for the first copy; a second copy takes `NAME.2`, then `NAME.3` |
 | Arguments | Each command has a `ReadArgs` template, so quotes and keywords work as in the Shell. `HELP` lists the commands; `HELP <command>` gives its template |
 | Results | In `RESULT` when the script asks (`OPTIONS RESULTS`) |
-| Return codes | 0 done; 5 not possible now (unsaved changes, nothing selected, not supported); 10 error (bad arguments, an unknown command, a failure); 20 fatal |
-| Common commands | `VERSION`, `OPEN`, `SAVE`, `SAVEAS`, `EXPORT`, `PRINT`, `QUIT [FORCE]`, `HELP`, `ACTIVATE`, `FAULT <code>`, `GETFILE`, `ISDIRTY` |
+| Return codes | As every Open app's port (amicradle-teams ARexx-RULE.md 3, OS 3.2's arexx.class): 0 done; 5 not possible now (unsaved changes, nothing found, not supported); 10 error (bad arguments, a file that can't be read or written); 20 an unknown command or a failure (out of memory) |
+| Requesters | None while an ARexx command runs (ARexx-RULE.md 4): what one would have said is `LASTERROR`'s answer |
+| Common commands | `VERSION`, `OPEN`, `SAVE`, `SAVEAS`, `EXPORT`, `PRINT`, `QUIT [FORCE]`, `HELP`, `ACTIVATE`, `DEACTIVATE`, `FAULT <code>`, `LASTERROR`, `GETFILE`, `ISDIRTY` |
 
 GFOpenWrite moves to these, keeping its commands' names (`WORDCOUNT`,
 `PAGECOUNT`, `INSERTTEXT`, `FIND`, `GETTEXT`, `COMMAND`). Since 7 November 2026
 GFOpenWrite and GFOpenCalc both answer `VERSION`, `HELP`, `ACTIVATE` and `FAULT`, the
 commands every Open app's port has; `Rexx/` holds an example script for each.
+Since 10 November 2026 both answer 20 for an unknown command, show no requester
+while a command runs, and have `DEACTIVATE` (5: no icon) and `LASTERROR`;
+`tests/arexx/` checks them.
 
 ## 7. Spelling (E11)
 
