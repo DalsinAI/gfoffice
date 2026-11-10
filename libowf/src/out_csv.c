@@ -9,6 +9,8 @@
 
 #include <string.h>
 
+#define CSV_PAD_MAX (4UL * 1024 * 1024)
+
 static void put_text(owf_buf *b, const char *s)
 {
     size_t n = strlen(s);
@@ -57,8 +59,8 @@ static int export_csv(const owf_book *book, unsigned char **data, size_t *length
 {
     const owf_sheet *sheet;
     owf_buf b;
-    unsigned last_col = 0, row = 0, col;
-    int i, any = 0;
+    unsigned last_col = 0, last_row = 0, row = 0, col, row_end;
+    int i, j, any = 0, ragged = 0;
 
     *data = NULL;
     *length = 0;
@@ -68,10 +70,20 @@ static int export_csv(const owf_book *book, unsigned char **data, size_t *length
         if (book->nsheets > 1)
             owf_report_add(report, OWF_NOTE_LOST, "CSV holds one sheet: only \"%s\" was written", sheet->name);
         for (i = 0; i < sheet->ncells; i++)
-            if (sheet->cells[i].type != OWF_VALUE_EMPTY && (!any || sheet->cells[i].col > last_col)) {
-                last_col = sheet->cells[i].col;
+            if (sheet->cells[i].type != OWF_VALUE_EMPTY) {
+                if (!any || sheet->cells[i].col > last_col)
+                    last_col = sheet->cells[i].col;
+                if (!any || sheet->cells[i].row > last_row)
+                    last_row = sheet->cells[i].row;
                 any = 1;
             }
+        /* A few far-off cells (row 60000, column 30000) would pad every row
+           to billions of commas, and the save would never end.  Past
+           CSV_PAD_MAX padding commas, each row stops at its own last cell. */
+        if (any && ((unsigned long)last_row + 1) * (unsigned long)last_col > CSV_PAD_MAX) {
+            ragged = 1;
+            owf_report_add(report, OWF_NOTE_APPROX, "The sheet is very wide and long: rows of the CSV end at their last cell instead of all being as wide as the widest");
+        }
         /* every row as wide as the widest, as RFC 4180 asks */
         for (i = 0; any && i < sheet->ncells;) {
             const owf_cell *c = &sheet->cells[i];
@@ -80,11 +92,16 @@ static int export_csv(const owf_book *book, unsigned char **data, size_t *length
                 continue;
             }
             for (; row < c->row; row++) {
-                for (col = 0; col < last_col; col++)
+                for (col = 0; !ragged && col < last_col; col++)
                     owf_buf_putc(&b, ',');
                 owf_buf_puts(&b, "\r\n");
             }
-            for (col = 0; col <= last_col; col++) {
+            row_end = last_col;
+            if (ragged)
+                for (j = i; j < sheet->ncells && sheet->cells[j].row == row; j++)
+                    if (sheet->cells[j].type != OWF_VALUE_EMPTY)
+                        row_end = sheet->cells[j].col;
+            for (col = 0; col <= row_end; col++) {
                 if (col)
                     owf_buf_putc(&b, ',');
                 while (i < sheet->ncells && sheet->cells[i].row == row && sheet->cells[i].col < col)

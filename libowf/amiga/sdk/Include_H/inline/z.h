@@ -232,94 +232,6 @@ __z_DeflateParams(void *__base, z_stream *strm, LONG level, LONG strategy)
 #define __DeflateParams_base(__in_base, strm, level, strategy) __z_DeflateParams((__in_base), (z_stream *)(strm), (LONG)(level), (LONG)(strategy))
 
 static __inline__ LONG
-__z_DeflateTune(void *__base, z_stream *strm, LONG good, LONG lazy, LONG nice, LONG chain)
-{
-	register ULONG _a0 __asm("a0") = (ULONG)(strm);
-	register ULONG _d0 __asm("d0") = (ULONG)(good);
-	register ULONG _d1 __asm("d1") = (ULONG)(lazy);
-	register ULONG _d2 __asm("d2") = (ULONG)(nice);
-	register ULONG _d3 __asm("d3") = (ULONG)(chain);
-	register void *_a6 __asm("a6") = __base;
-	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -102(%/a6)"
-		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
-		: "r" (_a6), "r" (_d2), "r" (_d3)
-		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (LONG)_d0;
-}
-#define DeflateTune(strm, good, lazy, nice, chain) __z_DeflateTune((Z_BASE_NAME), (z_stream *)(strm), (LONG)(good), (LONG)(lazy), (LONG)(nice), (LONG)(chain))
-#define __DeflateTune_base(__in_base, strm, good, lazy, nice, chain) __z_DeflateTune((__in_base), (z_stream *)(strm), (LONG)(good), (LONG)(lazy), (LONG)(nice), (LONG)(chain))
-
-static __inline__ ULONG
-__z_DeflateBound(void *__base, z_stream *strm, ULONG sourceLen)
-{
-	register ULONG _a0 __asm("a0") = (ULONG)(strm);
-	register ULONG _d0 __asm("d0") = (ULONG)(sourceLen);
-	register void *_a6 __asm("a6") = __base;
-	register ULONG _d1 __asm("d1");
-	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -108(%/a6)"
-		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
-		: "r" (_a6)
-		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (ULONG)_d0;
-}
-#define DeflateBound(strm, sourceLen) __z_DeflateBound((Z_BASE_NAME), (z_stream *)(strm), (ULONG)(sourceLen))
-#define __DeflateBound_base(__in_base, strm, sourceLen) __z_DeflateBound((__in_base), (z_stream *)(strm), (ULONG)(sourceLen))
-
-static __inline__ LONG
-__z_DeflatePending(void *__base, z_stream *strm, ULONG *pending, LONG *bits)
-{
-	register ULONG _a0 __asm("a0") = (ULONG)(strm);
-	register ULONG _a1 __asm("a1") = (ULONG)(pending);
-	register ULONG _a2 __asm("a2") = (ULONG)(bits);
-	register void *_a6 __asm("a6") = __base;
-	register ULONG _d0 __asm("d0");
-	register ULONG _d1 __asm("d1");
-	__asm__ __volatile__ ("jsr -114(%/a6)"
-		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
-		: "r" (_a2), "r" (_a6)
-		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (LONG)_d0;
-}
-#define DeflatePending(strm, pending, bits) __z_DeflatePending((Z_BASE_NAME), (z_stream *)(strm), (ULONG *)(pending), (LONG *)(bits))
-#define __DeflatePending_base(__in_base, strm, pending, bits) __z_DeflatePending((__in_base), (z_stream *)(strm), (ULONG *)(pending), (LONG *)(bits))
-
-static __inline__ LONG
-__z_DeflatePrime(void *__base, z_stream *strm, LONG bits, LONG value)
-{
-	register ULONG _a0 __asm("a0") = (ULONG)(strm);
-	register ULONG _d0 __asm("d0") = (ULONG)(bits);
-	register ULONG _d1 __asm("d1") = (ULONG)(value);
-	register void *_a6 __asm("a6") = __base;
-	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -120(%/a6)"
-		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
-		: "r" (_a6)
-		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (LONG)_d0;
-}
-#define DeflatePrime(strm, bits, value) __z_DeflatePrime((Z_BASE_NAME), (z_stream *)(strm), (LONG)(bits), (LONG)(value))
-#define __DeflatePrime_base(__in_base, strm, bits, value) __z_DeflatePrime((__in_base), (z_stream *)(strm), (LONG)(bits), (LONG)(value))
-
-static __inline__ LONG
-__z_DeflateSetHeader(void *__base, z_stream *strm, APTR head)
-{
-	register ULONG _a0 __asm("a0") = (ULONG)(strm);
-	register ULONG _a1 __asm("a1") = (ULONG)(head);
-	register void *_a6 __asm("a6") = __base;
-	register ULONG _d0 __asm("d0");
-	register ULONG _d1 __asm("d1");
-	__asm__ __volatile__ ("jsr -126(%/a6)"
-		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
-		: "r" (_a6)
-		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (LONG)_d0;
-}
-#define DeflateSetHeader(strm, head) __z_DeflateSetHeader((Z_BASE_NAME), (z_stream *)(strm), (APTR)(head))
-#define __DeflateSetHeader_base(__in_base, strm, head) __z_DeflateSetHeader((__in_base), (z_stream *)(strm), (APTR)(head))
-
-static __inline__ LONG
 __z_InflateInit2(void *__base, z_stream *strm, LONG windowBits)
 {
 	register ULONG _a0 __asm("a0") = (ULONG)(strm);
@@ -327,7 +239,7 @@ __z_InflateInit2(void *__base, z_stream *strm, LONG windowBits)
 	register void *_a6 __asm("a6") = __base;
 	register ULONG _d1 __asm("d1");
 	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -132(%/a6)"
+	__asm__ __volatile__ ("jsr -102(%/a6)"
 		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
 		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
@@ -344,7 +256,7 @@ __z_InflateSetDictionary(void *__base, z_stream *strm, CONST UBYTE *dict, ULONG 
 	register ULONG _d0 __asm("d0") = (ULONG)(len);
 	register void *_a6 __asm("a6") = __base;
 	register ULONG _d1 __asm("d1");
-	__asm__ __volatile__ ("jsr -138(%/a6)"
+	__asm__ __volatile__ ("jsr -108(%/a6)"
 		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
 		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
@@ -354,58 +266,6 @@ __z_InflateSetDictionary(void *__base, z_stream *strm, CONST UBYTE *dict, ULONG 
 #define __InflateSetDictionary_base(__in_base, strm, dict, len) __z_InflateSetDictionary((__in_base), (z_stream *)(strm), (CONST UBYTE *)(dict), (ULONG)(len))
 
 static __inline__ LONG
-__z_InflateGetDictionary(void *__base, z_stream *strm, UBYTE *dict, ULONG *len)
-{
-	register ULONG _a0 __asm("a0") = (ULONG)(strm);
-	register ULONG _a1 __asm("a1") = (ULONG)(dict);
-	register ULONG _a2 __asm("a2") = (ULONG)(len);
-	register void *_a6 __asm("a6") = __base;
-	register ULONG _d0 __asm("d0");
-	register ULONG _d1 __asm("d1");
-	__asm__ __volatile__ ("jsr -144(%/a6)"
-		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
-		: "r" (_a2), "r" (_a6)
-		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (LONG)_d0;
-}
-#define InflateGetDictionary(strm, dict, len) __z_InflateGetDictionary((Z_BASE_NAME), (z_stream *)(strm), (UBYTE *)(dict), (ULONG *)(len))
-#define __InflateGetDictionary_base(__in_base, strm, dict, len) __z_InflateGetDictionary((__in_base), (z_stream *)(strm), (UBYTE *)(dict), (ULONG *)(len))
-
-static __inline__ LONG
-__z_InflateSync(void *__base, z_stream *strm)
-{
-	register ULONG _a0 __asm("a0") = (ULONG)(strm);
-	register void *_a6 __asm("a6") = __base;
-	register ULONG _d0 __asm("d0");
-	register ULONG _d1 __asm("d1");
-	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -150(%/a6)"
-		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
-		: "r" (_a6)
-		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (LONG)_d0;
-}
-#define InflateSync(strm) __z_InflateSync((Z_BASE_NAME), (z_stream *)(strm))
-#define __InflateSync_base(__in_base, strm) __z_InflateSync((__in_base), (z_stream *)(strm))
-
-static __inline__ LONG
-__z_InflateCopy(void *__base, z_stream *dest, z_stream *source)
-{
-	register ULONG _a0 __asm("a0") = (ULONG)(dest);
-	register ULONG _a1 __asm("a1") = (ULONG)(source);
-	register void *_a6 __asm("a6") = __base;
-	register ULONG _d0 __asm("d0");
-	register ULONG _d1 __asm("d1");
-	__asm__ __volatile__ ("jsr -156(%/a6)"
-		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
-		: "r" (_a6)
-		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (LONG)_d0;
-}
-#define InflateCopy(dest, source) __z_InflateCopy((Z_BASE_NAME), (z_stream *)(dest), (z_stream *)(source))
-#define __InflateCopy_base(__in_base, dest, source) __z_InflateCopy((__in_base), (z_stream *)(dest), (z_stream *)(source))
-
-static __inline__ LONG
 __z_InflateReset(void *__base, z_stream *strm)
 {
 	register ULONG _a0 __asm("a0") = (ULONG)(strm);
@@ -413,7 +273,7 @@ __z_InflateReset(void *__base, z_stream *strm)
 	register ULONG _d0 __asm("d0");
 	register ULONG _d1 __asm("d1");
 	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -162(%/a6)"
+	__asm__ __volatile__ ("jsr -114(%/a6)"
 		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
 		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
@@ -423,21 +283,178 @@ __z_InflateReset(void *__base, z_stream *strm)
 #define __InflateReset_base(__in_base, strm) __z_InflateReset((__in_base), (z_stream *)(strm))
 
 static __inline__ LONG
-__z_InflateReset2(void *__base, z_stream *strm, LONG windowBits)
+__z_Compress(void *__base, UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG sourceLen)
 {
-	register ULONG _a0 __asm("a0") = (ULONG)(strm);
-	register ULONG _d0 __asm("d0") = (ULONG)(windowBits);
+	register ULONG _a0 __asm("a0") = (ULONG)(dest);
+	register ULONG _a1 __asm("a1") = (ULONG)(destLen);
+	register ULONG _a2 __asm("a2") = (ULONG)(source);
+	register ULONG _d0 __asm("d0") = (ULONG)(sourceLen);
 	register void *_a6 __asm("a6") = __base;
 	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -120(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (LONG)_d0;
+}
+#define Compress(dest, destLen, source, sourceLen) __z_Compress((Z_BASE_NAME), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG)(sourceLen))
+#define __Compress_base(__in_base, dest, destLen, source, sourceLen) __z_Compress((__in_base), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG)(sourceLen))
+
+static __inline__ LONG
+__z_Uncompress(void *__base, UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG sourceLen)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(dest);
+	register ULONG _a1 __asm("a1") = (ULONG)(destLen);
+	register ULONG _a2 __asm("a2") = (ULONG)(source);
+	register ULONG _d0 __asm("d0") = (ULONG)(sourceLen);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -126(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (LONG)_d0;
+}
+#define Uncompress(dest, destLen, source, sourceLen) __z_Uncompress((Z_BASE_NAME), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG)(sourceLen))
+#define __Uncompress_base(__in_base, dest, destLen, source, sourceLen) __z_Uncompress((__in_base), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG)(sourceLen))
+
+static __inline__ ULONG
+__z_Adler32(void *__base, ULONG adler, CONST UBYTE *buf, ULONG len)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(adler);
+	register ULONG _a0 __asm("a0") = (ULONG)(buf);
+	register ULONG _d1 __asm("d1") = (ULONG)(len);
+	register void *_a6 __asm("a6") = __base;
 	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -168(%/a6)"
-		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+	__asm__ __volatile__ ("jsr -132(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (ULONG)_d0;
+}
+#define Adler32(adler, buf, len) __z_Adler32((Z_BASE_NAME), (ULONG)(adler), (CONST UBYTE *)(buf), (ULONG)(len))
+#define __Adler32_base(__in_base, adler, buf, len) __z_Adler32((__in_base), (ULONG)(adler), (CONST UBYTE *)(buf), (ULONG)(len))
+
+static __inline__ ULONG
+__z_CRC32(void *__base, ULONG crc, CONST UBYTE *buf, ULONG len)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(crc);
+	register ULONG _a0 __asm("a0") = (ULONG)(buf);
+	register ULONG _d1 __asm("d1") = (ULONG)(len);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -138(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (ULONG)_d0;
+}
+#define CRC32(crc, buf, len) __z_CRC32((Z_BASE_NAME), (ULONG)(crc), (CONST UBYTE *)(buf), (ULONG)(len))
+#define __CRC32_base(__in_base, crc, buf, len) __z_CRC32((__in_base), (ULONG)(crc), (CONST UBYTE *)(buf), (ULONG)(len))
+
+static __inline__ LONG
+__z_InflateSync(void *__base, z_stream *strm)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -144(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
 		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
 	return (LONG)_d0;
 }
-#define InflateReset2(strm, windowBits) __z_InflateReset2((Z_BASE_NAME), (z_stream *)(strm), (LONG)(windowBits))
-#define __InflateReset2_base(__in_base, strm, windowBits) __z_InflateReset2((__in_base), (z_stream *)(strm), (LONG)(windowBits))
+#define InflateSync(strm) __z_InflateSync((Z_BASE_NAME), (z_stream *)(strm))
+#define __InflateSync_base(__in_base, strm) __z_InflateSync((__in_base), (z_stream *)(strm))
+
+static __inline__ LONG
+__z_DeflateTune(void *__base, z_stream *strm, LONG good, LONG lazy, LONG nice, LONG chain)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _d0 __asm("d0") = (ULONG)(good);
+	register ULONG _d1 __asm("d1") = (ULONG)(lazy);
+	register ULONG _d2 __asm("d2") = (ULONG)(nice);
+	register ULONG _d3 __asm("d3") = (ULONG)(chain);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -150(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (LONG)_d0;
+}
+#define DeflateTune(strm, good, lazy, nice, chain) __z_DeflateTune((Z_BASE_NAME), (z_stream *)(strm), (LONG)(good), (LONG)(lazy), (LONG)(nice), (LONG)(chain))
+#define __DeflateTune_base(__in_base, strm, good, lazy, nice, chain) __z_DeflateTune((__in_base), (z_stream *)(strm), (LONG)(good), (LONG)(lazy), (LONG)(nice), (LONG)(chain))
+
+static __inline__ ULONG
+__z_DeflateBound(void *__base, z_stream *strm, ULONG sourceLen)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _d0 __asm("d0") = (ULONG)(sourceLen);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -156(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (ULONG)_d0;
+}
+#define DeflateBound(strm, sourceLen) __z_DeflateBound((Z_BASE_NAME), (z_stream *)(strm), (ULONG)(sourceLen))
+#define __DeflateBound_base(__in_base, strm, sourceLen) __z_DeflateBound((__in_base), (z_stream *)(strm), (ULONG)(sourceLen))
+
+static __inline__ LONG
+__z_DeflatePrime(void *__base, z_stream *strm, LONG bits, LONG value)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _d0 __asm("d0") = (ULONG)(bits);
+	register ULONG _d1 __asm("d1") = (ULONG)(value);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -162(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (LONG)_d0;
+}
+#define DeflatePrime(strm, bits, value) __z_DeflatePrime((Z_BASE_NAME), (z_stream *)(strm), (LONG)(bits), (LONG)(value))
+#define __DeflatePrime_base(__in_base, strm, bits, value) __z_DeflatePrime((__in_base), (z_stream *)(strm), (LONG)(bits), (LONG)(value))
+
+static __inline__ LONG
+__z_DeflateSetHeader(void *__base, z_stream *strm, APTR head)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _a1 __asm("a1") = (ULONG)(head);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -168(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (LONG)_d0;
+}
+#define DeflateSetHeader(strm, head) __z_DeflateSetHeader((Z_BASE_NAME), (z_stream *)(strm), (APTR)(head))
+#define __DeflateSetHeader_base(__in_base, strm, head) __z_DeflateSetHeader((__in_base), (z_stream *)(strm), (APTR)(head))
+
+static __inline__ LONG
+__z_InflateCopy(void *__base, z_stream *dest, z_stream *source)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(dest);
+	register ULONG _a1 __asm("a1") = (ULONG)(source);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -174(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (LONG)_d0;
+}
+#define InflateCopy(dest, source) __z_InflateCopy((Z_BASE_NAME), (z_stream *)(dest), (z_stream *)(source))
+#define __InflateCopy_base(__in_base, dest, source) __z_InflateCopy((__in_base), (z_stream *)(dest), (z_stream *)(source))
 
 static __inline__ LONG
 __z_InflatePrime(void *__base, z_stream *strm, LONG bits, LONG value)
@@ -447,7 +464,7 @@ __z_InflatePrime(void *__base, z_stream *strm, LONG bits, LONG value)
 	register ULONG _d1 __asm("d1") = (ULONG)(value);
 	register void *_a6 __asm("a6") = __base;
 	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -174(%/a6)"
+	__asm__ __volatile__ ("jsr -180(%/a6)"
 		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
 		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
@@ -455,23 +472,6 @@ __z_InflatePrime(void *__base, z_stream *strm, LONG bits, LONG value)
 }
 #define InflatePrime(strm, bits, value) __z_InflatePrime((Z_BASE_NAME), (z_stream *)(strm), (LONG)(bits), (LONG)(value))
 #define __InflatePrime_base(__in_base, strm, bits, value) __z_InflatePrime((__in_base), (z_stream *)(strm), (LONG)(bits), (LONG)(value))
-
-static __inline__ LONG
-__z_InflateMark(void *__base, z_stream *strm)
-{
-	register ULONG _a0 __asm("a0") = (ULONG)(strm);
-	register void *_a6 __asm("a6") = __base;
-	register ULONG _d0 __asm("d0");
-	register ULONG _d1 __asm("d1");
-	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -180(%/a6)"
-		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
-		: "r" (_a6)
-		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (LONG)_d0;
-}
-#define InflateMark(strm) __z_InflateMark((Z_BASE_NAME), (z_stream *)(strm))
-#define __InflateMark_base(__in_base, strm) __z_InflateMark((__in_base), (z_stream *)(strm))
 
 static __inline__ LONG
 __z_InflateGetHeader(void *__base, z_stream *strm, APTR head)
@@ -490,40 +490,93 @@ __z_InflateGetHeader(void *__base, z_stream *strm, APTR head)
 #define InflateGetHeader(strm, head) __z_InflateGetHeader((Z_BASE_NAME), (z_stream *)(strm), (APTR)(head))
 #define __InflateGetHeader_base(__in_base, strm, head) __z_InflateGetHeader((__in_base), (z_stream *)(strm), (APTR)(head))
 
-static __inline__ ULONG
-__z_ZlibCompileFlags(void *__base)
+static __inline__ LONG
+__z_InflateBackInit(void *__base, z_stream *strm, LONG windowBits, UBYTE *window)
 {
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _d0 __asm("d0") = (ULONG)(windowBits);
+	register ULONG _a1 __asm("a1") = (ULONG)(window);
 	register void *_a6 __asm("a6") = __base;
-	register ULONG _d0 __asm("d0");
 	register ULONG _d1 __asm("d1");
-	register ULONG _a0 __asm("a0");
-	register ULONG _a1 __asm("a1");
 	__asm__ __volatile__ ("jsr -192(%/a6)"
-		: "=r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
 		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (ULONG)_d0;
+	return (LONG)_d0;
 }
-#define ZlibCompileFlags() __z_ZlibCompileFlags((Z_BASE_NAME))
-#define __ZlibCompileFlags_base(__in_base) __z_ZlibCompileFlags((__in_base))
+#define InflateBackInit(strm, windowBits, window) __z_InflateBackInit((Z_BASE_NAME), (z_stream *)(strm), (LONG)(windowBits), (UBYTE *)(window))
+#define __InflateBackInit_base(__in_base, strm, windowBits, window) __z_InflateBackInit((__in_base), (z_stream *)(strm), (LONG)(windowBits), (UBYTE *)(window))
 
 static __inline__ LONG
-__z_Compress(void *__base, UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG sourceLen)
+__z_InflateBack(void *__base, z_stream *strm, APTR in, APTR in_desc, APTR out, APTR out_desc)
 {
-	register ULONG _a0 __asm("a0") = (ULONG)(dest);
-	register ULONG _a1 __asm("a1") = (ULONG)(destLen);
-	register ULONG _a2 __asm("a2") = (ULONG)(source);
-	register ULONG _d0 __asm("d0") = (ULONG)(sourceLen);
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _a1 __asm("a1") = (ULONG)(in);
+	register ULONG _d0 __asm("d0") = (ULONG)(in_desc);
+	register ULONG _a2 __asm("a2") = (ULONG)(out);
+	register ULONG _d1 __asm("d1") = (ULONG)(out_desc);
 	register void *_a6 __asm("a6") = __base;
-	register ULONG _d1 __asm("d1");
 	__asm__ __volatile__ ("jsr -198(%/a6)"
-		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
 		: "r" (_a2), "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
 	return (LONG)_d0;
 }
-#define Compress(dest, destLen, source, sourceLen) __z_Compress((Z_BASE_NAME), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG)(sourceLen))
-#define __Compress_base(__in_base, dest, destLen, source, sourceLen) __z_Compress((__in_base), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG)(sourceLen))
+#define InflateBack(strm, in, in_desc, out, out_desc) __z_InflateBack((Z_BASE_NAME), (z_stream *)(strm), (APTR)(in), (APTR)(in_desc), (APTR)(out), (APTR)(out_desc))
+#define __InflateBack_base(__in_base, strm, in, in_desc, out, out_desc) __z_InflateBack((__in_base), (z_stream *)(strm), (APTR)(in), (APTR)(in_desc), (APTR)(out), (APTR)(out_desc))
+
+static __inline__ LONG
+__z_InflateBackEnd(void *__base, z_stream *strm)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -204(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (LONG)_d0;
+}
+#define InflateBackEnd(strm) __z_InflateBackEnd((Z_BASE_NAME), (z_stream *)(strm))
+#define __InflateBackEnd_base(__in_base, strm) __z_InflateBackEnd((__in_base), (z_stream *)(strm))
+
+static __inline__ ULONG
+__z_Adler32Combine(void *__base, ULONG adler1, ULONG adler2, LONG len2)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(adler1);
+	register ULONG _d1 __asm("d1") = (ULONG)(adler2);
+	register ULONG _d2 __asm("d2") = (ULONG)(len2);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -210(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (ULONG)_d0;
+}
+#define Adler32Combine(adler1, adler2, len2) __z_Adler32Combine((Z_BASE_NAME), (ULONG)(adler1), (ULONG)(adler2), (LONG)(len2))
+#define __Adler32Combine_base(__in_base, adler1, adler2, len2) __z_Adler32Combine((__in_base), (ULONG)(adler1), (ULONG)(adler2), (LONG)(len2))
+
+static __inline__ ULONG
+__z_CRC32Combine(void *__base, ULONG crc1, ULONG crc2, LONG len2)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(crc1);
+	register ULONG _d1 __asm("d1") = (ULONG)(crc2);
+	register ULONG _d2 __asm("d2") = (ULONG)(len2);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -216(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (ULONG)_d0;
+}
+#define CRC32Combine(crc1, crc2, len2) __z_CRC32Combine((Z_BASE_NAME), (ULONG)(crc1), (ULONG)(crc2), (LONG)(len2))
+#define __CRC32Combine_base(__in_base, crc1, crc2, len2) __z_CRC32Combine((__in_base), (ULONG)(crc1), (ULONG)(crc2), (LONG)(len2))
 
 static __inline__ LONG
 __z_Compress2(void *__base, UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG sourceLen, LONG level)
@@ -534,7 +587,7 @@ __z_Compress2(void *__base, UBYTE *dest, ULONG *destLen, CONST UBYTE *source, UL
 	register ULONG _d0 __asm("d0") = (ULONG)(sourceLen);
 	register ULONG _d1 __asm("d1") = (ULONG)(level);
 	register void *_a6 __asm("a6") = __base;
-	__asm__ __volatile__ ("jsr -204(%/a6)"
+	__asm__ __volatile__ ("jsr -222(%/a6)"
 		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
 		: "r" (_a2), "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
@@ -551,7 +604,7 @@ __z_CompressBound(void *__base, ULONG sourceLen)
 	register ULONG _d1 __asm("d1");
 	register ULONG _a0 __asm("a0");
 	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -210(%/a6)"
+	__asm__ __volatile__ ("jsr -228(%/a6)"
 		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
 		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
@@ -561,22 +614,39 @@ __z_CompressBound(void *__base, ULONG sourceLen)
 #define __CompressBound_base(__in_base, sourceLen) __z_CompressBound((__in_base), (ULONG)(sourceLen))
 
 static __inline__ LONG
-__z_Uncompress(void *__base, UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG sourceLen)
+__z_InflateGetDictionary(void *__base, z_stream *strm, UBYTE *dict, ULONG *len)
 {
-	register ULONG _a0 __asm("a0") = (ULONG)(dest);
-	register ULONG _a1 __asm("a1") = (ULONG)(destLen);
-	register ULONG _a2 __asm("a2") = (ULONG)(source);
-	register ULONG _d0 __asm("d0") = (ULONG)(sourceLen);
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _a1 __asm("a1") = (ULONG)(dict);
+	register ULONG _a2 __asm("a2") = (ULONG)(len);
 	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
 	register ULONG _d1 __asm("d1");
-	__asm__ __volatile__ ("jsr -216(%/a6)"
-		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+	__asm__ __volatile__ ("jsr -234(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
 		: "r" (_a2), "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
 	return (LONG)_d0;
 }
-#define Uncompress(dest, destLen, source, sourceLen) __z_Uncompress((Z_BASE_NAME), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG)(sourceLen))
-#define __Uncompress_base(__in_base, dest, destLen, source, sourceLen) __z_Uncompress((__in_base), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG)(sourceLen))
+#define InflateGetDictionary(strm, dict, len) __z_InflateGetDictionary((Z_BASE_NAME), (z_stream *)(strm), (UBYTE *)(dict), (ULONG *)(len))
+#define __InflateGetDictionary_base(__in_base, strm, dict, len) __z_InflateGetDictionary((__in_base), (z_stream *)(strm), (UBYTE *)(dict), (ULONG *)(len))
+
+static __inline__ CONST_STRPTR
+__z_ZError(void *__base, LONG err)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(err);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -240(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (CONST_STRPTR)_d0;
+}
+#define ZError(err) __z_ZError((Z_BASE_NAME), (LONG)(err))
+#define __ZError_base(__in_base, err) __z_ZError((__in_base), (LONG)(err))
 
 static __inline__ LONG
 __z_Uncompress2(void *__base, UBYTE *dest, ULONG *destLen, CONST UBYTE *source, ULONG *sourceLen)
@@ -588,7 +658,7 @@ __z_Uncompress2(void *__base, UBYTE *dest, ULONG *destLen, CONST UBYTE *source, 
 	register void *_a6 __asm("a6") = __base;
 	register ULONG _d0 __asm("d0");
 	register ULONG _d1 __asm("d1");
-	__asm__ __volatile__ ("jsr -222(%/a6)"
+	__asm__ __volatile__ ("jsr -246(%/a6)"
 		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
 		: "r" (_a2), "r" (_a3), "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
@@ -597,75 +667,126 @@ __z_Uncompress2(void *__base, UBYTE *dest, ULONG *destLen, CONST UBYTE *source, 
 #define Uncompress2(dest, destLen, source, sourceLen) __z_Uncompress2((Z_BASE_NAME), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG *)(sourceLen))
 #define __Uncompress2_base(__in_base, dest, destLen, source, sourceLen) __z_Uncompress2((__in_base), (UBYTE *)(dest), (ULONG *)(destLen), (CONST UBYTE *)(source), (ULONG *)(sourceLen))
 
-static __inline__ ULONG
-__z_Adler32(void *__base, ULONG adler, CONST UBYTE *buf, ULONG len)
+static __inline__ LONG
+__z_InflateReset2(void *__base, z_stream *strm, LONG windowBits)
 {
-	register ULONG _d0 __asm("d0") = (ULONG)(adler);
-	register ULONG _a0 __asm("a0") = (ULONG)(buf);
-	register ULONG _d1 __asm("d1") = (ULONG)(len);
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _d0 __asm("d0") = (ULONG)(windowBits);
 	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
 	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -228(%/a6)"
-		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+	__asm__ __volatile__ ("jsr -252(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
 		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (ULONG)_d0;
+	return (LONG)_d0;
 }
-#define Adler32(adler, buf, len) __z_Adler32((Z_BASE_NAME), (ULONG)(adler), (CONST UBYTE *)(buf), (ULONG)(len))
-#define __Adler32_base(__in_base, adler, buf, len) __z_Adler32((__in_base), (ULONG)(adler), (CONST UBYTE *)(buf), (ULONG)(len))
+#define InflateReset2(strm, windowBits) __z_InflateReset2((Z_BASE_NAME), (z_stream *)(strm), (LONG)(windowBits))
+#define __InflateReset2_base(__in_base, strm, windowBits) __z_InflateReset2((__in_base), (z_stream *)(strm), (LONG)(windowBits))
 
-static __inline__ ULONG
-__z_Crc32(void *__base, ULONG crc, CONST UBYTE *buf, ULONG len)
+static __inline__ LONG
+__z_InflateValidate(void *__base, z_stream *strm, LONG check)
 {
-	register ULONG _d0 __asm("d0") = (ULONG)(crc);
-	register ULONG _a0 __asm("a0") = (ULONG)(buf);
-	register ULONG _d1 __asm("d1") = (ULONG)(len);
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _d0 __asm("d0") = (ULONG)(check);
 	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
 	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -234(%/a6)"
-		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+	__asm__ __volatile__ ("jsr -258(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
 		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
-	return (ULONG)_d0;
+	return (LONG)_d0;
 }
-#define Crc32(crc, buf, len) __z_Crc32((Z_BASE_NAME), (ULONG)(crc), (CONST UBYTE *)(buf), (ULONG)(len))
-#define __Crc32_base(__in_base, crc, buf, len) __z_Crc32((__in_base), (ULONG)(crc), (CONST UBYTE *)(buf), (ULONG)(len))
+#define InflateValidate(strm, check) __z_InflateValidate((Z_BASE_NAME), (z_stream *)(strm), (LONG)(check))
+#define __InflateValidate_base(__in_base, strm, check) __z_InflateValidate((__in_base), (z_stream *)(strm), (LONG)(check))
 
 static __inline__ ULONG
-__z_Adler32Combine(void *__base, ULONG adler1, ULONG adler2, LONG len2)
+__z_CRC32CombineGen(void *__base, LONG len2)
 {
-	register ULONG _d0 __asm("d0") = (ULONG)(adler1);
-	register ULONG _d1 __asm("d1") = (ULONG)(adler2);
-	register ULONG _d2 __asm("d2") = (ULONG)(len2);
+	register ULONG _d0 __asm("d0") = (ULONG)(len2);
 	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
 	register ULONG _a0 __asm("a0");
 	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -240(%/a6)"
-		: "+r" (_d0), "+r" (_d1), "=r" (_a0), "=r" (_a1)
-		: "r" (_a6), "r" (_d2)
+	__asm__ __volatile__ ("jsr -264(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
 	return (ULONG)_d0;
 }
-#define Adler32Combine(adler1, adler2, len2) __z_Adler32Combine((Z_BASE_NAME), (ULONG)(adler1), (ULONG)(adler2), (LONG)(len2))
-#define __Adler32Combine_base(__in_base, adler1, adler2, len2) __z_Adler32Combine((__in_base), (ULONG)(adler1), (ULONG)(adler2), (LONG)(len2))
+#define CRC32CombineGen(len2) __z_CRC32CombineGen((Z_BASE_NAME), (LONG)(len2))
+#define __CRC32CombineGen_base(__in_base, len2) __z_CRC32CombineGen((__in_base), (LONG)(len2))
 
 static __inline__ ULONG
-__z_Crc32Combine(void *__base, ULONG crc1, ULONG crc2, LONG len2)
+__z_CRC32CombineOp(void *__base, ULONG crc1, ULONG crc2, ULONG op)
 {
 	register ULONG _d0 __asm("d0") = (ULONG)(crc1);
 	register ULONG _d1 __asm("d1") = (ULONG)(crc2);
-	register ULONG _d2 __asm("d2") = (ULONG)(len2);
+	register ULONG _d2 __asm("d2") = (ULONG)(op);
 	register void *_a6 __asm("a6") = __base;
 	register ULONG _a0 __asm("a0");
 	register ULONG _a1 __asm("a1");
-	__asm__ __volatile__ ("jsr -246(%/a6)"
+	__asm__ __volatile__ ("jsr -270(%/a6)"
 		: "+r" (_d0), "+r" (_d1), "=r" (_a0), "=r" (_a1)
 		: "r" (_a6), "r" (_d2)
 		: __OPENNDK_FPCLOBBER "cc", "memory");
 	return (ULONG)_d0;
 }
-#define Crc32Combine(crc1, crc2, len2) __z_Crc32Combine((Z_BASE_NAME), (ULONG)(crc1), (ULONG)(crc2), (LONG)(len2))
-#define __Crc32Combine_base(__in_base, crc1, crc2, len2) __z_Crc32Combine((__in_base), (ULONG)(crc1), (ULONG)(crc2), (LONG)(len2))
+#define CRC32CombineOp(crc1, crc2, op) __z_CRC32CombineOp((Z_BASE_NAME), (ULONG)(crc1), (ULONG)(crc2), (ULONG)(op))
+#define __CRC32CombineOp_base(__in_base, crc1, crc2, op) __z_CRC32CombineOp((__in_base), (ULONG)(crc1), (ULONG)(crc2), (ULONG)(op))
+
+static __inline__ LONG
+__z_DeflatePending(void *__base, z_stream *strm, ULONG *pending, LONG *bits)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register ULONG _a1 __asm("a1") = (ULONG)(pending);
+	register ULONG _a2 __asm("a2") = (ULONG)(bits);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -276(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (LONG)_d0;
+}
+#define DeflatePending(strm, pending, bits) __z_DeflatePending((Z_BASE_NAME), (z_stream *)(strm), (ULONG *)(pending), (LONG *)(bits))
+#define __DeflatePending_base(__in_base, strm, pending, bits) __z_DeflatePending((__in_base), (z_stream *)(strm), (ULONG *)(pending), (LONG *)(bits))
+
+static __inline__ LONG
+__z_InflateMark(void *__base, z_stream *strm)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(strm);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -282(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (LONG)_d0;
+}
+#define InflateMark(strm) __z_InflateMark((Z_BASE_NAME), (z_stream *)(strm))
+#define __InflateMark_base(__in_base, strm) __z_InflateMark((__in_base), (z_stream *)(strm))
+
+static __inline__ ULONG
+__z_ZlibCompileFlags(void *__base)
+{
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -288(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (ULONG)_d0;
+}
+#define ZlibCompileFlags() __z_ZlibCompileFlags((Z_BASE_NAME))
+#define __ZlibCompileFlags_base(__in_base) __z_ZlibCompileFlags((__in_base))
 
 static __inline__ LONG
 __z_DeflateGetDictionary(void *__base, z_stream *strm, UBYTE *dict, ULONG *len)
@@ -676,7 +797,7 @@ __z_DeflateGetDictionary(void *__base, z_stream *strm, UBYTE *dict, ULONG *len)
 	register void *_a6 __asm("a6") = __base;
 	register ULONG _d0 __asm("d0");
 	register ULONG _d1 __asm("d1");
-	__asm__ __volatile__ ("jsr -252(%/a6)"
+	__asm__ __volatile__ ("jsr -294(%/a6)"
 		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
 		: "r" (_a2), "r" (_a6)
 		: __OPENNDK_FPCLOBBER "cc", "memory");

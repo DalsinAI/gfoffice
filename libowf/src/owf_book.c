@@ -599,6 +599,10 @@ int owf_sheet_set_row(owf_sheet *sheet, unsigned row, int height, int hidden)
 
 int owf_sheet_merge(owf_sheet *sheet, const owf_range *range)
 {
+    /* a damaged file's merge that ends before it starts, or is one cell, merges nothing */
+    if (range->last_row < range->first_row || range->last_col < range->first_col
+        || (range->last_row == range->first_row && range->last_col == range->first_col))
+        return 0;
     if (!grow((void **)&sheet->merges, sheet->nmerges, &sheet->capmerges, sizeof *range, 8))
         return -1;
     sheet->merges[sheet->nmerges++] = *range;

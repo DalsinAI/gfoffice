@@ -152,6 +152,7 @@ static void finish_picture(rtf *r)
         ++r->pictures;
         return;
     }
+    /* \picw and \pich are pixels (at most 100000, kept so when read), a twip is 1/15 of one */
     width = r->picwgoal > 0 ? r->picwgoal : r->picw > 0 ? r->picw * 15 : 1440;
     height = r->pichgoal > 0 ? r->pichgoal : r->pich > 0 ? r->pich * 15 : 1440;
     snprintf(name, sizeof name, "rtf-image-%d.%s", ++r->picture_number, ext);
@@ -280,8 +281,8 @@ static void control(rtf *r, const char *s, size_t n, int have, long value)
     if (r->state.destination == RTF_PICTURE) {
         if (word(s, n, "pngblip")) r->picture_kind = 1;
         else if (word(s, n, "jpegblip")) r->picture_kind = 2;
-        else if (word(s, n, "picw") && have && value > 0) r->picw = (int)value;
-        else if (word(s, n, "pich") && have && value > 0) r->pich = (int)value;
+        else if (word(s, n, "picw") && have && value > 0 && value <= 100000L) r->picw = (int)value;
+        else if (word(s, n, "pich") && have && value > 0 && value <= 100000L) r->pich = (int)value;
         else if (word(s, n, "picwgoal") && have && value > 0) r->picwgoal = (int)value;
         else if (word(s, n, "pichgoal") && have && value > 0) r->pichgoal = (int)value;
         return;

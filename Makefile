@@ -574,3 +574,15 @@ test: library-test
 check: library-check
 
 .PHONY: sfd-check library-test library-check libtest-host
+
+# The fuzz harnesses (tests/fuzz/README.md), under AddressSanitizer and UBSan
+FUZZ_OUT = build/fuzz
+FUZZ_FLAGS = $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB
+
+fuzz: $(FUZZ_OUT)/fuzz_doc $(FUZZ_OUT)/fuzz_book
+
+$(FUZZ_OUT)/fuzz_%: tests/fuzz/fuzz_%.c tests/fuzz/driver.c $(OWF_SRC) libowf/include/owf.h libowf/src/owf_internal.h
+	mkdir -p $(FUZZ_OUT)
+	$(CC) $(FUZZ_FLAGS) -Ilibowf/include -Ilibowf/src $(OWF_SRC) $< tests/fuzz/driver.c -lz -o $@
+
+.PHONY: fuzz

@@ -119,7 +119,10 @@ int owf_zip_add(owf_zip *zip, const char *name, const void *data, size_t length,
         memset(&z, 0, sizeof z);
         if (deflateInit2(&z, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -15, 8, Z_DEFAULT_STRATEGY) == Z_OK) {
             bound = deflateBound(&z, (uLong)length);
-            packed = malloc(bound);
+            /* zlib's bound is the length and a little more; anything else is a z.library that answered
+             * another call (53.12's table, 10 November 2026), and is not a size to allocate */
+            if (bound >= (uLong)length && bound - (uLong)length <= (uLong)length / 2 + 4096)
+                packed = malloc(bound);
             if (packed) {
                 z.next_in = (Bytef *)data;
                 z.avail_in = (uInt)length;
