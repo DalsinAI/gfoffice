@@ -278,6 +278,28 @@ static int doc_font_miss_next;
 static int doc_font_next;                            /* 2.1: the slot a new size replaces when all are used */
 static int quit_now;
 
+/* ARexx (amicradle-teams ARexx-RULE.md): while a command runs no requester shows; what it would have said is
+ * kept, and a failing command's reason is LASTERROR's answer. */
+static int rexx_busy, rexx_noted;
+static char rexx_noting[300], rexx_lasterror[300];
+
+/* src into dst (n bytes), cut short to fit (no snprintf: GCC 16's format-truncation at -Werror) */
+static void rexx_copy(char *dst, size_t n, const char *src)
+{
+    size_t len = src ? strlen(src) : 0;
+    if (!n) return;
+    if (len >= n) len = n - 1;
+    if (len) memcpy(dst, src, len);
+    dst[len] = 0;
+}
+
+static int rexx_quiet(const char *text)
+{
+    if (!rexx_busy) return 0;
+    if (!rexx_noted) { rexx_copy(rexx_noting, sizeof rexx_noting, text); rexx_noted = 1; }
+    return 1;
+}
+
 static ogt_theme theme;
 static ogt_ctx ctx;
 static ogt_toolbar tb;
@@ -424,6 +446,7 @@ static void tell(const char *title, const char *text)
     struct EasyStruct es = {
         sizeof(struct EasyStruct), 0, (UBYTE *)title, (UBYTE *)"%s", (UBYTE *)"OK"
     };
+    if (rexx_quiet(text)) return;
     EasyRequest(win, &es, NULL, (ULONG)text);
 }
 
@@ -833,6 +856,7 @@ static int ask_file(int save, char *out, size_t out_size)
     struct FileRequester *fr;
     char last[512];
     int ok = 0;
+    if (rexx_quiet("A file is needed")) return 0;
     lastdir_get("GFOpenWrite", last, sizeof last);         /* 1.0.4: where the last document was */
     fr = AllocAslRequestTags(ASL_FileRequest,
         ASLFR_TitleText, (ULONG)(save ? "Save GFOpenWrite document" : "Open document"),
@@ -3242,6 +3266,7 @@ static int confirm_discard_changes(void)
         (UBYTE *)"Discard|Cancel"
     };
     if (!editor || !ow_editor_is_dirty(editor)) return 1;
+    if (rexx_quiet("The document has unsaved changes")) return 0;
     return EasyRequest(win, &es, NULL) != 0;
 }
 
@@ -4141,42 +4166,60 @@ static void mem_check(char *out, size_t size)
              fonts, font_bytes);
 }
 
+/* RC as every Open app's port: 0 done, 5 not done but nothing wrong, 10 an error, 20 an unknown command. */
+#define RX_OK 0
+#define RX_WARN 5
+#define RX_ERROR 10
+#define RX_UNKNOWN 20
+
 static int rexx_do_command(const char *command, char **result_out)
 {
-    const char *arg="";char result[512];int ok=1;char *dynamic=NULL;
+    const char *arg="";char result[512];int ok=1,rc_fail=RX_ERROR;char *dynamic=NULL;
     result[0]=0;command=skip_space(command);
     if(starts_word_ci(command,"VERSION",&arg))snprintf(result,sizeof result,"%s",VERSION_TEXT);
-    /* ACTIVATE, HELP and FAULT: with VERSION and QUIT, the commands every Open app's port has */
+    /* ACTIVATE, DEACTIVATE, HELP, FAULT and LASTERROR: with VERSION and QUIT, the commands every Open app's port has */
     else if(starts_word_ci(command,"ACTIVATE",&arg)){if(win){ScreenToFront(win->WScreen);WindowToFront(win);ActivateWindow(win);}}
-    else if(starts_word_ci(command,"HELP",&arg))snprintf(result,sizeof result,"VERSION ACTIVATE HELP FAULT WORDCOUNT PAGECOUNT FONTCHECK MEMCHECK "
+    else if(starts_word_ci(command,"DEACTIVATE",&arg)){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"DEACTIVATE: GFOpenWrite has no icon to go to");}
+    else if(starts_word_ci(command,"LASTERROR",&arg))rexx_copy(result,sizeof result,rexx_lasterror);
+    else if(starts_word_ci(command,"HELP",&arg))snprintf(result,sizeof result,"VERSION ACTIVATE DEACTIVATE HELP FAULT LASTERROR WORDCOUNT PAGECOUNT FONTCHECK MEMCHECK "
         "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
     else if(starts_word_ci(command,"FONTCHECK",&arg))font_check(arg,result,sizeof result);
     else if(starts_word_ci(command,"MEMCHECK",&arg))mem_check(result,sizeof result);
-    else if(starts_word_ci(command,"OPEN",&arg)){if(!*arg|| (editor&&ow_editor_is_dirty(editor))){ok=0;snprintf(result,sizeof result,"Unsaved changes or missing path");}else{open_document(arg);relayout();snprintf(result,sizeof result,"%s",status);}}
-    else if(starts_word_ci(command,"SAVEAS",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing path");}else{save_document_as(arg);snprintf(result,sizeof result,"%s",status);}}
-    else if(starts_word_ci(command,"SAVE",&arg)){if(current_path[0]){save_document_as(current_path);snprintf(result,sizeof result,"%s",status);}else{ok=0;snprintf(result,sizeof result,"Untitled document needs SAVEAS");}}
+    else if(starts_word_ci(command,"OPEN",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"OPEN needs a file");}else if(editor&&ow_editor_is_dirty(editor)){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"The document has unsaved changes");}else{open_document(arg);relayout();if(rexx_noted)ok=0;snprintf(result,sizeof result,"%s",status);}}
+    else if(starts_word_ci(command,"SAVEAS",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"SAVEAS needs a file");}else{save_document_as(arg);if(rexx_noted)ok=0;snprintf(result,sizeof result,"%s",status);}}
+    else if(starts_word_ci(command,"SAVE",&arg)){if(current_path[0]){save_document_as(current_path);if(rexx_noted)ok=0;snprintf(result,sizeof result,"%s",status);}else{ok=0;snprintf(result,sizeof result,"Untitled document needs SAVEAS");}}
     else if(starts_word_ci(command,"EXPORT",&arg)){owf_report *rp;if(!*arg){ok=0;snprintf(result,sizeof result,"Missing export path");}else{rp=owf_report_new();ok=owf_export_file(doc,arg,NULL,rp)==OWF_OK;owf_report_free(rp);snprintf(result,sizeof result,"%s",ok?"Exported":"Export failed");}}
     else if(starts_word_ci(command,"PRINT",&arg)){ok=ow_print_document_named(doc,current_path[0]?leaf(current_path):NULL,result,sizeof result);}
     else if(starts_word_ci(command,"INSERTTEXT",&arg)){ok=editor_result(ow_editor_insert_text_block(editor,arg,strlen(arg)),"ARexx text inserted.");snprintf(result,sizeof result,"%s",ok?"Inserted":"Insert failed");}
-    else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;if(ok)bring_focus_into_view();else request_document_redraw();snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
-    else if(starts_word_ci(command,"GETTEXT",&arg)){dynamic=document_plain_text();if(!dynamic){ok=0;snprintf(result,sizeof result,"Out of memory");}}
+    else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;if(ok)bring_focus_into_view();else{request_document_redraw();rc_fail=RX_WARN;}snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
+    else if(starts_word_ci(command,"GETTEXT",&arg)){dynamic=document_plain_text();if(!dynamic){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}}
     else if(starts_word_ci(command,"COMMAND",&arg)){
         if(!strcasecmp(arg,"BOLD"))menu_action(M_BOLD);else if(!strcasecmp(arg,"ITALIC"))menu_action(M_ITALIC);else if(!strcasecmp(arg,"UNDERLINE"))menu_action(M_UNDERLINE);else if(!strcasecmp(arg,"PAGEBREAK"))menu_action(M_PAGE_BREAK);else if(!strcasecmp(arg,"UNDO"))menu_action(M_UNDO);else if(!strcasecmp(arg,"REDO"))menu_action(M_REDO);else{ok=0;snprintf(result,sizeof result,"Unknown COMMAND");}
         if(ok&&!result[0])snprintf(result,sizeof result,"OK");
     }
-    else if(starts_word_ci(command,"QUIT",&arg)){if(editor&&ow_editor_is_dirty(editor)){ok=0;snprintf(result,sizeof result,"Unsaved changes");}else{quit_now=1;snprintf(result,sizeof result,"Quitting");}}
-    else {ok=0;snprintf(result,sizeof result,"Unknown GFOpenWrite ARexx command");}
-    if(result_out){if(dynamic)*result_out=dynamic;else{*result_out=(char*)malloc(strlen(result)+1);if(*result_out)strcpy(*result_out,result);else ok=0;}}
-    return ok;
+    else if(starts_word_ci(command,"QUIT",&arg)){if(editor&&ow_editor_is_dirty(editor)&&strcasecmp(arg,"FORCE")){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"Unsaved changes (QUIT FORCE quits)");}else{quit_now=1;snprintf(result,sizeof result,"Quitting");}}
+    else {ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Unknown GFOpenWrite ARexx command; HELP lists them");}
+    if(!ok){free(dynamic);dynamic=NULL;rexx_copy(rexx_lasterror,sizeof rexx_lasterror,rexx_noted?rexx_noting:result);}
+    if(result_out){if(dynamic)*result_out=dynamic;else{*result_out=(char*)malloc(strlen(result)+1);if(*result_out)strcpy(*result_out,result);else if(ok){ok=0;rc_fail=RX_UNKNOWN;}}}
+    return ok?RX_OK:rc_fail;
 }
 
 static void rexx_messages(void)
 {
     struct RexxMsg *rm;
-    while(rexx_port&&(rm=(struct RexxMsg*)GetMsg(rexx_port))!=NULL){char *result=NULL;int ok=rexx_do_command((const char*)rm->rm_Args[0],&result);rm->rm_Result1=ok?RC_OK:RC_ERROR;rm->rm_Result2=0;if((rm->rm_Action&RXFF_RESULT)&&RexxSysBase&&result)rm->rm_Result2=(LONG)CreateArgstring((STRPTR)result,(LONG)strlen(result));free(result);ReplyMsg((struct Message*)rm);}
+    while(rexx_port&&(rm=(struct RexxMsg*)GetMsg(rexx_port))!=NULL){
+        char *result=NULL;int rc;
+        rexx_busy=1;rexx_noted=0;
+        rc=rexx_do_command((const char*)rm->rm_Args[0],&result);
+        rexx_busy=0;
+        rm->rm_Result1=rc;rm->rm_Result2=0;
+        /* RESULT only with RC 0 (a secondary result with an error RC is an error number, not a string) */
+        if(rc==RX_OK&&(rm->rm_Action&RXFF_RESULT)&&RexxSysBase&&result)rm->rm_Result2=(LONG)CreateArgstring((STRPTR)result,(LONG)strlen(result));
+        free(result);ReplyMsg((struct Message*)rm);
+    }
 }
 
 static void rexx_open(void)

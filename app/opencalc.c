@@ -298,6 +298,28 @@ static struct RastPort mrp;                          /* measures text in the win
 static struct RastPort crp;                          /* measures cells' text for the core, in their fonts */
 static int quit_now;
 
+/* ARexx (amicradle-teams ARexx-RULE.md): while a command runs no requester shows; what it would have said is
+ * kept, and a failing command's reason is LASTERROR's answer. */
+static int rexx_busy, rexx_noted;
+static char rexx_noting[300], rexx_lasterror[300];
+
+/* src into dst (n bytes), cut short to fit (no snprintf: GCC 16's format-truncation at -Werror) */
+static void rexx_copy(char *dst, size_t n, const char *src)
+{
+    size_t len = src ? strlen(src) : 0;
+    if (!n) return;
+    if (len >= n) len = n - 1;
+    if (len) memcpy(dst, src, len);
+    dst[len] = 0;
+}
+
+static int rexx_quiet(const char *text)
+{
+    if (!rexx_busy) return 0;
+    if (!rexx_noted) { rexx_copy(rexx_noting, sizeof rexx_noting, text); rexx_noted = 1; }
+    return 1;
+}
+
 static ogt_theme theme;
 static ogt_ctx ctx;
 static ogt_toolbar tb;
@@ -900,6 +922,7 @@ static void read_theme_choice(void)
 static void tell(const char *title, const char *text)
 {
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)title, (UBYTE *)"%s", (UBYTE *)"OK" };
+    if (rexx_quiet(text)) return;
     EasyRequest(win, &es, NULL, (ULONG)text);
 }
 
@@ -1824,6 +1847,7 @@ static int confirm_discard_changes(void)
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenCalc",
                              (UBYTE *)"The workbook has unsaved changes.\n\nDiscard them?", (UBYTE *)"Discard|Cancel" };
     if (!core || !oc_core_is_dirty(core)) return 1;
+    if (rexx_quiet("The workbook has unsaved changes")) return 0;
     return EasyRequest(win, &es, NULL) != 0;
 }
 
@@ -1832,6 +1856,7 @@ static int ask_file(int save, const char *title, const char *initial, char *out,
     struct FileRequester *fr;
     char last[512];
     int ok = 0;
+    if (rexx_quiet("A file is needed")) return 0;
     lastdir_get("GFOpenCalc", last, sizeof last);
     fr = AllocAslRequestTags(ASL_FileRequest,
         ASLFR_TitleText, (ULONG)title,
@@ -1951,6 +1976,7 @@ static int break_note_lines(struct RastPort *rp, const char *text, int maxw, int
  * gadget the last. -1 when the window could not be opened (the caller asks otherwise). */
 static int ask_window(const char *title, const char *text, const char *buttons)
 {
+    if (rexx_quiet(text)) return 0;      /* an ARexx command: as the rightmost button (Cancel, or OK) */
     struct Gadget *list = NULL, *gok = NULL;
     struct NewGadget ng;
     struct Window *rw;
@@ -4505,11 +4531,12 @@ static int valid_check(char *out, size_t size)
     return 1;
 }
 
-/* As the GFOffice ARexx conventions (docs/gfoffice/Design-Suite-Shared.md 6.3, proposed): 0 done, 5 not
- * possible now, 10 an error or an unknown command. */
+/* As every Open app's port (amicradle-teams ARexx-RULE.md 3, OS 3.2's arexx.class): 0 done, 5 not possible
+ * now (nothing wrong), 10 an error, 20 an unknown command or a failure. */
 #define RX_OK 0
 #define RX_NOW 5
 #define RX_ERROR 10
+#define RX_UNKNOWN 20
 
 static int rexx_do_command(const char *command, char **result_out)
 {
@@ -4520,8 +4547,11 @@ static int rexx_do_command(const char *command, char **result_out)
     result_text[0] = 0;
     command = skip_space(command);
     if (starts_word_ci(command, "VERSION", &arg)) snprintf(result_text, sizeof result_text, "%s", VERSION_TEXT);
-    else if (starts_word_ci(command, "HELP", &arg))
-        snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE FAULT ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
+    else if (starts_word_ci(command, "LASTERROR", &arg)) rexx_copy(result_text, sizeof result_text, rexx_lasterror);
+    else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
+        ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "DEACTIVATE: GFOpenCalc has no icon to go to");
+    } else if (starts_word_ci(command, "HELP", &arg))
+        snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
                  "VALIDCHECK GETCOMMENT QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
@@ -4536,7 +4566,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if (starts_word_ci(command, "OPEN", &arg)) {
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "Missing path"); }
         else if (oc_core_is_dirty(core)) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "Unsaved changes"); }
-        else { open_book(arg); snprintf(result_text, sizeof result_text, "%s", status); }
+        else { open_book(arg); if (rexx_noted) ok = 0; snprintf(result_text, sizeof result_text, "%s", status); }
     } else if (starts_word_ci(command, "SAVEAS", &arg)) {
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "Missing path"); }
         else { ok = save_book_as(arg, NULL, 1); snprintf(result_text, sizeof result_text, "%s", status); }
@@ -4653,7 +4683,8 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "QUIT", &arg)) {
         if (oc_core_is_dirty(core) && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "Unsaved changes"); }
         else { quit_now = 1; snprintf(result_text, sizeof result_text, "Quitting"); }
-    } else { ok = 0; snprintf(result_text, sizeof result_text, "Unknown GFOpenCalc ARexx command"); }
+    } else { ok = 0; rc_fail = RX_UNKNOWN; snprintf(result_text, sizeof result_text, "Unknown GFOpenCalc ARexx command; HELP lists them"); }
+    if (!ok) rexx_copy(rexx_lasterror, sizeof rexx_lasterror, rexx_noted ? rexx_noting : result_text);
     if (result_out) {
         *result_out = (char *)malloc(strlen(result_text) + 1);
         if (*result_out) strcpy(*result_out, result_text);
@@ -4668,7 +4699,11 @@ static void rexx_messages(void)
     struct RexxMsg *rm;
     while (rexx_port && (rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
         char *res = NULL;
-        int rc = rexx_do_command((const char *)rm->rm_Args[0], &res);
+        int rc;
+        rexx_busy = 1;
+        rexx_noted = 0;
+        rc = rexx_do_command((const char *)rm->rm_Args[0], &res);
+        rexx_busy = 0;
         rm->rm_Result1 = rc;
         rm->rm_Result2 = 0;
         if (rc == RX_OK && (rm->rm_Action & RXFF_RESULT) && RexxSysBase && res)
