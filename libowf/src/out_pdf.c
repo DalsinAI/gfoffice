@@ -186,7 +186,7 @@ static int png_decode(const unsigned char *d, size_t n, pdf_image *img)
         if (!memcmp(ty, "IHDR", 4) && len >= 13) { w = (int)be32(body); h = (int)be32(body + 4); depth = body[8]; type = body[9]; inter = body[12]; }
         else if (!memcmp(ty, "PLTE", 4) && len <= 768) { memcpy(plte, body, len); nplte = (int)(len / 3); }
         else if (!memcmp(ty, "tRNS", 4) && type == 3 && len <= 256) { memcpy(trns, body, len); ntrns = (int)len; }
-        else if (!memcmp(ty, "IDAT", 4)) {
+        else if (!memcmp(ty, "IDAT", 4) && len) {   /* an empty IDAT adds nothing (and z may still be NULL) */
             if (zlen + len > zcap) { unsigned char *g; zcap = (zlen + len) * 2; g = (unsigned char *)realloc(z, zcap); if (!g) goto out; z = g; }
             memcpy(z + zlen, body, len); zlen += len;
         } else if (!memcmp(ty, "IEND", 4)) break;
