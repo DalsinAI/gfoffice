@@ -218,6 +218,7 @@ typedef struct {
     int npending, cappending;
     int want_string;
     unsigned string_row, string_col;
+    unsigned long dropped;      /* cells and merges past column IV, which a damaged file can claim */
 } xls;
 
 typedef struct {
@@ -1515,10 +1516,19 @@ static void build_names(xls *x)
 
 /* ---- A worksheet ---- */
 
+/* Excel 97's sheets are 256 columns wide (A to IV): a cell past them is dropped */
+#define XLS_MAX_COL 255U
+
 static owf_cell *cell_at(xls *x, const unsigned char *p)
 {
     unsigned ixfe = le16(p + 4);
-    owf_cell *c = owf_sheet_cell(x->sheet, le16(p), le16(p + 2), 1);
+    owf_cell *c;
+    if (le16(p + 2) > XLS_MAX_COL) {
+        x->dropped++;
+        x->want_string = 0;
+        return NULL;
+    }
+    c = owf_sheet_cell(x->sheet, le16(p), le16(p + 2), 1);
     if (!c) {
         x->failed = 1;
         return NULL;
@@ -1826,6 +1836,10 @@ static void read_sheet(xls *x, const xls_boundsheet *bs)
                 range.last_row = le16(q + 2);
                 range.first_col = le16(q + 4);
                 range.last_col = le16(q + 6);
+                if (range.first_col > XLS_MAX_COL || range.last_col > XLS_MAX_COL) {
+                    x->dropped++;
+                    continue;
+                }
                 if (owf_sheet_merge(sheet, &range) < 0)
                     x->failed = 1;
             }
@@ -2006,6 +2020,8 @@ static int import_xls(const unsigned char *data, size_t length, owf_book *book, 
     result = read_book(&x);
     if (result == OWF_OK && (cut || x.cut))
         owf_report_add(report, OWF_NOTE_LOST, "The file is cut short; the cells up to the cut were read");
+    if (result == OWF_OK && x.dropped)
+        owf_report_add(report, OWF_NOTE_LOST, "%lu cell%s past column IV dropped", x.dropped, x.dropped == 1 ? "" : "s");
     free_reader(&x);
     free(stream);
     return result;
