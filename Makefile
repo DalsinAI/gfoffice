@@ -490,7 +490,8 @@ endif
 # tests on those maths (libm_shim.c, no -lm); OWFLibTest's version-2 checks
 # (owf_lib_checks.c) with libowf linked in and the same maths;
 # owf_file_kind and the structures' sizes; the SFD against the headers and
-# the glue (check_sfd.py), and the maths' tables (gen_libm_tables.py).
+# the glue (check_sfd.py); libowf's z.library SDK against z.library's own
+# jump table (check_zsdk.py); and the maths' tables (gen_libm_tables.py).
 LIBM_DEPS = libowf/library/owf_libm.c libowf/library/owf_libm.h
 LIBM_ON = -fno-builtin -Ilibowf/library libowf/library/owf_libm.c tests/library/libm_shim.c
 LIB_FIXTURES = tests/book/fixtures/book.xls tests/book/fixtures/book-lo.xlsx tests/book/fixtures/book-lo.ods \
@@ -549,6 +550,7 @@ $(OUT)/test-owf-kind-asan: $(OWF_SRC) tests/library/test_owf_kind.c libowf/inclu
 
 sfd-check:
 	python3 tests/library/check_sfd.py
+	python3 tests/library/check_zsdk.py
 	python3 tests/library/gen_libm_tables.py --check libowf/library/owf_libm.c
 
 library-test: sfd-check $(OUT)/test-owf-softdouble $(OUT)/test-owf-libm $(OUT)/test-calc-owflibm \

@@ -1,0 +1,63 @@
+# z.library's jump table, as GFOpenZlib builds it: LVO, call, registers.
+# The order and registers are the Aminet z.library's (util/libs/z_lib on
+# Aminet; its interface file z_lib.sfd, read on 6 November 2026 from its
+# BSD-licensed source on GitHub, salass00/z_lib):
+# 41 calls, -30 to -270, so a program built for it finds every call where
+# it looks. Until 53.13 this table was guessed from zlib.h's order (no FD
+# could be read then) and was wrong from -102 on.
+# After the Aminet table, from -276, GFOpenZlib's own four, which the
+# Aminet library doesn't have (deflatePending, inflateMark,
+# zlibCompileFlags, deflateGetDictionary): a newer Aminet library that
+# adds calls there would clash with them.
+# build-amiga.sh checks this against z_lib.fd or z_lib.sfd when FD= names
+# one (../common/check_fd.py); ZlibABITest's PROBE run against the Aminet
+# z.library shows it in use. openzlib_lib.c's lib_vectors[] follows it
+# line for line.
+# Core class (OPEN_LIBRARIES.md, section 5): every call is pure (the
+# checksums, the bounds, ZlibVersion) or locked per stream: the caller's
+# own z_stream, whose state the library never shares.
+-30 ZlibVersion
+-36 DeflateInit a0,d0
+-42 Deflate a0,d0
+-48 DeflateEnd a0
+-54 InflateInit a0
+-60 Inflate a0,d0
+-66 InflateEnd a0
+-72 DeflateInit2 a0,d0,d1,d2,d3,d4
+-78 DeflateSetDictionary a0,a1,d0
+-84 DeflateCopy a0,a1
+-90 DeflateReset a0
+-96 DeflateParams a0,d0,d1
+-102 InflateInit2 a0,d0
+-108 InflateSetDictionary a0,a1,d0
+-114 InflateReset a0
+-120 Compress a0,a1,a2,d0
+-126 Uncompress a0,a1,a2,d0
+-132 Adler32 d0,a0,d1
+-138 CRC32 d0,a0,d1
+-144 InflateSync a0
+-150 DeflateTune a0,d0,d1,d2,d3
+-156 DeflateBound a0,d0
+-162 DeflatePrime a0,d0,d1
+-168 DeflateSetHeader a0,a1
+-174 InflateCopy a0,a1
+-180 InflatePrime a0,d0,d1
+-186 InflateGetHeader a0,a1
+-192 InflateBackInit a0,d0,a1
+-198 InflateBack a0,a1,d0,a2,d1
+-204 InflateBackEnd a0
+-210 Adler32Combine d0,d1,d2
+-216 CRC32Combine d0,d1,d2
+-222 Compress2 a0,a1,a2,d0,d1
+-228 CompressBound d0
+-234 InflateGetDictionary a0,a1,a2
+-240 ZError d0
+-246 Uncompress2 a0,a1,a2,a3
+-252 InflateReset2 a0,d0
+-258 InflateValidate a0,d0
+-264 CRC32CombineGen d0
+-270 CRC32CombineOp d0,d1,d2
+-276 DeflatePending a0,a1,a2  # beyond the fd: GFOpenZlib's own
+-282 InflateMark a0  # beyond the fd: GFOpenZlib's own
+-288 ZlibCompileFlags  # beyond the fd: GFOpenZlib's own
+-294 DeflateGetDictionary a0,a1,a2  # beyond the fd: GFOpenZlib's own

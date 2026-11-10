@@ -532,6 +532,44 @@ def test_difat_loop(work):
             check("difat loop refused by " + name, False, "still reading after 5 s")
 
 
+def rich_wrap_book():
+    """Three shared strings: "Before"; a rich string with one formatting run
+    and phonetic data whose size (ext) is 0xFFFFFFFC; "After". The runs and
+    ext are skipped after the characters as runs * 4 + ext, which on the
+    Amiga's 32-bit longs is 4 + 0xFFFFFFFC = 0: nothing was skipped, and the
+    run's 4 bytes (01 00 00 58) were read as the next string, "X" (LV-426
+    review, 10 Nov 2026). The PC's 64-bit longs never wrap, so here this
+    shows what the Amiga build must do too: the ext runs past the record,
+    the table ends there, and A3's index is past it (an empty string)."""
+    sst = (struct.pack("<II", 3, 3) + u16str("Before")
+           + struct.pack("<HB", 4, 0x0C) + struct.pack("<HI", 1, 0xFFFFFFFC) + b"Rich" + struct.pack("<HH", 1, 0x5800)
+           + u16str("After"))
+
+    def boundsheet(offset, name):
+        return rec(0x0085, struct.pack("<IBB", offset, 0, 0) + short_str(name))
+    globals_ = [bof(0x0005), font("Arial")] + [xf(style=True) for _ in range(15)] + [xf()]
+    bs_at = len(b"".join(globals_))
+    globals_ += [boundsheet(0, "Sheet1"), rec(0x00FC, sst), rec(0x000A)]
+    sheet = [bof(0x0010)] + [rec(0x00FD, cellhdr(r, 0) + struct.pack("<I", r)) for r in range(3)] + [rec(0x000A)]
+    g = b"".join(globals_)
+    g = g[:bs_at] + boundsheet(len(g), "Sheet1") + g[bs_at + len(boundsheet(0, "Sheet1")):]
+    return g + b"".join(sheet)
+
+
+def test_rich_wrap(work):
+    path = os.path.join(work, "rich-wrap.xls")
+    with open(path, "wb") as f:
+        f.write(cfb([("Workbook", rich_wrap_book())]))
+    rc, out, err = dump(path)
+    check("rich wrap read", rc in (0, 10), "exit %d %s" % (rc, (out + err)[-400:]))
+    if rc:
+        return
+    b = parse(out)
+    cell_is(b, 0, "A1", 'text "Before"')
+    cell_is(b, 0, "A2", 'text "Rich"')
+    cell_is(b, 0, "A3", 'text ""')
+
+
 def test_damaged(paths):
     """Every file cut short at many places, and with bytes changed, must
     give a book or an error."""
@@ -565,6 +603,7 @@ def main():
         built = test_built_book(work)
         test_refused(work)
         test_difat_loop(work)
+        test_rich_wrap(work)
         test_damaged([os.path.join(HERE, "fixtures", "book.xls"), built])
     if failures:
         print("%d workbook check(s) failed" % len(failures))

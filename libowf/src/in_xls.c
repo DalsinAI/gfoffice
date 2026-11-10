@@ -380,8 +380,12 @@ static void cur_string(xls_cur *c, unsigned long cch, int rich, owf_buf *out)
     if (rich && (flags & 4))
         ext = cur_u32(c);
     cur_chars(c, cch, flags & 1, out);
-    if (runs || ext)
-        cur_skip(c, (unsigned long)runs * 4 + ext);
+    /* one skip after the other: as one sum, an ext near 4 GB wrapped round
+     * on the Amiga's 32-bit longs and skipped next to nothing, so the runs
+     * and phonetic bytes were read as the strings after (the PC's 64-bit
+     * longs ran out of record instead) */
+    cur_skip(c, (unsigned long)runs * 4);
+    cur_skip(c, ext);
 }
 
 static char *take(xls *x, owf_buf *b)
