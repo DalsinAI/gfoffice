@@ -18,7 +18,9 @@ input being tried in `DIR/last`, so the one that crashed is there.
 `seeds/` holds inputs that once crashed or hung a filter, to be added to
 any corpus: `xls-past-column-iv.xls` has a cell at row 32513, column 65279,
 far past Excel 97's column IV (the CSV save padded it to billions of
-commas; the cell is now dropped with a note).
+commas; the cell is now dropped with a note); `rtf-empty-idat.rtf` has a picture
+whose PNG starts with an empty IDAT chunk (the PDF export copied 0 bytes
+from a NULL buffer, which UBSan stops on).
 
 A harness built with clang can also run under libFuzzer
 (`-fsanitize=fuzzer`): both define `LLVMFuzzerTestOneInput`.
