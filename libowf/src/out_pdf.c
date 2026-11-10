@@ -159,7 +159,9 @@ static unsigned long be32(const unsigned char *p) { return ((unsigned long)p[0] 
 static unsigned char *pdf_deflate(const unsigned char *in, size_t n, size_t *out_len)
 {
     uLongf cap = compressBound((uLong)n);
-    unsigned char *o = (unsigned char *)malloc(cap ? cap : 1);
+    unsigned char *o;
+    if (cap < (uLongf)n || cap - (uLongf)n > (uLongf)n / 2 + 4096) return NULL;   /* not zlib's bound (see owf_zip.c) */
+    o = (unsigned char *)malloc(cap ? cap : 1);
     if (!o) return NULL;
     if (compress2(o, &cap, in, (uLong)n, 6) != Z_OK) { free(o); return NULL; }
     *out_len = cap;
@@ -489,7 +491,8 @@ static int pdf_layout_document(pdf_layout *l)
                 /* 1.3: a frame's picture where it is anchored, as before frames were read */
                 if(line.n){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
                 if(!pdf_place_image(l,p,l->doc->frames[r->image].image))return 0;}
-            else if(r->kind==OWF_RUN_FIELD){char field[8]="#";owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=field;if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
+            else if(r->kind==OWF_RUN_FIELD){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)"#";   /* a literal: the line keeps the pointer until it is flushed, after this block */
+                if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
         }
         if(line.n || !p->nruns){if(!pdf_flush_line(l,p,&line,first))return 0;}
         l->y-=pdf_points(p->fmt.space_after);
