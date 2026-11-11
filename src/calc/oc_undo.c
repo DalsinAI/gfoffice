@@ -224,11 +224,11 @@ void oc_undo_free(oc_undo *u)
     free(u->saves);
     free(u->cols);
     free(u->rows);
-    free(u->autofilter_xml);
+    owf_free(u->autofilter_xml);                     /* these three are owf_malloc'd, as the book's own */
     owf_book_free(u->book);
     free(u->states);
-    free(u->part_name);
-    free(u->part_data);
+    owf_free(u->part_name);
+    owf_free(u->part_data);
     free(u);
 }
 
@@ -237,10 +237,10 @@ int oc_undo_save_part(oc_core *core, oc_undo *u, const char *name)
     const owf_part *p = owf_book_part(core->book, name);
     if (!p)
         return OWF_ERR_UNSUPPORTED;
-    free(u->part_name);
-    free(u->part_data);
+    owf_free(u->part_name);
+    owf_free(u->part_data);
     u->part_name = oc_strdup(name);
-    u->part_data = malloc(p->length ? p->length : 1);
+    u->part_data = owf_malloc(p->length ? p->length : 1);    /* it goes back into the book */
     if (!u->part_name || !u->part_data)
         return OWF_ERR_MEMORY;
     if (p->length)
@@ -509,7 +509,7 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
         sheet->freeze_cols = u->freeze_cols;
         sheet->has_autofilter = u->has_autofilter;
         sheet->autofilter = u->autofilter;
-        free(sheet->autofilter_xml);
+        owf_free(sheet->autofilter_xml);
         sheet->autofilter_xml = u->autofilter_xml;
         u->autofilter_xml = NULL;
     }
@@ -518,7 +518,7 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
     if (u->kind == OC_UNDO_PART && u->part_data) {
         for (i = 0; i < core->book->nparts; i++)
             if (!strcmp(core->book->parts[i].name, u->part_name)) {
-                free(core->book->parts[i].data);           /* the step's text moves into the book */
+                owf_free(core->book->parts[i].data);       /* the step's text moves into the book */
                 core->book->parts[i].data = u->part_data;
                 core->book->parts[i].length = u->part_length;
                 u->part_data = NULL;

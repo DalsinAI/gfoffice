@@ -38,7 +38,7 @@ void oc_charts_forget(oc_core *core)
     owf_charts_free(core->charts, core->ncharts);
     core->charts = NULL;
     core->ncharts = 0;
-    free(core->charts_of);
+    owf_free(core->charts_of);                       /* oc_strdup's: owf_malloc'd */
     core->charts_of = NULL;
 }
 
@@ -55,7 +55,7 @@ const owf_chart *oc_core_charts(oc_core *core, int *count)
         if (owf_sheet_charts(core->book, oc_core_sheet(core), &core->charts, &core->ncharts) != OWF_OK) {
             core->charts = NULL;
             core->ncharts = 0;
-            free(core->charts_of);       /* tried again next time */
+            owf_free(core->charts_of);   /* tried again next time */
             core->charts_of = NULL;
         }
     }
@@ -867,9 +867,9 @@ static void data_free(chartdata *cd)
 {
     int i;
     for (i = 0; cd->labels && i < cd->n; i++)
-        free(cd->labels[i]);
+        owf_free(cd->labels[i]);                     /* oc_strdup's, as the names: owf_malloc'd */
     for (i = 0; cd->names && i < cd->ns; i++)
-        free(cd->names[i]);
+        owf_free(cd->names[i]);
     free(cd->labels);
     free(cd->names);
     free(cd->fmts);
