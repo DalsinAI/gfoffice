@@ -127,6 +127,8 @@ struct oc_core {
 
     int dirty;
     unsigned long changes;
+    int multiop_quiet;              /* Multiple Operations worked out again by themselves (no Undo step) */
+    unsigned long multiop_seen;     /* changes when they last were */
 
     /* conditional formatting's looks for the cells showing (oc_cf_looks), kept while nothing changes */
     oc_look *cf_looks;

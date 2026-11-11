@@ -66,11 +66,11 @@ static int set_metadata_name(owf_book *book, int sheet, const char *name, const 
     char *copy;
     if (!item)
         return owf_book_add_name(book, name, sheet, formula, 1) < 0 ? OWF_ERR_MEMORY : OWF_OK;
-    copy = malloc(strlen(formula) + 1u);
+    copy = owf_malloc(strlen(formula) + 1u);       /* the book's: owfcalc.library frees it */
     if (!copy)
         return OWF_ERR_MEMORY;
     strcpy(copy, formula);
-    free(item->formula);
+    owf_free(item->formula);
     item->formula = copy;
     item->hidden = 1;
     return OWF_OK;
@@ -234,10 +234,12 @@ int oc_core_multiple_operations(oc_core *core,
                       -1, NULL, input_sheet, &input_range, MULTIOP_META_COLUMN);
     if (rc != OWF_OK) goto done;
 
-    undo = oc_undo_new(core, OC_UNDO_BOOK);
-    if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
-        oc_undo_free(undo);
-        undo = NULL;
+    if (!core->multiop_quiet) {              /* worked out again by itself: not an Undo step */
+        undo = oc_undo_new(core, OC_UNDO_BOOK);
+        if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+            oc_undo_free(undo);
+            undo = NULL;
+        }
     }
     oc_cf_forget(core);
     oc_charts_forget(core);
@@ -249,7 +251,8 @@ int oc_core_multiple_operations(oc_core *core,
     work_calc = NULL;
     owf_calc_free(old_calc);
     owf_book_free(old_book);
-    oc_undo_push(core, undo);
+    if (!core->multiop_quiet)
+        oc_undo_push(core, undo);
     undo = NULL;
     oc_changed(core);
     core->used_valid = 0;
@@ -410,10 +413,12 @@ int oc_core_multiple_operations_2d(oc_core *core,
                       column_input_sheet, &column_input_range, MULTIOP_META_2D);
     if (rc != OWF_OK) goto done;
 
-    undo = oc_undo_new(core, OC_UNDO_BOOK);
-    if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
-        oc_undo_free(undo);
-        undo = NULL;
+    if (!core->multiop_quiet) {              /* worked out again by itself: not an Undo step */
+        undo = oc_undo_new(core, OC_UNDO_BOOK);
+        if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+            oc_undo_free(undo);
+            undo = NULL;
+        }
     }
     oc_cf_forget(core);
     oc_charts_forget(core);
@@ -425,7 +430,8 @@ int oc_core_multiple_operations_2d(oc_core *core,
     work_calc = NULL;
     owf_calc_free(old_calc);
     owf_book_free(old_book);
-    oc_undo_push(core, undo);
+    if (!core->multiop_quiet)
+        oc_undo_push(core, undo);
     undo = NULL;
     oc_changed(core);
     core->used_valid = 0;
@@ -583,10 +589,12 @@ int oc_core_multiple_operations_multi(oc_core *core,
         if (rc != OWF_OK) goto done;
     }
 
-    undo = oc_undo_new(core, OC_UNDO_BOOK);
-    if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
-        oc_undo_free(undo);
-        undo = NULL;
+    if (!core->multiop_quiet) {              /* worked out again by itself: not an Undo step */
+        undo = oc_undo_new(core, OC_UNDO_BOOK);
+        if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+            oc_undo_free(undo);
+            undo = NULL;
+        }
     }
     oc_cf_forget(core);
     oc_charts_forget(core);
@@ -598,7 +606,8 @@ int oc_core_multiple_operations_multi(oc_core *core,
     work_calc = NULL;
     owf_calc_free(old_calc);
     owf_book_free(old_book);
-    oc_undo_push(core, undo);
+    if (!core->multiop_quiet)
+        oc_undo_push(core, undo);
     undo = NULL;
     oc_changed(core);
     core->used_valid = 0;
@@ -706,4 +715,73 @@ int oc_core_refresh_multiple_operations(oc_core *core)
     if (rc != OWF_OK)
         oc_state(core)->sel = old_selection;
     return rc;
+}
+
+/* Every table worked out again after a change, as Apache Calc keeps its own
+ * live: small books only, so that typing stays quick on a 68040. */
+int oc_core_auto_multiple_operations(oc_core *core)
+{
+    typedef struct { int sheet; owf_range range; } table_at;
+    table_at *tables = NULL;
+    size_t prefix = strlen(MULTIOP_TABLE_PREFIX);
+    unsigned long trials = 0, cells = 0;
+    int i, n = 0, cap = 0, done = 0, sheet, dirty, s;
+    oc_selection *saved = NULL;
+    if (!core || core->edit_mode || core->multiop_quiet || core->changes == core->multiop_seen)
+        return 0;
+    core->multiop_seen = core->changes;
+    for (i = 0; i < core->book->nnames; ++i) {
+        const owf_defname *item = &core->book->names[i];
+        unsigned id;
+        int used, at_sheet;
+        owf_range r;
+        if (item->sheet < 0 || strncmp(item->name, MULTIOP_TABLE_PREFIX, prefix) ||
+            sscanf(item->name + prefix, "%u%n", &id, &used) != 1 || item->name[prefix + (size_t)used] ||
+            !oc_sheet_range(core->book, item->formula, item->sheet, &at_sheet, &r) || at_sheet != item->sheet)
+            continue;
+        if (n == cap) {
+            table_at *more = realloc(tables, (size_t)(cap ? cap * 2 : 8) * sizeof *more);
+            if (!more) { free(tables); return 0; }
+            tables = more;
+            cap = cap ? cap * 2 : 8;
+        }
+        tables[n].sheet = item->sheet;
+        tables[n].range = r;
+        trials += (unsigned long)(r.last_row - r.first_row + 1u) * (r.last_col - r.first_col + 1u);
+        ++n;
+    }
+    for (s = 0; s < core->book->nsheets; ++s)
+        cells += (unsigned long)core->book->sheets[s].ncells;
+    if (!n || trials > OC_MULTIOP_AUTO_TRIALS || cells > OC_MULTIOP_AUTO_CELLS ||
+        !(saved = malloc((size_t)core->nstates * sizeof *saved))) {
+        free(tables);
+        return 0;
+    }
+    for (s = 0; s < core->nstates; ++s)
+        saved[s] = core->states[s].sel;
+    sheet = core->sheet;
+    dirty = core->dirty;
+    core->multiop_quiet = 1;
+    for (i = 0; i < n; ++i) {
+        if (tables[i].sheet >= core->book->nsheets || tables[i].sheet >= core->nstates)
+            continue;
+        core->sheet = tables[i].sheet;
+        oc_core_select_range(core, &tables[i].range);
+        if (oc_core_refresh_multiple_operations(core) == OWF_OK)
+            ++done;
+    }
+    core->multiop_quiet = 0;
+    core->sheet = sheet < core->book->nsheets ? sheet : 0;
+    for (s = 0; s < core->nstates; ++s)
+        core->states[s].sel = saved[s];
+    core->dirty = dirty;
+    core->multiop_seen = core->changes;
+    free(saved);
+    free(tables);
+    return done > 0;
+}
+
+int oc_core_sheet_range(const oc_core *core, const char *text, int *sheet, owf_range *range)
+{
+    return core && text && oc_sheet_range(core->book, text, core->sheet, sheet, range);
 }

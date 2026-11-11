@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.72 (11.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.73 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -1545,6 +1545,7 @@ static void update_tools(void)
 /* After anything: the grid, the bar, the tabs, the status and the title. */
 static void refresh(void)
 {
+    if (core) oc_core_auto_multiple_operations(core);   /* the Multiple Operations tables kept live */
     if (!win) return;
     if (defer_repaint) { repaint_pending = 1; return; }
     update_tools();
@@ -6116,6 +6117,28 @@ static int rexx_advfilter(const char *arg, char *out, size_t size)
     return 0;
 }
 
+/* MULTIOP trials formula input: Data > Multiple Operations, the column form: trials is a column of numbers (the
+ * results go in the column to its right), formula and input are cells (on any sheet). 1 done. */
+static int rexx_multiop(const char *arg, char *out, size_t size)
+{
+    char trials[160], formula[160], input[160];
+    owf_range t, f, in;
+    int ts, fs, is, rc;
+    const char *p = rexx_quoted(arg, trials, sizeof trials);
+    p = rexx_quoted(p, formula, sizeof formula);
+    rexx_quoted(p, input, sizeof input);
+    if (!oc_core_sheet_range(core, trials, &ts, &t) || ts != oc_core_sheet(core) ||
+        !oc_core_sheet_range(core, formula, &fs, &f) || !oc_core_sheet_range(core, input, &is, &in)) {
+        snprintf(out, size, "MULTIOP: a column of trials on this sheet, a formula cell and an input cell");
+        return 0;
+    }
+    oc_core_select_range(core, &t);
+    rc = oc_core_multiple_operations(core, fs, f.first_row, f.first_col, is, in.first_row, in.first_col);
+    if (rc == OWF_OK) { snprintf(out, size, "OK"); return 1; }
+    snprintf(out, size, "MULTIOP: %s", rc == OWF_ERR_MEMORY ? "out of memory" : "the trials, formula or input will not do");
+    return 0;
+}
+
 /* As every Open app's port (amicradle-teams ARexx-RULE.md 3, OS 3.2's arexx.class): 0 done, 5 not possible
  * now (nothing wrong), 10 an error, 20 an unknown command or a failure. */
 #define RX_OK 0
@@ -6138,7 +6161,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -6210,6 +6233,8 @@ static int rexx_do_command(const char *command, char **result_out)
         rexx_word(command, verb, sizeof verb);
         ok = rexx_names(verb, arg, result_text, sizeof result_text, &now);
         if (!ok && now) rc_fail = RX_NOW;
+    } else if (starts_word_ci(command, "MULTIOP", &arg)) {
+        ok = rexx_multiop(arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "ADVFILTER", &arg)) {
         ok = rexx_advfilter(arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "CONSOLIDATE", &arg)) {
@@ -6320,6 +6345,7 @@ static void rexx_messages(void)
         rexx_busy = 1;
         rexx_noted = 0;
         rc = rexx_do_command((const char *)rm->rm_Args[0], &res);
+        if (core) oc_core_auto_multiple_operations(core);   /* the next command reads them live */
         rexx_busy = 0;
         rm->rm_Result1 = rc;
         rm->rm_Result2 = 0;

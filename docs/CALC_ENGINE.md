@@ -167,9 +167,14 @@ leaves the live book untouched. Output remains ordinary numeric cells. Hidden
 sheet-scoped names retain each table's formula and input references, so
 **Data > Refresh Multiple Operations** can rebuild it after model changes.
 Those durable definitions and results round-trip through XLSX and ODS, and a
-refresh is another atomic Undo step. Unlike Apache Calc's native formula
-arrays, refresh is currently manual rather than part of ordinary workbook
-recalculation.
+refresh is another atomic Undo step. The tables are also kept live, as Apache
+Calc keeps its own: after every command (and every ARexx command) that
+changed the book, `oc_core_auto_multiple_operations` works each table out
+again, with no Undo step of its own and Undo, Redo, the selections and the
+unsaved-changes flag left as they were. That happens while the tables have
+at most 4096 results together and the book at most 20,000 cells, so typing
+stays quick on a 68040; past that, Refresh does it by hand. ARexx `MULTIOP
+trials formula input` makes a column table.
 
 ## Grouped subtotal authoring
 
