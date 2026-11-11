@@ -1,6 +1,6 @@
 /* tests/arexx/presentation.rexx: GFOpenPresentation's ARexx port against amicradle-teams ARexx-RULE.md
    (return codes 0/5/10/20, no requester holds up a command): open, edit, save, export, print, reopen,
-   the slide sorter's commands on several slides, and speaker notes (notes pages, handouts).
+   the slide sorter's commands on several slides, speaker notes (notes pages, handouts) and the outline.
    rx tests/arexx/presentation.rexx   (GFOpenPresentation running; prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
 port = 'GFOPENPRESENTATION'
@@ -151,6 +151,33 @@ CALL want 'OPEN RAM:arexx-test.odp', 0
 CALL want 'SLIDE 1', 0
 CALL want 'GETNOTES', 0
 CALL same 'GETNOTES after saving and reopening', res, 'Say hello\nThen the demo'
+/* the outline: rows, a title typed, a slide added, levels, each one Undo step */
+CALL want 'VIEW OUTLINE', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after VIEW OUTLINE', res, 'OUTLINE'
+CALL want 'OUTLINE', 0
+rows = res
+IF rows < 2 THEN CALL bad 'OUTLINE has' rows 'rows (wanted 2 or more)'
+CALL want 'OUTLINE 1', 0
+CALL same 'OUTLINE 1', res, '0 Hello from ARexx'
+CALL want 'OUTLINE SET 1 Outline title', 0
+CALL want 'OUTLINE 1', 0
+CALL same 'OUTLINE 1 after OUTLINE SET', res, '0 Outline title'
+CALL want 'GETTEXT' t, 0
+CALL same 'GETTEXT after OUTLINE SET', res, 'Outline title'
+CALL want 'UNDO', 0
+CALL want 'OUTLINE 1', 0
+CALL same 'OUTLINE 1 after UNDO', res, '0 Hello from ARexx'
+CALL want 'OUTLINE INSERT 1', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after OUTLINE INSERT on a title', res, 3
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after UNDO', res, 2
+CALL want 'OUTLINE DEMOTE 1', 5                 /* the first title joins nothing */
+CALL want 'OUTLINE PROMOTE 1', 5                /* a title goes no higher */
+CALL want 'OUTLINE 99', 10
+CALL want 'OUTLINE SET 0 x', 10
 CALL want 'VIEW NORMAL', 0
 CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0

@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.32.0"
+#define OPR_CORE_VERSION "0.33.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -462,6 +462,52 @@ int opr_handout_box(const owf_deck *deck, int per_page, int k, int box[4]);
  * setting it as one Undo step (u may be NULL: no step). */
 char *opr_notes_get(const owf_deck *deck, int slide);
 int opr_notes_set(opr_undo *u, owf_deck *deck, int slide, const char *utf8);
+
+/* ---- The outline (opr_outline.c) ----
+ *
+ * The deck as one list of rows, as the Outline view shows it: each slide's
+ * title (level 0), then the paragraphs of its outline box (the first
+ * body, object or text placeholder) at levels 1 to 9. A box still showing
+ * its prompt has no rows. Rows are rebuilt after each change. */
+typedef struct {
+    int slide;
+    int obj;                     /* the title box (-1: the slide has none) or the outline box */
+    int para;                    /* the paragraph in obj */
+    int level;                   /* 0: the title; 1..9: the outline's levels */
+} opr_outline_row;
+
+typedef struct {
+    int count, cap;
+    opr_outline_row *rows;
+} opr_outline;
+
+int opr_outline_title_obj(const owf_deck *deck, int slide);
+int opr_outline_body_obj(const owf_deck *deck, int slide);
+/* The rows, into out (zeroed the first time; opr_outline_free after). 0, or -1 when memory runs out. */
+int opr_outline_build(const owf_deck *deck, opr_outline *out);
+void opr_outline_free(opr_outline *out);
+/* The row of a slide's title (obj -1) or of a paragraph; -1 when there is none. */
+int opr_outline_find(const opr_outline *out, int slide, int obj, int para);
+/* A row's text (owf_malloc): a title's paragraphs joined by spaces. */
+char *opr_outline_text(const owf_deck *deck, const opr_outline_row *r);
+/* The changes, each one Undo step (u may be NULL), and the rows stale after
+ * them. 0, -1 for memory or a bad row, -2 when the row cannot change so:
+ *   set_text: a row's text replaced (a title's whole box); -2 no title box.
+ *   insert_after: Return at a row's end: a new slide after a title (its
+ *     layout), a new paragraph after body text; where the new row is.
+ *   demote: a paragraph a level lower; a title: its slide joins the one
+ *     before, the title a top-level paragraph there and its paragraphs a
+ *     level lower under it (-2 for the first slide, or one before with no
+ *     outline box).
+ *   promote: a paragraph a level higher; a top-level one starts a slide of
+ *     its own after this one, its title, the paragraphs after it going with
+ *     it a level higher (-2 for a title).
+ *   delete: a paragraph taken out; a title row, its whole slide (-2 the last). */
+int opr_outline_set_text(opr_undo *u, owf_deck *deck, const opr_outline_row *r, const char *utf8);
+int opr_outline_insert_after(opr_undo *u, owf_deck *deck, const opr_outline_row *r, int *new_slide, int *new_para);
+int opr_outline_demote(opr_undo *u, owf_deck *deck, const opr_outline_row *r);
+int opr_outline_promote(opr_undo *u, owf_deck *deck, const opr_outline_row *r, int *new_slide);
+int opr_outline_delete(opr_undo *u, owf_deck *deck, const opr_outline_row *r);
 
 /* ---- The slide sorter (opr_sorter.c) ----
  *
