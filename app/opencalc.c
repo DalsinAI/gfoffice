@@ -5652,7 +5652,7 @@ static int rexx_consolidate(const char *arg, char *out, size_t size)
         snprintf(out, size, "CONSOLIDATE: SUM, COUNT, AVERAGE, MAX, MIN, PRODUCT, COUNTA, STDEV, STDEVP, VAR or VARP first");
         return 0;
     }
-    for (p = rexx_name(p, word, sizeof word); word[0]; p = rexx_name(p, word, sizeof word)) {
+    for (p = rexx_quoted(p, word, sizeof word); word[0]; p = rexx_quoted(p, word, sizeof word)) {
         char *u;
         if (!strcasecmp(word, "TO")) { to = 1; continue; }
         if (!strcasecmp(word, "ROWLABELS")) { spec.row_labels = 1; continue; }
