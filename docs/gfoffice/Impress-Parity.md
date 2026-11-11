@@ -201,7 +201,7 @@ Undo and ODP persistence.
 | Speaker notes, per slide | P1 | Yes (in the model and ODP) |
 | Notes view, notes pages printed | P3, P4 | Yes (0.6.25): View > Notes, typed in place with Undo; Print and Export PDF in Notes view |
 | Handouts: 1, 2, 3, 4, 6 or 9 slides a page | P4 (P1 design asks for them) | Yes (0.6.25): Project > Export Handouts, ARexx EXPORT/PRINT HANDOUTS n; no writing lines |
-| Outline view | P4 | No |
+| Outline view | P4 | Yes (0.6.26): View > Outline, titles and outline text as one list; edit (in a requester), add, move in and out (titles join, lines become slides), delete; each one Undo step. Not typed straight into the list |
 | Print slides, notes, handouts, outline (through GFOpenPrint) | P2 (slides), P4 | Slides, notes pages and handouts: Yes, through GFOpenPrint; outline: No |
 
 ## 10. Slide show
