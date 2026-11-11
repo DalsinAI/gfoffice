@@ -27,7 +27,7 @@
 /* The rollback journal's mode for every project (Design-OpenBase.md 3.2: the
  * B0 probe's numbers are in section 11.3). */
 #ifndef OB_JOURNAL_MODE
-#define OB_JOURNAL_MODE "DELETE"
+#define OB_JOURNAL_MODE "TRUNCATE"
 #endif
 
 struct ob_project {
@@ -1477,7 +1477,20 @@ ob_int ob_row_total(ob_project *p, const char *table)
     return n;
 }
 
+static int rows_from(ob_project *p, const char *table, ob_int after, ob_int first, int max, ob_row_fn cb, void *user);
+
 int ob_rows(ob_project *p, const char *table, ob_int after, int max, ob_row_fn cb, void *user)
+{
+    return rows_from(p, table, after, -1, max, cb, user);
+}
+
+int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_fn cb, void *user)
+{
+    return rows_from(p, table, 0, first < 0 ? 0 : first, max, cb, user);
+}
+
+/* first < 0: the rows after key `after`; else from position first. */
+static int rows_from(ob_project *p, const char *table, ob_int after, ob_int first, int max, ob_row_fn cb, void *user)
 {
     ob_table t;
     sqlite3_str *s;
@@ -1496,12 +1509,13 @@ int ob_rows(ob_project *p, const char *table, ob_int after, int max, ob_row_fn c
         if (t.fields[i].type == OB_OBJECT) sqlite3_str_appendf(s, ", length(\"%w\")", t.fields[i].name);
         else sqlite3_str_appendf(s, ", \"%w\"", t.fields[i].name);
     }
-    sqlite3_str_appendf(s, " FROM \"%w\" WHERE rowid > ?1 ORDER BY rowid LIMIT ?2", t.name);
+    if (first < 0) sqlite3_str_appendf(s, " FROM \"%w\" WHERE rowid > ?1 ORDER BY rowid LIMIT ?2", t.name);
+    else sqlite3_str_appendf(s, " FROM \"%w\" ORDER BY rowid LIMIT ?2 OFFSET ?1", t.name);
     sql = sqlite3_str_finish(s);
     st = sql ? prep(p, sql) : NULL;
     sqlite3_free(sql);
     if (!st) { free(cells); return -1; }
-    sqlite3_bind_int64(st, 1, after);
+    sqlite3_bind_int64(st, 1, first < 0 ? after : first);
     sqlite3_bind_int(st, 2, max);
     while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
         for (i = 0; i < t.nfields; i++) {

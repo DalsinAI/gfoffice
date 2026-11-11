@@ -378,6 +378,15 @@ static void test_rows(void)
         n += got_n;
     }
     CHECK(n == 252 && i == 3, "pages: %d rows in %d pages", n, i);
+    last = 0;
+    CHECK(ob_rows_at(p, "Customers", 250, 100, page_cb, &last) == 2, "the last page by position");
+    {
+        ob_int k200 = 0;
+        ob_rows_at(p, "Customers", 200, 1, page_cb, &k200);
+        last = 0;
+        ob_rows(p, "Customers", 0, 201, page_cb, &last);
+        CHECK(k200 == last && k200 > 0, "row 200 by position %lld, by key %lld", k200, last);
+    }
     {
         ob_field f;
         memset(&f, 0, sizeof f);

@@ -164,9 +164,9 @@ int ob_table_sql(const ob_table *t, const char *as_name, char *out, size_t size)
 /* ---- Rows ----
  * Values are text in the field's own form, as a datasheet cell or a form's
  * gadget holds them: "1,234.50" for Currency, "Yes"/"No" for Yes/No,
- * "2026-11-11" for a Date; NULL (or "" for a field that isn't Text or Memo)
- * is empty. Each is checked against its field (ob_value_check) and stored
- * as the field's SQL type. */
+ * "2026-11-11" (or 11/11/2026) for a Date; NULL or "" is empty (NULL in the
+ * file). Each is checked against its field (ob_value_check) and stored as
+ * the field's SQL type. */
 
 /* Adds a row; *key gets its Counter (rowid). Fields left out get their
  * default. */
@@ -183,6 +183,9 @@ ob_int ob_row_total(ob_project *p, const char *table);
  * Returns the number of rows given, -1 on error. */
 typedef int (*ob_row_fn)(void *user, ob_int key, int n, const char *const *values);
 int ob_rows(ob_project *p, const char *table, ob_int after, int max, ob_row_fn cb, void *user);
+/* The same from the row at position `first` (0 is the first) in key order:
+ * a datasheet scrolled to a place (LIMIT and OFFSET, design 5.4). */
+int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_fn cb, void *user);
 
 /* ---- Values ---- */
 
