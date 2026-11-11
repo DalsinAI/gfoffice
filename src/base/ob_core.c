@@ -533,7 +533,7 @@ static int sql_fail(ob_project *p, const ob_table *t, int rc)
 /* The table list and the design cache are read again on next use. */
 static void forget(ob_project *p)
 {
-    forget(p);
+    p->tables_valid = 0;
     p->cache_ok = 0;
 }
 
