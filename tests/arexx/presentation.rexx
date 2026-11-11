@@ -194,6 +194,51 @@ CALL same 'GETNOTES after reopening the PPTX', res, 'Say hello\nThen the demo'
 CALL want 'SAVE', 0
 CALL want 'ISDIRTY', 0
 CALL same 'ISDIRTY after SAVE of the PPTX', res, 0
+/* several objects at once: picked, moved, aligned, each one Undo step; layout boxes stay out of groups */
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 1', 0
+CALL want 'OBJECTS', 0
+IF WORD(res, 1) < 2 THEN CALL bad 'OBJECTS has' WORD(res, 1) 'objects (wanted 2 or more)'
+CALL want 'PICKOBJECTS 1 2', 0
+CALL same 'PICKOBJECTS 1 2', res, 2
+CALL want 'PICKEDOBJECTS', 0
+CALL same 'PICKEDOBJECTS', res, '2 1 2'
+CALL want 'GROUP', 5                           /* the layout's boxes: no group */
+CALL want 'DISTRIBUTE ACROSS', 5               /* two: nothing to space */
+CALL want 'UNGROUP', 5                         /* no group selected */
+CALL want 'OBJECTBOX 1', 0
+box1 = res
+CALL want 'OBJECTBOX 2', 0
+box2 = res
+CALL want 'MOVEOBJECTS 100 50', 0
+CALL want 'OBJECTBOX 1', 0
+PARSE VAR box1 bx by .
+PARSE VAR res ax ay .
+IF ax - bx ~= 100 | ay - by ~= 50 THEN CALL bad 'MOVEOBJECTS 100 50 moved object 1 from' box1 'to' res
+CALL want 'OBJECTBOX 2', 0
+PARSE VAR box2 bx by .
+PARSE VAR res ax ay .
+IF ax - bx ~= 100 | ay - by ~= 50 THEN CALL bad 'MOVEOBJECTS 100 50 moved object 2 from' box2 'to' res
+CALL want 'UNDO', 0
+CALL want 'OBJECTBOX 1', 0
+CALL same 'OBJECTBOX 1 after UNDO', res, box1
+CALL want 'OBJECTBOX 2', 0
+CALL same 'OBJECTBOX 2 after UNDO', res, box2
+CALL want 'PICKOBJECTS 1 2', 0
+CALL want 'ALIGN TOP', 0                       /* the layout's boxes share their sides: TOP moves one */
+CALL want 'OBJECTBOX 1', 0
+PARSE VAR res . ay .
+CALL want 'OBJECTBOX 2', 0
+PARSE VAR res . cy .
+IF ay ~= cy THEN CALL bad 'ALIGN TOP: tops' ay 'and' cy
+CALL want 'UNDO', 0
+CALL want 'OBJECTBOX 2', 0
+CALL same 'OBJECTBOX 2 after UNDO', res, box2
+CALL want 'ALIGN SIDEWAYS', 10
+CALL want 'PICKOBJECTS 99', 10
+CALL want 'PICKOBJECTS', 0
+CALL same 'PICKOBJECTS with none', res, 0
+CALL want 'MOVEOBJECTS 10 10', 5               /* nothing picked */
 CALL want 'VIEW NORMAL', 0
 CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0
