@@ -246,8 +246,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
-    { NM_ITEM, "Pivot Summary...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
-    { NM_ITEM, "Refresh Pivot Summary", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
+    { NM_ITEM, "Pivot Table...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
+    { NM_ITEM, "Refresh Pivot Table", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -3295,72 +3295,301 @@ static void do_subtotals(void)
         result(rc, "Group subtotals and a grand total were inserted; Undo removes them.");
 }
 
-static void do_pivot_summary(void)
+/* ---- Pivot Table: the field layout window ----
+ * The source's fields in a list, each with its use (row, column or page
+ * field, in the order they were given one), its data function and, for a
+ * page field, the item it keeps. */
+
+#define PV_LIST_MAX 64
+
+typedef struct {
+    struct Node node;
+    char label[120];
+    char heading[64];                /* Latin-1 */
+    int use;                         /* 0 none, 1 row, 2 column, 3 page */
+    int data;                        /* pv_data_labels' index; 0 none */
+    unsigned order, data_order;
+    char item[64];                   /* Latin-1; "" every item */
+} pv_field;
+
+static STRPTR pv_use_labels[] = { (STRPTR)"Not used", (STRPTR)"Row field", (STRPTR)"Column field",
+                                  (STRPTR)"Page field (filter)", NULL };
+static STRPTR pv_data_labels[] = { (STRPTR)"No data", (STRPTR)"Sum", (STRPTR)"Average", (STRPTR)"Count",
+                                   (STRPTR)"CountA", (STRPTR)"Max", (STRPTR)"Min", (STRPTR)"Product",
+                                   (STRPTR)"StdDev", (STRPTR)"StdDevP", (STRPTR)"Var", (STRPTR)"VarP", NULL };
+static const int pv_data_function[] = { 0, OC_SUBTOTAL_SUM, OC_SUBTOTAL_AVERAGE, OC_SUBTOTAL_COUNT,
+                                        OC_SUBTOTAL_COUNTA, OC_SUBTOTAL_MAX, OC_SUBTOTAL_MIN, OC_SUBTOTAL_PRODUCT,
+                                        OC_SUBTOTAL_STDEV, OC_SUBTOTAL_STDEVP, OC_SUBTOTAL_VAR, OC_SUBTOTAL_VARP };
+
+static void pv_label(pv_field *f)
 {
-    oc_selection selection;
-    char row_text[12], column_text[12], value_text[12], function_text[24];
-    unsigned row_col, column_col = OC_PIVOT_NO_COLUMN, value_col, candidate;
-    int function, rc;
-    oc_core_selection(core, &selection);
-    if (selection.nranges != 1 || selection.ranges[0].first_row >= selection.ranges[0].last_row ||
-        selection.ranges[0].first_col >= selection.ranges[0].last_col) {
-        set_status("Select one headed table with at least one data row and two columns.");
+    static const char *const uses[] = { "", "row", "column", "page" };
+    char extra[96];
+    extra[0] = 0;
+    if (f->use && f->data)
+        snprintf(extra, sizeof extra, "  [%s, %s]", uses[f->use], (const char *)pv_data_labels[f->data]);
+    else if (f->use)
+        snprintf(extra, sizeof extra, "  [%s%s%s]", uses[f->use], f->use == 3 && f->item[0] ? ": " : "",
+                 f->use == 3 ? f->item : "");
+    else if (f->data)
+        snprintf(extra, sizeof extra, "  [%s]", (const char *)pv_data_labels[f->data]);
+    snprintf(f->label, sizeof f->label, "%s%s", f->heading, extra);
+    f->node.ln_Name = f->label;
+}
+
+/* The source cell whose value the typed item names, so that "2025" finds a number and "East" a text. */
+static void pv_item(const owf_book *book, const owf_pivotdef *def, unsigned field, const char *latin1,
+                    owf_pivot_page *page)
+{
+    const owf_sheet *sh = &book->sheets[def->source_sheet];
+    char *utf8 = from_latin1(latin1), n[40];
+    unsigned row;
+    page->field = field;
+    if (!utf8 || !*utf8) {
+        page->kind = OWF_PIVOT_ALL;
+        owf_free(utf8);
         return;
     }
-    oc_col_name(selection.ranges[0].first_col, row_text);
-    if (!text_requester("Pivot Summary", "Row field column", row_text,
-                        row_text, sizeof row_text)) return;
-    if (!column_word(row_text, strlen(row_text), &row_col) ||
-        row_col < selection.ranges[0].first_col || row_col > selection.ranges[0].last_col) {
-        set_status("The pivot row field must be a column inside the selected table.");
+    if (!strcasecmp(utf8, "(blank)")) {
+        page->kind = OWF_PIVOT_BLANK;
+        owf_free(utf8);
         return;
     }
-    candidate = row_col == selection.ranges[0].first_col ? row_col + 1u : selection.ranges[0].first_col;
-    if (selection.ranges[0].last_col - selection.ranges[0].first_col >= 2u)
-        oc_col_name(candidate, column_text);
-    else
-        snprintf(column_text, sizeof column_text, "none");
-    if (!text_requester("Pivot Summary", "Column field, or none", column_text,
-                        column_text, sizeof column_text)) return;
-    if (strcasecmp(column_text, "none")) {
-        if (!column_word(column_text, strlen(column_text), &column_col) ||
-            column_col < selection.ranges[0].first_col || column_col > selection.ranges[0].last_col ||
-            column_col == row_col) {
-            set_status("Use a different table column for the column field, or type none.");
+    for (row = def->source.first_row + 1u; row <= def->source.last_row; ++row) {
+        const owf_cell *c = owf_sheet_find(sh, row, def->source.first_col + field);
+        int same = 0;
+        if (!c) continue;
+        if (c->type == OWF_VALUE_TEXT) same = c->text && !strcmp(c->text, utf8);
+        else if (c->type == OWF_VALUE_NUMBER) { owf_number_text(c->number, n); same = !strcmp(n, utf8); }
+        else if (c->type == OWF_VALUE_BOOL) same = !strcasecmp(utf8, c->number != 0.0 ? "TRUE" : "FALSE");
+        if (same) {
+            owf_pivot_item_from_cell(page, c);
+            owf_free(utf8);
             return;
         }
     }
-    value_col = selection.ranges[0].last_col;
-    if (value_col == row_col || value_col == column_col) {
-        for (candidate = selection.ranges[0].first_col; candidate <= selection.ranges[0].last_col; ++candidate)
-            if (candidate != row_col && candidate != column_col) {
-                value_col = candidate;
-                break;
+    owf_pivot_item_from_text(page, utf8);
+    owf_free(utf8);
+}
+
+/* Fills def's fields from the window's choices; 0 (with a status line) when they do not make a table. */
+static int pv_collect(const owf_book *book, pv_field *fields, unsigned n, owf_pivotdef *def)
+{
+    unsigned want, i;
+    def->nrow = def->ncol = def->npage = def->ndata = 0;
+    for (want = 1; want <= n * 2u + 2u; ++want)
+        for (i = 0; i < n; ++i) {
+            if (fields[i].use && fields[i].order == want) {
+                if (fields[i].use == 1) {
+                    if (def->nrow == OWF_PIVOT_FIELDS) { set_status("A pivot table takes up to 8 row fields."); return 0; }
+                    def->row[def->nrow++] = i;
+                } else if (fields[i].use == 2) {
+                    if (def->ncol == OWF_PIVOT_FIELDS) { set_status("A pivot table takes up to 8 column fields."); return 0; }
+                    def->col[def->ncol++] = i;
+                } else {
+                    if (def->npage == OWF_PIVOT_PAGES) { set_status("A pivot table takes up to 4 page fields."); return 0; }
+                    pv_item(book, def, i, fields[i].item, &def->page[def->npage++]);
+                }
             }
+            if (fields[i].data && fields[i].data_order == want) {
+                if (def->ndata == OWF_PIVOT_DATA) { set_status("A pivot table takes up to 8 data fields."); return 0; }
+                def->data[def->ndata].field = i;
+                def->data[def->ndata++].function = pv_data_function[fields[i].data];
+            }
+        }
+    if (!def->ndata) { set_status("Give at least one field a data function (Sum, Count...)."); return 0; }
+    if (!def->nrow && !def->ncol) { set_status("Make at least one field a row or column field."); return 0; }
+    return 1;
+}
+
+/* The layout window over def (its source set). 1 when OK was chosen and def holds the new layout. */
+static int pivot_layout_window(const owf_book *book, owf_pivotdef *def, int editing)
+{
+    struct Gadget *glist = NULL, *last, *gfields, *guse, *gdata, *gitem, *grow, *gcol, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List items;
+    pv_field *fields;
+    unsigned n = def->source.last_col - def->source.first_col + 1u, i, next = 1;
+    int done = 0, ok = 0, ww, wh, lh = fh + 6, sel = 0, listw, rx, k;
+    if (!scr || !vi) return 0;
+    if (n > PV_LIST_MAX) {
+        set_status("Pivot tables here take sources up to 64 columns wide.");
+        return 0;
     }
-    oc_col_name(value_col, value_text);
-    if (!text_requester("Pivot Summary", "Value field column", value_text,
-                        value_text, sizeof value_text)) return;
-    if (!column_word(value_text, strlen(value_text), &value_col) ||
-        value_col < selection.ranges[0].first_col || value_col > selection.ranges[0].last_col ||
-        value_col == row_col || value_col == column_col) {
-        set_status("The value field must be a different column inside the selected table.");
-        return;
+    fields = calloc(n, sizeof *fields);
+    if (!fields) { result(OWF_ERR_MEMORY, ""); return 0; }
+    NewList(&items);
+    for (i = 0; i < n; ++i) {
+        char utf8[160];
+        owf_pivot_field_heading(book, def, i, utf8, sizeof utf8);
+        to_latin1(utf8, strlen(utf8), fields[i].heading, sizeof fields[i].heading);
     }
-    if (!text_requester("Pivot Summary", "sum/average/count/counta/max/min/...", "sum",
-                        function_text, sizeof function_text)) return;
-    function = subtotal_function(function_text);
-    if (!function) {
-        set_status("Use sum, average, count, counta, max, min, product, stdev, stdevp, var or varp.");
-        return;
+    for (i = 0; i < def->nrow; ++i) { fields[def->row[i]].use = 1; fields[def->row[i]].order = next++; }
+    for (i = 0; i < def->ncol; ++i) { fields[def->col[i]].use = 2; fields[def->col[i]].order = next++; }
+    for (i = 0; i < def->npage; ++i) {
+        char utf8[OWF_PIVOT_ITEM + 8];
+        pv_field *f = &fields[def->page[i].field];
+        f->use = 3;
+        f->order = next++;
+        if (def->page[i].kind == OWF_PIVOT_BLANK) snprintf(utf8, sizeof utf8, "(blank)");
+        else owf_pivot_item_text(&def->page[i], utf8, sizeof utf8);
+        to_latin1(utf8, strlen(utf8), f->item, sizeof f->item);
     }
-    rc = oc_core_pivot_summary(core, row_col, column_col, value_col, function);
+    for (i = 0; i < def->ndata; ++i) {
+        pv_field *f = &fields[def->data[i].field];
+        for (k = 1; pv_data_labels[k] && pv_data_function[k] != def->data[i].function; ++k) {}
+        f->data = pv_data_labels[k] ? k : 1;
+        f->data_order = next++;
+    }
+    for (i = 0; i < n; ++i) {
+        pv_label(&fields[i]);
+        AddTail(&items, &fields[i].node);
+    }
+
+    listw = 250;
+    rx = 10 + listw + 16;
+    ww = rx + 190;
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4; ng.ng_Width = listw; ng.ng_Height = lh * 8 + 4;
+    ng.ng_GadgetText = (STRPTR)"Fields"; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_ABOVE;
+    last = gfields = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&items, GTLV_ShowSelected, 0,
+                                  GTLV_Selected, 0, TAG_DONE);
+    ng.ng_LeftEdge = rx; ng.ng_Width = 180; ng.ng_Height = fh + 6; ng.ng_GadgetText = (STRPTR)"Use";
+    ng.ng_GadgetID = 2;
+    last = guse = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)pv_use_labels,
+                               GTCY_Active, (ULONG)fields[0].use, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Data"; ng.ng_GadgetID = 3;
+    last = gdata = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)pv_data_labels,
+                                GTCY_Active, (ULONG)fields[0].data, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Page item (empty: all)"; ng.ng_GadgetID = 4;
+    last = gitem = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)fields[0].item,
+                                GTST_MaxChars, (ULONG)(sizeof fields[0].item - 1), GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4 + lh * 8 + 12;
+    ng.ng_Width = 22; ng.ng_Height = fh + 4; ng.ng_GadgetText = (STRPTR)"Grand total row"; ng.ng_GadgetID = 5;
+    last = grow = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, def->row_grand ? TRUE : FALSE, TAG_DONE);
+    ng.ng_LeftEdge = rx; ng.ng_GadgetText = (STRPTR)"Grand total column"; ng.ng_GadgetID = 6;
+    last = gcol = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, def->col_grand ? TRUE : FALSE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 16; ng.ng_Width = 90; ng.ng_Height = fh + 8;
+    ng.ng_LeftEdge = ww - 200; ng.ng_GadgetText = (STRPTR)(editing ? "Apply" : "Create"); ng.ng_GadgetID = 7;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 100; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 8;
+    last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gfields || !guse || !gdata || !gitem || !grow || !gcol || !gok || !gcancel) goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)(editing ? "Pivot Table Layout" : "New Pivot Table"), WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP | CYCLEIDCMP |
+                  STRINGIDCMP | CHECKBOXIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD code = m->Code;
+            UWORD id = cls == IDCMP_GADGETUP && m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            int relabel = 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 1 || id == 7) {               /* leaving a field: its typed item first */
+                STRPTR v = NULL;
+                GT_GetGadgetAttrs(gitem, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+                snprintf(fields[sel].item, sizeof fields[sel].item, "%s", v ? (char *)v : "");
+                relabel = 1;
+            }
+            if (id == 1 && code < n) {
+                sel = code;
+                GT_SetGadgetAttrs(guse, rw, NULL, GTCY_Active, (ULONG)fields[sel].use, TAG_DONE);
+                GT_SetGadgetAttrs(gdata, rw, NULL, GTCY_Active, (ULONG)fields[sel].data, TAG_DONE);
+                GT_SetGadgetAttrs(gitem, rw, NULL, GTST_String, (ULONG)fields[sel].item, TAG_DONE);
+            } else if (id == 2 && code <= 3) {
+                if (fields[sel].use != code) fields[sel].order = next++;
+                fields[sel].use = code;
+                relabel = 1;
+            } else if (id == 3 && code < sizeof pv_data_function / sizeof pv_data_function[0]) {
+                if (!fields[sel].data && code) fields[sel].data_order = next++;
+                fields[sel].data = code;
+                relabel = 1;
+            } else if (id == 4) {
+                STRPTR v = NULL;
+                GT_GetGadgetAttrs(gitem, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+                snprintf(fields[sel].item, sizeof fields[sel].item, "%s", v ? (char *)v : "");
+                relabel = 1;
+            } else if (id == 7) {
+                LONG checked = 0;
+                GT_GetGadgetAttrs(grow, rw, NULL, GTCB_Checked, (ULONG)&checked, TAG_DONE);
+                def->row_grand = checked != 0;
+                GT_GetGadgetAttrs(gcol, rw, NULL, GTCB_Checked, (ULONG)&checked, TAG_DONE);
+                def->col_grand = checked != 0;
+                if (pv_collect(book, fields, n, def)) { ok = 1; done = 1; }
+            } else if (id == 8) {
+                done = 1;
+            }
+            if (relabel && !done) {
+                GT_SetGadgetAttrs(gfields, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                for (i = 0; i < n; ++i)
+                    pv_label(&fields[i]);
+                GT_SetGadgetAttrs(gfields, rw, NULL, GTLV_Labels, (ULONG)&items, GTLV_Selected, (ULONG)sel, TAG_DONE);
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(fields);
+    return ok;
+}
+
+static void pivot_result(int rc, const char *done_text)
+{
     if (rc == OWF_ERR_FORMAT)
-        set_status("Pivot Summary needs distinct heading, row, column and value fields inside the selection.");
+        set_status("Those fields do not fit the source table (or the table would cover its own source).");
     else if (rc == OWF_ERR_UNSUPPORTED)
-        set_status("That pivot would be too large, or the selection is not one rectangular table.");
+        set_status("That pivot table would be too large (65536 values at most).");
     else
-        result(rc, "Pivot summary created on a new sheet; Undo removes it.");
+        result(rc, done_text);
+}
+
+/* Data > Pivot Table...: a new one from the selected table, or the active sheet's laid out afresh. */
+static void do_pivot_table(void)
+{
+    oc_selection selection;
+    owf_pivotdef def;
+    const owf_book *book = oc_core_book(core);
+    if (oc_core_pivot_get(core, &def)) {
+        if (pivot_layout_window(book, &def, 1))
+            pivot_result(oc_core_pivot_set_layout(core, &def), "Pivot table laid out afresh; Undo restores the previous one.");
+        return;
+    }
+    oc_core_selection(core, &selection);
+    if (selection.nranges != 1 || selection.ranges[0].first_row >= selection.ranges[0].last_row) {
+        set_status("Select one headed table with at least one data row (or open a pivot table's sheet).");
+        return;
+    }
+    owf_pivot_init(&def);
+    def.source_sheet = oc_core_sheet(core);
+    def.source = selection.ranges[0];
+    def.nrow = 1;
+    def.row[0] = 0;
+    if (selection.ranges[0].last_col > selection.ranges[0].first_col) {
+        def.ndata = 1;
+        def.data[0].field = selection.ranges[0].last_col - selection.ranges[0].first_col;
+        def.data[0].function = OC_SUBTOTAL_SUM;
+    }
+    if (pivot_layout_window(book, &def, 0))
+        pivot_result(oc_core_pivot_create(core, &def), "Pivot table created on a new sheet; Undo removes it.");
 }
 
 static void do_format_chart(void)
@@ -4350,16 +4579,16 @@ static void menu_action(ULONG id)
         }
         break;
     case M_SUBTOTALS: do_subtotals(); break;
-    case M_PIVOT_SUMMARY: do_pivot_summary(); break;
+    case M_PIVOT_SUMMARY: do_pivot_table(); break;
     case M_PIVOT_REFRESH:
         {
             int rc = oc_core_refresh_pivot(core);
             if (rc == OWF_ERR_UNSUPPORTED)
-                set_status("The active sheet is not a refreshable GFOpenCalc Pivot Summary.");
+                set_status("The active sheet has no pivot table.");
             else if (rc == OWF_ERR_FORMAT)
-                set_status("The Pivot Summary source or fields are no longer valid.");
+                set_status("The pivot table's source or fields no longer fit (Data > Pivot Table... lays it out afresh).");
             else
-                result(rc, "Pivot summary refreshed from its source; Undo restores the previous summary.");
+                result(rc, "Pivot table refreshed from its source; Undo restores the previous one.");
         }
         break;
     case M_VALIDITY: do_validity(); break;
