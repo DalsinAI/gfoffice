@@ -3137,7 +3137,7 @@ static int sv_take(const char *latin1, char *out, size_t size)
     char *u = from_latin1(latin1);
     if (!u) return 0;
     snprintf(out, size, "%s", u);
-    free(u);
+    owf_free(u);
     return 1;
 }
 
