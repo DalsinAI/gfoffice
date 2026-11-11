@@ -10,10 +10,11 @@ undoes; **Part** = some of it; **Gap** = missing.
 | --- | --- | --- | ---: |
 | 9 Nov 2026 | 2.0.26 | Gap analysis | 63% |
 | 11 Nov 2026 | 2.0.27 | W1 track changes | 66% |
+| 11 Nov 2026 | 2.0.28 | W2 comments | 68% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
-after W1 to W4).
+after W1 to W4). Comments, the other half of reviewing, add two more.
 
 ## Stream W features
 
@@ -26,7 +27,12 @@ after W1 to W4).
 | Tracked format changes (w:rPrChange, w:pPrChange, ODT format-change) | Gap | | Read as the new format, with a note in the import report. |
 | Tracked picture, frame and table-structure changes | Gap | | Pictures and frames typed while recording are plain insertions; table row and column deletes are not recorded. |
 | Show/hide changes (final view while recording) | Gap | | |
-| Comments (insert, margin, reply; ODT + DOCX) | Gap | | W2 |
+| Comments: insert, reply, edit, done, delete | Done | 2.0.28 | Insert > Comment... on the selection (a range) or at the caret (a point), under the review author. Tools > Comments: Next/Previous (replies passed over), Reply..., Edit Comment..., Mark Done, Delete Comment (with its replies), all undoable. Typing at a comment's place goes after it. ARexx ADDCOMMENT, COMMENTS, NEXTCOMMENT, PREVCOMMENT, GETCOMMENT, REPLYCOMMENT, EDITCOMMENT, RESOLVECOMMENT, DELETECOMMENT. |
+| Comments: margin display | Done | 2.0.28 | Notes in the right margin beside their line, stacked, initials and date, the first line of the text; the one at the caret outlined, replies indented, done ones grey. Commented text is highlighted. |
+| Comments: DOCX | Done | 2.0.28 | comments.xml (author, initials, date, paragraphs), commentRangeStart/End and commentReference, commentsExtended for replies and done. |
+| Comments: ODT | Part | 2.0.28 | office:annotation and office:annotation-end, dc:creator, dc:date, initials. Replies and done are saved as plain comments (the save report says so). |
+| Comments: other formats | Done | 2.0.28 | RTF, plain text, HTML and the Amiga formats leave comments out, and the save report says so. |
+| Comments: edit text in the margin, filter by author, print in the margin | Gap | | Edited through a requester; printing leaves comments out. |
 | Fields (doc info, cross-references, user fields, chapter) | Part | | W3. Page, page count, date and time exist. |
 | Footnotes and endnotes | Gap | | W4 |
 | Mail merge, indexes, AutoCorrect | Gap | | Phase 2 |
