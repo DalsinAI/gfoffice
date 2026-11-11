@@ -157,6 +157,14 @@ int oc_core_name_count(const oc_core *core);
 const owf_defname *oc_core_name_at(const oc_core *core, int index);
 int oc_core_set_name(oc_core *core, const char *name, int sheet, const char *formula);
 int oc_core_delete_name(oc_core *core, const char *name, int sheet);
+/* Changes one name (old_name in old_sheet's scope) to name in sheet's scope
+ * with formula, as one Undo step. When only the name changes, the formulas
+ * that use it follow: in cells and names the scope reaches, a word of its
+ * own (not in a string, not a function, not qualified by a sheet). OWF_OK,
+ * OWF_ERR_FORMAT (a name or formula that is not one), OWF_ERR_UNSUPPORTED
+ * (no such name, or the new scope has that name already), OWF_ERR_MEMORY. */
+int oc_core_change_name(oc_core *core, const char *old_name, int old_sheet, const char *name, int sheet,
+                        const char *formula);
 /* Defines the current, single-range selection with an absolute reference to
  * its sheet. */
 int oc_core_define_selection(oc_core *core, const char *name, int sheet);
@@ -593,6 +601,22 @@ int oc_core_filter_top(oc_core *core, unsigned col, unsigned count, int bottom, 
 /* Removes every column condition and shows the table again, leaving its
  * buttons. Filtering changes are undoable and written to XLSX/ODS. */
 int oc_core_filter_clear(oc_core *core);
+/* Data > More Filters > Advanced Filter: the list (a range with a heading
+ * row) is filtered by a criteria range, whose first row holds some of the
+ * list's headings and whose other rows hold conditions: a row's conditions
+ * must all hold, and any one row is enough. A condition is "<10", "<=10",
+ * ">2026", ">=2026", "<>East", "=East" (just that; "=" alone: empty), "East"
+ * (text beginning with it; * and ? are wildcards) or "10" (equal). Without
+ * copy_to, the rows of the list on the sheet showing that do not match are
+ * hidden (one Undo step; showing the rows again brings them back). With
+ * copy_to (a cell, on any sheet), the heading row and the matching rows are
+ * copied there as values in their styles (one Undo step). unique leaves out
+ * rows that repeat an earlier one. *kept, if given, is the rows kept.
+ * OWF_OK, OWF_ERR_FORMAT (a range that is not one, a criteria heading the
+ * list does not have, a destination over the list), OWF_ERR_UNSUPPORTED
+ * (too many cells), OWF_ERR_MEMORY. */
+int oc_core_advanced_filter(oc_core *core, const char *list, const char *criteria, const char *copy_to,
+                            int unique, unsigned *kept);
 
 /* Merges the selection's one rectangular range, or unmerges every merged
  * range it touches. A merge keeps the top-left cell. When another nonempty

@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.71 (11.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.72 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_NAME_MANAGE, M_ADV_FILTER
 };
 
 static struct NewMenu menus[] = {
@@ -241,6 +241,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "AutoFilter", NULL, 0, 0, (APTR)M_AUTOFILTER },
     { NM_ITEM, "Filter by Active Cell", NULL, 0, 0, (APTR)M_FILTER_ACTIVE },
     { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_FILTER_CLEAR },
+    { NM_ITEM, "Advanced Filter...", NULL, 0, 0, (APTR)M_ADV_FILTER },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
     { NM_ITEM, "Solver...", NULL, 0, 0, (APTR)M_SOLVER },
@@ -266,6 +267,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Define Name...", NULL, 0, 0, (APTR)M_NAME_DEFINE },
     { NM_ITEM, "Delete Name...", NULL, 0, 0, (APTR)M_NAME_DELETE },
+    { NM_ITEM, "Manage Names...", NULL, 0, 0, (APTR)M_NAME_MANAGE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Next Sheet", "]", 0, 0, (APTR)M_SHEET_NEXT },
     { NM_ITEM, "Previous Sheet", "[", 0, 0, (APTR)M_SHEET_PREV },
@@ -3752,6 +3754,325 @@ out:
         refresh();
 }
 
+/* ---- Sheet > Manage Names ---- */
+
+typedef struct {
+    struct Node node;
+    char label[128];
+    int index;                                   /* into the book's names */
+} nm_line;
+
+/* The names one may see (not hidden ones such as Solver's or a scenario's). */
+static unsigned nm_list(nm_line *lines, unsigned cap, struct List *list)
+{
+    unsigned n = 0;
+    int i;
+    owf_book *book = oc_core_book(core);
+    NewList(list);
+    for (i = 0; i < oc_core_name_count(core) && n < cap; ++i) {
+        const owf_defname *d = oc_core_name_at(core, i);
+        char name[48], where[40], refers[64];
+        if (!d || d->hidden) continue;
+        to_latin1(d->name, strlen(d->name), name, sizeof name);
+        if (d->sheet >= 0 && d->sheet < book->nsheets)
+            to_latin1(book->sheets[d->sheet].name, strlen(book->sheets[d->sheet].name), where, sizeof where);
+        else
+            snprintf(where, sizeof where, "Workbook");
+        to_latin1(d->formula ? d->formula : "", strlen(d->formula ? d->formula : ""), refers, sizeof refers);
+        snprintf(lines[n].label, sizeof lines[n].label, "%-.30s (%-.24s) =%-.60s", name, where, refers);
+        lines[n].index = i;
+        lines[n].node.ln_Name = lines[n].label;
+        AddTail(list, &lines[n].node);
+        ++n;
+    }
+    return n;
+}
+
+static int nm_result(int rc, const char *done)
+{
+    if (rc == OWF_ERR_FORMAT) {
+        set_status("A name starts with a letter, _ or \\, has no spaces and is not a cell; Refers to is a formula.");
+        return 0;
+    }
+    if (rc == OWF_ERR_UNSUPPORTED) { set_status("That scope has a name by that name already."); return 0; }
+    return result(rc, done);
+}
+
+static void do_manage_names(void)
+{
+    struct Gadget *glist = NULL, *last, *glv, *gname, *grefers, *gscope, *gadd, *gchange, *gdelete, *gclose;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List list;
+    owf_book *book = oc_core_book(core);
+    unsigned cap = (unsigned)oc_core_name_count(core) + 64u, nsheets = (unsigned)book->nsheets, s;
+    nm_line *lines = calloc(cap, sizeof *lines);
+    STRPTR *scope_labels = calloc(nsheets + 2u, sizeof *scope_labels);
+    char (*scope_text)[40] = calloc(nsheets + 1u, sizeof *scope_text);
+    char refers[256] = "";
+    int done = 0, sel = -1, ww = 460, wh, lh = fh + 6, rc;
+    oc_selection selection;
+    if (!scr || !vi || !lines || !scope_labels || !scope_text) goto out;
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); goto out; }
+    snprintf(scope_text[0], sizeof scope_text[0], "Workbook");
+    scope_labels[0] = (STRPTR)scope_text[0];
+    for (s = 0; s < nsheets; ++s) {
+        to_latin1(book->sheets[s].name, strlen(book->sheets[s].name), scope_text[s + 1u], sizeof scope_text[0]);
+        scope_labels[s + 1u] = (STRPTR)scope_text[s + 1u];
+    }
+    oc_core_selection(core, &selection);
+    if (selection.nranges == 1) {                /* the selection as what a new name refers to */
+        char a[8], b[8], sheet[96];
+        const owf_range *g = &selection.ranges[0];
+        const char *sn = book->sheets[oc_core_sheet(core)].name;
+        oc_col_name(g->first_col, a);
+        oc_col_name(g->last_col, b);
+        to_latin1(sn, strlen(sn), sheet, sizeof sheet);
+        if (g->first_row != g->last_row || g->first_col != g->last_col)
+            snprintf(refers, sizeof refers, "'%s'!$%s$%u:$%s$%u", sheet, a, g->first_row + 1u, b, g->last_row + 1u);
+        else
+            snprintf(refers, sizeof refers, "'%s'!$%s$%u", sheet, a, g->first_row + 1u);
+    }
+    nm_list(lines, cap, &list);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4; ng.ng_Width = ww - 20; ng.ng_Height = lh * 8 + 4;
+    ng.ng_GadgetText = (STRPTR)"Names"; ng.ng_GadgetID = 1;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&list, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = 100; ng.ng_TopEdge += ng.ng_Height + 8; ng.ng_Width = ww - 110; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"Name"; ng.ng_GadgetID = 2;
+    last = gname = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)"", GTST_MaxChars, 95, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += fh + 10; ng.ng_GadgetText = (STRPTR)"Refers to"; ng.ng_GadgetID = 3;
+    last = grefers = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)refers, GTST_MaxChars, 255,
+                                  GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += fh + 10; ng.ng_Width = 200; ng.ng_GadgetText = (STRPTR)"Scope"; ng.ng_GadgetID = 4;
+    last = gscope = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)scope_labels, GTCY_Active, 0, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 14; ng.ng_Height = fh + 8; ng.ng_Width = 80;
+    ng.ng_LeftEdge = 10; ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = 5;
+    last = gadd = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 100; ng.ng_GadgetText = (STRPTR)"Change"; ng.ng_GadgetID = 6;
+    last = gchange = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 190; ng.ng_GadgetText = (STRPTR)"Delete"; ng.ng_GadgetID = 7;
+    last = gdelete = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 90; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = 8;
+    last = gclose = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glv || !gname || !grefers || !gscope || !gadd || !gchange || !gdelete || !gclose) goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Manage Names", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP |
+                  STRINGIDCMP | BUTTONIDCMP | CYCLEIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *msg;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((msg = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = msg->Class;
+            UWORD code = msg->Code;
+            UWORD id = cls == IDCMP_GADGETUP && msg->IAddress ? ((struct Gadget *)msg->IAddress)->GadgetID : 0;
+            int relist = 0;
+            GT_ReplyIMsg(msg);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 1) {
+                const owf_defname *d;
+                char t[256];
+                sel = code;
+                d = oc_core_name_at(core, lines[sel].index);
+                if (d) {
+                    to_latin1(d->name, strlen(d->name), t, sizeof t);
+                    GT_SetGadgetAttrs(gname, rw, NULL, GTST_String, (ULONG)t, TAG_DONE);
+                    to_latin1(d->formula ? d->formula : "", strlen(d->formula ? d->formula : ""), t, sizeof t);
+                    GT_SetGadgetAttrs(grefers, rw, NULL, GTST_String, (ULONG)t, TAG_DONE);
+                    GT_SetGadgetAttrs(gscope, rw, NULL, GTCY_Active, (ULONG)(d->sheet + 1), TAG_DONE);
+                }
+            } else if (id == 5 || id == 6) {
+                char name[96], formula[256];
+                char *uname, *uformula;
+                ULONG scope = 0;
+                int sheet, i, taken = 0;
+                if (id == 6 && sel < 0) { DisplayBeep(scr); continue; }
+                sv_get_string(gname, rw, name, sizeof name);
+                sv_get_string(grefers, rw, formula, sizeof formula);
+                GT_GetGadgetAttrs(gscope, rw, NULL, GTCY_Active, (ULONG)&scope, TAG_DONE);
+                sheet = (int)scope - 1;
+                uname = from_latin1(trim_text(name));
+                uformula = from_latin1(formula);
+                if (!uname || !uformula) {
+                    rc = OWF_ERR_MEMORY;
+                } else if (id == 5) {
+                    for (i = 0; i < oc_core_name_count(core); ++i) {
+                        const owf_defname *d = oc_core_name_at(core, i);
+                        if (d && d->sheet == sheet && !strcasecmp(d->name, uname)) taken = 1;
+                    }
+                    rc = taken ? OWF_ERR_UNSUPPORTED : oc_core_set_name(core, uname, sheet, uformula);
+                } else {
+                    const owf_defname *d = oc_core_name_at(core, lines[sel].index);
+                    rc = OWF_ERR_UNSUPPORTED;
+                    if (d) {
+                        size_t n = strlen(d->name);
+                        char *was = owf_malloc(n + 1);
+                        int was_sheet = d->sheet;
+                        if (!was) rc = OWF_ERR_MEMORY;
+                        else {
+                            memcpy(was, d->name, n + 1);
+                            rc = oc_core_change_name(core, was, was_sheet, uname, sheet, uformula);
+                            owf_free(was);
+                        }
+                    }
+                }
+                owf_free(uname);
+                owf_free(uformula);
+                if (nm_result(rc, id == 5 ? "Name added; Undo takes it away."
+                                          : "Name changed; formulas that used it follow."))
+                    relist = 1;
+            } else if (id == 7 && sel >= 0) {
+                const owf_defname *d = oc_core_name_at(core, lines[sel].index);
+                if (d) {
+                    size_t n = strlen(d->name);
+                    char *was = owf_malloc(n + 1);
+                    if (!was) rc = OWF_ERR_MEMORY;
+                    else {
+                        memcpy(was, d->name, n + 1);
+                        rc = oc_core_delete_name(core, was, d->sheet);
+                        owf_free(was);
+                    }
+                    if (nm_result(rc, "Name deleted; Undo brings it back.")) relist = 1;
+                }
+            } else if (id == 8) {
+                done = 1;
+            }
+            if (relist && !done) {
+                sel = -1;
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                nm_list(lines, cap, &list);
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)&list, GTLV_Selected, ~0UL, TAG_DONE);
+                refresh();
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(lines);
+    free(scope_labels);
+    free(scope_text);
+}
+
+/* ---- Data > Advanced Filter ---- */
+
+static void do_advanced_filter(void)
+{
+    struct Gadget *glist = NULL, *last, *glst, *gcrit, *gto, *guniq, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    static char list_text[160], crit_text[160], to_text[160];
+    static int unique;
+    int done = 0, ok = 0, ww = 420, wh, rc;
+    oc_selection selection;
+    if (!scr || !vi) return;
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); return; }
+    oc_core_selection(core, &selection);
+    if (selection.nranges == 1 && selection.ranges[0].first_row < selection.ranges[0].last_row) {
+        char a[16], b[16];
+        oc_cell_name(selection.ranges[0].first_row, selection.ranges[0].first_col, a);
+        oc_cell_name(selection.ranges[0].last_row, selection.ranges[0].last_col, b);
+        snprintf(list_text, sizeof list_text, "%s:%s", a, b);
+    }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = 150; ng.ng_TopEdge = 8; ng.ng_Width = ww - 160; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"List range"; ng.ng_GadgetID = 1;
+    last = glst = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)list_text, GTST_MaxChars, 159,
+                               GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += fh + 10; ng.ng_GadgetText = (STRPTR)"Criteria range"; ng.ng_GadgetID = 2;
+    last = gcrit = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)crit_text, GTST_MaxChars, 159,
+                                GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += fh + 10; ng.ng_GadgetText = (STRPTR)"Copy to (or blank)"; ng.ng_GadgetID = 3;
+    last = gto = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)to_text, GTST_MaxChars, 159,
+                              GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_Width = 26;
+    ng.ng_TopEdge += fh + 12; ng.ng_GadgetText = (STRPTR)"Unique rows only"; ng.ng_GadgetID = 4;
+    last = guniq = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, unique ? TRUE : FALSE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 14; ng.ng_Height = fh + 8; ng.ng_Width = 90;
+    ng.ng_LeftEdge = 10; ng.ng_GadgetText = (STRPTR)"Filter"; ng.ng_GadgetID = 5;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 100; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 6;
+    last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glst || !gcrit || !gto || !guniq || !gok || !gcancel) goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Advanced Filter", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | STRINGIDCMP | BUTTONIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *msg;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((msg = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = msg->Class;
+            UWORD code = msg->Code;
+            UWORD id = cls == IDCMP_GADGETUP && msg->IAddress ? ((struct Gadget *)msg->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(msg);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (id == 5) {
+                ULONG u = 0;
+                sv_get_string(glst, rw, list_text, sizeof list_text);
+                sv_get_string(gcrit, rw, crit_text, sizeof crit_text);
+                sv_get_string(gto, rw, to_text, sizeof to_text);
+                GT_GetGadgetAttrs(guniq, rw, NULL, GTCB_Checked, (ULONG)&u, TAG_DONE);
+                unique = u != 0;
+                ok = done = 1;
+            } else if (id == 6) {
+                done = 1;
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    if (ok) {
+        char *ul = from_latin1(trim_text(list_text)), *uc = from_latin1(trim_text(crit_text));
+        char *ut = from_latin1(trim_text(to_text));
+        unsigned kept = 0;
+        char message[80];
+        rc = ul && uc && ut ? oc_core_advanced_filter(core, ul, uc, ut, unique, &kept) : OWF_ERR_MEMORY;
+        owf_free(ul);
+        owf_free(uc);
+        owf_free(ut);
+        snprintf(message, sizeof message, "%u row%s kept%s; Undo goes back.", kept, kept == 1 ? "" : "s",
+                 to_text[0] ? " and copied" : "");
+        if (rc == OWF_ERR_FORMAT)
+            set_status("Give the list and criteria as ranges with headings; the criteria's headings must be the list's.");
+        else if (rc == OWF_ERR_UNSUPPORTED)
+            set_status("The list or the criteria range is too big.");
+        else if (result(rc, message))
+            refresh();
+    }
+}
+
 static void do_multiple_operations(void)
 {
     oc_selection selection;
@@ -5261,6 +5582,8 @@ static void menu_action(ULONG id)
     case M_SHEET_SHOW: do_show_sheet(); break;
     case M_NAME_DEFINE: do_define_name(); break;
     case M_NAME_DELETE: do_delete_name(); break;
+    case M_NAME_MANAGE: do_manage_names(); break;
+    case M_ADV_FILTER: do_advanced_filter(); break;
     case M_SHEET_NEXT: oc_core_key(core, OC_KEY_PAGEDOWN, OC_MOD_CTRL); break;
     case M_SHEET_PREV: oc_core_key(core, OC_KEY_PAGEUP, OC_MOD_CTRL); break;
     }
@@ -5673,6 +5996,110 @@ static int rexx_consolidate(const char *arg, char *out, size_t size)
     return rc == OWF_OK;
 }
 
+/* NAMES: the names one may see, "name=formula" comma-separated (a sheet's own as "Sheet!name").
+ * NAMEDEFINE name formula [LOCAL] | NAMERENAME old new [LOCAL] | NAMEDELETE name [LOCAL]: LOCAL is the sheet
+ * showing's own name, otherwise the workbook's. 1 done; *now set when there is no such name. */
+static int rexx_names(const char *verb, const char *arg, char *out, size_t size, int *now)
+{
+    char name[96], second[256], third[16];
+    char *uname = NULL, *usecond = NULL;
+    const char *p;
+    int sheet = -1, rc, i;
+    out[0] = 0;
+    if (!strcasecmp(verb, "NAMES")) {
+        owf_book *book = oc_core_book(core);
+        size_t at = 0;
+        for (i = 0; i < oc_core_name_count(core) && at + 2 < size; ++i) {
+            const owf_defname *d = oc_core_name_at(core, i);
+            char t[320], u[320];
+            if (!d || d->hidden) continue;
+            if (d->sheet >= 0 && d->sheet < book->nsheets)
+                snprintf(t, sizeof t, "%.96s!%.96s=%.120s", book->sheets[d->sheet].name, d->name, d->formula ? d->formula : "");
+            else
+                snprintf(t, sizeof t, "%.96s=%.200s", d->name, d->formula ? d->formula : "");
+            to_latin1(t, strlen(t), u, sizeof u);
+            at += (size_t)snprintf(out + at, size - at, "%s%s", at ? "," : "", u);
+        }
+        return 1;
+    }
+    p = rexx_word(arg, name, sizeof name);
+    if (!name[0]) { snprintf(out, size, "%s needs a name", verb); return 0; }
+    if (!strcasecmp(verb, "NAMEDELETE")) {
+        second[0] = 0;
+        p = rexx_word(p, third, sizeof third);
+    } else {
+        p = rexx_quoted(p, second, sizeof second);
+        p = rexx_word(p, third, sizeof third);
+        if (!second[0]) { snprintf(out, size, "%s needs a name and %s", verb,
+                                   !strcasecmp(verb, "NAMERENAME") ? "a new name" : "what it refers to"); return 0; }
+    }
+    if (!strcasecmp(third, "LOCAL")) sheet = oc_core_sheet(core);
+    else if (third[0]) { snprintf(out, size, "%s: LOCAL or nothing after the name", verb); return 0; }
+    uname = from_latin1(name);
+    usecond = from_latin1(second);
+    if (!uname || !usecond) { owf_free(uname); owf_free(usecond); snprintf(out, size, "Out of memory"); return 0; }
+    if (!strcasecmp(verb, "NAMEDEFINE")) {
+        rc = oc_core_set_name(core, uname, sheet, usecond);
+    } else {
+        const owf_defname *d = NULL;
+        for (i = 0; i < oc_core_name_count(core); ++i) {
+            const owf_defname *e = oc_core_name_at(core, i);
+            if (e && e->sheet == sheet && !strcasecmp(e->name, uname)) d = e;
+        }
+        if (!d) {
+            *now = 1;
+            owf_free(uname);
+            owf_free(usecond);
+            snprintf(out, size, "No name %s there", name);
+            return 0;
+        }
+        if (!strcasecmp(verb, "NAMEDELETE")) {
+            rc = oc_core_delete_name(core, uname, sheet);
+        } else {
+            char *formula = owf_malloc(strlen(d->formula ? d->formula : "") + 1);
+            if (!formula) rc = OWF_ERR_MEMORY;
+            else {
+                strcpy(formula, d->formula ? d->formula : "");
+                rc = oc_core_change_name(core, uname, sheet, usecond, sheet, formula);
+                owf_free(formula);
+            }
+        }
+    }
+    owf_free(uname);
+    owf_free(usecond);
+    nm_result(rc, "OK");
+    snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+    return rc == OWF_OK;
+}
+
+/* ADVFILTER list criteria [TO cell] [UNIQUE]: Data > Advanced Filter. Gives the rows kept. 1 done. */
+static int rexx_advfilter(const char *arg, char *out, size_t size)
+{
+    char list[160], crit[160], word[160], to[160] = "";
+    char *ul, *uc, *ut;
+    const char *p = rexx_quoted(arg, list, sizeof list);
+    int unique = 0, rc;
+    unsigned kept = 0;
+    p = rexx_quoted(p, crit, sizeof crit);
+    for (p = rexx_quoted(p, word, sizeof word); word[0]; p = rexx_quoted(p, word, sizeof word)) {
+        if (!strcasecmp(word, "UNIQUE")) unique = 1;
+        else if (!strcasecmp(word, "TO")) p = rexx_quoted(p, to, sizeof to);
+        else { snprintf(out, size, "ADVFILTER: TO cell or UNIQUE after the ranges"); return 0; }
+    }
+    if (!list[0] || !crit[0]) { snprintf(out, size, "ADVFILTER needs a list range and a criteria range"); return 0; }
+    ul = from_latin1(list);
+    uc = from_latin1(crit);
+    ut = from_latin1(to);
+    rc = ul && uc && ut ? oc_core_advanced_filter(core, ul, uc, ut, unique, &kept) : OWF_ERR_MEMORY;
+    owf_free(ul);
+    owf_free(uc);
+    owf_free(ut);
+    if (rc == OWF_OK) { snprintf(out, size, "%u", kept); return 1; }
+    if (rc == OWF_ERR_FORMAT) snprintf(out, size, "ADVFILTER: a range is wrong, a criteria heading is not the list's, or TO is over the list");
+    else snprintf(out, size, "%s", rc == OWF_ERR_UNSUPPORTED ? "ADVFILTER: too many cells" : "Out of memory");
+    return 0;
+}
+
 /* As every Open app's port (amicradle-teams ARexx-RULE.md 3, OS 3.2's arexx.class): 0 done, 5 not possible
  * now (nothing wrong), 10 an error, 20 an unknown command or a failure. */
 #define RX_OK 0
@@ -5695,7 +6122,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -5760,6 +6187,15 @@ static int rexx_do_command(const char *command, char **result_out)
         else to_latin1(t, strlen(t), result_text, sizeof result_text);
     } else if (starts_word_ci(command, "PIVOT", &arg)) {
         ok = rexx_pivot(arg, result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "NAMES", &arg) || starts_word_ci(command, "NAMEDEFINE", &arg) ||
+               starts_word_ci(command, "NAMERENAME", &arg) || starts_word_ci(command, "NAMEDELETE", &arg)) {
+        char verb[12];
+        int now = 0;
+        rexx_word(command, verb, sizeof verb);
+        ok = rexx_names(verb, arg, result_text, sizeof result_text, &now);
+        if (!ok && now) rc_fail = RX_NOW;
+    } else if (starts_word_ci(command, "ADVFILTER", &arg)) {
+        ok = rexx_advfilter(arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "CONSOLIDATE", &arg)) {
         ok = rexx_consolidate(arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "SCENARIO", &arg)) {

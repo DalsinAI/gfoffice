@@ -256,6 +256,16 @@ key where it can (`WHERE id > ? LIMIT 100`) and by `LIMIT`/`OFFSET` where it
 can't. A result is never held whole, so a 100,000-row table opens as fast as
 a 10-row one.
 
+A datasheet can be sorted by one field (A to Z or Z to A, text without case,
+ties in key order) and filtered by one test on one field: Equals, Is not,
+Less than, More than, Contains, Starts with, Is empty, Is not empty. The
+value is typed in the field's own form and checked like a row's
+("1,234.50", 11/11/2026), and Contains and Starts with escape `%` and `_`,
+so what is typed is what is matched. The core calls this a view (`ob_view`,
+core 0.3); a sorted view pages by `LIMIT`/`OFFSET`. Table > Sort and
+Filter... sets it, a click on a column's heading sorts by that column (again
+for Z to A, a third time for key order), and Show All Rows clears it.
+
 ### 5.5 Tests
 
 The generator is plain C and host-tested: grids in, SQL out, compared with the
@@ -354,7 +364,7 @@ whole document, is a later step if the limit bites.
 
 | Format | Import | Export | Phase | Notes |
 | --- | --- | --- | --- | --- |
-| CSV (RFC 4180) | Yes | Yes | B1 | A wizard: separator, quotes, header row, character set (UTF-8 or ISO-8859-1), types guessed from the first 200 rows and changeable, date formats. Bad rows listed in a report, as libowf's import report lists notes |
+| CSV (RFC 4180) | Yes | Yes | B1 | Core 0.3 (`ob_csv_import`, `ob_csv_export`): into an existing table, all or none, the first bad row named ("Line 4: Price must be a number"); a header row matched to fields by name or label in any order, else the fields in order; separator `,` `;` or tab found from the first line; a Counter column keeps its keys, so an export imports back the same. Export writes the datasheet as shown (sorted, filtered), values in their own text form, CR LF. Still to come: the wizard (character set, a new table with types guessed from the first 200 rows, date formats, bad rows listed in a report rather than refusing the file) |
 | Sheets: XLS today; ODS and XLSX when W106 lands | Yes, through `owf_book` | Yes, through `owf_book` | B3 | Each sheet becomes a table, its first row the field names, its cells' types the fields' types. A table or a query's result becomes a one-sheet book, saved by libowf's book formats |
 | DBF (dBase III and IV, FoxPro) | Yes | No | B3 | Worth it: a simple fixed-record format, and the one old Amiga and DOS databases most often exported. Memo files (`.dbt`, `.fpt`) later |
 | SQL text | Yes | Yes | B4 | `CREATE` and `INSERT` statements, our own writer |

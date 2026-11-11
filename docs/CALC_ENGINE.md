@@ -120,6 +120,26 @@ and the settings stay on the sheet as a hidden name, `_GF_CONSOLIDATE`, so
 the window offers them again (and they survive XLSX and ODS as any name
 does).
 
+## Names and the advanced filter
+
+Sheet > Manage Names lists the names one may see (a sheet's own and
+the workbook's; the hidden ones Solver, scenarios and the rest keep are
+left out) with what each refers to, and adds, changes and deletes them.
+`oc_core_change_name` (`src/calc/oc_core.c`) changes a name, its formula and
+its scope in one Undo step; when only the name changes, the formulas that use
+it follow, in the cells and names its scope reaches: a word of its own, not
+in a string, not a function and not qualified by a sheet.
+
+Data > Advanced Filter (`oc_core_advanced_filter`, `src/calc/oc_filter.c`)
+filters a list by a criteria range, as Excel and OpenOffice read one: its
+first row holds some of the list's headings, and each other row is a set of
+conditions that must all hold; any one row is enough. A condition is `<10`,
+`<=10`, `>2026`, `>=2026`, `<>East`, `=East` (just that; `=` alone: empty),
+`East` (text beginning with it; `*` and `?` are wildcards) or `10`. In place,
+the rows that do not match are hidden (showing the rows again brings them back);
+copied, the heading and the matching rows go to a cell on any sheet as values
+in their styles. Unique rows only leaves out repeats. Each is one Undo step.
+
 ## Multiple Operations
 
 GFOpenCalc 0.1.67 supports the column, row and two-variable forms of Apache

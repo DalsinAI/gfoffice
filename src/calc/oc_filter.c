@@ -6,6 +6,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
+#include "owf_scenario.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1002,4 +1003,311 @@ int oc_core_filter_clear(oc_core *core)
     if (!sheet->autofilter_xml)
         return OWF_OK;
     return apply_rules(core, sheet, NULL, 0);
+}
+
+/* ---- Advanced filter: a criteria range ---- */
+
+typedef struct {
+    unsigned col;                 /* the list's column it tests */
+    int op;                       /* OC_FILTER_* */
+    char *value;
+} adv_test;
+
+static const char *shown_on(const oc_core *core, int sheet, unsigned row, unsigned col, char *buf, size_t size)
+{
+    const owf_cell *cell = oc_find(core, sheet, row, col);
+    if (cell && cell->type == OWF_VALUE_TEXT)
+        return cell->text ? cell->text : "";
+    oc_core_cell_text(core, sheet, row, col, buf, size);
+    buf[strcspn(buf, "\r\n")] = 0;
+    return buf;
+}
+
+/* One criteria cell as a test: "<10", ">=2026", "<>East", "=East" (just
+ * that), "East" (begins with it, as Excel reads it), "10" (equal). 0 for an
+ * empty cell, -1 for memory. */
+static int adv_parse(const char *text, unsigned col, adv_test *t)
+{
+    static const struct { const char *s; int op; } ops[] = {
+        { "<=", OC_FILTER_LESS_EQUAL }, { ">=", OC_FILTER_GREATER_EQUAL }, { "<>", OC_FILTER_NOT_EQUAL },
+        { "<", OC_FILTER_LESS }, { ">", OC_FILTER_GREATER }, { "=", OC_FILTER_EQUAL }
+    };
+    unsigned i;
+    double number;
+    size_t n;
+    if (!*text)
+        return 0;
+    t->col = col;
+    for (i = 0; i < sizeof ops / sizeof ops[0]; i++) {
+        n = strlen(ops[i].s);
+        if (!strncmp(text, ops[i].s, n)) {
+            t->op = ops[i].op;
+            t->value = oc_strdup(text + n);
+            return t->value ? 1 : -1;
+        }
+    }
+    t->op = OC_FILTER_EQUAL;
+    if (number_text(text, &number)) {
+        t->value = oc_strdup(text);
+        return t->value ? 1 : -1;
+    }
+    n = strlen(text);
+    t->value = owf_malloc(n + 2);
+    if (!t->value)
+        return -1;
+    memcpy(t->value, text, n);
+    t->value[n] = '*';
+    t->value[n + 1] = 0;
+    return 1;
+}
+
+static int adv_row_matches(const oc_core *core, int sheet, unsigned row, const adv_test *tests,
+                           const unsigned *row_start, unsigned nrows)
+{
+    unsigned r, k;
+    char shown[256];
+    if (!nrows)
+        return 1;
+    for (r = 0; r < nrows; r++) {                        /* criteria rows: any of them */
+        int all = 1;
+        for (k = row_start[r]; k < row_start[r + 1] && all; k++)   /* a row's cells: all of them */
+            all = compare_one(shown_on(core, sheet, row, tests[k].col, shown, sizeof shown), tests[k].op,
+                              tests[k].value);
+        if (all)
+            return 1;
+    }
+    return 0;
+}
+
+/* A row's shown values joined, for Unique records only. */
+static char *adv_row_key(const oc_core *core, int sheet, unsigned row, const owf_range *list)
+{
+    char shown[256], *key = NULL;
+    size_t at = 0, cap = 0;
+    unsigned c;
+    for (c = list->first_col; c <= list->last_col; c++) {
+        const char *s = shown_on(core, sheet, row, c, shown, sizeof shown);
+        size_t n = strlen(s);
+        if (at + n + 2 > cap) {
+            char *more;
+            cap = (at + n + 2) * 2;
+            more = realloc(key, cap);
+            if (!more) {
+                free(key);
+                return NULL;
+            }
+            key = more;
+        }
+        memcpy(key + at, s, n);
+        at += n;
+        key[at++] = '\t';
+        key[at] = 0;
+    }
+    if (key)
+        for (at = 0; key[at]; at++)
+            if (key[at] >= 'A' && key[at] <= 'Z')
+                key[at] = (char)(key[at] + ('a' - 'A'));
+    return key;
+}
+
+static int adv_key_seen(char **keys, unsigned n, const char *key)
+{
+    unsigned i;
+    for (i = 0; i < n; i++)
+        if (!strcmp(keys[i], key))
+            return 1;
+    return 0;
+}
+
+int oc_core_advanced_filter(oc_core *core, const char *list_text, const char *criteria_text, const char *copy_to,
+                            int unique, unsigned *kept)
+{
+    owf_range list, crit, dest;
+    int list_sheet, crit_sheet, dest_sheet = -1, rc = OWF_ERR_MEMORY;
+    adv_test *tests = NULL;
+    unsigned *row_start = NULL, ntests = 0, ncrit_rows = 0, row, c, out = 0, nkeys = 0;
+    unsigned *head_col = NULL;
+    char **keys = NULL, shown[256], shown2[256];
+    owf_book *work = NULL;
+    owf_calc *calc = NULL;
+    if (kept)
+        *kept = 0;
+    if (!core || !list_text || !criteria_text)
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    if (!oc_sheet_range(core->book, list_text, core->sheet, &list_sheet, &list) ||
+        !oc_sheet_range(core->book, criteria_text, core->sheet, &crit_sheet, &crit) ||
+        list.first_row >= list.last_row)
+        return OWF_ERR_FORMAT;
+    if (copy_to && *copy_to) {
+        if (!oc_sheet_range(core->book, copy_to, core->sheet, &dest_sheet, &dest))
+            return OWF_ERR_FORMAT;
+        if (dest_sheet == list_sheet && dest.first_row <= list.last_row && dest.first_col <= list.last_col &&
+            dest.first_col + (list.last_col - list.first_col) >= list.first_col)
+            return OWF_ERR_FORMAT;                       /* it would write over the list */
+    } else if (list_sheet != core->sheet) {
+        return OWF_ERR_FORMAT;                           /* in place: on the sheet showing */
+    }
+    if ((unsigned long)(list.last_row - list.first_row) * (list.last_col - list.first_col + 1u) > OC_MAX_RANGE_CELLS ||
+        (unsigned long)(crit.last_row - crit.first_row + 1u) * (crit.last_col - crit.first_col + 1u) > 4096u)
+        return OWF_ERR_UNSUPPORTED;
+    /* each criteria heading is one of the list's */
+    head_col = malloc((crit.last_col - crit.first_col + 1u) * sizeof *head_col);
+    tests = calloc((size_t)(crit.last_row - crit.first_row + 1u) * (crit.last_col - crit.first_col + 1u), sizeof *tests);
+    row_start = malloc((crit.last_row - crit.first_row + 2u) * sizeof *row_start);
+    if (!head_col || !tests || !row_start)
+        goto done;
+    for (c = crit.first_col; c <= crit.last_col; c++) {
+        unsigned lc;
+        const char *h = shown_on(core, crit_sheet, crit.first_row, c, shown, sizeof shown);
+        head_col[c - crit.first_col] = ~0u;
+        if (!*h)
+            continue;                                    /* a column with no heading tests nothing */
+        for (lc = list.first_col; lc <= list.last_col; lc++)
+            if (!compare_ci(h, shown_on(core, list_sheet, list.first_row, lc, shown2, sizeof shown2))) {
+                head_col[c - crit.first_col] = lc;
+                break;
+            }
+        if (head_col[c - crit.first_col] == ~0u) {
+            rc = OWF_ERR_FORMAT;
+            goto done;
+        }
+    }
+    for (row = crit.first_row + 1u; row <= crit.last_row; row++) {
+        unsigned first = ntests;
+        for (c = crit.first_col; c <= crit.last_col; c++) {
+            int got;
+            if (head_col[c - crit.first_col] == ~0u)
+                continue;
+            got = adv_parse(shown_on(core, crit_sheet, row, c, shown, sizeof shown), head_col[c - crit.first_col],
+                            &tests[ntests]);
+            if (got < 0)
+                goto done;
+            if (got)
+                ntests++;
+        }
+        if (ntests == first) {                           /* an empty criteria row: every row matches */
+            ncrit_rows = 0;
+            break;
+        }
+        row_start[ncrit_rows++] = first;
+    }
+    row_start[ncrit_rows] = ntests;
+    if (unique && !(keys = calloc(list.last_row - list.first_row, sizeof *keys)))
+        goto done;
+    if (dest_sheet < 0) {
+        /* in place: the rows that do not match are hidden; Show Rows brings them back */
+        owf_sheet *s = &core->book->sheets[list_sheet];
+        oc_undo *u = oc_undo_new(core, OC_UNDO_LAYOUT);
+        if (u && oc_undo_save_layout(core, u, list_sheet) != OWF_OK) {
+            oc_undo_free(u);
+            u = NULL;
+        }
+        oc_undo_push(core, u);
+        rc = OWF_OK;
+        for (row = list.first_row + 1u; row <= list.last_row && rc == OWF_OK; row++) {
+            int keep = adv_row_matches(core, list_sheet, row, tests, row_start, ncrit_rows);
+            const owf_rowinfo *ri = row_info(s, row);
+            if (keep && keys) {
+                char *key = adv_row_key(core, list_sheet, row, &list);
+                if (!key) { rc = OWF_ERR_MEMORY; break; }
+                if (adv_key_seen(keys, nkeys, key)) { free(key); keep = 0; }
+                else keys[nkeys++] = key;
+            }
+            if (keep)
+                out++;
+            if (owf_sheet_set_row(s, row, ri && ri->height > 0 ? ri->height : s->default_height, keep ? 0 : 1) < 0)
+                rc = OWF_ERR_MEMORY;
+        }
+        oc_changed(core);
+        core->used_valid = 0;
+        if (kept)
+            *kept = out;
+        goto done;
+    }
+    /* copied: the heading row and the rows that match, as values in their styles */
+    work = oc_book_copy(core->book);
+    if (!work || !(calc = owf_calc_new(work)))
+        goto done;
+    rc = OWF_OK;
+    for (row = list.first_row; row <= list.last_row && rc == OWF_OK; row++) {
+        int keep = row == list.first_row || adv_row_matches(core, list_sheet, row, tests, row_start, ncrit_rows);
+        if (keep && keys && row > list.first_row) {
+            char *key = adv_row_key(core, list_sheet, row, &list);
+            if (!key) { rc = OWF_ERR_MEMORY; break; }
+            if (adv_key_seen(keys, nkeys, key)) { free(key); keep = 0; }
+            else keys[nkeys++] = key;
+        }
+        if (!keep)
+            continue;
+        if (dest.first_row + out >= OC_MAX_ROWS || dest.first_col + (list.last_col - list.first_col) >= OC_MAX_COLS) {
+            rc = OWF_ERR_FORMAT;
+            break;
+        }
+        for (c = list.first_col; c <= list.last_col && rc == OWF_OK; c++) {
+            const owf_cell *from = oc_find(core, list_sheet, row, c);
+            unsigned trow = dest.first_row + out, tcol = dest.first_col + (c - list.first_col);
+            char *input;
+            if (from && from->formula) {
+                owf_cell value = *from;
+                value.formula = NULL;
+                input = owf_scenario_input(&value);
+            } else {
+                input = owf_scenario_input(from);
+            }
+            if (!input) { rc = OWF_ERR_MEMORY; break; }
+            rc = owf_calc_enter(calc, dest_sheet, trow, tcol, input);
+            owf_free(input);
+            if (rc == OWF_OK && from && from->style) {
+                owf_cell *to = owf_sheet_cell(&work->sheets[dest_sheet], trow, tcol, 1);
+                if (to) to->style = from->style;
+                else rc = OWF_ERR_MEMORY;
+            }
+        }
+        out++;
+    }
+    if (rc == OWF_OK)
+        rc = owf_calc_recalc(calc);
+    if (rc != OWF_OK)
+        goto done;
+    {
+        owf_book *old_book = core->book;
+        owf_calc *old_calc = core->calc;
+        oc_undo *undo = oc_undo_new(core, OC_UNDO_BOOK);
+        if (undo && oc_undo_save_book(core, undo) != OWF_OK) {
+            oc_undo_free(undo);
+            undo = NULL;
+        }
+        oc_cf_forget(core);
+        oc_charts_forget(core);
+        core->book = work;
+        core->calc = calc;
+        work = NULL;
+        calc = NULL;
+        owf_calc_free(old_calc);
+        owf_book_free(old_book);
+        oc_undo_push(core, undo);
+        oc_changed(core);
+        core->used_valid = 0;
+        core->unchecked = 0;
+        if (core->clip.valid)
+            core->clip.cut = 0;
+    }
+    if (kept)
+        *kept = out ? out - 1u : 0u;
+done:
+    owf_calc_free(calc);
+    owf_book_free(work);
+    if (tests)
+        for (c = 0; c < ntests; c++)
+            owf_free(tests[c].value);
+    free(tests);
+    free(row_start);
+    free(head_col);
+    if (keys)
+        for (c = 0; c < nkeys; c++)
+            free(keys[c]);
+    free(keys);
+    return rc;
 }
