@@ -30,6 +30,47 @@ the value actually achieved and the iteration count. Formula variables,
 non-numeric results, non-finite values and searches which do not converge are
 reported rather than committed.
 
+## Solver
+
+Data > Solver makes a target cell as large or as small as it can be, or
+equal to a value, by changing variable cells (up to 200), under up to 32
+constraints: a cell or range `<=`, `=` or `>=` a number, a cell or a range of
+the same size, or variable cells that must be whole numbers or binary (0 or
+1). Variables are kept from going negative unless that is turned off.
+
+`oc_core_solve` (`src/calc/oc_solver.c`) works on a deep copy of the book.
+It reads the model as a linear programme: every cell the model reads is
+worked out at the variables' present values and then with each variable one
+more, which gives each formula's coefficients. Two more points, with every
+variable moved by a different amount, check that the formulas really are
+linear; a model that is not (a product of two variables, say) is reported by
+the first cell that gave it away, and nothing is solved wrongly. After
+solving, the answer is put into the copy and every constraint is checked on
+the sheet itself.
+
+`src/calc/oc_lp.c` solves the programme: a dense two-phase simplex (the
+largest gain enters; after 50 steps that gain nothing, Bland's rule, which
+cannot cycle), with rows that hold one variable turned into bounds first and
+variables with no lower limit split in two. Whole-number variables are found
+by branch and bound, depth first on the most fractional variable, nearer
+side first, pruned by the best answer so far, up to 5000 programmes. The
+tableau is at most 512K numbers (4 MB). Values within 1e-9 of a whole number
+are written as that number.
+
+The window keeps the model on the sheet whether or not the answer is kept,
+as hidden names named as Excel names its Solver models (`solver_opt`,
+`solver_typ`, `solver_val`, `solver_adj`, `solver_num`, `solver_lhsN`,
+`solver_relN`, `solver_rhsN`, `solver_neg`, with `solver_eng` 2 for a linear
+model), so a model made in Excel opens in GFOpenCalc and the other way round.
+ODS keeps them as named expressions (ODF has no hidden names, which the save
+notes). Keeping the answer is one Undo step.
+
+ARexx: `SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs ...]
+[INT cells] [BIN cells] [ANY] [KEEP]` gives "target cell=value ..."; with no
+model words it solves the sheet's own model. RC 5 when the model has no
+answer (no values meet it, no limit, or not linear), 10 when it does not
+make sense; LASTERROR says why. Test script: tests/arexx/calc-solver.rexx.
+
 ## Multiple Operations
 
 GFOpenCalc 0.1.67 supports the column, row and two-variable forms of Apache

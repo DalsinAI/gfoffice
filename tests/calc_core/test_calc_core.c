@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "opencalc_core.h"
+#include "oc_internal.h"                /* oc_lp_solve */
 #include "owf_zip.h"
 
 static int failures, checks;
@@ -5428,6 +5429,208 @@ static void test_pdf(void)
     oc_core_free(core);
 }
 
+static void solver_constraint(oc_solver_model *m, const char *lhs, int rel, const char *rhs)
+{
+    oc_solver_constraint *c = &m->constraints[m->nconstraints++];
+    snprintf(c->lhs, sizeof c->lhs, "%s", lhs);
+    c->rel = rel;
+    snprintf(c->rhs, sizeof c->rhs, "%s", rhs);
+}
+
+/* The linear programme on its own: a small one, an equality, free variables,
+ * an infeasible one, an unbounded one, a degenerate one, and integers. */
+static void test_solver_lp(void)
+{
+    double x[4], obj = 0.0;
+    unsigned nodes = 0;
+    {
+        /* max 3x + 5y: x <= 4, 2y <= 12, 3x + 2y <= 18 -> x 2, y 6, 36 */
+        static const double a[] = { 1, 0, 0, 2, 3, 2 }, b[] = { 4, 12, 18 }, c[] = { 3, 5 };
+        static const int rel[] = { -1, -1, -1 };
+        oc_lp lp = { 2, 3, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(x[0] - 2) < 1e-9 && fabs(x[1] - 6) < 1e-9 && fabs(obj - 36) < 1e-9);
+    }
+    {
+        /* min x + y (max -x - y): x + 2y >= 4, 3x + y >= 6, x - y = 0 -> x = y = 1.5 */
+        static const double a[] = { 1, 2, 3, 1, 1, -1 }, b[] = { 4, 6, 0 }, c[] = { -1, -1 };
+        static const int rel[] = { 1, 1, 0 };
+        oc_lp lp = { 2, 3, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(x[0] - 1.5) < 1e-9 && fabs(x[1] - 1.5) < 1e-9 && fabs(obj + 3) < 1e-9);  /* 4x >= 6 binds */
+    }
+    {
+        /* free variables: max -|...|: max x + y with x + y <= -3, x - y <= 1, -x + y <= 1 (x, y may be < 0) */
+        static const double a[] = { 1, 1, 1, -1, -1, 1 }, b[] = { -3, 1, 1 }, c[] = { 1, 1 };
+        static const int rel[] = { -1, -1, -1 };
+        static const double lo[] = { -HUGE_VAL, -HUGE_VAL }, up[] = { HUGE_VAL, HUGE_VAL };
+        oc_lp lp = { 2, 3, a, rel, b, c, lo, up, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(obj + 3) < 1e-9 && fabs(x[0] - x[1]) <= 1 + 1e-9);
+    }
+    {
+        /* infeasible: x + y <= 1, x + y >= 2 */
+        static const double a[] = { 1, 1, 1, 1 }, b[] = { 1, 2 }, c[] = { 1, 1 };
+        static const int rel[] = { -1, 1 };
+        oc_lp lp = { 2, 2, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_INFEASIBLE);
+    }
+    {
+        /* unbounded: max x with x - y <= 1 */
+        static const double a[] = { 1, -1 }, b[] = { 1 }, c[] = { 1, 0 };
+        static const int rel[] = { -1 };
+        oc_lp lp = { 2, 1, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_UNBOUNDED);
+    }
+    {
+        /* degenerate (several rows meet at the answer): max x + y, x <= 1 three ways, y <= 1, x + y <= 2 */
+        static const double a[] = { 1, 0, 2, 0, 1, 1, 0, 1, 3, 0 }, b[] = { 1, 2, 2, 1, 3 }, c[] = { 1, 1 };
+        static const int rel[] = { -1, -1, -1, -1, -1 };
+        oc_lp lp = { 2, 5, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(obj - 2) < 1e-9);
+    }
+    {
+        /* integers: max 5x + 4y: 6x + 4y <= 24, x + 2y <= 6 -> relaxed 3, 1.5 (21); whole 4, 0 (20) */
+        static const double a[] = { 6, 4, 1, 2 }, b[] = { 24, 6 }, c[] = { 5, 4 };
+        static const int rel[] = { -1, -1 };
+        static const unsigned char whole[] = { 1, 1 };
+        oc_lp lp = { 2, 2, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(x[0] - 3) < 1e-9 && fabs(x[1] - 1.5) < 1e-9 && fabs(obj - 21) < 1e-9);
+        lp.integer = whole;
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(obj - 20) < 1e-9 && fabs(x[0] - 4) < 1e-9 && fabs(x[1]) < 1e-9 && nodes > 1);
+    }
+    {
+        /* a knapsack of binaries: values 10 13 7 8, weights 3 4 2 3, room 7 -> the first two, 23 */
+        static const double a[] = { 3, 4, 2, 3 }, b[] = { 7 }, c[] = { 10, 13, 7, 8 };
+        static const double lo[] = { 0, 0, 0, 0 }, up[] = { 1, 1, 1, 1 };
+        static const int rel[] = { -1 };
+        static const unsigned char whole[] = { 1, 1, 1, 1 };
+        oc_lp lp = { 4, 1, a, rel, b, c, lo, up, whole, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(obj - 23) < 1e-9 && x[0] == 1 && x[1] == 1 && x[2] == 0 && x[3] == 0);
+        lp.max_nodes = 1;
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_LIMIT_NONE);
+    }
+}
+
+static void test_solver(void)
+{
+    static const char *const xlsx = "build/host/calc-core-solver.xlsx";
+    static const char *const ods = "build/host/calc-core-solver.ods";
+    oc_core *core = fresh();
+    oc_solver_model m, back;
+    oc_solver_result r;
+    char bad[64];
+    unsigned long changes;
+    if (!core)
+        return;
+    /* two products: B2, C2 made; profit B5 = 3B2 + 5C2; machine hours B3 <= 4, C3: 2 C2 <= 12, B4: 3B2 + 2C2 <= 18 */
+    enter_at(core, "A1", "Made");
+    enter_at(core, "B2", "0");
+    enter_at(core, "C2", "0");
+    enter_at(core, "B3", "=B2");
+    enter_at(core, "C3", "=2*C2");
+    enter_at(core, "B4", "=3*B2+2*C2");
+    enter_at(core, "B5", "=3*B2+5*C2");
+    enter_at(core, "D3", "4");
+    enter_at(core, "D4", "12");
+    oc_solver_model_init(&m);
+    snprintf(m.target, sizeof m.target, "B5");
+    snprintf(m.variables, sizeof m.variables, "B2:C2");
+    solver_constraint(&m, "B3", OC_SOLVER_LE, "D3");
+    solver_constraint(&m, "C3", OC_SOLVER_LE, "D4");
+    solver_constraint(&m, "B4", OC_SOLVER_LE, "18");
+    changes = oc_core_changes(core);
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK);
+    CHECK(r.status == OC_SOLVED && r.nvariables == 2 && r.value[0] == 2 && r.value[1] == 6 && r.objective == 36);
+    CHECK(num(core, "B2") == 0 && num(core, "B5") == 0 && oc_core_changes(core) == changes);
+    CHECK(oc_core_solver_apply(core, &m, &r, bad, sizeof bad) == OWF_OK);
+    CHECK(num(core, "B2") == 2 && num(core, "C2") == 6 && num(core, "B5") == 36);
+    CHECK(oc_core_solver_model(core, &back) == 1);
+    CHECK_STR(back.target, "'Sheet1'!$B$5");
+    CHECK_STR(back.variables, "'Sheet1'!$B$2:$C$2");
+    CHECK(back.goal == OC_SOLVER_MAX && back.nonnegative && back.nconstraints == 3);
+    CHECK_STR(back.constraints[0].rhs, "'Sheet1'!$D$3");
+    CHECK_STR(back.constraints[2].rhs, "18");
+    CHECK(back.constraints[1].rel == OC_SOLVER_LE);
+    CHECK(oc_core_undo(core) == OWF_OK && num(core, "B2") == 0 && !oc_core_solver_model(core, &back));
+    CHECK(oc_core_redo(core) == OWF_OK && num(core, "C2") == 6 && oc_core_solver_model(core, &back));
+
+    /* minimise, a whole-number variable, a value goal */
+    m.goal = OC_SOLVER_MIN;
+    m.nconstraints = 0;
+    solver_constraint(&m, "B4", OC_SOLVER_GE, "7");
+    solver_constraint(&m, "B2", OC_SOLVER_INT, "");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    /* min 3B2 + 5C2 with 3B2 + 2C2 >= 7, B2 whole: B2 = 3 gives 9; B2 = 2, C2 = .5 gives 8.5 */
+    CHECK(fabs(r.objective - 8.5) < 1e-9 && r.value[0] == 2 && fabs(r.value[1] - 0.5) < 1e-9);
+    m.goal = OC_SOLVER_VALUE;
+    m.value = 20;
+    m.nconstraints = 0;
+    solver_constraint(&m, "C2", OC_SOLVER_EQ, "1");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED && fabs(r.value[0] - 5) < 1e-9 &&
+          fabs(r.objective - 20) < 1e-9);
+    /* fewer constraints: the old solver_lhs2 goes */
+    CHECK(oc_core_solver_apply(core, &m, NULL, bad, sizeof bad) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.nconstraints == 1 && back.goal == OC_SOLVER_VALUE &&
+          back.value == 20);
+    {
+        int i, lhs2 = 0;
+        for (i = 0; i < oc_core_book(core)->nnames; i++)
+            if (!strcmp(oc_core_book(core)->names[i].name, "solver_lhs2"))
+                lhs2 = 1;
+        CHECK(!lhs2);
+    }
+
+    /* no answer, no limit, not linear, bad models */
+    m.goal = OC_SOLVER_MAX;
+    m.nconstraints = 0;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_UNBOUNDED && r.why[0]);
+    solver_constraint(&m, "B4", OC_SOLVER_LE, "5");
+    solver_constraint(&m, "B4", OC_SOLVER_GE, "6");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_INFEASIBLE);
+    enter_at(core, "B6", "=B2*C2");
+    snprintf(m.target, sizeof m.target, "B6");
+    m.nconstraints = 0;
+    solver_constraint(&m, "B4", OC_SOLVER_LE, "18");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_NOT_LINEAR && strstr(r.why, "B6"));
+    snprintf(m.target, sizeof m.target, "D3");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT && strstr(r.why, "D3"));
+    snprintf(m.target, sizeof m.target, "B5");
+    snprintf(m.variables, sizeof m.variables, "B2:C2,B3");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT && strstr(r.why, "B3"));
+    snprintf(m.variables, sizeof m.variables, "B2:C2");
+    solver_constraint(&m, "B4", OC_SOLVER_LE, "D3:D4");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT);
+    m.nconstraints = 0;
+    solver_constraint(&m, "B4", OC_SOLVER_BIN, "");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT);
+
+    /* a binary choice, constraints on ranges, a limit range of the same size */
+    m.nconstraints = 0;
+    solver_constraint(&m, "B3:C3", OC_SOLVER_LE, "D3:D4");
+    solver_constraint(&m, "B2:C2", OC_SOLVER_BIN, "");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED && r.value[0] == 1 && r.value[1] == 1 &&
+          r.objective == 8);
+
+    /* the model in files */
+    CHECK(oc_core_solver_apply(core, &m, &r, bad, sizeof bad) == OWF_OK);
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.nconstraints == 2 && back.constraints[1].rel == OC_SOLVER_BIN);
+    CHECK(oc_core_solve(core, &back, &r) == OWF_OK && r.status == OC_SOLVED && r.objective == 8);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.nconstraints == 2);
+    CHECK(oc_core_solve(core, &back, &r) == OWF_OK && r.status == OC_SOLVED && r.objective == 8);
+    oc_core_free(core);
+    remove(xlsx);
+    remove(ods);
+}
+
 int main(void)
 {
     test_more();
@@ -5483,6 +5686,8 @@ int main(void)
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_definition_text();
+    test_solver_lp();
+    test_solver();
     test_pdf();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);
