@@ -6,12 +6,14 @@
  * the run's character style, then the direct formatting. Theme fonts
  * (Calibri, Cambria...) are looked up in the theme. Lists keep their
  * numbers and bullets as text; fields PAGE, NUMPAGES, DATE and TIME become
- * fields and the others show their last result; tracked insertions are
- * kept and deletions dropped; tables become rows of text with tabs between
- * the cells; footnotes and endnotes go to the end.
+ * fields and the others show their last result; tracked insertions and
+ * deletions (w:ins, w:del, w:moveTo, w:moveFrom, and on paragraph marks) are
+ * the document's tracked changes (1.5); tables become rows of text with tabs
+ * between the cells; footnotes and endnotes go to the end.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_track.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,6 +85,7 @@ typedef struct {
     int nmarks;
     int section_start;        /* 2.0.25: first body paragraph of the section being read */
     unsigned char section_break; /* the break before it (owf_section_break) */
+    int in_del;               /* 1.5: inside a tracked deletion: its w:delText is its text */
 } docx;
 
 /* 2.0.19: a table style (w:style w:type="table"), worked out for one table: what it gives its cells'
@@ -993,13 +996,13 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
         }
         return;
     }
-    if (!strcmp(c->name, "t")) {
+    if (!strcmp(c->name, "t") || (d->in_del && !strcmp(c->name, "delText"))) {
         if (!hiding(d) && c->first && c->first->type == OWF_XML_TEXT) {
             set_fmt(d, fmt);
             if (d->current_href) owf_builder_link_text(d->b, c->first->name, c->first->length, d->current_href);
             else owf_builder_text(d->b, c->first->name, c->first->length);
         }
-    } else if (!strcmp(c->name, "instrText")) {
+    } else if (!strcmp(c->name, "instrText") || (d->in_del && !strcmp(c->name, "delInstrText"))) {
         if (d->nfields && d->fields[d->nfields - 1].code && c->first && c->first->type == OWF_XML_TEXT) {
             field_state *f = &d->fields[d->nfields - 1];
             size_t have = strlen(f->instr), n = c->first->length;
@@ -1175,10 +1178,25 @@ static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para
             mark_start(d, c);                        /* 2.0.21 */
         } else if (is_w(d, c, "bookmarkEnd")) {
             mark_end(d, c);
-        } else if (is_w(d, c, "pPr") || is_w(d, c, "del") || is_w(d, c, "moveFrom") || is_w(d, c, "proofErr") ||
+        } else if (is_w(d, c, "ins") || is_w(d, c, "moveTo") || is_w(d, c, "del") || is_w(d, c, "moveFrom")) {
+            /* 1.5: a tracked change, its runs the document's change */
+            int del = is_w(d, c, "del") || is_w(d, c, "moveFrom");
+            int rev = owf_track_add(d->doc, del ? OWF_REV_DELETE : OWF_REV_INSERT, owf_xml_attr(c, d->w, "author"),
+                                    owf_xml_attr(c, d->w, "date"));
+            owf_track_span t;
+            if (!rev) d->failed = 1;
+            if (is_w(d, c, "moveTo") || is_w(d, c, "moveFrom"))
+                owf_report_add(d->report, OWF_NOTE_APPROX, "Moved text is kept as a deletion and an insertion");
+            owf_track_begin(&t, d->b);
+            owf_track_switch(&t, d->b, rev, 0);
+            d->in_del += del;
+            para_content(d, c, para_char);
+            d->in_del -= del;
+            owf_track_switch(&t, d->b, 0, 0);
+        } else if (is_w(d, c, "pPr") || is_w(d, c, "proofErr") ||
                    is_w(d, c, "permStart") || is_w(d, c, "permEnd") || is_w(d, c, "commentRangeStart") ||
                    is_w(d, c, "commentRangeEnd")) {
-            /* deleted text and marks */
+            /* marks */
         } else if (is_w(d, c, "fldSimple")) {
             owf_field field;
             const char *instr = owf_xml_attr(c, d->w, "instr");
@@ -1390,6 +1408,23 @@ static void paragraph(docx *d, const owf_xml_node *p)
     para_content(d, p, &cf);
     owf_builder_end_para(d->b);
     para_names(d, pstyle ? wval(d, pstyle) : NULL);
+    {
+        /* 1.5: its paragraph mark inserted or deleted (w:pPr/w:rPr/w:ins, w:del) */
+        const owf_xml_node *mrpr = wchild(d, ppr, "rPr");
+        const owf_xml_node *mins = wchild(d, mrpr, "ins"), *mdel = wchild(d, mrpr, "del");
+        const owf_xml_node *m = mdel ? mdel : mins;
+        owf_story *st = d->b->story;
+        if (!m) m = mdel = wchild(d, mrpr, "moveFrom");
+        if (!m) m = wchild(d, mrpr, "moveTo");
+        if (m && st && st->nparas) {
+            int rev = owf_track_add(d->doc, mdel ? OWF_REV_DELETE : OWF_REV_INSERT, owf_xml_attr(m, d->w, "author"),
+                                    owf_xml_attr(m, d->w, "date"));
+            if (!rev) d->failed = 1;
+            st->paras[st->nparas - 1].mark_revision = rev;
+        }
+        if (wchild(d, ppr, "pPrChange") || wchild(d, mrpr, "rPrChange"))
+            owf_report_add(d->report, OWF_NOTE_APPROX, "Tracked format changes are kept as the format is now");
+    }
     if (wchild(d, ppr, "sectPr")) {
         const owf_xml_node *sect = wchild(d, ppr, "sectPr");
         record_section_columns(d, sect);
@@ -1774,6 +1809,9 @@ static void section(docx *d, const owf_xml_node *sect)
         owf_xml *settings = read_related(d, "/settings");
         const owf_xml_node *eo = settings ? wchild(d, owf_xml_root(settings), "evenAndOddHeaders") : NULL;
         even_odd = eo && on_off(d, eo);
+        /* 1.5: whether changes are recorded */
+        eo = settings ? wchild(d, owf_xml_root(settings), "trackRevisions") : NULL;
+        if (eo && on_off(d, eo)) d->doc->track_changes = 1;
         owf_xml_free(settings);
     }
     story(d, head_default, &d->doc->header);
