@@ -131,7 +131,7 @@ static const char *function_name(int function)
 
 static int put_text(owf_calc *calc, int sheet, unsigned row, unsigned col, const char *text)
 {
-    char input[128];
+    char input[256];
     snprintf(input, sizeof input, "'%s", text ? text : "");
     return owf_calc_enter(calc, sheet, row, col, input);
 }
