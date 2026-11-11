@@ -2298,6 +2298,14 @@ static int comment_at(ow_editor *editor, const ed_comment *list, int n)
     ow_position caret = clamp_position(editor, editor->selection.focus);
     int k, best = -1;
     size_t best_len = (size_t)-1;
+    /* the one Next/Previous selected: its runs are the selection's ends (others can be at the same places) */
+    for (k = 0; k < n; ++k) {
+        ow_position s = comment_start(editor, &list[k]);
+        if (editor->selection.anchor.paragraph == s.paragraph && editor->selection.anchor.run == s.run &&
+            editor->selection.anchor.byte_offset == 0 && editor->selection.focus.paragraph == list[k].para &&
+            editor->selection.focus.run == list[k].run && editor->selection.focus.byte_offset == 0)
+            return k;
+    }
     for (k = 0; k < n; ++k) {
         ow_position s = comment_start(editor, &list[k]), e = run_position(editor, list[k].para, list[k].run);
         size_t len;
