@@ -96,8 +96,7 @@ keeps a name the table had to change to stay unique), and reads scenario
 tables back into their sheet's scenarios, so they are not sheets in
 GFOpenCalc. XLSX writes the sheet's `scenarios` element (each `scenario`
 with its `inputCells` and their values, `current` and `show` for the one
-shown) and reads Excel's; Excel keeps values only, so a formula in a
-scenario is written as its text.
+shown) and reads Excel's (values, as GFOpenCalc keeps them too).
 
 ARexx: `SCENARIO ADD name cells [comment]`, `SCENARIO UPDATE name [cells
 [comment]]`, `SCENARIO SHOW name`, `SCENARIO DELETE name`, `SCENARIO LIST`
