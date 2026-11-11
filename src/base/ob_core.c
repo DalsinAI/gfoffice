@@ -167,6 +167,7 @@ int ob_currency_parse(const char *text, ob_int *pence)
     if (*s == '\xa3' || *s == '$') s++;              /* a pound (ISO-8859-1) or dollar sign */
     else if ((unsigned char)s[0] == 0xc2 && (unsigned char)s[1] == 0xa3) s += 2;    /* UTF-8 pound */
     if (*s == '-' && !neg) { neg = 1; s++; }
+    if (!isdigit((unsigned char)*s) && !(*s == '.' && isdigit((unsigned char)s[1]))) return 0;
     dot = strchr(s, '.');
     copy(whole, sizeof whole, s);
     if (dot) whole[dot - s] = 0;
@@ -247,7 +248,7 @@ static int read_num(const char **s, int min, int max, int *out)
 }
 
 /* YYYY-MM-DD, or DD/MM/YYYY (as the UK writes a date), into YYYY-MM-DD. */
-static int parse_date(const char **s, char out[11])
+static int parse_date(const char **s, char out[16])
 {
     int y, m, d;
     const char *t = *s;
@@ -260,13 +261,13 @@ static int parse_date(const char **s, char out[11])
             || !read_num(&t, 4, 4, &y)) return 0;
     }
     if (y < 1 || m < 1 || m > 12 || d < 1 || d > days_in(y, m)) return 0;
-    snprintf(out, 11, "%04d-%02d-%02d", y, m, d);
+    snprintf(out, 16, "%04d-%02d-%02d", y, m, d);
     *s = t;
     return 1;
 }
 
 /* H:MM or H:MM:SS into HH:MM:SS. */
-static int parse_time(const char **s, char out[9])
+static int parse_time(const char **s, char out[16])
 {
     int h, m, sec = 0;
     const char *t = *s;
@@ -276,7 +277,7 @@ static int parse_time(const char **s, char out[9])
         if (!read_num(&t, 2, 2, &sec)) return 0;
     }
     if (h > 23 || m > 59 || sec > 59) return 0;
-    snprintf(out, 9, "%02d:%02d:%02d", h, m, sec);
+    snprintf(out, 16, "%02d:%02d:%02d", h, m, sec);
     *s = t;
     return 1;
 }
@@ -372,7 +373,7 @@ static int convert(const ob_field *f, const char *in, value *v, char *err, size_
         v->kind = V_INT;
         return 1;
     case OB_DATE: {
-        char d[11];
+        char d[16];
         if (!parse_date(&s, d) || *s) {
             snprintf(err, errsize, "%s must be a date, such as 2026-11-11 or 11/11/2026", label);
             return 0;
@@ -382,7 +383,7 @@ static int convert(const ob_field *f, const char *in, value *v, char *err, size_
         return 1;
     }
     case OB_TIME: {
-        char h[9];
+        char h[16];
         if (!parse_time(&s, h) || *s) {
             snprintf(err, errsize, "%s must be a time, such as 14:30 or 14:30:15", label);
             return 0;
@@ -392,7 +393,7 @@ static int convert(const ob_field *f, const char *in, value *v, char *err, size_
         return 1;
     }
     case OB_DATETIME: {
-        char d[11], h[9] = "00:00:00";
+        char d[16], h[16] = "00:00:00";
         if (!parse_date(&s, d) || (*s && (*s != ' ' || (s = skip_space(s), !parse_time(&s, h)))) || *s) {
             snprintf(err, errsize, "%s must be a date and time, such as 2026-11-11 14:30", label);
             return 0;
@@ -417,7 +418,7 @@ static int convert(const ob_field *f, const char *in, value *v, char *err, size_
             size_t i;
             copy(list, sizeof list, f->choices);
             for (i = 0; list[i]; i++) if (list[i] == '|') list[i] = ',';
-            snprintf(err, errsize, "%s must be one of: %s", label, list);
+            snprintf(err, errsize, "%.60s must be one of: %.180s", label, list);
             return 0;
         }
         v->kind = V_TEXT;
@@ -1372,7 +1373,10 @@ int ob_row_add(ob_project *p, const char *table, int n, const char *const *field
     char *sql;
     int i, rc;
     if (!ob_table_get(p, table, &t)) return 0;
-    if (n < 0 || n > t.nfields || !names_unique(p, n, fields)) return n < 0 || n > t.nfields ? fail(p, "Too many fields") : 0;
+    if (n < 0 || n > t.nfields) return fail(p, "Too many fields");
+    if (!names_unique(p, n, fields)) return 0;
+    for (i = 0; i < n; i++)
+        if (!field_named(&t, fields[i])) return fail(p, "%s has no field %s", t.name, fields[i]);
     /* a required field left out with no default: say so before SQLite does */
     for (i = 0; i < t.nfields; i++) {
         const ob_field *f = &t.fields[i];

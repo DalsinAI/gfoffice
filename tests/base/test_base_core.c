@@ -12,7 +12,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef __amigaos__
 #include <unistd.h>
+#endif
 #include <sqlite3.h>
 #include "openbase_core.h"
 
@@ -29,7 +31,7 @@ static const char *path(const char *file)
     static char p[4][600];
     static int k;
     k = (k + 1) % 4;
-    snprintf(p[k], sizeof p[k], "%s/%s", dir, file);
+    snprintf(p[k], sizeof p[k], "%s%s%s", dir, dir[0] && dir[strlen(dir) - 1] == ':' ? "" : "/", file);
     return p[k];
 }
 
@@ -718,9 +720,18 @@ int main(int argc, char **argv)
     if (argc > 1) {
         snprintf(dir, sizeof dir, "%s", argv[1]);
     } else {
+#ifdef __amigaos__
+        printf("usage: test-base-core DIR (a scratch drawer, such as RAM:Test or DH1:Test)\n");
+        return 2;
+#else
         char t[] = "/tmp/obtestXXXXXX";
         if (!mkdtemp(t)) { perror("mkdtemp"); return 2; }
         snprintf(dir, sizeof dir, "%s", t);
+#endif
+    }
+    {
+        size_t n = strlen(dir);
+        if (n && (dir[n - 1] == '/' || dir[n - 1] == ':')) dir[n - 1] = dir[n - 1] == ':' ? ':' : 0;
     }
     test_currency();
     test_values();
