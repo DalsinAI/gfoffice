@@ -405,6 +405,8 @@ static void editor_repaint(const char *message);
 static int editor_result(int rc, const char *message);
 static void review_author_init(void);
 static void sync_track_menu(void);
+static char review_author[64];                       /* 2.0.27: the name tracked changes are made under */
+static int review_author_set;
 static int mm_to_twips(int mm);
 
 static const char classic_theme[] =
@@ -3912,8 +3914,6 @@ static void set_paragraph_alignment(owf_align align)
 }
 
 /* ---- 2.0.27: tracked changes ---- */
-static char review_author[64];
-static int review_author_set;
 
 /* The name changes are made under: the ENV USER (or USERNAME) variable until Review Author... names one. */
 static void review_author_init(void)
