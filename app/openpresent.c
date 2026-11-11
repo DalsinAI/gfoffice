@@ -6016,7 +6016,7 @@ static void do_export_handouts(void)
     int per;
     if (!deck) return;
     snprintf(initial, sizeof initial, "%d", pdf_handout_slides);
-    if (!text_requester("Export Handouts", UNITS " a page (1, 2, 3, 4, 6, 9)", initial, entered, sizeof entered))
+    if (!text_requester("Export Handouts", "Slides a page (1, 2, 3, 4, 6, 9)", initial, entered, sizeof entered))
         return;
     per = atoi(entered);
     if (per != 1 && per != 2 && per != 3 && per != 4 && per != 6 && per != 9) {
