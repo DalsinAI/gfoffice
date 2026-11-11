@@ -95,7 +95,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.21 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.22 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPUBLISHER"
 #define UNIT "Page"
 #define UNIT_UPPER "PAGE"
@@ -106,7 +106,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.27 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.28 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -136,6 +136,7 @@ enum {
     M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
+    M_DISTRIBUTE_ACROSS, M_DISTRIBUTE_DOWN, M_GROUP, M_UNGROUP,
     M_POSITION_SIZE, M_APPEARANCE, M_PICTURE_CROP,
     M_TABLE_INSERT_ROW, M_TABLE_DELETE_ROW, M_TABLE_INSERT_COLUMN, M_TABLE_DELETE_COLUMN,
     M_TABLE_STYLE,
@@ -233,6 +234,11 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Align Top", NULL, 0, 0, (APTR)M_ALIGN_TOP },
     { NM_ITEM, "Align Middle", NULL, 0, 0, (APTR)M_ALIGN_MIDDLE },
     { NM_ITEM, "Align Bottom", NULL, 0, 0, (APTR)M_ALIGN_BOTTOM },
+    { NM_ITEM, "Distribute Across", NULL, 0, 0, (APTR)M_DISTRIBUTE_ACROSS },
+    { NM_ITEM, "Distribute Down", NULL, 0, 0, (APTR)M_DISTRIBUTE_DOWN },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Group", NULL, 0, 0, (APTR)M_GROUP },
+    { NM_ITEM, "Ungroup", NULL, 0, 0, (APTR)M_UNGROUP },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Position and Size...", NULL, 0, 0, (APTR)M_POSITION_SIZE },
     { NM_ITEM, "Appearance...", NULL, 0, 0, (APTR)M_APPEARANCE },
@@ -423,6 +429,15 @@ static struct {
     int active, moved, mode, obj, mouse_x, mouse_y;
     owf_obj original, preview;
 } object_drag;
+
+/* Objects picked together (Shift+click, or a drag round them on the slide). They count only while
+ * selected_obj is the last of them on the same slide with the same objects, so anything that sets
+ * selected_obj, changes the slide or adds or removes an object drops them. */
+#define MAX_PICKED 64
+static int picked_obj[MAX_PICKED], npicked_obj, picked_slide = -1, picked_nobjs = -1;
+/* A drag round objects (band) or of several objects (or a group) together; last is the frame drawn. */
+static struct { int active, band, moved, mouse_x, mouse_y, shown, lx, ly, lw, lh; } multi_drag;
+static UWORD mouse_qual;
 
 static void draw_all(void);
 static void draw_slide(void);
@@ -2488,6 +2503,18 @@ static void draw_selection(const opr_slide *s)
     box b;
     int x[8], y[8], i, frame;
     LONG accent;
+    if (picks_together()) {
+        /* several objects, or a group: a frame round each, no handles (they move, not resize) */
+        int p[MAX_PICKED], n = picks(p), t[4];
+        accent = ogt_pen(&ctx, "accent");
+        for (i = 0; i < n; i++) {
+            if (opr_objs_box(deck, current, &p[i], 1, t) < 0) continue;
+            twip_pixel_box(t, &b);
+            ogt_frame(win->RPort, accent, b.x - 2, b.y - 2, b.w + 4, b.h + 4);
+            ogt_frame(win->RPort, accent, b.x - 3, b.y - 3, b.w + 6, b.h + 6);
+        }
+        return;
+    }
     if (selected_obj < 0 || !object_pixel_box(selected_obj, &b)) return;
     accent = ogt_pen(&ctx, "accent");
     ogt_frame(win->RPort, accent, b.x - 2, b.y - 2, b.w + 4, b.h + 4);
@@ -4577,7 +4604,7 @@ static void slide_mouse_down(int mx, int my)
         return;
     }
     handle = selection_handle(mx, my);
-    if (handle != DRAG_NONE) {
+    if (handle != DRAG_NONE && !picks_together() && !(mouse_qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT))) {
         stop_typing();
         start_object_drag(selected_obj, handle, mx, my);
         set_status("Resize the selected object.");
@@ -4586,14 +4613,52 @@ static void slide_mouse_down(int mx, int my)
     }
     obj = hit_slide_object(mx, my, &at);
     stop_typing();
-    if (obj < 0) {
-        selected_obj = -1;
+    if (obj == OPR_NOTES) obj = -1;
+    if (mouse_qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) {
+        /* Shift+click: one more object picked, or one taken out */
         memset(&object_drag, 0, sizeof object_drag);
-        set_status("Ready.");
+        if (obj >= 0) toggle_pick(obj);
+        picks_status();
         draw_slide();
         draw_status();
         return;
     }
+    if (obj < 0) {
+        /* a drag over the slide picks what it goes round */
+        selected_obj = -1;
+        npicked_obj = 0;
+        memset(&object_drag, 0, sizeof object_drag);
+        start_multi_drag(1, mx, my);
+        set_status("Ready; drag round objects to pick them together.");
+        draw_slide();
+        draw_status();
+        return;
+    }
+    {
+        int p[MAX_PICKED], n = picks(p), top = opr_obj_top(deck, current, obj), i;
+        for (i = 0; i < n && p[i] != top; i++)
+            ;
+        if (n > 1 && i < n) {
+            /* one of the objects picked: they move together */
+            memset(&object_drag, 0, sizeof object_drag);
+            start_multi_drag(0, mx, my);
+            picks_status();
+            draw_status();
+            return;
+        }
+        if (top >= 0 && deck->slides[current].objs[top].kind == OWF_OBJ_GROUP) {
+            /* a group moves as one */
+            memset(&object_drag, 0, sizeof object_drag);
+            npicked_obj = 0;
+            selected_obj = top;
+            start_multi_drag(0, mx, my);
+            picks_status();
+            draw_slide();
+            draw_status();
+            return;
+        }
+    }
+    npicked_obj = 0;
     selected_obj = obj;
     start_object_drag(obj, DRAG_MOVE, mx, my);
     set_status("Drag to move; release over text to type.");
@@ -4749,11 +4814,279 @@ static void finish_object_drag(int mx, int my)
     draw_status();
 }
 
+/* ---- Several objects at once (P5) ---- */
+
+/* The objects picked: several top-level ones, or the one selected (its group when it is in one). */
+static int picks(int *out)
+{
+    int i, n = npicked_obj;
+    if (!deck || current < 0 || current >= deck->nslides || selected_obj < 0 ||
+        selected_obj >= deck->slides[current].nobjs)
+        return 0;
+    if (n >= 2 && picked_slide == current && picked_nobjs == deck->slides[current].nobjs &&
+        picked_obj[n - 1] == selected_obj) {
+        for (i = 0; i < n; i++) {
+            if (picked_obj[i] < 0 || picked_obj[i] >= deck->slides[current].nobjs ||
+                deck->slides[current].objs[picked_obj[i]].parent >= 0)
+                break;
+            out[i] = picked_obj[i];
+        }
+        if (i == n) return n;
+    }
+    out[0] = opr_obj_top(deck, current, selected_obj);
+    return out[0] >= 0;
+}
+
+static void set_picks(const int *objs, int n)
+{
+    if (n > MAX_PICKED) n = MAX_PICKED;
+    if (n > 0) memmove(picked_obj, objs, (size_t)n * sizeof *objs);
+    npicked_obj = n;
+    picked_slide = current;
+    picked_nobjs = deck && current >= 0 && current < deck->nslides ? deck->slides[current].nobjs : -1;
+    selected_obj = n > 0 ? picked_obj[n - 1] : -1;
+}
+
+/* Whether the selection moves as a whole: several objects, or a group. */
+static int picks_together(void)
+{
+    int p[MAX_PICKED], n = picks(p);
+    return n > 1 || (n == 1 && deck->slides[current].objs[p[0]].kind == OWF_OBJ_GROUP);
+}
+
+/* A box in slide twips (x, y, width, height) on the screen. */
+static void twip_pixel_box(const int t[4], box *b)
+{
+    ol_scale sc;
+    current_slide_scale(&sc);
+    b->x = ol_scale_x(&sc, TW(t[0]));
+    b->y = ol_scale_y(&sc, TW(t[1]));
+    b->w = ol_scale_x(&sc, TW(t[0] + t[2])) - b->x;
+    b->h = ol_scale_y(&sc, TW(t[1] + t[3])) - b->y;
+}
+
+/* The drag's frame drawn, or taken away by drawing it again. */
+static void multi_frame(int x, int y, int w, int h)
+{
+    struct RastPort *rp = win->RPort;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    SetAPen(rp, (ULONG)ogt_pen(&ctx, "accent"));
+    SetDrMd(rp, COMPLEMENT);
+    Move(rp, x, y);
+    Draw(rp, x + w - 1, y);
+    Draw(rp, x + w - 1, y + h - 1);
+    Draw(rp, x, y + h - 1);
+    if (h > 2) Draw(rp, x, y + 1);
+    SetDrMd(rp, JAM1);
+}
+
+static void multi_frame_hide(void)
+{
+    if (multi_drag.shown) multi_frame(multi_drag.lx, multi_drag.ly, multi_drag.lw, multi_drag.lh);
+    multi_drag.shown = 0;
+}
+
+static void multi_frame_show(int x, int y, int w, int h)
+{
+    multi_frame_hide();
+    multi_drag.lx = x;
+    multi_drag.ly = y;
+    multi_drag.lw = w;
+    multi_drag.lh = h;
+    multi_frame(x, y, w, h);
+    multi_drag.shown = 1;
+}
+
+/* After a change to the picked objects: redrawn, the strip's thumbnail, the title's star. */
+static void picks_changed(const char *message)
+{
+    stop_typing();
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status(message);
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
+static void picks_status(void)
+{
+    char msg[80];
+    int p[MAX_PICKED], n = picks(p);
+    if (n > 1) snprintf(msg, sizeof msg, "%d objects picked: drag to move them; Object menu to align, space or group.", n);
+    else if (n == 1 && deck->slides[current].objs[p[0]].kind == OWF_OBJ_GROUP)
+        snprintf(msg, sizeof msg, "A group: drag to move it; Object > Ungroup takes it apart.");
+    else snprintf(msg, sizeof msg, n ? "Object selected." : "Ready.");
+    set_status(msg);
+}
+
+/* Shift+click: the object (its group) added to the objects picked, or taken out. */
+static void toggle_pick(int obj)
+{
+    int p[MAX_PICKED], n = picks(p), top = opr_obj_top(deck, current, obj), i;
+    for (i = 0; i < n && p[i] != top; i++)
+        ;
+    if (i < n) {
+        memmove(&p[i], &p[i + 1], (size_t)(n - i - 1) * sizeof *p);
+        n--;
+    } else if (n < MAX_PICKED && top >= 0)
+        p[n++] = top;
+    set_picks(p, n);
+}
+
+static void start_multi_drag(int band, int mx, int my)
+{
+    memset(&multi_drag, 0, sizeof multi_drag);
+    multi_drag.active = 1;
+    multi_drag.band = band;
+    multi_drag.mouse_x = mx;
+    multi_drag.mouse_y = my;
+}
+
+static void preview_multi_drag(int mx, int my)
+{
+    int p[MAX_PICKED], n, t[4];
+    box b;
+    if (!multi_drag.active) return;
+    if (!multi_drag.moved && abs(mx - multi_drag.mouse_x) < 3 && abs(my - multi_drag.mouse_y) < 3) return;
+    multi_drag.moved = 1;
+    if (multi_drag.band) {
+        int x = mx < multi_drag.mouse_x ? mx : multi_drag.mouse_x, y = my < multi_drag.mouse_y ? my : multi_drag.mouse_y;
+        multi_frame_show(x, y, abs(mx - multi_drag.mouse_x) + 1, abs(my - multi_drag.mouse_y) + 1);
+        return;
+    }
+    n = picks(p);
+    if (n < 1 || opr_objs_box(deck, current, p, n, t) < 0) return;
+    twip_pixel_box(t, &b);
+    multi_frame_show(b.x + mx - multi_drag.mouse_x, b.y + my - multi_drag.mouse_y, b.w, b.h);
+}
+
+static void finish_multi_drag(int mx, int my)
+{
+    int p[MAX_PICKED], n, found;
+    ol_scale sc;
+    char msg[80];
+    if (!multi_drag.active) return;
+    multi_frame_hide();
+    current_slide_scale(&sc);
+    if (multi_drag.band) {
+        int x0 = mx < multi_drag.mouse_x ? mx : multi_drag.mouse_x, y0 = my < multi_drag.mouse_y ? my : multi_drag.mouse_y;
+        int x1 = mx < multi_drag.mouse_x ? multi_drag.mouse_x : mx, y1 = my < multi_drag.mouse_y ? multi_drag.mouse_y : my;
+        int tx = twip_delta_x(&sc, slide_box.x, x0), ty = twip_delta_y(&sc, slide_box.y, y0);
+        found = multi_drag.moved ? opr_objs_in_rect(deck, current, tx, ty, twip_delta_x(&sc, x0, x1),
+                                                    twip_delta_y(&sc, y0, y1), p, MAX_PICKED) : 0;
+        if (found > MAX_PICKED) found = MAX_PICKED;
+        set_picks(p, found > 0 ? found : 0);
+        picks_status();
+        memset(&multi_drag, 0, sizeof multi_drag);
+        draw_slide();
+        draw_status();
+        return;
+    }
+    n = picks(p);
+    if (multi_drag.moved && n > 0) {
+        int dx = twip_delta_x(&sc, multi_drag.mouse_x, mx), dy = twip_delta_y(&sc, multi_drag.mouse_y, my);
+        memset(&multi_drag, 0, sizeof multi_drag);
+        if (opr_objs_move(undo, deck, current, p, n, dx, dy) < 0) {
+            set_status("Those objects could not be moved.");
+            draw_slide();
+            draw_status();
+            return;
+        }
+        if (n > 1) set_picks(p, n);
+        snprintf(msg, sizeof msg, n > 1 ? "%d objects moved." : "Group moved.", n);
+        picks_changed(msg);
+        return;
+    }
+    memset(&multi_drag, 0, sizeof multi_drag);
+    picks_status();
+    draw_slide();
+    draw_status();
+}
+
+/* Object > Distribute Across and Down. */
+static void distribute_picked(int vertical)
+{
+    int p[MAX_PICKED], n = picks(p);
+    if (n < 3) {
+        set_status("Pick three or more objects to space them evenly (Shift+click, or drag round them).");
+        draw_status();
+        return;
+    }
+    if (opr_objs_distribute(undo, deck, current, p, n, vertical) < 0) {
+        set_status("Those objects could not be spaced.");
+        draw_status();
+        return;
+    }
+    set_picks(p, n);
+    picks_changed(vertical ? "Objects spaced evenly down." : "Objects spaced evenly across.");
+}
+
+static void group_picked(void)
+{
+    int p[MAX_PICKED], n = picks(p), g = -1, rc;
+    if (n < 2) {
+        set_status("Pick two or more objects to group (Shift+click, or drag round them).");
+        draw_status();
+        return;
+    }
+    rc = opr_obj_group(undo, deck, current, p, n, &g);
+    if (rc < 0) {
+        set_status(rc == -2 ? "Groups and the layout's boxes (title, text) cannot go in a group." :
+                   "Those objects could not be grouped.");
+        draw_status();
+        return;
+    }
+    npicked_obj = 0;
+    selected_obj = g;
+    picks_changed("Grouped: they move as one; Object > Ungroup takes them apart.");
+}
+
+static void ungroup_selected(void)
+{
+    int p[MAX_PICKED], n = picks(p), first = -1, count = 0, i, k = 0, end;
+    if (n != 1 || deck->slides[current].objs[p[0]].kind != OWF_OBJ_GROUP) {
+        set_status("Select a group to ungroup.");
+        draw_status();
+        return;
+    }
+    if (opr_obj_ungroup(undo, deck, current, p[0], &first, &count) < 0) {
+        set_status("That group could not be taken apart.");
+        draw_status();
+        return;
+    }
+    /* what was in it, picked */
+    end = first + count;
+    for (i = first; i < end && k < MAX_PICKED; i++)
+        if (deck->slides[current].objs[i].parent < 0) p[k++] = i;
+    set_picks(p, k);
+    picks_changed("Ungrouped.");
+}
+
 static void nudge_selected(int dx, int dy, int pixels)
 {
     owf_obj box, before;
     ol_scale sc;
     int tx, ty;
+    if (deck && picks_together()) {
+        int p[MAX_PICKED], n = picks(p), t[4], after[4];
+        current_slide_scale(&sc);
+        tx = twip_delta_x(&sc, slide_box.x, slide_box.x + pixels);
+        ty = twip_delta_y(&sc, slide_box.y, slide_box.y + pixels);
+        if (tx < 1) tx = 1;
+        if (ty < 1) ty = 1;
+        if (opr_objs_box(deck, current, p, n, t) < 0 ||
+            opr_objs_move(undo, deck, current, p, n, dx * tx, dy * ty) < 0 ||
+            (opr_objs_box(deck, current, p, n, after) == 0 && after[0] == t[0] && after[1] == t[1]))
+            return;
+        if (n > 1) set_picks(p, n);
+        picks_changed("Objects nudged.");
+        return;
+    }
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs ||
         owf_deck_resolve(deck, current, selected_obj, &box, NULL) < 0)
         return;
@@ -5394,6 +5727,18 @@ static void edit_table_style(void)
 
 static void delete_selected_object(void)
 {
+    if (deck && picks_together()) {
+        int p[MAX_PICKED], n = picks(p);
+        if (opr_objs_delete(undo, deck, current, p, n) < 0) {
+            set_status("Those objects could not be deleted.");
+            draw_status();
+            return;
+        }
+        npicked_obj = 0;
+        selected_obj = -1;
+        picks_changed(n > 1 ? "Objects deleted." : "Group deleted.");
+        return;
+    }
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
         set_status("Select an object to delete.");
         draw_status();
@@ -5477,6 +5822,17 @@ static void arrange_selected_object(opr_arrange how, const char *message)
 static void align_selected_object(opr_align how, const char *message)
 {
     owf_obj before, after;
+    if (deck && picks_together()) {
+        int p[MAX_PICKED], n = picks(p);
+        if (opr_objs_align(undo, deck, current, p, n, how) < 0) {
+            set_status("Those objects could not be aligned.");
+            draw_status();
+            return;
+        }
+        if (n > 1) set_picks(p, n);
+        picks_changed(n > 1 ? "Objects aligned to the box round them." : message);
+        return;
+    }
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs ||
         owf_deck_resolve(deck, current, selected_obj, &before, NULL) < 0) {
         set_status("Select an object to align.");
@@ -6322,6 +6678,10 @@ static void menu_action(ULONG id)
     case M_ALIGN_TOP: align_selected_object(OPR_ALIGN_TOP, "Object aligned top."); break;
     case M_ALIGN_MIDDLE: align_selected_object(OPR_ALIGN_MIDDLE, "Object centred vertically."); break;
     case M_ALIGN_BOTTOM: align_selected_object(OPR_ALIGN_BOTTOM, "Object aligned bottom."); break;
+    case M_DISTRIBUTE_ACROSS: distribute_picked(0); break;
+    case M_DISTRIBUTE_DOWN: distribute_picked(1); break;
+    case M_GROUP: group_picked(); break;
+    case M_UNGROUP: ungroup_selected(); break;
     case M_POSITION_SIZE: edit_selected_geometry(); break;
     case M_APPEARANCE: edit_selected_appearance(); break;
     case M_PICTURE_CROP: edit_selected_picture_crop(); break;
@@ -6486,6 +6846,7 @@ static void events(void)
                 break;
             }
             if (outline_view) break;
+            mouse_qual = qual;
             if (code == SELECTDOWN) slide_mouse_down(mx, my);
             else if (code == SELECTUP) {
                 if (text_selecting) {
@@ -6495,6 +6856,7 @@ static void events(void)
                                "Typing: Esc stops." : "Text selected; type to replace or choose a format.");
                     draw_status();
                 } else if (object_drag.active) finish_object_drag(mx, my);
+                else if (multi_drag.active) finish_multi_drag(mx, my);
                 if (tb.pressed >= 0) {
                     ogt_toolbar_draw_one(&tb, &ctx, win->RPort, tb.pressed, 0, "window");
                     tb.pressed = -1;
@@ -6506,6 +6868,7 @@ static void events(void)
             if (sorter_view) sorter_mouse_move(mx, my);
             else if (text_selecting) drag_text_selection(mx, my);
             else if (object_drag.active) preview_object_drag(mx, my);
+            else if (multi_drag.active) preview_multi_drag(mx, my);
             break;
         case IDCMP_RAWKEY:
             if (code & 0x80) break;
@@ -6651,7 +7014,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
                   "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
-                  "SHOWPICKED OBJECTS GETTEXT "
+                  "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
                   "SETTEXT UNDO REDO QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "FAULT needs a code"); }
@@ -6865,6 +7228,93 @@ static int rexx_do_command(const char *command, char **result_out)
             for (i = 0; i < k && at + 8 < sizeof result_text; i++)
                 if (opr_obj_editable(deck, current, i)) at += (size_t)snprintf(result_text + at, sizeof result_text - at, " %d", i + 1);
         }
+    } else if (starts_word_ci(command, "PICKOBJECTS", &arg)) {   /* PICKOBJECTS n...: objects picked together (none: no pick) */
+        int p[MAX_PICKED], n = 0, top;
+        const char *rest = arg;
+        while (*rest && n < MAX_PICKED && (obj = rexx_obj(rest, &rest)) >= 0) {
+            top = opr_obj_top(deck, current, obj);
+            if (top >= 0) {
+                int i;
+                for (i = 0; i < n && p[i] != top; i++)
+                    ;
+                if (i == n) p[n++] = top;
+            }
+        }
+        if (*rest) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
+        else {
+            stop_typing();
+            set_picks(p, n);
+            picks_status();
+            draw_slide();
+            draw_status();
+            snprintf(result_text, sizeof result_text, "%d", n);
+        }
+    } else if (starts_word_ci(command, "PICKEDOBJECTS", &arg)) {   /* how many, then each (from 1) */
+        int p[MAX_PICKED], n = picks(p), i;
+        size_t at = (size_t)snprintf(result_text, sizeof result_text, "%d", n);
+        for (i = 0; i < n && at + 8 < sizeof result_text; i++)
+            at += (size_t)snprintf(result_text + at, sizeof result_text - at, " %d", p[i] + 1);
+    } else if (starts_word_ci(command, "OBJECTBOX", &arg)) {   /* OBJECTBOX n: x y width height in twips, as drawn */
+        int t[4];
+        if ((obj = rexx_obj(arg, NULL)) < 0 || opr_objs_box(deck, current, &obj, 1, t) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
+        else snprintf(result_text, sizeof result_text, "%d %d %d %d", t[0], t[1], t[2], t[3]);
+    } else if (starts_word_ci(command, "MOVEOBJECTS", &arg)) {   /* MOVEOBJECTS dx dy: the objects picked, in twips */
+        int p[MAX_PICKED], n = picks(p);
+        char *end;
+        long dx = strtol(arg, &end, 10), dy = strtol(end, &end, 10);
+        if (n < 1) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No object picked"); }
+        else if (opr_objs_move(undo, deck, current, p, n, (int)dx, (int)dy) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not moved"); }
+        else { if (n > 1) set_picks(p, n); picks_changed(n > 1 ? "Objects moved." : "Object moved."); }
+    } else if (starts_word_ci(command, "ALIGN", &arg)) {   /* ALIGN LEFT|CENTRE|RIGHT|TOP|MIDDLE|BOTTOM: the objects picked */
+        static const char *const names[6] = { "LEFT", "CENTRE", "RIGHT", "TOP", "MIDDLE", "BOTTOM" };
+        int p[MAX_PICKED], n = picks(p), how;
+        for (how = 0; how < 6 && !starts_word_ci(arg, names[how], NULL); how++)
+            ;
+        if (how == 6 && starts_word_ci(arg, "CENTER", NULL)) how = 1;
+        if (how == 6) { ok = 0; rexx_copy(result_text, sizeof result_text, "ALIGN LEFT, CENTRE, RIGHT, TOP, MIDDLE or BOTTOM"); }
+        else if (n < 1) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No object picked"); }
+        else if (opr_objs_align(undo, deck, current, p, n, (opr_align)how) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not aligned"); }
+        else { if (n > 1) set_picks(p, n); picks_changed("Objects aligned."); }
+    } else if (starts_word_ci(command, "DISTRIBUTE", &arg)) {   /* DISTRIBUTE ACROSS|DOWN: three or more picked */
+        int p[MAX_PICKED], n = picks(p), down = starts_word_ci(arg, "DOWN", NULL), rc;
+        if (!down && !starts_word_ci(arg, "ACROSS", NULL)) { ok = 0; rexx_copy(result_text, sizeof result_text, "DISTRIBUTE ACROSS or DOWN"); }
+        else if ((rc = opr_objs_distribute(undo, deck, current, p, n, down)) < 0) {
+            ok = 0;
+            if (rc == -2 || n < 3) { rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs three or more objects picked"); }
+            else rexx_copy(result_text, sizeof result_text, "Not spaced");
+        } else { set_picks(p, n); picks_changed("Objects spaced evenly."); }
+    } else if (starts_word_ci(command, "GROUP", &arg)) {   /* the objects picked as one group; RESULT its number */
+        int p[MAX_PICKED], n = picks(p), g = -1, rc;
+        if (n < 2) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs two or more objects picked"); }
+        else if ((rc = opr_obj_group(undo, deck, current, p, n, &g)) < 0) {
+            ok = 0;
+            if (rc == -2) { rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Groups and layout boxes cannot be grouped"); }
+            else rexx_copy(result_text, sizeof result_text, "Not grouped");
+        } else {
+            npicked_obj = 0;
+            selected_obj = g;
+            picks_changed("Grouped.");
+            snprintf(result_text, sizeof result_text, "%d", g + 1);
+        }
+    } else if (starts_word_ci(command, "UNGROUP", &arg)) {   /* UNGROUP [n]: a group (else the one selected) taken apart */
+        int p[MAX_PICKED], n = picks(p), first = -1, count = 0, rc;
+        if (*arg) { n = (obj = rexx_obj(arg, NULL)) >= 0; p[0] = obj; }
+        if (n != 1) { ok = 0; rc_fail = *arg ? RX_ERROR : RX_NOW; rexx_copy(result_text, sizeof result_text, *arg ? "No such object" : "No group selected"); }
+        else if ((rc = opr_obj_ungroup(undo, deck, current, p[0], &first, &count)) < 0) {
+            ok = 0;
+            if (rc == -2) { rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Not a group"); }
+            else rexx_copy(result_text, sizeof result_text, "Not ungrouped");
+        } else {
+            npicked_obj = 0;
+            selected_obj = -1;
+            picks_changed("Ungrouped.");
+            snprintf(result_text, sizeof result_text, "%d %d", first + 1, count);
+        }
+    } else if (starts_word_ci(command, "DELETEOBJECTS", &arg)) {   /* the objects picked, with what is in them */
+        int p[MAX_PICKED], n = picks(p);
+        if (n < 1) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No object picked"); }
+        else if (opr_objs_delete(undo, deck, current, p, n) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not deleted"); }
+        else { npicked_obj = 0; selected_obj = -1; picks_changed("Objects deleted."); }
     } else if (starts_word_ci(command, "GETTEXT", &arg)) {
         char *utf8;
         if ((obj = rexx_obj(arg, NULL)) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }

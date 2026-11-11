@@ -151,12 +151,12 @@ Undo and ODP persistence.
 | 3-D objects, extrusion | Not planned | Kept |
 | Line: colour, width, solid or dashed; area: colour | P1 | Yes in the model and renderer; GFOpenPresentation 0.5.0 adds undoable UI editing of solid fill, line colour/width, solid/dashed/dotted/dash-dot style and start/end arrowheads for one top-level text box or shape |
 | Area: gradient, hatching, bitmap, transparency; shadow | Later | Approx.: one colour; transparency and shadow No |
-| Position and size | P1 | Yes: GFOpenPresentation 0.3.4 added single-object drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; 0.3.9 added independent deep-copy duplication with a clamped offset; 0.5.1 adds exact numeric left, top, width and height; 0.6.17 adds an optional half-inch grid with move/resize snapping; 0.6.18 adds fixed margin/centre guides. Multi-selection, custom guides and aspect lock remain |
+| Position and size | P1 | Yes: GFOpenPresentation 0.3.4 added single-object drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; 0.3.9 added independent deep-copy duplication with a clamped offset; 0.5.1 adds exact numeric left, top, width and height; 0.6.17 adds an optional half-inch grid with move/resize snapping; 0.6.18 adds fixed margin/centre guides. 0.6.28 adds several objects picked (Shift+click, a drag round them) moved together by drag and arrow keys. Resizing several together, custom guides and aspect lock remain |
 | Rotation | P1 | Shape outlines are rotated through OpenLayout 0.14 and saved to ODP; GFOpenPresentation 0.3.7 adds undoable 15-degree left/right rotation for a selected shape. Shape text, pictures, groups, exact angle entry and rotation handles remain |
 | Flip, slant | P1 (flip of lines and arrows) | Lines and arrows yes; slant: Approx. (drawn in its box) |
 | Text in shapes | P1 | Yes |
-| Group, ungroup, enter group | P1 (groups), P3 (commands) | Yes |
-| Arrange (front, back), align, distribute | P3 | Bring to Front, Bring Forward, Send Backward and Send to Back: Yes in 0.4.0 for one top-level object, undoable and group-block safe. Align Left/Centre/Right/Top/Middle/Bottom to the slide/page: Yes in 0.4.1. Multi-object align and distribute: No |
+| Group, ungroup, enter group | P1 (groups), P3 (commands) | Group and Ungroup: Yes in 0.6.28 (Object menu, ARexx GROUP/UNGROUP; a group moves, aligns and deletes as one; `opr_edit.c`). Enter group: No |
+| Arrange (front, back), align, distribute | P3 | Bring to Front, Bring Forward, Send Backward and Send to Back: Yes in 0.4.0 for one top-level object, undoable and group-block safe. Align Left/Centre/Right/Top/Middle/Bottom to the slide/page: Yes in 0.4.1. Multi-object align and distribute: Yes in 0.6.28 (several picked align to the box round them; Distribute Across/Down; `opr_multi.c`) |
 | Combine, split, shape operations (merge, subtract, intersect) | Not planned | No |
 | Name and description (alt text) | P1 | Yes |
 | Snap, grid, guides, rulers | P3 | Text-indent ruler: Yes; snap, grid and guides: No |
