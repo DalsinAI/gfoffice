@@ -20,7 +20,7 @@ needs Dale's "yes with review" first.
 | Impress | GFOpenPresentation | 0.6.22 | 64% | Slide sorter/outline/notes/handout views, PPTX save, master editing, custom animation, group |
 | Draw | GFOpenDraw (gfopendraw) | 0.2.0 RC2 | 19% | It is a raster painter; Draw is a vector page editor |
 | Base | GFOpenBase | design 0.1 | 4% | Nothing runs yet |
-| Math | none | - | 0% | Out of the suite today (README); Phase 4 below if Dale wants it |
+| Math | none | - | - | Not planned: Dale, 11 Nov 2026 |
 
 Percentages are the workflow-weighted estimates from the 9 November gap
 analysis: an ordinary user finishing OpenOffice's documented workflow, with
@@ -137,8 +137,8 @@ Status: **Done** = edits, saves, reloads and undoes; **Part** = some of it
 
 | Feature (Math) | Status | Phase | Notes |
 | --- | --- | --- | --- |
-| Formula editor (markup + palette), ODF MathML | Gap | 4 | Out of scope in the README today; only if Dale says so |
-| Formulas inside Writer/Impress | Gap | 4 | Display of imported MathML could come first |
+| Formula editor (markup + palette), ODF MathML | Not planned | - | Dale, 11 Nov 2026: keep Math out of the suite |
+| Formulas inside Writer/Impress | Not planned | - | |
 
 ## 3. Phases
 
@@ -150,7 +150,6 @@ Status: **Done** = edits, saves, reloads and undoes; **Part** = some of it
   vector page shell; Base queries, forms, reports and CSV.
 - **Phase 3.** Forms, master documents, embedded objects, change tracking in
   Calc, connectors and technical drawing, media.
-- **Phase 4 (only on Dale's word).** GFOpenMath.
 
 The suite parity target for the end of Phase 1 is about 62% (from 49%):
 Writer 72%, Calc 74%, Impress 76%, Base 25%. Each workstream re-scores its app
@@ -256,7 +255,7 @@ list, table designer, datasheet; B0d primary keys and relationships.
 ### Later streams
 
 Draw D2 (vector page shell in gfopendraw on `owf_deck`) starts after P5 lands,
-because it extends the deck model the P stream owns. Math waits for Dale.
+because it extends the deck model the P stream owns. Math is not planned (Dale, 11 Nov 2026).
 
 ## 5. Rules every stream follows
 
