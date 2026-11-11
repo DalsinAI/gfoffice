@@ -281,7 +281,7 @@ static int relax(const oc_lp *lp, const unsigned char *as_bound, const double *l
                     T(&tb, 0, c) -= T(&tb, r, c);
     s = simplex(&tb, artn);
     if (s == 2) { rc = OC_LP_LIMIT; goto done; }
-    if (-T(&tb, 0, tb.width - 1) < -LP_FEAS * (1.0 + tb.rows)) {
+    if (T(&tb, 0, tb.width - 1) < -LP_FEAS * (1.0 + tb.rows)) {   /* -(sum of artificials) left over */
         rc = OC_LP_INFEASIBLE;
         goto done;
     }

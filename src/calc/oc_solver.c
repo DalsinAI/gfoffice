@@ -32,7 +32,13 @@ static int fin(double v)
 
 static void why(oc_solver_result *res, const char *fmt, const char *ref)
 {
-    snprintf(res->why, sizeof res->why, fmt, ref ? ref : "");
+    char shown[96];
+    size_t n = ref ? strlen(ref) : 0;
+    if (n >= sizeof shown)
+        n = sizeof shown - 1;
+    memcpy(shown, ref ? ref : "", n);
+    shown[n] = 0;
+    snprintf(res->why, sizeof res->why, fmt, shown);
 }
 
 /* A number written as text: "12", " -3.5 ", "=4". 1 when the whole text is one. */
