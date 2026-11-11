@@ -3597,7 +3597,7 @@ static int cs_take(char *dst, size_t size, const char *typed)
     char *u = from_latin1(typed);
     int ok = u && strlen(u) < size;
     if (ok) strcpy(dst, u);
-    free(u);
+    owf_free(u);
     return ok;
 }
 
@@ -5652,9 +5652,9 @@ static int rexx_consolidate(const char *arg, char *out, size_t size)
         if (to && spec.dest[0]) { snprintf(out, size, "CONSOLIDATE: one destination cell"); return 0; }
         u = from_latin1(word);
         if (!u) { snprintf(out, size, "Out of memory"); return 0; }
-        if (strlen(u) >= OC_CONSOLIDATE_REF) { free(u); snprintf(out, size, "CONSOLIDATE: a range is too long"); return 0; }
+        if (strlen(u) >= OC_CONSOLIDATE_REF) { owf_free(u); snprintf(out, size, "CONSOLIDATE: a range is too long"); return 0; }
         strcpy(to ? spec.dest : spec.source[spec.nsources++], u);
-        free(u);
+        owf_free(u);
     }
     if (!spec.nsources || !spec.dest[0]) { snprintf(out, size, "CONSOLIDATE needs a source range and TO cell"); return 0; }
     rc = oc_core_consolidate(core, &spec);
