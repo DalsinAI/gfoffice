@@ -1018,6 +1018,7 @@ static void edit_indexes(struct Window *parent)
 #define RV_FIELDS 10        /* fields shown in a box */
 
 static ob_table rv_t;       /* one table's design at a time (too big for the stack) */
+static struct TextExtent rv_te;   /* TextFit writes its answer here: never pass it NULL */
 
 static int same_name(const char *a, const char *b)
 {
@@ -1151,7 +1152,7 @@ static void show_relationships(void)
         SetAPen(rp, pen(FILLTEXTPEN));
         SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
         Move(rp, b->x + 4, b->y + 1 + rp->TxBaseline);
-        Text(rp, (STRPTR)b->name, (ULONG)TextFit(rp, (STRPTR)b->name, strlen(b->name), NULL, NULL, 1,
+        Text(rp, (STRPTR)b->name, (ULONG)TextFit(rp, (STRPTR)b->name, strlen(b->name), &rv_te, NULL, 1,
                                                  b->w - 8, row_h + 2));
         SetSoftStyle(rp, 0, FSF_BOLD);
         SetAPen(rp, pen(TEXTPEN));
@@ -1161,7 +1162,7 @@ static void show_relationships(void)
             int keyed = k >= 0 && (rv_t.fields[k].type == OB_COUNTER || rv_t.fields[k].key);
             if (keyed) SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
             Move(rp, b->x + 6, b->y + 3 + row_h * (j + 1) + rp->TxBaseline);
-            Text(rp, (STRPTR)b->fields[j], (ULONG)TextFit(rp, (STRPTR)b->fields[j], strlen(b->fields[j]), NULL, NULL, 1,
+            Text(rp, (STRPTR)b->fields[j], (ULONG)TextFit(rp, (STRPTR)b->fields[j], strlen(b->fields[j]), &rv_te, NULL, 1,
                                                           b->w - 10, row_h));
             if (keyed) SetSoftStyle(rp, 0, FSF_BOLD);
         }
@@ -1176,7 +1177,7 @@ static void show_relationships(void)
     }
     SetAPen(rp, pen(TEXTPEN));
     Move(rp, rw->BorderLeft + 8, rw->Height - rw->BorderBottom - 6 - fh + rp->TxBaseline);
-    Text(rp, (STRPTR)line, (ULONG)TextFit(rp, (STRPTR)line, strlen(line), NULL, NULL, 1,
+    Text(rp, (STRPTR)line, (ULONG)TextFit(rp, (STRPTR)line, strlen(line), &rv_te, NULL, 1,
                                           rw->Width - rw->BorderLeft - rw->BorderRight - 16, fh + 2));
     while (!done) {
         struct IntuiMessage *m;
