@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.30.0"
+#define OPR_CORE_VERSION "0.31.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -382,6 +382,19 @@ int opr_guide_snap_axis(int start, int length, const int *guides, int count,
  * a shape; -1 means bad input. */
 int opr_obj_set_rotation(opr_undo *u, owf_deck *deck, int slide, int obj,
                          int rotation_tenths);
+/* Several changes as one Undo step: begin with room for most steps, make
+ * the changes with the calls above, then end. Undo puts them all back, last
+ * first; Redo makes them again. Undo and Redo are refused while a group is
+ * open. A group of one step is that step; an empty group adds nothing. -1
+ * from begin: bad input, a group already open, or no memory. -1 from end:
+ * no group open, or more steps than room, when the whole history is
+ * cleared, since the change made without a step can no longer be undone. */
+int opr_undo_group_begin(opr_undo *u, int most);
+int opr_undo_group_end(opr_undo *u);
+/* The open group's changes put back, last first, and the group dropped, for
+ * a command that fails part way. 0; -1 with no group open, or when a change
+ * could not be put back or had no step (the history is then cleared). */
+int opr_undo_group_cancel(opr_undo *u, owf_deck *deck);
 int opr_undo_can(const opr_undo *u);
 int opr_redo_can(const opr_undo *u);
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj);
@@ -408,6 +421,90 @@ int opr_hit_frame(const opr_slide *s, int frame, ol_unit x, ol_unit y, ol_measur
 /* The frame of a slide's own object under a point (the frontmost), and the
  * position in its text (at may be NULL); -1 when there is none. */
 int opr_hit(const opr_slide *s, ol_unit x, ol_unit y, ol_measure_text_fn measure, void *userdata, opr_pos *at);
+
+/* ---- The slide sorter (opr_sorter.c) ----
+ *
+ * Every slide as a thumbnail in a grid, row by row, for seeing the whole
+ * deck and arranging it: several slides picked at once and moved, copied,
+ * deleted, hidden or shown together, each as one Undo step.
+ *
+ * A pick is which slides are picked: on[i] for slide i, the anchor a Shift
+ * range starts from, and the focus (the slide the keys move from; -1 for
+ * none). Its count follows the deck's (opr_pick_resize). */
+typedef struct {
+    unsigned char *on;
+    int count;
+    int anchor, focus;
+} opr_pick;
+
+typedef enum {
+    OPR_PICK_ONE,                /* a plain click: only this slide */
+    OPR_PICK_RANGE,              /* Shift: from the anchor to this slide */
+    OPR_PICK_TOGGLE,             /* Amiga/Ctrl: this slide in or out */
+    OPR_PICK_ADD_RANGE           /* Shift with Ctrl: the range added */
+} opr_pick_how;
+
+/* 0, or -1 when memory runs out (the pick is then empty, count 0). */
+int opr_pick_resize(opr_pick *p, int count);
+void opr_pick_free(opr_pick *p);
+void opr_pick_clear(opr_pick *p);
+/* Only index picked, as the anchor and focus. -1 for an index outside. */
+int opr_pick_only(opr_pick *p, int index);
+int opr_pick_click(opr_pick *p, int index, opr_pick_how how);
+void opr_pick_all(opr_pick *p);
+int opr_pick_has(const opr_pick *p, int index);
+int opr_pick_number(const opr_pick *p);
+/* The picked slides in order, up to max of them; returns how many there are. */
+int opr_pick_list(const opr_pick *p, int *out, int max);
+
+/* The grid in pixels, inside a view w by h. columns 0 picks as many as fit
+ * thumbnails about 160 pixels wide; otherwise 1..OPR_SORTER_MAX_COLUMNS,
+ * fewer when the thumbnails would be under 32 pixels. label_h is the line
+ * under each thumbnail for its number. */
+#define OPR_SORTER_MAX_COLUMNS 12
+typedef struct {
+    int count, columns, rows;
+    int view_w, view_h;
+    int margin, gap, label_h;
+    int thumb_w, thumb_h;        /* the slide's own shape */
+    int cell_w, cell_h;          /* thumbnail and label */
+    int content_h;               /* all of it, for the scroller */
+} opr_sorter_grid;
+
+int opr_sorter_layout(opr_sorter_grid *g, int view_w, int view_h, int slide_w, int slide_h,
+                      int count, int columns, int label_h);
+/* The scroll (pixels from the top) kept between 0 and the most there is. */
+int opr_sorter_clamp_scroll(const opr_sorter_grid *g, int scroll);
+/* Slide index's thumbnail's top left within the view, scrolled. -1 when
+ * there is no such slide. */
+int opr_sorter_cell(const opr_sorter_grid *g, int index, int scroll, int *x, int *y);
+/* The slide whose thumbnail or label is under x, y (view pixels), or -1. */
+int opr_sorter_hit(const opr_sorter_grid *g, int x, int y, int scroll);
+/* Where slides dropped at x, y go: the gap before slide 0..count. */
+int opr_sorter_gap(const opr_sorter_grid *g, int x, int y, int scroll);
+/* The insertion mark for a gap: a vertical bar at x from y, h high. */
+int opr_sorter_gap_mark(const opr_sorter_grid *g, int gap, int scroll, int *x, int *y, int *h);
+/* The scroll that shows slide index's whole row, changing scroll as little
+ * as it can. */
+int opr_sorter_scroll_to(const opr_sorter_grid *g, int index, int scroll);
+
+typedef enum {
+    OPR_SORTER_LEFT, OPR_SORTER_RIGHT, OPR_SORTER_UP, OPR_SORTER_DOWN,
+    OPR_SORTER_PAGE_UP, OPR_SORTER_PAGE_DOWN, OPR_SORTER_HOME, OPR_SORTER_END
+} opr_sorter_key;
+/* The slide a key goes to from index (kept inside the deck). */
+int opr_sorter_step(const opr_sorter_grid *g, int index, opr_sorter_key key);
+
+/* The picked slides, as one Undo step each command. The pick follows: the
+ * slides moved, the copies made, the slides hidden or shown stay picked;
+ * after a delete, the slide after the last deleted one is. *selected (may
+ * be NULL) is the slide to show. 0, -2 when nothing is picked (or a delete
+ * would leave no slide), -1 for bad input or no memory (the deck is then as
+ * it was, and the Undo history too). */
+int opr_sorter_move(opr_undo *u, owf_deck *deck, opr_pick *pick, int gap, int *selected);
+int opr_sorter_duplicate(opr_undo *u, owf_deck *deck, opr_pick *pick, int *selected);
+int opr_sorter_delete(opr_undo *u, owf_deck *deck, opr_pick *pick, int *selected);
+int opr_sorter_set_hidden(opr_undo *u, owf_deck *deck, opr_pick *pick, int hidden, int *selected);
 
 /* ---- Portable slide-show state (opr_show.c) ----
  *

@@ -50,7 +50,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | New slide, delete, duplicate, rename | P3 | Yes in GFOpenPresentation 0.2.3; all undoable, with deep-copy duplication in libowf |
-| Move slides (Slide Sorter, drag) | P3 | Move up/down: Yes in GFOpenPresentation 0.2.3, undoable through `opr_slide_move`; drag: No |
+| Move slides (Slide Sorter, drag) | P3 | Yes in GFOpenPresentation 0.6.24: Move Up/Down, and in the Slide Sorter several picked slides dragged together, one Undo step (`opr_sorter_move`) |
 | Hide and show a slide | P2 (show), P3 (edit) | Yes in GFOpenPresentation 0.3.0: read, written, omitted from PDF and normal show navigation, and edited with undo/redo |
 | Slide layouts (Blank, Title Slide, Title Content, Title and 2 Content, Title Only, Centered Text, and the rest) | P3 | Model: a new deck has six; a file's layouts are read and written with their placeholders |
 | Page setup: slide size (Screen 4:3, 16:9, 16:10, A4, Letter, custom), orientation, numbering format | P3 | Model: any size, orientation from it; numbering format No |
@@ -241,7 +241,7 @@ Undo and ODP persistence.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Normal view (slides, slide, notes) | P3 | No. P2: the slide at the window's size with the slides beside it; no notes pane |
-| Slide Sorter | P3 | No. P2: a strip of slides to pick from; moving them is P3 |
+| Slide Sorter | P3 | Yes in GFOpenPresentation 0.6.24 (View > Slide Sorter): a thumbnail grid; click, Shift and Ctrl pick several; drag with an insertion mark; Duplicate, Delete, Hide, Show, Move Up/Down and Slide Transition on every picked slide, each one Undo step; Zoom sets the columns; Return or a double-click opens a slide; ARexx VIEW, PICK, MOVEPICKED and the rest. Slide clipboard: No |
 | Master view | P4 | No |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
