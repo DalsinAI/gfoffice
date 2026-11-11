@@ -44,6 +44,12 @@ struct ow_layout {
     /* 2.2.0: the comments whose ranges are open where the body is being laid out (their indexes), for their
      * text's highlight */
     int open_comments[16], nopen;
+    /* 2.4.0: each note's mark (by doc->notes), and the footnotes at the foot of the pages: each one's note,
+     * page and height, in the order of their marks */
+    char (*note_marks)[16];
+    int nfeet;
+    int *foot_note, *foot_page;
+    ol_unit *foot_height;
 };
 
 /* The text a field shows. */
@@ -57,6 +63,8 @@ typedef struct {
     int frames;
     ol_unit ox, oy;
 } field_values;
+
+static ol_unit story_height(const ol_document *od);
 
 static int remember(ow_layout *l, ol_node *node, int box, int paragraph, int run)
 {
@@ -305,6 +313,211 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
            add_story((ow_layout *)l, doc, od, f, &fr->story, l && !fv ? (int)(fr - doc->frames) + 2 : 0, NULL);
 }
 
+/* ---- 2.4.0: footnotes and endnotes ----
+ * A note's mark is an empty text run naming it (owf_run.note); it shows the note's number, footnotes 1, 2,
+ * 3 and endnotes i, ii, iii, in the order the marks come (the body, the headers and footers, the text boxes),
+ * or the note's own label. Footnotes go at the foot of the page their mark is on (GFOpenLayout's
+ * ol_layout_pages_notes), endnotes after the text; in a document with columns footnotes go after the text
+ * too. */
+
+static const owf_story *note_story(const owf_doc *doc, int n)
+{
+    switch (n) {
+    case 0: return &doc->body;
+    case 1: return &doc->header;
+    case 2: return &doc->footer;
+    case 3: return &doc->header_left;
+    case 4: return &doc->footer_left;
+    }
+    n -= 5;
+    return n >= 0 && n < doc->nframes ? &doc->frames[n].story : NULL;
+}
+
+static void roman(int number, char *out, size_t size)
+{
+    static const int values[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
+    static const char *const digits[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
+    size_t at = 0;
+    int k;
+    out[0] = 0;
+    if (number < 1 || number > 3999) { snprintf(out, size, "%d", number); return; }
+    for (k = 0; k < 13; ++k)
+        while (number >= values[k]) {
+            size_t len = strlen(digits[k]);
+            if (at + len >= size) return;
+            memcpy(out + at, digits[k], len + 1);
+            at += len;
+            number -= values[k];
+        }
+}
+
+/* Every note's mark into marks (doc->nnotes of them; "" for a note no run names) */
+static void number_notes(const owf_doc *doc, char (*marks)[16])
+{
+    const owf_story *st;
+    int n, i, j, count[2] = {0, 0};
+    for (i = 0; i < doc->nnotes; ++i) marks[i][0] = 0;
+    for (n = 0; (st = note_story(doc, n)) != NULL; ++n)
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j) {
+                int m = st->paras[i].runs[j].note;
+                const owf_note *note;
+                if (m <= 0 || m > doc->nnotes || marks[m - 1][0]) continue;
+                note = &doc->notes[m - 1];
+                if (note->label) { snprintf(marks[m - 1], sizeof marks[m - 1], "%s", note->label); continue; }
+                ++count[note->endnote ? 1 : 0];
+                if (note->endnote) roman(count[1], marks[m - 1], sizeof marks[m - 1]);
+                else snprintf(marks[m - 1], sizeof marks[m - 1], "%d", count[0]);
+            }
+}
+
+int ow_layout_note_mark(const owf_doc *doc, int index, char *out, size_t size)
+{
+    char (*marks)[16];
+    if (!out || !size) return 0;
+    out[0] = 0;
+    if (!doc || index < 0 || index >= doc->nnotes) return 0;
+    marks = (char (*)[16])malloc((size_t)doc->nnotes * sizeof(*marks));
+    if (!marks) return 0;
+    number_notes(doc, marks);
+    snprintf(out, size, "%s", marks[index]);
+    free(marks);
+    return out[0] != 0;
+}
+
+/* What a note's mark run shows */
+static const char *note_mark(const ow_layout *l, const owf_run *r)
+{
+    if (l && l->note_marks && r->note > 0 && r->note <= l->doc->nnotes && l->note_marks[r->note - 1][0])
+        return l->note_marks[r->note - 1];
+    return "*";
+}
+
+static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_document *od, ol_node *parent,
+                              const owf_para *p, int index, const field_values *fv);
+
+/* A note's text as paragraphs appended to parent (NULL: the root), smaller than the text, the first with the
+ * note's mark raised. 1, or 0 when memory runs out. */
+static int add_note_text(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note)
+{
+    const char *t = doc->notes[note].text ? doc->notes[note].text : "";
+    const char *nl;
+    int first = 1;
+    for (;; t = nl + 1, first = 0) {
+        owf_para np;
+        owf_run runs[2];
+        char *piece;
+        size_t len;
+        ol_node *ok;
+        nl = strchr(t, '\n');
+        len = nl ? (size_t)(nl - t) : strlen(t);
+        piece = (char *)malloc(len + 2);
+        if (!piece) return 0;
+        piece[0] = ' ';
+        memcpy(piece + 1, t, len);
+        piece[len + 1] = 0;
+        memset(&np, 0, sizeof np);
+        owf_parafmt_init(&np.fmt);
+        np.table_id = -1;
+        memset(runs, 0, sizeof runs);
+        runs[0].kind = runs[1].kind = OWF_RUN_TEXT;
+        runs[0].fmt = doc->base;
+        runs[0].fmt.size = (doc->base.size > 0 ? doc->base.size : DEFAULT_SIZE) * 5 / 6;
+        runs[1].fmt = runs[0].fmt;
+        runs[0].fmt.flags |= OWF_SUPER;
+        runs[0].text = (char *)(first && l && l->note_marks ? l->note_marks[note] : "");
+        runs[1].text = piece;
+        np.runs = runs;
+        np.nruns = np.capruns = 2;
+        ok = add_paragraph(l, 0, doc, od, parent, &np, -1, NULL);
+        free(piece);
+        if (!ok) return 0;
+        if (!nl) break;
+    }
+    return 1;
+}
+
+/* Whether footnotes can go at the foot of the pages: one column all through */
+static int feet_on_pages(const owf_doc *doc)
+{
+    int i;
+    for (i = 0; i < doc->body.nparas; ++i)
+        if (doc->body.paras[i].section_columns > 1 || (i > 0 && doc->body.paras[i].section_columns > 0))
+            return 0;
+    return 1;
+}
+
+/* The notes that go after the text (endnotes, and footnotes when they can't go on the pages), on a page of
+ * their own after it, in the order of their marks. 1, or 0 when memory runs out. */
+static int add_end_notes(ow_layout *l, const owf_doc *doc, int feet)
+{
+    int pass, i, j, any = 0;
+    for (pass = 0; pass < 2; ++pass)
+        for (i = 0; i < doc->body.nparas; ++i)
+            for (j = 0; j < doc->body.paras[i].nruns; ++j) {
+                int m = doc->body.paras[i].runs[j].note;
+                if (m <= 0 || m > doc->nnotes || doc->notes[m - 1].endnote != pass || (!pass && feet)) continue;
+                if (!any) {
+                    ol_node *rule = ol_node_append(l->body, NULL, OL_ROLE_PARAGRAPH, NULL);
+                    ol_style rs;
+                    ol_box_style rb;
+                    if (!rule) return 0;
+                    ol_style_init(&rs);
+                    rs.display = OL_DISPLAY_BLOCK;
+                    rs.margin_top = TW(240);
+                    rs.margin_bottom = TW(120);
+                    rs.font_size = TW(120);
+                    rs.line_height = TW(120);
+                    ol_node_set_style(rule, &rs);
+                    ol_box_style_init(&rb);
+                    rb.flags = OL_BOX_EMPTY_LINE;
+                    rb.border_width = BORDER_WIDTH;
+                    rb.border_argb = 0xff000000u;
+                    rb.border_sides = OL_BORDER_TOP;
+                    ol_node_set_box(rule, &rb);
+                    any = 1;
+                }
+                if (!add_note_text(l, doc, l->body, NULL, m - 1)) return 0;
+            }
+    return 1;
+}
+
+/* The footnotes in the body, with their heights at the body's width: l->nfeet of them. 1, or 0 when memory
+ * runs out. */
+static int measure_feet(ow_layout *l, const owf_doc *doc)
+{
+    int i, j, n = 0;
+    ol_unit width = l->page.width - l->page.margin_left - l->page.margin_right;
+    for (i = 0; i < doc->body.nparas; ++i)
+        for (j = 0; j < doc->body.paras[i].nruns; ++j) {
+            int m = doc->body.paras[i].runs[j].note;
+            if (m > 0 && m <= doc->nnotes && !doc->notes[m - 1].endnote) ++n;
+        }
+    if (!n) return 1;
+    l->foot_note = (int *)calloc((size_t)n, sizeof(int));
+    l->foot_page = (int *)calloc((size_t)n, sizeof(int));
+    l->foot_height = (ol_unit *)calloc((size_t)n, sizeof(ol_unit));
+    if (!l->foot_note || !l->foot_page || !l->foot_height) return 0;
+    for (i = 0; i < doc->body.nparas; ++i)
+        for (j = 0; j < doc->body.paras[i].nruns; ++j) {
+            int m = doc->body.paras[i].runs[j].note;
+            ol_document *od;
+            if (m <= 0 || m > doc->nnotes || doc->notes[m - 1].endnote) continue;
+            od = ol_document_new();
+            if (!od) return 0;
+            if (!add_note_text(l, doc, od, NULL, m - 1) || !ol_layout(od, width, l->measure, l->measure_userdata)) {
+                ol_document_free(od);
+                return 0;
+            }
+            l->foot_note[l->nfeet] = m - 1;
+            l->foot_page[l->nfeet] = (int)(l->blocks[i] + 1 + (ol_id)j);   /* the mark's node, until laid out */
+            l->foot_height[l->nfeet] = story_height(od) + TW(40);
+            ++l->nfeet;
+            ol_document_free(od);
+        }
+    return 1;
+}
+
 static const char *field_text(const field_values *fv, const owf_run *r)
 {
     switch (r->field) {
@@ -367,6 +580,10 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         ol_style rs;
         switch (r->kind) {
         case OWF_RUN_TEXT:
+            if (r->note > 0) {                       /* 2.4.0: a note's mark, its number */
+                n = ol_node_append(od, block, OL_ROLE_TEXT, note_mark(l, r));
+                break;
+            }
             n = ol_node_append(od, block, r->href ? OL_ROLE_LINK : OL_ROLE_TEXT, r->text ? r->text : "");
             if (n && r->href && !ol_node_set_href(n, r->href)) return NULL;
             break;
@@ -398,7 +615,14 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
             break;
         }
         if (!n) return NULL;
-        run_style(doc, &r->fmt, spacing, &rs);
+        if (r->kind == OWF_RUN_TEXT && r->note > 0) {
+            owf_charfmt mf = r->fmt;
+            mf.flags |= OWF_SUPER;
+            mf.flags &= ~(unsigned)OWF_SUB;
+            run_style(doc, &mf, spacing, &rs);
+        } else {
+            run_style(doc, &r->fmt, spacing, &rs);
+        }
         if (r->revision) change_style(doc, r->revision, &rs);
         if (l && record == 1 && r->comment) {
             /* 2.2.0: a comment's range: its text highlighted from its start to its place */
@@ -686,6 +910,14 @@ static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, vo
                 return NULL;
             }
     }
+    if (doc->nnotes > 0) {                           /* 2.4.0 */
+        l->note_marks = (char (*)[16])calloc((size_t)doc->nnotes, sizeof(*l->note_marks));
+        if (!l->note_marks) {
+            ow_layout_free(l);
+            return NULL;
+        }
+        number_notes(doc, l->note_marks);
+    }
     if (!l->body || !l->blocks || !add_story(l, doc, l->body, NULL, &doc->body, 1, NULL)) {
         ow_layout_free(l);
         return NULL;
@@ -703,6 +935,13 @@ static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, vo
             ow_layout_free(l);
             return NULL;
         }
+    if (doc->nnotes > 0) {                           /* 2.4.0: the notes after the text, and the footnotes' room */
+        int feet = feet_on_pages(doc);
+        if (!add_end_notes(l, doc, feet) || (feet && !measure_feet(l, doc))) {
+            ow_layout_free(l);
+            return NULL;
+        }
+    }
     {
         ol_page_section *sections = NULL;
         int section_count = 0;
@@ -720,7 +959,23 @@ static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, vo
         else if (uniform && columns > 1)
             laid_out = ol_layout_pages_columns(l->body, &l->page, columns, TW(gap),
                                                measure, measure_userdata);
-        else
+        else if (l->nfeet) {
+            /* 2.4.0: footnotes at the foot of their pages */
+            ol_page_note *notes = (ol_page_note *)calloc((size_t)l->nfeet, sizeof(*notes));
+            int f;
+            if (!notes) {
+                free(sections);
+                ow_layout_free(l);
+                return NULL;
+            }
+            for (f = 0; f < l->nfeet; ++f) {
+                notes[f].anchor = (ol_id)l->foot_page[f];
+                notes[f].height = l->foot_height[f];
+            }
+            laid_out = ol_layout_pages_notes(l->body, &l->page, notes, l->nfeet, OW_LAYOUT_NOTE_SEPARATOR,
+                                             l->foot_page, measure, measure_userdata);
+            free(notes);
+        } else
             laid_out = ol_layout_pages(l->body, &l->page, measure, measure_userdata);
         /* A continuous boundary whose preceding columns require balancing is
          * not representable yet. Preserve the document and retain the former
@@ -822,6 +1077,10 @@ void ow_layout_free(ow_layout *l)
     free(l->box_frame);
     free((void *)l->inline_dx);              /* 2.0.17: the moved layout's own */
     free((void *)l->inline_dy);
+    free(l->note_marks);                     /* 2.4.0 */
+    free(l->foot_note);
+    free(l->foot_page);
+    free(l->foot_height);
     free(l);
 }
 
@@ -943,6 +1202,11 @@ static int text_run_after(const owf_para *p, int run, ow_position *out)
 
 static void into_text_run(const owf_para *p, int run, size_t offset, ow_position *out)
 {
+    /* 2.4.0: a note's mark shows text it hasn't: a place in it is before it, or after it */
+    if (run >= 0 && run < p->nruns && p->runs[run].kind == OWF_RUN_TEXT && p->runs[run].note > 0 && offset > 0) {
+        if (text_run_after(p, run, out)) return;
+        offset = 0;
+    }
     if (run >= 0 && run < p->nruns && p->runs[run].kind == OWF_RUN_TEXT) {
         out->run = run;
         out->byte_offset = offset;
@@ -1273,3 +1537,41 @@ int ow_layout_add_story(ol_document *od, ol_node *parent, const owf_doc *doc, co
     fv.ox = fv.oy = 0;
     return add_story(NULL, doc, od, parent, story, 0, &fv);
 }
+
+/* 2.4.0: the footnotes of a page */
+int ow_layout_footnote_count(const ow_layout *l, int page)
+{
+    int f, n = 0;
+    if (!l) return 0;
+    for (f = 0; f < l->nfeet; ++f)
+        if (l->foot_page[f] == page) ++n;
+    return n;
+}
+
+ol_document *ow_layout_footnotes(const ow_layout *l, int page, ol_unit *x, ol_unit *y)
+{
+    ol_document *od;
+    ol_unit room = 0;
+    int f, any = 0;
+    if (!l || !ow_layout_footnote_count(l, page)) return NULL;
+    od = ol_document_new();
+    if (!od) return NULL;
+    for (f = 0; f < l->nfeet; ++f) {
+        if (l->foot_page[f] != page) continue;
+        if (!add_note_text((ow_layout *)l, l->doc, od, NULL, l->foot_note[f])) {
+            ol_document_free(od);
+            return NULL;
+        }
+        room += l->foot_height[f];
+        any = 1;
+    }
+    if (!any || !ol_layout(od, l->page.width - l->page.margin_left - l->page.margin_right,
+                           l->measure, l->measure_userdata)) {
+        ol_document_free(od);
+        return NULL;
+    }
+    if (x) *x = l->page.margin_left;
+    if (y) *y = l->page.height - l->page.margin_bottom - room;
+    return od;
+}
+

@@ -6,6 +6,7 @@
 #include "owf_internal.h"
 #include "owf_track.h"
 #include "owf_comment.h"
+#include "owf_note.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -186,6 +187,7 @@ int owf_import_memory(const unsigned char *data, size_t length, const char *form
     }
     owf_track_finish(doc);                           /* 1.5 */
     owf_comment_finish(doc);                         /* 1.6 */
+    owf_note_finish(doc);                            /* 1.8 */
     find_base(doc);
     if (used)
         *used = f;

@@ -5,6 +5,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_note.h"
 
 #include <string.h>
 
@@ -99,6 +100,15 @@ static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_re
 
     switch (run->kind) {
     case OWF_RUN_TEXT:
+        if (run->note > 0 && run->note <= doc->nnotes) {     /* 1.8: a link to the note at the end */
+            char mark[32];
+            owf_note_mark_text(doc, run->note - 1, mark, sizeof mark);
+            owf_buf_printf(out, "<sup class=\"ow-note-mark\"><a id=\"ow-noteref%d\" href=\"#ow-note%d\">", run->note,
+                           run->note);
+            owf_buf_puts_xml(out, mark);
+            owf_buf_puts(out, "</a></sup>");
+            break;
+        }
         owf_buf_puts_xml(out, run->text);
         break;
     case OWF_RUN_TAB:
@@ -287,6 +297,38 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
     }
 }
 
+/* 1.8: a kind of note's text, at the end, each back to its mark */
+static void put_notes(owf_buf *out, const owf_doc *doc, int endnote)
+{
+    int i, j, any = 0;
+    for (i = 0; i < doc->body.nparas; ++i)
+        for (j = 0; j < doc->body.paras[i].nruns; ++j) {
+            int m = doc->body.paras[i].runs[j].note;
+            char mark[32];
+            const char *t;
+            if (m <= 0 || m > doc->nnotes || doc->notes[m - 1].endnote != endnote)
+                continue;
+            if (!any) {
+                owf_buf_printf(out, "<section class=\"ow-%s\">\n<hr>\n", endnote ? "endnotes" : "footnotes");
+                any = 1;
+            }
+            owf_note_mark_text(doc, m - 1, mark, sizeof mark);
+            owf_buf_printf(out, "<p id=\"ow-note%d\"><a href=\"#ow-noteref%d\"><sup>", m, m);
+            owf_buf_puts_xml(out, mark);
+            owf_buf_puts(out, "</sup></a> ");
+            for (t = doc->notes[m - 1].text; *t; ++t) {
+                if (*t == '\n') owf_buf_puts(out, "<br>");
+                else if (*t == '<') owf_buf_puts(out, "&lt;");
+                else if (*t == '>') owf_buf_puts(out, "&gt;");
+                else if (*t == '&') owf_buf_puts(out, "&amp;");
+                else owf_buf_putc(out, *t);
+            }
+            owf_buf_puts(out, "</p>\n");
+        }
+    if (any)
+        owf_buf_puts(out, "</section>\n");
+}
+
 static int export_html(const owf_doc *doc, unsigned char **data, size_t *length, owf_report *report)
 {
     owf_buf out;
@@ -335,6 +377,8 @@ static int export_html(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&out, "</div>\n");
     }
     put_story(&out, doc, &doc->body, report);
+    put_notes(&out, doc, 0);                         /* 1.8 */
+    put_notes(&out, doc, 1);
     if (doc->footer.nparas) {
         owf_buf_printf(&out, "<div class=\"ow-footer\" data-first-page=\"%d\">\n", pg->footer_on_first);
         put_story(&out, doc, &doc->footer, report);

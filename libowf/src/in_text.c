@@ -5,6 +5,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_note.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -96,7 +97,17 @@ static void put_para_runs(owf_buf *out, const owf_doc *doc, const owf_para *para
         const owf_run *run = &para->runs[j];
         const owf_frame *fr;
         switch (run->kind) {
-        case OWF_RUN_TEXT: owf_buf_puts(out, run->text); break;
+        case OWF_RUN_TEXT:
+            if (run->note > 0) {                     /* 1.8: [mark], the note's text at the end */
+                char mark[32];
+                owf_note_mark_text(doc, run->note - 1, mark, sizeof mark);
+                owf_buf_putc(out, '[');
+                owf_buf_puts(out, mark);
+                owf_buf_putc(out, ']');
+                break;
+            }
+            owf_buf_puts(out, run->text);
+            break;
         case OWF_RUN_TAB: owf_buf_putc(out, '\t'); break;
         case OWF_RUN_LINEBREAK: owf_buf_putc(out, '\n'); break;
         case OWF_RUN_FIELD: put_field(out, run); break;
@@ -171,6 +182,11 @@ static int export_utf8(const owf_doc *doc, unsigned char **data, size_t *length,
             break;
         }
     put_story(&out, doc, &doc->body, &first);
+    for (i = 0; i < 2; ++i)                          /* 1.8 */
+        if (owf_doc_note_count(doc, i)) {
+            owf_buf_putc(&out, '\n');
+            owf_notes_listing(doc, i, &out);
+        }
     if (has_table)
         owf_report_add(report, OWF_NOTE_APPROX, "Tables are kept as rows with tabs between cells");
     if (doc->header.nparas || doc->footer.nparas || doc->header_left.nparas || doc->footer_left.nparas)

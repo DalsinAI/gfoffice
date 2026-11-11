@@ -16,6 +16,7 @@
 #include "owf_track.h"
 #include "owf_comment.h"
 #include "owf_fields.h"
+#include "owf_note.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -998,26 +999,31 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         owf_buf_free(&shown);
         o->space = 0;
     } else if (owf_xml_is(c, NS_TEXT, "note")) {
-        /* The mark stays as a superscript number; the note goes to the end. */
-        const owf_xml_node *body = owf_xml_child(c, NS_TEXT, "note-body");
-        char mark[16];
-        f = *fmt;
-        f.flags |= OWF_SUPER;
-        o->nnotes++;
-        snprintf(mark, sizeof mark, "%d", o->nnotes);
-        f = relative(o, f);
-        set_fmt(o->b, &f);
-        owf_builder_text(o->b, mark, strlen(mark));
-        if (body) {
-            size_t start;
-            owf_buf_printf(&o->notes, "%d\t", o->nnotes);
-            start = o->notes.length;
-            plain_text(body, &o->notes);
-            owf_buf_trim_from(&o->notes, start);
-            owf_buf_putc(&o->notes, '\n');
+        /* 1.8: a footnote or endnote: its text, and its mark here */
+        const owf_xml_node *body = owf_xml_child(c, NS_TEXT, "note-body"), *p;
+        const owf_xml_node *cite = owf_xml_child(c, NS_TEXT, "note-citation");
+        const char *cls = owf_xml_attr(c, NS_TEXT, "note-class");
+        const char *label = cite ? owf_xml_attr(cite, NS_TEXT, "label") : NULL;
+        int idx;
+        o->notes.length = 0;
+        for (p = body ? body->first : NULL; p; p = p->next) {
+            if (!owf_xml_is(p, NS_TEXT, "p") && !owf_xml_is(p, NS_TEXT, "h") && !owf_xml_is(p, NS_TEXT, "list"))
+                continue;
+            if (o->notes.length) owf_buf_putc(&o->notes, '\n');
+            plain_text(p, &o->notes);
+        }
+        owf_buf_putc(&o->notes, 0);
+        idx = o->notes.failed ? -1
+            : owf_note_add(o->doc, cls && !strcmp(cls, "endnote"), (const char *)o->notes.data, label);
+        if (idx < 0) {
+            o->failed = 1;
+        } else {
+            o->nnotes++;
+            f = relative(o, *fmt);
+            set_fmt(o->b, &f);
+            owf_builder_note(o->b, idx + 1);
         }
         o->space = 0;
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Footnotes and endnotes are listed at the end of the document");
     } else if (owf_xml_is(c, NS_OFFICE, "annotation")) {
         read_annotation(o, c);                       /* 1.6 */
     } else if (owf_xml_is(c, NS_OFFICE, "annotation-end")) {
@@ -1533,32 +1539,6 @@ static int read_document(odt *o, const owf_xml_node *content_root, const owf_xml
         owf_builder_end_para(&b);
     }
 
-    /* Notes at the end. */
-    if (o->nnotes && !o->notes.failed) {
-        const char *p = (const char *)o->notes.data, *end = p + o->notes.length;
-        if (b.para || b.text.length)
-            owf_builder_end_para(&b);
-        owf_parafmt_init(&b.parafmt);
-        b.parafmt.heading = 2;
-        owf_charfmt_init(&b.charfmt);
-        owf_builder_text(&b, "Notes", 5);
-        owf_builder_end_para(&b);
-        owf_parafmt_init(&b.parafmt);
-        while (p < end) {
-            const char *nl = memchr(p, '\n', (size_t)(end - p));
-            const char *tab = memchr(p, '\t', (size_t)((nl ? nl : end) - p));
-            if (!nl)
-                nl = end;
-            if (tab) {
-                owf_builder_text(&b, p, (size_t)(tab - p));
-                owf_builder_special(&b, OWF_RUN_TAB, OWF_FIELD_PAGE);
-                p = tab + 1;
-            }
-            owf_builder_text(&b, p, (size_t)(nl - p));
-            owf_builder_end_para(&b);
-            p = nl + 1;
-        }
-    }
     result = owf_builder_done(&b);
     {
         /* 1.5: the paragraphs whose ends a deletion took, last first */

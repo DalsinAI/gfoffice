@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.29 (11.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.30 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -114,7 +114,8 @@ enum {
     M_CHANGE_REJECT_ALL, M_REVIEW_AUTHOR,
     M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
-    M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS
+    M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS,
+    M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE
 };
 
 static struct NewMenu menus[] = {
@@ -179,6 +180,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Page Break", NULL, 0, 0, (APTR)M_PAGE_BREAK },
     { NM_ITEM, "Comment...", NULL, 0, 0, (APTR)M_COMMENT },
+    { NM_ITEM, "Footnote...", NULL, 0, 0, (APTR)M_FOOTNOTE },     /* 2.0.30 (core 1.5) */
+    { NM_ITEM, "Endnote...", NULL, 0, 0, (APTR)M_ENDNOTE },
     { NM_ITEM, "Field", NULL, 0, 0, NULL },
     { NM_SUB, "Page Number", NULL, 0, 0, (APTR)M_FIELD_PAGE },
     { NM_SUB, "Page Count", NULL, 0, 0, (APTR)M_FIELD_PAGES },
@@ -261,6 +264,14 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Edit Comment...", NULL, 0, 0, (APTR)M_COMMENT_EDIT },
     { NM_SUB, "Mark Done", NULL, 0, 0, (APTR)M_COMMENT_DONE },
     { NM_SUB, "Delete Comment", NULL, 0, 0, (APTR)M_COMMENT_DELETE },
+    /* 2.0.30: footnotes and endnotes (core 1.5) */
+    { NM_ITEM, "Notes", NULL, 0, 0, NULL },
+    { NM_SUB, "Next Note", NULL, 0, 0, (APTR)M_NOTE_NEXT },
+    { NM_SUB, "Previous Note", NULL, 0, 0, (APTR)M_NOTE_PREV },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Edit Note...", NULL, 0, 0, (APTR)M_NOTE_EDIT },
+    { NM_SUB, "Footnote <-> Endnote", NULL, 0, 0, (APTR)M_NOTE_CONVERT },
+    { NM_SUB, "Delete Note", NULL, 0, 0, (APTR)M_NOTE_DELETE },
     { NM_ITEM, "User Fields...", NULL, 0, 0, (APTR)M_USER_FIELDS },
     { NM_ITEM, "Update Fields", NULL, 0, 0, (APTR)M_UPDATE_FIELDS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -2310,6 +2321,27 @@ static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_sca
     pp.od = ow_layout_body(l);
     pp.body = 1;
     ol_draw_page(pp.od, page, s, clip, paint_op, &pp);
+    {
+        /* 2.0.30: the page's footnotes at the foot of its body, a short rule above them */
+        ol_unit fx, fy;
+        ol_document *feet = ow_layout_footnotes(l, page, &fx, &fy);
+        if (feet) {
+            ol_scale fs = *s;
+            const ol_page *pg = ow_layout_page(l);
+            int ry = ol_scale_y(s, fy - OW_LAYOUT_NOTE_SEPARATOR / 2);
+            int rx = ol_scale_x(s, fx);
+            int rw = ol_scale_length(s, (pg->width - pg->margin_left - pg->margin_right) / 3);
+            ogt_hline(rp, ogt_pen(&ctx, "fill.text"), rx, ry, rw > 1 ? rw : 1);
+            fs.origin_x = ol_scale_x(s, fx);
+            fs.origin_y = ol_scale_y(s, fy);
+            pp.od = feet;
+            pp.body = 0;
+            ol_draw_page(feet, 0, &fs, clip, paint_op, &pp);
+            ol_document_free(feet);
+            pp.od = ow_layout_body(l);
+            pp.body = 1;
+        }
+    }
     SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     if (pp.caret_on && pp.caret_page == page) {
         if (!pp.caret_done) {                        /* not in a word (an empty paragraph): where the layout says */
@@ -4437,6 +4469,69 @@ static void do_comment(int what)
     }
 }
 
+/* ---- 2.0.30: footnotes and endnotes ---- */
+
+static int insert_footnote(ow_editor *ed, const char *utf8) { return ow_editor_insert_note(ed, 0, utf8); }
+static int insert_endnote(ow_editor *ed, const char *utf8) { return ow_editor_insert_note(ed, 1, utf8); }
+
+static void note_text(const ow_note_info *info, int count, char *out, size_t size)
+{
+    char words[160];
+    comment_latin1(info->text, words, sizeof words);
+    snprintf(out, size, "%s %s: %s (%d of %d)", info->endnote ? "Endnote" : "Footnote", info->mark, words,
+             info->index + 1, count);
+}
+
+static int no_note_here(int rc)
+{
+    if (rc != OWF_ERR_UNSUPPORTED) return 0;
+    set_status("No note at the caret.");
+    request_document_redraw();
+    DisplayBeep(scr);
+    return 1;
+}
+
+static void do_note(int what)
+{
+    ow_note_info info;
+    char msg[240];
+    int rc, have;
+    if (!editor) return;
+    have = ow_editor_current_note(editor, &info);
+    switch (what) {
+    case M_FOOTNOTE:
+        comment_with_text("Insert Footnote", "", insert_footnote, "Footnote added.");
+        break;
+    case M_ENDNOTE:
+        comment_with_text("Insert Endnote", "", insert_endnote, "Endnote added.");
+        break;
+    case M_NOTE_NEXT: case M_NOTE_PREV:
+        rc = ow_editor_next_note(editor, what == M_NOTE_PREV);
+        if (rc <= 0) { set_status("No notes."); request_document_redraw(); DisplayBeep(scr); return; }
+        if (ow_editor_current_note(editor, &info)) {
+            note_text(&info, ow_editor_note_count(editor), msg, sizeof msg);
+            if (rc == 2) strncat(msg, what == M_NOTE_PREV ? "; from the end" : "; from the start",
+                                 sizeof msg - strlen(msg) - 1);
+            set_status(msg);
+        }
+        bring_focus_into_view();
+        break;
+    case M_NOTE_EDIT:
+        if (!have) { no_note_here(OWF_ERR_UNSUPPORTED); return; }
+        comment_with_text(info.endnote ? "Edit Endnote" : "Edit Footnote", info.text, ow_editor_set_note_text,
+                          "Note changed.");
+        break;
+    case M_NOTE_CONVERT:
+        rc = ow_editor_convert_note(editor);
+        if (!no_note_here(rc)) editor_result(rc, have && info.endnote ? "Made a footnote." : "Made an endnote.");
+        break;
+    case M_NOTE_DELETE:
+        rc = ow_editor_delete_note(editor);
+        if (!no_note_here(rc)) editor_result(rc, "Note deleted.");
+        break;
+    }
+}
+
 static void menu_action(ULONG id)
 {
     switch (id) {
@@ -4573,6 +4668,8 @@ static void menu_action(ULONG id)
     case M_REVIEW_AUTHOR: do_review_author(); break;
     case M_COMMENT: case M_COMMENT_NEXT: case M_COMMENT_PREV: case M_COMMENT_REPLY: case M_COMMENT_EDIT:
     case M_COMMENT_DONE: case M_COMMENT_DELETE: do_comment((int)id); break;
+    case M_FOOTNOTE: case M_ENDNOTE: case M_NOTE_NEXT: case M_NOTE_PREV: case M_NOTE_EDIT: case M_NOTE_CONVERT:
+    case M_NOTE_DELETE: do_note((int)id); break;
     }
 }
 
@@ -4598,7 +4695,8 @@ static char *document_plain_text(void)
     for(p=0;p<doc->body.nparas;++p){
         const owf_para *para=&doc->body.paras[p];
         for(r=0;r<para->nruns;++r){const owf_run *run=&para->runs[r];const char *t=NULL;char field[32];size_t add;
-            if(run->kind==OWF_RUN_TEXT)t=run->text;
+            if(run->kind==OWF_RUN_TEXT&&run->note>0){char m[16];ow_layout_note_mark(doc,run->note-1,m,sizeof m);snprintf(field,sizeof field,"[%s]",m);t=field;}   /* 2.0.30 */
+            else if(run->kind==OWF_RUN_TEXT)t=run->text;
             else if(run->kind==OWF_RUN_TAB)t="\t";
             else if(run->kind==OWF_RUN_LINEBREAK)t="\n";
             else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",caret_page()+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",page_total());else if(run->field>OWF_FIELD_TIME)snprintf(field,sizeof field,"%s",run->text?run->text:"");else field[0]=0;t=field;}
@@ -4751,7 +4849,8 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"HELP",&arg))snprintf(result,sizeof result,"VERSION ACTIVATE DEACTIVATE HELP FAULT LASTERROR WORDCOUNT PAGECOUNT FONTCHECK MEMCHECK "
         "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND TRACKCHANGES CHANGES NEXTCHANGE PREVCHANGE "
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
-        "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS QUIT");
+        "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
+        "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
@@ -4789,6 +4888,23 @@ static int rexx_do_command(const char *command, char **result_out)
         else{if(c0!='g')bring_focus_into_view();comment_text(&ci,ow_editor_comment_count(editor),result,sizeof result);}}
     else if(starts_word_ci(command,"RESOLVECOMMENT",&arg)||starts_word_ci(command,"DELETECOMMENT",&arg)){int del=tolower((unsigned char)command[0])=='d';int off=!strcasecmp(arg,"OFF")||!strcmp(arg,"0");int rc=!editor?OWF_ERR_UNSUPPORTED:del?ow_editor_delete_comment(editor):ow_editor_resolve_comment(editor,!off);
         if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No comment at the caret");}else{ok=editor_result(rc,del?"Comment deleted.":off?"Comment open again.":"Comment marked done.");snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
+    /* 2.0.30: notes. ADDFOOTNOTE text, ADDENDNOTE text ("\n": a new paragraph) at the caret; NOTES answers how
+     * many; NEXTNOTE, PREVNOTE and GETNOTE answer "Footnote 1: text (1 of 2)" (RC 5: none); EDITNOTE text,
+     * CONVERTNOTE and DELETENOTE act on the note at the caret (RC 5: none there) */
+    else if(starts_word_ci(command,"ADDFOOTNOTE",&arg)||starts_word_ci(command,"ADDENDNOTE",&arg)||starts_word_ci(command,"EDITNOTE",&arg)){
+        int add=toupper((unsigned char)command[0])=='A';char *u=NULL;int rc;
+        if(!editor){ok=0;snprintf(result,sizeof result,"No document");}
+        else if(!*arg){ok=0;snprintf(result,sizeof result,"The note needs its text");}
+        else if(!(u=comment_utf8(arg))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
+        else{rc=add?ow_editor_insert_note(editor,toupper((unsigned char)command[3])=='E',u):ow_editor_set_note_text(editor,u);free(u);
+            if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No note at the caret");}
+            else{ok=editor_result(rc,add?"Note added.":"Note changed.");snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
+    else if(starts_word_ci(command,"NOTES",&arg))snprintf(result,sizeof result,"%d",editor?ow_editor_note_count(editor):0);
+    else if(starts_word_ci(command,"NEXTNOTE",&arg)||starts_word_ci(command,"PREVNOTE",&arg)||starts_word_ci(command,"GETNOTE",&arg)){ow_note_info ni;char c0=(char)tolower((unsigned char)command[0]);
+        if(!editor||(c0!='g'&&ow_editor_next_note(editor,c0=='p')<=0)||!ow_editor_current_note(editor,&ni)){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",c0=='g'?"No note at the caret":"No notes");}
+        else{if(c0!='g')bring_focus_into_view();note_text(&ni,ow_editor_note_count(editor),result,sizeof result);}}
+    else if(starts_word_ci(command,"CONVERTNOTE",&arg)||starts_word_ci(command,"DELETENOTE",&arg)){int del=toupper((unsigned char)command[0])=='D';int rc=!editor?OWF_ERR_UNSUPPORTED:del?ow_editor_delete_note(editor):ow_editor_convert_note(editor);
+        if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No note at the caret");}else{ok=editor_result(rc,del?"Note deleted.":"Note changed kind.");snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
     /* 2.0.29: fields. INSERTFIELD kind [name] (PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER,
      * USER name, REF name, REFPAGE name: a bookmark's); DOCINFO TITLE|AUTHOR|SUBJECT [value] answers the value;
      * USERFIELD name [value|-] answers the value (RC 5: none; "-" removes it); CROSSREF n [PAGE] refers to the

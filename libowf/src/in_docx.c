@@ -16,6 +16,7 @@
 #include "owf_track.h"
 #include "owf_comment.h"
 #include "owf_fields.h"
+#include "owf_note.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -755,6 +756,7 @@ static void field_collect(docx *d, const char *s, size_t n)
     f->shown[have + n] = 0;
 }
 
+/* 1.8: a note's text: its paragraphs between '\n' */
 static void note_text(docx *d, const owf_xml_node *n, owf_buf *out)
 {
     const owf_xml_node *c;
@@ -762,41 +764,54 @@ static void note_text(docx *d, const owf_xml_node *n, owf_buf *out)
         if (is_w(d, c, "t") && c->first && c->first->type == OWF_XML_TEXT)
             owf_buf_put(out, c->first->name, c->first->length);
         else if (is_w(d, c, "tab"))
+            owf_buf_putc(out, '\t');
+        else if (is_w(d, c, "br"))
             owf_buf_putc(out, ' ');
-        else if (is_w(d, c, "p") && out->length && out->data[out->length - 1] != '\t' && out->data[out->length - 1] != ' ')
-            (owf_buf_putc(out, ' '), note_text(d, c, out));
-        else if (c->type == OWF_XML_ELEMENT && !is_w(d, c, "del") && !is_w(d, c, "footnoteRef") && !is_w(d, c, "endnoteRef"))
+        else if (is_w(d, c, "p")) {
+            if (out->length && out->data[out->length - 1] != '\n')
+                owf_buf_putc(out, '\n');
+            note_text(d, c, out);
+        } else if (c->type == OWF_XML_ELEMENT && !is_w(d, c, "del") && !is_w(d, c, "footnoteRef") &&
+                   !is_w(d, c, "endnoteRef") && !is_w(d, c, "rPr") && !is_w(d, c, "pPr"))
             note_text(d, c, out);
     }
 }
 
+/* 1.8: a footnote's or endnote's reference: the note from its part, and its mark here */
 static void note(docx *d, const owf_xml_node *ref, owf_xml *part, const char *element, const owf_charfmt *fmt)
 {
     const char *id = owf_xml_attr(ref, d->w, "id");
     const owf_xml_node *n;
-    owf_charfmt f = *fmt;
-    char mark[16];
+    int index;
 
-    d->nnotes++;
-    snprintf(mark, sizeof mark, "%d", d->nnotes);
-    f.flags |= OWF_SUPER;
-    set_fmt(d, &f);
-    owf_builder_text(d->b, mark, strlen(mark));
-    owf_report_add(d->report, OWF_NOTE_APPROX, "Footnotes and endnotes are listed at the end of the document");
-    if (!part || !id)
-        return;
-    for (n = owf_xml_root(part)->first; n; n = n->next) {
-        const char *nid = owf_xml_attr(n, d->w, "id");
-        if (is_w(d, n, element) && nid && !strcmp(nid, id)) {
-            size_t start;
-            owf_buf_printf(&d->notes, "%d\t", d->nnotes);
-            start = d->notes.length;
-            note_text(d, n, &d->notes);
-            owf_buf_trim_from(&d->notes, start);
-            owf_buf_putc(&d->notes, '\n');
-            break;
+    d->notes.length = 0;
+    if (part && id)
+        for (n = owf_xml_root(part)->first; n; n = n->next) {
+            const char *nid = owf_xml_attr(n, d->w, "id");
+            if (is_w(d, n, element) && nid && !strcmp(nid, id)) {
+                note_text(d, n, &d->notes);
+                break;
+            }
         }
+    while (d->notes.length && (d->notes.data[d->notes.length - 1] == '\n' || d->notes.data[d->notes.length - 1] == ' '))
+        d->notes.length--;
+    owf_buf_putc(&d->notes, 0);
+    if (d->notes.failed) {
+        d->failed = 1;
+        return;
     }
+    {
+        const char *t = (const char *)d->notes.data;
+        while (*t == ' ' || *t == '\t') ++t;
+        index = owf_note_add(d->doc, element[0] == 'e', t, NULL);
+    }
+    if (index < 0) {
+        d->failed = 1;
+        return;
+    }
+    d->nnotes++;
+    set_fmt(d, fmt);
+    owf_builder_note(d->b, index + 1);
 }
 
 static const owf_xml_node *find_local(const owf_xml_node *n, const char *name)
@@ -2158,32 +2173,6 @@ static int read_docx(docx *d)
     for (n = body ? body->first : NULL; n; n = n->next)
         if (is_w(d, n, "sectPr"))
             break;
-    if (d->nnotes && !d->notes.failed) {
-        const char *p = (const char *)d->notes.data, *end = p + d->notes.length;
-        owf_parafmt pf;
-        owf_parafmt_init(&pf);
-        pf.heading = 2;
-        start_para(d, &pf);
-        owf_charfmt_init(&b.charfmt);
-        owf_builder_text(&b, "Notes", 5);
-        owf_builder_end_para(&b);
-        owf_parafmt_init(&b.parafmt);
-        while (p < end) {
-            const char *nl = memchr(p, '\n', (size_t)(end - p));
-            const char *tab;
-            if (!nl)
-                nl = end;
-            tab = memchr(p, '\t', (size_t)(nl - p));
-            if (tab) {
-                owf_builder_text(&b, p, (size_t)(tab - p));
-                owf_builder_special(&b, OWF_RUN_TAB, OWF_FIELD_PAGE);
-                p = tab + 1;
-            }
-            owf_builder_text(&b, p, (size_t)(nl - p));
-            owf_builder_end_para(&b);
-            p = nl + 1;
-        }
-    }
     result = owf_builder_done(&b);
     record_section_columns(d, n);
     section(d, n);    /* headers and footers use their own builders */

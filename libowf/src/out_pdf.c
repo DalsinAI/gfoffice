@@ -4,6 +4,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_note.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +38,7 @@ typedef struct {
     const owf_doc *doc;
     owf_report *report;
     unsigned char *image_used;   /* per doc image: drawn somewhere, so it is written once */
+    char (*note_marks)[32];      /* 1.8: each note's mark, kept while its line waits to be drawn */
 } pdf_layout;
 
 static int pdf_points(int twips)
@@ -470,18 +472,21 @@ static int pdf_place_image(pdf_layout *l, const owf_para *para, int index)
     return 1;
 }
 
-static int pdf_layout_document(pdf_layout *l)
+static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
 {
-    int i,j;
-    if(!pdf_new_page(l))return 0;
-    for(i=0;i<l->doc->body.nparas;++i){
-        const owf_para *p=&l->doc->body.paras[i]; pdf_line line; int first=1;
+    int j;
+    {
+        pdf_line line; int first=1;
         if(p->fmt.page_break_before && (i || l->y < l->page_h-l->top) && !pdf_new_page(l))return 0;
         l->y-=pdf_points(p->fmt.space_before);
         pdf_line_reset(&line);
         for(j=0;j<p->nruns;++j){
             const owf_run *r=&p->runs[j];
-            if(r->kind==OWF_RUN_TEXT){if(!pdf_layout_text_run(l,p,r,&line,&first))return 0;}
+            if(r->kind==OWF_RUN_TEXT&&r->note>0&&r->note<=l->doc->nnotes&&l->note_marks){
+                /* 1.8: a note's mark, raised; the notes follow the text */
+                owf_run fake=*r;fake.text=l->note_marks[r->note-1];fake.fmt.flags|=OWF_SUPER;
+                if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
+            else if(r->kind==OWF_RUN_TEXT){if(!pdf_layout_text_run(l,p,r,&line,&first))return 0;}
             else if(r->kind==OWF_RUN_TAB){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)"    ";if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
             else if(r->kind==OWF_RUN_LINEBREAK){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
             else if(r->kind==OWF_RUN_IMAGE&&r->image>=0&&r->image<l->doc->nimages&&l->image_used){
@@ -498,6 +503,46 @@ static int pdf_layout_document(pdf_layout *l)
         if(line.n || !p->nruns){if(!pdf_flush_line(l,p,&line,first))return 0;}
         l->y-=pdf_points(p->fmt.space_after);
     }
+    return 1;
+}
+
+/* 1.8: a kind of note after the text: a paragraph each of its paragraphs, the first with its mark */
+static int pdf_layout_notes(pdf_layout *l, int endnote)
+{
+    const owf_doc *doc=l->doc; int i,j,any=0;
+    for(i=0;i<doc->body.nparas;++i)for(j=0;j<doc->body.paras[i].nruns;++j){
+        int m=doc->body.paras[i].runs[j].note; const char *t,*nl; int first=1;
+        if(m<=0||m>doc->nnotes||doc->notes[m-1].endnote!=endnote||!l->note_marks)continue;
+        for(t=doc->notes[m-1].text;;t=nl+1,first=0){
+            owf_para np; owf_run runs[2]; char *piece; size_t len; int ok;
+            nl=strchr(t,'\n'); len=nl?(size_t)(nl-t):strlen(t);
+            piece=(char *)malloc(len+2); if(!piece)return 0;
+            piece[0]=' '; memcpy(piece+1,t,len); piece[len+1]=0;
+            memset(&np,0,sizeof np); owf_parafmt_init(&np.fmt); np.table_id=-1;
+            np.fmt.space_before=first&&!any?240:0;
+            memset(runs,0,sizeof runs);
+            runs[0].kind=runs[1].kind=OWF_RUN_TEXT;
+            owf_charfmt_init(&runs[0].fmt); runs[0].fmt=doc->base; runs[0].fmt.size=doc->base.size?doc->base.size*5/6:200;
+            runs[1].fmt=runs[0].fmt; runs[0].fmt.flags|=OWF_SUPER;
+            runs[0].text=first?l->note_marks[m-1]:(char *)""; runs[1].text=piece;
+            np.runs=runs; np.nruns=2; np.capruns=2;
+            ok=pdf_layout_para(l,&np,1);
+            free(piece);
+            if(!ok)return 0;
+            any=1;
+            if(!nl)break;
+        }
+    }
+    return 1;
+}
+
+static int pdf_layout_document(pdf_layout *l)
+{
+    int i;
+    if(!pdf_new_page(l))return 0;
+    for(i=0;i<l->doc->body.nparas;++i)
+        if(!pdf_layout_para(l,&l->doc->body.paras[i],i))return 0;
+    if(l->note_marks&&(!pdf_layout_notes(l,0)||!pdf_layout_notes(l,1)))return 0;
     pdf_add_headers_footers(l);
     return 1;
 }
@@ -522,6 +567,11 @@ static int export_pdf(const owf_doc *doc, unsigned char **data, size_t *length, 
     l.left=pdf_points(doc->page.margin_left);l.right=pdf_points(doc->page.margin_right);
     l.top=pdf_points(doc->page.margin_top);l.bottom=pdf_points(doc->page.margin_bottom);
     if(l.page_w<72||l.page_h<72)return OWF_ERR_FORMAT;
+    if(doc->nnotes>0){                               /* 1.8 */
+        l.note_marks=(char (*)[32])calloc((size_t)doc->nnotes,sizeof *l.note_marks);
+        if(!l.note_marks){result=OWF_ERR_MEMORY;goto done;}
+        for(i=0;i<doc->nnotes;++i)owf_note_mark_text(doc,i,l.note_marks[i],sizeof l.note_marks[i]);
+    }
     if(!pdf_layout_document(&l)){result=OWF_ERR_MEMORY;goto done;}
     /* objects after the pages: each picture drawn, and its soft mask */
     nextobj=15+l.npages*2;
@@ -556,6 +606,7 @@ static int export_pdf(const owf_doc *doc, unsigned char **data, size_t *length, 
     if(out.failed){owf_buf_free(&out);result=OWF_ERR_MEMORY;goto done;}
     result=owf_buf_take(&out,data,length);
 done:
+    free(l.note_marks);
     free(offs);for(i=0;i<l.npages;++i)owf_buf_free(&l.pages[i]);free(l.pages);
     for(i=0;imgs&&i<doc->nimages;++i){if(!imgs[i].dct)free(imgs[i].data);free(imgs[i].mask);}
     free(imgs);free(imobj);free(l.image_used);return result;
