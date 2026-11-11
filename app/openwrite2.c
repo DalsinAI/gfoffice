@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.26 (8.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.27 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -109,7 +109,9 @@ enum {
     M_PAGE_SETUP, M_COLUMNS, M_FRAME, M_HEADER, M_FOOTER, M_HEADER_LEFT, M_FOOTER_LEFT,
     M_DATATYPES, M_OPENPRINT, M_SPELL,
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
-    M_TB_BOTH, M_TB_ICONS, M_TB_TEXT
+    M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
+    M_TRACK, M_CHANGE_NEXT, M_CHANGE_PREV, M_CHANGE_ACCEPT, M_CHANGE_REJECT, M_CHANGE_ACCEPT_ALL,
+    M_CHANGE_REJECT_ALL, M_REVIEW_AUTHOR
 };
 
 static struct NewMenu menus[] = {
@@ -223,6 +225,18 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Spell Check...", NULL, 0, 0, (APTR)M_SPELL },
+    /* 2.0.27: tracked changes (core 1.2), in Tools so the menu bar still fits a 640 screen */
+    { NM_ITEM, "Track Changes", NULL, 0, 0, NULL },
+    { NM_SUB, "Record Changes", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_TRACK },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Next Change", NULL, 0, 0, (APTR)M_CHANGE_NEXT },
+    { NM_SUB, "Previous Change", NULL, 0, 0, (APTR)M_CHANGE_PREV },
+    { NM_SUB, "Accept Change", NULL, 0, 0, (APTR)M_CHANGE_ACCEPT },
+    { NM_SUB, "Reject Change", NULL, 0, 0, (APTR)M_CHANGE_REJECT },
+    { NM_SUB, "Accept All", NULL, 0, 0, (APTR)M_CHANGE_ACCEPT_ALL },
+    { NM_SUB, "Reject All", NULL, 0, 0, (APTR)M_CHANGE_REJECT_ALL },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Review Author...", NULL, 0, 0, (APTR)M_REVIEW_AUTHOR },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "GFOpenPrint...", NULL, 0, 0, (APTR)M_OPENPRINT },
 
@@ -389,6 +403,8 @@ static void doc_font_cache_clear(void);
 static void image_cache_clear(void);
 static void editor_repaint(const char *message);
 static int editor_result(int rc, const char *message);
+static void review_author_init(void);
+static void sync_track_menu(void);
 static int mm_to_twips(int mm);
 
 static const char classic_theme[] =
@@ -771,6 +787,8 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
     doc = newdoc;
     editor = doc ? ow_editor_new(doc) : NULL;
     if (editor) {
+        review_author_init();
+        ow_editor_set_review_author(editor, review_author);
         ow_editor_set_zoom(editor, zoom);
         ow_editor_layout(editor);
         ow_editor_mark_saved(editor);
@@ -784,6 +802,7 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
     snprintf(current_path, sizeof current_path, "%s", path ? path : "");
     snprintf(current_format, sizeof current_format, "%s", fmt && *fmt ? fmt : "ODT");
     recovery.made = 0;                               /* a new editor counts its changes from 0 */
+    sync_track_menu();
     update_window_title();
 }
 
@@ -2456,7 +2475,7 @@ static void draw_status(void)
     snprintf(s, sizeof s, "%d words", word_count());
     ogt_status_set(&sbar, 1, s);
     ogt_status_set(&sbar, 2, status);
-    snprintf(s, sizeof s, "%s  %d%%", current_format, zoom);
+    snprintf(s, sizeof s, "%s  %d%%%s", current_format, zoom, editor && ow_editor_track_changes(editor) ? "  Rec" : "");
     ogt_status_set(&sbar, 3, s);
 }
 
@@ -3892,6 +3911,88 @@ static void set_paragraph_alignment(owf_align align)
                   "Paragraph alignment changed.");
 }
 
+/* ---- 2.0.27: tracked changes ---- */
+static char review_author[64];
+static int review_author_set;
+
+/* The name changes are made under: the ENV USER (or USERNAME) variable until Review Author... names one. */
+static void review_author_init(void)
+{
+    char buf[64];
+    if (review_author_set) return;
+    review_author_set = 1;
+    if (GetVar((STRPTR)"USER", (STRPTR)buf, sizeof buf, 0) > 0 ||
+        GetVar((STRPTR)"USERNAME", (STRPTR)buf, sizeof buf, 0) > 0)
+        snprintf(review_author, sizeof review_author, "%s", buf);
+}
+
+/* Record Changes' tick follows the document's setting (a file can arrive recording) */
+static void sync_track_menu(void)
+{
+    struct Menu *m;
+    struct MenuItem *it, *sub;
+    int on = editor && ow_editor_track_changes(editor);
+    if (!menu) return;
+    if (win) ClearMenuStrip(win);
+    for (m = menu; m; m = m->NextMenu)
+        for (it = m->FirstItem; it; it = it->NextItem)
+            for (sub = it->SubItem; sub; sub = sub->NextItem)
+                if ((ULONG)GTMENUITEM_USERDATA(sub) == M_TRACK) {
+                    if (on) sub->Flags |= CHECKED; else sub->Flags &= ~CHECKED;
+                }
+    if (win) ResetMenuStrip(win, menu);
+}
+
+static void change_text(const ow_change_info *info, int count, char *out, size_t size)
+{
+    snprintf(out, size, "%s by %s%s%s (%d of %d)", info->kind == OWF_REV_DELETE ? "Deletion" : "Insertion",
+             info->author && *info->author ? info->author : "unknown author", info->date && *info->date ? ", " : "",
+             info->date ? info->date : "", info->index + 1, count);
+}
+
+static void do_next_change(int backwards)
+{
+    ow_change_info info;
+    char msg[160];
+    int rc;
+    if (!editor) return;
+    rc = ow_editor_next_change(editor, backwards);
+    if (rc <= 0) { set_status("No changes."); request_document_redraw(); DisplayBeep(scr); return; }
+    if (ow_editor_current_change(editor, &info)) {
+        change_text(&info, ow_editor_change_count(editor), msg, sizeof msg);
+        if (rc == 2) strncat(msg, backwards ? "; from the end" : "; from the start", sizeof msg - strlen(msg) - 1);
+        set_status(msg);
+    }
+    bring_focus_into_view();
+}
+
+static void do_accept_change(int accept, int all)
+{
+    int rc;
+    if (!editor) return;
+    rc = all ? ow_editor_accept_all_changes(editor, accept) : ow_editor_accept_change(editor, accept);
+    if (rc == OWF_ERR_UNSUPPORTED) {
+        set_status(all ? "The document has no changes." : "No change at the caret.");
+        request_document_redraw();
+        DisplayBeep(scr);
+        return;
+    }
+    editor_result(rc, all ? (accept ? "Every change accepted." : "Every change rejected.")
+                          : (accept ? "Change accepted." : "Change rejected."));
+}
+
+static void do_review_author(void)
+{
+    char name[64];
+    snprintf(name, sizeof name, "%s", review_author);
+    if (!text_requester("Review Author", "Name", review_author, name, sizeof name)) return;
+    snprintf(review_author, sizeof review_author, "%s", name);
+    review_author_set = 1;
+    if (editor) ow_editor_set_review_author(editor, review_author);
+    set_status(review_author[0] ? "Changes are now made under that name." : "Changes now have no author.");
+    request_document_redraw();
+}
+
 static void menu_action(ULONG id)
 {
     switch (id) {
@@ -4006,6 +4107,14 @@ static void menu_action(ULONG id)
     case M_TB_BOTH: tb_style = OGT_TB_ICONS_TEXT; relayout(); break;
     case M_TB_ICONS: tb_style = OGT_TB_ICONS; relayout(); break;
     case M_TB_TEXT: tb_style = OGT_TB_TEXT; relayout(); break;
+    case M_TRACK: if (editor) { ow_editor_set_track_changes(editor, !ow_editor_track_changes(editor)); sync_track_menu(); editor_repaint(ow_editor_track_changes(editor) ? "Recording changes." : "Changes no longer recorded."); } break;
+    case M_CHANGE_NEXT: do_next_change(0); break;
+    case M_CHANGE_PREV: do_next_change(1); break;
+    case M_CHANGE_ACCEPT: do_accept_change(1, 0); break;
+    case M_CHANGE_REJECT: do_accept_change(0, 0); break;
+    case M_CHANGE_ACCEPT_ALL: do_accept_change(1, 1); break;
+    case M_CHANGE_REJECT_ALL: do_accept_change(0, 1); break;
+    case M_REVIEW_AUTHOR: do_review_author(); break;
     }
 }
 
@@ -4182,7 +4291,8 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"DEACTIVATE",&arg)){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"DEACTIVATE: GFOpenWrite has no icon to go to");}
     else if(starts_word_ci(command,"LASTERROR",&arg))rexx_copy(result,sizeof result,rexx_lasterror);
     else if(starts_word_ci(command,"HELP",&arg))snprintf(result,sizeof result,"VERSION ACTIVATE DEACTIVATE HELP FAULT LASTERROR WORDCOUNT PAGECOUNT FONTCHECK MEMCHECK "
-        "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND QUIT");
+        "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND TRACKCHANGES CHANGES NEXTCHANGE PREVCHANGE "
+        "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
@@ -4200,6 +4310,13 @@ static int rexx_do_command(const char *command, char **result_out)
         if(!strcasecmp(arg,"BOLD"))menu_action(M_BOLD);else if(!strcasecmp(arg,"ITALIC"))menu_action(M_ITALIC);else if(!strcasecmp(arg,"UNDERLINE"))menu_action(M_UNDERLINE);else if(!strcasecmp(arg,"PAGEBREAK"))menu_action(M_PAGE_BREAK);else if(!strcasecmp(arg,"UNDO"))menu_action(M_UNDO);else if(!strcasecmp(arg,"REDO"))menu_action(M_REDO);else{ok=0;snprintf(result,sizeof result,"Unknown COMMAND");}
         if(ok&&!result[0])snprintf(result,sizeof result,"OK");
     }
+    /* 2.0.27: tracked changes. TRACKCHANGES [ON|OFF] answers 1 or 0; CHANGES the count; NEXTCHANGE and PREVCHANGE
+     * the change they selected; ACCEPT/REJECT ... RC 5 when there was nothing to do */
+    else if(starts_word_ci(command,"TRACKCHANGES",&arg)){if(!editor){ok=0;snprintf(result,sizeof result,"No document");}else{if(!strcasecmp(arg,"ON")||!strcmp(arg,"1"))ow_editor_set_track_changes(editor,1);else if(!strcasecmp(arg,"OFF")||!strcmp(arg,"0"))ow_editor_set_track_changes(editor,0);else if(*arg){ok=0;snprintf(result,sizeof result,"TRACKCHANGES takes ON or OFF");}if(ok){sync_track_menu();draw_status();snprintf(result,sizeof result,"%d",ow_editor_track_changes(editor));}}}
+    else if(starts_word_ci(command,"CHANGES",&arg))snprintf(result,sizeof result,"%d",editor?ow_editor_change_count(editor):0);
+    else if(starts_word_ci(command,"NEXTCHANGE",&arg)||starts_word_ci(command,"PREVCHANGE",&arg)){ow_change_info ci;int back=tolower((unsigned char)command[0])=='p';if(!editor||ow_editor_next_change(editor,back)<=0||!ow_editor_current_change(editor,&ci)){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No changes");}else{bring_focus_into_view();change_text(&ci,ow_editor_change_count(editor),result,sizeof result);}}
+    else if(starts_word_ci(command,"ACCEPTCHANGE",&arg)||starts_word_ci(command,"REJECTCHANGE",&arg)||starts_word_ci(command,"ACCEPTALL",&arg)||starts_word_ci(command,"REJECTALL",&arg)){int acc=tolower((unsigned char)command[0])=='a',all=tolower((unsigned char)command[6])=='a'&&tolower((unsigned char)command[7])=='l';int rc=!editor?OWF_ERR_UNSUPPORTED:all?ow_editor_accept_all_changes(editor,acc):ow_editor_accept_change(editor,acc);if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",all?"The document has no changes":"No change at the caret");}else{ok=editor_result(rc,acc?"Accepted.":"Rejected.");snprintf(result,sizeof result,"%s",ok?(acc?"Accepted":"Rejected"):"Failed");}}
+    else if(starts_word_ci(command,"REVIEWAUTHOR",&arg)){if(*arg){snprintf(review_author,sizeof review_author,"%s",arg);review_author_set=1;if(editor)ow_editor_set_review_author(editor,review_author);}snprintf(result,sizeof result,"%s",review_author);}
     else if(starts_word_ci(command,"QUIT",&arg)){if(editor&&ow_editor_is_dirty(editor)&&strcasecmp(arg,"FORCE")){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"Unsaved changes (QUIT FORCE quits)");}else{quit_now=1;snprintf(result,sizeof result,"Quitting");}}
     else {ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Unknown GFOpenWrite ARexx command; HELP lists them");}
     if(!ok){free(dynamic);dynamic=NULL;rexx_copy(rexx_lasterror,sizeof rexx_lasterror,rexx_noted?rexx_noting:result);}
