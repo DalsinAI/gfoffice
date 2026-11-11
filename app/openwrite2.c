@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.28 (11.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.29 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -112,7 +112,9 @@ enum {
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_TRACK, M_CHANGE_NEXT, M_CHANGE_PREV, M_CHANGE_ACCEPT, M_CHANGE_REJECT, M_CHANGE_ACCEPT_ALL,
     M_CHANGE_REJECT_ALL, M_REVIEW_AUTHOR,
-    M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE
+    M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
+    M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
+    M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS
 };
 
 static struct NewMenu menus[] = {
@@ -121,6 +123,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Open...", "O", 0, 0, (APTR)M_OPEN },
     { NM_ITEM, "Save", "S", 0, 0, (APTR)M_SAVE },
     { NM_ITEM, "Save As...", NULL, 0, 0, (APTR)M_SAVE_AS },
+    { NM_ITEM, "Document Info...", NULL, 0, 0, (APTR)M_DOC_INFO },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_PDF },
@@ -181,6 +184,16 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Page Count", NULL, 0, 0, (APTR)M_FIELD_PAGES },
     { NM_SUB, "Date", NULL, 0, 0, (APTR)M_FIELD_DATE },
     { NM_SUB, "Time", NULL, 0, 0, (APTR)M_FIELD_TIME },
+    /* 2.0.29: fields with a value (core 1.4) */
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Title", NULL, 0, 0, (APTR)M_FIELD_TITLE },
+    { NM_SUB, "Author", NULL, 0, 0, (APTR)M_FIELD_AUTHOR },
+    { NM_SUB, "Subject", NULL, 0, 0, (APTR)M_FIELD_SUBJECT },
+    { NM_SUB, "File Name", NULL, 0, 0, (APTR)M_FIELD_FILENAME },
+    { NM_SUB, "Word Count", NULL, 0, 0, (APTR)M_FIELD_WORDS },
+    { NM_SUB, "Chapter", NULL, 0, 0, (APTR)M_FIELD_CHAPTER },
+    { NM_SUB, "User Field...", NULL, 0, 0, (APTR)M_FIELD_USER },
+    { NM_ITEM, "Cross-reference...", NULL, 0, 0, (APTR)M_CROSS_REF },
 
     { NM_TITLE, "Format", NULL, 0, 0, NULL },
     { NM_ITEM, "Bold", "B", 0, 0, (APTR)M_BOLD },
@@ -248,6 +261,8 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Edit Comment...", NULL, 0, 0, (APTR)M_COMMENT_EDIT },
     { NM_SUB, "Mark Done", NULL, 0, 0, (APTR)M_COMMENT_DONE },
     { NM_SUB, "Delete Comment", NULL, 0, 0, (APTR)M_COMMENT_DELETE },
+    { NM_ITEM, "User Fields...", NULL, 0, 0, (APTR)M_USER_FIELDS },
+    { NM_ITEM, "Update Fields", NULL, 0, 0, (APTR)M_UPDATE_FIELDS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "GFOpenPrint...", NULL, 0, 0, (APTR)M_OPENPRINT },
 
@@ -398,6 +413,7 @@ static void redraw_document_area(void);
 static void layout(void);
 static void pages_changed(void);
 static void pages_free(void);
+static void fields_update(void);
 static int page_hit(int mx, int my, ow_position *out);
 static int page_frame_hit(int mx, int my, int *frame_index, ol_rect *rect);
 static int frame_drag_begin(int mx, int my);
@@ -815,6 +831,10 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
     snprintf(current_path, sizeof current_path, "%s", path ? path : "");
     snprintf(current_format, sizeof current_format, "%s", fmt && *fmt ? fmt : "ODT");
     recovery.made = 0;                               /* a new editor counts its changes from 0 */
+    if (editor) {                                    /* 2.0.29: the fields as this file and its pages make them */
+        ow_editor_set_file_name(editor, current_path[0] ? current_path : NULL);
+        fields_update();
+    }
     sync_track_menu();
     update_window_title();
 }
@@ -939,6 +959,10 @@ static void save_document_as(const char *path)
     char msg[256];
     int rc;
     if (!doc) return;
+    if (editor) {                                    /* 2.0.29: the fields as they will be in the file */
+        ow_editor_set_file_name(editor, path);
+        fields_update();
+    }
     rc = owf_export_file(doc, path, NULL, report);
     if (rc != OWF_OK) {
         snprintf(msg, sizeof msg, "GFOpenWrite could not save this document.\n\n%s", owf_error_text(rc));
@@ -4085,6 +4109,221 @@ static void do_review_author(void)
     request_document_redraw();
 }
 
+/* ---- 2.0.29: fields with a value ---- */
+
+/* Pages of the bookmarked body paragraphs, from this layout, for page references (made before an update, as
+ * the update changes the text the layout points into) */
+static int *field_pages;
+static int field_npages;
+
+static int field_page_of(void *userdata, int paragraph)
+{
+    (void)userdata;
+    return paragraph >= 0 && paragraph < field_npages && field_pages[paragraph] >= 0 ? field_pages[paragraph] : 0;
+}
+
+static void fields_update(void)
+{
+    ow_layout *l;
+    owf_doc *d;
+    int i;
+    if (!editor || !(d = ow_editor_document(editor))) return;
+    l = pages();
+    field_npages = d->body.nparas;
+    field_pages = field_npages ? (int *)malloc((size_t)field_npages * sizeof(int)) : NULL;
+    for (i = 0; field_pages && i < field_npages; ++i) {
+        ow_position pos;
+        ol_rect box;
+        int page = -1;
+        field_pages[i] = -1;
+        if (!l || !d->body.paras[i].bookmarks) continue;
+        memset(&pos, 0, sizeof pos);
+        pos.paragraph = i;
+        if (ow_layout_caret(l, pos, &page, &box)) field_pages[i] = page;
+    }
+    if (field_pages) ow_editor_set_page_lookup(editor, field_page_of, NULL);
+    if (ow_editor_update_fields(editor) > 0) pages_changed();
+    ow_editor_set_page_lookup(editor, NULL, NULL);
+    free(field_pages);
+    field_pages = NULL;
+    field_npages = 0;
+}
+
+/* UTF-8 from what a requester gives (Latin-1) */
+static char *latin1_utf8(const char *latin1)
+{
+    size_t n = strlen(latin1), i, o = 0;
+    char *out = (char *)malloc(2 * n + 1);
+    if (!out) return NULL;
+    for (i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)latin1[i];
+        if (c < 0x80) out[o++] = (char)c;
+        else { out[o++] = (char)(0xC0 | (c >> 6)); out[o++] = (char)(0x80 | (c & 0x3F)); }
+    }
+    out[o] = 0;
+    return out;
+}
+
+static int set_info(ow_doc_info which, const char *latin1)
+{
+    char *u = latin1_utf8(latin1);
+    int rc = u ? ow_editor_set_doc_info(editor, which, u) : OWF_ERR_MEMORY;
+    free(u);
+    return rc;
+}
+
+/* Title, author and subject, one requester each (an empty answer leaves it as it is) */
+static void do_doc_info(void)
+{
+    static const char *const labels[] = { "Title", "Author", "Subject" };
+    char text[200];
+    int k, changed = 0;
+    if (!editor) return;
+    for (k = 0; k < 3; ++k) {
+        const char *now = ow_editor_doc_info(editor, (ow_doc_info)k);
+        to_latin1(now ? now : "", now ? strlen(now) : 0, text, sizeof text);
+        if (!text_requester("Document Info", labels[k], text, text, sizeof text)) continue;
+        if (set_info((ow_doc_info)k, text) == OWF_OK) ++changed;
+    }
+    if (changed) { fields_update(); update_window_title(); set_status("Document information changed."); }
+    request_document_redraw();
+}
+
+/* A user field: insert one (named, made when new), or (insert 0) set one's value or remove it ("-") */
+static void do_user_field(int insert)
+{
+    char name[64], value[200];
+    const char *first = NULL, *now = NULL;
+    char *un, *uv;
+    int i, rc = OWF_OK;
+    if (!editor) return;
+    ow_editor_user_field_at(editor, 0, &first, NULL);
+    to_latin1(first ? first : "", first ? strlen(first) : 0, name, sizeof name);
+    if (!text_requester(insert ? "Insert User Field" : "User Fields", "Name", name, name, sizeof name)) return;
+    if (!(un = latin1_utf8(name))) return;
+    for (i = 0; i < ow_editor_user_field_count(editor); ++i) {
+        const char *n, *v;
+        if (ow_editor_user_field_at(editor, i, &n, &v) && !strcmp(n, un)) now = v;
+    }
+    if (!insert || !now) {
+        to_latin1(now ? now : "", now ? strlen(now) : 0, value, sizeof value);
+        if (!text_requester(insert ? "Insert User Field" : "User Fields", insert ? "Value" : "Value (-: remove)",
+                            value, value, sizeof value)) { free(un); return; }
+        if (!insert && !strcmp(value, "-")) {
+            rc = ow_editor_set_user_field(editor, un, NULL);
+        } else if ((uv = latin1_utf8(value)) != NULL) {
+            rc = ow_editor_set_user_field(editor, un, uv);
+            free(uv);
+        } else rc = OWF_ERR_MEMORY;
+    }
+    if (rc == OWF_OK && insert) rc = ow_editor_insert_field_arg(editor, OWF_FIELD_USER, un);
+    free(un);
+    if (rc == OWF_ERR_UNSUPPORTED) { set_status("No user field of that name."); DisplayBeep(scr); }
+    else if (editor_result(rc, insert ? "User field inserted." : "User field changed.")) fields_update();
+    request_document_redraw();
+}
+
+/* A heading to refer to, from a list, and whether to show its text or its page: its paragraph, -1: cancelled */
+static int heading_requester(int *page)
+{
+    struct Gadget *glist = NULL, *last, *glv, *gpage, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List items;
+    struct Node *nodes = NULL;
+    char (*labels)[72] = NULL;
+    int *paras = NULL, n = 0, i, k, chosen = -1, picked = 0, done = 0, ww = 420, wh = 200;
+    owf_doc *d = editor ? ow_editor_document(editor) : NULL;
+    if (!scr || !vi || !d) return -1;
+    for (i = 0; i < d->body.nparas; ++i) if (d->body.paras[i].fmt.heading > 0) ++n;
+    if (!n) return -2;
+    nodes = (struct Node *)calloc((size_t)n, sizeof *nodes);
+    labels = (char (*)[72])calloc((size_t)n, sizeof *labels);
+    paras = (int *)calloc((size_t)n, sizeof *paras);
+    if (!nodes || !labels || !paras) goto out;
+    NewList(&items);
+    for (i = 0, k = 0; i < d->body.nparas && k < n; ++i) {
+        const owf_para *p = &d->body.paras[i];
+        size_t o;
+        int j;
+        if (p->fmt.heading <= 0) continue;
+        o = (size_t)(p->fmt.heading > 1 ? 2 * (p->fmt.heading - 1) : 0);
+        memset(labels[k], ' ', o);
+        for (j = 0; j < p->nruns && o + 1 < sizeof labels[k]; ++j)
+            if (p->runs[j].kind == OWF_RUN_TEXT && p->runs[j].text)
+                o += to_latin1(p->runs[j].text, strlen(p->runs[j].text), labels[k] + o, sizeof labels[k] - o);
+        labels[k][o < sizeof labels[k] ? o : sizeof labels[k] - 1] = 0;
+        nodes[k].ln_Name = labels[k];
+        AddTail(&items, &nodes[k]);
+        paras[k++] = i;
+    }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_LeftEdge = 12; ng.ng_TopEdge = 20; ng.ng_Width = 396; ng.ng_Height = 120;
+    ng.ng_GadgetText = (STRPTR)"Refer to the heading"; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_ABOVE;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&items, GTLV_ShowSelected, 0,
+                              GTLV_Selected, 0, TAG_DONE);
+    ng.ng_TopEdge = 146; ng.ng_Width = 26; ng.ng_Height = 14; ng.ng_LeftEdge = 12;
+    ng.ng_GadgetText = (STRPTR)"Its page number, not its text"; ng.ng_GadgetID = 2; ng.ng_Flags = PLACETEXT_RIGHT;
+    last = gpage = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, *page ? TRUE : FALSE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_GadgetText = (STRPTR)"Insert"; ng.ng_GadgetID = 3;
+    ng.ng_LeftEdge = 242; ng.ng_TopEdge = 170; ng.ng_Width = 78; ng.ng_Height = 20;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 4; ng.ng_LeftEdge = 330;
+    last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glv || !gpage || !gok || !gcancel) goto out;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Cross-reference", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | LISTVIEWIDCMP | CHECKBOXIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD code = m->Code;
+            UWORD id = m->IAddress && (cls == IDCMP_GADGETUP || cls == IDCMP_GADGETDOWN)
+                     ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 1) picked = code;
+                else if (id == 2) *page = !*page;
+                else if (id == 3) { chosen = picked >= 0 && picked < n ? paras[picked] : -1; done = 1; }
+                else if (id == 4) done = 1;
+            }
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(nodes);
+    free(labels);
+    free(paras);
+    return chosen;
+}
+
+static void do_cross_reference(void)
+{
+    static int page_form;
+    int para;
+    if (!editor) return;
+    para = heading_requester(&page_form);
+    if (para == -2) { set_status("The document has no headings to refer to."); DisplayBeep(scr); return; }
+    if (para < 0) return;
+    if (editor_result(ow_editor_insert_cross_reference(editor, para, page_form), "Cross-reference inserted."))
+        fields_update();
+    request_document_redraw();
+}
+
 /* ---- 2.0.28: comments ---- */
 
 /* Latin-1 (what the requester and ARexx give) as UTF-8, a typed "\n" as a paragraph break. NULL: no memory. */
@@ -4300,6 +4539,18 @@ static void menu_action(ULONG id)
     case M_FIELD_PAGE: editor_result(ow_editor_insert_field(editor, OWF_FIELD_PAGE), "Page field inserted."); break;
     case M_FIELD_PAGES: editor_result(ow_editor_insert_field(editor, OWF_FIELD_PAGES), "Page-count field inserted."); break;
     case M_FIELD_DATE: editor_result(ow_editor_insert_field(editor, OWF_FIELD_DATE), "Date field inserted."); break;
+    case M_FIELD_TITLE: case M_FIELD_AUTHOR: case M_FIELD_SUBJECT: case M_FIELD_FILENAME: case M_FIELD_WORDS:
+    case M_FIELD_CHAPTER:
+        if (editor && editor_result(ow_editor_insert_field(editor, (owf_field)(OWF_FIELD_TITLE + (id - M_FIELD_TITLE))),
+                                    "Field inserted.")) fields_update();
+        break;
+    case M_FIELD_USER: do_user_field(1); break;
+    case M_USER_FIELDS: do_user_field(0); break;
+    case M_CROSS_REF: do_cross_reference(); break;
+    case M_DOC_INFO: do_doc_info(); break;
+    case M_UPDATE_FIELDS:
+        if (editor) { fields_update(); set_status("Fields updated."); request_document_redraw(); }
+        break;
     case M_FIELD_TIME: editor_result(ow_editor_insert_field(editor, OWF_FIELD_TIME), "Time field inserted."); break;
     case M_DATATYPES: do_command(C_IMAGE); break;
     case M_OPENPRINT: do_command(C_PRINT); break;
@@ -4350,7 +4601,7 @@ static char *document_plain_text(void)
             if(run->kind==OWF_RUN_TEXT)t=run->text;
             else if(run->kind==OWF_RUN_TAB)t="\t";
             else if(run->kind==OWF_RUN_LINEBREAK)t="\n";
-            else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",caret_page()+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",page_total());else field[0]=0;t=field;}
+            else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",caret_page()+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",page_total());else if(run->field>OWF_FIELD_TIME)snprintf(field,sizeof field,"%s",run->text?run->text:"");else field[0]=0;t=field;}
             if(!t)continue;
             add=strlen(t);
             if(n+add+2>cap){size_t want=(n+add+2)*2;char *q=(char*)realloc(out,want);if(!q){free(out);return NULL;}out=q;cap=want;}
@@ -4500,7 +4751,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"HELP",&arg))snprintf(result,sizeof result,"VERSION ACTIVATE DEACTIVATE HELP FAULT LASTERROR WORDCOUNT PAGECOUNT FONTCHECK MEMCHECK "
         "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND TRACKCHANGES CHANGES NEXTCHANGE PREVCHANGE "
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
-        "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT QUIT");
+        "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
@@ -4538,6 +4789,31 @@ static int rexx_do_command(const char *command, char **result_out)
         else{if(c0!='g')bring_focus_into_view();comment_text(&ci,ow_editor_comment_count(editor),result,sizeof result);}}
     else if(starts_word_ci(command,"RESOLVECOMMENT",&arg)||starts_word_ci(command,"DELETECOMMENT",&arg)){int del=tolower((unsigned char)command[0])=='d';int off=!strcasecmp(arg,"OFF")||!strcmp(arg,"0");int rc=!editor?OWF_ERR_UNSUPPORTED:del?ow_editor_delete_comment(editor):ow_editor_resolve_comment(editor,!off);
         if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No comment at the caret");}else{ok=editor_result(rc,del?"Comment deleted.":off?"Comment open again.":"Comment marked done.");snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
+    /* 2.0.29: fields. INSERTFIELD kind [name] (PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER,
+     * USER name, REF name, REFPAGE name: a bookmark's); DOCINFO TITLE|AUTHOR|SUBJECT [value] answers the value;
+     * USERFIELD name [value|-] answers the value (RC 5: none; "-" removes it); CROSSREF n [PAGE] refers to the
+     * n-th heading (from 1); UPDATEFIELDS answers how many changed */
+    else if(starts_word_ci(command,"INSERTFIELD",&arg)){static const char *const kinds[]={"PAGE","PAGES","DATE","TIME","TITLE","AUTHOR","SUBJECT","FILENAME","WORDS","CHAPTER","USER","REF","REFPAGE"};char kind[16];const char *rest=arg;int k,n=0,rc;char *u=NULL;
+        while(*rest&&*rest!=' '&&n<15)kind[n++]=(char)toupper((unsigned char)*rest++);kind[n]=0;rest=skip_space(rest);
+        for(k=0;k<13&&strcmp(kinds[k],kind);++k);
+        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF or REFPAGE and a name");}
+        else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
+    else if(starts_word_ci(command,"DOCINFO",&arg)){char what[16];const char *rest=arg;int n=0,k;while(*rest&&*rest!=' '&&n<15)what[n++]=(char)toupper((unsigned char)*rest++);what[n]=0;rest=skip_space(rest);
+        k=!strcmp(what,"TITLE")?0:!strcmp(what,"AUTHOR")?1:!strcmp(what,"SUBJECT")?2:-1;
+        if(!editor||k<0){ok=0;snprintf(result,sizeof result,"DOCINFO takes TITLE, AUTHOR or SUBJECT, and a value to set");}
+        else{const char *v;if(*rest){char *u=comment_utf8(!strcmp(rest,"\"\"")?"":rest);ok=u&&ow_editor_set_doc_info(editor,(ow_doc_info)k,u)==OWF_OK;free(u);if(ok){fields_update();update_window_title();request_document_redraw();}}
+            v=ow_editor_doc_info(editor,(ow_doc_info)k);if(ok)to_latin1(v?v:"",v?strlen(v):0,result,sizeof result);else snprintf(result,sizeof result,"Failed");}}
+    else if(starts_word_ci(command,"USERFIELD",&arg)){char name[64];const char *rest=arg,*now=NULL;int n=0,i,rc=OWF_OK;char *un;while(*rest&&*rest!=' '&&n<63)name[n++]=*rest++;name[n]=0;rest=skip_space(rest);
+        if(!editor||!name[0]){ok=0;snprintf(result,sizeof result,"USERFIELD needs a name");}
+        else if(!(un=comment_utf8(name))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
+        else{if(*rest){if(!strcmp(rest,"-"))rc=ow_editor_set_user_field(editor,un,NULL);else{char *uv=comment_utf8(rest);rc=uv?ow_editor_set_user_field(editor,un,uv):OWF_ERR_MEMORY;free(uv);}if(rc==OWF_OK){fields_update();request_document_redraw();}}
+            for(i=0;i<ow_editor_user_field_count(editor);++i){const char *nn,*vv;if(ow_editor_user_field_at(editor,i,&nn,&vv)&&!strcmp(nn,un))now=vv;}free(un);
+            if(rc!=OWF_OK&&rc!=OWF_ERR_UNSUPPORTED){ok=0;snprintf(result,sizeof result,"Failed");}else if(!now&&strcmp(rest,"-")){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No user field of that name");}else to_latin1(now?now:"",now?strlen(now):0,result,sizeof result);}}
+    else if(starts_word_ci(command,"CROSSREF",&arg)){owf_doc *d=editor?ow_editor_document(editor):NULL;int want=atoi(arg),i,k=0,para=-1,page=strstr(arg,"PAGE")||strstr(arg,"page");
+        for(i=0;d&&i<d->body.nparas&&para<0;++i)if(d->body.paras[i].fmt.heading>0&&++k==want)para=i;
+        if(para<0){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No heading %d",want);}
+        else{ok=editor_result(ow_editor_insert_cross_reference(editor,para,page),"Cross-reference inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
+    else if(starts_word_ci(command,"UPDATEFIELDS",&arg)){int before=editor?(int)ow_editor_changes(editor):0;fields_update();request_document_redraw();snprintf(result,sizeof result,"%d",editor&&(int)ow_editor_changes(editor)!=before?1:0);}
     else if(starts_word_ci(command,"QUIT",&arg)){if(editor&&ow_editor_is_dirty(editor)&&strcasecmp(arg,"FORCE")){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"Unsaved changes (QUIT FORCE quits)");}else{quit_now=1;snprintf(result,sizeof result,"Quitting");}}
     else {ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Unknown GFOpenWrite ARexx command; HELP lists them");}
     if(!ok){free(dynamic);dynamic=NULL;rexx_copy(rexx_lasterror,sizeof rexx_lasterror,rexx_noted?rexx_noting:result);}

@@ -77,13 +77,14 @@ static int import_text(const unsigned char *data, size_t length, owf_doc *doc, o
     return owf_builder_done(&b);
 }
 
-static void put_field(owf_buf *out, owf_field field)
+static void put_field(owf_buf *out, const owf_run *run)
 {
-    switch (field) {
+    switch (run->field) {
     case OWF_FIELD_PAGE: owf_buf_puts(out, "#"); break;
     case OWF_FIELD_PAGES: owf_buf_puts(out, "##"); break;
     case OWF_FIELD_DATE: owf_buf_puts(out, "[date]"); break;
     case OWF_FIELD_TIME: owf_buf_puts(out, "[time]"); break;
+    default: owf_buf_puts(out, run->text ? run->text : ""); break;   /* 1.7: the value it showed */
     }
 }
 
@@ -98,7 +99,7 @@ static void put_para_runs(owf_buf *out, const owf_doc *doc, const owf_para *para
         case OWF_RUN_TEXT: owf_buf_puts(out, run->text); break;
         case OWF_RUN_TAB: owf_buf_putc(out, '\t'); break;
         case OWF_RUN_LINEBREAK: owf_buf_putc(out, '\n'); break;
-        case OWF_RUN_FIELD: put_field(out, run->field); break;
+        case OWF_RUN_FIELD: put_field(out, run); break;
         case OWF_RUN_IMAGE: owf_buf_puts(out, "[image]"); break;
         case OWF_RUN_FRAME:
             /* a picture or a text box placed on the page: its text where it is anchored, a line a paragraph */

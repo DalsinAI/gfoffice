@@ -45,7 +45,14 @@ struct ow_editor {
     int typing_rev;
     int ins_rev, del_rev;
     char ins_minute[32], del_minute[32];
+
+    /* 2.3.0: fields: the file's name, and where to find a paragraph's page (NULL: the editor's own pages) */
+    char *file_name;
+    int (*page_of)(void *userdata, int paragraph);
+    void *page_of_data;
 };
+
+static int update_story_fields(ow_editor *editor, owf_story *story);   /* 2.3.0 */
 
 /* ---- small allocation helpers -------------------------------------------------- */
 
@@ -98,6 +105,10 @@ static void clear_doc_data(owf_doc *doc)
         owf_free(doc->comments[i].date); owf_free(doc->comments[i].text);
     }
     owf_free(doc->comments);
+    owf_free(doc->author);                           /* 2.3.0 */
+    owf_free(doc->subject);
+    for (i = 0; i < doc->nuserfields; ++i) { owf_free(doc->userfields[i].name); owf_free(doc->userfields[i].value); }
+    owf_free(doc->userfields);
     memset(doc, 0, sizeof(*doc));
 }
 
@@ -201,6 +212,9 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     owf_revision *revisions;
     owf_annotation *comments;
     int nimages, capimages, nrevisions, caprevisions, track, ncomments, capcomments;
+    char *author, *subject;
+    owf_userfield *userfields;
+    int nuserfields, capuserfields;
     if (!dst || !snapshot) return;
     images = dst->images;           /* 2.0.11: the pictures stay the document's (clone_doc) */
     nimages = dst->nimages;
@@ -218,6 +232,14 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capcomments = dst->capcomments;
     dst->comments = NULL;
     dst->ncomments = dst->capcomments = 0;
+    author = dst->author;           /* 2.3.0: the document's author, subject and user fields: not undone */
+    subject = dst->subject;
+    userfields = dst->userfields;
+    nuserfields = dst->nuserfields;
+    capuserfields = dst->capuserfields;
+    dst->author = dst->subject = NULL;
+    dst->userfields = NULL;
+    dst->nuserfields = dst->capuserfields = 0;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
     dst->images = images;
@@ -230,6 +252,11 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->comments = comments;
     dst->ncomments = ncomments;
     dst->capcomments = capcomments;
+    dst->author = author;
+    dst->subject = subject;
+    dst->userfields = userfields;
+    dst->nuserfields = nuserfields;
+    dst->capuserfields = capuserfields;
     owf_free(snapshot);                 /* only the old outer shell */
 }
 
@@ -986,6 +1013,12 @@ static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
         } else {
             if (owf_para_add_special(&tmp, &r->fmt, r->kind, r->field) != OWF_OK)
                 goto fail;
+            if (r->kind == OWF_RUN_FIELD) {          /* 2.3.0: a field's argument and value go with it */
+                owf_run *n = &tmp.runs[tmp.nruns - 1];
+                if ((r->href && !(n->href = copy_bytes(r->href, strlen(r->href)))) ||
+                    (r->text && !(n->text = copy_bytes(r->text, strlen(r->text)))))
+                    goto fail;
+            }
             tmp.runs[tmp.nruns - 1].image = r->image;   /* a picture's or a frame's index goes with it */
             tmp.runs[tmp.nruns - 1].revision = r->revision;   /* 2.1.1: and a tab's change */
         }
@@ -2696,6 +2729,7 @@ void ow_editor_free(ow_editor *editor)
     owf_free(editor->para_page);
     owf_free(editor->para_y);
     owf_free(editor->author);
+    owf_free(editor->file_name);
     owf_free(editor);
 }
 
@@ -4254,15 +4288,15 @@ int ow_editor_insert_table(ow_editor *editor, int rows, int cols)
     caret=after;caret.paragraph=base;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
-static const char *field_token(owf_field field)
+/* A header's or footer's fields as text: {PAGE} ... {CHAPTER} (2.3.0); a user field or a reference as its value */
+static const char *const field_tokens[] = { "{PAGE}", "{PAGES}", "{DATE}", "{TIME}", "{TITLE}", "{AUTHOR}",
+                                            "{SUBJECT}", "{FILENAME}", "{WORDS}", "{CHAPTER}" };
+#define FIELD_TOKENS ((int)(sizeof field_tokens / sizeof field_tokens[0]))
+
+static const char *field_token(const owf_run *run)
 {
-    switch (field) {
-    case OWF_FIELD_PAGE: return "{PAGE}";
-    case OWF_FIELD_PAGES: return "{PAGES}";
-    case OWF_FIELD_DATE: return "{DATE}";
-    case OWF_FIELD_TIME: return "{TIME}";
-    default: return "";
-    }
+    if ((int)run->field >= 0 && (int)run->field < FIELD_TOKENS) return field_tokens[run->field];
+    return run->text ? run->text : "";
 }
 
 static owf_story *story_for(ow_editor *editor, ow_story_kind which)
@@ -4298,7 +4332,7 @@ char *ow_editor_story_text(const ow_editor *editor, ow_story_kind which)
             if (run->kind == OWF_RUN_TEXT) text = run->text;
             else if (run->kind == OWF_RUN_TAB) text = "\t";
             else if (run->kind == OWF_RUN_LINEBREAK) text = "\n";
-            else if (run->kind == OWF_RUN_FIELD) text = field_token(run->field);
+            else if (run->kind == OWF_RUN_FIELD) text = field_token(run);
             if (!text) continue;
             add = strlen(text);
             if (n + add + 2 > cap) {
@@ -4326,16 +4360,12 @@ static int add_story_template_line(owf_para *para, const owf_charfmt *fmt,
 {
     size_t p = 0, start = 0;
     while (p < length) {
-        owf_field field;
+        owf_field field = OWF_FIELD_PAGE;
         size_t token = 0;
-        if (p + 6 <= length && !memcmp(text + p, "{PAGE}", 6)) {
-            field = OWF_FIELD_PAGE; token = 6;
-        } else if (p + 7 <= length && !memcmp(text + p, "{PAGES}", 7)) {
-            field = OWF_FIELD_PAGES; token = 7;
-        } else if (p + 6 <= length && !memcmp(text + p, "{DATE}", 6)) {
-            field = OWF_FIELD_DATE; token = 6;
-        } else if (p + 6 <= length && !memcmp(text + p, "{TIME}", 6)) {
-            field = OWF_FIELD_TIME; token = 6;
+        int t;
+        for (t = 0; t < FIELD_TOKENS && !token; ++t) {
+            size_t n = strlen(field_tokens[t]);
+            if (p + n <= length && !memcmp(text + p, field_tokens[t], n)) { field = (owf_field)t; token = n; }
         }
         if (token) {
             if (p > start && owf_para_add_text(para, fmt, text + start, p - start) != OWF_OK)
@@ -4380,7 +4410,7 @@ int ow_editor_set_story_text(ow_editor *editor, ow_story_kind which, const char 
         } else ++p;
     }
     editor->dirty = 1; ++editor->changes;
-    return OWF_OK;
+    return update_story_fields(editor, story) < 0 ? OWF_ERR_MEMORY : OWF_OK;   /* 2.3.0: {TITLE} ... */
 }
 
 static char *copy_cstr(const char *s)
@@ -4468,7 +4498,321 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
     pos.run+=2;pos.byte_offset=0;editor->selection.anchor=editor->selection.focus=pos;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
+
+/* ---- 2.3.0: fields with a value ------------------------------------------------------
+ * The document's title, author and subject, its file's name, its words, the chapter, a user field, and a
+ * reference to a bookmarked paragraph (its text or its page). A field run keeps the value it shows as its
+ * text (and its argument, a name, as its href), so that the layout, the printer and every writer show it as
+ * it is; update_fields works the values out again: on inserting one, after document information or a user
+ * field changes, and when the program asks (ow_editor_update_fields: after opening, before saving). */
+
+static int field_wants_arg(owf_field f)
+{
+    return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE;
+}
+
+/* A paragraph's text as one line (deleted text left out, tabs and breaks as spaces), cut to fit */
+static void para_line(const owf_doc *doc, const owf_para *p, char *out, size_t size)
+{
+    size_t n = 0;
+    int j;
+    if (!size) return;
+    for (j = 0; j < p->nruns && n + 1 < size; ++j) {
+        const owf_run *r = &p->runs[j];
+        const char *t = NULL;
+        if (rev_kind(doc, r->revision) == OWF_REV_DELETE) continue;
+        if (r->kind == OWF_RUN_TEXT) t = r->text;
+        else if (r->kind == OWF_RUN_TAB || r->kind == OWF_RUN_LINEBREAK) t = " ";
+        for (; t && *t && n + 1 < size; ++t) out[n++] = *t;
+    }
+    while (n && out[n - 1] == ' ') --n;
+    if (n + 1 >= size) {                             /* not inside a UTF-8 sequence */
+        while (n && ((unsigned char)out[n - 1] & 0xC0) == 0x80) --n;
+        if (n && ((unsigned char)out[n - 1] & 0xC0) == 0xC0) --n;
+    }
+    out[n] = 0;
+}
+
+static int count_words(const owf_doc *doc)
+{
+    int i, j, words = 0, in_word;
+    for (i = 0; i < doc->body.nparas; ++i) {
+        const owf_para *p = &doc->body.paras[i];
+        in_word = 0;
+        for (j = 0; j < p->nruns; ++j) {
+            const owf_run *r = &p->runs[j];
+            const char *t;
+            if (r->kind != OWF_RUN_TEXT || !r->text || rev_kind(doc, r->revision) == OWF_REV_DELETE) {
+                if (r->kind != OWF_RUN_TEXT) in_word = 0;
+                continue;
+            }
+            for (t = r->text; *t; ++t) {
+                int space = *t == ' ' || *t == '\t' || *t == '\n';
+                if (!space && !in_word) ++words;
+                in_word = !space;
+            }
+        }
+    }
+    return words;
+}
+
+/* The body paragraph a bookmark of that name begins, -1: none */
+static int bookmark_paragraph(const owf_doc *doc, const char *name)
+{
+    size_t n = name ? strlen(name) : 0;
+    int i;
+    if (!n) return -1;
+    for (i = 0; i < doc->body.nparas; ++i) {
+        const char *b = doc->body.paras[i].bookmarks;
+        while (b && *b) {
+            const char *e = strchr(b, ' ');
+            size_t len = e ? (size_t)(e - b) : strlen(b);
+            if (len == n && !memcmp(b, name, n)) return i;
+            b = e ? e + 1 : NULL;
+        }
+    }
+    return -1;
+}
+
+static const char *leaf_name(const char *path)
+{
+    const char *a = path ? strrchr(path, '/') : NULL, *b = path ? strrchr(path, ':') : NULL;
+    if (!path) return "";
+    if (b > a) a = b;
+    return a ? a + 1 : path;
+}
+
+static void field_value(ow_editor *editor, const owf_story *story, int para, const owf_run *run, char *out,
+                        size_t size)
+{
+    const owf_doc *doc = editor->doc;
+    int i, k;
+    out[0] = 0;
+    switch (run->field) {
+    case OWF_FIELD_TITLE: snprintf(out, size, "%s", doc->title ? doc->title : ""); break;
+    case OWF_FIELD_AUTHOR: snprintf(out, size, "%s", doc->author ? doc->author : ""); break;
+    case OWF_FIELD_SUBJECT: snprintf(out, size, "%s", doc->subject ? doc->subject : ""); break;
+    case OWF_FIELD_FILENAME: snprintf(out, size, "%s", leaf_name(editor->file_name)); break;
+    case OWF_FIELD_WORDS: snprintf(out, size, "%d", count_words(doc)); break;
+    case OWF_FIELD_CHAPTER:
+        /* the level-1 heading the paragraph is under; outside the body, the document's first */
+        k = -1;
+        if (story == &doc->body) {
+            for (i = para; i >= 0 && k < 0; --i) if (doc->body.paras[i].fmt.heading == 1) k = i;
+        } else {
+            for (i = 0; i < doc->body.nparas && k < 0; ++i) if (doc->body.paras[i].fmt.heading == 1) k = i;
+        }
+        if (k >= 0) para_line(doc, &doc->body.paras[k], out, size);
+        break;
+    case OWF_FIELD_USER:
+        for (i = 0; run->href && i < doc->nuserfields; ++i)
+            if (!strcmp(doc->userfields[i].name, run->href)) { snprintf(out, size, "%s", doc->userfields[i].value); break; }
+        break;
+    case OWF_FIELD_REF:
+    case OWF_FIELD_REF_PAGE:
+        k = bookmark_paragraph(doc, run->href);
+        if (k < 0) snprintf(out, size, "%s", "(no such bookmark)");
+        else if (run->field == OWF_FIELD_REF) para_line(doc, &doc->body.paras[k], out, size);
+        else {
+            int page = editor->page_of ? editor->page_of(editor->page_of_data, k)
+                     : k < editor->para_cap && editor->para_page ? editor->para_page[k] : 0;
+            snprintf(out, size, "%d", page + 1);
+        }
+        break;
+    default: break;
+    }
+}
+
+/* Every field's value worked out again: how many changed, -1 when memory ran out */
+static int update_story_fields(ow_editor *editor, owf_story *story)
+{
+    char value[256];
+    int i, j, changed = 0;
+    for (i = 0; i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j) {
+            owf_run *r = &story->paras[i].runs[j];
+            char *v;
+            if (r->kind != OWF_RUN_FIELD || r->field <= OWF_FIELD_TIME) continue;
+            field_value(editor, story, i, r, value, sizeof value);
+            if (r->text && !strcmp(r->text, value)) continue;
+            if (!(v = copy_bytes(value, strlen(value)))) return -1;
+            owf_free(r->text);
+            r->text = v;
+            ++changed;
+        }
+    return changed;
+}
+
+static int update_fields(ow_editor *editor)
+{
+    owf_doc *doc = editor->doc;
+    owf_story *stories[5];
+    int s, n, changed = 0;
+    stories[0] = &doc->body; stories[1] = &doc->header; stories[2] = &doc->footer;
+    stories[3] = &doc->header_left; stories[4] = &doc->footer_left;
+    for (s = 0; s < 5 + doc->nframes; ++s) {
+        n = update_story_fields(editor, s < 5 ? stories[s] : &doc->frames[s - 5].story);
+        if (n < 0) return -1;
+        changed += n;
+    }
+    if (changed) ++editor->changes;
+    return changed;
+}
+
+int ow_editor_update_fields(ow_editor *editor)
+{
+    int n, rc;
+    if (!editor || !editor->doc) return OWF_ERR_FORMAT;
+    if ((n = update_fields(editor)) < 0) return OWF_ERR_MEMORY;
+    if (!n) return 0;
+    if ((rc = ow_editor_layout(editor)) != OWF_OK) return rc;
+    /* a page reference can move what follows it: once more (a page number's width only) */
+    if ((n = update_fields(editor)) < 0) return OWF_ERR_MEMORY;
+    return n && (rc = ow_editor_layout(editor)) != OWF_OK ? rc : n + 1;
+}
+
+void ow_editor_set_file_name(ow_editor *editor, const char *path)
+{
+    char *copy = NULL;
+    if (!editor) return;
+    if (path && *path && !(copy = copy_bytes(path, strlen(path)))) return;
+    owf_free(editor->file_name);
+    editor->file_name = copy;
+}
+
+void ow_editor_set_page_lookup(ow_editor *editor, int (*page_of)(void *userdata, int paragraph), void *userdata)
+{
+    if (!editor) return;
+    editor->page_of = page_of;
+    editor->page_of_data = userdata;
+}
+
+const char *ow_editor_doc_info(const ow_editor *editor, ow_doc_info which)
+{
+    const owf_doc *doc = editor ? editor->doc : NULL;
+    if (!doc) return NULL;
+    return which == OW_INFO_TITLE ? doc->title : which == OW_INFO_AUTHOR ? doc->author :
+           which == OW_INFO_SUBJECT ? doc->subject : NULL;
+}
+
+static int set_text(char **at, const char *utf8)
+{
+    char *s = NULL;
+    if (utf8 && *utf8 && !(s = copy_bytes(utf8, strlen(utf8)))) return 0;
+    owf_free(*at);
+    *at = s;
+    return 1;
+}
+
+int ow_editor_set_doc_info(ow_editor *editor, ow_doc_info which, const char *utf8)
+{
+    owf_doc *doc = editor ? editor->doc : NULL;
+    char **at;
+    if (!doc) return OWF_ERR_FORMAT;
+    at = which == OW_INFO_TITLE ? &doc->title : which == OW_INFO_AUTHOR ? &doc->author :
+         which == OW_INFO_SUBJECT ? &doc->subject : NULL;
+    if (!at) return OWF_ERR_FORMAT;
+    if (!set_text(at, utf8)) return OWF_ERR_MEMORY;
+    editor->dirty = 1; ++editor->changes;
+    return ow_editor_update_fields(editor) < 0 ? OWF_ERR_MEMORY : OWF_OK;
+}
+
+int ow_editor_user_field_count(const ow_editor *editor)
+{
+    return editor && editor->doc ? editor->doc->nuserfields : 0;
+}
+
+int ow_editor_user_field_at(const ow_editor *editor, int index, const char **name, const char **value)
+{
+    const owf_doc *doc = editor ? editor->doc : NULL;
+    if (!doc || index < 0 || index >= doc->nuserfields) return 0;
+    if (name) *name = doc->userfields[index].name;
+    if (value) *value = doc->userfields[index].value;
+    return 1;
+}
+
+int ow_editor_set_user_field(ow_editor *editor, const char *name, const char *value)
+{
+    owf_doc *doc = editor ? editor->doc : NULL;
+    int i;
+    if (!doc || !name || !*name) return OWF_ERR_FORMAT;
+    for (i = 0; i < doc->nuserfields && strcmp(doc->userfields[i].name, name); ++i) ;
+    if (!value) {                                    /* removed (its fields show nothing) */
+        if (i == doc->nuserfields) return OWF_ERR_UNSUPPORTED;
+        owf_free(doc->userfields[i].name);
+        owf_free(doc->userfields[i].value);
+        memmove(&doc->userfields[i], &doc->userfields[i + 1],
+                (size_t)(doc->nuserfields - i - 1) * sizeof doc->userfields[0]);
+        --doc->nuserfields;
+    } else if (i < doc->nuserfields) {
+        char *v = copy_bytes(value, strlen(value));
+        if (!v) return OWF_ERR_MEMORY;
+        owf_free(doc->userfields[i].value);
+        doc->userfields[i].value = v;
+    } else {
+        owf_userfield *u;
+        if (doc->nuserfields == doc->capuserfields) {
+            int want = doc->capuserfields ? doc->capuserfields * 2 : 8;
+            u = (owf_userfield *)owf_realloc(doc->userfields, (size_t)want * sizeof *u);
+            if (!u) return OWF_ERR_MEMORY;
+            doc->userfields = u;
+            doc->capuserfields = want;
+        }
+        u = &doc->userfields[doc->nuserfields];
+        u->name = copy_bytes(name, strlen(name));
+        u->value = copy_bytes(value, strlen(value));
+        if (!u->name || !u->value) { owf_free(u->name); owf_free(u->value); return OWF_ERR_MEMORY; }
+        ++doc->nuserfields;
+    }
+    editor->dirty = 1; ++editor->changes;
+    return ow_editor_update_fields(editor) < 0 ? OWF_ERR_MEMORY : OWF_OK;
+}
+
+/* A body paragraph's bookmark: its first, or a new one ("_Ref1" ...) */
+static const char *paragraph_bookmark(ow_editor *editor, int paragraph, char *made, size_t size)
+{
+    owf_para *p = &editor->doc->body.paras[paragraph];
+    const char *b = p->bookmarks;
+    int n;
+    if (b && *b) {
+        const char *e = strchr(b, ' ');
+        snprintf(made, size, "%.*s", e ? (int)(e - b) : (int)strlen(b), b);
+        return made;
+    }
+    for (n = 1; n < 100000; ++n) {
+        snprintf(made, size, "_Ref%d", n);
+        if (bookmark_paragraph(editor->doc, made) < 0) break;
+    }
+    if (!(p->bookmarks = copy_bytes(made, strlen(made)))) return NULL;
+    return made;
+}
+
+int ow_editor_insert_cross_reference(ow_editor *editor, int paragraph, int page)
+{
+    char name[64];
+    owf_doc *doc = editor ? editor->doc : NULL;
+    owf_para *p;
+    int rc, had;
+    if (!doc || paragraph < 0 || paragraph >= doc->body.nparas) return OWF_ERR_FORMAT;
+    p = &doc->body.paras[paragraph];
+    had = p->bookmarks && *p->bookmarks;
+    if (!paragraph_bookmark(editor, paragraph, name, sizeof name)) return OWF_ERR_MEMORY;
+    /* a new bookmark stays when the field is undone: it marks the paragraph and changes nothing shown */
+    rc = ow_editor_insert_field_arg(editor, page ? OWF_FIELD_REF_PAGE : OWF_FIELD_REF, name);
+    p = &doc->body.paras[paragraph];
+    if (rc != OWF_OK && !had && p->bookmarks && !strcmp(p->bookmarks, name)) {
+        owf_free(p->bookmarks);
+        p->bookmarks = NULL;
+    }
+    return rc;
+}
+
 int ow_editor_insert_field(ow_editor *editor, owf_field field)
+{
+    return ow_editor_insert_field_arg(editor, field, NULL);
+}
+
+int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *arg)
 {
     ow_position pos;
     owf_para *para;
@@ -4477,7 +4821,9 @@ int ow_editor_insert_field(ow_editor *editor, owf_field field)
     char *right;
     size_t right_len;
     int old_n, move;
-    if (!editor || field < OWF_FIELD_PAGE || field > OWF_FIELD_TIME) return OWF_ERR_FORMAT;
+    char *arg_copy = NULL;
+    if (!editor || field < OWF_FIELD_PAGE || field > OWF_FIELD_LAST) return OWF_ERR_FORMAT;
+    if (field_wants_arg(field) != (arg && *arg)) return OWF_ERR_FORMAT;   /* 2.3.0: a name, for those that take one */
     editor->typing_group = 0;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     if (!ow_editor_selection_empty(editor) && delete_selection_internal(editor) < 0) {
@@ -4505,6 +4851,15 @@ int ow_editor_insert_field(ow_editor *editor, owf_field field)
     para->runs[pos.run + 1].kind = OWF_RUN_FIELD;
     para->runs[pos.run + 1].fmt = fmt;
     para->runs[pos.run + 1].field = field;
+    if (arg && *arg && !(arg_copy = copy_bytes(arg, strlen(arg)))) {
+        para->runs[pos.run + 1].kind = OWF_RUN_TEXT;  /* no memory: as an empty text run, and undone */
+        para->runs[pos.run + 2].kind = OWF_RUN_TEXT;
+        para->runs[pos.run + 2].text = right;
+        para->nruns = old_n + 2;
+        ow_editor_undo(editor);
+        return OWF_ERR_MEMORY;
+    }
+    para->runs[pos.run + 1].href = arg_copy;
     para->runs[pos.run + 2].kind = OWF_RUN_TEXT;
     para->runs[pos.run + 2].fmt = fmt;
     para->runs[pos.run + 2].text = right;
@@ -4513,14 +4868,21 @@ int ow_editor_insert_field(ow_editor *editor, owf_field field)
     editor->selection.anchor = editor->selection.focus = pos;
     editor->typing_fmt = fmt; editor->typing_fmt_set = 1;
     editor->dirty = 1; ++editor->changes;
+    if (field > OWF_FIELD_TIME) {                    /* 2.3.0: its value, laid out once to find pages */
+        int rc = ow_editor_layout(editor);
+        if (rc != OWF_OK) return rc;
+        if (update_fields(editor) < 0) return OWF_ERR_MEMORY;
+    }
     return ow_editor_layout(editor);
 }
 
-static const char *field_display(owf_field field, int page, int pages,
+static const char *field_display(const owf_run *run, int page, int pages,
                                  char *buffer, size_t size)
 {
     time_t now;
     struct tm *tmv;
+    owf_field field = run->field;
+    if (field > OWF_FIELD_TIME) return run->text ? run->text : "";   /* 2.3.0 */
     switch (field) {
     case OWF_FIELD_PAGE: snprintf(buffer, size, "%d", page + 1); break;
     case OWF_FIELD_PAGES: snprintf(buffer, size, "%d", pages); break;
@@ -4557,7 +4919,7 @@ static void render_story(const ow_editor *editor, const owf_story *story,
             else if (run->kind == OWF_RUN_TAB) text = "    ";
             else if (run->kind == OWF_RUN_LINEBREAK) text = "\n";
             else if (run->kind == OWF_RUN_FIELD)
-                text = field_display(run->field, page_index, editor->pages, field, sizeof field);
+                text = field_display(run, page_index, editor->pages, field, sizeof field);
             if (!text) continue;
             if (renderer->text_run)
                 renderer->text_run(renderer->userdata, para_base - i, j, px, y, text, &run->fmt);
@@ -4625,7 +4987,7 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
             else if (run->kind == OWF_RUN_TAB) text = "    ";
             else if (run->kind == OWF_RUN_LINEBREAK) text = "\n";
             else if (run->kind == OWF_RUN_FIELD)
-                text = field_display(run->field, page_index, editor->pages, field, sizeof field);
+                text = field_display(run, page_index, editor->pages, field, sizeof field);
             if (!text) continue;
             if (renderer->text_run)
                 renderer->text_run(renderer->userdata, i, j, x, y, text, &run->fmt);

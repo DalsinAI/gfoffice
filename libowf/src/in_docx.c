@@ -15,6 +15,7 @@
 #include "owf_internal.h"
 #include "owf_track.h"
 #include "owf_comment.h"
+#include "owf_fields.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,7 +50,10 @@ typedef struct {
     int hide;                /* hiding its result (a field we write ourselves) */
     owf_field field;
     int special;             /* PAGE, NUMPAGES, DATE or TIME */
-    char instr[32];
+    char instr[128];
+    int collect;             /* 1.7: keeping its result as the field's shown value (a field with one) */
+    char arg[96];            /* its argument: a bookmark's or a document variable's name */
+    char shown[256];
 } field_state;
 
 #define MAX_MARKS 32
@@ -644,23 +648,111 @@ static int hiding(const docx *d)
     return 0;
 }
 
-/* PAGE, NUMPAGES, DATE and TIME are our fields; 1 if instr is one. */
-static int special_field(const char *instr, owf_field *field)
+/* PAGE, NUMPAGES, DATE and TIME are our fields, and (1.7) TITLE, AUTHOR, SUBJECT, FILENAME, NUMWORDS,
+ * STYLEREF of the first heading level, DOCVARIABLE, REF and PAGEREF with their argument; 1 if instr is one. */
+static int special_field(const char *instr, owf_field *field, char *arg, size_t arg_size)
 {
     char word[16];
     size_t n = 0;
+    if (arg_size) arg[0] = 0;
     while (*instr == ' ')
         instr++;
     while (*instr && *instr != ' ' && *instr != '\\' && n < sizeof word - 1)
         word[n++] = (char)owf_upper((unsigned char)*instr++);
     word[n] = 0;
+    while (*instr == ' ')
+        instr++;
+    /* its argument: a word, or a quoted name */
+    n = 0;
+    if (*instr == '"') {
+        for (++instr; *instr && *instr != '"' && n + 1 < arg_size; )
+            arg[n++] = *instr++;
+    } else if (*instr != '\\') {
+        while (*instr && *instr != ' ' && n + 1 < arg_size)
+            arg[n++] = *instr++;
+    }
+    if (arg_size) arg[n] = 0;
     if (!strcmp(word, "PAGE")) *field = OWF_FIELD_PAGE;
     else if (!strcmp(word, "NUMPAGES") || !strcmp(word, "SECTIONPAGES")) *field = OWF_FIELD_PAGES;
     else if (!strcmp(word, "DATE") || !strcmp(word, "CREATEDATE") || !strcmp(word, "SAVEDATE") ||
              !strcmp(word, "PRINTDATE")) *field = OWF_FIELD_DATE;
     else if (!strcmp(word, "TIME")) *field = OWF_FIELD_TIME;
+    else if (!strcmp(word, "TITLE")) *field = OWF_FIELD_TITLE;
+    else if (!strcmp(word, "AUTHOR")) *field = OWF_FIELD_AUTHOR;
+    else if (!strcmp(word, "SUBJECT")) *field = OWF_FIELD_SUBJECT;
+    else if (!strcmp(word, "FILENAME")) *field = OWF_FIELD_FILENAME;
+    else if (!strcmp(word, "NUMWORDS")) *field = OWF_FIELD_WORDS;
+    else if (!strcmp(word, "STYLEREF") && (!strcmp(arg, "1") || !strcasecmp(arg, "Heading 1") ||
+                                           !strcasecmp(arg, "heading1"))) *field = OWF_FIELD_CHAPTER;
+    else if (!strcmp(word, "DOCVARIABLE") && *arg) *field = OWF_FIELD_USER;
+    else if (!strcmp(word, "REF") && *arg) *field = OWF_FIELD_REF;
+    else if (!strcmp(word, "PAGEREF") && *arg) *field = OWF_FIELD_REF_PAGE;
     else return 0;
+    if (*field <= OWF_FIELD_TIME || *field == OWF_FIELD_CHAPTER) arg[0] = 0;
     return 1;
+}
+
+/* 1.7: the document's title, author and subject (docProps/core.xml) */
+#define NS_DC "http://purl.org/dc/elements/1.1/"
+static void core_text(docx *d, const owf_xml_node *root, const char *name, int which)
+{
+    const owf_xml_node *n = owf_xml_child(root, NS_DC, name);
+    owf_buf t;
+    int rc;
+    if (!n || !n->first || n->first->type != OWF_XML_TEXT) return;
+    owf_buf_init(&t);
+    owf_buf_put(&t, n->first->name, n->first->length);
+    owf_buf_putc(&t, 0);
+    if (t.failed) { d->failed = 1; owf_buf_free(&t); return; }
+    rc = which == 0 ? owf_doc_set_title(d->doc, (const char *)t.data)
+       : which == 1 ? owf_doc_set_author(d->doc, (const char *)t.data)
+       : owf_doc_set_subject(d->doc, (const char *)t.data);
+    if (rc < 0) d->failed = 1;
+    owf_buf_free(&t);
+}
+
+static void read_core(docx *d)
+{
+    owf_xml *core = read_xml(d->zip, "docProps/core.xml");
+    const owf_xml_node *root = core ? owf_xml_root(core) : NULL;
+    if (root) {
+        if (!d->doc->title) core_text(d, root, "title", 0);
+        core_text(d, root, "creator", 1);
+        core_text(d, root, "subject", 2);
+    }
+    owf_xml_free(core);
+}
+
+/* 1.7: the text of a w:fldSimple's runs */
+static void simple_field_text(docx *d, const owf_xml_node *n, owf_buf *out)
+{
+    const owf_xml_node *c;
+    for (c = n->first; c; c = c->next) {
+        if (c->type != OWF_XML_ELEMENT) continue;
+        if (is_w(d, c, "t") && c->first && c->first->type == OWF_XML_TEXT)
+            owf_buf_put(out, c->first->name, c->first->length);
+        else
+            simple_field_text(d, c, out);
+    }
+}
+
+/* 1.7: a field with a shown value, its result kept as it */
+static int keeps_result(owf_field field)
+{
+    return field > OWF_FIELD_TIME;
+}
+
+static void field_collect(docx *d, const char *s, size_t n)
+{
+    field_state *f;
+    size_t have;
+    if (!d->nfields || d->nfields > MAX_FIELDS) return;
+    f = &d->fields[d->nfields - 1];
+    if (!f->collect || f->code) return;
+    have = strlen(f->shown);
+    if (have + n >= sizeof f->shown) n = sizeof f->shown - 1 - have;
+    memcpy(f->shown + have, s, n);
+    f->shown[have + n] = 0;
 }
 
 static void note_text(docx *d, const owf_xml_node *n, owf_buf *out)
@@ -1118,6 +1210,8 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
             set_fmt(d, fmt);
             if (d->current_href) owf_builder_link_text(d->b, c->first->name, c->first->length, d->current_href);
             else owf_builder_text(d->b, c->first->name, c->first->length);
+        } else if (c->first && c->first->type == OWF_XML_TEXT) {
+            field_collect(d, c->first->name, c->first->length);
         }
     } else if (!strcmp(c->name, "instrText") || (d->in_del && !strcmp(c->name, "delInstrText"))) {
         if (d->nfields && d->fields[d->nfields - 1].code && c->first && c->first->type == OWF_XML_TEXT) {
@@ -1139,9 +1233,11 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
         } else if (type && !strcmp(type, "separate") && d->nfields && d->nfields <= MAX_FIELDS) {
             field_state *f = &d->fields[d->nfields - 1];
             f->code = 0;
-            if (special_field(f->instr, &f->field)) {
+            if (special_field(f->instr, &f->field, f->arg, sizeof f->arg)) {
                 f->hide = 1;
-                if (!hiding(d) || d->nfields == 1) {
+                if (keeps_result(f->field)) {
+                    f->collect = 1;               /* 1.7: made at its end, with its result */
+                } else if (!hiding(d) || d->nfields == 1) {
                     set_fmt(d, fmt);
                     owf_builder_special(d->b, OWF_RUN_FIELD, f->field);
                 }
@@ -1150,11 +1246,21 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
             if (d->nfields <= MAX_FIELDS) {
                 field_state *f = &d->fields[d->nfields - 1];
                 /* A field without a result: show ours if it is one. */
-                if (f->code && special_field(f->instr, &f->field)) {
+                if (f->code && special_field(f->instr, &f->field, f->arg, sizeof f->arg)) {
                     d->nfields--;
                     if (!hiding(d)) {
                         set_fmt(d, fmt);
-                        owf_builder_special(d->b, OWF_RUN_FIELD, f->field);
+                        if (keeps_result(f->field)) owf_builder_field(d->b, f->field, f->arg, NULL);
+                        else owf_builder_special(d->b, OWF_RUN_FIELD, f->field);
+                    }
+                    return;
+                }
+                if (f->collect) {                 /* 1.7: the field, its result its shown value */
+                    field_state done = *f;
+                    d->nfields--;
+                    if (!hiding(d)) {
+                        set_fmt(d, fmt);
+                        owf_builder_field(d->b, done.field, done.arg, done.shown);
                     }
                     return;
                 }
@@ -1317,10 +1423,20 @@ static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para
             /* marks */
         } else if (is_w(d, c, "fldSimple")) {
             owf_field field;
+            char arg[96];
             const char *instr = owf_xml_attr(c, d->w, "instr");
-            if (instr && special_field(instr, &field)) {
+            if (instr && special_field(instr, &field, arg, sizeof arg)) {
                 set_fmt(d, para_char);
-                owf_builder_special(d->b, OWF_RUN_FIELD, field);
+                if (keeps_result(field)) {        /* 1.7: its runs' text is its shown value */
+                    owf_buf shown;
+                    owf_buf_init(&shown);
+                    simple_field_text(d, c, &shown);
+                    owf_buf_putc(&shown, 0);
+                    owf_builder_field(d->b, field, arg, shown.failed ? NULL : (const char *)shown.data);
+                    owf_buf_free(&shown);
+                } else {
+                    owf_builder_special(d->b, OWF_RUN_FIELD, field);
+                }
             } else {
                 para_content(d, c, para_char);
             }
@@ -1930,6 +2046,18 @@ static void section(docx *d, const owf_xml_node *sect)
         /* 1.5: whether changes are recorded */
         eo = settings ? wchild(d, owf_xml_root(settings), "trackRevisions") : NULL;
         if (eo && on_off(d, eo)) d->doc->track_changes = 1;
+        /* 1.7: document variables (w:docVars), the user fields */
+        eo = settings ? wchild(d, owf_xml_root(settings), "docVars") : NULL;
+        if (eo) {
+            const owf_xml_node *v;
+            for (v = eo->first; v; v = v->next) {
+                const char *name, *val;
+                if (v->type != OWF_XML_ELEMENT || !is_w(d, v, "docVar")) continue;
+                name = owf_xml_attr(v, d->w, "name");
+                val = owf_xml_attr(v, d->w, "val");
+                if (name && *name && owf_doc_set_user_field(d->doc, name, val ? val : "") < 0) d->failed = 1;
+            }
+        }
         owf_xml_free(settings);
     }
     story(d, head_default, &d->doc->header);
@@ -1994,6 +2122,7 @@ static int read_docx(docx *d)
         return OWF_ERR_FORMAT;
     }
     read_rels(d->zip, rels_name, &d->doc_rels);
+    read_core(d);                                    /* 1.7 */
     d->styles_xml = read_related(d, "/styles");
     d->theme = read_related(d, "/theme");
     d->numbering = read_related(d, "/numbering");

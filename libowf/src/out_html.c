@@ -146,8 +146,15 @@ static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_re
             owf_buf_puts(out, "[image]");
         break;
     case OWF_RUN_FIELD: {
-        static const char *names[] = { "page", "pages", "date", "time" };
+        static const char *names[] = { "page", "pages", "date", "time", "title", "author", "subject", "filename",
+                                       "words", "chapter", "user", "ref", "refpage" };
         static const char *shown[] = { "#", "##", "date", "time" };
+        if (run->field > OWF_FIELD_TIME) {           /* 1.7: the value it showed */
+            owf_buf_printf(out, "<span class=\"ow-field\" data-field=\"%s\">", names[run->field]);
+            owf_buf_puts_xml(out, run->text ? run->text : "");
+            owf_buf_puts(out, "</span>");
+            break;
+        }
         owf_buf_printf(out, "<span class=\"ow-field\" data-field=\"%s\">%s</span>",
                        names[run->field], shown[run->field]);
         break;

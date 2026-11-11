@@ -25,13 +25,16 @@
  * 3.5: libowf 1.6, comments (owf_run.comment, owf_doc.comments, owf_annotation): ODT office:annotation and
  * DOCX comments.xml with replies and done (commentsExtended); other formats leave them out and say so. No new
  * calls; the structs grew again, so the three libraries go together as for 3.4.
+ * 3.6: libowf 1.7, fields with a value (title, author, subject, file name, word count, chapter, user fields,
+ * references to a bookmark; owf_doc.author, .subject and .userfields): ODT and DOCX keep them, other formats
+ * the value shown. No new calls; owf_doc grew, so the three libraries go together again.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 5
-#define OWF_LIB_VERS "3.5"
+#define OWF_LIB_REVISION 6
+#define OWF_LIB_VERS "3.6"
 #define OWF_LIB_DATE "11.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"
