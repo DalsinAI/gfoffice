@@ -437,6 +437,7 @@ typedef struct {
     xarray *arrays;
     int narrays, caparrays;
     unsigned long array_budget, text_budget;
+    int pivots_read, pivots_kept;    /* pivot tables made into names; left as cells */
 } xlsx;
 
 static void *grow(xlsx *x, void *items, int count, int *capacity, size_t size)
@@ -2011,8 +2012,8 @@ static void read_sheet_notes(xlsx *x, int sheet, const char *part)
         else
             kept = 1;
     }
-    if (kept)
-        owf_report_add(x->report, OWF_NOTE_LOST, "Some pivot tables keep their cells only: GFOpenCalc reads one pivot table a sheet, from a range of cells");
+    x->pivots_read += made;
+    x->pivots_kept += kept;
     if (rel_by_type(&r, "/threadedComment"))
         owf_report_add(x->report, OWF_NOTE_APPROX, "Threaded comments are read as the plain comments Excel keeps beside them; their replies are not kept apart");
     free_rels(&r);
@@ -2446,7 +2447,7 @@ static int read_workbook(xlsx *x)
     const owf_xml_node *root, *n, *sheets;
     const rel *it;
     char part[PART_NAME];
-    int error = OWF_ERR_CORRUPT, i, count, active = 0;
+    int error = OWF_ERR_CORRUPT, i, count, active = 0, pivot_caches;
 
     xml = read_xml(x->zip, x->wb_part, &error);
     if (!xml)
@@ -2473,6 +2474,7 @@ static int read_workbook(xlsx *x)
     if ((it = rel_by_type(&x->wb_rels, "/vbaProject")) != NULL)
         owf_report_add(x->report, OWF_NOTE_LOST, "Macros (Visual Basic) are not read; the workbook opens without them");
     read_external(x, main_child(root, "externalReferences"));
+    pivot_caches = main_child(root, "pivotCaches") != NULL;
 
     /* the sheets, in the book's order */
     sheets = main_child(root, "sheets");
@@ -2530,6 +2532,9 @@ static int read_workbook(xlsx *x)
             read_worksheet(x, &x->sheets[i]);
     if (active < x->nsheets && x->sheets[active].sheet >= 0)
         x->book->active = x->sheets[active].sheet;
+    if (x->pivots_kept || (pivot_caches && !x->pivots_read))
+        owf_report_add(x->report, OWF_NOTE_LOST, "Pivot tables: some keep their cells only (GFOpenCalc reads one a sheet, "
+                                                 "from a range of cells)");
     if (!x->book->nsheets)
         owf_report_add(x->report, OWF_NOTE_INFO, "The workbook has no worksheets");
     if (x->damaged)
