@@ -95,7 +95,7 @@ static char *scen_item(const char **p, char *out, size_t size)
     const char *s = *p, *e = s;
     size_t n = 0;
     char *d;
-    while (*e && *e != ';' && *e != ',')
+    while (*e && *e != ';' && *e != ',' && *e != '"')
         e++;
     d = size ? out : owf_malloc((size_t)(e - s) + 1u);
     if (!d)
