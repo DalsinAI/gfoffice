@@ -624,14 +624,13 @@ def test_xls_to_ods(work):
                 continue
             rc_b, b, err = dump(dst)
             check("read back " + os.path.basename(dst), rc_b == 0, err)
-            # a name in another workbook: ODF formulas have none, and say so
-            other = lambda l: l.replace('"Other.xls!Rate"', '"Rate"')
-            same_books(f"xls to {ext}: {os.path.basename(src)}", a, b, ignore=other)
+            # a name in another workbook is kept too, in Excel's syntax (msoxl:)
+            same_books(f"xls to {ext}: {os.path.basename(src)}", a, b)
             if ext == "ods":
                 check_ods_package(dst)
             written.append(dst)
     rc, out, err = run([OWCONVERT, "--report", os.path.join(work, "built.xls"), os.path.join(work, "notes.ods")])
-    check("ods: other book's names reported", "lost their sheet or workbook" in out, out)
+    check("ods: other book's names reported", "written in Excel's syntax (msoxl:)" in out, out)
     return written
 
 
@@ -671,15 +670,15 @@ def test_xlsx_ods_xlsx(work, xlsx_paths):
         if not (convert(src, ods) and convert(ods, back)):
             continue
         a, b = dump(src)[1], dump(back)[1]
-        extra = (lambda l: l.replace('"Other.xls!Rate"', '"Rate"')) if stem == "built.xls.xlsx" else None
+        extra = None
         if stem == "hand.xlsx":
             rc, out, err = run([OWCONVERT, "--report", src, os.path.join(work, "hand-notes.ods")])
-            for want in ("lost their sheet or workbook", "Hidden names are shown", "Very hidden sheets",
+            for want in ("written in Excel's syntax (msoxl:)", "Hidden names are shown", "Very hidden sheets",
                          "centred in its cell", "Carriage returns"):
                 check("hand.xlsx to ods: note " + want, want in out, out)
 
             def extra(l):
-                l = l.replace('"Other.xlsx!Rate"', '"Rate"').replace(' hidden=1 "\'Very', ' hidden=0 "\'Very')
+                l = l.replace(' hidden=1 "\'Very', ' hidden=0 "\'Very')
                 l = l.replace('hidden=2 width', 'hidden=1 width').replace("halign=6", "halign=2").replace("\\x0d\\n", "\\n")
                 return l
         # comments, data validation and AutoFilters go through ODS (what an AutoFilter filters by, when it is a
