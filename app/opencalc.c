@@ -5109,9 +5109,7 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
     const char *p = arg;
     int keep = 0, any_model = 0, rc;
     oc_core_solver_model(core, &m);
-#define SV_NEXT() do { size_t k_ = 0; p = skip_space(p); \
-        while (*p && !isspace((unsigned char)*p) && k_ + 1 < sizeof word) word[k_++] = *p++; word[k_] = 0; } while (0)
-    for (SV_NEXT(); word[0]; SV_NEXT()) {
+    for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
         char *op;
         if (!strcasecmp(word, "KEEP")) { keep = 1; continue; }
         if (!any_model) {                   /* the first model word starts a model afresh */
@@ -5121,16 +5119,16 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
         if (!strcasecmp(word, "ANY")) { m.nonnegative = 0; continue; }
         if (!strcasecmp(word, "MAX") || !strcasecmp(word, "MIN") || !strcasecmp(word, "VALUE")) {
             m.goal = !strcasecmp(word, "MAX") ? OC_SOLVER_MAX : !strcasecmp(word, "MIN") ? OC_SOLVER_MIN : OC_SOLVER_VALUE;
-            SV_NEXT();
+            p = rexx_word(p, word, sizeof word);
             snprintf(m.target, sizeof m.target, "%s", word);
             if (m.goal == OC_SOLVER_VALUE) {
-                SV_NEXT();
+                p = rexx_word(p, word, sizeof word);
                 if (!chart_number(word, &m.value)) { snprintf(out, size, "SOLVE: VALUE needs a cell and a number"); return 0; }
             }
             continue;
         }
         if (!strcasecmp(word, "BY")) {
-            SV_NEXT();
+            p = rexx_word(p, word, sizeof word);
             snprintf(m.variables, sizeof m.variables, "%s", word);
             continue;
         }
@@ -5138,7 +5136,7 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
         if (!strcasecmp(word, "INT") || !strcasecmp(word, "BIN")) {
             oc_solver_constraint *c = &m.constraints[m.nconstraints++];
             c->rel = !strcasecmp(word, "INT") ? OC_SOLVER_INT : OC_SOLVER_BIN;
-            SV_NEXT();
+            p = rexx_word(p, word, sizeof word);
             snprintf(c->lhs, sizeof c->lhs, "%s", word);
             c->rhs[0] = 0;
             continue;
@@ -5160,7 +5158,6 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
         snprintf(out, size, "SOLVE: %s is not a Solver word", word);
         return 0;
     }
-#undef SV_NEXT
     if (!m.target[0]) { snprintf(out, size, "SOLVE: no model on this sheet: give MAX, MIN or VALUE and BY"); return 0; }
     rc = oc_core_solve(core, &m, &r);
     if (rc == OWF_OK && r.status != OC_SOLVED && r.status != OC_SOLVED_LIMIT) {
