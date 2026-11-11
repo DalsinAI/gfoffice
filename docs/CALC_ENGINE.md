@@ -30,6 +30,96 @@ the value actually achieved and the iteration count. Formula variables,
 non-numeric results, non-finite values and searches which do not converge are
 reported rather than committed.
 
+## Solver
+
+Data > Solver makes a target cell as large or as small as it can be, or
+equal to a value, by changing variable cells (up to 200), under up to 32
+constraints: a cell or range `<=`, `=` or `>=` a number, a cell or a range of
+the same size, or variable cells that must be whole numbers or binary (0 or
+1). Variables are kept from going negative unless that is turned off.
+
+`oc_core_solve` (`src/calc/oc_solver.c`) works on a deep copy of the book.
+It reads the model as a linear programme: every cell the model reads is
+worked out at the variables' present values and then with each variable one
+more, which gives each formula's coefficients. Two more points, with every
+variable moved by a different amount, check that the formulas really are
+linear; a model that is not (a product of two variables, say) is reported by
+the first cell that gave it away, and nothing is solved wrongly. After
+solving, the answer is put into the copy and every constraint is checked on
+the sheet itself.
+
+`src/calc/oc_lp.c` solves the programme: a dense two-phase simplex (the
+largest gain enters; after 50 steps that gain nothing, Bland's rule, which
+cannot cycle), with rows that hold one variable turned into bounds first and
+variables with no lower limit split in two. Whole-number variables are found
+by branch and bound, depth first on the most fractional variable, nearer
+side first, pruned by the best answer so far, up to 5000 programmes. The
+tableau is at most 512K numbers (4 MB). Values within 1e-9 of a whole number
+are written as that number.
+
+The window keeps the model on the sheet whether or not the answer is kept,
+as hidden names named as Excel names its Solver models (`solver_opt`,
+`solver_typ`, `solver_val`, `solver_adj`, `solver_num`, `solver_lhsN`,
+`solver_relN`, `solver_rhsN`, `solver_neg`, with `solver_eng` 2 for a linear
+model), so a model made in Excel opens in GFOpenCalc and the other way round.
+ODS keeps them as named expressions (ODF has no hidden names, which the save
+notes). Keeping the answer is one Undo step.
+
+ARexx: `SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs ...]
+[INT cells] [BIN cells] [ANY] [KEEP]` gives "target cell=value ..."; with no
+model words it solves the sheet's own model. RC 5 when the model has no
+answer (no values meet it, no limit, or not linear), 10 when it does not
+make sense; LASTERROR says why. Test script: tests/arexx/calc-solver.rexx.
+
+## Scenarios
+
+Data > Scenarios keeps named sets of values for some cells of a sheet (its
+changing cells: up to 32 ranges and 2048 cells), each with a comment, up to
+32 a sheet. Add keeps the cells' present inputs (numbers, text; a formula as
+the value it has now, as Excel keeps it, since its references would not
+follow rows put in later); Show puts a scenario's back in its cells and marks it as the one
+shown; Update keeps the present inputs afresh; Delete takes one away. Each
+is one Undo step (`src/calc/oc_scenario.c`).
+
+A sheet's scenarios are its hidden names (`libowf/include/owf_scenario.h`,
+code in `libowf/calc/owf_scenariodef.h`, shared as the pivot definitions'
+is): `_GF_SCENARIO_k` holds the name, comment, whether it was shown last and
+the inputs (escaped as the pivot text is), and `_GF_SCENARIO_k_Rn` each
+range, so the ranges follow inserted and deleted rows and columns as any
+name does. A scenario whose ranges no longer hold as many cells as it has
+inputs is left alone (not shown) rather than shown wrongly.
+
+Files: ODS writes each scenario as ODF does, a scenario table after its
+sheet (`table:scenario` with its ranges, comment and whether it is active,
+and the scenario's cells at their own addresses; `gfocalc:scenario-name`
+keeps a name the table had to change to stay unique), and reads scenario
+tables back into their sheet's scenarios, so they are not sheets in
+GFOpenCalc. XLSX writes the sheet's `scenarios` element (each `scenario`
+with its `inputCells` and their values, `current` and `show` for the one
+shown) and reads Excel's (values, as GFOpenCalc keeps them too).
+
+ARexx: `SCENARIO ADD name cells [comment]`, `SCENARIO UPDATE name [cells
+[comment]]`, `SCENARIO SHOW name`, `SCENARIO DELETE name`, `SCENARIO LIST`
+(the names, with commas between); a name with spaces in double quotes. RC 5
+when there is no such scenario. Test script: tests/arexx/calc-scenario.rexx.
+
+## Consolidate
+
+Data > Consolidate puts up to 16 source ranges, on any sheets, together into
+one table at a destination cell, with one of the eleven functions (Sum,
+Count, Average, Max, Min, Product, CountA, StdDev, StdDevP, Var, VarP). By
+position, each source's cell goes with the cells at the same place in the
+others. With labels in the left column, the top row or both, cells go
+together by their labels instead (case aside), and the table has each label
+once, in the order the labels first come; a label only some sources have
+still gets its row or column. Linked, each of the table's cells is a formula
+over the source cells that went into it (`=SUM('Q1'!$B$2,'Q2'!$B$2)`), so
+it follows them; otherwise the table is values. The destination may not be
+inside a source. The work is one Undo step (`src/calc/oc_consolidate.c`),
+and the settings stay on the sheet as a hidden name, `_GF_CONSOLIDATE`, so
+the window offers them again (and they survive XLSX and ODS as any name
+does).
+
 ## Multiple Operations
 
 GFOpenCalc 0.1.67 supports the column, row and two-variable forms of Apache
@@ -104,9 +194,59 @@ reloaded summary to refresh without application-private file parts.
 
 `oc_core_refresh_pivot` rebuilds the active summary on a deep workbook copy,
 clears stale cells when the result shrinks and swaps the complete result only
-after success. Refresh is one whole-book Undo step. The summary cells remain a
-snapshot between refreshes; interactive field filtering and native ODF/OOXML
-pivot-cache definitions are still outside this vertical slice.
+after success. Refresh is one whole-book Undo step.
+
+### Pivot tables (field layout)
+
+Data > Pivot Table... (core: `oc_core_pivot_create`, `oc_core_pivot_get`,
+`oc_core_pivot_set_layout`, `oc_core_refresh_pivot`) replaces the summary's
+three requesters with a field layout window. The definition is
+`owf_pivotdef` (`libowf/include/owf_pivot.h`; its code is
+`libowf/calc/owf_pivotdef.h`, compiled into `owf_book.c` and, on
+owfcalc.library, into the core's `oc_pivotdef.c`):
+
+- up to 8 row fields and 8 column fields, nested outer first;
+- up to 8 data fields, each with one of the eleven functions; a field may be
+  a data field as well as a row, column or page field;
+- up to 4 page fields, each keeping every item or one item (a text, number,
+  logical value or blank), which filter the source rows;
+- a grand total row and a grand total column, each optional.
+
+Each field's items keep their first-occurrence order and nested keys are
+grouped by their outer items. Items and keys are hashed, so making a table
+is linear in the source's rows. The output has the page fields at its top
+left, a blank row, the column items' heading rows (with a row of data field
+names when there are several), then one row per row key; outer row items are
+written once per group. Headings and totals are bold; values take their data
+field's source cell style. At most 65536 values are made. The table's
+place and size are kept, so a refresh or a new layout clears only the old
+table's rectangle (an older summary with no size clears its sheet as
+before). A table may share its source's sheet if it does not cover the
+source.
+
+`_GF_PIVOT_CONFIG` now holds `"2;r=...;c=...;d=field:function,...;p=field:item,...;g=...;t=row,col,rows,cols"`
+(fields counted from the source's first column; items with `%XX` for the
+characters the text uses). The first form, `"row,column,value,function"`
+with absolute columns, still reads.
+
+Files carry the pivot table natively, and the readers turn it back into the
+two names:
+
+- **ODS**: `table:data-pilot-tables/table:data-pilot-table` with its target
+  range, `table:source-cell-range`, one `table:data-pilot-field` per field
+  (`table:orientation` row, column, data with `table:function`, or page with
+  `table:selected-page`), and `table:grand-total`. libowf adds
+  `gfocalc:field` and `gfocalc:position` (the field's source column and
+  order) and the output's size; without them a file's fields are found by
+  their headings, so an OpenOffice or LibreOffice pivot table reads too.
+- **XLSX**: a pivot cache (`pivotCacheDefinition`: worksheet source, cache
+  fields with the shared items of row, column and page fields, no records,
+  `refreshOnLoad`) and a `pivotTableDefinition` on the output sheet (pivot
+  fields, row/column/page/data fields, grand totals). Excel's own pivot
+  tables read when their source is a range of cells; one table a sheet.
+
+The two names are not written beside the native pivot table, and a file that
+has both (an older GFOpenCalc's names and a newer table) takes the table.
 
 ## How it works
 

@@ -19,6 +19,8 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_pivot.h"
+#include "owf_scenario.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1280,6 +1282,20 @@ static void put_columns(ods_out *w, owf_buf *b, const owf_sheet *sh, unsigned lo
     free(cols);
 }
 
+/* Whether a _GF_SCENARIO_ name's scenario reads, so its scenario table carries it. */
+static int scenario_kept(const owf_book *book, int sheet, const char *name)
+{
+    owf_scenario sc;
+    int k = 0;
+    const char *p = name + sizeof OWF_SCENARIO_PREFIX - 1;
+    while (*p >= '0' && *p <= '9')
+        k = k * 10 + (*p++ - '0');
+    if (k < 1 || k > OWF_SCENARIOS || !owf_scenario_get(book, sheet, k - 1, &sc))
+        return 0;
+    owf_scenario_free(&sc);
+    return 1;
+}
+
 static void put_names(ods_out *w, owf_buf *b, int sheet)
 {
     const owf_book *book = w->book;
@@ -1290,6 +1306,13 @@ static void put_names(ods_out *w, owf_buf *b, int sheet)
         size_t len;
         if (n->sheet != sheet)
             continue;
+        if (owf_scenario_is_name(n->name) && sheet >= 0 && scenario_kept(book, sheet, n->name))
+            continue;                            /* in its scenario table instead */
+        if (owf_pivot_is_name(n->name) && sheet >= 0) {
+            owf_pivotdef def;
+            if (owf_pivot_get(book, sheet, &def))
+                continue;                        /* in table:data-pilot-tables instead */
+        }
         of = table_formula(w, n->formula);
         if (!of) {
             owf_report_add(w->report, OWF_NOTE_LOST, "Some defined names could not be written");
@@ -2804,6 +2827,224 @@ static void put_autofilters(ods_out *w, owf_buf *b)
         owf_buf_puts(b, "</table:database-ranges>");
 }
 
+/* ---- Pivot tables: table:data-pilot-tables (ODF 1.2 9.6) ----
+ * Each sheet's pivot table (owf_pivot.h) with its fields named by their
+ * headings, and libowf's own attributes for what ODF names otherwise: the
+ * field's column in the source (gfocalc:field), and the output's size. */
+
+static void put_pivot_field(ods_out *w, owf_buf *b, const owf_pivotdef *def, unsigned field,
+                            const char *orientation, unsigned position)
+{
+    char heading[160];
+    owf_pivot_field_heading(w->book, def, field, heading, sizeof heading);
+    owf_buf_puts(b, "<table:data-pilot-field table:source-field-name=\"");
+    attr(w, b, heading);
+    owf_buf_printf(b, "\" table:orientation=\"%s\"", orientation);
+    owf_buf_printf(b, " gfocalc:field=\"%u\" gfocalc:position=\"%u\"", field, position);
+}
+
+static void put_pivots(ods_out *w, owf_buf *b)
+{
+    const owf_book *book = w->book;
+    int i, any = 0;
+    unsigned k;
+    for (i = 0; i < book->nsheets; i++) {
+        owf_pivotdef def;
+        const char *out_name = book->sheets[i].name, *src_name;
+        if (!owf_pivot_get(book, i, &def))
+            continue;
+        src_name = book->sheets[def.source_sheet].name;
+        if (!any)
+            owf_buf_puts(b, "<table:data-pilot-tables>");
+        any = 1;
+        owf_buf_puts(b, "<table:data-pilot-table table:name=\"");
+        attr(w, b, out_name);
+        owf_buf_puts(b, "\" table:target-range-address=\"");
+        put_address(w, b, out_name, def.at_row, def.at_col, 0);
+        owf_buf_putc(b, ':');
+        put_address(w, b, out_name, def.at_row + (def.rows ? def.rows - 1u : 0u),
+                    def.at_col + (def.cols ? def.cols - 1u : 0u), 0);
+        owf_buf_printf(b, "\" table:grand-total=\"%s\" table:show-filter-button=\"false\" "
+                          "table:drill-down-on-double-click=\"false\" gfocalc:output-rows=\"%u\" "
+                          "gfocalc:output-columns=\"%u\">",
+                       def.row_grand && def.col_grand ? "both" : def.row_grand ? "row" : def.col_grand ? "column" : "none",
+                       def.rows, def.cols);
+        owf_buf_puts(b, "<table:source-cell-range table:cell-range-address=\"");
+        put_address(w, b, src_name, def.source.first_row, def.source.first_col, 0);
+        owf_buf_putc(b, ':');
+        put_address(w, b, src_name, def.source.last_row, def.source.last_col, 0);
+        owf_buf_puts(b, "\"/>");
+        for (k = 0; k < def.npage; k++) {
+            char item[OWF_PIVOT_ITEM + 8];
+            put_pivot_field(w, b, &def, def.page[k].field, "page", k);
+            if (def.page[k].kind != OWF_PIVOT_ALL) {
+                owf_pivot_item_text(&def.page[k], item, sizeof item);
+                owf_buf_puts(b, " table:selected-page=\"");
+                attr(w, b, item);
+                owf_buf_printf(b, "\" gfocalc:item-kind=\"%d\"", def.page[k].kind);
+            }
+            owf_buf_puts(b, "/>");
+        }
+        for (k = 0; k < def.nrow; k++) {
+            put_pivot_field(w, b, &def, def.row[k], "row", k);
+            owf_buf_puts(b, "/>");
+        }
+        for (k = 0; k < def.ncol; k++) {
+            put_pivot_field(w, b, &def, def.col[k], "column", k);
+            owf_buf_puts(b, "/>");
+        }
+        for (k = 0; k < def.ndata; k++) {
+            put_pivot_field(w, b, &def, def.data[k].field, "data", k);
+            owf_buf_printf(b, " table:function=\"%s\"/>", owf_pivot_function_word(def.data[k].function, 0));
+        }
+        if (def.ndata > 1)                       /* the data fields' own place: under the column fields */
+            owf_buf_printf(b, "<table:data-pilot-field table:source-field-name=\"\" table:orientation=\"%s\" "
+                              "table:is-data-layout-field=\"true\"/>", "column");
+        owf_buf_puts(b, "</table:data-pilot-table>");
+    }
+    if (any)
+        owf_buf_puts(b, "</table:data-pilot-tables>");
+}
+
+/* ---- Scenarios: each a scenario table after its sheet, holding the scenario's cells ---- */
+
+static void put_scenario_cell(ods_out *w, owf_buf *b, const char *input)
+{
+    double v;
+    size_t n = strlen(input);
+    if (!n) {
+        owf_buf_puts(b, "<table:table-cell/>");
+    } else if (input[0] == '=') {
+        char *of = of_expr(w, input + 1);
+        if (!of) {
+            owf_report_add(w->report, OWF_NOTE_LOST, "A scenario's formula could not be written: its cell is left empty");
+            owf_buf_puts(b, "<table:table-cell/>");
+            return;
+        }
+        owf_buf_puts(b, "<table:table-cell table:formula=\"of:=");
+        attr(w, b, of);
+        owf_buf_puts(b, "\"/>");
+        free(of);
+    } else if (input[0] != '\'' && owf_number_parse(input, n, &v)) {
+        char num[48];
+        owf_number_text(v, num);
+        owf_buf_printf(b, "<table:table-cell office:value-type=\"float\" office:value=\"%s\"/>", num);
+    } else if (!strcmp(input, "TRUE") || !strcmp(input, "FALSE")) {
+        owf_buf_printf(b, "<table:table-cell office:value-type=\"boolean\" office:boolean-value=\"%s\"/>",
+                       input[0] == 'T' ? "true" : "false");
+    } else {
+        const char *t = input[0] == '\'' ? input + 1 : input;
+        owf_buf_puts(b, "<table:table-cell office:value-type=\"string\"><text:p>");
+        put_xml(b, t, strlen(t), 0, &w->dropped);
+        owf_buf_puts(b, "</text:p></table:table-cell>");
+    }
+}
+
+/* The cell of a scenario at row, col: its value's index, or -1. */
+static int scenario_at(const owf_scenario *sc, unsigned row, unsigned col)
+{
+    unsigned k, at = 0;
+    for (k = 0; k < sc->nranges; k++) {
+        const owf_range *r = &sc->range[k];
+        unsigned width = r->last_col - r->first_col + 1u;
+        if (row >= r->first_row && row <= r->last_row && col >= r->first_col && col <= r->last_col)
+            return (int)(at + (row - r->first_row) * width + (col - r->first_col));
+        at += (r->last_row - r->first_row + 1u) * width;
+    }
+    return -1;
+}
+
+/* A table name no sheet and no earlier scenario table has. */
+static void scenario_table_name(const owf_book *book, int sheet, int index, const char *want, char *out, size_t size)
+{
+    int i, k, clash, n = 1;
+    snprintf(out, size, "%s", want);
+    do {
+        clash = 0;
+        for (i = 0; i < book->nsheets && !clash; i++)
+            clash = !strcmp(book->sheets[i].name, out);
+        for (i = 0; i <= sheet && !clash; i++) {
+            int count = owf_scenario_count(book, i);
+            for (k = 0; k < count && !(i == sheet && k >= index) && !clash; k++) {
+                owf_scenario other;
+                char earlier[OWF_SCENARIO_NAME + 16];
+                if (!owf_scenario_get(book, i, k, &other))
+                    continue;
+                scenario_table_name(book, i, k, other.name, earlier, sizeof earlier);
+                owf_scenario_free(&other);
+                clash = !strcmp(earlier, out);
+            }
+        }
+        if (clash)
+            snprintf(out, size, "%s_%d", want, ++n);
+    } while (clash && n < 1000);
+}
+
+static void put_scenarios(ods_out *w, owf_buf *b, int sheet)
+{
+    const owf_book *book = w->book;
+    const char *base = book->sheets[sheet].name;
+    int count = owf_scenario_count(book, sheet), i;
+    for (i = 0; i < count && !w->failed; i++) {
+        owf_scenario sc;
+        char name[OWF_SCENARIO_NAME + 16];
+        unsigned k, top = MAX_ROWS, bottom = 0, right = 0, row;
+        if (!owf_scenario_get(book, sheet, i, &sc))
+            continue;
+        for (k = 0; k < sc.nranges; k++) {
+            if (sc.range[k].first_row < top) top = sc.range[k].first_row;
+            if (sc.range[k].last_row > bottom) bottom = sc.range[k].last_row;
+            if (sc.range[k].last_col > right) right = sc.range[k].last_col;
+        }
+        scenario_table_name(book, sheet, i, sc.name, name, sizeof name);
+        owf_buf_puts(b, "<table:table table:name=\"");
+        attr(w, b, name);
+        owf_buf_puts(b, "\"><table:scenario table:scenario-ranges=\"");
+        for (k = 0; k < sc.nranges; k++) {
+            if (k)
+                owf_buf_putc(b, ' ');
+            put_address(w, b, base, sc.range[k].first_row, sc.range[k].first_col, 0);
+            owf_buf_putc(b, ':');
+            put_address(w, b, base, sc.range[k].last_row, sc.range[k].last_col, 0);
+        }
+        owf_buf_printf(b, "\" table:is-active=\"%s\" table:display-border=\"true\" table:border-color=\"#c0c0c0\" "
+                          "table:copy-back=\"true\" table:copy-styles=\"true\" table:copy-formulas=\"true\" "
+                          "table:comment=\"", sc.active ? "true" : "false");
+        attr(w, b, sc.comment);
+        owf_buf_puts(b, "\" gfocalc:scenario-name=\"");
+        attr(w, b, sc.name);
+        owf_buf_printf(b, "\"/><table:table-column table:number-columns-repeated=\"%u\"/>", right + 1u);
+        if (top)
+            owf_buf_printf(b, "<table:table-row table:number-rows-repeated=\"%u\"><table:table-cell/></table:table-row>",
+                           top);
+        for (row = top; row <= bottom; row++) {
+            unsigned col = 0, empty = 0;
+            int any = 0;
+            for (k = 0; k < sc.nranges; k++)
+                any |= row >= sc.range[k].first_row && row <= sc.range[k].last_row;
+            if (!any) {
+                owf_buf_puts(b, "<table:table-row><table:table-cell/></table:table-row>");
+                continue;
+            }
+            owf_buf_puts(b, "<table:table-row>");
+            for (col = 0; col <= right; col++) {
+                int at = scenario_at(&sc, row, col);
+                if (at < 0) {
+                    empty++;
+                    continue;
+                }
+                if (empty)
+                    owf_buf_printf(b, "<table:table-cell table:number-columns-repeated=\"%u\"/>", empty);
+                empty = 0;
+                put_scenario_cell(w, b, sc.value[at]);
+            }
+            owf_buf_puts(b, "</table:table-row>");
+        }
+        owf_buf_puts(b, "</table:table>");
+        owf_scenario_free(&sc);
+    }
+}
+
 static void body(ods_out *w, owf_buf *b)
 {
     int i;
@@ -2814,6 +3055,7 @@ static void body(ods_out *w, owf_buf *b)
     w->val_base = 0;
     for (i = 0; i < w->book->nsheets && !w->failed; i++) {
         put_sheet(w, b, i);
+        put_scenarios(w, b, i);
         w->val_base += w->book->sheets[i].nvalidations;
     }
     if (!w->book->nsheets)
@@ -2821,6 +3063,7 @@ static void body(ods_out *w, owf_buf *b)
                         "</table:table-row></table:table>");
     put_names(w, b, -1);
     put_autofilters(w, b);
+    put_pivots(w, b);
     owf_buf_puts(b, "</office:spreadsheet></office:body>");
 }
 

@@ -16,6 +16,8 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_pivot.h"
+#include "owf_scenario.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -172,6 +174,8 @@ typedef struct {
     char **names;                /* the sheets' names as written */
     char *kept;                  /* the book's kept parts written (1), by number */
     int *drawing;                /* each sheet's drawing among them, or -1 */
+    int *pivot;                  /* each sheet's pivot table's number (1...), or 0 */
+    int npivots;
     int failed;
 } xlsx_out;
 
@@ -1135,6 +1139,71 @@ static void put_drawing_target(owf_buf *b, const char *name)
     }
 }
 
+/* The sheet's scenarios, as Excel keeps them: each changing cell with its value as text. */
+static void put_scenarios(xlsx_out *w, owf_buf *b, int sheet)
+{
+    const owf_book *book = w->book;
+    int count = owf_scenario_count(book, sheet), i, shown = -1, any = 0;
+    owf_range all[OWF_SCENARIO_RANGES];
+    int nall = 0;
+    for (i = 0; i < count; i++) {
+        owf_scenario sc;
+        unsigned k;
+        if (!owf_scenario_get(book, sheet, i, &sc))
+            continue;
+        if (sc.active)
+            shown = i;
+        for (k = 0; k < sc.nranges && nall < OWF_SCENARIO_RANGES && !i; k++)
+            all[nall++] = sc.range[k];
+        owf_scenario_free(&sc);
+        any = 1;
+    }
+    if (!any)
+        return;
+    owf_buf_puts(b, "<scenarios");
+    if (shown >= 0)
+        owf_buf_printf(b, " current=\"%d\" show=\"%d\"", shown, shown);
+    if (nall) {
+        owf_buf_puts(b, " sqref=\"");
+        put_sqref(b, all, nall);
+        owf_buf_putc(b, '"');
+    }
+    owf_buf_putc(b, '>');
+    for (i = 0; i < count; i++) {
+        owf_scenario sc;
+        unsigned k, row, col, at = 0;
+        if (!owf_scenario_get(book, sheet, i, &sc))
+            continue;
+        owf_buf_puts(b, "<scenario name=\"");
+        put_text(b, sc.name, strlen(sc.name), X_ATTR);
+        owf_buf_printf(b, "\" locked=\"1\" count=\"%u\"", sc.ncells);
+        if (sc.comment[0]) {
+            owf_buf_puts(b, " comment=\"");
+            put_text(b, sc.comment, strlen(sc.comment), X_ATTR);
+            owf_buf_putc(b, '"');
+        }
+        owf_buf_putc(b, '>');
+        for (k = 0; k < sc.nranges; k++)
+            for (row = sc.range[k].first_row; row <= sc.range[k].last_row; row++)
+                for (col = sc.range[k].first_col; col <= sc.range[k].last_col; col++) {
+                    const char *v = sc.value[at++];
+                    if (row >= MAX_ROWS || col >= MAX_COLS)
+                        continue;
+                    if (*v == '\'')
+                        v++;
+                    owf_buf_puts(b, "<inputCells r=\"");
+                    put_ref(b, row, col);
+                    owf_buf_puts(b, "\" val=\"");
+                    put_text(b, v, strlen(v), X_ATTR);
+                    owf_buf_puts(b, "\"/>");
+                }
+        owf_buf_puts(b, "</scenario>");
+        owf_scenario_free(&sc);
+    }
+    owf_buf_puts(b, "</scenarios>");
+    (void)w;
+}
+
 static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
 {
     const owf_sheet *sh = &w->book->sheets[index];
@@ -1209,6 +1278,7 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
             owf_buf_puts(b, "</row>");
         }
     owf_buf_puts(b, "</sheetData>");
+    put_scenarios(w, b, index);
     if (sh->has_autofilter && sh->autofilter.last_row < MAX_ROWS && sh->autofilter.last_col < MAX_COLS) {
         owf_buf_puts(b, "<autoFilter ref=\"");
         put_sqref(b, &sh->autofilter, 1);
@@ -1250,6 +1320,311 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
     owf_buf_puts(b, "</worksheet>\n");
     if (skipped)
         owf_report_add(w->report, OWF_NOTE_LOST, "Cells beyond Excel's 1048576 rows or 16384 columns were left out");
+}
+
+/* ---- Pivot tables: a pivot cache (its source and fields, no records: Excel
+ * refreshes it on loading) and a pivot table on the output sheet, for each
+ * sheet's pivot table (owf_pivot.h). */
+
+typedef struct {
+    const owf_cell **items;      /* one cell of each distinct value, in their first order */
+    int n, cap;
+    int texts, numbers, blanks, bools, errors;
+} xpivot_items;
+
+static int xp_same(const owf_cell *a, const owf_cell *b)
+{
+    owf_value_type at = a ? a->type : OWF_VALUE_EMPTY, bt = b ? b->type : OWF_VALUE_EMPTY;
+    if (at == OWF_VALUE_TEXT && !(a->text && *a->text))
+        at = OWF_VALUE_EMPTY;
+    if (bt == OWF_VALUE_TEXT && !(b->text && *b->text))
+        bt = OWF_VALUE_EMPTY;
+    if (at != bt)
+        return 0;
+    switch (at) {
+    case OWF_VALUE_NUMBER:
+    case OWF_VALUE_BOOL: return a->number == b->number;
+    case OWF_VALUE_TEXT: return !strcmp(a->text, b->text);
+    case OWF_VALUE_ERROR: return a->error == b->error;
+    default: return 1;
+    }
+}
+
+/* A field's distinct values over the source's rows. 0 when memory runs out. */
+static int xp_collect(const owf_book *book, const owf_pivotdef *def, unsigned field, xpivot_items *it)
+{
+    const owf_sheet *sh = &book->sheets[def->source_sheet];
+    unsigned row;
+    int k;
+    memset(it, 0, sizeof *it);
+    for (row = def->source.first_row + 1u; row <= def->source.last_row; row++) {
+        const owf_cell *c = owf_sheet_find(sh, row, def->source.first_col + field);
+        for (k = 0; k < it->n && !xp_same(it->items[k], c); k++)
+            ;
+        if (k < it->n)
+            continue;
+        if (it->n == it->cap) {
+            int cap = it->cap ? it->cap * 2 : 16;
+            const owf_cell **p = realloc(it->items, (size_t)cap * sizeof *p);
+            if (!p)
+                return 0;
+            it->items = p;
+            it->cap = cap;
+        }
+        it->items[it->n++] = c;
+        if (!c || c->type == OWF_VALUE_EMPTY || (c->type == OWF_VALUE_TEXT && !(c->text && *c->text)))
+            it->blanks = 1;
+        else if (c->type == OWF_VALUE_TEXT)
+            it->texts = 1;
+        else if (c->type == OWF_VALUE_NUMBER)
+            it->numbers = 1;
+        else if (c->type == OWF_VALUE_BOOL)
+            it->bools = 1;
+        else
+            it->errors = 1;
+    }
+    return 1;
+}
+
+static void xp_item(owf_buf *b, const owf_cell *c)
+{
+    char n[40];
+    if (!c || c->type == OWF_VALUE_EMPTY || (c->type == OWF_VALUE_TEXT && !(c->text && *c->text))) {
+        owf_buf_puts(b, "<m/>");
+    } else if (c->type == OWF_VALUE_TEXT) {
+        owf_buf_puts(b, "<s v=\"");
+        put_xml(b, c->text, X_ATTR);
+        owf_buf_puts(b, "\"/>");
+    } else if (c->type == OWF_VALUE_NUMBER) {
+        owf_buf_puts(b, "<n v=\"");
+        put_number(b, c->number);
+        owf_buf_puts(b, "\"/>");
+    } else if (c->type == OWF_VALUE_BOOL) {
+        owf_buf_printf(b, "<b v=\"%d\"/>", c->number != 0.0);
+    } else {
+        snprintf(n, sizeof n, "%s", owf_error_name(c->error) ? owf_error_name(c->error) : "#N/A");
+        owf_buf_puts(b, "<e v=\"");
+        put_xml(b, n, X_ATTR);
+        owf_buf_puts(b, "\"/>");
+    }
+}
+
+/* Whether a field takes part in the table's layout (an axis field needs its items). */
+static int xp_axis(const owf_pivotdef *def, unsigned field, const char **axis)
+{
+    unsigned k;
+    for (k = 0; k < def->nrow; k++)
+        if (def->row[k] == field) { *axis = "axisRow"; return 1; }
+    for (k = 0; k < def->ncol; k++)
+        if (def->col[k] == field) { *axis = "axisCol"; return 1; }
+    for (k = 0; k < def->npage; k++)
+        if (def->page[k].field == field) { *axis = "axisPage"; return 1; }
+    *axis = NULL;
+    return 0;
+}
+
+/* The heading of each source field, made unique as Excel's cache fields must be. */
+static char *xp_heading(const owf_pivotdef *def, const xlsx_out *w, unsigned field, char *out, size_t size)
+{
+    unsigned k;
+    int dup = 0;
+    char other[160];
+    owf_pivot_field_heading(w->book, def, field, out, size);
+    for (k = 0; k < field; k++) {
+        owf_pivot_field_heading(w->book, def, k, other, sizeof other);
+        dup += owf_same_word(other, out);
+    }
+    if (dup) {
+        size_t n = strlen(out);
+        snprintf(out + n, size > n ? size - n : 0, "%d", dup + 1);
+    }
+    return out;
+}
+
+static void pivot_cache_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def)
+{
+    unsigned width = def->source.last_col - def->source.first_col + 1u, f;
+    const char *axis;
+    char heading[200];
+    int k;
+    owf_buf_puts(b, XML_HEAD "<pivotCacheDefinition xmlns=\"" NS_MAIN "\" xmlns:r=\"" NS_R "\" saveData=\"0\" "
+                    "refreshOnLoad=\"1\" createdVersion=\"3\" refreshedVersion=\"3\" minRefreshableVersion=\"3\">"
+                    "<cacheSource type=\"worksheet\"><worksheetSource ref=\"");
+    put_ref(b, def->source.first_row, def->source.first_col);
+    owf_buf_putc(b, ':');
+    put_ref(b, def->source.last_row, def->source.last_col);
+    owf_buf_puts(b, "\" sheet=\"");
+    put_xml(b, w->names[def->source_sheet], X_ATTR);
+    owf_buf_printf(b, "\"/></cacheSource><cacheFields count=\"%u\">", width);
+    for (f = 0; f < width && !w->failed; f++) {
+        owf_buf_puts(b, "<cacheField name=\"");
+        put_xml(b, xp_heading(def, w, f, heading, sizeof heading), X_ATTR);
+        owf_buf_puts(b, "\" numFmtId=\"0\">");
+        if (xp_axis(def, f, &axis)) {
+            xpivot_items it;
+            if (!xp_collect(w->book, def, f, &it)) {
+                free(it.items);
+                w->failed = 1;
+                return;
+            }
+            owf_buf_puts(b, "<sharedItems");
+            if (!it.texts)
+                owf_buf_puts(b, " containsSemiMixedTypes=\"0\" containsString=\"0\"");
+            if (it.numbers)
+                owf_buf_puts(b, " containsNumber=\"1\"");
+            if (it.blanks)
+                owf_buf_puts(b, " containsBlank=\"1\"");
+            if ((it.texts || it.blanks) + it.numbers + it.bools + it.errors > 1)
+                owf_buf_puts(b, " containsMixedTypes=\"1\"");
+            owf_buf_printf(b, " count=\"%d\">", it.n);
+            for (k = 0; k < it.n; k++)
+                xp_item(b, it.items[k]);
+            owf_buf_puts(b, "</sharedItems>");
+            free(it.items);
+        } else
+            owf_buf_puts(b, "<sharedItems/>");
+        owf_buf_puts(b, "</cacheField>");
+    }
+    owf_buf_puts(b, "</cacheFields></pivotCacheDefinition>\n");
+}
+
+static int xp_is_data(const owf_pivotdef *def, unsigned field)
+{
+    unsigned k;
+    for (k = 0; k < def->ndata; k++)
+        if (def->data[k].field == field)
+            return 1;
+    return 0;
+}
+
+static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, int number)
+{
+    unsigned width = def->source.last_col - def->source.first_col + 1u, f, k;
+    unsigned top = def->at_row + (def->npage ? def->npage + 1u : 0u);
+    unsigned last_row = def->at_row + (def->rows ? def->rows - 1u : 0u);
+    unsigned last_col = def->at_col + (def->cols ? def->cols - 1u : 0u);
+    unsigned header_rows = def->ncol ? def->ncol + (def->ndata > 1 ? 1u : 0u) : 1u;
+    const char *axis;
+    char heading[200], name[260];
+    int i;
+    if (last_row < top)
+        last_row = top;
+    owf_buf_printf(b, XML_HEAD "<pivotTableDefinition xmlns=\"" NS_MAIN "\" name=\"PivotTable%d\" cacheId=\"%d\" "
+                              "dataCaption=\"Values\" applyNumberFormats=\"0\" applyBorderFormats=\"0\" "
+                              "applyFontFormats=\"0\" applyPatternFormats=\"0\" applyAlignmentFormats=\"0\" "
+                              "applyWidthHeightFormats=\"1\" updatedVersion=\"3\" minRefreshableVersion=\"3\" "
+                              "createdVersion=\"3\" useAutoFormatting=\"1\" itemPrintTitles=\"1\" indent=\"0\" "
+                              "outline=\"1\" outlineData=\"1\" rowGrandTotals=\"%d\" colGrandTotals=\"%d\">",
+                   number, number, def->row_grand ? 1 : 0, def->col_grand ? 1 : 0);
+    owf_buf_puts(b, "<location ref=\"");
+    put_ref(b, top, def->at_col);
+    owf_buf_putc(b, ':');
+    put_ref(b, last_row, last_col);
+    owf_buf_printf(b, "\" firstHeaderRow=\"%u\" firstDataRow=\"%u\" firstDataCol=\"%u\"", def->ncol ? 1u : 0u,
+                   header_rows, def->nrow ? def->nrow : 1u);
+    if (def->npage)
+        owf_buf_printf(b, " rowPageCount=\"%u\" colPageCount=\"1\"", def->npage);
+    owf_buf_printf(b, "/><pivotFields count=\"%u\">", width);
+    for (f = 0; f < width && !w->failed; f++) {
+        int axis_field = xp_axis(def, f, &axis);
+        owf_buf_puts(b, "<pivotField");
+        if (axis_field)
+            owf_buf_printf(b, " axis=\"%s\"", axis);
+        if (xp_is_data(def, f))
+            owf_buf_puts(b, " dataField=\"1\"");
+        owf_buf_puts(b, " showAll=\"0\"");
+        if (axis_field) {
+            xpivot_items it;
+            if (!xp_collect(w->book, def, f, &it)) {
+                free(it.items);
+                w->failed = 1;
+                return;
+            }
+            owf_buf_printf(b, "><items count=\"%d\">", it.n + 1);
+            for (i = 0; i < it.n; i++)
+                owf_buf_printf(b, "<item x=\"%d\"/>", i);
+            owf_buf_puts(b, "<item t=\"default\"/></items></pivotField>");
+            free(it.items);
+        } else
+            owf_buf_puts(b, "/>");
+    }
+    owf_buf_puts(b, "</pivotFields>");
+    if (def->nrow) {
+        owf_buf_printf(b, "<rowFields count=\"%u\">", def->nrow);
+        for (k = 0; k < def->nrow; k++)
+            owf_buf_printf(b, "<field x=\"%u\"/>", def->row[k]);
+        owf_buf_puts(b, "</rowFields>");
+    }
+    if (def->ncol || def->ndata > 1) {
+        owf_buf_printf(b, "<colFields count=\"%u\">", def->ncol + (def->ndata > 1 ? 1u : 0u));
+        for (k = 0; k < def->ncol; k++)
+            owf_buf_printf(b, "<field x=\"%u\"/>", def->col[k]);
+        if (def->ndata > 1)
+            owf_buf_puts(b, "<field x=\"-2\"/>");
+        owf_buf_puts(b, "</colFields>");
+    }
+    if (def->npage) {
+        owf_buf_printf(b, "<pageFields count=\"%u\">", def->npage);
+        for (k = 0; k < def->npage; k++) {
+            const owf_pivot_page *pg = &def->page[k];
+            owf_buf_printf(b, "<pageField fld=\"%u\"", pg->field);
+            if (pg->kind != OWF_PIVOT_ALL) {
+                xpivot_items it;
+                if (!xp_collect(w->book, def, pg->field, &it)) {
+                    free(it.items);
+                    w->failed = 1;
+                    return;
+                }
+                for (i = 0; i < it.n && !owf_pivot_item_matches(pg, it.items[i]); i++)
+                    ;
+                if (i < it.n)
+                    owf_buf_printf(b, " item=\"%d\"", i);
+                else
+                    owf_report_add(w->report, OWF_NOTE_APPROX, "A pivot table's filter shows every item in Excel: its chosen item is not in the source");
+                free(it.items);
+            }
+            owf_buf_puts(b, " hier=\"-1\"/>");
+        }
+        owf_buf_puts(b, "</pageFields>");
+    }
+    owf_buf_printf(b, "<dataFields count=\"%u\">", def->ndata);
+    for (k = 0; k < def->ndata; k++) {
+        static const char *const fn_names[] = { "", "Average", "Count", "Count", "Max", "Min", "Product", "StdDev",
+                                                "StdDevp", "Sum", "Var", "Varp" };
+        unsigned j, same = 0;
+        owf_pivot_field_heading(w->book, def, def->data[k].field, heading, sizeof heading);
+        for (j = 0; j < k; j++)
+            same += def->data[j].field == def->data[k].field && def->data[j].function == def->data[k].function;
+        snprintf(name, sizeof name, same ? "%s of %s %u" : "%s of %s", fn_names[def->data[k].function], heading,
+                 same + 1u);
+        owf_buf_puts(b, "<dataField name=\"");
+        put_xml(b, name, X_ATTR);
+        owf_buf_printf(b, "\" fld=\"%u\"", def->data[k].field);
+        if (def->data[k].function != OWF_PIVOT_FN_SUM)
+            owf_buf_printf(b, " subtotal=\"%s\"", owf_pivot_function_word(def->data[k].function, 1));
+        owf_buf_puts(b, " baseField=\"0\" baseItem=\"0\"/>");
+    }
+    owf_buf_puts(b, "</dataFields><pivotTableStyleInfo name=\"PivotStyleLight16\" showRowHeaders=\"1\" "
+                    "showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/>"
+                    "</pivotTableDefinition>\n");
+}
+
+/* Which sheets have a pivot table that can be written. */
+static void collect_pivots(xlsx_out *w)
+{
+    const owf_book *book = w->book;
+    int i;
+    w->pivot = calloc((size_t)book->nsheets + 1, sizeof *w->pivot);
+    if (!w->pivot) {
+        w->failed = 1;
+        return;
+    }
+    for (i = 0; i < book->nsheets; i++) {
+        owf_pivotdef def;
+        if (owf_pivot_get(book, i, &def) && def.source.last_row < MAX_ROWS && def.source.last_col < MAX_COLS &&
+            def.at_row + def.rows <= MAX_ROWS && def.at_col + def.cols <= MAX_COLS)
+            w->pivot[i] = ++w->npivots;
+    }
 }
 
 /* ---- The workbook ---- */
@@ -1294,6 +1669,10 @@ static void workbook_xml(xlsx_out *w, owf_buf *b)
             char *f;
             if (n->sheet >= book->nsheets)
                 continue;
+            if (n->sheet >= 0 && w->pivot && w->pivot[n->sheet] && owf_pivot_is_name(n->name))
+                continue;                        /* in the sheet's pivot table instead */
+            if (n->sheet >= 0 && owf_scenario_is_name(n->name) && owf_scenario_count(book, n->sheet))
+                continue;                        /* in the sheet's scenarios instead */
             f = formula_for_file(w, n->formula);
             if (!f)
                 break;
@@ -1312,6 +1691,13 @@ static void workbook_xml(xlsx_out *w, owf_buf *b)
             free(f);
         }
         owf_buf_puts(b, "</definedNames>");
+    }
+    if (w->npivots) {
+        owf_buf_puts(b, "<pivotCaches>");
+        for (i = 0; i < w->npivots; i++)
+            owf_buf_printf(b, "<pivotCache cacheId=\"%d\" r:id=\"rId%d\"/>", i + 1,
+                           book->nsheets + 3 + w->links.count + i);
+        owf_buf_puts(b, "</pivotCaches>");
     }
     owf_buf_puts(b, "</workbook>\n");
 }
@@ -1369,6 +1755,7 @@ static void free_writer(xlsx_out *w)
     free(w->names);
     free(w->kept);
     free(w->drawing);
+    free(w->pivot);
 }
 
 int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, owf_report *report)
@@ -1393,6 +1780,8 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
         collect_links(&w);
     if (!w.failed)
         collect_kept(&w);
+    if (!w.failed)
+        collect_pivots(&w);
     if (w.failed) {
         free_writer(&w);
         return OWF_ERR_MEMORY;
@@ -1429,6 +1818,10 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
     for (i = 0; i < w.links.count; i++)
         owf_buf_printf(&part, "<Override PartName=\"/xl/externalLinks/externalLink%d.xml\" ContentType=\"" CT
                               "externalLink+xml\"/>", i + 1);
+    for (i = 0; i < w.npivots; i++)
+        owf_buf_printf(&part, "<Override PartName=\"/xl/pivotCache/pivotCacheDefinition%d.xml\" ContentType=\"" CT
+                              "pivotCacheDefinition+xml\"/><Override PartName=\"/xl/pivotTables/pivotTable%d.xml\" "
+                              "ContentType=\"" CT "pivotTable+xml\"/>", i + 1, i + 1);
     for (i = 0; w.kept && i < book->nparts; i++)
         if (w.kept[i] && strcmp(book->parts[i].type, "application/vnd.openxmlformats-package.relationships+xml")) {
             owf_buf_puts(&part, "<Override PartName=\"/");
@@ -1476,6 +1869,9 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
     for (i = 0; i < w.links.count; i++)
         owf_buf_printf(&part, "<Relationship Id=\"rId%d\" Type=\"" REL "externalLink\" Target=\"externalLinks/externalLink%d.xml\"/>",
                        nsh + 3 + i, i + 1);
+    for (i = 0; i < w.npivots; i++)
+        owf_buf_printf(&part, "<Relationship Id=\"rId%d\" Type=\"" REL "pivotCacheDefinition\" "
+                              "Target=\"pivotCache/pivotCacheDefinition%d.xml\"/>", nsh + 3 + w.links.count + i, i + 1);
     owf_buf_puts(&part, "</Relationships>\n");
     result = add_part(zip, &part, "xl/_rels/workbook.xml.rels", result);
 
@@ -1488,7 +1884,7 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
             result = OWF_ERR_MEMORY;
         snprintf(name, sizeof name, "xl/worksheets/sheet%d.xml", i + 1);
         result = add_part(zip, &part, name, result);
-        if (book->sheets[i].ncomments || w.drawing[i] >= 0) {
+        if (book->sheets[i].ncomments || w.drawing[i] >= 0 || w.pivot[i]) {
             owf_buf_puts(&part, XML_HEAD "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">");
             if (book->sheets[i].ncomments)
                 owf_buf_printf(&part, "<Relationship Id=\"rId1\" Type=\"" REL "comments\" Target=\"../comments%d.xml\"/>"
@@ -1499,9 +1895,27 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
                 put_drawing_target(&part, book->parts[w.drawing[i]].name);
                 owf_buf_puts(&part, "\"/>");
             }
+            if (w.pivot[i])
+                owf_buf_printf(&part, "<Relationship Id=\"rId4\" Type=\"" REL "pivotTable\" "
+                                      "Target=\"../pivotTables/pivotTable%d.xml\"/>", w.pivot[i]);
             owf_buf_puts(&part, "</Relationships>\n");
             snprintf(name, sizeof name, "xl/worksheets/_rels/sheet%d.xml.rels", i + 1);
             result = add_part(zip, &part, name, result);
+        }
+        if (w.pivot[i]) {
+            owf_pivotdef def;
+            owf_pivot_get(book, i, &def);
+            pivot_table_xml(&w, &part, &def, w.pivot[i]);
+            snprintf(name, sizeof name, "xl/pivotTables/pivotTable%d.xml", w.pivot[i]);
+            result = add_part(zip, &part, name, w.failed ? OWF_ERR_MEMORY : result);
+            owf_buf_printf(&part, XML_HEAD "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                                  "<Relationship Id=\"rId1\" Type=\"" REL "pivotCacheDefinition\" "
+                                  "Target=\"../pivotCache/pivotCacheDefinition%d.xml\"/></Relationships>\n", w.pivot[i]);
+            snprintf(name, sizeof name, "xl/pivotTables/_rels/pivotTable%d.xml.rels", w.pivot[i]);
+            result = add_part(zip, &part, name, result);
+            pivot_cache_xml(&w, &part, &def);
+            snprintf(name, sizeof name, "xl/pivotCache/pivotCacheDefinition%d.xml", w.pivot[i]);
+            result = add_part(zip, &part, name, w.failed ? OWF_ERR_MEMORY : result);
         }
         if (book->sheets[i].ncomments) {
             comments_xml(&w, &part, i);

@@ -6,12 +6,15 @@
  * the run's character style, then the direct formatting. Theme fonts
  * (Calibri, Cambria...) are looked up in the theme. Lists keep their
  * numbers and bullets as text; fields PAGE, NUMPAGES, DATE and TIME become
- * fields and the others show their last result; tracked insertions are
- * kept and deletions dropped; tables become rows of text with tabs between
- * the cells; footnotes and endnotes go to the end.
+ * fields and the others show their last result; tracked insertions and
+ * deletions (w:ins, w:del, w:moveTo, w:moveFrom, and on paragraph marks) are
+ * the document's tracked changes (1.5); tables become rows of text with tabs
+ * between the cells; footnotes and endnotes go to the end.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_track.h"
+#include "owf_comment.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +23,8 @@
 
 #define NS_W "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 #define NS_W_STRICT "http://purl.oclc.org/ooxml/wordprocessingml/main"
+#define NS_W14 "http://schemas.microsoft.com/office/word/2010/wordml"
+#define NS_W15 "http://schemas.microsoft.com/office/word/2012/wordml"
 #define NS_PKG_REL "http://schemas.openxmlformats.org/package/2006/relationships"
 #define NS_A "http://schemas.openxmlformats.org/drawingml/2006/main"
 #define NS_A_STRICT "http://purl.oclc.org/ooxml/drawingml/main"
@@ -83,6 +88,11 @@ typedef struct {
     int nmarks;
     int section_start;        /* 2.0.25: first body paragraph of the section being read */
     unsigned char section_break; /* the break before it (owf_section_break) */
+    int in_del;               /* 1.5: inside a tracked deletion: its w:delText is its text */
+    /* 1.6: the comments part's comments: their w:id and the document's index for each */
+    owf_xml *comments_xml, *comments_ext;
+    struct { const char *id; int index; } *cmap;
+    int ncmap;
 } docx;
 
 /* 2.0.19: a table style (w:style w:type="table"), worked out for one table: what it gives its cells'
@@ -928,6 +938,116 @@ static int import_drawing(docx *d, const owf_xml_node *drawing, const owf_charfm
 }
 
 static void run_children(docx *d, const owf_xml_node *r, const owf_charfmt *fmt);
+
+/* ---- 1.6: comments ---- */
+
+/* A comment's text: its paragraphs' w:t (w:tab a tab, a break a space), '\n' between paragraphs */
+static void comment_text(docx *d, const owf_xml_node *n, owf_buf *out, int *paras)
+{
+    const owf_xml_node *c;
+    for (c = n->first; c; c = c->next) {
+        if (c->type != OWF_XML_ELEMENT)
+            continue;
+        if (is_w(d, c, "p")) {
+            if ((*paras)++) owf_buf_putc(out, '\n');
+            comment_text(d, c, out, paras);
+        } else if (is_w(d, c, "t")) {
+            const owf_xml_node *t;
+            for (t = c->first; t; t = t->next)
+                if (t->type == OWF_XML_TEXT) owf_buf_put(out, t->name, t->length);
+        } else if (is_w(d, c, "tab")) {
+            owf_buf_putc(out, '\t');
+        } else if (is_w(d, c, "br") || is_w(d, c, "cr")) {
+            owf_buf_putc(out, ' ');
+        } else if (!is_w(d, c, "pPr") && !is_w(d, c, "rPr") && !is_w(d, c, "delText")) {
+            comment_text(d, c, out, paras);
+        }
+    }
+}
+
+/* The last w:p's w14:paraId inside n: commentsExtended names a comment by it */
+static const char *last_para_id(docx *d, const owf_xml_node *n)
+{
+    const owf_xml_node *c;
+    const char *id = NULL;
+    for (c = n->first; c; c = c->next)
+        if (is_w(d, c, "p") && owf_xml_attr(c, NS_W14, "paraId"))
+            id = owf_xml_attr(c, NS_W14, "paraId");
+    return id;
+}
+
+/* Every comment in the comments part, in order, then who answers whom and which are done (commentsExtended) */
+static void read_comments(docx *d)
+{
+    const owf_xml_node *root = d->comments_xml ? owf_xml_root(d->comments_xml) : NULL, *c, *e;
+    const char **para_ids;
+    int n = 0, i, j;
+    if (!root)
+        return;
+    for (c = root->first; c; c = c->next)
+        if (is_w(d, c, "comment")) ++n;
+    if (!n)
+        return;
+    d->cmap = calloc((size_t)n, sizeof *d->cmap);
+    para_ids = calloc((size_t)n, sizeof *para_ids);
+    if (!d->cmap || !para_ids) {
+        free(para_ids);
+        d->failed = 1;
+        return;
+    }
+    for (c = root->first; c; c = c->next) {
+        owf_buf text;
+        int paras = 0, idx;
+        if (!is_w(d, c, "comment") || !owf_xml_attr(c, d->w, "id"))
+            continue;
+        owf_buf_init(&text);
+        comment_text(d, c, &text, &paras);
+        owf_buf_putc(&text, 0);
+        idx = text.failed ? -1 : owf_comment_add(d->doc, owf_xml_attr(c, d->w, "author"),
+                                                 owf_xml_attr(c, d->w, "initials"), owf_xml_attr(c, d->w, "date"),
+                                                 (const char *)text.data, -1);
+        owf_buf_free(&text);
+        if (idx < 0) {
+            d->failed = 1;
+            break;
+        }
+        d->cmap[d->ncmap].id = owf_xml_attr(c, d->w, "id");
+        d->cmap[d->ncmap].index = idx;
+        para_ids[d->ncmap++] = last_para_id(d, c);
+    }
+    root = d->comments_ext ? owf_xml_root(d->comments_ext) : NULL;
+    for (e = root ? root->first : NULL; e; e = e->next) {
+        const char *pid = owf_xml_attr(e, NS_W15, "paraId"), *parent = owf_xml_attr(e, NS_W15, "paraIdParent");
+        const char *done = owf_xml_attr(e, NS_W15, "done");
+        if (!owf_xml_is(e, NS_W15, "commentEx") || !pid)
+            continue;
+        for (i = 0; i < d->ncmap; ++i)
+            if (para_ids[i] && !strcmp(para_ids[i], pid))
+                break;
+        if (i == d->ncmap)
+            continue;
+        if (done && (!strcmp(done, "1") || !strcmp(done, "true")))
+            d->doc->comments[d->cmap[i].index].done = 1;
+        for (j = 0; parent && j < d->ncmap; ++j)
+            if (j != i && para_ids[j] && !strcmp(para_ids[j], parent)) {
+                d->doc->comments[d->cmap[i].index].parent = d->cmap[j].index;
+                break;
+            }
+    }
+    free(para_ids);
+}
+
+/* A comment's place: where its range starts (w:commentRangeStart) or where it is (w:commentReference) */
+static void comment_mark(docx *d, const owf_xml_node *c, int start)
+{
+    const char *id = owf_xml_attr(c, d->w, "id");
+    int i;
+    for (i = 0; id && i < d->ncmap; ++i)
+        if (!strcmp(d->cmap[i].id, id)) {
+            owf_builder_comment(d->b, start ? -(d->cmap[i].index + 1) : d->cmap[i].index + 1);
+            return;
+        }
+}
 static void start_para(docx *d, const owf_parafmt *pf);
 
 /* mc:AlternateContent's branch to read: the first mc:Choice whose Requires names only markup we read, else
@@ -993,13 +1113,13 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
         }
         return;
     }
-    if (!strcmp(c->name, "t")) {
+    if (!strcmp(c->name, "t") || (d->in_del && !strcmp(c->name, "delText"))) {
         if (!hiding(d) && c->first && c->first->type == OWF_XML_TEXT) {
             set_fmt(d, fmt);
             if (d->current_href) owf_builder_link_text(d->b, c->first->name, c->first->length, d->current_href);
             else owf_builder_text(d->b, c->first->name, c->first->length);
         }
-    } else if (!strcmp(c->name, "instrText")) {
+    } else if (!strcmp(c->name, "instrText") || (d->in_del && !strcmp(c->name, "delInstrText"))) {
         if (d->nfields && d->fields[d->nfields - 1].code && c->first && c->first->type == OWF_XML_TEXT) {
             field_state *f = &d->fields[d->nfields - 1];
             size_t have = strlen(f->instr), n = c->first->length;
@@ -1090,7 +1210,7 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
     } else if (!strcmp(c->name, "endnoteReference")) {
         note(d, c, d->endnotes, "endnote", fmt);
     } else if (!strcmp(c->name, "commentReference")) {
-        owf_report_add(d->report, OWF_NOTE_LOST, "Comments were left out");
+        comment_mark(d, c, 0);                       /* 1.6 */
     } else if (!strcmp(c->name, "drawing")) {
         if(!import_drawing(d,c,fmt))owf_report_add(d->report, OWF_NOTE_LOST, "A picture could not be brought across");
     } else if (!strcmp(c->name, "pict") || !strcmp(c->name, "object")) {
@@ -1175,10 +1295,26 @@ static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para
             mark_start(d, c);                        /* 2.0.21 */
         } else if (is_w(d, c, "bookmarkEnd")) {
             mark_end(d, c);
-        } else if (is_w(d, c, "pPr") || is_w(d, c, "del") || is_w(d, c, "moveFrom") || is_w(d, c, "proofErr") ||
-                   is_w(d, c, "permStart") || is_w(d, c, "permEnd") || is_w(d, c, "commentRangeStart") ||
-                   is_w(d, c, "commentRangeEnd")) {
-            /* deleted text and marks */
+        } else if (is_w(d, c, "commentRangeStart")) {
+            comment_mark(d, c, 1);                   /* 1.6 */
+        } else if (is_w(d, c, "ins") || is_w(d, c, "moveTo") || is_w(d, c, "del") || is_w(d, c, "moveFrom")) {
+            /* 1.5: a tracked change, its runs the document's change */
+            int del = is_w(d, c, "del") || is_w(d, c, "moveFrom");
+            int rev = owf_track_add(d->doc, del ? OWF_REV_DELETE : OWF_REV_INSERT, owf_xml_attr(c, d->w, "author"),
+                                    owf_xml_attr(c, d->w, "date"));
+            owf_track_span t;
+            if (!rev) d->failed = 1;
+            if (is_w(d, c, "moveTo") || is_w(d, c, "moveFrom"))
+                owf_report_add(d->report, OWF_NOTE_APPROX, "Moved text is kept as a deletion and an insertion");
+            owf_track_begin(&t, d->b);
+            owf_track_switch(&t, d->b, rev, 0);
+            d->in_del += del;
+            para_content(d, c, para_char);
+            d->in_del -= del;
+            owf_track_switch(&t, d->b, 0, 0);
+        } else if (is_w(d, c, "pPr") || is_w(d, c, "proofErr") ||
+                   is_w(d, c, "permStart") || is_w(d, c, "permEnd") || is_w(d, c, "commentRangeEnd")) {
+            /* marks */
         } else if (is_w(d, c, "fldSimple")) {
             owf_field field;
             const char *instr = owf_xml_attr(c, d->w, "instr");
@@ -1390,6 +1526,23 @@ static void paragraph(docx *d, const owf_xml_node *p)
     para_content(d, p, &cf);
     owf_builder_end_para(d->b);
     para_names(d, pstyle ? wval(d, pstyle) : NULL);
+    {
+        /* 1.5: its paragraph mark inserted or deleted (w:pPr/w:rPr/w:ins, w:del) */
+        const owf_xml_node *mrpr = wchild(d, ppr, "rPr");
+        const owf_xml_node *mins = wchild(d, mrpr, "ins"), *mdel = wchild(d, mrpr, "del");
+        const owf_xml_node *m = mdel ? mdel : mins;
+        owf_story *st = d->b->story;
+        if (!m) m = mdel = wchild(d, mrpr, "moveFrom");
+        if (!m) m = wchild(d, mrpr, "moveTo");
+        if (m && st && st->nparas) {
+            int rev = owf_track_add(d->doc, mdel ? OWF_REV_DELETE : OWF_REV_INSERT, owf_xml_attr(m, d->w, "author"),
+                                    owf_xml_attr(m, d->w, "date"));
+            if (!rev) d->failed = 1;
+            st->paras[st->nparas - 1].mark_revision = rev;
+        }
+        if (wchild(d, ppr, "pPrChange") || wchild(d, mrpr, "rPrChange"))
+            owf_report_add(d->report, OWF_NOTE_APPROX, "Tracked format changes are kept as the format is now");
+    }
     if (wchild(d, ppr, "sectPr")) {
         const owf_xml_node *sect = wchild(d, ppr, "sectPr");
         record_section_columns(d, sect);
@@ -1774,6 +1927,9 @@ static void section(docx *d, const owf_xml_node *sect)
         owf_xml *settings = read_related(d, "/settings");
         const owf_xml_node *eo = settings ? wchild(d, owf_xml_root(settings), "evenAndOddHeaders") : NULL;
         even_odd = eo && on_off(d, eo);
+        /* 1.5: whether changes are recorded */
+        eo = settings ? wchild(d, owf_xml_root(settings), "trackRevisions") : NULL;
+        if (eo && on_off(d, eo)) d->doc->track_changes = 1;
         owf_xml_free(settings);
     }
     story(d, head_default, &d->doc->header);
@@ -1843,6 +1999,9 @@ static int read_docx(docx *d)
     d->numbering = read_related(d, "/numbering");
     d->footnotes = read_related(d, "/footnotes");
     d->endnotes = read_related(d, "/endnotes");
+    d->comments_xml = read_related(d, "/comments");  /* 1.6 */
+    d->comments_ext = read_related(d, "/commentsExtended");
+    read_comments(d);
 
     owf_parafmt_init(&d->base_para);
     owf_charfmt_init(&d->base_char);
@@ -1930,6 +2089,9 @@ static int import_docx(const unsigned char *data, size_t length, owf_doc *doc, o
     owf_xml_free(d->numbering);
     owf_xml_free(d->footnotes);
     owf_xml_free(d->endnotes);
+    owf_xml_free(d->comments_xml);                   /* 1.6 */
+    owf_xml_free(d->comments_ext);
+    free(d->cmap);
     free(d);
     return result;
 }

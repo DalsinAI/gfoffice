@@ -3,10 +3,14 @@
  * mimetype first and stored, the manifest, meta.xml, styles.xml (named
  * styles, the page, headers and footers) and content.xml (the body).
  * Formatting becomes automatic styles: P1, P2... for paragraphs and T1,
- * T2... for text, one per distinct format.
+ * T2... for text, one per distinct format. The body's tracked changes (1.5)
+ * are text:tracked-changes: insertions between text:change-start and
+ * text:change-end, deletions a text:change with their text in the changed
+ * region; a deleted paragraph end joins the two paragraphs, as ODF has it.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_comment.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -24,6 +28,22 @@
            "xmlns:meta=\"urn:oasis:names:tc:opendocument:xmlns:meta:1.0\" " \
            "office:version=\"1.3\""
 
+/* 1.5: the body's tracked changes as they are written: each changed region (ct1, ct2...) and the one an
+ * insertion or deletion being written is in (0: none) */
+typedef struct {
+    int rev;                     /* the document's change number */
+    owf_buf content;             /* a deletion's paragraphs */
+} odt_region;
+
+typedef struct {
+    const owf_doc *doc;
+    odt_region *regions;
+    int nregions, capregions;
+    int ins, del;                /* the region open: insertion's or deletion's, 1 + its index; 0: none */
+    int del_space;               /* the deletion's text ended with a space (put_text) */
+    int failed;
+} odt_track;
+
 /* The distinct formats of one XML file's stories. */
 typedef struct {
     const owf_parafmt **paras;
@@ -31,6 +51,7 @@ typedef struct {
     const owf_charfmt **chars;
     int nchars, capchar;
     int failed;
+    odt_track *track;            /* 1.5: content.xml's; NULL: changes are written accepted (styles.xml) */
 } styles;
 
 static int same_para(const owf_parafmt *a, const owf_parafmt *b)
@@ -483,20 +504,195 @@ static size_t next_cut_odt(const odt_marks *mk, const char *text, size_t at, siz
     return next;
 }
 
-static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s)
+/* ---- 1.5: tracked changes ---- */
+
+static int change_kind(const owf_doc *doc, int number)
+{
+    const owf_revision *r = OWF_DOC_REVISION(doc, number);
+    return r ? r->kind : 0;
+}
+
+static int new_region(odt_track *tk, int rev)
+{
+    if (tk->nregions == tk->capregions) {
+        int want = tk->capregions ? tk->capregions * 2 : 16;
+        odt_region *grown = realloc(tk->regions, (size_t)want * sizeof *grown);
+        if (!grown) {
+            tk->failed = 1;
+            return 0;
+        }
+        tk->regions = grown;
+        tk->capregions = want;
+    }
+    tk->regions[tk->nregions].rev = rev;
+    owf_buf_init(&tk->regions[tk->nregions].content);
+    return ++tk->nregions;
+}
+
+/* Ends the insertion or deletion being written, if one is. */
+static void end_insertion(owf_buf *out, odt_track *tk)
+{
+    if (tk && tk->ins) {
+        owf_buf_printf(out, "<text:change-end text:change-id=\"ct%d\"/>", tk->ins);
+        tk->ins = 0;
+    }
+}
+
+static void end_deletion(odt_track *tk)
+{
+    if (tk && tk->del) {
+        owf_buf_puts(&tk->regions[tk->del - 1].content, "</text:p>");
+        tk->del = 0;
+    }
+}
+
+/* What is written next is change rev's (0: no change's): the insertion or deletion it is in begun, the
+ * one before ended. A deletion's text goes into its region, in a paragraph of the style para_style. */
+static void change_to(owf_buf *out, odt_track *tk, int rev, int para_style)
+{
+    int kind;
+    if (!tk)
+        return;
+    kind = change_kind(tk->doc, rev);
+    if (kind != OWF_REV_INSERT || (tk->ins && tk->regions[tk->ins - 1].rev != rev))
+        end_insertion(out, tk);
+    if (kind != OWF_REV_DELETE || (tk->del && tk->regions[tk->del - 1].rev != rev))
+        end_deletion(tk);
+    if (kind == OWF_REV_INSERT && !tk->ins && (tk->ins = new_region(tk, rev)))
+        owf_buf_printf(out, "<text:change-start text:change-id=\"ct%d\"/>", tk->ins);
+    if (kind == OWF_REV_DELETE && !tk->del && (tk->del = new_region(tk, rev))) {
+        owf_buf_printf(out, "<text:change text:change-id=\"ct%d\"/>", tk->del);
+        owf_buf_printf(&tk->regions[tk->del - 1].content, "<text:p text:style-name=\"P%d\">", para_style);
+        tk->del_space = 1;
+    }
+}
+
+/* One run's content (not a frame's): its text from done on, a tab, a break, a field or a picture in the line. */
+static void put_run_content(owf_buf *out, const owf_doc *doc, const owf_run *run, const char *text, size_t length,
+                            int *after_space)
 {
     static const char *fields[] = {
         "<text:page-number text:select-page=\"current\">1</text:page-number>",
         "<text:page-count>1</text:page-count>", "<text:date/>", "<text:time/>" };
-    int heading=para->fmt.heading>=1&&para->fmt.heading<=6,after_space=1,j;
+    switch (run->kind) {
+    case OWF_RUN_TEXT: put_text(out, text, length, after_space); break;
+    case OWF_RUN_TAB: owf_buf_puts(out, "<text:tab/>"); *after_space = 1; break;
+    case OWF_RUN_LINEBREAK: owf_buf_puts(out, "<text:line-break/>"); *after_space = 1; break;
+    case OWF_RUN_FIELD: owf_buf_puts(out, fields[run->field]); *after_space = 0; break;
+    case OWF_RUN_IMAGE:
+        if (doc && run->image >= 0 && run->image < doc->nimages) {
+            const owf_image *im = &doc->images[run->image];
+            owf_buf_puts(out, "<draw:frame text:anchor-type=\"as-char\" svg:width=\"");
+            owf_put_points(out, im->width);
+            owf_buf_puts(out, "\" svg:height=\"");
+            owf_put_points(out, im->height);
+            owf_buf_printf(out, "\"><draw:image xlink:href=\"Pictures/image%d.%s\" xlink:type=\"simple\" xlink:show=\"embed\" "
+                                "xlink:actuate=\"onLoad\"/></draw:frame>", run->image + 1, odt_image_ext(im));
+        }
+        break;
+    default: break;
+    }
+}
+
+/* 1.6: whether comment index has a range (a run where it starts) */
+static int comment_ranged(const owf_doc *doc, int index)
+{
+    owf_story *st;
+    int n, i, j;
+    for (n = 0; (st = owf_doc_story((owf_doc *)doc, n)) != NULL; ++n)
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j)
+                if (st->paras[i].runs[j].comment == -(index + 1))
+                    return 1;
+    return 0;
+}
+
+/* 1.6: a comment's place: office:annotation where it is (or where its range starts, named), and
+ * office:annotation-end where a range ends */
+static void put_comment_odt(owf_buf *out, const owf_doc *doc, int mark)
+{
+    int index = mark > 0 ? mark - 1 : -mark - 1;
+    const owf_annotation *c;
+    const char *t, *nl;
+    if (!doc || index < 0 || index >= doc->ncomments)
+        return;
+    if (mark > 0 && comment_ranged(doc, index)) {
+        owf_buf_printf(out, "<office:annotation-end office:name=\"__Annotation__%d\"/>", index + 1);
+        return;
+    }
+    c = &doc->comments[index];
+    if (mark < 0)
+        owf_buf_printf(out, "<office:annotation office:name=\"__Annotation__%d\">", index + 1);
+    else
+        owf_buf_puts(out, "<office:annotation>");
+    if (c->author) {
+        owf_buf_puts(out, "<dc:creator>");
+        owf_buf_puts_xml(out, c->author);
+        owf_buf_puts(out, "</dc:creator>");
+    }
+    if (c->date) {
+        owf_buf_puts(out, "<dc:date>");
+        owf_buf_puts_xml(out, c->date);
+        owf_buf_puts(out, "</dc:date>");
+    }
+    if (c->initials) {
+        owf_buf_puts(out, "<meta:creator-initials>");
+        owf_buf_puts_xml(out, c->initials);
+        owf_buf_puts(out, "</meta:creator-initials>");
+    }
+    for (t = c->text ? c->text : ""; ; t = nl + 1) {
+        int after_space = 1;
+        nl = strchr(t, '\n');
+        owf_buf_puts(out, "<text:p>");
+        put_text(out, t, nl ? (size_t)(nl - t) : strlen(t), &after_space);
+        owf_buf_puts(out, "</text:p>");
+        if (!nl)
+            break;
+    }
+    owf_buf_puts(out, "</office:annotation>");
+}
+
+/* A paragraph: its start tag unless the one before it was joined to it (open 0), its end tag unless its own
+ * end is a deletion's and next is joined to it (close 0; next is that paragraph). */
+static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s, int open, int close,
+                          const owf_para *next)
+{
+    int heading=para->fmt.heading>=1&&para->fmt.heading<=6,after_space=1,j,pstyle=para_style(s,&para->fmt);
+    odt_track *tk = s->track;
     odt_marks mk;
     size_t at = 0;
-    if(heading)owf_buf_printf(out,"<text:h text:style-name=\"P%d\" text:outline-level=\"%d\">",para_style(s,&para->fmt),para->fmt.heading);
-    else owf_buf_printf(out,"<text:p text:style-name=\"P%d\">",para_style(s,&para->fmt));
+    if(open){
+        if(heading)owf_buf_printf(out,"<text:h text:style-name=\"P%d\" text:outline-level=\"%d\">",pstyle,para->fmt.heading);
+        else owf_buf_printf(out,"<text:p text:style-name=\"P%d\">",pstyle);
+    }
     /* 1.4: its bookmarks, where links into the document go; 2.0.21: each where it is in the text */
     mk.n = para->bookmarks ? owf_marks_parse(para->bookmarks, mk.m, 16) : 0;
     for (j = 0; j < mk.n; ++j) mk.state[j] = 0;
-    for(j=0;j<para->nruns;++j){const owf_run *run=&para->runs[j];int t=char_style(s,&run->fmt);
+    for(j=0;j<para->nruns;++j){const owf_run *run=&para->runs[j];int t;
+        int kind;
+        if (run->comment) {                          /* 1.6 */
+            put_comment_odt(out, doc, run->comment);
+            continue;
+        }
+        t=char_style(s,&run->fmt);
+        kind = run->kind == OWF_RUN_FRAME || run->kind == OWF_RUN_IMAGE ? 0 : change_kind(doc, run->revision);
+        if (kind == OWF_REV_DELETE) {
+            /* 1.5: deleted text: in the deletion's region (written accepted when there is none: left out) */
+            if (tk) {
+                owf_buf *dc;
+                change_to(out, tk, run->revision, pstyle);
+                if (tk->del) {
+                    dc = &tk->regions[tk->del - 1].content;
+                    if (t) owf_buf_printf(dc, "<text:span text:style-name=\"T%d\">", t);
+                    put_run_content(dc, doc, run, run->text ? run->text : "", run->text ? strlen(run->text) : 0,
+                                    &tk->del_space);
+                    if (t) owf_buf_puts(dc, "</text:span>");
+                }
+            }
+            if (run->kind == OWF_RUN_TEXT && run->text) at += strlen(run->text);
+            continue;
+        }
+        change_to(out, tk, kind ? run->revision : 0, pstyle);
         put_marks_odt(out, &mk, at, run->kind == OWF_RUN_TEXT);
         if(run->kind==OWF_RUN_TEXT&&run->href){owf_buf_puts(out,"<text:a xlink:href=\"");owf_buf_puts_xml(out,run->href);owf_buf_puts(out,"\">");}
         if(t)owf_buf_printf(out,"<text:span text:style-name=\"T%d\">",t);
@@ -514,9 +710,6 @@ static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para,
             at += len;
             break;
         }
-        case OWF_RUN_TAB:owf_buf_puts(out,"<text:tab/>");after_space=1;break;
-        case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<text:line-break/>");after_space=1;break;
-        case OWF_RUN_FIELD:owf_buf_puts(out,fields[run->field]);after_space=0;break;
         case OWF_RUN_FRAME:
             /* the body's, a header's and a footer's (2.0.20); a text box's own are left out */
             if(doc&&((para>=doc->body.paras&&para<doc->body.paras+doc->body.nparas)||
@@ -525,8 +718,8 @@ static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para,
                      (para>=doc->header_left.paras&&para<doc->header_left.paras+doc->header_left.nparas)||
                      (para>=doc->footer_left.paras&&para<doc->footer_left.paras+doc->footer_left.nparas))){put_frame_odt(out,doc,run->image,s);after_space=0;}
             break;
-        case OWF_RUN_IMAGE:
-            if(doc&&run->image>=0&&run->image<doc->nimages){const owf_image *im=&doc->images[run->image];owf_buf_puts(out,"<draw:frame text:anchor-type=\"as-char\" svg:width=\"");owf_put_points(out,im->width);owf_buf_puts(out,"\" svg:height=\"");owf_put_points(out,im->height);owf_buf_printf(out,"\"><draw:image xlink:href=\"Pictures/image%d.%s\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/></draw:frame>",run->image+1,odt_image_ext(im));}
+        default:
+            put_run_content(out, doc, run, NULL, 0, &after_space);
             break;
         }
         if(t)owf_buf_puts(out,"</text:span>");
@@ -534,7 +727,33 @@ static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para,
     }
     put_marks_odt(out, &mk, at, 1);                  /* what is left: at the paragraph's end */
     put_marks_odt(out, &mk, (size_t)-1, 0);
-    owf_buf_puts(out,heading?"</text:h>":"</text:p>");
+    if (tk) {
+        /* 1.5: its end: a deletion's when next is joined to it, an insertion's (begun here, ended in the
+         * next paragraph) */
+        int kind = next ? change_kind(doc, para->mark_revision) : 0;
+        if (kind == OWF_REV_DELETE && !close) {
+            change_to(out, tk, para->mark_revision, pstyle);
+            if (tk->del)
+                owf_buf_printf(&tk->regions[tk->del - 1].content, "</text:p><text:p text:style-name=\"P%d\">",
+                               para_style(s, &next->fmt));
+        } else if (kind == OWF_REV_INSERT) {
+            change_to(out, tk, para->mark_revision, pstyle);
+        } else {
+            change_to(out, tk, 0, pstyle);
+        }
+        if (!next)
+            end_insertion(out, tk);
+        if (!(kind == OWF_REV_DELETE && !close))
+            end_deletion(tk);
+    }
+    if(close)owf_buf_puts(out,heading?"</text:h>":"</text:p>");
+}
+
+/* A paragraph by itself (a table cell's, a text box's): its end is never joined to another. */
+static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s)
+{
+    put_para_part(out, doc, para, s, 1, 1, NULL);
+    if (s->track) end_insertion(out, s->track);
 }
 
 static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, styles *s)
@@ -550,8 +769,20 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
             while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
             if(row>=0)owf_buf_puts(out,"</table:table-row>");
             owf_buf_puts(out,"</table:table>");
-        }else{put_para_odt(out,doc,p,s);++i;}
+        }else{
+            /* 1.5: paragraphs whose ends are deleted, with the next (no table, no new section), as one */
+            int open=1;
+            for(;;){const owf_para *n=i+1<story->nparas?&story->paras[i+1]:NULL;
+                int join=s->track&&n&&n->table_id<0&&!(body&&n->section_columns>0)&&
+                         change_kind(doc,p->mark_revision)==OWF_REV_DELETE;
+                put_para_part(out,doc,p,s,open,!join,n&&n->table_id<0&&!(body&&n->section_columns>0)?n:NULL);
+                ++i;
+                if(!join)break;
+                open=0;p=&story->paras[i];
+            }
+        }
     }
+    if(s->track){end_insertion(out,s->track);end_deletion(s->track);}
     if(section_open)owf_buf_puts(out,"</text:section>");
 }
 
@@ -658,15 +889,52 @@ static int build_styles_xml(const owf_doc *doc, owf_buf *out)
     return s.failed ? OWF_ERR_MEMORY : OWF_OK;
 }
 
+/* 1.5: the body's changed regions, first in office:text */
+static void put_tracked_changes(owf_buf *out, const owf_doc *doc, const odt_track *tk)
+{
+    int i;
+    if (!tk->nregions && !doc->track_changes)
+        return;
+    owf_buf_printf(out, "<text:tracked-changes text:track-changes=\"%s\">", doc->track_changes ? "true" : "false");
+    for (i = 0; i < tk->nregions; ++i) {
+        const odt_region *r = &tk->regions[i];
+        const owf_revision *rv = OWF_DOC_REVISION(doc, r->rev);
+        int del = rv && rv->kind == OWF_REV_DELETE;
+        owf_buf_printf(out, "<text:changed-region xml:id=\"ct%d\" text:id=\"ct%d\"><text:%s><office:change-info>",
+                       i + 1, i + 1, del ? "deletion" : "insertion");
+        owf_buf_puts(out, "<dc:creator>");
+        owf_buf_puts_xml(out, rv && rv->author ? rv->author : "Unknown");
+        owf_buf_puts(out, "</dc:creator><dc:date>");
+        owf_buf_puts_xml(out, rv && rv->date ? rv->date : "1970-01-01T00:00:00");
+        owf_buf_puts(out, "</dc:date></office:change-info>");
+        if (del && r->content.length)
+            owf_buf_put(out, r->content.data, r->content.length);
+        owf_buf_printf(out, "</text:%s></text:changed-region>", del ? "deletion" : "insertion");
+        if (r->content.failed)
+            out->failed = 1;
+    }
+    owf_buf_puts(out, "</text:tracked-changes>");
+}
+
 static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *report)
 {
     styles s;
     owf_buf body;
+    odt_track tk;
+    int i;
 
     memset(&s, 0, sizeof s);
+    memset(&tk, 0, sizeof tk);
+    tk.doc = doc;
+    s.track = &tk;
     owf_buf_init(&body);
     /* The body first, so the styles it uses are known. */
     put_story(&body, doc, &doc->body, &s);
+    for (i = 0; i < doc->ncomments; ++i)             /* 1.6 */
+        if ((doc->comments[i].parent >= 0 || doc->comments[i].done) && owf_comment_place(doc, i, NULL, NULL, NULL)) {
+            owf_report_add(report, OWF_NOTE_APPROX, "Replies and comments marked done are saved as plain comments");
+            break;
+        }
     if (doc->page.start_page != 1)
         owf_report_add(report, OWF_NOTE_APPROX, "Page numbers start at 1");
 
@@ -687,14 +955,18 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
         }
     }
     owf_buf_puts(out, "</office:automatic-styles><office:body><office:text>");
+    put_tracked_changes(out, doc, &tk);
     if (body.length)
         owf_buf_put(out, body.data, body.length);
     else
         owf_buf_puts(out, "<text:p/>");
     owf_buf_puts(out, "</office:text></office:body></office:document-content>\n");
-    if (body.failed)
+    if (body.failed || tk.failed)
         out->failed = 1;
     owf_buf_free(&body);
+    for (i = 0; i < tk.nregions; ++i)
+        owf_buf_free(&tk.regions[i].content);
+    free(tk.regions);
     free_styles(&s);
     return s.failed ? OWF_ERR_MEMORY : OWF_OK;
 }

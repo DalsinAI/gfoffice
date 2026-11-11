@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.67 (9.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.71 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE
 };
 
 static struct NewMenu menus[] = {
@@ -243,11 +243,14 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_FILTER_CLEAR },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
+    { NM_ITEM, "Solver...", NULL, 0, 0, (APTR)M_SOLVER },
+    { NM_ITEM, "Scenarios...", NULL, 0, 0, (APTR)M_SCENARIOS },
+    { NM_ITEM, "Consolidate...", NULL, 0, 0, (APTR)M_CONSOLIDATE },
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
-    { NM_ITEM, "Pivot Summary...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
-    { NM_ITEM, "Refresh Pivot Summary", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
+    { NM_ITEM, "Pivot Table...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
+    { NM_ITEM, "Refresh Pivot Table", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -3145,6 +3148,641 @@ static void do_goal_seek(void)
         set_status("Goal Seek solution not applied.");
 }
 
+/* ---- Data > Solver ---- */
+
+static const char *const sv_goal_labels[] = { "Maximum", "Minimum", "Value of", NULL };
+static const char *const sv_rel_labels[] = { "<=", "=", ">=", "Whole number", "Binary", NULL };
+static const char *const sv_rel_words[] = { "", "<=", "=", ">=", "INT", "BIN" };
+
+typedef struct {
+    struct Node node;
+    char label[2 * OC_SOLVER_REF + 24];
+} sv_line;
+
+/* Latin-1 for a gadget from the model's UTF-8, and back. */
+static void sv_show(const char *utf8, char *out, size_t size)
+{
+    to_latin1(utf8, strlen(utf8), out, size);
+}
+
+static int sv_take(const char *latin1, char *out, size_t size)
+{
+    char *u = from_latin1(latin1);
+    if (!u) return 0;
+    snprintf(out, size, "%s", u);
+    owf_free(u);
+    return 1;
+}
+
+static void sv_labels(const oc_solver_model *m, sv_line *lines, struct List *list)
+{
+    unsigned k;
+    NewList(list);
+    for (k = 0; k < m->nconstraints; ++k) {
+        char l[OC_SOLVER_REF], r[OC_SOLVER_REF];
+        const oc_solver_constraint *c = &m->constraints[k];
+        sv_show(c->lhs, l, sizeof l);
+        sv_show(c->rhs, r, sizeof r);
+        if (c->rel >= OC_SOLVER_INT)
+            snprintf(lines[k].label, sizeof lines[k].label, "%s  %s", l, c->rel == OC_SOLVER_INT ? "whole" : "binary");
+        else
+            snprintf(lines[k].label, sizeof lines[k].label, "%s %s %s", l, sv_rel_words[c->rel], r);
+        lines[k].node.ln_Name = lines[k].label;
+        AddTail(list, &lines[k].node);
+    }
+}
+
+static void sv_get_string(struct Gadget *g, struct Window *w, char *out, size_t size)
+{
+    STRPTR v = NULL;
+    GT_GetGadgetAttrs(g, w, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+    snprintf(out, size, "%s", v ? (char *)v : "");
+}
+
+/* The Solver window: 1 Solve (the model filled in), 0 Close. */
+static int solver_window(oc_solver_model *m)
+{
+    struct Gadget *glist = NULL, *last, *gtarget, *ggoal, *gvalue, *gvars, *glist_v, *glhs, *grel, *grhs;
+    struct Gadget *gadd, *gchange, *gremove, *gneg, *gsolve, *gclose;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List lines;
+    sv_line *line = calloc(OC_SOLVER_CONSTRAINTS, sizeof *line);
+    char text[2 * OC_SOLVER_REF], value[48];
+    int done = 0, ok = 0, ww = 460, wh, sel = -1, rel = 0, lh = fh + 6, top, x2 = 250;
+    if (!scr || !vi || !line) { free(line); return 0; }
+    sv_labels(m, line, &lines);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    top = 8 + fh + 4;
+    ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = top; ng.ng_Width = 200; ng.ng_Height = fh + 6;
+    sv_show(m->target, text, sizeof text);
+    ng.ng_GadgetText = (STRPTR)"Target cell"; ng.ng_GadgetID = 1;
+    last = gtarget = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)text, GTST_MaxChars, OC_SOLVER_REF - 1,
+                                  GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_LeftEdge = x2; ng.ng_Width = 110; ng.ng_GadgetText = (STRPTR)"Make it"; ng.ng_GadgetID = 2;
+    last = ggoal = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)sv_goal_labels,
+                                GTCY_Active, (ULONG)(m->goal - 1), TAG_DONE);
+    owf_number_text(m->value, value);
+    ng.ng_LeftEdge = x2 + 120; ng.ng_Width = 80; ng.ng_GadgetText = (STRPTR)"Value"; ng.ng_GadgetID = 3;
+    last = gvalue = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)value, GTST_MaxChars, 40,
+                                 GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge += 2 * fh + 14; ng.ng_Width = ww - 20;
+    sv_show(m->variables, text, sizeof text);
+    ng.ng_GadgetText = (STRPTR)"By changing cells"; ng.ng_GadgetID = 4;
+    last = gvars = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)text,
+                                GTST_MaxChars, (ULONG)(sizeof m->variables - 1), GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_Height = lh * 5 + 4; ng.ng_GadgetText = (STRPTR)"Constraints"; ng.ng_GadgetID = 5;
+    last = glist_v = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&lines, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_TopEdge += ng.ng_Height + fh + 8; ng.ng_Height = fh + 6; ng.ng_Width = 150;
+    ng.ng_GadgetText = (STRPTR)"Cell"; ng.ng_GadgetID = 6;
+    last = glhs = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)"", GTST_MaxChars, OC_SOLVER_REF - 1,
+                               GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_LeftEdge = 170; ng.ng_Width = 130; ng.ng_GadgetText = (STRPTR)"Relation"; ng.ng_GadgetID = 7;
+    last = grel = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)sv_rel_labels, GTCY_Active, 0, TAG_DONE);
+    ng.ng_LeftEdge = 310; ng.ng_Width = ww - 320; ng.ng_GadgetText = (STRPTR)"Limit"; ng.ng_GadgetID = 8;
+    last = grhs = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)"", GTST_MaxChars, OC_SOLVER_REF - 1,
+                               GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 12; ng.ng_Height = fh + 8; ng.ng_Width = 90;
+    ng.ng_LeftEdge = 10; ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = 9;
+    last = gadd = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 110; ng.ng_GadgetText = (STRPTR)"Change"; ng.ng_GadgetID = 10;
+    last = gchange = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 210; ng.ng_GadgetText = (STRPTR)"Remove"; ng.ng_GadgetID = 11;
+    last = gremove = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_TopEdge += fh + 16; ng.ng_Width = 22; ng.ng_Height = fh + 4;
+    ng.ng_GadgetText = (STRPTR)"Variables are not negative"; ng.ng_GadgetID = 12;
+    last = gneg = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, m->nonnegative ? TRUE : FALSE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 14; ng.ng_Width = 90; ng.ng_Height = fh + 8;
+    ng.ng_LeftEdge = ww - 200; ng.ng_GadgetText = (STRPTR)"Solve"; ng.ng_GadgetID = 13;
+    last = gsolve = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 100; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = 14;
+    last = gclose = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gtarget || !ggoal || !gvalue || !gvars || !glist_v || !glhs || !grel || !grhs || !gadd || !gchange ||
+        !gremove || !gneg || !gsolve || !gclose)
+        goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Solver", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP | CYCLEIDCMP |
+                  STRINGIDCMP | CHECKBOXIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *msg;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((msg = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = msg->Class;
+            UWORD code = msg->Code;
+            UWORD id = cls == IDCMP_GADGETUP && msg->IAddress ? ((struct Gadget *)msg->IAddress)->GadgetID : 0;
+            int relist = 0;
+            GT_ReplyIMsg(msg);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 5 && code < m->nconstraints) {
+                const oc_solver_constraint *c = &m->constraints[code];
+                sel = code;
+                rel = c->rel - 1;
+                sv_show(c->lhs, text, sizeof text);
+                GT_SetGadgetAttrs(glhs, rw, NULL, GTST_String, (ULONG)text, TAG_DONE);
+                sv_show(c->rhs, text, sizeof text);
+                GT_SetGadgetAttrs(grhs, rw, NULL, GTST_String, (ULONG)text, TAG_DONE);
+                GT_SetGadgetAttrs(grel, rw, NULL, GTCY_Active, (ULONG)rel, TAG_DONE);
+            } else if (id == 7 && code < 5) {
+                rel = code;
+            } else if (id == 9 || id == 10) {
+                oc_solver_constraint c;
+                char l[OC_SOLVER_REF], r[OC_SOLVER_REF];
+                int at = id == 9 ? (int)m->nconstraints : sel;
+                sv_get_string(glhs, rw, l, sizeof l);
+                sv_get_string(grhs, rw, r, sizeof r);
+                memset(&c, 0, sizeof c);
+                c.rel = rel + 1;
+                if (!*trim_text(l) || (c.rel <= OC_SOLVER_GE && !*trim_text(r))) {
+                    DisplayBeep(scr);
+                    continue;
+                }
+                if (at < 0 || at >= OC_SOLVER_CONSTRAINTS) { DisplayBeep(scr); continue; }
+                sv_take(trim_text(l), c.lhs, sizeof c.lhs);
+                if (c.rel <= OC_SOLVER_GE) sv_take(trim_text(r), c.rhs, sizeof c.rhs);
+                GT_SetGadgetAttrs(glist_v, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                m->constraints[at] = c;
+                if (at == (int)m->nconstraints) m->nconstraints++;
+                sel = at;
+                relist = 1;
+            } else if (id == 11 && sel >= 0 && (unsigned)sel < m->nconstraints) {
+                GT_SetGadgetAttrs(glist_v, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                memmove(&m->constraints[sel], &m->constraints[sel + 1],
+                        (m->nconstraints - (unsigned)sel - 1u) * sizeof m->constraints[0]);
+                m->nconstraints--;
+                sel = -1;
+                relist = 1;
+            } else if (id == 13) {
+                LONG goal = 0, neg = 0;
+                double v = 0.0;
+                sv_get_string(gtarget, rw, text, sizeof text);
+                sv_take(trim_text(text), m->target, sizeof m->target);
+                sv_get_string(gvars, rw, text, sizeof text);
+                sv_take(trim_text(text), m->variables, sizeof m->variables);
+                GT_GetGadgetAttrs(ggoal, rw, NULL, GTCY_Active, (ULONG)&goal, TAG_DONE);
+                GT_GetGadgetAttrs(gneg, rw, NULL, GTCB_Checked, (ULONG)&neg, TAG_DONE);
+                m->goal = (int)goal + 1;
+                m->nonnegative = neg != 0;
+                sv_get_string(gvalue, rw, value, sizeof value);
+                if (m->goal == OC_SOLVER_VALUE && !chart_number(value, &v)) { DisplayBeep(scr); continue; }
+                m->value = m->goal == OC_SOLVER_VALUE ? v : 0.0;
+                ok = 1;
+                done = 1;
+            } else if (id == 14) {
+                done = 1;
+            }
+            if (relist) {
+                sv_labels(m, line, &lines);
+                GT_SetGadgetAttrs(glist_v, rw, NULL, GTLV_Labels, (ULONG)&lines,
+                                  GTLV_Selected, (ULONG)(sel >= 0 ? sel : ~0), TAG_DONE);
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(line);
+    return ok;
+}
+
+static void solver_answer_text(const oc_solver_result *r, char *out, size_t size)
+{
+    size_t used;
+    unsigned j;
+    char v[48];
+    owf_number_text(r->objective, v);
+    used = (size_t)snprintf(out, size, "%s", v);
+    for (j = 0; j < r->nvariables && used < size; ++j) {
+        char cell[16];
+        oc_cell_name(r->row[j], r->col[j], cell);
+        owf_number_text(r->value[j], v);
+        used += (size_t)snprintf(out + used, size - used, " %s=%s", cell, v);
+    }
+}
+
+/* Data > Solver...: the sheet's model in the window; solving shows the answer, kept or not. */
+static void do_solver(void)
+{
+    static oc_solver_model m;
+    static oc_solver_result r;
+    char message[600], answer[400], bad[64];
+    int rc;
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); return; }
+    if (!oc_core_solver_model(core, &m)) {          /* a new model: the active cell as its target */
+        unsigned row, col;
+        oc_core_active(core, &row, &col);
+        oc_cell_name(row, col, m.target);
+    }
+    for (;;) {
+        if (!solver_window(&m)) return;
+        rc = oc_core_solve(core, &m, &r);
+        if (rc == OWF_ERR_MEMORY) { result(rc, NULL); return; }
+        if (rc != OWF_OK || (r.status != OC_SOLVED && r.status != OC_SOLVED_LIMIT)) {
+            char shown[sizeof r.why];
+            to_latin1(r.why, strlen(r.why), shown, sizeof shown);
+            tell("Solver", shown[0] ? shown : "Solver could not solve this model.");
+            continue;                                 /* back to the window to change the model */
+        }
+        solver_answer_text(&r, answer, sizeof answer);
+        snprintf(message, sizeof message, "%s\n\nTarget and values: %s\n\nKeep these values?",
+                 r.status == OC_SOLVED ? "Solver found the best values for the model."
+                                       : "Solver stopped at its limit: these are the best values it found, "
+                                         "but there may be better ones.", answer);
+        {
+            int keep = ask_window("Solver", message, "Keep|Restore") == 1;
+            /* the model is kept on the sheet either way */
+            rc = oc_core_solver_apply(core, &m, keep ? &r : NULL, bad, sizeof bad);
+            if (rc == OWF_ERR_FORMAT) { set_status("Solver could not keep the model: one of its cells is not a cell."); return; }
+            result(rc, keep ? "Solver's values are in the cells; Undo restores the old ones."
+                            : "The cells keep their values; the Solver model is kept on the sheet.");
+        }
+        return;
+    }
+}
+
+/* ---- Data > Scenarios ---- */
+
+typedef struct {
+    struct Node node;
+    char label[OWF_SCENARIO_NAME + 4];
+} sc_line;
+
+static unsigned sc_list(sc_line *lines, struct List *list)
+{
+    unsigned n = (unsigned)oc_core_scenario_count(core), i;
+    NewList(list);
+    for (i = 0; i < n && i < OWF_SCENARIOS; ++i) {
+        owf_scenario sc;
+        char name[OWF_SCENARIO_NAME];
+        if (oc_core_scenario_get(core, (int)i, &sc)) {
+            to_latin1(sc.name, strlen(sc.name), name, sizeof name);
+            snprintf(lines[i].label, sizeof lines[i].label, "%s%s", sc.active ? "* " : "", name);
+            owf_scenario_free(&sc);
+        } else {
+            snprintf(lines[i].label, sizeof lines[i].label, "(damaged)");
+        }
+        lines[i].node.ln_Name = lines[i].label;
+        AddTail(list, &lines[i].node);
+    }
+    return n;
+}
+
+static int sc_result(int rc, const char *done)
+{
+    if (rc == OWF_ERR_FORMAT) { set_status("Give the scenario a name, and its changing cells as ranges of this sheet (B2:C4,E7)."); return 0; }
+    if (rc == OWF_ERR_UNSUPPORTED) { set_status("Another scenario has that name, or the sheet has 32 already, or it has more than 2048 cells."); return 0; }
+    return result(rc, done);
+}
+
+/* The Scenarios window: keep, show and delete the active sheet's scenarios. */
+static void do_scenarios(void)
+{
+    struct Gadget *glist = NULL, *last, *glv, *gname, *gcells, *gcomment, *gadd, *gupdate, *gshow, *gdelete, *gclose;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List list;
+    sc_line *lines = calloc(OWF_SCENARIOS, sizeof *lines);
+    char initial[200] = "";
+    int done = 0, sel = -1, ww = 420, wh, lh = fh + 6, rc;
+    oc_selection selection;
+    if (!scr || !vi || !lines) { free(lines); return; }
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); free(lines); return; }
+    oc_core_selection(core, &selection);
+    if (selection.nranges) {                    /* the selection as the changing cells to start with */
+        unsigned r;
+        size_t at = 0;
+        for (r = 0; r < selection.nranges && at + 24 < sizeof initial; ++r) {
+            char a[16], b[16];
+            const owf_range *g = &selection.ranges[r];
+            oc_cell_name(g->first_row, g->first_col, a);
+            oc_cell_name(g->last_row, g->last_col, b);
+            at += (size_t)snprintf(initial + at, sizeof initial - at, "%s%s%s%s", r ? "," : "", a,
+                                   strcmp(a, b) ? ":" : "", strcmp(a, b) ? b : "");
+        }
+    }
+    sc_list(lines, &list);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4; ng.ng_Width = 180; ng.ng_Height = lh * 7 + 4;
+    ng.ng_GadgetText = (STRPTR)"Scenarios"; ng.ng_GadgetID = 1;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&list, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_LeftEdge = 200; ng.ng_Width = ww - 210; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"Name"; ng.ng_GadgetID = 2;
+    last = gname = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)"", GTST_MaxChars, OWF_SCENARIO_NAME - 1,
+                                GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Changing cells"; ng.ng_GadgetID = 3;
+    last = gcells = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)initial, GTST_MaxChars, 199,
+                                 GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Comment"; ng.ng_GadgetID = 4;
+    last = gcomment = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)"",
+                                   GTST_MaxChars, OWF_SCENARIO_COMMENT - 1, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge = 8 + fh + 4 + lh * 7 + 14; ng.ng_Height = fh + 8; ng.ng_Width = 74;
+    ng.ng_LeftEdge = 10; ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = 5;
+    last = gadd = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 90; ng.ng_GadgetText = (STRPTR)"Update"; ng.ng_GadgetID = 6;
+    last = gupdate = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 170; ng.ng_GadgetText = (STRPTR)"Show"; ng.ng_GadgetID = 7;
+    last = gshow = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 250; ng.ng_GadgetText = (STRPTR)"Delete"; ng.ng_GadgetID = 8;
+    last = gdelete = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 84; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = 9;
+    last = gclose = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glv || !gname || !gcells || !gcomment || !gadd || !gupdate || !gshow || !gdelete || !gclose) goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Scenarios", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP |
+                  STRINGIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *msg;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((msg = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = msg->Class;
+            UWORD code = msg->Code;
+            UWORD id = cls == IDCMP_GADGETUP && msg->IAddress ? ((struct Gadget *)msg->IAddress)->GadgetID : 0;
+            int relist = 0;
+            GT_ReplyIMsg(msg);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 1) {
+                owf_scenario sc;
+                char t[OWF_SCENARIO_COMMENT], cells[200];
+                sel = code;
+                if (oc_core_scenario_get(core, sel, &sc)) {
+                    to_latin1(sc.name, strlen(sc.name), t, sizeof t);
+                    GT_SetGadgetAttrs(gname, rw, NULL, GTST_String, (ULONG)t, TAG_DONE);
+                    if (oc_core_scenario_cells_text(core, &sc, cells, sizeof cells))
+                        GT_SetGadgetAttrs(gcells, rw, NULL, GTST_String, (ULONG)cells, TAG_DONE);
+                    to_latin1(sc.comment, strlen(sc.comment), t, sizeof t);
+                    GT_SetGadgetAttrs(gcomment, rw, NULL, GTST_String, (ULONG)t, TAG_DONE);
+                    owf_scenario_free(&sc);
+                }
+            } else if (id == 5 || id == 6) {
+                char name[OWF_SCENARIO_NAME], cells[200], comment[OWF_SCENARIO_COMMENT];
+                char *uname, *ucomment;
+                if (id == 6 && sel < 0) { DisplayBeep(scr); continue; }
+                sv_get_string(gname, rw, name, sizeof name);
+                sv_get_string(gcells, rw, cells, sizeof cells);
+                sv_get_string(gcomment, rw, comment, sizeof comment);
+                uname = from_latin1(trim_text(name));
+                ucomment = from_latin1(comment);
+                rc = uname && ucomment ? oc_core_scenario_save(core, id == 5 ? -1 : sel, uname, cells, ucomment)
+                                       : OWF_ERR_MEMORY;
+                owf_free(uname);
+                owf_free(ucomment);
+                if (sc_result(rc, id == 5 ? "Scenario kept with the cells' present values; Undo takes it away."
+                                          : "Scenario kept afresh with the cells' present values."))
+                    relist = 1;
+            } else if (id == 7 && sel >= 0) {
+                if (sc_result(oc_core_scenario_show(core, sel), "Scenario shown; Undo puts the old values back.")) {
+                    relist = 1;
+                    refresh();
+                }
+            } else if (id == 8 && sel >= 0) {
+                if (sc_result(oc_core_scenario_delete(core, sel), "Scenario deleted; Undo brings it back.")) {
+                    sel = -1;
+                    relist = 1;
+                }
+            } else if (id == 9) {
+                done = 1;
+            }
+            if (relist && !done) {
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                sc_list(lines, &list);
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)&list,
+                                  GTLV_Selected, (ULONG)(sel >= 0 ? sel : ~0), TAG_DONE);
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(lines);
+}
+
+/* ---- Data > Consolidate ---- */
+
+static STRPTR cs_function_labels[] = { (STRPTR)"Sum", (STRPTR)"Count", (STRPTR)"Average", (STRPTR)"Max",
+                                       (STRPTR)"Min", (STRPTR)"Product", (STRPTR)"CountA", (STRPTR)"StdDev",
+                                       (STRPTR)"StdDevP", (STRPTR)"Var", (STRPTR)"VarP", NULL };
+static const int cs_function[] = { OC_SUBTOTAL_SUM, OC_SUBTOTAL_COUNT, OC_SUBTOTAL_AVERAGE, OC_SUBTOTAL_MAX,
+                                   OC_SUBTOTAL_MIN, OC_SUBTOTAL_PRODUCT, OC_SUBTOTAL_COUNTA, OC_SUBTOTAL_STDEV,
+                                   OC_SUBTOTAL_STDEVP, OC_SUBTOTAL_VAR, OC_SUBTOTAL_VARP };
+
+typedef struct {
+    struct Node node;
+    char label[OC_CONSOLIDATE_REF];
+} cs_line;
+
+static void cs_list(const oc_consolidate_spec *spec, cs_line *lines, struct List *list)
+{
+    int k;
+    NewList(list);
+    for (k = 0; k < spec->nsources; ++k) {
+        to_latin1(spec->source[k], strlen(spec->source[k]), lines[k].label, sizeof lines[k].label);
+        lines[k].node.ln_Name = lines[k].label;
+        AddTail(list, &lines[k].node);
+    }
+}
+
+static int cs_result(int rc)
+{
+    if (rc == OWF_ERR_FORMAT) {
+        set_status("Give each source as a range (B2:D9, 'Q1'!A1:C20) and a destination cell outside them.");
+        return 0;
+    }
+    if (rc == OWF_ERR_UNSUPPORTED) { set_status("The sources have too many cells or labels to consolidate."); return 0; }
+    return result(rc, "Consolidated; Undo takes the table away.");
+}
+
+/* A range typed in the window into a spec's field (UTF-8): 0 when it does not fit. */
+static int cs_take(char *dst, size_t size, const char *typed)
+{
+    char *u = from_latin1(typed);
+    int ok = u && strlen(u) < size;
+    if (ok) strcpy(dst, u);
+    owf_free(u);
+    return ok;
+}
+
+/* The Consolidate window: the sheet's last settings, or the selection as the first source. */
+static void do_consolidate(void)
+{
+    static oc_consolidate_spec spec;
+    struct Gadget *glist = NULL, *last, *gfn, *glv, *gsrc, *gadd, *gremove, *gdest, *grows, *gcols, *glink, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List list;
+    cs_line *lines = calloc(OC_CONSOLIDATE_SOURCES, sizeof *lines);
+    char typed[OC_CONSOLIDATE_REF], dest[OC_CONSOLIDATE_REF];
+    int done = 0, ok = 0, sel = -1, ww = 440, wh, lh = fh + 6, rc, active = 0, k;
+    if (!scr || !vi || !lines) { free(lines); return; }
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); free(lines); return; }
+    typed[0] = 0;
+    if (!oc_core_consolidate_settings(core, &spec)) {
+        oc_selection selection;
+        oc_core_selection(core, &selection);
+        oc_consolidate_init(&spec);
+        if (selection.nranges == 1 && (selection.ranges[0].first_row != selection.ranges[0].last_row ||
+                                       selection.ranges[0].first_col != selection.ranges[0].last_col)) {
+            char a[16], b[16];
+            oc_cell_name(selection.ranges[0].first_row, selection.ranges[0].first_col, a);
+            oc_cell_name(selection.ranges[0].last_row, selection.ranges[0].last_col, b);
+            snprintf(typed, sizeof typed, "%s:%s", a, b);
+        }
+    }
+    for (k = 0; k < (int)(sizeof cs_function / sizeof cs_function[0]); ++k)
+        if (cs_function[k] == spec.function) active = k;
+    to_latin1(spec.dest, strlen(spec.dest), dest, sizeof dest);
+    cs_list(&spec, lines, &list);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = 100; ng.ng_TopEdge = 8; ng.ng_Width = 160; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"Function"; ng.ng_GadgetID = 1;
+    last = gfn = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)cs_function_labels, GTCY_Active, active, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 6 + fh + 10; ng.ng_Width = ww - 20; ng.ng_Height = lh * 5 + 4;
+    ng.ng_GadgetText = (STRPTR)"Source ranges"; ng.ng_GadgetID = 2;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&list, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_Flags = 0;
+    ng.ng_TopEdge += ng.ng_Height + 6; ng.ng_Width = ww - 190; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = NULL; ng.ng_GadgetID = 3;
+    last = gsrc = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)typed, GTST_MaxChars, OC_CONSOLIDATE_REF - 1,
+                               GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_LeftEdge = ww - 172; ng.ng_Width = 76; ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = 4;
+    last = gadd = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 86; ng.ng_GadgetText = (STRPTR)"Remove"; ng.ng_GadgetID = 5;
+    last = gremove = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = 130; ng.ng_TopEdge += fh + 14; ng.ng_Width = 160;
+    ng.ng_GadgetText = (STRPTR)"Destination"; ng.ng_GadgetID = 6;
+    last = gdest = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)dest, GTST_MaxChars, OC_CONSOLIDATE_REF - 1,
+                                GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_Width = 26;
+    ng.ng_TopEdge += fh + 12; ng.ng_GadgetText = (STRPTR)"Labels in the left column"; ng.ng_GadgetID = 7;
+    last = grows = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, spec.row_labels ? TRUE : FALSE, TAG_DONE);
+    ng.ng_TopEdge += fh + 8; ng.ng_GadgetText = (STRPTR)"Labels in the top row"; ng.ng_GadgetID = 8;
+    last = gcols = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, spec.column_labels ? TRUE : FALSE, TAG_DONE);
+    ng.ng_TopEdge += fh + 8; ng.ng_GadgetText = (STRPTR)"Link to the sources (formulas)"; ng.ng_GadgetID = 9;
+    last = glink = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, spec.link ? TRUE : FALSE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 14; ng.ng_Height = fh + 8; ng.ng_Width = 96;
+    ng.ng_LeftEdge = 10; ng.ng_GadgetText = (STRPTR)"Consolidate"; ng.ng_GadgetID = 10;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 106; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 11;
+    last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gfn || !glv || !gsrc || !gadd || !gremove || !gdest || !grows || !gcols || !glink || !gok || !gcancel) goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Consolidate", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP |
+                  STRINGIDCMP | BUTTONIDCMP | CYCLEIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *msg;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((msg = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = msg->Class;
+            UWORD code = msg->Code;
+            UWORD id = cls == IDCMP_GADGETUP && msg->IAddress ? ((struct Gadget *)msg->IAddress)->GadgetID : 0;
+            int relist = 0;
+            GT_ReplyIMsg(msg);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 2) {
+                sel = code;
+                if (sel < spec.nsources)
+                    GT_SetGadgetAttrs(gsrc, rw, NULL, GTST_String, (ULONG)lines[sel].label, TAG_DONE);
+            } else if (id == 3 || id == 4) {                 /* Return in the range, or Add */
+                sv_get_string(gsrc, rw, typed, sizeof typed);
+                if (!trim_text(typed)[0]) continue;
+                if (spec.nsources >= OC_CONSOLIDATE_SOURCES ||
+                    !cs_take(spec.source[spec.nsources], sizeof spec.source[0], trim_text(typed))) {
+                    DisplayBeep(scr);
+                    continue;
+                }
+                spec.nsources++;
+                GT_SetGadgetAttrs(gsrc, rw, NULL, GTST_String, (ULONG)"", TAG_DONE);
+                relist = 1;
+            } else if (id == 5 && sel >= 0 && sel < spec.nsources) {
+                for (k = sel; k + 1 < spec.nsources; ++k)
+                    memcpy(spec.source[k], spec.source[k + 1], sizeof spec.source[k]);
+                spec.nsources--;
+                sel = -1;
+                relist = 1;
+            } else if (id == 10) {
+                ULONG fn = 0, rows = 0, cols = 0, link = 0;
+                sv_get_string(gdest, rw, dest, sizeof dest);
+                if (!spec.nsources || !trim_text(dest)[0] || !cs_take(spec.dest, sizeof spec.dest, trim_text(dest))) {
+                    DisplayBeep(scr);
+                    continue;
+                }
+                GT_GetGadgetAttrs(gfn, rw, NULL, GTCY_Active, (ULONG)&fn, TAG_DONE);
+                GT_GetGadgetAttrs(grows, rw, NULL, GTCB_Checked, (ULONG)&rows, TAG_DONE);
+                GT_GetGadgetAttrs(gcols, rw, NULL, GTCB_Checked, (ULONG)&cols, TAG_DONE);
+                GT_GetGadgetAttrs(glink, rw, NULL, GTCB_Checked, (ULONG)&link, TAG_DONE);
+                spec.function = cs_function[fn < (ULONG)(sizeof cs_function / sizeof cs_function[0]) ? fn : 0];
+                spec.row_labels = rows != 0;
+                spec.column_labels = cols != 0;
+                spec.link = link != 0;
+                ok = 1;
+                done = 1;
+            } else if (id == 11) {
+                done = 1;
+            }
+            if (relist) {
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                cs_list(&spec, lines, &list);
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)&list,
+                                  GTLV_Selected, (ULONG)(sel >= 0 ? sel : ~0), TAG_DONE);
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(lines);
+    if (ok && cs_result(oc_core_consolidate(core, &spec)))
+        refresh();
+}
+
 static void do_multiple_operations(void)
 {
     oc_selection selection;
@@ -3326,72 +3964,284 @@ static void do_subtotals(void)
         result(rc, "Group subtotals and a grand total were inserted; Undo removes them.");
 }
 
-static void do_pivot_summary(void)
+/* ---- Pivot Table: the field layout window ----
+ * The source's fields in a list, each with its use (row, column or page
+ * field, in the order they were given one), its data function and, for a
+ * page field, the item it keeps. */
+
+#define PV_LIST_MAX 64
+
+typedef struct {
+    struct Node node;
+    char label[120];
+    char heading[64];                /* Latin-1 */
+    int use;                         /* 0 none, 1 row, 2 column, 3 page */
+    int data;                        /* pv_data_labels' index; 0 none */
+    unsigned order, data_order;
+    char item[64];                   /* Latin-1; "" every item */
+} pv_field;
+
+static STRPTR pv_use_labels[] = { (STRPTR)"Not used", (STRPTR)"Row field", (STRPTR)"Column field",
+                                  (STRPTR)"Page field (filter)", NULL };
+static STRPTR pv_data_labels[] = { (STRPTR)"No data", (STRPTR)"Sum", (STRPTR)"Average", (STRPTR)"Count",
+                                   (STRPTR)"CountA", (STRPTR)"Max", (STRPTR)"Min", (STRPTR)"Product",
+                                   (STRPTR)"StdDev", (STRPTR)"StdDevP", (STRPTR)"Var", (STRPTR)"VarP", NULL };
+static const int pv_data_function[] = { 0, OC_SUBTOTAL_SUM, OC_SUBTOTAL_AVERAGE, OC_SUBTOTAL_COUNT,
+                                        OC_SUBTOTAL_COUNTA, OC_SUBTOTAL_MAX, OC_SUBTOTAL_MIN, OC_SUBTOTAL_PRODUCT,
+                                        OC_SUBTOTAL_STDEV, OC_SUBTOTAL_STDEVP, OC_SUBTOTAL_VAR, OC_SUBTOTAL_VARP };
+
+static void pv_label(pv_field *f)
 {
-    oc_selection selection;
-    char row_text[12], column_text[12], value_text[12], function_text[24];
-    unsigned row_col, column_col = OC_PIVOT_NO_COLUMN, value_col, candidate;
-    int function, rc;
-    oc_core_selection(core, &selection);
-    if (selection.nranges != 1 || selection.ranges[0].first_row >= selection.ranges[0].last_row ||
-        selection.ranges[0].first_col >= selection.ranges[0].last_col) {
-        set_status("Select one headed table with at least one data row and two columns.");
+    static const char *const uses[] = { "", "row", "column", "page" };
+    char extra[96];
+    extra[0] = 0;
+    if (f->use && f->data)
+        snprintf(extra, sizeof extra, "  [%s, %s]", uses[f->use], (const char *)pv_data_labels[f->data]);
+    else if (f->use)
+        snprintf(extra, sizeof extra, "  [%s%s%s]", uses[f->use], f->use == 3 && f->item[0] ? ": " : "",
+                 f->use == 3 ? f->item : "");
+    else if (f->data)
+        snprintf(extra, sizeof extra, "  [%s]", (const char *)pv_data_labels[f->data]);
+    snprintf(f->label, sizeof f->label, "%s%s", f->heading, extra);
+    f->node.ln_Name = f->label;
+}
+
+/* The source cell whose value the typed item names, so that "2025" finds a number and "East" a text. */
+static void pv_item(const owf_pivotdef *def, unsigned field, const char *latin1, owf_pivot_page *page)
+{
+    char *utf8 = from_latin1(latin1);
+    page->field = field;
+    if (!utf8 || !*utf8) {
+        page->kind = OWF_PIVOT_ALL;
+        owf_free(utf8);
         return;
     }
-    oc_col_name(selection.ranges[0].first_col, row_text);
-    if (!text_requester("Pivot Summary", "Row field column", row_text,
-                        row_text, sizeof row_text)) return;
-    if (!column_word(row_text, strlen(row_text), &row_col) ||
-        row_col < selection.ranges[0].first_col || row_col > selection.ranges[0].last_col) {
-        set_status("The pivot row field must be a column inside the selected table.");
+    if (!strcasecmp(utf8, "(blank)")) {
+        page->kind = OWF_PIVOT_BLANK;
+        owf_free(utf8);
         return;
     }
-    candidate = row_col == selection.ranges[0].first_col ? row_col + 1u : selection.ranges[0].first_col;
-    if (selection.ranges[0].last_col - selection.ranges[0].first_col >= 2u)
-        oc_col_name(candidate, column_text);
-    else
-        snprintf(column_text, sizeof column_text, "none");
-    if (!text_requester("Pivot Summary", "Column field, or none", column_text,
-                        column_text, sizeof column_text)) return;
-    if (strcasecmp(column_text, "none")) {
-        if (!column_word(column_text, strlen(column_text), &column_col) ||
-            column_col < selection.ranges[0].first_col || column_col > selection.ranges[0].last_col ||
-            column_col == row_col) {
-            set_status("Use a different table column for the column field, or type none.");
-            return;
+    oc_core_pivot_item(core, def, field, utf8, page);
+    owf_free(utf8);
+}
+
+/* Fills def's fields from the window's choices; 0 (with a status line) when they do not make a table. */
+static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
+{
+    unsigned want, i;
+    def->nrow = def->ncol = def->npage = def->ndata = 0;
+    for (want = 1; want <= n * 2u + 2u; ++want)
+        for (i = 0; i < n; ++i) {
+            if (fields[i].use && fields[i].order == want) {
+                if (fields[i].use == 1) {
+                    if (def->nrow == OWF_PIVOT_FIELDS) { set_status("A pivot table takes up to 8 row fields."); return 0; }
+                    def->row[def->nrow++] = i;
+                } else if (fields[i].use == 2) {
+                    if (def->ncol == OWF_PIVOT_FIELDS) { set_status("A pivot table takes up to 8 column fields."); return 0; }
+                    def->col[def->ncol++] = i;
+                } else {
+                    if (def->npage == OWF_PIVOT_PAGES) { set_status("A pivot table takes up to 4 page fields."); return 0; }
+                    pv_item(def, i, fields[i].item, &def->page[def->npage++]);
+                }
+            }
+            if (fields[i].data && fields[i].data_order == want) {
+                if (def->ndata == OWF_PIVOT_DATA) { set_status("A pivot table takes up to 8 data fields."); return 0; }
+                def->data[def->ndata].field = i;
+                def->data[def->ndata++].function = pv_data_function[fields[i].data];
+            }
+        }
+    if (!def->ndata) { set_status("Give at least one field a data function (Sum, Count...)."); return 0; }
+    if (!def->nrow && !def->ncol) { set_status("Make at least one field a row or column field."); return 0; }
+    return 1;
+}
+
+/* The layout window over def (its source set). 1 when OK was chosen and def holds the new layout. */
+static int pivot_layout_window(owf_pivotdef *def, int editing)
+{
+    struct Gadget *glist = NULL, *last, *gfields, *guse, *gdata, *gitem, *grow, *gcol, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List items;
+    pv_field *fields;
+    unsigned n = def->source.last_col - def->source.first_col + 1u, i, next = 1;
+    int done = 0, ok = 0, ww, wh, lh = fh + 6, sel = 0, listw, rx, k;
+    if (!scr || !vi) return 0;
+    if (n > PV_LIST_MAX) {
+        set_status("Pivot tables here take sources up to 64 columns wide.");
+        return 0;
+    }
+    fields = calloc(n, sizeof *fields);
+    if (!fields) { result(OWF_ERR_MEMORY, ""); return 0; }
+    NewList(&items);
+    for (i = 0; i < n; ++i) {
+        char utf8[160];
+        oc_core_pivot_heading(core, def, i, utf8, sizeof utf8);
+        to_latin1(utf8, strlen(utf8), fields[i].heading, sizeof fields[i].heading);
+    }
+    for (i = 0; i < def->nrow; ++i) { fields[def->row[i]].use = 1; fields[def->row[i]].order = next++; }
+    for (i = 0; i < def->ncol; ++i) { fields[def->col[i]].use = 2; fields[def->col[i]].order = next++; }
+    for (i = 0; i < def->npage; ++i) {
+        char utf8[OWF_PIVOT_ITEM + 8];
+        pv_field *f = &fields[def->page[i].field];
+        f->use = 3;
+        f->order = next++;
+        if (def->page[i].kind == OWF_PIVOT_BLANK) snprintf(utf8, sizeof utf8, "(blank)");
+        else owf_pivot_item_text(&def->page[i], utf8, sizeof utf8);
+        to_latin1(utf8, strlen(utf8), f->item, sizeof f->item);
+    }
+    for (i = 0; i < def->ndata; ++i) {
+        pv_field *f = &fields[def->data[i].field];
+        for (k = 1; pv_data_labels[k] && pv_data_function[k] != def->data[i].function; ++k) {}
+        f->data = pv_data_labels[k] ? k : 1;
+        f->data_order = next++;
+    }
+    for (i = 0; i < n; ++i) {
+        pv_label(&fields[i]);
+        AddTail(&items, &fields[i].node);
+    }
+
+    listw = 250;
+    rx = 10 + listw + 16;
+    ww = rx + 190;
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4; ng.ng_Width = listw; ng.ng_Height = lh * 8 + 4;
+    ng.ng_GadgetText = (STRPTR)"Fields"; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_ABOVE;
+    last = gfields = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&items, GTLV_ShowSelected, 0,
+                                  GTLV_Selected, 0, TAG_DONE);
+    ng.ng_LeftEdge = rx; ng.ng_Width = 180; ng.ng_Height = fh + 6; ng.ng_GadgetText = (STRPTR)"Use";
+    ng.ng_GadgetID = 2;
+    last = guse = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)pv_use_labels,
+                               GTCY_Active, (ULONG)fields[0].use, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Data"; ng.ng_GadgetID = 3;
+    last = gdata = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)pv_data_labels,
+                                GTCY_Active, (ULONG)fields[0].data, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Page item (empty: all)"; ng.ng_GadgetID = 4;
+    last = gitem = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)fields[0].item,
+                                GTST_MaxChars, (ULONG)(sizeof fields[0].item - 1), GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4 + lh * 8 + 12;
+    ng.ng_Width = 22; ng.ng_Height = fh + 4; ng.ng_GadgetText = (STRPTR)"Grand total row"; ng.ng_GadgetID = 5;
+    last = grow = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, def->row_grand ? TRUE : FALSE, TAG_DONE);
+    ng.ng_LeftEdge = rx; ng.ng_GadgetText = (STRPTR)"Grand total column"; ng.ng_GadgetID = 6;
+    last = gcol = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, def->col_grand ? TRUE : FALSE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 16; ng.ng_Width = 90; ng.ng_Height = fh + 8;
+    ng.ng_LeftEdge = ww - 200; ng.ng_GadgetText = (STRPTR)(editing ? "Apply" : "Create"); ng.ng_GadgetID = 7;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 100; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 8;
+    last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gfields || !guse || !gdata || !gitem || !grow || !gcol || !gok || !gcancel) goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)(editing ? "Pivot Table Layout" : "New Pivot Table"), WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP | CYCLEIDCMP |
+                  STRINGIDCMP | CHECKBOXIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD code = m->Code;
+            UWORD id = cls == IDCMP_GADGETUP && m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            int relabel = 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 1 || id == 7) {               /* leaving a field: its typed item first */
+                STRPTR v = NULL;
+                GT_GetGadgetAttrs(gitem, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+                snprintf(fields[sel].item, sizeof fields[sel].item, "%s", v ? (char *)v : "");
+                relabel = 1;
+            }
+            if (id == 1 && code < n) {
+                sel = code;
+                GT_SetGadgetAttrs(guse, rw, NULL, GTCY_Active, (ULONG)fields[sel].use, TAG_DONE);
+                GT_SetGadgetAttrs(gdata, rw, NULL, GTCY_Active, (ULONG)fields[sel].data, TAG_DONE);
+                GT_SetGadgetAttrs(gitem, rw, NULL, GTST_String, (ULONG)fields[sel].item, TAG_DONE);
+            } else if (id == 2 && code <= 3) {
+                if (fields[sel].use != code) fields[sel].order = next++;
+                fields[sel].use = code;
+                relabel = 1;
+            } else if (id == 3 && code < sizeof pv_data_function / sizeof pv_data_function[0]) {
+                if (!fields[sel].data && code) fields[sel].data_order = next++;
+                fields[sel].data = code;
+                relabel = 1;
+            } else if (id == 4) {
+                STRPTR v = NULL;
+                GT_GetGadgetAttrs(gitem, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+                snprintf(fields[sel].item, sizeof fields[sel].item, "%s", v ? (char *)v : "");
+                relabel = 1;
+            } else if (id == 7) {
+                LONG checked = 0;
+                GT_GetGadgetAttrs(grow, rw, NULL, GTCB_Checked, (ULONG)&checked, TAG_DONE);
+                def->row_grand = checked != 0;
+                GT_GetGadgetAttrs(gcol, rw, NULL, GTCB_Checked, (ULONG)&checked, TAG_DONE);
+                def->col_grand = checked != 0;
+                if (pv_collect(fields, n, def)) { ok = 1; done = 1; }
+            } else if (id == 8) {
+                done = 1;
+            }
+            if (relabel && !done) {
+                GT_SetGadgetAttrs(gfields, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                for (i = 0; i < n; ++i)
+                    pv_label(&fields[i]);
+                GT_SetGadgetAttrs(gfields, rw, NULL, GTLV_Labels, (ULONG)&items, GTLV_Selected, (ULONG)sel, TAG_DONE);
+            }
+            if (done) break;
         }
     }
-    value_col = selection.ranges[0].last_col;
-    if (value_col == row_col || value_col == column_col) {
-        for (candidate = selection.ranges[0].first_col; candidate <= selection.ranges[0].last_col; ++candidate)
-            if (candidate != row_col && candidate != column_col) {
-                value_col = candidate;
-                break;
-            }
-    }
-    oc_col_name(value_col, value_text);
-    if (!text_requester("Pivot Summary", "Value field column", value_text,
-                        value_text, sizeof value_text)) return;
-    if (!column_word(value_text, strlen(value_text), &value_col) ||
-        value_col < selection.ranges[0].first_col || value_col > selection.ranges[0].last_col ||
-        value_col == row_col || value_col == column_col) {
-        set_status("The value field must be a different column inside the selected table.");
-        return;
-    }
-    if (!text_requester("Pivot Summary", "sum/average/count/counta/max/min/...", "sum",
-                        function_text, sizeof function_text)) return;
-    function = subtotal_function(function_text);
-    if (!function) {
-        set_status("Use sum, average, count, counta, max, min, product, stdev, stdevp, var or varp.");
-        return;
-    }
-    rc = oc_core_pivot_summary(core, row_col, column_col, value_col, function);
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(fields);
+    return ok;
+}
+
+static void pivot_result(int rc, const char *done_text)
+{
     if (rc == OWF_ERR_FORMAT)
-        set_status("Pivot Summary needs distinct heading, row, column and value fields inside the selection.");
+        set_status("Those fields do not fit the source table (or the table would cover its own source).");
     else if (rc == OWF_ERR_UNSUPPORTED)
-        set_status("That pivot would be too large, or the selection is not one rectangular table.");
+        set_status("That pivot table would be too large (65536 values at most).");
     else
-        result(rc, "Pivot summary created on a new sheet; Undo removes it.");
+        result(rc, done_text);
+}
+
+/* Data > Pivot Table...: a new one from the selected table, or the active sheet's laid out afresh. */
+static void do_pivot_table(void)
+{
+    oc_selection selection;
+    owf_pivotdef def;
+    if (oc_core_pivot_get(core, &def)) {
+        if (pivot_layout_window(&def, 1))
+            pivot_result(oc_core_pivot_set_layout(core, &def), "Pivot table laid out afresh; Undo restores the previous one.");
+        return;
+    }
+    oc_core_selection(core, &selection);
+    if (selection.nranges != 1 || selection.ranges[0].first_row >= selection.ranges[0].last_row) {
+        set_status("Select one headed table with at least one data row (or open a pivot table's sheet).");
+        return;
+    }
+    owf_pivot_init(&def);
+    def.source_sheet = oc_core_sheet(core);
+    def.source = selection.ranges[0];
+    def.nrow = 1;
+    def.row[0] = 0;
+    if (selection.ranges[0].last_col > selection.ranges[0].first_col) {
+        def.ndata = 1;
+        def.data[0].field = selection.ranges[0].last_col - selection.ranges[0].first_col;
+        def.data[0].function = OC_SUBTOTAL_SUM;
+    }
+    if (pivot_layout_window(&def, 0))
+        pivot_result(oc_core_pivot_create(core, &def), "Pivot table created on a new sheet; Undo removes it.");
 }
 
 static void do_format_chart(void)
@@ -4368,6 +5218,9 @@ static void menu_action(ULONG id)
         break;
     case M_FILTER_ACTIVE: do_filter_active(); break;
     case M_GOAL_SEEK: do_goal_seek(); break;
+    case M_SOLVER: do_solver(); break;
+    case M_SCENARIOS: do_scenarios(); break;
+    case M_CONSOLIDATE: do_consolidate(); break;
     case M_MULTIPLE_OPS: do_multiple_operations(); break;
     case M_MULTIPLE_REFRESH:
         {
@@ -4381,16 +5234,16 @@ static void menu_action(ULONG id)
         }
         break;
     case M_SUBTOTALS: do_subtotals(); break;
-    case M_PIVOT_SUMMARY: do_pivot_summary(); break;
+    case M_PIVOT_SUMMARY: do_pivot_table(); break;
     case M_PIVOT_REFRESH:
         {
             int rc = oc_core_refresh_pivot(core);
             if (rc == OWF_ERR_UNSUPPORTED)
-                set_status("The active sheet is not a refreshable GFOpenCalc Pivot Summary.");
+                set_status("The active sheet has no pivot table.");
             else if (rc == OWF_ERR_FORMAT)
-                set_status("The Pivot Summary source or fields are no longer valid.");
+                set_status("The pivot table's source or fields no longer fit (Data > Pivot Table... lays it out afresh).");
             else
-                result(rc, "Pivot summary refreshed from its source; Undo restores the previous summary.");
+                result(rc, "Pivot table refreshed from its source; Undo restores the previous one.");
         }
         break;
     case M_VALIDITY: do_validity(); break;
@@ -4433,6 +5286,17 @@ static const char *skip_space(const char *s)
 {
     while (s && *s && isspace((unsigned char)*s)) ++s;
     return s ? s : "";
+}
+
+/* The next word of an ARexx command's arguments into word (empty at the end); where the rest starts. */
+static const char *rexx_word(const char *p, char *word, size_t size)
+{
+    size_t k = 0;
+    p = skip_space(p);
+    while (*p && !isspace((unsigned char)*p) && k + 1 < size)
+        word[k++] = *p++;
+    word[k] = 0;
+    return p;
 }
 
 static int starts_word_ci(const char *s, const char *word, const char **rest)
@@ -4564,6 +5428,267 @@ static int valid_check(char *out, size_t size)
     return 1;
 }
 
+/* PIVOT range ROWS cols [COLUMNS cols] DATA col:function[,...] [PAGE col=item[,...]] [NOROWTOTAL] [NOCOLUMNTOTAL]:
+ * a new pivot table, as Data > Pivot Table... makes one (columns as letters). 1 when made. */
+static int rexx_pivot(const char *arg, char *out, size_t size)
+{
+    char word[160];
+    owf_pivotdef def;
+    owf_range range;
+    const char *p = arg;
+    int mode = 0, rc;
+    owf_pivot_init(&def);
+    def.source_sheet = oc_core_sheet(core);
+    p = rexx_word(p, word, sizeof word);
+    if (!oc_parse_range(word, &range) || range.first_row >= range.last_row) {
+        snprintf(out, size, "PIVOT needs a source range with a heading row");
+        return 0;
+    }
+    def.source = range;
+    for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
+        char *item = word, *next;
+        if (!strcasecmp(word, "ROWS")) { mode = 1; continue; }
+        if (!strcasecmp(word, "COLUMNS")) { mode = 2; continue; }
+        if (!strcasecmp(word, "DATA")) { mode = 3; continue; }
+        if (!strcasecmp(word, "PAGE")) { mode = 4; continue; }
+        if (!strcasecmp(word, "NOROWTOTAL")) { def.row_grand = 0; continue; }
+        if (!strcasecmp(word, "NOCOLUMNTOTAL")) { def.col_grand = 0; continue; }
+        for (; item && *item; item = next) {
+            char *sep;
+            unsigned col;
+            next = strchr(item, ',');
+            if (next) *next++ = 0;
+            sep = mode == 3 ? strchr(item, ':') : mode == 4 ? strchr(item, '=') : NULL;
+            if ((mode == 3 || mode == 4) && !sep) mode = 0;
+            if (!mode || !column_word(item, sep ? (size_t)(sep - item) : strlen(item), &col) ||
+                col < range.first_col || col > range.last_col) {
+                snprintf(out, size, "PIVOT: %s is not a column of the source here", item);
+                return 0;
+            }
+            col -= range.first_col;
+            if (mode == 1 && def.nrow < OWF_PIVOT_FIELDS) def.row[def.nrow++] = col;
+            else if (mode == 2 && def.ncol < OWF_PIVOT_FIELDS) def.col[def.ncol++] = col;
+            else if (mode == 3 && def.ndata < OWF_PIVOT_DATA && subtotal_function(sep + 1)) {
+                def.data[def.ndata].field = col;
+                def.data[def.ndata++].function = subtotal_function(sep + 1);
+            } else if (mode == 4 && def.npage < OWF_PIVOT_PAGES)
+                pv_item(&def, col, sep + 1, &def.page[def.npage++]);
+            else {
+                snprintf(out, size, "PIVOT: too many fields, or an unknown function in %s", item);
+                return 0;
+            }
+        }
+    }
+    oc_core_select_range(core, &range);
+    rc = oc_core_pivot_create(core, &def);
+    pivot_result(rc, "Pivot table created on a new sheet; Undo removes it.");
+    snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+    return rc == OWF_OK;
+}
+
+/* SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs lhs=rhs lhs>=rhs ...] [INT cells] [BIN cells] [ANY]
+ * [KEEP]: Data > Solver. With no model words, the sheet's own model. The answer is "target cell=value ...";
+ * KEEP puts it in the cells (and keeps the model on the sheet). 1 solved; *now set when the model has no answer. */
+/* A cell or range word into a model's field: 0 when it is too long for it. */
+static int solve_ref(char *dst, size_t size, const char *word)
+{
+    size_t n = strlen(word);
+    if (n >= size)
+        return 0;
+    memcpy(dst, word, n + 1);
+    return 1;
+}
+
+static int rexx_solve(const char *arg, char *out, size_t size, int *now)
+{
+    static oc_solver_model m;
+    static oc_solver_result r;
+    char word[2 * OC_SOLVER_REF], bad[64];
+    const char *p = arg;
+    int keep = 0, any_model = 0, rc;
+    oc_core_solver_model(core, &m);
+    for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
+        char *op;
+        if (!strcasecmp(word, "KEEP")) { keep = 1; continue; }
+        if (!any_model) {                   /* the first model word starts a model afresh */
+            any_model = 1;
+            oc_solver_model_init(&m);
+        }
+        if (!strcasecmp(word, "ANY")) { m.nonnegative = 0; continue; }
+        if (!strcasecmp(word, "MAX") || !strcasecmp(word, "MIN") || !strcasecmp(word, "VALUE")) {
+            m.goal = !strcasecmp(word, "MAX") ? OC_SOLVER_MAX : !strcasecmp(word, "MIN") ? OC_SOLVER_MIN : OC_SOLVER_VALUE;
+            p = rexx_word(p, word, sizeof word);
+            if (!solve_ref(m.target, sizeof m.target, word)) { snprintf(out, size, "SOLVE: the target cell is too long"); return 0; }
+            if (m.goal == OC_SOLVER_VALUE) {
+                p = rexx_word(p, word, sizeof word);
+                if (!chart_number(word, &m.value)) { snprintf(out, size, "SOLVE: VALUE needs a cell and a number"); return 0; }
+            }
+            continue;
+        }
+        if (!strcasecmp(word, "BY")) {
+            p = rexx_word(p, word, sizeof word);
+            snprintf(m.variables, sizeof m.variables, "%s", word);
+            continue;
+        }
+        if (m.nconstraints >= OC_SOLVER_CONSTRAINTS) { snprintf(out, size, "SOLVE: 32 constraints at most"); return 0; }
+        if (!strcasecmp(word, "INT") || !strcasecmp(word, "BIN")) {
+            oc_solver_constraint *c = &m.constraints[m.nconstraints++];
+            c->rel = !strcasecmp(word, "INT") ? OC_SOLVER_INT : OC_SOLVER_BIN;
+            p = rexx_word(p, word, sizeof word);
+            if (!solve_ref(c->lhs, sizeof c->lhs, word)) { snprintf(out, size, "SOLVE: a range is too long"); return 0; }
+            c->rhs[0] = 0;
+            continue;
+        }
+        op = strpbrk(word, "<>=");
+        if (op && op > word) {
+            oc_solver_constraint *c = &m.constraints[m.nconstraints++];
+            size_t len = (size_t)(op - word), skip = 1;
+            if (op[0] == '<' && op[1] == '=') { c->rel = OC_SOLVER_LE; skip = 2; }
+            else if (op[0] == '>' && op[1] == '=') { c->rel = OC_SOLVER_GE; skip = 2; }
+            else if (op[0] == '=') c->rel = OC_SOLVER_EQ;
+            else { snprintf(out, size, "SOLVE: use <=, = or >= in %s", word); return 0; }
+            if (len >= sizeof c->lhs || !op[skip]) { snprintf(out, size, "SOLVE: %s is not a constraint", word); return 0; }
+            memcpy(c->lhs, word, len);
+            c->lhs[len] = 0;
+            snprintf(c->rhs, sizeof c->rhs, "%s", op + skip);
+            continue;
+        }
+        snprintf(out, size, "SOLVE: %s is not a Solver word", word);
+        return 0;
+    }
+    if (!m.target[0]) { snprintf(out, size, "SOLVE: no model on this sheet: give MAX, MIN or VALUE and BY"); return 0; }
+    rc = oc_core_solve(core, &m, &r);
+    if (rc == OWF_OK && r.status != OC_SOLVED && r.status != OC_SOLVED_LIMIT) {
+        *now = 1;
+        to_latin1(r.why, strlen(r.why), out, size);
+        return 0;
+    }
+    if (rc != OWF_OK) {
+        if (r.why[0]) to_latin1(r.why, strlen(r.why), out, size);
+        else snprintf(out, size, "%s", rc == OWF_ERR_MEMORY ? "Out of memory" : "Solver could not solve this model");
+        return 0;
+    }
+    if (keep) {
+        rc = oc_core_solver_apply(core, &m, &r, bad, sizeof bad);
+        result(rc, "Solver's values are in the cells; Undo restores the old ones.");
+        if (rc != OWF_OK) { snprintf(out, size, "SOLVE: could not keep the values (%s)", bad); return 0; }
+    }
+    {
+        char t[400];
+        solver_answer_text(&r, t, sizeof t);
+        snprintf(out, size, "%s%s", r.status == OC_SOLVED_LIMIT ? "LIMIT " : "", t);
+    }
+    return 1;
+}
+
+/* SCENARIO ADD name cells [comment] | UPDATE name [cells [comment]] | SHOW name | DELETE name | LIST: the active
+ * sheet's scenarios (a name with spaces in double quotes). LIST gives the names, comma-separated. 1 done; *now set
+ * when there is no such scenario. */
+static const char *rexx_quoted(const char *p, char *out, size_t size)
+{
+    size_t k = 0;
+    p = skip_space(p);
+    if (*p == '"') {
+        for (++p; *p && *p != '"'; ++p)
+            if (k + 1 < size) out[k++] = *p;
+        if (*p == '"') ++p;
+        out[k] = 0;
+        return p;
+    }
+    return rexx_word(p, out, size);
+}
+
+static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
+{
+    char verb[16], name[OWF_SCENARIO_NAME * 2], cells[200];
+    char *uname = NULL, *ucomment = NULL;
+    const char *p = rexx_word(arg, verb, sizeof verb);
+    int index = -1, rc;
+    if (!strcasecmp(verb, "LIST")) {
+        int i, n = oc_core_scenario_count(core);
+        size_t at = 0;
+        out[0] = 0;
+        for (i = 0; i < n && at + 2 < size; ++i) {
+            owf_scenario sc;
+            char t[OWF_SCENARIO_NAME];
+            if (!oc_core_scenario_get(core, i, &sc)) continue;
+            to_latin1(sc.name, strlen(sc.name), t, sizeof t);
+            at += (size_t)snprintf(out + at, size - at, "%s%s", at ? "," : "", t);
+            owf_scenario_free(&sc);
+        }
+        return 1;
+    }
+    p = rexx_quoted(p, name, sizeof name);
+    if (!name[0]) { snprintf(out, size, "SCENARIO %s needs a name", verb); return 0; }
+    uname = from_latin1(name);
+    if (!uname) { snprintf(out, size, "Out of memory"); return 0; }
+    if (strcasecmp(verb, "ADD")) {
+        index = oc_core_scenario_find(core, uname);
+        if (index < 0) { *now = 1; owf_free(uname); snprintf(out, size, "No scenario %s on this sheet", name); return 0; }
+    }
+    if (!strcasecmp(verb, "ADD") || !strcasecmp(verb, "UPDATE")) {
+        owf_scenario old;
+        p = rexx_word(p, cells, sizeof cells);
+        p = skip_space(p);
+        if (!cells[0] && index >= 0 && oc_core_scenario_get(core, index, &old)) {     /* UPDATE name: its own cells */
+            oc_core_scenario_cells_text(core, &old, cells, sizeof cells);
+            ucomment = owf_malloc(strlen(old.comment) + 1);
+            if (ucomment) strcpy(ucomment, old.comment);
+            owf_scenario_free(&old);
+        } else {
+            ucomment = from_latin1(p);
+        }
+        rc = ucomment ? oc_core_scenario_save(core, index, uname, cells, ucomment) : OWF_ERR_MEMORY;
+    } else if (!strcasecmp(verb, "SHOW")) {
+        rc = oc_core_scenario_show(core, index);
+    } else if (!strcasecmp(verb, "DELETE")) {
+        rc = oc_core_scenario_delete(core, index);
+    } else {
+        owf_free(uname);
+        snprintf(out, size, "SCENARIO: ADD, UPDATE, SHOW, DELETE or LIST");
+        return 0;
+    }
+    owf_free(uname);
+    owf_free(ucomment);
+    sc_result(rc, "OK");
+    snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+    return rc == OWF_OK;
+}
+
+/* CONSOLIDATE function range [range ...] TO cell [ROWLABELS] [COLUMNLABELS] [LINK]: Data > Consolidate. A range
+ * with spaces (a sheet's name) in double quotes. 1 done. */
+static int rexx_consolidate(const char *arg, char *out, size_t size)
+{
+    static oc_consolidate_spec spec;
+    char word[OC_CONSOLIDATE_REF * 2];
+    const char *p = rexx_word(arg, word, sizeof word);
+    int to = 0, rc;
+    oc_consolidate_init(&spec);
+    if (!(spec.function = subtotal_function(word))) {
+        snprintf(out, size, "CONSOLIDATE: SUM, COUNT, AVERAGE, MAX, MIN, PRODUCT, COUNTA, STDEV, STDEVP, VAR or VARP first");
+        return 0;
+    }
+    for (p = rexx_quoted(p, word, sizeof word); word[0]; p = rexx_quoted(p, word, sizeof word)) {
+        char *u;
+        if (!strcasecmp(word, "TO")) { to = 1; continue; }
+        if (!strcasecmp(word, "ROWLABELS")) { spec.row_labels = 1; continue; }
+        if (!strcasecmp(word, "COLUMNLABELS")) { spec.column_labels = 1; continue; }
+        if (!strcasecmp(word, "LINK")) { spec.link = 1; continue; }
+        if (!to && spec.nsources >= OC_CONSOLIDATE_SOURCES) { snprintf(out, size, "CONSOLIDATE: 16 sources at most"); return 0; }
+        if (to && spec.dest[0]) { snprintf(out, size, "CONSOLIDATE: one destination cell"); return 0; }
+        u = from_latin1(word);
+        if (!u) { snprintf(out, size, "Out of memory"); return 0; }
+        if (strlen(u) >= OC_CONSOLIDATE_REF) { owf_free(u); snprintf(out, size, "CONSOLIDATE: a range is too long"); return 0; }
+        strcpy(to ? spec.dest : spec.source[spec.nsources++], u);
+        owf_free(u);
+    }
+    if (!spec.nsources || !spec.dest[0]) { snprintf(out, size, "CONSOLIDATE needs a source range and TO cell"); return 0; }
+    rc = oc_core_consolidate(core, &spec);
+    cs_result(rc);
+    snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+    return rc == OWF_OK;
+}
+
 /* As every Open app's port (amicradle-teams ARexx-RULE.md 3, OS 3.2's arexx.class): 0 done, 5 not possible
  * now (nothing wrong), 10 an error, 20 an unknown command or a failure. */
 #define RX_OK 0
@@ -4586,7 +5711,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -4637,6 +5762,30 @@ static int rexx_do_command(const char *command, char **result_out)
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc2 == OWF_ERR_UNSUPPORTED ? "No chart selected" : "Failed");
     } else if (starts_word_ci(command, "CHARTCHECK", &arg)) {
         if (!chart_check(result_text, sizeof result_text)) ok = 0;
+    } else if (starts_word_ci(command, "PIVOTREFRESH", &arg)) {
+        int rc = oc_core_refresh_pivot(core);
+        ok = rc == OWF_OK;
+        if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_UNSUPPORTED ? "No pivot table on this sheet"
+                                                         : "The pivot table's source or fields no longer fit");
+    } else if (starts_word_ci(command, "PIVOTINFO", &arg)) {     /* the active sheet's pivot table, as its definition */
+        owf_pivotdef d;
+        char t[OWF_PIVOT_TEXT_MAX];
+        if (!oc_core_pivot_get(core, &d)) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "No pivot table on this sheet"); }
+        else if (!owf_pivot_config_text(&d, t, sizeof t)) ok = 0;
+        else to_latin1(t, strlen(t), result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "PIVOT", &arg)) {
+        ok = rexx_pivot(arg, result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "CONSOLIDATE", &arg)) {
+        ok = rexx_consolidate(arg, result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "SCENARIO", &arg)) {
+        int now = 0;
+        ok = rexx_scenario(arg, result_text, sizeof result_text, &now);
+        if (!ok && now) rc_fail = RX_NOW;
+    } else if (starts_word_ci(command, "SOLVE", &arg)) {
+        int now = 0;
+        ok = rexx_solve(arg, result_text, sizeof result_text, &now);
+        if (!ok && now) rc_fail = RX_NOW;
     } else if (starts_word_ci(command, "VALIDCHECK", &arg)) {
         valid_check(result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCOMMENT", &arg)) {

@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "opencalc_core.h"
+#include "oc_internal.h"                /* oc_lp_solve */
 #include "owf_zip.h"
 
 static int failures, checks;
@@ -5113,7 +5114,7 @@ static void test_pivot_summary(void)
                         config_name = &round->names[n];
             }
             CHECK(source_name && config_name && strstr(source_name->formula, "$A$1:$C$8") &&
-                  !strcmp(config_name->formula, "\"0,1,2,9\""));
+                  !strcmp(config_name->formula, "\"2;r=0;c=1;d=2:9;p=;g=3;t=0,0,5,4\""));
             round_core = oc_core_new(round);
             round = NULL;
             CHECK(round_core && oc_core_set_input(round_core, 0, 1, 2, "40") == OWF_OK &&
@@ -5148,6 +5149,225 @@ static void test_pivot_summary(void)
     CHECK(oc_core_pivot_summary(core, 0, 1, 1, OC_SUBTOTAL_SUM) == OWF_ERR_FORMAT);
     CHECK(oc_core_refresh_pivot(core) == OWF_ERR_UNSUPPORTED);
     oc_core_free(core);
+}
+
+static void pivot_table_at(oc_core *core, const char *const (*rows)[5], int nrows)
+{
+    int r, c;
+    for (r = 0; r < nrows; ++r)
+        for (c = 0; c < 5; ++c) {
+            char cell[16];
+            oc_cell_name((unsigned)r, (unsigned)c, cell);
+            enter_at(core, cell, rows[r][c]);
+        }
+}
+
+static void test_pivot_layout(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "Product", "Year", "Sales", "Units" },
+        { "East", "A", "2025", "10", "1" }, { "East", "B", "2025", "20", "2" },
+        { "West", "A", "2025", "5", "3" }, { "West", "A", "2026", "15", "4" },
+        { "West", "B", "2026", "25", "5" }, { "North", "B", "2026", "30", "6" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got;
+    int k;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 7);
+    CHECK(oc_parse_range("A1:E7", &selected));
+    oc_core_select_range(core, &selected);
+
+    /* two row fields, a column field, two data fields */
+    owf_pivot_init(&def);
+    def.nrow = 2; def.row[0] = 0; def.row[1] = 1;
+    def.ncol = 1; def.col[0] = 2;
+    def.ndata = 2;
+    def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.data[1].field = 4; def.data[1].function = OC_SUBTOTAL_MAX;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 2 && oc_core_sheet(core) == 1);
+    CHECK_STR(text(core, "C1"), "2025");
+    CHECK_STR(text(core, "E1"), "2026");
+    CHECK(empty(core, "D1") && empty(core, "A1"));
+    CHECK_STR(text(core, "A2"), "Region");
+    CHECK_STR(text(core, "B2"), "Product");
+    CHECK_STR(text(core, "C2"), "Sum of Sales");
+    CHECK_STR(text(core, "D2"), "Max of Units");
+    CHECK_STR(text(core, "G2"), "Total Sum of Sales");
+    CHECK_STR(text(core, "H2"), "Total Max of Units");
+    CHECK_STR(text(core, "A3"), "East");
+    CHECK_STR(text(core, "B3"), "A");
+    CHECK(empty(core, "A4"));
+    CHECK_STR(text(core, "B4"), "B");
+    CHECK_STR(text(core, "A5"), "West");
+    CHECK_STR(text(core, "A7"), "North");
+    CHECK_STR(text(core, "A8"), "Grand Total");
+    CHECK(fabs(num(core, "C3") - 10.0) < 1e-12 && fabs(num(core, "D3") - 1.0) < 1e-12 && empty(core, "E3"));
+    CHECK(fabs(num(core, "C5") - 5.0) < 1e-12 && fabs(num(core, "E5") - 15.0) < 1e-12 &&
+          fabs(num(core, "F5") - 4.0) < 1e-12 && fabs(num(core, "G5") - 20.0) < 1e-12 &&
+          fabs(num(core, "H5") - 4.0) < 1e-12);
+    CHECK(fabs(num(core, "C8") - 35.0) < 1e-12 && fabs(num(core, "D8") - 3.0) < 1e-12 &&
+          fabs(num(core, "E8") - 70.0) < 1e-12 && fabs(num(core, "G8") - 105.0) < 1e-12 &&
+          fabs(num(core, "H8") - 6.0) < 1e-12);
+    CHECK(oc_core_pivot_get(core, &got) && got.rows == 8 && got.cols == 8 && got.nrow == 2 && got.ndata == 2 &&
+          got.data[1].function == OC_SUBTOTAL_MAX);
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot3.xlsx", "/tmp/opencalc-pivot3.ods" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
+            CHECK(round && owf_pivot_get(round, 1, &got) && got.nrow == 2 && got.row[1] == 1 && got.ncol == 1 &&
+                  got.col[0] == 2 && got.ndata == 2 && got.data[1].field == 4 &&
+                  got.data[1].function == OC_SUBTOTAL_MAX && got.rows == 8 && got.cols == 8);
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+
+    /* a page field (filter), laid out afresh on the same sheet: the old cells go */
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 1;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.npage = 1; def.page[0].field = 0;
+    owf_pivot_item_from_text(&def.page[0], "West");
+    CHECK(oc_core_pivot_set_layout(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A1"), "Region");
+    CHECK_STR(text(core, "B1"), "West");
+    CHECK(empty(core, "A2"));
+    CHECK_STR(text(core, "A3"), "Product");
+    CHECK_STR(text(core, "B3"), "Sum of Sales");
+    CHECK_STR(text(core, "A4"), "A");
+    CHECK_STR(text(core, "A5"), "B");
+    CHECK_STR(text(core, "A6"), "Grand Total");
+    CHECK(fabs(num(core, "B4") - 20.0) < 1e-12 && fabs(num(core, "B5") - 25.0) < 1e-12 &&
+          fabs(num(core, "B6") - 45.0) < 1e-12);
+    CHECK(empty(core, "H8") && empty(core, "C1") && empty(core, "G2"));
+
+    /* both formats keep the layout, and the reloaded table refreshes */
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot2.xlsx", "/tmp/opencalc-pivot2.ods" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            oc_core *round_core;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round && round->nsheets == 2);
+            if (!round)
+                continue;
+            CHECK(owf_pivot_get(round, 1, &got) && got.source_sheet == 0 && got.source.last_row == 6 &&
+                  got.source.last_col == 4 && got.nrow == 1 && got.row[0] == 1 && got.ncol == 0 &&
+                  got.ndata == 1 && got.data[0].field == 3 && got.data[0].function == OC_SUBTOTAL_SUM &&
+                  got.npage == 1 && got.page[0].field == 0 && got.page[0].kind == OWF_PIVOT_TEXT &&
+                  !strcmp(got.page[0].text, "West") && got.rows == 6 && got.cols == 2 && got.row_grand);
+            round_core = oc_core_new(round);
+            CHECK(round_core && oc_core_set_input(round_core, 0, 3, 3, "100") == OWF_OK &&
+                  oc_core_set_sheet(round_core, 1) == OWF_OK && oc_core_refresh_pivot(round_core) == OWF_OK);
+            CHECK(round_core && fabs(num(round_core, "B4") - 115.0) < 1e-12 &&
+                  fabs(num(round_core, "B6") - 140.0) < 1e-12);
+            oc_core_free(round_core);
+            remove(paths[k]);
+        }
+    }
+
+    /* Undo: the layout change, then the table */
+    CHECK(oc_core_undo(core) == OWF_OK && fabs(num(core, "G8") - 105.0) < 1e-12);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_book(core)->nsheets == 1);
+
+    /* column fields only: one row of totals */
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.ncol = 1; def.col[0] = 0;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "B1"), "East");
+    CHECK_STR(text(core, "C1"), "West");
+    CHECK_STR(text(core, "D1"), "North");
+    CHECK_STR(text(core, "E1"), "Grand Total");
+    CHECK_STR(text(core, "A2"), "Total");
+    CHECK(fabs(num(core, "C2") - 45.0) < 1e-12 && fabs(num(core, "E2") - 105.0) < 1e-12 && empty(core, "A3"));
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* a filter nothing passes: headings only */
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 1;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.npage = 1; def.page[0].field = 0;
+    owf_pivot_item_from_text(&def.page[0], "South");
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A3"), "Product");
+    CHECK_STR(text(core, "A4"), "Grand Total");
+    CHECK(empty(core, "B4"));
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* bad layouts */
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 0;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_ERR_FORMAT);          /* no data field */
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.ncol = 1; def.col[0] = 0;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_ERR_FORMAT);          /* a field twice */
+    def.ncol = 0; def.row[0] = 9;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_ERR_FORMAT);          /* outside the source */
+    CHECK(oc_core_pivot_set_layout(core, &def) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_book(core)->nsheets == 1);
+    oc_core_free(core);
+}
+
+static void test_pivot_definition_text(void)
+{
+    owf_book *book = owf_book_new();
+    owf_pivotdef def, back;
+    char text[OWF_PIVOT_TEXT_MAX];
+    int sheet;
+    owf_range r;
+    if (!book || !owf_book_add_sheet(book, "My 'data'") || !owf_book_add_sheet(book, "Out")) {
+        owf_book_free(book);
+        CHECK(0);
+        return;
+    }
+    CHECK(owf_pivot_parse_source(book, "'my ''data'''!$B$2:$D$9", &sheet, &r) && sheet == 0 &&
+          r.first_row == 1 && r.first_col == 1 && r.last_row == 8 && r.last_col == 3);
+    CHECK(owf_pivot_parse_source(book, "'My ''data'''.B2:'My ''data'''.D9", &sheet, &r) && sheet == 0 &&
+          r.last_col == 3);
+    {
+        owf_range o;
+        CHECK(owf_pivot_parse_source(book, "$Out.$A$1:.$C$3", &sheet, &o) && sheet == 1 && o.last_row == 2);
+        CHECK(!owf_pivot_parse_source(book, "Nowhere!A1:B2", &sheet, &o));
+        CHECK(!owf_pivot_parse_source(book, "Out!B2:A1", &sheet, &o));
+    }
+    owf_pivot_init(&def);
+    def.source_sheet = 0;
+    def.source = r;
+    def.nrow = 2; def.row[0] = 0; def.row[1] = 2;
+    def.ndata = 1; def.data[0].field = 1; def.data[0].function = 4;
+    def.npage = 2; def.page[0].field = 1;
+    owf_pivot_item_from_text(&def.page[0], "a;b,c:d=\"e\"%");
+    def.page[1].field = 1;
+    owf_pivot_item_from_text(&def.page[1], "12.5");
+    def.col_grand = 0;
+    def.at_row = 3; def.at_col = 2; def.rows = 7; def.cols = 4;
+    CHECK(owf_pivot_config_text(&def, text, sizeof text));
+    CHECK(strchr(text + 1, '"') == text + strlen(text) - 1);
+    back = def;
+    CHECK(owf_pivot_parse_config(text, &back));
+    CHECK(back.nrow == 2 && back.row[1] == 2 && back.ndata == 1 && back.data[0].function == 4 &&
+          back.npage == 2 && back.page[0].kind == OWF_PIVOT_TEXT && !strcmp(back.page[0].text, "a;b,c:d=\"e\"%") &&
+          back.page[1].kind == OWF_PIVOT_NUMBER && back.page[1].number == 12.5 && back.row_grand &&
+          !back.col_grand && back.at_row == 3 && back.at_col == 2 && back.rows == 7 && back.cols == 4);
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4;g=9\"", &back));
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4", &back));
+    CHECK(owf_pivot_parse_config("\"2;r=0;d=1:4;z=whatever\"", &back) && back.nrow == 1);
+    CHECK(owf_pivot_function_from_word("countNums") == OC_SUBTOTAL_COUNT &&
+          owf_pivot_function_from_word("COUNT") == OC_SUBTOTAL_COUNTA &&
+          owf_pivot_function_from_word("stdDevp") == OC_SUBTOTAL_STDEVP &&
+          owf_pivot_function_from_word("stdevp") == OC_SUBTOTAL_STDEVP &&
+          !owf_pivot_function_from_word("median"));
+    owf_book_free(book);
 }
 
 static void test_pdf(void)
@@ -5303,6 +5523,391 @@ static void test_book_reads(void)
     oc_core_free(core);
 }
 
+static void solver_constraint(oc_solver_model *m, const char *lhs, int rel, const char *rhs)
+{
+    oc_solver_constraint *c = &m->constraints[m->nconstraints++];
+    snprintf(c->lhs, sizeof c->lhs, "%s", lhs);
+    c->rel = rel;
+    snprintf(c->rhs, sizeof c->rhs, "%s", rhs);
+}
+
+/* The linear programme on its own: a small one, an equality, free variables,
+ * an infeasible one, an unbounded one, a degenerate one, and integers. */
+static void test_solver_lp(void)
+{
+    double x[4], obj = 0.0;
+    unsigned nodes = 0;
+    {
+        /* max 3x + 5y: x <= 4, 2y <= 12, 3x + 2y <= 18 -> x 2, y 6, 36 */
+        static const double a[] = { 1, 0, 0, 2, 3, 2 }, b[] = { 4, 12, 18 }, c[] = { 3, 5 };
+        static const int rel[] = { -1, -1, -1 };
+        oc_lp lp = { 2, 3, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(x[0] - 2) < 1e-9 && fabs(x[1] - 6) < 1e-9 && fabs(obj - 36) < 1e-9);
+    }
+    {
+        /* min x + y (max -x - y): x + 2y >= 4, 3x + y >= 6, x - y = 0 -> x = y = 1.5 */
+        static const double a[] = { 1, 2, 3, 1, 1, -1 }, b[] = { 4, 6, 0 }, c[] = { -1, -1 };
+        static const int rel[] = { 1, 1, 0 };
+        oc_lp lp = { 2, 3, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(x[0] - 1.5) < 1e-9 && fabs(x[1] - 1.5) < 1e-9 && fabs(obj + 3) < 1e-9);  /* 4x >= 6 binds */
+    }
+    {
+        /* free variables: max -|...|: max x + y with x + y <= -3, x - y <= 1, -x + y <= 1 (x, y may be < 0) */
+        static const double a[] = { 1, 1, 1, -1, -1, 1 }, b[] = { -3, 1, 1 }, c[] = { 1, 1 };
+        static const int rel[] = { -1, -1, -1 };
+        static const double lo[] = { -HUGE_VAL, -HUGE_VAL }, up[] = { HUGE_VAL, HUGE_VAL };
+        oc_lp lp = { 2, 3, a, rel, b, c, lo, up, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(obj + 3) < 1e-9 && fabs(x[0] - x[1]) <= 1 + 1e-9);
+    }
+    {
+        /* infeasible: x + y <= 1, x + y >= 2 */
+        static const double a[] = { 1, 1, 1, 1 }, b[] = { 1, 2 }, c[] = { 1, 1 };
+        static const int rel[] = { -1, 1 };
+        oc_lp lp = { 2, 2, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_INFEASIBLE);
+    }
+    {
+        /* unbounded: max x with x - y <= 1 */
+        static const double a[] = { 1, -1 }, b[] = { 1 }, c[] = { 1, 0 };
+        static const int rel[] = { -1 };
+        oc_lp lp = { 2, 1, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_UNBOUNDED);
+    }
+    {
+        /* degenerate (several rows meet at the answer): max x + y, x <= 1 three ways, y <= 1, x + y <= 2 */
+        static const double a[] = { 1, 0, 2, 0, 1, 1, 0, 1, 3, 0 }, b[] = { 1, 2, 2, 1, 3 }, c[] = { 1, 1 };
+        static const int rel[] = { -1, -1, -1, -1, -1 };
+        oc_lp lp = { 2, 5, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(obj - 2) < 1e-9);
+    }
+    {
+        /* integers: max 5x + 4y: 6x + 4y <= 24, x + 2y <= 6 -> relaxed 3, 1.5 (21); whole 4, 0 (20) */
+        static const double a[] = { 6, 4, 1, 2 }, b[] = { 24, 6 }, c[] = { 5, 4 };
+        static const int rel[] = { -1, -1 };
+        static const unsigned char whole[] = { 1, 1 };
+        oc_lp lp = { 2, 2, a, rel, b, c, NULL, NULL, NULL, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(x[0] - 3) < 1e-9 && fabs(x[1] - 1.5) < 1e-9 && fabs(obj - 21) < 1e-9);
+        lp.integer = whole;
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(obj - 20) < 1e-9 && fabs(x[0] - 4) < 1e-9 && fabs(x[1]) < 1e-9 && nodes > 1);
+    }
+    {
+        /* a knapsack of binaries: values 10 13 7 8, weights 3 4 2 3, room 7 -> the first two, 23 */
+        static const double a[] = { 3, 4, 2, 3 }, b[] = { 7 }, c[] = { 10, 13, 7, 8 };
+        static const double lo[] = { 0, 0, 0, 0 }, up[] = { 1, 1, 1, 1 };
+        static const int rel[] = { -1 };
+        static const unsigned char whole[] = { 1, 1, 1, 1 };
+        oc_lp lp = { 4, 1, a, rel, b, c, lo, up, whole, 0 };
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_OPTIMAL);
+        CHECK(fabs(obj - 23) < 1e-9 && x[0] == 1 && x[1] == 1 && x[2] == 0 && x[3] == 0);
+        lp.max_nodes = 1;
+        CHECK(oc_lp_solve(&lp, x, &obj, &nodes) == OC_LP_LIMIT_NONE);
+    }
+}
+
+static void test_solver(void)
+{
+    static const char *const xlsx = "build/host/calc-core-solver.xlsx";
+    static const char *const ods = "build/host/calc-core-solver.ods";
+    oc_core *core = fresh();
+    oc_solver_model m, back;
+    oc_solver_result r;
+    char bad[64];
+    unsigned long changes;
+    if (!core)
+        return;
+    /* two products: B2, C2 made; profit B5 = 3B2 + 5C2; machine hours B3 <= 4, C3: 2 C2 <= 12, B4: 3B2 + 2C2 <= 18 */
+    enter_at(core, "A1", "Made");
+    enter_at(core, "B2", "0");
+    enter_at(core, "C2", "0");
+    enter_at(core, "B3", "=B2");
+    enter_at(core, "C3", "=2*C2");
+    enter_at(core, "B4", "=3*B2+2*C2");
+    enter_at(core, "B5", "=3*B2+5*C2");
+    enter_at(core, "D3", "4");
+    enter_at(core, "D4", "12");
+    oc_solver_model_init(&m);
+    snprintf(m.target, sizeof m.target, "B5");
+    snprintf(m.variables, sizeof m.variables, "B2:C2");
+    solver_constraint(&m, "B3", OC_SOLVER_LE, "D3");
+    solver_constraint(&m, "C3", OC_SOLVER_LE, "D4");
+    solver_constraint(&m, "B4", OC_SOLVER_LE, "18");
+    changes = oc_core_changes(core);
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK);
+    CHECK(r.status == OC_SOLVED && r.nvariables == 2 && r.value[0] == 2 && r.value[1] == 6 && r.objective == 36);
+    CHECK(num(core, "B2") == 0 && num(core, "B5") == 0 && oc_core_changes(core) == changes);
+    CHECK(oc_core_solver_apply(core, &m, &r, bad, sizeof bad) == OWF_OK);
+    CHECK(num(core, "B2") == 2 && num(core, "C2") == 6 && num(core, "B5") == 36);
+    CHECK(oc_core_solver_model(core, &back) == 1);
+    CHECK_STR(back.target, "'Sheet1'!$B$5");
+    CHECK_STR(back.variables, "'Sheet1'!$B$2:$C$2");
+    CHECK(back.goal == OC_SOLVER_MAX && back.nonnegative && back.nconstraints == 3);
+    CHECK_STR(back.constraints[0].rhs, "'Sheet1'!$D$3");
+    CHECK_STR(back.constraints[2].rhs, "18");
+    CHECK(back.constraints[1].rel == OC_SOLVER_LE);
+    CHECK(oc_core_undo(core) == OWF_OK && num(core, "B2") == 0 && !oc_core_solver_model(core, &back));
+    CHECK(oc_core_redo(core) == OWF_OK && num(core, "C2") == 6 && oc_core_solver_model(core, &back));
+
+    /* minimise, a whole-number variable, a value goal */
+    m.goal = OC_SOLVER_MIN;
+    m.nconstraints = 0;
+    solver_constraint(&m, "B4", OC_SOLVER_GE, "7");
+    solver_constraint(&m, "B2", OC_SOLVER_INT, "");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    /* min 3B2 + 5C2 with 3B2 + 2C2 >= 7, B2 whole: B2 = 3 gives 9; B2 = 2, C2 = .5 gives 8.5 */
+    CHECK(fabs(r.objective - 8.5) < 1e-9 && r.value[0] == 2 && fabs(r.value[1] - 0.5) < 1e-9);
+    m.goal = OC_SOLVER_VALUE;
+    m.value = 20;
+    m.nconstraints = 0;
+    solver_constraint(&m, "C2", OC_SOLVER_EQ, "1");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED && fabs(r.value[0] - 5) < 1e-9 &&
+          fabs(r.objective - 20) < 1e-9);
+    /* fewer constraints: the old solver_lhs2 goes */
+    CHECK(oc_core_solver_apply(core, &m, NULL, bad, sizeof bad) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.nconstraints == 1 && back.goal == OC_SOLVER_VALUE &&
+          back.value == 20);
+    {
+        int i, lhs2 = 0;
+        for (i = 0; i < oc_core_book(core)->nnames; i++)
+            if (!strcmp(oc_core_book(core)->names[i].name, "solver_lhs2"))
+                lhs2 = 1;
+        CHECK(!lhs2);
+    }
+
+    /* no answer, no limit, not linear, bad models */
+    m.goal = OC_SOLVER_MAX;
+    m.nconstraints = 0;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_UNBOUNDED && r.why[0]);
+    solver_constraint(&m, "B4", OC_SOLVER_LE, "5");
+    solver_constraint(&m, "B4", OC_SOLVER_GE, "6");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_INFEASIBLE);
+    enter_at(core, "B6", "=B2*C2");
+    snprintf(m.target, sizeof m.target, "B6");
+    m.nconstraints = 0;
+    solver_constraint(&m, "B4", OC_SOLVER_LE, "18");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_NOT_LINEAR && strstr(r.why, "B6"));
+    snprintf(m.target, sizeof m.target, "D3");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT && strstr(r.why, "D3"));
+    snprintf(m.target, sizeof m.target, "B5");
+    snprintf(m.variables, sizeof m.variables, "B2:C2,B3");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT && strstr(r.why, "B3"));
+    snprintf(m.variables, sizeof m.variables, "B2:C2");
+    solver_constraint(&m, "B4", OC_SOLVER_LE, "D3:D4");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT);
+    m.nconstraints = 0;
+    solver_constraint(&m, "B4", OC_SOLVER_BIN, "");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT);
+
+    /* a binary choice, constraints on ranges, a limit range of the same size */
+    m.nconstraints = 0;
+    solver_constraint(&m, "B3:C3", OC_SOLVER_LE, "D3:D4");
+    solver_constraint(&m, "B2:C2", OC_SOLVER_BIN, "");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED && r.value[0] == 1 && r.value[1] == 1 &&
+          r.objective == 8);
+
+    /* the model in files */
+    CHECK(oc_core_solver_apply(core, &m, &r, bad, sizeof bad) == OWF_OK);
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.nconstraints == 2 && back.constraints[1].rel == OC_SOLVER_BIN);
+    CHECK(oc_core_solve(core, &back, &r) == OWF_OK && r.status == OC_SOLVED && r.objective == 8);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.nconstraints == 2);
+    CHECK(oc_core_solve(core, &back, &r) == OWF_OK && r.status == OC_SOLVED && r.objective == 8);
+    oc_core_free(core);
+    remove(xlsx);
+    remove(ods);
+}
+
+static void test_consolidate(void)
+{
+    oc_core *core = fresh();
+    oc_consolidate_spec spec, back;
+    if (!core)
+        return;
+    enter_at(core, "B1", "Jan");
+    enter_at(core, "C1", "Feb");
+    enter_at(core, "A2", "East");
+    enter_at(core, "B2", "10");
+    enter_at(core, "C2", "20");
+    enter_at(core, "A3", "West");
+    enter_at(core, "B3", "1");
+    enter_at(core, "C3", "2");
+    CHECK(oc_core_add_sheet(core, "Q2") == 1);
+    enter_at(core, "B1", "Feb");
+    enter_at(core, "C1", "Mar");
+    enter_at(core, "A2", "west");
+    enter_at(core, "B2", "5");
+    enter_at(core, "C2", "6");
+    enter_at(core, "A3", "North");
+    enter_at(core, "B3", "7");
+    enter_at(core, "C3", "8");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+
+    /* by both labels */
+    oc_consolidate_init(&spec);
+    CHECK(oc_core_consolidate_settings(core, &back) == 0);
+    spec.nsources = 2;
+    snprintf(spec.source[0], sizeof spec.source[0], "A1:C3");
+    snprintf(spec.source[1], sizeof spec.source[1], "'Q2'!A1:C3");
+    snprintf(spec.dest, sizeof spec.dest, "E1");
+    spec.row_labels = spec.column_labels = 1;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK_STR(text(core, "F1"), "Jan");
+    CHECK_STR(text(core, "G1"), "Feb");
+    CHECK_STR(text(core, "H1"), "Mar");
+    CHECK_STR(text(core, "E2"), "East");
+    CHECK_STR(text(core, "E3"), "West");                 /* "west" on Q2 is the same row */
+    CHECK_STR(text(core, "E4"), "North");
+    CHECK(num(core, "F2") == 10 && num(core, "G2") == 20 && empty(core, "H2"));
+    CHECK(num(core, "F3") == 1 && num(core, "G3") == 7 && num(core, "H3") == 6);
+    CHECK(empty(core, "F4") && num(core, "G4") == 7 && num(core, "H4") == 8);
+    CHECK(empty(core, "E5") && empty(core, "I1"));
+    CHECK(oc_core_consolidate_settings(core, &back) == 1 && back.nsources == 2 && back.row_labels &&
+          back.column_labels && !back.link && back.function == OC_SUBTOTAL_SUM);
+    CHECK_STR(back.source[1], "'Q2'!A1:C3");
+    CHECK_STR(back.dest, "E1");
+    CHECK(oc_core_undo(core) == OWF_OK && empty(core, "F2") && oc_core_consolidate_settings(core, &back) == 0);
+
+    /* by position, linked */
+    oc_consolidate_init(&spec);
+    spec.nsources = 2;
+    snprintf(spec.source[0], sizeof spec.source[0], "B2:C3");
+    snprintf(spec.source[1], sizeof spec.source[1], "'Q2'!B2:C3");
+    snprintf(spec.dest, sizeof spec.dest, "J1");
+    spec.link = 1;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK(num(core, "J1") == 15 && num(core, "K1") == 26 && num(core, "J2") == 8 && num(core, "K2") == 10);
+    CHECK(strstr(formula(core, "J1"), "SUM(") == formula(core, "J1") && strstr(formula(core, "J1"), "'Q2'!$B$2"));
+    enter_at(core, "B2", "100");                          /* the link follows its source */
+    CHECK(num(core, "J1") == 105);
+
+    /* other functions, values only */
+    spec.link = 0;
+    spec.function = OC_SUBTOTAL_MAX;
+    snprintf(spec.dest, sizeof spec.dest, "J5");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK(num(core, "J5") == 100 && num(core, "K6") == 8 && formula(core, "J5")[0] == 0);
+    spec.function = OC_SUBTOTAL_COUNT;
+    snprintf(spec.dest, sizeof spec.dest, "J8");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK && num(core, "J8") == 2);
+
+    /* bad ones */
+    snprintf(spec.dest, sizeof spec.dest, "C3");          /* inside a source */
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    snprintf(spec.dest, sizeof spec.dest, "J8");
+    snprintf(spec.source[1], sizeof spec.source[1], "nowhere");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    spec.nsources = 0;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    spec.nsources = 1;
+    spec.function = 99;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
+static void test_scenarios(void)
+{
+    static const char *const xlsx = "build/host/calc-core-scenarios.xlsx";
+    static const char *const ods = "build/host/calc-core-scenarios.ods";
+    oc_core *core = fresh();
+    owf_scenario sc;
+    char cells[64];
+    int i;
+    if (!core)
+        return;
+    enter_at(core, "B2", "10");
+    enter_at(core, "C2", "20");
+    enter_at(core, "B3", "East");
+    enter_at(core, "E5", "=B2*2");
+    enter_at(core, "B6", "=B2+C2+E5");
+    CHECK(oc_core_scenario_count(core) == 0);
+    CHECK(oc_core_scenario_save(core, -1, "Low", "B2:C2, B3; E5", "the low case") == OWF_OK);
+    CHECK(oc_core_scenario_count(core) == 1);
+    enter_at(core, "B2", "100");
+    enter_at(core, "C2", "200");
+    enter_at(core, "B3", "'007");
+    enter_at(core, "E5", "5");
+    CHECK(oc_core_scenario_save(core, -1, "High", "B2:C2,B3,E5", "") == OWF_OK);
+    CHECK(oc_core_scenario_save(core, -1, "high", "B2", "") == OWF_ERR_UNSUPPORTED);   /* the name is taken */
+    CHECK(oc_core_scenario_save(core, -1, "", "B2", "") == OWF_ERR_FORMAT);
+    CHECK(oc_core_scenario_save(core, -1, "Bad", "nowhere", "") == OWF_ERR_FORMAT);
+    CHECK(oc_core_scenario_find(core, "LOW") == 0 && oc_core_scenario_find(core, "High") == 1 &&
+          oc_core_scenario_find(core, "Mid") == -1);
+    CHECK(num(core, "B6") == 305);
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK);
+    CHECK(num(core, "B2") == 10 && num(core, "C2") == 20 && num(core, "B6") == 50);
+    {
+        char *in = oc_core_cell_input(core, 0, 4, 4);
+        CHECK_STR(in, "20");                           /* a formula is kept as its value */
+        owf_free(in);
+    }
+    CHECK(oc_core_scenario_get(core, 0, &sc) && sc.active && sc.ncells == 4 && sc.nranges == 3);
+    CHECK_STR(sc.comment, "the low case");
+    CHECK(oc_core_scenario_cells_text(core, &sc, cells, sizeof cells));
+    CHECK_STR(cells, "B2:C2,B3,E5");
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_show(core, 1) == OWF_OK && num(core, "B6") == 305);
+    {
+        char *in = oc_core_cell_input(core, 0, 2, 1);
+        CHECK_STR(in, "'007");                         /* text stays text */
+        owf_free(in);
+    }
+    CHECK(oc_core_scenario_get(core, 0, &sc) && !sc.active);
+    owf_scenario_free(&sc);
+    CHECK(oc_core_undo(core) == OWF_OK && num(core, "B2") == 10);
+    CHECK(oc_core_redo(core) == OWF_OK && num(core, "B2") == 100);
+
+    /* a row put in above: the ranges follow */
+    oc_core_select_cell(core, 0, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK && num(core, "B3") == 10 && num(core, "B7") == 50);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_undo(core) == OWF_OK);
+
+    /* files */
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_scenario_count(core) == 2);
+    CHECK(oc_core_scenario_get(core, 0, &sc));
+    CHECK_STR(sc.name, "Low");
+    CHECK_STR(sc.comment, "the low case");
+    CHECK(sc.ncells == 4);
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK && num(core, "B6") == 50);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 1);            /* the scenario tables are not sheets */
+    CHECK(oc_core_scenario_count(core) == 2);
+    CHECK(oc_core_scenario_get(core, 1, &sc) && sc.ncells == 4 && !sc.active);
+    CHECK_STR(sc.name, "High");
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_get(core, 0, &sc) && sc.active);
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_show(core, 1) == OWF_OK && num(core, "B6") == 305);
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK && num(core, "E5") == 20);   /* its formula, worked out */
+
+    /* replace, delete */
+    enter_at(core, "B2", "1");
+    CHECK(oc_core_scenario_save(core, 0, "Low", "B2", "just one") == OWF_OK);
+    CHECK(oc_core_scenario_get(core, 0, &sc) && sc.ncells == 1 && sc.nranges == 1);
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_delete(core, 0) == OWF_OK && oc_core_scenario_count(core) == 1 &&
+          oc_core_scenario_find(core, "High") == 0);
+    for (i = 0; i < oc_core_book(core)->nnames; i++)
+        CHECK(strncmp(oc_core_book(core)->names[i].name, "_GF_SCENARIO_2", 14) != 0);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_scenario_count(core) == 2);
+    CHECK(oc_core_scenario_delete(core, 5) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+    remove(xlsx);
+    remove(ods);
+}
+
 int main(void)
 {
     test_more();
@@ -5356,6 +5961,12 @@ int main(void)
     test_multiple_operations_multi();
     test_subtotals();
     test_pivot_summary();
+    test_pivot_layout();
+    test_pivot_definition_text();
+    test_solver_lp();
+    test_solver();
+    test_scenarios();
+    test_consolidate();
     test_pdf();
     test_book_reads();
     if (failures) {

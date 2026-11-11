@@ -95,7 +95,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.18 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.22 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPUBLISHER"
 #define UNIT "Page"
 #define UNIT_UPPER "PAGE"
@@ -106,7 +106,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.24 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.28 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -121,9 +121,9 @@ static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
 enum { C_NEW = 1, C_OPEN, C_SAVE, C_PRINT, C_PDF, C_UNDO, C_REDO };
-enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501 };
+enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_OUTLINE = 410, GID_HSCROLL = 500, GID_VSCROLL = 501 };
 enum {
-    M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_ABOUT, M_QUIT,
+    M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_HANDOUTS, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FIND, M_FIND_NEXT, M_REPLACE, M_REPLACE_ALL, M_SELECT_ALL, M_STOP,
     M_TEXT_BOLD, M_TEXT_ITALIC, M_TEXT_UNDERLINE,
     M_TEXT_SIZE_10, M_TEXT_SIZE_12, M_TEXT_SIZE_14, M_TEXT_SIZE_18, M_TEXT_SIZE_24, M_TEXT_SIZE_36,
@@ -136,6 +136,7 @@ enum {
     M_BRING_FRONT, M_BRING_FORWARD, M_SEND_BACKWARD, M_SEND_BACK,
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
+    M_DISTRIBUTE_ACROSS, M_DISTRIBUTE_DOWN, M_GROUP, M_UNGROUP,
     M_POSITION_SIZE, M_APPEARANCE, M_PICTURE_CROP,
     M_TABLE_INSERT_ROW, M_TABLE_DELETE_ROW, M_TABLE_INSERT_COLUMN, M_TABLE_DELETE_COLUMN,
     M_TABLE_STYLE,
@@ -148,7 +149,7 @@ enum {
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
-    M_VIEW_NORMAL, M_VIEW_SORTER
+    M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE
 };
 
 static struct NewMenu menus[] = {
@@ -160,6 +161,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_PDF },
+#ifndef OPENPUBLISHER
+    { NM_ITEM, "Export Handouts...", NULL, 0, 0, (APTR)M_HANDOUTS },
+#endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "About...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_ITEM, "Quit", "Q", 0, 0, (APTR)M_QUIT },
@@ -230,6 +234,11 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Align Top", NULL, 0, 0, (APTR)M_ALIGN_TOP },
     { NM_ITEM, "Align Middle", NULL, 0, 0, (APTR)M_ALIGN_MIDDLE },
     { NM_ITEM, "Align Bottom", NULL, 0, 0, (APTR)M_ALIGN_BOTTOM },
+    { NM_ITEM, "Distribute Across", NULL, 0, 0, (APTR)M_DISTRIBUTE_ACROSS },
+    { NM_ITEM, "Distribute Down", NULL, 0, 0, (APTR)M_DISTRIBUTE_DOWN },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Group", NULL, 0, 0, (APTR)M_GROUP },
+    { NM_ITEM, "Ungroup", NULL, 0, 0, (APTR)M_UNGROUP },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Position and Size...", NULL, 0, 0, (APTR)M_POSITION_SIZE },
     { NM_ITEM, "Appearance...", NULL, 0, 0, (APTR)M_APPEARANCE },
@@ -268,8 +277,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Move " UNIT " Down", NULL, 0, 0, (APTR)M_MOVE_SLIDE_DOWN },
 
     { NM_TITLE, "View", NULL, 0, 0, NULL },
-    { NM_ITEM, "Normal", NULL, CHECKIT | CHECKED, ~1 & 3, (APTR)M_VIEW_NORMAL },
-    { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 3, (APTR)M_VIEW_SORTER },
+    { NM_ITEM, "Normal", NULL, CHECKIT | CHECKED, ~1 & 15, (APTR)M_VIEW_NORMAL },
+    { NM_ITEM, "Outline", NULL, CHECKIT, ~8 & 15, (APTR)M_VIEW_OUTLINE },
+    { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 15, (APTR)M_VIEW_SORTER },
+    { NM_ITEM, "Notes", NULL, CHECKIT, ~4 & 15, (APTR)M_VIEW_NOTES },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First " UNIT, NULL, 0, 0, (APTR)M_FIRST },
     { NM_ITEM, "Previous " UNIT, "[", 0, 0, (APTR)M_PREV },
@@ -382,6 +393,13 @@ static opr_undo *undo;
 /* The slide sorter (View > Slide Sorter): the grid of thumbnails fills the view, the picked slides are the
  * ones the Slide menu works on, and a drag moves them. */
 static int sorter_view;
+/* View > Notes: the slide's notes page, the slide small at the top and its speaker notes typed in below */
+static int notes_view;
+/* View > Outline: every slide's title and its outline text as one list, typed, demoted and promoted */
+static int outline_view;
+static ogt_list *outline_list;
+static opr_outline outline_rows;
+static void outline_refresh(void);
 static int sorter_columns;                           /* 0: as many as fit */
 static int sorter_scroll;
 static opr_sorter_grid sorter;
@@ -412,12 +430,27 @@ static struct {
     owf_obj original, preview;
 } object_drag;
 
+/* Objects picked together (Shift+click, or a drag round them on the slide). They count only while
+ * selected_obj is the last of them on the same slide with the same objects, so anything that sets
+ * selected_obj, changes the slide or adds or removes an object drops them. */
+#define MAX_PICKED 64
+static int picked_obj[MAX_PICKED], npicked_obj, picked_slide = -1, picked_nobjs = -1;
+/* A drag round objects (band) or of several objects (or a group) together; last is the frame drawn. */
+static struct { int active, band, moved, mouse_x, mouse_y, shown, lx, ly, lw, lh; } multi_drag;
+static UWORD mouse_qual;
+
 static void draw_all(void);
 static void draw_slide(void);
 static void draw_status(void);
 static void layout(void);
 static void insert_picture(void);
 static void update_ruler(void);
+static int picks(int *out);
+static int picks_together(void);
+static void twip_pixel_box(const int t[4], box *b);
+static void picks_status(void);
+static void toggle_pick(int obj);
+static void start_multi_drag(int band, int mx, int my);
 static void delete_selected_object(void);
 
 /* ---- Small helpers ---- */
@@ -1528,7 +1561,7 @@ static void draw_picture(struct RastPort *rp, const picture *c, int bx, int by, 
 
 #define TW(v) ((ol_unit)(v) * OL_UNITS_PER_TWIP)
 #define LAID_MAX 24                                  /* the slide sorter shows about twenty */
-static struct { int slide; unsigned long version; opr_slide *s; ULONG used; } laid[LAID_MAX];
+static struct { int slide, notes; unsigned long version; opr_slide *s; ULONG used; } laid[LAID_MAX];
 static unsigned long *versions;                      /* a count of each slide's changes */
 static int nversions;
 static ULONG laid_tick;
@@ -1561,13 +1594,14 @@ static void slide_changed(int slide)
     if (slide >= 0 && slide < nversions) versions[slide]++;
 }
 
-static opr_slide *laid_get(int slide)
+/* A slide laid out (notes 0) or its notes page (1), kept while it is unchanged. */
+static opr_slide *laid_get_as(int slide, int notes)
 {
     int i, slot = 0;
     unsigned long v = slide_version(slide);
     if (!deck || slide < 0 || slide >= deck->nslides) return NULL;
     for (i = 0; i < LAID_MAX; ++i)
-        if (laid[i].s && laid[i].slide == slide && laid[i].version == v) {
+        if (laid[i].s && laid[i].slide == slide && laid[i].notes == notes && laid[i].version == v) {
             laid[i].used = ++laid_tick;
             return laid[i].s;
         }
@@ -1576,11 +1610,65 @@ static opr_slide *laid_get(int slide)
         if (laid[i].used < laid[slot].used) slot = i;
     }
     opr_slide_free(laid[slot].s);
-    laid[slot].s = opr_slide_layout(deck, slide, NULL, NULL, NULL);
+    laid[slot].s = notes ? opr_notes_layout(deck, slide, NULL, NULL) : opr_slide_layout(deck, slide, NULL, NULL, NULL);
     laid[slot].slide = slide;
+    laid[slot].notes = notes;
     laid[slot].version = v;
     laid[slot].used = ++laid_tick;
     return laid[slot].s;
+}
+
+/* The slide's thumbnail: always the slide itself. */
+static opr_slide *laid_get(int slide)
+{
+    return laid_get_as(slide, 0);
+}
+
+/* What the main view edits: the notes page in Notes view, else the slide. */
+static opr_slide *laid_view(int slide)
+{
+    return laid_get_as(slide, notes_view);
+}
+
+/* The page in front of you, twips: the notes page in Notes view, else the slide. */
+static int page_width(void)
+{
+    int w = deck ? deck->width : 1;
+    if (notes_view && deck) opr_notes_page(deck, &w, NULL);
+    return w > 0 ? w : 1;
+}
+
+static int page_height(void)
+{
+    int h = deck ? deck->height : 1;
+    if (notes_view && deck) opr_notes_page(deck, NULL, &h);
+    return h > 0 ? h : 1;
+}
+
+/* The object being typed in: one of the slide's, or its notes. */
+static owf_obj *edit_target(void)
+{
+    if (!deck || current < 0 || current >= deck->nslides || edit_obj < 0) return NULL;
+    if (edit_obj == OPR_NOTES) return &deck->slides[current].notes;
+    return edit_obj < deck->slides[current].nobjs ? &deck->slides[current].objs[edit_obj] : NULL;
+}
+
+/* Its box on the page, inherited sizes resolved; 0 when there is none. */
+static int edit_resolved(owf_obj *out)
+{
+    owf_obj *o = edit_target();
+    if (!o) return 0;
+    if (edit_obj == OPR_NOTES) {
+        int t[4];
+        opr_notes_boxes(deck, NULL, t);
+        *out = *o;
+        out->x = t[0];
+        out->y = t[1];
+        out->width = t[2];
+        out->height = t[3];
+        return 1;
+    }
+    return owf_deck_resolve(deck, current, edit_obj, out, NULL) >= 0;
 }
 
 /* ---- Drawing a slide from its display list ---- */
@@ -1956,12 +2044,14 @@ static void paint_slide(struct RastPort *rp, const opr_slide *s, int x, int y, i
                         int thumb, ol_scale *out)
 {
     painter p;
-    int h = (int)((long)w * deck->height / deck->width);
+    int pw = deck->width, ph = deck->height, h;
+    if (s && s->notes) opr_notes_page(deck, &pw, &ph);
+    h = (int)((long)w * ph / pw);
     memset(&p, 0, sizeof p);
     p.rp = rp;
     p.s = s;
     p.thumb = thumb;
-    ol_scale_fit(&p.scale, TW(deck->width), w);
+    ol_scale_fit(&p.scale, TW(pw), w);
     p.scale.origin_x = x;
     p.scale.origin_y = y;
     p.lim.x = x;
@@ -2018,10 +2108,10 @@ static void place_slide(void)
         return;
     }
     w = mw;
-    h = (int)((long)w * deck->height / deck->width);
+    h = (int)((long)w * page_height() / page_width());
     if (h > mh) {
         h = mh;
-        w = (int)((long)h * deck->width / deck->height);
+        w = (int)((long)h * page_width() / page_height());
     }
     w = (int)((long)w * zoom / 100);
     h = (int)((long)h * zoom / 100);
@@ -2052,16 +2142,15 @@ static void place_slide(void)
  * owf_parafmt indents rather than page-relative approximations. */
 static void update_ruler(void)
 {
-    int page_x = slide_box.x, page_w = deck ? deck->width : 11906;
+    int page_x = slide_box.x, page_w = deck ? page_width() : 11906;
     int left = 0, first = 0, right = 0;
     int num = slide_box.w > 0 ? slide_box.w : 1;
-    int den = deck && deck->width > 0 ? deck->width : 1;
-    if (deck && current >= 0 && current < deck->nslides && edit_obj >= 0 &&
-        edit_obj < deck->slides[current].nobjs && slide_box.w > 0) {
+    int den = deck ? page_width() : 1;
+    if (deck && edit_target() && slide_box.w > 0) {
         owf_obj resolved;
-        owf_obj *o = &deck->slides[current].objs[edit_obj];
+        owf_obj *o = edit_target();
         int para = caret.para;
-        if (owf_deck_resolve(deck, current, edit_obj, &resolved, NULL) >= 0 &&
+        if (edit_resolved(&resolved) &&
             opr_obj_editable(deck, current, edit_obj) && o->text.nparas > 0) {
             int content_x = resolved.x + resolved.inset[0];
             int content_w = resolved.width - resolved.inset[0] - resolved.inset[2];
@@ -2257,6 +2346,7 @@ static void free_gadgets(void)
     free_scrollers();
     if (chain) { RemoveGList(win, chain, -1); chain = NULL; }
     if (strip) { ogt_list_free(strip); strip = NULL; }
+    if (outline_list) { ogt_list_free(outline_list); outline_list = NULL; }
 }
 
 static void layout(void)
@@ -2278,19 +2368,20 @@ static void layout(void)
     body_h = status_box.y - body_y;
     /* the slides beside the slide, hidden in a narrow window (as GFOpenWrite's navigator); the sorter is the
        slides, so neither the strip nor the ruler is there */
-    stripw = sorter_view ? 0 : area.w >= 480 ? (area.w < 1000 ? 140 : area.w / 7) : 0;
+    stripw = sorter_view || outline_view ? 0 : area.w >= 480 ? (area.w < 1000 ? 140 : area.w / 7) : 0;
     strip_box = (box){ area.x, body_y, stripw, body_h };
     view_x = area.x + stripw + (stripw ? 1 : 0);
     view_w = area.w - stripw - (stripw ? 1 : 0);
-    ruler_h = sorter_view ? 0 : fh + 12;
+    ruler_h = sorter_view || outline_view ? 0 : fh + 12;
     if (ruler_h > body_h / 3) ruler_h = body_h / 3;
     ruler_box = (box){ view_x, body_y, view_w, ruler_h };
     view_box = (box){ view_x, body_y + ruler_h, view_w, body_h - ruler_h };
     place_slide();
-    if (!sorter_view) update_ruler();
+    if (!sorter_view && !outline_view) update_ruler();
     if ((chain = ogt_toolbar_gadgets(&tb, GID_TOOLBAR)))
         AddGList(win, chain, ~0, -1, NULL);
     if (sorter_view) sorter_place();
+    else if (outline_view) outline_refresh();
     else make_scrollers();
     if (stripw && (strip = ogt_list_new(win, &ctx, GID_SLIDES, thumb_height, thumb_draw, NULL, NULL, "list"))) {
         ogt_list_layout(strip, strip_box.x + 4, strip_box.y + 4, strip_box.w - 8, strip_box.h - 8);
@@ -2392,7 +2483,7 @@ static int object_pixel_box(int obj, box *b)
     if (!deck || current < 0 || current >= deck->nslides || obj < 0 ||
         obj >= deck->slides[current].nobjs || owf_deck_resolve(deck, current, obj, &resolved, NULL) < 0)
         return 0;
-    ol_scale_fit(&sc, TW(deck->width), slide_box.w);
+    ol_scale_fit(&sc, TW(page_width()), slide_box.w);
     sc.origin_x = slide_box.x;
     sc.origin_y = slide_box.y;
     b->x = ol_scale_x(&sc, TW(resolved.x));
@@ -2418,6 +2509,18 @@ static void draw_selection(const opr_slide *s)
     box b;
     int x[8], y[8], i, frame;
     LONG accent;
+    if (picks_together()) {
+        /* several objects, or a group: a frame round each, no handles (they move, not resize) */
+        int p[MAX_PICKED], n = picks(p), t[4];
+        accent = ogt_pen(&ctx, "accent");
+        for (i = 0; i < n; i++) {
+            if (opr_objs_box(deck, current, &p[i], 1, t) < 0) continue;
+            twip_pixel_box(t, &b);
+            ogt_frame(win->RPort, accent, b.x - 2, b.y - 2, b.w + 4, b.h + 4);
+            ogt_frame(win->RPort, accent, b.x - 3, b.y - 3, b.w + 6, b.h + 6);
+        }
+        return;
+    }
     if (selected_obj < 0 || !object_pixel_box(selected_obj, &b)) return;
     accent = ogt_pen(&ctx, "accent");
     ogt_frame(win->RPort, accent, b.x - 2, b.y - 2, b.w + 4, b.h + 4);
@@ -2561,6 +2664,12 @@ static void draw_slide_part(const box *part)
         draw_sorter();
         return;
     }
+    if (outline_view) {
+        outline_refresh();
+        if (outline_list) ogt_list_draw(outline_list);
+        else ogt_fill(&ctx, win->RPort, "window", view_box.x, view_box.y, view_box.w, view_box.h);
+        return;
+    }
     rp = win->RPort;
     if (!part) {
         /* the window's own colour around the slide, so the slide stands out */
@@ -2609,13 +2718,27 @@ static void draw_slide_part(const box *part)
     clip.y = r.MinY;
     clip.width = r.MaxX - r.MinX + 1;
     clip.height = r.MaxY - r.MinY + 1;
-    s = laid_get(current);
+    s = laid_view(current);
     paint_slide(rp, s, slide_box.x, slide_box.y, slide_box.w, &clip, 0, &sc);
     if (!s)
         ogt_text(rp, ogt_pen(&ctx, "muted"), slide_box.x + 8, slide_box.y + 8, "Not enough memory to show this " UNIT_LOWER ".",
                  slide_box.w - 16);
-    draw_grid(&sc);
-    draw_guides(&sc);
+    if (notes_view) {
+        /* the slide itself, small, in its place at the top of the notes page */
+        int b[4], x, y, x2;
+        opr_notes_boxes(deck, b, NULL);
+        x = ol_scale_x(&sc, TW(b[0]));
+        y = ol_scale_y(&sc, TW(b[1]));
+        x2 = ol_scale_x(&sc, TW(b[0] + b[2]));
+        if (x2 - x > 8) {
+            paint_slide(rp, laid_get(current), x, y, x2 - x, &clip, x2 - x < 240, NULL);
+            ogt_frame(rp, ogt_pen(&ctx, "group.line"), x - 1, y - 1, x2 - x + 2,
+                      (int)((long)(x2 - x) * deck->height / deck->width) + 2);
+        }
+    } else {
+        draw_grid(&sc);
+        draw_guides(&sc);
+    }
     draw_selection(s);
     draw_text_selection(s, &sc);
     draw_caret(s, &sc);
@@ -2876,26 +2999,37 @@ static struct MenuItem *menu_item_for(ULONG id)
 /* The View menu's tick on Normal or the sorter, and the menus that need a slide in front of them. */
 static void update_view_menus(void)
 {
-    struct MenuItem *normal = menu_item_for(M_VIEW_NORMAL), *sorted = menu_item_for(M_VIEW_SORTER);
+    struct MenuItem *normal = menu_item_for(M_VIEW_NORMAL), *sorted = menu_item_for(M_VIEW_SORTER),
+                    *notes = menu_item_for(M_VIEW_NOTES), *lines = menu_item_for(M_VIEW_OUTLINE);
+    int normal_on = !sorter_view && !notes_view && !outline_view;
     if (!win || !menu) return;
     ClearMenuStrip(win);
-    if (normal) normal->Flags = (UWORD)(sorter_view ? normal->Flags & ~CHECKED : normal->Flags | CHECKED);
+    if (normal) normal->Flags = (UWORD)(normal_on ? normal->Flags | CHECKED : normal->Flags & ~CHECKED);
     if (sorted) sorted->Flags = (UWORD)(sorter_view ? sorted->Flags | CHECKED : sorted->Flags & ~CHECKED);
+    if (notes) notes->Flags = (UWORD)(notes_view ? notes->Flags | CHECKED : notes->Flags & ~CHECKED);
+    if (lines) lines->Flags = (UWORD)(outline_view ? lines->Flags | CHECKED : lines->Flags & ~CHECKED);
     ResetMenuStrip(win, menu);
-    /* Format, Insert and Object work on what is on the slide in front of you */
-    if (sorter_view) { OffMenu(win, FULLMENUNUM(2, NOITEM, NOSUB)); OffMenu(win, FULLMENUNUM(3, NOITEM, NOSUB));
-                       OffMenu(win, FULLMENUNUM(4, NOITEM, NOSUB)); }
-    else { OnMenu(win, FULLMENUNUM(2, NOITEM, NOSUB)); OnMenu(win, FULLMENUNUM(3, NOITEM, NOSUB));
-           OnMenu(win, FULLMENUNUM(4, NOITEM, NOSUB)); }
+    /* Format works on text, so on the notes too; Insert and Object on what is on the slide in front of you */
+    if (sorter_view || outline_view) OffMenu(win, FULLMENUNUM(2, NOITEM, NOSUB));
+    else OnMenu(win, FULLMENUNUM(2, NOITEM, NOSUB));
+    if (!normal_on) { OffMenu(win, FULLMENUNUM(3, NOITEM, NOSUB)); OffMenu(win, FULLMENUNUM(4, NOITEM, NOSUB)); }
+    else { OnMenu(win, FULLMENUNUM(3, NOITEM, NOSUB)); OnMenu(win, FULLMENUNUM(4, NOITEM, NOSUB)); }
 }
 
-static void set_view(int sorted)
+/* 0 Normal, 1 the sorter, 2 Notes, 3 the outline. */
+static void set_view(int mode)
 {
-    sorted = sorted != 0;
-    if (sorted == sorter_view) { update_view_menus(); return; }
+    int sorted = mode == 1;
+    if (sorted == sorter_view && (mode == 2) == notes_view && (mode == 3) == outline_view) {
+        update_view_menus();
+        return;
+    }
     clear_object_selection();
     memset(&sorter_drag, 0, sizeof sorter_drag);
     sorter_view = sorted;
+    notes_view = mode == 2;
+    outline_view = mode == 3;
+    pan_x = pan_y = 0;
     if (sorted) {
         sorter_pick_fit();
         if (!opr_pick_has(&pick, current)) opr_pick_only(&pick, current);
@@ -2903,8 +3037,14 @@ static void set_view(int sorted)
     }
     update_view_menus();
     set_status(sorted ? UNIT " Sorter: drag to move; Shift and Ctrl pick several; Return opens one."
-                      : "Normal view.");
+               : notes_view ? "Notes: click under the " UNIT_LOWER " to type its speaker notes."
+               : outline_view ? "Outline: Return edits a line, Shift+Return adds one, Tab and Shift+Tab move it in and out."
+               : "Normal view.");
     relayout();
+    if (outline_view && outline_list) {
+        int r = opr_outline_find(&outline_rows, current, -1, 0);
+        if (r >= 0) { ogt_list_select(outline_list, r); ogt_list_show(outline_list, r); ogt_list_draw(outline_list); }
+    }
     if (sorted) {
         sorter_scroll = opr_sorter_scroll_to(&sorter, current, sorter_scroll);
         sorter_scroller_follow();
@@ -2918,6 +3058,196 @@ static void sorter_open(int index)
     current = index;
     set_view(0);
     show_slide(index);
+}
+
+/* ---- The outline view ---- */
+
+static int outline_height(void *user, int index)
+{
+    (void)user;
+    return index < outline_rows.count && outline_rows.rows[index].level == 0 ? fh + 12 : fh + 4;
+}
+
+static void outline_draw(void *user, int index, struct RastPort *rp, int x, int y, int w, int h, int selected)
+{
+    const opr_outline_row *r;
+    char *text, num[16];
+    int tx, ty;
+    (void)user;
+    if (!deck || index >= outline_rows.count) return;
+    r = &outline_rows.rows[index];
+    if (selected) ogt_fill(&ctx, rp, "accent", x, y, w, h);
+    SetFont(rp, font);
+    ty = y + (h - fh) / 2;
+    if (r->level == 0) {
+        if (index) ogt_hline(rp, ogt_pen(&ctx, "group.line"), x + 4, y, w - 8);
+        snprintf(num, sizeof num, "%d", r->slide + 1);
+        ogt_text(rp, ogt_pen(&ctx, selected ? "accent.text" : "muted"), x + 6, ty, num, 0);
+        tx = x + 6 + ogt_text_width(rp, "0000");
+    } else {
+        tx = x + 6 + ogt_text_width(rp, "0000") + (r->level - 1) * 20 + 4;
+        ogt_box(rp, ogt_pen(&ctx, selected ? "accent.text" : "label"), tx, ty + fh / 2 - 2, 4, 4);
+        tx += 12;
+    }
+    text = opr_outline_text(deck, r);
+    if (text && !text[0] && r->level == 0) {
+        owf_free(text);
+        text = NULL;
+        ogt_text(rp, ogt_pen(&ctx, selected ? "accent.text" : "muted"), tx, ty,
+                 r->obj < 0 ? "(no title box)" : "(no title)", x + w - tx - 4);
+    } else if (text) {
+        if (r->level == 0) SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
+        ogt_text(rp, ogt_pen(&ctx, selected ? "accent.text" : "label"), tx, ty, text, x + w - tx - 4);
+        if (r->level == 0) SetSoftStyle(rp, 0, FSF_BOLD);
+    }
+    owf_free(text);
+    if (deck->slides[r->slide].hidden && r->level == 0)
+        ogt_text(rp, ogt_pen(&ctx, "muted"), x + w - ogt_text_width(rp, "(hidden)") - 8, ty, "(hidden)", 0);
+}
+
+/* The rows again from the deck, the list told; the slide in front of you followed. */
+static void outline_refresh(void)
+{
+    int at;
+    if (!outline_view || !deck) return;
+    if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
+    if (!outline_list) {
+        outline_list = ogt_list_new(win, &ctx, GID_OUTLINE, outline_height, outline_draw, NULL, NULL, "list");
+        if (!outline_list) return;
+        ogt_list_layout(outline_list, view_box.x + 4, view_box.y + 4, view_box.w - 8, view_box.h - 8);
+        ogt_list_set_count(outline_list, outline_rows.count);
+        at = opr_outline_find(&outline_rows, current, -1, 0);
+        if (at >= 0) { ogt_list_select(outline_list, at); ogt_list_show(outline_list, at); }
+        return;
+    }
+    ogt_list_set_count(outline_list, outline_rows.count);   /* heights asked again: a title may now be a line */
+    at = outline_list->selected;
+    if (at < 0 || at >= outline_rows.count || outline_rows.rows[at].slide != current) {
+        at = opr_outline_find(&outline_rows, current, -1, 0);
+        if (at >= 0) ogt_list_select(outline_list, at);
+    }
+}
+
+static int outline_row(opr_outline_row *r)
+{
+    int at = outline_list ? outline_list->selected : -1;
+    if (at < 0 || at >= outline_rows.count) return -1;
+    *r = outline_rows.rows[at];
+    return at;
+}
+
+/* After a change: every slide laid out again, the rows rebuilt, row at picked. */
+static void outline_changed(int slide, int obj, int para, const char *message)
+{
+    int at;
+    laid_clear();
+    free(versions);
+    versions = NULL;
+    nversions = 0;
+    if (deck && slide >= deck->nslides) slide = deck->nslides - 1;
+    if (slide >= 0) current = slide;
+    dirty = 1;
+    update_window_title();
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
+    if (outline_list) {
+        ogt_list_set_count(outline_list, outline_rows.count);
+        at = opr_outline_find(&outline_rows, current, obj, para);
+        if (at < 0) at = opr_outline_find(&outline_rows, current, -1, 0);
+        if (at >= 0) { ogt_list_select(outline_list, at); ogt_list_show(outline_list, at); }
+        ogt_list_draw(outline_list);
+    }
+    set_status(message);
+    draw_status();
+}
+
+static void outline_refused(int rc, const char *why)
+{
+    set_status(rc == -2 ? why : "Not enough memory for that.");
+    draw_status();
+}
+
+/* Return: a row's text in a requester. */
+static void outline_edit(void)
+{
+    opr_outline_row r;
+    char *text, entered[512];
+    int rc;
+    if (outline_row(&r) < 0) return;
+    if (r.level == 0 && r.obj < 0) {
+        outline_refused(-2, "This " UNIT_LOWER " has no title box; give it a layout with one.");
+        return;
+    }
+    text = opr_outline_text(deck, &r);
+    rc = text_requester(r.level ? "Outline Text" : UNIT " Title", r.level ? "Text" : "Title", text ? text : "",
+                        entered, sizeof entered);
+    owf_free(text);
+    if (!rc) return;
+    rc = opr_outline_set_text(undo, deck, &r, entered);
+    if (rc < 0) outline_refused(rc, "That line can't be typed in.");
+    else outline_changed(r.slide, r.level ? r.obj : -1, r.para, r.level ? "Text changed." : "Title changed.");
+}
+
+/* Shift+Return: a line after this one, then its text. */
+static void outline_insert(void)
+{
+    opr_outline_row r;
+    int s, p, rc;
+    if (outline_row(&r) < 0) return;
+    rc = opr_outline_insert_after(undo, deck, &r, &s, &p);
+    if (rc < 0) { outline_refused(rc, "No line can go there."); return; }
+    if (r.level == 0) outline_changed(s, -1, 0, "A new " UNIT_LOWER ": type its title.");
+    else outline_changed(s, r.obj, p, "A new line: type it.");
+    outline_edit();
+}
+
+static void outline_level(int demote)
+{
+    opr_outline_row r;
+    int rc, s = -1;
+    if (outline_row(&r) < 0) return;
+    rc = demote ? opr_outline_demote(undo, deck, &r) : opr_outline_promote(undo, deck, &r, &s);
+    if (rc < 0) {
+        outline_refused(rc, demote ? (r.level ? "That line is as far in as it goes."
+                                              : "This title has no " UNIT_LOWER " before it with outline text to join.")
+                                   : "A title is as far out as it goes.");
+        return;
+    }
+    if (demote && r.level == 0) outline_changed(r.slide - 1, -1, 0, UNIT " joined to the one before.");
+    else if (!demote && r.level == 1 && s != r.slide) outline_changed(s, -1, 0, "The line is a " UNIT_LOWER " of its own.");
+    else outline_changed(r.slide, r.obj, r.para, demote ? "Moved in." : "Moved out.");
+}
+
+static void outline_delete(void)
+{
+    opr_outline_row r;
+    int rc;
+    if (outline_row(&r) < 0) return;
+    rc = opr_outline_delete(undo, deck, &r);
+    if (rc < 0) outline_refused(rc, "The last " UNIT_LOWER " stays.");
+    else outline_changed(r.slide, r.level ? r.obj : -1, r.para > 0 ? r.para - 1 : 0,
+                         r.level ? "Line deleted." : UNIT " deleted.");
+}
+
+static void outline_pick(int row)
+{
+    char msg[64];
+    if (row < 0 || row >= outline_rows.count) return;
+    current = outline_rows.rows[row].slide;
+    snprintf(msg, sizeof msg, UNIT " %d.", current + 1);
+    set_status(msg);
+    draw_status();
+}
+
+static void outline_key(UWORD code, UWORD qual)
+{
+    int shift = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
+    if (code == 27) set_view(0);
+    else if (code == 13) { if (shift) outline_insert(); else outline_edit(); }
+    else if (code == 9) outline_level(!shift);
+    else if (code == 127 || code == 8) outline_delete();
+    else if (code >= 32 && code < 256) outline_edit();
 }
 
 static const char *picked_words(int n, const char *one, const char *many)
@@ -3508,16 +3838,16 @@ static int edit_area(box *b)
     int frame;
     ol_scale sc;
     ol_rect r;
-    if (edit_obj < 0 || !deck || !(s = laid_get(current)) || (frame = opr_slide_frame_for(s, edit_obj)) < 0) return 0;
-    ol_scale_fit(&sc, TW(deck->width), slide_box.w);
+    if (edit_obj < 0 || !deck || !(s = laid_view(current)) || (frame = opr_slide_frame_for(s, edit_obj)) < 0) return 0;
+    ol_scale_fit(&sc, TW(page_width()), slide_box.w);
     sc.origin_x = slide_box.x;
     sc.origin_y = slide_box.y;
     r = ol_node_bounds(ol_node_by_id(s->doc, s->frames[frame].node));
     {
         owf_obj resolved;
-        const owf_obj *o = &deck->slides[current].objs[edit_obj];
+        const owf_obj *o = edit_target();
         int x, y, x2, y2;
-        if (owf_deck_resolve(deck, current, edit_obj, &resolved, NULL) >= 0) o = &resolved;
+        if (edit_resolved(&resolved)) o = &resolved;
         x = ol_scale_x(&sc, TW(o->x));
         y = ol_scale_y(&sc, TW(o->y));
         x2 = ol_scale_x(&sc, TW(o->x + o->width));
@@ -3957,7 +4287,7 @@ static void replace_text_command(int all)
 /* Up or down a line: the place nearest the caret on the line above or below, in the same text. */
 static void caret_line(int dir, int extend_selection)
 {
-    opr_slide *s = laid_get(current);
+    opr_slide *s = laid_view(current);
     int frame;
     ol_rect b;
     opr_pos to;
@@ -3989,8 +4319,8 @@ static void select_all_text(void)
         draw_status();
         return;
     }
-    o = &deck->slides[current].objs[edit_obj];
-    if (!o->text.nparas)
+    o = edit_target();
+    if (!o || !o->text.nparas)
         return;
     text_selection.anchor.para = 0;
     text_selection.anchor.offset = 0;
@@ -4053,8 +4383,7 @@ static void format_text_font(void)
     owf_obj *o;
     int font = -1, rc;
     char initial[96] = "Liberation Sans", entered[96];
-    if (!format_begin(&before)) return;
-    o = &deck->slides[current].objs[edit_obj];
+    if (!format_begin(&before) || !(o = edit_target())) return;
     if (caret.para >= 0 && caret.para < o->text.nparas &&
         o->text.paras[caret.para].nruns > 0)
         font = o->text.paras[caret.para].runs[0].fmt.font;
@@ -4082,8 +4411,7 @@ static void format_text_colour(void)
     unsigned long colour = 0, shade;
     char initial[8], entered[16];
     int rc;
-    if (!format_begin(&before)) return;
-    o = &deck->slides[current].objs[edit_obj];
+    if (!format_begin(&before) || !(o = edit_target())) return;
     if (caret.para >= 0 && caret.para < o->text.nparas &&
         o->text.paras[caret.para].nruns > 0 &&
         o->text.paras[caret.para].runs[0].fmt.colour != OWF_COLOUR_AUTO)
@@ -4171,7 +4499,7 @@ static int on_visible_slide(int mx, int my)
 
 static void current_slide_scale(ol_scale *sc)
 {
-    ol_scale_fit(sc, TW(deck->width), slide_box.w);
+    ol_scale_fit(sc, TW(page_width()), slide_box.w);
     sc->origin_x = slide_box.x;
     sc->origin_y = slide_box.y;
 }
@@ -4191,7 +4519,7 @@ static int selection_handle(int mx, int my)
 
 static int hit_slide_object(int mx, int my, opr_pos *at)
 {
-    opr_slide *s = laid_get(current);
+    opr_slide *s = laid_view(current);
     ol_scale sc;
     int frame;
     if (!s || !on_visible_slide(mx, my)) return -1;
@@ -4202,7 +4530,7 @@ static int hit_slide_object(int mx, int my, opr_pos *at)
 
 static int hit_edit_text(int mx, int my, opr_pos *at)
 {
-    opr_slide *s = laid_get(current);
+    opr_slide *s = laid_view(current);
     ol_scale sc;
     int frame;
     if (!s || edit_obj < 0 || !on_visible_slide(mx, my) ||
@@ -4245,6 +4573,32 @@ static void slide_mouse_down(int mx, int my)
     opr_pos at;
     int obj, handle;
     if (!on_visible_slide(mx, my)) return;
+    if (notes_view) {
+        /* the notes are the one thing to type in on a notes page */
+        memset(&at, 0, sizeof at);
+        if (edit_obj != OPR_NOTES || !hit_edit_text(mx, my, &at)) {
+            obj = hit_slide_object(mx, my, &at);
+            if (obj != OPR_NOTES) {
+                stop_typing();
+                set_status("Click in the notes under the " UNIT_LOWER " to type them.");
+                draw_slide();
+                draw_status();
+                return;
+            }
+            stop_typing();
+            edit_obj = OPR_NOTES;
+        }
+        selected_obj = -1;
+        caret = at;
+        text_selection.anchor = text_selection.focus = at;
+        text_selecting = 1;
+        edit_grouped = 0;
+        set_status("Speaker notes: type; they print on the notes pages.");
+        caret_moved(1);
+        draw_slide();
+        draw_status();
+        return;
+    }
     if (edit_obj >= 0 && hit_edit_text(mx, my, &at)) {
         caret = at;
         text_selection.anchor = text_selection.focus = at;
@@ -4256,7 +4610,7 @@ static void slide_mouse_down(int mx, int my)
         return;
     }
     handle = selection_handle(mx, my);
-    if (handle != DRAG_NONE) {
+    if (handle != DRAG_NONE && !picks_together() && !(mouse_qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT))) {
         stop_typing();
         start_object_drag(selected_obj, handle, mx, my);
         set_status("Resize the selected object.");
@@ -4265,14 +4619,52 @@ static void slide_mouse_down(int mx, int my)
     }
     obj = hit_slide_object(mx, my, &at);
     stop_typing();
-    if (obj < 0) {
-        selected_obj = -1;
+    if (obj == OPR_NOTES) obj = -1;
+    if (mouse_qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) {
+        /* Shift+click: one more object picked, or one taken out */
         memset(&object_drag, 0, sizeof object_drag);
-        set_status("Ready.");
+        if (obj >= 0) toggle_pick(obj);
+        picks_status();
         draw_slide();
         draw_status();
         return;
     }
+    if (obj < 0) {
+        /* a drag over the slide picks what it goes round */
+        selected_obj = -1;
+        npicked_obj = 0;
+        memset(&object_drag, 0, sizeof object_drag);
+        start_multi_drag(1, mx, my);
+        set_status("Ready; drag round objects to pick them together.");
+        draw_slide();
+        draw_status();
+        return;
+    }
+    {
+        int p[MAX_PICKED], n = picks(p), top = opr_obj_top(deck, current, obj), i;
+        for (i = 0; i < n && p[i] != top; i++)
+            ;
+        if (n > 1 && i < n) {
+            /* one of the objects picked: they move together */
+            memset(&object_drag, 0, sizeof object_drag);
+            start_multi_drag(0, mx, my);
+            picks_status();
+            draw_status();
+            return;
+        }
+        if (top >= 0 && deck->slides[current].objs[top].kind == OWF_OBJ_GROUP) {
+            /* a group moves as one */
+            memset(&object_drag, 0, sizeof object_drag);
+            npicked_obj = 0;
+            selected_obj = top;
+            start_multi_drag(0, mx, my);
+            picks_status();
+            draw_slide();
+            draw_status();
+            return;
+        }
+    }
+    npicked_obj = 0;
     selected_obj = obj;
     start_object_drag(obj, DRAG_MOVE, mx, my);
     set_status("Drag to move; release over text to type.");
@@ -4428,11 +4820,279 @@ static void finish_object_drag(int mx, int my)
     draw_status();
 }
 
+/* ---- Several objects at once (P5) ---- */
+
+/* The objects picked: several top-level ones, or the one selected (its group when it is in one). */
+static int picks(int *out)
+{
+    int i, n = npicked_obj;
+    if (!deck || current < 0 || current >= deck->nslides || selected_obj < 0 ||
+        selected_obj >= deck->slides[current].nobjs)
+        return 0;
+    if (n >= 2 && picked_slide == current && picked_nobjs == deck->slides[current].nobjs &&
+        picked_obj[n - 1] == selected_obj) {
+        for (i = 0; i < n; i++) {
+            if (picked_obj[i] < 0 || picked_obj[i] >= deck->slides[current].nobjs ||
+                deck->slides[current].objs[picked_obj[i]].parent >= 0)
+                break;
+            out[i] = picked_obj[i];
+        }
+        if (i == n) return n;
+    }
+    out[0] = opr_obj_top(deck, current, selected_obj);
+    return out[0] >= 0;
+}
+
+static void set_picks(const int *objs, int n)
+{
+    if (n > MAX_PICKED) n = MAX_PICKED;
+    if (n > 0) memmove(picked_obj, objs, (size_t)n * sizeof *objs);
+    npicked_obj = n;
+    picked_slide = current;
+    picked_nobjs = deck && current >= 0 && current < deck->nslides ? deck->slides[current].nobjs : -1;
+    selected_obj = n > 0 ? picked_obj[n - 1] : -1;
+}
+
+/* Whether the selection moves as a whole: several objects, or a group. */
+static int picks_together(void)
+{
+    int p[MAX_PICKED], n = picks(p);
+    return n > 1 || (n == 1 && deck->slides[current].objs[p[0]].kind == OWF_OBJ_GROUP);
+}
+
+/* A box in slide twips (x, y, width, height) on the screen. */
+static void twip_pixel_box(const int t[4], box *b)
+{
+    ol_scale sc;
+    current_slide_scale(&sc);
+    b->x = ol_scale_x(&sc, TW(t[0]));
+    b->y = ol_scale_y(&sc, TW(t[1]));
+    b->w = ol_scale_x(&sc, TW(t[0] + t[2])) - b->x;
+    b->h = ol_scale_y(&sc, TW(t[1] + t[3])) - b->y;
+}
+
+/* The drag's frame drawn, or taken away by drawing it again. */
+static void multi_frame(int x, int y, int w, int h)
+{
+    struct RastPort *rp = win->RPort;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    SetAPen(rp, (ULONG)ogt_pen(&ctx, "accent"));
+    SetDrMd(rp, COMPLEMENT);
+    Move(rp, x, y);
+    Draw(rp, x + w - 1, y);
+    Draw(rp, x + w - 1, y + h - 1);
+    Draw(rp, x, y + h - 1);
+    if (h > 2) Draw(rp, x, y + 1);
+    SetDrMd(rp, JAM1);
+}
+
+static void multi_frame_hide(void)
+{
+    if (multi_drag.shown) multi_frame(multi_drag.lx, multi_drag.ly, multi_drag.lw, multi_drag.lh);
+    multi_drag.shown = 0;
+}
+
+static void multi_frame_show(int x, int y, int w, int h)
+{
+    multi_frame_hide();
+    multi_drag.lx = x;
+    multi_drag.ly = y;
+    multi_drag.lw = w;
+    multi_drag.lh = h;
+    multi_frame(x, y, w, h);
+    multi_drag.shown = 1;
+}
+
+/* After a change to the picked objects: redrawn, the strip's thumbnail, the title's star. */
+static void picks_changed(const char *message)
+{
+    stop_typing();
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status(message);
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
+static void picks_status(void)
+{
+    char msg[80];
+    int p[MAX_PICKED], n = picks(p);
+    if (n > 1) snprintf(msg, sizeof msg, "%d objects picked: drag to move them; Object menu to align, space or group.", n);
+    else if (n == 1 && deck->slides[current].objs[p[0]].kind == OWF_OBJ_GROUP)
+        snprintf(msg, sizeof msg, "A group: drag to move it; Object > Ungroup takes it apart.");
+    else snprintf(msg, sizeof msg, n ? "Object selected." : "Ready.");
+    set_status(msg);
+}
+
+/* Shift+click: the object (its group) added to the objects picked, or taken out. */
+static void toggle_pick(int obj)
+{
+    int p[MAX_PICKED], n = picks(p), top = opr_obj_top(deck, current, obj), i;
+    for (i = 0; i < n && p[i] != top; i++)
+        ;
+    if (i < n) {
+        memmove(&p[i], &p[i + 1], (size_t)(n - i - 1) * sizeof *p);
+        n--;
+    } else if (n < MAX_PICKED && top >= 0)
+        p[n++] = top;
+    set_picks(p, n);
+}
+
+static void start_multi_drag(int band, int mx, int my)
+{
+    memset(&multi_drag, 0, sizeof multi_drag);
+    multi_drag.active = 1;
+    multi_drag.band = band;
+    multi_drag.mouse_x = mx;
+    multi_drag.mouse_y = my;
+}
+
+static void preview_multi_drag(int mx, int my)
+{
+    int p[MAX_PICKED], n, t[4];
+    box b;
+    if (!multi_drag.active) return;
+    if (!multi_drag.moved && abs(mx - multi_drag.mouse_x) < 3 && abs(my - multi_drag.mouse_y) < 3) return;
+    multi_drag.moved = 1;
+    if (multi_drag.band) {
+        int x = mx < multi_drag.mouse_x ? mx : multi_drag.mouse_x, y = my < multi_drag.mouse_y ? my : multi_drag.mouse_y;
+        multi_frame_show(x, y, abs(mx - multi_drag.mouse_x) + 1, abs(my - multi_drag.mouse_y) + 1);
+        return;
+    }
+    n = picks(p);
+    if (n < 1 || opr_objs_box(deck, current, p, n, t) < 0) return;
+    twip_pixel_box(t, &b);
+    multi_frame_show(b.x + mx - multi_drag.mouse_x, b.y + my - multi_drag.mouse_y, b.w, b.h);
+}
+
+static void finish_multi_drag(int mx, int my)
+{
+    int p[MAX_PICKED], n, found;
+    ol_scale sc;
+    char msg[80];
+    if (!multi_drag.active) return;
+    multi_frame_hide();
+    current_slide_scale(&sc);
+    if (multi_drag.band) {
+        int x0 = mx < multi_drag.mouse_x ? mx : multi_drag.mouse_x, y0 = my < multi_drag.mouse_y ? my : multi_drag.mouse_y;
+        int x1 = mx < multi_drag.mouse_x ? multi_drag.mouse_x : mx, y1 = my < multi_drag.mouse_y ? multi_drag.mouse_y : my;
+        int tx = twip_delta_x(&sc, slide_box.x, x0), ty = twip_delta_y(&sc, slide_box.y, y0);
+        found = multi_drag.moved ? opr_objs_in_rect(deck, current, tx, ty, twip_delta_x(&sc, x0, x1),
+                                                    twip_delta_y(&sc, y0, y1), p, MAX_PICKED) : 0;
+        if (found > MAX_PICKED) found = MAX_PICKED;
+        set_picks(p, found > 0 ? found : 0);
+        picks_status();
+        memset(&multi_drag, 0, sizeof multi_drag);
+        draw_slide();
+        draw_status();
+        return;
+    }
+    n = picks(p);
+    if (multi_drag.moved && n > 0) {
+        int dx = twip_delta_x(&sc, multi_drag.mouse_x, mx), dy = twip_delta_y(&sc, multi_drag.mouse_y, my);
+        memset(&multi_drag, 0, sizeof multi_drag);
+        if (opr_objs_move(undo, deck, current, p, n, dx, dy) < 0) {
+            set_status("Those objects could not be moved.");
+            draw_slide();
+            draw_status();
+            return;
+        }
+        if (n > 1) set_picks(p, n);
+        snprintf(msg, sizeof msg, n > 1 ? "%d objects moved." : "Group moved.", n);
+        picks_changed(msg);
+        return;
+    }
+    memset(&multi_drag, 0, sizeof multi_drag);
+    picks_status();
+    draw_slide();
+    draw_status();
+}
+
+/* Object > Distribute Across and Down. */
+static void distribute_picked(int vertical)
+{
+    int p[MAX_PICKED], n = picks(p);
+    if (n < 3) {
+        set_status("Pick three or more objects to space them evenly (Shift+click, or drag round them).");
+        draw_status();
+        return;
+    }
+    if (opr_objs_distribute(undo, deck, current, p, n, vertical) < 0) {
+        set_status("Those objects could not be spaced.");
+        draw_status();
+        return;
+    }
+    set_picks(p, n);
+    picks_changed(vertical ? "Objects spaced evenly down." : "Objects spaced evenly across.");
+}
+
+static void group_picked(void)
+{
+    int p[MAX_PICKED], n = picks(p), g = -1, rc;
+    if (n < 2) {
+        set_status("Pick two or more objects to group (Shift+click, or drag round them).");
+        draw_status();
+        return;
+    }
+    rc = opr_obj_group(undo, deck, current, p, n, &g);
+    if (rc < 0) {
+        set_status(rc == -2 ? "Groups and the layout's boxes (title, text) cannot go in a group." :
+                   "Those objects could not be grouped.");
+        draw_status();
+        return;
+    }
+    npicked_obj = 0;
+    selected_obj = g;
+    picks_changed("Grouped: they move as one; Object > Ungroup takes them apart.");
+}
+
+static void ungroup_selected(void)
+{
+    int p[MAX_PICKED], n = picks(p), first = -1, count = 0, i, k = 0, end;
+    if (n != 1 || deck->slides[current].objs[p[0]].kind != OWF_OBJ_GROUP) {
+        set_status("Select a group to ungroup.");
+        draw_status();
+        return;
+    }
+    if (opr_obj_ungroup(undo, deck, current, p[0], &first, &count) < 0) {
+        set_status("That group could not be taken apart.");
+        draw_status();
+        return;
+    }
+    /* what was in it, picked */
+    end = first + count;
+    for (i = first; i < end && k < MAX_PICKED; i++)
+        if (deck->slides[current].objs[i].parent < 0) p[k++] = i;
+    set_picks(p, k);
+    picks_changed("Ungrouped.");
+}
+
 static void nudge_selected(int dx, int dy, int pixels)
 {
     owf_obj box, before;
     ol_scale sc;
     int tx, ty;
+    if (deck && picks_together()) {
+        int p[MAX_PICKED], n = picks(p), t[4], after[4];
+        current_slide_scale(&sc);
+        tx = twip_delta_x(&sc, slide_box.x, slide_box.x + pixels);
+        ty = twip_delta_y(&sc, slide_box.y, slide_box.y + pixels);
+        if (tx < 1) tx = 1;
+        if (ty < 1) ty = 1;
+        if (opr_objs_box(deck, current, p, n, t) < 0 ||
+            opr_objs_move(undo, deck, current, p, n, dx * tx, dy * ty) < 0 ||
+            (opr_objs_box(deck, current, p, n, after) == 0 && after[0] == t[0] && after[1] == t[1]))
+            return;
+        if (n > 1) set_picks(p, n);
+        picks_changed("Objects nudged.");
+        return;
+    }
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs ||
         owf_deck_resolve(deck, current, selected_obj, &box, NULL) < 0)
         return;
@@ -5073,6 +5733,18 @@ static void edit_table_style(void)
 
 static void delete_selected_object(void)
 {
+    if (deck && picks_together()) {
+        int p[MAX_PICKED], n = picks(p);
+        if (opr_objs_delete(undo, deck, current, p, n) < 0) {
+            set_status("Those objects could not be deleted.");
+            draw_status();
+            return;
+        }
+        npicked_obj = 0;
+        selected_obj = -1;
+        picks_changed(n > 1 ? "Objects deleted." : "Group deleted.");
+        return;
+    }
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
         set_status("Select an object to delete.");
         draw_status();
@@ -5156,6 +5828,17 @@ static void arrange_selected_object(opr_arrange how, const char *message)
 static void align_selected_object(opr_align how, const char *message)
 {
     owf_obj before, after;
+    if (deck && picks_together()) {
+        int p[MAX_PICKED], n = picks(p);
+        if (opr_objs_align(undo, deck, current, p, n, how) < 0) {
+            set_status("Those objects could not be aligned.");
+            draw_status();
+            return;
+        }
+        if (n > 1) set_picks(p, n);
+        picks_changed(n > 1 ? "Objects aligned to the box round them." : message);
+        return;
+    }
     if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs ||
         owf_deck_resolve(deck, current, selected_obj, &before, NULL) < 0) {
         set_status("Select an object to align.");
@@ -5332,7 +6015,12 @@ static void do_undo(int redo)
     dirty = 1;
     update_window_title();
     if (slide != current) show_slide(slide);
-    selected_obj = obj;
+    /* the notes are changed in Notes view, the slide's objects in Normal: show the one undone */
+    if ((obj == OPR_NOTES) != notes_view) {
+        set_view(obj == OPR_NOTES ? 2 : 0);
+        was_typing = 0;
+    }
+    selected_obj = obj == OPR_NOTES ? -1 : obj;
     edit_obj = was_typing && opr_obj_editable(deck, current, obj) ? obj : -1;
     edit_grouped = 0;
     if (edit_obj >= 0)
@@ -5596,11 +6284,54 @@ static void do_open(void)
     relayout();
 }
 
+/* Whether a name ends in an extension, any case: ".pptx". */
+static int has_extension(const char *path, const char *ext)
+{
+    size_t n = strlen(path), e = strlen(ext);
+    return n > e && !strcasecmp(path + n - e, ext);
+}
+
+/* The format a name saves as: PPTX for ".pptx" (GFOpenPresentation), ODP otherwise. */
+static const char *format_for(const char *path)
+{
+#ifndef OPENPUBLISHER
+    if (has_extension(path, ".pptx")) return "PPTX";
+#endif
+    (void)path;
+    return "ODP";
+}
+
+/* Whether Save writes over the file itself: an ODP, or a PPTX in GFOpenPresentation. */
+static int saves_in_place(void)
+{
+    return *current_path && !strcmp(current_format, format_for(current_path)) &&
+           (has_extension(current_path, ".odp") || has_extension(current_path, ".pptx"));
+}
+
 static int save_to(const char *path)
 {
     owf_report *report = owf_report_new();
+    const char *format = format_for(path);
     char msg[600];
-    int rc = owf_export_deck_file(deck, path, "odp", report);
+    int rc, simpler;
+#ifndef OPENPUBLISHER
+    if (!strcmp(format, "PPTX")) {
+        unsigned char *data = NULL;
+        size_t length = 0;
+        BPTR f;
+        rc = opr_export_pptx(deck, &data, &length, report);
+        if (rc == OWF_OK) {
+            if ((f = Open((STRPTR)path, MODE_NEWFILE))) {
+                if (Write(f, data, (LONG)length) != (LONG)length) rc = OWF_ERR_IO;
+                Close(f);
+            } else
+                rc = OWF_ERR_IO;
+        }
+        free(data);
+    } else
+#endif
+        rc = owf_export_deck_file(deck, path, "odp", report);
+    simpler = owf_report_count(report) > 0;
     owf_report_free(report);
     if (rc != OWF_OK) {
         snprintf(msg, sizeof msg, PROGRAM " could not save %.200s.\n\n%.200s", leaf(path), owf_error_text(rc));
@@ -5608,9 +6339,9 @@ static int save_to(const char *path)
         return 0;
     }
     snprintf(current_path, sizeof current_path, "%s", path);
-    snprintf(current_format, sizeof current_format, "ODP");
+    snprintf(current_format, sizeof current_format, "%s", format);
     dirty = 0;
-    snprintf(msg, sizeof msg, "%.200s saved.", leaf(path));
+    snprintf(msg, sizeof msg, "%.200s saved%s.", leaf(path), simpler ? "; some parts saved simpler" : "");
     set_status(msg);
     update_window_title();
     draw_status();
@@ -5620,11 +6351,17 @@ static int save_to(const char *path)
 static void do_save_as(void)
 {
     char path[512], name[128];
+    /* the file's own format when it has one we write, ODP otherwise */
+    const char *ext = !strcmp(current_format, "PPTX") ? "pptx" : "odp";
     if (!deck) return;
-    with_extension(current_path, "odp", name, sizeof name);
-    if (ask_file(1, "Save the " DOCUMENT_LOWER " as ODP", name, path, sizeof path)) {
+    with_extension(current_path, ext, name, sizeof name);
+    if (ask_file(1, "Save the " DOCUMENT_LOWER " (.odp"
+#ifndef OPENPUBLISHER
+                 " or .pptx"
+#endif
+                 ")", name, path, sizeof path)) {
         size_t n = strlen(path);
-        if (n < 4 || (strcmp(path + n - 4, ".odp") && strcmp(path + n - 4, ".ODP")))
+        if (!has_extension(path, ".odp") && strcmp(format_for(path), "PPTX"))
             snprintf(path + n, sizeof path - n, ".odp");
         save_to(path);
     }
@@ -5632,23 +6369,30 @@ static void do_save_as(void)
 
 static void do_save(void)
 {
-    size_t n = strlen(current_path);
-    /* PPTX is read only for now: a PowerPoint file is saved as ODP beside it, under a name asked for */
-    if (!n || strcmp(current_format, "ODP") || n < 4 || (strcmp(current_path + n - 4, ".odp") &&
-                                                         strcmp(current_path + n - 4, ".ODP"))) {
+    /* a file in a format not written here (a Publisher file) is saved as ODP, under a name asked for */
+    if (!saves_in_place()) {
         do_save_as();
         return;
     }
     save_to(current_path);
 }
 
+/* What a PDF holds: the slides, notes pages (Notes view, or EXPORT NOTES) or handouts. */
+static opr_pdf_pages pdf_pages = OPR_PDF_SLIDES;
+static int pdf_handout_slides = 6;
+
 static int write_pdf(const char *path)
 {
     unsigned char *data = NULL;
     size_t length = 0;
     owf_report *report = owf_report_new();
+    opr_pdf_options options;
     BPTR f;
-    int rc = opr_export_pdf(deck, NULL, &data, &length, report), ok = 0;
+    int rc, ok = 0;
+    memset(&options, 0, sizeof options);
+    options.pages = pdf_pages;
+    options.handout_slides = pdf_handout_slides;
+    rc = opr_export_pdf(deck, &options, &data, &length, report);
     owf_report_free(report);
     if (rc == OWF_OK && (f = Open((STRPTR)path, MODE_NEWFILE))) {
         ok = Write(f, data, (LONG)length) == (LONG)length;
@@ -5663,9 +6407,40 @@ static void do_export_pdf(void)
     char path[512], name[128], msg[600];
     if (!deck) return;
     with_extension(current_path, "pdf", name, sizeof name);
-    if (!ask_file(1, "Export the " UNITS_LOWER " as PDF", name, path, sizeof path)) return;
-    if (write_pdf(path)) snprintf(msg, sizeof msg, "%.200s written: one PDF page per %s.", leaf(path), UNIT_LOWER);
+    pdf_pages = notes_view ? OPR_PDF_NOTES : OPR_PDF_SLIDES;
+    if (!ask_file(1, notes_view ? "Export the notes pages as PDF" : "Export the " UNITS_LOWER " as PDF", name, path,
+                  sizeof path)) return;
+    if (write_pdf(path)) snprintf(msg, sizeof msg, "%.200s written: one %s per %s.", leaf(path),
+                                  notes_view ? "notes page" : "PDF page", UNIT_LOWER);
     else snprintf(msg, sizeof msg, "%.200s could not be written.", leaf(path));
+    pdf_pages = OPR_PDF_SLIDES;
+    set_status(msg);
+    draw_status();
+}
+
+/* Handouts: so many slides a page (1, 2, 3, 4, 6 or 9), as a PDF. */
+static void do_export_handouts(void)
+{
+    char path[512], name[128], msg[600], initial[8], entered[16];
+    int per;
+    if (!deck) return;
+    snprintf(initial, sizeof initial, "%d", pdf_handout_slides);
+    if (!text_requester("Export Handouts", "Slides a page (1, 2, 3, 4, 6, 9)", initial, entered, sizeof entered))
+        return;
+    per = atoi(entered);
+    if (per != 1 && per != 2 && per != 3 && per != 4 && per != 6 && per != 9) {
+        set_status("Handouts take 1, 2, 3, 4, 6 or 9 " UNITS_LOWER " a page.");
+        draw_status();
+        return;
+    }
+    pdf_handout_slides = per;
+    with_extension(current_path, "pdf", name, sizeof name);
+    if (!ask_file(1, "Export handouts as PDF", name, path, sizeof path)) return;
+    pdf_pages = OPR_PDF_HANDOUTS;
+    if (write_pdf(path)) snprintf(msg, sizeof msg, "%.200s written: %d %s a page.", leaf(path), per,
+                                  per == 1 ? UNIT_LOWER : UNITS_LOWER);
+    else snprintf(msg, sizeof msg, "%.200s could not be written.", leaf(path));
+    pdf_pages = OPR_PDF_SLIDES;
     set_status(msg);
     draw_status();
 }
@@ -5723,7 +6498,7 @@ static void about(void)
              OPP_CORE_VERSION, OPR_CORE_VERSION, OWF_VERSION, OL_VERSION);
 #else
     snprintf(text, sizeof text,
-             VERSION_TEXT "\nThe GFOffice Suite's slides.\n\nOpens ODP and PPTX, saves ODP, exports PDF,\n"
+             VERSION_TEXT "\nThe GFOffice Suite's slides.\n\nOpens and saves ODP and PPTX, exports PDF,\n"
              "prints through GFOpenPrint, and runs a full-screen show.\n"
              "F5: first; Shift-F5: current; Esc: end.\n\nCore %s, libowf %s, GFOpenLayout %s.\n"
              "MIT, Copyright (c) 2026 AmiCradle Team.",
@@ -5816,15 +6591,42 @@ static void menu_action(ULONG id)
             break;
         }
     }
+    if (outline_view) {
+        switch (id) {
+        case M_CUT: case M_COPY: case M_PASTE: case M_SELECT_ALL:
+        case M_ZOOM_IN: case M_ZOOM_OUT: case M_ZOOM_FIT:
+            set_status("In Outline view: Return edits a line; Shift+Return adds one; Tab moves it in.");
+            draw_status();
+            return;
+        case M_FIND: case M_FIND_NEXT: case M_REPLACE: case M_REPLACE_ALL: case M_STOP:
+            set_view(0);
+            break;
+        }
+    }
+    if (notes_view) {
+        switch (id) {
+        case M_CUT: case M_COPY: case M_PASTE:
+            if (edit_obj == OPR_NOTES) break;
+            set_status("Click in the notes to cut, copy or paste their text.");
+            draw_status();
+            return;
+        case M_FIND: case M_FIND_NEXT: case M_REPLACE: case M_REPLACE_ALL: case M_STOP:
+            set_view(0);
+            break;
+        }
+    }
     switch (id) {
     case M_VIEW_NORMAL: set_view(0); break;
     case M_VIEW_SORTER: set_view(1); break;
+    case M_VIEW_NOTES: set_view(2); break;
+    case M_VIEW_OUTLINE: set_view(3); break;
     case M_NEW: new_deck(); break;
     case M_OPEN: do_open(); break;
     case M_SAVE: do_save(); break;
     case M_SAVE_AS: do_save_as(); break;
-    case M_PRINT: do_print(); break;
+    case M_PRINT: pdf_pages = notes_view ? OPR_PDF_NOTES : OPR_PDF_SLIDES; do_print(); pdf_pages = OPR_PDF_SLIDES; break;
     case M_PDF: do_export_pdf(); break;
+    case M_HANDOUTS: do_export_handouts(); break;
     case M_ABOUT: about(); break;
     case M_QUIT: if (confirm_discard()) quit_now = 1; break;
     case M_UNDO: do_undo(0); break;
@@ -5882,6 +6684,10 @@ static void menu_action(ULONG id)
     case M_ALIGN_TOP: align_selected_object(OPR_ALIGN_TOP, "Object aligned top."); break;
     case M_ALIGN_MIDDLE: align_selected_object(OPR_ALIGN_MIDDLE, "Object centred vertically."); break;
     case M_ALIGN_BOTTOM: align_selected_object(OPR_ALIGN_BOTTOM, "Object aligned bottom."); break;
+    case M_DISTRIBUTE_ACROSS: distribute_picked(0); break;
+    case M_DISTRIBUTE_DOWN: distribute_picked(1); break;
+    case M_GROUP: group_picked(); break;
+    case M_UNGROUP: ungroup_selected(); break;
     case M_POSITION_SIZE: edit_selected_geometry(); break;
     case M_APPEARANCE: edit_selected_appearance(); break;
     case M_PICTURE_CROP: edit_selected_picture_crop(); break;
@@ -5995,7 +6801,13 @@ static void events(void)
         APTR ia = im->IAddress;
         int mx = im->MouseX, my = im->MouseY, row = -1, r, handled = 0;
         struct Gadget *g = (struct Gadget *)ia;
-        if (strip) {
+        if (outline_list) {
+            r = ogt_list_event(outline_list, class, code, ia, mx, my, secs, micros, &row);
+            if (r == OGT_LIST_PICKED) { outline_pick(row); handled = 1; }
+            else if (r == OGT_LIST_OPENED) { outline_pick(row); outline_edit(); handled = 1; }
+            else if (r == OGT_LIST_SCROLLED) handled = 1;
+        }
+        if (!handled && strip) {
             r = ogt_list_event(strip, class, code, ia, mx, my, secs, micros, &row);
             if (r == OGT_LIST_PICKED || r == OGT_LIST_OPENED) { show_slide(row); handled = 1; }
             else if (r == OGT_LIST_SCROLLED) handled = 1;
@@ -6039,6 +6851,8 @@ static void events(void)
                 }
                 break;
             }
+            if (outline_view) break;
+            mouse_qual = qual;
             if (code == SELECTDOWN) slide_mouse_down(mx, my);
             else if (code == SELECTUP) {
                 if (text_selecting) {
@@ -6048,6 +6862,7 @@ static void events(void)
                                "Typing: Esc stops." : "Text selected; type to replace or choose a format.");
                     draw_status();
                 } else if (object_drag.active) finish_object_drag(mx, my);
+                else if (multi_drag.active) finish_multi_drag(mx, my);
                 if (tb.pressed >= 0) {
                     ogt_toolbar_draw_one(&tb, &ctx, win->RPort, tb.pressed, 0, "window");
                     tb.pressed = -1;
@@ -6055,14 +6870,21 @@ static void events(void)
             }
             break;
         case IDCMP_MOUSEMOVE:
+            if (outline_view) break;
             if (sorter_view) sorter_mouse_move(mx, my);
             else if (text_selecting) drag_text_selection(mx, my);
             else if (object_drag.active) preview_object_drag(mx, my);
+            else if (multi_drag.active) preview_multi_drag(mx, my);
             break;
         case IDCMP_RAWKEY:
             if (code & 0x80) break;
             if (code == 0x54) {                 /* F5; Shift-F5 starts here */
                 run_show(qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT) ? current : 0, 0);
+            } else if (outline_view) {
+                if (outline_list && (code == 0x4c || code == 0x4d || code == 0x7a || code == 0x7b)) {
+                    int to = ogt_list_step(outline_list, code == 0x4c || code == 0x7a ? -1 : 1);
+                    if (to >= 0) outline_pick(to);
+                }
             } else if (sorter_view) {
                 if (code == 0x7a || code == 0x7b) {   /* the mouse wheel */
                     int to = opr_sorter_clamp_scroll(&sorter, sorter_scroll +
@@ -6090,6 +6912,7 @@ static void events(void)
             break;
         case IDCMP_VANILLAKEY:
             if (qual & (IEQUALIFIER_LCOMMAND | IEQUALIFIER_RCOMMAND)) break;
+            if (outline_view) { outline_key(code, qual); break; }
             if (sorter_view) {
                 if (code == 27) set_view(0);
                 else if (code == 13) sorter_open(current);
@@ -6124,7 +6947,7 @@ static void events(void)
                 else if (code == '0') set_zoom(100);
                 break;
             }
-            if (code == 9 && deck->slides[current].objs[edit_obj].kind == OWF_OBJ_TABLE) {
+            if (code == 9 && edit_target() && edit_target()->kind == OWF_OBJ_TABLE) {
                 table_next_cell((qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0);
             } else if (code == 8 || code == 127 || code == 13) type_key(code);
             else if (code == 9 || (code >= 32 && code < 256 && code != 127)) {
@@ -6196,8 +7019,8 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "DEACTIVATE: " PROGRAM " has no icon to go to");
     } else if (starts_word_ci(command, "HELP", &arg))
         rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
-                  "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
-                  "SHOWPICKED OBJECTS GETTEXT "
+                  "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
+                  "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
                   "SETTEXT UNDO REDO QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "FAULT needs a code"); }
@@ -6221,19 +7044,36 @@ static int rexx_do_command(const char *command, char **result_out)
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
         else { ok = save_to(arg); rexx_copy(result_text, sizeof result_text, status); }
     } else if (starts_word_ci(command, "SAVE", &arg)) {
-        size_t n = strlen(current_path);
-        if (n >= 4 && !strcmp(current_format, "ODP") && (!strcmp(current_path + n - 4, ".odp") || !strcmp(current_path + n - 4, ".ODP"))) {
+        if (saves_in_place()) {
             ok = save_to(current_path);
             rexx_copy(result_text, sizeof result_text, status);
         } else { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs SAVEAS"); }
-    } else if (starts_word_ci(command, "EXPORT", &arg)) {
-        if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
+    } else if (starts_word_ci(command, "EXPORT", &arg) || starts_word_ci(command, "PRINT", &arg)) {
+        /* EXPORT [NOTES | HANDOUTS [n]] path, PRINT [NOTES | HANDOUTS [n]]: the slides, notes pages or handouts */
+        int printing = !strncasecmp(command, "PRINT", 5), per = 6, bad = 0;
+        const char *rest;
+        pdf_pages = OPR_PDF_SLIDES;
+        if (starts_word_ci(arg, "NOTES", &rest)) { pdf_pages = OPR_PDF_NOTES; arg = rest; }
+        else if (starts_word_ci(arg, "HANDOUTS", &rest)) {
+            pdf_pages = OPR_PDF_HANDOUTS;
+            arg = rest;
+            if (*arg >= '0' && *arg <= '9') {
+                per = 0;
+                while (*arg >= '0' && *arg <= '9') per = per * 10 + (*arg++ - '0');
+                while (*arg == ' ') arg++;
+                bad = per != 1 && per != 2 && per != 3 && per != 4 && per != 6 && per != 9;
+            }
+        }
+        pdf_handout_slides = per;
+        if (bad) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "HANDOUTS takes 1, 2, 3, 4, 6 or 9"); }
+        else if (printing) {
+            int r = do_print();
+            ok = r > 0;
+            if (!r) rc_fail = RX_NOW;
+            rexx_copy(result_text, sizeof result_text, status);
+        } else if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
         else { ok = write_pdf(arg); rexx_copy(result_text, sizeof result_text, ok ? "Exported" : "Export failed"); }
-    } else if (starts_word_ci(command, "PRINT", &arg)) {
-        int r = do_print();
-        ok = r > 0;
-        if (!r) rc_fail = RX_NOW;
-        rexx_copy(result_text, sizeof result_text, status);
+        pdf_pages = OPR_PDF_SLIDES;
     } else if (starts_word_ci(command, UNIT_UPPER "S", &arg)) {
         snprintf(result_text, sizeof result_text, "%d", deck ? deck->nslides : 0);
     } else if (starts_word_ci(command, UNIT_UPPER, &arg)) {   /* n: go to it; none given: which */
@@ -6258,11 +7098,69 @@ static int rexx_do_command(const char *command, char **result_out)
             ok = deck->nslides == was - 1;
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : rexx_noted ? rexx_noting : "Failed");
         }
-    } else if (starts_word_ci(command, "VIEW", &arg)) {     /* VIEW NORMAL|SORTER; none given: which */
-        if (!*arg) rexx_copy(result_text, sizeof result_text, sorter_view ? "SORTER" : "NORMAL");
+    } else if (starts_word_ci(command, "VIEW", &arg)) {     /* VIEW NORMAL|SORTER|NOTES; none given: which */
+        if (!*arg) rexx_copy(result_text, sizeof result_text, sorter_view ? "SORTER" : notes_view ? "NOTES"
+                                                              : outline_view ? "OUTLINE" : "NORMAL");
         else if (!strcasecmp(arg, "NORMAL")) { set_view(0); rexx_copy(result_text, sizeof result_text, "OK"); }
         else if (!strcasecmp(arg, "SORTER")) { set_view(1); rexx_copy(result_text, sizeof result_text, "OK"); }
-        else { ok = 0; rexx_copy(result_text, sizeof result_text, "VIEW NORMAL or VIEW SORTER"); }
+        else if (!strcasecmp(arg, "NOTES")) { set_view(2); rexx_copy(result_text, sizeof result_text, "OK"); }
+        else if (!strcasecmp(arg, "OUTLINE")) { set_view(3); rexx_copy(result_text, sizeof result_text, "OK"); }
+        else { ok = 0; rexx_copy(result_text, sizeof result_text, "VIEW NORMAL, OUTLINE, SORTER or NOTES"); }
+    } else if (starts_word_ci(command, "OUTLINE", &arg)) {  /* OUTLINE: rows; OUTLINE n: "level text"; the rest change row n */
+        static const char *const verbs[] = { "SET", "INSERT", "DEMOTE", "PROMOTE", "DELETE", NULL };
+        const char *rest = arg;
+        int verb = -1, n = 0, k, rc = 0, s = -1, p = 0;
+        opr_outline_row r;
+        for (k = 0; verbs[k]; k++) if (starts_word_ci(arg, verbs[k], &rest)) { verb = k; break; }
+        if (verb < 0) rest = arg;
+        if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
+        while (*rest >= '0' && *rest <= '9') n = n * 10 + (*rest++ - '0');
+        while (*rest == ' ') rest++;
+        if (verb < 0 && n == 0 && !*arg) snprintf(result_text, sizeof result_text, "%d", outline_rows.count);
+        else if (n < 1 || n > outline_rows.count) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such outline row"); }
+        else if (verb < 0) {
+            char *t = opr_outline_text(deck, &outline_rows.rows[n - 1]);
+            snprintf(result_text, sizeof result_text, "%d %s", outline_rows.rows[n - 1].level, t ? t : "");
+            owf_free(t);
+        } else {
+            r = outline_rows.rows[n - 1];
+            if (verb == 0) rc = opr_outline_set_text(undo, deck, &r, rest);
+            else if (verb == 1) rc = opr_outline_insert_after(undo, deck, &r, &s, &p);
+            else if (verb == 2) rc = opr_outline_demote(undo, deck, &r);
+            else if (verb == 3) rc = opr_outline_promote(undo, deck, &r, &s);
+            else rc = opr_outline_delete(undo, deck, &r);
+            if (rc == -2) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "That row can't change so"); }
+            else if (rc < 0) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Failed"); }
+            else {
+                if (outline_view) outline_changed(r.slide, -1, 0, "Outline changed.");
+                else structure_changed(current, "Outline changed.");
+                if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
+                snprintf(result_text, sizeof result_text, "%d", outline_rows.count);
+            }
+        }
+    } else if (starts_word_ci(command, "GETNOTES", &arg)) {  /* this slide's speaker notes, paragraphs as \n */
+        char *t = deck ? opr_notes_get(deck, current) : NULL, *o = result_text;
+        const char *q;
+        for (q = t ? t : ""; *q && o + 3 < result_text + sizeof result_text; q++) {
+            if (*q == '\n') { *o++ = '\\'; *o++ = 'n'; } else *o++ = *q;
+        }
+        *o = 0;
+        owf_free(t);
+    } else if (starts_word_ci(command, "SETNOTES", &arg)) {  /* SETNOTES text: \n starts a paragraph; one Undo step */
+        char *t = malloc(strlen(arg) + 1), *o = t;
+        const char *q;
+        if (!deck || !t) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No memory"); }
+        else {
+            for (q = arg; *q; q++) {
+                if (q[0] == '\\' && q[1] == 'n') { *o++ = '\n'; q++; } else *o++ = *q;
+            }
+            *o = 0;
+            if (edit_obj == OPR_NOTES) stop_typing();
+            ok = opr_notes_set(undo, deck, current, t) == 0;
+            if (ok) text_changed(NULL);
+            rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Failed");
+        }
+        free(t);
     } else if (starts_word_ci(command, "PICKED", &arg)) {   /* the picked slides, counted from 1 */
         int i;
         size_t at = 0;
@@ -6336,6 +7234,93 @@ static int rexx_do_command(const char *command, char **result_out)
             for (i = 0; i < k && at + 8 < sizeof result_text; i++)
                 if (opr_obj_editable(deck, current, i)) at += (size_t)snprintf(result_text + at, sizeof result_text - at, " %d", i + 1);
         }
+    } else if (starts_word_ci(command, "PICKOBJECTS", &arg)) {   /* PICKOBJECTS n...: objects picked together (none: no pick) */
+        int p[MAX_PICKED], n = 0, top;
+        const char *rest = arg;
+        while (*rest && n < MAX_PICKED && (obj = rexx_obj(rest, &rest)) >= 0) {
+            top = opr_obj_top(deck, current, obj);
+            if (top >= 0) {
+                int i;
+                for (i = 0; i < n && p[i] != top; i++)
+                    ;
+                if (i == n) p[n++] = top;
+            }
+        }
+        if (*rest) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
+        else {
+            stop_typing();
+            set_picks(p, n);
+            picks_status();
+            draw_slide();
+            draw_status();
+            snprintf(result_text, sizeof result_text, "%d", n);
+        }
+    } else if (starts_word_ci(command, "PICKEDOBJECTS", &arg)) {   /* how many, then each (from 1) */
+        int p[MAX_PICKED], n = picks(p), i;
+        size_t at = (size_t)snprintf(result_text, sizeof result_text, "%d", n);
+        for (i = 0; i < n && at + 8 < sizeof result_text; i++)
+            at += (size_t)snprintf(result_text + at, sizeof result_text - at, " %d", p[i] + 1);
+    } else if (starts_word_ci(command, "OBJECTBOX", &arg)) {   /* OBJECTBOX n: x y width height in twips, as drawn */
+        int t[4];
+        if ((obj = rexx_obj(arg, NULL)) < 0 || opr_objs_box(deck, current, &obj, 1, t) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
+        else snprintf(result_text, sizeof result_text, "%d %d %d %d", t[0], t[1], t[2], t[3]);
+    } else if (starts_word_ci(command, "MOVEOBJECTS", &arg)) {   /* MOVEOBJECTS dx dy: the objects picked, in twips */
+        int p[MAX_PICKED], n = picks(p);
+        char *end;
+        long dx = strtol(arg, &end, 10), dy = strtol(end, &end, 10);
+        if (n < 1) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No object picked"); }
+        else if (opr_objs_move(undo, deck, current, p, n, (int)dx, (int)dy) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not moved"); }
+        else { if (n > 1) set_picks(p, n); picks_changed(n > 1 ? "Objects moved." : "Object moved."); }
+    } else if (starts_word_ci(command, "ALIGN", &arg)) {   /* ALIGN LEFT|CENTRE|RIGHT|TOP|MIDDLE|BOTTOM: the objects picked */
+        static const char *const names[6] = { "LEFT", "CENTRE", "RIGHT", "TOP", "MIDDLE", "BOTTOM" };
+        int p[MAX_PICKED], n = picks(p), how;
+        for (how = 0; how < 6 && !starts_word_ci(arg, names[how], NULL); how++)
+            ;
+        if (how == 6 && starts_word_ci(arg, "CENTER", NULL)) how = 1;
+        if (how == 6) { ok = 0; rexx_copy(result_text, sizeof result_text, "ALIGN LEFT, CENTRE, RIGHT, TOP, MIDDLE or BOTTOM"); }
+        else if (n < 1) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No object picked"); }
+        else if (opr_objs_align(undo, deck, current, p, n, (opr_align)how) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not aligned"); }
+        else { if (n > 1) set_picks(p, n); picks_changed("Objects aligned."); }
+    } else if (starts_word_ci(command, "DISTRIBUTE", &arg)) {   /* DISTRIBUTE ACROSS|DOWN: three or more picked */
+        int p[MAX_PICKED], n = picks(p), down = starts_word_ci(arg, "DOWN", NULL), rc;
+        if (!down && !starts_word_ci(arg, "ACROSS", NULL)) { ok = 0; rexx_copy(result_text, sizeof result_text, "DISTRIBUTE ACROSS or DOWN"); }
+        else if ((rc = opr_objs_distribute(undo, deck, current, p, n, down)) < 0) {
+            ok = 0;
+            if (rc == -2 || n < 3) { rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs three or more objects picked"); }
+            else rexx_copy(result_text, sizeof result_text, "Not spaced");
+        } else { set_picks(p, n); picks_changed("Objects spaced evenly."); }
+    } else if (starts_word_ci(command, "GROUP", &arg)) {   /* the objects picked as one group; RESULT its number */
+        int p[MAX_PICKED], n = picks(p), g = -1, rc;
+        if (n < 2) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs two or more objects picked"); }
+        else if ((rc = opr_obj_group(undo, deck, current, p, n, &g)) < 0) {
+            ok = 0;
+            if (rc == -2) { rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Groups and layout boxes cannot be grouped"); }
+            else rexx_copy(result_text, sizeof result_text, "Not grouped");
+        } else {
+            npicked_obj = 0;
+            selected_obj = g;
+            picks_changed("Grouped.");
+            snprintf(result_text, sizeof result_text, "%d", g + 1);
+        }
+    } else if (starts_word_ci(command, "UNGROUP", &arg)) {   /* UNGROUP [n]: a group (else the one selected) taken apart */
+        int p[MAX_PICKED], n = picks(p), first = -1, count = 0, rc;
+        if (*arg) { n = (obj = rexx_obj(arg, NULL)) >= 0; p[0] = obj; }
+        if (n != 1) { ok = 0; rc_fail = *arg ? RX_ERROR : RX_NOW; rexx_copy(result_text, sizeof result_text, *arg ? "No such object" : "No group selected"); }
+        else if ((rc = opr_obj_ungroup(undo, deck, current, p[0], &first, &count)) < 0) {
+            ok = 0;
+            if (rc == -2) { rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Not a group"); }
+            else rexx_copy(result_text, sizeof result_text, "Not ungrouped");
+        } else {
+            npicked_obj = 0;
+            selected_obj = -1;
+            picks_changed("Ungrouped.");
+            snprintf(result_text, sizeof result_text, "%d %d", first + 1, count);
+        }
+    } else if (starts_word_ci(command, "DELETEOBJECTS", &arg)) {   /* the objects picked, with what is in them */
+        int p[MAX_PICKED], n = picks(p);
+        if (n < 1) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No object picked"); }
+        else if (opr_objs_delete(undo, deck, current, p, n) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not deleted"); }
+        else { npicked_obj = 0; selected_obj = -1; picks_changed("Objects deleted."); }
     } else if (starts_word_ci(command, "GETTEXT", &arg)) {
         char *utf8;
         if ((obj = rexx_obj(arg, NULL)) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
@@ -6580,6 +7565,7 @@ out:
     pictures_clear();
     free(versions);
     opr_pick_free(&pick);
+    opr_outline_free(&outline_rows);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
     if (theme.text) ogt_theme_free(&theme);

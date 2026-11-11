@@ -4,6 +4,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team. */
 #include "oc_internal.h"
 
+#include <ctype.h>
 #include <string.h>
 
 /* text (NULL: "") into out, cut at a whole UTF-8 character to fit size and ended;
@@ -145,4 +146,39 @@ int oc_core_sheet_charts(const oc_core *core, owf_chart **charts, int *count)
 int oc_core_write_copy(const oc_core *core, const char *path, const char *format, owf_report *report)
 {
     return owf_export_book_file(core->book, path, format, report);
+}
+
+/* a and b the same but for case (ASCII), as strcasecmp */
+static int same_ci(const char *a, const char *b)
+{
+    while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b))
+        a++, b++;
+    return !*a && !*b;
+}
+
+void oc_core_pivot_heading(const oc_core *core, const owf_pivotdef *def, unsigned field, char *out, size_t size)
+{
+    owf_pivot_field_heading(core->book, def, field, out, size);
+}
+
+void oc_core_pivot_item(const oc_core *core, const owf_pivotdef *def, unsigned field, const char *utf8,
+                        owf_pivot_page *page)
+{
+    const owf_sheet *sh = sheet_at(core, def->source_sheet);
+    char n[40];
+    unsigned row;
+    page->field = field;
+    for (row = def->source.first_row + 1u; sh && row <= def->source.last_row; ++row) {
+        const owf_cell *c = owf_sheet_find(sh, row, def->source.first_col + field);
+        int same = 0;
+        if (!c) continue;
+        if (c->type == OWF_VALUE_TEXT) same = c->text && !strcmp(c->text, utf8);
+        else if (c->type == OWF_VALUE_NUMBER) { owf_number_text(c->number, n); same = !strcmp(n, utf8); }
+        else if (c->type == OWF_VALUE_BOOL) same = same_ci(utf8, c->number != 0.0 ? "TRUE" : "FALSE");
+        if (same) {
+            owf_pivot_item_from_cell(page, c);
+            return;
+        }
+    }
+    owf_pivot_item_from_text(page, utf8);
 }

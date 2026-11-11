@@ -944,3 +944,12 @@ int owf_export_book_file(const owf_book *book, const char *path, const char *for
     free(data);
     return result;
 }
+
+/* ---- Pivot tables' definitions (owf_pivot.h) ---- */
+
+#define OWF_PIVOT_NUMBER(s, n, v) owf_number_parse((s), (n), (v))
+#include "../calc/owf_pivotdef.h"
+
+/* ---- Scenarios (owf_scenario.h) ---- */
+
+#include "../calc/owf_scenariodef.h"

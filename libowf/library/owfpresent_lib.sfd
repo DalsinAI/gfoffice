@@ -1,5 +1,5 @@
-==id $Id: owfpresent_lib.sfd 3.5 (9.11.2026) $
-* "owfpresent.library" 3.5: GFOpenPresentation's part of libowf:
+==id $Id: owfpresent_lib.sfd 3.6 (11.11.2026) $
+* "owfpresent.library" 3.6: GFOpenPresentation's part of libowf:
 * presentations. The deck model, its formats (ODP, flat ODP) and the page
 * PDF writer, with the document model its text uses.
 * Copyright (c) 2026 AmiCradle Team. MIT licence (see LICENSE).

@@ -21,6 +21,8 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_pivot.h"
+#include "owf_scenario.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -436,6 +438,7 @@ typedef struct {
     xarray *arrays;
     int narrays, caparrays;
     unsigned long array_budget, text_budget;
+    int pivots_read, pivots_kept;    /* pivot tables made into names; left as cells */
 } xlsx;
 
 static void *grow(xlsx *x, void *items, int count, int *capacity, size_t size)
@@ -1795,6 +1798,117 @@ typedef struct {
     owf_buf xml;
 } afread;
 
+/* ---- Scenarios: the sheet's scenarios element into its scenario names ---- */
+
+typedef struct {
+    int in, in_one, current, index, cleared, lost;
+    owf_scenario sc;
+    unsigned n, cap;
+    owf_range *cell;             /* each input cell, as a one-cell range */
+    char **val;
+} scenread;
+
+static void sc_reset(scenread *sr)
+{
+    unsigned i;
+    for (i = 0; i < sr->n; i++)
+        free(sr->val[i]);
+    sr->n = 0;
+    memset(&sr->sc, 0, sizeof sr->sc);
+}
+
+static void sc_done(xlsx *x, scenread *sr, int sheet)
+{
+    owf_scenario *sc = &sr->sc;
+    unsigned i;
+    if (!sr->n || !sc->name[0])
+        return;
+    for (i = 0; i < sr->n; i++) {                /* a cell just right of the last range's end extends it */
+        owf_range *last = sc->nranges ? &sc->range[sc->nranges - 1] : NULL;
+        if (last && last->first_row == last->last_row && sr->cell[i].first_row == last->first_row &&
+            sr->cell[i].first_col == last->last_col + 1u) {
+            last->last_col++;
+            continue;
+        }
+        if (sc->nranges >= OWF_SCENARIO_RANGES) {
+            sr->lost = 1;
+            return;
+        }
+        sc->range[sc->nranges++] = sr->cell[i];
+    }
+    sc->ncells = sr->n;
+    sc->value = sr->val;
+    sc->active = sr->index == sr->current;
+    if (owf_scenario_cells(sc) != sc->ncells || owf_scenario_count(x->book, sheet) >= OWF_SCENARIOS)
+        sr->lost = 1;
+    else if (owf_scenario_put(x->book, sheet, owf_scenario_count(x->book, sheet), sc) != OWF_OK)
+        x->failed = 1;
+    sc->value = NULL;
+}
+
+/* 1 when the event was the scenarios element's. */
+static int sc_event(xlsx *x, const owf_xml_event *e, scenread *sr, int sheet)
+{
+    if (e->type == OWF_XS_START && is_main(e->ns) && e->depth == 2 && !strcmp(e->name, "scenarios")) {
+        sr->in = 1;
+        sr->current = (int)xlong(ev_attr(e, "current"), -1, 0, OWF_SCENARIOS);
+        if (!sr->cleared) {                      /* the file's own names for them give way */
+            while (owf_scenario_count(x->book, sheet))
+                owf_scenario_remove(x->book, sheet, 0);
+            sr->cleared = 1;
+        }
+        return 1;
+    }
+    if (!sr->in)
+        return 0;
+    if (e->type == OWF_XS_START && !strcmp(e->name, "scenario")) {
+        const char *v;
+        sc_reset(sr);
+        sr->in_one = 1;
+        snprintf(sr->sc.name, sizeof sr->sc.name, "%s", (v = ev_attr(e, "name")) ? v : "");
+        snprintf(sr->sc.comment, sizeof sr->sc.comment, "%s", (v = ev_attr(e, "comment")) ? v : "");
+    } else if (e->type == OWF_XS_START && !strcmp(e->name, "inputCells") && sr->in_one) {
+        const char *v = ev_attr(e, "val");
+        owf_range r;
+        if (!parse_range(ev_attr(e, "r"), &r) || sr->n >= OWF_SCENARIO_CELLS) {
+            sr->lost = 1;
+            return 1;
+        }
+        if (sr->n == sr->cap) {
+            unsigned cap = sr->cap ? sr->cap * 2 : 16;
+            owf_range *c = realloc(sr->cell, cap * sizeof *c);
+            char **vv;
+            if (c)
+                sr->cell = c;
+            vv = c ? realloc(sr->val, cap * sizeof *vv) : NULL;
+            if (!vv) {
+                x->failed = 1;
+                return 1;
+            }
+            sr->val = vv;
+            sr->cap = cap;
+        }
+        r.last_row = r.first_row;
+        r.last_col = r.first_col;
+        sr->cell[sr->n] = r;
+        if (!v)
+            v = "";
+        if (!(sr->val[sr->n] = malloc(strlen(v) + 1))) {
+            x->failed = 1;
+            return 1;
+        }
+        strcpy(sr->val[sr->n++], v);
+    } else if (e->type == OWF_XS_END && !strcmp(e->name, "scenario")) {
+        sc_done(x, sr, sheet);
+        sc_reset(sr);
+        sr->in_one = 0;
+        sr->index++;
+    } else if (e->type == OWF_XS_END && !strcmp(e->name, "scenarios")) {
+        sr->in = 0;
+    }
+    return 1;
+}
+
 static int af_event(xlsx *x, const owf_xml_event *e, afread *ar)
 {
     owf_sheet *sh = x->sheet;
@@ -1843,12 +1957,175 @@ static int af_event(xlsx *x, const owf_xml_event *e, afread *ar)
     return 0;
 }
 
-static void read_sheet_notes(xlsx *x, const char *part)
+/* ---- Pivot tables: a sheet's pivot table and its cache, as the sheet's
+ * two names (owf_pivot.h). One per sheet; the others keep their cells. */
+
+static owf_xml_node *nth_child(const owf_xml_node *n, long index)
+{
+    owf_xml_node *c;
+    for (c = n ? n->first : NULL; c; c = c->next)
+        if (c->type == OWF_XML_ELEMENT && is_main(c->ns) && index-- == 0)
+            return c;
+    return NULL;
+}
+
+/* A page field's chosen item: its pivotField's item, that item's shared item in the cache. */
+static void pivot_page_item(const owf_xml_node *table, const owf_xml_node *cache_fields, long fld, long item,
+                            owf_pivot_page *pg)
+{
+    const owf_xml_node *pf = nth_child(main_child(table, "pivotFields"), fld);
+    const owf_xml_node *it = nth_child(main_child(pf, "items"), item);
+    const owf_xml_node *shared = main_child(nth_child(cache_fields, fld), "sharedItems");
+    const owf_xml_node *v;
+    double d;
+    pg->kind = OWF_PIVOT_ALL;
+    if (!it || attr(it, "t"))
+        return;
+    v = nth_child(shared, xlong(attr(it, "x"), -1, 0, 0x7FFFFFFF));
+    if (!v)
+        return;
+    if (main_is(v, "s") && attr(v, "v")) {
+        pg->kind = OWF_PIVOT_TEXT;
+        snprintf(pg->text, sizeof pg->text, "%s", attr(v, "v"));
+    } else if (main_is(v, "n") && xdouble(attr(v, "v"), &d)) {
+        pg->kind = OWF_PIVOT_NUMBER;
+        pg->number = d;
+    } else if (main_is(v, "b")) {
+        pg->kind = OWF_PIVOT_BOOL;
+        pg->number = xbool(attr(v, "v"), 0);
+    } else if (main_is(v, "m")) {
+        pg->kind = OWF_PIVOT_BLANK;
+    }
+}
+
+static void drop_pivot_names(owf_book *book, int sheet)
+{
+    int i, k;
+    for (i = k = 0; i < book->nnames; i++) {
+        if (book->names[i].sheet == sheet && owf_pivot_is_name(book->names[i].name)) {
+            free(book->names[i].name);
+            free(book->names[i].formula);
+            continue;
+        }
+        book->names[k++] = book->names[i];
+    }
+    book->nnames = k;
+}
+
+/* 1 when the pivot table became the sheet's names. */
+static int read_pivot(xlsx *x, int sheet, const char *table_part)
+{
+    owf_xml *txml, *cxml = NULL;
+    const owf_xml_node *table, *cache, *src, *loc, *n, *fields;
+    rels tr;
+    char cache_part[PART_NAME], source[700], cfg[OWF_PIVOT_TEXT_MAX];
+    owf_pivotdef def;
+    owf_range where;
+    const char *ref, *src_sheet, *p;
+    size_t at = 0;
+    int ok = 0;
+    long pages;
+
+    owf_pivot_init(&def);
+    txml = read_xml(x->zip, table_part, NULL);
+    table = txml ? owf_xml_root(txml) : NULL;
+    if (!table || !main_is(table, "pivotTableDefinition"))
+        goto done;
+    read_rels(x->zip, table_part, &tr);
+    if (rel_part(&tr, rel_by_type(&tr, "/pivotCacheDefinition"), cache_part, sizeof cache_part))
+        cxml = read_xml(x->zip, cache_part, NULL);
+    free_rels(&tr);
+    cache = cxml ? owf_xml_root(cxml) : NULL;
+    src = main_child(main_child(cache, "cacheSource"), "worksheetSource");
+    fields = main_child(cache, "cacheFields");
+    if (!cache || !main_is(cache, "pivotCacheDefinition") || !src)
+        goto done;
+    ref = attr(src, "ref");
+    src_sheet = attr(src, "sheet");
+    if (!ref || !src_sheet || !parse_range(ref, &where))
+        goto done;                               /* a named range or table as the source: not yet */
+    /* 'Sheet'!A1:E9, to find the sheet as the names find theirs */
+    source[at++] = '\'';
+    for (p = src_sheet; *p && at + 4 < sizeof source; p++) {
+        source[at++] = *p;
+        if (*p == '\'')
+            source[at++] = '\'';
+    }
+    snprintf(source + at, sizeof source - at, "'!%s", ref);
+    if (!owf_pivot_parse_source(x->book, source, &def.source_sheet, &def.source))
+        goto done;
+    /* the layout */
+    loc = main_child(table, "location");
+    if (!loc || !parse_range(attr(loc, "ref"), &where))
+        goto done;
+    pages = xlong(attr(loc, "rowPageCount"), 0, 0, 1000);
+    for (n = main_child(main_child(table, "rowFields"), "field"); n; n = main_next(n, "field")) {
+        long f = xlong(attr(n, "x"), -1, -2, 16383);
+        if (f >= 0 && def.nrow < OWF_PIVOT_FIELDS)
+            def.row[def.nrow++] = (unsigned)f;
+    }
+    for (n = main_child(main_child(table, "colFields"), "field"); n; n = main_next(n, "field")) {
+        long f = xlong(attr(n, "x"), -1, -2, 16383);
+        if (f >= 0 && def.ncol < OWF_PIVOT_FIELDS)
+            def.col[def.ncol++] = (unsigned)f;
+    }
+    for (n = main_child(main_child(table, "pageFields"), "pageField"); n; n = main_next(n, "pageField")) {
+        long f = xlong(attr(n, "fld"), -1, 0, 16383);
+        owf_pivot_page *pg;
+        if (f < 0 || def.npage >= OWF_PIVOT_PAGES)
+            continue;
+        pg = &def.page[def.npage++];
+        memset(pg, 0, sizeof *pg);
+        pg->field = (unsigned)f;
+        pivot_page_item(table, fields, f, xlong(attr(n, "item"), -1, 0, 0x7FFFFFFF), pg);
+    }
+    for (n = main_child(main_child(table, "dataFields"), "dataField"); n; n = main_next(n, "dataField")) {
+        long f = xlong(attr(n, "fld"), -1, 0, 16383);
+        const char *fn = attr(n, "subtotal");
+        int function = fn ? owf_pivot_function_from_word(fn) : OWF_PIVOT_FN_SUM;
+        if (f < 0 || !function || def.ndata >= OWF_PIVOT_DATA)
+            continue;
+        def.data[def.ndata].field = (unsigned)f;
+        def.data[def.ndata++].function = function;
+    }
+    def.row_grand = xbool(attr(table, "rowGrandTotals"), 1);
+    def.col_grand = xbool(attr(table, "colGrandTotals"), 1);
+    /* the page fields stand over the table, a row apart, as GFOpenCalc and Excel put them */
+    def.at_row = where.first_row >= (unsigned)(pages ? pages + 1 : 0) ? where.first_row - (unsigned)(pages ? pages + 1 : 0)
+                                                                     : 0;
+    def.at_col = where.first_col;
+    def.rows = where.last_row + 1u - def.at_row;
+    def.cols = where.last_col + 1u - where.first_col;
+    if (!owf_pivot_check(x->book, &def) || !owf_pivot_source_text(x->book, &def, source, sizeof source) ||
+        !owf_pivot_config_text(&def, cfg, sizeof cfg))
+        goto done;
+    drop_pivot_names(x->book, sheet);
+    if (owf_book_add_name(x->book, OWF_PIVOT_SOURCE, sheet, source, 1) < 0 ||
+        owf_book_add_name(x->book, OWF_PIVOT_CONFIG, sheet, cfg, 1) < 0)
+        x->failed = 1;
+    ok = 1;
+done:
+    owf_xml_free(txml);
+    owf_xml_free(cxml);
+    return ok;
+}
+
+static void read_sheet_notes(xlsx *x, int sheet, const char *part)
 {
     rels r;
+    int i, made = 0, kept = 0;
     read_rels(x->zip, part, &r);
-    if (rel_by_type(&r, "/pivotTable"))
-        owf_report_add(x->report, OWF_NOTE_LOST, "Pivot tables keep their cells; the pivot tables themselves are not read yet");
+    for (i = 0; i < r.count && !x->failed; i++) {
+        char table_part[PART_NAME];
+        if (!type_is(r.items[i].type, "/pivotTable"))
+            continue;
+        if (!made && rel_part(&r, &r.items[i], table_part, sizeof table_part) && read_pivot(x, sheet, table_part))
+            made = 1;
+        else
+            kept = 1;
+    }
+    x->pivots_read += made;
+    x->pivots_kept += kept;
     if (rel_by_type(&r, "/threadedComment"))
         owf_report_add(x->report, OWF_NOTE_APPROX, "Threaded comments are read as the plain comments Excel keeps beside them; their replies are not kept apart");
     free_rels(&r);
@@ -2084,6 +2361,7 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     cfread cr;
     dvread dr;
     afread ar;
+    scenread sr;
     int r;
 
     x->sheet = &x->book->sheets[xs->sheet];
@@ -2095,7 +2373,7 @@ static void read_worksheet(xlsx *x, xsheet *xs)
             owf_report_add(x->report, OWF_NOTE_LOST, "A sheet could not be read: its part of the file is missing or damaged");
         return;
     }
-    read_sheet_notes(x, xs->part);
+    read_sheet_notes(x, xs->sheet, xs->part);
     scan = owf_xml_scan_new((char *)data, length);
     if (!scan) {
         free(data);
@@ -2115,8 +2393,10 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     owf_buf_init(&dr.text);
     memset(&ar, 0, sizeof ar);
     owf_buf_init(&ar.xml);
+    memset(&sr, 0, sizeof sr);
     while (!x->failed && (r = owf_xml_scan_next(scan, &e)) > 0) {
-        if (!cs.in_data && (af_event(x, &e, &ar) || cf_event(x, &e, &cr) || dv_event(x, &e, &dr)))
+        if (!cs.in_data && (af_event(x, &e, &ar) || cf_event(x, &e, &cr) || dv_event(x, &e, &dr) ||
+                            sc_event(x, &e, &sr, xs->sheet)))
             continue;
         if (e.type == OWF_XS_TEXT) {
             if (cs.in_v)
@@ -2165,6 +2445,11 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     free(cr.ranges);
     owf_buf_free(&dr.text);
     owf_buf_free(&ar.xml);
+    sc_reset(&sr);
+    free(sr.cell);
+    free(sr.val);
+    if (sr.lost)
+        owf_report_add(x->report, OWF_NOTE_LOST, "Some scenarios could not be read: their cells are too many or too scattered");
     /* validations left without their ranges (a damaged sqref) go */
     {
         owf_sheet *sh = x->sheet;
@@ -2282,7 +2567,7 @@ static int read_workbook(xlsx *x)
     const owf_xml_node *root, *n, *sheets;
     const rel *it;
     char part[PART_NAME];
-    int error = OWF_ERR_CORRUPT, i, count, active = 0;
+    int error = OWF_ERR_CORRUPT, i, count, active = 0, pivot_caches;
 
     xml = read_xml(x->zip, x->wb_part, &error);
     if (!xml)
@@ -2309,8 +2594,7 @@ static int read_workbook(xlsx *x)
     if ((it = rel_by_type(&x->wb_rels, "/vbaProject")) != NULL)
         owf_report_add(x->report, OWF_NOTE_LOST, "Macros (Visual Basic) are not read; the workbook opens without them");
     read_external(x, main_child(root, "externalReferences"));
-    if (main_child(root, "pivotCaches"))
-        owf_report_add(x->report, OWF_NOTE_LOST, "Pivot tables keep their cells; the pivot tables themselves are not read yet");
+    pivot_caches = main_child(root, "pivotCaches") != NULL;
 
     /* the sheets, in the book's order */
     sheets = main_child(root, "sheets");
@@ -2368,6 +2652,9 @@ static int read_workbook(xlsx *x)
             read_worksheet(x, &x->sheets[i]);
     if (active < x->nsheets && x->sheets[active].sheet >= 0)
         x->book->active = x->sheets[active].sheet;
+    if (x->pivots_kept || (pivot_caches && !x->pivots_read))
+        owf_report_add(x->report, OWF_NOTE_LOST, "Pivot tables: some keep their cells only (GFOpenCalc reads one a sheet, "
+                                                 "from a range of cells)");
     if (!x->book->nsheets)
         owf_report_add(x->report, OWF_NOTE_INFO, "The workbook has no worksheets");
     if (x->damaged)

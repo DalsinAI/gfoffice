@@ -29,6 +29,8 @@
 #include <stddef.h>
 #include "owf.h"
 #include "owf_calc.h"
+#include "owf_pivot.h"
+#include "owf_scenario.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -328,6 +330,83 @@ int oc_core_goal_seek(const oc_core *core,
                       double tolerance, int max_iterations,
                       double *solution, double *achieved, int *iterations);
 
+/* Data > Scenarios, on the active sheet: named sets of values for some of
+ * its cells (owf_scenario.h), kept in its hidden names, in ODS as scenario
+ * tables and in XLSX as the sheet's scenarios. Each change is one Undo step. */
+int oc_core_scenario_count(const oc_core *core);
+/* One scenario (from 0): 1 when read; free it with owf_scenario_free. */
+int oc_core_scenario_get(const oc_core *core, int index, owf_scenario *sc);
+/* The index of the scenario with this name (case does not matter), or -1. */
+int oc_core_scenario_find(const oc_core *core, const char *name);
+/* Keeps the changing cells' present values as a scenario: a new one (index
+ * -1) or in place of one. cells: ranges on the active sheet, "B2:C4,E7".
+ * OWF_ERR_FORMAT: no name, or cells that are not cells of this sheet;
+ * OWF_ERR_UNSUPPORTED: another scenario has the name, or there are 32
+ * already, or more than 2048 cells. */
+int oc_core_scenario_save(oc_core *core, int index, const char *name, const char *cells, const char *comment);
+/* Puts a scenario's values in its cells. */
+int oc_core_scenario_show(oc_core *core, int index);
+int oc_core_scenario_delete(oc_core *core, int index);
+/* A scenario's ranges as one types them: "B2:C4,E7". 0 when they do not fit. */
+int oc_core_scenario_cells_text(const oc_core *core, const owf_scenario *sc, char *out, size_t size);
+
+/* Data > Solver: make a target cell as large or as small as it can be, or
+ * equal to a value, by changing variable cells, under constraints. Models
+ * must be linear (the target and constraints change in proportion to the
+ * variables); whole-number and binary variables are solved by branch and
+ * bound. Cells are written as one types them ("B10", "'Plan'!$B$2:$C$4"),
+ * on the active sheet unless they name another. The model is kept in the
+ * active sheet's hidden names as Excel keeps its own (solver_opt ...). */
+#define OC_SOLVER_CONSTRAINTS 32
+#define OC_SOLVER_VARIABLES 200
+#define OC_SOLVER_REF 160
+enum { OC_SOLVER_MAX = 1, OC_SOLVER_MIN = 2, OC_SOLVER_VALUE = 3 };
+/* Relations, numbered as Excel's solver_relN: <=, =, >=, whole, binary. */
+enum { OC_SOLVER_LE = 1, OC_SOLVER_EQ = 2, OC_SOLVER_GE = 3, OC_SOLVER_INT = 4, OC_SOLVER_BIN = 5 };
+typedef struct {
+    char lhs[OC_SOLVER_REF];      /* a cell or range */
+    int rel;
+    char rhs[OC_SOLVER_REF];      /* a number, a cell, or a range as big as lhs; unused for INT and BIN */
+} oc_solver_constraint;
+typedef struct {
+    char target[OC_SOLVER_REF];
+    int goal;                     /* OC_SOLVER_MAX ... */
+    double value;                 /* OC_SOLVER_VALUE's value */
+    char variables[OC_SOLVER_REF * 2]; /* ranges, with commas between */
+    unsigned nconstraints;
+    oc_solver_constraint constraints[OC_SOLVER_CONSTRAINTS];
+    int nonnegative;              /* variables with no lower limit are kept >= 0 */
+    unsigned max_nodes;           /* branch and bound's limit; 0: 5000 */
+} oc_solver_model;
+enum { OC_SOLVED,                 /* the best values */
+       OC_SOLVED_LIMIT,           /* the best found before the limit: maybe not the best there is */
+       OC_SOLVER_INFEASIBLE, OC_SOLVER_UNBOUNDED, OC_SOLVER_NOT_LINEAR,
+       OC_SOLVER_NO_ANSWER,       /* stopped at the limit with no values that meet the constraints */
+       OC_SOLVER_ERROR };         /* the model does not make sense: why says what is wrong */
+typedef struct {
+    int status;
+    char why[200];                /* for anything but OC_SOLVED and OC_SOLVED_LIMIT */
+    unsigned nvariables;
+    int sheet[OC_SOLVER_VARIABLES];
+    unsigned row[OC_SOLVER_VARIABLES], col[OC_SOLVER_VARIABLES];
+    double value[OC_SOLVER_VARIABLES];
+    double objective;             /* the target's value with them */
+    unsigned nodes;               /* linear programmes solved */
+} oc_solver_result;
+/* An empty model: maximise, variables kept >= 0. */
+void oc_solver_model_init(oc_solver_model *model);
+/* The active sheet's model, from its names: 1 when it has one, else 0 (and an empty model). */
+int oc_core_solver_model(const oc_core *core, oc_solver_model *model);
+/* Solves on a private copy (the book is not changed). OWF_OK: result->status
+ * says how it went; OWF_ERR_FORMAT: the model does not make sense (why says
+ * how); OWF_ERR_UNSUPPORTED: too big; OWF_ERR_MEMORY. */
+int oc_core_solve(const oc_core *core, const oc_solver_model *model, oc_solver_result *result);
+/* Keeps the model in the active sheet's names and, with a result, puts its
+ * values in the variable cells: one Undo step. OWF_ERR_FORMAT: a cell of the
+ * model is not one (bad names it). */
+int oc_core_solver_apply(oc_core *core, const oc_solver_model *model, const oc_solver_result *result,
+                         char *bad, size_t badsize);
+
 /* One-variable Data > Multiple Operations. The current selection must be one
  * column of at most 65,536 numeric trial values; results are written into the
  * column immediately to its right. For every trial value a private workbook
@@ -413,22 +492,66 @@ int oc_core_subtotals(oc_core *core, unsigned group_col,
                       const unsigned *value_cols, unsigned nvalue_cols,
                       int function, int has_header, int grand_total);
 
-/* Builds a static pivot-summary snapshot from the selected headed table on a
- * new sheet. row_col, column_col and value_col are absolute source columns;
- * use OC_PIVOT_NO_COLUMN for a one-dimensional summary. function is one of
- * OC_SUBTOTAL_* above. Categories keep their first-occurrence order, blank
- * categories are included, and row/column/grand totals are written. The
- * source is untouched and creating the summary is one whole-book Undo step.
- * This is the reusable aggregation layer for DataPilot-style work; it does
- * not yet store a refreshable pivot definition in the document. */
+/* ---- Data > Consolidate ----
+ * Several source ranges (on any sheets, up to OC_CONSOLIDATE_SOURCES) are
+ * put together with one of the OC_SUBTOTAL_ functions into one table whose
+ * top left cell is dest: cell by cell where they sit, or matched by the
+ * labels in their first column (row_labels), their first row
+ * (column_labels) or both, case aside, in the order the labels come. With
+ * link the table's cells are formulas over the sources' cells
+ * (=SUM('Q1'!$B$2,'Q2'!$B$2)), so they follow them; otherwise values. The
+ * destination may not be inside a source. One Undo step; the settings stay
+ * on the active sheet for the window to offer again. */
+#define OC_CONSOLIDATE_SOURCES 16
+#define OC_CONSOLIDATE_REF 160
+typedef struct {
+    int function;                                 /* OC_SUBTOTAL_ */
+    int nsources;
+    char source[OC_CONSOLIDATE_SOURCES][OC_CONSOLIDATE_REF];  /* "B2:D9", "'Q1'!A1:C20" */
+    char dest[OC_CONSOLIDATE_REF];
+    int row_labels, column_labels, link;
+} oc_consolidate_spec;
+/* SUM, no labels, no link, no sources. */
+void oc_consolidate_init(oc_consolidate_spec *spec);
+/* The active sheet's last settings: 1 when it has some. */
+int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec);
+/* OWF_OK (the table is selected when it is on the active sheet),
+ * OWF_ERR_FORMAT (a range, the function or the destination is wrong),
+ * OWF_ERR_UNSUPPORTED (too many cells or labels), OWF_ERR_MEMORY. */
+int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec);
+
+/* ---- Pivot tables (DataPilot) ----
+ * A pivot table summarises a headed source table by row, column, data and
+ * page fields (owf_pivot.h: fields count from the source's first column).
+ * Row and column fields nest, outer first; each value is a data field's
+ * function over the source rows of its row and column items; page fields
+ * keep only the rows whose value is the chosen item (or every row). Items
+ * keep each field's first-occurrence order, blank items are included, and
+ * grand totals are optional. The output is ordinary cells (headings and
+ * totals bold) and the definition is stored with the output sheet, so it
+ * survives XLSX and ODS (as their own pivot tables) and can be refreshed
+ * from the source or laid out afresh. Each change is one whole-book Undo
+ * step. OWF_ERR_FORMAT: the fields do not fit the source; OWF_ERR_UNSUPPORTED:
+ * no pivot table here, or the result would be too large (65536 values). */
 #define OC_PIVOT_NO_COLUMN ((unsigned)-1)
+/* A new pivot table of the selected headed table on a new sheet ("Pivot",
+ * "Pivot2"...). layout's fields and grand totals are used; its source and
+ * place are the selection's and A1. */
+int oc_core_pivot_create(oc_core *core, const owf_pivotdef *layout);
+/* The simplest one: one row field, an optional column field
+ * (OC_PIVOT_NO_COLUMN for none) and one data field, as absolute columns;
+ * function is one of OC_SUBTOTAL_* above. */
 int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
                           unsigned value_col, int function);
-/* Rebuilds the active Pivot Summary from its stored source/configuration.
- * The source range follows ordinary row/column edits through a hidden defined
- * name and survives XLSX/ODS. Refresh replaces the summary cells atomically
- * as one Undo step. OWF_ERR_UNSUPPORTED means the active sheet is not a Pivot
- * Summary made by this core. */
+/* The active sheet's pivot table: 1 when it has one. */
+int oc_core_pivot_get(const oc_core *core, owf_pivotdef *def);
+/* Lays the active sheet's pivot table out with new fields, filters and
+ * totals (layout's source and place are ignored: the table keeps its own). */
+int oc_core_pivot_set_layout(oc_core *core, const owf_pivotdef *layout);
+/* Rebuilds the active sheet's pivot table from its source as it is now.
+ * The source range follows ordinary row/column edits through a hidden
+ * defined name. OWF_ERR_UNSUPPORTED means the active sheet has no pivot
+ * table; OWF_ERR_FORMAT that its source or fields no longer fit. */
 int oc_core_refresh_pivot(oc_core *core);
 
 /* ---- AutoFilter ----
@@ -944,6 +1067,14 @@ int oc_core_validation_info(const oc_core *core, int sheet, int index, oc_valida
 /* The charts of the sheet showing, as owf_sheet_charts reads them: copies, freed with
  * owf_charts_free. */
 int oc_core_sheet_charts(const oc_core *core, owf_chart **charts, int *count);
+
+/* A pivot field's heading (owf_pivot_field_heading), into out. */
+void oc_core_pivot_heading(const oc_core *core, const owf_pivotdef *def, unsigned field, char *out, size_t size);
+/* A page field's item from its typed text (UTF-8, not empty and not "(blank)"): the
+ * first cell of the field's source column whose value it names ("2025" a number,
+ * "East" a text, "TRUE" a truth), else the text itself. */
+void oc_core_pivot_item(const oc_core *core, const owf_pivotdef *def, unsigned field, const char *utf8,
+                        owf_pivot_page *page);
 
 /* The book as it is, written to path (a copy: the edit line, the sheet saved as
  * active and the dirty mark are left as they are; owf_export_book_file). */

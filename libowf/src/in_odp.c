@@ -2084,13 +2084,13 @@ static void read_notes(odp *o, owf_slide *s, const owf_xml_node *notes, const ow
         tmp.placeholder = OWF_PH_NOTES;
         t.o = o;
         t.obj = &tmp;
-        t.story = &s->notes;
+        t.story = &s->notes.text;
         t.m = m;
         t.st = object_style(o, f, OWF_ODF_CONTENT_AUTO);
         t.pstyle = find_style(o, attr(f, NS_DRAW, "text-style-name"), "paragraph", OWF_ODF_CONTENT_AUTO);
         t.which = OWF_ODF_CONTENT_AUTO;
         t.keep_levels = 0;
-        owf_builder_init(&t.b, o->deck->res, &s->notes);
+        owf_builder_init(&t.b, o->deck->res, &s->notes.text);
         text_blocks(&t, box, 0, 0);
         if (owf_builder_done(&t.b) != OWF_OK)
             o->failed = 1;
