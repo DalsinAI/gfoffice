@@ -158,7 +158,7 @@ static void test_recording(void)
     CHECK(doc->body.nparas == 2, "still two paragraphs");
 
     /* Delete forward goes past what it marks */
-    caret(ed, 1, 10);
+    caret(ed, 1, 8);                                 /* the offsets count the deleted "nd" too */
     ow_editor_delete_forward(ed);
     {
         ow_selection s = ow_editor_selection(ed);
@@ -182,13 +182,14 @@ static void test_recording(void)
     CHECK(ow_editor_next_change(ed, 1) == 1 && ow_editor_current_change(ed, &info) && info.index == 0, "back");
 
     /* accept the deletion of "world" only */
+    caret(ed, 0, 0);
+    CHECK(ow_editor_accept_change(ed, 1) == OWF_ERR_UNSUPPORTED, "no change at the start");
     caret(ed, 0, 12);
     CHECK(ow_editor_accept_change(ed, 1) == OWF_OK, "accept one");
     CHECK(!strcmp(dump(doc), "Hello{+ big+} {+ther+}|-Seco{+X+}[-nd-] [-l-]ine"), dump(doc));
-    caret(ed, 0, 0);
+    caret(ed, 0, 6);
     CHECK(ow_editor_accept_change(ed, 1) == OWF_OK, "accept the first");
     CHECK(!strcmp(dump(doc), "Hello big {+ther+}|-Seco{+X+}[-nd-] [-l-]ine"), dump(doc));
-    CHECK(ow_editor_accept_change(ed, 1) == OWF_ERR_UNSUPPORTED || 1, "no change at the start");
 
     /* undo both, then reject everything */
     ow_editor_undo(ed);
@@ -247,7 +248,7 @@ static owf_doc *changed_doc(void)
     caret(ed, 0, 5);
     ow_editor_insert_utf8(ed, " new", 4);
     ow_editor_set_review_author(ed, "Bob & co");
-    select_range(ed, 0, 10, 0, 14);                  /* " bet" */
+    select_range(ed, 0, 10, 0, 14);                  /* "beta" */
     ow_editor_delete_forward(ed);
     caret(ed, 1, 0);
     ow_editor_backspace(ed);                         /* Alpha...|-Gamma */
@@ -257,7 +258,7 @@ static owf_doc *changed_doc(void)
     return doc;
 }
 
-static const char *const changed_dump = "Alpha{+ new+}[- bet-]a|-Gamma|De|+lta";
+static const char *const changed_dump = "Alpha{+ new+} [-beta-]|-Gamma|De|+lta";
 
 static void test_round_trip(const char *format)
 {
@@ -302,7 +303,7 @@ static void test_accepted_formats(void)
     CHECK(owf_export_file(doc, "/tmp/openwrite-track.rtf", "rtf", rp) == OWF_OK, "rtf");
     CHECK(owf_import_file("/tmp/openwrite-track.rtf", NULL, &back, NULL, NULL) == OWF_OK && back, "rtf back");
     if (back) {
-        CHECK(!strcmp(dump(back), "Alpha newaGamma|De|lta"), dump(back));
+        CHECK(!strcmp(dump(back), "Alpha new Gamma|De|lta"), dump(back));
         owf_doc_free(back);
     }
     for (i = 0; i < owf_report_count(rp); ++i) {
@@ -367,8 +368,11 @@ static void test_word_form(void)
     CHECK(!strcmp(dump(doc), "Keep {+added+}[- gone-]|-Next{+!+}"), dump(doc));
     CHECK(doc->track_changes == 1, "w:trackRevisions");
     CHECK(doc->body.paras[0].runs[1].fmt.flags & OWF_BOLD, "the insertion's format");
-    CHECK(doc->nrevisions >= 3 && doc->revisions[0].date && !strcmp(doc->revisions[0].date, "2026-11-02T10:00:00Z"),
-          doc->nrevisions ? (doc->revisions[0].date ? doc->revisions[0].date : "no date") : "none");
+    {
+        const owf_revision *mark = OWF_DOC_REVISION(doc, doc->body.paras[0].mark_revision);
+        CHECK(doc->nrevisions >= 3 && mark && mark->kind == OWF_REV_DELETE && mark->date &&
+              !strcmp(mark->date, "2026-11-02T10:00:00Z"), mark && mark->date ? mark->date : "the mark's date");
+    }
     owf_doc_free(doc);
 }
 
