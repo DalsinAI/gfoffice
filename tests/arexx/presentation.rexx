@@ -1,7 +1,8 @@
 /* tests/arexx/presentation.rexx: GFOpenPresentation's ARexx port against amicradle-teams ARexx-RULE.md
    (return codes 0/5/10/20, no requester holds up a command): open, edit, save, export, print, reopen,
    the slide sorter's commands on several slides, speaker notes (notes pages, handouts) and the outline.
-   rx tests/arexx/presentation.rexx   (GFOpenPresentation running; prints PASS/FAIL lines, then ALL PASS or n FAILED) */
+   rx tests/arexx/presentation.rexx [PRINT]   (GFOpenPresentation running; prints PASS/FAIL lines, then ALL PASS
+   or n FAILED; PRINT also opens GFOpenPrint's Print window, left for a person to close) */
 OPTIONS RESULTS
 port = 'GFOPENPRESENTATION'
 IF ~SHOW('P', port) THEN DO
@@ -65,9 +66,14 @@ CALL same 'GETFILE', res, 'RAM:arexx-test.odp'
 CALL want 'SAVE', 0
 CALL want 'EXPORT RAM:arexx-test.pdf', 0
 IF ~EXISTS('RAM:arexx-test.pdf') THEN CALL bad 'EXPORT wrote no RAM:arexx-test.pdf'
-'PRINT'                                        /* 0 with C:GFOpenPrint, 5 without it */
-IF rc = 0 | rc = 5 THEN SAY 'PASS PRINT RC' rc
-ELSE CALL bad 'PRINT RC' rc '(wanted 0 or 5)'
+/* PRINT opens GFOpenPrint's Print window, which waits for a person, so it is tried only when asked for:
+   rx presentation.rexx PRINT (a lab copy, then Cancel the window). */
+IF TRANSLATE(WORD(ARG(1), 1)) = 'PRINT' THEN DO
+    'PRINT'                                    /* 0 with C:GFOpenPrint, 5 without it */
+    IF rc = 0 | rc = 5 THEN SAY 'PASS PRINT RC' rc
+    ELSE CALL bad 'PRINT RC' rc '(wanted 0 or 5)'
+END
+ELSE SAY 'SKIP PRINT (rx presentation.rexx PRINT tries it: it opens a window)'
 CALL want 'OPEN RAM:no/such/file.odp', 10
 CALL want 'LASTERROR', 0
 SAY '     LASTERROR:' res
