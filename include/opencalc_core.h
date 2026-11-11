@@ -884,6 +884,71 @@ void oc_core_status(oc_core *core, char *out, size_t size);
  * cut short when it is wider than the strip. */
 int oc_tab_strip(const int *width, int n, int avail, int arrows, int current, int *first, int *scroll);
 
+/* ---- What the window reads of the book: copies only ----
+ * The window reads the book through these calls and oc_view_draw's display list,
+ * never through the book's structs. So the book could live where the window can't
+ * reach it (in host memory: OPENEXTMEM 9.6), and these calls would fill the window's
+ * own memory, bounded by what it shows. Texts are UTF-8, cut to fit size (and always
+ * ended); each call returns the text's whole length, as snprintf does, so a caller can
+ * ask again with room. A NULL buffer with size 0 just measures. */
+typedef struct {
+    int hidden;                     /* 1 hidden, 2 hidden from the user too */
+    unsigned freeze_rows, freeze_cols;
+    int has_autofilter;
+    owf_range autofilter;
+    int nvalidations;
+} oc_sheet_info;
+
+int oc_core_sheet_count(const oc_core *core);
+/* A sheet's info, and its name into name: the name's length, or -1 when there is no
+ * such sheet (info and name are then left as they were). */
+int oc_core_sheet_info(const oc_core *core, int sheet, oc_sheet_info *info, char *name, size_t size);
+
+/* The book's font index (-1: the default style's font), its name ("" when none) and
+ * kind (OWF_FONT_ANY when none). Returns the index it took; the name's length goes to
+ * *length when length is not NULL (-1 when there is no such font). */
+int oc_core_font_info(const oc_core *core, int index, char *name, size_t size, owf_font_kind *kind, int *length);
+
+typedef struct {
+    int exists;                     /* the cell is in the sheet's list */
+    owf_value_type type;            /* OWF_VALUE_EMPTY when it isn't */
+    int style;                      /* its style index as the cell says (0 when none) */
+    owf_cellstyle look;             /* the style it shows with: its own, or the default's
+                                       when its index is out of range */
+} oc_cell_info;
+/* A cell's info, and a TEXT cell's text into text ("" for others): the text's length,
+ * or -1 when there is no such sheet. */
+int oc_core_cell_info(const oc_core *core, int sheet, unsigned row, unsigned col, oc_cell_info *info,
+                      char *text, size_t size);
+
+/* A cell's comment: its text into text and its length, or -1 when the cell has none.
+ * Its author into author, its length to *author_length (-1 when the comment names
+ * none). */
+int oc_core_comment_info(const oc_core *core, int sheet, unsigned row, unsigned col, char *text, size_t size,
+                         char *author, size_t author_size, int *author_length);
+
+/* The defined name at index (as oc_core_name_at): its name into name and its length,
+ * or -1 when there is none; the sheet it belongs to (-1: the book) to *sheet. */
+int oc_core_name_info(const oc_core *core, int index, char *name, size_t size, int *sheet);
+
+typedef struct {
+    int type;                       /* OWF_DV_... */
+    int nranges;
+    owf_range first;                /* ranges[0]; all 0 when nranges is 0 */
+    int show_error, error_style, no_dropdown;
+} oc_validation_info;
+/* A sheet's data validation rule index: OWF_OK, or OWF_ERR_UNSUPPORTED when there is
+ * no such sheet or rule. */
+int oc_core_validation_info(const oc_core *core, int sheet, int index, oc_validation_info *info);
+
+/* The charts of the sheet showing, as owf_sheet_charts reads them: copies, freed with
+ * owf_charts_free. */
+int oc_core_sheet_charts(const oc_core *core, owf_chart **charts, int *count);
+
+/* The book as it is, written to path (a copy: the edit line, the sheet saved as
+ * active and the dirty mark are left as they are; owf_export_book_file). */
+int oc_core_write_copy(const oc_core *core, const char *path, const char *format, owf_report *report);
+
 #ifdef __cplusplus
 }
 #endif

@@ -5209,6 +5209,100 @@ static void test_pdf(void)
     oc_core_free(core);
 }
 
+/* What the window reads of the book: copies, matching the structs, cut at whole UTF-8 characters and
+ * measured whole. */
+static void test_book_reads(void)
+{
+    oc_core *core = fresh();
+    owf_book *book;
+    owf_sheet *sh;
+    oc_sheet_info si;
+    oc_cell_info ci;
+    oc_validation_info vi;
+    owf_validation *v;
+    owf_font_kind kind;
+    char buf[64], small[4], author[8];
+    int n, len, sheet, alen, font;
+    if (!core)
+        return;
+    book = oc_core_book(core);
+    CHECK(oc_core_sheet_count(core) == book->nsheets);
+    sh = &book->sheets[0];
+    sh->freeze_rows = 2;
+    sh->freeze_cols = 1;
+    sh->hidden = 0;
+    n = oc_core_sheet_info(core, 0, &si, buf, sizeof buf);
+    CHECK(n == (int)strlen(sh->name) && !strcmp(buf, sh->name));
+    CHECK(si.freeze_rows == 2 && si.freeze_cols == 1 && !si.hidden && !si.has_autofilter && !si.nvalidations);
+    CHECK(oc_core_sheet_info(core, book->nsheets, &si, buf, sizeof buf) == -1);
+    CHECK(oc_core_sheet_info(core, -1, NULL, NULL, 0) == -1);
+    /* "Préc" into 4 bytes: "Pr" and no half of the é */
+    CHECK(oc_core_rename_sheet(core, 0, "Pr\xC3\xA9" "c") == OWF_OK);
+    CHECK(oc_core_sheet_info(core, 0, NULL, small, sizeof small) == 5 && !strcmp(small, "Pr"));
+    CHECK(oc_core_sheet_info(core, 0, NULL, NULL, 0) == 5);
+    /* a text cell, a number cell, an empty one */
+    enter_at(core, "B2", "hello");
+    enter_at(core, "C3", "12");
+    n = oc_core_cell_info(core, 0, 1, 1, &ci, buf, sizeof buf);
+    CHECK(n == 5 && !strcmp(buf, "hello") && ci.exists && ci.type == OWF_VALUE_TEXT);
+    n = oc_core_cell_info(core, 0, 2, 2, &ci, buf, sizeof buf);
+    CHECK(n == 0 && !buf[0] && ci.exists && ci.type == OWF_VALUE_NUMBER);
+    n = oc_core_cell_info(core, 0, 9, 9, &ci, buf, sizeof buf);
+    CHECK(n == 0 && !ci.exists && ci.type == OWF_VALUE_EMPTY && ci.style == 0);
+    CHECK(!memcmp(&ci.look, &book->styles[0], sizeof ci.look));
+    CHECK(oc_core_cell_info(core, 7, 0, 0, &ci, buf, sizeof buf) == -1);
+    /* a style index out of range shows with the default */
+    owf_sheet_cell(sh, 1, 1, 0)->style = book->nstyles + 3;
+    oc_core_cell_info(core, 0, 1, 1, &ci, NULL, 0);
+    CHECK(ci.style == book->nstyles + 3 && !memcmp(&ci.look, &book->styles[0], sizeof ci.look));
+    owf_sheet_cell(sh, 1, 1, 0)->style = 0;
+    /* fonts: -1 is the default style's */
+    font = owf_book_font(book, "Courier New", OWF_FONT_MONO);
+    CHECK(font >= 0);
+    CHECK(oc_core_font_info(core, font, buf, sizeof buf, &kind, &len) == font && !strcmp(buf, "Courier New") &&
+          kind == OWF_FONT_MONO && len == 11);
+    CHECK(oc_core_font_info(core, -1, buf, sizeof buf, &kind, &len) == book->styles[0].font.font);
+    CHECK(oc_core_font_info(core, book->nfonts + 5, buf, sizeof buf, &kind, &len) == book->nfonts + 5 && len == -1 &&
+          !buf[0] && kind == OWF_FONT_ANY);
+    /* comments: text, author (none: -1) */
+    CHECK(owf_sheet_set_comment(sh, 1, 1, "Team 2 reviewer", "Check it") == 0);
+    CHECK(owf_sheet_set_comment(sh, 4, 2, NULL, "no author") == 0);
+    n = oc_core_comment_info(core, 0, 1, 1, buf, sizeof buf, author, sizeof author, &alen);
+    CHECK(n == 8 && !strcmp(buf, "Check it") && alen == 15 && !strcmp(author, "Team 2 "));
+    n = oc_core_comment_info(core, 0, 4, 2, buf, sizeof buf, author, sizeof author, &alen);
+    CHECK(n == 9 && alen == -1 && !author[0]);
+    CHECK(oc_core_comment_info(core, 0, 7, 7, buf, sizeof buf, author, sizeof author, &alen) == -1 && alen == -1 && !buf[0]);
+    /* defined names */
+    CHECK(oc_core_set_name(core, "Prices", -1, "Sheet1!$B$2:$B$4") == OWF_OK);
+    n = oc_core_name_info(core, 0, buf, sizeof buf, &sheet);
+    CHECK(n == 6 && !strcmp(buf, "Prices") && sheet == -1);
+    CHECK(oc_core_name_info(core, 99, buf, sizeof buf, &sheet) == -1);
+    /* validation rules */
+    v = owf_sheet_add_validation(sh);
+    CHECK(v != NULL);
+    if (v) {
+        owf_range r = { 1, 4, 0, 2 };
+        v->type = OWF_DV_LIST;
+        v->no_dropdown = 1;
+        v->show_error = 1;
+        v->error_style = OWF_DV_WARNING;
+        v->ranges = owf_malloc(sizeof *v->ranges);
+        if (v->ranges) { v->ranges[0] = r; v->nranges = 1; }
+        oc_core_sheet_info(core, 0, &si, NULL, 0);
+        CHECK(si.nvalidations == 1);
+        CHECK(oc_core_validation_info(core, 0, 0, &vi) == OWF_OK && vi.type == OWF_DV_LIST && vi.nranges == 1 &&
+              !memcmp(&vi.first, &r, sizeof r) && vi.no_dropdown && vi.show_error && vi.error_style == OWF_DV_WARNING);
+        CHECK(oc_core_validation_info(core, 0, 1, &vi) == OWF_ERR_UNSUPPORTED);
+    }
+    /* AutoFilter */
+    sh->has_autofilter = 1;
+    sh->autofilter.first_row = 0; sh->autofilter.last_row = 9;
+    sh->autofilter.first_col = 1; sh->autofilter.last_col = 3;
+    oc_core_sheet_info(core, 0, &si, NULL, 0);
+    CHECK(si.has_autofilter && si.autofilter.last_row == 9 && si.autofilter.first_col == 1);
+    oc_core_free(core);
+}
+
 int main(void)
 {
     test_more();
@@ -5263,6 +5357,7 @@ int main(void)
     test_subtotals();
     test_pivot_summary();
     test_pdf();
+    test_book_reads();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);
         return 1;
