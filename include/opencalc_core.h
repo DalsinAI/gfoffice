@@ -329,6 +329,63 @@ int oc_core_goal_seek(const oc_core *core,
                       double tolerance, int max_iterations,
                       double *solution, double *achieved, int *iterations);
 
+/* Tools > Solver: make a target cell as large or as small as it can be, or
+ * equal to a value, by changing variable cells, under constraints. Models
+ * must be linear (the target and constraints change in proportion to the
+ * variables); whole-number and binary variables are solved by branch and
+ * bound. Cells are written as one types them ("B10", "'Plan'!$B$2:$C$4"),
+ * on the active sheet unless they name another. The model is kept in the
+ * active sheet's hidden names as Excel keeps its own (solver_opt ...). */
+#define OC_SOLVER_CONSTRAINTS 32
+#define OC_SOLVER_VARIABLES 200
+#define OC_SOLVER_REF 160
+enum { OC_SOLVER_MAX = 1, OC_SOLVER_MIN = 2, OC_SOLVER_VALUE = 3 };
+/* Relations, numbered as Excel's solver_relN: <=, =, >=, whole, binary. */
+enum { OC_SOLVER_LE = 1, OC_SOLVER_EQ = 2, OC_SOLVER_GE = 3, OC_SOLVER_INT = 4, OC_SOLVER_BIN = 5 };
+typedef struct {
+    char lhs[OC_SOLVER_REF];      /* a cell or range */
+    int rel;
+    char rhs[OC_SOLVER_REF];      /* a number, a cell, or a range as big as lhs; unused for INT and BIN */
+} oc_solver_constraint;
+typedef struct {
+    char target[OC_SOLVER_REF];
+    int goal;                     /* OC_SOLVER_MAX ... */
+    double value;                 /* OC_SOLVER_VALUE's value */
+    char variables[OC_SOLVER_REF * 2]; /* ranges, with commas between */
+    unsigned nconstraints;
+    oc_solver_constraint constraints[OC_SOLVER_CONSTRAINTS];
+    int nonnegative;              /* variables with no lower limit are kept >= 0 */
+    unsigned max_nodes;           /* branch and bound's limit; 0: 5000 */
+} oc_solver_model;
+enum { OC_SOLVED,                 /* the best values */
+       OC_SOLVED_LIMIT,           /* the best found before the limit: maybe not the best there is */
+       OC_SOLVER_INFEASIBLE, OC_SOLVER_UNBOUNDED, OC_SOLVER_NOT_LINEAR,
+       OC_SOLVER_NO_ANSWER,       /* stopped at the limit with no values that meet the constraints */
+       OC_SOLVER_ERROR };         /* the model does not make sense: why says what is wrong */
+typedef struct {
+    int status;
+    char why[200];                /* for anything but OC_SOLVED and OC_SOLVED_LIMIT */
+    unsigned nvariables;
+    int sheet[OC_SOLVER_VARIABLES];
+    unsigned row[OC_SOLVER_VARIABLES], col[OC_SOLVER_VARIABLES];
+    double value[OC_SOLVER_VARIABLES];
+    double objective;             /* the target's value with them */
+    unsigned nodes;               /* linear programmes solved */
+} oc_solver_result;
+/* An empty model: maximise, variables kept >= 0. */
+void oc_solver_model_init(oc_solver_model *model);
+/* The active sheet's model, from its names: 1 when it has one, else 0 (and an empty model). */
+int oc_core_solver_model(const oc_core *core, oc_solver_model *model);
+/* Solves on a private copy (the book is not changed). OWF_OK: result->status
+ * says how it went; OWF_ERR_FORMAT: the model does not make sense (why says
+ * how); OWF_ERR_UNSUPPORTED: too big; OWF_ERR_MEMORY. */
+int oc_core_solve(const oc_core *core, const oc_solver_model *model, oc_solver_result *result);
+/* Keeps the model in the active sheet's names and, with a result, puts its
+ * values in the variable cells: one Undo step. OWF_ERR_FORMAT: a cell of the
+ * model is not one (bad names it). */
+int oc_core_solver_apply(oc_core *core, const oc_solver_model *model, const oc_solver_result *result,
+                         char *bad, size_t badsize);
+
 /* One-variable Data > Multiple Operations. The current selection must be one
  * column of at most 65,536 numeric trial values; results are written into the
  * column immediately to its right. For every trial value a private workbook

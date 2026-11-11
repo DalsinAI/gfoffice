@@ -182,6 +182,25 @@ int oc_empty_style(const owf_sheet *sheet, unsigned row, unsigned col);
  * typed into in Excel does. */
 int oc_enter(oc_core *core, int sheet, unsigned row, unsigned col, const char *text);
 
+/* oc_lp.c: the Solver's linear programme. Maximise c.x over n variables
+ * subject to m rows a.x rel b (rel -1 <=, 0 =, 1 >=), lower <= x <= upper
+ * (NULL: x >= 0; -HUGE_VAL / HUGE_VAL for no bound) and x whole where
+ * integer[j] (integer may be NULL). max_nodes 0: 5000 branch and bound nodes. */
+typedef struct {
+    unsigned n, m;
+    const double *a;            /* m x n, row by row */
+    const int *rel;
+    const double *b, *c;
+    const double *lower, *upper;
+    const unsigned char *integer;
+    unsigned max_nodes;
+} oc_lp;
+enum { OC_LP_OPTIMAL, OC_LP_INFEASIBLE, OC_LP_UNBOUNDED,
+       OC_LP_LIMIT,             /* stopped at the node or step limit: x is the best found */
+       OC_LP_LIMIT_NONE,        /* stopped before any answer */
+       OC_LP_TOO_BIG, OC_LP_MEMORY };
+int oc_lp_solve(const oc_lp *lp, double *x, double *objective, unsigned *nodes);
+
 /* oc_undo.c */
 oc_undo *oc_undo_new(oc_core *core, int kind);
 /* with: OC_SAVE_COLS, OC_SAVE_ROWS (the column and row lists too) */
