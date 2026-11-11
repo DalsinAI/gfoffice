@@ -492,6 +492,34 @@ int oc_core_subtotals(oc_core *core, unsigned group_col,
                       const unsigned *value_cols, unsigned nvalue_cols,
                       int function, int has_header, int grand_total);
 
+/* ---- Data > Consolidate ----
+ * Several source ranges (on any sheets, up to OC_CONSOLIDATE_SOURCES) are
+ * put together with one of the OC_SUBTOTAL_ functions into one table whose
+ * top left cell is dest: cell by cell where they sit, or matched by the
+ * labels in their first column (row_labels), their first row
+ * (column_labels) or both, case aside, in the order the labels come. With
+ * link the table's cells are formulas over the sources' cells
+ * (=SUM('Q1'!$B$2,'Q2'!$B$2)), so they follow them; otherwise values. The
+ * destination may not be inside a source. One Undo step; the settings stay
+ * on the active sheet for the window to offer again. */
+#define OC_CONSOLIDATE_SOURCES 16
+#define OC_CONSOLIDATE_REF 160
+typedef struct {
+    int function;                                 /* OC_SUBTOTAL_ */
+    int nsources;
+    char source[OC_CONSOLIDATE_SOURCES][OC_CONSOLIDATE_REF];  /* "B2:D9", "'Q1'!A1:C20" */
+    char dest[OC_CONSOLIDATE_REF];
+    int row_labels, column_labels, link;
+} oc_consolidate_spec;
+/* SUM, no labels, no link, no sources. */
+void oc_consolidate_init(oc_consolidate_spec *spec);
+/* The active sheet's last settings: 1 when it has some. */
+int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec);
+/* OWF_OK (the table is selected when it is on the active sheet),
+ * OWF_ERR_FORMAT (a range, the function or the destination is wrong),
+ * OWF_ERR_UNSUPPORTED (too many cells or labels), OWF_ERR_MEMORY. */
+int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec);
+
 /* ---- Pivot tables (DataPilot) ----
  * A pivot table summarises a headed source table by row, column, data and
  * page fields (owf_pivot.h: fields count from the source's first column).

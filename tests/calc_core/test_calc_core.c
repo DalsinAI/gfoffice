@@ -5631,6 +5631,93 @@ static void test_solver(void)
     remove(ods);
 }
 
+static void test_consolidate(void)
+{
+    oc_core *core = fresh();
+    oc_consolidate_spec spec, back;
+    if (!core)
+        return;
+    enter_at(core, "B1", "Jan");
+    enter_at(core, "C1", "Feb");
+    enter_at(core, "A2", "East");
+    enter_at(core, "B2", "10");
+    enter_at(core, "C2", "20");
+    enter_at(core, "A3", "West");
+    enter_at(core, "B3", "1");
+    enter_at(core, "C3", "2");
+    CHECK(oc_core_add_sheet(core, "Q2") == 1);
+    enter_at(core, "B1", "Feb");
+    enter_at(core, "C1", "Mar");
+    enter_at(core, "A2", "west");
+    enter_at(core, "B2", "5");
+    enter_at(core, "C2", "6");
+    enter_at(core, "A3", "North");
+    enter_at(core, "B3", "7");
+    enter_at(core, "C3", "8");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+
+    /* by both labels */
+    oc_consolidate_init(&spec);
+    CHECK(oc_core_consolidate_settings(core, &back) == 0);
+    spec.nsources = 2;
+    snprintf(spec.source[0], sizeof spec.source[0], "A1:C3");
+    snprintf(spec.source[1], sizeof spec.source[1], "'Q2'!A1:C3");
+    snprintf(spec.dest, sizeof spec.dest, "E1");
+    spec.row_labels = spec.column_labels = 1;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK_STR(text(core, "F1"), "Jan");
+    CHECK_STR(text(core, "G1"), "Feb");
+    CHECK_STR(text(core, "H1"), "Mar");
+    CHECK_STR(text(core, "E2"), "East");
+    CHECK_STR(text(core, "E3"), "West");                 /* "west" on Q2 is the same row */
+    CHECK_STR(text(core, "E4"), "North");
+    CHECK(num(core, "F2") == 10 && num(core, "G2") == 20 && empty(core, "H2"));
+    CHECK(num(core, "F3") == 1 && num(core, "G3") == 7 && num(core, "H3") == 6);
+    CHECK(empty(core, "F4") && num(core, "G4") == 7 && num(core, "H4") == 8);
+    CHECK(empty(core, "E5") && empty(core, "I1"));
+    CHECK(oc_core_consolidate_settings(core, &back) == 1 && back.nsources == 2 && back.row_labels &&
+          back.column_labels && !back.link && back.function == OC_SUBTOTAL_SUM);
+    CHECK_STR(back.source[1], "'Q2'!A1:C3");
+    CHECK_STR(back.dest, "E1");
+    CHECK(oc_core_undo(core) == OWF_OK && empty(core, "F2") && oc_core_consolidate_settings(core, &back) == 0);
+
+    /* by position, linked */
+    oc_consolidate_init(&spec);
+    spec.nsources = 2;
+    snprintf(spec.source[0], sizeof spec.source[0], "B2:C3");
+    snprintf(spec.source[1], sizeof spec.source[1], "'Q2'!B2:C3");
+    snprintf(spec.dest, sizeof spec.dest, "J1");
+    spec.link = 1;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK(num(core, "J1") == 15 && num(core, "K1") == 26 && num(core, "J2") == 8 && num(core, "K2") == 10);
+    CHECK(strstr(formula(core, "J1"), "SUM(") == formula(core, "J1") && strstr(formula(core, "J1"), "'Q2'!$B$2"));
+    enter_at(core, "B2", "100");                          /* the link follows its source */
+    CHECK(num(core, "J1") == 105);
+
+    /* other functions, values only */
+    spec.link = 0;
+    spec.function = OC_SUBTOTAL_MAX;
+    snprintf(spec.dest, sizeof spec.dest, "J5");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK(num(core, "J5") == 100 && num(core, "K6") == 8 && formula(core, "J5")[0] == 0);
+    spec.function = OC_SUBTOTAL_COUNT;
+    snprintf(spec.dest, sizeof spec.dest, "J8");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK && num(core, "J8") == 2);
+
+    /* bad ones */
+    snprintf(spec.dest, sizeof spec.dest, "C3");          /* inside a source */
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    snprintf(spec.dest, sizeof spec.dest, "J8");
+    snprintf(spec.source[1], sizeof spec.source[1], "nowhere");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    spec.nsources = 0;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    spec.nsources = 1;
+    spec.function = 99;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 static void test_scenarios(void)
 {
     static const char *const xlsx = "build/host/calc-core-scenarios.xlsx";
@@ -5785,6 +5872,7 @@ int main(void)
     test_solver_lp();
     test_solver();
     test_scenarios();
+    test_consolidate();
     test_pdf();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);
