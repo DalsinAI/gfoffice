@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.33.0"
+#define OPR_CORE_VERSION "0.34.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -90,6 +90,13 @@ typedef struct {
  * OWF_OK, or OWF_ERR_MEMORY. */
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report);
+
+/* The deck as PowerPoint (PPTX, opr_pptx.c): its slides with their objects
+ * where they are drawn, text with its look and levels, pictures, shapes,
+ * backgrounds, hidden slides, transitions and speaker notes, a slide master
+ * for each deck master. Tables are saved as text boxes and groups as their
+ * objects, and the report says so. OWF_OK, or OWF_ERR_MEMORY. */
+int opr_export_pptx(const owf_deck *deck, unsigned char **data, size_t *length, owf_report *report);
 
 /* ---- Editing a text frame's text (P3's first part, opr_edit.c) ----
  *
