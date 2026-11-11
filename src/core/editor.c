@@ -2312,6 +2312,17 @@ static int comment_at(ow_editor *editor, const ed_comment *list, int n)
             best_len = len;
         }
     }
+    /* a reply stands where its comment is: the comment, when the caret is in it too */
+    while (best >= 0 && editor->doc->comments[list[best].record].parent >= 0) {
+        int parent = editor->doc->comments[list[best].record].parent, up = -1;
+        for (k = 0; k < n; ++k)
+            if (list[k].record == parent) { up = k; break; }
+        if (up < 0 || up == best) break;
+        if (place_compare(story, comment_start(editor, &list[up]), caret) > 0 ||
+            place_compare(story, caret, run_position(editor, list[up].para, list[up].run)) > 0)
+            break;
+        best = up;
+    }
     return best;
 }
 
