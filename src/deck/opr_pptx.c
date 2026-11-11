@@ -13,6 +13,7 @@
 #include "openpresentation_core.h"
 #include "owf_internal.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
