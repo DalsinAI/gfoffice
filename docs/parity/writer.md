@@ -11,10 +11,12 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 9 Nov 2026 | 2.0.26 | Gap analysis | 63% |
 | 11 Nov 2026 | 2.0.27 | W1 track changes | 66% |
 | 11 Nov 2026 | 2.0.28 | W2 comments | 68% |
+| 11 Nov 2026 | 2.0.29 | W3 fields | 70% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
-after W1 to W4). Comments, the other half of reviewing, add two more.
+after W1 to W4). Comments, the other half of reviewing, add two more, and
+fields two more.
 
 ## Stream W features
 
@@ -33,7 +35,12 @@ after W1 to W4). Comments, the other half of reviewing, add two more.
 | Comments: ODT | Part | 2.0.28 | office:annotation and office:annotation-end, dc:creator, dc:date, initials. Replies and done are saved as plain comments (the save report says so). |
 | Comments: other formats | Done | 2.0.28 | RTF, plain text, HTML and the Amiga formats leave comments out, and the save report says so. |
 | Comments: edit text in the margin, filter by author, print in the margin | Gap | | Edited through a requester; printing leaves comments out. |
-| Fields (doc info, cross-references, user fields, chapter) | Part | | W3. Page, page count, date and time exist. |
+| Fields: document info, file name, word count, chapter | Done | 2.0.29 | Insert > Field: Title, Author, Subject (Project > Document Info...), File Name, Word Count and Chapter (the heading above), next to Page, Page Count, Date and Time. Values are worked out again on load, on save and by Tools > Update Fields. ARexx INSERTFIELD, DOCINFO, UPDATEFIELDS; GETTEXT shows the values. |
+| Fields: user fields | Done | 2.0.29 | Tools > User Fields... sets, changes and removes named values; Insert > Field > User Field... places one. ARexx USERFIELD. |
+| Fields: cross-references | Done | 2.0.29 | Insert > Cross-reference... picks a heading and shows its text or its page; the heading gets a bookmark. ARexx CROSSREF. |
+| Fields: DOCX and ODT | Done | 2.0.29 | DOCX TITLE, AUTHOR, SUBJECT, FILENAME, NUMWORDS, STYLEREF, DOCVARIABLE, REF and PAGEREF (simple and complex fields), docProps/core.xml and w:docVars. ODT text:title, initial-creator, subject, file-name, word-count, chapter, user-field-get with user-field-decls, bookmark-ref and reference-ref, and the meta.xml title, creator and subject. The file's shown value is kept until fields are updated. |
+| Fields: other formats | Done | 2.0.29 | RTF, plain text, HTML and PDF get the shown value. |
+| Fields: number ranges, conditional and hidden text, input fields, references to tables and figures | Gap | | Cross-references point at headings only. |
 | Footnotes and endnotes | Gap | | W4 |
 | Mail merge, indexes, AutoCorrect | Gap | | Phase 2 |
 | Document compare | Gap | | Phase 3; will build on track changes |
