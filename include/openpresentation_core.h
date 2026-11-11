@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.30.0"
+#define OPR_CORE_VERSION "0.35.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -52,6 +52,7 @@ typedef struct {
     int nframes;
     opr_frame *frames;           /* drawing order */
     int overflow;                /* something reached below the slide's bottom edge */
+    int notes;                   /* 1: the slide's notes page (opr_notes_layout), page 0 its size */
 } opr_slide;
 
 /* The slide laid out. measure NULL: the PDF's standard fonts' widths
@@ -70,15 +71,32 @@ int opr_measure(void *userdata, const char *utf8, size_t length, const ol_style 
 /* What kind of face a deck's font is: its own kind, else by its name. */
 owf_font_kind opr_font_kind(const owf_deck *deck, int font);
 
+typedef enum {
+    OPR_PDF_SLIDES,              /* a page a slide, at the slide's size */
+    OPR_PDF_NOTES,               /* a notes page a slide: the slide above its notes */
+    OPR_PDF_HANDOUTS             /* handouts: handout_slides slides to a page */
+} opr_pdf_pages;
+
 typedef struct {
     int with_hidden;             /* hidden slides too */
     const char *today;           /* the date fields' text; NULL: today's */
+    opr_pdf_pages pages;         /* 0: the slides */
+    int handout_slides;          /* OPR_PDF_HANDOUTS: 1, 2, 3, 4, 6 or 9 (others: 6) */
 } opr_pdf_options;
 
-/* The deck as a PDF, one page a slide at the slide's size. options may be
- * NULL. OWF_OK, or OWF_ERR_MEMORY. */
+/* The deck as a PDF: by options->pages, one page a slide at the slide's
+ * size, a notes page a slide, or handouts, both on the deck's notes page
+ * (deck->notes_page; A4 when it has no size). options may be NULL.
+ * OWF_OK, or OWF_ERR_MEMORY. */
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report);
+
+/* The deck as PowerPoint (PPTX, opr_pptx.c): its slides with their objects
+ * where they are drawn, text with its look and levels, pictures, shapes,
+ * backgrounds, hidden slides, transitions and speaker notes, a slide master
+ * for each deck master. Tables are saved as text boxes and groups as their
+ * objects, and the report says so. OWF_OK, or OWF_ERR_MEMORY. */
+int opr_export_pptx(const owf_deck *deck, unsigned char **data, size_t *length, owf_report *report);
 
 /* ---- Editing a text frame's text (P3's first part, opr_edit.c) ----
  *
@@ -382,6 +400,19 @@ int opr_guide_snap_axis(int start, int length, const int *guides, int count,
  * a shape; -1 means bad input. */
 int opr_obj_set_rotation(opr_undo *u, owf_deck *deck, int slide, int obj,
                          int rotation_tenths);
+/* Several changes as one Undo step: begin with room for most steps, make
+ * the changes with the calls above, then end. Undo puts them all back, last
+ * first; Redo makes them again. Undo and Redo are refused while a group is
+ * open. A group of one step is that step; an empty group adds nothing. -1
+ * from begin: bad input, a group already open, or no memory. -1 from end:
+ * no group open, or more steps than room, when the whole history is
+ * cleared, since the change made without a step can no longer be undone. */
+int opr_undo_group_begin(opr_undo *u, int most);
+int opr_undo_group_end(opr_undo *u);
+/* The open group's changes put back, last first, and the group dropped, for
+ * a command that fails part way. 0; -1 with no group open, or when a change
+ * could not be put back or had no step (the history is then cleared). */
+int opr_undo_group_cancel(opr_undo *u, owf_deck *deck);
 int opr_undo_can(const opr_undo *u);
 int opr_redo_can(const opr_undo *u);
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj);
@@ -408,6 +439,200 @@ int opr_hit_frame(const opr_slide *s, int frame, ol_unit x, ol_unit y, ol_measur
 /* The frame of a slide's own object under a point (the frontmost), and the
  * position in its text (at may be NULL); -1 when there is none. */
 int opr_hit(const opr_slide *s, ol_unit x, ol_unit y, ol_measure_text_fn measure, void *userdata, opr_pos *at);
+
+/* ---- Notes pages and handouts (opr_notes.c) ----
+ *
+ * A slide's speaker notes are its notes object (owf_slide.notes), typed in
+ * through the text calls above with obj OPR_NOTES: opr_text_insert(deck,
+ * slide, OPR_NOTES, ...), opr_text_set, Undo and the rest work on it as on
+ * any text frame. The notes page is deck->notes_page's size (A4 portrait
+ * when it has none): the slide's picture at the top, the notes below it,
+ * as ODP's notes pages place them. */
+/* Above any slide's object count, so "no object" stays below 0. */
+#define OPR_NOTES 0x7FFF
+
+/* The notes page's size and its two boxes, in twips: x, y, width, height of
+ * the slide's picture and of the notes' text. */
+void opr_notes_page(const owf_deck *deck, int *width, int *height);
+void opr_notes_boxes(const owf_deck *deck, int slide_box[4], int text_box[4]);
+/* A slide's notes page laid out for the screen and the PDF: frame 0 the
+ * page's white, frame 1 the notes text in its box (opr_frame_obj gives
+ * OPR_NOTES for it). opr_caret_box, opr_hit_frame and opr_hit work on it.
+ * The slide's picture is not in it: draw opr_slide_layout's into
+ * opr_notes_boxes' slide box. NULL when memory runs out. */
+opr_slide *opr_notes_layout(const owf_deck *deck, int slide, ol_measure_text_fn measure, void *userdata);
+/* A handout page with per_page slides on it (1, 2, 3, 4, 6 or 9; others:
+ * 6): the box of the k'th slide on it (0 first), twips; the slide's shape
+ * kept, centred in its cell. -1 for k outside 0..per_page-1. */
+int opr_handout_box(const owf_deck *deck, int per_page, int k, int box[4]);
+/* The text of a slide's notes, paragraphs between "\n" (owf_malloc), and
+ * setting it as one Undo step (u may be NULL: no step). */
+char *opr_notes_get(const owf_deck *deck, int slide);
+int opr_notes_set(opr_undo *u, owf_deck *deck, int slide, const char *utf8);
+
+/* ---- The outline (opr_outline.c) ----
+ *
+ * The deck as one list of rows, as the Outline view shows it: each slide's
+ * title (level 0), then the paragraphs of its outline box (the first
+ * body, object or text placeholder) at levels 1 to 9. A box still showing
+ * its prompt has no rows. Rows are rebuilt after each change. */
+typedef struct {
+    int slide;
+    int obj;                     /* the title box (-1: the slide has none) or the outline box */
+    int para;                    /* the paragraph in obj */
+    int level;                   /* 0: the title; 1..9: the outline's levels */
+} opr_outline_row;
+
+typedef struct {
+    int count, cap;
+    opr_outline_row *rows;
+} opr_outline;
+
+int opr_outline_title_obj(const owf_deck *deck, int slide);
+int opr_outline_body_obj(const owf_deck *deck, int slide);
+/* The rows, into out (zeroed the first time; opr_outline_free after). 0, or -1 when memory runs out. */
+int opr_outline_build(const owf_deck *deck, opr_outline *out);
+void opr_outline_free(opr_outline *out);
+
+/* ---- Several objects at once (P5: opr_multi.c, groups in opr_edit.c) ----
+ *
+ * The objects are top-level ones (parent -1); a group stands for itself and
+ * everything in it (its block: the objects after it inside it). Each call is
+ * one Undo step. -2: refused (see each), -1: bad input or no memory. */
+
+/* Where obj's block ends: the index after the last object inside it (obj + 1
+ * for an object that is not a group). -1 for bad input. */
+int opr_obj_block_end(const owf_deck *deck, int slide, int obj);
+/* The top-level object obj is in (obj itself when it is top-level). */
+int opr_obj_top(const owf_deck *deck, int slide, int obj);
+/* n (2 or more) top-level objects made one group, kept in their drawing order
+ * where the frontmost was; *group is its index. -2 for a group, a placeholder
+ * or an object with nothing drawn. */
+int opr_obj_group(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n, int *group);
+/* A top-level group taken apart: its objects stay where they are drawn, top-
+ * level. *first is the first of them and *count how many objects the block
+ * held. -2 for anything but a top-level group. */
+int opr_obj_ungroup(opr_undo *u, owf_deck *deck, int slide, int group, int *first, int *count);
+/* n objects deleted, each with everything in it. */
+int opr_objs_delete(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n);
+/* The box round n objects as drawn: x, y, width, height in slide twips. */
+int opr_objs_box(const owf_deck *deck, int slide, const int *objs, int n, int box[4]);
+/* n objects moved together by dx, dy twips, held on the slide. */
+int opr_objs_move(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n, int dx, int dy);
+/* Aligned: one object to the slide, several to the box round them all. */
+int opr_objs_align(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n, opr_align how);
+/* 3 or more objects spaced evenly across (vertical 0) or down (1): the first
+ * and last stay and the gaps between them all become the same. -2 for fewer. */
+int opr_objs_distribute(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n, int vertical);
+/* The top-level shown objects wholly inside a rectangle (a drag over the
+ * slide), up to max into out; the count found. */
+int opr_objs_in_rect(const owf_deck *deck, int slide, int x, int y, int width, int height, int *out, int max);
+/* The row of a slide's title (obj -1) or of a paragraph; -1 when there is none. */
+int opr_outline_find(const opr_outline *out, int slide, int obj, int para);
+/* A row's text (owf_malloc): a title's paragraphs joined by spaces. */
+char *opr_outline_text(const owf_deck *deck, const opr_outline_row *r);
+/* The changes, each one Undo step (u may be NULL), and the rows stale after
+ * them. 0, -1 for memory or a bad row, -2 when the row cannot change so:
+ *   set_text: a row's text replaced (a title's whole box); -2 no title box.
+ *   insert_after: Return at a row's end: a new slide after a title (its
+ *     layout), a new paragraph after body text; where the new row is.
+ *   demote: a paragraph a level lower; a title: its slide joins the one
+ *     before, the title a top-level paragraph there and its paragraphs a
+ *     level lower under it (-2 for the first slide, or one before with no
+ *     outline box).
+ *   promote: a paragraph a level higher; a top-level one starts a slide of
+ *     its own after this one, its title, the paragraphs after it going with
+ *     it a level higher (-2 for a title).
+ *   delete: a paragraph taken out; a title row, its whole slide (-2 the last). */
+int opr_outline_set_text(opr_undo *u, owf_deck *deck, const opr_outline_row *r, const char *utf8);
+int opr_outline_insert_after(opr_undo *u, owf_deck *deck, const opr_outline_row *r, int *new_slide, int *new_para);
+int opr_outline_demote(opr_undo *u, owf_deck *deck, const opr_outline_row *r);
+int opr_outline_promote(opr_undo *u, owf_deck *deck, const opr_outline_row *r, int *new_slide);
+int opr_outline_delete(opr_undo *u, owf_deck *deck, const opr_outline_row *r);
+
+/* ---- The slide sorter (opr_sorter.c) ----
+ *
+ * Every slide as a thumbnail in a grid, row by row, for seeing the whole
+ * deck and arranging it: several slides picked at once and moved, copied,
+ * deleted, hidden or shown together, each as one Undo step.
+ *
+ * A pick is which slides are picked: on[i] for slide i, the anchor a Shift
+ * range starts from, and the focus (the slide the keys move from; -1 for
+ * none). Its count follows the deck's (opr_pick_resize). */
+typedef struct {
+    unsigned char *on;
+    int count;
+    int anchor, focus;
+} opr_pick;
+
+typedef enum {
+    OPR_PICK_ONE,                /* a plain click: only this slide */
+    OPR_PICK_RANGE,              /* Shift: from the anchor to this slide */
+    OPR_PICK_TOGGLE,             /* Amiga/Ctrl: this slide in or out */
+    OPR_PICK_ADD_RANGE           /* Shift with Ctrl: the range added */
+} opr_pick_how;
+
+/* 0, or -1 when memory runs out (the pick is then empty, count 0). */
+int opr_pick_resize(opr_pick *p, int count);
+void opr_pick_free(opr_pick *p);
+void opr_pick_clear(opr_pick *p);
+/* Only index picked, as the anchor and focus. -1 for an index outside. */
+int opr_pick_only(opr_pick *p, int index);
+int opr_pick_click(opr_pick *p, int index, opr_pick_how how);
+void opr_pick_all(opr_pick *p);
+int opr_pick_has(const opr_pick *p, int index);
+int opr_pick_number(const opr_pick *p);
+/* The picked slides in order, up to max of them; returns how many there are. */
+int opr_pick_list(const opr_pick *p, int *out, int max);
+
+/* The grid in pixels, inside a view w by h. columns 0 picks as many as fit
+ * thumbnails about 160 pixels wide; otherwise 1..OPR_SORTER_MAX_COLUMNS,
+ * fewer when the thumbnails would be under 32 pixels. label_h is the line
+ * under each thumbnail for its number. */
+#define OPR_SORTER_MAX_COLUMNS 12
+typedef struct {
+    int count, columns, rows;
+    int view_w, view_h;
+    int margin, gap, label_h;
+    int thumb_w, thumb_h;        /* the slide's own shape */
+    int cell_w, cell_h;          /* thumbnail and label */
+    int content_h;               /* all of it, for the scroller */
+} opr_sorter_grid;
+
+int opr_sorter_layout(opr_sorter_grid *g, int view_w, int view_h, int slide_w, int slide_h,
+                      int count, int columns, int label_h);
+/* The scroll (pixels from the top) kept between 0 and the most there is. */
+int opr_sorter_clamp_scroll(const opr_sorter_grid *g, int scroll);
+/* Slide index's thumbnail's top left within the view, scrolled. -1 when
+ * there is no such slide. */
+int opr_sorter_cell(const opr_sorter_grid *g, int index, int scroll, int *x, int *y);
+/* The slide whose thumbnail or label is under x, y (view pixels), or -1. */
+int opr_sorter_hit(const opr_sorter_grid *g, int x, int y, int scroll);
+/* Where slides dropped at x, y go: the gap before slide 0..count. */
+int opr_sorter_gap(const opr_sorter_grid *g, int x, int y, int scroll);
+/* The insertion mark for a gap: a vertical bar at x from y, h high. */
+int opr_sorter_gap_mark(const opr_sorter_grid *g, int gap, int scroll, int *x, int *y, int *h);
+/* The scroll that shows slide index's whole row, changing scroll as little
+ * as it can. */
+int opr_sorter_scroll_to(const opr_sorter_grid *g, int index, int scroll);
+
+typedef enum {
+    OPR_SORTER_LEFT, OPR_SORTER_RIGHT, OPR_SORTER_UP, OPR_SORTER_DOWN,
+    OPR_SORTER_PAGE_UP, OPR_SORTER_PAGE_DOWN, OPR_SORTER_HOME, OPR_SORTER_END
+} opr_sorter_key;
+/* The slide a key goes to from index (kept inside the deck). */
+int opr_sorter_step(const opr_sorter_grid *g, int index, opr_sorter_key key);
+
+/* The picked slides, as one Undo step each command. The pick follows: the
+ * slides moved, the copies made, the slides hidden or shown stay picked;
+ * after a delete, the slide after the last deleted one is. *selected (may
+ * be NULL) is the slide to show. 0, -2 when nothing is picked (or a delete
+ * would leave no slide), -1 for bad input or no memory (the deck is then as
+ * it was, and the Undo history too). */
+int opr_sorter_move(opr_undo *u, owf_deck *deck, opr_pick *pick, int gap, int *selected);
+int opr_sorter_duplicate(opr_undo *u, owf_deck *deck, opr_pick *pick, int *selected);
+int opr_sorter_delete(opr_undo *u, owf_deck *deck, opr_pick *pick, int *selected);
+int opr_sorter_set_hidden(opr_undo *u, owf_deck *deck, opr_pick *pick, int hidden, int *selected);
 
 /* ---- Portable slide-show state (opr_show.c) ----
  *

@@ -192,6 +192,13 @@ OWFSRC_PUB="$OWFSRC_DECK $HERE/libowf/src/owf_cfb.c $HERE/libowf/src/in_pub.c"
 echo "$OUT/GFOpenPublisher ($(wc -c < "$OUT/GFOpenPublisher") bytes)"
 fi
 
+# Workstream hooks (docs/openoffice-parity-plan.md, section 4): a stream that needs a new program or
+# its own link line adds build.d/<stream>.sh, sourced here with this script's variables set.
+for f in "$HERE"/build.d/*.sh; do
+    [ -f "$f" ] || continue
+    . "$f"
+done
+
 # The toolbars' pictures: the Chrome icon set's strips beside the programs, where they look first
 # (PROGDIR:Images/Toolbar/; gfopengadtools lib/ogt_iconset.c). Made by gfopengadtools' tools/iconset.
 mkdir -p "$OUT/Images/Toolbar"

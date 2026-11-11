@@ -175,7 +175,11 @@ typedef struct {
     int layout;                  /* into deck->layouts; -1: none */
     int nobjs, capobjs;
     owf_obj *objs;               /* back to front */
-    owf_story notes;
+    /* The speaker notes: a text object (OWF_OBJ_TEXT, OWF_PH_NOTES) so they
+       are typed in as any text frame is; its text is the notes. Its box is
+       the notes page's, worked out from deck->notes_page (opr_notes_boxes).
+       An owf_obj since owfpresent.library 3.6 (an owf_story before). */
+    owf_obj notes;
     owf_transition transition;
     unsigned long background;    /* OWF_SHADE(0xRRGGBB); 0: the master's */
     int background_image;        /* into res->images; -1: none */
