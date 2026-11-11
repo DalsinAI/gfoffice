@@ -5568,7 +5568,7 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
 /* SCENARIO ADD name cells [comment] | UPDATE name [cells [comment]] | SHOW name | DELETE name | LIST: the active
  * sheet's scenarios (a name with spaces in double quotes). LIST gives the names, comma-separated. 1 done; *now set
  * when there is no such scenario. */
-static const char *rexx_name(const char *p, char *out, size_t size)
+static const char *rexx_quoted(const char *p, char *out, size_t size)
 {
     size_t k = 0;
     p = skip_space(p);
@@ -5602,7 +5602,7 @@ static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
         }
         return 1;
     }
-    p = rexx_name(p, name, sizeof name);
+    p = rexx_quoted(p, name, sizeof name);
     if (!name[0]) { snprintf(out, size, "SCENARIO %s needs a name", verb); return 0; }
     uname = from_latin1(name);
     if (!uname) { snprintf(out, size, "Out of memory"); return 0; }
