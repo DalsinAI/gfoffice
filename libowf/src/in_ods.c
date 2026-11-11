@@ -24,6 +24,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_pivot.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -128,6 +129,25 @@ typedef struct {
     int sheet;
 } ods_name;
 
+/* A pivot table (table:data-pilot-table) as the file has it; made into
+ * the output sheet's two names once every sheet is read (owf_pivot.h). */
+#define ODS_PIVOT_FIELDS 32
+enum { PV_ROW, PV_COLUMN, PV_DATA, PV_PAGE };
+typedef struct {
+    char *name;                  /* the heading it names */
+    long field, position;        /* libowf's own (gfocalc:): its column in the source, its place; -1 */
+    int orientation, function, kind, has_page;
+    char *page;                  /* table:selected-page */
+} ods_pivot_field;
+
+typedef struct {
+    char *target, *source;
+    int grand;                   /* 1 row, 2 column */
+    long rows, cols;             /* gfocalc:output-rows/-columns, or -1 */
+    ods_pivot_field fields[ODS_PIVOT_FIELDS];
+    int nfields;
+} ods_pivot;
+
 typedef struct {
     char *sheet;
     int hmode, vmode;
@@ -213,6 +233,9 @@ typedef struct {
     /* named ranges and expressions, made once the sheets are known */
     ods_name *names;
     int nnames, capnames;
+    /* pivot tables */
+    ods_pivot *pivots;
+    int npivots, cappivots;
 
     /* settings */
     char *active;
@@ -3582,6 +3605,8 @@ static void text_start(ods *o, const owf_xml_event *e)
     }
 }
 
+static void pivot_start(ods *o, const owf_xml_event *e);
+
 static void body_start(ods *o, const owf_xml_event *e)
 {
     if (o->in_cell) {
@@ -3631,6 +3656,9 @@ static void body_start(ods *o, const owf_xml_event *e)
                 filter_start(o, e);
             } else if (!strcmp(n, "dde-link")) {
                 owf_report_add(o->report, OWF_NOTE_LOST, "Links to other programs (DDE) keep their last values");
+            } else if (!strcmp(n, "data-pilot-table") || !strcmp(n, "source-cell-range") ||
+                       !strcmp(n, "data-pilot-field")) {
+                pivot_start(o, e);
             }
         } else if (!strcmp(n, "table-column")) {
             table_column(o, e);
@@ -3847,16 +3875,196 @@ static int read_part(ods *o, char *data, size_t length)
     return OWF_OK;
 }
 
+/* ---- Pivot tables (table:data-pilot-table) ---- */
+
+static long pivot_whole(const char *v)
+{
+    char *end;
+    long n;
+    if (!v)
+        return -1;
+    n = strtol(v, &end, 10);
+    return end == v || *end || n < 0 || n > 1048576L ? -1 : n;
+}
+
+static void pivot_start(ods *o, const owf_xml_event *e)
+{
+    ods_pivot *pv;
+    if (is(e, NS_TABLE, "data-pilot-table")) {
+        const char *grand = ev(e, NS_TABLE, "grand-total");
+        if (!(pv = grow(o, o->pivots, o->npivots, &o->cappivots, sizeof *pv)))
+            return;
+        o->pivots = pv;
+        pv = &o->pivots[o->npivots++];
+        memset(pv, 0, sizeof *pv);
+        pv->target = copy(o, ev(e, NS_TABLE, "target-range-address"));
+        pv->grand = !grand || !strcmp(grand, "both") ? 3 : !strcmp(grand, "row") ? 1 : !strcmp(grand, "column") ? 2 : 0;
+        pv->rows = pivot_whole(ev(e, NS_GFO, "output-rows"));
+        pv->cols = pivot_whole(ev(e, NS_GFO, "output-columns"));
+        return;
+    }
+    if (!o->npivots)
+        return;
+    pv = &o->pivots[o->npivots - 1];
+    if (is(e, NS_TABLE, "source-cell-range")) {
+        if (!pv->source)
+            pv->source = copy(o, ev(e, NS_TABLE, "cell-range-address"));
+    } else if (is(e, NS_TABLE, "data-pilot-field")) {
+        const char *orient = ev(e, NS_TABLE, "orientation"), *layout = ev(e, NS_TABLE, "is-data-layout-field");
+        const char *page = ev(e, NS_TABLE, "selected-page");
+        ods_pivot_field *f;
+        int kind;
+        if (!orient || (layout && !strcmp(layout, "true")))
+            return;
+        kind = !strcmp(orient, "row") ? PV_ROW : !strcmp(orient, "column") ? PV_COLUMN
+             : !strcmp(orient, "data") ? PV_DATA : !strcmp(orient, "page") ? PV_PAGE : -1;
+        if (kind < 0)
+            return;                              /* hidden: not used */
+        if (pv->nfields == ODS_PIVOT_FIELDS) {
+            owf_report_add(o->report, OWF_NOTE_LOST, "Pivot tables with more than 32 fields lost the rest");
+            return;
+        }
+        f = &pv->fields[pv->nfields++];
+        memset(f, 0, sizeof *f);
+        f->orientation = kind;
+        f->name = copy(o, ev(e, NS_TABLE, "source-field-name") ? ev(e, NS_TABLE, "source-field-name") : "");
+        f->field = pivot_whole(ev(e, NS_GFO, "field"));
+        f->position = pivot_whole(ev(e, NS_GFO, "position"));
+        f->function = owf_pivot_function_from_word(ev(e, NS_TABLE, "function"));
+        if (kind == PV_DATA && !f->function)
+            f->function = OWF_PIVOT_FN_SUM;      /* "auto" and the rest: a sum, as for numbers */
+        if (page) {
+            f->has_page = 1;
+            f->page = copy(o, page);
+            f->kind = (int)pivot_whole(ev(e, NS_GFO, "item-kind"));
+        }
+    }
+}
+
+/* The source column a field names: libowf's own number, or the heading. -1 when none. */
+static long pivot_field_index(const owf_book *book, const owf_pivotdef *def, const ods_pivot_field *f)
+{
+    unsigned width = def->source.last_col - def->source.first_col + 1u, k;
+    char heading[160];
+    if (f->field >= 0 && (unsigned long)f->field < width)
+        return f->field;
+    for (k = 0; k < width; k++) {
+        owf_pivot_field_heading(book, def, k, heading, sizeof heading);
+        if (f->name && !strcmp(heading, f->name))
+            return (long)k;
+    }
+    return -1;
+}
+
+/* Turns one data-pilot-table into a definition; 1 when it fits GFOpenCalc's. */
+static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
+{
+    owf_range target;
+    int k, pass, ok = 1;
+    owf_pivot_init(def);
+    if (!pv->target || !pv->source || !owf_pivot_parse_source(o->book, pv->target, sheet, &target) ||
+        !owf_pivot_parse_source(o->book, pv->source, &def->source_sheet, &def->source))
+        return 0;
+    def->at_row = target.first_row;
+    def->at_col = target.first_col;
+    def->rows = pv->rows >= 0 ? (unsigned)pv->rows : target.last_row - target.first_row + 1u;
+    def->cols = pv->cols >= 0 ? (unsigned)pv->cols : target.last_col - target.first_col + 1u;
+    def->row_grand = (pv->grand & 1) != 0;
+    def->col_grand = (pv->grand & 2) != 0;
+    /* in libowf's own order when the file has it (gfocalc:position), else the file's */
+    for (pass = 0; pass < ODS_PIVOT_FIELDS && ok; pass++) {
+        for (k = 0; k < pv->nfields && ok; k++) {
+            const ods_pivot_field *f = &pv->fields[k];
+            long index;
+            long want = f->position >= 0 ? f->position : -1;
+            if ((want >= 0 && want != pass) || (want < 0 && pass))
+                continue;
+            index = pivot_field_index(o->book, def, f);
+            if (index < 0) {
+                ok = 0;
+                break;
+            }
+            switch (f->orientation) {
+            case PV_ROW:
+                if (def->nrow < OWF_PIVOT_FIELDS) def->row[def->nrow++] = (unsigned)index; else ok = 0;
+                break;
+            case PV_COLUMN:
+                if (def->ncol < OWF_PIVOT_FIELDS) def->col[def->ncol++] = (unsigned)index; else ok = 0;
+                break;
+            case PV_DATA:
+                if (def->ndata < OWF_PIVOT_DATA) {
+                    def->data[def->ndata].field = (unsigned)index;
+                    def->data[def->ndata++].function = f->function;
+                } else
+                    ok = 0;
+                break;
+            default:
+                if (def->npage < OWF_PIVOT_PAGES) {
+                    owf_pivot_page *pg = &def->page[def->npage++];
+                    pg->field = (unsigned)index;
+                    pg->kind = OWF_PIVOT_ALL;
+                    if (f->has_page) {
+                        owf_pivot_item_from_text(pg, f->page);
+                        if (f->kind == OWF_PIVOT_TEXT && pg->kind != OWF_PIVOT_TEXT) {
+                            pg->kind = OWF_PIVOT_TEXT;
+                            snprintf(pg->text, sizeof pg->text, "%s", f->page ? f->page : "");
+                        } else if (f->kind == OWF_PIVOT_BOOL) {
+                            pg->kind = OWF_PIVOT_BOOL;
+                            pg->number = f->page && (!strcmp(f->page, "TRUE") || !strcmp(f->page, "1"));
+                        }
+                    }
+                } else
+                    ok = 0;
+                break;
+            }
+        }
+    }
+    return ok && owf_pivot_check(o->book, def);
+}
+
+/* The pivot tables as names: which sheets got one (1 each), so their old names are left out. */
+static void pivot_names(ods *o, char *made)
+{
+    int i;
+    for (i = 0; i < o->npivots && !o->failed; i++) {
+        owf_pivotdef def;
+        char source[600], config[OWF_PIVOT_TEXT_MAX];
+        int sheet;
+        if (!pivot_def(o, &o->pivots[i], &sheet, &def) || made[sheet] ||
+            !owf_pivot_source_text(o->book, &def, source, sizeof source) ||
+            !owf_pivot_config_text(&def, config, sizeof config)) {
+            owf_report_add(o->report, OWF_NOTE_LOST, "Some pivot tables keep their cells only: their layout could not be read");
+            continue;
+        }
+        made[sheet] = 1;
+        if (owf_book_add_name(o->book, OWF_PIVOT_SOURCE, sheet, source, 1) < 0 ||
+            owf_book_add_name(o->book, OWF_PIVOT_CONFIG, sheet, config, 1) < 0)
+            o->failed = 1;
+    }
+}
+
 /* ---- The whole spreadsheet ---- */
 
 static void finish(ods *o)
 {
     int i, k;
+    char *made;
     if (o->style_maps && !o->cf_seen)                /* ODF's own conditional styles alone: not read */
         owf_report_add(o->report, OWF_NOTE_LOST, "Conditional formatting is not read yet");
-    for (i = 0; i < o->nnames && !o->failed; i++)
-        if (owf_book_add_name(o->book, o->names[i].name, o->names[i].sheet, o->names[i].formula, 0) < 0)
+    made = calloc((size_t)o->book->nsheets + 1, 1);
+    if (!made) {
+        o->failed = 1;
+        return;
+    }
+    pivot_names(o, made);
+    for (i = 0; i < o->nnames && !o->failed; i++) {
+        int pivot = owf_pivot_is_name(o->names[i].name);
+        if (pivot && o->names[i].sheet >= 0 && o->names[i].sheet < o->book->nsheets && made[o->names[i].sheet])
+            continue;                            /* the data-pilot-table's say */
+        if (owf_book_add_name(o->book, o->names[i].name, o->names[i].sheet, o->names[i].formula, pivot) < 0)
             o->failed = 1;
+    }
+    free(made);
     for (i = 0; i < o->book->nsheets; i++) {
         owf_sheet *sh = &o->book->sheets[i];
         if (o->active && !strcmp(sh->name, o->active))
@@ -3910,6 +4118,16 @@ static void free_reader(ods *o)
         free(o->names[i].formula);
     }
     free(o->names);
+    for (i = 0; i < o->npivots; i++) {
+        int k;
+        free(o->pivots[i].target);
+        free(o->pivots[i].source);
+        for (k = 0; k < o->pivots[i].nfields; k++) {
+            free(o->pivots[i].fields[k].name);
+            free(o->pivots[i].fields[k].page);
+        }
+    }
+    free(o->pivots);
     free(o->active);
     for (i = 0; i < o->nsplits; i++)
         free(o->splits[i].sheet);

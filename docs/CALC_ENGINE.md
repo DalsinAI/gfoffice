@@ -104,9 +104,59 @@ reloaded summary to refresh without application-private file parts.
 
 `oc_core_refresh_pivot` rebuilds the active summary on a deep workbook copy,
 clears stale cells when the result shrinks and swaps the complete result only
-after success. Refresh is one whole-book Undo step. The summary cells remain a
-snapshot between refreshes; interactive field filtering and native ODF/OOXML
-pivot-cache definitions are still outside this vertical slice.
+after success. Refresh is one whole-book Undo step.
+
+### Pivot tables (field layout)
+
+Data > Pivot Table... (core: `oc_core_pivot_create`, `oc_core_pivot_get`,
+`oc_core_pivot_set_layout`, `oc_core_refresh_pivot`) replaces the summary's
+three requesters with a field layout window. The definition is
+`owf_pivotdef` (`libowf/include/owf_pivot.h`; its code is
+`libowf/calc/owf_pivotdef.h`, compiled into `owf_book.c` and, on
+owfcalc.library, into the core's `oc_pivotdef.c`):
+
+- up to 8 row fields and 8 column fields, nested outer first;
+- up to 8 data fields, each with one of the eleven functions; a field may be
+  a data field as well as a row, column or page field;
+- up to 4 page fields, each keeping every item or one item (a text, number,
+  logical value or blank), which filter the source rows;
+- a grand total row and a grand total column, each optional.
+
+Each field's items keep their first-occurrence order and nested keys are
+grouped by their outer items. Items and keys are hashed, so making a table
+is linear in the source's rows. The output has the page fields at its top
+left, a blank row, the column items' heading rows (with a row of data field
+names when there are several), then one row per row key; outer row items are
+written once per group. Headings and totals are bold; values take their data
+field's source cell style. At most 65536 values are made. The table's
+place and size are kept, so a refresh or a new layout clears only the old
+table's rectangle (an older summary with no size clears its sheet as
+before). A table may share its source's sheet if it does not cover the
+source.
+
+`_GF_PIVOT_CONFIG` now holds `"2;r=...;c=...;d=field:function,...;p=field:item,...;g=...;t=row,col,rows,cols"`
+(fields counted from the source's first column; items with `%XX` for the
+characters the text uses). The first form, `"row,column,value,function"`
+with absolute columns, still reads.
+
+Files carry the pivot table natively, and the readers turn it back into the
+two names:
+
+- **ODS**: `table:data-pilot-tables/table:data-pilot-table` with its target
+  range, `table:source-cell-range`, one `table:data-pilot-field` per field
+  (`table:orientation` row, column, data with `table:function`, or page with
+  `table:selected-page`), and `table:grand-total`. libowf adds
+  `gfocalc:field` and `gfocalc:position` (the field's source column and
+  order) and the output's size; without them a file's fields are found by
+  their headings, so an OpenOffice or LibreOffice pivot table reads too.
+- **XLSX**: a pivot cache (`pivotCacheDefinition`: worksheet source, cache
+  fields with the shared items of row, column and page fields, no records,
+  `refreshOnLoad`) and a `pivotTableDefinition` on the output sheet (pivot
+  fields, row/column/page/data fields, grand totals). Excel's own pivot
+  tables read when their source is a range of cells; one table a sheet.
+
+The two names are not written beside the native pivot table, and a file that
+has both (an older GFOpenCalc's names and a newer table) takes the table.
 
 ## How it works
 
