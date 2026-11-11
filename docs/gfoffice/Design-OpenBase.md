@@ -561,7 +561,9 @@ build.
 
 ### 16.2 Speed (milliseconds)
 
-100 journal commits; 10,000 rows for the rest (2,000 on `T:`).
+100 journal commits; 1,000 lookups by key; 10,000 rows for the rest
+(2,000 on `T:`). A second run, the table below, varied by up to 4 times on
+`DH1:` (the host folder), so read the disk columns as a guide.
 
 | Test | hard DH1 | hard RAM | soft DH1 | soft RAM | no FPU DH1 | no FPU RAM | T: |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -575,7 +577,7 @@ build.
 | sort text | 30 | 34 | 31 | 29 | 27 | 34 | 6 |
 | whole probe | 4833 | 1221 | 4998 | 1213 | 5739 | 1038 | 880 |
 
-Lookups by key, 10,000 rows, one statement each:
+1,000 lookups by key in a 10,000-row table:
 
 | Build and disk | each its own transaction | all in one transaction | `unix-none`, own transactions |
 | --- | --- | --- | --- |
