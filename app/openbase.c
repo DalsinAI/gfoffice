@@ -983,7 +983,7 @@ static void edit_indexes(struct Window *parent)
                                         ? dt.fields[dsel].name : dt.nfields > 1 ? dt.fields[1].name : dt.fields[0].name;
                     int k = dt.nindexes + 1, j, clash;
                     do {
-                        snprintf(name, sizeof name, "%.40s by %.20s", dt.name, field);
+                        snprintf(name, sizeof name, "%.38s by %.20s", dt.name, field);
                         if (k > dt.nindexes + 1) snprintf(name, sizeof name, "%.40s index %d", dt.name, k);
                         for (clash = 0, j = 0; j < dt.nindexes; j++) if (!strcmp(dt.indexes[j].name, name)) clash = 1;
                         k++;
