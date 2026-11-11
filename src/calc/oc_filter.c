@@ -556,7 +556,7 @@ int oc_core_set_autofilter(oc_core *core, int enabled)
         show_filter_rows(sheet, sheet->autofilter.first_row + 1, sheet->autofilter.last_row, exact);
         sheet->has_autofilter = 0;
         memset(&sheet->autofilter, 0, sizeof sheet->autofilter);
-        free(sheet->autofilter_xml);
+        owf_free(sheet->autofilter_xml);
         sheet->autofilter_xml = NULL;
     } else {
         state = oc_state(core);
@@ -585,7 +585,7 @@ int oc_core_set_autofilter(oc_core *core, int enabled)
         }
         sheet->has_autofilter = 1;
         sheet->autofilter = range;
-        free(sheet->autofilter_xml);
+        owf_free(sheet->autofilter_xml);
         sheet->autofilter_xml = NULL;
     }
     oc_undo_push(core, u);
@@ -705,7 +705,7 @@ static char *rules_xml(const owf_sheet *sheet, filter_rule *rules, int n)
         cap += sizeof custom_before + sizeof pair_before + sizeof pair_between + sizeof custom_after +
                sizeof top_fmt + 128 + escaped_size(rules[i].value) +
                (rules[i].has_second ? escaped_size(rules[i].value2) : 0);
-    if (!(out = malloc(cap)))
+    if (!(out = owf_malloc(cap)))                /* it goes into the book: the book's allocator */
         return NULL;
     p = out;
     for (i = 0; i < n; i++) {
@@ -860,12 +860,12 @@ static int apply_rules(oc_core *core, owf_sheet *sheet, filter_rule *rules, int 
     if (nrules && !(xml = rules_xml(sheet, rules, nrules)))
         return OWF_ERR_MEMORY;
     if (nrules && count && !(hidden = malloc(count))) {
-        free(xml);
+        owf_free(xml);
         return OWF_ERR_MEMORY;
     }
     if ((rc = prepare_rules(core, rules, nrules)) != OWF_OK) {
         free(hidden);
-        free(xml);
+        owf_free(xml);
         return rc;
     }
     for (row = first; nrules && row <= last; row++)
@@ -873,14 +873,14 @@ static int apply_rules(oc_core *core, owf_sheet *sheet, filter_rule *rules, int 
     u = filter_step(core);
     if (!u) {
         free(hidden);
-        free(xml);
+        owf_free(xml);
         return OWF_ERR_MEMORY;
     }
     {
         int exact = mark_filter_rows(core, sheet);
         show_filter_rows(sheet, first, last, exact);
     }
-    free(sheet->autofilter_xml);
+    owf_free(sheet->autofilter_xml);
     sheet->autofilter_xml = xml;
     for (row = first; nrules && row <= last; row++)
         if (hidden[row - first]) {
