@@ -11,6 +11,7 @@ working. Phase 1's target is 74%.
 | 9 Nov 2026 | Gap analysis | 62% |
 | 11 Nov 2026 | C1 pivot table field layout | 65% |
 | 11 Nov 2026 | C2 Solver | 67% |
+| 11 Nov 2026 | C3 Scenarios | 68% |
 
 ## Phase 1 features
 
@@ -18,7 +19,7 @@ working. Phase 1's target is 74%.
 | --- | --- | --- | --- |
 | Pivot tables | Done (most) | C1 | Row, column, data and page fields; several data fields; page-field filters; grand totals on/off; refresh; layout afresh; ODS `table:data-pilot-table` and XLSX pivot cache/table both ways; Undo. Not yet: subtotals per outer item, hiding single items, sorting items, date/number grouping, drill-down, "show data as" (percent of...), several pivot tables on one sheet |
 | Solver (linear, integer) | Done (linear) | C2 | Max, min or value of a target; up to 200 variables and 32 constraints (<=, =, >=, whole, binary; limits as numbers, cells or ranges); variables kept >= 0 or not; own two-phase simplex and branch and bound; linearity checked; model kept in Excel's solver_* names (XLSX and ODS); ARexx SOLVE; Undo. Not yet: models that are not linear, reports, keeping answers as scenarios |
-| Scenarios | Gap | C3 | ODS `table:scenario` |
+| Scenarios | Done | C3 | Add, show, update, delete; up to 32 a sheet, 32 ranges and 2048 cells each; formulas kept; ranges follow row and column edits; ODS `table:scenario` tables and XLSX `scenarios` both ways; ARexx SCENARIO; Undo. Not yet: the scenario frame and drop-down on the sheet, a summary report, protection |
 | Consolidate | Gap | C4 | |
 | Named-range and database-range manager, advanced filter | Part | C5 | Define Name exists; no list to edit or delete names |
 | Automatic data-table (Multiple Operations) recalc | Part | C6 | |
@@ -42,3 +43,14 @@ working. Phase 1's target is 74%.
   answer, not linear, bad models, Undo and Redo, the model in XLSX and ODS.
   Also under AddressSanitizer and UBSan (`make check`).
 - Instance-32 lab copy: tests/arexx/calc-solver.rexx; see the pull request.
+
+## How C3 was checked
+
+- Host tests (tests/calc_core): add two scenarios over three ranges (numbers,
+  text, a text that looks like a number, a formula), names taken and bad
+  cells refused, show each (the formulas recalculate), the shown one marked,
+  Undo and Redo, a row put in above (the ranges follow), XLSX and ODS save
+  and reopen (the ODS scenario tables do not become sheets), update in
+  place, delete (the later one's names move down), Undo of a delete. Also
+  under AddressSanitizer and UBSan.
+- Instance-32 lab copy: tests/arexx/calc-scenario.rexx; see the pull request.

@@ -71,6 +71,38 @@ model words it solves the sheet's own model. RC 5 when the model has no
 answer (no values meet it, no limit, or not linear), 10 when it does not
 make sense; LASTERROR says why. Test script: tests/arexx/calc-solver.rexx.
 
+## Scenarios
+
+Data > Scenarios keeps named sets of values for some cells of a sheet (its
+changing cells: up to 32 ranges and 2048 cells), each with a comment, up to
+32 a sheet. Add keeps the cells' present inputs (numbers, text, formulas as
+typed); Show puts a scenario's back in its cells and marks it as the one
+shown; Update keeps the present inputs afresh; Delete takes one away. Each
+is one Undo step (`src/calc/oc_scenario.c`).
+
+A sheet's scenarios are its hidden names (`libowf/include/owf_scenario.h`,
+code in `libowf/calc/owf_scenariodef.h`, shared as the pivot definitions'
+is): `_GF_SCENARIO_k` holds the name, comment, whether it was shown last and
+the inputs (escaped as the pivot text is), and `_GF_SCENARIO_k_Rn` each
+range, so the ranges follow inserted and deleted rows and columns as any
+name does. A scenario whose ranges no longer hold as many cells as it has
+inputs is left alone (not shown) rather than shown wrongly.
+
+Files: ODS writes each scenario as ODF does, a scenario table after its
+sheet (`table:scenario` with its ranges, comment and whether it is active,
+and the scenario's cells at their own addresses; `gfocalc:scenario-name`
+keeps a name the table had to change to stay unique), and reads scenario
+tables back into their sheet's scenarios, so they are not sheets in
+GFOpenCalc. XLSX writes the sheet's `scenarios` element (each `scenario`
+with its `inputCells` and their values, `current` and `show` for the one
+shown) and reads Excel's; Excel keeps values only, so a formula in a
+scenario is written as its text.
+
+ARexx: `SCENARIO ADD name cells [comment]`, `SCENARIO UPDATE name [cells
+[comment]]`, `SCENARIO SHOW name`, `SCENARIO DELETE name`, `SCENARIO LIST`
+(the names, with commas between); a name with spaces in double quotes. RC 5
+when there is no such scenario. Test script: tests/arexx/calc-scenario.rexx.
+
 ## Multiple Operations
 
 GFOpenCalc 0.1.67 supports the column, row and two-variable forms of Apache

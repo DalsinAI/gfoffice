@@ -5651,7 +5651,7 @@ static void test_scenarios(void)
     CHECK(oc_core_scenario_count(core) == 1);
     enter_at(core, "B2", "100");
     enter_at(core, "C2", "200");
-    enter_at(core, "B3", "007");
+    enter_at(core, "B3", "'007");
     enter_at(core, "E5", "5");
     CHECK(oc_core_scenario_save(core, -1, "High", "B2:C2,B3,E5", "") == OWF_OK);
     CHECK(oc_core_scenario_save(core, -1, "high", "B2", "") == OWF_ERR_UNSUPPORTED);   /* the name is taken */
