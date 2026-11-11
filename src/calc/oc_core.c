@@ -6,6 +6,7 @@
  */
 #include "oc_internal.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -926,6 +927,183 @@ int oc_core_delete_name(oc_core *core, const char *name, int sheet)
         memmove(&book->names[at], &book->names[at + 1],
                 (size_t)(book->nnames - at - 1) * sizeof book->names[0]);
     book->nnames--;
+    rc = oc_recalc(core, 1);
+    if (rc != OWF_OK) {
+        oc_undo_free(undo);
+        return rc;
+    }
+    oc_undo_push(core, undo);
+    oc_changed(core);
+    return OWF_OK;
+}
+
+/* ---- a name renamed, and the formulas that use it ---- */
+
+static int name_char(unsigned char c, int first)
+{
+    if (c == '_' || c == '\\' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c >= 0x80)
+        return 1;
+    return !first && (c == '.' || (c >= '0' && c <= '9'));
+}
+
+/* formula with each use of the name old as new (owf_malloc'd), or NULL when
+ * it has none (or memory runs out: *memory set). A use is a word of its own
+ * that is not in a string, not a function (no "(" after it), not a sheet
+ * ("Plan!") and not qualified by one ("Plan!Rate" stays). */
+static char *renamed_formula(const char *formula, const char *old, const char *new_name, int *memory)
+{
+    size_t len = strlen(formula), nlen = strlen(new_name), olen = strlen(old), cap, at = 0;
+    const char *p = formula;
+    char *out;
+    int uses = 0, after_sheet = 0;
+    cap = len + 1 + (nlen > olen ? (nlen - olen) * (len / (olen ? olen : 1) + 1) : 0);
+    out = owf_malloc(cap);
+    if (!out) {
+        *memory = 1;
+        return NULL;
+    }
+    while (*p) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '"' || c == '\'' || c == '[') {
+            char close = c == '[' ? ']' : (char)c;
+            out[at++] = *p++;
+            while (*p) {
+                if (*p == close && !(close != ']' && p[1] == close)) {
+                    out[at++] = *p++;
+                    break;
+                }
+                if (*p == close)                      /* "" or '' inside */
+                    out[at++] = *p++;
+                out[at++] = *p++;
+            }
+            after_sheet = c == '\'' && *p == '!';
+            continue;
+        }
+        if (name_char(c, 1)) {
+            const char *s = p, *q;
+            while (*p && name_char((unsigned char)*p, 0))
+                p++;
+            q = p;
+            while (*q == ' ')
+                q++;
+            if (!after_sheet && *p != '!' && *q != '(' && (size_t)(p - s) == olen) {
+                size_t k;
+                int same = 1;
+                for (k = 0; k < olen && same; k++)
+                    same = tolower((unsigned char)s[k]) == tolower((unsigned char)old[k]);
+                if (same) {
+                    memcpy(out + at, new_name, nlen);
+                    at += nlen;
+                    uses++;
+                    after_sheet = 0;
+                    continue;
+                }
+            }
+            memcpy(out + at, s, (size_t)(p - s));
+            at += (size_t)(p - s);
+            after_sheet = 0;
+            continue;
+        }
+        if (c == '!') {
+            out[at++] = *p++;
+            after_sheet = 1;
+            continue;
+        }
+        out[at++] = *p++;
+        after_sheet = 0;
+    }
+    out[at] = 0;
+    if (!uses) {
+        owf_free(out);
+        return NULL;
+    }
+    return out;
+}
+
+/* Puts each renamed formula in place: 0 when memory ran out. */
+static int rename_text(char **formula, const char *old, const char *new_name)
+{
+    int memory = 0;
+    char *changed;
+    if (!*formula)
+        return 1;
+    changed = renamed_formula(*formula, old, new_name, &memory);
+    if (changed) {
+        owf_free(*formula);
+        *formula = changed;
+    }
+    return !memory;
+}
+
+/* The uses of a name renamed: in the cells and names its scope reaches (a
+ * book-wide name not on sheets with a local name of the same name). */
+static int rename_uses(owf_book *book, const char *old, int sheet, const char *new_name)
+{
+    int s, i;
+    for (s = 0; s < book->nsheets; s++) {
+        owf_sheet *sh = &book->sheets[s];
+        if (sheet >= 0 ? s != sheet : defined_name_index(book, old, s) >= 0)
+            continue;
+        for (i = 0; i < sh->ncells; i++)
+            if (!rename_text(&sh->cells[i].formula, old, new_name))
+                return 0;
+    }
+    for (i = 0; i < book->nnames; i++) {
+        int ns = book->names[i].sheet;
+        if (sheet >= 0 ? ns != sheet : (ns >= 0 && defined_name_index(book, old, ns) >= 0))
+            continue;
+        if (!rename_text(&book->names[i].formula, old, new_name))
+            return 0;
+    }
+    return 1;
+}
+
+int oc_core_change_name(oc_core *core, const char *old_name, int old_sheet, const char *name, int sheet,
+                        const char *formula)
+{
+    owf_book *book;
+    oc_undo *undo;
+    char *new_name, *new_formula;
+    int at, other, rc;
+    if (!core || !old_name || !defined_name_ok(name) || !formula || old_sheet < -1 ||
+        old_sheet >= core->book->nsheets || sheet < -1 || sheet >= core->book->nsheets)
+        return OWF_ERR_FORMAT;
+    while (*formula == ' ' || *formula == '=')
+        formula++;
+    if (!*formula)
+        return OWF_ERR_FORMAT;
+    book = core->book;
+    at = defined_name_index(book, old_name, old_sheet);
+    if (at < 0)
+        return OWF_ERR_UNSUPPORTED;
+    other = defined_name_index(book, name, sheet);
+    if (other >= 0 && other != at)
+        return OWF_ERR_UNSUPPORTED;                  /* the scope has that name already */
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    new_name = oc_strdup(name);
+    new_formula = oc_strdup(formula);
+    if (!new_name || !new_formula) {
+        owf_free(new_name);
+        owf_free(new_formula);
+        return OWF_ERR_MEMORY;
+    }
+    undo = name_undo(core);
+    if (!same_name(old_name, name) && sheet == old_sheet && !rename_uses(book, old_name, old_sheet, name)) {
+        owf_free(new_name);
+        owf_free(new_formula);
+        if (undo) {                                    /* back as it was */
+            oc_undo_push(core, undo);
+            oc_core_undo(core);
+        }
+        return OWF_ERR_MEMORY;
+    }
+    at = defined_name_index(book, old_name, old_sheet);
+    owf_free(book->names[at].name);
+    owf_free(book->names[at].formula);
+    book->names[at].name = new_name;
+    book->names[at].formula = new_formula;
+    book->names[at].sheet = sheet;
     rc = oc_recalc(core, 1);
     if (rc != OWF_OK) {
         oc_undo_free(undo);

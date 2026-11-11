@@ -440,6 +440,118 @@ static void test_defined_names(void)
     oc_core_free(core);
 }
 
+static void test_change_name(void)
+{
+    oc_core *core = fresh();
+    const owf_defname *name;
+    int second;
+    if (!core)
+        return;
+    enter_at(core, "B2", "2");
+    enter_at(core, "B3", "3");
+    CHECK(oc_core_set_name(core, "Sales", -1, "'Sheet1'!$B$2:$B$3") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Rate", -1, "0.5") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Twice", -1, "SUM(Sales)*2") == OWF_OK);
+    enter_at(core, "D1", "=SUM(Sales)+Rate");
+    enter_at(core, "D2", "=\"Sales\"&COUNT(sales)");
+    enter_at(core, "D3", "=Twice");
+    enter_at(core, "D4", "=SalesTax+1");                 /* a longer word stays */
+    second = oc_core_add_sheet(core, "Plan");
+    CHECK(second == 1);
+    CHECK(oc_core_set_name(core, "Sales", second, "'Plan'!$A$1") == OWF_OK);
+    enter_at(core, "A1", "40");
+    enter_at(core, "B1", "=Sales+1");                    /* the sheet's own Sales */
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(num(core, "D1") == 5.5 && num(core, "D3") == 10);
+
+    CHECK(oc_core_change_name(core, "sales", -1, "Revenue", -1, "'Sheet1'!$B$2:$B$3") == OWF_OK);
+    CHECK_STR(formula(core, "D1"), "SUM(Revenue)+Rate");
+    CHECK_STR(formula(core, "D2"), "\"Sales\"&COUNT(Revenue)");
+    CHECK_STR(formula(core, "D4"), "SalesTax+1");
+    CHECK(num(core, "D1") == 5.5 && num(core, "D3") == 10);
+    name = oc_core_name_at(core, 2);
+    CHECK(name && !strcmp(name->name, "Twice") && !strcmp(name->formula, "SUM(Revenue)*2"));
+    CHECK(oc_core_set_sheet(core, second) == OWF_OK);
+    CHECK_STR(formula(core, "B1"), "Sales+1");           /* not the book's: its own */
+    CHECK(num(core, "B1") == 41);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK_STR(formula(core, "D1"), "SUM(Sales)+Rate");
+    CHECK(oc_core_redo(core) == OWF_OK);
+
+    /* a new formula, and a new scope */
+    CHECK(oc_core_change_name(core, "Rate", -1, "Rate", -1, "=0.25") == OWF_OK && num(core, "D1") == 5.25);
+    CHECK(oc_core_change_name(core, "Rate", -1, "Rate", 0, "0.75") == OWF_OK && num(core, "D1") == 5.75);
+    name = oc_core_name_at(core, 1);
+    CHECK(name && name->sheet == 0);
+
+    /* refused */
+    CHECK(oc_core_change_name(core, "Missing", -1, "Other", -1, "1") == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_change_name(core, "Revenue", -1, "Twice", -1, "1") == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_change_name(core, "Revenue", -1, "B2", -1, "1") == OWF_ERR_FORMAT);
+    CHECK(oc_core_change_name(core, "Revenue", -1, "Fine", -1, " ") == OWF_ERR_FORMAT);
+    CHECK(oc_core_change_name(core, "Revenue", -1, "Fine", 7, "1") == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
+static void test_advanced_filter(void)
+{
+    oc_core *core = fresh();
+    unsigned kept = 99;
+    if (!core)
+        return;
+    /* the list A1:C7 */
+    enter_at(core, "A1", "Region");
+    enter_at(core, "B1", "Item");
+    enter_at(core, "C1", "Sales");
+    enter_at(core, "A2", "East");      enter_at(core, "B2", "Pens");    enter_at(core, "C2", "10");
+    enter_at(core, "A3", "West");      enter_at(core, "B3", "Ink");     enter_at(core, "C3", "25");
+    enter_at(core, "A4", "Eastern");   enter_at(core, "B4", "Pens");    enter_at(core, "C4", "40");
+    enter_at(core, "A5", "North");     enter_at(core, "B5", "Paper");   enter_at(core, "C5", "=C2*5");
+    enter_at(core, "A6", "East");      enter_at(core, "B6", "Pens");    enter_at(core, "C6", "10");
+    enter_at(core, "A7", "South");     enter_at(core, "B7", "Ink");     enter_at(core, "C7", "5");
+    /* criteria E1:F3: (Region begins with East and Sales < 30) or Item is Ink */
+    enter_at(core, "E1", "region");
+    enter_at(core, "F1", "Sales");
+    enter_at(core, "G1", "Item");
+    enter_at(core, "E2", "East");
+    enter_at(core, "F2", "<30");
+    enter_at(core, "G3", "=Ink");
+
+    CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:G3", NULL, 0, &kept) == OWF_OK && kept == 4);
+    CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && row_hidden(core, 3) && row_hidden(core, 4) &&
+          !row_hidden(core, 5) && !row_hidden(core, 6) && !row_hidden(core, 0));
+    CHECK(oc_core_undo(core) == OWF_OK && !row_hidden(core, 3) && !row_hidden(core, 4));
+    CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:G3", NULL, 1, &kept) == OWF_OK && kept == 3);
+    CHECK(row_hidden(core, 5));                                  /* East Pens 10 again */
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* copied elsewhere, a formula as its value */
+    enter_at(core, "F3", ">=50");
+    CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:G3", "I1", 0, &kept) == OWF_OK && kept == 6);
+    CHECK_STR(text(core, "I1"), "Region");
+    CHECK_STR(text(core, "I2"), "East");
+    CHECK_STR(text(core, "J3"), "Ink");
+    CHECK(num(core, "K4") == 50 && formula(core, "K4")[0] == 0);   /* North Paper =C2*5 */
+    CHECK(empty(core, "I8") && !row_hidden(core, 3));
+    CHECK(oc_core_undo(core) == OWF_OK && empty(core, "I1"));
+    CHECK(oc_core_add_sheet(core, "Out") == 1 && oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:E2", "'Out'!B2", 1, &kept) == OWF_OK && kept == 2);
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK_STR(text(core, "B3"), "East");
+    CHECK_STR(text(core, "B4"), "Eastern");
+    CHECK(empty(core, "B5"));
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+
+    /* refused */
+    enter_at(core, "H1", "Colour");
+    CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:H3", NULL, 0, NULL) == OWF_ERR_FORMAT);
+    CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:G3", "B4", 0, NULL) == OWF_ERR_FORMAT);
+    CHECK(oc_core_advanced_filter(core, "A1:C1", "E1:G3", NULL, 0, NULL) == OWF_ERR_FORMAT);
+    CHECK(oc_core_advanced_filter(core, "nowhere", "E1:G3", NULL, 0, NULL) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 static void test_editing(void)
 {
     oc_core *core = fresh();
@@ -5821,6 +5933,8 @@ int main(void)
     test_names();
     test_navigation();
     test_defined_names();
+    test_change_name();
+    test_advanced_filter();
     test_editing();
     test_undo();
     test_fill();
