@@ -5113,7 +5113,7 @@ static void test_pivot_summary(void)
                         config_name = &round->names[n];
             }
             CHECK(source_name && config_name && strstr(source_name->formula, "$A$1:$C$8") &&
-                  !strcmp(config_name->formula, "\"0,1,2,9\""));
+                  !strcmp(config_name->formula, "\"2;r=0;c=1;d=2:9;p=;g=3;t=0,0,5,4\""));
             round_core = oc_core_new(round);
             round = NULL;
             CHECK(round_core && oc_core_set_input(round_core, 0, 1, 2, "40") == OWF_OK &&
@@ -5148,6 +5148,225 @@ static void test_pivot_summary(void)
     CHECK(oc_core_pivot_summary(core, 0, 1, 1, OC_SUBTOTAL_SUM) == OWF_ERR_FORMAT);
     CHECK(oc_core_refresh_pivot(core) == OWF_ERR_UNSUPPORTED);
     oc_core_free(core);
+}
+
+static void pivot_table_at(oc_core *core, const char *const (*rows)[5], int nrows)
+{
+    int r, c;
+    for (r = 0; r < nrows; ++r)
+        for (c = 0; c < 5; ++c) {
+            char cell[16];
+            oc_cell_name((unsigned)r, (unsigned)c, cell);
+            enter_at(core, cell, rows[r][c]);
+        }
+}
+
+static void test_pivot_layout(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "Product", "Year", "Sales", "Units" },
+        { "East", "A", "2025", "10", "1" }, { "East", "B", "2025", "20", "2" },
+        { "West", "A", "2025", "5", "3" }, { "West", "A", "2026", "15", "4" },
+        { "West", "B", "2026", "25", "5" }, { "North", "B", "2026", "30", "6" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got;
+    int k;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 7);
+    CHECK(oc_parse_range("A1:E7", &selected));
+    oc_core_select_range(core, &selected);
+
+    /* two row fields, a column field, two data fields */
+    owf_pivot_init(&def);
+    def.nrow = 2; def.row[0] = 0; def.row[1] = 1;
+    def.ncol = 1; def.col[0] = 2;
+    def.ndata = 2;
+    def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.data[1].field = 4; def.data[1].function = OC_SUBTOTAL_MAX;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 2 && oc_core_sheet(core) == 1);
+    CHECK_STR(text(core, "C1"), "2025");
+    CHECK_STR(text(core, "E1"), "2026");
+    CHECK(empty(core, "D1") && empty(core, "A1"));
+    CHECK_STR(text(core, "A2"), "Region");
+    CHECK_STR(text(core, "B2"), "Product");
+    CHECK_STR(text(core, "C2"), "Sum of Sales");
+    CHECK_STR(text(core, "D2"), "Max of Units");
+    CHECK_STR(text(core, "G2"), "Total Sum of Sales");
+    CHECK_STR(text(core, "H2"), "Total Max of Units");
+    CHECK_STR(text(core, "A3"), "East");
+    CHECK_STR(text(core, "B3"), "A");
+    CHECK(empty(core, "A4"));
+    CHECK_STR(text(core, "B4"), "B");
+    CHECK_STR(text(core, "A5"), "West");
+    CHECK_STR(text(core, "A7"), "North");
+    CHECK_STR(text(core, "A8"), "Grand Total");
+    CHECK(fabs(num(core, "C3") - 10.0) < 1e-12 && fabs(num(core, "D3") - 1.0) < 1e-12 && empty(core, "E3"));
+    CHECK(fabs(num(core, "C5") - 5.0) < 1e-12 && fabs(num(core, "E5") - 15.0) < 1e-12 &&
+          fabs(num(core, "F5") - 4.0) < 1e-12 && fabs(num(core, "G5") - 20.0) < 1e-12 &&
+          fabs(num(core, "H5") - 4.0) < 1e-12);
+    CHECK(fabs(num(core, "C8") - 35.0) < 1e-12 && fabs(num(core, "D8") - 3.0) < 1e-12 &&
+          fabs(num(core, "E8") - 70.0) < 1e-12 && fabs(num(core, "G8") - 105.0) < 1e-12 &&
+          fabs(num(core, "H8") - 6.0) < 1e-12);
+    CHECK(oc_core_pivot_get(core, &got) && got.rows == 8 && got.cols == 8 && got.nrow == 2 && got.ndata == 2 &&
+          got.data[1].function == OC_SUBTOTAL_MAX);
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot3.xlsx", "/tmp/opencalc-pivot3.ods" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
+            CHECK(round && owf_pivot_get(round, 1, &got) && got.nrow == 2 && got.row[1] == 1 && got.ncol == 1 &&
+                  got.col[0] == 2 && got.ndata == 2 && got.data[1].field == 4 &&
+                  got.data[1].function == OC_SUBTOTAL_MAX && got.rows == 8 && got.cols == 8);
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+
+    /* a page field (filter), laid out afresh on the same sheet: the old cells go */
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 1;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.npage = 1; def.page[0].field = 0;
+    owf_pivot_item_from_text(&def.page[0], "West");
+    CHECK(oc_core_pivot_set_layout(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A1"), "Region");
+    CHECK_STR(text(core, "B1"), "West");
+    CHECK(empty(core, "A2"));
+    CHECK_STR(text(core, "A3"), "Product");
+    CHECK_STR(text(core, "B3"), "Sum of Sales");
+    CHECK_STR(text(core, "A4"), "A");
+    CHECK_STR(text(core, "A5"), "B");
+    CHECK_STR(text(core, "A6"), "Grand Total");
+    CHECK(fabs(num(core, "B4") - 20.0) < 1e-12 && fabs(num(core, "B5") - 25.0) < 1e-12 &&
+          fabs(num(core, "B6") - 45.0) < 1e-12);
+    CHECK(empty(core, "H8") && empty(core, "C1") && empty(core, "G2"));
+
+    /* both formats keep the layout, and the reloaded table refreshes */
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot2.xlsx", "/tmp/opencalc-pivot2.ods" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            oc_core *round_core;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round && round->nsheets == 2);
+            if (!round)
+                continue;
+            CHECK(owf_pivot_get(round, 1, &got) && got.source_sheet == 0 && got.source.last_row == 6 &&
+                  got.source.last_col == 4 && got.nrow == 1 && got.row[0] == 1 && got.ncol == 0 &&
+                  got.ndata == 1 && got.data[0].field == 3 && got.data[0].function == OC_SUBTOTAL_SUM &&
+                  got.npage == 1 && got.page[0].field == 0 && got.page[0].kind == OWF_PIVOT_TEXT &&
+                  !strcmp(got.page[0].text, "West") && got.rows == 6 && got.cols == 2 && got.row_grand);
+            round_core = oc_core_new(round);
+            CHECK(round_core && oc_core_set_input(round_core, 0, 3, 3, "100") == OWF_OK &&
+                  oc_core_set_sheet(round_core, 1) == OWF_OK && oc_core_refresh_pivot(round_core) == OWF_OK);
+            CHECK(round_core && fabs(num(round_core, "B4") - 115.0) < 1e-12 &&
+                  fabs(num(round_core, "B6") - 140.0) < 1e-12);
+            oc_core_free(round_core);
+            remove(paths[k]);
+        }
+    }
+
+    /* Undo: the layout change, then the table */
+    CHECK(oc_core_undo(core) == OWF_OK && fabs(num(core, "G8") - 105.0) < 1e-12);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_book(core)->nsheets == 1);
+
+    /* column fields only: one row of totals */
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.ncol = 1; def.col[0] = 0;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "B1"), "East");
+    CHECK_STR(text(core, "C1"), "West");
+    CHECK_STR(text(core, "D1"), "North");
+    CHECK_STR(text(core, "E1"), "Grand Total");
+    CHECK_STR(text(core, "A2"), "Total");
+    CHECK(fabs(num(core, "C2") - 45.0) < 1e-12 && fabs(num(core, "E2") - 105.0) < 1e-12 && empty(core, "A3"));
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* a filter nothing passes: headings only */
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 1;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.npage = 1; def.page[0].field = 0;
+    owf_pivot_item_from_text(&def.page[0], "South");
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A3"), "Product");
+    CHECK_STR(text(core, "A4"), "Grand Total");
+    CHECK(empty(core, "B4"));
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* bad layouts */
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 0;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_ERR_FORMAT);          /* no data field */
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.ncol = 1; def.col[0] = 0;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_ERR_FORMAT);          /* a field twice */
+    def.ncol = 0; def.row[0] = 9;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_ERR_FORMAT);          /* outside the source */
+    CHECK(oc_core_pivot_set_layout(core, &def) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_book(core)->nsheets == 1);
+    oc_core_free(core);
+}
+
+static void test_pivot_definition_text(void)
+{
+    owf_book *book = owf_book_new();
+    owf_pivotdef def, back;
+    char text[OWF_PIVOT_TEXT_MAX];
+    int sheet;
+    owf_range r;
+    if (!book || !owf_book_add_sheet(book, "My 'data'") || !owf_book_add_sheet(book, "Out")) {
+        owf_book_free(book);
+        CHECK(0);
+        return;
+    }
+    CHECK(owf_pivot_parse_source(book, "'my ''data'''!$B$2:$D$9", &sheet, &r) && sheet == 0 &&
+          r.first_row == 1 && r.first_col == 1 && r.last_row == 8 && r.last_col == 3);
+    CHECK(owf_pivot_parse_source(book, "'My ''data'''.B2:'My ''data'''.D9", &sheet, &r) && sheet == 0 &&
+          r.last_col == 3);
+    {
+        owf_range o;
+        CHECK(owf_pivot_parse_source(book, "$Out.$A$1:.$C$3", &sheet, &o) && sheet == 1 && o.last_row == 2);
+        CHECK(!owf_pivot_parse_source(book, "Nowhere!A1:B2", &sheet, &o));
+        CHECK(!owf_pivot_parse_source(book, "Out!B2:A1", &sheet, &o));
+    }
+    owf_pivot_init(&def);
+    def.source_sheet = 0;
+    def.source = r;
+    def.nrow = 2; def.row[0] = 0; def.row[1] = 2;
+    def.ndata = 1; def.data[0].field = 1; def.data[0].function = 4;
+    def.npage = 2; def.page[0].field = 1;
+    owf_pivot_item_from_text(&def.page[0], "a;b,c:d=\"e\"%");
+    def.page[1].field = 1;
+    owf_pivot_item_from_text(&def.page[1], "12.5");
+    def.col_grand = 0;
+    def.at_row = 3; def.at_col = 2; def.rows = 7; def.cols = 4;
+    CHECK(owf_pivot_config_text(&def, text, sizeof text));
+    CHECK(strchr(text + 1, '"') == text + strlen(text) - 1);
+    back = def;
+    CHECK(owf_pivot_parse_config(text, &back));
+    CHECK(back.nrow == 2 && back.row[1] == 2 && back.ndata == 1 && back.data[0].function == 4 &&
+          back.npage == 2 && back.page[0].kind == OWF_PIVOT_TEXT && !strcmp(back.page[0].text, "a;b,c:d=\"e\"%") &&
+          back.page[1].kind == OWF_PIVOT_NUMBER && back.page[1].number == 12.5 && back.row_grand &&
+          !back.col_grand && back.at_row == 3 && back.at_col == 2 && back.rows == 7 && back.cols == 4);
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4;g=9\"", &back));
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4", &back));
+    CHECK(owf_pivot_parse_config("\"2;r=0;d=1:4;z=whatever\"", &back) && back.nrow == 1);
+    CHECK(owf_pivot_function_from_word("countNums") == OC_SUBTOTAL_COUNT &&
+          owf_pivot_function_from_word("COUNT") == OC_SUBTOTAL_COUNTA &&
+          owf_pivot_function_from_word("stdDevp") == OC_SUBTOTAL_STDEVP &&
+          owf_pivot_function_from_word("stdevp") == OC_SUBTOTAL_STDEVP &&
+          !owf_pivot_function_from_word("median"));
+    owf_book_free(book);
 }
 
 static void test_pdf(void)
@@ -5262,6 +5481,8 @@ int main(void)
     test_multiple_operations_multi();
     test_subtotals();
     test_pivot_summary();
+    test_pivot_layout();
+    test_pivot_definition_text();
     test_pdf();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);

@@ -1,6 +1,6 @@
 /* tests/arexx/presentation.rexx: GFOpenPresentation's ARexx port against amicradle-teams ARexx-RULE.md
    (return codes 0/5/10/20, no requester holds up a command): open, edit, save, export, print, reopen,
-   and the slide sorter's commands on several slides.
+   the slide sorter's commands on several slides, and speaker notes (notes pages, handouts).
    rx tests/arexx/presentation.rexx   (GFOpenPresentation running; prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
 port = 'GFOPENPRESENTATION'
@@ -124,6 +124,33 @@ CALL same 'SLIDES after UNDO of DELETEPICKED', res, 2
 CALL want 'PICK 0', 10
 CALL want 'PICK', 10
 CALL want 'MOVEPICKED 9', 10
+CALL want 'VIEW NORMAL', 0
+/* speaker notes: set, read, Undo, the Notes view, notes pages and handouts as PDF */
+CALL want 'SLIDE 1', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES of a new slide', res, ''
+CALL want 'SETNOTES Say hello\nThen the demo', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after SETNOTES', res, 'Say hello\nThen the demo'
+CALL want 'UNDO', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after UNDO', res, ''
+CALL want 'REDO', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after undoing notes', res, 'NOTES'
+CALL want 'VIEW NOTES', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after REDO', res, 'Say hello\nThen the demo'
+CALL want 'EXPORT NOTES RAM:arexx-notes.pdf', 0
+IF ~EXISTS('RAM:arexx-notes.pdf') THEN CALL bad 'EXPORT NOTES wrote no RAM:arexx-notes.pdf'
+CALL want 'EXPORT HANDOUTS 4 RAM:arexx-handouts.pdf', 0
+IF ~EXISTS('RAM:arexx-handouts.pdf') THEN CALL bad 'EXPORT HANDOUTS wrote no RAM:arexx-handouts.pdf'
+CALL want 'EXPORT HANDOUTS 5 RAM:arexx-handouts.pdf', 10
+CALL want 'SAVE', 0
+CALL want 'OPEN RAM:arexx-test.odp', 0
+CALL want 'SLIDE 1', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after saving and reopening', res, 'Say hello\nThen the demo'
 CALL want 'VIEW NORMAL', 0
 CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0

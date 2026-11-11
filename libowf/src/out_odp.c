@@ -1190,11 +1190,11 @@ static void put_notes(odpw *w, owf_buf *out, const owf_slide *s, int number, con
     owf_buf_printf(out, "<draw:frame presentation:style-name=\"%s\" draw:layer=\"layout\"", style);
     put_geometry(out, &notes);
     owf_buf_puts(out, " presentation:class=\"notes\"");
-    if (s && !s->notes.nparas)
+    if (s && !s->notes.text.nparas)
         owf_buf_puts(out, " presentation:placeholder=\"true\"");
     owf_buf_puts(out, "><draw:text-box>");
     if (s)
-        put_story(w, out, &notes, &s->notes, 0);
+        put_story(w, out, &notes, &s->notes.text, 0);
     owf_buf_puts(out, "</draw:text-box></draw:frame></presentation:notes>");
 }
 

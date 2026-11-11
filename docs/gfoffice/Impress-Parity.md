@@ -38,7 +38,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | PowerPoint 97-2003 (`.ppt`, `.pps`, `.pot`) open and save | Later | No |
 | OpenOffice.org 1.x (`.sxi`), StarImpress | Later, if samples appear | No |
 | Export as PDF (Export as PDF..., Export Directly as PDF) | P1 | Yes: a page a slide, searchable text, JPEG and PNG pictures, hidden slides left out |
-| PDF options: page range, notes pages, handouts, hidden slides, bookmarks, tagged PDF, image compression | P2-P4 | No |
+| PDF options: page range, notes pages, handouts, hidden slides, bookmarks, tagged PDF, image compression | P2-P4 | Notes pages and handouts: Yes (0.6.25); the rest No |
 | Export slides as pictures (PNG, JPEG, GIF, BMP, SVG...) | P4 (IFF ILBM through datatypes) | No |
 | Export as HTML (Web Page wizard), Flash | Not planned | No |
 | Document properties: title, subject, keywords | P1 (title) | Title yes; the rest No |
@@ -69,7 +69,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Master's placeholders: title, outline, date, footer, number | P1 | Yes |
 | Presentation styles: title, subtitle, outline 1-9, notes, background objects | P1 | Yes: each a text level of the master |
 | Graphic styles | P1 (as looks) | Approx.: resolved into each object's look; the file's defaults kept |
-| Notes master, handout master | P2-P4 | Notes page size; the rest No |
+| Notes master, handout master | P2-P4 | Notes page size and its fixed layout (slide above, notes below); editing the masters No |
 
 ## 4. Text
 
@@ -199,10 +199,10 @@ Undo and ODP persistence.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Speaker notes, per slide | P1 | Yes (in the model and ODP) |
-| Notes view, notes pages printed | P3, P4 | No |
-| Handouts: 1, 2, 3, 4, 6 or 9 slides a page | P4 (P1 design asks for them) | No |
+| Notes view, notes pages printed | P3, P4 | Yes (0.6.25): View > Notes, typed in place with Undo; Print and Export PDF in Notes view |
+| Handouts: 1, 2, 3, 4, 6 or 9 slides a page | P4 (P1 design asks for them) | Yes (0.6.25): Project > Export Handouts, ARexx EXPORT/PRINT HANDOUTS n; no writing lines |
 | Outline view | P4 | No |
-| Print slides, notes, handouts, outline (through GFOpenPrint) | P2 (slides), P4 | Slides: Yes, through GFOpenPrint; notes, handouts and outline: No |
+| Print slides, notes, handouts, outline (through GFOpenPrint) | P2 (slides), P4 | Slides, notes pages and handouts: Yes, through GFOpenPrint; outline: No |
 
 ## 10. Slide show
 
@@ -240,7 +240,7 @@ Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Normal view (slides, slide, notes) | P3 | No. P2: the slide at the window's size with the slides beside it; no notes pane |
+| Normal view (slides, slide, notes) | P3 | Partly: the slide at the window's size with the slides beside it; notes in their own Notes view, no notes pane |
 | Slide Sorter | P3 | Yes in GFOpenPresentation 0.6.24 (View > Slide Sorter): a thumbnail grid; click, Shift and Ctrl pick several; drag with an insertion mark; Duplicate, Delete, Hide, Show, Move Up/Down and Slide Transition on every picked slide, each one Undo step; Zoom sets the columns; Return or a double-click opens a slide; ARexx VIEW, PICK, MOVEPICKED and the rest. Slide clipboard: No |
 | Master view | P4 | No |
 | Zoom, panels that hide on narrow screens | P3 | No |
