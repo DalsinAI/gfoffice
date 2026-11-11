@@ -5664,7 +5664,7 @@ static void test_scenarios(void)
     CHECK(num(core, "B2") == 10 && num(core, "C2") == 20 && num(core, "B6") == 50);
     {
         char *in = oc_core_cell_input(core, 0, 4, 4);
-        CHECK_STR(in, "=B2*2");
+        CHECK_STR(in, "20");                           /* a formula is kept as its value */
         owf_free(in);
     }
     CHECK(oc_core_scenario_get(core, 0, &sc) && sc.active && sc.ncells == 4 && sc.nranges == 3);

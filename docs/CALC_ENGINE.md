@@ -75,8 +75,9 @@ make sense; LASTERROR says why. Test script: tests/arexx/calc-solver.rexx.
 
 Data > Scenarios keeps named sets of values for some cells of a sheet (its
 changing cells: up to 32 ranges and 2048 cells), each with a comment, up to
-32 a sheet. Add keeps the cells' present inputs (numbers, text, formulas as
-typed); Show puts a scenario's back in its cells and marks it as the one
+32 a sheet. Add keeps the cells' present inputs (numbers, text; a formula as
+the value it has now, as Excel keeps it, since its references would not
+follow rows put in later); Show puts a scenario's back in its cells and marks it as the one
 shown; Update keeps the present inputs afresh; Delete takes one away. Each
 is one Undo step (`src/calc/oc_scenario.c`).
 

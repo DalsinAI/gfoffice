@@ -129,7 +129,10 @@ static int read_cells(const oc_core *core, const char *text, owf_scenario *sc)
     return sc->nranges > 0;
 }
 
-/* The cells' present inputs into sc->value. */
+/* The cells' present inputs into sc->value. A formula is kept as the value
+ * it has now, as Excel keeps it: the formula's references would not follow
+ * rows and columns put in later, so showing it again could point it
+ * elsewhere. */
 static int capture(const oc_core *core, owf_scenario *sc)
 {
     unsigned k, row, col, i = 0, n = owf_scenario_cells(sc);
@@ -142,7 +145,15 @@ static int capture(const oc_core *core, owf_scenario *sc)
     for (k = 0; k < sc->nranges; k++)
         for (row = sc->range[k].first_row; row <= sc->range[k].last_row; row++)
             for (col = sc->range[k].first_col; col <= sc->range[k].last_col; col++) {
-                char *v = oc_cell_input(core, core->sheet, row, col);
+                const owf_cell *c = oc_find(core, core->sheet, row, col);
+                char *v;
+                if (c && c->formula) {
+                    owf_cell value = *c;
+                    value.formula = NULL;
+                    v = owf_scenario_input(&value);
+                } else {
+                    v = owf_scenario_input(c);
+                }
                 if (!v)
                     return OWF_ERR_MEMORY;
                 sc->value[i++] = v;
