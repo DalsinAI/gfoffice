@@ -225,15 +225,15 @@ CALL same 'OBJECTBOX 1 after UNDO', res, box1
 CALL want 'OBJECTBOX 2', 0
 CALL same 'OBJECTBOX 2 after UNDO', res, box2
 CALL want 'PICKOBJECTS 1 2', 0
-CALL want 'ALIGN RIGHT', 0
+CALL want 'ALIGN TOP', 0                       /* the layout's boxes share their sides: TOP moves one */
 CALL want 'OBJECTBOX 1', 0
-PARSE VAR res ax . aw .
+PARSE VAR res . ay .
 CALL want 'OBJECTBOX 2', 0
-PARSE VAR res cx . cw .
-IF ax + aw ~= cx + cw THEN CALL bad 'ALIGN RIGHT: right edges' ax + aw 'and' cx + cw
+PARSE VAR res . cy .
+IF ay ~= cy THEN CALL bad 'ALIGN TOP: tops' ay 'and' cy
 CALL want 'UNDO', 0
-CALL want 'OBJECTBOX 1', 0
-CALL same 'OBJECTBOX 1 after UNDO', res, box1
+CALL want 'OBJECTBOX 2', 0
+CALL same 'OBJECTBOX 2 after UNDO', res, box2
 CALL want 'ALIGN SIDEWAYS', 10
 CALL want 'PICKOBJECTS 99', 10
 CALL want 'PICKOBJECTS', 0
