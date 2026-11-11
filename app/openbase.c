@@ -869,7 +869,7 @@ static void design_table(int creating)
             ng.ng_TopEdge = t + rowh + fh + 4;
             ng.ng_LeftEdge = l;
             ng.ng_Width = lw + colw;
-            ng.ng_Height = h - (ng.ng_TopEdge - dw->BorderTop) - 2 * rowh - 8;
+            ng.ng_Height = h - (ng.ng_TopEdge - dw->BorderTop) - 2 * rowh - 20;
             ng.ng_GadgetText = (UBYTE *)"Fields";
             ng.ng_Flags = PLACETEXT_ABOVE;
             ng.ng_GadgetID = D_FIELDS;
