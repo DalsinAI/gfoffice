@@ -56,7 +56,8 @@ CALL want 'ADVFILTER F1:G5 I1:J2', 10            /* not one of the list's headin
 CALL want 'SAVEAS RAM:names-test.ods', 0
 CALL want 'OPEN RAM:names-test.ods', 0
 CALL want 'NAMES', 0
-IF res ~= "Revenue='Sheet1'!$B$2:$B$3,Rate=0.5" THEN CALL bad 'NAMES after ODS gave' res
+/* ODS keeps the range as Sheet1.$B$2:$B$3, so it comes back without the quotes Sheet1 does not need */
+IF res ~= "Revenue='Sheet1'!$B$2:$B$3,Rate=0.5" & res ~= "Revenue=Sheet1!$B$2:$B$3,Rate=0.5" THEN CALL bad 'NAMES after ODS gave' res
 
 IF fails = 0 THEN SAY 'ALL PASS'
 ELSE SAY fails 'FAILED'

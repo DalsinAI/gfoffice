@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.67 (9.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.72 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -504,25 +504,39 @@ static int name_has(const char *name, const char *part)
     return 0;
 }
 
-/* The book's font (-1 the book's own) and its name. */
-static int cell_font_index(int index, const char **name, owf_font_kind *kind)
+/* The book's font (-1 the book's own): its name into name (NULL when the book names none) and its kind. */
+static int cell_font_index(int index, char *buf, size_t size, const char **name, owf_font_kind *kind)
 {
-    owf_book *book = core ? oc_core_book(core) : NULL;
+    int length = -1;
     *name = NULL;
     *kind = OWF_FONT_ANY;
-    if (book && index < 0 && book->nstyles) index = book->styles[0].font.font;
-    if (book && index >= 0 && index < book->nfonts) {
-        *name = book->fonts[index].name;
-        *kind = book->fonts[index].kind;
-    }
+    if (!core) return index;
+    index = oc_core_font_info(core, index, buf, size, kind, &length);
+    if (length >= 0) *name = buf;
     return index;
+}
+
+/* A sheet's name as Latin-1, cut to size (the name is read whole: 512 bytes of UTF-8 are more than any
+ * Latin-1 buffer here holds). */
+static void sheet_latin(int sheet, char *out, size_t size)
+{
+    char utf8[512];
+    if (oc_core_sheet_info(core, sheet, NULL, utf8, sizeof utf8) < 0) utf8[0] = 0;
+    to_latin1(utf8, strlen(utf8), out, size);
+}
+
+static int sheet_hidden(int sheet)
+{
+    oc_sheet_info info;
+    return oc_core_sheet_info(core, sheet, &info, NULL, 0) >= 0 ? info.hidden : 0;
 }
 
 static const char *cell_font_file(int index)
 {
+    char buf[256];
     const char *name;
     owf_font_kind kind;
-    cell_font_index(index, &name, &kind);
+    cell_font_index(index, buf, sizeof buf, &name, &kind);
     if (kind == OWF_FONT_MONO || name_has(name, "courier") || name_has(name, "mono") || name_has(name, "consolas") ||
         name_has(name, "lettergothic"))
         return "courier.font";
@@ -1352,11 +1366,10 @@ static void draw_tab_arrow(struct RastPort *rp, int x, int y, int w, int h, int 
 static void draw_tabs(void)
 {
     struct RastPort *rp;
-    owf_book *book;
-    int x, s, h = tabs_box.h - 3, y = tabs_box.y + 1, cur, plus_w, arrow_w, avail, maxtab, *width;
+    int x, s, h = tabs_box.h - 3, y = tabs_box.y + 1, cur, plus_w, arrow_w, avail, maxtab, *width, nsheets;
     if (!win || !core || tabs_box.w <= 0) return;
     rp = win->RPort;
-    book = oc_core_book(core);
+    nsheets = oc_core_sheet_count(core);
     cur = oc_core_sheet(core);
     SetFont(rp, font);
     ogt_fill(&ctx, rp, "window", tabs_box.x, tabs_box.y, tabs_box.w, tabs_box.h);
@@ -1366,25 +1379,25 @@ static void draw_tabs(void)
     arrow_w = fh + 4;
     avail = tabs_box.w - 4 - (plus_w + 2) - 4;
     maxtab = avail / 3 > 60 ? avail / 3 : 60;        /* a long name is cut short ("...") to a third of the strip */
-    if (!(width = malloc((size_t)(book->nsheets > 0 ? book->nsheets : 1) * sizeof *width))) return;
+    if (!(width = malloc((size_t)(nsheets > 0 ? nsheets : 1) * sizeof *width))) return;
     ogt_bold(rp, 1);                                 /* each tab as wide as when chosen: none moves on a click */
-    for (s = 0; s < book->nsheets; s++) {
+    for (s = 0; s < nsheets; s++) {
         char name[64];
-        if (book->sheets[s].hidden && s != cur) { width[s] = 0; continue; }
-        to_latin1(book->sheets[s].name, strlen(book->sheets[s].name), name, sizeof name);
+        if (sheet_hidden(s) && s != cur) { width[s] = 0; continue; }
+        sheet_latin(s, name, sizeof name);
         width[s] = ogt_text_width(rp, name) + 16;
         if (width[s] > maxtab) width[s] = maxtab;
         width[s] += 2;                               /* the gap after it */
     }
     ogt_bold(rp, 0);
-    tab_end = oc_tab_strip(width, book->nsheets, avail, 2 * (arrow_w + 2), cur != tab_shown_sheet ? cur : -1,
+    tab_end = oc_tab_strip(width, nsheets, avail, 2 * (arrow_w + 2), cur != tab_shown_sheet ? cur : -1,
                            &tab_first, &tab_scroll);
     tab_shown_sheet = cur;
     x = tabs_box.x + 4;
     if (tab_scroll) {
         int k, more_left = 0, more_right = 0;
         for (k = 0; k < tab_first; k++) if (width[k]) more_left = 1;
-        for (k = tab_end; k < book->nsheets; k++) if (width[k]) more_right = 1;
+        for (k = tab_end; k < nsheets; k++) if (width[k]) more_right = 1;
         draw_tab_arrow(rp, x, y, arrow_w, h, 0, more_left);
         tab_area(x, arrow_w, TAB_LEFT);
         x += arrow_w + 2;
@@ -1392,11 +1405,11 @@ static void draw_tabs(void)
         tab_area(x, arrow_w, TAB_RIGHT);
         x += arrow_w + 2;
     }
-    for (s = tab_first; s < tab_end && s < book->nsheets && tab_n < MAX_TABS; s++) {
+    for (s = tab_first; s < tab_end && s < nsheets && tab_n < MAX_TABS; s++) {
         char name[64];
         int on = s == cur, tw = width[s] - 2;
         if (!width[s]) continue;
-        to_latin1(book->sheets[s].name, strlen(book->sheets[s].name), name, sizeof name);
+        sheet_latin(s, name, sizeof name);
         ogt_bold(rp, on);
         /* the chosen sheet's tab white, as the sheet; the others the theme's tabs (THEME_SPEC.md 5) */
         if (on) ogt_box(rp, rgb_pen(0xFFFFFFUL), x, y, tw, h);
@@ -1419,14 +1432,13 @@ static void draw_tabs(void)
 /* The strip scrolled a tab left (way < 0) or right. */
 static void scroll_tabs(int way)
 {
-    owf_book *book = oc_core_book(core);
-    int s, cur = oc_core_sheet(core);
+    int s, cur = oc_core_sheet(core), nsheets = oc_core_sheet_count(core);
     if (way < 0) {
         for (s = tab_first - 1; s >= 0; s--)
-            if (!book->sheets[s].hidden || s == cur) { tab_first = s; break; }
-    } else if (tab_end < book->nsheets) {
-        for (s = tab_first + 1; s < book->nsheets; s++)
-            if (!book->sheets[s].hidden || s == cur) { tab_first = s; break; }
+            if (!sheet_hidden(s) || s == cur) { tab_first = s; break; }
+    } else if (tab_end < nsheets) {
+        for (s = tab_first + 1; s < nsheets; s++)
+            if (!sheet_hidden(s) || s == cur) { tab_first = s; break; }
     }
     draw_tabs();
 }
@@ -1488,11 +1500,12 @@ static void update_scrollers(void)
 static void scrolled(int axis, unsigned top)
 {
     unsigned first, vis, total, t, l, frozen;
-    owf_sheet *s = &oc_core_book(core)->sheets[oc_core_sheet(core)];
+    oc_sheet_info s;
+    oc_core_sheet_info(core, oc_core_sheet(core), &s, NULL, 0);
     oc_view_scroller(core, axis, &first, &vis, &total);
     if (total > 32767) top *= total / 32767 + 1;
     oc_view_scroll_pos(core, &t, &l);
-    frozen = axis ? s->freeze_cols : s->freeze_rows;
+    frozen = axis ? s.freeze_cols : s.freeze_rows;
     if (axis) oc_view_scroll_to(core, t, frozen + top);
     else oc_view_scroll_to(core, frozen + top, l);
 }
@@ -2316,7 +2329,7 @@ static void recovery_save(void)
         !ow_recovery_due(&recovery, oc_core_is_dirty(core), oc_core_changes(core)) || !ow_recovery_begin(&recovery))
         return;
     report = owf_report_new();
-    if (owf_export_book_file(oc_core_book(core), recovery.name, f->name, report) == OWF_OK) {
+    if (oc_core_write_copy(core, recovery.name, f->name, report) == OWF_OK) {
         ow_recovery_done(&recovery, current_path[0] ? current_path : "Untitled", oc_core_changes(core));
         set_status("Autosave recovery copy updated.");
         draw_status();
@@ -2446,9 +2459,8 @@ static void do_rename_sheet(int sheet)
 {
     char name[96], latin[96];
     char *utf8;
-    owf_book *book = oc_core_book(core);
-    if (sheet < 0 || sheet >= book->nsheets) return;
-    to_latin1(book->sheets[sheet].name, strlen(book->sheets[sheet].name), latin, sizeof latin);
+    if (sheet < 0 || sheet >= oc_core_sheet_count(core)) return;
+    sheet_latin(sheet, latin, sizeof latin);
     if (!text_requester("Rename Sheet", "Name", latin, name, sizeof name)) return;
     if (!(utf8 = from_latin1(name))) { result(OWF_ERR_MEMORY, NULL); return; }
     if (oc_core_rename_sheet(core, sheet, utf8) == OWF_ERR_FORMAT)
@@ -2462,28 +2474,27 @@ static void do_delete_sheet(void)
 {
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"Delete Sheet",
                              (UBYTE *)"Delete the sheet \"%s\" and everything on it?", (UBYTE *)"Delete|Cancel" };
-    owf_book *book = oc_core_book(core);
     char latin[96];
     int s = oc_core_sheet(core);
-    if (book->nsheets < 2) { set_status("A workbook keeps at least one sheet."); return; }
-    to_latin1(book->sheets[s].name, strlen(book->sheets[s].name), latin, sizeof latin);
+    if (oc_core_sheet_count(core) < 2) { set_status("A workbook keeps at least one sheet."); return; }
+    sheet_latin(s, latin, sizeof latin);
     if (EasyRequest(win, &es, NULL, (ULONG)latin)) result(oc_core_delete_sheet(core, s), "Sheet deleted.");
 }
 
 static void do_show_sheet(void)
 {
-    owf_book *book = oc_core_book(core);
-    char entered[96];
+    char entered[96], name[512];
     char *utf8;
-    int i, found = -1;
-    for (i = 0; i < book->nsheets; i++)
-        if (book->sheets[i].hidden) { found = i; break; }
+    int i, found = -1, nsheets = oc_core_sheet_count(core);
+    for (i = 0; i < nsheets; i++)
+        if (sheet_hidden(i)) { found = i; break; }
     if (found < 0) { set_status("There are no hidden sheets."); return; }
     if (!text_requester("Show Sheet", "Hidden sheet name", "", entered, sizeof entered)) return;
     if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
     found = -1;
-    for (i = 0; i < book->nsheets; i++)
-        if (book->sheets[i].hidden && !strcasecmp(book->sheets[i].name, utf8)) { found = i; break; }
+    for (i = 0; i < nsheets; i++)   /* a name longer than the buffer can't be the one typed (96 Latin-1 letters) */
+        if (sheet_hidden(i) && (size_t)oc_core_sheet_info(core, i, NULL, name, sizeof name) < sizeof name &&
+            !strcasecmp(name, utf8)) { found = i; break; }
     if (found < 0)
         set_status("There is no hidden sheet by that name.");
     else {
@@ -2496,11 +2507,10 @@ static void do_show_sheet(void)
 
 static void do_duplicate_sheet(void)
 {
-    owf_book *book = oc_core_book(core);
     int sheet = oc_core_sheet(core), rc;
     char initial[96], entered[96], latin[72];
     char *utf8;
-    to_latin1(book->sheets[sheet].name, strlen(book->sheets[sheet].name), latin, sizeof latin);
+    sheet_latin(sheet, latin, sizeof latin);
     snprintf(initial, sizeof initial, "%s Copy", latin);
     if (!text_requester("Duplicate Sheet", "New name", initial, entered, sizeof entered)) return;
     if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
@@ -2540,17 +2550,16 @@ static void do_delete_name(void)
 {
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"Delete Name",
                              (UBYTE *)"This name exists in both scopes. Which one?", (UBYTE *)"Sheet|Workbook|Cancel" };
-    char entered[96];
+    char entered[96], name[512];
     char *utf8;
-    const owf_defname *name;
-    int i, local = 0, global = 0, scope, pick;
+    int i, local = 0, global = 0, scope, pick, sheet;
     if (!text_requester("Delete Name", "Name", "", entered, sizeof entered)) return;
     if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
     for (i = 0; i < oc_core_name_count(core); i++) {
-        name = oc_core_name_at(core, i);
-        if (!name || strcasecmp(name->name, utf8)) continue;
-        if (name->sheet == oc_core_sheet(core)) local = 1;
-        if (name->sheet == -1) global = 1;
+        int n = oc_core_name_info(core, i, name, sizeof name, &sheet);   /* longer than the buffer: not the one typed */
+        if (n < 0 || (size_t)n >= sizeof name || strcasecmp(name, utf8)) continue;
+        if (sheet == oc_core_sheet(core)) local = 1;
+        if (sheet == -1) global = 1;
     }
     if (!local && !global) {
         set_status("There is no workbook or current-sheet name by that name.");
@@ -2570,17 +2579,31 @@ static void do_delete_name(void)
 static void do_comment(void)
 {
     unsigned row, col;
-    const owf_comment *comment;
-    char initial[512], entered[512];
-    char *utf8;
+    char initial[512], entered[512], text[2048], author_buf[256];
+    char *utf8, *author = author_buf;
+    int author_length;
     oc_core_active(core, &row, &col);
-    comment = oc_core_comment(core, oc_core_sheet(core), row, col);
-    to_latin1(comment && comment->text ? comment->text : "",
-              comment && comment->text ? strlen(comment->text) : 0, initial, sizeof initial);
-    if (!text_requester("Cell Comment", "Comment (empty removes)", initial, entered, sizeof entered)) return;
-    if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
-    result(oc_core_set_comment(core, comment && comment->author ? comment->author : "GFOpenCalc", utf8),
+    /* the text only as far as the requester shows it (2048 bytes of UTF-8 are more than 511 Latin-1 letters);
+       the author whole, as it is written back */
+    oc_core_comment_info(core, oc_core_sheet(core), row, col, text, sizeof text, author_buf, sizeof author_buf,
+                         &author_length);
+    if (author_length >= (int)sizeof author_buf) {
+        if (!(author = malloc((size_t)author_length + 1))) { result(OWF_ERR_MEMORY, NULL); return; }
+        oc_core_comment_info(core, oc_core_sheet(core), row, col, NULL, 0, author, (size_t)author_length + 1, NULL);
+    }
+    to_latin1(text, strlen(text), initial, sizeof initial);
+    if (!text_requester("Cell Comment", "Comment (empty removes)", initial, entered, sizeof entered)) {
+        if (author != author_buf) free(author);
+        return;
+    }
+    if (!(utf8 = from_latin1(entered))) {
+        if (author != author_buf) free(author);
+        result(OWF_ERR_MEMORY, NULL);
+        return;
+    }
+    result(oc_core_set_comment(core, author_length >= 0 ? author : "GFOpenCalc", utf8),
            *utf8 ? "Comment saved." : "Comment removed.");
+    if (author != author_buf) free(author);
     owf_free(utf8);
 }
 
@@ -2740,26 +2763,34 @@ static void do_merge(int merge)
 
 static void do_filter_active(void)
 {
-    const owf_sheet *sheet = &oc_core_book(core)->sheets[oc_core_sheet(core)];
-    const owf_cell *cell;
+    oc_sheet_info sheet;
+    oc_cell_info cell;
     const char *display;
+    char *text = NULL;
     unsigned row, col;
     char value[256];
+    int n;
     oc_core_active(core, &row, &col);
-    if (!sheet->has_autofilter || row <= sheet->autofilter.first_row || row > sheet->autofilter.last_row ||
-        col < sheet->autofilter.first_col || col > sheet->autofilter.last_col) {
+    oc_core_sheet_info(core, oc_core_sheet(core), &sheet, NULL, 0);
+    if (!sheet.has_autofilter || row <= sheet.autofilter.first_row || row > sheet.autofilter.last_row ||
+        col < sheet.autofilter.first_col || col > sheet.autofilter.last_col) {
         set_status("Select a data cell inside an AutoFilter range.");
         return;
     }
-    cell = owf_sheet_find(sheet, row, col);
-    if (cell && cell->type == OWF_VALUE_TEXT)
-        display = cell->text ? cell->text : "";
-    else {
+    n = oc_core_cell_info(core, oc_core_sheet(core), row, col, &cell, value, sizeof value);
+    if (cell.type == OWF_VALUE_TEXT) {             /* the text whole: it is what the rows are filtered by */
+        if (n >= (int)sizeof value) {
+            if (!(text = malloc((size_t)n + 1))) { result(OWF_ERR_MEMORY, NULL); return; }
+            oc_core_cell_info(core, oc_core_sheet(core), row, col, NULL, text, (size_t)n + 1);
+        }
+        display = text ? text : value;
+    } else {
         oc_core_cell_text(core, oc_core_sheet(core), row, col, value, sizeof value);
         display = value;
     }
     result(oc_core_filter_value(core, col, display), display[0] ? "Rows filtered by the active value."
                                                                 : "Rows filtered to blanks.");
+    free(text);
 }
 
 static const char *valid_kind_name(int type)
@@ -4298,12 +4329,9 @@ static void pv_label(pv_field *f)
 }
 
 /* The source cell whose value the typed item names, so that "2025" finds a number and "East" a text. */
-static void pv_item(const owf_book *book, const owf_pivotdef *def, unsigned field, const char *latin1,
-                    owf_pivot_page *page)
+static void pv_item(const owf_pivotdef *def, unsigned field, const char *latin1, owf_pivot_page *page)
 {
-    const owf_sheet *sh = &book->sheets[def->source_sheet];
-    char *utf8 = from_latin1(latin1), n[40];
-    unsigned row;
+    char *utf8 = from_latin1(latin1);
     page->field = field;
     if (!utf8 || !*utf8) {
         page->kind = OWF_PIVOT_ALL;
@@ -4315,25 +4343,12 @@ static void pv_item(const owf_book *book, const owf_pivotdef *def, unsigned fiel
         owf_free(utf8);
         return;
     }
-    for (row = def->source.first_row + 1u; row <= def->source.last_row; ++row) {
-        const owf_cell *c = owf_sheet_find(sh, row, def->source.first_col + field);
-        int same = 0;
-        if (!c) continue;
-        if (c->type == OWF_VALUE_TEXT) same = c->text && !strcmp(c->text, utf8);
-        else if (c->type == OWF_VALUE_NUMBER) { owf_number_text(c->number, n); same = !strcmp(n, utf8); }
-        else if (c->type == OWF_VALUE_BOOL) same = !strcasecmp(utf8, c->number != 0.0 ? "TRUE" : "FALSE");
-        if (same) {
-            owf_pivot_item_from_cell(page, c);
-            owf_free(utf8);
-            return;
-        }
-    }
-    owf_pivot_item_from_text(page, utf8);
+    oc_core_pivot_item(core, def, field, utf8, page);
     owf_free(utf8);
 }
 
 /* Fills def's fields from the window's choices; 0 (with a status line) when they do not make a table. */
-static int pv_collect(const owf_book *book, pv_field *fields, unsigned n, owf_pivotdef *def)
+static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
 {
     unsigned want, i;
     def->nrow = def->ncol = def->npage = def->ndata = 0;
@@ -4348,7 +4363,7 @@ static int pv_collect(const owf_book *book, pv_field *fields, unsigned n, owf_pi
                     def->col[def->ncol++] = i;
                 } else {
                     if (def->npage == OWF_PIVOT_PAGES) { set_status("A pivot table takes up to 4 page fields."); return 0; }
-                    pv_item(book, def, i, fields[i].item, &def->page[def->npage++]);
+                    pv_item(def, i, fields[i].item, &def->page[def->npage++]);
                 }
             }
             if (fields[i].data && fields[i].data_order == want) {
@@ -4363,7 +4378,7 @@ static int pv_collect(const owf_book *book, pv_field *fields, unsigned n, owf_pi
 }
 
 /* The layout window over def (its source set). 1 when OK was chosen and def holds the new layout. */
-static int pivot_layout_window(const owf_book *book, owf_pivotdef *def, int editing)
+static int pivot_layout_window(owf_pivotdef *def, int editing)
 {
     struct Gadget *glist = NULL, *last, *gfields, *guse, *gdata, *gitem, *grow, *gcol, *gok, *gcancel;
     struct NewGadget ng;
@@ -4382,7 +4397,7 @@ static int pivot_layout_window(const owf_book *book, owf_pivotdef *def, int edit
     NewList(&items);
     for (i = 0; i < n; ++i) {
         char utf8[160];
-        owf_pivot_field_heading(book, def, i, utf8, sizeof utf8);
+        oc_core_pivot_heading(core, def, i, utf8, sizeof utf8);
         to_latin1(utf8, strlen(utf8), fields[i].heading, sizeof fields[i].heading);
     }
     for (i = 0; i < def->nrow; ++i) { fields[def->row[i]].use = 1; fields[def->row[i]].order = next++; }
@@ -4492,7 +4507,7 @@ static int pivot_layout_window(const owf_book *book, owf_pivotdef *def, int edit
                 def->row_grand = checked != 0;
                 GT_GetGadgetAttrs(gcol, rw, NULL, GTCB_Checked, (ULONG)&checked, TAG_DONE);
                 def->col_grand = checked != 0;
-                if (pv_collect(book, fields, n, def)) { ok = 1; done = 1; }
+                if (pv_collect(fields, n, def)) { ok = 1; done = 1; }
             } else if (id == 8) {
                 done = 1;
             }
@@ -4527,9 +4542,8 @@ static void do_pivot_table(void)
 {
     oc_selection selection;
     owf_pivotdef def;
-    const owf_book *book = oc_core_book(core);
     if (oc_core_pivot_get(core, &def)) {
-        if (pivot_layout_window(book, &def, 1))
+        if (pivot_layout_window(&def, 1))
             pivot_result(oc_core_pivot_set_layout(core, &def), "Pivot table laid out afresh; Undo restores the previous one.");
         return;
     }
@@ -4548,7 +4562,7 @@ static void do_pivot_table(void)
         def.data[0].field = selection.ranges[0].last_col - selection.ranges[0].first_col;
         def.data[0].function = OC_SUBTOTAL_SUM;
     }
-    if (pivot_layout_window(book, &def, 0))
+    if (pivot_layout_window(&def, 0))
         pivot_result(oc_core_pivot_create(core, &def), "Pivot table created on a new sheet; Undo removes it.");
 }
 
@@ -4560,7 +4574,7 @@ static void do_format_chart(void)
     unsigned current_labels;
     int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, current_pos, current_kind;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL);
@@ -4670,7 +4684,7 @@ static void do_chart_axis_titles(void)
     char *category_utf8 = NULL, *value_utf8 = NULL;
     int index = oc_core_selected_chart(core), n = 0, rc;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart Axis Titles."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL);
@@ -4723,7 +4737,7 @@ static void do_chart_axis_formats(void)
     char initial[384], entered[384], *separator, *value, *x;
     int index = oc_core_selected_chart(core), n = 0, rc, scatter;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart Axis Number Formats."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL);
@@ -4801,7 +4815,7 @@ static void do_chart_series_style(void)
     long chosen, size;
     int index = oc_core_selected_chart(core), n = 0, rc, bad = 0;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Style."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL);
@@ -4876,7 +4890,7 @@ static void do_chart_point_colour(void)
     long chosen_series, chosen_point;
     int index = oc_core_selected_chart(core), n = 0, rc;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart Data Point Colour."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL);
@@ -4950,7 +4964,7 @@ static void do_chart_series_labels(void)
     long chosen;
     int index = oc_core_selected_chart(core), n = 0, rc, i, bad = 0;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Data Labels."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL);
@@ -5049,7 +5063,7 @@ static void do_chart_plot_options(void)
     long value;
     int index = oc_core_selected_chart(core), n = 0, rc, kind, bad = 0;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart Plot Options."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL);
@@ -5118,7 +5132,7 @@ static void do_chart_trendline(void)
     long chosen, value;
     int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, type;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Trendline."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL);
@@ -5207,7 +5221,7 @@ static void do_chart_error_bars(void)
     double value;
     int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, type;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Y Error Bars."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL); else set_status("The selected chart is no longer on this sheet.");
@@ -5292,7 +5306,7 @@ static void do_chart_series_axis(void)
     double value;
     int index = oc_core_selected_chart(core), n = 0, rc, bad = 0, secondary;
     if (index < 0) { set_status("Click a chart first, then choose Format > Chart Series Value Axis."); return; }
-    rc = owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n);
+    rc = oc_core_sheet_charts(core, &charts, &n);
     if (rc != OWF_OK || index >= n) {
         owf_charts_free(charts, n);
         if (rc != OWF_OK) result(rc, NULL); else set_status("The selected chart is no longer on this sheet.");
@@ -5572,7 +5586,7 @@ static void menu_action(ULONG id)
         else result(oc_core_move_sheet(core, oc_core_sheet(core), oc_core_sheet(core) - 1), "Sheet moved left.");
         break;
     case M_SHEET_RIGHT:
-        if (oc_core_sheet(core) + 1 >= oc_core_book(core)->nsheets) set_status("This sheet is already last.");
+        if (oc_core_sheet(core) + 1 >= oc_core_sheet_count(core)) set_status("This sheet is already last.");
         else result(oc_core_move_sheet(core, oc_core_sheet(core), oc_core_sheet(core) + 1), "Sheet moved right.");
         break;
     case M_SHEET_HIDE:
@@ -5639,21 +5653,19 @@ static int rexx_cell(const char *arg, unsigned *row, unsigned *col, const char *
  * and the rows its letters mark (ascenders to descenders), all in pixels at the view's zoom. */
 static int font_check(const char *arg, char *out, size_t size)
 {
-    owf_book *book = oc_core_book(core);
-    const owf_sheet *sh = &book->sheets[oc_core_sheet(core)];
-    const owf_cell *c;
+    oc_cell_info c;
     const owf_cellstyle *st;
     cell_font_entry *e;
     const char *name;
     owf_font_kind kind;
-    char ref[16];
+    char ref[16], font_name[256];
     unsigned row, col;
     int pt10;
     if (!*arg) oc_core_active(core, &row, &col);
     else if (!rexx_cell(arg, &row, &col, NULL)) { snprintf(out, size, "Not a cell"); return 0; }
-    c = owf_sheet_find(sh, row, col);
-    st = &book->styles[c && c->style >= 0 && c->style < book->nstyles ? c->style : 0];
-    cell_font_index(st->font.font, &name, &kind);
+    oc_core_cell_info(core, oc_core_sheet(core), row, col, &c, NULL, 0);
+    st = &c.look;
+    cell_font_index(st->font.font, font_name, sizeof font_name, &name, &kind);
     e = cell_font(st->font.font, st->font.size);
     oc_cell_name(row, col, ref);
     pt10 = (st->font.size > 0 ? st->font.size : OC_DEFAULT_FONT_TWIPS) / 2;
@@ -5678,7 +5690,7 @@ static int chart_check(char *out, size_t size)
     owf_chart *charts;
     int n, i;
     size_t k;
-    if (owf_sheet_charts(oc_core_book(core), oc_core_sheet(core), &charts, &n) != OWF_OK) {
+    if (oc_core_sheet_charts(core, &charts, &n) != OWF_OK) {
         snprintf(out, size, "Out of memory");
         return 0;
     }
@@ -5715,14 +5727,18 @@ static int valid_check(char *out, size_t size)
 {
     static const char *const kinds[] = { "any", "whole", "decimal", "list", "date", "time", "text length", "formula" };
     static const char *const alerts[] = { "Stop", "Warning", "Information" };
-    const owf_book *b = oc_core_book(core);
-    const owf_sheet *sh = &b->sheets[oc_core_sheet(core)];
+    oc_sheet_info sh;
     char buf[1024], a[16], z[16];
     int i;
-    size_t k = (size_t)snprintf(buf, sizeof buf, "%d rule%s", sh->nvalidations, sh->nvalidations == 1 ? "" : "s");
-    for (i = 0; i < sh->nvalidations && k < sizeof buf; i++) {
-        const owf_validation *v = &sh->validations[i];
-        const owf_range *r = v->nranges ? &v->ranges[0] : NULL;
+    size_t k;
+    oc_core_sheet_info(core, oc_core_sheet(core), &sh, NULL, 0);
+    k = (size_t)snprintf(buf, sizeof buf, "%d rule%s", sh.nvalidations, sh.nvalidations == 1 ? "" : "s");
+    for (i = 0; i < sh.nvalidations && k < sizeof buf; i++) {
+        oc_validation_info vi;
+        const oc_validation_info *v = &vi;
+        const owf_range *r;
+        if (oc_core_validation_info(core, oc_core_sheet(core), i, &vi) != OWF_OK) break;
+        r = v->nranges ? &v->first : NULL;
         if (r) {
             oc_cell_name(r->first_row, r->first_col, a);
             oc_cell_name(r->last_row, r->last_col, z);
@@ -5780,7 +5796,7 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
                 def.data[def.ndata].field = col;
                 def.data[def.ndata++].function = subtotal_function(sep + 1);
             } else if (mode == 4 && def.npage < OWF_PIVOT_PAGES)
-                pv_item(oc_core_book(core), &def, col, sep + 1, &def.page[def.npage++]);
+                pv_item(&def, col, sep + 1, &def.page[def.npage++]);
             else {
                 snprintf(out, size, "PIVOT: too many fields, or an unknown function in %s", item);
                 return 0;
@@ -6168,7 +6184,7 @@ static int rexx_do_command(const char *command, char **result_out)
         else { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "Needs SAVEAS"); }
     } else if (starts_word_ci(command, "EXPORT", &arg)) {
         owf_report *rp = owf_report_new();
-        ok = *arg && owf_export_book_file(oc_core_book(core), arg, NULL, rp) == OWF_OK;
+        ok = *arg && oc_core_write_copy(core, arg, NULL, rp) == OWF_OK;
         owf_report_free(rp);
         snprintf(result_text, sizeof result_text, "%s", ok ? "Exported" : "Export failed");
     } else if (starts_word_ci(command, "FONTCHECK", &arg)) {
@@ -6234,10 +6250,10 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "VALIDCHECK", &arg)) {
         valid_check(result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCOMMENT", &arg)) {
-        const owf_comment *cm;
+        char text[4 * sizeof result_text];   /* more UTF-8 than result_text holds as Latin-1 */
         if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
-        else if ((cm = oc_core_comment(core, oc_core_sheet(core), row, col)) != NULL)
-            to_latin1(cm->text, strlen(cm->text), result_text, sizeof result_text);
+        else if (oc_core_comment_info(core, oc_core_sheet(core), row, col, text, sizeof text, NULL, 0, NULL) >= 0)
+            to_latin1(text, strlen(text), result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCELL", &arg)) {
         if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
         else {
@@ -6268,20 +6284,19 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = oc_core_goto(core, arg) == OWF_OK;
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : "Not a cell");
     } else if (starts_word_ci(command, "SHEET", &arg)) {
-        owf_book *book = oc_core_book(core);
-        int i, n = atoi(arg);
+        int i, n = atoi(arg), nsheets = oc_core_sheet_count(core);
         if (!*arg) snprintf(result_text, sizeof result_text, "%d", oc_core_sheet(core) + 1);
         else {
             ok = 0;
-            for (i = 0; i < book->nsheets; i++) {
+            for (i = 0; i < nsheets; i++) {
                 char latin[96];
-                to_latin1(book->sheets[i].name, strlen(book->sheets[i].name), latin, sizeof latin);
+                sheet_latin(i, latin, sizeof latin);
                 if (!strcasecmp(latin, arg) || n == i + 1) { ok = oc_core_set_sheet(core, i) == OWF_OK; break; }
             }
             snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : "No such sheet");
         }
     } else if (starts_word_ci(command, "SHEETS", &arg)) {
-        snprintf(result_text, sizeof result_text, "%d", oc_core_book(core)->nsheets);
+        snprintf(result_text, sizeof result_text, "%d", oc_core_sheet_count(core));
     } else if (starts_word_ci(command, "ADDSHEET", &arg)) {
         char *utf8 = *arg ? from_latin1(arg) : NULL;
         ok = oc_core_add_sheet(core, utf8) >= 0;

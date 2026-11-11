@@ -19,7 +19,11 @@
 
 static owf_obj *object(owf_deck *deck, int slide, int obj)
 {
-    if (!deck || slide < 0 || slide >= deck->nslides || obj < 0 || obj >= deck->slides[slide].nobjs)
+    if (!deck || slide < 0 || slide >= deck->nslides)
+        return NULL;
+    if (obj == OPR_NOTES)
+        return &deck->slides[slide].notes;
+    if (obj < 0 || obj >= deck->slides[slide].nobjs)
         return NULL;
     return &deck->slides[slide].objs[obj];
 }
@@ -832,10 +836,12 @@ typedef enum {
     SNAP_OBJ_COLUMNS,
     SNAP_OBJ_WRAP,
     SNAP_OBJ_CROP,
-    SNAP_OBJ_FLOW
+    SNAP_OBJ_FLOW,
+    SNAP_OBJ_PARENT,
+    SNAP_GROUP
 } snapshot_kind;
 
-typedef struct {
+typedef struct snapshot {
     snapshot_kind kind;
     int slide, obj;
     owf_story text;
@@ -851,7 +857,8 @@ typedef struct {
     int saved_present;
     /* The selection belonging to the saved and live states. */
     int focus, other_focus;
-    /* SNAP_MOVE/SNAP_OBJ_ORDER: the next move to apply; swapped afterward. */
+    /* SNAP_MOVE/SNAP_OBJ_ORDER: the next move to apply; swapped afterward.
+     * SNAP_OBJ_PARENT: from is the object's group (parent) in the saved state. */
     int from, to;
     /* SNAP_NAME: the name belonging to the saved state. */
     char *name;
@@ -880,6 +887,11 @@ typedef struct {
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
     owf_obj saved_obj;
     int saved_obj_present;
+    /* SNAP_GROUP: several steps made as one (opr_undo_group_begin/end), in
+     * the order they were made; parts_forward says the next swap redoes
+     * them first to last (else it undoes them last to first). */
+    struct snapshot *parts;
+    int nparts, parts_forward;
 } snapshot;
 
 #define UNDO_STEPS 16
@@ -887,6 +899,10 @@ typedef struct {
 struct opr_undo {
     snapshot undo[UNDO_STEPS], redo[UNDO_STEPS];
     int nundo, nredo;
+    /* opr_undo_group_begin: steps go to group (room for capgroup) until
+     * opr_undo_group_end makes them one; group_lost: a step had no room. */
+    int grouping, ngroup, capgroup, group_lost;
+    snapshot *group;
 };
 
 static void story_free(owf_story *s)
@@ -911,7 +927,7 @@ static void slide_free(owf_slide *s)
     for (i = 0; i < s->nobjs; i++)
         owf_obj_clear(&s->objs[i]);
     owf_free(s->objs);
-    story_free(&s->notes);
+    owf_obj_clear(&s->notes);
     owf_free(s->name);
     owf_free(s->footer);
     owf_free(s->date_text);
@@ -971,6 +987,11 @@ static void snap_free(snapshot *s)
         owf_free(s->transitions);
     } else if (s->kind == SNAP_OBJ_PRESENCE && s->saved_obj_present) {
         owf_obj_clear(&s->saved_obj);
+    } else if (s->kind == SNAP_GROUP) {
+        int i;
+        for (i = 0; i < s->nparts; i++)
+            snap_free(&s->parts[i]);
+        owf_free(s->parts);
     }
     memset(s, 0, sizeof *s);
 }
@@ -1152,6 +1173,23 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         if (focus) *focus = s->slide;
         return 0;
     }
+    if (s->kind == SNAP_GROUP) {
+        int i, n = s->nparts, last = -1;
+        for (i = 0; i < n; i++) {
+            snapshot *p = &s->parts[s->parts_forward ? i : n - 1 - i];
+            int pf = -1;
+            if (snap_swap(p, deck, &pf) < 0) {
+                /* put back what this swap did, so the group stays whole */
+                while (--i >= 0)
+                    snap_swap(&s->parts[s->parts_forward ? i : n - 1 - i], deck, NULL);
+                return -1;
+            }
+            last = pf;
+        }
+        s->parts_forward = !s->parts_forward;
+        if (focus) *focus = last;
+        return 0;
+    }
     f = s->focus;
     if (s->kind == SNAP_SLIDE) {
         if (s->saved_present) {
@@ -1223,6 +1261,14 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
                 return -1;
             s->saved_obj_present = 1;
         }
+    } else if (s->kind == SNAP_OBJ_PARENT) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        int k;
+        if (!o)
+            return -1;
+        k = o->parent;
+        o->parent = s->from;
+        s->from = k;
     } else if (s->kind == SNAP_OBJ_ORDER) {
         int k;
         if (obj_reorder(deck, s->slide, s->from, s->to) < 0)
@@ -1304,12 +1350,98 @@ void opr_undo_clear(opr_undo *u)
     for (i = 0; i < u->nredo; i++)
         snap_free(&u->redo[i]);
     u->nundo = u->nredo = 0;
+    for (i = 0; i < u->ngroup; i++)
+        snap_free(&u->group[i]);
+    owf_free(u->group);
+    u->group = NULL;
+    u->grouping = u->ngroup = u->capgroup = u->group_lost = 0;
 }
 
 void opr_undo_free(opr_undo *u)
 {
     opr_undo_clear(u);
     owf_free(u);
+}
+
+int opr_undo_group_begin(opr_undo *u, int most)
+{
+    if (!u || u->grouping || most < 1 || most > 1000000)
+        return -1;
+    u->group = owf_calloc((size_t)most, sizeof *u->group);
+    if (!u->group)
+        return -1;
+    u->capgroup = most;
+    u->ngroup = 0;
+    u->group_lost = 0;
+    u->grouping = 1;
+    return 0;
+}
+
+static void structural_push(opr_undo *u, snapshot *s);
+
+int opr_undo_group_cancel(opr_undo *u, owf_deck *deck)
+{
+    int i, rc = 0;
+    if (!u || !u->grouping)
+        return -1;
+    u->grouping = 0;
+    for (i = u->ngroup - 1; i >= 0; i--) {
+        if (snap_swap(&u->group[i], deck, NULL) < 0)
+            rc = -1;
+        snap_free(&u->group[i]);
+    }
+    owf_free(u->group);
+    u->group = NULL;
+    u->ngroup = u->capgroup = 0;
+    if (u->group_lost || rc < 0) {
+        u->group_lost = 0;
+        opr_undo_clear(u);
+        return -1;
+    }
+    return 0;
+}
+
+int opr_undo_group_end(opr_undo *u)
+{
+    snapshot g;
+    int i, lost;
+    if (!u || !u->grouping)
+        return -1;
+    u->grouping = 0;
+    lost = u->group_lost;
+    u->group_lost = 0;
+    if (lost) {
+        /* a change was made without its step: no earlier step can be trusted */
+        for (i = 0; i < u->ngroup; i++)
+            snap_free(&u->group[i]);
+        owf_free(u->group);
+        u->group = NULL;
+        u->ngroup = u->capgroup = 0;
+        opr_undo_clear(u);
+        return -1;
+    }
+    if (!u->ngroup) {
+        owf_free(u->group);
+        u->group = NULL;
+        u->capgroup = 0;
+        return 0;
+    }
+    memset(&g, 0, sizeof g);
+    if (u->ngroup == 1) {
+        g = u->group[0];
+        owf_free(u->group);
+    } else {
+        g.kind = SNAP_GROUP;
+        g.slide = -1;
+        g.obj = -1;
+        g.parts = u->group;
+        g.nparts = u->ngroup;
+        g.parts_forward = 0;
+    }
+    u->group = NULL;
+    u->ngroup = u->capgroup = 0;
+    structural_push(u, &g);
+    return 0;
 }
 
 int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj)
@@ -1320,6 +1452,15 @@ int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj)
         return -1;
     if (snap_take(&s, deck, slide, obj) < 0)
         return -1;
+    if (u->grouping) {
+        if (u->ngroup >= u->capgroup) {
+            snap_free(&s);
+            u->group_lost = 1;
+            return -1;
+        }
+        u->group[u->ngroup++] = s;
+        return 0;
+    }
     for (i = 0; i < u->nredo; i++)
         snap_free(&u->redo[i]);
     u->nredo = 0;
@@ -1612,6 +1753,16 @@ int opr_text_set_indents(opr_undo *u, owf_deck *deck, int slide, int obj,
 static void structural_push(opr_undo *u, snapshot *s)
 {
     int i;
+    if (u->grouping) {
+        if (u->ngroup < u->capgroup) {
+            u->group[u->ngroup++] = *s;
+        } else {
+            snap_free(s);
+            u->group_lost = 1;
+        }
+        memset(s, 0, sizeof *s);
+        return;
+    }
     for (i = 0; i < u->nredo; i++)
         snap_free(&u->redo[i]);
     u->nredo = 0;
@@ -3146,12 +3297,12 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
 
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj)
 {
-    return u ? step(u->undo, &u->nundo, u->redo, &u->nredo, deck, slide, obj) : -1;
+    return u && !u->grouping ? step(u->undo, &u->nundo, u->redo, &u->nredo, deck, slide, obj) : -1;
 }
 
 int opr_undo_redo(opr_undo *u, owf_deck *deck, int *slide, int *obj)
 {
-    return u ? step(u->redo, &u->nredo, u->undo, &u->nundo, deck, slide, obj) : -1;
+    return u && !u->grouping ? step(u->redo, &u->nredo, u->undo, &u->nundo, deck, slide, obj) : -1;
 }
 
 /* ---- The caret and the pointer, through the laid-out slide ---- */
@@ -3163,7 +3314,13 @@ int opr_slide_frame_for(const opr_slide *s, int obj)
     if (!s || s->slide < 0 || s->slide >= s->deck->nslides)
         return -1;
     sl = &s->deck->slides[s->slide];
-    if (obj < 0 || obj >= sl->nobjs)
+    if (obj == OPR_NOTES) {
+        for (i = 0; s->notes && i < s->nframes; i++)
+            if (s->frames[i].obj == &sl->notes)
+                return i;
+        return -1;
+    }
+    if (s->notes || obj < 0 || obj >= sl->nobjs)
         return -1;
     for (i = 0; i < s->nframes; i++)
         if (!s->frames[i].from_master && s->frames[i].obj == &sl->objs[obj])
@@ -3179,6 +3336,8 @@ int opr_frame_obj(const opr_slide *s, int frame)
         return -1;
     sl = &s->deck->slides[s->slide];
     o = s->frames[frame].obj;
+    if (o == &sl->notes)
+        return OPR_NOTES;
     if (o < sl->objs || o >= sl->objs + sl->nobjs)
         return -1;
     return (int)(o - sl->objs);
@@ -3419,4 +3578,238 @@ int opr_hit(const opr_slide *s, ol_unit x, ol_unit y, ol_measure_text_fn measure
         return i;
     }
     return -1;
+}
+
+/* ---- Groups (P5): several top-level objects made one, and taken apart ---- */
+
+/* Whether obj is inside group (a child, or a child's child...). */
+static int inside(const owf_slide *s, int obj, int group)
+{
+    int p = obj >= 0 && obj < s->nobjs ? s->objs[obj].parent : -1, guard = 0;
+    while (p >= 0 && p < s->nobjs && guard++ < s->nobjs) {
+        if (p == group)
+            return 1;
+        p = s->objs[p].parent;
+    }
+    return 0;
+}
+
+int opr_obj_block_end(const owf_deck *deck, int slide, int obj)
+{
+    const owf_slide *s;
+    int i;
+    if (!deck || slide < 0 || slide >= deck->nslides)
+        return -1;
+    s = &deck->slides[slide];
+    if (obj < 0 || obj >= s->nobjs)
+        return -1;
+    for (i = obj + 1; i < s->nobjs && inside(s, i, obj); i++)
+        ;
+    return i;
+}
+
+int opr_obj_top(const owf_deck *deck, int slide, int obj)
+{
+    const owf_slide *s;
+    int guard = 0;
+    if (!deck || slide < 0 || slide >= deck->nslides)
+        return -1;
+    s = &deck->slides[slide];
+    if (obj < 0 || obj >= s->nobjs)
+        return -1;
+    while (s->objs[obj].parent >= 0 && s->objs[obj].parent < s->nobjs && guard++ < s->nobjs)
+        obj = s->objs[obj].parent;
+    return obj;
+}
+
+static int int_order(const void *a, const void *b)
+{
+    int x = *(const int *)a, y = *(const int *)b;
+    return x < y ? -1 : x > y;
+}
+
+static void parent_push(opr_undo *u, owf_deck *deck, int slide, int obj, int parent)
+{
+    snapshot s;
+    owf_obj *o = object(deck, slide, obj);
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_PARENT;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    s.from = o->parent;
+    o->parent = parent;
+    structural_push(u, &s);
+}
+
+int opr_obj_group(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n, int *group)
+{
+    owf_slide *sl;
+    owf_obj g, r;
+    snapshot s;
+    int *m, i, first, x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    if (group) *group = -1;
+    if (!u || !deck || slide < 0 || slide >= deck->nslides || !objs || n < 2 || n > 10000)
+        return -1;
+    sl = &deck->slides[slide];
+    m = owf_malloc((size_t)n * sizeof *m);
+    if (!m)
+        return -1;
+    memcpy(m, objs, (size_t)n * sizeof *m);
+    qsort(m, (size_t)n, sizeof *m, int_order);
+    for (i = 0; i < n; i++) {
+        const owf_obj *o;
+        if (m[i] < 0 || m[i] >= sl->nobjs || (i && m[i] == m[i - 1])) {
+            owf_free(m);
+            return -1;
+        }
+        o = &sl->objs[m[i]];
+        /* top-level, not a group, not a placeholder (its box comes from the layout) */
+        if (o->parent >= 0 || o->kind == OWF_OBJ_GROUP || o->placeholder != OWF_PH_NONE ||
+            owf_deck_resolve(deck, slide, m[i], &r, NULL) < 0 || r.width < 1 || r.height < 1) {
+            owf_free(m);
+            return -2;
+        }
+        if (!i || r.x < x0) x0 = r.x;
+        if (!i || r.y < y0) y0 = r.y;
+        if (!i || r.x + r.width > x1) x1 = r.x + r.width;
+        if (!i || r.y + r.height > y1) y1 = r.y + r.height;
+    }
+    if (opr_undo_group_begin(u, 2 * n + 2) < 0) {
+        owf_free(m);
+        return -1;
+    }
+    /* the members side by side in their order, ending where the frontmost is */
+    for (i = n - 2; i >= 0; i--) {
+        int to = m[i + 1] - 1;
+        if (m[i] != to) {
+            if (obj_reorder(deck, slide, m[i], to) < 0)
+                goto fail;
+            memset(&s, 0, sizeof s);
+            s.kind = SNAP_OBJ_ORDER;
+            s.slide = slide;
+            s.obj = to;
+            s.from = to;
+            s.to = m[i];
+            s.focus = s.other_focus = slide;
+            structural_push(u, &s);
+            m[i] = to;
+        }
+    }
+    first = m[0];
+    /* the group just behind them */
+    owf_obj_init(&g, OWF_OBJ_GROUP);
+    g.x = x0;
+    g.y = y0;
+    g.width = x1 - x0;
+    g.height = y1 - y0;
+    if (obj_attach(deck, slide, first, &g) < 0)
+        goto fail;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_PRESENCE;
+    s.slide = slide;
+    s.obj = first;
+    s.focus = s.other_focus = slide;
+    structural_push(u, &s);
+    for (i = 0; i < n; i++)
+        parent_push(u, deck, slide, first + 1 + i, first);
+    owf_free(m);
+    if (opr_undo_group_end(u) < 0)
+        return -1;
+    if (group) *group = first;
+    return 0;
+fail:
+    owf_free(m);
+    opr_undo_group_cancel(u, deck);
+    return -1;
+}
+
+int opr_obj_ungroup(opr_undo *u, owf_deck *deck, int slide, int group, int *first, int *count)
+{
+    owf_slide *sl;
+    snapshot s;
+    int i, end, children = 0;
+    if (first) *first = -1;
+    if (count) *count = 0;
+    if (!u || !deck || slide < 0 || slide >= deck->nslides)
+        return -1;
+    sl = &deck->slides[slide];
+    if (group < 0 || group >= sl->nobjs)
+        return -1;
+    if (sl->objs[group].kind != OWF_OBJ_GROUP || sl->objs[group].parent >= 0)
+        return -2;
+    end = opr_obj_block_end(deck, slide, group);
+    for (i = group + 1; i < end; i++)
+        if (sl->objs[i].parent == group)
+            children++;
+    if (opr_undo_group_begin(u, children + 1) < 0)
+        return -1;
+    for (i = group + 1; i < end; i++)
+        if (sl->objs[i].parent == group)
+            parent_push(u, deck, slide, i, -1);
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_PRESENCE;
+    s.slide = slide;
+    s.obj = group;
+    s.focus = s.other_focus = slide;
+    if (obj_detach(deck, slide, group, &s.saved_obj) < 0) {
+        opr_undo_group_cancel(u, deck);
+        return -1;
+    }
+    s.saved_obj_present = 1;
+    structural_push(u, &s);
+    if (opr_undo_group_end(u) < 0)
+        return -1;
+    if (first) *first = group;
+    if (count) *count = end - group - 1;
+    return 0;
+}
+
+int opr_objs_delete(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n)
+{
+    owf_slide *sl;
+    snapshot s;
+    char *gone;
+    int i, j, total = 0;
+    if (!u || !deck || slide < 0 || slide >= deck->nslides || !objs || n < 1)
+        return -1;
+    sl = &deck->slides[slide];
+    gone = owf_calloc((size_t)(sl->nobjs ? sl->nobjs : 1), 1);
+    if (!gone)
+        return -1;
+    for (i = 0; i < n; i++) {
+        int end;
+        if (objs[i] < 0 || objs[i] >= sl->nobjs) {
+            owf_free(gone);
+            return -1;
+        }
+        end = opr_obj_block_end(deck, slide, objs[i]);
+        for (j = objs[i]; j < end; j++)
+            gone[j] = 1;
+    }
+    for (i = 0; i < sl->nobjs; i++)
+        total += gone[i];
+    if (opr_undo_group_begin(u, total) < 0) {
+        owf_free(gone);
+        return -1;
+    }
+    /* frontmost first: a group's children before the group */
+    for (i = sl->nobjs - 1; i >= 0; i--) {
+        if (!gone[i])
+            continue;
+        memset(&s, 0, sizeof s);
+        s.kind = SNAP_OBJ_PRESENCE;
+        s.slide = slide;
+        s.obj = i;
+        s.focus = s.other_focus = slide;
+        if (obj_detach(deck, slide, i, &s.saved_obj) < 0) {
+            owf_free(gone);
+            opr_undo_group_cancel(u, deck);
+            return -1;
+        }
+        s.saved_obj_present = 1;
+        structural_push(u, &s);
+    }
+    owf_free(gone);
+    return opr_undo_group_end(u);
 }

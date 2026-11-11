@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.1.0"
+#define OW_CORE_VERSION "1.3.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -228,6 +228,74 @@ int ow_editor_table_insert_column(ow_editor *editor);
 int ow_editor_table_delete_column(ow_editor *editor);
 int ow_editor_render_page(const ow_editor *editor, int page_index,
                           const ow_renderer *renderer);
+
+/* ---- Tracked changes (core 1.2) ----
+ * Recording on, typed and pasted text and new paragraphs are the review author's insertions, and Backspace,
+ * Delete, Cut and typing over a selection mark text deleted instead of removing it: it stays, struck through,
+ * until the change is accepted or rejected. Deleting the author's own insertion removes it. The document
+ * keeps the setting (owf_doc.track_changes). Accepting or rejecting is undoable.
+ *
+ * A change, as these calls count them, is a row of text and paragraph ends in the caret's story that name
+ * the same owf_revision. */
+void ow_editor_set_track_changes(ow_editor *editor, int on);
+int ow_editor_track_changes(const ow_editor *editor);
+/* The name new changes are made under; NULL or "" for none (an unknown author). */
+int ow_editor_set_review_author(ow_editor *editor, const char *utf8);
+const char *ow_editor_review_author(const ow_editor *editor);
+
+typedef struct {
+    int index;               /* 0, 1... in the story */
+    int kind;                /* OWF_REV_INSERT or OWF_REV_DELETE */
+    const char *author;      /* the document's; NULL: unknown */
+    const char *date;        /* ISO 8601; NULL: unknown */
+    ow_position start, end;  /* where it is, as a selection */
+} ow_change_info;
+int ow_editor_change_count(const ow_editor *editor);
+/* 1 and *info for the index-th change, 0 when there is none. The strings are valid until the next edit. */
+int ow_editor_change_info(ow_editor *editor, int index, ow_change_info *info);
+/* The change at the caret: 1 and *info, or 0. */
+int ow_editor_current_change(ow_editor *editor, ow_change_info *info);
+/* Selects the next change after the selection (or the one before it): 1, 2 when it went round the story's
+ * end to find it, 0 when there are none. */
+int ow_editor_next_change(ow_editor *editor, int backwards);
+/* Accepts (accept 1) or rejects (0) the changes the selection touches, or the one at the caret. Accepting an
+ * insertion keeps its text, a deletion removes it; rejecting does the opposite. OWF_ERR_UNSUPPORTED when
+ * there is none there. */
+int ow_editor_accept_change(ow_editor *editor, int accept);
+/* Every change in the document (body, headers, footers, text boxes). OWF_ERR_UNSUPPORTED when it has none. */
+int ow_editor_accept_all_changes(ow_editor *editor, int accept);
+
+/* ---- Comments (core 1.3) ----
+ * Notes in the margin, the document's (owf.h's owf_annotation): on a point, or on the text selected when it
+ * was made. A reply answers a comment and is where it is. Comments are listed in the order of their places in
+ * the caret's story; index counts them so. All of these are undoable. */
+typedef struct {
+    int index;               /* in the story's order, from 0 */
+    const char *author;      /* NULL: unknown */
+    const char *initials;    /* NULL: none */
+    const char *date;        /* ISO 8601; NULL: unknown */
+    const char *text;        /* UTF-8, its paragraphs between '\n' */
+    int reply_to;            /* the index of the comment it answers; -1: none */
+    int done;                /* marked done */
+    ow_position start, end;  /* its text (start == end's place: a point) */
+} ow_comment_info;
+int ow_editor_comment_count(const ow_editor *editor);
+/* 1 and *info for the index-th comment, 0 when there is none. The strings are valid until the next edit. */
+int ow_editor_comment_info(ow_editor *editor, int index, ow_comment_info *info);
+/* The comment at the caret (its text holds the caret, or it is where the caret is): 1 and *info, or 0. */
+int ow_editor_current_comment(ow_editor *editor, ow_comment_info *info);
+/* Selects the next comment's text (or the one before): 1, 2 when it went round the story's end, 0: none.
+ * Replies are passed over (they are where their comment is). */
+int ow_editor_next_comment(ow_editor *editor, int backwards);
+/* A comment of the review author's on the selection (or at the caret), made now; the caret after it. */
+int ow_editor_insert_comment(ow_editor *editor, const char *utf8);
+/* The review author's reply to the comment at the caret. OWF_ERR_UNSUPPORTED: no comment there. */
+int ow_editor_reply_comment(ow_editor *editor, const char *utf8);
+/* The comment at the caret: its text changed, marked done or not (with its replies), or deleted (with its
+ * replies). OWF_ERR_UNSUPPORTED: no comment there. */
+int ow_editor_set_comment_text(ow_editor *editor, const char *utf8);
+int ow_editor_resolve_comment(ow_editor *editor, int done);
+int ow_editor_delete_comment(ow_editor *editor);
 
 #ifdef __cplusplus
 }

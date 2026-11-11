@@ -41,6 +41,9 @@ struct ow_layout {
     /* 2.0.17: how far each text box in the line is moved from its paragraph's corner onto its room there (by
      * frame; NULL: not yet) */
     const ol_unit *inline_dx, *inline_dy;
+    /* 2.2.0: the comments whose ranges are open where the body is being laid out (their indexes), for their
+     * text's highlight */
+    int open_comments[16], nopen;
 };
 
 /* The text a field shows. */
@@ -87,6 +90,28 @@ static int base_size(const owf_doc *doc)
 static uint32_t argb(unsigned long rgb)
 {
     return 0xff000000u | (uint32_t)(rgb & 0xffffffUL);
+}
+
+/* 2.1.0: a tracked change's text in its author's colour, an insertion underlined, a deletion struck through.
+ * The colour is the author's place among the document's authors, from a short list that reads on white. */
+static void change_style(const owf_doc *doc, int number, ol_style *s)
+{
+    static const unsigned long colours[] = { 0x1F5FBF, 0xB0306A, 0x2E7D32, 0x8E44AD, 0xC0601A, 0x00838F };
+    const owf_revision *r = OWF_DOC_REVISION(doc, number);
+    int i, author = 0;
+    if (!r) return;
+    for (i = 0; i < number - 1; ++i) {
+        const char *a = doc->revisions[i].author, *b = r->author;
+        int seen = 0, k;
+        if ((!a && !b) || (a && b && !strcmp(a, b))) break;
+        for (k = 0; k < i && !seen; ++k) {
+            const char *c = doc->revisions[k].author;
+            seen = (!a && !c) || (a && c && !strcmp(a, c));
+        }
+        if (!seen) ++author;
+    }
+    s->foreground = argb(colours[author % (int)(sizeof colours / sizeof colours[0])]);
+    s->text_flags |= r->kind == OWF_REV_DELETE ? OL_TEXT_STRIKE : OL_TEXT_UNDERLINE;
 }
 
 static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spacing, ol_style *s)
@@ -374,6 +399,16 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         }
         if (!n) return NULL;
         run_style(doc, &r->fmt, spacing, &rs);
+        if (r->revision) change_style(doc, r->revision, &rs);
+        if (l && record == 1 && r->comment) {
+            /* 2.2.0: a comment's range: its text highlighted from its start to its place */
+            int k, idx = r->comment > 0 ? r->comment - 1 : -r->comment - 1;
+            if (r->comment < 0 && l->nopen < 16) l->open_comments[l->nopen++] = idx;
+            for (k = 0; r->comment > 0 && k < l->nopen; ++k)
+                if (l->open_comments[k] == idx) { l->open_comments[k] = l->open_comments[--l->nopen]; break; }
+        } else if (l && record == 1 && l->nopen && r->kind == OWF_RUN_TEXT) {
+            rs.background = 0xFFFFF0A0u;
+        }
         ol_node_set_style(n, &rs);
         if (!remember(record ? l : NULL, n, record - 1, index, j)) return NULL;
     }

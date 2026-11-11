@@ -96,8 +96,8 @@ static owf_deck *build_deck(void)
         o->x = 1000; o->y = 7000; o->width = 1440; o->height = 1440;
         o->image = owf_doc_add_image(d->res, "dot.png", "image/png", png, sizeof png, 1440, 1440, "a dot");
     }
-    owf_story_add(&s->notes, NULL);
-    owf_para_add_text(&s->notes.paras[0], &s->objs[0].text.paras[0].runs[0].fmt, "notes!", 6);
+    owf_story_add(&s->notes.text, NULL);
+    owf_para_add_text(&s->notes.text.paras[0], &s->objs[0].text.paras[0].runs[0].fmt, "notes!", 6);
     /* 3: hidden */
     s = owf_deck_add_slide(d, -1, 0);
     if (s)
@@ -217,7 +217,7 @@ static void test_duplicate(void)
     if (copy) {
         source = &d->slides[1];
         c = &copy->objs[2];
-        CHECK(copy->objs != source->objs && copy->notes.paras != source->notes.paras &&
+        CHECK(copy->objs != source->objs && copy->notes.text.paras != source->notes.text.paras &&
               copy->name != source->name && copy->footer != source->footer && copy->date_text != source->date_text,
               "slide-owned allocations are independent");
         CHECK(c->points != source->objs[2].points && c->levels != source->objs[2].levels &&
@@ -260,7 +260,7 @@ static void compare_decks(const char *what, const owf_deck *a, const owf_deck *b
         CHECK(x->transition.kind == y->transition.kind && x->transition.direction == y->transition.direction &&
               x->transition.advance_after == y->transition.advance_after, "%s: slide %d transition", what, i);
         CHECK((!x->footer && !y->footer) || (x->footer && y->footer && !strcmp(x->footer, y->footer)), "%s: footer", what);
-        CHECK(x->notes.nparas == y->notes.nparas, "%s: notes", what);
+        CHECK(x->notes.text.nparas == y->notes.text.nparas, "%s: notes", what);
         for (j = 0; j < x->nobjs && j < y->nobjs; j++) {
             const owf_obj *p = &x->objs[j], *q = &y->objs[j];
             CHECK(p->kind == q->kind && p->placeholder == q->placeholder && p->x == q->x && p->y == q->y &&

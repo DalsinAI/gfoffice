@@ -33,12 +33,12 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Open and save ODF Presentation (`.odp`) | P1 | Yes |
 | ODF Presentation template (`.otp`) | P1 | Yes (opened; saved as `.otp` by name) |
 | Flat XML ODF Presentation (`.fodp`) | P1 | Yes; embedded objects' parts are not kept in flat XML (reported) |
-| Microsoft PowerPoint 2007-365 (`.pptx`, `.potx`, `.ppsx`) open | P2 | No in P1. P2: Yes (`in_pptx.c`; what is approximated is reported, see FORMATS.md); saved as ODP |
-| Save as PowerPoint 2007-365 | P2 | No |
+| Microsoft PowerPoint 2007-365 (`.pptx`, `.potx`, `.ppsx`) open | P2 | No in P1. P2: Yes (`in_pptx.c`; what is approximated is reported, see FORMATS.md); saved as PPTX since 0.6.27 |
+| Save as PowerPoint 2007-365 | P4 | Yes (0.6.27): Save and Save As .pptx (`src/deck/opr_pptx.c`); tables saved as text boxes, groups ungrouped, animations not written, all reported |
 | PowerPoint 97-2003 (`.ppt`, `.pps`, `.pot`) open and save | Later | No |
 | OpenOffice.org 1.x (`.sxi`), StarImpress | Later, if samples appear | No |
 | Export as PDF (Export as PDF..., Export Directly as PDF) | P1 | Yes: a page a slide, searchable text, JPEG and PNG pictures, hidden slides left out |
-| PDF options: page range, notes pages, handouts, hidden slides, bookmarks, tagged PDF, image compression | P2-P4 | No |
+| PDF options: page range, notes pages, handouts, hidden slides, bookmarks, tagged PDF, image compression | P2-P4 | Notes pages and handouts: Yes (0.6.25); the rest No |
 | Export slides as pictures (PNG, JPEG, GIF, BMP, SVG...) | P4 (IFF ILBM through datatypes) | No |
 | Export as HTML (Web Page wizard), Flash | Not planned | No |
 | Document properties: title, subject, keywords | P1 (title) | Title yes; the rest No |
@@ -50,7 +50,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | New slide, delete, duplicate, rename | P3 | Yes in GFOpenPresentation 0.2.3; all undoable, with deep-copy duplication in libowf |
-| Move slides (Slide Sorter, drag) | P3 | Move up/down: Yes in GFOpenPresentation 0.2.3, undoable through `opr_slide_move`; drag: No |
+| Move slides (Slide Sorter, drag) | P3 | Yes in GFOpenPresentation 0.6.24: Move Up/Down, and in the Slide Sorter several picked slides dragged together, one Undo step (`opr_sorter_move`) |
 | Hide and show a slide | P2 (show), P3 (edit) | Yes in GFOpenPresentation 0.3.0: read, written, omitted from PDF and normal show navigation, and edited with undo/redo |
 | Slide layouts (Blank, Title Slide, Title Content, Title and 2 Content, Title Only, Centered Text, and the rest) | P3 | Model: a new deck has six; a file's layouts are read and written with their placeholders |
 | Page setup: slide size (Screen 4:3, 16:9, 16:10, A4, Letter, custom), orientation, numbering format | P3 | Model: any size, orientation from it; numbering format No |
@@ -69,7 +69,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Master's placeholders: title, outline, date, footer, number | P1 | Yes |
 | Presentation styles: title, subtitle, outline 1-9, notes, background objects | P1 | Yes: each a text level of the master |
 | Graphic styles | P1 (as looks) | Approx.: resolved into each object's look; the file's defaults kept |
-| Notes master, handout master | P2-P4 | Notes page size; the rest No |
+| Notes master, handout master | P2-P4 | Notes page size and its fixed layout (slide above, notes below); editing the masters No |
 
 ## 4. Text
 
@@ -151,12 +151,12 @@ Undo and ODP persistence.
 | 3-D objects, extrusion | Not planned | Kept |
 | Line: colour, width, solid or dashed; area: colour | P1 | Yes in the model and renderer; GFOpenPresentation 0.5.0 adds undoable UI editing of solid fill, line colour/width, solid/dashed/dotted/dash-dot style and start/end arrowheads for one top-level text box or shape |
 | Area: gradient, hatching, bitmap, transparency; shadow | Later | Approx.: one colour; transparency and shadow No |
-| Position and size | P1 | Yes: GFOpenPresentation 0.3.4 added single-object drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; 0.3.9 added independent deep-copy duplication with a clamped offset; 0.5.1 adds exact numeric left, top, width and height; 0.6.17 adds an optional half-inch grid with move/resize snapping; 0.6.18 adds fixed margin/centre guides. Multi-selection, custom guides and aspect lock remain |
+| Position and size | P1 | Yes: GFOpenPresentation 0.3.4 added single-object drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; 0.3.9 added independent deep-copy duplication with a clamped offset; 0.5.1 adds exact numeric left, top, width and height; 0.6.17 adds an optional half-inch grid with move/resize snapping; 0.6.18 adds fixed margin/centre guides. 0.6.28 adds several objects picked (Shift+click, a drag round them) moved together by drag and arrow keys. Resizing several together, custom guides and aspect lock remain |
 | Rotation | P1 | Shape outlines are rotated through OpenLayout 0.14 and saved to ODP; GFOpenPresentation 0.3.7 adds undoable 15-degree left/right rotation for a selected shape. Shape text, pictures, groups, exact angle entry and rotation handles remain |
 | Flip, slant | P1 (flip of lines and arrows) | Lines and arrows yes; slant: Approx. (drawn in its box) |
 | Text in shapes | P1 | Yes |
-| Group, ungroup, enter group | P1 (groups), P3 (commands) | Yes |
-| Arrange (front, back), align, distribute | P3 | Bring to Front, Bring Forward, Send Backward and Send to Back: Yes in 0.4.0 for one top-level object, undoable and group-block safe. Align Left/Centre/Right/Top/Middle/Bottom to the slide/page: Yes in 0.4.1. Multi-object align and distribute: No |
+| Group, ungroup, enter group | P1 (groups), P3 (commands) | Group and Ungroup: Yes in 0.6.28 (Object menu, ARexx GROUP/UNGROUP; a group moves, aligns and deletes as one; `opr_edit.c`). Enter group: No |
+| Arrange (front, back), align, distribute | P3 | Bring to Front, Bring Forward, Send Backward and Send to Back: Yes in 0.4.0 for one top-level object, undoable and group-block safe. Align Left/Centre/Right/Top/Middle/Bottom to the slide/page: Yes in 0.4.1. Multi-object align and distribute: Yes in 0.6.28 (several picked align to the box round them; Distribute Across/Down; `opr_multi.c`) |
 | Combine, split, shape operations (merge, subtract, intersect) | Not planned | No |
 | Name and description (alt text) | P1 | Yes |
 | Snap, grid, guides, rulers | P3 | Text-indent ruler: Yes; snap, grid and guides: No |
@@ -199,10 +199,10 @@ Undo and ODP persistence.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Speaker notes, per slide | P1 | Yes (in the model and ODP) |
-| Notes view, notes pages printed | P3, P4 | No |
-| Handouts: 1, 2, 3, 4, 6 or 9 slides a page | P4 (P1 design asks for them) | No |
-| Outline view | P4 | No |
-| Print slides, notes, handouts, outline (through GFOpenPrint) | P2 (slides), P4 | Slides: Yes, through GFOpenPrint; notes, handouts and outline: No |
+| Notes view, notes pages printed | P3, P4 | Yes (0.6.25): View > Notes, typed in place with Undo; Print and Export PDF in Notes view |
+| Handouts: 1, 2, 3, 4, 6 or 9 slides a page | P4 (P1 design asks for them) | Yes (0.6.25): Project > Export Handouts, ARexx EXPORT/PRINT HANDOUTS n; no writing lines |
+| Outline view | P4 | Yes (0.6.26): View > Outline, titles and outline text as one list; edit (in a requester), add, move in and out (titles join, lines become slides), delete; each one Undo step. Not typed straight into the list |
+| Print slides, notes, handouts, outline (through GFOpenPrint) | P2 (slides), P4 | Slides, notes pages and handouts: Yes, through GFOpenPrint; outline: No |
 
 ## 10. Slide show
 
@@ -240,8 +240,8 @@ Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Normal view (slides, slide, notes) | P3 | No. P2: the slide at the window's size with the slides beside it; no notes pane |
-| Slide Sorter | P3 | No. P2: a strip of slides to pick from; moving them is P3 |
+| Normal view (slides, slide, notes) | P3 | Partly: the slide at the window's size with the slides beside it; notes in their own Notes view, no notes pane |
+| Slide Sorter | P3 | Yes in GFOpenPresentation 0.6.24 (View > Slide Sorter): a thumbnail grid; click, Shift and Ctrl pick several; drag with an insertion mark; Duplicate, Delete, Hide, Show, Move Up/Down and Slide Transition on every picked slide, each one Undo step; Zoom sets the columns; Return or a double-click opens a slide; ARexx VIEW, PICK, MOVEPICKED and the rest. Slide clipboard: No |
 | Master view | P4 | No |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
