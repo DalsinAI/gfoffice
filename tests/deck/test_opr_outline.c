@@ -74,7 +74,7 @@ static owf_deck *deck_of(opr_undo *u)
     opr_text_set(d, 0, opr_outline_title_obj(d, 0), "One");
     body = opr_outline_body_obj(d, 0);
     opr_text_set(d, 0, body, "a\nb\nc");
-    owf_obj_set_level(&d->slides[0].objs[body], 1, 1);
+    owf_obj_set_level(&d->slides[0].objs[body], 1, 2);
     opr_text_set(d, 1, opr_outline_title_obj(d, 1), "Two");
     opr_text_set(d, 1, opr_outline_body_obj(d, 1), "d");
     opr_undo_clear(u);

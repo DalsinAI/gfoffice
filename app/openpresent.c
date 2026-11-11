@@ -95,7 +95,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.19 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.20 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPUBLISHER"
 #define UNIT "Page"
 #define UNIT_UPPER "PAGE"
@@ -106,7 +106,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.25 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.26 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -121,7 +121,7 @@ static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
 enum { C_NEW = 1, C_OPEN, C_SAVE, C_PRINT, C_PDF, C_UNDO, C_REDO };
-enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_HSCROLL = 500, GID_VSCROLL = 501 };
+enum { GID_TOOLBAR = 100, GID_SLIDES = 400, GID_OUTLINE = 410, GID_HSCROLL = 500, GID_VSCROLL = 501 };
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_PRINT, M_PDF, M_HANDOUTS, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FIND, M_FIND_NEXT, M_REPLACE, M_REPLACE_ALL, M_SELECT_ALL, M_STOP,
@@ -148,7 +148,7 @@ enum {
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
-    M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES
+    M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE
 };
 
 static struct NewMenu menus[] = {
@@ -271,9 +271,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Move " UNIT " Down", NULL, 0, 0, (APTR)M_MOVE_SLIDE_DOWN },
 
     { NM_TITLE, "View", NULL, 0, 0, NULL },
-    { NM_ITEM, "Normal", NULL, CHECKIT | CHECKED, ~1 & 7, (APTR)M_VIEW_NORMAL },
-    { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 7, (APTR)M_VIEW_SORTER },
-    { NM_ITEM, "Notes", NULL, CHECKIT, ~4 & 7, (APTR)M_VIEW_NOTES },
+    { NM_ITEM, "Normal", NULL, CHECKIT | CHECKED, ~1 & 15, (APTR)M_VIEW_NORMAL },
+    { NM_ITEM, "Outline", NULL, CHECKIT, ~8 & 15, (APTR)M_VIEW_OUTLINE },
+    { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 15, (APTR)M_VIEW_SORTER },
+    { NM_ITEM, "Notes", NULL, CHECKIT, ~4 & 15, (APTR)M_VIEW_NOTES },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First " UNIT, NULL, 0, 0, (APTR)M_FIRST },
     { NM_ITEM, "Previous " UNIT, "[", 0, 0, (APTR)M_PREV },
@@ -388,6 +389,11 @@ static opr_undo *undo;
 static int sorter_view;
 /* View > Notes: the slide's notes page, the slide small at the top and its speaker notes typed in below */
 static int notes_view;
+/* View > Outline: every slide's title and its outline text as one list, typed, demoted and promoted */
+static int outline_view;
+static ogt_list *outline_list;
+static opr_outline outline;
+static void outline_refresh(void);
 static int sorter_columns;                           /* 0: as many as fit */
 static int sorter_scroll;
 static opr_sorter_grid sorter;
@@ -2319,6 +2325,7 @@ static void free_gadgets(void)
     free_scrollers();
     if (chain) { RemoveGList(win, chain, -1); chain = NULL; }
     if (strip) { ogt_list_free(strip); strip = NULL; }
+    if (outline_list) { ogt_list_free(outline_list); outline_list = NULL; }
 }
 
 static void layout(void)
@@ -2340,19 +2347,20 @@ static void layout(void)
     body_h = status_box.y - body_y;
     /* the slides beside the slide, hidden in a narrow window (as GFOpenWrite's navigator); the sorter is the
        slides, so neither the strip nor the ruler is there */
-    stripw = sorter_view ? 0 : area.w >= 480 ? (area.w < 1000 ? 140 : area.w / 7) : 0;
+    stripw = sorter_view || outline_view ? 0 : area.w >= 480 ? (area.w < 1000 ? 140 : area.w / 7) : 0;
     strip_box = (box){ area.x, body_y, stripw, body_h };
     view_x = area.x + stripw + (stripw ? 1 : 0);
     view_w = area.w - stripw - (stripw ? 1 : 0);
-    ruler_h = sorter_view ? 0 : fh + 12;
+    ruler_h = sorter_view || outline_view ? 0 : fh + 12;
     if (ruler_h > body_h / 3) ruler_h = body_h / 3;
     ruler_box = (box){ view_x, body_y, view_w, ruler_h };
     view_box = (box){ view_x, body_y + ruler_h, view_w, body_h - ruler_h };
     place_slide();
-    if (!sorter_view) update_ruler();
+    if (!sorter_view && !outline_view) update_ruler();
     if ((chain = ogt_toolbar_gadgets(&tb, GID_TOOLBAR)))
         AddGList(win, chain, ~0, -1, NULL);
     if (sorter_view) sorter_place();
+    else if (outline_view) outline_refresh();
     else make_scrollers();
     if (stripw && (strip = ogt_list_new(win, &ctx, GID_SLIDES, thumb_height, thumb_draw, NULL, NULL, "list"))) {
         ogt_list_layout(strip, strip_box.x + 4, strip_box.y + 4, strip_box.w - 8, strip_box.h - 8);
@@ -2621,6 +2629,12 @@ static void draw_slide_part(const box *part)
     if (!win) return;
     if (sorter_view) {
         draw_sorter();
+        return;
+    }
+    if (outline_view) {
+        outline_refresh();
+        if (outline_list) ogt_list_draw(outline_list);
+        else ogt_fill(&ctx, win->RPort, "window", view_box.x, view_box.y, view_box.w, view_box.h);
         return;
     }
     rp = win->RPort;
@@ -2953,30 +2967,35 @@ static struct MenuItem *menu_item_for(ULONG id)
 static void update_view_menus(void)
 {
     struct MenuItem *normal = menu_item_for(M_VIEW_NORMAL), *sorted = menu_item_for(M_VIEW_SORTER),
-                    *notes = menu_item_for(M_VIEW_NOTES);
-    int normal_on = !sorter_view && !notes_view;
+                    *notes = menu_item_for(M_VIEW_NOTES), *lines = menu_item_for(M_VIEW_OUTLINE);
+    int normal_on = !sorter_view && !notes_view && !outline_view;
     if (!win || !menu) return;
     ClearMenuStrip(win);
     if (normal) normal->Flags = (UWORD)(normal_on ? normal->Flags | CHECKED : normal->Flags & ~CHECKED);
     if (sorted) sorted->Flags = (UWORD)(sorter_view ? sorted->Flags | CHECKED : sorted->Flags & ~CHECKED);
     if (notes) notes->Flags = (UWORD)(notes_view ? notes->Flags | CHECKED : notes->Flags & ~CHECKED);
+    if (lines) lines->Flags = (UWORD)(outline_view ? lines->Flags | CHECKED : lines->Flags & ~CHECKED);
     ResetMenuStrip(win, menu);
     /* Format works on text, so on the notes too; Insert and Object on what is on the slide in front of you */
-    if (sorter_view) OffMenu(win, FULLMENUNUM(2, NOITEM, NOSUB));
+    if (sorter_view || outline_view) OffMenu(win, FULLMENUNUM(2, NOITEM, NOSUB));
     else OnMenu(win, FULLMENUNUM(2, NOITEM, NOSUB));
     if (!normal_on) { OffMenu(win, FULLMENUNUM(3, NOITEM, NOSUB)); OffMenu(win, FULLMENUNUM(4, NOITEM, NOSUB)); }
     else { OnMenu(win, FULLMENUNUM(3, NOITEM, NOSUB)); OnMenu(win, FULLMENUNUM(4, NOITEM, NOSUB)); }
 }
 
-/* 0 Normal, 1 the sorter, 2 Notes. */
+/* 0 Normal, 1 the sorter, 2 Notes, 3 the outline. */
 static void set_view(int mode)
 {
     int sorted = mode == 1;
-    if (sorted == sorter_view && (mode == 2) == notes_view) { update_view_menus(); return; }
+    if (sorted == sorter_view && (mode == 2) == notes_view && (mode == 3) == outline_view) {
+        update_view_menus();
+        return;
+    }
     clear_object_selection();
     memset(&sorter_drag, 0, sizeof sorter_drag);
     sorter_view = sorted;
     notes_view = mode == 2;
+    outline_view = mode == 3;
     pan_x = pan_y = 0;
     if (sorted) {
         sorter_pick_fit();
@@ -2986,8 +3005,13 @@ static void set_view(int mode)
     update_view_menus();
     set_status(sorted ? UNIT " Sorter: drag to move; Shift and Ctrl pick several; Return opens one."
                : notes_view ? "Notes: click under the " UNIT_LOWER " to type its speaker notes."
+               : outline_view ? "Outline: Return edits a line, Shift+Return adds one, Tab and Shift+Tab move it in and out."
                : "Normal view.");
     relayout();
+    if (outline_view && outline_list) {
+        int r = opr_outline_find(&outline, current, -1, 0);
+        if (r >= 0) { ogt_list_select(outline_list, r); ogt_list_show(outline_list, r); ogt_list_draw(outline_list); }
+    }
     if (sorted) {
         sorter_scroll = opr_sorter_scroll_to(&sorter, current, sorter_scroll);
         sorter_scroller_follow();
@@ -3001,6 +3025,196 @@ static void sorter_open(int index)
     current = index;
     set_view(0);
     show_slide(index);
+}
+
+/* ---- The outline view ---- */
+
+static int outline_height(void *user, int index)
+{
+    (void)user;
+    return index < outline.count && outline.rows[index].level == 0 ? fh + 12 : fh + 4;
+}
+
+static void outline_draw(void *user, int index, struct RastPort *rp, int x, int y, int w, int h, int selected)
+{
+    const opr_outline_row *r;
+    char *text, num[16];
+    int tx, ty;
+    (void)user;
+    if (!deck || index >= outline.count) return;
+    r = &outline.rows[index];
+    if (selected) ogt_fill(&ctx, rp, "accent", x, y, w, h);
+    SetFont(rp, font);
+    ty = y + (h - fh) / 2;
+    if (r->level == 0) {
+        if (index) ogt_hline(rp, ogt_pen(&ctx, "group.line"), x + 4, y, w - 8);
+        snprintf(num, sizeof num, "%d", r->slide + 1);
+        ogt_text(rp, ogt_pen(&ctx, selected ? "accent.text" : "muted"), x + 6, ty, num, 0);
+        tx = x + 6 + ogt_text_width(rp, "0000");
+    } else {
+        tx = x + 6 + ogt_text_width(rp, "0000") + (r->level - 1) * 20 + 4;
+        ogt_box(rp, ogt_pen(&ctx, selected ? "accent.text" : "label"), tx, ty + fh / 2 - 2, 4, 4);
+        tx += 12;
+    }
+    text = opr_outline_text(deck, r);
+    if (text && !text[0] && r->level == 0) {
+        owf_free(text);
+        text = NULL;
+        ogt_text(rp, ogt_pen(&ctx, selected ? "accent.text" : "muted"), tx, ty,
+                 r->obj < 0 ? "(no title box)" : "(no title)", x + w - tx - 4);
+    } else if (text) {
+        if (r->level == 0) SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
+        ogt_text(rp, ogt_pen(&ctx, selected ? "accent.text" : "label"), tx, ty, text, x + w - tx - 4);
+        if (r->level == 0) SetSoftStyle(rp, 0, FSF_BOLD);
+    }
+    owf_free(text);
+    if (deck->slides[r->slide].hidden && r->level == 0)
+        ogt_text(rp, ogt_pen(&ctx, "muted"), x + w - ogt_text_width(rp, "(hidden)") - 8, ty, "(hidden)", 0);
+}
+
+/* The rows again from the deck, the list told; the slide in front of you followed. */
+static void outline_refresh(void)
+{
+    int at;
+    if (!outline_view || !deck) return;
+    if (opr_outline_build(deck, &outline) < 0) outline.count = 0;
+    if (!outline_list) {
+        outline_list = ogt_list_new(win, &ctx, GID_OUTLINE, outline_height, outline_draw, NULL, NULL, "list");
+        if (!outline_list) return;
+        ogt_list_layout(outline_list, view_box.x + 4, view_box.y + 4, view_box.w - 8, view_box.h - 8);
+        ogt_list_set_count(outline_list, outline.count);
+        at = opr_outline_find(&outline, current, -1, 0);
+        if (at >= 0) { ogt_list_select(outline_list, at); ogt_list_show(outline_list, at); }
+        return;
+    }
+    ogt_list_set_count(outline_list, outline.count);   /* heights asked again: a title may now be a line */
+    at = outline_list->selected;
+    if (at < 0 || at >= outline.count || outline.rows[at].slide != current) {
+        at = opr_outline_find(&outline, current, -1, 0);
+        if (at >= 0) ogt_list_select(outline_list, at);
+    }
+}
+
+static int outline_row(opr_outline_row *r)
+{
+    int at = outline_list ? outline_list->selected : -1;
+    if (at < 0 || at >= outline.count) return -1;
+    *r = outline.rows[at];
+    return at;
+}
+
+/* After a change: every slide laid out again, the rows rebuilt, row at picked. */
+static void outline_changed(int slide, int obj, int para, const char *message)
+{
+    int at;
+    laid_clear();
+    free(versions);
+    versions = NULL;
+    nversions = 0;
+    if (deck && slide >= deck->nslides) slide = deck->nslides - 1;
+    if (slide >= 0) current = slide;
+    dirty = 1;
+    update_window_title();
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    if (opr_outline_build(deck, &outline) < 0) outline.count = 0;
+    if (outline_list) {
+        ogt_list_set_count(outline_list, outline.count);
+        at = opr_outline_find(&outline, current, obj, para);
+        if (at < 0) at = opr_outline_find(&outline, current, -1, 0);
+        if (at >= 0) { ogt_list_select(outline_list, at); ogt_list_show(outline_list, at); }
+        ogt_list_draw(outline_list);
+    }
+    set_status(message);
+    draw_status();
+}
+
+static void outline_refused(int rc, const char *why)
+{
+    set_status(rc == -2 ? why : "Not enough memory for that.");
+    draw_status();
+}
+
+/* Return: a row's text in a requester. */
+static void outline_edit(void)
+{
+    opr_outline_row r;
+    char *text, entered[512];
+    int rc;
+    if (outline_row(&r) < 0) return;
+    if (r.level == 0 && r.obj < 0) {
+        outline_refused(-2, "This " UNIT_LOWER " has no title box; give it a layout with one.");
+        return;
+    }
+    text = opr_outline_text(deck, &r);
+    rc = text_requester(r.level ? "Outline Text" : UNIT " Title", r.level ? "Text" : "Title", text ? text : "",
+                        entered, sizeof entered);
+    owf_free(text);
+    if (!rc) return;
+    rc = opr_outline_set_text(undo, deck, &r, entered);
+    if (rc < 0) outline_refused(rc, "That line can't be typed in.");
+    else outline_changed(r.slide, r.level ? r.obj : -1, r.para, r.level ? "Text changed." : "Title changed.");
+}
+
+/* Shift+Return: a line after this one, then its text. */
+static void outline_insert(void)
+{
+    opr_outline_row r;
+    int s, p, rc;
+    if (outline_row(&r) < 0) return;
+    rc = opr_outline_insert_after(undo, deck, &r, &s, &p);
+    if (rc < 0) { outline_refused(rc, "No line can go there."); return; }
+    if (r.level == 0) outline_changed(s, -1, 0, "A new " UNIT_LOWER ": type its title.");
+    else outline_changed(s, r.obj, p, "A new line: type it.");
+    outline_edit();
+}
+
+static void outline_level(int demote)
+{
+    opr_outline_row r;
+    int rc, s = -1;
+    if (outline_row(&r) < 0) return;
+    rc = demote ? opr_outline_demote(undo, deck, &r) : opr_outline_promote(undo, deck, &r, &s);
+    if (rc < 0) {
+        outline_refused(rc, demote ? (r.level ? "That line is as far in as it goes."
+                                              : "This title has no " UNIT_LOWER " before it with outline text to join.")
+                                   : "A title is as far out as it goes.");
+        return;
+    }
+    if (demote && r.level == 0) outline_changed(r.slide - 1, -1, 0, UNIT " joined to the one before.");
+    else if (!demote && r.level == 1 && s != r.slide) outline_changed(s, -1, 0, "The line is a " UNIT_LOWER " of its own.");
+    else outline_changed(r.slide, r.obj, r.para, demote ? "Moved in." : "Moved out.");
+}
+
+static void outline_delete(void)
+{
+    opr_outline_row r;
+    int rc;
+    if (outline_row(&r) < 0) return;
+    rc = opr_outline_delete(undo, deck, &r);
+    if (rc < 0) outline_refused(rc, "The last " UNIT_LOWER " stays.");
+    else outline_changed(r.slide, r.level ? r.obj : -1, r.para > 0 ? r.para - 1 : 0,
+                         r.level ? "Line deleted." : UNIT " deleted.");
+}
+
+static void outline_pick(int row)
+{
+    char msg[64];
+    if (row < 0 || row >= outline.count) return;
+    current = outline.rows[row].slide;
+    snprintf(msg, sizeof msg, UNIT " %d.", current + 1);
+    set_status(msg);
+    draw_status();
+}
+
+static void outline_key(UWORD code, UWORD qual)
+{
+    int shift = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
+    if (code == 27) set_view(0);
+    else if (code == 13) { if (shift) outline_insert(); else outline_edit(); }
+    else if (code == 9) outline_level(!shift);
+    else if (code == 127 || code == 8) outline_delete();
+    else if (code >= 32 && code < 256) outline_edit();
 }
 
 static const char *picked_words(int n, const char *one, const char *many)
@@ -5968,6 +6182,18 @@ static void menu_action(ULONG id)
             break;
         }
     }
+    if (outline_view) {
+        switch (id) {
+        case M_CUT: case M_COPY: case M_PASTE: case M_SELECT_ALL:
+        case M_ZOOM_IN: case M_ZOOM_OUT: case M_ZOOM_FIT:
+            set_status("In Outline view: Return edits a line; Shift+Return adds one; Tab moves it in.");
+            draw_status();
+            return;
+        case M_FIND: case M_FIND_NEXT: case M_REPLACE: case M_REPLACE_ALL: case M_STOP:
+            set_view(0);
+            break;
+        }
+    }
     if (notes_view) {
         switch (id) {
         case M_CUT: case M_COPY: case M_PASTE:
@@ -5984,6 +6210,7 @@ static void menu_action(ULONG id)
     case M_VIEW_NORMAL: set_view(0); break;
     case M_VIEW_SORTER: set_view(1); break;
     case M_VIEW_NOTES: set_view(2); break;
+    case M_VIEW_OUTLINE: set_view(3); break;
     case M_NEW: new_deck(); break;
     case M_OPEN: do_open(); break;
     case M_SAVE: do_save(); break;
@@ -6161,7 +6388,13 @@ static void events(void)
         APTR ia = im->IAddress;
         int mx = im->MouseX, my = im->MouseY, row = -1, r, handled = 0;
         struct Gadget *g = (struct Gadget *)ia;
-        if (strip) {
+        if (outline_list) {
+            r = ogt_list_event(outline_list, class, code, ia, mx, my, secs, micros, &row);
+            if (r == OGT_LIST_PICKED) { outline_pick(row); handled = 1; }
+            else if (r == OGT_LIST_OPENED) { outline_pick(row); outline_edit(); handled = 1; }
+            else if (r == OGT_LIST_SCROLLED) handled = 1;
+        }
+        if (!handled && strip) {
             r = ogt_list_event(strip, class, code, ia, mx, my, secs, micros, &row);
             if (r == OGT_LIST_PICKED || r == OGT_LIST_OPENED) { show_slide(row); handled = 1; }
             else if (r == OGT_LIST_SCROLLED) handled = 1;
@@ -6205,6 +6438,7 @@ static void events(void)
                 }
                 break;
             }
+            if (outline_view) break;
             if (code == SELECTDOWN) slide_mouse_down(mx, my);
             else if (code == SELECTUP) {
                 if (text_selecting) {
@@ -6221,6 +6455,7 @@ static void events(void)
             }
             break;
         case IDCMP_MOUSEMOVE:
+            if (outline_view) break;
             if (sorter_view) sorter_mouse_move(mx, my);
             else if (text_selecting) drag_text_selection(mx, my);
             else if (object_drag.active) preview_object_drag(mx, my);
@@ -6229,6 +6464,11 @@ static void events(void)
             if (code & 0x80) break;
             if (code == 0x54) {                 /* F5; Shift-F5 starts here */
                 run_show(qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT) ? current : 0, 0);
+            } else if (outline_view) {
+                if (outline_list && (code == 0x4c || code == 0x4d || code == 0x7a || code == 0x7b)) {
+                    int to = ogt_list_step(outline_list, code == 0x4c || code == 0x7a ? -1 : 1);
+                    if (to >= 0) outline_pick(to);
+                }
             } else if (sorter_view) {
                 if (code == 0x7a || code == 0x7b) {   /* the mouse wheel */
                     int to = opr_sorter_clamp_scroll(&sorter, sorter_scroll +
@@ -6256,6 +6496,7 @@ static void events(void)
             break;
         case IDCMP_VANILLAKEY:
             if (qual & (IEQUALIFIER_LCOMMAND | IEQUALIFIER_RCOMMAND)) break;
+            if (outline_view) { outline_key(code, qual); break; }
             if (sorter_view) {
                 if (code == 27) set_view(0);
                 else if (code == 13) sorter_open(current);
@@ -6362,7 +6603,7 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "DEACTIVATE: " PROGRAM " has no icon to go to");
     } else if (starts_word_ci(command, "HELP", &arg))
         rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
-                  "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
+                  "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
                   "SHOWPICKED OBJECTS GETTEXT "
                   "SETTEXT UNDO REDO QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {
@@ -6443,11 +6684,45 @@ static int rexx_do_command(const char *command, char **result_out)
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : rexx_noted ? rexx_noting : "Failed");
         }
     } else if (starts_word_ci(command, "VIEW", &arg)) {     /* VIEW NORMAL|SORTER|NOTES; none given: which */
-        if (!*arg) rexx_copy(result_text, sizeof result_text, sorter_view ? "SORTER" : notes_view ? "NOTES" : "NORMAL");
+        if (!*arg) rexx_copy(result_text, sizeof result_text, sorter_view ? "SORTER" : notes_view ? "NOTES"
+                                                              : outline_view ? "OUTLINE" : "NORMAL");
         else if (!strcasecmp(arg, "NORMAL")) { set_view(0); rexx_copy(result_text, sizeof result_text, "OK"); }
         else if (!strcasecmp(arg, "SORTER")) { set_view(1); rexx_copy(result_text, sizeof result_text, "OK"); }
         else if (!strcasecmp(arg, "NOTES")) { set_view(2); rexx_copy(result_text, sizeof result_text, "OK"); }
-        else { ok = 0; rexx_copy(result_text, sizeof result_text, "VIEW NORMAL, VIEW SORTER or VIEW NOTES"); }
+        else if (!strcasecmp(arg, "OUTLINE")) { set_view(3); rexx_copy(result_text, sizeof result_text, "OK"); }
+        else { ok = 0; rexx_copy(result_text, sizeof result_text, "VIEW NORMAL, OUTLINE, SORTER or NOTES"); }
+    } else if (starts_word_ci(command, "OUTLINE", &arg)) {  /* OUTLINE: rows; OUTLINE n: "level text"; the rest change row n */
+        static const char *const verbs[] = { "SET", "INSERT", "DEMOTE", "PROMOTE", "DELETE", NULL };
+        const char *rest = arg;
+        int verb = -1, n = 0, k, rc = 0, s = -1, p = 0;
+        opr_outline_row r;
+        for (k = 0; verbs[k]; k++) if (starts_word_ci(arg, verbs[k], &rest)) { verb = k; break; }
+        if (verb < 0) rest = arg;
+        if (opr_outline_build(deck, &outline) < 0) outline.count = 0;
+        while (*rest >= '0' && *rest <= '9') n = n * 10 + (*rest++ - '0');
+        while (*rest == ' ') rest++;
+        if (verb < 0 && n == 0 && !*arg) snprintf(result_text, sizeof result_text, "%d", outline.count);
+        else if (n < 1 || n > outline.count) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such outline row"); }
+        else if (verb < 0) {
+            char *t = opr_outline_text(deck, &outline.rows[n - 1]);
+            snprintf(result_text, sizeof result_text, "%d %s", outline.rows[n - 1].level, t ? t : "");
+            owf_free(t);
+        } else {
+            r = outline.rows[n - 1];
+            if (verb == 0) rc = opr_outline_set_text(undo, deck, &r, rest);
+            else if (verb == 1) rc = opr_outline_insert_after(undo, deck, &r, &s, &p);
+            else if (verb == 2) rc = opr_outline_demote(undo, deck, &r);
+            else if (verb == 3) rc = opr_outline_promote(undo, deck, &r, &s);
+            else rc = opr_outline_delete(undo, deck, &r);
+            if (rc == -2) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "That row can't change so"); }
+            else if (rc < 0) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Failed"); }
+            else {
+                if (outline_view) outline_changed(r.slide, -1, 0, "Outline changed.");
+                else structure_changed(current, "Outline changed.");
+                if (opr_outline_build(deck, &outline) < 0) outline.count = 0;
+                snprintf(result_text, sizeof result_text, "%d", outline.count);
+            }
+        }
     } else if (starts_word_ci(command, "GETNOTES", &arg)) {  /* this slide's speaker notes, paragraphs as \n */
         char *t = deck ? opr_notes_get(deck, current) : NULL, *o = result_text;
         const char *q;
@@ -6788,6 +7063,7 @@ out:
     pictures_clear();
     free(versions);
     opr_pick_free(&pick);
+    opr_outline_free(&outline);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
     if (theme.text) ogt_theme_free(&theme);

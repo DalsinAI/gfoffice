@@ -93,7 +93,7 @@ int opr_outline_build(const owf_deck *deck, opr_outline *out)
         n = body_paras(deck, slide, body);
         for (i = 0; i < n; i++) {
             int level = owf_obj_level(&deck->slides[slide].objs[body], i);
-            if (add_row(out, slide, body, i, 1 + (level < 0 ? 0 : level)) < 0)
+            if (add_row(out, slide, body, i, level < 1 ? 1 : level) < 0)
                 return -1;
         }
     }
@@ -188,7 +188,7 @@ int opr_outline_set_text(opr_undo *u, owf_deck *deck, const opr_outline_row *r, 
     return rc < 0 ? -1 : 0;
 }
 
-/* A paragraph copied onto the end of another box at a level (0-based). */
+/* A paragraph copied onto the end of another box at a level (0 a title's, 1..9 the outline's). */
 static int append_para(owf_deck *deck, int slide, int obj, const owf_para *from, int level)
 {
     owf_obj *o = &deck->slides[slide].objs[obj];
@@ -217,7 +217,7 @@ static int append_para(owf_deck *deck, int slide, int obj, const owf_para *from,
         if (rc < 0)
             return -1;
     }
-    return owf_obj_set_level(o, o->text.nparas - 1, level < 0 ? 0 : level > OWF_TEXT_LEVELS - 1 ? OWF_TEXT_LEVELS - 1 : level);
+    return owf_obj_set_level(o, o->text.nparas - 1, level < 0 ? 0 : level > OWF_TEXT_LEVELS ? OWF_TEXT_LEVELS : level);
 }
 
 /* Paragraphs first.. of a box taken out (the box keeps one, emptied, when all go). */
@@ -292,8 +292,8 @@ int opr_outline_demote(opr_undo *u, owf_deck *deck, const opr_outline_row *r)
         return -1;
     if (r->level > 0) {
         owf_obj *o = &deck->slides[r->slide].objs[r->obj];
-        int level = owf_obj_level(o, r->para);
-        if (level >= OWF_TEXT_LEVELS - 1)
+        int level = r->level;
+        if (level >= OWF_TEXT_LEVELS)
             return -2;
         if (u && opr_undo_push(u, deck, r->slide, r->obj) < 0)
             return -1;
@@ -315,18 +315,19 @@ int opr_outline_demote(opr_undo *u, owf_deck *deck, const opr_outline_row *r)
         if (title >= 0 && !(deck->slides[r->slide].objs[title].flags & OWF_OBJ_EMPTY)) {
             const owf_obj *t = &deck->slides[r->slide].objs[title];
             for (i = 0; i < t->text.nparas; i++)
-                if (append_para(deck, prev, into, &t->text.paras[i], 0) < 0)
+                if (append_para(deck, prev, into, &t->text.paras[i], 1) < 0)
                     goto cancel;
         } else {
             owf_para empty;
             memset(&empty, 0, sizeof empty);
             owf_parafmt_init(&empty.fmt);
-            if (append_para(deck, prev, into, &empty, 0) < 0)
+            if (append_para(deck, prev, into, &empty, 1) < 0)
                 goto cancel;
         }
         for (i = 0; i < n; i++) {
             const owf_obj *b = &deck->slides[r->slide].objs[body];
-            if (append_para(deck, prev, into, &b->text.paras[i], owf_obj_level(b, i) + 1) < 0)
+            int level = owf_obj_level(b, i);
+            if (append_para(deck, prev, into, &b->text.paras[i], (level < 1 ? 1 : level) + 1) < 0)
                 goto cancel;
         }
         if (opr_slide_delete(u, deck, r->slide, &sel) < 0)
@@ -351,8 +352,8 @@ int opr_outline_promote(opr_undo *u, owf_deck *deck, const opr_outline_row *r, i
     if (r->level == 0)
         return -2;               /* a title is as high as it goes */
     o = &deck->slides[r->slide].objs[r->obj];
-    level = owf_obj_level(o, r->para);
-    if (level > 0) {
+    level = r->level;
+    if (level > 1) {
         if (u && opr_undo_push(u, deck, r->slide, r->obj) < 0)
             return -1;
         return owf_obj_set_level(o, r->para, level - 1) < 0 ? -1 : 0;
@@ -370,7 +371,7 @@ int opr_outline_promote(opr_undo *u, owf_deck *deck, const opr_outline_row *r, i
     if (title >= 0) {
         if (u && opr_undo_push(u, deck, s, title) < 0)
             goto cancel;
-        if (append_para(deck, s, title, &o->text.paras[r->para], 0) < 0)
+        if (append_para(deck, s, title, &o->text.paras[r->para], 0) < 0)   /* a title's paragraph: level 0 */
             goto cancel;
         o = &deck->slides[r->slide].objs[r->obj];
     }
@@ -380,8 +381,10 @@ int opr_outline_promote(opr_undo *u, owf_deck *deck, const opr_outline_row *r, i
         if (u && opr_undo_push(u, deck, s, body) < 0)
             goto cancel;
         for (i = r->para + 1; i < n; i++) {
+            int level;
             o = &deck->slides[r->slide].objs[r->obj];
-            if (append_para(deck, s, body, &o->text.paras[i], owf_obj_level(o, i) - 1) < 0)
+            level = owf_obj_level(o, i) - 1;
+            if (append_para(deck, s, body, &o->text.paras[i], level < 1 ? 1 : level) < 0)
                 goto cancel;
         }
     }
