@@ -4633,6 +4633,17 @@ static const char *skip_space(const char *s)
     return s ? s : "";
 }
 
+/* The next word of an ARexx command's arguments into word (empty at the end); where the rest starts. */
+static const char *rexx_word(const char *p, char *word, size_t size)
+{
+    size_t k = 0;
+    p = skip_space(p);
+    while (*p && !isspace((unsigned char)*p) && k + 1 < size)
+        word[k++] = *p++;
+    word[k] = 0;
+    return p;
+}
+
 static int starts_word_ci(const char *s, const char *word, const char **rest)
 {
     size_t n = strlen(word), i;
@@ -4771,15 +4782,13 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
     int mode = 0, rc;
     owf_pivot_init(&def);
     def.source_sheet = oc_core_sheet(core);
-#define PV_NEXT() do { size_t k_ = 0; p = skip_space(p); \
-        while (*p && !isspace((unsigned char)*p) && k_ + 1 < sizeof word) word[k_++] = *p++; word[k_] = 0; } while (0)
-    PV_NEXT();
+    p = rexx_word(p, word, sizeof word);
     if (!oc_parse_range(word, &range) || range.first_row >= range.last_row) {
         snprintf(out, size, "PIVOT needs a source range with a heading row");
         return 0;
     }
     def.source = range;
-    for (PV_NEXT(); word[0]; PV_NEXT()) {
+    for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
         char *item = word, *next;
         if (!strcasecmp(word, "ROWS")) { mode = 1; continue; }
         if (!strcasecmp(word, "COLUMNS")) { mode = 2; continue; }
@@ -4813,7 +4822,6 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
             }
         }
     }
-#undef PV_NEXT
     oc_core_select_range(core, &range);
     rc = oc_core_pivot_create(core, &def);
     pivot_result(rc, "Pivot table created on a new sheet; Undo removes it.");
