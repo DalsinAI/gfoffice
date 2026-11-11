@@ -14,6 +14,7 @@
  */
 #include "owf_internal.h"
 #include "owf_track.h"
+#include "owf_comment.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,7 @@
 #define NS_SVG "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
 #define NS_DRAW "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
 #define NS_DC "http://purl.org/dc/elements/1.1/"
+#define NS_META "urn:oasis:names:tc:opendocument:xmlns:meta:1.0"
 
 #define MAX_FACES 128
 #define MAX_LISTS 64
@@ -71,6 +73,9 @@ typedef struct {
     int rev, in_deletion;
     struct { int para, run, rev; } *splits;
     int nsplits, capsplits;
+    /* 1.6: comments with a range: their names (office:name) and indexes, for their office:annotation-end */
+    struct { const char *name; int index; } *annots;
+    int nannots, capannots;
 } odt;
 
 /* ---- Styles ---- */
@@ -470,6 +475,62 @@ static void plain_text(const owf_xml_node *n, owf_buf *out)
 }
 
 static void inline_children(odt *o, const owf_xml_node *n, const owf_charfmt *fmt);
+
+static const char *child_text(odt *o, const owf_xml_node *n, const char *ns, const char *name, owf_buf *into);
+
+/* 1.6: an office:annotation: the comment, and its place (a range's start when it has a name, which its
+ * office:annotation-end names again; owf_comment_finish anchors one whose end never comes) */
+static void read_annotation(odt *o, const owf_xml_node *c)
+{
+    const owf_xml_node *p;
+    owf_buf text, author, date, initials;
+    const char *name = owf_xml_attr(c, NS_OFFICE, "name");
+    int idx, first = 1;
+    owf_buf_init(&text);
+    owf_buf_init(&author);
+    owf_buf_init(&date);
+    owf_buf_init(&initials);
+    for (p = c->first; p; p = p->next) {
+        if (owf_xml_is(p, NS_TEXT, "p") || owf_xml_is(p, NS_TEXT, "h")) {
+            if (!first) owf_buf_putc(&text, '\n');
+            plain_text(p, &text);
+            first = 0;
+        } else if (owf_xml_is(p, NS_TEXT, "list")) {
+            if (!first) owf_buf_putc(&text, '\n');
+            plain_text(p, &text);
+            first = 0;
+        }
+    }
+    owf_buf_putc(&text, 0);
+    idx = text.failed ? -1 : owf_comment_add(o->doc, child_text(o, c, NS_DC, "creator", &author),
+                                             child_text(o, c, NS_META, "creator-initials", &initials),
+                                             child_text(o, c, NS_DC, "date", &date), (const char *)text.data, -1);
+    owf_buf_free(&text);
+    owf_buf_free(&author);
+    owf_buf_free(&date);
+    owf_buf_free(&initials);
+    if (idx < 0) {
+        o->failed = 1;
+        return;
+    }
+    if (name && *name) {
+        if (o->nannots == o->capannots) {
+            int want = o->capannots ? o->capannots * 2 : 8;
+            void *grown = realloc(o->annots, (size_t)want * sizeof *o->annots);
+            if (!grown) {
+                o->failed = 1;
+                return;
+            }
+            o->annots = grown;
+            o->capannots = want;
+        }
+        o->annots[o->nannots].name = name;
+        o->annots[o->nannots++].index = idx;
+        owf_builder_comment(o->b, -(idx + 1));
+    } else {
+        owf_builder_comment(o->b, idx + 1);
+    }
+}
 
 static const char *image_mime(const char *name)
 {
@@ -905,7 +966,16 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         o->space = 0;
         owf_report_add(o->report, OWF_NOTE_APPROX, "Footnotes and endnotes are listed at the end of the document");
     } else if (owf_xml_is(c, NS_OFFICE, "annotation")) {
-        owf_report_add(o->report, OWF_NOTE_LOST, "Comments were left out");
+        read_annotation(o, c);                       /* 1.6 */
+    } else if (owf_xml_is(c, NS_OFFICE, "annotation-end")) {
+        const char *name = owf_xml_attr(c, NS_OFFICE, "name");
+        int i;
+        for (i = 0; name && i < o->nannots; ++i)
+            if (!strcmp(o->annots[i].name, name)) {
+                owf_builder_comment(o->b, o->annots[i].index + 1);
+                o->annots[i] = o->annots[--o->nannots];
+                break;
+            }
     } else if (owf_xml_is(c, NS_DRAW, "frame") && strcmp(owf_xml_attr(c, NS_TEXT, "anchor-type") ?
                                                           owf_xml_attr(c, NS_TEXT, "anchor-type") : "", "as-char")) {
         /* 2.0.20: placed on the page, from its paragraph, its character or the page: a frame */
@@ -952,7 +1022,7 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
             o->space = space;
             track_now(o, before, before ? 1 : 0);
         }
-    } else if (owf_xml_is(c, NS_TEXT, "soft-page-break") || owf_xml_is(c, NS_OFFICE, "annotation-end") ||
+    } else if (owf_xml_is(c, NS_TEXT, "soft-page-break") ||
                owf_xml_is(c, NS_TEXT, "reference-mark-start") || owf_xml_is(c, NS_TEXT, "reference-mark-end") ||
                owf_xml_is(c, NS_TEXT, "toc-mark") || owf_xml_is(c, NS_TEXT, "alphabetical-index-mark")) {
         /* marks without text */
@@ -1462,6 +1532,7 @@ static int read_document(odt *o, const owf_xml_node *content_root, const owf_xml
 static void odt_free(odt *o)
 {
     free(o->splits);
+    free(o->annots);
     owf_styles_free(&o->common);
     owf_styles_free(&o->autos_content);
     owf_styles_free(&o->autos_styles);

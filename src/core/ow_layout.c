@@ -41,6 +41,9 @@ struct ow_layout {
     /* 2.0.17: how far each text box in the line is moved from its paragraph's corner onto its room there (by
      * frame; NULL: not yet) */
     const ol_unit *inline_dx, *inline_dy;
+    /* 2.2.0: the comments whose ranges are open where the body is being laid out (their indexes), for their
+     * text's highlight */
+    int open_comments[16], nopen;
 };
 
 /* The text a field shows. */
@@ -397,6 +400,15 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         if (!n) return NULL;
         run_style(doc, &r->fmt, spacing, &rs);
         if (r->revision) change_style(doc, r->revision, &rs);
+        if (l && record == 1 && r->comment) {
+            /* 2.2.0: a comment's range: its text highlighted from its start to its place */
+            int k, idx = r->comment > 0 ? r->comment - 1 : -r->comment - 1;
+            if (r->comment < 0 && l->nopen < 16) l->open_comments[l->nopen++] = idx;
+            for (k = 0; r->comment > 0 && k < l->nopen; ++k)
+                if (l->open_comments[k] == idx) { l->open_comments[k] = l->open_comments[--l->nopen]; break; }
+        } else if (l && record == 1 && l->nopen && r->kind == OWF_RUN_TEXT) {
+            rs.background = 0xFFFFF0A0u;
+        }
         ol_node_set_style(n, &rs);
         if (!remember(record ? l : NULL, n, record - 1, index, j)) return NULL;
     }

@@ -10,6 +10,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_comment.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -593,6 +594,64 @@ static void put_run_content(owf_buf *out, const owf_doc *doc, const owf_run *run
     }
 }
 
+/* 1.6: whether comment index has a range (a run where it starts) */
+static int comment_ranged(const owf_doc *doc, int index)
+{
+    owf_story *st;
+    int n, i, j;
+    for (n = 0; (st = owf_doc_story((owf_doc *)doc, n)) != NULL; ++n)
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j)
+                if (st->paras[i].runs[j].comment == -(index + 1))
+                    return 1;
+    return 0;
+}
+
+/* 1.6: a comment's place: office:annotation where it is (or where its range starts, named), and
+ * office:annotation-end where a range ends */
+static void put_comment_odt(owf_buf *out, const owf_doc *doc, int mark)
+{
+    int index = mark > 0 ? mark - 1 : -mark - 1;
+    const owf_annotation *c;
+    const char *t, *nl;
+    if (!doc || index < 0 || index >= doc->ncomments)
+        return;
+    if (mark > 0 && comment_ranged(doc, index)) {
+        owf_buf_printf(out, "<office:annotation-end office:name=\"__Annotation__%d\"/>", index + 1);
+        return;
+    }
+    c = &doc->comments[index];
+    if (mark < 0)
+        owf_buf_printf(out, "<office:annotation office:name=\"__Annotation__%d\">", index + 1);
+    else
+        owf_buf_puts(out, "<office:annotation>");
+    if (c->author) {
+        owf_buf_puts(out, "<dc:creator>");
+        owf_buf_puts_xml(out, c->author);
+        owf_buf_puts(out, "</dc:creator>");
+    }
+    if (c->date) {
+        owf_buf_puts(out, "<dc:date>");
+        owf_buf_puts_xml(out, c->date);
+        owf_buf_puts(out, "</dc:date>");
+    }
+    if (c->initials) {
+        owf_buf_puts(out, "<meta:creator-initials>");
+        owf_buf_puts_xml(out, c->initials);
+        owf_buf_puts(out, "</meta:creator-initials>");
+    }
+    for (t = c->text ? c->text : ""; ; t = nl + 1) {
+        int after_space = 1;
+        nl = strchr(t, '\n');
+        owf_buf_puts(out, "<text:p>");
+        put_text(out, t, nl ? (size_t)(nl - t) : strlen(t), &after_space);
+        owf_buf_puts(out, "</text:p>");
+        if (!nl)
+            break;
+    }
+    owf_buf_puts(out, "</office:annotation>");
+}
+
 /* A paragraph: its start tag unless the one before it was joined to it (open 0), its end tag unless its own
  * end is a deletion's and next is joined to it (close 0; next is that paragraph). */
 static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s, int open, int close,
@@ -609,8 +668,14 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
     /* 1.4: its bookmarks, where links into the document go; 2.0.21: each where it is in the text */
     mk.n = para->bookmarks ? owf_marks_parse(para->bookmarks, mk.m, 16) : 0;
     for (j = 0; j < mk.n; ++j) mk.state[j] = 0;
-    for(j=0;j<para->nruns;++j){const owf_run *run=&para->runs[j];int t=char_style(s,&run->fmt);
-        int kind = run->kind == OWF_RUN_FRAME || run->kind == OWF_RUN_IMAGE ? 0 : change_kind(doc, run->revision);
+    for(j=0;j<para->nruns;++j){const owf_run *run=&para->runs[j];int t;
+        int kind;
+        if (run->comment) {                          /* 1.6 */
+            put_comment_odt(out, doc, run->comment);
+            continue;
+        }
+        t=char_style(s,&run->fmt);
+        kind = run->kind == OWF_RUN_FRAME || run->kind == OWF_RUN_IMAGE ? 0 : change_kind(doc, run->revision);
         if (kind == OWF_REV_DELETE) {
             /* 1.5: deleted text: in the deletion's region (written accepted when there is none: left out) */
             if (tk) {
@@ -865,6 +930,11 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
     owf_buf_init(&body);
     /* The body first, so the styles it uses are known. */
     put_story(&body, doc, &doc->body, &s);
+    for (i = 0; i < doc->ncomments; ++i)             /* 1.6 */
+        if ((doc->comments[i].parent >= 0 || doc->comments[i].done) && owf_comment_place(doc, i, NULL, NULL, NULL)) {
+            owf_report_add(report, OWF_NOTE_APPROX, "Replies and comments marked done are saved as plain comments");
+            break;
+        }
     if (doc->page.start_page != 1)
         owf_report_add(report, OWF_NOTE_APPROX, "Page numbers start at 1");
 

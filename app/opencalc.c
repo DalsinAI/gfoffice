@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.67 (9.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.71 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE
 };
 
 static struct NewMenu menus[] = {
@@ -245,6 +245,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
     { NM_ITEM, "Solver...", NULL, 0, 0, (APTR)M_SOLVER },
     { NM_ITEM, "Scenarios...", NULL, 0, 0, (APTR)M_SCENARIOS },
+    { NM_ITEM, "Consolidate...", NULL, 0, 0, (APTR)M_CONSOLIDATE },
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
@@ -3555,6 +3556,202 @@ out:
     free(lines);
 }
 
+/* ---- Data > Consolidate ---- */
+
+static STRPTR cs_function_labels[] = { (STRPTR)"Sum", (STRPTR)"Count", (STRPTR)"Average", (STRPTR)"Max",
+                                       (STRPTR)"Min", (STRPTR)"Product", (STRPTR)"CountA", (STRPTR)"StdDev",
+                                       (STRPTR)"StdDevP", (STRPTR)"Var", (STRPTR)"VarP", NULL };
+static const int cs_function[] = { OC_SUBTOTAL_SUM, OC_SUBTOTAL_COUNT, OC_SUBTOTAL_AVERAGE, OC_SUBTOTAL_MAX,
+                                   OC_SUBTOTAL_MIN, OC_SUBTOTAL_PRODUCT, OC_SUBTOTAL_COUNTA, OC_SUBTOTAL_STDEV,
+                                   OC_SUBTOTAL_STDEVP, OC_SUBTOTAL_VAR, OC_SUBTOTAL_VARP };
+
+typedef struct {
+    struct Node node;
+    char label[OC_CONSOLIDATE_REF];
+} cs_line;
+
+static void cs_list(const oc_consolidate_spec *spec, cs_line *lines, struct List *list)
+{
+    int k;
+    NewList(list);
+    for (k = 0; k < spec->nsources; ++k) {
+        to_latin1(spec->source[k], strlen(spec->source[k]), lines[k].label, sizeof lines[k].label);
+        lines[k].node.ln_Name = lines[k].label;
+        AddTail(list, &lines[k].node);
+    }
+}
+
+static int cs_result(int rc)
+{
+    if (rc == OWF_ERR_FORMAT) {
+        set_status("Give each source as a range (B2:D9, 'Q1'!A1:C20) and a destination cell outside them.");
+        return 0;
+    }
+    if (rc == OWF_ERR_UNSUPPORTED) { set_status("The sources have too many cells or labels to consolidate."); return 0; }
+    return result(rc, "Consolidated; Undo takes the table away.");
+}
+
+/* A range typed in the window into a spec's field (UTF-8): 0 when it does not fit. */
+static int cs_take(char *dst, size_t size, const char *typed)
+{
+    char *u = from_latin1(typed);
+    int ok = u && strlen(u) < size;
+    if (ok) strcpy(dst, u);
+    owf_free(u);
+    return ok;
+}
+
+/* The Consolidate window: the sheet's last settings, or the selection as the first source. */
+static void do_consolidate(void)
+{
+    static oc_consolidate_spec spec;
+    struct Gadget *glist = NULL, *last, *gfn, *glv, *gsrc, *gadd, *gremove, *gdest, *grows, *gcols, *glink, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List list;
+    cs_line *lines = calloc(OC_CONSOLIDATE_SOURCES, sizeof *lines);
+    char typed[OC_CONSOLIDATE_REF], dest[OC_CONSOLIDATE_REF];
+    int done = 0, ok = 0, sel = -1, ww = 440, wh, lh = fh + 6, rc, active = 0, k;
+    if (!scr || !vi || !lines) { free(lines); return; }
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); free(lines); return; }
+    typed[0] = 0;
+    if (!oc_core_consolidate_settings(core, &spec)) {
+        oc_selection selection;
+        oc_core_selection(core, &selection);
+        oc_consolidate_init(&spec);
+        if (selection.nranges == 1 && (selection.ranges[0].first_row != selection.ranges[0].last_row ||
+                                       selection.ranges[0].first_col != selection.ranges[0].last_col)) {
+            char a[16], b[16];
+            oc_cell_name(selection.ranges[0].first_row, selection.ranges[0].first_col, a);
+            oc_cell_name(selection.ranges[0].last_row, selection.ranges[0].last_col, b);
+            snprintf(typed, sizeof typed, "%s:%s", a, b);
+        }
+    }
+    for (k = 0; k < (int)(sizeof cs_function / sizeof cs_function[0]); ++k)
+        if (cs_function[k] == spec.function) active = k;
+    to_latin1(spec.dest, strlen(spec.dest), dest, sizeof dest);
+    cs_list(&spec, lines, &list);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = 100; ng.ng_TopEdge = 8; ng.ng_Width = 160; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"Function"; ng.ng_GadgetID = 1;
+    last = gfn = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)cs_function_labels, GTCY_Active, active, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 6 + fh + 10; ng.ng_Width = ww - 20; ng.ng_Height = lh * 5 + 4;
+    ng.ng_GadgetText = (STRPTR)"Source ranges"; ng.ng_GadgetID = 2;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&list, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_Flags = 0;
+    ng.ng_TopEdge += ng.ng_Height + 6; ng.ng_Width = ww - 190; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = NULL; ng.ng_GadgetID = 3;
+    last = gsrc = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)typed, GTST_MaxChars, OC_CONSOLIDATE_REF - 1,
+                               GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_LeftEdge = ww - 172; ng.ng_Width = 76; ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = 4;
+    last = gadd = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 86; ng.ng_GadgetText = (STRPTR)"Remove"; ng.ng_GadgetID = 5;
+    last = gremove = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = 130; ng.ng_TopEdge += fh + 14; ng.ng_Width = 160;
+    ng.ng_GadgetText = (STRPTR)"Destination"; ng.ng_GadgetID = 6;
+    last = gdest = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)dest, GTST_MaxChars, OC_CONSOLIDATE_REF - 1,
+                                GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_Width = 26;
+    ng.ng_TopEdge += fh + 12; ng.ng_GadgetText = (STRPTR)"Labels in the left column"; ng.ng_GadgetID = 7;
+    last = grows = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, spec.row_labels ? TRUE : FALSE, TAG_DONE);
+    ng.ng_TopEdge += fh + 8; ng.ng_GadgetText = (STRPTR)"Labels in the top row"; ng.ng_GadgetID = 8;
+    last = gcols = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, spec.column_labels ? TRUE : FALSE, TAG_DONE);
+    ng.ng_TopEdge += fh + 8; ng.ng_GadgetText = (STRPTR)"Link to the sources (formulas)"; ng.ng_GadgetID = 9;
+    last = glink = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, spec.link ? TRUE : FALSE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 14; ng.ng_Height = fh + 8; ng.ng_Width = 96;
+    ng.ng_LeftEdge = 10; ng.ng_GadgetText = (STRPTR)"Consolidate"; ng.ng_GadgetID = 10;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 106; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 11;
+    last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gfn || !glv || !gsrc || !gadd || !gremove || !gdest || !grows || !gcols || !glink || !gok || !gcancel) goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Consolidate", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP |
+                  STRINGIDCMP | BUTTONIDCMP | CYCLEIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *msg;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((msg = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = msg->Class;
+            UWORD code = msg->Code;
+            UWORD id = cls == IDCMP_GADGETUP && msg->IAddress ? ((struct Gadget *)msg->IAddress)->GadgetID : 0;
+            int relist = 0;
+            GT_ReplyIMsg(msg);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 2) {
+                sel = code;
+                if (sel < spec.nsources)
+                    GT_SetGadgetAttrs(gsrc, rw, NULL, GTST_String, (ULONG)lines[sel].label, TAG_DONE);
+            } else if (id == 3 || id == 4) {                 /* Return in the range, or Add */
+                sv_get_string(gsrc, rw, typed, sizeof typed);
+                if (!trim_text(typed)[0]) continue;
+                if (spec.nsources >= OC_CONSOLIDATE_SOURCES ||
+                    !cs_take(spec.source[spec.nsources], sizeof spec.source[0], trim_text(typed))) {
+                    DisplayBeep(scr);
+                    continue;
+                }
+                spec.nsources++;
+                GT_SetGadgetAttrs(gsrc, rw, NULL, GTST_String, (ULONG)"", TAG_DONE);
+                relist = 1;
+            } else if (id == 5 && sel >= 0 && sel < spec.nsources) {
+                for (k = sel; k + 1 < spec.nsources; ++k)
+                    memcpy(spec.source[k], spec.source[k + 1], sizeof spec.source[k]);
+                spec.nsources--;
+                sel = -1;
+                relist = 1;
+            } else if (id == 10) {
+                ULONG fn = 0, rows = 0, cols = 0, link = 0;
+                sv_get_string(gdest, rw, dest, sizeof dest);
+                if (!spec.nsources || !trim_text(dest)[0] || !cs_take(spec.dest, sizeof spec.dest, trim_text(dest))) {
+                    DisplayBeep(scr);
+                    continue;
+                }
+                GT_GetGadgetAttrs(gfn, rw, NULL, GTCY_Active, (ULONG)&fn, TAG_DONE);
+                GT_GetGadgetAttrs(grows, rw, NULL, GTCB_Checked, (ULONG)&rows, TAG_DONE);
+                GT_GetGadgetAttrs(gcols, rw, NULL, GTCB_Checked, (ULONG)&cols, TAG_DONE);
+                GT_GetGadgetAttrs(glink, rw, NULL, GTCB_Checked, (ULONG)&link, TAG_DONE);
+                spec.function = cs_function[fn < (ULONG)(sizeof cs_function / sizeof cs_function[0]) ? fn : 0];
+                spec.row_labels = rows != 0;
+                spec.column_labels = cols != 0;
+                spec.link = link != 0;
+                ok = 1;
+                done = 1;
+            } else if (id == 11) {
+                done = 1;
+            }
+            if (relist) {
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                cs_list(&spec, lines, &list);
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)&list,
+                                  GTLV_Selected, (ULONG)(sel >= 0 ? sel : ~0), TAG_DONE);
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(lines);
+    if (ok && cs_result(oc_core_consolidate(core, &spec)))
+        refresh();
+}
+
 static void do_multiple_operations(void)
 {
     oc_selection selection;
@@ -5009,6 +5206,7 @@ static void menu_action(ULONG id)
     case M_GOAL_SEEK: do_goal_seek(); break;
     case M_SOLVER: do_solver(); break;
     case M_SCENARIOS: do_scenarios(); break;
+    case M_CONSOLIDATE: do_consolidate(); break;
     case M_MULTIPLE_OPS: do_multiple_operations(); break;
     case M_MULTIPLE_REFRESH:
         {
@@ -5441,6 +5639,40 @@ static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
     return rc == OWF_OK;
 }
 
+/* CONSOLIDATE function range [range ...] TO cell [ROWLABELS] [COLUMNLABELS] [LINK]: Data > Consolidate. A range
+ * with spaces (a sheet's name) in double quotes. 1 done. */
+static int rexx_consolidate(const char *arg, char *out, size_t size)
+{
+    static oc_consolidate_spec spec;
+    char word[OC_CONSOLIDATE_REF * 2];
+    const char *p = rexx_word(arg, word, sizeof word);
+    int to = 0, rc;
+    oc_consolidate_init(&spec);
+    if (!(spec.function = subtotal_function(word))) {
+        snprintf(out, size, "CONSOLIDATE: SUM, COUNT, AVERAGE, MAX, MIN, PRODUCT, COUNTA, STDEV, STDEVP, VAR or VARP first");
+        return 0;
+    }
+    for (p = rexx_quoted(p, word, sizeof word); word[0]; p = rexx_quoted(p, word, sizeof word)) {
+        char *u;
+        if (!strcasecmp(word, "TO")) { to = 1; continue; }
+        if (!strcasecmp(word, "ROWLABELS")) { spec.row_labels = 1; continue; }
+        if (!strcasecmp(word, "COLUMNLABELS")) { spec.column_labels = 1; continue; }
+        if (!strcasecmp(word, "LINK")) { spec.link = 1; continue; }
+        if (!to && spec.nsources >= OC_CONSOLIDATE_SOURCES) { snprintf(out, size, "CONSOLIDATE: 16 sources at most"); return 0; }
+        if (to && spec.dest[0]) { snprintf(out, size, "CONSOLIDATE: one destination cell"); return 0; }
+        u = from_latin1(word);
+        if (!u) { snprintf(out, size, "Out of memory"); return 0; }
+        if (strlen(u) >= OC_CONSOLIDATE_REF) { owf_free(u); snprintf(out, size, "CONSOLIDATE: a range is too long"); return 0; }
+        strcpy(to ? spec.dest : spec.source[spec.nsources++], u);
+        owf_free(u);
+    }
+    if (!spec.nsources || !spec.dest[0]) { snprintf(out, size, "CONSOLIDATE needs a source range and TO cell"); return 0; }
+    rc = oc_core_consolidate(core, &spec);
+    cs_result(rc);
+    snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+    return rc == OWF_OK;
+}
+
 /* As every Open app's port (amicradle-teams ARexx-RULE.md 3, OS 3.2's arexx.class): 0 done, 5 not possible
  * now (nothing wrong), 10 an error, 20 an unknown command or a failure. */
 #define RX_OK 0
@@ -5463,7 +5695,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -5528,6 +5760,8 @@ static int rexx_do_command(const char *command, char **result_out)
         else to_latin1(t, strlen(t), result_text, sizeof result_text);
     } else if (starts_word_ci(command, "PIVOT", &arg)) {
         ok = rexx_pivot(arg, result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "CONSOLIDATE", &arg)) {
+        ok = rexx_consolidate(arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "SCENARIO", &arg)) {
         int now = 0;
         ok = rexx_scenario(arg, result_text, sizeof result_text, &now);

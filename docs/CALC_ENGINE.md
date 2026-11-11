@@ -103,6 +103,23 @@ ARexx: `SCENARIO ADD name cells [comment]`, `SCENARIO UPDATE name [cells
 (the names, with commas between); a name with spaces in double quotes. RC 5
 when there is no such scenario. Test script: tests/arexx/calc-scenario.rexx.
 
+## Consolidate
+
+Data > Consolidate puts up to 16 source ranges, on any sheets, together into
+one table at a destination cell, with one of the eleven functions (Sum,
+Count, Average, Max, Min, Product, CountA, StdDev, StdDevP, Var, VarP). By
+position, each source's cell goes with the cells at the same place in the
+others. With labels in the left column, the top row or both, cells go
+together by their labels instead (case aside), and the table has each label
+once, in the order the labels first come; a label only some sources have
+still gets its row or column. Linked, each of the table's cells is a formula
+over the source cells that went into it (`=SUM('Q1'!$B$2,'Q2'!$B$2)`), so
+it follows them; otherwise the table is values. The destination may not be
+inside a source. The work is one Undo step (`src/calc/oc_consolidate.c`),
+and the settings stay on the sheet as a hidden name, `_GF_CONSOLIDATE`, so
+the window offers them again (and they survive XLSX and ODS as any name
+does).
+
 ## Multiple Operations
 
 GFOpenCalc 0.1.67 supports the column, row and two-variable forms of Apache
