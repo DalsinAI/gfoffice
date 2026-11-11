@@ -1,6 +1,10 @@
 # GFOpenBase: design
 
-Version 0.1, draft for Dale's approval before code | 25 October 2026 | AmiCradle Team, MIT
+Version 0.2 | 11 November 2026 (0.1: 25 October 2026) | AmiCradle Team, MIT
+
+0.2: work started on Dale's word of 11 November 2026 (the GFOffice parity plan,
+`docs/openoffice-parity-plan.md`, stream B). B0's answers are in section 16;
+sections 3.2, 11 and 12 say what they changed.
 
 ## 0. This is the first written design
 
@@ -103,26 +107,33 @@ A project is one SQLite database file named `<name>.oadb`.
 
 ### 3.2 Safety
 
-- **Locking.** Our SQLite build uses the `unix-none` VFS: no locking at all,
-  because libnix has no POSIX file locks (gfopensqlite README). Two
-  programs writing one database will damage it. GFOpenBase will:
-  1. try SQLite's `unix-dotfile` VFS in B0, which locks with an entry beside
-     the database instead of POSIX locks;
-  2. if that fails on AmigaDOS, hold a public Exec semaphore named after the
-     file's full path while the project is open, so a second GFOpenBase or
-     GFOpenBaseRun on the same machine says "open in another program" instead
-     of writing.
+- **Locking.** gfopensqlite's default VFS is now `unix-dotfile` with an Amiga
+  lock: an exclusive `Lock()` on `<database>.lck`, gone after a reset
+  (gfopensqlite README, "Locking"). B0 checked it on the lab (section 16): a
+  second connection that wants to write while the first holds a write
+  transaction gets `SQLITE_BUSY`, and writes once the first commits.
+  `unix-none` takes no lock and makes no `.lck`. GFOpenBase opens projects
+  with the default (dot-file) VFS; a program that keeps its own Exec
+  semaphore may open with `unix-none` (`OB_OPEN_NOLOCK`). The lock is taken
+  per statement outside a transaction, which costs: 1,000 lookups by key
+  took about 0.8 s on DH1: against 0.27 s for the 10,000-row insert
+  (section 16). Datasheets therefore read a page in one statement.
 - **Journal.** SQLite's rollback journal stays (WAL is left out of our
-  build). B0 measures `journal_mode=TRUNCATE` against the default `DELETE`,
-  which creates and deletes the journal file on every commit, a slow thing on
-  FFS.
+  build). GFOpenBase sets `journal_mode=TRUNCATE` for every project
+  (`OB_JOURNAL_MODE`, src/base/ob_core.c): on the lab's DH1: a commit took
+  6 ms with TRUNCATE and 7 to 20 ms with DELETE, which makes and deletes the
+  journal file each time (section 16). The journal file stays beside the
+  project, empty, between commits.
 - **Checks.** `PRAGMA quick_check` when a project opens; `integrity_check`
   from Tools.
 - **Copies.** Project > Save a Copy uses `VACUUM INTO`; Tools > Compact uses
   `VACUUM`.
-- **RAM:.** In `RAM:` (`T:`) a fresh database fails with "file is not a
-  database" (gfopensqlite README, Known issues, not investigated).
-  Projects stay on disk until B0 finds the cause.
+- **RAM:.** The "file is not a database" failure of a fresh database in
+  `RAM:` (gfopensqlite README, Known issues) does not happen with today's
+  build: B0 made, wrote, closed, reopened and checked fresh databases in
+  `RAM:` and `T:` with all three builds (section 16). The likeliest cause of
+  the old failure is the one gfopensqlite's seek patch fixed (a write past
+  the end of a file), which came after the note. Projects may be in RAM:.
 
 ## 4. Tables, fields, keys and relationships
 
@@ -397,12 +408,12 @@ From gfopensqlite (`README.md`, `build.sh`, `restart.md`):
 | --- | --- |
 | Version | 3.53.4, the amalgamation, pinned by SHA-256 |
 | CPU | `-m68040 -m68881`: hard float, so a 68040 with its FPU (not a 68LC040) |
-| Threads | `SQLITE_THREADSAFE=1`, linked with libpthread |
+| Threads | `SQLITE_THREADSAFE=1`, linked with libpthread; `THREADSAFE=0` (no libpthread) for GFOpenBase, into `out-st/` and `out-soft-st/` |
 | Left out | Extension loading, WAL, memory mapping, deprecated calls |
-| Locking | None: programs must register the `unix-none` VFS |
+| Locking | `unix-dotfile` with an Amiga `Lock()` (3.2); `unix-none` on request |
 | AmigaDOS names | A patch keeps names as given (`T:a.db`) |
-| Tested | The smoke test on Instance-24 (AC090, 68040 with FPU, 256 MB), 4 October 2026; never on real hardware |
-| Known issue | A fresh database in `RAM:` fails |
+| Tested | The smoke test on Instance-24 (AC090, 68040 with FPU, 256 MB), 4 October 2026; B0's probe on an Instance-32 lab copy, 11 November 2026 (section 16); never on real hardware |
+| Known issue | None open (the RAM: failure no longer happens, 3.2) |
 | Owner | The GFOpenBrowser (JSC) thread (`restart.md`) |
 
 The smoke test resets the FPU's control register first, because "ROM
@@ -413,8 +424,8 @@ opens it (`tests/sqlitetest.c`).
 
 | Change | Why |
 | --- | --- |
-| A soft-float flavour of the build, with GFOpenWrite's specs (`specs/m68k-soft-m68040.specs`) | GFOffice runs on a 68040 without an FPU |
-| `SQLITE_THREADSAFE=0` | GFOpenBase uses one connection from one task; no libpthread to link |
+| A soft-float flavour of the build, with GFOpenWrite's specs (`specs/m68k-soft-m68040.specs`) | GFOffice runs on a 68040 without an FPU. Done: `FLOAT=soft` |
+| `SQLITE_THREADSAFE=0` | GFOpenBase uses one connection from one task; no libpthread to link. Done: `THREADSAFE=0` |
 | `SQLITE_OMIT_JSON`, and other options B0 shows are safe to leave out | Smaller code |
 | `sqlite3_temp_directory` set by GFOpenBase | SQLite's Unix code looks for a temporary folder through Unix paths and environment variables, which mean nothing on AmigaDOS; GFOpenBase names a folder on disk (beside the project, or `T:` once the RAM: issue is understood) |
 | A stack of at least 64 KB | SQLite's parser and planner recurse; GFOpenPrint asks for 65,536 bytes the same way (`oap_main_with_stack`) |
@@ -424,19 +435,18 @@ The soft-float flavour goes into gfopensqlite as a second build
 
 ### 11.3 Size, memory and speed
 
-- **Code size.** SQLite says "with all features enabled, the library size can
-  be less than 900KiB", depending on the platform and compiler settings
-  (sqlite.org, About SQLite). Our 68k library's size isn't recorded anywhere
-  (`build.sh` prints it, but no run is kept), and this session can't build
-  it. B0 measures it. Plan on about 1 MB of GFOpenBase being SQLite.
+- **Code size.** Measured in B0: `libsqlite3.a` is 992,912 bytes hard float
+  and 997,776 soft float (`THREADSAFE=0`, `-O2`); the probe program that links
+  it is 1,005,204 to 1,012,900 bytes. So about 1 MB of GFOpenBase is SQLite,
+  as planned.
 - **Memory.** SQLite's page cache defaults to about 2 MB (`cache_size`
   -2000). GFOpenBase sets it from free memory when a project opens: 256 KB on
   an 8 MB machine, 1 to 2 MB at 16 to 32 MB. `sqlite3_soft_heap_limit64` caps
   SQLite as a whole. Datasheets read rows a page at a time (5.4), and blobs
   are streamed (4.3), so a big table or a big picture doesn't spike memory.
-- **Speed.** Not measured on a 68040: the smoke test records no times
-  (`tests/bench-output.txt`). B0 runs these on the lab's 68040, with the hard-
-  and soft-float builds, and the results go into this section:
+- **Speed.** Measured in B0 on the lab's emulated 68040 (section 16 has
+  every number): none of these is slow enough to shape the design. The
+  tests:
 
 | Test | Measures |
 | --- | --- |
@@ -464,23 +474,27 @@ The soft-float flavour goes into gfopensqlite as a second build
 
 ## 12. Where the code lives
 
-In DalsinAI/gfopenbase, as its README always said:
+In DalsinAI/gfoffice, beside the suite's other apps (the parity plan,
+`docs/openoffice-parity-plan.md`, section 4, stream B; it replaces
+DalsinAI/gfopenbase, which the README had named):
 
 | What | Where |
 | --- | --- |
-| Portable core: projects, schema, field types, query model and SQL generator, CSV and DBF, report building into an `owf_doc` | `src/core/`, host-tested with SQLite on the PC |
-| Amiga program | `app/` (GFOpenGadTools) |
-| Tests | `tests/` |
+| Portable core: projects, tables, field types, rows (B0b); later the query model and SQL generator, CSV and DBF, report building into an `owf_doc` | `src/base/`, `include/openbase_core.h`, host-tested with SQLite on the PC |
+| Amiga program | `app/openbase.c` (GFOpenGadTools), its link line in `build.d/base.sh` |
+| Tests | `tests/base/`, run by `mk/base.mk` (`make base-test`, `make base-check`, and from `make test` and `make check`) |
+| SQLite itself | DalsinAI/gfopensqlite: `FLOAT=soft THREADSAFE=0 ./build.sh` |
 
 It links owf.library (reports, sheets) and the soft-float SQLite. On the PC,
-the tests link the same pinned amalgamation, fetched at build time and never
-committed, as the Team's third-party rule says.
+the tests link the same pinned amalgamation, fetched at build time (into
+`build/sqlite`, checked by its SHA-256) and never committed, as the Team's
+third-party rule says.
 
 ## 13. Phases
 
 | Phase | Delivers | Tested by |
 | --- | --- | --- |
-| **B0, SQLite for GFOpenBase** | The soft-float build flavour; `unix-dotfile` locking tried; the RAM: issue looked into; the size and speed of 11.3 measured | The smoke test and the B0 benchmark on the lab's 68040, both builds; results written into this design |
+| **B0, SQLite for GFOpenBase** (done, 11 November 2026) | The soft-float build flavour; `unix-dotfile` locking tried; the RAM: issue looked into; the size and speed of 11.3 measured | gfopensqlite's `tests/baseprobe.c` on an Instance-32 lab copy, hard, soft and no-FPU builds; results in section 16 |
 | **B1, the core** | `.oadb` projects; field types; table create and change (the copy-and-rename way); relationships; CSV import and export; the query model and SQL generator. No window | Host: schema changes keep every row; CSV round trips; SQL golden files; ASan and UBSan; every cut-short `.oadb` and CSV gives an error, never a crash |
 | **B2, the program** | The object browser; table designer; datasheets; auto forms; relationships view; Datatype object fields | Lab: make a project, add tables and rows, a relationship that refuses an orphan, a picture field; quit and reopen |
 | **B3, designers and output** | Query designer; form designer with subforms; reports to PDF, ODT, DOCX and GFOpenPrint; labels; DBF import; sheets in and out | Host: report building into an `owf_doc` compared with expected paragraphs; DBF fixtures. Lab: an invoice report printed through GFOpenPrint to a saved PDF |
@@ -516,3 +530,73 @@ story) for memo fields, E9 (the picture cache) for Datatype fields, E13
 8. Reports built whole in memory as a GFOpenWrite document for B3, with page-by-page PDF later if needed?
 9. Currency stored as whole pence or cents (exact, no floating point)?
 10. No passwords or encryption in `.oadb` files. Agreed?
+
+## 16. B0 results (11 November 2026)
+
+Measured with gfopensqlite's `tests/baseprobe.c` (branch
+`team2/base-probe-20261111`) on `t2-base-20261111`, a lab copy of Instance-32
+(Kickstart 47.2, Workbench 47.100, emulated 68040). The lab's `DH1:` is a
+host folder, not an FFS partition, so disk times on a real hard disk or CF
+card will differ. Three builds of SQLite 3.53.4: hard float, soft float
+(`m68k-soft-m68040.specs`, the stove's FPU-detecting wrappers) and no FPU at
+all (`-DNO_FPUAUTO`), each single-threaded (`THREADSAFE=0`).
+
+### 16.1 What passed
+
+Every probe passed on `DH1:`, `RAM:` and `T:` with all three builds:
+
+- a fresh database, with the default `unix-dotfile` VFS and with `unix-none`;
+- a second writer refused while the first holds the lock, and let in after;
+  `unix-none` makes no `.lck` file;
+- 100 commits each in journal modes DELETE, TRUNCATE and PERSIST;
+- temporary files in the database's own drawer and in `T:`;
+- foreign keys: off by default, an orphan refused once on, cascade deletes;
+- the `.oadb` header (`application_id`, `user_version`), `quick_check`,
+  `VACUUM INTO`;
+- 13 `REAL` answers (sums, averages, rounding, 2^53, a large `printf`)
+  compared with the PC's, the same on all three builds.
+
+The `RAM:` failure seen in October (section 3.2) did not happen with any
+build.
+
+### 16.2 Speed (milliseconds)
+
+100 journal commits; 1,000 lookups by key; 10,000 rows for the rest
+(2,000 on `T:`). A second run, the table below, varied by up to 4 times on
+`DH1:` (the host folder), so read the disk columns as a guide.
+
+| Test | hard DH1 | hard RAM | soft DH1 | soft RAM | no FPU DH1 | no FPU RAM | T: |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| journal DELETE | 844 | 135 | 724 | 128 | 2012 | 126 | 100 |
+| journal TRUNCATE | 631 | 122 | 649 | 129 | 621 | 122 | 104 |
+| journal PERSIST | 656 | 153 | 649 | 148 | 690 | 130 | 147 |
+| insert | 266 | 99 | 209 | 102 | 288 | 82 | 18 |
+| lookup | 831 | 278 | 880 | 227 | 710 | 180 | 182 |
+| scan | 14 | 11 | 11 | 13 | 5 | 6 | 2 |
+| join, group, sum | 58 | 77 | 65 | 79 | 49 | 49 | 14 |
+| sort text | 30 | 34 | 31 | 29 | 27 | 34 | 6 |
+| whole probe | 4833 | 1221 | 4998 | 1213 | 5739 | 1038 | 880 |
+
+1,000 lookups by key in a 10,000-row table:
+
+| Build and disk | each its own transaction | all in one transaction | `unix-none`, own transactions |
+| --- | --- | --- | --- |
+| hard DH1 | 1104 | 6 | 669 |
+| soft DH1 | 1026 | 5 | 860 |
+| no FPU DH1 | 1730 | 5 | 808 |
+| soft RAM | 477 | 13 | 489 |
+
+What this means for GFOpenBase:
+
+- **Group reads.** Each statement outside a transaction opens and checks the
+  file again, which costs far more than the lock does. A datasheet page, a
+  form's lookups and a report read inside one transaction.
+- **TRUNCATE** is the journal mode: as fast as PERSIST, never leaves a stale
+  journal that looks like a hot one, and much faster than DELETE on a disk.
+- **Soft float costs nothing that shows** in these tests, so GFOpenBase links
+  the soft-float build and runs without an FPU.
+
+### 16.3 Size
+
+`libsqlite3.a` is 992,912 bytes hard float and 997,776 bytes soft. Each probe
+is about 1.0 MB; GFOpenBase with its window is 1,065,120 bytes.
