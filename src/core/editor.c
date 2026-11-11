@@ -109,6 +109,8 @@ static void clear_doc_data(owf_doc *doc)
     owf_free(doc->subject);
     for (i = 0; i < doc->nuserfields; ++i) { owf_free(doc->userfields[i].name); owf_free(doc->userfields[i].value); }
     owf_free(doc->userfields);
+    for (i = 0; i < doc->nnotes; ++i) { owf_free(doc->notes[i].text); owf_free(doc->notes[i].label); }   /* 2.4.0 */
+    owf_free(doc->notes);
     memset(doc, 0, sizeof(*doc));
 }
 
@@ -215,6 +217,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     char *author, *subject;
     owf_userfield *userfields;
     int nuserfields, capuserfields;
+    owf_note *notes;
+    int nnotes, capnotes;
     if (!dst || !snapshot) return;
     images = dst->images;           /* 2.0.11: the pictures stay the document's (clone_doc) */
     nimages = dst->nimages;
@@ -240,6 +244,11 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->author = dst->subject = NULL;
     dst->userfields = NULL;
     dst->nuserfields = dst->capuserfields = 0;
+    notes = dst->notes;             /* 2.4.0: the notes, which the marks name and which only grow */
+    nnotes = dst->nnotes;
+    capnotes = dst->capnotes;
+    dst->notes = NULL;
+    dst->nnotes = dst->capnotes = 0;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
     dst->images = images;
@@ -257,6 +266,9 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->userfields = userfields;
     dst->nuserfields = nuserfields;
     dst->capuserfields = capuserfields;
+    dst->notes = notes;
+    dst->nnotes = nnotes;
+    dst->capnotes = capnotes;
     owf_free(snapshot);                 /* only the old outer shell */
 }
 
@@ -813,8 +825,9 @@ static int insert_formatted_text_at(ow_editor *editor, ow_position pos,
     old_rev = run->revision;
     old_href = run->href;
 
-    if (run->comment) {
-        /* 2.1.1: a comment's place keeps no text: the text goes in a run of its own after it */
+    if (run->comment || run->note) {
+        /* 2.1.1: a comment's place keeps no text: the text goes in a run of its own after it (2.4.0: a note's
+         * mark too) */
         inserted = pos.run + 1;
         if (!insert_run_at(p, inserted, fmt, utf8, length)) return 0;
         p->runs[inserted].revision = rev;
@@ -980,10 +993,11 @@ static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
 
     for (i = 0; i < p->nruns; ++i) {
         const owf_run *r = &p->runs[i];
-        if (r->kind == OWF_RUN_TEXT && r->comment) {
-            /* 2.1.1: a comment's place, as it is */
+        if (r->kind == OWF_RUN_TEXT && (r->comment || r->note)) {
+            /* 2.1.1: a comment's place, as it is (2.4.0: and a note's mark) */
             if (!insert_run_at(&tmp, tmp.nruns, &r->fmt, "", 0)) goto fail;
             tmp.runs[tmp.nruns - 1].comment = r->comment;
+            tmp.runs[tmp.nruns - 1].note = r->note;
         } else if (r->kind == OWF_RUN_TEXT) {
             const char *text = r->text ? r->text : "";
             size_t n = strlen(text), rs = at, re = at + n;
@@ -1644,6 +1658,7 @@ static void join_runs(owf_para *p)
     while (j + 1 < p->nruns) {
         owf_run *a = &p->runs[j], *b = &p->runs[j + 1];
         if (a->kind == OWF_RUN_TEXT && b->kind == OWF_RUN_TEXT && a->revision == b->revision && !a->comment && !b->comment &&
+            !a->note && !b->note &&
             same_charfmt_local(&a->fmt, &b->fmt) && same_text_or_null(a->href, b->href)) {
             size_t la = a->text ? strlen(a->text) : 0, lb = b->text ? strlen(b->text) : 0;
             char *t = (char *)owf_malloc(la + lb + 1);
@@ -2698,6 +2713,294 @@ int ow_editor_delete_comment(ow_editor *editor)
 {
     if (!editor || !editor->doc) return OWF_ERR_FORMAT;
     return change_comment(editor, 1, NULL, -1);
+}
+
+/* ---- 2.4.0: footnotes and endnotes ------------------------------------------------
+ * A note is the document's (owf_note in doc->notes) and is in the text where a run names it (owf_run.note:
+ * an empty text run, its mark). The list only grows and is kept outside the undo snapshots, as comments are:
+ * deleting a note removes its mark, and changing its text is a new note that the mark names instead. */
+
+/* Every note's mark text into marks (doc->nnotes of them), numbered as ow_layout numbers them */
+static void editor_number_notes(const owf_doc *doc, char (*marks)[16])
+{
+    static const int values[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
+    static const char *const digits[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
+    const owf_story *stories[5];
+    int n, i, j, k, count[2] = {0, 0};
+    stories[0] = &doc->body; stories[1] = &doc->header; stories[2] = &doc->footer;
+    stories[3] = &doc->header_left; stories[4] = &doc->footer_left;
+    for (i = 0; i < doc->nnotes; ++i) marks[i][0] = 0;
+    for (n = 0; n < 5 + doc->nframes; ++n) {
+        const owf_story *st = n < 5 ? stories[n] : &doc->frames[n - 5].story;
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j) {
+                int m = st->paras[i].runs[j].note, number;
+                const owf_note *note;
+                if (m <= 0 || m > doc->nnotes || marks[m - 1][0]) continue;
+                note = &doc->notes[m - 1];
+                if (note->label) { snprintf(marks[m - 1], sizeof marks[m - 1], "%s", note->label); continue; }
+                number = ++count[note->endnote ? 1 : 0];
+                if (!note->endnote || number > 3999) {
+                    snprintf(marks[m - 1], sizeof marks[m - 1], "%d", number);
+                    continue;
+                }
+                for (k = 0; k < 13; ++k)
+                    while (number >= values[k]) {
+                        size_t at = strlen(marks[m - 1]);
+                        if (at + strlen(digits[k]) < sizeof marks[m - 1]) strcat(marks[m - 1], digits[k]);
+                        number -= values[k];
+                    }
+            }
+    }
+}
+
+typedef struct {
+    int record;                 /* its index in doc->notes */
+    int para, run;              /* its mark */
+} ed_note;
+
+/* The note marks of a story in order; NULL and 0 when none (or no memory: *failed) */
+static ed_note *story_notes(const owf_doc *doc, const owf_story *story, int *count, int *failed)
+{
+    ed_note *list = NULL;
+    int n = 0, cap = 0, i, j;
+    *count = 0;
+    if (failed) *failed = 0;
+    for (i = 0; i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j) {
+            int m = story->paras[i].runs[j].note;
+            if (m <= 0 || m > doc->nnotes) continue;
+            if (n == cap) {
+                int want = cap ? cap * 2 : 8;
+                ed_note *grown = (ed_note *)owf_realloc(list, (size_t)want * sizeof(*grown));
+                if (!grown) { owf_free(list); if (failed) *failed = 1; return NULL; }
+                list = grown;
+                cap = want;
+            }
+            list[n].record = m - 1;
+            list[n].para = i;
+            list[n].run = j;
+            ++n;
+        }
+    *count = n;
+    return list;
+}
+
+static void note_fill(ow_editor *editor, const ed_note *list, int k, ow_note_info *info)
+{
+    const owf_note *note = &editor->doc->notes[list[k].record];
+    memset(info, 0, sizeof(*info));
+    info->index = k;
+    info->endnote = note->endnote;
+    info->text = note->text ? note->text : "";
+    info->label = note->label;
+    info->place = run_position(editor, list[k].para, list[k].run);
+    {
+        char (*marks)[16] = (char (*)[16])owf_malloc((size_t)editor->doc->nnotes * sizeof(*marks));
+        if (marks) {
+            editor_number_notes(editor->doc, marks);
+            snprintf(info->mark, sizeof info->mark, "%s", marks[list[k].record]);
+            owf_free(marks);
+        }
+    }
+}
+
+/* The note whose mark is where the caret is (just before or after it); the first of several. -1: none */
+static int note_at(ow_editor *editor, const ed_note *list, int n)
+{
+    owf_story *story = ed_story(editor);
+    ow_position caret = clamp_position(editor, editor->selection.focus);
+    int k;
+    for (k = 0; k < n; ++k)
+        if (caret.paragraph == list[k].para && caret.run == list[k].run) return k;
+    for (k = 0; k < n; ++k)
+        if (!place_compare(story, run_position(editor, list[k].para, list[k].run), caret)) return k;
+    return -1;
+}
+
+int ow_editor_note_count(const ow_editor *editor)
+{
+    int n = 0, failed;
+    ed_note *list;
+    if (!editor || !editor->doc) return 0;
+    list = story_notes(editor->doc, ed_story(editor), &n, &failed);
+    owf_free(list);
+    return n;
+}
+
+int ow_editor_note_info(ow_editor *editor, int index, ow_note_info *info)
+{
+    int n = 0, failed;
+    ed_note *list;
+    if (!editor || !info || index < 0) return 0;
+    list = story_notes(editor->doc, ed_story(editor), &n, &failed);
+    if (index >= n) { owf_free(list); return 0; }
+    note_fill(editor, list, index, info);
+    owf_free(list);
+    return 1;
+}
+
+int ow_editor_current_note(ow_editor *editor, ow_note_info *info)
+{
+    int n = 0, failed, k;
+    ed_note *list;
+    if (!editor || !info) return 0;
+    list = story_notes(editor->doc, ed_story(editor), &n, &failed);
+    k = note_at(editor, list, n);
+    if (k >= 0) note_fill(editor, list, k, info);
+    owf_free(list);
+    return k >= 0;
+}
+
+int ow_editor_next_note(ow_editor *editor, int backwards)
+{
+    owf_story *story;
+    ed_note *list;
+    ow_position caret;
+    int n = 0, failed, k, pick = -1, wrapped = 0, here;
+    if (!editor || !editor->doc) return 0;
+    story = ed_story(editor);
+    list = story_notes(editor->doc, story, &n, &failed);
+    caret = clamp_position(editor, editor->selection.focus);
+    here = note_at(editor, list, n);
+    if (!backwards) {
+        for (k = here >= 0 ? here + 1 : 0; k < n && pick < 0; ++k)
+            if (here >= 0 || place_compare(story, run_position(editor, list[k].para, list[k].run), caret) > 0)
+                pick = k;
+    } else {
+        for (k = here >= 0 ? here - 1 : n - 1; k >= 0 && pick < 0; --k)
+            if (here >= 0 || place_compare(story, run_position(editor, list[k].para, list[k].run), caret) < 0)
+                pick = k;
+    }
+    if (pick < 0 && n) {
+        pick = backwards ? n - 1 : 0;
+        wrapped = 1;
+    }
+    if (pick >= 0) {
+        editor->selection.anchor = editor->selection.focus = run_position(editor, list[pick].para, list[pick].run);
+        editor->typing_group = 0;
+        sync_typing_fmt(editor);
+    }
+    owf_free(list);
+    return pick < 0 ? 0 : wrapped ? 2 : 1;
+}
+
+/* A new note, its text (and label) copied: its index; -1 when memory runs out */
+static int editor_note_add(ow_editor *editor, int endnote, const char *text, const char *label)
+{
+    owf_doc *doc = editor->doc;
+    owf_note *note;
+    if (doc->nnotes == doc->capnotes) {
+        int want = doc->capnotes ? doc->capnotes * 2 : 8;
+        owf_note *grown = (owf_note *)owf_realloc(doc->notes, (size_t)want * sizeof(*grown));
+        if (!grown) return -1;
+        doc->notes = grown;
+        doc->capnotes = want;
+    }
+    note = &doc->notes[doc->nnotes];
+    memset(note, 0, sizeof(*note));
+    note->endnote = endnote ? 1 : 0;
+    note->text = copy_bytes(text ? text : "", text ? strlen(text) : 0);
+    if (label && *label) note->label = copy_bytes(label, strlen(label));
+    if (!note->text || (label && *label && !note->label)) {
+        owf_free(note->text); owf_free(note->label);
+        memset(note, 0, sizeof(*note));
+        return -1;
+    }
+    return doc->nnotes++;
+}
+
+int ow_editor_insert_note(ow_editor *editor, int endnote, const char *utf8)
+{
+    ow_position a, b;
+    owf_para *p;
+    owf_charfmt fmt;
+    int record, at;
+    size_t len;
+    if (!editor || !editor->doc || !utf8) return OWF_ERR_FORMAT;
+    a = clamp_position(editor, editor->selection.anchor);
+    b = clamp_position(editor, editor->selection.focus);
+    if (compare_position(a, b) > 0) b = a;          /* at the selection's end */
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    record = editor_note_add(editor, endnote, utf8, NULL);
+    if (record < 0) { edit_undone(editor); return OWF_ERR_MEMORY; }
+    p = &ed_story(editor)->paras[b.paragraph];
+    if (b.run < 0 || b.run >= p->nruns) {
+        at = p->nruns;
+    } else {
+        len = p->runs[b.run].kind == OWF_RUN_TEXT && p->runs[b.run].text ? strlen(p->runs[b.run].text) : 0;
+        if (b.byte_offset == 0 && !(p->runs[b.run].note || p->runs[b.run].comment)) at = b.run;
+        else if (b.byte_offset >= len) at = b.run + 1;
+        else {
+            if (!split_text_run(p, b.run, b.byte_offset)) return OWF_ERR_MEMORY;
+            at = b.run + 1;
+        }
+    }
+    fmt = p->nruns ? p->runs[at > 0 ? at - 1 : 0].fmt : editor->doc->base;
+    fmt.flags &= ~(unsigned)(OWF_SUPER | OWF_SUB);
+    if (!insert_run_at(p, at, &fmt, "", 0)) return OWF_ERR_MEMORY;
+    p->runs[at].note = record + 1;
+    if (editor->track) p->runs[at].revision = editor->typing_rev;
+    /* the caret after it: at the start of a text run of its own after the mark */
+    if (at + 1 >= p->nruns || p->runs[at + 1].kind != OWF_RUN_TEXT || p->runs[at + 1].note || p->runs[at + 1].comment) {
+        if (!insert_run_at(p, at + 1, &fmt, "", 0)) return OWF_ERR_MEMORY;
+    }
+    b.run = at + 1;
+    b.byte_offset = 0;
+    editor->selection.anchor = editor->selection.focus = clamp_position(editor, b);
+    edit_done(editor);
+    return OWF_OK;
+}
+
+/* The note at the caret: its text changed (text != NULL), made the other kind (convert), or removed */
+static int change_note(ow_editor *editor, int remove, const char *text, int convert)
+{
+    owf_doc *doc = editor->doc;
+    owf_story *story = ed_story(editor);
+    ed_note *list;
+    int n = 0, failed, k, record, to = -1;
+    ow_position caret;
+    list = story_notes(doc, story, &n, &failed);
+    k = note_at(editor, list, n);
+    if (k < 0) { owf_free(list); return failed ? OWF_ERR_MEMORY : OWF_ERR_UNSUPPORTED; }
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) { owf_free(list); return OWF_ERR_MEMORY; }
+    record = list[k].record;
+    caret = run_position(editor, list[k].para, list[k].run);
+    if (!remove) {
+        owf_note from = doc->notes[record];         /* editor_note_add may move the list */
+        to = editor_note_add(editor, convert ? !from.endnote : from.endnote, text ? text : from.text, from.label);
+        if (to < 0) { owf_free(list); edit_undone(editor); return OWF_ERR_MEMORY; }
+        story->paras[list[k].para].runs[list[k].run].note = to + 1;
+    } else {
+        owf_para *p = &story->paras[list[k].para];
+        remove_run(p, list[k].run);
+        if (!p->nruns) append_empty_text_run(p, &doc->base);
+        caret.run = list[k].run < p->nruns ? list[k].run : p->nruns - 1;
+    }
+    owf_free(list);
+    editor->selection.anchor = editor->selection.focus = clamp_position(editor, caret);
+    edit_done(editor);
+    return OWF_OK;
+}
+
+int ow_editor_set_note_text(ow_editor *editor, const char *utf8)
+{
+    if (!editor || !editor->doc || !utf8) return OWF_ERR_FORMAT;
+    return change_note(editor, 0, utf8, 0);
+}
+
+int ow_editor_convert_note(ow_editor *editor)
+{
+    if (!editor || !editor->doc) return OWF_ERR_FORMAT;
+    return change_note(editor, 0, NULL, 1);
+}
+
+int ow_editor_delete_note(ow_editor *editor)
+{
+    if (!editor || !editor->doc) return OWF_ERR_FORMAT;
+    return change_note(editor, 1, NULL, 0);
 }
 
 /* ---- public editor API --------------------------------------------------------- */

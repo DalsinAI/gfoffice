@@ -5,6 +5,7 @@
  */
 #include "owf_internal.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #define RTF_OUT_COLOURS 64
@@ -146,6 +147,29 @@ static void put_runs(rtf_out *w, const owf_para *p, int depth)
         put_charfmt(w, &r->fmt);
         switch (r->kind) {
         case OWF_RUN_TEXT:
+            if (r->note > 0 && r->note <= w->doc->nnotes) {   /* 1.8: RTF's own footnotes and endnotes */
+                const owf_note *n = &w->doc->notes[r->note - 1];
+                const char *t;
+                owf_buf_puts(&w->out, "{\\super\\chftn}{\\footnote");
+                if (n->endnote) owf_buf_puts(&w->out, "\\ftnalt");
+                owf_buf_puts(&w->out, "\\pard\\plain{\\super\\chftn} ");
+                for (t = n->text; *t; ) {
+                    const char *nl = strchr(t, '\n');
+                    size_t len = nl ? (size_t)(nl - t) : strlen(t);
+                    char *piece = (char *)malloc(len + 1);
+                    if (piece) {
+                        memcpy(piece, t, len);
+                        piece[len] = 0;
+                        put_text(&w->out, piece);
+                        free(piece);
+                    }
+                    if (!nl) break;
+                    owf_buf_puts(&w->out, "\\par ");
+                    t = nl + 1;
+                }
+                owf_buf_puts(&w->out, "}");
+                break;
+            }
             if (r->href && *r->href) {
                 owf_buf_puts(&w->out, "{\\field{\\*\\fldinst HYPERLINK \\\"");
                 put_text(&w->out, r->href);

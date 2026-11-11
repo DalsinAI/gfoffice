@@ -60,3 +60,27 @@ test: track-test comments-test fields-test
 check: track-check comments-check fields-check
 
 .PHONY: track-test track-check comments-test comments-check fields-test fields-check
+
+# W4: footnotes and endnotes (core 1.5, libowf 1.8); with the layout, so GFOpenLayout's source too
+NOTES_SRC = $(OWF_SRC) $(CORE_SRC) $(LAYOUT_SRC) tests/core/test_notes.c include/openwrite_core.h include/ow_layout.h \
+	libowf/src/owf_note.h
+
+$(OUT)/test-notes: $(NOTES_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
+		$(OWF_SRC) $(CORE_SRC) $(LAYOUT_SRC) tests/core/test_notes.c -lz -o $@
+
+$(OUT)/test-notes-asan: $(NOTES_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
+		$(OWF_SRC) $(CORE_SRC) $(LAYOUT_SRC) tests/core/test_notes.c -lz -o $@
+
+notes-test: $(OUT)/test-notes
+	$(OUT)/test-notes
+
+notes-check: $(OUT)/test-notes-asan
+	$(OUT)/test-notes-asan
+
+test: notes-test
+check: notes-check

@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.7.0"
+#define OWF_VERSION "1.8.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -97,6 +97,8 @@ typedef struct {
     int comment;             /* 1.6: a comment's place (OWF_RUN_TEXT runs with no text, kept apart from the text
                                 round them): 1 + its index in doc->comments where it is anchored (shown, and where
                                 a range ends); -(1 + its index) where its range starts. 0: none */
+    int note;                /* 1.8: a footnote's or endnote's mark (an OWF_RUN_TEXT run with no text, kept apart
+                                like a comment's; it shows the note's number): 1 + its index in doc->notes. 0: none */
 } owf_run;
 
 typedef enum { OWF_ALIGN_LEFT, OWF_ALIGN_CENTRE, OWF_ALIGN_RIGHT, OWF_ALIGN_JUSTIFY } owf_align;
@@ -293,6 +295,19 @@ typedef struct owf_annotation {
     int done;                /* marked done (resolved) */
 } owf_annotation;
 
+/* ---- Footnotes and endnotes (1.8) ----
+ * A note's mark is a run in the text (owf_run.note); its text is here. Footnotes go at the foot of the page
+ * their mark is on, endnotes at the end of the document; each kind is numbered in the order its marks come
+ * (footnotes 1, 2, 3; endnotes i, ii, iii) unless it has a label of its own. A note is in the document while
+ * a run names it; the list only grows, so an edit's undo puts the run back and the note with it. ODT's
+ * text:note and DOCX's footnotes and endnotes come in and go out as these; other formats list the notes'
+ * text at the end. Its size never changes (owf_struct_size doesn't list it). */
+typedef struct owf_note {
+    int endnote;             /* 0: a footnote, 1: an endnote */
+    char *text;              /* UTF-8, its paragraphs between '\n'; never NULL */
+    char *label;             /* its own mark (DOCX's customMarkFollows, ODF's text:label); NULL: numbered */
+} owf_note;
+
 /* 1.7: a user field (DOCX's w:docVar, ODF's text:user-field-decl): its name and value, UTF-8 */
 typedef struct owf_userfield {
     char *name;
@@ -330,6 +345,9 @@ typedef struct owf_doc {
     char *author, *subject;
     int nuserfields, capuserfields;
     struct owf_userfield *userfields;
+    /* 1.8: footnotes and endnotes (owf_note), named by their marks (owf_run.note) */
+    int nnotes, capnotes;
+    struct owf_note *notes;
 } owf_doc;
 
 /* ---- Memory ----

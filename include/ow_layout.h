@@ -101,6 +101,17 @@ ol_document *ow_layout_story(const ow_layout *layout, ow_story_kind which, int p
 int ow_layout_add_story(ol_document *od, ol_node *parent, const owf_doc *doc, const owf_story *story,
                         const char *const fields[4]);
 
+/* 2.4.0: footnotes and endnotes. A note's mark shows its number (footnotes 1, 2; endnotes i, ii, in the
+ * order of the marks) or its own label: ow_layout_note_mark answers it for doc->notes[index] (1, or 0 and ""
+ * when no mark names it). Footnotes take room at the foot of the page their mark is on, endnotes go after
+ * the text (and footnotes too in a document with columns). ow_layout_footnotes lays out a page's footnotes
+ * at the body's width, *x, *y (either may be NULL) where its top left goes, ending at the body's foot; NULL
+ * when the page has none. Draw a short rule OW_LAYOUT_NOTE_SEPARATOR / 2 above it. ol_document_free() it. */
+#define OW_LAYOUT_NOTE_SEPARATOR (240 * OL_UNITS_PER_TWIP)
+int ow_layout_note_mark(const owf_doc *doc, int index, char *out, size_t size);
+int ow_layout_footnote_count(const ow_layout *layout, int page);
+ol_document *ow_layout_footnotes(const ow_layout *layout, int page, ol_unit *x, ol_unit *y);
+
 /* A page number as the document writes it: 1, iv, IV, d or D. */
 void ow_layout_page_number(const owf_page *page, int number, char *out, size_t size);
 

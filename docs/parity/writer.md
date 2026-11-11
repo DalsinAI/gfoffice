@@ -12,11 +12,12 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 11 Nov 2026 | 2.0.27 | W1 track changes | 66% |
 | 11 Nov 2026 | 2.0.28 | W2 comments | 68% |
 | 11 Nov 2026 | 2.0.29 | W3 fields | 70% |
+| 11 Nov 2026 | 2.0.30 | W4 footnotes and endnotes | 72% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
-after W1 to W4). Comments, the other half of reviewing, add two more, and
-fields two more.
+after W1 to W4). Comments, the other half of reviewing, add two more,
+fields two more, and footnotes and endnotes the last two: Phase 1's target.
 
 ## Stream W features
 
@@ -41,6 +42,10 @@ fields two more.
 | Fields: DOCX and ODT | Done | 2.0.29 | DOCX TITLE, AUTHOR, SUBJECT, FILENAME, NUMWORDS, STYLEREF, DOCVARIABLE, REF and PAGEREF (simple and complex fields), docProps/core.xml and w:docVars. ODT text:title, initial-creator, subject, file-name, word-count, chapter, user-field-get with user-field-decls, bookmark-ref and reference-ref, and the meta.xml title, creator and subject. The file's shown value is kept until fields are updated. |
 | Fields: other formats | Done | 2.0.29 | RTF, plain text, HTML and PDF get the shown value. |
 | Fields: number ranges, conditional and hidden text, input fields, references to tables and figures | Gap | | Cross-references point at headings only. |
-| Footnotes and endnotes | Gap | | W4 |
+| Footnotes and endnotes: insert, edit, delete | Done | 2.0.30 | Insert > Footnote... and Endnote... at the caret; Tools > Notes: Next/Previous Note, Edit Note..., Footnote <-> Endnote, Delete Note, all undoable. Typing at a mark goes after it. ARexx ADDFOOTNOTE, ADDENDNOTE, NOTES, NEXTNOTE, PREVNOTE, GETNOTE, EDITNOTE, CONVERTNOTE, DELETENOTE; GETTEXT shows the marks. |
+| Footnotes and endnotes: on the page | Done | 2.0.30 | Marks numbered as they come (footnotes 1, 2, 3; endnotes i, ii, iii) or with their own label. Footnotes at the foot of the page their mark is on, under a short rule, the page's text making room for them (GFOpenLayout's ol_layout_pages_notes); endnotes after the text. |
+| Footnotes and endnotes: DOCX and ODT | Done | 2.0.30 | DOCX footnotes.xml and endnotes.xml (with Word's separators), footnoteReference and endnoteReference. ODT text:note with note-class, note-citation (and its label) and note-body. |
+| Footnotes and endnotes: other formats | Done | 2.0.30 | RTF its own \footnote (and \ftnalt for endnotes); HTML links each mark to its note after the text; plain text and PDF list the notes after the text. |
+| Footnotes and endnotes: formatted note text, notes continued onto the next page, footnotes in columns, numbering settings (restart each page, symbols), RTF notes read | Gap | | Note text is plain paragraphs; a note taller than the room left runs on below the foot; in a document with columns footnotes go after the text; RTF notes are not read yet. |
 | Mail merge, indexes, AutoCorrect | Gap | | Phase 2 |
 | Document compare | Gap | | Phase 3; will build on track changes |

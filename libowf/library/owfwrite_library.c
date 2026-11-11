@@ -28,13 +28,16 @@
  * 3.6: libowf 1.7, fields with a value (title, author, subject, file name, word count, chapter, user fields,
  * references to a bookmark; owf_doc.author, .subject and .userfields): ODT and DOCX keep them, other formats
  * the value shown. No new calls; owf_doc grew, so the three libraries go together again.
+ * 3.7: libowf 1.8, footnotes and endnotes (owf_run.note, owf_doc.notes, owf_note): ODT text:note and DOCX
+ * footnotes.xml and endnotes.xml keep them, RTF its own \footnote, HTML, plain text and PDF list them after
+ * the text. No new calls; owf_run and owf_doc grew, so the three libraries go together again.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 6
-#define OWF_LIB_VERS "3.6"
+#define OWF_LIB_REVISION 7
+#define OWF_LIB_VERS "3.7"
 #define OWF_LIB_DATE "11.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

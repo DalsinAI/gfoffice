@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.4.0"
+#define OW_CORE_VERSION "1.5.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -296,6 +296,33 @@ int ow_editor_reply_comment(ow_editor *editor, const char *utf8);
 int ow_editor_set_comment_text(ow_editor *editor, const char *utf8);
 int ow_editor_resolve_comment(ow_editor *editor, int done);
 int ow_editor_delete_comment(ow_editor *editor);
+
+/* ---- Footnotes and endnotes (core 1.5) ----
+ * Notes the document's (owf.h's owf_note): a mark in the text, numbered (footnotes 1, 2; endnotes i, ii, in
+ * the order of the marks), and its text, at the foot of the mark's page or after the text. Notes are listed in
+ * the order of their marks in the caret's story; index counts them so. All of these are undoable. */
+typedef struct {
+    int index;               /* in the story's order, from 0 */
+    int endnote;             /* 0: a footnote, 1: an endnote */
+    const char *text;        /* UTF-8, its paragraphs between '\n' */
+    const char *label;       /* its own mark; NULL: numbered */
+    char mark[16];           /* what its mark shows */
+    ow_position place;       /* its mark */
+} ow_note_info;
+int ow_editor_note_count(const ow_editor *editor);
+/* 1 and *info for the index-th note, 0 when there is none. The strings are valid until the next edit. */
+int ow_editor_note_info(ow_editor *editor, int index, ow_note_info *info);
+/* The note whose mark is at the caret (just before or after it): 1 and *info, or 0. */
+int ow_editor_current_note(ow_editor *editor, ow_note_info *info);
+/* The caret to the next note's mark (or the one before): 1, 2 when it went round the story's end, 0: none. */
+int ow_editor_next_note(ow_editor *editor, int backwards);
+/* A footnote (endnote 0) or endnote with this text, its mark at the caret (the selection's end). */
+int ow_editor_insert_note(ow_editor *editor, int endnote, const char *utf8);
+/* The note at the caret: its text changed, made a footnote from an endnote or the other way round, or
+ * deleted (its mark and its text). OWF_ERR_UNSUPPORTED: no note there. */
+int ow_editor_set_note_text(ow_editor *editor, const char *utf8);
+int ow_editor_convert_note(ow_editor *editor);
+int ow_editor_delete_note(ow_editor *editor);
 
 /* ---- Fields with a value (core 1.4) ----
  * The document's title, author and subject, the file's name, its words, the chapter (the level-1 heading a

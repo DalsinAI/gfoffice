@@ -11,6 +11,7 @@
  */
 #include "owf_internal.h"
 #include "owf_comment.h"
+#include "owf_note.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -683,6 +684,39 @@ static void put_comment_odt(owf_buf *out, const owf_doc *doc, int mark)
     owf_buf_puts(out, "</office:annotation>");
 }
 
+/* 1.8: a footnote's or endnote's mark, with its text: text:note */
+static void put_note_odt(owf_buf *out, const owf_doc *doc, int mark)
+{
+    const owf_note *n;
+    const char *t, *nl;
+    char shown[32];
+    int after_space = 1;
+    if (!doc || mark <= 0 || mark > doc->nnotes)
+        return;
+    n = &doc->notes[mark - 1];
+    owf_note_mark_text(doc, mark - 1, shown, sizeof shown);
+    owf_buf_printf(out, "<text:note text:id=\"ftn%d\" text:note-class=\"%s\"><text:note-citation", mark,
+                   n->endnote ? "endnote" : "footnote");
+    if (n->label) {
+        owf_buf_puts(out, " text:label=\"");
+        owf_buf_puts_xml(out, n->label);
+        owf_buf_puts(out, "\"");
+    }
+    owf_buf_puts(out, ">");
+    put_text(out, shown, strlen(shown), &after_space);
+    owf_buf_puts(out, "</text:note-citation><text:note-body>");
+    for (t = n->text; ; t = nl + 1) {
+        nl = strchr(t, '\n');
+        after_space = 1;
+        owf_buf_puts(out, "<text:p>");
+        put_text(out, t, nl ? (size_t)(nl - t) : strlen(t), &after_space);
+        owf_buf_puts(out, "</text:p>");
+        if (!nl)
+            break;
+    }
+    owf_buf_puts(out, "</text:note-body></text:note>");
+}
+
 /* A paragraph: its start tag unless the one before it was joined to it (open 0), its end tag unless its own
  * end is a deletion's and next is joined to it (close 0; next is that paragraph). */
 static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s, int open, int close,
@@ -703,6 +737,10 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
         int kind;
         if (run->comment) {                          /* 1.6 */
             put_comment_odt(out, doc, run->comment);
+            continue;
+        }
+        if (run->note > 0) {                         /* 1.8 */
+            put_note_odt(out, doc, run->note);
             continue;
         }
         t=char_style(s,&run->fmt);

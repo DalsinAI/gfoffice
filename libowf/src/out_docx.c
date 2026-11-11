@@ -426,6 +426,77 @@ static const owf_revision *run_change(const owf_doc *doc, int number)
     return OWF_DOC_REVISION(doc, number);
 }
 
+/* 1.8: footnotes and endnotes: w:id 1 + the note's index (-1 and 0 are the separators) */
+static int has_notes(const owf_doc *doc, int endnote)
+{
+    int i, j;
+    for (i = 0; i < doc->body.nparas; ++i)
+        for (j = 0; j < doc->body.paras[i].nruns; ++j) {
+            int m = doc->body.paras[i].runs[j].note;
+            if (m > 0 && m <= doc->nnotes && doc->notes[m - 1].endnote == endnote)
+                return 1;
+        }
+    return 0;
+}
+
+static void put_note_mark(owf_buf *out, const owf_doc *doc, const owf_story *story, const owf_run *run,
+                          owf_report *report)
+{
+    owf_charfmt f = run->fmt;
+    const owf_note *n;
+    if (run->note > doc->nnotes)
+        return;
+    n = &doc->notes[run->note - 1];
+    if (story != &doc->body) {
+        owf_report_add(report, OWF_NOTE_LOST, "Footnotes and endnotes outside the body text are left out");
+        return;
+    }
+    if (n->label)
+        owf_report_add(report, OWF_NOTE_APPROX, "Notes with a mark of their own are numbered");
+    f.flags |= OWF_SUPER;
+    f.flags &= ~(unsigned)OWF_SUB;
+    owf_buf_puts(out, "<w:r>");
+    put_rpr(out, doc, &f, report);
+    owf_buf_printf(out, n->endnote ? "<w:endnoteReference w:id=\"%d\"/>" : "<w:footnoteReference w:id=\"%d\"/>",
+                   run->note);
+    owf_buf_puts(out, "</w:r>");
+}
+
+static void build_notes(owf_buf *out, const owf_doc *doc, int endnote)
+{
+    const char *tag = endnote ? "endnote" : "footnote";
+    int i, j;
+    owf_buf_printf(out, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:%ss " W_NS ">", tag);
+    owf_buf_printf(out, "<w:%s w:type=\"separator\" w:id=\"-1\"><w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" "
+                        "w:lineRule=\"auto\"/></w:pPr><w:r><w:separator/></w:r></w:p></w:%s>", tag, tag);
+    owf_buf_printf(out, "<w:%s w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:pPr><w:spacing w:after=\"0\" "
+                        "w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:%s>",
+                   tag, tag);
+    for (i = 0; i < doc->body.nparas; ++i)
+        for (j = 0; j < doc->body.paras[i].nruns; ++j) {
+            int m = doc->body.paras[i].runs[j].note;
+            const char *t, *nl;
+            int first = 1;
+            if (m <= 0 || m > doc->nnotes || doc->notes[m - 1].endnote != endnote)
+                continue;
+            owf_buf_printf(out, "<w:%s w:id=\"%d\">", tag, m);
+            for (t = doc->notes[m - 1].text; ; t = nl + 1, first = 0) {
+                nl = strchr(t, '\n');
+                owf_buf_puts(out, "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr>");
+                if (first)
+                    owf_buf_printf(out, "<w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:%sRef/></w:r>"
+                                        "<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>", tag);
+                owf_buf_puts(out, "<w:r><w:t xml:space=\"preserve\">");
+                owf_buf_put_xml(out, t, nl ? (size_t)(nl - t) : strlen(t));
+                owf_buf_puts(out, "</w:t></w:r></w:p>");
+                if (!nl)
+                    break;
+            }
+            owf_buf_printf(out, "</w:%s>", tag);
+        }
+    owf_buf_printf(out, "</w:%ss>\n", tag);
+}
+
 /* 1.6: comments: w:id 5000000 + the comment's index (the document's annotations share one set of ids, and
  * bookmarks and changes have theirs below and above), the last paragraph of its text w14:paraId 10000000 + it */
 #define COMMENT_ID(index) (5000000L + (long)(index))
@@ -577,6 +648,10 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
         int link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
         if (run->comment) {                          /* 1.6 */
             put_comment_mark(out, doc, run->comment);
+            continue;
+        }
+        if (run->note > 0) {                         /* 1.8 */
+            put_note_mark(out, doc, story, run, report);
             continue;
         }
         /* 1.5: a tracked change's run inside w:ins or w:del (a picture or frame is never one) */
@@ -846,6 +921,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
     int header = doc->header.nparas > 0, footer = doc->footer.nparas > 0;
     int header_left = doc->header_left.nparas > 0, footer_left = doc->footer_left.nparas > 0;   /* 2.0.23 */
     int comments = owf_doc_has_comments(doc), comments_ext = comments && comments_extended(doc);   /* 1.6 */
+    int footnotes = has_notes(doc, 0), endnotes = has_notes(doc, 1);                                /* 1.8 */
 
     owf_buf_init(&out);
     owf_buf_init(&part);
@@ -874,6 +950,10 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         if (comments_ext)
             owf_buf_puts(&part, "<Override PartName=\"/word/commentsExtended.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml\"/>");
     }
+    if (footnotes)                                   /* 1.8 */
+        owf_buf_puts(&part, "<Override PartName=\"/word/footnotes.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml\"/>");
+    if (endnotes)
+        owf_buf_puts(&part, "<Override PartName=\"/word/endnotes.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml\"/>");
     { int i; for(i=0;i<doc->nimages;++i){owf_buf_printf(&part,"<Override PartName=\"/word/media/image%d.%s\" ContentType=\"",i+1,docx_image_ext(&doc->images[i]));owf_buf_puts_xml(&part,doc->images[i].mime?doc->images[i].mime:"application/octet-stream");owf_buf_puts(&part,"\"/>");} }
     owf_buf_puts(&part, "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
                         "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>"
@@ -907,6 +987,10 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         if (comments_ext)
             owf_buf_puts(&part, "<Relationship Id=\"rId8\" Type=\"http://schemas.microsoft.com/office/2011/relationships/commentsExtended\" Target=\"commentsExtended.xml\"/>");
     }
+    if (footnotes)                                   /* 1.8 */
+        owf_buf_puts(&part, "<Relationship Id=\"rIdFootnotes\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes\" Target=\"footnotes.xml\"/>");
+    if (endnotes)
+        owf_buf_puts(&part, "<Relationship Id=\"rIdEndnotes\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes\" Target=\"endnotes.xml\"/>");
     {
         int i,j;
         for(i=0;i<doc->body.nparas;++i)for(j=0;j<doc->body.paras[i].nruns;++j){
@@ -944,6 +1028,17 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
             if (result == OWF_OK)
                 result = add_part(zip, &part, "word/commentsExtended.xml");
         }
+    }
+
+    if (footnotes) {                                 /* 1.8 */
+        build_notes(&part, doc, 0);
+        if (result == OWF_OK)
+            result = add_part(zip, &part, "word/footnotes.xml");
+    }
+    if (endnotes) {
+        build_notes(&part, doc, 1);
+        if (result == OWF_OK)
+            result = add_part(zip, &part, "word/endnotes.xml");
     }
 
     /* 1.3: a header's and a footer's pictures: their parts' own relationships, the same ids as the body's */
