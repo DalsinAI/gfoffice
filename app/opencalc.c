@@ -5101,6 +5101,16 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
 /* SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs lhs=rhs lhs>=rhs ...] [INT cells] [BIN cells] [ANY]
  * [KEEP]: Data > Solver. With no model words, the sheet's own model. The answer is "target cell=value ...";
  * KEEP puts it in the cells (and keeps the model on the sheet). 1 solved; *now set when the model has no answer. */
+/* A cell or range word into a model's field: 0 when it is too long for it. */
+static int solve_ref(char *dst, size_t size, const char *word)
+{
+    size_t n = strlen(word);
+    if (n >= size)
+        return 0;
+    memcpy(dst, word, n + 1);
+    return 1;
+}
+
 static int rexx_solve(const char *arg, char *out, size_t size, int *now)
 {
     static oc_solver_model m;
@@ -5120,7 +5130,7 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
         if (!strcasecmp(word, "MAX") || !strcasecmp(word, "MIN") || !strcasecmp(word, "VALUE")) {
             m.goal = !strcasecmp(word, "MAX") ? OC_SOLVER_MAX : !strcasecmp(word, "MIN") ? OC_SOLVER_MIN : OC_SOLVER_VALUE;
             p = rexx_word(p, word, sizeof word);
-            snprintf(m.target, sizeof m.target, "%s", word);
+            if (!solve_ref(m.target, sizeof m.target, word)) { snprintf(out, size, "SOLVE: the target cell is too long"); return 0; }
             if (m.goal == OC_SOLVER_VALUE) {
                 p = rexx_word(p, word, sizeof word);
                 if (!chart_number(word, &m.value)) { snprintf(out, size, "SOLVE: VALUE needs a cell and a number"); return 0; }
@@ -5137,7 +5147,7 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
             oc_solver_constraint *c = &m.constraints[m.nconstraints++];
             c->rel = !strcasecmp(word, "INT") ? OC_SOLVER_INT : OC_SOLVER_BIN;
             p = rexx_word(p, word, sizeof word);
-            snprintf(c->lhs, sizeof c->lhs, "%s", word);
+            if (!solve_ref(c->lhs, sizeof c->lhs, word)) { snprintf(out, size, "SOLVE: a range is too long"); return 0; }
             c->rhs[0] = 0;
             continue;
         }
