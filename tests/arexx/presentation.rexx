@@ -1,5 +1,6 @@
 /* tests/arexx/presentation.rexx: GFOpenPresentation's ARexx port against amicradle-teams ARexx-RULE.md
-   (return codes 0/5/10/20, no requester holds up a command): open, edit, save, export, print, reopen.
+   (return codes 0/5/10/20, no requester holds up a command): open, edit, save, export, print, reopen,
+   the slide sorter's commands on several slides, speaker notes (notes pages, handouts) and the outline.
    rx tests/arexx/presentation.rexx   (GFOpenPresentation running; prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
 port = 'GFOPENPRESENTATION'
@@ -76,6 +77,170 @@ CALL same 'SLIDES after reopening', res, 2
 CALL want 'SLIDE 1', 0
 CALL want 'GETTEXT' t, 0
 CALL same 'GETTEXT after reopening', res, 'Hello from ARexx'
+/* the slide sorter: pick several slides, move, copy, hide, delete, each one Undo step */
+CALL want 'VIEW', 0
+CALL same 'VIEW', res, 'NORMAL'
+CALL want 'VIEW SORTER', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after VIEW SORTER', res, 'SORTER'
+CALL want 'VIEW SIDEWAYS', 10
+CALL want 'PICK 1', 0
+CALL want 'PICKED', 0
+CALL same 'PICKED', res, '1'
+CALL want 'MOVEPICKED 3', 0                    /* slide 1 to after the last */
+CALL want 'PICKED', 0
+CALL same 'PICKED after MOVEPICKED', res, '2'
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 2', 0
+CALL want 'GETTEXT' t, 0
+CALL same 'GETTEXT of the moved slide', res, 'Hello from ARexx'
+CALL want 'VIEW SORTER', 0
+CALL want 'UNDO', 0
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 1', 0
+CALL want 'GETTEXT' t, 0
+CALL same 'GETTEXT after undoing the move', res, 'Hello from ARexx'
+CALL want 'VIEW SORTER', 0
+CALL want 'PICK ALL', 0
+CALL same 'PICK ALL', res, 2
+CALL want 'COPYPICKED', 0
+CALL same 'COPYPICKED', res, 4
+CALL want 'PICKED', 0
+CALL same 'PICKED after COPYPICKED', res, '3 4'
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after one UNDO of two copies', res, 2
+CALL want 'PICK 2', 0
+CALL want 'HIDEPICKED', 0
+CALL want 'SHOWPICKED', 0
+CALL want 'PICK 1 2', 0
+CALL want 'DELETEPICKED', 5                    /* the last slide stays */
+CALL want 'PICK 2', 0
+CALL want 'DELETEPICKED', 0
+CALL same 'DELETEPICKED', res, 1
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after UNDO of DELETEPICKED', res, 2
+CALL want 'PICK 0', 10
+CALL want 'PICK', 10
+CALL want 'MOVEPICKED 9', 10
+CALL want 'VIEW NORMAL', 0
+/* speaker notes: set, read, Undo, the Notes view, notes pages and handouts as PDF */
+CALL want 'SLIDE 1', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES of a new slide', res, ''
+CALL want 'SETNOTES Say hello\nThen the demo', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after SETNOTES', res, 'Say hello\nThen the demo'
+CALL want 'UNDO', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after UNDO', res, ''
+CALL want 'REDO', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after undoing notes', res, 'NOTES'
+CALL want 'VIEW NOTES', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after REDO', res, 'Say hello\nThen the demo'
+CALL want 'EXPORT NOTES RAM:arexx-notes.pdf', 0
+IF ~EXISTS('RAM:arexx-notes.pdf') THEN CALL bad 'EXPORT NOTES wrote no RAM:arexx-notes.pdf'
+CALL want 'EXPORT HANDOUTS 4 RAM:arexx-handouts.pdf', 0
+IF ~EXISTS('RAM:arexx-handouts.pdf') THEN CALL bad 'EXPORT HANDOUTS wrote no RAM:arexx-handouts.pdf'
+CALL want 'EXPORT HANDOUTS 5 RAM:arexx-handouts.pdf', 10
+CALL want 'SAVE', 0
+CALL want 'OPEN RAM:arexx-test.odp', 0
+CALL want 'SLIDE 1', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after saving and reopening', res, 'Say hello\nThen the demo'
+/* the outline: rows, a title typed, a slide added, levels, each one Undo step */
+CALL want 'VIEW OUTLINE', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after VIEW OUTLINE', res, 'OUTLINE'
+CALL want 'OUTLINE', 0
+rows = res
+IF rows < 2 THEN CALL bad 'OUTLINE has' rows 'rows (wanted 2 or more)'
+CALL want 'OUTLINE 1', 0
+CALL same 'OUTLINE 1', res, '0 Hello from ARexx'
+CALL want 'OUTLINE SET 1 Outline title', 0
+CALL want 'OUTLINE 1', 0
+CALL same 'OUTLINE 1 after OUTLINE SET', res, '0 Outline title'
+CALL want 'GETTEXT' t, 0
+CALL same 'GETTEXT after OUTLINE SET', res, 'Outline title'
+CALL want 'UNDO', 0
+CALL want 'OUTLINE 1', 0
+CALL same 'OUTLINE 1 after UNDO', res, '0 Hello from ARexx'
+CALL want 'OUTLINE INSERT 1', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after OUTLINE INSERT on a title', res, 3
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after UNDO', res, 2
+CALL want 'OUTLINE DEMOTE 1', 5                 /* the first title joins nothing */
+CALL want 'OUTLINE PROMOTE 1', 5                /* a title goes no higher */
+CALL want 'OUTLINE 99', 10
+CALL want 'OUTLINE SET 0 x', 10
+/* saved as PowerPoint and reopened: the slides, the title, the notes; then SAVE writes the PPTX again */
+CALL want 'VIEW NORMAL', 0
+CALL want 'SAVEAS RAM:arexx-test.pptx', 0
+IF ~EXISTS('RAM:arexx-test.pptx') THEN CALL bad 'SAVEAS wrote no RAM:arexx-test.pptx'
+CALL want 'OPEN RAM:arexx-test.pptx', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after reopening the PPTX', res, 2
+CALL want 'VIEW OUTLINE', 0
+CALL want 'OUTLINE 1', 0
+CALL same 'OUTLINE 1 after reopening the PPTX', res, '0 Hello from ARexx'
+CALL want 'SLIDE 1', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after reopening the PPTX', res, 'Say hello\nThen the demo'
+CALL want 'SAVE', 0
+CALL want 'ISDIRTY', 0
+CALL same 'ISDIRTY after SAVE of the PPTX', res, 0
+/* several objects at once: picked, moved, aligned, each one Undo step; layout boxes stay out of groups */
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 1', 0
+CALL want 'OBJECTS', 0
+IF WORD(res, 1) < 2 THEN CALL bad 'OBJECTS has' WORD(res, 1) 'objects (wanted 2 or more)'
+CALL want 'PICKOBJECTS 1 2', 0
+CALL same 'PICKOBJECTS 1 2', res, 2
+CALL want 'PICKEDOBJECTS', 0
+CALL same 'PICKEDOBJECTS', res, '2 1 2'
+CALL want 'GROUP', 5                           /* the layout's boxes: no group */
+CALL want 'DISTRIBUTE ACROSS', 5               /* two: nothing to space */
+CALL want 'UNGROUP', 5                         /* no group selected */
+CALL want 'OBJECTBOX 1', 0
+box1 = res
+CALL want 'OBJECTBOX 2', 0
+box2 = res
+CALL want 'MOVEOBJECTS 100 50', 0
+CALL want 'OBJECTBOX 1', 0
+PARSE VAR box1 bx by .
+PARSE VAR res ax ay .
+IF ax - bx ~= 100 | ay - by ~= 50 THEN CALL bad 'MOVEOBJECTS 100 50 moved object 1 from' box1 'to' res
+CALL want 'OBJECTBOX 2', 0
+PARSE VAR box2 bx by .
+PARSE VAR res ax ay .
+IF ax - bx ~= 100 | ay - by ~= 50 THEN CALL bad 'MOVEOBJECTS 100 50 moved object 2 from' box2 'to' res
+CALL want 'UNDO', 0
+CALL want 'OBJECTBOX 1', 0
+CALL same 'OBJECTBOX 1 after UNDO', res, box1
+CALL want 'OBJECTBOX 2', 0
+CALL same 'OBJECTBOX 2 after UNDO', res, box2
+CALL want 'PICKOBJECTS 1 2', 0
+CALL want 'ALIGN TOP', 0                       /* the layout's boxes share their sides: TOP moves one */
+CALL want 'OBJECTBOX 1', 0
+PARSE VAR res . ay .
+CALL want 'OBJECTBOX 2', 0
+PARSE VAR res . cy .
+IF ay ~= cy THEN CALL bad 'ALIGN TOP: tops' ay 'and' cy
+CALL want 'UNDO', 0
+CALL want 'OBJECTBOX 2', 0
+CALL same 'OBJECTBOX 2 after UNDO', res, box2
+CALL want 'ALIGN SIDEWAYS', 10
+CALL want 'PICKOBJECTS 99', 10
+CALL want 'PICKOBJECTS', 0
+CALL same 'PICKOBJECTS with none', res, 0
+CALL want 'MOVEOBJECTS 10 10', 5               /* nothing picked */
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0
 CALL want 'DELETESLIDE', 5                     /* the last slide stays */
 CALL want 'DEACTIVATE', 5                      /* no icon to go to */

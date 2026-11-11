@@ -127,6 +127,7 @@ typedef struct {
     owf_pdf *pdf;
     const opr_slide *slide;
     const owf_deck *deck;
+    int scaled;                  /* drawn smaller than its page: text at the scale's size */
     int failed;
 } drawing;
 
@@ -155,7 +156,7 @@ static void draw_op(void *userdata, const ol_device_op *dop)
         int font = OW_LAYOUT_FONT_INDEX(OL_TEXT_FONT_OF(st->text_flags));
         owf_font_kind kind = (st->text_flags & OL_TEXT_MONO) ? OWF_FONT_MONO : opr_font_kind(d->deck, font);
         unsigned flags = 0;
-        int baseline = dop->baseline, size = U2T(st->font_size);
+        int baseline = dop->baseline, size = d->scaled ? dop->font_pixels : U2T(st->font_size);
         if (!text || !visible(text + op->u.text.text_offset, op->u.text.text_length))
             break;
         if (st->text_flags & OL_TEXT_BOLD) flags |= OWF_BOLD;
@@ -216,6 +217,40 @@ static void draw_op(void *userdata, const ol_device_op *dop)
     }
 }
 
+/* One laid-out page drawn through scale; 0, or -1 when memory ran out. */
+static int draw_laid(owf_pdf *pdf, const owf_deck *deck, const opr_slide *laid, const ol_scale *scale, int scaled)
+{
+    drawing d;
+    memset(&d, 0, sizeof d);
+    d.pdf = pdf;
+    d.slide = laid;
+    d.deck = deck;
+    d.scaled = scaled;
+    ol_draw_page(laid->doc, 0, scale, NULL, draw_op, &d);
+    return d.failed ? -1 : 0;
+}
+
+/* The slide drawn small into box (twips), with a hairline round it. */
+static int draw_slide_in(owf_pdf *pdf, const owf_deck *deck, int slide, const int box[4], const char *today,
+                         int *overflow)
+{
+    ol_scale scale;
+    opr_slide *laid = opr_slide_layout(deck, slide, NULL, NULL, today);
+    int rc;
+    if (!laid)
+        return -1;
+    memset(&scale, 0, sizeof scale);
+    ol_scale_set(&scale, box[2], (int32_t)deck->width * OL_UNITS_PER_TWIP);
+    scale.origin_x = box[0];
+    scale.origin_y = box[1];
+    rc = draw_laid(pdf, deck, laid, &scale, 1);
+    *overflow |= laid->overflow;
+    opr_slide_free(laid);
+    if (rc == 0)
+        rc = owf_pdf_rect(pdf, box[0], box[1], box[2], box[3], 0, OWF_SHADE(0x808080), 10) < 0 ? -1 : 0;
+    return rc;
+}
+
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report)
 {
@@ -233,28 +268,61 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
     /* the display list in twips: a unit is a quarter of one */
     memset(&scale, 0, sizeof scale);
     ol_scale_set(&scale, 1, OL_UNITS_PER_TWIP);
-    for (i = 0; i < deck->nslides; i++) {
-        const owf_slide *s = &deck->slides[i];
-        opr_slide *laid;
-        drawing d;
-        if (s->hidden && !(options && options->with_hidden))
-            continue;
-        laid = opr_slide_layout(deck, i, NULL, NULL, options ? options->today : NULL);
-        if (!laid || owf_pdf_page(pdf, deck->width, deck->height) < 0) {
-            opr_slide_free(laid);
-            owf_pdf_free(pdf);
-            return OWF_ERR_MEMORY;
+    if (options && options->pages == OPR_PDF_HANDOUTS) {
+        int per = options->handout_slides, k = 0, w, h, box[4];
+        if (per != 1 && per != 2 && per != 3 && per != 4 && per != 9)
+            per = 6;
+        opr_notes_page(deck, &w, &h);
+        for (i = 0; i < deck->nslides; i++) {
+            if (deck->slides[i].hidden && !options->with_hidden)
+                continue;
+            if (k == 0 && owf_pdf_page(pdf, w, h) < 0)
+                goto memory;
+            opr_handout_box(deck, per, k, box);
+            if (draw_slide_in(pdf, deck, i, box, options->today, &overflow) < 0)
+                goto memory;
+            k = (k + 1) % per;
         }
-        memset(&d, 0, sizeof d);
-        d.pdf = pdf;
-        d.slide = laid;
-        d.deck = deck;
-        ol_draw_page(laid->doc, 0, &scale, NULL, draw_op, &d);
-        overflow |= laid->overflow;
-        opr_slide_free(laid);
-        if (d.failed) {
-            owf_pdf_free(pdf);
-            return OWF_ERR_MEMORY;
+    } else if (options && options->pages == OPR_PDF_NOTES) {
+        int w, h, box[4];
+        opr_notes_page(deck, &w, &h);
+        opr_notes_boxes(deck, box, NULL);
+        for (i = 0; i < deck->nslides; i++) {
+            opr_slide *laid;
+            if (deck->slides[i].hidden && !options->with_hidden)
+                continue;
+            if (owf_pdf_page(pdf, w, h) < 0)
+                goto memory;
+            /* the page's white and the notes, then the slide over the white */
+            laid = opr_notes_layout(deck, i, NULL, NULL);
+            if (!laid)
+                goto memory;
+            if (draw_laid(pdf, deck, laid, &scale, 0) < 0) {
+                opr_slide_free(laid);
+                goto memory;
+            }
+            overflow |= laid->overflow;
+            opr_slide_free(laid);
+            if (draw_slide_in(pdf, deck, i, box, options->today, &overflow) < 0)
+                goto memory;
+        }
+    } else {
+        for (i = 0; i < deck->nslides; i++) {
+            const owf_slide *s = &deck->slides[i];
+            opr_slide *laid;
+            if (s->hidden && !(options && options->with_hidden))
+                continue;
+            laid = opr_slide_layout(deck, i, NULL, NULL, options ? options->today : NULL);
+            if (!laid || owf_pdf_page(pdf, deck->width, deck->height) < 0) {
+                opr_slide_free(laid);
+                goto memory;
+            }
+            if (draw_laid(pdf, deck, laid, &scale, 0) < 0) {
+                opr_slide_free(laid);
+                goto memory;
+            }
+            overflow |= laid->overflow;
+            opr_slide_free(laid);
         }
     }
     if (overflow)
@@ -262,4 +330,7 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
     result = owf_pdf_finish(pdf, deck->res->title, data, length, report);
     owf_pdf_free(pdf);
     return result;
+memory:
+    owf_pdf_free(pdf);
+    return OWF_ERR_MEMORY;
 }

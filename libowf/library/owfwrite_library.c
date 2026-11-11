@@ -19,13 +19,16 @@
  *
  * 3.3: owf_page_number(), the shared page-label service used by OpenLayout,
  * generated references and GFOpenWrite 2.0.26's Table of Contents.
+ * 3.4: libowf 1.5, tracked changes (owf_run.revision, owf_para.mark_revision, owf_doc.revisions): ODT and
+ * DOCX keep them, every other format is written with them accepted. No new calls; the documents' structs
+ * grew, so owf_open's size check wants this owfwrite, owfpub and owfpresent together.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 3
-#define OWF_LIB_VERS "3.3"
-#define OWF_LIB_DATE "8.11.2026"
+#define OWF_LIB_REVISION 4
+#define OWF_LIB_VERS "3.4"
+#define OWF_LIB_DATE "11.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

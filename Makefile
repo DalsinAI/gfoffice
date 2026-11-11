@@ -588,3 +588,7 @@ $(FUZZ_OUT)/fuzz_%: tests/fuzz/fuzz_%.c tests/fuzz/driver.c $(OWF_SRC) libowf/in
 	$(CC) $(FUZZ_FLAGS) -Ilibowf/include -Ilibowf/src $(OWF_SRC) $< tests/fuzz/driver.c -lz -o $@
 
 .PHONY: fuzz
+
+# Workstream hooks (docs/openoffice-parity-plan.md, section 4): each stream's host test targets
+# live in its own mk/<stream>.mk, so streams never edit this file at the same time.
+-include $(sort $(wildcard mk/*.mk))
