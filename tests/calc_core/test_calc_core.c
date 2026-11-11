@@ -5631,6 +5631,102 @@ static void test_solver(void)
     remove(ods);
 }
 
+static void test_scenarios(void)
+{
+    static const char *const xlsx = "build/host/calc-core-scenarios.xlsx";
+    static const char *const ods = "build/host/calc-core-scenarios.ods";
+    oc_core *core = fresh();
+    owf_scenario sc;
+    char cells[64];
+    int i;
+    if (!core)
+        return;
+    enter_at(core, "B2", "10");
+    enter_at(core, "C2", "20");
+    enter_at(core, "B3", "East");
+    enter_at(core, "E5", "=B2*2");
+    enter_at(core, "B6", "=B2+C2+E5");
+    CHECK(oc_core_scenario_count(core) == 0);
+    CHECK(oc_core_scenario_save(core, -1, "Low", "B2:C2, B3; E5", "the low case") == OWF_OK);
+    CHECK(oc_core_scenario_count(core) == 1);
+    enter_at(core, "B2", "100");
+    enter_at(core, "C2", "200");
+    enter_at(core, "B3", "007");
+    enter_at(core, "E5", "5");
+    CHECK(oc_core_scenario_save(core, -1, "High", "B2:C2,B3,E5", "") == OWF_OK);
+    CHECK(oc_core_scenario_save(core, -1, "high", "B2", "") == OWF_ERR_UNSUPPORTED);   /* the name is taken */
+    CHECK(oc_core_scenario_save(core, -1, "", "B2", "") == OWF_ERR_FORMAT);
+    CHECK(oc_core_scenario_save(core, -1, "Bad", "nowhere", "") == OWF_ERR_FORMAT);
+    CHECK(oc_core_scenario_find(core, "LOW") == 0 && oc_core_scenario_find(core, "High") == 1 &&
+          oc_core_scenario_find(core, "Mid") == -1);
+    CHECK(num(core, "B6") == 305);
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK);
+    CHECK(num(core, "B2") == 10 && num(core, "C2") == 20 && num(core, "B6") == 50);
+    {
+        char *in = oc_core_cell_input(core, 0, 4, 4);
+        CHECK_STR(in, "=B2*2");
+        owf_free(in);
+    }
+    CHECK(oc_core_scenario_get(core, 0, &sc) && sc.active && sc.ncells == 4 && sc.nranges == 3);
+    CHECK_STR(sc.comment, "the low case");
+    CHECK(oc_core_scenario_cells_text(core, &sc, cells, sizeof cells));
+    CHECK_STR(cells, "B2:C2,B3,E5");
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_show(core, 1) == OWF_OK && num(core, "B6") == 305);
+    {
+        char *in = oc_core_cell_input(core, 0, 2, 1);
+        CHECK_STR(in, "'007");                         /* text stays text */
+        owf_free(in);
+    }
+    CHECK(oc_core_scenario_get(core, 0, &sc) && !sc.active);
+    owf_scenario_free(&sc);
+    CHECK(oc_core_undo(core) == OWF_OK && num(core, "B2") == 10);
+    CHECK(oc_core_redo(core) == OWF_OK && num(core, "B2") == 100);
+
+    /* a row put in above: the ranges follow */
+    oc_core_select_cell(core, 0, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK && num(core, "B3") == 10 && num(core, "B7") == 50);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_undo(core) == OWF_OK);
+
+    /* files */
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_scenario_count(core) == 2);
+    CHECK(oc_core_scenario_get(core, 0, &sc));
+    CHECK_STR(sc.name, "Low");
+    CHECK_STR(sc.comment, "the low case");
+    CHECK(sc.ncells == 4);
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK && num(core, "B6") == 50);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_book(core)->nsheets == 1);            /* the scenario tables are not sheets */
+    CHECK(oc_core_scenario_count(core) == 2);
+    CHECK(oc_core_scenario_get(core, 1, &sc) && sc.ncells == 4 && !sc.active);
+    CHECK_STR(sc.name, "High");
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_get(core, 0, &sc) && sc.active);
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_show(core, 1) == OWF_OK && num(core, "B6") == 305);
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK && num(core, "E5") == 20);   /* its formula, worked out */
+
+    /* replace, delete */
+    enter_at(core, "B2", "1");
+    CHECK(oc_core_scenario_save(core, 0, "Low", "B2", "just one") == OWF_OK);
+    CHECK(oc_core_scenario_get(core, 0, &sc) && sc.ncells == 1 && sc.nranges == 1);
+    owf_scenario_free(&sc);
+    CHECK(oc_core_scenario_delete(core, 0) == OWF_OK && oc_core_scenario_count(core) == 1 &&
+          oc_core_scenario_find(core, "High") == 0);
+    for (i = 0; i < oc_core_book(core)->nnames; i++)
+        CHECK(strncmp(oc_core_book(core)->names[i].name, "_GF_SCENARIO_2", 14) != 0);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_scenario_count(core) == 2);
+    CHECK(oc_core_scenario_delete(core, 5) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+    remove(xlsx);
+    remove(ods);
+}
+
 int main(void)
 {
     test_more();
@@ -5688,6 +5784,7 @@ int main(void)
     test_pivot_definition_text();
     test_solver_lp();
     test_solver();
+    test_scenarios();
     test_pdf();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);
