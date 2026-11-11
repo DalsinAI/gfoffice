@@ -232,7 +232,7 @@ int ob_rows(ob_project *p, const char *table, ob_int after, int max, ob_row_fn c
  * a datasheet scrolled to a place (LIMIT and OFFSET, design 5.4). */
 int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_fn cb, void *user);
 
-/* ---- Views: a datasheet sorted and filtered (design 5.5) ----
+/* ---- Views: a datasheet sorted and filtered (design 5.4) ----
  * sort: a field to sort by ("" keeps key order), desc for Z to A; ties keep
  * key order. Text fields sort and compare without case.
  * filter: rows whose field `field` passes `op` against `value`, which is in
@@ -271,7 +271,7 @@ ob_int ob_view_total(ob_project *p, const char *table, const ob_view *v);
 int ob_view_rows(ob_project *p, const char *table, const ob_view *v, ob_int first, int max,
                  ob_row_fn cb, void *user);
 
-/* ---- CSV (design 5.6) ----
+/* ---- CSV (design 8) ----
  * Export: a header of field names, then each row of the view (NULL: every
  * row in key order) with values in their own text form; quoted where they
  * hold the separator, a quote or a line end (RFC 4180), lines end CR LF.
