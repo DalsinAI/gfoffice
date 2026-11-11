@@ -91,8 +91,7 @@ typedef struct {
 
 static void label_of(const oc_core *core, int sheet, unsigned row, unsigned col, char *out, size_t size)
 {
-    if (oc_core_cell_text(core, sheet, row, col, out, size) != OWF_OK)
-        out[0] = 0;
+    oc_core_cell_text(core, sheet, row, col, out, size);   /* "" for an empty cell */
 }
 
 static int same_label(const char *a, const char *b)
@@ -319,7 +318,7 @@ int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec)
         rc = OWF_ERR_UNSUPPORTED;
         goto done;
     }
-    grid = calloc((size_t)nrows * ncols ? (size_t)nrows * ncols : 1, sizeof *grid);
+    grid = calloc(nrows && ncols ? (size_t)nrows * ncols : 1u, sizeof *grid);
     if (!grid)
         goto done;
     work = oc_book_copy(core->book);
