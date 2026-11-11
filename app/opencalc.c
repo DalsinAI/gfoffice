@@ -4760,6 +4760,67 @@ static int valid_check(char *out, size_t size)
     return 1;
 }
 
+/* PIVOT range ROWS cols [COLUMNS cols] DATA col:function[,...] [PAGE col=item[,...]] [NOROWTOTAL] [NOCOLUMNTOTAL]:
+ * a new pivot table, as Data > Pivot Table... makes one (columns as letters). 1 when made. */
+static int rexx_pivot(const char *arg, char *out, size_t size)
+{
+    char word[160];
+    owf_pivotdef def;
+    owf_range range;
+    const char *p = arg;
+    int mode = 0, rc;
+    owf_pivot_init(&def);
+    def.source_sheet = oc_core_sheet(core);
+#define PV_NEXT() do { size_t k_ = 0; p = skip_space(p); \
+        while (*p && !isspace((unsigned char)*p) && k_ + 1 < sizeof word) word[k_++] = *p++; word[k_] = 0; } while (0)
+    PV_NEXT();
+    if (!oc_parse_range(word, &range) || range.first_row >= range.last_row) {
+        snprintf(out, size, "PIVOT needs a source range with a heading row");
+        return 0;
+    }
+    def.source = range;
+    for (PV_NEXT(); word[0]; PV_NEXT()) {
+        char *item = word, *next;
+        if (!strcasecmp(word, "ROWS")) { mode = 1; continue; }
+        if (!strcasecmp(word, "COLUMNS")) { mode = 2; continue; }
+        if (!strcasecmp(word, "DATA")) { mode = 3; continue; }
+        if (!strcasecmp(word, "PAGE")) { mode = 4; continue; }
+        if (!strcasecmp(word, "NOROWTOTAL")) { def.row_grand = 0; continue; }
+        if (!strcasecmp(word, "NOCOLUMNTOTAL")) { def.col_grand = 0; continue; }
+        for (; item && *item; item = next) {
+            char *sep;
+            unsigned col;
+            next = strchr(item, ',');
+            if (next) *next++ = 0;
+            sep = mode == 3 ? strchr(item, ':') : mode == 4 ? strchr(item, '=') : NULL;
+            if ((mode == 3 || mode == 4) && !sep) mode = 0;
+            if (!mode || !column_word(item, sep ? (size_t)(sep - item) : strlen(item), &col) ||
+                col < range.first_col || col > range.last_col) {
+                snprintf(out, size, "PIVOT: %s is not a column of the source here", item);
+                return 0;
+            }
+            col -= range.first_col;
+            if (mode == 1 && def.nrow < OWF_PIVOT_FIELDS) def.row[def.nrow++] = col;
+            else if (mode == 2 && def.ncol < OWF_PIVOT_FIELDS) def.col[def.ncol++] = col;
+            else if (mode == 3 && def.ndata < OWF_PIVOT_DATA && subtotal_function(sep + 1)) {
+                def.data[def.ndata].field = col;
+                def.data[def.ndata++].function = subtotal_function(sep + 1);
+            } else if (mode == 4 && def.npage < OWF_PIVOT_PAGES)
+                pv_item(oc_core_book(core), &def, col, sep + 1, &def.page[def.npage++]);
+            else {
+                snprintf(out, size, "PIVOT: too many fields, or an unknown function in %s", item);
+                return 0;
+            }
+        }
+    }
+#undef PV_NEXT
+    oc_core_select_range(core, &range);
+    rc = oc_core_pivot_create(core, &def);
+    pivot_result(rc, "Pivot table created on a new sheet; Undo removes it.");
+    snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+    return rc == OWF_OK;
+}
+
 /* As every Open app's port (amicradle-teams ARexx-RULE.md 3, OS 3.2's arexx.class): 0 done, 5 not possible
  * now (nothing wrong), 10 an error, 20 an unknown command or a failure. */
 #define RX_OK 0
@@ -4782,7 +4843,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -4833,6 +4894,20 @@ static int rexx_do_command(const char *command, char **result_out)
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc2 == OWF_ERR_UNSUPPORTED ? "No chart selected" : "Failed");
     } else if (starts_word_ci(command, "CHARTCHECK", &arg)) {
         if (!chart_check(result_text, sizeof result_text)) ok = 0;
+    } else if (starts_word_ci(command, "PIVOTREFRESH", &arg)) {
+        int rc = oc_core_refresh_pivot(core);
+        ok = rc == OWF_OK;
+        if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_UNSUPPORTED ? "No pivot table on this sheet"
+                                                         : "The pivot table's source or fields no longer fit");
+    } else if (starts_word_ci(command, "PIVOTINFO", &arg)) {     /* the active sheet's pivot table, as its definition */
+        owf_pivotdef d;
+        char t[OWF_PIVOT_TEXT_MAX];
+        if (!oc_core_pivot_get(core, &d)) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "No pivot table on this sheet"); }
+        else if (!owf_pivot_config_text(&d, t, sizeof t)) ok = 0;
+        else to_latin1(t, strlen(t), result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "PIVOT", &arg)) {
+        ok = rexx_pivot(arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "VALIDCHECK", &arg)) {
         valid_check(result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCOMMENT", &arg)) {
