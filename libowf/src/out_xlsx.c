@@ -17,6 +17,7 @@
  */
 #include "owf_internal.h"
 #include "owf_pivot.h"
+#include "owf_scenario.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1138,6 +1139,71 @@ static void put_drawing_target(owf_buf *b, const char *name)
     }
 }
 
+/* The sheet's scenarios, as Excel keeps them: each changing cell with its value as text. */
+static void put_scenarios(xlsx_out *w, owf_buf *b, int sheet)
+{
+    const owf_book *book = w->book;
+    int count = owf_scenario_count(book, sheet), i, shown = -1, any = 0;
+    owf_range all[OWF_SCENARIO_RANGES];
+    int nall = 0;
+    for (i = 0; i < count; i++) {
+        owf_scenario sc;
+        unsigned k;
+        if (!owf_scenario_get(book, sheet, i, &sc))
+            continue;
+        if (sc.active)
+            shown = i;
+        for (k = 0; k < sc.nranges && nall < OWF_SCENARIO_RANGES && !i; k++)
+            all[nall++] = sc.range[k];
+        owf_scenario_free(&sc);
+        any = 1;
+    }
+    if (!any)
+        return;
+    owf_buf_puts(b, "<scenarios");
+    if (shown >= 0)
+        owf_buf_printf(b, " current=\"%d\" show=\"%d\"", shown, shown);
+    if (nall) {
+        owf_buf_puts(b, " sqref=\"");
+        put_sqref(b, all, nall);
+        owf_buf_putc(b, '"');
+    }
+    owf_buf_putc(b, '>');
+    for (i = 0; i < count; i++) {
+        owf_scenario sc;
+        unsigned k, row, col, at = 0;
+        if (!owf_scenario_get(book, sheet, i, &sc))
+            continue;
+        owf_buf_puts(b, "<scenario name=\"");
+        put_text(b, sc.name, strlen(sc.name), X_ATTR);
+        owf_buf_printf(b, "\" locked=\"1\" count=\"%u\"", sc.ncells);
+        if (sc.comment[0]) {
+            owf_buf_puts(b, " comment=\"");
+            put_text(b, sc.comment, strlen(sc.comment), X_ATTR);
+            owf_buf_putc(b, '"');
+        }
+        owf_buf_putc(b, '>');
+        for (k = 0; k < sc.nranges; k++)
+            for (row = sc.range[k].first_row; row <= sc.range[k].last_row; row++)
+                for (col = sc.range[k].first_col; col <= sc.range[k].last_col; col++) {
+                    const char *v = sc.value[at++];
+                    if (row >= MAX_ROWS || col >= MAX_COLS)
+                        continue;
+                    if (*v == '\'')
+                        v++;
+                    owf_buf_puts(b, "<inputCells r=\"");
+                    put_ref(b, row, col);
+                    owf_buf_puts(b, "\" val=\"");
+                    put_text(b, v, strlen(v), X_ATTR);
+                    owf_buf_puts(b, "\"/>");
+                }
+        owf_buf_puts(b, "</scenario>");
+        owf_scenario_free(&sc);
+    }
+    owf_buf_puts(b, "</scenarios>");
+    (void)w;
+}
+
 static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
 {
     const owf_sheet *sh = &w->book->sheets[index];
@@ -1212,6 +1278,7 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
             owf_buf_puts(b, "</row>");
         }
     owf_buf_puts(b, "</sheetData>");
+    put_scenarios(w, b, index);
     if (sh->has_autofilter && sh->autofilter.last_row < MAX_ROWS && sh->autofilter.last_col < MAX_COLS) {
         owf_buf_puts(b, "<autoFilter ref=\"");
         put_sqref(b, &sh->autofilter, 1);
@@ -1604,6 +1671,8 @@ static void workbook_xml(xlsx_out *w, owf_buf *b)
                 continue;
             if (n->sheet >= 0 && w->pivot && w->pivot[n->sheet] && owf_pivot_is_name(n->name))
                 continue;                        /* in the sheet's pivot table instead */
+            if (n->sheet >= 0 && owf_scenario_is_name(n->name) && owf_scenario_count(book, n->sheet))
+                continue;                        /* in the sheet's scenarios instead */
             f = formula_for_file(w, n->formula);
             if (!f)
                 break;

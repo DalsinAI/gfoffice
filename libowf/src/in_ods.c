@@ -25,6 +25,7 @@
  */
 #include "owf_internal.h"
 #include "owf_pivot.h"
+#include "owf_scenario.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -148,6 +149,13 @@ typedef struct {
     int nfields;
 } ods_pivot;
 
+/* A scenario table (table:scenario): the sheet it was read into, its ranges and words. */
+typedef struct {
+    int sheet;
+    char *ranges, *comment, *name;
+    int active;
+} ods_scen;
+
 typedef struct {
     char *sheet;
     int hmode, vmode;
@@ -236,6 +244,9 @@ typedef struct {
     /* pivot tables */
     ods_pivot *pivots;
     int npivots, cappivots;
+    /* scenario tables */
+    ods_scen *scens;
+    int nscens, capscens;
 
     /* settings */
     char *active;
@@ -3607,6 +3618,156 @@ static void text_start(ods *o, const owf_xml_event *e)
 
 static void pivot_start(ods *o, const owf_xml_event *e);
 
+/* ---- Scenarios: a table:scenario makes its table a scenario of the sheet before it ---- */
+
+static char *dup_attr(const char *v)
+{
+    char *d;
+    if (!v)
+        v = "";
+    d = malloc(strlen(v) + 1);
+    if (d)
+        strcpy(d, v);
+    return d;
+}
+
+static void scenario_start(ods *o, const owf_xml_event *e)
+{
+    ods_scen *sc;
+    const char *v;
+    if (!o->sheet || o->book->nsheets < 2 || !(sc = grow(o, o->scens, o->nscens, &o->capscens, sizeof *sc)))
+        return;
+    o->scens = sc;
+    sc = &o->scens[o->nscens];
+    memset(sc, 0, sizeof *sc);
+    sc->sheet = o->book->nsheets - 1;
+    sc->ranges = dup_attr(ev(e, NS_TABLE, "scenario-ranges"));
+    sc->comment = dup_attr(ev(e, NS_TABLE, "comment"));
+    sc->name = dup_attr(o->ext_ns ? ev(e, o->ext_ns, "scenario-name") : NULL);
+    v = ev(e, NS_TABLE, "is-active");
+    sc->active = v && !strcmp(v, "true");
+    if (!sc->ranges || !sc->comment || !sc->name) {
+        free(sc->ranges);
+        free(sc->comment);
+        free(sc->name);
+        o->failed = 1;
+        return;
+    }
+    o->nscens++;
+}
+
+static int is_scen_sheet(const ods *o, int sheet)
+{
+    int i;
+    for (i = 0; i < o->nscens; i++)
+        if (o->scens[i].sheet == sheet)
+            return 1;
+    return 0;
+}
+
+/* One scenario table into its sheet's names; 0 when it does not read. */
+static int scenario_names(ods *o, const ods_scen *t, int base)
+{
+    owf_scenario sc;
+    const owf_sheet *from = &o->book->sheets[t->sheet];
+    const char *p = t->ranges;
+    char one[600];
+    unsigned k, row, col, i = 0;
+    int ok = 0, s;
+    memset(&sc, 0, sizeof sc);
+    snprintf(sc.name, sizeof sc.name, "%s", t->name[0] ? t->name : from->name);
+    snprintf(sc.comment, sizeof sc.comment, "%s", t->comment);
+    sc.active = t->active;
+    while (*p) {                                  /* "Sheet1.B2:Sheet1.C3 Sheet1.E5" */
+        size_t n = 0;
+        int quoted = 0;
+        while (*p == ' ')
+            p++;
+        if (!*p)
+            break;
+        while (*p && (quoted || *p != ' ')) {
+            if (*p == '\'')
+                quoted = !quoted;
+            if (n + 1 < sizeof one)
+                one[n++] = *p;
+            p++;
+        }
+        one[n] = 0;
+        if (sc.nranges >= OWF_SCENARIO_RANGES || !owf_pivot_parse_source(o->book, one, &s, &sc.range[sc.nranges]) ||
+            s != base)
+            return 0;
+        sc.nranges++;
+    }
+    sc.ncells = owf_scenario_cells(&sc);
+    if (!sc.nranges || !sc.ncells || sc.ncells > OWF_SCENARIO_CELLS ||
+        owf_scenario_count(o->book, base) >= OWF_SCENARIOS)
+        return 0;
+    sc.value = calloc(sc.ncells, sizeof *sc.value);
+    if (!sc.value) {
+        o->failed = 1;
+        return 0;
+    }
+    for (k = 0; k < sc.nranges; k++)
+        for (row = sc.range[k].first_row; row <= sc.range[k].last_row; row++)
+            for (col = sc.range[k].first_col; col <= sc.range[k].last_col; col++)
+                if (!(sc.value[i++] = owf_scenario_input(owf_sheet_find(from, row, col)))) {
+                    o->failed = 1;
+                    goto out;
+                }
+    if (owf_scenario_put(o->book, base, owf_scenario_count(o->book, base), &sc) == OWF_OK)
+        ok = 1;
+    else
+        o->failed = 1;
+out:
+    for (i = 0; i < sc.ncells; i++)
+        owf_free(sc.value[i]);
+    free(sc.value);
+    sc.value = NULL;
+    return ok;
+}
+
+/* The scenario tables become their sheets' scenarios, and are taken out of the book. */
+static void scenarios_fold(ods *o)
+{
+    int i, j, lost = 0;
+    for (i = 0; i < o->nscens && !o->failed; i++) {
+        int base = o->scens[i].sheet - 1;
+        while (base >= 0 && is_scen_sheet(o, base))
+            base--;
+        if (base < 0 || !scenario_names(o, &o->scens[i], base))
+            lost = 1;
+    }
+    for (i = o->book->nsheets - 1; i >= 0 && !o->failed; i--) {
+        owf_sheet gone;
+        int c;
+        if (!is_scen_sheet(o, i) || o->book->nsheets < 2)
+            continue;
+        gone = o->book->sheets[i];
+        memmove(&o->book->sheets[i], &o->book->sheets[i + 1], (size_t)(o->book->nsheets - i - 1) * sizeof gone);
+        o->book->nsheets--;
+        for (c = 0; c < gone.ncells; c++) {
+            owf_free(gone.cells[c].text);
+            owf_free(gone.cells[c].formula);
+        }
+        owf_free(gone.cells);
+        owf_free(gone.cols);
+        owf_free(gone.rows);
+        owf_free(gone.merges);
+        owf_free(gone.name);
+        owf_sheet_free_extras(&gone);
+        for (j = 0; j < o->book->nnames; j++)
+            if (o->book->names[j].sheet > i)
+                o->book->names[j].sheet--;
+        for (j = 0; j < o->nnames; j++)
+            if (o->names[j].sheet == i)
+                o->names[j].sheet = -2;           /* a scenario table's own name: dropped */
+            else if (o->names[j].sheet > i)
+                o->names[j].sheet--;
+    }
+    if (lost)
+        owf_report_add(o->report, OWF_NOTE_LOST, "Some scenarios could not be read: their tables are left out");
+}
+
 static void body_start(ods *o, const owf_xml_event *e)
 {
     if (o->in_cell) {
@@ -3660,6 +3821,8 @@ static void body_start(ods *o, const owf_xml_event *e)
                        !strcmp(n, "data-pilot-field")) {
                 pivot_start(o, e);
             }
+        } else if (!strcmp(n, "scenario")) {
+            scenario_start(o, e);
         } else if (!strcmp(n, "table-column")) {
             table_column(o, e);
         } else if (!strcmp(n, "table-row")) {
@@ -4051,6 +4214,7 @@ static void finish(ods *o)
     char *made;
     if (o->style_maps && !o->cf_seen)                /* ODF's own conditional styles alone: not read */
         owf_report_add(o->report, OWF_NOTE_LOST, "Conditional formatting is not read yet");
+    scenarios_fold(o);
     made = calloc((size_t)o->book->nsheets + 1, 1);
     if (!made) {
         o->failed = 1;
@@ -4059,6 +4223,8 @@ static void finish(ods *o)
     pivot_names(o, made);
     for (i = 0; i < o->nnames && !o->failed; i++) {
         int pivot = owf_pivot_is_name(o->names[i].name);
+        if (o->names[i].sheet == -2)
+            continue;
         if (pivot && o->names[i].sheet >= 0 && o->names[i].sheet < o->book->nsheets && made[o->names[i].sheet])
             continue;                            /* the data-pilot-table's say */
         if (owf_book_add_name(o->book, o->names[i].name, o->names[i].sheet, o->names[i].formula, pivot) < 0)
@@ -4128,6 +4294,12 @@ static void free_reader(ods *o)
         }
     }
     free(o->pivots);
+    for (i = 0; i < o->nscens; i++) {
+        free(o->scens[i].ranges);
+        free(o->scens[i].comment);
+        free(o->scens[i].name);
+    }
+    free(o->scens);
     free(o->active);
     for (i = 0; i < o->nsplits; i++)
         free(o->splits[i].sheet);

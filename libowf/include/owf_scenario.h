@@ -28,7 +28,7 @@ extern "C" {
 
 #define OWF_SCENARIO_PREFIX "_GF_SCENARIO_"
 #define OWF_SCENARIOS 32             /* a sheet's, at most */
-#define OWF_SCENARIO_RANGES 8
+#define OWF_SCENARIO_RANGES 32            /* as many as Excel has changing cells */
 #define OWF_SCENARIO_CELLS 2048      /* a scenario's changing cells, at most */
 #define OWF_SCENARIO_NAME 64         /* bytes, UTF-8 */
 #define OWF_SCENARIO_COMMENT 256
