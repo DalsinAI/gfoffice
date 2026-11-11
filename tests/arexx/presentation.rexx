@@ -178,6 +178,22 @@ CALL want 'OUTLINE DEMOTE 1', 5                 /* the first title joins nothing
 CALL want 'OUTLINE PROMOTE 1', 5                /* a title goes no higher */
 CALL want 'OUTLINE 99', 10
 CALL want 'OUTLINE SET 0 x', 10
+/* saved as PowerPoint and reopened: the slides, the title, the notes; then SAVE writes the PPTX again */
+CALL want 'VIEW NORMAL', 0
+CALL want 'SAVEAS RAM:arexx-test.pptx', 0
+IF ~EXISTS('RAM:arexx-test.pptx') THEN CALL bad 'SAVEAS wrote no RAM:arexx-test.pptx'
+CALL want 'OPEN RAM:arexx-test.pptx', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after reopening the PPTX', res, 2
+CALL want 'VIEW OUTLINE', 0
+CALL want 'OUTLINE 1', 0
+CALL same 'OUTLINE 1 after reopening the PPTX', res, '0 Hello from ARexx'
+CALL want 'SLIDE 1', 0
+CALL want 'GETNOTES', 0
+CALL same 'GETNOTES after reopening the PPTX', res, 'Say hello\nThen the demo'
+CALL want 'SAVE', 0
+CALL want 'ISDIRTY', 0
+CALL same 'ISDIRTY after SAVE of the PPTX', res, 0
 CALL want 'VIEW NORMAL', 0
 CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0

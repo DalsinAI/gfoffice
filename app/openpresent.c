@@ -95,7 +95,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.20 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.21 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPUBLISHER"
 #define UNIT "Page"
 #define UNIT_UPPER "PAGE"
@@ -106,7 +106,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.26 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.27 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -5922,11 +5922,54 @@ static void do_open(void)
     relayout();
 }
 
+/* Whether a name ends in an extension, any case: ".pptx". */
+static int has_extension(const char *path, const char *ext)
+{
+    size_t n = strlen(path), e = strlen(ext);
+    return n > e && !strcasecmp(path + n - e, ext);
+}
+
+/* The format a name saves as: PPTX for ".pptx" (GFOpenPresentation), ODP otherwise. */
+static const char *format_for(const char *path)
+{
+#ifndef OPENPUBLISHER
+    if (has_extension(path, ".pptx")) return "PPTX";
+#endif
+    (void)path;
+    return "ODP";
+}
+
+/* Whether Save writes over the file itself: an ODP, or a PPTX in GFOpenPresentation. */
+static int saves_in_place(void)
+{
+    return *current_path && !strcmp(current_format, format_for(current_path)) &&
+           (has_extension(current_path, ".odp") || has_extension(current_path, ".pptx"));
+}
+
 static int save_to(const char *path)
 {
     owf_report *report = owf_report_new();
+    const char *format = format_for(path);
     char msg[600];
-    int rc = owf_export_deck_file(deck, path, "odp", report);
+    int rc, simpler;
+#ifndef OPENPUBLISHER
+    if (!strcmp(format, "PPTX")) {
+        unsigned char *data = NULL;
+        size_t length = 0;
+        BPTR f;
+        rc = opr_export_pptx(deck, &data, &length, report);
+        if (rc == OWF_OK) {
+            if ((f = Open((STRPTR)path, MODE_NEWFILE))) {
+                if (Write(f, data, (LONG)length) != (LONG)length) rc = OWF_ERR_IO;
+                Close(f);
+            } else
+                rc = OWF_ERR_IO;
+        }
+        free(data);
+    } else
+#endif
+        rc = owf_export_deck_file(deck, path, "odp", report);
+    simpler = owf_report_count(report) > 0;
     owf_report_free(report);
     if (rc != OWF_OK) {
         snprintf(msg, sizeof msg, PROGRAM " could not save %.200s.\n\n%.200s", leaf(path), owf_error_text(rc));
@@ -5934,9 +5977,9 @@ static int save_to(const char *path)
         return 0;
     }
     snprintf(current_path, sizeof current_path, "%s", path);
-    snprintf(current_format, sizeof current_format, "ODP");
+    snprintf(current_format, sizeof current_format, "%s", format);
     dirty = 0;
-    snprintf(msg, sizeof msg, "%.200s saved.", leaf(path));
+    snprintf(msg, sizeof msg, "%.200s saved%s.", leaf(path), simpler ? "; some parts saved simpler" : "");
     set_status(msg);
     update_window_title();
     draw_status();
@@ -5946,11 +5989,17 @@ static int save_to(const char *path)
 static void do_save_as(void)
 {
     char path[512], name[128];
+    /* the file's own format when it has one we write, ODP otherwise */
+    const char *ext = !strcmp(current_format, "PPTX") ? "pptx" : "odp";
     if (!deck) return;
-    with_extension(current_path, "odp", name, sizeof name);
-    if (ask_file(1, "Save the " DOCUMENT_LOWER " as ODP", name, path, sizeof path)) {
+    with_extension(current_path, ext, name, sizeof name);
+    if (ask_file(1, "Save the " DOCUMENT_LOWER " (.odp"
+#ifndef OPENPUBLISHER
+                 " or .pptx"
+#endif
+                 ")", name, path, sizeof path)) {
         size_t n = strlen(path);
-        if (n < 4 || (strcmp(path + n - 4, ".odp") && strcmp(path + n - 4, ".ODP")))
+        if (!has_extension(path, ".odp") && strcmp(format_for(path), "PPTX"))
             snprintf(path + n, sizeof path - n, ".odp");
         save_to(path);
     }
@@ -5958,10 +6007,8 @@ static void do_save_as(void)
 
 static void do_save(void)
 {
-    size_t n = strlen(current_path);
-    /* PPTX is read only for now: a PowerPoint file is saved as ODP beside it, under a name asked for */
-    if (!n || strcmp(current_format, "ODP") || n < 4 || (strcmp(current_path + n - 4, ".odp") &&
-                                                         strcmp(current_path + n - 4, ".ODP"))) {
+    /* a file in a format not written here (a Publisher file) is saved as ODP, under a name asked for */
+    if (!saves_in_place()) {
         do_save_as();
         return;
     }
@@ -6089,7 +6136,7 @@ static void about(void)
              OPP_CORE_VERSION, OPR_CORE_VERSION, OWF_VERSION, OL_VERSION);
 #else
     snprintf(text, sizeof text,
-             VERSION_TEXT "\nThe GFOffice Suite's slides.\n\nOpens ODP and PPTX, saves ODP, exports PDF,\n"
+             VERSION_TEXT "\nThe GFOffice Suite's slides.\n\nOpens and saves ODP and PPTX, exports PDF,\n"
              "prints through GFOpenPrint, and runs a full-screen show.\n"
              "F5: first; Shift-F5: current; Esc: end.\n\nCore %s, libowf %s, GFOpenLayout %s.\n"
              "MIT, Copyright (c) 2026 AmiCradle Team.",
@@ -6628,8 +6675,7 @@ static int rexx_do_command(const char *command, char **result_out)
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
         else { ok = save_to(arg); rexx_copy(result_text, sizeof result_text, status); }
     } else if (starts_word_ci(command, "SAVE", &arg)) {
-        size_t n = strlen(current_path);
-        if (n >= 4 && !strcmp(current_format, "ODP") && (!strcmp(current_path + n - 4, ".odp") || !strcmp(current_path + n - 4, ".ODP"))) {
+        if (saves_in_place()) {
             ok = save_to(current_path);
             rexx_copy(result_text, sizeof result_text, status);
         } else { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs SAVEAS"); }
