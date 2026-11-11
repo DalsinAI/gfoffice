@@ -329,7 +329,7 @@ int oc_core_goal_seek(const oc_core *core,
                       double tolerance, int max_iterations,
                       double *solution, double *achieved, int *iterations);
 
-/* Tools > Solver: make a target cell as large or as small as it can be, or
+/* Data > Solver: make a target cell as large or as small as it can be, or
  * equal to a value, by changing variable cells, under constraints. Models
  * must be linear (the target and constraints change in proportion to the
  * variables); whole-number and binary variables are solved by branch and

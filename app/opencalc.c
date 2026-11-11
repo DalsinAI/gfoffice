@@ -3115,7 +3115,7 @@ static void do_goal_seek(void)
         set_status("Goal Seek solution not applied.");
 }
 
-/* ---- Tools > Solver ---- */
+/* ---- Data > Solver ---- */
 
 static const char *const sv_goal_labels[] = { "Maximum", "Minimum", "Value of", NULL };
 static const char *const sv_rel_labels[] = { "<=", "=", ">=", "Whole number", "Binary", NULL };
@@ -3341,7 +3341,7 @@ static void solver_answer_text(const oc_solver_result *r, char *out, size_t size
     }
 }
 
-/* Tools > Solver...: the sheet's model in the window; solving shows the answer, kept or not. */
+/* Data > Solver...: the sheet's model in the window; solving shows the answer, kept or not. */
 static void do_solver(void)
 {
     static oc_solver_model m;
@@ -5099,7 +5099,7 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
 }
 
 /* SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs lhs=rhs lhs>=rhs ...] [INT cells] [BIN cells] [ANY]
- * [KEEP]: Tools > Solver. With no model words, the sheet's own model. The answer is "target cell=value ...";
+ * [KEEP]: Data > Solver. With no model words, the sheet's own model. The answer is "target cell=value ...";
  * KEEP puts it in the cells (and keeps the model on the sheet). 1 solved; *now set when the model has no answer. */
 static int rexx_solve(const char *arg, char *out, size_t size, int *now)
 {
