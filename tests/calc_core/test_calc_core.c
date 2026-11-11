@@ -4913,7 +4913,8 @@ static void test_multiple_operations_auto(void)
     oc_core_select_range(core, &selected);
     CHECK(oc_core_multiple_operations(core, 1, 0, 2, 1, 0, 3) == OWF_OK);
     CHECK(num(core, "B1") == 2 && num(core, "B2") == 5 && num(core, "B3") == 10);
-    CHECK(oc_core_auto_multiple_operations(core) == 0);        /* nothing changed since */
+    oc_core_auto_multiple_operations(core);                     /* the book changed: worked out once */
+    CHECK(num(core, "B3") == 10 && oc_core_auto_multiple_operations(core) == 0);   /* nothing changed since */
 
     /* the model changes: the table follows, with no Undo step of its own */
     CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
