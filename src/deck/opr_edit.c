@@ -832,10 +832,11 @@ typedef enum {
     SNAP_OBJ_COLUMNS,
     SNAP_OBJ_WRAP,
     SNAP_OBJ_CROP,
-    SNAP_OBJ_FLOW
+    SNAP_OBJ_FLOW,
+    SNAP_GROUP
 } snapshot_kind;
 
-typedef struct {
+typedef struct snapshot {
     snapshot_kind kind;
     int slide, obj;
     owf_story text;
@@ -880,6 +881,11 @@ typedef struct {
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
     owf_obj saved_obj;
     int saved_obj_present;
+    /* SNAP_GROUP: several steps made as one (opr_undo_group_begin/end), in
+     * the order they were made; parts_forward says the next swap redoes
+     * them first to last (else it undoes them last to first). */
+    struct snapshot *parts;
+    int nparts, parts_forward;
 } snapshot;
 
 #define UNDO_STEPS 16
@@ -887,6 +893,10 @@ typedef struct {
 struct opr_undo {
     snapshot undo[UNDO_STEPS], redo[UNDO_STEPS];
     int nundo, nredo;
+    /* opr_undo_group_begin: steps go to group (room for capgroup) until
+     * opr_undo_group_end makes them one; group_lost: a step had no room. */
+    int grouping, ngroup, capgroup, group_lost;
+    snapshot *group;
 };
 
 static void story_free(owf_story *s)
@@ -971,6 +981,11 @@ static void snap_free(snapshot *s)
         owf_free(s->transitions);
     } else if (s->kind == SNAP_OBJ_PRESENCE && s->saved_obj_present) {
         owf_obj_clear(&s->saved_obj);
+    } else if (s->kind == SNAP_GROUP) {
+        int i;
+        for (i = 0; i < s->nparts; i++)
+            snap_free(&s->parts[i]);
+        owf_free(s->parts);
     }
     memset(s, 0, sizeof *s);
 }
@@ -1152,6 +1167,23 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         if (focus) *focus = s->slide;
         return 0;
     }
+    if (s->kind == SNAP_GROUP) {
+        int i, n = s->nparts, last = -1;
+        for (i = 0; i < n; i++) {
+            snapshot *p = &s->parts[s->parts_forward ? i : n - 1 - i];
+            int pf = -1;
+            if (snap_swap(p, deck, &pf) < 0) {
+                /* put back what this swap did, so the group stays whole */
+                while (--i >= 0)
+                    snap_swap(&s->parts[s->parts_forward ? i : n - 1 - i], deck, NULL);
+                return -1;
+            }
+            last = pf;
+        }
+        s->parts_forward = !s->parts_forward;
+        if (focus) *focus = last;
+        return 0;
+    }
     f = s->focus;
     if (s->kind == SNAP_SLIDE) {
         if (s->saved_present) {
@@ -1304,12 +1336,98 @@ void opr_undo_clear(opr_undo *u)
     for (i = 0; i < u->nredo; i++)
         snap_free(&u->redo[i]);
     u->nundo = u->nredo = 0;
+    for (i = 0; i < u->ngroup; i++)
+        snap_free(&u->group[i]);
+    owf_free(u->group);
+    u->group = NULL;
+    u->grouping = u->ngroup = u->capgroup = u->group_lost = 0;
 }
 
 void opr_undo_free(opr_undo *u)
 {
     opr_undo_clear(u);
     owf_free(u);
+}
+
+int opr_undo_group_begin(opr_undo *u, int most)
+{
+    if (!u || u->grouping || most < 1 || most > 1000000)
+        return -1;
+    u->group = owf_calloc((size_t)most, sizeof *u->group);
+    if (!u->group)
+        return -1;
+    u->capgroup = most;
+    u->ngroup = 0;
+    u->group_lost = 0;
+    u->grouping = 1;
+    return 0;
+}
+
+static void structural_push(opr_undo *u, snapshot *s);
+
+int opr_undo_group_cancel(opr_undo *u, owf_deck *deck)
+{
+    int i, rc = 0;
+    if (!u || !u->grouping)
+        return -1;
+    u->grouping = 0;
+    for (i = u->ngroup - 1; i >= 0; i--) {
+        if (snap_swap(&u->group[i], deck, NULL) < 0)
+            rc = -1;
+        snap_free(&u->group[i]);
+    }
+    owf_free(u->group);
+    u->group = NULL;
+    u->ngroup = u->capgroup = 0;
+    if (u->group_lost || rc < 0) {
+        u->group_lost = 0;
+        opr_undo_clear(u);
+        return -1;
+    }
+    return 0;
+}
+
+int opr_undo_group_end(opr_undo *u)
+{
+    snapshot g;
+    int i, lost;
+    if (!u || !u->grouping)
+        return -1;
+    u->grouping = 0;
+    lost = u->group_lost;
+    u->group_lost = 0;
+    if (lost) {
+        /* a change was made without its step: no earlier step can be trusted */
+        for (i = 0; i < u->ngroup; i++)
+            snap_free(&u->group[i]);
+        owf_free(u->group);
+        u->group = NULL;
+        u->ngroup = u->capgroup = 0;
+        opr_undo_clear(u);
+        return -1;
+    }
+    if (!u->ngroup) {
+        owf_free(u->group);
+        u->group = NULL;
+        u->capgroup = 0;
+        return 0;
+    }
+    memset(&g, 0, sizeof g);
+    if (u->ngroup == 1) {
+        g = u->group[0];
+        owf_free(u->group);
+    } else {
+        g.kind = SNAP_GROUP;
+        g.slide = -1;
+        g.obj = -1;
+        g.parts = u->group;
+        g.nparts = u->ngroup;
+        g.parts_forward = 0;
+    }
+    u->group = NULL;
+    u->ngroup = u->capgroup = 0;
+    structural_push(u, &g);
+    return 0;
 }
 
 int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj)
@@ -1320,6 +1438,15 @@ int opr_undo_push(opr_undo *u, const owf_deck *deck, int slide, int obj)
         return -1;
     if (snap_take(&s, deck, slide, obj) < 0)
         return -1;
+    if (u->grouping) {
+        if (u->ngroup >= u->capgroup) {
+            snap_free(&s);
+            u->group_lost = 1;
+            return -1;
+        }
+        u->group[u->ngroup++] = s;
+        return 0;
+    }
     for (i = 0; i < u->nredo; i++)
         snap_free(&u->redo[i]);
     u->nredo = 0;
@@ -1612,6 +1739,16 @@ int opr_text_set_indents(opr_undo *u, owf_deck *deck, int slide, int obj,
 static void structural_push(opr_undo *u, snapshot *s)
 {
     int i;
+    if (u->grouping) {
+        if (u->ngroup < u->capgroup) {
+            u->group[u->ngroup++] = *s;
+        } else {
+            snap_free(s);
+            u->group_lost = 1;
+        }
+        memset(s, 0, sizeof *s);
+        return;
+    }
     for (i = 0; i < u->nredo; i++)
         snap_free(&u->redo[i]);
     u->nredo = 0;
@@ -3146,12 +3283,12 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
 
 int opr_undo_undo(opr_undo *u, owf_deck *deck, int *slide, int *obj)
 {
-    return u ? step(u->undo, &u->nundo, u->redo, &u->nredo, deck, slide, obj) : -1;
+    return u && !u->grouping ? step(u->undo, &u->nundo, u->redo, &u->nredo, deck, slide, obj) : -1;
 }
 
 int opr_undo_redo(opr_undo *u, owf_deck *deck, int *slide, int *obj)
 {
-    return u ? step(u->redo, &u->nredo, u->undo, &u->nundo, deck, slide, obj) : -1;
+    return u && !u->grouping ? step(u->redo, &u->nredo, u->undo, &u->nundo, deck, slide, obj) : -1;
 }
 
 /* ---- The caret and the pointer, through the laid-out slide ---- */
