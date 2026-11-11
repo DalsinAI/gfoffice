@@ -1220,6 +1220,93 @@ static int build(builder *b)
     return apply_exclusions(b);
 }
 
+/* ---- Notes pages and handouts: where things go (openpresentation_core.h) ---- */
+
+#define A4_WIDTH 11906
+#define A4_HEIGHT 16838
+#define NOTES_MARGIN 1134              /* 2 cm */
+#define NOTES_GAP 567                  /* 1 cm between the slide and the notes, and between handout slides */
+
+void opr_notes_page(const owf_deck *deck, int *width, int *height)
+{
+    int w = deck ? deck->notes_page.width : 0, h = deck ? deck->notes_page.height : 0;
+    if (w <= 0 || h <= 0) {
+        w = A4_WIDTH;
+        h = A4_HEIGHT;
+    }
+    if (width) *width = w;
+    if (height) *height = h;
+}
+
+/* The page's margins, each one a margin unless the page leaves no room. */
+static void page_area(const owf_deck *deck, int area[4])
+{
+    int w, h, l, t, r, b;
+    opr_notes_page(deck, &w, &h);
+    l = deck && deck->notes_page.margin_left > 0 ? deck->notes_page.margin_left : NOTES_MARGIN;
+    t = deck && deck->notes_page.margin_top > 0 ? deck->notes_page.margin_top : NOTES_MARGIN;
+    r = deck && deck->notes_page.margin_right > 0 ? deck->notes_page.margin_right : NOTES_MARGIN;
+    b = deck && deck->notes_page.margin_bottom > 0 ? deck->notes_page.margin_bottom : NOTES_MARGIN;
+    if (l + r > w / 2) l = r = w / 8;
+    if (t + b > h / 2) t = b = h / 8;
+    area[0] = l;
+    area[1] = t;
+    area[2] = w - l - r;
+    area[3] = h - t - b;
+}
+
+/* The slide's shape fitted in w x h, centred there. */
+static void fit_slide(const owf_deck *deck, int x, int y, int w, int h, int box[4])
+{
+    long sw = deck && deck->width > 0 ? deck->width : 4, sh = deck && deck->height > 0 ? deck->height : 3;
+    long fw = w, fh = (long)w * sh / sw;
+    if (fh > h) {
+        fh = h;
+        fw = (long)h * sw / sh;
+    }
+    box[0] = x + (int)((w - fw) / 2);
+    box[1] = y + (int)((h - fh) / 2);
+    box[2] = (int)fw;
+    box[3] = (int)fh;
+}
+
+void opr_notes_boxes(const owf_deck *deck, int slide_box[4], int text_box[4])
+{
+    int area[4], s[4];
+    /* the slide in the top half at most, as wide as the margins let it */
+    page_area(deck, area);
+    fit_slide(deck, area[0], area[1], area[2], (area[3] - NOTES_GAP) / 2, s);
+    s[1] = area[1];              /* at the top, not in the middle of its half */
+    if (slide_box)
+        memcpy(slide_box, s, sizeof s);
+    if (text_box) {
+        text_box[0] = area[0];
+        text_box[1] = s[1] + s[3] + NOTES_GAP;
+        text_box[2] = area[2];
+        text_box[3] = area[1] + area[3] - text_box[1];
+    }
+}
+
+int opr_handout_box(const owf_deck *deck, int per_page, int k, int box[4])
+{
+    int area[4], cols, rows, cw, ch;
+    switch (per_page) {
+    case 1: cols = 1; rows = 1; break;
+    case 2: cols = 1; rows = 2; break;
+    case 3: cols = 1; rows = 3; break;
+    case 4: cols = 2; rows = 2; break;
+    case 9: cols = 3; rows = 3; break;
+    default: per_page = 6; cols = 2; rows = 3; break;
+    }
+    if (k < 0 || k >= per_page || !box)
+        return -1;
+    page_area(deck, area);
+    cw = (area[2] - (cols - 1) * NOTES_GAP) / cols;
+    ch = (area[3] - (rows - 1) * NOTES_GAP) / rows;
+    fit_slide(deck, area[0] + (k % cols) * (cw + NOTES_GAP), area[1] + (k / cols) * (ch + NOTES_GAP), cw, ch, box);
+    return 0;
+}
+
 /* A notes page: the page's white, then the notes in their box. */
 static int build_notes(builder *b)
 {
