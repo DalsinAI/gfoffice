@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.34.0"
+#define OPR_CORE_VERSION "0.35.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -493,6 +493,40 @@ int opr_outline_body_obj(const owf_deck *deck, int slide);
 /* The rows, into out (zeroed the first time; opr_outline_free after). 0, or -1 when memory runs out. */
 int opr_outline_build(const owf_deck *deck, opr_outline *out);
 void opr_outline_free(opr_outline *out);
+
+/* ---- Several objects at once (P5: opr_multi.c, groups in opr_edit.c) ----
+ *
+ * The objects are top-level ones (parent -1); a group stands for itself and
+ * everything in it (its block: the objects after it inside it). Each call is
+ * one Undo step. -2: refused (see each), -1: bad input or no memory. */
+
+/* Where obj's block ends: the index after the last object inside it (obj + 1
+ * for an object that is not a group). -1 for bad input. */
+int opr_obj_block_end(const owf_deck *deck, int slide, int obj);
+/* The top-level object obj is in (obj itself when it is top-level). */
+int opr_obj_top(const owf_deck *deck, int slide, int obj);
+/* n (2 or more) top-level objects made one group, kept in their drawing order
+ * where the frontmost was; *group is its index. -2 for a group, a placeholder
+ * or an object with nothing drawn. */
+int opr_obj_group(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n, int *group);
+/* A top-level group taken apart: its objects stay where they are drawn, top-
+ * level. *first is the first of them and *count how many objects the block
+ * held. -2 for anything but a top-level group. */
+int opr_obj_ungroup(opr_undo *u, owf_deck *deck, int slide, int group, int *first, int *count);
+/* n objects deleted, each with everything in it. */
+int opr_objs_delete(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n);
+/* The box round n objects as drawn: x, y, width, height in slide twips. */
+int opr_objs_box(const owf_deck *deck, int slide, const int *objs, int n, int box[4]);
+/* n objects moved together by dx, dy twips, held on the slide. */
+int opr_objs_move(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n, int dx, int dy);
+/* Aligned: one object to the slide, several to the box round them all. */
+int opr_objs_align(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n, opr_align how);
+/* 3 or more objects spaced evenly across (vertical 0) or down (1): the first
+ * and last stay and the gaps between them all become the same. -2 for fewer. */
+int opr_objs_distribute(opr_undo *u, owf_deck *deck, int slide, const int *objs, int n, int vertical);
+/* The top-level shown objects wholly inside a rectangle (a drag over the
+ * slide), up to max into out; the count found. */
+int opr_objs_in_rect(const owf_deck *deck, int slide, int x, int y, int width, int height, int *out, int max);
 /* The row of a slide's title (obj -1) or of a paragraph; -1 when there is none. */
 int opr_outline_find(const opr_outline *out, int slide, int obj, int para);
 /* A row's text (owf_malloc): a title's paragraphs joined by spaces. */
