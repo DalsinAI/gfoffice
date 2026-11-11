@@ -1,7 +1,7 @@
 /*
  * GFOpenCalc's core on owfcalc.library: its own copy of the pivot
- * definition code (owf_pivot.h), which the library holds but does not
- * export. With libowf linked in, owf_book.c's copy serves.
+ * definition and scenario code (owf_pivot.h, owf_scenario.h), which the
+ * library holds but does not export. With libowf linked in, owf_book.c's copy serves.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifdef OWF_USE_CALC_LIBRARY
@@ -21,6 +21,7 @@ static int oc_pivot_number(const char *s, size_t n, double *v)
 
 #define OWF_PIVOT_NUMBER(s, n, v) oc_pivot_number((s), (n), (v))
 #include "owf_pivotdef.h"
+#include "owf_scenariodef.h"
 #else
 /* ISO C wants a translation unit to declare something. */
 typedef int oc_pivotdef_unused;
