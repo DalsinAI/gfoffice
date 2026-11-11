@@ -123,7 +123,7 @@ does).
 
 ## Names and the advanced filter
 
-Insert > Names > Manage Names lists the names one may see (a sheet's own and
+Sheet > Manage Names lists the names one may see (a sheet's own and
 the workbook's; the hidden ones Solver, scenarios and the rest keep are
 left out) with what each refers to, and adds, changes and deletes them.
 `oc_core_change_name` (`src/calc/oc_core.c`) changes a name, its formula and
@@ -137,7 +137,7 @@ first row holds some of the list's headings, and each other row is a set of
 conditions that must all hold; any one row is enough. A condition is `<10`,
 `<=10`, `>2026`, `>=2026`, `<>East`, `=East` (just that; `=` alone: empty),
 `East` (text beginning with it; `*` and `?` are wildcards) or `10`. In place,
-the rows that do not match are hidden (Format's Show Rows brings them back);
+the rows that do not match are hidden (showing the rows again brings them back);
 copied, the heading and the matching rows go to a cell on any sheet as values
 in their styles. Unique rows only leaves out repeats. Each is one Undo step.
 

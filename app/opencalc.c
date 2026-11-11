@@ -3754,7 +3754,7 @@ out:
         refresh();
 }
 
-/* ---- Insert > Names > Manage Names ---- */
+/* ---- Sheet > Manage Names ---- */
 
 typedef struct {
     struct Node node;
