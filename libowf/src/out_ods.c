@@ -1061,6 +1061,30 @@ static int val_at(const ods_out *w, const owf_sheet *sh, unsigned long row, unsi
     return v ? w->val_base + (int)(v - sh->validations) + 1 : 0;
 }
 
+/* A cell's or a name's formula for table:formula or table:expression. OpenFormula when it holds the
+ * formula; Excel's own text under msoxl: (which LibreOffice and libowf read) when the formula names
+ * another workbook's name or one sheet's own ("Other.xls!Rate", "Sheet2!Rate"): of: would keep only
+ * "Rate", and the formula would quietly use a name of this workbook in its place. */
+static char *table_formula(ods_out *w, const char *excel)
+{
+    int lost = 0;
+    char *of = owf_excel_to_of_lossy(excel, &lost);
+    if (of && lost) {
+        owf_buf b;
+        unsigned char *data;
+        size_t length;
+        free(of);
+        of = NULL;
+        owf_buf_init(&b);
+        owf_buf_puts(&b, "msoxl:=");
+        owf_buf_puts(&b, excel);
+        if (owf_buf_take(&b, &data, &length) == OWF_OK)
+            of = (char *)data;
+        owf_report_add(w->report, OWF_NOTE_APPROX, "Formulas naming another workbook's names or one sheet's own were written in Excel's syntax (msoxl:): OpenFormula has no such names");
+    }
+    return of;
+}
+
 static void put_cell(ods_out *w, owf_buf *b, const owf_sheet *sh, const owf_cell *c, const owf_range *merge, int covered,
                      int val, const owf_comment *note, int sheet, const ods_anchor *a, int na)
 {
@@ -1087,10 +1111,7 @@ static void put_cell(ods_out *w, owf_buf *b, const owf_sheet *sh, const owf_cell
         unsigned long rows = 1, cols = 1;
         int array = (c->flags & OWF_CELL_ARRAY) != 0, anchor = array ? array_size(sh, c, &rows, &cols) : 1;
         if (anchor) {
-            int lost = 0;
-            of = owf_excel_to_of_lossy(c->formula, &lost);
-            if (lost)
-                owf_report_add(w->report, OWF_NOTE_APPROX, "Names of one sheet or of another workbook in formulas lost their sheet or workbook: ODF formulas have no such names");
+            of = table_formula(w, c->formula);
             if (!of) {
                 owf_report_add(w->report, OWF_NOTE_LOST, "Some formulas could not be written; their cells keep their values");
             } else {
@@ -1269,12 +1290,7 @@ static void put_names(ods_out *w, owf_buf *b, int sheet)
         size_t len;
         if (n->sheet != sheet)
             continue;
-        {
-            int lost = 0;
-            of = owf_excel_to_of_lossy(n->formula, &lost);
-            if (lost)
-                owf_report_add(w->report, OWF_NOTE_APPROX, "Names of one sheet or of another workbook in formulas lost their sheet or workbook: ODF formulas have no such names");
-        }
+        of = table_formula(w, n->formula);
         if (!of) {
             owf_report_add(w->report, OWF_NOTE_LOST, "Some defined names could not be written");
             continue;

@@ -15,6 +15,7 @@ import os
 import random
 import struct
 import subprocess
+import zipfile
 import sys
 import tempfile
 
@@ -491,6 +492,35 @@ def test_built_book(work):
     return path
 
 
+def test_saved_names(work, built):
+    """A formula naming another workbook's name keeps it through .ods and .xlsx saves: OpenFormula
+    has no such name, so out_ods writes Excel's text under msoxl: in place of a bare "Rate" that would
+    quietly use a name of this workbook."""
+    if not OWCONVERT:
+        return
+    previous = built
+    for n, ext in enumerate(("ods", "xlsx", "ods")):
+        path = os.path.join(work, "saved%d.%s" % (n, ext))
+        p = subprocess.run([OWCONVERT, previous, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        check("saved %s" % path, p.returncode == 0, p.stderr.decode("utf-8", "replace")[-400:])
+        if p.returncode:
+            return
+        rc, out, err = dump(path)
+        check("saved %d read" % n, rc == 0, err[-400:])
+        if rc:
+            return
+        b = parse(out)
+        cell_is(b, 0, "E6", 'number 0 formula "[Other.xls]Rates!$A$1"')
+        cell_is(b, 0, "F6", 'number 0 formula "Other.xls!Rate"')
+        cell_is(b, 0, "F8", 'number 10 formula "SUM(Total)"')
+        if ext == "ods":
+            with zipfile.ZipFile(path) as z:
+                content = z.read("content.xml").decode("utf-8")
+            check("saved %d msoxl" % n, 'table:formula="msoxl:=Other.xls!Rate"' in content, "")
+            check("saved %d of" % n, 'table:formula="of:=SUM([.A2:.B2])"' in content, "")
+        previous = path
+
+
 def test_refused(work):
     for name, data, want in (
             ("encrypted", cfb([("Workbook", built_book(filepass=True))]), "protected with a password"),
@@ -601,6 +631,7 @@ def main():
     with tempfile.TemporaryDirectory() as work:
         test_libreoffice_book()
         built = test_built_book(work)
+        test_saved_names(work, built)
         test_refused(work)
         test_difat_loop(work)
         test_rich_wrap(work)
