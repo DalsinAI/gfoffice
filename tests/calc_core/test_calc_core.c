@@ -510,13 +510,13 @@ static void test_advanced_filter(void)
     enter_at(core, "A5", "North");     enter_at(core, "B5", "Paper");   enter_at(core, "C5", "=C2*5");
     enter_at(core, "A6", "East");      enter_at(core, "B6", "Pens");    enter_at(core, "C6", "10");
     enter_at(core, "A7", "South");     enter_at(core, "B7", "Ink");     enter_at(core, "C7", "5");
-    /* criteria E1:F3: (Region begins with East and Sales < 30) or Item is Ink */
+    /* criteria E1:G3: (Region begins with East and Sales < 30) or Item is Ink */
     enter_at(core, "E1", "region");
     enter_at(core, "F1", "Sales");
     enter_at(core, "G1", "Item");
     enter_at(core, "E2", "East");
     enter_at(core, "F2", "<30");
-    enter_at(core, "G3", "=Ink");
+    enter_at(core, "G3", "'=Ink");
 
     CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:G3", NULL, 0, &kept) == OWF_OK && kept == 4);
     CHECK(!row_hidden(core, 1) && !row_hidden(core, 2) && row_hidden(core, 3) && row_hidden(core, 4) &&
@@ -527,13 +527,13 @@ static void test_advanced_filter(void)
     CHECK(oc_core_undo(core) == OWF_OK);
 
     /* copied elsewhere, a formula as its value */
-    enter_at(core, "F3", ">=50");
-    CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:G3", "I1", 0, &kept) == OWF_OK && kept == 6);
+    enter_at(core, "F4", ">=50");                        /* or Sales at least 50 */
+    CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:G4", "I1", 0, &kept) == OWF_OK && kept == 5);
     CHECK_STR(text(core, "I1"), "Region");
     CHECK_STR(text(core, "I2"), "East");
     CHECK_STR(text(core, "J3"), "Ink");
     CHECK(num(core, "K4") == 50 && formula(core, "K4")[0] == 0);   /* North Paper =C2*5 */
-    CHECK(empty(core, "I8") && !row_hidden(core, 3));
+    CHECK(empty(core, "I7") && !row_hidden(core, 3));
     CHECK(oc_core_undo(core) == OWF_OK && empty(core, "I1"));
     CHECK(oc_core_add_sheet(core, "Out") == 1 && oc_core_set_sheet(core, 0) == OWF_OK);
     CHECK(oc_core_advanced_filter(core, "A1:C7", "E1:E2", "'Out'!B2", 1, &kept) == OWF_OK && kept == 2);
