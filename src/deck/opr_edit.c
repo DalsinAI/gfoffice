@@ -19,7 +19,11 @@
 
 static owf_obj *object(owf_deck *deck, int slide, int obj)
 {
-    if (!deck || slide < 0 || slide >= deck->nslides || obj < 0 || obj >= deck->slides[slide].nobjs)
+    if (!deck || slide < 0 || slide >= deck->nslides)
+        return NULL;
+    if (obj == OPR_NOTES)
+        return &deck->slides[slide].notes;
+    if (obj < 0 || obj >= deck->slides[slide].nobjs)
         return NULL;
     return &deck->slides[slide].objs[obj];
 }
@@ -921,7 +925,7 @@ static void slide_free(owf_slide *s)
     for (i = 0; i < s->nobjs; i++)
         owf_obj_clear(&s->objs[i]);
     owf_free(s->objs);
-    story_free(&s->notes);
+    owf_obj_clear(&s->notes);
     owf_free(s->name);
     owf_free(s->footer);
     owf_free(s->date_text);
@@ -3300,7 +3304,13 @@ int opr_slide_frame_for(const opr_slide *s, int obj)
     if (!s || s->slide < 0 || s->slide >= s->deck->nslides)
         return -1;
     sl = &s->deck->slides[s->slide];
-    if (obj < 0 || obj >= sl->nobjs)
+    if (obj == OPR_NOTES) {
+        for (i = 0; s->notes && i < s->nframes; i++)
+            if (s->frames[i].obj == &sl->notes)
+                return i;
+        return -1;
+    }
+    if (s->notes || obj < 0 || obj >= sl->nobjs)
         return -1;
     for (i = 0; i < s->nframes; i++)
         if (!s->frames[i].from_master && s->frames[i].obj == &sl->objs[obj])
@@ -3316,6 +3326,8 @@ int opr_frame_obj(const opr_slide *s, int frame)
         return -1;
     sl = &s->deck->slides[s->slide];
     o = s->frames[frame].obj;
+    if (o == &sl->notes)
+        return OPR_NOTES;
     if (o < sl->objs || o >= sl->objs + sl->nobjs)
         return -1;
     return (int)(o - sl->objs);

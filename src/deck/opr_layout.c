@@ -829,7 +829,7 @@ int opr_frame_text_overflow(opr_slide *s, int frame,
     b.fields[1] = pages;
     b.fields[2] = "";
     b.fields[3] = NULL;
-    obj_index = (int)(f->obj - b.slide->objs);
+    obj_index = s->notes ? -1 : (int)(f->obj - b.slide->objs);
     story = linked_story_source(&b, f->obj, &f->obj->text);
     if (!story->nparas) {
         f->text_overflow = 0;
@@ -1220,6 +1220,49 @@ static int build(builder *b)
     return apply_exclusions(b);
 }
 
+/* A notes page: the page's white, then the notes in their box. */
+static int build_notes(builder *b)
+{
+    const owf_obj *o = &b->slide->notes;
+    opr_frame *f;
+    ol_node *n;
+    owf_obj box = *o;
+    int w, h, text[4];
+
+    b->out->nframes = 0;
+    opr_notes_page(b->deck, &w, &h);
+    opr_notes_boxes(b->deck, NULL, text);
+    f = add_frame(b, NULL, 1);
+    if (!f)
+        return 0;
+    n = frame_node(b, f, 0, 0, w, h, NULL);
+    if (!n)
+        return 0;
+    {
+        ol_style st = *ol_node_style(n);
+        st.background = 0xffffffffu;
+        ol_node_set_style(n, &st);
+    }
+    f->first = f->end = ol_node_id(n) + 1;
+    box.x = text[0];
+    box.y = text[1];
+    box.width = text[2];
+    box.height = text[3];
+    box.flags &= ~(unsigned)OWF_OBJ_HIDDEN;
+    f = add_frame(b, o, 0);
+    if (!f)
+        return 0;
+    f->box = box;
+    n = frame_node(b, f, box.x, box.y, box.width, box.height, &box);
+    if (!n)
+        return 0;
+    f->first = ol_node_id(n) + 1;
+    if (!add_text(b, f, n, o, &o->text, 1, -1, -1))
+        return 0;
+    f->end = last_node(b);
+    return 1;
+}
+
 /* How tall a frame's content is, and how tall it may be. */
 static void content_height(const opr_slide *s, const opr_frame *f, ol_unit *content, ol_unit *room)
 {
@@ -1246,8 +1289,15 @@ static int lay_out(opr_slide *s, ol_measure_text_fn measure, void *userdata)
 {
     ol_page page;
     memset(&page, 0, sizeof page);
-    page.width = TW(s->deck->width);
-    page.height = TW(s->deck->height);
+    if (s->notes) {
+        int w, h;
+        opr_notes_page(s->deck, &w, &h);
+        page.width = TW(w);
+        page.height = TW(h);
+    } else {
+        page.width = TW(s->deck->width);
+        page.height = TW(s->deck->height);
+    }
     return ol_layout_pages(s->doc, &page, measure, userdata);
 }
 
@@ -1260,8 +1310,8 @@ void opr_slide_free(opr_slide *s)
     free(s);
 }
 
-opr_slide *opr_slide_layout(const owf_deck *deck, int slide, ol_measure_text_fn measure, void *userdata,
-                            const char *today)
+static opr_slide *layout(const owf_deck *deck, int slide, ol_measure_text_fn measure, void *userdata,
+                         const char *today, int notes)
 {
     builder b;
     opr_slide *s;
@@ -1278,6 +1328,7 @@ opr_slide *opr_slide_layout(const owf_deck *deck, int slide, ol_measure_text_fn 
         return NULL;
     s->deck = deck;
     s->slide = slide;
+    s->notes = notes;
     memset(&b, 0, sizeof b);
     b.deck = deck;
     b.slide = &deck->slides[slide];
@@ -1307,7 +1358,7 @@ opr_slide *opr_slide_layout(const owf_deck *deck, int slide, ol_measure_text_fn 
         int again = 0;
         ol_document_free(s->doc);
         s->doc = ol_document_new();
-        if (!s->doc || !build(&b) || !lay_out(s, measure, userdata))
+        if (!s->doc || !(notes ? build_notes(&b) : build(&b)) || !lay_out(s, measure, userdata))
             goto fail;
         if (!scales) {
             scales = malloc((size_t)(s->nframes > 0 ? s->nframes : 1) * sizeof *scales);
@@ -1365,6 +1416,17 @@ fail:
     free(scales);
     opr_slide_free(s);
     return NULL;
+}
+
+opr_slide *opr_slide_layout(const owf_deck *deck, int slide, ol_measure_text_fn measure, void *userdata,
+                            const char *today)
+{
+    return layout(deck, slide, measure, userdata, today, 0);
+}
+
+opr_slide *opr_notes_layout(const owf_deck *deck, int slide, ol_measure_text_fn measure, void *userdata)
+{
+    return layout(deck, slide, measure, userdata, NULL, 1);
 }
 
 int opr_slide_frame_of(const opr_slide *s, const ol_display_op *op)

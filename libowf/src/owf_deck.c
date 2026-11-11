@@ -200,6 +200,8 @@ static void slide_init(owf_slide *s)
     s->keep_timing = -1;
     s->transition.advance_after = -1;
     s->transition.keep = -1;
+    owf_obj_init(&s->notes, OWF_OBJ_TEXT);
+    s->notes.placeholder = OWF_PH_NOTES;
 }
 
 static void slide_clear(owf_slide *s)
@@ -208,7 +210,7 @@ static void slide_clear(owf_slide *s)
     for (i = 0; i < s->nobjs; i++)
         owf_obj_clear(&s->objs[i]);
     free(s->objs);
-    owf_deck_free_story(&s->notes);
+    owf_obj_clear(&s->notes);
     free(s->name);
     free(s->footer);
     free(s->date_text);
@@ -334,7 +336,7 @@ static int slide_copy(owf_slide *to, const owf_slide *from)
             to->nobjs = i + 1;
         }
     }
-    if (story_copy(&to->notes, &from->notes) < 0)
+    if (owf_obj_copy(&to->notes, &from->notes) < 0)
         goto fail;
     to->name = from->name ? owf_deck_strdup(from->name, strlen(from->name)) : NULL;
     to->footer = from->footer ? owf_deck_strdup(from->footer, strlen(from->footer)) : NULL;
