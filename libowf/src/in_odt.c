@@ -7,10 +7,13 @@
  * is in (content.xml for the body, styles.xml for headers and footers).
  * Lists keep their numbers and bullets as text, tables become rows of text
  * with tabs between the cells, and notes go to the end; the import report
- * says so.
+ * says so. Tracked changes (text:tracked-changes; 1.5) are the document's:
+ * insertions between text:change-start and text:change-end, deletions at
+ * text:change with their text from the changed region.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_track.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,6 +64,13 @@ typedef struct {
     /* 2.0.21: the bookmarks in the paragraph being made, where in its text they begin and end */
     struct { const char *name; size_t start, end; int ended; } marks[32];
     int nmarks;
+    /* 1.5: tracked changes: the body's text:tracked-changes, the change the text is in now, and the places
+     * where a deletion took a paragraph's end (split when the body is read) */
+    const owf_xml_node *changes;
+    owf_track_span span;
+    int rev, in_deletion;
+    struct { int para, run, rev; } *splits;
+    int nsplits, capsplits;
 } odt;
 
 /* ---- Styles ---- */
@@ -703,6 +713,126 @@ static void pending_frames(odt *o)
     o->npending = 0;
 }
 
+/* ---- 1.5: tracked changes ---- */
+
+/* The changed region with this id (xml:id or the older text:id), NULL when there is none. */
+static const owf_xml_node *changed_region(const odt *o, const char *id)
+{
+    const owf_xml_node *c;
+    if (!o->changes || !id)
+        return NULL;
+    for (c = o->changes->first; c; c = c->next) {
+        const char *cid;
+        if (!owf_xml_is(c, NS_TEXT, "changed-region"))
+            continue;
+        cid = owf_xml_attr(c, NS_TEXT, "id");
+        if (!cid)
+            cid = owf_xml_attr(c, "http://www.w3.org/XML/1998/namespace", "id");
+        if (cid && !strcmp(cid, id))
+            return c;
+    }
+    return NULL;
+}
+
+/* An element's text (dc:creator, dc:date), into scratch; NULL when it has none. */
+static const char *child_text(odt *o, const owf_xml_node *n, const char *ns, const char *name, owf_buf *into)
+{
+    const owf_xml_node *c = owf_xml_child(n, ns, name), *t;
+    into->length = 0;
+    if (!c)
+        return NULL;
+    for (t = c->first; t; t = t->next)
+        if (t->type == OWF_XML_TEXT)
+            owf_buf_put(into, t->name, t->length);
+    owf_buf_putc(into, 0);
+    (void)o;
+    return into->failed || into->length <= 1 ? NULL : (const char *)into->data;
+}
+
+/* A region's change as the document's: its number, and its insertion or deletion element. 0: none we keep. */
+static int region_change(odt *o, const owf_xml_node *region, const owf_xml_node **what)
+{
+    const owf_xml_node *ins = owf_xml_child(region, NS_TEXT, "insertion");
+    const owf_xml_node *del = owf_xml_child(region, NS_TEXT, "deletion");
+    const owf_xml_node *w = del ? del : ins, *info;
+    owf_buf author, date;
+    int rev;
+    *what = w;
+    if (!w) {
+        if (owf_xml_child(region, NS_TEXT, "format-change"))
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Tracked format changes are kept as the format is now");
+        return 0;
+    }
+    info = owf_xml_child(w, NS_OFFICE, "change-info");
+    owf_buf_init(&author);
+    owf_buf_init(&date);
+    rev = owf_track_add(o->doc, del ? OWF_REV_DELETE : OWF_REV_INSERT, child_text(o, info, NS_DC, "creator", &author),
+                        child_text(o, info, NS_DC, "date", &date));
+    owf_buf_free(&author);
+    owf_buf_free(&date);
+    if (!rev)
+        o->failed = 1;
+    return rev;
+}
+
+/* The change the builder's text is in becomes rev. */
+static void track_now(odt *o, int rev, int marks)
+{
+    if (o->b->story != o->span.story)
+        owf_track_begin(&o->span, o->b);
+    owf_track_switch(&o->span, o->b, rev, marks);
+}
+
+/* A place to split the body's paragraph at, after the body is read: its end there is the deletion's. */
+static void track_split(odt *o, int rev)
+{
+    owf_para *p;
+    if (o->b->story != &o->doc->body) {
+        owf_report_add(o->report, OWF_NOTE_APPROX, "A deleted paragraph end outside the body was joined");
+        return;
+    }
+    owf_track_switch(&o->span, o->b, o->span.rev, o->span.marks);   /* mark what is in so far */
+    p = owf_builder_para(o->b);
+    if (!p) {
+        o->failed = 1;
+        return;
+    }
+    if (o->nsplits == o->capsplits) {
+        int want = o->capsplits ? o->capsplits * 2 : 16;
+        void *grown = realloc(o->splits, (size_t)want * sizeof *o->splits);
+        if (!grown) {
+            o->failed = 1;
+            return;
+        }
+        o->splits = grown;
+        o->capsplits = want;
+    }
+    o->splits[o->nsplits].para = o->b->story->nparas - 1;
+    o->splits[o->nsplits].run = p->nruns;
+    o->splits[o->nsplits].rev = rev;
+    o->nsplits++;
+}
+
+/* A deletion's paragraphs, their text the deletion's, a paragraph end between each two. */
+static void deleted_paragraphs(odt *o, const owf_xml_node *n, const owf_charfmt *fmt, int rev, int *first)
+{
+    const owf_xml_node *c;
+    for (c = n->first; c; c = c->next) {
+        if (c->type != OWF_XML_ELEMENT || owf_xml_is(c, NS_OFFICE, "change-info"))
+            continue;
+        if (owf_xml_is(c, NS_TEXT, "p") || owf_xml_is(c, NS_TEXT, "h")) {
+            if (!*first)
+                track_split(o, rev);
+            *first = 0;
+            inline_children(o, c, fmt);
+        } else {
+            if (!owf_xml_is(c, NS_TEXT, "list") && !owf_xml_is(c, NS_TEXT, "list-item"))
+                owf_report_add(o->report, OWF_NOTE_APPROX, "A deleted table or frame was kept as its text");
+            deleted_paragraphs(o, c, fmt, rev, first);
+        }
+    }
+}
+
 static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
 {
     owf_charfmt f;
@@ -799,9 +929,30 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
     } else if (owf_xml_is(c, NS_TEXT, "bookmark") || owf_xml_is(c, NS_TEXT, "bookmark-start") ||
                owf_xml_is(c, NS_TEXT, "bookmark-end")) {
         odt_mark(o, c);                              /* 2.0.21 */
-    } else if (owf_xml_is(c, NS_TEXT, "soft-page-break") ||
-               owf_xml_is(c, NS_TEXT, "change") || owf_xml_is(c, NS_TEXT, "change-start") ||
-               owf_xml_is(c, NS_TEXT, "change-end") || owf_xml_is(c, NS_OFFICE, "annotation-end") ||
+    } else if (owf_xml_is(c, NS_TEXT, "change-start") || owf_xml_is(c, NS_TEXT, "change-end") ||
+               owf_xml_is(c, NS_TEXT, "change")) {
+        /* 1.5: a tracked change: an insertion from its start to its end, a deletion's text here */
+        const owf_xml_node *what = NULL, *region = changed_region(o, owf_xml_attr(c, NS_TEXT, "change-id"));
+        int rev = region && !o->in_deletion ? region_change(o, region, &what) : 0;
+        if (!rev || !what) {
+            /* a format change, or a change we don't know: nothing */
+        } else if (owf_xml_is(c, NS_TEXT, "change-start") && owf_xml_is(what, NS_TEXT, "insertion")) {
+            o->rev = rev;
+            track_now(o, rev, 1);
+        } else if (owf_xml_is(c, NS_TEXT, "change-end") && owf_xml_is(what, NS_TEXT, "insertion")) {
+            o->rev = 0;
+            track_now(o, 0, 0);
+        } else if (owf_xml_is(c, NS_TEXT, "change") && owf_xml_is(what, NS_TEXT, "deletion")) {
+            int first = 1, before = o->rev, space = o->space;
+            track_now(o, rev, 0);
+            o->in_deletion = 1;
+            o->space = 0;
+            deleted_paragraphs(o, what, fmt, rev, &first);
+            o->in_deletion = 0;
+            o->space = space;
+            track_now(o, before, before ? 1 : 0);
+        }
+    } else if (owf_xml_is(c, NS_TEXT, "soft-page-break") || owf_xml_is(c, NS_OFFICE, "annotation-end") ||
                owf_xml_is(c, NS_TEXT, "reference-mark-start") || owf_xml_is(c, NS_TEXT, "reference-mark-end") ||
                owf_xml_is(c, NS_TEXT, "toc-mark") || owf_xml_is(c, NS_TEXT, "alphabetical-index-mark")) {
         /* marks without text */
@@ -1239,7 +1390,16 @@ static int read_document(odt *o, const owf_xml_node *content_root, const owf_xml
     owf_builder_init(&b, o->doc, &o->doc->body);
     o->b = &b;
     o->npending = 0;
+    /* 1.5: the body's tracked changes, and whether new ones are recorded (text:track-changes, true unless
+     * it says false) */
+    o->changes = owf_xml_child(text, NS_TEXT, "tracked-changes");
+    if (o->changes) {
+        const char *on = owf_xml_attr(o->changes, NS_TEXT, "track-changes");
+        o->doc->track_changes = !on || strcmp(on, "false") != 0;
+    }
+    owf_track_begin(&o->span, &b);
     blocks(o, text, -1, NULL);
+    track_now(o, 0, 0);
     if (o->npending) {                               /* 2.0.20: frames on the page after the last paragraph */
         if (b.para || b.text.length)
             owf_builder_end_para(&b);
@@ -1275,6 +1435,13 @@ static int read_document(odt *o, const owf_xml_node *content_root, const owf_xml
         }
     }
     result = owf_builder_done(&b);
+    {
+        /* 1.5: the paragraphs whose ends a deletion took, last first */
+        int k;
+        for (k = o->nsplits - 1; k >= 0; --k)
+            if (!owf_track_split_para(&o->doc->body, o->splits[k].para, o->splits[k].run, o->splits[k].rev))
+                o->failed = 1;
+    }
 
     if (meta_root && (t = owf_xml_child(owf_xml_child(meta_root, NS_OFFICE, "meta"), NS_DC, "title")) &&
         t->first && t->first->type == OWF_XML_TEXT) {
@@ -1294,6 +1461,7 @@ static int read_document(odt *o, const owf_xml_node *content_root, const owf_xml
 
 static void odt_free(odt *o)
 {
+    free(o->splits);
     owf_styles_free(&o->common);
     owf_styles_free(&o->autos_content);
     owf_styles_free(&o->autos_styles);

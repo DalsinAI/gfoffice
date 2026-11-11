@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.4.3"
+#define OWF_VERSION "1.5.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -82,6 +82,9 @@ typedef struct {
     char *href;              /* optional hyperlink target for text */
     owf_field field;         /* for OWF_RUN_FIELD */
     int image;               /* index into doc->images for OWF_RUN_IMAGE, doc->frames for OWF_RUN_FRAME */
+    int revision;            /* 1.5: a tracked change: 1 + its index in doc->revisions (OWF_REV_INSERT: this
+                                run was inserted, OWF_REV_DELETE: deleted but kept, shown struck through);
+                                0: none */
 } owf_run;
 
 typedef enum { OWF_ALIGN_LEFT, OWF_ALIGN_CENTRE, OWF_ALIGN_RIGHT, OWF_ALIGN_JUSTIFY } owf_align;
@@ -159,6 +162,10 @@ typedef struct {
      * (in its text runs' bytes, in order; other runs count none), then '-' and where it ends when it isn't
      * empty ("_Toc123@0-14 _Ref7@20"). A name without one is at the paragraph's start, empty, as before. */
     char *bookmarks;
+    /* 1.5: the paragraph's end (its paragraph mark, between it and the next) is a tracked change: 1 + its index
+     * in doc->revisions. Inserted: Return was typed there. Deleted: accepting the deletion joins the next
+     * paragraph to this one. 0: none. */
+    int mark_revision;
 } owf_para;
 
 typedef enum {
@@ -244,6 +251,21 @@ typedef struct {
     unsigned long line;      /* OWF_SHADE(0xRRGGBB) round it; 0: none */
 } owf_frame;
 
+/* ---- Tracked changes (1.5) ----
+ * What one change is: who made it, when and how. Runs and paragraph marks name their change by its number
+ * (owf_run.revision, owf_para.mark_revision: 1 + the index here). Several runs and marks may name one; a
+ * change's text is every run that names it, in order. Nothing in the document is the change of a number
+ * past nrevisions. ODT's text:tracked-changes and DOCX's w:ins and w:del come in and go out as these; a format
+ * without tracked changes is written with every change accepted. */
+typedef enum { OWF_REV_INSERT = 1, OWF_REV_DELETE = 2 } owf_rev_kind;
+
+/* Its size never changes (owf_struct_size doesn't list it): more about a change is a new structure. */
+typedef struct {
+    int kind;                /* owf_rev_kind */
+    char *author;            /* UTF-8; NULL: unknown */
+    char *date;              /* ISO 8601, "2026-11-11T14:03:00"; NULL: unknown */
+} owf_revision;
+
 typedef struct owf_doc {
     owf_story body, header, footer;
     int nfonts, capfonts;
@@ -261,6 +283,11 @@ typedef struct owf_doc {
      * paragraph is "nothing on these pages", in either. header_on_first and footer_on_first are for the
      * first page, whichever its number makes it. */
     owf_story header_left, footer_left;
+    /* 1.5: the document's tracked changes (owf_revision), and whether new changes are recorded (DOCX's
+     * w:trackRevisions, ODT's text:track-changes) */
+    int nrevisions, caprevisions;
+    owf_revision *revisions;
+    int track_changes;
 } owf_doc;
 
 /* ---- Memory ----
@@ -292,6 +319,10 @@ int owf_doc_add_frame(owf_doc *doc, const owf_frame *frame);
 int owf_para_add_frame(owf_para *para, const owf_charfmt *fmt, int frame_index);
 int owf_doc_font(owf_doc *doc, const char *name, owf_font_kind kind);
 int owf_doc_set_title(owf_doc *doc, const char *utf8);
+/* 1.5: the change a run or paragraph mark names (owf_run.revision, owf_para.mark_revision), NULL for 0 or a
+ * number the document doesn't have. A macro, so that programs on the library have it too. */
+#define OWF_DOC_REVISION(doc, number)                                                                      \
+    ((number) > 0 && (number) <= (doc)->nrevisions ? &(doc)->revisions[(number) - 1] : (owf_revision *)0)
 
 /* Today's equivalent of an Amiga font name ("times" gives "Liberation
  * Serif"), or NULL when the name is not one we map. */
