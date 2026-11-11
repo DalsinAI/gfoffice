@@ -66,11 +66,11 @@ static int set_metadata_name(owf_book *book, int sheet, const char *name, const 
     char *copy;
     if (!item)
         return owf_book_add_name(book, name, sheet, formula, 1) < 0 ? OWF_ERR_MEMORY : OWF_OK;
-    copy = malloc(strlen(formula) + 1u);
+    copy = owf_malloc(strlen(formula) + 1u);       /* the book's: owfcalc.library frees it */
     if (!copy)
         return OWF_ERR_MEMORY;
     strcpy(copy, formula);
-    free(item->formula);
+    owf_free(item->formula);
     item->formula = copy;
     item->hidden = 1;
     return OWF_OK;
