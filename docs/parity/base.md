@@ -3,15 +3,15 @@
 Stream B of [the parity plan](../openoffice-parity-plan.md). Re-scored with each
 deliverable. Statuses as the plan's table: Done, Part, Gap.
 
-**Score: 10%** (11 November 2026, after B0a and B0b; was 4%, design only).
-The core makes, opens, checks and changes projects and their rows, tested
-on the PC and on an Instance-32 lab copy, but there is no window yet, so a
-user can't do any of it.
+**Score: 15%** (11 November 2026, after B0c; was 10% after B0a and B0b, 4%
+design only). GFOpenBase has a window: a project's tables, a table designer
+and a datasheet with a row editor, checked on an Instance-32 lab copy. A row
+is saved when it is added or changed; there is no undo yet.
 
 | Feature (Base) | Status | Phase | Notes |
 | --- | --- | --- | --- |
-| Create/open a database file | Part | 1 | Core: `.oadb` (SQLite, `application_id` OADB, `user_version` 1) made, opened, checked (`quick_check` on open, `integrity_check`), copied (`VACUUM INTO`), compacted; plain SQLite files refused or adopted. No window (B0c) |
-| Table designer, datasheet view with add/edit/delete | Part | 1 | Core: the 13 field types of the design, rules as named SQL constraints, create, change (copy and rename, one transaction), rename, drop; rows added, changed and deleted with every value checked, in transactions; datasheet pages by key. No window (B0c) |
+| Create/open a database file | Part | 1 | Core: `.oadb` (SQLite, `application_id` OADB, `user_version` 1) made, opened, checked (`quick_check` on open, `integrity_check`), copied (`VACUUM INTO`), compacted; plain SQLite files refused or adopted. Window: `GFOpenBase FILE [NEW]`, a plain SQLite file adopted after asking |
+| Table designer, datasheet view with add/edit/delete | Part | 1 | Core: the 13 field types of the design, rules as named SQL constraints, create, change (copy and rename, one transaction), rename, drop; rows added, changed and deleted with every value checked, in transactions; datasheet pages by key. Window: table designer (every field type and rule, Show SQL), datasheet with scroller and keys, row editor; errors in plain words. No undo, no sort or filter yet |
 | Primary keys, relationships | Part | 1 | Core: a Counter key per table; Lookups are real `FOREIGN KEY` clauses with refuse, cascade or clear on delete; `PRAGMA foreign_keys` on for every connection; renames follow. Composite keys, indexes and the relationships view are B0d |
 | SQL view, query designer | Gap | 2 | |
 | Forms and subforms | Gap | 2 | |
@@ -29,3 +29,8 @@ user can't do any of it.
   UBSan clean); the same test built for AmigaOS passes 212 of 212 on the
   lab copy `t2-base-20261111` of Instance-32, with its projects on DH1: and
   in RAM:.
+- B0c: on the same lab copy, `GFOpenBase DH1:T2Base/Shop.oadb NEW`; a
+  Customers table (Text required, Currency, Date) made in the designer, two
+  rows added in the row editor, "lots" in Credit refused with "Credit must
+  be an amount of money, such as 1,234.50"; quit and reopened with both rows
+  there; an Email field added in the designer with both rows kept.
