@@ -530,3 +530,71 @@ story) for memo fields, E9 (the picture cache) for Datatype fields, E13
 8. Reports built whole in memory as a GFOpenWrite document for B3, with page-by-page PDF later if needed?
 9. Currency stored as whole pence or cents (exact, no floating point)?
 10. No passwords or encryption in `.oadb` files. Agreed?
+
+## 16. B0 results (11 November 2026)
+
+Measured with gfopensqlite's `tests/baseprobe.c` (branch
+`team2/base-probe-20261111`) on `t2-base-20261111`, a lab copy of Instance-32
+(Kickstart 47.2, Workbench 47.100, emulated 68040). The lab's `DH1:` is a
+host folder, not an FFS partition, so disk times on a real hard disk or CF
+card will differ. Three builds of SQLite 3.53.4: hard float, soft float
+(`m68k-soft-m68040.specs`, the stove's FPU-detecting wrappers) and no FPU at
+all (`-DNO_FPUAUTO`), each single-threaded (`THREADSAFE=0`).
+
+### 16.1 What passed
+
+Every probe passed on `DH1:`, `RAM:` and `T:` with all three builds:
+
+- a fresh database, with the default `unix-dotfile` VFS and with `unix-none`;
+- a second writer refused while the first holds the lock, and let in after;
+  `unix-none` makes no `.lck` file;
+- 100 commits each in journal modes DELETE, TRUNCATE and PERSIST;
+- temporary files in the database's own drawer and in `T:`;
+- foreign keys: off by default, an orphan refused once on, cascade deletes;
+- the `.oadb` header (`application_id`, `user_version`), `quick_check`,
+  `VACUUM INTO`;
+- 13 `REAL` answers (sums, averages, rounding, 2^53, a large `printf`)
+  compared with the PC's, the same on all three builds.
+
+The `RAM:` failure seen in October (section 3.2) did not happen with any
+build.
+
+### 16.2 Speed (milliseconds)
+
+100 journal commits; 10,000 rows for the rest (2,000 on `T:`).
+
+| Test | hard DH1 | hard RAM | soft DH1 | soft RAM | no FPU DH1 | no FPU RAM | T: |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| journal DELETE | 844 | 135 | 724 | 128 | 2012 | 126 | 100 |
+| journal TRUNCATE | 631 | 122 | 649 | 129 | 621 | 122 | 104 |
+| journal PERSIST | 656 | 153 | 649 | 148 | 690 | 130 | 147 |
+| insert | 266 | 99 | 209 | 102 | 288 | 82 | 18 |
+| lookup | 831 | 278 | 880 | 227 | 710 | 180 | 182 |
+| scan | 14 | 11 | 11 | 13 | 5 | 6 | 2 |
+| join, group, sum | 58 | 77 | 65 | 79 | 49 | 49 | 14 |
+| sort text | 30 | 34 | 31 | 29 | 27 | 34 | 6 |
+| whole probe | 4833 | 1221 | 4998 | 1213 | 5739 | 1038 | 880 |
+
+Lookups by key, 10,000 rows, one statement each:
+
+| Build and disk | each its own transaction | all in one transaction | `unix-none`, own transactions |
+| --- | --- | --- | --- |
+| hard DH1 | 1104 | 6 | 669 |
+| soft DH1 | 1026 | 5 | 860 |
+| no FPU DH1 | 1730 | 5 | 808 |
+| soft RAM | 477 | 13 | 489 |
+
+What this means for GFOpenBase:
+
+- **Group reads.** Each statement outside a transaction opens and checks the
+  file again, which costs far more than the lock does. A datasheet page, a
+  form's lookups and a report read inside one transaction.
+- **TRUNCATE** is the journal mode: as fast as PERSIST, never leaves a stale
+  journal that looks like a hot one, and much faster than DELETE on a disk.
+- **Soft float costs nothing that shows** in these tests, so GFOpenBase links
+  the soft-float build and runs without an FPU.
+
+### 16.3 Size
+
+`libsqlite3.a` is 992,912 bytes hard float and 997,776 bytes soft. Each probe
+is about 1.0 MB; GFOpenBase with its window is 1,065,120 bytes.
