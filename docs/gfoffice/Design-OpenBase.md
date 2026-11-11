@@ -160,12 +160,21 @@ must be a number", not "CHECK constraint failed").
 
 ### 4.2 Keys and relationships
 
-- Each table has a primary key: the Counter by default, or chosen fields.
-- Indexes: unique or not, on one field or several, from the table designer.
+- Each table has a primary key: the Counter by default, or chosen fields
+  (the designer's Key: `PRIMARY KEY(...)` in field order, each field `NOT
+  NULL`). A table keyed by its fields still has SQLite's rowid, which the
+  datasheet pages by; a Lookup can only point at a table with a Counter.
+  (Done in B0d.)
+- Indexes: unique or not, on one field or up to eight, from the table
+  designer's Indexes window. They are real `CREATE INDEX` statements, read
+  back from the file (`pragma_index_list`, `origin = 'c'`), and made again
+  after a table change; a unique index the rows don't fit undoes the
+  change. An index's name is the project's, like a table's. (Done in B0d.)
 - The **relationships view** draws tables as boxes and relationships as lines
-  between them. Drawing a line from a field to another table's key makes a
-  `FOREIGN KEY` with a rule for deletes: refuse, delete the related rows too,
-  or clear them.
+  between them, each line labelled with its rule for deletes: refuse, delete
+  the related rows too (cascade), or clear them. B0d draws them; a
+  relationship is made in the table designer (a Lookup field), and drawing
+  a line in the view to make one comes later.
 - **Changing a table.** SQLite's `ALTER TABLE` adds, renames and drops
   columns, but can't change a column's type or rules. For those, GFOpenBase does
   what SQLite's documentation describes: make the new table, copy the rows,
@@ -494,7 +503,7 @@ third-party rule says.
 
 | Phase | Delivers | Tested by |
 | --- | --- | --- |
-| **B0, SQLite for GFOpenBase** (done, 11 November 2026) | The soft-float build flavour; `unix-dotfile` locking tried; the RAM: issue looked into; the size and speed of 11.3 measured | gfopensqlite's `tests/baseprobe.c` on an Instance-32 lab copy, hard, soft and no-FPU builds; results in section 16 |
+| **B0, SQLite for GFOpenBase** (done, 11 November 2026; B0b-B0d also brought the core, the window, keys, indexes and the relationships view forward from B1 and B2) | The soft-float build flavour; `unix-dotfile` locking tried; the RAM: issue looked into; the size and speed of 11.3 measured | gfopensqlite's `tests/baseprobe.c` on an Instance-32 lab copy, hard, soft and no-FPU builds; results in section 16 |
 | **B1, the core** | `.oadb` projects; field types; table create and change (the copy-and-rename way); relationships; CSV import and export; the query model and SQL generator. No window | Host: schema changes keep every row; CSV round trips; SQL golden files; ASan and UBSan; every cut-short `.oadb` and CSV gives an error, never a crash |
 | **B2, the program** | The object browser; table designer; datasheets; auto forms; relationships view; Datatype object fields | Lab: make a project, add tables and rows, a relationship that refuses an orphan, a picture field; quit and reopen |
 | **B3, designers and output** | Query designer; form designer with subforms; reports to PDF, ODT, DOCX and GFOpenPrint; labels; DBF import; sheets in and out | Host: report building into an `owf_doc` compared with expected paragraphs; DBF fixtures. Lab: an invoice report printed through GFOpenPrint to a saved PDF |
