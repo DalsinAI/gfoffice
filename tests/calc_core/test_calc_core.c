@@ -4927,9 +4927,12 @@ static void test_multiple_operations_auto(void)
     enter_at(core, "A3", "4");
     CHECK(oc_core_auto_multiple_operations(core) == 1 && num(core, "B3") == 26);
     CHECK(oc_core_undo(core) == OWF_OK && oc_core_auto_multiple_operations(core) == 1 && num(core, "B3") == 19);
-    CHECK(oc_core_undo(core) == OWF_OK && oc_core_auto_multiple_operations(core) == 1 && num(core, "B3") == 10);
+    /* Undo of the model's change goes back to the Model sheet, and the table follows it there */
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_auto_multiple_operations(core) == 1 && oc_core_sheet(core) == 1);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK && num(core, "B3") == 10);
     CHECK(oc_core_can_redo(core));                              /* working out kept Redo */
-    CHECK(oc_core_redo(core) == OWF_OK && oc_core_auto_multiple_operations(core) == 1 && num(core, "B3") == 19);
+    CHECK(oc_core_redo(core) == OWF_OK && oc_core_auto_multiple_operations(core) == 1);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK && num(core, "B3") == 19);
     CHECK(oc_core_is_dirty(core));
     oc_core_free(core);
 }
