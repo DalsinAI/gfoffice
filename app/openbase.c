@@ -313,7 +313,7 @@ static void draw_datasheet(void)
     struct RastPort *rp;
     int row_h = fh + 3, x, i, j, y;
     UWORD text_pen, back_pen, fill_pen, filltext_pen, shine_pen, shadow_pen;
-    char line[80];
+    char line[128];
     if (!win) return;
     rp = win->RPort;
     SetFont(rp, font);
@@ -407,7 +407,7 @@ static void update_title(void)
     if (!win) return;
     if (proj) {
         const char *t = ob_title(proj);
-        snprintf(title, sizeof title, "GFOpenBase - %s", t && *t ? t : leaf(proj_path));
+        snprintf(title, sizeof title, "GFOpenBase - %.140s", t && *t ? t : leaf(proj_path));
     } else {
         put_text(title, sizeof title, "GFOpenBase");
     }
@@ -549,7 +549,7 @@ static int open_project(const char *path, int create)
     p = ob_open(full, create ? OB_OPEN_CREATE : 0, err, sizeof err);
     if (!p && !create && strstr(err, "is an SQLite database")) {
         char q[400];
-        snprintf(q, sizeof q, "%s\n\nOpen it as a GFOpenBase project? Its tables stay as they are;\n"
+        snprintf(q, sizeof q, "%.250s\n\nOpen it as a GFOpenBase project? Its tables stay as they are;\n"
                  "GFOpenBase adds its own design tables beside them.", err);
         if (ask(q, "Open as a project|Cancel") == 1) p = ob_open(full, OB_OPEN_ADOPT, err, sizeof err);
         else return 0;
@@ -769,7 +769,7 @@ static void delete_row(void)
     char q[200];
     if (!proj || !have_cur) return;
     if (sel_row < top_row || sel_row >= top_row + page_n || sel_row < 0) { tell("Choose a row first."); return; }
-    snprintf(q, sizeof q, "Delete row %d of %s?", sel_row + 1, cur.name);
+    snprintf(q, sizeof q, "Delete row %d of %.63s?", sel_row + 1, cur.name);
     if (ask(q, "Delete|Cancel") != 1) return;
     if (!ob_row_delete(proj, cur.name, page_keys[sel_row - top_row])) tell(ob_error(proj));
     else set_status("Row deleted");
@@ -791,7 +791,7 @@ static const char *delete_labels[] = { "Refuse", "Delete them too", "Clear them"
 static ob_table dt;
 static struct List dl;
 static struct Node dnodes[OB_MAX_FIELDS];
-static char dtext[OB_MAX_FIELDS][OB_NAME_MAX + 24];
+static char dtext[OB_MAX_FIELDS][OB_NAME_MAX + 48];
 static int dsel;
 
 static void designer_list(void)
@@ -1059,7 +1059,7 @@ static void delete_table(void)
 {
     char q[200];
     if (!proj || !have_cur) return;
-    snprintf(q, sizeof q, "Delete the table %s and its %lld rows?\nThis can't be undone.", cur.name, total_rows);
+    snprintf(q, sizeof q, "Delete the table %.63s and its %lld rows?\nThis can't be undone.", cur.name, total_rows);
     if (ask(q, "Delete|Cancel") != 1) return;
     if (!ob_table_drop(proj, cur.name)) tell(ob_error(proj));
     else { set_status("Table deleted"); load_tables(NULL); }
