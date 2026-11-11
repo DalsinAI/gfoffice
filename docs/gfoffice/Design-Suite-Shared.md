@@ -290,6 +290,12 @@ commands every Open app's port has; `Rexx/` holds an example script for each.
 Since 10 November 2026 both answer 20 for an unknown command, show no requester
 while a command runs, and have `DEACTIVATE` (5: no icon) and `LASTERROR`;
 `tests/arexx/` checks them.
+Since 11 November 2026 GFOpenPresentation has its `GFOPENPRESENTATION` port
+(GFOpenPublisher, built from the same source, `GFOPENPUBLISHER`) with the common
+commands (`EXPORT` writes a PDF), and `SLIDES`, `SLIDE [n]`, `NEWSLIDE`,
+`DELETESLIDE`, `OBJECTS` (the slide's objects, then the ones that take text),
+`GETTEXT n`, `SETTEXT n text`, `UNDO` and `REDO` (`PAGES`, `PAGE`, `NEWPAGE`,
+`DELETEPAGE` in GFOpenPublisher); `tests/arexx/presentation.rexx` checks it.
 
 ## 7. Spelling (E11)
 

@@ -54,6 +54,9 @@
 #include <proto/cybergraphics.h>
 #include <proto/diskfont.h>
 #include <proto/layers.h>
+#include <rexx/storage.h>
+#include <rexx/errors.h>
+#include <proto/rexxsyslib.h>
 #include "ogt_openfont.h"
 
 #include <stdio.h>
@@ -83,11 +86,14 @@
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, *LayersBase = NULL;
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
+struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.16 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.17 (11.11.2026)"
+#define REXX_PORT_NAME "GFOPENPUBLISHER"
 #define UNIT "Page"
+#define UNIT_UPPER "PAGE"
 #define UNIT_LOWER "page"
 #define UNITS_LOWER "pages"
 #define DOCUMENT_LOWER "publication"
@@ -95,8 +101,10 @@ struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.22 (9.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.23 (11.11.2026)"
+#define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
+#define UNIT_UPPER "SLIDE"
 #define UNIT_LOWER "slide"
 #define UNITS_LOWER "slides"
 #define DOCUMENT_LOWER "presentation"
@@ -320,6 +328,30 @@ static int theme_mode = OGT_LIGHT;
 static int tb_style = OGT_TB_ICONS;
 static int quit_now;
 
+/* ARexx (amicradle-teams ARexx-RULE.md): while a command runs no requester shows; what it would have said is
+ * kept, and a failing command's reason is LASTERROR's answer. */
+static int rexx_busy, rexx_noted;
+static char rexx_noting[300], rexx_lasterror[300];
+static struct MsgPort *rexx_port;
+static char rexx_name[24];                           /* GFOPENPRESENTATION, or .2 for a second copy */
+
+/* src into dst (n bytes), cut short to fit */
+static void rexx_copy(char *dst, size_t n, const char *src)
+{
+    size_t len = src ? strlen(src) : 0;
+    if (!n) return;
+    if (len >= n) len = n - 1;
+    if (len) memcpy(dst, src, len);
+    dst[len] = 0;
+}
+
+static int rexx_quiet(const char *text)
+{
+    if (!rexx_busy) return 0;
+    if (!rexx_noted) { rexx_copy(rexx_noting, sizeof rexx_noting, text); rexx_noted = 1; }
+    return 1;
+}
+
 static box area, toolbar_box, strip_box, ruler_box, view_box, slide_box, status_box;
 /* Zoom: the slide at a percent of its size fitted to the view; larger than the view, it scrolls (pan, in
  * pixels) with the scrollers along the view's right and bottom edges, and is drawn only inside slide_area. */
@@ -419,12 +451,14 @@ static void read_theme_choice(void)
 static void tell(const char *title, const char *text)
 {
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)title, (UBYTE *)"%s", (UBYTE *)"OK" };
+    if (rexx_quiet(text)) return;
     EasyRequest(win, &es, NULL, (ULONG)text);
 }
 
 static int ask(const char *title, const char *text, const char *buttons)
 {
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)title, (UBYTE *)"%s", (UBYTE *)buttons };
+    if (rexx_quiet(text)) return 0;                  /* under ARexx: the last button, Cancel */
     return (int)EasyRequest(win, &es, NULL, (ULONG)text);
 }
 
@@ -5173,19 +5207,20 @@ static void do_export_pdf(void)
 /* Print: the slides as a PDF in T:, and GFOpenPrint's Print window on it, started on its own (GFOpenWrite's way,
  * app/ow_print.c). GFOpenPrint chooses the printer, or saves the PDF. */
 #define OPENPRINT "C:GFOpenPrint"
-static void do_print(void)
+/* 1 GFOpenPrint started, 0 not possible here (no GFOpenPrint), -1 failed */
+static int do_print(void)
 {
     char path[160], name[128], cmd[300];
     struct Process *me = (struct Process *)FindTask(NULL);
     APTR was = me->pr_WindowPtr;
     BPTR lock, in, out;
-    if (!deck) return;
+    if (!deck) return -1;
     me->pr_WindowPtr = (APTR)-1;
     lock = Lock((STRPTR)OPENPRINT, ACCESS_READ);
     me->pr_WindowPtr = was;
     if (!lock) {
         tell("Print", "Printing needs GFOpenPrint (C:GFOpenPrint).\n\nExport PDF still works.");
-        return;
+        return 0;
     }
     UnLock(lock);
     with_extension(current_path, "pdf", name, sizeof name);
@@ -5193,7 +5228,7 @@ static void do_print(void)
     if (!write_pdf(path)) {
         set_status("The " UNITS_LOWER " couldn't be made ready to print.");
         draw_status();
-        return;
+        return -1;
     }
     snprintf(cmd, sizeof cmd, "%s \"%s\"", OPENPRINT, path);
     in = Open((STRPTR)"NIL:", MODE_OLDFILE);
@@ -5203,10 +5238,12 @@ static void do_print(void)
         if (in) Close(in);
         if (out) Close(out);
         set_status("GFOpenPrint couldn't be started.");
-    } else {
-        set_status("GFOpenPrint's Print window is open for these " UNITS_LOWER ".");
+        draw_status();
+        return -1;
     }
+    set_status("GFOpenPrint's Print window is open for these " UNITS_LOWER ".");
     draw_status();
+    return 1;
 }
 
 static void about(void)
@@ -5585,6 +5622,221 @@ static void events(void)
 
 /* The part of the screen a window may have: below the title bar, less GFOpenDock's strip when it publishes
  * one (ENV:GFOpenDock/Free), as GFOpenWrite's free_area. */
+/* ---- ARexx: the GFOPENPRESENTATION port (GFOPENPUBLISHER in GFOpenPublisher) ---- */
+
+static const char *skip_space(const char *s)
+{
+    while (s && *s && isspace((unsigned char)*s)) ++s;
+    return s ? s : "";
+}
+
+static int starts_word_ci(const char *s, const char *word, const char **rest)
+{
+    size_t n = strlen(word), i;
+    for (i = 0; i < n; ++i) if (!s[i] || tolower((unsigned char)s[i]) != tolower((unsigned char)word[i])) return 0;
+    if (s[n] && !isspace((unsigned char)s[n])) return 0;
+    if (rest) *rest = skip_space(s + n);
+    return 1;
+}
+
+/* An object of the slide showing, counted from 1, as its index; -1 when there is no such object. */
+static int rexx_obj(const char *arg, const char **rest)
+{
+    char *end;
+    long n = strtol(arg, &end, 10);
+    if (end == arg || n < 1 || !deck || current < 0 || current >= deck->nslides || n > deck->slides[current].nobjs) return -1;
+    if (rest) *rest = skip_space(end);
+    return (int)n - 1;
+}
+
+/* As every Open app's port (amicradle-teams ARexx-RULE.md 3): 0 done, 5 not possible now (nothing wrong),
+ * 10 an error, 20 an unknown command or a failure. */
+#define RX_OK 0
+#define RX_NOW 5
+#define RX_ERROR 10
+#define RX_UNKNOWN 20
+
+static int rexx_do_command(const char *command, char **result_out)
+{
+    const char *arg = "";
+    char result_text[1024];
+    int ok = 1, rc_fail = RX_ERROR, obj;
+    result_text[0] = 0;
+    command = skip_space(command);
+    if (starts_word_ci(command, "VERSION", &arg)) rexx_copy(result_text, sizeof result_text, VERSION_TEXT);
+    else if (starts_word_ci(command, "LASTERROR", &arg)) rexx_copy(result_text, sizeof result_text, rexx_lasterror);
+    else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
+        ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "DEACTIVATE: " PROGRAM " has no icon to go to");
+    } else if (starts_word_ci(command, "HELP", &arg))
+        rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
+                  "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " OBJECTS GETTEXT "
+                  "SETTEXT UNDO REDO QUIT");
+    else if (starts_word_ci(command, "FAULT", &arg)) {
+        if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "FAULT needs a code"); }
+        else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "ACTIVATE", &arg)) {
+        if (win) { WindowToFront(win); ActivateWindow(win); }
+    } else if (starts_word_ci(command, "ISDIRTY", &arg))
+        rexx_copy(result_text, sizeof result_text, dirty ? "1" : "0");
+    else if (starts_word_ci(command, "GETFILE", &arg))
+        rexx_copy(result_text, sizeof result_text, current_path);
+    else if (starts_word_ci(command, "OPEN", &arg)) {
+        if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
+        else if (dirty) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else {
+            open_deck(arg);
+            relayout();
+            if (rexx_noted) ok = 0;
+            rexx_copy(result_text, sizeof result_text, status);
+        }
+    } else if (starts_word_ci(command, "SAVEAS", &arg)) {
+        if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
+        else { ok = save_to(arg); rexx_copy(result_text, sizeof result_text, status); }
+    } else if (starts_word_ci(command, "SAVE", &arg)) {
+        size_t n = strlen(current_path);
+        if (n >= 4 && !strcmp(current_format, "ODP") && (!strcmp(current_path + n - 4, ".odp") || !strcmp(current_path + n - 4, ".ODP"))) {
+            ok = save_to(current_path);
+            rexx_copy(result_text, sizeof result_text, status);
+        } else { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs SAVEAS"); }
+    } else if (starts_word_ci(command, "EXPORT", &arg)) {
+        if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
+        else { ok = write_pdf(arg); rexx_copy(result_text, sizeof result_text, ok ? "Exported" : "Export failed"); }
+    } else if (starts_word_ci(command, "PRINT", &arg)) {
+        int r = do_print();
+        ok = r > 0;
+        if (!r) rc_fail = RX_NOW;
+        rexx_copy(result_text, sizeof result_text, status);
+    } else if (starts_word_ci(command, UNIT_UPPER "S", &arg)) {
+        snprintf(result_text, sizeof result_text, "%d", deck ? deck->nslides : 0);
+    } else if (starts_word_ci(command, UNIT_UPPER, &arg)) {   /* n: go to it; none given: which */
+        if (!*arg) snprintf(result_text, sizeof result_text, "%d", current + 1);
+        else {
+            int n = atoi(arg);
+            ok = deck && n >= 1 && n <= deck->nslides;
+            if (ok) show_slide(n - 1);
+            rexx_copy(result_text, sizeof result_text, ok ? "OK" : "No such " UNIT_LOWER);
+        }
+    } else if (starts_word_ci(command, "NEW" UNIT_UPPER, &arg)) {
+        int was = deck ? deck->nslides : 0;
+        new_slide();
+        ok = deck && deck->nslides == was + 1;
+        if (ok) snprintf(result_text, sizeof result_text, "%d", current + 1);
+        else rexx_copy(result_text, sizeof result_text, rexx_noted ? rexx_noting : "Failed");
+    } else if (starts_word_ci(command, "DELETE" UNIT_UPPER, &arg)) {
+        int was = deck ? deck->nslides : 0;
+        if (was <= 1) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "The last " UNIT_LOWER " stays"); }
+        else {
+            delete_slide();
+            ok = deck->nslides == was - 1;
+            rexx_copy(result_text, sizeof result_text, ok ? "OK" : rexx_noted ? rexx_noting : "Failed");
+        }
+    } else if (starts_word_ci(command, "OBJECTS", &arg)) {   /* the slide showing's objects; which can be typed in */
+        int i, k;
+        size_t at;
+        if (!deck || current < 0 || current >= deck->nslides) { ok = 0; rexx_copy(result_text, sizeof result_text, "No " UNIT_LOWER); }
+        else {
+            k = deck->slides[current].nobjs;
+            at = (size_t)snprintf(result_text, sizeof result_text, "%d", k);
+            for (i = 0; i < k && at + 8 < sizeof result_text; i++)
+                if (opr_obj_editable(deck, current, i)) at += (size_t)snprintf(result_text + at, sizeof result_text - at, " %d", i + 1);
+        }
+    } else if (starts_word_ci(command, "GETTEXT", &arg)) {
+        char *utf8;
+        if ((obj = rexx_obj(arg, NULL)) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
+        else if (!(utf8 = opr_text_get(deck, current, obj))) { ok = 0; rexx_copy(result_text, sizeof result_text, "Out of memory"); }
+        else { name_to_latin1(utf8, result_text, sizeof result_text); owf_free(utf8); }
+    } else if (starts_word_ci(command, "SETTEXT", &arg)) {   /* SETTEXT n text: the object's whole text, one Undo step */
+        const char *text;
+        char *utf8;
+        if ((obj = rexx_obj(arg, &text)) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
+        else if (!opr_obj_editable(deck, current, obj)) { ok = 0; rexx_copy(result_text, sizeof result_text, "That object takes no text"); }
+        else if (!(utf8 = name_from_latin1(text))) { ok = 0; rexx_copy(result_text, sizeof result_text, "Out of memory"); }
+        else {
+            stop_typing();
+            ok = opr_undo_push(undo, deck, current, obj) >= 0 && opr_text_set(deck, current, obj, utf8) >= 0;
+            owf_free(utf8);
+            if (ok) {
+                slide_changed(current);
+                dirty = 1;
+                update_window_title();
+                set_status("Text set.");
+                draw_slide();
+                if (strip) ogt_list_draw_row(strip, current);
+                draw_status();
+            }
+            rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Out of memory");
+        }
+    } else if (starts_word_ci(command, "UNDO", &arg) || starts_word_ci(command, "REDO", &arg)) {
+        int redo = toupper((unsigned char)command[0]) == 'R';
+        if (!(redo ? opr_redo_can(undo) : opr_undo_can(undo))) {
+            ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, redo ? "Nothing to redo" : "Nothing to undo");
+        } else { do_undo(redo); rexx_copy(result_text, sizeof result_text, "OK"); }
+    } else if (starts_word_ci(command, "QUIT", &arg)) {
+        if (dirty && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else { quit_now = 1; rexx_copy(result_text, sizeof result_text, "Quitting"); }
+    } else { ok = 0; rc_fail = RX_UNKNOWN; rexx_copy(result_text, sizeof result_text, "Unknown " PROGRAM " ARexx command; HELP lists them"); }
+    if (!ok) rexx_copy(rexx_lasterror, sizeof rexx_lasterror, rexx_noted ? rexx_noting : result_text);
+    if (result_out) {
+        *result_out = (char *)malloc(strlen(result_text) + 1);
+        if (*result_out) strcpy(*result_out, result_text);
+        else ok = 0;
+    }
+    return ok ? RX_OK : rc_fail;
+}
+
+static void rexx_messages(void)
+{
+    struct RexxMsg *rm;
+    while (rexx_port && (rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
+        char *res = NULL;
+        int rc;
+        rexx_busy = 1;
+        rexx_noted = 0;
+        rc = rexx_do_command((const char *)rm->rm_Args[0], &res);
+        rexx_busy = 0;
+        rm->rm_Result1 = rc;
+        rm->rm_Result2 = 0;
+        if (rc == RX_OK && (rm->rm_Action & RXFF_RESULT) && RexxSysBase && res)
+            rm->rm_Result2 = (LONG)CreateArgstring((STRPTR)res, (LONG)strlen(res));
+        free(res);
+        ReplyMsg((struct Message *)rm);
+    }
+}
+
+static void rexx_open(void)
+{
+    struct MsgPort *p;
+    int n;
+    if (!RexxSysBase) return;
+    if (!(p = CreateMsgPort())) return;
+    p->mp_Node.ln_Pri = 0;
+    Forbid();
+    for (n = 1; n < 10; n++) {                       /* the name, then NAME.2 for a second copy */
+        if (n == 1) snprintf(rexx_name, sizeof rexx_name, "%s", REXX_PORT_NAME);
+        else snprintf(rexx_name, sizeof rexx_name, "%s.%d", REXX_PORT_NAME, n);
+        if (!FindPort((STRPTR)rexx_name)) break;
+    }
+    if (n == 10) { Permit(); DeleteMsgPort(p); return; }
+    p->mp_Node.ln_Name = rexx_name;
+    AddPort(p);
+    Permit();
+    rexx_port = p;
+}
+
+static void rexx_close(void)
+{
+    struct RexxMsg *rm;
+    if (!rexx_port) return;
+    RemPort(rexx_port);
+    while ((rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
+        rm->rm_Result1 = RC_FATAL;
+        rm->rm_Result2 = 0;
+        ReplyMsg((struct Message *)rm);
+    }
+    DeleteMsgPort(rexx_port);
+    rexx_port = NULL;
+}
+
 static void free_area(int *l, int *t, int *w, int *h)
 {
     char buf[48];
@@ -5681,6 +5933,7 @@ static int window_main(int argc, char **argv)
     OpenFontTextBase = ogt_openfont_open();
     LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
     DataTypesBase = OpenLibrary((STRPTR)"datatypes.library", 39);
+    RexxSysBase = (struct RxsLib *)OpenLibrary((STRPTR)"rexxsyslib.library", 36);
     CyberGfxBase = OpenLibrary((STRPTR)"cybergraphics.library", 0);
     ogt_iconset_attach();   /* the toolbar's pictures from the Chrome set (Images/Toolbar/) */
     read_theme_choice();
@@ -5715,13 +5968,17 @@ static int window_main(int argc, char **argv)
         open_deck(first);
         relayout();
     }
+    rexx_open();
     while (!quit_now) {
         ULONG sig = 1UL << win->UserPort->mp_SigBit;
-        ULONG got = Wait(sig | SIGBREAKF_CTRL_C);
+        ULONG rsig = rexx_port ? 1UL << rexx_port->mp_SigBit : 0;
+        ULONG got = Wait(sig | rsig | SIGBREAKF_CTRL_C);
         if ((got & SIGBREAKF_CTRL_C) && confirm_discard()) quit_now = 1;
         if (got & sig) events();
+        if (got & rsig) rexx_messages();
     }
 out:
+    rexx_close();
     close_window();
     laid_clear();
     pictures_clear();
@@ -5734,6 +5991,7 @@ out:
     if (DiskfontBase) CloseLibrary(DiskfontBase);
     if (CyberGfxBase) CloseLibrary(CyberGfxBase);
     if (DataTypesBase) CloseLibrary(DataTypesBase);
+    if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
     return rc;
