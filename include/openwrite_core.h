@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.1.0"
+#define OW_CORE_VERSION "1.2.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -228,6 +228,42 @@ int ow_editor_table_insert_column(ow_editor *editor);
 int ow_editor_table_delete_column(ow_editor *editor);
 int ow_editor_render_page(const ow_editor *editor, int page_index,
                           const ow_renderer *renderer);
+
+/* ---- Tracked changes (core 1.2) ----
+ * Recording on, typed and pasted text and new paragraphs are the review author's insertions, and Backspace,
+ * Delete, Cut and typing over a selection mark text deleted instead of removing it: it stays, struck through,
+ * until the change is accepted or rejected. Deleting the author's own insertion removes it. The document
+ * keeps the setting (owf_doc.track_changes). Accepting or rejecting is undoable.
+ *
+ * A change, as these calls count them, is a row of text and paragraph ends in the caret's story that name
+ * the same owf_revision. */
+void ow_editor_set_track_changes(ow_editor *editor, int on);
+int ow_editor_track_changes(const ow_editor *editor);
+/* The name new changes are made under; NULL or "" for none (an unknown author). */
+int ow_editor_set_review_author(ow_editor *editor, const char *utf8);
+const char *ow_editor_review_author(const ow_editor *editor);
+
+typedef struct {
+    int index;               /* 0, 1... in the story */
+    int kind;                /* OWF_REV_INSERT or OWF_REV_DELETE */
+    const char *author;      /* the document's; NULL: unknown */
+    const char *date;        /* ISO 8601; NULL: unknown */
+    ow_position start, end;  /* where it is, as a selection */
+} ow_change_info;
+int ow_editor_change_count(const ow_editor *editor);
+/* 1 and *info for the index-th change, 0 when there is none. The strings are valid until the next edit. */
+int ow_editor_change_info(ow_editor *editor, int index, ow_change_info *info);
+/* The change at the caret: 1 and *info, or 0. */
+int ow_editor_current_change(ow_editor *editor, ow_change_info *info);
+/* Selects the next change after the selection (or the one before it): 1, 2 when it went round the story's
+ * end to find it, 0 when there are none. */
+int ow_editor_next_change(ow_editor *editor, int backwards);
+/* Accepts (accept 1) or rejects (0) the changes the selection touches, or the one at the caret. Accepting an
+ * insertion keeps its text, a deletion removes it; rejecting does the opposite. OWF_ERR_UNSUPPORTED when
+ * there is none there. */
+int ow_editor_accept_change(ow_editor *editor, int accept);
+/* Every change in the document (body, headers, footers, text boxes). OWF_ERR_UNSUPPORTED when it has none. */
+int ow_editor_accept_all_changes(ow_editor *editor, int accept);
 
 #ifdef __cplusplus
 }
