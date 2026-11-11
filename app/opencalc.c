@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER
 };
 
 static struct NewMenu menus[] = {
@@ -243,6 +243,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_FILTER_CLEAR },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
+    { NM_ITEM, "Solver...", NULL, 0, 0, (APTR)M_SOLVER },
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
@@ -3114,6 +3115,273 @@ static void do_goal_seek(void)
         set_status("Goal Seek solution not applied.");
 }
 
+/* ---- Data > Solver ---- */
+
+static const char *const sv_goal_labels[] = { "Maximum", "Minimum", "Value of", NULL };
+static const char *const sv_rel_labels[] = { "<=", "=", ">=", "Whole number", "Binary", NULL };
+static const char *const sv_rel_words[] = { "", "<=", "=", ">=", "INT", "BIN" };
+
+typedef struct {
+    struct Node node;
+    char label[2 * OC_SOLVER_REF + 24];
+} sv_line;
+
+/* Latin-1 for a gadget from the model's UTF-8, and back. */
+static void sv_show(const char *utf8, char *out, size_t size)
+{
+    to_latin1(utf8, strlen(utf8), out, size);
+}
+
+static int sv_take(const char *latin1, char *out, size_t size)
+{
+    char *u = from_latin1(latin1);
+    if (!u) return 0;
+    snprintf(out, size, "%s", u);
+    owf_free(u);
+    return 1;
+}
+
+static void sv_labels(const oc_solver_model *m, sv_line *lines, struct List *list)
+{
+    unsigned k;
+    NewList(list);
+    for (k = 0; k < m->nconstraints; ++k) {
+        char l[OC_SOLVER_REF], r[OC_SOLVER_REF];
+        const oc_solver_constraint *c = &m->constraints[k];
+        sv_show(c->lhs, l, sizeof l);
+        sv_show(c->rhs, r, sizeof r);
+        if (c->rel >= OC_SOLVER_INT)
+            snprintf(lines[k].label, sizeof lines[k].label, "%s  %s", l, c->rel == OC_SOLVER_INT ? "whole" : "binary");
+        else
+            snprintf(lines[k].label, sizeof lines[k].label, "%s %s %s", l, sv_rel_words[c->rel], r);
+        lines[k].node.ln_Name = lines[k].label;
+        AddTail(list, &lines[k].node);
+    }
+}
+
+static void sv_get_string(struct Gadget *g, struct Window *w, char *out, size_t size)
+{
+    STRPTR v = NULL;
+    GT_GetGadgetAttrs(g, w, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+    snprintf(out, size, "%s", v ? (char *)v : "");
+}
+
+/* The Solver window: 1 Solve (the model filled in), 0 Close. */
+static int solver_window(oc_solver_model *m)
+{
+    struct Gadget *glist = NULL, *last, *gtarget, *ggoal, *gvalue, *gvars, *glist_v, *glhs, *grel, *grhs;
+    struct Gadget *gadd, *gchange, *gremove, *gneg, *gsolve, *gclose;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List lines;
+    sv_line *line = calloc(OC_SOLVER_CONSTRAINTS, sizeof *line);
+    char text[2 * OC_SOLVER_REF], value[48];
+    int done = 0, ok = 0, ww = 460, wh, sel = -1, rel = 0, lh = fh + 6, top, x2 = 250;
+    if (!scr || !vi || !line) { free(line); return 0; }
+    sv_labels(m, line, &lines);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    top = 8 + fh + 4;
+    ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = top; ng.ng_Width = 200; ng.ng_Height = fh + 6;
+    sv_show(m->target, text, sizeof text);
+    ng.ng_GadgetText = (STRPTR)"Target cell"; ng.ng_GadgetID = 1;
+    last = gtarget = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)text, GTST_MaxChars, OC_SOLVER_REF - 1,
+                                  GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_LeftEdge = x2; ng.ng_Width = 110; ng.ng_GadgetText = (STRPTR)"Make it"; ng.ng_GadgetID = 2;
+    last = ggoal = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)sv_goal_labels,
+                                GTCY_Active, (ULONG)(m->goal - 1), TAG_DONE);
+    owf_number_text(m->value, value);
+    ng.ng_LeftEdge = x2 + 120; ng.ng_Width = 80; ng.ng_GadgetText = (STRPTR)"Value"; ng.ng_GadgetID = 3;
+    last = gvalue = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)value, GTST_MaxChars, 40,
+                                 GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge += 2 * fh + 14; ng.ng_Width = ww - 20;
+    sv_show(m->variables, text, sizeof text);
+    ng.ng_GadgetText = (STRPTR)"By changing cells"; ng.ng_GadgetID = 4;
+    last = gvars = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)text,
+                                GTST_MaxChars, (ULONG)(sizeof m->variables - 1), GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_Height = lh * 5 + 4; ng.ng_GadgetText = (STRPTR)"Constraints"; ng.ng_GadgetID = 5;
+    last = glist_v = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&lines, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_TopEdge += ng.ng_Height + fh + 8; ng.ng_Height = fh + 6; ng.ng_Width = 150;
+    ng.ng_GadgetText = (STRPTR)"Cell"; ng.ng_GadgetID = 6;
+    last = glhs = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)"", GTST_MaxChars, OC_SOLVER_REF - 1,
+                               GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_LeftEdge = 170; ng.ng_Width = 130; ng.ng_GadgetText = (STRPTR)"Relation"; ng.ng_GadgetID = 7;
+    last = grel = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)sv_rel_labels, GTCY_Active, 0, TAG_DONE);
+    ng.ng_LeftEdge = 310; ng.ng_Width = ww - 320; ng.ng_GadgetText = (STRPTR)"Limit"; ng.ng_GadgetID = 8;
+    last = grhs = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)"", GTST_MaxChars, OC_SOLVER_REF - 1,
+                               GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 12; ng.ng_Height = fh + 8; ng.ng_Width = 90;
+    ng.ng_LeftEdge = 10; ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = 9;
+    last = gadd = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 110; ng.ng_GadgetText = (STRPTR)"Change"; ng.ng_GadgetID = 10;
+    last = gchange = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 210; ng.ng_GadgetText = (STRPTR)"Remove"; ng.ng_GadgetID = 11;
+    last = gremove = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_TopEdge += fh + 16; ng.ng_Width = 22; ng.ng_Height = fh + 4;
+    ng.ng_GadgetText = (STRPTR)"Variables are not negative"; ng.ng_GadgetID = 12;
+    last = gneg = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, m->nonnegative ? TRUE : FALSE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += fh + 14; ng.ng_Width = 90; ng.ng_Height = fh + 8;
+    ng.ng_LeftEdge = ww - 200; ng.ng_GadgetText = (STRPTR)"Solve"; ng.ng_GadgetID = 13;
+    last = gsolve = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 100; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = 14;
+    last = gclose = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gtarget || !ggoal || !gvalue || !gvars || !glist_v || !glhs || !grel || !grhs || !gadd || !gchange ||
+        !gremove || !gneg || !gsolve || !gclose)
+        goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Solver", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP | CYCLEIDCMP |
+                  STRINGIDCMP | CHECKBOXIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *msg;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((msg = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = msg->Class;
+            UWORD code = msg->Code;
+            UWORD id = cls == IDCMP_GADGETUP && msg->IAddress ? ((struct Gadget *)msg->IAddress)->GadgetID : 0;
+            int relist = 0;
+            GT_ReplyIMsg(msg);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 5 && code < m->nconstraints) {
+                const oc_solver_constraint *c = &m->constraints[code];
+                sel = code;
+                rel = c->rel - 1;
+                sv_show(c->lhs, text, sizeof text);
+                GT_SetGadgetAttrs(glhs, rw, NULL, GTST_String, (ULONG)text, TAG_DONE);
+                sv_show(c->rhs, text, sizeof text);
+                GT_SetGadgetAttrs(grhs, rw, NULL, GTST_String, (ULONG)text, TAG_DONE);
+                GT_SetGadgetAttrs(grel, rw, NULL, GTCY_Active, (ULONG)rel, TAG_DONE);
+            } else if (id == 7 && code < 5) {
+                rel = code;
+            } else if (id == 9 || id == 10) {
+                oc_solver_constraint c;
+                char l[OC_SOLVER_REF], r[OC_SOLVER_REF];
+                int at = id == 9 ? (int)m->nconstraints : sel;
+                sv_get_string(glhs, rw, l, sizeof l);
+                sv_get_string(grhs, rw, r, sizeof r);
+                memset(&c, 0, sizeof c);
+                c.rel = rel + 1;
+                if (!*trim_text(l) || (c.rel <= OC_SOLVER_GE && !*trim_text(r))) {
+                    DisplayBeep(scr);
+                    continue;
+                }
+                if (at < 0 || at >= OC_SOLVER_CONSTRAINTS) { DisplayBeep(scr); continue; }
+                sv_take(trim_text(l), c.lhs, sizeof c.lhs);
+                if (c.rel <= OC_SOLVER_GE) sv_take(trim_text(r), c.rhs, sizeof c.rhs);
+                GT_SetGadgetAttrs(glist_v, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                m->constraints[at] = c;
+                if (at == (int)m->nconstraints) m->nconstraints++;
+                sel = at;
+                relist = 1;
+            } else if (id == 11 && sel >= 0 && (unsigned)sel < m->nconstraints) {
+                GT_SetGadgetAttrs(glist_v, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                memmove(&m->constraints[sel], &m->constraints[sel + 1],
+                        (m->nconstraints - (unsigned)sel - 1u) * sizeof m->constraints[0]);
+                m->nconstraints--;
+                sel = -1;
+                relist = 1;
+            } else if (id == 13) {
+                LONG goal = 0, neg = 0;
+                double v = 0.0;
+                sv_get_string(gtarget, rw, text, sizeof text);
+                sv_take(trim_text(text), m->target, sizeof m->target);
+                sv_get_string(gvars, rw, text, sizeof text);
+                sv_take(trim_text(text), m->variables, sizeof m->variables);
+                GT_GetGadgetAttrs(ggoal, rw, NULL, GTCY_Active, (ULONG)&goal, TAG_DONE);
+                GT_GetGadgetAttrs(gneg, rw, NULL, GTCB_Checked, (ULONG)&neg, TAG_DONE);
+                m->goal = (int)goal + 1;
+                m->nonnegative = neg != 0;
+                sv_get_string(gvalue, rw, value, sizeof value);
+                if (m->goal == OC_SOLVER_VALUE && !chart_number(value, &v)) { DisplayBeep(scr); continue; }
+                m->value = m->goal == OC_SOLVER_VALUE ? v : 0.0;
+                ok = 1;
+                done = 1;
+            } else if (id == 14) {
+                done = 1;
+            }
+            if (relist) {
+                sv_labels(m, line, &lines);
+                GT_SetGadgetAttrs(glist_v, rw, NULL, GTLV_Labels, (ULONG)&lines,
+                                  GTLV_Selected, (ULONG)(sel >= 0 ? sel : ~0), TAG_DONE);
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(line);
+    return ok;
+}
+
+static void solver_answer_text(const oc_solver_result *r, char *out, size_t size)
+{
+    size_t used;
+    unsigned j;
+    char v[48];
+    owf_number_text(r->objective, v);
+    used = (size_t)snprintf(out, size, "%s", v);
+    for (j = 0; j < r->nvariables && used < size; ++j) {
+        char cell[16];
+        oc_cell_name(r->row[j], r->col[j], cell);
+        owf_number_text(r->value[j], v);
+        used += (size_t)snprintf(out + used, size - used, " %s=%s", cell, v);
+    }
+}
+
+/* Data > Solver...: the sheet's model in the window; solving shows the answer, kept or not. */
+static void do_solver(void)
+{
+    static oc_solver_model m;
+    static oc_solver_result r;
+    char message[600], answer[400], bad[64];
+    int rc;
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); return; }
+    if (!oc_core_solver_model(core, &m)) {          /* a new model: the active cell as its target */
+        unsigned row, col;
+        oc_core_active(core, &row, &col);
+        oc_cell_name(row, col, m.target);
+    }
+    for (;;) {
+        if (!solver_window(&m)) return;
+        rc = oc_core_solve(core, &m, &r);
+        if (rc == OWF_ERR_MEMORY) { result(rc, NULL); return; }
+        if (rc != OWF_OK || (r.status != OC_SOLVED && r.status != OC_SOLVED_LIMIT)) {
+            char shown[sizeof r.why];
+            to_latin1(r.why, strlen(r.why), shown, sizeof shown);
+            tell("Solver", shown[0] ? shown : "Solver could not solve this model.");
+            continue;                                 /* back to the window to change the model */
+        }
+        solver_answer_text(&r, answer, sizeof answer);
+        snprintf(message, sizeof message, "%s\n\nTarget and values: %s\n\nKeep these values?",
+                 r.status == OC_SOLVED ? "Solver found the best values for the model."
+                                       : "Solver stopped at its limit: these are the best values it found, "
+                                         "but there may be better ones.", answer);
+        {
+            int keep = ask_window("Solver", message, "Keep|Restore") == 1;
+            /* the model is kept on the sheet either way */
+            rc = oc_core_solver_apply(core, &m, keep ? &r : NULL, bad, sizeof bad);
+            if (rc == OWF_ERR_FORMAT) { set_status("Solver could not keep the model: one of its cells is not a cell."); return; }
+            result(rc, keep ? "Solver's values are in the cells; Undo restores the old ones."
+                            : "The cells keep their values; the Solver model is kept on the sheet.");
+        }
+        return;
+    }
+}
+
 static void do_multiple_operations(void)
 {
     oc_selection selection;
@@ -4566,6 +4834,7 @@ static void menu_action(ULONG id)
         break;
     case M_FILTER_ACTIVE: do_filter_active(); break;
     case M_GOAL_SEEK: do_goal_seek(); break;
+    case M_SOLVER: do_solver(); break;
     case M_MULTIPLE_OPS: do_multiple_operations(); break;
     case M_MULTIPLE_REFRESH:
         {
@@ -4829,6 +5098,101 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
     return rc == OWF_OK;
 }
 
+/* SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs lhs=rhs lhs>=rhs ...] [INT cells] [BIN cells] [ANY]
+ * [KEEP]: Data > Solver. With no model words, the sheet's own model. The answer is "target cell=value ...";
+ * KEEP puts it in the cells (and keeps the model on the sheet). 1 solved; *now set when the model has no answer. */
+/* A cell or range word into a model's field: 0 when it is too long for it. */
+static int solve_ref(char *dst, size_t size, const char *word)
+{
+    size_t n = strlen(word);
+    if (n >= size)
+        return 0;
+    memcpy(dst, word, n + 1);
+    return 1;
+}
+
+static int rexx_solve(const char *arg, char *out, size_t size, int *now)
+{
+    static oc_solver_model m;
+    static oc_solver_result r;
+    char word[2 * OC_SOLVER_REF], bad[64];
+    const char *p = arg;
+    int keep = 0, any_model = 0, rc;
+    oc_core_solver_model(core, &m);
+    for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
+        char *op;
+        if (!strcasecmp(word, "KEEP")) { keep = 1; continue; }
+        if (!any_model) {                   /* the first model word starts a model afresh */
+            any_model = 1;
+            oc_solver_model_init(&m);
+        }
+        if (!strcasecmp(word, "ANY")) { m.nonnegative = 0; continue; }
+        if (!strcasecmp(word, "MAX") || !strcasecmp(word, "MIN") || !strcasecmp(word, "VALUE")) {
+            m.goal = !strcasecmp(word, "MAX") ? OC_SOLVER_MAX : !strcasecmp(word, "MIN") ? OC_SOLVER_MIN : OC_SOLVER_VALUE;
+            p = rexx_word(p, word, sizeof word);
+            if (!solve_ref(m.target, sizeof m.target, word)) { snprintf(out, size, "SOLVE: the target cell is too long"); return 0; }
+            if (m.goal == OC_SOLVER_VALUE) {
+                p = rexx_word(p, word, sizeof word);
+                if (!chart_number(word, &m.value)) { snprintf(out, size, "SOLVE: VALUE needs a cell and a number"); return 0; }
+            }
+            continue;
+        }
+        if (!strcasecmp(word, "BY")) {
+            p = rexx_word(p, word, sizeof word);
+            snprintf(m.variables, sizeof m.variables, "%s", word);
+            continue;
+        }
+        if (m.nconstraints >= OC_SOLVER_CONSTRAINTS) { snprintf(out, size, "SOLVE: 32 constraints at most"); return 0; }
+        if (!strcasecmp(word, "INT") || !strcasecmp(word, "BIN")) {
+            oc_solver_constraint *c = &m.constraints[m.nconstraints++];
+            c->rel = !strcasecmp(word, "INT") ? OC_SOLVER_INT : OC_SOLVER_BIN;
+            p = rexx_word(p, word, sizeof word);
+            if (!solve_ref(c->lhs, sizeof c->lhs, word)) { snprintf(out, size, "SOLVE: a range is too long"); return 0; }
+            c->rhs[0] = 0;
+            continue;
+        }
+        op = strpbrk(word, "<>=");
+        if (op && op > word) {
+            oc_solver_constraint *c = &m.constraints[m.nconstraints++];
+            size_t len = (size_t)(op - word), skip = 1;
+            if (op[0] == '<' && op[1] == '=') { c->rel = OC_SOLVER_LE; skip = 2; }
+            else if (op[0] == '>' && op[1] == '=') { c->rel = OC_SOLVER_GE; skip = 2; }
+            else if (op[0] == '=') c->rel = OC_SOLVER_EQ;
+            else { snprintf(out, size, "SOLVE: use <=, = or >= in %s", word); return 0; }
+            if (len >= sizeof c->lhs || !op[skip]) { snprintf(out, size, "SOLVE: %s is not a constraint", word); return 0; }
+            memcpy(c->lhs, word, len);
+            c->lhs[len] = 0;
+            snprintf(c->rhs, sizeof c->rhs, "%s", op + skip);
+            continue;
+        }
+        snprintf(out, size, "SOLVE: %s is not a Solver word", word);
+        return 0;
+    }
+    if (!m.target[0]) { snprintf(out, size, "SOLVE: no model on this sheet: give MAX, MIN or VALUE and BY"); return 0; }
+    rc = oc_core_solve(core, &m, &r);
+    if (rc == OWF_OK && r.status != OC_SOLVED && r.status != OC_SOLVED_LIMIT) {
+        *now = 1;
+        to_latin1(r.why, strlen(r.why), out, size);
+        return 0;
+    }
+    if (rc != OWF_OK) {
+        if (r.why[0]) to_latin1(r.why, strlen(r.why), out, size);
+        else snprintf(out, size, "%s", rc == OWF_ERR_MEMORY ? "Out of memory" : "Solver could not solve this model");
+        return 0;
+    }
+    if (keep) {
+        rc = oc_core_solver_apply(core, &m, &r, bad, sizeof bad);
+        result(rc, "Solver's values are in the cells; Undo restores the old ones.");
+        if (rc != OWF_OK) { snprintf(out, size, "SOLVE: could not keep the values (%s)", bad); return 0; }
+    }
+    {
+        char t[400];
+        solver_answer_text(&r, t, sizeof t);
+        snprintf(out, size, "%s%s", r.status == OC_SOLVED_LIMIT ? "LIMIT " : "", t);
+    }
+    return 1;
+}
+
 /* As every Open app's port (amicradle-teams ARexx-RULE.md 3, OS 3.2's arexx.class): 0 done, 5 not possible
  * now (nothing wrong), 10 an error, 20 an unknown command or a failure. */
 #define RX_OK 0
@@ -4851,7 +5215,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -4916,6 +5280,10 @@ static int rexx_do_command(const char *command, char **result_out)
         else to_latin1(t, strlen(t), result_text, sizeof result_text);
     } else if (starts_word_ci(command, "PIVOT", &arg)) {
         ok = rexx_pivot(arg, result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "SOLVE", &arg)) {
+        int now = 0;
+        ok = rexx_solve(arg, result_text, sizeof result_text, &now);
+        if (!ok && now) rc_fail = RX_NOW;
     } else if (starts_word_ci(command, "VALIDCHECK", &arg)) {
         valid_check(result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCOMMENT", &arg)) {
