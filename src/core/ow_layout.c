@@ -305,15 +305,15 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
            add_story((ow_layout *)l, doc, od, f, &fr->story, l && !fv ? (int)(fr - doc->frames) + 2 : 0, NULL);
 }
 
-static const char *field_text(const field_values *fv, owf_field field)
+static const char *field_text(const field_values *fv, const owf_run *r)
 {
-    switch (field) {
+    switch (r->field) {
     case OWF_FIELD_PAGE: return fv ? fv->page : "1";
     case OWF_FIELD_PAGES: return fv ? fv->pages : "1";
     case OWF_FIELD_DATE: return fv && fv->date ? fv->date : "";
     case OWF_FIELD_TIME: return fv && fv->time ? fv->time : "";
+    default: return r->text ? r->text : "";         /* 2.3.0: the value the editor worked out */
     }
-    return "";
 }
 
 /* One paragraph: its block, then one node a run, in order, so that run j
@@ -372,7 +372,7 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
             break;
         case OWF_RUN_TAB: n = ol_node_append(od, block, OL_ROLE_TEXT, "\t"); break;
         case OWF_RUN_LINEBREAK: n = ol_node_append(od, block, OL_ROLE_TEXT, "\n"); break;
-        case OWF_RUN_FIELD: n = ol_node_append(od, block, OL_ROLE_TEXT, field_text(fv, r->field)); break;
+        case OWF_RUN_FIELD: n = ol_node_append(od, block, OL_ROLE_TEXT, field_text(fv, r)); break;
         case OWF_RUN_IMAGE:
             n = ol_node_append(od, block, OL_ROLE_IMAGE, NULL);
             if (n) {

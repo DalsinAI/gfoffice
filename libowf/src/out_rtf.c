@@ -159,6 +159,10 @@ static void put_runs(rtf_out *w, const owf_para *p, int depth)
         case OWF_RUN_TAB: owf_buf_puts(&w->out, "\\tab "); break;
         case OWF_RUN_LINEBREAK: owf_buf_puts(&w->out, "\\line "); break;
         case OWF_RUN_FIELD:
+            if (r->field > OWF_FIELD_TIME) {         /* 1.7: the value it showed */
+                put_text(&w->out, r->text ? r->text : "");
+                break;
+            }
             owf_buf_printf(&w->out, "{\\field{\\*\\fldinst %s}{\\fldrslt }}",
                            r->field == OWF_FIELD_PAGE ? "PAGE" : r->field == OWF_FIELD_PAGES ? "NUMPAGES" :
                            r->field == OWF_FIELD_DATE ? "DATE" : "TIME");

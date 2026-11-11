@@ -15,6 +15,7 @@
 #include "owf_internal.h"
 #include "owf_track.h"
 #include "owf_comment.h"
+#include "owf_fields.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -475,6 +476,44 @@ static void plain_text(const owf_xml_node *n, owf_buf *out)
 }
 
 static void inline_children(odt *o, const owf_xml_node *n, const owf_charfmt *fmt);
+
+/* 1.7: the field an element is (text:title ... text:bookmark-ref), -1: none of these */
+static int odf_field(const owf_xml_node *c)
+{
+    const char *form;
+    if (owf_xml_is(c, NS_TEXT, "title")) return OWF_FIELD_TITLE;
+    if (owf_xml_is(c, NS_TEXT, "initial-creator") || owf_xml_is(c, NS_TEXT, "author-name") ||
+        owf_xml_is(c, NS_TEXT, "creator")) return OWF_FIELD_AUTHOR;
+    if (owf_xml_is(c, NS_TEXT, "subject")) return OWF_FIELD_SUBJECT;
+    if (owf_xml_is(c, NS_TEXT, "file-name")) return OWF_FIELD_FILENAME;
+    if (owf_xml_is(c, NS_TEXT, "word-count")) return OWF_FIELD_WORDS;
+    if (owf_xml_is(c, NS_TEXT, "chapter")) return OWF_FIELD_CHAPTER;
+    if (owf_xml_is(c, NS_TEXT, "user-field-get") && owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_USER;
+    if ((owf_xml_is(c, NS_TEXT, "bookmark-ref") || owf_xml_is(c, NS_TEXT, "reference-ref")) &&
+        owf_xml_attr(c, NS_TEXT, "ref-name")) {
+        form = owf_xml_attr(c, NS_TEXT, "reference-format");
+        return form && !strcmp(form, "page") ? OWF_FIELD_REF_PAGE : OWF_FIELD_REF;
+    }
+    return -1;
+}
+
+/* 1.7: text:user-field-decls, the document's user fields */
+static void user_field_decls(odt *o, const owf_xml_node *decls)
+{
+    const owf_xml_node *d;
+    for (d = decls->first; d; d = d->next) {
+        const char *name, *value;
+        char number[48];
+        if (d->type != OWF_XML_ELEMENT || !owf_xml_is(d, NS_TEXT, "user-field-decl")) continue;
+        name = owf_xml_attr(d, NS_TEXT, "name");
+        value = owf_xml_attr(d, NS_OFFICE, "string-value");
+        if (!value && (value = owf_xml_attr(d, NS_OFFICE, "value")) != NULL) {
+            snprintf(number, sizeof number, "%s", value);
+            value = number;
+        }
+        if (name && *name && owf_doc_set_user_field(o->doc, name, value ? value : "") < 0) o->failed = 1;
+    }
+}
 
 static const char *child_text(odt *o, const owf_xml_node *n, const char *ns, const char *name, owf_buf *into);
 
@@ -944,6 +983,20 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         set_fmt(o->b, &rel);
         owf_builder_special(o->b, OWF_RUN_FIELD, field);
         o->space = 0;
+    } else if (odf_field(c) >= 0) {
+        /* 1.7: a field with a shown value: the document's, a user field, a reference */
+        owf_buf shown;
+        const char *arg = NULL;
+        owf_field field = (owf_field)odf_field(c);
+        if (field == OWF_FIELD_USER) arg = owf_xml_attr(c, NS_TEXT, "name");
+        else if (field == OWF_FIELD_REF || field == OWF_FIELD_REF_PAGE) arg = owf_xml_attr(c, NS_TEXT, "ref-name");
+        owf_buf_init(&shown);
+        plain_text(c, &shown);
+        owf_buf_putc(&shown, 0);
+        set_fmt(o->b, &rel);
+        owf_builder_field(o->b, field, arg, shown.failed ? NULL : (const char *)shown.data);
+        owf_buf_free(&shown);
+        o->space = 0;
     } else if (owf_xml_is(c, NS_TEXT, "note")) {
         /* The mark stays as a superscript number; the note goes to the end. */
         const owf_xml_node *body = owf_xml_child(c, NS_TEXT, "note-body");
@@ -1292,8 +1345,10 @@ static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *li
                 first->section_gap = gap;
                 first->section_break = OWF_SECTION_CONTINUOUS;
             }
+        } else if (owf_xml_is(c, NS_TEXT, "user-field-decls")) {
+            user_field_decls(o, c);                  /* 1.7 */
         } else if (owf_xml_is(c, NS_TEXT, "tracked-changes") || owf_xml_is(c, NS_TEXT, "sequence-decls") ||
-                   owf_xml_is(c, NS_TEXT, "variable-decls") || owf_xml_is(c, NS_TEXT, "user-field-decls") ||
+                   owf_xml_is(c, NS_TEXT, "variable-decls") ||
                    owf_xml_is(c, NS_OFFICE, "forms") || owf_xml_is(c, NS_TEXT, "index-title-template") ||
                    owf_xml_is(c, NS_TEXT, "table-of-content-source")) {
             /* nothing to show */
@@ -1521,6 +1576,16 @@ static int read_document(odt *o, const owf_xml_node *content_root, const owf_xml
         if (!title.failed)
             owf_doc_set_title(o->doc, (const char *)title.data);
         owf_buf_free(&title);
+    }
+    if (meta_root) {                                 /* 1.7: who wrote it, what it is about */
+        const owf_xml_node *m = owf_xml_child(meta_root, NS_OFFICE, "meta");
+        const char *v;
+        if ((v = child_text(o, m, NS_META, "initial-creator", &o->scratch)) != NULL ||
+            (v = child_text(o, m, NS_DC, "creator", &o->scratch)) != NULL)
+            if (owf_doc_set_author(o->doc, v) < 0) o->failed = 1;
+        if ((v = child_text(o, m, NS_DC, "subject", &o->scratch)) != NULL && owf_doc_set_subject(o->doc, v) < 0)
+            o->failed = 1;
+        o->scratch.length = 0;
     }
     if (o->notes.failed || o->scratch.failed || o->failed)
         result = OWF_ERR_MEMORY;

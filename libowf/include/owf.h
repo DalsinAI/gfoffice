@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.6.0"
+#define OWF_VERSION "1.7.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -73,7 +73,16 @@ typedef struct {
 typedef enum { OWF_RUN_TEXT, OWF_RUN_TAB, OWF_RUN_LINEBREAK, OWF_RUN_FIELD, OWF_RUN_IMAGE,
                OWF_RUN_FRAME   /* 1.3: a frame anchored here (its image field is the frame's index) */
 } owf_run_kind;
-typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME } owf_field;
+typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
+               /* 1.7: the document's (owf_doc's title, author, subject), its file's name, its words, the
+                * heading its paragraph is under, a user field's value (owf_doc.userfields), and a reference
+                * to a bookmark's paragraph: its text, or the page it is on. A field run's href is its argument
+                * (OWF_FIELD_USER: the user field's name; OWF_FIELD_REF and OWF_FIELD_REF_PAGE: the bookmark's
+                * name), and its text the value last shown (NULL: none yet). Readers keep the file's shown
+                * value; GFOpenWrite's editor works them out again. */
+               OWF_FIELD_TITLE, OWF_FIELD_AUTHOR, OWF_FIELD_SUBJECT, OWF_FIELD_FILENAME, OWF_FIELD_WORDS,
+               OWF_FIELD_CHAPTER, OWF_FIELD_USER, OWF_FIELD_REF, OWF_FIELD_REF_PAGE } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_REF_PAGE
 
 typedef struct {
     owf_run_kind kind;
@@ -284,6 +293,12 @@ typedef struct owf_annotation {
     int done;                /* marked done (resolved) */
 } owf_annotation;
 
+/* 1.7: a user field (DOCX's w:docVar, ODF's text:user-field-decl): its name and value, UTF-8 */
+typedef struct owf_userfield {
+    char *name;
+    char *value;             /* never NULL */
+} owf_userfield;
+
 typedef struct owf_doc {
     owf_story body, header, footer;
     int nfonts, capfonts;
@@ -310,6 +325,11 @@ typedef struct owf_doc {
      * list only grows, so an edit's undo puts the runs back and the comment with them. */
     int ncomments, capcomments;
     struct owf_annotation *comments;
+    /* 1.7: who wrote it and what it is about (DOCX's dc:creator and dc:subject, ODF's meta:initial-creator
+     * and dc:subject), UTF-8, NULL: none; and its user fields */
+    char *author, *subject;
+    int nuserfields, capuserfields;
+    struct owf_userfield *userfields;
 } owf_doc;
 
 /* ---- Memory ----

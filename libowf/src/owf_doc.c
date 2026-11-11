@@ -130,6 +130,13 @@ void owf_doc_free(owf_doc *doc)
         free(doc->comments[i].text);
     }
     free(doc->comments);
+    free(doc->author);                              /* 1.7 */
+    free(doc->subject);
+    for (i = 0; i < doc->nuserfields; ++i) {
+        free(doc->userfields[i].name);
+        free(doc->userfields[i].value);
+    }
+    free(doc->userfields);
     free(doc);
 }
 

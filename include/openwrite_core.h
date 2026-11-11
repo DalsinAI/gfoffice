@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.3.0"
+#define OW_CORE_VERSION "1.4.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -296,6 +296,31 @@ int ow_editor_reply_comment(ow_editor *editor, const char *utf8);
 int ow_editor_set_comment_text(ow_editor *editor, const char *utf8);
 int ow_editor_resolve_comment(ow_editor *editor, int done);
 int ow_editor_delete_comment(ow_editor *editor);
+
+/* ---- Fields with a value (core 1.4) ----
+ * The document's title, author and subject, the file's name, its words, the chapter (the level-1 heading a
+ * paragraph is under), a user field, and a reference to a body paragraph (its text or its page) through a
+ * bookmark. A field shows the value worked out when it was inserted or last updated: on inserting one, when
+ * document information or a user field changes, and on ow_editor_update_fields (after opening, before saving
+ * and printing). ow_editor_insert_field takes the kinds without a name; USER, REF and REF_PAGE need one. */
+int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *name);
+/* Fields worked out again and laid out: how many changed (0: none), or an OWF_ERR_ */
+int ow_editor_update_fields(ow_editor *editor);
+/* The document's file (for FILENAME; NULL: untitled) */
+void ow_editor_set_file_name(ow_editor *editor, const char *path);
+/* Where a body paragraph is: its page from 0, for page references (NULL: the editor's own pagination) */
+void ow_editor_set_page_lookup(ow_editor *editor, int (*page_of)(void *userdata, int paragraph), void *userdata);
+typedef enum { OW_INFO_TITLE, OW_INFO_AUTHOR, OW_INFO_SUBJECT } ow_doc_info;
+/* Document information, UTF-8 (NULL: none). Setting it is not undone (it is the file's, not the text's). */
+const char *ow_editor_doc_info(const ow_editor *editor, ow_doc_info which);
+int ow_editor_set_doc_info(ow_editor *editor, ow_doc_info which, const char *utf8);
+/* User fields: name and value; set_user_field with value NULL removes it (OWF_ERR_UNSUPPORTED: none) */
+int ow_editor_user_field_count(const ow_editor *editor);
+int ow_editor_user_field_at(const ow_editor *editor, int index, const char **name, const char **value);
+int ow_editor_set_user_field(ow_editor *editor, const char *name, const char *value);
+/* A reference to body paragraph paragraph at the caret: its text, or (page 1) its page; the paragraph gets a
+ * bookmark ("_Ref1" ...) when it has none */
+int ow_editor_insert_cross_reference(ow_editor *editor, int paragraph, int page);
 
 #ifdef __cplusplus
 }

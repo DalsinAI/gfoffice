@@ -567,6 +567,33 @@ static void change_to(owf_buf *out, odt_track *tk, int rev, int para_style)
     }
 }
 
+/* 1.7: a field with a shown value, as its ODF element */
+static void put_field(owf_buf *out, const owf_run *run)
+{
+    static const char *const names[] = { "title", "initial-creator", "subject", "file-name", "word-count",
+                                         "chapter", "user-field-get", "bookmark-ref", "bookmark-ref" };
+    const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_LAST
+                     ? names[run->field - OWF_FIELD_TITLE] : NULL;
+    if (!name) return;
+    owf_buf_printf(out, "<text:%s", name);
+    if (run->field == OWF_FIELD_FILENAME) owf_buf_puts(out, " text:display=\"name-and-extension\"");
+    if (run->field == OWF_FIELD_CHAPTER) owf_buf_puts(out, " text:display=\"name\" text:outline-level=\"1\"");
+    if (run->field == OWF_FIELD_USER) {
+        owf_buf_puts(out, " text:name=\"");
+        owf_buf_puts_xml(out, run->href ? run->href : "");
+        owf_buf_puts(out, "\"");
+    }
+    if (run->field == OWF_FIELD_REF || run->field == OWF_FIELD_REF_PAGE) {
+        owf_buf_puts(out, run->field == OWF_FIELD_REF ? " text:reference-format=\"text\"" : " text:reference-format=\"page\"");
+        owf_buf_puts(out, " text:ref-name=\"");
+        owf_buf_puts_xml(out, run->href ? run->href : "");
+        owf_buf_puts(out, "\"");
+    }
+    owf_buf_puts(out, ">");
+    owf_buf_puts_xml(out, run->text ? run->text : "");
+    owf_buf_printf(out, "</text:%s>", name);
+}
+
 /* One run's content (not a frame's): its text from done on, a tab, a break, a field or a picture in the line. */
 static void put_run_content(owf_buf *out, const owf_doc *doc, const owf_run *run, const char *text, size_t length,
                             int *after_space)
@@ -578,7 +605,11 @@ static void put_run_content(owf_buf *out, const owf_doc *doc, const owf_run *run
     case OWF_RUN_TEXT: put_text(out, text, length, after_space); break;
     case OWF_RUN_TAB: owf_buf_puts(out, "<text:tab/>"); *after_space = 1; break;
     case OWF_RUN_LINEBREAK: owf_buf_puts(out, "<text:line-break/>"); *after_space = 1; break;
-    case OWF_RUN_FIELD: owf_buf_puts(out, fields[run->field]); *after_space = 0; break;
+    case OWF_RUN_FIELD:
+        if (run->field <= OWF_FIELD_TIME) owf_buf_puts(out, fields[run->field]);
+        else put_field(out, run);                    /* 1.7 */
+        *after_space = 0;
+        break;
     case OWF_RUN_IMAGE:
         if (doc && run->image >= 0 && run->image < doc->nimages) {
             const owf_image *im = &doc->images[run->image];
@@ -955,6 +986,18 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
         }
     }
     owf_buf_puts(out, "</office:automatic-styles><office:body><office:text>");
+    if (doc->nuserfields) {                          /* 1.7: the user fields */
+        int k;
+        owf_buf_puts(out, "<text:user-field-decls>");
+        for (k = 0; k < doc->nuserfields; ++k) {
+            owf_buf_puts(out, "<text:user-field-decl office:value-type=\"string\" office:string-value=\"");
+            owf_buf_puts_xml(out, doc->userfields[k].value);
+            owf_buf_puts(out, "\" text:name=\"");
+            owf_buf_puts_xml(out, doc->userfields[k].name);
+            owf_buf_puts(out, "\"/>");
+        }
+        owf_buf_puts(out, "</text:user-field-decls>");
+    }
     put_tracked_changes(out, doc, &tk);
     if (body.length)
         owf_buf_put(out, body.data, body.length);
@@ -1006,6 +1049,16 @@ static int export_odt(const owf_doc *doc, unsigned char **data, size_t *length, 
         owf_buf_puts(&part, "<dc:title>");
         owf_buf_puts_xml(&part, doc->title);
         owf_buf_puts(&part, "</dc:title>");
+    }
+    if (doc->subject) {                              /* 1.7 */
+        owf_buf_puts(&part, "<dc:subject>");
+        owf_buf_puts_xml(&part, doc->subject);
+        owf_buf_puts(&part, "</dc:subject>");
+    }
+    if (doc->author) {
+        owf_buf_puts(&part, "<meta:initial-creator>");
+        owf_buf_puts_xml(&part, doc->author);
+        owf_buf_puts(&part, "</meta:initial-creator>");
     }
     owf_buf_puts(&part, "</office:meta></office:document-meta>\n");
     if (result == OWF_OK)

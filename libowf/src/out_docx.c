@@ -528,12 +528,30 @@ static void build_comments_extended(owf_buf *out, const owf_doc *doc)
     owf_buf_puts(out, "</w15:commentsEx>\n");
 }
 
+/* A field's code (1.7: with its argument) and the value shown for it */
+static void field_instr(const owf_run *run, char *out, size_t size)
+{
+    static const char *const word[] = { "PAGE", "NUMPAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
+                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF" };
+    const char *arg = run->href ? run->href : "";
+    int f = (int)run->field >= 0 && (int)run->field <= OWF_FIELD_LAST ? (int)run->field : 0;
+    if (f == OWF_FIELD_CHAPTER) snprintf(out, size, " STYLEREF 1 ");
+    else if (f == OWF_FIELD_USER) snprintf(out, size, " DOCVARIABLE \"%s\" ", arg);
+    else if (f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE) snprintf(out, size, " %s %s \\h ", word[f], arg);
+    else snprintf(out, size, " %s ", word[f]);
+}
+
+static const char *field_shown(const owf_run *run)
+{
+    if (run->text) return run->text;
+    return run->field == OWF_FIELD_PAGE || run->field == OWF_FIELD_PAGES ? "1" : "";
+}
+
 static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
                       const owf_para *para, owf_report *report,
                       int section_end, const owf_para *section, int next_break)
 {
-    static const char *field_instr[] = { " PAGE ", " NUMPAGES ", " DATE ", " TIME " };
-    static const char *field_shown[] = { "1", "1", "", "" };
+    char instr[160];
     char style[16];
     const char *pstyle = NULL;
     docx_marks mk;
@@ -566,18 +584,19 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
         int del = chg && chg->kind == OWF_REV_DELETE;
         const char *open_chg = chg ? (del ? "<w:del" : "<w:ins") : NULL, *close_chg = del ? "</w:del>" : "</w:ins>";
         put_marks(out, &mk, at, run->kind == OWF_RUN_TEXT);
+        if(run->kind==OWF_RUN_FIELD)field_instr(run,instr,sizeof instr);
         if(run->kind==OWF_RUN_FIELD&&chg){
             /* a changed field as Word's complex field, its runs inside the change */
             owf_buf_puts(out,open_chg);put_change_attrs(out,chg,change_id(doc,story,para,j));owf_buf_puts(out,">");
             owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,"<w:fldChar w:fldCharType=\"begin\"/></w:r>");
-            owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_printf(out,del?"<w:delInstrText xml:space=\"preserve\">%s</w:delInstrText></w:r>":"<w:instrText xml:space=\"preserve\">%s</w:instrText></w:r>",field_instr[run->field]);
+            owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,del?"<w:delInstrText xml:space=\"preserve\">":"<w:instrText xml:space=\"preserve\">");owf_buf_puts_xml(out,instr);owf_buf_puts(out,del?"</w:delInstrText></w:r>":"</w:instrText></w:r>");
             owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,"<w:fldChar w:fldCharType=\"separate\"/></w:r>");
-            owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_printf(out,del?"<w:delText>%s</w:delText></w:r>":"<w:t>%s</w:t></w:r>",field_shown[run->field]);
+            owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,del?"<w:delText xml:space=\"preserve\">":"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,field_shown(run));owf_buf_puts(out,del?"</w:delText></w:r>":"</w:t></w:r>");
             owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,"<w:fldChar w:fldCharType=\"end\"/></w:r>");
             owf_buf_puts(out,close_chg);
             continue;
         }
-        if(run->kind==OWF_RUN_FIELD){owf_buf_printf(out,"<w:fldSimple w:instr=\"%s\"><w:r>",field_instr[run->field]);put_rpr(out,doc,&run->fmt,report);owf_buf_printf(out,"<w:t>%s</w:t></w:r></w:fldSimple>",field_shown[run->field]);continue;}
+        if(run->kind==OWF_RUN_FIELD){owf_buf_puts(out,"<w:fldSimple w:instr=\"");owf_buf_puts_xml(out,instr);owf_buf_puts(out,"\"><w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,field_shown(run));owf_buf_puts(out,"</w:t></w:r></w:fldSimple>");continue;}
         if(link){
             /* 1.3.1: a link inside the document ("#_Toc1", from w:anchor) stays w:anchor, with no relationship */
             if(run->href[0]=='#'){owf_buf_puts(out,"<w:hyperlink w:anchor=\"");owf_buf_puts_xml(out,run->href+1);owf_buf_puts(out,"\">");}
@@ -848,7 +867,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Override PartName=\"/word/header2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>");
     if (footer_left)
         owf_buf_puts(&part, "<Override PartName=\"/word/footer2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>");
-    if (header_left || footer_left || doc->track_changes)
+    if (header_left || footer_left || doc->track_changes || doc->nuserfields)
         owf_buf_puts(&part, "<Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>");
     if (comments) {
         owf_buf_puts(&part, "<Override PartName=\"/word/comments.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml\"/>");
@@ -881,7 +900,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Relationship Id=\"rId4\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header2.xml\"/>");
     if (footer_left)
         owf_buf_puts(&part, "<Relationship Id=\"rId5\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" Target=\"footer2.xml\"/>");
-    if (header_left || footer_left || doc->track_changes)
+    if (header_left || footer_left || doc->track_changes || doc->nuserfields)
         owf_buf_puts(&part, "<Relationship Id=\"rId6\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/>");
     if (comments) {                                  /* 1.6 */
         owf_buf_puts(&part, "<Relationship Id=\"rId7\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments\" Target=\"comments.xml\"/>");
@@ -969,7 +988,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         if (result == OWF_OK)
             result = add_part(zip, &part, "word/footer2.xml");
     }
-    if (header_left || footer_left || doc->track_changes) {
+    if (header_left || footer_left || doc->track_changes || doc->nuserfields) {
         /* settings in the schema's order: w:trackRevisions comes before w:evenAndOddHeaders */
         owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
                             "<w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">");
@@ -977,6 +996,18 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
             owf_buf_puts(&part, "<w:trackRevisions/>");
         if (header_left || footer_left)
             owf_buf_puts(&part, "<w:evenAndOddHeaders/>");
+        if (doc->nuserfields) {                      /* 1.7: the user fields, after them in the schema */
+            int k;
+            owf_buf_puts(&part, "<w:docVars>");
+            for (k = 0; k < doc->nuserfields; ++k) {
+                owf_buf_puts(&part, "<w:docVar w:name=\"");
+                owf_buf_puts_xml(&part, doc->userfields[k].name);
+                owf_buf_puts(&part, "\" w:val=\"");
+                owf_buf_puts_xml(&part, doc->userfields[k].value);
+                owf_buf_puts(&part, "\"/>");
+            }
+            owf_buf_puts(&part, "</w:docVars>");
+        }
         owf_buf_puts(&part, "</w:settings>\n");
         if (result == OWF_OK)
             result = add_part(zip, &part, "word/settings.xml");
@@ -989,6 +1020,16 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<dc:title>");
         owf_buf_puts_xml(&part, doc->title);
         owf_buf_puts(&part, "</dc:title>");
+    }
+    if (doc->subject) {                              /* 1.7 */
+        owf_buf_puts(&part, "<dc:subject>");
+        owf_buf_puts_xml(&part, doc->subject);
+        owf_buf_puts(&part, "</dc:subject>");
+    }
+    if (doc->author) {
+        owf_buf_puts(&part, "<dc:creator>");
+        owf_buf_puts_xml(&part, doc->author);
+        owf_buf_puts(&part, "</dc:creator>");
     }
     owf_buf_puts(&part, "</cp:coreProperties>\n");
     if (result == OWF_OK)
