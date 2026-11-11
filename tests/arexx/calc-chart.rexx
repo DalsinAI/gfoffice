@@ -33,9 +33,9 @@ DO pass = 1 TO 2
     CALL want 'SHEET 8', 0
     CALL want 'CHARTSELECT 1', 0
     CALL want 'CHARTMOVE BY 2 1', 0
-    CALL want 'UNDO', 0
-    CALL want 'REDO', 0
-    CALL want 'UNDO', 0
+    CALL want 'COMMAND UNDO', 0
+    CALL want 'COMMAND REDO', 0
+    CALL want 'COMMAND UNDO', 0
     CALL want 'SHEET 1', 0
     CALL want 'SHEET 8', 0
     CALL cell 'A1', 'North'
