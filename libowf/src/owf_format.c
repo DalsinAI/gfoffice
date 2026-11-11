@@ -5,6 +5,7 @@
  */
 #include "owf_internal.h"
 #include "owf_track.h"
+#include "owf_comment.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -184,6 +185,7 @@ int owf_import_memory(const unsigned char *data, size_t length, const char *form
         return result;
     }
     owf_track_finish(doc);                           /* 1.5 */
+    owf_comment_finish(doc);                         /* 1.6 */
     find_base(doc);
     if (used)
         *used = f;
@@ -218,6 +220,8 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
         return format ? OWF_ERR_UNSUPPORTED : OWF_ERR_FORMAT;
     if (!f->export)
         return OWF_ERR_UNSUPPORTED;
+    if (f != &owf_format_odt && f != &owf_format_docx && owf_doc_has_comments(doc))
+        owf_report_add(report, OWF_NOTE_LOST, "Comments were left out: %s has none", f->description);  /* 1.6 */
     if (f != &owf_format_odt && f != &owf_format_docx && owf_doc_has_changes(doc)) {
         /* 1.5: a format without tracked changes gets the document with them all accepted */
         owf_doc *view;

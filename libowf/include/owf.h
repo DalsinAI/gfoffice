@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.5.0"
+#define OWF_VERSION "1.6.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -85,6 +85,9 @@ typedef struct {
     int revision;            /* 1.5: a tracked change: 1 + its index in doc->revisions (OWF_REV_INSERT: this
                                 run was inserted, OWF_REV_DELETE: deleted but kept, shown struck through);
                                 0: none */
+    int comment;             /* 1.6: a comment's place (OWF_RUN_TEXT runs with no text, kept apart from the text
+                                round them): 1 + its index in doc->comments where it is anchored (shown, and where
+                                a range ends); -(1 + its index) where its range starts. 0: none */
 } owf_run;
 
 typedef enum { OWF_ALIGN_LEFT, OWF_ALIGN_CENTRE, OWF_ALIGN_RIGHT, OWF_ALIGN_JUSTIFY } owf_align;
@@ -266,6 +269,21 @@ typedef struct {
     char *date;              /* ISO 8601, "2026-11-11T14:03:00"; NULL: unknown */
 } owf_revision;
 
+/* ---- Comments (1.6) ----
+ * A note in the margin: who wrote it, when, its text, the comment it answers. Its place in the text is a run
+ * (owf_run.comment); one with a range has a run where the range starts too. A changed comment (its text, done)
+ * is a new one that its runs name instead. ODT's office:annotation and DOCX's comments come in and go out as
+ * these; other formats leave them out. Its size never changes (owf_struct_size doesn't list it). (owf_comment is
+ * a spreadsheet cell's.) */
+typedef struct owf_annotation {
+    char *author;            /* UTF-8; NULL: unknown */
+    char *initials;          /* NULL: none */
+    char *date;              /* ISO 8601; NULL: unknown */
+    char *text;              /* UTF-8, its paragraphs between '\n'; never NULL */
+    int parent;              /* the comment it answers: its index; -1: none */
+    int done;                /* marked done (resolved) */
+} owf_annotation;
+
 typedef struct owf_doc {
     owf_story body, header, footer;
     int nfonts, capfonts;
@@ -288,6 +306,10 @@ typedef struct owf_doc {
     int nrevisions, caprevisions;
     owf_revision *revisions;
     int track_changes;
+    /* 1.6: comments (owf_annotation). A comment is in the document while a run names it (owf_run.comment); the
+     * list only grows, so an edit's undo puts the runs back and the comment with them. */
+    int ncomments, capcomments;
+    struct owf_annotation *comments;
 } owf_doc;
 
 /* ---- Memory ----

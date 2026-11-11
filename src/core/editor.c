@@ -93,6 +93,11 @@ static void clear_doc_data(owf_doc *doc)
     owf_free(doc->title);
     for (i = 0; i < doc->nrevisions; ++i) { owf_free(doc->revisions[i].author); owf_free(doc->revisions[i].date); }
     owf_free(doc->revisions);                        /* 2.1.0 */
+    for (i = 0; i < doc->ncomments; ++i) {          /* 2.2.0 */
+        owf_free(doc->comments[i].author); owf_free(doc->comments[i].initials);
+        owf_free(doc->comments[i].date); owf_free(doc->comments[i].text);
+    }
+    owf_free(doc->comments);
     memset(doc, 0, sizeof(*doc));
 }
 
@@ -194,7 +199,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
 {
     owf_image *images;
     owf_revision *revisions;
-    int nimages, capimages, nrevisions, caprevisions, track;
+    owf_annotation *comments;
+    int nimages, capimages, nrevisions, caprevisions, track, ncomments, capcomments;
     if (!dst || !snapshot) return;
     images = dst->images;           /* 2.0.11: the pictures stay the document's (clone_doc) */
     nimages = dst->nimages;
@@ -207,6 +213,11 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     track = dst->track_changes;
     dst->revisions = NULL;
     dst->nrevisions = dst->caprevisions = 0;
+    comments = dst->comments;       /* 2.2.0: the comments too: the runs name them, and they only grow */
+    ncomments = dst->ncomments;
+    capcomments = dst->capcomments;
+    dst->comments = NULL;
+    dst->ncomments = dst->capcomments = 0;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
     dst->images = images;
@@ -216,6 +227,9 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->nrevisions = nrevisions;
     dst->caprevisions = caprevisions;
     dst->track_changes = track;
+    dst->comments = comments;
+    dst->ncomments = ncomments;
+    dst->capcomments = capcomments;
     owf_free(snapshot);                 /* only the old outer shell */
 }
 
@@ -772,6 +786,19 @@ static int insert_formatted_text_at(ow_editor *editor, ow_position pos,
     old_rev = run->revision;
     old_href = run->href;
 
+    if (run->comment) {
+        /* 2.1.1: a comment's place keeps no text: the text goes in a run of its own after it */
+        inserted = pos.run + 1;
+        if (!insert_run_at(p, inserted, fmt, utf8, length)) return 0;
+        p->runs[inserted].revision = rev;
+        if (after) {
+            after->paragraph = pos.paragraph;
+            after->run = inserted;
+            after->byte_offset = length;
+        }
+        return 1;
+    }
+
     if (same_charfmt_local(&run->fmt, fmt) && run->revision == rev) {
         if (!replace_run_slice(run, pos.byte_offset, pos.byte_offset,
                                utf8, length)) return 0;
@@ -901,6 +928,20 @@ static void apply_charfmt_fields(owf_charfmt *dst, const owf_charfmt *src,
     if (mask & OW_CHARFMT_COLOUR) dst->colour = src->colour;
 }
 
+/* 2.1.1: a piece of run r's text for rebuild_para_charfmt. A tracked change's piece is a run of its own with
+ * the change (owf_para_add_text would join it to the run before it, and the change would be lost). */
+static int add_piece(owf_para *tmp, const owf_run *r, const owf_charfmt *f, const char *s, size_t len)
+{
+    owf_run *n;
+    if (!r->revision)
+        return (r->href ? owf_para_add_link_text(tmp, f, s, len, r->href) : owf_para_add_text(tmp, f, s, len)) == OWF_OK;
+    if (!insert_run_at(tmp, tmp->nruns, f, s, len)) return 0;
+    n = &tmp->runs[tmp->nruns - 1];
+    n->revision = r->revision;
+    if (r->href && !(n->href = copy_bytes(r->href, strlen(r->href)))) return 0;
+    return 1;
+}
+
 static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
                                 const owf_charfmt *fmt, unsigned mask)
 {
@@ -912,7 +953,11 @@ static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
 
     for (i = 0; i < p->nruns; ++i) {
         const owf_run *r = &p->runs[i];
-        if (r->kind == OWF_RUN_TEXT) {
+        if (r->kind == OWF_RUN_TEXT && r->comment) {
+            /* 2.1.1: a comment's place, as it is */
+            if (!insert_run_at(&tmp, tmp.nruns, &r->fmt, "", 0)) goto fail;
+            tmp.runs[tmp.nruns - 1].comment = r->comment;
+        } else if (r->kind == OWF_RUN_TEXT) {
             const char *text = r->text ? r->text : "";
             size_t n = strlen(text), rs = at, re = at + n;
             size_t a = from > rs ? from : rs;
@@ -920,8 +965,7 @@ static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
             owf_charfmt changed = r->fmt;
             if (a < b) apply_charfmt_fields(&changed, fmt, mask);
             /* 2.0.12: a link stays a link when part of it is made bold (it lost its target) */
-#define ADD_PART(f, s, len) (r->href ? owf_para_add_link_text(&tmp, (f), (s), (len), r->href) \
-                                     : owf_para_add_text(&tmp, (f), (s), (len)))
+#define ADD_PART(f, s, len) (add_piece(&tmp, r, (f), (s), (len)) ? OWF_OK : OWF_ERR_MEMORY)
             /* 2.0.13: a run outside the selection is copied once, as it is. Its split used to run too:
              * a run before the selection was copied on past its end, and one after it from before its
              * start, and then the whole of either again. */
@@ -943,6 +987,7 @@ static int rebuild_para_charfmt(owf_para *p, size_t from, size_t to,
             if (owf_para_add_special(&tmp, &r->fmt, r->kind, r->field) != OWF_OK)
                 goto fail;
             tmp.runs[tmp.nruns - 1].image = r->image;   /* a picture's or a frame's index goes with it */
+            tmp.runs[tmp.nruns - 1].revision = r->revision;   /* 2.1.1: and a tab's change */
         }
     }
 
@@ -1565,7 +1610,7 @@ static void join_runs(owf_para *p)
     int j = 0;
     while (j + 1 < p->nruns) {
         owf_run *a = &p->runs[j], *b = &p->runs[j + 1];
-        if (a->kind == OWF_RUN_TEXT && b->kind == OWF_RUN_TEXT && a->revision == b->revision &&
+        if (a->kind == OWF_RUN_TEXT && b->kind == OWF_RUN_TEXT && a->revision == b->revision && !a->comment && !b->comment &&
             same_charfmt_local(&a->fmt, &b->fmt) && same_text_or_null(a->href, b->href)) {
             size_t la = a->text ? strlen(a->text) : 0, lb = b->text ? strlen(b->text) : 0;
             char *t = (char *)owf_malloc(la + lb + 1);
@@ -2151,6 +2196,456 @@ int ow_editor_accept_all_changes(ow_editor *editor, int accept)
     sync_typing_fmt(editor);
     ow_editor_layout(editor);
     return OWF_OK;
+}
+
+/* ---- 2.2.0: comments ----------------------------------------------------------------
+ * A comment is the document's (owf_annotation in doc->comments) and is in the text where a run names it
+ * (owf_run.comment: an empty text run, 1 + its index where it is anchored, -(1 + its index) where its range
+ * starts). The list only grows and is kept outside the undo snapshots, as the changes are: removing a comment
+ * removes its runs, and changing one (its text, done) is a new one that its runs name instead, so that undo
+ * puts the runs back as they were and the comments with them. The editor lists a story's comments in the
+ * order of their places. */
+
+typedef struct {
+    int record;                 /* its index in doc->comments */
+    int para, run;              /* its anchor run */
+    int spara, srun;            /* its range's start run (spara -1: none, a point) */
+} ed_comment;
+
+/* The comments of a story in the order of their anchors; NULL and 0 when none (or no memory: *failed) */
+static ed_comment *story_comments(const owf_doc *doc, const owf_story *story, int *count, int *failed)
+{
+    ed_comment *list = NULL;
+    int n = 0, cap = 0, i, j, k;
+    *count = 0;
+    if (failed) *failed = 0;
+    for (i = 0; i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j) {
+            int m = story->paras[i].runs[j].comment;
+            if (m <= 0 || m > doc->ncomments) continue;
+            if (n == cap) {
+                int want = cap ? cap * 2 : 8;
+                ed_comment *grown = (ed_comment *)owf_realloc(list, (size_t)want * sizeof(*grown));
+                if (!grown) { owf_free(list); if (failed) *failed = 1; return NULL; }
+                list = grown;
+                cap = want;
+            }
+            list[n].record = m - 1;
+            list[n].para = i;
+            list[n].run = j;
+            list[n].spara = list[n].srun = -1;
+            ++n;
+        }
+    for (i = 0; i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j) {
+            int m = story->paras[i].runs[j].comment;
+            if (m >= 0) continue;
+            for (k = 0; k < n; ++k)
+                if (list[k].record == -m - 1 && list[k].spara < 0) { list[k].spara = i; list[k].srun = j; break; }
+        }
+    *count = n;
+    return list;
+}
+
+static ow_position run_position(ow_editor *editor, int para, int run)
+{
+    ow_position pos;
+    pos.paragraph = para;
+    pos.run = run;
+    pos.byte_offset = 0;
+    pos.box = box_of(editor, editor->selection.focus.box);
+    return pos;
+}
+
+/* A place as (paragraph, bytes of text before it): the same place whichever empty run it is in */
+static int place_compare(const owf_story *story, ow_position a, ow_position b)
+{
+    size_t x, y;
+    if (a.paragraph != b.paragraph) return a.paragraph < b.paragraph ? -1 : 1;
+    x = para_text_offset(&story->paras[a.paragraph], a);
+    y = para_text_offset(&story->paras[b.paragraph], b);
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+
+static ow_position comment_start(ow_editor *editor, const ed_comment *c)
+{
+    return c->spara >= 0 ? run_position(editor, c->spara, c->srun) : run_position(editor, c->para, c->run);
+}
+
+static void comment_fill(ow_editor *editor, const ed_comment *list, int n, int k, ow_comment_info *info)
+{
+    const owf_annotation *a = &editor->doc->comments[list[k].record];
+    int i;
+    memset(info, 0, sizeof(*info));
+    info->index = k;
+    info->author = a->author;
+    info->initials = a->initials;
+    info->date = a->date;
+    info->text = a->text ? a->text : "";
+    info->done = a->done;
+    info->reply_to = -1;
+    for (i = 0; a->parent >= 0 && i < n; ++i)
+        if (list[i].record == a->parent) { info->reply_to = i; break; }
+    info->start = comment_start(editor, &list[k]);
+    info->end = run_position(editor, list[k].para, list[k].run);
+}
+
+/* The comment at the caret: one whose range holds it, or whose place it is at; the narrowest, a comment
+ * before its replies. -1: none. */
+static int comment_at(ow_editor *editor, const ed_comment *list, int n)
+{
+    owf_story *story = ed_story(editor);
+    ow_position caret = clamp_position(editor, editor->selection.focus);
+    int k, best = -1;
+    size_t best_len = (size_t)-1;
+    for (k = 0; k < n; ++k) {
+        ow_position s = comment_start(editor, &list[k]), e = run_position(editor, list[k].para, list[k].run);
+        size_t len;
+        if (place_compare(story, s, caret) > 0 || place_compare(story, caret, e) > 0) continue;
+        len = s.paragraph == e.paragraph
+            ? para_text_offset(&story->paras[e.paragraph], e) - para_text_offset(&story->paras[s.paragraph], s)
+            : (size_t)(e.paragraph - s.paragraph) * 100000u;
+        if (best < 0 || len < best_len ||
+            (len == best_len && editor->doc->comments[list[best].record].parent >= 0 &&
+             editor->doc->comments[list[k].record].parent < 0)) {
+            best = k;
+            best_len = len;
+        }
+    }
+    return best;
+}
+
+int ow_editor_comment_count(const ow_editor *editor)
+{
+    int n = 0, failed;
+    ed_comment *list;
+    if (!editor || !editor->doc) return 0;
+    list = story_comments(editor->doc, ed_story(editor), &n, &failed);
+    owf_free(list);
+    return n;
+}
+
+int ow_editor_comment_info(ow_editor *editor, int index, ow_comment_info *info)
+{
+    int n = 0, failed;
+    ed_comment *list;
+    if (!editor || !info || index < 0) return 0;
+    list = story_comments(editor->doc, ed_story(editor), &n, &failed);
+    if (index >= n) { owf_free(list); return 0; }
+    comment_fill(editor, list, n, index, info);
+    owf_free(list);
+    return 1;
+}
+
+int ow_editor_current_comment(ow_editor *editor, ow_comment_info *info)
+{
+    int n = 0, failed, k;
+    ed_comment *list;
+    if (!editor || !info) return 0;
+    list = story_comments(editor->doc, ed_story(editor), &n, &failed);
+    k = comment_at(editor, list, n);
+    if (k >= 0) comment_fill(editor, list, n, k, info);
+    owf_free(list);
+    return k >= 0;
+}
+
+/* Selects comment k's range (a point: the caret there) */
+static void select_comment(ow_editor *editor, const ed_comment *c)
+{
+    editor->selection.anchor = comment_start(editor, c);
+    editor->selection.focus = run_position(editor, c->para, c->run);
+    editor->typing_group = 0;
+    sync_typing_fmt(editor);
+}
+
+int ow_editor_next_comment(ow_editor *editor, int backwards)
+{
+    owf_story *story;
+    ed_comment *list;
+    ow_position a, b;
+    int n = 0, failed, k, pick = -1, wrapped = 0;
+    if (!editor || !editor->doc) return 0;
+    story = ed_story(editor);
+    list = story_comments(editor->doc, story, &n, &failed);
+    a = clamp_position(editor, editor->selection.anchor);
+    b = clamp_position(editor, editor->selection.focus);
+    if (place_compare(story, a, b) > 0) { ow_position t = a; a = b; b = t; }
+    /* comments, not their replies (a reply is where its comment is) */
+    if (!backwards) {
+        for (k = 0; k < n && pick < 0; ++k)
+            if (editor->doc->comments[list[k].record].parent < 0 &&
+                place_compare(story, comment_start(editor, &list[k]), a) > 0)
+                pick = k;
+    } else {
+        for (k = n - 1; k >= 0 && pick < 0; --k)
+            if (editor->doc->comments[list[k].record].parent < 0 &&
+                place_compare(story, comment_start(editor, &list[k]), a) < 0)
+                pick = k;
+    }
+    if (pick < 0) {
+        /* round to the other end of the story */
+        for (k = backwards ? n - 1 : 0; k >= 0 && k < n; k += backwards ? -1 : 1)
+            if (editor->doc->comments[list[k].record].parent < 0) { pick = k; break; }
+        wrapped = 1;
+    }
+    if (pick >= 0) select_comment(editor, &list[pick]);
+    owf_free(list);
+    return pick < 0 ? 0 : wrapped ? 2 : 1;
+}
+
+/* A new comment of the review author's, made now: its index; -1 when memory runs out */
+static int editor_comment_add(ow_editor *editor, const char *text, int parent, int done)
+{
+    owf_doc *doc = editor->doc;
+    owf_annotation *c;
+    char now[32];
+    if (doc->ncomments == doc->capcomments) {
+        int want = doc->capcomments ? doc->capcomments * 2 : 8;
+        owf_annotation *grown = (owf_annotation *)owf_realloc(doc->comments, (size_t)want * sizeof(*grown));
+        if (!grown) return -1;
+        doc->comments = grown;
+        doc->capcomments = want;
+    }
+    review_now(now, sizeof now);
+    c = &doc->comments[doc->ncomments];
+    memset(c, 0, sizeof(*c));
+    c->parent = parent;
+    c->done = done;
+    c->date = copy_bytes(now, strlen(now));
+    c->text = copy_bytes(text ? text : "", text ? strlen(text) : 0);
+    if (editor->author) c->author = copy_bytes(editor->author, strlen(editor->author));
+    if (!c->date || !c->text || (editor->author && !c->author)) {
+        owf_free(c->date); owf_free(c->text); owf_free(c->author);
+        memset(c, 0, sizeof(*c));
+        return -1;
+    }
+    return doc->ncomments++;
+}
+
+/* A copy of comment record (its author, initials and date kept) with new text (NULL: the same) and done */
+static int editor_comment_copy(ow_editor *editor, int record, const char *text, int done, int parent)
+{
+    owf_doc *doc = editor->doc;
+    owf_annotation from, *c;
+    if (doc->ncomments == doc->capcomments) {
+        int want = doc->capcomments ? doc->capcomments * 2 : 8;
+        owf_annotation *grown = (owf_annotation *)owf_realloc(doc->comments, (size_t)want * sizeof(*grown));
+        if (!grown) return -1;
+        doc->comments = grown;
+        doc->capcomments = want;
+    }
+    from = doc->comments[record];
+    if (!text) text = from.text ? from.text : "";
+    c = &doc->comments[doc->ncomments];
+    memset(c, 0, sizeof(*c));
+    c->parent = parent;
+    c->done = done;
+    c->text = copy_bytes(text, strlen(text));
+    if (from.author) c->author = copy_bytes(from.author, strlen(from.author));
+    if (from.initials) c->initials = copy_bytes(from.initials, strlen(from.initials));
+    if (from.date) c->date = copy_bytes(from.date, strlen(from.date));
+    if (!c->text || (from.author && !c->author) || (from.initials && !c->initials) || (from.date && !c->date)) {
+        owf_free(c->text); owf_free(c->author); owf_free(c->initials); owf_free(c->date);
+        memset(c, 0, sizeof(*c));
+        return -1;
+    }
+    return doc->ncomments++;
+}
+
+/* A comment's run (mark) at pos: the text run there split if pos is inside it. The run's index, -1 when
+ * memory runs out. */
+static int insert_comment_run(ow_editor *editor, ow_position pos, int mark)
+{
+    owf_para *p = &ed_story(editor)->paras[pos.paragraph];
+    owf_charfmt fmt;
+    int at;
+    size_t len;
+    if (pos.run < 0 || pos.run >= p->nruns) {
+        at = p->nruns;
+    } else {
+        len = p->runs[pos.run].kind == OWF_RUN_TEXT && p->runs[pos.run].text ? strlen(p->runs[pos.run].text) : 0;
+        if (pos.byte_offset == 0) at = pos.run;
+        else if (pos.byte_offset >= len) at = pos.run + 1;
+        else {
+            if (!split_text_run(p, pos.run, pos.byte_offset)) return -1;
+            at = pos.run + 1;
+        }
+    }
+    fmt = p->nruns ? p->runs[at < p->nruns ? at : p->nruns - 1].fmt : editor->doc->base;
+    if (!insert_run_at(p, at, &fmt, "", 0)) return -1;
+    p->runs[at].comment = mark;
+    return at;
+}
+
+static void edit_done(ow_editor *editor)
+{
+    editor->dirty = 1;
+    ++editor->changes;
+    sync_typing_fmt(editor);
+    ow_editor_layout(editor);
+}
+
+/* An edit that came to nothing: its undo step goes */
+static void edit_undone(ow_editor *editor)
+{
+    snapshot_free(&editor->undo[editor->nundo - 1]);
+    --editor->nundo;
+}
+
+int ow_editor_insert_comment(ow_editor *editor, const char *utf8)
+{
+    ow_position a, b;
+    int record, at, ranged;
+    if (!editor || !editor->doc || !utf8) return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    record = editor_comment_add(editor, utf8, -1, 0);
+    if (record < 0) { edit_undone(editor); return OWF_ERR_MEMORY; }
+    a = clamp_position(editor, editor->selection.anchor);
+    b = clamp_position(editor, editor->selection.focus);
+    if (compare_position(a, b) > 0) { ow_position t = a; a = b; b = t; }
+    ranged = place_compare(ed_story(editor), a, b) < 0;
+    /* the end first, so the start's place stays as it is */
+    at = insert_comment_run(editor, b, record + 1);
+    if (at < 0) return OWF_ERR_MEMORY;
+    if (ranged && insert_comment_run(editor, a, -(record + 1)) < 0)
+        return OWF_ERR_MEMORY;
+    /* the caret after it */
+    {
+        owf_para *p = &ed_story(editor)->paras[b.paragraph];
+        int j;
+        for (j = 0; j < p->nruns; ++j)
+            if (p->runs[j].comment == record + 1) { b.run = j; b.byte_offset = 0; break; }
+    }
+    editor->selection.anchor = editor->selection.focus = clamp_position(editor, b);
+    edit_done(editor);
+    return OWF_OK;
+}
+
+int ow_editor_reply_comment(ow_editor *editor, const char *utf8)
+{
+    ed_comment *list;
+    int n = 0, failed, k, root, record;
+    if (!editor || !editor->doc || !utf8) return OWF_ERR_FORMAT;
+    list = story_comments(editor->doc, ed_story(editor), &n, &failed);
+    k = comment_at(editor, list, n);
+    if (k < 0) { owf_free(list); return failed ? OWF_ERR_MEMORY : OWF_ERR_UNSUPPORTED; }
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) { owf_free(list); return OWF_ERR_MEMORY; }
+    root = list[k].record;
+    while (editor->doc->comments[root].parent >= 0) root = editor->doc->comments[root].parent;   /* a reply's comment */
+    record = editor_comment_add(editor, utf8, root, 0);
+    if (record < 0) { owf_free(list); edit_undone(editor); return OWF_ERR_MEMORY; }
+    /* its place: after the comment's and its replies' */
+    {
+        int last = k, i;
+        ow_position at;
+        for (i = 0; i < n; ++i)
+            if ((list[i].record == root || editor->doc->comments[list[i].record].parent == root) &&
+                (list[i].para > list[last].para || (list[i].para == list[last].para && list[i].run > list[last].run)))
+                last = i;
+        at = run_position(editor, list[last].para, list[last].run + 1);
+        if (insert_comment_run(editor, at, record + 1) < 0) { owf_free(list); return OWF_ERR_MEMORY; }
+    }
+    owf_free(list);
+    edit_done(editor);
+    return OWF_OK;
+}
+
+/* Every run naming record (either sign) names to instead (0: removed) */
+static void repoint_runs(ow_editor *editor, owf_story *story, int record, int to)
+{
+    int i, j;
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        for (j = p->nruns - 1; j >= 0; --j) {
+            int m = p->runs[j].comment;
+            if (m != record + 1 && m != -(record + 1)) continue;
+            if (to < 0) {
+                remove_run(p, j);
+                if (!p->nruns) append_empty_text_run(p, &editor->doc->base);
+            } else {
+                p->runs[j].comment = m > 0 ? to + 1 : -(to + 1);
+            }
+        }
+    }
+}
+
+/* The comment at the caret and its replies changed (text != NULL: the comment's text) or removed */
+static int change_comment(ow_editor *editor, int remove, const char *text, int done)
+{
+    owf_doc *doc = editor->doc;
+    owf_story *story = ed_story(editor);
+    ed_comment *list;
+    ow_position caret;
+    int n = 0, failed, k, root, i, newroot = -1, rc = OWF_OK;
+    list = story_comments(doc, story, &n, &failed);
+    k = comment_at(editor, list, n);
+    if (k < 0) { owf_free(list); return failed ? OWF_ERR_MEMORY : OWF_ERR_UNSUPPORTED; }
+    root = list[k].record;
+    if (text && doc->comments[root].parent >= 0) {
+        /* editing a reply's text: that reply alone */
+        int r;
+        editor->typing_group = 0;
+        if (!remember_before_edit(editor)) { owf_free(list); return OWF_ERR_MEMORY; }
+        r = editor_comment_copy(editor, root, text, doc->comments[root].done, doc->comments[root].parent);
+        owf_free(list);
+        if (r < 0) { edit_undone(editor); return OWF_ERR_MEMORY; }
+        repoint_runs(editor, story, root, r);
+        edit_done(editor);
+        return OWF_OK;
+    }
+    while (doc->comments[root].parent >= 0) root = doc->comments[root].parent;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) { owf_free(list); return OWF_ERR_MEMORY; }
+    caret = clamp_position(editor, comment_start(editor, &list[k]));
+    if (!remove) {
+        newroot = editor_comment_copy(editor, root, text, done < 0 ? doc->comments[root].done : done, -1);
+        if (newroot < 0) { owf_free(list); edit_undone(editor); return OWF_ERR_MEMORY; }
+    }
+    /* its replies first: each a copy answering the new comment, or gone */
+    for (i = 0; i < n; ++i) {
+        int r = list[i].record;
+        if (doc->comments[r].parent != root) continue;
+        if (remove) {
+            repoint_runs(editor, story, r, -1);
+        } else {
+            int c = editor_comment_copy(editor, r, NULL, done < 0 ? doc->comments[r].done : done, newroot);
+            if (c < 0) { rc = OWF_ERR_MEMORY; break; }
+            repoint_runs(editor, story, r, c);
+        }
+    }
+    repoint_runs(editor, story, root, remove ? -1 : newroot);
+    owf_free(list);
+    if (remove) {
+        if (caret.paragraph >= story->nparas) caret.paragraph = story->nparas - 1;
+        caret.run = -1;
+        caret.byte_offset = 0;
+        editor->selection.anchor = editor->selection.focus = clamp_position(editor, caret);
+    } else {
+        editor->selection.anchor = clamp_position(editor, editor->selection.anchor);
+        editor->selection.focus = clamp_position(editor, editor->selection.focus);
+    }
+    edit_done(editor);
+    return rc;
+}
+
+int ow_editor_set_comment_text(ow_editor *editor, const char *utf8)
+{
+    if (!editor || !editor->doc || !utf8) return OWF_ERR_FORMAT;
+    return change_comment(editor, 0, utf8, -1);
+}
+
+int ow_editor_resolve_comment(ow_editor *editor, int done)
+{
+    if (!editor || !editor->doc) return OWF_ERR_FORMAT;
+    return change_comment(editor, 0, NULL, done ? 1 : 0);
+}
+
+int ow_editor_delete_comment(ow_editor *editor)
+{
+    if (!editor || !editor->doc) return OWF_ERR_FORMAT;
+    return change_comment(editor, 1, NULL, -1);
 }
 
 /* ---- public editor API --------------------------------------------------------- */

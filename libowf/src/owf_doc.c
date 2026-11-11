@@ -123,6 +123,13 @@ void owf_doc_free(owf_doc *doc)
         free(doc->revisions[i].date);
     }
     free(doc->revisions);
+    for (i = 0; i < doc->ncomments; ++i) {          /* 1.6 */
+        free(doc->comments[i].author);
+        free(doc->comments[i].initials);
+        free(doc->comments[i].date);
+        free(doc->comments[i].text);
+    }
+    free(doc->comments);
     free(doc);
 }
 
@@ -179,8 +186,9 @@ int owf_para_add_text(owf_para *para, const owf_charfmt *fmt, const char *utf8, 
     /* Text in the same formatting as the run before joins it. */
     if (para->nruns) {
         run = &para->runs[para->nruns - 1];
-        /* 1.5: not onto a tracked change's run (owf_track.c gives a change its own runs) */
-        if (run->kind == OWF_RUN_TEXT && !run->href && !run->revision && same_charfmt(&run->fmt, fmt)) {
+        /* 1.5: not onto a tracked change's run (owf_track.c gives a change its own runs); 1.6: nor a comment's */
+        if (run->kind == OWF_RUN_TEXT && !run->href && !run->revision && !run->comment &&
+            same_charfmt(&run->fmt, fmt)) {
             size_t old = strlen(run->text);
             char *joined = realloc(run->text, old + len + 1);
             if (!joined)

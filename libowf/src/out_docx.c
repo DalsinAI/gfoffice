@@ -9,6 +9,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_comment.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -425,6 +426,108 @@ static const owf_revision *run_change(const owf_doc *doc, int number)
     return OWF_DOC_REVISION(doc, number);
 }
 
+/* 1.6: comments: w:id 5000000 + the comment's index (the document's annotations share one set of ids, and
+ * bookmarks and changes have theirs below and above), the last paragraph of its text w14:paraId 10000000 + it */
+#define COMMENT_ID(index) (5000000L + (long)(index))
+#define COMMENT_PARA_ID(index) (0x10000000UL + (unsigned long)(index))
+
+static int comment_ranged(const owf_doc *doc, int index)
+{
+    owf_story *st;
+    int n, i, j;
+    for (n = 0; (st = owf_doc_story((owf_doc *)doc, n)) != NULL; ++n)
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j)
+                if (st->paras[i].runs[j].comment == -(index + 1))
+                    return 1;
+    return 0;
+}
+
+/* A comment's place: where its range starts, or its end and reference */
+static void put_comment_mark(owf_buf *out, const owf_doc *doc, int mark)
+{
+    int index = mark > 0 ? mark - 1 : -mark - 1;
+    if (index < 0 || index >= doc->ncomments)
+        return;
+    if (mark < 0) {
+        owf_buf_printf(out, "<w:commentRangeStart w:id=\"%ld\"/>", COMMENT_ID(index));
+        return;
+    }
+    if (comment_ranged(doc, index))
+        owf_buf_printf(out, "<w:commentRangeEnd w:id=\"%ld\"/>", COMMENT_ID(index));
+    owf_buf_printf(out, "<w:r><w:commentReference w:id=\"%ld\"/></w:r>", COMMENT_ID(index));
+}
+
+/* Whether any comment in the document answers another or is done: commentsExtended.xml then */
+static int comments_extended(const owf_doc *doc)
+{
+    int i;
+    for (i = 0; i < doc->ncomments; ++i)
+        if ((doc->comments[i].parent >= 0 || doc->comments[i].done) && owf_comment_place(doc, i, NULL, NULL, NULL))
+            return 1;
+    return 0;
+}
+
+static void build_comments(owf_buf *out, const owf_doc *doc)
+{
+    int i;
+    owf_buf_puts(out, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:comments " W_NS " "
+                      "xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" mc:Ignorable=\"w14\">");
+    for (i = 0; i < doc->ncomments; ++i) {
+        const owf_annotation *c = &doc->comments[i];
+        const char *t, *nl;
+        if (!owf_comment_place(doc, i, NULL, NULL, NULL))
+            continue;
+        owf_buf_printf(out, "<w:comment w:id=\"%ld\" w:author=\"", COMMENT_ID(i));
+        owf_buf_puts_xml(out, c->author ? c->author : "");
+        owf_buf_puts(out, "\"");
+        if (c->date) {
+            /* Word wants a time zone: a date without one is UTC */
+            owf_buf_puts(out, " w:date=\"");
+            owf_buf_puts_xml(out, c->date);
+            if (strlen(c->date) == 19) owf_buf_putc(out, 'Z');
+            owf_buf_puts(out, "\"");
+        }
+        if (c->initials) {
+            owf_buf_puts(out, " w:initials=\"");
+            owf_buf_puts_xml(out, c->initials);
+            owf_buf_puts(out, "\"");
+        }
+        owf_buf_puts(out, ">");
+        for (t = c->text ? c->text : "", nl = NULL; ; t = nl + 1) {
+            int first = t == (c->text ? c->text : "");
+            nl = strchr(t, '\n');
+            if (nl) owf_buf_puts(out, "<w:p>");
+            else owf_buf_printf(out, "<w:p w14:paraId=\"%08lX\">", COMMENT_PARA_ID(i));
+            if (first) owf_buf_puts(out, "<w:r><w:annotationRef/></w:r>");
+            owf_buf_puts(out, "<w:r><w:t xml:space=\"preserve\">");
+            owf_buf_put_xml(out, t, nl ? (size_t)(nl - t) : strlen(t));
+            owf_buf_puts(out, "</w:t></w:r></w:p>");
+            if (!nl)
+                break;
+        }
+        owf_buf_puts(out, "</w:comment>");
+    }
+    owf_buf_puts(out, "</w:comments>\n");
+}
+
+static void build_comments_extended(owf_buf *out, const owf_doc *doc)
+{
+    int i;
+    owf_buf_puts(out, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+                      "<w15:commentsEx xmlns:w15=\"http://schemas.microsoft.com/office/word/2012/wordml\">");
+    for (i = 0; i < doc->ncomments; ++i) {
+        const owf_annotation *c = &doc->comments[i];
+        if (!owf_comment_place(doc, i, NULL, NULL, NULL))
+            continue;
+        owf_buf_printf(out, "<w15:commentEx w15:paraId=\"%08lX\"", COMMENT_PARA_ID(i));
+        if (c->parent >= 0 && c->parent < doc->ncomments && owf_comment_place(doc, c->parent, NULL, NULL, NULL))
+            owf_buf_printf(out, " w15:paraIdParent=\"%08lX\"", COMMENT_PARA_ID(c->parent));
+        owf_buf_printf(out, " w15:done=\"%d\"/>", c->done ? 1 : 0);
+    }
+    owf_buf_puts(out, "</w15:commentsEx>\n");
+}
+
 static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
                       const owf_para *para, owf_report *report,
                       int section_end, const owf_para *section, int next_break)
@@ -454,6 +557,10 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     for (j = 0; j < para->nruns; ++j) {
         const owf_run *run=&para->runs[j];
         int link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
+        if (run->comment) {                          /* 1.6 */
+            put_comment_mark(out, doc, run->comment);
+            continue;
+        }
         /* 1.5: a tracked change's run inside w:ins or w:del (a picture or frame is never one) */
         const owf_revision *chg = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ? run_change(doc, run->revision) : NULL;
         int del = chg && chg->kind == OWF_REV_DELETE;
@@ -719,6 +826,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
     int result;
     int header = doc->header.nparas > 0, footer = doc->footer.nparas > 0;
     int header_left = doc->header_left.nparas > 0, footer_left = doc->footer_left.nparas > 0;   /* 2.0.23 */
+    int comments = owf_doc_has_comments(doc), comments_ext = comments && comments_extended(doc);   /* 1.6 */
 
     owf_buf_init(&out);
     owf_buf_init(&part);
@@ -742,6 +850,11 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Override PartName=\"/word/footer2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>");
     if (header_left || footer_left || doc->track_changes)
         owf_buf_puts(&part, "<Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>");
+    if (comments) {
+        owf_buf_puts(&part, "<Override PartName=\"/word/comments.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml\"/>");
+        if (comments_ext)
+            owf_buf_puts(&part, "<Override PartName=\"/word/commentsExtended.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml\"/>");
+    }
     { int i; for(i=0;i<doc->nimages;++i){owf_buf_printf(&part,"<Override PartName=\"/word/media/image%d.%s\" ContentType=\"",i+1,docx_image_ext(&doc->images[i]));owf_buf_puts_xml(&part,doc->images[i].mime?doc->images[i].mime:"application/octet-stream");owf_buf_puts(&part,"\"/>");} }
     owf_buf_puts(&part, "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
                         "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>"
@@ -770,6 +883,11 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Relationship Id=\"rId5\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" Target=\"footer2.xml\"/>");
     if (header_left || footer_left || doc->track_changes)
         owf_buf_puts(&part, "<Relationship Id=\"rId6\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/>");
+    if (comments) {                                  /* 1.6 */
+        owf_buf_puts(&part, "<Relationship Id=\"rId7\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments\" Target=\"comments.xml\"/>");
+        if (comments_ext)
+            owf_buf_puts(&part, "<Relationship Id=\"rId8\" Type=\"http://schemas.microsoft.com/office/2011/relationships/commentsExtended\" Target=\"commentsExtended.xml\"/>");
+    }
     {
         int i,j;
         for(i=0;i<doc->body.nparas;++i)for(j=0;j<doc->body.paras[i].nruns;++j){
@@ -797,6 +915,17 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
     build_styles(&part, doc);
     if (result == OWF_OK)
         result = add_part(zip, &part, "word/styles.xml");
+
+    if (comments) {                                  /* 1.6 */
+        build_comments(&part, doc);
+        if (result == OWF_OK)
+            result = add_part(zip, &part, "word/comments.xml");
+        if (comments_ext) {
+            build_comments_extended(&part, doc);
+            if (result == OWF_OK)
+                result = add_part(zip, &part, "word/commentsExtended.xml");
+        }
+    }
 
     /* 1.3: a header's and a footer's pictures: their parts' own relationships, the same ids as the body's */
     {
