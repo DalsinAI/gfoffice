@@ -95,7 +95,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.17 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.18 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPUBLISHER"
 #define UNIT "Page"
 #define UNIT_UPPER "PAGE"
@@ -106,7 +106,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.23 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.24 (11.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -2985,6 +2985,36 @@ static void sorter_hide_picked(int hidden)
                                        : picked_words(n, UNIT " included in the show.", "%d " UNITS_LOWER " included in the show."));
 }
 
+/* Slide Transition... in the sorter: the transition chosen for every picked slide, one Undo step. */
+static void sorter_transition_picked(void)
+{
+    owf_transition transition;
+    int apply_all = 0, selected = current, i, n = 0, rc = 0;
+    if (!deck || current < 0 || current >= deck->nslides) return;
+    transition = deck->slides[pick.focus >= 0 && pick.focus < deck->nslides ? pick.focus : current].transition;
+    if (!transition_requester(&transition, &apply_all)) return;
+    if (apply_all) {
+        rc = opr_slide_set_transition(undo, deck, current, &transition, 1, &selected);
+        n = deck->nslides;
+    } else {
+        n = opr_pick_number(&pick);
+        if (opr_undo_group_begin(undo, n > 0 ? n : 1) < 0) rc = -1;
+        for (i = 0; !rc && i < deck->nslides; ++i)
+            if (opr_pick_has(&pick, i)) rc = opr_slide_set_transition(undo, deck, i, &transition, 0, NULL);
+        if (rc) opr_undo_group_cancel(undo, deck);
+        else if (opr_undo_group_end(undo) < 0) rc = -1;
+    }
+    if (rc == -2) {
+        tell(TRANSITION_TITLE, "Duration must be 0 to 600000 ms and automatic advance 0 to 86399999 ms.");
+        return;
+    }
+    if (rc < 0) {
+        tell(PROGRAM, "There is not enough memory to change the " UNIT_LOWER " transitions.");
+        return;
+    }
+    structure_changed(current, picked_words(n, UNIT " transition changed.", "Transition set on %d " UNITS_LOWER "."));
+}
+
 /* Move Up and Down in the sorter: the picked slides one place earlier or later, together. */
 static void sorter_nudge_picked(int direction)
 {
@@ -5766,6 +5796,7 @@ static void menu_action(ULONG id)
         case M_HIDE_SLIDE: sorter_hide_picked(1); return;
         case M_SHOW_SLIDE: sorter_hide_picked(0); return;
         case M_MOVE_SLIDE_UP: sorter_nudge_picked(-1); return;
+        case M_TRANSITION: sorter_transition_picked(); return;
         case M_MOVE_SLIDE_DOWN: sorter_nudge_picked(1); return;
         case M_SELECT_ALL:
             opr_pick_all(&pick);

@@ -1,5 +1,6 @@
 /* tests/arexx/presentation.rexx: GFOpenPresentation's ARexx port against amicradle-teams ARexx-RULE.md
-   (return codes 0/5/10/20, no requester holds up a command): open, edit, save, export, print, reopen.
+   (return codes 0/5/10/20, no requester holds up a command): open, edit, save, export, print, reopen,
+   and the slide sorter's commands on several slides.
    rx tests/arexx/presentation.rexx   (GFOpenPresentation running; prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
 port = 'GFOPENPRESENTATION'
@@ -76,6 +77,55 @@ CALL same 'SLIDES after reopening', res, 2
 CALL want 'SLIDE 1', 0
 CALL want 'GETTEXT' t, 0
 CALL same 'GETTEXT after reopening', res, 'Hello from ARexx'
+/* the slide sorter: pick several slides, move, copy, hide, delete, each one Undo step */
+CALL want 'VIEW', 0
+CALL same 'VIEW', res, 'NORMAL'
+CALL want 'VIEW SORTER', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after VIEW SORTER', res, 'SORTER'
+CALL want 'VIEW SIDEWAYS', 10
+CALL want 'PICK 1', 0
+CALL want 'PICKED', 0
+CALL same 'PICKED', res, '1'
+CALL want 'MOVEPICKED 3', 0                    /* slide 1 to after the last */
+CALL want 'PICKED', 0
+CALL same 'PICKED after MOVEPICKED', res, '2'
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 2', 0
+CALL want 'GETTEXT' t, 0
+CALL same 'GETTEXT of the moved slide', res, 'Hello from ARexx'
+CALL want 'VIEW SORTER', 0
+CALL want 'UNDO', 0
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 1', 0
+CALL want 'GETTEXT' t, 0
+CALL same 'GETTEXT after undoing the move', res, 'Hello from ARexx'
+CALL want 'VIEW SORTER', 0
+CALL want 'PICK ALL', 0
+CALL same 'PICK ALL', res, 2
+CALL want 'COPYPICKED', 0
+CALL same 'COPYPICKED', res, 4
+CALL want 'PICKED', 0
+CALL same 'PICKED after COPYPICKED', res, '3 4'
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after one UNDO of two copies', res, 2
+CALL want 'PICK 2', 0
+CALL want 'HIDEPICKED', 0
+CALL want 'SHOWPICKED', 0
+CALL want 'PICK 1 2', 0
+CALL want 'DELETEPICKED', 5                    /* the last slide stays */
+CALL want 'PICK 2', 0
+CALL want 'DELETEPICKED', 0
+CALL same 'DELETEPICKED', res, 1
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after UNDO of DELETEPICKED', res, 2
+CALL want 'PICK 0', 10
+CALL want 'PICK', 10
+CALL want 'MOVEPICKED 9', 10
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0
 CALL want 'DELETESLIDE', 5                     /* the last slide stays */
 CALL want 'DEACTIVATE', 5                      /* no icon to go to */
