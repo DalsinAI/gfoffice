@@ -4794,16 +4794,16 @@ static int rexx_do_command(const char *command, char **result_out)
      * USERFIELD name [value|-] answers the value (RC 5: none; "-" removes it); CROSSREF n [PAGE] refers to the
      * n-th heading (from 1); UPDATEFIELDS answers how many changed */
     else if(starts_word_ci(command,"INSERTFIELD",&arg)){static const char *const kinds[]={"PAGE","PAGES","DATE","TIME","TITLE","AUTHOR","SUBJECT","FILENAME","WORDS","CHAPTER","USER","REF","REFPAGE"};char kind[16];const char *rest=arg;int k,n=0,rc;char *u=NULL;
-        while(*rest&&*rest!=' '&&n<15)kind[n++]=(char)toupper((unsigned char)*rest++);kind[n]=0;rest=skip_space(rest);
+        while(*rest&&*rest!=' '&&n<15){kind[n++]=(char)toupper((unsigned char)*rest++);}kind[n]=0;rest=skip_space(rest);
         for(k=0;k<13&&strcmp(kinds[k],kind);++k);
         if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF or REFPAGE and a name");}
         else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
-    else if(starts_word_ci(command,"DOCINFO",&arg)){char what[16];const char *rest=arg;int n=0,k;while(*rest&&*rest!=' '&&n<15)what[n++]=(char)toupper((unsigned char)*rest++);what[n]=0;rest=skip_space(rest);
+    else if(starts_word_ci(command,"DOCINFO",&arg)){char what[16];const char *rest=arg;int n=0,k;while(*rest&&*rest!=' '&&n<15){what[n++]=(char)toupper((unsigned char)*rest++);}what[n]=0;rest=skip_space(rest);
         k=!strcmp(what,"TITLE")?0:!strcmp(what,"AUTHOR")?1:!strcmp(what,"SUBJECT")?2:-1;
         if(!editor||k<0){ok=0;snprintf(result,sizeof result,"DOCINFO takes TITLE, AUTHOR or SUBJECT, and a value to set");}
         else{const char *v;if(*rest){char *u=comment_utf8(!strcmp(rest,"\"\"")?"":rest);ok=u&&ow_editor_set_doc_info(editor,(ow_doc_info)k,u)==OWF_OK;free(u);if(ok){fields_update();update_window_title();request_document_redraw();}}
             v=ow_editor_doc_info(editor,(ow_doc_info)k);if(ok)to_latin1(v?v:"",v?strlen(v):0,result,sizeof result);else snprintf(result,sizeof result,"Failed");}}
-    else if(starts_word_ci(command,"USERFIELD",&arg)){char name[64];const char *rest=arg,*now=NULL;int n=0,i,rc=OWF_OK;char *un;while(*rest&&*rest!=' '&&n<63)name[n++]=*rest++;name[n]=0;rest=skip_space(rest);
+    else if(starts_word_ci(command,"USERFIELD",&arg)){char name[64];const char *rest=arg,*now=NULL;int n=0,i,rc=OWF_OK;char *un;while(*rest&&*rest!=' '&&n<63){name[n++]=*rest++;}name[n]=0;rest=skip_space(rest);
         if(!editor||!name[0]){ok=0;snprintf(result,sizeof result,"USERFIELD needs a name");}
         else if(!(un=comment_utf8(name))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
         else{if(*rest){if(!strcmp(rest,"-"))rc=ow_editor_set_user_field(editor,un,NULL);else{char *uv=comment_utf8(rest);rc=uv?ow_editor_set_user_field(editor,un,uv):OWF_ERR_MEMORY;free(uv);}if(rc==OWF_OK){fields_update();request_document_redraw();}}
