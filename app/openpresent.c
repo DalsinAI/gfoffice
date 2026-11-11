@@ -445,6 +445,12 @@ static void draw_status(void);
 static void layout(void);
 static void insert_picture(void);
 static void update_ruler(void);
+static int picks(int *out);
+static int picks_together(void);
+static void twip_pixel_box(const int t[4], box *b);
+static void picks_status(void);
+static void toggle_pick(int obj);
+static void start_multi_drag(int band, int mx, int my);
 static void delete_selected_object(void);
 
 /* ---- Small helpers ---- */
