@@ -1363,6 +1363,8 @@ int opr_undo_group_begin(opr_undo *u, int most)
     return 0;
 }
 
+static void structural_push(opr_undo *u, snapshot *s);
+
 int opr_undo_group_cancel(opr_undo *u, owf_deck *deck)
 {
     int i, rc = 0;
