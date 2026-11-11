@@ -14,6 +14,7 @@ working. Phase 1's target is 74%.
 | 11 Nov 2026 | C3 Scenarios | 68% |
 | 11 Nov 2026 | C4 Consolidate | 69% |
 | 11 Nov 2026 | C5 Names manager, advanced filter | 71% |
+| 11 Nov 2026 | C6 Multiple Operations kept live | 72% |
 
 ## Phase 1 features
 
@@ -24,7 +25,7 @@ working. Phase 1's target is 74%.
 | Scenarios | Done | C3 | Add, show, update, delete; up to 32 a sheet, 32 ranges and 2048 cells each; a formula kept as its value, as Excel keeps it; ranges follow row and column edits; ODS `table:scenario` tables and XLSX `scenarios` both ways; ARexx SCENARIO; Undo. Not yet: the scenario frame and drop-down on the sheet, a summary report, protection |
 | Consolidate | Done | C4 | Up to 16 sources on any sheets; the eleven functions; by position or by row labels, column labels or both (case aside, labels in first-seen order); linked (formulas over the sources) or values; settings kept on the sheet for the window; ARexx CONSOLIDATE; Undo. Not yet: a linked table that grows when its sources grow, picking a source from a list of named ranges (names can be typed) |
 | Named-range and database-range manager, advanced filter | Done (most) | C5 | Manage Names: list, add, change (name, formula, scope in one step; uses follow a rename), delete; ARexx NAMES, NAMEDEFINE, NAMERENAME, NAMEDELETE. Advanced filter: criteria range (AND across, OR down; <, <=, >, >=, <>, =, begins-with, wildcards), in place or copied to any sheet, unique rows; ARexx ADVFILTER; Undo. Not yet: database ranges as their own objects (a named range serves), criteria formulas (=C2>AVERAGE(C:C)), a rename followed into charts, validation and conditional formats |
-| Automatic data-table (Multiple Operations) recalc | Part | C6 | |
+| Automatic data-table (Multiple Operations) recalc | Done (most) | C6 | Every table worked out again after each change (edits, Undo, Redo, ARexx), no Undo step of its own; ARexx MULTIOP. Not yet: live past 4096 results or 20,000 cells (Refresh by hand there), tables as true formula arrays (MULTIPLE.OPERATIONS) in ODS |
 
 ## How C1 was checked
 
@@ -78,3 +79,11 @@ working. Phase 1's target is 74%.
   refused criteria, destination and lists. Also under AddressSanitizer and
   UBSan.
 - Instance-32 lab copy: tests/arexx/calc-names.rexx; see the pull request.
+
+## How C6 was checked
+
+- Host tests (tests/calc_core): a column table follows its model changing on
+  another sheet and a trial changing, with no work when nothing changed; Undo
+  and Redo of the edits (the table follows, Redo is kept); the unsaved flag.
+  Also under AddressSanitizer and UBSan.
+- Instance-32 lab copy: tests/arexx/calc-multiop.rexx; see the pull request.

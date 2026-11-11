@@ -4895,6 +4895,44 @@ static void test_multiple_operations(void)
     oc_core_free(core);
 }
 
+static void test_multiple_operations_auto(void)
+{
+    oc_core *core = fresh();
+    owf_range selected;
+    if (!core)
+        return;
+    enter_at(core, "A1", "1");
+    enter_at(core, "A2", "2");
+    enter_at(core, "A3", "3");
+    CHECK(oc_core_add_sheet(core, "Model") == 1);
+    enter_at(core, "D1", "0");
+    enter_at(core, "E1", "1");
+    enter_at(core, "C1", "=D1*D1+E1");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_parse_range("A1:A3", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_multiple_operations(core, 1, 0, 2, 1, 0, 3) == OWF_OK);
+    CHECK(num(core, "B1") == 2 && num(core, "B2") == 5 && num(core, "B3") == 10);
+    CHECK(oc_core_auto_multiple_operations(core) == 0);        /* nothing changed since */
+
+    /* the model changes: the table follows, with no Undo step of its own */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    enter_at(core, "E1", "10");
+    CHECK(oc_core_auto_multiple_operations(core) == 1 && oc_core_sheet(core) == 1);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(num(core, "B1") == 11 && num(core, "B2") == 14 && num(core, "B3") == 19);
+    CHECK(oc_core_auto_multiple_operations(core) == 0);
+    /* a trial changes */
+    enter_at(core, "A3", "4");
+    CHECK(oc_core_auto_multiple_operations(core) == 1 && num(core, "B3") == 26);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_auto_multiple_operations(core) == 1 && num(core, "B3") == 19);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_auto_multiple_operations(core) == 1 && num(core, "B3") == 10);
+    CHECK(oc_core_can_redo(core));                              /* working out kept Redo */
+    CHECK(oc_core_redo(core) == OWF_OK && oc_core_auto_multiple_operations(core) == 1 && num(core, "B3") == 19);
+    CHECK(oc_core_is_dirty(core));
+    oc_core_free(core);
+}
+
 static void test_multiple_operations_2d(void)
 {
     oc_core *core = fresh();
@@ -5977,6 +6015,7 @@ int main(void)
     test_files();
     test_goal_seek();
     test_multiple_operations();
+    test_multiple_operations_auto();
     test_multiple_operations_2d();
     test_multiple_operations_multi();
     test_subtotals();

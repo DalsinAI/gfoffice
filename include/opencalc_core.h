@@ -147,6 +147,8 @@ void oc_cell_name(unsigned row, unsigned col, char *out);
 /* "B12", "$B$12", "B2:D8", "B:D" (columns), "3:5" (rows): 1 and the range,
  * or 0. */
 int oc_parse_range(const char *text, owf_range *range);
+/* "B2:C4" on the sheet showing, or "'Plan'!B2": 1 with its sheet and range. */
+int oc_core_sheet_range(const oc_core *core, const char *text, int *sheet, owf_range *range);
 
 /* Workbook and sheet-local defined names. A sheet of -1 is workbook-wide;
  * otherwise it is the zero-based sheet that owns the local name. set updates
@@ -452,6 +454,16 @@ int oc_core_multiple_operations_multi(oc_core *core,
  * Table/formula/input references are stored as hidden sheet-scoped names and
  * follow structural edits through XLSX/ODS. One whole-book Undo step. */
 int oc_core_refresh_multiple_operations(oc_core *core);
+/* Works every table out again when the book has changed since the last
+ * call, as Apache Calc keeps its tables live: a program calls it after each
+ * command. Only when the tables have at most OC_MULTIOP_AUTO_TRIALS results
+ * together and the book at most OC_MULTIOP_AUTO_CELLS cells (otherwise
+ * Refresh does it by hand), and not while a cell is being edited. It is not
+ * an Undo step, and leaves Undo, Redo, the selections and the unsaved-changes
+ * flag as they were. 1 when a table was worked out again. */
+#define OC_MULTIOP_AUTO_TRIALS 4096UL
+#define OC_MULTIOP_AUTO_CELLS 20000UL
+int oc_core_auto_multiple_operations(oc_core *core);
 
 /* ---- Commands on the selection (each one undo step) ---- */
 
