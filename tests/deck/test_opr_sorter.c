@@ -83,8 +83,8 @@ static void picking(void)
           p.anchor == 5, "a toggle adds one and moves the anchor");
     CHECK(!opr_pick_click(&p, 1, OPR_PICK_TOGGLE) && !opr_pick_has(&p, 1) && opr_pick_number(&p) == 3,
           "a toggle takes one out");
-    CHECK(!opr_pick_click(&p, 3, OPR_PICK_ADD_RANGE) && opr_pick_number(&p) == 5 && !opr_pick_has(&p, 1),
-          "Shift with a toggle adds the range to the rest");
+    CHECK(!opr_pick_click(&p, 3, OPR_PICK_ADD_RANGE) && opr_pick_number(&p) == 5 && opr_pick_has(&p, 1) &&
+          opr_pick_has(&p, 5) && !opr_pick_has(&p, 4), "Shift with a toggle adds the anchor's range to the rest");
     CHECK(opr_pick_click(&p, 6, OPR_PICK_ONE) == -1 && opr_pick_click(&p, -1, OPR_PICK_ONE) == -1,
           "no slide outside the deck");
     opr_pick_all(&p);

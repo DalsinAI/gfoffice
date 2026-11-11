@@ -16,6 +16,11 @@
  * from OpenLayout's shared display metadata. Pictures go through datatypes,
  * as GFOpenWrite's do.
  *
+ * View > Slide Sorter shows every slide as a thumbnail in a grid instead
+ * (src/deck/opr_sorter.c): click, Shift and Ctrl pick several, a drag moves
+ * them, and the Slide menu's commands work on all the picked slides, each
+ * one Undo step.
+ *
  * Chrome: GFOpenGadTools' toolbar with the Chrome icon set
  * (ogt_iconset_attach), status bar and list, in the theme
  * (gfopengadtools docs/style/README.md). 68040, no FPU needed.
@@ -142,7 +147,8 @@ enum {
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_SHOW_GRID, M_SNAP_GRID, M_SHOW_GUIDES, M_SNAP_GUIDES,
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
-    M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP
+    M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
+    M_VIEW_NORMAL, M_VIEW_SORTER
 };
 
 static struct NewMenu menus[] = {
@@ -262,6 +268,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Move " UNIT " Down", NULL, 0, 0, (APTR)M_MOVE_SLIDE_DOWN },
 
     { NM_TITLE, "View", NULL, 0, 0, NULL },
+    { NM_ITEM, "Normal", NULL, CHECKIT | CHECKED, ~1 & 3, (APTR)M_VIEW_NORMAL },
+    { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 3, (APTR)M_VIEW_SORTER },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First " UNIT, NULL, 0, 0, (APTR)M_FIRST },
     { NM_ITEM, "Previous " UNIT, "[", 0, 0, (APTR)M_PREV },
     { NM_ITEM, "Next " UNIT, "]", 0, 0, (APTR)M_NEXT },
@@ -370,6 +379,17 @@ static char status[320] = "Ready.";
 static opr_undo *undo;
 
 /* The selected slide object, and typing within it. */
+/* The slide sorter (View > Slide Sorter): the grid of thumbnails fills the view, the picked slides are the
+ * ones the Slide menu works on, and a drag moves them. */
+static int sorter_view;
+static int sorter_columns;                           /* 0: as many as fit */
+static int sorter_scroll;
+static opr_sorter_grid sorter;
+static opr_pick pick;
+static struct { int active, dragging, x0, y0, gap, hit, plain; } sorter_drag;
+static ULONG sorter_click_secs, sorter_click_micros;
+static int sorter_click_index = -1;
+
 static int selected_obj = -1;
 static int edit_obj = -1;
 static opr_pos caret;
@@ -1507,7 +1527,7 @@ static void draw_picture(struct RastPort *rp, const picture *c, int bx, int by, 
  * so a change lays out that slide again and no other. */
 
 #define TW(v) ((ol_unit)(v) * OL_UNITS_PER_TWIP)
-#define LAID_MAX 8
+#define LAID_MAX 24                                  /* the slide sorter shows about twenty */
 static struct { int slide; unsigned long version; opr_slide *s; ULONG used; } laid[LAID_MAX];
 static unsigned long *versions;                      /* a count of each slide's changes */
 static int nversions;
@@ -2117,6 +2137,120 @@ static void thumb_draw(void *user, int index, struct RastPort *rp, int x, int y,
     ogt_text(rp, ogt_pen(&ctx, "muted"), x + (w - ogt_text_width(rp, num)) / 2, ty + th + 3, num, 0);
 }
 
+/* ---- The slide sorter ---- */
+
+static void sorter_pick_fit(void)
+{
+    int n = deck ? deck->nslides : 0;
+    if (opr_pick_resize(&pick, n) < 0) return;
+    if (n && !opr_pick_number(&pick)) opr_pick_only(&pick, current >= 0 && current < n ? current : 0);
+    if (n && !opr_pick_has(&pick, pick.focus)) pick.focus = current;
+}
+
+/* The grid in the view, with a scroller down the right when it is taller than the view. */
+static void sorter_place(void)
+{
+    int n = deck ? deck->nslides : 0, sw = 0, sh = 0;
+    free_scrollers();
+    if (deck) { sw = deck->width; sh = deck->height; }
+    if (view_box.w < 8 || view_box.h < 8 || sw < 1 || sh < 1 ||
+        opr_sorter_layout(&sorter, view_box.w, view_box.h, sw, sh, n, sorter_columns, fh + 6) < 0) {
+        memset(&sorter, 0, sizeof sorter);
+        return;
+    }
+    if (sorter.content_h > view_box.h &&
+        opr_sorter_layout(&sorter, view_box.w - SCROLLER, view_box.h, sw, sh, n, sorter_columns, fh + 6) == 0) {
+        sorter_scroll = opr_sorter_clamp_scroll(&sorter, sorter_scroll);
+        vscroll = (struct Gadget *)NewObject(NULL, (UBYTE *)"propgclass",
+            GA_Left, view_box.x + view_box.w - SCROLLER + 1, GA_Top, view_box.y, GA_Width, SCROLLER - 2,
+            GA_Height, view_box.h, GA_ID, GID_VSCROLL, GA_RelVerify, TRUE, GA_Immediate, TRUE, PGA_Freedom, FREEVERT,
+            PGA_NewLook, TRUE, PGA_Borderless, TRUE, PGA_Total, (ULONG)sorter.content_h, PGA_Visible, (ULONG)view_box.h,
+            PGA_Top, (ULONG)sorter_scroll, ICA_TARGET, ICTARGET_IDCMP, TAG_DONE);
+        if (vscroll) AddGadget(win, vscroll, (UWORD)~0);
+    } else {
+        sorter_scroll = 0;
+    }
+}
+
+static void sorter_scroller_follow(void)
+{
+    if (vscroll) SetGadgetAttrs(vscroll, win, NULL, PGA_Top, (ULONG)sorter_scroll, TAG_DONE);
+}
+
+static void draw_sorter_mark(int gap, int on)
+{
+    int x, y, h;
+    struct RastPort *rp = win->RPort;
+    if (opr_sorter_gap_mark(&sorter, gap, sorter_scroll, &x, &y, &h) < 0) return;
+    x += view_box.x - 1;
+    y += view_box.y;
+    if (y < view_box.y) { h -= view_box.y - y; y = view_box.y; }
+    if (y + h > view_box.y + view_box.h) h = view_box.y + view_box.h - y;
+    if (h <= 0 || x < view_box.x || x + 3 > view_box.x + view_box.w) return;
+    if (on) ogt_box(rp, ogt_pen(&ctx, "accent"), x, y, 3, h);
+    else ogt_fill(&ctx, rp, "window", x, y, 3, h);
+}
+
+/* Every slide in view as a thumbnail, its number under it; the picked ones framed in the accent colour, the
+ * one the keys move from with a second frame. */
+static void draw_sorter(void)
+{
+    struct RastPort *rp;
+    struct Region *region = NULL, *old = NULL;
+    struct Rectangle r;
+    int i, vw;
+    if (!win) return;
+    rp = win->RPort;
+    vw = view_box.w - (vscroll ? SCROLLER : 0);
+    r.MinX = (WORD)view_box.x;
+    r.MinY = (WORD)view_box.y;
+    r.MaxX = (WORD)(view_box.x + vw - 1);
+    r.MaxY = (WORD)(view_box.y + view_box.h - 1);
+    if (r.MaxX < r.MinX || r.MaxY < r.MinY) return;
+    if (LayersBase && (region = NewRegion()) != NULL) {
+        if (OrRectRegion(region, &r)) old = InstallClipRegion(win->WLayer, region);
+        else { DisposeRegion(region); region = NULL; }
+    }
+    ogt_fill(&ctx, rp, "window", view_box.x, view_box.y, vw, view_box.h);
+    if (!deck || !deck->nslides) {
+        ogt_text(rp, ogt_pen(&ctx, "muted"), view_box.x + 16, view_box.y + 16, "No " UNITS_LOWER ".", vw - 32);
+    }
+    for (i = 0; deck && i < deck->nslides && sorter.columns > 0; ++i) {
+        int x, y, tw = sorter.thumb_w, th = sorter.thumb_h, picked;
+        char num[40];
+        ol_pixel_rect clip;
+        opr_slide *sl;
+        if (opr_sorter_cell(&sorter, i, sorter_scroll, &x, &y) < 0) continue;
+        if (y + sorter.cell_h < 0 || y > view_box.h) continue;
+        x += view_box.x;
+        y += view_box.y;
+        picked = opr_pick_has(&pick, i);
+        ogt_box(rp, ogt_pen(&ctx, "track"), x + 3, y + 3, tw, th);
+        sl = laid_get(i);
+        clip.x = x > view_box.x ? x : view_box.x;
+        clip.y = y > view_box.y ? y : view_box.y;
+        clip.width = x + tw - clip.x;
+        clip.height = (y + th < view_box.y + view_box.h ? y + th : view_box.y + view_box.h) - clip.y;
+        if (clip.width > 0 && clip.height > 0) paint_slide(rp, sl, x, y, tw, &clip, tw < 240, NULL);
+        ogt_frame(rp, ogt_pen(&ctx, picked ? "accent" : "group.line"), x, y, tw, th);
+        if (picked) {
+            ogt_frame(rp, ogt_pen(&ctx, "accent"), x - 1, y - 1, tw + 2, th + 2);
+            ogt_frame(rp, ogt_pen(&ctx, "accent"), x - 2, y - 2, tw + 4, th + 4);
+        }
+        if (i == pick.focus) ogt_frame(rp, ogt_pen(&ctx, "label"), x - 4, y - 4, tw + 8, th + 8);
+        snprintf(num, sizeof num, "%d%s", i + 1, deck->slides[i].hidden ? " (hidden)" : "");
+        SetFont(rp, font);
+        ogt_text(rp, ogt_pen(&ctx, picked ? "text" : "muted"), x + (tw - ogt_text_width(rp, num)) / 2, y + th + 4,
+                 num, tw);
+    }
+    if (sorter_drag.dragging) draw_sorter_mark(sorter_drag.gap, 1);
+    if (region) {
+        InstallClipRegion(win->WLayer, old);
+        DisposeRegion(region);
+    }
+    if (vscroll) RefreshGList(vscroll, win, NULL, 1);
+}
+
 static void free_gadgets(void)
 {
     if (!win) return;
@@ -2142,20 +2276,22 @@ static void layout(void)
     status_box = (box){ area.x, area.y + area.h - fh - 10, area.w, fh + 10 };
     body_y = toolbar_box.y + toolbar_box.h;
     body_h = status_box.y - body_y;
-    /* the slides beside the slide, hidden in a narrow window (as GFOpenWrite's navigator) */
-    stripw = area.w >= 480 ? (area.w < 1000 ? 140 : area.w / 7) : 0;
+    /* the slides beside the slide, hidden in a narrow window (as GFOpenWrite's navigator); the sorter is the
+       slides, so neither the strip nor the ruler is there */
+    stripw = sorter_view ? 0 : area.w >= 480 ? (area.w < 1000 ? 140 : area.w / 7) : 0;
     strip_box = (box){ area.x, body_y, stripw, body_h };
     view_x = area.x + stripw + (stripw ? 1 : 0);
     view_w = area.w - stripw - (stripw ? 1 : 0);
-    ruler_h = fh + 12;
+    ruler_h = sorter_view ? 0 : fh + 12;
     if (ruler_h > body_h / 3) ruler_h = body_h / 3;
     ruler_box = (box){ view_x, body_y, view_w, ruler_h };
     view_box = (box){ view_x, body_y + ruler_h, view_w, body_h - ruler_h };
     place_slide();
-    update_ruler();
+    if (!sorter_view) update_ruler();
     if ((chain = ogt_toolbar_gadgets(&tb, GID_TOOLBAR)))
         AddGList(win, chain, ~0, -1, NULL);
-    make_scrollers();
+    if (sorter_view) sorter_place();
+    else make_scrollers();
     if (stripw && (strip = ogt_list_new(win, &ctx, GID_SLIDES, thumb_height, thumb_draw, NULL, NULL, "list"))) {
         ogt_list_layout(strip, strip_box.x + 4, strip_box.y + 4, strip_box.w - 8, strip_box.h - 8);
         ogt_list_set_count(strip, deck ? deck->nslides : 0);
@@ -2239,7 +2375,8 @@ static void draw_status(void)
     ogt_status_set(&sbar, 2, status);
     {
         char z[16];
-        if (zoom == 100) snprintf(z, sizeof z, "Fit");
+        if (sorter_view) snprintf(z, sizeof z, "Sorter");
+        else if (zoom == 100) snprintf(z, sizeof z, "Fit");
         else snprintf(z, sizeof z, "%d%%", zoom);
         ogt_status_set(&sbar, 3, z);
     }
@@ -2420,6 +2557,10 @@ static void draw_slide_part(const box *part)
     ol_scale sc;
     ol_pixel_rect clip;
     if (!win) return;
+    if (sorter_view) {
+        draw_sorter();
+        return;
+    }
     rp = win->RPort;
     if (!part) {
         /* the window's own colour around the slide, so the slide stands out */
@@ -2488,7 +2629,8 @@ static void draw_slide_part(const box *part)
 
 static void draw_slide(void)
 {
-    draw_slide_part(NULL);
+    if (sorter_view) draw_sorter();
+    else draw_slide_part(NULL);
 }
 
 static void draw_all(void)
@@ -2537,6 +2679,20 @@ static void show_slide(int index)
     if (index >= deck->nslides) index = deck->nslides - 1;
     if (index != current) clear_object_selection();
     current = index;
+    if (sorter_view) {
+        int was = sorter_scroll;
+        char msg[64];
+        sorter_pick_fit();
+        if (!opr_pick_has(&pick, current)) opr_pick_only(&pick, current);
+        pick.focus = current;
+        sorter_scroll = opr_sorter_scroll_to(&sorter, current, sorter_scroll);
+        if (sorter_scroll != was) sorter_scroller_follow();
+        snprintf(msg, sizeof msg, UNIT " %d.", current + 1);
+        set_status(msg);
+        draw_sorter();
+        draw_status();
+        return;
+    }
     if (strip) {
         ogt_list_select(strip, current);
         ogt_list_show(strip, current);
@@ -2564,10 +2720,21 @@ static void structure_changed(int selected, const char *message)
     else if (selected < 0) current = 0;
     else if (selected >= deck->nslides) current = deck->nslides - 1;
     else current = selected;
+    sorter_pick_fit();
+    if (!opr_pick_has(&pick, current)) opr_pick_only(&pick, current);
+    pick.focus = current;
     dirty = 1;
     update_window_title();
     set_status(message);
     relayout();
+    if (sorter_view) {
+        int to = opr_sorter_scroll_to(&sorter, current, sorter_scroll);
+        if (to != sorter_scroll) {
+            sorter_scroll = to;
+            sorter_scroller_follow();
+            draw_sorter();
+        }
+    }
 }
 
 static void new_slide(void)
@@ -2689,6 +2856,272 @@ static void edit_current_transition(void)
         return;
     }
     structure_changed(selected, apply_all ? "Transition applied to all " UNITS_LOWER "." : UNIT " transition changed.");
+}
+
+/* ---- The slide sorter's commands: on every picked slide, each one Undo step ---- */
+
+static struct MenuItem *menu_item_for(ULONG id)
+{
+    struct Menu *m;
+    struct MenuItem *it, *sub;
+    for (m = menu; m; m = m->NextMenu)
+        for (it = m->FirstItem; it; it = it->NextItem) {
+            if ((ULONG)GTMENUITEM_USERDATA(it) == id) return it;
+            for (sub = it->SubItem; sub; sub = sub->NextItem)
+                if ((ULONG)GTMENUITEM_USERDATA(sub) == id) return sub;
+        }
+    return NULL;
+}
+
+/* The View menu's tick on Normal or the sorter, and the menus that need a slide in front of them. */
+static void update_view_menus(void)
+{
+    struct MenuItem *normal = menu_item_for(M_VIEW_NORMAL), *sorted = menu_item_for(M_VIEW_SORTER);
+    if (!win || !menu) return;
+    ClearMenuStrip(win);
+    if (normal) normal->Flags = (UWORD)(sorter_view ? normal->Flags & ~CHECKED : normal->Flags | CHECKED);
+    if (sorted) sorted->Flags = (UWORD)(sorter_view ? sorted->Flags | CHECKED : sorted->Flags & ~CHECKED);
+    ResetMenuStrip(win, menu);
+    /* Format, Insert and Object work on what is on the slide in front of you */
+    if (sorter_view) { OffMenu(win, FULLMENUNUM(2, NOITEM, NOSUB)); OffMenu(win, FULLMENUNUM(3, NOITEM, NOSUB));
+                       OffMenu(win, FULLMENUNUM(4, NOITEM, NOSUB)); }
+    else { OnMenu(win, FULLMENUNUM(2, NOITEM, NOSUB)); OnMenu(win, FULLMENUNUM(3, NOITEM, NOSUB));
+           OnMenu(win, FULLMENUNUM(4, NOITEM, NOSUB)); }
+}
+
+static void set_view(int sorted)
+{
+    sorted = sorted != 0;
+    if (sorted == sorter_view) { update_view_menus(); return; }
+    clear_object_selection();
+    memset(&sorter_drag, 0, sizeof sorter_drag);
+    sorter_view = sorted;
+    if (sorted) {
+        sorter_pick_fit();
+        if (!opr_pick_has(&pick, current)) opr_pick_only(&pick, current);
+        pick.focus = current;
+    }
+    update_view_menus();
+    set_status(sorted ? UNIT " Sorter: drag to move; Shift and Ctrl pick several; Return opens one."
+                      : "Normal view.");
+    relayout();
+    if (sorted) {
+        sorter_scroll = opr_sorter_scroll_to(&sorter, current, sorter_scroll);
+        sorter_scroller_follow();
+        draw_sorter();
+    }
+}
+
+static void sorter_open(int index)
+{
+    if (!deck || index < 0 || index >= deck->nslides) return;
+    current = index;
+    set_view(0);
+    show_slide(index);
+}
+
+static const char *picked_words(int n, const char *one, const char *many)
+{
+    static char text[96];
+    if (n == 1) snprintf(text, sizeof text, "%s", one);
+    else snprintf(text, sizeof text, many, n);
+    return text;
+}
+
+static void sorter_move_picked(int gap)
+{
+    int selected = current, rc, n = opr_pick_number(&pick), i, first = -1, last = -1, before = 0;
+    for (i = 0; deck && i < deck->nslides; ++i)
+        if (opr_pick_has(&pick, i)) {
+            if (first < 0) first = i;
+            last = i;
+            if (i < gap) before++;
+        }
+    if (n && last - first == n - 1 && first == gap - before) {
+        /* dropped where they already are */
+        set_status("Nothing moved.");
+        draw_sorter();
+        draw_status();
+        return;
+    }
+    rc = opr_sorter_move(undo, deck, &pick, gap, &selected);
+    if (rc == -2) { set_status("Pick a " UNIT_LOWER " first."); draw_status(); return; }
+    if (rc < 0) { tell(PROGRAM, "There is not enough memory to move the " UNITS_LOWER "."); relayout(); return; }
+    structure_changed(selected, picked_words(n, UNIT " moved.", "%d " UNITS_LOWER " moved."));
+}
+
+static void sorter_duplicate_picked(void)
+{
+    int selected = current, n = opr_pick_number(&pick), rc = opr_sorter_duplicate(undo, deck, &pick, &selected);
+    if (rc < 0) { tell(PROGRAM, "There is not enough memory to duplicate the " UNITS_LOWER "."); relayout(); return; }
+    structure_changed(selected, picked_words(n, UNIT " duplicated.", "%d " UNITS_LOWER " duplicated."));
+}
+
+static void sorter_delete_picked(void)
+{
+    int selected = current, n = opr_pick_number(&pick), rc;
+    if (deck && n >= deck->nslides) {
+        tell(PROGRAM, "A " DOCUMENT_LOWER " must keep at least one " UNIT_LOWER ".");
+        return;
+    }
+    rc = opr_sorter_delete(undo, deck, &pick, &selected);
+    if (rc < 0) { tell(PROGRAM, "The " UNITS_LOWER " could not be deleted."); relayout(); return; }
+    structure_changed(selected, picked_words(n, UNIT " deleted.", "%d " UNITS_LOWER " deleted."));
+}
+
+static void sorter_hide_picked(int hidden)
+{
+    int selected = current, n = opr_pick_number(&pick), rc, i, changes = 0;
+    for (i = 0; deck && i < deck->nslides; ++i)
+        if (opr_pick_has(&pick, i) && deck->slides[i].hidden != (hidden != 0)) changes++;
+    if (!changes) {
+        set_status(hidden ? "Already hidden." : "Already in the show.");
+        draw_status();
+        return;
+    }
+    rc = opr_sorter_set_hidden(undo, deck, &pick, hidden, &selected);
+    if (rc < 0) { tell(PROGRAM, "The " UNITS_LOWER "' show setting could not be changed."); return; }
+    structure_changed(selected, hidden ? picked_words(n, UNIT " hidden from the show.", "%d " UNITS_LOWER " hidden from the show.")
+                                       : picked_words(n, UNIT " included in the show.", "%d " UNITS_LOWER " included in the show."));
+}
+
+/* Move Up and Down in the sorter: the picked slides one place earlier or later, together. */
+static void sorter_nudge_picked(int direction)
+{
+    int first = -1, last = -1, i;
+    for (i = 0; deck && i < deck->nslides; ++i)
+        if (opr_pick_has(&pick, i)) { if (first < 0) first = i; last = i; }
+    if (first < 0) return;
+    if (direction < 0 ? first == 0 : last == deck->nslides - 1) {
+        set_status(direction < 0 ? "Already the first " UNITS_LOWER "." : "Already the last " UNITS_LOWER ".");
+        draw_status();
+        return;
+    }
+    sorter_move_picked(direction < 0 ? first - 1 : last + 2);
+}
+
+static void sorter_columns_step(int dir)
+{
+    int cols = sorter.columns > 0 ? sorter.columns : 1;
+    cols -= dir;                                     /* zoom in: bigger thumbnails, fewer columns */
+    if (cols < 1) cols = 1;
+    if (cols > OPR_SORTER_MAX_COLUMNS) cols = OPR_SORTER_MAX_COLUMNS;
+    sorter_columns = cols;
+    relayout();
+    sorter_scroll = opr_sorter_scroll_to(&sorter, current, sorter_scroll);
+    sorter_scroller_follow();
+    draw_sorter();
+}
+
+static void sorter_mouse_down(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
+{
+    int hit, shift = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0, ctrl = (qual & IEQUALIFIER_CONTROL) != 0;
+    if (mx < view_box.x || my < view_box.y || mx >= view_box.x + view_box.w - (vscroll ? SCROLLER : 0) ||
+        my >= view_box.y + view_box.h || !deck)
+        return;
+    hit = opr_sorter_hit(&sorter, mx - view_box.x, my - view_box.y, sorter_scroll);
+    memset(&sorter_drag, 0, sizeof sorter_drag);
+    if (hit < 0) return;
+    if (!shift && !ctrl && hit == sorter_click_index &&
+        DoubleClick(sorter_click_secs, sorter_click_micros, secs, micros)) {
+        sorter_click_index = -1;
+        sorter_open(hit);
+        return;
+    }
+    sorter_click_index = hit;
+    sorter_click_secs = secs;
+    sorter_click_micros = micros;
+    sorter_pick_fit();
+    if (shift) opr_pick_click(&pick, hit, ctrl ? OPR_PICK_ADD_RANGE : OPR_PICK_RANGE);
+    else if (ctrl) opr_pick_click(&pick, hit, OPR_PICK_TOGGLE);
+    else if (!opr_pick_has(&pick, hit)) opr_pick_only(&pick, hit);
+    else pick.focus = hit;                           /* a picked one: the drag takes them all; a click, it alone */
+    current = hit;
+    sorter_drag.active = opr_pick_has(&pick, hit);
+    sorter_drag.x0 = mx;
+    sorter_drag.y0 = my;
+    sorter_drag.hit = hit;
+    sorter_drag.plain = !shift && !ctrl;
+    sorter_drag.gap = -1;
+    draw_sorter();
+    draw_status();
+}
+
+static void sorter_mouse_move(int mx, int my)
+{
+    int gap, dy = 0;
+    if (!sorter_drag.active) return;
+    if (!sorter_drag.dragging) {
+        if (abs(mx - sorter_drag.x0) < 5 && abs(my - sorter_drag.y0) < 5) return;
+        sorter_drag.dragging = 1;
+        set_status(picked_words(opr_pick_number(&pick), "Drop the " UNIT_LOWER " where it should go.",
+                                "Drop the %d " UNITS_LOWER " where they should go."));
+        draw_status();
+    }
+    /* near the top or bottom edge, the grid scrolls */
+    if (my < view_box.y + 12) dy = -(sorter.cell_h / 3 + 1);
+    else if (my > view_box.y + view_box.h - 12) dy = sorter.cell_h / 3 + 1;
+    if (dy) {
+        int to = opr_sorter_clamp_scroll(&sorter, sorter_scroll + dy);
+        if (to != sorter_scroll) {
+            sorter_scroll = to;
+            sorter_drag.gap = opr_sorter_gap(&sorter, mx - view_box.x, my - view_box.y, sorter_scroll);
+            sorter_scroller_follow();
+            draw_sorter();
+            return;
+        }
+    }
+    gap = opr_sorter_gap(&sorter, mx - view_box.x, my - view_box.y, sorter_scroll);
+    if (gap == sorter_drag.gap) return;
+    if (sorter_drag.gap >= 0) draw_sorter_mark(sorter_drag.gap, 0);
+    sorter_drag.gap = gap;
+    draw_sorter_mark(gap, 1);
+}
+
+static void sorter_mouse_up(int mx, int my)
+{
+    int was_dragging = sorter_drag.dragging, gap = sorter_drag.gap;
+    if (!sorter_drag.active) return;
+    sorter_drag.active = sorter_drag.dragging = 0;
+    if (was_dragging) {
+        if (gap < 0) gap = opr_sorter_gap(&sorter, mx - view_box.x, my - view_box.y, sorter_scroll);
+        sorter_move_picked(gap);
+        return;
+    }
+    if (sorter_drag.plain && opr_pick_number(&pick) > 1) {
+        opr_pick_only(&pick, sorter_drag.hit);
+        draw_sorter();
+    }
+}
+
+static void sorter_key(UWORD code, UWORD qual)
+{
+    int shift = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0, to;
+    opr_sorter_key key;
+    switch (code) {
+    case 0x4f: key = OPR_SORTER_LEFT; break;
+    case 0x4e: key = OPR_SORTER_RIGHT; break;
+    case 0x4c: key = qual & (IEQUALIFIER_LALT | IEQUALIFIER_RALT) ? OPR_SORTER_PAGE_UP : OPR_SORTER_UP; break;
+    case 0x4d: key = qual & (IEQUALIFIER_LALT | IEQUALIFIER_RALT) ? OPR_SORTER_PAGE_DOWN : OPR_SORTER_DOWN; break;
+    case 0x3f: key = OPR_SORTER_PAGE_UP; break;       /* the keypad's 9 and 3, Page Up and Down */
+    case 0x1f: key = OPR_SORTER_PAGE_DOWN; break;
+    case 0x3d: key = OPR_SORTER_HOME; break;          /* keypad 7 and 1, Home and End */
+    case 0x1d: key = OPR_SORTER_END; break;
+    default: return;
+    }
+    to = opr_sorter_step(&sorter, pick.focus >= 0 ? pick.focus : current, key);
+    if (to < 0) return;
+    sorter_pick_fit();
+    if (shift) opr_pick_click(&pick, to, OPR_PICK_RANGE);
+    else opr_pick_only(&pick, to);
+    current = to;
+    {
+        int was = sorter_scroll;
+        sorter_scroll = opr_sorter_scroll_to(&sorter, to, sorter_scroll);
+        if (was != sorter_scroll) sorter_scroller_follow();
+    }
+    draw_sorter();
+    draw_status();
 }
 
 /* ---- Full-screen show ----
@@ -4898,6 +5331,9 @@ static void set_deck(owf_deck *d, const char *path, const char *format)
     current = 0;
     dirty = 0;
     clear_object_selection();
+    opr_pick_clear(&pick);
+    sorter_pick_fit();
+    sorter_scroll = 0;
     snprintf(current_path, sizeof current_path, "%s", path ? path : "");
     snprintf(current_format, sizeof current_format, "%s", format ? format : "ODP");
     update_window_title();
@@ -5300,6 +5736,13 @@ static void scrolled(void)
 {
     ULONG top;
     int moved = 0;
+    if (sorter_view) {
+        if (vscroll && GetAttr(PGA_Top, (Object *)vscroll, &top) && (int)top != sorter_scroll) {
+            sorter_scroll = opr_sorter_clamp_scroll(&sorter, (int)top);
+            draw_sorter();
+        }
+        return;
+    }
     if (hscroll && GetAttr(PGA_Top, (Object *)hscroll, &top) && (int)top != pan_x) { pan_x = (int)top; moved = 1; }
     if (vscroll && GetAttr(PGA_Top, (Object *)vscroll, &top) && (int)top != pan_y) { pan_y = (int)top; moved = 1; }
     if (moved) {
@@ -5316,7 +5759,35 @@ static void set_buttons(int style)
 
 static void menu_action(ULONG id)
 {
+    if (sorter_view) {
+        switch (id) {
+        case M_DUPLICATE_SLIDE: sorter_duplicate_picked(); return;
+        case M_DELETE_SLIDE: sorter_delete_picked(); return;
+        case M_HIDE_SLIDE: sorter_hide_picked(1); return;
+        case M_SHOW_SLIDE: sorter_hide_picked(0); return;
+        case M_MOVE_SLIDE_UP: sorter_nudge_picked(-1); return;
+        case M_MOVE_SLIDE_DOWN: sorter_nudge_picked(1); return;
+        case M_SELECT_ALL:
+            opr_pick_all(&pick);
+            set_status("Every " UNIT_LOWER " picked.");
+            draw_sorter();
+            draw_status();
+            return;
+        case M_ZOOM_IN: sorter_columns_step(1); return;
+        case M_ZOOM_OUT: sorter_columns_step(-1); return;
+        case M_ZOOM_FIT: sorter_columns = 0; relayout(); return;
+        case M_CUT: case M_COPY: case M_PASTE:
+            set_status("Cut, Copy and Paste work on a " UNIT_LOWER "'s objects in Normal view.");
+            draw_status();
+            return;
+        case M_FIND: case M_FIND_NEXT: case M_REPLACE: case M_REPLACE_ALL: case M_STOP:
+            set_view(0);
+            break;
+        }
+    }
     switch (id) {
+    case M_VIEW_NORMAL: set_view(0); break;
+    case M_VIEW_SORTER: set_view(1); break;
     case M_NEW: new_deck(); break;
     case M_OPEN: do_open(); break;
     case M_SAVE: do_save(); break;
@@ -5528,6 +5999,15 @@ static void events(void)
             scrolled();
             break;
         case IDCMP_MOUSEBUTTONS:
+            if (sorter_view) {
+                if (code == SELECTDOWN) sorter_mouse_down(mx, my, qual, secs, micros);
+                else if (code == SELECTUP) sorter_mouse_up(mx, my);
+                if (code == SELECTUP && tb.pressed >= 0) {
+                    ogt_toolbar_draw_one(&tb, &ctx, win->RPort, tb.pressed, 0, "window");
+                    tb.pressed = -1;
+                }
+                break;
+            }
             if (code == SELECTDOWN) slide_mouse_down(mx, my);
             else if (code == SELECTUP) {
                 if (text_selecting) {
@@ -5544,13 +6024,20 @@ static void events(void)
             }
             break;
         case IDCMP_MOUSEMOVE:
-            if (text_selecting) drag_text_selection(mx, my);
+            if (sorter_view) sorter_mouse_move(mx, my);
+            else if (text_selecting) drag_text_selection(mx, my);
             else if (object_drag.active) preview_object_drag(mx, my);
             break;
         case IDCMP_RAWKEY:
             if (code & 0x80) break;
             if (code == 0x54) {                 /* F5; Shift-F5 starts here */
                 run_show(qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT) ? current : 0, 0);
+            } else if (sorter_view) {
+                if (code == 0x7a || code == 0x7b) {   /* the mouse wheel */
+                    int to = opr_sorter_clamp_scroll(&sorter, sorter_scroll +
+                                                     (code == 0x7a ? -1 : 1) * (sorter.cell_h + sorter.gap) / 2);
+                    if (to != sorter_scroll) { sorter_scroll = to; sorter_scroller_follow(); draw_sorter(); }
+                } else sorter_key(code, qual);
             } else if (edit_obj >= 0) {
                 int extend = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
                 switch (code) {
@@ -5572,6 +6059,15 @@ static void events(void)
             break;
         case IDCMP_VANILLAKEY:
             if (qual & (IEQUALIFIER_LCOMMAND | IEQUALIFIER_RCOMMAND)) break;
+            if (sorter_view) {
+                if (code == 27) set_view(0);
+                else if (code == 13) sorter_open(current);
+                else if (code == 127 || code == 8) sorter_delete_picked();
+                else if (code == '+' || code == '=') sorter_columns_step(1);
+                else if (code == '-') sorter_columns_step(-1);
+                else if (code == '0') { sorter_columns = 0; relayout(); }
+                break;
+            }
             if (code == 27) {
                 if (edit_obj >= 0) {
                     box b;
@@ -5669,7 +6165,8 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "DEACTIVATE: " PROGRAM " has no icon to go to");
     } else if (starts_word_ci(command, "HELP", &arg))
         rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
-                  "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " OBJECTS GETTEXT "
+                  "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
+                  "SHOWPICKED OBJECTS GETTEXT "
                   "SETTEXT UNDO REDO QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "FAULT needs a code"); }
@@ -5729,6 +6226,74 @@ static int rexx_do_command(const char *command, char **result_out)
             delete_slide();
             ok = deck->nslides == was - 1;
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : rexx_noted ? rexx_noting : "Failed");
+        }
+    } else if (starts_word_ci(command, "VIEW", &arg)) {     /* VIEW NORMAL|SORTER; none given: which */
+        if (!*arg) rexx_copy(result_text, sizeof result_text, sorter_view ? "SORTER" : "NORMAL");
+        else if (!strcasecmp(arg, "NORMAL")) { set_view(0); rexx_copy(result_text, sizeof result_text, "OK"); }
+        else if (!strcasecmp(arg, "SORTER")) { set_view(1); rexx_copy(result_text, sizeof result_text, "OK"); }
+        else { ok = 0; rexx_copy(result_text, sizeof result_text, "VIEW NORMAL or VIEW SORTER"); }
+    } else if (starts_word_ci(command, "PICKED", &arg)) {   /* the picked slides, counted from 1 */
+        int i;
+        size_t at = 0;
+        sorter_pick_fit();
+        result_text[0] = 0;
+        for (i = 0; deck && i < deck->nslides && at + 12 < sizeof result_text; ++i)
+            if (opr_pick_has(&pick, i)) at += (size_t)snprintf(result_text + at, sizeof result_text - at, at ? " %d" : "%d", i + 1);
+    } else if (starts_word_ci(command, "PICK", &arg)) {     /* PICK n [n...] or PICK ALL: these slides only */
+        const char *at = arg;
+        int bad = 0, any = 0;
+        sorter_pick_fit();
+        if (!strcasecmp(arg, "ALL")) { opr_pick_all(&pick); any = 1; }
+        else {
+            opr_pick_clear(&pick);
+            while (*at) {
+                char *end;
+                long n = strtol(at, &end, 10);
+                if (end == at || n < 1 || !deck || n > deck->nslides) { bad = 1; break; }
+                opr_pick_click(&pick, (int)n - 1, any ? OPR_PICK_TOGGLE : OPR_PICK_ONE);
+                if (!opr_pick_has(&pick, (int)n - 1)) opr_pick_click(&pick, (int)n - 1, OPR_PICK_TOGGLE);
+                any = 1;
+                at = skip_space(end);
+            }
+        }
+        if (bad || !any) {
+            ok = 0;
+            sorter_pick_fit();
+            rexx_copy(result_text, sizeof result_text, "PICK needs " UNIT_LOWER " numbers or ALL");
+        } else {
+            current = pick.focus >= 0 ? pick.focus : current;
+            draw_slide();
+            draw_status();
+            snprintf(result_text, sizeof result_text, "%d", opr_pick_number(&pick));
+        }
+    } else if (starts_word_ci(command, "MOVEPICKED", &arg)) {   /* MOVEPICKED n: before slide n (one past the end: last) */
+        char *end;
+        long n = strtol(arg, &end, 10);
+        sorter_pick_fit();
+        if (end == arg || !deck || n < 1 || n > deck->nslides + 1) {
+            ok = 0;
+            rexx_copy(result_text, sizeof result_text, "MOVEPICKED needs a " UNIT_LOWER " number");
+        } else if (!opr_pick_number(&pick)) {
+            ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Nothing picked");
+        } else {
+            sorter_move_picked((int)n - 1);
+            rexx_copy(result_text, sizeof result_text, rexx_noted ? rexx_noting : "OK");
+        }
+    } else if (starts_word_ci(command, "COPYPICKED", &arg) || starts_word_ci(command, "DELETEPICKED", &arg) ||
+               starts_word_ci(command, "HIDEPICKED", &arg) || starts_word_ci(command, "SHOWPICKED", &arg)) {
+        int was = deck ? deck->nslides : 0, n;
+        char c = (char)toupper((unsigned char)command[0]);
+        sorter_pick_fit();
+        n = opr_pick_number(&pick);
+        if (!n) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Nothing picked"); }
+        else if (c == 'D' && n >= was) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "The last " UNIT_LOWER " stays"); }
+        else {
+            if (c == 'C') sorter_duplicate_picked();
+            else if (c == 'D') sorter_delete_picked();
+            else sorter_hide_picked(c == 'H');
+            ok = c == 'C' ? deck->nslides == was + n : c == 'D' ? deck->nslides == was - n : 1;
+            if (ok) snprintf(result_text, sizeof result_text, "%d", deck->nslides);
+            else rexx_copy(result_text, sizeof result_text, rexx_noted ? rexx_noting : "Failed");
         }
     } else if (starts_word_ci(command, "OBJECTS", &arg)) {   /* the slide showing's objects; which can be typed in */
         int i, k;
@@ -5983,6 +6548,7 @@ out:
     laid_clear();
     pictures_clear();
     free(versions);
+    opr_pick_free(&pick);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
     if (theme.text) ogt_theme_free(&theme);
