@@ -261,7 +261,7 @@ static int parse_date(const char **s, char out[16])
             || !read_num(&t, 4, 4, &y)) return 0;
     }
     if (y < 1 || m < 1 || m > 12 || d < 1 || d > days_in(y, m)) return 0;
-    snprintf(out, 16, "%04d-%02d-%02d", y, m, d);
+    snprintf(out, 16, "%04u-%02u-%02u", (unsigned)y % 10000u, (unsigned)m % 100u, (unsigned)d % 100u);
     *s = t;
     return 1;
 }
@@ -277,7 +277,7 @@ static int parse_time(const char **s, char out[16])
         if (!read_num(&t, 2, 2, &sec)) return 0;
     }
     if (h > 23 || m > 59 || sec > 59) return 0;
-    snprintf(out, 16, "%02d:%02d:%02d", h, m, sec);
+    snprintf(out, 16, "%02u:%02u:%02u", (unsigned)h % 100u, (unsigned)m % 100u, (unsigned)sec % 100u);
     *s = t;
     return 1;
 }
@@ -418,7 +418,7 @@ static int convert(const ob_field *f, const char *in, value *v, char *err, size_
             size_t i;
             copy(list, sizeof list, f->choices);
             for (i = 0; list[i]; i++) if (list[i] == '|') list[i] = ',';
-            snprintf(err, errsize, "%.60s must be one of: %.180s", label, list);
+            snprintf(err, errsize, "%.60s must be one of: %.150s", label, list);
             return 0;
         }
         v->kind = V_TEXT;
