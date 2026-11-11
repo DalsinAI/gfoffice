@@ -11,7 +11,9 @@
  *     copy-and-rename way, in one transaction), rename and drop;
  *   - rows: add, change and delete, each value checked against its field's
  *     type, in the project's transaction or one of their own;
- *   - a datasheet's rows a page at a time, by key;
+ *   - a datasheet's rows a page at a time, by key, or sorted and filtered
+ *     (a view);
+ *   - CSV out of a table (or a view of it) and into a table;
  *   - errors in plain words ("Price must be a number", not "CHECK
  *     constraint failed").
  *
@@ -30,7 +32,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.2.0"
+#define OB_CORE_VERSION "0.3.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -229,6 +231,63 @@ int ob_rows(ob_project *p, const char *table, ob_int after, int max, ob_row_fn c
 /* The same from the row at position `first` (0 is the first) in key order:
  * a datasheet scrolled to a place (LIMIT and OFFSET, design 5.4). */
 int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_fn cb, void *user);
+
+/* ---- Views: a datasheet sorted and filtered (design 5.5) ----
+ * sort: a field to sort by ("" keeps key order), desc for Z to A; ties keep
+ * key order. Text fields sort and compare without case.
+ * filter: rows whose field `field` passes `op` against `value`, which is in
+ * the field's own text form ("1,234.50", "Yes", 11/11/2026) and checked like
+ * a row's value; Contains and Starts with are for fields that hold text
+ * (Text, Memo, Choice, Date, Time, Date and time). */
+typedef enum ob_filter_op {
+    OB_FILTER_NONE,
+    OB_FILTER_EQUALS,
+    OB_FILTER_NOT_EQUALS,
+    OB_FILTER_LESS,         /* less than */
+    OB_FILTER_MORE,         /* more than */
+    OB_FILTER_CONTAINS,
+    OB_FILTER_STARTS,
+    OB_FILTER_EMPTY,
+    OB_FILTER_NOT_EMPTY,
+    OB_FILTER_COUNT
+} ob_filter_op;
+
+typedef struct ob_view {
+    char sort[OB_NAME_MAX];
+    int desc;
+    char field[OB_NAME_MAX];
+    ob_filter_op op;
+    char value[OB_VALUE_MAX];
+} ob_view;
+
+void ob_view_init(ob_view *v);                  /* key order, every row */
+const char *ob_filter_name(ob_filter_op op);    /* "Contains"... */
+/* Whether v is good for table (its fields exist, the value suits the field);
+ * 0 with the reason in ob_error(). */
+int ob_view_check(ob_project *p, const char *table, const ob_view *v);
+/* The rows a view shows; -1 on error. */
+ob_int ob_view_total(ob_project *p, const char *table, const ob_view *v);
+/* ob_rows_at through a view (NULL is key order, every row). */
+int ob_view_rows(ob_project *p, const char *table, const ob_view *v, ob_int first, int max,
+                 ob_row_fn cb, void *user);
+
+/* ---- CSV (design 5.6) ----
+ * Export: a header of field names, then each row of the view (NULL: every
+ * row in key order) with values in their own text form; quoted where they
+ * hold the separator, a quote or a line end (RFC 4180), lines end CR LF.
+ * Datatype objects are left out. sep is ',', ';' or '\t' (0 is ',').
+ * Returns the rows written, -1 on error. */
+ob_int ob_csv_export(ob_project *p, const char *table, const ob_view *v, const char *path, int sep);
+
+/* Import: adds the file's rows to table, all or none (one transaction, or
+ * a savepoint inside the caller's). The first line is a header when each of
+ * its cells names a field (by name or label, any case): columns go to those
+ * fields, in any order. Otherwise columns are the table's fields in order
+ * (Datatype objects left out); a file one column short starts after the
+ * Counter. A Counter value keeps that key; empty gets a new one. sep 0 finds
+ * ',', ';' or tab from the first line. A UTF-8 byte order mark is skipped.
+ * Returns the rows added, -1 with "Line 4: Price must be a number". */
+ob_int ob_csv_import(ob_project *p, const char *table, const char *path, int sep);
 
 /* ---- Values ---- */
 

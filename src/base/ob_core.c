@@ -1760,20 +1760,156 @@ ob_int ob_row_total(ob_project *p, const char *table)
     return n;
 }
 
-static int rows_from(ob_project *p, const char *table, ob_int after, ob_int first, int max, ob_row_fn cb, void *user);
+/* ---- Views ---- */
+
+static const char *const filter_names[OB_FILTER_COUNT] = {
+    "Every row", "Equals", "Is not", "Less than", "More than", "Contains", "Starts with",
+    "Is empty", "Is not empty"
+};
+
+const char *ob_filter_name(ob_filter_op op)
+{
+    return (unsigned)op < OB_FILTER_COUNT ? filter_names[op] : "?";
+}
+
+void ob_view_init(ob_view *v)
+{
+    memset(v, 0, sizeof *v);
+    v->op = OB_FILTER_NONE;
+}
+
+/* Fields whose stored value is text (so LIKE and NOCASE mean something). */
+static int holds_text(ob_type t)
+{
+    return t == OB_TEXT || t == OB_MEMO || t == OB_CHOICE || t == OB_DATE || t == OB_TIME || t == OB_DATETIME;
+}
+
+/* What a view adds to a SELECT ... FROM table: its WHERE and ORDER BY,
+ * appended to s, the filter's value into *bind (?3; kind V_NULL when none).
+ * 0 with the reason. */
+static int view_sql(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
+{
+    const ob_field *f;
+    bind->kind = V_NULL;
+    bind->long_text = NULL;
+    if (v && v->op != OB_FILTER_NONE) {
+        const char *nc;
+        if ((unsigned)v->op >= OB_FILTER_COUNT) return fail(p, "Unknown filter");
+        if (!(f = field_named(t, v->field))) return fail(p, "%s has no field %s", t->name, v->field);
+        if (f->type == OB_OBJECT && v->op != OB_FILTER_EMPTY && v->op != OB_FILTER_NOT_EMPTY)
+            return fail(p, "%s holds Datatype objects: filter it by Is empty or Is not empty", field_label(f));
+        nc = holds_text(f->type) ? " COLLATE NOCASE" : "";
+        switch (v->op) {
+        case OB_FILTER_EMPTY:
+            sqlite3_str_appendf(s, " WHERE \"%w\" IS NULL", f->name);
+            if (holds_text(f->type)) sqlite3_str_appendf(s, " OR \"%w\" = ''", f->name);
+            break;
+        case OB_FILTER_NOT_EMPTY:
+            sqlite3_str_appendf(s, " WHERE \"%w\" IS NOT NULL", f->name);
+            if (holds_text(f->type)) sqlite3_str_appendf(s, " AND \"%w\" <> ''", f->name);
+            break;
+        case OB_FILTER_CONTAINS:
+        case OB_FILTER_STARTS: {
+            size_t i, o = 0;
+            if (!holds_text(f->type))
+                return fail(p, "%s: %s works on fields that hold text", field_label(f), ob_filter_name(v->op));
+            if (v->op == OB_FILTER_CONTAINS) bind->text[o++] = '%';
+            for (i = 0; v->value[i] && o + 3 < sizeof bind->text; i++) {
+                char c = v->value[i];
+                if (c == '%' || c == '_' || c == '\\') bind->text[o++] = '\\';
+                bind->text[o++] = c;
+            }
+            bind->text[o++] = '%';
+            bind->text[o] = 0;
+            bind->kind = V_TEXT;
+            sqlite3_str_appendf(s, " WHERE \"%w\" LIKE ?3 ESCAPE '\\'", f->name);
+            break;
+        }
+        default: {
+            char e[OB_ERR_MAX];
+            static const char *const ops[] = { "", "=", "<>", "<", ">" };
+            ob_field loose = *f;
+            loose.required = loose.key = 0;     /* "" here means empty, which has its own filter */
+            loose.max_len = 0;
+            if (f->type == OB_COUNTER) loose.type = OB_INTEGER;
+            if (!convert(&loose, v->value, bind, e, sizeof e)) return fail(p, "%s", e);
+            if (bind->kind == V_NULL)
+                return fail(p, "%s: give a value to compare with, or use Is empty", field_label(f));
+            sqlite3_str_appendf(s, " WHERE \"%w\" %s ?3%s", f->name, ops[v->op], nc);
+            break;
+        }
+        }
+    }
+    if (v && v->sort[0]) {
+        if (!(f = field_named(t, v->sort))) return fail(p, "%s has no field %s", t->name, v->sort);
+        sqlite3_str_appendf(s, " ORDER BY \"%w\"%s%s, rowid", f->name,
+                            holds_text(f->type) ? " COLLATE NOCASE" : "", v->desc ? " DESC" : "");
+    } else {
+        sqlite3_str_appendall(s, " ORDER BY rowid");
+    }
+    return 1;
+}
+
+int ob_view_check(ob_project *p, const char *table, const ob_view *v)
+{
+    const ob_table *t;
+    sqlite3_str *s;
+    value b;
+    int good;
+    if (!(t = design(p, table))) return 0;
+    s = sqlite3_str_new(NULL);
+    good = view_sql(p, t, v, s, &b);
+    sqlite3_free(sqlite3_str_finish(s));
+    return good ? ok(p) : 0;
+}
+
+ob_int ob_view_total(ob_project *p, const char *table, const ob_view *v)
+{
+    const ob_table *t;
+    sqlite3_str *s;
+    sqlite3_stmt *st;
+    char *sql;
+    value b;
+    ob_int n = -1;
+    if (!v || v->op == OB_FILTER_NONE) return ob_row_total(p, table);
+    if (!(t = design(p, table))) return -1;
+    s = sqlite3_str_new(NULL);
+    sqlite3_str_appendf(s, "SELECT count(*) FROM \"%w\"", t->name);
+    if (!view_sql(p, t, v, s, &b)) { sqlite3_free(sqlite3_str_finish(s)); return -1; }
+    sql = sqlite3_str_finish(s);
+    st = sql ? prep(p, sql) : NULL;
+    sqlite3_free(sql);
+    if (!st) return -1;
+    if (b.kind != V_NULL) bind_value(st, 3, &b);
+    if (sqlite3_step(st) == SQLITE_ROW) { n = sqlite3_column_int64(st, 0); ok(p); }
+    else sql_fail(p, t, sqlite3_errcode(p->db));
+    sqlite3_finalize(st);
+    return n;
+}
+
+static int rows_from(ob_project *p, const char *table, const ob_view *v, ob_int after, ob_int first,
+                     int max, ob_row_fn cb, void *user);
 
 int ob_rows(ob_project *p, const char *table, ob_int after, int max, ob_row_fn cb, void *user)
 {
-    return rows_from(p, table, after, -1, max, cb, user);
+    return rows_from(p, table, NULL, after, -1, max, cb, user);
 }
 
 int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_fn cb, void *user)
 {
-    return rows_from(p, table, 0, first < 0 ? 0 : first, max, cb, user);
+    return rows_from(p, table, NULL, 0, first < 0 ? 0 : first, max, cb, user);
 }
 
-/* first < 0: the rows after key `after`; else from position first. */
-static int rows_from(ob_project *p, const char *table, ob_int after, ob_int first, int max, ob_row_fn cb, void *user)
+int ob_view_rows(ob_project *p, const char *table, const ob_view *v, ob_int first, int max,
+                 ob_row_fn cb, void *user)
+{
+    return rows_from(p, table, v, 0, first < 0 ? 0 : first, max, cb, user);
+}
+
+/* first < 0: the rows after key `after` (key order); else from position
+ * first of the view v (NULL: key order). max < 0: every row. */
+static int rows_from(ob_project *p, const char *table, const ob_view *v, ob_int after, ob_int first,
+                     int max, ob_row_fn cb, void *user)
 {
     const ob_table *t;
     sqlite3_str *s;
@@ -1782,13 +1918,14 @@ static int rows_from(ob_project *p, const char *table, ob_int after, ob_int firs
     const char *vals[OB_MAX_FIELDS];
     char (*cells)[48];
     unsigned char types[OB_MAX_FIELDS];
+    value b;
     int i, nf, n = 0, rc;
     if (!(t = design(p, table))) return -1;
-    if (max <= 0) return 0;
+    if (max == 0) return 0;
     /* cb may read another table's design, so keep what the loop needs */
     nf = t->nfields;
     for (i = 0; i < nf; i++) types[i] = (unsigned char)t->fields[i].type;
-    cells = malloc(sizeof *cells * (size_t)t->nfields);
+    cells = malloc(sizeof *cells * (size_t)(t->nfields ? t->nfields : 1));
     if (!cells) { fail(p, "Not enough memory"); return -1; }
     s = sqlite3_str_new(NULL);
     sqlite3_str_appendall(s, "SELECT rowid");
@@ -1796,14 +1933,21 @@ static int rows_from(ob_project *p, const char *table, ob_int after, ob_int firs
         if (t->fields[i].type == OB_OBJECT) sqlite3_str_appendf(s, ", length(\"%w\")", t->fields[i].name);
         else sqlite3_str_appendf(s, ", \"%w\"", t->fields[i].name);
     }
-    if (first < 0) sqlite3_str_appendf(s, " FROM \"%w\" WHERE rowid > ?1 ORDER BY rowid LIMIT ?2", t->name);
-    else sqlite3_str_appendf(s, " FROM \"%w\" ORDER BY rowid LIMIT ?2 OFFSET ?1", t->name);
+    sqlite3_str_appendf(s, " FROM \"%w\"", t->name);
+    b.kind = V_NULL;
+    if (first < 0) {
+        sqlite3_str_appendall(s, " WHERE rowid > ?1 ORDER BY rowid LIMIT ?2");
+    } else {
+        if (!view_sql(p, t, v, s, &b)) { sqlite3_free(sqlite3_str_finish(s)); free(cells); return -1; }
+        sqlite3_str_appendall(s, " LIMIT ?2 OFFSET ?1");
+    }
     sql = sqlite3_str_finish(s);
     st = sql ? prep(p, sql) : NULL;
     sqlite3_free(sql);
     if (!st) { free(cells); return -1; }
     sqlite3_bind_int64(st, 1, first < 0 ? after : first);
-    sqlite3_bind_int(st, 2, max);
+    sqlite3_bind_int(st, 2, max < 0 ? -1 : max);
+    if (b.kind != V_NULL) bind_value(st, 3, &b);
     while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
         for (i = 0; i < nf; i++) {
             int c = i + 1;
@@ -1828,4 +1972,292 @@ static int rows_from(ob_project *p, const char *table, ob_int after, ob_int firs
     if (rc != SQLITE_DONE) { sql_fail(p, NULL, rc); return -1; }
     ok(p);
     return n;
+}
+
+/* ---- CSV ---- */
+
+typedef struct csv_out {
+    FILE *f;
+    int sep;
+    int nf;
+    unsigned char types[OB_MAX_FIELDS];
+    int bad;
+} csv_out;
+
+static void csv_cell(csv_out *o, const char *v, int first)
+{
+    const char *c;
+    int quote = 0;
+    if (!first) putc(o->sep, o->f);
+    if (!v) return;
+    for (c = v; *c; c++)
+        if (*c == o->sep || *c == '"' || *c == '\n' || *c == '\r') quote = 1;
+    /* a value with spaces at its ends keeps them */
+    if (*v == ' ' || (*v && v[strlen(v) - 1] == ' ')) quote = 1;
+    if (!quote) { fputs(v, o->f); return; }
+    putc('"', o->f);
+    for (c = v; *c; c++) {
+        if (*c == '"') putc('"', o->f);
+        putc(*c, o->f);
+    }
+    putc('"', o->f);
+}
+
+static int csv_row(void *user, ob_int key, int n, const char *const *values)
+{
+    csv_out *o = user;
+    int i, first = 1;
+    (void)key;
+    for (i = 0; i < n && i < o->nf; i++) {
+        if (o->types[i] == OB_OBJECT) continue;
+        csv_cell(o, values[i], first);
+        first = 0;
+    }
+    fputs("\r\n", o->f);
+    if (ferror(o->f)) { o->bad = 1; return 1; }
+    return 0;
+}
+
+ob_int ob_csv_export(ob_project *p, const char *table, const ob_view *v, const char *path, int sep)
+{
+    const ob_table *t;
+    csv_out *o;
+    int i, first = 1, n, shut;
+    if (!(t = design(p, table))) return -1;
+    if (!sep) sep = ',';
+    if (sep != ',' && sep != ';' && sep != '\t') { fail(p, "CSV values are separated by a comma, a semicolon or a tab"); return -1; }
+    if (v && !ob_view_check(p, table, v)) return -1;
+    if (!(t = design(p, table))) return -1;
+    if (!(o = calloc(1, sizeof *o))) { fail(p, "Not enough memory"); return -1; }
+    if (!(o->f = fopen(path, "wb"))) { free(o); fail(p, "%s could not be made", path); return -1; }
+    o->sep = sep;
+    o->nf = t->nfields;
+    for (i = 0; i < t->nfields; i++) {
+        o->types[i] = (unsigned char)t->fields[i].type;
+        if (t->fields[i].type == OB_OBJECT) continue;
+        csv_cell(o, t->fields[i].name, first);
+        first = 0;
+    }
+    fputs("\r\n", o->f);
+    n = rows_from(p, table, v, 0, 0, -1, csv_row, o);
+    shut = fclose(o->f);
+    if (n >= 0 && (o->bad || shut != 0)) { fail(p, "%s could not be written: is the disk full?", path); n = -1; }
+    free(o);
+    return n;
+}
+
+/* A CSV reader: one record at a time, its cells in one buffer. */
+typedef struct csv_in {
+    FILE *f;
+    int sep;
+    char *buf;
+    size_t len, cap;
+    int ncells;
+    size_t cell[OB_MAX_FIELDS + 1];
+    int too_many;
+    long line;      /* the line the record starts on */
+    long next_line;
+    int peek;
+} csv_in;
+
+static int csv_get(csv_in *r)
+{
+    int c;
+    if (r->peek != EOF - 1) { c = r->peek; r->peek = EOF - 1; return c; }
+    return getc(r->f);
+}
+
+static int csv_put(csv_in *r, int c)
+{
+    if (r->len + 1 >= r->cap) {
+        size_t cap = r->cap ? r->cap * 2 : 1024;
+        char *b = realloc(r->buf, cap);
+        if (!b) return 0;
+        r->buf = b;
+        r->cap = cap;
+    }
+    r->buf[r->len++] = (char)c;
+    return 1;
+}
+
+static int csv_end_cell(csv_in *r)
+{
+    if (!csv_put(r, 0)) return 0;
+    if (r->ncells < OB_MAX_FIELDS) r->cell[r->ncells] = r->len;
+    else r->too_many = 1;
+    r->ncells++;
+    return 1;
+}
+
+/* Reads one record: 1, 0 at the end of the file, -1 out of memory, -2 a
+ * quote that never ends. */
+static int csv_record(csv_in *r)
+{
+    int c, quoted = 0, any = 0;
+    r->len = 0;
+    r->ncells = 0;
+    r->too_many = 0;
+    r->cell[0] = 0;
+    r->line = r->next_line;
+    for (;;) {
+        c = csv_get(r);
+        if (c == EOF) {
+            if (quoted) return -2;
+            if (!any) return 0;
+            return csv_end_cell(r) ? 1 : -1;
+        }
+        any = 1;
+        if (quoted) {
+            if (c == '"') {
+                int d = csv_get(r);
+                if (d == '"') { if (!csv_put(r, '"')) return -1; continue; }
+                r->peek = d;
+                quoted = 0;
+                continue;
+            }
+            if (c == '\n') r->next_line++;
+            if (c == '\r') {        /* CR LF inside a value is a line end: keep LF */
+                int d = csv_get(r);
+                if (d != '\n') r->peek = d;
+                r->next_line++;
+                c = '\n';
+            }
+            if (!csv_put(r, c)) return -1;
+            continue;
+        }
+        if (c == '"' && (r->len == (r->ncells ? r->cell[r->ncells - 1] : 0))) { quoted = 1; continue; }
+        if (c == r->sep) { if (!csv_end_cell(r)) return -1; continue; }
+        if (c == '\r' || c == '\n') {
+            if (c == '\r') { int d = csv_get(r); if (d != '\n') r->peek = d; }
+            r->next_line++;
+            return csv_end_cell(r) ? 1 : -1;
+        }
+        if (!csv_put(r, c)) return -1;
+    }
+}
+
+static const char *csv_text(const csv_in *r, int i)
+{
+    return r->buf + (i ? r->cell[i - 1] : 0);
+}
+
+/* The separator the first line uses most, outside quotes: ',' when none. */
+static int csv_guess(FILE *f)
+{
+    long at = ftell(f);
+    int c, quoted = 0, comma = 0, semi = 0, tab = 0;
+    while ((c = getc(f)) != EOF) {
+        if (c == '"') quoted = !quoted;
+        else if (!quoted && (c == '\n' || c == '\r')) break;
+        else if (!quoted) { comma += c == ','; semi += c == ';'; tab += c == '\t'; }
+    }
+    fseek(f, at, SEEK_SET);
+    if (tab > comma && tab >= semi) return '\t';
+    if (semi > comma) return ';';
+    return ',';
+}
+
+ob_int ob_csv_import(ob_project *p, const char *table, const char *path, int sep)
+{
+    const ob_table *t;
+    csv_in *r = NULL;
+    char (*names)[OB_NAME_MAX] = NULL;
+    const char *fields[OB_MAX_FIELDS], *vals[OB_MAX_FIELDS];
+    int map[OB_MAX_FIELDS];
+    int nf, ncols = 0, i, j, rc, header = 1, good = 0, began = 0;
+    ob_int added = 0;
+    char tname[OB_NAME_MAX];
+    unsigned char bom[3];
+
+    if (!(t = design(p, table))) return -1;
+    if (p->readonly) { fail(p, "The project is open read-only"); return -1; }
+    if (sep && sep != ',' && sep != ';' && sep != '\t') { fail(p, "CSV values are separated by a comma, a semicolon or a tab"); return -1; }
+    /* keep what the loop needs: ob_row_add reads designs */
+    copy(tname, sizeof tname, t->name);
+    nf = t->nfields;
+    names = malloc(sizeof *names * (size_t)(nf ? nf : 1));
+    r = calloc(1, sizeof *r);
+    if (!names || !r) { fail(p, "Not enough memory"); goto out; }
+    for (i = 0; i < nf; i++) copy(names[i], sizeof names[i], t->fields[i].name);
+    if (!(r->f = fopen(path, "rb"))) { fail(p, "%s could not be opened", path); goto out; }
+    if (fread(bom, 1, 3, r->f) != 3 || bom[0] != 0xEF || bom[1] != 0xBB || bom[2] != 0xBF) rewind(r->f);
+    r->sep = sep ? sep : csv_guess(r->f);
+    r->peek = EOF - 1;
+    r->next_line = 1;
+
+    rc = csv_record(r);
+    if (rc == 0) { fail(p, "%s is empty", path); goto out; }
+    if (rc < 0) goto bad_read;
+    if (r->too_many) { fail(p, "Line 1 has more than %d values", OB_MAX_FIELDS); goto out; }
+    /* a header: every cell names a field */
+    for (i = 0; i < r->ncells && header; i++) {
+        const char *h = csv_text(r, i);
+        int found = -1;
+        while (*h == ' ') h++;
+        for (j = 0; j < nf && found < 0; j++) {
+            const ob_field *f = &t->fields[j];
+            if (same(h, f->name) || (f->label[0] && same(h, f->label))) found = j;
+        }
+        if (found < 0) header = 0;
+        else {
+            for (j = 0; j < i; j++) if (map[j] == found) { fail(p, "Line 1 names %s twice", names[found]); goto out; }
+            map[i] = found;
+        }
+    }
+    if (header) {
+        ncols = r->ncells;
+        for (i = 0; i < ncols; i++)
+            if (t->fields[map[i]].type == OB_OBJECT) { fail(p, "%s holds Datatype objects, which CSV can't carry", names[map[i]]); goto out; }
+    } else {
+        int skip_counter;
+        for (i = 0; i < nf; i++) if (t->fields[i].type != OB_OBJECT) ncols++;
+        skip_counter = r->ncells == ncols - 1 && nf && t->fields[0].type == OB_COUNTER;
+        ncols = 0;
+        for (i = 0; i < nf; i++) {
+            if (t->fields[i].type == OB_OBJECT) continue;
+            if (skip_counter && t->fields[i].type == OB_COUNTER) { skip_counter = 0; continue; }
+            map[ncols++] = i;
+        }
+    }
+    for (i = 0; i < ncols; i++) fields[i] = names[map[i]];
+
+    if (!step_begin(p)) goto out;
+    began = 1;
+    if (header) rc = csv_record(r);
+    for (; rc == 1; rc = csv_record(r)) {
+        int n = 0;
+        if (r->ncells == 1 && !csv_text(r, 0)[0]) continue;     /* a blank line */
+        if (r->too_many || r->ncells > ncols) { fail(p, "Line %ld has %d values: the table takes %d", r->line, r->ncells, ncols); goto out; }
+        for (i = 0; i < ncols; i++) {
+            const char *c = i < r->ncells ? csv_text(r, i) : "";
+            vals[n] = *c ? c : NULL;
+            fields[n] = names[map[i]];
+            n++;
+        }
+        if (!ob_row_add(p, tname, n, fields, vals, NULL)) {
+            char e[OB_ERR_MAX];
+            copy(e, sizeof e, p->err);
+            fail(p, "Line %ld: %s", r->line, e);
+            goto out;
+        }
+        added++;
+    }
+    if (rc < 0) goto bad_read;
+    if (ferror(r->f)) { fail(p, "%s could not be read", path); goto out; }
+    good = 1;
+    goto out;
+bad_read:
+    if (rc == -2) fail(p, "Line %ld: a quote is never closed", r->line);
+    else fail(p, "Not enough memory");
+out:
+    if (began) good = step_end(p, good);
+    if (r) {
+        if (r->f) fclose(r->f);
+        free(r->buf);
+        free(r);
+    }
+    free(names);
+    if (!good) return -1;
+    ok(p);
+    return added;
 }

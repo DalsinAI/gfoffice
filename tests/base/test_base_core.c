@@ -908,6 +908,237 @@ static void test_cache(void)
     ob_close(a);
 }
 
+/* ---- Views and CSV (0.3) ---- */
+
+static void add_customer(ob_project *p, const char *name, const char *town, const char *email,
+                         const char *joined, const char *member, const char *credit)
+{
+    const char *f[] = { "Name", "Town", "Email", "Joined", "Member", "Credit" };
+    const char *v[6];
+    v[0] = name; v[1] = town; v[2] = email; v[3] = joined; v[4] = member; v[5] = credit;
+    CHECK(ob_row_add(p, "Customers", 6, f, v, NULL), "add %s: %s", name, ob_error(p));
+}
+
+static int name_cb(void *u, ob_int key, int n, const char *const *v)
+{
+    char *out = u;
+    size_t len = strlen(out);
+    (void)key; (void)n;
+    snprintf(out + len, 512 - len, "%s%s", len ? "," : "", v[1] ? v[1] : "-");
+    return 0;
+}
+
+static const char *names_of(ob_project *p, const ob_view *v, ob_int first, int max)
+{
+    static char got[512];
+    got[0] = 0;
+    if (ob_view_rows(p, "Customers", v, first, max, name_cb, got) < 0) snprintf(got, sizeof got, "error: %s", ob_error(p));
+    return got;
+}
+
+static void view_set(ob_view *v, const char *sort, int desc, const char *field, ob_filter_op op, const char *value)
+{
+    ob_view_init(v);
+    snprintf(v->sort, sizeof v->sort, "%s", sort);
+    v->desc = desc;
+    snprintf(v->field, sizeof v->field, "%s", field);
+    v->op = op;
+    snprintf(v->value, sizeof v->value, "%s", value);
+}
+
+static void five_customers(ob_project *p)
+{
+    static ob_table t;
+    customers(&t);
+    CHECK(ob_table_create(p, &t), "Customers: %s", ob_error(p));
+    add_customer(p, "dan", "York", "dan@example.org", "2026-03-01", "Yes", "250");
+    add_customer(p, "Ann", "Leeds", NULL, "2025-12-31", "No", "1,500");
+    add_customer(p, "Cy", "Hull", "cy@example.org", NULL, "Yes", "99.99");
+    add_customer(p, "bob", "York", "bob 100%_x@example.org", "2026-11-11", "No", NULL);
+    add_customer(p, "Eve", "Leeds", "eve@example.org", "2024-01-02", "Yes", "-5");
+}
+
+static void test_views(void)
+{
+    ob_project *p = fresh("views.oadb");
+    ob_view v;
+    if (!p) return;
+    five_customers(p);
+    CHECK(!strcmp(names_of(p, NULL, 0, -1), "dan,Ann,Cy,bob,Eve"), "key order: %s", names_of(p, NULL, 0, -1));
+    view_set(&v, "Name", 0, "", OB_FILTER_NONE, "");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Ann,bob,Cy,dan,Eve"), "by name, no case: %s", names_of(p, &v, 0, -1));
+    CHECK(!strcmp(names_of(p, &v, 1, 2), "bob,Cy"), "a page of it: %s", names_of(p, &v, 1, 2));
+    v.desc = 1;
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Eve,dan,Cy,bob,Ann"), "Z to A: %s", names_of(p, &v, 0, -1));
+    view_set(&v, "Credit", 0, "", OB_FILTER_NONE, "");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "bob,Eve,Cy,dan,Ann"), "by money (empty first): %s", names_of(p, &v, 0, -1));
+    view_set(&v, "Town", 0, "", OB_FILTER_NONE, "");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Cy,Ann,Eve,dan,bob"), "ties keep key order: %s", names_of(p, &v, 0, -1));
+    view_set(&v, "Joined", 1, "", OB_FILTER_NONE, "");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "bob,dan,Ann,Eve,Cy"), "dates newest first: %s", names_of(p, &v, 0, -1));
+
+    view_set(&v, "", 0, "Town", OB_FILTER_EQUALS, "york");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "dan,bob") && ob_view_total(p, "Customers", &v) == 2, "Town = york: %s", names_of(p, &v, 0, -1));
+    view_set(&v, "", 0, "Town", OB_FILTER_NOT_EQUALS, "York");
+    CHECK(ob_view_total(p, "Customers", &v) == 3, "Town is not York");
+    view_set(&v, "Name", 0, "Credit", OB_FILTER_MORE, "100");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Ann,dan"), "Credit > 100: %s", names_of(p, &v, 0, -1));
+    view_set(&v, "", 0, "Credit", OB_FILTER_LESS, "0");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Eve"), "Credit < 0: %s", names_of(p, &v, 0, -1));
+    view_set(&v, "", 0, "Joined", OB_FILTER_LESS, "1/1/2026");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Ann,Eve"), "Joined before 2026 (d/m/y): %s", names_of(p, &v, 0, -1));
+    view_set(&v, "", 0, "Member", OB_FILTER_EQUALS, "yes");
+    CHECK(ob_view_total(p, "Customers", &v) == 3, "members");
+    view_set(&v, "", 0, "Email", OB_FILTER_CONTAINS, "EXAMPLE");
+    CHECK(ob_view_total(p, "Customers", &v) == 4, "Email contains EXAMPLE");
+    view_set(&v, "", 0, "Email", OB_FILTER_CONTAINS, "100%_");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "bob"), "%% and _ are plain: %s", names_of(p, &v, 0, -1));
+    view_set(&v, "", 0, "Email", OB_FILTER_CONTAINS, "0%x");
+    CHECK(ob_view_total(p, "Customers", &v) == 0, "%% is not a wildcard");
+    view_set(&v, "", 0, "Name", OB_FILTER_STARTS, "c");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Cy"), "Name starts with c: %s", names_of(p, &v, 0, -1));
+    view_set(&v, "", 0, "Email", OB_FILTER_EMPTY, "");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Ann"), "no Email: %s", names_of(p, &v, 0, -1));
+    view_set(&v, "", 0, "Credit", OB_FILTER_NOT_EMPTY, "");
+    CHECK(ob_view_total(p, "Customers", &v) == 4, "with a Credit");
+    view_set(&v, "", 0, "id", OB_FILTER_MORE, "3");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "bob,Eve"), "id > 3: %s", names_of(p, &v, 0, -1));
+
+    /* plain words */
+    view_set(&v, "", 0, "Credit", OB_FILTER_MORE, "lots");
+    CHECK(!ob_view_check(p, "Customers", &v), "Credit > lots");
+    CHECK_ERR(p, "Credit limit must be an amount of money");
+    CHECK(ob_view_total(p, "Customers", &v) == -1, "total of a bad view");
+    view_set(&v, "", 0, "Credit", OB_FILTER_CONTAINS, "1");
+    CHECK(!ob_view_check(p, "Customers", &v), "Credit contains");
+    CHECK_ERR(p, "Contains works on fields that hold text");
+    view_set(&v, "", 0, "Credit", OB_FILTER_EQUALS, "");
+    CHECK(!ob_view_check(p, "Customers", &v), "Credit = nothing");
+    CHECK_ERR(p, "use Is empty");
+    view_set(&v, "Nope", 0, "", OB_FILTER_NONE, "");
+    CHECK(!ob_view_check(p, "Customers", &v), "sort by a field that isn't");
+    CHECK_ERR(p, "Customers has no field Nope");
+    CHECK(!strncmp(names_of(p, &v, 0, -1), "error:", 6), "rows of a bad view");
+    CHECK(!strcmp(ob_filter_name(OB_FILTER_STARTS), "Starts with"), "filter names");
+    ob_close(p);
+}
+
+static char *slurp(const char *file)
+{
+    static char buf[4096];
+    FILE *f = fopen(path(file), "rb");
+    size_t n = 0;
+    buf[0] = 0;
+    if (!f) return buf;
+    n = fread(buf, 1, sizeof buf - 1, f);
+    buf[n] = 0;
+    fclose(f);
+    return buf;
+}
+
+static void spill(const char *file, const char *text)
+{
+    FILE *f = fopen(path(file), "wb");
+    if (!f) { CHECK(0, "make %s", file); return; }
+    fputs(text, f);
+    fclose(f);
+}
+
+static void test_csv(void)
+{
+    ob_project *p = fresh("csv.oadb"), *q;
+    ob_view v;
+    char got[1024];
+    if (!p) return;
+    five_customers(p);
+    {
+        const char *f[] = { "Name" }, *val[] = { "Quote \"Q\", Esq.\nline two" };
+        CHECK(ob_row_add(p, "Customers", 1, f, val, NULL), "add Q: %s", ob_error(p));
+    }
+    CHECK(ob_csv_export(p, "Customers", NULL, path("all.csv"), 0) == 6, "export: %s", ob_error(p));
+    CHECK(!strcmp(slurp("all.csv"),
+        "id,Name,Town,Email,Joined,Member,Credit\r\n"
+        "1,dan,York,dan@example.org,2026-03-01,Yes,250.00\r\n"
+        "2,Ann,Leeds,,2025-12-31,No,\"1,500.00\"\r\n"
+        "3,Cy,Hull,cy@example.org,,Yes,99.99\r\n"
+        "4,bob,York,bob 100%_x@example.org,2026-11-11,No,\r\n"
+        "5,Eve,Leeds,eve@example.org,2024-01-02,Yes,-5.00\r\n"
+        "6,\"Quote \"\"Q\"\", Esq.\nline two\",Leeds,,,No,\r\n"), "all.csv:\n%s", slurp("all.csv"));
+    view_set(&v, "Name", 1, "Town", OB_FILTER_EQUALS, "Leeds");
+    CHECK(ob_csv_export(p, "Customers", &v, path("leeds.csv"), ';') == 3, "export a view: %s", ob_error(p));
+    CHECK(strstr(slurp("leeds.csv"), "\r\n5;Eve;Leeds;eve@example.org;2024-01-02;Yes;-5.00\r\n2;Ann;Leeds;;2025-12-31;No;1,500.00\r\n"),
+          "leeds.csv (Z to A, ; keeps 1,500.00 bare):\n%s", slurp("leeds.csv"));
+    CHECK(ob_csv_export(p, "Customers", NULL, path("x.csv"), '|') == -1, "| is not a separator");
+    CHECK_ERR(p, "comma, a semicolon or a tab");
+    CHECK(ob_csv_export(p, "Customers", NULL, path("no/such/drawer/x.csv"), 0) == -1, "export nowhere");
+    CHECK_ERR(p, "could not be made");
+
+    /* round trip into a fresh project: the same keys and values */
+    q = fresh("csv2.oadb");
+    if (q) {
+        static ob_table t;
+        customers(&t);
+        CHECK(ob_table_create(q, &t), "Customers in csv2: %s", ob_error(q));
+        CHECK(ob_csv_import(q, "Customers", path("all.csv"), 0) == 6, "import all.csv: %s", ob_error(q));
+        got[0] = 0;
+        ob_rows(q, "Customers", 0, 10, row_cb, got);
+        CHECK(!strcmp(got, "1:1|dan|York|dan@example.org|2026-03-01|Yes|250.00;2:2|Ann|Leeds|-|2025-12-31|No|1,500.00;"
+                           "3:3|Cy|Hull|cy@example.org|-|Yes|99.99;4:4|bob|York|bob 100%_x@example.org|2026-11-11|No|-;"
+                           "5:5|Eve|Leeds|eve@example.org|2024-01-02|Yes|-5.00;6:6|Quote \"Q\", Esq.\nline two|Leeds|-|-|No|-;"),
+              "round trip:\n%s", got);
+        /* again: the keys are taken, so nothing is added */
+        CHECK(ob_csv_import(q, "Customers", path("all.csv"), 0) == -1, "the same keys twice");
+        CHECK_ERR(q, "Line 2:");
+        CHECK(ob_row_total(q, "Customers") == 6, "all or none");
+
+        /* a header in another order, by label, any case, with ; found; no id: new keys */
+        spill("in1.csv", "\xEF\xBB\xBF" "CREDIT LIMIT;name;Joined\n12.5;Fay;11/11/2026\n\n;Gus;\r\n");
+        CHECK(ob_csv_import(q, "Customers", path("in1.csv"), 0) == 2, "in1.csv: %s", ob_error(q));
+        got[0] = 0;
+        ob_rows(q, "Customers", 6, 10, row_cb, got);
+        CHECK(!strcmp(got, "7:7|Fay|Leeds|-|2026-11-11|No|12.50;8:8|Gus|Leeds|-|-|No|-;"), "in1:\n%s", got);
+
+        /* no header: the fields in order, a column short starts after id; tabs */
+        spill("in2.csv", "Hal\tHull\thal@example.org\t2026-01-05\tyes\t3\n\"Ida\"\tYork\t\t\tno\t\n");
+        CHECK(ob_csv_import(q, "Customers", path("in2.csv"), 0) == 2, "in2.csv: %s", ob_error(q));
+        CHECK(ob_row_total(q, "Customers") == 10, "10 rows");
+
+        /* plain words, nothing added */
+        spill("bad1.csv", "Name,Credit\nJo,1\nKim,lots\n");
+        CHECK(ob_csv_import(q, "Customers", path("bad1.csv"), 0) == -1, "Credit lots");
+        CHECK_ERR(q, "Line 3: Credit limit must be an amount of money");
+        CHECK(ob_row_total(q, "Customers") == 10, "Jo is not kept");
+        spill("bad2.csv", "Name,Town\n\"Lu,York\n");
+        CHECK(ob_csv_import(q, "Customers", path("bad2.csv"), 0) == -1, "open quote");
+        CHECK_ERR(q, "Line 2: a quote is never closed");
+        spill("bad3.csv", "Name,Town\nMo,York,extra\n");
+        CHECK(ob_csv_import(q, "Customers", path("bad3.csv"), 0) == -1, "too many values");
+        CHECK_ERR(q, "Line 2 has 3 values: the table takes 2");
+        spill("bad4.csv", "Name,name\nNo,No\n");
+        CHECK(ob_csv_import(q, "Customers", path("bad4.csv"), 0) == -1, "a field twice");
+        CHECK_ERR(q, "names Name twice");
+        spill("bad5.csv", "");
+        CHECK(ob_csv_import(q, "Customers", path("bad5.csv"), 0) == -1, "empty");
+        CHECK_ERR(q, "is empty");
+        spill("bad6.csv", "Town\nYork\n");
+        CHECK(ob_csv_import(q, "Customers", path("bad6.csv"), 0) == -1, "no Name");
+        CHECK_ERR(q, "Line 2: Name must be filled in");
+        CHECK(ob_csv_import(q, "Customers", path("none.csv"), 0) == -1, "no file");
+        CHECK_ERR(q, "could not be opened");
+        CHECK(ob_csv_import(q, "Nope", path("in1.csv"), 0) == -1, "no table");
+        CHECK(ob_row_total(q, "Customers") == 10, "still 10 rows");
+
+        /* inside the caller's transaction: a savepoint, and the caller's rollback undoes it */
+        CHECK(ob_begin(q), "begin");
+        CHECK(ob_csv_import(q, "Customers", path("in1.csv"), 0) == 2, "import in a transaction: %s", ob_error(q));
+        CHECK(ob_csv_import(q, "Customers", path("bad1.csv"), 0) == -1 && ob_in_transaction(q), "a bad import keeps the transaction");
+        CHECK(ob_row_total(q, "Customers") == 12, "12 in the transaction");
+        CHECK(ob_rollback(q) && ob_row_total(q, "Customers") == 10, "rolled back");
+        ob_close(q);
+    }
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -937,6 +1168,8 @@ int main(int argc, char **argv)
     test_indexes();
     test_relations();
     test_cache();
+    test_views();
+    test_csv();
     test_not_projects();
     test_cut_short();
     printf("test-base-core: %d checks, %d failed\n", checks, fails);
