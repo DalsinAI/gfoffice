@@ -44,7 +44,7 @@ struct ow_editor {
     char *author;
     int typing_rev;
     int ins_rev, del_rev;
-    char ins_minute[20], del_minute[20];
+    char ins_minute[32], del_minute[32];
 };
 
 /* ---- small allocation helpers -------------------------------------------------- */
@@ -1474,8 +1474,8 @@ static void review_now(char *out, size_t size)
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
     if (!tm || t == (time_t)-1) { snprintf(out, size, "2026-01-01T00:00:00"); return; }
-    snprintf(out, size, "%04d-%02d-%02dT%02d:%02d:%02d", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-             tm->tm_hour, tm->tm_min, tm->tm_sec);
+    snprintf(out, size, "%04d-%02d-%02dT%02d:%02d:%02d", (tm->tm_year + 1900) % 10000, (tm->tm_mon + 1) % 100,
+             tm->tm_mday % 100, tm->tm_hour % 100, tm->tm_min % 100, tm->tm_sec % 100);
 }
 
 static int same_text_or_null(const char *a, const char *b)
@@ -1501,7 +1501,7 @@ static int rev_mine(const ow_editor *editor, int number)
 static int editor_revision(ow_editor *editor, int kind)
 {
     owf_doc *doc = editor->doc;
-    char now[20];
+    char now[32];
     int *cached = kind == OWF_REV_INSERT ? &editor->ins_rev : &editor->del_rev;
     char *minute = kind == OWF_REV_INSERT ? editor->ins_minute : editor->del_minute;
     owf_revision *r;

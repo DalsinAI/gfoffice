@@ -29,6 +29,10 @@ void owf_track_switch(owf_track_span *t, owf_builder *b, int rev, int marks);
  * bookmarks after the place. 0 when memory runs out. */
 int owf_track_split_para(owf_story *story, int para, int run, int rev);
 
+/* The builder's paragraph, made now if it has none open (a deleted paragraph mark at a paragraph's start).
+ * NULL when memory runs out. (owf_doc.c, beside the builder.) */
+owf_para *owf_builder_para(owf_builder *b);
+
 /* After a reader: changes it began but didn't number (-1) and numbers the document hasn't go. */
 void owf_track_finish(owf_doc *doc);
 

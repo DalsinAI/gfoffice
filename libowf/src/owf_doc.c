@@ -5,6 +5,7 @@
  */
 #include "owf_internal.h"
 #include "owf_pagenum_impl.h"
+#include "owf_track.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -473,6 +474,13 @@ static int ensure_para(owf_builder *b)
     /* A page break belongs to one paragraph only. */
     b->parafmt.page_break_before = 0;
     return 1;
+}
+
+/* 1.5 (owf_track.h) */
+owf_para *owf_builder_para(owf_builder *b)
+{
+    owf_builder_flush(b);
+    return ensure_para(b) ? b->para : NULL;
 }
 
 void owf_builder_flush(owf_builder *b)
