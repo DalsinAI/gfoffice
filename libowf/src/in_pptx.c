@@ -2425,7 +2425,7 @@ static void read_notes(pptx *x, const rels *r, int slide, const part *mp, const 
         j.ch.ref_at = 1;
         j.ch.extra.size = 12 * OWF_TWIPS_PER_POINT;
         j.ch.extra.has = TP_SIZE;
-        read_paras(&j, pchild(n, "txBody"), NULL, &x->deck->slides[slide].notes);
+        read_paras(&j, pchild(n, "txBody"), NULL, &x->deck->slides[slide].notes.text);
         break;
     }
     free_rels(&nr);

@@ -275,9 +275,9 @@ int main(int argc, char **argv)
                                              strlen(d->kept[s->keep_timing].xml)));
         printf("\n");
         put_objs("  ", s->objs, s->nobjs);
-        if (s->notes.nparas) {
+        if (s->notes.text.nparas) {
             printf("  notes\n");
-            put_story("    ", &s->notes, NULL);
+            put_story("    ", &s->notes.text, NULL);
         }
     }
     {

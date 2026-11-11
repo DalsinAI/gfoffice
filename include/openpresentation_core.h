@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.31.0"
+#define OPR_CORE_VERSION "0.32.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -52,6 +52,7 @@ typedef struct {
     int nframes;
     opr_frame *frames;           /* drawing order */
     int overflow;                /* something reached below the slide's bottom edge */
+    int notes;                   /* 1: the slide's notes page (opr_notes_layout), page 0 its size */
 } opr_slide;
 
 /* The slide laid out. measure NULL: the PDF's standard fonts' widths
@@ -70,13 +71,23 @@ int opr_measure(void *userdata, const char *utf8, size_t length, const ol_style 
 /* What kind of face a deck's font is: its own kind, else by its name. */
 owf_font_kind opr_font_kind(const owf_deck *deck, int font);
 
+typedef enum {
+    OPR_PDF_SLIDES,              /* a page a slide, at the slide's size */
+    OPR_PDF_NOTES,               /* a notes page a slide: the slide above its notes */
+    OPR_PDF_HANDOUTS             /* handouts: handout_slides slides to a page */
+} opr_pdf_pages;
+
 typedef struct {
     int with_hidden;             /* hidden slides too */
     const char *today;           /* the date fields' text; NULL: today's */
+    opr_pdf_pages pages;         /* 0: the slides */
+    int handout_slides;          /* OPR_PDF_HANDOUTS: 1, 2, 3, 4, 6 or 9 (others: 6) */
 } opr_pdf_options;
 
-/* The deck as a PDF, one page a slide at the slide's size. options may be
- * NULL. OWF_OK, or OWF_ERR_MEMORY. */
+/* The deck as a PDF: by options->pages, one page a slide at the slide's
+ * size, a notes page a slide, or handouts, both on the deck's notes page
+ * (deck->notes_page; A4 when it has no size). options may be NULL.
+ * OWF_OK, or OWF_ERR_MEMORY. */
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report);
 
@@ -421,6 +432,36 @@ int opr_hit_frame(const opr_slide *s, int frame, ol_unit x, ol_unit y, ol_measur
 /* The frame of a slide's own object under a point (the frontmost), and the
  * position in its text (at may be NULL); -1 when there is none. */
 int opr_hit(const opr_slide *s, ol_unit x, ol_unit y, ol_measure_text_fn measure, void *userdata, opr_pos *at);
+
+/* ---- Notes pages and handouts (opr_notes.c) ----
+ *
+ * A slide's speaker notes are its notes object (owf_slide.notes), typed in
+ * through the text calls above with obj OPR_NOTES: opr_text_insert(deck,
+ * slide, OPR_NOTES, ...), opr_text_set, Undo and the rest work on it as on
+ * any text frame. The notes page is deck->notes_page's size (A4 portrait
+ * when it has none): the slide's picture at the top, the notes below it,
+ * as ODP's notes pages place them. */
+/* Above any slide's object count, so "no object" stays below 0. */
+#define OPR_NOTES 0x7FFF
+
+/* The notes page's size and its two boxes, in twips: x, y, width, height of
+ * the slide's picture and of the notes' text. */
+void opr_notes_page(const owf_deck *deck, int *width, int *height);
+void opr_notes_boxes(const owf_deck *deck, int slide_box[4], int text_box[4]);
+/* A slide's notes page laid out for the screen and the PDF: frame 0 the
+ * page's white, frame 1 the notes text in its box (opr_frame_obj gives
+ * OPR_NOTES for it). opr_caret_box, opr_hit_frame and opr_hit work on it.
+ * The slide's picture is not in it: draw opr_slide_layout's into
+ * opr_notes_boxes' slide box. NULL when memory runs out. */
+opr_slide *opr_notes_layout(const owf_deck *deck, int slide, ol_measure_text_fn measure, void *userdata);
+/* A handout page with per_page slides on it (1, 2, 3, 4, 6 or 9; others:
+ * 6): the box of the k'th slide on it (0 first), twips; the slide's shape
+ * kept, centred in its cell. -1 for k outside 0..per_page-1. */
+int opr_handout_box(const owf_deck *deck, int per_page, int k, int box[4]);
+/* The text of a slide's notes, paragraphs between "\n" (owf_malloc), and
+ * setting it as one Undo step (u may be NULL: no step). */
+char *opr_notes_get(const owf_deck *deck, int slide);
+int opr_notes_set(opr_undo *u, owf_deck *deck, int slide, const char *utf8);
 
 /* ---- The slide sorter (opr_sorter.c) ----
  *
