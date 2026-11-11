@@ -27,7 +27,13 @@ it is added or changed; there is no undo yet.
 - B0d: `make base-test` and `make base-check` (274 checks each, ASan and
   UBSan clean): keys, indexes (made, read back, kept through renames and
   removals, a unique index the rows don't fit refused and undone),
-  relationships, a design changed by another connection.
+  relationships, a design changed by another connection. The same test
+  for AmigaOS: 274 of 274 on the lab copy `t2-base-20261111`, DH1: and
+  RAM:. In GFOpenBase on that lab: an Orders table with a Lookup to
+  Customers (cascade) and an index on Customer and Total made in the
+  designer, its SQL shown, and the relationships view drawing the two
+  tables, their keys in bold and the line between them. After the lab
+  Amiga was reset with the project open, it reopened whole.
 
 - B0a: DalsinAI/gfopensqlite `tests/baseprobe.c`, its results in
   [Design-OpenBase.md](../gfoffice/Design-OpenBase.md) section 16.
