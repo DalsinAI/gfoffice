@@ -29,6 +29,7 @@
 #include <stddef.h>
 #include "owf.h"
 #include "owf_calc.h"
+#include "owf_pivot.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -413,22 +414,38 @@ int oc_core_subtotals(oc_core *core, unsigned group_col,
                       const unsigned *value_cols, unsigned nvalue_cols,
                       int function, int has_header, int grand_total);
 
-/* Builds a static pivot-summary snapshot from the selected headed table on a
- * new sheet. row_col, column_col and value_col are absolute source columns;
- * use OC_PIVOT_NO_COLUMN for a one-dimensional summary. function is one of
- * OC_SUBTOTAL_* above. Categories keep their first-occurrence order, blank
- * categories are included, and row/column/grand totals are written. The
- * source is untouched and creating the summary is one whole-book Undo step.
- * This is the reusable aggregation layer for DataPilot-style work; it does
- * not yet store a refreshable pivot definition in the document. */
+/* ---- Pivot tables (DataPilot) ----
+ * A pivot table summarises a headed source table by row, column, data and
+ * page fields (owf_pivot.h: fields count from the source's first column).
+ * Row and column fields nest, outer first; each value is a data field's
+ * function over the source rows of its row and column items; page fields
+ * keep only the rows whose value is the chosen item (or every row). Items
+ * keep each field's first-occurrence order, blank items are included, and
+ * grand totals are optional. The output is ordinary cells (headings and
+ * totals bold) and the definition is stored with the output sheet, so it
+ * survives XLSX and ODS (as their own pivot tables) and can be refreshed
+ * from the source or laid out afresh. Each change is one whole-book Undo
+ * step. OWF_ERR_FORMAT: the fields do not fit the source; OWF_ERR_UNSUPPORTED:
+ * no pivot table here, or the result would be too large (65536 values). */
 #define OC_PIVOT_NO_COLUMN ((unsigned)-1)
+/* A new pivot table of the selected headed table on a new sheet ("Pivot",
+ * "Pivot2"...). layout's fields and grand totals are used; its source and
+ * place are the selection's and A1. */
+int oc_core_pivot_create(oc_core *core, const owf_pivotdef *layout);
+/* The simplest one: one row field, an optional column field
+ * (OC_PIVOT_NO_COLUMN for none) and one data field, as absolute columns;
+ * function is one of OC_SUBTOTAL_* above. */
 int oc_core_pivot_summary(oc_core *core, unsigned row_col, unsigned column_col,
                           unsigned value_col, int function);
-/* Rebuilds the active Pivot Summary from its stored source/configuration.
- * The source range follows ordinary row/column edits through a hidden defined
- * name and survives XLSX/ODS. Refresh replaces the summary cells atomically
- * as one Undo step. OWF_ERR_UNSUPPORTED means the active sheet is not a Pivot
- * Summary made by this core. */
+/* The active sheet's pivot table: 1 when it has one. */
+int oc_core_pivot_get(const oc_core *core, owf_pivotdef *def);
+/* Lays the active sheet's pivot table out with new fields, filters and
+ * totals (layout's source and place are ignored: the table keeps its own). */
+int oc_core_pivot_set_layout(oc_core *core, const owf_pivotdef *layout);
+/* Rebuilds the active sheet's pivot table from its source as it is now.
+ * The source range follows ordinary row/column edits through a hidden
+ * defined name. OWF_ERR_UNSUPPORTED means the active sheet has no pivot
+ * table; OWF_ERR_FORMAT that its source or fields no longer fit. */
 int oc_core_refresh_pivot(oc_core *core);
 
 /* ---- AutoFilter ----

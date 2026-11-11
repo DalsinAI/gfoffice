@@ -19,6 +19,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_pivot.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1290,6 +1291,11 @@ static void put_names(ods_out *w, owf_buf *b, int sheet)
         size_t len;
         if (n->sheet != sheet)
             continue;
+        if (owf_pivot_is_name(n->name) && sheet >= 0) {
+            owf_pivotdef def;
+            if (owf_pivot_get(book, sheet, &def))
+                continue;                        /* in table:data-pilot-tables instead */
+        }
         of = table_formula(w, n->formula);
         if (!of) {
             owf_report_add(w->report, OWF_NOTE_LOST, "Some defined names could not be written");
@@ -2804,6 +2810,85 @@ static void put_autofilters(ods_out *w, owf_buf *b)
         owf_buf_puts(b, "</table:database-ranges>");
 }
 
+/* ---- Pivot tables: table:data-pilot-tables (ODF 1.2 9.6) ----
+ * Each sheet's pivot table (owf_pivot.h) with its fields named by their
+ * headings, and libowf's own attributes for what ODF names otherwise: the
+ * field's column in the source (gfocalc:field), and the output's size. */
+
+static void put_pivot_field(ods_out *w, owf_buf *b, const owf_pivotdef *def, unsigned field,
+                            const char *orientation, unsigned position)
+{
+    char heading[160];
+    owf_pivot_field_heading(w->book, def, field, heading, sizeof heading);
+    owf_buf_puts(b, "<table:data-pilot-field table:source-field-name=\"");
+    attr(w, b, heading);
+    owf_buf_printf(b, "\" table:orientation=\"%s\"", orientation);
+    owf_buf_printf(b, " gfocalc:field=\"%u\" gfocalc:position=\"%u\"", field, position);
+}
+
+static void put_pivots(ods_out *w, owf_buf *b)
+{
+    const owf_book *book = w->book;
+    int i, any = 0;
+    unsigned k;
+    for (i = 0; i < book->nsheets; i++) {
+        owf_pivotdef def;
+        const char *out_name = book->sheets[i].name, *src_name;
+        if (!owf_pivot_get(book, i, &def))
+            continue;
+        src_name = book->sheets[def.source_sheet].name;
+        if (!any)
+            owf_buf_puts(b, "<table:data-pilot-tables>");
+        any = 1;
+        owf_buf_puts(b, "<table:data-pilot-table table:name=\"");
+        attr(w, b, out_name);
+        owf_buf_puts(b, "\" table:target-range-address=\"");
+        put_address(w, b, out_name, def.at_row, def.at_col, 0);
+        owf_buf_putc(b, ':');
+        put_address(w, b, out_name, def.at_row + (def.rows ? def.rows - 1u : 0u),
+                    def.at_col + (def.cols ? def.cols - 1u : 0u), 0);
+        owf_buf_printf(b, "\" table:grand-total=\"%s\" table:show-filter-button=\"false\" "
+                          "table:drill-down-on-double-click=\"false\" gfocalc:output-rows=\"%u\" "
+                          "gfocalc:output-columns=\"%u\">",
+                       def.row_grand && def.col_grand ? "both" : def.row_grand ? "row" : def.col_grand ? "column" : "none",
+                       def.rows, def.cols);
+        owf_buf_puts(b, "<table:source-cell-range table:cell-range-address=\"");
+        put_address(w, b, src_name, def.source.first_row, def.source.first_col, 0);
+        owf_buf_putc(b, ':');
+        put_address(w, b, src_name, def.source.last_row, def.source.last_col, 0);
+        owf_buf_puts(b, "\"/>");
+        for (k = 0; k < def.npage; k++) {
+            char item[OWF_PIVOT_ITEM + 8];
+            put_pivot_field(w, b, &def, def.page[k].field, "page", k);
+            if (def.page[k].kind != OWF_PIVOT_ALL) {
+                owf_pivot_item_text(&def.page[k], item, sizeof item);
+                owf_buf_puts(b, " table:selected-page=\"");
+                attr(w, b, item);
+                owf_buf_printf(b, "\" gfocalc:item-kind=\"%d\"", def.page[k].kind);
+            }
+            owf_buf_puts(b, "/>");
+        }
+        for (k = 0; k < def.nrow; k++) {
+            put_pivot_field(w, b, &def, def.row[k], "row", k);
+            owf_buf_puts(b, "/>");
+        }
+        for (k = 0; k < def.ncol; k++) {
+            put_pivot_field(w, b, &def, def.col[k], "column", k);
+            owf_buf_puts(b, "/>");
+        }
+        for (k = 0; k < def.ndata; k++) {
+            put_pivot_field(w, b, &def, def.data[k].field, "data", k);
+            owf_buf_printf(b, " table:function=\"%s\"/>", owf_pivot_function_word(def.data[k].function, 0));
+        }
+        if (def.ndata > 1)                       /* the data fields' own place: under the column fields */
+            owf_buf_printf(b, "<table:data-pilot-field table:source-field-name=\"\" table:orientation=\"%s\" "
+                              "table:is-data-layout-field=\"true\"/>", "column");
+        owf_buf_puts(b, "</table:data-pilot-table>");
+    }
+    if (any)
+        owf_buf_puts(b, "</table:data-pilot-tables>");
+}
+
 static void body(ods_out *w, owf_buf *b)
 {
     int i;
@@ -2821,6 +2906,7 @@ static void body(ods_out *w, owf_buf *b)
                         "</table:table-row></table:table>");
     put_names(w, b, -1);
     put_autofilters(w, b);
+    put_pivots(w, b);
     owf_buf_puts(b, "</office:spreadsheet></office:body>");
 }
 
