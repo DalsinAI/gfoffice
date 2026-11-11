@@ -22,13 +22,25 @@ $(OUT)/test-opr-notes-asan: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_co
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_opr_notes.c -lz -o $@
 
-present-test: $(OUT)/test-opr-sorter $(OUT)/test-opr-notes
+$(OUT)/test-opr-outline: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_outline.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) \
+		tests/deck/test_opr_outline.c -lz -o $@
+
+$(OUT)/test-opr-outline-asan: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_outline.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_opr_outline.c -lz -o $@
+
+present-test: $(OUT)/test-opr-sorter $(OUT)/test-opr-notes $(OUT)/test-opr-outline
 	$(OUT)/test-opr-sorter
 	$(OUT)/test-opr-notes
+	$(OUT)/test-opr-outline
 
-present-check: $(OUT)/test-opr-sorter-asan $(OUT)/test-opr-notes-asan
+present-check: $(OUT)/test-opr-sorter-asan $(OUT)/test-opr-notes-asan $(OUT)/test-opr-outline-asan
 	$(OUT)/test-opr-sorter-asan
 	$(OUT)/test-opr-notes-asan
+	$(OUT)/test-opr-outline-asan
 
 test: present-test
 check: present-check
