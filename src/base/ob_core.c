@@ -39,6 +39,11 @@ struct ob_project {
     int ntables;
     int tables_valid;
     char tables[OB_MAX_TABLES][OB_NAME_MAX];
+    /* the last table's design read by a row or table call (design()), on
+     * the heap: an ob_table is too big for a 64 KB stack */
+    ob_table *cache;
+    int cache_ok;
+    ob_int cache_version;
 };
 
 static const char *const type_names[OB_TYPE_COUNT] = {
@@ -73,6 +78,7 @@ static int fail(ob_project *p, const char *fmt, ...)
 static int fail(ob_project *p, const char *fmt, ...)
 {
     va_list ap;
+    if (!p) return 0;
     va_start(ap, fmt);
     vsnprintf(p->err, sizeof p->err, fmt, ap);
     va_end(ap);
@@ -431,7 +437,7 @@ static int convert(const ob_field *f, const char *in, value *v, char *err, size_
         return 0;
     }
 empty:
-    if (f->required && f->type != OB_COUNTER) {
+    if ((f->required || f->key) && f->type != OB_COUNTER) {
         snprintf(err, errsize, "%s must be filled in", label);
         return 0;
     }
@@ -491,8 +497,27 @@ static int sql_fail(ob_project *p, const ob_table *t, int rc)
         }
         if ((c = strstr(m, "NOT NULL constraint failed: ")) != NULL && (c = strchr(c + 28, '.')) != NULL)
             return fail(p, "%s must be filled in", t && (f = field_named(t, c + 1)) ? field_label(f) : c + 1);
-        if ((c = strstr(m, "UNIQUE constraint failed: ")) != NULL && (c = strchr(c + 26, '.')) != NULL)
-            return fail(p, "%s must be different in every row", t && (f = field_named(t, c + 1)) ? field_label(f) : c + 1);
+        if ((c = strstr(m, "UNIQUE constraint failed: ")) != NULL && strchr(c + 26, '.') != NULL) {
+            /* "tbl.a" or "tbl.a, tbl.b": the fields by their labels */
+            char list[OB_ERR_MAX], one[OB_NAME_MAX];
+            const char *a = c + 26;
+            int k = 0;
+            list[0] = 0;
+            while (a && *a) {
+                const char *dot = strchr(a, '.'), *end = strstr(a, ", ");
+                size_t len;
+                if (!dot || (end && dot > end)) break;
+                len = end ? (size_t)(end - dot - 1) : strlen(dot + 1);
+                if (len >= sizeof one) len = sizeof one - 1;
+                memcpy(one, dot + 1, len);
+                one[len] = 0;
+                if (k++) strncat(list, end ? ", " : " and ", sizeof list - strlen(list) - 1);
+                strncat(list, t && (f = field_named(t, one)) ? field_label(f) : one, sizeof list - strlen(list) - 1);
+                a = end ? end + 2 : NULL;
+            }
+            if (k > 1) return fail(p, "%s must be different in every row, taken together", list);
+            return fail(p, "%s must be different in every row", list);
+        }
         if (strstr(m, "FOREIGN KEY"))
             return fail(p, "That would leave a row looking up a row that isn't there");
     }
@@ -503,6 +528,13 @@ static int sql_fail(ob_project *p, const ob_table *t, int rc)
     if ((rc & 0xff) == SQLITE_NOMEM) return fail(p, "Not enough memory");
     if ((rc & 0xff) == SQLITE_IOERR) return fail(p, "The disk could not be read or written");
     return fail(p, "%s", m);
+}
+
+/* The table list and the design cache are read again on next use. */
+static void forget(ob_project *p)
+{
+    p->tables_valid = 0;
+    p->cache_ok = 0;
 }
 
 /* ---- SQL helpers ---- */
@@ -643,6 +675,7 @@ ob_project *ob_open(const char *path, int flags, char *err, size_t errsize)
 bad:
     copy(err, errsize, p->err[0] ? p->err : "The project could not be opened");
     sqlite3_close(p->db);
+    free(p->cache);
     free(p);
     return NULL;
 }
@@ -652,6 +685,7 @@ void ob_close(ob_project *p)
     if (!p) return;
     if (p->in_txn) sqlite3_exec(p->db, "ROLLBACK", NULL, NULL, NULL);
     sqlite3_close(p->db);
+    free(p->cache);
     free(p);
 }
 
@@ -717,7 +751,7 @@ int ob_rollback(ob_project *p)
     if (!p->in_txn) return fail(p, "No change is open");
     sqlite3_exec(p->db, "ROLLBACK", NULL, NULL, NULL);
     p->in_txn = 0;
-    p->tables_valid = 0;
+    forget(p);
     return ok(p);
 }
 
@@ -747,7 +781,7 @@ static int step_end(ob_project *p, int good)
         sqlite3_exec(p->db, "ROLLBACK", NULL, NULL, NULL);
     }
     copy(p->err, sizeof p->err, keep);
-    p->tables_valid = 0;
+    forget(p);
     return 0;
 }
 
@@ -786,6 +820,24 @@ static int table_exists(ob_project *p, const char *name)
     return 0;
 }
 
+/* Table name's design, from the cache when the schema hasn't changed since
+ * it was read (another program's change bumps schema_version too). The
+ * pointer is good until the next call that reads a design. */
+static const ob_table *design(ob_project *p, const char *name)
+{
+    ob_int v = scalar(p, "PRAGMA schema_version", -1);
+    if (p->cache_ok && v == p->cache_version && same(p->cache->name, name)) return p->cache;
+    if (!p->cache && !(p->cache = malloc(sizeof *p->cache))) {
+        fail(p, "Not enough memory");
+        return NULL;
+    }
+    p->cache_ok = 0;
+    if (!ob_table_get(p, name, p->cache)) return NULL;
+    p->cache_ok = 1;
+    p->cache_version = v;
+    return p->cache;
+}
+
 void ob_table_init(ob_table *t, const char *name)
 {
     memset(t, 0, sizeof *t);
@@ -809,6 +861,98 @@ int ob_table_find_field(const ob_table *t, const char *name)
     int i;
     for (i = 0; i < t->nfields; i++) if (same(t->fields[i].name, name)) return i;
     return -1;
+}
+
+void ob_table_remove_index(ob_table *t, int i)
+{
+    if (i < 0 || i >= t->nindexes) return;
+    memmove(&t->indexes[i], &t->indexes[i + 1], sizeof t->indexes[0] * (size_t)(t->nindexes - i - 1));
+    t->nindexes--;
+}
+
+void ob_table_remove_field(ob_table *t, int i)
+{
+    int k, j, m;
+    if (i < 0 || i >= t->nfields) return;
+    for (k = 0; k < t->nindexes; k++) {
+        ob_index *x = &t->indexes[k];
+        for (j = m = 0; j < x->nfields; j++)
+            if (!same(x->fields[j], t->fields[i].name)) {
+                if (m != j) memcpy(x->fields[m], x->fields[j], OB_NAME_MAX);
+                m++;
+            }
+        x->nfields = m;
+        if (m == 0) ob_table_remove_index(t, k--);
+    }
+    memmove(&t->fields[i], &t->fields[i + 1], sizeof t->fields[0] * (size_t)(t->nfields - i - 1));
+    t->nfields--;
+}
+
+void ob_table_rename_field(ob_table *t, int i, const char *name)
+{
+    char old[OB_NAME_MAX];
+    int k, j;
+    if (i < 0 || i >= t->nfields) return;
+    copy(old, sizeof old, t->fields[i].name);
+    for (k = 0; k < t->nindexes; k++)
+        for (j = 0; j < t->indexes[k].nfields; j++)
+            if (same(t->indexes[k].fields[j], old)) copy(t->indexes[k].fields[j], OB_NAME_MAX, name);
+    copy(t->fields[i].name, sizeof t->fields[i].name, name);
+}
+
+ob_index *ob_table_add_index(ob_table *t, const char *name, int unique, const char *fields)
+{
+    ob_index *x;
+    const char *a = fields ? fields : "";
+    if (t->nindexes >= OB_MAX_INDEXES) return NULL;
+    x = &t->indexes[t->nindexes];
+    memset(x, 0, sizeof *x);
+    copy(x->name, sizeof x->name, name);
+    x->unique = unique != 0;
+    for (;;) {
+        const char *b = strchr(a, ',');
+        size_t len = b ? (size_t)(b - a) : strlen(a);
+        char one[OB_NAME_MAX * 2], name1[OB_NAME_MAX * 2];
+        if (len >= sizeof one) len = sizeof one - 1;
+        memcpy(one, a, len);
+        one[len] = 0;
+        trimmed(one, name1, sizeof name1);
+        if (name1[0]) {
+            if (x->nfields >= OB_INDEX_FIELDS) return NULL;
+            copy(x->fields[x->nfields++], OB_NAME_MAX, name1);
+        }
+        if (!b) break;
+        a = b + 1;
+    }
+    t->nindexes++;
+    return x;
+}
+
+void ob_index_fields_text(const ob_index *x, char *out, size_t size)
+{
+    int j;
+    size_t n = 0;
+    if (!size) return;
+    out[0] = 0;
+    for (j = 0; j < x->nfields && n + 1 < size; j++) {
+        snprintf(out + n, size - n, "%s%s", j ? ", " : "", x->fields[j]);
+        n = strlen(out);
+    }
+}
+
+/* Whether an index named name is on a table other than tbl (or old). */
+static int index_elsewhere(ob_project *p, const char *name, const char *tbl, const char *old)
+{
+    sqlite3_stmt *st = prep(p, "SELECT tbl_name FROM sqlite_schema WHERE type = 'index' AND name = ?1 COLLATE NOCASE");
+    int r = 0;
+    if (!st) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_STATIC);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const char *n = (const char *)sqlite3_column_text(st, 0);
+        if (n && !same(n, tbl) && !(old && same(n, old))) r = 1;
+    }
+    sqlite3_finalize(st);
+    return r;
 }
 
 /* A name GFOpenBase gives a table or field: a letter, then letters, digits,
@@ -836,9 +980,10 @@ static int name_ok(const char *s, char *why, size_t n, const char *what)
     return 1;
 }
 
-int ob_table_check(ob_project *p, const ob_table *t)
+/* old_name: the table t replaces (its indexes' names are free), or NULL. */
+static int check_design(ob_project *p, const ob_table *t, const char *old_name)
 {
-    int i, j, counters = 0;
+    int i, j, k, counters = 0, keys = 0;
     char why[OB_ERR_MAX];
     if (!name_ok(t->name, why, sizeof why, "table")) return fail(p, "%s", why);
     if (t->nfields < 1) return fail(p, "%s needs at least one field", t->name);
@@ -858,14 +1003,18 @@ int ob_table_check(ob_project *p, const ob_table *t)
             if (strchr(c, '\'') || c[0] == '|' || c[strlen(c) - 1] == '|' || strstr(c, "||"))
                 return fail(p, "%s: choices are separated by |, without quotes or empty ones", f->name);
         }
+        if (f->key) {
+            keys++;
+            if (f->type == OB_MEMO || f->type == OB_OBJECT) return fail(p, "%s can't be part of the key", f->name);
+        }
         if (f->type == OB_LOOKUP) {
-            ob_table other;
+            const ob_table *other;
             if (!f->lookup[0]) return fail(p, "%s needs the table it looks up", f->name);
             if (!same(f->lookup, t->name)) {
-                if (!p || !ob_table_get(p, f->lookup, &other))
+                if (!p || (other = design(p, f->lookup)) == NULL)
                     return fail(p, "%s looks up %s, which isn't a table", f->name, f->lookup);
-                for (j = 0; j < other.nfields && other.fields[j].type != OB_COUNTER; j++) ;
-                if (j == other.nfields) return fail(p, "%s looks up %s, which has no Counter", f->name, f->lookup);
+                for (j = 0; j < other->nfields && other->fields[j].type != OB_COUNTER; j++) ;
+                if (j == other->nfields) return fail(p, "%s looks up %s, which has no Counter", f->name, f->lookup);
             } else {
                 for (j = 0; j < t->nfields && t->fields[j].type != OB_COUNTER; j++) ;
                 if (j == t->nfields) return fail(p, "%s looks up %s, which has no Counter", f->name, f->lookup);
@@ -881,7 +1030,35 @@ int ob_table_check(ob_project *p, const ob_table *t)
             if (!convert(f, f->deflt, &v, why, sizeof why)) return fail(p, "Default: %s", why);
         }
     }
+    if (counters && keys) return fail(p, "%s has a Counter, which is its key: take Key off its other fields", t->name);
+    if (!counters && !keys) return fail(p, "%s needs a Counter or key fields", t->name);
+    if (t->nindexes < 0 || t->nindexes > OB_MAX_INDEXES)
+        return fail(p, "%s has more than %d indexes", t->name, OB_MAX_INDEXES);
+    for (k = 0; k < t->nindexes; k++) {
+        const ob_index *x = &t->indexes[k];
+        if (!name_ok(x->name, why, sizeof why, "index")) return fail(p, "%s", why);
+        for (j = 0; j < k; j++)
+            if (same(x->name, t->indexes[j].name)) return fail(p, "%s has two indexes named %s", t->name, x->name);
+        if (same(x->name, t->name) || (p && table_exists(p, x->name)))
+            return fail(p, "Index %s: there is a table with that name", x->name);
+        if (p && index_elsewhere(p, x->name, t->name, old_name))
+            return fail(p, "There is an index named %s on another table", x->name);
+        if (x->nfields < 1) return fail(p, "Index %s needs at least one field", x->name);
+        if (x->nfields > OB_INDEX_FIELDS) return fail(p, "Index %s has more than %d fields", x->name, OB_INDEX_FIELDS);
+        for (i = 0; i < x->nfields; i++) {
+            int fi = ob_table_find_field(t, x->fields[i]);
+            if (fi < 0) return fail(p, "Index %s: %s has no field %s", x->name, t->name, x->fields[i]);
+            if (t->fields[fi].type == OB_OBJECT) return fail(p, "Index %s can't use %s, a Datatype object", x->name, x->fields[i]);
+            for (j = 0; j < i; j++)
+                if (same(x->fields[i], x->fields[j])) return fail(p, "Index %s has %s twice", x->name, x->fields[i]);
+        }
+    }
     return p ? ok(p) : 1;
+}
+
+int ob_table_check(ob_project *p, const ob_table *t)
+{
+    return check_design(p, t, NULL);
 }
 
 /* One column's definition, appended to s. */
@@ -892,7 +1069,7 @@ static void column_sql(sqlite3_str *s, const ob_field *f)
         sqlite3_str_appendall(s, " PRIMARY KEY");
         return;
     }
-    if (f->required) sqlite3_str_appendall(s, " NOT NULL");
+    if (f->required || f->key) sqlite3_str_appendall(s, " NOT NULL");
     if (f->unique) sqlite3_str_appendall(s, " UNIQUE");
     if (f->has_default) {
         value v;
@@ -945,17 +1122,42 @@ static void column_sql(sqlite3_str *s, const ob_field *f)
     }
 }
 
+/* CREATE TABLE, with PRIMARY KEY(...) for a table keyed by its fields. */
+static void create_sql(sqlite3_str *s, const ob_table *t, const char *as_name)
+{
+    int i, k = 0, counter = 0;
+    sqlite3_str_appendf(s, "CREATE TABLE \"%w\" (", as_name ? as_name : t->name);
+    for (i = 0; i < t->nfields; i++) {
+        sqlite3_str_appendall(s, i ? ",\n  " : "\n  ");
+        column_sql(s, &t->fields[i]);
+        if (t->fields[i].type == OB_COUNTER) counter = 1;
+    }
+    if (!counter)
+        for (i = 0; i < t->nfields; i++)
+            if (t->fields[i].key)
+                sqlite3_str_appendf(s, "%s\"%w\"", k++ ? ", " : ",\n  PRIMARY KEY(", t->fields[i].name);
+    if (k) sqlite3_str_appendall(s, ")");
+    sqlite3_str_appendall(s, "\n)");
+}
+
+static void index_sql(sqlite3_str *s, const ob_table *t, const ob_index *x)
+{
+    int j;
+    sqlite3_str_appendf(s, "CREATE %sINDEX \"%w\" ON \"%w\" (", x->unique ? "UNIQUE " : "", x->name, t->name);
+    for (j = 0; j < x->nfields; j++) sqlite3_str_appendf(s, "%s\"%w\"", j ? ", " : "", x->fields[j]);
+    sqlite3_str_appendall(s, ")");
+}
+
 int ob_table_sql(const ob_table *t, const char *as_name, char *out, size_t size)
 {
     sqlite3_str *s = sqlite3_str_new(NULL);
     char *sql;
     int i, len;
-    sqlite3_str_appendf(s, "CREATE TABLE \"%w\" (", as_name ? as_name : t->name);
-    for (i = 0; i < t->nfields; i++) {
-        sqlite3_str_appendall(s, i ? ",\n  " : "\n  ");
-        column_sql(s, &t->fields[i]);
+    create_sql(s, t, as_name);
+    for (i = 0; i < t->nindexes; i++) {
+        sqlite3_str_appendall(s, ";\n");
+        index_sql(s, t, &t->indexes[i]);
     }
-    sqlite3_str_appendall(s, "\n)");
     len = sqlite3_str_length(s);
     sql = sqlite3_str_finish(s);
     if (!sql || (size_t)len >= size) {
@@ -972,14 +1174,23 @@ int ob_table_sql(const ob_table *t, const char *as_name, char *out, size_t size)
 static char *table_sql_alloc(const ob_table *t, const char *as_name)
 {
     sqlite3_str *s = sqlite3_str_new(NULL);
-    int i;
-    sqlite3_str_appendf(s, "CREATE TABLE \"%w\" (", as_name ? as_name : t->name);
-    for (i = 0; i < t->nfields; i++) {
-        sqlite3_str_appendall(s, i ? ",\n  " : "\n  ");
-        column_sql(s, &t->fields[i]);
-    }
-    sqlite3_str_appendall(s, "\n)");
+    create_sql(s, t, as_name);
     return sqlite3_str_finish(s);
+}
+
+/* The table's indexes, made in the file; 0 with the reason in plain words. */
+static int make_indexes(ob_project *p, const ob_table *t)
+{
+    int i, rc = SQLITE_OK;
+    for (i = 0; i < t->nindexes && rc == SQLITE_OK; i++) {
+        sqlite3_str *s = sqlite3_str_new(NULL);
+        char *sql;
+        index_sql(s, t, &t->indexes[i]);
+        sql = sqlite3_str_finish(s);
+        rc = sql ? sqlite3_exec(p->db, sql, NULL, NULL, NULL) : SQLITE_NOMEM;
+        sqlite3_free(sql);
+    }
+    return rc == SQLITE_OK ? 1 : sql_fail(p, t, rc);
 }
 
 static int save_fields(ob_project *p, const ob_table *t)
@@ -1070,6 +1281,7 @@ int ob_table_get(ob_project *p, const char *name, ob_table *out)
                                     pks == 1 && sqlite3_column_int(st, 3) == 1);
             f->required = sqlite3_column_int(st, 2);
         }
+        f->key = f->type != OB_COUNTER && sqlite3_column_int(st, 3) > 0;
     }
     sqlite3_finalize(st);
     /* Foreign keys another program made become Lookups. */
@@ -1087,6 +1299,31 @@ int ob_table_get(ob_project *p, const char *name, ob_table *out)
                                  : rule && !strcmp(rule, "SET NULL") ? OB_DELETE_CLEAR : OB_DELETE_REFUSE;
     }
     sqlite3_finalize(st);
+    /* Indexes made by CREATE INDEX on whole fields (not UNIQUE fields' own,
+     * the key's, partial ones or ones on expressions) */
+    sql = sqlite3_mprintf("SELECT name, \"unique\" FROM pragma_index_list(%Q) WHERE origin = 'c' AND partial = 0"
+                          " ORDER BY name COLLATE NOCASE", out->name);
+    st = sql ? prep(p, sql) : NULL;
+    sqlite3_free(sql);
+    while (st && sqlite3_step(st) == SQLITE_ROW && out->nindexes < OB_MAX_INDEXES) {
+        ob_index *x = &out->indexes[out->nindexes];
+        sqlite3_stmt *ci;
+        int whole = 1;
+        memset(x, 0, sizeof *x);
+        copy(x->name, sizeof x->name, (const char *)sqlite3_column_text(st, 0));
+        x->unique = sqlite3_column_int(st, 1);
+        sql = sqlite3_mprintf("SELECT name FROM pragma_index_info(%Q) ORDER BY seqno", x->name);
+        ci = sql ? prep(p, sql) : NULL;
+        sqlite3_free(sql);
+        while (ci && sqlite3_step(ci) == SQLITE_ROW) {
+            const char *n = (const char *)sqlite3_column_text(ci, 0);
+            if (!n || x->nfields >= OB_INDEX_FIELDS) whole = 0;
+            else copy(x->fields[x->nfields++], OB_NAME_MAX, n);
+        }
+        sqlite3_finalize(ci);
+        if (whole && x->nfields > 0) out->nindexes++;
+    }
+    sqlite3_finalize(st);
     return ok(p);
 }
 
@@ -1098,9 +1335,9 @@ int ob_table_create(ob_project *p, const ob_table *t)
     if (table_exists(p, t->name)) return fail(p, "There is a table named %s already", t->name);
     if (!(sql = table_sql_alloc(t, NULL))) return fail(p, "Not enough memory");
     if (!step_begin(p)) { sqlite3_free(sql); return 0; }
-    good = run(p, sql) && save_fields(p, t);
+    good = run(p, sql) && save_fields(p, t) && make_indexes(p, t);
     sqlite3_free(sql);
-    p->tables_valid = 0;
+    forget(p);
     return step_end(p, good) && ok(p);
 }
 
@@ -1202,29 +1439,27 @@ static int change_fail(ob_project *p, const ob_table *t, int rc)
     return 0;
 }
 
-int ob_table_change(ob_project *p, const char *old_name, const ob_table *t)
+static int change_table(ob_project *p, const char *old_name, const ob_table *t, ob_table *old)
 {
-    ob_table old;
     sqlite3_str *cols, *vals;
     char *sql = NULL, *cs = NULL, *vs = NULL;
     int i, good = 0, any = 0, rc;
-    if (p->in_txn) return fail(p, "Save or undo the row changes first");
-    if (!ob_table_get(p, old_name, &old)) return 0;
-    if (!ob_table_check(p, t)) return 0;
-    if (!same(old.name, t->name) && table_exists(p, t->name))
+    if (!ob_table_get(p, old_name, old)) return 0;
+    if (!check_design(p, t, old->name)) return 0;
+    if (!same(old->name, t->name) && table_exists(p, t->name))
         return fail(p, "There is a table named %s already", t->name);
     for (i = 0; i < t->nfields; i++)
-        if (t->fields[i].from[0] && ob_table_find_field(&old, t->fields[i].from) < 0)
-            return fail(p, "%s has no field %s", old.name, t->fields[i].from);
+        if (t->fields[i].from[0] && ob_table_find_field(old, t->fields[i].from) < 0)
+            return fail(p, "%s has no field %s", old->name, t->fields[i].from);
     cols = sqlite3_str_new(NULL);
     vals = sqlite3_str_new(NULL);
     for (i = 0; i < t->nfields; i++) {
         const ob_field *f = &t->fields[i];
-        int j = f->from[0] ? ob_table_find_field(&old, f->from) : -1;
+        int j = f->from[0] ? ob_table_find_field(old, f->from) : -1;
         if (j < 0) continue;
         sqlite3_str_appendf(cols, "%s\"%w\"", any ? ", " : "", f->name);
         if (any) sqlite3_str_appendall(vals, ", ");
-        convert_sql(vals, &old.fields[j], f);
+        convert_sql(vals, &old->fields[j], f);
         any = 1;
     }
     cs = sqlite3_str_finish(cols);
@@ -1238,22 +1473,30 @@ int ob_table_change(ob_project *p, const char *old_name, const ob_table *t)
     sqlite3_free(sql);
     sql = NULL;
     if (any) {
-        sql = sqlite3_mprintf("INSERT INTO oadb_change(%s) SELECT %s FROM \"%w\"", cs, vs, old.name);
+        sql = sqlite3_mprintf("INSERT INTO oadb_change(%s) SELECT %s FROM \"%w\"", cs, vs, old->name);
         rc = sql ? sqlite3_exec(p->db, sql, NULL, NULL, NULL) : SQLITE_NOMEM;
         if (rc != SQLITE_OK) { change_fail(p, t, rc); goto undo; }
     }
-    if (!runf(p, "DROP TABLE \"%w\"", old.name)) goto undo;
+    if (!runf(p, "DROP TABLE \"%w\"", old->name)) goto undo;
     if (!runf(p, "ALTER TABLE oadb_change RENAME TO \"%w\"", t->name)) goto undo;
-    if (!runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", old.name) || !save_fields(p, t)) goto undo;
-    if (!same(old.name, t->name)) {
+    if (!runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", old->name) || !save_fields(p, t)) goto undo;
+    if (!make_indexes(p, t)) {
+        if (strstr(p->err, "must be")) {
+            char keep[OB_ERR_MAX];
+            copy(keep, sizeof keep, p->err);
+            fail(p, "Some rows don't fit the new design: %s", keep);
+        }
+        goto undo;
+    }
+    if (!same(old->name, t->name)) {
         /* other tables' Lookups follow the rename (SQLite rewrote their REFERENCES) */
-        if (!runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", t->name, old.name)) goto undo;
+        if (!runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", t->name, old->name)) goto undo;
     }
     {
         sqlite3_stmt *st = prep(p, "PRAGMA foreign_key_check");
         if (!st) goto undo;
         if (sqlite3_step(st) == SQLITE_ROW) {
-            fail(p, "Changing %s would leave rows in %s looking up rows that aren't there", old.name,
+            fail(p, "Changing %s would leave rows in %s looking up rows that aren't there", old->name,
                  (const char *)sqlite3_column_text(st, 0));
             sqlite3_finalize(st);
             goto undo;
@@ -1281,46 +1524,86 @@ out:
     sqlite3_free(sql);
     sqlite3_free(cs);
     sqlite3_free(vs);
-    p->tables_valid = 0;
+    forget(p);
     return good ? ok(p) : 0;
+}
+
+int ob_table_change(ob_project *p, const char *old_name, const ob_table *t)
+{
+    ob_table *old;
+    int good;
+    if (p->in_txn) return fail(p, "Save or undo the row changes first");
+    if (!(old = malloc(sizeof *old))) return fail(p, "Not enough memory");
+    good = change_table(p, old_name, t, old);
+    free(old);
+    return good;
 }
 
 int ob_table_rename(ob_project *p, const char *old_name, const char *new_name)
 {
     char why[OB_ERR_MAX];
-    ob_table t;
+    const ob_table *t;
     int good;
-    if (!ob_table_get(p, old_name, &t)) return 0;
+    if (!(t = design(p, old_name))) return 0;
     if (!name_ok(new_name, why, sizeof why, "table")) return fail(p, "%s", why);
-    if (!same(t.name, new_name) && table_exists(p, new_name))
+    if (!same(t->name, new_name) && table_exists(p, new_name))
         return fail(p, "There is a table named %s already", new_name);
     if (!step_begin(p)) return 0;
-    good = runf(p, "ALTER TABLE \"%w\" RENAME TO \"%w\"", t.name, new_name)
-        && runf(p, "UPDATE oadb_fields SET tbl = %Q WHERE tbl = %Q", new_name, t.name)
-        && runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", new_name, t.name);
-    p->tables_valid = 0;
+    good = runf(p, "ALTER TABLE \"%w\" RENAME TO \"%w\"", t->name, new_name)
+        && runf(p, "UPDATE oadb_fields SET tbl = %Q WHERE tbl = %Q", new_name, t->name)
+        && runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", new_name, t->name);
+    forget(p);
     return step_end(p, good) && ok(p);
 }
 
 int ob_table_drop(ob_project *p, const char *name)
 {
-    ob_table t;
+    const ob_table *t;
     sqlite3_stmt *st;
     int good;
-    if (!ob_table_get(p, name, &t)) return 0;
+    if (!(t = design(p, name))) return 0;
     st = prep(p, "SELECT tbl FROM oadb_fields WHERE lookup = ?1 AND tbl <> ?1 LIMIT 1");
     if (!st) return 0;
-    sqlite3_bind_text(st, 1, t.name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(st, 1, t->name, -1, SQLITE_STATIC);
     if (sqlite3_step(st) == SQLITE_ROW) {
-        fail(p, "%s looks up %s: change or delete it first", (const char *)sqlite3_column_text(st, 0), t.name);
+        fail(p, "%s looks up %s: change or delete it first", (const char *)sqlite3_column_text(st, 0), t->name);
         sqlite3_finalize(st);
         return 0;
     }
     sqlite3_finalize(st);
     if (!step_begin(p)) return 0;
-    good = runf(p, "DROP TABLE \"%w\"", t.name) && runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", t.name);
-    p->tables_valid = 0;
+    good = runf(p, "DROP TABLE \"%w\"", t->name) && runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", t->name);
+    forget(p);
     return step_end(p, good) && ok(p);
+}
+
+/* ---- Relationships ---- */
+
+int ob_relations(ob_project *p, ob_relation *out, int max)
+{
+    sqlite3_stmt *st = prep(p, "SELECT m.name, k.\"from\", k.\"table\", k.on_delete"
+                               " FROM sqlite_schema m, pragma_foreign_key_list(m.name) k"
+                               " WHERE m.type = 'table' AND m.name NOT LIKE 'oadb\\_%' ESCAPE '\\'"
+                               " AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
+                               " ORDER BY m.name COLLATE NOCASE, k.\"from\" COLLATE NOCASE");
+    int n = 0, rc;
+    if (!st) return -1;
+    while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
+        if (out && n < max) {
+            ob_relation *r = &out[n];
+            const char *rule = (const char *)sqlite3_column_text(st, 3);
+            copy(r->table, sizeof r->table, (const char *)sqlite3_column_text(st, 0));
+            copy(r->field, sizeof r->field, (const char *)sqlite3_column_text(st, 1));
+            copy(r->lookup, sizeof r->lookup, (const char *)sqlite3_column_text(st, 2));
+            r->on_delete = rule && !strcmp(rule, "CASCADE") ? OB_DELETE_CASCADE
+                         : rule && !strcmp(rule, "SET NULL") ? OB_DELETE_CLEAR : OB_DELETE_REFUSE;
+        }
+        n++;
+    }
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE) { sql_fail(p, NULL, rc); return -1; }
+    ok(p);
+    return n;
 }
 
 /* ---- Rows ---- */
@@ -1367,29 +1650,29 @@ static int names_unique(ob_project *p, int n, const char *const *fields)
 int ob_row_add(ob_project *p, const char *table, int n, const char *const *fields,
                const char *const *values, ob_int *key)
 {
-    ob_table t;
+    const ob_table *t;
     sqlite3_str *s;
     sqlite3_stmt *st;
     char *sql;
     int i, rc;
-    if (!ob_table_get(p, table, &t)) return 0;
-    if (n < 0 || n > t.nfields) return fail(p, "Too many fields");
+    if (!(t = design(p, table))) return 0;
+    if (n < 0 || n > t->nfields) return fail(p, "Too many fields");
     if (!names_unique(p, n, fields)) return 0;
     for (i = 0; i < n; i++)
-        if (!field_named(&t, fields[i])) return fail(p, "%s has no field %s", t.name, fields[i]);
+        if (!field_named(t, fields[i])) return fail(p, "%s has no field %s", t->name, fields[i]);
     /* a required field left out with no default: say so before SQLite does */
-    for (i = 0; i < t.nfields; i++) {
-        const ob_field *f = &t.fields[i];
+    for (i = 0; i < t->nfields; i++) {
+        const ob_field *f = &t->fields[i];
         int j, given = 0;
         for (j = 0; j < n; j++) if (same(fields[j], f->name)) given = 1;
-        if (!given && f->required && !f->has_default && f->type != OB_COUNTER)
+        if (!given && (f->required || f->key) && !f->has_default && f->type != OB_COUNTER)
             return fail(p, "%s must be filled in", field_label(f));
     }
     s = sqlite3_str_new(NULL);
     if (n == 0) {
-        sqlite3_str_appendf(s, "INSERT INTO \"%w\" DEFAULT VALUES", t.name);
+        sqlite3_str_appendf(s, "INSERT INTO \"%w\" DEFAULT VALUES", t->name);
     } else {
-        sqlite3_str_appendf(s, "INSERT INTO \"%w\"(", t.name);
+        sqlite3_str_appendf(s, "INSERT INTO \"%w\"(", t->name);
         for (i = 0; i < n; i++) sqlite3_str_appendf(s, "%s\"%w\"", i ? ", " : "", fields[i]);
         sqlite3_str_appendall(s, ") VALUES(");
         for (i = 0; i < n; i++) sqlite3_str_appendf(s, "%s?%d", i ? ", " : "", i + 1);
@@ -1399,10 +1682,10 @@ int ob_row_add(ob_project *p, const char *table, int n, const char *const *field
     st = sql ? prep(p, sql) : NULL;
     sqlite3_free(sql);
     if (!st) return 0;
-    if (!bind_fields(p, &t, st, 1, n, fields, values)) { sqlite3_finalize(st); return 0; }
+    if (!bind_fields(p, t, st, 1, n, fields, values)) { sqlite3_finalize(st); return 0; }
     rc = sqlite3_step(st);
     sqlite3_finalize(st);
-    if (rc != SQLITE_DONE) return sql_fail(p, &t, rc);
+    if (rc != SQLITE_DONE) return sql_fail(p, t, rc);
     if (key) *key = sqlite3_last_insert_rowid(p->db);
     return ok(p);
 }
@@ -1410,39 +1693,39 @@ int ob_row_add(ob_project *p, const char *table, int n, const char *const *field
 int ob_row_change(ob_project *p, const char *table, ob_int key, int n,
                   const char *const *fields, const char *const *values)
 {
-    ob_table t;
+    const ob_table *t;
     sqlite3_str *s;
     sqlite3_stmt *st;
     char *sql;
     int i, rc;
-    if (!ob_table_get(p, table, &t)) return 0;
+    if (!(t = design(p, table))) return 0;
     if (n <= 0) return ok(p);
-    if (n > t.nfields) return fail(p, "Too many fields");
+    if (n > t->nfields) return fail(p, "Too many fields");
     if (!names_unique(p, n, fields)) return 0;
     s = sqlite3_str_new(NULL);
-    sqlite3_str_appendf(s, "UPDATE \"%w\" SET ", t.name);
+    sqlite3_str_appendf(s, "UPDATE \"%w\" SET ", t->name);
     for (i = 0; i < n; i++) sqlite3_str_appendf(s, "%s\"%w\" = ?%d", i ? ", " : "", fields[i], i + 1);
     sqlite3_str_appendf(s, " WHERE rowid = ?%d", n + 1);
     sql = sqlite3_str_finish(s);
     st = sql ? prep(p, sql) : NULL;
     sqlite3_free(sql);
     if (!st) return 0;
-    if (!bind_fields(p, &t, st, 1, n, fields, values)) { sqlite3_finalize(st); return 0; }
+    if (!bind_fields(p, t, st, 1, n, fields, values)) { sqlite3_finalize(st); return 0; }
     sqlite3_bind_int64(st, n + 1, key);
     rc = sqlite3_step(st);
     sqlite3_finalize(st);
-    if (rc != SQLITE_DONE) return sql_fail(p, &t, rc);
-    if (sqlite3_changes(p->db) == 0) return fail(p, "%s has no row %lld", t.name, key);
+    if (rc != SQLITE_DONE) return sql_fail(p, t, rc);
+    if (sqlite3_changes(p->db) == 0) return fail(p, "%s has no row %lld", t->name, key);
     return ok(p);
 }
 
 int ob_row_delete(ob_project *p, const char *table, ob_int key)
 {
-    ob_table t;
+    const ob_table *t;
     char *sql;
     int rc;
-    if (!ob_table_get(p, table, &t)) return 0;
-    sql = sqlite3_mprintf("DELETE FROM \"%w\" WHERE rowid = %lld", t.name, key);
+    if (!(t = design(p, table))) return 0;
+    sql = sqlite3_mprintf("DELETE FROM \"%w\" WHERE rowid = %lld", t->name, key);
     rc = sql ? sqlite3_exec(p->db, sql, NULL, NULL, NULL) : SQLITE_NOMEM;
     sqlite3_free(sql);
     if (rc != SQLITE_OK) {
@@ -1450,28 +1733,28 @@ int ob_row_delete(ob_project *p, const char *table, ob_int key)
             /* a Lookup that refuses: name the table that still looks it up */
             sqlite3_stmt *st = prep(p, "SELECT tbl FROM oadb_fields WHERE lookup = ?1 AND on_delete = 0 LIMIT 1");
             if (st) {
-                sqlite3_bind_text(st, 1, t.name, -1, SQLITE_STATIC);
+                sqlite3_bind_text(st, 1, t->name, -1, SQLITE_STATIC);
                 if (sqlite3_step(st) == SQLITE_ROW) {
-                    fail(p, "%s row %lld still has rows in %s", t.name, key, (const char *)sqlite3_column_text(st, 0));
+                    fail(p, "%s row %lld still has rows in %s", t->name, key, (const char *)sqlite3_column_text(st, 0));
                     sqlite3_finalize(st);
                     return 0;
                 }
                 sqlite3_finalize(st);
             }
         }
-        return sql_fail(p, &t, rc);
+        return sql_fail(p, t, rc);
     }
-    if (sqlite3_changes(p->db) == 0) return fail(p, "%s has no row %lld", t.name, key);
+    if (sqlite3_changes(p->db) == 0) return fail(p, "%s has no row %lld", t->name, key);
     return ok(p);
 }
 
 ob_int ob_row_total(ob_project *p, const char *table)
 {
-    ob_table t;
+    const ob_table *t;
     char *sql;
     ob_int n;
-    if (!ob_table_get(p, table, &t)) return -1;
-    sql = sqlite3_mprintf("SELECT count(*) FROM \"%w\"", t.name);
+    if (!(t = design(p, table))) return -1;
+    sql = sqlite3_mprintf("SELECT count(*) FROM \"%w\"", t->name);
     n = sql ? scalar(p, sql, -1) : -1;
     sqlite3_free(sql);
     return n;
@@ -1492,25 +1775,29 @@ int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_f
 /* first < 0: the rows after key `after`; else from position first. */
 static int rows_from(ob_project *p, const char *table, ob_int after, ob_int first, int max, ob_row_fn cb, void *user)
 {
-    ob_table t;
+    const ob_table *t;
     sqlite3_str *s;
     sqlite3_stmt *st;
     char *sql;
     const char *vals[OB_MAX_FIELDS];
     char (*cells)[48];
-    int i, n = 0, rc;
-    if (!ob_table_get(p, table, &t)) return -1;
+    unsigned char types[OB_MAX_FIELDS];
+    int i, nf, n = 0, rc;
+    if (!(t = design(p, table))) return -1;
     if (max <= 0) return 0;
-    cells = malloc(sizeof *cells * (size_t)t.nfields);
+    /* cb may read another table's design, so keep what the loop needs */
+    nf = t->nfields;
+    for (i = 0; i < nf; i++) types[i] = (unsigned char)t->fields[i].type;
+    cells = malloc(sizeof *cells * (size_t)t->nfields);
     if (!cells) { fail(p, "Not enough memory"); return -1; }
     s = sqlite3_str_new(NULL);
     sqlite3_str_appendall(s, "SELECT rowid");
-    for (i = 0; i < t.nfields; i++) {
-        if (t.fields[i].type == OB_OBJECT) sqlite3_str_appendf(s, ", length(\"%w\")", t.fields[i].name);
-        else sqlite3_str_appendf(s, ", \"%w\"", t.fields[i].name);
+    for (i = 0; i < t->nfields; i++) {
+        if (t->fields[i].type == OB_OBJECT) sqlite3_str_appendf(s, ", length(\"%w\")", t->fields[i].name);
+        else sqlite3_str_appendf(s, ", \"%w\"", t->fields[i].name);
     }
-    if (first < 0) sqlite3_str_appendf(s, " FROM \"%w\" WHERE rowid > ?1 ORDER BY rowid LIMIT ?2", t.name);
-    else sqlite3_str_appendf(s, " FROM \"%w\" ORDER BY rowid LIMIT ?2 OFFSET ?1", t.name);
+    if (first < 0) sqlite3_str_appendf(s, " FROM \"%w\" WHERE rowid > ?1 ORDER BY rowid LIMIT ?2", t->name);
+    else sqlite3_str_appendf(s, " FROM \"%w\" ORDER BY rowid LIMIT ?2 OFFSET ?1", t->name);
     sql = sqlite3_str_finish(s);
     st = sql ? prep(p, sql) : NULL;
     sqlite3_free(sql);
@@ -1518,16 +1805,15 @@ static int rows_from(ob_project *p, const char *table, ob_int after, ob_int firs
     sqlite3_bind_int64(st, 1, first < 0 ? after : first);
     sqlite3_bind_int(st, 2, max);
     while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
-        for (i = 0; i < t.nfields; i++) {
-            const ob_field *f = &t.fields[i];
+        for (i = 0; i < nf; i++) {
             int c = i + 1;
             if (sqlite3_column_type(st, c) == SQLITE_NULL) { vals[i] = NULL; continue; }
-            if (f->type == OB_CURRENCY && sqlite3_column_type(st, c) == SQLITE_INTEGER) {
+            if (types[i] == OB_CURRENCY && sqlite3_column_type(st, c) == SQLITE_INTEGER) {
                 ob_currency_format(sqlite3_column_int64(st, c), cells[i], sizeof cells[i]);
                 vals[i] = cells[i];
-            } else if (f->type == OB_YESNO && sqlite3_column_type(st, c) == SQLITE_INTEGER) {
+            } else if (types[i] == OB_YESNO && sqlite3_column_type(st, c) == SQLITE_INTEGER) {
                 vals[i] = sqlite3_column_int64(st, c) ? "Yes" : "No";
-            } else if (f->type == OB_OBJECT) {
+            } else if (types[i] == OB_OBJECT) {
                 snprintf(cells[i], sizeof cells[i], "(%lld bytes)", (ob_int)sqlite3_column_int64(st, c));
                 vals[i] = cells[i];
             } else {
@@ -1535,11 +1821,11 @@ static int rows_from(ob_project *p, const char *table, ob_int after, ob_int firs
             }
         }
         n++;
-        if (cb && cb(user, sqlite3_column_int64(st, 0), t.nfields, vals)) { rc = SQLITE_DONE; break; }
+        if (cb && cb(user, sqlite3_column_int64(st, 0), nf, vals)) { rc = SQLITE_DONE; break; }
     }
     sqlite3_finalize(st);
     free(cells);
-    if (rc != SQLITE_DONE) { sql_fail(p, &t, rc); return -1; }
+    if (rc != SQLITE_DONE) { sql_fail(p, NULL, rc); return -1; }
     ok(p);
     return n;
 }

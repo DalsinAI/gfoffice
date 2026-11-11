@@ -42,7 +42,7 @@
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.1.0 (11.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.2.0 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -50,7 +50,7 @@ static const char version[] __attribute__((used)) =
 
 enum {
     M_NEW = 1, M_OPEN, M_CLOSE, M_COPY, M_COMPACT, M_CHECK, M_ABOUT, M_QUIT,
-    M_T_NEW, M_T_DESIGN, M_T_DELETE, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST
+    M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST
 };
 
 static struct NewMenu menus[] = {
@@ -69,6 +69,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "New Table...", "T", 0, 0, (APTR)M_T_NEW },
     { NM_ITEM, "Design...", "D", 0, 0, (APTR)M_T_DESIGN },
     { NM_ITEM, "Delete Table...", NULL, 0, 0, (APTR)M_T_DELETE },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Relationships...", "R", 0, 0, (APTR)M_T_RELATIONS },
     { NM_TITLE, "Row", NULL, 0, 0, NULL },
     { NM_ITEM, "Add Row...", "A", 0, 0, (APTR)M_R_ADD },
     { NM_ITEM, "Edit Row...", "E", 0, 0, (APTR)M_R_EDIT },
@@ -780,8 +782,8 @@ static void delete_row(void)
 /* ---- The table designer ---- */
 
 enum {
-    D_TNAME = 1, D_FIELDS, D_FNAME, D_TYPE, D_REQUIRED, D_UNIQUE, D_MAXLEN, D_DEFAULT, D_LABEL, D_CHOICES,
-    D_LOOKUP, D_ONDELETE, D_ADD, D_REMOVE, D_UP, D_DOWN, D_SQL, D_SAVE, D_CANCEL, D_COUNT
+    D_TNAME = 1, D_FIELDS, D_FNAME, D_TYPE, D_REQUIRED, D_UNIQUE, D_KEY, D_MAXLEN, D_DEFAULT, D_LABEL, D_CHOICES,
+    D_LOOKUP, D_ONDELETE, D_ADD, D_REMOVE, D_UP, D_DOWN, D_SQL, D_INDEXES, D_SAVE, D_CANCEL, D_COUNT
 };
 
 static const char *type_labels[OB_TYPE_COUNT + 1];
@@ -799,11 +801,403 @@ static void designer_list(void)
     int i;
     NewList(&dl);
     for (i = 0; i < dt.nfields; i++) {
-        snprintf(dtext[i], sizeof dtext[i], "%s (%s%s)", dt.fields[i].name, ob_type_name(dt.fields[i].type),
-                 dt.fields[i].required ? ", required" : "");
+        snprintf(dtext[i], sizeof dtext[i], "%s (%s%s%s)", dt.fields[i].name, ob_type_name(dt.fields[i].type),
+                 dt.fields[i].key ? ", key" : "", dt.fields[i].required ? ", required" : "");
         dnodes[i].ln_Name = dtext[i];
         AddTail(&dl, &dnodes[i]);
     }
+}
+
+/* ---- Indexes (on the designer's working copy) ---- */
+
+enum { X_LIST = 1, X_NAME, X_FIELDS, X_UNIQUE, X_ADD, X_REMOVE, X_DONE, X_COUNT };
+
+static struct List xl;
+static struct Node xnodes[OB_MAX_INDEXES];
+static char xtext[OB_MAX_INDEXES][OB_NAME_MAX + 160];
+
+static void index_list(void)
+{
+    int i;
+    NewList(&xl);
+    for (i = 0; i < dt.nindexes; i++) {
+        char f[140];
+        ob_index_fields_text(&dt.indexes[i], f, sizeof f);
+        snprintf(xtext[i], sizeof xtext[i], "%s%s: %s", dt.indexes[i].name, dt.indexes[i].unique ? " (unique)" : "", f);
+        xnodes[i].ln_Name = xtext[i];
+        AddTail(&xl, &xnodes[i]);
+    }
+}
+
+/* "Surname, First name" into x's fields; 0 when there are too many. */
+static int index_set_fields(ob_index *x, const char *text)
+{
+    const char *a = text;
+    int n = 0;
+    char names[OB_INDEX_FIELDS][OB_NAME_MAX];
+    for (;;) {
+        const char *b = strchr(a, ','), *e;
+        size_t len = b ? (size_t)(b - a) : strlen(a);
+        while (len && (*a == ' ' || *a == '\t')) { a++; len--; }
+        e = a + len;
+        while (len && (e[-1] == ' ' || e[-1] == '\t')) { e--; len--; }
+        if (len) {
+            if (n >= OB_INDEX_FIELDS) return 0;
+            if (len >= OB_NAME_MAX) len = OB_NAME_MAX - 1;
+            memcpy(names[n], a, len);
+            names[n++][len] = 0;
+        }
+        if (!b) break;
+        a = b + 1;
+    }
+    memcpy(x->fields, names, sizeof names[0] * (size_t)n);
+    x->nfields = n;
+    return 1;
+}
+
+static void edit_indexes(struct Window *parent)
+{
+    struct Window *xw;
+    struct Gadget *eg = NULL, *g, *gad[X_COUNT];
+    struct NewGadget ng;
+    int done = 0, rebuild = 1, xsel = dt.nindexes ? 0 : -1, rowh = fh + 8, l, t, w, h, lw = fw * 8;
+    w = fw * 58;
+    h = rowh * 10 + 16;
+    if (w > scr->Width - 20) w = scr->Width - 20;
+    xw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Indexes",
+        WA_PubScreen, (ULONG)scr,
+        WA_Left, parent->LeftEdge + 40, WA_Top, parent->TopEdge + 30,
+        WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
+        WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY |
+                  LISTVIEWIDCMP | STRINGIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!xw) return;
+    SetFont(xw->RPort, font);
+    l = xw->BorderLeft + 8;
+    t = xw->BorderTop + 6;
+    while (!done) {
+        if (rebuild) {
+            ob_index *x = xsel >= 0 && xsel < dt.nindexes ? &dt.indexes[xsel] : NULL;
+            char ftext[OB_INDEX_FIELDS * (OB_NAME_MAX + 2)];
+            int iw = xw->Width - xw->BorderLeft - xw->BorderRight - 16;
+            if (eg) { RemoveGList(xw, eg, -1); FreeGadgets(eg); eg = NULL; }
+            memset(gad, 0, sizeof gad);
+            index_list();
+            ftext[0] = 0;
+            if (x) ob_index_fields_text(x, ftext, sizeof ftext);
+            if (!(g = CreateContext(&eg))) break;
+            memset(&ng, 0, sizeof ng);
+            ng.ng_VisualInfo = vi;
+            ng.ng_TextAttr = &font_attr;
+            ng.ng_LeftEdge = l;
+            ng.ng_TopEdge = t;
+            ng.ng_Width = iw;
+            ng.ng_Height = rowh * 5;
+            ng.ng_GadgetID = X_LIST;
+            g = gad[X_LIST] = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&xl, GTLV_ShowSelected, 0,
+                                           GTLV_Selected, xsel >= 0 ? (ULONG)xsel : ~0UL, TAG_DONE);
+            ng.ng_Flags = PLACETEXT_LEFT;
+            ng.ng_LeftEdge = l + lw;
+            ng.ng_Width = iw - lw;
+            ng.ng_Height = fh + 6;
+            ng.ng_TopEdge = t + rowh * 5 + 8;
+            ng.ng_GadgetText = (UBYTE *)"Name";
+            ng.ng_GadgetID = X_NAME;
+            g = gad[X_NAME] = CreateGadget(STRING_KIND, g, &ng, GA_Disabled, x == NULL,
+                                           GTST_String, (ULONG)(x ? x->name : ""), GTST_MaxChars, OB_NAME_MAX - 1, TAG_DONE);
+            ng.ng_TopEdge += rowh;
+            ng.ng_GadgetText = (UBYTE *)"Fields";
+            ng.ng_GadgetID = X_FIELDS;
+            g = gad[X_FIELDS] = CreateGadget(STRING_KIND, g, &ng, GA_Disabled, x == NULL,
+                                             GTST_String, (ULONG)ftext, GTST_MaxChars, (ULONG)sizeof ftext - 1, TAG_DONE);
+            ng.ng_TopEdge += rowh;
+            ng.ng_Width = fh + 6;
+            ng.ng_GadgetText = (UBYTE *)"Unique";
+            ng.ng_GadgetID = X_UNIQUE;
+            g = gad[X_UNIQUE] = CreateGadget(CHECKBOX_KIND, g, &ng, GA_Disabled, x == NULL,
+                                             GTCB_Checked, x ? x->unique : 0, GTCB_Scaled, TRUE, TAG_DONE);
+            ng.ng_Flags = PLACETEXT_IN;
+            ng.ng_TopEdge = xw->Height - xw->BorderBottom - 6 - (fh + 6);
+            ng.ng_LeftEdge = l;
+            ng.ng_Width = fw * 10 + 16;
+            ng.ng_GadgetText = (UBYTE *)"Add";
+            ng.ng_GadgetID = X_ADD;
+            g = gad[X_ADD] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, dt.nindexes >= OB_MAX_INDEXES, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8;
+            ng.ng_GadgetText = (UBYTE *)"Remove";
+            ng.ng_GadgetID = X_REMOVE;
+            g = gad[X_REMOVE] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, x == NULL, TAG_DONE);
+            ng.ng_LeftEdge = xw->Width - xw->BorderRight - 8 - ng.ng_Width;
+            ng.ng_GadgetText = (UBYTE *)"Done";
+            ng.ng_GadgetID = X_DONE;
+            g = gad[X_DONE] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            if (!g) break;
+            SetAPen(xw->RPort, pen(BACKGROUNDPEN));
+            RectFill(xw->RPort, xw->BorderLeft, xw->BorderTop, xw->Width - xw->BorderRight - 1,
+                     xw->Height - xw->BorderBottom - 1);
+            AddGList(xw, eg, ~0, -1, NULL);
+            RefreshGList(eg, xw, NULL, -1);
+            GT_RefreshWindow(xw, NULL);
+            rebuild = 0;
+        }
+        {
+            struct IntuiMessage *m;
+            WaitPort(xw->UserPort);
+            while (!rebuild && !done && (m = GT_GetIMsg(xw->UserPort)) != NULL) {
+                ULONG class = m->Class;
+                UWORD code = m->Code;
+                struct Gadget *gg = (struct Gadget *)m->IAddress;
+                ob_index *x = xsel >= 0 && xsel < dt.nindexes ? &dt.indexes[xsel] : NULL;
+                GT_ReplyIMsg(m);
+                if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+                if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(xw); GT_EndRefresh(xw, TRUE); continue; }
+                if (class != IDCMP_GADGETUP && class != IDCMP_GADGETDOWN) continue;
+                switch (gg->GadgetID) {
+                case X_LIST:
+                    xsel = code;
+                    rebuild = 1;
+                    break;
+                case X_NAME: case X_FIELDS: {
+                    STRPTR s = NULL;
+                    if (!x) break;
+                    GT_GetGadgetAttrs(gg, xw, NULL, GTST_String, (ULONG)&s, TAG_DONE);
+                    if (!s) s = (STRPTR)"";
+                    if (gg->GadgetID == X_NAME) put_text(x->name, sizeof x->name, (const char *)s);
+                    else if (!index_set_fields(x, (const char *)s)) {
+                        struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase",
+                                                 (UBYTE *)"An index has at most %ld fields.", (UBYTE *)"OK" };
+                        EasyRequest(xw, &es, NULL, (ULONG)OB_INDEX_FIELDS);
+                    }
+                    rebuild = 1;
+                    break;
+                }
+                case X_UNIQUE:
+                    if (x) { x->unique = (gg->Flags & GFLG_SELECTED) != 0; rebuild = 1; }
+                    break;
+                case X_ADD: {
+                    char name[OB_NAME_MAX];
+                    const char *field = dsel >= 0 && dsel < dt.nfields && dt.fields[dsel].type != OB_COUNTER
+                                        ? dt.fields[dsel].name : dt.nfields > 1 ? dt.fields[1].name : dt.fields[0].name;
+                    int k = dt.nindexes + 1, j, clash;
+                    do {
+                        snprintf(name, sizeof name, "%.38s by %.20s", dt.name, field);
+                        if (k > dt.nindexes + 1) snprintf(name, sizeof name, "%.40s index %d", dt.name, k);
+                        for (clash = 0, j = 0; j < dt.nindexes; j++) if (!strcmp(dt.indexes[j].name, name)) clash = 1;
+                        k++;
+                    } while (clash);
+                    if (ob_table_add_index(&dt, name, 0, field)) xsel = dt.nindexes - 1;
+                    rebuild = 1;
+                    break;
+                }
+                case X_REMOVE:
+                    if (x) {
+                        ob_table_remove_index(&dt, xsel);
+                        if (xsel >= dt.nindexes) xsel = dt.nindexes - 1;
+                        rebuild = 1;
+                    }
+                    break;
+                case X_DONE:
+                    done = 1;
+                    break;
+                }
+            }
+        }
+    }
+    if (eg) { RemoveGList(xw, eg, -1); FreeGadgets(eg); }
+    CloseWindow(xw);
+}
+
+/* ---- The relationships view ----
+ * Each table a box (its name, then its fields, the key's in bold), each
+ * relationship a line from the Lookup field to the table it looks up. The
+ * relationships are made and changed in the table designer (Looks up). */
+
+#define RV_FIELDS 10        /* fields shown in a box */
+
+static ob_table rv_t;       /* one table's design at a time (too big for the stack) */
+static struct TextExtent rv_te;   /* TextFit writes its answer here: never pass it NULL */
+
+static int same_name(const char *a, const char *b)
+{
+    while (*a && *b) {
+        int x = *a++, y = *b++;
+        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
+        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
+        if (x != y) return 0;
+    }
+    return *a == *b;
+}
+
+struct rv_box {
+    char name[OB_NAME_MAX];
+    int x, y, w, h, shown;
+    int nfields;
+    char fields[RV_FIELDS][OB_NAME_MAX];
+};
+
+static void show_relationships(void)
+{
+    struct Window *rw;
+    struct RastPort *rp;
+    struct rv_box *box = NULL;
+    ob_relation *rel = NULL;
+    int nt, nr, i, j, done = 0, row_h = fh + 2, bw = fw * 18, gap, cols, x, y, rowmax, w, h, hidden = 0;
+    char line[160];
+    if (!proj) { tell("Open or make a project first."); return; }
+    nt = ob_table_count(proj);
+    nr = ob_relations(proj, NULL, 0);
+    if (nr < 0) { tell(ob_error(proj)); return; }
+    box = calloc((size_t)(nt ? nt : 1), sizeof *box);
+    rel = calloc((size_t)(nr ? nr : 1), sizeof *rel);
+    if (!box || !rel) { tell("Not enough memory."); goto out; }
+    ob_relations(proj, rel, nr);
+    w = scr->Width * 4 / 5;
+    h = scr->Height * 3 / 4;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Relationships",
+        WA_PubScreen, (ULONG)scr,
+        WA_Left, (scr->Width - w) / 2, WA_Top, (scr->Height - h) / 2,
+        WA_Width, w, WA_Height, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
+        WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY,
+        TAG_DONE);
+    if (!rw) { tell("The window could not be opened."); goto out; }
+    rp = rw->RPort;
+    SetFont(rp, font);
+    SetDrMd(rp, JAM1);
+    SetAPen(rp, pen(BACKGROUNDPEN));
+    RectFill(rp, rw->BorderLeft, rw->BorderTop, rw->Width - rw->BorderRight - 1, rw->Height - rw->BorderBottom - 1);
+    /* lay the boxes out in rows, leaving room between columns for the lines */
+    gap = fw * 12;
+    cols = (rw->Width - rw->BorderLeft - rw->BorderRight - gap) / (bw + gap);
+    if (cols < 1) cols = 1;
+    x = rw->BorderLeft + gap;
+    y = rw->BorderTop + 10;
+    rowmax = 0;
+    for (i = 0; i < nt; i++) {
+        struct rv_box *b = &box[i];
+        put_text(b->name, sizeof b->name, ob_table_name(proj, i));
+        if (ob_table_get(proj, b->name, &rv_t)) {
+            for (j = 0; j < rv_t.nfields && b->nfields < RV_FIELDS; j++)
+                put_text(b->fields[b->nfields++], OB_NAME_MAX, rv_t.fields[j].name);
+            if (rv_t.nfields > RV_FIELDS) put_text(b->fields[RV_FIELDS - 1], OB_NAME_MAX, "...");
+        }
+        b->w = bw;
+        b->h = row_h * (b->nfields + 1) + 6;
+        if (i && i % cols == 0) { x = rw->BorderLeft + gap; y += rowmax + row_h * 2; rowmax = 0; }
+        b->x = x;
+        b->y = y;
+        b->shown = y + b->h < rw->Height - rw->BorderBottom - row_h - 8;
+        if (!b->shown) hidden++;
+        if (b->h > rowmax) rowmax = b->h;
+        x += bw + gap;
+    }
+    /* the boxes first */
+    for (i = 0; i < nt; i++) {
+        struct rv_box *b = &box[i];
+        if (!b->shown) continue;
+        SetAPen(rp, pen(BACKGROUNDPEN));
+        RectFill(rp, b->x, b->y, b->x + b->w - 1, b->y + b->h - 1);
+        SetAPen(rp, pen(FILLPEN));
+        RectFill(rp, b->x, b->y, b->x + b->w - 1, b->y + row_h + 1);
+        SetAPen(rp, pen(SHADOWPEN));
+        Move(rp, b->x, b->y); Draw(rp, b->x + b->w - 1, b->y); Draw(rp, b->x + b->w - 1, b->y + b->h - 1);
+        Draw(rp, b->x, b->y + b->h - 1); Draw(rp, b->x, b->y);
+        SetAPen(rp, pen(FILLTEXTPEN));
+        SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
+        Move(rp, b->x + 4, b->y + 1 + rp->TxBaseline);
+        Text(rp, (STRPTR)b->name, (ULONG)TextFit(rp, (STRPTR)b->name, strlen(b->name), &rv_te, NULL, 1,
+                                                 b->w - 8, row_h + 2));
+        SetSoftStyle(rp, 0, FSF_BOLD);
+        SetAPen(rp, pen(TEXTPEN));
+        ob_table_get(proj, b->name, &rv_t);
+        for (j = 0; j < b->nfields; j++) {
+            int k = ob_table_find_field(&rv_t, b->fields[j]);
+            int keyed = k >= 0 && (rv_t.fields[k].type == OB_COUNTER || rv_t.fields[k].key);
+            if (keyed) SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
+            Move(rp, b->x + 6, b->y + 3 + row_h * (j + 1) + rp->TxBaseline);
+            Text(rp, (STRPTR)b->fields[j], (ULONG)TextFit(rp, (STRPTR)b->fields[j], strlen(b->fields[j]), &rv_te, NULL, 1,
+                                                          b->w - 10, row_h));
+            if (keyed) SetSoftStyle(rp, 0, FSF_BOLD);
+        }
+    }
+    /* then the lines, from box edge to box edge, each with its rule in the gap */
+    for (i = 0; i < nr; i++) {
+        struct rv_box *from = NULL, *to = NULL;
+        int fy, tx, fx, ty, lx, ly, f = 0;
+        for (j = 0; j < nt; j++) {
+            if (same_name(box[j].name, rel[i].table)) from = &box[j];
+            if (same_name(box[j].name, rel[i].lookup)) to = &box[j];
+        }
+        if (!from || !to || !from->shown || !to->shown) continue;
+        for (j = 0; j < from->nfields; j++) if (same_name(from->fields[j], rel[i].field)) f = j + 1;
+        fy = f ? from->y + 3 + row_h * f + row_h / 2 : from->y + from->h / 2;
+        ty = to->y + row_h / 2 + 1;
+        if (from == to) {
+            /* a table that looks itself up: a loop on its right */
+            fx = from->x + from->w;
+            SetAPen(rp, pen(FILLPEN));
+            Move(rp, fx, fy); Draw(rp, fx + gap / 2, fy); Draw(rp, fx + gap / 2, ty); Draw(rp, fx, ty);
+            continue;
+        }
+        if (to->x >= from->x + from->w) { fx = from->x + from->w; tx = to->x; }
+        else if (to->x + to->w <= from->x) { fx = from->x; tx = to->x + to->w; }
+        else { fx = from->x + from->w; tx = to->x + to->w; }
+        SetAPen(rp, pen(FILLPEN));
+        Move(rp, fx, fy);
+        if (fx == tx || (fx == from->x + from->w && tx == to->x + to->w)) {
+            /* one above the other: out to the side and back */
+            int side = (fx > tx ? fx : tx) + gap / 2;
+            Draw(rp, side, fy); Draw(rp, side, ty); Draw(rp, tx, ty);
+            lx = side + 3;
+            ly = (fy + ty) / 2 + rp->TxBaseline / 2;
+        } else {
+            int mid = (fx + tx) / 2;
+            Draw(rp, mid, fy); Draw(rp, mid, ty); Draw(rp, tx, ty);
+            lx = -1;
+            ly = ty - 3;
+        }
+        /* the rule, in the gap, just above the line at the looked-up table */
+        SetAPen(rp, pen(TEXTPEN));
+        {
+            const char *rule = rel[i].on_delete == OB_DELETE_CASCADE ? "cascade"
+                             : rel[i].on_delete == OB_DELETE_CLEAR ? "clear" : "refuse";
+            int tw = TextLength(rp, (STRPTR)rule, strlen(rule));
+            Move(rp, lx >= 0 ? lx : (fx + tx) / 2 - tw / 2, ly);
+            Text(rp, (STRPTR)rule, strlen(rule));
+        }
+    }
+    if (!nt) snprintf(line, sizeof line, "No tables yet: Table > New Table...");
+    else if (!nr) snprintf(line, sizeof line, "No relationships yet: give a field the type Lookup in the table designer");
+    else snprintf(line, sizeof line, "%d table%s, %d relationship%s. Key fields are in bold. Made in the table designer (Looks up).",
+                  nt, nt == 1 ? "" : "s", nr, nr == 1 ? "" : "s");
+    if (hidden) {
+        size_t n = strlen(line);
+        snprintf(line + n, sizeof line - n, " %d don't fit.", hidden);
+    }
+    SetAPen(rp, pen(TEXTPEN));
+    Move(rp, rw->BorderLeft + 8, rw->Height - rw->BorderBottom - 6 - fh + rp->TxBaseline);
+    Text(rp, (STRPTR)line, (ULONG)TextFit(rp, (STRPTR)line, strlen(line), &rv_te, NULL, 1,
+                                          rw->Width - rw->BorderLeft - rw->BorderRight - 16, fh + 2));
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(rw->UserPort);
+        while ((m = GT_GetIMsg(rw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && (code == 27 || code == 13))) done = 1;
+            if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+        }
+    }
+    CloseWindow(rw);
+out:
+    free(box);
+    free(rel);
 }
 
 static void design_table(int creating)
@@ -830,7 +1224,7 @@ static void design_table(int creating)
     colw = fw * 26;
     w = lw + colw + 20 + fw * 30 + 30;
     if (w > scr->Width - 20) w = scr->Width - 20;
-    h = rowh * 14 + 20;
+    h = rowh * 15 + 20;
     if (h > scr->Height - 40) h = scr->Height - 40;
     dw = OpenWindowTags(NULL,
         WA_Title, (ULONG)(creating ? "New Table" : "Design Table"),
@@ -905,6 +1299,7 @@ static void design_table(int creating)
             ng.ng_Width = fh + 6;
             PROP(D_REQUIRED, CHECKBOX_KIND, "Required", GTCB_Checked, f ? f->required : 0, GTCB_Scaled, TRUE);
             PROP(D_UNIQUE, CHECKBOX_KIND, "Unique", GTCB_Checked, f ? f->unique : 0, GTCB_Scaled, TRUE);
+            PROP(D_KEY, CHECKBOX_KIND, "Key", GTCB_Checked, f ? f->key : 0, GTCB_Scaled, TRUE);
             ng.ng_Width = pw;
             PROP(D_MAXLEN, INTEGER_KIND, "Max length", GTIN_Number, f ? (ULONG)f->max_len : 0, GTIN_MaxChars, 5);
             PROP(D_DEFAULT, STRING_KIND, "Default", GTST_String, (ULONG)(f && f->has_default ? f->deflt : ""),
@@ -925,6 +1320,10 @@ static void design_table(int creating)
             ng.ng_GadgetText = (UBYTE *)"Show SQL";
             ng.ng_GadgetID = D_SQL;
             g = gad[D_SQL] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8;
+            ng.ng_GadgetText = (UBYTE *)"Indexes...";
+            ng.ng_GadgetID = D_INDEXES;
+            g = gad[D_INDEXES] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
             ng.ng_LeftEdge = dw->Width - dw->BorderRight - 8 - ng.ng_Width;
             ng.ng_GadgetText = (UBYTE *)"Cancel";
             ng.ng_GadgetID = D_CANCEL;
@@ -967,7 +1366,12 @@ static void design_table(int creating)
                     if (!f) break;
                     GT_GetGadgetAttrs(gg, dw, NULL, GTST_String, (ULONG)&s, TAG_DONE);
                     if (!s) s = (STRPTR)"";
-                    if (gg->GadgetID == D_FNAME) { put_text(f->name, sizeof f->name, (const char *)s); rebuild = 1; }
+                    if (gg->GadgetID == D_FNAME) {
+                        char n[OB_NAME_MAX];
+                        put_text(n, sizeof n, (const char *)s);
+                        ob_table_rename_field(&dt, dsel, n);   /* its indexes follow */
+                        rebuild = 1;
+                    }
                     else if (gg->GadgetID == D_LABEL) put_text(f->label, sizeof f->label, (const char *)s);
                     else if (gg->GadgetID == D_DEFAULT) { put_text(f->deflt, sizeof f->deflt, (const char *)s); f->has_default = s[0] != 0; }
                     else if (gg->GadgetID == D_CHOICES) put_text(f->choices, sizeof f->choices, (const char *)s);
@@ -986,6 +1390,12 @@ static void design_table(int creating)
                 case D_UNIQUE:
                     if (f) f->unique = (gg->Flags & GFLG_SELECTED) != 0;
                     break;
+                case D_KEY:
+                    if (f) { f->key = (gg->Flags & GFLG_SELECTED) != 0; rebuild = 1; }
+                    break;
+                case D_INDEXES:
+                    edit_indexes(dw);
+                    break;
                 case D_MAXLEN: {
                     LONG n = 0;
                     if (!f) break;
@@ -1003,8 +1413,7 @@ static void design_table(int creating)
                 }
                 case D_REMOVE:
                     if (f && dt.nfields > 1) {
-                        memmove(&dt.fields[dsel], &dt.fields[dsel + 1], sizeof dt.fields[0] * (size_t)(dt.nfields - dsel - 1));
-                        dt.nfields--;
+                        ob_table_remove_field(&dt, dsel);   /* and from its indexes */
                         if (dsel >= dt.nfields) dsel = dt.nfields - 1;
                         rebuild = 1;
                     }
@@ -1102,6 +1511,7 @@ static void menu_action(ULONG id)
     case M_T_NEW: design_table(1); break;
     case M_T_DESIGN: design_table(0); break;
     case M_T_DELETE: delete_table(); break;
+    case M_T_RELATIONS: show_relationships(); break;
     case M_R_ADD: edit_row(1); break;
     case M_R_EDIT: edit_row(0); break;
     case M_R_DELETE: delete_row(); break;

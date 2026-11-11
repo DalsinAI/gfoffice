@@ -30,7 +30,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.1.0"
+#define OB_CORE_VERSION "0.2.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -42,6 +42,8 @@ extern "C" {
 #define OB_ERR_MAX 256          /* ob_error()'s text */
 #define OB_MAX_FIELDS 96        /* fields in one table (an auto form's 8 x 12) */
 #define OB_TEXT_MAX_LEN 32767   /* the most a Text field's maximum length can be */
+#define OB_MAX_INDEXES 16       /* indexes on one table */
+#define OB_INDEX_FIELDS 8       /* fields in one index */
 
 typedef long long ob_int;       /* SQLite's 64-bit integer */
 
@@ -74,6 +76,8 @@ typedef struct ob_field {
     ob_type type;
     int required;                   /* NOT NULL */
     int unique;                     /* UNIQUE */
+    int key;                        /* part of the table's key (PRIMARY KEY(...), in field
+                                     * order): only in a table with no Counter */
     int max_len;                    /* Text: CHECK (length(x) <= n); 0 none */
     int has_default;
     char deflt[OB_VALUE_MAX];       /* in the field's own text form ("12.50", "Yes") */
@@ -86,11 +90,30 @@ typedef struct ob_field {
     char from[OB_NAME_MAX];
 } ob_field;
 
+/* An index (CREATE [UNIQUE] INDEX): its name is the project's, like a table's. */
+typedef struct ob_index {
+    char name[OB_NAME_MAX];
+    int unique;
+    int nfields;
+    char fields[OB_INDEX_FIELDS][OB_NAME_MAX];
+} ob_index;
+
+/* About 90 KB: keep one static or on the heap, never on a 64 KB stack. */
 typedef struct ob_table {
     char name[OB_NAME_MAX];
     int nfields;
     ob_field fields[OB_MAX_FIELDS];
+    int nindexes;
+    ob_index indexes[OB_MAX_INDEXES];
 } ob_table;
+
+/* A relationship: table.field (a Lookup) holds lookup's key. */
+typedef struct ob_relation {
+    char table[OB_NAME_MAX];
+    char field[OB_NAME_MAX];
+    char lookup[OB_NAME_MAX];
+    ob_on_delete on_delete;
+} ob_relation;
 
 typedef struct ob_project ob_project;
 
@@ -140,12 +163,25 @@ void ob_table_init(ob_table *t, const char *name);
 /* A field of the type with its rules empty; added at the end. NULL when full. */
 ob_field *ob_table_add_field(ob_table *t, const char *name, ob_type type);
 int ob_table_find_field(const ob_table *t, const char *name);
+/* Removes or renames field i, and the same field in the table's indexes (an
+ * index left with no fields goes too). */
+void ob_table_remove_field(ob_table *t, int i);
+void ob_table_rename_field(ob_table *t, int i, const char *name);
+
+/* An index on fields, given as "Surname, First name"; added at the end. NULL
+ * when the table has OB_MAX_INDEXES or a list has more than OB_INDEX_FIELDS
+ * (names are checked by ob_table_check). */
+ob_index *ob_table_add_index(ob_table *t, const char *name, int unique, const char *fields);
+void ob_table_remove_index(ob_table *t, int i);
+/* An index's fields as "Surname, First name". */
+void ob_index_fields_text(const ob_index *x, char *out, size_t size);
 
 /* Reads a table's design from the file. 0 when there is none. */
 int ob_table_get(ob_project *p, const char *name, ob_table *out);
 
-/* Checks a design without touching the file: names, types, rules, a
- * Lookup's table. 0 with the reason in ob_error. */
+/* Checks a design without touching the file: names, types, rules, the key,
+ * indexes, a Lookup's table. 0 with the reason in ob_error. A table has a
+ * Counter or key fields. */
 int ob_table_check(ob_project *p, const ob_table *t);
 
 int ob_table_create(ob_project *p, const ob_table *t);
@@ -156,10 +192,17 @@ int ob_table_change(ob_project *p, const char *old_name, const ob_table *t);
 int ob_table_rename(ob_project *p, const char *old_name, const char *new_name);
 int ob_table_drop(ob_project *p, const char *name);
 
-/* The CREATE TABLE statement for t, as ob_table_create writes it (for the
- * designer's SQL view and the golden tests). Returns its length, or -1 when it
- * does not fit in size bytes. */
+/* The CREATE TABLE statement for t, as ob_table_create writes it, then a
+ * CREATE INDEX statement for each index, each after ";\n" (for the designer's
+ * SQL view and the golden tests). Returns its length, or -1 when it does not
+ * fit in size bytes. */
 int ob_table_sql(const ob_table *t, const char *as_name, char *out, size_t size);
+
+/* ---- Relationships ----
+ * Every foreign key in the project (a Lookup, or one another program made),
+ * in table and field order: up to max into out. Returns how many there are
+ * (which may be more than max), -1 on error. */
+int ob_relations(ob_project *p, ob_relation *out, int max);
 
 /* ---- Rows ----
  * Values are text in the field's own form, as a datasheet cell or a form's
