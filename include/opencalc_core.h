@@ -30,6 +30,7 @@
 #include "owf.h"
 #include "owf_calc.h"
 #include "owf_pivot.h"
+#include "owf_scenario.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -328,6 +329,26 @@ int oc_core_goal_seek(const oc_core *core,
                       int variable_sheet, unsigned variable_row, unsigned variable_col,
                       double tolerance, int max_iterations,
                       double *solution, double *achieved, int *iterations);
+
+/* Data > Scenarios, on the active sheet: named sets of values for some of
+ * its cells (owf_scenario.h), kept in its hidden names, in ODS as scenario
+ * tables and in XLSX as the sheet's scenarios. Each change is one Undo step. */
+int oc_core_scenario_count(const oc_core *core);
+/* One scenario (from 0): 1 when read; free it with owf_scenario_free. */
+int oc_core_scenario_get(const oc_core *core, int index, owf_scenario *sc);
+/* The index of the scenario with this name (case does not matter), or -1. */
+int oc_core_scenario_find(const oc_core *core, const char *name);
+/* Keeps the changing cells' present values as a scenario: a new one (index
+ * -1) or in place of one. cells: ranges on the active sheet, "B2:C4,E7".
+ * OWF_ERR_FORMAT: no name, or cells that are not cells of this sheet;
+ * OWF_ERR_UNSUPPORTED: another scenario has the name, or there are 32
+ * already, or more than 2048 cells. */
+int oc_core_scenario_save(oc_core *core, int index, const char *name, const char *cells, const char *comment);
+/* Puts a scenario's values in its cells. */
+int oc_core_scenario_show(oc_core *core, int index);
+int oc_core_scenario_delete(oc_core *core, int index);
+/* A scenario's ranges as one types them: "B2:C4,E7". 0 when they do not fit. */
+int oc_core_scenario_cells_text(const oc_core *core, const owf_scenario *sc, char *out, size_t size);
 
 /* Data > Solver: make a target cell as large or as small as it can be, or
  * equal to a value, by changing variable cells, under constraints. Models

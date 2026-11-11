@@ -22,6 +22,7 @@
  */
 #include "owf_internal.h"
 #include "owf_pivot.h"
+#include "owf_scenario.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1797,6 +1798,117 @@ typedef struct {
     owf_buf xml;
 } afread;
 
+/* ---- Scenarios: the sheet's scenarios element into its scenario names ---- */
+
+typedef struct {
+    int in, in_one, current, index, cleared, lost;
+    owf_scenario sc;
+    unsigned n, cap;
+    owf_range *cell;             /* each input cell, as a one-cell range */
+    char **val;
+} scenread;
+
+static void sc_reset(scenread *sr)
+{
+    unsigned i;
+    for (i = 0; i < sr->n; i++)
+        free(sr->val[i]);
+    sr->n = 0;
+    memset(&sr->sc, 0, sizeof sr->sc);
+}
+
+static void sc_done(xlsx *x, scenread *sr, int sheet)
+{
+    owf_scenario *sc = &sr->sc;
+    unsigned i;
+    if (!sr->n || !sc->name[0])
+        return;
+    for (i = 0; i < sr->n; i++) {                /* a cell just right of the last range's end extends it */
+        owf_range *last = sc->nranges ? &sc->range[sc->nranges - 1] : NULL;
+        if (last && last->first_row == last->last_row && sr->cell[i].first_row == last->first_row &&
+            sr->cell[i].first_col == last->last_col + 1u) {
+            last->last_col++;
+            continue;
+        }
+        if (sc->nranges >= OWF_SCENARIO_RANGES) {
+            sr->lost = 1;
+            return;
+        }
+        sc->range[sc->nranges++] = sr->cell[i];
+    }
+    sc->ncells = sr->n;
+    sc->value = sr->val;
+    sc->active = sr->index == sr->current;
+    if (owf_scenario_cells(sc) != sc->ncells || owf_scenario_count(x->book, sheet) >= OWF_SCENARIOS)
+        sr->lost = 1;
+    else if (owf_scenario_put(x->book, sheet, owf_scenario_count(x->book, sheet), sc) != OWF_OK)
+        x->failed = 1;
+    sc->value = NULL;
+}
+
+/* 1 when the event was the scenarios element's. */
+static int sc_event(xlsx *x, const owf_xml_event *e, scenread *sr, int sheet)
+{
+    if (e->type == OWF_XS_START && is_main(e->ns) && e->depth == 2 && !strcmp(e->name, "scenarios")) {
+        sr->in = 1;
+        sr->current = (int)xlong(ev_attr(e, "current"), -1, 0, OWF_SCENARIOS);
+        if (!sr->cleared) {                      /* the file's own names for them give way */
+            while (owf_scenario_count(x->book, sheet))
+                owf_scenario_remove(x->book, sheet, 0);
+            sr->cleared = 1;
+        }
+        return 1;
+    }
+    if (!sr->in)
+        return 0;
+    if (e->type == OWF_XS_START && !strcmp(e->name, "scenario")) {
+        const char *v;
+        sc_reset(sr);
+        sr->in_one = 1;
+        snprintf(sr->sc.name, sizeof sr->sc.name, "%s", (v = ev_attr(e, "name")) ? v : "");
+        snprintf(sr->sc.comment, sizeof sr->sc.comment, "%s", (v = ev_attr(e, "comment")) ? v : "");
+    } else if (e->type == OWF_XS_START && !strcmp(e->name, "inputCells") && sr->in_one) {
+        const char *v = ev_attr(e, "val");
+        owf_range r;
+        if (!parse_range(ev_attr(e, "r"), &r) || sr->n >= OWF_SCENARIO_CELLS) {
+            sr->lost = 1;
+            return 1;
+        }
+        if (sr->n == sr->cap) {
+            unsigned cap = sr->cap ? sr->cap * 2 : 16;
+            owf_range *c = realloc(sr->cell, cap * sizeof *c);
+            char **vv;
+            if (c)
+                sr->cell = c;
+            vv = c ? realloc(sr->val, cap * sizeof *vv) : NULL;
+            if (!vv) {
+                x->failed = 1;
+                return 1;
+            }
+            sr->val = vv;
+            sr->cap = cap;
+        }
+        r.last_row = r.first_row;
+        r.last_col = r.first_col;
+        sr->cell[sr->n] = r;
+        if (!v)
+            v = "";
+        if (!(sr->val[sr->n] = malloc(strlen(v) + 1))) {
+            x->failed = 1;
+            return 1;
+        }
+        strcpy(sr->val[sr->n++], v);
+    } else if (e->type == OWF_XS_END && !strcmp(e->name, "scenario")) {
+        sc_done(x, sr, sheet);
+        sc_reset(sr);
+        sr->in_one = 0;
+        sr->index++;
+    } else if (e->type == OWF_XS_END && !strcmp(e->name, "scenarios")) {
+        sr->in = 0;
+    }
+    return 1;
+}
+
 static int af_event(xlsx *x, const owf_xml_event *e, afread *ar)
 {
     owf_sheet *sh = x->sheet;
@@ -2249,6 +2361,7 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     cfread cr;
     dvread dr;
     afread ar;
+    scenread sr;
     int r;
 
     x->sheet = &x->book->sheets[xs->sheet];
@@ -2280,8 +2393,10 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     owf_buf_init(&dr.text);
     memset(&ar, 0, sizeof ar);
     owf_buf_init(&ar.xml);
+    memset(&sr, 0, sizeof sr);
     while (!x->failed && (r = owf_xml_scan_next(scan, &e)) > 0) {
-        if (!cs.in_data && (af_event(x, &e, &ar) || cf_event(x, &e, &cr) || dv_event(x, &e, &dr)))
+        if (!cs.in_data && (af_event(x, &e, &ar) || cf_event(x, &e, &cr) || dv_event(x, &e, &dr) ||
+                            sc_event(x, &e, &sr, xs->sheet)))
             continue;
         if (e.type == OWF_XS_TEXT) {
             if (cs.in_v)
@@ -2330,6 +2445,11 @@ static void read_worksheet(xlsx *x, xsheet *xs)
     free(cr.ranges);
     owf_buf_free(&dr.text);
     owf_buf_free(&ar.xml);
+    sc_reset(&sr);
+    free(sr.cell);
+    free(sr.val);
+    if (sr.lost)
+        owf_report_add(x->report, OWF_NOTE_LOST, "Some scenarios could not be read: their cells are too many or too scattered");
     /* validations left without their ranges (a damaged sqref) go */
     {
         owf_sheet *sh = x->sheet;

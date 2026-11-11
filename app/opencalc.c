@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS
 };
 
 static struct NewMenu menus[] = {
@@ -244,6 +244,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Goal Seek...", NULL, 0, 0, (APTR)M_GOAL_SEEK },
     { NM_ITEM, "Solver...", NULL, 0, 0, (APTR)M_SOLVER },
+    { NM_ITEM, "Scenarios...", NULL, 0, 0, (APTR)M_SCENARIOS },
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
@@ -3382,6 +3383,178 @@ static void do_solver(void)
     }
 }
 
+/* ---- Data > Scenarios ---- */
+
+typedef struct {
+    struct Node node;
+    char label[OWF_SCENARIO_NAME + 4];
+} sc_line;
+
+static unsigned sc_list(sc_line *lines, struct List *list)
+{
+    unsigned n = (unsigned)oc_core_scenario_count(core), i;
+    NewList(list);
+    for (i = 0; i < n && i < OWF_SCENARIOS; ++i) {
+        owf_scenario sc;
+        char name[OWF_SCENARIO_NAME];
+        if (oc_core_scenario_get(core, (int)i, &sc)) {
+            to_latin1(sc.name, strlen(sc.name), name, sizeof name);
+            snprintf(lines[i].label, sizeof lines[i].label, "%s%s", sc.active ? "* " : "", name);
+            owf_scenario_free(&sc);
+        } else {
+            snprintf(lines[i].label, sizeof lines[i].label, "(damaged)");
+        }
+        lines[i].node.ln_Name = lines[i].label;
+        AddTail(list, &lines[i].node);
+    }
+    return n;
+}
+
+static int sc_result(int rc, const char *done)
+{
+    if (rc == OWF_ERR_FORMAT) { set_status("Give the scenario a name, and its changing cells as ranges of this sheet (B2:C4,E7)."); return 0; }
+    if (rc == OWF_ERR_UNSUPPORTED) { set_status("Another scenario has that name, or the sheet has 32 already, or it has more than 2048 cells."); return 0; }
+    return result(rc, done);
+}
+
+/* The Scenarios window: keep, show and delete the active sheet's scenarios. */
+static void do_scenarios(void)
+{
+    struct Gadget *glist = NULL, *last, *glv, *gname, *gcells, *gcomment, *gadd, *gupdate, *gshow, *gdelete, *gclose;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List list;
+    sc_line *lines = calloc(OWF_SCENARIOS, sizeof *lines);
+    char initial[200] = "";
+    int done = 0, sel = -1, ww = 420, wh, lh = fh + 6, rc;
+    oc_selection selection;
+    if (!scr || !vi || !lines) { free(lines); return; }
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); free(lines); return; }
+    oc_core_selection(core, &selection);
+    if (selection.nranges) {                    /* the selection as the changing cells to start with */
+        unsigned r;
+        size_t at = 0;
+        for (r = 0; r < selection.nranges && at + 24 < sizeof initial; ++r) {
+            char a[16], b[16];
+            const owf_range *g = &selection.ranges[r];
+            oc_cell_name(g->first_row, g->first_col, a);
+            oc_cell_name(g->last_row, g->last_col, b);
+            at += (size_t)snprintf(initial + at, sizeof initial - at, "%s%s%s%s", r ? "," : "", a,
+                                   strcmp(a, b) ? ":" : "", strcmp(a, b) ? b : "");
+        }
+    }
+    sc_list(lines, &list);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4; ng.ng_Width = 180; ng.ng_Height = lh * 7 + 4;
+    ng.ng_GadgetText = (STRPTR)"Scenarios"; ng.ng_GadgetID = 1;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&list, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_LeftEdge = 200; ng.ng_Width = ww - 210; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"Name"; ng.ng_GadgetID = 2;
+    last = gname = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)"", GTST_MaxChars, OWF_SCENARIO_NAME - 1,
+                                GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Changing cells"; ng.ng_GadgetID = 3;
+    last = gcells = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)initial, GTST_MaxChars, 199,
+                                 GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Comment"; ng.ng_GadgetID = 4;
+    last = gcomment = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)"",
+                                   GTST_MaxChars, OWF_SCENARIO_COMMENT - 1, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge = 8 + fh + 4 + lh * 7 + 14; ng.ng_Height = fh + 8; ng.ng_Width = 74;
+    ng.ng_LeftEdge = 10; ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = 5;
+    last = gadd = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 90; ng.ng_GadgetText = (STRPTR)"Update"; ng.ng_GadgetID = 6;
+    last = gupdate = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 170; ng.ng_GadgetText = (STRPTR)"Show"; ng.ng_GadgetID = 7;
+    last = gshow = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 250; ng.ng_GadgetText = (STRPTR)"Delete"; ng.ng_GadgetID = 8;
+    last = gdelete = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 84; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = 9;
+    last = gclose = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glv || !gname || !gcells || !gcomment || !gadd || !gupdate || !gshow || !gdelete || !gclose) goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Scenarios", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP |
+                  STRINGIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *msg;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((msg = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = msg->Class;
+            UWORD code = msg->Code;
+            UWORD id = cls == IDCMP_GADGETUP && msg->IAddress ? ((struct Gadget *)msg->IAddress)->GadgetID : 0;
+            int relist = 0;
+            GT_ReplyIMsg(msg);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 1) {
+                owf_scenario sc;
+                char t[OWF_SCENARIO_COMMENT], cells[200];
+                sel = code;
+                if (oc_core_scenario_get(core, sel, &sc)) {
+                    to_latin1(sc.name, strlen(sc.name), t, sizeof t);
+                    GT_SetGadgetAttrs(gname, rw, NULL, GTST_String, (ULONG)t, TAG_DONE);
+                    if (oc_core_scenario_cells_text(core, &sc, cells, sizeof cells))
+                        GT_SetGadgetAttrs(gcells, rw, NULL, GTST_String, (ULONG)cells, TAG_DONE);
+                    to_latin1(sc.comment, strlen(sc.comment), t, sizeof t);
+                    GT_SetGadgetAttrs(gcomment, rw, NULL, GTST_String, (ULONG)t, TAG_DONE);
+                    owf_scenario_free(&sc);
+                }
+            } else if (id == 5 || id == 6) {
+                char name[OWF_SCENARIO_NAME], cells[200], comment[OWF_SCENARIO_COMMENT];
+                char *uname, *ucomment;
+                if (id == 6 && sel < 0) { DisplayBeep(scr); continue; }
+                sv_get_string(gname, rw, name, sizeof name);
+                sv_get_string(gcells, rw, cells, sizeof cells);
+                sv_get_string(gcomment, rw, comment, sizeof comment);
+                uname = from_latin1(trim_text(name));
+                ucomment = from_latin1(comment);
+                rc = uname && ucomment ? oc_core_scenario_save(core, id == 5 ? -1 : sel, uname, cells, ucomment)
+                                       : OWF_ERR_MEMORY;
+                owf_free(uname);
+                owf_free(ucomment);
+                if (sc_result(rc, id == 5 ? "Scenario kept with the cells' present values; Undo takes it away."
+                                          : "Scenario kept afresh with the cells' present values."))
+                    relist = 1;
+            } else if (id == 7 && sel >= 0) {
+                if (sc_result(oc_core_scenario_show(core, sel), "Scenario shown; Undo puts the old values back.")) {
+                    relist = 1;
+                    refresh();
+                }
+            } else if (id == 8 && sel >= 0) {
+                if (sc_result(oc_core_scenario_delete(core, sel), "Scenario deleted; Undo brings it back.")) {
+                    sel = -1;
+                    relist = 1;
+                }
+            } else if (id == 9) {
+                done = 1;
+            }
+            if (relist && !done) {
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                sc_list(lines, &list);
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)&list,
+                                  GTLV_Selected, (ULONG)(sel >= 0 ? sel : ~0), TAG_DONE);
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(lines);
+}
+
 static void do_multiple_operations(void)
 {
     oc_selection selection;
@@ -4835,6 +5008,7 @@ static void menu_action(ULONG id)
     case M_FILTER_ACTIVE: do_filter_active(); break;
     case M_GOAL_SEEK: do_goal_seek(); break;
     case M_SOLVER: do_solver(); break;
+    case M_SCENARIOS: do_scenarios(); break;
     case M_MULTIPLE_OPS: do_multiple_operations(); break;
     case M_MULTIPLE_REFRESH:
         {
@@ -5193,6 +5367,80 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
     return 1;
 }
 
+/* SCENARIO ADD name cells [comment] | UPDATE name [cells [comment]] | SHOW name | DELETE name | LIST: the active
+ * sheet's scenarios (a name with spaces in double quotes). LIST gives the names, comma-separated. 1 done; *now set
+ * when there is no such scenario. */
+static const char *rexx_quoted(const char *p, char *out, size_t size)
+{
+    size_t k = 0;
+    p = skip_space(p);
+    if (*p == '"') {
+        for (++p; *p && *p != '"'; ++p)
+            if (k + 1 < size) out[k++] = *p;
+        if (*p == '"') ++p;
+        out[k] = 0;
+        return p;
+    }
+    return rexx_word(p, out, size);
+}
+
+static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
+{
+    char verb[16], name[OWF_SCENARIO_NAME * 2], cells[200];
+    char *uname = NULL, *ucomment = NULL;
+    const char *p = rexx_word(arg, verb, sizeof verb);
+    int index = -1, rc;
+    if (!strcasecmp(verb, "LIST")) {
+        int i, n = oc_core_scenario_count(core);
+        size_t at = 0;
+        out[0] = 0;
+        for (i = 0; i < n && at + 2 < size; ++i) {
+            owf_scenario sc;
+            char t[OWF_SCENARIO_NAME];
+            if (!oc_core_scenario_get(core, i, &sc)) continue;
+            to_latin1(sc.name, strlen(sc.name), t, sizeof t);
+            at += (size_t)snprintf(out + at, size - at, "%s%s", at ? "," : "", t);
+            owf_scenario_free(&sc);
+        }
+        return 1;
+    }
+    p = rexx_quoted(p, name, sizeof name);
+    if (!name[0]) { snprintf(out, size, "SCENARIO %s needs a name", verb); return 0; }
+    uname = from_latin1(name);
+    if (!uname) { snprintf(out, size, "Out of memory"); return 0; }
+    if (strcasecmp(verb, "ADD")) {
+        index = oc_core_scenario_find(core, uname);
+        if (index < 0) { *now = 1; owf_free(uname); snprintf(out, size, "No scenario %s on this sheet", name); return 0; }
+    }
+    if (!strcasecmp(verb, "ADD") || !strcasecmp(verb, "UPDATE")) {
+        owf_scenario old;
+        p = rexx_word(p, cells, sizeof cells);
+        p = skip_space(p);
+        if (!cells[0] && index >= 0 && oc_core_scenario_get(core, index, &old)) {     /* UPDATE name: its own cells */
+            oc_core_scenario_cells_text(core, &old, cells, sizeof cells);
+            ucomment = owf_malloc(strlen(old.comment) + 1);
+            if (ucomment) strcpy(ucomment, old.comment);
+            owf_scenario_free(&old);
+        } else {
+            ucomment = from_latin1(p);
+        }
+        rc = ucomment ? oc_core_scenario_save(core, index, uname, cells, ucomment) : OWF_ERR_MEMORY;
+    } else if (!strcasecmp(verb, "SHOW")) {
+        rc = oc_core_scenario_show(core, index);
+    } else if (!strcasecmp(verb, "DELETE")) {
+        rc = oc_core_scenario_delete(core, index);
+    } else {
+        owf_free(uname);
+        snprintf(out, size, "SCENARIO: ADD, UPDATE, SHOW, DELETE or LIST");
+        return 0;
+    }
+    owf_free(uname);
+    owf_free(ucomment);
+    sc_result(rc, "OK");
+    snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+    return rc == OWF_OK;
+}
+
 /* As every Open app's port (amicradle-teams ARexx-RULE.md 3, OS 3.2's arexx.class): 0 done, 5 not possible
  * now (nothing wrong), 10 an error, 20 an unknown command or a failure. */
 #define RX_OK 0
@@ -5215,7 +5463,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -5280,6 +5528,10 @@ static int rexx_do_command(const char *command, char **result_out)
         else to_latin1(t, strlen(t), result_text, sizeof result_text);
     } else if (starts_word_ci(command, "PIVOT", &arg)) {
         ok = rexx_pivot(arg, result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "SCENARIO", &arg)) {
+        int now = 0;
+        ok = rexx_scenario(arg, result_text, sizeof result_text, &now);
+        if (!ok && now) rc_fail = RX_NOW;
     } else if (starts_word_ci(command, "SOLVE", &arg)) {
         int now = 0;
         ok = rexx_solve(arg, result_text, sizeof result_text, &now);
