@@ -1072,7 +1072,7 @@ static void show_relationships(void)
     SetAPen(rp, pen(BACKGROUNDPEN));
     RectFill(rp, rw->BorderLeft, rw->BorderTop, rw->Width - rw->BorderRight - 1, rw->Height - rw->BorderBottom - 1);
     /* lay the boxes out in rows, leaving room between columns for the lines */
-    gap = fw * 6;
+    gap = fw * 12;
     cols = (rw->Width - rw->BorderLeft - rw->BorderRight - gap) / (bw + gap);
     if (cols < 1) cols = 1;
     x = rw->BorderLeft + gap;
@@ -1096,49 +1096,7 @@ static void show_relationships(void)
         if (b->h > rowmax) rowmax = b->h;
         x += bw + gap;
     }
-    /* the lines first, so the boxes are drawn over their ends */
-    for (i = 0; i < nr; i++) {
-        struct rv_box *from = NULL, *to = NULL;
-        int fy, tx, fx, ty, f = 0;
-        for (j = 0; j < nt; j++) {
-            if (same_name(box[j].name, rel[i].table)) from = &box[j];
-            if (same_name(box[j].name, rel[i].lookup)) to = &box[j];
-        }
-        if (!from || !to || !from->shown || !to->shown) continue;
-        for (j = 0; j < from->nfields; j++) if (same_name(from->fields[j], rel[i].field)) f = j + 1;
-        fy = f ? from->y + 3 + row_h * f + row_h / 2 : from->y + from->h / 2;
-        ty = to->y + row_h / 2 + 1;
-        if (from == to) {
-            /* a table that looks itself up: a loop on its right */
-            fx = from->x + from->w;
-            SetAPen(rp, pen(FILLPEN));
-            Move(rp, fx, fy); Draw(rp, fx + gap / 2, fy); Draw(rp, fx + gap / 2, ty); Draw(rp, fx, ty);
-            continue;
-        }
-        if (to->x >= from->x + from->w) { fx = from->x + from->w; tx = to->x; }
-        else if (to->x + to->w <= from->x) { fx = from->x; tx = to->x + to->w; }
-        else { fx = from->x + from->w; tx = to->x + to->w; }
-        SetAPen(rp, pen(FILLPEN));
-        Move(rp, fx, fy);
-        if (fx == tx || (fx == from->x + from->w && tx == to->x + to->w)) {
-            /* one above the other: out to the side and back */
-            int side = (fx > tx ? fx : tx) + gap / 2;
-            Draw(rp, side, fy); Draw(rp, side, ty); Draw(rp, tx, ty);
-        } else {
-            int mid = (fx + tx) / 2;
-            Draw(rp, mid, fy); Draw(rp, mid, ty); Draw(rp, tx, ty);
-        }
-        /* the rule, by the line's start */
-        SetAPen(rp, pen(TEXTPEN));
-        {
-            const char *rule = rel[i].on_delete == OB_DELETE_CASCADE ? "cascade"
-                             : rel[i].on_delete == OB_DELETE_CLEAR ? "clear" : "refuse";
-            int tw = TextLength(rp, (STRPTR)rule, strlen(rule));
-            int rx = fx == from->x ? fx - tw - 3 : fx + 3;
-            Move(rp, rx, fy - 2);
-            Text(rp, (STRPTR)rule, strlen(rule));
-        }
-    }
+    /* the boxes first */
     for (i = 0; i < nt; i++) {
         struct rv_box *b = &box[i];
         if (!b->shown) continue;
@@ -1165,6 +1123,52 @@ static void show_relationships(void)
             Text(rp, (STRPTR)b->fields[j], (ULONG)TextFit(rp, (STRPTR)b->fields[j], strlen(b->fields[j]), &rv_te, NULL, 1,
                                                           b->w - 10, row_h));
             if (keyed) SetSoftStyle(rp, 0, FSF_BOLD);
+        }
+    }
+    /* then the lines, from box edge to box edge, each with its rule in the gap */
+    for (i = 0; i < nr; i++) {
+        struct rv_box *from = NULL, *to = NULL;
+        int fy, tx, fx, ty, lx, ly, f = 0;
+        for (j = 0; j < nt; j++) {
+            if (same_name(box[j].name, rel[i].table)) from = &box[j];
+            if (same_name(box[j].name, rel[i].lookup)) to = &box[j];
+        }
+        if (!from || !to || !from->shown || !to->shown) continue;
+        for (j = 0; j < from->nfields; j++) if (same_name(from->fields[j], rel[i].field)) f = j + 1;
+        fy = f ? from->y + 3 + row_h * f + row_h / 2 : from->y + from->h / 2;
+        ty = to->y + row_h / 2 + 1;
+        if (from == to) {
+            /* a table that looks itself up: a loop on its right */
+            fx = from->x + from->w;
+            SetAPen(rp, pen(FILLPEN));
+            Move(rp, fx, fy); Draw(rp, fx + gap / 2, fy); Draw(rp, fx + gap / 2, ty); Draw(rp, fx, ty);
+            continue;
+        }
+        if (to->x >= from->x + from->w) { fx = from->x + from->w; tx = to->x; }
+        else if (to->x + to->w <= from->x) { fx = from->x; tx = to->x + to->w; }
+        else { fx = from->x + from->w; tx = to->x + to->w; }
+        SetAPen(rp, pen(FILLPEN));
+        Move(rp, fx, fy);
+        if (fx == tx || (fx == from->x + from->w && tx == to->x + to->w)) {
+            /* one above the other: out to the side and back */
+            int side = (fx > tx ? fx : tx) + gap / 2;
+            Draw(rp, side, fy); Draw(rp, side, ty); Draw(rp, tx, ty);
+            lx = side + 3;
+            ly = (fy + ty) / 2 + rp->TxBaseline / 2;
+        } else {
+            int mid = (fx + tx) / 2;
+            Draw(rp, mid, fy); Draw(rp, mid, ty); Draw(rp, tx, ty);
+            lx = -1;
+            ly = ty - 3;
+        }
+        /* the rule, in the gap, just above the line at the looked-up table */
+        SetAPen(rp, pen(TEXTPEN));
+        {
+            const char *rule = rel[i].on_delete == OB_DELETE_CASCADE ? "cascade"
+                             : rel[i].on_delete == OB_DELETE_CLEAR ? "clear" : "refuse";
+            int tw = TextLength(rp, (STRPTR)rule, strlen(rule));
+            Move(rp, lx >= 0 ? lx : (fx + tx) / 2 - tw / 2, ly);
+            Text(rp, (STRPTR)rule, strlen(rule));
         }
     }
     if (!nt) snprintf(line, sizeof line, "No tables yet: Table > New Table...");
