@@ -3523,8 +3523,8 @@ static void do_scenarios(void)
                 ucomment = from_latin1(comment);
                 rc = uname && ucomment ? oc_core_scenario_save(core, id == 5 ? -1 : sel, uname, cells, ucomment)
                                        : OWF_ERR_MEMORY;
-                free(uname);
-                free(ucomment);
+                owf_free(uname);
+                owf_free(ucomment);
                 if (sc_result(rc, id == 5 ? "Scenario kept with the cells' present values; Undo takes it away."
                                           : "Scenario kept afresh with the cells' present values."))
                     relist = 1;
@@ -5598,7 +5598,7 @@ static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
     if (!uname) { snprintf(out, size, "Out of memory"); return 0; }
     if (strcasecmp(verb, "ADD")) {
         index = oc_core_scenario_find(core, uname);
-        if (index < 0) { *now = 1; free(uname); snprintf(out, size, "No scenario %s on this sheet", name); return 0; }
+        if (index < 0) { *now = 1; owf_free(uname); snprintf(out, size, "No scenario %s on this sheet", name); return 0; }
     }
     if (!strcasecmp(verb, "ADD") || !strcasecmp(verb, "UPDATE")) {
         owf_scenario old;
@@ -5606,7 +5606,7 @@ static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
         p = skip_space(p);
         if (!cells[0] && index >= 0 && oc_core_scenario_get(core, index, &old)) {     /* UPDATE name: its own cells */
             oc_core_scenario_cells_text(core, &old, cells, sizeof cells);
-            ucomment = malloc(strlen(old.comment) + 1);
+            ucomment = owf_malloc(strlen(old.comment) + 1);
             if (ucomment) strcpy(ucomment, old.comment);
             owf_scenario_free(&old);
         } else {
@@ -5618,12 +5618,12 @@ static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
     } else if (!strcasecmp(verb, "DELETE")) {
         rc = oc_core_scenario_delete(core, index);
     } else {
-        free(uname);
+        owf_free(uname);
         snprintf(out, size, "SCENARIO: ADD, UPDATE, SHOW, DELETE or LIST");
         return 0;
     }
-    free(uname);
-    free(ucomment);
+    owf_free(uname);
+    owf_free(ucomment);
     sc_result(rc, "OK");
     snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
     return rc == OWF_OK;
