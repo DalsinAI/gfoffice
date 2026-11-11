@@ -42,7 +42,7 @@
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.2.0 (11.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.3.0 (11.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -50,7 +50,8 @@ static const char version[] __attribute__((used)) =
 
 enum {
     M_NEW = 1, M_OPEN, M_CLOSE, M_COPY, M_COMPACT, M_CHECK, M_ABOUT, M_QUIT,
-    M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST
+    M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST,
+    M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT
 };
 
 static struct NewMenu menus[] = {
@@ -71,6 +72,12 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Delete Table...", NULL, 0, 0, (APTR)M_T_DELETE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Relationships...", "R", 0, 0, (APTR)M_T_RELATIONS },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Sort and Filter...", "F", 0, 0, (APTR)M_T_VIEW },
+    { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_T_ALL },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Import CSV...", "I", 0, 0, (APTR)M_T_IMPORT },
+    { NM_ITEM, "Export CSV...", NULL, 0, 0, (APTR)M_T_EXPORT },
     { NM_TITLE, "Row", NULL, 0, 0, NULL },
     { NM_ITEM, "Add Row...", "A", 0, 0, (APTR)M_R_ADD },
     { NM_ITEM, "Edit Row...", "E", 0, 0, (APTR)M_R_EDIT },
@@ -109,7 +116,11 @@ static int table_count, table_sel = -1;
 /* The chosen table's design and the datasheet. */
 static ob_table cur;
 static int have_cur;
-static ob_int total_rows;
+static ob_int total_rows;          /* the rows the view shows */
+static ob_int all_rows;            /* the table's rows */
+/* The datasheet's sort and filter: the chosen table's, cleared for another */
+static ob_view view;
+static char view_table[OB_NAME_MAX];
 static ob_int top_row;             /* the first row shown, by position */
 static int sel_row = -1;           /* by position; -1 none */
 static int left_col;               /* the first field shown */
@@ -156,7 +167,7 @@ static const char *leaf(const char *path)
 }
 
 /* A file name from the ASL requester; 0 when cancelled. */
-static int ask_file(const char *title, int save, char *out, size_t size)
+static int ask_file(const char *title, int save, const char *pattern, char *out, size_t size)
 {
     struct FileRequester *fr;
     char dir[400] = "", file[108] = "";
@@ -168,7 +179,7 @@ static int ask_file(const char *title, int save, char *out, size_t size)
     }
     fr = (struct FileRequester *)AllocAslRequestTags(ASL_FileRequest,
         ASLFR_Window, (ULONG)win, ASLFR_TitleText, (ULONG)title,
-        ASLFR_DoSaveMode, save, ASLFR_DoPatterns, TRUE, ASLFR_InitialPattern, (ULONG)"#?.oadb",
+        ASLFR_DoSaveMode, save, ASLFR_DoPatterns, TRUE, ASLFR_InitialPattern, (ULONG)pattern,
         ASLFR_InitialDrawer, (ULONG)dir, ASLFR_InitialFile, (ULONG)file, TAG_DONE);
     if (!fr) return 0;
     if (AslRequest(fr, NULL) && fr->fr_File && fr->fr_File[0]) {
@@ -216,12 +227,23 @@ static void load_page(void)
 {
     free_page();
     if (!proj || !have_cur) return;
-    total_rows = ob_row_total(proj, cur.name);
-    if (total_rows < 0) total_rows = 0;
+    if (strcmp(view_table, cur.name)) {
+        ob_view_init(&view);
+        put_text(view_table, sizeof view_table, cur.name);
+    }
+    all_rows = ob_row_total(proj, cur.name);
+    if (all_rows < 0) all_rows = 0;
+    total_rows = ob_view_total(proj, cur.name, &view);
+    if (total_rows < 0) {
+        /* a field it sorted or filtered by has gone or changed type */
+        ob_view_init(&view);
+        set_status("The sort or filter no longer fits the table: every row is shown");
+        total_rows = all_rows;
+    }
     if (top_row > total_rows - ds_rows) top_row = total_rows - ds_rows;
     if (top_row < 0) top_row = 0;
     if (sel_row >= total_rows) sel_row = (int)total_rows - 1;
-    ob_rows_at(proj, cur.name, top_row, ds_rows < PAGE_MAX ? ds_rows : PAGE_MAX, page_cb, NULL);
+    ob_view_rows(proj, cur.name, &view, top_row, ds_rows < PAGE_MAX ? ds_rows : PAGE_MAX, page_cb, NULL);
 }
 
 static void free_tables(void)
@@ -352,7 +374,13 @@ static void draw_datasheet(void)
         const ob_field *f = &cur.fields[j];
         int w = col_width(f);
         SetAPen(rp, filltext_pen);
-        text_fit(rp, x, y, (x + w - 6 < ds_x + ds_w - 4 ? w - 6 : ds_x + ds_w - 4 - x), f->label[0] ? f->label : f->name);
+        if (!strcmp(view.sort, f->name)) {
+            /* the column the rows are sorted by: its name and an arrow */
+            snprintf(line, sizeof line, "%.100s %s", f->label[0] ? f->label : f->name, view.desc ? "v" : "^");
+            text_fit(rp, x, y, (x + w - 6 < ds_x + ds_w - 4 ? w - 6 : ds_x + ds_w - 4 - x), line);
+        } else {
+            text_fit(rp, x, y, (x + w - 6 < ds_x + ds_w - 4 ? w - 6 : ds_x + ds_w - 4 - x), f->label[0] ? f->label : f->name);
+        }
         x += w;
     }
     /* the rows */
@@ -377,7 +405,8 @@ static void draw_datasheet(void)
     }
     if (!page_n) {
         SetAPen(rp, text_pen);
-        text_fit(rp, ds_x + 8, ds_y + 2 + row_h + 4, ds_w - 16, "No rows yet: Row > Add Row...");
+        text_fit(rp, ds_x + 8, ds_y + 2 + row_h + 4, ds_w - 16,
+                 all_rows ? "No rows pass the filter: Table > Show All Rows" : "No rows yet: Row > Add Row...");
     }
 status_line:
     /* the status line, under the datasheet */
@@ -387,7 +416,10 @@ status_line:
     if (status[0]) {
         text_fit(rp, ds_x + 2, ds_y + ds_h + 3, ds_w - 4, status);
     } else if (have_cur) {
-        snprintf(line, sizeof line, "%.40s: %lld rows, %d fields", cur.name, total_rows, cur.nfields);
+        if (view.op != OB_FILTER_NONE)
+            snprintf(line, sizeof line, "%.40s: %lld of %lld rows (filtered), %d fields", cur.name, total_rows, all_rows, cur.nfields);
+        else
+            snprintf(line, sizeof line, "%.40s: %lld rows, %d fields", cur.name, total_rows, cur.nfields);
         if (sel_row >= 0) {
             size_t n = strlen(line);
             snprintf(line + n, sizeof line - n, ", row %d", sel_row + 1);
@@ -1477,23 +1509,263 @@ static void delete_table(void)
 
 /* ---- Commands ---- */
 
+/* ---- Sort and filter, CSV ---- */
+
+enum { V_SORT = 1, V_DESC, V_FIELD, V_OP, V_VALUE, V_APPLY, V_ALL, V_CANCEL, V_COUNT };
+
+static STRPTR v_sort_labels[OB_MAX_FIELDS + 2], v_field_labels[OB_MAX_FIELDS + 1], v_op_labels[OB_FILTER_COUNT + 1];
+
+static void view_changed(void)
+{
+    top_row = 0;
+    sel_row = -1;
+    load_page();
+}
+
+/* Table > Sort and Filter...: the datasheet's view of the chosen table. */
+static void edit_view(void)
+{
+    struct Window *vw;
+    struct Gadget *eg = NULL, *g, *gad[V_COUNT];
+    struct NewGadget ng;
+    ob_view v = view;
+    int done = 0, rebuild = 1, rowh = fh + 8, l, t, w, h, lw = fw * 9, i, sort_i = 0, field_i = 0;
+    if (!proj || !have_cur) return;
+    for (i = 0; i < cur.nfields; i++) {
+        STRPTR name = (STRPTR)(cur.fields[i].label[0] ? cur.fields[i].label : cur.fields[i].name);
+        v_sort_labels[i + 1] = name;
+        v_field_labels[i] = name;
+        if (!strcmp(v.sort, cur.fields[i].name)) sort_i = i + 1;
+        if (!strcmp(v.field, cur.fields[i].name)) field_i = i;
+    }
+    v_sort_labels[0] = (STRPTR)"Key order";
+    v_sort_labels[cur.nfields + 1] = NULL;
+    v_field_labels[cur.nfields] = NULL;
+    for (i = 0; i < OB_FILTER_COUNT; i++) v_op_labels[i] = (STRPTR)ob_filter_name((ob_filter_op)i);
+    v_op_labels[OB_FILTER_COUNT] = NULL;
+    if (!v.field[0] && cur.nfields) {
+        /* the first field after the Counter */
+        field_i = cur.nfields > 1 ? 1 : 0;
+        put_text(v.field, sizeof v.field, cur.fields[field_i].name);
+    }
+    w = fw * 46;
+    h = rowh * 7 + 12;
+    if (w > scr->Width - 20) w = scr->Width - 20;
+    vw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Sort and Filter",
+        WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 30,
+        WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
+        WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY |
+                  CYCLEIDCMP | STRINGIDCMP | CHECKBOXIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!vw) return;
+    SetFont(vw->RPort, font);
+    l = vw->BorderLeft + 8;
+    t = vw->BorderTop + 6;
+    while (!done) {
+        if (rebuild) {
+            int iw = vw->Width - vw->BorderLeft - vw->BorderRight - 16;
+            int needs_value = v.op != OB_FILTER_NONE && v.op != OB_FILTER_EMPTY && v.op != OB_FILTER_NOT_EMPTY;
+            if (eg) { RemoveGList(vw, eg, -1); FreeGadgets(eg); eg = NULL; }
+            memset(gad, 0, sizeof gad);
+            if (!(g = CreateContext(&eg))) break;
+            memset(&ng, 0, sizeof ng);
+            ng.ng_VisualInfo = vi;
+            ng.ng_TextAttr = &font_attr;
+            ng.ng_Flags = PLACETEXT_LEFT;
+            ng.ng_LeftEdge = l + lw;
+            ng.ng_TopEdge = t;
+            ng.ng_Width = iw - lw;
+            ng.ng_Height = fh + 6;
+            ng.ng_GadgetText = (UBYTE *)"Sort by";
+            ng.ng_GadgetID = V_SORT;
+            g = gad[V_SORT] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)v_sort_labels, GTCY_Active, (ULONG)sort_i, TAG_DONE);
+            ng.ng_TopEdge += rowh;
+            ng.ng_Width = fh + 6;
+            ng.ng_GadgetText = (UBYTE *)"Z to A";
+            ng.ng_GadgetID = V_DESC;
+            g = gad[V_DESC] = CreateGadget(CHECKBOX_KIND, g, &ng, GA_Disabled, sort_i == 0,
+                                           GTCB_Checked, v.desc, GTCB_Scaled, TRUE, TAG_DONE);
+            ng.ng_TopEdge += rowh + 6;
+            ng.ng_Width = iw - lw;
+            ng.ng_GadgetText = (UBYTE *)"Show";
+            ng.ng_GadgetID = V_OP;
+            g = gad[V_OP] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)v_op_labels, GTCY_Active, (ULONG)v.op, TAG_DONE);
+            ng.ng_TopEdge += rowh;
+            ng.ng_GadgetText = (UBYTE *)"Field";
+            ng.ng_GadgetID = V_FIELD;
+            g = gad[V_FIELD] = CreateGadget(CYCLE_KIND, g, &ng, GA_Disabled, v.op == OB_FILTER_NONE,
+                                            GTCY_Labels, (ULONG)v_field_labels, GTCY_Active, (ULONG)field_i, TAG_DONE);
+            ng.ng_TopEdge += rowh;
+            ng.ng_GadgetText = (UBYTE *)"Value";
+            ng.ng_GadgetID = V_VALUE;
+            g = gad[V_VALUE] = CreateGadget(STRING_KIND, g, &ng, GA_Disabled, !needs_value,
+                                            GTST_String, (ULONG)v.value, GTST_MaxChars, OB_VALUE_MAX - 1, TAG_DONE);
+            ng.ng_Flags = PLACETEXT_IN;
+            ng.ng_TopEdge = vw->Height - vw->BorderBottom - 6 - (fh + 6);
+            ng.ng_LeftEdge = l;
+            ng.ng_Width = fw * 10 + 16;
+            ng.ng_GadgetText = (UBYTE *)"Apply";
+            ng.ng_GadgetID = V_APPLY;
+            g = gad[V_APPLY] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge = l + (iw - ng.ng_Width) / 2;
+            ng.ng_GadgetText = (UBYTE *)"Show All";
+            ng.ng_GadgetID = V_ALL;
+            g = gad[V_ALL] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge = vw->Width - vw->BorderRight - 8 - ng.ng_Width;
+            ng.ng_GadgetText = (UBYTE *)"Cancel";
+            ng.ng_GadgetID = V_CANCEL;
+            g = gad[V_CANCEL] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            if (!g) break;
+            SetAPen(vw->RPort, pen(BACKGROUNDPEN));
+            RectFill(vw->RPort, vw->BorderLeft, vw->BorderTop, vw->Width - vw->BorderRight - 1,
+                     vw->Height - vw->BorderBottom - 1);
+            AddGList(vw, eg, ~0, -1, NULL);
+            RefreshGList(eg, vw, NULL, -1);
+            GT_RefreshWindow(vw, NULL);
+            rebuild = 0;
+        }
+        {
+            struct IntuiMessage *m;
+            WaitPort(vw->UserPort);
+            while (!rebuild && !done && (m = GT_GetIMsg(vw->UserPort)) != NULL) {
+                ULONG class = m->Class;
+                UWORD code = m->Code;
+                struct Gadget *gg = (struct Gadget *)m->IAddress;
+                GT_ReplyIMsg(m);
+                if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+                if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(vw); GT_EndRefresh(vw, TRUE); continue; }
+                if (class != IDCMP_GADGETUP && class != IDCMP_GADGETDOWN) continue;
+                switch (gg->GadgetID) {
+                case V_SORT:
+                    sort_i = code;
+                    put_text(v.sort, sizeof v.sort, sort_i > 0 && sort_i <= cur.nfields ? cur.fields[sort_i - 1].name : "");
+                    if (!sort_i) v.desc = 0;
+                    rebuild = 1;
+                    break;
+                case V_DESC:
+                    v.desc = (gg->Flags & GFLG_SELECTED) != 0;
+                    break;
+                case V_OP:
+                    v.op = (ob_filter_op)code;
+                    rebuild = 1;
+                    break;
+                case V_FIELD:
+                    field_i = code;
+                    if (field_i < cur.nfields) put_text(v.field, sizeof v.field, cur.fields[field_i].name);
+                    break;
+                case V_VALUE: {
+                    STRPTR str = NULL;
+                    GT_GetGadgetAttrs(gg, vw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
+                    put_text(v.value, sizeof v.value, str ? (const char *)str : "");
+                    break;
+                }
+                case V_APPLY: {
+                    STRPTR str = NULL;
+                    /* the value as typed, Return pressed or not */
+                    if (gad[V_VALUE]) GT_GetGadgetAttrs(gad[V_VALUE], vw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
+                    if (str) put_text(v.value, sizeof v.value, (const char *)str);
+                    if (!ob_view_check(proj, cur.name, &v)) {
+                        struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
+                        EasyRequest(vw, &es, NULL, (ULONG)ob_error(proj));
+                        break;
+                    }
+                    view = v;
+                    view_changed();
+                    done = 1;
+                    break;
+                }
+                case V_ALL:
+                    ob_view_init(&view);
+                    view_changed();
+                    done = 1;
+                    break;
+                case V_CANCEL:
+                    done = 1;
+                    break;
+                }
+            }
+        }
+    }
+    if (eg) { RemoveGList(vw, eg, -1); FreeGadgets(eg); }
+    CloseWindow(vw);
+}
+
+/* A click on a column's heading: sort by it, then Z to A, then key order. */
+static void sort_by_column(int mx)
+{
+    int x = ds_x + 4, j;
+    for (j = left_col; j < cur.nfields; j++) {
+        int w = col_width(&cur.fields[j]);
+        if (mx >= x && mx < x + w) {
+            if (strcmp(view.sort, cur.fields[j].name)) { put_text(view.sort, sizeof view.sort, cur.fields[j].name); view.desc = 0; }
+            else if (!view.desc) view.desc = 1;
+            else { view.sort[0] = 0; view.desc = 0; }
+            view_changed();
+            return;
+        }
+        x += w;
+    }
+}
+
+static void import_csv(void)
+{
+    char path[512], msg[160];
+    ob_int n;
+    if (!proj || !have_cur) return;
+    snprintf(msg, sizeof msg, "Import CSV into %.60s", cur.name);
+    if (!ask_file(msg, FALSE, "#?.(csv|txt|tab)", path, sizeof path)) return;
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    n = ob_csv_import(proj, cur.name, path, 0);
+    SetWindowPointer(win, TAG_DONE);
+    if (n < 0) { tell(ob_error(proj)); return; }
+    snprintf(msg, sizeof msg, "Added %lld rows from %.60s", n, leaf(path));
+    load_page();
+    set_status(msg);
+}
+
+static void export_csv(void)
+{
+    char path[512], msg[160];
+    ob_int n;
+    BPTR l;
+    if (!proj || !have_cur) return;
+    snprintf(msg, sizeof msg, "Export %.60s as CSV", cur.name);
+    if (!ask_file(msg, TRUE, "#?.csv", path, sizeof path)) return;
+    if ((l = Lock((STRPTR)path, ACCESS_READ)) != 0) {
+        UnLock(l);
+        snprintf(msg, sizeof msg, "%.100s is already there.\nReplace it?", leaf(path));
+        if (!ask(msg, "Replace|Cancel")) return;
+    }
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    n = ob_csv_export(proj, cur.name, &view, path, ',');
+    SetWindowPointer(win, TAG_DONE);
+    if (n < 0) { tell(ob_error(proj)); return; }
+    snprintf(msg, sizeof msg, "Wrote %lld rows to %.60s%s", n, leaf(path),
+             view.op != OB_FILTER_NONE ? " (the filtered rows)" : "");
+    set_status(msg);
+}
+
 static void menu_action(ULONG id)
 {
     char path[512];
     set_status("");
     switch (id) {
     case M_NEW:
-        if (ask_file("New project", TRUE, path, sizeof path)) open_project(path, 1);
+        if (ask_file("New project", TRUE, "#?.oadb", path, sizeof path)) open_project(path, 1);
         break;
     case M_OPEN:
-        if (ask_file("Open a project", FALSE, path, sizeof path)) open_project(path, 0);
+        if (ask_file("Open a project", FALSE, "#?.oadb", path, sizeof path)) open_project(path, 0);
         break;
     case M_CLOSE:
         close_project();
         update_title();
         break;
     case M_COPY:
-        if (proj && ask_file("Save a copy as", TRUE, path, sizeof path)) {
+        if (proj && ask_file("Save a copy as", TRUE, "#?.oadb", path, sizeof path)) {
             if (!ob_copy(proj, path)) tell(ob_error(proj));
             else set_status("Copy saved");
         }
@@ -1517,6 +1789,10 @@ static void menu_action(ULONG id)
     case M_R_DELETE: delete_row(); break;
     case M_R_FIRST: top_row = 0; sel_row = total_rows ? 0 : -1; load_page(); break;
     case M_R_LAST: top_row = total_rows - ds_rows; sel_row = (int)total_rows - 1; load_page(); break;
+    case M_T_VIEW: edit_view(); break;
+    case M_T_ALL: if (have_cur) { ob_view_init(&view); view_changed(); } break;
+    case M_T_IMPORT: import_csv(); break;
+    case M_T_EXPORT: export_csv(); break;
     }
     refresh();
 }
@@ -1595,7 +1871,11 @@ static void events(void)
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN && have_cur && mx >= ds_x && mx < ds_x + ds_w && my >= ds_y && my < ds_y + ds_h) {
                 int r = (my - ds_y - 2) / (fh + 3) - 1;
-                if (r >= 0 && r < page_n) {
+                if (my >= ds_y + 2 && r < 0) {
+                    set_status("");
+                    sort_by_column(mx);
+                    refresh();
+                } else if (r >= 0 && r < page_n) {
                     int row = (int)top_row + r;
                     int dbl = row == last_row && DoubleClick(last_s, last_m, secs, micros);
                     sel_row = row;
