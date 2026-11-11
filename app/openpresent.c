@@ -392,7 +392,7 @@ static int notes_view;
 /* View > Outline: every slide's title and its outline text as one list, typed, demoted and promoted */
 static int outline_view;
 static ogt_list *outline_list;
-static opr_outline outline;
+static opr_outline outline_rows;
 static void outline_refresh(void);
 static int sorter_columns;                           /* 0: as many as fit */
 static int sorter_scroll;
@@ -3009,7 +3009,7 @@ static void set_view(int mode)
                : "Normal view.");
     relayout();
     if (outline_view && outline_list) {
-        int r = opr_outline_find(&outline, current, -1, 0);
+        int r = opr_outline_find(&outline_rows, current, -1, 0);
         if (r >= 0) { ogt_list_select(outline_list, r); ogt_list_show(outline_list, r); ogt_list_draw(outline_list); }
     }
     if (sorted) {
@@ -3032,7 +3032,7 @@ static void sorter_open(int index)
 static int outline_height(void *user, int index)
 {
     (void)user;
-    return index < outline.count && outline.rows[index].level == 0 ? fh + 12 : fh + 4;
+    return index < outline_rows.count && outline_rows.rows[index].level == 0 ? fh + 12 : fh + 4;
 }
 
 static void outline_draw(void *user, int index, struct RastPort *rp, int x, int y, int w, int h, int selected)
@@ -3041,8 +3041,8 @@ static void outline_draw(void *user, int index, struct RastPort *rp, int x, int 
     char *text, num[16];
     int tx, ty;
     (void)user;
-    if (!deck || index >= outline.count) return;
-    r = &outline.rows[index];
+    if (!deck || index >= outline_rows.count) return;
+    r = &outline_rows.rows[index];
     if (selected) ogt_fill(&ctx, rp, "accent", x, y, w, h);
     SetFont(rp, font);
     ty = y + (h - fh) / 2;
@@ -3077,20 +3077,20 @@ static void outline_refresh(void)
 {
     int at;
     if (!outline_view || !deck) return;
-    if (opr_outline_build(deck, &outline) < 0) outline.count = 0;
+    if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
     if (!outline_list) {
         outline_list = ogt_list_new(win, &ctx, GID_OUTLINE, outline_height, outline_draw, NULL, NULL, "list");
         if (!outline_list) return;
         ogt_list_layout(outline_list, view_box.x + 4, view_box.y + 4, view_box.w - 8, view_box.h - 8);
-        ogt_list_set_count(outline_list, outline.count);
-        at = opr_outline_find(&outline, current, -1, 0);
+        ogt_list_set_count(outline_list, outline_rows.count);
+        at = opr_outline_find(&outline_rows, current, -1, 0);
         if (at >= 0) { ogt_list_select(outline_list, at); ogt_list_show(outline_list, at); }
         return;
     }
-    ogt_list_set_count(outline_list, outline.count);   /* heights asked again: a title may now be a line */
+    ogt_list_set_count(outline_list, outline_rows.count);   /* heights asked again: a title may now be a line */
     at = outline_list->selected;
-    if (at < 0 || at >= outline.count || outline.rows[at].slide != current) {
-        at = opr_outline_find(&outline, current, -1, 0);
+    if (at < 0 || at >= outline_rows.count || outline_rows.rows[at].slide != current) {
+        at = opr_outline_find(&outline_rows, current, -1, 0);
         if (at >= 0) ogt_list_select(outline_list, at);
     }
 }
@@ -3098,8 +3098,8 @@ static void outline_refresh(void)
 static int outline_row(opr_outline_row *r)
 {
     int at = outline_list ? outline_list->selected : -1;
-    if (at < 0 || at >= outline.count) return -1;
-    *r = outline.rows[at];
+    if (at < 0 || at >= outline_rows.count) return -1;
+    *r = outline_rows.rows[at];
     return at;
 }
 
@@ -3117,11 +3117,11 @@ static void outline_changed(int slide, int obj, int para, const char *message)
     update_window_title();
     update_edit_tools();
     ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
-    if (opr_outline_build(deck, &outline) < 0) outline.count = 0;
+    if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
     if (outline_list) {
-        ogt_list_set_count(outline_list, outline.count);
-        at = opr_outline_find(&outline, current, obj, para);
-        if (at < 0) at = opr_outline_find(&outline, current, -1, 0);
+        ogt_list_set_count(outline_list, outline_rows.count);
+        at = opr_outline_find(&outline_rows, current, obj, para);
+        if (at < 0) at = opr_outline_find(&outline_rows, current, -1, 0);
         if (at >= 0) { ogt_list_select(outline_list, at); ogt_list_show(outline_list, at); }
         ogt_list_draw(outline_list);
     }
@@ -3200,8 +3200,8 @@ static void outline_delete(void)
 static void outline_pick(int row)
 {
     char msg[64];
-    if (row < 0 || row >= outline.count) return;
-    current = outline.rows[row].slide;
+    if (row < 0 || row >= outline_rows.count) return;
+    current = outline_rows.rows[row].slide;
     snprintf(msg, sizeof msg, UNIT " %d.", current + 1);
     set_status(msg);
     draw_status();
@@ -6744,17 +6744,17 @@ static int rexx_do_command(const char *command, char **result_out)
         opr_outline_row r;
         for (k = 0; verbs[k]; k++) if (starts_word_ci(arg, verbs[k], &rest)) { verb = k; break; }
         if (verb < 0) rest = arg;
-        if (opr_outline_build(deck, &outline) < 0) outline.count = 0;
+        if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
         while (*rest >= '0' && *rest <= '9') n = n * 10 + (*rest++ - '0');
         while (*rest == ' ') rest++;
-        if (verb < 0 && n == 0 && !*arg) snprintf(result_text, sizeof result_text, "%d", outline.count);
-        else if (n < 1 || n > outline.count) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such outline row"); }
+        if (verb < 0 && n == 0 && !*arg) snprintf(result_text, sizeof result_text, "%d", outline_rows.count);
+        else if (n < 1 || n > outline_rows.count) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such outline row"); }
         else if (verb < 0) {
-            char *t = opr_outline_text(deck, &outline.rows[n - 1]);
-            snprintf(result_text, sizeof result_text, "%d %s", outline.rows[n - 1].level, t ? t : "");
+            char *t = opr_outline_text(deck, &outline_rows.rows[n - 1]);
+            snprintf(result_text, sizeof result_text, "%d %s", outline_rows.rows[n - 1].level, t ? t : "");
             owf_free(t);
         } else {
-            r = outline.rows[n - 1];
+            r = outline_rows.rows[n - 1];
             if (verb == 0) rc = opr_outline_set_text(undo, deck, &r, rest);
             else if (verb == 1) rc = opr_outline_insert_after(undo, deck, &r, &s, &p);
             else if (verb == 2) rc = opr_outline_demote(undo, deck, &r);
@@ -6765,8 +6765,8 @@ static int rexx_do_command(const char *command, char **result_out)
             else {
                 if (outline_view) outline_changed(r.slide, -1, 0, "Outline changed.");
                 else structure_changed(current, "Outline changed.");
-                if (opr_outline_build(deck, &outline) < 0) outline.count = 0;
-                snprintf(result_text, sizeof result_text, "%d", outline.count);
+                if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
+                snprintf(result_text, sizeof result_text, "%d", outline_rows.count);
             }
         }
     } else if (starts_word_ci(command, "GETNOTES", &arg)) {  /* this slide's speaker notes, paragraphs as \n */
@@ -7109,7 +7109,7 @@ out:
     pictures_clear();
     free(versions);
     opr_pick_free(&pick);
-    opr_outline_free(&outline);
+    opr_outline_free(&outline_rows);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
     if (theme.text) ogt_theme_free(&theme);
