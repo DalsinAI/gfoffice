@@ -53,7 +53,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.4.1 (12.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.5.0 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -62,7 +62,8 @@ static const char version[] __attribute__((used)) =
 enum {
     M_NEW = 1, M_OPEN, M_CLOSE, M_COPY, M_COMPACT, M_CHECK, M_ABOUT, M_QUIT,
     M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST,
-    M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV
+    M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV,
+    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN
 };
 
 static struct NewMenu menus[] = {
@@ -92,6 +93,11 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "New Table from CSV...", NULL, 0, 0, (APTR)M_T_FROMCSV },
     { NM_ITEM, "Import CSV...", "I", 0, 0, (APTR)M_T_IMPORT },
     { NM_ITEM, "Export CSV...", NULL, 0, 0, (APTR)M_T_EXPORT },
+    { NM_TITLE, "Query", NULL, 0, 0, NULL },
+    { NM_ITEM, "New Query...", "Y", 0, 0, (APTR)M_Q_NEW },
+    { NM_ITEM, "Open Query...", "U", 0, 0, (APTR)M_Q_OPEN },
+    { NM_ITEM, "Design Query...", NULL, 0, 0, (APTR)M_Q_DESIGN },
+    { NM_ITEM, "Run Again", NULL, 0, 0, (APTR)M_Q_AGAIN },
     { NM_TITLE, "Row", NULL, 0, 0, NULL },
     { NM_ITEM, "Add Row...", "A", 0, 0, (APTR)M_R_ADD },
     { NM_ITEM, "Edit Row...", "E", 0, 0, (APTR)M_R_EDIT },
@@ -142,6 +148,14 @@ static int left_col;               /* the first field shown */
 static int page_n;
 static ob_int page_keys[PAGE_MAX];
 static char *page_cells[PAGE_MAX][OB_MAX_FIELDS];
+
+/* A query's rows in the datasheet (core 0.5, design 5): read only */
+static ob_query qy;                /* the query shown, or the last one designed */
+static int q_on;                   /* the datasheet shows qy's rows, not cur's */
+static ob_qresult q_cols[OB_QUERY_OUT];
+static int q_ncols;
+static char q_answers[OB_QUERY_PARAMS][OB_VALUE_MAX];
+static const char *q_pv[OB_QUERY_PARAMS];
 
 /* The datasheet's box in the window. */
 static int ds_x, ds_y, ds_w, ds_h, ds_rows;
@@ -258,6 +272,22 @@ static int page_cb(void *user, ob_int key, int n, const char *const *values)
 static void load_page(void)
 {
     free_page();
+    if (proj && q_on) {
+        total_rows = all_rows = ob_query_total(proj, &qy, q_pv);
+        if (total_rows < 0) {
+            static char why[OB_ERR_MAX];
+            put_text(why, sizeof why, ob_error(proj));
+            q_on = 0;
+            total_rows = all_rows = 0;
+            set_status(why);
+        } else {
+            if (top_row > total_rows - ds_rows) top_row = total_rows - ds_rows;
+            if (top_row < 0) top_row = 0;
+            if (sel_row >= total_rows) sel_row = (int)total_rows - 1;
+            ob_query_rows(proj, &qy, q_pv, top_row, ds_rows < PAGE_MAX ? ds_rows : PAGE_MAX, page_cb, NULL);
+            return;
+        }
+    }
     if (!proj || !have_cur) return;
     if (strcmp(view_table, cur.name)) {
         ob_view_init(&view);
@@ -356,6 +386,31 @@ static void text_fit(struct RastPort *rp, int x, int y, int w, const char *s)
     Text(rp, (STRPTR)s, n);
 }
 
+/* The datasheet's columns: the table's fields, or the query's result. */
+static int ds_ncols(void)
+{
+    if (q_on) return q_ncols < OB_MAX_FIELDS ? q_ncols : OB_MAX_FIELDS;
+    return have_cur ? cur.nfields : 0;
+}
+
+static ob_field q_tmpf;            /* a result column's width, worked out as a field's */
+
+static int ds_colw(int j)
+{
+    if (!q_on) return col_width(&cur.fields[j]);
+    memset(&q_tmpf, 0, sizeof q_tmpf);
+    q_tmpf.type = q_cols[j].type >= 0 ? (ob_type)q_cols[j].type : OB_TEXT;
+    if (q_cols[j].type < 0) q_tmpf.max_len = 14;
+    put_text(q_tmpf.name, sizeof q_tmpf.name, q_cols[j].heading);
+    return col_width(&q_tmpf);
+}
+
+static const char *ds_head(int j)
+{
+    if (q_on) return q_cols[j].heading;
+    return cur.fields[j].label[0] ? cur.fields[j].label : cur.fields[j].name;
+}
+
 static UWORD pen(int which)
 {
     struct DrawInfo *di = GetScreenDrawInfo(scr);
@@ -392,7 +447,7 @@ static void draw_datasheet(void)
         text_fit(rp, ds_x + 8, ds_y + 8, ds_w - 16, "No project open: Project > New... or Open...");
         goto status_line;
     }
-    if (!have_cur) {
+    if (!have_cur && !q_on) {
         SetAPen(rp, text_pen);
         text_fit(rp, ds_x + 8, ds_y + 8, ds_w - 16, table_count ? "Choose a table" : "No tables yet: Table > New Table...");
         goto status_line;
@@ -402,16 +457,15 @@ static void draw_datasheet(void)
     y = ds_y + 2;
     SetAPen(rp, fill_pen);
     RectFill(rp, ds_x + 1, ds_y + 1, ds_x + ds_w - 2, ds_y + row_h);
-    for (j = left_col; j < cur.nfields && x < ds_x + ds_w - 4; j++) {
-        const ob_field *f = &cur.fields[j];
-        int w = col_width(f);
+    for (j = left_col; j < ds_ncols() && x < ds_x + ds_w - 4; j++) {
+        int w = ds_colw(j);
         SetAPen(rp, filltext_pen);
-        if (!strcmp(view.sort, f->name)) {
+        if (!q_on && !strcmp(view.sort, cur.fields[j].name)) {
             /* the column the rows are sorted by: its name and an arrow */
-            snprintf(line, sizeof line, "%.100s %s", f->label[0] ? f->label : f->name, view.desc ? "v" : "^");
+            snprintf(line, sizeof line, "%.100s %s", ds_head(j), view.desc ? "v" : "^");
             text_fit(rp, x, y, (x + w - 6 < ds_x + ds_w - 4 ? w - 6 : ds_x + ds_w - 4 - x), line);
         } else {
-            text_fit(rp, x, y, (x + w - 6 < ds_x + ds_w - 4 ? w - 6 : ds_x + ds_w - 4 - x), f->label[0] ? f->label : f->name);
+            text_fit(rp, x, y, (x + w - 6 < ds_x + ds_w - 4 ? w - 6 : ds_x + ds_w - 4 - x), ds_head(j));
         }
         x += w;
     }
@@ -424,8 +478,8 @@ static void draw_datasheet(void)
             RectFill(rp, ds_x + 1, y - 1, ds_x + ds_w - 2, y + row_h - 2);
         }
         x = ds_x + 4;
-        for (j = left_col; j < cur.nfields && x < ds_x + ds_w - 4; j++) {
-            int w = col_width(&cur.fields[j]);
+        for (j = left_col; j < ds_ncols() && x < ds_x + ds_w - 4; j++) {
+            int w = ds_colw(j);
             SetAPen(rp, sel ? filltext_pen : text_pen);
             text_fit(rp, x, y, (x + w - 6 < ds_x + ds_w - 4 ? w - 6 : ds_x + ds_w - 4 - x),
                      page_cells[i][j] ? page_cells[i][j] : "");
@@ -438,6 +492,7 @@ static void draw_datasheet(void)
     if (!page_n) {
         SetAPen(rp, text_pen);
         text_fit(rp, ds_x + 8, ds_y + 2 + row_h + 4, ds_w - 16,
+                 q_on ? "The query gives no rows" :
                  all_rows ? "No rows pass the filter: Table > Show All Rows" : "No rows yet: Row > Add Row...");
     }
 status_line:
@@ -447,6 +502,13 @@ status_line:
     SetAPen(rp, text_pen);
     if (status[0]) {
         text_fit(rp, ds_x + 2, ds_y + ds_h + 3, ds_w - 4, status);
+    } else if (q_on) {
+        snprintf(line, sizeof line, "Query %.40s: %lld rows, read only", qy.name[0] ? qy.name : "(not saved)", total_rows);
+        if (sel_row >= 0) {
+            size_t n = strlen(line);
+            snprintf(line + n, sizeof line - n, ", row %d", sel_row + 1);
+        }
+        text_fit(rp, ds_x + 2, ds_y + ds_h + 3, ds_w - 4, line);
     } else if (have_cur) {
         if (view.op != OB_FILTER_NONE)
             snprintf(line, sizeof line, "%.40s: %lld of %lld rows (filtered), %d fields", cur.name, total_rows, all_rows, cur.nfields);
@@ -598,6 +660,8 @@ static void close_project(void)
     free_tables();
     if (win && g_tables) GT_SetGadgetAttrs(g_tables, win, NULL, GTLV_Labels, (ULONG)&table_list, TAG_DONE);
     have_cur = 0;
+    q_on = 0;
+    ob_query_init(&qy, "");
     table_sel = -1;
     if (proj) ob_close(proj);
     proj = NULL;
@@ -655,6 +719,7 @@ static void edit_row(int adding)
     char *values[OB_MAX_FIELDS], *before[OB_MAX_FIELDS];
     ob_int key = 0;
     int i, page = 0, pages, per, done = 0, lw = 0, vw, h, row_h = fh + 8, nshow, first;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
     if (!proj || !have_cur) return;
     if (!adding && (sel_row < 0 || sel_row < top_row || sel_row >= top_row + page_n)) {
         tell("Choose a row first.");
@@ -833,6 +898,7 @@ out:
 static void delete_row(void)
 {
     char q[200];
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
     if (!proj || !have_cur) return;
     if (sel_row < top_row || sel_row >= top_row + page_n || sel_row < 0) { tell("Choose a row first."); return; }
     snprintf(q, sizeof q, "Delete row %d of %.63s?", sel_row + 1, cur.name);
@@ -1562,6 +1628,7 @@ static void edit_view(void)
     struct NewGadget ng;
     ob_view v = view;
     int done = 0, rebuild = 1, rowh = fh + 8, l, t, w, h, lw = fw * 9, i, sort_i = 0, field_i = 0;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
     if (!proj || !have_cur) return;
     for (i = 0; i < cur.nfields; i++) {
         STRPTR name = (STRPTR)(cur.fields[i].label[0] ? cur.fields[i].label : cur.fields[i].name);
@@ -1730,6 +1797,7 @@ static void edit_view(void)
 static void sort_by_column(int mx)
 {
     int x = ds_x + 4, j;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
     for (j = left_col; j < cur.nfields; j++) {
         int w = col_width(&cur.fields[j]);
         if (mx >= x && mx < x + w) {
@@ -1757,6 +1825,7 @@ static void import_csv(void)
 {
     char path[512], msg[160];
     ob_int n;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
     if (!proj || !have_cur) return;
     snprintf(msg, sizeof msg, "Import CSV into %.60s", cur.name);
     if (!ask_file(msg, FALSE, "#?.(csv|txt|tab)", path, sizeof path)) return;
@@ -1788,6 +1857,7 @@ static void export_csv(void)
     char path[512], msg[160];
     ob_int n;
     BPTR l;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
     if (!proj || !have_cur) return;
     snprintf(msg, sizeof msg, "Export %.60s as CSV", cur.name);
     if (!ask_file(msg, TRUE, "#?.csv", path, sizeof path)) return;
@@ -2044,6 +2114,635 @@ static void new_table_from_csv(void)
     }
 }
 
+/* ---- Queries (core 0.5, design 5) ---- */
+
+/* A line of text from the user in a small window; 0 when cancelled. */
+static int ask_text(const char *title, const char *prompt, char *buf, size_t size)
+{
+    struct Window *aw;
+    struct Gadget *eg = NULL, *g, *sg;
+    struct NewGadget ng;
+    int done = 0, okd = 0, w = fw * 44, h = (fh + 8) * 3 + 12, lw;
+    if (rexx_quiet(prompt)) return 0;
+    lw = (int)strlen(prompt) * fw + 12;
+    if (lw > w / 2) lw = w / 2;
+    aw = OpenWindowTags(NULL, WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 60, WA_Top, win->TopEdge + 60, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | STRINGIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!aw) return 0;
+    if (!(g = CreateContext(&eg))) { CloseWindow(aw); return 0; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_LeftEdge = aw->BorderLeft + 8 + lw;
+    ng.ng_TopEdge = aw->BorderTop + 8;
+    ng.ng_Width = w - 16 - lw;
+    ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (UBYTE *)prompt;
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_GadgetID = 1;
+    g = sg = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)buf, GTST_MaxChars, (ULONG)(size - 1), TAG_DONE);
+    ng.ng_Flags = PLACETEXT_IN;
+    ng.ng_TopEdge = aw->Height - aw->BorderBottom - 6 - (fh + 6);
+    ng.ng_LeftEdge = aw->BorderLeft + 8;
+    ng.ng_Width = fw * 10 + 16;
+    ng.ng_GadgetText = (UBYTE *)"OK";
+    ng.ng_GadgetID = 2;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    ng.ng_LeftEdge = aw->Width - aw->BorderRight - 8 - ng.ng_Width;
+    ng.ng_GadgetText = (UBYTE *)"Cancel";
+    ng.ng_GadgetID = 3;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    if (!g) { FreeGadgets(eg); CloseWindow(aw); return 0; }
+    AddGList(aw, eg, ~0, -1, NULL);
+    RefreshGList(eg, aw, NULL, -1);
+    GT_RefreshWindow(aw, NULL);
+    ActivateGadget(sg, aw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(aw->UserPort);
+        while ((m = GT_GetIMsg(aw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) done = 1;
+            else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(aw); GT_EndRefresh(aw, TRUE); }
+            else if (class == IDCMP_GADGETUP && (gg->GadgetID == 1 || gg->GadgetID == 2)) done = okd = 1;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 3) done = 1;
+        }
+    }
+    if (okd) {
+        STRPTR str = NULL;
+        GT_GetGadgetAttrs(sg, aw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
+        put_text(buf, size, str ? (const char *)str : "");
+    }
+    RemoveGList(aw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(aw);
+    return okd;
+}
+
+/* qy's rows into the datasheet, asking its questions first; 0 when it can't run. */
+static int run_query(int ask_again)
+{
+    char names[OB_QUERY_PARAMS][OB_VALUE_MAX], msg[OB_ERR_MAX + 80];
+    int n, i;
+    if (!proj) return 0;
+    n = ob_query_params(proj, &qy, names, OB_QUERY_PARAMS);
+    if (n < 0) { tell(ob_error(proj)); return 0; }
+    for (i = 0; i < n && i < OB_QUERY_PARAMS; i++) {
+        if (ask_again || !q_answers[i][0]) {
+            if (!ask_text(qy.name[0] ? qy.name : "Query", names[i], q_answers[i], sizeof q_answers[i])) return 0;
+        }
+        q_pv[i] = q_answers[i];
+    }
+    q_ncols = ob_query_columns(proj, &qy, q_cols, OB_QUERY_OUT);
+    if (q_ncols < 0) { tell(ob_error(proj)); q_ncols = 0; return 0; }
+    if (q_ncols > OB_QUERY_OUT) q_ncols = OB_QUERY_OUT;
+    if (ob_query_total(proj, &qy, q_pv) < 0) {
+        snprintf(msg, sizeof msg, "%s", ob_error(proj));
+        tell(msg);
+        return 0;
+    }
+    q_on = 1;
+    top_row = 0;
+    sel_row = -1;
+    left_col = 0;
+    load_page();
+    set_status("");
+    return 1;
+}
+
+/* The designer: one window for the grid (tables, columns, criteria) or the
+ * SQL, with Run, Save and Close. */
+enum {
+    Q_NAME = 1, Q_SQLONLY, Q_SQL, Q_TABLES, Q_ADDTABLE, Q_REMTABLE, Q_COLS, Q_ADDFIELD, Q_ADDEXPR, Q_REMCOL,
+    Q_EXPR, Q_HEAD, Q_SORT, Q_TOTAL, Q_SHOW, Q_CRIT0, Q_CRIT1, Q_CRIT2, Q_SQLTEXT, Q_RUN, Q_SAVE, Q_CLOSE, Q_COUNT
+};
+
+#define QF_MAX 240                 /* fields offered to add */
+static ob_table q_t;               /* one table's design at a time */
+static ob_query q_ed;              /* the query being designed */
+static struct List q_tl, q_cl;
+static struct Node q_tnodes[OB_QUERY_TABLES], q_cnodes[OB_QUERY_COLUMNS];
+static char q_ctext[OB_QUERY_COLUMNS][2 * OB_NAME_MAX + 48];
+static char q_ftext[QF_MAX][2 * OB_NAME_MAX + 4];
+static STRPTR q_flabels[QF_MAX + 2], q_tlabels[OB_MAX_FIELDS + 2];
+static char q_tname_text[OB_MAX_FIELDS][OB_NAME_MAX];
+static STRPTR q_sort_labels[] = { (STRPTR)"No sort", (STRPTR)"A to Z", (STRPTR)"Z to A", NULL };
+static STRPTR q_total_labels[OB_TOTALS + 1];
+static char q_sqltext[OB_SQL_MAX];
+static int q_nf;
+
+static void q_lists(void)
+{
+    int i, j, n = 0;
+    NewList(&q_tl);
+    for (i = 0; i < q_ed.ntables; i++) {
+        q_tnodes[i].ln_Name = q_ed.tables[i];
+        AddTail(&q_tl, &q_tnodes[i]);
+    }
+    NewList(&q_cl);
+    for (i = 0; i < q_ed.ncolumns; i++) {
+        const ob_qcolumn *c = &q_ed.columns[i];
+        if (c->table[0]) snprintf(q_ctext[i], sizeof q_ctext[i], "%s%s.%s", c->show ? "" : "(", c->table, c->field);
+        else snprintf(q_ctext[i], sizeof q_ctext[i], "%s%.60s", c->show ? "" : "(", c->expr);
+        if (c->total) {
+            size_t len = strlen(q_ctext[i]);
+            snprintf(q_ctext[i] + len, sizeof q_ctext[i] - len, " %s", ob_total_name(c->total));
+        }
+        if (c->sort) {
+            size_t len = strlen(q_ctext[i]);
+            snprintf(q_ctext[i] + len, sizeof q_ctext[i] - len, " %s", c->sort == OB_SORT_UP ? "A-Z" : "Z-A");
+        }
+        if (c->criteria[0][0] || c->criteria[1][0] || c->criteria[2][0]) {
+            size_t len = strlen(q_ctext[i]);
+            snprintf(q_ctext[i] + len, sizeof q_ctext[i] - len, " [%.40s]", c->criteria[0][0] ? c->criteria[0] : "or...");
+        }
+        if (!c->show) {
+            size_t len = strlen(q_ctext[i]);
+            snprintf(q_ctext[i] + len, sizeof q_ctext[i] - len, ")");
+        }
+        q_cnodes[i].ln_Name = q_ctext[i];
+        AddTail(&q_cl, &q_cnodes[i]);
+    }
+    /* the fields that can be added: each table's *, then its fields */
+    q_flabels[0] = (STRPTR)"Add a field...";
+    q_nf = 0;
+    for (i = 0; i < q_ed.ntables && q_nf < QF_MAX; i++) {
+        if (!ob_table_get(proj, q_ed.tables[i], &q_t)) continue;
+        snprintf(q_ftext[q_nf], sizeof q_ftext[q_nf], "%s.*", q_t.name);
+        q_flabels[q_nf + 1] = (STRPTR)q_ftext[q_nf];
+        q_nf++;
+        for (j = 0; j < q_t.nfields && q_nf < QF_MAX; j++) {
+            snprintf(q_ftext[q_nf], sizeof q_ftext[q_nf], "%s.%s", q_t.name, q_t.fields[j].name);
+            q_flabels[q_nf + 1] = (STRPTR)q_ftext[q_nf];
+            q_nf++;
+        }
+    }
+    q_flabels[q_nf + 1] = NULL;
+    /* the tables that can be added */
+    q_tlabels[0] = (STRPTR)"Add a table...";
+    n = ob_table_count(proj);
+    if (n > OB_MAX_FIELDS) n = OB_MAX_FIELDS;
+    for (i = 0; i < n; i++) {
+        put_text(q_tname_text[i], sizeof q_tname_text[i], ob_table_name(proj, i));
+        q_tlabels[i + 1] = (STRPTR)q_tname_text[i];
+    }
+    q_tlabels[n + 1] = NULL;
+    for (i = 0; i < OB_TOTALS; i++) q_total_labels[i] = (STRPTR)(i ? ob_total_name((ob_total)i) : "No total");
+    q_total_labels[OB_TOTALS] = NULL;
+    /* the SQL it makes, or why it can't run yet */
+    if (q_ed.sql_only) {
+        put_text(q_sqltext, sizeof q_sqltext, "");
+    } else if (ob_query_sql(proj, &q_ed, q_sqltext, sizeof q_sqltext) < 0) {
+        snprintf(q_sqltext, sizeof q_sqltext, "(%s)", ob_error(proj));
+    }
+}
+
+/* What the string gadgets hold, into q_ed (a string gadget tells only when
+ * Return is pressed, so read them before anything else happens). */
+static void q_read_strings(struct Window *qw, struct Gadget **gad, int csel)
+{
+    STRPTR str;
+    ob_qcolumn *c = csel >= 0 && csel < q_ed.ncolumns ? &q_ed.columns[csel] : NULL;
+#define QSTR(id, dst) do { str = NULL; if (gad[id]) GT_GetGadgetAttrs(gad[id], qw, NULL, GTST_String, (ULONG)&str, TAG_DONE); \
+    if (str) put_text((dst), sizeof(dst), (const char *)str); } while (0)
+    QSTR(Q_NAME, q_ed.name);
+    if (q_ed.sql_only) QSTR(Q_SQL, q_ed.sql);
+    if (c && !q_ed.sql_only) {
+        if (!c->table[0]) QSTR(Q_EXPR, c->expr);
+        QSTR(Q_HEAD, c->heading);
+        QSTR(Q_CRIT0, c->criteria[0]);
+        QSTR(Q_CRIT1, c->criteria[1]);
+        QSTR(Q_CRIT2, c->criteria[2]);
+    }
+#undef QSTR
+}
+
+static void design_query(int fresh)
+{
+    struct Window *qw;
+    struct Gadget *eg = NULL, *g, *gad[Q_COUNT];
+    struct NewGadget ng;
+    int done = 0, rebuild = 1, rowh = fh + 8, l, t, w, h, lw = fw * 10, csel = -1, tsel = -1, run_it = 0, i;
+    if (!proj) return;
+    if (fresh) {
+        ob_query_init(&q_ed, "");
+        if (have_cur) {
+            ob_query_add_table(&q_ed, cur.name);
+            ob_query_add_column(&q_ed, cur.name, "*");
+        }
+    } else {
+        q_ed = qy;
+    }
+    w = fw * 72;
+    h = rowh * 21 + 16;
+    if (w > scr->Width - 20) w = scr->Width - 20;
+    if (h > scr->Height - 40) h = scr->Height - 40;
+    qw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Query",
+        WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 20, WA_Top, win->TopEdge + 16,
+        WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
+        WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY |
+                  LISTVIEWIDCMP | CYCLEIDCMP | STRINGIDCMP | CHECKBOXIDCMP | BUTTONIDCMP | TEXTIDCMP,
+        TAG_DONE);
+    if (!qw) return;
+    SetFont(qw->RPort, font);
+    l = qw->BorderLeft + 8;
+    t = qw->BorderTop + 6;
+    while (!done) {
+        if (rebuild) {
+            int iw = qw->Width - qw->BorderLeft - qw->BorderRight - 16, y, half, bw = fw * 16 + 16;
+            ob_qcolumn *c = csel >= 0 && csel < q_ed.ncolumns ? &q_ed.columns[csel] : NULL;
+            int nc = !c || q_ed.sql_only;
+            if (eg) { RemoveGList(qw, eg, -1); FreeGadgets(eg); eg = NULL; }
+            memset(gad, 0, sizeof gad);
+            q_lists();
+            if (!(g = CreateContext(&eg))) break;
+            memset(&ng, 0, sizeof ng);
+            ng.ng_VisualInfo = vi;
+            ng.ng_TextAttr = &font_attr;
+            ng.ng_Flags = PLACETEXT_LEFT;
+            ng.ng_LeftEdge = l + lw;
+            ng.ng_TopEdge = y = t;
+            ng.ng_Width = iw - lw;
+            ng.ng_Height = fh + 6;
+            ng.ng_GadgetText = (UBYTE *)"Name";
+            ng.ng_GadgetID = Q_NAME;
+            g = gad[Q_NAME] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)q_ed.name, GTST_MaxChars, OB_NAME_MAX - 1, TAG_DONE);
+            ng.ng_TopEdge = y += rowh;
+            ng.ng_Width = fh + 6;
+            ng.ng_Flags = PLACETEXT_RIGHT;
+            ng.ng_GadgetText = (UBYTE *)"Type the SQL";
+            ng.ng_GadgetID = Q_SQLONLY;
+            g = gad[Q_SQLONLY] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, q_ed.sql_only, GTCB_Scaled, TRUE, TAG_DONE);
+            ng.ng_Flags = PLACETEXT_LEFT;
+            ng.ng_TopEdge = y += rowh;
+            if (q_ed.sql_only) {
+                ng.ng_Width = iw - lw;
+                ng.ng_GadgetText = (UBYTE *)"SQL";
+                ng.ng_GadgetID = Q_SQL;
+                g = gad[Q_SQL] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)q_ed.sql, GTST_MaxChars, OB_SQL_MAX - 1, TAG_DONE);
+                y += rowh;
+            } else {
+                half = (iw - lw) / 2 - 4;
+                /* the tables, and adding or taking one away */
+                ng.ng_Width = half;
+                ng.ng_Height = rowh * 3;
+                ng.ng_GadgetText = (UBYTE *)"Tables";
+                ng.ng_GadgetID = Q_TABLES;
+                g = gad[Q_TABLES] = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&q_tl, GTLV_ShowSelected, 0,
+                                                 GTLV_Selected, tsel >= 0 ? (ULONG)tsel : ~0UL, TAG_DONE);
+                ng.ng_LeftEdge = l + lw + half + 8;
+                ng.ng_Height = fh + 6;
+                ng.ng_GadgetText = NULL;
+                ng.ng_GadgetID = Q_ADDTABLE;
+                g = gad[Q_ADDTABLE] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)q_tlabels, GTCY_Active, 0, TAG_DONE);
+                ng.ng_TopEdge = y + rowh;
+                ng.ng_Flags = PLACETEXT_IN;
+                ng.ng_GadgetText = (UBYTE *)"Take Table Out";
+                ng.ng_GadgetID = Q_REMTABLE;
+                g = gad[Q_REMTABLE] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, tsel < 0, TAG_DONE);
+                ng.ng_Flags = PLACETEXT_LEFT;
+                ng.ng_LeftEdge = l + lw;
+                ng.ng_TopEdge = y += rowh * 3 + 4;
+                /* the columns */
+                ng.ng_Width = half;
+                ng.ng_Height = rowh * 5;
+                ng.ng_GadgetText = (UBYTE *)"Columns";
+                ng.ng_GadgetID = Q_COLS;
+                g = gad[Q_COLS] = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&q_cl, GTLV_ShowSelected, 0,
+                                               GTLV_Selected, csel >= 0 ? (ULONG)csel : ~0UL, TAG_DONE);
+                ng.ng_LeftEdge = l + lw + half + 8;
+                ng.ng_Height = fh + 6;
+                ng.ng_GadgetText = NULL;
+                ng.ng_GadgetID = Q_ADDFIELD;
+                g = gad[Q_ADDFIELD] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)q_flabels, GTCY_Active, 0,
+                                                   GA_Disabled, q_nf == 0, TAG_DONE);
+                ng.ng_Flags = PLACETEXT_IN;
+                ng.ng_TopEdge = y + rowh;
+                ng.ng_GadgetText = (UBYTE *)"Add an Expression";
+                ng.ng_GadgetID = Q_ADDEXPR;
+                g = gad[Q_ADDEXPR] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+                ng.ng_TopEdge = y + rowh * 2;
+                ng.ng_GadgetText = (UBYTE *)"Take Column Out";
+                ng.ng_GadgetID = Q_REMCOL;
+                g = gad[Q_REMCOL] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, c == NULL, TAG_DONE);
+                ng.ng_Flags = PLACETEXT_LEFT;
+                ng.ng_LeftEdge = l + lw;
+                ng.ng_TopEdge = y += rowh * 5 + 4;
+                /* the chosen column */
+                ng.ng_Width = iw - lw;
+                ng.ng_GadgetText = (UBYTE *)"Expression";
+                ng.ng_GadgetID = Q_EXPR;
+                g = gad[Q_EXPR] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)(c && !c->table[0] ? c->expr : ""),
+                                               GTST_MaxChars, OB_EXPR_MAX - 1, GA_Disabled, nc || c->table[0], TAG_DONE);
+                ng.ng_TopEdge = y += rowh;
+                ng.ng_GadgetText = (UBYTE *)"Heading";
+                ng.ng_GadgetID = Q_HEAD;
+                g = gad[Q_HEAD] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)(c ? c->heading : ""),
+                                               GTST_MaxChars, OB_NAME_MAX - 1, GA_Disabled, nc, TAG_DONE);
+                ng.ng_TopEdge = y += rowh;
+                ng.ng_Width = half;
+                ng.ng_GadgetText = (UBYTE *)"Sort";
+                ng.ng_GadgetID = Q_SORT;
+                g = gad[Q_SORT] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)q_sort_labels,
+                                               GTCY_Active, (ULONG)(c ? c->sort : 0), GA_Disabled, nc, TAG_DONE);
+                ng.ng_LeftEdge = l + lw + half + 8 + fw * 6;
+                ng.ng_Width = half - fw * 6;
+                ng.ng_GadgetText = (UBYTE *)"Total";
+                ng.ng_GadgetID = Q_TOTAL;
+                g = gad[Q_TOTAL] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)q_total_labels,
+                                                GTCY_Active, (ULONG)(c ? c->total : 0), GA_Disabled, nc, TAG_DONE);
+                ng.ng_LeftEdge = l + lw;
+                ng.ng_TopEdge = y += rowh;
+                ng.ng_Width = fh + 6;
+                ng.ng_Flags = PLACETEXT_RIGHT;
+                ng.ng_GadgetText = (UBYTE *)"Show";
+                ng.ng_GadgetID = Q_SHOW;
+                g = gad[Q_SHOW] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, c ? c->show : 0, GTCB_Scaled, TRUE,
+                                               GA_Disabled, nc, TAG_DONE);
+                ng.ng_Flags = PLACETEXT_LEFT;
+                ng.ng_Width = iw - lw;
+                for (i = 0; i < OB_QUERY_OR; i++) {
+                    ng.ng_TopEdge = y += rowh;
+                    ng.ng_GadgetText = (UBYTE *)(i ? "or" : "Criteria");
+                    ng.ng_GadgetID = Q_CRIT0 + i;
+                    g = gad[Q_CRIT0 + i] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)(c ? c->criteria[i] : ""),
+                                                        GTST_MaxChars, OB_VALUE_MAX - 1, GA_Disabled, nc, TAG_DONE);
+                }
+                ng.ng_TopEdge = y += rowh;
+                ng.ng_GadgetText = (UBYTE *)"SQL";
+                ng.ng_GadgetID = Q_SQLTEXT;
+                g = gad[Q_SQLTEXT] = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)q_sqltext, GTTX_Border, TRUE, TAG_DONE);
+            }
+            ng.ng_Flags = PLACETEXT_IN;
+            ng.ng_TopEdge = qw->Height - qw->BorderBottom - 6 - (fh + 6);
+            ng.ng_LeftEdge = l;
+            ng.ng_Width = bw;
+            ng.ng_Height = fh + 6;
+            ng.ng_GadgetText = (UBYTE *)"Run";
+            ng.ng_GadgetID = Q_RUN;
+            g = gad[Q_RUN] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge = (qw->Width - bw) / 2;
+            ng.ng_GadgetText = (UBYTE *)"Save";
+            ng.ng_GadgetID = Q_SAVE;
+            g = gad[Q_SAVE] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge = qw->Width - qw->BorderRight - 8 - bw;
+            ng.ng_GadgetText = (UBYTE *)"Close";
+            ng.ng_GadgetID = Q_CLOSE;
+            g = gad[Q_CLOSE] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            if (!g) break;
+            SetAPen(qw->RPort, pen(BACKGROUNDPEN));
+            RectFill(qw->RPort, qw->BorderLeft, qw->BorderTop, qw->Width - qw->BorderRight - 1,
+                     qw->Height - qw->BorderBottom - 1);
+            AddGList(qw, eg, ~0, -1, NULL);
+            RefreshGList(eg, qw, NULL, -1);
+            GT_RefreshWindow(qw, NULL);
+            if (q_ed.sql_only && gad[Q_SQL]) ActivateGadget(gad[Q_SQL], qw, NULL);
+            rebuild = 0;
+        }
+        {
+            struct IntuiMessage *m;
+            WaitPort(qw->UserPort);
+            while (!rebuild && !done && (m = GT_GetIMsg(qw->UserPort)) != NULL) {
+                ULONG class = m->Class;
+                UWORD code = m->Code;
+                struct Gadget *gg = (struct Gadget *)m->IAddress;
+                ob_qcolumn *c = csel >= 0 && csel < q_ed.ncolumns ? &q_ed.columns[csel] : NULL;
+                GT_ReplyIMsg(m);
+                if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+                if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(qw); GT_EndRefresh(qw, TRUE); continue; }
+                if (class != IDCMP_GADGETUP && class != IDCMP_GADGETDOWN) continue;
+                q_read_strings(qw, gad, csel);
+                switch (gg->GadgetID) {
+                case Q_NAME: case Q_SQL: break;
+                case Q_EXPR: case Q_HEAD: case Q_CRIT0: case Q_CRIT1: case Q_CRIT2: rebuild = 1; break;
+                case Q_SQLONLY:
+                    q_ed.sql_only = (gg->Flags & GFLG_SELECTED) != 0;
+                    /* typing SQL starts from what the grid makes */
+                    if (q_ed.sql_only && !q_ed.sql[0] && q_sqltext[0] && q_sqltext[0] != '(')
+                        put_text(q_ed.sql, sizeof q_ed.sql, q_sqltext);
+                    rebuild = 1;
+                    break;
+                case Q_TABLES: tsel = code; rebuild = 1; break;
+                case Q_ADDTABLE:
+                    if (code > 0 && q_tlabels[code]) {
+                        if (ob_query_add_table(&q_ed, (const char *)q_tlabels[code]) < 0)
+                            tell(q_ed.ntables >= OB_QUERY_TABLES ? "A query has at most 8 tables" : "That table is in the query already");
+                        rebuild = 1;
+                    }
+                    break;
+                case Q_REMTABLE:
+                    if (tsel >= 0 && tsel < q_ed.ntables) { ob_query_remove_table(&q_ed, tsel); tsel = -1; csel = -1; rebuild = 1; }
+                    break;
+                case Q_COLS: csel = code; rebuild = 1; break;
+                case Q_ADDFIELD:
+                    if (code > 0 && code <= q_nf) {
+                        char tn[2 * OB_NAME_MAX + 4], *dot;
+                        put_text(tn, sizeof tn, q_ftext[code - 1]);
+                        dot = strrchr(tn, '.');
+                        if (dot) {
+                            *dot = 0;
+                            if (!ob_query_add_column(&q_ed, tn, dot + 1)) tell("A query has at most 16 columns");
+                            else csel = q_ed.ncolumns - 1;
+                        }
+                        rebuild = 1;
+                    }
+                    break;
+                case Q_ADDEXPR:
+                    if (!ob_query_add_column(&q_ed, NULL, "")) tell("A query has at most 16 columns");
+                    else csel = q_ed.ncolumns - 1;
+                    rebuild = 1;
+                    break;
+                case Q_REMCOL:
+                    if (c) { ob_query_remove_column(&q_ed, csel); csel = -1; rebuild = 1; }
+                    break;
+                case Q_SORT: if (c) { c->sort = code; rebuild = 1; } break;
+                case Q_TOTAL: if (c && code < OB_TOTALS) { c->total = (ob_total)code; rebuild = 1; } break;
+                case Q_SHOW: if (c) { c->show = (gg->Flags & GFLG_SELECTED) != 0; rebuild = 1; } break;
+                case Q_RUN:
+                    if (!ob_query_check(proj, &q_ed)) {
+                        struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
+                        EasyRequest(qw, &es, NULL, (ULONG)ob_error(proj));
+                    } else {
+                        run_it = done = 1;
+                    }
+                    break;
+                case Q_SAVE: {
+                    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
+                    if (!q_ed.name[0]) EasyRequest(qw, &es, NULL, (ULONG)"Give the query a name first");
+                    else if (!ob_query_save(proj, &q_ed)) EasyRequest(qw, &es, NULL, (ULONG)ob_error(proj));
+                    else {
+                        char msg[OB_NAME_MAX + 20];
+                        snprintf(msg, sizeof msg, "Saved %s", q_ed.name);
+                        set_status(msg);
+                        SetWindowTitles(qw, (UBYTE *)"Query (saved)", (UBYTE *)~0);
+                    }
+                    break;
+                }
+                case Q_CLOSE: done = 1; break;
+                }
+            }
+        }
+    }
+    if (eg) { RemoveGList(qw, eg, -1); FreeGadgets(eg); }
+    CloseWindow(qw);
+    if (run_it) {
+        int k;
+        qy = q_ed;
+        for (k = 0; k < OB_QUERY_PARAMS; k++) q_answers[k][0] = 0;
+        run_query(1);
+    }
+}
+
+/* The saved queries: run one, design it, or delete it. */
+enum { O_LIST = 1, O_RUN, O_DESIGN, O_DELETE, O_CANCEL, O_COUNT };
+
+static struct List o_list;
+static struct Node *o_nodes;
+static char (*o_names)[OB_NAME_MAX];
+
+static void open_query(void)
+{
+    struct Window *ow;
+    struct Gadget *eg = NULL, *g, *gad[O_COUNT];
+    struct NewGadget ng;
+    int done = 0, rebuild = 1, sel = -1, n = 0, i, w = fw * 44, h = (fh + 8) * 12 + 12, bw, act = 0;
+    if (!proj) return;
+    ow = OpenWindowTags(NULL, WA_Title, (ULONG)"Open Query", WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 30, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!ow) return;
+    while (!done) {
+        if (rebuild) {
+            if (eg) { RemoveGList(ow, eg, -1); FreeGadgets(eg); eg = NULL; }
+            free(o_nodes); o_nodes = NULL;
+            free(o_names); o_names = NULL;
+            NewList(&o_list);
+            n = ob_query_count(proj);
+            if (n > 0 && (o_nodes = calloc((size_t)n, sizeof *o_nodes)) != NULL
+                && (o_names = calloc((size_t)n, sizeof *o_names)) != NULL) {
+                for (i = 0; i < n; i++) {
+                    const char *nm = ob_query_name(proj, i);
+                    put_text(o_names[i], OB_NAME_MAX, nm ? nm : "");
+                    o_nodes[i].ln_Name = o_names[i];
+                    AddTail(&o_list, &o_nodes[i]);
+                }
+            } else {
+                n = 0;
+            }
+            if (sel >= n) sel = -1;
+            memset(gad, 0, sizeof gad);
+            if (!(g = CreateContext(&eg))) break;
+            memset(&ng, 0, sizeof ng);
+            ng.ng_VisualInfo = vi;
+            ng.ng_TextAttr = &font_attr;
+            ng.ng_LeftEdge = ow->BorderLeft + 8;
+            ng.ng_TopEdge = ow->BorderTop + 6;
+            ng.ng_Width = w - 16;
+            ng.ng_Height = h - (fh + 6) - 24;
+            ng.ng_GadgetID = O_LIST;
+            g = gad[O_LIST] = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&o_list, GTLV_ShowSelected, 0,
+                                           GTLV_Selected, sel >= 0 ? (ULONG)sel : ~0UL, TAG_DONE);
+            bw = (w - 16 - 3 * 6) / 4;
+            ng.ng_Flags = PLACETEXT_IN;
+            ng.ng_TopEdge = ow->Height - ow->BorderBottom - 6 - (fh + 6);
+            ng.ng_Height = fh + 6;
+            ng.ng_Width = bw;
+            ng.ng_GadgetText = (UBYTE *)"Run";
+            ng.ng_GadgetID = O_RUN;
+            g = gad[O_RUN] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, sel < 0, TAG_DONE);
+            ng.ng_LeftEdge += bw + 6;
+            ng.ng_GadgetText = (UBYTE *)"Design...";
+            ng.ng_GadgetID = O_DESIGN;
+            g = gad[O_DESIGN] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, sel < 0, TAG_DONE);
+            ng.ng_LeftEdge += bw + 6;
+            ng.ng_GadgetText = (UBYTE *)"Delete...";
+            ng.ng_GadgetID = O_DELETE;
+            g = gad[O_DELETE] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, sel < 0, TAG_DONE);
+            ng.ng_LeftEdge += bw + 6;
+            ng.ng_GadgetText = (UBYTE *)"Cancel";
+            ng.ng_GadgetID = O_CANCEL;
+            g = gad[O_CANCEL] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            if (!g) break;
+            SetAPen(ow->RPort, pen(BACKGROUNDPEN));
+            RectFill(ow->RPort, ow->BorderLeft, ow->BorderTop, ow->Width - ow->BorderRight - 1,
+                     ow->Height - ow->BorderBottom - 1);
+            if (!n) {
+                SetAPen(ow->RPort, pen(TEXTPEN));
+                SetFont(ow->RPort, font);
+                text_fit(ow->RPort, ow->BorderLeft + 16, ow->BorderTop + 14, w - 32, "No saved queries yet: Query > New Query...");
+            }
+            AddGList(ow, eg, ~0, -1, NULL);
+            RefreshGList(eg, ow, NULL, -1);
+            GT_RefreshWindow(ow, NULL);
+            rebuild = 0;
+        }
+        {
+            struct IntuiMessage *m;
+            WaitPort(ow->UserPort);
+            while (!rebuild && !done && (m = GT_GetIMsg(ow->UserPort)) != NULL) {
+                ULONG class = m->Class;
+                UWORD code = m->Code;
+                struct Gadget *gg = (struct Gadget *)m->IAddress;
+                GT_ReplyIMsg(m);
+                if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+                if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(ow); GT_EndRefresh(ow, TRUE); continue; }
+                if (class != IDCMP_GADGETUP) continue;
+                switch (gg->GadgetID) {
+                case O_LIST: sel = code; rebuild = 1; break;
+                case O_RUN: act = 1; done = 1; break;
+                case O_DESIGN: act = 2; done = 1; break;
+                case O_DELETE:
+                    if (sel >= 0 && sel < n) {
+                        struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"Delete the query %s?",
+                                                 (UBYTE *)"Delete|Cancel" };
+                        if (EasyRequest(ow, &es, NULL, (ULONG)o_names[sel]) == 1) {
+                            if (!ob_query_delete(proj, o_names[sel])) {
+                                struct EasyStruct e2 = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
+                                EasyRequest(ow, &e2, NULL, (ULONG)ob_error(proj));
+                            }
+                            sel = -1;
+                            rebuild = 1;
+                        }
+                    }
+                    break;
+                case O_CANCEL: done = 1; break;
+                }
+            }
+        }
+    }
+    if (act && sel >= 0 && sel < n) {
+        static ob_query got;
+        if (!ob_query_get(proj, o_names[sel], &got)) {
+            tell(ob_error(proj));
+            act = 0;
+        } else {
+            int k;
+            qy = got;
+            for (k = 0; k < OB_QUERY_PARAMS; k++) q_answers[k][0] = 0;
+        }
+    }
+    if (eg) { RemoveGList(ow, eg, -1); FreeGadgets(eg); }
+    CloseWindow(ow);
+    free(o_nodes); o_nodes = NULL;
+    free(o_names); o_names = NULL;
+    if (act == 1) run_query(1);
+    else if (act == 2) design_query(0);
+}
+
 static void undo_last(void)
 {
     char msg[OB_NAME_MAX + 80], name[OB_NAME_MAX + 48];
@@ -2102,6 +2801,13 @@ static void menu_action(ULONG id)
     case M_T_EXPORT: export_csv(); break;
     case M_T_FROMCSV: new_table_from_csv(); break;
     case M_UNDO: undo_last(); break;
+    case M_Q_NEW: design_query(1); break;
+    case M_Q_OPEN: open_query(); break;
+    case M_Q_DESIGN: design_query(!qy.ntables && !qy.sql_only); break;
+    case M_Q_AGAIN:
+        if (qy.ntables || qy.sql_only) run_query(1);
+        else set_status("No query yet: Query > New Query...");
+        break;
     }
     refresh();
 }
@@ -2159,6 +2865,11 @@ static void events(void)
             set_status("");
             switch (g->GadgetID) {
             case GID_TABLES:
+                if (q_on && code < (UWORD)table_count) {
+                    /* back from a query's rows to a table's */
+                    q_on = 0;
+                    table_sel = -1;
+                }
                 if ((int)code != table_sel && code < (UWORD)table_count) {
                     table_sel = code;
                     have_cur = ob_table_get(proj, ob_table_name(proj, table_sel), &cur);
@@ -2205,7 +2916,7 @@ static void events(void)
             if (code == 0x4c) move_selection(-1);           /* cursor up */
             else if (code == 0x4d) move_selection(1);       /* cursor down */
             else if (code == 0x4f && left_col > 0) { left_col--; draw_datasheet(); }        /* left */
-            else if (code == 0x4e && have_cur && left_col < cur.nfields - 1) { left_col++; draw_datasheet(); }
+            else if (code == 0x4e && left_col < ds_ncols() - 1) { left_col++; draw_datasheet(); }
             break;
         }
     }
