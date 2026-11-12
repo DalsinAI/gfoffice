@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.35.0"
+#define OPR_CORE_VERSION "0.36.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -647,8 +647,16 @@ typedef struct {
     int slide;
     int loop;
     unsigned long elapsed_ms;
+    /* The slide's custom animation: steps is how many click-started steps it
+       has (opr_anim_steps), step how many of them have played. Next plays the
+       next step (returns 2) before it changes slide; Previous takes one back
+       (2); a slide reached backwards shows with every step played. Its
+       automatic advance waits until every step has played. */
+    int step, steps;
 } opr_show;
 
+/* Calls that move return 2 when they played or took back an animation step
+ * on the same slide (show->step changed). */
 int opr_show_begin(opr_show *show, const owf_deck *deck, int from, int loop);
 int opr_show_next(opr_show *show);
 int opr_show_previous(opr_show *show);
@@ -697,6 +705,82 @@ int opr_transition_pattern_at(int step, int steps, unsigned short pattern[4]);
 /* Dissolve asks for its 16 x 16 tiles in deterministic shuffled order. */
 int opr_transition_tile_count(int width, int height);
 int opr_transition_tile_at(int width, int height, int index, opr_blit *tile);
+
+/* ---- Custom animation (opr_anim.c) ----
+ *
+ * A slide's effects (owf_slide.anims) as the editor changes them, each change
+ * one Undo step, and as the show plays them. An effect's class and kind come
+ * in pairs with names, for the menus and ARexx: APPEAR, FADEIN, FLYIN, WIPEIN,
+ * DISSOLVEIN (entrances), DISAPPEAR, FADEOUT, FLYOUT, WIPEOUT, DISSOLVEOUT
+ * (exits). Changing a slide's effects drops the file's own timing XML
+ * (owf_slide.keep_timing) for them. */
+#define OPR_EFFECTS 10
+/* Effect n (0..OPR_EFFECTS-1) of the list above: its class, kind, ARexx word
+ * and menu name; -1 out of range. */
+int opr_effect_at(int n, int *cls, int *effect, const char **word, const char **label);
+/* The list's n for a class and kind (OTHER and emphasis: -1), and for a word
+ * (any case); -1 when there is none. */
+int opr_effect_index(int cls, int effect);
+int opr_effect_word(const char *word);
+/* What an effect lasts when its duration is 0: appear 0, fly and wipe 500,
+ * fade and dissolve 1000 milliseconds. */
+int opr_effect_duration(const owf_anim *a);
+
+/* The object an effect animates (its index in the slide's objs), -1 when it
+ * has none on the slide. */
+int opr_anim_obj(const owf_deck *deck, int slide, int index);
+
+/* Each one Undo step. spec's obj is ignored: obj is the object's index; the
+ * object gets an id when it has none (owf_deck_new_obj_id). A spec's preset
+ * is copied. at -1 or past the end: last. Returns the effect's index, -2 for a
+ * bad spec (class, kind, start, direction; duration or delay outside 0 to
+ * 600000) or object, -1 when memory runs out (nothing changed). */
+int opr_anim_add(opr_undo *u, owf_deck *deck, int slide, int obj, const owf_anim *spec, int at);
+/* spec replaces effect index's class, kind, start, direction, duration and
+ * delay (its object and preset stay; a new kind drops the preset). */
+int opr_anim_change(opr_undo *u, owf_deck *deck, int slide, int index, const owf_anim *spec);
+int opr_anim_delete(opr_undo *u, owf_deck *deck, int slide, int index);
+/* Effect from goes to index to (the others close up). */
+int opr_anim_move(opr_undo *u, owf_deck *deck, int slide, int from, int to);
+/* Every effect of an object, as when the object is deleted for good: one Undo
+ * step; how many went. */
+int opr_anim_delete_obj(opr_undo *u, owf_deck *deck, int slide, int obj);
+/* What the calls above end in (opr_edit.c): anims (owned, nanims of capanims)
+ * become the slide's effects and its old ones go into one Undo step; the
+ * slide's kept timing XML is dropped (and comes back on Undo). -1 for bad
+ * input. */
+int opr_slide_set_anims(opr_undo *u, owf_deck *deck, int slide, owf_anim *anims, int nanims, int capanims);
+
+/* Playing. Step 0 is the effects before the first click-started one (they
+ * play as the slide comes in); steps 1..opr_anim_steps are each a
+ * click-started effect with the effects after it up to the next one. */
+int opr_anim_steps(const owf_deck *deck, int slide);
+/* Which objects show once steps 0..step have played (step -1: before step
+ * 0; an object whose first effect is an entrance is hidden until it):
+ * visible[i] for each of the slide's nobjs objects, 1 or 0; a group's
+ * objects follow it. -1 for bad input. */
+int opr_anim_visible(const owf_deck *deck, int slide, int step, unsigned char *visible);
+/* The effects of one step with their times from the step's start; returns
+ * how many (at most max written), *total the step's length (may be NULL). */
+typedef struct {
+    int anim, obj;               /* the effect's index; its object's */
+    int cls, effect, direction;
+    long begin, duration;        /* milliseconds */
+} opr_anim_play;
+int opr_anim_step_plan(const owf_deck *deck, int slide, int step, opr_anim_play *out, int max, long *total);
+/* How an effect draws its object t milliseconds into its step, in pixels:
+ * the object's box (x, y, w, h) on a slide drawn at sx, sy, sw, sh. show 0:
+ * not drawn; else drawn moved by dx, dy, clipped to clip (the moved box when
+ * nothing is wiped), through a dither or squares of amount 0..1000 (1000:
+ * whole) for fade and dissolve. */
+typedef struct {
+    int show;
+    int dx, dy;
+    int clip_x, clip_y, clip_w, clip_h;
+    int amount;
+} opr_anim_look;
+int opr_anim_look_at(const opr_anim_play *p, long t, int x, int y, int w, int h,
+                     int sx, int sy, int sw, int sh, opr_anim_look *look);
 
 #ifdef __cplusplus
 }

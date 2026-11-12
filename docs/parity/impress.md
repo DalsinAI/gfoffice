@@ -15,8 +15,9 @@ docs/gfoffice/Impress-Parity.md.
 | 11 Nov 2026 | 0.6.26 | 71% | P3: the Outline view |
 | 11 Nov 2026 | 0.6.27 | 74% | P4: PPTX save |
 | 11 Nov 2026 | 0.6.28 | 76% | P5: several objects picked, distribute, group and ungroup |
+| 12 Nov 2026 | 0.6.29 | 79% | P6: custom animation (entrance and exit effects, played in the show) |
 
-Phase 1 target: 76% after P1 to P5.
+Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 
 ## Phase 1 deliverables
 
@@ -27,6 +28,22 @@ Phase 1 target: 76% after P1 to P5.
 | P3 Outline view | Done in 0.6.26 | View > Outline: each slide's title and its outline box's paragraphs as one list; Return edits a line, Shift+Return adds a line (a new slide after a title), Tab and Shift+Tab move a line in and out (a title moved in joins the slide before, a top-level line moved out starts a slide), Del deletes a line or, on a title, its slide; each change one Undo step (`opr_outline.c`). ARexx VIEW OUTLINE, OUTLINE [SET, INSERT, DEMOTE, PROMOTE, DELETE] n. Host test tests/deck/test_opr_outline.c |
 | P4 PPTX save | Done in 0.6.27 | Save and Save As write PowerPoint (.pptx) as well as ODP: slides with their objects where they are drawn, text with its runs, levels and fields, pictures (cropped), shapes, backgrounds, hidden slides, transitions and speaker notes; a slide master and layout for each deck master with its text levels (`opr_pptx.c`). Save writes a PPTX it opened back as PPTX. ARexx SAVEAS name.pptx. Host test tests/deck/test_opr_pptx.c (saved, read back with the PPTX reader, compared) |
 | P5 Multi-select, distribute, group/ungroup | Done in 0.6.28 | Shift+click picks several objects, a drag over the slide picks those it goes round; they move together (drag, arrow keys), align to the box round them, space evenly across or down (Object > Distribute), delete together; Object > Group makes them one group that moves, aligns and deletes as one, Ungroup takes it apart; each change one Undo step (`opr_multi.c`, groups in `opr_edit.c`). ARexx PICKOBJECTS, PICKEDOBJECTS, OBJECTBOX, MOVEOBJECTS, ALIGN, DISTRIBUTE, GROUP, UNGROUP, DELETEOBJECTS. Host test tests/deck/test_opr_multi.c |
+
+## Phase 2 deliverables
+
+| Deliverable | State | Notes |
+| --- | --- | --- |
+| P6 Custom animation | Done in 0.6.29 | Slide > Custom Animation...: a list of the slide's effects with Add, Change, Remove, Move Up and Move Down; each effect is an object, an effect (Appear, Fade In, Fly In, Wipe, Dissolve In and the same five out), a direction for fly and wipe, a start (on click, with previous, after previous), a duration and a delay; each change one Undo step (`opr_anim.c`, `opr_edit.c`). The show plays them: objects with an entrance wait hidden, each click runs the next step and its with/after effects, then the next slide. ODP open reads Impress's main sequence (effects it has no player for are kept and written back as they were) and Save writes the timing tree Impress reads; owfpresent.library 3.7 adds the effect list to a slide (`owf_anim`). ARexx ANIMATIONS, ANIMATION n, ADDANIMATION, CHANGEANIMATION, DELETEANIMATION, MOVEANIMATION, ANIMSTEPS, ANIMVISIBLE. Host test tests/deck/test_opr_anim.c; lab: tests/arexx/presentation.rexx |
+| P7 Master view | Next | |
+| P8 Slide clipboard, Insert Slide from file | Next | |
+| P9 Export slides as pictures | Next | |
+
+## What custom animation does not do yet
+
+- Emphasis effects and motion paths: kept from the file and written back, not played or edited.
+- Animating text one paragraph or one letter at a time; sounds; triggers (start on clicking an object).
+- PPTX save leaves animations out (ODP keeps them).
+- A preview in the editor: the show plays them.
 
 ## What picking several objects does not do yet
 
@@ -58,7 +75,7 @@ Phase 1 target: 76% after P1 to P5.
   left out.
 - One layout a master: a PPTX opened with many layouts saves each slide
   with its boxes placed, under its master's one layout.
-- Animations, and ODP parts kept from the file, are not written.
+- Animations (ODP keeps them), and ODP parts kept from the file, are not written.
 - Templates and shows (.potx, .ppsx) and PowerPoint 97-2003 (.ppt).
 
 ## What the sorter does not do yet

@@ -46,7 +46,18 @@ static int move_to(opr_show *show, int slide)
     changed = slide != show->slide;
     show->slide = slide;
     show->elapsed_ms = 0;
+    show->steps = opr_anim_steps(show->deck, slide);
+    show->step = 0;
     return changed;
+}
+
+/* A slide reached going back shows as it was left: every step played. */
+static int move_back_to(opr_show *show, int slide)
+{
+    int rc = move_to(show, slide);
+    if (rc >= 0)
+        show->step = show->steps;
+    return rc;
 }
 
 int opr_show_begin(opr_show *show, const owf_deck *deck, int from, int loop)
@@ -66,6 +77,7 @@ int opr_show_begin(opr_show *show, const owf_deck *deck, int from, int loop)
     show->deck = deck;
     show->slide = slide;
     show->loop = loop != 0;
+    show->steps = opr_anim_steps(deck, slide);
     return 0;
 }
 
@@ -73,6 +85,11 @@ int opr_show_next(opr_show *show)
 {
     int slide;
     if (!valid(show)) return -1;
+    if (show->step < show->steps) {
+        show->step++;
+        show->elapsed_ms = 0;
+        return 2;
+    }
     slide = visible_forward(show->deck, show->slide + 1);
     if (slide < 0 && show->loop)
         slide = visible_forward(show->deck, 0);
@@ -85,12 +102,17 @@ int opr_show_previous(opr_show *show)
 {
     int slide;
     if (!valid(show)) return -1;
+    if (show->step > 0) {
+        show->step--;
+        show->elapsed_ms = 0;
+        return 2;
+    }
     slide = visible_backward(show->deck, show->slide - 1);
     if (slide < 0 && show->loop)
         slide = visible_backward(show->deck, show->deck->nslides - 1);
     if (slide < 0)
         return 0;
-    return move_to(show, slide);
+    return move_back_to(show, slide);
 }
 
 int opr_show_first(opr_show *show)
@@ -133,7 +155,7 @@ int opr_show_tick(opr_show *show, unsigned long milliseconds)
     int after;
     if (!valid(show)) return -1;
     after = show->deck->slides[show->slide].transition.advance_after;
-    if (after < 0)
+    if (after < 0 || show->step < show->steps)
         return 0;
     if (milliseconds > ULONG_MAX - show->elapsed_ms)
         show->elapsed_ms = ULONG_MAX;
