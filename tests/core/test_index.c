@@ -96,6 +96,15 @@ static void caret_end(ow_editor *ed, int paragraph)
     ow_editor_set_selection(ed, &sel);
 }
 
+/* each paragraph its own page */
+static int one_a_page(void *userdata, const owf_doc *doc, const int *paragraphs, int count, int *pages)
+{
+    int i;
+    (void)userdata; (void)doc;
+    for (i = 0; i < count; ++i) pages[i] = paragraphs[i];
+    return 1;
+}
+
 /* each paragraph's page: ten to a page */
 static int ten_a_page(void *userdata, const owf_doc *doc, const int *paragraphs, int count, int *pages)
 {
@@ -171,6 +180,17 @@ static void test_index(void)
     if (ed) {
         caret_end(ed, 0);
         CHECK(ow_editor_insert_index(ed, ten_a_page, NULL) == OWF_ERR_UNSUPPORTED, "no entries");
+        /* the caret at the start of a marked paragraph: its mark goes down with it */
+        mark(ed, 0, "Alpha");
+        mark(ed, 2, "Beta");
+        {
+            ow_selection sel;
+            memset(&sel, 0, sizeof sel);
+            ow_editor_set_selection(ed, &sel);
+        }
+        CHECK(ow_editor_insert_index(ed, one_a_page, NULL) == OWF_OK, "index before a mark");
+        /* |Index|Alpha|Beta| then P0 (paragraph 4, page 5), P1, P2 (paragraph 6, page 7) */
+        CHECK(!strcmp(dump_from(doc, 0), "|Index|Alpha, 5|Beta, 7|P0.{Alpha}|P1.|P2.{Beta}"), dump_from(doc, 0));
         ow_editor_free(ed);
     }
     owf_doc_free(doc);
@@ -187,6 +207,23 @@ static void test_round_trip(const char *format)
     CHECK(owf_import_file(path, NULL, &back, NULL, NULL) == OWF_OK && back, format);
     if (back) {
         CHECK(!strcmp(dump_from(back, 0), dump_from(doc, 0)), dump_from(back, 0));
+        owf_doc_free(back);
+        back = NULL;
+    }
+    /* a page break before a marked paragraph keeps the mark on its page */
+    caret_end(ed, 19);
+    CHECK(ow_editor_insert_page_break(ed) == OWF_OK, "page break");
+    CHECK(owf_export_file(doc, path, format, NULL) == OWF_OK, format);
+    CHECK(owf_import_file(path, NULL, &back, NULL, NULL) == OWF_OK && back, format);
+    if (back) {
+        int i, breaks = 0, marks = 0;
+        for (i = 0; i < back->body.nparas; ++i) {
+            int j;
+            breaks += back->body.paras[i].fmt.page_break_before;
+            for (j = 0; j < back->body.paras[i].nruns; ++j)
+                marks += back->body.paras[i].runs[j].kind == OWF_RUN_FIELD && back->body.paras[i].runs[j].field == OWF_FIELD_INDEX;
+        }
+        CHECK(breaks == 1 && marks == 7, format);
         owf_doc_free(back);
     }
     ow_editor_free(ed);

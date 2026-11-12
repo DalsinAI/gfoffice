@@ -4276,6 +4276,7 @@ done:
 typedef struct {
     char *main, *sub;            /* sub NULL: the main entry's own */
     int paragraph;
+    int order;                   /* its place among the marks, in document order */
     int page;
 } ow_index_entry;
 
@@ -4397,6 +4398,7 @@ int ow_editor_insert_index(ow_editor *editor, ow_toc_pages_fn resolve_pages, voi
             if (r->kind != OWF_RUN_FIELD || r->field != OWF_FIELD_INDEX || !r->href) continue;
             colon = strchr(r->href, ':');
             e[k].paragraph = i;
+            e[k].order = k;
             if (colon && colon > r->href && colon[1]) {
                 e[k].main = copy_bytes(r->href, (size_t)(colon - r->href));
                 e[k].sub = copy_bytes(colon + 1, strlen(colon + 1));
@@ -4443,7 +4445,14 @@ int ow_editor_insert_index(ow_editor *editor, ow_toc_pages_fn resolve_pages, voi
         snprintf(style, sizeof style, "Index%d", lines[i].level);
         if (!(line->style = copy_bytes(style, strlen(style)))) goto undo;
     }
-    for (i = 0; i < n; ++i) paragraphs[i] = e[i].paragraph >= base ? e[i].paragraph + inserted : e[i].paragraph;
+    /* where each mark is now: the index lines hold none, so the marks keep their order (the split and the lines
+     * moved some of them down, those after the caret in its paragraph included) */
+    for (i = 0, k = 0; i < story->nparas && k < n; ++i)
+        for (j = 0; j < story->paras[i].nruns && k < n; ++j)
+            if (story->paras[i].runs[j].kind == OWF_RUN_FIELD && story->paras[i].runs[j].field == OWF_FIELD_INDEX &&
+                story->paras[i].runs[j].href) scratch[k++] = i;
+    if (k != n) goto undo;
+    for (i = 0; i < n; ++i) paragraphs[i] = scratch[e[i].order];
     if (!resolve_pages(userdata, editor->doc, paragraphs, n, pages)) goto undo;
     for (i = 0; i < n; ++i) { if (pages[i] < 0) goto undo; e[i].page = pages[i]; }
     cf = editor->doc->base;
