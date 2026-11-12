@@ -150,6 +150,10 @@ static void test_index(void)
     CHECK(!strcmp(dump_from(doc, 4), "P4{P4}.|P5.{Lamps}|P6.|P7.|P8.|P9.|P10.{Lamps:LED}|P11.|P12.{Lamps:LED}|P13.|P14.|P15.|"
                   "P16.|P17.|P18.|P19.|P20.|P21.|P22.|P23.|P24.|P25.{Lamps}|P26.|P27.|P28.|P29."), dump_from(doc, 4));
     CHECK(ow_editor_undo(ed) == 1 && ow_editor_index_entry_count(ed) == 7, "undone");
+    /* straight after marking, the caret beside the mark: the index goes there too */
+    mark(ed, 29, "Zinc");
+    CHECK(ow_editor_insert_index(ed, ten_a_page, NULL) == OWF_OK, "index after a mark");
+    CHECK(ow_editor_undo(ed) == 1 && ow_editor_undo(ed) == 1 && ow_editor_index_entry_count(ed) == 7, "both undone");
     caret_end(ed, 29);
     CHECK(ow_editor_insert_index(ed, ten_a_page, NULL) == OWF_OK, "index made");
     CHECK(!strcmp(dump_from(doc, 30), "Index|apples, 1|Lamps, 1, 3|  LED, 2|Wicks, 1|"), dump_from(doc, 30));
