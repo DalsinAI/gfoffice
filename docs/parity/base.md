@@ -3,12 +3,12 @@
 Stream B of [the parity plan](../openoffice-parity-plan.md). Re-scored with each
 deliverable. Statuses as the plan's table: Done, Part, Gap.
 
-**Score: 25%** (12 November 2026, after B1b; 22% after B1a, 18% after B0d, 15% after
+**Score: 27%** (12 November 2026, after the ARexx port; 25% after B1b, 22% after B1a, 18% after B0d, 15% after
 B0c, 10% after B0a and B0b, 4% design only). GFOpenBase has a window: a
 project's tables, a table designer with keys and indexes, a datasheet that
 sorts and filters, with a row editor and Undo, CSV import (into a table or
 a new one, types guessed) and export, and a relationships view, checked on
-an Instance-32 lab copy.
+an Instance-32 lab copy. Its ARexx port opens a project at a table and row.
 
 | Feature (Base) | Status | Phase | Notes |
 | --- | --- | --- | --- |
@@ -20,11 +20,14 @@ an Instance-32 lab copy.
 | Reports | Gap | 2 | Generated as GFOpenWrite documents |
 | CSV/DBF/Calc import and export | Part | 2 | B1a: CSV import into a table (all or none, by header or field order, separator found) and export of the datasheet as shown; round trips keep keys and values. B1b: New Table from CSV (types guessed from 200 rows, changeable), ISO-8859-1 or UTF-8 both ways, bad rows left out and listed. Not yet: DBF, sheets |
 | Locking, recovery | Part | 1 | B0a on the lab: the dot-file lock refuses a second writer, `unix-none` takes none; the rollback journal recovers; journal mode TRUNCATE; the RAM: issue does not happen with today's build |
-| ARexx | Gap | 2 | Per ARexx-RULE.md |
+| ARexx | Part | 2 | Per ARexx-RULE.md. #155 (0.4.1): port GFOPENBASE with VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN TABLES TABLE ROW QUIT, no requesters while a command runs; `FILE TABLE=t ROW=n` from the Shell. Not yet: commands that add, change or find rows, run a query |
 | Connect to other databases (ODBC/JDBC) | Gap | - | Not planned: no such stack on AmigaOS |
 
 ## Evidence
 
+- ARexx (#155, Team 2's ACFind thread): `tests/arexx/base.rexx`, 40 of 40
+  in the lab, including OPEN FILE x TABLE t ROW n by key and by place (#n)
+  and a plain SQLite file refused with 10.
 - B1a: `make base-test` and `make base-check` (361 checks each, ASan and
   UBSan clean): views (each sort and filter, `%` and `_` matched as typed,
   bad values in plain words) and CSV (an export read back byte for byte, a
