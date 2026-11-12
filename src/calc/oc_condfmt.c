@@ -70,7 +70,7 @@ static int cf_copy(owf_condfmt *dst, const owf_condfmt *src, const owf_range *ra
     dst->ranges = NULL; dst->formula[0] = dst->formula[1] = dst->xml = NULL;
     for (i = 0; i < 3; ++i) dst->points[i].value = NULL;
     dst->nranges = nranges;
-    if (nranges && !(dst->ranges = malloc((size_t)nranges * sizeof *dst->ranges))) failed = 1;
+    if (nranges && !(dst->ranges = owf_malloc((size_t)nranges * sizeof *dst->ranges))) failed = 1;
     if (!failed && nranges) memcpy(dst->ranges, ranges, (size_t)nranges * sizeof *ranges);
     dst->formula[0] = cf_copy_text(src->formula[0], &failed);
     dst->formula[1] = cf_copy_text(src->formula[1], &failed);
@@ -87,7 +87,7 @@ static int cf_add_copy(owf_condfmt **rules, int *n, int *cap, const owf_condfmt 
     if (!nranges) return 1;
     if (*n == *cap) {
         int size = *cap ? *cap * 2 : 4;
-        if (!(p = realloc(*rules, (size_t)size * sizeof *p))) return 0;
+        if (!(p = owf_realloc(*rules, (size_t)size * sizeof *p))) return 0;
         *rules = p; *cap = size;
     }
     if (!cf_copy(&(*rules)[*n], src, ranges, nranges)) return 0;
@@ -99,7 +99,7 @@ static void cf_rules_free(owf_condfmt *rules, int n)
 {
     int i;
     for (i = 0; i < n; ++i) owf_condfmt_free(&rules[i]);
-    free(rules);
+    owf_free(rules);
 }
 
 static int cf_spec_ok(const oc_condfmt_spec *r)
@@ -260,7 +260,7 @@ int oc_core_clear_condfmt(oc_core *core)
     undo = oc_undo_new(core, OC_UNDO_BOOK);
     if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
     for (i = 0; i < sheet->ncondfmts; ++i) owf_condfmt_free(&sheet->condfmts[i]);
-    free(sheet->condfmts); sheet->condfmts = fresh; sheet->ncondfmts = nfresh; sheet->capcondfmts = cap;
+    owf_free(sheet->condfmts); sheet->condfmts = fresh; sheet->ncondfmts = nfresh; sheet->capcondfmts = cap;
     oc_undo_push(core, undo); oc_changed(core); oc_cf_forget(core);
     return OWF_OK;
 }
