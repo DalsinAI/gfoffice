@@ -569,10 +569,11 @@ static void change_to(owf_buf *out, odt_track *tk, int rev, int para_style)
 }
 
 /* 1.7: a field with a shown value, as its ODF element */
-static void put_field(owf_buf *out, const owf_run *run)
+static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
 {
     static const char *const names[] = { "title", "initial-creator", "subject", "file-name", "word-count",
-                                         "chapter", "user-field-get", "bookmark-ref", "bookmark-ref" };
+                                         "chapter", "user-field-get", "bookmark-ref", "bookmark-ref",
+                                         "database-display" };
     const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_LAST
                      ? names[run->field - OWF_FIELD_TITLE] : NULL;
     if (!name) return;
@@ -581,6 +582,13 @@ static void put_field(owf_buf *out, const owf_run *run)
     if (run->field == OWF_FIELD_CHAPTER) owf_buf_puts(out, " text:display=\"name\" text:outline-level=\"1\"");
     if (run->field == OWF_FIELD_USER) {
         owf_buf_puts(out, " text:name=\"");
+        owf_buf_puts_xml(out, run->href ? run->href : "");
+        owf_buf_puts(out, "\"");
+    }
+    if (run->field == OWF_FIELD_MERGE) {             /* 1.9: a merge field, its data source as the database */
+        owf_buf_puts(out, " text:table-name=\"\" text:table-type=\"table\" text:database-name=\"");
+        owf_buf_puts_xml(out, doc && doc->merge_source ? doc->merge_source : "");
+        owf_buf_puts(out, "\" text:column-name=\"");
         owf_buf_puts_xml(out, run->href ? run->href : "");
         owf_buf_puts(out, "\"");
     }
@@ -608,7 +616,7 @@ static void put_run_content(owf_buf *out, const owf_doc *doc, const owf_run *run
     case OWF_RUN_LINEBREAK: owf_buf_puts(out, "<text:line-break/>"); *after_space = 1; break;
     case OWF_RUN_FIELD:
         if (run->field <= OWF_FIELD_TIME) owf_buf_puts(out, fields[run->field]);
-        else put_field(out, run);                    /* 1.7 */
+        else put_field(out, doc, run);               /* 1.7 */
         *after_space = 0;
         break;
     case OWF_RUN_IMAGE:

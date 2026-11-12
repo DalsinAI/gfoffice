@@ -22,6 +22,9 @@ int owf_doc_set_user_field(owf_doc *doc, const char *name, const char *value);
 /* The value of the user field of that name, NULL: none */
 const char *owf_doc_user_field(const owf_doc *doc, const char *name);
 
+/* 1.9: the mail merge data source (NULL or "": none). 0, or -1 when memory runs out. */
+int owf_doc_set_merge_source(owf_doc *doc, const char *path);
+
 /* A field kind's name in ARexx and the editor ("TITLE", "REFPAGE"); "" for none */
 const char *owf_field_name(owf_field field);
 

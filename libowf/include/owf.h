@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.8.0"
+#define OWF_VERSION "1.9.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -81,8 +81,11 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                 * name), and its text the value last shown (NULL: none yet). Readers keep the file's shown
                 * value; GFOpenWrite's editor works them out again. */
                OWF_FIELD_TITLE, OWF_FIELD_AUTHOR, OWF_FIELD_SUBJECT, OWF_FIELD_FILENAME, OWF_FIELD_WORDS,
-               OWF_FIELD_CHAPTER, OWF_FIELD_USER, OWF_FIELD_REF, OWF_FIELD_REF_PAGE } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_REF_PAGE
+               OWF_FIELD_CHAPTER, OWF_FIELD_USER, OWF_FIELD_REF, OWF_FIELD_REF_PAGE,
+               /* 1.9: a mail merge field: href is the data source's column, text the value last shown (DOCX
+                * MERGEFIELD, ODF text:database-display) */
+               OWF_FIELD_MERGE } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_MERGE
 
 typedef struct {
     owf_run_kind kind;
@@ -348,6 +351,8 @@ typedef struct owf_doc {
     /* 1.8: footnotes and endnotes (owf_note), named by their marks (owf_run.note) */
     int nnotes, capnotes;
     struct owf_note *notes;
+    /* 1.9: the mail merge data source its merge fields come from (a file's path, UTF-8), NULL: none */
+    char *merge_source;
 } owf_doc;
 
 /* ---- Memory ----

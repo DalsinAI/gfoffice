@@ -105,6 +105,11 @@ int owf_doc_set_user_field(owf_doc *doc, const char *name, const char *value)
     return 0;
 }
 
+int owf_doc_set_merge_source(owf_doc *doc, const char *path)
+{
+    return doc ? set_string(&doc->merge_source, path) : -1;
+}
+
 const char *owf_doc_user_field(const owf_doc *doc, const char *name)
 {
     int i;
@@ -117,6 +122,6 @@ const char *owf_doc_user_field(const owf_doc *doc, const char *name)
 const char *owf_field_name(owf_field field)
 {
     static const char *const names[] = { "PAGE", "PAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE" };
+                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE" };
     return (int)field >= 0 && (int)field <= OWF_FIELD_LAST ? names[field] : "";
 }
