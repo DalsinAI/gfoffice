@@ -266,6 +266,14 @@ core 0.3); a sorted view pages by `LIMIT`/`OFFSET`. Table > Sort and
 Filter... sets it, a click on a column's heading sorts by that column (again
 for Z to A, a third time for key order), and Show All Rows clears it.
 
+Edit > Undo (core 0.4, `ob_undo`) takes back the last row added, changed or
+deleted, or the last CSV import, up to 100 steps. Each step keeps the row's
+stored values as they were (`sqlite3_value_dup`), so an undone delete comes
+back with its key. Steps hold only while every table's design stays as it
+was (`PRAGMA schema_version`); a delete that cascades or clears rows
+elsewhere can't be undone and clears the list, as does a rollback past
+where it began.
+
 ### 5.5 Tests
 
 The generator is plain C and host-tested: grids in, SQL out, compared with the
@@ -364,7 +372,7 @@ whole document, is a later step if the limit bites.
 
 | Format | Import | Export | Phase | Notes |
 | --- | --- | --- | --- | --- |
-| CSV (RFC 4180) | Yes | Yes | B1 | Core 0.3 (`ob_csv_import`, `ob_csv_export`): into an existing table, all or none, the first bad row named ("Line 4: Price must be a number"); a header row matched to fields by name or label in any order, else the fields in order; separator `,` `;` or tab found from the first line; a Counter column keeps its keys, so an export imports back the same. Export writes the datasheet as shown (sorted, filtered), values in their own text form, CR LF. Still to come: the wizard (character set, a new table with types guessed from the first 200 rows, date formats, bad rows listed in a report rather than refusing the file) |
+| CSV (RFC 4180) | Yes | Yes | B1 | Core 0.3-0.4 (`ob_csv_import_with`, `ob_csv_export_with`, `ob_csv_guess`): into an existing table or a new one (Table > New Table from CSV...), whose fields are named from the header (an odd header kept as the label, so the import still finds it) and typed from the first 200 rows (Yes/No, Integer, Currency, Number, Date, Time, Date and time, Text, Memo past 255 characters), each type changeable before it is made; a column called id holding whole numbers becomes the Counter and keeps its keys. Separator, character set (UTF-8 found by its mark or its bytes and turned into ISO-8859-1) and header found or chosen. All or none, or bad rows left out and listed ("Line 4: Price must be a number"). Export writes the datasheet as shown, in ISO-8859-1 or UTF-8 with its mark, CR LF. The table and its rows are made together or not at all |
 | Sheets: XLS today; ODS and XLSX when W106 lands | Yes, through `owf_book` | Yes, through `owf_book` | B3 | Each sheet becomes a table, its first row the field names, its cells' types the fields' types. A table or a query's result becomes a one-sheet book, saved by libowf's book formats |
 | DBF (dBase III and IV, FoxPro) | Yes | No | B3 | Worth it: a simple fixed-record format, and the one old Amiga and DOS databases most often exported. Memo files (`.dbt`, `.fpt`) later |
 | SQL text | Yes | Yes | B4 | `CREATE` and `INSERT` statements, our own writer |
