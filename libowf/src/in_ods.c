@@ -1367,11 +1367,12 @@ static void start_table(ods *o, const owf_xml_event *e)
         else if (key && *key) {
             /* the digest ODF names (SHA-1 when it names none), kept as it was */
             const char *a = alg && *alg ? alg : "http://www.w3.org/2000/09/xmldsig#sha1";
-            char *k = malloc(strlen(a) + strlen(key) + 6);
+            size_t size = strlen(a) + strlen(key) + 6;
+            char *k = malloc(size);
             if (!k)
                 o->failed = 1;
             else {
-                sprintf(k, "ods:%s %s", a, key);
+                snprintf(k, size, "ods:%s %s", a, key);
                 o->sheet->protect_kept = k;
             }
         }
