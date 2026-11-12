@@ -2277,6 +2277,26 @@ static void test_condfmt_bars_icons(void)
     CHECK(oc_core_add_condfmt(core, &icons) == OWF_ERR_FORMAT);
     bar.npoints = 1;
     CHECK(oc_core_add_condfmt(core, &bar) == OWF_ERR_FORMAT);
+    /* as the ARexx test leaves it: a colour scale and a reversed icon set on one range, through xlsx and ods */
+    {
+        oc_condfmt_spec scale = { 0 };
+        scale.type = OWF_CF_COLOUR_SCALE;
+        scale.npoints = 3;
+        scale.points[0].kind = OWF_CFV_MIN; scale.points[0].colour = OWF_SHADE(0xF8696B);
+        scale.points[1].kind = OWF_CFV_PERCENTILE; scale.points[1].value = "50"; scale.points[1].colour = OWF_SHADE(0xFFEB84);
+        scale.points[2].kind = OWF_CFV_MAX; scale.points[2].colour = OWF_SHADE(0x63BE7B);
+        enter_at(core, "D1", "0"); enter_at(core, "D2", "50"); enter_at(core, "D3", "100");
+        go(core, "D1:D3");
+        CHECK(oc_core_add_condfmt(core, &scale) == OWF_OK);
+        icons.icon_set = "5Quarters"; icons.reverse = 1;
+        CHECK(oc_core_add_condfmt(core, &icons) == OWF_OK);
+        CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_book(core)->sheets[0].ncondfmts == 5);
+        CHECK(oc_view_draw(core, &l) == OWF_OK && icon_of(&l, 0, 3) == 0x202020 && icon_of(&l, 2, 3) == 0xF0F0F0);
+    }
     oc_draw_list_free(&l);
     oc_core_free(core);
 }

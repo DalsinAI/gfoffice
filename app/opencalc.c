@@ -6467,7 +6467,7 @@ static int rexx_do_command(const char *command, char **result_out)
         owf_range r;
         const char *rest = rexx_word(arg, where, sizeof where);
         int rc;
-        snprintf(rule, sizeof rule, "%s", rest);
+        snprintf(rule, sizeof rule, "%s", skip_space(rest));
         if (!oc_parse_range(where, &r)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a range: %s", where); }
         else {
             oc_core_select_range(core, &r);
