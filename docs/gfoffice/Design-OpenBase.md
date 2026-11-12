@@ -356,6 +356,35 @@ save" and "after save", runs an ARexx script: one kept in the project
 (section 9). A built-in action (go to a record, open a form, run a report,
 print) needs no script.
 
+### 6.6 What core 0.6 and GFOpenBase 0.6 do
+
+- Table > Open as Form... (Amiga-K) opens the auto form of 6.1 for the
+  table in the list: a row a field, label on the left, in the datasheet's
+  sort and filter, starting at the chosen row. A table with more fields
+  than fit pages them with < Fields and Fields >. Counters and Datatype
+  objects are shown, not typed into.
+- The record bar of 6.3: |< < "3 of 6" > >|, New and Delete... Below it
+  are Find..., Save, Undo Record and Close.
+- Edits are kept for the record and written as one change when you move
+  to another record, Find, Save or Close. A change that is refused says
+  why and keeps you on the record. Esc or Undo Record puts the record back.
+  Close asks before it loses a change that can't be saved.
+- A new record that the filter leaves out is added and the form says so.
+- Find asks for a field and the text. A field that holds text (Text, Memo,
+  Choice, Date, Time, Date and time) matches when it contains the text, in
+  any case, with `%` and `_` taken as typed. Any other field matches when
+  it equals the value, given in its own form (`1,250.50`, `Yes`). Find Next
+  searches on from the record and Find Back searches back.
+- A subform (6.4) for each Lookup that points at the table: "Rows in" picks
+  one, such as Orders (Customer), and the form lists that table's rows for
+  the record, up to 40, read only, with their count.
+- The core calls are `ob_view_position` (a key's place in a view),
+  `ob_view_find` (one `row_number()` window over the view's order and
+  filter) and `ob_children` (the Lookups pointing at a table).
+- Not yet: the form designer (6.2), Filter by Form, rows added or changed
+  in the subform, Return on a subform row to open its table's form, buttons
+  and events (6.5), forms kept in `oadb_forms`.
+
 ## 7. Reports
 
 ### 7.1 What a report is

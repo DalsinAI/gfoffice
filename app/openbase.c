@@ -2999,7 +2999,7 @@ static void open_form(void)
     if (f_nsubs < 0) f_nsubs = 0;
     if (f_nsubs > FORM_SUBS) f_nsubs = FORM_SUBS;
     for (i = 0; i < f_nsubs; i++) {
-        snprintf(f_sub_text[i], sizeof f_sub_text[i], "%s (%s)", f_subs[i].table, f_subs[i].field);
+        snprintf(f_sub_text[i], sizeof f_sub_text[i], "%.63s (%.63s)", f_subs[i].table, f_subs[i].field);
         f_sub_labels[i] = (STRPTR)f_sub_text[i];
     }
     f_sub_labels[f_nsubs] = NULL;
