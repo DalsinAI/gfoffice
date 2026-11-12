@@ -128,3 +128,25 @@ index-check: $(OUT)/test-index-asan
 
 test: index-test
 check: index-check
+
+# Phase 2: AutoCorrect (tests/core/test_autocorrect.c)
+AUTOCORRECT_SRC = $(OWF_SRC) $(CORE_SRC) tests/core/test_autocorrect.c include/openwrite_core.h
+
+$(OUT)/test-autocorrect: $(AUTOCORRECT_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) \
+		tests/core/test_autocorrect.c -lz -o $@
+
+$(OUT)/test-autocorrect-asan: $(AUTOCORRECT_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) tests/core/test_autocorrect.c -lz -o $@
+
+autocorrect-test: $(OUT)/test-autocorrect
+	$(OUT)/test-autocorrect
+
+autocorrect-check: $(OUT)/test-autocorrect-asan
+	$(OUT)/test-autocorrect-asan
+
+test: autocorrect-test
+check: autocorrect-check

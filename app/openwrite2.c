@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.32 (12.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.33 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -117,7 +117,8 @@ enum {
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS,
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
-    M_INDEX_ENTRY, M_INDEX
+    M_INDEX_ENTRY, M_INDEX,
+    M_AC_ON, M_AC_REPLACE, M_AC_SENTENCE, M_AC_TWO_CAPS, M_AC_QUOTES, M_AC_DASHES, M_AC_ADD, M_AC_REMOVE
 };
 
 static struct NewMenu menus[] = {
@@ -247,6 +248,18 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Spell Check...", NULL, 0, 0, (APTR)M_SPELL },
+    /* 2.0.33: AutoCorrect (core 1.8) */
+    { NM_ITEM, "AutoCorrect", NULL, 0, 0, NULL },
+    { NM_SUB, "While Typing", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_ON },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Replace Words", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_REPLACE },
+    { NM_SUB, "Capitalise Sentences", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_SENTENCE },
+    { NM_SUB, "Correct TWo CApitals", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_TWO_CAPS },
+    { NM_SUB, "Curly Quotes", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_QUOTES },
+    { NM_SUB, "Dashes", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_DASHES },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Add Replacement...", NULL, 0, 0, (APTR)M_AC_ADD },
+    { NM_SUB, "Remove Replacement...", NULL, 0, 0, (APTR)M_AC_REMOVE },
     /* 2.0.27: tracked changes (core 1.2), in Tools so the menu bar still fits a 640 screen */
     { NM_ITEM, "Track Changes", NULL, 0, 0, NULL },
     { NM_SUB, "Record Changes", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_TRACK },
@@ -458,6 +471,7 @@ static void editor_repaint(const char *message);
 static int editor_result(int rc, const char *message);
 static void review_author_init(void);
 static void sync_track_menu(void);
+static void sync_ac_menu(void);                     /* 2.0.33 */
 static char review_author[64];                       /* 2.0.27: the name tracked changes are made under */
 static int review_author_set;
 static int mm_to_twips(int mm);
@@ -3119,6 +3133,7 @@ static int open_window(void)
         TAG_DONE);
     if (!win) return 0;
     if (menu) SetMenuStrip(win, menu);
+    sync_ac_menu();                                  /* 2.0.33: AutoCorrect as it was left */
     relayout();
     zoom_choice = ZOOM_FIT_WIDTH;                    /* 2.0: the page as wide as the view to start */
     set_zoom(fit_zoom(1));
@@ -4364,6 +4379,145 @@ out:
     return chosen;
 }
 
+/* 2.0.33: AutoCorrect. One list and its options for every document, kept in ENV:GFOpenWrite/AutoCorrect (and
+ * ENVARC:) as core 1.8 saves it, with "typing off" when While Typing is off; the starting list when there is none */
+static ow_autocorrect *autocorrect;
+static int autocorrect_on = 1;
+#define AC_FILE "GFOpenWrite/AutoCorrect"
+
+static ow_autocorrect *ac_list(void)
+{
+    char *text;
+    if (autocorrect) return autocorrect;
+    text = read_file("ENV:" AC_FILE);
+    autocorrect = ow_autocorrect_new(text == NULL);
+    if (autocorrect && text) {
+        ow_autocorrect_load(autocorrect, text, strlen(text));
+        autocorrect_on = strstr(text, "\ntyping off") == NULL;
+    }
+    free(text);
+    return autocorrect;
+}
+
+/* what typing goes through: NULL while AutoCorrect is off */
+static const ow_autocorrect *ac_active(void)
+{
+    return autocorrect_on ? ac_list() : NULL;
+}
+
+static void ac_save_to(const char *dir)
+{
+    char path[64];
+    size_t len = 0;
+    char *text;
+    BPTR f, lock;
+    snprintf(path, sizeof path, "%sGFOpenWrite", dir);
+    if ((lock = Lock((STRPTR)path, ACCESS_READ)) != 0) UnLock(lock);
+    else if ((lock = CreateDir((STRPTR)path)) != 0) UnLock(lock);
+    snprintf(path, sizeof path, "%s" AC_FILE, dir);
+    if (!(text = ow_autocorrect_save(autocorrect, &len))) return;
+    if ((f = Open((STRPTR)path, MODE_NEWFILE)) != 0) {
+        Write(f, text, (LONG)len);
+        if (!autocorrect_on) Write(f, "typing off\n", 11);
+        Close(f);
+    }
+    owf_free(text);
+}
+
+static void ac_save(void)
+{
+    if (!autocorrect) return;
+    ac_save_to("ENV:");
+    ac_save_to("ENVARC:");
+}
+
+static void sync_ac_menu(void)
+{
+    struct Menu *m;
+    struct MenuItem *it, *sub;
+    unsigned o = ow_autocorrect_options(ac_list());
+    if (!menu) return;
+    if (win) ClearMenuStrip(win);
+    for (m = menu; m; m = m->NextMenu)
+        for (it = m->FirstItem; it; it = it->NextItem)
+            for (sub = it->SubItem; sub; sub = sub->NextItem) {
+                ULONG id = (ULONG)GTMENUITEM_USERDATA(sub);
+                int on = -1;
+                if (id == M_AC_ON) on = autocorrect_on;
+                else if (id == M_AC_REPLACE) on = (o & OW_AC_REPLACE) != 0;
+                else if (id == M_AC_SENTENCE) on = (o & OW_AC_SENTENCE) != 0;
+                else if (id == M_AC_TWO_CAPS) on = (o & OW_AC_TWO_CAPS) != 0;
+                else if (id == M_AC_QUOTES) on = (o & OW_AC_QUOTES) != 0;
+                else if (id == M_AC_DASHES) on = (o & OW_AC_DASHES) != 0;
+                if (on > 0) sub->Flags |= CHECKED; else if (!on) sub->Flags &= ~CHECKED;
+            }
+    if (win) ResetMenuStrip(win, menu);
+}
+
+static void do_autocorrect(int what)
+{
+    ow_autocorrect *ac = ac_list();
+    unsigned bit = what == M_AC_REPLACE ? OW_AC_REPLACE : what == M_AC_SENTENCE ? OW_AC_SENTENCE :
+                   what == M_AC_TWO_CAPS ? OW_AC_TWO_CAPS : what == M_AC_QUOTES ? OW_AC_QUOTES :
+                   what == M_AC_DASHES ? OW_AC_DASHES : 0;
+    if (!ac) { tell("AutoCorrect", "There is not enough memory."); return; }
+    if (what == M_AC_ON) {
+        autocorrect_on = !autocorrect_on;
+        set_status(autocorrect_on ? "AutoCorrect on." : "AutoCorrect off.");
+    } else if (bit) {
+        ow_autocorrect_set_options(ac, ow_autocorrect_options(ac) ^ bit);
+        set_status((ow_autocorrect_options(ac) & bit) ? "AutoCorrect option on." : "AutoCorrect option off.");
+    } else if (what == M_AC_ADD) {
+        char from[64], to[160], *uf, *ut;
+        int rc;
+        from[0] = to[0] = 0;
+        if (!editor || ow_editor_selection_empty(editor)) from[0] = 0;
+        else {
+            size_t len = 0, o;
+            char *sel = ow_editor_selection_text(editor, &len);
+            if (sel) { o = to_latin1(sel, len, from, sizeof from); from[o < sizeof from ? o : sizeof from - 1] = 0; free(sel); }
+        }
+        if (!text_requester("Add Replacement", "Replace", from, from, sizeof from) || !from[0]) return;
+        if (!text_requester("Add Replacement", "With", to, to, sizeof to) || !to[0]) return;
+        uf = latin1_utf8(from);
+        ut = latin1_utf8(to);
+        rc = uf && ut ? ow_autocorrect_add(ac, uf, ut) : OWF_ERR_MEMORY;
+        free(uf);
+        free(ut);
+        if (rc == OWF_ERR_FORMAT) { tell("Add Replacement", "The word to replace has no spaces in it."); return; }
+        if (rc != OWF_OK) { tell("Add Replacement", "There is not enough memory."); return; }
+        set_status("Replacement added.");
+    } else if (what == M_AC_REMOVE) {
+        char (*names)[72];
+        int k, n = ow_autocorrect_count(ac);
+        char *u;
+        if (!n) { tell("Remove Replacement", "The replacement list is empty."); return; }
+        if (!(names = (char (*)[72])calloc((size_t)n, sizeof *names))) return;
+        for (k = 0; k < n; ++k) {
+            char both[200];
+            size_t o;
+            snprintf(both, sizeof both, "%.60s -> %.100s", ow_autocorrect_from(ac, k), ow_autocorrect_to(ac, k));
+            o = to_latin1(both, strlen(both), names[k], sizeof names[k]);
+            names[k][o < sizeof names[k] ? o : sizeof names[k] - 1] = 0;
+        }
+        k = pick_requester("Remove Replacement", "Replacement", names, n);
+        free(names);
+        if (k < 0) return;
+        {
+            const char *from = ow_autocorrect_from(ac, k);
+            size_t n0 = strlen(from);
+            if (!(u = (char *)malloc(n0 + 1))) return;
+            memcpy(u, from, n0 + 1);
+            ow_autocorrect_remove(ac, u);
+            free(u);
+        }
+        set_status("Replacement removed.");
+    }
+    ac_save();
+    sync_ac_menu();
+    request_document_redraw();
+}
+
 /* 2.0.32: an index entry at the caret (the selection's words by default; "Main:Sub" for a subentry), and the
  * alphabetical index from every entry, made like the table of contents */
 static void do_index(int what)
@@ -4891,6 +5045,8 @@ static void menu_action(ULONG id)
     case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
     case M_MERGE_DOC: case M_MERGE_FILES: do_merge((int)id); break;
     case M_INDEX_ENTRY: case M_INDEX: do_index((int)id); break;
+    case M_AC_ON: case M_AC_REPLACE: case M_AC_SENTENCE: case M_AC_TWO_CAPS: case M_AC_QUOTES: case M_AC_DASHES:
+    case M_AC_ADD: case M_AC_REMOVE: do_autocorrect((int)id); break;
     }
 }
 
@@ -5072,7 +5228,8 @@ static int rexx_do_command(const char *command, char **result_out)
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
         "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
         "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE "
-        "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX QUIT");
+        "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX "
+        "AUTOCORRECT ACREPLACE TYPETEXT QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
@@ -5152,6 +5309,27 @@ static int rexx_do_command(const char *command, char **result_out)
         if(!editor||!path[0]){ok=0;snprintf(result,sizeof result,"MERGE needs a file");}
         else if((n=merge_out(path,files))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",-n==OWF_ERR_UNSUPPORTED?"No records":owf_error_text(-n));}
         else snprintf(result,sizeof result,"%d",n);}
+    /* 2.0.33: AutoCorrect. AUTOCORRECT [ON|OFF|n] answers its options (0: off; 1 replace, 2 sentences, 4 two
+     * capitals, 8 quotes, 16 dashes; n sets them and turns it on); ACREPLACE word [with|-] answers the word's
+     * replacement (RC 5: none), sets it or ("-") removes it; TYPETEXT text types it as the keyboard does */
+    else if(starts_word_ci(command,"AUTOCORRECT",&arg)){ow_autocorrect *ac=ac_list();
+        if(!ac){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
+        else{if(!strcasecmp(arg,"ON"))autocorrect_on=1;else if(!strcasecmp(arg,"OFF"))autocorrect_on=0;else if(*arg>='0'&&*arg<='9'){ow_autocorrect_set_options(ac,(unsigned)atol(arg));autocorrect_on=1;}else if(*arg){ok=0;snprintf(result,sizeof result,"AUTOCORRECT takes ON, OFF or a number");}
+            if(ok){if(*arg){ac_save();sync_ac_menu();}snprintf(result,sizeof result,"%u",autocorrect_on?ow_autocorrect_options(ac):0u);}}}
+    else if(starts_word_ci(command,"ACREPLACE",&arg)){ow_autocorrect *ac=ac_list();char word[64];const char *rest=arg;int n=0;char *uw=NULL,*ut=NULL;
+        while(*rest&&*rest!=' '&&n<63)word[n++]=*rest++;word[n]=0;rest=skip_space(rest);
+        if(!ac||!word[0]){ok=0;snprintf(result,sizeof result,"ACREPLACE needs a word");}
+        else if(!(uw=latin1_utf8(word))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
+        else if(!*rest){const char *to=ow_autocorrect_lookup(ac,uw);if(!to){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No replacement");}else{size_t o=to_latin1(to,strlen(to),result,sizeof result);result[o<sizeof result?o:sizeof result-1]=0;}}
+        else if(!strcmp(rest,"-")){if(ow_autocorrect_remove(ac,uw)!=OWF_OK){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No replacement");}else{ac_save();snprintf(result,sizeof result,"OK");}}
+        else if(!(ut=latin1_utf8(rest))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
+        else if(ow_autocorrect_add(ac,uw,ut)!=OWF_OK){ok=0;snprintf(result,sizeof result,"Not a replacement");}
+        else{ac_save();snprintf(result,sizeof result,"OK");}
+        free(uw);free(ut);}
+    else if(starts_word_ci(command,"TYPETEXT",&arg)){const unsigned char *t=(const unsigned char *)arg;int rc=OWF_OK;
+        if(!editor){ok=0;snprintf(result,sizeof result,"No document");}
+        else{for(;*t&&rc==OWF_OK;++t){char u[3];int n=vanilla_utf8(*t,u);rc=ow_editor_type(editor,ac_active(),u,(size_t)n);}
+            ok=editor_result(rc,"ARexx text typed.");snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
     /* 2.0.32: the alphabetical index. INDEXENTRY entry marks one at the caret ("Main:Sub" for a subentry);
      * INDEXENTRIES answers how many; INSERTINDEX puts the index at the caret (RC 5: no entries) */
     else if(starts_word_ci(command,"INDEXENTRY",&arg)){char *u;int rc;
@@ -5337,16 +5515,16 @@ static void events(void)
                 editor_result(ow_editor_backspace(editor), "Modified.");
             } else if (code == 13) {
                 if (ow_editor_in_table(editor)) editor_result(ow_editor_insert_utf8(editor, "\n", 1), "Table cell line break.");
-                else editor_result(ow_editor_newline(editor), "Modified.");
+                else { ow_editor_autocorrect_word(editor, ac_active()); editor_result(ow_editor_newline(editor), "Modified."); }
             } else if (code == 127) {
                 editor_result(ow_editor_delete_forward(editor), "Modified.");
             } else if (code == 9) {
                 if(ow_editor_in_table(editor)){int backwards=(qual&(IEQUALIFIER_LSHIFT|IEQUALIFIER_RSHIFT))!=0;if(!ow_editor_table_move(editor,backwards?-1:1)&&!backwards)editor_result(ow_editor_table_insert_row(editor),"New table row.");else request_document_redraw();}
-                else editor_result(ow_editor_insert_utf8(editor, "\t", 1), "Modified.");
+                else editor_result(ow_editor_type(editor, ac_active(), "\t", 1), "Modified.");
             } else if (code >= 32 && code < 256) {
                 char u[3];
                 int n = vanilla_utf8(code, u);
-                editor_result(ow_editor_insert_utf8(editor, u, (size_t)n), "Modified.");
+                editor_result(ow_editor_type(editor, ac_active(), u, (size_t)n), "Modified.");
             }
             break;
         case IDCMP_MENUPICK:
@@ -5438,6 +5616,7 @@ out:
     if (editor) { ow_editor_free(editor); editor = NULL; }
     if (doc) { owf_doc_free(doc); doc = NULL; }
     if (theme.text) ogt_theme_free(&theme);
+    if (autocorrect) { ow_autocorrect_free(autocorrect); autocorrect = NULL; }   /* 2.0.33 */
     if (LayersBase) { CloseLibrary(LayersBase); LayersBase = NULL; }
     if (OpenFontTextBase) { CloseLibrary(OpenFontTextBase); OpenFontTextBase = NULL; }
     if (DiskfontBase) { CloseLibrary(DiskfontBase); DiskfontBase = NULL; }

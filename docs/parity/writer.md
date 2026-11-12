@@ -15,6 +15,7 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 11 Nov 2026 | 2.0.30 | W4 footnotes and endnotes | 72% |
 | 12 Nov 2026 | 2.0.31 | Phase 2: mail merge | 74% |
 | 12 Nov 2026 | 2.0.32 | Phase 2: alphabetical index | 75% |
+| 12 Nov 2026 | 2.0.33 | Phase 2: AutoCorrect | 76% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
@@ -23,7 +24,8 @@ fields two more, and footnotes and endnotes the last two: Phase 1's target.
 Phase 2 starts with mail merge (form letters from a CSV data source): two points;
 labels and envelopes, indexes and AutoCorrect are the rest of Phase 2.
 The alphabetical index (entries, subentries, pages) adds one point; range
-marks, other index kinds and a live index are left for later.
+marks, other index kinds and a live index are left for later. AutoCorrect while
+typing adds one more; labels and envelopes and word completion are left.
 
 ## Stream W features
 
@@ -61,5 +63,7 @@ marks, other index kinds and a live index are left for later.
 | Alphabetical index: the index | Done | 2.0.32 | Insert > Alphabetical Index puts the index at the caret: an "Index" title, then each entry in alphabetical order (case folded) with the pages of its marks, subentries indented under it, in the Index1/Index2 styles; one Undo removes it. ARexx INSERTINDEX. |
 | Alphabetical index: DOCX and ODT | Done | 2.0.32 | DOCX XE fields (simple and complex, "Main:Sub"). ODT text:alphabetical-index-mark with text:key1 for a subentry. RTF, HTML, plain text and PDF show nothing for a mark. |
 | Index: range marks (an entry over several pages), concordance files, user indexes, tables of figures and tables, bibliography, a live index that updates itself, index letters headings | Gap | | Phase 2 later; Insert > Alphabetical Index again after changes. |
-| AutoCorrect | Gap | | Phase 2 |
+| AutoCorrect: replacements | Done | 2.0.33 | Tools > AutoCorrect: a word typed from the list is replaced when a space, tab or Return follows ("teh" -> "the"), keeping a capital (Teh -> The) or capitals (TEH -> THE); punctuation round it stays. A starting list of common slips and symbols ((c), (tm), ...), Add Replacement... (the selection by default) and Remove Replacement.... The list and options are kept in ENVARC:GFOpenWrite/AutoCorrect for every document. One Undo gives back the word as typed. ARexx AUTOCORRECT, ACREPLACE, TYPETEXT. |
+| AutoCorrect: while typing | Done | 2.0.33 | Capitalise a sentence's first letter (after . ! ? or at a paragraph's start; not after e.g. or i.e., not in addresses or file names), correct TWo INitial capitals (CDs stays), curly quotes (opening and closing, apostrophes), "a - b" to an en dash and "a--b" to an em dash. Each can be turned off, or all with While Typing. |
+| AutoCorrect: word completion, an exceptions list, *bold* and _underline_, URL recognition, ordinals (1st), automatic lists, per-language lists, correcting while changes are recorded (only quotes are) | Gap | | Phase 2 later. |
 | Document compare | Gap | | Phase 3; will build on track changes |
