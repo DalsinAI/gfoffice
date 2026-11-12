@@ -1139,6 +1139,218 @@ static void test_csv(void)
     ob_close(p);
 }
 
+/* ---- Undo, and CSV with options (0.4) ---- */
+
+static const char *all_rows(ob_project *p, const char *table)
+{
+    static char got[1024];
+    got[0] = 0;
+    if (ob_rows(p, table, 0, 50, row_cb, got) < 0) snprintf(got, sizeof got, "error: %s", ob_error(p));
+    return got;
+}
+
+static void test_undo(void)
+{
+    ob_project *p = fresh("undo.oadb");
+    static ob_table t;
+    char before[1024];
+    ob_int key;
+    if (!p) return;
+    customers(&t);
+    CHECK(ob_table_create(p, &t), "Customers: %s", ob_error(p));
+    CHECK(ob_undo_count(p) == 0 && !strcmp(ob_undo_name(p), ""), "nothing yet");
+    CHECK(!ob_undo(p), "undo with nothing");
+    CHECK_ERR(p, "Nothing to undo");
+    add_customer(p, "Ann", "York", "ann@example.org", "2026-01-02", "Yes", "12.50");
+    add_customer(p, "Bob", "Hull", NULL, NULL, "No", NULL);
+    CHECK(ob_undo_count(p) == 2 && !strcmp(ob_undo_name(p), "Add Row in Customers"), "%s", ob_undo_name(p));
+    snprintf(before, sizeof before, "%s", all_rows(p, "Customers"));
+    {
+        const char *f[] = { "Name", "Credit", "Joined" }, *v[] = { "Annie", "", "3/4/2026" };
+        CHECK(ob_row_change(p, "Customers", 1, 3, f, v), "change: %s", ob_error(p));
+    }
+    CHECK(!strcmp(ob_undo_name(p), "Change Row in Customers"), "%s", ob_undo_name(p));
+    CHECK(ob_undo(p) && !strcmp(all_rows(p, "Customers"), before), "change undone:\n%s", all_rows(p, "Customers"));
+    CHECK(ob_row_delete(p, "Customers", 1), "delete: %s", ob_error(p));
+    CHECK(!strcmp(ob_undo_name(p), "Delete Row in Customers"), "%s", ob_undo_name(p));
+    CHECK(ob_undo(p) && !strcmp(all_rows(p, "Customers"), before), "delete undone, same key and values:\n%s", all_rows(p, "Customers"));
+    CHECK(ob_undo(p) && ob_row_total(p, "Customers") == 1, "Bob's add undone");
+    CHECK(ob_undo(p) && ob_row_total(p, "Customers") == 0 && ob_undo_count(p) == 0, "Ann's add undone");
+
+    /* an import is one step */
+    spill("u1.csv", "Name,Town\nCy,York\nDi,Leeds\nEd,Hull\n");
+    add_customer(p, "Fay", "York", NULL, NULL, NULL, NULL);
+    CHECK(ob_csv_import(p, "Customers", path("u1.csv"), 0) == 3, "import: %s", ob_error(p));
+    CHECK(ob_undo_count(p) == 2 && !strcmp(ob_undo_name(p), "Import of 3 rows into Customers"), "%s", ob_undo_name(p));
+    CHECK(ob_undo(p) && ob_row_total(p, "Customers") == 1, "import undone");
+
+    /* a design change: the steps can't be undone any more */
+    {
+        const char *f[] = { "Name" }, *v[] = { "Gus" };
+        CHECK(ob_row_add(p, "Customers", 1, f, v, &key), "Gus: %s", ob_error(p));
+    }
+    customers(&t);
+    ob_table_add_field(&t, "Notes", OB_MEMO);
+    {
+        int i;
+        for (i = 0; i < t.nfields; i++) snprintf(t.fields[i].from, sizeof t.fields[i].from, "%s", t.fields[i].name);
+        t.fields[t.nfields - 1].from[0] = 0;
+    }
+    CHECK(ob_table_change(p, "Customers", &t), "add Notes: %s", ob_error(p));
+    CHECK(!ob_undo(p), "undo after a design change");
+    CHECK_ERR(p, "design has changed");
+    CHECK(ob_undo_count(p) == 0 && ob_row_total(p, "Customers") == 2, "Gus kept, list cleared");
+
+    /* a cascading delete can't be undone */
+    {
+        static ob_table o;
+        ob_int ok_key;
+        orders(&o, OB_DELETE_CASCADE);
+        CHECK(ob_table_create(p, &o), "Orders: %s", ob_error(p));
+        {
+            const char *f[] = { "Customer", "Total" }, *v[] = { "2", "5" };
+            snprintf(before, sizeof before, "%lld", key);
+            v[0] = before;
+            CHECK(ob_row_add(p, "Orders", 2, f, v, &ok_key), "order: %s", ob_error(p));
+        }
+        CHECK(ob_undo_count(p) == 1, "the order's step");
+        CHECK(ob_row_delete(p, "Customers", key) && ob_row_total(p, "Orders") == 0, "cascade: %s", ob_error(p));
+        CHECK(ob_undo_count(p) == 0, "a cascade clears the list");
+    }
+
+    /* the caller's rollback takes back the steps inside it */
+    add_customer(p, "Hal", "York", NULL, NULL, NULL, NULL);
+    CHECK(ob_undo_count(p) == 1, "Hal's step");
+    CHECK(ob_begin(p), "begin");
+    add_customer(p, "Ida", "York", NULL, NULL, NULL, NULL);
+    CHECK(ob_undo_count(p) == 2, "Ida's step");
+    CHECK(ob_rollback(p) && ob_undo_count(p) == 1, "rolled back: %d", ob_undo_count(p));
+    CHECK(ob_undo(p), "Hal undone: %s", ob_error(p));
+
+    /* at most 100 steps */
+    {
+        int i;
+        for (i = 0; i < 105; i++) add_customer(p, "Many", "York", NULL, NULL, NULL, NULL);
+        CHECK(ob_undo_count(p) == 100, "100 steps: %d", ob_undo_count(p));
+    }
+    ob_close(p);
+}
+
+static void test_csv_options(void)
+{
+    ob_project *p = fresh("csvopt.oadb");
+    static ob_table t, g;
+    ob_csv_opts o;
+    char got[1024];
+    if (!p) return;
+    customers(&t);
+    CHECK(ob_table_create(p, &t), "Customers: %s", ob_error(p));
+
+    /* UTF-8 found and made ISO-8859-1; what it lacks is ? */
+    spill("utf.csv", "Name,Town\nJos\xC3\xA9,York\nZo\xC3\xAB \xE2\x82\xAC,Hull\n");
+    ob_csv_opts_init(&o);
+    CHECK(ob_csv_import_with(p, "Customers", path("utf.csv"), &o) == 2 && o.found_charset == OB_CHARSET_UTF8,
+          "utf.csv: %s", ob_error(p));
+    got[0] = 0;
+    ob_rows(p, "Customers", 0, 10, row_cb, got);
+    CHECK(!strcmp(got, "1:1|Jos\xE9|York|-|-|No|-;2:2|Zo\xEB ?|Hull|-|-|No|-;"), "latin-1:\n%s", got);
+    /* the same bytes read as ISO-8859-1 when asked */
+    ob_csv_opts_init(&o);
+    o.charset = OB_CHARSET_LATIN1;
+    CHECK(ob_csv_import_with(p, "Customers", path("utf.csv"), &o) == 2, "latin1: %s", ob_error(p));
+    got[0] = 0;
+    ob_rows(p, "Customers", 2, 1, row_cb, got);
+    CHECK(!strcmp(got, "3:3|Jos\xC3\xA9|York|-|-|No|-;"), "kept as bytes:\n%s", got);
+    /* plain ISO-8859-1 is not UTF-8 */
+    spill("lat.csv", "Name\nJos\xE9\n");
+    ob_csv_opts_init(&o);
+    CHECK(ob_csv_import_with(p, "Customers", path("lat.csv"), &o) == 1 && o.found_charset == OB_CHARSET_LATIN1, "lat.csv");
+    /* export as UTF-8, with its mark */
+    ob_csv_opts_init(&o);
+    o.charset = OB_CHARSET_UTF8;
+    {
+        ob_view v;
+        view_set(&v, "", 0, "id", OB_FILTER_EQUALS, "1");
+        CHECK(ob_csv_export_with(p, "Customers", &v, path("out8.csv"), &o) == 1, "export utf-8: %s", ob_error(p));
+    }
+    CHECK(!strcmp(slurp("out8.csv"), "\xEF\xBB\xBFid,Name,Town,Email,Joined,Member,Credit\r\n1,Jos\xC3\xA9,York,,,No,\r\n"),
+          "out8.csv:\n%s", slurp("out8.csv"));
+
+    /* leave out the bad rows and list them */
+    spill("mixed.csv", "Name,Credit\nKay,1\nLou,lots\n,5\nMo,2\n");
+    ob_csv_opts_init(&o);
+    o.skip_bad = 1;
+    CHECK(ob_csv_import_with(p, "Customers", path("mixed.csv"), &o) == 2 && o.bad == 2, "mixed: %s (%d bad)", ob_error(p), o.bad);
+    CHECK(!strcmp(o.report, "Line 3: Credit limit must be an amount of money, such as 1,234.50\nLine 4: Name must be filled in\n"),
+          "report:\n%s", o.report);
+    /* header forced, and wrong */
+    ob_csv_opts_init(&o);
+    o.header = 1;
+    spill("nohead.csv", "Nia,York\n");
+    CHECK(ob_csv_import_with(p, "Customers", path("nohead.csv"), &o) == -1, "a header that isn't");
+    CHECK_ERR(p, "Line 1: Nia is not a field of Customers");
+    /* header 0: a first line of names is data */
+    ob_csv_opts_init(&o);
+    o.header = 0;
+    spill("names.csv", "Name,Town\n");
+    CHECK(ob_csv_import_with(p, "Customers", path("names.csv"), &o) == -1, "names as data");
+    CHECK_ERR(p, "Line 1: id must be a whole number");
+
+    /* a new table: types guessed */
+    spill("shop.csv",
+          "id;Product name;Price;In stock;Count;Weight;Added;Opens;Sold at;Notes\r\n"
+          "7;Tea;\xA3" "2.50;yes;10;0.25;2026-01-02;09:00;2026-01-02 10:30;\r\n"
+          "9;Coffee;3.00;no;1,200;1.5;3/1/2026;9:30;2026-01-03 11:00:05;strong\r\n"
+          "12;Cocoa;4;Y;;2;;;;\r\n");
+    ob_csv_opts_init(&o);
+    CHECK(ob_csv_guess(p, path("shop.csv"), NULL, &o, &g), "guess: %s", ob_error(p));
+    CHECK(o.found_sep == ';' && o.found_header == 1 && o.found_charset == OB_CHARSET_LATIN1, "found %c %d %d", o.found_sep, o.found_header, o.found_charset);
+    CHECK(!strcmp(g.name, "shop") && g.nfields == 10, "%s, %d fields", g.name, g.nfields);
+    if (g.nfields == 10) {
+        static const ob_type want[] = { OB_COUNTER, OB_TEXT, OB_CURRENCY, OB_YESNO, OB_INTEGER, OB_NUMBER,
+                                        OB_DATE, OB_TIME, OB_DATETIME, OB_TEXT };
+        static const char *const names[] = { "id", "Product name", "Price", "In stock", "Count", "Weight",
+                                             "Added", "Opens", "Sold at", "Notes" };
+        int i;
+        for (i = 0; i < 10; i++)
+            CHECK(g.fields[i].type == want[i] && !strcmp(g.fields[i].name, names[i]), "field %d: %s %s", i,
+                  g.fields[i].name, ob_type_name(g.fields[i].type));
+    }
+    CHECK(ob_table_create(p, &g), "create shop: %s", ob_error(p));
+    CHECK(ob_csv_import_with(p, "shop", path("shop.csv"), &o) == 3, "import shop: %s", ob_error(p));
+    got[0] = 0;
+    ob_rows(p, "shop", 0, 10, row_cb, got);
+    CHECK(!strcmp(got, "7:7|Tea|2.50|Yes|10|0.25|2026-01-02|09:00:00|2026-01-02 10:30:00|-;"
+                       "9:9|Coffee|3.00|No|1200|1.5|2026-01-03|09:30:00|2026-01-03 11:00:05|strong;"
+                       "12:12|Cocoa|4.00|Yes|-|2.0|-|-|-|-;"), "shop rows (keys kept):\n%s", got);
+
+    /* no header; names made; a long column is Memo; odd header text kept as a label */
+    {
+        char big[700];
+        memset(big, 'x', 300);
+        big[300] = 0;
+        snprintf(got, sizeof got, "1,%s,1.5\n2,short,2.25\n", big);
+        spill("nohdr.csv", got);
+    }
+    ob_csv_opts_init(&o);
+    CHECK(ob_csv_guess(p, path("nohdr.csv"), "No header", &o, &g) && o.found_header == 0, "nohdr: %s", ob_error(p));
+    CHECK(g.nfields == 4 && !strcmp(g.fields[1].name, "Field 1") && g.fields[1].type == OB_INTEGER
+          && g.fields[2].type == OB_MEMO && g.fields[3].type == OB_NUMBER, "nohdr fields");
+    spill("odd.csv", "2nd price \xA3,id,oadb_x,Name,Name\nfoo,bar,1,a,b\n");
+    ob_csv_opts_init(&o);
+    CHECK(ob_csv_guess(p, path("odd.csv"), NULL, &o, &g), "odd: %s", ob_error(p));
+    CHECK(g.nfields == 6 && !strcmp(g.fields[0].name, "Key") && g.fields[0].type == OB_COUNTER, "Key counter: %s", g.fields[0].name);
+    CHECK(g.nfields == 6 && !strcmp(g.fields[1].name, "nd price") && !strcmp(g.fields[1].label, "2nd price \xA3")
+          && !strcmp(g.fields[3].name, "F oadb_x") && !strcmp(g.fields[5].name, "Name 2"),
+          "names: %s|%s|%s|%s", g.fields[1].name, g.fields[2].name, g.fields[3].name, g.fields[5].name);
+    CHECK(ob_table_create(p, &g), "create odd: %s", ob_error(p));
+    CHECK(ob_csv_import_with(p, "odd", path("odd.csv"), &o) == 1, "import odd by labels: %s", ob_error(p));
+    spill("empty.csv", "");
+    CHECK(!ob_csv_guess(p, path("empty.csv"), NULL, &o, &g), "empty");
+    CHECK_ERR(p, "is empty");
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -1170,6 +1382,8 @@ int main(int argc, char **argv)
     test_cache();
     test_views();
     test_csv();
+    test_undo();
+    test_csv_options();
     test_not_projects();
     test_cut_short();
     printf("test-base-core: %d checks, %d failed\n", checks, fails);

@@ -13,7 +13,9 @@
  *     type, in the project's transaction or one of their own;
  *   - a datasheet's rows a page at a time, by key, or sorted and filtered
  *     (a view);
- *   - CSV out of a table (or a view of it) and into a table;
+ *   - CSV out of a table (or a view of it) and into a table, or into a new
+ *     table whose field types are guessed from the file;
+ *   - undo of row changes;
  *   - errors in plain words ("Price must be a number", not "CHECK
  *     constraint failed").
  *
@@ -32,7 +34,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.3.0"
+#define OB_CORE_VERSION "0.4.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -288,6 +290,56 @@ ob_int ob_csv_export(ob_project *p, const char *table, const ob_view *v, const c
  * ',', ';' or tab from the first line. A UTF-8 byte order mark is skipped.
  * Returns the rows added, -1 with "Line 4: Price must be a number". */
 ob_int ob_csv_import(ob_project *p, const char *table, const char *path, int sep);
+
+/* ---- CSV with options (core 0.4, design 8) ---- */
+typedef enum ob_charset {
+    OB_CHARSET_AUTO,    /* import: UTF-8 when the file starts with its mark or its
+                         * bytes above 127 are all UTF-8, else ISO-8859-1.
+                         * Export: ISO-8859-1 */
+    OB_CHARSET_LATIN1,  /* ISO-8859-1, as the Amiga keeps text */
+    OB_CHARSET_UTF8     /* turned into ISO-8859-1 on import ('?' for what it lacks);
+                         * export writes UTF-8 with its mark */
+} ob_charset;
+
+typedef struct ob_csv_opts {
+    int sep;                /* ',', ';', '\t'; 0: found from the first line (import), ',' (export) */
+    ob_charset charset;
+    int header;             /* import: -1 found (each cell names a field), 1 the first line
+                             * names fields, 0 it is data */
+    int skip_bad;           /* import: add the good rows and list the bad ones in report,
+                             * rather than adding none */
+    /* out, import */
+    int bad;                /* rows left out */
+    char report[1024];      /* "Line 4: Price must be a number\n...", cut short with "..." */
+    /* out, ob_csv_guess */
+    int found_sep;
+    ob_charset found_charset;
+    int found_header;
+} ob_csv_opts;
+
+void ob_csv_opts_init(ob_csv_opts *o);
+ob_int ob_csv_import_with(ob_project *p, const char *table, const char *path, ob_csv_opts *o);
+ob_int ob_csv_export_with(ob_project *p, const char *table, const ob_view *v, const char *path,
+                          const ob_csv_opts *o);
+
+/* A new table's design from a CSV file: name (or the file's name), a Counter
+ * "id" (a column called id holding whole numbers becomes it, so its keys are
+ * kept), then a field for each column, named by the header (or Field 1,
+ * Field 2...) and typed from the first 200 rows: Yes/No, Integer, Currency
+ * (two decimals, or a pound or dollar sign), Number, Date, Time, Date and
+ * time, else Text (Memo past 255 characters). The caller may change it, then
+ * ob_table_create and ob_csv_import_with. o's found_* say what was found. */
+int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts *o, ob_table *out);
+
+/* ---- Undo (core 0.4) ----
+ * Each row added, changed or deleted, and each CSV import, can be undone,
+ * last first, up to 100 steps, while the tables' designs stay as they were.
+ * A delete that cascaded to other rows can't be undone, and clears the list.
+ * ob_rollback takes back the steps it undid itself. */
+int ob_undo_count(ob_project *p);
+const char *ob_undo_name(ob_project *p);        /* "Change Row in Customers"; "" none */
+int ob_undo(ob_project *p);
+void ob_undo_clear(ob_project *p);
 
 /* ---- Values ---- */
 
