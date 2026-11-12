@@ -2742,6 +2742,7 @@ int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts 
     csv_in *r;
     col_guess *g = NULL;
     char (*first)[OB_LABEL_MAX] = NULL;
+    int *first_len = NULL;
     int rc, rows = 0, ncols = 0, i, header, id_col = -1;
     ob_type types[OB_MAX_FIELDS];
     char tname[OB_NAME_MAX];
@@ -2756,15 +2757,20 @@ int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts 
     if (ncols >= OB_MAX_FIELDS) { csv_close(r); return fail(p, "A table has at most %d fields besides its Counter", OB_MAX_FIELDS - 1); }
     g = calloc((size_t)ncols, sizeof *g);
     first = calloc((size_t)ncols, sizeof *first);
-    if (!g || !first) { free(g); free(first); csv_close(r); return fail(p, "Not enough memory"); }
-    for (i = 0; i < ncols; i++) { copy(first[i], sizeof first[i], csv_text(r, i)); guess_start(&g[i]); }
+    first_len = calloc((size_t)ncols, sizeof *first_len);
+    if (!g || !first || !first_len) { free(g); free(first); free(first_len); csv_close(r); return fail(p, "Not enough memory"); }
+    for (i = 0; i < ncols; i++) {
+        copy(first[i], sizeof first[i], csv_text(r, i));
+        first_len[i] = (int)strlen(csv_text(r, i));
+        guess_start(&g[i]);
+    }
     while (rows < GUESS_ROWS && (rc = csv_record(r)) == 1) {
         if (r->ncells == 1 && !csv_text(r, 0)[0]) continue;
         for (i = 0; i < ncols && i < r->ncells; i++) guess_cell(&g[i], csv_text(r, i));
         rows++;
     }
     csv_close(r);
-    if (rc < 0) { free(g); free(first); return fail(p, rc == -2 ? "A quote is never closed" : "Not enough memory"); }
+    if (rc < 0) { free(g); free(first); free(first_len); return fail(p, rc == -2 ? "A quote is never closed" : "Not enough memory"); }
     for (i = 0; i < ncols; i++) types[i] = guess_type(&g[i]);
     /* the first line: names, unless each cell fits its column's type and one
      * column isn't text */
@@ -2784,7 +2790,14 @@ int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts 
     }
     if (!header)
         for (i = 0; i < ncols; i++) {
-            guess_cell(&g[i], first[i]);
+            if (first_len[i] >= (int)sizeof first[i]) {
+                /* longer than kept here: text, as long as it was */
+                g[i].yesno = g[i].whole = g[i].money = g[i].number = g[i].date = g[i].time = g[i].datetime = 0;
+                g[i].filled++;
+                if (first_len[i] > g[i].longest) g[i].longest = first_len[i];
+            } else {
+                guess_cell(&g[i], first[i]);
+            }
             types[i] = guess_type(&g[i]);
         }
     o->found_header = header;
@@ -2827,5 +2840,6 @@ int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts 
     }
     free(g);
     free(first);
+    free(first_len);
     return ok(p);
 }
