@@ -1,9 +1,9 @@
 /* tests/arexx/base.rexx: GFOpenBase's ARexx port against amicradle-teams ARexx-RULE.md (return codes
    0/5/10/20, no requester holds up a command), and opening a row hit as ACFind and GFOpenBench do:
    OPEN FILE x TABLE t ROW n.
-   rx tests/arexx/base.rexx project   (GFOpenBase running; project a copy of a .oadb holding a table
-   Customers with rows 1 and 118, as amicradle-teams' task 54 lab has; prints PASS/FAIL lines, then
-   ALL PASS or n FAILED) */
+   rx tests/arexx/base.rexx project   (GFOpenBase running; project a copy of a GFOpenBase project whose
+   tables are Customers with rows 1 and 118, logins and Orders: task 54's lab database, adopted;
+   prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
 PARSE ARG project
 IF project = '' THEN project = 'RAM:Customers.oadb'
