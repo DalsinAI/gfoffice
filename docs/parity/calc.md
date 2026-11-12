@@ -128,4 +128,6 @@ working. Phase 1's target is 74%.
   unlocked cell taking a value and a formula, the hidden formula not shown;
   all again after XLSX and after ODS; inserting rows allowed; wrong and
   missing passwords; no password. Also under AddressSanitizer and UBSan.
-- Instance-32 lab copy: tests/arexx/calc-protect.rexx; see the pull request.
+  Conditional formats can't be added or cleared on a protected sheet.
+- Amiga: OWF=library and linked builds. Instance-32 lab copy (GFOpenCalc
+  0.1.76): tests/arexx/calc.rexx and calc-protect.rexx ALL PASS.
