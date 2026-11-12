@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.34 (12.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.35 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -119,7 +119,8 @@ enum {
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
     M_AC_ON, M_AC_REPLACE, M_AC_SENTENCE, M_AC_TWO_CAPS, M_AC_QUOTES, M_AC_DASHES, M_AC_ADD, M_AC_REMOVE,
-    M_LABELS, M_ENV_DL, M_ENV_C5, M_ENV_C6
+    M_LABELS, M_ENV_DL, M_ENV_C5, M_ENV_C6,
+    M_AC_COMPLETE
 };
 
 static struct NewMenu menus[] = {
@@ -262,6 +263,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Correct TWo CApitals", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_TWO_CAPS },
     { NM_SUB, "Curly Quotes", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_QUOTES },
     { NM_SUB, "Dashes", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_DASHES },
+    { NM_SUB, "Word Completion", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_AC_COMPLETE },   /* 2.0.35 */
     { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_SUB, "Add Replacement...", NULL, 0, 0, (APTR)M_AC_ADD },
     { NM_SUB, "Remove Replacement...", NULL, 0, 0, (APTR)M_AC_REMOVE },
@@ -4412,6 +4414,19 @@ static const ow_autocorrect *ac_active(void)
     return autocorrect_on ? ac_list() : NULL;
 }
 
+/* 2.0.35: word completion: the rest of a word offered, selected, after a letter is typed; Return keeps it */
+static int completion_pending;
+
+static void type_key(const char *u, size_t n, int letter)
+{
+    const ow_autocorrect *ac = ac_active();
+    int rc = ow_editor_type(editor, ac, u, n);
+    completion_pending = 0;
+    if (rc == OWF_OK && letter && ac && (ow_autocorrect_options(ac) & OW_AC_COMPLETE))
+        completion_pending = ow_editor_complete(editor, 6) > 0;
+    editor_result(rc, completion_pending ? "Return keeps the word offered." : "Modified.");
+}
+
 static void ac_save_to(const char *dir)
 {
     char path[64];
@@ -4456,6 +4471,7 @@ static void sync_ac_menu(void)
                 else if (id == M_AC_TWO_CAPS) on = (o & OW_AC_TWO_CAPS) != 0;
                 else if (id == M_AC_QUOTES) on = (o & OW_AC_QUOTES) != 0;
                 else if (id == M_AC_DASHES) on = (o & OW_AC_DASHES) != 0;
+                else if (id == M_AC_COMPLETE) on = (o & OW_AC_COMPLETE) != 0;
                 if (on > 0) sub->Flags |= CHECKED; else if (!on) sub->Flags &= ~CHECKED;
             }
     if (win) ResetMenuStrip(win, menu);
@@ -4466,7 +4482,7 @@ static void do_autocorrect(int what)
     ow_autocorrect *ac = ac_list();
     unsigned bit = what == M_AC_REPLACE ? OW_AC_REPLACE : what == M_AC_SENTENCE ? OW_AC_SENTENCE :
                    what == M_AC_TWO_CAPS ? OW_AC_TWO_CAPS : what == M_AC_QUOTES ? OW_AC_QUOTES :
-                   what == M_AC_DASHES ? OW_AC_DASHES : 0;
+                   what == M_AC_DASHES ? OW_AC_DASHES : what == M_AC_COMPLETE ? OW_AC_COMPLETE : 0;
     if (!ac) { tell("AutoCorrect", "There is not enough memory."); return; }
     if (what == M_AC_ON) {
         autocorrect_on = !autocorrect_on;
@@ -5109,7 +5125,7 @@ static void menu_action(ULONG id)
     case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
     case M_MERGE_DOC: case M_MERGE_FILES: do_merge((int)id); break;
     case M_INDEX_ENTRY: case M_INDEX: do_index((int)id); break;
-    case M_AC_ON: case M_AC_REPLACE: case M_AC_SENTENCE: case M_AC_TWO_CAPS: case M_AC_QUOTES: case M_AC_DASHES:
+    case M_AC_ON: case M_AC_REPLACE: case M_AC_SENTENCE: case M_AC_TWO_CAPS: case M_AC_QUOTES: case M_AC_DASHES: case M_AC_COMPLETE:
     case M_AC_ADD: case M_AC_REMOVE: do_autocorrect((int)id); break;
     case M_LABELS: do_labels(); break;
     case M_ENV_DL: case M_ENV_C5: case M_ENV_C6: do_envelope((int)id); break;
@@ -5295,7 +5311,7 @@ static int rexx_do_command(const char *command, char **result_out)
         "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
         "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE "
         "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX "
-        "AUTOCORRECT ACREPLACE TYPETEXT LABELSHEETS LABELS ENVELOPE QUIT");
+        "AUTOCORRECT ACREPLACE TYPETEXT COMPLETE LABELSHEETS LABELS ENVELOPE QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
@@ -5405,8 +5421,15 @@ static int rexx_do_command(const char *command, char **result_out)
         free(uw);free(ut);}
     else if(starts_word_ci(command,"TYPETEXT",&arg)){const unsigned char *t=(const unsigned char *)arg;int rc=OWF_OK;
         if(!editor){ok=0;snprintf(result,sizeof result,"No document");}
-        else{for(;*t&&rc==OWF_OK;++t){char u[3];int n=vanilla_utf8(*t,u);rc=ow_editor_type(editor,ac_active(),u,(size_t)n);}
+        else{for(;*t&&rc==OWF_OK;++t){char u[3];int n=vanilla_utf8(*t,u);const ow_autocorrect *ac=ac_active();rc=ow_editor_type(editor,ac,u,(size_t)n);completion_pending=0;
+                if(rc==OWF_OK&&ac&&(ow_autocorrect_options(ac)&OW_AC_COMPLETE)&&(isalpha((int)*t)||*t>=0xC0))completion_pending=ow_editor_complete(editor,6)>0;}
             ok=editor_result(rc,"ARexx text typed.");snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
+    /* 2.0.35: COMPLETE answers the word's rest offered (RC 5: none); COMPLETE ACCEPT keeps it, as Return does */
+    else if(starts_word_ci(command,"COMPLETE",&arg)){
+        if(!editor||!completion_pending||ow_editor_selection_empty(editor)){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"Nothing offered");}
+        else if(!strcasecmp(arg,"ACCEPT")){ow_editor_complete_accept(editor);completion_pending=0;request_document_redraw();snprintf(result,sizeof result,"OK");}
+        else if(*arg){ok=0;snprintf(result,sizeof result,"COMPLETE takes ACCEPT");}
+        else{size_t len=0,o;char *sel=ow_editor_selection_text(editor,&len);if(!sel){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}else{o=to_latin1(sel,len,result,sizeof result);result[o<sizeof result?o:sizeof result-1]=0;free(sel);}}}
     /* 2.0.32: the alphabetical index. INDEXENTRY entry marks one at the caret ("Main:Sub" for a subentry);
      * INDEXENTRIES answers how many; INSERTINDEX puts the index at the caret (RC 5: no entries) */
     else if(starts_word_ci(command,"INDEXENTRY",&arg)){char *u;int rc;
@@ -5544,6 +5567,7 @@ static void events(void)
             else if (g && class == IDCMP_GADGETUP) format_gadget(g, code);
             break;
         case IDCMP_MOUSEBUTTONS:
+            completion_pending = 0;
             if (code == SELECTUP) {
                 if (frame_dragging) frame_drag_finish(mx, my);
                 else if (mouse_selecting) { mouse_set_selection(mx, my, 1); mouse_selecting = 0; }
@@ -5558,6 +5582,7 @@ static void events(void)
             else if (mouse_selecting) mouse_set_selection(mx, my, 1);
             break;
         case IDCMP_RAWKEY:
+            if (!(code & 0x80)) completion_pending = 0;
             if (!(code & 0x80) && editor) {
                 int extend = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
                 int alt = (qual & (IEQUALIFIER_LALT | IEQUALIFIER_RALT)) != 0;
@@ -5584,11 +5609,15 @@ static void events(void)
                 }
             }
             break;
-        case IDCMP_VANILLAKEY:
+        case IDCMP_VANILLAKEY: {
+            int offered = completion_pending;
+            completion_pending = 0;
             if (!editor) break;
             if (qual & (IEQUALIFIER_CONTROL | IEQUALIFIER_LCOMMAND | IEQUALIFIER_RCOMMAND))
                 break;
-            if (code == 8) {
+            if (code == 13 && offered && ow_editor_complete_accept(editor)) {
+                request_document_redraw();
+            } else if (code == 8) {
                 editor_result(ow_editor_backspace(editor), "Modified.");
             } else if (code == 13) {
                 if (ow_editor_in_table(editor)) editor_result(ow_editor_insert_utf8(editor, "\n", 1), "Table cell line break.");
@@ -5601,9 +5630,10 @@ static void events(void)
             } else if (code >= 32 && code < 256) {
                 char u[3];
                 int n = vanilla_utf8(code, u);
-                editor_result(ow_editor_type(editor, ac_active(), u, (size_t)n), "Modified.");
+                type_key(u, (size_t)n, isalpha((int)code) || code >= 0xC0);
             }
             break;
+        }
         case IDCMP_MENUPICK:
             while (code != MENUNULL && win) {
                 struct MenuItem *item = ItemAddress(menu, code);

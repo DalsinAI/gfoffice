@@ -6569,3 +6569,99 @@ int ow_editor_labels(ow_editor *editor, const ow_label_sheet *sheet, int first, 
     *out = all;
     return OWF_OK;
 }
+
+/* ---- 2.9.0 (core 1.10): word completion ---------------------------------------------------------------------
+ * Typing the start of a word (three letters or more) the document already has longer words for, the rest of the
+ * one used most often (the first, when as often) is put in after the caret and selected: typing on replaces it,
+ * ow_editor_complete_accept keeps it. Words are letters (ASCII, or any UTF-8 beyond it); case aside for ASCII. */
+
+static int wc_letter(unsigned char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80; }
+
+static int wc_prefix(const char *w, size_t wn, const char *p, size_t pn)
+{
+    size_t i;
+    if (wn <= pn) return 0;
+    for (i = 0; i < pn; ++i)
+        if (tolower_ascii((unsigned char)w[i]) != tolower_ascii((unsigned char)p[i])) return 0;
+    return 1;
+}
+
+int ow_editor_complete(ow_editor *editor, int min_word)
+{
+    ow_position caret, end;
+    owf_para *p;
+    owf_run *run;
+    char *text, prefix[64], best[256];
+    size_t len, at, start, pn;
+    int i, best_count = 0;
+    if (!editor || !editor->doc || !ow_editor_selection_empty(editor) || editor->track) return 0;
+    if (min_word < 4) min_word = 4;
+    caret = clamp_position(editor, editor->selection.focus);
+    p = &ed_story(editor)->paras[caret.paragraph];
+    run = &p->runs[caret.run];
+    if (run->kind != OWF_RUN_TEXT || !run->text) return 0;
+    if (!(text = paragraph_plain_text(p, &len))) return -1;
+    at = para_text_offset(p, caret);
+    if (at < len && wc_letter((unsigned char)text[at])) { owf_free(text); return 0; }   /* inside a word */
+    for (start = at; start > 0 && wc_letter((unsigned char)text[start - 1]); --start) ;
+    pn = at - start;
+    if (pn < 3 || pn >= sizeof prefix || pn > caret.byte_offset) { owf_free(text); return 0; }
+    memcpy(prefix, text + start, pn);
+    prefix[pn] = 0;
+    owf_free(text);
+    best[0] = 0;
+    {   /* every word of the body that starts so, counted */
+        struct { char w[256]; int n; } *seen = NULL;
+        int nseen = 0, cap = 0;
+        for (i = 0; i < ed_story(editor)->nparas; ++i) {
+            size_t k = 0, n;
+            char *t = paragraph_plain_text(&ed_story(editor)->paras[i], &n);
+            if (!t) { owf_free(seen); return -1; }
+            while (k < n) {
+                size_t w0;
+                while (k < n && !wc_letter((unsigned char)t[k])) ++k;
+                w0 = k;
+                while (k < n && wc_letter((unsigned char)t[k])) ++k;
+                if (k - w0 >= (size_t)min_word && k - w0 < 256 && wc_prefix(t + w0, k - w0, prefix, pn)) {
+                    int j;
+                    for (j = 0; j < nseen; ++j)
+                        if (strlen(seen[j].w) == k - w0 && !memcmp(seen[j].w, t + w0, k - w0)) break;
+                    if (j == nseen) {
+                        if (nseen == cap) {
+                            void *g = owf_realloc(seen, (size_t)(cap ? cap * 2 : 16) * sizeof *seen);
+                            if (!g) { owf_free(t); owf_free(seen); return -1; }
+                            seen = g;
+                            cap = cap ? cap * 2 : 16;
+                        }
+                        memcpy(seen[j].w, t + w0, k - w0);
+                        seen[j].w[k - w0] = 0;
+                        seen[j].n = 0;
+                        ++nseen;
+                    }
+                    ++seen[j].n;
+                }
+            }
+            owf_free(t);
+        }
+        for (i = 0; i < nseen; ++i)
+            if (seen[i].n > best_count) { best_count = seen[i].n; memcpy(best, seen[i].w, strlen(seen[i].w) + 1); }
+        owf_free(seen);
+    }
+    if (!best_count) return 0;
+    editor->typing_group = 0;                    /* an edit of its own: Undo takes back just the rest */
+    if (ow_editor_insert_utf8(editor, best + pn, strlen(best + pn)) != OWF_OK) return -1;
+    end = editor->selection.focus;
+    editor->selection.anchor = caret;            /* the rest selected, the caret at its end */
+    editor->selection.focus = end;
+    editor->typing_group = 0;
+    return 1;
+}
+
+int ow_editor_complete_accept(ow_editor *editor)
+{
+    if (!editor || ow_editor_selection_empty(editor)) return 0;
+    if (compare_position(editor->selection.anchor, editor->selection.focus) > 0)
+        editor->selection.focus = editor->selection.anchor;
+    editor->selection.anchor = editor->selection.focus;
+    return 1;
+}
