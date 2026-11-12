@@ -367,7 +367,8 @@ print) needs no script.
   are Find..., Save, Undo Record and Close.
 - Edits are kept for the record and written as one change when you move
   to another record, Find, Save or Close. A change that is refused says
-  why and keeps you on the record. Esc or Undo Record puts the record back.
+  why and keeps you on the record. Undo Record puts the record back (Esc too,
+  when no field is being typed in).
   Close asks before it loses a change that can't be saved.
 - A new record that the filter leaves out is added and the form says so.
 - Find asks for a field and the text. A field that holds text (Text, Memo,

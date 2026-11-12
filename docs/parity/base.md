@@ -31,7 +31,12 @@ as a form, one record at a time, with Find and its related rows below.
   UBSan clean): a key's place in key order and in a sorted, filtered view;
   Find on text (any case, `%` and `_` as typed), money, Yes/No, on and back,
   inside a filter; the Lookups pointing at a table, and a record's rows
-  through them. LAB_FORMS
+  through them. The same test for AmigaOS: 716 of 716 on the lab, DH1: and
+  RAM:. In GFOpenBase 0.6.0 on that lab: Customers opened as a form at its
+  first record; an Email typed and saved by moving on with >; Find "ZOE" in
+  Name went to Zoe (3 of 6); an order added with New in the Orders form
+  (2 of 2); Zoe's form listed her two orders under "Rows in Orders
+  (Customer)"; Undo Record put a typed Email back.
 - B2a: `make base-test` and `make base-check` (676 checks each, ASan and
   UBSan clean): golden SQL for criteria, joins and totals; every criterion
   form run against rows; parameters asked and checked; typed SQL refused
