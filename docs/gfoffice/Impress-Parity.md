@@ -39,7 +39,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | OpenOffice.org 1.x (`.sxi`), StarImpress | Later, if samples appear | No |
 | Export as PDF (Export as PDF..., Export Directly as PDF) | P1 | Yes: a page a slide, searchable text, JPEG and PNG pictures, hidden slides left out |
 | PDF options: page range, notes pages, handouts, hidden slides, bookmarks, tagged PDF, image compression | P2-P4 | Notes pages and handouts: Yes (0.6.25); the rest No |
-| Export slides as pictures (PNG, JPEG, GIF, BMP, SVG...) | P4 (IFF ILBM through datatypes) | No |
+| Export slides as pictures (PNG, JPEG, GIF, BMP, SVG...) | P9 | Yes in 0.6.32: File > Export as Pictures..., this slide or all, PNG or IFF ILBM; JPEG, GIF, BMP, SVG: No |
 | Export as HTML (Web Page wizard), Flash | Not planned | No |
 | Document properties: title, subject, keywords | P1 (title) | Title yes; the rest No |
 | Templates (New from template, save as template) | P3 | Model (masters and layouts come with a deck) |

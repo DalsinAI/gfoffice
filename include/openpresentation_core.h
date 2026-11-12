@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.38.0"
+#define OPR_CORE_VERSION "0.39.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -834,6 +834,19 @@ void opr_clip_free(opr_clip *c);
 int opr_clip_count(const opr_clip *c);
 int opr_clip_copy(opr_clip *c, const owf_deck *deck, const int *slides, int n);
 int opr_clip_paste(const opr_clip *c, opr_undo *u, owf_deck *deck, int at, int *selected);
+
+/* ---- Slides as pictures (P9, opr_picture.c) ----
+ * rgb: height rows of width pixels, 3 bytes each (R, G, B), stride bytes
+ * apart. The encoders return the file in memory (free it) and its length, or
+ * NULL. opr_picture_write: 0, -1 (memory or arguments), -2 (the file).
+ * opr_picture_name: "Talk.png", slide index 2 of 12 -> "Talk-03.png". */
+#define OPR_PICTURE_PNG 0
+#define OPR_PICTURE_ILBM 1
+unsigned char *opr_png_encode(const unsigned char *rgb, int width, int height, size_t stride, size_t *length);
+unsigned char *opr_ilbm_encode(const unsigned char *rgb, int width, int height, size_t stride, size_t *length);
+int opr_picture_format_for(const char *path);
+int opr_picture_write(const char *path, int format, const unsigned char *rgb, int width, int height, size_t stride);
+int opr_picture_name(char *out, size_t size, const char *path, int index, int count);
 
 #ifdef __cplusplus
 }

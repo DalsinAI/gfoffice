@@ -18,6 +18,7 @@ docs/gfoffice/Impress-Parity.md.
 | 12 Nov 2026 | 0.6.29 | 79% | P6: custom animation (entrance and exit effects, played in the show) |
 | 12 Nov 2026 | 0.6.30 | 81% | P7: the Master view and Slide Design |
 | 12 Nov 2026 | 0.6.31 | 83% | P8: slides on the clipboard, Insert Slides from File |
+| 12 Nov 2026 | 0.6.32 | 84% | P9: Export as Pictures (PNG, IFF ILBM); Phase 2 done |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 
@@ -38,7 +39,12 @@ Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 | P6 Custom animation | Done in 0.6.29 | Slide > Custom Animation...: a list of the slide's effects with Add, Change, Remove, Move Up and Move Down; each effect is an object, an effect (Appear, Fade In, Fly In, Wipe, Dissolve In and the same five out), a direction for fly and wipe, a start (on click, with previous, after previous), a duration and a delay; each change one Undo step (`opr_anim.c`, `opr_edit.c`). The show plays them: objects with an entrance wait hidden, each click runs the next step and its with/after effects, then the next slide. ODP open reads Impress's main sequence (effects it has no player for are kept and written back as they were) and Save writes the timing tree Impress reads; owfpresent.library 3.7 adds the effect list to a slide (`owf_anim`). ARexx ANIMATIONS, ANIMATION n, ADDANIMATION, CHANGEANIMATION, DELETEANIMATION, MOVEANIMATION, ANIMSTEPS, ANIMVISIBLE. Host test tests/deck/test_opr_anim.c; lab: tests/arexx/presentation.rexx |
 | P7 Master view | Done in 0.6.30 | View > Master Slides shows each master as a slide: its art, its title, outline, date, footer and number boxes, and its background, edited with every slide command (move, resize, type, pictures, shapes, delete, Undo); New, Duplicate, Rename, Delete and Move make, name, remove and order masters. Leaving the view (or saving, printing, the show) writes the masters back as one Undo step; a master's slides follow it, and a deleted master's go to the first (`opr_master.c`, `opr_masters_set` in `opr_edit.c`). Slide > Slide Design... puts this slide, or the slides picked in the sorter, on a master. ARexx VIEW MASTER, MASTERS, MASTER [n], SETMASTER n. Host test tests/deck/test_opr_master.c; lab: tests/arexx/presentation.rexx |
 | P8 Slide clipboard, Insert Slide from file | Done in 0.6.31 | In the Slide Sorter, Cut, Copy and Paste work on the picked slides: the copies keep their pictures, fonts, master, layout, notes, transition and effects, and paste after the focused slide in this deck or another one opened later, as one Undo step. Slide > Insert Slides from File... puts every slide of another ODP or PPTX after this one the same way. A master or layout of the same name is reused, otherwise it comes along; names already taken get " (2)". Charts and embedded objects kept only as file XML are left out and counted (`opr_clip.c`, `opr_slide_insert_owned` in `opr_edit.c`). ARexx COPYSLIDES, CUTSLIDES, PASTESLIDES, INSERTFILE path. Host test tests/deck/test_opr_clip.c; lab: tests/arexx/presentation.rexx |
-| P9 Export slides as pictures | Next | |
+| P9 Export slides as pictures | Done in 0.6.32 | File > Export as Pictures... writes this slide, or every slide in the show (hidden ones left out, named Name-01.png and on), painted as the show paints it, 1024 pixels wide. PNG, or IFF ILBM (24 planes, ByteRun1) when the name ends in .iff or .ilbm. PNG is deflated through z.library when it is there and written stored otherwise (`opr_picture.c`). Needs a graphics card screen (cybergraphics.library). ARexx EXPORTPICTURES path [ALL] [WIDTH n]. Host test tests/deck/test_opr_picture.c; lab: tests/arexx/presentation.rexx |
+
+## What Export as Pictures does not do yet
+
+- JPEG, GIF, BMP and SVG; a size requester (the menu writes 1024 wide; ARexx WIDTH sets it).
+- Pictures on a native (AGA) screen without cybergraphics.library.
 
 ## What the slide clipboard does not do yet
 
