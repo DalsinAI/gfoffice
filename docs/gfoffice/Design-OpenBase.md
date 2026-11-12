@@ -274,6 +274,38 @@ was (`PRAGMA schema_version`); a delete that cascades or clears rows
 elsewhere can't be undone and clears the list, as does a rollback past
 where it began.
 
+### 5.4.1 What core 0.5 and GFOpenBase 0.5 do
+
+- `ob_query` holds up to 8 tables and 16 columns, each with three rows of
+  criteria (Criteria, or, or). Each table after the first joins one before
+  it by a relationship, a Lookup either way (`JOIN ... ON child.Lookup =
+  parent.Counter`). A table with no relationship to the others is refused
+  in plain words. A table keyed by its own fields can't be joined yet.
+- The criteria words are those of the table in 5.2. Two words are added:
+  `not York` (`<>`) and `?` as a one-character wildcard. A `[question]`
+  can follow an operator (`>= [From]`). Values are checked and stored
+  like a row's, so `> 100` on a Currency field is `> 10000`. Text compares
+  without case.
+- With a Total on any column, the query groups by the columns with no
+  total. Criteria go to `HAVING` when any criterion is on a total.
+  Average of money stays money, rounded to the penny.
+- A column of every field (`Table.*`) is spread into the table's fields,
+  each with its label as the heading. Such a column can't have a sort, a
+  total or criteria.
+- Type the SQL (`sql_only`) takes one statement that starts `SELECT`,
+  `WITH` or `VALUES` and only reads (`sqlite3_stmt_readonly`). Its
+  parameters are `?`, `?1` or `:name`.
+- Saved queries live in `oadb_queries(name, grid, sql)`. The grid is kept
+  as text GFOpenBase reads back; the SQL is kept beside it for other
+  tools. The table is made when a project opens, so older projects gain
+  it without a format change. A query and a table can't share a name.
+- In GFOpenBase: Query > New Query..., Open Query... (Run, Design...,
+  Delete...), Design Query... and Run Again. A query's rows show in the
+  datasheet, read only, and a click on a table goes back to it.
+- Not yet: drawing the tables and joins as boxes (5.2's picture), saving
+  a query as a `VIEW`, a query's rows as CSV, and following a table's
+  rename into the saved queries.
+
 ### 5.5 Tests
 
 The generator is plain C and host-tested: grids in, SQL out, compared with the
