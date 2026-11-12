@@ -1913,6 +1913,7 @@ static void new_table_from_csv(void)
                                            GTCY_Labels, (ULONG)w_type_labels, GTCY_Active, (ULONG)ti, TAG_DONE);
             ng.ng_TopEdge = y += rowh;
             ng.ng_Width = fh + 6;
+            ng.ng_Flags = PLACETEXT_RIGHT; /* the label is longer than the left column */
             ng.ng_GadgetText = (UBYTE *)"Leave out bad rows";
             ng.ng_GadgetID = W_SKIP;
             g = gad[W_SKIP] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, skip, GTCB_Scaled, TRUE, TAG_DONE);
