@@ -603,12 +603,14 @@ static void build_comments_extended(owf_buf *out, const owf_doc *doc)
 static void field_instr(const owf_run *run, char *out, size_t size)
 {
     static const char *const word[] = { "PAGE", "NUMPAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF" };
+                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD" };
     const char *arg = run->href ? run->href : "";
     int f = (int)run->field >= 0 && (int)run->field <= OWF_FIELD_LAST ? (int)run->field : 0;
     if (f == OWF_FIELD_CHAPTER) snprintf(out, size, " STYLEREF 1 ");
     else if (f == OWF_FIELD_USER) snprintf(out, size, " DOCVARIABLE \"%s\" ", arg);
     else if (f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE) snprintf(out, size, " %s %s \\h ", word[f], arg);
+    else if (f == OWF_FIELD_MERGE && strchr(arg, ' ')) snprintf(out, size, " MERGEFIELD \"%s\" ", arg);
+    else if (f == OWF_FIELD_MERGE) snprintf(out, size, " MERGEFIELD %s ", arg);
     else snprintf(out, size, " %s ", word[f]);
 }
 
@@ -943,7 +945,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Override PartName=\"/word/header2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>");
     if (footer_left)
         owf_buf_puts(&part, "<Override PartName=\"/word/footer2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>");
-    if (header_left || footer_left || doc->track_changes || doc->nuserfields)
+    if (header_left || footer_left || doc->track_changes || doc->nuserfields || doc->merge_source)
         owf_buf_puts(&part, "<Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>");
     if (comments) {
         owf_buf_puts(&part, "<Override PartName=\"/word/comments.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml\"/>");
@@ -980,7 +982,7 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         owf_buf_puts(&part, "<Relationship Id=\"rId4\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header2.xml\"/>");
     if (footer_left)
         owf_buf_puts(&part, "<Relationship Id=\"rId5\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" Target=\"footer2.xml\"/>");
-    if (header_left || footer_left || doc->track_changes || doc->nuserfields)
+    if (header_left || footer_left || doc->track_changes || doc->nuserfields || doc->merge_source)
         owf_buf_puts(&part, "<Relationship Id=\"rId6\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/>");
     if (comments) {                                  /* 1.6 */
         owf_buf_puts(&part, "<Relationship Id=\"rId7\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments\" Target=\"comments.xml\"/>");
@@ -1083,10 +1085,17 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
         if (result == OWF_OK)
             result = add_part(zip, &part, "word/footer2.xml");
     }
-    if (header_left || footer_left || doc->track_changes || doc->nuserfields) {
+    if (header_left || footer_left || doc->track_changes || doc->nuserfields || doc->merge_source) {
         /* settings in the schema's order: w:trackRevisions comes before w:evenAndOddHeaders */
         owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
                             "<w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">");
+        if (doc->merge_source) {                     /* 1.9: a form letter, and where its data comes from */
+            owf_buf_puts(&part, "<w:mailMerge><w:mainDocumentType w:val=\"formLetters\"/><w:linkToQuery/>"
+                                "<w:dataType w:val=\"textFile\"/><w:connectString w:val=\"\"/>"
+                                "<w:query w:val=\"SELECT * FROM `");
+            owf_buf_puts_xml(&part, doc->merge_source);
+            owf_buf_puts(&part, "`\"/></w:mailMerge>");
+        }
         if (doc->track_changes)
             owf_buf_puts(&part, "<w:trackRevisions/>");
         if (header_left || footer_left)

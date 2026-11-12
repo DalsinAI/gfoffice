@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.30 (11.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.31 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -115,7 +115,8 @@ enum {
     M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS,
-    M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE
+    M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE,
+    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES
 };
 
 static struct NewMenu menus[] = {
@@ -272,6 +273,17 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Edit Note...", NULL, 0, 0, (APTR)M_NOTE_EDIT },
     { NM_SUB, "Footnote <-> Endnote", NULL, 0, 0, (APTR)M_NOTE_CONVERT },
     { NM_SUB, "Delete Note", NULL, 0, 0, (APTR)M_NOTE_DELETE },
+    /* 2.0.31: mail merge (core 1.6) */
+    { NM_ITEM, "Mail Merge", NULL, 0, 0, NULL },
+    { NM_SUB, "Data Source...", NULL, 0, 0, (APTR)M_MERGE_SOURCE },
+    { NM_SUB, "Insert Merge Field...", NULL, 0, 0, (APTR)M_MERGE_FIELD },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Next Record", NULL, 0, 0, (APTR)M_MERGE_NEXT },
+    { NM_SUB, "Previous Record", NULL, 0, 0, (APTR)M_MERGE_PREV },
+    { NM_SUB, "Show Field Names", NULL, 0, 0, (APTR)M_MERGE_NAMES },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Merge to Document...", NULL, 0, 0, (APTR)M_MERGE_DOC },
+    { NM_SUB, "Merge to Files...", NULL, 0, 0, (APTR)M_MERGE_FILES },
     { NM_ITEM, "User Fields...", NULL, 0, 0, (APTR)M_USER_FIELDS },
     { NM_ITEM, "Update Fields", NULL, 0, 0, (APTR)M_UPDATE_FIELDS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -914,7 +926,8 @@ static void recovery_offer(void)
     }
 }
 
-static int ask_file(int save, char *out, size_t out_size)
+/* 2.0.31: a file, with a requester titled for what it is for (title NULL: a document's) */
+static int ask_file_for(int save, const char *title, char *out, size_t out_size)
 {
     struct FileRequester *fr;
     char last[512];
@@ -922,7 +935,7 @@ static int ask_file(int save, char *out, size_t out_size)
     if (rexx_quiet("A file is needed")) return 0;
     lastdir_get("GFOpenWrite", last, sizeof last);         /* 1.0.4: where the last document was */
     fr = AllocAslRequestTags(ASL_FileRequest,
-        ASLFR_TitleText, (ULONG)(save ? "Save GFOpenWrite document" : "Open document"),
+        ASLFR_TitleText, (ULONG)(title ? title : save ? "Save GFOpenWrite document" : "Open document"),
         ASLFR_InitialDrawer, (ULONG)last,
         ASLFR_Window, (ULONG)win,
         ASLFR_SleepWindow, TRUE,
@@ -939,6 +952,11 @@ static int ask_file(int save, char *out, size_t out_size)
     }
     FreeAslRequest(fr);
     return ok;
+}
+
+static int ask_file(int save, char *out, size_t out_size)
+{
+    return ask_file_for(save, NULL, out, out_size);
 }
 
 static void open_document(const char *path)
@@ -4532,6 +4550,165 @@ static void do_note(int what)
     }
 }
 
+/* ---- 2.0.31: mail merge (core 1.6) ---- */
+
+/* One of n names (Latin-1) from a list: its index, -1: cancelled */
+static int pick_requester(const char *title, const char *label, char (*names)[72], int n)
+{
+    struct Gadget *glist = NULL, *last, *glv, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List items;
+    struct Node *nodes;
+    int i, chosen = -1, picked = 0, done = 0, ww = 320, wh = 190;
+    if (!scr || !vi || n <= 0) return -1;
+    if (!(nodes = (struct Node *)calloc((size_t)n, sizeof *nodes))) return -1;
+    NewList(&items);
+    for (i = 0; i < n; ++i) { nodes[i].ln_Name = names[i]; AddTail(&items, &nodes[i]); }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_LeftEdge = 12; ng.ng_TopEdge = 20; ng.ng_Width = 296; ng.ng_Height = 130;
+    ng.ng_GadgetText = (STRPTR)label; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_ABOVE;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&items, GTLV_ShowSelected, 0,
+                              GTLV_Selected, 0, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_GadgetText = (STRPTR)"Insert"; ng.ng_GadgetID = 2;
+    ng.ng_LeftEdge = 142; ng.ng_TopEdge = 160; ng.ng_Width = 78; ng.ng_Height = 20;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 3; ng.ng_LeftEdge = 230;
+    last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glv || !gok || !gcancel) goto out;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | LISTVIEWIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD code = m->Code;
+            UWORD id = m->IAddress && (cls == IDCMP_GADGETUP || cls == IDCMP_GADGETDOWN)
+                     ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 1) picked = code;
+                else if (id == 2) { chosen = picked >= 0 && picked < n ? picked : -1; done = 1; }
+                else if (id == 3) done = 1;
+            }
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(nodes);
+    return chosen;
+}
+
+/* Where the fields are: "Record 2 of 3" or "Field names" */
+static void merge_status(const char *before)
+{
+    char msg[200];                                   /* set_status keeps 256 */
+    int at = ow_editor_merge_shown(editor);
+    if (at >= 0) snprintf(msg, sizeof msg, "%.150sRecord %d of %d.", before, at + 1, ow_editor_merge_records(editor));
+    else snprintf(msg, sizeof msg, "%.150sField names shown.", before);
+    set_status(msg);
+}
+
+static const char *merge_error(int rc)
+{
+    return rc == OWF_ERR_IO ? "The data source could not be read." :
+           rc == OWF_ERR_FORMAT ? "The data source has no columns: its first line names them." :
+           rc == OWF_ERR_UNSUPPORTED ? "The data source has no records." : owf_error_text(rc);
+}
+
+/* Merge records into one document, or a file each (files), at path: how many records, or -(an OWF_ERR_) */
+static int merge_out(const char *path, int files)
+{
+    owf_doc *all = NULL;
+    int rc, n = 0, records = ow_editor_merge_records(editor);
+    if (!records) return -OWF_ERR_UNSUPPORTED;
+    fields_update();                                 /* the other fields as they are now */
+    if (files) {
+        rc = ow_editor_merge_to_files(editor, path, 0, -1, &n);
+    } else {
+        rc = ow_editor_merge_document(editor, 0, -1, &all);
+        if (rc == OWF_OK) {
+            owf_report *report = owf_report_new();
+            rc = owf_export_file(all, path, NULL, report);
+            owf_report_free(report);
+            owf_doc_free(all);
+            n = records;
+        }
+    }
+    pages_changed();
+    return rc == OWF_OK ? n : -rc;
+}
+
+static void do_merge(int what)
+{
+    char path[512], msg[240];
+    int rc, n, at;
+    if (!editor) return;
+    switch (what) {
+    case M_MERGE_SOURCE:
+        if (!ask_file_for(0, "Mail merge data source (CSV)", path, sizeof path)) return;
+        rc = ow_editor_merge_load(editor, path);
+        if (rc != OWF_OK) { tell("Mail Merge", merge_error(rc)); return; }
+        snprintf(msg, sizeof msg, "%.100s: %d columns, %d records. ", leaf(path), ow_editor_merge_columns(editor),
+                 ow_editor_merge_records(editor));
+        pages_changed();
+        merge_status(msg);
+        break;
+    case M_MERGE_FIELD: {
+        char (*names)[72];
+        int k, cols = ow_editor_merge_columns(editor);
+        if (!cols) { tell("Mail Merge", "Choose a data source first (Tools > Mail Merge > Data Source...)."); return; }
+        if (!(names = (char (*)[72])calloc((size_t)cols, sizeof *names))) return;
+        for (k = 0; k < cols; ++k) {
+            const char *c = ow_editor_merge_column(editor, k);
+            size_t o = to_latin1(c, strlen(c), names[k], sizeof names[k]);
+            names[k][o < sizeof names[k] ? o : sizeof names[k] - 1] = 0;
+        }
+        k = pick_requester("Insert Merge Field", "Column", names, cols);
+        free(names);
+        if (k < 0) return;
+        if (editor_result(ow_editor_insert_merge_field(editor, ow_editor_merge_column(editor, k)), "Merge field inserted."))
+            fields_update();
+        break;
+    }
+    case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
+        n = ow_editor_merge_records(editor);
+        if (!n && what != M_MERGE_NAMES) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        at = ow_editor_merge_shown(editor);
+        at = what == M_MERGE_NAMES ? -1 : what == M_MERGE_NEXT ? (at + 1 < n ? at + 1 : n - 1) : (at > 0 ? at - 1 : 0);
+        rc = ow_editor_merge_show(editor, at);
+        if (rc != OWF_OK) { editor_result(rc, NULL); return; }
+        pages_changed();
+        merge_status("");
+        break;
+    case M_MERGE_DOC: case M_MERGE_FILES:
+        if (!ow_editor_merge_records(editor)) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        if (!ask_file_for(1, what == M_MERGE_DOC ? "Merge into one document" : "Merge into files (numbered)",
+                          path, sizeof path)) return;
+        n = merge_out(path, what == M_MERGE_FILES);
+        if (n < 0) { tell("Mail Merge", owf_error_text(-n)); return; }
+        snprintf(msg, sizeof msg, what == M_MERGE_DOC ? "%d records merged into %.100s." : "%d records merged into files from %.100s.",
+                 n, leaf(path));
+        set_status(msg);
+        break;
+    }
+    request_document_redraw();
+}
+
 static void menu_action(ULONG id)
 {
     switch (id) {
@@ -4670,6 +4847,8 @@ static void menu_action(ULONG id)
     case M_COMMENT_DONE: case M_COMMENT_DELETE: do_comment((int)id); break;
     case M_FOOTNOTE: case M_ENDNOTE: case M_NOTE_NEXT: case M_NOTE_PREV: case M_NOTE_EDIT: case M_NOTE_CONVERT:
     case M_NOTE_DELETE: do_note((int)id); break;
+    case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
+    case M_MERGE_DOC: case M_MERGE_FILES: do_merge((int)id); break;
     }
 }
 
@@ -4699,7 +4878,7 @@ static char *document_plain_text(void)
             else if(run->kind==OWF_RUN_TEXT)t=run->text;
             else if(run->kind==OWF_RUN_TAB)t="\t";
             else if(run->kind==OWF_RUN_LINEBREAK)t="\n";
-            else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",caret_page()+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",page_total());else if(run->field>OWF_FIELD_TIME)snprintf(field,sizeof field,"%s",run->text?run->text:"");else field[0]=0;t=field;}
+            else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",caret_page()+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",page_total());else field[0]=0;t=run->field>OWF_FIELD_TIME?(run->text?run->text:""):field;}   /* 2.0.31: a value whole, not cut at 31 bytes */
             if(!t)continue;
             add=strlen(t);
             if(n+add+2>cap){size_t want=(n+add+2)*2;char *q=(char*)realloc(out,want);if(!q){free(out);return NULL;}out=q;cap=want;}
@@ -4839,7 +5018,7 @@ static void mem_check(char *out, size_t size)
 
 static int rexx_do_command(const char *command, char **result_out)
 {
-    const char *arg="";char result[512];int ok=1,rc_fail=RX_ERROR;char *dynamic=NULL;
+    const char *arg="";char result[768];int ok=1,rc_fail=RX_ERROR;char *dynamic=NULL;
     result[0]=0;command=skip_space(command);
     if(starts_word_ci(command,"VERSION",&arg))snprintf(result,sizeof result,"%s",VERSION_TEXT);
     /* ACTIVATE, DEACTIVATE, HELP, FAULT and LASTERROR: with VERSION and QUIT, the commands every Open app's port has */
@@ -4850,7 +5029,8 @@ static int rexx_do_command(const char *command, char **result_out)
         "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND TRACKCHANGES CHANGES NEXTCHANGE PREVCHANGE "
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
         "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
-        "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE QUIT");
+        "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE "
+        "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
@@ -4905,6 +5085,31 @@ static int rexx_do_command(const char *command, char **result_out)
         else{if(c0!='g')bring_focus_into_view();note_text(&ni,ow_editor_note_count(editor),result,sizeof result);}}
     else if(starts_word_ci(command,"CONVERTNOTE",&arg)||starts_word_ci(command,"DELETENOTE",&arg)){int del=toupper((unsigned char)command[0])=='D';int rc=!editor?OWF_ERR_UNSUPPORTED:del?ow_editor_delete_note(editor):ow_editor_convert_note(editor);
         if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No note at the caret");}else{ok=editor_result(rc,del?"Note deleted.":"Note changed kind.");snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
+    /* 2.0.31: mail merge. MERGESOURCE [file|-] reads a data source ("-": none) or answers the document's (RC 5:
+     * none); MERGEFIELDS answers the columns between '|'; MERGERECORDS how many records; MERGERECORD [n|0] shows
+     * record n (from 1; 0: the names) or answers the one shown; INSERTMERGEFIELD column at the caret; MERGE file
+     * [FILES] merges every record into one document, or a file each (numbered), and answers how many */
+    else if(starts_word_ci(command,"MERGESOURCE",&arg)){int rc;
+        if(!editor){ok=0;snprintf(result,sizeof result,"No document");}
+        else if(!*arg){const char *src=ow_editor_merge_source(editor);if(!src){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No data source");}else{size_t o=to_latin1(src,strlen(src),result,sizeof result);result[o<sizeof result?o:sizeof result-1]=0;}}
+        else{rc=ow_editor_merge_load(editor,strcmp(arg,"-")?arg:NULL);if(rc!=OWF_OK){ok=0;snprintf(result,sizeof result,"%s",merge_error(rc));}else{pages_changed();snprintf(result,sizeof result,"%d",ow_editor_merge_records(editor));}}}
+    else if(starts_word_ci(command,"MERGEFIELDS",&arg)){int k,cols=editor?ow_editor_merge_columns(editor):0;size_t o=0;result[0]=0;
+        if(!cols){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No data source");}
+        else for(k=0;k<cols&&o+2<sizeof result;++k){const char *c=ow_editor_merge_column(editor,k);if(k)result[o++]='|';o+=to_latin1(c,strlen(c),result+o,sizeof result-o);if(o>=sizeof result)o=sizeof result-1;result[o]=0;}}
+    else if(starts_word_ci(command,"MERGERECORDS",&arg))snprintf(result,sizeof result,"%d",editor?ow_editor_merge_records(editor):0);
+    else if(starts_word_ci(command,"MERGERECORD",&arg)){int rc;
+        if(!editor){ok=0;snprintf(result,sizeof result,"No document");}
+        else if(!*arg)snprintf(result,sizeof result,"%d",ow_editor_merge_shown(editor)+1);
+        else{rc=ow_editor_merge_show(editor,atoi(arg)-1);if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No such record");}else{ok=editor_result(rc,NULL);if(ok)pages_changed();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
+    else if(starts_word_ci(command,"INSERTMERGEFIELD",&arg)){char *u;int rc;
+        if(!editor||!*arg){ok=0;snprintf(result,sizeof result,"INSERTMERGEFIELD needs a column");}
+        else if(!(u=latin1_utf8(arg))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
+        else{rc=ow_editor_insert_merge_field(editor,u);free(u);ok=editor_result(rc,"Merge field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
+    else if(starts_word_ci(command,"MERGE",&arg)){char path[400];const char *rest=arg;int n=0,files;
+        while(*rest&&*rest!=' '&&n<399){path[n++]=*rest++;}path[n]=0;rest=skip_space(rest);files=starts_word_ci(rest,"FILES",NULL);
+        if(!editor||!path[0]){ok=0;snprintf(result,sizeof result,"MERGE needs a file");}
+        else if((n=merge_out(path,files))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",-n==OWF_ERR_UNSUPPORTED?"No records":owf_error_text(-n));}
+        else snprintf(result,sizeof result,"%d",n);}
     /* 2.0.29: fields. INSERTFIELD kind [name] (PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER,
      * USER name, REF name, REFPAGE name: a bookmark's); DOCINFO TITLE|AUTHOR|SUBJECT [value] answers the value;
      * USERFIELD name [value|-] answers the value (RC 5: none; "-" removes it); CROSSREF n [PAGE] refers to the
