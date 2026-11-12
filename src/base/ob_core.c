@@ -2734,7 +2734,7 @@ static void unique_name(const ob_table *t, char *name, size_t size)
     char base[OB_NAME_MAX];
     int k = 2;
     copy(base, sizeof base, name);
-    while (name_taken(t, name)) snprintf(name, size, "%.55s %d", base, k++);
+    while (name_taken(t, name) && k < 1000) snprintf(name, size, "%.50s %d", base, k++);
 }
 
 int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts *o, ob_table *out)
@@ -2809,7 +2809,9 @@ int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts 
         int clash = 0;
         if (id_col < 0 && header) for (i = 0; i < ncols; i++) if (same(first[i], "id")) clash = 1;
         if (clash) cname = "Key";
-        ob_table_add_field(out, cname, OB_COUNTER);
+        /* ob_table_init gave it a Counter "id": name it */
+        if (out->nfields && out->fields[0].type == OB_COUNTER) copy(out->fields[0].name, sizeof out->fields[0].name, cname);
+        else ob_table_add_field(out, cname, OB_COUNTER);
     }
     for (i = 0; i < ncols; i++) {
         char fname[OB_NAME_MAX];
