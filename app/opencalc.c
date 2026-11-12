@@ -2919,11 +2919,49 @@ static unsigned long conditional_colour(const char *name)
     return 0;
 }
 
+/* A data bar's colour: Excel's blue, green, red, orange, light blue, purple. */
+static unsigned long bar_colour(const char *name)
+{
+    static const char *const names[] = { "blue", "green", "red", "orange", "lightblue", "purple" };
+    static const unsigned long rgb[] = { 0x638EC6UL, 0x63C384UL, 0xFF555AUL, 0xFFB628UL, 0x008AEFUL, 0xD6007BUL };
+    int i;
+    for (i = 0; i < 6; ++i) if (!strcasecmp(name, names[i])) return OWF_SHADE(rgb[i]);
+    return 0;
+}
+
+/* "bar [colour] [only]" or "icons 3Arrows [reverse] [only]": 1 with rule set. */
+static int conditional_bar_icons(char *text, oc_condfmt_spec *rule)
+{
+    int icons = !strncasecmp(text, "icons ", 6);
+    char *p = trim_text(text + (icons ? 6 : 3));
+    if (icons) {
+        char *name = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        if (*p) *p++ = 0;
+        if (!oc_icon_set_name(name)) return 0;
+        rule->type = OC_CF_ICON_SET;
+        rule->icon_set = oc_icon_set_name(name);
+    } else {
+        rule->type = OC_CF_DATA_BAR;
+    }
+    while (*(p = trim_text(p))) {
+        char *word = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        if (*p) *p++ = 0;
+        if (!strcasecmp(word, "only")) rule->hide_value = 1;
+        else if (icons && !strcasecmp(word, "reverse")) rule->reverse = 1;
+        else if (icons || rule->fill || !(rule->fill = bar_colour(word))) return 0;
+    }
+    return 1;
+}
+
 static int conditional_parse(char *text, oc_condfmt_spec *rule)
 {
     char *p, *join = NULL, *value, *dots;
     memset(rule, 0, sizeof *rule);
     text = trim_text(text);
+    if (!strncasecmp(text, "icons ", 6) || !strcasecmp(text, "bar") || !strncasecmp(text, "bar ", 4))
+        return conditional_bar_icons(text, rule);
     if (!strncasecmp(text, "scale ", 6)) {
         char *words[3]; int n = 0;
         p = trim_text(text + 6);
@@ -2974,17 +3012,14 @@ static int conditional_parse(char *text, oc_condfmt_spec *rule)
     return 1;
 }
 
-static void do_conditional_format(void)
+/* A rule as the window takes it, over the selection: OWF_OK..., or OWF_ERR_FORMAT for words it does not take. */
+static int conditional_apply(char *entered)
 {
-    char entered[256], *utf8 = NULL, *utf8b = NULL;
+    char *utf8 = NULL, *utf8b = NULL;
     oc_condfmt_spec rule;
     int rc;
-    if (!text_requester("Conditional Format", "red if >10; green if formula A1>0; scale red blue",
-                        "red if > 10", entered, sizeof entered)) return;
-    if (!conditional_parse(entered, &rule)) {
-        set_status("Use red if > 10, green if formula A1>0, or scale red yellow green.");
-        return;
-    }
+    if (!conditional_parse(entered, &rule))
+        return OWF_ERR_FORMAT;
     if (rule.formula[0]) utf8 = from_latin1(rule.formula[0]);
     if (rule.formula[1]) utf8b = from_latin1(rule.formula[1]);
     if ((rule.formula[0] && !utf8) || (rule.formula[1] && !utf8b)) rc = OWF_ERR_MEMORY;
@@ -2994,6 +3029,22 @@ static void do_conditional_format(void)
         rc = oc_core_add_condfmt(core, &rule);
     }
     owf_free(utf8); owf_free(utf8b);
+    return rc;
+}
+
+#define CONDFMT_WORDS "red if > 10, green if formula A1>0, scale red yellow green, bar blue, or icons 3Arrows"
+
+static void do_conditional_format(void)
+{
+    char entered[256];
+    int rc;
+    if (!text_requester("Conditional Format", "red if >10; scale red blue; bar blue; icons 3Arrows",
+                        "red if > 10", entered, sizeof entered)) return;
+    rc = conditional_apply(entered);
+    if (rc == OWF_ERR_FORMAT) {
+        set_status("Use " CONDFMT_WORDS ".");
+        return;
+    }
     result(rc, "Conditional format added.");
 }
 
@@ -6441,7 +6492,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS PROTECT UNPROTECT CELLPROTECT ISPROTECTED QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -6517,6 +6568,21 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = rexx_multiop(arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "ADVFILTER", &arg)) {
         ok = rexx_advfilter(arg, result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "CONDFMT", &arg)) {
+        /* CONDFMT range rule (as the window takes it) | CONDFMT range CLEAR */
+        char where[64], rule[256];
+        owf_range r;
+        const char *rest = rexx_word(arg, where, sizeof where);
+        int rc;
+        snprintf(rule, sizeof rule, "%s", skip_space(rest));
+        if (!oc_parse_range(where, &r)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a range: %s", where); }
+        else {
+            oc_core_select_range(core, &r);
+            rc = !strcasecmp(rule, "CLEAR") ? oc_core_clear_condfmt(core) : conditional_apply(rule);
+            ok = rc == OWF_OK;
+            snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_FORMAT ? "Use " CONDFMT_WORDS
+                                                             : rc == OC_PROTECTED ? "The sheet is protected" : owf_error_text(rc));
+        }
     } else if (starts_word_ci(command, "TEXTTOCOLUMNS", &arg) || starts_word_ci(command, "REMOVEDUPS", &arg)) {
         /* the range first, then the options: TEXTTOCOLUMNS gives the columns split into, REMOVEDUPS the rows removed */
         char where[64];

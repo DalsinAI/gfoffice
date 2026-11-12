@@ -85,7 +85,7 @@ static int validation_copy(owf_validation *dst, const owf_validation *src,
     dst->formula[0] = dst->formula[1] = NULL;
     dst->prompt_title = dst->prompt = dst->error_title = dst->error = NULL;
     dst->nranges = nranges;
-    if (nranges && !(dst->ranges = malloc((size_t)nranges * sizeof *dst->ranges))) failed = 1;
+    if (nranges && !(dst->ranges = owf_malloc((size_t)nranges * sizeof *dst->ranges))) failed = 1;
     if (!failed && nranges) memcpy(dst->ranges, ranges, (size_t)nranges * sizeof *ranges);
     dst->formula[0] = valid_copy(src->formula[0], &failed);
     dst->formula[1] = valid_copy(src->formula[1], &failed);
@@ -104,7 +104,7 @@ static int validation_add(owf_validation **rules, int *n, int *cap,
     if (!nranges) return 1;
     if (*n == *cap) {
         int size = *cap ? *cap * 2 : 4;
-        grown = realloc(*rules, (size_t)size * sizeof *grown);
+        grown = owf_realloc(*rules, (size_t)size * sizeof *grown);
         if (!grown) return 0;
         *rules = grown;
         *cap = size;
@@ -118,7 +118,7 @@ static void validations_free(owf_validation *rules, int n)
 {
     int i;
     for (i = 0; i < n; ++i) owf_validation_free(&rules[i]);
-    free(rules);
+    owf_free(rules);
 }
 
 static int validation_spec_ok(const oc_validation_spec *rule)
@@ -213,7 +213,7 @@ int oc_core_set_validation(oc_core *core, const oc_validation_spec *rule)
     undo = oc_undo_new(core, OC_UNDO_BOOK);
     if (undo && oc_undo_save_book(core, undo) != OWF_OK) { oc_undo_free(undo); undo = NULL; }
     for (i = 0; i < sheet->nvalidations; ++i) owf_validation_free(&sheet->validations[i]);
-    free(sheet->validations);
+    owf_free(sheet->validations);
     sheet->validations = fresh;
     sheet->nvalidations = nfresh;
     sheet->capvalidations = capfresh;

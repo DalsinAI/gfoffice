@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.5.0"
+#define OW_CORE_VERSION "1.7.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -175,6 +175,13 @@ typedef int (*ow_toc_pages_fn)(void *userdata, const owf_doc *doc,
 int ow_editor_insert_table_of_contents(ow_editor *editor, int max_level,
                                        ow_toc_pages_fn resolve_pages,
                                        void *userdata);
+/* Core 1.7: an alphabetical index. An entry is a mark at the caret (after a selection, which stays) that shows
+ * nothing: "Lamps", or "Lamps:LED" for a subentry. ow_editor_insert_index builds, at the caret as the contents
+ * are, a title and a line for each entry and subentry in alphabetical order with its marks' pages ("Lamps, 2,
+ * 5"), undone as one edit; the resolver gets each mark's paragraph. OWF_ERR_UNSUPPORTED: no entries. */
+int ow_editor_insert_index_entry(ow_editor *editor, const char *entry);
+int ow_editor_index_entry_count(const ow_editor *editor);
+int ow_editor_insert_index(ow_editor *editor, ow_toc_pages_fn resolve_pages, void *userdata);
 
 /* 2.0.23: the left pages' (the even-numbered) own, doc->header_left and footer_left */
 typedef enum { OW_STORY_HEADER = 1, OW_STORY_FOOTER = 2, OW_STORY_HEADER_LEFT = 3, OW_STORY_FOOTER_LEFT = 4 } ow_story_kind;
@@ -348,6 +355,39 @@ int ow_editor_set_user_field(ow_editor *editor, const char *name, const char *va
 /* A reference to body paragraph paragraph at the caret: its text, or (page 1) its page; the paragraph gets a
  * bookmark ("_Ref1" ...) when it has none */
 int ow_editor_insert_cross_reference(ow_editor *editor, int paragraph, int page);
+
+/* ---- Mail merge (core 1.6) ----
+ * A data source is a CSV file (comma, semicolon or tab separated; quoted cells; UTF-8 or Latin-1) whose first
+ * row names the columns. A merge field shows its column's name in guillemets, or a record's value while that
+ * record is shown (ow_editor_merge_show). The document keeps the source's path (owf_doc.merge_source) and reads
+ * it again when it is asked for. A merge makes each record's document, with the fields' values as plain text,
+ * tracked changes accepted and comments left out. */
+/* Read a data source (path NULL or "": none, and the document forgets it): OWF_OK, OWF_ERR_IO (no such file),
+ * OWF_ERR_FORMAT (no columns), OWF_ERR_UNSUPPORTED (over 4 MB) or OWF_ERR_MEMORY */
+int ow_editor_merge_load(ow_editor *editor, const char *path);
+/* The same from bytes in memory; name (when given) becomes the document's data source */
+int ow_editor_merge_load_text(ow_editor *editor, const char *name, const char *data, size_t length);
+/* Forget the table read (the document keeps its data source) */
+void ow_editor_merge_close(ow_editor *editor);
+/* The document's data source (NULL: none) */
+const char *ow_editor_merge_source(const ow_editor *editor);
+/* The columns and records (0: no data source, or it can't be read) */
+int ow_editor_merge_columns(ow_editor *editor);
+const char *ow_editor_merge_column(ow_editor *editor, int index);
+int ow_editor_merge_records(ow_editor *editor);
+/* A record's value in a column (record from 0; column by name, then without minding case), NULL: none */
+const char *ow_editor_merge_value(const ow_editor *editor, int record, const char *column);
+/* The record the fields show (-1: the columns' names); show one (-1: the names) and lay out again */
+int ow_editor_merge_shown(const ow_editor *editor);
+int ow_editor_merge_show(ow_editor *editor, int record);
+/* A merge field for column at the caret (undoable) */
+int ow_editor_insert_merge_field(ow_editor *editor, const char *column);
+/* Records first to last (from 0; last -1: to the end) merged into one new document, each from a new page
+ * (*out is the caller's: owf_doc_free); OWF_ERR_UNSUPPORTED: no records */
+int ow_editor_merge_document(ow_editor *editor, int first, int last, owf_doc **out);
+/* Records first to last each saved as its own file, path with the record's number (from 1) before its
+ * extension (RAM:letter.odt: RAM:letter1.odt ...), in the format the extension names; *written: how many */
+int ow_editor_merge_to_files(ow_editor *editor, const char *path, int first, int last, int *written);
 
 #ifdef __cplusplus
 }

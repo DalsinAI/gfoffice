@@ -1575,9 +1575,10 @@ static void cf_kept_done(xlsx *x, cfread *cr)
     }
     if (!(cf->xml = copy(x, (const char *)cr->xml.data, cr->xml.length)))
         return;
-    if (!cf->formula[0])
+    /* data bars and icon sets are shown (GFOpenCalc's oc_condfmt.c); the others only kept */
+    if (!cf->formula[0] && !strstr(cf->xml, "type=\"dataBar\"") && !strstr(cf->xml, "type=\"iconSet\""))
         owf_report_add(x->report, OWF_NOTE_APPROX,
-                       "Some conditional formats (data bars, icon sets, top 10 and the like) are kept but not shown");
+                       "Some conditional formats (top 10, above average and the like) are kept but not shown");
 }
 
 /* The events of a sheet's conditional formatting (and those of a kept rule, all of them): 1 when it took

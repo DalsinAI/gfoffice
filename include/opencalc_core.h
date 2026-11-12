@@ -313,7 +313,20 @@ typedef struct {
         const char *value;
         unsigned long colour;
     } points[3];
+    /* OC_CF_DATA_BAR: a bar from the lowest number to the highest (or points[0], [1] when npoints is 2), in
+     * fill (OWF_SHADE(0xRRGGBB); 0: Excel's blue). OC_CF_ICON_SET: icon_set is Excel's name ("3Arrows",
+     * "3TrafficLights1", "4Rating", "5Quarters"...), its icons for equal thirds (quarters, fifths) of the
+     * way from the lowest number to the highest; reverse turns the order round. hide_value shows the bar or
+     * icon alone. Both are kept in XLSX and ODS. */
+    const char *icon_set;
+    int reverse, hide_value;
 } oc_condfmt_spec;
+enum { OC_CF_DATA_BAR = 16, OC_CF_ICON_SET };
+/* Excel's name of an icon set given in any case ("3arrows": "3Arrows"), or NULL when there is none. */
+const char *oc_icon_set_name(const char *name);
+int oc_core_add_condfmt(oc_core *core, const oc_condfmt_spec *rule);
+int oc_core_clear_condfmt(oc_core *core);
+
 /* ---- Sheet and cell protection ----
  * Protecting the active sheet stops every change to its locked cells (all
  * cells are locked until made unlocked) and what allow (OWF_ALLOW_...,
@@ -332,9 +345,6 @@ int oc_core_sheet_protection(const oc_core *core, unsigned *allow, int *has_pass
 int oc_core_set_cell_protection(oc_core *core, int locked, int formula_hidden);
 /* Excel's 16-bit hash of a password (0 for none). */
 unsigned oc_password_hash(const char *password);
-
-int oc_core_add_condfmt(oc_core *core, const oc_condfmt_spec *rule);
-int oc_core_clear_condfmt(oc_core *core);
 
 /* The formula bar's text: what is being typed, or what the active cell
  * holds as one would type it ("=SUM(A1:A3)", "12.5", "'0123"). The

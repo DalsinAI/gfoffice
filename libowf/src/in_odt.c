@@ -490,6 +490,10 @@ static int odf_field(const owf_xml_node *c)
     if (owf_xml_is(c, NS_TEXT, "word-count")) return OWF_FIELD_WORDS;
     if (owf_xml_is(c, NS_TEXT, "chapter")) return OWF_FIELD_CHAPTER;
     if (owf_xml_is(c, NS_TEXT, "user-field-get") && owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_USER;
+    if (owf_xml_is(c, NS_TEXT, "database-display") && owf_xml_attr(c, NS_TEXT, "column-name") &&
+        *owf_xml_attr(c, NS_TEXT, "column-name")) return OWF_FIELD_MERGE;                  /* 1.9 */
+    if (owf_xml_is(c, NS_TEXT, "alphabetical-index-mark") && owf_xml_attr(c, NS_TEXT, "string-value") &&
+        *owf_xml_attr(c, NS_TEXT, "string-value")) return OWF_FIELD_INDEX;                 /* 1.10 */
     if ((owf_xml_is(c, NS_TEXT, "bookmark-ref") || owf_xml_is(c, NS_TEXT, "reference-ref")) &&
         owf_xml_attr(c, NS_TEXT, "ref-name")) {
         form = owf_xml_attr(c, NS_TEXT, "reference-format");
@@ -991,6 +995,29 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         owf_field field = (owf_field)odf_field(c);
         if (field == OWF_FIELD_USER) arg = owf_xml_attr(c, NS_TEXT, "name");
         else if (field == OWF_FIELD_REF || field == OWF_FIELD_REF_PAGE) arg = owf_xml_attr(c, NS_TEXT, "ref-name");
+        else if (field == OWF_FIELD_INDEX) {         /* 1.10: the entry, under its main entry (key1) */
+            const char *key = owf_xml_attr(c, NS_TEXT, "key1"), *value = owf_xml_attr(c, NS_TEXT, "string-value");
+            if (key && *key) {
+                size_t n = strlen(key) + strlen(value) + 2;
+                char *both = (char *)malloc(n);
+                if (!both) o->b->failed = 1;
+                else {
+                    snprintf(both, n, "%s:%s", key, value);
+                    set_fmt(o->b, &rel);
+                    owf_builder_field(o->b, field, both, "");
+                    free(both);
+                }
+                o->space = 0;
+                return;
+            }
+            arg = value;
+        }
+        else if (field == OWF_FIELD_MERGE) {         /* 1.9: the column, and the first field's database */
+            const char *db = owf_xml_attr(c, NS_TEXT, "database-name");
+            arg = owf_xml_attr(c, NS_TEXT, "column-name");
+            if (db && *db && !o->b->doc->merge_source && owf_doc_set_merge_source(o->b->doc, db) < 0)
+                o->b->failed = 1;
+        }
         owf_buf_init(&shown);
         plain_text(c, &shown);
         owf_buf_putc(&shown, 0);

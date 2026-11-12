@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.36.0"
+#define OPR_CORE_VERSION "0.39.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -781,6 +781,72 @@ typedef struct {
 } opr_anim_look;
 int opr_anim_look_at(const opr_anim_play *p, long t, int x, int y, int w, int h,
                      int sx, int sy, int sw, int sh, opr_anim_look *look);
+
+/* ---- The Master view (P7, opr_master.c) ----
+ *
+ * The masters edited as slides: opr_master_view_open makes a deck whose
+ * slide i is master i (its art and placeholders as the slide's objects, its
+ * background as the slide's, under a copy of the master with its text levels
+ * and no objects). It shares the deck's pictures, fonts and kept XML, so
+ * every slide command works on it with an opr_undo of its own.
+ * opr_master_view_commit writes its slides back as the deck's masters in one
+ * Undo step of u: a master's slides follow it wherever it moved, a new slide
+ * is a new master, and the slides of a master deleted go to the first.
+ * 0 written, -2 when the view has no slides (a deck keeps one master), -1
+ * no memory. opr_master_view_free gives back what the view borrowed; free
+ * it before the deck is freed or saved. */
+typedef struct opr_master_view opr_master_view;
+opr_master_view *opr_master_view_open(owf_deck *deck);
+owf_deck *opr_master_view_deck(opr_master_view *v);
+/* The deck's master the view's slide is (as last written back), or -1 for a new one. */
+int opr_master_view_origin(const opr_master_view *v, int slide);
+int opr_master_view_commit(opr_master_view *v, opr_undo *u);
+void opr_master_view_free(opr_master_view *v);
+/* How many of the deck's slides use master. */
+int opr_master_slides(const owf_deck *deck, int master);
+/* opr_edit.c: the deck's masters replaced by masters (owned once this
+ * succeeds; nmasters of capmasters, one at least), each slide's and layout's
+ * master given anew (slide_masters nslides long, layout_masters nlayouts
+ * long; -1 for a layout of any master): one Undo step. -1 for bad input. */
+int opr_masters_set(opr_undo *u, owf_deck *deck, owf_master *masters, int nmasters, int capmasters,
+                    const int *slide_masters, const int *layout_masters);
+/* Slide Design: one slide's master, one Undo step (0 when it already was). */
+int opr_slide_set_master(opr_undo *u, owf_deck *deck, int slide, int master);
+
+/* ---- Slides from another deck (P8, opr_clip.c) ----
+ *
+ * opr_slides_insert_from: copies of src's slides (n of them, by index) go in
+ * at at (-1: the end) as one Undo step. Their pictures and fonts are added to
+ * the deck's, each master is the deck's of the same name or comes along, each
+ * layout is the deck's of the same name or none. Objects src kept as XML it
+ * cannot draw (charts, embedded objects) are left out and counted in
+ * *left_out; effects and transitions without a player become plain ones;
+ * names already taken get " (2)" and on. *selected: the first new slide. */
+int opr_slides_insert_from(opr_undo *u, owf_deck *dst, int at, const owf_deck *src, const int *slides, int n,
+                           int *selected, int *left_out);
+/* opr_edit.c: an owned slide put in at at, one Undo step (the slide is the deck's after). */
+int opr_slide_insert_owned(opr_undo *u, owf_deck *deck, int at, owf_slide *slide, int *selected);
+/* The sorter's clipboard: copies of slides kept in a deck of its own, so they
+ * paste into this deck or another one opened later. */
+typedef struct opr_clip opr_clip;
+opr_clip *opr_clip_new(void);
+void opr_clip_free(opr_clip *c);
+int opr_clip_count(const opr_clip *c);
+int opr_clip_copy(opr_clip *c, const owf_deck *deck, const int *slides, int n);
+int opr_clip_paste(const opr_clip *c, opr_undo *u, owf_deck *deck, int at, int *selected);
+
+/* ---- Slides as pictures (P9, opr_picture.c) ----
+ * rgb: height rows of width pixels, 3 bytes each (R, G, B), stride bytes
+ * apart. The encoders return the file in memory (free it) and its length, or
+ * NULL. opr_picture_write: 0, -1 (memory or arguments), -2 (the file).
+ * opr_picture_name: "Talk.png", slide index 2 of 12 -> "Talk-03.png". */
+#define OPR_PICTURE_PNG 0
+#define OPR_PICTURE_ILBM 1
+unsigned char *opr_png_encode(const unsigned char *rgb, int width, int height, size_t stride, size_t *length);
+unsigned char *opr_ilbm_encode(const unsigned char *rgb, int width, int height, size_t stride, size_t *length);
+int opr_picture_format_for(const char *path);
+int opr_picture_write(const char *path, int format, const unsigned char *rgb, int width, int height, size_t stride);
+int opr_picture_name(char *out, size_t size, const char *path, int index, int count);
 
 #ifdef __cplusplus
 }

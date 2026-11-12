@@ -292,7 +292,74 @@ CALL want 'ANIMATION 2', 0
 CALL same 'ANIMATION 2 after reopening', res, '1 DISSOLVEOUT WITH BOTTOM 1000 200'
 CALL want 'DELETEANIMATION 2', 0
 CALL same 'DELETEANIMATION', res, 1
+/* the Master view: a slide a master; art moved there is the master's; written back as one Undo step */
 CALL want 'VIEW NORMAL', 0
+CALL want 'MASTERS', 0
+nm = res
+CALL want 'MASTER', 0
+SAY '     MASTER:' res
+CALL want 'VIEW MASTER', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW in the masters', res, 'MASTER'
+CALL want 'SLIDES', 0
+CALL same 'a slide a master', res, nm
+CALL want 'OBJECTS', 0
+IF WORD(res, 1) > 0 THEN DO
+    CALL want 'PICKOBJECTS 1', 0
+    CALL want 'MOVEOBJECTS 0 100', 0
+END
+CALL want 'NEWSLIDE', 0                        /* a new master */
+CALL want 'SETMASTER 1', 5                     /* not in the Master view */
+CALL want 'VIEW NORMAL', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after the masters', res, 'NORMAL'
+CALL want 'MASTERS', 0
+CALL same 'a master added', res, nm + 1
+CALL want 'UNDO', 0
+CALL want 'MASTERS', 0
+CALL same 'MASTERS after UNDO', res, nm
+CALL want 'REDO', 0
+CALL want 'MASTERS', 0
+CALL same 'MASTERS after REDO', res, nm + 1
+CALL want 'SETMASTER' nm + 1, 0
+CALL want 'MASTER', 0
+CALL same 'the slide on the new master', WORD(res, 1), nm + 1
+CALL want 'UNDO', 0
+CALL want 'MASTER', 0
+CALL same 'SETMASTER undone', WORD(res, 1) = nm + 1, 0
+CALL want 'SETMASTER 99', 10
+CALL want 'MASTER 99', 10
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 1', 0
+CALL want 'SLIDES', 0                         /* P8: whole slides on a clipboard of their own */
+ns = res
+CALL want 'COPYSLIDES', 0
+CALL same 'COPYSLIDES', res, 1
+CALL want 'PASTESLIDES', 0
+CALL same 'PASTESLIDES lands after slide 1', res, 2
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after PASTESLIDES', res, ns + 1
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'PASTESLIDES undone', res, ns
+CALL want 'INSERTFILE RAM:arexx-test.odp', 0
+ni = res
+IF ni < 1 THEN CALL bad 'INSERTFILE put in' ni 'slides'
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after INSERTFILE', res, ns + ni
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'INSERTFILE undone in one step', res, ns
+CALL want 'INSERTFILE RAM:no/such/file.odp', 10
+CALL want 'EXPORTPICTURES RAM:arexx-pic.png', 0  /* P9: this slide as a PNG */
+CALL same 'EXPORTPICTURES one', res, 1
+IF ~EXISTS('RAM:arexx-pic.png') THEN CALL bad 'EXPORTPICTURES wrote no RAM:arexx-pic.png'
+CALL want 'EXPORTPICTURES RAM:arexx-pic.iff ALL WIDTH 320', 0
+np = res
+IF np < 1 THEN CALL bad 'EXPORTPICTURES ALL wrote' np
+IF ~EXISTS('RAM:arexx-pic-01.iff') THEN CALL bad 'EXPORTPICTURES ALL wrote no RAM:arexx-pic-01.iff'
+CALL want 'EXPORTPICTURES', 10
+CALL want 'EXPORTPICTURES RAM:no/such/drawer/x.png', 10
 CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0
 CALL want 'DELETESLIDE', 5                     /* the last slide stays */
