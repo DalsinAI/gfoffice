@@ -1,5 +1,5 @@
 /*
- * owfpresent.library 3.6, GFOpenPresentation's part of libowf: presentations.
+ * owfpresent.library 3.7, GFOpenPresentation's part of libowf: presentations.
  * The deck model, its formats (ODP, flat ODP) and the page PDF writer, with
  * the document model its text uses.
  *
@@ -28,12 +28,17 @@
  * view types into it as into any frame), not an owf_story, so owf_slide is
  * larger and a program's size check refuses 3.5. No call changes.
  *
+ * 3.7: custom animation. owf_slide ends with its effects (nanims, capanims,
+ * anims), so it is larger again; owf_slide_obj_by_id, owf_deck_new_obj_id,
+ * owf_slide_add_anim and owf_slide_delete_anim are new; ODP reads and
+ * writes the effects.
+ *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 6
-#define OWF_LIB_VERS "3.6"
-#define OWF_LIB_DATE "11.11.2026"
+#define OWF_LIB_REVISION 7
+#define OWF_LIB_VERS "3.7"
+#define OWF_LIB_DATE "12.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"

@@ -107,4 +107,9 @@ const char *owf_pdf_fallback(unsigned long codepoint) (d0)
 * 3.4: owf_obj text-frame column count and gap; no call changes
 * 3.5: owf_obj wrap kind and per-side gaps; no call changes
 owf_slide *owf_deck_duplicate_slide(owf_deck *deck, int index, int at) (a0,d0,d1)
+* 3.7: custom animation: owf_slide's effects (anims), and the calls for them
+int owf_slide_obj_by_id(const owf_slide *slide, long id) (a0,d0)
+long owf_deck_new_obj_id(const owf_deck *deck) (a0)
+owf_anim *owf_slide_add_anim(owf_slide *slide, int at, long obj) (a0,d0,d1)
+int owf_slide_delete_anim(owf_slide *slide, int index) (a0,d0)
 ==end

@@ -2098,12 +2098,14 @@ static void read_notes(odp *o, owf_slide *s, const owf_xml_node *notes, const ow
     }
 }
 
+static int read_effects(odp *o, owf_slide *s, const owf_xml_node *n, int depth);
+
 static void read_page(odp *o, const owf_xml_node *page)
 {
     owf_slide *s;
     const gstyle *st;
     const owf_master *m;
-    const owf_xml_node *c, *d;
+    const owf_xml_node *c, *d, *timing = NULL;
     objctx oc;
     const char *v;
 
@@ -2152,13 +2154,193 @@ static void read_page(odp *o, const owf_xml_node *page)
             read_notes(o, s, c, m);
         } else if (is(c, NS_ANIM, "par") || is(c, NS_ANIM, "seq")) {
             s->keep_timing = keep_xml(o, OWF_KEPT_TIMING, c);
-            owf_report_add(o->report, OWF_NOTE_APPROX, "Animations are kept, not played");
+            timing = c;
         } else if (is(c, NS_OFFICE, "forms")) {
             /* nothing to show */
         } else {
             read_object(o, &oc, c, -1, 0);
         }
     }
+    /* after the objects, whose ids the effects name; the slide may have moved in the array meanwhile */
+    if (timing && !o->failed) {
+        s = &o->deck->slides[o->deck->nslides - 1];
+        if (read_effects(o, s, timing, 0))
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Some animations are kept, not played");
+    }
+}
+
+/* ---- Custom animation: the main sequence's effects into owf_slide.anims ---- */
+
+/* An ODF clock value ("0.5s", "2s", "500ms", "0:00:01.5") in milliseconds; -1 when it is not one. */
+static long clock_ms(const char *v)
+{
+    long whole = 0, frac = 0, scale = 1, ms;
+    int digits = 0;
+    if (!v)
+        return -1;
+    while (*v == ' ')
+        v++;
+    if (strchr(v, ':')) {               /* hh:mm:ss.f */
+        long part = 0, total = 0;
+        for (; *v && *v != '.'; v++) {
+            if (*v == ':') { total = total * 60 + part; part = 0; }
+            else if (*v >= '0' && *v <= '9') part = part * 10 + (*v - '0');
+            else return -1;
+        }
+        whole = total * 60 + part;
+        if (*v == '.')
+            for (v++; *v >= '0' && *v <= '9' && scale < 1000; v++) { frac = frac * 10 + (*v - '0'); scale *= 10; }
+        return whole * 1000 + frac * 1000 / scale;
+    }
+    for (; *v >= '0' && *v <= '9'; v++, digits++)
+        if (whole < 100000000L)
+            whole = whole * 10 + (*v - '0');
+    if (*v == '.')
+        for (v++; *v >= '0' && *v <= '9'; v++, digits++)
+            if (scale < 1000) { frac = frac * 10 + (*v - '0'); scale *= 10; }
+    if (!digits)
+        return -1;
+    if (v[0] == 'm' && v[1] == 's')
+        ms = whole + frac / scale;
+    else if (v[0] == 's' || !v[0])
+        ms = whole * 1000 + frac * 1000 / scale;
+    else
+        return -1;
+    return ms > 3600000L ? 3600000L : ms;
+}
+
+/* The object on the slide an effect names (draw:id or xml:id), given an id when it has none. */
+static long anim_target(odp *o, owf_slide *s, const char *ref)
+{
+    long n = id_number(ref);
+    int i;
+    if (!ref)
+        return 0;
+    for (i = 0; i < s->nobjs; i++) {
+        owf_obj *b = &s->objs[i];
+        if ((b->xml_id && !strcmp(b->xml_id, ref)) || (!b->xml_id && n > 0 && b->id == n)) {
+            if (b->id <= 0) {
+                long top = owf_deck_new_obj_id(o->deck);
+                int j;
+                for (j = 0; j < s->nobjs; j++)
+                    if (s->objs[j].id >= top)
+                        top = s->objs[j].id + 1;
+                b->id = top;
+            }
+            return b->id;
+        }
+    }
+    return 0;
+}
+
+static const owf_xml_node *first_target(const owf_xml_node *n)
+{
+    const owf_xml_node *c, *t;
+    for (c = n ? n->first : NULL; c; c = c->next) {
+        if (c->type != OWF_XML_ELEMENT)
+            continue;
+        if (attr(c, NS_SMIL, "targetElement"))
+            return c;
+        if ((t = first_target(c)))
+            return t;
+    }
+    return NULL;
+}
+
+/* The longest smil:dur under an effect, leaving out the instant sets (0.001s). */
+static long effect_duration(const owf_xml_node *n)
+{
+    const owf_xml_node *c;
+    long most = 0, d;
+    for (c = n ? n->first : NULL; c; c = c->next) {
+        if (c->type != OWF_XML_ELEMENT)
+            continue;
+        d = clock_ms(attr(c, NS_SMIL, "dur"));
+        if (d > 10 && d > most)
+            most = d;
+        d = effect_duration(c);
+        if (d > most)
+            most = d;
+    }
+    return most;
+}
+
+static void read_effect(odp *o, owf_slide *s, const owf_xml_node *e)
+{
+    static const struct { const char *id; unsigned char cls, effect; } presets[] = {
+        { "ooo-entrance-appear", OWF_ANIM_ENTRANCE, OWF_EFFECT_APPEAR },
+        { "ooo-entrance-fade-in", OWF_ANIM_ENTRANCE, OWF_EFFECT_FADE },
+        { "ooo-entrance-fly-in", OWF_ANIM_ENTRANCE, OWF_EFFECT_FLY },
+        { "ooo-entrance-wipe", OWF_ANIM_ENTRANCE, OWF_EFFECT_WIPE },
+        { "ooo-entrance-dissolve-in", OWF_ANIM_ENTRANCE, OWF_EFFECT_DISSOLVE },
+        { "ooo-exit-disappear", OWF_ANIM_EXIT, OWF_EFFECT_APPEAR },
+        { "ooo-exit-fade-out", OWF_ANIM_EXIT, OWF_EFFECT_FADE },
+        { "ooo-exit-fly-out", OWF_ANIM_EXIT, OWF_EFFECT_FLY },
+        { "ooo-exit-wipe", OWF_ANIM_EXIT, OWF_EFFECT_WIPE },
+        { "ooo-exit-dissolve", OWF_ANIM_EXIT, OWF_EFFECT_DISSOLVE }
+    };
+    const char *cls = attr(e, NS_PRES, "preset-class"), *id = attr(e, NS_PRES, "preset-id");
+    const char *node = attr(e, NS_PRES, "node-type"), *sub = attr(e, NS_PRES, "preset-sub-type");
+    const owf_xml_node *t = first_target(e);
+    owf_anim *a;
+    long obj, delay;
+    size_t i;
+    if (!t || !(obj = anim_target(o, s, attr(t, NS_SMIL, "targetElement"))))
+        return;
+    if (!(a = owf_slide_add_anim(s, -1, obj))) {
+        o->failed = 1;
+        return;
+    }
+    a->cls = same(cls, "entrance") ? OWF_ANIM_ENTRANCE : same(cls, "exit") ? OWF_ANIM_EXIT : OWF_ANIM_EMPHASIS;
+    a->effect = OWF_EFFECT_OTHER;
+    for (i = 0; i < sizeof presets / sizeof presets[0]; i++)
+        if (same(id, presets[i].id) && presets[i].cls == a->cls)
+            a->effect = presets[i].effect;
+    if (a->effect == OWF_EFFECT_OTHER) {
+        if (id && owf_deck_set_text(&a->preset, id) < 0)
+            o->failed = 1;
+        a->keep = keep_xml(o, OWF_KEPT_EFFECT, e);   /* written back as the file had it */
+    }
+    a->start = same(node, "on-click") ? OWF_START_CLICK : same(node, "after-previous") ? OWF_START_AFTER
+                                                                                        : OWF_START_WITH;
+    a->direction = same(sub, "from-left") ? OWF_DIR_LEFT : same(sub, "from-right") ? OWF_DIR_RIGHT
+                 : same(sub, "from-top") ? OWF_DIR_UP : OWF_DIR_DOWN;
+    delay = clock_ms(attr(e, NS_SMIL, "begin"));
+    a->delay = delay > 0 ? (int)(delay > 600000 ? 600000 : delay) : 0;
+    if (a->effect != OWF_EFFECT_APPEAR) {
+        long d = effect_duration(e);
+        a->duration = (int)(d > 600000 ? 600000 : d);
+    }
+}
+
+/* Effects are the anim:par elements with a preset class, in the order they
+ * play; the main sequence only (an interactive sequence's triggers stay in
+ * the kept XML). Returns how many effects the show cannot play as written. */
+static int read_effects(odp *o, owf_slide *s, const owf_xml_node *n, int depth)
+{
+    const owf_xml_node *c;
+    int odd = 0;
+    if (!n || depth > 16)
+        return 0;
+    for (c = n->first; c && !o->failed; c = c->next) {
+        if (c->type != OWF_XML_ELEMENT)
+            continue;
+        if (is(c, NS_ANIM, "seq") && attr(c, NS_PRES, "node-type") &&
+            !same(attr(c, NS_PRES, "node-type"), "main-sequence")) {
+            odd++;                      /* an interactive sequence */
+            continue;
+        }
+        if (is(c, NS_ANIM, "par") && attr(c, NS_PRES, "preset-class")) {
+            int before = s->nanims;
+            read_effect(o, s, c);
+            if (s->nanims == before || s->anims[s->nanims - 1].effect == OWF_EFFECT_OTHER ||
+                s->anims[s->nanims - 1].cls == OWF_ANIM_EMPHASIS)
+                odd++;
+            continue;
+        }
+        odd += read_effects(o, s, c, depth + 1);
+    }
+    return odd;
 }
 
 /* ---- Masters, layouts and the page ---- */
