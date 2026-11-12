@@ -142,6 +142,7 @@ void owf_doc_free(owf_doc *doc)
         free(doc->notes[i].label);
     }
     free(doc->notes);
+    free(doc->merge_source);                         /* 1.9 */
     free(doc);
 }
 

@@ -24,6 +24,7 @@
 
 #define OB_MAX_TABLES 256
 #define OB_UNDO_MAX 100
+#define QUERIES_SQL "CREATE TABLE IF NOT EXISTS oadb_queries(name TEXT PRIMARY KEY COLLATE NOCASE, grid TEXT, sql TEXT NOT NULL)"
 
 struct undo_step;
 
@@ -53,9 +54,11 @@ struct ob_project {
     int undo_off;           /* > 0: row calls record no steps (an import records one) */
     int undo_at_begin;      /* nundo when ob_begin opened the transaction */
     char undo_name[OB_NAME_MAX + 48];
+    char qname[OB_NAME_MAX];   /* ob_query_name's answer */
 };
 
 static void undo_drop_top(ob_project *p);
+static int query_exists(ob_project *p, const char *name);
 
 static const char *const type_names[OB_TYPE_COUNT] = {
     "Counter", "Text", "Memo", "Integer", "Number", "Currency", "Date", "Time",
@@ -77,7 +80,7 @@ static void copy(char *out, size_t size, const char *in)
     if (!size) return;
     n = in ? strlen(in) : 0;
     if (n >= size) n = size - 1;
-    if (n) memcpy(out, in, n);
+    if (n) memmove(out, in, n);     /* in may lie inside out (trimmed in place) */
     out[n] = 0;
 }
 
@@ -680,6 +683,9 @@ ob_project *ob_open(const char *path, int flags, char *err, size_t errsize)
     }
     run(p, "PRAGMA foreign_keys=ON");
     if (!p->readonly) run(p, "PRAGMA journal_mode=" OB_JOURNAL_MODE);
+    /* saved queries (core 0.5): made now, before any undo step needs the
+     * design to stay as it is; a project another program holds gets it later */
+    if (!p->readonly) sqlite3_exec(p->db, QUERIES_SQL, NULL, NULL, NULL);
     copy(err, errsize, "");
     ok(p);
     return p;
@@ -1003,6 +1009,7 @@ static int check_design(ob_project *p, const ob_table *t, const char *old_name)
     int i, j, k, counters = 0, keys = 0;
     char why[OB_ERR_MAX];
     if (!name_ok(t->name, why, sizeof why, "table")) return fail(p, "%s", why);
+    if (query_exists(p, t->name)) return fail(p, "There is a query named %s: give the table another name", t->name);
     if (t->nfields < 1) return fail(p, "%s needs at least one field", t->name);
     if (t->nfields > OB_MAX_FIELDS) return fail(p, "%s has more than %d fields", t->name, OB_MAX_FIELDS);
     for (i = 0; i < t->nfields; i++) {
@@ -1565,6 +1572,7 @@ int ob_table_rename(ob_project *p, const char *old_name, const char *new_name)
     if (!name_ok(new_name, why, sizeof why, "table")) return fail(p, "%s", why);
     if (!same(t->name, new_name) && table_exists(p, new_name))
         return fail(p, "There is a table named %s already", new_name);
+    if (query_exists(p, new_name)) return fail(p, "There is a query named %s: give the table another name", new_name);
     if (!step_begin(p)) return 0;
     good = runf(p, "ALTER TABLE \"%w\" RENAME TO \"%w\"", t->name, new_name)
         && runf(p, "UPDATE oadb_fields SET tbl = %Q WHERE tbl = %Q", new_name, t->name)
@@ -2015,10 +2023,24 @@ static int holds_text(ob_type t)
     return t == OB_TEXT || t == OB_MEMO || t == OB_CHOICE || t == OB_DATE || t == OB_TIME || t == OB_DATETIME;
 }
 
-/* What a view adds to a SELECT ... FROM table: its WHERE and ORDER BY,
+/* A view's ORDER BY, appended to s. */
+static int view_order(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s)
+{
+    const ob_field *f;
+    if (v && v->sort[0]) {
+        if (!(f = field_named(t, v->sort))) return fail(p, "%s has no field %s", t->name, v->sort);
+        sqlite3_str_appendf(s, " ORDER BY \"%w\"%s%s, rowid", f->name,
+                            holds_text(f->type) ? " COLLATE NOCASE" : "", v->desc ? " DESC" : "");
+    } else {
+        sqlite3_str_appendall(s, " ORDER BY rowid");
+    }
+    return 1;
+}
+
+/* What a view's filter adds to a SELECT ... FROM table: its WHERE,
  * appended to s, the filter's value into *bind (?3; kind V_NULL when none).
  * 0 with the reason. */
-static int view_sql(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
+static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
 {
     const ob_field *f;
     bind->kind = V_NULL;
@@ -2071,14 +2093,12 @@ static int view_sql(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_
         }
         }
     }
-    if (v && v->sort[0]) {
-        if (!(f = field_named(t, v->sort))) return fail(p, "%s has no field %s", t->name, v->sort);
-        sqlite3_str_appendf(s, " ORDER BY \"%w\"%s%s, rowid", f->name,
-                            holds_text(f->type) ? " COLLATE NOCASE" : "", v->desc ? " DESC" : "");
-    } else {
-        sqlite3_str_appendall(s, " ORDER BY rowid");
-    }
     return 1;
+}
+
+static int view_sql(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
+{
+    return view_where(p, t, v, s, bind) && view_order(p, t, v, s);
 }
 
 int ob_view_check(ob_project *p, const char *table, const ob_view *v)
@@ -2203,6 +2223,115 @@ static int rows_from(ob_project *p, const char *table, const ob_view *v, ob_int 
     if (rc != SQLITE_DONE) { sql_fail(p, NULL, rc); return -1; }
     ok(p);
     return n;
+}
+
+/* ---- Forms: a view one record at a time (design 6.3) ---- */
+
+/* SELECT pos FROM (the view numbered, with `extra` as column f) WHERE ...:
+ * the start of the statements below. */
+static int numbered(ob_project *p, const ob_table *t, const ob_view *v, const char *extra, sqlite3_str *s,
+                    value *b)
+{
+    sqlite3_str_appendall(s, "SELECT pos FROM (SELECT row_number() OVER (");
+    if (!view_order(p, t, v, s)) return 0;
+    sqlite3_str_appendf(s, ") - 1 AS pos, rowid AS k, %s AS f FROM \"%w\"", extra, t->name);
+    if (!view_where(p, t, v, s, b)) return 0;
+    sqlite3_str_appendall(s, ")");
+    return 1;
+}
+
+static ob_int pos_of(ob_project *p, const ob_table *t, sqlite3_str *s, const value *b, ob_int one,
+                     const value *two)
+{
+    sqlite3_stmt *st;
+    char *sql = sqlite3_str_finish(s);
+    ob_int n = -1;
+    int rc;
+    st = sql ? prep(p, sql) : NULL;
+    sqlite3_free(sql);
+    if (!st) return -2;
+    sqlite3_bind_int64(st, 1, one);
+    if (two) bind_value(st, 2, two);
+    if (b->kind != V_NULL) bind_value(st, 3, b);
+    rc = sqlite3_step(st);
+    if (rc == SQLITE_ROW) n = sqlite3_column_int64(st, 0);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_ROW && rc != SQLITE_DONE) { sql_fail(p, t, rc); return -2; }
+    ok(p);
+    return n;
+}
+
+ob_int ob_view_position(ob_project *p, const char *table, const ob_view *v, ob_int key)
+{
+    const ob_table *t;
+    sqlite3_str *s;
+    value b;
+    if (!(t = design(p, table))) return -2;
+    s = sqlite3_str_new(NULL);
+    if (!numbered(p, t, v, "NULL", s, &b)) { sqlite3_free(sqlite3_str_finish(s)); return -2; }
+    sqlite3_str_appendall(s, " WHERE k = ?1");
+    return pos_of(p, t, s, &b, key, NULL);
+}
+
+ob_int ob_view_find(ob_project *p, const char *table, const ob_view *v, const char *field, const char *text,
+                    ob_int from, int backward)
+{
+    const ob_table *t;
+    const ob_field *f;
+    sqlite3_str *s;
+    char *col;
+    value b, w;
+    if (!(t = design(p, table))) return -2;
+    if (!(f = field_named(t, field))) { fail(p, "%s has no field %s", t->name, field); return -2; }
+    if (!text || !text[0]) { fail(p, "Type what to find"); return -2; }
+    if (f->type == OB_OBJECT) { fail(p, "%s holds Datatype objects, which can't be searched", field_label(f)); return -2; }
+    w.long_text = NULL;
+    if (holds_text(f->type)) {
+        size_t i, o = 0;
+        w.text[o++] = '%';
+        for (i = 0; text[i] && o + 3 < sizeof w.text; i++) {
+            char c = text[i];
+            if (c == '%' || c == '_' || c == '\\') w.text[o++] = '\\';
+            w.text[o++] = c;
+        }
+        w.text[o++] = '%';
+        w.text[o] = 0;
+        w.kind = V_TEXT;
+    } else {
+        char e[OB_ERR_MAX];
+        ob_field loose = *f;
+        loose.required = loose.key = 0;
+        loose.max_len = 0;
+        if (f->type == OB_COUNTER) loose.type = OB_INTEGER;
+        if (!convert(&loose, text, &w, e, sizeof e)) { fail(p, "%s", e); return -2; }
+    }
+    col = sqlite3_mprintf("\"%w\"", f->name);
+    if (!col) { fail(p, "Out of memory"); return -2; }
+    s = sqlite3_str_new(NULL);
+    if (!numbered(p, t, v, col, s, &b)) { sqlite3_free(col); sqlite3_free(sqlite3_str_finish(s)); return -2; }
+    sqlite3_free(col);
+    sqlite3_str_appendf(s, " WHERE pos %s ?1 AND f %s ORDER BY pos%s LIMIT 1", backward ? "<=" : ">=",
+                        w.kind == V_TEXT && holds_text(f->type) ? "LIKE ?2 ESCAPE '\\'" : "= ?2",
+                        backward ? " DESC" : "");
+    return pos_of(p, t, s, &b, from < 0 ? 0 : from, &w);
+}
+
+int ob_children(ob_project *p, const char *table, ob_relation *out, int max)
+{
+    ob_relation *all;
+    int n, i, k = 0;
+    if (!design(p, table)) return -1;
+    n = ob_relations(p, NULL, 0);
+    if (n <= 0) return n;
+    if (!(all = malloc((size_t)n * sizeof *all))) { fail(p, "Out of memory"); return -1; }
+    n = ob_relations(p, all, n);
+    for (i = 0; i < n; i++)
+        if (same(all[i].lookup, table) && !same(all[i].table, table)) {
+            if (k < max) out[k] = all[i];
+            k++;
+        }
+    free(all);
+    return n < 0 ? -1 : k;
 }
 
 /* ---- CSV ---- */
@@ -2842,4 +2971,902 @@ int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts 
     free(first);
     free(first_len);
     return ok(p);
+}
+
+/* ---- Queries (design 5) ---- */
+
+static const char *const total_names[OB_TOTALS] = { "", "Group", "Sum", "Count", "Average", "Min", "Max" };
+
+const char *ob_total_name(ob_total t)
+{
+    return (unsigned)t < OB_TOTALS ? total_names[t] : "";
+}
+
+void ob_query_init(ob_query *q, const char *name)
+{
+    memset(q, 0, sizeof *q);
+    copy(q->name, sizeof q->name, name ? name : "");
+}
+
+int ob_query_add_table(ob_query *q, const char *table)
+{
+    int i;
+    if (!table || !*table || q->ntables >= OB_QUERY_TABLES) return -1;
+    for (i = 0; i < q->ntables; i++) if (same(q->tables[i], table)) return -1;
+    copy(q->tables[q->ntables], OB_NAME_MAX, table);
+    return q->ntables++;
+}
+
+void ob_query_remove_column(ob_query *q, int i)
+{
+    if (i < 0 || i >= q->ncolumns) return;
+    memmove(&q->columns[i], &q->columns[i + 1], sizeof q->columns[0] * (size_t)(q->ncolumns - i - 1));
+    q->ncolumns--;
+}
+
+void ob_query_remove_table(ob_query *q, int i)
+{
+    int c;
+    if (i < 0 || i >= q->ntables) return;
+    for (c = q->ncolumns - 1; c >= 0; c--)
+        if (q->columns[c].table[0] && same(q->columns[c].table, q->tables[i])) ob_query_remove_column(q, c);
+    memmove(q->tables[i], q->tables[i + 1], OB_NAME_MAX * (size_t)(q->ntables - i - 1));
+    q->ntables--;
+}
+
+ob_qcolumn *ob_query_add_column(ob_query *q, const char *table, const char *field)
+{
+    ob_qcolumn *c;
+    if (q->ncolumns < 0 || q->ncolumns >= OB_QUERY_COLUMNS) return NULL;
+    c = &q->columns[q->ncolumns++];
+    memset(c, 0, sizeof *c);
+    c->show = 1;
+    if (table && *table) {
+        copy(c->table, sizeof c->table, table);
+        copy(c->field, sizeof c->field, field && *field ? field : "*");
+    } else {
+        copy(c->expr, sizeof c->expr, field ? field : "");
+    }
+    return c;
+}
+
+/* A query made ready to run: its SQL, parameters and result columns. */
+typedef struct qparam {
+    char name[OB_VALUE_MAX];
+    int has_field;
+    ob_field f;                 /* what a value is checked as */
+} qparam;
+
+typedef struct qplan {
+    char *sql;                  /* sqlite3_malloc */
+    int sql_only;
+    int nparams;
+    qparam params[OB_QUERY_PARAMS];
+    int nout;
+    ob_qresult out[OB_QUERY_OUT];
+} qplan;
+
+static void plan_free(qplan *pl)
+{
+    if (!pl) return;
+    sqlite3_free(pl->sql);
+    free(pl);
+}
+
+static const char *qname(const ob_query *q)
+{
+    return q->name[0] ? q->name : "The query";
+}
+
+static int numeric_type(int t)
+{
+    return t == OB_COUNTER || t == OB_INTEGER || t == OB_NUMBER || t == OB_CURRENCY || t == OB_YESNO;
+}
+
+/* A value typed in a criterion, as an SQL literal for field f (NULL: an
+ * expression's, a number when it reads as one, else text). */
+static int literal(ob_project *p, const ob_field *f, const char *v, sqlite3_str *s)
+{
+    value val;
+    char e[OB_ERR_MAX], num[96];
+    ob_field loose;
+    if (!f) {
+        if (parse_number(v, num, sizeof num)) sqlite3_str_appendall(s, num);
+        else sqlite3_str_appendf(s, "%Q", v);
+        return 1;
+    }
+    if (f->type == OB_OBJECT)
+        return fail(p, "%s holds Datatype objects: its criteria can be empty or not empty", field_label(f));
+    loose = *f;
+    loose.required = loose.key = 0;
+    loose.max_len = 0;
+    if (loose.type == OB_COUNTER || loose.type == OB_LOOKUP) loose.type = OB_INTEGER;
+    if (!convert(&loose, v, &val, e, sizeof e)) return fail(p, "%s", e);
+    switch (val.kind) {
+    case V_INT: sqlite3_str_appendf(s, "%lld", val.i); break;
+    case V_REAL_TEXT: sqlite3_str_appendall(s, val.text); break;
+    case V_TEXT: sqlite3_str_appendf(s, "%Q", val.long_text ? val.long_text : val.text); break;
+    default: return fail(p, "%s: give a value", field_label(f));
+    }
+    return 1;
+}
+
+/* Where " and " (any case) is in s; NULL when it isn't. */
+static const char *find_and(const char *s)
+{
+    for (; *s; s++) if (starts_nocase(s, " and ")) return s;
+    return NULL;
+}
+
+/* One criterion on ref (an SQL expression; f its field, NULL for an
+ * expression), appended to s. */
+static int criterion(ob_project *p, qplan *pl, const char *ref, const ob_field *f, const char *heading,
+                     const char *text, sqlite3_str *s)
+{
+    char t[OB_VALUE_MAX];
+    const char *v, *op = "=";
+    int textual = f && holds_text(f->type);
+    const char *nc = textual ? " COLLATE NOCASE" : "";
+    trimmed(text, t, sizeof t);
+    if (same(t, "empty") || same(t, "is empty")) {
+        sqlite3_str_appendf(s, textual ? "(%s IS NULL OR %s = '')" : "%s IS NULL", ref, ref);
+        return 1;
+    }
+    if (same(t, "not empty") || same(t, "is not empty")) {
+        sqlite3_str_appendf(s, textual ? "(%s IS NOT NULL AND %s <> '')" : "%s IS NOT NULL", ref, ref);
+        return 1;
+    }
+    if (f && f->type == OB_OBJECT)
+        return fail(p, "%s holds Datatype objects: its criteria can be empty or not empty", heading);
+    if (starts_nocase(t, "between ")) {
+        char a[OB_VALUE_MAX], b[OB_VALUE_MAX];
+        const char *and_at = find_and(t + 8);
+        size_t alen;
+        if (!and_at) return fail(p, "%s: write between 1 and 5", heading);
+        alen = (size_t)(and_at - (t + 8));
+        if (alen >= sizeof a) alen = sizeof a - 1;
+        memcpy(a, t + 8, alen);
+        a[alen] = 0;
+        trimmed(a, a, sizeof a);
+        trimmed(and_at + 5, b, sizeof b);
+        if (!a[0] || !b[0]) return fail(p, "%s: write between 1 and 5", heading);
+        sqlite3_str_appendf(s, "%s BETWEEN ", ref);
+        if (!literal(p, f, a, s)) return 0;
+        sqlite3_str_appendall(s, " AND ");
+        if (!literal(p, f, b, s)) return 0;
+        sqlite3_str_appendall(s, nc);
+        return 1;
+    }
+    v = t;
+    if (!strncmp(v, "<=", 2) || !strncmp(v, ">=", 2) || !strncmp(v, "<>", 2) || !strncmp(v, "!=", 2)) {
+        op = v[0] == '<' && v[1] == '=' ? "<=" : v[0] == '>' ? ">=" : "<>";
+        v += 2;
+    } else if (*v == '<' || *v == '>' || *v == '=') {
+        op = *v == '<' ? "<" : *v == '>' ? ">" : "=";
+        v++;
+    } else if (starts_nocase(v, "not ")) {
+        op = "<>";
+        v += 4;
+    }
+    v = skip_space(v);
+    if (!*v) return fail(p, "%s: give a value after %s", heading, op);
+    if (*v == '[') {
+        size_t n = strlen(v);
+        qparam *q;
+        if (v[n - 1] != ']' || n < 3) return fail(p, "%s: a question to ask is written in [ ], such as [Which town?]", heading);
+        if (pl->nparams >= OB_QUERY_PARAMS) return fail(p, "A query asks at most %d questions", OB_QUERY_PARAMS);
+        q = &pl->params[pl->nparams++];
+        copy(q->name, sizeof q->name, v + 1);
+        q->name[n - 2 < sizeof q->name ? n - 2 : sizeof q->name - 1] = 0;
+        trimmed(q->name, q->name, sizeof q->name);
+        if (!q->name[0]) return fail(p, "%s: write the question inside [ ]", heading);
+        q->has_field = f != NULL;
+        if (f) {
+            q->f = *f;
+            q->f.required = q->f.key = 0;
+            q->f.max_len = 0;
+            if (q->f.type == OB_COUNTER || q->f.type == OB_LOOKUP) q->f.type = OB_INTEGER;
+        }
+        sqlite3_str_appendf(s, "%s %s ?%d%s", ref, op, pl->nparams, nc);
+        return 1;
+    }
+    if ((textual || !f) && (strchr(v, '*') || strchr(v, '?')) && (!strcmp(op, "=") || !strcmp(op, "<>"))) {
+        char pat[2 * OB_VALUE_MAX];
+        size_t o = 0;
+        for (; *v && o + 3 < sizeof pat; v++) {
+            if (*v == '%' || *v == '_' || *v == '\\') { pat[o++] = '\\'; pat[o++] = *v; }
+            else if (*v == '*') pat[o++] = '%';
+            else if (*v == '?') pat[o++] = '_';
+            else pat[o++] = *v;
+        }
+        pat[o] = 0;
+        sqlite3_str_appendf(s, "%s %sLIKE %Q ESCAPE '\\'", ref, op[0] == '<' ? "NOT " : "", pat);
+        return 1;
+    }
+    sqlite3_str_appendf(s, "%s %s ", ref, op);
+    if (!literal(p, f, v, s)) return 0;
+    sqlite3_str_appendall(s, nc);
+    return 1;
+}
+
+/* The Counter of table t, the key its Lookups hold; NULL when it has none. */
+static const char *counter_of(const ob_table *t)
+{
+    int i;
+    for (i = 0; i < t->nfields; i++) if (t->fields[i].type == OB_COUNTER) return t->fields[i].name;
+    return NULL;
+}
+
+static int first_word_reads(const char *s)
+{
+    for (;;) {
+        while (*s && isspace((unsigned char)*s)) s++;
+        if (s[0] == '-' && s[1] == '-') { while (*s && *s != '\n') s++; continue; }
+        if (s[0] == '/' && s[1] == '*') { const char *e = strstr(s + 2, "*/"); if (!e) return 0; s = e + 2; continue; }
+        break;
+    }
+    return (starts_nocase(s, "select") && !isalnum((unsigned char)s[6]))
+        || (starts_nocase(s, "with") && !isalnum((unsigned char)s[4]))
+        || (starts_nocase(s, "values") && !isalnum((unsigned char)s[6]));
+}
+
+static qplan *sql_plan(ob_project *p, const ob_query *q, qplan *pl)
+{
+    char *sql;
+    size_t n;
+    sqlite3_stmt *st = NULL;
+    const char *tail = NULL;
+    int rc, i;
+    pl->sql_only = 1;
+    if (!(sql = sqlite3_mprintf("%s", q->sql))) { fail(p, "Not enough memory"); goto bad; }
+    n = strlen(sql);
+    while (n && (isspace((unsigned char)sql[n - 1]) || sql[n - 1] == ';')) sql[--n] = 0;
+    pl->sql = sql;
+    if (!n || !*skip_space(sql)) { fail(p, "%s: type its SQL", qname(q)); goto bad; }
+    if (!first_word_reads(sql)) {
+        fail(p, "%s: a query only reads, so it starts SELECT (rows are changed in a table's datasheet)", qname(q));
+        goto bad;
+    }
+    rc = sqlite3_prepare_v2(p->db, sql, -1, &st, &tail);
+    if (rc != SQLITE_OK) { fail(p, "%s: %s", qname(q), sqlite3_errmsg(p->db)); goto bad; }
+    if (!st) { fail(p, "%s: type its SQL", qname(q)); goto bad; }
+    if (tail && *tail) {
+        const char *t = tail;
+        while (*t && (isspace((unsigned char)*t) || *t == ';')) t++;
+        if (*t) { fail(p, "%s is one statement: take out what follows the first ;", qname(q)); goto bad; }
+    }
+    if (!sqlite3_stmt_readonly(st) || sqlite3_column_count(st) == 0) {
+        fail(p, "%s: a query only reads, so it starts SELECT (rows are changed in a table's datasheet)", qname(q));
+        goto bad;
+    }
+    pl->nparams = sqlite3_bind_parameter_count(st);
+    if (pl->nparams > OB_QUERY_PARAMS) { fail(p, "A query asks at most %d questions", OB_QUERY_PARAMS); goto bad; }
+    for (i = 0; i < pl->nparams; i++) {
+        const char *nm = sqlite3_bind_parameter_name(st, i + 1);
+        if (nm && nm[0] != '?' && nm[1]) copy(pl->params[i].name, sizeof pl->params[i].name, nm + 1);
+        else snprintf(pl->params[i].name, sizeof pl->params[i].name, "Value %d", i + 1);
+    }
+    pl->nout = sqlite3_column_count(st);
+    if (pl->nout > OB_QUERY_OUT) pl->nout = OB_QUERY_OUT;
+    for (i = 0; i < pl->nout; i++) {
+        const char *nm = sqlite3_column_name(st, i);
+        copy(pl->out[i].heading, sizeof pl->out[i].heading, nm ? nm : "");
+        pl->out[i].type = -1;
+    }
+    sqlite3_finalize(st);
+    return pl;
+bad:
+    sqlite3_finalize(st);
+    plan_free(pl);
+    return NULL;
+}
+
+/* A field's column as SQL: "Table"."Field". */
+static void field_ref(char *out, size_t size, const char *table, const char *field)
+{
+    sqlite3_snprintf((int)size, out, "\"%w\".\"%w\"", table, field);
+}
+
+static int add_out(ob_project *p, qplan *pl, const char *heading, int type)
+{
+    if (pl->nout >= OB_QUERY_OUT) return fail(p, "A query shows at most %d columns", OB_QUERY_OUT);
+    copy(pl->out[pl->nout].heading, sizeof pl->out[pl->nout].heading, heading);
+    pl->out[pl->nout++].type = type;
+    return 1;
+}
+
+static qplan *plan_make(ob_project *p, const ob_query *q)
+{
+    qplan *pl = calloc(1, sizeof *pl);
+    ob_table *tabs = NULL;
+    ob_relation *rels = NULL;
+    sqlite3_str *sel = NULL, *from = NULL, *crit = NULL, *group = NULL, *order = NULL;
+    /* per column: its SQL (the total's when it has one), its field (a copy,
+     * loose for criteria), heading */
+    struct qc { char ref[3 * OB_NAME_MAX + 16]; char sql[OB_EXPR_MAX + 3 * OB_NAME_MAX + 48]; int has_field;
+                ob_field f; int agg; char heading[OB_NAME_MAX]; } *cs = NULL;
+    int i, j, c, r, grouping = 0, having = 0, nrels, shown = 0, any_crit = 0;
+    if (!pl) { fail(p, "Not enough memory"); return NULL; }
+    if (q->sql_only) return sql_plan(p, q, pl);
+    if (q->ntables < 1 || q->ntables > OB_QUERY_TABLES) { fail(p, "%s: add a table to it", qname(q)); goto bad; }
+    if (q->ncolumns < 1 || q->ncolumns > OB_QUERY_COLUMNS) { fail(p, "%s: add a column to it", qname(q)); goto bad; }
+    tabs = malloc(sizeof *tabs * (size_t)q->ntables);
+    cs = calloc((size_t)q->ncolumns, sizeof *cs);
+    if (!tabs || !cs) { fail(p, "Not enough memory"); goto bad; }
+    for (i = 0; i < q->ntables; i++) {
+        for (j = 0; j < i; j++)
+            if (same(q->tables[i], q->tables[j])) { fail(p, "%s has %s twice", qname(q), q->tables[i]); goto bad; }
+        if (!ob_table_get(p, q->tables[i], &tabs[i])) {
+            fail(p, "%s uses the table %s, which isn't there", qname(q), q->tables[i]);
+            goto bad;
+        }
+    }
+    for (c = 0; c < q->ncolumns; c++) if (q->columns[c].total != OB_TOTAL_NONE) grouping = 1;
+    sel = sqlite3_str_new(NULL);
+    from = sqlite3_str_new(NULL);
+    crit = sqlite3_str_new(NULL);
+    group = sqlite3_str_new(NULL);
+    order = sqlite3_str_new(NULL);
+    /* FROM, each table joined to one before it by a relationship */
+    sqlite3_str_appendf(from, " FROM \"%w\"", tabs[0].name);
+    if (q->ntables > 1) {
+        nrels = ob_relations(p, NULL, 0);
+        if (nrels < 0) goto bad;
+        rels = calloc((size_t)(nrels ? nrels : 1), sizeof *rels);
+        if (!rels) { fail(p, "Not enough memory"); goto bad; }
+        nrels = ob_relations(p, rels, nrels);
+        for (i = 1; i < q->ntables; i++) {
+            int done = 0;
+            for (j = 0; j < i && !done; j++)
+                for (r = 0; r < nrels && !done; r++) {
+                    const ob_table *child, *parent;
+                    const char *key;
+                    if (same(rels[r].table, tabs[i].name) && same(rels[r].lookup, tabs[j].name)) {
+                        child = &tabs[i]; parent = &tabs[j];
+                    } else if (same(rels[r].table, tabs[j].name) && same(rels[r].lookup, tabs[i].name)) {
+                        child = &tabs[j]; parent = &tabs[i];
+                    } else {
+                        continue;
+                    }
+                    if (!(key = counter_of(parent))) {
+                        fail(p, "%s is keyed by its fields, which a query can't join yet", parent->name);
+                        goto bad;
+                    }
+                    sqlite3_str_appendf(from, " JOIN \"%w\" ON \"%w\".\"%w\" = \"%w\".\"%w\"", tabs[i].name,
+                                        child->name, rels[r].field, parent->name, key);
+                    done = 1;
+                }
+            if (!done) {
+                fail(p, "%s has no relationship with %s: give one a Lookup to the other in the table designer",
+                     tabs[i].name, tabs[0].name);
+                goto bad;
+            }
+        }
+    }
+    /* the columns */
+    for (c = 0; c < q->ncolumns; c++) {
+        const ob_qcolumn *qc = &q->columns[c];
+        struct qc *k = &cs[c];
+        int ti = -1, type = -1, has_crit = 0;
+        for (r = 0; r < OB_QUERY_OR; r++) if (qc->criteria[r][0] && *skip_space(qc->criteria[r])) has_crit = 1;
+        if ((unsigned)qc->total >= OB_TOTALS) { fail(p, "%s: unknown total", qname(q)); goto bad; }
+        if (!qc->table[0]) {
+            if (!*skip_space(qc->expr)) { fail(p, "%s: column %d has no field or expression", qname(q), c + 1); goto bad; }
+            if (strchr(qc->expr, ';')) { fail(p, "%s: an expression is one piece of SQL, without ;", qc->expr); goto bad; }
+            sqlite3_snprintf((int)sizeof k->ref, k->ref, "(%s)", qc->expr);
+            copy(k->heading, sizeof k->heading, qc->heading[0] ? qc->heading : qc->expr);
+        } else {
+            for (i = 0; i < q->ntables; i++) if (same(q->tables[i], qc->table)) ti = i;
+            if (ti < 0) { fail(p, "%s: %s isn't one of the query's tables", qname(q), qc->table); goto bad; }
+            if (!strcmp(qc->field, "*")) {
+                if (grouping || qc->sort || has_crit) {
+                    fail(p, "%s.*: a column of every field can't have a sort, a total or criteria", tabs[ti].name);
+                    goto bad;
+                }
+                if (qc->show)
+                    for (i = 0; i < tabs[ti].nfields; i++) {
+                        const ob_field *f = &tabs[ti].fields[i];
+                        char ref[3 * OB_NAME_MAX + 16];
+                        field_ref(ref, sizeof ref, tabs[ti].name, f->name);
+                        if (f->type == OB_OBJECT) sqlite3_str_appendf(sel, "%slength(%s)", shown++ ? ", " : "", ref);
+                        else sqlite3_str_appendf(sel, "%s%s", shown++ ? ", " : "", ref);
+                        sqlite3_str_appendf(sel, " AS \"%w\"", field_label(f));
+                        if (!add_out(p, pl, field_label(f), f->type)) goto bad;
+                    }
+                k->ref[0] = 0;
+                continue;
+            }
+            if ((i = ob_table_find_field(&tabs[ti], qc->field)) < 0) {
+                fail(p, "%s has no field %s", tabs[ti].name, qc->field);
+                goto bad;
+            }
+            k->f = tabs[ti].fields[i];
+            k->has_field = 1;
+            type = k->f.type;
+            field_ref(k->ref, sizeof k->ref, tabs[ti].name, k->f.name);
+            copy(k->heading, sizeof k->heading, qc->heading[0] ? qc->heading : field_label(&k->f));
+        }
+        /* the total */
+        copy(k->sql, sizeof k->sql, k->ref);
+        switch (qc->total) {
+        case OB_TOTAL_SUM:
+        case OB_TOTAL_AVERAGE:
+            if (k->has_field && !numeric_type(type)) {
+                fail(p, "%s: %s works on numbers", k->heading, ob_total_name(qc->total));
+                goto bad;
+            }
+            if (qc->total == OB_TOTAL_SUM) {
+                sqlite3_snprintf((int)sizeof k->sql, k->sql, "sum(%s)", k->ref);
+                if (type == OB_YESNO || type == OB_COUNTER) type = OB_INTEGER;
+            } else if (type == OB_CURRENCY) {
+                sqlite3_snprintf((int)sizeof k->sql, k->sql, "CAST(round(avg(%s)) AS INTEGER)", k->ref);
+            } else {
+                sqlite3_snprintf((int)sizeof k->sql, k->sql, "avg(%s)", k->ref);
+                if (k->has_field) type = OB_NUMBER;
+            }
+            k->agg = 1;
+            break;
+        case OB_TOTAL_COUNT:
+            sqlite3_snprintf((int)sizeof k->sql, k->sql, "count(%s)", k->ref);
+            type = OB_INTEGER;
+            k->agg = 1;
+            break;
+        case OB_TOTAL_MIN:
+        case OB_TOTAL_MAX:
+            if (type == OB_OBJECT) { fail(p, "%s holds Datatype objects: it has no %s", k->heading, ob_total_name(qc->total)); goto bad; }
+            sqlite3_snprintf((int)sizeof k->sql, k->sql, "%s(%s)", qc->total == OB_TOTAL_MIN ? "min" : "max", k->ref);
+            k->agg = 1;
+            break;
+        default:
+            break;
+        }
+        if (k->agg) {
+            if (!qc->heading[0]) {
+                char h[OB_NAME_MAX + 16];
+                snprintf(h, sizeof h, "%s of %s", ob_total_name(qc->total), k->heading);
+                copy(k->heading, sizeof k->heading, h);
+            }
+            if (k->has_field) {
+                k->f.type = (ob_type)type;
+                copy(k->f.label, sizeof k->f.label, k->heading);
+            }
+            if (has_crit) having = 1;
+        }
+        if (grouping && !k->agg) sqlite3_str_appendf(group, "%s%s", sqlite3_str_length(group) ? ", " : "", k->ref);
+        if (qc->show) {
+            if (type == OB_OBJECT) sqlite3_str_appendf(sel, "%slength(%s)", shown++ ? ", " : "", k->sql);
+            else sqlite3_str_appendf(sel, "%s%s", shown++ ? ", " : "", k->sql);
+            sqlite3_str_appendf(sel, " AS \"%w\"", k->heading);
+            if (!add_out(p, pl, k->heading, type)) goto bad;
+        }
+        if (qc->sort) {
+            if (type == OB_OBJECT) { fail(p, "%s holds Datatype objects: it can't be sorted", k->heading); goto bad; }
+            sqlite3_str_appendf(order, "%s%s%s%s", sqlite3_str_length(order) ? ", " : "", k->sql,
+                                type >= 0 && holds_text((ob_type)type) ? " COLLATE NOCASE" : "",
+                                qc->sort == OB_SORT_DOWN ? " DESC" : "");
+        }
+    }
+    if (!shown) { fail(p, "%s shows no columns: tick Show on one", qname(q)); goto bad; }
+    /* criteria: a row's are ANDed, the rows ORed */
+    for (r = 0; r < OB_QUERY_OR; r++) {
+        int n = 0;
+        for (c = 0; c < q->ncolumns; c++) {
+            const char *t = q->columns[c].criteria[r];
+            if (!cs[c].ref[0] || !*skip_space(t)) continue;
+            sqlite3_str_appendall(crit, n++ ? " AND " : any_crit++ ? " OR (" : "(");
+            if (!criterion(p, pl, cs[c].agg ? cs[c].sql : cs[c].ref, cs[c].has_field ? &cs[c].f : NULL,
+                           cs[c].heading, t, crit))
+                goto bad;
+        }
+        if (n) sqlite3_str_appendall(crit, ")");
+    }
+    {
+        char *a = sqlite3_str_finish(sel), *b = sqlite3_str_finish(from), *w = sqlite3_str_finish(crit),
+             *g = sqlite3_str_finish(group), *o = sqlite3_str_finish(order);
+        sel = from = crit = group = order = NULL;
+        if (a && b) {
+            /* one row's criteria need no brackets */
+            const char *wc = w ? w : "";
+            char *unwrapped = NULL;
+            if (any_crit == 1 && wc[0] == '(') {
+                size_t n = strlen(wc);
+                unwrapped = sqlite3_mprintf("%.*s", (int)(n - 2), wc + 1);
+                if (unwrapped) wc = unwrapped;
+            }
+            pl->sql = sqlite3_mprintf("SELECT %s%s%s%s%s%s%s%s", a, b,
+                                      any_crit && !having ? " WHERE " : "", any_crit && !having ? wc : "",
+                                      g && g[0] ? " GROUP BY " : "", g ? g : "",
+                                      any_crit && having ? " HAVING " : "", any_crit && having ? wc : "");
+            if (pl->sql && o && o[0]) {
+                char *full = sqlite3_mprintf("%s ORDER BY %s", pl->sql, o);
+                sqlite3_free(pl->sql);
+                pl->sql = full;
+            }
+            sqlite3_free(unwrapped);
+        }
+        sqlite3_free(a); sqlite3_free(b); sqlite3_free(w); sqlite3_free(g); sqlite3_free(o);
+        if (!pl->sql) { fail(p, "Not enough memory"); goto bad; }
+    }
+    /* SQLite checks the expressions and the rest */
+    {
+        sqlite3_stmt *st = NULL;
+        int rc = sqlite3_prepare_v2(p->db, pl->sql, -1, &st, NULL);
+        if (rc != SQLITE_OK) { fail(p, "%s: %s", qname(q), sqlite3_errmsg(p->db)); sqlite3_finalize(st); goto bad; }
+        if (!sqlite3_stmt_readonly(st)) { sqlite3_finalize(st); fail(p, "%s: a query only reads", qname(q)); goto bad; }
+        sqlite3_finalize(st);
+    }
+    free(tabs);
+    free(rels);
+    free(cs);
+    return pl;
+bad:
+    sqlite3_free(sqlite3_str_finish(sel));
+    sqlite3_free(sqlite3_str_finish(from));
+    sqlite3_free(sqlite3_str_finish(crit));
+    sqlite3_free(sqlite3_str_finish(group));
+    sqlite3_free(sqlite3_str_finish(order));
+    free(tabs);
+    free(rels);
+    free(cs);
+    plan_free(pl);
+    return NULL;
+}
+
+int ob_query_check(ob_project *p, const ob_query *q)
+{
+    qplan *pl = plan_make(p, q);
+    if (!pl) return 0;
+    plan_free(pl);
+    return ok(p);
+}
+
+int ob_query_sql(ob_project *p, const ob_query *q, char *out, size_t size)
+{
+    qplan *pl = plan_make(p, q);
+    int n;
+    if (!pl) return -1;
+    n = (int)strlen(pl->sql);
+    if ((size_t)n >= size) {
+        plan_free(pl);
+        fail(p, "%s's SQL is too long (%d characters)", qname(q), n);
+        return -1;
+    }
+    memcpy(out, pl->sql, (size_t)n + 1);
+    plan_free(pl);
+    ok(p);
+    return n;
+}
+
+int ob_query_params(ob_project *p, const ob_query *q, char (*names)[OB_VALUE_MAX], int max)
+{
+    qplan *pl = plan_make(p, q);
+    int i, n;
+    if (!pl) return -1;
+    n = pl->nparams;
+    for (i = 0; i < n && i < max && names; i++) copy(names[i], OB_VALUE_MAX, pl->params[i].name);
+    plan_free(pl);
+    ok(p);
+    return n;
+}
+
+int ob_query_columns(ob_project *p, const ob_query *q, ob_qresult *out, int max)
+{
+    qplan *pl = plan_make(p, q);
+    int i, n;
+    if (!pl) return -1;
+    n = pl->nout;
+    for (i = 0; i < n && i < max && out; i++) out[i] = pl->out[i];
+    plan_free(pl);
+    ok(p);
+    return n;
+}
+
+/* The plan's statement wrapped by fmt (with %s for its SQL and %d %d for the
+ * two numbers after its parameters), parameters bound. */
+static sqlite3_stmt *plan_prepare(ob_project *p, const qplan *pl, const char *const *params, const char *fmt)
+{
+    sqlite3_stmt *st;
+    char *sql = sqlite3_mprintf(fmt, pl->sql, pl->nparams + 1, pl->nparams + 2);
+    int i;
+    if (!sql) { fail(p, "Not enough memory"); return NULL; }
+    st = prep(p, sql);
+    sqlite3_free(sql);
+    if (!st) return NULL;
+    for (i = 0; i < pl->nparams; i++) {
+        const qparam *qp = &pl->params[i];
+        const char *v = params ? params[i] : NULL;
+        char t[OB_VALUE_MAX];
+        trimmed(v, t, sizeof t);
+        if (!t[0]) { fail(p, "%s: give a value", qp->name); sqlite3_finalize(st); return NULL; }
+        if (qp->has_field) {
+            value val;
+            char e[OB_ERR_MAX];
+            if (!convert(&qp->f, t, &val, e, sizeof e)) {
+                fail(p, "%s: %s", qp->name, e);
+                sqlite3_finalize(st);
+                return NULL;
+            }
+            bind_value(st, i + 1, &val);
+        } else {
+            ob_int n;
+            if (parse_int(t, &n)) sqlite3_bind_int64(st, i + 1, n);
+            else sqlite3_bind_text(st, i + 1, t, -1, SQLITE_TRANSIENT);
+        }
+    }
+    return st;
+}
+
+ob_int ob_query_total(ob_project *p, const ob_query *q, const char *const *params)
+{
+    qplan *pl = plan_make(p, q);
+    sqlite3_stmt *st;
+    ob_int n = -1;
+    int rc;
+    if (!pl) return -1;
+    st = plan_prepare(p, pl, params, "SELECT count(*) FROM (%s)");
+    if (st) {
+        if ((rc = sqlite3_step(st)) == SQLITE_ROW) { n = sqlite3_column_int64(st, 0); ok(p); }
+        else sql_fail(p, NULL, rc);
+        sqlite3_finalize(st);
+    }
+    plan_free(pl);
+    return n;
+}
+
+int ob_query_rows(ob_project *p, const ob_query *q, const char *const *params, ob_int first, int max,
+                  ob_row_fn cb, void *user)
+{
+    qplan *pl;
+    sqlite3_stmt *st;
+    const char *vals[OB_QUERY_OUT];
+    char (*cells)[48];
+    int i, n = 0, rc, nout;
+    if (max == 0) return 0;
+    if (first < 0) first = 0;
+    if (!(pl = plan_make(p, q))) return -1;
+    st = plan_prepare(p, pl, params, pl->sql_only ? "SELECT * FROM (%s) LIMIT ?%d OFFSET ?%d" : "%s LIMIT ?%d OFFSET ?%d");
+    if (!st) { plan_free(pl); return -1; }
+    sqlite3_bind_int(st, pl->nparams + 1, max < 0 ? -1 : max);
+    sqlite3_bind_int64(st, pl->nparams + 2, first);
+    nout = sqlite3_column_count(st);
+    if (nout > OB_QUERY_OUT) nout = OB_QUERY_OUT;
+    if (!(cells = malloc(sizeof *cells * (size_t)(nout ? nout : 1)))) {
+        sqlite3_finalize(st);
+        plan_free(pl);
+        fail(p, "Not enough memory");
+        return -1;
+    }
+    while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
+        for (i = 0; i < nout; i++) {
+            int type = i < pl->nout ? pl->out[i].type : -1;
+            int ct = sqlite3_column_type(st, i);
+            if (ct == SQLITE_NULL) { vals[i] = NULL; continue; }
+            if (type == OB_CURRENCY && ct == SQLITE_INTEGER) {
+                ob_currency_format(sqlite3_column_int64(st, i), cells[i], sizeof cells[i]);
+                vals[i] = cells[i];
+            } else if (type == OB_YESNO && ct == SQLITE_INTEGER) {
+                vals[i] = sqlite3_column_int64(st, i) ? "Yes" : "No";
+            } else if (type == OB_OBJECT) {
+                snprintf(cells[i], sizeof cells[i], "(%lld bytes)", (ob_int)sqlite3_column_int64(st, i));
+                vals[i] = cells[i];
+            } else if (ct == SQLITE_BLOB) {
+                snprintf(cells[i], sizeof cells[i], "(%d bytes)", sqlite3_column_bytes(st, i));
+                vals[i] = cells[i];
+            } else {
+                vals[i] = (const char *)sqlite3_column_text(st, i);
+            }
+        }
+        if (cb && cb(user, first + n, nout, vals)) { n++; rc = SQLITE_DONE; break; }
+        n++;
+    }
+    sqlite3_finalize(st);
+    free(cells);
+    plan_free(pl);
+    if (rc != SQLITE_DONE) { sql_fail(p, NULL, rc); return -1; }
+    ok(p);
+    return n;
+}
+
+/* ---- Saved queries ---- */
+
+static int has_queries(ob_project *p)
+{
+    return scalar(p, "SELECT count(*) FROM sqlite_schema WHERE name = 'oadb_queries'", 0) == 1;
+}
+
+static int query_exists(ob_project *p, const char *name)
+{
+    sqlite3_stmt *st;
+    int found = 0;
+    if (!has_queries(p)) return 0;
+    st = prep(p, "SELECT 1 FROM oadb_queries WHERE name = ?1");
+    if (!st) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    found = sqlite3_step(st) == SQLITE_ROW;
+    sqlite3_finalize(st);
+    return found;
+}
+
+int ob_query_count(ob_project *p)
+{
+    ob_int n;
+    if (!has_queries(p)) return 0;
+    n = scalar(p, "SELECT count(*) FROM oadb_queries", 0);
+    return (int)n;
+}
+
+const char *ob_query_name(ob_project *p, int i)
+{
+    sqlite3_stmt *st;
+    const char *r = NULL;
+    if (i < 0 || !has_queries(p)) return NULL;
+    st = prep(p, "SELECT name FROM oadb_queries ORDER BY name COLLATE NOCASE LIMIT 1 OFFSET ?1");
+    if (!st) return NULL;
+    sqlite3_bind_int(st, 1, i);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        copy(p->qname, sizeof p->qname, (const char *)sqlite3_column_text(st, 0));
+        r = p->qname;
+    }
+    sqlite3_finalize(st);
+    return r;
+}
+
+/* The grid as text: a line per table and column, tab-separated, with \t \n
+ * \r and \\ escaped. */
+static void put_escaped(sqlite3_str *s, const char *v)
+{
+    sqlite3_str_appendchar(s, 1, '\t');
+    for (; *v; v++) {
+        switch (*v) {
+        case '\t': sqlite3_str_appendall(s, "\\t"); break;
+        case '\n': sqlite3_str_appendall(s, "\\n"); break;
+        case '\r': sqlite3_str_appendall(s, "\\r"); break;
+        case '\\': sqlite3_str_appendall(s, "\\\\"); break;
+        default: sqlite3_str_appendchar(s, 1, *v); break;
+        }
+    }
+}
+
+static char *grid_text(const ob_query *q)
+{
+    sqlite3_str *s = sqlite3_str_new(NULL);
+    int i, r;
+    sqlite3_str_appendall(s, "oadb query 1\n");
+    for (i = 0; i < q->ntables; i++) {
+        sqlite3_str_appendall(s, "table");
+        put_escaped(s, q->tables[i]);
+        sqlite3_str_appendall(s, "\n");
+    }
+    for (i = 0; i < q->ncolumns; i++) {
+        const ob_qcolumn *c = &q->columns[i];
+        sqlite3_str_appendall(s, "column");
+        put_escaped(s, c->table);
+        put_escaped(s, c->field);
+        put_escaped(s, c->expr);
+        put_escaped(s, c->heading);
+        sqlite3_str_appendf(s, "\t%d\t%d\t%d", c->show ? 1 : 0, c->sort, (int)c->total);
+        for (r = 0; r < OB_QUERY_OR; r++) put_escaped(s, c->criteria[r]);
+        sqlite3_str_appendall(s, "\n");
+    }
+    return sqlite3_str_finish(s);
+}
+
+/* The next tab-separated cell of a grid line, unescaped into out; s moves on. */
+static void grid_cell(const char **s, char *out, size_t size)
+{
+    size_t o = 0;
+    const char *p = *s;
+    while (*p && *p != '\t' && *p != '\n') {
+        char ch = *p++;
+        if (ch == '\\' && *p) {
+            ch = *p++;
+            ch = ch == 't' ? '\t' : ch == 'n' ? '\n' : ch == 'r' ? '\r' : ch;
+        }
+        if (o + 1 < size) out[o++] = ch;
+    }
+    if (size) out[o] = 0;
+    if (*p == '\t') p++;
+    *s = p;
+}
+
+static int grid_read(const char *text, ob_query *q)
+{
+    const char *s = text;
+    char word[16], num[16];
+    if (strncmp(s, "oadb query 1\n", 13)) return 0;
+    s += 13;
+    while (*s) {
+        grid_cell(&s, word, sizeof word);
+        if (!strcmp(word, "table") && q->ntables < OB_QUERY_TABLES) {
+            grid_cell(&s, q->tables[q->ntables++], OB_NAME_MAX);
+        } else if (!strcmp(word, "column") && q->ncolumns < OB_QUERY_COLUMNS) {
+            ob_qcolumn *c = &q->columns[q->ncolumns++];
+            int r;
+            memset(c, 0, sizeof *c);
+            grid_cell(&s, c->table, sizeof c->table);
+            grid_cell(&s, c->field, sizeof c->field);
+            grid_cell(&s, c->expr, sizeof c->expr);
+            grid_cell(&s, c->heading, sizeof c->heading);
+            grid_cell(&s, num, sizeof num); c->show = atoi(num) != 0;
+            grid_cell(&s, num, sizeof num); c->sort = atoi(num);
+            if (c->sort < OB_SORT_NONE || c->sort > OB_SORT_DOWN) c->sort = OB_SORT_NONE;
+            grid_cell(&s, num, sizeof num); c->total = (ob_total)atoi(num);
+            if ((unsigned)c->total >= OB_TOTALS) c->total = OB_TOTAL_NONE;
+            for (r = 0; r < OB_QUERY_OR; r++) grid_cell(&s, c->criteria[r], sizeof c->criteria[r]);
+        }
+        while (*s && *s != '\n') s++;
+        if (*s == '\n') s++;
+    }
+    return 1;
+}
+
+int ob_query_get(ob_project *p, const char *name, ob_query *out)
+{
+    sqlite3_stmt *st;
+    int found = 0;
+    if (!has_queries(p) || !(st = prep(p, "SELECT name, grid, sql FROM oadb_queries WHERE name = ?1")))
+        return fail(p, "There is no query named %s", name);
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *grid = (const char *)sqlite3_column_text(st, 1);
+        ob_query_init(out, (const char *)sqlite3_column_text(st, 0));
+        if (grid && grid_read(grid, out)) {
+            found = 1;
+        } else {
+            const char *sql = (const char *)sqlite3_column_text(st, 2);
+            out->sql_only = 1;
+            copy(out->sql, sizeof out->sql, sql ? sql : "");
+            found = 1;
+        }
+    }
+    sqlite3_finalize(st);
+    if (!found) return fail(p, "There is no query named %s", name);
+    return ok(p);
+}
+
+static int query_name_ok(ob_project *p, const char *name, const char *old)
+{
+    char why[OB_ERR_MAX];
+    if (!name_ok(name, why, sizeof why, "query")) return fail(p, "%s", why);
+    if (table_exists(p, name)) return fail(p, "There is a table named %s: give the query another name", name);
+    if (old && !same(old, name) && query_exists(p, name))
+        return fail(p, "There is a query named %s already", name);
+    return 1;
+}
+
+int ob_query_save(ob_project *p, const ob_query *q)
+{
+    qplan *pl;
+    char *grid = NULL;
+    sqlite3_stmt *st;
+    int rc;
+    if (!query_name_ok(p, q->name, NULL)) return 0;
+    if (!(pl = plan_make(p, q))) return 0;
+    if (!q->sql_only && !(grid = grid_text(q))) { plan_free(pl); return fail(p, "Not enough memory"); }
+    if (!has_queries(p) && !run(p, QUERIES_SQL)) { sqlite3_free(grid); plan_free(pl); return 0; }
+    st = prep(p, "INSERT OR REPLACE INTO oadb_queries(name, grid, sql) VALUES(?1, ?2, ?3)");
+    if (!st) { sqlite3_free(grid); plan_free(pl); return 0; }
+    sqlite3_bind_text(st, 1, q->name, -1, SQLITE_TRANSIENT);
+    if (grid) sqlite3_bind_text(st, 2, grid, -1, SQLITE_TRANSIENT);
+    else sqlite3_bind_null(st, 2);
+    sqlite3_bind_text(st, 3, q->sql_only ? q->sql : pl->sql, -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    sqlite3_free(grid);
+    plan_free(pl);
+    if (rc != SQLITE_DONE) return sql_fail(p, NULL, rc);
+    return ok(p);
+}
+
+int ob_query_rename(ob_project *p, const char *old_name, const char *new_name)
+{
+    if (!query_exists(p, old_name)) return fail(p, "There is no query named %s", old_name);
+    if (!query_name_ok(p, new_name, old_name)) return 0;
+    return runf(p, "UPDATE oadb_queries SET name = %Q WHERE name = %Q", new_name, old_name) && ok(p);
+}
+
+int ob_query_delete(ob_project *p, const char *name)
+{
+    if (!query_exists(p, name)) return fail(p, "There is no query named %s", name);
+    return runf(p, "DELETE FROM oadb_queries WHERE name = %Q", name) && ok(p);
 }

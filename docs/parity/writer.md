@@ -13,11 +13,14 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 11 Nov 2026 | 2.0.28 | W2 comments | 68% |
 | 11 Nov 2026 | 2.0.29 | W3 fields | 70% |
 | 11 Nov 2026 | 2.0.30 | W4 footnotes and endnotes | 72% |
+| 12 Nov 2026 | 2.0.31 | Phase 2: mail merge | 74% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
 after W1 to W4). Comments, the other half of reviewing, add two more,
 fields two more, and footnotes and endnotes the last two: Phase 1's target.
+Phase 2 starts with mail merge (form letters from a CSV data source): two points;
+labels and envelopes, indexes and AutoCorrect are the rest of Phase 2.
 
 ## Stream W features
 
@@ -47,5 +50,9 @@ fields two more, and footnotes and endnotes the last two: Phase 1's target.
 | Footnotes and endnotes: DOCX and ODT | Done | 2.0.30 | DOCX footnotes.xml and endnotes.xml (with Word's separators), footnoteReference and endnoteReference. ODT text:note with note-class, note-citation (and its label) and note-body. |
 | Footnotes and endnotes: other formats | Done | 2.0.30 | RTF its own \footnote (and \ftnalt for endnotes); HTML links each mark to its note after the text; plain text and PDF list the notes after the text. |
 | Footnotes and endnotes: formatted note text, notes continued onto the next page, footnotes in columns, numbering settings (restart each page, symbols), RTF notes read | Gap | | Note text is plain paragraphs; a note taller than the room left runs on below the foot; in a document with columns footnotes go after the text; RTF notes are not read yet. |
-| Mail merge, indexes, AutoCorrect | Gap | | Phase 2 |
+| Mail merge: data source and fields | Done | 2.0.31 | Tools > Mail Merge > Data Source... reads a CSV file (comma, semicolon or tab separated, found from its first line; quoted cells; UTF-8 or Latin-1) whose first row names the columns; Insert Merge Field... picks a column. Fields show «Column», or a record's values with Next/Previous Record (Show Field Names goes back). The document keeps its data source and reads it again when opened. ARexx MERGESOURCE, MERGEFIELDS, MERGERECORDS, MERGERECORD, INSERTMERGEFIELD; GETTEXT shows what the fields show. |
+| Mail merge: the merge | Done | 2.0.31 | Merge to Document... saves every record into one document, each from a new page; Merge to Files... saves a file each (letter1.odt, letter2.odt ...). The fields become plain text (a line break in a value stays one), tracked changes are accepted and comments left out. ARexx MERGE file [FILES]. |
+| Mail merge: DOCX and ODT | Done | 2.0.31 | DOCX MERGEFIELD (simple and complex fields) and settings' w:mailMerge query for the data source. ODT text:database-display with its column and database. RTF, HTML, plain text and PDF get the value shown. |
+| Mail merge: labels and envelopes, a database or Calc sheet as data source, conditions (skip a record, IF fields), choosing records, merging to the printer or e-mail | Gap | | Phase 2 later; the data source is a CSV file (a Calc sheet saved as CSV works). |
+| Indexes, AutoCorrect | Gap | | Phase 2 |
 | Document compare | Gap | | Phase 3; will build on track changes |

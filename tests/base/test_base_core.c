@@ -1351,6 +1351,445 @@ static void test_csv_options(void)
     ob_close(p);
 }
 
+/* ---- Forms (core 0.6) ---- */
+
+static void shop_orders(ob_project *p);
+
+static void test_forms(void)
+{
+    ob_project *p = fresh("forms.oadb");
+    ob_view v, kids;
+    ob_relation r[4];
+    char key[24];
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+
+    /* positions in key order and in a sorted, filtered view */
+    CHECK(ob_view_position(p, "Customers", NULL, 1) == 0 && ob_view_position(p, "Customers", NULL, 5) == 4,
+          "key order positions");
+    CHECK(ob_view_position(p, "Customers", NULL, 99) == -1, "no such row");
+    view_set(&v, "Name", 0, "", OB_FILTER_NONE, "");
+    CHECK(ob_view_position(p, "Customers", &v, 4) == 1, "bob is second by name: %lld",
+          (long long)ob_view_position(p, "Customers", &v, 4));
+    view_set(&v, "Name", 1, "Town", OB_FILTER_EQUALS, "leeds");
+    CHECK(ob_view_position(p, "Customers", &v, 2) == 1 && ob_view_position(p, "Customers", &v, 5) == 0,
+          "Leeds Z to A: Eve, Ann");
+    CHECK(ob_view_position(p, "Customers", &v, 1) == -1, "dan is filtered out");
+    CHECK(ob_view_position(p, "Nobody", NULL, 1) == -2, "no table");
+
+    /* find: text contains, any case; other fields equal */
+    view_set(&v, "Name", 0, "", OB_FILTER_NONE, "");     /* Ann bob Cy dan Eve */
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "EXAMPLE", 0, 0) == 1, "first email: bob");
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "example", 2, 0) == 2, "from 2: Cy");
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "example", 4, 1) == 4, "backward from 4: Eve");
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "100%_", 0, 0) == 1, "wildcards are plain: %lld",
+          (long long)ob_view_find(p, "Customers", &v, "Email", "100%_", 0, 0));
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "1%0", 0, 0) == -1, "a %% is a %%");
+    CHECK(ob_view_find(p, "Customers", &v, "Name", "zz", 0, 0) == -1, "none");
+    CHECK(ob_view_find(p, "Customers", &v, "Credit", "250.00", 0, 0) == 3, "money equals: dan");
+    CHECK(ob_view_find(p, "Customers", &v, "Credit", "250", 4, 0) == -1, "none after dan");
+    CHECK(ob_view_find(p, "Customers", &v, "Member", "yes", 0, 0) == 2, "Yes/No: Cy");
+    CHECK(ob_view_find(p, "Customers", &v, "Credit", "lots", 0, 0) == -2, "money that isn't");
+    CHECK(ob_view_find(p, "Customers", &v, "Name", "", 0, 0) == -2, "nothing to find");
+    CHECK_ERR(p, "Type what to find");
+    CHECK(ob_view_find(p, "Customers", &v, "Age", "1", 0, 0) == -2, "no field");
+    CHECK_ERR(p, "has no field Age");
+    view_set(&v, "", 0, "Town", OB_FILTER_EQUALS, "York");   /* dan bob */
+    CHECK(ob_view_find(p, "Customers", &v, "Name", "b", 0, 0) == 1, "inside a filter: bob");
+    CHECK(ob_view_find(p, "Customers", &v, "Name", "Ann", 0, 0) == -1, "Ann is filtered out");
+
+    /* subforms */
+    CHECK(ob_children(p, "Customers", r, 4) == 1 && !strcmp(r[0].table, "Orders") && !strcmp(r[0].field, "Customer"),
+          "Customers' child: Orders");
+    CHECK(ob_children(p, "Orders", r, 4) == 0, "Orders has none");
+    CHECK(ob_children(p, "Nobody", r, 4) == -1, "no table");
+    snprintf(key, sizeof key, "%d", 1);
+    view_set(&kids, "", 0, r[0].field, OB_FILTER_EQUALS, key);
+    CHECK(ob_view_total(p, "Orders", &kids) == 2, "dan's orders: %lld", (long long)ob_view_total(p, "Orders", &kids));
+    view_set(&kids, "", 0, "Customer", OB_FILTER_EQUALS, "4");
+    CHECK(ob_view_total(p, "Orders", &kids) == 0, "bob has none");
+    ob_close(p);
+}
+
+/* ---- Queries (core 0.5) ---- */
+
+static int qrow_cb(void *u, ob_int key, int n, const char *const *v)
+{
+    char *out = u;
+    int i;
+    size_t len = strlen(out);
+    (void)key;
+    if (len) snprintf(out + len, 1024 - len, ";");
+    for (i = 0; i < n; i++) {
+        len = strlen(out);
+        snprintf(out + len, 1024 - len, "%s%s", i ? "|" : "", v[i] ? v[i] : "");
+    }
+    return 0;
+}
+
+static const char *qrows(ob_project *p, const ob_query *q, const char *const *params, ob_int first, int max)
+{
+    static char got[1024];
+    got[0] = 0;
+    if (ob_query_rows(p, q, params, first, max, qrow_cb, got) < 0) snprintf(got, sizeof got, "error: %s", ob_error(p));
+    return got;
+}
+
+static const char *qsql(ob_project *p, const ob_query *q)
+{
+    static char got[OB_SQL_MAX];
+    if (ob_query_sql(p, q, got, sizeof got) < 0) snprintf(got, sizeof got, "error: %s", ob_error(p));
+    return got;
+}
+
+static void shop_orders(ob_project *p)
+{
+    static ob_table o;
+    const char *f[] = { "Customer", "Total", "Weight" };
+    static const char *const rows[][3] = {
+        { "1", "10.00", "1.5" }, { "1", "2.50", NULL }, { "2", "100", "20" }, { "3", "7.25", NULL }, { "5", "1", "0.25" },
+    };
+    unsigned i;
+    orders(&o, OB_DELETE_REFUSE);
+    CHECK(ob_table_create(p, &o), "Orders: %s", ob_error(p));
+    for (i = 0; i < sizeof rows / sizeof rows[0]; i++)
+        CHECK(ob_row_add(p, "Orders", 3, f, rows[i], NULL), "order %u: %s", i, ob_error(p));
+}
+
+static void test_queries(void)
+{
+    ob_project *p = fresh("query.oadb");
+    static ob_query q, back;
+    ob_qcolumn *c;
+    ob_qresult res[OB_QUERY_OUT];
+    char names[OB_QUERY_PARAMS][OB_VALUE_MAX];
+    char err[OB_ERR_MAX];
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+
+    /* one table: criteria in plain words */
+    ob_query_init(&q, "York people");
+    CHECK(ob_query_add_table(&q, "Customers") == 0 && ob_query_add_table(&q, "customers") == -1, "a table once");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    c->sort = OB_SORT_UP;
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "york");
+    CHECK(!strcmp(qsql(p, &q), "SELECT \"Customers\".\"Name\" AS \"Name\", \"Customers\".\"Town\" AS \"Town\" FROM \"Customers\""
+                               " WHERE \"Customers\".\"Town\" = 'York' COLLATE NOCASE ORDER BY \"Customers\".\"Name\" COLLATE NOCASE"),
+          "york SQL: %s", qsql(p, &q));
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "bob|York;dan|York"), "york rows: %s", qrows(p, &q, NULL, 0, -1));
+    CHECK(ob_query_total(p, &q, NULL) == 2, "york total");
+    strcpy(c->criteria[0], "not York");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|Leeds;Cy|Hull;Eve|Leeds"), "not York: %s", qrows(p, &q, NULL, 0, -1));
+    CHECK(!strcmp(qrows(p, &q, NULL, 1, 1), "Cy|Hull"), "a page: %s", qrows(p, &q, NULL, 1, 1));
+    strcpy(c->criteria[0], "Hull");
+    strcpy(c->criteria[1], "leeds");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|Leeds;Cy|Hull;Eve|Leeds"), "Hull or Leeds: %s", qrows(p, &q, NULL, 0, -1));
+    CHECK(strstr(qsql(p, &q), " WHERE (\"Customers\".\"Town\" = 'Hull' COLLATE NOCASE) OR (\"Customers\".\"Town\" = 'Leeds' COLLATE NOCASE)"),
+          "rows ORed: %s", qsql(p, &q));
+    strcpy(c->criteria[0], "Paris");
+    c->criteria[1][0] = 0;
+    CHECK(ob_query_total(p, &q, NULL) < 0, "a town that isn't a choice");
+    CHECK_ERR(p, "Town must be one of: Leeds,York,Hull");
+    c->criteria[0][0] = 0;
+
+    c = ob_query_add_column(&q, "Customers", "Credit");
+    strcpy(c->criteria[0], "> 100");
+    CHECK(strstr(qsql(p, &q), "\"Customers\".\"Credit\" > 10000"), "money in pence: %s", qsql(p, &q));
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|Leeds|1,500.00;dan|York|250.00"), "credit > 100: %s", qrows(p, &q, NULL, 0, -1));
+    strcpy(c->criteria[0], ">= lots");
+    CHECK(ob_query_total(p, &q, NULL) < 0, "bad money");
+    CHECK_ERR(p, "Credit limit must be an amount of money");
+    strcpy(c->criteria[0], "empty");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "bob|York|"), "no credit: %s", qrows(p, &q, NULL, 0, -1));
+    strcpy(c->criteria[0], "between -10 and 100");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Cy|Hull|99.99;Eve|Leeds|-5.00"), "between: %s", qrows(p, &q, NULL, 0, -1));
+    c->show = 0;
+    strcpy(c->criteria[0], "<0");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Eve|Leeds"), "hidden column's criteria: %s", qrows(p, &q, NULL, 0, -1));
+    ob_query_remove_column(&q, 2);
+
+    c = ob_query_add_column(&q, "Customers", "Email");
+    strcpy(c->criteria[0], "empty");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|Leeds|"), "no email: %s", qrows(p, &q, NULL, 0, -1));
+    strcpy(c->criteria[0], "*100%_*");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "bob|York|bob 100%_x@example.org"), "%% and _ as typed: %s", qrows(p, &q, NULL, 0, -1));
+    strcpy(c->criteria[0], "?ve@*");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Eve|Leeds|eve@example.org"), "? and *: %s", qrows(p, &q, NULL, 0, -1));
+    strcpy(c->criteria[0], "not *example*");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), ""), "not like: %s", qrows(p, &q, NULL, 0, -1));
+    ob_query_remove_column(&q, 2);
+
+    c = ob_query_add_column(&q, "Customers", "Joined");
+    strcpy(c->criteria[0], "between 1/1/2026 and 2026-12-31");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "bob|York|2026-11-11;dan|York|2026-03-01"), "dates between: %s", qrows(p, &q, NULL, 0, -1));
+    strcpy(c->criteria[0], "between 2026");
+    CHECK(ob_query_total(p, &q, NULL) < 0, "between without and");
+    CHECK_ERR(p, "Joined: write between 1 and 5");
+    ob_query_remove_column(&q, 2);
+
+    /* parameters */
+    strcpy(q.columns[1].criteria[0], "[Which town?]");
+    c = ob_query_add_column(&q, "Customers", "Credit");
+    strcpy(c->criteria[0], ">= [ At least ]");
+    CHECK(ob_query_params(p, &q, names, OB_QUERY_PARAMS) == 2 && !strcmp(names[0], "Which town?") && !strcmp(names[1], "At least"),
+          "parameters: %s|%s", names[0], names[1]);
+    {
+        const char *york[] = { "york", "0" }, *none[] = { "york", "" }, *bad[] = { "york", "lots" };
+        CHECK(!strcmp(qrows(p, &q, york, 0, -1), "dan|York|250.00"), "asked: %s", qrows(p, &q, york, 0, -1));
+        CHECK(ob_query_total(p, &q, york) == 1, "asked total");
+        CHECK(ob_query_total(p, &q, none) < 0, "no answer");
+        CHECK_ERR(p, "At least: give a value");
+        CHECK(ob_query_total(p, &q, bad) < 0, "bad answer");
+        CHECK_ERR(p, "At least: Credit limit must be an amount of money");
+        CHECK(ob_query_total(p, &q, NULL) < 0, "no answers");
+    }
+    strcpy(q.columns[1].criteria[0], "[]");
+    CHECK(!ob_query_check(p, &q), "empty question");
+    CHECK_ERR(p, "a question to ask is written in [ ]");
+    q.columns[1].criteria[0][0] = 0;
+    ob_query_remove_column(&q, 2);
+
+    /* two tables, joined by their relationship, with totals */
+    ob_query_init(&q, "Spend");
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_table(&q, "Orders");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    c->sort = OB_SORT_UP;
+    c->total = OB_TOTAL_GROUP;
+    c = ob_query_add_column(&q, "Orders", "Total");
+    c->total = OB_TOTAL_SUM;
+    c = ob_query_add_column(&q, "Orders", "Total");
+    c->total = OB_TOTAL_COUNT;
+    strcpy(c->heading, "Orders");
+    CHECK(!strcmp(qsql(p, &q), "SELECT \"Customers\".\"Name\" AS \"Name\", sum(\"Orders\".\"Total\") AS \"Sum of Total\","
+                               " count(\"Orders\".\"Total\") AS \"Orders\" FROM \"Customers\" JOIN \"Orders\""
+                               " ON \"Orders\".\"Customer\" = \"Customers\".\"id\" GROUP BY \"Customers\".\"Name\""
+                               " ORDER BY \"Customers\".\"Name\" COLLATE NOCASE"), "spend SQL: %s", qsql(p, &q));
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|100.00|1;Cy|7.25|1;dan|12.50|2;Eve|1.00|1"), "spend: %s", qrows(p, &q, NULL, 0, -1));
+    CHECK(ob_query_columns(p, &q, res, OB_QUERY_OUT) == 3 && res[1].type == OB_CURRENCY && res[2].type == OB_INTEGER
+          && !strcmp(res[1].heading, "Sum of Total"), "result columns");
+    strcpy(q.columns[1].criteria[0], "> 5");
+    CHECK(strstr(qsql(p, &q), " HAVING sum(\"Orders\".\"Total\") > 500"), "HAVING: %s", qsql(p, &q));
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|100.00|1;Cy|7.25|1;dan|12.50|2"), "spend > 5: %s", qrows(p, &q, NULL, 0, -1));
+    strcpy(q.columns[0].criteria[0], "*n");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|100.00|1;dan|12.50|2"), "group and total criteria: %s", qrows(p, &q, NULL, 0, -1));
+    q.columns[0].criteria[0][0] = 0;
+    q.columns[1].criteria[0][0] = 0;
+    q.columns[2].total = OB_TOTAL_AVERAGE;
+    q.columns[2].heading[0] = 0;
+    q.columns[2].sort = OB_SORT_DOWN;
+    q.columns[0].sort = OB_SORT_NONE;
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|100.00|100.00;Cy|7.25|7.25;dan|12.50|6.25;Eve|1.00|1.00"),
+          "average of money: %s", qrows(p, &q, NULL, 0, -1));
+    q.columns[2].total = OB_TOTAL_MAX;
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|100.00|100.00;dan|12.50|10.00;Cy|7.25|7.25;Eve|1.00|1.00"),
+          "max: %s", qrows(p, &q, NULL, 0, -1));
+    q.columns[2].total = OB_TOTAL_SUM;
+    q.columns[2].field[0] = 0;
+    strcpy(q.columns[2].field, "Weight");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Ann|100.00|20.0;dan|12.50|1.5;Eve|1.00|0.25;Cy|7.25|"),
+          "sum of numbers: %s", qrows(p, &q, NULL, 0, -1));
+    q.columns[0].total = OB_TOTAL_SUM;
+    CHECK(!ob_query_check(p, &q), "sum of names");
+    CHECK_ERR(p, "Name: Sum works on numbers");
+    q.columns[0].total = OB_TOTAL_GROUP;
+
+    /* the other way round, and an expression */
+    ob_query_init(&q, "Lines");
+    ob_query_add_table(&q, "Orders");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Orders", "id");
+    c->sort = OB_SORT_UP;
+    c = ob_query_add_column(&q, "Customers", "Name");
+    c = ob_query_add_column(&q, NULL, "\"Orders\".\"Total\" * 2");
+    strcpy(c->heading, "Double");
+    strcpy(c->criteria[0], "> 1000");
+    CHECK(strstr(qsql(p, &q), " FROM \"Orders\" JOIN \"Customers\" ON \"Orders\".\"Customer\" = \"Customers\".\"id\""),
+          "joined the other way: %s", qsql(p, &q));
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "1|dan|2000;3|Ann|20000;4|Cy|1450"), "expression: %s", qrows(p, &q, NULL, 0, -1));
+    strcpy(c->expr, "nope + 1");
+    CHECK(!ob_query_check(p, &q), "bad expression");
+    CHECK_ERR(p, "no such column: nope");
+    strcpy(c->expr, "1; DROP TABLE Orders");
+    CHECK(!ob_query_check(p, &q), "two statements in an expression");
+    CHECK_ERR(p, "without ;");
+    ob_query_remove_column(&q, 2);
+
+    /* every field */
+    ob_query_init(&q, "All");
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_column(&q, "Customers", "*");
+    CHECK(ob_query_columns(p, &q, res, OB_QUERY_OUT) == 7 && !strcmp(res[6].heading, "Credit limit") && res[6].type == OB_CURRENCY,
+          "every field: %s", res[6].heading);
+    CHECK(!strcmp(qrows(p, &q, NULL, 4, 1), "5|Eve|Leeds|eve@example.org|2024-01-02|Yes|-5.00"), "a whole row: %s", qrows(p, &q, NULL, 4, 1));
+    q.columns[0].sort = OB_SORT_UP;
+    CHECK(!ob_query_check(p, &q), "sorted star");
+    CHECK_ERR(p, "a column of every field can't have a sort");
+    q.columns[0].sort = OB_SORT_NONE;
+
+    /* what can't run */
+    {
+        static ob_table t;
+        ob_table_init(&t, "Things");
+        ob_table_add_field(&t, "Thing", OB_TEXT);
+        CHECK(ob_table_create(p, &t), "Things: %s", ob_error(p));
+    }
+    ob_query_add_table(&q, "Things");
+    CHECK(!ob_query_check(p, &q), "no relationship");
+    CHECK_ERR(p, "Things has no relationship with Customers");
+    ob_query_remove_table(&q, 1);
+    ob_query_add_table(&q, "Shops");
+    CHECK(!ob_query_check(p, &q), "a missing table");
+    CHECK_ERR(p, "All uses the table Shops, which isn't there");
+    ob_query_remove_table(&q, 1);
+    ob_query_add_column(&q, "Customers", "Shoe");
+    CHECK(!ob_query_check(p, &q), "a missing field");
+    CHECK_ERR(p, "Customers has no field Shoe");
+    ob_query_remove_column(&q, 1);
+    q.columns[0].show = 0;
+    CHECK(!ob_query_check(p, &q), "nothing shown");
+    CHECK_ERR(p, "All shows no columns");
+    ob_query_remove_table(&q, 0);
+    CHECK(q.ntables == 0 && q.ncolumns == 0, "a table's columns go with it");
+    CHECK(!ob_query_check(p, &q), "empty");
+    CHECK_ERR(p, "add a table");
+
+    /* SQL view */
+    ob_query_init(&q, "Typed");
+    q.sql_only = 1;
+    strcpy(q.sql, "SELECT Name, Credit FROM Customers WHERE Town = :town ORDER BY Name;  ");
+    CHECK(ob_query_params(p, &q, names, OB_QUERY_PARAMS) == 1 && !strcmp(names[0], "town"), "named parameter: %s", names[0]);
+    {
+        const char *york[] = { "York" };
+        CHECK(!strcmp(qrows(p, &q, york, 0, -1), "bob|;dan|25000"), "typed SQL: %s", qrows(p, &q, york, 0, -1));
+        CHECK(ob_query_total(p, &q, york) == 2, "typed total");
+        CHECK(ob_query_columns(p, &q, res, OB_QUERY_OUT) == 2 && !strcmp(res[1].heading, "Credit") && res[1].type == -1,
+              "typed columns");
+    }
+    strcpy(q.sql, "SELECT id FROM Customers WHERE id > ? AND id < ?");
+    {
+        const char *two[] = { "1", "4" };
+        CHECK(ob_query_params(p, &q, names, OB_QUERY_PARAMS) == 2 && !strcmp(names[1], "Value 2"), "? parameters");
+        CHECK(!strcmp(qrows(p, &q, two, 0, -1), "2;3"), "? bound: %s", qrows(p, &q, two, 0, -1));
+    }
+    {
+        static const char *const bad[][2] = {
+            { "DELETE FROM Customers", "a query only reads" },
+            { "WITH x AS (SELECT 1) DELETE FROM Orders", "a query only reads" },
+            { "SELECT 1; SELECT 2", "is one statement" },
+            { "SELECT nope FROM Customers", "no such column: nope" },
+            { "   ", "type its SQL" },
+            { "PRAGMA journal_mode=DELETE", "a query only reads" },
+        };
+        unsigned i;
+        for (i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+            strcpy(q.sql, bad[i][0]);
+            CHECK(!ob_query_check(p, &q), "accepted: %s", bad[i][0]);
+            CHECK_ERR(p, bad[i][1]);
+        }
+        CHECK(ob_row_total(p, "Orders") == 5, "still five orders");
+    }
+    strcpy(q.sql, "/* spend */ WITH s AS (SELECT Customer, sum(Total) AS t FROM Orders GROUP BY Customer)"
+                  " SELECT count(*) FROM s WHERE t > 500");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "3"), "WITH: %s", qrows(p, &q, NULL, 0, -1));
+
+    /* saved */
+    CHECK(ob_query_count(p) == 0, "no queries yet");
+    ob_query_init(&q, "Spend");
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_table(&q, "Orders");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    c->total = OB_TOTAL_GROUP;
+    c->sort = OB_SORT_DOWN;
+    strcpy(c->heading, "Who\tthey are\\");
+    strcpy(c->criteria[0], "not empty");
+    c = ob_query_add_column(&q, "Orders", "Total");
+    c->total = OB_TOTAL_SUM;
+    strcpy(c->criteria[0], ">= [Spent at least]");
+    c->show = 0;
+    c = ob_query_add_column(&q, NULL, "\"Orders\".\"id\"");
+    c->total = OB_TOTAL_COUNT;
+    {
+        ob_int key;
+        const char *f[] = { "Name" }, *v[] = { "Zed" };
+        CHECK(ob_row_add(p, "Customers", 1, f, v, &key), "a row to undo: %s", ob_error(p));
+        CHECK(ob_query_save(p, &q), "save: %s", ob_error(p));
+        CHECK(ob_undo_count(p) >= 1 && ob_undo(p) && ob_row_total(p, "Customers") == 5, "undo after saving a query: %s", ob_error(p));
+    }
+    memset(&back, 0x55, sizeof back);
+    CHECK(ob_query_get(p, "spend", &back), "get: %s", ob_error(p));
+    CHECK(!strcmp(back.name, "Spend") && back.ntables == 2 && back.ncolumns == 3 && !strcmp(back.tables[1], "Orders")
+          && !strcmp(back.columns[0].heading, "Who\tthey are\\") && back.columns[0].sort == OB_SORT_DOWN
+          && back.columns[0].total == OB_TOTAL_GROUP && !strcmp(back.columns[0].criteria[0], "not empty")
+          && !back.columns[1].show && !strcmp(back.columns[1].criteria[0], ">= [Spent at least]")
+          && !strcmp(back.columns[2].expr, "\"Orders\".\"id\"") && back.columns[2].total == OB_TOTAL_COUNT
+          && !back.columns[2].table[0] && !back.sql_only,
+          "read back");
+    {
+        const char *ten[] = { "10" };
+        CHECK(!strcmp(qrows(p, &back, ten, 0, -1), "dan|2;Ann|1"), "the saved query runs: %s", qrows(p, &back, ten, 0, -1));
+    }
+    ob_query_init(&q, "Typed");
+    q.sql_only = 1;
+    strcpy(q.sql, "SELECT Name FROM Customers ORDER BY id DESC");
+    CHECK(ob_query_save(p, &q), "save SQL: %s", ob_error(p));
+    CHECK(ob_query_count(p) == 2 && !strcmp(ob_query_name(p, 0), "Spend") && !strcmp(ob_query_name(p, 1), "Typed")
+          && ob_query_name(p, 2) == NULL, "listed");
+    CHECK(ob_query_get(p, "Typed", &back) && back.sql_only && !strcmp(back.sql, q.sql), "SQL read back");
+    strcpy(q.sql, "DELETE FROM Customers");
+    CHECK(!ob_query_save(p, &q), "a query that can't run isn't saved");
+    CHECK(ob_query_get(p, "Typed", &back) && !strcmp(back.sql, "SELECT Name FROM Customers ORDER BY id DESC"), "kept as it was");
+    ob_query_init(&q, "Customers");
+    q.sql_only = 1;
+    strcpy(q.sql, "SELECT 1");
+    CHECK(!ob_query_save(p, &q), "a query named like a table");
+    CHECK_ERR(p, "There is a table named Customers");
+    strcpy(q.name, "oadb_x");
+    CHECK(!ob_query_save(p, &q), "a kept name");
+    CHECK_ERR(p, "kept for the project");
+    {
+        static ob_table t;
+        ob_table_init(&t, "Typed");
+        CHECK(!ob_table_create(p, &t), "a table named like a query");
+        CHECK_ERR(p, "There is a query named Typed");
+        CHECK(!ob_table_rename(p, "Things", "spend"), "a table renamed like a query");
+        CHECK_ERR(p, "There is a query named spend");
+    }
+    CHECK(!ob_query_rename(p, "Typed", "Spend"), "rename onto another");
+    CHECK_ERR(p, "There is a query named Spend already");
+    CHECK(ob_query_rename(p, "Typed", "Newest first") && ob_query_get(p, "newest FIRST", &back), "rename: %s", ob_error(p));
+    CHECK(ob_query_delete(p, "Newest first") && ob_query_count(p) == 1, "delete: %s", ob_error(p));
+    CHECK(!ob_query_delete(p, "Newest first"), "delete twice");
+    CHECK_ERR(p, "There is no query named Newest first");
+    CHECK(!ob_query_get(p, "Nothing", &back), "get a missing query");
+    ob_close(p);
+
+    /* reopened; and a project from core 0.4, with no oadb_queries */
+    p = ob_open(path("query.oadb"), 0, err, sizeof err);
+    CHECK(p && ob_query_count(p) == 1 && ob_query_get(p, "Spend", &back), "reopened: %s", p ? ob_error(p) : err);
+    ob_close(p);
+    {
+        sqlite3 *db;
+        CHECK(sqlite3_open(path("query.oadb"), &db) == SQLITE_OK
+              && sqlite3_exec(db, "DROP TABLE oadb_queries", NULL, NULL, NULL) == SQLITE_OK, "made old");
+        sqlite3_close(db);
+    }
+    p = ob_open(path("query.oadb"), OB_OPEN_READONLY, err, sizeof err);
+    CHECK(p && ob_query_count(p) == 0 && ob_query_name(p, 0) == NULL && !ob_query_get(p, "Spend", &back),
+          "old, read only: %s", p ? ob_error(p) : err);
+    ob_query_init(&q, "Typed");
+    q.sql_only = 1;
+    strcpy(q.sql, "SELECT 1");
+    CHECK(p && !ob_query_save(p, &q), "no saving read only");
+    ob_close(p);
+    p = ob_open(path("query.oadb"), 0, err, sizeof err);
+    CHECK(p && ob_query_save(p, &q) && ob_query_count(p) == 1, "old project gets queries: %s", p ? ob_error(p) : err);
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -1384,6 +1823,8 @@ int main(int argc, char **argv)
     test_csv();
     test_undo();
     test_csv_options();
+    test_queries();
+    test_forms();
     test_not_projects();
     test_cut_short();
     printf("test-base-core: %d checks, %d failed\n", checks, fails);

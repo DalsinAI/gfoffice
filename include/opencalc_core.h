@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.32.0"
+#define OC_CORE_VERSION "0.33.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -511,6 +511,46 @@ enum {
 int oc_core_subtotals(oc_core *core, unsigned group_col,
                       const unsigned *value_cols, unsigned nvalue_cols,
                       int function, int has_header, int grand_total);
+
+/* ---- Data > Text to Columns ----
+ * Splits each cell of the selection (one column) into the cells to its
+ * right: by delimiters (any of OC_TEXTCOLS_TAB... and `other`), with merge
+ * treating a run of them as one and `quote` (0 for none) keeping delimiters
+ * inside "quoted, text" (a doubled quote is one); or, with nbreaks, at fixed
+ * character positions (breaks ascending). kind[] says what each field
+ * becomes: General (read as typed: numbers, dates), Text, or Skip (not
+ * written; the next field takes its place). A text cell splits its text,
+ * another its value as shown. The cells to the right are replaced; one Undo
+ * step; the selection grows to the widest row. ncols_out (may be NULL) gets
+ * that width. OWF_ERR_UNSUPPORTED for a selection that is not one column. */
+#define OC_TEXTCOLS_MAX 64
+enum {
+    OC_TEXTCOLS_TAB = 1, OC_TEXTCOLS_COMMA = 2, OC_TEXTCOLS_SEMICOLON = 4,
+    OC_TEXTCOLS_SPACE = 8, OC_TEXTCOLS_OTHER = 16
+};
+enum { OC_TEXTCOLS_GENERAL, OC_TEXTCOLS_TEXT, OC_TEXTCOLS_SKIP };
+typedef struct {
+    unsigned delimiters;                    /* OC_TEXTCOLS_TAB | ... */
+    char other;                             /* with OC_TEXTCOLS_OTHER */
+    char quote;                             /* '"', '\'' or 0 */
+    int merge;                              /* consecutive delimiters as one */
+    unsigned nbreaks;                       /* > 0: fixed width */
+    unsigned breaks[OC_TEXTCOLS_MAX];
+    unsigned char kind[OC_TEXTCOLS_MAX];    /* OC_TEXTCOLS_GENERAL... per field */
+} oc_textcols_options;
+int oc_core_text_to_columns(oc_core *core, const oc_textcols_options *opt, unsigned *ncols_out);
+
+/* ---- Data > Remove Duplicates ----
+ * Removes the rows of the selection (one range; a whole column means as far
+ * as the sheet is used) whose values in cols (absolute columns inside it;
+ * NULL or ncols 0: every column) repeat an earlier row's, text compared
+ * without case. Only the selection's cells move: the rows kept close up
+ * and the rows left at the bottom are emptied; references follow the rows
+ * kept, and one to a row removed and replaced becomes #REF!. has_header
+ * leaves the first row alone. One Undo step (none when nothing repeats);
+ * removed_out (may be NULL) gets how many rows went. */
+int oc_core_remove_duplicates(oc_core *core, const unsigned *cols, unsigned ncols,
+                              int has_header, unsigned *removed_out);
 
 /* ---- Data > Consolidate ----
  * Several source ranges (on any sheets, up to OC_CONSOLIDATE_SOURCES) are

@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.73 (11.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.74 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -107,7 +107,8 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_NAME_MANAGE, M_ADV_FILTER
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_NAME_MANAGE, M_ADV_FILTER,
+    M_TEXT_COLUMNS, M_REMOVE_DUPS
 };
 
 static struct NewMenu menus[] = {
@@ -250,6 +251,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
+    { NM_ITEM, "Text to Columns...", NULL, 0, 0, (APTR)M_TEXT_COLUMNS },
+    { NM_ITEM, "Remove Duplicates...", NULL, 0, 0, (APTR)M_REMOVE_DUPS },
     { NM_ITEM, "Pivot Table...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
     { NM_ITEM, "Refresh Pivot Table", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -4286,6 +4289,174 @@ static void do_subtotals(void)
         result(rc, "Group subtotals and a grand total were inserted; Undo removes them.");
 }
 
+/* ---- Data > Text to Columns and Remove Duplicates ----
+ * The windows take the same option words as the ARexx commands:
+ * TEXTTOCOLUMNS range [TAB] [COMMA] [SEMICOLON] [SPACE] [OTHER c] [MERGE]
+ *   [QUOTE c | NOQUOTE] [WIDTHS 3,8,...] [TYPES GTS...]
+ * REMOVEDUPS range [HEADER] [COLUMNS A,C,...] */
+
+static const char *rexx_word(const char *p, char *word, size_t size);
+
+/* 1 with opt filled from the words in p; 0 with why in out. */
+static int textcols_parse(const char *p, oc_textcols_options *opt, char *out, size_t size)
+{
+    char word[160];
+    memset(opt, 0, sizeof *opt);
+    opt->quote = '"';
+    for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
+        if (!strcasecmp(word, "TAB")) opt->delimiters |= OC_TEXTCOLS_TAB;
+        else if (!strcasecmp(word, "COMMA")) opt->delimiters |= OC_TEXTCOLS_COMMA;
+        else if (!strcasecmp(word, "SEMICOLON")) opt->delimiters |= OC_TEXTCOLS_SEMICOLON;
+        else if (!strcasecmp(word, "SPACE")) opt->delimiters |= OC_TEXTCOLS_SPACE;
+        else if (!strcasecmp(word, "MERGE")) opt->merge = 1;
+        else if (!strcasecmp(word, "NOQUOTE")) opt->quote = 0;
+        else if (!strcasecmp(word, "OTHER") || !strcasecmp(word, "QUOTE")) {
+            int other = !strcasecmp(word, "OTHER");
+            p = rexx_word(p, word, sizeof word);
+            if (strlen(word) != 1) {
+                snprintf(out, size, "%s needs one character after it", other ? "OTHER" : "QUOTE");
+                return 0;
+            }
+            if (other) { opt->delimiters |= OC_TEXTCOLS_OTHER; opt->other = word[0]; }
+            else opt->quote = word[0];
+        } else if (!strcasecmp(word, "WIDTHS")) {
+            const char *q;
+            p = rexx_word(p, word, sizeof word);
+            for (q = word; *q;) {
+                char *end;
+                long at = strtol(q, &end, 10);
+                if (end == q || at <= 0 || opt->nbreaks >= OC_TEXTCOLS_MAX ||
+                    (opt->nbreaks && (unsigned long)at <= opt->breaks[opt->nbreaks - 1])) {
+                    snprintf(out, size, "WIDTHS takes rising break positions, for example 3,8");
+                    return 0;
+                }
+                opt->breaks[opt->nbreaks++] = (unsigned)at;
+                q = *end == ',' ? end + 1 : end;
+                if (*end && *end != ',') { snprintf(out, size, "WIDTHS takes rising break positions, for example 3,8"); return 0; }
+            }
+        } else if (!strcasecmp(word, "TYPES")) {
+            size_t k;
+            p = rexx_word(p, word, sizeof word);
+            for (k = 0; word[k] && k < OC_TEXTCOLS_MAX; ++k) {
+                int c = toupper((unsigned char)word[k]);
+                if (c == 'G') opt->kind[k] = OC_TEXTCOLS_GENERAL;
+                else if (c == 'T') opt->kind[k] = OC_TEXTCOLS_TEXT;
+                else if (c == 'S') opt->kind[k] = OC_TEXTCOLS_SKIP;
+                else { snprintf(out, size, "TYPES takes G (general), T (text) or S (skip) for each column"); return 0; }
+            }
+        } else {
+            snprintf(out, size, "Unknown option %s: TAB COMMA SEMICOLON SPACE OTHER c MERGE QUOTE c NOQUOTE WIDTHS TYPES", word);
+            return 0;
+        }
+    }
+    if (!opt->delimiters && !opt->nbreaks) {
+        snprintf(out, size, "Give a delimiter (TAB COMMA SEMICOLON SPACE OTHER c) or WIDTHS");
+        return 0;
+    }
+    return 1;
+}
+
+static int textcols_run(const oc_textcols_options *opt, char *out, size_t size)
+{
+    unsigned width = 0;
+    int rc = oc_core_text_to_columns(core, opt, &width);
+    if (rc == OWF_ERR_UNSUPPORTED)
+        snprintf(out, size, "Text to Columns needs the cells of one column selected");
+    else if (rc == OWF_ERR_FORMAT)
+        snprintf(out, size, "The fields go past the sheet's last column, or the widths do not rise");
+    else if (rc == OWF_ERR_MEMORY)
+        snprintf(out, size, "Out of memory");
+    else if (rc != OWF_OK)
+        snprintf(out, size, "%s", owf_error_text(rc));
+    else
+        snprintf(out, size, "%u", width);
+    return rc == OWF_OK;
+}
+
+static int dups_parse(const char *p, unsigned *cols, unsigned *ncols, int *header, char *out, size_t size)
+{
+    char word[256];
+    *ncols = 0;
+    *header = 0;
+    for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
+        if (!strcasecmp(word, "HEADER")) *header = 1;
+        else if (!strcasecmp(word, "COLUMNS")) {
+            p = rexx_word(p, word, sizeof word);
+            if (!column_list(word, cols, 64, ncols)) {
+                snprintf(out, size, "COLUMNS takes letters separated by commas, for example A,C");
+                return 0;
+            }
+        } else {
+            snprintf(out, size, "Unknown option %s: HEADER COLUMNS A,C", word);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int dups_run(const unsigned *cols, unsigned ncols, int header, char *out, size_t size)
+{
+    unsigned removed = 0;
+    int rc = oc_core_remove_duplicates(core, cols, ncols, header, &removed);
+    if (rc == OWF_ERR_UNSUPPORTED)
+        snprintf(out, size, "Remove Duplicates needs one range selected");
+    else if (rc == OWF_ERR_FORMAT)
+        snprintf(out, size, "The columns to compare must be inside the range, below any heading");
+    else if (rc == OWF_ERR_MEMORY)
+        snprintf(out, size, "Out of memory");
+    else if (rc != OWF_OK)
+        snprintf(out, size, "%s", owf_error_text(rc));
+    else
+        snprintf(out, size, "%u", removed);
+    return rc == OWF_OK;
+}
+
+static void do_text_columns(void)
+{
+    oc_selection selection;
+    oc_textcols_options opt;
+    char options[200], why[200], done[260];
+    oc_core_selection(core, &selection);
+    if (selection.nranges != 1 || selection.ranges[0].first_col != selection.ranges[0].last_col) {
+        set_status("Select the cells of one column to split.");
+        return;
+    }
+    if (!text_requester("Text to Columns", "TAB COMMA SEMICOLON SPACE OTHER c MERGE NOQUOTE WIDTHS 3,8 TYPES GTS",
+                        "COMMA", options, sizeof options)) return;
+    if (!textcols_parse(options, &opt, why, sizeof why)) { set_status(why); return; }
+    if (!textcols_run(&opt, why, sizeof why)) { set_status(why); return; }
+    snprintf(done, sizeof done, "Split into %s columns; Undo puts the text back.", why);
+    result(OWF_OK, done);
+}
+
+static void do_remove_duplicates(void)
+{
+    oc_selection selection;
+    unsigned cols[64], ncols;
+    int header;
+    char options[300], why[200], done[260], name[8];
+    unsigned col;
+    size_t used;
+    oc_core_selection(core, &selection);
+    if (selection.nranges != 1) {
+        set_status("Select one range to remove duplicate rows from.");
+        return;
+    }
+    used = (size_t)snprintf(options, sizeof options, "HEADER COLUMNS ");
+    for (col = selection.ranges[0].first_col; col <= selection.ranges[0].last_col && col < selection.ranges[0].first_col + 64; ++col) {
+        oc_col_name(col, name);
+        if (used + strlen(name) + 2 >= sizeof options) break;
+        used += (size_t)snprintf(options + used, sizeof options - used, "%s%s",
+                                 col > selection.ranges[0].first_col ? "," : "", name);
+    }
+    if (!text_requester("Remove Duplicates", "HEADER (first row is headings), COLUMNS to compare",
+                        options, options, sizeof options)) return;
+    if (!dups_parse(options, cols, &ncols, &header, why, sizeof why)) { set_status(why); return; }
+    if (!dups_run(cols, ncols, header, why, sizeof why)) { set_status(why); return; }
+    snprintf(done, sizeof done, "%s duplicate rows removed%s", why, strcmp(why, "0") ? "; Undo puts them back." : ".");
+    result(OWF_OK, done);
+}
+
 /* ---- Pivot Table: the field layout window ----
  * The source's fields in a list, each with its use (row, column or page
  * field, in the order they were given one), its data function and, for a
@@ -5556,6 +5727,8 @@ static void menu_action(ULONG id)
         }
         break;
     case M_SUBTOTALS: do_subtotals(); break;
+    case M_TEXT_COLUMNS: do_text_columns(); break;
+    case M_REMOVE_DUPS: do_remove_duplicates(); break;
     case M_PIVOT_SUMMARY: do_pivot_table(); break;
     case M_PIVOT_REFRESH:
         {
@@ -6161,7 +6334,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -6237,6 +6410,26 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = rexx_multiop(arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "ADVFILTER", &arg)) {
         ok = rexx_advfilter(arg, result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "TEXTTOCOLUMNS", &arg) || starts_word_ci(command, "REMOVEDUPS", &arg)) {
+        /* the range first, then the options: TEXTTOCOLUMNS gives the columns split into, REMOVEDUPS the rows removed */
+        char where[64];
+        owf_range r;
+        int dups = starts_word_ci(command, "REMOVEDUPS", NULL);
+        const char *opts = rexx_word(arg, where, sizeof where);
+        if (!oc_parse_range(where, &r)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a range: %s", where); }
+        else {
+            oc_core_select_range(core, &r);
+            if (dups) {
+                unsigned cols[64], ncols;
+                int header;
+                ok = dups_parse(opts, cols, &ncols, &header, result_text, sizeof result_text) &&
+                     dups_run(cols, ncols, header, result_text, sizeof result_text);
+            } else {
+                oc_textcols_options opt;
+                ok = textcols_parse(opts, &opt, result_text, sizeof result_text) &&
+                     textcols_run(&opt, result_text, sizeof result_text);
+            }
+        }
     } else if (starts_word_ci(command, "CONSOLIDATE", &arg)) {
         ok = rexx_consolidate(arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "SCENARIO", &arg)) {

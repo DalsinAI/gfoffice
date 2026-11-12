@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.5.0"
+#define OW_CORE_VERSION "1.6.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -348,6 +348,39 @@ int ow_editor_set_user_field(ow_editor *editor, const char *name, const char *va
 /* A reference to body paragraph paragraph at the caret: its text, or (page 1) its page; the paragraph gets a
  * bookmark ("_Ref1" ...) when it has none */
 int ow_editor_insert_cross_reference(ow_editor *editor, int paragraph, int page);
+
+/* ---- Mail merge (core 1.6) ----
+ * A data source is a CSV file (comma, semicolon or tab separated; quoted cells; UTF-8 or Latin-1) whose first
+ * row names the columns. A merge field shows its column's name in guillemets, or a record's value while that
+ * record is shown (ow_editor_merge_show). The document keeps the source's path (owf_doc.merge_source) and reads
+ * it again when it is asked for. A merge makes each record's document, with the fields' values as plain text,
+ * tracked changes accepted and comments left out. */
+/* Read a data source (path NULL or "": none, and the document forgets it): OWF_OK, OWF_ERR_IO (no such file),
+ * OWF_ERR_FORMAT (no columns), OWF_ERR_UNSUPPORTED (over 4 MB) or OWF_ERR_MEMORY */
+int ow_editor_merge_load(ow_editor *editor, const char *path);
+/* The same from bytes in memory; name (when given) becomes the document's data source */
+int ow_editor_merge_load_text(ow_editor *editor, const char *name, const char *data, size_t length);
+/* Forget the table read (the document keeps its data source) */
+void ow_editor_merge_close(ow_editor *editor);
+/* The document's data source (NULL: none) */
+const char *ow_editor_merge_source(const ow_editor *editor);
+/* The columns and records (0: no data source, or it can't be read) */
+int ow_editor_merge_columns(ow_editor *editor);
+const char *ow_editor_merge_column(ow_editor *editor, int index);
+int ow_editor_merge_records(ow_editor *editor);
+/* A record's value in a column (record from 0; column by name, then without minding case), NULL: none */
+const char *ow_editor_merge_value(const ow_editor *editor, int record, const char *column);
+/* The record the fields show (-1: the columns' names); show one (-1: the names) and lay out again */
+int ow_editor_merge_shown(const ow_editor *editor);
+int ow_editor_merge_show(ow_editor *editor, int record);
+/* A merge field for column at the caret (undoable) */
+int ow_editor_insert_merge_field(ow_editor *editor, const char *column);
+/* Records first to last (from 0; last -1: to the end) merged into one new document, each from a new page
+ * (*out is the caller's: owf_doc_free); OWF_ERR_UNSUPPORTED: no records */
+int ow_editor_merge_document(ow_editor *editor, int first, int last, owf_doc **out);
+/* Records first to last each saved as its own file, path with the record's number (from 1) before its
+ * extension (RAM:letter.odt: RAM:letter1.odt ...), in the format the extension names; *written: how many */
+int ow_editor_merge_to_files(ow_editor *editor, const char *path, int first, int last, int *written);
 
 #ifdef __cplusplus
 }
