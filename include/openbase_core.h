@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.5.0"
+#define OB_CORE_VERSION "0.6.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -274,6 +274,27 @@ ob_int ob_view_total(ob_project *p, const char *table, const ob_view *v);
 /* ob_rows_at through a view (NULL is key order, every row). */
 int ob_view_rows(ob_project *p, const char *table, const ob_view *v, ob_int first, int max,
                  ob_row_fn cb, void *user);
+
+/* ---- Forms: one record at a time (core 0.6, design 6.3) ----
+ * Positions count from 0 in the view's order (NULL: key order, every row),
+ * as ob_view_rows takes them. */
+
+/* Where the row with key `key` stands in view v: -1 when the view leaves it
+ * out, -2 on error. */
+ob_int ob_view_position(ob_project *p, const char *table, const ob_view *v, ob_int key);
+/* Find: the first row at or after position `from` (backward: at or before)
+ * whose field holds `text`. A field that holds text (Text, Memo, Choice,
+ * Date, Time, Date and time) matches when it contains the text, any case;
+ * any other field when it equals the value, given in the field's own form
+ * ("1,250.50", "Yes"). Returns the row's position, -1 when none matches,
+ * -2 with the reason in ob_error(). */
+ob_int ob_view_find(ob_project *p, const char *table, const ob_view *v, const char *field, const char *text,
+                    ob_int from, int backward);
+/* Subforms: the Lookups in other tables that point at table (an order's
+ * lines look up the order), up to max into out. A subform's rows are the
+ * child table's rows whose Lookup holds the record's key: a view filtered on
+ * r.field Equals the key. Returns how many there are, -1 on error. */
+int ob_children(ob_project *p, const char *table, ob_relation *out, int max);
 
 /* ---- CSV (design 8) ----
  * Export: a header of field names, then each row of the view (NULL: every

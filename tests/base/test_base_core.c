@@ -1351,6 +1351,67 @@ static void test_csv_options(void)
     ob_close(p);
 }
 
+/* ---- Forms (core 0.6) ---- */
+
+static void shop_orders(ob_project *p);
+
+static void test_forms(void)
+{
+    ob_project *p = fresh("forms.oadb");
+    ob_view v, kids;
+    ob_relation r[4];
+    char key[24];
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+
+    /* positions in key order and in a sorted, filtered view */
+    CHECK(ob_view_position(p, "Customers", NULL, 1) == 0 && ob_view_position(p, "Customers", NULL, 5) == 4,
+          "key order positions");
+    CHECK(ob_view_position(p, "Customers", NULL, 99) == -1, "no such row");
+    view_set(&v, "Name", 0, "", OB_FILTER_NONE, "");
+    CHECK(ob_view_position(p, "Customers", &v, 4) == 1, "bob is second by name: %lld",
+          (long long)ob_view_position(p, "Customers", &v, 4));
+    view_set(&v, "Name", 1, "Town", OB_FILTER_EQUALS, "leeds");
+    CHECK(ob_view_position(p, "Customers", &v, 2) == 1 && ob_view_position(p, "Customers", &v, 5) == 0,
+          "Leeds Z to A: Eve, Ann");
+    CHECK(ob_view_position(p, "Customers", &v, 1) == -1, "dan is filtered out");
+    CHECK(ob_view_position(p, "Nobody", NULL, 1) == -2, "no table");
+
+    /* find: text contains, any case; other fields equal */
+    view_set(&v, "Name", 0, "", OB_FILTER_NONE, "");     /* Ann bob Cy dan Eve */
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "EXAMPLE", 0, 0) == 1, "first email: bob");
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "example", 2, 0) == 2, "from 2: Cy");
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "example", 4, 1) == 4, "backward from 4: Eve");
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "100%_", 0, 0) == 1, "wildcards are plain: %lld",
+          (long long)ob_view_find(p, "Customers", &v, "Email", "100%_", 0, 0));
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "1%0", 0, 0) == -1, "a %% is a %%");
+    CHECK(ob_view_find(p, "Customers", &v, "Name", "zz", 0, 0) == -1, "none");
+    CHECK(ob_view_find(p, "Customers", &v, "Credit", "250.00", 0, 0) == 3, "money equals: dan");
+    CHECK(ob_view_find(p, "Customers", &v, "Credit", "250", 4, 0) == -1, "none after dan");
+    CHECK(ob_view_find(p, "Customers", &v, "Member", "yes", 0, 0) == 2, "Yes/No: Cy");
+    CHECK(ob_view_find(p, "Customers", &v, "Credit", "lots", 0, 0) == -2, "money that isn't");
+    CHECK(ob_view_find(p, "Customers", &v, "Name", "", 0, 0) == -2, "nothing to find");
+    CHECK_ERR(p, "Type what to find");
+    CHECK(ob_view_find(p, "Customers", &v, "Age", "1", 0, 0) == -2, "no field");
+    CHECK_ERR(p, "has no field Age");
+    view_set(&v, "", 0, "Town", OB_FILTER_EQUALS, "York");   /* dan bob */
+    CHECK(ob_view_find(p, "Customers", &v, "Name", "b", 0, 0) == 1, "inside a filter: bob");
+    CHECK(ob_view_find(p, "Customers", &v, "Name", "Ann", 0, 0) == -1, "Ann is filtered out");
+
+    /* subforms */
+    CHECK(ob_children(p, "Customers", r, 4) == 1 && !strcmp(r[0].table, "Orders") && !strcmp(r[0].field, "Customer"),
+          "Customers' child: Orders");
+    CHECK(ob_children(p, "Orders", r, 4) == 0, "Orders has none");
+    CHECK(ob_children(p, "Nobody", r, 4) == -1, "no table");
+    snprintf(key, sizeof key, "%d", 1);
+    view_set(&kids, "", 0, r[0].field, OB_FILTER_EQUALS, key);
+    CHECK(ob_view_total(p, "Orders", &kids) == 2, "dan's orders: %lld", (long long)ob_view_total(p, "Orders", &kids));
+    view_set(&kids, "", 0, "Customer", OB_FILTER_EQUALS, "4");
+    CHECK(ob_view_total(p, "Orders", &kids) == 0, "bob has none");
+    ob_close(p);
+}
+
 /* ---- Queries (core 0.5) ---- */
 
 static int qrow_cb(void *u, ob_int key, int n, const char *const *v)
@@ -1763,6 +1824,7 @@ int main(int argc, char **argv)
     test_undo();
     test_csv_options();
     test_queries();
+    test_forms();
     test_not_projects();
     test_cut_short();
     printf("test-base-core: %d checks, %d failed\n", checks, fails);

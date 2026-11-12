@@ -2023,10 +2023,24 @@ static int holds_text(ob_type t)
     return t == OB_TEXT || t == OB_MEMO || t == OB_CHOICE || t == OB_DATE || t == OB_TIME || t == OB_DATETIME;
 }
 
-/* What a view adds to a SELECT ... FROM table: its WHERE and ORDER BY,
+/* A view's ORDER BY, appended to s. */
+static int view_order(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s)
+{
+    const ob_field *f;
+    if (v && v->sort[0]) {
+        if (!(f = field_named(t, v->sort))) return fail(p, "%s has no field %s", t->name, v->sort);
+        sqlite3_str_appendf(s, " ORDER BY \"%w\"%s%s, rowid", f->name,
+                            holds_text(f->type) ? " COLLATE NOCASE" : "", v->desc ? " DESC" : "");
+    } else {
+        sqlite3_str_appendall(s, " ORDER BY rowid");
+    }
+    return 1;
+}
+
+/* What a view's filter adds to a SELECT ... FROM table: its WHERE,
  * appended to s, the filter's value into *bind (?3; kind V_NULL when none).
  * 0 with the reason. */
-static int view_sql(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
+static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
 {
     const ob_field *f;
     bind->kind = V_NULL;
@@ -2079,14 +2093,12 @@ static int view_sql(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_
         }
         }
     }
-    if (v && v->sort[0]) {
-        if (!(f = field_named(t, v->sort))) return fail(p, "%s has no field %s", t->name, v->sort);
-        sqlite3_str_appendf(s, " ORDER BY \"%w\"%s%s, rowid", f->name,
-                            holds_text(f->type) ? " COLLATE NOCASE" : "", v->desc ? " DESC" : "");
-    } else {
-        sqlite3_str_appendall(s, " ORDER BY rowid");
-    }
     return 1;
+}
+
+static int view_sql(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
+{
+    return view_where(p, t, v, s, bind) && view_order(p, t, v, s);
 }
 
 int ob_view_check(ob_project *p, const char *table, const ob_view *v)
@@ -2211,6 +2223,115 @@ static int rows_from(ob_project *p, const char *table, const ob_view *v, ob_int 
     if (rc != SQLITE_DONE) { sql_fail(p, NULL, rc); return -1; }
     ok(p);
     return n;
+}
+
+/* ---- Forms: a view one record at a time (design 6.3) ---- */
+
+/* SELECT pos FROM (the view numbered, with `extra` as column f) WHERE ...:
+ * the start of the statements below. */
+static int numbered(ob_project *p, const ob_table *t, const ob_view *v, const char *extra, sqlite3_str *s,
+                    value *b)
+{
+    sqlite3_str_appendall(s, "SELECT pos FROM (SELECT row_number() OVER (");
+    if (!view_order(p, t, v, s)) return 0;
+    sqlite3_str_appendf(s, ") - 1 AS pos, rowid AS k, %s AS f FROM \"%w\"", extra, t->name);
+    if (!view_where(p, t, v, s, b)) return 0;
+    sqlite3_str_appendall(s, ")");
+    return 1;
+}
+
+static ob_int pos_of(ob_project *p, const ob_table *t, sqlite3_str *s, const value *b, ob_int one,
+                     const value *two)
+{
+    sqlite3_stmt *st;
+    char *sql = sqlite3_str_finish(s);
+    ob_int n = -1;
+    int rc;
+    st = sql ? prep(p, sql) : NULL;
+    sqlite3_free(sql);
+    if (!st) return -2;
+    sqlite3_bind_int64(st, 1, one);
+    if (two) bind_value(st, 2, two);
+    if (b->kind != V_NULL) bind_value(st, 3, b);
+    rc = sqlite3_step(st);
+    if (rc == SQLITE_ROW) n = sqlite3_column_int64(st, 0);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_ROW && rc != SQLITE_DONE) { sql_fail(p, t, rc); return -2; }
+    ok(p);
+    return n;
+}
+
+ob_int ob_view_position(ob_project *p, const char *table, const ob_view *v, ob_int key)
+{
+    const ob_table *t;
+    sqlite3_str *s;
+    value b;
+    if (!(t = design(p, table))) return -2;
+    s = sqlite3_str_new(NULL);
+    if (!numbered(p, t, v, "NULL", s, &b)) { sqlite3_free(sqlite3_str_finish(s)); return -2; }
+    sqlite3_str_appendall(s, " WHERE k = ?1");
+    return pos_of(p, t, s, &b, key, NULL);
+}
+
+ob_int ob_view_find(ob_project *p, const char *table, const ob_view *v, const char *field, const char *text,
+                    ob_int from, int backward)
+{
+    const ob_table *t;
+    const ob_field *f;
+    sqlite3_str *s;
+    char *col;
+    value b, w;
+    if (!(t = design(p, table))) return -2;
+    if (!(f = field_named(t, field))) { fail(p, "%s has no field %s", t->name, field); return -2; }
+    if (!text || !text[0]) { fail(p, "Type what to find"); return -2; }
+    if (f->type == OB_OBJECT) { fail(p, "%s holds Datatype objects, which can't be searched", field_label(f)); return -2; }
+    w.long_text = NULL;
+    if (holds_text(f->type)) {
+        size_t i, o = 0;
+        w.text[o++] = '%';
+        for (i = 0; text[i] && o + 3 < sizeof w.text; i++) {
+            char c = text[i];
+            if (c == '%' || c == '_' || c == '\\') w.text[o++] = '\\';
+            w.text[o++] = c;
+        }
+        w.text[o++] = '%';
+        w.text[o] = 0;
+        w.kind = V_TEXT;
+    } else {
+        char e[OB_ERR_MAX];
+        ob_field loose = *f;
+        loose.required = loose.key = 0;
+        loose.max_len = 0;
+        if (f->type == OB_COUNTER) loose.type = OB_INTEGER;
+        if (!convert(&loose, text, &w, e, sizeof e)) { fail(p, "%s", e); return -2; }
+    }
+    col = sqlite3_mprintf("\"%w\"", f->name);
+    if (!col) { fail(p, "Out of memory"); return -2; }
+    s = sqlite3_str_new(NULL);
+    if (!numbered(p, t, v, col, s, &b)) { sqlite3_free(col); sqlite3_free(sqlite3_str_finish(s)); return -2; }
+    sqlite3_free(col);
+    sqlite3_str_appendf(s, " WHERE pos %s ?1 AND f %s ORDER BY pos%s LIMIT 1", backward ? "<=" : ">=",
+                        w.kind == V_TEXT && holds_text(f->type) ? "LIKE ?2 ESCAPE '\\'" : "= ?2",
+                        backward ? " DESC" : "");
+    return pos_of(p, t, s, &b, from < 0 ? 0 : from, &w);
+}
+
+int ob_children(ob_project *p, const char *table, ob_relation *out, int max)
+{
+    ob_relation *all;
+    int n, i, k = 0;
+    if (!design(p, table)) return -1;
+    n = ob_relations(p, NULL, 0);
+    if (n <= 0) return n;
+    if (!(all = malloc((size_t)n * sizeof *all))) { fail(p, "Out of memory"); return -1; }
+    n = ob_relations(p, all, n);
+    for (i = 0; i < n; i++)
+        if (same(all[i].lookup, table) && !same(all[i].table, table)) {
+            if (k < max) out[k] = all[i];
+            k++;
+        }
+    free(all);
+    return n < 0 ? -1 : k;
 }
 
 /* ---- CSV ---- */
