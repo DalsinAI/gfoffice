@@ -150,3 +150,25 @@ autocorrect-check: $(OUT)/test-autocorrect-asan
 
 test: autocorrect-test
 check: autocorrect-check
+
+# Phase 2: labels (tests/core/test_labels.c)
+LABELS_SRC = $(OWF_SRC) $(CORE_SRC) tests/core/test_labels.c include/openwrite_core.h
+
+$(OUT)/test-labels: $(LABELS_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) \
+		tests/core/test_labels.c -lz -o $@
+
+$(OUT)/test-labels-asan: $(LABELS_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) tests/core/test_labels.c -lz -o $@
+
+labels-test: $(OUT)/test-labels
+	$(OUT)/test-labels
+
+labels-check: $(OUT)/test-labels-asan
+	$(OUT)/test-labels-asan
+
+test: labels-test
+check: labels-check

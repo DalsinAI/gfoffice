@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.33 (12.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.34 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -118,7 +118,8 @@ enum {
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
-    M_AC_ON, M_AC_REPLACE, M_AC_SENTENCE, M_AC_TWO_CAPS, M_AC_QUOTES, M_AC_DASHES, M_AC_ADD, M_AC_REMOVE
+    M_AC_ON, M_AC_REPLACE, M_AC_SENTENCE, M_AC_TWO_CAPS, M_AC_QUOTES, M_AC_DASHES, M_AC_ADD, M_AC_REMOVE,
+    M_LABELS, M_ENV_DL, M_ENV_C5, M_ENV_C6
 };
 
 static struct NewMenu menus[] = {
@@ -235,6 +236,10 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Layout", NULL, 0, 0, NULL },
     { NM_ITEM, "Page Setup...", NULL, 0, 0, (APTR)M_PAGE_SETUP },
+    { NM_ITEM, "Envelope", NULL, 0, 0, NULL },                         /* 2.0.34 */
+    { NM_SUB, "DL (220 x 110 mm)", NULL, 0, 0, (APTR)M_ENV_DL },
+    { NM_SUB, "C5 (229 x 162 mm)", NULL, 0, 0, (APTR)M_ENV_C5 },
+    { NM_SUB, "C6 (162 x 114 mm)", NULL, 0, 0, (APTR)M_ENV_C6 },
     { NM_ITEM, "Document Columns...", NULL, 0, 0, (APTR)M_COLUMNS },
     { NM_ITEM, "Frame...", NULL, 0, 0, (APTR)M_FRAME },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -300,6 +305,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_SUB, "Merge to Document...", NULL, 0, 0, (APTR)M_MERGE_DOC },
     { NM_SUB, "Merge to Files...", NULL, 0, 0, (APTR)M_MERGE_FILES },
+    { NM_SUB, "Labels...", NULL, 0, 0, (APTR)M_LABELS },              /* 2.0.34 (core 1.9) */
     { NM_ITEM, "User Fields...", NULL, 0, 0, (APTR)M_USER_FIELDS },
     { NM_ITEM, "Update Fields", NULL, 0, 0, (APTR)M_UPDATE_FIELDS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -4849,6 +4855,63 @@ static int merge_out(const char *path, int files)
     return rc == OWF_OK ? n : -rc;
 }
 
+/* 2.0.34: a sheet of labels (core 1.9): one record a label, or with no data source a page of the document;
+ * saved as a new document. sheet < 0: ask. Answers how many labels, or -error. */
+static int labels_out(int sheet, const char *path)
+{
+    owf_doc *out = NULL;
+    owf_report *report;
+    int rc, n;
+    fields_update();
+    rc = ow_editor_labels(editor, ow_label_sheet_at(sheet), -1, -1, &out);
+    pages_changed();
+    if (rc != OWF_OK) return -rc;
+    n = out->nframes;
+    report = owf_report_new();
+    rc = owf_export_file(out, path, NULL, report);
+    owf_report_free(report);
+    owf_doc_free(out);
+    return rc == OWF_OK ? n : -rc;
+}
+
+static void do_labels(void)
+{
+    char (*names)[72], path[512], msg[200];
+    int k, n = ow_label_sheet_count();
+    if (!editor) return;
+    if (!(names = (char (*)[72])calloc((size_t)n, sizeof *names))) return;
+    for (k = 0; k < n; ++k) snprintf(names[k], sizeof names[k], "%s", ow_label_sheet_at(k)->name);
+    k = pick_requester("Labels", "Label sheet", names, n);
+    free(names);
+    if (k < 0) return;
+    if (!ask_file_for(1, "Save the labels as", path, sizeof path)) return;
+    n = labels_out(k, path);
+    if (n == -OWF_ERR_UNSUPPORTED) {
+        tell("Labels", "Labels are made from plain text: take out tables and text boxes first (or there are no records).");
+        return;
+    }
+    if (n < 0) { tell("Labels", owf_error_text(-n)); return; }
+    snprintf(msg, sizeof msg, "%d labels saved in %.100s; open it to print.", n, leaf(path));
+    set_status(msg);
+    request_document_redraw();
+}
+
+/* 2.0.34: an envelope's page, turned for printing across, the address where a window would be */
+static void do_envelope(int what)
+{
+    owf_page pg;
+    int rc;
+    if (!editor) return;
+    ow_editor_page_setup(editor, &pg);
+    if (what == M_ENV_DL) { pg.width = mm_to_twips(220); pg.height = mm_to_twips(110); pg.margin_left = mm_to_twips(100); pg.margin_top = mm_to_twips(50); }
+    else if (what == M_ENV_C5) { pg.width = mm_to_twips(229); pg.height = mm_to_twips(162); pg.margin_left = mm_to_twips(110); pg.margin_top = mm_to_twips(80); }
+    else { pg.width = mm_to_twips(162); pg.height = mm_to_twips(114); pg.margin_left = mm_to_twips(75); pg.margin_top = mm_to_twips(50); }
+    pg.margin_right = pg.margin_bottom = mm_to_twips(10);
+    rc = ow_editor_apply_page_setup(editor, &pg);
+    if (rc == OWF_OK) { pages_changed(); editor_repaint("Envelope page set; type the address."); }
+    else tell("Envelope", "The envelope page could not be set.");
+}
+
 static void do_merge(int what)
 {
     char path[512], msg[240];
@@ -5048,6 +5111,8 @@ static void menu_action(ULONG id)
     case M_INDEX_ENTRY: case M_INDEX: do_index((int)id); break;
     case M_AC_ON: case M_AC_REPLACE: case M_AC_SENTENCE: case M_AC_TWO_CAPS: case M_AC_QUOTES: case M_AC_DASHES:
     case M_AC_ADD: case M_AC_REMOVE: do_autocorrect((int)id); break;
+    case M_LABELS: do_labels(); break;
+    case M_ENV_DL: case M_ENV_C5: case M_ENV_C6: do_envelope((int)id); break;
     }
 }
 
@@ -5230,7 +5295,7 @@ static int rexx_do_command(const char *command, char **result_out)
         "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
         "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE "
         "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX "
-        "AUTOCORRECT ACREPLACE TYPETEXT QUIT");
+        "AUTOCORRECT ACREPLACE TYPETEXT LABELSHEETS LABELS ENVELOPE QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
@@ -5310,6 +5375,17 @@ static int rexx_do_command(const char *command, char **result_out)
         if(!editor||!path[0]){ok=0;snprintf(result,sizeof result,"MERGE needs a file");}
         else if((n=merge_out(path,files))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",-n==OWF_ERR_UNSUPPORTED?"No records":owf_error_text(-n));}
         else snprintf(result,sizeof result,"%d",n);}
+    /* 2.0.34: labels and envelopes. LABELSHEETS answers the sheets between '|'; LABELS n file saves a sheet (n from
+     * 1) of labels, a record each (or a page of the document), and answers how many; ENVELOPE DL|C5|C6 */
+    else if(starts_word_ci(command,"LABELSHEETS",&arg)){int k;size_t o=0;result[0]=0;
+        for(k=0;k<ow_label_sheet_count()&&o+2<sizeof result;++k){if(k)result[o++]='|';o+=(size_t)snprintf(result+o,sizeof result-o,"%s",ow_label_sheet_at(k)->name);if(o>=sizeof result)o=sizeof result-1;result[o]=0;}}
+    else if(starts_word_ci(command,"LABELS",&arg)){char *end;long k=strtol(arg,&end,10);const char *path=skip_space(end);int n;
+        if(!editor||k<1||k>ow_label_sheet_count()||!*path){ok=0;snprintf(result,sizeof result,"LABELS needs a sheet (1 to %d) and a file",ow_label_sheet_count());}
+        else if((n=labels_out((int)k-1,path))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",n==-OWF_ERR_UNSUPPORTED?"Not plain text, or no records":owf_error_text(-n));}
+        else snprintf(result,sizeof result,"%d",n);}
+    else if(starts_word_ci(command,"ENVELOPE",&arg)){int w=!strcasecmp(arg,"DL")?M_ENV_DL:!strcasecmp(arg,"C5")?M_ENV_C5:!strcasecmp(arg,"C6")?M_ENV_C6:0;
+        if(!editor||!w){ok=0;snprintf(result,sizeof result,"ENVELOPE takes DL, C5 or C6");}
+        else{owf_page pg;do_envelope(w);ow_editor_page_setup(editor,&pg);snprintf(result,sizeof result,"%d %d",pg.width,pg.height);}}
     /* 2.0.33: AutoCorrect. AUTOCORRECT [ON|OFF|n] answers its options (0: off; 1 replace, 2 sentences, 4 two
      * capitals, 8 quotes, 16 dashes; n sets them and turns it on); ACREPLACE word [with|-] answers the word's
      * replacement (RC 5: none), sets it or ("-") removes it; TYPETEXT text types it as the keyboard does */

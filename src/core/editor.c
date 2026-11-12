@@ -6459,3 +6459,113 @@ int ow_editor_type(ow_editor *editor, const ow_autocorrect *ac, const char *utf8
     if (ac && length == 1 && (utf8[0] == ' ' || utf8[0] == '\t') && ac_apply(editor, ac) < 0) return OWF_ERR_MEMORY;
     return ow_editor_insert_utf8(editor, utf8, length);
 }
+
+/* ---- 2.8.0 (core 1.9): labels --------------------------------------------------------------------------------
+ * A sheet of labels from the document: a label is a text box placed on the page at its sheet's pitch, holding
+ * the body as one record of the mail merge shows it (or, with no data source, the document as it is, on every
+ * label of one page). The sheets are common stock sizes, by their measures, the program's own list. */
+
+static const ow_label_sheet label_sheets[] = {
+    /* name, page width, height, columns, rows, label width, height, left, top, across, down (twips: mm * 56.7) */
+    { "A4 3 x 7 (63.5 x 38.1 mm)", 11906, 16838, 3, 7, 3600, 2160, 408, 873, 3714, 2160 },
+    { "A4 2 x 7 (99.1 x 38.1 mm)", 11906, 16838, 2, 7, 5619, 2160, 266, 873, 5755, 2160 },
+    { "A4 3 x 8 (70 x 37 mm)", 11906, 16838, 3, 8, 3968, 2098, 0, 25, 3968, 2098 },
+    { "A4 2 x 4 (99.1 x 67.7 mm)", 11906, 16838, 2, 4, 5619, 3839, 266, 737, 5755, 3839 },
+    { "Letter 3 x 10 (2.625 x 1 in)", 12240, 15840, 3, 10, 3780, 1440, 270, 720, 3960, 1440 },
+    { "Letter 2 x 5 (4 x 2 in)", 12240, 15840, 2, 5, 5760, 2880, 216, 720, 6048, 2880 },
+};
+
+int ow_label_sheet_count(void) { return (int)(sizeof label_sheets / sizeof label_sheets[0]); }
+
+const ow_label_sheet *ow_label_sheet_at(int i)
+{
+    return i >= 0 && i < ow_label_sheet_count() ? &label_sheets[i] : NULL;
+}
+
+/* The body of rec becomes a label's text box on page (from 0), place k; its body is left empty */
+static int add_label(owf_doc *into, owf_doc *rec, const ow_label_sheet *s, int k, owf_para *anchor)
+{
+    owf_frame f;
+    owf_charfmt cf;
+    int i, j, at;
+    memset(&f, 0, sizeof f);
+    f.image = -1;
+    f.story = rec->body;
+    memset(&rec->body, 0, sizeof rec->body);
+    for (i = 0; i < f.story.nparas; ++i) {
+        owf_para *p = &f.story.paras[i];
+        p->fmt.page_break_before = 0;
+        owf_free(p->bookmarks);
+        p->bookmarks = NULL;
+        for (j = 0; j < p->nruns; ++j) p->runs[j].note = 0;    /* notes stay with the document, not a label */
+    }
+    f.width = s->label_width;
+    f.height = s->label_height;
+    f.x = s->left + (k % s->columns) * s->across;
+    f.y = s->top + (k / s->columns) * s->down;
+    f.x_from = f.y_from = OWF_FROM_PAGE;
+    f.x_place = f.y_place = OWF_PLACE_AT;
+    f.wrap = OWF_WRAP_NONE;
+    f.inset[0] = f.inset[2] = 85;               /* 1.5 mm top and bottom, 3 mm at the sides */
+    f.inset[1] = f.inset[3] = 170;
+    if ((at = owf_doc_add_frame(into, &f)) < 0) { free_story_data(&f.story); return 0; }
+    owf_charfmt_init(&cf);
+    return owf_para_add_frame(anchor, &cf, at) == OWF_OK;
+}
+
+int ow_editor_labels(ow_editor *editor, const ow_label_sheet *sheet, int first, int last, owf_doc **out)
+{
+    owf_doc *all = NULL, *rec = NULL;
+    owf_para *anchor = NULL;
+    owf_parafmt pf;
+    int r, k = 0, per, shown, merging, rc = OWF_OK;
+    if (out) *out = NULL;
+    if (!editor || !editor->doc || !sheet || !out || sheet->columns < 1 || sheet->rows < 1 || sheet->label_width < 1 ||
+        sheet->label_height < 1) return OWF_ERR_FORMAT;
+    if (editor->doc->nframes || !editor->doc->body.nparas) return OWF_ERR_UNSUPPORTED;   /* text boxes: no */
+    for (r = 0; r < editor->doc->body.nparas; ++r) if (editor->doc->body.paras[r].table_id >= 0) return OWF_ERR_UNSUPPORTED;
+    per = sheet->columns * sheet->rows;
+    merging = ow_editor_merge_records(editor) > 0;
+    if (merging) { if (!merge_range(editor, &first, &last)) return OWF_ERR_UNSUPPORTED; }
+    else { first = 0; last = per - 1; }
+    shown = editor->merge_at;
+    for (r = first; r <= last && rc == OWF_OK; ++r, ++k) {
+        if (merging) rec = record_doc(editor, r);
+        else rec = clone_doc(editor->doc);
+        if (!rec) { rc = OWF_ERR_MEMORY; break; }
+        if (!all) {                              /* the first record's document holds them all: its styles and images */
+            all = rec;
+            rec = clone_doc(all);
+            if (!rec) { rc = OWF_ERR_MEMORY; break; }
+            free_story_data(&all->body);
+            memset(&all->body, 0, sizeof all->body);
+            free_story_data(&all->header); memset(&all->header, 0, sizeof all->header);
+            free_story_data(&all->footer); memset(&all->footer, 0, sizeof all->footer);
+            free_story_data(&all->header_left); memset(&all->header_left, 0, sizeof all->header_left);
+            free_story_data(&all->footer_left); memset(&all->footer_left, 0, sizeof all->footer_left);
+            all->page.width = sheet->page_width;
+            all->page.height = sheet->page_height;
+            all->page.margin_top = all->page.margin_bottom = all->page.margin_left = all->page.margin_right = 0;
+        }
+        if (k % per == 0) {
+            owf_parafmt_init(&pf);
+            pf.page_break_before = k > 0;
+            if (!(anchor = owf_story_add(&all->body, &pf))) { rc = OWF_ERR_MEMORY; break; }
+            {
+                owf_charfmt cf = all->base;
+                if (owf_para_add_text(anchor, &cf, "", 0) != OWF_OK) { rc = OWF_ERR_MEMORY; break; }
+            }
+        }
+        if (!add_label(all, rec, sheet, k % per, anchor)) rc = OWF_ERR_MEMORY;
+        owf_doc_free(rec);
+        rec = NULL;
+    }
+    owf_doc_free(rec);
+    if (merging) {
+        editor->merge_at = shown;
+        if (update_fields(editor) < 0 && rc == OWF_OK) rc = OWF_ERR_MEMORY;
+    }
+    if (rc != OWF_OK) { owf_doc_free(all); return rc; }
+    *out = all;
+    return OWF_OK;
+}
