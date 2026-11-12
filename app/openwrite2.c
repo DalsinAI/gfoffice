@@ -472,6 +472,7 @@ static int editor_result(int rc, const char *message);
 static void review_author_init(void);
 static void sync_track_menu(void);
 static void sync_ac_menu(void);                     /* 2.0.33 */
+static int pick_requester(const char *title, const char *label, char (*names)[72], int n);
 static char review_author[64];                       /* 2.0.27: the name tracked changes are made under */
 static int review_author_set;
 static int mm_to_twips(int mm);
@@ -5317,7 +5318,7 @@ static int rexx_do_command(const char *command, char **result_out)
         else{if(!strcasecmp(arg,"ON"))autocorrect_on=1;else if(!strcasecmp(arg,"OFF"))autocorrect_on=0;else if(*arg>='0'&&*arg<='9'){ow_autocorrect_set_options(ac,(unsigned)atol(arg));autocorrect_on=1;}else if(*arg){ok=0;snprintf(result,sizeof result,"AUTOCORRECT takes ON, OFF or a number");}
             if(ok){if(*arg){ac_save();sync_ac_menu();}snprintf(result,sizeof result,"%u",autocorrect_on?ow_autocorrect_options(ac):0u);}}}
     else if(starts_word_ci(command,"ACREPLACE",&arg)){ow_autocorrect *ac=ac_list();char word[64];const char *rest=arg;int n=0;char *uw=NULL,*ut=NULL;
-        while(*rest&&*rest!=' '&&n<63)word[n++]=*rest++;word[n]=0;rest=skip_space(rest);
+        while(*rest&&*rest!=' '&&n<63){word[n++]=*rest++;}word[n]=0;rest=skip_space(rest);
         if(!ac||!word[0]){ok=0;snprintf(result,sizeof result,"ACREPLACE needs a word");}
         else if(!(uw=latin1_utf8(word))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
         else if(!*rest){const char *to=ow_autocorrect_lookup(ac,uw);if(!to){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No replacement");}else{size_t o=to_latin1(to,strlen(to),result,sizeof result);result[o<sizeof result?o:sizeof result-1]=0;}}
