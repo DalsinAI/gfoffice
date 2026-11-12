@@ -4616,7 +4616,7 @@ out:
 /* Where the fields are: "Record 2 of 3" or "Field names" */
 static void merge_status(const char *before)
 {
-    char msg[160];
+    char msg[300];
     int at = ow_editor_merge_shown(editor);
     if (at >= 0) snprintf(msg, sizeof msg, "%sRecord %d of %d.", before, at + 1, ow_editor_merge_records(editor));
     else snprintf(msg, sizeof msg, "%sField names shown.", before);
@@ -4663,7 +4663,7 @@ static void do_merge(int what)
         if (!ask_file_for(0, "Mail merge data source (CSV)", path, sizeof path)) return;
         rc = ow_editor_merge_load(editor, path);
         if (rc != OWF_OK) { tell("Mail Merge", merge_error(rc)); return; }
-        snprintf(msg, sizeof msg, "%s: %d columns, %d records. ", leaf(path), ow_editor_merge_columns(editor),
+        snprintf(msg, sizeof msg, "%.100s: %d columns, %d records. ", leaf(path), ow_editor_merge_columns(editor),
                  ow_editor_merge_records(editor));
         pages_changed();
         merge_status(msg);
@@ -4701,7 +4701,7 @@ static void do_merge(int what)
                           path, sizeof path)) return;
         n = merge_out(path, what == M_MERGE_FILES);
         if (n < 0) { tell("Mail Merge", owf_error_text(-n)); return; }
-        snprintf(msg, sizeof msg, what == M_MERGE_DOC ? "%d records merged into %s." : "%d records merged into files from %s.",
+        snprintf(msg, sizeof msg, what == M_MERGE_DOC ? "%d records merged into %.100s." : "%d records merged into files from %.100s.",
                  n, leaf(path));
         set_status(msg);
         break;
@@ -5018,7 +5018,7 @@ static void mem_check(char *out, size_t size)
 
 static int rexx_do_command(const char *command, char **result_out)
 {
-    const char *arg="";char result[512];int ok=1,rc_fail=RX_ERROR;char *dynamic=NULL;
+    const char *arg="";char result[768];int ok=1,rc_fail=RX_ERROR;char *dynamic=NULL;
     result[0]=0;command=skip_space(command);
     if(starts_word_ci(command,"VERSION",&arg))snprintf(result,sizeof result,"%s",VERSION_TEXT);
     /* ACTIVATE, DEACTIVATE, HELP, FAULT and LASTERROR: with VERSION and QUIT, the commands every Open app's port has */
@@ -5106,7 +5106,7 @@ static int rexx_do_command(const char *command, char **result_out)
         else if(!(u=latin1_utf8(arg))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
         else{rc=ow_editor_insert_merge_field(editor,u);free(u);ok=editor_result(rc,"Merge field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
     else if(starts_word_ci(command,"MERGE",&arg)){char path[400];const char *rest=arg;int n=0,files;
-        while(*rest&&*rest!=' '&&n<399)path[n++]=*rest++;path[n]=0;rest=skip_space(rest);files=starts_word_ci(rest,"FILES",NULL);
+        while(*rest&&*rest!=' '&&n<399){path[n++]=*rest++;}path[n]=0;rest=skip_space(rest);files=starts_word_ci(rest,"FILES",NULL);
         if(!editor||!path[0]){ok=0;snprintf(result,sizeof result,"MERGE needs a file");}
         else if((n=merge_out(path,files))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",-n==OWF_ERR_UNSUPPORTED?"No records":owf_error_text(-n));}
         else snprintf(result,sizeof result,"%d",n);}
