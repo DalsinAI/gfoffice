@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.36.0"
+#define OPR_CORE_VERSION "0.37.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -781,6 +781,37 @@ typedef struct {
 } opr_anim_look;
 int opr_anim_look_at(const opr_anim_play *p, long t, int x, int y, int w, int h,
                      int sx, int sy, int sw, int sh, opr_anim_look *look);
+
+/* ---- The Master view (P7, opr_master.c) ----
+ *
+ * The masters edited as slides: opr_master_view_open makes a deck whose
+ * slide i is master i (its art and placeholders as the slide's objects, its
+ * background as the slide's, under a copy of the master with its text levels
+ * and no objects). It shares the deck's pictures, fonts and kept XML, so
+ * every slide command works on it with an opr_undo of its own.
+ * opr_master_view_commit writes its slides back as the deck's masters in one
+ * Undo step of u: a master's slides follow it wherever it moved, a new slide
+ * is a new master, and the slides of a master deleted go to the first.
+ * 0 written, -2 when the view has no slides (a deck keeps one master), -1
+ * no memory. opr_master_view_free gives back what the view borrowed; free
+ * it before the deck is freed or saved. */
+typedef struct opr_master_view opr_master_view;
+opr_master_view *opr_master_view_open(owf_deck *deck);
+owf_deck *opr_master_view_deck(opr_master_view *v);
+/* The deck's master the view's slide is (as last written back), or -1 for a new one. */
+int opr_master_view_origin(const opr_master_view *v, int slide);
+int opr_master_view_commit(opr_master_view *v, opr_undo *u);
+void opr_master_view_free(opr_master_view *v);
+/* How many of the deck's slides use master. */
+int opr_master_slides(const owf_deck *deck, int master);
+/* opr_edit.c: the deck's masters replaced by masters (owned once this
+ * succeeds; nmasters of capmasters, one at least), each slide's and layout's
+ * master given anew (slide_masters nslides long, layout_masters nlayouts
+ * long; -1 for a layout of any master): one Undo step. -1 for bad input. */
+int opr_masters_set(opr_undo *u, owf_deck *deck, owf_master *masters, int nmasters, int capmasters,
+                    const int *slide_masters, const int *layout_masters);
+/* Slide Design: one slide's master, one Undo step (0 when it already was). */
+int opr_slide_set_master(opr_undo *u, owf_deck *deck, int slide, int master);
 
 #ifdef __cplusplus
 }

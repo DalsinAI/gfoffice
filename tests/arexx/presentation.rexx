@@ -292,6 +292,43 @@ CALL want 'ANIMATION 2', 0
 CALL same 'ANIMATION 2 after reopening', res, '1 DISSOLVEOUT WITH BOTTOM 1000 200'
 CALL want 'DELETEANIMATION 2', 0
 CALL same 'DELETEANIMATION', res, 1
+/* the Master view: a slide a master; art moved there is the master's; written back as one Undo step */
+CALL want 'VIEW NORMAL', 0
+CALL want 'MASTERS', 0
+nm = res
+CALL want 'MASTER', 0
+SAY '     MASTER:' res
+CALL want 'VIEW MASTER', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW in the masters', res, 'MASTER'
+CALL want 'SLIDES', 0
+CALL same 'a slide a master', res, nm
+CALL want 'OBJECTS', 0
+IF WORD(res, 1) > 0 THEN DO
+    CALL want 'PICKOBJECTS 1', 0
+    CALL want 'MOVEOBJECTS 0 100', 0
+END
+CALL want 'NEWSLIDE', 0                        /* a new master */
+CALL want 'SETMASTER 1', 5                     /* not in the Master view */
+CALL want 'VIEW NORMAL', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after the masters', res, 'NORMAL'
+CALL want 'MASTERS', 0
+CALL same 'a master added', res, nm + 1
+CALL want 'UNDO', 0
+CALL want 'MASTERS', 0
+CALL same 'MASTERS after UNDO', res, nm
+CALL want 'REDO', 0
+CALL want 'MASTERS', 0
+CALL same 'MASTERS after REDO', res, nm + 1
+CALL want 'SETMASTER' nm + 1, 0
+CALL want 'MASTER', 0
+CALL same 'the slide on the new master', WORD(res, 1), nm + 1
+CALL want 'UNDO', 0
+CALL want 'MASTER', 0
+CALL same 'SETMASTER undone', WORD(res, 1) = nm + 1, 0
+CALL want 'SETMASTER 99', 10
+CALL want 'MASTER 99', 10
 CALL want 'VIEW NORMAL', 0
 CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0
