@@ -4415,7 +4415,7 @@ static void do_text_columns(void)
 {
     oc_selection selection;
     oc_textcols_options opt;
-    char options[200], why[200], done[96];
+    char options[200], why[200], done[260];
     oc_core_selection(core, &selection);
     if (selection.nranges != 1 || selection.ranges[0].first_col != selection.ranges[0].last_col) {
         set_status("Select the cells of one column to split.");
@@ -4434,7 +4434,7 @@ static void do_remove_duplicates(void)
     oc_selection selection;
     unsigned cols[64], ncols;
     int header;
-    char options[300], why[200], done[96], name[8];
+    char options[300], why[200], done[260], name[8];
     unsigned col;
     size_t used;
     oc_core_selection(core, &selection);
