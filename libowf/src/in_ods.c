@@ -2683,6 +2683,8 @@ static void cf_start(ods *o, const owf_xml_event *e)
                 owf_buf_printf(&o->cf_xml, " minLength=\"%ld\"", whole(lo, 10, 0, 100));
             if (hi && strcmp(hi, "90"))
                 owf_buf_printf(&o->cf_xml, " maxLength=\"%ld\"", whole(hi, 90, 0, 100));
+            if ((lo = ev(e, NS_CALCEXT, "show-value")) != NULL && !strcmp(lo, "false"))
+                owf_buf_puts(&o->cf_xml, " showValue=\"0\"");
             owf_buf_putc(&o->cf_xml, '>');
             if (!owf_parse_colour(ev(e, NS_CALCEXT, "positive-color"), &rgb))
                 rgb = 0x638EC6;
@@ -2697,6 +2699,8 @@ static void cf_start(ods *o, const owf_xml_event *e)
             }
             if (show && !strcmp(show, "false"))
                 owf_buf_puts(&o->cf_xml, " showValue=\"0\"");
+            if ((show = ev(e, NS_GFO, "reverse")) != NULL && !strcmp(show, "true"))
+                owf_buf_puts(&o->cf_xml, " reverse=\"1\"");
             owf_buf_putc(&o->cf_xml, '>');
         }
     } else if (!strcmp(e->name, "formatting-entry") && o->cf_kept) {

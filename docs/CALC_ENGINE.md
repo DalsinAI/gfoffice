@@ -211,6 +211,21 @@ Undo step, as Subtotals does. ARexx: `TEXTTOCOLUMNS range [TAB] [COMMA]
 [TYPES GTS]` gives the number of columns; `REMOVEDUPS range [HEADER]
 [COLUMNS A,C]` gives the number of rows removed. The windows take the same
 words.
+## Data bars and icon sets
+
+The model keeps a data bar or icon set as the cfRule Excel wrote
+(`OWF_CF_KEPT` with its `xml`); ODS's `calcext:data-bar` and
+`calcext:icon-set` are read into the same form. GFOpenCalc 0.1.75 reads that
+rule when it draws (`oc_condfmt.c`): its cfvo points become numbers as a
+colour scale's do (min, max, number, percent, percentile, formula), a bar's
+length goes from its minLength to its maxLength percent of the cell, and an
+icon is the highest point a number reaches (reverse turns it round). The grid
+draws bars as fills from the cell's left and icons as shapes at its left
+(`OC_DRAW_FILL`, `OC_DRAW_POLY`), and leaves the number out for
+showValue="0". `oc_condfmt_spec` takes `OC_CF_DATA_BAR` and `OC_CF_ICON_SET`
+(`opencalc_core.h` 0.34.0) and writes the cfRule; ARexx `CONDFMT range rule`
+takes the window's words ("bar blue only", "icons 3Arrows reverse") and
+`CONDFMT range CLEAR`.
 
 ## Pivot-summary aggregation
 

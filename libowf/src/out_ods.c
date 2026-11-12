@@ -2033,7 +2033,11 @@ static int put_cf_rule(ods_out *w, owf_buf *b, const owf_sheet *sh, int sheet, i
             if (rgb[k] >= 'A' && rgb[k] <= 'F')
                 rgb[k] = (char)(rgb[k] + 32);
         attr(w, b, strlen(rgb) == 8 ? rgb + 2 : rgb);
-        owf_buf_printf(b, "\" calcext:axis-color=\"#000000\" gfocalc:priority=\"%d\">", cf->priority);
+        owf_buf_puts(b, "\" calcext:axis-color=\"#000000\"");
+        if (strstr(cf->xml, "<dataBar") && rule_attr(strstr(cf->xml, "<dataBar"), "showValue", lo, sizeof lo) &&
+            !strcmp(lo, "0"))
+            owf_buf_puts(b, " calcext:show-value=\"false\"");
+        owf_buf_printf(b, " gfocalc:priority=\"%d\">", cf->priority);
         put_cfvos(w, b, cf->xml);
         owf_buf_puts(b, "</calcext:data-bar>");
         return 1;
@@ -2048,6 +2052,8 @@ static int put_cf_rule(ods_out *w, owf_buf *b, const owf_sheet *sh, int sheet, i
         owf_buf_putc(b, '"');
         if (set && rule_attr(set, "showValue", flag, sizeof flag) && !strcmp(flag, "0"))
             owf_buf_puts(b, " calcext:show-value=\"false\"");
+        if (set && rule_attr(set, "reverse", flag, sizeof flag) && (!strcmp(flag, "1") || !strcmp(flag, "true")))
+            owf_buf_puts(b, " gfocalc:reverse=\"true\"");
         owf_buf_printf(b, " gfocalc:priority=\"%d\">", cf->priority);
         put_cfvos(w, b, cf->xml);
         owf_buf_puts(b, "</calcext:icon-set>");

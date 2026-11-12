@@ -2202,6 +2202,105 @@ static void test_condfmt_authoring(void)
     oc_core_free(core);
 }
 
+/* A data bar's width in the cell (its fill in the bar's colour), or -1. */
+static int bar_of(const oc_draw_list *l, unsigned row, unsigned col, unsigned long rgb)
+{
+    int i;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_FILL && l->items[i].role == OC_ROLE_CELL_FILL && l->items[i].row == row &&
+            l->items[i].col == col && l->items[i].rgb == rgb)
+            return l->items[i].w;
+    return -1;
+}
+
+/* An icon's colour (its polygon's), or -1. */
+static long icon_of(const oc_draw_list *l, unsigned row, unsigned col)
+{
+    int i;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_POLY && l->items[i].row == row && l->items[i].col == col &&
+            l->items[i].points && l->items[i].npoints >= 3)
+            return (long)l->items[i].rgb;
+    return -1;
+}
+
+static void test_condfmt_bars_icons(void)
+{
+    static const char *const xlsx = "build/host/calc-core-bars.xlsx";
+    static const char *const ods = "build/host/calc-core-bars.ods";
+    oc_core *core = fresh();
+    oc_draw_list l;
+    oc_condfmt_spec bar = { 0 }, icons = { 0 }, only = { 0 };
+    int k;
+    if (!core) return;
+    oc_draw_list_init(&l);
+    enter_at(core, "A1", "0"); enter_at(core, "A2", "50"); enter_at(core, "A3", "100");
+    enter_at(core, "C1", "0"); enter_at(core, "C2", "50"); enter_at(core, "C3", "100");
+    enter_at(core, "E1", "1"); enter_at(core, "E2", "2"); enter_at(core, "E3", "text");
+    bar.type = OC_CF_DATA_BAR;
+    go(core, "A1:A3");
+    CHECK(oc_core_add_condfmt(core, &bar) == OWF_OK);
+    icons.type = OC_CF_ICON_SET; icons.icon_set = "3arrows";
+    go(core, "C1:C3");
+    CHECK(oc_core_add_condfmt(core, &icons) == OWF_OK);
+    only.type = OC_CF_DATA_BAR; only.fill = OWF_SHADE(0x63C384); only.hide_value = 1;
+    go(core, "E1:E3");
+    CHECK(oc_core_add_condfmt(core, &only) == OWF_OK);
+    CHECK(oc_core_book(core)->sheets[0].ncondfmts == 3);
+    CHECK(strstr(oc_core_book(core)->sheets[0].condfmts[1].xml, "iconSet=\"3Arrows\"") != NULL);
+    for (k = 0; k < 3; k++) {
+        /* 64-pixel cells: 10% of 61 to 90% of it */
+        CHECK(oc_view_draw(core, &l) == OWF_OK);
+        CHECK(bar_of(&l, 0, 0, 0x638EC6) == 6 && bar_of(&l, 1, 0, 0x638EC6) == 30 && bar_of(&l, 2, 0, 0x638EC6) == 54);
+        CHECK(icon_of(&l, 0, 2) == 0xE0453A && icon_of(&l, 1, 2) == 0xF2C230 && icon_of(&l, 2, 2) == 0x3E9C47);
+        CHECK(bar_of(&l, 0, 4, 0x63C384) == 6 && bar_of(&l, 1, 4, 0x63C384) == 54 && bar_of(&l, 2, 4, 0x63C384) == -1);
+        CHECK(text_of(&l, 0, 4) == NULL && text_of(&l, 2, 4) != NULL && text_of(&l, 0, 0) != NULL);
+        if (k == 0) {
+            CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+            CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+        } else if (k == 1) {
+            CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+            CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+        }
+    }
+    /* reversed, and a set of five */
+    icons.icon_set = "5Quarters"; icons.reverse = 1;
+    go(core, "C1:C3");
+    CHECK(oc_core_clear_condfmt(core) == OWF_OK);
+    CHECK(oc_core_add_condfmt(core, &icons) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(icon_of(&l, 0, 2) == 0x202020 && icon_of(&l, 2, 2) == 0xF0F0F0);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && icon_of(&l, 2, 2) == 0x3E9C47);
+    icons.icon_set = "6Arrows";
+    CHECK(oc_core_add_condfmt(core, &icons) == OWF_ERR_FORMAT);
+    bar.npoints = 1;
+    CHECK(oc_core_add_condfmt(core, &bar) == OWF_ERR_FORMAT);
+    /* as the ARexx test leaves it: a colour scale and a reversed icon set on one range, through xlsx and ods */
+    {
+        oc_condfmt_spec scale = { 0 };
+        scale.type = OWF_CF_COLOUR_SCALE;
+        scale.npoints = 3;
+        scale.points[0].kind = OWF_CFV_MIN; scale.points[0].colour = OWF_SHADE(0xF8696B);
+        scale.points[1].kind = OWF_CFV_PERCENTILE; scale.points[1].value = "50"; scale.points[1].colour = OWF_SHADE(0xFFEB84);
+        scale.points[2].kind = OWF_CFV_MAX; scale.points[2].colour = OWF_SHADE(0x63BE7B);
+        enter_at(core, "D1", "0"); enter_at(core, "D2", "50"); enter_at(core, "D3", "100");
+        go(core, "D1:D3");
+        CHECK(oc_core_add_condfmt(core, &scale) == OWF_OK);
+        icons.icon_set = "5Quarters"; icons.reverse = 1;
+        CHECK(oc_core_add_condfmt(core, &icons) == OWF_OK);
+        CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_book(core)->sheets[0].ncondfmts == 5);
+        CHECK(oc_view_draw(core, &l) == OWF_OK && icon_of(&l, 0, 3) == 0x202020 && icon_of(&l, 2, 3) == 0xF0F0F0);
+    }
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 /* Made-up faces for oc_font_size_for_caps: the capitals' height at each size, and the sizes asked for. */
 typedef struct {
     int kind;                    /* 0 capitals = size; 1 two thirds of it; 2 never made; 3 bitmap sizes only */
@@ -6231,6 +6330,7 @@ int main(void)
     test_borders();
     test_condfmt();
     test_condfmt_authoring();
+    test_condfmt_bars_icons();
     test_font_caps();
     test_comments();
     test_validation();

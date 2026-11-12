@@ -990,6 +990,11 @@ static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int 
     int n, tw, pad = PAD * core->zoom / 100 + 1, align, lo, hi;
     int clip_x = x, clip_w = w, qx, qy, qw, qh, k;
     oc_draw_item *it;
+    {
+        const oc_look *l = look_at(d, c->row, c->col);
+        if (l && (l->parts & OC_LOOK_NO_VALUE))
+            return 1;                                /* a data bar or icon alone */
+    }
     if (st->wrap && c->type == OWF_VALUE_TEXT) {
         char *all = malloc(WRAP_TEXT);
         int ok;
@@ -1826,6 +1831,118 @@ int oc_view_chart_at(oc_core *core, int px, int py)
     return found;
 }
 
+/* ---- Data bars and icon sets (conditional formatting's, oc_condfmt.c) ---- */
+
+static unsigned long mix_rgb(unsigned long a, unsigned long b, int t, int of)
+{
+    unsigned long out = 0;
+    int k;
+    for (k = 16; k >= 0; k -= 8) {
+        long x = (long)((a >> k) & 255), y = (long)((b >> k) & 255);
+        out |= (unsigned long)(x + (y - x) * t / (of ? of : 1)) << k;
+    }
+    return out;
+}
+
+/* Red through yellow to green as level goes from 0 to n - 1. */
+static unsigned long icon_colour(int level, int n)
+{
+    int of = n > 1 ? n - 1 : 1;
+    if (2 * level <= of)
+        return mix_rgb(0xE0453AUL, 0xF2C230UL, 2 * level, of);
+    return mix_rgb(0xF2C230UL, 0x3E9C47UL, 2 * level - of, of);
+}
+
+static int add_poly(drawing *d, const int *shape, int npts, int x, int y, int size, unsigned long rgb,
+                    unsigned row, unsigned col)
+{
+    int xy[16], k;
+    oc_draw_item *it = add_box(d->list, OC_DRAW_POLY, OC_ROLE_CHART, x, y, size, size);
+    if (!it)
+        return 0;
+    for (k = 0; k < npts; k++) {
+        xy[2 * k] = x + shape[2 * k] * size / 12;
+        xy[2 * k + 1] = y + shape[2 * k + 1] * size / 12;
+    }
+    it->rgb = rgb;
+    it->row = row;
+    it->col = col;
+    return oc_draw_add_points(d->list, it, xy, npts);
+}
+
+/* One icon in the size x size box at x, y. */
+static int icon_item(drawing *d, const oc_look *l, int x, int y, int size, unsigned row, unsigned col)
+{
+    /* arrows on a 12 x 12 grid: down, down and right, right, up and right, up */
+    static const int arrows[5][14] = {
+        { 6, 12, 12, 6, 8, 6, 8, 0, 4, 0, 4, 6, 0, 6 },
+        { 12, 12, 12, 4, 9, 7, 3, 1, 1, 3, 7, 9, 4, 12 },
+        { 12, 6, 6, 0, 6, 4, 0, 4, 0, 8, 6, 8, 6, 12 },
+        { 12, 0, 12, 8, 9, 5, 3, 11, 1, 9, 7, 3, 4, 0 },
+        { 6, 0, 12, 6, 8, 6, 8, 12, 4, 12, 4, 6, 0, 6 }
+    };
+    static const int circle[16] = { 4, 0, 8, 0, 12, 4, 12, 8, 8, 12, 4, 12, 0, 8, 0, 4 };
+    int n = l->nicons > 1 ? l->nicons : 2, level = l->icon < n ? l->icon : n - 1;
+    switch (l->icons) {
+    case OC_ICONS_ARROWS:
+    case OC_ICONS_ARROWS_GREY: {
+        int dir = (level * 4 + (n - 1) / 2) / (n - 1);
+        return add_poly(d, arrows[dir], 7, x, y, size,
+                        l->icons == OC_ICONS_ARROWS ? icon_colour(level, n) : 0x808080UL, row, col);
+    }
+    case OC_ICONS_RATING: {                          /* signal bars: as many filled as the level */
+        int bars = n - 1, k, bw = size / (2 * bars) > 0 ? size / (2 * bars) : 1;
+        for (k = 0; k < bars; k++) {
+            int h = size * (k + 1) / bars;
+            oc_draw_item *it = add_box(d->list, OC_DRAW_FILL, OC_ROLE_CELL_FILL, x + k * 2 * bw, y + size - h, bw, h);
+            if (!it)
+                return 0;
+            it->rgb = k < level ? 0x3A6FB0UL : 0xC8C8C8UL;
+            it->row = row;
+            it->col = col;
+        }
+        return 1;
+    }
+    case OC_ICONS_QUARTERS:                          /* white to black */
+        return add_poly(d, circle, 8, x, y, size, mix_rgb(0xF0F0F0UL, 0x202020UL, level, n - 1), row, col);
+    case OC_ICONS_RED_BLACK:                         /* black to red */
+        return add_poly(d, circle, 8, x, y, size, mix_rgb(0x303030UL, 0xE0453AUL, level, n - 1), row, col);
+    default:
+        return add_poly(d, circle, 8, x, y, size, icon_colour(level, n), row, col);
+    }
+}
+
+/* Each cell's data bar (from its left edge, in its rows' middle) and icon (at its left). */
+static int bars_and_icons(drawing *d)
+{
+    int i, j;
+    if (!d->looks)
+        return 1;
+    for (i = 0; i < d->nr; i++)
+        for (j = 0; j < d->nc; j++) {
+            const oc_look *l = &d->looks[(size_t)i * (size_t)d->nc + (size_t)j];
+            int x = d->cl[j].pos, y = d->rl[i].pos, w = d->cl[j].size, h = d->rl[i].size;
+            if ((l->parts & OC_LOOK_BAR) && w > 4 && h > 4) {
+                int bw = (int)((long)(w - 3) * l->bar / 1000);
+                oc_draw_item *it;
+                if (bw < 1)
+                    bw = 1;
+                if (!(it = add_box(d->list, OC_DRAW_FILL, OC_ROLE_CELL_FILL, x + 1, y + 2, bw, h - 4)))
+                    return 0;
+                it->rgb = l->bar_colour;
+                it->row = d->rl[i].index;
+                it->col = d->cl[j].index;
+            }
+            if (l->parts & OC_LOOK_ICON) {
+                int size = h - 4 < 14 ? h - 4 : 14;
+                if (size >= 6 && w > size + 4 &&
+                    !icon_item(d, l, x + 2, y + (h - size) / 2, size, d->rl[i].index, d->cl[j].index))
+                    return 0;
+            }
+        }
+    return 1;
+}
+
 static int build(drawing *d)
 {
     oc_core *core = d->core;
@@ -1900,6 +2017,10 @@ static int build(drawing *d)
                 it->col = g->first_col;
             }
     }
+
+    /* 1b. conditional formatting's data bars and icons */
+    if (!bars_and_icons(d))
+        return 0;
 
     /* 2. the selection (not when it is the active cell alone) */
     {
