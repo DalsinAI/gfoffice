@@ -4616,10 +4616,10 @@ out:
 /* Where the fields are: "Record 2 of 3" or "Field names" */
 static void merge_status(const char *before)
 {
-    char msg[300];
+    char msg[200];                                   /* set_status keeps 256 */
     int at = ow_editor_merge_shown(editor);
-    if (at >= 0) snprintf(msg, sizeof msg, "%sRecord %d of %d.", before, at + 1, ow_editor_merge_records(editor));
-    else snprintf(msg, sizeof msg, "%sField names shown.", before);
+    if (at >= 0) snprintf(msg, sizeof msg, "%.150sRecord %d of %d.", before, at + 1, ow_editor_merge_records(editor));
+    else snprintf(msg, sizeof msg, "%.150sField names shown.", before);
     set_status(msg);
 }
 
