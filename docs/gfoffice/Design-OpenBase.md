@@ -274,6 +274,38 @@ was (`PRAGMA schema_version`); a delete that cascades or clears rows
 elsewhere can't be undone and clears the list, as does a rollback past
 where it began.
 
+### 5.4.1 What core 0.5 and GFOpenBase 0.5 do
+
+- `ob_query` holds up to 8 tables and 16 columns, each with three rows of
+  criteria (Criteria, or, or). Each table after the first joins one before
+  it by a relationship, a Lookup either way (`JOIN ... ON child.Lookup =
+  parent.Counter`). A table with no relationship to the others is refused
+  in plain words. A table keyed by its own fields can't be joined yet.
+- The criteria words are those of the table in 5.2. Two words are added:
+  `not York` (`<>`) and `?` as a one-character wildcard. A `[question]`
+  can follow an operator (`>= [From]`). Values are checked and stored
+  like a row's, so `> 100` on a Currency field is `> 10000`. Text compares
+  without case.
+- With a Total on any column, the query groups by the columns with no
+  total. Criteria go to `HAVING` when any criterion is on a total.
+  Average of money stays money, rounded to the penny.
+- A column of every field (`Table.*`) is spread into the table's fields,
+  each with its label as the heading. Such a column can't have a sort, a
+  total or criteria.
+- Type the SQL (`sql_only`) takes one statement that starts `SELECT`,
+  `WITH` or `VALUES` and only reads (`sqlite3_stmt_readonly`). Its
+  parameters are `?`, `?1` or `:name`.
+- Saved queries live in `oadb_queries(name, grid, sql)`. The grid is kept
+  as text GFOpenBase reads back; the SQL is kept beside it for other
+  tools. The table is made when a project opens, so older projects gain
+  it without a format change. A query and a table can't share a name.
+- In GFOpenBase: Query > New Query..., Open Query... (Run, Design...,
+  Delete...), Design Query... and Run Again. A query's rows show in the
+  datasheet, read only, and a click on a table goes back to it.
+- Not yet: drawing the tables and joins as boxes (5.2's picture), saving
+  a query as a `VIEW`, a query's rows as CSV, and following a table's
+  rename into the saved queries.
+
 ### 5.5 Tests
 
 The generator is plain C and host-tested: grids in, SQL out, compared with the
@@ -323,6 +355,36 @@ save" and "after save", runs an ARexx script: one kept in the project
 (`oadb_scripts`) or a file. The script talks back to GFOpenBase through its port
 (section 9). A built-in action (go to a record, open a form, run a report,
 print) needs no script.
+
+### 6.6 What core 0.6 and GFOpenBase 0.6 do
+
+- Table > Open as Form... (Amiga-K) opens the auto form of 6.1 for the
+  table in the list: a row a field, label on the left, in the datasheet's
+  sort and filter, starting at the chosen row. A table with more fields
+  than fit pages them with < Fields and Fields >. Counters and Datatype
+  objects are shown, not typed into.
+- The record bar of 6.3: |< < "3 of 6" > >|, New and Delete... Below it
+  are Find..., Save, Undo Record and Close.
+- Edits are kept for the record and written as one change when you move
+  to another record, Find, Save or Close. A change that is refused says
+  why and keeps you on the record. Undo Record puts the record back (Esc too,
+  when no field is being typed in).
+  Close asks before it loses a change that can't be saved.
+- A new record that the filter leaves out is added and the form says so.
+- Find asks for a field and the text. A field that holds text (Text, Memo,
+  Choice, Date, Time, Date and time) matches when it contains the text, in
+  any case, with `%` and `_` taken as typed. Any other field matches when
+  it equals the value, given in its own form (`1,250.50`, `Yes`). Find Next
+  searches on from the record and Find Back searches back.
+- A subform (6.4) for each Lookup that points at the table: "Rows in" picks
+  one, such as Orders (Customer), and the form lists that table's rows for
+  the record, up to 40, read only, with their count.
+- The core calls are `ob_view_position` (a key's place in a view),
+  `ob_view_find` (one `row_number()` window over the view's order and
+  filter) and `ob_children` (the Lookups pointing at a table).
+- Not yet: the form designer (6.2), Filter by Form, rows added or changed
+  in the subform, Return on a subform row to open its table's form, buttons
+  and events (6.5), forms kept in `oadb_forms`.
 
 ## 7. Reports
 

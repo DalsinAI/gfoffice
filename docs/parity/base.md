@@ -3,20 +3,22 @@
 Stream B of [the parity plan](../openoffice-parity-plan.md). Re-scored with each
 deliverable. Statuses as the plan's table: Done, Part, Gap.
 
-**Score: 27%** (12 November 2026, after the ARexx port; 25% after B1b, 22% after B1a, 18% after B0d, 15% after
+**Score: 38%** (12 November 2026, after B2b, forms; 33% after B2a, queries; 27% after the ARexx port, 25% after B1b, 22% after B1a, 18% after B0d, 15% after
 B0c, 10% after B0a and B0b, 4% design only). GFOpenBase has a window: a
 project's tables, a table designer with keys and indexes, a datasheet that
 sorts and filters, with a row editor and Undo, CSV import (into a table or
 a new one, types guessed) and export, and a relationships view, checked on
-an Instance-32 lab copy. Its ARexx port opens a project at a table and row.
+an Instance-32 lab copy. Its ARexx port opens a project at a table and row. Queries are designed
+in a grid or typed as SQL, saved, and run into the datasheet. A table opens
+as a form, one record at a time, with Find and its related rows below.
 
 | Feature (Base) | Status | Phase | Notes |
 | --- | --- | --- | --- |
 | Create/open a database file | Part | 1 | Core: `.oadb` (SQLite, `application_id` OADB, `user_version` 1) made, opened, checked (`quick_check` on open, `integrity_check`), copied (`VACUUM INTO`), compacted; plain SQLite files refused or adopted. Window: `GFOpenBase FILE [NEW]`, a plain SQLite file adopted after asking |
 | Table designer, datasheet view with add/edit/delete | Part | 1 | Core: the 13 field types of the design, rules as named SQL constraints, create, change (copy and rename, one transaction), rename, drop; rows added, changed and deleted with every value checked, in transactions; datasheet pages by key. Window: table designer (every field type and rule, Show SQL), datasheet with scroller and keys, row editor; errors in plain words. B1a: the datasheet sorted (Sort and Filter..., or a click on a heading) and filtered by one test on one field. B1b: Edit > Undo of rows and imports (100 steps) |
 | Primary keys, relationships | Part | 1 | Core: a Counter key, or a key of chosen fields (`PRIMARY KEY(...)`); indexes, unique or not, on up to 8 fields, kept through table changes; Lookups are real `FOREIGN KEY` clauses with refuse, cascade or clear on delete; `PRAGMA foreign_keys` on for every connection; renames follow; every relationship listed. Window: Key in the designer, an Indexes window, the relationships view (boxes and lines). Not yet: drawing a relationship in the view (it is made in the designer), a Lookup to a table keyed by its fields |
-| SQL view, query designer | Gap | 2 | |
-| Forms and subforms | Gap | 2 | |
+| SQL view, query designer | Part | 2 | B2a (core 0.5, GFOpenBase 0.5.0): the designer's grid (8 tables joined by their relationships, 16 columns, sort, Show, Group/Sum/Count/Average/Min/Max, three rows of criteria in plain words, `[questions]`), the SQL it makes shown live, Type the SQL (one read-only statement), saved queries, results read only in the datasheet. Not yet: tables drawn as boxes, a query saved as a VIEW, a query's rows as CSV |
+| Forms and subforms | Part | 2 | B2b (core 0.6, GFOpenBase 0.6.0): the auto form of any table in the datasheet's sort and filter, a record bar (first, back, n of N, on, last, new, delete), edits written once when you leave the record, Undo Record, Find (contains for text, equals for other fields, on or back), and a subform for each Lookup that points at the table, its rows for the record shown read only. Not yet: the form designer, Filter by Form, changing rows in the subform, buttons and events |
 | Reports | Gap | 2 | Generated as GFOpenWrite documents |
 | CSV/DBF/Calc import and export | Part | 2 | B1a: CSV import into a table (all or none, by header or field order, separator found) and export of the datasheet as shown; round trips keep keys and values. B1b: New Table from CSV (types guessed from 200 rows, changeable), ISO-8859-1 or UTF-8 both ways, bad rows left out and listed. Not yet: DBF, sheets |
 | Locking, recovery | Part | 1 | B0a on the lab: the dot-file lock refuses a second writer, `unix-none` takes none; the rollback journal recovers; journal mode TRUNCATE; the RAM: issue does not happen with today's build |
@@ -25,6 +27,21 @@ an Instance-32 lab copy. Its ARexx port opens a project at a table and row.
 
 ## Evidence
 
+- B2b: `make base-test` and `make base-check` (716 checks each, ASan and
+  UBSan clean): a key's place in key order and in a sorted, filtered view;
+  Find on text (any case, `%` and `_` as typed), money, Yes/No, on and back,
+  inside a filter; the Lookups pointing at a table, and a record's rows
+  through them. The same test for AmigaOS: 716 of 716 on the lab, DH1: and
+  RAM:. In GFOpenBase 0.6.0 on that lab: Customers opened as a form at its
+  first record; an Email typed and saved by moving on with >; Find "ZOE" in
+  Name went to Zoe (3 of 6); an order added with New in the Orders form
+  (2 of 2); Zoe's form listed her two orders under "Rows in Orders
+  (Customer)"; Undo Record put a typed Email back.
+- B2a: `make base-test` and `make base-check` (676 checks each, ASan and
+  UBSan clean): golden SQL for criteria, joins and totals; every criterion
+  form run against rows; parameters asked and checked; typed SQL refused
+  when it writes or is two statements; saved queries read back, renamed,
+  deleted, and made in a project from core 0.4.
 - ARexx (#155, Team 2's ACFind thread): `tests/arexx/base.rexx`, 40 of 40
   in the lab, including OPEN FILE x TABLE t ROW n by key and by place (#n)
   and a plain SQLite file refused with 10.

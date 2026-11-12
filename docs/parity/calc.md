@@ -15,7 +15,8 @@ working. Phase 1's target is 74%.
 | 11 Nov 2026 | C4 Consolidate | 69% |
 | 11 Nov 2026 | C5 Names manager, advanced filter | 71% |
 | 11 Nov 2026 | C6 Multiple Operations kept live | 72% |
-| 12 Nov 2026 | C9 Data bars and icon sets | 73% |
+| 12 Nov 2026 | C7 Text to Columns, Remove Duplicates | 73% |
+| 12 Nov 2026 | C9 Data bars and icon sets | 74% |
 
 ## Phase 1 features
 
@@ -32,6 +33,7 @@ working. Phase 1's target is 74%.
 
 | Feature | Status | Deliverable | Notes |
 | --- | --- | --- | --- |
+| Text to Columns, Remove Duplicates | Done | C7 | Text to Columns: tab, comma, semicolon, space and any other delimiter, runs of them as one, a text qualifier (a doubled one inside is one), fixed widths; each field General, Text or skipped; a number's shown value splits; ARexx TEXTTOCOLUMNS; Undo. Remove Duplicates: chosen columns or all, text compared without case, a heading row, only the range's cells move (rows kept close up, references follow them); ARexx REMOVEDUPS; Undo. Not yet: a preview of the split, a date order per column (the book's order is used) |
 | Colour scales, data bars, icon sets | Done | C9 | Colour scales (two or three colours) as before; data bars drawn in each cell from its lowest number to its highest (Excel's 10% to 90%, or the file's lengths), in any colour, the number shown or not; Excel's 17 icon sets drawn (arrows, grey arrows, traffic lights, signs, symbols and flags as lights, red to black, ratings as signal bars, quarters as greys), reversed or not, the number shown or not; added from Format > Conditional Format ("bar blue", "icons 3Arrows reverse only") and ARexx CONDFMT; kept in XLSX and ODS (show-value both ways, reverse in GFOffice's own attribute); Undo. Not yet: negative bars from an axis, gradient bars, the icons' own pictures (the shapes stand for them), Excel 2010's extensions (kept out) |
 
 ## How C1 was checked
@@ -95,6 +97,18 @@ working. Phase 1's target is 74%.
   Also under AddressSanitizer and UBSan.
 - Instance-32 lab copy: tests/arexx/calc-multiop.rexx; see the pull request.
 
+## How C7 was checked
+
+- Host tests (tests/calc_core): commas with a quoted field, a field that
+  begins with an apostrophe or "=" kept as text, an empty field, a row with
+  fewer fields leaving the cell to its right alone, a formula reading a
+  split cell, the selection widened, Undo; spaces merged with a Text column
+  and a skipped one; fixed widths and widths that do not rise; a selection
+  of two columns refused. Remove Duplicates over every column (text without
+  case; formulas into the range follow the rows kept; a cell outside the
+  range stays), by one column, nothing repeated (no Undo step), a column
+  outside the range refused. Also under AddressSanitizer and UBSan.
+- Instance-32 lab copy: tests/arexx/calc-textcols.rexx; see the pull request.
 ## How C9 was checked
 
 - Host tests (tests/calc_core): a data bar's lengths (10%, 50%, 90% of the

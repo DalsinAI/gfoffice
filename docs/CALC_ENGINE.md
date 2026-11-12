@@ -192,6 +192,25 @@ shift semantics update formulas and names elsewhere in the workbook,
 including cross-sheet references; allocation, formula or recalculation
 failure leaves the live workbook untouched.
 
+## Text to Columns and Remove Duplicates
+
+GFOpenCalc 0.1.74's Data > Text to Columns (`oc_core_text_to_columns`,
+`opencalc_core.h` 0.33.0) splits the cells of one selected column into the
+cells to their right, by delimiters (tab, comma, semicolon, space, one other
+character; a run as one; a text qualifier) or at fixed widths. Each field is
+entered as typed (General: numbers, dates, booleans), as text, or skipped; a
+field that begins with "=" or an apostrophe stays text. Data > Remove
+Duplicates (`oc_core_remove_duplicates`) compares rows of the selection on
+chosen columns (text without case) and keeps the first of each; the rows
+kept move up inside the selection with the engine's `owf_calc_move_range`,
+so references follow them, and the rows left at the bottom are emptied.
+
+Both are built on a deep copy of the book and replace it as one whole-book
+Undo step, as Subtotals does. ARexx: `TEXTTOCOLUMNS range [TAB] [COMMA]
+[SEMICOLON] [SPACE] [OTHER c] [MERGE] [QUOTE c | NOQUOTE] [WIDTHS 3,8]
+[TYPES GTS]` gives the number of columns; `REMOVEDUPS range [HEADER]
+[COLUMNS A,C]` gives the number of rows removed. The windows take the same
+words.
 ## Data bars and icon sets
 
 The model keeps a data bar or icon set as the cfRule Excel wrote
