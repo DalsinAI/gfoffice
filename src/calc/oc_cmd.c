@@ -60,7 +60,11 @@ const owf_cellstyle *oc_cell_style(const oc_core *core, const owf_cell *cell, un
 
 int oc_enter(oc_core *core, int sheet, unsigned row, unsigned col, const char *text)
 {
-    int made = oc_find(core, sheet, row, col) == NULL, rc = owf_calc_enter(core->calc, sheet, row, col, text);
+    int made, rc;
+    if (oc_cell_locked(core, sheet, row, col))
+        return OC_PROTECTED;
+    made = oc_find(core, sheet, row, col) == NULL;
+    rc = owf_calc_enter(core->calc, sheet, row, col, text);
     if (made && rc != OWF_ERR_MEMORY && rc != OWF_ERR_UNSUPPORTED) {
         owf_sheet *s = &core->book->sheets[sheet];
         owf_cell *c = owf_sheet_cell(s, row, col, 0);
@@ -219,6 +223,8 @@ int oc_core_fill(oc_core *core, int direction)
     long total = 0;
     oc_undo *u;
     end_editing(core);
+    if (oc_protected_selection(core))
+        return OC_PROTECTED;
     for (k = 0; k < st->sel.nranges; k++) {
         owf_range r, t;
         if (!oc_range_clip(core, &st->sel.ranges[k], &r))
@@ -320,6 +326,8 @@ int oc_core_insert(oc_core *core, int axis)
     oc_undo *u;
     int rc;
     end_editing(core);
+    if (oc_protected(core, axis ? OWF_ALLOW_INSERT_COLUMNS : OWF_ALLOW_INSERT_ROWS))
+        return OC_PROTECTED;
     crossed(core, axis, &at, &count);
     if (count >= max)
         return OWF_ERR_UNSUPPORTED;
@@ -357,6 +365,8 @@ int oc_core_delete(oc_core *core, int axis)
     oc_undo *u;
     int rc;
     end_editing(core);
+    if (oc_protected(core, axis ? OWF_ALLOW_DELETE_COLUMNS : OWF_ALLOW_DELETE_ROWS))
+        return OC_PROTECTED;
     crossed(core, axis, &at, &count);
     u = oc_undo_new(core, OC_UNDO_BOOK);
     if (u && oc_undo_save_book(core, u) != OWF_OK) {
@@ -468,6 +478,8 @@ int oc_core_clear(oc_core *core, unsigned what)
     oc_undo *u;
     if (core->edit_mode)
         oc_edit_cancel(core);
+    if (oc_protected_selection(core))
+        return OC_PROTECTED;
     for (k = 0; k < st->sel.nranges; k++)                /* only cells there are change: no need to cut ranges down */
         r[n++] = st->sel.ranges[k];
     u = oc_undo_new(core, OC_UNDO_CELLS);
@@ -523,7 +535,7 @@ typedef struct {
     const owf_range *range;
 } style_change;
 
-enum { SC_FLAGS, SC_HALIGN, SC_VALIGN, SC_NUMFMT, SC_FILL, SC_COLOUR, SC_BORDERS };
+enum { SC_FLAGS, SC_HALIGN, SC_VALIGN, SC_NUMFMT, SC_FILL, SC_COLOUR, SC_BORDERS, SC_PROTECT };
 
 static void change(owf_cellstyle *st, const style_change *sc, unsigned row, unsigned col)
 {
@@ -550,6 +562,10 @@ static void change(owf_cellstyle *st, const style_change *sc, unsigned row, unsi
         break;
     case SC_COLOUR:
         st->font.colour = sc->colour;
+        break;
+    case SC_PROTECT:                                 /* on: locked; value: the formula hidden */
+        st->unlocked = (unsigned char)!sc->on;
+        st->formula_hidden = (unsigned char)!!sc->value;
         break;
     case SC_BORDERS:
         for (side = 0; side < 4; side++) {
@@ -605,6 +621,8 @@ static int apply_style(oc_core *core, style_change *sc)
     long total = 0;
     oc_undo *u;
     end_editing(core);
+    if (oc_protected(core, sc->what == SC_PROTECT ? 0 : OWF_ALLOW_FORMAT_CELLS))
+        return OC_PROTECTED;
     for (k = 0; k < st->sel.nranges; k++) {
         r[n] = st->sel.ranges[k];
         if (!whole_cols(&r[n]) && !whole_rows(&r[n]))
@@ -732,6 +750,16 @@ int oc_core_set_fill(oc_core *core, unsigned long fill)
     return apply_style(core, &sc);
 }
 
+int oc_core_set_cell_protection(oc_core *core, int locked, int formula_hidden)
+{
+    style_change sc;
+    memset(&sc, 0, sizeof sc);
+    sc.what = SC_PROTECT;
+    sc.on = !!locked;
+    sc.value = !!formula_hidden;
+    return apply_style(core, &sc);
+}
+
 int oc_core_set_font_colour(oc_core *core, unsigned long rgb)
 {
     style_change sc;
@@ -845,12 +873,16 @@ static int rows_set(oc_core *core, unsigned first, unsigned last, int what, int 
 int oc_core_set_cols_width(oc_core *core, unsigned first, unsigned last, int twips)
 {
     end_editing(core);
+    if (oc_protected(core, OWF_ALLOW_FORMAT_COLUMNS))
+        return OC_PROTECTED;
     return cols_set(core, first, last, 1, twips, 0);
 }
 
 int oc_core_set_rows_height(oc_core *core, unsigned first, unsigned last, int twips)
 {
     end_editing(core);
+    if (oc_protected(core, OWF_ALLOW_FORMAT_ROWS))
+        return OC_PROTECTED;
     return rows_set(core, first, last, 1, twips, 0);
 }
 
@@ -874,6 +906,8 @@ int oc_core_hide(oc_core *core, int axis, int hide)
 {
     unsigned at, count;
     end_editing(core);
+    if (oc_protected(core, axis ? OWF_ALLOW_FORMAT_COLUMNS : OWF_ALLOW_FORMAT_ROWS))
+        return OC_PROTECTED;
     crossed(core, axis, &at, &count);
     if (axis)
         return cols_set(core, at, at + count - 1, 2, 0, hide);

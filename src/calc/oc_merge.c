@@ -43,6 +43,7 @@ int oc_core_merge(oc_core *core, int merge, int discard)
     int i, out, found = 0, rc = OWF_OK;
     if (!core) return OWF_ERR_FORMAT;
     if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    if (oc_protected(core, 0)) return OC_PROTECTED;
     state = oc_state(core);
     if (state->sel.nranges != 1 || !oc_range_clip(core, &state->sel.ranges[0], &range))
         return OWF_ERR_UNSUPPORTED;

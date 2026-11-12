@@ -5430,6 +5430,76 @@ static void test_remove_duplicates(void)
     oc_core_free(core);
 }
 
+static void test_protection(void)
+{
+    static const char *const paths[] = { "build/host/calc-core-protect.xlsx", "build/host/calc-core-protect.ods" };
+    oc_core *core = fresh();
+    owf_range sel;
+    unsigned allow = 0;
+    int has = 0, k;
+    if (!core) return;
+    CHECK(oc_password_hash("test") == 0xCBEB);
+    CHECK(oc_password_hash("") == 0);
+    enter_at(core, "A1", "10");
+    enter_at(core, "B1", "=A1*2");
+    enter_at(core, "C1", "=A1+1");
+    /* B1: unlocked; C1: its formula hidden */
+    go(core, "B1");
+    CHECK(oc_core_set_cell_protection(core, 0, 0) == OWF_OK);
+    go(core, "C1");
+    CHECK(oc_core_set_cell_protection(core, 1, 1) == OWF_OK);
+    CHECK(oc_core_protect_sheet(core, "test", OWF_ALLOW_DEFAULT | OWF_ALLOW_INSERT_ROWS) == OWF_OK);
+    CHECK(oc_core_protect_sheet(core, NULL, 0) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_sheet_protection(core, &allow, &has) == 1 && has && (allow & OWF_ALLOW_INSERT_ROWS));
+    for (k = 0; k < 3; k++) {
+        char *in;
+        CHECK(oc_core_set_input(core, 0, 0, 0, "5") == OC_PROTECTED);
+        CHECK(fabs(num(core, "A1") - 10.0) < 1e-12);
+        CHECK(oc_core_set_input(core, 0, 0, 1, "7") == OWF_OK);      /* B1 is unlocked */
+        CHECK(fabs(num(core, "B1") - 7.0) < 1e-12);
+        CHECK(oc_core_set_input(core, 0, 0, 1, "=A1*2") == OWF_OK);
+        in = oc_core_cell_input(core, 0, 0, 2);
+        CHECK(in && !strcmp(in, ""));                                 /* C1's formula hidden */
+        owf_free(in);
+        in = oc_core_cell_input(core, 0, 0, 1);
+        CHECK(in && !strcmp(in, "=A1*2"));
+        owf_free(in);
+        go(core, "A1");
+        CHECK(oc_core_clear(core, OC_CLEAR_CONTENTS) == OC_PROTECTED);
+        CHECK(oc_core_set_fill(core, OWF_SHADE(0xFF0000)) == OC_PROTECTED);
+        CHECK(oc_core_set_cell_protection(core, 0, 0) == OC_PROTECTED);
+        CHECK(oc_core_delete(core, 0) == OC_PROTECTED);
+        CHECK(oc_core_paste(core, "1\t2", 3) == OC_PROTECTED);
+        CHECK(oc_core_clear_condfmt(core) == OC_PROTECTED);
+        CHECK(fabs(num(core, "A1") - 10.0) < 1e-12);
+        CHECK(oc_edit_type(core, "9", 1) == OC_PROTECTED && !oc_core_editing(core));
+        if (k < 2) {
+            CHECK(oc_core_save(core, paths[k], NULL, NULL) == OWF_OK);
+            CHECK(oc_core_open(core, paths[k], NULL, NULL, NULL) == OWF_OK);
+            CHECK(oc_core_sheet_protection(core, &allow, &has) == 1 && has && (allow & OWF_ALLOW_INSERT_ROWS) &&
+                  !(allow & OWF_ALLOW_FORMAT_CELLS));
+        }
+    }
+    go(core, "A3");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);                       /* inserting rows is allowed */
+    CHECK(oc_core_unprotect_sheet(core, "wrong") == OC_WRONG_PASSWORD);
+    CHECK(oc_core_unprotect_sheet(core, NULL) == OC_WRONG_PASSWORD);
+    CHECK(oc_core_unprotect_sheet(core, "test") == OWF_OK);
+    CHECK(oc_core_unprotect_sheet(core, "test") == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_set_input(core, 0, 0, 0, "5") == OWF_OK && fabs(num(core, "B1") - 10.0) < 1e-12);
+    {
+        char *in = oc_core_cell_input(core, 0, 0, 2);
+        CHECK(in && !strcmp(in, "=A1+1"));
+        owf_free(in);
+    }
+    /* no password: protected, unprotected with any */
+    CHECK(oc_core_protect_sheet(core, "", OWF_ALLOW_DEFAULT) == OWF_OK);
+    CHECK(oc_core_sheet_protection(core, NULL, &has) == 1 && !has);
+    CHECK(oc_core_unprotect_sheet(core, NULL) == OWF_OK);
+    (void)sel;
+    oc_core_free(core);
+}
+
 static void test_pivot_summary(void)
 {
     static const char *const rows[][3] = {
@@ -6361,6 +6431,7 @@ int main(void)
     test_subtotals();
     test_text_to_columns();
     test_remove_duplicates();
+    test_protection();
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_definition_text();

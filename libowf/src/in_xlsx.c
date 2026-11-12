@@ -758,6 +758,13 @@ static void xf_style(xlsx *x, const owf_xml_node *xf, owf_cellstyle *s)
             s->border[i] = x->borders[border].line[i];
             s->border_colour[i] = x->borders[border].colour[i];
         }
+    {
+        const owf_xml_node *pr = main_child(xf, "protection");
+        if (pr) {
+            s->unlocked = !xbool(attr(pr, "locked"), 1);
+            s->formula_hidden = (unsigned char)xbool(attr(pr, "hidden"), 0);
+        }
+    }
     if (!al)
         return;
     if ((v = attr(al, "horizontal")) != NULL)
@@ -1393,7 +1400,48 @@ static void sheet_element(xlsx *x, const owf_xml_event *e, cellstate *cs)
     } else if (!strcmp(name, "tablePart")) {
         owf_report_add(x->report, OWF_NOTE_LOST, "Tables keep their cells; the tables themselves (names, styles, filters) are not read yet");
     } else if (!strcmp(name, "sheetProtection")) {
-        owf_report_add(x->report, OWF_NOTE_INFO, "Sheet protection is not kept: the sheets open unprotected");
+        /* each option says what is protected: 1 not allowed (formatCells... default 1, the selections,
+         * objects and scenarios 0) */
+        static const struct { const char *name; unsigned bit; int def; } opts[] = {
+            { "selectLockedCells", OWF_ALLOW_SELECT_LOCKED, 0 }, { "selectUnlockedCells", OWF_ALLOW_SELECT_UNLOCKED, 0 },
+            { "formatCells", OWF_ALLOW_FORMAT_CELLS, 1 }, { "formatColumns", OWF_ALLOW_FORMAT_COLUMNS, 1 },
+            { "formatRows", OWF_ALLOW_FORMAT_ROWS, 1 }, { "insertColumns", OWF_ALLOW_INSERT_COLUMNS, 1 },
+            { "insertRows", OWF_ALLOW_INSERT_ROWS, 1 }, { "insertHyperlinks", OWF_ALLOW_INSERT_LINKS, 1 },
+            { "deleteColumns", OWF_ALLOW_DELETE_COLUMNS, 1 }, { "deleteRows", OWF_ALLOW_DELETE_ROWS, 1 },
+            { "sort", OWF_ALLOW_SORT, 1 }, { "autoFilter", OWF_ALLOW_AUTOFILTER, 1 },
+            { "pivotTables", OWF_ALLOW_PIVOT, 1 }, { "objects", OWF_ALLOW_OBJECTS, 0 },
+            { "scenarios", OWF_ALLOW_SCENARIOS, 0 }
+        };
+        const char *pw = ev_attr(e, "password"), *alg = ev_attr(e, "algorithmName");
+        size_t k;
+        sh->protect = xbool(ev_attr(e, "sheet"), 0);
+        sh->protect_allow = 0;
+        for (k = 0; k < sizeof opts / sizeof opts[0]; k++)
+            if (!xbool(ev_attr(e, opts[k].name), opts[k].def))
+                sh->protect_allow |= opts[k].bit;
+        free(sh->protect_hash);
+        free(sh->protect_kept);
+        sh->protect_hash = sh->protect_kept = NULL;
+        if (pw && strlen(pw) == 4 && !(sh->protect_hash = copy(x, pw, 4)))
+            return;
+        if (alg) {
+            static const char *const keep[4] = { "algorithmName", "hashValue", "saltValue", "spinCount" };
+            owf_buf b;
+            owf_buf_init(&b);
+            owf_buf_puts(&b, "xlsx:");
+            for (k = 0; k < 4; k++) {
+                const char *v = ev_attr(e, keep[k]);
+                if (!v)
+                    continue;
+                owf_buf_printf(&b, " %s=\"", keep[k]);
+                owf_buf_puts(&b, v);
+                owf_buf_putc(&b, '"');
+            }
+            owf_buf_putc(&b, 0);
+            if (b.failed || !(sh->protect_kept = copy(x, (const char *)b.data, strlen((const char *)b.data))))
+                x->failed = 1;
+            owf_buf_free(&b);
+        }
     }
 }
 

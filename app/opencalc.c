@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.75 (12.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.76 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -108,7 +108,8 @@ enum {
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
     M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_NAME_MANAGE, M_ADV_FILTER,
-    M_TEXT_COLUMNS, M_REMOVE_DUPS
+    M_TEXT_COLUMNS, M_REMOVE_DUPS,
+    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT
 };
 
 static struct NewMenu menus[] = {
@@ -263,6 +264,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Rename...", NULL, 0, 0, (APTR)M_SHEET_RENAME },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_SHEET_DELETE },
     { NM_ITEM, "Duplicate...", NULL, 0, 0, (APTR)M_SHEET_DUPLICATE },
+    { NM_ITEM, "Protect Sheet...", NULL, 0, 0, (APTR)M_PROTECT_SHEET },
+    { NM_ITEM, "Unprotect Sheet...", NULL, 0, 0, (APTR)M_UNPROTECT_SHEET },
+    { NM_ITEM, "Cell Protection...", NULL, 0, 0, (APTR)M_CELL_PROTECT },
     { NM_ITEM, "Move Left", NULL, 0, 0, (APTR)M_SHEET_LEFT },
     { NM_ITEM, "Move Right", NULL, 0, 0, (APTR)M_SHEET_RIGHT },
     { NM_ITEM, "Hide Sheet", NULL, 0, 0, (APTR)M_SHEET_HIDE },
@@ -1017,6 +1021,12 @@ static int result(int rc, const char *done)
         return 1;
     case OWF_ERR_MEMORY:
         tell("GFOpenCalc", "There is not enough memory to complete that.");
+        break;
+    case OC_PROTECTED:
+        set_status("The cells are protected: Sheet > Unprotect Sheet first.");
+        break;
+    case OC_WRONG_PASSWORD:
+        set_status("That is not the sheet's password.");
         break;
     case OWF_ERR_FORMAT:
         set_status("The formula has an error: it is kept, and shows #NAME?.");
@@ -4508,6 +4518,100 @@ static void do_remove_duplicates(void)
     result(OWF_OK, done);
 }
 
+/* ---- Sheet > Protect Sheet, Unprotect Sheet, Cell Protection ----
+ * The windows take the same words as the ARexx commands:
+ * PROTECT [PASSWORD p] [ALLOW FORMATCELLS FORMATCOLUMNS FORMATROWS INSERTCOLUMNS INSERTROWS DELETECOLUMNS
+ *   DELETEROWS SORT AUTOFILTER ...]   UNPROTECT [password]   CELLPROTECT range LOCKED|UNLOCKED [HIDDEN] */
+
+static const char *rexx_word(const char *p, char *word, size_t size);
+
+static const struct { const char *word; unsigned bit; } allow_words[] = {
+    { "SELECTLOCKED", OWF_ALLOW_SELECT_LOCKED }, { "SELECTUNLOCKED", OWF_ALLOW_SELECT_UNLOCKED },
+    { "FORMATCELLS", OWF_ALLOW_FORMAT_CELLS }, { "FORMATCOLUMNS", OWF_ALLOW_FORMAT_COLUMNS },
+    { "FORMATROWS", OWF_ALLOW_FORMAT_ROWS }, { "INSERTCOLUMNS", OWF_ALLOW_INSERT_COLUMNS },
+    { "INSERTROWS", OWF_ALLOW_INSERT_ROWS }, { "INSERTLINKS", OWF_ALLOW_INSERT_LINKS },
+    { "DELETECOLUMNS", OWF_ALLOW_DELETE_COLUMNS }, { "DELETEROWS", OWF_ALLOW_DELETE_ROWS },
+    { "SORT", OWF_ALLOW_SORT }, { "AUTOFILTER", OWF_ALLOW_AUTOFILTER }, { "PIVOT", OWF_ALLOW_PIVOT },
+    { "OBJECTS", OWF_ALLOW_OBJECTS }, { "SCENARIOS", OWF_ALLOW_SCENARIOS }
+};
+
+/* PROTECT's words: OWF_OK... from oc_core_protect_sheet, or OWF_ERR_FORMAT with why in out. */
+static int protect_words(const char *p, char *out, size_t size)
+{
+    char word[64], password[64];
+    unsigned allow = OWF_ALLOW_DEFAULT;
+    int in_allow = 0, rc;
+    password[0] = 0;
+    for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
+        size_t k;
+        if (!strcasecmp(word, "PASSWORD")) { p = rexx_word(p, password, sizeof password); in_allow = 0; continue; }
+        if (!strcasecmp(word, "ALLOW")) { in_allow = 1; continue; }
+        for (k = 0; in_allow && k < sizeof allow_words / sizeof allow_words[0]; k++)
+            if (!strcasecmp(word, allow_words[k].word)) break;
+        if (!in_allow || k == sizeof allow_words / sizeof allow_words[0]) {
+            snprintf(out, size, "PROTECT [PASSWORD p] [ALLOW FORMATCELLS INSERTROWS DELETEROWS SORT ...]: not %s", word);
+            return OWF_ERR_FORMAT;
+        }
+        allow |= allow_words[k].bit;
+    }
+    rc = oc_core_protect_sheet(core, password[0] ? password : NULL, allow);
+    snprintf(out, size, "%s", rc == OWF_OK ? "OK" : rc == OWF_ERR_UNSUPPORTED ? "The sheet is protected already" : owf_error_text(rc));
+    return rc;
+}
+
+/* CELLPROTECT's words after the range: LOCKED or UNLOCKED, then HIDDEN. */
+static int cellprotect_words(const char *p, char *out, size_t size)
+{
+    char word[32];
+    int locked = -1, hidden = 0, rc;
+    for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
+        if (!strcasecmp(word, "LOCKED")) locked = 1;
+        else if (!strcasecmp(word, "UNLOCKED")) locked = 0;
+        else if (!strcasecmp(word, "HIDDEN")) hidden = 1;
+        else locked = -2;
+    }
+    if (locked < 0) {
+        snprintf(out, size, "Say LOCKED or UNLOCKED, and HIDDEN to hide formulas");
+        return OWF_ERR_FORMAT;
+    }
+    rc = oc_core_set_cell_protection(core, locked, hidden);
+    snprintf(out, size, "%s", rc == OWF_OK ? "OK" : rc == OC_PROTECTED ? "The sheet is protected" : owf_error_text(rc));
+    return rc;
+}
+
+static void do_protect_sheet(void)
+{
+    char words[200], why[200];
+    int rc;
+    if (oc_core_sheet_protection(core, NULL, NULL)) { set_status("This sheet is protected already."); return; }
+    if (!text_requester("Protect Sheet", "PASSWORD p, ALLOW FORMATCELLS INSERTROWS DELETEROWS SORT...",
+                        "PASSWORD ", words, sizeof words)) return;
+    rc = protect_words(words, why, sizeof why);
+    if (rc == OWF_ERR_FORMAT) set_status(why);
+    else result(rc, "The sheet is protected: its locked cells cannot change.");
+}
+
+static void do_unprotect_sheet(void)
+{
+    char password[64];
+    int has = 0;
+    if (!oc_core_sheet_protection(core, NULL, &has)) { set_status("This sheet is not protected."); return; }
+    password[0] = 0;
+    if (has && !text_requester("Unprotect Sheet", "Password", "", password, sizeof password)) return;
+    result(oc_core_unprotect_sheet(core, password), "The sheet is no longer protected.");
+}
+
+static void do_cell_protection(void)
+{
+    char words[64], why[120];
+    int rc;
+    if (!text_requester("Cell Protection", "LOCKED or UNLOCKED, and HIDDEN to hide formulas",
+                        "UNLOCKED", words, sizeof words)) return;
+    rc = cellprotect_words(words, why, sizeof why);
+    if (rc == OWF_ERR_FORMAT) set_status(why);
+    else result(rc, "Cell protection changed: it counts once the sheet is protected.");
+}
+
 /* ---- Pivot Table: the field layout window ----
  * The source's fields in a list, each with its use (row, column or page
  * field, in the order they were given one), its data function and, for a
@@ -5780,6 +5884,9 @@ static void menu_action(ULONG id)
     case M_SUBTOTALS: do_subtotals(); break;
     case M_TEXT_COLUMNS: do_text_columns(); break;
     case M_REMOVE_DUPS: do_remove_duplicates(); break;
+    case M_PROTECT_SHEET: do_protect_sheet(); break;
+    case M_UNPROTECT_SHEET: do_unprotect_sheet(); break;
+    case M_CELL_PROTECT: do_cell_protection(); break;
     case M_PIVOT_SUMMARY: do_pivot_table(); break;
     case M_PIVOT_REFRESH:
         {
@@ -6385,7 +6492,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -6474,7 +6581,7 @@ static int rexx_do_command(const char *command, char **result_out)
             rc = !strcasecmp(rule, "CLEAR") ? oc_core_clear_condfmt(core) : conditional_apply(rule);
             ok = rc == OWF_OK;
             snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_FORMAT ? "Use " CONDFMT_WORDS
-                                                             : owf_error_text(rc));
+                                                             : rc == OC_PROTECTED ? "The sheet is protected" : owf_error_text(rc));
         }
     } else if (starts_word_ci(command, "TEXTTOCOLUMNS", &arg) || starts_word_ci(command, "REMOVEDUPS", &arg)) {
         /* the range first, then the options: TEXTTOCOLUMNS gives the columns split into, REMOVEDUPS the rows removed */
@@ -6495,6 +6602,32 @@ static int rexx_do_command(const char *command, char **result_out)
                 ok = textcols_parse(opts, &opt, result_text, sizeof result_text) &&
                      textcols_run(&opt, result_text, sizeof result_text);
             }
+        }
+    } else if (starts_word_ci(command, "PROTECT", &arg)) {
+        int rc = protect_words(arg, result_text, sizeof result_text);
+        ok = rc == OWF_OK;
+        if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
+    } else if (starts_word_ci(command, "UNPROTECT", &arg)) {
+        char password[64];
+        int rc;
+        rexx_word(arg, password, sizeof password);
+        rc = oc_core_unprotect_sheet(core, password);
+        ok = rc == OWF_OK;
+        if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OC_WRONG_PASSWORD ? "Wrong password"
+                                                     : rc == OWF_ERR_UNSUPPORTED ? "The sheet is not protected" : owf_error_text(rc));
+    } else if (starts_word_ci(command, "ISPROTECTED", &arg)) {
+        unsigned allow = 0;
+        int has = 0, on = oc_core_sheet_protection(core, &allow, &has);
+        snprintf(result_text, sizeof result_text, "%d %u %d", on, allow, has);
+    } else if (starts_word_ci(command, "CELLPROTECT", &arg)) {
+        char where[64];
+        owf_range r;
+        const char *rest = rexx_word(arg, where, sizeof where);
+        if (!oc_parse_range(where, &r)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a range: %s", where); }
+        else {
+            oc_core_select_range(core, &r);
+            ok = cellprotect_words(rest, result_text, sizeof result_text) == OWF_OK;
         }
     } else if (starts_word_ci(command, "CONSOLIDATE", &arg)) {
         ok = rexx_consolidate(arg, result_text, sizeof result_text);
@@ -6537,7 +6670,7 @@ static int rexx_do_command(const char *command, char **result_out)
             int rc = oc_core_set_input(core, oc_core_sheet(core), row, col, utf8);
             owf_free(utf8);
             ok = rc == OWF_OK;
-            snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_FORMAT ? "Formula error" : "Failed");
+            snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_FORMAT ? "Formula error" : rc == OC_PROTECTED ? "Protected" : "Failed");
         }
     } else if (starts_word_ci(command, "GOTO", &arg)) {
         ok = oc_core_goto(core, arg) == OWF_OK;

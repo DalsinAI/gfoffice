@@ -184,6 +184,7 @@ int oc_core_add_condfmt(oc_core *core, const oc_condfmt_spec *rule)
     owf_range targets[OC_MAX_RANGES];
     int n;
     if (!core || !cf_spec_ok(rule)) return OWF_ERR_FORMAT;
+    if (oc_protected(core, 0)) return OC_PROTECTED;     /* as Excel: none on a protected sheet */
     if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
     if (!(n = cf_targets(core, targets))) return OWF_ERR_UNSUPPORTED;
     if (rule->type == OC_CF_DATA_BAR || rule->type == OC_CF_ICON_SET) {
@@ -240,6 +241,7 @@ int oc_core_clear_condfmt(oc_core *core)
     int ntargets, nfresh = 0, cap = 0, i, r, t, rc = OWF_OK;
     oc_undo *undo;
     if (!core) return OWF_ERR_FORMAT;
+    if (oc_protected(core, 0)) return OC_PROTECTED;
     if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
     if (!(ntargets = cf_targets(core, targets))) return OWF_ERR_UNSUPPORTED;
     sheet = oc_sheet(core);

@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.34.0"
+#define OC_CORE_VERSION "0.35.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -264,6 +264,10 @@ int oc_edit_insert_ref(oc_core *core, const owf_range *range);
  * warning's Yes, an information's OK). Ctrl+Return's fill, paste and
  * ARexx's SETCELL are not checked, as Excel's paste and macros aren't. */
 #define OC_INVALID 100
+/* A change refused because the cells (or the sheet) are protected: Tools >
+ * Unprotect Sheet first. And a password that is not the sheet's. */
+#define OC_PROTECTED 101
+#define OC_WRONG_PASSWORD 102
 typedef struct {
     int style;                  /* OWF_DV_STOP, OWF_DV_WARNING, OWF_DV_INFORMATION */
     const char *title, *message;
@@ -322,6 +326,25 @@ enum { OC_CF_DATA_BAR = 16, OC_CF_ICON_SET };
 const char *oc_icon_set_name(const char *name);
 int oc_core_add_condfmt(oc_core *core, const oc_condfmt_spec *rule);
 int oc_core_clear_condfmt(oc_core *core);
+
+/* ---- Sheet and cell protection ----
+ * Protecting the active sheet stops every change to its locked cells (all
+ * cells are locked until made unlocked) and what allow (OWF_ALLOW_...,
+ * owf.h) does not let through: formatting, inserting or deleting rows and
+ * columns, sorting. Edits refused return OC_PROTECTED. The password (NULL or
+ * "" for none) is kept as Excel's 16-bit hash, in XLSX and ODS; unprotecting
+ * needs it (OC_WRONG_PASSWORD), except a hash another program made with
+ * another digest, which is kept but not checked. Neither is an Undo step.
+ * OWF_ERR_UNSUPPORTED: already protected (not protected). Cell protection
+ * changes the selection's style (locked, formula hidden: a protected sheet
+ * shows no formula for it), as an Undo step, refused on a protected sheet. */
+int oc_core_protect_sheet(oc_core *core, const char *password, unsigned allow);
+int oc_core_unprotect_sheet(oc_core *core, const char *password);
+/* 1 when the active sheet is protected; what it allows and whether it has a password. */
+int oc_core_sheet_protection(const oc_core *core, unsigned *allow, int *has_password);
+int oc_core_set_cell_protection(oc_core *core, int locked, int formula_hidden);
+/* Excel's 16-bit hash of a password (0 for none). */
+unsigned oc_password_hash(const char *password);
 
 /* The formula bar's text: what is being typed, or what the active cell
  * holds as one would type it ("=SUM(A1:A3)", "12.5", "'0123"). The

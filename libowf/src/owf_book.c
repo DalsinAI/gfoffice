@@ -220,6 +220,11 @@ void owf_sheet_free_extras(owf_sheet *sheet)
     sheet->has_autofilter = 0;
     free(sheet->drawing);
     sheet->drawing = NULL;
+    free(sheet->protect_hash);
+    sheet->protect_hash = NULL;
+    free(sheet->protect_kept);
+    sheet->protect_kept = NULL;
+    sheet->protect = 0;
 }
 
 static char *dup_or_null(const char *s, int *failed)
@@ -243,6 +248,8 @@ int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src)
     dst->nvalidations = dst->capvalidations = 0;
     dst->autofilter_xml = dup_or_null(src->autofilter_xml, &failed);
     dst->drawing = dup_or_null(src->drawing, &failed);
+    dst->protect_hash = dup_or_null(src->protect_hash, &failed);
+    dst->protect_kept = dup_or_null(src->protect_kept, &failed);
     for (i = 0; i < src->nvalidations && !failed; i++) {
         const owf_validation *a = &src->validations[i];
         owf_validation *b = owf_sheet_add_validation(dst);
@@ -393,7 +400,8 @@ static int same_style(const owf_cellstyle *a, const owf_cellstyle *b)
     int i;
     if (a->font.flags != b->font.flags || a->font.font != b->font.font || a->font.size != b->font.size ||
         a->font.colour != b->font.colour || a->number_format != b->number_format || a->halign != b->halign ||
-        a->valign != b->valign || a->wrap != b->wrap || a->indent != b->indent || a->fill != b->fill)
+        a->valign != b->valign || a->wrap != b->wrap || a->indent != b->indent || a->fill != b->fill ||
+        a->unlocked != b->unlocked || a->formula_hidden != b->formula_hidden)
         return 0;
     for (i = 0; i < 4; i++)
         if (a->border[i] != b->border[i] || a->border_colour[i] != b->border_colour[i])

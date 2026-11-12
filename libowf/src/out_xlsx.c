@@ -325,6 +325,44 @@ static void dxfs_xml(xlsx_out *w, owf_buf *b)
     owf_buf_puts(b, "</dxfs>");
 }
 
+/* An xf's protection, when it is not Excel's default (locked, formula shown); after its alignment. */
+static void put_protection(owf_buf *b, const owf_cellstyle *s)
+{
+    if (!s->unlocked && !s->formula_hidden)
+        return;
+    owf_buf_printf(b, "<protection%s%s/>", s->unlocked ? " locked=\"0\"" : "", s->formula_hidden ? " hidden=\"1\"" : "");
+}
+
+/* A protected sheet's sheetProtection (after sheetData): its options as what is protected, its password. */
+static void put_sheet_protection(owf_buf *b, const owf_sheet *sh)
+{
+    static const struct { const char *name; unsigned bit; int def; } opts[] = {
+        { "objects", OWF_ALLOW_OBJECTS, 0 }, { "scenarios", OWF_ALLOW_SCENARIOS, 0 },
+        { "formatCells", OWF_ALLOW_FORMAT_CELLS, 1 }, { "formatColumns", OWF_ALLOW_FORMAT_COLUMNS, 1 },
+        { "formatRows", OWF_ALLOW_FORMAT_ROWS, 1 }, { "insertColumns", OWF_ALLOW_INSERT_COLUMNS, 1 },
+        { "insertRows", OWF_ALLOW_INSERT_ROWS, 1 }, { "insertHyperlinks", OWF_ALLOW_INSERT_LINKS, 1 },
+        { "deleteColumns", OWF_ALLOW_DELETE_COLUMNS, 1 }, { "deleteRows", OWF_ALLOW_DELETE_ROWS, 1 },
+        { "selectLockedCells", OWF_ALLOW_SELECT_LOCKED, 0 }, { "sort", OWF_ALLOW_SORT, 1 },
+        { "autoFilter", OWF_ALLOW_AUTOFILTER, 1 }, { "pivotTables", OWF_ALLOW_PIVOT, 1 },
+        { "selectUnlockedCells", OWF_ALLOW_SELECT_UNLOCKED, 0 }
+    };
+    size_t k;
+    if (!sh->protect)
+        return;
+    owf_buf_puts(b, "<sheetProtection");
+    if (sh->protect_hash && strlen(sh->protect_hash) == 4)
+        owf_buf_printf(b, " password=\"%s\"", sh->protect_hash);
+    else if (sh->protect_kept && !strncmp(sh->protect_kept, "xlsx:", 5))
+        owf_buf_puts(b, sh->protect_kept + 5);
+    owf_buf_puts(b, " sheet=\"1\"");
+    for (k = 0; k < sizeof opts / sizeof opts[0]; k++) {
+        int locked = !(sh->protect_allow & opts[k].bit);
+        if (locked != opts[k].def)
+            owf_buf_printf(b, " %s=\"%d\"", opts[k].name, locked);
+    }
+    owf_buf_puts(b, "/>");
+}
+
 static void styles_xml(xlsx_out *w, owf_buf *b)
 {
     const owf_book *book = w->book;
@@ -419,8 +457,16 @@ static void styles_xml(xlsx_out *w, owf_buf *b)
             owf_buf_puts(b, " applyFill=\"1\"");
         if (w->xf_border[i])
             owf_buf_puts(b, " applyBorder=\"1\"");
-        if (!align) {
+        if (s->unlocked || s->formula_hidden)
+            owf_buf_puts(b, " applyProtection=\"1\"");
+        if (!align && !s->unlocked && !s->formula_hidden) {
             owf_buf_puts(b, "/>");
+            continue;
+        }
+        if (!align) {
+            owf_buf_putc(b, '>');
+            put_protection(b, s);
+            owf_buf_puts(b, "</xf>");
             continue;
         }
         owf_buf_puts(b, " applyAlignment=\"1\"><alignment");
@@ -432,7 +478,9 @@ static void styles_xml(xlsx_out *w, owf_buf *b)
             owf_buf_puts(b, " wrapText=\"1\"");
         if (s->indent)
             owf_buf_printf(b, " indent=\"%u\"", (unsigned)s->indent);
-        owf_buf_puts(b, "/></xf>");
+        owf_buf_puts(b, "/>");
+        put_protection(b, s);
+        owf_buf_puts(b, "</xf>");
     }
     owf_buf_puts(b, "</cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>");
     dxfs_xml(w, b);
@@ -1278,6 +1326,7 @@ static void sheet_xml(xlsx_out *w, owf_buf *b, int index)
             owf_buf_puts(b, "</row>");
         }
     owf_buf_puts(b, "</sheetData>");
+    put_sheet_protection(b, sh);
     put_scenarios(w, b, index);
     if (sh->has_autofilter && sh->autofilter.last_row < MAX_ROWS && sh->autofilter.last_col < MAX_COLS) {
         owf_buf_puts(b, "<autoFilter ref=\"");

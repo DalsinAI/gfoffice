@@ -681,9 +681,12 @@ static void cell_properties(ods_out *w, owf_buf *b, const owf_cellstyle *s)
             owf_buf_printf(b, " #%06lx", OWF_SHADE_RGB(s->border_colour[k]));
         owf_buf_putc(b, '"');
     }
-    owf_buf_printf(b, " style:vertical-align=\"%s\" fo:wrap-option=\"%s\" style:text-align-source=\"%s\" style:repeat-content=\"%s\"/>",
+    owf_buf_printf(b, " style:vertical-align=\"%s\" fo:wrap-option=\"%s\" style:text-align-source=\"%s\" style:repeat-content=\"%s\""
+                      " style:cell-protect=\"%s\"/>",
                    valign[s->valign < 3 ? s->valign : 2], s->wrap ? "wrap" : "no-wrap",
-                   s->halign == OWF_HALIGN_GENERAL ? "value-type" : "fix", s->halign == OWF_HALIGN_FILL ? "true" : "false");
+                   s->halign == OWF_HALIGN_GENERAL ? "value-type" : "fix", s->halign == OWF_HALIGN_FILL ? "true" : "false",
+                   s->unlocked ? (s->formula_hidden ? "formula-hidden" : "none")
+                               : (s->formula_hidden ? "protected formula-hidden" : "protected"));
     owf_buf_puts(b, "<style:paragraph-properties");
     if (s->halign != OWF_HALIGN_GENERAL) {
         static const char *const align[7] = { "start", "start", "center", "end", "start", "justify", "center" };
@@ -2316,8 +2319,31 @@ static void put_sheet(ods_out *w, owf_buf *b, int index)
     }
     owf_buf_puts(b, "<table:table table:name=\"");
     attr(w, b, sh->name);
-    owf_buf_printf(b, "\" table:style-name=\"%s\" gfocalc:default-column-width=\"%d\" gfocalc:default-row-height=\"%d\">",
+    owf_buf_printf(b, "\" table:style-name=\"%s\" gfocalc:default-column-width=\"%d\" gfocalc:default-row-height=\"%d\"",
                    sh->hidden ? "ta2" : "ta1", sh->default_width, sh->default_height);
+    if (sh->protect) {
+        owf_buf_printf(b, " table:protected=\"true\" gfocalc:protect-allow=\"%u\"", sh->protect_allow);
+        if (sh->protect_hash && strlen(sh->protect_hash) == 4) {
+            owf_buf_puts(b, " gfocalc:protection-key-excel=\"");
+            attr(w, b, sh->protect_hash);
+            owf_buf_putc(b, '"');
+        } else if (sh->protect_kept && !strncmp(sh->protect_kept, "ods:", 4) && strchr(sh->protect_kept, ' ')) {
+            const char *sp = strchr(sh->protect_kept, ' ');
+            char alg[128];
+            size_t n = (size_t)(sp - sh->protect_kept - 4);
+            if (n < sizeof alg) {
+                memcpy(alg, sh->protect_kept + 4, n);
+                alg[n] = 0;
+                owf_buf_puts(b, " table:protection-key=\"");
+                attr(w, b, sp + 1);
+                owf_buf_puts(b, "\" table:protection-key-digest-algorithm=\"");
+                attr(w, b, alg);
+                owf_buf_putc(b, '"');
+            }
+        } else if (sh->protect_kept)
+            owf_report_add(w->report, OWF_NOTE_APPROX, "A sheet's password from an Excel file is not kept in ODS: the sheet stays protected without one");
+    }
+    owf_buf_putc(b, '>');
     if (sh->hidden == 2)
         owf_report_add(w->report, OWF_NOTE_APPROX, "Very hidden sheets became hidden ones");
     if (na)

@@ -67,7 +67,8 @@
 enum { F_CELL = 1, F_COLUMN, F_ROW, F_TABLE, F_OTHER };
 enum {
     P_FONT = 1 << 0, P_SIZE = 1 << 1, P_COLOUR = 1 << 2, P_HALIGN = 1 << 3, P_VALIGN = 1 << 4, P_WRAP = 1 << 5,
-    P_INDENT = 1 << 6, P_FILL = 1 << 7, P_DATA = 1 << 8, P_BORDER = 1 << 9 /* and three more, a side each */
+    P_INDENT = 1 << 6, P_FILL = 1 << 7, P_DATA = 1 << 8, P_BORDER = 1 << 9, /* and three more, a side each */
+    P_PROTECT = 1 << 13
 };
 
 typedef struct {
@@ -81,6 +82,7 @@ typedef struct {
     unsigned long fill;
     unsigned char border[4];
     unsigned long border_colour[4];
+    unsigned char unlocked, formula_hidden; /* P_PROTECT: style:cell-protect */
     int width;                           /* columns' */
     int height, optimal;                 /* rows' */
     int display;                         /* tables': 0 hidden */
@@ -548,6 +550,11 @@ static void style_properties(ods *o, const owf_xml_event *e)
         if ((v = ev(e, NS_FO, "wrap-option")) != NULL) {
             s->mask |= P_WRAP;
             s->wrap = !strcmp(v, "wrap");
+        }
+        if ((v = ev(e, NS_STYLE, "cell-protect")) != NULL) {   /* "none", "protected formula-hidden"... */
+            s->mask |= P_PROTECT;
+            s->unlocked = !strstr(v, "protected");
+            s->formula_hidden = strstr(v, "hidden") != NULL;
         }
         if ((v = ev(e, NS_STYLE, "rotation-angle")) != NULL && strcmp(v, "0") && strcmp(v, "0deg"))
             owf_report_add(o->report, OWF_NOTE_APPROX, "Text turned at an angle in cells is shown level");
@@ -1036,6 +1043,10 @@ static void apply_style(ods *o, const ods_style *s, owf_cellstyle *c, int depth)
         c->indent = (unsigned char)s->indent;
     if (s->mask & P_FILL)
         c->fill = s->fill;
+    if (s->mask & P_PROTECT) {
+        c->unlocked = s->unlocked;
+        c->formula_hidden = s->formula_hidden;
+    }
     for (i = 0; i < 4; i++)
         if (s->mask & (P_BORDER << i)) {
             c->border[i] = s->border[i];
@@ -1346,8 +1357,26 @@ static void start_table(ods *o, const owf_xml_event *e)
     o->default_width = o->default_height = -1;
     if (ts && !ts->display)
         o->sheet->hidden = 1;
-    if ((v = ev(e, NS_TABLE, "protected")) != NULL && !strcmp(v, "true"))
-        owf_report_add(o->report, OWF_NOTE_INFO, "Sheet protection is not kept: the sheets open unprotected");
+    if ((v = ev(e, NS_TABLE, "protected")) != NULL && !strcmp(v, "true")) {
+        const char *key = ev(e, NS_TABLE, "protection-key"), *alg = ev(e, NS_TABLE, "protection-key-digest-algorithm");
+        const char *xl = ev(e, NS_GFO, "protection-key-excel"), *allow = ev(e, NS_GFO, "protect-allow");
+        o->sheet->protect = 1;
+        o->sheet->protect_allow = allow ? (unsigned)whole(allow, OWF_ALLOW_DEFAULT, 0, 0x7FFF) : OWF_ALLOW_DEFAULT;
+        if (xl && strlen(xl) == 4)
+            o->sheet->protect_hash = copy(o, xl);
+        else if (key && *key) {
+            /* the digest ODF names (SHA-1 when it names none), kept as it was */
+            const char *a = alg && *alg ? alg : "http://www.w3.org/2000/09/xmldsig#sha1";
+            size_t size = strlen(a) + strlen(key) + 6;
+            char *k = malloc(size);
+            if (!k)
+                o->failed = 1;
+            else {
+                snprintf(k, size, "ods:%s %s", a, key);
+                o->sheet->protect_kept = k;
+            }
+        }
+    }
     if (o->ext_ns) {
         long w = whole(ev(e, o->ext_ns, "default-column-width"), -1, 0, 0x7FFF);
         long h = whole(ev(e, o->ext_ns, "default-row-height"), -1, 0, 0x7FFF);
