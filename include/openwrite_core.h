@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.6.0"
+#define OW_CORE_VERSION "1.7.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -175,6 +175,13 @@ typedef int (*ow_toc_pages_fn)(void *userdata, const owf_doc *doc,
 int ow_editor_insert_table_of_contents(ow_editor *editor, int max_level,
                                        ow_toc_pages_fn resolve_pages,
                                        void *userdata);
+/* Core 1.7: an alphabetical index. An entry is a mark at the caret (after a selection, which stays) that shows
+ * nothing: "Lamps", or "Lamps:LED" for a subentry. ow_editor_insert_index builds, at the caret as the contents
+ * are, a title and a line for each entry and subentry in alphabetical order with its marks' pages ("Lamps, 2,
+ * 5"), undone as one edit; the resolver gets each mark's paragraph. OWF_ERR_UNSUPPORTED: no entries. */
+int ow_editor_insert_index_entry(ow_editor *editor, const char *entry);
+int ow_editor_index_entry_count(const ow_editor *editor);
+int ow_editor_insert_index(ow_editor *editor, ow_toc_pages_fn resolve_pages, void *userdata);
 
 /* 2.0.23: the left pages' (the even-numbered) own, doc->header_left and footer_left */
 typedef enum { OW_STORY_HEADER = 1, OW_STORY_FOOTER = 2, OW_STORY_HEADER_LEFT = 3, OW_STORY_FOOTER_LEFT = 4 } ow_story_kind;

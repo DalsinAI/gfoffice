@@ -573,10 +573,24 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
 {
     static const char *const names[] = { "title", "initial-creator", "subject", "file-name", "word-count",
                                          "chapter", "user-field-get", "bookmark-ref", "bookmark-ref",
-                                         "database-display" };
+                                         "database-display", "alphabetical-index-mark" };
     const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_LAST
                      ? names[run->field - OWF_FIELD_TITLE] : NULL;
     if (!name) return;
+    if (run->field == OWF_FIELD_INDEX) {             /* 1.10: a point mark, Main:Sub as key1 and its value */
+        const char *e = run->href ? run->href : "", *colon = strchr(e, ':');
+        owf_buf_puts(out, "<text:alphabetical-index-mark");
+        if (colon && colon > e && colon[1]) {
+            owf_buf_puts(out, " text:key1=\"");
+            owf_buf_put_xml(out, e, (size_t)(colon - e));
+            owf_buf_puts(out, "\"");
+            e = colon + 1;
+        }
+        owf_buf_puts(out, " text:string-value=\"");
+        owf_buf_puts_xml(out, e);
+        owf_buf_puts(out, "\"/>");
+        return;
+    }
     owf_buf_printf(out, "<text:%s", name);
     if (run->field == OWF_FIELD_FILENAME) owf_buf_puts(out, " text:display=\"name-and-extension\"");
     if (run->field == OWF_FIELD_CHAPTER) owf_buf_puts(out, " text:display=\"name\" text:outline-level=\"1\"");

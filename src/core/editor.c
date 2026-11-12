@@ -58,6 +58,7 @@ struct ow_editor {
 };
 
 static int update_story_fields(ow_editor *editor, owf_story *story);   /* 2.3.0 */
+static int tolower_ascii(int c);                                       /* 2.5.0 */
 
 /* ---- small allocation helpers -------------------------------------------------- */
 
@@ -4267,6 +4268,219 @@ done:
     return rc;
 }
 
+/* ---- 2.6.0 (core 1.7): an alphabetical index ------------------------------------------------------------
+ * An index entry is a field run (OWF_FIELD_INDEX) that shows nothing, its href the entry ("Main:Sub" for a
+ * subentry). The index is made like the contents: at the caret, a title and a line for each main entry and
+ * subentry in alphabetical order, with the pages its marks are on ("Lamps, 2, 5"), undoable as one edit. */
+
+typedef struct {
+    char *main, *sub;            /* sub NULL: the main entry's own */
+    int paragraph;
+    int order;                   /* its place among the marks, in document order */
+    int page;
+} ow_index_entry;
+
+typedef struct {
+    int first, count;            /* the entries it takes its pages from */
+    int level;                   /* 1: a main entry, 2: a subentry */
+} ow_index_line;
+
+static int fold_cmp(const char *a, const char *b)
+{
+    for (; *a && *b; ++a, ++b) {
+        int x = tolower_ascii((unsigned char)*a), y = tolower_ascii((unsigned char)*b);
+        if (x != y) return x - y;
+    }
+    if (*a || *b) return *a ? 1 : -1;
+    return 0;
+}
+
+static int index_entry_cmp(const void *pa, const void *pb)
+{
+    const ow_index_entry *a = (const ow_index_entry *)pa, *b = (const ow_index_entry *)pb;
+    int c = fold_cmp(a->main, b->main);
+    if (!c) c = strcmp(a->main, b->main);
+    if (!c && (!a->sub || !b->sub)) c = a->sub ? 1 : b->sub ? -1 : 0;   /* the main entry's own first */
+    else if (!c) {
+        c = fold_cmp(a->sub, b->sub);
+        if (!c) c = strcmp(a->sub, b->sub);
+    }
+    if (!c) c = a->paragraph - b->paragraph;
+    return c;
+}
+
+int ow_editor_index_entry_count(const ow_editor *editor)
+{
+    const owf_story *story = editor && editor->doc ? &editor->doc->body : NULL;
+    int i, j, n = 0;
+    for (i = 0; story && i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j)
+            n += story->paras[i].runs[j].kind == OWF_RUN_FIELD && story->paras[i].runs[j].field == OWF_FIELD_INDEX &&
+                 story->paras[i].runs[j].href;
+    return n;
+}
+
+int ow_editor_insert_index_entry(ow_editor *editor, const char *entry)
+{
+    if (!editor || !editor->doc || !entry || !*entry || *entry == ':') return OWF_ERR_FORMAT;
+    editor->selection.anchor = editor->selection.focus;     /* after the words it is about, which stay */
+    return ow_editor_insert_field_arg(editor, OWF_FIELD_INDEX, entry);
+}
+
+static void index_entries_free(ow_index_entry *e, int n)
+{
+    int i;
+    for (i = 0; e && i < n; ++i) { owf_free(e[i].main); owf_free(e[i].sub); }
+    owf_free(e);
+}
+
+static int int_cmp(const void *a, const void *b)
+{
+    return *(const int *)a - *(const int *)b;
+}
+
+/* A line's text: the entry, then its pages after commas (none when it has none of its own) */
+static int index_line_text(const owf_doc *doc, const ow_index_entry *e, const ow_index_line *line, int *pages,
+                           char **out)
+{
+    const char *name = line->level == 1 ? e[line->first].main : e[line->first].sub;
+    size_t cap = strlen(name) + 1, at;
+    int k, n = 0, first = doc->page.start_page > 0 ? doc->page.start_page : 1;
+    char *text;
+    for (k = line->first; k < line->first + line->count; ++k)
+        if (line->level == 2 || !e[k].sub) pages[n++] = e[k].page;
+    qsort(pages, (size_t)n, sizeof *pages, int_cmp);
+    cap += (size_t)n * 50;
+    if (!(text = (char *)owf_malloc(cap))) return 0;
+    at = (size_t)snprintf(text, cap, "%s", name);
+    for (k = 0; k < n; ++k) {
+        char label[48];
+        if (k && pages[k] == pages[k - 1]) continue;
+        owf_page_number(&doc->page, first + pages[k], label, sizeof label);
+        at += (size_t)snprintf(text + at, cap - at, ", %s", label);
+    }
+    *out = text;
+    return 1;
+}
+
+int ow_editor_insert_index(ow_editor *editor, ow_toc_pages_fn resolve_pages, void *userdata)
+{
+    ow_index_entry *e = NULL;
+    ow_index_line *lines = NULL;
+    int *paragraphs = NULL, *pages = NULL, *scratch = NULL;
+    owf_story *story;
+    ow_position after;
+    owf_parafmt fmt;
+    owf_charfmt title_cf, cf;
+    int n = 0, nlines = 0, i, j, k, base, inserted, rc = OWF_ERR_MEMORY;
+    if (!editor || !editor->doc || !resolve_pages || editor->selection.focus.box || editor->selection.anchor.box)
+        return OWF_ERR_FORMAT;
+    story = &editor->doc->body;
+    {
+        int fp = editor->selection.focus.paragraph, fr = editor->selection.focus.run;
+        if (!ow_editor_selection_empty(editor) || fp < 0 || fp >= story->nparas || story->paras[fp].table_id >= 0 ||
+            story->paras[fp].fmt.heading || fr < 0 || fr >= story->paras[fp].nruns ||
+            story->paras[fp].runs[fr].kind != OWF_RUN_TEXT || !story->paras[fp].runs[fr].text)
+            return OWF_ERR_FORMAT;
+    }
+    n = ow_editor_index_entry_count(editor);
+    if (!n) return OWF_ERR_UNSUPPORTED;
+    e = (ow_index_entry *)owf_calloc((size_t)n, sizeof *e);
+    lines = (ow_index_line *)owf_calloc((size_t)n * 2, sizeof *lines);
+    paragraphs = (int *)owf_malloc((size_t)n * sizeof *paragraphs);
+    pages = (int *)owf_malloc((size_t)n * sizeof *pages);
+    scratch = (int *)owf_malloc((size_t)n * sizeof *scratch);
+    if (!e || !lines || !paragraphs || !pages || !scratch) goto done;
+    for (i = 0, k = 0; i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j) {
+            const owf_run *r = &story->paras[i].runs[j];
+            const char *colon;
+            if (r->kind != OWF_RUN_FIELD || r->field != OWF_FIELD_INDEX || !r->href) continue;
+            colon = strchr(r->href, ':');
+            e[k].paragraph = i;
+            e[k].order = k;
+            if (colon && colon > r->href && colon[1]) {
+                e[k].main = copy_bytes(r->href, (size_t)(colon - r->href));
+                e[k].sub = copy_bytes(colon + 1, strlen(colon + 1));
+                if (!e[k].sub) { owf_free(e[k].main); e[k].main = NULL; }
+            } else {
+                e[k].main = copy_bytes(r->href, strlen(r->href));
+            }
+            if (!e[k].main) goto done;
+            ++k;
+        }
+    qsort(e, (size_t)n, sizeof *e, index_entry_cmp);
+    for (i = 0; i < n; i = j) {                      /* a main entry, then its subentries */
+        for (j = i; j < n && !strcmp(e[j].main, e[i].main); ++j) ;
+        lines[nlines].first = i; lines[nlines].count = j - i; lines[nlines].level = 1; ++nlines;
+        for (k = i; k < j; ) {
+            int m = k;
+            if (!e[k].sub) { ++k; continue; }
+            while (m < j && e[m].sub && !strcmp(e[m].sub, e[k].sub)) ++m;
+            lines[nlines].first = k; lines[nlines].count = m - k; lines[nlines].level = 2; ++nlines;
+            k = m;
+        }
+    }
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) goto done;
+    if (split_paragraph(editor, editor->selection.focus, &after) < 0) goto undo;
+    story = &editor->doc->body;
+    base = after.paragraph;
+    inserted = nlines + 1;
+    owf_parafmt_init(&fmt);
+    title_cf = editor->doc->base;
+    title_cf.flags |= OWF_BOLD;
+    if (!title_cf.size || title_cf.size < 320) title_cf.size = 320;
+    {
+        owf_para *title = insert_paragraph(story, base, &fmt);
+        if (!title || !(title->style = copy_bytes("IndexHeading", 12)) ||
+            owf_para_add_text(title, &title_cf, "Index", 5) != OWF_OK) goto undo;
+    }
+    for (i = 0; i < nlines; ++i) {
+        owf_para *line;
+        char style[16];
+        owf_parafmt_init(&fmt);
+        fmt.indent_left = (lines[i].level - 1) * 360;
+        if (!(line = insert_paragraph(story, base + 1 + i, &fmt))) goto undo;
+        snprintf(style, sizeof style, "Index%d", lines[i].level);
+        if (!(line->style = copy_bytes(style, strlen(style)))) goto undo;
+    }
+    /* where each mark is now: the index lines hold none, so the marks keep their order (the split and the lines
+     * moved some of them down, those after the caret in its paragraph included) */
+    for (i = 0, k = 0; i < story->nparas && k < n; ++i)
+        for (j = 0; j < story->paras[i].nruns && k < n; ++j)
+            if (story->paras[i].runs[j].kind == OWF_RUN_FIELD && story->paras[i].runs[j].field == OWF_FIELD_INDEX &&
+                story->paras[i].runs[j].href) scratch[k++] = i;
+    if (k != n) goto undo;
+    for (i = 0; i < n; ++i) paragraphs[i] = scratch[e[i].order];
+    if (!resolve_pages(userdata, editor->doc, paragraphs, n, pages)) goto undo;
+    for (i = 0; i < n; ++i) { if (pages[i] < 0) goto undo; e[i].page = pages[i]; }
+    cf = editor->doc->base;
+    for (i = 0; i < nlines; ++i) {
+        char *text = NULL;
+        owf_para *line = &story->paras[base + 1 + i];
+        if (!index_line_text(editor->doc, e, &lines[i], scratch, &text)) goto undo;
+        k = owf_para_add_text(line, &cf, text, strlen(text));
+        owf_free(text);
+        if (k != OWF_OK) goto undo;
+    }
+    after.paragraph += inserted;
+    editor->selection.anchor = editor->selection.focus = after;
+    editor->dirty = 1;
+    ++editor->changes;
+    rc = ow_editor_layout(editor);
+    goto done;
+undo:
+    ow_editor_undo(editor);
+done:
+    index_entries_free(e, n);
+    owf_free(lines);
+    owf_free(paragraphs);
+    owf_free(pages);
+    owf_free(scratch);
+    return rc;
+}
+
 static int current_table_cell(const ow_editor *editor,int *id,int *row,int *col,int *cols)
 {
     int p;if(!editor||!editor->doc)return 0;p=editor->selection.focus.paragraph;if(p<0||p>=ed_story(editor)->nparas||ed_story(editor)->paras[p].table_id<0)return 0;if(id)*id=ed_story(editor)->paras[p].table_id;if(row)*row=ed_story(editor)->paras[p].table_row;if(col)*col=ed_story(editor)->paras[p].table_col;if(cols)*cols=ed_story(editor)->paras[p].table_cols;return 1;
@@ -4822,7 +5036,8 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
 
 static int field_wants_arg(owf_field f)
 {
-    return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE || f == OWF_FIELD_MERGE;
+    return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE || f == OWF_FIELD_MERGE ||
+           f == OWF_FIELD_INDEX;
 }
 
 static void merge_field_value(const ow_editor *editor, const char *column, char *out, size_t size);   /* 2.5.0 */
