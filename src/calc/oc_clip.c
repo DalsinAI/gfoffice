@@ -241,6 +241,8 @@ static int paste_move(oc_core *core)
     from.first_col = clip->col0;
     from.last_row = clip->row0 + clip->rows - 1;
     from.last_col = clip->col0 + clip->cols - 1;
+    if (oc_range_locked(core, clip->cut_sheet, &from) || oc_range_locked(core, core->sheet, &t))
+        return OC_PROTECTED;
     u = oc_undo_new(core, OC_UNDO_BOOK);
     if (u && oc_undo_save_book(core, u) != OWF_OK) {
         oc_undo_free(u);
@@ -275,6 +277,8 @@ static int paste_cells(oc_core *core)
         return paste_move(core);
     if (!paste_target(core, clip->rows, clip->cols, &t, 1))
         return OWF_ERR_UNSUPPORTED;
+    if (oc_range_locked(core, core->sheet, &t))
+        return OC_PROTECTED;
     if ((long)(t.last_row - t.first_row + 1) * (long)(t.last_col - t.first_col + 1) > OC_MAX_RANGE_CELLS)
         return OWF_ERR_UNSUPPORTED;
     u = oc_undo_new(core, OC_UNDO_CELLS);
@@ -416,6 +420,10 @@ static int paste_text(oc_core *core, const char *text, size_t length)
     if (!paste_target(core, t.rows, t.cols, &target, t.rows == 1 && t.cols == 1)) {
         tsv_free(&t);
         return OWF_ERR_UNSUPPORTED;
+    }
+    if (oc_range_locked(core, core->sheet, &target)) {
+        tsv_free(&t);
+        return OC_PROTECTED;
     }
     u = oc_undo_new(core, OC_UNDO_CELLS);
     if (u && oc_undo_save_range(core, u, core->sheet, &target, 0) != OWF_OK) {

@@ -180,6 +180,13 @@ const owf_cellstyle *oc_cell_style(const oc_core *core, const owf_cell *cell, un
 int oc_col_style(const owf_sheet *sheet, unsigned col);
 int oc_row_style(const owf_sheet *sheet, unsigned row);
 int oc_empty_style(const owf_sheet *sheet, unsigned row, unsigned col);
+/* oc_protect.c: 1 when a protected sheet's cell (any of a range's) is locked; when the active sheet is protected
+ * and does not allow `allow` (0: anything); when the selection has a locked cell; when a cell's formula is hidden. */
+int oc_cell_locked(const oc_core *core, int sheet, unsigned row, unsigned col);
+int oc_range_locked(const oc_core *core, int sheet, const owf_range *range);
+int oc_protected(const oc_core *core, unsigned allow);
+int oc_protected_selection(const oc_core *core);
+int oc_formula_hidden(const oc_core *core, int sheet, unsigned row, unsigned col);
 /* Text entered into a cell through the engine; a cell it makes takes its row's or column's style, as a cell
  * typed into in Excel does. */
 int oc_enter(oc_core *core, int sheet, unsigned row, unsigned col, const char *text);

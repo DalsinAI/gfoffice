@@ -485,6 +485,9 @@ typedef struct {
     unsigned long fill;          /* OWF_SHADE(0xRRGGBB) behind the cell; 0: none */
     unsigned char border[4];     /* OWF_LINE_... by OWF_SIDE_... */
     unsigned long border_colour[4]; /* OWF_SHADE(0xRRGGBB); 0: automatic */
+    unsigned char unlocked;      /* owf.library 2.6: 1 when the cell may be changed on a protected sheet (Excel's
+                                    locked="0"; cells are locked by default) */
+    unsigned char formula_hidden; /* owf.library 2.6: 1 when a protected sheet hides its formula */
 } owf_cellstyle;
 
 typedef struct {
@@ -606,7 +609,25 @@ typedef struct {
     char *autofilter_xml;        /* what it filters and sorts by, as the file wrote it (Excel's filterColumn and
                                     sortState elements), or NULL */
     char *drawing;               /* its drawing (charts, pictures) in the book's kept parts: the part's name, or NULL */
+    /* owf.library 2.6: sheet protection, as Excel's sheetProtection and ODF's table:protected */
+    int protect;                 /* 1: protected (its locked cells cannot change) */
+    unsigned protect_allow;      /* OWF_ALLOW_...: what users may still do on it */
+    char *protect_hash;          /* Excel's 16-bit password hash as 4 hex digits ("CBEB"), or NULL: no password */
+    char *protect_kept;          /* a password hash libowf cannot check, as its file wrote it: "xlsx:" and the
+                                    sheetProtection's algorithmName, hashValue, saltValue and spinCount attributes,
+                                    or "ods:" the digest algorithm's URI, a space and table:protection-key; or NULL */
 } owf_sheet;
+
+/* What a protected sheet still lets users do (owf_sheet's protect_allow): Excel's sheetProtection options. */
+enum {
+    OWF_ALLOW_SELECT_LOCKED = 1, OWF_ALLOW_SELECT_UNLOCKED = 2, OWF_ALLOW_FORMAT_CELLS = 4,
+    OWF_ALLOW_FORMAT_COLUMNS = 8, OWF_ALLOW_FORMAT_ROWS = 16, OWF_ALLOW_INSERT_COLUMNS = 32,
+    OWF_ALLOW_INSERT_ROWS = 64, OWF_ALLOW_INSERT_LINKS = 128, OWF_ALLOW_DELETE_COLUMNS = 256,
+    OWF_ALLOW_DELETE_ROWS = 512, OWF_ALLOW_SORT = 1024, OWF_ALLOW_AUTOFILTER = 2048, OWF_ALLOW_PIVOT = 4096,
+    OWF_ALLOW_OBJECTS = 8192, OWF_ALLOW_SCENARIOS = 16384
+};
+/* Excel's default: selecting cells, nothing else. */
+#define OWF_ALLOW_DEFAULT (OWF_ALLOW_SELECT_LOCKED | OWF_ALLOW_SELECT_UNLOCKED)
 
 /* A defined name: "Prices" standing for "Sheet1!$B$2:$B$40". */
 typedef struct {

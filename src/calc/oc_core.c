@@ -1807,8 +1807,11 @@ static int input_into(const oc_core *core, const owf_cell *c, char *out, size_t 
     const char *e;
     if (!c)
         return snprintf(out, size, "%s", "");
-    if (c->formula)
+    if (c->formula) {
+        if (oc_formula_hidden(core, core->sheet, c->row, c->col))
+            return snprintf(out, size, "%s", "");     /* a protected sheet hides it */
         return snprintf(out, size, "=%s", c->formula);
+    }
     switch (c->type) {
     case OWF_VALUE_NUMBER: {
         const owf_cellstyle *st = c->style > 0 && c->style < core->book->nstyles ? &core->book->styles[c->style] : NULL;

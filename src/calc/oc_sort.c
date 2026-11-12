@@ -122,6 +122,7 @@ int oc_core_sort_keys(oc_core *core, const oc_sort_key *keys, unsigned nkeys, in
     if (!core || !keys || !nkeys)
         return OWF_ERR_FORMAT;
     if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    if (oc_protected(core, OWF_ALLOW_SORT) || oc_protected_selection(core)) return OC_PROTECTED;
     st = oc_state(core);
     if (st->sel.nranges != 1 || !oc_range_clip(core, &st->sel.ranges[0], &range))
         return OWF_ERR_UNSUPPORTED;

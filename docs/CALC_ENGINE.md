@@ -192,6 +192,28 @@ shift semantics update formulas and names elsewhere in the workbook,
 including cross-sheet references; allocation, formula or recalculation
 failure leaves the live workbook untouched.
 
+## Sheet and cell protection
+
+owf.library 2.6 gives `owf_sheet` its protection (`protect`, the
+`OWF_ALLOW_` options, Excel's 16-bit password hash, a hash from another
+program kept as it was) and `owf_cellstyle` `unlocked` and
+`formula_hidden`; both structures grow, so every GFOffice program is built
+against the same owf.h. XLSX reads and writes `sheetProtection` and each
+xf's `protection`; ODS `table:protected` (with GFOffice's own
+`gfocalc:protect-allow` and `gfocalc:protection-key-excel`, or LibreOffice's
+`table:protection-key` kept) and `style:cell-protect`.
+
+GFOpenCalc 0.1.76 (`oc_protect.c`, `opencalc_core.h` 0.35.0) refuses, with
+`OC_PROTECTED`, an edit that would change a locked cell of a protected
+sheet: typing (editing does not start), Set Input, clear, fill, paste and
+cut (their target and source), merge and sort; and formatting, row and
+column sizes, hiding, inserting and deleting unless the sheet allows them.
+A hidden formula is not shown as the cell's input. Protecting and
+unprotecting are not Undo steps; a wrong password is
+`OC_WRONG_PASSWORD`. ARexx: `PROTECT [PASSWORD p] [ALLOW FORMATCELLS ...]`,
+`UNPROTECT [p]`, `CELLPROTECT range LOCKED|UNLOCKED [HIDDEN]`, `ISPROTECTED`
+(on, the allow bits, whether it has a password).
+
 ## Pivot-summary aggregation
 
 GFOpenCalc 0.1.62's Data > Pivot Summary is the first DataPilot-style vertical

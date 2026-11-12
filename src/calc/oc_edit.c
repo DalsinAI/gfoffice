@@ -64,6 +64,8 @@ int oc_edit_begin(oc_core *core, int keep)
     size_t n = 0;
     if (core->edit_mode)
         return OWF_OK;
+    if (oc_cell_locked(core, core->sheet, st->sel.row, st->sel.col))
+        return OC_PROTECTED;
     if (keep) {
         text = oc_cell_input(core, core->sheet, st->sel.row, st->sel.col);
         if (!text)
@@ -453,6 +455,8 @@ int oc_core_set_input(oc_core *core, int sheet, unsigned row, unsigned col, cons
         return OWF_ERR_UNSUPPORTED;
     if (core->edit_mode)
         oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    if (oc_cell_locked(core, sheet, row, col))
+        return OC_PROTECTED;
     u = oc_undo_new(core, OC_UNDO_CELLS);
     r.first_row = r.last_row = row;
     r.first_col = r.last_col = col;
