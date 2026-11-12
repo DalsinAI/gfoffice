@@ -2209,6 +2209,27 @@ int opr_masters_set(opr_undo *u, owf_deck *deck, owf_master *masters, int nmaste
     return 0;
 }
 
+int opr_slide_insert_owned(opr_undo *u, owf_deck *deck, int at, owf_slide *slide, int *selected)
+{
+    snapshot s;
+    int before, index;
+    if (!u || !deck || !slide || slide->master < 0 || slide->master >= deck->nmasters)
+        return -1;
+    before = selected_before(deck, selected, at);
+    index = at < 0 || at > deck->nslides ? deck->nslides : at;
+    if (slide_attach(deck, index, slide) < 0)
+        return -1;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_SLIDE;
+    s.slide = index;
+    s.obj = -1;
+    s.focus = before;
+    s.other_focus = index;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
 int opr_slide_set_master(opr_undo *u, owf_deck *deck, int slide, int master)
 {
     snapshot s;
