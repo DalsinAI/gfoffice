@@ -172,3 +172,25 @@ labels-check: $(OUT)/test-labels-asan
 
 test: labels-test
 check: labels-check
+
+# Word completion (tests/core/test_completion.c)
+COMPLETION_SRC = $(OWF_SRC) $(CORE_SRC) tests/core/test_completion.c include/openwrite_core.h
+
+$(OUT)/test-completion: $(COMPLETION_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) \
+		tests/core/test_completion.c -lz -o $@
+
+$(OUT)/test-completion-asan: $(COMPLETION_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) tests/core/test_completion.c -lz -o $@
+
+completion-test: $(OUT)/test-completion
+	$(OUT)/test-completion
+
+completion-check: $(OUT)/test-completion-asan
+	$(OUT)/test-completion-asan
+
+test: completion-test
+check: completion-check

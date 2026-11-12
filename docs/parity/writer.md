@@ -17,6 +17,7 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 12 Nov 2026 | 2.0.32 | Phase 2: alphabetical index | 75% |
 | 12 Nov 2026 | 2.0.33 | Phase 2: AutoCorrect | 76% |
 | 12 Nov 2026 | 2.0.34 | Phase 2: labels and envelopes | 77% |
+| 12 Nov 2026 | 2.0.35 | Word completion | 78% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
@@ -27,7 +28,7 @@ labels and envelopes, indexes and AutoCorrect are the rest of Phase 2.
 The alphabetical index (entries, subentries, pages) adds one point; range
 marks, other index kinds and a live index are left for later. AutoCorrect while
 typing adds one more, and labels and envelopes the last of Phase 2's; word
-completion is left.
+completion adds one more.
 
 ## Stream W features
 
@@ -69,5 +70,6 @@ completion is left.
 | Index: range marks (an entry over several pages), concordance files, user indexes, tables of figures and tables, bibliography, a live index that updates itself, index letters headings | Gap | | Phase 2 later; Insert > Alphabetical Index again after changes. |
 | AutoCorrect: replacements | Done | 2.0.33 | Tools > AutoCorrect: a word typed from the list is replaced when a space, tab or Return follows ("teh" -> "the"), keeping a capital (Teh -> The) or capitals (TEH -> THE); punctuation round it stays. A starting list of common slips and symbols ((c), (tm), ...), Add Replacement... (the selection by default) and Remove Replacement.... The list and options are kept in ENVARC:GFOpenWrite/AutoCorrect for every document. One Undo gives back the word as typed. ARexx AUTOCORRECT, ACREPLACE, TYPETEXT. |
 | AutoCorrect: while typing | Done | 2.0.33 | Capitalise a sentence's first letter (after . ! ? or at a paragraph's start; not after e.g. or i.e., not in addresses or file names), correct TWo INitial capitals (CDs stays), curly quotes (opening and closing, apostrophes), "a - b" to an en dash and "a--b" to an em dash. Each can be turned off, or all with While Typing. |
-| AutoCorrect: word completion, an exceptions list, *bold* and _underline_, URL recognition, ordinals (1st), automatic lists, per-language lists, correcting while changes are recorded (only quotes are) | Gap | | Phase 2 later. |
+| Word completion | Done | 2.0.35 | Tools > AutoCorrect > Word Completion: after three letters of a word the document already has a longer word for (six letters or more), the rest of the one used most is put in, selected; Return keeps it, typing on replaces it, Undo takes it back. ARexx COMPLETE [ACCEPT]; TYPETEXT offers as the keyboard does. |
+| AutoCorrect: an exceptions list, *bold* and _underline_, URL recognition, ordinals (1st), automatic lists, per-language lists, correcting while changes are recorded (only quotes are) | Gap | | Phase 2 later. |
 | Document compare | Gap | | Phase 3; will build on track changes |

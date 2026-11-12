@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.9.0"
+#define OW_CORE_VERSION "1.10.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -193,7 +193,8 @@ typedef struct ow_autocorrect ow_autocorrect;
 #define OW_AC_TWO_CAPS  4u      /* "THe" -> "The" */
 #define OW_AC_QUOTES    8u      /* curly quotes */
 #define OW_AC_DASHES   16u      /* "a - b" an en dash, "a--b" an em dash */
-#define OW_AC_ALL      31u
+#define OW_AC_COMPLETE 32u      /* 2.9.0 (core 1.10): word completion, for the program to use with ow_editor_complete */
+#define OW_AC_ALL      63u
 ow_autocorrect *ow_autocorrect_new(int with_defaults);
 void ow_autocorrect_free(ow_autocorrect *ac);
 unsigned ow_autocorrect_options(const ow_autocorrect *ac);
@@ -225,6 +226,13 @@ typedef struct {
 int ow_label_sheet_count(void);
 const ow_label_sheet *ow_label_sheet_at(int i);
 int ow_editor_labels(ow_editor *editor, const ow_label_sheet *sheet, int first, int last, owf_doc **out);
+
+/* 2.9.0 (core 1.10): word completion. ow_editor_complete, after a letter is typed: when the word before the caret
+ * (3 letters or more) starts a longer word of the body (min_word letters or more, at least 4), the rest of the one
+ * used most is put in and selected (1; 0: none, <0: no memory); typing on replaces it, as any selection;
+ * ow_editor_complete_accept leaves it and the caret after it (1; 0: nothing selected). */
+int ow_editor_complete(ow_editor *editor, int min_word);
+int ow_editor_complete_accept(ow_editor *editor);
 
 /* 2.0.23: the left pages' (the even-numbered) own, doc->header_left and footer_left */
 typedef enum { OW_STORY_HEADER = 1, OW_STORY_FOOTER = 2, OW_STORY_HEADER_LEFT = 3, OW_STORY_FOOTER_LEFT = 4 } ow_story_kind;
