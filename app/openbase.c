@@ -42,7 +42,7 @@
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.3.0 (11.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.4.0 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -51,7 +51,7 @@ static const char version[] __attribute__((used)) =
 enum {
     M_NEW = 1, M_OPEN, M_CLOSE, M_COPY, M_COMPACT, M_CHECK, M_ABOUT, M_QUIT,
     M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST,
-    M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT
+    M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV
 };
 
 static struct NewMenu menus[] = {
@@ -66,6 +66,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "About...", "?", 0, 0, (APTR)M_ABOUT },
     { NM_ITEM, "Quit", "Q", 0, 0, (APTR)M_QUIT },
+    { NM_TITLE, "Edit", NULL, 0, 0, NULL },
+    { NM_ITEM, "Undo", "Z", 0, 0, (APTR)M_UNDO },
     { NM_TITLE, "Table", NULL, 0, 0, NULL },
     { NM_ITEM, "New Table...", "T", 0, 0, (APTR)M_T_NEW },
     { NM_ITEM, "Design...", "D", 0, 0, (APTR)M_T_DESIGN },
@@ -76,6 +78,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Sort and Filter...", "F", 0, 0, (APTR)M_T_VIEW },
     { NM_ITEM, "Show All Rows", NULL, 0, 0, (APTR)M_T_ALL },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "New Table from CSV...", NULL, 0, 0, (APTR)M_T_FROMCSV },
     { NM_ITEM, "Import CSV...", "I", 0, 0, (APTR)M_T_IMPORT },
     { NM_ITEM, "Export CSV...", NULL, 0, 0, (APTR)M_T_EXPORT },
     { NM_TITLE, "Row", NULL, 0, 0, NULL },
@@ -1711,6 +1714,16 @@ static void sort_by_column(int mx)
     }
 }
 
+static ob_csv_opts csv_o;
+
+/* What an import left out, as a requester. */
+static void show_report(ob_int added, const ob_csv_opts *o)
+{
+    static char text[sizeof o->report + 120];
+    snprintf(text, sizeof text, "Added %lld rows. %d left out:\n\n%s", added, o->bad, o->report);
+    tell(text);
+}
+
 static void import_csv(void)
 {
     char path[512], msg[160];
@@ -1719,12 +1732,26 @@ static void import_csv(void)
     snprintf(msg, sizeof msg, "Import CSV into %.60s", cur.name);
     if (!ask_file(msg, FALSE, "#?.(csv|txt|tab)", path, sizeof path)) return;
     SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
-    n = ob_csv_import(proj, cur.name, path, 0);
+    ob_csv_opts_init(&csv_o);
+    n = ob_csv_import_with(proj, cur.name, path, &csv_o);
     SetWindowPointer(win, TAG_DONE);
-    if (n < 0) { tell(ob_error(proj)); return; }
+    if (n < 0) {
+        char q[OB_ERR_MAX + 120];
+        if (strncmp(ob_error(proj), "Line ", 5) || !strncmp(ob_error(proj), "Line 1", 6)) { tell(ob_error(proj)); return; }
+        /* a bad row: the others can go in, with the bad ones listed */
+        snprintf(q, sizeof q, "%s\n\nNothing was added. Add the other rows and list the bad ones?", ob_error(proj));
+        if (!ask(q, "Add the Others|Cancel")) return;
+        ob_csv_opts_init(&csv_o);
+        csv_o.skip_bad = 1;
+        SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+        n = ob_csv_import_with(proj, cur.name, path, &csv_o);
+        SetWindowPointer(win, TAG_DONE);
+        if (n < 0) { tell(ob_error(proj)); return; }
+    }
     snprintf(msg, sizeof msg, "Added %lld rows from %.60s", n, leaf(path));
     load_page();
     set_status(msg);
+    if (csv_o.bad) show_report(n, &csv_o);
 }
 
 static void export_csv(void)
@@ -1740,12 +1767,262 @@ static void export_csv(void)
         snprintf(msg, sizeof msg, "%.100s is already there.\nReplace it?", leaf(path));
         if (!ask(msg, "Replace|Cancel")) return;
     }
+    {
+        int c = ask("Write the text as ISO-8859-1 (for Amiga programs)\nor UTF-8 (for PC and Mac programs)?", "ISO-8859-1|UTF-8|Cancel");
+        if (!c) return;
+        ob_csv_opts_init(&csv_o);
+        csv_o.sep = ',';
+        csv_o.charset = c == 2 ? OB_CHARSET_UTF8 : OB_CHARSET_LATIN1;
+    }
     SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
-    n = ob_csv_export(proj, cur.name, &view, path, ',');
+    n = ob_csv_export_with(proj, cur.name, &view, path, &csv_o);
     SetWindowPointer(win, TAG_DONE);
     if (n < 0) { tell(ob_error(proj)); return; }
     snprintf(msg, sizeof msg, "Wrote %lld rows to %.60s%s", n, leaf(path),
              view.op != OB_FILTER_NONE ? " (the filtered rows)" : "");
+    set_status(msg);
+}
+
+/* ---- Table > New Table from CSV... ---- */
+
+enum { W_NAME = 1, W_SEP, W_CHARSET, W_HEADER, W_FIELDS, W_TYPE, W_SKIP, W_IMPORT, W_CANCEL, W_COUNT };
+
+static ob_table wt;         /* the new table's design (too big for the stack) */
+static struct List wl;
+static struct Node wnodes[OB_MAX_FIELDS];
+static char wtext[OB_MAX_FIELDS][OB_NAME_MAX + 24];
+static const ob_type w_types[] = { OB_TEXT, OB_MEMO, OB_INTEGER, OB_NUMBER, OB_CURRENCY, OB_DATE, OB_TIME,
+                                   OB_DATETIME, OB_YESNO };
+#define W_NTYPES ((int)(sizeof w_types / sizeof w_types[0]))
+static STRPTR w_type_labels[W_NTYPES + 1];
+static char w_sep_found[40], w_cs_found[40], w_hd_found[40];
+static STRPTR w_sep_labels[] = { (STRPTR)w_sep_found, (STRPTR)"Comma", (STRPTR)"Semicolon", (STRPTR)"Tab", NULL };
+static STRPTR w_cs_labels[] = { (STRPTR)w_cs_found, (STRPTR)"ISO-8859-1", (STRPTR)"UTF-8", NULL };
+static STRPTR w_hd_labels[] = { (STRPTR)w_hd_found, (STRPTR)"Field names", (STRPTR)"Data", NULL };
+
+static void wizard_list(void)
+{
+    int i;
+    NewList(&wl);
+    for (i = 0; i < wt.nfields; i++) {
+        snprintf(wtext[i], sizeof wtext[i], "%s: %s", wt.fields[i].name, ob_type_name(wt.fields[i].type));
+        wnodes[i].ln_Name = wtext[i];
+        AddTail(&wl, &wnodes[i]);
+    }
+}
+
+static void new_table_from_csv(void)
+{
+    char path[512], tname[OB_NAME_MAX], msg[200];
+    struct Window *ww;
+    struct Gadget *eg = NULL, *g, *gad[W_COUNT];
+    struct NewGadget ng;
+    ob_csv_opts o;
+    int done = 0, rebuild = 1, regues = 1, rowh = fh + 8, l, t, w, h, lw = fw * 12, i;
+    int sep_i = 0, cs_i = 0, hd_i = 0, fsel = -1, skip = 0, made = 0;
+    ob_int n = 0;
+    if (!proj) return;
+    if (!ask_file("New table from a CSV file", FALSE, "#?.(csv|txt|tab)", path, sizeof path)) return;
+    tname[0] = 0;
+    for (i = 0; i < W_NTYPES; i++) w_type_labels[i] = (STRPTR)ob_type_name(w_types[i]);
+    w_type_labels[W_NTYPES] = NULL;
+    w = fw * 56;
+    h = rowh * 14 + 16;
+    if (w > scr->Width - 20) w = scr->Width - 20;
+    if (h > scr->Height - 40) h = scr->Height - 40;
+    ww = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"New Table from CSV",
+        WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 30, WA_Top, win->TopEdge + 20,
+        WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
+        WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY |
+                  LISTVIEWIDCMP | CYCLEIDCMP | STRINGIDCMP | CHECKBOXIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!ww) return;
+    SetFont(ww->RPort, font);
+    l = ww->BorderLeft + 8;
+    t = ww->BorderTop + 6;
+    while (!done) {
+        if (regues) {
+            ob_csv_opts_init(&o);
+            o.sep = sep_i == 1 ? ',' : sep_i == 2 ? ';' : sep_i == 3 ? '\t' : 0;
+            o.charset = cs_i == 1 ? OB_CHARSET_LATIN1 : cs_i == 2 ? OB_CHARSET_UTF8 : OB_CHARSET_AUTO;
+            o.header = hd_i == 1 ? 1 : hd_i == 2 ? 0 : -1;
+            SetWindowPointer(ww, WA_BusyPointer, TRUE, TAG_DONE);
+            if (!ob_csv_guess(proj, path, tname[0] ? tname : NULL, &o, &wt)) {
+                SetWindowPointer(ww, TAG_DONE);
+                {
+                    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
+                    EasyRequest(ww, &es, NULL, (ULONG)ob_error(proj));
+                }
+                break;
+            }
+            SetWindowPointer(ww, TAG_DONE);
+            put_text(tname, sizeof tname, wt.name);
+            snprintf(w_sep_found, sizeof w_sep_found, "Found: %s", o.found_sep == ';' ? "semicolon" : o.found_sep == '\t' ? "tab" : "comma");
+            snprintf(w_cs_found, sizeof w_cs_found, "Found: %s", o.found_charset == OB_CHARSET_UTF8 ? "UTF-8" : "ISO-8859-1");
+            snprintf(w_hd_found, sizeof w_hd_found, "Found: %s", o.found_header ? "field names" : "data");
+            fsel = -1;
+            regues = 0;
+            rebuild = 1;
+        }
+        if (rebuild) {
+            int iw = ww->Width - ww->BorderLeft - ww->BorderRight - 16, ti = 0, y;
+            ob_field *f = fsel >= 0 && fsel < wt.nfields ? &wt.fields[fsel] : NULL;
+            if (f) for (i = 0; i < W_NTYPES; i++) if (w_types[i] == f->type) ti = i;
+            if (eg) { RemoveGList(ww, eg, -1); FreeGadgets(eg); eg = NULL; }
+            memset(gad, 0, sizeof gad);
+            wizard_list();
+            if (!(g = CreateContext(&eg))) break;
+            memset(&ng, 0, sizeof ng);
+            ng.ng_VisualInfo = vi;
+            ng.ng_TextAttr = &font_attr;
+            ng.ng_Flags = PLACETEXT_LEFT;
+            ng.ng_LeftEdge = l + lw;
+            ng.ng_TopEdge = y = t;
+            ng.ng_Width = iw - lw;
+            ng.ng_Height = fh + 6;
+            ng.ng_GadgetText = (UBYTE *)"Table name";
+            ng.ng_GadgetID = W_NAME;
+            g = gad[W_NAME] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)tname, GTST_MaxChars, OB_NAME_MAX - 1, TAG_DONE);
+            ng.ng_TopEdge = y += rowh;
+            ng.ng_GadgetText = (UBYTE *)"Separator";
+            ng.ng_GadgetID = W_SEP;
+            g = gad[W_SEP] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)w_sep_labels, GTCY_Active, (ULONG)sep_i, TAG_DONE);
+            ng.ng_TopEdge = y += rowh;
+            ng.ng_GadgetText = (UBYTE *)"Characters";
+            ng.ng_GadgetID = W_CHARSET;
+            g = gad[W_CHARSET] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)w_cs_labels, GTCY_Active, (ULONG)cs_i, TAG_DONE);
+            ng.ng_TopEdge = y += rowh;
+            ng.ng_GadgetText = (UBYTE *)"First line";
+            ng.ng_GadgetID = W_HEADER;
+            g = gad[W_HEADER] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)w_hd_labels, GTCY_Active, (ULONG)hd_i, TAG_DONE);
+            ng.ng_TopEdge = y += rowh;
+            ng.ng_Height = rowh * 5;
+            ng.ng_GadgetText = (UBYTE *)"Fields";
+            ng.ng_GadgetID = W_FIELDS;
+            g = gad[W_FIELDS] = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&wl, GTLV_ShowSelected, 0,
+                                             GTLV_Selected, fsel >= 0 ? (ULONG)fsel : ~0UL, TAG_DONE);
+            ng.ng_TopEdge = y += rowh * 5 + 6;
+            ng.ng_Height = fh + 6;
+            ng.ng_GadgetText = (UBYTE *)"Type";
+            ng.ng_GadgetID = W_TYPE;
+            g = gad[W_TYPE] = CreateGadget(CYCLE_KIND, g, &ng, GA_Disabled, !f || f->type == OB_COUNTER,
+                                           GTCY_Labels, (ULONG)w_type_labels, GTCY_Active, (ULONG)ti, TAG_DONE);
+            ng.ng_TopEdge = y += rowh;
+            ng.ng_Width = fh + 6;
+            ng.ng_GadgetText = (UBYTE *)"Leave out bad rows";
+            ng.ng_GadgetID = W_SKIP;
+            g = gad[W_SKIP] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, skip, GTCB_Scaled, TRUE, TAG_DONE);
+            ng.ng_Flags = PLACETEXT_IN;
+            ng.ng_TopEdge = ww->Height - ww->BorderBottom - 6 - (fh + 6);
+            ng.ng_LeftEdge = l;
+            ng.ng_Width = fw * 10 + 16;
+            ng.ng_GadgetText = (UBYTE *)"Import";
+            ng.ng_GadgetID = W_IMPORT;
+            g = gad[W_IMPORT] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge = ww->Width - ww->BorderRight - 8 - ng.ng_Width;
+            ng.ng_GadgetText = (UBYTE *)"Cancel";
+            ng.ng_GadgetID = W_CANCEL;
+            g = gad[W_CANCEL] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            if (!g) break;
+            SetAPen(ww->RPort, pen(BACKGROUNDPEN));
+            RectFill(ww->RPort, ww->BorderLeft, ww->BorderTop, ww->Width - ww->BorderRight - 1,
+                     ww->Height - ww->BorderBottom - 1);
+            AddGList(ww, eg, ~0, -1, NULL);
+            RefreshGList(eg, ww, NULL, -1);
+            GT_RefreshWindow(ww, NULL);
+            rebuild = 0;
+        }
+        {
+            struct IntuiMessage *m;
+            WaitPort(ww->UserPort);
+            while (!rebuild && !regues && !done && (m = GT_GetIMsg(ww->UserPort)) != NULL) {
+                ULONG class = m->Class;
+                UWORD code = m->Code;
+                struct Gadget *gg = (struct Gadget *)m->IAddress;
+                GT_ReplyIMsg(m);
+                if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+                if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(ww); GT_EndRefresh(ww, TRUE); continue; }
+                if (class != IDCMP_GADGETUP && class != IDCMP_GADGETDOWN) continue;
+                switch (gg->GadgetID) {
+                case W_NAME: {
+                    STRPTR str = NULL;
+                    GT_GetGadgetAttrs(gg, ww, NULL, GTST_String, (ULONG)&str, TAG_DONE);
+                    put_text(tname, sizeof tname, str ? (const char *)str : "");
+                    put_text(wt.name, sizeof wt.name, tname);
+                    break;
+                }
+                case W_SEP: sep_i = code; regues = 1; break;
+                case W_CHARSET: cs_i = code; regues = 1; break;
+                case W_HEADER: hd_i = code; regues = 1; break;
+                case W_FIELDS: fsel = code; rebuild = 1; break;
+                case W_TYPE:
+                    if (fsel >= 0 && fsel < wt.nfields && wt.fields[fsel].type != OB_COUNTER && code < W_NTYPES) {
+                        wt.fields[fsel].type = w_types[code];
+                        rebuild = 1;
+                    }
+                    break;
+                case W_SKIP: skip = (gg->Flags & GFLG_SELECTED) != 0; break;
+                case W_IMPORT: {
+                    STRPTR str = NULL;
+                    struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
+                    if (gad[W_NAME]) GT_GetGadgetAttrs(gad[W_NAME], ww, NULL, GTST_String, (ULONG)&str, TAG_DONE);
+                    if (str) { put_text(tname, sizeof tname, (const char *)str); put_text(wt.name, sizeof wt.name, tname); }
+                    o.skip_bad = skip;
+                    o.bad = 0;
+                    o.report[0] = 0;
+                    SetWindowPointer(ww, WA_BusyPointer, TRUE, TAG_DONE);
+                    /* the table and its rows together, or neither */
+                    n = -1;
+                    if (ob_begin(proj)) {
+                        if (ob_table_create(proj, &wt) && (n = ob_csv_import_with(proj, wt.name, path, &o)) >= 0 && ob_commit(proj)) {
+                            made = 1;
+                        } else {
+                            char e[OB_ERR_MAX];
+                            put_text(e, sizeof e, ob_error(proj));
+                            ob_rollback(proj);
+                            n = -1;
+                            EasyRequest(ww, &es, NULL, (ULONG)e);
+                        }
+                    } else {
+                        EasyRequest(ww, &es, NULL, (ULONG)ob_error(proj));
+                    }
+                    SetWindowPointer(ww, TAG_DONE);
+                    if (made) done = 1;
+                    break;
+                }
+                case W_CANCEL:
+                    done = 1;
+                    break;
+                }
+            }
+        }
+    }
+    if (eg) { RemoveGList(ww, eg, -1); FreeGadgets(eg); }
+    CloseWindow(ww);
+    if (made) {
+        load_tables(wt.name);
+        top_row = 0;
+        sel_row = -1;
+        load_page();
+        snprintf(msg, sizeof msg, "Made %.60s with %lld rows from %.60s", wt.name, n, leaf(path));
+        set_status(msg);
+        if (o.bad) show_report(n, &o);
+    }
+}
+
+static void undo_last(void)
+{
+    char msg[OB_NAME_MAX + 80], name[OB_NAME_MAX + 48];
+    if (!proj) return;
+    if (!ob_undo_count(proj)) { set_status("Nothing to undo"); return; }
+    put_text(name, sizeof name, ob_undo_name(proj));
+    if (!ob_undo(proj)) { tell(ob_error(proj)); load_page(); return; }
+    snprintf(msg, sizeof msg, "Undone: %s", name);
+    load_page();
     set_status(msg);
 }
 
@@ -1793,6 +2070,8 @@ static void menu_action(ULONG id)
     case M_T_ALL: if (have_cur) { ob_view_init(&view); view_changed(); } break;
     case M_T_IMPORT: import_csv(); break;
     case M_T_EXPORT: export_csv(); break;
+    case M_T_FROMCSV: new_table_from_csv(); break;
+    case M_UNDO: undo_last(); break;
     }
     refresh();
 }
