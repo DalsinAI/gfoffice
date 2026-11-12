@@ -1353,6 +1353,8 @@ static void test_csv_options(void)
 
 /* ---- Forms (core 0.6) ---- */
 
+static void shop_orders(ob_project *p);
+
 static void test_forms(void)
 {
     ob_project *p = fresh("forms.oadb");
@@ -1383,7 +1385,7 @@ static void test_forms(void)
     CHECK(ob_view_find(p, "Customers", &v, "Email", "example", 4, 1) == 4, "backward from 4: Eve");
     CHECK(ob_view_find(p, "Customers", &v, "Email", "100%_", 0, 0) == 1, "wildcards are plain: %lld",
           (long long)ob_view_find(p, "Customers", &v, "Email", "100%_", 0, 0));
-    CHECK(ob_view_find(p, "Customers", &v, "Email", "1%0", 0, 0) == -1, "a % is a %");
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "1%0", 0, 0) == -1, "a %% is a %%");
     CHECK(ob_view_find(p, "Customers", &v, "Name", "zz", 0, 0) == -1, "none");
     CHECK(ob_view_find(p, "Customers", &v, "Credit", "250.00", 0, 0) == 3, "money equals: dan");
     CHECK(ob_view_find(p, "Customers", &v, "Credit", "250", 4, 0) == -1, "none after dan");
