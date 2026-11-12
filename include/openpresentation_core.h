@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.37.0"
+#define OPR_CORE_VERSION "0.38.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -812,6 +812,28 @@ int opr_masters_set(opr_undo *u, owf_deck *deck, owf_master *masters, int nmaste
                     const int *slide_masters, const int *layout_masters);
 /* Slide Design: one slide's master, one Undo step (0 when it already was). */
 int opr_slide_set_master(opr_undo *u, owf_deck *deck, int slide, int master);
+
+/* ---- Slides from another deck (P8, opr_clip.c) ----
+ *
+ * opr_slides_insert_from: copies of src's slides (n of them, by index) go in
+ * at at (-1: the end) as one Undo step. Their pictures and fonts are added to
+ * the deck's, each master is the deck's of the same name or comes along, each
+ * layout is the deck's of the same name or none. Objects src kept as XML it
+ * cannot draw (charts, embedded objects) are left out and counted in
+ * *left_out; effects and transitions without a player become plain ones;
+ * names already taken get " (2)" and on. *selected: the first new slide. */
+int opr_slides_insert_from(opr_undo *u, owf_deck *dst, int at, const owf_deck *src, const int *slides, int n,
+                           int *selected, int *left_out);
+/* opr_edit.c: an owned slide put in at at, one Undo step (the slide is the deck's after). */
+int opr_slide_insert_owned(opr_undo *u, owf_deck *deck, int at, owf_slide *slide, int *selected);
+/* The sorter's clipboard: copies of slides kept in a deck of its own, so they
+ * paste into this deck or another one opened later. */
+typedef struct opr_clip opr_clip;
+opr_clip *opr_clip_new(void);
+void opr_clip_free(opr_clip *c);
+int opr_clip_count(const opr_clip *c);
+int opr_clip_copy(opr_clip *c, const owf_deck *deck, const int *slides, int n);
+int opr_clip_paste(const opr_clip *c, opr_undo *u, owf_deck *deck, int at, int *selected);
 
 #ifdef __cplusplus
 }

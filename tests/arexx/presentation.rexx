@@ -331,6 +331,27 @@ CALL want 'SETMASTER 99', 10
 CALL want 'MASTER 99', 10
 CALL want 'VIEW NORMAL', 0
 CALL want 'SLIDE 1', 0
+CALL want 'SLIDES', 0                         /* P8: whole slides on a clipboard of their own */
+ns = res
+CALL want 'COPYSLIDES', 0
+CALL same 'COPYSLIDES', res, 1
+CALL want 'PASTESLIDES', 0
+CALL same 'PASTESLIDES lands after slide 1', res, 2
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after PASTESLIDES', res, ns + 1
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'PASTESLIDES undone', res, ns
+CALL want 'INSERTFILE RAM:arexx-test.odp', 0
+ni = res
+IF ni < 1 THEN CALL bad 'INSERTFILE put in' ni 'slides'
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after INSERTFILE', res, ns + ni
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'INSERTFILE undone in one step', res, ns
+CALL want 'INSERTFILE RAM:no/such/file.odp', 10
+CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0
 CALL want 'DELETESLIDE', 5                     /* the last slide stays */
 CALL want 'DEACTIVATE', 5                      /* no icon to go to */

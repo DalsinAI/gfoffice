@@ -106,7 +106,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.30 (12.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.31 (12.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -151,7 +151,7 @@ enum {
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
-    M_VIEW_MASTER, M_SLIDE_DESIGN
+    M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE
 };
 
 static struct NewMenu menus[] = {
@@ -277,6 +277,7 @@ static struct NewMenu menus[] = {
 #ifndef OPENPUBLISHER
     { NM_ITEM, "Custom Animation...", NULL, 0, 0, (APTR)M_CUSTOM_ANIMATION },
     { NM_ITEM, UNIT " Design...", NULL, 0, 0, (APTR)M_SLIDE_DESIGN },
+    { NM_ITEM, "Insert " UNIT "s from File...", NULL, 0, 0, (APTR)M_INSERT_FILE },
 #endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Move " UNIT " Up", NULL, 0, 0, (APTR)M_MOVE_SLIDE_UP },
@@ -3712,6 +3713,125 @@ static void sorter_delete_picked(void)
     if (rc < 0) { tell(PROGRAM, "The " UNITS_LOWER " could not be deleted."); relayout(); return; }
     structure_changed(selected, picked_words(n, UNIT " deleted.", "%d " UNITS_LOWER " deleted."));
 }
+
+/* ---- Whole slides on a clipboard of their own (P8) ----
+ * Cut, Copy and Paste in the sorter work on the picked slides; elsewhere
+ * (ARexx) on this slide. The copies keep their pictures, fonts and master,
+ * so they paste into this deck or another one opened later. */
+static opr_clip *slide_clip;
+
+static int slides_picked(int **out)
+{
+    int i, n = 0, *list;
+    *out = NULL;
+    if (!deck || !deck->nslides) return 0;
+    list = malloc(sizeof *list * (size_t)deck->nslides);
+    if (!list) return -1;
+    for (i = 0; i < deck->nslides; i++)
+        if (sorter_view ? opr_pick_has(&pick, i) : i == current) list[n++] = i;
+    if (!n && current >= 0 && current < deck->nslides) list[n++] = current;
+    *out = list;
+    return n;
+}
+
+/* 0 done, -1 not. cut: the copied slides then go. */
+static int slides_copy(int cut)
+{
+    int *list = NULL, n, rc;
+    master_view_leave();
+    n = slides_picked(&list);
+    if (n < 0) { tell(PROGRAM, "There is not enough memory to copy the " UNITS_LOWER "."); return -1; }
+    if (!n) { free(list); return -1; }
+    if (cut && n >= deck->nslides) {
+        free(list);
+        tell(PROGRAM, "A " DOCUMENT_LOWER " must keep at least one " UNIT_LOWER ".");
+        return -1;
+    }
+    if (!slide_clip) slide_clip = opr_clip_new();
+    rc = slide_clip ? opr_clip_copy(slide_clip, deck, list, n) : -1;
+    free(list);
+    if (rc < 0) { tell(PROGRAM, "There is not enough memory to copy the " UNITS_LOWER "."); return -1; }
+    if (cut) {
+        if (sorter_view) sorter_delete_picked();
+        else delete_slide();
+        set_status(picked_words(n, UNIT " cut to the clipboard.", "%d " UNITS_LOWER " cut to the clipboard."));
+    } else {
+        set_status(picked_words(n, UNIT " copied.", "%d " UNITS_LOWER " copied."));
+    }
+    draw_status();
+    return 0;
+}
+
+/* The clipboard's slides after this one, one Undo step. */
+static int slides_paste(void)
+{
+    int selected = current, n = opr_clip_count(slide_clip), at;
+    master_view_leave();
+    if (!deck || !n) {
+        set_status("Copy " UNITS_LOWER " in the " UNIT " Sorter first.");
+        draw_status();
+        return -1;
+    }
+    at = sorter_view && pick.focus >= 0 && pick.focus < deck->nslides ? pick.focus + 1 : current + 1;
+    if (opr_clip_paste(slide_clip, undo, deck, at, &selected) < 0) {
+        tell(PROGRAM, "There is not enough memory to paste the " UNITS_LOWER ".");
+        relayout();
+        return -1;
+    }
+    structure_changed(selected, picked_words(n, UNIT " pasted.", "%d " UNITS_LOWER " pasted."));
+    return 0;
+}
+
+#ifndef OPENPUBLISHER
+static int ask_file(int save, const char *title, const char *initial, char *out, size_t out_size);
+
+/* Slide > Insert Slides from File...: every slide of another ODP or PPTX
+ * after this one, one Undo step. path NULL: ask. Returns the number put in, -1 none. */
+static int insert_from_file(const char *path_in)
+{
+    char path[512], msg[400];
+    owf_deck *d = NULL;
+    owf_report *report;
+    int rc, i, *all, selected = current, left_out = 0, n;
+    master_view_leave();
+    if (!deck) return -1;
+    if (path_in) snprintf(path, sizeof path, "%s", path_in);
+    else if (!ask_file(0, "Insert " UNITS_LOWER " from a " DOCUMENT_LOWER, NULL, path, sizeof path)) return -1;
+    report = owf_report_new();
+    rc = owf_import_deck_file(path, NULL, &d, report, NULL);
+    owf_report_free(report);
+    if (rc != OWF_OK || !d) {
+        snprintf(msg, sizeof msg, PROGRAM " could not read %.120s.\n\n%.100s", leaf(path),
+                 rc == OWF_ERR_FORMAT ? "It is not a presentation GFOpenPresentation reads (ODP or PPTX)." : owf_error_text(rc));
+        if (!path_in) tell("Insert " UNIT "s", msg);
+        owf_deck_free(d);
+        return -1;
+    }
+    n = d->nslides;
+    all = n ? malloc(sizeof *all * (size_t)n) : NULL;
+    if (!all) {
+        owf_deck_free(d);
+        if (!path_in) tell(PROGRAM, n ? "There is not enough memory to insert the " UNITS_LOWER "." : "That " DOCUMENT_LOWER " has no " UNITS_LOWER ".");
+        return -1;
+    }
+    for (i = 0; i < n; i++) all[i] = i;
+    rc = opr_slides_insert_from(undo, deck, current + 1, d, all, n, &selected, &left_out);
+    free(all);
+    owf_deck_free(d);
+    if (rc < 0) {
+        if (!path_in) tell(PROGRAM, "There is not enough memory to insert the " UNITS_LOWER ".");
+        relayout();
+        return -1;
+    }
+    if (left_out)
+        snprintf(msg, sizeof msg, "%d " UNITS_LOWER " inserted from %.60s; %d chart%s or object%s left out.", n, leaf(path),
+                 left_out, left_out == 1 ? "" : "s", left_out == 1 ? "" : "s");
+    else
+        snprintf(msg, sizeof msg, "%d " UNIT_LOWER "%s inserted from %.60s.", n, n == 1 ? "" : "s", leaf(path));
+    structure_changed(selected, msg);
+    return n;
+}
+#endif
 
 static void sorter_hide_picked(int hidden)
 {
@@ -7208,10 +7328,9 @@ static void menu_action(ULONG id)
         case M_ZOOM_IN: sorter_columns_step(1); return;
         case M_ZOOM_OUT: sorter_columns_step(-1); return;
         case M_ZOOM_FIT: sorter_columns = 0; relayout(); return;
-        case M_CUT: case M_COPY: case M_PASTE:
-            set_status("Cut, Copy and Paste work on a " UNIT_LOWER "'s objects in Normal view.");
-            draw_status();
-            return;
+        case M_CUT: slides_copy(1); return;
+        case M_COPY: slides_copy(0); return;
+        case M_PASTE: slides_paste(); return;
         case M_FIND: case M_FIND_NEXT: case M_REPLACE: case M_REPLACE_ALL: case M_STOP:
             set_view(0);
             break;
@@ -7245,6 +7364,9 @@ static void menu_action(ULONG id)
     case M_VIEW_NORMAL: master_view_leave(); set_view(0); break;
     case M_VIEW_MASTER: if (mview) master_view_leave(); else master_view_enter(); break;
     case M_SLIDE_DESIGN: slide_design(); break;
+#ifndef OPENPUBLISHER
+    case M_INSERT_FILE: insert_from_file(NULL); break;
+#endif
     case M_VIEW_SORTER: set_view(1); break;
     case M_VIEW_NOTES: set_view(2); break;
     case M_VIEW_OUTLINE: set_view(3); break;
@@ -7759,6 +7881,26 @@ static int rexx_do_command(const char *command, char **result_out)
             name_to_latin1(d->masters[n - 1].name ? d->masters[n - 1].name : "", name, sizeof name);
             snprintf(result_text, sizeof result_text, "%d %d %s", n, opr_master_slides(d, n - 1), name);
         }
+    } else if (starts_word_ci(command, "COPYSLIDES", &arg) || starts_word_ci(command, "CUTSLIDES", &arg)) {
+        /* COPYSLIDES / CUTSLIDES: this slide (the picked ones in the sorter) to the slide clipboard */
+        int cut = starts_word_ci(command, "CUTSLIDES", &arg);
+        if (!deck) { ok = 0; rexx_copy(result_text, sizeof result_text, "No document"); }
+        else {
+            ok = slides_copy(cut) == 0;
+            if (ok) snprintf(result_text, sizeof result_text, "%d", opr_clip_count(slide_clip));
+            else rexx_copy(result_text, sizeof result_text, "Failed");
+        }
+    } else if (starts_word_ci(command, "PASTESLIDES", &arg)) {   /* PASTESLIDES: after this slide */
+        ok = slides_paste() == 0;
+        if (ok) snprintf(result_text, sizeof result_text, "%d", current + 1);
+        else rexx_copy(result_text, sizeof result_text, "Nothing to paste");
+#ifndef OPENPUBLISHER
+    } else if (starts_word_ci(command, "INSERTFILE", &arg)) {    /* INSERTFILE path: its slides after this one */
+        int n = *arg ? insert_from_file(arg) : -1;
+        ok = n >= 0;
+        if (ok) snprintf(result_text, sizeof result_text, "%d", n);
+        else rexx_copy(result_text, sizeof result_text, "Could not insert");
+#endif
     } else if (starts_word_ci(command, "SETMASTER", &arg)) { /* SETMASTER n: this slide (the picked ones in the sorter) */
         int n = atoi(arg);
         if (mview) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Leave the Master view first"); }
@@ -8340,6 +8482,7 @@ out:
     opr_pick_free(&pick);
     opr_outline_free(&outline_rows);
     master_view_drop();
+    opr_clip_free(slide_clip);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
     if (theme.text) ogt_theme_free(&theme);
