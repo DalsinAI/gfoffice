@@ -603,7 +603,7 @@ static void build_comments_extended(owf_buf *out, const owf_doc *doc)
 static void field_instr(const owf_run *run, char *out, size_t size)
 {
     static const char *const word[] = { "PAGE", "NUMPAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD" };
+                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE" };
     const char *arg = run->href ? run->href : "";
     int f = (int)run->field >= 0 && (int)run->field <= OWF_FIELD_LAST ? (int)run->field : 0;
     if (f == OWF_FIELD_CHAPTER) snprintf(out, size, " STYLEREF 1 ");
@@ -611,6 +611,7 @@ static void field_instr(const owf_run *run, char *out, size_t size)
     else if (f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE) snprintf(out, size, " %s %s \\h ", word[f], arg);
     else if (f == OWF_FIELD_MERGE && strchr(arg, ' ')) snprintf(out, size, " MERGEFIELD \"%s\" ", arg);
     else if (f == OWF_FIELD_MERGE) snprintf(out, size, " MERGEFIELD %s ", arg);
+    else if (f == OWF_FIELD_INDEX) snprintf(out, size, " XE \"%s\" ", arg);      /* 1.10 */
     else snprintf(out, size, " %s ", word[f]);
 }
 

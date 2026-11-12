@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.9.0"
+#define OWF_VERSION "1.10.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -84,8 +84,11 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                OWF_FIELD_CHAPTER, OWF_FIELD_USER, OWF_FIELD_REF, OWF_FIELD_REF_PAGE,
                /* 1.9: a mail merge field: href is the data source's column, text the value last shown (DOCX
                 * MERGEFIELD, ODF text:database-display) */
-               OWF_FIELD_MERGE } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_MERGE
+               OWF_FIELD_MERGE,
+               /* 1.10: an alphabetical index entry where it is (shows nothing): href is the entry, "Main:Sub" for
+                * a subentry (DOCX XE, ODF text:alphabetical-index-mark) */
+               OWF_FIELD_INDEX } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_INDEX
 
 typedef struct {
     owf_run_kind kind;
