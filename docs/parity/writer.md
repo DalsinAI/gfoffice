@@ -14,6 +14,7 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 11 Nov 2026 | 2.0.29 | W3 fields | 70% |
 | 11 Nov 2026 | 2.0.30 | W4 footnotes and endnotes | 72% |
 | 12 Nov 2026 | 2.0.31 | Phase 2: mail merge | 74% |
+| 12 Nov 2026 | 2.0.32 | Phase 2: alphabetical index | 75% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
@@ -21,6 +22,8 @@ after W1 to W4). Comments, the other half of reviewing, add two more,
 fields two more, and footnotes and endnotes the last two: Phase 1's target.
 Phase 2 starts with mail merge (form letters from a CSV data source): two points;
 labels and envelopes, indexes and AutoCorrect are the rest of Phase 2.
+The alphabetical index (entries, subentries, pages) adds one point; range
+marks, other index kinds and a live index are left for later.
 
 ## Stream W features
 
@@ -54,5 +57,9 @@ labels and envelopes, indexes and AutoCorrect are the rest of Phase 2.
 | Mail merge: the merge | Done | 2.0.31 | Merge to Document... saves every record into one document, each from a new page; Merge to Files... saves a file each (letter1.odt, letter2.odt ...). The fields become plain text (a line break in a value stays one), tracked changes are accepted and comments left out. ARexx MERGE file [FILES]. |
 | Mail merge: DOCX and ODT | Done | 2.0.31 | DOCX MERGEFIELD (simple and complex fields) and settings' w:mailMerge query for the data source. ODT text:database-display with its column and database. RTF, HTML, plain text and PDF get the value shown. |
 | Mail merge: labels and envelopes, a database or Calc sheet as data source, conditions (skip a record, IF fields), choosing records, merging to the printer or e-mail | Gap | | Phase 2 later; the data source is a CSV file (a Calc sheet saved as CSV works). |
-| Indexes, AutoCorrect | Gap | | Phase 2 |
+| Alphabetical index: entries | Done | 2.0.32 | Insert > Index Entry... marks an entry at the caret (the selected words by default; "Main:Sub" for a subentry). The mark shows nothing, saves, reloads and undoes. ARexx INDEXENTRY, INDEXENTRIES. |
+| Alphabetical index: the index | Done | 2.0.32 | Insert > Alphabetical Index puts the index at the caret: an "Index" title, then each entry in alphabetical order (case folded) with the pages of its marks, subentries indented under it, in the Index1/Index2 styles; one Undo removes it. ARexx INSERTINDEX. |
+| Alphabetical index: DOCX and ODT | Done | 2.0.32 | DOCX XE fields (simple and complex, "Main:Sub"). ODT text:alphabetical-index-mark with text:key1 for a subentry. RTF, HTML, plain text and PDF show nothing for a mark. |
+| Index: range marks (an entry over several pages), concordance files, user indexes, tables of figures and tables, bibliography, a live index that updates itself, index letters headings | Gap | | Phase 2 later; Insert > Alphabetical Index again after changes. |
+| AutoCorrect | Gap | | Phase 2 |
 | Document compare | Gap | | Phase 3; will build on track changes |

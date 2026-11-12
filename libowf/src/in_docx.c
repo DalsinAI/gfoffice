@@ -689,6 +689,7 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     else if (!strcmp(word, "REF") && *arg) *field = OWF_FIELD_REF;
     else if (!strcmp(word, "PAGEREF") && *arg) *field = OWF_FIELD_REF_PAGE;
     else if (!strcmp(word, "MERGEFIELD") && *arg) *field = OWF_FIELD_MERGE;      /* 1.9 */
+    else if (!strcmp(word, "XE") && *arg) *field = OWF_FIELD_INDEX;               /* 1.10 */
     else return 0;
     if (*field <= OWF_FIELD_TIME || *field == OWF_FIELD_CHAPTER) arg[0] = 0;
     return 1;
@@ -1266,7 +1267,8 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
                     d->nfields--;
                     if (!hiding(d)) {
                         set_fmt(d, fmt);
-                        if (keeps_result(f->field)) owf_builder_field(d->b, f->field, f->arg, NULL);
+                        if (keeps_result(f->field))
+                            owf_builder_field(d->b, f->field, f->arg, f->field == OWF_FIELD_INDEX ? "" : NULL);
                         else owf_builder_special(d->b, OWF_RUN_FIELD, f->field);
                     }
                     return;
