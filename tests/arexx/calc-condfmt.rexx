@@ -56,7 +56,14 @@ want: PROCEDURE EXPOSE fails res
     got = rc
     IF got = 0 THEN res = result
     IF got = rcwant THEN SAY 'PASS' cmd 'RC' got
-    ELSE CALL bad cmd 'RC' got '(wanted' rcwant')'
+    ELSE DO
+        why = ''
+        IF got ~= 0 THEN DO
+            'LASTERROR'
+            IF rc = 0 THEN why = result
+        END
+        CALL bad cmd 'RC' got '(wanted' rcwant')' why
+    END
     RETURN
 
 bad:
