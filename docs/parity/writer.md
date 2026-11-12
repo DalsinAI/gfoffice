@@ -16,6 +16,7 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 12 Nov 2026 | 2.0.31 | Phase 2: mail merge | 74% |
 | 12 Nov 2026 | 2.0.32 | Phase 2: alphabetical index | 75% |
 | 12 Nov 2026 | 2.0.33 | Phase 2: AutoCorrect | 76% |
+| 12 Nov 2026 | 2.0.34 | Phase 2: labels and envelopes | 77% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
@@ -25,7 +26,8 @@ Phase 2 starts with mail merge (form letters from a CSV data source): two points
 labels and envelopes, indexes and AutoCorrect are the rest of Phase 2.
 The alphabetical index (entries, subentries, pages) adds one point; range
 marks, other index kinds and a live index are left for later. AutoCorrect while
-typing adds one more; labels and envelopes and word completion are left.
+typing adds one more, and labels and envelopes the last of Phase 2's; word
+completion is left.
 
 ## Stream W features
 
@@ -58,7 +60,9 @@ typing adds one more; labels and envelopes and word completion are left.
 | Mail merge: data source and fields | Done | 2.0.31 | Tools > Mail Merge > Data Source... reads a CSV file (comma, semicolon or tab separated, found from its first line; quoted cells; UTF-8 or Latin-1) whose first row names the columns; Insert Merge Field... picks a column. Fields show «Column», or a record's values with Next/Previous Record (Show Field Names goes back). The document keeps its data source and reads it again when opened. ARexx MERGESOURCE, MERGEFIELDS, MERGERECORDS, MERGERECORD, INSERTMERGEFIELD; GETTEXT shows what the fields show. |
 | Mail merge: the merge | Done | 2.0.31 | Merge to Document... saves every record into one document, each from a new page; Merge to Files... saves a file each (letter1.odt, letter2.odt ...). The fields become plain text (a line break in a value stays one), tracked changes are accepted and comments left out. ARexx MERGE file [FILES]. |
 | Mail merge: DOCX and ODT | Done | 2.0.31 | DOCX MERGEFIELD (simple and complex fields) and settings' w:mailMerge query for the data source. ODT text:database-display with its column and database. RTF, HTML, plain text and PDF get the value shown. |
-| Mail merge: labels and envelopes, a database or Calc sheet as data source, conditions (skip a record, IF fields), choosing records, merging to the printer or e-mail | Gap | | Phase 2 later; the data source is a CSV file (a Calc sheet saved as CSV works). |
+| Labels | Done | 2.0.34 | Tools > Mail Merge > Labels... picks a sheet (A4 3 x 7, 2 x 7, 3 x 8, 2 x 4; Letter 3 x 10, 2 x 5, by their measures) and saves a new document of labels: each a text box at the sheet's pitch holding the document as one record shows it, a new page when a sheet is full; with no data source, a page of the same label. ODT and DOCX keep them. ARexx LABELSHEETS, LABELS n file. |
+| Envelopes | Done | 2.0.34 | Format > Envelope sets the page to DL, C5 or C6, turned for printing across, with the margins putting the address where a window would be. ARexx ENVELOPE. |
+| Mail merge: a database or Calc sheet as data source, conditions (skip a record, IF fields), choosing records, merging to the printer or e-mail; labels: own sizes, a return address and printing on the envelope's feed | Gap | | Phase 2 later; the data source is a CSV file (a Calc sheet saved as CSV works). |
 | Alphabetical index: entries | Done | 2.0.32 | Insert > Index Entry... marks an entry at the caret (the selected words by default; "Main:Sub" for a subentry). The mark shows nothing, saves, reloads and undoes. ARexx INDEXENTRY, INDEXENTRIES. |
 | Alphabetical index: the index | Done | 2.0.32 | Insert > Alphabetical Index puts the index at the caret: an "Index" title, then each entry in alphabetical order (case folded) with the pages of its marks, subentries indented under it, in the Index1/Index2 styles; one Undo removes it. ARexx INSERTINDEX. |
 | Alphabetical index: DOCX and ODT | Done | 2.0.32 | DOCX XE fields (simple and complex, "Main:Sub"). ODT text:alphabetical-index-mark with text:key1 for a subentry. RTF, HTML, plain text and PDF show nothing for a mark. |

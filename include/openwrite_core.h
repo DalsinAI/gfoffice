@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.8.0"
+#define OW_CORE_VERSION "1.9.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -208,6 +208,23 @@ int ow_autocorrect_load(ow_autocorrect *ac, const char *text, size_t length);
 char *ow_autocorrect_save(const ow_autocorrect *ac, size_t *length);   /* owf_free it */
 int ow_editor_type(ow_editor *editor, const ow_autocorrect *ac, const char *utf8, size_t length);
 int ow_editor_autocorrect_word(ow_editor *editor, const ow_autocorrect *ac);
+
+/* 2.8.0 (core 1.9): labels. A sheet's measures, in twips: the page, how many labels across and down, a label's
+ * size, the first label's corner from the page's, and the pitch across and down. ow_editor_labels makes a new
+ * document of sheets: each label a text box holding the body as records first..last of the mail merge show it
+ * (-1, -1: all), or with no data source one page of the document as it is. OWF_ERR_UNSUPPORTED: the body has
+ * text boxes or tables, or the range has no records. */
+typedef struct {
+    const char *name;
+    int page_width, page_height;
+    int columns, rows;
+    int label_width, label_height;
+    int left, top;
+    int across, down;
+} ow_label_sheet;
+int ow_label_sheet_count(void);
+const ow_label_sheet *ow_label_sheet_at(int i);
+int ow_editor_labels(ow_editor *editor, const ow_label_sheet *sheet, int first, int last, owf_doc **out);
 
 /* 2.0.23: the left pages' (the even-numbered) own, doc->header_left and footer_left */
 typedef enum { OW_STORY_HEADER = 1, OW_STORY_FOOTER = 2, OW_STORY_HEADER_LEFT = 3, OW_STORY_FOOTER_LEFT = 4 } ow_story_kind;
