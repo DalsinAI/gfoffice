@@ -16,6 +16,7 @@
  */
 #include "oc_internal.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -104,6 +105,16 @@ static void cf_rules_free(owf_condfmt *rules, int n)
 static int cf_spec_ok(const oc_condfmt_spec *r)
 {
     int i, two;
+    if (r && r->type == OC_CF_DATA_BAR) {
+        if (r->npoints != 0 && r->npoints != 2) return 0;
+        for (i = 0; i < r->npoints; ++i) {
+            if (r->points[i].kind < OWF_CFV_MIN || r->points[i].kind > OWF_CFV_PERCENTILE) return 0;
+            if (r->points[i].kind >= OWF_CFV_NUMBER && (!r->points[i].value || !*r->points[i].value)) return 0;
+        }
+        return 1;
+    }
+    if (r && r->type == OC_CF_ICON_SET)
+        return oc_icon_set_name(r->icon_set) != NULL;
     if (!r || r->type < OWF_CF_CELL_IS || r->type > OWF_CF_COLOUR_SCALE) return 0;
     if (r->type == OWF_CF_COLOUR_SCALE) {
         if (r->npoints < 2 || r->npoints > 3) return 0;
@@ -129,18 +140,76 @@ static int cf_targets(oc_core *core, owf_range *targets)
     return n;
 }
 
+/* A data bar's or icon set's cfRule, as Excel writes it (from owf_malloc), or NULL. */
+static char *kept_xml(const oc_condfmt_spec *r)
+{
+    static const char *const kinds[5] = { "min", "max", "num", "percent", "percentile" };
+    char buf[1024];
+    size_t at = 0;
+    int i, n;
+#define PUT(...) do { \
+        int w_ = snprintf(buf + at, sizeof buf - at, __VA_ARGS__); \
+        if (w_ < 0 || (size_t)w_ >= sizeof buf - at) \
+            return NULL; \
+        at += (size_t)w_; \
+    } while (0)
+    if (r->type == OC_CF_DATA_BAR) {
+        unsigned long rgb = OWF_SHADE_SET(r->fill) ? OWF_SHADE_RGB(r->fill) : 0x638EC6UL;
+        PUT("<cfRule type=\"dataBar\"><dataBar%s>", r->hide_value ? " showValue=\"0\"" : "");
+        for (i = 0; i < 2; ++i) {
+            int kind = r->npoints == 2 ? r->points[i].kind : i ? OWF_CFV_MAX : OWF_CFV_MIN;
+            if (kind >= OWF_CFV_NUMBER && r->npoints == 2)
+                PUT("<cfvo type=\"%s\" val=\"%s\"/>", kinds[kind], r->points[i].value);
+            else
+                PUT("<cfvo type=\"%s\"/>", kinds[kind]);
+        }
+        PUT("<color rgb=\"FF%06lX\"/></dataBar></cfRule>", rgb & 0xFFFFFFUL);
+    } else {
+        const char *name = oc_icon_set_name(r->icon_set);
+        n = name[0] - '0';
+        PUT("<cfRule type=\"iconSet\"><iconSet iconSet=\"%s\"%s%s>", name,
+            r->reverse ? " reverse=\"1\"" : "", r->hide_value ? " showValue=\"0\"" : "");
+        for (i = 0; i < n; ++i)
+            PUT("<cfvo type=\"percent\" val=\"%d\"/>", i * 100 / n);
+        PUT("</iconSet></cfRule>");
+    }
+#undef PUT
+    return oc_strdup(buf);
+}
+
+static int add_rule(oc_core *core, const oc_condfmt_spec *rule, const char *xml, const owf_range *targets, int n);
+
 int oc_core_add_condfmt(oc_core *core, const oc_condfmt_spec *rule)
 {
-    owf_sheet *sheet;
-    owf_condfmt made, *dst;
     owf_range targets[OC_MAX_RANGES];
-    oc_undo *undo;
-    int n, i, priority = 0;
+    int n;
     if (!core || !cf_spec_ok(rule)) return OWF_ERR_FORMAT;
     if (core->edit_mode) oc_edit_commit_anyway(core, OC_MOVE_NONE);
     if (!(n = cf_targets(core, targets))) return OWF_ERR_UNSUPPORTED;
-    sheet = oc_sheet(core);
+    if (rule->type == OC_CF_DATA_BAR || rule->type == OC_CF_ICON_SET) {
+        oc_condfmt_spec plain;
+        char *xml = kept_xml(rule);
+        int rc;
+        if (!xml) return OWF_ERR_MEMORY;
+        memset(&plain, 0, sizeof plain);
+        plain.type = OWF_CF_KEPT;
+        plain.stop = rule->stop;
+        rc = add_rule(core, &plain, xml, targets, n);
+        owf_free(xml);
+        return rc;
+    }
+    return add_rule(core, rule, NULL, targets, n);
+}
+
+/* Adds rule (with xml, a kept rule's cfRule) over the targets: one Undo step. */
+static int add_rule(oc_core *core, const oc_condfmt_spec *rule, const char *xml, const owf_range *targets, int n)
+{
+    owf_sheet *sheet = oc_sheet(core);
+    owf_condfmt made, *dst;
+    oc_undo *undo;
+    int i, priority = 0;
     memset(&made, 0, sizeof made);
+    made.xml = (char *)xml;
     made.type = rule->type; made.op = rule->op; made.stop = !!rule->stop;
     made.formula[0] = (char *)rule->formula[0]; made.formula[1] = (char *)rule->formula[1];
     made.font_set = rule->font_set; made.font_flags = rule->font_flags;
@@ -341,8 +410,10 @@ static int by_value(const void *a, const void *b)
     return x < y ? -1 : x > y;
 }
 
-/* A colour scale's points as numbers, from the numbers in its ranges. 0 when it has none to colour. */
-static int scale_points(evaluator *ev, const owf_sheet *s, const owf_condfmt *cf, double *at)
+/* Points (a colour scale's, a data bar's or an icon set's) as numbers, from the numbers in cf's ranges. 0 when
+ * there are none. */
+static int points_at(evaluator *ev, const owf_sheet *s, const owf_condfmt *cf, const owf_cfpoint *pts, int npts,
+                     double *at)
 {
     double lo = 0, hi = 0, *all = NULL;
     long n = 0, cap = 0;
@@ -372,8 +443,8 @@ static int scale_points(evaluator *ev, const owf_sheet *s, const owf_condfmt *cf
         return 0;
     }
     qsort(all, (size_t)n, sizeof *all, by_value);
-    for (k = 0; k < cf->npoints; k++) {
-        const owf_cfpoint *p = &cf->points[k];
+    for (k = 0; k < npts; k++) {
+        const owf_cfpoint *p = &pts[k];
         double v = 0;
         const owf_cell *r;
         switch (p->kind) {
@@ -400,6 +471,119 @@ static int scale_points(evaluator *ev, const owf_sheet *s, const owf_condfmt *cf
     }
     free(all);
     return 1;
+}
+
+static int scale_points(evaluator *ev, const owf_sheet *s, const owf_condfmt *cf, double *at)
+{
+    return points_at(ev, s, cf, cf->points, cf->npoints, at);
+}
+
+/* ---- Data bars and icon sets: rules the model keeps as the file's cfRule (OWF_CF_KEPT), read here ---- */
+
+typedef struct {
+    int kind;                    /* 0 neither, 1 data bar, 2 icon set */
+    int n;                       /* points */
+    owf_cfpoint pts[5];
+    char vals[5][48];
+    unsigned long colour;        /* a bar's, 0xRRGGBB */
+    int min_len, max_len;        /* a bar's, percent of the cell */
+    int family, reverse, hide;
+} kept_rule;
+
+/* An attribute's value in the tag starting at tag (up to its '>'): 1 when it is there. */
+static int tag_attr(const char *tag, const char *name, char *out, size_t size)
+{
+    size_t n = strlen(name);
+    const char *p = tag, *end = strchr(tag, '>');
+    if (!end)
+        return 0;
+    while ((p = strstr(p, name)) != NULL && p < end) {
+        if (p > tag && p[-1] == ' ' && p[n] == '=' && p[n + 1] == '"') {
+            size_t k = 0;
+            for (p += n + 2; *p && *p != '"' && k + 1 < size; ++p)
+                out[k++] = *p;
+            out[k] = 0;
+            return 1;
+        }
+        p += n;
+    }
+    return 0;
+}
+
+static const struct { const char *name; int family; } icon_sets[] = {
+    { "3Arrows", OC_ICONS_ARROWS }, { "3ArrowsGray", OC_ICONS_ARROWS_GREY }, { "3Flags", OC_ICONS_LIGHTS },
+    { "3TrafficLights1", OC_ICONS_LIGHTS }, { "3TrafficLights2", OC_ICONS_LIGHTS }, { "3Signs", OC_ICONS_LIGHTS },
+    { "3Symbols", OC_ICONS_LIGHTS }, { "3Symbols2", OC_ICONS_LIGHTS }, { "4Arrows", OC_ICONS_ARROWS },
+    { "4ArrowsGray", OC_ICONS_ARROWS_GREY }, { "4RedToBlack", OC_ICONS_RED_BLACK }, { "4Rating", OC_ICONS_RATING },
+    { "4TrafficLights", OC_ICONS_LIGHTS }, { "5Arrows", OC_ICONS_ARROWS }, { "5ArrowsGray", OC_ICONS_ARROWS_GREY },
+    { "5Rating", OC_ICONS_RATING }, { "5Quarters", OC_ICONS_QUARTERS }
+};
+
+const char *oc_icon_set_name(const char *name)
+{
+    size_t i;
+    for (i = 0; name && i < sizeof icon_sets / sizeof icon_sets[0]; ++i) {
+        const char *a = name, *b = icon_sets[i].name;
+        while (*a && lower((unsigned char)*a) == lower((unsigned char)*b))
+            a++, b++;
+        if (!*a && !*b)
+            return icon_sets[i].name;
+    }
+    return NULL;
+}
+
+static int kept_parse(const owf_condfmt *cf, kept_rule *k)
+{
+    static const char *const kinds[6] = { "min", "max", "num", "percent", "percentile", "formula" };
+    const char *tag, *p;
+    char v[48];
+    size_t i;
+    memset(k, 0, sizeof *k);
+    if (!cf->xml || cf->formula[0])
+        return 0;
+    if ((tag = strstr(cf->xml, "<dataBar")) != NULL) {
+        k->kind = 1;
+        k->colour = 0x638EC6UL;
+        k->min_len = 10;
+        k->max_len = 90;
+        if (tag_attr(tag, "minLength", v, sizeof v)) k->min_len = atoi(v);
+        if (tag_attr(tag, "maxLength", v, sizeof v)) k->max_len = atoi(v);
+        if (k->min_len < 0 || k->min_len > 100) k->min_len = 10;
+        if (k->max_len < k->min_len || k->max_len > 100) k->max_len = 90;
+        if ((p = strstr(tag, "<color")) != NULL && tag_attr(p, "rgb", v, sizeof v) && strlen(v) >= 6)
+            k->colour = strtoul(v + strlen(v) - 6, NULL, 16) & 0xFFFFFFUL;
+    } else if ((tag = strstr(cf->xml, "<iconSet")) != NULL) {
+        k->kind = 2;
+        k->family = OC_ICONS_LIGHTS;
+        if (!tag_attr(tag, "iconSet", v, sizeof v))
+            strcpy(v, "3TrafficLights1");
+        for (i = 0; i < sizeof icon_sets / sizeof icon_sets[0]; ++i)
+            if (!strcmp(v, icon_sets[i].name))
+                k->family = icon_sets[i].family;
+        if (tag_attr(tag, "reverse", v, sizeof v)) k->reverse = !strcmp(v, "1") || !strcmp(v, "true");
+    } else {
+        return 0;
+    }
+    if (tag_attr(tag, "showValue", v, sizeof v)) k->hide = !strcmp(v, "0") || !strcmp(v, "false");
+    for (p = strstr(tag, "<cfvo"); p && k->n < 5; p = strstr(p + 5, "<cfvo")) {
+        owf_cfpoint *pt = &k->pts[k->n];
+        int j;
+        pt->kind = OWF_CFV_MIN;
+        if (tag_attr(p, "type", v, sizeof v)) {
+            for (j = 0; j < 6; ++j)
+                if (!strcmp(v, kinds[j]))
+                    pt->kind = j;
+            if (!strcmp(v, "autoMax")) pt->kind = OWF_CFV_MAX;
+        }
+        if (pt->kind >= OWF_CFV_NUMBER && tag_attr(p, "val", k->vals[k->n], sizeof k->vals[k->n]))
+            pt->value = k->vals[k->n];
+        else if (pt->kind >= OWF_CFV_NUMBER)
+            pt->kind = k->n ? OWF_CFV_MAX : OWF_CFV_MIN;
+        k->n++;
+    }
+    if (k->kind == 1 && k->n != 2)
+        return 0;
+    return k->kind == 1 || k->n >= 3;
 }
 
 static unsigned long mix(unsigned long a, unsigned long b, double t)
@@ -499,10 +683,16 @@ const oc_look *oc_cf_looks(oc_core *core, const oc_line *rl, int nr, const oc_li
     ev.sheet = core->sheet;
     for (k = 0; k < n; k++) {
         const owf_condfmt *cf = &s->condfmts[order[k]];
-        double at[3];
-        int r;
-        if (!cf->nranges || (cf->type == OWF_CF_KEPT && !cf->formula[0]))
+        double at[5];
+        kept_rule kr;
+        int r, kept = 0;
+        if (!cf->nranges)
             continue;
+        if (cf->type == OWF_CF_KEPT && !cf->formula[0]) {
+            if (!kept_parse(cf, &kr) || !points_at(&ev, s, cf, kr.pts, kr.n, at))
+                continue;
+            kept = 1;
+        }
         if (cf->type == OWF_CF_COLOUR_SCALE && (cf->npoints < 2 || !scale_points(&ev, s, cf, at)))
             continue;
         eval_reset(&ev);
@@ -523,6 +713,35 @@ const oc_look *oc_cf_looks(oc_core *core, const oc_line *rl, int nr, const oc_li
                     if (prev < r)
                         continue;                    /* a cell two of its ranges share: once */
                     cell = owf_sheet_find(s, row, col);
+                    if (kept) {
+                        if (!cell || cell->type != OWF_VALUE_NUMBER)
+                            continue;
+                        if (kr.kind == 1 && !(l->parts & OC_LOOK_BAR)) {
+                            double t = at[1] > at[0] ? (cell->number - at[0]) / (at[1] - at[0])
+                                                     : cell->number >= at[1];
+                            if (t < 0) t = 0;
+                            if (t > 1) t = 1;
+                            l->bar = (unsigned short)(10 * (kr.min_len + t * (kr.max_len - kr.min_len)) + 0.5);
+                            l->bar_colour = kr.colour;
+                            l->parts |= OC_LOOK_BAR;
+                        } else if (kr.kind == 2 && !(l->parts & OC_LOOK_ICON)) {
+                            int level = 0, j;
+                            for (j = 1; j < kr.n; j++)
+                                if (cell->number >= at[j])
+                                    level = j;
+                            l->icons = (unsigned char)kr.family;
+                            l->nicons = (unsigned char)kr.n;
+                            l->icon = (unsigned char)(kr.reverse ? kr.n - 1 - level : level);
+                            l->parts |= OC_LOOK_ICON;
+                        } else {
+                            continue;
+                        }
+                        if (kr.hide)
+                            l->parts |= OC_LOOK_NO_VALUE;
+                        if (cf->stop)
+                            l->stop = 1;
+                        continue;
+                    }
                     if (cf->type == OWF_CF_COLOUR_SCALE) {
                         if (cell && cell->type == OWF_VALUE_NUMBER && !(l->parts & OC_LOOK_FILL)) {
                             l->fill = scale_colour(cf, at, cell->number);

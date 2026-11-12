@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.32.0"
+#define OC_CORE_VERSION "0.34.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -309,7 +309,17 @@ typedef struct {
         const char *value;
         unsigned long colour;
     } points[3];
+    /* OC_CF_DATA_BAR: a bar from the lowest number to the highest (or points[0], [1] when npoints is 2), in
+     * fill (OWF_SHADE(0xRRGGBB); 0: Excel's blue). OC_CF_ICON_SET: icon_set is Excel's name ("3Arrows",
+     * "3TrafficLights1", "4Rating", "5Quarters"...), its icons for equal thirds (quarters, fifths) of the
+     * way from the lowest number to the highest; reverse turns the order round. hide_value shows the bar or
+     * icon alone. Both are kept in XLSX and ODS. */
+    const char *icon_set;
+    int reverse, hide_value;
 } oc_condfmt_spec;
+enum { OC_CF_DATA_BAR = 16, OC_CF_ICON_SET };
+/* Excel's name of an icon set given in any case ("3arrows": "3Arrows"), or NULL when there is none. */
+const char *oc_icon_set_name(const char *name);
 int oc_core_add_condfmt(oc_core *core, const oc_condfmt_spec *rule);
 int oc_core_clear_condfmt(oc_core *core);
 

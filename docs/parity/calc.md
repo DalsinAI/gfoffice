@@ -15,6 +15,7 @@ working. Phase 1's target is 74%.
 | 11 Nov 2026 | C4 Consolidate | 69% |
 | 11 Nov 2026 | C5 Names manager, advanced filter | 71% |
 | 11 Nov 2026 | C6 Multiple Operations kept live | 72% |
+| 12 Nov 2026 | C9 Data bars and icon sets | 73% |
 
 ## Phase 1 features
 
@@ -26,6 +27,12 @@ working. Phase 1's target is 74%.
 | Consolidate | Done | C4 | Up to 16 sources on any sheets; the eleven functions; by position or by row labels, column labels or both (case aside, labels in first-seen order); linked (formulas over the sources) or values; settings kept on the sheet for the window; ARexx CONSOLIDATE; Undo. Not yet: a linked table that grows when its sources grow, picking a source from a list of named ranges (names can be typed) |
 | Named-range and database-range manager, advanced filter | Done (most) | C5 | Manage Names: list, add, change (name, formula, scope in one step; uses follow a rename), delete; ARexx NAMES, NAMEDEFINE, NAMERENAME, NAMEDELETE. Advanced filter: criteria range (AND across, OR down; <, <=, >, >=, <>, =, begins-with, wildcards), in place or copied to any sheet, unique rows; ARexx ADVFILTER; Undo. Not yet: database ranges as their own objects (a named range serves), criteria formulas (=C2>AVERAGE(C:C)), a rename followed into charts, validation and conditional formats |
 | Automatic data-table (Multiple Operations) recalc | Done (most) | C6 | Every table worked out again after each change (edits, Undo, Redo, ARexx), no Undo step of its own; ARexx MULTIOP. Not yet: live past 4096 results or 20,000 cells (Refresh by hand there), tables as true formula arrays (MULTIPLE.OPERATIONS) in ODS |
+
+## Phase 2 features
+
+| Feature | Status | Deliverable | Notes |
+| --- | --- | --- | --- |
+| Colour scales, data bars, icon sets | Done | C9 | Colour scales (two or three colours) as before; data bars drawn in each cell from its lowest number to its highest (Excel's 10% to 90%, or the file's lengths), in any colour, the number shown or not; Excel's 17 icon sets drawn (arrows, grey arrows, traffic lights, signs, symbols and flags as lights, red to black, ratings as signal bars, quarters as greys), reversed or not, the number shown or not; added from Format > Conditional Format ("bar blue", "icons 3Arrows reverse only") and ARexx CONDFMT; kept in XLSX and ODS (show-value both ways, reverse in GFOffice's own attribute); Undo. Not yet: negative bars from an axis, gradient bars, the icons' own pictures (the shapes stand for them), Excel 2010's extensions (kept out) |
 
 ## How C1 was checked
 
@@ -87,3 +94,13 @@ working. Phase 1's target is 74%.
   and Redo of the edits (the table follows, Redo is kept); the unsaved flag.
   Also under AddressSanitizer and UBSan.
 - Instance-32 lab copy: tests/arexx/calc-multiop.rexx; see the pull request.
+
+## How C9 was checked
+
+- Host tests (tests/calc_core): a data bar's lengths (10%, 50%, 90% of the
+  cell), a green bar with its numbers hidden (no bar for text), 3Arrows'
+  three colours, all again after XLSX and after ODS; 5Quarters reversed;
+  Undo; an unknown set and a bad bar refused. Also under AddressSanitizer
+  and UBSan.
+- Instance-32 lab copy: tests/arexx/calc-condfmt.rexx and a screenshot; see
+  the pull request.

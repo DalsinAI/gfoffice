@@ -86,11 +86,16 @@ typedef struct {
 } oc_line;
 
 /* The look conditional formatting gives a cell showing (oc_condfmt.c): which parts it sets. */
-enum { OC_LOOK_FILL = 1, OC_LOOK_COLOUR = 2 };
+enum { OC_LOOK_FILL = 1, OC_LOOK_COLOUR = 2, OC_LOOK_BAR = 4, OC_LOOK_ICON = 8, OC_LOOK_NO_VALUE = 16 };
+/* An icon set's family, as the look draws it. */
+enum { OC_ICONS_ARROWS, OC_ICONS_ARROWS_GREY, OC_ICONS_LIGHTS, OC_ICONS_RED_BLACK, OC_ICONS_RATING, OC_ICONS_QUARTERS };
 typedef struct {
     unsigned long fill, colour;     /* 0xRRGGBB, for OC_LOOK_FILL, OC_LOOK_COLOUR */
     unsigned set, flags;            /* OWF_BOLD...: which it sets, and to what */
     unsigned char parts, stop;
+    unsigned short bar;             /* OC_LOOK_BAR: its length, thousandths of the cell's width */
+    unsigned long bar_colour;       /* 0xRRGGBB */
+    unsigned char icons, nicons, icon;  /* OC_LOOK_ICON: OC_ICONS_..., how many the set has, which (0 lowest) */
 } oc_look;
 
 struct oc_core {
