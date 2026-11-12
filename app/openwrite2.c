@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.31 (12.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.32 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -116,7 +116,8 @@ enum {
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS,
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE,
-    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES
+    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
+    M_INDEX_ENTRY, M_INDEX
 };
 
 static struct NewMenu menus[] = {
@@ -178,6 +179,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Table...", NULL, 0, 0, (APTR)M_TABLE },
     { NM_ITEM, "Link...", NULL, 0, 0, (APTR)M_LINK },
     { NM_ITEM, "Table of Contents", NULL, 0, 0, (APTR)M_CONTENTS },
+    { NM_ITEM, "Alphabetical Index", NULL, 0, 0, (APTR)M_INDEX },          /* 2.0.32 (core 1.7) */
+    { NM_ITEM, "Index Entry...", NULL, 0, 0, (APTR)M_INDEX_ENTRY },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Page Break", NULL, 0, 0, (APTR)M_PAGE_BREAK },
     { NM_ITEM, "Comment...", NULL, 0, 0, (APTR)M_COMMENT },
@@ -4361,6 +4364,44 @@ out:
     return chosen;
 }
 
+/* 2.0.32: an index entry at the caret (the selection's words by default; "Main:Sub" for a subentry), and the
+ * alphabetical index from every entry, made like the table of contents */
+static void do_index(int what)
+{
+    if (!editor) return;
+    if (what == M_INDEX_ENTRY) {
+        char entry[160], *u;
+        size_t len = 0;
+        int rc;
+        char *sel = ow_editor_selection_empty(editor) ? NULL : ow_editor_selection_text(editor, &len);
+        entry[0] = 0;
+        if (sel) {
+            size_t o = to_latin1(sel, len, entry, sizeof entry);
+            entry[o < sizeof entry ? o : sizeof entry - 1] = 0;
+            free(sel);
+        }
+        if (!text_requester("Index Entry", "Entry (Main:Sub)", entry, entry, sizeof entry) || !entry[0]) return;
+        if (!(u = latin1_utf8(entry))) { tell("Index Entry", "There is not enough memory."); return; }
+        rc = ow_editor_insert_index_entry(editor, u);
+        free(u);
+        if (rc == OWF_ERR_FORMAT) { tell("Index Entry", "An entry needs a word before any ':'."); return; }
+        if (editor_result(rc, "Index entry marked; Insert > Alphabetical Index lists it.")) pages_changed();
+        return;
+    } else {
+        int rc = ow_editor_insert_index(editor, resolve_toc_pages, NULL);
+        if (rc == OWF_OK) {
+            pages_changed();
+            editor_repaint("Alphabetical index inserted; Undo removes it.");
+        } else if (rc == OWF_ERR_UNSUPPORTED) {
+            tell("Alphabetical Index", "This document has no index entries (Insert > Index Entry...).");
+        } else if (rc == OWF_ERR_MEMORY) {
+            tell("Alphabetical Index", "There is not enough memory to build the index.");
+        } else {
+            tell("Alphabetical Index", "Place the caret in an ordinary body paragraph, outside a table or text box.");
+        }
+    }
+}
+
 static void do_cross_reference(void)
 {
     static int page_form;
@@ -4849,6 +4890,7 @@ static void menu_action(ULONG id)
     case M_NOTE_DELETE: do_note((int)id); break;
     case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
     case M_MERGE_DOC: case M_MERGE_FILES: do_merge((int)id); break;
+    case M_INDEX_ENTRY: case M_INDEX: do_index((int)id); break;
     }
 }
 
@@ -5030,7 +5072,7 @@ static int rexx_do_command(const char *command, char **result_out)
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
         "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
         "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE "
-        "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE QUIT");
+        "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
@@ -5110,6 +5152,16 @@ static int rexx_do_command(const char *command, char **result_out)
         if(!editor||!path[0]){ok=0;snprintf(result,sizeof result,"MERGE needs a file");}
         else if((n=merge_out(path,files))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",-n==OWF_ERR_UNSUPPORTED?"No records":owf_error_text(-n));}
         else snprintf(result,sizeof result,"%d",n);}
+    /* 2.0.32: the alphabetical index. INDEXENTRY entry marks one at the caret ("Main:Sub" for a subentry);
+     * INDEXENTRIES answers how many; INSERTINDEX puts the index at the caret (RC 5: no entries) */
+    else if(starts_word_ci(command,"INDEXENTRY",&arg)){char *u;int rc;
+        if(!editor||!*arg){ok=0;snprintf(result,sizeof result,"INDEXENTRY needs an entry");}
+        else if(!(u=latin1_utf8(arg))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
+        else{rc=ow_editor_insert_index_entry(editor,u);free(u);ok=editor_result(rc,"Index entry marked.");if(ok)pages_changed();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
+    else if(starts_word_ci(command,"INDEXENTRIES",&arg))snprintf(result,sizeof result,"%d",editor?ow_editor_index_entry_count(editor):0);
+    else if(starts_word_ci(command,"INSERTINDEX",&arg)){int rc=editor?ow_editor_insert_index(editor,resolve_toc_pages,NULL):OWF_ERR_FORMAT;
+        if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No index entries");}
+        else{ok=editor_result(rc,"Alphabetical index inserted.");if(ok)pages_changed();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
     /* 2.0.29: fields. INSERTFIELD kind [name] (PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER,
      * USER name, REF name, REFPAGE name: a bookmark's); DOCINFO TITLE|AUTHOR|SUBJECT [value] answers the value;
      * USERFIELD name [value|-] answers the value (RC 5: none; "-" removes it); CROSSREF n [PAGE] refers to the

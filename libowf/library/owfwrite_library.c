@@ -34,13 +34,15 @@
  * 3.8: libowf 1.9, mail merge fields (OWF_FIELD_MERGE) and the data source (owf_doc.merge_source): DOCX
  * MERGEFIELD and w:mailMerge, ODT text:database-display; other formats the value shown. No new calls; owf_doc
  * grew, so the three libraries go together again.
+ * 3.9: libowf 1.10, alphabetical index entries (OWF_FIELD_INDEX): DOCX XE fields and ODT
+ * text:alphabetical-index-mark; other formats show nothing for them. No new calls and no struct grew.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 8
-#define OWF_LIB_VERS "3.8"
+#define OWF_LIB_REVISION 9
+#define OWF_LIB_VERS "3.9"
 #define OWF_LIB_DATE "12.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"
