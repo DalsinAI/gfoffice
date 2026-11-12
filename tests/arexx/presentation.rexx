@@ -351,6 +351,15 @@ CALL want 'UNDO', 0
 CALL want 'SLIDES', 0
 CALL same 'INSERTFILE undone in one step', res, ns
 CALL want 'INSERTFILE RAM:no/such/file.odp', 10
+CALL want 'EXPORTPICTURES RAM:arexx-pic.png', 0  /* P9: this slide as a PNG */
+CALL same 'EXPORTPICTURES one', res, 1
+IF ~EXISTS('RAM:arexx-pic.png') THEN CALL bad 'EXPORTPICTURES wrote no RAM:arexx-pic.png'
+CALL want 'EXPORTPICTURES RAM:arexx-pic.iff ALL WIDTH 320', 0
+np = res
+IF np < 1 THEN CALL bad 'EXPORTPICTURES ALL wrote' np
+IF ~EXISTS('RAM:arexx-pic-01.iff') THEN CALL bad 'EXPORTPICTURES ALL wrote no RAM:arexx-pic-01.iff'
+CALL want 'EXPORTPICTURES', 10
+CALL want 'EXPORTPICTURES RAM:no/such/drawer/x.png', 10
 CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0
 CALL want 'DELETESLIDE', 5                     /* the last slide stays */

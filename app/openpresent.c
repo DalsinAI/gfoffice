@@ -106,7 +106,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.31 (12.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.32 (12.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -151,7 +151,7 @@ enum {
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
-    M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE
+    M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES
 };
 
 static struct NewMenu menus[] = {
@@ -163,6 +163,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_PDF },
+    { NM_ITEM, "Export as Pictures...", NULL, 0, 0, (APTR)M_PICTURES },
 #ifndef OPENPUBLISHER
     { NM_ITEM, "Export Handouts...", NULL, 0, 0, (APTR)M_HANDOUTS },
 #endif
@@ -7162,6 +7163,91 @@ static void do_export_pdf(void)
     draw_status();
 }
 
+/* ---- File > Export as Pictures... (P9) ----
+ * A slide painted as the show paints it, into a bitmap of its own, read back
+ * as RGB and written as PNG (or IFF ILBM when the name ends in .iff or .ilbm). */
+#define PICTURE_WIDTH 1024
+
+static unsigned char *slide_pixels(int index, int width, int *height)
+{
+    struct BitMap *bm;
+    struct RastPort rp;
+    ol_pixel_rect clip;
+    unsigned char *rgb;
+    int h;
+    if (!deck || !CyberGfxBase || index < 0 || index >= deck->nslides || width < 16) return NULL;
+    h = (int)((long)width * deck->height / deck->width);
+    if (h < 1) return NULL;
+    bm = AllocBitMap((ULONG)width, (ULONG)h, (ULONG)screen_depth(), BMF_CLEAR | BMF_DISPLAYABLE, scr->RastPort.BitMap);
+    if (!bm) return NULL;
+    InitRastPort(&rp);
+    rp.BitMap = bm;
+    clip.x = 0;
+    clip.y = 0;
+    clip.width = width;
+    clip.height = h;
+    ogt_box(&rp, argb_pen(0xffffffffu), 0, 0, width, h);
+    paint_slide_ex(&rp, laid_get(index), 0, 0, width, &clip, 0, NULL, NULL, NULL, 0, 0);
+    rgb = malloc((size_t)width * (size_t)h * 3);
+    if (rgb) ReadPixelArray(rgb, 0, 0, (UWORD)(width * 3), &rp, 0, 0, (UWORD)width, (UWORD)h, RECTFMT_RGB);
+    WaitBlit();
+    FreeBitMap(bm);
+    *height = h;
+    return rgb;
+}
+
+/* path NULL: ask which and where. all: every slide in the show (hidden ones left out), named
+ * "Name-01.png" and on; else this slide to path. Returns the pictures written, -1 none. */
+static int export_pictures(const char *path_in, int all, int width)
+{
+    char path[512], name[128], file[560], msg[300];
+    int i, done = 0, failed = 0, count = 0, format;
+    master_view_leave();
+    if (!deck || !deck->nslides) return -1;
+    if (width < 16 || width > 4096) width = PICTURE_WIDTH;
+    if (!CyberGfxBase) {
+        if (!path_in) tell(PROGRAM, "Pictures need a graphics card screen (cybergraphics.library).");
+        return -1;
+    }
+    if (path_in) snprintf(path, sizeof path, "%s", path_in);
+    else {
+        int choice = ask(PROGRAM, "Export which " UNIT_LOWER "s as pictures?\n\n"
+                                  "PNG, or IFF ILBM when the name ends in .iff.\n"
+                                  "All of them are named Name-01.png and on.",
+                         "This " UNIT "|All " UNIT "s|Cancel");
+        if (choice < 1 || choice > 2) return -1;
+        all = choice == 2;
+        with_extension(current_path, "png", name, sizeof name);
+        if (!ask_file(1, all ? "Export the " UNIT_LOWER "s as pictures" : "Export the " UNIT_LOWER " as a picture", name,
+                      path, sizeof path)) return -1;
+    }
+    format = opr_picture_format_for(path);
+    for (i = 0; i < deck->nslides; i++) if (!deck->slides[i].hidden) count++;
+    for (i = 0; i < deck->nslides && !failed; i++) {
+        unsigned char *rgb;
+        int h = 0, rc;
+        if (all ? deck->slides[i].hidden : i != current) continue;
+        if (all) {
+            if (opr_picture_name(file, sizeof file, path, done, count) < 0) { failed = 1; break; }
+        } else snprintf(file, sizeof file, "%s", path);
+        rgb = slide_pixels(i, width, &h);
+        if (!rgb) { failed = 2; break; }
+        rc = opr_picture_write(file, format, rgb, width, h, (size_t)width * 3);
+        free(rgb);
+        if (rc < 0) { failed = rc == -2 ? 3 : 2; break; }
+        done++;
+    }
+    if (failed == 3) snprintf(msg, sizeof msg, "%.200s could not be written.", leaf(file));
+    else if (failed) snprintf(msg, sizeof msg, "There was not enough memory for the picture%s.", all ? "s" : "");
+    else if (all) snprintf(msg, sizeof msg, "%d picture%s written, %dx%d, from %.120s.", done, done == 1 ? "" : "s",
+                           width, (int)((long)width * deck->height / deck->width), leaf(file));
+    else snprintf(msg, sizeof msg, "%.200s written, %dx%d.", leaf(path), width, (int)((long)width * deck->height / deck->width));
+    if (failed && !path_in) tell(PROGRAM, msg);
+    set_status(msg);
+    draw_status();
+    return failed ? -1 : done;
+}
+
 /* Handouts: so many slides a page (1, 2, 3, 4, 6 or 9), as a PDF. */
 static void do_export_handouts(void)
 {
@@ -7376,6 +7462,7 @@ static void menu_action(ULONG id)
     case M_SAVE_AS: do_save_as(); break;
     case M_PRINT: pdf_pages = notes_view ? OPR_PDF_NOTES : OPR_PDF_SLIDES; do_print(); pdf_pages = OPR_PDF_SLIDES; break;
     case M_PDF: do_export_pdf(); break;
+    case M_PICTURES: export_pictures(NULL, 0, 0); break;
     case M_HANDOUTS: do_export_handouts(); break;
     case M_ABOUT: about(); break;
     case M_QUIT: if (confirm_discard()) quit_now = 1; break;
@@ -7901,6 +7988,21 @@ static int rexx_do_command(const char *command, char **result_out)
         if (ok) snprintf(result_text, sizeof result_text, "%d", n);
         else rexx_copy(result_text, sizeof result_text, "Could not insert");
 #endif
+    } else if (starts_word_ci(command, "EXPORTPICTURES", &arg)) {
+        /* EXPORTPICTURES path [ALL] [WIDTH n]: this slide (or every one in the show) as PNG or ILBM */
+        char path[512];
+        const char *p = arg, *opt;
+        int k = 0, all = 0, width = 0, n;
+        if (*p == '"') { p++; while (*p && *p != '"' && k < (int)sizeof path - 1) path[k++] = *p++; if (*p) p++; }
+        else while (*p && *p != ' ' && *p != '\t' && k < (int)sizeof path - 1) path[k++] = *p++;
+        path[k] = 0;
+        while (*p == ' ' || *p == '\t') p++;
+        if (starts_word_ci(p, "ALL", &opt)) { all = 1; p = opt; }
+        if (starts_word_ci(p, "WIDTH", &opt)) width = atoi(opt);
+        n = *path ? export_pictures(path, all, width) : -1;
+        ok = n > 0;
+        if (ok) snprintf(result_text, sizeof result_text, "%d", n);
+        else rexx_copy(result_text, sizeof result_text, *path ? status : "Missing path");
     } else if (starts_word_ci(command, "SETMASTER", &arg)) { /* SETMASTER n: this slide (the picked ones in the sorter) */
         int n = atoi(arg);
         if (mview) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Leave the Master view first"); }
