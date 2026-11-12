@@ -4878,7 +4878,7 @@ static char *document_plain_text(void)
             else if(run->kind==OWF_RUN_TEXT)t=run->text;
             else if(run->kind==OWF_RUN_TAB)t="\t";
             else if(run->kind==OWF_RUN_LINEBREAK)t="\n";
-            else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",caret_page()+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",page_total());else if(run->field>OWF_FIELD_TIME)snprintf(field,sizeof field,"%s",run->text?run->text:"");else field[0]=0;t=field;}
+            else if(run->kind==OWF_RUN_FIELD){if(run->field==OWF_FIELD_PAGE)snprintf(field,sizeof field,"%d",caret_page()+1);else if(run->field==OWF_FIELD_PAGES)snprintf(field,sizeof field,"%d",page_total());else field[0]=0;t=run->field>OWF_FIELD_TIME?(run->text?run->text:""):field;}   /* 2.0.31: a value whole, not cut at 31 bytes */
             if(!t)continue;
             add=strlen(t);
             if(n+add+2>cap){size_t want=(n+add+2)*2;char *q=(char*)realloc(out,want);if(!q){free(out);return NULL;}out=q;cap=want;}
