@@ -889,6 +889,7 @@ static void edit_row(int adding)
         }
     }
     CloseWindow(ew);
+    if (win) ActivateWindow(win);     /* keys go to the main window again */
 out:
     if (eg) FreeGadgets(eg);
     for (i = 0; i < OB_MAX_FIELDS; i++) { free(values[i]); free(before[i]); }
@@ -1326,6 +1327,7 @@ static void show_relationships(void)
         }
     }
     CloseWindow(rw);
+    if (win) ActivateWindow(win);     /* keys go to the main window again */
 out:
     free(box);
     free(rel);
@@ -1588,6 +1590,7 @@ static void design_table(int creating)
     }
     if (eg) { RemoveGList(dw, eg, -1); FreeGadgets(eg); }
     CloseWindow(dw);
+    if (win) ActivateWindow(win);     /* keys go to the main window again */
     if (done == 2) {
         set_status(creating ? "Table created" : "Table saved");
         load_tables(dt.name);
@@ -1792,6 +1795,7 @@ static void edit_view(void)
     }
     if (eg) { RemoveGList(vw, eg, -1); FreeGadgets(eg); }
     CloseWindow(vw);
+    if (win) ActivateWindow(win);     /* keys go to the main window again */
 }
 
 /* A click on a column's heading: sort by it, then Z to A, then key order. */
@@ -2104,6 +2108,7 @@ static void new_table_from_csv(void)
     }
     if (eg) { RemoveGList(ww, eg, -1); FreeGadgets(eg); }
     CloseWindow(ww);
+    if (win) ActivateWindow(win);     /* keys go to the main window again */
     if (made) {
         load_tables(wt.name);
         top_row = 0;
@@ -2597,6 +2602,7 @@ static void design_query(int fresh)
     }
     if (eg) { RemoveGList(qw, eg, -1); FreeGadgets(eg); }
     CloseWindow(qw);
+    if (win) ActivateWindow(win);     /* keys go to the main window again */
     if (run_it) {
         int k;
         qy = q_ed;
@@ -2738,6 +2744,7 @@ static void open_query(void)
     }
     if (eg) { RemoveGList(ow, eg, -1); FreeGadgets(eg); }
     CloseWindow(ow);
+    if (win) ActivateWindow(win);     /* keys go to the main window again */
     free(o_nodes); o_nodes = NULL;
     free(o_names); o_names = NULL;
     if (act == 1) run_query(1);
