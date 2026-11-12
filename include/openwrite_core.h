@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.7.0"
+#define OW_CORE_VERSION "1.8.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -182,6 +182,32 @@ int ow_editor_insert_table_of_contents(ow_editor *editor, int max_level,
 int ow_editor_insert_index_entry(ow_editor *editor, const char *entry);
 int ow_editor_index_entry_count(const ow_editor *editor);
 int ow_editor_insert_index(ow_editor *editor, ow_toc_pages_fn resolve_pages, void *userdata);
+
+/* 2.7.0 (core 1.8): AutoCorrect. The program keeps one ow_autocorrect (a list of replacements and the options) and
+ * passes it with what is typed: ow_editor_type corrects the word before the caret when a space or a tab is typed,
+ * and makes typed quotes curly; ow_editor_autocorrect_word does the word before Return. Undo gives back the word
+ * as typed. ow_autocorrect_save/load: "options n", then "from<TAB>to" a line each (UTF-8). */
+typedef struct ow_autocorrect ow_autocorrect;
+#define OW_AC_REPLACE   1u      /* from the list ("teh" -> "the") */
+#define OW_AC_SENTENCE  2u      /* a sentence's first letter a capital */
+#define OW_AC_TWO_CAPS  4u      /* "THe" -> "The" */
+#define OW_AC_QUOTES    8u      /* curly quotes */
+#define OW_AC_DASHES   16u      /* "a - b" an en dash, "a--b" an em dash */
+#define OW_AC_ALL      31u
+ow_autocorrect *ow_autocorrect_new(int with_defaults);
+void ow_autocorrect_free(ow_autocorrect *ac);
+unsigned ow_autocorrect_options(const ow_autocorrect *ac);
+void ow_autocorrect_set_options(ow_autocorrect *ac, unsigned options);
+int ow_autocorrect_add(ow_autocorrect *ac, const char *from, const char *to);
+int ow_autocorrect_remove(ow_autocorrect *ac, const char *from);
+int ow_autocorrect_count(const ow_autocorrect *ac);
+const char *ow_autocorrect_from(const ow_autocorrect *ac, int i);
+const char *ow_autocorrect_to(const ow_autocorrect *ac, int i);
+const char *ow_autocorrect_lookup(const ow_autocorrect *ac, const char *from);
+int ow_autocorrect_load(ow_autocorrect *ac, const char *text, size_t length);
+char *ow_autocorrect_save(const ow_autocorrect *ac, size_t *length);   /* owf_free it */
+int ow_editor_type(ow_editor *editor, const ow_autocorrect *ac, const char *utf8, size_t length);
+int ow_editor_autocorrect_word(ow_editor *editor, const ow_autocorrect *ac);
 
 /* 2.0.23: the left pages' (the even-numbered) own, doc->header_left and footer_left */
 typedef enum { OW_STORY_HEADER = 1, OW_STORY_FOOTER = 2, OW_STORY_HEADER_LEFT = 3, OW_STORY_FOOTER_LEFT = 4 } ow_story_kind;

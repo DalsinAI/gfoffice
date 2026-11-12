@@ -6111,3 +6111,351 @@ int ow_editor_merge_to_files(ow_editor *editor, const char *path, int first, int
     if (update_fields(editor) < 0 && rc == OWF_OK) rc = OWF_ERR_MEMORY;
     return rc;
 }
+
+/* ---- 2.7.0 (core 1.8): AutoCorrect --------------------------------------------------------------------------
+ * A list of replacements ("teh" -> "the") and options, kept by the program, not the document. Typing a space or a
+ * tab (ow_editor_type), or before Return (ow_editor_autocorrect_word), the word before the caret is looked at:
+ * replaced from the list, a sentence's first letter made a capital, a second capital of TWo made small, and
+ * "a - b" given an en dash, "a--b" an em dash. Typed quotes become curly ones. The word is corrected as one edit:
+ * Undo gives back what was typed. Not while changes are recorded (tracked) but for the quotes. */
+
+typedef struct {
+    char *from, *to;
+} ow_ac_pair;
+
+struct ow_autocorrect {
+    unsigned options;
+    ow_ac_pair *pairs;
+    int count, cap;
+};
+
+/* a starting list of slips of the fingers, the program's own (more come from Add Replacement...) */
+static const char *const ac_defaults[] = {
+    "teh", "the", "adn", "and", "taht", "that", "hte", "the", "wiht", "with", "becuase", "because",
+    "recieve", "receive", "beleive", "believe", "freind", "friend", "occured", "occurred", "seperate", "separate",
+    "definately", "definitely", "accomodate", "accommodate", "untill", "until", "wich", "which", "thier", "their",
+    "alot", "a lot", "tommorow", "tomorrow", "goverment", "government", "enviroment", "environment",
+    "neccessary", "necessary", "occassion", "occasion", "publically", "publicly", "begining", "beginning",
+    "existance", "existence", "independant", "independent", "acheive", "achieve", "wierd", "weird",
+    "(c)", "\xc2\xa9", "(r)", "\xc2\xae", "(tm)", "\xe2\x84\xa2", "...", "\xe2\x80\xa6",
+    NULL
+};
+
+static int ac_eq_fold(const char *a, size_t an, const char *b)
+{
+    size_t i;
+    if (strlen(b) != an) return 0;
+    for (i = 0; i < an; ++i)
+        if (tolower_ascii((unsigned char)a[i]) != tolower_ascii((unsigned char)b[i])) return 0;
+    return 1;
+}
+
+static int ac_find(const ow_autocorrect *ac, const char *from, size_t n, int fold)
+{
+    int i;
+    for (i = 0; ac && i < ac->count; ++i)
+        if (fold ? ac_eq_fold(from, n, ac->pairs[i].from)
+                 : strlen(ac->pairs[i].from) == n && !memcmp(ac->pairs[i].from, from, n)) return i;
+    return -1;
+}
+
+ow_autocorrect *ow_autocorrect_new(int with_defaults)
+{
+    ow_autocorrect *ac = (ow_autocorrect *)owf_calloc(1, sizeof *ac);
+    int i;
+    if (!ac) return NULL;
+    ac->options = OW_AC_ALL;
+    for (i = 0; with_defaults && ac_defaults[i]; i += 2)
+        if (ow_autocorrect_add(ac, ac_defaults[i], ac_defaults[i + 1]) != OWF_OK) {
+            ow_autocorrect_free(ac);
+            return NULL;
+        }
+    return ac;
+}
+
+void ow_autocorrect_free(ow_autocorrect *ac)
+{
+    int i;
+    if (!ac) return;
+    for (i = 0; i < ac->count; ++i) { owf_free(ac->pairs[i].from); owf_free(ac->pairs[i].to); }
+    owf_free(ac->pairs);
+    owf_free(ac);
+}
+
+unsigned ow_autocorrect_options(const ow_autocorrect *ac) { return ac ? ac->options : 0; }
+void ow_autocorrect_set_options(ow_autocorrect *ac, unsigned options) { if (ac) ac->options = options & OW_AC_ALL; }
+int ow_autocorrect_count(const ow_autocorrect *ac) { return ac ? ac->count : 0; }
+const char *ow_autocorrect_from(const ow_autocorrect *ac, int i)
+{ return ac && i >= 0 && i < ac->count ? ac->pairs[i].from : NULL; }
+const char *ow_autocorrect_to(const ow_autocorrect *ac, int i)
+{ return ac && i >= 0 && i < ac->count ? ac->pairs[i].to : NULL; }
+
+const char *ow_autocorrect_lookup(const ow_autocorrect *ac, const char *from)
+{
+    int i = from ? ac_find(ac, from, strlen(from), 0) : -1;
+    return i >= 0 ? ac->pairs[i].to : NULL;
+}
+
+/* a word to replace has no space, tab or line end in it; the replacement may have spaces ("a lot") */
+int ow_autocorrect_add(ow_autocorrect *ac, const char *from, const char *to)
+{
+    size_t i;
+    int at;
+    char *f, *t;
+    if (!ac || !from || !to || !*from || !*to) return OWF_ERR_FORMAT;
+    for (i = 0; from[i]; ++i) if (from[i] == ' ' || from[i] == '\t' || from[i] == '\n' || from[i] == '\r') return OWF_ERR_FORMAT;
+    for (i = 0; to[i]; ++i) if (to[i] == '\t' || to[i] == '\n' || to[i] == '\r') return OWF_ERR_FORMAT;
+    if (!(t = copy_bytes(to, strlen(to)))) return OWF_ERR_MEMORY;
+    if ((at = ac_find(ac, from, strlen(from), 0)) >= 0) {
+        owf_free(ac->pairs[at].to);
+        ac->pairs[at].to = t;
+        return OWF_OK;
+    }
+    if (ac->count == ac->cap) {
+        int cap = ac->cap ? ac->cap * 2 : 64;
+        ow_ac_pair *p = (ow_ac_pair *)owf_realloc(ac->pairs, (size_t)cap * sizeof *p);
+        if (!p) { owf_free(t); return OWF_ERR_MEMORY; }
+        ac->pairs = p;
+        ac->cap = cap;
+    }
+    if (!(f = copy_bytes(from, strlen(from)))) { owf_free(t); return OWF_ERR_MEMORY; }
+    ac->pairs[ac->count].from = f;
+    ac->pairs[ac->count].to = t;
+    ++ac->count;
+    return OWF_OK;
+}
+
+int ow_autocorrect_remove(ow_autocorrect *ac, const char *from)
+{
+    int at = from ? ac_find(ac, from, strlen(from), 0) : -1;
+    if (at < 0) return OWF_ERR_UNSUPPORTED;
+    owf_free(ac->pairs[at].from);
+    owf_free(ac->pairs[at].to);
+    memmove(&ac->pairs[at], &ac->pairs[at + 1], (size_t)(ac->count - at - 1) * sizeof *ac->pairs);
+    --ac->count;
+    return OWF_OK;
+}
+
+/* The saved form: "options n" on the first line, then "from<TAB>to" a line each (UTF-8) */
+int ow_autocorrect_load(ow_autocorrect *ac, const char *text, size_t length)
+{
+    size_t i = 0;
+    int rc = OWF_OK, first = 1;
+    if (!ac || (!text && length)) return OWF_ERR_FORMAT;
+    while (i < length) {
+        size_t start = i, end, tab;
+        char *line;
+        while (i < length && text[i] != '\n') ++i;
+        end = i;
+        if (i < length) ++i;
+        if (end > start && text[end - 1] == '\r') --end;
+        if (end == start) continue;
+        if (!(line = copy_bytes(text + start, end - start))) return OWF_ERR_MEMORY;
+        if (first && !strncmp(line, "options ", 8)) {
+            ac->options = (unsigned)strtoul(line + 8, NULL, 10) & OW_AC_ALL;
+        } else {
+            for (tab = 0; line[tab] && line[tab] != '\t'; ++tab) ;
+            if (line[tab]) {
+                line[tab] = 0;
+                if (ow_autocorrect_add(ac, line, line + tab + 1) == OWF_ERR_MEMORY) rc = OWF_ERR_MEMORY;
+            }
+        }
+        first = 0;
+        owf_free(line);
+        if (rc != OWF_OK) return rc;
+    }
+    return OWF_OK;
+}
+
+char *ow_autocorrect_save(const ow_autocorrect *ac, size_t *length)
+{
+    size_t n = 32, at;
+    int i;
+    char *out;
+    if (!ac) return NULL;
+    for (i = 0; i < ac->count; ++i) n += strlen(ac->pairs[i].from) + strlen(ac->pairs[i].to) + 2;
+    if (!(out = (char *)owf_malloc(n))) return NULL;
+    at = (size_t)snprintf(out, n, "options %u\n", ac->options);
+    for (i = 0; i < ac->count; ++i)
+        at += (size_t)snprintf(out + at, n - at, "%s\t%s\n", ac->pairs[i].from, ac->pairs[i].to);
+    if (length) *length = at;
+    return out;
+}
+
+static int ac_space(char c) { return c == ' ' || c == '\t'; }
+static int ac_lead(char c) { return c == '"' || c == '\'' || c == '(' || c == '[' || c == '{'; }
+static int ac_trail(char c)
+{ return c == '.' || c == ',' || c == ';' || c == ':' || c == '!' || c == '?' || c == ')' || c == ']' || c == '}' ||
+         c == '"' || c == '\''; }
+static int ac_upper(char c) { return c >= 'A' && c <= 'Z'; }
+static int ac_lower(char c) { return c >= 'a' && c <= 'z'; }
+
+/* after "e.g." or "i.e." (letters with stops) a sentence goes on */
+static int ac_abbreviation(const char *s, size_t start, size_t end)
+{
+    size_t i;
+    if (end - start < 4) return 0;
+    for (i = start; i + 1 < end; i += 2)
+        if (!ac_lower(s[i]) || s[i + 1] != '.') return 0;
+    return i == end;
+}
+
+/* The corrected word: from bytes [word, caret) of the paragraph's text; *start is where the change begins (the
+ * dash before the word may be in it). NULL when nothing changes. */
+static char *ac_correct(const ow_autocorrect *ac, const char *s, size_t caret, size_t *start)
+{
+    size_t token = caret, w0, w1, k, n, outn;
+    unsigned o = ac->options;
+    const char *rep = NULL, *tail = NULL;
+    char *out;
+    int capital_word = 0, caps_word = 0, sentence = 0, two_caps = 0, en_dash = 0, i;
+    while (token > 0 && !ac_space(s[token - 1])) --token;
+    if (token == caret) return NULL;
+    w0 = token; w1 = caret;
+    while (w0 < w1 && ac_lead(s[w0])) ++w0;
+    while (w1 > w0 && ac_trail(s[w1 - 1])) --w1;
+    n = w1 - w0;
+    if (o & OW_AC_REPLACE) {                     /* the whole token first ("(c)", "..."), then the word */
+        if ((i = ac_find(ac, s + token, caret - token, 0)) >= 0) { w0 = token; w1 = caret; n = w1 - w0; rep = ac->pairs[i].to; }
+        else if (n && (i = ac_find(ac, s + w0, n, 0)) >= 0) rep = ac->pairs[i].to;
+        else if (n && (i = ac_find(ac, s + w0, n, 1)) >= 0) {
+            size_t lowers = 0, uppers = 0;
+            for (k = w0; k < w1; ++k) { lowers += ac_lower(s[k]); uppers += ac_upper(s[k]); }
+            if (ac_upper(s[w0]) && uppers == 1) capital_word = 1;
+            else if (n > 1 && !lowers && uppers) caps_word = 1;
+            else capital_word = -1;
+            if (capital_word >= 0) rep = ac->pairs[i].to;
+        }
+    }
+    if ((o & OW_AC_REPLACE) && caret - w1 >= 2 && (i = ac_find(ac, s + w1, caret - w1, 0)) >= 0)
+        tail = ac->pairs[i].to;                  /* "so..." */
+    if (!rep && (o & OW_AC_TWO_CAPS) && n >= 3 && ac_upper(s[w0]) && ac_upper(s[w0 + 1]) && ac_lower(s[w0 + 2]) &&
+        !(n == 3 && s[w0 + 2] == 's')) {         /* CDs, PCs stay */
+        two_caps = 1;
+        for (k = w0; k < w1; ++k) if (!ac_upper(s[k]) && !ac_lower(s[k])) two_caps = 0;
+    }
+    if (o & OW_AC_SENTENCE) {
+        size_t b = token, e;
+        int plain = 1;
+        for (k = w0; k < w1; ++k) if (s[k] == '.' || s[k] == '/' || s[k] == '@' || s[k] == '\\' || (s[k] >= '0' && s[k] <= '9')) plain = 0;
+        while (b > 0 && ac_space(s[b - 1])) --b;
+        if (plain && (rep ? 1 : ac_lower(s[w0]))) {
+            if (b == 0) sentence = 1;
+            else if (b < token && (s[b - 1] == '.' || s[b - 1] == '!' || s[b - 1] == '?')) {
+                for (e = b; e > 0 && !ac_space(s[e - 1]); --e) ;
+                sentence = !ac_abbreviation(s, e, b);
+            }
+        }
+    }
+    if ((o & OW_AC_DASHES) && token >= 4 && s[token - 1] == ' ' && s[token - 2] == '-' && s[token - 3] == ' ' &&
+        !ac_space(s[token - 4]) && s[token - 4] != '-') en_dash = 1;
+    {   /* "a--b": an em dash between the letters */
+        int em = 0;
+        if ((o & OW_AC_DASHES) && !rep)
+            for (k = w0 + 1; k + 2 < w1; ++k)
+                if (s[k] == '-' && s[k + 1] == '-' && s[k - 1] != '-' && s[k + 2] != '-') em = 1;
+        if (!rep && !tail && !two_caps && !en_dash && !em && !(sentence && ac_lower(s[w0]))) return NULL;
+    }
+    *start = en_dash ? token - 2 : token;
+    outn = (caret - *start) + (rep ? strlen(rep) : 0) + (tail ? strlen(tail) : 0) + 8;
+    for (k = token; k < caret; ++k) outn += 2;
+    if (!(out = (char *)owf_malloc(outn))) return NULL;
+    k = 0;
+    if (en_dash) { memcpy(out, "\xe2\x80\x93 ", 4); k = 4; }
+    memcpy(out + k, s + token, w0 - token); k += w0 - token;
+    {
+        size_t body = k;
+        if (rep) { memcpy(out + k, rep, strlen(rep)); k += strlen(rep); }
+        else {
+            size_t j;
+            for (j = w0; j < w1; ++j) {
+                if ((o & OW_AC_DASHES) && j > w0 && j + 2 < w1 && s[j] == '-' && s[j + 1] == '-' && s[j - 1] != '-' &&
+                    s[j + 2] != '-') { memcpy(out + k, "\xe2\x80\x94", 3); k += 3; ++j; continue; }
+                out[k++] = s[j];
+            }
+            if (two_caps) out[body + 1] = (char)tolower_ascii((unsigned char)out[body + 1]);
+        }
+        if (caps_word) { size_t j; for (j = body; j < k; ++j) if (ac_lower(out[j])) out[j] = (char)(out[j] - 32); }
+        if ((capital_word == 1 || sentence) && ac_lower(out[body])) out[body] = (char)(out[body] - 32);
+    }
+    if (tail) { memcpy(out + k, tail, strlen(tail)); k += strlen(tail); }
+    else { memcpy(out + k, s + w1, caret - w1); k += caret - w1; }
+    out[k] = 0;
+    if (k == caret - *start && !memcmp(out, s + *start, k)) { owf_free(out); return NULL; }
+    return out;
+}
+
+/* Correct the word before the caret, as an edit of its own; 1: changed, 0: nothing to do, <0: no memory */
+static int ac_apply(ow_editor *editor, const ow_autocorrect *ac)
+{
+    ow_position caret, from, after;
+    owf_para *p;
+    owf_run *run;
+    owf_charfmt fmt;
+    char *text, *fixed;
+    size_t len, at, start = 0;
+    if (!editor || !editor->doc || !ac || !(ac->options & (OW_AC_REPLACE | OW_AC_SENTENCE | OW_AC_TWO_CAPS | OW_AC_DASHES)) ||
+        editor->track || !ow_editor_selection_empty(editor)) return 0;
+    caret = clamp_position(editor, editor->selection.focus);
+    p = &ed_story(editor)->paras[caret.paragraph];
+    run = &p->runs[caret.run];
+    if (run->kind != OWF_RUN_TEXT || !run->text || run->revision || run->note > 0) return 0;
+    if (!(text = paragraph_plain_text(p, &len))) return -1;
+    at = para_text_offset(p, caret);
+    fixed = ac_correct(ac, text, at, &start);
+    owf_free(text);
+    if (!fixed) return 0;
+    if (at - start > caret.byte_offset) { owf_free(fixed); return 0; }   /* it runs into another run */
+    fmt = run->fmt;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) { owf_free(fixed); return -1; }
+    from = caret;
+    from.byte_offset -= at - start;
+    editor->selection.anchor = from;
+    editor->selection.focus = caret;
+    if (delete_selection_internal(editor) < 0 ||
+        !insert_formatted_text(editor, editor->selection.focus, fixed, strlen(fixed), &fmt, &after)) {
+        owf_free(fixed);
+        ow_editor_undo(editor);
+        return -1;
+    }
+    owf_free(fixed);
+    editor->selection.anchor = editor->selection.focus = after;
+    editor->typing_group = 1;                    /* what is typed next goes with it, for Undo */
+    editor->typing_next = after;
+    editor->dirty = 1;
+    ++editor->changes;
+    return 1;
+}
+
+int ow_editor_autocorrect_word(ow_editor *editor, const ow_autocorrect *ac)
+{
+    int rc = ac_apply(editor, ac);
+    if (rc < 0) return OWF_ERR_MEMORY;
+    if (rc > 0) { editor->typing_group = 0; ow_editor_layout(editor); }
+    return OWF_OK;
+}
+
+int ow_editor_type(ow_editor *editor, const ow_autocorrect *ac, const char *utf8, size_t length)
+{
+    if (!editor || !utf8 || !length) return ow_editor_insert_utf8(editor, utf8, length);
+    if (ac && length == 1 && (utf8[0] == '"' || utf8[0] == '\'') && (ac->options & OW_AC_QUOTES) &&
+        ow_editor_selection_empty(editor)) {
+        ow_position caret = clamp_position(editor, editor->selection.focus);
+        owf_para *p = &ed_story(editor)->paras[caret.paragraph];
+        size_t len, at;
+        char *text = paragraph_plain_text(p, &len);
+        int open;
+        if (!text) return OWF_ERR_MEMORY;
+        at = para_text_offset(p, caret);
+        open = at == 0 || ac_space(text[at - 1]) || text[at - 1] == '(' || text[at - 1] == '[' || text[at - 1] == '{' ||
+               (at >= 3 && (unsigned char)text[at - 3] == 0xE2 && (unsigned char)text[at - 2] == 0x80 &&
+                ((unsigned char)text[at - 1] == 0x9C || (unsigned char)text[at - 1] == 0x98 ||
+                 (unsigned char)text[at - 1] == 0x93 || (unsigned char)text[at - 1] == 0x94));
+        owf_free(text);
+        if (utf8[0] == '"') return ow_editor_insert_utf8(editor, open ? "\xe2\x80\x9c" : "\xe2\x80\x9d", 3);
+        return ow_editor_insert_utf8(editor, open ? "\xe2\x80\x98" : "\xe2\x80\x99", 3);
+    }
+    if (ac && length == 1 && (utf8[0] == ' ' || utf8[0] == '\t') && ac_apply(editor, ac) < 0) return OWF_ERR_MEMORY;
+    return ow_editor_insert_utf8(editor, utf8, length);
+}
