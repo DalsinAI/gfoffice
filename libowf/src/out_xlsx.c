@@ -464,6 +464,7 @@ static void styles_xml(xlsx_out *w, owf_buf *b)
             continue;
         }
         if (!align) {
+            owf_buf_putc(b, '>');
             put_protection(b, s);
             owf_buf_puts(b, "</xf>");
             continue;
