@@ -84,3 +84,47 @@ notes-check: $(OUT)/test-notes-asan
 
 test: notes-test
 check: notes-check
+
+# Phase 2: mail merge (tests/core/test_merge.c)
+MERGE_SRC = $(OWF_SRC) $(CORE_SRC) tests/core/test_merge.c include/openwrite_core.h libowf/src/owf_fields.h
+
+$(OUT)/test-merge: $(MERGE_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) \
+		tests/core/test_merge.c -lz -o $@
+
+$(OUT)/test-merge-asan: $(MERGE_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) tests/core/test_merge.c -lz -o $@
+
+merge-test: $(OUT)/test-merge
+	$(OUT)/test-merge
+
+merge-check: $(OUT)/test-merge-asan
+	$(OUT)/test-merge-asan
+
+test: merge-test
+check: merge-check
+
+# Phase 2: alphabetical index (tests/core/test_index.c)
+INDEX_SRC = $(OWF_SRC) $(CORE_SRC) tests/core/test_index.c include/openwrite_core.h libowf/src/owf_fields.h
+
+$(OUT)/test-index: $(INDEX_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) \
+		tests/core/test_index.c -lz -o $@
+
+$(OUT)/test-index-asan: $(INDEX_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) tests/core/test_index.c -lz -o $@
+
+index-test: $(OUT)/test-index
+	$(OUT)/test-index
+
+index-check: $(OUT)/test-index-asan
+	$(OUT)/test-index-asan
+
+test: index-test
+check: index-check

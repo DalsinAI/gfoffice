@@ -195,9 +195,10 @@ def test_hand(work, hand):
           lines_with(lines, "kept "))
     check("hand: the chart's parts", 'part "Object 1/" application/vnd.oasis.opendocument.chart 0' in out and
           'part "Object 1/content.xml" text/xml' in out and 'part "ObjectReplacements/Object 1" image/png 116' in out)
-    for note in ("Animations are kept, not played", "Rotated objects are drawn unrotated", "Custom shows are kept",
-                 "Embedded charts and objects are kept"):
+    for note in ("Rotated objects are drawn unrotated", "Custom shows are kept", "Embedded charts and objects are kept"):
         check("hand: the report says " + note, note in out)
+    check("hand: its animation plays (0.6.29), so the report has no animation note",
+          "animations are kept, not played" not in out.lower())
     return out
 
 

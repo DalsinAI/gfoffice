@@ -838,6 +838,9 @@ typedef enum {
     SNAP_OBJ_CROP,
     SNAP_OBJ_FLOW,
     SNAP_OBJ_PARENT,
+    SNAP_ANIMS,
+    SNAP_MASTERS,
+    SNAP_SLIDE_MASTER,
     SNAP_GROUP
 } snapshot_kind;
 
@@ -887,6 +890,15 @@ typedef struct snapshot {
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
     owf_obj saved_obj;
     int saved_obj_present;
+    /* SNAP_ANIMS: a slide's effects and its kept timing XML, as they were. */
+    owf_anim *anims;
+    int nanims, capanims, keep_timing;
+    /* SNAP_MASTERS: the deck's masters as they were, and which master each
+     * slide and layout used (nslides, nlayouts long). SNAP_SLIDE_MASTER: the
+     * slide's master in from. */
+    owf_master *masters;
+    int nmasters, capmasters, nslide_masters, nlayout_masters;
+    int *slide_masters, *layout_masters;
     /* SNAP_GROUP: several steps made as one (opr_undo_group_begin/end), in
      * the order they were made; parts_forward says the next swap redoes
      * them first to last (else it undoes them last to first). */
@@ -931,6 +943,9 @@ static void slide_free(owf_slide *s)
     owf_free(s->name);
     owf_free(s->footer);
     owf_free(s->date_text);
+    for (i = 0; i < s->nanims; i++)
+        owf_free(s->anims[i].preset);
+    owf_free(s->anims);
     memset(s, 0, sizeof *s);
 }
 
@@ -987,6 +1002,22 @@ static void snap_free(snapshot *s)
         owf_free(s->transitions);
     } else if (s->kind == SNAP_OBJ_PRESENCE && s->saved_obj_present) {
         owf_obj_clear(&s->saved_obj);
+    } else if (s->kind == SNAP_ANIMS) {
+        int i;
+        for (i = 0; i < s->nanims; i++)
+            owf_free(s->anims[i].preset);
+        owf_free(s->anims);
+    } else if (s->kind == SNAP_MASTERS) {
+        int i, k;
+        for (i = 0; i < s->nmasters; i++) {
+            for (k = 0; k < s->masters[i].nobjs; k++)
+                owf_obj_clear(&s->masters[i].objs[k]);
+            owf_free(s->masters[i].objs);
+            owf_free(s->masters[i].name);
+        }
+        owf_free(s->masters);
+        owf_free(s->slide_masters);
+        owf_free(s->layout_masters);
     } else if (s->kind == SNAP_GROUP) {
         int i;
         for (i = 0; i < s->nparts; i++)
@@ -1261,6 +1292,41 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
                 return -1;
             s->saved_obj_present = 1;
         }
+    } else if (s->kind == SNAP_ANIMS) {
+        owf_slide *sl;
+        owf_anim *a;
+        int n, cap, keep;
+        if (!deck || s->slide < 0 || s->slide >= deck->nslides)
+            return -1;
+        sl = &deck->slides[s->slide];
+        a = sl->anims; n = sl->nanims; cap = sl->capanims; keep = sl->keep_timing;
+        sl->anims = s->anims; sl->nanims = s->nanims; sl->capanims = s->capanims; sl->keep_timing = s->keep_timing;
+        s->anims = a; s->nanims = n; s->capanims = cap; s->keep_timing = keep;
+    } else if (s->kind == SNAP_MASTERS) {
+        owf_master *m;
+        int n, cap, i, t;
+        if (!deck || deck->nslides != s->nslide_masters || deck->nlayouts != s->nlayout_masters)
+            return -1;
+        m = deck->masters; n = deck->nmasters; cap = deck->capmasters;
+        deck->masters = s->masters; deck->nmasters = s->nmasters; deck->capmasters = s->capmasters;
+        s->masters = m; s->nmasters = n; s->capmasters = cap;
+        for (i = 0; i < deck->nslides; i++) {
+            t = deck->slides[i].master;
+            deck->slides[i].master = s->slide_masters[i];
+            s->slide_masters[i] = t;
+        }
+        for (i = 0; i < deck->nlayouts; i++) {
+            t = deck->layouts[i].master;
+            deck->layouts[i].master = s->layout_masters[i];
+            s->layout_masters[i] = t;
+        }
+    } else if (s->kind == SNAP_SLIDE_MASTER) {
+        int t;
+        if (!deck || s->slide < 0 || s->slide >= deck->nslides)
+            return -1;
+        t = deck->slides[s->slide].master;
+        deck->slides[s->slide].master = s->from;
+        s->from = t;
     } else if (s->kind == SNAP_OBJ_PARENT) {
         owf_obj *o = object(deck, s->slide, s->obj);
         int k;
@@ -2063,6 +2129,122 @@ int opr_slide_set_transition(opr_undo *u, owf_deck *deck, int index, const owf_t
     }
     structural_push(u, &s);
     if (selected) *selected = index;
+    return 0;
+}
+
+int opr_slide_set_anims(opr_undo *u, owf_deck *deck, int slide, owf_anim *anims, int nanims, int capanims)
+{
+    snapshot s;
+    owf_slide *sl;
+    if (!u || !deck || slide < 0 || slide >= deck->nslides || nanims < 0 || capanims < nanims ||
+        (nanims && !anims))
+        return -1;
+    sl = &deck->slides[slide];
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_ANIMS;
+    s.slide = slide;
+    s.obj = -1;
+    s.focus = s.other_focus = slide;
+    s.anims = sl->anims;
+    s.nanims = sl->nanims;
+    s.capanims = sl->capanims;
+    s.keep_timing = sl->keep_timing;
+    sl->anims = anims;
+    sl->nanims = nanims;
+    sl->capanims = capanims;
+    sl->keep_timing = -1;               /* the effects are the model's now, not the file's XML */
+    structural_push(u, &s);
+    return 0;
+}
+
+/* The deck's masters replaced by masters (taken over when this succeeds),
+ * with each slide's and layout's master given anew: one Undo step. */
+int opr_masters_set(opr_undo *u, owf_deck *deck, owf_master *masters, int nmasters, int capmasters,
+                    const int *slide_masters, const int *layout_masters)
+{
+    snapshot s;
+    int i;
+    if (!u || !deck || !masters || nmasters < 1 || capmasters < nmasters ||
+        (deck->nslides && !slide_masters) || (deck->nlayouts && !layout_masters))
+        return -1;
+    for (i = 0; i < deck->nslides; i++)
+        if (slide_masters[i] < 0 || slide_masters[i] >= nmasters)
+            return -1;
+    for (i = 0; i < deck->nlayouts; i++)
+        if (layout_masters[i] < -1 || layout_masters[i] >= nmasters)
+            return -1;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_MASTERS;
+    s.slide = s.obj = -1;
+    s.focus = s.other_focus = -1;
+    if (deck->nslides) {
+        s.slide_masters = owf_malloc((size_t)deck->nslides * sizeof *s.slide_masters);
+        if (!s.slide_masters)
+            return -1;
+    }
+    if (deck->nlayouts) {
+        s.layout_masters = owf_malloc((size_t)deck->nlayouts * sizeof *s.layout_masters);
+        if (!s.layout_masters) {
+            owf_free(s.slide_masters);
+            return -1;
+        }
+    }
+    s.nslide_masters = deck->nslides;
+    s.nlayout_masters = deck->nlayouts;
+    for (i = 0; i < deck->nslides; i++) {
+        s.slide_masters[i] = deck->slides[i].master;
+        deck->slides[i].master = slide_masters[i];
+    }
+    for (i = 0; i < deck->nlayouts; i++) {
+        s.layout_masters[i] = deck->layouts[i].master;
+        deck->layouts[i].master = layout_masters[i];
+    }
+    s.masters = deck->masters;
+    s.nmasters = deck->nmasters;
+    s.capmasters = deck->capmasters;
+    deck->masters = masters;
+    deck->nmasters = nmasters;
+    deck->capmasters = capmasters;
+    structural_push(u, &s);
+    return 0;
+}
+
+int opr_slide_insert_owned(opr_undo *u, owf_deck *deck, int at, owf_slide *slide, int *selected)
+{
+    snapshot s;
+    int before, index;
+    if (!u || !deck || !slide || slide->master < 0 || slide->master >= deck->nmasters)
+        return -1;
+    before = selected_before(deck, selected, at);
+    index = at < 0 || at > deck->nslides ? deck->nslides : at;
+    if (slide_attach(deck, index, slide) < 0)
+        return -1;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_SLIDE;
+    s.slide = index;
+    s.obj = -1;
+    s.focus = before;
+    s.other_focus = index;
+    structural_push(u, &s);
+    if (selected) *selected = index;
+    return 0;
+}
+
+int opr_slide_set_master(opr_undo *u, owf_deck *deck, int slide, int master)
+{
+    snapshot s;
+    if (!u || !deck || slide < 0 || slide >= deck->nslides || master < 0 || master >= deck->nmasters)
+        return -1;
+    if (deck->slides[slide].master == master)
+        return 0;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_SLIDE_MASTER;
+    s.slide = slide;
+    s.obj = -1;
+    s.focus = s.other_focus = slide;
+    s.from = deck->slides[slide].master;
+    deck->slides[slide].master = master;
+    structural_push(u, &s);
     return 0;
 }
 

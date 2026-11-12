@@ -34,7 +34,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | ODF Presentation template (`.otp`) | P1 | Yes (opened; saved as `.otp` by name) |
 | Flat XML ODF Presentation (`.fodp`) | P1 | Yes; embedded objects' parts are not kept in flat XML (reported) |
 | Microsoft PowerPoint 2007-365 (`.pptx`, `.potx`, `.ppsx`) open | P2 | No in P1. P2: Yes (`in_pptx.c`; what is approximated is reported, see FORMATS.md); saved as PPTX since 0.6.27 |
-| Save as PowerPoint 2007-365 | P4 | Yes (0.6.27): Save and Save As .pptx (`src/deck/opr_pptx.c`); tables saved as text boxes, groups ungrouped, animations not written, all reported |
+| Save as PowerPoint 2007-365 | P4 | Yes (0.6.27): Save and Save As .pptx (`src/deck/opr_pptx.c`); tables saved as text boxes, groups ungrouped, animations not written (ODP keeps them), all reported |
 | PowerPoint 97-2003 (`.ppt`, `.pps`, `.pot`) open and save | Later | No |
 | OpenOffice.org 1.x (`.sxi`), StarImpress | Later, if samples appear | No |
 | Export as PDF (Export as PDF..., Export Directly as PDF) | P1 | Yes: a page a slide, searchable text, JPEG and PNG pictures, hidden slides left out |
@@ -57,14 +57,14 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Slide background: colour | P1 | Yes |
 | Background: gradient, hatching | Later | Approx.: drawn and saved in one colour |
 | Background: bitmap | P1 | Yes (stretched) |
-| Insert slide from file, expand slide, summary slide | Later | No |
+| Insert slide from file, expand slide, summary slide | P8 | Insert Slides from File: Yes in 0.6.31 (every slide of an ODP or PPTX, one Undo step); expand and summary slide: No |
 | Header and footer: date (fixed or current), footer text, slide number, per slide or all | P1 (data), P3 (dialog) | Yes: read, written, drawn in the master's boxes |
 
 ## 3. Masters and styles
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Slide masters (several in a deck), apply a master to slides | P1 (data), P4 (Master view) | Yes: read, written, slides keep theirs |
+| Slide masters (several in a deck), apply a master to slides | P1 (data), P7 (Master view) | Yes: read, written, slides keep theirs; 0.6.30: View > Master Slides edits them (art, boxes, background; new, rename, delete, order) and Slide > Slide Design... gives slides a master |
 | Master's fixed art (logos, bands) | P1 | Yes |
 | Master's placeholders: title, outline, date, footer, number | P1 | Yes |
 | Presentation styles: title, subtitle, outline 1-9, notes, background objects | P1 | Yes: each a text level of the master |
@@ -233,20 +233,22 @@ Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Entrance, emphasis, exit effects, motion paths | P4 ("appear" and "fade in"), Later | Kept, written back while objects keep their ids |
-| Start on click, with previous, after previous; timing; triggers | P4 | Kept |
+| Entrance and exit effects: appear, fade, fly in/out, wipe, dissolve | P6 | Yes in 0.6.29: Slide > Custom Animation... edits them (add, change, remove, reorder, one Undo step each) and the show plays them; ODP open and save (`src/deck/opr_anim.c`, owfpresent.library 3.7) |
+| Emphasis effects, motion paths, other entrance and exit effects | Later | Kept and written back as they were while their object keeps its id |
+| Start on click, with previous, after previous; duration and delay | P6 | Yes in 0.6.29 |
+| Triggers, sounds, text by paragraph or letter | Later | Kept or No |
 
 ## 13. Views and tools
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Normal view (slides, slide, notes) | P3 | Partly: the slide at the window's size with the slides beside it; notes in their own Notes view, no notes pane |
-| Slide Sorter | P3 | Yes in GFOpenPresentation 0.6.24 (View > Slide Sorter): a thumbnail grid; click, Shift and Ctrl pick several; drag with an insertion mark; Duplicate, Delete, Hide, Show, Move Up/Down and Slide Transition on every picked slide, each one Undo step; Zoom sets the columns; Return or a double-click opens a slide; ARexx VIEW, PICK, MOVEPICKED and the rest. Slide clipboard: No |
-| Master view | P4 | No |
+| Slide Sorter | P3 | Yes in GFOpenPresentation 0.6.24 (View > Slide Sorter): a thumbnail grid; click, Shift and Ctrl pick several; drag with an insertion mark; Duplicate, Delete, Hide, Show, Move Up/Down and Slide Transition on every picked slide, each one Undo step; Zoom sets the columns; Return or a double-click opens a slide; ARexx VIEW, PICK, MOVEPICKED and the rest. Slide clipboard: Yes in 0.6.31 (Cut, Copy, Paste of the picked slides) |
+| Master view | P7 | Yes in 0.6.30: View > Master Slides, one Undo step back to the deck; text levels not edited there yet |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
 | Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/duplication/deletion/position/size/shape rotation/drawing order/alignment/appearance: Yes (`opr_edit.c`); other object edits: No |
-| Clipboard: objects and slides | P3 (Shared E10) | Top-level supported objects: system Cut/Copy/Paste Yes in 0.6.15; groups/charts/opaque objects and slide clipboard: No |
+| Clipboard: objects and slides | P3 (Shared E10) | Top-level supported objects: system Cut/Copy/Paste Yes in 0.6.15; slide clipboard Yes in 0.6.31 (the sorter's own); groups/charts/opaque objects: No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
 | ARexx port `GFOPENPRESENTATION` | P4 | No |
 

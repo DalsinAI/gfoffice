@@ -106,7 +106,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.28 (11.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.31 (12.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -144,12 +144,14 @@ enum {
     M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TIGHT, M_WRAP_TOP_BOTTOM, M_WRAP_DISTANCE,
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
+    M_CUSTOM_ANIMATION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_SHOW_GRID, M_SNAP_GRID, M_SHOW_GUIDES, M_SNAP_GUIDES,
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
-    M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE
+    M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
+    M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE
 };
 
 static struct NewMenu menus[] = {
@@ -272,6 +274,11 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Hide " UNIT, NULL, 0, 0, (APTR)M_HIDE_SLIDE },
     { NM_ITEM, "Show " UNIT, NULL, 0, 0, (APTR)M_SHOW_SLIDE },
     { NM_ITEM, UNIT " Transition...", NULL, 0, 0, (APTR)M_TRANSITION },
+#ifndef OPENPUBLISHER
+    { NM_ITEM, "Custom Animation...", NULL, 0, 0, (APTR)M_CUSTOM_ANIMATION },
+    { NM_ITEM, UNIT " Design...", NULL, 0, 0, (APTR)M_SLIDE_DESIGN },
+    { NM_ITEM, "Insert " UNIT "s from File...", NULL, 0, 0, (APTR)M_INSERT_FILE },
+#endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Move " UNIT " Up", NULL, 0, 0, (APTR)M_MOVE_SLIDE_UP },
     { NM_ITEM, "Move " UNIT " Down", NULL, 0, 0, (APTR)M_MOVE_SLIDE_DOWN },
@@ -281,6 +288,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Outline", NULL, CHECKIT, ~8 & 15, (APTR)M_VIEW_OUTLINE },
     { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 15, (APTR)M_VIEW_SORTER },
     { NM_ITEM, "Notes", NULL, CHECKIT, ~4 & 15, (APTR)M_VIEW_NOTES },
+#ifndef OPENPUBLISHER
+    { NM_ITEM, "Master " UNIT "s", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_VIEW_MASTER },
+#endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First " UNIT, NULL, 0, 0, (APTR)M_FIRST },
     { NM_ITEM, "Previous " UNIT, "[", 0, 0, (APTR)M_PREV },
@@ -388,6 +398,13 @@ static char current_format[16] = "ODP";
 static int dirty;
 static char status[320] = "Ready.";
 static opr_undo *undo;
+/* The Master view (P7): while it is shown, deck and undo are the view's (a slide a master) and the
+ * document's wait here; master_view_leave writes the masters back. */
+static opr_master_view *mview;
+static owf_deck *mview_deck;
+static opr_undo *mview_undo;
+static int mview_current, mview_dirty;
+static void master_view_leave(void);
 
 /* The selected slide object, and typing within it. */
 /* The slide sorter (View > Slide Sorter): the grid of thumbnails fills the view, the picked slides are the
@@ -1679,7 +1696,24 @@ typedef struct {
     ol_scale scale;
     ol_pixel_rect lim;           /* the slide, and of it what is being drawn */
     int thumb;                   /* a thumbnail: text as lines */
+    /* The show's custom animation: objects not drawn (by their index in the slide's objs), or the only
+       ones drawn (the slide's background and master art then are not); NULL: all. */
+    const unsigned char *hide, *only;
 } painter;
+
+/* Whether an op is drawn: its frame's object is not left out (or is one of the only ones). */
+static int paint_wanted(const painter *p, const ol_display_op *op)
+{
+    int f = opr_slide_frame_of(p->s, op), k = -1;
+    if (f >= 0 && p->s->frames[f].obj && !p->s->frames[f].from_master && !p->s->notes && deck &&
+        p->s->slide >= 0 && p->s->slide < deck->nslides) {
+        const owf_slide *sl = &deck->slides[p->s->slide];
+        if (p->s->frames[f].obj >= sl->objs && p->s->frames[f].obj < sl->objs + sl->nobjs)
+            k = (int)(p->s->frames[f].obj - sl->objs);
+    }
+    if (p->only) return k >= 0 && p->only[k];
+    return k < 0 || !p->hide[k];
+}
 
 static UWORD shape_pattern(unsigned style)
 {
@@ -1985,6 +2019,7 @@ static void paint_op(void *userdata, const ol_device_op *d)
 {
     painter *p = (painter *)userdata;
     struct RastPort *rp = p->rp;
+    if ((p->hide || p->only) && !paint_wanted(p, d->op)) return;
     switch (d->op->type) {
     case OL_OP_TEXT:
         paint_text(p, d);
@@ -2040,8 +2075,21 @@ static void paint_op(void *userdata, const ol_device_op *d)
 }
 
 /* The slide at x, y, w wide (its height from the deck's shape), what crosses clip (NULL: all of it). */
+/* paint_slide with the show's choice of objects (hide, only: painter's) and the objects moved by dx, dy
+ * pixels (clip still the slide's part drawn). */
+static void paint_slide_ex(struct RastPort *rp, const opr_slide *s, int x, int y, int w, const ol_pixel_rect *clip,
+                           int thumb, ol_scale *out, const unsigned char *hide, const unsigned char *only,
+                           int dx, int dy);
+
 static void paint_slide(struct RastPort *rp, const opr_slide *s, int x, int y, int w, const ol_pixel_rect *clip,
                         int thumb, ol_scale *out)
+{
+    paint_slide_ex(rp, s, x, y, w, clip, thumb, out, NULL, NULL, 0, 0);
+}
+
+static void paint_slide_ex(struct RastPort *rp, const opr_slide *s, int x, int y, int w, const ol_pixel_rect *clip,
+                           int thumb, ol_scale *out, const unsigned char *hide, const unsigned char *only,
+                           int dx, int dy)
 {
     painter p;
     int pw = deck->width, ph = deck->height, h;
@@ -2051,9 +2099,11 @@ static void paint_slide(struct RastPort *rp, const opr_slide *s, int x, int y, i
     p.rp = rp;
     p.s = s;
     p.thumb = thumb;
+    p.hide = hide;
+    p.only = only;
     ol_scale_fit(&p.scale, TW(pw), w);
-    p.scale.origin_x = x;
-    p.scale.origin_y = y;
+    p.scale.origin_x = x + dx;
+    p.scale.origin_y = y + dy;
     p.lim.x = x;
     p.lim.y = y;
     p.lim.width = w;
@@ -2071,6 +2121,7 @@ static void paint_slide(struct RastPort *rp, const opr_slide *s, int x, int y, i
         ogt_box(rp, argb_pen(0xffffffffu), x, y, w, h);
         return;
     }
+    if (p.lim.width <= 0 || p.lim.height <= 0) return;
     ol_draw_page(s->doc, 0, &p.scale, &p.lim, paint_op, &p);
     SetFont(rp, font);
 }
@@ -2081,7 +2132,7 @@ static void update_window_title(void)
 {
     static char title[sizeof current_path + 32];     /* static: Intuition keeps the pointer */
     const char *name = current_path[0] ? leaf(current_path) : "Untitled";
-    snprintf(title, sizeof title, "%s%s - " PROGRAM, dirty ? "*" : "", name);
+    snprintf(title, sizeof title, "%s%s%s - " PROGRAM, dirty ? "*" : "", name, mview ? " (Masters)" : "");
     if (win) SetWindowTitles(win, (STRPTR)title, (STRPTR)-1);
 }
 
@@ -2981,6 +3032,260 @@ static void edit_current_transition(void)
     structure_changed(selected, apply_all ? "Transition applied to all " UNITS_LOWER "." : UNIT " transition changed.");
 }
 
+/* ---- Custom animation (Slide > Custom Animation...) ----
+ *
+ * The slide's effects in the order they play, and the effect, direction, start, duration and delay of the
+ * one picked. Add puts the effect set below on the object chosen; Change sets the picked effect to it;
+ * each button is one Undo step at once, so the window stays open while the effects are built. */
+
+static const char *anim_start_words[] = { "CLICK", "WITH", "AFTER" };
+static const char *anim_dir_words[] = { "LEFT", "RIGHT", "TOP", "BOTTOM" };
+
+#ifndef OPENPUBLISHER
+/* An object's name in lists: its own, else its kind and number ("3 Title", "5 Shape"). */
+static void anim_obj_label(const owf_slide *sl, int k, char *out, size_t cap)
+{
+    const owf_obj *o = &sl->objs[k];
+    const char *kind = "Object";
+    char name[40];
+    if (o->name && o->name[0]) {
+        int n;
+        size_t len;
+        name_to_latin1(o->name, name, sizeof name);
+        n = snprintf(out, cap, "%d ", k + 1);
+        if (n < 0 || (size_t)n >= cap)
+            return;
+        len = strlen(name);
+        if (len > cap - (size_t)n - 1)
+            len = cap - (size_t)n - 1;
+        memcpy(out + n, name, len);
+        out[n + len] = 0;
+        return;
+    }
+    if (o->placeholder == OWF_PH_TITLE) kind = "Title";
+    else if (o->placeholder == OWF_PH_SUBTITLE) kind = "Subtitle";
+    else if (o->kind == OWF_OBJ_TEXT) kind = "Text";
+    else if (o->kind == OWF_OBJ_PICTURE) kind = "Picture";
+    else if (o->kind == OWF_OBJ_SHAPE) kind = "Shape";
+    else if (o->kind == OWF_OBJ_TABLE) kind = "Table";
+    else if (o->kind == OWF_OBJ_GROUP) kind = "Group";
+    snprintf(out, cap, "%d %s", k + 1, kind);
+}
+
+/* An effect as the list shows it: "1. 5 Shape: Fly In, on click". */
+static void anim_label(const owf_deck *d, int slide, int i, char *out, size_t cap)
+{
+    static const char *starts[] = { "on click", "with previous", "after previous" };
+    const owf_slide *sl = &d->slides[slide];
+    const owf_anim *a = &sl->anims[i];
+    const char *label = NULL;
+    char obj[48];
+    int k = opr_anim_obj(d, slide, i), n = opr_effect_index(a->cls, a->effect);
+    if (k >= 0) anim_obj_label(sl, k, obj, sizeof obj);
+    else snprintf(obj, sizeof obj, "(object gone)");
+    if (n >= 0) opr_effect_at(n, NULL, NULL, NULL, &label);
+    snprintf(out, cap, "%d. %s: %s, %s", i + 1, obj, label ? label : (a->preset ? a->preset : "Kept effect"),
+             starts[a->start <= OWF_START_AFTER ? a->start : 0]);
+}
+#endif /* OPENPUBLISHER */
+
+static void anim_changed(const char *message)
+{
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status(message);
+    update_edit_tools();
+}
+
+#ifndef OPENPUBLISHER
+#define ANIM_LIST_MAX 64
+
+static void custom_animation_window(void)
+{
+    master_view_leave();
+    static STRPTR effect_labels[OPR_EFFECTS + 1];
+    static STRPTR direction_labels[] = {
+        (STRPTR)"From Left", (STRPTR)"From Right", (STRPTR)"From Top", (STRPTR)"From Bottom", NULL
+    };
+    static STRPTR start_labels[] = { (STRPTR)"On Click", (STRPTR)"With Previous", (STRPTR)"After Previous", NULL };
+    static STRPTR obj_labels[ANIM_LIST_MAX + 1];
+    static char obj_text[ANIM_LIST_MAX][48];
+    static struct Node nodes[ANIM_LIST_MAX];
+    static char node_text[ANIM_LIST_MAX][96];
+    struct List labels;
+    struct Gadget *glist = NULL, *last, *glv, *gobj, *geffect, *gdir, *gstart, *gdur, *gdelay, *g;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    const owf_slide *sl;
+    int done = 0, picked = -1, nobj, i, ww = 600, wh = 262, changed = 0;
+    LONG v;
+    if (!deck || current < 0 || current >= deck->nslides || !scr || !vi) return;
+    sl = &deck->slides[current];
+    if (!sl->nobjs) {
+        tell(PROGRAM, "This " UNIT_LOWER " has no objects to animate.");
+        return;
+    }
+    stop_typing();
+    for (i = 0; i < OPR_EFFECTS; i++) {
+        const char *label;
+        opr_effect_at(i, NULL, NULL, NULL, &label);
+        effect_labels[i] = (STRPTR)label;
+    }
+    effect_labels[OPR_EFFECTS] = NULL;
+    nobj = sl->nobjs < ANIM_LIST_MAX ? sl->nobjs : ANIM_LIST_MAX;
+    for (i = 0; i < nobj; i++) {
+        anim_obj_label(sl, i, obj_text[i], sizeof obj_text[i]);
+        obj_labels[i] = (STRPTR)obj_text[i];
+    }
+    obj_labels[nobj] = NULL;
+
+#define ANIM_FILL_LIST() do { \
+        int n_ = deck->slides[current].nanims < ANIM_LIST_MAX ? deck->slides[current].nanims : ANIM_LIST_MAX; \
+        labels.lh_Head = (struct Node *)&labels.lh_Tail; labels.lh_Tail = NULL; \
+        labels.lh_TailPred = (struct Node *)&labels.lh_Head; \
+        for (i = 0; i < n_; i++) { \
+            anim_label(deck, current, i, node_text[i], sizeof node_text[i]); \
+            memset(&nodes[i], 0, sizeof nodes[i]); \
+            nodes[i].ln_Name = node_text[i]; \
+            AddTail(&labels, &nodes[i]); \
+        } \
+    } while (0)
+    ANIM_FILL_LIST();
+
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 22; ng.ng_Width = 300; ng.ng_Height = 196;
+    ng.ng_GadgetText = (STRPTR)"Effects in the order they play"; ng.ng_Flags = PLACETEXT_ABOVE; ng.ng_GadgetID = 1;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&labels, GTLV_ShowSelected, 0,
+                              TAG_DONE);
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_LeftEdge = 410; ng.ng_Width = 180; ng.ng_Height = 18;
+    ng.ng_TopEdge = 22; ng.ng_GadgetText = (STRPTR)"Object"; ng.ng_GadgetID = 13;
+    last = gobj = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)obj_labels,
+                               GTCY_Active, (ULONG)(selected_obj >= 0 && selected_obj < nobj ? selected_obj : 0), TAG_DONE);
+    ng.ng_TopEdge = 48; ng.ng_GadgetText = (STRPTR)"Effect"; ng.ng_GadgetID = 2;
+    last = geffect = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)effect_labels, GTCY_Active, 1, TAG_DONE);
+    ng.ng_TopEdge = 74; ng.ng_GadgetText = (STRPTR)"Direction"; ng.ng_GadgetID = 3;
+    last = gdir = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)direction_labels, GTCY_Active, 3, TAG_DONE);
+    ng.ng_TopEdge = 100; ng.ng_GadgetText = (STRPTR)"Start"; ng.ng_GadgetID = 4;
+    last = gstart = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)start_labels, GTCY_Active, 0, TAG_DONE);
+    ng.ng_TopEdge = 126; ng.ng_Width = 90; ng.ng_GadgetText = (STRPTR)"Duration ms"; ng.ng_GadgetID = 5;
+    last = gdur = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, 0, GTIN_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 152; ng.ng_GadgetText = (STRPTR)"Delay ms"; ng.ng_GadgetID = 6;
+    last = gdelay = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, 0, GTIN_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge = 182; ng.ng_Width = 86; ng.ng_Height = 18; ng.ng_LeftEdge = 320;
+    ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = 7;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 412; ng.ng_GadgetText = (STRPTR)"Change"; ng.ng_GadgetID = 8;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 504; ng.ng_GadgetText = (STRPTR)"Remove"; ng.ng_GadgetID = 9;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_TopEdge = 230; ng.ng_LeftEdge = 10; ng.ng_GadgetText = (STRPTR)"Move Up"; ng.ng_GadgetID = 10;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 102; ng.ng_GadgetText = (STRPTR)"Move Down"; ng.ng_GadgetID = 11;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 504; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = 12;
+    g = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glv || !gobj || !geffect || !gdir || !gstart || !gdur || !gdelay || !g) goto out;
+    rw = OpenWindowTags(NULL, WA_Title, (ULONG)"Custom Animation", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh, WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+        WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | INTEGERIDCMP | CYCLEIDCMP | LISTVIEWIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD code = m->Code, id = 0;
+            if ((cls == IDCMP_GADGETUP || cls == IDCMP_GADGETDOWN) && m->IAddress)
+                id = ((struct Gadget *)m->IAddress)->GadgetID;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 12) { done = 1; break; }
+            if (id == 1) {
+                const owf_anim *a;
+                int n, k;
+                picked = code;
+                if (picked < 0 || picked >= deck->slides[current].nanims) { picked = -1; continue; }
+                a = &deck->slides[current].anims[picked];
+                n = opr_effect_index(a->cls, a->effect);
+                k = opr_anim_obj(deck, current, picked);
+                if (k >= 0 && k < nobj) GT_SetGadgetAttrs(gobj, rw, NULL, GTCY_Active, (ULONG)k, TAG_DONE);
+                if (n >= 0) GT_SetGadgetAttrs(geffect, rw, NULL, GTCY_Active, (ULONG)n, TAG_DONE);
+                GT_SetGadgetAttrs(gdir, rw, NULL, GTCY_Active, (ULONG)(a->direction & 3), TAG_DONE);
+                GT_SetGadgetAttrs(gstart, rw, NULL, GTCY_Active, (ULONG)(a->start <= OWF_START_AFTER ? a->start : 0), TAG_DONE);
+                GT_SetGadgetAttrs(gdur, rw, NULL, GTIN_Number, (LONG)a->duration, TAG_DONE);
+                GT_SetGadgetAttrs(gdelay, rw, NULL, GTIN_Number, (LONG)a->delay, TAG_DONE);
+                continue;
+            }
+            if (id >= 7 && id <= 11) {
+                owf_anim spec;
+                int cls_v = 0, effect_v = 0, obj_v, rc = -1, at = -1;
+                memset(&spec, 0, sizeof spec);
+                GT_GetGadgetAttrs(geffect, rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE);
+                opr_effect_at((int)v, &cls_v, &effect_v, NULL, NULL);
+                spec.cls = (unsigned char)cls_v;
+                spec.effect = (unsigned char)effect_v;
+                GT_GetGadgetAttrs(gdir, rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE); spec.direction = (unsigned char)v;
+                GT_GetGadgetAttrs(gstart, rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE); spec.start = (unsigned char)v;
+                GT_GetGadgetAttrs(gdur, rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); spec.duration = (int)v;
+                GT_GetGadgetAttrs(gdelay, rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); spec.delay = (int)v;
+                GT_GetGadgetAttrs(gobj, rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE); obj_v = (int)v;
+                /* detach the list while it changes */
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                if (id == 7) {
+                    at = picked >= 0 ? picked + 1 : -1;
+                    rc = opr_anim_add(undo, deck, current, obj_v, &spec, at);
+                } else if (picked < 0) {
+                    rc = -3;
+                } else if (id == 8) {
+                    rc = opr_anim_change(undo, deck, current, picked, &spec);
+                } else if (id == 9) {
+                    rc = opr_anim_delete(undo, deck, current, picked);
+                    if (rc >= 0) {
+                        picked = rc < deck->slides[current].nanims ? rc : deck->slides[current].nanims - 1;
+                        rc = 0;
+                    }
+                } else if (id == 10) {
+                    rc = picked > 0 ? opr_anim_move(undo, deck, current, picked, picked - 1) : picked;
+                } else {
+                    rc = picked + 1 < deck->slides[current].nanims ? opr_anim_move(undo, deck, current, picked, picked + 1)
+                                                                   : picked;
+                }
+                ANIM_FILL_LIST();
+                if (rc >= 0 && id != 9) picked = rc;
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)&labels,
+                                  GTLV_Selected, (ULONG)(picked >= 0 ? picked : ~0), GTLV_MakeVisible,
+                                  (ULONG)(picked >= 0 ? picked : 0), TAG_DONE);
+                if (rc == -3) SetWindowTitles(rw, (STRPTR)"Custom Animation: pick an effect in the list first", (STRPTR)-1);
+                else if (rc == -2) SetWindowTitles(rw, (STRPTR)"Custom Animation: duration and delay 0 to 600000 ms", (STRPTR)-1);
+                else if (rc < 0) SetWindowTitles(rw, (STRPTR)"Custom Animation: not enough memory", (STRPTR)-1);
+                else {
+                    SetWindowTitles(rw, (STRPTR)"Custom Animation", (STRPTR)-1);
+                    changed = 1;
+                    anim_changed(id == 7 ? "Effect added." : id == 8 ? "Effect changed." : id == 9 ? "Effect removed."
+                                                                                                   : "Effect moved.");
+                }
+            }
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    FreeGadgets(glist);
+#undef ANIM_FILL_LIST
+    if (changed) draw_all();
+}
+
+#endif /* OPENPUBLISHER */
+
 /* ---- The slide sorter's commands: on every picked slide, each one Undo step ---- */
 
 static struct MenuItem *menu_item_for(ULONG id)
@@ -3008,6 +3313,10 @@ static void update_view_menus(void)
     if (sorted) sorted->Flags = (UWORD)(sorter_view ? sorted->Flags | CHECKED : sorted->Flags & ~CHECKED);
     if (notes) notes->Flags = (UWORD)(notes_view ? notes->Flags | CHECKED : notes->Flags & ~CHECKED);
     if (lines) lines->Flags = (UWORD)(outline_view ? lines->Flags | CHECKED : lines->Flags & ~CHECKED);
+    {
+        struct MenuItem *masters = menu_item_for(M_VIEW_MASTER);
+        if (masters) masters->Flags = (UWORD)(mview ? masters->Flags | CHECKED : masters->Flags & ~CHECKED);
+    }
     ResetMenuStrip(win, menu);
     /* Format works on text, so on the notes too; Insert and Object on what is on the slide in front of you */
     if (sorter_view || outline_view) OffMenu(win, FULLMENUNUM(2, NOITEM, NOSUB));
@@ -3020,6 +3329,7 @@ static void update_view_menus(void)
 static void set_view(int mode)
 {
     int sorted = mode == 1;
+    if (mview && (mode == 2 || mode == 3)) master_view_leave();
     if (sorted == sorter_view && (mode == 2) == notes_view && (mode == 3) == outline_view) {
         update_view_menus();
         return;
@@ -3050,6 +3360,111 @@ static void set_view(int mode)
         sorter_scroller_follow();
         draw_sorter();
     }
+}
+
+/* ---- The Master view (P7) ---- */
+
+static void master_view_enter(void)
+{
+    opr_master_view *v;
+    opr_undo *vu = NULL;
+    int m, was = dirty;
+    if (mview || !deck) return;
+    if (notes_view || outline_view) set_view(0);
+    v = opr_master_view_open(deck);
+    if (v) vu = opr_undo_new();
+    if (!vu) {
+        opr_master_view_free(v);
+        tell(PROGRAM, "There is not enough memory to show the masters.");
+        update_view_menus();
+        return;
+    }
+    m = deck->nslides && current < deck->nslides ? deck->slides[current].master : 0;
+    mview = v;
+    mview_deck = deck;
+    mview_undo = undo;
+    mview_current = current;
+    mview_dirty = was;
+    deck = opr_master_view_deck(v);
+    undo = vu;
+    structure_changed(m, "Master " UNITS_LOWER ": what is here is on every " UNIT_LOWER " of the master. "
+                      "View > Master " UNIT "s again goes back.");
+    dirty = was;
+    update_window_title();
+    update_view_menus();
+    update_edit_tools();
+}
+
+static void master_view_leave(void)
+{
+    int changed, rc = 0;
+    if (!mview) return;
+    changed = opr_undo_can(undo);
+    if (changed) rc = opr_master_view_commit(mview, mview_undo);
+    opr_undo_free(undo);
+    undo = mview_undo;
+    opr_master_view_free(mview);
+    mview = NULL;
+    deck = mview_deck;
+    mview_deck = NULL;
+    structure_changed(mview_current, !changed ? "Normal view." : rc == 0 ? "The masters are changed."
+                      : rc == -2 ? "A " DOCUMENT_LOWER " keeps one master: the masters are as they were."
+                      : "There was not enough memory to change the masters.");
+    dirty = mview_dirty || (changed && rc == 0);
+    update_window_title();
+    update_view_menus();
+    update_edit_tools();
+}
+
+/* At the end, with the window gone: the view goes without writing back or drawing. */
+static void master_view_drop(void)
+{
+    if (!mview) return;
+    opr_undo_free(undo);
+    undo = mview_undo;
+    opr_master_view_free(mview);
+    mview = NULL;
+    deck = mview_deck;
+    mview_deck = NULL;
+}
+
+/* Slide > Slide Design...: the picked slides (or this one) on a master, one Undo step. */
+static int set_master_picked(int master)
+{
+    int i, n = 0, rc = 0;
+    if (!deck || master < 0 || master >= deck->nmasters) return -1;
+    if (opr_undo_group_begin(undo, deck->nslides) < 0) return -1;
+    for (i = 0; i < deck->nslides && rc == 0; i++)
+        if (i == current || (sorter_view && opr_pick_has(&pick, i))) {
+            rc = opr_slide_set_master(undo, deck, i, master);
+            n++;
+        }
+    if (rc < 0) { opr_undo_group_cancel(undo, deck); return -1; }
+    opr_undo_group_end(undo);
+    structure_changed(current, n > 1 ? UNIT "s given the master." : UNIT " given the master.");
+    return 0;
+}
+
+static void slide_design(void)
+{
+    char buttons[400], text[200];
+    int i, at = 0, choice;
+    if (mview) { set_status("Leave the Master view to give " UNITS_LOWER " a master."); return; }
+    if (!deck || !deck->nslides) return;
+    buttons[0] = 0;
+    for (i = 0; i < deck->nmasters && i < 8; i++) {
+        char name[40];
+        name_to_latin1(deck->masters[i].name ? deck->masters[i].name : "Master", name, sizeof name);
+        at += snprintf(buttons + at, sizeof buttons - (size_t)at, "%s%s", i ? "|" : "", name);
+        if (at >= (int)sizeof buttons - 48) break;
+    }
+    snprintf(buttons + at, sizeof buttons - (size_t)at, "|Cancel");
+    snprintf(text, sizeof text, "Which master should the %s use?\n\n(It uses master %d now.)",
+             sorter_view && opr_pick_number(&pick) > 1 ? "picked " UNITS_LOWER : UNIT_LOWER,
+             deck->slides[current].master + 1);
+    choice = ask(PROGRAM, text, buttons);
+    if (choice < 1 || choice > i) return;
+    if (set_master_picked(choice - 1) < 0) tell(PROGRAM, "There is not enough memory to change the master.");
 }
 
 static void sorter_open(int index)
@@ -3299,6 +3714,125 @@ static void sorter_delete_picked(void)
     structure_changed(selected, picked_words(n, UNIT " deleted.", "%d " UNITS_LOWER " deleted."));
 }
 
+/* ---- Whole slides on a clipboard of their own (P8) ----
+ * Cut, Copy and Paste in the sorter work on the picked slides; elsewhere
+ * (ARexx) on this slide. The copies keep their pictures, fonts and master,
+ * so they paste into this deck or another one opened later. */
+static opr_clip *slide_clip;
+
+static int slides_picked(int **out)
+{
+    int i, n = 0, *list;
+    *out = NULL;
+    if (!deck || !deck->nslides) return 0;
+    list = malloc(sizeof *list * (size_t)deck->nslides);
+    if (!list) return -1;
+    for (i = 0; i < deck->nslides; i++)
+        if (sorter_view ? opr_pick_has(&pick, i) : i == current) list[n++] = i;
+    if (!n && current >= 0 && current < deck->nslides) list[n++] = current;
+    *out = list;
+    return n;
+}
+
+/* 0 done, -1 not. cut: the copied slides then go. */
+static int slides_copy(int cut)
+{
+    int *list = NULL, n, rc;
+    master_view_leave();
+    n = slides_picked(&list);
+    if (n < 0) { tell(PROGRAM, "There is not enough memory to copy the " UNITS_LOWER "."); return -1; }
+    if (!n) { free(list); return -1; }
+    if (cut && n >= deck->nslides) {
+        free(list);
+        tell(PROGRAM, "A " DOCUMENT_LOWER " must keep at least one " UNIT_LOWER ".");
+        return -1;
+    }
+    if (!slide_clip) slide_clip = opr_clip_new();
+    rc = slide_clip ? opr_clip_copy(slide_clip, deck, list, n) : -1;
+    free(list);
+    if (rc < 0) { tell(PROGRAM, "There is not enough memory to copy the " UNITS_LOWER "."); return -1; }
+    if (cut) {
+        if (sorter_view) sorter_delete_picked();
+        else delete_slide();
+        set_status(picked_words(n, UNIT " cut to the clipboard.", "%d " UNITS_LOWER " cut to the clipboard."));
+    } else {
+        set_status(picked_words(n, UNIT " copied.", "%d " UNITS_LOWER " copied."));
+    }
+    draw_status();
+    return 0;
+}
+
+/* The clipboard's slides after this one, one Undo step. */
+static int slides_paste(void)
+{
+    int selected = current, n = opr_clip_count(slide_clip), at;
+    master_view_leave();
+    if (!deck || !n) {
+        set_status("Copy " UNITS_LOWER " in the " UNIT " Sorter first.");
+        draw_status();
+        return -1;
+    }
+    at = sorter_view && pick.focus >= 0 && pick.focus < deck->nslides ? pick.focus + 1 : current + 1;
+    if (opr_clip_paste(slide_clip, undo, deck, at, &selected) < 0) {
+        tell(PROGRAM, "There is not enough memory to paste the " UNITS_LOWER ".");
+        relayout();
+        return -1;
+    }
+    structure_changed(selected, picked_words(n, UNIT " pasted.", "%d " UNITS_LOWER " pasted."));
+    return 0;
+}
+
+#ifndef OPENPUBLISHER
+static int ask_file(int save, const char *title, const char *initial, char *out, size_t out_size);
+
+/* Slide > Insert Slides from File...: every slide of another ODP or PPTX
+ * after this one, one Undo step. path NULL: ask. Returns the number put in, -1 none. */
+static int insert_from_file(const char *path_in)
+{
+    char path[512], msg[400];
+    owf_deck *d = NULL;
+    owf_report *report;
+    int rc, i, *all, selected = current, left_out = 0, n;
+    master_view_leave();
+    if (!deck) return -1;
+    if (path_in) snprintf(path, sizeof path, "%s", path_in);
+    else if (!ask_file(0, "Insert " UNITS_LOWER " from a " DOCUMENT_LOWER, NULL, path, sizeof path)) return -1;
+    report = owf_report_new();
+    rc = owf_import_deck_file(path, NULL, &d, report, NULL);
+    owf_report_free(report);
+    if (rc != OWF_OK || !d) {
+        snprintf(msg, sizeof msg, PROGRAM " could not read %.120s.\n\n%.100s", leaf(path),
+                 rc == OWF_ERR_FORMAT ? "It is not a presentation GFOpenPresentation reads (ODP or PPTX)." : owf_error_text(rc));
+        if (!path_in) tell("Insert " UNIT "s", msg);
+        owf_deck_free(d);
+        return -1;
+    }
+    n = d->nslides;
+    all = n ? malloc(sizeof *all * (size_t)n) : NULL;
+    if (!all) {
+        owf_deck_free(d);
+        if (!path_in) tell(PROGRAM, n ? "There is not enough memory to insert the " UNITS_LOWER "." : "That " DOCUMENT_LOWER " has no " UNITS_LOWER ".");
+        return -1;
+    }
+    for (i = 0; i < n; i++) all[i] = i;
+    rc = opr_slides_insert_from(undo, deck, current + 1, d, all, n, &selected, &left_out);
+    free(all);
+    owf_deck_free(d);
+    if (rc < 0) {
+        if (!path_in) tell(PROGRAM, "There is not enough memory to insert the " UNITS_LOWER ".");
+        relayout();
+        return -1;
+    }
+    if (left_out)
+        snprintf(msg, sizeof msg, "%d " UNITS_LOWER " inserted from %.60s; %d chart%s or object%s left out.", n, leaf(path),
+                 left_out, left_out == 1 ? "" : "s", left_out == 1 ? "" : "s");
+    else
+        snprintf(msg, sizeof msg, "%d " UNIT_LOWER "%s inserted from %.60s.", n, n == 1 ? "" : "s", leaf(path));
+    structure_changed(selected, msg);
+    return n;
+}
+#endif
+
 static void sorter_hide_picked(int hidden)
 {
     int selected = current, n = opr_pick_number(&pick), rc, i, changes = 0;
@@ -3490,27 +4024,52 @@ static void sorter_key(UWORD code, UWORD qual)
  * player backend. It uses the same laid-out slides and painter as the editor,
  * and opr_show owns all navigation/timing decisions. A later own-screen
  * backend can therefore change display setup without changing show rules. */
-static void show_paint(struct RastPort *rp, int width, int height, const opr_show *show, int blank, int number)
+/* Where the show draws the slide: as large as fits, its shape kept, centred. */
+static void show_place(const opr_show *show, int width, int height, ol_pixel_rect *r)
+{
+    int w = width, h = (int)((long)width * show->deck->height / show->deck->width);
+    if (h > height) {
+        h = height;
+        w = (int)((long)h * show->deck->width / show->deck->height);
+    }
+    r->x = (width - w) / 2;
+    r->y = (height - h) / 2;
+    r->width = w;
+    r->height = h;
+}
+
+/* The objects not drawn once the slide's animation steps up to step have played (opr_anim_visible), or
+ * NULL when every object is (and when memory runs out: then all are drawn). owf_free it. */
+static unsigned char *show_hidden(const opr_show *show, int step)
+{
+    const owf_slide *sl;
+    unsigned char *hide;
+    int i, any = 0;
+    if (!show || !show->deck || show->slide < 0 || show->slide >= show->deck->nslides) return NULL;
+    sl = &show->deck->slides[show->slide];
+    if (!sl->nanims || !sl->nobjs || !(hide = owf_malloc((size_t)sl->nobjs))) return NULL;
+    if (opr_anim_visible(show->deck, show->slide, step, hide) < 0) { owf_free(hide); return NULL; }
+    for (i = 0; i < sl->nobjs; i++) {
+        hide[i] = !hide[i];
+        any |= hide[i];
+    }
+    if (!any) { owf_free(hide); return NULL; }
+    return hide;
+}
+
+/* The slide as it shows after its animation steps up to step (show->step normally; -1 before step 0). */
+static void show_paint_at(struct RastPort *rp, int width, int height, const opr_show *show, int step, int blank,
+                          int number)
 {
     ol_pixel_rect clip;
-    int w, h, x, y;
     char digits[24];
     LONG background = blank == 2 ? argb_pen(0xffffffffu) : argb_pen(0xff000000u);
     ogt_box(rp, background, 0, 0, width, height);
     if (!blank && show && show->deck) {
-        w = width;
-        h = (int)((long)w * show->deck->height / show->deck->width);
-        if (h > height) {
-            h = height;
-            w = (int)((long)h * show->deck->width / show->deck->height);
-        }
-        x = (width - w) / 2;
-        y = (height - h) / 2;
-        clip.x = x;
-        clip.y = y;
-        clip.width = w;
-        clip.height = h;
-        paint_slide(rp, laid_get(show->slide), x, y, w, &clip, 0, NULL);
+        unsigned char *hide = show_hidden(show, step);
+        show_place(show, width, height, &clip);
+        paint_slide_ex(rp, laid_get(show->slide), clip.x, clip.y, clip.width, &clip, 0, NULL, hide, NULL, 0, 0);
+        owf_free(hide);
     }
     if (number > 0) {
         snprintf(digits, sizeof digits, "%d", number);
@@ -3520,14 +4079,21 @@ static void show_paint(struct RastPort *rp, int width, int height, const opr_sho
     }
 }
 
+static void show_paint(struct RastPort *rp, int width, int height, const opr_show *show, int blank, int number)
+{
+    show_paint_at(rp, width, height, show, show ? show->step : 0, blank, number);
+}
+
 static void show_draw(struct Window *sw, const opr_show *show, int blank, int number)
 {
     show_paint(sw->RPort, sw->Width, sw->Height, show, blank, number);
 }
 
+/* old and new: a transition's two slides; base: the slide under an animation step's effects. Without base
+ * (memory) the effects are cuts; without old and new so are the transitions. */
 typedef struct {
-    struct BitMap *old_bitmap, *new_bitmap, *mask_bitmap;
-    struct RastPort old_rp, new_rp, mask_rp;
+    struct BitMap *old_bitmap, *new_bitmap, *mask_bitmap, *base_bitmap;
+    struct RastPort old_rp, new_rp, mask_rp, base_rp;
 } show_buffers;
 
 static int show_buffers_open(show_buffers *b, int width, int height)
@@ -3553,6 +4119,12 @@ static int show_buffers_open(show_buffers *b, int width, int height)
         InitRastPort(&b->mask_rp);
         b->mask_rp.BitMap = b->mask_bitmap;
     }
+    b->base_bitmap = AllocBitMap((ULONG)width, (ULONG)height, (ULONG)depth, BMF_CLEAR | BMF_DISPLAYABLE,
+                                 scr->RastPort.BitMap);
+    if (b->base_bitmap) {
+        InitRastPort(&b->base_rp);
+        b->base_rp.BitMap = b->base_bitmap;
+    }
     return 1;
 }
 
@@ -3562,6 +4134,7 @@ static void show_buffers_close(show_buffers *b)
     if (b->old_bitmap) FreeBitMap(b->old_bitmap);
     if (b->new_bitmap) FreeBitMap(b->new_bitmap);
     if (b->mask_bitmap) FreeBitMap(b->mask_bitmap);
+    if (b->base_bitmap) FreeBitMap(b->base_bitmap);
     memset(b, 0, sizeof *b);
 }
 
@@ -3633,28 +4206,36 @@ static void show_fade_black(struct Window *sw, int width, int height, int step, 
 /* Animate the incoming slide's transition. Rendering remains shared with the
  * editor; when two screen-sized friend bitmaps do not fit, this deliberately
  * falls back to a cut rather than making a low-memory Amiga crawl. */
-static void show_transition(struct Window *sw, show_buffers *b, const opr_show *show, int old_slide)
+/* The step a slide comes in at: -1 when its step 0 has effects to play, else where it is. */
+static int show_entry_step(const opr_show *show)
+{
+    if (show->step == 0 && opr_anim_step_plan(show->deck, show->slide, 0, NULL, 0, NULL) > 0) return -1;
+    return show->step;
+}
+
+static void show_transition(struct Window *sw, show_buffers *b, const opr_show *show, int old_slide, int old_step)
 {
     const owf_transition *transition;
     opr_show old_show;
     int kind, direction, duration, steps = 12, i, width = sw->Width, height = sw->Height;
     if (!b->old_bitmap || !b->new_bitmap || old_slide < 0 || old_slide == show->slide) {
-        show_draw(sw, show, 0, 0);
+        show_paint_at(sw->RPort, sw->Width, sw->Height, show, show_entry_step(show), 0, 0);
         return;
     }
     transition = &show->deck->slides[show->slide].transition;
     kind = transition->kind;
     if (kind < OWF_TRANS_FADE || kind > OWF_TRANS_DISSOLVE ||
         ((kind == OWF_TRANS_FADE || kind == OWF_TRANS_FADE_BLACK) && !b->mask_bitmap)) {
-        show_draw(sw, show, 0, 0);
+        show_paint_at(sw->RPort, sw->Width, sw->Height, show, show_entry_step(show), 0, 0);
         return;
     }
     direction = transition->direction;
     duration = transition->duration;
     old_show = *show;
     old_show.slide = old_slide;
+    old_show.step = old_step;
     show_paint(&b->old_rp, width, height, &old_show, 0, 0);
-    show_paint(&b->new_rp, width, height, show, 0, 0);
+    show_paint_at(&b->new_rp, width, height, show, show_entry_step(show), 0, 0);
     BltBitMapRastPort(b->old_bitmap, 0, 0, sw->RPort, 0, 0, width, height, 0xC0);
 
     if (kind >= OWF_TRANS_WIPE && kind <= OWF_TRANS_BLINDS) {
@@ -3708,6 +4289,153 @@ static void show_transition(struct Window *sw, show_buffers *b, const opr_show *
     BltBitMapRastPort(b->new_bitmap, 0, 0, sw->RPort, 0, 0, width, height, 0xC0);
 }
 
+/* ---- Custom animation in the show ----
+ *
+ * A step's effects play over a base: the slide as it was before the step without the objects the step
+ * animates. Each frame copies the base, then draws each animated object as opr_anim_look_at says (moved,
+ * clipped, or through a dither or squares from a scratch copy), and shows the frame. */
+
+/* set[k] and every object inside k (a group's objects follow it) to v. */
+static void show_mark(unsigned char *set, const owf_slide *sl, int k, unsigned char v)
+{
+    int i;
+    if (k < 0 || k >= sl->nobjs) return;
+    set[k] = v;
+    for (i = k + 1; i < sl->nobjs; i++) {
+        int p = sl->objs[i].parent, guard = 0;
+        while (p >= 0 && p != k && guard++ < 64) p = sl->objs[p].parent;
+        if (p == k) set[i] = v;
+    }
+}
+
+static long show_ms_since(const struct DateStamp *started)
+{
+    struct DateStamp now;
+    DateStamp(&now);
+    return ((now.ds_Days - started->ds_Days) * 24L * 60L * 60L * TICKS_PER_SECOND +
+            (now.ds_Minute - started->ds_Minute) * 60L * TICKS_PER_SECOND + now.ds_Tick - started->ds_Tick) *
+           (1000L / TICKS_PER_SECOND);
+}
+
+#define SHOW_MAX_EFFECTS 32
+
+static void show_play_step(struct Window *sw, show_buffers *b, const opr_show *show, int step)
+{
+    opr_anim_play plays[SHOW_MAX_EFFECTS];
+    ol_pixel_rect slide;
+    const owf_slide *sl;
+    const opr_slide *laid;
+    unsigned char *base_hide = NULL, *only = NULL;
+    int n, i, k, width = sw->Width, height = sw->Height, box[SHOW_MAX_EFFECTS][4];
+    long total, t;
+    struct DateStamp started;
+    n = opr_anim_step_plan(show->deck, show->slide, step, plays, SHOW_MAX_EFFECTS, &total);
+    if (n > SHOW_MAX_EFFECTS) n = SHOW_MAX_EFFECTS;
+    sl = &show->deck->slides[show->slide];
+    laid = laid_get(show->slide);
+    if (n <= 0 || !laid || !b->base_bitmap || !b->old_bitmap || !b->new_bitmap || !sl->nobjs ||
+        !(base_hide = owf_malloc((size_t)sl->nobjs)) || !(only = owf_malloc((size_t)sl->nobjs))) {
+        owf_free(base_hide);
+        show_draw(sw, show, 0, 0);
+        return;
+    }
+    show_place(show, width, height, &slide);
+    /* the base: before the step, without what it animates */
+    opr_anim_visible(show->deck, show->slide, step - 1, base_hide);
+    for (k = 0; k < sl->nobjs; k++) base_hide[k] = !base_hide[k];
+    for (i = 0; i < n; i++) show_mark(base_hide, sl, plays[i].obj, 1);
+    ogt_box(&b->base_rp, argb_pen(0xff000000u), 0, 0, width, height);
+    paint_slide_ex(&b->base_rp, laid, slide.x, slide.y, slide.width, &slide, 0, NULL, base_hide, NULL, 0, 0);
+    /* each object's box in pixels, as drawn */
+    for (i = 0; i < n; i++) {
+        owf_obj r;
+        int x = 0, y = 0, w = 0, h = 0;
+        if (owf_deck_resolve(show->deck, show->slide, plays[i].obj, &r, NULL) >= 0) {
+            x = r.x; y = r.y; w = r.width; h = r.height;
+        }
+        box[i][0] = slide.x + (int)((long)x * slide.width / show->deck->width);
+        box[i][1] = slide.y + (int)((long)y * slide.height / show->deck->height);
+        box[i][2] = (int)((long)w * slide.width / show->deck->width) + 1;
+        box[i][3] = (int)((long)h * slide.height / show->deck->height) + 1;
+    }
+    /* drawn back to front */
+    for (i = 1; i < n; i++)
+        for (k = i; k > 0 && plays[k - 1].obj > plays[k].obj; k--) {
+            opr_anim_play tp = plays[k];
+            int tb[4];
+            plays[k] = plays[k - 1]; plays[k - 1] = tp;
+            memcpy(tb, box[k], sizeof tb); memcpy(box[k], box[k - 1], sizeof tb); memcpy(box[k - 1], tb, sizeof tb);
+        }
+    DateStamp(&started);
+    for (;;) {
+        t = show_ms_since(&started);
+        if (t > total) t = total;
+        BltBitMap(b->base_bitmap, 0, 0, b->new_bitmap, 0, 0, width, height, 0xC0, 0xFF, NULL);
+        for (i = 0; i < n; i++) {
+            opr_anim_look look;
+            ol_pixel_rect clip;
+            int x0, y0, x1, y1;
+            opr_anim_look_at(&plays[i], t, box[i][0], box[i][1], box[i][2], box[i][3],
+                             slide.x, slide.y, slide.width, slide.height, &look);
+            if (!look.show || look.amount <= 0) continue;
+            memset(only, 0, (size_t)sl->nobjs);
+            show_mark(only, sl, plays[i].obj, 1);
+            if (look.amount >= 1000) {
+                /* moved or wiped (or whole): drawn straight into the frame, clipped to the slide */
+                x0 = look.clip_x > slide.x ? look.clip_x : slide.x;
+                y0 = look.clip_y > slide.y ? look.clip_y : slide.y;
+                x1 = look.clip_x + look.clip_w < slide.x + slide.width ? look.clip_x + look.clip_w : slide.x + slide.width;
+                y1 = look.clip_y + look.clip_h < slide.y + slide.height ? look.clip_y + look.clip_h : slide.y + slide.height;
+                if (x1 <= x0 || y1 <= y0) continue;
+                clip.x = x0; clip.y = y0; clip.width = x1 - x0; clip.height = y1 - y0;
+                paint_slide_ex(&b->new_rp, laid, slide.x, slide.y, slide.width, &clip, 0, NULL, NULL, only,
+                               look.dx, look.dy);
+            } else {
+                /* fade or dissolve: the object over the frame in the scratch bitmap, part of it copied */
+                int bx = box[i][0], by = box[i][1], bw = box[i][2], bh = box[i][3];
+                if (bx < 0) { bw += bx; bx = 0; }
+                if (by < 0) { bh += by; by = 0; }
+                if (bx + bw > width) bw = width - bx;
+                if (by + bh > height) bh = height - by;
+                if (bw <= 0 || bh <= 0) continue;
+                BltBitMap(b->new_bitmap, bx, by, b->old_bitmap, bx, by, bw, bh, 0xC0, 0xFF, NULL);
+                clip.x = bx; clip.y = by; clip.width = bw; clip.height = bh;
+                paint_slide_ex(&b->old_rp, laid, slide.x, slide.y, slide.width, &clip, 0, NULL, NULL, only, 0, 0);
+                if (plays[i].effect == OWF_EFFECT_FADE && b->mask_bitmap) {
+                    unsigned short pattern[4];
+                    int level = (int)((16L * look.amount + 999) / 1000);
+                    if (level < 1) level = 1;
+                    if (opr_transition_pattern_at(level, 16, pattern) < 0) continue;
+                    SetAPen(&b->mask_rp, 0);
+                    RectFill(&b->mask_rp, bx, by, bx + bw - 1, by + bh - 1);
+                    SetAPen(&b->mask_rp, 1);
+                    SetDrMd(&b->mask_rp, JAM1);
+                    SetAfPt(&b->mask_rp, pattern, 2);
+                    RectFill(&b->mask_rp, bx, by, bx + bw - 1, by + bh - 1);
+                    SetAfPt(&b->mask_rp, NULL, 0);
+                    BltMaskBitMapRastPort(b->old_bitmap, bx, by, &b->new_rp, bx, by, bw, bh, ABC | ABNC | ANBC,
+                                          b->mask_bitmap->Planes[0]);
+                } else {
+                    int tiles = opr_transition_tile_count(bw, bh), j, until;
+                    until = (int)((long)tiles * look.amount / 1000);
+                    for (j = 0; j < until; j++) {
+                        opr_blit tile;
+                        if (opr_transition_tile_at(bw, bh, j, &tile) == 0)
+                            BltBitMap(b->old_bitmap, bx + tile.source_x, by + tile.source_y, b->new_bitmap,
+                                      bx + tile.dest_x, by + tile.dest_y, tile.width, tile.height, 0xC0, 0xFF, NULL);
+                    }
+                }
+            }
+        }
+        BltBitMapRastPort(b->new_bitmap, 0, 0, sw->RPort, 0, 0, width, height, 0xC0);
+        if (t >= total) break;
+        WaitTOF();
+    }
+    owf_free(base_hide);
+    owf_free(only);
+    show_draw(sw, show, 0, 0);
+}
+
 static ULONG show_tick_delta(ULONG seconds, ULONG micros, ULONG *last_seconds, ULONG *last_micros, int *have_time)
 {
     ULONG delta;
@@ -3730,11 +4458,12 @@ static ULONG show_tick_delta(ULONG seconds, ULONG micros, ULONG *last_seconds, U
 
 static void run_show(int from, int loop)
 {
+    master_view_leave();
     struct Window *sw;
     struct IntuiMessage *im;
     opr_show show;
     show_buffers buffers;
-    int running = 1, blank = 0, number = 0, have_time = 0, drawn_slide, drawn_blank = 0;
+    int running = 1, blank = 0, number = 0, have_time = 0, drawn_slide, drawn_blank = 0, drawn_step;
     ULONG last_seconds = 0, last_micros = 0;
     if (!deck || opr_show_begin(&show, deck, from, loop) < 0) {
         tell(SHOW_TITLE, "There is no visible " UNIT_LOWER " to show.");
@@ -3754,8 +4483,13 @@ static void run_show(int from, int loop)
         return;
     }
     show_buffers_open(&buffers, sw->Width, sw->Height);
-    show_draw(sw, &show, blank, number);
+    if (show_entry_step(&show) < 0) {
+        show_paint_at(sw->RPort, sw->Width, sw->Height, &show, -1, 0, 0);
+        show_play_step(sw, &buffers, &show, 0);
+    } else
+        show_draw(sw, &show, blank, number);
     drawn_slide = show.slide;
+    drawn_step = show.step;
     while (running) {
         ULONG signals = Wait((1UL << sw->UserPort->mp_SigBit) | SIGBREAKF_CTRL_C);
         if (signals & SIGBREAKF_CTRL_C) break;
@@ -3815,12 +4549,18 @@ static void run_show(int from, int loop)
                 }
             }
             if (running && redraw) {
-                if (!blank && !drawn_blank && drawn_slide != show.slide && number == 0)
-                    show_transition(sw, &buffers, &show, drawn_slide);
+                if (!blank && !drawn_blank && drawn_slide != show.slide && number == 0) {
+                    int entry = show_entry_step(&show);
+                    show_transition(sw, &buffers, &show, drawn_slide, drawn_step);
+                    if (entry < 0) show_play_step(sw, &buffers, &show, 0);
+                } else if (!blank && !drawn_blank && drawn_slide == show.slide && number == 0 &&
+                           show.step == drawn_step + 1)
+                    show_play_step(sw, &buffers, &show, show.step);
                 else
                     show_draw(sw, &show, blank, number);
                 drawn_slide = show.slide;
                 drawn_blank = blank;
+                drawn_step = show.step;
             }
         }
     }
@@ -6217,6 +6957,7 @@ static void with_extension(const char *path, const char *ext, char *out, size_t 
 
 static void open_deck(const char *path)
 {
+    master_view_leave();
     owf_deck *d = NULL;
     owf_report *report = owf_report_new();
 #ifdef OPENPUBLISHER
@@ -6256,6 +6997,7 @@ static void open_deck(const char *path)
 
 static void new_deck(void)
 {
+    master_view_leave();
     owf_deck *d;
     if (!confirm_discard()) return;
     d = owf_deck_new(
@@ -6310,6 +7052,7 @@ static int saves_in_place(void)
 
 static int save_to(const char *path)
 {
+    master_view_leave();
     owf_report *report = owf_report_new();
     const char *format = format_for(path);
     char msg[600];
@@ -6383,6 +7126,7 @@ static int pdf_handout_slides = 6;
 
 static int write_pdf(const char *path)
 {
+    master_view_leave();
     unsigned char *data = NULL;
     size_t length = 0;
     owf_report *report = owf_report_new();
@@ -6421,6 +7165,7 @@ static void do_export_pdf(void)
 /* Handouts: so many slides a page (1, 2, 3, 4, 6 or 9), as a PDF. */
 static void do_export_handouts(void)
 {
+    master_view_leave();
     char path[512], name[128], msg[600], initial[8], entered[16];
     int per;
     if (!deck) return;
@@ -6451,6 +7196,7 @@ static void do_export_handouts(void)
 /* 1 GFOpenPrint started, 0 not possible here (no GFOpenPrint), -1 failed */
 static int do_print(void)
 {
+    master_view_leave();
     char path[160], name[128], cmd[300];
     struct Process *me = (struct Process *)FindTask(NULL);
     APTR was = me->pr_WindowPtr;
@@ -6582,10 +7328,9 @@ static void menu_action(ULONG id)
         case M_ZOOM_IN: sorter_columns_step(1); return;
         case M_ZOOM_OUT: sorter_columns_step(-1); return;
         case M_ZOOM_FIT: sorter_columns = 0; relayout(); return;
-        case M_CUT: case M_COPY: case M_PASTE:
-            set_status("Cut, Copy and Paste work on a " UNIT_LOWER "'s objects in Normal view.");
-            draw_status();
-            return;
+        case M_CUT: slides_copy(1); return;
+        case M_COPY: slides_copy(0); return;
+        case M_PASTE: slides_paste(); return;
         case M_FIND: case M_FIND_NEXT: case M_REPLACE: case M_REPLACE_ALL: case M_STOP:
             set_view(0);
             break;
@@ -6616,7 +7361,12 @@ static void menu_action(ULONG id)
         }
     }
     switch (id) {
-    case M_VIEW_NORMAL: set_view(0); break;
+    case M_VIEW_NORMAL: master_view_leave(); set_view(0); break;
+    case M_VIEW_MASTER: if (mview) master_view_leave(); else master_view_enter(); break;
+    case M_SLIDE_DESIGN: slide_design(); break;
+#ifndef OPENPUBLISHER
+    case M_INSERT_FILE: insert_from_file(NULL); break;
+#endif
     case M_VIEW_SORTER: set_view(1); break;
     case M_VIEW_NOTES: set_view(2); break;
     case M_VIEW_OUTLINE: set_view(3); break;
@@ -6714,6 +7464,9 @@ static void menu_action(ULONG id)
     case M_HIDE_SLIDE: set_current_hidden(1); break;
     case M_SHOW_SLIDE: set_current_hidden(0); break;
     case M_TRANSITION: edit_current_transition(); break;
+#ifndef OPENPUBLISHER
+    case M_CUSTOM_ANIMATION: custom_animation_window(); break;
+#endif
     case M_MOVE_SLIDE_UP: move_slide(-1); break;
     case M_MOVE_SLIDE_DOWN: move_slide(1); break;
     case M_FIRST: show_slide(0); break;
@@ -7099,13 +7852,63 @@ static int rexx_do_command(const char *command, char **result_out)
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : rexx_noted ? rexx_noting : "Failed");
         }
     } else if (starts_word_ci(command, "VIEW", &arg)) {     /* VIEW NORMAL|SORTER|NOTES; none given: which */
-        if (!*arg) rexx_copy(result_text, sizeof result_text, sorter_view ? "SORTER" : notes_view ? "NOTES"
-                                                              : outline_view ? "OUTLINE" : "NORMAL");
-        else if (!strcasecmp(arg, "NORMAL")) { set_view(0); rexx_copy(result_text, sizeof result_text, "OK"); }
+        if (!*arg) rexx_copy(result_text, sizeof result_text, sorter_view ? (mview ? "MASTER SORTER" : "SORTER")
+                                                              : notes_view ? "NOTES" : outline_view ? "OUTLINE"
+                                                              : mview ? "MASTER" : "NORMAL");
+        else if (!strcasecmp(arg, "MASTER")) {
+#ifdef OPENPUBLISHER
+            ok = 0; rexx_copy(result_text, sizeof result_text, "No Master view here");
+#else
+            master_view_enter(); ok = mview != NULL;
+            rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Failed");
+#endif
+        }
+        else if (!strcasecmp(arg, "NORMAL")) { master_view_leave(); set_view(0); rexx_copy(result_text, sizeof result_text, "OK"); }
         else if (!strcasecmp(arg, "SORTER")) { set_view(1); rexx_copy(result_text, sizeof result_text, "OK"); }
         else if (!strcasecmp(arg, "NOTES")) { set_view(2); rexx_copy(result_text, sizeof result_text, "OK"); }
         else if (!strcasecmp(arg, "OUTLINE")) { set_view(3); rexx_copy(result_text, sizeof result_text, "OK"); }
-        else { ok = 0; rexx_copy(result_text, sizeof result_text, "VIEW NORMAL, OUTLINE, SORTER or NOTES"); }
+        else { ok = 0; rexx_copy(result_text, sizeof result_text, "VIEW NORMAL, OUTLINE, SORTER, NOTES or MASTER"); }
+    } else if (starts_word_ci(command, "MASTERS", &arg)) {  /* MASTERS: how many */
+        const owf_deck *d = mview ? mview_deck : deck;
+        snprintf(result_text, sizeof result_text, "%d", d ? d->nmasters : 0);
+    } else if (starts_word_ci(command, "MASTER", &arg)) {   /* MASTER n: "slides name"; MASTER: this slide's */
+        const owf_deck *d = mview ? mview_deck : deck;
+        int n = atoi(arg);
+        if (!*arg && d && !mview && d->nslides) n = d->slides[current].master + 1;
+        if (!d || n < 1 || n > d->nmasters) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such master"); }
+        else {
+            char name[80];
+            name_to_latin1(d->masters[n - 1].name ? d->masters[n - 1].name : "", name, sizeof name);
+            snprintf(result_text, sizeof result_text, "%d %d %s", n, opr_master_slides(d, n - 1), name);
+        }
+    } else if (starts_word_ci(command, "COPYSLIDES", &arg) || starts_word_ci(command, "CUTSLIDES", &arg)) {
+        /* COPYSLIDES / CUTSLIDES: this slide (the picked ones in the sorter) to the slide clipboard */
+        int cut = starts_word_ci(command, "CUTSLIDES", &arg);
+        if (!deck) { ok = 0; rexx_copy(result_text, sizeof result_text, "No document"); }
+        else {
+            ok = slides_copy(cut) == 0;
+            if (ok) snprintf(result_text, sizeof result_text, "%d", opr_clip_count(slide_clip));
+            else rexx_copy(result_text, sizeof result_text, "Failed");
+        }
+    } else if (starts_word_ci(command, "PASTESLIDES", &arg)) {   /* PASTESLIDES: after this slide */
+        ok = slides_paste() == 0;
+        if (ok) snprintf(result_text, sizeof result_text, "%d", current + 1);
+        else rexx_copy(result_text, sizeof result_text, "Nothing to paste");
+#ifndef OPENPUBLISHER
+    } else if (starts_word_ci(command, "INSERTFILE", &arg)) {    /* INSERTFILE path: its slides after this one */
+        int n = *arg ? insert_from_file(arg) : -1;
+        ok = n >= 0;
+        if (ok) snprintf(result_text, sizeof result_text, "%d", n);
+        else rexx_copy(result_text, sizeof result_text, "Could not insert");
+#endif
+    } else if (starts_word_ci(command, "SETMASTER", &arg)) { /* SETMASTER n: this slide (the picked ones in the sorter) */
+        int n = atoi(arg);
+        if (mview) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Leave the Master view first"); }
+        else if (!deck || n < 1 || n > deck->nmasters) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such master"); }
+        else {
+            ok = set_master_picked(n - 1) == 0;
+            rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Failed");
+        }
     } else if (starts_word_ci(command, "OUTLINE", &arg)) {  /* OUTLINE: rows; OUTLINE n: "level text"; the rest change row n */
         static const char *const verbs[] = { "SET", "INSERT", "DEMOTE", "PROMOTE", "DELETE", NULL };
         const char *rest = arg;
@@ -7233,6 +8036,118 @@ static int rexx_do_command(const char *command, char **result_out)
             at = (size_t)snprintf(result_text, sizeof result_text, "%d", k);
             for (i = 0; i < k && at + 8 < sizeof result_text; i++)
                 if (opr_obj_editable(deck, current, i)) at += (size_t)snprintf(result_text + at, sizeof result_text - at, " %d", i + 1);
+        }
+    } else if (starts_word_ci(command, "ANIMATIONS", &arg)) {   /* how many effects the slide showing has */
+        if (!deck || current < 0 || current >= deck->nslides) { ok = 0; rexx_copy(result_text, sizeof result_text, "No " UNIT_LOWER); }
+        else snprintf(result_text, sizeof result_text, "%d", deck->slides[current].nanims);
+    } else if (starts_word_ci(command, "ANIMATION", &arg)) {   /* ANIMATION n: object WORD START FROM duration delay */
+        char *end;
+        long n = strtol(arg, &end, 10);
+        if (!deck || current < 0 || current >= deck->nslides || n < 1 || n > deck->slides[current].nanims) {
+            ok = 0; rexx_copy(result_text, sizeof result_text, "No such effect");
+        } else {
+            const owf_anim *a = &deck->slides[current].anims[n - 1];
+            const char *word = NULL;
+            int e = opr_effect_index(a->cls, a->effect);
+            if (e >= 0) opr_effect_at(e, NULL, NULL, &word, NULL);
+            snprintf(result_text, sizeof result_text, "%d %s %s %s %d %d", opr_anim_obj(deck, current, (int)n - 1) + 1,
+                     word ? word : "OTHER", anim_start_words[a->start <= OWF_START_AFTER ? a->start : 0],
+                     anim_dir_words[a->direction & 3], a->duration, a->delay);
+        }
+    } else if (starts_word_ci(command, "ADDANIMATION", &arg) || starts_word_ci(command, "CHANGEANIMATION", &arg)) {
+        /* ADDANIMATION obj WORD [START CLICK|WITH|AFTER] [FROM LEFT|RIGHT|TOP|BOTTOM] [DURATION ms] [DELAY ms] [AT n];
+           CHANGEANIMATION n WORD and the same: RESULT the effect's number */
+        int adding = starts_word_ci(command, "ADDANIMATION", NULL), which = -1, e, cls_v = 0, effect_v = 0, at = -1, rc;
+        const char *rest = arg;
+        char word[24], *end;
+        size_t wl = 0;
+        owf_anim spec;
+        memset(&spec, 0, sizeof spec);
+        if (adding) which = rexx_obj(rest, &rest);
+        else {
+            long n = strtol(rest, &end, 10);
+            if (end != rest && deck && current >= 0 && current < deck->nslides && n >= 1 && n <= deck->slides[current].nanims) {
+                which = (int)n - 1;
+                rest = skip_space(end);
+            }
+        }
+        while (rest[wl] && !isspace((unsigned char)rest[wl]) && wl + 1 < sizeof word) { word[wl] = rest[wl]; wl++; }
+        word[wl] = 0;
+        rest = skip_space(rest + wl);
+        e = opr_effect_word(word);
+        if (e >= 0) opr_effect_at(e, &cls_v, &effect_v, NULL, NULL);
+        spec.cls = (unsigned char)cls_v;
+        spec.effect = (unsigned char)effect_v;
+        spec.direction = OWF_DIR_DOWN;
+        if (!adding && which >= 0) {
+            const owf_anim *a = &deck->slides[current].anims[which];
+            spec.start = a->start; spec.direction = a->direction; spec.duration = a->duration; spec.delay = a->delay;
+        }
+        rc = which >= 0 && e >= 0 ? 0 : -2;
+        while (rc == 0 && *rest) {
+            int k;
+            if (starts_word_ci(rest, "START", &rest)) {
+                for (k = 0; k < 3 && !starts_word_ci(rest, anim_start_words[k], &rest); k++)
+                    ;
+                if (k == 3) rc = -2; else spec.start = (unsigned char)k;
+            } else if (starts_word_ci(rest, "FROM", &rest)) {
+                for (k = 0; k < 4 && !starts_word_ci(rest, anim_dir_words[k], &rest); k++)
+                    ;
+                if (k == 4) rc = -2; else spec.direction = (unsigned char)k;
+            } else if (starts_word_ci(rest, "DURATION", &rest)) {
+                spec.duration = (int)strtol(rest, &end, 10);
+                if (end == rest) rc = -2; else rest = skip_space(end);
+            } else if (starts_word_ci(rest, "DELAY", &rest)) {
+                spec.delay = (int)strtol(rest, &end, 10);
+                if (end == rest) rc = -2; else rest = skip_space(end);
+            } else if (adding && starts_word_ci(rest, "AT", &rest)) {
+                at = (int)strtol(rest, &end, 10) - 1;
+                if (end == rest) rc = -2; else rest = skip_space(end);
+            } else rc = -2;
+        }
+        if (rc == 0) rc = adding ? opr_anim_add(undo, deck, current, which, &spec, at)
+                                 : opr_anim_change(undo, deck, current, which, &spec);
+        if (rc == -2 || which < 0 || e < 0) {
+            ok = 0;
+            rexx_copy(result_text, sizeof result_text, adding ? "ADDANIMATION object WORD [START CLICK|WITH|AFTER] [FROM LEFT|RIGHT|TOP|BOTTOM] [DURATION ms] [DELAY ms] [AT n]"
+                                                              : "CHANGEANIMATION n WORD [START ...] [FROM ...] [DURATION ms] [DELAY ms]");
+        } else if (rc < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not enough memory"); }
+        else {
+            anim_changed(adding ? "Effect added." : "Effect changed.");
+            draw_status();
+            snprintf(result_text, sizeof result_text, "%d", rc + 1);
+        }
+    } else if (starts_word_ci(command, "DELETEANIMATION", &arg) || starts_word_ci(command, "MOVEANIMATION", &arg)) {
+        /* DELETEANIMATION n; MOVEANIMATION n to */
+        int deleting = starts_word_ci(command, "DELETEANIMATION", NULL), rc;
+        char *end;
+        long n = strtol(arg, &end, 10), to = deleting ? 0 : strtol(end, NULL, 10);
+        if (!deck || current < 0 || current >= deck->nslides) rc = -2;
+        else rc = deleting ? opr_anim_delete(undo, deck, current, (int)n - 1)
+                           : opr_anim_move(undo, deck, current, (int)n - 1, (int)to - 1);
+        if (rc == -2) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such effect"); }
+        else if (rc < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not enough memory"); }
+        else {
+            anim_changed(deleting ? "Effect removed." : "Effect moved.");
+            draw_status();
+            snprintf(result_text, sizeof result_text, "%d", deck->slides[current].nanims);
+        }
+    } else if (starts_word_ci(command, "ANIMSTEPS", &arg)) {   /* the clicks the slide showing's effects take */
+        snprintf(result_text, sizeof result_text, "%d", opr_anim_steps(deck, current));
+    } else if (starts_word_ci(command, "ANIMVISIBLE", &arg)) {   /* ANIMVISIBLE step: the objects showing then */
+        long step = strtol(arg, NULL, 10);
+        unsigned char *vis;
+        if (!deck || current < 0 || current >= deck->nslides || !deck->slides[current].nobjs ||
+            !(vis = owf_malloc((size_t)deck->slides[current].nobjs))) { ok = 0; rexx_copy(result_text, sizeof result_text, "No objects"); }
+        else {
+            int i, count = 0;
+            size_t at;
+            opr_anim_visible(deck, current, (int)step, vis);
+            for (i = 0; i < deck->slides[current].nobjs; i++) count += vis[i] != 0;
+            at = (size_t)snprintf(result_text, sizeof result_text, "%d", count);
+            for (i = 0; i < deck->slides[current].nobjs && at + 8 < sizeof result_text; i++)
+                if (vis[i]) at += (size_t)snprintf(result_text + at, sizeof result_text - at, " %d", i + 1);
+            owf_free(vis);
         }
     } else if (starts_word_ci(command, "PICKOBJECTS", &arg)) {   /* PICKOBJECTS n...: objects picked together (none: no pick) */
         int p[MAX_PICKED], n = 0, top;
@@ -7566,6 +8481,8 @@ out:
     free(versions);
     opr_pick_free(&pick);
     opr_outline_free(&outline_rows);
+    master_view_drop();
+    opr_clip_free(slide_clip);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
     if (theme.text) ogt_theme_free(&theme);

@@ -214,6 +214,9 @@ static void slide_clear(owf_slide *s)
     free(s->name);
     free(s->footer);
     free(s->date_text);
+    for (i = 0; i < s->nanims; i++)
+        free(s->anims[i].preset);
+    free(s->anims);
 }
 
 /* The allocations owned by a story, object and slide. Deck-wide resources
@@ -325,6 +328,8 @@ static int slide_copy(owf_slide *to, const owf_slide *from)
     to->nobjs = to->capobjs = 0;
     memset(&to->notes, 0, sizeof to->notes);
     to->name = to->footer = to->date_text = NULL;
+    to->anims = NULL;
+    to->nanims = to->capanims = 0;
     if (from->nobjs) {
         to->objs = calloc((size_t)from->nobjs, sizeof *to->objs);
         if (!to->objs)
@@ -343,6 +348,20 @@ static int slide_copy(owf_slide *to, const owf_slide *from)
     to->date_text = from->date_text ? owf_deck_strdup(from->date_text, strlen(from->date_text)) : NULL;
     if ((from->name && !to->name) || (from->footer && !to->footer) || (from->date_text && !to->date_text))
         goto fail;
+    if (from->nanims) {
+        to->anims = calloc((size_t)from->nanims, sizeof *to->anims);
+        if (!to->anims)
+            goto fail;
+        to->capanims = from->nanims;
+        for (i = 0; i < from->nanims; i++) {
+            to->anims[i] = from->anims[i];
+            to->anims[i].preset = from->anims[i].preset ?
+                owf_deck_strdup(from->anims[i].preset, strlen(from->anims[i].preset)) : NULL;
+            to->nanims = i + 1;
+            if (from->anims[i].preset && !to->anims[i].preset)
+                goto fail;
+        }
+    }
     return 0;
 fail:
     slide_clear(to);
@@ -509,7 +528,85 @@ owf_slide *owf_deck_duplicate_slide(owf_deck *deck, int index, int at)
         return NULL;
     }
     *slot = copy;
+    /* The copy's objects have no ids (owf_obj_copy): its animated ones get new ones, so its effects
+       keep their objects and the save does not give two objects one id. The file's own timing XML
+       names the first slide's objects, so the copy's is dropped for its effects. */
+    if (slot->nanims) {
+        const owf_slide *from = &deck->slides[at <= index ? index + 1 : index];
+        int i;
+        for (i = 0; i < slot->nanims; i++) {
+            int k = owf_slide_obj_by_id(from, slot->anims[i].obj);
+            if (k < 0 || k >= slot->nobjs) {
+                slot->anims[i].obj = 0;
+                continue;
+            }
+            if (!slot->objs[k].id)
+                slot->objs[k].id = owf_deck_new_obj_id(deck);
+            slot->anims[i].obj = slot->objs[k].id;
+            slot->anims[i].keep = -1;   /* its XML names the first slide's object */
+        }
+        slot->keep_timing = -1;
+    }
     return slot;
+}
+
+int owf_slide_obj_by_id(const owf_slide *slide, long id)
+{
+    int i;
+    if (!slide || id <= 0)
+        return -1;
+    for (i = 0; i < slide->nobjs; i++)
+        if (slide->objs[i].id == id)
+            return i;
+    return -1;
+}
+
+long owf_deck_new_obj_id(const owf_deck *deck)
+{
+    long top = 0;
+    int i, j;
+    if (!deck)
+        return 1;
+    for (i = 0; i < deck->nslides; i++)
+        for (j = 0; j < deck->slides[i].nobjs; j++)
+            if (deck->slides[i].objs[j].id > top)
+                top = deck->slides[i].objs[j].id;
+    return top < 0x7ffffffeL ? top + 1 : 0x7fffffffL;
+}
+
+owf_anim *owf_slide_add_anim(owf_slide *slide, int at, long obj)
+{
+    owf_anim *a;
+    if (!slide)
+        return NULL;
+    if (slide->nanims == slide->capanims) {
+        int cap = slide->capanims ? slide->capanims * 2 : 8;
+        owf_anim *grown = realloc(slide->anims, (size_t)cap * sizeof *grown);
+        if (!grown)
+            return NULL;
+        slide->anims = grown;
+        slide->capanims = cap;
+    }
+    if (at < 0 || at > slide->nanims)
+        at = slide->nanims;
+    memmove(&slide->anims[at + 1], &slide->anims[at], (size_t)(slide->nanims - at) * sizeof *slide->anims);
+    slide->nanims++;
+    a = &slide->anims[at];
+    memset(a, 0, sizeof *a);
+    a->obj = obj;
+    a->keep = -1;
+    return a;
+}
+
+int owf_slide_delete_anim(owf_slide *slide, int index)
+{
+    if (!slide || index < 0 || index >= slide->nanims)
+        return -1;
+    free(slide->anims[index].preset);
+    memmove(&slide->anims[index], &slide->anims[index + 1],
+            (size_t)(slide->nanims - index - 1) * sizeof *slide->anims);
+    slide->nanims--;
+    return 0;
 }
 
 int owf_deck_delete_slide(owf_deck *deck, int index)

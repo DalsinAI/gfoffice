@@ -403,16 +403,16 @@ deck-edit-test: $(OUT)/test-opr-edit
 deck-edit-check: $(OUT)/test-opr-edit-asan
 	$(OUT)/test-opr-edit-asan tests/deck/fixtures/pptx-talk.pptx
 
-$(OUT)/test-opr-show: $(DECK_DEPS) src/deck/opr_show.c include/openpresentation_core.h tests/deck/test_opr_show.c
+$(OUT)/test-opr-show: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_show.c
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
-		$(OWF_SRC) src/deck/opr_show.c tests/deck/test_opr_show.c -lz -o $@
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) \
+		$(OWF_SRC) tests/deck/test_opr_show.c -lz -o $@
 
-$(OUT)/test-opr-show-asan: $(DECK_DEPS) src/deck/opr_show.c include/openpresentation_core.h tests/deck/test_opr_show.c
+$(OUT)/test-opr-show-asan: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_show.c
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
-		$(OWF_SRC) src/deck/opr_show.c tests/deck/test_opr_show.c -lz -o $@
+		-DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) \
+		$(OWF_SRC) tests/deck/test_opr_show.c -lz -o $@
 
 deck-show-test: $(OUT)/test-opr-show
 	$(OUT)/test-opr-show

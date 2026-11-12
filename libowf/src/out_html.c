@@ -157,7 +157,7 @@ static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_re
         break;
     case OWF_RUN_FIELD: {
         static const char *names[] = { "page", "pages", "date", "time", "title", "author", "subject", "filename",
-                                       "words", "chapter", "user", "ref", "refpage" };
+                                       "words", "chapter", "user", "ref", "refpage", "merge", "index" };
         static const char *shown[] = { "#", "##", "date", "time" };
         if (run->field > OWF_FIELD_TIME) {           /* 1.7: the value it showed */
             owf_buf_printf(out, "<span class=\"ow-field\" data-field=\"%s\">", names[run->field]);

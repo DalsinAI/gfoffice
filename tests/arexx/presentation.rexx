@@ -245,7 +245,112 @@ CALL want 'PICKOBJECTS 99', 10
 CALL want 'PICKOBJECTS', 0
 CALL same 'PICKOBJECTS with none', res, 0
 CALL want 'MOVEOBJECTS 10 10', 5               /* nothing picked */
+/* custom animation: effects added, listed, changed, moved, what each step shows; saved and read back */
 CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 1', 0
+CALL want 'ANIMATIONS', 0
+CALL same 'ANIMATIONS at first', res, 0
+CALL want 'ADDANIMATION 2 FLYIN FROM LEFT DURATION 700', 0
+CALL same 'ADDANIMATION', res, 1
+CALL want 'ADDANIMATION 1 FADEIN START WITH', 0
+CALL same 'ADDANIMATION with previous', res, 2
+CALL want 'ANIMATION 1', 0
+CALL same 'ANIMATION 1', res, '2 FLYIN CLICK LEFT 700 0'
+CALL want 'ANIMATION 2', 0
+CALL same 'ANIMATION 2', res, '1 FADEIN WITH BOTTOM 0 0'
+CALL want 'ANIMSTEPS', 0
+CALL same 'ANIMSTEPS', res, 1
+CALL want 'ANIMVISIBLE 0', 0
+IF WORDPOS('1', SUBWORD(res, 2)) > 0 | WORDPOS('2', SUBWORD(res, 2)) > 0 THEN CALL bad 'ANIMVISIBLE 0 shows 1 or 2:' res
+ELSE SAY 'PASS ANIMVISIBLE 0 =' res
+CALL want 'ANIMVISIBLE 1', 0
+IF WORDPOS('1', SUBWORD(res, 2)) = 0 | WORDPOS('2', SUBWORD(res, 2)) = 0 THEN CALL bad 'ANIMVISIBLE 1 hides 1 or 2:' res
+ELSE SAY 'PASS ANIMVISIBLE 1 =' res
+CALL want 'CHANGEANIMATION 2 DISSOLVEOUT DELAY 200', 0
+CALL want 'ANIMATION 2', 0
+CALL same 'ANIMATION 2 after CHANGEANIMATION', res, '1 DISSOLVEOUT WITH BOTTOM 0 200'
+CALL want 'MOVEANIMATION 2 1', 0
+CALL want 'ANIMATION 1', 0
+CALL same 'ANIMATION 1 after MOVEANIMATION', res, '1 DISSOLVEOUT WITH BOTTOM 0 200'
+CALL want 'UNDO', 0
+CALL want 'ANIMATION 1', 0
+CALL same 'ANIMATION 1 after UNDO', res, '2 FLYIN CLICK LEFT 700 0'
+CALL want 'ADDANIMATION 1 ZOOM', 10
+CALL want 'ADDANIMATION 99 APPEAR', 10
+CALL want 'ADDANIMATION 1 APPEAR START SOMETIME', 10
+CALL want 'CHANGEANIMATION 9 APPEAR', 10
+CALL want 'DELETEANIMATION 9', 10
+CALL want 'MOVEANIMATION 1 9', 10
+CALL want 'SAVEAS RAM:arexx-anim.odp', 0
+CALL want 'OPEN RAM:arexx-anim.odp', 0
+CALL want 'SLIDE 1', 0
+CALL want 'ANIMATIONS', 0
+CALL same 'ANIMATIONS after reopening', res, 2
+CALL want 'ANIMATION 1', 0
+CALL same 'ANIMATION 1 after reopening', res, '2 FLYIN CLICK LEFT 700 0'
+CALL want 'ANIMATION 2', 0
+CALL same 'ANIMATION 2 after reopening', res, '1 DISSOLVEOUT WITH BOTTOM 1000 200'
+CALL want 'DELETEANIMATION 2', 0
+CALL same 'DELETEANIMATION', res, 1
+/* the Master view: a slide a master; art moved there is the master's; written back as one Undo step */
+CALL want 'VIEW NORMAL', 0
+CALL want 'MASTERS', 0
+nm = res
+CALL want 'MASTER', 0
+SAY '     MASTER:' res
+CALL want 'VIEW MASTER', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW in the masters', res, 'MASTER'
+CALL want 'SLIDES', 0
+CALL same 'a slide a master', res, nm
+CALL want 'OBJECTS', 0
+IF WORD(res, 1) > 0 THEN DO
+    CALL want 'PICKOBJECTS 1', 0
+    CALL want 'MOVEOBJECTS 0 100', 0
+END
+CALL want 'NEWSLIDE', 0                        /* a new master */
+CALL want 'SETMASTER 1', 5                     /* not in the Master view */
+CALL want 'VIEW NORMAL', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after the masters', res, 'NORMAL'
+CALL want 'MASTERS', 0
+CALL same 'a master added', res, nm + 1
+CALL want 'UNDO', 0
+CALL want 'MASTERS', 0
+CALL same 'MASTERS after UNDO', res, nm
+CALL want 'REDO', 0
+CALL want 'MASTERS', 0
+CALL same 'MASTERS after REDO', res, nm + 1
+CALL want 'SETMASTER' nm + 1, 0
+CALL want 'MASTER', 0
+CALL same 'the slide on the new master', WORD(res, 1), nm + 1
+CALL want 'UNDO', 0
+CALL want 'MASTER', 0
+CALL same 'SETMASTER undone', WORD(res, 1) = nm + 1, 0
+CALL want 'SETMASTER 99', 10
+CALL want 'MASTER 99', 10
+CALL want 'VIEW NORMAL', 0
+CALL want 'SLIDE 1', 0
+CALL want 'SLIDES', 0                         /* P8: whole slides on a clipboard of their own */
+ns = res
+CALL want 'COPYSLIDES', 0
+CALL same 'COPYSLIDES', res, 1
+CALL want 'PASTESLIDES', 0
+CALL same 'PASTESLIDES lands after slide 1', res, 2
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after PASTESLIDES', res, ns + 1
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'PASTESLIDES undone', res, ns
+CALL want 'INSERTFILE RAM:arexx-test.odp', 0
+ni = res
+IF ni < 1 THEN CALL bad 'INSERTFILE put in' ni 'slides'
+CALL want 'SLIDES', 0
+CALL same 'SLIDES after INSERTFILE', res, ns + ni
+CALL want 'UNDO', 0
+CALL want 'SLIDES', 0
+CALL same 'INSERTFILE undone in one step', res, ns
+CALL want 'INSERTFILE RAM:no/such/file.odp', 10
 CALL want 'SLIDE 1', 0
 CALL want 'DELETESLIDE', 0
 CALL want 'DELETESLIDE', 5                     /* the last slide stays */

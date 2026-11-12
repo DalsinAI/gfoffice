@@ -164,6 +164,48 @@ typedef struct {
     int keep;                    /* OWF_TRANS_OTHER: into deck->kept; -1: none */
 } owf_transition;
 
+/* ---- Custom animation ----
+ *
+ * A slide's effects, in the order they play. Each names its object by
+ * owf_obj.id (owf_deck_new_obj_id gives an object one), so effects follow
+ * their objects through Undo, reordering and grouping; an effect whose
+ * object is not on the slide is left out of the show and of the save.
+ * Effects start on a click, with the effect before them or after it; the
+ * effects up to the next click-started one play together as one step. */
+typedef enum {
+    OWF_ANIM_ENTRANCE,           /* the object is hidden until the effect */
+    OWF_ANIM_EXIT,               /* the object is hidden after it */
+    OWF_ANIM_EMPHASIS            /* kept and written back; shown without a change */
+} owf_anim_class;
+
+typedef enum {
+    OWF_EFFECT_APPEAR,           /* at once (an exit: disappear) */
+    OWF_EFFECT_FADE,             /* through a growing dither */
+    OWF_EFFECT_FLY,              /* from (to) the slide's edge, owf_anim.direction */
+    OWF_EFFECT_WIPE,             /* uncovered (covered) from an edge */
+    OWF_EFFECT_DISSOLVE,         /* in (out of) squares */
+    OWF_EFFECT_OTHER             /* the file's own preset (owf_anim.preset): played as appear */
+} owf_effect;
+
+typedef enum {
+    OWF_START_CLICK,             /* on a click or a key */
+    OWF_START_WITH,              /* with the effect before */
+    OWF_START_AFTER              /* when the effect before ends */
+} owf_anim_start;
+
+typedef struct {
+    long obj;                    /* the object's owf_obj.id */
+    unsigned char cls;           /* owf_anim_class */
+    unsigned char effect;        /* owf_effect */
+    unsigned char start;         /* owf_anim_start */
+    unsigned char direction;     /* OWF_DIR_...: the edge it comes from (goes to) */
+    int duration;                /* milliseconds; 0: the effect's own (appear: none) */
+    int delay;                   /* milliseconds after its start */
+    char *preset;                /* the file's preset id ("ooo-entrance-zoom"), or NULL */
+    int keep;                    /* OWF_EFFECT_OTHER: the file's own XML for it, into deck->kept
+                                    (OWF_KEPT_EFFECT); -1: none, written as appear or disappear */
+} owf_anim;
+
 /* owf_slide.show: which of the master's footer fields the slide shows */
 #define OWF_SHOW_FOOTER 1
 #define OWF_SHOW_NUMBER 2
@@ -188,6 +230,12 @@ typedef struct {
     unsigned show;               /* OWF_SHOW_... */
     char *footer;                /* the footer's text, or NULL */
     char *date_text;             /* a fixed date's text; NULL: today's, when shown */
+    /* Custom animation (owfpresent.library 3.7, appended so every earlier
+       field keeps its offset): the effects in the order they play. While
+       keep_timing is set the file's own timing XML is written back and these
+       are what the show plays; changing them drops the kept XML. */
+    int nanims, capanims;
+    owf_anim *anims;
 } owf_slide;
 
 typedef struct {
@@ -217,7 +265,8 @@ typedef enum {
     OWF_KEPT_SETTINGS,           /* the show's settings and custom shows */
     OWF_KEPT_GRAPHIC,            /* the graphic properties of the file's "standard" style, which
                                     kept objects' styles inherit */
-    OWF_KEPT_MASTER_STYLE        /* an automatic style kept objects of a master use (styles.xml's) */
+    OWF_KEPT_MASTER_STYLE,       /* an automatic style kept objects of a master use (styles.xml's) */
+    OWF_KEPT_EFFECT              /* one effect GFOpenPresentation does not have (owf_anim.keep) */
 } owf_kept_kind;
 
 typedef struct {
@@ -299,6 +348,14 @@ void owf_textlevel_init(owf_textlevel *level);
 int owf_obj_level(const owf_obj *obj, int para);
 int owf_obj_set_level(owf_obj *obj, int para, int level);
 int owf_deck_set_text(char **field, const char *utf8);      /* a name, footer...: copied; NULL clears */
+/* The object on a slide with this owf_obj.id, its index, or -1 (id 0: -1). */
+int owf_slide_obj_by_id(const owf_slide *slide, long id);
+/* An id no object of the deck's slides has yet (above every one in use). */
+long owf_deck_new_obj_id(const owf_deck *deck);
+/* A new effect at index at (outside 0..n: the end), zeroed but for obj (and
+   keep, -1); NULL when memory runs out. Deleting frees its preset. */
+owf_anim *owf_slide_add_anim(owf_slide *slide, int at, long obj);
+int owf_slide_delete_anim(owf_slide *slide, int index);
 int owf_deck_keep(owf_deck *deck, owf_kept_kind kind, const char *xml, size_t length);  /* its index */
 int owf_deck_add_part(owf_deck *deck, const char *name, const char *mime, const void *data, size_t length);
 

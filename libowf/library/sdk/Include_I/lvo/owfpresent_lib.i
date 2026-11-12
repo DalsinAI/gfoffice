@@ -85,5 +85,9 @@ _LVOowf_pdf_text_width	EQU	-492
 _LVOowf_pdf_winansi	EQU	-498
 _LVOowf_pdf_fallback	EQU	-504
 _LVOowf_deck_duplicate_slide	EQU	-510
+_LVOowf_slide_obj_by_id	EQU	-516
+_LVOowf_deck_new_obj_id	EQU	-522
+_LVOowf_slide_add_anim	EQU	-528
+_LVOowf_slide_delete_anim	EQU	-534
 
 	ENDC	; LVO_OWFPRESENT_LIB_I

@@ -1198,6 +1198,183 @@ static void put_notes(odpw *w, owf_buf *out, const owf_slide *s, int number, con
     owf_buf_puts(out, "</draw:text-box></draw:frame></presentation:notes>");
 }
 
+/* ---- Custom animation: owf_slide.anims as Impress's main sequence ---- */
+
+static void put_clock(owf_buf *out, long ms)
+{
+    if (ms % 1000)
+        owf_buf_printf(out, "%ld.%03lds", ms / 1000, ms % 1000);
+    else
+        owf_buf_printf(out, "%lds", ms / 1000);
+}
+
+/* What put_common writes as the object's id. */
+static void put_ref(owf_buf *out, const owf_obj *o)
+{
+    char id[48];
+    if (o->xml_id)
+        snprintf(id, sizeof id, "%.40s", o->xml_id);
+    else
+        snprintf(id, sizeof id, "id%ld", o->id);
+    owf_buf_puts(out, " smil:targetElement=\"");
+    owf_buf_puts_xml(out, id);
+    owf_buf_putc(out, '"');
+}
+
+static void put_visibility(owf_buf *out, const owf_obj *o, long begin, int visible)
+{
+    owf_buf_puts(out, "<anim:set smil:begin=\"");
+    put_clock(out, begin);
+    owf_buf_puts(out, "\" smil:dur=\"0.001s\" smil:fill=\"hold\"");
+    put_ref(out, o);
+    owf_buf_printf(out, " smil:attributeName=\"visibility\" smil:to=\"%s\"/>", visible ? "visible" : "hidden");
+}
+
+static void put_filter(owf_buf *out, const owf_obj *o, long dur, const owf_anim *a)
+{
+    static const char *wipe_sub[] = { "leftToRight", "leftToRight", "topToBottom", "topToBottom" };
+    owf_buf_puts(out, "<anim:transitionFilter smil:dur=\"");
+    put_clock(out, dur);
+    owf_buf_putc(out, '"');
+    put_ref(out, o);
+    if (a->effect == OWF_EFFECT_FADE)
+        owf_buf_puts(out, " smil:type=\"fade\" smil:subtype=\"crossfade\"");
+    else if (a->effect == OWF_EFFECT_DISSOLVE)
+        owf_buf_puts(out, " smil:type=\"dissolve\"");
+    else
+        owf_buf_printf(out, " smil:type=\"barWipe\" smil:subtype=\"%s\"%s", wipe_sub[a->direction & 3],
+                       a->direction == OWF_DIR_RIGHT || a->direction == OWF_DIR_DOWN ? " smil:direction=\"reverse\"" : "");
+    if (a->cls == OWF_ANIM_EXIT)
+        owf_buf_puts(out, " smil:mode=\"out\"");
+    owf_buf_puts(out, "/>");
+}
+
+/* Fly in from (out to) an edge: x and y as Impress's own fly presets write them. */
+static void put_fly(owf_buf *out, const owf_obj *o, long dur, const owf_anim *a)
+{
+    static const char *off[] = { "0-width/2", "1+width/2", "0-height/2", "1+height/2" };
+    int across = a->direction == OWF_DIR_LEFT || a->direction == OWF_DIR_RIGHT, k;
+    for (k = 0; k < 2; k++) {
+        const char *axis = k ? "y" : "x";
+        const char *edge = (k == 0) == across ? off[a->direction & 3] : axis;
+        owf_buf_puts(out, "<anim:animate smil:dur=\"");
+        put_clock(out, dur);
+        owf_buf_puts(out, "\" smil:fill=\"hold\"");
+        put_ref(out, o);
+        if (a->cls == OWF_ANIM_EXIT)
+            owf_buf_printf(out, " smil:attributeName=\"%s\" smil:values=\"%s;%s\"", axis, axis, edge);
+        else
+            owf_buf_printf(out, " smil:attributeName=\"%s\" smil:values=\"%s;%s\"", axis, edge, axis);
+        owf_buf_puts(out, " smil:keyTimes=\"0;1\" presentation:additive=\"base\"/>");
+    }
+}
+
+static void put_effect(odpw *w, owf_buf *out, const owf_slide *s, const owf_anim *a, int k)
+{
+    static const char *nodes[] = { "on-click", "with-previous", "after-previous" };
+    static const char *in_ids[] = { "ooo-entrance-appear", "ooo-entrance-fade-in", "ooo-entrance-fly-in",
+                                    "ooo-entrance-wipe", "ooo-entrance-dissolve-in" };
+    static const char *out_ids[] = { "ooo-exit-disappear", "ooo-exit-fade-out", "ooo-exit-fly-out",
+                                     "ooo-exit-wipe", "ooo-exit-dissolve" };
+    static const char *subs[] = { "from-left", "from-right", "from-top", "from-bottom" };
+    const owf_obj *o = &s->objs[k];
+    const char *id;
+    long dur = a->duration;
+    int exit = a->cls == OWF_ANIM_EXIT;
+    if (a->effect == OWF_EFFECT_OTHER && a->keep >= 0 && a->keep < w->deck->nkept &&
+        w->deck->kept[a->keep].kind == OWF_KEPT_EFFECT) {
+        owf_buf_puts(out, w->deck->kept[a->keep].xml);
+        return;
+    }
+    if (a->effect == OWF_EFFECT_OTHER)
+        id = a->preset;
+    else
+        id = exit ? out_ids[a->effect] : in_ids[a->effect];
+    if (!dur && a->effect != OWF_EFFECT_APPEAR && a->effect != OWF_EFFECT_OTHER)
+        dur = a->effect == OWF_EFFECT_FLY || a->effect == OWF_EFFECT_WIPE ? 500 : 1000;
+    owf_buf_puts(out, "<anim:par smil:begin=\"");
+    put_clock(out, a->delay);
+    owf_buf_printf(out, "\" smil:fill=\"hold\" presentation:node-type=\"%s\" presentation:preset-class=\"%s\"",
+                   nodes[a->start <= OWF_START_AFTER ? a->start : 0],
+                   exit ? "exit" : a->cls == OWF_ANIM_EMPHASIS ? "emphasis" : "entrance");
+    if (id) {
+        owf_buf_puts(out, " presentation:preset-id=\"");
+        owf_buf_puts_xml(out, id);
+        owf_buf_putc(out, '"');
+    }
+    if (a->effect == OWF_EFFECT_FLY || a->effect == OWF_EFFECT_WIPE)
+        owf_buf_printf(out, " presentation:preset-sub-type=\"%s\"", subs[a->direction & 3]);
+    owf_buf_putc(out, '>');
+    if (a->cls == OWF_ANIM_EMPHASIS) {
+        /* nothing GFOpenPresentation draws: the object stays as it is */
+        put_visibility(out, o, 0, 1);
+    } else if (!exit) {
+        put_visibility(out, o, 0, 1);
+        if (a->effect == OWF_EFFECT_FADE || a->effect == OWF_EFFECT_DISSOLVE || a->effect == OWF_EFFECT_WIPE)
+            put_filter(out, o, dur, a);
+        else if (a->effect == OWF_EFFECT_FLY)
+            put_fly(out, o, dur, a);
+    } else {
+        if (a->effect == OWF_EFFECT_FADE || a->effect == OWF_EFFECT_DISSOLVE || a->effect == OWF_EFFECT_WIPE)
+            put_filter(out, o, dur, a);
+        else if (a->effect == OWF_EFFECT_FLY)
+            put_fly(out, o, dur, a);
+        put_visibility(out, o, a->effect == OWF_EFFECT_APPEAR || a->effect == OWF_EFFECT_OTHER ? 0 : dur, 0);
+    }
+    owf_buf_puts(out, "</anim:par>");
+}
+
+/* The slide's effects: a par for each click, inside it a par for each run of
+ * effects that start together (an after-previous effect starts the next run,
+ * when the ones before it end). */
+static void put_timing(odpw *w, owf_buf *out, const owf_slide *s)
+{
+    int i, live = 0, click_open = 0, run_open = 0, first = 1;
+    long run_begin = 0, run_end = 0, run_start = 0;
+    for (i = 0; i < s->nanims; i++)
+        if (owf_slide_obj_by_id(s, s->anims[i].obj) >= 0)
+            live++;
+    if (!live)
+        return;
+    owf_buf_puts(out, "<anim:par presentation:node-type=\"timing-root\"><anim:seq presentation:node-type=\"main-sequence\">");
+    for (i = 0; i < s->nanims; i++) {
+        const owf_anim *a = &s->anims[i];
+        int k = owf_slide_obj_by_id(s, a->obj);
+        long dur;
+        if (k < 0)
+            continue;
+        dur = a->duration;
+        if (!dur && a->effect != OWF_EFFECT_APPEAR && a->effect != OWF_EFFECT_OTHER)
+            dur = a->effect == OWF_EFFECT_FLY || a->effect == OWF_EFFECT_WIPE ? 500 : 1000;
+        if (a->start == OWF_START_CLICK || first) {
+            if (run_open) owf_buf_puts(out, "</anim:par>");
+            if (click_open) owf_buf_puts(out, "</anim:par>");
+            owf_buf_printf(out, "<anim:par smil:begin=\"%s\">", a->start == OWF_START_CLICK ? "indefinite" : "0s");
+            click_open = 1;
+            run_open = 0;
+            run_begin = run_end = 0;
+        }
+        if (!run_open || a->start == OWF_START_AFTER) {
+            if (run_open) {
+                owf_buf_puts(out, "</anim:par>");
+                run_begin = run_end;
+            }
+            owf_buf_puts(out, "<anim:par smil:begin=\"");
+            put_clock(out, run_begin);
+            owf_buf_puts(out, "\">");
+            run_open = 1;
+            run_start = run_begin;
+        }
+        first = 0;
+        put_effect(w, out, s, a, k);
+        if (run_start + a->delay + dur > run_end)
+            run_end = run_start + a->delay + dur;
+    }
+    if (run_open) owf_buf_puts(out, "</anim:par>");
+    if (click_open) owf_buf_puts(out, "</anim:par>");
+    owf_buf_puts(out, "</anim:seq></anim:par>");
+}
+
 static int build_content(odpw *w, owf_buf *out)
 {
     const owf_deck *d = w->deck;
@@ -1260,6 +1437,8 @@ static int build_content(odpw *w, owf_buf *out)
         put_objects(w, &pages, s->objs, s->nobjs, -1, 0);
         if (s->keep_timing >= 0 && s->keep_timing < d->nkept && d->kept[s->keep_timing].kind == OWF_KEPT_TIMING)
             owf_buf_puts(&pages, d->kept[s->keep_timing].xml);
+        else
+            put_timing(w, &pages, s);
         put_notes(w, &pages, s, i + 1, NULL);
         owf_buf_puts(&pages, "</draw:page>");
     }

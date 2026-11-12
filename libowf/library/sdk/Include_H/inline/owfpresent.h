@@ -1456,4 +1456,72 @@ __owfpresent_owf_deck_duplicate_slide(void *__base, owf_deck *deck, int index, i
 #define owf_deck_duplicate_slide(deck, index, at) __owfpresent_owf_deck_duplicate_slide((OWFPRESENT_BASE_NAME), (owf_deck *)(deck), (int)(index), (int)(at))
 #define __owf_deck_duplicate_slide_base(__in_base, deck, index, at) __owfpresent_owf_deck_duplicate_slide((__in_base), (owf_deck *)(deck), (int)(index), (int)(at))
 
+static __inline__ int
+__owfpresent_owf_slide_obj_by_id(void *__base, const owf_slide *slide, long id)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(slide);
+	register ULONG _d0 __asm("d0") = (ULONG)(id);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -516(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_slide_obj_by_id(slide, id) __owfpresent_owf_slide_obj_by_id((OWFPRESENT_BASE_NAME), (const owf_slide *)(slide), (long)(id))
+#define __owf_slide_obj_by_id_base(__in_base, slide, id) __owfpresent_owf_slide_obj_by_id((__in_base), (const owf_slide *)(slide), (long)(id))
+
+static __inline__ long
+__owfpresent_owf_deck_new_obj_id(void *__base, const owf_deck *deck)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(deck);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -522(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (long)_d0;
+}
+#define owf_deck_new_obj_id(deck) __owfpresent_owf_deck_new_obj_id((OWFPRESENT_BASE_NAME), (const owf_deck *)(deck))
+#define __owf_deck_new_obj_id_base(__in_base, deck) __owfpresent_owf_deck_new_obj_id((__in_base), (const owf_deck *)(deck))
+
+static __inline__ owf_anim *
+__owfpresent_owf_slide_add_anim(void *__base, owf_slide *slide, int at, long obj)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(slide);
+	register ULONG _d0 __asm("d0") = (ULONG)(at);
+	register ULONG _d1 __asm("d1") = (ULONG)(obj);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -528(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (owf_anim *)_d0;
+}
+#define owf_slide_add_anim(slide, at, obj) __owfpresent_owf_slide_add_anim((OWFPRESENT_BASE_NAME), (owf_slide *)(slide), (int)(at), (long)(obj))
+#define __owf_slide_add_anim_base(__in_base, slide, at, obj) __owfpresent_owf_slide_add_anim((__in_base), (owf_slide *)(slide), (int)(at), (long)(obj))
+
+static __inline__ int
+__owfpresent_owf_slide_delete_anim(void *__base, owf_slide *slide, int index)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(slide);
+	register ULONG _d0 __asm("d0") = (ULONG)(index);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -534(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_slide_delete_anim(slide, index) __owfpresent_owf_slide_delete_anim((OWFPRESENT_BASE_NAME), (owf_slide *)(slide), (int)(index))
+#define __owf_slide_delete_anim_base(__in_base, slide, index) __owfpresent_owf_slide_delete_anim((__in_base), (owf_slide *)(slide), (int)(index))
+
 #endif /* INLINE_OWFPRESENT_H */

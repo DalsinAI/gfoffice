@@ -688,6 +688,8 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     else if (!strcmp(word, "DOCVARIABLE") && *arg) *field = OWF_FIELD_USER;
     else if (!strcmp(word, "REF") && *arg) *field = OWF_FIELD_REF;
     else if (!strcmp(word, "PAGEREF") && *arg) *field = OWF_FIELD_REF_PAGE;
+    else if (!strcmp(word, "MERGEFIELD") && *arg) *field = OWF_FIELD_MERGE;      /* 1.9 */
+    else if (!strcmp(word, "XE") && *arg) *field = OWF_FIELD_INDEX;               /* 1.10 */
     else return 0;
     if (*field <= OWF_FIELD_TIME || *field == OWF_FIELD_CHAPTER) arg[0] = 0;
     return 1;
@@ -1265,7 +1267,8 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
                     d->nfields--;
                     if (!hiding(d)) {
                         set_fmt(d, fmt);
-                        if (keeps_result(f->field)) owf_builder_field(d->b, f->field, f->arg, NULL);
+                        if (keeps_result(f->field))
+                            owf_builder_field(d->b, f->field, f->arg, f->field == OWF_FIELD_INDEX ? "" : NULL);
                         else owf_builder_special(d->b, OWF_RUN_FIELD, f->field);
                     }
                     return;
@@ -2071,6 +2074,27 @@ static void section(docx *d, const owf_xml_node *sect)
                 name = owf_xml_attr(v, d->w, "name");
                 val = owf_xml_attr(v, d->w, "val");
                 if (name && *name && owf_doc_set_user_field(d->doc, name, val ? val : "") < 0) d->failed = 1;
+            }
+        }
+        /* 1.9: the mail merge data source: w:mailMerge's query, SELECT * FROM `path` */
+        eo = settings ? wchild(d, owf_xml_root(settings), "mailMerge") : NULL;
+        if (eo) {
+            const owf_xml_node *q = wchild(d, eo, "query");
+            const char *sql = q ? owf_xml_attr(q, d->w, "val") : NULL;
+            const char *from = sql ? strstr(sql, "FROM ") : NULL;
+            if (from) {
+                char path[512];
+                size_t n = 0;
+                from += 5;
+                while (*from == ' ') ++from;
+                if (*from == '`') {
+                    ++from;
+                    while (*from && *from != '`' && n + 1 < sizeof path) path[n++] = *from++;
+                } else {
+                    while (*from && *from != ' ' && n + 1 < sizeof path) path[n++] = *from++;
+                }
+                path[n] = 0;
+                if (n && owf_doc_set_merge_source(d->doc, path) < 0) d->failed = 1;
             }
         }
         owf_xml_free(settings);

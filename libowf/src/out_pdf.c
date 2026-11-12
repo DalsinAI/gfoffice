@@ -497,7 +497,7 @@ static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
                 /* 1.3: a frame's picture where it is anchored, as before frames were read */
                 if(line.n){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
                 if(!pdf_place_image(l,p,l->doc->frames[r->image].image))return 0;}
-            else if(r->kind==OWF_RUN_FIELD){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)(r->field>OWF_FIELD_TIME&&r->text?r->text:"#");   /* a literal: the line keeps the pointer until it is flushed, after this block */
+            else if(r->kind==OWF_RUN_FIELD){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)(r->field>OWF_FIELD_TIME?(r->text?r->text:""):"#");   /* a literal: the line keeps the pointer until it is flushed, after this block */
                 if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
         }
         if(line.n || !p->nruns){if(!pdf_flush_line(l,p,&line,first))return 0;}

@@ -98,6 +98,10 @@ int owf_pdf_text_width(const char *utf8, size_t length, owf_font_kind kind, unsi
 int owf_pdf_winansi(unsigned long codepoint);
 const char * owf_pdf_fallback(unsigned long codepoint);
 owf_slide * owf_deck_duplicate_slide(owf_deck *deck, int index, int at);
+int owf_slide_obj_by_id(const owf_slide *slide, long id);
+long owf_deck_new_obj_id(const owf_deck *deck);
+owf_anim * owf_slide_add_anim(owf_slide *slide, int at, long obj);
+int owf_slide_delete_anim(owf_slide *slide, int index);
 
 #ifdef __cplusplus
 }

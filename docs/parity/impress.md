@@ -15,8 +15,11 @@ docs/gfoffice/Impress-Parity.md.
 | 11 Nov 2026 | 0.6.26 | 71% | P3: the Outline view |
 | 11 Nov 2026 | 0.6.27 | 74% | P4: PPTX save |
 | 11 Nov 2026 | 0.6.28 | 76% | P5: several objects picked, distribute, group and ungroup |
+| 12 Nov 2026 | 0.6.29 | 79% | P6: custom animation (entrance and exit effects, played in the show) |
+| 12 Nov 2026 | 0.6.30 | 81% | P7: the Master view and Slide Design |
+| 12 Nov 2026 | 0.6.31 | 83% | P8: slides on the clipboard, Insert Slides from File |
 
-Phase 1 target: 76% after P1 to P5.
+Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 
 ## Phase 1 deliverables
 
@@ -27,6 +30,34 @@ Phase 1 target: 76% after P1 to P5.
 | P3 Outline view | Done in 0.6.26 | View > Outline: each slide's title and its outline box's paragraphs as one list; Return edits a line, Shift+Return adds a line (a new slide after a title), Tab and Shift+Tab move a line in and out (a title moved in joins the slide before, a top-level line moved out starts a slide), Del deletes a line or, on a title, its slide; each change one Undo step (`opr_outline.c`). ARexx VIEW OUTLINE, OUTLINE [SET, INSERT, DEMOTE, PROMOTE, DELETE] n. Host test tests/deck/test_opr_outline.c |
 | P4 PPTX save | Done in 0.6.27 | Save and Save As write PowerPoint (.pptx) as well as ODP: slides with their objects where they are drawn, text with its runs, levels and fields, pictures (cropped), shapes, backgrounds, hidden slides, transitions and speaker notes; a slide master and layout for each deck master with its text levels (`opr_pptx.c`). Save writes a PPTX it opened back as PPTX. ARexx SAVEAS name.pptx. Host test tests/deck/test_opr_pptx.c (saved, read back with the PPTX reader, compared) |
 | P5 Multi-select, distribute, group/ungroup | Done in 0.6.28 | Shift+click picks several objects, a drag over the slide picks those it goes round; they move together (drag, arrow keys), align to the box round them, space evenly across or down (Object > Distribute), delete together; Object > Group makes them one group that moves, aligns and deletes as one, Ungroup takes it apart; each change one Undo step (`opr_multi.c`, groups in `opr_edit.c`). ARexx PICKOBJECTS, PICKEDOBJECTS, OBJECTBOX, MOVEOBJECTS, ALIGN, DISTRIBUTE, GROUP, UNGROUP, DELETEOBJECTS. Host test tests/deck/test_opr_multi.c |
+
+## Phase 2 deliverables
+
+| Deliverable | State | Notes |
+| --- | --- | --- |
+| P6 Custom animation | Done in 0.6.29 | Slide > Custom Animation...: a list of the slide's effects with Add, Change, Remove, Move Up and Move Down; each effect is an object, an effect (Appear, Fade In, Fly In, Wipe, Dissolve In and the same five out), a direction for fly and wipe, a start (on click, with previous, after previous), a duration and a delay; each change one Undo step (`opr_anim.c`, `opr_edit.c`). The show plays them: objects with an entrance wait hidden, each click runs the next step and its with/after effects, then the next slide. ODP open reads Impress's main sequence (effects it has no player for are kept and written back as they were) and Save writes the timing tree Impress reads; owfpresent.library 3.7 adds the effect list to a slide (`owf_anim`). ARexx ANIMATIONS, ANIMATION n, ADDANIMATION, CHANGEANIMATION, DELETEANIMATION, MOVEANIMATION, ANIMSTEPS, ANIMVISIBLE. Host test tests/deck/test_opr_anim.c; lab: tests/arexx/presentation.rexx |
+| P7 Master view | Done in 0.6.30 | View > Master Slides shows each master as a slide: its art, its title, outline, date, footer and number boxes, and its background, edited with every slide command (move, resize, type, pictures, shapes, delete, Undo); New, Duplicate, Rename, Delete and Move make, name, remove and order masters. Leaving the view (or saving, printing, the show) writes the masters back as one Undo step; a master's slides follow it, and a deleted master's go to the first (`opr_master.c`, `opr_masters_set` in `opr_edit.c`). Slide > Slide Design... puts this slide, or the slides picked in the sorter, on a master. ARexx VIEW MASTER, MASTERS, MASTER [n], SETMASTER n. Host test tests/deck/test_opr_master.c; lab: tests/arexx/presentation.rexx |
+| P8 Slide clipboard, Insert Slide from file | Done in 0.6.31 | In the Slide Sorter, Cut, Copy and Paste work on the picked slides: the copies keep their pictures, fonts, master, layout, notes, transition and effects, and paste after the focused slide in this deck or another one opened later, as one Undo step. Slide > Insert Slides from File... puts every slide of another ODP or PPTX after this one the same way. A master or layout of the same name is reused, otherwise it comes along; names already taken get " (2)". Charts and embedded objects kept only as file XML are left out and counted (`opr_clip.c`, `opr_slide_insert_owned` in `opr_edit.c`). ARexx COPYSLIDES, CUTSLIDES, PASTESLIDES, INSERTFILE path. Host test tests/deck/test_opr_clip.c; lab: tests/arexx/presentation.rexx |
+| P9 Export slides as pictures | Next | |
+
+## What the slide clipboard does not do yet
+
+- It is GFOpenPresentation's own: slides do not go through the Amiga clipboard to other programs.
+- Insert Slides from File puts in every slide; there is no list to pick some.
+- Charts and embedded objects the file kept as XML are left out of copies (the status line counts them).
+
+## What the Master view does not do yet
+
+- Editing the masters' text levels (the outline's fonts, sizes and bullets) and the title's format: a master's boxes are moved and sized, their text styles stay as the file had them.
+- Slide layouts as their own pages; notes and handout masters.
+- Slide Design shows the first eight masters as buttons, not as pictures.
+
+## What custom animation does not do yet
+
+- Emphasis effects and motion paths: kept from the file and written back, not played or edited.
+- Animating text one paragraph or one letter at a time; sounds; triggers (start on clicking an object).
+- PPTX save leaves animations out (ODP keeps them).
+- A preview in the editor: the show plays them.
 
 ## What picking several objects does not do yet
 
@@ -58,7 +89,7 @@ Phase 1 target: 76% after P1 to P5.
   left out.
 - One layout a master: a PPTX opened with many layouts saves each slide
   with its boxes placed, under its master's one layout.
-- Animations, and ODP parts kept from the file, are not written.
+- Animations (ODP keeps them), and ODP parts kept from the file, are not written.
 - Templates and shows (.potx, .ppsx) and PowerPoint 97-2003 (.ppt).
 
 ## What the sorter does not do yet
