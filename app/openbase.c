@@ -9,7 +9,14 @@
  * what the user types. Plain GadTools in the screen's font, so it works on
  * any Workbench screen; 68040 code, no FPU needed.
  *
- *   GFOpenBase [FILE] [NEW]     FILE: a project (.oadb); NEW makes it if there is none
+ *   GFOpenBase [FILE] [NEW] [TABLE=name] [ROW=key]
+ *                               FILE: a project (.oadb); NEW makes it if there is none;
+ *                               TABLE and ROW: the table shown, and the row chosen in it
+ *
+ * ARexx: the GFOPENBASE port (GFOPENBASE.2 for a second copy), as docs/gfoffice/Design-Suite-Shared.md
+ * section 6 has it: VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN TABLES TABLE
+ * ROW QUIT. OPEN FILE "x" TABLE "t" ROW n is how ACFind and GFOpenBench open a row hit (amicradle-teams
+ * designs/ACFIND-EVERY-DRIVE-DESIGN-20261111.md section 9). No requester shows while a command runs.
  *
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -31,6 +38,9 @@
 #include <proto/graphics.h>
 #include <proto/gadtools.h>
 #include <proto/asl.h>
+#include <rexx/storage.h>
+#include <rexx/errors.h>
+#include <proto/rexxsyslib.h>
 #include <clib/alib_protos.h>
 
 #include <stdio.h>
@@ -41,8 +51,9 @@
 #include "ow_stack.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
+struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.4.0 (12.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.4.1 (12.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -146,16 +157,34 @@ static void put_text(char *dst, size_t n, const char *src)
     dst[len] = 0;
 }
 
+/* ARexx (amicradle-teams ARexx-RULE.md): while a command runs no requester shows; what it would have said is
+ * kept, and a failing command's reason is LASTERROR's answer. */
+static int rexx_busy, rexx_noted;
+static char rexx_noting[300], rexx_lasterror[300];
+
+static int rexx_quiet(const char *text)
+{
+    if (!rexx_busy) return 0;
+    if (!rexx_noted) { put_text(rexx_noting, sizeof rexx_noting, text); rexx_noted = 1; }
+    return 1;
+}
+
 static void tell(const char *text)
 {
+    if (rexx_quiet(text)) return;
+    {
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
     EasyRequest(win, &es, NULL, (ULONG)text);
+    }
 }
 
 static int ask(const char *text, const char *buttons)
 {
+    if (rexx_quiet(text)) return 0;                  /* the last button: Cancel */
+    {
     struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)buttons };
     return EasyRequest(win, &es, NULL, (ULONG)text);
+    }
 }
 
 static void set_status(const char *s)
@@ -2184,6 +2213,243 @@ static void events(void)
 
 /* ---- The window ---- */
 
+/* ---- ARexx: the GFOPENBASE port ---- */
+
+#define RX_OK 0
+#define RX_NOW 5
+#define RX_ERROR 10
+#define RX_UNKNOWN 20
+#define REXX_PORT_NAME "GFOPENBASE"
+static struct MsgPort *rexx_port;
+static char rexx_name[16];
+
+static int is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+static const char *skip_space(const char *s)
+{
+    while (*s && is_space(*s)) s++;
+    return s;
+}
+static int lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+/* s starts with word (any case) and then a space or its end; *rest is what follows */
+static int starts_word_ci(const char *s, const char *word, const char **rest)
+{
+    size_t n = strlen(word), i;
+    for (i = 0; i < n; ++i) if (!s[i] || lower((unsigned char)s[i]) != lower((unsigned char)word[i])) return 0;
+    if (s[n] && !is_space(s[n]) && s[n] != '=') return 0;
+    if (rest) *rest = skip_space(s + n + (s[n] == '=' ? 1 : 0));
+    return 1;
+}
+/* the next argument ("in quotes" or one word) into out; where the rest starts */
+static const char *rexx_arg(const char *p, char *out, size_t size)
+{
+    size_t k = 0;
+    p = skip_space(p);
+    if (*p == '"') {
+        for (++p; *p && *p != '"'; ++p) if (k + 1 < size) out[k++] = *p;
+        if (*p == '"') ++p;
+    } else {
+        while (*p && !is_space(*p)) { if (k + 1 < size) out[k++] = *p; ++p; }
+    }
+    out[k] = 0;
+    return skip_space(p);
+}
+
+/* the table named (any case): its index, or -1 */
+static int table_named(const char *name)
+{
+    int i;
+    for (i = 0; proj && i < table_count; i++) {
+        const char *t = ob_table_name(proj, i);
+        size_t j;
+        for (j = 0; t[j] && name[j] && lower((unsigned char)t[j]) == lower((unsigned char)name[j]); j++) ;
+        if (!t[j] && !name[j]) return i;
+    }
+    return -1;
+}
+
+struct key_find { ob_int key, at, seen; };
+static int key_cb(void *user, ob_int key, int n, const char *const *values)
+{
+    struct key_find *f = (struct key_find *)user;
+    (void)n; (void)values;
+    if (key == f->key) { f->at = f->seen; return 1; }
+    f->seen++;
+    return 0;
+}
+
+/* The row chosen: its key ("118"), or its place from 1 ("#7"), every row in key order shown. 1 when it is there. */
+static int choose_row(const char *row)
+{
+    struct key_find f;
+    ob_int first;
+    char *end;
+    if (!proj || !have_cur || !*row) return 0;
+    ob_view_init(&view);
+    put_text(view_table, sizeof view_table, cur.name);
+    total_rows = ob_view_total(proj, cur.name, &view);
+    f.at = -1;
+    if (row[0] == '#') {
+        long n = strtol(row + 1, &end, 10);
+        if (*end || n < 1 || n > total_rows) return 0;
+        f.at = n - 1;
+    } else {
+        f.key = (ob_int)strtol(row, &end, 10);
+        if (*end) return 0;
+        for (first = 0, f.seen = 0; f.at < 0 && first < total_rows; first += 256) {
+            f.seen = first;
+            if (ob_view_rows(proj, cur.name, NULL, first, 256, key_cb, &f) < 0) return 0;
+        }
+        if (f.at < 0) return 0;
+    }
+    sel_row = (int)f.at;
+    top_row = f.at - ds_rows / 2;
+    if (top_row < 0) top_row = 0;
+    load_page();
+    return 1;
+}
+
+/* OPEN FILE x [TABLE t] [ROW n] (FILE= may be left out), and the same on the command line */
+static int rexx_open_cmd(const char *arg, char *out, size_t size)
+{
+    char file[512] = "", table[OB_NAME_MAX] = "", row[24] = "";
+    const char *rest;
+    while (*(arg = skip_space(arg))) {
+        if (starts_word_ci(arg, "FILE", &rest)) arg = rexx_arg(rest, file, sizeof file);
+        else if (starts_word_ci(arg, "TABLE", &rest)) arg = rexx_arg(rest, table, sizeof table);
+        else if (starts_word_ci(arg, "ROW", &rest)) arg = rexx_arg(rest, row, sizeof row);
+        else arg = rexx_arg(arg, file, sizeof file);
+    }
+    if (!file[0] && !proj) { put_text(out, size, "OPEN needs a FILE"); return RX_ERROR; }
+    if (file[0] && !open_project(file, 0)) {
+        put_text(out, size, rexx_noted ? rexx_noting : "The project could not be opened");
+        return RX_ERROR;
+    }
+    if (table[0]) {
+        int t = table_named(table);
+        if (t < 0) { snprintf(out, size, "No table %.100s in the project", table); return RX_ERROR; }
+        load_tables(ob_table_name(proj, t));
+    }
+    if (row[0] && !choose_row(row)) { snprintf(out, size, "No row %.20s in the table", row); return RX_NOW; }
+    if (win) { WindowToFront(win); ActivateWindow(win); }
+    put_text(out, size, "OK");
+    return RX_OK;
+}
+
+static int rexx_do_command(const char *command, char **result_out)
+{
+    const char *arg = "";
+    char result_text[1024];
+    int rc = RX_OK;
+    result_text[0] = 0;
+    command = skip_space(command);
+    if (starts_word_ci(command, "VERSION", &arg)) put_text(result_text, sizeof result_text, VERSION_TEXT);
+    else if (starts_word_ci(command, "LASTERROR", &arg)) put_text(result_text, sizeof result_text, rexx_lasterror);
+    else if (starts_word_ci(command, "HELP", &arg))
+        put_text(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE "
+                 "OPEN TABLES TABLE ROW QUIT");
+    else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
+        rc = RX_NOW; put_text(result_text, sizeof result_text, "DEACTIVATE: GFOpenBase has no icon to go to");
+    } else if (starts_word_ci(command, "FAULT", &arg)) {
+        if (!*arg) { rc = RX_ERROR; put_text(result_text, sizeof result_text, "FAULT needs a code"); }
+        else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
+    } else if (starts_word_ci(command, "ACTIVATE", &arg)) {
+        if (win) { WindowToFront(win); ActivateWindow(win); }
+    } else if (starts_word_ci(command, "ISDIRTY", &arg)) put_text(result_text, sizeof result_text, "0");   /* rows are written as they are typed */
+    else if (starts_word_ci(command, "GETFILE", &arg)) put_text(result_text, sizeof result_text, proj_path);
+    else if (starts_word_ci(command, "OPEN", &arg)) rc = rexx_open_cmd(arg, result_text, sizeof result_text);
+    else if (starts_word_ci(command, "TABLES", &arg)) {
+        int i;
+        size_t k = 0;
+        for (i = 0; proj && i < table_count; i++) {
+            const char *t = ob_table_name(proj, i);
+            size_t l = strlen(t);
+            if (k + l + 4 >= sizeof result_text) break;
+            if (k) result_text[k++] = ' ';
+            result_text[k++] = '"'; memcpy(result_text + k, t, l); k += l; result_text[k++] = '"';
+        }
+        result_text[k] = 0;
+    } else if (starts_word_ci(command, "TABLE", &arg)) {
+        char t[OB_NAME_MAX];
+        int i;
+        rexx_arg(arg, t, sizeof t);
+        if (!t[0]) put_text(result_text, sizeof result_text, have_cur ? cur.name : "");
+        else if ((i = table_named(t)) < 0) { rc = RX_ERROR; snprintf(result_text, sizeof result_text, "No table %.100s in the project", t); }
+        else { load_tables(ob_table_name(proj, i)); put_text(result_text, sizeof result_text, "OK"); }
+    } else if (starts_word_ci(command, "ROW", &arg)) {
+        char r[24];
+        rexx_arg(arg, r, sizeof r);
+        if (!r[0]) {
+            if (have_cur && sel_row >= top_row && sel_row - top_row < page_n)
+                snprintf(result_text, sizeof result_text, "%ld", (long)page_keys[sel_row - top_row]);
+        } else if (!have_cur) { rc = RX_NOW; put_text(result_text, sizeof result_text, "No table is shown"); }
+        else if (!choose_row(r)) { rc = RX_NOW; snprintf(result_text, sizeof result_text, "No row %.20s in the table", r); }
+        else put_text(result_text, sizeof result_text, "OK");
+    } else if (starts_word_ci(command, "QUIT", &arg)) {
+        quit_now = 1; put_text(result_text, sizeof result_text, "Quitting");
+    } else { rc = RX_UNKNOWN; put_text(result_text, sizeof result_text, "Unknown GFOpenBase ARexx command; HELP lists them"); }
+    if (rc != RX_OK) put_text(rexx_lasterror, sizeof rexx_lasterror, result_text);
+    if (result_out) {
+        *result_out = (char *)malloc(strlen(result_text) + 1);
+        if (*result_out) strcpy(*result_out, result_text);
+        else if (rc == RX_OK) rc = RX_UNKNOWN;
+    }
+    if (win) refresh();
+    return rc;
+}
+
+static void rexx_messages(void)
+{
+    struct RexxMsg *rm;
+    while (rexx_port && (rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
+        char *res = NULL;
+        int rc;
+        rexx_busy = 1;
+        rexx_noted = 0;
+        rc = rexx_do_command((const char *)rm->rm_Args[0], &res);
+        rexx_busy = 0;
+        rm->rm_Result1 = rc;
+        rm->rm_Result2 = 0;
+        if (rc == RX_OK && (rm->rm_Action & RXFF_RESULT) && RexxSysBase && res)
+            rm->rm_Result2 = (LONG)CreateArgstring((STRPTR)res, (LONG)strlen(res));
+        free(res);
+        ReplyMsg((struct Message *)rm);
+    }
+}
+
+static void rexx_open(void)
+{
+    struct MsgPort *p;
+    int n;
+    if (!RexxSysBase) return;
+    if (!(p = CreateMsgPort())) return;
+    p->mp_Node.ln_Pri = 0;
+    Forbid();
+    for (n = 1; n < 10; n++) {                       /* GFOPENBASE, then GFOPENBASE.2 for a second copy */
+        if (n == 1) put_text(rexx_name, sizeof rexx_name, REXX_PORT_NAME);
+        else snprintf(rexx_name, sizeof rexx_name, "%s.%d", REXX_PORT_NAME, n);
+        if (!FindPort((STRPTR)rexx_name)) break;
+    }
+    if (n == 10) { Permit(); DeleteMsgPort(p); return; }
+    p->mp_Node.ln_Name = rexx_name;
+    AddPort(p);
+    Permit();
+    rexx_port = p;
+}
+
+static void rexx_close(void)
+{
+    struct RexxMsg *rm;
+    if (!rexx_port) return;
+    RemPort(rexx_port);
+    while ((rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
+        rm->rm_Result1 = RC_FATAL;
+        rm->rm_Result2 = 0;
+        ReplyMsg((struct Message *)rm);
+    }
+    DeleteMsgPort(rexx_port);
+    rexx_port = NULL;
+}
+
 static int open_window(void)
 {
     int w, h;
@@ -2242,7 +2508,7 @@ static void close_window(void)
 static int window_main(int argc, char **argv)
 {
     int rc = 0, create = 0;
-    char first[512] = "";
+    char first[512] = "", table[OB_NAME_MAX] = "", row[24] = "";
     NewList(&table_list);
     if (!(GadToolsBase = OpenLibrary((STRPTR)"gadtools.library", 39)) ||
         !(AslBase = OpenLibrary((STRPTR)"asl.library", 38))) {
@@ -2253,7 +2519,10 @@ static int window_main(int argc, char **argv)
     if (argc > 1) {
         int i;
         for (i = 1; i < argc; i++) {
+            const char *rest;
             if (!strcmp(argv[i], "NEW") || !strcmp(argv[i], "new")) create = 1;
+            else if (starts_word_ci(argv[i], "TABLE", &rest) && argv[i][5] == '=') put_text(table, sizeof table, rest);
+            else if (starts_word_ci(argv[i], "ROW", &rest) && argv[i][3] == '=') put_text(row, sizeof row, rest);
             else put_text(first, sizeof first, argv[i]);
         }
     } else if (argc == 0) {
@@ -2266,15 +2535,26 @@ static int window_main(int argc, char **argv)
         rc = 20;
         goto out;
     }
-    if (first[0]) open_project(first, create);
+    RexxSysBase = (struct RxsLib *)OpenLibrary((STRPTR)"rexxsyslib.library", 36);
+    rexx_open();
+    if (first[0] && open_project(first, create)) {
+        int t = table[0] ? table_named(table) : -1;
+        if (t >= 0) load_tables(ob_table_name(proj, t));
+        else if (table[0]) set_status("No such table in the project");
+        if (row[0] && !choose_row(row)) set_status("No such row in the table");
+    }
     refresh();
     while (!quit_now) {
         ULONG sig = 1UL << win->UserPort->mp_SigBit;
-        ULONG got = Wait(sig | SIGBREAKF_CTRL_C);
+        ULONG rsig = rexx_port ? (1UL << rexx_port->mp_SigBit) : 0;
+        ULONG got = Wait(sig | rsig | SIGBREAKF_CTRL_C);
         if (got & SIGBREAKF_CTRL_C) quit_now = 1;
+        if (got & rsig) rexx_messages();
         if (got & sig) events();
     }
 out:
+    rexx_close();
+    if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     close_project();
     close_window();
     if (AslBase) CloseLibrary(AslBase);
