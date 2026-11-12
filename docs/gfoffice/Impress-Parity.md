@@ -34,7 +34,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | ODF Presentation template (`.otp`) | P1 | Yes (opened; saved as `.otp` by name) |
 | Flat XML ODF Presentation (`.fodp`) | P1 | Yes; embedded objects' parts are not kept in flat XML (reported) |
 | Microsoft PowerPoint 2007-365 (`.pptx`, `.potx`, `.ppsx`) open | P2 | No in P1. P2: Yes (`in_pptx.c`; what is approximated is reported, see FORMATS.md); saved as PPTX since 0.6.27 |
-| Save as PowerPoint 2007-365 | P4 | Yes (0.6.27): Save and Save As .pptx (`src/deck/opr_pptx.c`); tables saved as text boxes, groups ungrouped, animations not written, all reported |
+| Save as PowerPoint 2007-365 | P4 | Yes (0.6.27): Save and Save As .pptx (`src/deck/opr_pptx.c`); tables saved as text boxes, groups ungrouped, animations not written (ODP keeps them), all reported |
 | PowerPoint 97-2003 (`.ppt`, `.pps`, `.pot`) open and save | Later | No |
 | OpenOffice.org 1.x (`.sxi`), StarImpress | Later, if samples appear | No |
 | Export as PDF (Export as PDF..., Export Directly as PDF) | P1 | Yes: a page a slide, searchable text, JPEG and PNG pictures, hidden slides left out |
@@ -233,8 +233,10 @@ Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Entrance, emphasis, exit effects, motion paths | P4 ("appear" and "fade in"), Later | Kept, written back while objects keep their ids |
-| Start on click, with previous, after previous; timing; triggers | P4 | Kept |
+| Entrance and exit effects: appear, fade, fly in/out, wipe, dissolve | P6 | Yes in 0.6.29: Slide > Custom Animation... edits them (add, change, remove, reorder, one Undo step each) and the show plays them; ODP open and save (`src/deck/opr_anim.c`, owfpresent.library 3.7) |
+| Emphasis effects, motion paths, other entrance and exit effects | Later | Kept and written back as they were while their object keeps its id |
+| Start on click, with previous, after previous; duration and delay | P6 | Yes in 0.6.29 |
+| Triggers, sounds, text by paragraph or letter | Later | Kept or No |
 
 ## 13. Views and tools
 

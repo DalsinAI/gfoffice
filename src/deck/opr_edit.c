@@ -838,6 +838,7 @@ typedef enum {
     SNAP_OBJ_CROP,
     SNAP_OBJ_FLOW,
     SNAP_OBJ_PARENT,
+    SNAP_ANIMS,
     SNAP_GROUP
 } snapshot_kind;
 
@@ -887,6 +888,9 @@ typedef struct snapshot {
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
     owf_obj saved_obj;
     int saved_obj_present;
+    /* SNAP_ANIMS: a slide's effects and its kept timing XML, as they were. */
+    owf_anim *anims;
+    int nanims, capanims, keep_timing;
     /* SNAP_GROUP: several steps made as one (opr_undo_group_begin/end), in
      * the order they were made; parts_forward says the next swap redoes
      * them first to last (else it undoes them last to first). */
@@ -931,6 +935,9 @@ static void slide_free(owf_slide *s)
     owf_free(s->name);
     owf_free(s->footer);
     owf_free(s->date_text);
+    for (i = 0; i < s->nanims; i++)
+        owf_free(s->anims[i].preset);
+    owf_free(s->anims);
     memset(s, 0, sizeof *s);
 }
 
@@ -987,6 +994,11 @@ static void snap_free(snapshot *s)
         owf_free(s->transitions);
     } else if (s->kind == SNAP_OBJ_PRESENCE && s->saved_obj_present) {
         owf_obj_clear(&s->saved_obj);
+    } else if (s->kind == SNAP_ANIMS) {
+        int i;
+        for (i = 0; i < s->nanims; i++)
+            owf_free(s->anims[i].preset);
+        owf_free(s->anims);
     } else if (s->kind == SNAP_GROUP) {
         int i;
         for (i = 0; i < s->nparts; i++)
@@ -1261,6 +1273,16 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
                 return -1;
             s->saved_obj_present = 1;
         }
+    } else if (s->kind == SNAP_ANIMS) {
+        owf_slide *sl;
+        owf_anim *a;
+        int n, cap, keep;
+        if (!deck || s->slide < 0 || s->slide >= deck->nslides)
+            return -1;
+        sl = &deck->slides[s->slide];
+        a = sl->anims; n = sl->nanims; cap = sl->capanims; keep = sl->keep_timing;
+        sl->anims = s->anims; sl->nanims = s->nanims; sl->capanims = s->capanims; sl->keep_timing = s->keep_timing;
+        s->anims = a; s->nanims = n; s->capanims = cap; s->keep_timing = keep;
     } else if (s->kind == SNAP_OBJ_PARENT) {
         owf_obj *o = object(deck, s->slide, s->obj);
         int k;
@@ -2063,6 +2085,31 @@ int opr_slide_set_transition(opr_undo *u, owf_deck *deck, int index, const owf_t
     }
     structural_push(u, &s);
     if (selected) *selected = index;
+    return 0;
+}
+
+int opr_slide_set_anims(opr_undo *u, owf_deck *deck, int slide, owf_anim *anims, int nanims, int capanims)
+{
+    snapshot s;
+    owf_slide *sl;
+    if (!u || !deck || slide < 0 || slide >= deck->nslides || nanims < 0 || capanims < nanims ||
+        (nanims && !anims))
+        return -1;
+    sl = &deck->slides[slide];
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_ANIMS;
+    s.slide = slide;
+    s.obj = -1;
+    s.focus = s.other_focus = slide;
+    s.anims = sl->anims;
+    s.nanims = sl->nanims;
+    s.capanims = sl->capanims;
+    s.keep_timing = sl->keep_timing;
+    sl->anims = anims;
+    sl->nanims = nanims;
+    sl->capanims = capanims;
+    sl->keep_timing = -1;               /* the effects are the model's now, not the file's XML */
+    structural_push(u, &s);
     return 0;
 }
 

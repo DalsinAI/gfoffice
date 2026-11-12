@@ -84,4 +84,8 @@ owf_pdf_text_width(utf8,length,kind,flags,size)(a0,d0,d1,d2,d3)
 owf_pdf_winansi(codepoint)(d0)
 owf_pdf_fallback(codepoint)(d0)
 owf_deck_duplicate_slide(deck,index,at)(a0,d0,d1)
+owf_slide_obj_by_id(slide,id)(a0,d0)
+owf_deck_new_obj_id(deck)(a0)
+owf_slide_add_anim(slide,at,obj)(a0,d0,d1)
+owf_slide_delete_anim(slide,index)(a0,d0)
 ##end

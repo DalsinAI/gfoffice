@@ -5189,6 +5189,148 @@ static void test_subtotals(void)
     oc_core_free(core);
 }
 
+static void test_text_to_columns(void)
+{
+    oc_core *core = fresh();
+    oc_textcols_options opt;
+    owf_range selected;
+    unsigned width = 0;
+    if (!core)
+        return;
+    enter_at(core, "A1", "North,12,\"Smith, J\",'x");
+    enter_at(core, "A2", "South,,=1+1");
+    enter_at(core, "A3", "West");
+    enter_at(core, "D2", "old");
+    enter_at(core, "F1", "=B1*2");
+    memset(&opt, 0, sizeof opt);
+    opt.delimiters = OC_TEXTCOLS_COMMA;
+    opt.quote = '"';
+    CHECK(oc_parse_range("A1:B3", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_text_to_columns(core, &opt, &width) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_parse_range("A1:A3", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_text_to_columns(core, &opt, &width) == OWF_OK);
+    CHECK(width == 4);
+    CHECK_STR(text(core, "A1"), "North");
+    CHECK(fabs(num(core, "B1") - 12.0) < 1e-12);
+    CHECK_STR(text(core, "C1"), "Smith, J");
+    CHECK_STR(text(core, "D1"), "'x");
+    CHECK(fabs(num(core, "F1") - 24.0) < 1e-12);
+    CHECK_STR(text(core, "A2"), "South");
+    CHECK(empty(core, "B2"));
+    CHECK_STR(text(core, "C2"), "=1+1");
+    CHECK_STR(text(core, "D2"), "old");          /* no fourth field: left alone */
+    CHECK_STR(text(core, "A3"), "West");
+    {
+        oc_selection sel;
+        oc_core_selection(core, &sel);
+        CHECK(sel.nranges == 1 && sel.ranges[0].last_col == 3);
+    }
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK_STR(text(core, "A1"), "North,12,\"Smith, J\",'x");
+    CHECK(empty(core, "B1") && empty(core, "C1"));
+    CHECK(fabs(num(core, "F1") - 0.0) < 1e-12);
+
+    /* spaces merged, the second field as text, the third skipped */
+    enter_at(core, "A1", "007   42  x  y");
+    memset(&opt, 0, sizeof opt);
+    opt.delimiters = OC_TEXTCOLS_SPACE;
+    opt.merge = 1;
+    opt.kind[0] = OC_TEXTCOLS_TEXT;
+    opt.kind[2] = OC_TEXTCOLS_SKIP;
+    CHECK(oc_parse_range("A1", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_text_to_columns(core, &opt, &width) == OWF_OK && width == 3);
+    CHECK_STR(text(core, "A1"), "007");
+    CHECK(fabs(num(core, "B1") - 42.0) < 1e-12);
+    CHECK_STR(text(core, "C1"), "y");
+
+    /* fixed width */
+    enter_at(core, "A5", "AB12345XY");
+    memset(&opt, 0, sizeof opt);
+    opt.nbreaks = 2;
+    opt.breaks[0] = 2;
+    opt.breaks[1] = 7;
+    CHECK(oc_parse_range("A5", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_text_to_columns(core, &opt, &width) == OWF_OK && width == 3);
+    CHECK_STR(text(core, "A5"), "AB");
+    CHECK(fabs(num(core, "B5") - 12345.0) < 1e-12);
+    CHECK_STR(text(core, "C5"), "XY");
+    opt.breaks[1] = 1;
+    CHECK(oc_core_text_to_columns(core, &opt, &width) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
+static void test_remove_duplicates(void)
+{
+    static const char *const rows[][2] = {
+        { "Name", "Qty" },
+        { "apple", "1" }, { "Pear", "2" }, { "APPLE", "1" },
+        { "pear", "3" }, { "Plum", "4" }, { "apple", "1" }, { "Fig", "5" }
+    };
+    const unsigned name_only[] = { 0 };
+    oc_core *core = fresh();
+    owf_range selected;
+    unsigned removed = 99;
+    int r, c;
+    if (!core)
+        return;
+    for (r = 0; r < 8; ++r)
+        for (c = 0; c < 2; ++c) {
+            char cell[16];
+            oc_cell_name((unsigned)r, (unsigned)c, cell);
+            enter_at(core, cell, rows[r][c]);
+        }
+    enter_at(core, "C9", "outside");
+    enter_at(core, "D1", "=SUM(B2:B8)");
+    enter_at(core, "D2", "=B8");
+    enter_at(core, "D3", "=B5");
+    CHECK(oc_parse_range("A1:B8", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_remove_duplicates(core, NULL, 0, 1, &removed) == OWF_OK);
+    CHECK(removed == 2);
+    CHECK_STR(text(core, "A2"), "apple");
+    CHECK_STR(text(core, "A3"), "Pear");
+    CHECK_STR(text(core, "A4"), "pear");
+    CHECK_STR(text(core, "A5"), "Plum");
+    CHECK_STR(text(core, "A6"), "Fig");
+    CHECK(empty(core, "A7") && empty(core, "B7") && empty(core, "A8") && empty(core, "B8"));
+    CHECK_STR(text(core, "C9"), "outside");
+    CHECK_STR(formula(core, "D2"), "B6");             /* Fig followed */
+    CHECK(fabs(num(core, "D2") - 5.0) < 1e-12);
+    CHECK_STR(formula(core, "D3"), "B4");             /* pear followed */
+    {
+        oc_selection sel;
+        oc_core_selection(core, &sel);
+        CHECK(sel.nranges == 1 && sel.ranges[0].last_row == 5);
+    }
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK_STR(text(core, "A4"), "APPLE");
+    CHECK_STR(text(core, "A8"), "Fig");
+    CHECK_STR(formula(core, "D2"), "B8");
+
+    /* by the name only: pear and Pear are one */
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_remove_duplicates(core, name_only, 1, 1, &removed) == OWF_OK && removed == 3);
+    CHECK_STR(text(core, "A4"), "Plum");
+    CHECK_STR(text(core, "A5"), "Fig");
+    CHECK(empty(core, "A6"));
+    CHECK(oc_core_undo(core) == OWF_OK);
+
+    /* nothing repeats: no change, no Undo step */
+    CHECK(oc_parse_range("A5:B6", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_remove_duplicates(core, NULL, 0, 0, &removed) == OWF_OK && removed == 0);
+    CHECK_STR(text(core, "A6"), "Plum");
+    {
+        const unsigned outside[] = { 5 };
+        CHECK(oc_core_remove_duplicates(core, outside, 1, 0, &removed) == OWF_ERR_FORMAT);
+    }
+    oc_core_free(core);
+}
+
 static void test_protection(void)
 {
     static const char *const paths[] = { "build/host/calc-core-protect.xlsx", "build/host/calc-core-protect.ods" };
@@ -6186,6 +6328,8 @@ int main(void)
     test_multiple_operations_2d();
     test_multiple_operations_multi();
     test_subtotals();
+    test_text_to_columns();
+    test_remove_duplicates();
     test_protection();
     test_pivot_summary();
     test_pivot_layout();

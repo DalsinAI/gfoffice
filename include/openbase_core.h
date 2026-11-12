@@ -16,6 +16,8 @@
  *   - CSV out of a table (or a view of it) and into a table, or into a new
  *     table whose field types are guessed from the file;
  *   - undo of row changes;
+ *   - queries: a designer's grid turned into SQL, or SQL typed in (read
+ *     only), run a page at a time, saved in the project;
  *   - errors in plain words ("Price must be a number", not "CHECK
  *     constraint failed").
  *
@@ -34,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.4.0"
+#define OB_CORE_VERSION "0.6.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -273,6 +275,27 @@ ob_int ob_view_total(ob_project *p, const char *table, const ob_view *v);
 int ob_view_rows(ob_project *p, const char *table, const ob_view *v, ob_int first, int max,
                  ob_row_fn cb, void *user);
 
+/* ---- Forms: one record at a time (core 0.6, design 6.3) ----
+ * Positions count from 0 in the view's order (NULL: key order, every row),
+ * as ob_view_rows takes them. */
+
+/* Where the row with key `key` stands in view v: -1 when the view leaves it
+ * out, -2 on error. */
+ob_int ob_view_position(ob_project *p, const char *table, const ob_view *v, ob_int key);
+/* Find: the first row at or after position `from` (backward: at or before)
+ * whose field holds `text`. A field that holds text (Text, Memo, Choice,
+ * Date, Time, Date and time) matches when it contains the text, any case;
+ * any other field when it equals the value, given in the field's own form
+ * ("1,250.50", "Yes"). Returns the row's position, -1 when none matches,
+ * -2 with the reason in ob_error(). */
+ob_int ob_view_find(ob_project *p, const char *table, const ob_view *v, const char *field, const char *text,
+                    ob_int from, int backward);
+/* Subforms: the Lookups in other tables that point at table (an order's
+ * lines look up the order), up to max into out. A subform's rows are the
+ * child table's rows whose Lookup holds the record's key: a view filtered on
+ * r.field Equals the key. Returns how many there are, -1 on error. */
+int ob_children(ob_project *p, const char *table, ob_relation *out, int max);
+
 /* ---- CSV (design 8) ----
  * Export: a header of field names, then each row of the view (NULL: every
  * row in key order) with values in their own text form; quoted where they
@@ -340,6 +363,116 @@ int ob_undo_count(ob_project *p);
 const char *ob_undo_name(ob_project *p);        /* "Change Row in Customers"; "" none */
 int ob_undo(ob_project *p);
 void ob_undo_clear(ob_project *p);
+
+/* ---- Queries (core 0.5, design 5) ----
+ * A query is its tables, joined by their relationships (a Lookup between
+ * each table and one before it), and its columns: a field (or "*", every
+ * field of the table), or an SQL expression, each with a heading, shown or
+ * not, a sort and a total; and up to OB_QUERY_OR rows of criteria, one per
+ * column in each row, in plain words:
+ *
+ *   Leeds          = 'Leeds' (text without case)
+ *   > 10, <= 11/11/2026, <> 5, not York
+ *                  as written, the value in the field's own form
+ *   Smith*, ?ill   LIKE 'Smith%', LIKE '_ill' (* and ? as wildcards)
+ *   between 1 and 5, empty, not empty
+ *   [Which town?]  a parameter: asked for when the query runs (also after
+ *                  an operator: >= [From])
+ *
+ * Criteria in one row are joined by AND, the rows by OR. A total on any
+ * column makes a grouping query: columns with no total (or Group) are
+ * grouped, and criteria then go to HAVING when any is on a total.
+ * A query can instead be SQL only (sql_only): one statement that reads.
+ * Results are a datasheet's rows, a page at a time; values in their own
+ * form where the column is a field or a total of one. */
+#define OB_QUERY_TABLES 8
+#define OB_QUERY_COLUMNS 16
+#define OB_QUERY_OR 3
+#define OB_QUERY_PARAMS 8
+#define OB_QUERY_OUT 128        /* result columns, "*" spread out */
+#define OB_EXPR_MAX 160
+#define OB_SQL_MAX 4096
+
+typedef enum ob_total {
+    OB_TOTAL_NONE,
+    OB_TOTAL_GROUP,
+    OB_TOTAL_SUM,
+    OB_TOTAL_COUNT,
+    OB_TOTAL_AVERAGE,
+    OB_TOTAL_MIN,
+    OB_TOTAL_MAX,
+    OB_TOTALS
+} ob_total;
+
+enum { OB_SORT_NONE, OB_SORT_UP, OB_SORT_DOWN };   /* A to Z, Z to A */
+
+typedef struct ob_qcolumn {
+    char table[OB_NAME_MAX];        /* "" for an expression */
+    char field[OB_NAME_MAX];        /* a field, or "*" */
+    char expr[OB_EXPR_MAX];         /* when table is "": SQL, such as Total * 2 */
+    char heading[OB_NAME_MAX];      /* "" is the field's label (or the expression) */
+    int show;
+    int sort;                       /* OB_SORT_* */
+    ob_total total;
+    char criteria[OB_QUERY_OR][OB_VALUE_MAX];
+} ob_qcolumn;
+
+/* About 24 KB: keep one static or on the heap. */
+typedef struct ob_query {
+    char name[OB_NAME_MAX];
+    int ntables;
+    char tables[OB_QUERY_TABLES][OB_NAME_MAX];
+    int ncolumns;
+    ob_qcolumn columns[OB_QUERY_COLUMNS];
+    int sql_only;
+    char sql[OB_SQL_MAX];           /* sql_only: the statement */
+} ob_query;
+
+/* A result column: its heading, and the type its values are shown as
+ * (-1: as SQLite gives them, for SQL and expressions). */
+typedef struct ob_qresult {
+    char heading[OB_NAME_MAX];
+    int type;
+} ob_qresult;
+
+void ob_query_init(ob_query *q, const char *name);
+/* Adds a table (once); its index, -1 when full or there already. */
+int ob_query_add_table(ob_query *q, const char *table);
+/* Removes table i and its columns. */
+void ob_query_remove_table(ob_query *q, int i);
+/* A column showing table.field ("*" for every field), or the expression
+ * expr when table is NULL or ""; NULL when full. */
+ob_qcolumn *ob_query_add_column(ob_query *q, const char *table, const char *field);
+void ob_query_remove_column(ob_query *q, int i);
+const char *ob_total_name(ob_total t);      /* "Sum"...; "" for none */
+
+/* The SELECT the query runs, parameters as ?1, ?2...; its length, -1 with
+ * the reason in ob_error (or "too long" when it does not fit). */
+int ob_query_sql(ob_project *p, const ob_query *q, char *out, size_t size);
+/* Whether q can run; 0 with the reason. */
+int ob_query_check(ob_project *p, const ob_query *q);
+/* The parameters to ask for, in order ("Which town?"; for SQL, :name's
+ * name or "Value 1"): up to max; how many there are, -1 on error. */
+int ob_query_params(ob_project *p, const ob_query *q, char (*names)[OB_VALUE_MAX], int max);
+/* The result's columns: up to max; how many, -1 on error. */
+int ob_query_columns(ob_project *p, const ob_query *q, ob_qresult *out, int max);
+/* params: a value for each parameter, in the form of the field it is
+ * compared with (NULL when there are none). The rows the query gives, -1
+ * on error ("Which town?: must be a number"). */
+ob_int ob_query_total(ob_project *p, const ob_query *q, const char *const *params);
+/* Rows from position first (0 the first), up to max (-1 all): cb gets the
+ * row's position as its key and the values (NULL when empty). */
+int ob_query_rows(ob_project *p, const ob_query *q, const char *const *params, ob_int first, int max,
+                  ob_row_fn cb, void *user);
+
+/* Saved queries (oadb_queries), in name order. A query's name is a table's
+ * kind of name, and no table has it. Saving a name that is there replaces it. */
+int ob_query_count(ob_project *p);
+const char *ob_query_name(ob_project *p, int i);
+int ob_query_get(ob_project *p, const char *name, ob_query *out);
+int ob_query_save(ob_project *p, const ob_query *q);
+int ob_query_rename(ob_project *p, const char *old_name, const char *new_name);
+int ob_query_delete(ob_project *p, const char *name);
 
 /* ---- Values ---- */
 
