@@ -15,6 +15,7 @@ working. Phase 1's target is 74%.
 | 11 Nov 2026 | C4 Consolidate | 69% |
 | 11 Nov 2026 | C5 Names manager, advanced filter | 71% |
 | 11 Nov 2026 | C6 Multiple Operations kept live | 72% |
+| 12 Nov 2026 | C7 Text to Columns, Remove Duplicates | 73% |
 
 ## Phase 1 features
 
@@ -26,6 +27,12 @@ working. Phase 1's target is 74%.
 | Consolidate | Done | C4 | Up to 16 sources on any sheets; the eleven functions; by position or by row labels, column labels or both (case aside, labels in first-seen order); linked (formulas over the sources) or values; settings kept on the sheet for the window; ARexx CONSOLIDATE; Undo. Not yet: a linked table that grows when its sources grow, picking a source from a list of named ranges (names can be typed) |
 | Named-range and database-range manager, advanced filter | Done (most) | C5 | Manage Names: list, add, change (name, formula, scope in one step; uses follow a rename), delete; ARexx NAMES, NAMEDEFINE, NAMERENAME, NAMEDELETE. Advanced filter: criteria range (AND across, OR down; <, <=, >, >=, <>, =, begins-with, wildcards), in place or copied to any sheet, unique rows; ARexx ADVFILTER; Undo. Not yet: database ranges as their own objects (a named range serves), criteria formulas (=C2>AVERAGE(C:C)), a rename followed into charts, validation and conditional formats |
 | Automatic data-table (Multiple Operations) recalc | Done (most) | C6 | Every table worked out again after each change (edits, Undo, Redo, ARexx), no Undo step of its own; ARexx MULTIOP. Not yet: live past 4096 results or 20,000 cells (Refresh by hand there), tables as true formula arrays (MULTIPLE.OPERATIONS) in ODS |
+
+## Phase 2 features
+
+| Feature | Status | Deliverable | Notes |
+| --- | --- | --- | --- |
+| Text to Columns, Remove Duplicates | Done | C7 | Text to Columns: tab, comma, semicolon, space and any other delimiter, runs of them as one, a text qualifier (a doubled one inside is one), fixed widths; each field General, Text or skipped; a number's shown value splits; ARexx TEXTTOCOLUMNS; Undo. Remove Duplicates: chosen columns or all, text compared without case, a heading row, only the range's cells move (rows kept close up, references follow them); ARexx REMOVEDUPS; Undo. Not yet: a preview of the split, a date order per column (the book's order is used) |
 
 ## How C1 was checked
 
@@ -87,3 +94,16 @@ working. Phase 1's target is 74%.
   and Redo of the edits (the table follows, Redo is kept); the unsaved flag.
   Also under AddressSanitizer and UBSan.
 - Instance-32 lab copy: tests/arexx/calc-multiop.rexx; see the pull request.
+
+## How C7 was checked
+
+- Host tests (tests/calc_core): commas with a quoted field, a field that
+  begins with an apostrophe or "=" kept as text, an empty field, a row with
+  fewer fields leaving the cell to its right alone, a formula reading a
+  split cell, the selection widened, Undo; spaces merged with a Text column
+  and a skipped one; fixed widths and widths that do not rise; a selection
+  of two columns refused. Remove Duplicates over every column (text without
+  case; formulas into the range follow the rows kept; a cell outside the
+  range stays), by one column, nothing repeated (no Undo step), a column
+  outside the range refused. Also under AddressSanitizer and UBSan.
+- Instance-32 lab copy: tests/arexx/calc-textcols.rexx; see the pull request.
