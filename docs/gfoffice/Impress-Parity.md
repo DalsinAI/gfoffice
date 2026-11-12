@@ -64,7 +64,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Slide masters (several in a deck), apply a master to slides | P1 (data), P4 (Master view) | Yes: read, written, slides keep theirs |
+| Slide masters (several in a deck), apply a master to slides | P1 (data), P7 (Master view) | Yes: read, written, slides keep theirs; 0.6.30: View > Master Slides edits them (art, boxes, background; new, rename, delete, order) and Slide > Slide Design... gives slides a master |
 | Master's fixed art (logos, bands) | P1 | Yes |
 | Master's placeholders: title, outline, date, footer, number | P1 | Yes |
 | Presentation styles: title, subtitle, outline 1-9, notes, background objects | P1 | Yes: each a text level of the master |
@@ -244,7 +244,7 @@ Undo and ODP persistence.
 | --- | --- | --- |
 | Normal view (slides, slide, notes) | P3 | Partly: the slide at the window's size with the slides beside it; notes in their own Notes view, no notes pane |
 | Slide Sorter | P3 | Yes in GFOpenPresentation 0.6.24 (View > Slide Sorter): a thumbnail grid; click, Shift and Ctrl pick several; drag with an insertion mark; Duplicate, Delete, Hide, Show, Move Up/Down and Slide Transition on every picked slide, each one Undo step; Zoom sets the columns; Return or a double-click opens a slide; ARexx VIEW, PICK, MOVEPICKED and the rest. Slide clipboard: No |
-| Master view | P4 | No |
+| Master view | P7 | Yes in 0.6.30: View > Master Slides, one Undo step back to the deck; text levels not edited there yet |
 | Zoom, panels that hide on narrow screens | P3 | No |
 | Navigator, gallery, styles, sidebar decks | Later | No |
 | Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/duplication/deletion/position/size/shape rotation/drawing order/alignment/appearance: Yes (`opr_edit.c`); other object edits: No |

@@ -16,6 +16,7 @@ docs/gfoffice/Impress-Parity.md.
 | 11 Nov 2026 | 0.6.27 | 74% | P4: PPTX save |
 | 11 Nov 2026 | 0.6.28 | 76% | P5: several objects picked, distribute, group and ungroup |
 | 12 Nov 2026 | 0.6.29 | 79% | P6: custom animation (entrance and exit effects, played in the show) |
+| 12 Nov 2026 | 0.6.30 | 81% | P7: the Master view and Slide Design |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 
@@ -34,9 +35,15 @@ Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 | Deliverable | State | Notes |
 | --- | --- | --- |
 | P6 Custom animation | Done in 0.6.29 | Slide > Custom Animation...: a list of the slide's effects with Add, Change, Remove, Move Up and Move Down; each effect is an object, an effect (Appear, Fade In, Fly In, Wipe, Dissolve In and the same five out), a direction for fly and wipe, a start (on click, with previous, after previous), a duration and a delay; each change one Undo step (`opr_anim.c`, `opr_edit.c`). The show plays them: objects with an entrance wait hidden, each click runs the next step and its with/after effects, then the next slide. ODP open reads Impress's main sequence (effects it has no player for are kept and written back as they were) and Save writes the timing tree Impress reads; owfpresent.library 3.7 adds the effect list to a slide (`owf_anim`). ARexx ANIMATIONS, ANIMATION n, ADDANIMATION, CHANGEANIMATION, DELETEANIMATION, MOVEANIMATION, ANIMSTEPS, ANIMVISIBLE. Host test tests/deck/test_opr_anim.c; lab: tests/arexx/presentation.rexx |
-| P7 Master view | Next | |
+| P7 Master view | Done in 0.6.30 | View > Master Slides shows each master as a slide: its art, its title, outline, date, footer and number boxes, and its background, edited with every slide command (move, resize, type, pictures, shapes, delete, Undo); New, Duplicate, Rename, Delete and Move make, name, remove and order masters. Leaving the view (or saving, printing, the show) writes the masters back as one Undo step; a master's slides follow it, and a deleted master's go to the first (`opr_master.c`, `opr_masters_set` in `opr_edit.c`). Slide > Slide Design... puts this slide, or the slides picked in the sorter, on a master. ARexx VIEW MASTER, MASTERS, MASTER [n], SETMASTER n. Host test tests/deck/test_opr_master.c; lab: tests/arexx/presentation.rexx |
 | P8 Slide clipboard, Insert Slide from file | Next | |
 | P9 Export slides as pictures | Next | |
+
+## What the Master view does not do yet
+
+- Editing the masters' text levels (the outline's fonts, sizes and bullets) and the title's format: a master's boxes are moved and sized, their text styles stay as the file had them.
+- Slide layouts as their own pages; notes and handout masters.
+- Slide Design shows the first eight masters as buttons, not as pictures.
 
 ## What custom animation does not do yet
 

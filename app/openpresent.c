@@ -106,7 +106,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.29 (12.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.30 (12.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -150,7 +150,8 @@ enum {
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
-    M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE
+    M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
+    M_VIEW_MASTER, M_SLIDE_DESIGN
 };
 
 static struct NewMenu menus[] = {
@@ -275,6 +276,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, UNIT " Transition...", NULL, 0, 0, (APTR)M_TRANSITION },
 #ifndef OPENPUBLISHER
     { NM_ITEM, "Custom Animation...", NULL, 0, 0, (APTR)M_CUSTOM_ANIMATION },
+    { NM_ITEM, UNIT " Design...", NULL, 0, 0, (APTR)M_SLIDE_DESIGN },
 #endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Move " UNIT " Up", NULL, 0, 0, (APTR)M_MOVE_SLIDE_UP },
@@ -285,6 +287,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Outline", NULL, CHECKIT, ~8 & 15, (APTR)M_VIEW_OUTLINE },
     { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 15, (APTR)M_VIEW_SORTER },
     { NM_ITEM, "Notes", NULL, CHECKIT, ~4 & 15, (APTR)M_VIEW_NOTES },
+#ifndef OPENPUBLISHER
+    { NM_ITEM, "Master " UNIT "s", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_VIEW_MASTER },
+#endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First " UNIT, NULL, 0, 0, (APTR)M_FIRST },
     { NM_ITEM, "Previous " UNIT, "[", 0, 0, (APTR)M_PREV },
@@ -392,6 +397,13 @@ static char current_format[16] = "ODP";
 static int dirty;
 static char status[320] = "Ready.";
 static opr_undo *undo;
+/* The Master view (P7): while it is shown, deck and undo are the view's (a slide a master) and the
+ * document's wait here; master_view_leave writes the masters back. */
+static opr_master_view *mview;
+static owf_deck *mview_deck;
+static opr_undo *mview_undo;
+static int mview_current, mview_dirty;
+static void master_view_leave(void);
 
 /* The selected slide object, and typing within it. */
 /* The slide sorter (View > Slide Sorter): the grid of thumbnails fills the view, the picked slides are the
@@ -2119,7 +2131,7 @@ static void update_window_title(void)
 {
     static char title[sizeof current_path + 32];     /* static: Intuition keeps the pointer */
     const char *name = current_path[0] ? leaf(current_path) : "Untitled";
-    snprintf(title, sizeof title, "%s%s - " PROGRAM, dirty ? "*" : "", name);
+    snprintf(title, sizeof title, "%s%s%s - " PROGRAM, dirty ? "*" : "", name, mview ? " (Masters)" : "");
     if (win) SetWindowTitles(win, (STRPTR)title, (STRPTR)-1);
 }
 
@@ -3090,6 +3102,7 @@ static void anim_changed(const char *message)
 
 static void custom_animation_window(void)
 {
+    master_view_leave();
     static STRPTR effect_labels[OPR_EFFECTS + 1];
     static STRPTR direction_labels[] = {
         (STRPTR)"From Left", (STRPTR)"From Right", (STRPTR)"From Top", (STRPTR)"From Bottom", NULL
@@ -3299,6 +3312,10 @@ static void update_view_menus(void)
     if (sorted) sorted->Flags = (UWORD)(sorter_view ? sorted->Flags | CHECKED : sorted->Flags & ~CHECKED);
     if (notes) notes->Flags = (UWORD)(notes_view ? notes->Flags | CHECKED : notes->Flags & ~CHECKED);
     if (lines) lines->Flags = (UWORD)(outline_view ? lines->Flags | CHECKED : lines->Flags & ~CHECKED);
+    {
+        struct MenuItem *masters = menu_item_for(M_VIEW_MASTER);
+        if (masters) masters->Flags = (UWORD)(mview ? masters->Flags | CHECKED : masters->Flags & ~CHECKED);
+    }
     ResetMenuStrip(win, menu);
     /* Format works on text, so on the notes too; Insert and Object on what is on the slide in front of you */
     if (sorter_view || outline_view) OffMenu(win, FULLMENUNUM(2, NOITEM, NOSUB));
@@ -3311,6 +3328,7 @@ static void update_view_menus(void)
 static void set_view(int mode)
 {
     int sorted = mode == 1;
+    if (mview && (mode == 2 || mode == 3)) master_view_leave();
     if (sorted == sorter_view && (mode == 2) == notes_view && (mode == 3) == outline_view) {
         update_view_menus();
         return;
@@ -3341,6 +3359,111 @@ static void set_view(int mode)
         sorter_scroller_follow();
         draw_sorter();
     }
+}
+
+/* ---- The Master view (P7) ---- */
+
+static void master_view_enter(void)
+{
+    opr_master_view *v;
+    opr_undo *vu = NULL;
+    int m, was = dirty;
+    if (mview || !deck) return;
+    if (notes_view || outline_view) set_view(0);
+    v = opr_master_view_open(deck);
+    if (v) vu = opr_undo_new();
+    if (!vu) {
+        opr_master_view_free(v);
+        tell(PROGRAM, "There is not enough memory to show the masters.");
+        update_view_menus();
+        return;
+    }
+    m = deck->nslides && current < deck->nslides ? deck->slides[current].master : 0;
+    mview = v;
+    mview_deck = deck;
+    mview_undo = undo;
+    mview_current = current;
+    mview_dirty = was;
+    deck = opr_master_view_deck(v);
+    undo = vu;
+    structure_changed(m, "Master " UNITS_LOWER ": what is here is on every " UNIT_LOWER " of the master. "
+                      "View > Master " UNIT "s again goes back.");
+    dirty = was;
+    update_window_title();
+    update_view_menus();
+    update_edit_tools();
+}
+
+static void master_view_leave(void)
+{
+    int changed, rc = 0;
+    if (!mview) return;
+    changed = opr_undo_can(undo);
+    if (changed) rc = opr_master_view_commit(mview, mview_undo);
+    opr_undo_free(undo);
+    undo = mview_undo;
+    opr_master_view_free(mview);
+    mview = NULL;
+    deck = mview_deck;
+    mview_deck = NULL;
+    structure_changed(mview_current, !changed ? "Normal view." : rc == 0 ? "The masters are changed."
+                      : rc == -2 ? "A " DOCUMENT_LOWER " keeps one master: the masters are as they were."
+                      : "There was not enough memory to change the masters.");
+    dirty = mview_dirty || (changed && rc == 0);
+    update_window_title();
+    update_view_menus();
+    update_edit_tools();
+}
+
+/* At the end, with the window gone: the view goes without writing back or drawing. */
+static void master_view_drop(void)
+{
+    if (!mview) return;
+    opr_undo_free(undo);
+    undo = mview_undo;
+    opr_master_view_free(mview);
+    mview = NULL;
+    deck = mview_deck;
+    mview_deck = NULL;
+}
+
+/* Slide > Slide Design...: the picked slides (or this one) on a master, one Undo step. */
+static int set_master_picked(int master)
+{
+    int i, n = 0, rc = 0;
+    if (!deck || master < 0 || master >= deck->nmasters) return -1;
+    if (opr_undo_group_begin(undo, deck->nslides) < 0) return -1;
+    for (i = 0; i < deck->nslides && rc == 0; i++)
+        if (i == current || (sorter_view && opr_pick_has(&pick, i))) {
+            rc = opr_slide_set_master(undo, deck, i, master);
+            n++;
+        }
+    if (rc < 0) { opr_undo_group_cancel(undo, deck); return -1; }
+    opr_undo_group_end(undo);
+    structure_changed(current, n > 1 ? UNIT "s given the master." : UNIT " given the master.");
+    return 0;
+}
+
+static void slide_design(void)
+{
+    char buttons[400], text[200];
+    int i, at = 0, choice;
+    if (mview) { set_status("Leave the Master view to give " UNITS_LOWER " a master."); return; }
+    if (!deck || !deck->nslides) return;
+    buttons[0] = 0;
+    for (i = 0; i < deck->nmasters && i < 8; i++) {
+        char name[40];
+        name_to_latin1(deck->masters[i].name ? deck->masters[i].name : "Master", name, sizeof name);
+        at += snprintf(buttons + at, sizeof buttons - (size_t)at, "%s%s", i ? "|" : "", name);
+        if (at >= (int)sizeof buttons - 48) break;
+    }
+    snprintf(buttons + at, sizeof buttons - (size_t)at, "|Cancel");
+    snprintf(text, sizeof text, "Which master should the %s use?\n\n(It uses master %d now.)",
+             sorter_view && opr_pick_number(&pick) > 1 ? "picked " UNITS_LOWER : UNIT_LOWER,
+             deck->slides[current].master + 1);
+    choice = ask(PROGRAM, text, buttons);
+    if (choice < 1 || choice > i) return;
+    if (set_master_picked(choice - 1) < 0) tell(PROGRAM, "There is not enough memory to change the master.");
 }
 
 static void sorter_open(int index)
@@ -4215,6 +4338,7 @@ static ULONG show_tick_delta(ULONG seconds, ULONG micros, ULONG *last_seconds, U
 
 static void run_show(int from, int loop)
 {
+    master_view_leave();
     struct Window *sw;
     struct IntuiMessage *im;
     opr_show show;
@@ -6713,6 +6837,7 @@ static void with_extension(const char *path, const char *ext, char *out, size_t 
 
 static void open_deck(const char *path)
 {
+    master_view_leave();
     owf_deck *d = NULL;
     owf_report *report = owf_report_new();
 #ifdef OPENPUBLISHER
@@ -6752,6 +6877,7 @@ static void open_deck(const char *path)
 
 static void new_deck(void)
 {
+    master_view_leave();
     owf_deck *d;
     if (!confirm_discard()) return;
     d = owf_deck_new(
@@ -6806,6 +6932,7 @@ static int saves_in_place(void)
 
 static int save_to(const char *path)
 {
+    master_view_leave();
     owf_report *report = owf_report_new();
     const char *format = format_for(path);
     char msg[600];
@@ -6879,6 +7006,7 @@ static int pdf_handout_slides = 6;
 
 static int write_pdf(const char *path)
 {
+    master_view_leave();
     unsigned char *data = NULL;
     size_t length = 0;
     owf_report *report = owf_report_new();
@@ -6917,6 +7045,7 @@ static void do_export_pdf(void)
 /* Handouts: so many slides a page (1, 2, 3, 4, 6 or 9), as a PDF. */
 static void do_export_handouts(void)
 {
+    master_view_leave();
     char path[512], name[128], msg[600], initial[8], entered[16];
     int per;
     if (!deck) return;
@@ -6947,6 +7076,7 @@ static void do_export_handouts(void)
 /* 1 GFOpenPrint started, 0 not possible here (no GFOpenPrint), -1 failed */
 static int do_print(void)
 {
+    master_view_leave();
     char path[160], name[128], cmd[300];
     struct Process *me = (struct Process *)FindTask(NULL);
     APTR was = me->pr_WindowPtr;
@@ -7112,7 +7242,9 @@ static void menu_action(ULONG id)
         }
     }
     switch (id) {
-    case M_VIEW_NORMAL: set_view(0); break;
+    case M_VIEW_NORMAL: master_view_leave(); set_view(0); break;
+    case M_VIEW_MASTER: if (mview) master_view_leave(); else master_view_enter(); break;
+    case M_SLIDE_DESIGN: slide_design(); break;
     case M_VIEW_SORTER: set_view(1); break;
     case M_VIEW_NOTES: set_view(2); break;
     case M_VIEW_OUTLINE: set_view(3); break;
@@ -7598,13 +7730,43 @@ static int rexx_do_command(const char *command, char **result_out)
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : rexx_noted ? rexx_noting : "Failed");
         }
     } else if (starts_word_ci(command, "VIEW", &arg)) {     /* VIEW NORMAL|SORTER|NOTES; none given: which */
-        if (!*arg) rexx_copy(result_text, sizeof result_text, sorter_view ? "SORTER" : notes_view ? "NOTES"
-                                                              : outline_view ? "OUTLINE" : "NORMAL");
-        else if (!strcasecmp(arg, "NORMAL")) { set_view(0); rexx_copy(result_text, sizeof result_text, "OK"); }
+        if (!*arg) rexx_copy(result_text, sizeof result_text, sorter_view ? (mview ? "MASTER SORTER" : "SORTER")
+                                                              : notes_view ? "NOTES" : outline_view ? "OUTLINE"
+                                                              : mview ? "MASTER" : "NORMAL");
+        else if (!strcasecmp(arg, "MASTER")) {
+#ifdef OPENPUBLISHER
+            ok = 0; rexx_copy(result_text, sizeof result_text, "No Master view here");
+#else
+            master_view_enter(); ok = mview != NULL;
+            rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Failed");
+#endif
+        }
+        else if (!strcasecmp(arg, "NORMAL")) { master_view_leave(); set_view(0); rexx_copy(result_text, sizeof result_text, "OK"); }
         else if (!strcasecmp(arg, "SORTER")) { set_view(1); rexx_copy(result_text, sizeof result_text, "OK"); }
         else if (!strcasecmp(arg, "NOTES")) { set_view(2); rexx_copy(result_text, sizeof result_text, "OK"); }
         else if (!strcasecmp(arg, "OUTLINE")) { set_view(3); rexx_copy(result_text, sizeof result_text, "OK"); }
-        else { ok = 0; rexx_copy(result_text, sizeof result_text, "VIEW NORMAL, OUTLINE, SORTER or NOTES"); }
+        else { ok = 0; rexx_copy(result_text, sizeof result_text, "VIEW NORMAL, OUTLINE, SORTER, NOTES or MASTER"); }
+    } else if (starts_word_ci(command, "MASTERS", &arg)) {  /* MASTERS: how many */
+        const owf_deck *d = mview ? mview_deck : deck;
+        snprintf(result_text, sizeof result_text, "%d", d ? d->nmasters : 0);
+    } else if (starts_word_ci(command, "MASTER", &arg)) {   /* MASTER n: "slides name"; MASTER: this slide's */
+        const owf_deck *d = mview ? mview_deck : deck;
+        int n = atoi(arg);
+        if (!*arg && d && !mview && d->nslides) n = d->slides[current].master + 1;
+        if (!d || n < 1 || n > d->nmasters) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such master"); }
+        else {
+            char name[80];
+            name_to_latin1(d->masters[n - 1].name ? d->masters[n - 1].name : "", name, sizeof name);
+            snprintf(result_text, sizeof result_text, "%d %d %s", n, opr_master_slides(d, n - 1), name);
+        }
+    } else if (starts_word_ci(command, "SETMASTER", &arg)) { /* SETMASTER n: this slide (the picked ones in the sorter) */
+        int n = atoi(arg);
+        if (mview) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Leave the Master view first"); }
+        else if (!deck || n < 1 || n > deck->nmasters) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such master"); }
+        else {
+            ok = set_master_picked(n - 1) == 0;
+            rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Failed");
+        }
     } else if (starts_word_ci(command, "OUTLINE", &arg)) {  /* OUTLINE: rows; OUTLINE n: "level text"; the rest change row n */
         static const char *const verbs[] = { "SET", "INSERT", "DEMOTE", "PROMOTE", "DELETE", NULL };
         const char *rest = arg;
@@ -8177,6 +8339,7 @@ out:
     free(versions);
     opr_pick_free(&pick);
     opr_outline_free(&outline_rows);
+    master_view_drop();
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
     if (theme.text) ogt_theme_free(&theme);
