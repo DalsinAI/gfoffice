@@ -2937,8 +2937,7 @@ static int conditional_bar_icons(char *text, oc_condfmt_spec *rule)
         if (*p) *p++ = 0;
         if (!strcasecmp(word, "only")) rule->hide_value = 1;
         else if (icons && !strcasecmp(word, "reverse")) rule->reverse = 1;
-        else if (!icons && !rule->fill && (rule->fill = bar_colour(word)) != 0) ;
-        else return 0;
+        else if (icons || rule->fill || !(rule->fill = bar_colour(word))) return 0;
     }
     return 1;
 }
