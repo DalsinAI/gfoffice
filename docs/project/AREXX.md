@@ -11,6 +11,8 @@ These follow the GFOffice conventions (docs/gfoffice/Design-Suite-Shared.md 6.3)
 - **Arguments** use a ReadArgs template: quoted words (`*"` for a quote inside),
   `KEYWORD=value` or `KEYWORD value`, `/S` switches, and `/F` for the rest of the line.
 - **Numbering:** rows and resources are numbered from 1, as the sheets' ID columns.
+  A ROW or COUNT past the end of the plan is an error (10), however large it is.
+- **File names** are at most 255 bytes; OPEN and SAVEAS refuse a longer one (10).
 - **Return codes:**
   - 0: done.
   - 5: not possible now (unsaved changes, nothing to undo, no file yet).
