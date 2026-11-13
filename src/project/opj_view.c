@@ -36,7 +36,7 @@ static int sheet_width(const opj_view *v)
 
 void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int row_height, int zoom)
 {
-    static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 0, 0 };
+    static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 0, 0, 0 };
     long day;
     memset(v, 0, sizeof *v);
     v->width = width;
@@ -350,6 +350,24 @@ static void draw_sheet_titles(oldraw *d, const opj_view *v)
     }
 }
 
+#define LABEL_GAP 6
+#define LABEL_WIDTH 240
+
+int opj_label_box(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *box)
+{
+    opj_bar b;
+    int i;
+    if (!v || !box || !opj_bar_of(v, doc, row, &b)) return 0;
+    for (i = 0; i < doc->plan->nassigns; i++)
+        if (doc->plan->assigns[i].task == row) break;
+    if (i == doc->plan->nassigns) return 0;
+    box->x = b.bar.x + b.bar.w + LABEL_GAP;
+    box->y = opj_row_y(v, row);
+    box->w = LABEL_WIDTH;
+    box->h = v->row_height;
+    return 1;
+}
+
 static void draw_sheet_row(oldraw *d, const opj_view *v, const opj_doc *doc, int row)
 {
     const owf_ptask *t = &doc->plan->tasks[row];
@@ -406,6 +424,13 @@ void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rec
         for (row = v->first_row; row < last; row++) {
             opj_bar b;
             if (opj_bar_of(v, doc, row, &b) && crosses(area, b.bar.x, b.bar.y, b.bar.w, b.bar.h)) draw_bar(d, &b);
+        }
+        for (row = v->first_row; row < last; row++) {            /* resource names beside the bars */
+            oldraw_rect r;
+            char text[256];
+            if (!opj_label_box(v, doc, row, &r) || !crosses(area, r.x, r.y, r.w, r.h)) continue;
+            owf_presource_names_text(doc->plan, row, text, sizeof text);
+            oldraw_text_box(d, &r, text, (size_t)-1, &v->font, OLDRAW_PEN(OLDRAW_PEN_TEXT), 0, OLDRAW_LEFT);
         }
         for (i = 0; i < doc->plan->ntasks; i++)
             for (j = 0; j < doc->plan->tasks[i].nlinks; j++) {

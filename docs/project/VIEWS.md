@@ -40,10 +40,29 @@ the next PR and only wires windows, menus and requesters to these calls.
   between the halves, a task's bar (its middle, its right end for stretching, its done part) or the
   chart.
 
+## Resources
+
+- **Resource Names** is a task sheet column (hidden in the Gantt view's table by default). Typing
+  `Dale,Bob[50%],Steel[3]` replaces the task's assignments, adding a name not yet in the plan as a
+  work resource, as one Undo step. The names are also drawn 6 pixels right of each task's bar.
+- **The resource sheet** (`opj_resource_cell_text`, `opj_set_resource_cell`): ID ("1!" when
+  over-allocated), Name, Type, Initials, Group, Max. Units, Std. Rate ("20.00/h"; typed as "20",
+  "20/h", "160/d" by the project's day, a currency sign first skipped; a material's is a unit's), and
+  the worked-out Work and Cost. Names must be unique (case ignored) and free of `,;[]`, so Resource
+  Names always reads back. `opj_add_resource`, `opj_delete_resources` (their assignments go too) and
+  `opj_set_assignment` are each one Undo step.
+- **Resource usage** (`opj_usage_text`): a resource's work, or one assignment's, in a period
+  (`opj_period_start`/`opj_period_next`: a day, a week from Monday, a month, a quarter). A period is
+  marked over when the resource's work in it passes its calendar's working time there times its max
+  units.
+
 ## Checked
 
 `tests/project/test_opj.c`: dates typed and shown; every edit, including the ones refused and the
 plan staying as it was; outlines, WBS numbers and summaries; Undo and Redo and the Undo budget; every
 bar's and link line's pixels worked out by hand; the drawing itself on a host pixel target (bar
 colours, the diamond's shape, the lines and arrows, days off, the labels drawn at each zoom, and that
-drawing only the chart touches nothing left of it); and the hit tests.
+drawing only the chart touches nothing left of it); the hit tests; and resources: Resource Names
+typed and refused, every resource sheet cell typed and shown, rates by the hour and the day,
+over-allocation, periods at each zoom, usage worked out by hand, deleting with Undo, and the names
+drawn beside the bars.
