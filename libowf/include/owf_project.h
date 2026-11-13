@@ -137,4 +137,31 @@ void owf_project_unlink(owf_project *p, int pred, int succ);
  * OWF_OK, OWF_ERR_FORMAT when the links make a loop (loop_task names one task in it), or OWF_ERR_MEMORY. */
 int owf_project_schedule(owf_project *p);
 
+/* ---- Files (owf_pfile.c) ----
+ * .gfproj: GFOpenProject's own, a zip holding "mimetype" (stored first), content.xml and meta.xml;
+ *   content.xml uses MSPDI's element names in GFOpenProject's namespace.
+ * MSPDI: MS Project's XML (Microsoft's published Project XML Data Interchange schema).
+ * CSV: the task table, a header row then one row per task, columns found by their header. */
+enum { OWF_PFILE_GFPROJ, OWF_PFILE_MSPDI, OWF_PFILE_CSV };
+#define OWF_PFILE_MIME "application/x-gfopenproject"
+#define OWF_PFILE_NS "urn:amicradle:gfopenproject:1"
+
+/* What data looks like: an OWF_PFILE_, or -1 when it is none of them (anything that is not a zip or
+ * XML is taken for CSV). */
+int owf_project_detect(const unsigned char *data, size_t length);
+/* Reads a plan of any of the three into a new project (not scheduled). OWF_OK, OWF_ERR_FORMAT (not a
+ * plan), OWF_ERR_CORRUPT (damaged), OWF_ERR_UNSUPPORTED or OWF_ERR_MEMORY. A CSV's project starts at
+ * its earliest Start, or 1 Jan 2000 when it has none. */
+int owf_project_read(const unsigned char *data, size_t length, owf_project **out);
+/* Writes p as an OWF_PFILE_ into memory from owf_malloc (owf_free it), NUL after; OWF_OK or an
+ * OWF_ERR_. The dates worked out by owf_project_schedule are written as they stand. */
+int owf_project_write(const owf_project *p, int format, unsigned char **data, size_t *length);
+
+/* Durations as text, as MS Project shows them: "5d", "2.5h", "3ed", "1w?" ("?": estimated; "e":
+ * elapsed); a number alone is days. In minutes, with *elapsed and *estimated set; OWF_OK or
+ * OWF_ERR_FORMAT. */
+int owf_pduration_parse(const owf_project *p, const char *s, long *minutes, int *elapsed, int *estimated);
+/* The other way: the largest unit that gives a whole number. out holds at least 24 bytes. */
+void owf_pduration_text(const owf_project *p, long minutes, int elapsed, int estimated, char *out);
+
 #endif
