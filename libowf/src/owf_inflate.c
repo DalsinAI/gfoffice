@@ -286,7 +286,9 @@ COLD static int dynamic(inflater *s)
     return codes(s);
 }
 
-int owf_inflate(unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length)
+/* Inflates into out, at most out_length bytes; *made is how many it made. */
+static int inflate_into(unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length,
+                        size_t *made)
 {
     inflater *s = malloc(sizeof *s);
     int last, type, result;
@@ -312,8 +314,23 @@ int owf_inflate(unsigned char *out, size_t out_length, const unsigned char *in, 
         else if (type == 2)
             result = dynamic(s);
     } while (result == OWF_OK && !last);
-    if (result == OWF_OK && s->out != s->end)
-        result = OWF_ERR_CORRUPT;               /* fewer bytes than the directory said */
+    *made = (size_t)(s->out - s->start);
     free(s);
     return result;
+}
+
+int owf_inflate(unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length)
+{
+    size_t made = 0;
+    int result = inflate_into(out, out_length, in, in_length, &made);
+    if (result == OWF_OK && made != out_length)
+        result = OWF_ERR_CORRUPT;               /* fewer bytes than the directory said */
+    return result;
+}
+
+int owf_inflate_upto(unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length,
+                     size_t *made)
+{
+    *made = 0;
+    return inflate_into(out, out_length, in, in_length, made);
 }
