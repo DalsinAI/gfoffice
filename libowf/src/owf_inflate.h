@@ -16,6 +16,14 @@
  * are ignored. */
 int owf_inflate(unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length);
 
+/* As owf_inflate, for a stream whose size is not known: it may make fewer
+ * than out_length bytes, and *made says how many. A stream that needs more
+ * room than out_length fails OWF_ERR_CORRUPT, as a damaged one does, so a
+ * caller that does not know the size tries again with more room up to a
+ * limit of its own (DEFLATE makes at most 1032 bytes from one). */
+int owf_inflate_upto(unsigned char *out, size_t out_length, const unsigned char *in, size_t in_length,
+                     size_t *made);
+
 /* The state's size in bytes: one block from malloc for the length of a
  * call, the same whatever the stream. */
 extern const size_t owf_inflate_state_size;
