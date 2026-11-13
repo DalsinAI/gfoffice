@@ -359,6 +359,35 @@ static void test_navigation(void)
     oc_core_free(core);
 }
 
+/* A workbook whose file kept no formula results (openpyxl writes <v></v>) is worked out on opening, as
+ * LibreOffice does (gfoffice #173: the build plan's Gantt summaries showed blank) */
+static void test_open_without_results(void)
+{
+    static const char *const xlsx = "build/host/calc-core-noresults.xlsx";
+    owf_book *book = owf_book_new();
+    owf_sheet *sheet;
+    owf_cell *cell;
+    oc_core *core;
+    if (!book || !(sheet = owf_book_add_sheet(book, "Gantt"))) {
+        CHECK(0);
+        owf_book_free(book);
+        return;
+    }
+    if ((cell = owf_sheet_cell(sheet, 0, 0, 1))) owf_cell_set_text(cell, "Merged", 6);
+    if ((cell = owf_sheet_cell(sheet, 1, 0, 1))) owf_cell_set_text(cell, "Open", 4);
+    if ((cell = owf_sheet_cell(sheet, 2, 0, 1)))
+        owf_cell_set_formula(cell, "IF(COUNTIF(A1:A2,\"Merged\")=2,\"Done\",COUNTIF(A1:A2,\"Merged\")&\"/2 done\")");
+    CHECK(owf_export_book_file(book, xlsx, NULL, NULL) == OWF_OK);
+    owf_book_free(book);
+    core = fresh();
+    if (!core)
+        return;
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(at(core, "A3") && at(core, "A3")->type == OWF_VALUE_TEXT && !strcmp(at(core, "A3")->text, "1/2 done"));
+    CHECK(!oc_core_is_dirty(core));
+    oc_core_free(core);
+}
+
 static void test_defined_names(void)
 {
     static const char *const xlsx = "build/host/calc-core-names.xlsx";
@@ -6380,6 +6409,7 @@ int main(void)
     test_names();
     test_navigation();
     test_defined_names();
+    test_open_without_results();
     test_change_name();
     test_advanced_filter();
     test_editing();
