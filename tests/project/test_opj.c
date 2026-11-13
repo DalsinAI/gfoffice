@@ -686,6 +686,11 @@ static void test_print(void)
     CHECK(opj_print_page_view(&pr, 1, &v));
     CHECK(v.first_row == 2 && v.height == 64 && v.width == 800 && v.origin == proto.origin);
     CHECK_N(opj_print_page_view(&pr, 2, &v), 0);
+    v = proto;                                   /* a row height of 0 or less is refused, not divided by */
+    v.row_height = 0;
+    CHECK_N(opj_print_layout(&pr, &v, doc, 800, 80), 0);
+    v.row_height = -16;
+    CHECK_N(opj_print_layout(&pr, &v, doc, 800, 80), 0);
     /* 600 wide: 2 days of chart on the first page across, 24 on the next: four pages. */
     CHECK_N(opj_print_layout(&pr, &proto, doc, 600, 80), 4);
     CHECK(pr.across == 2 && pr.first_days == 2 && pr.more_days == 24);

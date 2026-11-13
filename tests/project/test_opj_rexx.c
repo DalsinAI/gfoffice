@@ -217,6 +217,62 @@ static void test_files(void)
     CHECK_N(rx_do("DELETETASK 1"), OPJ_RX_ERROR);                          /* nothing there */
 }
 
+/* A ROW or COUNT that overflows an int on the way in is refused, never wrapped into a negative size. */
+static void test_huge_numbers(void)
+{
+    static const char *const lines[] = {
+        "DELETETASK 2 COUNT 2147483647", "DELETETASK 2 COUNT 99999999999", "DELETETASK 2147483647",
+        "DELETETASK -2147483648 COUNT 2", "INDENT 2 COUNT 2147483647", "OUTDENT 2 COUNT 2147483647",
+        "LINK 2 COUNT 2147483647", "LINK 2147483647", "UNLINK 2 COUNT 2147483647",
+        "BASELINE 2 COUNT 2147483647", "BASELINE CLEAR 2 COUNT 2147483647",
+        "DELETERESOURCE 1 COUNT 2147483647", "DELETERESOURCE 2147483647 COUNT 2",
+        "GETCELL 2147483647 Name", "SETCELL 99999999999 Name X", "ADDTASK X ROW 2147483647",
+        "ASSIGN 2147483647 Ann", "GETRESOURCE 2147483647 Name",
+    };
+    char name[300];
+    size_t i;
+    ok("NEW FORCE");
+    ok("ADDTASK A");
+    ok("ADDTASK B");
+    ok("ADDTASK C");
+    ok("ADDRESOURCE Ann");
+    ok("ADDRESOURCE Bob");
+    for (i = 0; i < sizeof lines / sizeof *lines; i++) {
+        int rc = rx_do(lines[i]);
+        checks++;
+        if (rc != OPJ_RX_ERROR) {
+            fails++;
+            printf("FAIL %s gave %d, want %d\n", lines[i], rc, OPJ_RX_ERROR);
+        }
+    }
+    CHECK_S(ok("TASKS"), "3");
+    CHECK_S(ok("RESOURCES"), "2");
+    CHECK_N(rx.doc->plan->tasks[1].nlinks + rx.doc->plan->tasks[2].nlinks, 0);
+
+    /* The same calls straight into the core. */
+    CHECK_N(opj_delete_tasks(rx.doc, 1, 2147483647), OWF_ERR_FORMAT);
+    CHECK_N(opj_indent(rx.doc, 1, 2147483647, 1), OWF_ERR_FORMAT);
+    CHECK_N(opj_indent(rx.doc, 1, 2147483647, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_link_rows(rx.doc, 1, 2147483647), OWF_ERR_FORMAT);
+    CHECK_N(opj_unlink_rows(rx.doc, 1, 2147483647), OWF_ERR_FORMAT);
+    CHECK_N(opj_delete_resources(rx.doc, 1, 2147483647), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline(rx.doc, 1, 2147483647), OWF_ERR_FORMAT);
+    CHECK_N(rx.doc->plan->ntasks, 3);
+    ok("DELETETASK 2 COUNT 2");                                           /* the last rows exactly */
+    CHECK_S(ok("TASKS"), "1");
+
+    /* A file name that does not fit is refused, so SAVE never writes somewhere else. */
+    memset(name, 'a', sizeof name - 1);
+    name[sizeof name - 1] = 0;
+    memcpy(name, "SAVEAS ", 7);
+    CHECK_N(rx_do(name), OPJ_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "SAVEAS: the file name is longer than 255 bytes") != NULL);
+    memcpy(name, "OPEN   ", 7);
+    CHECK_N(rx_do(name), OPJ_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "OPEN: the file name is longer than 255 bytes") != NULL);
+    CHECK_S(ok("TASKS"), "1");                                            /* nothing opened */
+}
+
 int main(void)
 {
     rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
@@ -226,6 +282,7 @@ int main(void)
     test_tasks();
     test_resources_and_baseline();
     test_files();
+    test_huge_numbers();
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);
     CHECK_N(opj_rexx_format("plan"), OWF_PFILE_GFPROJ);

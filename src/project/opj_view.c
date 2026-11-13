@@ -545,7 +545,7 @@ int opj_print_layout(opj_print *pr, const opj_view *proto, const opj_doc *doc, i
 {
     int rh, dw, first_chart, more_chart, ntasks;
     long days, end, i;
-    if (!pr || !proto || !doc) return 0;
+    if (!pr || !proto || !doc || proto->row_height < 1) return 0;   /* a view not set up by opj_view_init */
     memset(pr, 0, sizeof *pr);
     pr->proto = *proto;
     pr->proto.selected = -1;

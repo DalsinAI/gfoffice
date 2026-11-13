@@ -14,6 +14,7 @@
 
 #define MAX_ARGS 6
 #define ARG_TEXT 1024
+#define NUM_LIMIT 1000000000L
 
 typedef struct {
     const char *name;
@@ -231,6 +232,10 @@ static int parse_args(const char *line, args *a, char *err, size_t esize)
                 snprintf(err, esize, "%.15s must be a number, not \"%.100s\"", a->f[i].name, v);
                 return 0;
             }
+            /* Keep every number well inside an int, so ROW - 1, ROW + COUNT and the casts
+               below cannot wrap on a 32-bit or a 64-bit long. Out of range stays out of range. */
+            if (a->num[i] > NUM_LIMIT) a->num[i] = NUM_LIMIT;
+            if (a->num[i] < -NUM_LIMIT) a->num[i] = -NUM_LIMIT;
         }
     }
     return 1;
@@ -359,6 +364,16 @@ static int write_file(opj_rexx *rx, const char *name, int format)
     return OPJ_RX_OK;
 }
 
+/* A name that does not fit rx->file is refused before anything is read or written,
+   so SAVE always writes where SAVEAS or OPEN did. */
+static int name_fits(opj_rexx *rx, const char *what, const char *name)
+{
+    if (strlen(name) < sizeof rx->file) return 1;
+    snprintf(rx->lasterror, sizeof rx->lasterror, "%s: the file name is longer than %d bytes", what,
+             (int)sizeof rx->file - 1);
+    return 0;
+}
+
 static void set_file(opj_rexx *rx, const char *name)
 {
     size_t n = strlen(name);
@@ -430,6 +445,7 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         owf_project *plan = NULL;
         opj_doc *fresh;
         int force = a->value[1] != NULL;
+        if (c == C_OPEN && !name_fits(rx, "OPEN", a->value[0])) return OPJ_RX_ERROR;
         if (doc->dirty && !force) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "%s: the plan has unsaved changes (FORCE drops them)",
                      commands[c].name);
@@ -478,6 +494,7 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         if ((rc = write_file(rx, rx->file, opj_rexx_format(rx->file))) == OPJ_RX_OK) opj_doc_saved(doc);
         return rc;
     case C_SAVEAS:
+        if (!name_fits(rx, "SAVEAS", a->value[0])) return OPJ_RX_ERROR;
         if ((rc = write_file(rx, a->value[0], opj_rexx_format(a->value[0]))) == OPJ_RX_OK) {
             set_file(rx, a->value[0]);
             opj_doc_saved(doc);
