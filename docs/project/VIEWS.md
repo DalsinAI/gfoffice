@@ -66,6 +66,15 @@ the next PR and only wires windows, menus and requesters to these calls.
 - With `show_baseline` set, the Gantt view draws a thin grey bar under each bar at its baseline dates
   (MS Project's Tracking Gantt), a sixth of a row high, clear of the bar.
 
+## Printing
+
+`opj_print_layout` puts the Gantt view on pages of the printer's printable area, down then across as
+MS Project prints. Each page has as many whole rows as fit under the timescale and above a footer row.
+The first page across holds the table and the start of the chart; later pages across hold only more
+chart, whole days each, to a day past the plan's finish. `opj_print_page_view` gives the view for a
+page, and `opj_print_draw` draws it with the footer (the plan's title, and "Page n of m") onto any
+`oldraw` target. The Amiga app's PRINT gives it a printer.device target.
+
 ## Checked
 
 `tests/project/test_opj.c`: dates typed and shown; every edit, including the ones refused and the
@@ -76,4 +85,5 @@ drawing only the chart touches nothing left of it); the hit tests; and resources
 typed and refused, every resource sheet cell typed and shown, rates by the hour and the day,
 over-allocation, periods at each zoom, usage worked out by hand, deleting with Undo, and the names
 drawn beside the bars; Set and Clear Baseline with Undo, the variance columns after a slip either way,
-and the baseline bar's place and colour.
+and the baseline bar's place and colour; and print layouts by hand (rows and days a page, pages
+down and across, pages too small) and drawn pages (no table after the first page across, the footer).

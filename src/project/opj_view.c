@@ -538,3 +538,81 @@ void opj_hit_test(const opj_view *v, const opj_doc *doc, int x, int y, opj_hit *
         }
     }
 }
+
+/* ---- Printing ---- */
+
+int opj_print_layout(opj_print *pr, const opj_view *proto, const opj_doc *doc, int page_width, int page_height)
+{
+    int rh, dw, first_chart, more_chart, ntasks;
+    long days, end, i;
+    if (!pr || !proto || !doc) return 0;
+    memset(pr, 0, sizeof *pr);
+    pr->proto = *proto;
+    pr->proto.selected = -1;
+    pr->proto.first_row = 0;
+    pr->page_width = page_width;
+    pr->page_height = page_height;
+    rh = proto->row_height;
+    dw = opj_zoom_day_width(proto->zoom);
+    pr->rows_per_page = (page_height - 3 * rh) / rh;           /* the timescale's two rows and the footer */
+    first_chart = page_width - opj_chart_left(proto);
+    more_chart = page_width - SPLIT;
+    pr->first_days = first_chart / dw;
+    pr->more_days = more_chart / dw;
+    if (pr->rows_per_page < 1 || pr->first_days < 1 || pr->more_days < 1) return 0;
+    ntasks = doc->plan->ntasks;
+    pr->down = ntasks > 0 ? (ntasks + pr->rows_per_page - 1) / pr->rows_per_page : 1;
+    end = doc->plan->start;
+    for (i = 0; i < ntasks; i++)
+        if (doc->plan->tasks[i].early_finish > end) end = doc->plan->tasks[i].early_finish;
+    days = floor_div(end - proto->origin, DAY) + 2;             /* to a day past the finish */
+    pr->across = 1;
+    if (days > pr->first_days) {
+        long more = (days - pr->first_days + pr->more_days - 1) / pr->more_days;
+        pr->across += more > 1000 ? 1000 : (int)more;
+    }
+    if ((long)pr->across * pr->down > 100000L) pr->across = (int)(100000L / pr->down);
+    return pr->across * pr->down;
+}
+
+int opj_print_page_view(const opj_print *pr, int page, opj_view *v)
+{
+    int down, across, c;
+    if (!pr || !v || page < 0 || page >= pr->across * pr->down) return 0;
+    across = page / pr->down;
+    down = page % pr->down;
+    *v = pr->proto;
+    v->width = pr->page_width;
+    v->height = 2 * v->row_height + pr->rows_per_page * v->row_height;
+    v->first_row = down * pr->rows_per_page;
+    if (across > 0) {
+        for (c = 0; c < OPJ_NCOLS; c++) v->columns[c] = 0;
+        v->sheet_width = 0;
+        v->origin = pr->proto.origin + (pr->first_days + (long)(across - 1) * pr->more_days) * DAY;
+    }
+    return 1;
+}
+
+void opj_print_draw(oldraw *d, const opj_print *pr, const opj_doc *doc, int page)
+{
+    opj_view v;
+    oldraw_rect r;
+    char text[64];
+    if (!d || !doc || !opj_print_page_view(pr, page, &v)) return;
+    r.x = r.y = 0;
+    r.w = pr->page_width;
+    r.h = pr->page_height;
+    oldraw_clip(d, &r);
+    fill(d, 0, 0, r.w, r.h, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND));
+    oldraw_clip(d, NULL);
+    opj_draw(d, &v, doc, NULL);
+    r.y = pr->page_height - v.row_height;
+    r.h = v.row_height;
+    r.x = 4;
+    r.w = pr->page_width / 2 - 8;
+    oldraw_text_box(d, &r, doc->plan->title ? doc->plan->title : "", (size_t)-1, &v.font,
+                    OLDRAW_PEN(OLDRAW_PEN_TEXT), 0, OLDRAW_LEFT);
+    sprintf(text, "Page %d of %d", page + 1, pr->across * pr->down);
+    r.x = pr->page_width / 2;
+    oldraw_text_box(d, &r, text, (size_t)-1, &v.font, OLDRAW_PEN(OLDRAW_PEN_TEXT), 0, OLDRAW_RIGHT);
+}

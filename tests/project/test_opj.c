@@ -667,6 +667,58 @@ static void test_baseline(void)
     opj_doc_free(doc);
 }
 
+/* Printing: pages down then across; the table only on the first pages across; a footer on each. */
+static void test_print(void)
+{
+    opj_doc *doc = three();
+    opj_view proto, v;
+    opj_print pr;
+    oldraw *d;
+    unsigned long bg;
+    doc->plan->title = owf_malloc(8);
+    if (doc->plan->title) strcpy(doc->plan->title, "Kitchen");
+    opj_view_init(&proto, doc, 0, 0, 16, OPJ_ZOOM_DAYS);
+    CHECK_N(opj_chart_left(&proto), 548);
+    /* 800 by 80: two rows a page (80 less the timescale's 32 and the footer's 16), 10 days of chart on the
+     * first page across, and the plan's 6 days fit: two pages. */
+    CHECK_N(opj_print_layout(&pr, &proto, doc, 800, 80), 2);
+    CHECK(pr.rows_per_page == 2 && pr.down == 2 && pr.across == 1 && pr.first_days == 10 && pr.more_days == 33);
+    CHECK(opj_print_page_view(&pr, 1, &v));
+    CHECK(v.first_row == 2 && v.height == 64 && v.width == 800 && v.origin == proto.origin);
+    CHECK_N(opj_print_page_view(&pr, 2, &v), 0);
+    /* 600 wide: 2 days of chart on the first page across, 24 on the next: four pages. */
+    CHECK_N(opj_print_layout(&pr, &proto, doc, 600, 80), 4);
+    CHECK(pr.across == 2 && pr.first_days == 2 && pr.more_days == 24);
+    CHECK(opj_print_page_view(&pr, 2, &v));                                /* down 0, across 1 */
+    CHECK_N(v.first_row, 0);
+    CHECK_N(opj_chart_left(&v), 4);                                        /* no table */
+    CHECK_N(v.origin, AT(18, 0, 0));
+    CHECK_N(opj_view_x(&v, AT(18, 8, 0)), 12);
+    /* Too small: no row of tasks, or no day of chart. */
+    CHECK_N(opj_print_layout(&pr, &proto, doc, 600, 60), 0);
+    CHECK_N(opj_print_layout(&pr, &proto, doc, 560, 80), 0);
+    /* Drawing page 3 of 4: Build's bar from x 12 (Wed 08:00) to 69 (Fri 17:00), no table, the footer. */
+    CHECK_N(opj_print_layout(&pr, &proto, doc, 600, 80), 4);
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_print_draw(d, &pr, doc, 2);
+    CHECK_X(px[56][30], 0xD03030);
+    CHECK_X(px[56][150], bg);                                             /* past the bars and lines */
+    CHECK_X(px[70][599], bg);                                              /* the page is cleared */
+    CHECK(drew("Page 3 of 4") && drew("Kitchen") && !drew("Task Name") && !drew("Build"));
+    ntexts = 0;
+    opj_print_draw(d, &pr, doc, 1);                                        /* down 1: Ship's row, table */
+    CHECK(drew("Page 2 of 4") && drew("Task Name") && drew("Ship") && !drew("Plan"));
+    ntexts = 0;
+    opj_print_draw(d, &pr, doc, 9);
+    CHECK_N(ntexts, 0);
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -678,6 +730,7 @@ int main(void)
     test_hits();
     test_resources();
     test_baseline();
+    test_print();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;
