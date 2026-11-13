@@ -230,6 +230,17 @@ int oc_core_set_book(oc_core *core, owf_book *book)
     return OWF_OK;
 }
 
+/* 1 when a formula in the book has no value from its file (openpyxl and other writers leave <v> empty) */
+static int book_lacks_results(const owf_book *book)
+{
+    int i, j;
+    for (i = 0; i < book->nsheets; i++)
+        for (j = 0; j < book->sheets[i].ncells; j++)
+            if (book->sheets[i].cells[j].formula && book->sheets[i].cells[j].type == OWF_VALUE_EMPTY)
+                return 1;
+    return 0;
+}
+
 int oc_core_open(oc_core *core, const char *path, const char *format, owf_report *report,
                  const owf_book_format **used)
 {
@@ -237,7 +248,12 @@ int oc_core_open(oc_core *core, const char *path, const char *format, owf_report
     int rc = owf_import_book_file(path, format, &book, report, used);
     if (rc != OWF_OK)
         return rc;
-    return oc_core_set_book(core, book);
+    rc = oc_core_set_book(core, book);
+    /* A book whose file kept no results is worked out on opening, as LibreOffice does for such files; the
+     * others show the file's results until something changes (owf_calc_new). Not a change: still unsaved-clean. */
+    if (rc == OWF_OK && book_lacks_results(core->book))
+        rc = owf_calc_recalc_all(core->calc);
+    return rc;
 }
 
 int oc_core_export(oc_core *core, const char *path, const char *format, owf_report *report)
