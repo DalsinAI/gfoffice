@@ -866,10 +866,23 @@ static void put_lag(owf_buf *b, const owf_project *p, const owf_plink *l)
     owf_buf_puts(b, text);
 }
 
+static void put_predecessors(owf_buf *b, const owf_project *p, const owf_ptask *t)
+{
+    int j, any = 0;
+    for (j = 0; j < t->nlinks; j++) {
+        const owf_plink *l = &t->links[j];
+        if (l->pred < 0 || l->pred >= p->ntasks) continue;
+        if (any++) owf_buf_putc(b, ',');
+        owf_buf_printf(b, "%d", l->pred + 1);
+        if (l->type != OWF_LINK_FS || l->lag) owf_buf_puts(b, link_names[l->type & 3]);
+        put_lag(b, p, l);
+    }
+}
+
 static void write_csv(const owf_project *p, owf_buf *b)
 {
     owf_buf cell;
-    int i, j, c;
+    int i, c;
     for (c = 0; c < NCOLS; c++) {
         if (c) owf_buf_putc(b, ',');
         owf_buf_puts(b, csv_columns[c]);
@@ -888,14 +901,7 @@ static void write_csv(const owf_project *p, owf_buf *b)
         put_time(b, t->early_finish, 1);
         owf_buf_putc(b, ',');
         cell.length = 0;
-        for (j = 0; j < t->nlinks; j++) {
-            const owf_plink *l = &t->links[j];
-            if (l->pred < 0 || l->pred >= p->ntasks) continue;
-            if (cell.length) owf_buf_putc(&cell, ',');
-            owf_buf_printf(&cell, "%d", l->pred + 1);
-            if (l->type != OWF_LINK_FS || l->lag) owf_buf_puts(&cell, link_names[l->type & 3]);
-            put_lag(&cell, p, l);
-        }
+        put_predecessors(&cell, p, t);
         owf_buf_putc(&cell, 0);
         csv_field(b, cell.failed ? "" : (const char *)cell.data, ',');
         owf_buf_printf(b, ",%s,", csv_constraints[t->constraint & 7][0]);
@@ -980,8 +986,11 @@ static int parse_constraint(const char *s)
     return -1;
 }
 
-/* "2,3SS+1d,4FF-2h,5SF+50%" onto task succ; ids maps the ID column to tasks. */
-static int parse_predecessors(owf_project *p, int succ, const char *s, const uid_map *ids, int nids)
+/* "2,3SS+1d,4FF-2h,5SF+50%" onto task succ; ids maps the ID column to tasks (NULL: IDs are row numbers).
+ * strict: anything that isn't a predecessor, or names no task or succ itself, is OWF_ERR_FORMAT, and with
+ * apply 0 nothing is linked (a check first). Not strict: those are skipped. */
+static int parse_predecessors(owf_project *p, int succ, const char *s, const uid_map *ids, int nids, int strict,
+                              int apply)
 {
     while (*s) {
         long id, lag = 0;
@@ -989,6 +998,7 @@ static int parse_predecessors(owf_project *p, int succ, const char *s, const uid
         while (*s == ' ' || *s == ',' || *s == ';') s++;
         if (!*s) break;
         if (!take_long(&s, &id)) {
+            if (strict) return OWF_ERR_FORMAT;
             while (*s && *s != ',' && *s != ';') s++;    /* not a predecessor we read */
             continue;
         }
@@ -1011,16 +1021,48 @@ static int parse_predecessors(owf_project *p, int succ, const char *s, const uid
                 percent = 1;
                 s = q + 1;
             } else if (!take_duration(p, &s, &lag, NULL, NULL)) {
+                if (strict) return OWF_ERR_FORMAT;
                 lag = 0;
             }
             if (neg) lag = -lag;
         }
+        while (*s == ' ') s++;
+        if (strict && *s && *s != ',' && *s != ';') return OWF_ERR_FORMAT;
         while (*s && *s != ',' && *s != ';') s++;
-        pred = find_uid(ids, nids, id);
-        if (pred >= 0 && pred != succ && (rc = owf_project_link(p, pred, succ, type, lag, percent)) == OWF_ERR_MEMORY)
-            return rc;
+        pred = ids ? find_uid(ids, nids, id) : id >= 1 && id <= p->ntasks ? (int)id - 1 : -1;
+        if (pred < 0 || pred == succ) {
+            if (strict) return OWF_ERR_FORMAT;
+            continue;
+        }
+        if (apply && (rc = owf_project_link(p, pred, succ, type, lag, percent)) == OWF_ERR_MEMORY) return rc;
     }
     return OWF_OK;
+}
+
+int owf_ppredecessors_parse(owf_project *p, int succ, const char *text)
+{
+    int rc;
+    if (!p || succ < 0 || succ >= p->ntasks || !text) return OWF_ERR_FORMAT;
+    if ((rc = parse_predecessors(p, succ, text, NULL, 0, 1, 0)) != OWF_OK) return rc;
+    p->tasks[succ].nlinks = 0;
+    return parse_predecessors(p, succ, text, NULL, 0, 1, 1);
+}
+
+void owf_ppredecessors_text(const owf_project *p, int row, char *out, size_t size)
+{
+    owf_buf b;
+    size_t n;
+    if (!out || !size) return;
+    out[0] = 0;
+    if (!p || row < 0 || row >= p->ntasks) return;
+    owf_buf_init(&b);
+    put_predecessors(&b, p, &p->tasks[row]);
+    if (!b.failed && b.length) {
+        n = b.length < size - 1 ? b.length : size - 1;
+        memcpy(out, b.data, n);
+        out[n] = 0;
+    }
+    owf_buf_free(&b);
 }
 
 static int read_csv(const unsigned char *data, size_t length, owf_project **out)
@@ -1148,7 +1190,7 @@ static int read_csv(const unsigned char *data, size_t length, owf_project **out)
             const owf_ptask *t = &p->tasks[i];
             if ((t->constraint != OWF_CON_ASAP && t->constraint != OWF_CON_ALAP) && !t->constraint_date)
                 p->tasks[i].constraint = OWF_CON_ASAP;
-            if (preds[i]) rc = parse_predecessors(p, i, preds[i], ids, nids);
+            if (preds[i]) rc = parse_predecessors(p, i, preds[i], ids, nids, 0, 1);
             if (t->uid > top) top = t->uid;
         }
         p->next_uid = top + 1;
