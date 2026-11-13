@@ -310,6 +310,8 @@ int owf_project_detect(const unsigned char *data, size_t length)
     if (owf_unzip_open(&zip, data, length)) return owf_unzip_has(&zip, "content.xml") ? OWF_PFILE_GFPROJ : -1;
     d = skip_bom_space(data, data + length);
     if (d < data + length && *d == '<') return OWF_PFILE_MSPDI;
+    if (length >= 4 && memcmp(data, "MPX", 3) == 0 && (data[3] == ',' || data[3] == ';' || data[3] == '\t'))
+        return OWF_PFILE_MPX;
     return OWF_PFILE_CSV;
 }
 
@@ -1489,6 +1491,7 @@ int owf_project_read(const unsigned char *data, size_t length, owf_project **out
     case OWF_PFILE_GFPROJ: return read_gfproj(data, length, out);
     case OWF_PFILE_MSPDI: return read_xml((const char *)data, length, out);
     case OWF_PFILE_CSV: return read_csv(data, length, out);
+    case OWF_PFILE_MPX: return owf_pmpx_read(data, length, out);
     default: return OWF_ERR_FORMAT;
     }
 }

@@ -699,6 +699,144 @@ static void test_baseline(void)
     owf_project_free(p);
 }
 
+/* MPX as MS Project wrote it: Windows text, its own delimiter, day order, decimal point and currency, field
+ * lists by number (61) and by name (40), base calendars, IDs that are not row numbers. */
+static const char mpx_sample[] =
+    "MPX,Microsoft Project for Windows,4.0,ANSI\r\n"
+    "10,\xA3,1,2,\",\",.\r\n"
+    "11,1,0,1,7.50,37.50,,,0,0\r\n"
+    "12,1,0,510,/,:,am,pm,20,20\r\n"
+    "20,Standard,0,1,1,1,1,1,0\r\n"
+    "25,1\r\n"
+    "25,2,08:30 am,12:00 pm,01:00 pm,05:00 pm\r\n"
+    "25,3,08:30 am,12:00 pm,01:00 pm,05:00 pm\r\n"
+    "25,4,08:30 am,12:00 pm,01:00 pm,05:00 pm\r\n"
+    "25,5,08:30 am,12:00 pm,01:00 pm,05:00 pm\r\n"
+    "25,6,08:30 am,12:00 pm,01:00 pm,05:00 pm\r\n"
+    "25,7\r\n"
+    "26,24/12/26,26/12/26,0\r\n"
+    "26,31/12/26,31/12/26,1,08:30 am,12:00 pm\r\n"
+    "20,Night,0,1,1,1,1,1,0\r\n"
+    "25,2,08:00 pm,12:00 am\r\n"
+    "30,Kitchen \x96 hall,,,Standard,16/11/26 08:30 am,,0,13/11/26\r\n"
+    "40,ID,Name,Max Units,Standard Rate,Unique ID,Initials\r\n"
+    "50,1,Ann,50%,\xA3" "240.00/d,7,A\r\n"
+    "50,2,Bob,1,\xA3" "10.00/h,8\r\n"
+    "60,ID,Name,Duration,Predecessors,Outline Level,Constraint Type,Constraint Date,% Complete,Unique ID,"
+    "Baseline Start,Baseline Finish\r\n"
+    "61,90,1,40,70,3,91,68,44,98,56,57\r\n"
+    "70,10,Caf\xE9 fit-out,2d,,1,As Soon As Possible,,25,100,16/11/26 08:30 am,17/11/26 05:00 pm\r\n"
+    "71,\"Notes \"\"here\"\"\"\r\n"
+    "75,1,0.5,7.5h,,,,,,,16/11/26,17/11/26,,7\r\n"
+    "70,20,Wiring,1.5d,10FS+3.75h,1,Start No Earlier Than,18/11/26 08:30 am,0,101,NA,NA\r\n"
+    "75,2,1,11.25h,,,,,,,18/11/26,19/11/26,,8\r\n"
+    "75,9,1\r\n"
+    "70,30,Sign off,0d,\"20,10SS+50%\",1,As Soon As Possible,,0,102\r\n"
+    "70,40,Night shift,1d?,,1\r\n"
+    "70,50,Odd links,1d,\"99,50,zz\",1\r\n";
+
+static void test_mpx(void)
+{
+    static const char semis[] =
+        "MPX;Microsoft Project for Windows;4.0;ANSI\n"
+        "10;\x80;0;2;.;,\n"
+        "11;1;0;1;8,00;40,00\n"
+        "12;2;1;480;-;:;;\n"
+        "30;Ymd;;;Standard;2026-11-16 08:00\n"
+        "60;Name;Duration;Predecessors\n"
+        "70;One;1,5d\n"
+        "70;Two;2d;\"1FS+0,5d\"\n";
+    owf_project *p = NULL;
+    const owf_pcal *c;
+    const owf_ptask *t;
+    unsigned char *data;
+    size_t length;
+    CHECK_N(owf_project_detect((const unsigned char *)mpx_sample, sizeof mpx_sample - 1), OWF_PFILE_MPX);
+    CHECK_N(owf_project_read((const unsigned char *)mpx_sample, sizeof mpx_sample - 1, &p), OWF_OK);
+    if (!p) return;
+    CHECK_S(p->title, "Kitchen \xE2\x80\x93 hall");                       /* an en dash, into UTF-8 */
+    CHECK_N(p->minutes_per_day, 450);
+    CHECK_N(p->minutes_per_week, 2250);
+    CHECK_N(p->start, AT(16, 8, 30));
+    CHECK_N(p->ncalendars, 2);
+    c = &p->calendars[0];
+    CHECK_S(c->name, "Standard");
+    CHECK(c->week[0].nspans == 0 && c->week[6].nspans == 0);
+    CHECK(c->week[1].nspans == 2 && c->week[1].from[0] == 510 && c->week[1].to[1] == 1020);
+    CHECK_N(c->nexceptions, 4);                                           /* 24, 25, 26 and 31 December */
+    if (c->nexceptions == 4) {
+        CHECK(c->exceptions[0].day == DAYNO(2026, 12, 24) && c->exceptions[0].hours.nspans == 0);
+        CHECK(c->exceptions[3].hours.nspans == 1 && c->exceptions[3].hours.to[0] == 720);
+    }
+    CHECK(p->calendars[1].week[1].nspans == 1 && p->calendars[1].week[1].from[0] == 1200 &&
+          p->calendars[1].week[1].to[0] == 1440);                         /* to midnight */
+    CHECK(p->calendars[1].week[2].nspans == 2);                           /* working, no hours: Standard's */
+
+    /* Resources by record 40's names: Ann half time at 240.00 a 7.5 hour day, 32.00 an hour. */
+    CHECK_N(p->nresources, 2);
+    CHECK_S(p->resources[0].name, "Ann");
+    CHECK_S(p->resources[0].initials, "A");
+    CHECK(p->resources[0].max_units == 50 && p->resources[0].rate == 3200 && p->resources[0].uid == 7);
+    CHECK(p->resources[1].max_units == 100 && p->resources[1].rate == 1000 && p->resources[1].uid == 8);
+    CHECK_N(p->next_resource_uid, 9);
+
+    /* Tasks by record 61's numbers. */
+    CHECK_N(p->ntasks, 5);
+    if (p->ntasks != 5) {
+        owf_project_free(p);
+        return;
+    }
+    t = &p->tasks[0];
+    CHECK_S(t->name, "Caf\xC3\xA9 fit-out");
+    CHECK(t->duration == 900 && t->percent == 25 && t->uid == 100);
+    CHECK_S(t->notes, "Notes \"here\"");
+    CHECK(t->baselined && t->baseline_start == AT(16, 8, 30) && t->baseline_finish == AT(17, 17, 0));
+    t = &p->tasks[1];
+    CHECK(t->constraint == OWF_CON_SNET && t->constraint_date == AT(18, 8, 30) && !t->baselined);
+    CHECK(t->nlinks == 1 && t->links[0].pred == 0 && t->links[0].type == OWF_LINK_FS && t->links[0].lag == 225);
+    t = &p->tasks[2];
+    CHECK(t->milestone && t->nlinks == 2);
+    CHECK(t->links[0].pred == 1 && t->links[1].pred == 0 && t->links[1].type == OWF_LINK_SS &&
+          t->links[1].lag == 50 && t->links[1].lag_percent);
+    CHECK(p->tasks[3].estimated && p->tasks[3].duration == 450);
+    CHECK_N(p->tasks[4].nlinks, 0);                                       /* to no task, itself, not a link */
+    CHECK_N(p->next_uid, 103);
+    /* Ann half time on the fit-out, Bob on the wiring; the assignment to resource 9 is left out. */
+    CHECK_N(p->nassigns, 2);
+    CHECK(p->assigns[0].task == 0 && p->assigns[0].resource == 0 && p->assigns[0].units == 50);
+    CHECK(p->assigns[1].task == 1 && p->assigns[1].resource == 1 && p->assigns[1].units == 100);
+
+    /* Scheduled on 7.5 hour days: the fit-out to Tuesday 17:00, the wiring 3.75 hours after it (Wednesday
+     * 13:15) for 1.5 days to Thursday 17:00, sign off then. */
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(p->tasks[0].early_finish, AT(17, 17, 0));
+    CHECK_N(p->tasks[1].early_start, AT(18, 13, 15));
+    CHECK_N(p->tasks[1].early_finish, AT(19, 17, 0));
+    CHECK_N(p->tasks[2].early_finish, AT(19, 17, 0));
+    CHECK_N(p->resources[0].cost, 7.5 * 3200);                            /* half of 15 hours at 32.00 */
+    owf_project_free(p);
+    p = NULL;
+
+    /* Semicolons, a decimal comma, year first, the euro. */
+    CHECK_N(owf_project_detect((const unsigned char *)semis, sizeof semis - 1), OWF_PFILE_MPX);
+    CHECK_N(owf_project_read((const unsigned char *)semis, sizeof semis - 1, &p), OWF_OK);
+    if (p) {
+        CHECK_S(p->title, "Ymd");
+        CHECK_N(p->start, AT(16, 8, 0));
+        CHECK(p->ntasks == 2 && p->tasks[0].duration == 720 && p->tasks[1].nlinks == 1);
+        if (p->ntasks == 2 && p->tasks[1].nlinks == 1) CHECK_N(p->tasks[1].links[0].lag, 240);
+    }
+    owf_project_free(p);
+    p = NULL;
+
+    /* Nothing an MPX file holds; MPX is not written. */
+    CHECK_N(owf_project_read((const unsigned char *)"MPX,x\r\n99,1\r\n", 13, &p), OWF_ERR_FORMAT);
+    CHECK(p == NULL);
+    p = sample();
+    CHECK_N(owf_project_write(p, OWF_PFILE_MPX, &data, &length), OWF_ERR_UNSUPPORTED);
+    owf_project_free(p);
+}
+
 int main(void)
 {
     test_durations();
@@ -709,6 +847,7 @@ int main(void)
     test_csv_read();
     test_cost_resource();
     test_baseline();
+    test_mpx();
     test_damaged();
     if (fails) {
         printf("project file tests: %d of %d checks failed\n", fails, checks);

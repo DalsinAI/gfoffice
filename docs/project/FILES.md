@@ -72,6 +72,34 @@ Written from Microsoft's published Project XML Data Interchange schema reference
   task sheet too.
 - A CSV keeps no calendars: its tasks are on the project's calendar.
 
+## MPX (MS Project's older text format, read only)
+
+Read from the published MPX 4.0 record layout and from what MS Project and other programs write;
+`libowf/project/owf_pmpx.c`. A file is MPX when it starts `MPX` and its delimiter.
+
+- **Records:** one a line, its number first, fields split by the delimiter (the character after
+  `MPX`: a comma, a semicolon or a tab), quoted as in CSV.
+  - 10 currency: the symbol, thousands separator and decimal point.
+  - 11 hours a day and a week.
+  - 12 dates: day order (0 month first, 1 day first, 2 year first), separators, am and pm, the
+    default time.
+  - 20, 25 and 26: base calendars, their weekdays' hours (up to five spans; `12:00 am` as an end is
+    midnight) and exceptions (a day off, or a working day with its own hours or Standard's).
+  - 30 the project: title, calendar, start.
+  - 40/41 and 60/61: which fields resource and task records hold, by name or by number. The numbers
+    win when both are there.
+  - 50 resources: Name 1, Initials 2, Group 3, ID 40, Max Units 41 (`1` or `100%`), Standard Rate
+    42 (`$20.00/h`; a rate by the minute, day, week, month or year is turned into an hour's by the
+    plan's day and week), Unique ID 49.
+  - 70 tasks: Name 1, Outline Level 3, Baseline Work 21, Baseline Cost 31, Duration 40 (`2d`, `1ed`,
+    `1d?`), Baseline Duration 41, % Complete 44, Start 50, Finish 51, Baseline Start 56, Baseline
+    Finish 57, Constraint Date 68, Predecessors 70 (by the ID field), Milestone 81, ID 90,
+    Constraint Type 91 (by name), Unique ID 98.
+  - 71 the task's notes; 75 an assignment to the task above (the resource's ID and its units).
+- **Text** is Windows code page 1252 and is turned into UTF-8.
+- **Left out:** MPX has no material or cost resources (every resource is a work resource), and
+  resource calendars and recurring tasks are not read. GFOpenProject doesn't write MPX.
+
 ## Resources (all formats)
 
 Version 1 keeps a task's duration as typed (fixed units, not effort driven). An assignment's work
@@ -87,5 +115,7 @@ is over-allocated when more of it is assigned at one time than its MaxUnits. Not
 - MPXJ 16.11.0 run as a black box on the host (no source read): it read our MSPDI with every task,
   duration, link, lag, constraint, calendar and exception as written, and showed the same dates,
   and every resource's type, max units and rate and every assignment's units, work and cost, and
-  every task's baseline start, finish, duration, work and cost and its finish variance;
+  every task's baseline start, finish, duration, work and cost and its finish variance. MPXJ also
+  wrote our plan as MPX, and `owf_project_read` read that back with the same tasks, links,
+  calendars, resources, assignments and baselines (less what MPX can't hold);
   the MSPDI it wrote from that was read back by `owf_project_read` and scheduled to the same dates.
