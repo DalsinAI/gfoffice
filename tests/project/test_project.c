@@ -438,6 +438,24 @@ static void test_baseline(void)
     owf_project_free(p);
 }
 
+/* A milestone that becomes a summary and then a task again keeps the span it had, as MS Project does,
+ * and so is no longer a milestone. */
+static void test_summary_back_to_task(void)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "Gate", 0), b = owf_project_add_task(p, "Work", D);
+    CHECK(TASK(p, a)->milestone);
+    TASK(p, b)->level = 2;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK(TASK(p, a)->summary && !TASK(p, a)->milestone);
+    TASK(p, b)->level = 1;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK(!TASK(p, a)->summary && !TASK(p, a)->milestone);
+    CHECK_N(TASK(p, a)->duration, D);
+    CHECK_N(TASK(p, a)->early_finish, AT(16, 17, 0));
+    owf_project_free(p);
+}
+
 int main(void)
 {
     test_dates();
@@ -453,6 +471,7 @@ int main(void)
     test_loop_and_holiday();
     test_resources();
     test_baseline();
+    test_summary_back_to_task();
     if (fails) {
         printf("project tests: %d of %d checks failed\n", fails, checks);
         return 1;

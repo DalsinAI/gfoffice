@@ -54,11 +54,23 @@ $(OUT)/test-opj-asan: $(OPJ_DEPS) $(OWF_SRC)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		$(OPJ_FLAGS) $(OWF_SRC) $(PROJECT_SRC) $(OPJ_SRC) $(OLDRAW_SRC) tests/project/test_opj.c -lz -o $@
 
-project-view-test: $(OUT)/test-opj
-	$(OUT)/test-opj
+$(OUT)/test-opj-rexx: $(OPJ_DEPS) $(OWF_SRC) tests/project/test_opj_rexx.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB $(OPJ_FLAGS) $(OWF_SRC) $(PROJECT_SRC) $(OPJ_SRC) $(OLDRAW_SRC) \
+		tests/project/test_opj_rexx.c -lz -o $@
 
-project-view-check: $(OUT)/test-opj-asan
+$(OUT)/test-opj-rexx-asan: $(OPJ_DEPS) $(OWF_SRC) tests/project/test_opj_rexx.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		$(OPJ_FLAGS) $(OWF_SRC) $(PROJECT_SRC) $(OPJ_SRC) $(OLDRAW_SRC) tests/project/test_opj_rexx.c -lz -o $@
+
+project-view-test: $(OUT)/test-opj $(OUT)/test-opj-rexx
+	$(OUT)/test-opj
+	$(OUT)/test-opj-rexx
+
+project-view-check: $(OUT)/test-opj-asan $(OUT)/test-opj-rexx-asan
 	$(OUT)/test-opj-asan
+	$(OUT)/test-opj-rexx-asan
 
 test: project-view-test
 check: project-view-check
