@@ -976,6 +976,55 @@ static int wrapped_items(drawing *d, const owf_cell *c, const owf_cellstyle *st,
     return 1;
 }
 
+/* The glyphs a Gantt bar or a progress cell is made of (U+2580 to U+259F's blocks, "■" U+25A0 and its small,
+ * wide and tall kin): the Amiga's Latin-1 fonts have none, so the grid draws them as filled squares. How many
+ * there are when text s (n bytes of UTF-8) is nothing else; 0 when it holds anything else. */
+static int block_glyphs(const char *s, int n)
+{
+    const unsigned char *u = (const unsigned char *)s;
+    int i = 0, count = 0;
+    while (i < n) {
+        unsigned cp;
+        if (u[i] != 0xE2 || i + 2 >= n || (u[i + 1] & 0xC0) != 0x80 || (u[i + 2] & 0xC0) != 0x80)
+            return 0;
+        cp = ((unsigned)(u[i] & 0x0F) << 12) | ((unsigned)(u[i + 1] & 0x3F) << 6) | (unsigned)(u[i + 2] & 0x3F);
+        if (!((cp >= 0x2580 && cp <= 0x259F) || cp == 0x25A0 || cp == 0x25AA || cp == 0x25AC || cp == 0x25AE ||
+              cp == 0x25FC || cp == 0x25FE))
+            return 0;
+        i += 3;
+        count++;
+    }
+    return count;
+}
+
+/* A cell's text of block glyphs alone (block_glyphs) as squares in its text's colour, a line's height less a
+ * third, side by side from where its text would start, clipped to the box (cx, cw). 0 when memory runs out. */
+static int block_items(drawing *d, const owf_cell *c, int count, unsigned long rgb, int text_x, int cx, int cw, int y,
+                       int h, int line)
+{
+    int side = line * 2 / 3, gap = side / 4 + 1, k;
+    if (side < 3)
+        side = 3;
+    for (k = 0; k < count; k++) {
+        int bx = text_x + k * (side + gap), bw = side;
+        oc_draw_item *it;
+        if (bx < cx) {
+            bw -= cx - bx;
+            bx = cx;
+        }
+        if (bx + bw > cx + cw)
+            bw = cx + cw - bx;
+        if (bw <= 0)
+            continue;
+        if (!(it = add_box(d->list, OC_DRAW_FILL, OC_ROLE_CELL_FILL, bx, y + (h - side) / 2, bw, side)))
+            return 0;
+        it->rgb = rgb == OWF_COLOUR_AUTO ? 0 : OWF_SHADE_SET(rgb) ? OWF_SHADE_RGB(rgb) : rgb;
+        it->row = c->row;
+        it->col = c->col;
+    }
+    return 1;
+}
+
 /* A cell's text in the box (x, y, w, h): wrapped (wrapped_items), or one
  * line, its clip box run on over empty neighbours in the same pane (text
  * only, not wrapped, as Excel). j is the column's place in cl (-1: a cell
@@ -1010,6 +1059,16 @@ static int text_item(drawing *d, int i, int j, int pane, const owf_cell *c, int 
     if (n <= 0)
         return 1;
     align = resolve_align(c, st);
+    if (c->type == OWF_VALUE_TEXT && (k = block_glyphs(buf, n)) > 0) {
+        /* "■" and the other blocks: squares, not the '?' a Latin-1 font would give (gfoffice #174) */
+        int line = oc_line_px(core, st->font.size), side = line * 2 / 3 < 3 ? 3 : line * 2 / 3;
+        tw = k * side + (k - 1) * (side / 4 + 1);
+        quadrant(d, d->rl[i].pane, pane, &qx, &qy, &qw, &qh);
+        clip_x = x > qx ? x : qx;
+        clip_w = (x + w - 1 < qx + qw ? x + w - 1 : qx + qw) - clip_x;
+        return block_items(d, c, k, colour != OWF_COLOUR_AUTO ? colour : st->font.colour,
+                           text_start(core, st, align, x, w, tw), clip_x, clip_w, y, h - 1, line);
+    }
     tw = oc_measure(core, buf, (size_t)n, st);
     if (c->type == OWF_VALUE_NUMBER && tw > w - 2 * pad) {   /* a number that doesn't fit: #### */
         int hw = oc_measure(core, "#", 1, st), m = hw > 0 ? (w - 2 * pad) / hw : 0;
