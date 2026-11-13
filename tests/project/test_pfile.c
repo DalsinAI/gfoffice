@@ -67,6 +67,20 @@ static owf_project *sample(void)
     p->tasks[5].calendar = 1;
     p->tasks[5].constraint = OWF_CON_SNET;
     p->tasks[5].constraint_date = AT(18, 8, 0);
+    d = owf_project_add_resource(p, "Dale");
+    p->resources[d].rate = 2000;
+    p->resources[d].initials = owf_malloc(2);
+    strcpy(p->resources[d].initials, "D");
+    p->resources[d].group = owf_malloc(16);
+    strcpy(p->resources[d].group, "Build team");
+    owf_project_add_resource(p, "Bob");
+    owf_project_add_resource(p, "Steel");
+    p->resources[2].type = OWF_RES_MATERIAL;
+    p->resources[2].rate = 500;
+    owf_project_assign(p, 0, 0, 100);
+    owf_project_assign(p, 1, 0, 50);
+    owf_project_assign(p, 1, 1, 100);
+    owf_project_assign(p, 2, 2, 300);
     CHECK_N(owf_project_schedule(p), OWF_OK);
     return p;
 }
@@ -113,6 +127,25 @@ static void check_same(const owf_project *a, const owf_project *b, int with_cale
             CHECK_N(y->links[j].lag, x->links[j].lag);
             CHECK_N(y->links[j].lag_percent, x->links[j].lag_percent);
         }
+    }
+    CHECK_N(b->nresources, a->nresources);
+    for (i = 0; i < a->nresources && i < b->nresources; i++) {
+        CHECK_S(text(b->resources[i].name), text(a->resources[i].name));
+        if (with_calendars) {
+            CHECK_S(text(b->resources[i].initials), text(a->resources[i].initials));
+            CHECK_S(text(b->resources[i].group), text(a->resources[i].group));
+            CHECK_N(b->resources[i].uid, a->resources[i].uid);
+            CHECK_N(b->resources[i].type, a->resources[i].type);
+            CHECK_N(b->resources[i].max_units, a->resources[i].max_units);
+            CHECK_N(b->resources[i].rate, a->resources[i].rate);
+        }
+    }
+    CHECK_N(b->nassigns, a->nassigns);
+    for (i = 0; i < a->nassigns && i < b->nassigns; i++) {
+        CHECK_N(b->assigns[i].task, a->assigns[i].task);
+        CHECK_N(b->assigns[i].resource, a->assigns[i].resource);
+        CHECK_N(b->assigns[i].units, a->assigns[i].units);
+        if (with_calendars) CHECK_N(b->assigns[i].uid, a->assigns[i].uid);
     }
     if (with_calendars) {
         CHECK_S(text(b->title), text(a->title));
@@ -246,11 +279,23 @@ static void test_mspdi_written(void)
     CHECK_HAS(data, "<ConstraintType>4</ConstraintType><CalendarUID>2</CalendarUID>"
                     "<ConstraintDate>2026-11-18T08:00:00</ConstraintDate>");
 
+    /* Resources (Type 1 work, 0 material) and assignments: Dale half time on Build's 3 days is 12 hours. */
+    CHECK_HAS(data, "<Resources>\n<Resource><UID>1</UID><ID>1</ID><Name>Dale</Name><Type>1</Type><Initials>D</Initials>"
+                    "<Group>Build team</Group><MaxUnits>1.00</MaxUnits><StandardRate>20.00</StandardRate>"
+                    "<StandardRateFormat>2</StandardRateFormat></Resource>");
+    CHECK_HAS(data, "<Resource><UID>3</UID><ID>3</ID><Name>Steel</Name><Type>0</Type><StandardRate>5.00</StandardRate>"
+                    "<StandardRateFormat>8</StandardRateFormat></Resource>");
+    CHECK_HAS(data, "<Assignment><UID>2</UID><TaskUID>2</TaskUID><ResourceUID>1</ResourceUID><Units>0.50</Units>"
+                    "<Work>PT12H0M0S</Work></Assignment>");
+    CHECK_HAS(data, "<TaskUID>3</TaskUID><ResourceUID>3</ResourceUID><Units>3.00</Units><Work>PT0H0M0S</Work>");
     CHECK_N(owf_project_read(data, length, &q), OWF_OK);
     if (q) {
         check_same(p, q, 1, __LINE__);
         check_same_schedule(p, q);
         CHECK_N(q->next_uid, 7);
+        CHECK_N(q->next_resource_uid, 4);
+        CHECK_N(q->next_assign_uid, 5);
+        CHECK_N(q->resources[0].cost, p->resources[0].cost);
     }
     owf_project_free(q);
     owf_free(data);
@@ -292,10 +337,11 @@ static void test_csv_written(void)
     CHECK_N(owf_project_write(p, OWF_PFILE_CSV, &data, &length), OWF_OK);
     CHECK_N(owf_project_detect(data, length), OWF_PFILE_CSV);
     CHECK_HAS(data, "ID,Unique ID,Name,Outline Level,Duration,Start,Finish,Predecessors,Constraint Type,"
-                    "Constraint Date,% Complete,Milestone,Notes\r\n");
+                    "Constraint Date,% Complete,Milestone,Notes,Resource Names\r\n");
     CHECK_HAS(data, "\r\n1,1,\"Design, review\",1,2d,2026-11-16 08:00,2026-11-17 17:00,,As Soon As Possible,,0%,No,"
-                    "\"Ask \"\"Dale\"\" <first>\"\r\n");
-    CHECK_HAS(data, "\r\n2,2,Build,1,3d,2026-11-18 13:00,2026-11-23 12:00,1FS+4h,As Soon As Possible,,25%,No,\r\n");
+                    "\"Ask \"\"Dale\"\" <first>\",Dale\r\n");
+    CHECK_HAS(data, "\r\n2,2,Build,1,3d,2026-11-18 13:00,2026-11-23 12:00,1FS+4h,As Soon As Possible,,25%,No,,\"Dale[50%],Bob\"\r\n");
+    CHECK_HAS(data, ",Steel[3.00]\r\n");
     CHECK_HAS(data, ",1ed,");
     CHECK_HAS(data, ",2SS+50%,");
     CHECK_HAS(data, ",\"3FF,1SF-1d\",Finish No Later Than,2026-11-27 17:00,0%,Yes,");
@@ -358,6 +404,22 @@ static const char mspdi_sample[] =
     "    <PredecessorLink><PredecessorUID>10</PredecessorUID><Type>3</Type><LinkLag>25</LinkLag><LagFormat>19</LagFormat>"
     "</PredecessorLink></Task>\n"
     " </Tasks>\n"
+    " <Resources>\n"
+    "  <Resource><UID>0</UID><ID>0</ID><Type>1</Type></Resource>\n"
+    "  <Resource><UID>5</UID><ID>1</ID><Name>Ann</Name><Type>1</Type><MaxUnits>0.5</MaxUnits><StandardRate>30"
+    "</StandardRate><StandardRateFormat>2</StandardRateFormat><CalendarUID>3</CalendarUID></Resource>\n"
+    "  <Resource><UID>6</UID><ID>2</ID><Name>Permit</Name><Type>2</Type></Resource>\n"
+    "  <Resource><UID>8</UID><ID>3</ID><Name>Fees</Name><Type>0</Type><IsCostResource>1</IsCostResource></Resource>\n"
+    " </Resources>\n"
+    " <Assignments>\n"
+    "  <Assignment><UID>7</UID><TaskUID>12</TaskUID><ResourceUID>5</ResourceUID><Units>1.5</Units></Assignment>\n"
+    "  <Assignment><UID>8</UID><TaskUID>12</TaskUID><ResourceUID>99</ResourceUID><Units>1</Units></Assignment>\n"
+    "  <Assignment><UID>9</UID><TaskUID>12</TaskUID><ResourceUID>0</ResourceUID><Units>1</Units></Assignment>\n"
+    "  <Assignment><UID>10</UID><TaskUID>77</TaskUID><ResourceUID>5</ResourceUID><Units>1</Units></Assignment>\n"
+    "  <Assignment><UID>11</UID><TaskUID>10</TaskUID><ResourceUID>6</ResourceUID><Units>250</Units></Assignment>\n"
+    "  <Assignment><UID>12</UID><TaskUID>12</TaskUID><ResourceUID>8</ResourceUID><Cost>123450</Cost><Units>1</Units>"
+    "</Assignment>\n"
+    " </Assignments>\n"
     "</Project>\n";
 
 static void test_mspdi_read(void)
@@ -415,16 +477,35 @@ static void test_mspdi_read(void)
     CHECK(t->links[0].pred == 1 && t->links[0].type == OWF_LINK_FF && t->links[0].lag == -600);
     CHECK(t->links[1].pred == 0 && t->links[1].type == OWF_LINK_SS && t->links[1].lag == 25 && t->links[1].lag_percent);
     CHECK_N(p->next_uid, 14);
+    /* Ann (half time, 30.00 an hour, on Office), Permit (a cost) and Fees (a cost, marked the way Project
+     * marks one, its amount the assignment's Cost in cents); UID 0 and the assignments to resources or tasks
+     * not there are left out. */
+    CHECK_N(p->nresources, 3);
+    CHECK_S(p->resources[0].name, "Ann");
+    CHECK(p->resources[0].uid == 5 && p->resources[0].type == OWF_RES_WORK && p->resources[0].max_units == 50);
+    CHECK(p->resources[0].rate == 3000 && p->resources[0].calendar == 0);
+    CHECK(p->resources[1].type == OWF_RES_COST && p->resources[1].max_units == 100);
+    CHECK(p->resources[2].type == OWF_RES_COST && p->resources[2].uid == 8);
+    CHECK_N(p->nassigns, 3);
+    CHECK(p->assigns[2].task == 1 && p->assigns[2].resource == 2 && p->assigns[2].units == 123450);
+    CHECK(p->assigns[0].task == 1 && p->assigns[0].resource == 0 && p->assigns[0].units == 150 && p->assigns[0].uid == 7);
+    CHECK(p->assigns[1].task == 0 && p->assigns[1].resource == 1 && p->assigns[1].units == 25000);
+    CHECK_N(p->next_resource_uid, 9);
+    CHECK_N(p->next_assign_uid, 13);
     CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK(p->resources[0].overallocated);                            /* 150% of a half-time person */
+    CHECK_N(p->resources[1].cost, 25000);
+    CHECK_N(p->resources[2].cost, 123450);
+    CHECK_N(p->assigns[0].work, 2880 * 3 / 2);                       /* Fit's 48 elapsed hours, half again */
     owf_project_free(p);
 }
 
 static const char csv_sample[] =
-    "\xEF\xBB\xBF" "ID;Task Name;Duration;Start;Predecessors;Notes;Something else\r\n"
-    "1;Plan;5 days;2026-11-16 08:00;;;x\r\n"
+    "\xEF\xBB\xBF" "ID;Task Name;Duration;Start;Predecessors;Notes;Something else;Resource Names\r\n"
+    "1;Plan;5 days;2026-11-16 08:00;;;x;Ann\r\n"
     "\r\n"
-    "2;\"Build; test\";1.5 wks?;2026-11-23 08:00;1SS+2 days;\"line one\nline \"\"two\"\"\"\r\n"
-    "3;Done;0 days;;2FF-4 hrs,1;\r\n"
+    "2;\"Build; test\";1.5 wks?;2026-11-23 08:00;1SS+2 days;\"line one\nline \"\"two\"\"\";;ann [ 25 % ], Bob\r\n"
+    "3;Done;0 days;;2FF-4 hrs,1;;;Steel[2.5]\r\n"
     "5;Wait;3 edays;;3FS+50%,7,junk;";
 
 static void test_csv_read(void)
@@ -456,6 +537,30 @@ static void test_csv_read(void)
     CHECK(t->duration == 3 * 1440 && t->elapsed);
     CHECK_N(t->nlinks, 1);                                           /* 7 is not there; "junk" is not one */
     CHECK(t->links[0].pred == 2 && t->links[0].lag == 50 && t->links[0].lag_percent);
+    /* Resource Names: made as they are first named, matched again whatever their case. */
+    CHECK_N(p->nresources, 3);
+    CHECK_S(p->resources[0].name, "Ann");
+    CHECK_S(p->resources[1].name, "Bob");
+    CHECK_S(p->resources[2].name, "Steel");
+    CHECK_N(p->nassigns, 4);
+    CHECK(p->assigns[0].task == 0 && p->assigns[0].resource == 0 && p->assigns[0].units == 100);
+    CHECK(p->assigns[1].task == 1 && p->assigns[1].resource == 0 && p->assigns[1].units == 25);
+    CHECK(p->assigns[2].task == 1 && p->assigns[2].resource == 1 && p->assigns[2].units == 100);
+    CHECK(p->assigns[3].task == 2 && p->assigns[3].resource == 2 && p->assigns[3].units == 250);
+    {
+        char names[64];
+        owf_presource_names_text(p, 1, names, sizeof names);
+        CHECK_S(names, "Ann[25%],Bob");
+        CHECK_N(owf_presource_names_parse(p, 1, "Bob, Zed", 0), OWF_ERR_FORMAT);  /* Zed isn't there */
+        CHECK_N(owf_presource_names_parse(p, 1, "Bob[", 1), OWF_ERR_FORMAT);
+        CHECK_N(owf_presource_names_parse(p, 1, "[50%]", 1), OWF_ERR_FORMAT);
+        CHECK_N(owf_presource_names_parse(p, 1, "Bob[50%],Zed", 1), OWF_OK);
+        owf_presource_names_text(p, 1, names, sizeof names);
+        CHECK_S(names, "Bob[50%],Zed");
+        CHECK_N(p->nresources, 4);
+        owf_presource_names_text(p, 1, names, 6);                    /* cut to fit */
+        CHECK_S(names, "Bob[5");
+    }
     CHECK_N(owf_project_schedule(p), OWF_OK);
     owf_project_free(p);
 }
@@ -510,6 +615,35 @@ static void test_damaged(void)
     owf_project_free(p);
 }
 
+/* A cost resource goes out as Project marks one, its amount as the assignment's Cost in cents, and comes back. */
+static void test_cost_resource(void)
+{
+    owf_project *p = owf_project_new(AT(16, 8, 0)), *q = NULL;
+    unsigned char *data;
+    size_t length;
+    int r;
+    if (!p) return;
+    owf_project_add_task(p, "Plan", 480);
+    r = owf_project_add_resource(p, "Fees");
+    p->resources[r].type = OWF_RES_COST;
+    CHECK_N(owf_project_assign(p, 0, r, 123450), 0);
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(owf_project_write(p, OWF_PFILE_MSPDI, &data, &length), OWF_OK);
+    CHECK_HAS(data, "<Name>Fees</Name><Type>2</Type><StandardRate>0.00</StandardRate><IsCostResource>1</IsCostResource>"
+                    "</Resource>");
+    CHECK_HAS(data, "<ResourceUID>1</ResourceUID><Cost>123450</Cost><Units>1234.50</Units>");
+    CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+    if (q) {
+        CHECK(q->nresources == 1 && q->resources[0].type == OWF_RES_COST);
+        CHECK(q->nassigns == 1 && q->assigns[0].units == 123450);
+        CHECK_N(owf_project_schedule(q), OWF_OK);
+        CHECK_N(q->resources[0].cost, 123450);
+    }
+    owf_project_free(q);
+    owf_free(data);
+    owf_project_free(p);
+}
+
 int main(void)
 {
     test_durations();
@@ -518,6 +652,7 @@ int main(void)
     test_csv_written();
     test_mspdi_read();
     test_csv_read();
+    test_cost_resource();
     test_damaged();
     if (fails) {
         printf("project file tests: %d of %d checks failed\n", fails, checks);

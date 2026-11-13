@@ -216,6 +216,8 @@ int opj_insert_task(opj_doc *doc, int at, const char *name)
     for (i = 0; i < work->ntasks; i++)
         for (j = 0; j < work->tasks[i].nlinks; j++)
             if (i != at && work->tasks[i].links[j].pred >= at) work->tasks[i].links[j].pred++;
+    for (i = 0; i < work->nassigns; i++)
+        if (work->assigns[i].task >= at) work->assigns[i].task++;
     tidy_levels(work);
     rc = commit(doc, work);
     return rc;
@@ -247,6 +249,7 @@ int opj_delete_tasks(opj_doc *doc, int first, int count)
         }
         t->nlinks = k;
     }
+    owf_project_remap_assignments(work, map, n + (end - first));
     owf_free(map);
     tidy_levels(work);
     rc = commit(doc, work);

@@ -99,6 +99,35 @@ typedef struct {
     int critical;
 } owf_ptask;
 
+/* ---- Resources and assignments (owf_presource.c) ---- */
+
+enum { OWF_RES_WORK, OWF_RES_MATERIAL, OWF_RES_COST };
+
+typedef struct {
+    char *name, *initials, *group;
+    int uid;                             /* kept through files; given one on adding */
+    int type;                            /* OWF_RES_ */
+    long max_units;                      /* percent: 100 is one full time (work resources) */
+    long rate;                           /* hundredths of the currency an hour of work, or a unit of material */
+    int calendar;                        /* index into the project's calendars, -1: the project's; kept in files
+                                          * and used for usage, not yet for scheduling */
+    /* worked out by owf_project_schedule */
+    long work;                           /* minutes, over all its assignments (work resources) */
+    long cost;                           /* hundredths of the currency */
+    long peak;                           /* the most units assigned at once (work resources), percent */
+    int overallocated;                   /* peak above max_units */
+} owf_presource;
+
+typedef struct {
+    int task, resource;                  /* indexes */
+    int uid;
+    long units;                          /* percent (work: 100 one full time; material: 100 one unit; cost: the
+                                          * cost in hundredths) */
+    /* worked out by owf_project_schedule */
+    long work;                           /* minutes (work resources): the task's duration times units */
+    long cost;                           /* hundredths of the currency */
+} owf_passign;
+
 typedef struct {
     char *title;
     owf_ptime start;                     /* the project's start */
@@ -111,6 +140,11 @@ typedef struct {
     int ncalendars, capcalendars;
     int next_uid;
     int loop_task;                       /* after OWF_ERR_FORMAT from scheduling: a task in the loop */
+    owf_presource *resources;
+    int nresources, capresources;
+    owf_passign *assigns;
+    int nassigns, capassigns;
+    int next_resource_uid, next_assign_uid;
 } owf_project;
 
 /* A new project starting at start, with the Standard calendar as its calendar. NULL: memory. */
@@ -136,6 +170,24 @@ void owf_project_unlink(owf_project *p, int pred, int succ);
  * - Total slack is late start less early start; a task is critical when its total slack is 0 or less.
  * OWF_OK, OWF_ERR_FORMAT when the links make a loop (loop_task names one task in it), or OWF_ERR_MEMORY. */
 int owf_project_schedule(owf_project *p);
+
+/* A resource (a work resource, one full time, no rate); its index, or -1 for memory. */
+int owf_project_add_resource(owf_project *p, const char *name);
+/* Removes a resource and its assignments; later resources move down an index. */
+void owf_project_remove_resource(owf_project *p, int resource);
+/* Assigns a resource to a task at units (percent); a second assignment of the pair changes its units. The
+ * assignment's index, or -1 (out of range, units below 0, or memory). */
+int owf_project_assign(owf_project *p, int task, int resource, long units);
+void owf_project_unassign(owf_project *p, int task, int resource);
+/* Assignments when tasks move: map[old task] is the new index, -1 for a task deleted (its assignments go). */
+void owf_project_remap_assignments(owf_project *p, const int *map, int nold);
+/* Minutes of work a resource (or one assignment) has from a to b, as scheduled: the overlap with each task,
+ * on the task's calendar (every minute for an elapsed one), times the units. */
+long owf_presource_work(const owf_project *p, int resource, owf_ptime a, owf_ptime b);
+long owf_passign_work(const owf_project *p, int assign, owf_ptime a, owf_ptime b);
+/* What owf_project_schedule does for resources after the dates: each assignment's work and cost, each
+ * resource's totals, peak and whether it is over-allocated. */
+void owf_project_resources_update(owf_project *p);
 
 /* A deep copy (for Undo); NULL for memory. */
 owf_project *owf_project_copy(const owf_project *p);
@@ -174,5 +226,11 @@ void owf_pduration_text(const owf_project *p, long minutes, int elapsed, int est
 int owf_ppredecessors_parse(owf_project *p, int succ, const char *text);
 /* The other way, cut to size. */
 void owf_ppredecessors_text(const owf_project *p, int row, char *out, size_t size);
+/* A task's resources as MS Project types them, "Dale,Bob[50%],Steel[2.5]" (percent for work resources, a
+ * quantity for material), replacing its assignments; a name not in the plan is added as a resource when
+ * create is set, else OWF_ERR_FORMAT. Work on a copy: a failure can leave the task's assignments partly
+ * changed. */
+int owf_presource_names_parse(owf_project *p, int task, const char *text, int create);
+void owf_presource_names_text(const owf_project *p, int task, char *out, size_t size);
 
 #endif
