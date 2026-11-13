@@ -5,7 +5,7 @@
  * mxGeometry; Apache 2.0, by name only). No other program's code.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
-#include "owf_diagram.h"
+#include "owf_diag_int.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -135,9 +135,6 @@ void owf_diagram_free(owf_diagram *d)
     owf_dattrs_free(&d->file);
     memset(d, 0, sizeof *d);
 }
-
-/* A page with no cells, not even the root (the reader's). */
-owf_dpage *owf_diagram_bare_page(owf_diagram *d);
 
 owf_dpage *owf_diagram_bare_page(owf_diagram *d)
 {

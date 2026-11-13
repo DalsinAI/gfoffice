@@ -9,8 +9,7 @@
  *    with ! ' ( ) *).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
-#include "owf_diagram.h"
-#include "owf_internal.h"
+#include "owf_diag_int.h"
 #include "owf_inflate.h"
 #ifdef OWF_HAVE_ZLIB
 #include "owf_zlib.h"
@@ -21,8 +20,6 @@
 
 #define MAX_CELLS 1000000                /* in one page: more is a damaged file */
 #define MAX_PAGE_XML (64UL * 1024 * 1024) /* a compressed page's XML, at most */
-
-owf_dpage *owf_diagram_bare_page(owf_diagram *d);
 
 /* ---- base64, URI encoding ---- */
 
@@ -105,7 +102,7 @@ static int hex_value(int c)
 }
 
 /* decodeURIComponent, in place; the new length. */
-static size_t uri_decode(char *s, size_t n)
+size_t owf_diag_uri_decode(char *s, size_t n)
 {
     size_t i, k = 0;
     for (i = 0; i < n; i++) {
@@ -120,7 +117,7 @@ static size_t uri_decode(char *s, size_t n)
     return k;
 }
 
-static void uri_encode(owf_buf *b, const unsigned char *s, size_t n)
+void owf_diag_uri_encode(owf_buf *b, const unsigned char *s, size_t n)
 {
     static const char hex[] = "0123456789ABCDEF";
     size_t i;
@@ -288,7 +285,7 @@ static int read_model(owf_dpage *p, const owf_xml_node *model)
 }
 
 /* Raw DEFLATE of unknown size: tried with more room until it fits or is shown damaged. */
-static int inflate_any(const unsigned char *in, size_t n, unsigned char **out, size_t *out_n)
+int owf_diag_inflate_any(const unsigned char *in, size_t n, unsigned char **out, size_t *out_n)
 {
     size_t limit = n > (MAX_PAGE_XML - 1024) / 1032 ? MAX_PAGE_XML : n * 1032 + 1024;
     size_t room = n * 4 + 1024;
@@ -341,11 +338,11 @@ static int read_compressed(owf_dpage *p, const owf_xml_node *diagram)
         owf_free(raw);
         return OWF_OK;                   /* an empty page */
     }
-    r = inflate_any(raw, raw_n, &xmltext, &xml_n);
+    r = owf_diag_inflate_any(raw, raw_n, &xmltext, &xml_n);
     owf_free(raw);
     if (r != OWF_OK)
         return r;
-    xml_n = uri_decode((char *)xmltext, xml_n);
+    xml_n = owf_diag_uri_decode((char *)xmltext, xml_n);
     x = owf_xml_parse((const char *)xmltext, xml_n, &err);
     owf_free(xmltext);
     if (!x)
@@ -397,7 +394,7 @@ int owf_drawio_read(const unsigned char *data, size_t length, owf_diagram *d)
 /* ---- Writing ---- */
 
 /* An attribute value: XML's escapes, and line breaks and tabs as references so they stay. */
-static void put_value(owf_buf *b, const char *s)
+void owf_diag_put_value(owf_buf *b, const char *s)
 {
     const char *start = s;
     for (; *s; s++) {
@@ -428,7 +425,7 @@ static void put_attr(owf_buf *b, const char *name, const char *value)
     owf_buf_putc(b, ' ');
     owf_buf_puts(b, name);
     owf_buf_puts(b, "=\"");
-    put_value(b, value);
+    owf_diag_put_value(b, value);
     owf_buf_putc(b, '"');
 }
 
@@ -642,7 +639,7 @@ static void put_compressed(owf_buf *b, const owf_dpage *p)
         owf_buf_free(&xml);
         return;
     }
-    uri_encode(&uri, xml.data, xml.length);
+    owf_diag_uri_encode(&uri, xml.data, xml.length);
     owf_buf_free(&xml);
     if (uri.failed) {
         b->failed = 1;
