@@ -137,6 +137,11 @@ void owf_project_unlink(owf_project *p, int pred, int succ);
  * OWF_OK, OWF_ERR_FORMAT when the links make a loop (loop_task names one task in it), or OWF_ERR_MEMORY. */
 int owf_project_schedule(owf_project *p);
 
+/* A deep copy (for Undo); NULL for memory. */
+owf_project *owf_project_copy(const owf_project *p);
+/* About how many bytes p holds, for an Undo budget. */
+size_t owf_project_bytes(const owf_project *p);
+
 /* ---- Files (owf_pfile.c) ----
  * .gfproj: GFOpenProject's own, a zip holding "mimetype" (stored first), content.xml and meta.xml;
  *   content.xml uses MSPDI's element names in GFOpenProject's namespace.
@@ -163,5 +168,11 @@ int owf_project_write(const owf_project *p, int format, unsigned char **data, si
 int owf_pduration_parse(const owf_project *p, const char *s, long *minutes, int *elapsed, int *estimated);
 /* The other way: the largest unit that gives a whole number. out holds at least 24 bytes. */
 void owf_pduration_text(const owf_project *p, long minutes, int elapsed, int estimated, char *out);
+/* A row's predecessors as MS Project types them, "2,3SS+1d,4FF-2h,5SF+50%" (IDs are row numbers, from 1),
+ * replacing its links. OWF_OK; OWF_ERR_FORMAT, the links left as they were, when any part isn't a
+ * predecessor or names no row or the row itself; OWF_ERR_MEMORY. */
+int owf_ppredecessors_parse(owf_project *p, int succ, const char *text);
+/* The other way, cut to size. */
+void owf_ppredecessors_text(const owf_project *p, int row, char *out, size_t size);
 
 #endif

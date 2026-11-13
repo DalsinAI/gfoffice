@@ -499,3 +499,72 @@ done:
     owf_free(s.alap_start);
     return ok == 1 ? OWF_OK : ok == 0 ? OWF_ERR_FORMAT : OWF_ERR_MEMORY;
 }
+
+/* ---- Copies (for Undo) ---- */
+
+owf_project *owf_project_copy(const owf_project *p)
+{
+    owf_project *c;
+    int i;
+    if (!p || !(c = owf_calloc(1, sizeof *c))) return NULL;
+    *c = *p;
+    c->title = NULL;
+    c->tasks = NULL;
+    c->calendars = NULL;
+    c->ntasks = c->captasks = c->ncalendars = c->capcalendars = 0;
+    if (p->title && !(c->title = dup_text(p->title))) goto fail;
+    if (p->ntasks && !(c->tasks = owf_calloc((size_t)p->ntasks, sizeof *c->tasks))) goto fail;
+    c->captasks = p->ntasks;
+    for (i = 0; i < p->ntasks; i++) {
+        owf_ptask *t = &c->tasks[i];
+        const owf_ptask *s = &p->tasks[i];
+        *t = *s;
+        t->name = t->notes = NULL;
+        t->links = NULL;
+        t->nlinks = t->caplinks = 0;
+        c->ntasks = i + 1;
+        if ((s->name && !(t->name = dup_text(s->name))) || (s->notes && !(t->notes = dup_text(s->notes)))) goto fail;
+        if (s->nlinks) {
+            if (!(t->links = owf_malloc((size_t)s->nlinks * sizeof *t->links))) goto fail;
+            memcpy(t->links, s->links, (size_t)s->nlinks * sizeof *t->links);
+            t->nlinks = t->caplinks = s->nlinks;
+        }
+    }
+    if (p->ncalendars && !(c->calendars = owf_calloc((size_t)p->ncalendars, sizeof *c->calendars))) goto fail;
+    c->capcalendars = p->ncalendars;
+    for (i = 0; i < p->ncalendars; i++) {
+        owf_pcal *k = &c->calendars[i];
+        const owf_pcal *s = &p->calendars[i];
+        *k = *s;
+        k->name = NULL;
+        k->exceptions = NULL;
+        k->nexceptions = k->capexceptions = 0;
+        c->ncalendars = i + 1;
+        if (s->name && !(k->name = dup_text(s->name))) goto fail;
+        if (s->nexceptions) {
+            if (!(k->exceptions = owf_malloc((size_t)s->nexceptions * sizeof *k->exceptions))) goto fail;
+            memcpy(k->exceptions, s->exceptions, (size_t)s->nexceptions * sizeof *k->exceptions);
+            k->nexceptions = k->capexceptions = s->nexceptions;
+        }
+    }
+    return c;
+fail:
+    owf_project_free(c);
+    return NULL;
+}
+
+size_t owf_project_bytes(const owf_project *p)
+{
+    size_t n;
+    int i;
+    if (!p) return 0;
+    n = sizeof *p + (p->title ? strlen(p->title) + 1 : 0);
+    for (i = 0; i < p->ntasks; i++) {
+        const owf_ptask *t = &p->tasks[i];
+        n += sizeof *t + (size_t)t->caplinks * sizeof *t->links;
+        n += (t->name ? strlen(t->name) + 1 : 0) + (t->notes ? strlen(t->notes) + 1 : 0);
+    }
+    for (i = 0; i < p->ncalendars; i++)
+        n += sizeof p->calendars[i] + (size_t)p->calendars[i].capexceptions * sizeof *p->calendars[i].exceptions;
+    return n;
+}
