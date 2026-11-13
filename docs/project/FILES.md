@@ -111,11 +111,13 @@ is over-allocated when more of it is assigned at one time than its MaxUnits. Not
 
 - `tests/project/test_pfile.c`: exact text of the written MSPDI and CSV, each format written then
   read back field by field and scheduled to the same dates, a hand-written MSPDI file and a
-  hand-written MS Project style CSV read field by field, and damaged or foreign input.
+  hand-written MS Project style CSV read field by field, hand-written MPX files (commas and
+  semicolons, decimal points and commas, each day order) read field by field and scheduled, and
+  damaged or foreign input.
 - MPXJ 16.11.0 run as a black box on the host (no source read): it read our MSPDI with every task,
   duration, link, lag, constraint, calendar and exception as written, and showed the same dates,
   and every resource's type, max units and rate and every assignment's units, work and cost, and
-  every task's baseline start, finish, duration, work and cost and its finish variance. MPXJ also
+  every task's baseline start, finish, duration, work and cost and its finish variance; the MSPDI
+  it wrote from that was read back by `owf_project_read` and scheduled to the same dates. MPXJ also
   wrote our plan as MPX, and `owf_project_read` read that back with the same tasks, links,
-  calendars, resources, assignments and baselines (less what MPX can't hold);
-  the MSPDI it wrote from that was read back by `owf_project_read` and scheduled to the same dates.
+  calendars, resources, assignments and baselines, less what MPX can't hold.
