@@ -309,7 +309,17 @@ int owf_project_detect(const unsigned char *data, size_t length)
     if (!data || !length) return -1;
     if (owf_unzip_open(&zip, data, length)) return owf_unzip_has(&zip, "content.xml") ? OWF_PFILE_GFPROJ : -1;
     d = skip_bom_space(data, data + length);
-    if (d < data + length && *d == '<') return OWF_PFILE_MSPDI;
+    if (d < data + length && *d == '<') {
+        const unsigned char *e = data + length;
+        while (d + 1 < e && *d == '<' && (d[1] == '?' || d[1] == '!')) {   /* the declaration, comments */
+            while (d < e && *d != '>') d++;
+            d = skip_bom_space(d < e ? d + 1 : d, e);
+        }
+        if (e - d > 8 && memcmp(d, "<project", 8) == 0 && (d[8] == ' ' || d[8] == '>' || d[8] == '\n' ||
+                                                           d[8] == '\r' || d[8] == '\t'))
+            return OWF_PFILE_GAN;
+        return OWF_PFILE_MSPDI;
+    }
     if (length >= 4 && memcmp(data, "MPX", 3) == 0 && (data[3] == ',' || data[3] == ';' || data[3] == '\t'))
         return OWF_PFILE_MPX;
     return OWF_PFILE_CSV;
@@ -1492,6 +1502,7 @@ int owf_project_read(const unsigned char *data, size_t length, owf_project **out
     case OWF_PFILE_MSPDI: return read_xml((const char *)data, length, out);
     case OWF_PFILE_CSV: return read_csv(data, length, out);
     case OWF_PFILE_MPX: return owf_pmpx_read(data, length, out);
+    case OWF_PFILE_GAN: return owf_pgan_read(data, length, out);
     default: return OWF_ERR_FORMAT;
     }
 }

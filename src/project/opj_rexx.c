@@ -455,7 +455,7 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
             owf_free(data);
             if (rc != OWF_OK) {
                 snprintf(rx->lasterror, sizeof rx->lasterror, rc == OWF_ERR_MEMORY ? "OPEN: out of memory reading %s"
-                         : "OPEN: %s is not a plan GFOpenProject reads (.gfproj, MS Project XML, MPX, CSV)", a->value[0]);
+                         : "OPEN: %s is not a plan GFOpenProject reads (.gfproj, MS Project XML, MPX, .gan, CSV)", a->value[0]);
                 return rc == OWF_ERR_MEMORY ? OPJ_RX_FAIL : OPJ_RX_ERROR;
             }
             fresh = opj_doc_new(plan, 0);
