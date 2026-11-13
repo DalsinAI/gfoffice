@@ -97,6 +97,11 @@ typedef struct {
     owf_ptime early_start, early_finish, late_start, late_finish;
     long total_slack, free_slack;
     int critical;
+    long work, cost;                     /* its assignments' (a summary: its subtasks'); minutes, hundredths */
+    /* the baseline, kept by owf_project_set_baseline */
+    int baselined;
+    owf_ptime baseline_start, baseline_finish;
+    long baseline_duration, baseline_work, baseline_cost;
 } owf_ptask;
 
 /* ---- Resources and assignments (owf_presource.c) ---- */
@@ -186,8 +191,20 @@ void owf_project_remap_assignments(owf_project *p, const int *map, int nold);
 long owf_presource_work(const owf_project *p, int resource, owf_ptime a, owf_ptime b);
 long owf_passign_work(const owf_project *p, int assign, owf_ptime a, owf_ptime b);
 /* What owf_project_schedule does for resources after the dates: each assignment's work and cost, each
- * resource's totals, peak and whether it is over-allocated. */
+ * task's (summaries adding up their subtasks'), each resource's totals, peak and whether it is
+ * over-allocated. */
 void owf_project_resources_update(owf_project *p);
+
+/* ---- The baseline (owf_presource.c) ---- */
+
+/* Saves the scheduled dates, duration, work and cost of tasks first..first+count-1 (count -1: every task)
+ * as their baseline, MS Project's Set Baseline; schedule first. */
+void owf_project_set_baseline(owf_project *p, int first, int count);
+void owf_project_clear_baseline(owf_project *p, int first, int count);
+/* A task's variance from its baseline, now less then; 0 with no baseline. Start and finish in working
+ * minutes on the task's calendar (later is above 0), duration and work in minutes, cost in hundredths. */
+enum { OWF_VAR_START, OWF_VAR_FINISH, OWF_VAR_DURATION, OWF_VAR_WORK, OWF_VAR_COST };
+long owf_ptask_variance(const owf_project *p, int task, int which);
 
 /* A deep copy (for Undo); NULL for memory. */
 owf_project *owf_project_copy(const owf_project *p);

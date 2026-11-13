@@ -620,6 +620,53 @@ static void test_resources(void)
     opj_doc_free(doc);
 }
 
+/* Set Baseline, a slip, the variance columns, Undo, and the baseline bars. */
+static void test_baseline(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    oldraw_rect r;
+    opj_bar b;
+    oldraw *d;
+    CHECK_S(cell_of(doc, 0, OPJ_COL_BASELINE_START), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_FINISH_VARIANCE), "0d");
+    CHECK_S(opj_column_title(OPJ_COL_START_VARIANCE), "Start Var.");
+    CHECK_N(opj_set_baseline(doc, 0, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline(doc, 0, -1), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_BASELINE_START), "Wed 18/11/26");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_BASELINE_FINISH), "Fri 20/11/26");
+    /* Plan takes 3 days: Build starts and finishes a day late; Plan back to 1 day: a day early. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_DURATION, "3d"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START_VARIANCE), "1d");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_FINISH_VARIANCE), "1d");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_START_VARIANCE), "0d");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_DURATION, "1d"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START_VARIANCE), "-1d");
+    CHECK_N(opj_clear_baseline(doc, 1, 1), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_BASELINE_START), "NA");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_BASELINE_START), "Wed 18/11/26");
+    CHECK_N(opj_clear_baseline(doc, 3, 1), OWF_ERR_FORMAT);
+
+    /* The baseline bar: under the bar, Wed 08:00 to Fri 17:00 at the baseline, a sixth of a row high. */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    CHECK_N(opj_baseline_bar(&v, doc, 1, &r), 0);                         /* not shown yet */
+    v.show_baseline = 1;
+    CHECK(opj_baseline_bar(&v, doc, 1, &r));
+    CHECK_N(r.x, opj_view_x(&v, AT(18, 8, 0)));
+    CHECK_N(r.x + r.w, opj_view_x(&v, AT(20, 17, 0)));
+    CHECK_N(r.y, opj_row_y(&v, 1) + 13);
+    CHECK_N(r.h, 2);
+    CHECK(opj_bar_of(&v, doc, 1, &b) && b.bar.y + b.bar.h <= r.y);         /* clear of the bar */
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    memset(px, 0, sizeof px);
+    opj_draw(d, &v, doc, NULL);
+    CHECK_X(px[r.y][r.x + r.w - 2], 0x909090);
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -630,6 +677,7 @@ int main(void)
     test_drawing();
     test_hits();
     test_resources();
+    test_baseline();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;

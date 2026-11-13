@@ -390,6 +390,54 @@ static void test_resources(void)
     owf_project_free(p);
 }
 
+/* A baseline, then A takes a day longer: A finishes a day late, B starts and finishes a day late, and the
+ * summary's work and cost grow by A's extra day of Dale at 20.00 an hour. */
+static void test_baseline(void)
+{
+    owf_project *p = plan();
+    int ph = owf_project_add_task(p, "Phase", 0), a = owf_project_add_task(p, "A", 2 * D);
+    int b = owf_project_add_task(p, "B", D), dale = owf_project_add_resource(p, "Dale");
+    TASK(p, a)->level = TASK(p, b)->level = 2;
+    owf_project_link(p, a, b, OWF_LINK_FS, 0, 0);
+    p->resources[dale].rate = 2000;
+    owf_project_assign(p, a, dale, 100);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(TASK(p, a)->work, 2 * D);
+    CHECK_N(TASK(p, a)->cost, 32000);
+    CHECK_N(TASK(p, ph)->work, 2 * D);                              /* the summary adds up its subtasks */
+    CHECK_N(TASK(p, b)->work, 0);
+    CHECK_N(owf_ptask_variance(p, a, OWF_VAR_FINISH), 0);           /* no baseline yet */
+    owf_project_set_baseline(p, 0, -1);
+    CHECK(TASK(p, a)->baselined && TASK(p, ph)->baselined);
+    CHECK_N(TASK(p, a)->baseline_start, AT(16, 8, 0));
+    CHECK_N(TASK(p, a)->baseline_finish, AT(17, 17, 0));
+    CHECK_N(TASK(p, ph)->baseline_duration, 3 * D);                 /* a summary's: its span's working time */
+    CHECK_N(TASK(p, a)->baseline_cost, 32000);
+    TASK(p, a)->duration = 3 * D;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(owf_ptask_variance(p, a, OWF_VAR_START), 0);
+    CHECK_N(owf_ptask_variance(p, a, OWF_VAR_FINISH), D);
+    CHECK_N(owf_ptask_variance(p, a, OWF_VAR_DURATION), D);
+    CHECK_N(owf_ptask_variance(p, a, OWF_VAR_WORK), D);
+    CHECK_N(owf_ptask_variance(p, a, OWF_VAR_COST), 16000);
+    CHECK_N(owf_ptask_variance(p, b, OWF_VAR_START), D);            /* Wed 08:00 to Thu 08:00 */
+    CHECK_N(owf_ptask_variance(p, b, OWF_VAR_FINISH), D);
+    CHECK_N(owf_ptask_variance(p, ph, OWF_VAR_DURATION), D);
+    CHECK_N(owf_ptask_variance(p, ph, OWF_VAR_COST), 16000);
+    CHECK_N(owf_ptask_variance(p, a, 99), 0);
+    /* Earlier than the baseline is below 0: A back to 1 day. */
+    TASK(p, a)->duration = D;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(owf_ptask_variance(p, b, OWF_VAR_START), -D);
+    /* Clearing one row; a range out of the plan does nothing. */
+    owf_project_clear_baseline(p, b, 1);
+    CHECK(!TASK(p, b)->baselined && TASK(p, a)->baselined);
+    CHECK_N(owf_ptask_variance(p, b, OWF_VAR_START), 0);
+    owf_project_set_baseline(p, 2, 5);
+    CHECK(!TASK(p, b)->baselined);
+    owf_project_free(p);
+}
+
 int main(void)
 {
     test_dates();
@@ -404,6 +452,7 @@ int main(void)
     test_milestone_and_elapsed();
     test_loop_and_holiday();
     test_resources();
+    test_baseline();
     if (fails) {
         printf("project tests: %d of %d checks failed\n", fails, checks);
         return 1;

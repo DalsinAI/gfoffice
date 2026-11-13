@@ -65,6 +65,10 @@ int opj_set_percent(opj_doc *doc, int row, int percent);
 /* A constraint (OWF_CON_) and its date (ignored for ASAP and ALAP). */
 int opj_set_constraint(opj_doc *doc, int row, int constraint, owf_ptime date);
 int opj_set_notes(opj_doc *doc, int row, const char *notes);
+/* Set Baseline (each row's scheduled dates, duration, work and cost) or Clear Baseline for rows
+ * first..first+count-1, count -1: the whole plan. */
+int opj_set_baseline(opj_doc *doc, int first, int count);
+int opj_clear_baseline(opj_doc *doc, int first, int count);
 
 /* ---- The task sheet ---- */
 
@@ -78,6 +82,10 @@ enum {
     OPJ_COL_PERCENT,
     OPJ_COL_WBS,                         /* the outline number, 1.2.3 */
     OPJ_COL_RESOURCES,                   /* Resource Names: "Dale,Bob[50%]" */
+    OPJ_COL_BASELINE_START,              /* "NA" with no baseline, as MS Project shows it */
+    OPJ_COL_BASELINE_FINISH,
+    OPJ_COL_START_VARIANCE,              /* working time later than the baseline: "2d", "-4h", "0d" */
+    OPJ_COL_FINISH_VARIANCE,
     OPJ_NCOLS
 };
 
@@ -159,6 +167,7 @@ typedef struct {
     owf_ptime origin;                    /* the time at the chart's left edge */
     int first_row;                       /* the top row shown */
     int selected;                        /* a selected row, -1 none */
+    int show_baseline;                   /* a thin grey bar under each bar, at its baseline dates */
     oldraw_font font;
 } opj_view;
 
@@ -186,6 +195,11 @@ typedef struct {
 } opj_bar;
 /* Row's bar in the view; 0 when the row has none (out of range). */
 int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar);
+
+/* Row's baseline bar (under its bar, a sixth of a row high); 0 when the row has none or the view doesn't
+ * show baselines. */
+int opj_baseline_bar(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *bar);
+#define OPJ_COLOUR_BASELINE OLDRAW_RGB(0x909090)
 
 /* Where the resource names go beside row's bar (to its right, MS Project's way); 0 when the row has no
  * bar or no assignments. */

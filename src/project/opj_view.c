@@ -36,7 +36,7 @@ static int sheet_width(const opj_view *v)
 
 void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int row_height, int zoom)
 {
-    static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 0, 0, 0 };
+    static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 0, 0, 0, 0, 0, 0, 0 };
     long day;
     memset(v, 0, sizeof *v);
     v->width = width;
@@ -350,6 +350,24 @@ static void draw_sheet_titles(oldraw *d, const opj_view *v)
     }
 }
 
+int opj_baseline_bar(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *bar)
+{
+    const owf_ptask *t;
+    long x0, x1;
+    int rh;
+    if (!v || !bar || !v->show_baseline || !doc || row < 0 || row >= doc->plan->ntasks) return 0;
+    t = &doc->plan->tasks[row];
+    if (!t->baselined) return 0;
+    rh = v->row_height;
+    x0 = opj_view_x(v, t->baseline_start);
+    x1 = opj_view_x(v, t->baseline_finish);
+    bar->x = (int)x0;
+    bar->w = x1 > x0 ? (int)(x1 - x0) : 1;
+    bar->y = opj_row_y(v, row) + rh * 3 / 4 + 1;
+    bar->h = rh / 6 > 1 ? rh / 6 : 2;
+    return 1;
+}
+
 #define LABEL_GAP 6
 #define LABEL_WIDTH 240
 
@@ -424,6 +442,11 @@ void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rec
         for (row = v->first_row; row < last; row++) {
             opj_bar b;
             if (opj_bar_of(v, doc, row, &b) && crosses(area, b.bar.x, b.bar.y, b.bar.w, b.bar.h)) draw_bar(d, &b);
+        }
+        for (row = v->first_row; row < last; row++) {            /* baselines under them */
+            oldraw_rect r;
+            if (opj_baseline_bar(v, doc, row, &r) && crosses(area, r.x, r.y, r.w, r.h))
+                fill(d, r.x, r.y, r.w, r.h, OPJ_COLOUR_BASELINE);
         }
         for (row = v->first_row; row < last; row++) {            /* resource names beside the bars */
             oldraw_rect r;
