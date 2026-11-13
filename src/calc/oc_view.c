@@ -2166,8 +2166,8 @@ static int build(drawing *d)
                             return 0;
                         }
                         (void)saved_pos;
-                        if (texts.n > before) {
-                            /* widen its clip over the empty cells it covers */
+                        if (texts.n > before && texts.items[texts.n - 1].kind == OC_DRAW_TEXT) {
+                            /* widen its clip over the empty cells it covers (block-glyph squares stay in their cell) */
                             int need, cw = 0;
                             t = &texts.items[texts.n - 1];
                             need = t->text_x + oc_measure(core, texts.pool + t->text_off, strlen(texts.pool + t->text_off),
@@ -2229,7 +2229,8 @@ static int build(drawing *d)
                 return 0;
             }
             *it = *t;
-            if (!add_text(list, it, texts.pool + t->text_off, strlen(texts.pool + t->text_off))) {
+            /* a block-glyph cell's squares (OC_DRAW_FILL) carry no text in the pool */
+            if (t->kind == OC_DRAW_TEXT && !add_text(list, it, texts.pool + t->text_off, strlen(texts.pool + t->text_off))) {
                 oc_draw_list_free(&texts);
                 return 0;
             }
