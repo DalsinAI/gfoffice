@@ -1497,6 +1497,43 @@ static int vline_at(const oc_draw_list *l, int x, int y)
     return 0;
 }
 
+/* "■" and the other block glyphs: a Gantt bar's cells are drawn as squares in the text's colour, not as text a
+ * Latin-1 font would show as '?' (gfoffice #174); text with anything else in it stays text */
+static void test_draw_blocks(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    int i, squares = 0, in_b2 = 0, red = 0, inside = 1;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    oc_view_set_size(core, 400, 200);
+    enter_at(core, "B2", "\xE2\x96\xA0");                 /* ■ */
+    enter_at(core, "C2", "\xE2\x96\x88\xE2\x96\x88");     /* ██ */
+    enter_at(core, "D2", "\xE2\x96\xA0 done");            /* mixed: still text */
+    go(core, "C2");
+    oc_core_set_font_colour(core, OWF_SHADE(0xFF0000));
+    go(core, "A1");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(!text_of(&l, 1, 1) && !text_of(&l, 1, 2));
+    CHECK(text_of(&l, 1, 3) != NULL);
+    for (i = 0; i < l.n; i++) {
+        const oc_draw_item *it = &l.items[i];
+        if (it->kind != OC_DRAW_FILL || it->role != OC_ROLE_CELL_FILL || it->row != 1 || it->col < 1 || it->col > 2)
+            continue;
+        squares++;
+        if (it->col == 1) {
+            in_b2++;
+            if (it->x < 104 || it->x + it->w > 104 + 64 || it->y < 35 || it->y + it->h > 35 + 17 || it->rgb != 0)
+                inside = 0;
+        } else if (it->rgb == 0xFF0000)
+            red++;
+    }
+    CHECK(squares == 3 && in_b2 == 1 && red == 2 && inside);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_draw(void)
 {
     oc_core *core = fresh();
@@ -6427,6 +6464,7 @@ int main(void)
     test_sheet_organisation();
     test_sheet_duplicate();
     test_draw();
+    test_draw_blocks();
     test_borders();
     test_condfmt();
     test_condfmt_authoring();
