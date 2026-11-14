@@ -248,6 +248,18 @@ unprotecting are not Undo steps; a wrong password is
 `UNPROTECT [p]`, `CELLPROTECT range LOCKED|UNLOCKED [HIDDEN]`, `ISPROTECTED`
 (on, the allow bits, whether it has a password).
 
+GFOpenCalc 0.1.77 (`opencalc_core.h` 0.35.1), from the Workbench build plan
+test of 13 Nov:
+- Opening a book in which a formula has no stored result (an `.xlsx` written
+  by openpyxl and other writers leaves `<v>` empty) works the whole book out
+  once, as LibreOffice does. The book stays clean (#177).
+- A text cell made only of block glyphs (U+2580 to U+259F, and the squares
+  U+25A0, U+25AA, U+25AC, U+25AE, U+25FC and U+25FE, as a Gantt's "■" bars)
+  is drawn as filled squares in the text's colour. The grid's Latin-1 text
+  has no such glyphs, so it showed "?" before. Text with anything else in it
+  stays text. ARexx `GETCELL` still returns Latin-1, so it gives "?" for these
+  cells (#178).
+
 ## Pivot-summary aggregation
 
 GFOpenCalc 0.1.62's Data > Pivot Summary is the first DataPilot-style vertical
