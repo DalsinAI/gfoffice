@@ -373,7 +373,7 @@ static int picture_file(odg_rexx *rx, const char *name, int format, unsigned cha
     }
     rgb = rx->picture(rx->picture_user, box, (int)w, (int)h);
     if (!rgb) {
-        snprintf(rx->lasterror, sizeof rx->lasterror, "%.150s: the page couldn't be drawn (no screen to copy, no "
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%.80s: the page couldn't be drawn (no screen to copy, no "
                  "memory for %ld by %ld pixels, or the drawing couldn't be read back)", name, w, h);
         return ODG_PICTURE_UNDRAWN;
     }
