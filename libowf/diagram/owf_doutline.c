@@ -138,7 +138,7 @@ owf_outline_kind owf_outline_guess(const char *name, const char *text, size_t le
     size_t i = 0;
     if (name && ends_with(name, ".mm"))
         return OWF_OUTLINE_MM;
-    if (name && (ends_with(name, ".opml") || ends_with(name, ".ompl")))
+    if (name && ends_with(name, ".opml"))
         return OWF_OUTLINE_OPML;
     if (name && (ends_with(name, ".md") || ends_with(name, ".markdown")))
         return OWF_OUTLINE_MD;
@@ -241,8 +241,12 @@ static void read_md(list *l, const char *text, size_t length)
             int h = 0;
             while (i < end && text[i] == '#') h++, i++;
             if (h <= 6 && (i == end || text[i] == ' ' || text[i] == '\t')) {
-                size_t e = end;
-                while (e > i && (text[e - 1] == '#' || text[e - 1] == ' ' || text[e - 1] == '\t' || text[e - 1] == '\r')) e--;
+                size_t e = end, k;
+                while (e > i && (text[e - 1] == ' ' || text[e - 1] == '\t' || text[e - 1] == '\r')) e--;
+                for (k = e; k > i && text[k - 1] == '#'; k--)
+                    ;
+                if (k < e && (text[k - 1] == ' ' || text[k - 1] == '\t'))   /* a closing run: "# Title ##" */
+                    e = k;                       /* text[i] is a space here, so k - 1 >= i */
                 add(l, h - 1, text + i, e - i, 0);
                 base = l->n ? l->items[l->n - 1].depth + 1 : 0;
                 levels = 0;
@@ -337,6 +341,9 @@ static void put_line(owf_buf *b, const char *s)
         owf_buf_putc(b, *s == '\n' || *s == '\r' || *s == '\t' ? ' ' : *s);
 }
 
+/* An item's depth as written: at most 60, as the reader takes, so a file written always opens again. */
+#define DEPTH(i) (items[i].depth < MAX_DEPTH - 1 ? items[i].depth : MAX_DEPTH - 1)
+
 int owf_outline_write(const owf_ditem *items, int n, owf_outline_kind kind, const char *title, char **data,
                       size_t *length)
 {
@@ -354,11 +361,15 @@ int owf_outline_write(const owf_ditem *items, int n, owf_outline_kind kind, cons
             return OWF_ERR_FORMAT;
     owf_buf_init(&b);
     if (kind == OWF_OUTLINE_MD) {
+        const char *root = items[0].text ? items[0].text : "";
+        size_t rn = strlen(root);
         owf_buf_puts(&b, "# ");
-        put_line(&b, items[0].text ? items[0].text : "");
+        put_line(&b, root);
+        if (rn && root[rn - 1] == '#')
+            owf_buf_puts(&b, " #");          /* a closing run, so "C #" reads back with its own # */
         owf_buf_puts(&b, "\n\n");
         for (i = 1; i < n; i++) {
-            for (d = 1; d < items[i].depth; d++)
+            for (d = 1; d < DEPTH(i); d++)
                 owf_buf_puts(&b, "  ");
             owf_buf_puts(&b, "- ");
             put_line(&b, items[i].text ? items[i].text : "");
@@ -374,20 +385,20 @@ int owf_outline_write(const owf_ditem *items, int n, owf_outline_kind kind, cons
             owf_buf_puts(&b, "</title>\n</head>\n<body>\n");
         }
         for (i = 0; i < n; i++) {
-            int next = i + 1 < n ? items[i + 1].depth : -1;
-            for (d = 0; d < items[i].depth; d++)
+            int next = i + 1 < n ? DEPTH(i + 1) : -1;
+            for (d = 0; d < DEPTH(i); d++)
                 owf_buf_putc(&b, ' ');
             owf_buf_printf(&b, "<%s %s=\"", tag, kind == OWF_OUTLINE_MM ? "TEXT" : "text");
             owf_diag_put_value(&b, items[i].text ? items[i].text : "");
             owf_buf_putc(&b, '"');
-            if (kind == OWF_OUTLINE_MM && items[i].folded && next > items[i].depth)
+            if (kind == OWF_OUTLINE_MM && items[i].folded && next > DEPTH(i))
                 owf_buf_puts(&b, " FOLDED=\"true\"");
-            if (next > items[i].depth) {
+            if (next > DEPTH(i)) {
                 owf_buf_puts(&b, ">\n");
                 continue;
             }
             owf_buf_puts(&b, "/>\n");
-            for (d = items[i].depth - 1; d >= (next < 0 ? 0 : next); d--) {   /* the open ones this ends */
+            for (d = DEPTH(i) - 1; d >= (next < 0 ? 0 : next); d--) {   /* the open ones this ends */
                 int s;
                 for (s = 0; s < d; s++)
                     owf_buf_putc(&b, ' ');
