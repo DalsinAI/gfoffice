@@ -152,7 +152,8 @@ static void test_dot(void)
     CHECK_N(owf_ddot_write(&d, 0, &out, &n), OWF_OK);
     s = (const char *)out;
     save("build/host/test-dgraph.dot", out, n);
-    CHECK(starts(s, "digraph \"Order \\\"flow\\\"\" {\n    rankdir=LR;\n    compound=true;\n"));
+    CHECK(starts(s, "digraph \"Order \\\"flow\\\"\" {\n    rankdir=LR;\n    compound=true;\n"
+                    "    graph [fontname=\"Helvetica\"];\n"));
     CHECK(find(s, n, "    n1 [shape=box, label=\"Start & go\", style=\"filled,rounded\", fillcolor=\"#dae8fc\", "
                      "color=\"#6c8ebf\"];\n") != NULL);
     CHECK(find(s, n, "    subgraph cluster_n2 {\n        label=\"Shop\";\n        n3 [shape=circle, label=\"Pay #1\"];\n")

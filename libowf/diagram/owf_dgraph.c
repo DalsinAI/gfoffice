@@ -389,7 +389,8 @@ static int graph_write(const owf_diagram *d, int page, int fmt, unsigned char **
         owf_buf_puts(&w.out, "digraph \"");
         dot_text(&w.out, p->name && *p->name ? p->name : "Diagram");
         owf_buf_printf(&w.out, "\" {\n    rankdir=%s;\n    compound=true;\n"
-                               "    node [fontname=\"Helvetica\"];\n    edge [fontname=\"Helvetica\"];\n",
+                               "    graph [fontname=\"Helvetica\"];\n    node [fontname=\"Helvetica\"];\n"
+                               "    edge [fontname=\"Helvetica\"];\n",
                        wide ? "LR" : "TB");
     }
     nodes(&w, -1, 0);
