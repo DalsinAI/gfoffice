@@ -238,6 +238,166 @@ static void test_odd_maps(void)
     done();
 }
 
+/* The window's keys (odg_mind_key_do): what each does and the node it leaves selected; the arrows on both sides of
+ * a map laid out both ways; and the reasons a key gives when it can't be done. */
+static void test_keys(void)
+{
+    char r[ODG_MIND_ID], a[ODG_MIND_ID], b[ODG_MIND_ID], a1[ODG_MIND_ID], b1[ODG_MIND_ID], got[ODG_MIND_ID], made[ODG_MIND_ID];
+    const owf_dcell *kids[4];
+    const char *why;
+    int steps;
+    fresh();
+    odg_mind_new(&doc, PX(100), PX(200), "Plan", r);
+    odg_mind_add_child(&doc, r, "Alpha", 0, a);
+    odg_mind_add_child(&doc, r, "Beta", 0, b);
+    odg_mind_add_child(&doc, a, "One", 0, a1);
+    steps = doc.nundo;
+
+    /* The arrows, all on the right: right goes out, left goes back, up and down along the row. */
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, a1);
+    CHECK_N(odg_mind_key_do(&doc, a1, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+    CHECK_S(got, r);
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_LEFT, got, NULL), OWF_OK);   /* nothing left of the root */
+    CHECK_S(got, r);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_DOWN, got, NULL), OWF_OK);
+    CHECK_S(got, b);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_DOWN, got, NULL), OWF_OK);   /* the end of the row */
+    CHECK_S(got, b);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_UP, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(doc.nundo, steps);                            /* stepping changes nothing */
+
+    /* Tab and Return: the new node is selected, one Undo step each. */
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_CHILD, b1, NULL), OWF_OK);
+    CHECK(strcmp(b1, b) != 0 && odg_mind_parent(&doc, b1) == cell(b));
+    CHECK_N(doc.nundo, steps + 1);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_SIBLING, made, NULL), OWF_OK);
+    CHECK_N(odg_mind_children(&doc, r, kids, 4), 3);
+    CHECK(kids[0] == cell(a) && kids[1] == cell(made) && kids[2] == cell(b));
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK(cell(made) == NULL);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_SIBLING_ABOVE, made, NULL), OWF_OK);
+    CHECK_N(odg_mind_children(&doc, r, kids, 4), 3);
+    CHECK(kids[0] == cell(made) && kids[1] == cell(a));
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    why = NULL;
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_SIBLING, got, &why), OWF_ERR_FORMAT);
+    CHECK_S(why, "a map's root has no siblings");
+
+    /* . folds and unfolds; - and + fold and unfold; a leaf has nothing to fold. */
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_FOLD, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK(odg_mind_folded(cell(a)) && !shown(a1));
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_RIGHT, got, NULL), OWF_OK);   /* not into a folded branch */
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_FOLD, got, NULL), OWF_OK);
+    CHECK(!odg_mind_folded(cell(a)) && shown(a1));
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_FOLD_ON, got, NULL), OWF_OK);
+    CHECK(odg_mind_folded(cell(a)));
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_FOLD_OFF, got, NULL), OWF_OK);
+    CHECK(!odg_mind_folded(cell(a)));
+    CHECK_N(odg_mind_key_do(&doc, a1, ODG_MKEY_FOLD, got, &why), OWF_ERR_FORMAT);
+    CHECK_S(why, "it has no children");
+
+    /* Alt-Up and Alt-Down keep the node selected; the end of the row says so. */
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_MOVE_UP, got, &why), OWF_ERR_FORMAT);
+    CHECK_S(why, "it is at the end of its row already");
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_MOVE_DOWN, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_children(&doc, r, kids, 4), 2);
+    CHECK(kids[0] == cell(b) && kids[1] == cell(a));
+    CHECK_N(odg_undo(&doc), OWF_OK);
+
+    /* Del: the branch goes, and the next sibling, the one before, or the parent is selected. */
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_DELETE, got, NULL), OWF_OK);
+    CHECK_S(got, b);
+    CHECK(cell(a) == NULL && cell(a1) == NULL);
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_DELETE, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK_N(odg_mind_key_do(&doc, a1, ODG_MKEY_DELETE, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_undo(&doc), OWF_OK);
+
+    /* Both sides: Alpha right, Beta left; on the left, left goes out and right goes back. */
+    CHECK_N(odg_mind_layout(&doc, r, 1), OWF_OK);
+    CHECK(cell(b)->geo.x < cell(r)->geo.x && cell(a)->geo.x > cell(r)->geo.x);
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+    CHECK_S(got, b);
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+    CHECK_S(got, b1);
+    CHECK_N(odg_mind_key_do(&doc, b1, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, b);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, r);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_CHILD, made, NULL), OWF_OK);   /* the sides are kept */
+    CHECK(cell(made)->geo.x < cell(b)->geo.x && cell(a)->geo.x > cell(r)->geo.x);
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_LAYOUT, got, NULL), OWF_OK);
+    CHECK_S(got, r);
+
+    /* Not a node. */
+    why = NULL;
+    CHECK_N(odg_mind_key_do(&doc, "nope", ODG_MKEY_CHILD, got, &why), OWF_ERR_FORMAT);
+    CHECK_S(why, "no map node by that id");
+    CHECK_S(got, "");
+    CHECK_N(odg_mind_key_do(&doc, NULL, ODG_MKEY_DOWN, got, &why), OWF_ERR_FORMAT);
+    done();
+}
+
+/* Budgie's #198 notes: a locked node keeps its place through a layout, and a map past ODG_MIND_MAX nodes says so. */
+static void test_locked_and_big(void)
+{
+    char r[ODG_MIND_ID], a[ODG_MIND_ID], b[ODG_MIND_ID], b1[ODG_MIND_ID], id[ODG_MIND_ID];
+    int i;
+    owf_dpage *p;
+    fresh();
+    odg_mind_new(&doc, PX(100), PX(200), "Plan", r);
+    odg_mind_add_child(&doc, r, "Alpha", 0, a);
+    odg_mind_add_child(&doc, r, "Beta", 0, b);
+    odg_mind_add_child(&doc, b, "One", 0, b1);
+    cell(b)->geo.x = PX(900);
+    cell(b)->geo.y = PX(800);
+    owf_dcell_set(&cell(b)->style, ODG_MIND_NODE_STYLE "locked=1;");
+    CHECK_N(odg_mind_layout(&doc, r, 0), OWF_OK);
+    check_at(b, 900, 800);                                /* locked: left where it is */
+    CHECK(cell(b1)->geo.x > cell(b)->geo.x);              /* its branch laid out from there */
+    CHECK(cell(a)->geo.x > cell(r)->geo.x);
+    CHECK(odg_mind_whole(&doc, r));
+    done();
+
+    fresh();                                              /* one more node than a walk takes */
+    odg_mind_new(&doc, PX(0), PX(0), "Big", r);
+    p = odg_page(&doc);
+    for (i = 0; i < ODG_MIND_MAX; i++) {
+        owf_dcell *c, *e;
+        int layer = owf_dpage_index(p, cell(r)->parent);
+        snprintf(id, sizeof id, "n%d", i);
+        c = owf_dpage_add(p, id, p->cells[layer].id, OWF_DCELL_VERTEX);
+        owf_dcell_set(&c->style, ODG_MIND_NODE_STYLE);
+        c->geo.width = PX(80);
+        c->geo.height = PX(30);
+        snprintf(id, sizeof id, "e%d", i);
+        e = owf_dpage_add(p, id, p->cells[layer].id, OWF_DCELL_EDGE);
+        owf_dcell_set(&e->style, ODG_MIND_EDGE_STYLE);
+        owf_dcell_set(&e->source, r);
+        snprintf(id, sizeof id, "n%d", i);
+        owf_dcell_set(&e->target, id);
+    }
+    CHECK(!odg_mind_whole(&doc, r));
+    CHECK(!odg_mind_whole(&doc, "n3"));
+    CHECK_N(odg_mind_layout(&doc, r, 0), OWF_OK);
+    CHECK(!odg_mind_whole(&doc, "nope"));
+    done();
+}
+
 /* Na'Toth's #198 note: an id from a diagrams.net file is often 24 characters or more ("WIyWlLk6GJQsqaUBKTNV-123");
  * a step hands it back whole, and one too long for the answer is no answer, never a cut id. */
 static void test_long_ids(void)
@@ -270,6 +430,16 @@ static void test_long_ids(void)
     strcpy(got, "old");
     CHECK_N(odg_mind_step(&doc, r, ODG_MIND_CHILD, got), 0);
     CHECK_S(got, "");
+    {                                                     /* a key on it is refused, not done on a cut id */
+        const char *why = NULL;
+        CHECK_N(odg_mind_key_do(&doc, too, ODG_MKEY_CHILD, got, &why), OWF_ERR_FORMAT);
+        CHECK_S(why, "its id is longer than 63 characters");
+        CHECK_S(got, "");
+        CHECK_N(odg_mind_key_do(&doc, long_id, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+        CHECK_S(got, long_id);                            /* a 24-character id is whole */
+        CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+        CHECK_S(got, r);                                  /* its child is too long to name: it stays */
+    }
     done();
 }
 
@@ -278,6 +448,8 @@ int main(void)
     test_build_and_layout();
     test_edits();
     test_odd_maps();
+    test_keys();
+    test_locked_and_big();
     test_long_ids();
     printf("diagram mind map: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;

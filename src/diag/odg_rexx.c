@@ -733,31 +733,34 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
     case C_MAPMOVE:
     case C_MAPFOLD:
     case C_MAPLAYOUT: {
-        const char *node = a->value[0], *why = "not a map node that can be changed (hidden or locked?)";
+        const char *node = a->value[0], *why;
         int both = odg_mind_both(doc, node);
+        odg_mind_key key = ODG_MKEY_LAYOUT;
         text[0] = 0;
-        if (c == C_MAPCHILD) rc = odg_mind_add_child(doc, node, a->value[1] ? a->value[1] : "", both, text);
-        else if (c == C_MAPSIBLING) {
+        if (c == C_MAPCHILD) {
+            key = ODG_MKEY_CHILD;
+            rc = odg_mind_add_child(doc, node, a->value[1] ? a->value[1] : "", both, text);
+        } else if (c == C_MAPSIBLING) {
+            key = ODG_MKEY_SIBLING;
             rc = odg_mind_add_sibling(doc, node, a->value[1] != NULL, a->value[2] ? a->value[2] : "", both, text);
-            if (rc == OWF_ERR_FORMAT && odg_mind_is_node(owf_dpage_find(odg_page(doc), node)) &&
-                !odg_mind_parent(doc, node))
-                why = "a map's root has no siblings";
-        } else if (c == C_MAPDELETE) rc = odg_mind_delete(doc, node, both);
-        else if (c == C_MAPMOVE) {
+        } else if (c == C_MAPDELETE) {
+            key = ODG_MKEY_DELETE;
+            rc = odg_mind_delete(doc, node, both);
+        } else if (c == C_MAPMOVE) {
+            key = ODG_MKEY_MOVE_DOWN;
             rc = odg_mind_move(doc, node, a->value[1] ? -1 : 1, both);
-            if (rc == OWF_ERR_FORMAT && odg_mind_parent(doc, node)) why = "it is at the end of its row already";
         } else if (c == C_MAPFOLD) {
+            key = ODG_MKEY_FOLD_ON;
             rc = odg_mind_fold(doc, node, a->value[1] == NULL, both);
-            if (rc == OWF_ERR_FORMAT && odg_mind_is_node(owf_dpage_find(odg_page(doc), node)) &&
-                !odg_mind_children(doc, node, NULL, 0))
-                why = "it has no children";
         } else
             rc = odg_mind_layout(doc, node, a->value[1] ? 1 : a->value[2] ? 0 : both);
-        if (rc == OWF_ERR_FORMAT && !odg_mind_is_node(owf_dpage_find(odg_page(doc), node))) why = "no map node by that id";
-        if (rc == OWF_ERR_FORMAT && odg_mind_is_node(owf_dpage_find(odg_page(doc), node)) &&
-            !odg_mind_root(doc, node))
-            why = "its map loops back on itself";
+        why = rc == OWF_ERR_FORMAT ? odg_mind_why(doc, node, key) : "not possible";
         if ((rc = edit_rc(rx, rc, commands[c].name, why)) == ODG_RX_OK && text[0]) put(result, size, text);
+        if (rc == ODG_RX_OK && c == C_MAPLAYOUT && !odg_mind_whole(doc, node)) {   /* RC 5, as MAPCHILDREN */
+            snprintf(rx->lasterror, sizeof rx->lasterror, "MAPLAYOUT: the map has more than %d nodes; the rest are "
+                     "where they were", ODG_MIND_MAX);
+            return ODG_RX_NOW;
+        }
         return rc;
     }
     case C_MAPROOT:
