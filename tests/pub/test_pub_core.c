@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* the .pub files tools/pubgen/make_pub.py makes (make builds them there) */
+#ifndef PUB_SAMPLES
+#define PUB_SAMPLES "build/host/pubgen"
+#endif
+#define PUB(name) PUB_SAMPLES "/" name
+
 static int checks, failed;
 #define CHECK(x) do { checks++; if (!(x)) { failed++; fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); } } while (0)
 
@@ -71,13 +77,39 @@ static int frame_for_object(const opr_slide *laid, const owf_obj *object)
     return -1;
 }
 
+/* Every object of the deck whose story has a run starting with word: its paragraph's alignment, or -1. */
+static int align_of(const owf_deck *deck, const char *word)
+{
+    int i, j, k;
+    for (i = 0; deck && i < deck->nslides; i++)
+        for (j = 0; j < deck->slides[i].nobjs; j++) {
+            const owf_story *st = &deck->slides[i].objs[j].text;
+            for (k = 0; k < st->nparas; k++)
+                if (st->paras[k].nruns && st->paras[k].runs[0].text &&
+                    !strncmp(st->paras[k].runs[0].text, word, strlen(word)))
+                    return (int)st->paras[k].fmt.align;
+        }
+    return -1;
+}
+
+/* The first run starting with word anywhere in the deck. */
+static const owf_charfmt *deck_run(const owf_deck *deck, const char *word)
+{
+    int i, j;
+    for (i = 0; deck && i < deck->nslides; i++)
+        for (j = 0; j < deck->slides[i].nobjs; j++) {
+            const owf_charfmt *f = run_fmt(&deck->slides[i].objs[j].text, word);
+            if (f) return f;
+        }
+    return NULL;
+}
+
 int main(void)
 {
     static const char *const corpus[] = {
-        "51318.pub", "60685.pub", "Sample.pub", "Sample2000.pub", "Sample98.pub",
-        "SampleBrochure.pub", "Sample_2010.pub", "Simple.pub",
-        "clusterfuzz-testcase-minimized-POIHPBFFuzzer-4918886059278336.pub",
-        "clusterfuzz-testcase-minimized-POIHPBFFuzzer-6325615354773504.pub", "mimetype-pub.pub"
+        PUB("gen-2007-plain.pub"), PUB("gen-2007-runs.pub"), PUB("gen-2010-styles.pub"), PUB("gen-2013-look.pub"),
+        PUB("gen-2003-columns.pub"), PUB("gen-2003-names.pub"), PUB("gen-98.pub"), PUB("gen-2000.pub"),
+        PUB("gen-cut.pub"), PUB("gen-notpub.pub"), PUB("gen-damaged.pub")
     };
     owf_deck *deck = NULL;
     owf_report *report = owf_report_new();
@@ -90,33 +122,44 @@ int main(void)
     int version = 0, i, pictures = 0;
     CHECK(report != NULL);
     CHECK(opp_pub_to_deck(NULL, &deck, report) == OWF_ERR_FORMAT && deck == NULL);
-    CHECK(opp_import_pub_file("tests/pub/samples/Simple.pub", &deck, report, &version) == OWF_OK);
+
+    /* the plainest file: one text box at 20 x 22 mm on an A4 page, its margins 91440 EMU (144 twips) */
+    CHECK(opp_import_pub_file(PUB("gen-2007-plain.pub"), &deck, report, &version) == OWF_OK);
     CHECK(deck && version == OWF_PUB_2007 && deck->nslides == 1 && deck->nmasters == 1);
-    CHECK(deck && deck->width == 11906 && deck->height == 16838 && deck->slides[0].nobjs == 2);
+    CHECK(deck && deck->width == 11906 && deck->height == 16838 && deck->slides[0].nobjs == 1);
     CHECK(deck && deck->slides[0].objs[0].kind == OWF_OBJ_TEXT && deck->slides[0].objs[0].x == 1134 &&
-          deck->slides[0].objs[0].y == 1247 && text_has(&deck->slides[0].objs[0].text, "0123456789abcdef"));
+          deck->slides[0].objs[0].y == 1247 && text_has(&deck->slides[0].objs[0].text, "0123456789"));
+    CHECK(deck && deck->slides[0].objs[0].inset[0] == 144 && deck->slides[0].objs[0].inset[1] == 72);
     CHECK(opr_export_pdf(deck, NULL, &pdf, &length, report) == OWF_OK && length > 500 && !memcmp(pdf, "%PDF-", 5));
     CHECK(format && format->export(deck, &odp, &odp_length, report) == OWF_OK && odp_length > 500);
     CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK &&
-          roundtrip && roundtrip->nslides == 1 && roundtrip->slides[0].nobjs == 2);
-    free(odp); owf_deck_free(roundtrip);
+          roundtrip && roundtrip->nslides == 1 && roundtrip->slides[0].nobjs == 1);
+    free(odp); odp = NULL; owf_deck_free(roundtrip); roundtrip = NULL;
     free(pdf); pdf = NULL; owf_deck_free(deck); deck = NULL;
 
-    CHECK(opp_import_pub_file("tests/pub/samples/Sample.pub", &deck, report, &version) == OWF_OK);
-    /* P1 character runs (FDPC): Sample's second text box says it is bold, italic, Arial, 20 point;
-     * its first is the default (Times New Roman 10 point, from the style, not a run). */
-    if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 1) {
-        const owf_charfmt *bold = run_fmt(&deck->slides[0].objs[1].text, "This is in bold");
-        const owf_charfmt *plain = run_fmt(&deck->slides[0].objs[0].text, "This is some text");
+    /* P1 character runs (FDPC): bold, italic, Arial, 20 point; Courier New 12; bold alone over the default;
+     * the plain text takes the default style's Times New Roman 10 pt. A table, a PNG, a second page and a
+     * frame on the scratch area (left out). */
+    CHECK(opp_import_pub_file(PUB("gen-2007-runs.pub"), &deck, report, &version) == OWF_OK);
+    CHECK(deck && deck->nslides == 2 && deck->slides[0].nobjs == 4 && deck->res->nimages == 1);
+    if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 3) {
+        const owf_charfmt *bold = run_fmt(&deck->slides[0].objs[1].text, "Bold and italic");
+        const owf_charfmt *plain = run_fmt(&deck->slides[0].objs[0].text, "Plain text");
+        const owf_charfmt *courier = run_fmt(&deck->slides[0].objs[1].text, "Then Courier");
+        const owf_charfmt *alone = run_fmt(&deck->slides[0].objs[1].text, "bold alone");
         CHECK(bold && (bold->flags & OWF_BOLD) && (bold->flags & OWF_ITALIC) && bold->size == 400);
         CHECK(!strcmp(font_name(deck->res, bold), "Arial"));
-        /* P1b paragraph styles (STSH): the plain text takes the default style's Times New Roman 10 pt */
+        CHECK(courier && !(courier->flags & (OWF_BOLD | OWF_ITALIC)) && courier->size == 240 &&
+              !strcmp(font_name(deck->res, courier), "Courier New"));
+        CHECK(alone && (alone->flags & OWF_BOLD) && alone->size == 200 && !strcmp(font_name(deck->res, alone), "Times New Roman"));
         CHECK(plain && !(plain->flags & (OWF_BOLD | OWF_ITALIC)) && plain->size == 200);
         CHECK(!strcmp(font_name(deck->res, plain), "Times New Roman"));
+        CHECK(deck->slides[0].objs[2].kind == OWF_OBJ_TABLE && deck->slides[0].objs[2].ncols == 2);
+        CHECK(deck->slides[0].objs[3].kind == OWF_OBJ_PICTURE && deck->slides[0].objs[3].image == 0);
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
         if (roundtrip && roundtrip->nslides > 0 && roundtrip->slides[0].nobjs > 1) {
-            const owf_charfmt *again = run_fmt(&roundtrip->slides[0].objs[1].text, "This is in bold");
+            const owf_charfmt *again = run_fmt(&roundtrip->slides[0].objs[1].text, "Bold and italic");
             CHECK(again && (again->flags & OWF_BOLD) && (again->flags & OWF_ITALIC) && again->size == 400);
             /* ODP saves Arial as Liberation Sans, the deck's own default face, which reads back as the
              * default (-1); the typeface itself is GFOffice's ODP round trip's, not the .pub reader's */
@@ -125,57 +168,91 @@ int main(void)
         free(odp); odp = NULL; odp_length = 0;
         owf_deck_free(roundtrip); roundtrip = NULL;
     }
-    laid = deck && deck->nslides > 1 ? opr_slide_layout(deck, 1, NULL, NULL, NULL) : NULL;
+    laid = deck && deck->nslides > 1 ? opr_slide_layout(deck, 0, NULL, NULL, NULL) : NULL;
     CHECK(laid != NULL);
     if (laid) {
-        int shapes = 0;
-        size_t k;
-        for (k = 0; k < ol_display_count(laid->doc); k++) {
-            const ol_display_op *op = ol_display_get(laid->doc, k);
-            if (op && op->type == OL_OP_SHAPE && op->graphic &&
-                op->graphic->shape.type == OL_SHAPE_RECT)
-                shapes++;
-        }
-        CHECK(shapes >= 1);
+        int first = frame_for_object(laid, &deck->slides[0].objs[0]);
+        CHECK(first >= 0 && frame_text_ops(laid, first, "Plain text"));
     }
     opr_slide_free(laid); laid = NULL;
+    CHECK(opr_export_pdf(deck, NULL, &pdf, &length, report) == OWF_OK && length > 1000 && !memcmp(pdf, "%PDF-", 5));
+    free(pdf); pdf = NULL; owf_deck_free(deck); deck = NULL;
+
+    /* P1b paragraph styles (STSH) and alignment (0x204's low byte): style 1 italic Garamond 14 pt centred,
+     * style 2 Garamond 11 pt, style 3 bold Arial right; a paragraph's own alignment, left too, over its
+     * style's; 6 (not known) keeps the style's; a style not in the sheet is the default */
+    CHECK(opp_import_pub_file(PUB("gen-2010-styles.pub"), &deck, report, &version) == OWF_OK);
+    CHECK(deck && version == OWF_PUB_2010);
+    if (deck) {
+        const owf_charfmt *head = deck_run(deck, "A centred heading");
+        const owf_charfmt *body = deck_run(deck, "Body text");
+        const owf_charfmt *right = deck_run(deck, "Page 2");
+        const owf_charfmt *none = deck_run(deck, "A style not in the sheet");
+        CHECK(head && (head->flags & OWF_ITALIC) && !(head->flags & OWF_BOLD) && head->size == 280);
+        CHECK(body && !(body->flags & OWF_ITALIC) && body->size == 220);
+        CHECK(!strcmp(font_name(deck->res, head), "Garamond") && !strcmp(font_name(deck->res, body), "Garamond"));
+        CHECK(right && (right->flags & OWF_BOLD) && right->size == 200 && !strcmp(font_name(deck->res, right), "Arial"));
+        CHECK(none && none->size == 200 && !strcmp(font_name(deck->res, none), "Times New Roman"));
+        CHECK(align_of(deck, "A centred heading") == OWF_ALIGN_CENTRE);
+        CHECK(align_of(deck, "Body text") == OWF_ALIGN_LEFT);
+        CHECK(align_of(deck, "A body paragraph centred") == OWF_ALIGN_CENTRE);
+        CHECK(align_of(deck, "Page 2") == OWF_ALIGN_RIGHT);
+        CHECK(align_of(deck, "Left over a right style") == OWF_ALIGN_LEFT);
+        CHECK(align_of(deck, "Left, with a high byte") == OWF_ALIGN_LEFT);
+        CHECK(align_of(deck, "An alignment not known") == OWF_ALIGN_LEFT);
+        CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
+        CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
+        if (roundtrip) {
+            const owf_charfmt *h2 = deck_run(roundtrip, "A centred heading");
+            CHECK(align_of(roundtrip, "A centred heading") == OWF_ALIGN_CENTRE);
+            CHECK(align_of(roundtrip, "Page 2") == OWF_ALIGN_RIGHT);
+            CHECK(h2 && (h2->flags & OWF_ITALIC) && h2->size == 280);
+        }
+        free(odp); odp = NULL; odp_length = 0;
+        owf_deck_free(roundtrip); roundtrip = NULL;
+    }
     owf_deck_free(deck); deck = NULL;
 
-    CHECK(opp_import_pub_file("tests/pub/samples/SampleBrochure.pub", &deck, report, &version) == OWF_OK);
-    CHECK(deck && deck->nslides == 2 && deck->res->nimages == 8);
-    if (deck)
-        for (i = 0; i < deck->nslides; i++) {
-            int j;
+    /* P1c frame look ([MS-ODRAW] properties over the colour scheme): the headline bar is the scheme's
+     * #CCCCEB with a black 1 pt outline, the corner block the scheme's #000099 with none, the border a
+     * black 3 pt line; in the group, a back filled with no colour said is white, the front #996633 with
+     * the scheme's #993300 half a point; colours not known (a system colour, a scheme place past its
+     * end) are left as not said */
+    CHECK(opp_import_pub_file(PUB("gen-2013-look.pub"), &deck, report, &version) == OWF_OK);
+    CHECK(deck && version == OWF_PUB_2013);
+    if (deck) {
+        CHECK(count_look(deck, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
+        CHECK(count_look(deck, OWF_SHADE(0x000099), 0, 0) == 1);
+        CHECK(count_look(deck, 0, OWF_SHADE(0x000000), 60) == 1);
+        CHECK(count_look(deck, OWF_SHADE(0xFFFFFF), 0, 0) == 1);
+        CHECK(count_look(deck, OWF_SHADE(0x996633), OWF_SHADE(0x993300), 10) == 1);
+        CHECK(deck->slides[0].objs[0].inset[0] == 144);
+        CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
+        CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
+        CHECK(count_look(roundtrip, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
+        free(odp); odp = NULL; odp_length = 0;
+        owf_deck_free(roundtrip); roundtrip = NULL;
+    }
+    owf_deck_free(deck); deck = NULL;
+
+    /* Linked frames: a story through three columns that the file lists middle, left, right, and one that
+     * runs on to page two. The chain (frame field 0x28) puts the columns left to right, so the layout
+     * starts the story in the left one; four pictures (GIF, JPEG, WMF, DIB) and WordArt */
+    CHECK(opp_import_pub_file(PUB("gen-2003-columns.pub"), &deck, report, &version) == OWF_OK);
+    CHECK(deck && version == OWF_PUB_2003 && deck->nslides == 2 && deck->res->nimages == 4);
+    if (deck) {
+        int linked = 0, j;
+        for (i = 0; i < deck->nslides; i++)
             for (j = 0; j < deck->slides[i].nobjs; j++)
                 if (deck->slides[i].objs[j].kind == OWF_OBJ_PICTURE && deck->slides[i].objs[j].image >= 0) pictures++;
-        }
-    CHECK(pictures >= 3);
-    /* "Opening hours" is bold (its run) in its style's Gill Sans MT; the hours are the style's italic
-     * Gill Sans MT 11 pt */
-    if (deck) {
-        int found_bold = 0, found_dash = 0;
-        for (i = 0; i < deck->nslides; i++) {
-            int j;
-            for (j = 0; j < deck->slides[i].nobjs; j++) {
-                const owf_charfmt *f = run_fmt(&deck->slides[i].objs[j].text, "Opening hours");
-                const owf_charfmt *d = run_fmt(&deck->slides[i].objs[j].text, "Monday");
-                if (f && (f->flags & OWF_BOLD) && !strcmp(font_name(deck->res, f), "Gill Sans MT")) found_bold = 1;
-                if (d && (d->flags & OWF_ITALIC) && d->size == 220 && !strcmp(font_name(deck->res, d), "Gill Sans MT"))
-                    found_dash = 1;
-            }
-        }
-        CHECK(found_bold && found_dash);
-    }
-    CHECK(opr_export_pdf(deck, NULL, &pdf, &length, report) == OWF_OK && length > 1000 && !memcmp(pdf, "%PDF-", 5));
-    free(pdf); owf_deck_free(deck); deck = NULL;
-
-    CHECK(opp_import_pub_file("tests/pub/stress/SampleNewsletter.pub", &deck, report, &version) == OWF_OK);
-    if (deck) {
-        int linked = 0;
-        CHECK(opp_flow_chain_count(deck, &linked) == 10);
-        CHECK(linked == 29);
-        CHECK(deck->slides[0].objs[0].flow_story == deck->slides[0].objs[1].flow_story);
-        CHECK(deck->slides[0].objs[0].flow_story >= 0);
+        CHECK(pictures == 4);
+        CHECK(opp_flow_chain_count(deck, &linked) == 2);
+        CHECK(linked == 5);
+        CHECK(deck->slides[0].nobjs >= 3 && deck->slides[0].objs[0].flow_story >= 0 &&
+              deck->slides[0].objs[0].flow_story == deck->slides[0].objs[1].flow_story &&
+              deck->slides[0].objs[1].flow_story == deck->slides[0].objs[2].flow_story);
+        CHECK(deck->slides[0].objs[0].x < deck->slides[0].objs[1].x && deck->slides[0].objs[1].x < deck->slides[0].objs[2].x);
+        CHECK(text_has(&deck->slides[0].objs[4].text, "Our WordArt"));
         laid = opr_slide_layout(deck, 0, NULL, NULL, NULL);
         CHECK(laid != NULL);
         if (laid) {
@@ -184,37 +261,64 @@ int main(void)
             CHECK(first >= 0 && second >= 0);
             CHECK(frame_text_ops(laid, first, NULL) > 0);
             CHECK(frame_text_ops(laid, second, NULL) > 0);
-            CHECK(frame_text_ops(laid, first, "This week in class"));
-            CHECK(!frame_text_ops(laid, second, "This week in class"));
+            CHECK(frame_text_ops(laid, first, "Column story, part one"));
+            CHECK(!frame_text_ops(laid, second, "Column story, part one"));
         }
         opr_slide_free(laid); laid = NULL;
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK && odp_length > 1000);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
         if (roundtrip) {
             int linked_again = 0;
-            CHECK(opp_flow_chain_count(roundtrip, &linked_again) == 10);
-            CHECK(linked_again == 29);
+            CHECK(opp_flow_chain_count(roundtrip, &linked_again) == 2);
+            CHECK(linked_again == 5);
             laid = opr_slide_layout(roundtrip, 0, NULL, NULL, NULL);
             CHECK(laid != NULL);
             if (laid) {
                 int first = frame_for_object(laid, &roundtrip->slides[0].objs[0]);
                 int second = frame_for_object(laid, &roundtrip->slides[0].objs[1]);
-                CHECK(frame_text_ops(laid, first, "This week in class"));
-                CHECK(!frame_text_ops(laid, second, "This week in class"));
+                CHECK(frame_text_ops(laid, first, "Column story, part one"));
+                CHECK(!frame_text_ops(laid, second, "Column story, part one"));
             }
             opr_slide_free(laid); laid = NULL;
         }
         free(odp); odp = NULL; odp_length = 0;
         owf_deck_free(roundtrip); roundtrip = NULL;
+        CHECK(opr_export_pdf(deck, NULL, &pdf, &length, report) == OWF_OK && length > 1000 && !memcmp(pdf, "%PDF-", 5));
+        free(pdf); pdf = NULL;
     }
     owf_deck_free(deck); deck = NULL;
 
+    /* a named master; a tab, a line break, a character past U+FFFF; a frame whose text isn't there */
+    CHECK(opp_import_pub_file(PUB("gen-2003-names.pub"), &deck, report, &version) == OWF_OK);
+    CHECK(deck && deck->nslides == 1 && deck->nmasters == 1 && deck->slides[0].nobjs == 3);
+    if (deck && deck->nslides == 1 && deck->slides[0].nobjs == 3) {
+        CHECK(text_has(&deck->slides[0].objs[0].text, "\xf0\x9d\x84\x9e"));      /* U+1D11E */
+        CHECK(!deck->slides[0].objs[1].text.nparas);
+    }
+    owf_deck_free(deck); deck = NULL;
+
+    /* the 98/2000 form: a text frame with its runs (plain fields for the typeface), a table, a shape */
+    for (i = 0; i < 2; i++) {
+        CHECK(opp_import_pub_file(i ? PUB("gen-2000.pub") : PUB("gen-98.pub"), &deck, report, &version) == OWF_OK);
+        CHECK(deck && version == (i ? OWF_PUB_2000 : OWF_PUB_98) && deck->nslides == 1 && deck->slides[0].nobjs == 3);
+        if (deck && deck->nslides == 1 && deck->slides[0].nobjs == 3) {
+            const owf_charfmt *b = run_fmt(&deck->slides[0].objs[0].text, "bold Arial");
+            CHECK(b && (b->flags & OWF_BOLD) && b->size == 240 && !strcmp(font_name(deck->res, b), "Arial"));
+            CHECK(deck->slides[0].objs[1].kind == OWF_OBJ_TABLE && deck->slides[0].objs[1].ncols == 2);
+        }
+        owf_deck_free(deck); deck = NULL;
+    }
+
+    /* damaged files: one cut short still opens; one not a publication; one with a Contents that isn't */
+    CHECK(opp_import_pub_file(PUB("gen-cut.pub"), &deck, report, &version) == OWF_OK && deck);
+    owf_deck_free(deck); deck = NULL;
+    CHECK(opp_import_pub_file(PUB("gen-notpub.pub"), &deck, report, &version) == OWF_ERR_FORMAT && !deck);
+    CHECK(opp_import_pub_file(PUB("gen-damaged.pub"), &deck, report, &version) == OWF_ERR_CORRUPT && !deck);
+
     for (i = 0; i < (int)(sizeof corpus / sizeof *corpus); i++) {
-        char path[256];
         int rc;
-        snprintf(path, sizeof path, "tests/pub/samples/%s", corpus[i]);
         version = -1;
-        rc = opp_import_pub_file(path, &deck, report, &version);
+        rc = opp_import_pub_file(corpus[i], &deck, report, &version);
         CHECK(rc == OWF_OK || rc == OWF_ERR_FORMAT || rc == OWF_ERR_CORRUPT);
         CHECK((rc == OWF_OK) == (deck != NULL));
         if (deck) {
@@ -225,106 +329,6 @@ int main(void)
             CHECK(version == OWF_PUB_UNKNOWN);
         }
     }
-    /* P1b: 60685's headings are style 4 (italic Garamond 14 pt, centred), its body style 5 (Garamond 11 pt,
-     * centred), as its thumbnail shows them centred */
-    CHECK(opp_import_pub_file("tests/pub/samples/60685.pub", &deck, report, &version) == OWF_OK);
-    if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 0) {
-        const owf_story *st = &deck->slides[0].objs[0].text;
-        const owf_charfmt *head = run_fmt(st, "Professional Experience");
-        const owf_charfmt *body = run_fmt(st, "Caring Registered Nurse");
-        CHECK(head && (head->flags & OWF_ITALIC) && !(head->flags & OWF_BOLD) && head->size == 280);
-        CHECK(body && !(body->flags & OWF_ITALIC) && body->size == 220);
-        CHECK(!strcmp(font_name(deck->res, head), "Garamond") && !strcmp(font_name(deck->res, body), "Garamond"));
-        CHECK(st->nparas > 1 && st->paras[0].fmt.align == OWF_ALIGN_CENTRE && st->paras[1].fmt.align == OWF_ALIGN_CENTRE);
-        CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
-        CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
-        if (roundtrip && roundtrip->nslides > 0 && roundtrip->slides[0].nobjs > 0) {
-            const owf_story *again = &roundtrip->slides[0].objs[0].text;
-            const owf_charfmt *h2 = run_fmt(again, "Professional Experience");
-            CHECK(again->nparas > 0 && again->paras[0].fmt.align == OWF_ALIGN_CENTRE);
-            CHECK(h2 && (h2->flags & OWF_ITALIC) && h2->size == 280);
-        }
-        free(odp); odp = NULL; odp_length = 0;
-        owf_deck_free(roundtrip); roundtrip = NULL;
-    }
-    owf_deck_free(deck); deck = NULL;
-    /* 51318's styles say 0x5A02: the low byte, 2, centres its headline (as its thumbnail shows) */
-    CHECK(opp_import_pub_file("tests/pub/samples/51318.pub", &deck, report, &version) == OWF_OK);
-    if (deck) {
-        int centred = 0, j;
-        for (i = 0; i < deck->nslides; i++)
-            for (j = 0; j < deck->slides[i].nobjs; j++) {
-                const owf_story *st = &deck->slides[i].objs[j].text;
-                if (run_fmt(st, "This is where") && st->paras[0].fmt.align == OWF_ALIGN_CENTRE) centred = 1;
-            }
-        CHECK(centred);
-    }
-    owf_deck_free(deck); deck = NULL;
-    /* P1c frame look ([MS-ODRAW] properties over the colour scheme): 51318's header bar is the scheme's
-     * #CCCCEB with a black 1 pt outline, its corner block the scheme's #000099 with none; its border a
-     * black 3 pt line; its text boxes' margins 36195 EMU (57 twips). All as its thumbnail shows them. */
-    CHECK(opp_import_pub_file("tests/pub/samples/51318.pub", &deck, report, &version) == OWF_OK);
-    if (deck) {
-        int j, margins = 0;
-        CHECK(count_look(deck, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
-        CHECK(count_look(deck, OWF_SHADE(0x000099), 0, 0) >= 1);
-        CHECK(count_look(deck, 0, OWF_SHADE(0x000000), 60) >= 1);
-        for (i = 0; i < deck->nslides; i++)
-            for (j = 0; j < deck->slides[i].nobjs; j++)
-                if (deck->slides[i].objs[j].kind == OWF_OBJ_TEXT && deck->slides[i].objs[j].inset[0] == 57) margins++;
-        CHECK(margins >= 2);
-        CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
-        CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
-        CHECK(count_look(roundtrip, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
-        free(odp); odp = NULL; odp_length = 0;
-        owf_deck_free(roundtrip); roundtrip = NULL;
-    }
-    owf_deck_free(deck); deck = NULL;
-    /* [MS-ODRAW]: a shape filled with no colour said is white; 51318's badge backs are */
-    CHECK(opp_import_pub_file("tests/pub/samples/51318.pub", &deck, report, &version) == OWF_OK);
-    CHECK(count_look(deck, OWF_SHADE(0xFFFFFF), 0, 0) >= 1);
-    owf_deck_free(deck); deck = NULL;
-    /* SampleBrochure's scheme starts #000080: its panel border lines are navy, a quarter point */
-    CHECK(opp_import_pub_file("tests/pub/samples/SampleBrochure.pub", &deck, report, &version) == OWF_OK);
-    CHECK(count_look(deck, 0, OWF_SHADE(0x000080), 5) >= 3);
-    CHECK(count_look(deck, OWF_SHADE(0xCCCCE6), 0, 0) >= 2);
-    owf_deck_free(deck); deck = NULL;
-    /* Simple has no paragraph runs that name a style: every paragraph is the default style's, left */
-    CHECK(opp_import_pub_file("tests/pub/samples/Simple.pub", &deck, report, &version) == OWF_OK);
-    if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 0) {
-        const owf_charfmt *f = run_fmt(&deck->slides[0].objs[0].text, "0123456789");
-        CHECK(f && f->size == 200 && !strcmp(font_name(deck->res, f), "Times New Roman"));
-        CHECK(deck->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_LEFT);
-    }
-    owf_deck_free(deck); deck = NULL;
-
-    /* P1c linked frames: the newsletter's stories run through three columns, which the file lists
-     * middle, left, right on page 2; the chain (frame field 0x28) puts them left to right, so the layout
-     * flows each story from its first column. "Page #" is right aligned (0x204 low byte 1); "Volume 1,
-     * Issue 1" says left (0) over its right-aligned style. */
-    CHECK(opp_import_pub_file("tests/pub/stress/SampleNewsletter.pub", &deck, report, &version) == OWF_OK);
-    if (deck) {
-        int j, k, chained = 0, ordered = 1, right = 0, left = 0;
-        CHECK(deck->nslides >= 2);
-        for (i = 0; i < deck->nslides; i++)
-            for (j = 0; j < deck->slides[i].nobjs; j++) {
-                const owf_obj *a = &deck->slides[i].objs[j];
-                const owf_story *st = &a->text;
-                if (st->nparas && run_fmt(st, "Page #") && st->paras[0].fmt.align == OWF_ALIGN_RIGHT) right = 1;
-                if (st->nparas && run_fmt(st, "Volume 1, Issue 1") && st->paras[0].fmt.align == OWF_ALIGN_LEFT) left = 1;
-                if (a->kind != OWF_OBJ_TEXT || a->flow_story < 0) continue;
-                for (k = j + 1; k < deck->slides[i].nobjs; k++) {
-                    const owf_obj *b = &deck->slides[i].objs[k];
-                    if (b->kind != OWF_OBJ_TEXT || b->flow_story != a->flow_story) continue;
-                    chained++;
-                    if (b->x <= a->x) ordered = 0;
-                }
-            }
-        CHECK(chained >= 20 && ordered);
-        CHECK(right && left);
-        CHECK(opp_flow_chain_count(deck, NULL) >= 9);
-    }
-    owf_deck_free(deck); deck = NULL;
 
     owf_report_free(report);
     printf("openpublisher core tests passed (%d checks)\n", checks);

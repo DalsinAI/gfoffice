@@ -266,7 +266,7 @@ built together with no library at all.
     checks the library's own calls:
     - documents saved and read back;
     - the workbook fixtures and the formula engine;
-    - `Sample.pub`;
+    - `Sample.pub` (made by `tools/pubgen/make_pub.py`);
     - an ODP saved and read back, a new deck, and a PDF page.
 
     It runs everything again from a second task at the same time.
