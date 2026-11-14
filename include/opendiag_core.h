@@ -112,5 +112,8 @@ int odg_cell_locked(const odg_doc *doc, const owf_dcell *c);
 /* ---- Hit-testing ---- */
 /* The topmost shape or connector at x, y (a connector within tol of its line), into id; 0 when none. */
 int odg_hit(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size);
+/* odg_hit for the mouse: locked cells (odg_cell_locked) are passed over, so one on top doesn't hide an open one
+ * under it. */
+int odg_hit_open(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size);
 
 #endif

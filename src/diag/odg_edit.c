@@ -111,13 +111,20 @@ static int pickable(const odg_doc *doc, const owf_dcell *c, int shapes)
     return !shapes || !parent || parent->kind != OWF_DCELL_EDGE;
 }
 
+int odg_edit_pickable(const odg_doc *doc, const char *id)
+{
+    const owf_dcell *c = id ? owf_dpage_find(odg_page(doc), id) : NULL;
+    return c && pickable(doc, c, 0);
+}
+
 void odg_edit_prune(odg_edit *e, const odg_doc *doc)
 {
     const owf_dpage *p = odg_page(doc);
     int i = 0;
     while (i < e->n) {
         const owf_dcell *c = owf_dpage_find(p, e->ids[i]);
-        if (!c || (c->kind != OWF_DCELL_VERTEX && c->kind != OWF_DCELL_EDGE))
+        /* gone, or hidden or locked since it was picked: Delete, a nudge and Style leave it alone */
+        if (!c || !pickable(doc, c, 0))
             odg_edit_drop(e, e->ids[i]);
         else
             i++;
@@ -150,7 +157,7 @@ int odg_edit_hit(const odg_view *v, const odg_doc *doc, long px, long py, int sh
     int i;
     if (!shapes) {
         const owf_dcell *c;
-        if (!odg_hit(doc, x, y, tolerance(v), buf, sizeof buf) || strlen(buf) >= ODG_EDIT_ID)
+        if (!odg_hit_open(doc, x, y, tolerance(v), buf, sizeof buf) || strlen(buf) >= ODG_EDIT_ID)
             return 0;
         c = owf_dpage_find(p, buf);
         if (!c || (c->kind != OWF_DCELL_VERTEX && c->kind != OWF_DCELL_EDGE) || odg_cell_locked(doc, c))
