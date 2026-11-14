@@ -192,15 +192,22 @@ static void test_md(void)
     CHECK_N(read_s("# C#\n## Title ##\n## #\n## Bug # \n## x\t#\n- F#\n", OWF_OUTLINE_MD, NULL, &it, &n), OWF_OK);
     CHECK_S(shape(it, n), "0:C# | 1:Title | 1: | 1:Bug | 1:x | 2:F#");
     owf_outline_free(it, n);
-    {                                                     /* a root ending in # round-trips */
-        owf_ditem one[1];
-        char c[] = "C#";
-        one[0].depth = 0, one[0].text = c, one[0].folded = 0;
-        CHECK_N(owf_outline_write(one, 1, OWF_OUTLINE_MD, NULL, &out, NULL), OWF_OK);
-        CHECK_N(read_s(out, OWF_OUTLINE_MD, NULL, &it, &n), OWF_OK);
-        CHECK_S(shape(it, n), "0:C#");
-        owf_outline_free(it, n);
-        owf_free(out);
+    {                                                     /* a root ending in # round-trips (Budgie: "C #" too) */
+        static const char *const roots[3] = { "C#", "C #", "##" };
+        int k;
+        for (k = 0; k < 3; k++) {
+            owf_ditem one[1];
+            char c[8];
+            strcpy(c, roots[k]);
+            one[0].depth = 0, one[0].text = c, one[0].folded = 0;
+            CHECK_N(owf_outline_write(one, 1, OWF_OUTLINE_MD, NULL, &out, NULL), OWF_OK);
+            CHECK_N(read_s(out, OWF_OUTLINE_MD, NULL, &it, &n), OWF_OK);
+            CHECK_N(n, 1);
+            if (n == 1)
+                CHECK_S(it[0].text, roots[k]);
+            owf_outline_free(it, n);
+            owf_free(out);
+        }
     }
     CHECK_N(read_s("# A\r\n- b\r\n", OWF_OUTLINE_MD, NULL, &it, &n), OWF_OK);   /* DOS line ends */
     CHECK_S(shape(it, n), "0:A | 1:b");
@@ -253,6 +260,24 @@ static void test_deep_and_bad_lists(void)
         }
     }
     owf_outline_free(it, n);
+    {                                                     /* Budgie: 70 deep written is put at 60 and reads back */
+        static owf_ditem deep[70];
+        static const owf_outline_kind kinds[3] = { OWF_OUTLINE_MM, OWF_OUTLINE_OPML, OWF_OUTLINE_MD };
+        int k;
+        for (i = 0; i < 70; i++)
+            deep[i].depth = i, deep[i].text = t, deep[i].folded = 1;
+        for (k = 0; k < 3; k++) {
+            owf_ditem *back;
+            int m;
+            CHECK_N(owf_outline_write(deep, 70, kinds[k], NULL, &out, NULL), OWF_OK);
+            CHECK_N(read_s(out, kinds[k], NULL, &back, &m), OWF_OK);
+            CHECK_N(m, 70);
+            if (m == 70)
+                CHECK_N(back[69].depth, 60);
+            owf_outline_free(back, m);
+            owf_free(out);
+        }
+    }
     out = NULL;
 
     bad[0].depth = 1, bad[0].text = t, bad[0].folded = 0;     /* not a tree from one root */

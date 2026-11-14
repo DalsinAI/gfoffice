@@ -204,8 +204,8 @@ owf_outline_kind owf_outline_guess(const char *name, const char *text, size_t le
 int owf_outline_read(const char *text, size_t length, owf_outline_kind kind, const char *title, owf_ditem **items,
                      int *n);
 void owf_outline_free(owf_ditem *items, int n);
-/* The items as that kind, into owf_malloc'd *data with a NUL after it. title is OPML's head title (NULL: the
- * root's text). OWF_ERR_FORMAT when the list isn't a tree with one root; OWF_ERR_MEMORY. */
+/* The items as that kind, into owf_malloc'd *data with a NUL after it, items deeper than 60 put at 60 (so the
+ * file reads back). title is OPML's head title (NULL: the root's text). OWF_ERR_FORMAT when the list isn't a tree with one root; OWF_ERR_MEMORY. */
 int owf_outline_write(const owf_ditem *items, int n, owf_outline_kind kind, const char *title, char **data,
                       size_t *length);
 
