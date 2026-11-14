@@ -184,8 +184,24 @@ static void test_files(void)
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");  /* EXPORT keeps the diagram's file */
     ok("EXPORT build/host/odg-rexx-svg.out FORMAT SVG");
     CHECK_N(rx_do("EXPORT build/host/odg-rexx.png"), ODG_RX_ERROR);
-    CHECK_N(rx_do("EXPORT build/host/x FORMAT PDF"), ODG_RX_ERROR);
-    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG or DRAWIO, not PDF");
+    ok("EXPORT build/host/odg-rexx.pdf");                 /* every page as PDF */
+    {
+        FILE *f = fopen("build/host/odg-rexx.pdf", "rb");
+        char head[9] = "";
+        CHECK(f != NULL);
+        if (f) {
+            CHECK_N(fread(head, 1, 8, f), 8);
+            fclose(f);
+        }
+        CHECK_S(head, "%PDF-1.4");
+    }
+    ok("EXPORT build/host/odg-rexx-pdf.out FORMAT pdf");
+    CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");  /* EXPORT keeps the diagram's file */
+    CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.pdf"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: a PDF doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio or .svg)");
+    CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
+    CHECK_N(rx_do("EXPORT build/host/x FORMAT DOC"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF or DRAWIO, not DOC");
 
     /* OPEN won't drop unsaved changes without FORCE */
     snprintf(a, sizeof a, "%s", ok("ADDSHAPE 500 500 10 10"));

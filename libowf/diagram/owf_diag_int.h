@@ -19,4 +19,9 @@ int owf_diag_inflate_any(const unsigned char *in, size_t n, unsigned char **out,
 /* Text as an XML attribute value or element text: &, <, >, " escaped, line breaks and tabs as references. */
 void owf_diag_put_value(owf_buf *b, const char *s);
 
+/* Integer square root (owf_dsvg.c). */
+long long owf_diag_isqrt(long long v);
+/* The point at frac (hundredths: -100 the start, 0 the middle, 100 the end) of the way along a path of n points. */
+owf_dpoint owf_diag_along(const owf_dpoint *pts, int n, long frac);
+
 #endif

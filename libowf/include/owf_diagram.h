@@ -182,6 +182,15 @@ int owf_dpng_embed(const unsigned char *png, size_t png_length, const owf_diagra
  * holds none; OWF_ERR_CORRUPT when a chunk is damaged; else as owf_drawio_read. */
 int owf_dpng_read(const unsigned char *png, size_t length, owf_diagram *d);
 
+/* ---- PDF ----
+ * Pages drawn as PDF (libowf's owf_pdf.h): shapes, connectors, arrowheads and labels as the SVG writer places them,
+ * the flowchart shapes (triangle, parallelogram, hexagon, process) as GFOpenDiag draws them; text in PDF's
+ * standard fonts, so it stays text. Each page is a PDF page the size of what is on it, 10 pixels round. */
+
+/* page (-1: every page, in order) as PDF, into owf_malloc'd *data. OWF_OK; OWF_ERR_FORMAT when there is no such
+ * page; OWF_ERR_MEMORY. */
+int owf_dpdf_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+
 #ifdef __cplusplus
 }
 #endif

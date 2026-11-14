@@ -293,6 +293,7 @@ int odg_rexx_format(const char *file)
 {
     if (ext_is(file, "svg")) return ODG_FILE_SVG;
     if (ext_is(file, "png")) return ODG_FILE_PNG;
+    if (ext_is(file, "pdf")) return ODG_FILE_PDF;
     return ODG_FILE_DRAWIO;
 }
 
@@ -335,7 +336,8 @@ static int write_file(odg_rexx *rx, const char *name, int format, int compressed
         snprintf(rx->lasterror, sizeof rx->lasterror, "%.150s: a PNG needs the drawn picture, which the app's Export makes", name);
         return ODG_RX_ERROR;
     }
-    rc = format == ODG_FILE_SVG ? owf_dsvg_write(&rx->d, rx->doc.page, &data, &length)
+    rc = format == ODG_FILE_PDF ? owf_dpdf_write(&rx->d, -1, &data, &length)
+         : format == ODG_FILE_SVG ? owf_dsvg_write(&rx->d, rx->doc.page, &data, &length)
                                 : owf_drawio_write(&rx->d, compressed, &data, &length);
     if (rc == OWF_ERR_MEMORY) {
         snprintf(rx->lasterror, sizeof rx->lasterror, "Out of memory writing %.200s", name);
@@ -576,6 +578,11 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return rc;
     case C_SAVEAS:
         if (!name_fits(rx, "SAVEAS", a->value[0])) return ODG_RX_ERROR;
+        if (odg_rexx_format(a->value[0]) == ODG_FILE_PDF) {   /* it would not open again: EXPORT writes one */
+            snprintf(rx->lasterror, sizeof rx->lasterror, "SAVEAS: a PDF doesn't open again as a diagram (EXPORT "
+                     "writes one; SAVEAS takes .drawio or .svg)");
+            return ODG_RX_ERROR;
+        }
         if ((rc = write_file(rx, a->value[0], odg_rexx_format(a->value[0]), a->value[1] != NULL)) == ODG_RX_OK) {
             set_file(rx, a->value[0]);
             odg_saved(doc);
@@ -587,8 +594,9 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             if (word_at(a->value[1], "SVG", 3, 0)) format = ODG_FILE_SVG;
             else if (word_at(a->value[1], "DRAWIO", 6, 0)) format = ODG_FILE_DRAWIO;
             else if (word_at(a->value[1], "PNG", 3, 0)) format = ODG_FILE_PNG;
+            else if (word_at(a->value[1], "PDF", 3, 0)) format = ODG_FILE_PDF;
             else {
-                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is SVG or DRAWIO, not %.100s", a->value[1]);
+                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is SVG, PDF or DRAWIO, not %.100s", a->value[1]);
                 return ODG_RX_ERROR;
             }
         }
