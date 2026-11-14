@@ -225,6 +225,25 @@ int opj_link_path(const opj_view *v, const opj_doc *doc, int row, int link, opj_
 /* Draws what of the view crosses area (the view's own pixels) onto d. */
 void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
 
+/* ---- Printing the Gantt view: pages down, then across, as MS Project prints ----
+ * The first page across holds the table and the start of the chart; the pages after it hold more of the
+ * chart (to a day past the plan's finish) with no table. Every page has the timescale at its top and a
+ * footer row: the plan's title, and "Page n of m". */
+typedef struct {
+    opj_view proto;                      /* columns, row height, zoom, font and baselines to print with */
+    int page_width, page_height;         /* the printable area, in the printer's pixels */
+    int rows_per_page, down, across;
+    long first_days, more_days;          /* days of chart on the first page across, and on each after it */
+} opj_print;
+
+/* Lays doc out on pages of page_width by page_height. The number of pages, or 0 when a page is too small
+ * for a row of tasks or a day of chart. */
+int opj_print_layout(opj_print *pr, const opj_view *proto, const opj_doc *doc, int page_width, int page_height);
+/* The view a page (from 0) shows. 0 when there is no such page. */
+int opj_print_page_view(const opj_print *pr, int page, opj_view *v);
+/* Draws a page onto d (sized as the page). */
+void opj_print_draw(oldraw *d, const opj_print *pr, const opj_doc *doc, int page);
+
 /* What is at a point. */
 enum { OPJ_HIT_NONE, OPJ_HIT_COLUMN_TITLE, OPJ_HIT_TIMESCALE, OPJ_HIT_CELL, OPJ_HIT_SPLIT, OPJ_HIT_BAR, OPJ_HIT_CHART };
 typedef struct {
