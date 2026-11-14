@@ -862,7 +862,7 @@ static const char *map_node(void)
  * asked for, and a key that can't be done says why on the status line, so typing on is never held up. */
 static void map_key(odg_mind_key key)
 {
-    char node[ODG_EDIT_ID], got[24], line[160];
+    char node[ODG_EDIT_ID], got[ODG_MIND_ID], line[160];
     const char *why = "";
     int rc;
     if (!map_node()) { set_status("Select one map node first"); redraw(); return; }
