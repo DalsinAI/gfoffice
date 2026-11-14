@@ -280,10 +280,18 @@ static char *dup(const char *s)
     return d;
 }
 
-static void put_id(char *out, const char *id)
+/* id into out (ODG_MIND_ID bytes); 0, and out left empty, when it is too long: a cut id could name another cell
+ * (diagrams.net's ids of one file share their first 20 characters). */
+static int put_id(char *out, const char *id)
 {
-    if (out)
-        snprintf(out, 24, "%s", id);
+    if (!out)
+        return 1;
+    if (strlen(id) >= ODG_MIND_ID) {
+        out[0] = 0;
+        return 0;
+    }
+    memcpy(out, id, strlen(id) + 1);
+    return 1;
 }
 
 /* The node id when the mouse or a script may edit it: a node, shown and not locked. */
@@ -359,7 +367,7 @@ int odg_mind_new(odg_doc *doc, owf_dnum x, owf_dnum y, const char *text, char *i
 static int add_under(odg_doc *doc, const char *parent, int next, const char *text, int both, char *id)
 {
     const owf_dcell *pc = open_node(doc, parent), *root;
-    char *pid, *in, *rootid, kid[24];
+    char *pid, *in, *rootid, kid[ODG_MIND_ID];
     owf_dpage *p;
     owf_dcell *c;
     int r = OWF_OK, unfold = 0;
@@ -545,8 +553,7 @@ int odg_mind_step(const odg_doc *doc, const char *id, odg_mind_dir dir, char *ou
     }
     if (!got)
         return 0;
-    put_id(out, got->id);
-    return 1;
+    return put_id(out, got->id);
 }
 
 const char *odg_mind_why(const odg_doc *doc, const char *node, odg_mind_key key)
@@ -554,6 +561,8 @@ const char *odg_mind_why(const odg_doc *doc, const char *node, odg_mind_key key)
     const owf_dcell *c = node ? owf_dpage_find(odg_page(doc), node) : NULL;
     if (!odg_mind_is_node(c))
         return "no map node by that id";
+    if (strlen(node) >= ODG_MIND_ID)
+        return "its id is longer than 63 characters";
     if (!odg_mind_root(doc, node))
         return "its map loops back on itself";
     if ((key == ODG_MKEY_SIBLING || key == ODG_MKEY_SIBLING_ABOVE) && !odg_mind_parent(doc, node))
@@ -602,7 +611,7 @@ static void step_side(const odg_doc *doc, const char *node, int right, char *out
 int odg_mind_key_do(odg_doc *doc, const char *node, odg_mind_key key, char *out, const char **why)
 {
     const owf_dcell *c = node ? owf_dpage_find(odg_page(doc), node) : NULL;
-    char made[24] = "";
+    char made[ODG_MIND_ID] = "";
     int rc = OWF_OK, both;
     out[0] = 0;
     if (!odg_mind_is_node(c)) {
@@ -610,7 +619,11 @@ int odg_mind_key_do(odg_doc *doc, const char *node, odg_mind_key key, char *out,
             *why = odg_mind_why(doc, node, key);
         return OWF_ERR_FORMAT;
     }
-    put_id(out, node);
+    if (!put_id(out, node)) {           /* never a cut id */
+        if (why)
+            *why = odg_mind_why(doc, node, key);
+        return OWF_ERR_FORMAT;
+    }
     both = odg_mind_both(doc, node);
     switch (key) {
     case ODG_MKEY_CHILD: rc = odg_mind_add_child(doc, node, "", both, made); break;
@@ -619,9 +632,9 @@ int odg_mind_key_do(odg_doc *doc, const char *node, odg_mind_key key, char *out,
         rc = odg_mind_add_sibling(doc, node, key == ODG_MKEY_SIBLING_ABOVE, "", both, made);
         break;
     case ODG_MKEY_LEFT:
-    case ODG_MKEY_RIGHT: step_side(doc, node, key == ODG_MKEY_RIGHT, out); return OWF_OK;
+    case ODG_MKEY_RIGHT: step_side(doc, node, key == ODG_MKEY_RIGHT, made); break;   /* into made: out keeps node */
     case ODG_MKEY_UP:
-    case ODG_MKEY_DOWN: odg_mind_step(doc, node, key == ODG_MKEY_UP ? ODG_MIND_PREV : ODG_MIND_NEXT, out); return OWF_OK;
+    case ODG_MKEY_DOWN: odg_mind_step(doc, node, key == ODG_MKEY_UP ? ODG_MIND_PREV : ODG_MIND_NEXT, made); break;
     case ODG_MKEY_FOLD:
     case ODG_MKEY_FOLD_ON:
     case ODG_MKEY_FOLD_OFF:

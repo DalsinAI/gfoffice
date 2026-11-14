@@ -64,7 +64,7 @@ static void check_at(const char *id, long x, long y)
 
 static void test_build_and_layout(void)
 {
-    char r[24], a[24], b[24], a1[24], a2[24], a0[24], got[24];
+    char r[ODG_MIND_ID], a[ODG_MIND_ID], b[ODG_MIND_ID], a1[ODG_MIND_ID], a2[ODG_MIND_ID], a0[ODG_MIND_ID], got[ODG_MIND_ID];
     const owf_dcell *kids[4];
     int steps;
     fresh();
@@ -118,7 +118,7 @@ static void test_build_and_layout(void)
 
 static void test_edits(void)
 {
-    char r[24], a[24], b[24], a1[24], a2[24], got[24];
+    char r[ODG_MIND_ID], a[ODG_MIND_ID], b[ODG_MIND_ID], a1[ODG_MIND_ID], a2[ODG_MIND_ID], got[ODG_MIND_ID];
     const owf_dcell *kids[4];
     int steps, n;
     fresh();
@@ -186,7 +186,7 @@ static void test_edits(void)
  * connectors and a locked layer are refused without hanging. */
 static void test_odd_maps(void)
 {
-    char r[24], a[24], b[24], free_shape[24], e[24];
+    char r[ODG_MIND_ID], a[ODG_MIND_ID], b[ODG_MIND_ID], free_shape[ODG_MIND_ID], e[ODG_MIND_ID];
     const owf_dcell *kids[4];
     fresh();
     odg_mind_new(&doc, PX(100), PX(200), "Plan", r);
@@ -209,7 +209,7 @@ static void test_odd_maps(void)
     CHECK_N(odg_layer_lock(&doc, 0, 0), OWF_OK);
     {                                                     /* a child on a locked layer: its branch stays */
         int at;
-        char a1[24];
+        char a1[ODG_MIND_ID];
         odg_mind_add_child(&doc, a, "One", 0, a1);
         CHECK_N(odg_layer_add(&doc, "Top", &at), OWF_OK);
         owf_dcell_set(&cell(a1)->parent, odg_layer_at(&doc, 1)->id);
@@ -242,7 +242,7 @@ static void test_odd_maps(void)
  * a map laid out both ways; and the reasons a key gives when it can't be done. */
 static void test_keys(void)
 {
-    char r[24], a[24], b[24], a1[24], b1[24], got[24], made[24];
+    char r[ODG_MIND_ID], a[ODG_MIND_ID], b[ODG_MIND_ID], a1[ODG_MIND_ID], b1[ODG_MIND_ID], got[ODG_MIND_ID], made[ODG_MIND_ID];
     const owf_dcell *kids[4];
     const char *why;
     int steps;
@@ -355,7 +355,7 @@ static void test_keys(void)
 /* Budgie's #198 notes: a locked node keeps its place through a layout, and a map past ODG_MIND_MAX nodes says so. */
 static void test_locked_and_big(void)
 {
-    char r[24], a[24], b[24], b1[24], id[24];
+    char r[ODG_MIND_ID], a[ODG_MIND_ID], b[ODG_MIND_ID], b1[ODG_MIND_ID], id[ODG_MIND_ID];
     int i;
     owf_dpage *p;
     fresh();
@@ -398,6 +398,51 @@ static void test_locked_and_big(void)
     done();
 }
 
+/* Na'Toth's #198 note: an id from a diagrams.net file is often 24 characters or more ("WIyWlLk6GJQsqaUBKTNV-123");
+ * a step hands it back whole, and one too long for the answer is no answer, never a cut id. */
+static void test_long_ids(void)
+{
+    static const char long_id[] = "WIyWlLk6GJQsqaUBKTNV-123";
+    char r[ODG_MIND_ID], got[ODG_MIND_ID], too[ODG_MIND_ID + 8];
+    owf_dpage *p;
+    owf_dcell *c, *e;
+    int layer;
+    fresh();
+    odg_mind_new(&doc, PX(100), PX(200), "Plan", r);
+    p = odg_page(&doc);
+    layer = owf_dpage_index(p, cell(r)->parent);
+    c = owf_dpage_add(p, long_id, p->cells[layer].id, OWF_DCELL_VERTEX);
+    owf_dcell_set(&c->style, ODG_MIND_NODE_STYLE);
+    e = owf_dpage_add(p, "e-long", p->cells[layer].id, OWF_DCELL_EDGE);
+    owf_dcell_set(&e->source, r);
+    owf_dcell_set(&e->target, long_id);
+    CHECK_N(odg_mind_step(&doc, r, ODG_MIND_CHILD, got), 1);
+    CHECK_S(got, long_id);
+    CHECK_N(odg_mind_step(&doc, long_id, ODG_MIND_PARENT, got), 1);
+    CHECK_S(got, r);
+
+    memset(too, 'x', sizeof too - 1);                     /* longer than an answer holds: 0, nothing cut */
+    too[sizeof too - 1] = 0;
+    p = odg_page(&doc);
+    c = owf_dpage_add(p, too, p->cells[owf_dpage_index(p, cell(r)->parent)].id, OWF_DCELL_VERTEX);
+    owf_dcell_set(&c->style, ODG_MIND_NODE_STYLE);
+    owf_dcell_set(&owf_dpage_find(p, "e-long")->target, too);
+    strcpy(got, "old");
+    CHECK_N(odg_mind_step(&doc, r, ODG_MIND_CHILD, got), 0);
+    CHECK_S(got, "");
+    {                                                     /* a key on it is refused, not done on a cut id */
+        const char *why = NULL;
+        CHECK_N(odg_mind_key_do(&doc, too, ODG_MKEY_CHILD, got, &why), OWF_ERR_FORMAT);
+        CHECK_S(why, "its id is longer than 63 characters");
+        CHECK_S(got, "");
+        CHECK_N(odg_mind_key_do(&doc, long_id, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+        CHECK_S(got, long_id);                            /* a 24-character id is whole */
+        CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+        CHECK_S(got, r);                                  /* its child is too long to name: it stays */
+    }
+    done();
+}
+
 int main(void)
 {
     test_build_and_layout();
@@ -405,6 +450,7 @@ int main(void)
     test_odd_maps();
     test_keys();
     test_locked_and_big();
+    test_long_ids();
     printf("diagram mind map: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

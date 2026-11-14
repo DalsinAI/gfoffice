@@ -19,6 +19,7 @@
 #define ODG_MIND_DEPTH 64                /* levels a walk up or down goes */
 #define ODG_MIND_HGAP OWF_DNUM(40)       /* across from a node to its children */
 #define ODG_MIND_VGAP OWF_DNUM(10)       /* between one branch and the next */
+#define ODG_MIND_ID 64                   /* an id's bytes with its NUL, as ODG_EDIT_ID: the size of the ids handed back */
 
 /* The styles new nodes and branches get. */
 #define ODG_MIND_ROOT_STYLE "ellipse;whiteSpace=wrap;html=1;treeFolding=1;treeMoving=1;"
@@ -42,11 +43,11 @@ int odg_mind_both(const odg_doc *doc, const char *id);
 /* 1 when the node is folded (its branch hidden). */
 int odg_mind_folded(const owf_dcell *c);
 /* The arrow keys: the node next to id that way (the parent, the first child, the sibling above or below) into
- * out (at least 24 bytes); 0 when there is none. A folded node's children are not stepped into. */
+ * out (ODG_MIND_ID bytes); 0 when there is none, or its id is longer than out holds. A folded node's children are not stepped into. */
 int odg_mind_step(const odg_doc *doc, const char *id, odg_mind_dir dir, char *out);
 
 /* Edits: one Undo step each, the map laid out again after it (both sides when both is 1). Ids come back in id (at
- * least 24 bytes) when it isn't NULL. OWF_ERR_FORMAT when a node named isn't one, or is hidden or locked;
+ * ODG_MIND_ID bytes) when it isn't NULL. OWF_ERR_FORMAT when a node named isn't one, or is hidden or locked;
  * OWF_ERR_MEMORY. */
 /* A new map: its root at x, y on the current layer. */
 int odg_mind_new(odg_doc *doc, owf_dnum x, owf_dnum y, const char *text, char *id);
@@ -75,14 +76,14 @@ typedef enum {
     ODG_MKEY_DELETE, ODG_MKEY_LAYOUT
 } odg_mind_key;
 
-/* The key done on node, keeping the map's sides (odg_mind_both). OWF_OK with the node to select now in out (at
- * least 24 bytes): the new node for Tab and Return, the node stepped to (node itself at the end of the way), the
+/* The key done on node, keeping the map's sides (odg_mind_both). OWF_OK with the node to select now in out
+ * (ODG_MIND_ID bytes): the new node for Tab and Return, the node stepped to (node itself at the end of the way), the
  * next sibling, the one before or the parent after Del, and node for the rest. Otherwise the edit's error, and
  * when why isn't NULL, *why says why in words (odg_mind_why). */
 int odg_mind_key_do(odg_doc *doc, const char *node, odg_mind_key key, char *out, const char **why);
-/* Why key failed on node, in words: "no map node by that id", "its map loops back on itself", "a map's root has
- * no siblings", "it is at the end of its row already", "it has no children", or "not a map node that can be
- * changed (hidden or locked?)". */
+/* Why key failed on node, in words: "no map node by that id", "its id is longer than 63 characters", "its map
+ * loops back on itself", "a map's root has no siblings", "it is at the end of its row already", "it has no
+ * children", or "not a map node that can be changed (hidden or locked?)". */
 const char *odg_mind_why(const odg_doc *doc, const char *node, odg_mind_key key);
 
 #endif
