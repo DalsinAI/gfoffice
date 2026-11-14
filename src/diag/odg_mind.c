@@ -201,8 +201,9 @@ static int show_folds(owf_dpage *p, int top, int open)
 }
 
 /* The children from walk position from, count of them, put beside the node at position at on side (1 right, -1
- * left), centred on it, one under the other. */
-static void place(owf_dpage *p, int at, int from, int count, int side)
+ * left), centred on it, one under the other. A locked node (or one on a locked layer) keeps its place, as the mouse
+ * leaves it alone; its branch is still laid out from where it is. */
+static void place(const odg_doc *doc, owf_dpage *p, int at, int from, int count, int side)
 {
     const owf_dcell *c = &p->cells[walk.cell[at]];
     owf_dnum total = 0, y;
@@ -213,6 +214,10 @@ static void place(owf_dpage *p, int at, int from, int count, int side)
     for (k = from; k < from + count; k++) {
         owf_dcell *kid = &p->cells[walk.cell[k]];
         c = &p->cells[walk.cell[at]];
+        if (odg_cell_locked(doc, kid)) {
+            y += walk.span[k] + ODG_MIND_VGAP;
+            continue;
+        }
         kid->geo.y = y + (walk.span[k] - kid->geo.height) / 2;
         kid->geo.x = side > 0 ? c->geo.x + c->geo.width + ODG_MIND_HGAP : c->geo.x - ODG_MIND_HGAP - kid->geo.width;
         y += walk.span[k] + ODG_MIND_VGAP;
@@ -221,7 +226,7 @@ static void place(owf_dpage *p, int at, int from, int count, int side)
 
 /* The tree from the root at index top laid out: the root stays where it is; its children go to its right (both:
  * the first half right, the rest left), each branch on the side its first node is on. */
-static void lay_out(owf_dpage *p, int top, int both)
+static void lay_out(const odg_doc *doc, owf_dpage *p, int top, int both)
 {
     static signed char side[ODG_MIND_MAX];
     int i, k;
@@ -241,13 +246,13 @@ static void lay_out(owf_dpage *p, int top, int both)
             right = (n + 1) / 2;
         for (k = f; k < f + n; k++)
             side[k] = (signed char)(k - f < right ? side[i] : -side[i]);
-        place(p, i, f, right, side[i]);
+        place(doc, p, i, f, right, side[i]);
         if (right < n)
-            place(p, i, f + right, n - right, -side[i]);
+            place(doc, p, i, f + right, n - right, -side[i]);
     }
     for (i = 1; i < walk.n; i++) {       /* the branches drawn from box to box again */
         int e = edge_in(p, p->cells[walk.cell[i]].id);
-        if (e >= 0)
+        if (e >= 0 && !odg_cell_locked(doc, &p->cells[e]) && !odg_cell_locked(doc, &p->cells[walk.cell[i]]))
             p->cells[e].geo.npoints = 0;
     }
 }
@@ -262,7 +267,7 @@ static int finish(odg_doc *doc, const char *rootid, int both, const char *openid
         return OWF_OK;                   /* the whole map went */
     if ((r = show_folds(p, top, openid ? owf_dpage_index(p, openid) : -1)) != OWF_OK)
         return r;
-    lay_out(p, top, both);
+    lay_out(doc, p, top, both);
     return OWF_OK;
 }
 
@@ -549,4 +554,121 @@ int odg_mind_step(const odg_doc *doc, const char *id, odg_mind_dir dir, char *ou
     if (!got)
         return 0;
     return put_id(out, got->id);
+}
+
+const char *odg_mind_why(const odg_doc *doc, const char *node, odg_mind_key key)
+{
+    const owf_dcell *c = node ? owf_dpage_find(odg_page(doc), node) : NULL;
+    if (!odg_mind_is_node(c))
+        return "no map node by that id";
+    if (strlen(node) >= ODG_MIND_ID)
+        return "its id is longer than 63 characters";
+    if (!odg_mind_root(doc, node))
+        return "its map loops back on itself";
+    if ((key == ODG_MKEY_SIBLING || key == ODG_MKEY_SIBLING_ABOVE) && !odg_mind_parent(doc, node))
+        return "a map's root has no siblings";
+    if ((key == ODG_MKEY_MOVE_UP || key == ODG_MKEY_MOVE_DOWN) && odg_mind_parent(doc, node))
+        return "it is at the end of its row already";
+    if ((key == ODG_MKEY_FOLD || key == ODG_MKEY_FOLD_ON || key == ODG_MKEY_FOLD_OFF) &&
+        !odg_mind_children(doc, node, NULL, 0))
+        return "it has no children";
+    return "not a map node that can be changed (hidden or locked?)";
+}
+
+/* 1 when c's middle is left of the middle of its map's root: the left side of a map laid out both ways. */
+static int on_left(const odg_doc *doc, const owf_dcell *c, const owf_dcell *root)
+{
+    owf_dnum a[4], b[4];
+    if (!owf_dcell_box(odg_page(doc), c, a) || !owf_dcell_box(odg_page(doc), root, b))
+        return 0;
+    return a[0] + a[2] / 2 < b[0] + b[2] / 2;
+}
+
+/* The arrow keys: towards the root is back (left on the right side, right on the left side). The root steps to
+ * its first open child on that side. */
+static void step_side(const odg_doc *doc, const char *node, int right, char *out)
+{
+    const owf_dcell *c = owf_dpage_find(odg_page(doc), node), *root = odg_mind_root(doc, node);
+    if (!root)
+        return;
+    if (c == root) {
+        int i, n = odg_mind_folded(c) ? 0 : odg_mind_children(doc, node, NULL, 0);
+        const owf_dcell **kids = n ? (const owf_dcell **)owf_malloc((size_t)n * sizeof *kids) : NULL;
+        if (!kids)
+            return;
+        odg_mind_children(doc, node, kids, n);
+        for (i = 0; i < n; i++)
+            if (on_left(doc, kids[i], root) != right) {
+                put_id(out, kids[i]->id);
+                break;
+            }
+        owf_free(kids);
+        return;
+    }
+    odg_mind_step(doc, node, on_left(doc, c, root) == right ? ODG_MIND_PARENT : ODG_MIND_CHILD, out);
+}
+
+int odg_mind_key_do(odg_doc *doc, const char *node, odg_mind_key key, char *out, const char **why)
+{
+    const owf_dcell *c = node ? owf_dpage_find(odg_page(doc), node) : NULL;
+    char made[ODG_MIND_ID] = "";
+    int rc = OWF_OK, both;
+    out[0] = 0;
+    if (!odg_mind_is_node(c)) {
+        if (why)
+            *why = odg_mind_why(doc, node, key);
+        return OWF_ERR_FORMAT;
+    }
+    if (!put_id(out, node)) {           /* never a cut id */
+        if (why)
+            *why = odg_mind_why(doc, node, key);
+        return OWF_ERR_FORMAT;
+    }
+    both = odg_mind_both(doc, node);
+    switch (key) {
+    case ODG_MKEY_CHILD: rc = odg_mind_add_child(doc, node, "", both, made); break;
+    case ODG_MKEY_SIBLING:
+    case ODG_MKEY_SIBLING_ABOVE:
+        rc = odg_mind_add_sibling(doc, node, key == ODG_MKEY_SIBLING_ABOVE, "", both, made);
+        break;
+    case ODG_MKEY_LEFT:
+    case ODG_MKEY_RIGHT: step_side(doc, node, key == ODG_MKEY_RIGHT, made); break;   /* into made: out keeps node */
+    case ODG_MKEY_UP:
+    case ODG_MKEY_DOWN: odg_mind_step(doc, node, key == ODG_MKEY_UP ? ODG_MIND_PREV : ODG_MIND_NEXT, made); break;
+    case ODG_MKEY_FOLD:
+    case ODG_MKEY_FOLD_ON:
+    case ODG_MKEY_FOLD_OFF:
+        rc = odg_mind_fold(doc, node, key == ODG_MKEY_FOLD ? !odg_mind_folded(c) : key == ODG_MKEY_FOLD_ON, both);
+        break;
+    case ODG_MKEY_MOVE_UP:
+    case ODG_MKEY_MOVE_DOWN: rc = odg_mind_move(doc, node, key == ODG_MKEY_MOVE_UP ? -1 : 1, both); break;
+    case ODG_MKEY_DELETE:                 /* the next one picked before the branch goes */
+        if (!odg_mind_step(doc, node, ODG_MIND_NEXT, made) && !odg_mind_step(doc, node, ODG_MIND_PREV, made) &&
+            !odg_mind_step(doc, node, ODG_MIND_PARENT, made))
+            made[0] = 0;
+        rc = odg_mind_delete(doc, node, both);
+        if (rc == OWF_OK)
+            put_id(out, made);
+        made[0] = 0;
+        break;
+    case ODG_MKEY_LAYOUT: rc = odg_mind_layout(doc, node, both); break;
+    }
+    if (rc != OWF_OK) {
+        if (why)
+            *why = odg_mind_why(doc, node, key);
+        return rc;
+    }
+    if (made[0])
+        put_id(out, made);
+    return OWF_OK;
+}
+
+int odg_mind_whole(const odg_doc *doc, const char *id)
+{
+    const owf_dpage *p = odg_page(doc);
+    const owf_dcell *root = odg_mind_root(doc, id);
+    if (!root)
+        return 0;
+    walk_from(p, owf_dpage_index(p, root->id), 1);
+    return !walk.cut;
 }

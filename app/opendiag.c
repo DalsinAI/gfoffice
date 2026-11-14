@@ -54,6 +54,7 @@
 #include "opendiag_rexx.h"
 #include "opendiag_edit.h"
 #include "opendiag_style.h"
+#include "opendiag_mind.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL;   /* labels' sizes: OpenDiskFont */
 struct RxsLib *RexxSysBase = NULL;
@@ -67,9 +68,10 @@ static const char version[] __attribute__((used)) =
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
-    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS,
+    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS, M_MAP_NEW,
     M_TOOL = 100,                        /* M_TOOL + odg_tool */
-    M_SHAPE = 200                        /* M_SHAPE + odg_stencil_at's number */
+    M_SHAPE = 200,                       /* M_SHAPE + odg_stencil_at's number */
+    M_MAP = 300                          /* M_MAP + odg_mind_key */
 };
 
 #define TOOL_ITEM(name, key, t) \
@@ -127,6 +129,18 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Preparation", NULL, 0, 0, (APTR)(M_SHAPE + 5) },
     { NM_ITEM, "Triangle", NULL, 0, 0, (APTR)(M_SHAPE + 6) },
     { NM_ITEM, "Circle", NULL, 0, 0, (APTR)(M_SHAPE + 7) },
+    { NM_TITLE, "Map", NULL, 0, 0, NULL },             /* the map mode (opendiag_mind.h); the keys are in map_keys */
+    { NM_ITEM, "New Map", NULL, 0, 0, (APTR)M_MAP_NEW },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Add Child", NULL, 0, 0, (APTR)(M_MAP + ODG_MKEY_CHILD) },
+    { NM_ITEM, "Add Sibling", NULL, 0, 0, (APTR)(M_MAP + ODG_MKEY_SIBLING) },
+    { NM_ITEM, "Add Sibling Above", NULL, 0, 0, (APTR)(M_MAP + ODG_MKEY_SIBLING_ABOVE) },
+    { NM_ITEM, "Fold or Unfold", NULL, 0, 0, (APTR)(M_MAP + ODG_MKEY_FOLD) },
+    { NM_ITEM, "Move Up", NULL, 0, 0, (APTR)(M_MAP + ODG_MKEY_MOVE_UP) },
+    { NM_ITEM, "Move Down", NULL, 0, 0, (APTR)(M_MAP + ODG_MKEY_MOVE_DOWN) },
+    { NM_ITEM, "Delete Branch", NULL, 0, 0, (APTR)(M_MAP + ODG_MKEY_DELETE) },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Lay Out Map", "M", 0, 0, (APTR)(M_MAP + ODG_MKEY_LAYOUT) },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -833,6 +847,86 @@ static void export_as(const char *format, const char *pattern)
     redraw();
 }
 
+/* ---- The map mode ---- */
+
+/* The one map node selected (opendiag_mind.h), or NULL: the map keys work on it. */
+static const char *map_node(void)
+{
+    return ed.n == 1 && odg_mind_is_node(owf_dpage_find(odg_page(DOC), ed.ids[0])) ? ed.ids[0] : NULL;
+}
+
+/* A map key on the selected node (odg_mind_key_do): the node it leaves selected is picked, a new node's label is
+ * asked for, and a key that can't be done says why on the status line, so typing on is never held up. */
+static void map_key(odg_mind_key key)
+{
+    char node[ODG_EDIT_ID], got[ODG_MIND_ID], line[160];
+    const char *why = "";
+    int rc;
+    if (!map_node()) { set_status("Select one map node first"); redraw(); return; }
+    put_text(node, sizeof node, ed.ids[0]);
+    rc = odg_mind_key_do(DOC, node, key, got, &why);
+    if (rc == OWF_ERR_MEMORY) { tell("The map: not enough memory"); redraw(); return; }
+    if (rc != OWF_OK) {
+        snprintf(line, sizeof line, "Not possible: %.120s", why);
+        set_status(line);
+        redraw();
+        return;
+    }
+    odg_edit_clear(&ed);
+    if (got[0]) odg_edit_select(&ed, got, 0);
+    if (got[0] && !odg_mind_whole(DOC, got)) {
+        snprintf(line, sizeof line, "The map has more than %d nodes: the rest are where they were", ODG_MIND_MAX);
+        set_status(line);
+    }
+    redraw();
+    if (got[0] && (key == ODG_MKEY_CHILD || key == ODG_MKEY_SIBLING || key == ODG_MKEY_SIBLING_ABOVE)) edit_label(got);
+}
+
+/* New Map: its root in the middle of the window, on the current layer (MAPNEW checks the layer), its label asked
+ * for. */
+static void map_new(void)
+{
+    char line[80], x[24], y[24], id[64];
+    owf_dnum_format(odg_page_x(&view, inner_w() / 2), x, sizeof x);
+    owf_dnum_format(odg_page_y(&view, inner_h() / 2), y, sizeof y);
+    snprintf(line, sizeof line, "MAPNEW %s %s", x, y);
+    if (run(line, id, sizeof id) != ODG_RX_OK) { tell(rx.lasterror); redraw(); return; }
+    odg_edit_clear(&ed);
+    odg_edit_select(&ed, id, 0);
+    redraw();
+    edit_label(id);
+}
+
+/* The keys of the map mode, with one map node selected; 1 when the key was one. Tab a child, Return a sibling
+ * (Shift-Return above), Space edits the label, . folds or unfolds, + unfolds, - folds, Del the branch. */
+static int map_vanilla(UWORD code, int shift)
+{
+    if (!map_node()) return 0;
+    switch (code) {
+    case 9: map_key(ODG_MKEY_CHILD); return 1;
+    case 13: map_key(shift ? ODG_MKEY_SIBLING_ABOVE : ODG_MKEY_SIBLING); return 1;
+    case ' ': edit_label(ed.ids[0]); return 1;
+    case '.': map_key(ODG_MKEY_FOLD); return 1;
+    case '+': map_key(ODG_MKEY_FOLD_OFF); return 1;
+    case '-': map_key(ODG_MKEY_FOLD_ON); return 1;
+    case 127: case 8: map_key(ODG_MKEY_DELETE); return 1;
+    }
+    return 0;
+}
+
+/* The arrows step from node to node (Shift-arrows still nudge); Alt-Up and Alt-Down move it among its siblings. */
+static int map_raw(UWORD code, int shift, int alt)
+{
+    if (!map_node() || shift) return 0;
+    switch (code) {
+    case 0x4c: map_key(alt ? ODG_MKEY_MOVE_UP : ODG_MKEY_UP); return 1;
+    case 0x4d: map_key(alt ? ODG_MKEY_MOVE_DOWN : ODG_MKEY_DOWN); return 1;
+    case 0x4f: if (alt) return 0; map_key(ODG_MKEY_LEFT); return 1;
+    case 0x4e: if (alt) return 0; map_key(ODG_MKEY_RIGHT); return 1;
+    }
+    return 0;
+}
+
 /* ---- Menus, mouse and keys ---- */
 
 static void menu_action(ULONG id, struct MenuItem *item)
@@ -840,6 +934,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     char path[512];
     set_status("");
     if (id >= M_TOOL && id < M_TOOL + ODG_TOOL_SHAPE) { set_tool((odg_tool)(id - M_TOOL)); return; }
+    if (id >= M_MAP && id <= M_MAP + ODG_MKEY_LAYOUT) { map_key((odg_mind_key)(id - M_MAP)); return; }
     if (id >= M_SHAPE && id < M_SHAPE + (ULONG)odg_stencil_count()) {
         ed.shape = (int)(id - M_SHAPE);
         set_tool(ODG_TOOL_SHAPE);
@@ -880,6 +975,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_PAGE_PREV: go_page(-1); return;
     case M_PAGE_ADD: add_page(); return;
     case M_LAYERS: layers_window(); return;
+    case M_MAP_NEW: map_new(); return;
     }
     redraw();
 }
@@ -958,6 +1054,7 @@ static void events(void)
         UWORD code = m->Code, qual = m->Qualifier;
         WORD mx = m->MouseX - win->BorderLeft, my = m->MouseY - win->BorderTop;   /* in the inner (GZZ) area */
         int shift = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
+        int alt = (qual & (IEQUALIFIER_LALT | IEQUALIFIER_RALT)) != 0;
         GT_ReplyIMsg(m);
         if (class == IDCMP_MOUSEMOVE) {      /* only the last place of a run of moves is drawn */
             moved = 1;
@@ -990,6 +1087,7 @@ static void events(void)
             else if (code == SELECTUP) release(mx, my);
             break;
         case IDCMP_VANILLAKEY:
+            if (map_vanilla(code, shift)) break;
             if (code == 127 || code == 8) { if (ed.n) { edit_failed(odg_edit_delete(&ed, DOC), "Delete"); redraw(); } }
             else if (code == 13) { if (ed.n) edit_label(ed.ids[0]); }
             else if (code == 27) { odg_edit_clear(&ed); set_tool(ODG_TOOL_SELECT); redraw(); }
@@ -997,7 +1095,9 @@ static void events(void)
             else if (code == '-') menu_action(M_ZOOM_OUT, NULL);
             break;
         case IDCMP_RAWKEY:
-            if (code == 0x4c) nudge_or_scroll(0, -1, shift);
+            if (map_raw(code, shift, alt)) break;
+            if (code == 0x51) { if (ed.n) edit_label(ed.ids[0]); }      /* F2 */
+            else if (code == 0x4c) nudge_or_scroll(0, -1, shift);
             else if (code == 0x4d) nudge_or_scroll(0, 1, shift);
             else if (code == 0x4f) nudge_or_scroll(-1, 0, shift);
             else if (code == 0x4e) nudge_or_scroll(1, 0, shift);
