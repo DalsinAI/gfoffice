@@ -198,8 +198,14 @@ static void test_files(void)
         fputs("\x01\x02 not a plan", f);
         fclose(f);
     }
-    CHECK_N(rx_do("OPEN build/host/rexx-test.junk"), OPJ_RX_ERROR);
-    CHECK_S(ok("GETCELL 1 Name"), "Saved");                                 /* still the plan it had */
+    {
+        unsigned long docs = rx.docs;                                       /* the app's view follows this */
+        CHECK_N(rx_do("OPEN build/host/rexx-test.junk"), OPJ_RX_ERROR);
+        CHECK_S(ok("GETCELL 1 Name"), "Saved");                             /* still the plan it had */
+        CHECK_N(rx.docs, docs);                                             /* a failed OPEN keeps the doc */
+        ok("OPEN build/host/rexx-test.gfproj");
+        CHECK_N(rx.docs, docs + 1);                                         /* even if the new doc reuses the address */
+    }
 
     /* NEW: an empty plan from a date; the file is forgotten. */
     CHECK_N(rx_do("NEW START=someday"), OPJ_RX_ERROR);
@@ -212,7 +218,11 @@ static void test_files(void)
     ok("DELETETASK 2");
     CHECK_S(ok("TASKS"), "1");
     CHECK_N(rx_do("NEW"), OPJ_RX_NOW);
-    ok("NEW FORCE");
+    {
+        unsigned long docs = rx.docs;
+        ok("NEW FORCE");
+        CHECK_N(rx.docs, docs + 1);
+    }
     CHECK_N(rx.doc->plan->start, AT(23, 8, 0));                            /* the plan's start kept */
     CHECK_N(rx_do("DELETETASK 1"), OPJ_RX_ERROR);                          /* nothing there */
 }

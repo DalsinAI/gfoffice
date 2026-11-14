@@ -483,6 +483,7 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         }
         opj_doc_free(doc);
         rx->doc = fresh;
+        rx->docs++;
         if (c == C_OPEN) set_file(rx, a->value[0]);
         else rx->file[0] = 0;
         return OPJ_RX_OK;

@@ -8,7 +8,7 @@
  * commands (OPEN, SAVE, SAVEAS, EXPORT), so a script and the menus do the same thing. Plain GadTools in the
  * screen's font, so it works on any Workbench screen; 68040 code, no FPU needed.
  *
- *   GFOpenProject [FILE]        FILE: a plan (.gfproj, MS Project XML, CSV, MPX or GanttProject .gan)
+ *   GFOpenProject [FILE]        FILE: a plan (.gfproj, MSPDI XML, CSV, MPX or .gan)
  *
  * Keys: cursor keys move the selected cell, Shift with left and right moves the timescale, Return edits the
  * cell, Del deletes the task, Tab indents it and Shift-Tab outdents it.
@@ -68,7 +68,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Save", "S", 0, 0, (APTR)M_SAVE },
     { NM_ITEM, "Save As...", "A", 0, 0, (APTR)M_SAVEAS },
-    { NM_ITEM, "Export MS Project XML...", NULL, 0, 0, (APTR)M_EXPORT_XML },
+    { NM_ITEM, "Export MSPDI XML...", NULL, 0, 0, (APTR)M_EXPORT_XML },
     { NM_ITEM, "Export CSV...", NULL, 0, 0, (APTR)M_EXPORT_CSV },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
@@ -114,7 +114,7 @@ static int fh, fw;                 /* the font's height and an average character
 static int quit_now;
 
 static opj_rexx rx;                /* the plan (rx.doc) and its file (rx.file), shared with the ARexx port */
-static opj_doc *shown;             /* the doc the view was made for: OPEN and NEW replace rx.doc */
+static unsigned long shown;         /* rx.docs + 1 for the doc the view was made for, 0 none yet (OPEN and NEW bump rx.docs) */
 static opj_view view;
 static oldraw *od;
 static int sel_col = OPJ_COL_NAME;
@@ -287,11 +287,11 @@ static int inner_h(void) { return win ? win->GZZHeight : 0; }
 static void view_for_doc(void)
 {
     int zoom = view.zoom, base = view.show_baseline;
-    if (DOC != shown) {
+    if (shown != rx.docs + 1) {
         opj_view_init(&view, DOC, inner_w(), inner_h(), fh + 5, shown ? zoom : OPJ_ZOOM_DAYS);
         view.show_baseline = base;
         view.selected = DOC->plan->ntasks ? 0 : -1;
-        shown = DOC;
+        shown = rx.docs + 1;
     }
     view.width = inner_w();
     view.height = inner_h();
@@ -673,6 +673,10 @@ static void resources_window(void)
     ng.ng_VisualInfo = vi;
     ng.ng_TextAttr = &font_attr;
     ng.ng_LeftEdge = rw->BorderLeft + 8;
+    ng.ng_TopEdge = rw->BorderTop + 2;
+    ng.ng_Width = w - 16;
+    ng.ng_Height = fh + 4;
+    g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)head, GTTX_CopyText, TRUE, TAG_DONE);   /* the column heading */
     ng.ng_TopEdge = rw->BorderTop + 6 + fh + 2;
     ng.ng_Width = w - 16;
     ng.ng_Height = (fh + 2) * lines + 4;
@@ -707,9 +711,6 @@ static void resources_window(void)
     AddGList(rw, eg, ~0, -1, NULL);
     RefreshGList(eg, rw, NULL, -1);
     GT_RefreshWindow(rw, NULL);
-    SetAPen(rw->RPort, 1);
-    Move(rw->RPort, rw->BorderLeft + 12, rw->BorderTop + 4 + font->tf_Baseline);
-    Text(rw->RPort, (STRPTR)head, (WORD)strlen(head));
     while (!done) {
         struct IntuiMessage *m;
         WaitPort(rw->UserPort);
@@ -812,8 +813,8 @@ static void menu_action(ULONG id, struct MenuItem *item)
         else set_status(why);
         break;
     case M_ABOUT:
-        tell(VERSION_TEXT "\nThe project planner of the GFOffice Suite.\n\nPlans in .gfproj, MS Project XML and CSV;\n"
-             "MPX and GanttProject .gan read.\nMIT, Copyright (c) 2026 AmiCradle Team");
+        tell(VERSION_TEXT "\nThe project planner of the GFOffice Suite.\n\nPlans in .gfproj, MSPDI XML and CSV;\n"
+             "MPX and .gan read.\nMIT, Copyright (c) 2026 AmiCradle Team");
         break;
     case M_QUIT: if (may_drop()) quit_now = 1; break;
     case M_UNDO: undo_redo(0); return;
