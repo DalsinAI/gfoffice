@@ -592,3 +592,15 @@ $(FUZZ_OUT)/fuzz_%: tests/fuzz/fuzz_%.c tests/fuzz/driver.c $(OWF_SRC) libowf/in
 # Workstream hooks (docs/openoffice-parity-plan.md, section 4): each stream's host test targets
 # live in its own mk/<stream>.mk, so streams never edit this file at the same time.
 -include $(sort $(wildcard mk/*.mk))
+
+# Markdown in and out (libowf/src/in_md.c, out_md.c): files the test makes itself
+markdown-test: $(OUT)/owconvert
+	python3 tests/markdown/test_markdown.py $(OUT)/owconvert
+
+markdown-check: $(OUT)/owconvert-asan
+	python3 tests/markdown/test_markdown.py $(OUT)/owconvert-asan
+
+test: markdown-test
+check: markdown-check
+
+.PHONY: markdown-test markdown-check

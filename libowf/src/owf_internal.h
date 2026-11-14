@@ -477,7 +477,7 @@ extern const unsigned short owf_pdf_widths[8][224];
 
 /* The formats. */
 extern const owf_format owf_format_fodt, owf_format_wordworth, owf_format_finalwriter;
-extern const owf_format owf_format_text, owf_format_amiga_text, owf_format_ftxt,
+extern const owf_format owf_format_markdown, owf_format_text, owf_format_amiga_text, owf_format_ftxt,
     owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_pdf, owf_format_odt, owf_format_docx,
     owf_format_rtf;
 
