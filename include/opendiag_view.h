@@ -17,6 +17,7 @@
 #define ODG_HANDLE 7                     /* a handle's side in pixels */
 
 typedef struct {
+    int x, y;                            /* the view's top left corner on the target (a window's canvas) */
     int width, height;                   /* the view's size in pixels */
     int zoom;                            /* percent: 100 draws a page pixel as one pixel */
     owf_dnum left, top;                  /* the page point at the view's top left corner */
@@ -29,7 +30,7 @@ typedef struct {
 
 /* A view width by height at 100% with the page's top left corner at its top left. */
 void odg_view_init(odg_view *v, int width, int height);
-/* A page place in the view's pixels, and back (rounded to the nearest hundredth). */
+/* A page place in the target's pixels (the view's x, y added), and back (rounded to the nearest hundredth). */
 long odg_view_x(const odg_view *v, owf_dnum x);
 long odg_view_y(const odg_view *v, owf_dnum y);
 owf_dnum odg_page_x(const odg_view *v, long px);
