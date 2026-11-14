@@ -6,6 +6,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "opendiag_rexx.h"
 #include "opendiag_mind.h"
@@ -199,10 +200,10 @@ static void test_files(void)
     ok("EXPORT build/host/odg-rexx-pdf.out FORMAT pdf");
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");  /* EXPORT keeps the diagram's file */
     CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.pdf"), ODG_RX_ERROR);
-    CHECK_S(rx.lasterror, "SAVEAS: a PDF doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio or .svg)");
+    CHECK_S(rx.lasterror, "SAVEAS: a PDF doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
     CHECK_N(rx_do("EXPORT build/host/x FORMAT DOC"), ODG_RX_ERROR);
-    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF or DRAWIO, not DOC");
+    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF, PNG, ILBM or DRAWIO, not DOC");
 
     /* OPEN won't drop unsaved changes without FORCE */
     snprintf(a, sizeof a, "%s", ok("ADDSHAPE 500 500 10 10"));
@@ -588,6 +589,218 @@ static void test_map_outline(void)
     odg_rexx_free(&rx);
 }
 
+/* ---- D6: the page as a picture (EXPORT to PNG and IFF ILBM through the app's drawer) ---- */
+
+static int pic_calls;
+static owf_dnum pic_box[4];
+static int pic_w, pic_h, pic_fail;
+
+/* stands in for the app: each pixel's colour from its place, so the file's pixels can be checked */
+static unsigned char *fake_picture(void *user, const owf_dnum box[4], int width, int height)
+{
+    unsigned char *rgb;
+    int x, y;
+    (void)user;
+    pic_calls++;
+    memcpy(pic_box, box, sizeof pic_box);
+    pic_w = width;
+    pic_h = height;
+    if (pic_fail) return NULL;
+    rgb = (unsigned char *)malloc((size_t)width * (size_t)height * 3);
+    if (!rgb) return NULL;
+    for (y = 0; y < height; y++)
+        for (x = 0; x < width; x++) {
+            unsigned char *p = rgb + ((size_t)y * (size_t)width + (size_t)x) * 3;
+            p[0] = (unsigned char)(x * 7);
+            p[1] = (unsigned char)(y * 13);
+            p[2] = (unsigned char)(x < width / 2 ? 0x5a : 0xc3);
+        }
+    return rgb;
+}
+
+static unsigned char *pic_read(const char *name, size_t *n)
+{
+    FILE *f = fopen(name, "rb");
+    unsigned char *buf;
+    long len;
+    *n = 0;
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    buf = len > 0 ? (unsigned char *)malloc((size_t)len) : NULL;
+    if (buf && fread(buf, 1, (size_t)len, f) != (size_t)len) { free(buf); buf = NULL; }
+    fclose(f);
+    if (buf) *n = (size_t)len;
+    return buf;
+}
+
+static unsigned long be32(const unsigned char *p)
+{
+    return ((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16) | ((unsigned long)p[2] << 8) | p[3];
+}
+
+/* The ILBM's BMHD size and its BODY (24 planes, ByteRun1) back to RGB rows; the pixels that differ from
+ * fake_picture's, or -1 when the file isn't such an ILBM. */
+static long ilbm_differs(const unsigned char *f, size_t n, int *w, int *h)
+{
+    size_t at = 12, rowbytes, need;
+    const unsigned char *body = NULL;
+    size_t body_len = 0;
+    long bad = 0;
+    int x, y, c, b;
+    *w = *h = 0;
+    if (n < 12 || memcmp(f, "FORM", 4) || memcmp(f + 8, "ILBM", 4) || be32(f + 4) + 8 != n) return -1;
+    while (at + 8 <= n) {
+        unsigned long len = be32(f + at + 4);
+        if (at + 8 + len > n) return -1;
+        if (!memcmp(f + at, "BMHD", 4) && len >= 20) {
+            *w = (f[at + 8] << 8) | f[at + 9];
+            *h = (f[at + 10] << 8) | f[at + 11];
+            if (f[at + 16] != 24 || f[at + 18] != 1) return -1;     /* 24 planes, ByteRun1 */
+        } else if (!memcmp(f + at, "BODY", 4)) {
+            body = f + at + 8;
+            body_len = len;
+        }
+        at += 8 + len + (len & 1);
+    }
+    if (!body || *w < 1 || *h < 1) return -1;
+    rowbytes = (size_t)((*w + 15) / 16) * 2;
+    need = rowbytes * 24 * (size_t)*h;
+    {
+        unsigned char *planes = (unsigned char *)calloc(need, 1);
+        size_t i = 0, o = 0;
+        if (!planes) return -1;
+        while (o < need && i < body_len) {
+            signed char k = (signed char)body[i++];
+            if (k >= 0) {
+                size_t m = (size_t)k + 1;
+                if (i + m > body_len || o + m > need) break;
+                memcpy(planes + o, body + i, m);
+                i += m;
+                o += m;
+            } else if (k != -128) {
+                size_t m = (size_t)(1 - k);
+                if (i >= body_len || o + m > need) break;
+                memset(planes + o, body[i++], m);
+                o += m;
+            }
+        }
+        if (o != need) { free(planes); return -1; }
+        for (y = 0; y < *h; y++)
+            for (x = 0; x < *w; x++) {
+                unsigned char got[3] = { 0, 0, 0 }, want[3];
+                for (c = 0; c < 3; c++)
+                    for (b = 0; b < 8; b++)
+                        if (planes[((size_t)y * 24 + (size_t)(c * 8 + b)) * rowbytes + (size_t)(x >> 3)] &
+                            (0x80 >> (x & 7)))
+                            got[c] |= (unsigned char)(1 << b);
+                want[0] = (unsigned char)(x * 7);
+                want[1] = (unsigned char)(y * 13);
+                want[2] = (unsigned char)(x < *w / 2 ? 0x5a : 0xc3);
+                if (memcmp(got, want, 3)) bad++;
+            }
+        free(planes);
+    }
+    return bad;
+}
+
+static void test_pictures(void)
+{
+    char a[24], b[24], line[160], cells[256];
+    unsigned char *f;
+    size_t n;
+    int w, h;
+    CHECK_N(odg_rexx_init(&rx), OWF_OK);
+    CHECK_N(odg_rexx_format("x.iff"), ODG_FILE_ILBM);
+    CHECK_N(odg_rexx_format("x.ILBM"), ODG_FILE_ILBM);
+    CHECK_N(odg_rexx_format("x.png"), ODG_FILE_PNG);
+
+    /* no app to draw the page: PNG and ILBM are refused, nothing is written */
+    remove("build/host/odg-pic.iff");
+    snprintf(a, sizeof a, "%s", ok("ADDSHAPE 10 20 120 60 STYLE \"rounded=1;\" TEXT Start"));
+    CHECK_N(rx_do("EXPORT build/host/odg-pic.iff"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "build/host/odg-pic.iff: a picture needs the drawn page, which the app makes");
+    f = pic_read("build/host/odg-pic.iff", &n);
+    CHECK(f == NULL);
+    free(f);
+
+    /* the app's drawer: the page's bounds with a 10-pixel margin, at 100% */
+    rx.picture = fake_picture;
+    snprintf(b, sizeof b, "%s", ok("ADDSHAPE 200 40 80 40 STYLE ellipse; TEXT End"));
+    snprintf(line, sizeof line, "CONNECT %s %s", a, b);
+    ok(line);
+    pic_calls = 0;
+    ok("EXPORT build/host/odg-pic.iff");
+    CHECK_N(pic_calls, 1);
+    CHECK_N(pic_box[0], OWF_DNUM(0));
+    CHECK_N(pic_box[1], OWF_DNUM(10));
+    CHECK_N(pic_box[2], OWF_DNUM(290));
+    CHECK_N(pic_box[3], OWF_DNUM(80));
+    CHECK_N(pic_w, 290);
+    CHECK_N(pic_h, 80);
+    f = pic_read("build/host/odg-pic.iff", &n);
+    CHECK(f != NULL);
+    if (f) {
+        CHECK_N(ilbm_differs(f, n, &w, &h), 0);          /* every pixel read back from the 24 planes */
+        CHECK_N(w, 290);
+        CHECK_N(h, 80);
+        free(f);
+    }
+    ok("EXPORT build/host/odg-pic-iff.out FORMAT ILBM");
+    f = pic_read("build/host/odg-pic-iff.out", &n);
+    CHECK(f && n > 12 && !memcmp(f + 8, "ILBM", 4));
+    free(f);
+    CHECK_S(ok("GETFILE"), "");                        /* EXPORT names no file */
+
+    /* PNG: the page drawn with the diagram inside, so it opens again as the same diagram */
+    snprintf(cells, sizeof cells, "%s", ok("CELLS"));
+    ok("EXPORT build/host/odg-pic.png");
+    f = pic_read("build/host/odg-pic.png", &n);
+    CHECK(f && n > 8 && !memcmp(f, "\x89PNG\r\n\x1a\n", 8));
+    if (f && n > 24) {
+        CHECK_N(be32(f + 16), 290);                    /* IHDR width and height */
+        CHECK_N(be32(f + 20), 80);
+    }
+    free(f);
+    ok("NEW FORCE");
+    ok("OPEN build/host/odg-pic.png");
+    CHECK_S(ok("CELLS"), cells);
+    snprintf(line, sizeof line, "GETBOX %s", a);
+    CHECK_S(ok(line), "10 20 120 60");
+    snprintf(line, sizeof line, "GETVALUE %s", a);
+    CHECK_S(ok(line), "Start");
+
+    /* SAVEAS: a PNG opens again, so it can be the diagram's file; an ILBM can't */
+    CHECK_N(rx_do("SAVEAS build/host/odg-pic-as.iff"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: an IFF picture doesn't open again as a diagram (EXPORT writes one; SAVEAS takes "
+                          ".drawio, .svg or .png)");
+    ok("SAVEAS build/host/odg-pic-as.png");
+    CHECK_S(ok("GETFILE"), "build/host/odg-pic-as.png");
+    CHECK_S(ok("ISDIRTY"), "0");
+
+    /* the drawer failing is a failure that says the page couldn't be drawn, and writes nothing; an empty page
+     * and a page too big for a picture are errors */
+    remove("build/host/odg-pic2.iff");
+    pic_fail = 1;
+    CHECK_N(rx_do("EXPORT build/host/odg-pic2.iff"), ODG_RX_FAIL);
+    CHECK_S(rx.lasterror, "build/host/odg-pic2.iff: the page couldn't be drawn (no screen to copy, no memory for 290 "
+                          "by 80 pixels, or the drawing couldn't be read back)");
+    f = pic_read("build/host/odg-pic2.iff", &n);
+    CHECK(f == NULL);
+    free(f);
+    pic_fail = 0;
+    ok("NEW FORCE");
+    pic_calls = 0;
+    CHECK_N(rx_do("EXPORT build/host/odg-pic3.iff"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "build/host/odg-pic3.iff: the page has nothing on it to draw");
+    ok("ADDSHAPE 0 0 5000 10");
+    CHECK_N(rx_do("EXPORT build/host/odg-pic3.png"), ODG_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "the page is 5020 by 30 pixels; a picture is 4096 at most") != NULL);
+    CHECK_N(pic_calls, 0);
+    odg_rexx_free(&rx);
+}
+
 int main(void)
 {
     test_edits();
@@ -598,6 +811,7 @@ int main(void)
     test_many_ids();
     test_map();
     test_map_outline();
+    test_pictures();
     printf("diagram ARexx: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -85,17 +85,17 @@ $(OUT)/test-odg-asan: $(ODG_DEPS) $(OWF_SRC)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) tests/diag/test_odg.c -lz -o $@
 
-ODG_REXX_DEPS = $(ODG_DEPS) src/diag/odg_mind.c include/opendiag_mind.h src/diag/odg_rexx.c include/opendiag_rexx.h tests/diag/test_odg_rexx.c
+ODG_REXX_DEPS = $(ODG_DEPS) src/diag/odg_mind.c include/opendiag_mind.h src/diag/odg_rexx.c include/opendiag_rexx.h src/deck/ow_picture.c include/ow_picture.h tests/diag/test_odg_rexx.c
 
 $(OUT)/test-odg-rexx: $(ODG_REXX_DEPS) $(OWF_SRC)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
-		$(ODG_SRC) src/diag/odg_mind.c src/diag/odg_rexx.c tests/diag/test_odg_rexx.c -lz -o $@
+		$(ODG_SRC) src/diag/odg_mind.c src/diag/odg_rexx.c src/deck/ow_picture.c tests/diag/test_odg_rexx.c -lz -o $@
 
 $(OUT)/test-odg-rexx-asan: $(ODG_REXX_DEPS) $(OWF_SRC)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
-		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_mind.c src/diag/odg_rexx.c \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_mind.c src/diag/odg_rexx.c src/deck/ow_picture.c \
 		tests/diag/test_odg_rexx.c -lz -o $@
 
 # The Style window's sums (src/diag/odg_style.c).
