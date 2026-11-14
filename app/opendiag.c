@@ -504,8 +504,11 @@ static void style_window(void)
     for (i = 0; i < ODG_NPROPS; i++) {
         int l = (int)strlen(odg_prop_title((odg_prop)i)) * fw + 12;
         if (l > lw) lw = l;
-        same[i] = odg_style_common(DOC, ed.list, ed.n, (odg_prop)i, was[i], sizeof was[i]);
-        ticked[i] = same[i] && !strcmp(was[i], "1");
+        if (odg_prop_kind_of((odg_prop)i) == ODG_KIND_SWITCH) {
+            same[i] = odg_style_common(DOC, ed.list, ed.n, (odg_prop)i, was[i], sizeof was[i]);
+            ticked[i] = same[i] && !strcmp(was[i], "1");
+        } else                               /* only a value the field holds: a field left as it was changes nothing */
+            same[i] = odg_style_field(DOC, ed.list, ed.n, (odg_prop)i, was[i], sizeof was[i]);
     }
     w = lw + fw * 16 + 24;
     h = row * (ODG_NPROPS + 1) + 16;

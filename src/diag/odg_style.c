@@ -147,6 +147,19 @@ int odg_style_common(const odg_doc *doc, const char *const *ids, int n, odg_prop
     return 1;
 }
 
+int odg_style_field(const odg_doc *doc, const char *const *ids, int n, odg_prop p, char *out, size_t size)
+{
+    char v[64];
+    put(out, size, "");
+    if (!odg_style_common(doc, ids, n, p, v, sizeof v) || !v[0])
+        return 0;
+    if (!odg_prop_check(p, v, out, size)) {
+        put(out, size, "");
+        return 0;
+    }
+    return 1;
+}
+
 int odg_style_apply(odg_doc *doc, const char *const *ids, int n, odg_prop p, const char *text)
 {
     char value[24];

@@ -143,11 +143,35 @@ static void test_common_and_apply(void)
     done();
 }
 
+/* The window's field starts with a value it can hold, or empty; a fill it can't hold is left as it is. */
+static void test_field(void)
+{
+    char a[24], b[24], out[24];
+    const char *ids[2];
+    fresh();
+    odg_add_shape(&doc, PX(10), PX(10), PX(40), PX(20), "fillColor=light-dark(#ffffff,#121212);fontSize=14;strokeColor=#ABC;", NULL, a);
+    odg_add_shape(&doc, PX(100), PX(10), PX(40), PX(20), "fillColor=#dae8fc;fontSize=14;", NULL, b);
+    ids[0] = a; ids[1] = b;
+    CHECK(!odg_style_field(&doc, ids, 1, ODG_PROP_FILL, out, sizeof out));     /* light-dark(...): not held */
+    CHECK_S(out, "");
+    CHECK(odg_style_field(&doc, ids, 1, ODG_PROP_STROKE, out, sizeof out));    /* as the check writes it */
+    CHECK_S(out, "#aabbcc");
+    CHECK(odg_style_field(&doc, ids, 2, ODG_PROP_FONT_SIZE, out, sizeof out));
+    CHECK_S(out, "14");
+    CHECK(!odg_style_field(&doc, ids, 2, ODG_PROP_FILL, out, sizeof out));     /* they differ */
+    CHECK_S(out, "");
+    CHECK(!odg_style_field(&doc, ids + 1, 1, ODG_PROP_STROKE, out, sizeof out)); /* not set */
+    CHECK_S(out, "");
+    CHECK(strstr(style_of(a), "fillColor=light-dark(#ffffff,#121212)") != NULL);  /* and nothing written */
+    done();
+}
+
 int main(void)
 {
     test_names();
     test_check();
     test_common_and_apply();
+    test_field();
     printf("diagram style: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }
