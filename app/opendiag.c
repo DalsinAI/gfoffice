@@ -377,24 +377,16 @@ static void draw_cb(void *user, oldraw *d, const oldraw_rect *area)
     odg_draw(d, &view, DOC, area);
 }
 
-/* The drag's outline, drawn complemented so the same call takes it off again. */
+/* The drag's outline, drawn complemented by GFOpenLayout (UI-LAYER-RULE: no drawing of our own beside it), so the
+ * same call takes it off again. A connector being drawn shows as the box its two ends span. */
 static int fb_on;
 static oldraw_rect fb;
-static int fb_line;
 
 static void feedback_toggle(void)
 {
-    struct RastPort *rp = win->RPort;
-    if (fb_line) {
-        UBYTE mode = rp->DrawMode;
-        SetDrMd(rp, COMPLEMENT);
-        Move(rp, fb.x, fb.y);
-        Draw(rp, fb.x + fb.w, fb.y + fb.h);
-        SetDrMd(rp, mode);
-    } else if (od) {
-        oldraw_select_box(od, fb.x, fb.y, fb.x + fb.w, fb.y + fb.h);
-        oldraw_flush(od);
-    }
+    if (!od) return;
+    oldraw_select_box(od, fb.x, fb.y, fb.x + fb.w, fb.y + fb.h);
+    oldraw_flush(od);
 }
 
 static void feedback_off(void)
@@ -407,7 +399,6 @@ static void feedback_on(void)
 {
     feedback_off();
     if (!win || !odg_edit_feedback(&ed, &view, DOC, &fb)) return;
-    fb_line = ed.drag == ODG_DRAG_CONNECT;
     feedback_toggle();
     fb_on = 1;
 }
