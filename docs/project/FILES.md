@@ -75,7 +75,8 @@ Written from Microsoft's published Project XML Data Interchange schema reference
 ## MPX (MS Project's older text format, read only)
 
 Read from the published MPX 4.0 record layout and from what MS Project and other programs write;
-`libowf/project/owf_pmpx.c`. A file is MPX when it starts `MPX` and its delimiter.
+`libowf/project/owf_pmpx.c`. MPXJ (LGPL) was run only as a black box on the host; no MPXJ source
+was read. A file is MPX when it starts `MPX` and its delimiter.
 
 - **Records:** one a line, its number first, fields split by the delimiter (the character after
   `MPX`: a comma, a semicolon or a tab), quoted as in CSV.
