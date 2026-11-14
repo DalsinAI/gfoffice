@@ -185,8 +185,51 @@ static void test_dot(void)
     owf_diagram_free(&d);
 }
 
+/* Shapes that are each other's parent (a file can say so): no hang, every shape written once, the loop cut at
+ * the top, and an edge to them still drawn. */
+static void test_loops(void)
+{
+    owf_diagram d;
+    owf_dpage *p;
+    owf_dcell *c;
+    unsigned char *out = NULL;
+    size_t n = 0;
+    int k, i;
+    owf_diagram_init(&d);
+    p = owf_diagram_add_page(&d, "p", "Loop");
+    c = shape(p, "A", "rounded=0;", 0, 0, 40, 40, "Ay");
+    owf_dcell_set(&c->parent, "B");
+    c = shape(p, "B", "rounded=0;", 0, 0, 40, 40, "Bee");
+    owf_dcell_set(&c->parent, "A");
+    c = shape(p, "S", "rounded=0;", 0, 0, 40, 40, "Self");
+    owf_dcell_set(&c->parent, "S");
+    shape(p, "C", "rounded=0;", 100, 0, 40, 40, "Sea");
+    edge(p, "e", "C", "A", "", NULL);
+    edge(p, "f", "C", "S", "", NULL);
+    for (i = 0; i < 70; i++) {            /* a chain of containers deeper than the cut */
+        char id[16], parent[16];
+        snprintf(id, sizeof id, "d%d", i);
+        snprintf(parent, sizeof parent, i ? "d%d" : "1", i - 1);
+        c = shape(p, id, "swimlane;", 0, 0, 10, 10, "deep");
+        owf_dcell_set(&c->parent, parent);
+    }
+    for (k = 0; k < 2; k++) {
+        const char *s;
+        CHECK_N((k ? owf_ddot_write : owf_dmermaid_write)(&d, 0, &out, &n), OWF_OK);
+        s = (const char *)out;
+        CHECK_N(count(s, n, "\"Ay\""), 1);
+        CHECK_N(count(s, n, "\"Bee\""), 1);
+        CHECK_N(count(s, n, "\"Self\""), 1);
+        CHECK_N(count(s, n, "\"deep\""), 70);
+        CHECK(find(s, n, k ? "n4 -> " : "n4 --> ") != NULL);   /* C's edges are there */
+        owf_free(out);
+    }
+    owf_diagram_free(&d);
+}
+
 int main(void)
 {
+    test_loops();
     test_mermaid();
     test_dot();
     printf("diagram graphs: %d checks, %d failed\n", checks, fails);

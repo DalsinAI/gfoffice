@@ -18,12 +18,15 @@
 
 enum { G_MERMAID, G_DOT };
 
+#define MAX_DEPTH 64                     /* containers inside containers, at most; a loop of parents is cut */
+
 typedef struct {
     const owf_dpage *page;
     owf_buf out;
     int fmt;
     int *node;                           /* per cell: its node number (1 on), 0 when it isn't a node */
     int *cluster;                        /* per cell: 1 when shapes are inside it */
+    int *up;                             /* per cell: the shape it is inside (an index), or -1 at the top */
     int links;                           /* Mermaid: the edges written so far */
 } walk;
 
@@ -44,11 +47,10 @@ static int index_of(const owf_dpage *p, const char *id)
     return id ? owf_dpage_index(p, id) : -1;
 }
 
-/* The shape a cell is inside, as an index, or -1 at the top. */
+/* The shape a cell is inside, as an index, or -1 at the top (worked out once, loops cut, in graph_write). */
 static int container_of(const walk *w, const owf_dcell *c)
 {
-    int i = index_of(w->page, c->parent);
-    return i >= 0 && w->node[i] ? i : -1;
+    return w->up[c - w->page->cells];
 }
 
 /* A label's plain text (owf_malloc'd, "" when none), or NULL when memory ran out. */
@@ -264,8 +266,8 @@ static void nodes(walk *w, int parent, int depth)
  * lhead clips it at the cluster's edge. */
 static int inner(const walk *w, int i)
 {
-    int j, found = 1;
-    while (w->cluster[i] && found) {
+    int j, found = 1, depth = 0;
+    while (w->cluster[i] && found && depth++ < MAX_DEPTH) {
         found = 0;
         for (j = 0; j < w->page->ncells; j++)
             if (w->node[j] && container_of(w, &w->page->cells[j]) == i) {
@@ -364,14 +366,29 @@ static int graph_write(const owf_diagram *d, int page, int fmt, unsigned char **
     owf_buf_init(&w.out);
     w.node = calloc((size_t)(p->ncells ? p->ncells : 1), sizeof *w.node);
     w.cluster = calloc((size_t)(p->ncells ? p->ncells : 1), sizeof *w.cluster);
-    if (!w.node || !w.cluster) {
+    w.up = calloc((size_t)(p->ncells ? p->ncells : 1), sizeof *w.up);
+    if (!w.node || !w.cluster || !w.up) {
         free(w.node);
         free(w.cluster);
+        free(w.up);
         return OWF_ERR_MEMORY;
     }
     for (i = 0; i < p->ncells; i++)
         if (is_shape(p, &p->cells[i]))
             w.node[i] = ++n;
+    for (i = 0; i < p->ncells; i++) {
+        int k = index_of(p, p->cells[i].parent);
+        w.up[i] = k >= 0 && w.node[k] && k != i ? k : -1;
+    }
+    for (i = 0; i < p->ncells; i++) {   /* a shape whose parents loop, or go deeper than MAX_DEPTH, goes to the top */
+        int j = w.up[i], steps = 0;
+        while (j >= 0 && j != i && steps < MAX_DEPTH) {
+            j = w.up[j];
+            steps++;
+        }
+        if (j >= 0)
+            w.up[i] = -1;
+    }
     for (i = 0; i < p->ncells; i++) {
         int c = w.node[i] ? container_of(&w, &p->cells[i]) : -1;
         if (c >= 0)
@@ -399,6 +416,7 @@ static int graph_write(const owf_diagram *d, int page, int fmt, unsigned char **
         owf_buf_puts(&w.out, "}\n");
     free(w.node);
     free(w.cluster);
+    free(w.up);
     if (owf_buf_take(&w.out, data, &len) != OWF_OK) {
         *data = NULL;
         return OWF_ERR_MEMORY;
