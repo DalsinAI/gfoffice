@@ -77,6 +77,72 @@ static void builder_place(owf_builder *b, int *para, int *run)
     }
 }
 
+int owf_track_format_add(owf_doc *doc, const char *author, const char *date, const owf_charfmt *before)
+{
+    owf_format_change *c;
+    if (!doc || !before)
+        return 0;
+    if (author && !*author)
+        author = NULL;
+    if (date && !*date)
+        date = NULL;
+    if (doc->nformat_changes == doc->capformat_changes) {
+        int want = doc->capformat_changes ? doc->capformat_changes * 2 : 8;
+        owf_format_change *grown = realloc(doc->format_changes, (size_t)want * sizeof *grown);
+        if (!grown)
+            return 0;
+        doc->format_changes = grown;
+        doc->capformat_changes = want;
+    }
+    c = &doc->format_changes[doc->nformat_changes];
+    memset(c, 0, sizeof *c);
+    c->before = *before;
+    c->author = copy_string(author);
+    c->date = copy_string(date);
+    if ((author && !c->author) || (date && !c->date)) {
+        free(c->author);
+        free(c->date);
+        memset(c, 0, sizeof *c);
+        return 0;
+    }
+    return ++doc->nformat_changes;
+}
+
+void owf_format_begin(owf_format_span *t, owf_builder *b)
+{
+    owf_builder_flush(b);
+    t->story = b->story;
+    builder_place(b, &t->para, &t->from);
+    t->sealed = 0;
+    if (t->from && b->para->runs[t->from - 1].format_change == 0) {
+        b->para->runs[t->from - 1].format_change = -1;
+        t->sealed = 1;
+    }
+}
+
+void owf_format_end(owf_format_span *t, owf_builder *b, int number)
+{
+    owf_story *s = t->story;
+    int i, j, end_para, end_run;
+    owf_builder_flush(b);
+    if (s != b->story)
+        return;                                      /* owf_track_finish opens the seal */
+    builder_place(b, &end_para, &end_run);
+    if (t->sealed && t->para < s->nparas && t->from <= s->paras[t->para].nruns)
+        s->paras[t->para].runs[t->from - 1].format_change = 0;
+    if (number <= 0)
+        return;
+    for (i = t->para; i < s->nparas && i <= end_para; ++i) {
+        owf_para *p = &s->paras[i];
+        int from = i == t->para ? t->from : 0;
+        int to = i == end_para ? end_run : p->nruns;
+        for (j = from; j < to && j < p->nruns; ++j)
+            if (p->runs[j].kind != OWF_RUN_FRAME && p->runs[j].kind != OWF_RUN_IMAGE && !p->runs[j].comment &&
+                !p->runs[j].note)
+                p->runs[j].format_change = number;
+    }
+}
+
 void owf_track_begin(owf_track_span *t, owf_builder *b)
 {
     t->story = b->story;
@@ -238,9 +304,12 @@ static void finish_story(owf_doc *doc, owf_story *s)
     int i, j;
     for (i = 0; i < s->nparas; ++i) {
         owf_para *p = &s->paras[i];
-        for (j = 0; j < p->nruns; ++j)
+        for (j = 0; j < p->nruns; ++j) {
             if (p->runs[j].revision < 0 || p->runs[j].revision > doc->nrevisions)
                 p->runs[j].revision = 0;
+            if (p->runs[j].format_change < 0 || p->runs[j].format_change > doc->nformat_changes)
+                p->runs[j].format_change = 0;   /* 1.11 */
+        }
         if (p->mark_revision < 0 || p->mark_revision > doc->nrevisions)
             p->mark_revision = 0;
     }
@@ -269,7 +338,7 @@ static int story_has_changes(const owf_story *s)
         if (s->paras[i].mark_revision > 0)
             return 1;
         for (j = 0; j < s->paras[i].nruns; ++j)
-            if (s->paras[i].runs[j].revision > 0)
+            if (s->paras[i].runs[j].revision > 0 || s->paras[i].runs[j].format_change > 0)
                 return 1;
     }
     return 0;
@@ -278,13 +347,38 @@ static int story_has_changes(const owf_story *s)
 int owf_doc_has_changes(const owf_doc *doc)
 {
     int i;
-    if (!doc || !doc->nrevisions)
+    if (!doc || (!doc->nrevisions && !doc->nformat_changes))
         return 0;
     if (story_has_changes(&doc->body) || story_has_changes(&doc->header) || story_has_changes(&doc->footer) ||
         story_has_changes(&doc->header_left) || story_has_changes(&doc->footer_left))
         return 1;
     for (i = 0; i < doc->nframes; ++i)
         if (story_has_changes(&doc->frames[i].story))
+            return 1;
+    return 0;
+}
+
+static int story_has_format_changes(const owf_story *s)
+{
+    int i, j;
+    for (i = 0; i < s->nparas; ++i)
+        for (j = 0; j < s->paras[i].nruns; ++j)
+            if (s->paras[i].runs[j].format_change > 0)
+                return 1;
+    return 0;
+}
+
+int owf_doc_has_format_changes(const owf_doc *doc)
+{
+    int i;
+    if (!doc || !doc->nformat_changes)
+        return 0;
+    if (story_has_format_changes(&doc->body) || story_has_format_changes(&doc->header) ||
+        story_has_format_changes(&doc->footer) || story_has_format_changes(&doc->header_left) ||
+        story_has_format_changes(&doc->footer_left))
+        return 1;
+    for (i = 0; i < doc->nframes; ++i)
+        if (story_has_format_changes(&doc->frames[i].story))
             return 1;
     return 0;
 }
@@ -331,6 +425,7 @@ static int accept_story(const owf_doc *doc, const owf_story *src, owf_story *dst
                     continue;
                 dp->runs[dp->nruns] = sp->runs[j];
                 dp->runs[dp->nruns].revision = 0;
+                dp->runs[dp->nruns].format_change = 0;   /* 1.11: accepted, the format is the run's now */
                 dp->nruns++;
             }
         }
@@ -381,6 +476,8 @@ int owf_doc_accepted(const owf_doc *doc, owf_doc **out)
     v->nframes = v->capframes = 0;
     v->revisions = NULL;
     v->nrevisions = v->caprevisions = 0;
+    v->format_changes = NULL;
+    v->nformat_changes = v->capformat_changes = 0;
     if (doc->nframes) {
         v->frames = calloc((size_t)doc->nframes, sizeof *v->frames);
         if (!v->frames)

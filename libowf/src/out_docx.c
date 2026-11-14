@@ -43,11 +43,11 @@ static void put_fonts(owf_buf *out, const char *name)
     owf_buf_puts(out, "\"/>");
 }
 
-static void put_rpr(owf_buf *out, const owf_doc *doc, const owf_charfmt *f, owf_report *report)
+static void put_change_attrs(owf_buf *out, const owf_revision *r, long id);
+
+/* w:rPr's properties, in the schema's order */
+static void put_rpr_props(owf_buf *out, const owf_doc *doc, const owf_charfmt *f, owf_report *report)
 {
-    if (!f->flags && f->font < 0 && !f->size && f->colour == OWF_COLOUR_AUTO)
-        return;
-    owf_buf_puts(out, "<w:rPr>");
     if (f->font >= 0 && f->font < doc->nfonts)
         put_fonts(out, face_name(doc, f->font, report));
     if (f->flags & OWF_BOLD)
@@ -66,7 +66,33 @@ static void put_rpr(owf_buf *out, const owf_doc *doc, const owf_charfmt *f, owf_
         owf_buf_puts(out, "<w:vertAlign w:val=\"superscript\"/>");
     else if (f->flags & OWF_SUB)
         owf_buf_puts(out, "<w:vertAlign w:val=\"subscript\"/>");
+}
+
+/* A run's w:rPr; 1.11: with its tracked format change (w:rPrChange, last, the format before in its own w:rPr) */
+static void put_rpr_change(owf_buf *out, const owf_doc *doc, const owf_charfmt *f, const owf_format_change *fc,
+                           long id, owf_report *report)
+{
+    if (!fc && !f->flags && f->font < 0 && !f->size && f->colour == OWF_COLOUR_AUTO)
+        return;
+    owf_buf_puts(out, "<w:rPr>");
+    put_rpr_props(out, doc, f, report);
+    if (fc) {
+        owf_revision r;
+        r.kind = 0;
+        r.author = fc->author;
+        r.date = fc->date;
+        owf_buf_puts(out, "<w:rPrChange");
+        put_change_attrs(out, &r, id);
+        owf_buf_puts(out, "><w:rPr>");
+        put_rpr_props(out, doc, &fc->before, report);
+        owf_buf_puts(out, "</w:rPr></w:rPrChange>");
+    }
     owf_buf_puts(out, "</w:rPr>");
+}
+
+static void put_rpr(owf_buf *out, const owf_doc *doc, const owf_charfmt *f, owf_report *report)
+{
+    put_rpr_change(out, doc, f, NULL, 0, report);
 }
 
 static void put_section_columns(owf_buf *out, const owf_doc *doc,
@@ -402,7 +428,7 @@ static void put_change_attrs(owf_buf *out, const owf_revision *r, long id)
 
 /* 1.5: a change's w:id, the same each time and none twice (nor a bookmark's): from the story, the runs and
  * paragraph ends before it in the story, and the run (j = nruns for the paragraph's end); four each, for the
- * pieces bookmarks cut a run into. */
+ * pieces bookmarks cut a run into. 1.11: eight each: +4 to +7 are the pieces' format changes (w:rPrChange). */
 static long change_id(const owf_doc *doc, const owf_story *story, const owf_para *para, int j)
 {
     long base = 10000000L, before = 0;
@@ -418,7 +444,7 @@ static long change_id(const owf_doc *doc, const owf_story *story, const owf_para
     if (k > 900) k = 900;
     for (q = story->paras; q < para; ++q)
         before += q->nruns + 1;
-    return base + (long)k * 2000000L + (before + j) * 4L;    /* +1 to +3: a run's later pieces */
+    return base + (long)k * 2000000L + (before + j) * 8L;    /* +1 to +3: a run's later pieces */
 }
 
 static const owf_revision *run_change(const owf_doc *doc, int number)
@@ -660,6 +686,9 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
         /* 1.5: a tracked change's run inside w:ins or w:del (a picture or frame is never one) */
         const owf_revision *chg = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ? run_change(doc, run->revision) : NULL;
         int del = chg && chg->kind == OWF_REV_DELETE;
+        /* 1.11: its tracked format change, in each of its w:r's w:rPr */
+        const owf_format_change *fc = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ?
+                                      OWF_DOC_FORMAT_CHANGE(doc, run->format_change) : NULL;
         const char *open_chg = chg ? (del ? "<w:del" : "<w:ins") : NULL, *close_chg = del ? "</w:del>" : "</w:ins>";
         put_marks(out, &mk, at, run->kind == OWF_RUN_TEXT);
         if(run->kind==OWF_RUN_FIELD)field_instr(run,instr,sizeof instr);
@@ -674,7 +703,7 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
             owf_buf_puts(out,close_chg);
             continue;
         }
-        if(run->kind==OWF_RUN_FIELD){owf_buf_puts(out,"<w:fldSimple w:instr=\"");owf_buf_puts_xml(out,instr);owf_buf_puts(out,"\"><w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,field_shown(run));owf_buf_puts(out,"</w:t></w:r></w:fldSimple>");continue;}
+        if(run->kind==OWF_RUN_FIELD){owf_buf_puts(out,"<w:fldSimple w:instr=\"");owf_buf_puts_xml(out,instr);owf_buf_puts(out,"\"><w:r>");put_rpr_change(out,doc,&run->fmt,fc,change_id(doc,story,para,j)+4,report);owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,field_shown(run));owf_buf_puts(out,"</w:t></w:r></w:fldSimple>");continue;}
         if(link){
             /* 1.3.1: a link inside the document ("#_Toc1", from w:anchor) stays w:anchor, with no relationship */
             if(run->href[0]=='#'){owf_buf_puts(out,"<w:hyperlink w:anchor=\"");owf_buf_puts_xml(out,run->href+1);owf_buf_puts(out,"\">");}
@@ -684,7 +713,7 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
             /* in pieces where bookmarks begin or end inside it */
             const char *text = run->text ? run->text : "";
             size_t len = strlen(text), done = 0;
-            long piece = 0;
+            long piece = 0, fpiece = 0;
             do {
                 size_t next = next_cut(&mk, text, at, done, len);
                 if (chg) {
@@ -694,7 +723,9 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
                     owf_buf_puts(out, ">");
                 }
                 owf_buf_puts(out, "<w:r>");
-                put_rpr(out, doc, &run->fmt, report);
+                put_rpr_change(out, doc, &run->fmt, fc, change_id(doc, story, para, j) + 4 + (fpiece < 3 ? fpiece : 3),
+                               report);
+                ++fpiece;
                 owf_buf_puts(out, del ? "<w:delText xml:space=\"preserve\">" : "<w:t xml:space=\"preserve\">");
                 owf_buf_put_xml(out, text + done, next - done);
                 owf_buf_puts(out, del ? "</w:delText></w:r>" : "</w:t></w:r>");
@@ -707,7 +738,7 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
             at += len;
         } else {
             if(chg){owf_buf_puts(out,open_chg);put_change_attrs(out,chg,change_id(doc,story,para,j));owf_buf_puts(out,">");}
-            owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);
+            owf_buf_puts(out,"<w:r>");put_rpr_change(out,doc,&run->fmt,fc,change_id(doc,story,para,j)+4,report);
             switch(run->kind){case OWF_RUN_TAB:owf_buf_puts(out,"<w:tab/>");break;case OWF_RUN_LINEBREAK:owf_buf_puts(out,"<w:br/>");break;case OWF_RUN_IMAGE:put_drawing(out,doc,run->image);break;
                 case OWF_RUN_FRAME:
                     /* 2.0.16: a header's and a footer's too (their parts' relationships have the pictures' ids) */
