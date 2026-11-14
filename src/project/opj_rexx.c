@@ -158,6 +158,7 @@ static const char *take_rest(const char **s, args *a)
     const char *p = *s, *end = p + strlen(p);
     char *out = a->text + a->used;
     size_t n, room = sizeof a->text - a->used;
+    if (room < 2) return NULL;           /* the words before it filled the text: "too long" */
     while (end > p && (end[-1] == ' ' || end[-1] == '\t')) end--;
     if (*p == '"') {
         const char *q = p;

@@ -271,6 +271,19 @@ static void test_huge_numbers(void)
     CHECK_N(rx_do(name), OPJ_RX_ERROR);
     CHECK(strstr(rx.lasterror, "OPEN: the file name is longer than 255 bytes") != NULL);
     CHECK_S(ok("TASKS"), "1");                                            /* nothing opened */
+
+    /* A word that fills the argument text leaves no room for a /F rest: refused, quoted or not. */
+    {
+        static char line[1100];
+        size_t k;
+        for (k = 0; k < 2; k++) {
+            memcpy(line, "SETCELL 1 ", 10);
+            memset(line + 10, 'c', 1021);
+            strcpy(line + 10 + 1021, k ? " \"hello\"" : " hello");
+            CHECK_N(rx_do(line), OPJ_RX_ERROR);
+            CHECK_S(rx.lasterror, "SETCELL: The arguments are too long");
+        }
+    }
 }
 
 int main(void)
