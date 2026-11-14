@@ -271,7 +271,7 @@ Chunks seen (in how many of the 26): `TEXT`, `STRS`, `SYID`, `FONT`, `STSH`,
   UTF-16, then a u32 [V 26]. The list holds the fonts the document uses,
   plus many script fonts every file lists ("Sylfaen", "Mangal"...).
 - **Formatting** lives in `FDPC` (character runs, 6.4), `FDPP` (paragraph
-  runs, 6.5), `STSH` (style sheets [H]) and `BTEC` and `BTEP` (the run
+  runs, 6.5), `STSH` (paragraph styles, 6.6) and `BTEC` and `BTEP` (the run
   pages' indexes [H]). Table cells: `TCD ` [H]. Fields and hyperlinks:
   `TOKN` [H].
 
@@ -306,15 +306,42 @@ one page and chunk to the next. The fields seen:
 | 0x22D | set on SampleBrochure's en dashes | unknown |
 | 0x21E, 0x244, 0x248, 0x22E, 0x200 | on Sample's hyperlinks | [H]: underline and colour; not read yet |
 
-A run with no 0x20C, 0x224 or 0x202 takes its paragraph style's (`STSH`):
-Sample's plain text says it is Times New Roman 10 point and has none. The
-reader leaves those runs at the default until the styles are read.
+A run's fields are laid over its paragraph style's (6.6): Sample's plain
+text says it is Times New Roman 10 point, has no fields of its own, and its
+default style (style 0) is exactly that [V 1 in 4 saves].
 
 ### 6.5 Paragraph runs: `FDPP` [V 8]
 
-The same pages as `FDPC`, one run per paragraph. Field 0x219 is in most:
-SampleBrochure 5 to 0xB, 60685's headings 4 and its body text 5 [H: the
-paragraph's style, a place in `STSH`]. Not read yet.
+The same pages as `FDPC`, one run per paragraph. The fields seen:
+
+| Id | What | Mark |
+|---|---|---|
+| 0x219 | the paragraph's style: k is style k of 6.6. None: style 0 | [V 2: 60685's headings are 4, its body 5, which give its thumbnail's italic headings and centred text; SampleBrochure's back cover is 0xB, centred 9 point, as its thumbnail shows] |
+| 0x204 | the alignment, over the style's (2: centred) | [V 2 for 2, as above]; SampleBrochure's 6 on its banner's lines: unknown |
+| 0x230, 0x234, 0x213, 0x23C | | unknown ([H]: 0x213 a space in EMU, 76200 = 6 pt) |
+
+### 6.6 Paragraph styles: `STSH` [V 8]
+
+Three `STSH` chunks, numbered 0, 1 and 2. Each starts with u32 its length,
+u32 a count n, u32 and u32 at +0x0C (0 or 4), u32 at +0x10 (the +0x08 and
++0x10 values are the same in all three of a file), then n u32 offsets
+counted from +0x14 [V 8]. In `STSH` 1, entry 2k holds style k's
+character properties and entry 2k+1 its paragraph properties; each is a
+u16 (the entry's length in u16s, less one), a block (u32 length counting
+itself, then 6.3's fields) and a u16 [V 8: every entry's block ends 2 bytes
+before the next entry]. `STSH` 0 has one 6-byte entry per style (u16 0,
+then an i32: -1 for style 0 [H: Publisher's built-in style numbers]);
+`STSH` 2 has one 16-byte entry per `STSH` 1 entry: u16 7, i32 -1, then
+u32 the style's number [V 8].
+
+- Character properties: 6.4's ids. Style 0 is Times New Roman 10 point in
+  Simple, Sample and SampleBrochure [V 3].
+- Paragraph properties: 6.5's ids; also 0x202, 0x206, 0x20C (negative) and
+  0x20D in 60685's style 3, a list-like style ([H]: spaces and a hanging
+  indent, EMU).
+- No style seems to name another as its parent [H: the `STSH` 2 i32 that
+  could is -1 in all 8]. A style without a size or typeface takes style 0's
+  [H].
 
 ## 7. The drawing: `Escher/EscherStm`
 
@@ -449,8 +476,9 @@ path in section 5.1.
 
 ## 12. Not known yet (phase 1's work)
 
-- Paragraph formatting, styles, colour schemes (`STSH`, `FDPP`; `Contents`
-  kinds 0x46-0x8C); underline and colour in `FDPC` (6.4).
+- Paragraph spacing, indents and the alignments other than centred (6.5,
+  6.6); style names; colour schemes (`Contents` kinds 0x46-0x8C); underline
+  and colour in `FDPC` (6.4).
 - Linked text frames (one story through several frames), columns, text
   wrap, layering beyond the back-to-front order, rotation and flips.
 - Tables' cell borders, merged cells, and which paragraph goes in which cell

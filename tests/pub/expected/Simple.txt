@@ -8,13 +8,20 @@ pages 1
 page 1 master 1 frames 2
   frame 0 text box 20.0 22.0 166.0 20.0 mm (emu 720000 792000 6696000 1512000) shape 202 text-id 1 story 0
     para "0123456789"
+      run 0 "0123456789" 10.0pt font "Times New Roman"
     para "0123456789abcdef"
+      run 0 "0123456789abcdef" 10.0pt font "Times New Roman"
     para "0123456789abcdef0123456789abcdef"
+      run 0 "0123456789abcdef01234567" 10.0pt font "Times New Roman"
   frame 1 text box 24.0 49.0 101.0 28.4 mm (emu 864000 1764000 4500000 2786400) shape 202 text-id 3 story 1
     para "0123456789"
+      run 0 "0123456789" 10.0pt font "Times New Roman"
     para "0123456789abcdef"
+      run 0 "0123456789abcdef" 10.0pt font "Times New Roman"
     para "0123456789abcdef0123456789abcdef"
+      run 0 "0123456789abcdef01234567" 10.0pt font "Times New Roman"
     para "0123456789abcdef0123456789abcdef0123456789abcdef"
+      run 0 "0123456789abcdef01234567" 10.0pt font "Times New Roman"
 stories 2
 fonts 27
 font "Times New Roman"

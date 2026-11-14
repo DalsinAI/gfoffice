@@ -197,11 +197,18 @@ typedef struct {
     long grect[4];               /* a group's own coordinate rectangle */
 } eshape;
 
-/* A character run: the text's characters up to end (not counting) take fmt. */
+/* A run of the text (FDPC or FDPP): the characters up to end (not counting)
+ * take props. */
 typedef struct {
     unsigned long end;           /* in characters from TEXT's start */
-    owf_charfmt fmt;
-} crun;
+    span props;                  /* its property fields; empty: none */
+} trun;
+
+/* A paragraph style (STSH): its character and paragraph properties. */
+typedef struct {
+    owf_charfmt chars;
+    owf_align align;
+} pstyle;
 
 typedef struct {
     owf_pub *pub;
@@ -220,8 +227,12 @@ typedef struct {
     int nblips;
     int *font_map;               /* the text storage's font n as res->fonts index; -1 */
     int nfont_map;
-    crun *cruns;                 /* the character runs (FDPC), in the text's order */
+    trun *cruns;                 /* the character runs (FDPC), in the text's order */
     int ncruns, capcruns;
+    trun *pruns;                 /* the paragraph runs (FDPP) */
+    int npruns, cappruns;
+    pstyle *styles;              /* the paragraph styles (STSH 1); style 0 is the default */
+    int nstyles;
 } reader;
 
 /* ---- Small helpers ---- */
@@ -393,6 +404,9 @@ typedef struct {
     unsigned long text_at;       /* TEXT's offset in the stream: the character runs count from it */
     span fdpc[QUILL_MAX_FDPC];   /* the character runs' 512-byte pages, in the directory's order */
     int nfdpc;
+    span fdpp[QUILL_MAX_FDPC];   /* the paragraph runs' */
+    int nfdpp;
+    span stsh1;                  /* the style sheet's styles (STSH number 1) */
 } quill;
 
 static int read_quill_dir(span q, quill *out, owf_report *report)
@@ -418,6 +432,10 @@ static int read_quill_dir(span q, quill *out, owf_report *report)
             }
             else if (!memcmp(q.p + e + 2, "FDPC", 4) && out->nfdpc < QUILL_MAX_FDPC)
                 out->fdpc[out->nfdpc++] = c;
+            else if (!memcmp(q.p + e + 2, "FDPP", 4) && out->nfdpp < QUILL_MAX_FDPC)
+                out->fdpp[out->nfdpp++] = c;
+            else if (!memcmp(q.p + e + 2, "STSH", 4) && rd16(q, e + 6) == 1)
+                out->stsh1 = c;
             else if (!memcmp(q.p + e + 2, "STRS", 4))
                 out->strs = c;
             else if (!memcmp(q.p + e + 2, "SYID", 4))
@@ -483,11 +501,11 @@ static int text_font(const reader *r, span block)
     return zero >= 0 && zero < r->nfont_map ? r->font_map[zero] : -1;
 }
 
+/* Character properties (FDPC's, or a style's) applied onto fmt. */
 static void char_props(const reader *r, span props, owf_charfmt *fmt)
 {
     size_t at = 0;
     field f;
-    owf_charfmt_init(fmt);
     while (next_qfield(props, &at, &f) > 0) {
         switch (f.id) {
         case 0x202:                              /* bold */
@@ -510,12 +528,28 @@ static void char_props(const reader *r, span props, owf_charfmt *fmt)
     }
 }
 
-static void read_fdpc(reader *r, const quill *qd)
+/* Paragraph properties (FDPP's, or a style's): the style (0x219) and the
+ * alignment (0x204; 2 is centred, PUB-FORMAT.md 6.5). */
+static void para_props(span props, int *style, owf_align *align)
+{
+    size_t at = 0;
+    field f;
+    while (next_qfield(props, &at, &f) > 0) {
+        if (f.id == 0x219 && style && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20))
+            *style = (int)f.value;
+        else if (f.id == 0x204 && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20) && f.value == 2)
+            *align = OWF_ALIGN_CENTRE;
+    }
+}
+
+/* FDPC's or FDPP's pages into runs. */
+static void read_runs(reader *r, const quill *qd, const span *chunks, int nchunks,
+                      trun **runs, int *count, int *cap)
 {
     unsigned long last = qd->text_at;
     int k;
-    for (k = 0; k < qd->nfdpc && !r->failed; k++) {
-        span c = qd->fdpc[k];
+    for (k = 0; k < nchunks && !r->failed; k++) {
+        span c = chunks[k];
         size_t page;
         for (page = 0; page + 512 <= c.n && !r->failed; page += 512) {
             span pg = sub(c, page, 512);
@@ -526,7 +560,7 @@ static void read_fdpc(reader *r, const quill *qd)
                 unsigned long end = rd32(pg, 8 + 4 * i);
                 unsigned off = rd16(pg, 8 + 4 * n + 2 * i);
                 span props = { NULL, 0 };
-                crun *cr;
+                trun *tr;
                 if (end <= last || end < qd->text_at || (end - qd->text_at) / 2 > qd->text.n / 2)
                     break;                       /* runs only go forward through the text */
                 if (off >= 8 + 6 * n && off + 4 <= 512) {
@@ -534,25 +568,88 @@ static void read_fdpc(reader *r, const quill *qd)
                     if (len >= 4 && off + len <= 512)
                         props = sub(pg, off + 4, len - 4);
                 }
-                cr = grow(r, r->cruns, &r->capcruns, r->ncruns, sizeof *r->cruns);
-                if (!cr)
+                tr = grow(r, *runs, cap, *count, sizeof **runs);
+                if (!tr)
                     return;
-                r->cruns = cr;
-                cr = &r->cruns[r->ncruns++];
-                cr->end = (end - qd->text_at) / 2;
-                char_props(r, props, &cr->fmt);
+                *runs = tr;
+                tr = &(*runs)[(*count)++];
+                tr->end = (end - qd->text_at) / 2;
+                tr->props = props;
                 last = end;
             }
         }
     }
 }
 
-/* The character formatting at character n of TEXT; *hint walks forward. */
-static const owf_charfmt *fmt_at(const reader *r, unsigned long n, int *hint)
+/* ---- Paragraph styles: STSH number 1 (PUB-FORMAT.md, section 6.6) ----
+ * u32 length, u32 n, u32, u32, u32, then n u32 offsets counted from +0x14.
+ * Entry 2k is style k's character properties, entry 2k+1 its paragraph
+ * properties; each is a u16, then a block (u32 length counting itself,
+ * then fields), then a u16. */
+
+static span stsh_entry(span st, unsigned long n, unsigned long k)
 {
-    while (*hint < r->ncruns && r->cruns[*hint].end <= n)
+    span none = { NULL, 0 };
+    unsigned long at, len;
+    if (k >= n || !has(st, 0x14 + 4 * k, 4))
+        return none;
+    at = 0x14 + rd32(st, 0x14 + 4 * k);
+    len = rd32(st, at + 2);
+    if (!has(st, at + 2, 4) || len < 4 || !has(st, at + 2, len))
+        return none;
+    return sub(st, at + 6, len - 4);
+}
+
+static void read_styles(reader *r, span st)
+{
+    unsigned long n = rd32(st, 4), k;
+    if (st.n < 0x14 || n < 2 || n > 4096 || !has(st, 0x14, 4 * n))
+        return;
+    r->styles = owf_calloc(n / 2, sizeof *r->styles);
+    if (!r->styles) {
+        r->failed = 1;
+        return;
+    }
+    r->nstyles = (int)(n / 2);
+    for (k = 0; k < n / 2; k++) {
+        pstyle *ps = &r->styles[k];
+        owf_charfmt_init(&ps->chars);
+        ps->align = OWF_ALIGN_LEFT;
+        char_props(r, stsh_entry(st, n, 2 * k), &ps->chars);
+        para_props(stsh_entry(st, n, 2 * k + 1), NULL, &ps->align);
+    }
+    /* a style without a size or a typeface takes the default style's
+     * (hypothesis: no style names a parent in the samples) */
+    for (k = 1; k < n / 2; k++) {
+        if (!r->styles[k].chars.size)
+            r->styles[k].chars.size = r->styles[0].chars.size;
+        if (r->styles[k].chars.font < 0)
+            r->styles[k].chars.font = r->styles[0].chars.font;
+    }
+}
+
+/* The run at character n; *hint walks forward. NULL past the last. */
+static const trun *run_at(const trun *runs, int count, unsigned long n, int *hint)
+{
+    while (*hint < count && runs[*hint].end <= n)
         (*hint)++;
-    return *hint < r->ncruns ? &r->cruns[*hint].fmt : NULL;
+    return *hint < count ? &runs[*hint] : NULL;
+}
+
+/* The paragraph at character n: its style and its alignment. */
+static int para_at(const reader *r, unsigned long n, int *hint, owf_align *align)
+{
+    const trun *p = run_at(r->pruns, r->npruns, n, hint);
+    owf_align ignored = OWF_ALIGN_LEFT;
+    int style = 0;
+    if (p)
+        para_props(p->props, &style, &ignored);
+    if (style < 0 || style >= r->nstyles)
+        style = 0;                           /* no styles, or one not in the sheet: the default */
+    *align = style < r->nstyles ? r->styles[style].align : OWF_ALIGN_LEFT;
+    if (p)
+        para_props(p->props, NULL, align);   /* the paragraph's own over its style's */
+    return style;
 }
 
 static int same_fmt(const owf_charfmt *a, const owf_charfmt *b)
@@ -566,25 +663,32 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
     owf_builder b;
     owf_buf run;
     size_t at = from * 2, end = to * 2;
-    int open = 0, hint = 0;
-    owf_charfmt plain;
+    int open = 0, chint = 0, phint = 0, style = 0;
     owf_builder_init(&b, r->pub->res, story);
     owf_buf_init(&run);
-    owf_charfmt_init(&plain);
     if (end > text.n)
         end = text.n & ~(size_t)1;
     while (at < end) {
         unsigned c = rd16(text, at);
-        const owf_charfmt *want = fmt_at(r, at / 2, &hint);
-        if (!want)
-            want = &plain;
-        if (!same_fmt(want, &b.charfmt)) {
+        const trun *cr;
+        owf_charfmt want;
+        if (!open) {                         /* a paragraph starts: its style and alignment */
+            style = para_at(r, at / 2, &phint, &b.parafmt.align);
+        }
+        cr = run_at(r->cruns, r->ncruns, at / 2, &chint);
+        if (style < r->nstyles)
+            want = r->styles[style].chars;   /* the style's, then the run's own over it */
+        else
+            owf_charfmt_init(&want);
+        if (cr)
+            char_props(r, cr->props, &want);
+        if (!same_fmt(&want, &b.charfmt)) {
             if (run.length) {
                 owf_builder_text(&b, (const char *)run.data, run.length);
                 run.length = 0;
             }
             owf_builder_flush(&b);
-            b.charfmt = *want;
+            b.charfmt = want;
         }
         if (c >= 0x20) {
             put_utf16_char(&run, text, &at);
@@ -669,7 +773,9 @@ static void read_text(reader *r)
             r->failed = 1;
         owf_buf_free(&name);
     }
-    read_fdpc(r, &qd);
+    read_styles(r, qd.stsh1);
+    read_runs(r, &qd, qd.fdpc, qd.nfdpc, &r->cruns, &r->ncruns, &r->capcruns);
+    read_runs(r, &qd, qd.fdpp, qd.nfdpp, &r->pruns, &r->npruns, &r->cappruns);
 
     /* STRS: u32 count, u32 8, u32 0xFF, then count story lengths */
     n = rd32(qd.strs, 0);
@@ -711,6 +817,8 @@ static void read_text(reader *r)
         r->nstory_ids = r->story_ids ? (int)n : 0;
     }
 
+    /* the runs point into data: later text (WordArt's) has none */
+    r->ncruns = r->npruns = 0;
     owf_free(data);
 }
 
@@ -1481,6 +1589,8 @@ int owf_pub_read(const unsigned char *data, size_t length, owf_pub **out, owf_re
     owf_free(r.blip_image);
     owf_free(r.font_map);
     owf_free(r.cruns);
+    owf_free(r.pruns);
+    owf_free(r.styles);
     owf_free(r.contents_data);
     owf_cfb_close(&r.cfb);
     if (r.failed) {

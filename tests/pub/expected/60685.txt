@@ -8,25 +8,56 @@ pages 1
 page 1 master 1 frames 43
   frame 0 text box 12.7 38.1 190.5 186.7 mm (emu 457200 1371600 7315200 8092440) shape 202 text-id 2 story 0
     para "Professional Experience"
+      align centre
+      run 0 "Professional Experience" italic 14.0pt font "Garamond"
     para "Caring Registered Nurse with six years experience and excellent communication and teaching skills.  I also have 10 years experience in geriatric care as an LPN prior to my RN experience, two years of which were in a management position."
+      align centre
+      run 0 "Caring Registered Nurse " 11.0pt font "Garamond"
     para ""
     para "Education"
+      align centre
+      run 0 "Education" italic 14.0pt font "Garamond"
     para ""
     para "Work Experience"
+      align centre
+      run 0 "Work Experience" italic 14.0pt font "Garamond"
     para "06/2010 to current: RN"
+      align centre
+      run 0 "06/2010 to current: RN" 11.0pt font "Garamond"
     para "UF Health Shands Hospital"
+      align centre
+      run 0 "UF Health Shands Hospita" 11.0pt font "Garamond"
     para "Currently work in a busy inpatient/outpatient endoscopy unit.  Work as charge nurse 20 hours per week and am responsible for flow of the unit and schedule of patients and staffing.  Have strong communication skills with physicians and interdisciplinary teams.  Also work in pre/post-op area as well as intraoperative, assisting with all types of endoscopic procedures including EGD, colonoscopy, EUS, ERCP.  While at UF Health I have also worked on med surg and IMC units."
+      align centre
+      run 0 "Currently work in a busy" 11.0pt font "Garamond"
     para ""
+      align centre
     para "04/2009-06/2010: LPN"
+      align centre
+      run 0 "04/2009-06/2010: LPN" 11.0pt font "Garamond"
     para "Lake Butler Hospital"
+      align centre
+      run 0 "Lake Butler Hospital" 11.0pt font "Garamond"
     para "Administration of medications, wound care, respiratory treatments and assist patients with ADLs including bathing, toileting, oral care and grooming, dressing and meals as needed.  Also assisted in Emergency Room with triage and IV starts."
+      align centre
+      run 0 "Administration of medica" 11.0pt font "Garamond"
     para ""
+      align centre
     para "10/1999 to 04/2009"
+      align centre
+      run 0 "10/1999 to 04/2009" 11.0pt font "Garamond"
     para "Windsor Manor Nursing Home: LPN, Unit MRSA"
+      align centre
+      run 0 "Windsor Manor Nursing Ho" 11.0pt font "Garamond"
     para "As Unit Manager, responsible for supervision of up to 20 other LPNs and CNAs in the care of a 120 bed unit, to ensure all patient care needs were met in a compassionate and caring manor.  Responsible for MDS data entry and completion as well as Care Plan Coordination and quarterly review/revision.  Met with resident and there families quarterly to ensure their wants and needs were met to their satisfaction and to keep them informed of Plan of Care.  Assisted DON with disciplinary actions, hiring process and annual performance appraisals.  Prior to Unit Manager position, worked as a staff nurse and was responsible for medication administration, wound care and other treatments and documentation of same. "
+      align centre
+      run 0 "As Unit Manager, respons" 11.0pt font "Garamond"
     para ""
     para "References"
+      align centre
+      run 0 "References" italic 14.0pt font "Garamond"
     para ""
+      align centre
   frame 1 text box 12.7 245.6 190.5 17.1 mm (emu 457200 8840153 7315200 9454896) shape 202 text-id 3 story 1
     para ""
   frame 2 text box 12.7 224.8 190.5 17.8 mm (emu 457200 8092440 7315200 8732577) shape 202 text-id 4 story 2

@@ -98,7 +98,9 @@ int main(void)
         const owf_charfmt *plain = run_fmt(&deck->slides[0].objs[0].text, "This is some text");
         CHECK(bold && (bold->flags & OWF_BOLD) && (bold->flags & OWF_ITALIC) && bold->size == 400);
         CHECK(!strcmp(font_name(deck->res, bold), "Arial"));
-        CHECK(plain && !(plain->flags & (OWF_BOLD | OWF_ITALIC)) && plain->size == 0 && plain->font < 0);
+        /* P1b paragraph styles (STSH): the plain text takes the default style's Times New Roman 10 pt */
+        CHECK(plain && !(plain->flags & (OWF_BOLD | OWF_ITALIC)) && plain->size == 200);
+        CHECK(!strcmp(font_name(deck->res, plain), "Times New Roman"));
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
         if (roundtrip && roundtrip->nslides > 0 && roundtrip->slides[0].nobjs > 1) {
@@ -136,16 +138,18 @@ int main(void)
                 if (deck->slides[i].objs[j].kind == OWF_OBJ_PICTURE && deck->slides[i].objs[j].image >= 0) pictures++;
         }
     CHECK(pictures >= 3);
-    /* runs that change inside a paragraph: "Opening hours" bold; the en dashes in Gill Sans MT */
+    /* "Opening hours" is bold (its run) in its style's Gill Sans MT; the hours are the style's italic
+     * Gill Sans MT 11 pt */
     if (deck) {
         int found_bold = 0, found_dash = 0;
         for (i = 0; i < deck->nslides; i++) {
             int j;
             for (j = 0; j < deck->slides[i].nobjs; j++) {
                 const owf_charfmt *f = run_fmt(&deck->slides[i].objs[j].text, "Opening hours");
-                const owf_charfmt *d = run_fmt(&deck->slides[i].objs[j].text, "\xE2\x80\x93");
-                if (f && (f->flags & OWF_BOLD)) found_bold = 1;
-                if (d && !strcmp(font_name(deck->res, d), "Gill Sans MT")) found_dash = 1;
+                const owf_charfmt *d = run_fmt(&deck->slides[i].objs[j].text, "Monday");
+                if (f && (f->flags & OWF_BOLD) && !strcmp(font_name(deck->res, f), "Gill Sans MT")) found_bold = 1;
+                if (d && (d->flags & OWF_ITALIC) && d->size == 220 && !strcmp(font_name(deck->res, d), "Gill Sans MT"))
+                    found_dash = 1;
             }
         }
         CHECK(found_bold && found_dash);
@@ -209,6 +213,38 @@ int main(void)
             CHECK(version == OWF_PUB_UNKNOWN);
         }
     }
+    /* P1b: 60685's headings are style 4 (italic Garamond 14 pt, centred), its body style 5 (Garamond 11 pt,
+     * centred), as its thumbnail shows them centred */
+    CHECK(opp_import_pub_file("tests/pub/samples/60685.pub", &deck, report, &version) == OWF_OK);
+    if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 0) {
+        const owf_story *st = &deck->slides[0].objs[0].text;
+        const owf_charfmt *head = run_fmt(st, "Professional Experience");
+        const owf_charfmt *body = run_fmt(st, "Caring Registered Nurse");
+        CHECK(head && (head->flags & OWF_ITALIC) && !(head->flags & OWF_BOLD) && head->size == 280);
+        CHECK(body && !(body->flags & OWF_ITALIC) && body->size == 220);
+        CHECK(!strcmp(font_name(deck->res, head), "Garamond") && !strcmp(font_name(deck->res, body), "Garamond"));
+        CHECK(st->nparas > 1 && st->paras[0].fmt.align == OWF_ALIGN_CENTRE && st->paras[1].fmt.align == OWF_ALIGN_CENTRE);
+        CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
+        CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
+        if (roundtrip && roundtrip->nslides > 0 && roundtrip->slides[0].nobjs > 0) {
+            const owf_story *again = &roundtrip->slides[0].objs[0].text;
+            const owf_charfmt *h2 = run_fmt(again, "Professional Experience");
+            CHECK(again->nparas > 0 && again->paras[0].fmt.align == OWF_ALIGN_CENTRE);
+            CHECK(h2 && (h2->flags & OWF_ITALIC) && h2->size == 280);
+        }
+        free(odp); odp = NULL; odp_length = 0;
+        owf_deck_free(roundtrip); roundtrip = NULL;
+    }
+    owf_deck_free(deck); deck = NULL;
+    /* Simple has no paragraph runs that name a style: every paragraph is the default style's, left */
+    CHECK(opp_import_pub_file("tests/pub/samples/Simple.pub", &deck, report, &version) == OWF_OK);
+    if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 0) {
+        const owf_charfmt *f = run_fmt(&deck->slides[0].objs[0].text, "0123456789");
+        CHECK(f && f->size == 200 && !strcmp(font_name(deck->res, f), "Times New Roman"));
+        CHECK(deck->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_LEFT);
+    }
+    owf_deck_free(deck); deck = NULL;
+
     owf_report_free(report);
     printf("openpublisher core tests passed (%d checks)\n", checks);
     return failed ? 1 : 0;
