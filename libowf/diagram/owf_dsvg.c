@@ -51,7 +51,7 @@ int owf_dcell_box(const owf_dpage *p, const owf_dcell *c, owf_dnum box[4])
 }
 
 /* 0 when the cell or anything it is inside has visible="0". */
-static int shown(const owf_dpage *p, const owf_dcell *c)
+int owf_dcell_shown(const owf_dpage *p, const owf_dcell *c)
 {
     int depth = 0;
     while (c && depth++ <= MAX_DEPTH) {
@@ -174,7 +174,7 @@ int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4])
     for (i = 0; i < p->ncells; i++) {
         const owf_dcell *c = &p->cells[i];
         owf_dnum b[4];
-        if (!shown(p, c))
+        if (!owf_dcell_shown(p, c))
             continue;
         if (c->kind == OWF_DCELL_VERTEX && owf_dcell_box(p, c, b))
             grow(box, &any, b[0], b[1], b[2], b[3]);
@@ -285,7 +285,7 @@ static const char *colour(const char *style, const char *key, char *buf, size_t 
     return c;
 }
 
-static int has_word(const char *style, const char *word)
+int owf_dstyle_is(const char *style, const char *word)
 {
     char v[8];
     char shape[32];
@@ -368,6 +368,21 @@ static void label_text(owf_buf *out, const char *s, int html)
         } else
             owf_buf_putc(out, *s++);
     }
+}
+
+char *owf_dlabel_text(const char *value, int html, size_t *length)
+{
+    owf_buf b;
+    owf_buf_init(&b);
+    label_text(&b, value ? value : "", html);
+    owf_buf_putc(&b, 0);
+    if (b.failed) {
+        owf_buf_free(&b);
+        return NULL;
+    }
+    if (length)
+        *length = b.length - 1;
+    return (char *)b.data;
 }
 
 /* A label at (x, y): its anchor ("start", "middle", "end") across, and down from y as valign says
@@ -490,13 +505,13 @@ static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
     owf_dnum box[4], header = 0;
     char buf[40];
     const char *style = c->style;
-    int bare = has_word(style, "text") || has_word(style, "edgeLabel");
+    int bare = owf_dstyle_is(style, "text") || owf_dstyle_is(style, "edgeLabel");
 
     if (!owf_dcell_box(p, c, box))
         return;
     if (bare)
         ;
-    else if (has_word(style, "ellipse")) {
+    else if (owf_dstyle_is(style, "ellipse")) {
         owf_buf_puts(b, "<ellipse");
         put_attr_num(b, "cx", box[0] + box[2] / 2);
         put_attr_num(b, "cy", box[1] + box[3] / 2);
@@ -504,7 +519,7 @@ static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
         put_attr_num(b, "ry", box[3] / 2);
         put_paint(b, style, "#ffffff");
         owf_buf_puts(b, " />\n");
-    } else if (has_word(style, "rhombus")) {
+    } else if (owf_dstyle_is(style, "rhombus")) {
         owf_buf_puts(b, "<path d=\"M ");
         put_num(b, box[0] + box[2] / 2); owf_buf_putc(b, ' '); put_num(b, box[1]);
         owf_buf_puts(b, " L "); put_num(b, box[0] + box[2]); owf_buf_putc(b, ' '); put_num(b, box[1] + box[3] / 2);
@@ -528,7 +543,7 @@ static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
         }
         put_paint(b, style, "#ffffff");
         owf_buf_puts(b, " />\n");
-        if (has_word(style, "swimlane")) {
+        if (owf_dstyle_is(style, "swimlane")) {
             header = owf_dnum_parse(style_or(style, "startSize", buf, sizeof buf, "23"));
             if (header > box[3])
                 header = box[3];
@@ -615,7 +630,7 @@ static void put_edge(owf_buf *b, const owf_dpage *p, const owf_dcell *e)
     /* labels placed along it: geometry x is how far, -1 to 1; the offset moves them off the line */
     for (i = 0; i < p->ncells; i++) {
         const owf_dcell *l = &p->cells[i];
-        if (l->kind == OWF_DCELL_VERTEX && l->parent && !strcmp(l->parent, e->id) && shown(p, l)) {
+        if (l->kind == OWF_DCELL_VERTEX && l->parent && !strcmp(l->parent, e->id) && owf_dcell_shown(p, l)) {
             owf_dpoint at = along(pts, n, (long)l->geo.x);
             put_label(b, l->value, l->style, at.x + l->geo.offset.x, at.y + l->geo.offset.y, "middle", "middle", "#ffffff");
         }
@@ -664,7 +679,7 @@ int owf_dsvg_write(const owf_diagram *d, int page, unsigned char **data, size_t 
     for (i = 0; i < p->ncells; i++) {
         const owf_dcell *c = &p->cells[i];
         const owf_dcell *parent = owf_dpage_find(p, c->parent);
-        if (!shown(p, c))
+        if (!owf_dcell_shown(p, c))
             continue;
         if (c->kind == OWF_DCELL_EDGE)
             put_edge(&b, p, c);
