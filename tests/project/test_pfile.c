@@ -829,6 +829,34 @@ static void test_mpx(void)
     owf_project_free(p);
     p = NULL;
 
+    /* A field list that names a field twice: the last copy wins and the first is freed (LeakSanitizer
+     * catches it under make project-check). */
+    {
+        static const char twice[] =
+            "MPX,Microsoft Project for Windows,4.0,ANSI\n"
+            "40,Name,Initials,Group,Name,Initials,Group\n"
+            "50,Ann,A,G1,Anne,AN,G2\n"
+            "60,Name,Predecessors,Name,Predecessors\n"
+            "70,First,,One,\n"
+            "70,Second,1,Two,1FS\n";
+        CHECK_N(owf_project_read((const unsigned char *)twice, sizeof twice - 1, &p), OWF_OK);
+        if (p) {
+            CHECK(p->nresources == 1 && p->ntasks == 2);
+            if (p->nresources == 1) {
+                CHECK_S(p->resources[0].name, "Anne");
+                CHECK_S(p->resources[0].initials, "AN");
+                CHECK_S(p->resources[0].group, "G2");
+            }
+            if (p->ntasks == 2) {
+                CHECK_S(p->tasks[0].name, "One");
+                CHECK_S(p->tasks[1].name, "Two");
+                CHECK(p->tasks[1].nlinks == 1 && p->tasks[1].links[0].pred == 0);
+            }
+        }
+        owf_project_free(p);
+        p = NULL;
+    }
+
     /* Nothing an MPX file holds; MPX is not written. */
     CHECK_N(owf_project_read((const unsigned char *)"MPX,x\r\n99,1\r\n", 13, &p), OWF_ERR_FORMAT);
     CHECK(p == NULL);

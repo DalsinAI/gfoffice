@@ -8,7 +8,8 @@
  *   30 the project (title, calendar, start), 40/41 and 60/61 which fields resource and task records hold
  *   (by name and by number), 50 resources, 70 tasks, 71 task notes, 75 assignments.
  * MPX has no material or cost resources: every resource is read as a work resource. Text is Windows
- * code page 1252 ("ANSI") and is turned into UTF-8.
+ * code page 1252 ("ANSI") and is turned into UTF-8. MPXJ (LGPL) was run only as a black box on the
+ * host to check files both ways; no MPXJ source was read.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_project.h"
@@ -376,8 +377,8 @@ static void resource_record(mpx *m, owf_project *p, char **f, int n)
         if (!*s) continue;
         switch (m->res_fields[i - 1]) {
         case 1: owf_free(r->name); r->name = to_utf8(s, &m->failed); break;
-        case 2: r->initials = to_utf8(s, &m->failed); break;
-        case 3: r->group = to_utf8(s, &m->failed); break;
+        case 2: owf_free(r->initials); r->initials = to_utf8(s, &m->failed); break;
+        case 3: owf_free(r->group); r->group = to_utf8(s, &m->failed); break;
         case 40: if (take_int(&s, &v, NULL)) m->res_ids[at] = v; break;
         case 41:
             if (hundredths(m, s, &v)) {
@@ -425,7 +426,7 @@ static void task_record(mpx *m, owf_project *p, char **f, int n)
         int el, es;
         if (!*s) continue;
         switch (m->task_fields[i - 1]) {
-        case 1: t->name = to_utf8(s, &m->failed); break;
+        case 1: owf_free(t->name); t->name = to_utf8(s, &m->failed); break;   /* a field named twice: the last */
         case 3: if (take_int(&s, &v, NULL)) t->level = v < 1 ? 1 : v > 100 ? 100 : (int)v; break;
         case 21: if (owf_pduration_parse(p, s, &v, &el, &es) == OWF_OK) t->baseline_work = v; break;
         case 31: {
@@ -448,6 +449,7 @@ static void task_record(mpx *m, owf_project *p, char **f, int n)
         case 57: if (date(m, s, 17 * 60, &when)) t->baseline_finish = when, has_baseline = 1; break;
         case 68: if (date(m, s, m->default_time, &when)) t->constraint_date = when; break;
         case 70:
+            owf_free(m->preds[at]);
             if (!(m->preds[at] = owf_malloc(strlen(s) + 1))) m->failed = 1;
             else strcpy(m->preds[at], s);
             break;
