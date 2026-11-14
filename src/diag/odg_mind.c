@@ -50,9 +50,11 @@ static int tree_edge(const owf_dpage *p, const owf_dcell *e)
 static int edge_in(const owf_dpage *p, const char *id)
 {
     int i;
-    for (i = 0; i < p->ncells; i++)
-        if (tree_edge(p, &p->cells[i]) && !strcmp(p->cells[i].target, id))
+    for (i = 0; i < p->ncells; i++) {
+        const owf_dcell *e = &p->cells[i];   /* the cheap test first: the lookups only for a connector to id */
+        if (e->kind == OWF_DCELL_EDGE && e->target && !strcmp(e->target, id) && tree_edge(p, e))
             return i;
+    }
     return -1;
 }
 
@@ -62,7 +64,8 @@ static int edge_to_child(const owf_dpage *p, const char *id, int k)
     int i;
     for (i = 0; i < p->ncells; i++) {
         const owf_dcell *e = &p->cells[i];
-        if (tree_edge(p, e) && !strcmp(e->source, id) && edge_in(p, e->target) == i && k-- == 0)
+        if (e->kind == OWF_DCELL_EDGE && e->source && !strcmp(e->source, id) && tree_edge(p, e) &&
+            edge_in(p, e->target) == i && k-- == 0)
             return i;
     }
     return -1;
@@ -86,7 +89,8 @@ int odg_mind_children(const odg_doc *doc, const char *id, const owf_dcell **out,
         return 0;
     for (i = 0; i < p->ncells; i++) {
         const owf_dcell *e = &p->cells[i];
-        if (tree_edge(p, e) && !strcmp(e->source, id) && edge_in(p, e->target) == i) {
+        if (e->kind == OWF_DCELL_EDGE && e->source && !strcmp(e->source, id) && tree_edge(p, e) &&
+            edge_in(p, e->target) == i) {
             if (n < max && out)
                 out[n] = owf_dpage_find(p, e->target);
             n++;
@@ -111,14 +115,20 @@ const owf_dcell *odg_mind_root(const odg_doc *doc, const char *id)
 
 int odg_mind_both(const odg_doc *doc, const char *id)
 {
-    const owf_dcell *root = odg_mind_root(doc, id), *kids[ODG_MIND_DEPTH];
-    int i, n;
+    const owf_dpage *p = odg_page(doc);
+    const owf_dcell *root = odg_mind_root(doc, id);
+    int i;
     if (!root)
         return 0;
-    n = odg_mind_children(doc, root->id, kids, ODG_MIND_DEPTH);
-    for (i = 0; i < n && i < ODG_MIND_DEPTH; i++)
-        if (kids[i]->geo.x + kids[i]->geo.width <= root->geo.x)
+    for (i = 0; i < p->ncells; i++) {        /* every child, however many */
+        const owf_dcell *e = &p->cells[i], *kid;
+        if (e->kind != OWF_DCELL_EDGE || !e->source || strcmp(e->source, root->id) || !tree_edge(p, e) ||
+            edge_in(p, e->target) != i)
+            continue;
+        kid = owf_dpage_find(p, e->target);
+        if (kid->geo.x + kid->geo.width <= root->geo.x)
             return 1;
+    }
     return 0;
 }
 
@@ -147,7 +157,8 @@ static void walk_from(const owf_dpage *p, int top, int all)
         for (k = 0; k < p->ncells; k++) {
             const owf_dcell *e = &p->cells[k];
             int t;
-            if (!tree_edge(p, e) || strcmp(e->source, c->id) || edge_in(p, e->target) != k)
+            if (e->kind != OWF_DCELL_EDGE || !e->source || strcmp(e->source, c->id) || !tree_edge(p, e) ||
+                edge_in(p, e->target) != k)
                 continue;
             t = owf_dpage_index(p, e->target);
             if (t < 0 || listed(t))
@@ -162,19 +173,25 @@ static void walk_from(const owf_dpage *p, int top, int all)
     }
 }
 
-/* Folding shown: a node under a folded one is hidden, and so is its branch connector. */
-static int show_folds(owf_dpage *p, int top)
+/* Folding shown: a node under a folded one is hidden, and so is its branch connector. Only the branch of open
+ * (the index of a node just unfolded, else -1) is shown again, so a node or connector hidden by hand elsewhere
+ * stays hidden through the map's edits. */
+static int show_folds(owf_dpage *p, int top, int open)
 {
-    static unsigned char hidden[ODG_MIND_MAX];
+    static unsigned char hidden[ODG_MIND_MAX], under[ODG_MIND_MAX];
     int i, k;
     walk_from(p, top, 1);
     hidden[0] = 0;
+    under[0] = walk.cell[0] == open;
     for (i = 0; i < walk.n; i++) {
         int fold = hidden[i] || odg_mind_folded(&p->cells[walk.cell[i]]);
         for (k = walk.first[i]; k < walk.first[i] + walk.nkids[i]; k++) {
             owf_dcell *c = &p->cells[walk.cell[k]];
             int e = edge_in(p, c->id);
             hidden[k] = (unsigned char)fold;
+            under[k] = (unsigned char)(under[i] || walk.cell[k] == open);
+            if (!fold && !under[i])
+                continue;                /* shown already, or hidden by hand: left as it is */
             if (owf_dattrs_set(&c->extra, "visible", fold ? "0" : NULL) != OWF_OK ||
                 (e >= 0 && owf_dattrs_set(&p->cells[e].extra, "visible", fold ? "0" : NULL) != OWF_OK))
                 return OWF_ERR_MEMORY;
@@ -235,14 +252,15 @@ static void lay_out(owf_dpage *p, int top, int both)
     }
 }
 
-/* After an edit: folding shown and the map rootid is the root of laid out again. */
-static int finish(odg_doc *doc, const char *rootid, int both)
+/* After an edit: folding shown (openid: a node just unfolded, or NULL) and the map rootid is the root of laid out
+ * again. */
+static int finish(odg_doc *doc, const char *rootid, int both, const char *openid)
 {
     owf_dpage *p = odg_page(doc);
     int top = rootid ? owf_dpage_index(p, rootid) : -1, r;
     if (top < 0)
         return OWF_OK;                   /* the whole map went */
-    if ((r = show_folds(p, top)) != OWF_OK)
+    if ((r = show_folds(p, top, openid ? owf_dpage_index(p, openid) : -1)) != OWF_OK)
         return r;
     lay_out(p, top, both);
     return OWF_OK;
@@ -339,7 +357,7 @@ static int add_under(odg_doc *doc, const char *parent, int next, const char *tex
     char *pid, *in, *rootid, kid[24];
     owf_dpage *p;
     owf_dcell *c;
-    int r = OWF_OK;
+    int r = OWF_OK, unfold = 0;
     if (!pc || !(root = odg_mind_root(doc, parent)))
         return OWF_ERR_FORMAT;
     pid = dup(pc->id);
@@ -351,7 +369,8 @@ static int add_under(odg_doc *doc, const char *parent, int next, const char *tex
     }
     p = odg_page(doc);
     pc = owf_dpage_find(p, pid);
-    if (odg_mind_folded(pc) && owf_dattrs_set(&((owf_dcell *)pc)->extra, "collapsed", NULL) != OWF_OK)
+    unfold = odg_mind_folded(pc);
+    if (unfold && owf_dattrs_set(&((owf_dcell *)pc)->extra, "collapsed", NULL) != OWF_OK)
         r = OWF_ERR_MEMORY;
     else if (!(c = new_node(p, in, pc->geo.x + pc->geo.width + ODG_MIND_HGAP, pc->geo.y, NODE_W, NODE_H,
                             ODG_MIND_NODE_STYLE, text)))
@@ -364,7 +383,7 @@ static int add_under(odg_doc *doc, const char *parent, int next, const char *tex
             if (next >= 0)
                 move_cell(p, p->ncells - 1, next);
             put_id(id, kid);
-            r = finish(doc, rootid, both);
+            r = finish(doc, rootid, both, unfold ? pid : NULL);
         }
     }
     owf_free(pid); owf_free(in); owf_free(rootid);
@@ -399,6 +418,9 @@ int odg_mind_delete(odg_doc *doc, const char *node, int both)
     if (walk.cut)
         return OWF_ERR_FORMAT;           /* a branch bigger than a walk: not cut in two */
     n = walk.n;
+    for (i = 0; i < n; i++)
+        if (odg_cell_locked(doc, &p->cells[walk.cell[i]]))
+            return OWF_ERR_FORMAT;       /* a locked node in the branch: the branch stays */
     ids = (char **)owf_malloc((size_t)n * sizeof *ids);
     rootid = root == c ? NULL : dup(root->id);
     if (!ids || (root != c && !rootid)) {
@@ -415,7 +437,7 @@ int odg_mind_delete(odg_doc *doc, const char *node, int both)
     else if (r == OWF_OK) {
         for (i = 0; i < n; i++)
             owf_dpage_remove(odg_page(doc), ids[i]);
-        r = odg_end(doc, finish(doc, rootid, both));
+        r = odg_end(doc, finish(doc, rootid, both, NULL));
     }
     for (i = 0; i < n; i++)
         owf_free(ids[i]);
@@ -451,7 +473,7 @@ int odg_mind_move(odg_doc *doc, const char *node, int by, int both)
         w->cells[at] = w->cells[other];
         w->cells[other] = keep;
     }
-    r = odg_end(doc, finish(doc, rootid, both));
+    r = odg_end(doc, finish(doc, rootid, both, NULL));
     owf_free(rootid);
     return r;
 }
@@ -471,7 +493,7 @@ int odg_mind_fold(odg_doc *doc, const char *node, int folded, int both)
     }
     r = owf_dattrs_set(&owf_dpage_find(odg_page(doc), id)->extra, "collapsed", folded ? "1" : NULL);
     if (r == OWF_OK)
-        r = finish(doc, rootid, both);
+        r = finish(doc, rootid, both, folded ? NULL : id);
     r = odg_end(doc, r);
     owf_free(id);
     owf_free(rootid);
@@ -489,7 +511,7 @@ int odg_mind_layout(odg_doc *doc, const char *node, int both)
         owf_free(rootid);
         return OWF_ERR_MEMORY;
     }
-    r = odg_end(doc, finish(doc, rootid, both));
+    r = odg_end(doc, finish(doc, rootid, both, NULL));
     owf_free(rootid);
     return r;
 }

@@ -156,6 +156,16 @@ static void test_edits(void)
     CHECK_N(odg_mind_fold(&doc, a, 0, 0), OWF_OK);
     CHECK(shown(a1) && shown(branch(a1)));
 
+    /* A node hidden by hand stays hidden through the map's edits; only an unfolded branch is shown again. */
+    owf_dattrs_set(&cell(b)->extra, "visible", "0");
+    CHECK_N(odg_mind_add_child(&doc, a, "Four", 0, got), OWF_OK);
+    CHECK(!shown(b));
+    CHECK_N(odg_mind_layout(&doc, a, 0), OWF_OK);
+    CHECK(!shown(b));
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    owf_dattrs_set(&cell(b)->extra, "visible", NULL);
+
     /* Delete: the whole branch and its connectors, one step; Undo puts it back. */
     n = odg_page(&doc)->ncells;
     steps = doc.nundo;
@@ -197,6 +207,19 @@ static void test_odd_maps(void)
     CHECK_N(odg_mind_delete(&doc, a, 0), OWF_ERR_FORMAT);
     CHECK_N(odg_mind_new(&doc, 0, 0, "x", NULL), OWF_ERR_FORMAT);
     CHECK_N(odg_layer_lock(&doc, 0, 0), OWF_OK);
+    {                                                     /* a child on a locked layer: its branch stays */
+        int at;
+        char a1[24];
+        odg_mind_add_child(&doc, a, "One", 0, a1);
+        CHECK_N(odg_layer_add(&doc, "Top", &at), OWF_OK);
+        owf_dcell_set(&cell(a1)->parent, odg_layer_at(&doc, 1)->id);
+        CHECK_N(odg_layer_lock(&doc, 1, 1), OWF_OK);
+        CHECK_N(odg_mind_delete(&doc, a, 0), OWF_ERR_FORMAT);
+        CHECK(cell(a) && cell(a1));
+        CHECK_N(odg_layer_lock(&doc, 1, 0), OWF_OK);
+        CHECK_N(odg_mind_delete(&doc, a, 0), OWF_OK);
+        CHECK(!cell(a) && !cell(a1));
+    }
     done();
 
     fresh();                                              /* a loop: Root -> A -> Root */

@@ -432,6 +432,17 @@ static void test_map(void)
     CHECK_N(rx_do("MAPCHILD nosuch x"), ODG_RX_ERROR);
     CHECK_S(rx.lasterror, "MAPCHILD: no map node by that id");
     CHECK_N(rx_do("MAPPARENT nosuch"), ODG_RX_ERROR);
+    CHECK_N(rx_do("MAPSTEP nosuch UP"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPSTEP: no map node nosuch");
+    {                                                     /* more children than the answer holds: RC 5 */
+        int i, made = 0;
+        snprintf(line, sizeof line, "MAPCHILD %s Many", b);
+        for (i = 0; i < 200; i++) made += rx_do(line) == ODG_RX_OK;
+        CHECK_N(made, 200);
+        snprintf(line, sizeof line, "MAPCHILDREN %s", b);
+        CHECK_N(rx_do(line), ODG_RX_NOW);
+        CHECK(strstr(rx.lasterror, "201 children") != NULL);
+    }
     CHECK_N(rx_do("LOCKLAYER 1"), ODG_RX_OK);
     snprintf(line, sizeof line, "MAPCHILD %s x", a);
     CHECK_N(rx_do(line), ODG_RX_ERROR);

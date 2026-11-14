@@ -761,11 +761,27 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             return ODG_RX_ERROR;
         }
         result[0] = 0;
-        if (c == C_MAPCHILDREN) {
-            const owf_dcell *kids[64];
-            size_t at = 0;
-            int i, n = odg_mind_children(doc, a->value[0], kids, 64);
-            for (i = 0; i < n && i < 64; i++) put_word(result, size, &at, kids[i]->id);
+        if (c == C_MAPCHILDREN) {           /* every child; RC 5 when the answer can't hold them all */
+            size_t at = 0, was;
+            int i, n = odg_mind_children(doc, a->value[0], NULL, 0), cut = 0;
+            {
+                const owf_dcell **kids = n ? (const owf_dcell **)malloc((size_t)n * sizeof *kids) : NULL;
+                if (n && !kids) {
+                    snprintf(rx->lasterror, sizeof rx->lasterror, "MAPCHILDREN: out of memory");
+                    return ODG_RX_FAIL;
+                }
+                odg_mind_children(doc, a->value[0], kids, n);
+                for (i = 0; i < n; i++) {
+                    was = at;
+                    put_word(result, size, &at, kids[i]->id);
+                    if (at == was) cut = 1;
+                }
+                free(kids);
+            }
+            if (cut) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "MAPCHILDREN: %d children, more than the answer holds", n);
+                return ODG_RX_NOW;
+            }
             return ODG_RX_OK;
         }
         got = c == C_MAPROOT ? odg_mind_root(doc, a->value[0]) : odg_mind_parent(doc, a->value[0]);
@@ -783,6 +799,10 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             ;
         if (w == 4) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "MAPSTEP: WAY is PARENT, CHILD, UP or DOWN");
+            return ODG_RX_ERROR;
+        }
+        if (!odg_mind_is_node(owf_dpage_find(odg_page(doc), a->value[0]))) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "MAPSTEP: no map node %.100s", a->value[0]);
             return ODG_RX_ERROR;
         }
         result[0] = 0;
