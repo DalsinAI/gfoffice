@@ -1267,7 +1267,7 @@ static int class_after(owf_para *p, ow_position *pos)
     for (;;) {
         owf_run *r = &p->runs[pos->run];
         int nr;
-        if (r->text && pos->byte_offset < strlen(r->text))
+        if (r->text && r->text[pos->byte_offset])     /* byte_offset is within the run's text (clamp_position) */
             return char_class((unsigned char)r->text[pos->byte_offset]);
         nr = next_text_run(p, pos->run);
         if (nr < 0) return -1;
