@@ -1,6 +1,7 @@
 /* tests/arexx/diag.rexx: GFOpenDiag's ARexx port on the Amiga, against amicradle-teams ARexx-RULE.md
    (return codes 0/5/10/20, no requester holds up a command): the app's own commands (VERSION, FAULT, QUIT
-   without FORCE, ZOOM, FIT, TOOL, SELECT, GETSELECTION), then a diagram drawn, joined, moved, undone, layered, saved,
+   without FORCE, ZOOM, FIT, TOOL, SELECT, GETSELECTION), then a diagram drawn, joined, moved, undone, layered, a
+   mind map beside it, saved,
    opened again and exported, the steps tests/diag/test_odg_rexx.c runs on the PC, and a volume that isn't
    there refused with no requester. The window redraws after each command, so watching it shows the canvas
    drawing too.
@@ -121,6 +122,25 @@ CALL want 'GETLAYER 2', 0
 CALL same 'GETLAYER 2', res, 'Side notes'
 CALL want 'LAYER 3', 10
 CALL want 'LAYER 1', 0
+
+/* A mind map beside the diagram: made, read, laid out on both sides, folded, deleted. */
+CALL want 'MAPNEW 100 420 "The plan"', 0
+m = res
+CALL want 'MAPCHILD' m 'Alpha', 0
+ma = res
+CALL want 'MAPCHILD' m 'Beta', 0
+CALL want 'MAPCHILDREN' m, 0
+IF WORDS(res) ~= 2 THEN CALL bad 'MAPCHILDREN =' res '(wanted 2 ids)'
+CALL want 'MAPPARENT' ma, 0
+CALL same 'MAPPARENT', res, m
+CALL want 'MAPSIBLING' m 'Nope', 10
+CALL want 'MAPLAYOUT' m 'BOTH', 0
+CALL want 'MAPFOLD' m, 0
+CALL want 'MAPSTEP' m 'CHILD', 0
+CALL same 'MAPSTEP into a folded map', res, ''
+CALL want 'MAPFOLD' m 'OFF', 0
+CALL want 'MAPDELETE' m, 0
+CALL want 'MAPROOT' ma, 10
 
 /* Files: a changed diagram won't QUIT or OPEN without FORCE; save, open again, export. */
 CALL want 'ISDIRTY', 0
