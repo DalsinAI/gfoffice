@@ -121,12 +121,14 @@ static void parse_template(const char *t, args *a)
     }
 }
 
-/* The next word (a quoted one with its quotes off, "" for "" and *"" for a quote inside) into a's text. */
+/* The next word (a quoted one with its quotes off, "" for "" and *"" for a quote inside) into a's text; NULL
+ * when it doesn't fit, so a long word is refused, never cut. */
 static const char *take_word(const char **s, args *a)
 {
     const char *p = *s;
     char *out = a->text + a->used;
     size_t room = sizeof a->text - a->used, k = 0;
+    int cut = 0;
     if (room < 2) return NULL;
     if (*p == '"') {
         p++;
@@ -137,13 +139,16 @@ static const char *take_word(const char **s, args *a)
                 if (c == 'N' || c == 'n') c = '\n';
             }
             if (k < room - 1) out[k++] = c;
+            else cut = 1;
         }
         if (*p == '"') p++;
     } else
         while (*p && *p != ' ' && *p != '\t' && *p != '=') {
             if (k < room - 1) out[k++] = *p;
+            else cut = 1;
             p++;
         }
+    if (cut) return NULL;
     out[k] = 0;
     a->used += k + 1;
     *s = p;
@@ -171,7 +176,8 @@ static const char *take_rest(const char **s, args *a)
         a->used -= strlen(w) + 1;        /* more after the quotes: the whole line, quotes and all */
     }
     n = (size_t)(end - p);
-    if (n > room - 1) n = room - 1;
+    if (n > room - 1)                    /* longer than the room: refused, not cut */
+        return NULL;
     memcpy(out, p, n);
     out[n] = 0;
     a->used += n + 1;
