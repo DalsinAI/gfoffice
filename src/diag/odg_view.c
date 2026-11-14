@@ -61,18 +61,25 @@ static int zoom_of(const odg_view *v)
     return v->zoom < ODG_ZOOM_MIN ? ODG_ZOOM_MIN : v->zoom > ODG_ZOOM_MAX ? ODG_ZOOM_MAX : v->zoom;
 }
 
-long odg_view_x(const odg_view *v, owf_dnum x) { return far_cut(floor_div(((wide)x - v->left) * zoom_of(v), 10000)); }
-long odg_view_y(const odg_view *v, owf_dnum y) { return far_cut(floor_div(((wide)y - v->top) * zoom_of(v), 10000)); }
+long odg_view_x(const odg_view *v, owf_dnum x)
+{
+    return far_cut(v->x + floor_div(((wide)x - v->left) * zoom_of(v), 10000));
+}
+
+long odg_view_y(const odg_view *v, owf_dnum y)
+{
+    return far_cut(v->y + floor_div(((wide)y - v->top) * zoom_of(v), 10000));
+}
 long odg_view_len(const odg_view *v, owf_dnum n) { return far_cut(floor_div((wide)n * zoom_of(v), 10000)); }
 
 owf_dnum odg_page_x(const odg_view *v, long px)
 {
-    return (owf_dnum)(v->left + floor_div((wide)px * 10000 + zoom_of(v) / 2, zoom_of(v)));
+    return (owf_dnum)(v->left + floor_div(((wide)px - v->x) * 10000 + zoom_of(v) / 2, zoom_of(v)));
 }
 
 owf_dnum odg_page_y(const odg_view *v, long py)
 {
-    return (owf_dnum)(v->top + floor_div((wide)py * 10000 + zoom_of(v) / 2, zoom_of(v)));
+    return (owf_dnum)(v->top + floor_div(((wide)py - v->y) * 10000 + zoom_of(v) / 2, zoom_of(v)));
 }
 
 void odg_view_rect(const odg_view *v, const owf_dnum box[4], oldraw_rect *r)
@@ -89,8 +96,8 @@ void odg_view_zoom_at(odg_view *v, int zoom, long px, long py)
 {
     owf_dnum x = odg_page_x(v, px), y = odg_page_y(v, py);
     v->zoom = zoom < ODG_ZOOM_MIN ? ODG_ZOOM_MIN : zoom > ODG_ZOOM_MAX ? ODG_ZOOM_MAX : zoom;
-    v->left = (owf_dnum)(x - floor_div((wide)px * 10000, v->zoom));
-    v->top = (owf_dnum)(y - floor_div((wide)py * 10000, v->zoom));
+    v->left = (owf_dnum)(x - floor_div(((wide)px - v->x) * 10000, v->zoom));
+    v->top = (owf_dnum)(y - floor_div(((wide)py - v->y) * 10000, v->zoom));
 }
 
 void odg_view_fit(odg_view *v, const odg_doc *doc)
@@ -558,7 +565,7 @@ static void draw_selection(oldraw *d, const odg_view *v, const owf_dpage *p)
 void odg_draw(oldraw *d, const odg_view *v, const odg_doc *doc, const oldraw_rect *area)
 {
     const owf_dpage *p = odg_page(doc);
-    oldraw_rect all = { 0, 0, v->width, v->height }, a = area ? *area : all;
+    oldraw_rect all = { v->x, v->y, v->width, v->height }, a = area ? *area : all;
     int i;
     if (!d || !p)
         return;

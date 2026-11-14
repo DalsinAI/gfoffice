@@ -158,6 +158,19 @@ static void test_places(void)
     v.zoom = 800;
     v.left = 0;
     CHECK(odg_view_x(&v, 2000000000L) <= (1L << 28));
+    /* a view placed at 30, 40 on its target (a window's canvas): everything moves with it */
+    v.zoom = 100;
+    v.left = v.top = 0;
+    v.x = 30;
+    v.y = 40;
+    CHECK_N(odg_view_x(&v, PX(5)), 35);
+    CHECK_N(odg_view_y(&v, PX(5)), 45);
+    CHECK_N(odg_page_x(&v, 35), PX(5));
+    odg_view_zoom_at(&v, 200, 130, 140);      /* the page point under 130, 140 (100, 100) stays there */
+    CHECK_N(v.left, PX(50));
+    CHECK_N(odg_page_x(&v, 130), PX(100));
+    CHECK_N(odg_page_y(&v, 140), PX(100));
+    v.x = v.y = 0;
 
     /* fitting: nothing drawn is the corner at 100%; a small drawing at 100%, centred; a big one shrunk */
     odg_view_fit(&v, &doc);
@@ -376,6 +389,21 @@ static void test_grid_and_area(void)
     CHECK(kept);
     CHECK_X(px[40][40], DOT);
     CHECK_X(px[45][45], WHITE);
+    /* placed on the target: the paper and the grid start at the view's corner, nothing before it */
+    for (j = 0; j < H; j++)
+        for (i = 0; i < W; i++) px[j][i] = 0x123456UL;
+    v.x = 100;
+    v.y = 50;
+    v.width = 60;
+    v.height = 40;
+    v.left = v.top = 0;
+    draw(&v);
+    CHECK_X(px[50][100], DOT);
+    CHECK_X(px[60][110], DOT);
+    CHECK_X(px[49][100], 0x123456UL);
+    CHECK_X(px[50][99], 0x123456UL);
+    CHECK_X(px[90][160], 0x123456UL);
+    CHECK_N(count(100, 50, 60, 40, 0x123456UL), 0);
     done();
 }
 
