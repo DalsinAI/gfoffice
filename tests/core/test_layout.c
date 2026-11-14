@@ -1608,6 +1608,73 @@ static void test_sample(const char *path)
     owf_doc_free(doc);
 }
 
+/* Issue #9 (7 October 2026), what of it the layout decides: a heading's own colour reaches its text's op, a
+ * table row's cells start on one line, small-text punctuation stays in the words, and a list's items are
+ * spaced alike (no blank line after the first). The rest of #9 (bullets drawn through a Latin-1 font) is the
+ * Amiga side: app/openwrite2.c's to_latin1 gives U+2022 as 0xB7. */
+static int op_word(const ol_document *od, const char *word, const ol_display_op **out)
+{
+    size_t k;
+    for (k = 0; k < ol_display_count(od); ++k) {
+        const ol_display_op *op = ol_display_get(od, k);
+        const char *t;
+        if (op->type != OL_OP_TEXT) continue;
+        t = ol_node_text(ol_node_by_id(od, op->u.text.node_id));
+        if (t && strstr(t, word)) {
+            if (out) *out = op;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void test_issue9(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_para *p, *cells[3];
+    ow_layout *l;
+    const ol_document *od;
+    const ol_display_op *op = NULL;
+    ow_position pos = { 0, 0, 0, 0 };
+    ol_rect box[3], item[3];
+    int i, page;
+    static const char *const items[] = { "\xE2\x80\xA2\tOne", "\xE2\x80\xA2\tTwo", "\xE2\x80\xA2\tThree" };
+
+    p = para(doc, NULL, 1, "Red heading", 320);
+    p->runs[0].fmt.colour = 0xC00000UL;
+    para(doc, NULL, 0, "Runs on AmigaOS 3.2, the PC, saved to the printer device.", 160);
+    for (i = 0; i < 3; ++i) {
+        cells[i] = para(doc, NULL, 0, i == 1 ? "a longer cell that wraps onto a second line of its own" : "cell", 240);
+        cells[i]->table_id = 1;
+        cells[i]->table_row = 0;
+        cells[i]->table_col = i;
+        cells[i]->table_cols = 3;
+    }
+    for (i = 0; i < 3; ++i) para(doc, NULL, 0, items[i], 240);
+
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (!l) {
+        owf_doc_free(doc);
+        return;
+    }
+    od = ow_layout_body(l);
+    CHECK(op_word(od, "Red", &op) && op->u.text.style.foreground == 0xFFC00000u);
+    CHECK(op_word(od, "3.2,", NULL) && op_word(od, "PC,", NULL) && op_word(od, "printer", NULL));
+    for (i = 0; i < 3; ++i) {
+        pos.paragraph = 2 + i;
+        CHECK(ow_layout_caret(l, pos, &page, &box[i]));
+    }
+    CHECK(box[0].y == box[1].y && box[1].y == box[2].y && box[0].x < box[1].x && box[1].x < box[2].x);
+    for (i = 0; i < 3; ++i) {
+        pos.paragraph = 5 + i;
+        CHECK(ow_layout_caret(l, pos, &page, &item[i]));
+    }
+    CHECK(item[1].y > item[0].y && item[1].y - item[0].y == item[2].y - item[1].y);
+    ow_layout_free(l);
+    owf_doc_free(doc);
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -1615,6 +1682,7 @@ int main(int argc, char **argv)
     test_built();
     test_columns();
     test_generated_toc();
+    test_issue9();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)
         if (strstr(argv[i], "cover-wpg.docx")) test_cover_typing(argv[i]);
