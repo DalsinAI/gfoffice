@@ -313,6 +313,31 @@ static void test_long_lines(void)
     odg_rexx_free(&rx);
 }
 
+/* MOVE, DELETE and STYLE take 64 ids; a 65th is refused, not dropped. */
+static void test_many_ids(void)
+{
+    static char line[2048];
+    char id[64];
+    size_t at;
+    int i;
+    CHECK_N(odg_rexx_init(&rx), OWF_OK);
+    CHECK_N(rx_do("ADDSHAPE 10 10 20 20 TEXT one"), ODG_RX_OK);
+    strcpy(id, res);
+    for (i = 0, at = 0; i < 65; i++) at += (size_t)snprintf(line + at, sizeof line - at, "%s%s", i ? "," : "MOVE ", id);
+    strcpy(line + at, " 5 5");
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "more than 64 ids") != NULL);
+    for (i = 0, at = 0; i < 65; i++) at += (size_t)snprintf(line + at, sizeof line - at, "%s%s", i ? "," : "DELETE ", id);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "DELETE: more than 64 ids") != NULL);
+    CHECK_N(rx_do("CELLS"), ODG_RX_OK);
+    CHECK(strcmp(res, id) == 0);              /* nothing deleted */
+    for (i = 0, at = 0; i < 64; i++) at += (size_t)snprintf(line + at, sizeof line - at, "%s%s", i ? "," : "MOVE ", id);
+    strcpy(line + at, " 5 5");
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    odg_rexx_free(&rx);
+}
+
 int main(void)
 {
     test_edits();
@@ -320,6 +345,7 @@ int main(void)
     test_files();
     test_layers();
     test_long_lines();
+    test_many_ids();
     printf("diagram ARexx: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }
