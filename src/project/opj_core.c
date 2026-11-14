@@ -411,7 +411,7 @@ int opj_date_parse(const char *s, int default_minute, owf_ptime *t)
 /* ---- The task sheet ---- */
 
 static const char *const column_titles[OPJ_NCOLS] = {
-    "ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", "% Complete", "WBS",
+    "ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", "% Complete", "WBS", "Resource Names",
 };
 
 const char *opj_column_title(int column)
@@ -466,6 +466,7 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
     case OPJ_COL_PREDECESSORS: owf_ppredecessors_text(doc->plan, row, out, size); return;
     case OPJ_COL_PERCENT: sprintf(text, "%d%%", t->percent); break;
     case OPJ_COL_WBS: opj_outline_number(doc, row, out, size); return;
+    case OPJ_COL_RESOURCES: owf_presource_names_text(doc->plan, row, out, size); return;
     default: return;
     }
     n = strlen(s);
@@ -524,8 +525,324 @@ int opj_set_cell(opj_doc *doc, int row, int column, const char *text)
         t->percent = (int)v;
         break;
     }
+    case OPJ_COL_RESOURCES:
+        if ((rc = owf_presource_names_parse(work, row, text, 1)) != OWF_OK) return fail(work, rc);
+        break;
     default:
         return fail(work, OWF_ERR_FORMAT);
     }
     return commit(doc, work);
+}
+
+/* ---- The resource sheet ---- */
+
+static const char *const resource_titles[OPJ_NRCOLS] = {
+    "ID", "Resource Name", "Type", "Initials", "Group", "Max. Units", "Std. Rate", "Work", "Cost",
+};
+
+const char *opj_resource_column_title(int column)
+{
+    return column >= 0 && column < OPJ_NRCOLS ? resource_titles[column] : "";
+}
+
+/* A number to two places, "12" or "12.5" or "12.25" (trim: the places only when not whole), into out. */
+static void put_hundredths(long v, int trim, char *out)
+{
+    const char *sign = v < 0 ? "-" : "";
+    long a = v < 0 ? -v : v;
+    if (trim && a % 100 == 0) sprintf(out, "%s%ld", sign, a / 100);
+    else if (trim && a % 10 == 0) sprintf(out, "%s%ld.%ld", sign, a / 100, a % 100 / 10);
+    else sprintf(out, "%s%ld.%02ld", sign, a / 100, a % 100);
+}
+
+void opj_work_text(long minutes, char *out)
+{
+    long h;
+    if (!out) return;
+    if (minutes < 0) minutes = 0;
+    /* hundredths of an hour, rounded: minutes * 100 / 60 without passing a 32-bit long */
+    h = minutes / 60 * 100 + (minutes % 60 * 100 + 30) / 60;
+    put_hundredths(h, 1, out);
+    strcat(out, "h");
+}
+
+void opj_money_text(long hundredths, char *out)
+{
+    if (out) put_hundredths(hundredths, 0, out);
+}
+
+static void copy_out(const char *s, char *out, size_t size)
+{
+    size_t n = strlen(s);
+    if (n > size - 1) n = size - 1;
+    memcpy(out, s, n);
+    out[n] = 0;
+}
+
+void opj_resource_cell_text(const opj_doc *doc, int resource, int column, char *out, size_t size)
+{
+    static const char *const types[3] = { "Work", "Material", "Cost" };
+    char text[32];
+    const owf_presource *r;
+    const char *s = text;
+    if (!out || !size) return;
+    out[0] = 0;
+    if (!doc || resource < 0 || resource >= doc->plan->nresources) return;
+    r = &doc->plan->resources[resource];
+    text[0] = 0;
+    switch (column) {
+    case OPJ_RCOL_ID: sprintf(text, r->overallocated ? "%d!" : "%d", resource + 1); break;
+    case OPJ_RCOL_NAME: s = r->name ? r->name : ""; break;
+    case OPJ_RCOL_TYPE: s = r->type >= 0 && r->type <= 2 ? types[r->type] : ""; break;
+    case OPJ_RCOL_INITIALS: s = r->initials ? r->initials : ""; break;
+    case OPJ_RCOL_GROUP: s = r->group ? r->group : ""; break;
+    case OPJ_RCOL_MAX:
+        if (r->type == OWF_RES_WORK) sprintf(text, "%ld%%", r->max_units);
+        break;
+    case OPJ_RCOL_RATE:
+        if (r->type == OWF_RES_COST) break;
+        opj_money_text(r->rate, text);
+        if (r->type == OWF_RES_WORK) strcat(text, "/h");
+        break;
+    case OPJ_RCOL_WORK:
+        if (r->type == OWF_RES_WORK) opj_work_text(r->work, text);
+        break;
+    case OPJ_RCOL_COST: opj_money_text(r->cost, text); break;
+    default: return;
+    }
+    copy_out(s, out, size);
+}
+
+/* A number with up to two places as hundredths ("12", "12.5", "0.25"); 0 when there is none, or it is
+ * too big. */
+static int take_hundredths(const char **s, long *v)
+{
+    const char *p = *s;
+    long whole = 0, part = 0;
+    int k = 0, places = 0;
+    while (*p >= '0' && *p <= '9') {
+        if (whole > 10000000L) return 0;
+        whole = whole * 10 + (*p++ - '0');
+        k++;
+    }
+    if (*p == '.' || *p == ',') {
+        p++;
+        while (*p >= '0' && *p <= '9') {
+            if (places < 2) part = part * 10 + (*p - '0'), places++;
+            p++, k++;
+        }
+    }
+    if (!k) return 0;
+    while (places < 2) part *= 10, places++;
+    *v = whole * 100 + part;
+    *s = p;
+    return 1;
+}
+
+static int same_name(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        char x = *a >= 'A' && *a <= 'Z' ? (char)(*a + 32) : *a, y = *b >= 'A' && *b <= 'Z' ? (char)(*b + 32) : *b;
+        if (x != y) return 0;
+    }
+    return *a == *b;
+}
+
+/* A name a resource may take: not empty, not another's (case ignored), no ',', ';' or '[' (they would
+ * break Resource Names). */
+static int name_ok(const owf_project *p, int self, const char *name)
+{
+    int i;
+    if (!name || !*name || strpbrk(name, ",;[]")) return 0;
+    for (i = 0; i < p->nresources; i++)
+        if (i != self && p->resources[i].name && same_name(p->resources[i].name, name)) return 0;
+    return 1;
+}
+
+/* A money amount, with a currency sign before it skipped ($, a pound or euro sign in UTF-8 or Latin-1). */
+static int take_money(const char **s, long *v)
+{
+    const unsigned char *u = (const unsigned char *)*s;
+    while (*u == ' ') u++;
+    if (*u == '$' || *u == 0xA3 || *u == 0xA4) u++;
+    else if (u[0] == 0xC2 && u[1] == 0xA3) u += 2;
+    else if (u[0] == 0xE2 && u[1] == 0x82 && u[2] == 0xAC) u += 3;
+    *s = (const char *)u;
+    return take_hundredths(s, v);
+}
+
+static int word_is(const char *s, const char *w)
+{
+    while (*w) {
+        char c = *s >= 'A' && *s <= 'Z' ? (char)(*s + 32) : *s;
+        if (c != *w) return 0;
+        s++, w++;
+    }
+    while (*s == ' ') s++;
+    return !*s;
+}
+
+int opj_set_resource_cell(opj_doc *doc, int resource, int column, const char *text)
+{
+    owf_project *work;
+    owf_presource *r;
+    const char *s;
+    long v;
+    int rc;
+    if (!doc || resource < 0 || resource >= doc->plan->nresources) return OWF_ERR_FORMAT;
+    if (!text) text = "";
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    r = &work->resources[resource];
+    s = text;
+    while (*s == ' ') s++;
+    switch (column) {
+    case OPJ_RCOL_NAME:
+        if (!name_ok(work, resource, s)) return fail(work, OWF_ERR_FORMAT);
+        if ((rc = replace_text(&r->name, s)) != OWF_OK) return fail(work, rc);
+        break;
+    case OPJ_RCOL_TYPE:
+        if (word_is(s, "work") || word_is(s, "w")) r->type = OWF_RES_WORK;
+        else if (word_is(s, "material") || word_is(s, "m")) r->type = OWF_RES_MATERIAL;
+        else if (word_is(s, "cost") || word_is(s, "c")) r->type = OWF_RES_COST;
+        else return fail(work, OWF_ERR_FORMAT);
+        break;
+    case OPJ_RCOL_INITIALS:
+        if ((rc = replace_text(&r->initials, s)) != OWF_OK) return fail(work, rc);
+        break;
+    case OPJ_RCOL_GROUP:
+        if ((rc = replace_text(&r->group, s)) != OWF_OK) return fail(work, rc);
+        break;
+    case OPJ_RCOL_MAX:                    /* a percent, as MS Project types it; "%" may be left off */
+        if (r->type != OWF_RES_WORK || !take_hundredths(&s, &v)) return fail(work, OWF_ERR_FORMAT);
+        while (*s == ' ') s++;
+        if (*s == '%') s++;
+        while (*s == ' ') s++;
+        if (*s || v / 100 > 1000000L) return fail(work, OWF_ERR_FORMAT);
+        r->max_units = v / 100;
+        break;
+    case OPJ_RCOL_RATE:
+        if (r->type == OWF_RES_COST || !take_money(&s, &v)) return fail(work, OWF_ERR_FORMAT);
+        while (*s == ' ') s++;
+        if (*s == '/') {
+            s++;
+            if (r->type != OWF_RES_WORK) return fail(work, OWF_ERR_FORMAT);
+            if (word_is(s, "h") || word_is(s, "hr") || word_is(s, "hour")) {
+            } else if (word_is(s, "d") || word_is(s, "day")) {
+                long day = work->minutes_per_day > 0 ? work->minutes_per_day : 480;
+                v = v / day * 60 + v % day * 60 / day;    /* to an hour's */
+            } else
+                return fail(work, OWF_ERR_FORMAT);
+        } else if (*s)
+            return fail(work, OWF_ERR_FORMAT);
+        r->rate = v;
+        break;
+    default:
+        return fail(work, OWF_ERR_FORMAT);
+    }
+    return commit(doc, work);
+}
+
+int opj_add_resource(opj_doc *doc, const char *name, int *index)
+{
+    owf_project *work;
+    int at;
+    if (!doc || !name_ok(doc->plan, -1, name)) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    if ((at = owf_project_add_resource(work, name)) < 0) return fail(work, OWF_ERR_MEMORY);
+    if (index) *index = at;
+    return commit(doc, work);
+}
+
+int opj_delete_resources(opj_doc *doc, int first, int count)
+{
+    owf_project *work;
+    int i;
+    if (!doc || first < 0 || count < 1 || first + count > doc->plan->nresources) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    for (i = first + count - 1; i >= first; i--) owf_project_remove_resource(work, i);
+    return commit(doc, work);
+}
+
+int opj_set_assignment(opj_doc *doc, int task, int resource, long units)
+{
+    owf_project *work;
+    int rc;
+    if (!(work = begin(doc, task, &rc))) return rc;
+    if (resource < 0 || resource >= work->nresources || units < 0) return fail(work, OWF_ERR_FORMAT);
+    if (units == 0) owf_project_unassign(work, task, resource);
+    else if (owf_project_assign(work, task, resource, units) < 0) return fail(work, OWF_ERR_MEMORY);
+    return commit(doc, work);
+}
+
+/* ---- Resource usage ---- */
+
+#define DAY 1440L
+
+static long floor_div(long a, long b)
+{
+    return a >= 0 ? a / b : -((-a + b - 1) / b);
+}
+
+owf_ptime opj_period_start(int zoom, owf_ptime t)
+{
+    long day = floor_div(t, DAY);
+    int y, mo, d, h, mi;
+    switch (zoom) {
+    case OPJ_ZOOM_WEEKS: return (day - (owf_ptime_weekday(day * DAY) + 6) % 7) * DAY;
+    case OPJ_ZOOM_MONTHS:
+    case OPJ_ZOOM_QUARTERS:
+        owf_ptime_split(day * DAY, &y, &mo, &d, &h, &mi);
+        if (zoom == OPJ_ZOOM_QUARTERS) mo = (mo - 1) / 3 * 3 + 1;
+        return owf_ptime_make(y, mo, 1, 0, 0);
+    default: return day * DAY;
+    }
+}
+
+owf_ptime opj_period_next(int zoom, owf_ptime start)
+{
+    int y, mo, d, h, mi, add;
+    switch (zoom) {
+    case OPJ_ZOOM_WEEKS: return start + 7 * DAY;
+    case OPJ_ZOOM_MONTHS:
+    case OPJ_ZOOM_QUARTERS:
+        add = zoom == OPJ_ZOOM_QUARTERS ? 3 : 1;
+        owf_ptime_split(start, &y, &mo, &d, &h, &mi);
+        mo += add;
+        if (mo > 12) mo -= 12, y++;
+        return owf_ptime_make(y, mo, 1, 0, 0);
+    default: return start + DAY;
+    }
+}
+
+void opj_usage_text(const opj_doc *doc, int resource, int assign, owf_ptime from, owf_ptime to, char *out,
+                    size_t size, int *over)
+{
+    const owf_project *p;
+    const owf_presource *r;
+    char text[24];
+    long work;
+    if (over) *over = 0;
+    if (!out || !size) return;
+    out[0] = 0;
+    if (!doc || resource < 0 || resource >= doc->plan->nresources || to <= from) return;
+    p = doc->plan;
+    r = &p->resources[resource];
+    if (r->type != OWF_RES_WORK) return;
+    if (assign >= 0) {
+        if (assign >= p->nassigns || p->assigns[assign].resource != resource) return;
+        work = owf_passign_work(p, assign, from, to);
+    } else {
+        work = owf_presource_work(p, resource, from, to);
+        if (over && work > 0 && p->ncalendars) {
+            const owf_pcal *c = &p->calendars[r->calendar >= 0 && r->calendar < p->ncalendars ? r->calendar
+                                                                                             : p->calendar];
+            long avail = owf_pcal_work(c, from, to), cap;
+            if (r->max_units > 0 && avail / 100 > 2000000000L / r->max_units) cap = 2000000000L;
+            else cap = avail / 100 * r->max_units + avail % 100 * r->max_units / 100;
+            *over = work > cap;
+        }
+    }
+    if (!work) return;
+    opj_work_text(work, text);
+    copy_out(text, out, size);
 }

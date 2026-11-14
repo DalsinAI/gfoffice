@@ -460,6 +460,166 @@ static void test_hits(void)
     opj_doc_free(doc);
 }
 
+/* Resources: Resource Names typed on the sheet, the resource sheet, usage by period, names by the bars. */
+static void test_resources(void)
+{
+    opj_doc *doc = three();
+    char out[64];
+    int at = -1, over = -1;
+    opj_view v;
+    oldraw *d;
+    oldraw_rect box;
+    unsigned long changes;
+
+    /* Typed Resource Names make the resources. Plan is 2 days: Dale 16h, Bob half time 8h. */
+    CHECK_S(opj_column_title(OPJ_COL_RESOURCES), "Resource Names");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale, Bob [50%]"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_RESOURCES), "Dale,Bob[50%]");
+    CHECK_N(doc->plan->nresources, 2);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale[x]"), OWF_ERR_FORMAT);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_RESOURCES), "Dale,Bob[50%]");          /* left as it was */
+    opj_resource_cell_text(doc, 0, OPJ_RCOL_WORK, out, sizeof out);
+    CHECK_S(out, "16h");
+    opj_resource_cell_text(doc, 1, OPJ_RCOL_WORK, out, sizeof out);
+    CHECK_S(out, "8h");
+    opj_resource_cell_text(doc, 0, OPJ_RCOL_TYPE, out, sizeof out);
+    CHECK_S(out, "Work");
+    opj_resource_cell_text(doc, 0, OPJ_RCOL_MAX, out, sizeof out);
+    CHECK_S(out, "100%");
+    CHECK_S(opj_resource_column_title(OPJ_RCOL_RATE), "Std. Rate");
+
+    /* Rates: 20 an hour makes Dale's 16 hours 320.00; 160 a day of 8 hours is 20 an hour. */
+    CHECK_N(opj_set_resource_cell(doc, 0, OPJ_RCOL_RATE, "20"), OWF_OK);
+    opj_resource_cell_text(doc, 0, OPJ_RCOL_COST, out, sizeof out);
+    CHECK_S(out, "320.00");
+    opj_resource_cell_text(doc, 0, OPJ_RCOL_RATE, out, sizeof out);
+    CHECK_S(out, "20.00/h");
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_RATE, "160/d"), OWF_OK);
+    CHECK_N(doc->plan->resources[1].rate, 2000);
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_RATE, "\xC2\xA3" "25.50/hr"), OWF_OK);    /* a pound sign */
+    CHECK_N(doc->plan->resources[1].rate, 2550);
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_RATE, "25/week"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_RATE, "abc"), OWF_ERR_FORMAT);
+    CHECK_N(doc->plan->resources[1].rate, 2550);
+
+    /* Names: not empty, not another's (case ignored), nothing that breaks Resource Names. */
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_NAME, "dale"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_NAME, "Bob, Jr"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_NAME, ""), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_NAME, "Robert"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_RESOURCES), "Dale,Robert[50%]");
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_INITIALS, "R"), OWF_OK);
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_GROUP, "Build team"), OWF_OK);
+    opj_resource_cell_text(doc, 1, OPJ_RCOL_GROUP, out, sizeof out);
+    CHECK_S(out, "Build team");
+    CHECK_N(opj_set_resource_cell(doc, 1, OPJ_RCOL_WORK, "5h"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, 5, OPJ_RCOL_NAME, "X"), OWF_ERR_FORMAT);
+
+    /* Max. Units, and over-allocation: Dale full time on Plan and on Build at once is 200%. */
+    CHECK_N(opj_set_resource_cell(doc, 0, OPJ_RCOL_MAX, "150%"), OWF_OK);
+    CHECK_N(doc->plan->resources[0].max_units, 150);
+    CHECK_N(opj_set_resource_cell(doc, 0, OPJ_RCOL_MAX, "100"), OWF_OK);
+    CHECK_N(opj_set_resource_cell(doc, 0, OPJ_RCOL_MAX, "lots"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_assignment(doc, 1, 0, 100), OWF_OK);
+    opj_resource_cell_text(doc, 0, OPJ_RCOL_ID, out, sizeof out);
+    CHECK_S(out, "1");                                                     /* Build follows Plan */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);
+    opj_resource_cell_text(doc, 0, OPJ_RCOL_ID, out, sizeof out);
+    CHECK_S(out, "1!");
+    CHECK_N(doc->plan->resources[0].peak, 200);
+
+    /* Periods. */
+    CHECK_N(opj_period_start(OPJ_ZOOM_DAYS, AT(18, 10, 0)), AT(18, 0, 0));
+    CHECK_N(opj_period_start(OPJ_ZOOM_WEEKS, AT(18, 10, 0)), AT(16, 0, 0));
+    CHECK_N(opj_period_start(OPJ_ZOOM_MONTHS, AT(18, 10, 0)), AT(1, 0, 0));
+    CHECK_N(opj_period_start(OPJ_ZOOM_QUARTERS, AT(18, 10, 0)), owf_ptime_make(2026, 10, 1, 0, 0));
+    CHECK_N(opj_period_next(OPJ_ZOOM_QUARTERS, owf_ptime_make(2026, 10, 1, 0, 0)), owf_ptime_make(2027, 1, 1, 0, 0));
+    CHECK_N(opj_period_next(OPJ_ZOOM_MONTHS, AT(1, 0, 0)), owf_ptime_make(2026, 12, 1, 0, 0));
+    CHECK_N(opj_period_next(OPJ_ZOOM_WEEKS, AT(16, 0, 0)), AT(23, 0, 0));
+
+    /* Usage: on Monday Dale works 8h on Plan and 8h on Build, 16h of an 8 hour day. */
+    opj_usage_text(doc, 0, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out, &over);
+    CHECK_S(out, "16h");
+    CHECK_N(over, 1);
+    opj_usage_text(doc, 0, 0, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out, NULL);
+    CHECK_S(out, "8h");                                                    /* Plan's assignment alone */
+    opj_usage_text(doc, 1, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out, &over);
+    CHECK_S(out, "4h");                                                    /* half of 8 hours */
+    CHECK_N(over, 0);
+    opj_usage_text(doc, 1, -1, AT(18, 0, 0), AT(19, 0, 0), out, sizeof out, &over);
+    CHECK_S(out, "");                                                      /* Plan is over by then */
+    opj_usage_text(doc, 0, -1, AT(16, 0, 0), AT(23, 0, 0), out, sizeof out, &over);
+    CHECK_S(out, "40h");                                                   /* 16h + 24h in the week */
+    CHECK_N(over, 0);                                                      /* of the week's 40 */
+
+    /* A material: 3 tonnes of steel at 5.00 is 15.00, and no work. */
+    CHECK_N(opj_add_resource(doc, "Steel", &at), OWF_OK);
+    CHECK_N(at, 2);
+    CHECK_N(opj_add_resource(doc, "STEEL", NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, 2, OPJ_RCOL_TYPE, "m"), OWF_OK);
+    CHECK_N(opj_set_resource_cell(doc, 2, OPJ_RCOL_RATE, "5/h"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, 2, OPJ_RCOL_RATE, "5"), OWF_OK);
+    CHECK_N(opj_set_resource_cell(doc, 2, OPJ_RCOL_MAX, "50%"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale,Steel[3]"), OWF_OK);
+    opj_resource_cell_text(doc, 2, OPJ_RCOL_COST, out, sizeof out);
+    CHECK_S(out, "15.00");
+    opj_resource_cell_text(doc, 2, OPJ_RCOL_RATE, out, sizeof out);
+    CHECK_S(out, "5.00");
+    opj_resource_cell_text(doc, 2, OPJ_RCOL_MAX, out, sizeof out);
+    CHECK_S(out, "");
+    opj_usage_text(doc, 2, -1, AT(16, 0, 0), AT(23, 0, 0), out, sizeof out, NULL);
+    CHECK_S(out, "");                                                      /* no hours for a material */
+
+    /* Deleting Dale takes his assignments; Undo brings both back. */
+    changes = doc->changes;
+    CHECK_N(opj_delete_resources(doc, 0, 1), OWF_OK);
+    CHECK_N(doc->plan->nresources, 2);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_RESOURCES), "Robert[50%]");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Steel[3.00]");
+    CHECK_N(opj_delete_resources(doc, 1, 5), OWF_ERR_FORMAT);
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_N(doc->changes, changes + 2);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale,Steel[3.00]");
+    CHECK_N(opj_set_assignment(doc, 1, 0, 0), OWF_OK);                       /* unassigned */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Steel[3.00]");
+    CHECK_N(opj_set_assignment(doc, 1, 9, 100), OWF_ERR_FORMAT);
+
+    /* Inserting a task above keeps the names on their tasks. */
+    CHECK_N(opj_insert_task(doc, 0, "Survey"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale,Robert[50%]");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_RESOURCES), "");
+
+    /* Work and money as the sheet shows them. */
+    opj_work_text(90, out);
+    CHECK_S(out, "1.5h");
+    opj_work_text(20, out);
+    CHECK_S(out, "0.33h");
+    opj_work_text(0, out);
+    CHECK_S(out, "0h");
+    opj_money_text(123450, out);
+    CHECK_S(out, "1234.50");
+    opj_money_text(5, out);
+    CHECK_S(out, "0.05");
+
+    /* The names go 6 pixels right of the bar; a row with none has no label. */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    CHECK_N(opj_label_box(&v, doc, 0, &box), 0);                             /* Survey: no one */
+    CHECK(opj_label_box(&v, doc, 1, &box));
+    {
+        opj_bar b;
+        CHECK(opj_bar_of(&v, doc, 1, &b));
+        CHECK_N(box.x, b.bar.x + b.bar.w + 6);
+        CHECK_N(box.y, opj_row_y(&v, 1));
+    }
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    ntexts = 0;
+    opj_draw(d, &v, doc, NULL);
+    CHECK(drew("Dale,Robert[50%]") && drew("Steel[3.00]"));
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -469,6 +629,7 @@ int main(void)
     test_geometry();
     test_drawing();
     test_hits();
+    test_resources();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;

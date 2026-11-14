@@ -77,6 +77,7 @@ enum {
     OPJ_COL_PREDECESSORS,
     OPJ_COL_PERCENT,
     OPJ_COL_WBS,                         /* the outline number, 1.2.3 */
+    OPJ_COL_RESOURCES,                   /* Resource Names: "Dale,Bob[50%]" */
     OPJ_NCOLS
 };
 
@@ -87,7 +88,8 @@ const char *opj_column_title(int column);
 void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
 /* Typed text into a cell, as one edit. Name; Duration (owf_pduration_parse's text); Start (sets Start No
  * Earlier Than, as MS Project does), Finish (Finish No Earlier Than); Predecessors (replaces the row's
- * links); % Complete. ID and WBS can't be typed into (OWF_ERR_FORMAT). */
+ * links); % Complete; Resource Names (replaces the row's assignments; a name not in the plan is added as
+ * a work resource). ID and WBS can't be typed into (OWF_ERR_FORMAT). */
 int opj_set_cell(opj_doc *doc, int row, int column, const char *text);
 /* The outline number of a row, "1.2.3". */
 void opj_outline_number(const opj_doc *doc, int row, char *out, size_t size);
@@ -96,6 +98,53 @@ void opj_date_text(owf_ptime t, int with_time, char *out);
 /* "16/11/26", "16/11/2026", "Mon 16/11/26 13:00", "2026-11-16", "2026-11-16 13:00". A date with no time
  * gets default_minute (the start or end of a working day). 1 when it is one. */
 int opj_date_parse(const char *s, int default_minute, owf_ptime *t);
+
+/* ---- The resource sheet ---- */
+
+enum {
+    OPJ_RCOL_ID,                         /* the row number; "!" after it when over-allocated */
+    OPJ_RCOL_NAME,
+    OPJ_RCOL_TYPE,                       /* Work, Material, Cost */
+    OPJ_RCOL_INITIALS,
+    OPJ_RCOL_GROUP,
+    OPJ_RCOL_MAX,                        /* Max. Units: "100%" (work only) */
+    OPJ_RCOL_RATE,                       /* Std. Rate: "20.00/h" for work, "5.00" a unit for material */
+    OPJ_RCOL_WORK,                       /* worked out: "40h" */
+    OPJ_RCOL_COST,                       /* worked out: "800.00" */
+    OPJ_NRCOLS
+};
+
+const char *opj_resource_column_title(int column);
+void opj_resource_cell_text(const opj_doc *doc, int resource, int column, char *out, size_t size);
+/* Typed text into a resource's cell, as one edit. Name (not empty, not another resource's, no ",;[]");
+ * Type (Work, Material, Cost, or their first letter); Initials; Group; Max. Units ("50%" or "50", work
+ * only); Std. Rate ("20", "20.00/h", "160/d" by the project's day, a currency sign first skipped; a
+ * material's is a unit's, no "/"). ID, Work and Cost can't be typed into (OWF_ERR_FORMAT). */
+int opj_set_resource_cell(opj_doc *doc, int resource, int column, const char *text);
+/* A new work resource at the end, its index in *index (may be NULL). The name must not be empty or
+ * another resource's. */
+int opj_add_resource(opj_doc *doc, const char *name, int *index);
+/* Resources first..first+count-1 and their assignments. */
+int opj_delete_resources(opj_doc *doc, int first, int count);
+/* Units of resource on task: 0 removes the assignment. Units in percent (hundredths for a cost). */
+int opj_set_assignment(opj_doc *doc, int task, int resource, long units);
+
+/* "12h", "12.5h", "0h": minutes of work as hours, to two places when not whole. out >= 16 bytes. */
+void opj_work_text(long minutes, char *out);
+/* "1234.50": hundredths of money. out >= 16 bytes. */
+void opj_money_text(long hundredths, char *out);
+
+/* ---- Resource usage: each resource's work in each period ---- */
+
+/* The start of the period holding t, at a zoom (a day, a Monday, the 1st of a month or quarter); the next
+ * period's start. */
+owf_ptime opj_period_start(int zoom, owf_ptime t);
+owf_ptime opj_period_next(int zoom, owf_ptime start);
+/* Work of a resource (assign -1) or of one of its assignments in [from, to), as opj_work_text puts it,
+ * "" when none. Over-allocated: *over set when the resource has more work in that span than its max
+ * units allow there (may be NULL). */
+void opj_usage_text(const opj_doc *doc, int resource, int assign, owf_ptime from, owf_ptime to, char *out,
+                    size_t size, int *over);
 
 /* ---- The Gantt view ---- */
 
@@ -137,6 +186,10 @@ typedef struct {
 } opj_bar;
 /* Row's bar in the view; 0 when the row has none (out of range). */
 int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar);
+
+/* Where the resource names go beside row's bar (to its right, MS Project's way); 0 when the row has no
+ * bar or no assignments. */
+int opj_label_box(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *box);
 
 /* A link's line: up to 6 points joined by straight lines, the last at the arrow's tip. */
 typedef struct {
