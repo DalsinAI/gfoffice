@@ -63,10 +63,6 @@ static int shown(const owf_dpage *p, const owf_dcell *c)
     return 1;
 }
 
-/* An edge's points on the page: its start, bends and end. The ends meet the edge of the box they are
- * joined to, on the line towards the next point. NULL when it has fewer than two; *n is how many. */
-static owf_dpoint *edge_path(const owf_dpage *p, const owf_dcell *e, int *n);
-
 /* x, y of the edge of box on the line from its centre towards (tx, ty). */
 static owf_dpoint clip_to_box(const owf_dnum box[4], owf_dnum tx, owf_dnum ty)
 {
@@ -89,7 +85,18 @@ static owf_dpoint clip_to_box(const owf_dnum box[4], owf_dnum tx, owf_dnum ty)
     return r;
 }
 
-static owf_dpoint *edge_path(const owf_dpage *p, const owf_dcell *e, int *n)
+/* A port's place on a box: style keys kx and ky, fractions of its width and height ("0.5"). */
+static int port_point(const char *style, const char *kx, const char *ky, const owf_dnum box[4], owf_dpoint *at)
+{
+    char bx[24], by[24];
+    if (!owf_dstyle_get(style, kx, bx, sizeof bx) || !owf_dstyle_get(style, ky, by, sizeof by) || !bx[0] || !by[0])
+        return 0;
+    at->x = (owf_dnum)(box[0] + (wide)box[2] * owf_dnum_parse(bx) / 100);
+    at->y = (owf_dnum)(box[1] + (wide)box[3] * owf_dnum_parse(by) / 100);
+    return 1;
+}
+
+owf_dpoint *owf_dedge_path(const owf_dpage *p, const owf_dcell *e, int *n)
 {
     const owf_dcell *src = owf_dpage_find(p, e->source), *dst = owf_dpage_find(p, e->target);
     const owf_dcell *parent = owf_dpage_find(p, e->parent);
@@ -122,10 +129,16 @@ static owf_dpoint *edge_path(const owf_dpage *p, const owf_dcell *e, int *n)
         pts[k].x = e->geo.target_point.x + pb[0];
         pts[k].y = e->geo.target_point.y + pb[1];
     }
+    if (has_s && port_point(e->style, "exitX", "exitY", sb, &pts[0]))
+        has_s = 0;                       /* placed by its port */
+    if (has_t && port_point(e->style, "entryX", "entryY", tb, &pts[k]))
+        has_t = 2;                       /* placed by its port; still aims the start */
     if (has_s) {
         owf_dpoint toward;
         if (k > 1)
             toward = pts[1];
+        else if (has_t == 2)
+            toward = pts[k];
         else if (has_t) {
             toward.x = tb[0] + tb[2] / 2;
             toward.y = tb[1] + tb[3] / 2;
@@ -133,7 +146,7 @@ static owf_dpoint *edge_path(const owf_dpage *p, const owf_dcell *e, int *n)
             toward = pts[k];
         pts[0] = clip_to_box(sb, toward.x, toward.y);
     }
-    if (has_t)
+    if (has_t == 1)
         pts[k] = clip_to_box(tb, pts[k - 1].x, pts[k - 1].y);
     *n = k + 1;
     return pts;
@@ -167,7 +180,7 @@ int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4])
             grow(box, &any, b[0], b[1], b[2], b[3]);
         else if (c->kind == OWF_DCELL_EDGE) {
             int n;
-            owf_dpoint *pts = edge_path(p, c, &n);
+            owf_dpoint *pts = owf_dedge_path(p, c, &n);
             for (j = 0; j < n; j++)
                 grow(box, &any, pts[j].x, pts[j].y, 0, 0);
             owf_free(pts);
@@ -565,7 +578,7 @@ static void put_edge(owf_buf *b, const owf_dpage *p, const owf_dcell *e)
 {
     char buf[40];
     int n, i;
-    owf_dpoint *pts = edge_path(p, e, &n);
+    owf_dpoint *pts = owf_dedge_path(p, e, &n);
     const char *stroke;
     if (!pts)
         return;

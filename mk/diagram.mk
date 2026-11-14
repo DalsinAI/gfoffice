@@ -44,3 +44,28 @@ test: diagram-test
 check: diagram-check
 
 .PHONY: diagram-test diagram-check
+
+# Step D3: the editing core (src/diag): operations with Undo, ports and glue, orthogonal routing, snap.
+ODG_SRC = $(wildcard src/diag/*.c)
+ODG_DEPS = $(DIAG_DEPS) $(ODG_SRC) include/opendiag_core.h tests/diag/test_odg.c
+
+$(OUT)/test-odg: $(ODG_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) tests/diag/test_odg.c -lz -o $@
+
+$(OUT)/test-odg-asan: $(ODG_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) tests/diag/test_odg.c -lz -o $@
+
+diagram-core-test: $(OUT)/test-odg
+	$(OUT)/test-odg
+
+diagram-core-check: $(OUT)/test-odg-asan
+	$(OUT)/test-odg-asan
+
+test: diagram-core-test
+check: diagram-core-check
+
+.PHONY: diagram-core-test diagram-core-check

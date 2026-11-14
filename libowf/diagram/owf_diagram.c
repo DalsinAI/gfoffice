@@ -109,7 +109,7 @@ static void cell_free(owf_dcell *c)
     memset(c, 0, sizeof *c);
 }
 
-static void page_free(owf_dpage *p)
+void owf_dpage_free(owf_dpage *p)
 {
     int i;
     for (i = 0; i < p->ncells; i++)
@@ -130,7 +130,7 @@ void owf_diagram_free(owf_diagram *d)
 {
     int i;
     for (i = 0; i < d->npages; i++)
-        page_free(&d->pages[i]);
+        owf_dpage_free(&d->pages[i]);
     owf_free(d->pages);
     owf_dattrs_free(&d->file);
     memset(d, 0, sizeof *d);
@@ -159,11 +159,75 @@ owf_dpage *owf_diagram_add_page(owf_diagram *d, const char *id, const char *name
         return NULL;
     if ((id && !(p->id = dup_s(id))) || (name && !(p->name = dup_s(name))) ||
         !owf_dpage_add(p, "0", NULL, OWF_DCELL_PLAIN) || !owf_dpage_add(p, "1", "0", OWF_DCELL_PLAIN)) {
-        page_free(p);
+        owf_dpage_free(p);
         d->npages--;
         return NULL;
     }
     return p;
+}
+
+static int copy_attrs(owf_dattrs *dst, const owf_dattrs *src)
+{
+    int i;
+    for (i = 0; i < src->n; i++)
+        if (owf_dattrs_set(dst, src->v[i].name, src->v[i].value) != OWF_OK)
+            return OWF_ERR_MEMORY;
+    return OWF_OK;
+}
+
+static int copy_cell(owf_dcell *d, const owf_dcell *s)
+{
+    memset(d, 0, sizeof *d);
+    d->kind = s->kind;
+    d->wrapper = s->wrapper;
+    d->geo.flags = s->geo.flags;
+    d->geo.x = s->geo.x;
+    d->geo.y = s->geo.y;
+    d->geo.width = s->geo.width;
+    d->geo.height = s->geo.height;
+    d->geo.source_point = s->geo.source_point;
+    d->geo.target_point = s->geo.target_point;
+    d->geo.offset = s->geo.offset;
+    memcpy(d->geo.alternate, s->geo.alternate, sizeof d->geo.alternate);
+    if ((s->id && !(d->id = dup_s(s->id))) || (s->parent && !(d->parent = dup_s(s->parent))) ||
+        (s->value && !(d->value = dup_s(s->value))) || (s->style && !(d->style = dup_s(s->style))) ||
+        (s->source && !(d->source = dup_s(s->source))) || (s->target && !(d->target = dup_s(s->target))) ||
+        copy_attrs(&d->data, &s->data) || copy_attrs(&d->extra, &s->extra) ||
+        copy_attrs(&d->geo.extra, &s->geo.extra))
+        return OWF_ERR_MEMORY;
+    if (s->geo.npoints) {
+        d->geo.points = owf_malloc((size_t)s->geo.npoints * sizeof *d->geo.points);
+        if (!d->geo.points)
+            return OWF_ERR_MEMORY;
+        memcpy(d->geo.points, s->geo.points, (size_t)s->geo.npoints * sizeof *d->geo.points);
+        d->geo.npoints = d->geo.cappoints = s->geo.npoints;
+    }
+    return OWF_OK;
+}
+
+int owf_dpage_copy(owf_dpage *dst, const owf_dpage *src)
+{
+    int i;
+    owf_dpage_free(dst);
+    dst->compressed = src->compressed;
+    if ((src->id && !(dst->id = dup_s(src->id))) || (src->name && !(dst->name = dup_s(src->name))) ||
+        copy_attrs(&dst->model, &src->model))
+        goto fail;
+    if (src->ncells) {
+        dst->cells = owf_calloc((size_t)src->ncells, sizeof *dst->cells);
+        if (!dst->cells)
+            goto fail;
+        dst->capcells = src->ncells;
+        for (i = 0; i < src->ncells; i++) {
+            dst->ncells = i + 1;
+            if (copy_cell(&dst->cells[i], &src->cells[i]) != OWF_OK)
+                goto fail;
+        }
+    }
+    return OWF_OK;
+fail:
+    owf_dpage_free(dst);
+    return OWF_ERR_MEMORY;
 }
 
 int owf_dpage_index(const owf_dpage *p, const char *id)
