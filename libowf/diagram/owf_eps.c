@@ -30,7 +30,8 @@ static const char *const face_names[12] = {
     "Courier", "Courier-Bold", "Courier-Oblique", "Courier-BoldOblique"
 };
 
-/* WinAnsiEncoding where it differs from PostScript's ISOLatin1Encoding: 0x27, 0x60 and 0x80 to 0x9F */
+/* WinAnsiEncoding where it differs from PostScript's ISOLatin1Encoding: 0x27, 0x2D (ISOLatin1 has minus there,
+ * WinAnsi hyphen, as owf_pdffonts.c measures it), 0x60 and 0x80 to 0x9F */
 static const char *const winansi_high[32] = {
     "Euro", NULL, "quotesinglbase", "florin", "quotedblbase", "ellipsis", "dagger", "daggerdbl",
     "circumflex", "perthousand", "Scaron", "guilsinglleft", "OE", NULL, "Zcaron", NULL,
@@ -357,7 +358,7 @@ int owf_eps_finish(owf_eps *e, const char *title, unsigned char **data, size_t *
     owf_buf_puts(&out, "%%EndComments\n%%BeginProlog\n");
     if (e->fonts) {                      /* the faces used, re-encoded to WinAnsiEncoding */
         owf_buf_puts(&out, "/OW-WinAnsi ISOLatin1Encoding 256 array copy def\n"
-                           "OW-WinAnsi 39 /quotesingle put OW-WinAnsi 96 /grave put\n");
+                           "OW-WinAnsi 39 /quotesingle put OW-WinAnsi 45 /hyphen put OW-WinAnsi 96 /grave put\n");
         for (i = 0; i < 32; i++)
             if (winansi_high[i])
                 owf_buf_printf(&out, "OW-WinAnsi %d /%s put\n", 128 + i, winansi_high[i]);
