@@ -573,9 +573,7 @@ static void data_name(const owf_book *book, const owf_pivotdef *def, unsigned d,
     snprintf(out, size, "%s of %s", function_name(def->data[d].function), heading);
 }
 
-/* Lays out def's table on the output sheet of an already private workbook,
- * and sets def->rows and def->cols to its size. old: the previous
- * definition on that sheet (its rectangle is emptied), or NULL. */
+/* A row or column field (where hidden items apply). */
 static int is_axis(const owf_pivotdef *def, unsigned field)
 {
     unsigned k;
@@ -621,6 +619,9 @@ static int row_kept(const owf_book *book, const owf_pivotdef *def, const owf_she
     return 1;
 }
 
+/* Lays out def's table on the output sheet of an already private workbook,
+ * and sets def->rows and def->cols to its size. old: the previous
+ * definition on that sheet (its rectangle is emptied), or NULL. */
 static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, const owf_pivotdef *old,
                        owf_calc **made_calc)
 {

@@ -48,8 +48,9 @@ enum { OWF_PIVOT_FN_FIRST = 1, OWF_PIVOT_FN_COUNT = 2, OWF_PIVOT_FN_COUNTA = 3, 
 
 /* The order of a row or column field's items: as they first come in the
  * source (the default), or sorted by their values. Ascending puts numbers
- * and booleans first, then text (case aside), then errors; blanks come last
- * in either direction, as in GFOpenCalc's Data > Sort. */
+ * and booleans first, then text (case aside), then errors; descending is
+ * that order turned round, so errors come first. Blanks come last in
+ * either direction, as in GFOpenCalc's Data > Sort. */
 enum { OWF_PIVOT_SORT_SOURCE, OWF_PIVOT_SORT_ASCENDING, OWF_PIVOT_SORT_DESCENDING };
 
 /* A row or column field's numbers grouped into items: ranges of step from

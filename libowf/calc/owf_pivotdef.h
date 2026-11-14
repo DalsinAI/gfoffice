@@ -858,6 +858,12 @@ int owf_pivot_check(const owf_book *book, const owf_pivotdef *def)
     for (i = 0; i < def->ngroup; i++)
         if (def->group[i].field >= width || !pivot_group_ok(&def->group[i]))
             return 0;
+    for (i = 0; i < def->nsort; i++)
+        if (def->sort_field[i] >= width)
+            return 0;
+    for (i = 0; i < def->nhide; i++)
+        if (def->hide[i].field >= width)
+            return 0;
     for (i = 0; i < def->ndata; i++)
         if (def->data[i].field >= width || def->data[i].function < OWF_PIVOT_FN_FIRST ||
             def->data[i].function > OWF_PIVOT_FN_LAST || def->data[i].show < OWF_PIVOT_SHOW_NORMAL ||

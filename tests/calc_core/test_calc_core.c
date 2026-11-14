@@ -6322,6 +6322,20 @@ static void test_pivot_group(void)
             remove(paths[k]);
         }
     }
+    {
+        /* a sorted, hidden or grouped field past the source's columns is refused */
+        owf_pivotdef bad = got;
+        CHECK(owf_pivot_check(oc_core_book(core), &bad));
+        bad.nsort = 1; bad.sort_field[0] = 40; bad.sort_order[0] = OWF_PIVOT_SORT_ASCENDING;
+        CHECK(!owf_pivot_check(oc_core_book(core), &bad));
+        bad = got;
+        bad.nhide = 1; memset(&bad.hide[0], 0, sizeof bad.hide[0]);
+        bad.hide[0].field = 3; bad.hide[0].kind = OWF_PIVOT_BLANK;
+        CHECK(!owf_pivot_check(oc_core_book(core), &bad));
+        bad = got;
+        bad.group[0].field = 3;
+        CHECK(!owf_pivot_check(oc_core_book(core), &bad));
+    }
     g.by = OWF_PIVOT_GROUP_NONE;
     CHECK(owf_pivot_set_group(&got, &g) && got.ngroup == 0);
     CHECK(owf_pivot_config_text(&got, config, sizeof config) && !strstr(config, ";b="));
