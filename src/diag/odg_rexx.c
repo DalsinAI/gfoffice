@@ -456,6 +456,20 @@ static int split_ids(odg_rexx *rx, const char *what, const char *s, char *buf, s
     return n;
 }
 
+/* 1 when new cells can go on the current layer; else 0 with LASTERROR saying why. */
+static int layer_open(odg_rexx *rx, const char *what)
+{
+    int i = odg_layer_current(&rx->doc);
+    if (i >= 0 && !odg_layer_shown(&rx->doc, i))
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%s: layer %d is hidden (SHOWLAYER %d shows it)", what, i + 1, i + 1);
+    else if (i >= 0 && odg_layer_locked(&rx->doc, i))
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%s: layer %d is locked (LOCKLAYER %d OFF unlocks it)", what, i + 1,
+                 i + 1);
+    else
+        return 1;
+    return 0;
+}
+
 static const owf_dcell *find_cell(odg_rexx *rx, const char *what, const char *id)
 {
     const owf_dcell *c = owf_dpage_find(odg_page(&rx->doc), id);
@@ -618,11 +632,13 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return ODG_RX_OK;
     }
     case C_ADDSHAPE:
+        if (!layer_open(rx, "ADDSHAPE")) return ODG_RX_ERROR;
         rc = odg_add_shape(doc, a->num[0], a->num[1], a->num[2], a->num[3], a->value[4] ? a->value[4] : "",
                            a->value[5], text);
         if ((rc = edit_rc(rx, rc, "ADDSHAPE", "not possible")) == ODG_RX_OK) put(result, size, text);
         return rc;
     case C_CONNECT:
+        if (!layer_open(rx, "CONNECT")) return ODG_RX_ERROR;
         rc = odg_add_edge(doc, a->value[0], a->value[1], NULL, NULL, a->value[2] ? a->value[2] : "", text);
         if ((rc = edit_rc(rx, rc, "CONNECT", "FROM and TO must be shapes on the page")) == ODG_RX_OK)
             put(result, size, text);
