@@ -26,7 +26,8 @@ typedef struct {
 enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_PAGES, C_PAGE,
     C_ADDPAGE, C_CELLS, C_ADDSHAPE, C_CONNECT, C_MOVE, C_RESIZE, C_DELETE, C_SETVALUE, C_GETVALUE, C_STYLE,
-    C_GETSTYLE, C_GETBOX, C_HIT, C_GRID, C_UNDO, C_REDO, NCOMMANDS
+    C_GETSTYLE, C_GETBOX, C_HIT, C_GRID, C_UNDO, C_REDO, C_LAYERS, C_LAYER, C_ADDLAYER, C_GETLAYER, C_SHOWLAYER,
+    C_LOCKLAYER, C_RENAMELAYER, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -57,6 +58,13 @@ static const command commands[NCOMMANDS] = {
     { "GRID", "SIZE/N" },
     { "UNDO", "" },
     { "REDO", "" },
+    { "LAYERS", "" },
+    { "LAYER", "NUMBER/N" },
+    { "ADDLAYER", "NAME" },
+    { "GETLAYER", "NUMBER/A/N" },
+    { "SHOWLAYER", "NUMBER/A/N,OFF/S" },
+    { "LOCKLAYER", "NUMBER/A/N,OFF/S" },
+    { "RENAMELAYER", "NUMBER/A/N,NAME/A" },
 };
 
 /* ---- Words ---- */
@@ -386,6 +394,18 @@ static int edit_rc(odg_rexx *rx, int rc, const char *what, const char *why)
     return ODG_RX_ERROR;
 }
 
+/* A layer's number (1 the bottom) as given, into *i from 0; 0 with LASTERROR when there is no such layer */
+static int layer_arg(odg_rexx *rx, const char *what, long num, int *i)
+{
+    int n = odg_layer_count(&rx->doc);
+    if (num % 100 || num < 100 || num / 100 > n) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%s: there are layers 1 to %d", what, n);
+        return 0;
+    }
+    *i = (int)(num / 100 - 1);
+    return 1;
+}
+
 static void put(char *result, size_t size, const char *s)
 {
     size_t n = strlen(s ? s : "");
@@ -645,6 +665,38 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         owf_dnum_format(doc->grid, text, sizeof text);
         put(result, size, text);
         return ODG_RX_OK;
+    case C_LAYERS: snprintf(result, size, "%d", odg_layer_count(doc)); return ODG_RX_OK;
+    case C_LAYER: {
+        int i, n = odg_layer_count(doc);
+        if (a->value[0]) {
+            if (!layer_arg(rx, "LAYER", a->num[0], &i)) return ODG_RX_ERROR;
+            doc->layer = i;
+        }
+        snprintf(result, size, "%d", doc->layer >= 0 && doc->layer < n ? doc->layer + 1 : 1);
+        return ODG_RX_OK;
+    }
+    case C_ADDLAYER: {
+        int at = 0;
+        rc = edit_rc(rx, odg_layer_add(doc, a->value[0], &at), "ADDLAYER", "the page has no root cell");
+        if (rc == ODG_RX_OK) snprintf(result, size, "%d", at + 1);
+        return rc;
+    }
+    case C_GETLAYER: {
+        int i;
+        if (!layer_arg(rx, "GETLAYER", a->num[0], &i)) return ODG_RX_ERROR;
+        put(result, size, odg_layer_at(doc, i)->value);
+        return ODG_RX_OK;
+    }
+    case C_SHOWLAYER:
+    case C_LOCKLAYER:
+    case C_RENAMELAYER: {
+        int i;
+        if (!layer_arg(rx, commands[c].name, a->num[0], &i)) return ODG_RX_ERROR;
+        if (c == C_SHOWLAYER) rc = odg_layer_show(doc, i, a->value[1] == NULL);
+        else if (c == C_LOCKLAYER) rc = odg_layer_lock(doc, i, a->value[1] == NULL);
+        else rc = odg_layer_rename(doc, i, a->value[1]);
+        return edit_rc(rx, rc, commands[c].name, "no such layer");
+    }
     case C_UNDO:
     case C_REDO:
         rc = c == C_UNDO ? odg_undo(doc) : odg_redo(doc);

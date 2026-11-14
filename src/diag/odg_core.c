@@ -168,16 +168,76 @@ static owf_dcell *shape(const owf_dpage *p, const char *id)
     return c && c->kind == OWF_DCELL_VERTEX ? c : NULL;
 }
 
-/* The default layer: the first cell whose parent is the root. */
-static const char *layer(const owf_dpage *p)
+static int is_layer(const owf_dpage *p, const owf_dcell *c)
 {
-    int i;
-    for (i = 0; i < p->ncells; i++) {
-        const owf_dcell *parent = owf_dpage_find(p, p->cells[i].parent);
-        if (parent && !parent->parent)
-            return p->cells[i].id;
+    const owf_dcell *parent = c->parent ? owf_dpage_find(p, c->parent) : NULL;
+    return parent && !parent->parent;
+}
+
+/* Layer i's index in the page's cells, -1 when there is none */
+static int layer_index(const owf_dpage *p, int i)
+{
+    int k, n = 0;
+    for (k = 0; k < p->ncells; k++)
+        if (is_layer(p, &p->cells[k]) && n++ == i)
+            return k;
+    return -1;
+}
+
+int odg_layer_count(const odg_doc *doc)
+{
+    const owf_dpage *p = odg_page(doc);
+    int k, n = 0;
+    for (k = 0; k < p->ncells; k++)
+        n += is_layer(p, &p->cells[k]);
+    return n;
+}
+
+const owf_dcell *odg_layer_at(const odg_doc *doc, int i)
+{
+    const owf_dpage *p = odg_page(doc);
+    int k = i >= 0 ? layer_index(p, i) : -1;
+    return k >= 0 ? &p->cells[k] : NULL;
+}
+
+int odg_layer_shown(const odg_doc *doc, int i)
+{
+    const owf_dcell *c = odg_layer_at(doc, i);
+    const char *v = c ? owf_dattrs_get(&c->extra, "visible") : NULL;
+    return c && !(v && !strcmp(v, "0"));
+}
+
+static int style_locked(const char *style)
+{
+    char v[8];
+    return owf_dstyle_get(style, "locked", v, sizeof v) && !strcmp(v, "1");
+}
+
+int odg_layer_locked(const odg_doc *doc, int i)
+{
+    const owf_dcell *c = odg_layer_at(doc, i);
+    return c && style_locked(c->style);
+}
+
+int odg_cell_locked(const odg_doc *doc, const owf_dcell *c)
+{
+    const owf_dpage *p = odg_page(doc);
+    int depth = 0;
+    while (c && depth++ < 64) {
+        if (style_locked(c->style))
+            return 1;
+        c = c->parent ? owf_dpage_find(p, c->parent) : NULL;
     }
-    return NULL;
+    return 0;
+}
+
+/* The layer new cells go on: doc->layer's, else the first. */
+static const char *layer_for(const odg_doc *doc)
+{
+    const owf_dcell *c = odg_layer_at(doc, doc->layer);
+    if (!c)
+        c = odg_layer_at(doc, 0);
+    return c ? c->id : NULL;
 }
 
 static int route_at(odg_doc *doc, int index);
@@ -192,7 +252,7 @@ int odg_add_shape(odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum w, owf_dnum h, 
                   const char *value, char *id)
 {
     owf_dpage *p = odg_page(doc);
-    const char *lay = layer(p);
+    const char *lay = layer_for(doc);
     owf_dcell *c;
     int r;
     if (!lay || w <= 0 || h <= 0)
@@ -200,7 +260,7 @@ int odg_add_shape(odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum w, owf_dnum h, 
     if (begin(doc) != OWF_OK)
         return OWF_ERR_MEMORY;
     p = odg_page(doc);
-    c = owf_dpage_add(p, NULL, layer(p), OWF_DCELL_VERTEX);
+    c = owf_dpage_add(p, NULL, layer_for(doc), OWF_DCELL_VERTEX);
     r = c ? OWF_OK : OWF_ERR_MEMORY;
     if (c) {
         c->geo.flags = OWF_DGEO_HAS;
@@ -229,12 +289,12 @@ int odg_add_edge(odg_doc *doc, const char *source, const char *target, const owf
     owf_dcell *e;
     int r = OWF_OK, at;
     if ((source && !shape(p, source)) || (target && !shape(p, target)) || (!source && !loose_source) ||
-        (!target && !loose_target) || !layer(p))
+        (!target && !loose_target) || !layer_for(doc))
         return OWF_ERR_FORMAT;
     if (begin(doc) != OWF_OK)
         return OWF_ERR_MEMORY;
     p = odg_page(doc);
-    e = owf_dpage_add(p, NULL, layer(p), OWF_DCELL_EDGE);
+    e = owf_dpage_add(p, NULL, layer_for(doc), OWF_DCELL_EDGE);
     if (!e)
         return end(doc, OWF_ERR_MEMORY);
     e->geo.flags = OWF_DGEO_HAS | OWF_DGEO_RELATIVE;
@@ -579,6 +639,76 @@ int odg_set_style(odg_doc *doc, const char *const *ids, int n, const char *key, 
     return end(doc, r);
 }
 
+/* ---- Layers ---- */
+
+int odg_layer_add(odg_doc *doc, const char *name, int *at)
+{
+    owf_dpage *p = odg_page(doc);
+    const owf_dcell *root = NULL;
+    owf_dcell *c;
+    char made[32];
+    int k, n = odg_layer_count(doc), r;
+    for (k = 0; k < p->ncells && !root; k++)
+        if (!p->cells[k].parent)
+            root = &p->cells[k];
+    if (!root)
+        return OWF_ERR_FORMAT;
+    if (!name) {
+        snprintf(made, sizeof made, "Layer %d", n + 1);
+        name = made;
+    }
+    if (begin(doc) != OWF_OK)
+        return OWF_ERR_MEMORY;
+    p = odg_page(doc);
+    for (k = 0; k < p->ncells; k++)
+        if (!p->cells[k].parent)
+            break;
+    {
+        char rootid[64];
+        snprintf(rootid, sizeof rootid, "%s", p->cells[k].id);
+        c = owf_dpage_add(p, NULL, rootid, OWF_DCELL_PLAIN);
+    }
+    if (!c)
+        return end(doc, OWF_ERR_MEMORY);
+    r = owf_dcell_set(&c->value, name);
+    if (r == OWF_OK) {
+        doc->layer = n;
+        if (at)
+            *at = n;
+    }
+    return end(doc, r);
+}
+
+int odg_layer_show(odg_doc *doc, int i, int shown)
+{
+    int k = i >= 0 ? layer_index(odg_page(doc), i) : -1;
+    if (k < 0)
+        return OWF_ERR_FORMAT;
+    if (begin(doc) != OWF_OK)
+        return OWF_ERR_MEMORY;
+    return end(doc, owf_dattrs_set(&odg_page(doc)->cells[k].extra, "visible", shown ? NULL : "0"));
+}
+
+int odg_layer_lock(odg_doc *doc, int i, int locked)
+{
+    int k = i >= 0 ? layer_index(odg_page(doc), i) : -1;
+    if (k < 0)
+        return OWF_ERR_FORMAT;
+    if (begin(doc) != OWF_OK)
+        return OWF_ERR_MEMORY;
+    return end(doc, owf_dstyle_set(&odg_page(doc)->cells[k].style, "locked", locked ? "1" : NULL));
+}
+
+int odg_layer_rename(odg_doc *doc, int i, const char *name)
+{
+    int k = i >= 0 ? layer_index(odg_page(doc), i) : -1;
+    if (k < 0 || !name)
+        return OWF_ERR_FORMAT;
+    if (begin(doc) != OWF_OK)
+        return OWF_ERR_MEMORY;
+    return end(doc, owf_dcell_set(&odg_page(doc)->cells[k].value, name));
+}
+
 /* ---- Hit-testing ---- */
 
 /* A whole square root, for the hit test's distances. */
@@ -636,9 +766,8 @@ int odg_hit(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, 
     for (i = p->ncells - 1; i >= 0; i--) {
         const owf_dcell *c = &p->cells[i];
         owf_dnum box[4];
-        const char *v = owf_dattrs_get(&c->extra, "visible");
         hit = 0;
-        if (v && !strcmp(v, "0"))
+        if (!owf_dcell_shown(p, c))      /* hidden, or on a hidden layer */
             continue;
         if (c->kind == OWF_DCELL_VERTEX && owf_dcell_box(p, c, box))
             hit = x >= box[0] && x <= box[0] + box[2] && y >= box[1] && y <= box[1] + box[3];

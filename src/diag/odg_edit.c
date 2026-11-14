@@ -96,10 +96,13 @@ void odg_edit_drop(odg_edit *e, const char *id)
     relink(e);
 }
 
-/* A cell the mouse can pick: a shown shape (not a connector's label) or a shown connector. */
-static int pickable(const owf_dpage *p, const owf_dcell *c, int shapes)
+/* A cell the mouse can pick: a shown shape (not a connector's label) or a shown connector, not locked. */
+static int pickable(const odg_doc *doc, const owf_dcell *c, int shapes)
 {
+    const owf_dpage *p = odg_page(doc);
     const owf_dcell *parent;
+    if (odg_cell_locked(doc, c))
+        return 0;
     if (c->kind == OWF_DCELL_EDGE)
         return !shapes && owf_dcell_shown(p, c);
     if (c->kind != OWF_DCELL_VERTEX || !owf_dcell_shown(p, c))
@@ -128,7 +131,7 @@ int odg_edit_select_all(odg_edit *e, const odg_doc *doc)
     int i;
     e->n = 0;
     for (i = 0; i < p->ncells && e->n < ODG_EDIT_MAX; i++)
-        if (pickable(p, &p->cells[i], 0))
+        if (pickable(doc, &p->cells[i], 0))
             odg_edit_select(e, p->cells[i].id, 1);
     return e->n;
 }
@@ -150,7 +153,7 @@ int odg_edit_hit(const odg_view *v, const odg_doc *doc, long px, long py, int sh
         if (!odg_hit(doc, x, y, tolerance(v), buf, sizeof buf) || strlen(buf) >= ODG_EDIT_ID)
             return 0;
         c = owf_dpage_find(p, buf);
-        if (!c || (c->kind != OWF_DCELL_VERTEX && c->kind != OWF_DCELL_EDGE))
+        if (!c || (c->kind != OWF_DCELL_VERTEX && c->kind != OWF_DCELL_EDGE) || odg_cell_locked(doc, c))
             return 0;
         memcpy(id, buf, strlen(buf) + 1);
         return 1;
@@ -158,7 +161,7 @@ int odg_edit_hit(const odg_view *v, const odg_doc *doc, long px, long py, int sh
     for (i = p->ncells - 1; i >= 0; i--) {
         const owf_dcell *c = &p->cells[i];
         owf_dnum box[4];
-        if (!pickable(p, c, 1) || !owf_dcell_box(p, c, box))
+        if (!pickable(doc, c, 1) || !owf_dcell_box(p, c, box))
             continue;
         if (x >= box[0] && x <= box[0] + box[2] && y >= box[1] && y <= box[1] + box[3]) {
             if (strlen(c->id) >= ODG_EDIT_ID)
@@ -436,7 +439,7 @@ static void do_lasso(odg_edit *e, const odg_view *v, const odg_doc *doc)
     for (i = 0; i < p->ncells; i++) {
         const owf_dcell *c = &p->cells[i];
         owf_dnum box[4];
-        if (!pickable(p, c, 0) || !cell_bounds(p, c, box))
+        if (!pickable(doc, c, 0) || !cell_bounds(p, c, box))
             continue;
         if (box[0] >= l && box[1] >= t && box[0] + box[2] <= r && box[1] + box[3] <= b)
             odg_edit_select(e, c->id, 1);

@@ -415,6 +415,35 @@ static void test_lasso(void)
     done();
 }
 
+static void test_locked_and_hidden(void)
+{
+    char a[24], b[24], id[ODG_EDIT_ID];
+    int at;
+    fresh(0);
+    odg_add_shape(&doc, PX(10), PX(10), PX(40), PX(20), "", NULL, a);
+    odg_layer_add(&doc, "Top", &at);
+    odg_add_shape(&doc, PX(100), PX(10), PX(40), PX(20), "", NULL, b);
+    odg_layer_lock(&doc, 0, 1);                           /* the bottom layer locked: a can't be picked */
+    CHECK(!odg_edit_hit(&v, &doc, 20, 20, 0, id));
+    CHECK(!odg_edit_hit(&v, &doc, 20, 20, 1, id));
+    CHECK(odg_edit_hit(&v, &doc, 110, 20, 0, id));
+    CHECK_N(odg_edit_press(&e, &v, &doc, 20, 20, 0), ODG_DRAG_LASSO);   /* a press on it is a press on nothing */
+    CHECK_N(drag(0, 0, 300, 100, 0), OWF_OK);
+    CHECK_N(e.n, 1);
+    CHECK_S(e.ids[0], b);
+    CHECK_N(odg_edit_select_all(&e, &doc), 1);
+    e.tool = ODG_TOOL_CONNECTOR;                          /* nor joined to */
+    CHECK_N(drag(110, 20, 20, 20, 0), OWF_OK);
+    CHECK(cell(e.made)->target == NULL);
+    odg_layer_lock(&doc, 0, 0);
+    odg_layer_show(&doc, 1, 0);                           /* the top layer hidden: b can't be picked */
+    CHECK(!odg_edit_hit(&v, &doc, 110, 20, 0, id));
+    CHECK(odg_edit_hit(&v, &doc, 20, 20, 0, id));
+    CHECK_N(odg_edit_select_all(&e, &doc), 1);
+    CHECK_S(e.ids[0], a);
+    done();
+}
+
 int main(void)
 {
     test_tools();
@@ -425,6 +454,7 @@ int main(void)
     test_resize();
     test_connect();
     test_lasso();
+    test_locked_and_hidden();
     printf("diagram edit: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }
