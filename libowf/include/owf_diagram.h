@@ -182,6 +182,33 @@ int owf_dpng_embed(const unsigned char *png, size_t png_length, const owf_diagra
  * holds none; OWF_ERR_CORRUPT when a chunk is damaged; else as owf_drawio_read. */
 int owf_dpng_read(const unsigned char *png, size_t length, owf_diagram *d);
 
+/* ---- Outlines: a mind map's tree as FreeMind (.mm), OPML and Markdown write it ----
+ * A tree as a list in reading order: each item one node, its depth from the root (0) down, each item at most one
+ * deeper than the one before. Text is plain UTF-8 ('\n' between lines). */
+
+typedef struct {
+    int depth;
+    char *text;                  /* owf_malloc'd */
+    int folded;                  /* its branch shown folded (FreeMind's FOLDED="true"; OPML and Markdown have none) */
+} owf_ditem;
+
+typedef enum { OWF_OUTLINE_MM, OWF_OUTLINE_OPML, OWF_OUTLINE_MD } owf_outline_kind;
+
+/* The kind a file is by its name's ending (.mm, .opml, .md or .markdown), else by its first bytes (<map, <opml
+ * or <?xml with an opml element, else Markdown). */
+owf_outline_kind owf_outline_guess(const char *name, const char *text, size_t length);
+/* The tree in text, into *items (owf_outline_free them). One root always: several at the top go under a new
+ * root named title (or "Outline"). OWF_ERR_FORMAT when it holds no node or isn't that kind; OWF_ERR_CORRUPT for
+ * damaged XML; OWF_ERR_MEMORY. Markdown: "#" headings are depths 0 to 5, list items ("-", "*", "+", "1.")
+ * go under the last heading by their indent; other lines are left out. Items deeper than 60 are put at 60. */
+int owf_outline_read(const char *text, size_t length, owf_outline_kind kind, const char *title, owf_ditem **items,
+                     int *n);
+void owf_outline_free(owf_ditem *items, int n);
+/* The items as that kind, into owf_malloc'd *data with a NUL after it, items deeper than 60 put at 60 (so the
+ * file reads back). title is OPML's head title (NULL: the root's text). OWF_ERR_FORMAT when the list isn't a tree with one root; OWF_ERR_MEMORY. */
+int owf_outline_write(const owf_ditem *items, int n, owf_outline_kind kind, const char *title, char **data,
+                      size_t *length);
+
 #ifdef __cplusplus
 }
 #endif

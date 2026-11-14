@@ -31,14 +31,27 @@ $(OUT)/test-dexport-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dexport.c
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dexport.c -lz -o $@
 
-diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport
+# Step D5: outlines (FreeMind .mm, OPML, Markdown).
+$(OUT)/test-doutline: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_doutline.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_doutline.c -lz -o $@
+
+$(OUT)/test-doutline-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_doutline.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_doutline.c -lz -o $@
+
+diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline
 	$(OUT)/test-diagram
 	$(OUT)/test-diagram-nozlib
 	$(OUT)/test-dexport
+	$(OUT)/test-doutline
 
-diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan
+diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan
 	$(OUT)/test-diagram-asan
 	$(OUT)/test-dexport-asan
+	$(OUT)/test-doutline-asan
 
 test: diagram-test
 check: diagram-check
