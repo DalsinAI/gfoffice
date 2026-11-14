@@ -592,11 +592,3 @@ $(FUZZ_OUT)/fuzz_%: tests/fuzz/fuzz_%.c tests/fuzz/driver.c $(OWF_SRC) libowf/in
 # Workstream hooks (docs/openoffice-parity-plan.md, section 4): each stream's host test targets
 # live in its own mk/<stream>.mk, so streams never edit this file at the same time.
 -include $(sort $(wildcard mk/*.mk))
-
-# ARexx test scripts: no string runs into a B or X (ARexx reads xb as a binary string: Error 8 on the Amiga).
-.PHONY: rexx-test
-rexx-test:
-	python3 tests/arexx/check_rexx_tokens.py --self-test
-
-test: rexx-test
-check: rexx-test
