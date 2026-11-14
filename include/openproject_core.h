@@ -269,6 +269,7 @@ typedef struct {
     opj_doc *doc;                        /* replaced by NEW and OPEN (the app redraws when it changes) */
     char file[256];                      /* the plan's file, "" when it has none */
     char lasterror[256];
+    unsigned long docs;                  /* bumped each time NEW or OPEN replaces doc: a new plan, even at the old address */
 } opj_rexx;
 
 /* A command, its answer into result (cut to size, "" when it has none). */

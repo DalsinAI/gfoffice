@@ -1,8 +1,9 @@
 /* tests/arexx/diag.rexx: GFOpenDiag's ARexx port on the Amiga, against amicradle-teams ARexx-RULE.md
    (return codes 0/5/10/20, no requester holds up a command): the app's own commands (VERSION, FAULT, QUIT
    without FORCE, ZOOM, FIT, TOOL, SELECT, GETSELECTION), then a diagram drawn, joined, moved, undone, layered, saved,
-   opened again and exported, the steps tests/diag/test_odg_rexx.c runs on the PC. The window redraws after
-   each command, so watching it shows the canvas drawing too.
+   opened again and exported, the steps tests/diag/test_odg_rexx.c runs on the PC, and a volume that isn't
+   there refused with no requester. The window redraws after each command, so watching it shows the canvas
+   drawing too.
    rx tests/arexx/diag.rexx [DIR]   (GFOpenDiag running; DIR for the files, RAM: when not given;
    prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
@@ -148,6 +149,10 @@ CALL same 'CELLS on page 2', res, ''
 CALL want 'PAGE 1', 0
 CALL want 'PAGE 3', 10
 CALL want 'OPEN "'dir'no such diagram.drawio" FORCE', 10
+/* A volume that isn't there: RC 10 at once, no "Please insert volume" requester (the script would stop here). */
+CALL want 'OPEN "GFNOSUCHVOL:lab-diag.drawio" FORCE', 10
+CALL want 'SAVEAS "GFNOSUCHVOL:lab-diag.drawio"', 10
+CALL want 'EXPORT "GFNOSUCHVOL:lab-diag.svg"', 10
 CALL want 'NEW FORCE', 0
 
 IF fails = 0 THEN SAY 'ALL PASS'

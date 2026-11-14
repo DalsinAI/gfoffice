@@ -440,6 +440,27 @@ static void test_baseline(void)
 
 /* A milestone that becomes a summary and then a task again keeps the span it had, as MS Project does,
  * and so is no longer a milestone. */
+/* Hundreds of 10,000,000-unit assignments at once go past a 32-bit long: the peak stops at 2,000,000,000
+ * instead of wrapping negative, and comes back exactly once they end. */
+static void test_peak_cap(void)
+{
+    owf_project *p = plan();
+    int i, ann = owf_project_add_resource(p, "Ann"), last = -1;
+    for (i = 0; i < 300; i++) {
+        int t = owf_project_add_task(p, "T", D);
+        owf_project_assign(p, t, ann, 10000000L);
+        last = t;
+    }
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(p->resources[ann].peak, 2000000000L);
+    CHECK(p->resources[ann].overallocated);
+    /* Linked in a chain, only one runs at a time. */
+    for (i = 1; i <= last; i++) owf_project_link(p, i - 1, i, OWF_LINK_FS, 0, 0);
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(p->resources[ann].peak, 10000000L);
+    owf_project_free(p);
+}
+
 static void test_summary_back_to_task(void)
 {
     owf_project *p = plan();
@@ -472,6 +493,7 @@ int main(void)
     test_resources();
     test_baseline();
     test_summary_back_to_task();
+    test_peak_cap();
     if (fails) {
         printf("project tests: %d of %d checks failed\n", fails, checks);
         return 1;

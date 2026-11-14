@@ -21,6 +21,12 @@ These follow the GFOffice conventions (docs/gfoffice/Design-Suite-Shared.md 6.3)
   - 20: an unknown command, or out of memory.
 - **LASTERROR** gives the reason after any return code but 0. No requester is shown.
 
+The window (`app/openproject.c`, built by `build.d/project.sh`) answers `VERSION`, `ACTIVATE`,
+`DEACTIVATE` (5: it has no icon to go to), `FAULT CODE`, `PRINT` (every page of the Gantt view through
+printer.device) and `QUIT` itself; `QUIT` gives 5 while the plan has unsaved changes and `QUIT FORCE`
+drops them. A second copy's port is `GFOPENPROJECT.2`. `tests/arexx/project.rexx` runs the port on the
+Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
+
 | Command | Template | Result |
 | --- | --- | --- |
 | HELP | `COMMAND` | every command, or one command's template |
