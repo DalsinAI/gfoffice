@@ -155,6 +155,13 @@ int owf_dcell_box(const owf_dpage *p, const owf_dcell *c, owf_dnum box[4]);
  * box), or else where the line towards the next point leaves the box. NULL when an end is neither joined
  * nor loose, or memory ran out; *n is how many. */
 owf_dpoint *owf_dedge_path(const owf_dpage *p, const owf_dcell *e, int *n);
+/* 1 when the cell and every cell it is inside are shown (no visible="0"). */
+int owf_dcell_shown(const owf_dpage *p, const owf_dcell *c);
+/* 1 when the style names that shape: a bare word ("ellipse;") or shape=word. */
+int owf_dstyle_is(const char *style, const char *word);
+/* A label's text, from owf_malloc with a NUL after it: an HTML label's (html) tags taken out, its breaks and
+ * blocks made '\n', its entities read; *length (when not NULL) its length. NULL when memory ran out. */
+char *owf_dlabel_text(const char *value, int html, size_t *length);
 /* The box round everything drawn on a page; 0 when nothing is. */
 int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4]);
 

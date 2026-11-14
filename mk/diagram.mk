@@ -46,7 +46,7 @@ check: diagram-check
 .PHONY: diagram-test diagram-check
 
 # Step D3: the editing core (src/diag): operations with Undo, ports and glue, orthogonal routing, snap.
-ODG_SRC = $(wildcard src/diag/*.c)
+ODG_SRC = src/diag/odg_core.c
 ODG_DEPS = $(DIAG_DEPS) $(ODG_SRC) include/opendiag_core.h tests/diag/test_odg.c
 
 $(OUT)/test-odg: $(ODG_DEPS) $(OWF_SRC)
@@ -69,3 +69,33 @@ test: diagram-core-test
 check: diagram-core-check
 
 .PHONY: diagram-core-test diagram-core-check
+
+# Step D4: the canvas (src/diag/odg_view.c), drawn through GFOpenLayout's drawing calls, so it is tested when
+# GFOpenLayout is there (OPENLAYOUT_SRC) with the lines, polygons and ellipses it draws with.
+ODG_OLDRAW = $(wildcard $(OPENLAYOUT_SRC)/draw/oldraw.c)
+ifneq ($(ODG_OLDRAW),)
+ODG_VIEW_DEPS = $(ODG_DEPS) src/diag/odg_view.c include/opendiag_view.h tests/diag/test_odg_view.c
+ODG_VIEW_FLAGS = -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include -I$(OPENLAYOUT_SRC)/draw
+
+$(OUT)/test-odg-view: $(ODG_VIEW_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB $(ODG_VIEW_FLAGS) $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_view.c \
+		$(ODG_OLDRAW) tests/diag/test_odg_view.c -lz -o $@
+
+$(OUT)/test-odg-view-asan: $(ODG_VIEW_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		$(ODG_VIEW_FLAGS) $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_view.c $(ODG_OLDRAW) tests/diag/test_odg_view.c \
+		-lz -o $@
+
+diagram-view-test: $(OUT)/test-odg-view
+	$(OUT)/test-odg-view
+
+diagram-view-check: $(OUT)/test-odg-view-asan
+	$(OUT)/test-odg-view-asan
+
+test: diagram-view-test
+check: diagram-view-check
+
+.PHONY: diagram-view-test diagram-view-check
+endif
