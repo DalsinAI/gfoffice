@@ -394,6 +394,68 @@ static void test_long_edges(void)
     done();
 }
 
+/* Ids of any length (Delenn's review): diagrams.net writes 20 characters, "-" and a number, so a big file's
+ * cells have ids of 24 characters and more; the core holds cells by index, never by a cut copy of the id. */
+static void long_ids(const char *ida, const char *idb, const char *ide)
+{
+    owf_dpage *p;
+    owf_dcell *c;
+    const char *ids[1];
+    fresh(0);
+    p = odg_page(&doc);
+    c = owf_dpage_add(p, ida, "1", OWF_DCELL_VERTEX);
+    c->geo.flags = OWF_DGEO_HAS;
+    c->geo.width = PX(100);
+    c->geo.height = PX(50);
+    c = owf_dpage_add(p, idb, "1", OWF_DCELL_VERTEX);
+    c->geo.flags = OWF_DGEO_HAS;
+    c->geo.x = PX(300);
+    c->geo.width = PX(100);
+    c->geo.height = PX(50);
+    c = owf_dpage_add(p, ide, "1", OWF_DCELL_EDGE);
+    c->geo.flags = OWF_DGEO_HAS | OWF_DGEO_RELATIVE;
+    owf_dcell_set(&c->source, ida);
+    owf_dcell_set(&c->target, idb);
+    owf_dcell_set(&c->style, "edgeStyle=orthogonalEdgeStyle;");
+    CHECK_N(odg_route(&doc, ide), OWF_OK);
+    CHECK_N(cell(ide)->geo.npoints, 0);            /* side by side, level: straight across */
+    /* joined again at B's west side: its port in the style */
+    CHECK_N(odg_connect(&doc, ide, 1, idb, ODG_PORT_W, NULL), OWF_OK);
+    CHECK_S(cell(ide)->target, idb);
+    CHECK(strstr(cell(ide)->style, "entryX=0;") != NULL);
+    /* moving A down routes the connector again: two bends half way across */
+    ids[0] = ida;
+    CHECK_N(odg_move(&doc, ids, 1, 0, PX(300)), OWF_OK);
+    CHECK_N(cell(ide)->geo.npoints, 2);
+    if (cell(ide)->geo.npoints == 2) {
+        CHECK_N(cell(ide)->geo.points[0].x, PX(200));
+        CHECK_N(cell(ide)->geo.points[0].y, PX(325));
+        CHECK_N(cell(ide)->geo.points[1].y, PX(25));
+    }
+    /* resizing B: routed again to its new west side's middle */
+    CHECK_N(odg_resize(&doc, idb, PX(300), 0, PX(100), PX(150)), OWF_OK);
+    CHECK_N(cell(ide)->geo.points[1].y, PX(75));
+    /* and a connector made by the core between them */
+    {
+        char e2[24];
+        CHECK_N(odg_add_edge(&doc, ida, idb, NULL, NULL, "edgeStyle=orthogonalEdgeStyle;", e2), OWF_OK);
+        CHECK_N(cell(e2)->geo.npoints, 2);
+    }
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK_N(cell(ide)->geo.points[1].y, PX(25));
+    done();
+}
+
+static void test_long_ids(void)
+{
+    long_ids("abcdefghijklmnopqrst-100", "abcdefghijklmnopqrst-101", "abcdefghijklmnopqrst-102");
+    long_ids("a-forty-character-id-for-shape-a-0000001", "a-forty-character-id-for-shape-b-0000002",
+             "a-forty-character-id-for-connector-00003");
+    /* ids that are the same for their first 23 characters: the right one is routed */
+    long_ids("abcdefghijklmnopqrstuvw-1", "abcdefghijklmnopqrstuvw-2", "abcdefghijklmnopqrstuvw-3");
+}
+
 int main(void)
 {
     test_shapes_and_undo();
@@ -405,6 +467,7 @@ int main(void)
     test_groups_and_styles();
     test_from_file();
     test_long_edges();
+    test_long_ids();
     printf("diagram core: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }
