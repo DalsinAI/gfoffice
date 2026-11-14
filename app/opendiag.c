@@ -29,6 +29,7 @@
 #include <libraries/asl.h>
 #include <workbench/startup.h>
 #include <dos/dos.h>
+#include <dos/dosextens.h>
 #include <graphics/text.h>
 #include <graphics/rastport.h>
 #include <devices/inputevent.h>
@@ -835,9 +836,15 @@ static void rexx_messages(void)
     while (rexx_port && (rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
         static char res[4096];
         int rc;
+        struct Process *me = (struct Process *)FindTask(NULL);
+        APTR was = me->pr_WindowPtr;
+        /* ARexx-RULE: no requester holds a script up, DOS's own ("Please insert volume") included, so an
+         * OPEN, SAVEAS or EXPORT naming a volume that isn't there fails with RC 10 instead */
+        me->pr_WindowPtr = (APTR)-1;
         rexx_busy = 1;
         rc = rexx_do_command((const char *)rm->rm_Args[0], res, sizeof res);
         rexx_busy = 0;
+        me->pr_WindowPtr = was;
         rm->rm_Result1 = rc;
         rm->rm_Result2 = 0;
         if (rc == ODG_RX_OK && (rm->rm_Action & RXFF_RESULT) && RexxSysBase)
