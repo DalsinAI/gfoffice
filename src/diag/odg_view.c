@@ -383,9 +383,17 @@ static void draw_vertex(oldraw *d, const odg_view *v, const owf_dpage *p, const 
             oldraw_ellipse_frame(d, &r, w, stroke);
     } else if (owf_dstyle_is(style, "triangle") || owf_dstyle_is(style, "parallelogram") ||
                owf_dstyle_is(style, "hexagon")) {
-        /* the flowchart polygons, as draw.io draws them by default: a triangle pointing east, a parallelogram
-         * leaning a fifth of its width, a hexagon cut a quarter in at each end */
-        int n, k = (int)((wide)r.w * (owf_dstyle_is(style, "hexagon") ? 1 : 2) / (owf_dstyle_is(style, "hexagon") ? 4 : 10));
+        /* the flowchart polygons as draw.io draws them: a triangle pointing east; a parallelogram leaning, and a
+         * hexagon cut in at each end, by size: pixels with fixedSize=1 (20 when not given), else a part of the
+         * width (0.2 and 0.25 when not given) */
+        int hex = owf_dstyle_is(style, "hexagon"), n;
+        long k;
+        if (style_is(style, "fixedSize", "1"))
+            k = odg_view_len(v, style_num(style, "size", OWF_DNUM(20)));
+        else
+            k = (long)((wide)r.w * style_num(style, "size", hex ? 25 : 20) / 100);
+        if (k < 0) k = 0;
+        if (k > r.w / 2) k = r.w / 2;
         if (owf_dstyle_is(style, "triangle")) {
             pts[0].x = r.x;           pts[0].y = r.y;
             pts[1].x = r.x + r.w - 1; pts[1].y = r.y + r.h / 2;

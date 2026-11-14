@@ -573,6 +573,19 @@ static void test_flowchart_shapes(void)
     CHECK_X(px[120][205], RED);
     CHECK_X(px[120][250], RED);
     done();
+    /* fixedSize=1, as the palette's Data and Preparation have: the lean is size pixels (20 when not given), not a
+     * part of the width, as diagrams.net draws it */
+    fresh(0);
+    odg_add_shape(&doc, PX(100), PX(200), PX(200), PX(40), "shape=parallelogram;fixedSize=1;fillColor=#ff0000;", NULL, a);
+    odg_add_shape(&doc, PX(10), PX(250), PX(200), PX(40), "shape=hexagon;fixedSize=1;size=10;fillColor=#ff0000;", NULL, c);
+    draw(&v);
+    CHECK_X(px[200][121], BLACK);              /* the top starts 20 in, not 40 */
+    CHECK_X(px[202][125], RED);
+    CHECK_X(px[201][105], WHITE);
+    CHECK_X(px[250][21], BLACK);               /* 10 in at the corners, not 50 */
+    CHECK_X(px[255][30], RED);
+    CHECK_X(px[251][12], WHITE);
+    done();
 }
 
 int main(void)
