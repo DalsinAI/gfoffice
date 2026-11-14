@@ -68,7 +68,7 @@ static const char version[] __attribute__((used)) =
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
-    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS, M_MAP_NEW,
+    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS, M_MAP_NEW, M_MAP_IMPORT, M_MAP_EXPORT,
     M_TOOL = 100,                        /* M_TOOL + odg_tool */
     M_SHAPE = 200,                       /* M_SHAPE + odg_stencil_at's number */
     M_MAP = 300                          /* M_MAP + odg_mind_key */
@@ -141,6 +141,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Delete Branch", NULL, 0, 0, (APTR)(M_MAP + ODG_MKEY_DELETE) },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Lay Out Map", "M", 0, 0, (APTR)(M_MAP + ODG_MKEY_LAYOUT) },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Import Outline...", NULL, 0, 0, (APTR)M_MAP_IMPORT },
+    { NM_ITEM, "Export Outline...", NULL, 0, 0, (APTR)M_MAP_EXPORT },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -897,6 +900,35 @@ static void map_new(void)
     edit_label(id);
 }
 
+/* Import Outline: a FreeMind .mm, OPML or Markdown outline as a new map in the middle of the window (MAPIMPORT),
+ * its root selected. Export Outline: the selected node's map as one of those, by the name's ending. */
+static void map_outline(int import)
+{
+    char path[512], line[700], id[64], x[24], y[24];
+    int rc;
+    if (!import && !map_node()) { set_status("Select a map node first"); redraw(); return; }
+    if (!ask_file(import ? "Import an outline" : "Export the map as (.mm, .opml or .md)", !import,
+                  "#?.(mm|opml|md|markdown)", path, sizeof path))
+        return;
+    if (strchr(path, '"') || (!import && strchr(ed.ids[0], '"'))) { tell("A name with a quote in it can't be used"); return; }
+    if (strlen(path) > 500) { tell("The file name is too long"); return; }
+    if (import) {
+        owf_dnum_format(odg_page_x(&view, inner_w() / 2), x, sizeof x);
+        owf_dnum_format(odg_page_y(&view, inner_h() / 2), y, sizeof y);
+        snprintf(line, sizeof line, "MAPIMPORT \"%s\" %s %s", path, x, y);
+    } else
+        snprintf(line, sizeof line, "MAPEXPORT \"%s\" \"%s\"", ed.ids[0], path);
+    id[0] = 0;
+    rc = run(line, id, sizeof id);
+    if (rc != ODG_RX_OK && rc != ODG_RX_NOW) { tell(rx.lasterror); redraw(); return; }
+    set_status(rc == ODG_RX_NOW ? rx.lasterror : import ? "Imported" : "Exported");
+    if (import && id[0]) {
+        odg_edit_clear(&ed);
+        odg_edit_select(&ed, id, 0);
+    }
+    redraw();
+}
+
 /* The keys of the map mode, with one map node selected; 1 when the key was one. Tab a child, Return a sibling
  * (Shift-Return above), Space edits the label, . folds or unfolds, + unfolds, - folds, Del the branch. */
 static int map_vanilla(UWORD code, int shift)
@@ -976,6 +1008,8 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_PAGE_ADD: add_page(); return;
     case M_LAYERS: layers_window(); return;
     case M_MAP_NEW: map_new(); return;
+    case M_MAP_IMPORT: map_outline(1); return;
+    case M_MAP_EXPORT: map_outline(0); return;
     }
     redraw();
 }

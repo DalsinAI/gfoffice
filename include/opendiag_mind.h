@@ -67,6 +67,18 @@ int odg_mind_layout(odg_doc *doc, const char *node, int both);
  * left where they were (or the map loops). */
 int odg_mind_whole(const odg_doc *doc, const char *id);
 
+/* Outlines (owf_diagram.h: FreeMind .mm, OPML, Markdown). */
+/* The map id is in as an outline: the root first, each node's children in order, folded branches too (marked
+ * folded), labels as plain text. At most ODG_MIND_MAX nodes and ODG_MIND_DEPTH levels; odg_mind_whole says when
+ * a map is bigger. *items to owf_outline_free. OWF_ERR_FORMAT when id isn't in a map (or the map loops);
+ * OWF_ERR_MEMORY. */
+int odg_mind_items(const odg_doc *doc, const char *id, owf_ditem **items, int *n);
+/* A new map from an outline, its root at x, y on the current layer, laid out (both sides when both); folded
+ * items come in folded. One Undo step. The root's id in id (at least 24 bytes) when it isn't NULL.
+ * OWF_ERR_FORMAT when the layer is hidden or locked, or items isn't a tree from one root under ODG_MIND_DEPTH
+ * levels; OWF_ERR_MEMORY. */
+int odg_mind_import(odg_doc *doc, owf_dnum x, owf_dnum y, const owf_ditem *items, int n, int both, char *id);
+
 /* The keys of the map mode, as GFOpenDiag's window gives them: Tab a child, Return a sibling below (Shift-Return
  * above), the arrows to the next node (left and right as the node's side of the root goes: towards the root is
  * back), . fold or unfold, + unfold, - fold, Alt-Up and Alt-Down move among the siblings, Del the branch, and Lay Out. */

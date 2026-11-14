@@ -29,7 +29,7 @@ enum {
     C_ADDPAGE, C_CELLS, C_ADDSHAPE, C_CONNECT, C_MOVE, C_RESIZE, C_DELETE, C_SETVALUE, C_GETVALUE, C_STYLE,
     C_GETSTYLE, C_GETBOX, C_HIT, C_GRID, C_UNDO, C_REDO, C_LAYERS, C_LAYER, C_ADDLAYER, C_GETLAYER, C_SHOWLAYER,
     C_LOCKLAYER, C_RENAMELAYER, C_MAPNEW, C_MAPCHILD, C_MAPSIBLING, C_MAPDELETE, C_MAPMOVE, C_MAPFOLD, C_MAPLAYOUT,
-    C_MAPROOT, C_MAPPARENT, C_MAPCHILDREN, C_MAPSTEP, NCOMMANDS
+    C_MAPROOT, C_MAPPARENT, C_MAPCHILDREN, C_MAPSTEP, C_MAPEXPORT, C_MAPIMPORT, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -78,6 +78,8 @@ static const command commands[NCOMMANDS] = {
     { "MAPPARENT", "NODE/A" },
     { "MAPCHILDREN", "NODE/A" },
     { "MAPSTEP", "NODE/A,WAY/A" },
+    { "MAPEXPORT", "NODE/A,FILE/A,FORMAT/K" },
+    { "MAPIMPORT", "FILE/A,X/N,Y/N,FORMAT/K" },
 };
 
 /* ---- Words ---- */
@@ -286,6 +288,16 @@ static int ext_is(const char *file, const char *ext)
     if (!dot || strlen(dot + 1) != strlen(ext)) return 0;
     for (dot++; *dot; dot++, ext++)
         if (lower((unsigned char)*dot) != *ext) return 0;
+    return 1;
+}
+
+/* MM, OPML or MD (MARKDOWN) into *kind; 0 for another word. */
+static int outline_kind(const char *w, owf_outline_kind *kind)
+{
+    if (word_at(w, "MM", 2, 0)) *kind = OWF_OUTLINE_MM;
+    else if (word_at(w, "OPML", 4, 0)) *kind = OWF_OUTLINE_OPML;
+    else if (word_at(w, "MD", 2, 0) || word_at(w, "MARKDOWN", 8, 0)) *kind = OWF_OUTLINE_MD;
+    else return 0;
     return 1;
 }
 
@@ -811,6 +823,89 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         result[0] = 0;
         if (odg_mind_step(doc, a->value[0], (odg_mind_dir)w, text)) put(result, size, text);
         return ODG_RX_OK;
+    }
+    case C_MAPEXPORT:
+    case C_MAPIMPORT: {
+        const char *name = a->value[c == C_MAPEXPORT ? 1 : 0], *fmt = a->value[c == C_MAPEXPORT ? 2 : 3];
+        owf_outline_kind kind;
+        owf_ditem *items = NULL;
+        int n = 0;
+        unsigned char *data = NULL;
+        size_t length = 0;
+        if (fmt && !outline_kind(fmt, &kind)) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "%s: FORMAT is MM, OPML or MD, not %.100s",
+                     commands[c].name, fmt);
+            return ODG_RX_ERROR;
+        }
+        if (c == C_MAPEXPORT) {
+            char *out = NULL;
+            FILE *f;
+            int ok;
+            if (!fmt) kind = owf_outline_guess(name, NULL, 0);
+            rc = odg_mind_items(doc, a->value[0], &items, &n);
+            if (rc == OWF_OK) rc = owf_outline_write(items, n, kind, NULL, &out, &length);
+            owf_outline_free(items, n);
+            if (rc != OWF_OK) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, rc == OWF_ERR_MEMORY ? "MAPEXPORT: out of memory"
+                         : "MAPEXPORT: %.100s is not in a map (or its map loops back on itself)", a->value[0]);
+                return rc == OWF_ERR_MEMORY ? ODG_RX_FAIL : ODG_RX_ERROR;
+            }
+            f = fopen(name, "wb");
+            ok = f && fwrite(out, 1, length, f) == length;
+            if (f && fclose(f) != 0) ok = 0;
+            owf_free(out);
+            if (!ok) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "MAPEXPORT: could not write %.200s", name);
+                return ODG_RX_ERROR;
+            }
+            if (!odg_mind_whole(doc, a->value[0])) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "MAPEXPORT: the map has more than %d nodes; the "
+                         "first %d were written", ODG_MIND_MAX, ODG_MIND_MAX);
+                return ODG_RX_NOW;
+            }
+            return ODG_RX_OK;
+        } else {
+            owf_dnum x = a->num[1], y = a->num[2], box[4];
+            int got;
+            if (!layer_open(rx, "MAPIMPORT")) return ODG_RX_ERROR;
+            got = read_file(name, &data, &length);
+            if (got <= 0) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, got < 0 ? "MAPIMPORT: out of memory reading %.200s"
+                         : "MAPIMPORT: could not read %.200s", name);
+                return got < 0 ? ODG_RX_FAIL : ODG_RX_ERROR;
+            }
+            if (!fmt) kind = owf_outline_guess(name, (const char *)data, length);
+            if (!a->value[1] || !a->value[2]) {     /* no place given: right of what the page has */
+                if (owf_dpage_bounds(odg_page(doc), box)) {
+                    if (!a->value[1]) x = box[0] + box[2] + OWF_DNUM(40);
+                    if (!a->value[2]) y = box[1];
+                } else {
+                    if (!a->value[1]) x = OWF_DNUM(40);
+                    if (!a->value[2]) y = OWF_DNUM(40);
+                }
+            }
+            rc = owf_outline_read((const char *)data, length, kind, NULL, &items, &n);
+            owf_free(data);
+            if (rc == OWF_OK) rc = odg_mind_import(doc, x, y, items, n, 0, text);
+            owf_outline_free(items, n);
+            if (rc == OWF_ERR_MEMORY) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "MAPIMPORT: out of memory");
+                return ODG_RX_FAIL;
+            }
+            if (rc != OWF_OK) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "MAPIMPORT: %.150s is not an outline GFOpenDiag "
+                         "reads (FreeMind .mm, OPML, or Markdown headings and lists)", name);
+                return ODG_RX_ERROR;
+            }
+            rx->changes++;
+            put(result, size, text);
+            if (!odg_mind_whole(doc, text)) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "MAPIMPORT: the map has more than %d nodes; the rest "
+                         "are not laid out", ODG_MIND_MAX);
+                return ODG_RX_NOW;
+            }
+            return ODG_RX_OK;
+        }
     }
     case C_LAYER: {
         int i, n = odg_layer_count(doc);

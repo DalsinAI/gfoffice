@@ -139,6 +139,16 @@ CALL want 'MAPFOLD' m, 0
 CALL want 'MAPSTEP' m 'CHILD', 0
 CALL same 'MAPSTEP into a folded map', res, ''
 CALL want 'MAPFOLD' m 'OFF', 0
+/* Outlines: out as FreeMind and Markdown on the Amiga's own files, and in again as a second map. */
+CALL want 'MAPEXPORT' m '"'dir'lab-map.mm"', 0
+CALL want 'MAPEXPORT' m '"'dir'lab-map.md"', 0
+CALL want 'MAPIMPORT "'dir'lab-map.mm" 600 420', 0
+m2 = res
+CALL want 'MAPCHILDREN' m2, 0
+IF WORDS(res) ~= 2 THEN CALL bad 'MAPCHILDREN of the imported map =' res '(wanted 2 ids)'
+CALL want 'MAPIMPORT "'dir'lab-map.md" 600 700', 0
+CALL want 'MAPIMPORT "'dir'no-such-outline.mm"', 10
+CALL want 'MAPDELETE' m2, 0
 CALL want 'MAPDELETE' m, 0
 CALL want 'MAPROOT' ma, 10
 
