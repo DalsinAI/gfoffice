@@ -313,7 +313,11 @@ static int run_file(const char *verb, const char *name, const char *more)
         snprintf(rx.lasterror, sizeof rx.lasterror, "A file name with a quote in it can't be used");
         return ODG_RX_ERROR;
     }
-    snprintf(line, sizeof line, "%.15s \"%.500s\"%s%.40s", verb, name, more ? " " : "", more ? more : "");
+    if (strlen(name) > 500) {            /* refused, never saved under a shortened name */
+        snprintf(rx.lasterror, sizeof rx.lasterror, "The file name is too long");
+        return ODG_RX_ERROR;
+    }
+    snprintf(line, sizeof line, "%.15s \"%s\"%s%.40s", verb, name, more ? " " : "", more ? more : "");
     return run(line, NULL, 0);
 }
 
@@ -645,6 +649,14 @@ static void open_file(const char *path)
     redraw();
 }
 
+/* The file named at the start: a file that can't be opened goes on the status line, not in a requester, so the
+ * ARexx port (already public) is served from the first command and an unattended script is never held up. */
+static void open_first(const char *path)
+{
+    set_status(run_file("OPEN", path, "FORCE") != ODG_RX_OK ? rx.lasterror : "");
+    redraw();
+}
+
 static void save(int as)
 {
     char path[512];
@@ -948,6 +960,10 @@ static void rexx_messages(void)
         int rc;
         struct Process *me = (struct Process *)FindTask(NULL);
         APTR was = me->pr_WindowPtr;
+        if (!RexxSysBase || !IsRexxMsg(rm)) {     /* not an ARexx message: sent back untouched */
+            ReplyMsg((struct Message *)rm);
+            continue;
+        }
         /* ARexx-RULE: no requester holds a script up, DOS's own ("Please insert volume") included, so an
          * OPEN, SAVEAS or EXPORT naming a volume that isn't there fails with RC 10 instead */
         me->pr_WindowPtr = (APTR)-1;
@@ -1087,7 +1103,7 @@ int main(int argc, char **argv)
     }
     RexxSysBase = (struct RxsLib *)OpenLibrary((STRPTR)"rexxsyslib.library", 36);
     rexx_open();
-    if (first[0]) open_file(first);
+    if (first[0]) open_first(first);
     redraw();
     while (!quit_now) {
         ULONG sig = 1UL << win->UserPort->mp_SigBit;
