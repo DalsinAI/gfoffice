@@ -238,11 +238,126 @@ static void test_odd_maps(void)
     done();
 }
 
+/* The window's keys (odg_mind_key_do): what each does and the node it leaves selected; the arrows on both sides of
+ * a map laid out both ways; and the reasons a key gives when it can't be done. */
+static void test_keys(void)
+{
+    char r[24], a[24], b[24], a1[24], b1[24], got[24], made[24];
+    const owf_dcell *kids[4];
+    const char *why;
+    int steps;
+    fresh();
+    odg_mind_new(&doc, PX(100), PX(200), "Plan", r);
+    odg_mind_add_child(&doc, r, "Alpha", 0, a);
+    odg_mind_add_child(&doc, r, "Beta", 0, b);
+    odg_mind_add_child(&doc, a, "One", 0, a1);
+    steps = doc.nundo;
+
+    /* The arrows, all on the right: right goes out, left goes back, up and down along the row. */
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, a1);
+    CHECK_N(odg_mind_key_do(&doc, a1, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+    CHECK_S(got, r);
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_LEFT, got, NULL), OWF_OK);   /* nothing left of the root */
+    CHECK_S(got, r);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_DOWN, got, NULL), OWF_OK);
+    CHECK_S(got, b);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_DOWN, got, NULL), OWF_OK);   /* the end of the row */
+    CHECK_S(got, b);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_UP, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(doc.nundo, steps);                            /* stepping changes nothing */
+
+    /* Tab and Return: the new node is selected, one Undo step each. */
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_CHILD, b1, NULL), OWF_OK);
+    CHECK(strcmp(b1, b) != 0 && odg_mind_parent(&doc, b1) == cell(b));
+    CHECK_N(doc.nundo, steps + 1);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_SIBLING, made, NULL), OWF_OK);
+    CHECK_N(odg_mind_children(&doc, r, kids, 4), 3);
+    CHECK(kids[0] == cell(a) && kids[1] == cell(made) && kids[2] == cell(b));
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK(cell(made) == NULL);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_SIBLING_ABOVE, made, NULL), OWF_OK);
+    CHECK_N(odg_mind_children(&doc, r, kids, 4), 3);
+    CHECK(kids[0] == cell(made) && kids[1] == cell(a));
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    why = NULL;
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_SIBLING, got, &why), OWF_ERR_FORMAT);
+    CHECK_S(why, "a map's root has no siblings");
+
+    /* . folds and unfolds; - and + fold and unfold; a leaf has nothing to fold. */
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_FOLD, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK(odg_mind_folded(cell(a)) && !shown(a1));
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_RIGHT, got, NULL), OWF_OK);   /* not into a folded branch */
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_FOLD, got, NULL), OWF_OK);
+    CHECK(!odg_mind_folded(cell(a)) && shown(a1));
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_FOLD_ON, got, NULL), OWF_OK);
+    CHECK(odg_mind_folded(cell(a)));
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_FOLD_OFF, got, NULL), OWF_OK);
+    CHECK(!odg_mind_folded(cell(a)));
+    CHECK_N(odg_mind_key_do(&doc, a1, ODG_MKEY_FOLD, got, &why), OWF_ERR_FORMAT);
+    CHECK_S(why, "it has no children");
+
+    /* Alt-Up and Alt-Down keep the node selected; the end of the row says so. */
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_MOVE_UP, got, &why), OWF_ERR_FORMAT);
+    CHECK_S(why, "it is at the end of its row already");
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_MOVE_DOWN, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_children(&doc, r, kids, 4), 2);
+    CHECK(kids[0] == cell(b) && kids[1] == cell(a));
+    CHECK_N(odg_undo(&doc), OWF_OK);
+
+    /* Del: the branch goes, and the next sibling, the one before, or the parent is selected. */
+    CHECK_N(odg_mind_key_do(&doc, a, ODG_MKEY_DELETE, got, NULL), OWF_OK);
+    CHECK_S(got, b);
+    CHECK(cell(a) == NULL && cell(a1) == NULL);
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_DELETE, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK_N(odg_mind_key_do(&doc, a1, ODG_MKEY_DELETE, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_undo(&doc), OWF_OK);
+
+    /* Both sides: Alpha right, Beta left; on the left, left goes out and right goes back. */
+    CHECK_N(odg_mind_layout(&doc, r, 1), OWF_OK);
+    CHECK(cell(b)->geo.x < cell(r)->geo.x && cell(a)->geo.x > cell(r)->geo.x);
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+    CHECK_S(got, b);
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, a);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_LEFT, got, NULL), OWF_OK);
+    CHECK_S(got, b1);
+    CHECK_N(odg_mind_key_do(&doc, b1, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, b);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_RIGHT, got, NULL), OWF_OK);
+    CHECK_S(got, r);
+    CHECK_N(odg_mind_key_do(&doc, b, ODG_MKEY_CHILD, made, NULL), OWF_OK);   /* the sides are kept */
+    CHECK(cell(made)->geo.x < cell(b)->geo.x && cell(a)->geo.x > cell(r)->geo.x);
+    CHECK_N(odg_mind_key_do(&doc, r, ODG_MKEY_LAYOUT, got, NULL), OWF_OK);
+    CHECK_S(got, r);
+
+    /* Not a node. */
+    why = NULL;
+    CHECK_N(odg_mind_key_do(&doc, "nope", ODG_MKEY_CHILD, got, &why), OWF_ERR_FORMAT);
+    CHECK_S(why, "no map node by that id");
+    CHECK_S(got, "");
+    CHECK_N(odg_mind_key_do(&doc, NULL, ODG_MKEY_DOWN, got, &why), OWF_ERR_FORMAT);
+    done();
+}
+
 int main(void)
 {
     test_build_and_layout();
     test_edits();
     test_odd_maps();
+    test_keys();
     printf("diagram mind map: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

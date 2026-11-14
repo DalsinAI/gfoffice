@@ -63,4 +63,23 @@ int odg_mind_fold(odg_doc *doc, const char *node, int folded, int both);
 /* The map node is in laid out again. */
 int odg_mind_layout(odg_doc *doc, const char *node, int both);
 
+/* The keys of the map mode, as GFOpenDiag's window gives them: Tab a child, Return a sibling below (Shift-Return
+ * above), the arrows to the next node (left and right as the node's side of the root goes: towards the root is
+ * back), . fold or unfold, + unfold, - fold, Alt-Up and Alt-Down move among the siblings, Del the branch, and Lay Out. */
+typedef enum {
+    ODG_MKEY_CHILD, ODG_MKEY_SIBLING, ODG_MKEY_SIBLING_ABOVE, ODG_MKEY_LEFT, ODG_MKEY_RIGHT, ODG_MKEY_UP,
+    ODG_MKEY_DOWN, ODG_MKEY_FOLD, ODG_MKEY_FOLD_ON, ODG_MKEY_FOLD_OFF, ODG_MKEY_MOVE_UP, ODG_MKEY_MOVE_DOWN,
+    ODG_MKEY_DELETE, ODG_MKEY_LAYOUT
+} odg_mind_key;
+
+/* The key done on node, keeping the map's sides (odg_mind_both). OWF_OK with the node to select now in out (at
+ * least 24 bytes): the new node for Tab and Return, the node stepped to (node itself at the end of the way), the
+ * next sibling, the one before or the parent after Del, and node for the rest. Otherwise the edit's error, and
+ * when why isn't NULL, *why says why in words (odg_mind_why). */
+int odg_mind_key_do(odg_doc *doc, const char *node, odg_mind_key key, char *out, const char **why);
+/* Why key failed on node, in words: "no map node by that id", "its map loops back on itself", "a map's root has
+ * no siblings", "it is at the end of its row already", "it has no children", or "not a map node that can be
+ * changed (hidden or locked?)". */
+const char *odg_mind_why(const odg_doc *doc, const char *node, odg_mind_key key);
+
 #endif
