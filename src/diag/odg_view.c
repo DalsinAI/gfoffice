@@ -180,6 +180,25 @@ static int stroke_px(const odg_view *v, const char *style)
 /* ---- lines, dashed or not ---- */
 
 /* n points as a polyline: dashed as draw.io's "3 3" (three widths on, three off). */
+/* odg_draw's area: dashes are only worked out where a segment crosses it, so a long line costs what is shown */
+static const oldraw_rect *dash_area;
+
+/* t from *lo to *hi (of len) along one axis (a + d * t / len) that may be within l..h; 0 when none is */
+static int cut_axis(wide a, wide d, wide l, wide h, wide len, wide *lo, wide *hi)
+{
+    wide ta, tb;
+    if (!d)
+        return a >= l && a <= h;
+    ta = floor_div((l - a) * len, d);
+    tb = floor_div((h - a) * len, d);
+    if (ta > tb) { wide k = ta; ta = tb; tb = k; }
+    ta -= 1;                             /* a pixel either way for the rounding */
+    tb += 1;
+    if (ta > *lo) *lo = ta;
+    if (tb < *hi) *hi = tb;
+    return *lo <= *hi;
+}
+
 static void stroke_path(oldraw *d, const oldraw_point *pts, int n, int closed, int width, int dashed, oldraw_colour c)
 {
     int i, segs;
@@ -195,9 +214,21 @@ static void stroke_path(oldraw *d, const oldraw_point *pts, int n, int closed, i
     for (i = 0; i < segs; i++) {
         const oldraw_point *a = &pts[i], *b = &pts[(i + 1) % n];
         wide dx = (wide)b->x - a->x, dy = (wide)b->y - a->y, len = isqrt_wide(dx * dx + dy * dy), t = 0;
+        wide end = len;
         if (!len)
             continue;
-        while (t < len) {
+        if (dash_area) {
+            wide pad = width + 1, lo = 0, hi = len;
+            const oldraw_rect *r = dash_area;
+            if (!cut_axis(a->x, dx, (wide)r->x - pad, (wide)r->x + r->w + pad, len, &lo, &hi) ||
+                !cut_axis(a->y, dy, (wide)r->y - pad, (wide)r->y + r->h + pad, len, &lo, &hi)) {
+                at += len;
+                continue;
+            }
+            t = lo < 0 ? 0 : lo;
+            end = hi > len ? len : hi;
+        }
+        while (t < end) {
             wide phase = (at + t) % (2 * dash), run = phase < dash ? dash - phase : 2 * dash - phase;
             wide t1 = t + run < len ? t + run : len;
             if (phase < dash) {
@@ -322,7 +353,7 @@ static int rounded_box(const oldraw_rect *r, long rad, oldraw_point *pts)
         for (k = 0; k < 7; k++) {
             /* top left runs from the left side up to the top; each next corner a quarter turn on */
             int a = (corner % 2 == 0) ? k : 6 - k;
-            long ox = rad * arc_cos[a] / 1000, oy = rad * arc_cos[6 - a] / 1000;
+            long ox = (long)((wide)rad * arc_cos[a] / 1000), oy = (long)((wide)rad * arc_cos[6 - a] / 1000);
             pts[n].x = (int32_t)(cx[corner] + sx[corner] * ox);
             pts[n].y = (int32_t)(cy[corner] + sy[corner] * oy);
             n++;
@@ -361,7 +392,8 @@ static void draw_vertex(oldraw *d, const odg_view *v, const owf_dpage *p, const 
         int n = 4;
         if (style_is(style, "rounded", "1")) {
             long small = r.w < r.h ? r.w : r.h;
-            long rad = small * style_num(style, "arcSize", 1500) / 10000 / 2;
+            long arc = style_num(style, "arcSize", 1500);    /* a percent of the shorter side: 0 to 100 */
+            long rad = (long)((wide)small * (arc < 0 ? 0 : arc > 10000 ? 10000 : arc) / 10000 / 2);
             if (rad > 1) n = rounded_box(&r, rad, pts);
         }
         if (n == 4) {
@@ -570,6 +602,7 @@ void odg_draw(oldraw *d, const odg_view *v, const odg_doc *doc, const oldraw_rec
     if (!d || !p)
         return;
     oldraw_clip(d, &a);
+    dash_area = &a;
     oldraw_fill(d, &a, v->paper);
     draw_grid(d, v, doc, &a);
     for (i = 0; i < p->ncells; i++) {
@@ -583,6 +616,8 @@ void odg_draw(oldraw *d, const odg_view *v, const odg_doc *doc, const oldraw_rec
             draw_vertex(d, v, p, c);           /* a label on an edge is drawn with its edge */
     }
     draw_selection(d, v, p);
+    dash_area = NULL;
+    oldraw_clip(d, NULL);                /* the caller's clip as it was: none of odg_draw's own */
 }
 
 /* ---- handles ---- */

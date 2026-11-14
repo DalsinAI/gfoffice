@@ -458,6 +458,55 @@ static void test_selection_and_handles(void)
     done();
 }
 
+/* A dashed line far longer than the view: its dashes are only worked out where it is on show, in step with where
+ * the line starts, and odg_draw leaves no clip of its own behind. A huge arcSize is held to 100%. */
+static void test_long_dashes(void)
+{
+    odg_view v;
+    char e[24], f[24], a[24];
+    owf_dpoint p0 = { PX(-1000), PX(50) }, p1 = { PX(2000), PX(50) };
+    owf_dpoint q0 = { PX(-3000000), PX(20) }, q1 = { PX(3000000), PX(20) };
+    oldraw_rect small = { 0, 0, 10, 10 }, out = { 300, 250, 2, 2 };
+    fresh(0);
+    odg_view_init(&v, W, H);
+    odg_add_edge(&doc, NULL, NULL, &p0, &p1, "endArrow=none;dashed=1;", e);
+    draw(&v);
+    /* pixel x is 1000 + x along the line: 1000 % 6 is 4, so 0 and 1 are a gap, 2 to 4 a dash, 5 to 7 a gap */
+    CHECK_X(px[50][0], WHITE);
+    CHECK_X(px[50][1], WHITE);
+    CHECK_X(px[50][2], BLACK);
+    CHECK_X(px[50][4], BLACK);
+    CHECK_X(px[50][5], WHITE);
+    CHECK_X(px[50][7], WHITE);
+    CHECK_X(px[50][8], BLACK);
+    CHECK_X(px[50][398], BLACK);              /* 1398 % 6 is 0 */
+    CHECK_X(px[50][397], WHITE);
+    done();
+
+    fresh(0);
+    odg_view_init(&v, W, H);
+    v.zoom = 800;                              /* 48 million pixels long, dashes of 24 on and 24 off */
+    odg_add_edge(&doc, NULL, NULL, &q0, &q1, "endArrow=none;dashed=1;", f);
+    draw(&v);
+    CHECK_X(px[160][10], BLACK);               /* 24,000,010 along: 10 into a dash */
+    CHECK_X(px[160][34], WHITE);               /* 34: in the gap */
+    CHECK_X(px[160][58], BLACK);
+    done();
+
+    fresh(0);
+    odg_view_init(&v, W, H);
+    odg_add_shape(&doc, PX(10), PX(10), PX(100), PX(60), "rounded=1;arcSize=2000000000;fillColor=#ff0000;", NULL, a);
+    draw(&v);
+    CHECK_X(px[10][10], WHITE);                /* a corner cut round, at most half the shorter side */
+    CHECK_X(px[40][60], RED);
+    CHECK_X(px[40][10], BLACK);
+    ntexts = 0;
+    odg_draw(d, &v, &doc, &small);
+    oldraw_fill(d, &out, OLDRAW_RGB(0x0000FF));
+    CHECK_X(px[250][300], BLUE);               /* drawn: the clip to the area is gone */
+    done();
+}
+
 int main(void)
 {
     d = cur = oldraw_new(&ops, NULL, W, H, NULL);
@@ -468,6 +517,7 @@ int main(void)
     test_labels();
     test_grid_and_area();
     test_selection_and_handles();
+    test_long_dashes();
     oldraw_free(d);
     printf("diagram view: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
