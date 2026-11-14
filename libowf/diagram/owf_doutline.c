@@ -138,7 +138,7 @@ owf_outline_kind owf_outline_guess(const char *name, const char *text, size_t le
     size_t i = 0;
     if (name && ends_with(name, ".mm"))
         return OWF_OUTLINE_MM;
-    if (name && (ends_with(name, ".opml") || ends_with(name, ".ompl")))
+    if (name && ends_with(name, ".opml"))
         return OWF_OUTLINE_OPML;
     if (name && (ends_with(name, ".md") || ends_with(name, ".markdown")))
         return OWF_OUTLINE_MD;
@@ -241,8 +241,12 @@ static void read_md(list *l, const char *text, size_t length)
             int h = 0;
             while (i < end && text[i] == '#') h++, i++;
             if (h <= 6 && (i == end || text[i] == ' ' || text[i] == '\t')) {
-                size_t e = end;
-                while (e > i && (text[e - 1] == '#' || text[e - 1] == ' ' || text[e - 1] == '\t' || text[e - 1] == '\r')) e--;
+                size_t e = end, k;
+                while (e > i && (text[e - 1] == ' ' || text[e - 1] == '\t' || text[e - 1] == '\r')) e--;
+                for (k = e; k > i && text[k - 1] == '#'; k--)
+                    ;
+                if (k < e && (text[k - 1] == ' ' || text[k - 1] == '\t'))   /* a closing run: "# Title ##" */
+                    e = k;                       /* text[i] is a space here, so k - 1 >= i */
                 add(l, h - 1, text + i, e - i, 0);
                 base = l->n ? l->items[l->n - 1].depth + 1 : 0;
                 levels = 0;

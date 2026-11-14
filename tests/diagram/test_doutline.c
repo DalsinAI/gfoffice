@@ -188,6 +188,20 @@ static void test_md(void)
     CHECK_N(read_s("### Deep first\n- x\n", OWF_OUTLINE_MD, NULL, &it, &n), OWF_OK);
     CHECK_S(shape(it, n), "0:Deep first | 1:x");
     owf_outline_free(it, n);
+    /* A closing run of # goes only with a space before it (Hollister's #200 note): "C#" keeps its #. */
+    CHECK_N(read_s("# C#\n## Title ##\n## #\n## Bug # \n## x\t#\n- F#\n", OWF_OUTLINE_MD, NULL, &it, &n), OWF_OK);
+    CHECK_S(shape(it, n), "0:C# | 1:Title | 1: | 1:Bug | 1:x | 2:F#");
+    owf_outline_free(it, n);
+    {                                                     /* a root ending in # round-trips */
+        owf_ditem one[1];
+        char c[] = "C#";
+        one[0].depth = 0, one[0].text = c, one[0].folded = 0;
+        CHECK_N(owf_outline_write(one, 1, OWF_OUTLINE_MD, NULL, &out, NULL), OWF_OK);
+        CHECK_N(read_s(out, OWF_OUTLINE_MD, NULL, &it, &n), OWF_OK);
+        CHECK_S(shape(it, n), "0:C#");
+        owf_outline_free(it, n);
+        owf_free(out);
+    }
     CHECK_N(read_s("# A\r\n- b\r\n", OWF_OUTLINE_MD, NULL, &it, &n), OWF_OK);   /* DOS line ends */
     CHECK_S(shape(it, n), "0:A | 1:b");
     owf_outline_free(it, n);
