@@ -59,11 +59,42 @@ $(OUT)/test-odg-asan: $(ODG_DEPS) $(OWF_SRC)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) tests/diag/test_odg.c -lz -o $@
 
-diagram-core-test: $(OUT)/test-odg
-	$(OUT)/test-odg
+ODG_REXX_DEPS = $(ODG_DEPS) src/diag/odg_rexx.c include/opendiag_rexx.h tests/diag/test_odg_rexx.c
 
-diagram-core-check: $(OUT)/test-odg-asan
+$(OUT)/test-odg-rexx: $(ODG_REXX_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_rexx.c tests/diag/test_odg_rexx.c -lz -o $@
+
+$(OUT)/test-odg-rexx-asan: $(ODG_REXX_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_rexx.c \
+		tests/diag/test_odg_rexx.c -lz -o $@
+
+# The Style window's sums (src/diag/odg_style.c).
+ODG_STYLE_DEPS = $(ODG_DEPS) src/diag/odg_style.c include/opendiag_style.h tests/diag/test_odg_style.c
+
+$(OUT)/test-odg-style: $(ODG_STYLE_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_style.c tests/diag/test_odg_style.c -lz -o $@
+
+$(OUT)/test-odg-style-asan: $(ODG_STYLE_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_style.c \
+		tests/diag/test_odg_style.c -lz -o $@
+
+diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style
+	$(OUT)/test-odg
+	$(OUT)/test-odg-rexx
+	$(OUT)/test-odg-style
+
+diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan
 	$(OUT)/test-odg-asan
+	$(OUT)/test-odg-rexx-asan
+	$(OUT)/test-odg-style-asan
 
 test: diagram-core-test
 check: diagram-core-check
@@ -88,11 +119,27 @@ $(OUT)/test-odg-view-asan: $(ODG_VIEW_DEPS) $(OWF_SRC)
 		$(ODG_VIEW_FLAGS) $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_view.c $(ODG_OLDRAW) tests/diag/test_odg_view.c \
 		-lz -o $@
 
-diagram-view-test: $(OUT)/test-odg-view
-	$(OUT)/test-odg-view
+# The mouse on the canvas (src/diag/odg_edit.c), over the canvas's places.
+ODG_EDIT_DEPS = $(ODG_VIEW_DEPS) src/diag/odg_edit.c include/opendiag_edit.h tests/diag/test_odg_edit.c
 
-diagram-view-check: $(OUT)/test-odg-view-asan
+$(OUT)/test-odg-edit: $(ODG_EDIT_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB $(ODG_VIEW_FLAGS) $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_view.c \
+		src/diag/odg_edit.c $(ODG_OLDRAW) tests/diag/test_odg_edit.c -lz -o $@
+
+$(OUT)/test-odg-edit-asan: $(ODG_EDIT_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		$(ODG_VIEW_FLAGS) $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_view.c src/diag/odg_edit.c $(ODG_OLDRAW) \
+		tests/diag/test_odg_edit.c -lz -o $@
+
+diagram-view-test: $(OUT)/test-odg-view $(OUT)/test-odg-edit
+	$(OUT)/test-odg-view
+	$(OUT)/test-odg-edit
+
+diagram-view-check: $(OUT)/test-odg-view-asan $(OUT)/test-odg-edit-asan
 	$(OUT)/test-odg-view-asan
+	$(OUT)/test-odg-edit-asan
 
 test: diagram-view-test
 check: diagram-view-check
