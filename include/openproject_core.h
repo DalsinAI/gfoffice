@@ -235,6 +235,28 @@ typedef struct {
 } opj_hit;
 void opj_hit_test(const opj_view *v, const opj_doc *doc, int x, int y, opj_hit *hit);
 
+/* ---- ARexx (opj_rexx.c): the plan's commands of the GFOPENPROJECT port ----
+ * The app answers VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT and QUIT itself and hands every other
+ * command here. Arguments as a ReadArgs template (quotes, KEYWORD=value or KEYWORD value, /S switches);
+ * rows and resources are numbered from 1, as the sheets' ID columns. Return codes as every Open app's
+ * port: 0 done, 5 not possible now, 10 an error, 20 an unknown command or out of memory; on any but 0,
+ * LASTERROR gives the reason. No requester is ever shown. */
+#define OPJ_RX_OK 0
+#define OPJ_RX_NOW 5
+#define OPJ_RX_ERROR 10
+#define OPJ_RX_FAIL 20
+
+typedef struct {
+    opj_doc *doc;                        /* replaced by NEW and OPEN (the app redraws when it changes) */
+    char file[256];                      /* the plan's file, "" when it has none */
+    char lasterror[256];
+} opj_rexx;
+
+/* A command, its answer into result (cut to size, "" when it has none). */
+int opj_rexx_command(opj_rexx *rx, const char *command, char *result, size_t size);
+/* The file format a name's extension asks for: .xml MSPDI, .csv CSV, else .gfproj. */
+int opj_rexx_format(const char *file);
+
 #ifdef __cplusplus
 }
 #endif

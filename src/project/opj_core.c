@@ -227,7 +227,7 @@ int opj_delete_tasks(opj_doc *doc, int first, int count)
 {
     owf_project *work;
     int *map, end, i, j, k, n, rc;
-    if (!doc || count < 1 || first < 0 || first + count > doc->plan->ntasks) return OWF_ERR_FORMAT;
+    if (!doc || count < 1 || first < 0 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
     end = subtree_end(work, first, count);
     if (!(map = owf_malloc((size_t)work->ntasks * sizeof *map))) return fail(work, OWF_ERR_MEMORY);
@@ -260,7 +260,7 @@ int opj_indent(opj_doc *doc, int first, int count, int by)
 {
     owf_project *work;
     int end, i;
-    if (!doc || count < 1 || first < 0 || first + count > doc->plan->ntasks || (by != 1 && by != -1))
+    if (!doc || count < 1 || first < 0 || first > doc->plan->ntasks - count || (by != 1 && by != -1))
         return OWF_ERR_FORMAT;
     if (by > 0 && (first == 0 || doc->plan->tasks[first].level > doc->plan->tasks[first - 1].level))
         return OWF_ERR_FORMAT;           /* already as deep as it can go */
@@ -280,7 +280,7 @@ int opj_link_rows(opj_doc *doc, int first, int count)
 {
     owf_project *work;
     int i, rc;
-    if (!doc || count < 2 || first < 0 || first + count > doc->plan->ntasks) return OWF_ERR_FORMAT;
+    if (!doc || count < 2 || first < 0 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
     for (i = first; i + 1 < first + count; i++)
         if ((rc = owf_project_link(work, i, i + 1, OWF_LINK_FS, 0, 0)) != OWF_OK) return fail(work, rc);
@@ -290,8 +290,9 @@ int opj_link_rows(opj_doc *doc, int first, int count)
 int opj_unlink_rows(opj_doc *doc, int first, int count)
 {
     owf_project *work;
-    int i, j, k, last = first + count;
-    if (!doc || count < 1 || first < 0 || last > doc->plan->ntasks) return OWF_ERR_FORMAT;
+    int i, j, k, last;
+    if (!doc || count < 1 || first < 0 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
+    last = first + count;
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
     for (i = 0; i < work->ntasks; i++) {
         owf_ptask *t = &work->tasks[i];
@@ -792,7 +793,7 @@ int opj_delete_resources(opj_doc *doc, int first, int count)
 {
     owf_project *work;
     int i;
-    if (!doc || first < 0 || count < 1 || first + count > doc->plan->nresources) return OWF_ERR_FORMAT;
+    if (!doc || first < 0 || count < 1 || first > doc->plan->nresources - count) return OWF_ERR_FORMAT;
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
     for (i = first + count - 1; i >= first; i--) owf_project_remove_resource(work, i);
     return commit(doc, work);

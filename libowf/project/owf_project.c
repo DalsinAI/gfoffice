@@ -468,6 +468,7 @@ static void slack(owf_project *p)
             any = 1;
         }
         t->duration = work(project_cal(p), t->early_start, t->early_finish);
+        t->milestone = t->duration == 0;     /* outdented back to a task, it keeps the span, as MS Project */
     }
 }
 
