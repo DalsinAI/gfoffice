@@ -11,8 +11,11 @@ page 1 master 1 frames 2
     para "It’s in times new roman, font size 10, all normal"
   frame 1 text box 30.0 57.0 144.0 30.0 mm (emu 1080000 2052000 6264000 3132000) shape 202 text-id 3 story 1
     para "This is in bold and italic"
+      run 0 "This is in bold and ital" bold italic 20.0pt font "Arial"
     para "It’s Arial, 20 point font"
+      run 0 "It’s Arial, 20 point f" bold italic 20.0pt font "Arial"
     para "It’s in the second textbox on the first page"
+      run 0 "It’s in the second tex" bold italic 20.0pt font "Arial"
 page 2 master 1 frames 5
   frame 0 text box 23.0 26.0 149.0 43.0 mm (emu 828000 936000 6192000 2484000) shape 202 text-id 4 story 2
     para "This is the second page"
@@ -33,9 +36,13 @@ page 2 master 1 frames 5
     para "Link to a file"
   frame 4 text box 40.0 173.0 126.0 48.0 mm (emu 1440000 6228000 5976000 7956000) shape 202 text-id 8 story 5
     para "More text, more hyperlinks"
+      run 0 "More text, more hyperlin" 18.0pt font "Arial"
     para "email link"
+      run 0 "email link" 18.0pt font "Arial"
     para "Final hyperlink"
+      run 0 "Final hyperlink" 18.0pt font "Arial"
     para "Within doc to page 1"
+      run 0 "Within doc to page 1" 18.0pt font "Arial"
 stories 6
 fonts 28
 font "Times New Roman"

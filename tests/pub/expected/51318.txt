@@ -22,6 +22,7 @@ page 1 master 1 frames 17
   frame 13 line in 10 box 12.7 262.1 190.5 0.0 mm (emu 457200 9435846 7315200 9435846) shape 20
   frame 14 text box 38.1 131.9 139.7 60.8 mm (emu 1371600 4749237 6400800 6939384) shape 202 text-id 2 story 0
     para "This is where it’s at"
+      run 0 "This is where it’s at" 69.3pt
   frame 15 text box 38.1 192.8 139.7 45.4 mm (emu 1371600 6939385 6400800 8572499) shape 202 text-id 3 story 1
     para "I pick things up and put them down."
   frame 16 picture box 48.3 60.3 119.3 71.6 mm (emu 1738252 2171700 6034147 4749237) shape 1 picture 0

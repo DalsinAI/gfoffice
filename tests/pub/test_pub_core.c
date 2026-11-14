@@ -17,6 +17,23 @@ static int text_has(const owf_story *s, const char *word)
     return 0;
 }
 
+/* The formatting of the first text run that starts with word in a story. */
+static const owf_charfmt *run_fmt(const owf_story *s, const char *word)
+{
+    int i, j;
+    for (i = 0; i < s->nparas; i++)
+        for (j = 0; j < s->paras[i].nruns; j++)
+            if (s->paras[i].runs[j].text && !strncmp(s->paras[i].runs[j].text, word, strlen(word)))
+                return &s->paras[i].runs[j].fmt;
+    return NULL;
+}
+
+/* The run's typeface's name, or "" for the default. */
+static const char *font_name(const owf_doc *res, const owf_charfmt *f)
+{
+    return f && res && f->font >= 0 && f->font < res->nfonts ? res->fonts[f->font].name : "";
+}
+
 static int frame_text_ops(const opr_slide *laid, int frame, const char *starts)
 {
     size_t i;
@@ -74,6 +91,26 @@ int main(void)
     free(pdf); pdf = NULL; owf_deck_free(deck); deck = NULL;
 
     CHECK(opp_import_pub_file("tests/pub/samples/Sample.pub", &deck, report, &version) == OWF_OK);
+    /* P1 character runs (FDPC): Sample's second text box says it is bold, italic, Arial, 20 point;
+     * its first is the default (Times New Roman 10 point, from the style, not a run). */
+    if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 1) {
+        const owf_charfmt *bold = run_fmt(&deck->slides[0].objs[1].text, "This is in bold");
+        const owf_charfmt *plain = run_fmt(&deck->slides[0].objs[0].text, "This is some text");
+        CHECK(bold && (bold->flags & OWF_BOLD) && (bold->flags & OWF_ITALIC) && bold->size == 400);
+        CHECK(!strcmp(font_name(deck->res, bold), "Arial"));
+        CHECK(plain && !(plain->flags & (OWF_BOLD | OWF_ITALIC)) && plain->size == 0 && plain->font < 0);
+        CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
+        CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
+        if (roundtrip && roundtrip->nslides > 0 && roundtrip->slides[0].nobjs > 1) {
+            const owf_charfmt *again = run_fmt(&roundtrip->slides[0].objs[1].text, "This is in bold");
+            CHECK(again && (again->flags & OWF_BOLD) && (again->flags & OWF_ITALIC) && again->size == 400);
+            /* ODP saves Arial as Liberation Sans, the deck's own default face, which reads back as the
+             * default (-1); the typeface itself is GFOffice's ODP round trip's, not the .pub reader's */
+            CHECK(again && (again->font < 0 || !strcmp(font_name(roundtrip->res, again), "Liberation Sans")));
+        }
+        free(odp); odp = NULL; odp_length = 0;
+        owf_deck_free(roundtrip); roundtrip = NULL;
+    }
     laid = deck && deck->nslides > 1 ? opr_slide_layout(deck, 1, NULL, NULL, NULL) : NULL;
     CHECK(laid != NULL);
     if (laid) {
@@ -99,6 +136,20 @@ int main(void)
                 if (deck->slides[i].objs[j].kind == OWF_OBJ_PICTURE && deck->slides[i].objs[j].image >= 0) pictures++;
         }
     CHECK(pictures >= 3);
+    /* runs that change inside a paragraph: "Opening hours" bold; the en dashes in Gill Sans MT */
+    if (deck) {
+        int found_bold = 0, found_dash = 0;
+        for (i = 0; i < deck->nslides; i++) {
+            int j;
+            for (j = 0; j < deck->slides[i].nobjs; j++) {
+                const owf_charfmt *f = run_fmt(&deck->slides[i].objs[j].text, "Opening hours");
+                const owf_charfmt *d = run_fmt(&deck->slides[i].objs[j].text, "\xE2\x80\x93");
+                if (f && (f->flags & OWF_BOLD)) found_bold = 1;
+                if (d && !strcmp(font_name(deck->res, d), "Gill Sans MT")) found_dash = 1;
+            }
+        }
+        CHECK(found_bold && found_dash);
+    }
     CHECK(opr_export_pdf(deck, NULL, &pdf, &length, report) == OWF_OK && length > 1000 && !memcmp(pdf, "%PDF-", 5));
     free(pdf); owf_deck_free(deck); deck = NULL;
 

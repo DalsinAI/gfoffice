@@ -31,12 +31,18 @@ page 1 master 1 frames 28
     para "Featuring paintings by Van Gogh, \nDa Vinci, Picasso, and Contoso"
   frame 15 text box 20.1 38.0 57.0 148.1 mm (emu 721885 1368000 2774306 6700607) shape 202 text-id 7 story 4
     para "Opening hours"
+      run 0 "Opening hours" bold
     para "Monday – Friday    10 A.M. – 5 P.M."
+      run 1 "–" font "Gill Sans MT"
+      run 3 "–" font "Gill Sans MT"
     para "Saturday \t   10 A.M. – 4 P.M."
+      run 3 "–" font "Gill Sans MT"
     para "Sunday\t\t   11 A.M. – 4 P.M."
+      run 4 "–" font "Gill Sans MT"
     para "Open on public holidays"
     para ""
     para "Contoso Coffee Break"
+      run 0 "Contoso Coffee Break" bold
     para "Enjoy a coffee and a muffin at the gallery coffee shop. Light lunches are also available. A great place to sit and discuss your favorite art pieces."
     para ""
     para "Art Book Shop"
@@ -44,10 +50,15 @@ page 1 master 1 frames 28
     para " "
   frame 16 text box 220.0 36.0 58.2 28.5 mm (emu 7920000 1296000 10016888 2321892) shape 202 text-id 8 story 5
     para "\t\tThe "
+      run 2 "The " 13.0pt font "Georgia"
     para "\t      Great    "
+      run 1 "      Great    " 13.0pt font "Georgia"
     para "            Portraits "
+      run 0 "            Portraits " 13.0pt font "Georgia"
     para "           Exhibition "
+      run 0 "           Exhibition " 13.0pt font "Georgia"
     para "May 23 – June 1, 2003"
+      run 0 "May 23 – June 1, 2003" bold 13.0pt font "Arial Narrow"
   frame 17 text box 219.3 176.1 58.2 12.5 mm (emu 7893621 6341325 9990509 6792671) shape 202 text-id 9 story 6
     para "Featuring paintings by Van Gogh, \nDa Vinci, Picasso, and Contoso"
   frame 18 text box 219.3 188.7 58.2 6.2 mm (emu 7893621 6792672 9990509 7014191) shape 202 text-id 10 story 7
@@ -60,7 +71,9 @@ page 1 master 1 frames 28
   frame 23 line box 219.3 175.9 58.2 0.0 mm (emu 7893621 6333633 9990509 6333633) shape 20
   frame 24 text box 220.0 126.0 59.0 47.2 mm (emu 7920000 4536000 10044000 6236400) shape 202 text-id 22 story 17
     para "World renowned artist, Lisa Baker, displays her unique style for capturing mood in this exhibition of portraits. \n"
+      run 0 "World renowned artist, L" 12.0pt
     para "With over 25 artworks on display this is an exhibition not to be missed."
+      run 0 "With over 25 artworks on" 12.0pt
     para ""
   frame 25 picture box 21.0 93.0 26.5 20.9 mm (emu 756000 3348000 1710011 4100286) shape 1 picture 4
   frame 26 picture box 49.0 168.0 28.3 25.6 mm (emu 1764000 6048000 2782357 6968644) shape 1 picture 5
@@ -75,9 +88,13 @@ page 2 master 1 frames 29
     para ""
     para "Picasso"
     para "The key concept of Cubism is that the essence of objects can only be captured by showing it from multiple points of view simultaneously."
+      run 0 "The key concept of Cubis" 9.7pt font "Arial"
     para "Picasso’s work would have to be one of the best examples of this type or artwork."
+      run 0 "Picasso’s work would h" 9.7pt font "Arial"
     para "Trained in the traditional methods of art, Picasso broke away developing his own style. The deep pain over the death of his friend become apparent in Picasso’s “blue period”. This was followed by his “Rose period” in which the love he found in his soon-to-be-wife blossomed both in his life and on the pallet. "
+      run 0 "Trained in the tradition" 9.7pt font "Arial"
     para "  "
+      run 0 "  " 9.7pt font "Arial"
   frame 1 group box 207.4 163.8 72.9 33.5 mm (emu 7464935 5896600 10088495 7102800) shape 0
   frame 2 line in 1 box 207.4 197.3 72.9 0.0 mm (emu 7464935 7102800 10088495 7102800) shape 20
   frame 3 line in 1 box 207.4 163.8 0.0 33.5 mm (emu 7464935 5896600 7464935 7102799) shape 20
@@ -104,24 +121,34 @@ page 2 master 1 frames 29
     para "Lisa Baker"
   frame 17 text box 207.4 12.7 72.9 129.6 mm (emu 7464935 457200 10088495 5122965) shape 202 text-id 29 story 19
     para "Vincent Van Gogh"
+      run 0 "Vincent Van Gogh" bold 11.0pt font "Gill Sans MT"
     para ""
     para "\"Vincent van Gogh was born near Brabant, the son of a minister. In 1869, he got a position at the art dealers, Goupil and Co. in The Hague, through his uncle, and worked with them until he was dismissed from the London office in 1873. He worked as a schoolmaster in England (1876), before training for the ministry at Amsterdam University (1877). After he failed to get a post in the Church, he went to live as an independent missionary among the Borinage miners. Van Gogh’s preferred medium was oil on canvas which at times he liberally applied using a palette knife. His expressive use of paint as illustrated in ‘Starry Night’ resulted in the uniquely recognizable trait of suggestive movement. "
+      run 0 ""Vincent van Gogh was bo" font "Arial"
     para ""
     para ""
   frame 18 text box 210.1 165.8 67.4 16.1 mm (emu 7562920 5970279 9990509 6549922) shape 202 text-id 17 story 12
     para "Contoso Art Gallery"
+      run 0 "Contoso Art Gallery" 8.0pt
     para ""
     para "Washington"
+      run 0 "Washington" 8.0pt
   frame 19 text box 210.0 182.0 67.4 12.9 mm (emu 7560000 6552000 9987589 7016268) shape 202 text-id 18 story 13
     para "Phone: (425) 555-0187"
+      run 0 "Phone: (425) 555-0187" 8.0pt
     para "Fax: (425) 555-0188"
+      run 0 "Fax: (425) 555-0188" 8.0pt
     para "Email: l.baker@contoso.com"
+      run 0 "Email: l.baker@contoso.c" 8.0pt
   frame 20 text box 223.1 151.0 42.0 11.9 mm (emu 8030393 5436785 9541576 5863673) shape 202 text-id 19 story 14
     para "Featuring paintings by Van Gogh, \nDa Vinci, Picasso, and Contoso"
+      run 0 "Featuring paintings by V" 7.8pt
+      run 2 "Da Vinci, Picasso, and C" 7.8pt
   frame 21 picture box 16.8 54.9 38.5 38.9 mm (emu 603504 1975483 1990684 3375382) shape 1 picture 0
   frame 22 text box 16.8 93.8 38.6 14.4 mm (emu 603504 3375382 1993058 3893461) shape 202 text-id 20 story 15
     para "Hindsight "
     para "Lisa Baker uses mixed media to create her portraits."
+      run 0 "Lisa Baker uses mixed me" bold
   frame 23 text box 148.0 162.0 39.0 11.0 mm (emu 5328000 5832000 6732000 6228000) shape 202 text-id 21 story 16
     para "Dora Maar"
     para "November 1937"
@@ -129,6 +156,7 @@ page 2 master 1 frames 29
   frame 25 picture box 48.4 150.0 35.6 43.9 mm (emu 1742788 5401701 3026030 6982299) shape 1 picture 2
   frame 26 text box 46.0 136.0 40.0 14.0 mm (emu 1656000 4896000 3096000 5400000) shape 202 text-id 25 story 18
     para "The eyes of an angel"
+      run 0 "The eyes of an angel" bold
     para "May 2003"
     para "A pencil sketch."
   frame 27 picture box 147.0 26.0 39.6 54.9 mm (emu 5292000 937420 6717836 2914579) shape 1 picture 3

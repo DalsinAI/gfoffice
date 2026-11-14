@@ -100,7 +100,7 @@ static int fixed_size(unsigned type)
 
 /* The next field of block s from *at: 1, or 0 at the end, or -1 when the
  * bytes stop making sense (the walk ends there). */
-static int next_field(span s, size_t *at, field *f)
+static int read_field(span s, size_t *at, field *f, int wide)
 {
     int size;
     if (*at >= s.n)
@@ -110,6 +110,10 @@ static int next_field(span s, size_t *at, field *f)
     memset(f, 0, sizeof *f);
     f->id = s.p[*at];
     f->type = s.p[*at + 1];
+    if (wide) {                          /* the text storage's: 11-bit ids (PUB-FORMAT.md, 6.4) */
+        f->id |= (f->type & 7u) << 8;
+        f->type &= 0xF8;
+    }
     size = fixed_size(f->type);
     if (size == -1)
         return -1;
@@ -131,6 +135,16 @@ static int next_field(span s, size_t *at, field *f)
         f->value2 = rd32(s, *at + 6);
     *at += 2 + (size_t)size;
     return 1;
+}
+
+static int next_field(span s, size_t *at, field *f)
+{
+    return read_field(s, at, f, 0);
+}
+
+static int next_qfield(span s, size_t *at, field *f)
+{
+    return read_field(s, at, f, 1);
 }
 
 /* A block at offset at of the stream: its fields, after the u32 length. */
@@ -183,6 +197,12 @@ typedef struct {
     long grect[4];               /* a group's own coordinate rectangle */
 } eshape;
 
+/* A character run: the text's characters up to end (not counting) take fmt. */
+typedef struct {
+    unsigned long end;           /* in characters from TEXT's start */
+    owf_charfmt fmt;
+} crun;
+
 typedef struct {
     owf_pub *pub;
     owf_report *report;
@@ -198,6 +218,10 @@ typedef struct {
     int nstory_ids;
     int *blip_image;             /* picture n (1-based) as res->images index; -1 */
     int nblips;
+    int *font_map;               /* the text storage's font n as res->fonts index; -1 */
+    int nfont_map;
+    crun *cruns;                 /* the character runs (FDPC), in the text's order */
+    int ncruns, capcruns;
 } reader;
 
 /* ---- Small helpers ---- */
@@ -362,8 +386,13 @@ static void read_app_version(reader *r)
  * 0x18. TEXT is UTF-16LE; STRS gives each story's length; SYID each
  * story's text id. */
 
+#define QUILL_MAX_FDPC 256
+
 typedef struct {
     span text, strs, syid, font;
+    unsigned long text_at;       /* TEXT's offset in the stream: the character runs count from it */
+    span fdpc[QUILL_MAX_FDPC];   /* the character runs' 512-byte pages, in the directory's order */
+    int nfdpc;
 } quill;
 
 static int read_quill_dir(span q, quill *out, owf_report *report)
@@ -383,8 +412,12 @@ static int read_quill_dir(span q, quill *out, owf_report *report)
             span c = sub(q, rd32(q, e + 16), rd32(q, e + 20));
             if (c.n < rd32(q, e + 20))
                 owf_report_add(report, OWF_NOTE_APPROX, "The file is cut short in its text; some text is missing");
-            if (!memcmp(q.p + e + 2, "TEXT", 4) && !rd16(q, e + 6))
+            if (!memcmp(q.p + e + 2, "TEXT", 4) && !rd16(q, e + 6)) {
                 out->text = c;
+                out->text_at = rd32(q, e + 16);
+            }
+            else if (!memcmp(q.p + e + 2, "FDPC", 4) && out->nfdpc < QUILL_MAX_FDPC)
+                out->fdpc[out->nfdpc++] = c;
             else if (!memcmp(q.p + e + 2, "STRS", 4))
                 out->strs = c;
             else if (!memcmp(q.p + e + 2, "SYID", 4))
@@ -415,19 +448,144 @@ static void put_utf16_char(owf_buf *b, span t, size_t *at)
     owf_buf_put_utf8(b, c);
 }
 
-/* Characters [from, to) of TEXT as a story's paragraphs. */
+/* ---- Character formatting: FDPC (PUB-FORMAT.md, section 6.4) ----
+ * 512-byte pages: u16 count, u16, u32, then count u32 run ends (byte
+ * offsets in the stream, so TEXT's own offset counts), then count u16
+ * offsets in the page of each run's properties: a u32 length (counting
+ * itself), then fields with 11-bit ids. */
+
+static int text_font(const reader *r, span block)
+{
+    size_t at = 0, in;
+    field f, g;
+    long first = -1, zero = -1;
+    while (next_qfield(block, &at, &f) > 0) {
+        long v = -1;
+        if (f.type == 0x18 || f.type == 0x10)        /* the 98/2000 form: the slots as plain fields */
+            v = (long)f.value;
+        else if (f.type == 0x88) {                   /* 2002 and later: each slot a block */
+            in = 0;
+            while (next_qfield(f.body, &in, &g) > 0)
+                if (g.type == 0x18 || g.type == 0x10) {
+                    v = (long)g.value;
+                    break;
+                }
+        }
+        if (v < 0)
+            continue;
+        if (first < 0)
+            first = v;
+        if (f.id == 0 && zero < 0)
+            zero = v;
+    }
+    if (zero < 0)
+        zero = first;
+    return zero >= 0 && zero < r->nfont_map ? r->font_map[zero] : -1;
+}
+
+static void char_props(const reader *r, span props, owf_charfmt *fmt)
+{
+    size_t at = 0;
+    field f;
+    owf_charfmt_init(fmt);
+    while (next_qfield(props, &at, &f) > 0) {
+        switch (f.id) {
+        case 0x202:                              /* bold */
+            if (f.type == 0x00 || f.type == 0x08 || f.value) fmt->flags |= OWF_BOLD; else fmt->flags &= ~(unsigned)OWF_BOLD;
+            break;
+        case 0x203:                              /* italic */
+            if (f.type == 0x00 || f.type == 0x08 || f.value) fmt->flags |= OWF_ITALIC; else fmt->flags &= ~(unsigned)OWF_ITALIC;
+            break;
+        case 0x20C:                              /* the size, EMU (12700 a point) */
+            if (f.type == 0x20 && f.value > 0 && f.value < 635UL * 20000)
+                fmt->size = emu_twips((long)f.value);
+            break;
+        case 0x224:                              /* the typeface: FONT's numbers */
+            if (f.type == 0x88 || f.type == 0x90 || f.type == 0x98 || f.type == 0xA0)
+                fmt->font = text_font(r, f.body);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+static void read_fdpc(reader *r, const quill *qd)
+{
+    unsigned long last = qd->text_at;
+    int k;
+    for (k = 0; k < qd->nfdpc && !r->failed; k++) {
+        span c = qd->fdpc[k];
+        size_t page;
+        for (page = 0; page + 512 <= c.n && !r->failed; page += 512) {
+            span pg = sub(c, page, 512);
+            unsigned n = rd16(pg, 0), i;
+            if (!n || 8 + 6 * (size_t)n > 512)
+                continue;
+            for (i = 0; i < n; i++) {
+                unsigned long end = rd32(pg, 8 + 4 * i);
+                unsigned off = rd16(pg, 8 + 4 * n + 2 * i);
+                span props = { NULL, 0 };
+                crun *cr;
+                if (end <= last || end < qd->text_at || (end - qd->text_at) / 2 > qd->text.n / 2)
+                    break;                       /* runs only go forward through the text */
+                if (off >= 8 + 6 * n && off + 4 <= 512) {
+                    unsigned long len = rd32(pg, off);
+                    if (len >= 4 && off + len <= 512)
+                        props = sub(pg, off + 4, len - 4);
+                }
+                cr = grow(r, r->cruns, &r->capcruns, r->ncruns, sizeof *r->cruns);
+                if (!cr)
+                    return;
+                r->cruns = cr;
+                cr = &r->cruns[r->ncruns++];
+                cr->end = (end - qd->text_at) / 2;
+                char_props(r, props, &cr->fmt);
+                last = end;
+            }
+        }
+    }
+}
+
+/* The character formatting at character n of TEXT; *hint walks forward. */
+static const owf_charfmt *fmt_at(const reader *r, unsigned long n, int *hint)
+{
+    while (*hint < r->ncruns && r->cruns[*hint].end <= n)
+        (*hint)++;
+    return *hint < r->ncruns ? &r->cruns[*hint].fmt : NULL;
+}
+
+static int same_fmt(const owf_charfmt *a, const owf_charfmt *b)
+{
+    return a->flags == b->flags && a->font == b->font && a->size == b->size && a->colour == b->colour;
+}
+
+/* Characters [from, to) of TEXT as a story's paragraphs, with their character runs. */
 static void make_story(reader *r, owf_story *story, span text, size_t from, size_t to)
 {
     owf_builder b;
     owf_buf run;
     size_t at = from * 2, end = to * 2;
-    int open = 0;
+    int open = 0, hint = 0;
+    owf_charfmt plain;
     owf_builder_init(&b, r->pub->res, story);
     owf_buf_init(&run);
+    owf_charfmt_init(&plain);
     if (end > text.n)
         end = text.n & ~(size_t)1;
     while (at < end) {
         unsigned c = rd16(text, at);
+        const owf_charfmt *want = fmt_at(r, at / 2, &hint);
+        if (!want)
+            want = &plain;
+        if (!same_fmt(want, &b.charfmt)) {
+            if (run.length) {
+                owf_builder_text(&b, (const char *)run.data, run.length);
+                run.length = 0;
+            }
+            owf_builder_flush(&b);
+            b.charfmt = *want;
+        }
         if (c >= 0x20) {
             put_utf16_char(&run, text, &at);
             open = 1;
@@ -481,6 +639,38 @@ static void read_text(reader *r)
     }
     chars = qd.text.n / 2;
 
+    /* FONT: five u32 (the second the count), offsets from +0x14, then each
+     * name as a u16 length and UTF-16. The character runs name fonts by
+     * their place here, so font_map keeps the place. */
+    n = rd32(qd.font, 4);
+    base = 0x14;
+    if (n > 1024)
+        n = 1024;
+    if (n && !(r->font_map = owf_malloc(n * sizeof *r->font_map))) {
+        r->failed = 1;
+        owf_free(data);
+        return;
+    }
+    r->nfont_map = (int)n;
+    for (i = 0; i < n; i++)
+        r->font_map[i] = -1;
+    for (i = 0; i < n && has(qd.font, base + 4 * i, 4) && !r->failed; i++) {
+        unsigned long at = base + rd32(qd.font, base + 4 * i);
+        unsigned len = rd16(qd.font, at);
+        size_t k = at + 2;
+        owf_buf name;
+        if (!len || !has(qd.font, at + 2, 2 * (size_t)len))
+            continue;
+        owf_buf_init(&name);
+        while (k < at + 2 + 2 * (size_t)len)
+            put_utf16_char(&name, qd.font, &k);
+        owf_buf_putc(&name, 0);
+        if (name.failed || (r->font_map[i] = owf_doc_font(r->pub->res, (const char *)name.data, OWF_FONT_ANY)) < 0)
+            r->failed = 1;
+        owf_buf_free(&name);
+    }
+    read_fdpc(r, &qd);
+
     /* STRS: u32 count, u32 8, u32 0xFF, then count story lengths */
     n = rd32(qd.strs, 0);
     if (!qd.strs.n || !has(qd.strs, 12, 4 * (size_t)n) || n > 100000) {
@@ -521,25 +711,6 @@ static void read_text(reader *r)
         r->nstory_ids = r->story_ids ? (int)n : 0;
     }
 
-    /* FONT: five u32 (the second the count), offsets from +0x14, then each
-     * name as a u16 length and UTF-16 */
-    n = rd32(qd.font, 4);
-    base = 0x14;
-    for (i = 0; i < n && i < 1024 && has(qd.font, base + 4 * i, 4) && !r->failed; i++) {
-        unsigned long at = base + rd32(qd.font, base + 4 * i);
-        unsigned len = rd16(qd.font, at);
-        size_t k = at + 2;
-        owf_buf name;
-        if (!len || !has(qd.font, at + 2, 2 * (size_t)len))
-            continue;
-        owf_buf_init(&name);
-        while (k < at + 2 + 2 * (size_t)len)
-            put_utf16_char(&name, qd.font, &k);
-        owf_buf_putc(&name, 0);
-        if (name.failed || owf_doc_font(r->pub->res, (const char *)name.data, OWF_FONT_ANY) < 0)
-            r->failed = 1;
-        owf_buf_free(&name);
-    }
     owf_free(data);
 }
 
@@ -1308,6 +1479,8 @@ int owf_pub_read(const unsigned char *data, size_t length, owf_pub **out, owf_re
     owf_free(r.shapes);
     owf_free(r.story_ids);
     owf_free(r.blip_image);
+    owf_free(r.font_map);
+    owf_free(r.cruns);
     owf_free(r.contents_data);
     owf_cfb_close(&r.cfb);
     if (r.failed) {

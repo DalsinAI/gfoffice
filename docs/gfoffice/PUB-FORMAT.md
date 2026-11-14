@@ -163,7 +163,7 @@ Counts are over the 24 samples (in how many samples).
 | 0x44 | the document (item 256) | 24 (24) | [V 24] |
 | 0x43 | a page: master pages, the document's pages and the program's own (5.4) | 153 (24) | [V 24] |
 | 0x01 | a frame or shape | 370 (24) | [V 24] |
-| 0x10 | a table | 8 (8) | [V 8]: Sample's table, checked on its text (6.3) |
+| 0x10 | a table | 8 (8) | [V 8]: Sample's table, checked on its text (6.2) |
 | 0x63 | a table's child (its grid, [H]) | 8 (8) | [H] |
 | 0x60, 0x77 | one of each per page (the page's fields 0x09, 0x0B) | 153 each (24) | what they hold: unknown |
 | others | 0x46, 0x4A, 0x4B, 0x4C, 0x4F, 0x54, 0x5B, 0x5C, 0x61, 0x65, 0x6C, 0x72, 0x73, 0x7F (one each per file); 0x20, 0x30, 0x31, 0x4D, 0x58, 0x59, 0x5A, 0x66, 0x70, 0x7D, 0x83, 0x8A, 0x8B, 0x8C | | unknown: styles, colour schemes, fonts and the like are likely [H] |
@@ -270,11 +270,51 @@ Chunks seen (in how many of the 26): `TEXT`, `STRS`, `SYID`, `FONT`, `STSH`,
   counted from +0x14, then at each offset a u16 length and the name in
   UTF-16, then a u32 [V 26]. The list holds the fonts the document uses,
   plus many script fonts every file lists ("Sylfaen", "Mangal"...).
-- **Formatting** (bold, sizes, which font, colours, paragraph alignment)
-  lives in `STSH` (style sheets [H]), `FDPC` and `FDPP` (character and
-  paragraph runs in 512-byte pages [H]), `BTEC` and `BTEP` (their indexes
-  [H]): not worked out yet. Table cells: `TCD ` [H]. Fields and hyperlinks:
+- **Formatting** lives in `FDPC` (character runs, 6.4), `FDPP` (paragraph
+  runs, 6.5), `STSH` (style sheets [H]) and `BTEC` and `BTEP` (the run
+  pages' indexes [H]). Table cells: `TCD ` [H]. Fields and hyperlinks:
   `TOKN` [H].
+
+### 6.3 Fields in the text storage [V 8]
+
+The property blocks in `FDPC`, `FDPP` and `STSH` use section 4's types, but
+an id has 11 bits: the low 3 bits of the type byte are the id's high bits.
+`0C 22` is id 0x20C, type 0x20 (4 bytes); `02 02` is id 0x202, type 0x00
+[V 8: all 316 FDPC and FDPP property blocks of the 8 checked-in samples
+with text are used up exactly this way; the fetched corpus is still to be
+run]. Source: Sample `FDPC` (stream 0x0800 on).
+
+### 6.4 Character runs: `FDPC` [V 8]
+
+One or more `FDPC` chunks (numbered from 0, in the text's order), each one
+or more 512-byte pages. A page: u16 the number of runs n, u16, u32, then n
+u32 run ends, then n u16 offsets in the page, then (at the page's end, back
+to front) the runs' property blocks: a u32 length counting itself, then
+fields (6.3). A run's end is a byte offset in the stream: TEXT's own offset
+(0x200 in all 8) plus twice the characters [V 8: the ends land on
+the paragraph and story ends that `STRS` and 0x0D give]. Runs follow on from
+one page and chunk to the next. The fields seen:
+
+| Id | What | Mark |
+|---|---|---|
+| 0x202 | bold: type 0x00 (no value) or a value not 0 | [V 3: Sample's "This is in bold and italic" in 2007, 2010, 2000 and 98; SampleBrochure's headings, as its thumbnail shows them] |
+| 0x203 | italic, the same way | [V 1 (in 4 saves): Sample] |
+| 0x20C | the size in EMU (12700 a point) | [V 1 (in 4 saves): Sample's "Arial, 20 point font" is 254000; its 18-point text 228600] |
+| 0x224 | the typeface: an array of slots, each giving a place in `FONT`'s list (6.2). 2002 or later: slot blocks (0x88, ids 0, 1, 2...) each holding one 0x18 field; 98/2000: 0x18 fields with ids 0, 8, 0x10... The reader takes slot 0, else the first | [V 1 (in 4 saves): Sample's "It's Arial" names place 27, "Arial"]; what the other slots are for: [H] (scripts: East Asian, complex) |
+| 0x237, 0x238, 0x239 | beside 0x202, 0x203 and 0x20C with the same values in the 2002-or-later files; not in the 98/2000 files | [V 6]; [H]: complex-script bold, italic and size |
+| 0x212, 0x23E | 0x809 (English, UK), 0x409, 0xC09 | [H]: languages (Windows LCIDs) |
+| 0x22D | set on SampleBrochure's en dashes | unknown |
+| 0x21E, 0x244, 0x248, 0x22E, 0x200 | on Sample's hyperlinks | [H]: underline and colour; not read yet |
+
+A run with no 0x20C, 0x224 or 0x202 takes its paragraph style's (`STSH`):
+Sample's plain text says it is Times New Roman 10 point and has none. The
+reader leaves those runs at the default until the styles are read.
+
+### 6.5 Paragraph runs: `FDPP` [V 8]
+
+The same pages as `FDPC`, one run per paragraph. Field 0x219 is in most:
+SampleBrochure 5 to 0xB, 60685's headings 4 and its body text 5 [H: the
+paragraph's style, a place in `STSH`]. Not read yet.
 
 ## 7. The drawing: `Escher/EscherStm`
 
@@ -409,8 +449,8 @@ path in section 5.1.
 
 ## 12. Not known yet (phase 1's work)
 
-- Character and paragraph formatting, styles, colour schemes (`STSH`, `FDPC`,
-  `FDPP`; `Contents` kinds 0x46-0x8C).
+- Paragraph formatting, styles, colour schemes (`STSH`, `FDPP`; `Contents`
+  kinds 0x46-0x8C); underline and colour in `FDPC` (6.4).
 - Linked text frames (one story through several frames), columns, text
   wrap, layering beyond the back-to-front order, rotation and flips.
 - Tables' cell borders, merged cells, and which paragraph goes in which cell
