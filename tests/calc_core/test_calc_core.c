@@ -4870,6 +4870,33 @@ static void test_latin1(void)
     owf_free(t);
 }
 
+/* ARexx GETCELL/GETFORMULA ... UTF8: the word, and a copy that never cuts a character (the Gantt's U+25A0) */
+static void test_rexx_utf8(void)
+{
+    char out[8];
+    CHECK(oc_rexx_wants_utf8("UTF8"));
+    CHECK(oc_rexx_wants_utf8("utf8"));
+    CHECK(oc_rexx_wants_utf8("  Utf8  "));
+    CHECK(oc_rexx_wants_utf8("\tUTF8\t"));
+    CHECK(!oc_rexx_wants_utf8(""));
+    CHECK(!oc_rexx_wants_utf8(NULL));
+    CHECK(!oc_rexx_wants_utf8("UTF"));
+    CHECK(!oc_rexx_wants_utf8("UTF8X"));
+    CHECK(!oc_rexx_wants_utf8("UTF-8"));
+    CHECK(!oc_rexx_wants_utf8("UTF8 MORE"));
+    CHECK(!oc_rexx_wants_utf8("UTFx"));
+    CHECK(oc_rexx_utf8_copy("\xE2\x96\xA0", out, sizeof out) == 3 && !strcmp(out, "\xE2\x96\xA0"));
+    CHECK(oc_rexx_utf8_copy("ab\xE2\x96\xA0\xE2\x96\xA0", out, sizeof out) == 5 && !strcmp(out, "ab\xE2\x96\xA0"));
+    CHECK(oc_rexx_utf8_copy("abcdefg", out, sizeof out) == 7 && !strcmp(out, "abcdefg"));
+    CHECK(oc_rexx_utf8_copy("abcdefgh", out, sizeof out) == 7 && !strcmp(out, "abcdefg"));
+    CHECK(oc_rexx_utf8_copy("abcdef\xC3\xA9", out, sizeof out) == 6 && !strcmp(out, "abcdef"));
+    CHECK(oc_rexx_utf8_copy("\xF0\x9F\x98\x80\xF0\x9F\x98\x80", out, sizeof out) == 4 && !strcmp(out, "\xF0\x9F\x98\x80"));
+    CHECK(oc_rexx_utf8_copy("", out, sizeof out) == 0 && !*out);
+    CHECK(oc_rexx_utf8_copy(NULL, out, sizeof out) == 0 && !*out);
+    CHECK(oc_rexx_utf8_copy("abc", out, 1) == 0 && !*out);
+    CHECK(oc_rexx_utf8_copy("abc", out, 0) == 0);
+}
+
 static void test_more(void)
 {
     oc_core *core = fresh();
@@ -6509,6 +6536,7 @@ int main(void)
     test_consolidate();
     test_pdf();
     test_book_reads();
+    test_rexx_utf8();
     if (failures) {
         fprintf(stderr, "opencalc core tests: %d of %d checks failed\n", failures, checks);
         return 1;
