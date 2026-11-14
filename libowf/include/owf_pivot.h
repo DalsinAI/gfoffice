@@ -54,9 +54,18 @@ enum { OWF_PIVOT_SORT_SOURCE, OWF_PIVOT_SORT_ASCENDING, OWF_PIVOT_SORT_DESCENDIN
 /* A page field's chosen item: every item, or one value. */
 enum { OWF_PIVOT_ALL, OWF_PIVOT_TEXT, OWF_PIVOT_NUMBER, OWF_PIVOT_BOOL, OWF_PIVOT_BLANK };
 
+/* How a data field's values are shown: as they are (the default), as a
+ * share of their row's total, of their column's total or of the grand
+ * total, or as an index: value x grand total / (row total x column total).
+ * Each total is made with the field's own function. A total of 0 shows
+ * #DIV/0!. */
+enum { OWF_PIVOT_SHOW_NORMAL, OWF_PIVOT_SHOW_ROW, OWF_PIVOT_SHOW_COLUMN, OWF_PIVOT_SHOW_TOTAL,
+       OWF_PIVOT_SHOW_INDEX, OWF_PIVOT_SHOW_LAST = OWF_PIVOT_SHOW_INDEX };
+
 typedef struct {
     unsigned field;
     int function;
+    int show;                        /* OWF_PIVOT_SHOW_... */
 } owf_pivot_data;
 
 typedef struct {
@@ -118,6 +127,11 @@ void owf_pivot_item_text(const owf_pivot_page *page, char *out, size_t size);
  * back from either (case does not matter); 0 when it is not one. */
 const char *owf_pivot_function_word(int function, int ooxml);
 int owf_pivot_function_from_word(const char *word);
+/* A data field's way of showing its values, by name in ODF
+ * (table:data-pilot-field-reference's table:type) or OOXML (showDataAs),
+ * and back from either; NULL and -1 when it is not one. */
+const char *owf_pivot_show_word(int show, int ooxml);
+int owf_pivot_show_from_word(const char *word);
 /* A row or column field's item order (OWF_PIVOT_SORT_SOURCE when it has
  * none), and setting it: SOURCE removes the field's entry. 0 when there is
  * no room for another sorted field or the order is not one. */

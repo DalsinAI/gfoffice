@@ -141,6 +141,7 @@ typedef struct {
     long field, position;        /* libowf's own (gfocalc:): its column in the source, its place; -1 */
     int orientation, function, kind, has_page;
     int sort;                    /* table:data-pilot-sort-info by name: OWF_PIVOT_SORT_... */
+    int show;                    /* table:data-pilot-field-reference: OWF_PIVOT_SHOW_... */
     char *page;                  /* table:selected-page */
 } ods_pivot_field;
 
@@ -3860,7 +3861,7 @@ static void body_start(ods *o, const owf_xml_event *e)
                 owf_report_add(o->report, OWF_NOTE_LOST, "Links to other programs (DDE) keep their last values");
             } else if (!strcmp(n, "data-pilot-table") || !strcmp(n, "source-cell-range") ||
                        !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info") ||
-                       !strcmp(n, "data-pilot-member")) {
+                       !strcmp(n, "data-pilot-member") || !strcmp(n, "data-pilot-field-reference")) {
                 pivot_start(o, e);
             }
         } else if (!strcmp(n, "scenario")) {
@@ -4126,6 +4127,17 @@ static void pivot_start(ods *o, const owf_xml_event *e)
         pv->hides[pv->nhides].kind = (int)pivot_whole(ev(e, NS_GFO, "item-kind"));
         pv->hides[pv->nhides].name = copy(o, ev(e, NS_TABLE, "name") ? ev(e, NS_TABLE, "name") : "");
         pv->nhides++;
+    } else if (is(e, NS_TABLE, "data-pilot-field-reference")) {
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        const char *type = ev(e, NS_TABLE, "type");
+        int show = owf_pivot_show_from_word(type);
+        if (!f || f->orientation != PV_DATA || !type)
+            return;
+        if (show >= 0)
+            f->show = show;
+        else
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table data field shown as a difference or running total shows its values");
     } else if (is(e, NS_TABLE, "data-pilot-sort-info")) {
         const char *mode = ev(e, NS_TABLE, "sort-mode"), *order = ev(e, NS_TABLE, "order");
         ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
@@ -4238,6 +4250,7 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
             case PV_DATA:
                 if (def->ndata < OWF_PIVOT_DATA) {
                     def->data[def->ndata].field = (unsigned)index;
+                    def->data[def->ndata].show = f->show;
                     def->data[def->ndata++].function = f->function;
                 } else
                     ok = 0;

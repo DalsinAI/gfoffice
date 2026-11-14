@@ -2162,11 +2162,20 @@ static int read_pivot(xlsx *x, int sheet, const char *table_part)
     }
     for (n = main_child(main_child(table, "dataFields"), "dataField"); n; n = main_next(n, "dataField")) {
         long f = xlong(attr(n, "fld"), -1, 0, 16383);
-        const char *fn = attr(n, "subtotal");
+        const char *fn = attr(n, "subtotal"), *as;
         int function = fn ? owf_pivot_function_from_word(fn) : OWF_PIVOT_FN_SUM;
         if (f < 0 || !function || def.ndata >= OWF_PIVOT_DATA)
             continue;
         def.data[def.ndata].field = (unsigned)f;
+        def.data[def.ndata].show = OWF_PIVOT_SHOW_NORMAL;
+        if ((as = attr(n, "showDataAs")) != NULL) {
+            int show = owf_pivot_show_from_word(as);
+            if (show >= 0)
+                def.data[def.ndata].show = show;
+            else
+                owf_report_add(x->report, OWF_NOTE_APPROX,
+                               "A pivot table data field shown as a difference or running total shows its values");
+        }
         def.data[def.ndata++].function = function;
     }
     def.row_grand = xbool(attr(table, "rowGrandTotals"), 1);
