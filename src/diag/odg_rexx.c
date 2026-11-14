@@ -8,6 +8,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "opendiag_rexx.h"
+#include "opendiag_mind.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +28,8 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_PAGES, C_PAGE,
     C_ADDPAGE, C_CELLS, C_ADDSHAPE, C_CONNECT, C_MOVE, C_RESIZE, C_DELETE, C_SETVALUE, C_GETVALUE, C_STYLE,
     C_GETSTYLE, C_GETBOX, C_HIT, C_GRID, C_UNDO, C_REDO, C_LAYERS, C_LAYER, C_ADDLAYER, C_GETLAYER, C_SHOWLAYER,
-    C_LOCKLAYER, C_RENAMELAYER, NCOMMANDS
+    C_LOCKLAYER, C_RENAMELAYER, C_MAPNEW, C_MAPCHILD, C_MAPSIBLING, C_MAPDELETE, C_MAPMOVE, C_MAPFOLD, C_MAPLAYOUT,
+    C_MAPROOT, C_MAPPARENT, C_MAPCHILDREN, C_MAPSTEP, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -65,6 +67,17 @@ static const command commands[NCOMMANDS] = {
     { "SHOWLAYER", "NUMBER/A/N,OFF/S" },
     { "LOCKLAYER", "NUMBER/A/N,OFF/S" },
     { "RENAMELAYER", "NUMBER/A/N,NAME/A" },
+    { "MAPNEW", "X/A/N,Y/A/N,TEXT/F" },
+    { "MAPCHILD", "NODE/A,TEXT/F" },
+    { "MAPSIBLING", "NODE/A,ABOVE/S,TEXT/F" },
+    { "MAPDELETE", "NODE/A" },
+    { "MAPMOVE", "NODE/A,UP/S" },
+    { "MAPFOLD", "NODE/A,OFF/S" },
+    { "MAPLAYOUT", "NODE/A,BOTH/S,RIGHT/S" },
+    { "MAPROOT", "NODE/A" },
+    { "MAPPARENT", "NODE/A" },
+    { "MAPCHILDREN", "NODE/A" },
+    { "MAPSTEP", "NODE/A,WAY/A" },
 };
 
 /* ---- Words ---- */
@@ -700,6 +713,82 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         put(result, size, text);
         return ODG_RX_OK;
     case C_LAYERS: snprintf(result, size, "%d", odg_layer_count(doc)); return ODG_RX_OK;
+    case C_MAPNEW:
+        if (!layer_open(rx, "MAPNEW")) return ODG_RX_ERROR;
+        rc = edit_rc(rx, odg_mind_new(doc, a->num[0], a->num[1], a->value[2] ? a->value[2] : "", text), "MAPNEW",
+                     "not possible");
+        if (rc == ODG_RX_OK) put(result, size, text);
+        return rc;
+    case C_MAPCHILD:
+    case C_MAPSIBLING:
+    case C_MAPDELETE:
+    case C_MAPMOVE:
+    case C_MAPFOLD:
+    case C_MAPLAYOUT: {
+        const char *node = a->value[0], *why = "not a map node that can be changed (hidden or locked?)";
+        int both = odg_mind_both(doc, node);
+        text[0] = 0;
+        if (c == C_MAPCHILD) rc = odg_mind_add_child(doc, node, a->value[1] ? a->value[1] : "", both, text);
+        else if (c == C_MAPSIBLING) {
+            rc = odg_mind_add_sibling(doc, node, a->value[1] != NULL, a->value[2] ? a->value[2] : "", both, text);
+            if (rc == OWF_ERR_FORMAT && odg_mind_is_node(owf_dpage_find(odg_page(doc), node)) &&
+                !odg_mind_parent(doc, node))
+                why = "a map's root has no siblings";
+        } else if (c == C_MAPDELETE) rc = odg_mind_delete(doc, node, both);
+        else if (c == C_MAPMOVE) {
+            rc = odg_mind_move(doc, node, a->value[1] ? -1 : 1, both);
+            if (rc == OWF_ERR_FORMAT && odg_mind_parent(doc, node)) why = "it is at the end of its row already";
+        } else if (c == C_MAPFOLD) {
+            rc = odg_mind_fold(doc, node, a->value[1] == NULL, both);
+            if (rc == OWF_ERR_FORMAT && odg_mind_is_node(owf_dpage_find(odg_page(doc), node)) &&
+                !odg_mind_children(doc, node, NULL, 0))
+                why = "it has no children";
+        } else
+            rc = odg_mind_layout(doc, node, a->value[1] ? 1 : a->value[2] ? 0 : both);
+        if (rc == OWF_ERR_FORMAT && !odg_mind_is_node(owf_dpage_find(odg_page(doc), node))) why = "no map node by that id";
+        if (rc == OWF_ERR_FORMAT && odg_mind_is_node(owf_dpage_find(odg_page(doc), node)) &&
+            !odg_mind_root(doc, node))
+            why = "its map loops back on itself";
+        if ((rc = edit_rc(rx, rc, commands[c].name, why)) == ODG_RX_OK && text[0]) put(result, size, text);
+        return rc;
+    }
+    case C_MAPROOT:
+    case C_MAPPARENT:
+    case C_MAPCHILDREN: {
+        const owf_dcell *got;
+        if (!odg_mind_is_node(owf_dpage_find(odg_page(doc), a->value[0]))) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "%s: no map node %.100s", commands[c].name, a->value[0]);
+            return ODG_RX_ERROR;
+        }
+        result[0] = 0;
+        if (c == C_MAPCHILDREN) {
+            const owf_dcell *kids[64];
+            size_t at = 0;
+            int i, n = odg_mind_children(doc, a->value[0], kids, 64);
+            for (i = 0; i < n && i < 64; i++) put_word(result, size, &at, kids[i]->id);
+            return ODG_RX_OK;
+        }
+        got = c == C_MAPROOT ? odg_mind_root(doc, a->value[0]) : odg_mind_parent(doc, a->value[0]);
+        if (c == C_MAPROOT && !got) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "MAPROOT: the map loops back on itself");
+            return ODG_RX_ERROR;
+        }
+        if (got) put(result, size, got->id);
+        return ODG_RX_OK;
+    }
+    case C_MAPSTEP: {
+        static const char *const ways[4] = { "PARENT", "CHILD", "UP", "DOWN" };
+        int w;
+        for (w = 0; w < 4 && !word_at(a->value[1], ways[w], strlen(ways[w]), 0); w++)
+            ;
+        if (w == 4) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "MAPSTEP: WAY is PARENT, CHILD, UP or DOWN");
+            return ODG_RX_ERROR;
+        }
+        result[0] = 0;
+        if (odg_mind_step(doc, a->value[0], (odg_mind_dir)w, text)) put(result, size, text);
+        return ODG_RX_OK;
+    }
     case C_LAYER: {
         int i, n = odg_layer_count(doc);
         if (a->value[0]) {

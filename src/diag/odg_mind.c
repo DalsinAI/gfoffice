@@ -109,6 +109,19 @@ const owf_dcell *odg_mind_root(const odg_doc *doc, const char *id)
     return c;
 }
 
+int odg_mind_both(const odg_doc *doc, const char *id)
+{
+    const owf_dcell *root = odg_mind_root(doc, id), *kids[ODG_MIND_DEPTH];
+    int i, n;
+    if (!root)
+        return 0;
+    n = odg_mind_children(doc, root->id, kids, ODG_MIND_DEPTH);
+    for (i = 0; i < n && i < ODG_MIND_DEPTH; i++)
+        if (kids[i]->geo.x + kids[i]->geo.width <= root->geo.x)
+            return 1;
+    return 0;
+}
+
 static int listed(int cell)
 {
     int i;

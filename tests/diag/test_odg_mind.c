@@ -106,7 +106,10 @@ static void test_build_and_layout(void)
     CHECK(!odg_mind_step(&doc, r, ODG_MIND_PREV, got));
 
     /* Both sides: the root's first half right, the rest left (100 - 40 - 100 = -40). */
+    CHECK(!odg_mind_both(&doc, a2));
     CHECK_N(odg_mind_layout(&doc, a2, 1), OWF_OK);
+    CHECK(odg_mind_both(&doc, a2));                       /* read back from where the root's children are */
+    CHECK(!odg_mind_both(&doc, "nope"));
     CHECK_N(cell(a)->geo.x, PX(260));
     check_at(b, -40, 210);
     CHECK_N(cell(a1)->geo.x, PX(400));                    /* a branch keeps its side */

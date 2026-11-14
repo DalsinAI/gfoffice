@@ -36,6 +36,9 @@ const owf_dcell *odg_mind_parent(const odg_doc *doc, const char *id);
 int odg_mind_children(const odg_doc *doc, const char *id, const owf_dcell **out, int max);
 /* The root of the map the node is in; NULL when it isn't a node, or the walk up loops. */
 const owf_dcell *odg_mind_root(const odg_doc *doc, const char *id);
+/* 1 when the map the node is in is laid out on both sides: a child of its root sits left of it. The edits' both
+ * argument takes this to keep a map the way it is. */
+int odg_mind_both(const odg_doc *doc, const char *id);
 /* 1 when the node is folded (its branch hidden). */
 int odg_mind_folded(const owf_dcell *c);
 /* The arrow keys: the node next to id that way (the parent, the first child, the sibling above or below) into

@@ -364,6 +364,83 @@ static void test_many_ids(void)
     odg_rexx_free(&rx);
 }
 
+/* The mind-map commands: a map made, read, changed and undone through the port. */
+static void test_map(void)
+{
+    char r[24], a[24], b[24], a1[24], line[128];
+    CHECK_N(odg_rexx_init(&rx), OWF_OK);
+    strcpy(r, ok("MAPNEW 100 200 The plan"));
+    CHECK(r[0] != 0);
+    snprintf(line, sizeof line, "MAPCHILD %s Alpha", r);
+    strcpy(a, ok(line));
+    snprintf(line, sizeof line, "MAPCHILD %s Beta", r);
+    strcpy(b, ok(line));
+    snprintf(line, sizeof line, "MAPCHILD %s One", a);
+    strcpy(a1, ok(line));
+    snprintf(line, sizeof line, "GETVALUE %s", r);
+    CHECK_S(ok(line), "The plan");
+    snprintf(line, sizeof line, "GETBOX %s", a);
+    CHECK_S(ok(line), "260 185 100 40");
+    snprintf(line, sizeof line, "MAPCHILDREN %s", r);
+    {
+        char want[64];
+        snprintf(want, sizeof want, "%s %s", a, b);
+        CHECK_S(ok(line), want);
+    }
+    snprintf(line, sizeof line, "MAPPARENT %s", a1); CHECK_S(ok(line), a);
+    snprintf(line, sizeof line, "MAPPARENT %s", r); CHECK_S(ok(line), "");
+    snprintf(line, sizeof line, "MAPROOT %s", a1); CHECK_S(ok(line), r);
+    snprintf(line, sizeof line, "MAPSTEP %s down", a); CHECK_S(ok(line), b);
+    snprintf(line, sizeof line, "MAPSTEP %s CHILD", a); CHECK_S(ok(line), a1);
+    snprintf(line, sizeof line, "MAPSTEP %s UP", a); CHECK_S(ok(line), "");
+    snprintf(line, sizeof line, "MAPSTEP %s SIDEWAYS", a);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPSTEP: WAY is PARENT, CHILD, UP or DOWN");
+
+    snprintf(line, sizeof line, "MAPSIBLING %s ABOVE Zero", a1);
+    CHECK(ok(line)[0] != 0);
+    snprintf(line, sizeof line, "MAPSIBLING %s No", r);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPSIBLING: a map's root has no siblings");
+    snprintf(line, sizeof line, "MAPMOVE %s UP", b); ok(line);
+    snprintf(line, sizeof line, "MAPMOVE %s UP", b);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPMOVE: it is at the end of its row already");
+    snprintf(line, sizeof line, "MAPFOLD %s", a); ok(line);
+    snprintf(line, sizeof line, "MAPFOLD %s", b);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPFOLD: it has no children");
+    snprintf(line, sizeof line, "MAPFOLD %s OFF", a); ok(line);
+
+    /* Both sides: kept by the edits after it, until RIGHT. */
+    snprintf(line, sizeof line, "MAPLAYOUT %s BOTH", r); ok(line);
+    snprintf(line, sizeof line, "GETBOX %s", a);
+    CHECK(strncmp(ok(line), "-40 ", 4) == 0);             /* Beta first now, so Alpha went left */
+    snprintf(line, sizeof line, "MAPCHILD %s Gamma", b); ok(line);
+    snprintf(line, sizeof line, "GETBOX %s", a);
+    CHECK(strncmp(ok(line), "-40 ", 4) == 0);
+    snprintf(line, sizeof line, "MAPLAYOUT %s RIGHT", r); ok(line);
+    snprintf(line, sizeof line, "GETBOX %s", a);
+    CHECK(strncmp(ok(line), "260 ", 4) == 0);
+
+    snprintf(line, sizeof line, "MAPDELETE %s", a); ok(line);
+    snprintf(line, sizeof line, "GETVALUE %s", a1);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_N(rx_do("UNDO"), ODG_RX_OK);
+    snprintf(line, sizeof line, "GETVALUE %s", a1);
+    CHECK_S(ok(line), "One");
+    CHECK_N(rx_do("MAPCHILD nosuch x"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPCHILD: no map node by that id");
+    CHECK_N(rx_do("MAPPARENT nosuch"), ODG_RX_ERROR);
+    CHECK_N(rx_do("LOCKLAYER 1"), ODG_RX_OK);
+    snprintf(line, sizeof line, "MAPCHILD %s x", a);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPCHILD: not a map node that can be changed (hidden or locked?)");
+    CHECK_N(rx_do("MAPNEW 0 0 Idea"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPNEW: layer 1 is locked (LOCKLAYER 1 OFF unlocks it)");
+    odg_rexx_free(&rx);
+}
+
 int main(void)
 {
     test_edits();
@@ -372,6 +449,7 @@ int main(void)
     test_layers();
     test_long_lines();
     test_many_ids();
+    test_map();
     printf("diagram ARexx: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }
