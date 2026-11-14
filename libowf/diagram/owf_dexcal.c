@@ -54,12 +54,45 @@ static int font_size(const char *style)
     return n >= 4 && n <= 400 ? (int)n : FONT_DEFAULT;
 }
 
-/* A JSON string's inside: quotes, backslashes and control characters escaped; UTF-8 passed as it is. */
+/* How many bytes of well-formed UTF-8 start at s (2 to 4), or 0 when the lead byte at s doesn't start one
+ * (a stray continuation, an overlong form, a surrogate, past U+10FFFF, or cut short). */
+static int utf8_run(const unsigned char *s)
+{
+    unsigned char c = s[0], lo = 0x80, hi = 0xBF;
+    int n, k;
+    if (c >= 0xC2 && c <= 0xDF) n = 2;
+    else if (c >= 0xE0 && c <= 0xEF) {
+        n = 3;
+        if (c == 0xE0) lo = 0xA0;        /* not overlong */
+        if (c == 0xED) hi = 0x9F;        /* not a surrogate */
+    } else if (c >= 0xF0 && c <= 0xF4) {
+        n = 4;
+        if (c == 0xF0) lo = 0x90;
+        if (c == 0xF4) hi = 0x8F;        /* not past U+10FFFF */
+    } else
+        return 0;
+    if (s[1] < lo || s[1] > hi)
+        return 0;
+    for (k = 2; k < n; k++)
+        if ((s[k] & 0xC0) != 0x80)
+            return 0;
+    return n;
+}
+
+/* A JSON string's inside: quotes, backslashes and control characters escaped; well-formed UTF-8 passed as it
+ * is, and any other byte from 0x80 up as U+FFFD, so a strict JSON reader takes the file. */
 static void js_text(owf_buf *o, const char *s)
 {
     for (; *s; s++) {
         unsigned char c = (unsigned char)*s;
-        if (c == '"' || c == '\\') {
+        if (c >= 0x80) {
+            int n = utf8_run((const unsigned char *)s);
+            if (n) {
+                owf_buf_put(o, s, (size_t)n);
+                s += n - 1;
+            } else
+                owf_buf_puts(o, "\xEF\xBF\xBD");
+        } else if (c == '"' || c == '\\') {
             owf_buf_putc(o, '\\');
             owf_buf_putc(o, c);
         } else if (c == '\n')
@@ -84,6 +117,8 @@ static void js_px(owf_buf *o, owf_dnum v)
 
 /* The size text takes, near enough for Excalidraw to place it before it measures it again: widest line by
  * lines, in hundredths. */
+#define TEXT_MOST 20000L                 /* characters or lines counted, so the sizes stay in a 32-bit long */
+
 static void text_size(const char *t, int fs, owf_dnum *w, owf_dnum *h)
 {
     long widest = 0, now = 0, lines = 1;
@@ -94,6 +129,9 @@ static void text_size(const char *t, int fs, owf_dnum *w, owf_dnum *h)
         } else if (((unsigned char)*t & 0xC0) != 0x80 && ++now > widest)
             widest = now;                /* a UTF-8 character counts once */
     }
+    if (widest > TEXT_MOST) widest = TEXT_MOST;
+    if (lines > TEXT_MOST) lines = TEXT_MOST;
+    /* fs is 4 to 400 (font_size): at most 20000 * 400 * 125 = 1e9 */
     *w = (owf_dnum)(widest * fs * 55L);  /* about 0.55 of the size per character */
     *h = (owf_dnum)(lines * fs * 125L);  /* Excalidraw's line height 1.25 */
 }
@@ -168,6 +206,12 @@ static owf_dpoint *arrow_path(const owf_dpage *p, const owf_dcell *e, int *n)
 
 /* ---- Elements ---- */
 
+/* A seed or nonce from the element's number: unsigned so it wraps instead of overflowing, kept to 31 bits. */
+static unsigned long seed_of(int index, unsigned long by, char prefix)
+{
+    return ((unsigned long)index * by + (unsigned char)prefix) & 0x7FFFFFFFUL;
+}
+
 /* What every element has; the caller writes its own fields after it, then "}". kind: "rectangle", ... */
 static void element(scene *s, const char *kind, char prefix, int index, const owf_dnum box[4], const char *stroke,
                     const char *fill, int dashed, int rounded)
@@ -183,10 +227,10 @@ static void element(scene *s, const char *kind, char prefix, int index, const ow
     js_px(o, box[3]);
     owf_buf_printf(o, ", \"angle\": 0, \"strokeColor\": \"%s\", \"backgroundColor\": \"%s\", \"fillStyle\": \"solid\", "
                       "\"strokeWidth\": 1, \"strokeStyle\": \"%s\", \"roughness\": 0, \"opacity\": 100, "
-                      "\"groupIds\": [], \"frameId\": null, \"roundness\": %s, \"seed\": %d, \"version\": 1, "
-                      "\"versionNonce\": %d, \"isDeleted\": false, \"updated\": 1, \"link\": null, \"locked\": false",
+                      "\"groupIds\": [], \"frameId\": null, \"roundness\": %s, \"seed\": %lu, \"version\": 1, "
+                      "\"versionNonce\": %lu, \"isDeleted\": false, \"updated\": 1, \"link\": null, \"locked\": false",
                    stroke ? stroke : "#1e1e1e", fill ? fill : "transparent", dashed ? "dashed" : "solid",
-                   rounded ? "{\"type\": 3}" : "null", index * 7919 + prefix, index * 104729 + prefix);
+                   rounded ? "{\"type\": 3}" : "null", seed_of(index, 7919UL, prefix), seed_of(index, 104729UL, prefix));
 }
 
 /* Text: inside container (prefix and index; prefix 0 for none) when it is a shape's or arrow's label. box is
