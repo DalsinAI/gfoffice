@@ -85,6 +85,7 @@ static void test_eps(void)
     CHECK(find(s, n, "/OW-Helvetica /Helvetica OW-font") && find(s, n, "/OW-Courier-Bold /Courier-Bold OW-font"));
     CHECK(find(s, n, "/OW-Times-Roman") == NULL);                  /* only the faces used */
     CHECK(find(s, n, "OW-WinAnsi 128 /Euro put") != NULL);
+    CHECK(find(s, n, "OW-WinAnsi 45 /hyphen put") != NULL);      /* "-" as WinAnsi's hyphen, not ISOLatin1's minus */
     CHECK(find(s, n, "1.000 0.000 0.000 setrgbcolor\nfill") != NULL);    /* the red fill */
     CHECK(find(s, n, "0.000 0.000 1.000 setrgbcolor") != NULL);          /* the blue line */
     CHECK(find(s, n, "] 0 setdash stroke") != NULL);                     /* the dashed box */
