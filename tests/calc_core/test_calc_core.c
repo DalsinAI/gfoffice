@@ -5876,6 +5876,97 @@ static void test_pivot_layout(void)
     oc_core_free(core);
 }
 
+/* Sorted items (owf_pivot.h OWF_PIVOT_SORT_...): ascending and descending row and column items,
+ * blanks last either way, case aside, kept by field through a new layout and through XLSX and ODS. */
+static void test_pivot_sort(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "Year", "Sales", "", "" },
+        { "west", "2026", "1", "", "" }, { "East", "2025", "2", "", "" }, { "", "2026", "4", "", "" },
+        { "North", "2024", "8", "", "" }, { "12", "2025", "16", "", "" }, { "east", "2024", "32", "", "" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got;
+    char config[OWF_PIVOT_TEXT_MAX];
+    int k;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 7);
+    CHECK(oc_parse_range("A1:C7", &selected));
+    oc_core_select_range(core, &selected);
+
+    owf_pivot_init(&def);
+    CHECK(owf_pivot_sort_of(&def, 0) == OWF_PIVOT_SORT_SOURCE);
+    CHECK(!owf_pivot_set_sort(&def, 0, 7));
+    CHECK(owf_pivot_set_sort(&def, 0, OWF_PIVOT_SORT_ASCENDING) && def.nsort == 1);
+    CHECK(owf_pivot_set_sort(&def, 0, OWF_PIVOT_SORT_ASCENDING) && def.nsort == 1);   /* the same field once */
+    CHECK(owf_pivot_set_sort(&def, 1, OWF_PIVOT_SORT_DESCENDING) && def.nsort == 2);
+    def.nrow = 1; def.row[0] = 0;
+    def.ncol = 1; def.col[0] = 1;
+    def.ndata = 1; def.data[0].field = 2; def.data[0].function = OC_SUBTOTAL_SUM;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    /* rows: the number, then text case aside (East and east together, in their first order),
+       then the blank; columns: years down */
+    CHECK_STR(text(core, "A2"), "12");
+    CHECK_STR(text(core, "A3"), "East");
+    CHECK_STR(text(core, "A4"), "east");
+    CHECK_STR(text(core, "A5"), "North");
+    CHECK_STR(text(core, "A6"), "west");
+    CHECK_STR(text(core, "A7"), "(blank)");
+    CHECK_STR(text(core, "A8"), "Grand Total");
+    CHECK_STR(text(core, "B1"), "2026");
+    CHECK_STR(text(core, "C1"), "2025");
+    CHECK_STR(text(core, "D1"), "2024");
+    CHECK(fabs(num(core, "C2") - 16.0) < 1e-12 && fabs(num(core, "D4") - 32.0) < 1e-12 &&
+          fabs(num(core, "B7") - 4.0) < 1e-12 && fabs(num(core, "E8") - 63.0) < 1e-12);
+
+    /* the text keeps the sorts, by field */
+    CHECK(oc_core_pivot_get(core, &got) && got.nsort == 2 && owf_pivot_sort_of(&got, 0) == OWF_PIVOT_SORT_ASCENDING &&
+          owf_pivot_sort_of(&got, 1) == OWF_PIVOT_SORT_DESCENDING);
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && strstr(config, ";s=0:a,1:d\""));
+
+    /* descending rows, and the fields swapped: each keeps its own order */
+    CHECK(owf_pivot_set_sort(&got, 0, OWF_PIVOT_SORT_DESCENDING) && got.nsort == 2);
+    got.row[0] = 1; got.col[0] = 0;
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "2026");
+    CHECK_STR(text(core, "A4"), "2024");
+    CHECK_STR(text(core, "B1"), "west");
+    CHECK_STR(text(core, "C1"), "North");
+    CHECK_STR(text(core, "D1"), "East");
+    CHECK_STR(text(core, "E1"), "east");
+    CHECK_STR(text(core, "F1"), "12");
+    CHECK_STR(text(core, "G1"), "(blank)");                 /* blanks last, descending too */
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot-sort.xlsx", "/tmp/opencalc-pivot-sort.ods" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            owf_pivotdef back;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
+            CHECK(round && owf_pivot_get(round, 1, &back) && back.nrow == 1 && back.row[0] == 1 &&
+                  back.ncol == 1 && back.col[0] == 0 && back.nsort == 2 &&
+                  owf_pivot_sort_of(&back, 0) == OWF_PIVOT_SORT_DESCENDING &&
+                  owf_pivot_sort_of(&back, 1) == OWF_PIVOT_SORT_DESCENDING);
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+
+    /* back to the source's order: the entry goes */
+    CHECK(owf_pivot_set_sort(&got, 0, OWF_PIVOT_SORT_SOURCE) && got.nsort == 1 &&
+          owf_pivot_sort_of(&got, 0) == OWF_PIVOT_SORT_SOURCE && owf_pivot_sort_of(&got, 1) == OWF_PIVOT_SORT_DESCENDING);
+    CHECK(owf_pivot_set_sort(&got, 1, OWF_PIVOT_SORT_SOURCE) && got.nsort == 0);
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK_STR(text(core, "B1"), "west");                    /* first come */
+    CHECK_STR(text(core, "C1"), "East");
+    CHECK_STR(text(core, "D1"), "(blank)");
+    CHECK(oc_core_pivot_get(core, &got) && got.nsort == 0);
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && !strstr(config, ";s="));
+    oc_core_free(core);
+}
+
 static void test_pivot_definition_text(void)
 {
     owf_book *book = owf_book_new();
@@ -5920,6 +6011,12 @@ static void test_pivot_definition_text(void)
     CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4;g=9\"", &back));
     CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4", &back));
     CHECK(owf_pivot_parse_config("\"2;r=0;d=1:4;z=whatever\"", &back) && back.nrow == 1);
+    CHECK(!strstr(text, ";s="));                         /* no sorted field: the text as before */
+    CHECK(owf_pivot_parse_config("\"2;r=0;d=1:4;s=0:d\"", &back) && back.nsort == 1 &&
+          owf_pivot_sort_of(&back, 0) == OWF_PIVOT_SORT_DESCENDING);
+    CHECK(owf_pivot_parse_config("\"2;r=0;d=1:4\"", &back) && back.nsort == 0);    /* none is kept from before */
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4;s=0:x\"", &back));
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4;s=0\"", &back));
     CHECK(owf_pivot_function_from_word("countNums") == OC_SUBTOTAL_COUNT &&
           owf_pivot_function_from_word("COUNT") == OC_SUBTOTAL_COUNTA &&
           owf_pivot_function_from_word("stdDevp") == OC_SUBTOTAL_STDEVP &&
@@ -6529,6 +6626,7 @@ int main(void)
     test_protection();
     test_pivot_summary();
     test_pivot_layout();
+    test_pivot_sort();
     test_pivot_definition_text();
     test_solver_lp();
     test_solver();

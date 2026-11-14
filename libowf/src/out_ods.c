@@ -2875,6 +2875,18 @@ static void put_pivot_field(ods_out *w, owf_buf *b, const owf_pivotdef *def, uns
     owf_buf_printf(b, " gfocalc:field=\"%u\" gfocalc:position=\"%u\"", field, position);
 }
 
+/* A row or column field's end: its items' order, when sorted, as the level's sort-info by name. */
+static void put_pivot_sort(owf_buf *b, int sort)
+{
+    if (sort == OWF_PIVOT_SORT_SOURCE) {
+        owf_buf_puts(b, "/>");
+        return;
+    }
+    owf_buf_printf(b, "><table:data-pilot-level><table:data-pilot-sort-info table:sort-mode=\"name\" "
+                      "table:order=\"%s\"/></table:data-pilot-level></table:data-pilot-field>",
+                   sort == OWF_PIVOT_SORT_DESCENDING ? "descending" : "ascending");
+}
+
 static void put_pivots(ods_out *w, owf_buf *b)
 {
     const owf_book *book = w->book;
@@ -2919,11 +2931,11 @@ static void put_pivots(ods_out *w, owf_buf *b)
         }
         for (k = 0; k < def.nrow; k++) {
             put_pivot_field(w, b, &def, def.row[k], "row", k);
-            owf_buf_puts(b, "/>");
+            put_pivot_sort(b, owf_pivot_sort_of(&def, def.row[k]));
         }
         for (k = 0; k < def.ncol; k++) {
             put_pivot_field(w, b, &def, def.col[k], "column", k);
-            owf_buf_puts(b, "/>");
+            put_pivot_sort(b, owf_pivot_sort_of(&def, def.col[k]));
         }
         for (k = 0; k < def.ndata; k++) {
             put_pivot_field(w, b, &def, def.data[k].field, "data", k);
