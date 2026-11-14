@@ -41,10 +41,10 @@ int odg_prop_check(odg_prop p, const char *text, char *out, size_t size)
     size_t n, i;
     if (p < 0 || p >= ODG_NPROPS || !text)
         return 0;
-    while (*text == ' ')
+    while (*text == ' ' || *text == '\t')
         text++;
     n = strlen(text);
-    while (n && text[n - 1] == ' ')
+    while (n && (text[n - 1] == ' ' || text[n - 1] == '\t'))
         n--;
     if (!n) {
         put(out, size, "");
@@ -145,6 +145,27 @@ int odg_style_common(const odg_doc *doc, const char *const *ids, int n, odg_prop
         return 0;
     put(out, size, first);
     return 1;
+}
+
+int odg_style_apply_all(odg_doc *doc, const char *const *ids, int n, const char *const *texts, int *bad)
+{
+    char values[ODG_NPROPS][24];
+    const char *keys[ODG_NPROPS], *vals[ODG_NPROPS];
+    int p, k = 0;
+    if (bad) *bad = -1;
+    for (p = 0; p < ODG_NPROPS; p++) {
+        if (!texts[p])
+            continue;
+        if (!odg_prop_check((odg_prop)p, texts[p], values[p], sizeof values[p])) {
+            if (bad) *bad = p;
+            return OWF_ERR_FORMAT;
+        }
+        if (props[p].kind == ODG_KIND_SWITCH && !strcmp(values[p], "0"))
+            values[p][0] = 0;              /* a switch off is the key taken off, as draw.io leaves it */
+        keys[k] = props[p].key;
+        vals[k++] = values[p][0] ? values[p] : NULL;
+    }
+    return k ? odg_set_styles(doc, ids, n, keys, vals, k) : OWF_OK;
 }
 
 int odg_style_field(const odg_doc *doc, const char *const *ids, int n, odg_prop p, char *out, size_t size)

@@ -622,19 +622,25 @@ int odg_set_value(odg_doc *doc, const char *id, const char *value)
 
 int odg_set_style(odg_doc *doc, const char *const *ids, int n, const char *key, const char *value)
 {
+    return odg_set_styles(doc, ids, n, &key, &value, 1);
+}
+
+int odg_set_styles(odg_doc *doc, const char *const *ids, int n, const char *const *keys, const char *const *values,
+                   int nkeys)
+{
     owf_dpage *p = odg_page(doc);
-    int i, any = 0, r = OWF_OK;
+    int i, k, any = 0, r = OWF_OK;
     for (i = 0; i < n; i++)
         any |= owf_dpage_find(p, ids[i]) != NULL;
-    if (!any)
+    if (!any || nkeys < 1)
         return OWF_ERR_FORMAT;
     if (begin(doc) != OWF_OK)
         return OWF_ERR_MEMORY;
     p = odg_page(doc);
     for (i = 0; i < n && r == OWF_OK; i++) {
         owf_dcell *c = owf_dpage_find(p, ids[i]);
-        if (c)
-            r = owf_dstyle_set(&c->style, key, value);
+        for (k = 0; c && k < nkeys && r == OWF_OK; k++)
+            r = owf_dstyle_set(&c->style, keys[k], values[k]);
     }
     return end(doc, r);
 }
