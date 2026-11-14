@@ -340,6 +340,17 @@ static void test_rtf_form(void)
     CHECK(!strcmp(dump(doc), "Lamps[F:Mostly.\nNot \xc3\xa9t\xc3\xa9 all.] glow[E:The\tend.]"), dump(doc));
     CHECK(doc->nnotes == 2 && !doc->notes[0].endnote && doc->notes[1].endnote, "a footnote, then an endnote");
     owf_doc_free(doc);
+    {
+        /* an empty note (Lisette, #218): its buffer has no data, and the note is kept with no text */
+        static const char empty_rtf[] = "{\\rtf1 A{\\footnote}B{\\footnote  \\par }C\\par}";
+        doc = NULL;
+        CHECK(owf_import_memory((const unsigned char *)empty_rtf, sizeof empty_rtf - 1, NULL, &doc, NULL, NULL) == OWF_OK && doc,
+              "empty notes read");
+        if (!doc) return;
+        CHECK(!strcmp(dump(doc), "A[F:]B[F:]C"), dump(doc));
+        CHECK(doc->nnotes == 2 && !*doc->notes[0].text && !*doc->notes[1].text, "empty notes have empty text");
+        owf_doc_free(doc);
+    }
 }
 
 /* half the size a character */

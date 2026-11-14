@@ -110,7 +110,7 @@ static void finish_note(rtf *r)
     while (end > start && (r->note.data[end - 1] == ' ' || r->note.data[end - 1] == '\n' || r->note.data[end - 1] == '\t')) --end;
     text = (char *)malloc(end - start + 1);
     if (!text) { r->b.failed = 1; return; }
-    memcpy(text, r->note.data + start, end - start);
+    if (end > start) memcpy(text, r->note.data + start, end - start);   /* an empty note has no data yet */
     text[end - start] = 0;
     index = owf_note_add(r->b.doc, r->note_endnote, text, NULL);
     free(text);
