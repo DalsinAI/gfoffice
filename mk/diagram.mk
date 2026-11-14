@@ -86,15 +86,31 @@ $(OUT)/test-odg-style-asan: $(ODG_STYLE_DEPS) $(OWF_SRC)
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_style.c \
 		tests/diag/test_odg_style.c -lz -o $@
 
-diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style
+# Step D5: the mind-map mode (src/diag/odg_mind.c).
+ODG_MIND_DEPS = $(ODG_DEPS) src/diag/odg_mind.c include/opendiag_mind.h tests/diag/test_odg_mind.c
+
+$(OUT)/test-odg-mind: $(ODG_MIND_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_mind.c tests/diag/test_odg_mind.c -lz -o $@
+
+$(OUT)/test-odg-mind-asan: $(ODG_MIND_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_mind.c \
+		tests/diag/test_odg_mind.c -lz -o $@
+
+diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style $(OUT)/test-odg-mind
 	$(OUT)/test-odg
 	$(OUT)/test-odg-rexx
 	$(OUT)/test-odg-style
+	$(OUT)/test-odg-mind
 
-diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan
+diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan $(OUT)/test-odg-mind-asan
 	$(OUT)/test-odg-asan
 	$(OUT)/test-odg-rexx-asan
 	$(OUT)/test-odg-style-asan
+	$(OUT)/test-odg-mind-asan
 
 test: diagram-core-test
 check: diagram-core-check

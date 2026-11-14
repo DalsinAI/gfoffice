@@ -110,6 +110,16 @@ static int end(odg_doc *doc, int result)
     return result;
 }
 
+int odg_begin(odg_doc *doc)
+{
+    return begin(doc);
+}
+
+int odg_end(odg_doc *doc, int result)
+{
+    return end(doc, result);
+}
+
 int odg_can_undo(const odg_doc *doc)
 {
     return doc->nundo > 0;

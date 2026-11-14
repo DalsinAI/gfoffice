@@ -40,6 +40,12 @@ int odg_can_redo(const odg_doc *doc);
 int odg_undo(odg_doc *doc);
 int odg_redo(odg_doc *doc);
 
+/* For the modules built on the core (odg_mind.c): an edit of their own as one Undo step. odg_begin keeps the page
+ * for Undo (OWF_OK or OWF_ERR_MEMORY); odg_end(result) ends the step, and when result is not OWF_OK puts the page
+ * back as it was and drops the step. Returns result. Cells move in odg_begin: look them up again after it. */
+int odg_begin(odg_doc *doc);
+int odg_end(odg_doc *doc, int result);
+
 /* ---- Snapping ---- */
 /* v to the nearest multiple of the grid (as it is when the grid is 0). */
 owf_dnum odg_snap(const odg_doc *doc, owf_dnum v);
