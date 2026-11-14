@@ -5587,6 +5587,7 @@ static void events(void)
                 int extend = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
                 int alt = (qual & (IEQUALIFIER_LALT | IEQUALIFIER_RALT)) != 0;
                 int ramiga = (qual & IEQUALIFIER_RCOMMAND) != 0;
+                int ctrl = (qual & IEQUALIFIER_CONTROL) != 0;
                 if (alt) {
                     if (code == 0x4f) scroll_page(-48, 0);
                     else if (code == 0x4e) scroll_page(48, 0);
@@ -5598,6 +5599,10 @@ static void events(void)
                     else if (code == 0x4c) set_page_view(page_index - 1);
                     else if (code == 0x4d) set_page_view(page_index + 1);
                     else if (code == 0x44) editor_result(ow_editor_insert_page_break(editor), "Page break inserted.");
+                } else if (ctrl && code >= 0x4c && code <= 0x4f) {
+                    /* 2.0.36: Ctrl+Left/Right a word at a time, Ctrl+Up/Down the text's start and end; Shift selects */
+                    static const ow_move moves[4] = { OW_MOVE_DOC_START, OW_MOVE_DOC_END, OW_MOVE_WORD_RIGHT, OW_MOVE_WORD_LEFT };
+                    ow_editor_move_caret(editor, moves[code - 0x4c], extend); bring_focus_into_view();
                 } else if (selected_frame_key(code, qual)) {
                     /* A selected floating frame takes arrows; Escape returns them to the caret. */
                 } else switch (code) {

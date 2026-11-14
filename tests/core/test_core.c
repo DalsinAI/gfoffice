@@ -1226,6 +1226,75 @@ static int test_pdf_export(void)
     free(data);remove("/tmp/openwrite-core.pdf");owf_doc_free(doc);return 0;
 }
 
+/* 2.0.36: Ctrl+arrows go a word at a time and to the text's start and end */
+static size_t focus_offset(const ow_editor *ed, const owf_doc *doc, int *para)
+{
+    ow_selection sel = ow_editor_selection(ed);
+    size_t off = sel.focus.byte_offset;
+    int r;
+    *para = sel.focus.paragraph;
+    for (r = 0; r < sel.focus.run; ++r)
+        if (doc->body.paras[*para].runs[r].kind == OWF_RUN_TEXT && doc->body.paras[*para].runs[r].text)
+            off += strlen(doc->body.paras[*para].runs[r].text);
+    return off;
+}
+
+static int test_word_moves(void)
+{
+    static const struct { int move, para; size_t off; } steps[] = {
+        { OW_MOVE_WORD_RIGHT, 0, 5 },  { OW_MOVE_WORD_RIGHT, 0, 7 },  { OW_MOVE_WORD_RIGHT, 0, 13 },
+        { OW_MOVE_WORD_RIGHT, 0, 18 }, { OW_MOVE_WORD_RIGHT, 0, 19 }, { OW_MOVE_WORD_RIGHT, 1, 0 },
+        { OW_MOVE_WORD_RIGHT, 1, 6 },  { OW_MOVE_DOC_END, 1, 8 },     { OW_MOVE_WORD_LEFT, 1, 6 },
+        { OW_MOVE_WORD_LEFT, 1, 0 },   { OW_MOVE_WORD_LEFT, 0, 19 },  { OW_MOVE_WORD_LEFT, 0, 18 },
+        { OW_MOVE_WORD_LEFT, 0, 13 },  { OW_MOVE_WORD_LEFT, 0, 7 },   { OW_MOVE_WORD_LEFT, 0, 5 },
+        { OW_MOVE_WORD_LEFT, 0, 0 },   { OW_MOVE_WORD_LEFT, 0, 0 },   { OW_MOVE_DOC_END, 1, 8 },
+        { OW_MOVE_WORD_RIGHT, 1, 8 },  { OW_MOVE_DOC_START, 0, 0 }
+    };
+    owf_doc *doc = doc_with("Hello, wi");
+    owf_charfmt cf;
+    owf_parafmt pf;
+    owf_para *p;
+    ow_editor *ed;
+    char *sel;
+    size_t n, off;
+    int i, para;
+    if (!doc) return 2801;
+    owf_charfmt_init(&cf);
+    cf.flags |= OWF_BOLD;
+    owf_parafmt_init(&pf);
+    if (owf_para_add_text(&doc->body.paras[0], &cf, "de  world.", 10) != OWF_OK) return 2802;
+    p = owf_story_add(&doc->body, &pf);
+    if (!p || owf_para_add_text(p, &cf, "\xc3\xa9t\xc3\xa9 ok", 8) != OWF_OK) return 2803;
+    if (doc->body.paras[0].nruns != 2) return 2804;
+    ed = ow_editor_new(doc);
+    if (!ed) return 2805;
+    for (i = 0; i < (int)(sizeof steps / sizeof steps[0]); ++i) {
+        ow_editor_move_caret(ed, (ow_move)steps[i].move, 0);
+        off = focus_offset(ed, doc, &para);
+        if (para != steps[i].para || off != steps[i].off) {
+            fprintf(stderr, "word move step %d: at %d:%lu, wanted %d:%lu\n", i, para, (unsigned long)off,
+                    steps[i].para, (unsigned long)steps[i].off);
+            return 2810 + i;
+        }
+    }
+    /* Shift+Ctrl+Right selects the word; a plain word move then leaves a selection's far end */
+    ow_editor_move_caret(ed, OW_MOVE_WORD_RIGHT, 1);
+    sel = ow_editor_selection_text(ed, &n);
+    if (!sel || n != 5 || memcmp(sel, "Hello", 5)) return 2840;
+    free(sel);
+    ow_editor_move_caret(ed, OW_MOVE_WORD_RIGHT, 1);
+    ow_editor_move_caret(ed, OW_MOVE_WORD_RIGHT, 1);
+    sel = ow_editor_selection_text(ed, &n);
+    if (!sel || n != 13 || memcmp(sel, "Hello, wide  ", 13)) { free(sel); return 2841; }
+    free(sel);
+    ow_editor_move_caret(ed, OW_MOVE_DOC_END, 1);
+    off = focus_offset(ed, doc, &para);
+    if (para != 1 || off != 8 || ow_editor_selection(ed).anchor.paragraph != 0) return 2842;
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    return 0;
+}
+
 int main(void)
 {
     int rc;
@@ -1256,6 +1325,7 @@ int main(void)
     if ((rc = test_section_columns_import())) goto fail;
     if ((rc = test_table_of_contents())) goto fail;
     if ((rc = test_pdf_export())) goto fail;
+    if ((rc = test_word_moves())) goto fail;
     puts("openwrite core editor tests passed");
     return 0;
 fail:
