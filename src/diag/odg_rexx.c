@@ -313,6 +313,7 @@ int odg_rexx_format(const char *file)
     if (ext_is(file, "eps") || ext_is(file, "epsf") || ext_is(file, "ps")) return ODG_FILE_EPS;
     if (ext_is(file, "mmd") || ext_is(file, "mermaid")) return ODG_FILE_MERMAID;
     if (ext_is(file, "dot") || ext_is(file, "gv")) return ODG_FILE_DOT;
+    if (ext_is(file, "graphml")) return ODG_FILE_GRAPHML;
     return ODG_FILE_DRAWIO;
 }
 
@@ -411,6 +412,7 @@ static int write_file(odg_rexx *rx, const char *name, int format, int compressed
              : format == ODG_FILE_EPS ? owf_deps_write(&rx->d, rx->doc.page, &data, &length)
              : format == ODG_FILE_MERMAID ? owf_dmermaid_write(&rx->d, rx->doc.page, &data, &length)
              : format == ODG_FILE_DOT ? owf_ddot_write(&rx->d, rx->doc.page, &data, &length)
+             : format == ODG_FILE_GRAPHML ? owf_dgraphml_write(&rx->d, rx->doc.page, &data, &length)
              : format == ODG_FILE_SVG ? owf_dsvg_write(&rx->d, rx->doc.page, &data, &length)
                                     : owf_drawio_write(&rx->d, compressed, &data, &length);
     if (rc == OWF_ERR_MEMORY) {
@@ -657,7 +659,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             int f = odg_rexx_format(a->value[0]);
             const char *what = f == ODG_FILE_PDF ? "a PDF" : f == ODG_FILE_EPS ? "an EPS"
                              : f == ODG_FILE_ILBM ? "an IFF picture" : f == ODG_FILE_MERMAID ? "a Mermaid chart"
-                             : f == ODG_FILE_DOT ? "a DOT graph" : NULL;
+                             : f == ODG_FILE_DOT ? "a DOT graph" : f == ODG_FILE_GRAPHML ? "a GraphML graph" : NULL;
             if (what) {
                 snprintf(rx->lasterror, sizeof rx->lasterror, "SAVEAS: %s doesn't open again as a diagram (EXPORT "
                          "writes one; SAVEAS takes .drawio, .svg or .png)", what);
@@ -680,8 +682,9 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             else if (word_at(a->value[1], "EPS", 3, 0)) format = ODG_FILE_EPS;
             else if (word_at(a->value[1], "MERMAID", 7, 0)) format = ODG_FILE_MERMAID;
             else if (word_at(a->value[1], "DOT", 3, 0)) format = ODG_FILE_DOT;
+            else if (word_at(a->value[1], "GRAPHML", 7, 0)) format = ODG_FILE_GRAPHML;
             else {
-                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM, MERMAID, DOT or DRAWIO, not %.80s",
+                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM, MERMAID, DOT, GRAPHML or DRAWIO, not %.80s",
                          a->value[1]);
                 return ODG_RX_ERROR;
             }

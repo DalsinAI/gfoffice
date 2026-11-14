@@ -1,13 +1,15 @@
 /*
  * owf_dgraph.c: a diagram's page as a graph in text, for tools that lay graphs out themselves: a Mermaid
- * flowchart and a Graphviz DOT digraph (owf_diagram.h). Each shape is a node with its label and the nearest
+ * flowchart, a Graphviz DOT digraph and a GraphML graph (owf_diagram.h). Each shape is a node with its label and the nearest
  * shape the format has; a shape with shapes inside it (a container, group or swimlane) is a subgraph (a DOT
  * cluster) holding them; each connector joined at both ends is an edge with its label, its dashes and its
  * arrowheads; fill, line and text colours go across where the format takes them. Places are not kept: the tool
- * lays the graph out again, top to bottom, or left to right when the page is wider than it is tall. Nodes are
- * named n1, n2, ... in the page's order, so any cell id is safe.
+ * lays the graph out again, top to bottom, or left to right when the page is wider than it is tall. GraphML
+ * keeps each shape's place and size too (x, y, width, height in pixels on the page), for a tool that reads
+ * them, and a container is a node holding a nested graph. Nodes are named n1, n2, ... in the page's order, so
+ * any cell id is safe.
  * Written from the formats' published documentation (mermaid.js.org's flowchart syntax, MIT; graphviz.org's
- * DOT language and node shapes), not from any program's code.
+ * DOT language and node shapes; graphdrawing.org's GraphML primer and schema), not from any program's code.
  * GFOpenDiag step D6 (amicradle-teams designs/GFOPENDIAG-20261113.md).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -16,7 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { G_MERMAID, G_DOT };
+enum { G_MERMAID, G_DOT, G_GRAPHML };
 
 #define MAX_DEPTH 64                     /* containers inside containers, at most; a loop of parents is cut */
 
@@ -27,7 +29,7 @@ typedef struct {
     int *node;                           /* per cell: its node number (1 on), 0 when it isn't a node */
     int *cluster;                        /* per cell: 1 when shapes are inside it */
     int *up;                             /* per cell: the shape it is inside (an index), or -1 at the top */
-    int links;                           /* Mermaid: the edges written so far */
+    int links;                           /* Mermaid and GraphML: the edges written so far */
 } walk;
 
 /* ---- What the page holds ---- */
@@ -183,6 +185,58 @@ static const char *dot_shape(const owf_dpage *p, const owf_dcell *c)
     return "box";
 }
 
+/* ---- GraphML ---- */
+
+/* Text inside an XML element or "...": &, <, >, " as entities, a line break as &#10;, other control
+ * characters left out (XML 1.0 can't hold them). */
+static void gm_text(owf_buf *o, const char *s)
+{
+    for (; *s; s++) {
+        if (*s == '&') owf_buf_puts(o, "&amp;");
+        else if (*s == '<') owf_buf_puts(o, "&lt;");
+        else if (*s == '>') owf_buf_puts(o, "&gt;");
+        else if (*s == '"') owf_buf_puts(o, "&quot;");
+        else if (*s == '\n') owf_buf_puts(o, "&#10;");
+        else if ((unsigned char)*s >= 32 || *s == '\t') owf_buf_putc(o, *s);
+    }
+}
+
+/* Hundredths of a pixel as pixels: 12.5, -3, 0.07. */
+static void gm_px(owf_buf *o, owf_dnum v)
+{
+    unsigned long a = v < 0 ? 0UL - (unsigned long)v : (unsigned long)v;
+    owf_buf_printf(o, "%s%lu", v < 0 ? "-" : "", a / 100);
+    if (a % 100)
+        owf_buf_printf(o, a % 10 ? ".%02lu" : ".%lu", a % 10 ? a % 100 : a % 100 / 10);
+}
+
+static void gm_data(owf_buf *o, int depth, const char *key, const char *value)
+{
+    indent(o, depth + 1);
+    owf_buf_printf(o, "<data key=\"%s\">", key);
+    gm_text(o, value);
+    owf_buf_puts(o, "</data>\n");
+}
+
+/* The keys GraphML wants declared before the graph: one name for nodes, edges and the graph where they mean
+ * the same. */
+static const char gm_head[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\"\n"
+    "    xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n"
+    "    xsi:schemaLocation=\"http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd\">\n"
+    "    <key id=\"label\" for=\"all\" attr.name=\"label\" attr.type=\"string\"/>\n"
+    "    <key id=\"shape\" for=\"node\" attr.name=\"shape\" attr.type=\"string\"/>\n"
+    "    <key id=\"x\" for=\"node\" attr.name=\"x\" attr.type=\"double\"/>\n"
+    "    <key id=\"y\" for=\"node\" attr.name=\"y\" attr.type=\"double\"/>\n"
+    "    <key id=\"width\" for=\"node\" attr.name=\"width\" attr.type=\"double\"/>\n"
+    "    <key id=\"height\" for=\"node\" attr.name=\"height\" attr.type=\"double\"/>\n"
+    "    <key id=\"fill\" for=\"node\" attr.name=\"fill\" attr.type=\"string\"/>\n"
+    "    <key id=\"color\" for=\"all\" attr.name=\"color\" attr.type=\"string\"/>\n"
+    "    <key id=\"fontcolor\" for=\"node\" attr.name=\"fontcolor\" attr.type=\"string\"/>\n"
+    "    <key id=\"dashed\" for=\"all\" attr.name=\"dashed\" attr.type=\"boolean\"><default>false</default></key>\n"
+    "    <key id=\"arrows\" for=\"edge\" attr.name=\"arrows\" attr.type=\"string\"><default>forward</default></key>\n";
+
 /* ---- The walk ---- */
 
 /* The shapes inside parent (-1: the top), in the page's order, a container as a subgraph round its own. */
@@ -205,7 +259,37 @@ static void nodes(walk *w, int parent, int depth)
         line = colour(c->style, "strokeColor", lb, sizeof lb);
         font = colour(c->style, "fontColor", cb, sizeof cb);
         indent(o, depth);
-        if (w->cluster[i]) {
+        if (w->fmt == G_GRAPHML) {
+            owf_dnum box[4];
+            /* yfiles.foldertype="group": yEd's mark for a node with a graph inside, which yEd and networkx
+             * need before they read the nested graph; other readers pass over it */
+            owf_buf_printf(o, "<node id=\"n%d\"%s>\n", w->node[i], w->cluster[i] ? " yfiles.foldertype=\"group\"" : "");
+            if (*t) gm_data(o, depth, "label", t);
+            if (!w->cluster[i]) gm_data(o, depth, "shape", dot_shape(p, c));
+            if (owf_dcell_box(p, c, box)) {
+                static const char *const keys[4] = { "x", "y", "width", "height" };
+                int k;
+                for (k = 0; k < 4; k++) {
+                    indent(o, depth + 1);
+                    owf_buf_printf(o, "<data key=\"%s\">", keys[k]);
+                    gm_px(o, box[k]);
+                    owf_buf_puts(o, "</data>\n");
+                }
+            }
+            if (fill) gm_data(o, depth, "fill", fill);
+            if (line) gm_data(o, depth, "color", line);
+            if (font) gm_data(o, depth, "fontcolor", font);
+            if (is_on(c->style, "dashed")) gm_data(o, depth, "dashed", "true");
+            if (w->cluster[i]) {         /* its shapes as a nested graph, named after it as the primer does */
+                indent(o, depth + 1);
+                owf_buf_printf(o, "<graph id=\"n%d:\" edgedefault=\"directed\">\n", w->node[i]);
+                nodes(w, i, depth + 2);
+                indent(o, depth + 1);
+                owf_buf_puts(o, "</graph>\n");
+            }
+            indent(o, depth);
+            owf_buf_puts(o, "</node>\n");
+        } else if (w->cluster[i]) {
             if (w->fmt == G_MERMAID) {
                 owf_buf_printf(o, "subgraph n%d [\"", w->node[i]);
                 mm_text(o, *t ? t : " ");
@@ -310,7 +394,19 @@ static void edges(walk *w)
         }
         dashed = is_on(e->style, "dashed");
         line = colour(e->style, "strokeColor", lb, sizeof lb);
-        if (w->fmt == G_MERMAID) {
+        if (w->fmt == G_GRAPHML) {
+            /* in the top graph, which holds both ends however deep they are */
+            int bare = !*label && !dashed && !line && head && !tail;
+            owf_buf_printf(o, "    <edge id=\"e%d\" source=\"n%d\" target=\"n%d\"%s\n", ++w->links, w->node[s],
+                           w->node[t], bare ? "/>" : ">");
+            if (!bare) {
+                if (*label) gm_data(o, 0, "label", label);
+                if (line) gm_data(o, 0, "color", line);
+                if (dashed) gm_data(o, 0, "dashed", "true");
+                if (!head || tail) gm_data(o, 0, "arrows", head ? "both" : tail ? "back" : "none");
+                owf_buf_puts(o, "    </edge>\n");
+            }
+        } else if (w->fmt == G_MERMAID) {
             /* a mermaid edge between subgraphs joins them; a node inside one joins as itself */
             owf_buf_printf(o, "    n%d %s%s%s", w->node[s], tail && head ? "<" : "", dashed ? "-.-" : "--",
                            head ? ">" : (dashed ? "" : "-"));
@@ -395,7 +491,12 @@ static int graph_write(const owf_diagram *d, int page, int fmt, unsigned char **
             w.cluster[c] = 1;
     }
     wide = owf_dpage_bounds(p, box) && box[2] > box[3];
-    if (fmt == G_MERMAID) {
+    if (fmt == G_GRAPHML) {
+        owf_buf_puts(&w.out, gm_head);
+        owf_buf_puts(&w.out, "    <graph id=\"G\" edgedefault=\"directed\">\n");
+        if (p->name && *p->name)
+            gm_data(&w.out, -1, "label", p->name);   /* in line with the top graph's nodes */
+    } else if (fmt == G_MERMAID) {
         if (p->name && *p->name) {      /* the page's name as the chart's title */
             owf_buf_puts(&w.out, "---\ntitle: \"");
             mm_text(&w.out, p->name);
@@ -414,6 +515,8 @@ static int graph_write(const owf_diagram *d, int page, int fmt, unsigned char **
     edges(&w);
     if (fmt == G_DOT)
         owf_buf_puts(&w.out, "}\n");
+    else if (fmt == G_GRAPHML)
+        owf_buf_puts(&w.out, "    </graph>\n</graphml>\n");
     free(w.node);
     free(w.cluster);
     free(w.up);
@@ -434,4 +537,9 @@ int owf_dmermaid_write(const owf_diagram *d, int page, unsigned char **data, siz
 int owf_ddot_write(const owf_diagram *d, int page, unsigned char **data, size_t *length)
 {
     return graph_write(d, page, G_DOT, data, length);
+}
+
+int owf_dgraphml_write(const owf_diagram *d, int page, unsigned char **data, size_t *length)
+{
+    return graph_write(d, page, G_GRAPHML, data, length);
 }

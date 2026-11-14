@@ -1,9 +1,9 @@
 /*
- * The Mermaid and DOT writers (libowf/diagram/owf_dgraph.c) on the PC: shapes as nodes with the nearest shape,
+ * The Mermaid, DOT and GraphML writers (libowf/diagram/owf_dgraph.c) on the PC: shapes as nodes with the nearest shape,
  * a container as a subgraph or cluster round its shapes, edges with labels (their own or a riding label),
  * dashes and arrowheads either way, colours, quotes and line breaks escaped, a loose connector and a hidden
  * shape left out, the page's name and direction, and no such page. Run under ASan and UBSan by make
- * diagram-check. Leaves build/host/test-dgraph.mmd and .dot for the real tools to read.
+ * diagram-check. Leaves build/host/test-dgraph.mmd, .dot and .graphml for the real tools to read.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
@@ -213,17 +213,98 @@ static void test_loops(void)
         c = shape(p, id, "swimlane;", 0, 0, 10, 10, "deep");
         owf_dcell_set(&c->parent, parent);
     }
-    for (k = 0; k < 2; k++) {
+    for (k = 0; k < 3; k++) {
+        static const char *const ay[3] = { "\"Ay\"", "\"Ay\"", ">Ay<" }, *const bee[3] = { "\"Bee\"", "\"Bee\"", ">Bee<" };
+        static const char *const self[3] = { "\"Self\"", "\"Self\"", ">Self<" };
+        static const char *const deep[3] = { "\"deep\"", "\"deep\"", ">deep<" };
+        static const char *const from_c[3] = { "n4 --> ", "n4 -> ", "source=\"n4\"" };
         const char *s;
-        CHECK_N((k ? owf_ddot_write : owf_dmermaid_write)(&d, 0, &out, &n), OWF_OK);
+        CHECK_N((k == 2 ? owf_dgraphml_write : k ? owf_ddot_write : owf_dmermaid_write)(&d, 0, &out, &n), OWF_OK);
         s = (const char *)out;
-        CHECK_N(count(s, n, "\"Ay\""), 1);
-        CHECK_N(count(s, n, "\"Bee\""), 1);
-        CHECK_N(count(s, n, "\"Self\""), 1);
-        CHECK_N(count(s, n, "\"deep\""), 70);
-        CHECK(find(s, n, k ? "n4 -> " : "n4 --> ") != NULL);   /* C's edges are there */
+        CHECK_N(count(s, n, ay[k]), 1);
+        CHECK_N(count(s, n, bee[k]), 1);
+        CHECK_N(count(s, n, self[k]), 1);
+        CHECK_N(count(s, n, deep[k]), 70);
+        CHECK_N(count(s, n, from_c[k]), 2);   /* C's edges are there */
         owf_free(out);
     }
+    owf_diagram_free(&d);
+}
+
+/* GraphML: the keys declared, shapes with their places, a container holding a nested graph, edges in the top
+ * graph with labels, colours, dashes and arrowheads either way, XML escaped, the same shapes and edges left out,
+ * and every element closed. */
+static void test_graphml(void)
+{
+    owf_diagram d;
+    unsigned char *out = NULL;
+    size_t n = 0;
+    const char *s;
+    build(&d);
+    CHECK_N(owf_dgraphml_write(&d, 0, &out, &n), OWF_OK);
+    s = (const char *)out;
+    save("build/host/test-dgraph.graphml", out, n);
+    CHECK(n > 0 && s[n] == 0 && strlen(s) == n);
+    CHECK(starts(s, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\""));
+    CHECK(find(s, n, "    <key id=\"label\" for=\"all\" attr.name=\"label\" attr.type=\"string\"/>\n") != NULL);
+    CHECK(find(s, n, "<key id=\"arrows\" for=\"edge\" attr.name=\"arrows\" attr.type=\"string\"><default>forward</default></key>\n")
+          != NULL);
+    CHECK(find(s, n, "    <graph id=\"G\" edgedefault=\"directed\">\n    <data key=\"label\">Order &quot;flow&quot;</data>\n")
+          != NULL);
+    CHECK(find(s, n, "    <node id=\"n1\">\n        <data key=\"label\">Start &amp; go</data>\n"
+                     "        <data key=\"shape\">box</data>\n        <data key=\"x\">0</data>\n"
+                     "        <data key=\"y\">0</data>\n        <data key=\"width\">120</data>\n"
+                     "        <data key=\"height\">60</data>\n        <data key=\"fill\">#dae8fc</data>\n"
+                     "        <data key=\"color\">#6c8ebf</data>\n    </node>\n") != NULL);
+    /* the swimlane: no shape, its box, then its shapes in a nested graph at their places on the page */
+    CHECK(find(s, n, "    <node id=\"n2\" yfiles.foldertype=\"group\">\n        <data key=\"label\">Shop</data>\n        <data key=\"x\">200</data>\n")
+          != NULL);
+    CHECK(find(s, n, "        <graph id=\"n2:\" edgedefault=\"directed\">\n            <node id=\"n3\">\n"
+                     "                <data key=\"label\">Pay #1</data>\n                <data key=\"shape\">circle</data>\n"
+                     "                <data key=\"x\">220</data>\n                <data key=\"y\">30</data>\n") != NULL);
+    CHECK(find(s, n, "                <data key=\"label\">Ship&#10;it</data>\n                <data key=\"shape\">hexagon</data>\n")
+          != NULL);
+    CHECK(find(s, n, "                <data key=\"dashed\">true</data>\n            </node>\n        </graph>\n    </node>\n")
+          != NULL);
+    CHECK(find(s, n, "<data key=\"fontcolor\">#ff0000</data>\n") != NULL);
+    CHECK(find(s, n, "<data key=\"shape\">cylinder</data>\n") != NULL);
+    CHECK(find(s, n, "Hidden") == NULL);
+    CHECK(find(s, n, "    <edge id=\"e1\" source=\"n1\" target=\"n3\">\n        <data key=\"label\">pay &quot;now&quot;</data>\n"
+                     "    </edge>\n") != NULL);
+    CHECK(find(s, n, "    <edge id=\"e2\" source=\"n3\" target=\"n4\">\n        <data key=\"label\">riding</data>\n"
+                     "        <data key=\"dashed\">true</data>\n        <data key=\"arrows\">none</data>\n    </edge>\n") != NULL);
+    CHECK(find(s, n, "    <edge id=\"e3\" source=\"n4\" target=\"n5\">\n        <data key=\"color\">#00aa00</data>\n"
+                     "        <data key=\"arrows\">both</data>\n    </edge>\n") != NULL);
+    CHECK(find(s, n, "    <edge id=\"e4\" source=\"n5\" target=\"n6\">\n        <data key=\"label\">back</data>\n"
+                     "        <data key=\"arrows\">back</data>\n    </edge>\n") != NULL);   /* not turned round */
+    CHECK(find(s, n, "    <edge id=\"e5\" source=\"n2\" target=\"n7\"/>\n") != NULL);   /* from the container itself */
+    CHECK(find(s, n, "loose") == NULL && find(s, n, "to hidden") == NULL);
+    CHECK_N(count(s, n, "<edge "), 5);
+    CHECK_N(count(s, n, "<node "), count(s, n, "</node>"));
+    CHECK_N(count(s, n, "<node "), 8);
+    CHECK_N(count(s, n, "<graph "), count(s, n, "</graph>"));
+    CHECK(n > 11 && !strcmp(s + n - 11, "</graphml>\n"));
+    owf_free(out);
+    CHECK_N(owf_dgraphml_write(&d, 2, &out, &n), OWF_ERR_FORMAT);
+    CHECK(out == NULL && n == 0);
+    owf_diagram_free(&d);
+
+    owf_diagram_init(&d);                /* an empty, unnamed page; a shape at a part pixel, left of the page */
+    {
+        owf_dpage *p = owf_diagram_add_page(&d, "e", NULL);
+        owf_dcell *c = shape(p, "a", "rounded=0;", 0, 0, 1, 1, "a\001b<c>");
+        c->geo.x = -350;
+        c->geo.y = 7;
+        c->geo.width = 1250;
+    }
+    CHECK_N(owf_dgraphml_write(&d, 0, &out, &n), OWF_OK);
+    s = (const char *)out;
+    CHECK(find(s, n, "<data key=\"label\">ab&lt;c&gt;</data>") != NULL);   /* a control character left out */
+    CHECK(find(s, n, "<data key=\"x\">-3.5</data>") != NULL);
+    CHECK(find(s, n, "<data key=\"y\">0.07</data>") != NULL);
+    CHECK(find(s, n, "<data key=\"width\">12.5</data>") != NULL);
+    CHECK(find(s, n, "<graph id=\"G\" edgedefault=\"directed\">\n    <node") != NULL);   /* no page name */
+    owf_free(out);
     owf_diagram_free(&d);
 }
 
@@ -232,6 +313,7 @@ int main(void)
     test_loops();
     test_mermaid();
     test_dot();
+    test_graphml();
     printf("diagram graphs: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }
