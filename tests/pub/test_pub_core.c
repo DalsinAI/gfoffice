@@ -1,5 +1,6 @@
 #include "openpublisher_core.h"
 #include "openpresentation_core.h"
+#include "owf_metafile.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -151,6 +152,23 @@ int main(void)
         CHECK(found_bold && found_dash);
     }
     CHECK(opr_export_pdf(deck, NULL, &pdf, &length, report) == OWF_OK && length > 1000 && !memcmp(pdf, "%PDF-", 5));
+    /* its WMF pictures are played into the PDF (owf_metafile.c), each clipped to its frame */
+    if (deck && pdf) {
+        int wmf = 0, clips = 0;
+        size_t k;
+        for (i = 0; i < deck->nslides; i++) {
+            int j;
+            for (j = 0; j < deck->slides[i].nobjs; j++) {
+                const owf_obj *o = &deck->slides[i].objs[j];
+                if (o->kind == OWF_OBJ_PICTURE && o->image >= 0 && o->image < deck->res->nimages &&
+                    owf_metafile_is_wmf(deck->res->images[o->image].data, deck->res->images[o->image].length))
+                    wmf++;
+            }
+        }
+        for (k = 0; k + 7 <= length; k++)
+            if (!memcmp(pdf + k, " re W n", 7)) clips++;
+        CHECK(wmf >= 1 && clips >= wmf);
+    }
     free(pdf); owf_deck_free(deck); deck = NULL;
 
     CHECK(opp_import_pub_file("tests/pub/stress/SampleNewsletter.pub", &deck, report, &version) == OWF_OK);
