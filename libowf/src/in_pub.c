@@ -195,6 +195,12 @@ typedef struct {
     int group;                   /* index of its group in shapes; -1 */
     int is_group;
     long grect[4];               /* a group's own coordinate rectangle */
+    /* its look ([MS-ODRAW] properties, PUB-FORMAT.md 7.4); -1: not said */
+    int filled, lined;
+    unsigned long fill, line;    /* the property's value: 0x00BBGGRR, or 0x08 in the top byte and a scheme place */
+    int has_fill, has_line;
+    long line_width;
+    long inset[4];
 } eshape;
 
 /* A run of the text (FDPC or FDPP): the characters up to end (not counting)
@@ -333,6 +339,9 @@ static owf_pub_frame *add_frame(reader *r, owf_pub_page *page)
     f->story = -1;
     f->image = -1;
     f->chunk = -1;
+    f->filled = f->lined = -1;
+    f->line_width = -1;
+    f->inset[0] = f->inset[1] = f->inset[2] = f->inset[3] = -1;
     return f;
 }
 
@@ -1005,6 +1014,9 @@ static int add_eshape(reader *r)
     s->type = -1;
     s->group = -1;
     s->wordart = -1;
+    s->filled = s->lined = -1;
+    s->line_width = -1;
+    s->inset[0] = s->inset[1] = s->inset[2] = s->inset[3] = -1;
     return r->nshapes++;
 }
 
@@ -1025,6 +1037,39 @@ static int wordart_story(reader *r, span text)
         len--;
     make_story(r, st, text, 0, len);
     return r->pub->nstories++;
+}
+
+/* One of a shape's simple properties ([MS-ODRAW] 2.3; PUB-FORMAT.md 7.4). */
+static void shape_prop(eshape *s, unsigned pid, unsigned long v)
+{
+    switch (pid) {
+    case 0x0081: case 0x0082: case 0x0083: case 0x0084:   /* the text's margins, EMU */
+        if (v < 914400UL * 22)
+            s->inset[pid - 0x0081] = (long)v;
+        break;
+    case 0x0181:                                        /* fill colour */
+        s->fill = v;
+        s->has_fill = 1;
+        break;
+    case 0x01BF:                                        /* fill booleans: fFilled (bit 4) when its use bit (20) is set */
+        if (v & 0x100000UL)
+            s->filled = (v & 0x10UL) != 0;
+        break;
+    case 0x01C0:                                        /* line colour */
+        s->line = v;
+        s->has_line = 1;
+        break;
+    case 0x01CB:                                        /* line width, EMU */
+        if (v < 914400UL)
+            s->line_width = (long)v;
+        break;
+    case 0x01FF:                                        /* line booleans: fLine (bit 3) when its use bit (19) is set */
+        if (v & 0x80000UL)
+            s->lined = (v & 0x8UL) != 0;
+        break;
+    default:
+        break;
+    }
 }
 
 static void read_shape(reader *r, span body, int group, int index)
@@ -1074,6 +1119,8 @@ static void read_shape(reader *r, span body, int group, int index)
                 unsigned long v = rd32(e.body, 6 * (size_t)i + 2);
                 if (pid == 0x4104)
                     s->blip = (int)v;
+                else if (!(pid & 0xC000))
+                    shape_prop(s, pid, v);
                 if (pid & 0x8000) {
                     if (pid == 0xC0C0 && s->wordart < 0)   /* WordArt's text */
                         s->wordart = wordart_story(r, sub(e.body, extra, v));
@@ -1270,6 +1317,36 @@ static owf_pub_kind frame_kind(const reader *r, const eshape *s)
 
 /* Puts the shapes that sit on page chunk pc onto page, back to front,
  * groups before their members. */
+/* A drawing property's colour as 0xRRGGBB: 0x00BBGGRR, or 0x08 in the top
+ * byte and a place in the colour scheme. -1: one not known. */
+static long shape_colour(const owf_pub *pub, unsigned long v)
+{
+    if ((v >> 24) == 0x08)
+        return (v & 0xFFFFFFUL) < (unsigned long)pub->nscheme ? (long)pub->scheme[v & 0xFFFFFFUL] : -1;
+    if (v >> 24)
+        return -1;                       /* system colours and the like: not known yet */
+    return (long)(((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF));
+}
+
+static void frame_look(const owf_pub *pub, owf_pub_frame *f, const eshape *s)
+{
+    long c;
+    int k;
+    f->filled = s->filled;
+    if (s->has_fill && (c = shape_colour(pub, s->fill)) >= 0)
+        f->fill = (unsigned long)c;
+    else if (f->filled == 1)
+        f->filled = -1;                  /* filled, but with a colour not known: as if not said */
+    f->lined = s->lined;
+    if (s->has_line && (c = shape_colour(pub, s->line)) >= 0)
+        f->line = (unsigned long)c;
+    else if (f->lined == 1 && s->has_line)
+        f->lined = -1;
+    f->line_width = s->line_width;
+    for (k = 0; k < 4; k++)
+        f->inset[k] = s->inset[k];
+}
+
 static void place_shapes(reader *r, long pc, owf_pub_page *page)
 {
     int i, *at;
@@ -1307,6 +1384,7 @@ static void place_shapes(reader *r, long pc, owf_pub_page *page)
         }
         if (s->blip > 0 && s->blip <= r->nblips)
             f->image = r->blip_image[s->blip - 1];
+        frame_look(r->pub, f, s);
         if (s->wordart >= 0 && f->story < 0) {
             f->story = s->wordart;
             f->wordart = 1;
@@ -1318,6 +1396,40 @@ static void place_shapes(reader *r, long pc, owf_pub_page *page)
         }
     }
     owf_free(at);
+}
+
+/* The colour scheme: the Contents chunk of kind 0x5C. Field 0x02 is an
+ * array, an item a block whose field 0x01 is a colour as R, G, B bytes (an
+ * empty item: black). */
+static void read_scheme(reader *r)
+{
+    long i;
+    for (i = 0; i < r->nchunks; i++) {
+        span c, arr;
+        field f;
+        size_t at = 0;
+        if (r->chunks[i].kind != 0x5C)
+            continue;
+        c = block_at(r->contents, r->chunks[i].offset);
+        if (!find_field(c, 0x02, &f) || (f.type != 0xA0 && f.type != 0x98 && f.type != 0x90))
+            return;
+        arr = f.body;
+        /* an array's body: its items, one after another (section 4) */
+        at = 0;
+        {
+            field it;
+            while (next_field(arr, &at, &it) > 0 && r->pub->nscheme < 16) {
+                if (it.type == 0x78)
+                    r->pub->scheme[r->pub->nscheme++] = 0;
+                else if (it.type == 0x88) {
+                    unsigned long v = (unsigned long)field_value(it.body, 0x01, 0);
+                    r->pub->scheme[r->pub->nscheme++] =
+                        ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF);
+                }
+            }
+        }
+        return;
+    }
 }
 
 static void read_modern(reader *r)
@@ -1342,6 +1454,7 @@ static void read_modern(reader *r)
             owf_report_add(r->report, OWF_NOTE_LOST, "The file's table of contents is damaged; no pages could be read");
         return;
     }
+    read_scheme(r);
     for (i = 0; i < r->nchunks; i++)
         if (r->chunks[i].kind == 0x44) {
             root = i;

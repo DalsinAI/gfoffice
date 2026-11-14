@@ -222,6 +222,18 @@ and its 0x05 y equals the master's. The y test is needed because in the
 2003 files the scratch area's 0x06 is (2, 1), as a document page's can be
 [V 3].
 
+### 5.5 The colour scheme [V 6]
+
+One chunk of kind 0x5C in each 2002-or-later sample [V 6]: field 0x01 is 8;
+0x02 an array of 8 items, each a block whose field 0x01 is a colour, its
+bytes red, green, blue then 0 (the opposite order to the drawing's), or an
+empty item (0x78) for black; 0x06 the scheme's name in UTF-16 ("Bluebird",
+"Waterfall", "Black & White") [V 6]. A drawing colour with 0x08 in its top
+byte names a place in this list: SampleBrochure's 0x08000002 fills its
+heading box with its third colour, #9999CC, which its thumbnail shows
+light blue-grey; its 0x08000000 lines are its first, #000080, navy [V 2].
+Empty items as black: [H, though "Black & White" has two].
+
 ## 6. The text: `Quill/QuillSub/CONTENTS`
 
 ### 6.1 Its directory [V 26]
@@ -400,8 +412,18 @@ Other shapes can hold text too: christmas's ellipses have (empty) text ids
 | 0x4104 | the picture: its number (from 1) in the picture store (section 8) | [V: 51318's one picture frame and its one picture; 68 such properties in 24 samples, against reference counts adding up to 77 in the stores, so 9 references come from elsewhere [H: fills, masters]] |
 | 0xC0C0 | WordArt's text, UTF-16 with a NUL | [V 4: "Haunted" and "Halloween" (halloween-flyer), "Easter Egg Hunt" (easter-egg-hunt-flyer), "Liberty" (SampleNewsletter), each where its thumbnail shows it] |
 | 0xC0C5 | WordArt's font name, UTF-16 | [V 1: "skullphabet"] |
-| 0x181 | fill colour; 0x1C0 line colour [H] | colours: 0x00BBGGRR, red in the low byte [V by hue on christmas: 0x0000CCFF shows yellow, 0xCC0000 red, 0x006600 green; 5 exact matches elsewhere]. A top byte of 0x08 (47 values) marks a colour from the scheme [H] |
-| 0x81-0x84 | 0x8EE0 (36576 EMU, 0.04 inch) in most text boxes | [H: the text's margins] |
+| 0x181 | fill colour; 0x1C0 line colour | colours: 0x00BBGGRR, red in the low byte [V by hue on christmas: 0x0000CCFF shows yellow, 0xCC0000 red, 0x006600 green; 5 exact matches elsewhere]. A top byte of 0x08 marks a place in the colour scheme (5.5) [V 2: 51318 and SampleBrochure, every fill and line their thumbnails show] |
+| 0x1BF | fill switches: bit 4 filled, counted only when bit 20 is set | [V 2: as 0x181; 0x1F001C filled, 0x100000 not] |
+| 0x1FF | line switches: bit 3 outlined, counted only when bit 19 is set | [V 2: 0xF000E and 0x80008 outlined (lines, borders), 0xF0006 and 0x80000 not] |
+| 0x1CB | line width, EMU | [V 2: 51318's border 38100 (3 pt) and header 12700 (1 pt); SampleBrochure's panel lines 3175] |
+| 0x81-0x84 | a text box's margins, EMU: left, top, right, bottom | 0x8D63 (36195) in SampleBrochure's and 51318's text boxes, 0x8EE0 (36576, 0.04 inch) in shapes [H: measured nowhere yet] |
+
+These ids and their meanings are the ones Microsoft's published [MS-ODRAW]
+specification gives its drawing properties (2.3: fill, line and text
+properties); the marks say where the samples agree with it. The reader reads
+only these and 0x4104 and 0xC0C0. Seen but not read: 0x384-0x387 (0x8EE0 in
+most shapes), 0x17F, 0x1C2, 0x201, 0x23F, 0x33F, 0x37F, 0x3BF, and a second
+table (0xF122) in most shapes.
 
 ## 8. Pictures [V 24]
 
@@ -486,7 +508,8 @@ path in section 5.1.
 - Master pages' own frames (the samples' masters are empty), headers and
   footers, page numbers.
 - Hyperlinks and fields (`TOKN`), catalog and mail-merge data.
-- Shape numbers beyond those in 7.3, gradients, picture crops and fills.
+- Shape numbers beyond those in 7.3, gradients, picture crops and fills;
+  rotation and flips (not looked for yet); columns and wrap.
 - The 98/2000 form's masters and pictures; the older form (section 10).
 - Publisher 2002 and 2016-or-later files (no samples).
 

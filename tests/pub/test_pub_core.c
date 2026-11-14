@@ -34,6 +34,18 @@ static const char *font_name(const owf_doc *res, const owf_charfmt *f)
     return f && res && f->font >= 0 && f->font < res->nfonts ? res->fonts[f->font].name : "";
 }
 
+/* How many objects (all slides) have this fill, line and line width. */
+static int count_look(const owf_deck *deck, unsigned long fill, unsigned long line, int width)
+{
+    int i, j, n = 0;
+    for (i = 0; deck && i < deck->nslides; i++)
+        for (j = 0; j < deck->slides[i].nobjs; j++) {
+            const owf_look *l = &deck->slides[i].objs[j].look;
+            if (l->fill == fill && l->line == line && l->line_width == width) n++;
+        }
+    return n;
+}
+
 static int frame_text_ops(const opr_slide *laid, int frame, const char *starts)
 {
     size_t i;
@@ -247,6 +259,31 @@ int main(void)
             }
         CHECK(centred);
     }
+    owf_deck_free(deck); deck = NULL;
+    /* P1c frame look ([MS-ODRAW] properties over the colour scheme): 51318's header bar is the scheme's
+     * #CCCCEB with a black 1 pt outline, its corner block the scheme's #000099 with none; its border a
+     * black 3 pt line; its text boxes' margins 36195 EMU (57 twips). All as its thumbnail shows them. */
+    CHECK(opp_import_pub_file("tests/pub/samples/51318.pub", &deck, report, &version) == OWF_OK);
+    if (deck) {
+        int j, margins = 0;
+        CHECK(count_look(deck, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
+        CHECK(count_look(deck, OWF_SHADE(0x000099), 0, 0) >= 1);
+        CHECK(count_look(deck, 0, OWF_SHADE(0x000000), 60) >= 1);
+        for (i = 0; i < deck->nslides; i++)
+            for (j = 0; j < deck->slides[i].nobjs; j++)
+                if (deck->slides[i].objs[j].kind == OWF_OBJ_TEXT && deck->slides[i].objs[j].inset[0] == 57) margins++;
+        CHECK(margins >= 2);
+        CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
+        CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
+        CHECK(count_look(roundtrip, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
+        free(odp); odp = NULL; odp_length = 0;
+        owf_deck_free(roundtrip); roundtrip = NULL;
+    }
+    owf_deck_free(deck); deck = NULL;
+    /* SampleBrochure's scheme starts #000080: its panel border lines are navy, a quarter point */
+    CHECK(opp_import_pub_file("tests/pub/samples/SampleBrochure.pub", &deck, report, &version) == OWF_OK);
+    CHECK(count_look(deck, 0, OWF_SHADE(0x000080), 5) >= 3);
+    CHECK(count_look(deck, OWF_SHADE(0xCCCCE6), 0, 0) >= 2);
     owf_deck_free(deck); deck = NULL;
     /* Simple has no paragraph runs that name a style: every paragraph is the default style's, left */
     CHECK(opp_import_pub_file("tests/pub/samples/Simple.pub", &deck, report, &version) == OWF_OK);
