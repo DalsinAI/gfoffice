@@ -525,7 +525,7 @@ static void draw_edge(oldraw *d, const odg_view *v, const owf_dpage *p, const ow
 {
     oldraw_point pts[MAX_PTS];
     char buf[24];
-    int n = view_path(v, p, e, pts), i;
+    int n = view_path(v, p, e, pts);
     oldraw_colour stroke = odg_style_colour(e->style, "strokeColor", OLDRAW_RGB(0x000000));
     if (n < 2)
         return;
@@ -541,14 +541,20 @@ static void draw_edge(oldraw *d, const odg_view *v, const owf_dpage *p, const ow
         draw_label(d, v, e->value, e->style, at.x + odg_view_len(v, e->geo.offset.x),
                    at.y + odg_view_len(v, e->geo.offset.y), 1, 1, OLDRAW_RGB(0xffffff));
     }
-    for (i = 0; i < p->ncells; i++) {
-        const owf_dcell *l = &p->cells[i];
-        if (l->kind == OWF_DCELL_VERTEX && l->parent && !strcmp(l->parent, e->id) && owf_dcell_shown(p, l)) {
-            oldraw_point at = along(pts, n, (long)l->geo.x);
-            draw_label(d, v, l->value, l->style, at.x + odg_view_len(v, l->geo.offset.x),
-                       at.y + odg_view_len(v, l->geo.offset.y), 1, 1, OLDRAW_RGB(0xffffff));
-        }
-    }
+}
+
+/* A label cell l on the edge e: at geo.x along the line (-1 start, 0 middle, 1 end) and its offset. Drawn where
+ * l comes in the page's cells, so no edge has to look through every cell for its labels. */
+static void draw_edge_label(oldraw *d, const odg_view *v, const owf_dpage *p, const owf_dcell *e,
+                            const owf_dcell *l)
+{
+    oldraw_point pts[MAX_PTS], at;
+    int n = view_path(v, p, e, pts);
+    if (n < 2)
+        return;
+    at = along(pts, n, (long)l->geo.x);
+    draw_label(d, v, l->value, l->style, at.x + odg_view_len(v, l->geo.offset.x),
+               at.y + odg_view_len(v, l->geo.offset.y), 1, 1, OLDRAW_RGB(0xffffff));
 }
 
 /* ---- the grid and the selection ---- */
@@ -646,8 +652,10 @@ void odg_draw(oldraw *d, const odg_view *v, const odg_doc *doc, const oldraw_rec
             continue;
         if (c->kind == OWF_DCELL_EDGE)
             draw_edge(d, v, p, c);
-        else if (c->kind == OWF_DCELL_VERTEX && !(parent && parent->kind == OWF_DCELL_EDGE))
-            draw_vertex(d, v, p, c);           /* a label on an edge is drawn with its edge */
+        else if (c->kind == OWF_DCELL_VERTEX && parent && parent->kind == OWF_DCELL_EDGE)
+            draw_edge_label(d, v, p, parent, c);
+        else if (c->kind == OWF_DCELL_VERTEX)
+            draw_vertex(d, v, p, c);
     }
     draw_selection(d, v, p);
     dash_area = NULL;

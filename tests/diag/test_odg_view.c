@@ -357,6 +357,37 @@ static void test_labels(void)
     done();
 }
 
+/* A label cell on a connector is drawn where it comes in the page, at its place along the line; a hidden
+ * connector takes its labels with it. */
+static void test_edge_label_cells(void)
+{
+    odg_view v;
+    char e[24];
+    const text_rec *t;
+    owf_dcell *l;
+    owf_dpoint p0 = { PX(20), PX(200) }, p1 = { PX(220), PX(200) };
+    fresh(0);
+    odg_view_init(&v, W, H);
+    odg_add_edge(&doc, NULL, NULL, &p0, &p1, "", e);
+    l = owf_dpage_add(odg_page(&doc), "lbl", e, OWF_DCELL_VERTEX);
+    CHECK(l != NULL);
+    if (!l) { done(); return; }
+    l->geo.x = -50;                          /* a quarter of the way: (70, 200) */
+    odg_set_value(&doc, "lbl", "near");
+    draw(&v);
+    t = drew("near");
+    CHECK(t != NULL);
+    if (t) {
+        CHECK_N(t->x, 58);
+        CHECK_N(t->y, 201);
+    }
+    CHECK_X(px[200][70], WHITE);              /* on its white ground */
+    owf_dattrs_set(&owf_dpage_find(odg_page(&doc), e)->extra, "visible", "0");
+    draw(&v);
+    CHECK(drew("near") == NULL);
+    done();
+}
+
 static void test_grid_and_area(void)
 {
     odg_view v;
@@ -552,6 +583,7 @@ int main(void)
     test_shapes();
     test_rounded_and_swimlane();
     test_labels();
+    test_edge_label_cells();
     test_grid_and_area();
     test_selection_and_handles();
     test_long_dashes();
