@@ -1609,21 +1609,25 @@ static void test_sample(const char *path)
 }
 
 /* Issue #9 (7 October 2026), what of it the layout decides: a heading's own colour reaches its text's op, a
- * table row's cells start on one line, small-text punctuation stays in the words, and a list's items are
- * spaced alike (no blank line after the first). The rest of #9 (bullets drawn through a Latin-1 font) is the
+ * table row's cells start on one line, small-text punctuation stays in the words a line draws, and a
+ * list's items are spaced alike (no blank line after the first). The rest of #9 (bullets drawn through a Latin-1 font) is the
  * Amiga side: app/openwrite2.c's to_latin1 gives U+2022 as 0xB7. */
 static int op_word(const ol_document *od, const char *word, const ol_display_op **out)
 {
-    size_t k;
+    size_t k, n = strlen(word);
     for (k = 0; k < ol_display_count(od); ++k) {
         const ol_display_op *op = ol_display_get(od, k);
         const char *t;
+        size_t i;
         if (op->type != OL_OP_TEXT) continue;
         t = ol_node_text(ol_node_by_id(od, op->u.text.node_id));
-        if (t && strstr(t, word)) {
-            if (out) *out = op;
-            return 1;
-        }
+        if (!t) continue;
+        /* in the slice this op draws, not anywhere in its node's text */
+        for (i = 0; i + n <= op->u.text.text_length; ++i)
+            if (!strncmp(t + op->u.text.text_offset + i, word, n)) {
+                if (out) *out = op;
+                return 1;
+            }
     }
     return 0;
 }
@@ -1638,7 +1642,9 @@ static void test_issue9(void)
     ow_position pos = { 0, 0, 0, 0 };
     ol_rect box[3], item[3];
     int i, page;
-    static const char *const items[] = { "\xE2\x80\xA2\tOne", "\xE2\x80\xA2\tTwo", "\xE2\x80\xA2\tThree" };
+    static const char *const items[] = { "One", "Two", "Three" };
+    owf_doc *list = owf_doc_new();
+    ow_editor *ed;
 
     p = para(doc, NULL, 1, "Red heading", 320);
     p->runs[0].fmt.colour = 0xC00000UL;
@@ -1650,7 +1656,6 @@ static void test_issue9(void)
         cells[i]->table_col = i;
         cells[i]->table_cols = 3;
     }
-    for (i = 0; i < 3; ++i) para(doc, NULL, 0, items[i], 240);
 
     l = ow_layout_new(doc, measure, NULL);
     CHECK(l != NULL);
@@ -1666,13 +1671,31 @@ static void test_issue9(void)
         CHECK(ow_layout_caret(l, pos, &page, &box[i]));
     }
     CHECK(box[0].y == box[1].y && box[1].y == box[2].y && box[0].x < box[1].x && box[1].x < box[2].x);
-    for (i = 0; i < 3; ++i) {
-        pos.paragraph = 5 + i;
-        CHECK(ow_layout_caret(l, pos, &page, &item[i]));
-    }
-    CHECK(item[1].y > item[0].y && item[1].y - item[0].y == item[2].y - item[1].y);
     ow_layout_free(l);
     owf_doc_free(doc);
+
+    /* a real list, made as GFOpenWrite's List command makes one (test_core's test_lists) */
+    for (i = 0; i < 3; ++i) para(list, NULL, 0, items[i], 240);
+    ed = ow_editor_new(list);
+    CHECK(ed != NULL);
+    if (!ed) {
+        owf_doc_free(list);
+        return;
+    }
+    ow_editor_select_all(ed);
+    CHECK(ow_editor_toggle_list(ed, 0) == OWF_OK && list->body.paras[0].fmt.indent_first < 0);
+    l = ow_layout_new(list, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        for (i = 0; i < 3; ++i) {
+            pos.paragraph = i;
+            CHECK(ow_layout_caret(l, pos, &page, &item[i]));
+        }
+        CHECK(item[1].y > item[0].y && item[1].y - item[0].y == item[2].y - item[1].y);
+        ow_layout_free(l);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(list);
 }
 
 int main(int argc, char **argv)
