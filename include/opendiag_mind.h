@@ -19,6 +19,7 @@
 #define ODG_MIND_DEPTH 64                /* levels a walk up or down goes */
 #define ODG_MIND_HGAP OWF_DNUM(40)       /* across from a node to its children */
 #define ODG_MIND_VGAP OWF_DNUM(10)       /* between one branch and the next */
+#define ODG_MIND_ID 64                   /* an id's bytes with its NUL, as ODG_EDIT_ID: the size of the ids handed back */
 
 /* The styles new nodes and branches get. */
 #define ODG_MIND_ROOT_STYLE "ellipse;whiteSpace=wrap;html=1;treeFolding=1;treeMoving=1;"
@@ -42,11 +43,11 @@ int odg_mind_both(const odg_doc *doc, const char *id);
 /* 1 when the node is folded (its branch hidden). */
 int odg_mind_folded(const owf_dcell *c);
 /* The arrow keys: the node next to id that way (the parent, the first child, the sibling above or below) into
- * out (at least 24 bytes); 0 when there is none. A folded node's children are not stepped into. */
+ * out (ODG_MIND_ID bytes); 0 when there is none, or its id is longer than out holds. A folded node's children are not stepped into. */
 int odg_mind_step(const odg_doc *doc, const char *id, odg_mind_dir dir, char *out);
 
 /* Edits: one Undo step each, the map laid out again after it (both sides when both is 1). Ids come back in id (at
- * least 24 bytes) when it isn't NULL. OWF_ERR_FORMAT when a node named isn't one, or is hidden or locked;
+ * ODG_MIND_ID bytes) when it isn't NULL. OWF_ERR_FORMAT when a node named isn't one, or is hidden or locked;
  * OWF_ERR_MEMORY. */
 /* A new map: its root at x, y on the current layer. */
 int odg_mind_new(odg_doc *doc, owf_dnum x, owf_dnum y, const char *text, char *id);

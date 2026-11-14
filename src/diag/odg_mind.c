@@ -275,10 +275,18 @@ static char *dup(const char *s)
     return d;
 }
 
-static void put_id(char *out, const char *id)
+/* id into out (ODG_MIND_ID bytes); 0, and out left empty, when it is too long: a cut id could name another cell
+ * (diagrams.net's ids of one file share their first 20 characters). */
+static int put_id(char *out, const char *id)
 {
-    if (out)
-        snprintf(out, 24, "%s", id);
+    if (!out)
+        return 1;
+    if (strlen(id) >= ODG_MIND_ID) {
+        out[0] = 0;
+        return 0;
+    }
+    memcpy(out, id, strlen(id) + 1);
+    return 1;
 }
 
 /* The node id when the mouse or a script may edit it: a node, shown and not locked. */
@@ -354,7 +362,7 @@ int odg_mind_new(odg_doc *doc, owf_dnum x, owf_dnum y, const char *text, char *i
 static int add_under(odg_doc *doc, const char *parent, int next, const char *text, int both, char *id)
 {
     const owf_dcell *pc = open_node(doc, parent), *root;
-    char *pid, *in, *rootid, kid[24];
+    char *pid, *in, *rootid, kid[ODG_MIND_ID];
     owf_dpage *p;
     owf_dcell *c;
     int r = OWF_OK, unfold = 0;
@@ -540,6 +548,5 @@ int odg_mind_step(const odg_doc *doc, const char *id, odg_mind_dir dir, char *ou
     }
     if (!got)
         return 0;
-    put_id(out, got->id);
-    return 1;
+    return put_id(out, got->id);
 }
