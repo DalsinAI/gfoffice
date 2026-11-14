@@ -33,6 +33,11 @@ int odg_style_common(const odg_doc *doc, const char *const *ids, int n, odg_prop
  * not one of those. */
 int odg_prop_check(odg_prop p, const char *text, char *out, size_t size);
 
+/* What the Style window's field for p starts with: the cells' common value when odg_prop_check accepts it, as it
+ * writes it (at least 24 bytes), and 1; "" and 0 when they differ or the value is one the field can't hold (a
+ * light-dark(...) fill, a style word of its own), so the field starts empty and, left empty, keeps it as it is. */
+int odg_style_field(const odg_doc *doc, const char *const *ids, int n, odg_prop p, char *out, size_t size);
+
 /* text set as p on each cell, as one Undo step. OWF_ERR_FORMAT when the text doesn't check or no id is a cell on
  * the page; OWF_ERR_MEMORY. */
 int odg_style_apply(odg_doc *doc, const char *const *ids, int n, odg_prop p, const char *text);
