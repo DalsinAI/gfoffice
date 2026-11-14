@@ -101,6 +101,28 @@ was read. A file is MPX when it starts `MPX` and its delimiter.
 - **Left out:** MPX has no material or cost resources (every resource is a work resource), and
   resource calendars and recurring tasks are not read. GFOpenProject doesn't write MPX.
 
+## .gan (GanttProject's, read only)
+
+Read from the format's published description and sample files, and from how MPXJ (as a black
+box) reads them; no GanttProject code was read. `libowf/project/owf_pgan.c`. A file is .gan when it
+is XML and its root element is `<project>`, lower case.
+
+- **Project:** `name` is the title. The project starts on its earliest task's start, at 08:00.
+- **Calendar:** `<default-week>` has `1` for each day off; the other days get Standard's hours.
+  Each `<date year month date>` under `<calendars>` (month from 1) is a day off.
+- **Tasks:** `<task>` elements nest for the outline. Each has `start` (`2026-11-16`), `duration`
+  in days, `complete` (percent), `meeting="true"` or duration 0 for a milestone, and `<notes>`.
+  - GanttProject has no constraints: a task keeps the start it was given unless a link moves it. So
+    a task with no predecessor that starts after the project gets Start No Earlier Than its start.
+- **Links:** `<depend id=successor type difference>` sits on the predecessor's task. The type
+  codes are 1 start-to-start, 2 finish-to-start, 3 finish-to-finish and 4 start-to-finish (as MPXJ
+  reads them). `difference` is the lag in days. Links to tasks not in the file, or to the task
+  itself, are left out.
+- **Resources:** `<resource id name>` with `<rate name="standard" value>`, a day's rate, turned into
+  an hour's. `<allocation task-id resource-id load>` gives the units (load is a percent).
+- GanttProject's vacations, roles, custom columns and colours are not read. GFOpenProject doesn't
+  write .gan.
+
 ## Resources (all formats)
 
 Version 1 keeps a task's duration as typed (fixed units, not effort driven). An assignment's work
@@ -113,7 +135,8 @@ is over-allocated when more of it is assigned at one time than its MaxUnits. Not
 - `tests/project/test_pfile.c`: exact text of the written MSPDI and CSV, each format written then
   read back field by field and scheduled to the same dates, a hand-written MSPDI file and a
   hand-written MS Project style CSV read field by field, hand-written MPX files (commas and
-  semicolons, decimal points and commas, each day order) read field by field and scheduled, and
+  semicolons, decimal points and commas, each day order) and a hand-written .gan read field by field
+  and scheduled, and
   damaged or foreign input.
 - MPXJ 16.11.0 run as a black box on the host (no source read): it read our MSPDI with every task,
   duration, link, lag, constraint, calendar and exception as written, and showed the same dates,
@@ -121,4 +144,5 @@ is over-allocated when more of it is assigned at one time than its MaxUnits. Not
   every task's baseline start, finish, duration, work and cost and its finish variance; the MSPDI
   it wrote from that was read back by `owf_project_read` and scheduled to the same dates. MPXJ also
   wrote our plan as MPX, and `owf_project_read` read that back with the same tasks, links,
-  calendars, resources, assignments and baselines, less what MPX can't hold.
+  calendars, resources, assignments and baselines, less what MPX can't hold. MPXJ read a hand-made
+  .gan with the same link types, lags, holiday and dates as `owf_project_read`.

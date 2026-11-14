@@ -865,6 +865,86 @@ static void test_mpx(void)
     owf_project_free(p);
 }
 
+/* GanttProject's .gan: nested tasks, the four link types by their codes, lags in days, a holiday, a
+ * weekend from the default week, a milestone, notes, a day rate and a half-time allocation. */
+static const char gan_sample[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!-- made by hand -->\n"
+    "<project name=\"Gan &amp; test\" company=\"\" view-date=\"2026-11-16\" version=\"2.0\" locale=\"en\">\n"
+    "<calendars><day-types><day-type id=\"0\"/><day-type id=\"1\"/>\n"
+    "<default-week sun=\"1\" mon=\"0\" tue=\"0\" wed=\"0\" thu=\"0\" fri=\"0\" sat=\"1\"/></day-types>\n"
+    "<date year=\"2026\" month=\"11\" date=\"25\"/><date year=\"2026\" month=\"13\" date=\"1\"/></calendars>\n"
+    "<tasks empty-milestones=\"true\">\n"
+    "<task id=\"10\" name=\"A\" meeting=\"false\" start=\"2026-11-16\" duration=\"2\" complete=\"10\">\n"
+    "<notes><![CDATA[Note <A>]]></notes>\n"
+    "<depend id=\"11\" type=\"1\" difference=\"0\" hardness=\"Strong\"/>\n"
+    "<depend id=\"12\" type=\"2\" difference=\"1\" hardness=\"Strong\"/>\n"
+    "<depend id=\"13\" type=\"3\" difference=\"0\" hardness=\"Rubber\"/>\n"
+    "<depend id=\"14\" type=\"4\" difference=\"0\" hardness=\"Strong\"/>\n"
+    "<depend id=\"99\" type=\"2\"/><depend id=\"10\" type=\"2\"/></task>\n"
+    "<task id=\"11\" name=\"B1\" start=\"2026-11-16\" duration=\"3\"/>\n"
+    "<task id=\"12\" name=\"B2\" start=\"2026-11-16\" duration=\"3\"/>\n"
+    "<task id=\"13\" name=\"B3\" start=\"2026-11-16\" duration=\"3\"/>\n"
+    "<task id=\"14\" name=\"B4\" start=\"2026-11-16\" duration=\"3\"/>\n"
+    "<task id=\"15\" name=\"Group\" start=\"2026-11-16\" duration=\"1\">\n"
+    "<task id=\"16\" name=\"Child\" start=\"2026-11-23\" duration=\"4\" complete=\"150\"/>\n"
+    "<task id=\"17\" name=\"Gate\" meeting=\"true\" start=\"2026-11-27\" duration=\"1\"/></task>\n"
+    "</tasks>\n"
+    "<resources><resource id=\"3\" name=\"Ann\" function=\"Default:1\"><rate name=\"standard\" value=\"20\"/>"
+    "</resource></resources>\n"
+    "<allocations><allocation task-id=\"10\" resource-id=\"3\" load=\"50.0\"/>"
+    "<allocation task-id=\"10\" resource-id=\"4\" load=\"50.0\"/></allocations>\n"
+    "</project>\n";
+
+static void test_gan(void)
+{
+    owf_project *p = NULL;
+    const owf_ptask *t;
+    const owf_pcal *c;
+    unsigned char *data;
+    size_t length;
+    CHECK_N(owf_project_detect((const unsigned char *)gan_sample, sizeof gan_sample - 1), OWF_PFILE_GAN);
+    CHECK_N(owf_project_read((const unsigned char *)gan_sample, sizeof gan_sample - 1, &p), OWF_OK);
+    if (!p) return;
+    CHECK_S(p->title, "Gan & test");
+    CHECK_N(p->start, AT(16, 8, 0));
+    c = &p->calendars[p->calendar];
+    CHECK(c->week[0].nspans == 0 && c->week[6].nspans == 0 && c->week[1].nspans == 2);
+    CHECK(c->nexceptions == 1 && c->exceptions[0].day == DAYNO(2026, 11, 25));   /* month 13 left out */
+    CHECK_N(p->ntasks, 8);
+    if (p->ntasks != 8) {
+        owf_project_free(p);
+        return;
+    }
+    t = &p->tasks[0];
+    CHECK(t->duration == 2 * D && t->percent == 10 && t->level == 1);
+    CHECK_S(t->notes, "Note <A>");
+    CHECK(p->tasks[1].nlinks == 1 && p->tasks[1].links[0].pred == 0 && p->tasks[1].links[0].type == OWF_LINK_SS);
+    CHECK(p->tasks[2].links[0].type == OWF_LINK_FS && p->tasks[2].links[0].lag == D);
+    CHECK_N(p->tasks[3].links[0].type, OWF_LINK_FF);
+    CHECK_N(p->tasks[4].links[0].type, OWF_LINK_SF);
+    CHECK_N(p->tasks[0].nlinks, 0);                                       /* to no task, and to itself */
+    CHECK(p->tasks[6].level == 2 && p->tasks[6].percent == 100);
+    CHECK(p->tasks[6].constraint == OWF_CON_SNET && p->tasks[6].constraint_date == AT(23, 8, 0));
+    CHECK(p->tasks[7].milestone && p->tasks[7].duration == 0);           /* a meeting is a milestone */
+    CHECK_N(p->tasks[5].constraint, OWF_CON_ASAP);                        /* a summary isn't held */
+    CHECK_N(p->nresources, 1);
+    CHECK(p->resources[0].rate == 250 && p->nassigns == 1 && p->assigns[0].units == 50);   /* 20.00 a day */
+
+    /* Scheduled: B2 a day after A; the child keeps its start and steps over the holiday. */
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(p->tasks[2].early_start, AT(19, 8, 0));
+    CHECK_N(p->tasks[2].early_finish, AT(23, 17, 0));
+    CHECK_N(p->tasks[6].early_finish, AT(27, 17, 0));
+    CHECK_N(p->tasks[5].early_start, AT(23, 8, 0));
+    owf_project_free(p);
+    p = NULL;
+    CHECK_N(owf_project_read((const unsigned char *)"<project><bad", 13, &p), OWF_ERR_CORRUPT);
+    p = sample();
+    CHECK_N(owf_project_write(p, OWF_PFILE_GAN, &data, &length), OWF_ERR_UNSUPPORTED);
+    owf_project_free(p);
+}
+
 int main(void)
 {
     test_durations();
@@ -876,6 +956,7 @@ int main(void)
     test_cost_resource();
     test_baseline();
     test_mpx();
+    test_gan();
     test_damaged();
     if (fails) {
         printf("project file tests: %d of %d checks failed\n", fails, checks);
