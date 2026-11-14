@@ -285,6 +285,7 @@ static void test_layers(void)
 static void test_long_lines(void)
 {
     static char line[4200];
+    char id[64];
     size_t n;
     CHECK_N(odg_rexx_init(&rx), OWF_OK);
     memcpy(line, "SETVALUE ", 9);
@@ -298,11 +299,25 @@ static void test_long_lines(void)
     strcpy(line + 10 + 2100, "\" \"quoted rest\"");
     CHECK_N(rx_do(line), ODG_RX_ERROR);
     CHECK(strstr(rx.lasterror, "too long") != NULL);
-    n = strlen("SETVALUE x ");                    /* a short id and a 4 KB label: cut to the room, not past it */
-    memcpy(line, "SETVALUE x ", n);
+    CHECK_N(rx_do("ADDSHAPE 0 0 10 10 TEXT keep"), ODG_RX_OK);
+    strcpy(id, res);
+    n = (size_t)snprintf(line, sizeof line, "SETVALUE %s ", id);   /* a 4 KB label: refused, not cut */
     memset(line + n, 'c', sizeof line - n - 1);
     line[sizeof line - 1] = 0;
-    CHECK(rx_do(line) != ODG_RX_OK);                /* no cell x; the point is it ends cleanly under ASan */
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "too long") != NULL);
+    line[n] = '"';                                /* the same quoted: refused too */
+    memset(line + n + 1, 'c', 3000);
+    strcpy(line + n + 3001, "\"");
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    snprintf(line, sizeof line, "GETVALUE %s", id);
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    CHECK(strcmp(res, "keep") == 0);                /* the label as it was */
+    n = (size_t)snprintf(line, sizeof line, "SETVALUE %s ", id); /* a label that just fits is taken whole */
+    memset(line + n, 'e', 2000);
+    line[n + 2000] = 0;
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    CHECK_N(strlen(owf_dpage_find(odg_page(&rx.doc), id)->value), 2000);
     CHECK_N(rx_do("SETVALUE \"\" text"), ODG_RX_ERROR);           /* a quoted empty id: no such cell */
     CHECK_N(rx_do("SETVALUE \"\""), ODG_RX_ERROR);
     CHECK_N(rx_do("GETVALUE \"\""), ODG_RX_ERROR);
