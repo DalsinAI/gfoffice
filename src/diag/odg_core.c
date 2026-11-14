@@ -180,6 +180,8 @@ static const char *layer(const owf_dpage *p)
     return NULL;
 }
 
+static int route_at(odg_doc *doc, int index);
+
 static void put_id(char *out, const char *id)
 {
     if (out)
@@ -225,8 +227,7 @@ int odg_add_edge(odg_doc *doc, const char *source, const char *target, const owf
 {
     owf_dpage *p = odg_page(doc);
     owf_dcell *e;
-    char eid[24];
-    int r = OWF_OK;
+    int r = OWF_OK, at;
     if ((source && !shape(p, source)) || (target && !shape(p, target)) || (!source && !loose_source) ||
         (!target && !loose_target) || !layer(p))
         return OWF_ERR_FORMAT;
@@ -247,11 +248,11 @@ int odg_add_edge(odg_doc *doc, const char *source, const char *target, const owf
         e->geo.flags |= OWF_DGEO_TARGET_POINT;
         e->geo.target_point = *loose_target;
     }
-    snprintf(eid, sizeof eid, "%s", e->id);
+    at = p->ncells - 1;                  /* the new connector is the last cell */
     if (is_orthogonal(e))
-        r = odg_route(doc, eid);
+        r = route_at(doc, at);
     if (r == OWF_OK)
-        put_id(id, eid);
+        put_id(id, odg_page(doc)->cells[at].id);
     return end(doc, r);
 }
 
@@ -279,18 +280,19 @@ int odg_connect(odg_doc *doc, const char *edge, int end_no, const char *to, odg_
                 const owf_dpoint *loose)
 {
     owf_dpage *p = odg_page(doc);
-    owf_dcell *e = owf_dpage_find(p, edge);
-    char eid[24];
+    int at = owf_dpage_index(p, edge);
+    owf_dcell *e = at >= 0 ? &p->cells[at] : NULL;
     const char *kx = end_no ? "entryX" : "exitX", *ky = end_no ? "entryY" : "exitY";
     int r = OWF_OK;
     if (!e || e->kind != OWF_DCELL_EDGE || (to && !shape(p, to)) || (!to && !loose) || port < ODG_PORT_NONE ||
         port > ODG_PORT_W)
         return OWF_ERR_FORMAT;
-    snprintf(eid, sizeof eid, "%s", e->id);
     if (begin(doc) != OWF_OK)
         return OWF_ERR_MEMORY;
     p = odg_page(doc);
-    e = owf_dpage_find(p, eid);
+    if (at >= p->ncells)
+        return end(doc, OWF_ERR_FORMAT);
+    e = &p->cells[at];                   /* begin() copied the page aside; this one's cells stay where they were */
     if (owf_dcell_set(end_no ? &e->target : &e->source, to) != OWF_OK)
         return end(doc, OWF_ERR_MEMORY);
     if (to) {
@@ -306,7 +308,7 @@ int odg_connect(odg_doc *doc, const char *edge, int end_no, const char *to, odg_
         owf_dstyle_set(&e->style, ky, to && port != ODG_PORT_NONE ? port_y[port] : NULL) != OWF_OK)
         return end(doc, OWF_ERR_MEMORY);
     if (is_orthogonal(e))
-        r = odg_route(doc, eid);
+        r = route_at(doc, at);
     return end(doc, r);
 }
 
@@ -335,8 +337,15 @@ static int horizontal(odg_port s)
 
 int odg_route(odg_doc *doc, const char *id)
 {
+    return route_at(doc, owf_dpage_index(odg_page(doc), id));
+}
+
+/* Routes the connector at index (cells are held by index across an operation: an id is never copied into a
+ * buffer that could cut it). */
+static int route_at(odg_doc *doc, int index)
+{
     owf_dpage *p = odg_page(doc);
-    owf_dcell *e = owf_dpage_find(p, id);
+    owf_dcell *e = index >= 0 && index < p->ncells ? &p->cells[index] : NULL;
     owf_dcell *src, *dst;
     owf_dnum sb[4], tb[4];
     owf_dpoint s, t;
@@ -416,15 +425,13 @@ static int reroute_joined(odg_doc *doc, const unsigned char *mark, int both_too)
     for (i = 0; i < p->ncells; i++) {
         const owf_dcell *e = &p->cells[i];
         int s, t;
-        char id[24];
         if (e->kind != OWF_DCELL_EDGE || !is_orthogonal(e) || mark[i])
             continue;
         s = inside_marked(p, mark, e->source);
         t = inside_marked(p, mark, e->target);
         if (!(s || t) || (s && t && !both_too))
             continue;
-        snprintf(id, sizeof id, "%s", e->id);
-        if ((r = odg_route(doc, id)) != OWF_OK && r != OWF_ERR_FORMAT)
+        if ((r = route_at(doc, i)) != OWF_OK && r != OWF_ERR_FORMAT)
             return r;
         p = odg_page(doc);
     }
