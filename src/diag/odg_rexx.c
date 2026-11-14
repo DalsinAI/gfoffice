@@ -83,6 +83,8 @@ static const command commands[NCOMMANDS] = {
     { "MAPIMPORT", "FILE/A,X/N,Y/N,FORMAT/K" },
 };
 
+#define ODG_PICTURE_UNDRAWN (-1000)   /* picture_file: the app's drawer gave no pixels */
+
 /* ---- Words ---- */
 
 static int upper(int c)
@@ -340,7 +342,8 @@ static int read_file(const char *name, unsigned char **data, size_t *length)
 }
 
 /* The page drawn by the app (rx->picture) as a PNG with the diagram inside, or as an IFF ILBM, into *data
- * (owf_malloc'd). OWF_OK; OWF_ERR_FORMAT (lasterror says why); OWF_ERR_MEMORY. */
+ * (owf_malloc'd). OWF_OK; OWF_ERR_FORMAT (lasterror says why); OWF_ERR_MEMORY; ODG_PICTURE_UNDRAWN when the
+ * app couldn't draw it (lasterror says so). */
 static int picture_file(odg_rexx *rx, const char *name, int format, unsigned char **data, size_t *length)
 {
     owf_dnum box[4];
@@ -369,7 +372,11 @@ static int picture_file(odg_rexx *rx, const char *name, int format, unsigned cha
         return OWF_ERR_FORMAT;
     }
     rgb = rx->picture(rx->picture_user, box, (int)w, (int)h);
-    if (!rgb) return OWF_ERR_MEMORY;
+    if (!rgb) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%.150s: the page couldn't be drawn (no screen to copy, no "
+                 "memory for %ld by %ld pixels, or the drawing couldn't be read back)", name, w, h);
+        return ODG_PICTURE_UNDRAWN;
+    }
     pic = format == ODG_FILE_PNG ? opr_png_encode(rgb, (int)w, (int)h, (size_t)w * 3, &n)
                                  : opr_ilbm_encode(rgb, (int)w, (int)h, (size_t)w * 3, &n);
     free(rgb);
@@ -395,6 +402,7 @@ static int write_file(odg_rexx *rx, const char *name, int format, int compressed
     if (format == ODG_FILE_PNG || format == ODG_FILE_ILBM) {
         rc = picture_file(rx, name, format, &data, &length);
         if (rc == OWF_ERR_FORMAT) return ODG_RX_ERROR;
+        if (rc == ODG_PICTURE_UNDRAWN) return ODG_RX_FAIL;
     } else
         rc = format == ODG_FILE_PDF ? owf_dpdf_write(&rx->d, -1, &data, &length)
              : format == ODG_FILE_SVG ? owf_dsvg_write(&rx->d, rx->doc.page, &data, &length)

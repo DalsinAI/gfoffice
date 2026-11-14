@@ -779,9 +779,16 @@ static void test_pictures(void)
     CHECK_S(ok("GETFILE"), "build/host/odg-pic-as.png");
     CHECK_S(ok("ISDIRTY"), "0");
 
-    /* the drawer failing is out of memory; an empty page and a page too big for a picture are errors */
+    /* the drawer failing is a failure that says the page couldn't be drawn, and writes nothing; an empty page
+     * and a page too big for a picture are errors */
+    remove("build/host/odg-pic2.iff");
     pic_fail = 1;
     CHECK_N(rx_do("EXPORT build/host/odg-pic2.iff"), ODG_RX_FAIL);
+    CHECK_S(rx.lasterror, "build/host/odg-pic2.iff: the page couldn't be drawn (no screen to copy, no memory for 290 "
+                          "by 80 pixels, or the drawing couldn't be read back)");
+    f = pic_read("build/host/odg-pic2.iff", &n);
+    CHECK(f == NULL);
+    free(f);
     pic_fail = 0;
     ok("NEW FORCE");
     pic_calls = 0;
