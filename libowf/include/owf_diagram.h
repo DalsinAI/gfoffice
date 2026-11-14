@@ -99,6 +99,12 @@ void owf_diagram_free(owf_diagram *d);
  * cells move when cells are added: hold ids, not pointers, across an add. */
 owf_dpage *owf_diagram_add_page(owf_diagram *d, const char *id, const char *name);
 
+/* Copies every cell, attribute and the page's own fields from src into dst (which it frees first).
+ * OWF_OK or OWF_ERR_MEMORY (dst then empty). */
+int owf_dpage_copy(owf_dpage *dst, const owf_dpage *src);
+/* Frees what a page holds (a page from owf_dpage_copy outside a diagram). */
+void owf_dpage_free(owf_dpage *p);
+
 /* The cell with that id, or NULL. */
 owf_dcell *owf_dpage_find(const owf_dpage *p, const char *id);
 /* Its index, or -1. */
@@ -144,6 +150,11 @@ int owf_drawio_write(const owf_diagram *d, int compressed, unsigned char **data,
 /* A cell's box on the page in hundredths (x, y, width, height): its geometry, moved by every vertex it is
  * inside. 1 when it has one, 0 when not (no geometry, or a label placed along an edge). */
 int owf_dcell_box(const owf_dpage *p, const owf_dcell *c, owf_dnum box[4]);
+/* An edge's points on the page, from owf_malloc: its start, bends and end. An end joined to a box is at
+ * the port its style names (exitX/exitY at the source, entryX/entryY at the target, fractions of the
+ * box), or else where the line towards the next point leaves the box. NULL when an end is neither joined
+ * nor loose, or memory ran out; *n is how many. */
+owf_dpoint *owf_dedge_path(const owf_dpage *p, const owf_dcell *e, int *n);
 /* The box round everything drawn on a page; 0 when nothing is. */
 int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4]);
 
