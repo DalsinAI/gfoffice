@@ -164,10 +164,14 @@ static const char *take_rest(const char **s, args *a)
     const char *p = *s, *end = p + strlen(p);
     char *out = a->text + a->used;
     size_t n, room = sizeof a->text - a->used;
+    if (room < 2)                        /* the words before filled the room: too long (parse_args says so) */
+        return NULL;
     while (end > p && (end[-1] == ' ' || end[-1] == '\t')) end--;
     if (*p == '"') {
         const char *q = p;
         const char *w = take_word(&q, a);
+        if (!w)
+            return NULL;
         if (*skip_space(q) == 0) {
             *s = q;
             return w;
@@ -450,7 +454,8 @@ static const owf_dcell *find_cell(odg_rexx *rx, const char *what, const char *id
 static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
 {
     odg_doc *doc = &rx->doc;
-    char text[64], idbuf[ARG_TEXT];
+    static char idbuf[ARG_TEXT];         /* off the Amiga's small stack, as args is */
+    char text[64];
     const char *ids[MAX_IDS];
     int rc, n;
     switch (c) {
@@ -568,7 +573,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
     }
     case C_ADDPAGE: {
         char name[32], id[32];
-        int changed = doc->changed, k = rx->d.npages + 1, i;
+        int changed = doc->changed, was = doc->page, k = rx->d.npages + 1, i;
         /* an id no page has */
         for (;; k++) {
             snprintf(id, sizeof id, "page-%d", k);
@@ -580,7 +585,8 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         /* the new page's cells live in d->pages, which may move: the doc is set up again on it */
         odg_free(doc);
         if (!owf_diagram_add_page(&rx->d, id, a->value[0] ? a->value[0] : name)) {
-            odg_init(doc, &rx->d, 0);
+            odg_init(doc, &rx->d, was < rx->d.npages ? was : 0);
+            doc->changed = changed;
             snprintf(rx->lasterror, sizeof rx->lasterror, "ADDPAGE: out of memory");
             return ODG_RX_FAIL;
         }
