@@ -324,6 +324,24 @@ static void test_odf_form(void)
     owf_doc_free(doc);
 }
 
+/* Word's RTF form (RTF 1.9.1, "Footnotes"): the mark's {\super\chftn}, then the note's group with its
+ * own {\super\chftn} first; \ftnalt makes it an endnote. Made here by hand from the specification. */
+static void test_rtf_form(void)
+{
+    static const char doc_rtf[] =
+        "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Times;}}"
+        "\\pard\\plain Lamps{\\cs16\\super\\chftn}{\\footnote\\pard\\plain\\s15{\\cs16\\super\\chftn} Mostly"
+        "{\\*\\bkmkstart x}{\\*\\bkmkend x}.\\par \\pard Not \\u233?t\\'e9 all.} glow"
+        "{\\super\\chftn}{\\footnote\\ftnalt\\pard\\plain{\\super\\chftn} The\\tab end.\\par }\\par}";
+    owf_doc *doc = NULL;
+    CHECK(owf_import_memory((const unsigned char *)doc_rtf, sizeof doc_rtf - 1, NULL, &doc, NULL, NULL) == OWF_OK && doc,
+          "Word's RTF form read");
+    if (!doc) return;
+    CHECK(!strcmp(dump(doc), "Lamps[F:Mostly.\nNot \xc3\xa9t\xc3\xa9 all.] glow[E:The\tend.]"), dump(doc));
+    CHECK(doc->nnotes == 2 && !doc->notes[0].endnote && doc->notes[1].endnote, "a footnote, then an endnote");
+    owf_doc_free(doc);
+}
+
 /* half the size a character */
 static int measure(void *userdata, const char *utf8, size_t length, const ol_style *style, ol_text_metrics *m)
 {
@@ -424,6 +442,8 @@ int main(void)
     test_round_trip("docx");
     test_round_trip("odt");
     test_listed("rtf", rtf, 5);
+    test_round_trip("rtf");
+    test_rtf_form();
     test_listed("html", html, 4);
     test_listed("text", txt, 4);
     test_word_form();

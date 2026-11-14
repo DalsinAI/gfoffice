@@ -6,6 +6,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
+#include "owf_note.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +16,7 @@
 #define RTF_FONTS 64
 #define RTF_COLOURS 64
 
-enum { RTF_BODY, RTF_SKIP, RTF_FONTTBL, RTF_COLORTBL, RTF_PICTURE };
+enum { RTF_BODY, RTF_SKIP, RTF_FONTTBL, RTF_COLORTBL, RTF_PICTURE, RTF_NOTE };
 
 typedef struct {
     owf_charfmt chr;
@@ -44,6 +45,8 @@ typedef struct {
     int table_active, row_open, table_id, next_table, table_row, table_col, table_cols;
     owf_buf picture;
     int picture_kind, picture_nibble, picture_depth, picw, pich, picwgoal, pichgoal, picture_number;
+    owf_buf note;            /* {\\footnote ...}'s text: its paragraphs between '\\n' (owf_note) */
+    int note_endnote;        /* \\ftnalt in it: an endnote */
 } rtf;
 
 static int hex_digit(int c);
@@ -75,12 +78,44 @@ static void put_codepoint(rtf *r, unsigned long c)
 {
     if (r->state.destination == RTF_BODY && !r->state.optional)
         owf_buf_put_utf8(&r->b.text, c);
+    else if (r->state.destination == RTF_NOTE && !r->state.optional)
+        owf_buf_put_utf8(&r->note, c);
 }
 
 static void put_byte(rtf *r, unsigned char c)
 {
     if (r->state.destination == RTF_BODY && !r->state.optional)
         owf_buf_put_cp1252(&r->b.text, &c, 1);
+    else if (r->state.destination == RTF_NOTE && !r->state.optional)
+        owf_buf_put_cp1252(&r->note, &c, 1);
+}
+
+/* A note's text so far ends a paragraph: '\n', never two in a row or one first (the mark's own
+ * {\super\chftn} and the space after it come before the text) */
+static void note_break(rtf *r, const char *with)
+{
+    if (r->note.length && r->note.data[r->note.length - 1] != '\n') owf_buf_puts(&r->note, with);
+}
+
+/* The note's group closed: its text (leading and trailing white space and breaks gone) becomes a
+ * footnote or endnote, and its mark a run where the group was (owf_note.h). */
+static void finish_note(rtf *r)
+{
+    size_t start = 0, end;
+    char *text;
+    int index;
+    if (r->note.failed) { r->b.failed = 1; return; }
+    end = r->note.length;
+    while (start < end && (r->note.data[start] == ' ' || r->note.data[start] == '\n' || r->note.data[start] == '\t')) ++start;
+    while (end > start && (r->note.data[end - 1] == ' ' || r->note.data[end - 1] == '\n' || r->note.data[end - 1] == '\t')) --end;
+    text = (char *)malloc(end - start + 1);
+    if (!text) { r->b.failed = 1; return; }
+    memcpy(text, r->note.data + start, end - start);
+    text[end - start] = 0;
+    index = owf_note_add(r->b.doc, r->note_endnote, text, NULL);
+    free(text);
+    if (index < 0) r->b.failed = 1;
+    else owf_builder_note(&r->b, index + 1);
 }
 
 static int font_index(const rtf *r, int id)
@@ -184,7 +219,7 @@ static void literal(rtf *r, unsigned char c)
                 r->picture_nibble = -1;
             }
         }
-    } else if (r->state.destination == RTF_BODY && !r->state.optional) {
+    } else if ((r->state.destination == RTF_BODY || r->state.destination == RTF_NOTE) && !r->state.optional) {
         put_byte(r, c);
     }
 }
@@ -192,7 +227,7 @@ static void literal(rtf *r, unsigned char c)
 static int skipped_destination(const char *s, size_t n, rtf *r)
 {
     static const char *const names[] = {
-        "stylesheet", "info", "object", "objdata", "headerf", "footerf", "footnote", "annotation",
+        "stylesheet", "info", "object", "objdata", "headerf", "footerf", "annotation",
         "listtable", "listoverridetable",
         "revtbl", "generator", "xmlnstbl", "datastore", "themedata", "colorschememapping", "fldinst"
     };
@@ -258,13 +293,47 @@ static void control(rtf *r, const char *s, size_t n, int have, long value)
         else if (word(s, n, "pict")) { start_picture(r); r->state.destination = RTF_PICTURE; }
         else if (word(s, n, "fonttbl")) r->state.destination = RTF_FONTTBL;
         else if (word(s, n, "colortbl")) r->state.destination = RTF_COLORTBL;
+        else if (word(s, n, "footnote") && !r->state.optional) {
+            /* RTF's footnote (1.4 of the gap list): its text is read as the note's, its place is the mark */
+            owf_builder_flush(&r->b);
+            r->note.length = 0;
+            r->note.failed = 0;
+            r->note_endnote = 0;
+            r->state.destination = RTF_NOTE;
+            r->state.fresh = r->state.optional = 0;
+            return;
+        }
         else if (r->state.optional || skipped_destination(s, n, r)) r->state.destination = RTF_SKIP;
+    } else if (r->state.fresh && r->state.destination == RTF_NOTE && !r->state.optional &&
+               (word(s, n, "footnote") || skipped_destination(s, n, r) || story_destination(r, s, n) ||
+                word(s, n, "pict") || word(s, n, "fonttbl") || word(s, n, "colortbl"))) {
+        r->state.destination = RTF_SKIP;     /* nothing nests in a note's text */
     }
     r->state.fresh = 0;
     r->state.optional = 0;
 
     if (r->state.destination == RTF_SKIP)
         return;
+    if (r->state.destination == RTF_NOTE) {
+        /* A note keeps plain text (owf_note): paragraphs, tabs and the special characters; \chftn is
+         * its own mark, \ftnalt makes it an endnote, and formatting is not kept */
+        if (word(s, n, "ftnalt")) r->note_endnote = 1;
+        else if (word(s, n, "par")) note_break(r, "\n");
+        else if (word(s, n, "line")) note_break(r, " ");
+        else if (word(s, n, "tab")) owf_buf_putc(&r->note, '\t');
+        else if (word(s, n, "uc") && have && value >= 0 && value < 16) r->state.uc = (int)value;
+        else if (word(s, n, "u") && have) {
+            unsigned long c = value < 0 ? (unsigned long)(value + 65536L) : (unsigned long)value;
+            put_codepoint(r, c); r->fallback = r->state.uc;
+        } else if (word(s, n, "emdash")) put_codepoint(r, 0x2014);
+        else if (word(s, n, "endash")) put_codepoint(r, 0x2013);
+        else if (word(s, n, "bullet")) put_codepoint(r, 0x2022);
+        else if (word(s, n, "lquote")) put_codepoint(r, 0x2018);
+        else if (word(s, n, "rquote")) put_codepoint(r, 0x2019);
+        else if (word(s, n, "ldblquote")) put_codepoint(r, 0x201C);
+        else if (word(s, n, "rdblquote")) put_codepoint(r, 0x201D);
+        return;
+    }
     if (r->state.destination == RTF_FONTTBL) {
         if (word(s, n, "f") && have) { r->font_id = (int)value; r->font_length = 0; }
         else if (word(s, n, "froman")) r->font_kind = OWF_FONT_SERIF;
@@ -382,6 +451,7 @@ static int hex_digit(int c)
 static int rtf_fail(rtf *r, int error)
 {
     owf_buf_free(&r->picture);
+    owf_buf_free(&r->note);
     owf_builder_done(&r->b);
     return error;
 }
@@ -393,6 +463,7 @@ static int import_rtf(const unsigned char *data, size_t length, owf_doc *doc, ow
     memset(&r, 0, sizeof r);
     owf_builder_init(&r.b, doc, &doc->body);
     owf_buf_init(&r.picture);
+    owf_buf_init(&r.note);
     owf_charfmt_init(&r.state.chr);
     owf_parafmt_init(&r.state.para);
     r.state.uc = 1;
@@ -413,7 +484,14 @@ static int import_rtf(const unsigned char *data, size_t length, owf_doc *doc, ow
             if (r.state.destination == RTF_BODY && !r.state.optional) owf_builder_flush(&r.b);
             if (r.state.destination == RTF_PICTURE && r.depth == r.picture_depth) finish_picture(&r);
             old_story = r.state.story;
-            r.state = r.stack[--r.depth];
+            {
+                int was_note = r.state.destination == RTF_NOTE;
+                r.state = r.stack[--r.depth];
+                if (was_note && r.state.destination != RTF_NOTE) {
+                    r.b.charfmt = r.state.chr;       /* the mark takes the text's format around it */
+                    finish_note(&r);
+                }
+            }
             if (old_story != r.state.story) r.b.para = NULL;
             r.b.story = r.state.story;
             r.b.charfmt = r.state.chr;
@@ -472,6 +550,7 @@ static int import_rtf(const unsigned char *data, size_t length, owf_doc *doc, ow
     if (r.first_headers) owf_report_add(report, OWF_NOTE_LOST, "RTF first-page-only headers and footers are not imported yet");
     owf_report_add(report, OWF_NOTE_INFO, "Read Rich Text Format text and basic formatting");
     owf_buf_free(&r.picture);
+    owf_buf_free(&r.note);
     return owf_builder_done(&r.b);
 }
 
