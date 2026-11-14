@@ -176,9 +176,10 @@ at most 4096 results together and the book at most 20,000 cells, so typing
 stays quick on a 68040. Past that they are kept live too, but not at once:
 they are marked behind, and while GFOpenCalc is idle (its window's ticks,
 ten a second) `oc_core_auto_multiple_operations_step` works out the next of
-them, tables in turn until about 1024 results (`OC_MULTIOP_STEP_TRIALS`), at
-least one table a tick. A change in between starts them over from the first,
-and Refresh still does the table at the cursor at once. ARexx commands read a
+them, tables in turn until about 1024 results (`OC_MULTIOP_STEP_TRIALS`). A
+table with more results than that is left for Refresh, as before, so that a
+tick never holds the window up. A change in between starts them over from the
+first, and Refresh still does the table at the cursor at once. ARexx commands read a
 big book's tables as the last idle tick left them. ARexx `MULTIOP
 trials formula input` makes a column table.
 

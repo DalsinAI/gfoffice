@@ -765,9 +765,9 @@ static int multiop_tables(const oc_core *core, multiop_table **out, int *count,
 }
 
 /* Tables from..to-1 worked out again, quietly: no Undo step, and the sheet,
- * every sheet's selection and the unsaved-changes flag as they were. The
- * number worked out. */
-static int multiop_work(oc_core *core, const multiop_table *tables, int from, int to)
+ * every sheet's selection and the unsaved-changes flag as they were. With
+ * most, only those with at most that many results. The number worked out. */
+static int multiop_work(oc_core *core, const multiop_table *tables, int from, int to, unsigned long most)
 {
     oc_selection *saved;
     int i, s, sheet, dirty, done = 0;
@@ -779,7 +779,8 @@ static int multiop_work(oc_core *core, const multiop_table *tables, int from, in
     dirty = core->dirty;
     core->multiop_quiet = 1;
     for (i = from; i < to; ++i) {
-        if (tables[i].sheet >= core->book->nsheets || tables[i].sheet >= core->nstates)
+        if (tables[i].sheet >= core->book->nsheets || tables[i].sheet >= core->nstates ||
+            (most && multiop_results(&tables[i].range) > most))
             continue;
         core->sheet = tables[i].sheet;
         oc_core_select_range(core, &tables[i].range);
@@ -819,7 +820,7 @@ int oc_core_auto_multiple_operations(oc_core *core)
         free(tables);
         return 0;
     }
-    done = multiop_work(core, tables, 0, n);
+    done = multiop_work(core, tables, 0, n, 0);
     free(tables);
     return done > 0;
 }
@@ -843,9 +844,17 @@ int oc_core_auto_multiple_operations_step(oc_core *core, unsigned long budget)
         free(tables);
         return 0;
     }
-    for (to = from; to < n && (to == from || spent + multiop_results(&tables[to].range) <= budget); ++to)
-        spent += multiop_results(&tables[to].range);
-    done = multiop_work(core, tables, from, to);
+    /* the next tables up to budget; one with more results than that is left for Refresh, as before (a
+     * tick that worked it out whole would hold the window up on a 68040: Agnus, gfoffice #225) */
+    for (to = from; to < n; ++to) {
+        unsigned long results = multiop_results(&tables[to].range);
+        if (results > budget)
+            continue;
+        if (spent + results > budget)
+            break;
+        spent += results;
+    }
+    done = multiop_work(core, tables, from, to, budget);
     core->multiop_next = to;
     if (to >= n)
         core->multiop_behind = 0;
