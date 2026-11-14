@@ -497,6 +497,20 @@ int oc_core_refresh_multiple_operations(oc_core *core);
 #define OC_MULTIOP_AUTO_TRIALS 4096UL
 #define OC_MULTIOP_AUTO_CELLS 20000UL
 int oc_core_auto_multiple_operations(oc_core *core);
+/* A bigger book's tables are kept live too, a few at a time while the
+ * program is idle: past the limits above, oc_core_auto_multiple_operations
+ * works none out and marks them behind, and each call of this works out the
+ * next of them, tables in turn until their results add up to budget (at least
+ * one table a call), in the same way (no Undo step; Undo, Redo, the
+ * selections and the unsaved-changes flag left as they were). A change to the
+ * book in between starts them over from the first. It returns how many
+ * tables it worked out (the program repaints when that is not 0), and does
+ * nothing while a cell is being edited. */
+#define OC_MULTIOP_STEP_TRIALS 1024UL
+int oc_core_auto_multiple_operations_step(oc_core *core, unsigned long budget);
+/* 1 while a big book's tables are behind its last change (the program can
+ * say so, and keeps calling the step above). */
+int oc_core_multiple_operations_behind(const oc_core *core);
 
 /* ---- Commands on the selection (each one undo step) ---- */
 

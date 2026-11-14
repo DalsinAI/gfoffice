@@ -5129,6 +5129,71 @@ static void test_multiple_operations_auto(void)
     oc_core_free(core);
 }
 
+/* Past the live limits (here 2100 trials, 4200 results with their column), the
+ * tables are not worked out at once but marked behind, and the idle steps work
+ * them out a few at a time, quietly; a change in between starts them over. */
+static void test_multiple_operations_auto_big(void)
+{
+    oc_core *core = fresh();
+    owf_range selected;
+    char cell[16], value[16];
+    int i, steps;
+    if (!core)
+        return;
+    for (i = 1; i <= 2100; ++i) {
+        snprintf(cell, sizeof cell, "A%d", i);
+        snprintf(value, sizeof value, "%d", i);
+        enter_at(core, cell, value);
+    }
+    enter_at(core, "D1", "1");
+    enter_at(core, "D2", "2");
+    enter_at(core, "H1", "0");                                  /* the input cell */
+    enter_at(core, "I1", "5");                                  /* the model's constant */
+    enter_at(core, "G1", "=H1*2+I1");                           /* the formula */
+    CHECK(oc_parse_range("A1:A2100", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_multiple_operations(core, 0, 0, 6, 0, 0, 7) == OWF_OK);
+    CHECK(oc_parse_range("D1:D2", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_multiple_operations(core, 0, 0, 6, 0, 0, 7) == OWF_OK);
+    CHECK(num(core, "B2100") == 4205 && num(core, "E2") == 9);
+    oc_core_auto_multiple_operations(core);
+    while (oc_core_auto_multiple_operations_step(core, 100))     /* caught up after the tables' own commands */
+        ;
+    CHECK(!oc_core_multiple_operations_behind(core));
+
+    /* the model changes: too big to work out at once, so behind, and nothing moved yet */
+    enter_at(core, "I1", "1000");
+    CHECK(oc_core_auto_multiple_operations(core) == 0 && oc_core_multiple_operations_behind(core));
+    CHECK(num(core, "B2100") == 4205 && num(core, "E2") == 9);
+    /* a step of budget 100 still works out one table (the first, 4200 results), and not the second */
+    CHECK(oc_core_auto_multiple_operations_step(core, 100) == 1);
+    CHECK(num(core, "B2100") == 5200 && num(core, "B1") == 1002 && num(core, "E2") == 9);
+    CHECK(oc_core_multiple_operations_behind(core));
+    /* a change before the next step: the steps start over from the first table */
+    enter_at(core, "I1", "7");
+    CHECK(oc_core_auto_multiple_operations_step(core, 100) == 1 && num(core, "B2100") == 4207 && num(core, "E2") == 9);
+    CHECK(oc_core_auto_multiple_operations_step(core, 100) == 1 && num(core, "E1") == 9 && num(core, "E2") == 11);
+    CHECK(!oc_core_multiple_operations_behind(core) && oc_core_auto_multiple_operations_step(core, 100) == 0);
+    /* a big budget does both in one step */
+    enter_at(core, "I1", "0");
+    for (steps = 0; oc_core_auto_multiple_operations_step(core, 100000UL) && steps < 10; ++steps)
+        ;
+    CHECK(steps == 1 && num(core, "B2100") == 4200 && num(core, "E2") == 4);
+    /* quietly: Undo goes back over the user's change, not the tables' working out, and Redo is kept */
+    CHECK(oc_core_undo(core) == OWF_OK && num(core, "I1") == 7);
+    while (oc_core_auto_multiple_operations_step(core, OC_MULTIOP_STEP_TRIALS))
+        ;
+    CHECK(num(core, "B2100") == 4207 && num(core, "E2") == 11 && oc_core_can_redo(core));
+    CHECK(oc_core_is_dirty(core));
+    /* nothing while a cell is being edited */
+    enter_at(core, "I1", "2");
+    type(core, "3");
+    CHECK(oc_core_editing(core));
+    CHECK(oc_core_auto_multiple_operations_step(core, 100000UL) == 0 && num(core, "E2") == 11);
+    oc_core_free(core);
+}
+
 static void test_multiple_operations_2d(void)
 {
     oc_core *core = fresh();
@@ -6521,6 +6586,7 @@ int main(void)
     test_goal_seek();
     test_multiple_operations();
     test_multiple_operations_auto();
+    test_multiple_operations_auto_big();
     test_multiple_operations_2d();
     test_multiple_operations_multi();
     test_subtotals();

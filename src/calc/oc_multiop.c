@@ -128,6 +128,12 @@ static int add_metadata(owf_book *book, int table_sheet, const owf_range *table,
     return OWF_OK;
 }
 
+/* A table's cells: its trials and results, as the limits count them. */
+static unsigned long multiop_results(const owf_range *r)
+{
+    return (unsigned long)(r->last_row - r->first_row + 1u) * (r->last_col - r->first_col + 1u);
+}
+
 static int finite_number(double value)
 {
     return value == value && value <= DBL_MAX && value >= -DBL_MAX;
@@ -717,19 +723,20 @@ int oc_core_refresh_multiple_operations(oc_core *core)
     return rc;
 }
 
-/* Every table worked out again after a change, as Apache Calc keeps its own
- * live: small books only, so that typing stays quick on a 68040. */
-int oc_core_auto_multiple_operations(oc_core *core)
+typedef struct { int sheet; owf_range range; } multiop_table;
+
+/* The book's durable tables, in the order of their names, with how many
+ * results they have together and how many cells the book has. 0 when memory
+ * runs out. */
+static int multiop_tables(const oc_core *core, multiop_table **out, int *count,
+                          unsigned long *trials, unsigned long *cells)
 {
-    typedef struct { int sheet; owf_range range; } table_at;
-    table_at *tables = NULL;
+    multiop_table *tables = NULL;
     size_t prefix = strlen(MULTIOP_TABLE_PREFIX);
-    unsigned long trials = 0, cells = 0;
-    int i, n = 0, cap = 0, done = 0, sheet, dirty, s;
-    oc_selection *saved = NULL;
-    if (!core || core->edit_mode || core->multiop_quiet || core->changes == core->multiop_seen)
-        return 0;
-    core->multiop_seen = core->changes;
+    int i, n = 0, cap = 0, s;
+    *out = NULL;
+    *count = 0;
+    *trials = *cells = 0;
     for (i = 0; i < core->book->nnames; ++i) {
         const owf_defname *item = &core->book->names[i];
         unsigned id;
@@ -740,29 +747,38 @@ int oc_core_auto_multiple_operations(oc_core *core)
             !oc_sheet_range(core->book, item->formula, item->sheet, &at_sheet, &r) || at_sheet != item->sheet)
             continue;
         if (n == cap) {
-            table_at *more = realloc(tables, (size_t)(cap ? cap * 2 : 8) * sizeof *more);
+            multiop_table *more = realloc(tables, (size_t)(cap ? cap * 2 : 8) * sizeof *more);
             if (!more) { free(tables); return 0; }
             tables = more;
             cap = cap ? cap * 2 : 8;
         }
         tables[n].sheet = item->sheet;
         tables[n].range = r;
-        trials += (unsigned long)(r.last_row - r.first_row + 1u) * (r.last_col - r.first_col + 1u);
+        *trials += multiop_results(&r);
         ++n;
     }
     for (s = 0; s < core->book->nsheets; ++s)
-        cells += (unsigned long)core->book->sheets[s].ncells;
-    if (!n || trials > OC_MULTIOP_AUTO_TRIALS || cells > OC_MULTIOP_AUTO_CELLS ||
-        !(saved = malloc((size_t)core->nstates * sizeof *saved))) {
-        free(tables);
+        *cells += (unsigned long)core->book->sheets[s].ncells;
+    *out = tables;
+    *count = n;
+    return 1;
+}
+
+/* Tables from..to-1 worked out again, quietly: no Undo step, and the sheet,
+ * every sheet's selection and the unsaved-changes flag as they were. The
+ * number worked out. */
+static int multiop_work(oc_core *core, const multiop_table *tables, int from, int to)
+{
+    oc_selection *saved;
+    int i, s, sheet, dirty, done = 0;
+    if (from >= to || !(saved = malloc((size_t)core->nstates * sizeof *saved)))
         return 0;
-    }
     for (s = 0; s < core->nstates; ++s)
         saved[s] = core->states[s].sel;
     sheet = core->sheet;
     dirty = core->dirty;
     core->multiop_quiet = 1;
-    for (i = 0; i < n; ++i) {
+    for (i = from; i < to; ++i) {
         if (tables[i].sheet >= core->book->nsheets || tables[i].sheet >= core->nstates)
             continue;
         core->sheet = tables[i].sheet;
@@ -775,10 +791,71 @@ int oc_core_auto_multiple_operations(oc_core *core)
     for (s = 0; s < core->nstates; ++s)
         core->states[s].sel = saved[s];
     core->dirty = dirty;
-    core->multiop_seen = core->changes;
+    core->multiop_seen = core->changes;           /* its own results are no change to work out again */
     free(saved);
+    return done;
+}
+
+/* Every table worked out again after a change, as Apache Calc keeps its own
+ * live: at once in a small book, so that typing stays quick on a 68040; in a
+ * bigger one they are marked behind and oc_core_auto_multiple_operations_step
+ * works them out while the program is idle. */
+int oc_core_auto_multiple_operations(oc_core *core)
+{
+    multiop_table *tables;
+    unsigned long trials, cells;
+    int n, done;
+    if (!core || core->edit_mode || core->multiop_quiet || core->changes == core->multiop_seen)
+        return 0;
+    core->multiop_seen = core->changes;
+    core->multiop_behind = 0;
+    core->multiop_next = 0;
+    if (!multiop_tables(core, &tables, &n, &trials, &cells) || !n) {
+        free(tables);
+        return 0;
+    }
+    if (trials > OC_MULTIOP_AUTO_TRIALS || cells > OC_MULTIOP_AUTO_CELLS) {
+        core->multiop_behind = 1;                 /* the idle steps from the first table */
+        free(tables);
+        return 0;
+    }
+    done = multiop_work(core, tables, 0, n);
     free(tables);
     return done > 0;
+}
+
+int oc_core_auto_multiple_operations_step(oc_core *core, unsigned long budget)
+{
+    multiop_table *tables;
+    unsigned long trials, cells, spent = 0;
+    int n, from, to, done;
+    if (!core || core->edit_mode || core->multiop_quiet)
+        return 0;
+    if (core->changes != core->multiop_seen && oc_core_auto_multiple_operations(core))
+        return 1;                                 /* a change since: a small book is done at once */
+    if (!core->multiop_behind)
+        return 0;
+    if (!multiop_tables(core, &tables, &n, &trials, &cells))
+        return 0;                                 /* no memory now: the next step tries again */
+    from = core->multiop_next;
+    if (from >= n) {
+        core->multiop_behind = 0;
+        free(tables);
+        return 0;
+    }
+    for (to = from; to < n && (to == from || spent + multiop_results(&tables[to].range) <= budget); ++to)
+        spent += multiop_results(&tables[to].range);
+    done = multiop_work(core, tables, from, to);
+    core->multiop_next = to;
+    if (to >= n)
+        core->multiop_behind = 0;
+    free(tables);
+    return done;
+}
+
+int oc_core_multiple_operations_behind(const oc_core *core)
+{
+    return core && core->multiop_behind;
 }
 
 int oc_core_sheet_range(const oc_core *core, const char *text, int *sheet, owf_range *range)
