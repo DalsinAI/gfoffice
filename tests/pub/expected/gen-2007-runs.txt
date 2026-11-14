@@ -47,9 +47,9 @@ page 2 master 1 frames 2
   frame 1 text box 20.0 50.0 170.0 20.0 mm (emu 720000 1800000 6840000 2520000) shape 202 text-id 6 story 5
     para "See our site, write to us, or turn to page 1."
       run 0 "See " 10.0pt font "Times New Roman"
-      run 1 "our site" 10.0pt font "Times New Roman" link "https://example.org/gfoffice/"
+      run 1 "our site" underline 10.0pt font "Times New Roman" link "https://example.org/gfoffice/"
       run 2 ", " 10.0pt font "Times New Roman"
-      run 3 "write to us" 10.0pt font "Times New Roman" link "mailto:team@example.org?subject=Hello"
+      run 3 "write to us" underline 10.0pt font "Times New Roman" link "mailto:team@example.org?subject=Hello"
       run 4 ", or turn to page 1." 10.0pt font "Times New Roman"
 scratch-frames 1
 stories 6

@@ -167,12 +167,14 @@ def qf(fid, typ, value=None):
     return fv(fid, typ, value, wide=True)
 
 
-def char_props(bold=None, italic=None, size=None, font=None, old=False):
+def char_props(bold=None, italic=None, size=None, font=None, old=False, underline=None):
     out = b''
     if bold is not None:
         out += qf(0x202, 0x08 if bold else 0x10, None if bold else 0)
     if italic is not None:
         out += qf(0x203, 0x08 if italic else 0x10, None if italic else 0)
+    if underline is not None:                # low byte 1: single (Publisher writes 0x801 on its links)
+        out += qf(0x21E, 0x10, 0x801 if underline else 0)
     if size is not None:
         out += qf(0x20C, 0x20, int(size * 12700))
     if font is not None:
@@ -637,7 +639,8 @@ def runs():
             cells=[1, 1, 2, 1, 1, 1])
     t.story(4, [(None, [('On the second page', None)])])
     t.story(5, [(None, [('Left on the scratch area', None)])])
-    s6 = t.story(6, [(None, [('See our site, write to us, or turn to page 1.', None)])],
+    s6 = t.story(6, [(None, [('See ', None), ('our site', char_props(underline=True)), (', ', None),
+                             ('write to us', char_props(underline=True)), (', or turn to page 1.', None)])],
             links=[(4, 8, 1, 'https://example.org/gfoffice/'), (14, 11, 4, 'mailto:team@example.org?subject=Hello'),
                    (30, 14, 3, '\u010a')])
     t.spare[s6] = [(0, 3, 1, 'https://example.org/not-this-one/')]
