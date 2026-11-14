@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "opendiag_rexx.h"
+#include "opendiag_mind.h"
 
 static int fails, checks;
 
@@ -442,6 +443,32 @@ static void test_map(void)
         snprintf(line, sizeof line, "MAPCHILDREN %s", b);
         CHECK_N(rx_do(line), ODG_RX_NOW);
         CHECK(strstr(rx.lasterror, "201 children") != NULL);
+    }
+    snprintf(line, sizeof line, "MAPLAYOUT %s", r);
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    {                                                     /* past ODG_MIND_MAX nodes: MAPLAYOUT gives RC 5 */
+        owf_dpage *p = odg_page(&rx.doc);
+        const char *layer = owf_dpage_find(p, b)->parent;
+        char id[24];
+        int i;
+        for (i = 0; i < ODG_MIND_MAX; i++) {
+            owf_dcell *c, *e;
+            snprintf(id, sizeof id, "big%d", i);
+            c = owf_dpage_add(p, id, layer, OWF_DCELL_VERTEX);
+            owf_dcell_set(&c->style, ODG_MIND_NODE_STYLE);
+            layer = owf_dpage_find(p, b)->parent;     /* cells move on add */
+            snprintf(id, sizeof id, "bige%d", i);
+            e = owf_dpage_add(p, id, layer, OWF_DCELL_EDGE);
+            owf_dcell_set(&e->style, ODG_MIND_EDGE_STYLE);
+            owf_dcell_set(&e->source, a1);
+            snprintf(id, sizeof id, "big%d", i);
+            owf_dcell_set(&e->target, id);
+            layer = owf_dpage_find(p, b)->parent;
+        }
+        snprintf(line, sizeof line, "MAPLAYOUT %s", r);
+        CHECK_N(rx_do(line), ODG_RX_NOW);
+        CHECK(strstr(rx.lasterror, "more than 512 nodes") != NULL);
+        CHECK(owf_dpage_find(odg_page(&rx.doc), "big0") != NULL);
     }
     CHECK_N(rx_do("LOCKLAYER 1"), ODG_RX_OK);
     snprintf(line, sizeof line, "MAPCHILD %s x", a);

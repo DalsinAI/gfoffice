@@ -352,12 +352,59 @@ static void test_keys(void)
     done();
 }
 
+/* Budgie's #198 notes: a locked node keeps its place through a layout, and a map past ODG_MIND_MAX nodes says so. */
+static void test_locked_and_big(void)
+{
+    char r[24], a[24], b[24], b1[24], id[24];
+    int i;
+    owf_dpage *p;
+    fresh();
+    odg_mind_new(&doc, PX(100), PX(200), "Plan", r);
+    odg_mind_add_child(&doc, r, "Alpha", 0, a);
+    odg_mind_add_child(&doc, r, "Beta", 0, b);
+    odg_mind_add_child(&doc, b, "One", 0, b1);
+    cell(b)->geo.x = PX(900);
+    cell(b)->geo.y = PX(800);
+    owf_dcell_set(&cell(b)->style, ODG_MIND_NODE_STYLE "locked=1;");
+    CHECK_N(odg_mind_layout(&doc, r, 0), OWF_OK);
+    check_at(b, 900, 800);                                /* locked: left where it is */
+    CHECK(cell(b1)->geo.x > cell(b)->geo.x);              /* its branch laid out from there */
+    CHECK(cell(a)->geo.x > cell(r)->geo.x);
+    CHECK(odg_mind_whole(&doc, r));
+    done();
+
+    fresh();                                              /* one more node than a walk takes */
+    odg_mind_new(&doc, PX(0), PX(0), "Big", r);
+    p = odg_page(&doc);
+    for (i = 0; i < ODG_MIND_MAX; i++) {
+        owf_dcell *c, *e;
+        int layer = owf_dpage_index(p, cell(r)->parent);
+        snprintf(id, sizeof id, "n%d", i);
+        c = owf_dpage_add(p, id, p->cells[layer].id, OWF_DCELL_VERTEX);
+        owf_dcell_set(&c->style, ODG_MIND_NODE_STYLE);
+        c->geo.width = PX(80);
+        c->geo.height = PX(30);
+        snprintf(id, sizeof id, "e%d", i);
+        e = owf_dpage_add(p, id, p->cells[layer].id, OWF_DCELL_EDGE);
+        owf_dcell_set(&e->style, ODG_MIND_EDGE_STYLE);
+        owf_dcell_set(&e->source, r);
+        snprintf(id, sizeof id, "n%d", i);
+        owf_dcell_set(&e->target, id);
+    }
+    CHECK(!odg_mind_whole(&doc, r));
+    CHECK(!odg_mind_whole(&doc, "n3"));
+    CHECK_N(odg_mind_layout(&doc, r, 0), OWF_OK);
+    CHECK(!odg_mind_whole(&doc, "nope"));
+    done();
+}
+
 int main(void)
 {
     test_build_and_layout();
     test_edits();
     test_odd_maps();
     test_keys();
+    test_locked_and_big();
     printf("diagram mind map: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -201,8 +201,9 @@ static int show_folds(owf_dpage *p, int top, int open)
 }
 
 /* The children from walk position from, count of them, put beside the node at position at on side (1 right, -1
- * left), centred on it, one under the other. */
-static void place(owf_dpage *p, int at, int from, int count, int side)
+ * left), centred on it, one under the other. A locked node (or one on a locked layer) keeps its place, as the mouse
+ * leaves it alone; its branch is still laid out from where it is. */
+static void place(const odg_doc *doc, owf_dpage *p, int at, int from, int count, int side)
 {
     const owf_dcell *c = &p->cells[walk.cell[at]];
     owf_dnum total = 0, y;
@@ -213,6 +214,10 @@ static void place(owf_dpage *p, int at, int from, int count, int side)
     for (k = from; k < from + count; k++) {
         owf_dcell *kid = &p->cells[walk.cell[k]];
         c = &p->cells[walk.cell[at]];
+        if (odg_cell_locked(doc, kid)) {
+            y += walk.span[k] + ODG_MIND_VGAP;
+            continue;
+        }
         kid->geo.y = y + (walk.span[k] - kid->geo.height) / 2;
         kid->geo.x = side > 0 ? c->geo.x + c->geo.width + ODG_MIND_HGAP : c->geo.x - ODG_MIND_HGAP - kid->geo.width;
         y += walk.span[k] + ODG_MIND_VGAP;
@@ -221,7 +226,7 @@ static void place(owf_dpage *p, int at, int from, int count, int side)
 
 /* The tree from the root at index top laid out: the root stays where it is; its children go to its right (both:
  * the first half right, the rest left), each branch on the side its first node is on. */
-static void lay_out(owf_dpage *p, int top, int both)
+static void lay_out(const odg_doc *doc, owf_dpage *p, int top, int both)
 {
     static signed char side[ODG_MIND_MAX];
     int i, k;
@@ -241,13 +246,13 @@ static void lay_out(owf_dpage *p, int top, int both)
             right = (n + 1) / 2;
         for (k = f; k < f + n; k++)
             side[k] = (signed char)(k - f < right ? side[i] : -side[i]);
-        place(p, i, f, right, side[i]);
+        place(doc, p, i, f, right, side[i]);
         if (right < n)
-            place(p, i, f + right, n - right, -side[i]);
+            place(doc, p, i, f + right, n - right, -side[i]);
     }
     for (i = 1; i < walk.n; i++) {       /* the branches drawn from box to box again */
         int e = edge_in(p, p->cells[walk.cell[i]].id);
-        if (e >= 0)
+        if (e >= 0 && !odg_cell_locked(doc, &p->cells[e]) && !odg_cell_locked(doc, &p->cells[walk.cell[i]]))
             p->cells[e].geo.npoints = 0;
     }
 }
@@ -262,7 +267,7 @@ static int finish(odg_doc *doc, const char *rootid, int both, const char *openid
         return OWF_OK;                   /* the whole map went */
     if ((r = show_folds(p, top, openid ? owf_dpage_index(p, openid) : -1)) != OWF_OK)
         return r;
-    lay_out(p, top, both);
+    lay_out(doc, p, top, both);
     return OWF_OK;
 }
 
@@ -643,4 +648,14 @@ int odg_mind_key_do(odg_doc *doc, const char *node, odg_mind_key key, char *out,
     if (made[0])
         put_id(out, made);
     return OWF_OK;
+}
+
+int odg_mind_whole(const odg_doc *doc, const char *id)
+{
+    const owf_dpage *p = odg_page(doc);
+    const owf_dcell *root = odg_mind_root(doc, id);
+    if (!root)
+        return 0;
+    walk_from(p, owf_dpage_index(p, root->id), 1);
+    return !walk.cut;
 }

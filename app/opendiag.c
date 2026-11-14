@@ -874,6 +874,10 @@ static void map_key(odg_mind_key key)
     }
     odg_edit_clear(&ed);
     if (got[0]) odg_edit_select(&ed, got, 0);
+    if (got[0] && !odg_mind_whole(DOC, got)) {
+        snprintf(line, sizeof line, "The map has more than %d nodes: the rest are where they were", ODG_MIND_MAX);
+        set_status(line);
+    }
     redraw();
     if (got[0] && (key == ODG_MKEY_CHILD || key == ODG_MKEY_SIBLING || key == ODG_MKEY_SIBLING_ABOVE)) edit_label(got);
 }

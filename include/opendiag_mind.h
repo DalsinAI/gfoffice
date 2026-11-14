@@ -60,8 +60,11 @@ int odg_mind_delete(odg_doc *doc, const char *node, int both);
 int odg_mind_move(odg_doc *doc, const char *node, int by, int both);
 /* The node's branch folded (hidden) or unfolded; OWF_ERR_FORMAT when it has no children. */
 int odg_mind_fold(odg_doc *doc, const char *node, int folded, int both);
-/* The map node is in laid out again. */
+/* The map node is in laid out again. A locked node, or one on a locked layer, keeps its place. */
 int odg_mind_layout(odg_doc *doc, const char *node, int both);
+/* 1 when the map id is in has no more than ODG_MIND_MAX nodes, so an edit laid all of it out; 0 when the rest were
+ * left where they were (or the map loops). */
+int odg_mind_whole(const odg_doc *doc, const char *id);
 
 /* The keys of the map mode, as GFOpenDiag's window gives them: Tab a child, Return a sibling below (Shift-Return
  * above), the arrows to the next node (left and right as the node's side of the root goes: towards the root is

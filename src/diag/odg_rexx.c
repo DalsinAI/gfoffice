@@ -748,6 +748,11 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             rc = odg_mind_layout(doc, node, a->value[1] ? 1 : a->value[2] ? 0 : both);
         why = rc == OWF_ERR_FORMAT ? odg_mind_why(doc, node, key) : "not possible";
         if ((rc = edit_rc(rx, rc, commands[c].name, why)) == ODG_RX_OK && text[0]) put(result, size, text);
+        if (rc == ODG_RX_OK && c == C_MAPLAYOUT && !odg_mind_whole(doc, node)) {   /* RC 5, as MAPCHILDREN */
+            snprintf(rx->lasterror, sizeof rx->lasterror, "MAPLAYOUT: the map has more than %d nodes; the rest are "
+                     "where they were", ODG_MIND_MAX);
+            return ODG_RX_NOW;
+        }
         return rc;
     }
     case C_MAPROOT:
