@@ -644,6 +644,61 @@ static void test_cost_resource(void)
     owf_project_free(p);
 }
 
+/* A baseline goes out as Baseline 0 and comes back; task Work and Cost are written for other programs. */
+static void test_baseline(void)
+{
+    static const char hand[] =
+        "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+        "<StartDate>2026-11-16T08:00:00</StartDate><Tasks>"
+        "<Task><UID>1</UID><ID>1</ID><Name>Dig</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<Baseline><Number>1</Number><Start>2026-11-01T08:00:00</Start></Baseline>"
+        "<Baseline><Start>2026-11-16T08:00:00</Start><Finish>2026-11-16T17:00:00</Finish>"
+        "<Duration>PT8H0M0S</Duration><Work>PT4H0M0S</Work><Cost>12345</Cost></Baseline></Task>"
+        "<Task><UID>2</UID><ID>2</ID><Name>Fill</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<Baseline><Number>2</Number><Start>2026-11-01T08:00:00</Start></Baseline></Task>"
+        "</Tasks></Project>\n";
+    owf_project *p = sample(), *q = NULL;
+    unsigned char *data;
+    size_t length;
+    int i;
+    owf_project_set_baseline(p, 0, -1);
+    p->tasks[0].duration = 3 * D;                                    /* Design slips a day */
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(owf_project_write(p, OWF_PFILE_MSPDI, &data, &length), OWF_OK);
+    CHECK_HAS(data, "<DurationFormat>7</DurationFormat><Work>PT24H0M0S</Work><Estimated>");
+    CHECK_HAS(data, "<PercentComplete>0</PercentComplete><Cost>48000</Cost><EarlyStart>");
+    CHECK_HAS(data, "<Baseline><Number>0</Number><Start>2026-11-16T08:00:00</Start><Finish>2026-11-17T17:00:00</Finish>"
+                    "<Duration>PT16H0M0S</Duration><DurationFormat>7</DurationFormat><Work>PT16H0M0S</Work>"
+                    "<Cost>32000</Cost></Baseline></Task>");
+    CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+    if (q) {
+        CHECK_N(owf_project_schedule(q), OWF_OK);
+        CHECK_N(q->ntasks, p->ntasks);
+        for (i = 0; i < p->ntasks && i < q->ntasks; i++) {
+            const owf_ptask *a = &p->tasks[i], *b = &q->tasks[i];
+            CHECK(b->baselined && b->baseline_start == a->baseline_start && b->baseline_finish == a->baseline_finish);
+            CHECK(b->baseline_duration == a->baseline_duration && b->baseline_work == a->baseline_work);
+            CHECK(b->baseline_cost == a->baseline_cost && b->work == a->work && b->cost == a->cost);
+            CHECK_N(owf_ptask_variance(q, i, OWF_VAR_FINISH), owf_ptask_variance(p, i, OWF_VAR_FINISH));
+        }
+        CHECK_N(owf_ptask_variance(q, 0, OWF_VAR_FINISH), D);
+    }
+    owf_project_free(q);
+    q = NULL;
+    owf_free(data);
+    /* By hand: a Baseline with no Number is Baseline 0; Baselines 1 to 10 are left out. */
+    CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
+    if (q && q->ntasks == 2) {
+        CHECK(q->tasks[0].baselined && q->tasks[0].baseline_start == AT(16, 8, 0));
+        CHECK(q->tasks[0].baseline_finish == AT(16, 17, 0) && q->tasks[0].baseline_duration == D);
+        CHECK(q->tasks[0].baseline_work == 240 && q->tasks[0].baseline_cost == 12345);
+        CHECK(!q->tasks[1].baselined);
+    } else
+        CHECK(q && q->ntasks == 2);
+    owf_project_free(q);
+    owf_project_free(p);
+}
+
 int main(void)
 {
     test_durations();
@@ -653,6 +708,7 @@ int main(void)
     test_mspdi_read();
     test_csv_read();
     test_cost_resource();
+    test_baseline();
     test_damaged();
     if (fails) {
         printf("project file tests: %d of %d checks failed\n", fails, checks);

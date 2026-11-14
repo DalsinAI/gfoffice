@@ -56,6 +56,16 @@ the next PR and only wires windows, menus and requesters to these calls.
   marked over when the resource's work in it passes its calendar's working time there times its max
   units.
 
+## Baseline
+
+- `opj_set_baseline` and `opj_clear_baseline` (one Undo step each) keep or drop each row's scheduled
+  start, finish, duration, work and cost (`owf_project_set_baseline`).
+- Task sheet columns Baseline Start and Baseline Finish ("NA" with no baseline, as MS Project shows
+  it), Start Var. and Finish Var.: working time on the task's calendar later than the baseline
+  ("1d", "-1d", "0d").
+- With `show_baseline` set, the Gantt view draws a thin grey bar under each bar at its baseline dates
+  (MS Project's Tracking Gantt), a sixth of a row high, clear of the bar.
+
 ## Checked
 
 `tests/project/test_opj.c`: dates typed and shown; every edit, including the ones refused and the
@@ -65,4 +75,5 @@ colours, the diamond's shape, the lines and arrows, days off, the labels drawn a
 drawing only the chart touches nothing left of it); the hit tests; and resources: Resource Names
 typed and refused, every resource sheet cell typed and shown, rates by the hour and the day,
 over-allocation, periods at each zoom, usage worked out by hand, deleting with Undo, and the names
-drawn beside the bars.
+drawn beside the bars; Set and Clear Baseline with Undo, the variance columns after a slip either way,
+and the baseline bar's place and colour.

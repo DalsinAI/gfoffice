@@ -412,6 +412,7 @@ int opj_date_parse(const char *s, int default_minute, owf_ptime *t)
 
 static const char *const column_titles[OPJ_NCOLS] = {
     "ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", "% Complete", "WBS", "Resource Names",
+    "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.",
 };
 
 const char *opj_column_title(int column)
@@ -467,6 +468,18 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
     case OPJ_COL_PERCENT: sprintf(text, "%d%%", t->percent); break;
     case OPJ_COL_WBS: opj_outline_number(doc, row, out, size); return;
     case OPJ_COL_RESOURCES: owf_presource_names_text(doc->plan, row, out, size); return;
+    case OPJ_COL_BASELINE_START:
+    case OPJ_COL_BASELINE_FINISH:
+        if (!t->baselined) strcpy(text, "NA");
+        else opj_date_text(column == OPJ_COL_BASELINE_START ? t->baseline_start : t->baseline_finish, 0, text);
+        break;
+    case OPJ_COL_START_VARIANCE:
+    case OPJ_COL_FINISH_VARIANCE: {
+        long var = owf_ptask_variance(doc->plan, row, column == OPJ_COL_START_VARIANCE ? OWF_VAR_START : OWF_VAR_FINISH);
+        if (var < 0) text[0] = '-';
+        owf_pduration_text(doc->plan, var < 0 ? -var : var, 0, 0, text + (var < 0));
+        break;
+    }
     default: return;
     }
     n = strlen(s);
@@ -531,6 +544,28 @@ int opj_set_cell(opj_doc *doc, int row, int column, const char *text)
     default:
         return fail(work, OWF_ERR_FORMAT);
     }
+    return commit(doc, work);
+}
+
+int opj_set_baseline(opj_doc *doc, int first, int count)
+{
+    owf_project *work;
+    if (!doc) return OWF_ERR_FORMAT;
+    if (count < 0) first = 0, count = doc->plan->ntasks;
+    if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    owf_project_set_baseline(work, first, count);
+    return commit(doc, work);
+}
+
+int opj_clear_baseline(opj_doc *doc, int first, int count)
+{
+    owf_project *work;
+    if (!doc) return OWF_ERR_FORMAT;
+    if (count < 0) first = 0, count = doc->plan->ntasks;
+    if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    owf_project_clear_baseline(work, first, count);
     return commit(doc, work);
 }
 

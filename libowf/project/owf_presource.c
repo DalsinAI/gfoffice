@@ -1,9 +1,10 @@
 /*
- * owf_presource.c: GFOpenProject's resources and assignments (owf_project.h). Version 1 keeps a task's
- * duration as typed (MS Project's fixed units, not effort driven): an assignment's work is the duration
- * times its units, its cost the work (or the quantity) times the resource's rate, and a resource is
- * over-allocated when more of it is assigned at one time than it has. Nothing is levelled. Integer
- * arithmetic only, cut so that a 32-bit long never overflows.
+ * owf_presource.c: GFOpenProject's resources, assignments and baseline (owf_project.h). Version 1 keeps a
+ * task's duration as typed (MS Project's fixed units, not effort driven): an assignment's work is the
+ * duration times its units, its cost the work (or the quantity) times the resource's rate, and a resource
+ * is over-allocated when more of it is assigned at one time than it has. Nothing is levelled. A baseline
+ * keeps a task's dates, duration, work and cost as scheduled when it is set. Integer arithmetic only, cut
+ * so that a 32-bit long never overflows.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_project.h"
@@ -188,6 +189,18 @@ static int cmp_event(const void *x, const void *y)
     return a->units < b->units ? -1 : a->units > b->units;   /* finishes before starts at the same time */
 }
 
+/* Work and cost onto a task and every summary above it. */
+static void add_up(owf_project *p, int task, long work, long cost)
+{
+    int guard = 0;
+    while (task >= 0 && task < p->ntasks && guard++ <= p->ntasks) {
+        owf_ptask *t = &p->tasks[task];
+        t->work = t->work + work > MAX_WORK ? MAX_WORK : t->work + work;
+        t->cost = t->cost + cost > MAX_COST ? MAX_COST : t->cost + cost;
+        task = t->parent;
+    }
+}
+
 void owf_project_resources_update(owf_project *p)
 {
     event *ev;
@@ -198,6 +211,7 @@ void owf_project_resources_update(owf_project *p)
         res->work = res->cost = res->peak = 0;
         res->overallocated = 0;
     }
+    for (i = 0; i < p->ntasks; i++) p->tasks[i].work = p->tasks[i].cost = 0;
     for (i = 0; i < p->nassigns; i++) {
         owf_passign *a = &p->assigns[i];
         owf_presource *res;
@@ -218,6 +232,7 @@ void owf_project_resources_update(owf_project *p)
         }
         res->work = res->work + a->work > MAX_WORK ? MAX_WORK : res->work + a->work;
         res->cost = res->cost + a->cost > MAX_COST ? MAX_COST : res->cost + a->cost;
+        add_up(p, a->task, a->work, a->cost);
     }
     /* The most of each work resource assigned at once: a sweep over its assignments' starts and finishes. */
     if (!p->nassigns || !(ev = owf_malloc((size_t)p->nassigns * 2 * sizeof *ev))) return;
@@ -245,4 +260,66 @@ void owf_project_resources_update(owf_project *p)
         res->overallocated = res->peak > res->max_units;
     }
     owf_free(ev);
+}
+
+/* ---- The baseline ---- */
+
+static int task_range(const owf_project *p, int *first, int *count)
+{
+    if (!p) return 0;
+    if (*count < 0) *first = 0, *count = p->ntasks;
+    if (*first < 0 || *count < 1 || *first > p->ntasks - *count) return 0;
+    return 1;
+}
+
+void owf_project_set_baseline(owf_project *p, int first, int count)
+{
+    int i;
+    if (!task_range(p, &first, &count)) return;
+    for (i = first; i < first + count; i++) {
+        owf_ptask *t = &p->tasks[i];
+        t->baselined = 1;
+        t->baseline_start = t->early_start;
+        t->baseline_finish = t->early_finish;
+        t->baseline_duration = t->summary ? task_minutes(p, t, t->early_start, t->early_finish) : t->duration;
+        t->baseline_work = t->work;
+        t->baseline_cost = t->cost;
+    }
+}
+
+void owf_project_clear_baseline(owf_project *p, int first, int count)
+{
+    int i;
+    if (!task_range(p, &first, &count)) return;
+    for (i = first; i < first + count; i++) {
+        owf_ptask *t = &p->tasks[i];
+        t->baselined = 0;
+        t->baseline_start = t->baseline_finish = 0;
+        t->baseline_duration = t->baseline_work = t->baseline_cost = 0;
+    }
+}
+
+/* Working minutes from a to b on t's calendar, below 0 when b is before a. */
+static long signed_work(const owf_project *p, const owf_ptask *t, owf_ptime a, owf_ptime b)
+{
+    const owf_pcal *c = task_cal(p, t);
+    if (a == b) return 0;
+    if (b < a) return -(c ? owf_pcal_work(c, b, a) : a - b);
+    return c ? owf_pcal_work(c, a, b) : b - a;
+}
+
+long owf_ptask_variance(const owf_project *p, int task, int which)
+{
+    const owf_ptask *t;
+    if (!p || task < 0 || task >= p->ntasks || !p->tasks[task].baselined) return 0;
+    t = &p->tasks[task];
+    switch (which) {
+    case OWF_VAR_START: return signed_work(p, t, t->baseline_start, t->early_start);
+    case OWF_VAR_FINISH: return signed_work(p, t, t->baseline_finish, t->early_finish);
+    case OWF_VAR_DURATION:
+        return (t->summary ? task_minutes(p, t, t->early_start, t->early_finish) : t->duration) - t->baseline_duration;
+    case OWF_VAR_WORK: return t->work - t->baseline_work;
+    case OWF_VAR_COST: return t->cost - t->baseline_cost;
+    default: return 0;
+    }
 }

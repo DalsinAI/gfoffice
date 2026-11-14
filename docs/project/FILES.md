@@ -34,6 +34,11 @@ Written from Microsoft's published Project XML Data Interchange schema reference
     Critical) are written for other programs; they are not read back.
   - Read but left out: the project's own summary task (OutlineLevel 0) and blank rows (IsNull).
   - DurationFormat: 3 m, 5 h, 7 d; 4, 6, 8 the elapsed ones; 32 more when estimated (39 is "d?").
+- **Work and Cost** of a task (its assignments', a summary's its subtasks') are written for other
+  programs (Cost in cents) when not 0; GFOpenProject works them out on reading.
+- **Baseline:** Baseline 0 (MS Project's "Baseline") is written and read: Number, Start, Finish,
+  Duration, DurationFormat, Work and Cost (cents). A Baseline with no Number is taken as 0;
+  Baselines 1 to 10 are left out. The CSV keeps no baseline.
 - **PredecessorLink:** PredecessorUID, Type (0 FF, 1 FS, 2 SF, 3 SS), LinkLag in tenths of a
   minute, LagFormat. A percent lag (LagFormat 19) has LinkLag as the percent itself (50 is 50%).
   Links to tasks not in the file, and to the task itself, are left out.
@@ -81,5 +86,6 @@ is over-allocated when more of it is assigned at one time than its MaxUnits. Not
   hand-written MS Project style CSV read field by field, and damaged or foreign input.
 - MPXJ 16.11.0 run as a black box on the host (no source read): it read our MSPDI with every task,
   duration, link, lag, constraint, calendar and exception as written, and showed the same dates,
-  and every resource's type, max units and rate and every assignment's units, work and cost;
+  and every resource's type, max units and rate and every assignment's units, work and cost, and
+  every task's baseline start, finish, duration, work and cost and its finish variance;
   the MSPDI it wrote from that was read back by `owf_project_read` and scheduled to the same dates.
