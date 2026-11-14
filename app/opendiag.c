@@ -52,6 +52,7 @@
 
 #include "opendiag_rexx.h"
 #include "opendiag_edit.h"
+#include "opendiag_style.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL;   /* labels' sizes: OpenDiskFont */
 struct RxsLib *RexxSysBase = NULL;
@@ -64,7 +65,7 @@ static const char version[] __attribute__((used)) =
 
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_ABOUT, M_QUIT,
-    M_UNDO, M_REDO, M_LABEL, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
+    M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD,
     M_TOOL = 100                         /* M_TOOL + odg_tool */
 };
@@ -88,6 +89,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Redo", "Y", 0, 0, (APTR)M_REDO },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Edit Label...", "E", 0, 0, (APTR)M_LABEL },
+    { NM_ITEM, "Style...", "K", 0, 0, (APTR)M_STYLE },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_DELETE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Select All", "L", 0, 0, (APTR)M_SELECT_ALL },
@@ -481,6 +483,113 @@ static void edit_label(const char *id)
     redraw();
 }
 
+/* The Style window: the selection's fill, line and text colours, line width, text size, dashed and rounded. A
+ * field shows what every selected cell has (empty, or unticked, when they differ); only the fields changed are set,
+ * each through odg_style_apply (opendiag_style.h), which checks the text first. */
+static void style_window(void)
+{
+    struct Window *sw;
+    struct Gadget *eg = NULL, *g, *field[ODG_NPROPS];
+    struct NewGadget ng;
+    char was[ODG_NPROPS][24], why[300] = "";
+    int same[ODG_NPROPS], ticked[ODG_NPROPS], done = 0, okd = 0, i, lw = 0, w, h, row = fh + 8;
+    if (!ed.n || rexx_busy) return;
+    for (i = 0; i < ODG_NPROPS; i++) {
+        int l = (int)strlen(odg_prop_title((odg_prop)i)) * fw + 12;
+        if (l > lw) lw = l;
+        same[i] = odg_style_common(DOC, ed.list, ed.n, (odg_prop)i, was[i], sizeof was[i]);
+        ticked[i] = same[i] && !strcmp(was[i], "1");
+    }
+    w = lw + fw * 16 + 24;
+    h = row * (ODG_NPROPS + 1) + 16;
+    sw = OpenWindowTags(NULL, WA_Title, (ULONG)"Style", WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 40, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | STRINGIDCMP |
+                  BUTTONIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!sw) return;
+    if (!(g = CreateContext(&eg))) { CloseWindow(sw); return; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    for (i = 0; i < ODG_NPROPS; i++) {
+        int sw_kind = odg_prop_kind_of((odg_prop)i) == ODG_KIND_SWITCH;
+        ng.ng_LeftEdge = sw->BorderLeft + 8 + lw;
+        ng.ng_TopEdge = sw->BorderTop + 6 + row * i;
+        ng.ng_Width = sw_kind ? 26 : fw * 16;
+        ng.ng_Height = fh + 4;
+        ng.ng_GadgetText = (UBYTE *)odg_prop_title((odg_prop)i);
+        ng.ng_Flags = PLACETEXT_LEFT;
+        ng.ng_GadgetID = 10 + i;
+        if (sw_kind)
+            g = field[i] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, ticked[i], GTCB_Scaled, TRUE, TAG_DONE);
+        else
+            g = field[i] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)(same[i] ? was[i] : ""),
+                                        GTST_MaxChars, 20, TAG_DONE);
+    }
+    ng.ng_Flags = PLACETEXT_IN;
+    ng.ng_TopEdge = sw->BorderTop + 6 + row * ODG_NPROPS + 4;
+    ng.ng_LeftEdge = sw->BorderLeft + 8;
+    ng.ng_Width = fw * 10 + 16;
+    ng.ng_GadgetText = (UBYTE *)"OK";
+    ng.ng_GadgetID = 2;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    ng.ng_LeftEdge = sw->Width - sw->BorderRight - 8 - ng.ng_Width;
+    ng.ng_GadgetText = (UBYTE *)"Cancel";
+    ng.ng_GadgetID = 3;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    if (!g) { FreeGadgets(eg); CloseWindow(sw); return; }
+    AddGList(sw, eg, ~0, -1, NULL);
+    RefreshGList(eg, sw, NULL, -1);
+    GT_RefreshWindow(sw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(sw->UserPort);
+        while ((m = GT_GetIMsg(sw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) done = 1;
+            else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(sw); GT_EndRefresh(sw, TRUE); }
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 2) done = okd = 1;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 3) done = 1;
+        }
+    }
+    if (okd) {
+        for (i = 0; i < ODG_NPROPS; i++) {
+            char now[24];
+            int rc;
+            if (odg_prop_kind_of((odg_prop)i) == ODG_KIND_SWITCH) {
+                LONG on = 0;
+                GT_GetGadgetAttrs(field[i], sw, NULL, GTCB_Checked, (ULONG)&on, TAG_DONE);
+                if ((on != 0) == ticked[i]) continue;      /* not changed */
+                put_text(now, sizeof now, on ? "1" : "0");
+            } else {
+                STRPTR str = NULL;
+                GT_GetGadgetAttrs(field[i], sw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
+                put_text(now, sizeof now, str ? (const char *)str : "");
+                if (!strcmp(now, same[i] ? was[i] : "")) continue;
+            }
+            rc = odg_style_apply(DOC, ed.list, ed.n, (odg_prop)i, now);
+            if (rc == OWF_ERR_MEMORY) { put_text(why, sizeof why, "Style: not enough memory"); break; }
+            if (rc != OWF_OK) {
+                size_t at = strlen(why);
+                snprintf(why + at, sizeof why - at, "%s%.20s: %.20s isn't %s", at ? "\n" : "", odg_prop_title((odg_prop)i), now,
+                         odg_prop_kind_of((odg_prop)i) == ODG_KIND_COLOUR ? "#rgb, #rrggbb or none" :
+                         "a number above 0 and below 1000");
+            }
+        }
+    }
+    RemoveGList(sw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(sw);
+    if (why[0]) tell(why);
+    redraw();
+}
+
 static void undo_redo(int redo)
 {
     if (!(redo ? odg_can_redo(DOC) : odg_can_undo(DOC))) set_status(redo ? "Nothing to redo" : "Nothing to undo");
@@ -588,6 +697,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_UNDO: undo_redo(0); return;
     case M_REDO: undo_redo(1); return;
     case M_LABEL: if (ed.n) { edit_label(ed.ids[0]); return; } break;
+    case M_STYLE: if (ed.n) { style_window(); return; } set_status("Select something to style first"); break;
     case M_DELETE: if (ed.n) edit_failed(odg_edit_delete(&ed, DOC), "Delete"); break;
     case M_SELECT_ALL: odg_edit_select_all(&ed, DOC); break;
     case M_SELECT_NONE: odg_edit_clear(&ed); break;

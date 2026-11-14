@@ -72,13 +72,29 @@ $(OUT)/test-odg-rexx-asan: $(ODG_REXX_DEPS) $(OWF_SRC)
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_rexx.c \
 		tests/diag/test_odg_rexx.c -lz -o $@
 
-diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx
+# The Style window's sums (src/diag/odg_style.c).
+ODG_STYLE_DEPS = $(ODG_DEPS) src/diag/odg_style.c include/opendiag_style.h tests/diag/test_odg_style.c
+
+$(OUT)/test-odg-style: $(ODG_STYLE_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_style.c tests/diag/test_odg_style.c -lz -o $@
+
+$(OUT)/test-odg-style-asan: $(ODG_STYLE_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_style.c \
+		tests/diag/test_odg_style.c -lz -o $@
+
+diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style
 	$(OUT)/test-odg
 	$(OUT)/test-odg-rexx
+	$(OUT)/test-odg-style
 
-diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan
+diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan
 	$(OUT)/test-odg-asan
 	$(OUT)/test-odg-rexx-asan
+	$(OUT)/test-odg-style-asan
 
 test: diagram-core-test
 check: diagram-core-check
