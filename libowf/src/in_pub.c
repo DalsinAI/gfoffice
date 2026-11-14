@@ -419,6 +419,9 @@ typedef struct {
     span tokn[QUILL_MAX_FDPC];   /* the hyperlinks: TOKN n is story n's (PUB-FORMAT.md 6.7) */
     unsigned tokn_story[QUILL_MAX_FDPC];
     int ntokn;
+    span tcd[QUILL_MAX_FDPC];    /* a table's cells: TCD n is story n's (PUB-FORMAT.md 6.8) */
+    unsigned tcd_story[QUILL_MAX_FDPC];
+    int ntcd;
 } quill;
 
 static int read_quill_dir(span q, quill *out, owf_report *report)
@@ -448,6 +451,10 @@ static int read_quill_dir(span q, quill *out, owf_report *report)
                 out->fdpp[out->nfdpp++] = c;
             else if (!memcmp(q.p + e + 2, "STSH", 4) && rd16(q, e + 6) == 1)
                 out->stsh1 = c;
+            else if (!memcmp(q.p + e + 2, "TCD ", 4) && out->ntcd < QUILL_MAX_FDPC) {
+                out->tcd_story[out->ntcd] = rd16(q, e + 6);
+                out->tcd[out->ntcd++] = c;
+            }
             else if (!memcmp(q.p + e + 2, "TOKN", 4) && out->ntokn < QUILL_MAX_FDPC) {
                 out->tokn_story[out->ntokn] = rd16(q, e + 6);
                 out->tokn[out->ntokn++] = c;
@@ -819,10 +826,40 @@ static void put_run(owf_builder *b, owf_buf *run, const char *href)
     run->length = 0;
 }
 
-/* Characters [from, to) of TEXT as a story's paragraphs, with their character runs and links. */
-static void make_story(reader *r, owf_story *story, span text, size_t from, size_t to,
-                       const tlink *links, int nlinks)
+/* ---- Table cells: TCD (PUB-FORMAT.md, section 6.8) ----
+ * u32 n, u32 0, u32 0xFF00, then n + 1 u32: each cell's last character
+ * in the story (its last paragraph's mark; the last cell's is the story's
+ * length). A table's story gives each paragraph its cell; the frame, which
+ * knows the columns, makes the cell a row and a column (place_shapes).
+ * Until then a cell's paragraph has table_col PENDING_CELL and the cell's
+ * number in table_row. */
+
+#define PENDING_CELL (-2)
+
+static void mark_cells(owf_story *story, span tcd, const unsigned long *starts, int nstarts)
 {
+    unsigned long n = rd32(tcd, 0), k;
+    int i;
+    if (!n || n > 65536 || !has(tcd, 12, 4 * (n + 1)) || nstarts != story->nparas)
+        return;
+    for (i = 0; i < story->nparas; i++) {
+        unsigned long cell = 0;
+        for (k = 0; k <= n; k++)
+            if (rd32(tcd, 12 + 4 * k) < starts[i])
+                cell++;
+        story->paras[i].table_id = 0;
+        story->paras[i].table_row = (int)cell;
+        story->paras[i].table_col = PENDING_CELL;
+    }
+}
+
+/* Characters [from, to) of TEXT as a story's paragraphs, with their character runs and links;
+ * a table's when tcd is not empty. */
+static void make_story(reader *r, owf_story *story, span text, size_t from, size_t to,
+                       const tlink *links, int nlinks, span tcd)
+{
+    unsigned long *starts = NULL;            /* each paragraph's first character in the story */
+    int nstarts = 0, capstarts = 0;
     owf_builder b;
     owf_buf run;
     size_t at = from * 2, end = to * 2;
@@ -839,6 +876,13 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
         const trun *cr;
         if (!open) {                         /* a paragraph starts: its style and alignment */
             style = para_at(r, at / 2, &phint, &b.parafmt.align);
+            if (tcd.n && nstarts >= capstarts) {
+                unsigned long *more = grow(r, starts, &capstarts, nstarts, sizeof *starts);
+                if (more)
+                    starts = more;
+            }
+            if (tcd.n && nstarts < capstarts)
+                starts[nstarts++] = (unsigned long)(at / 2 - from);
         }
         cr = run_at(r->cruns, r->ncruns, at / 2, &chint);
         if (made_style < 0 || cr != made_run || style != made_style) {
@@ -896,6 +940,9 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
         owf_builder_end_para(&b);
     if (owf_builder_done(&b) != OWF_OK)
         r->failed = 1;
+    else if (tcd.n && starts)
+        mark_cells(story, tcd, starts, nstarts);
+    owf_free(starts);
 }
 
 static void read_text(reader *r)
@@ -982,7 +1029,11 @@ static void read_text(reader *r)
             for (k = 0; k < qd.ntokn; k++)
                 if (qd.tokn_story[k] == i)
                     nlinks = read_links(r, qd.tokn[k], (unsigned long)len, &links);
-            make_story(r, &r->pub->stories[r->pub->nstories++], qd.text, pos, pos + len, links, nlinks);
+            span tcd = { NULL, 0 };
+            for (k = 0; k < qd.ntcd; k++)
+                if (qd.tcd_story[k] == i)
+                    tcd = qd.tcd[k];
+            make_story(r, &r->pub->stories[r->pub->nstories++], qd.text, pos, pos + len, links, nlinks, tcd);
             free_links(links, nlinks);
         }
         pos += len;
@@ -1208,7 +1259,10 @@ static int wordart_story(reader *r, span text)
     memset(st, 0, sizeof *st);
     while (len && !rd16(text, 2 * (len - 1)))
         len--;
-    make_story(r, st, text, 0, len, NULL, 0);
+    {
+        span none = { NULL, 0 };
+        make_story(r, st, text, 0, len, NULL, 0, none);
+    }
     return r->pub->nstories++;
 }
 
@@ -1555,6 +1609,38 @@ static void order_chains(reader *r, owf_pub_page *page, int first)
     }
 }
 
+/* A table frame's story: each cell's paragraphs into their row and column. */
+static void table_cells(owf_pub *pub, const owf_pub_frame *f)
+{
+    owf_story *st;
+    int i;
+    if (f->story < 0 || f->story >= pub->nstories || f->cols < 1 || f->cols > 64)
+        return;
+    st = &pub->stories[f->story];
+    for (i = 0; i < st->nparas; i++) {
+        owf_para *p = &st->paras[i];
+        if (p->table_col != PENDING_CELL)
+            continue;
+        p->table_col = p->table_row % f->cols;
+        p->table_row /= f->cols;
+        p->table_cols = f->cols;
+    }
+}
+
+/* Cells no table frame took: plain paragraphs again. */
+static void loose_cells(owf_pub *pub)
+{
+    int i, j;
+    for (i = 0; i < pub->nstories; i++)
+        for (j = 0; j < pub->stories[i].nparas; j++) {
+            owf_para *p = &pub->stories[i].paras[j];
+            if (p->table_col == PENDING_CELL) {
+                p->table_id = -1;
+                p->table_row = p->table_col = 0;
+            }
+        }
+}
+
 static void place_shapes(reader *r, long pc, owf_pub_page *page)
 {
     int i, *at, first = page->nframes;
@@ -1601,6 +1687,7 @@ static void place_shapes(reader *r, long pc, owf_pub_page *page)
             span t = chunk_body(r, s->chunk);
             f->rows = (int)field_value(t, 0x66, 0);
             f->cols = (int)field_value(t, 0x67, 0);
+            table_cells(r->pub, f);
         }
     }
     owf_free(at);
@@ -1835,6 +1922,8 @@ static void read_old(reader *r)
                 if (f->story < 0)
                     owf_report_add(r->report, OWF_NOTE_LOST, "A frame's text is not in the file's text; it is left out");
             }
+            if (f->kind == OWF_PUB_TABLE)
+                table_cells(pub, f);
         }
     }
     if (!any)
@@ -1904,6 +1993,7 @@ int owf_pub_read(const unsigned char *data, size_t length, owf_pub **out, owf_re
     } else {
         owf_report_add(report, OWF_NOTE_LOST, "This form of Publisher file is not known yet");
     }
+    loose_cells(r.pub);
     r.pub->width = emu_twips(r.pub->width_emu);
     r.pub->height = emu_twips(r.pub->height_emu);
     owf_free(r.chunks);

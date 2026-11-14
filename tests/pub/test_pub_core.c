@@ -176,6 +176,22 @@ int main(void)
         CHECK(plain && !(plain->flags & (OWF_BOLD | OWF_ITALIC)) && plain->size == 200);
         CHECK(!strcmp(font_name(deck->res, plain), "Times New Roman"));
         CHECK(deck->slides[0].objs[2].kind == OWF_OBJ_TABLE && deck->slides[0].objs[2].ncols == 2);
+        /* P1d table cells (TCD): six cells in three rows of two; the third cell has two paragraphs */
+        {
+            const owf_story *t = &deck->slides[0].objs[2].text;
+            CHECK(t->nparas == 7);
+            if (t->nparas == 7) {
+                CHECK(t->paras[0].table_id >= 0 && t->paras[0].table_row == 0 && t->paras[0].table_col == 0 &&
+                      t->paras[0].table_cols == 2);
+                CHECK(t->paras[1].table_row == 0 && t->paras[1].table_col == 1);
+                CHECK(t->paras[2].table_row == 1 && t->paras[2].table_col == 0);
+                CHECK(t->paras[3].table_row == 1 && t->paras[3].table_col == 0);
+                CHECK(t->paras[4].table_row == 1 && t->paras[4].table_col == 1);
+                CHECK(t->paras[6].table_row == 2 && t->paras[6].table_col == 1);
+            }
+            /* the plain text boxes' paragraphs are not cells */
+            CHECK(deck->slides[0].objs[0].text.nparas && deck->slides[0].objs[0].text.paras[0].table_id < 0);
+        }
         CHECK(deck->slides[0].objs[3].kind == OWF_OBJ_PICTURE && deck->slides[0].objs[3].image == 0);
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
@@ -186,6 +202,14 @@ int main(void)
              * default (-1); the typeface itself is GFOffice's ODP round trip's, not the .pub reader's */
             CHECK(again && (again->font < 0 || !strcmp(font_name(roundtrip->res, again), "Liberation Sans")));
             CHECK(deck_href(roundtrip, "our site") && !strcmp(deck_href(roundtrip, "our site"), "https://example.org/gfoffice/"));
+            if (roundtrip->slides[0].nobjs > 2) {
+                const owf_story *t = &roundtrip->slides[0].objs[2].text;
+                int k, last_row = -1, cells_ok = t->nparas >= 6;
+                for (k = 0; k < t->nparas; k++)
+                    if (t->paras[k].table_id < 0 || t->paras[k].table_row < last_row) cells_ok = 0;
+                    else last_row = t->paras[k].table_row;
+                CHECK(roundtrip->slides[0].objs[2].kind == OWF_OBJ_TABLE && cells_ok && last_row == 2);
+            }
         }
         free(odp); odp = NULL; odp_length = 0;
         owf_deck_free(roundtrip); roundtrip = NULL;
