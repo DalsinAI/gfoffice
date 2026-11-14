@@ -231,13 +231,20 @@ int odg_cell_locked(const odg_doc *doc, const owf_dcell *c)
     return 0;
 }
 
-/* The layer new cells go on: doc->layer's, else the first. */
+int odg_layer_current(const odg_doc *doc)
+{
+    if (odg_layer_at(doc, doc->layer))
+        return doc->layer;
+    return odg_layer_at(doc, 0) ? 0 : -1;
+}
+
+/* The layer new cells go on (odg_layer_current), NULL when there is none or it is hidden or locked. */
 static const char *layer_for(const odg_doc *doc)
 {
-    const owf_dcell *c = odg_layer_at(doc, doc->layer);
-    if (!c)
-        c = odg_layer_at(doc, 0);
-    return c ? c->id : NULL;
+    int i = odg_layer_current(doc);
+    if (i < 0 || !odg_layer_shown(doc, i) || odg_layer_locked(doc, i))
+        return NULL;
+    return odg_layer_at(doc, i)->id;
 }
 
 static int route_at(odg_doc *doc, int index);
@@ -670,9 +677,14 @@ int odg_layer_add(odg_doc *doc, const char *name, int *at)
         if (!p->cells[k].parent)
             break;
     {
-        char rootid[64];
-        snprintf(rootid, sizeof rootid, "%s", p->cells[k].id);
+        /* the root's id copied whole (adding a cell may move the cells), however long another tool made it */
+        size_t len = strlen(p->cells[k].id) + 1;
+        char *rootid = (char *)owf_malloc(len);
+        if (!rootid)
+            return end(doc, OWF_ERR_MEMORY);
+        memcpy(rootid, p->cells[k].id, len);
         c = owf_dpage_add(p, NULL, rootid, OWF_DCELL_PLAIN);
+        owf_free(rootid);
     }
     if (!c)
         return end(doc, OWF_ERR_MEMORY);

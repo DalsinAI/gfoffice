@@ -249,6 +249,17 @@ static void test_layers(void)
 {
     char a[24], line[96];
     CHECK_N(odg_rexx_init(&rx), OWF_OK);
+    CHECK_N(rx_do("SHOWLAYER 1 OFF"), ODG_RX_OK);                     /* no drawing on a hidden or locked layer */
+    CHECK_N(rx_do("ADDSHAPE 0 0 10 10"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "ADDSHAPE: layer 1 is hidden (SHOWLAYER 1 shows it)");
+    CHECK_N(rx_do("SHOWLAYER 1"), ODG_RX_OK);
+    CHECK_N(rx_do("LOCKLAYER 1"), ODG_RX_OK);
+    CHECK_N(rx_do("ADDSHAPE 0 0 10 10"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "ADDSHAPE: layer 1 is locked (LOCKLAYER 1 OFF unlocks it)");
+    CHECK_N(rx_do("CONNECT a b"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "CONNECT: layer 1 is locked (LOCKLAYER 1 OFF unlocks it)");
+    CHECK_N(rx_do("LOCKLAYER 1 OFF"), ODG_RX_OK);
+    CHECK_S(ok("CELLS"), "");
     CHECK_S(ok("LAYERS"), "1");
     CHECK_S(ok("LAYER"), "1");
     CHECK_S(ok("ADDLAYER Notes"), "2");

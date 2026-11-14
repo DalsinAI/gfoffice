@@ -456,6 +456,47 @@ static void test_long_ids(void)
     long_ids("abcdefghijklmnopqrstuvw-1", "abcdefghijklmnopqrstuvw-2", "abcdefghijklmnopqrstuvw-3");
 }
 
+/* New cells don't go on a hidden or locked layer; a layer is added under a root id of any length. */
+static void test_layer_rules(void)
+{
+    static char longid[200];
+    char a[24], b[24], e[24];
+    owf_dpage *p;
+    int at;
+    fresh(0);
+    odg_add_shape(&doc, PX(10), PX(10), PX(40), PX(20), NULL, NULL, a);
+    CHECK_N(odg_layer_current(&doc), 0);
+    CHECK_N(odg_layer_show(&doc, 0, 0), OWF_OK);
+    CHECK_N(odg_add_shape(&doc, PX(10), PX(100), PX(40), PX(20), NULL, NULL, b), OWF_ERR_FORMAT);   /* hidden */
+    CHECK_N(odg_layer_show(&doc, 0, 1), OWF_OK);
+    CHECK_N(odg_layer_lock(&doc, 0, 1), OWF_OK);
+    CHECK_N(odg_add_shape(&doc, PX(10), PX(100), PX(40), PX(20), NULL, NULL, b), OWF_ERR_FORMAT);   /* locked */
+    CHECK_N(odg_add_edge(&doc, a, a, NULL, NULL, "", e), OWF_ERR_FORMAT);
+    CHECK_N(odg_layer_add(&doc, "Top", &at), OWF_OK);                  /* a new layer is open: draw there */
+    CHECK_N(odg_layer_current(&doc), 1);
+    CHECK_N(odg_add_shape(&doc, PX(10), PX(100), PX(40), PX(20), NULL, NULL, b), OWF_OK);
+    CHECK_S(cell(b)->parent, odg_layer_at(&doc, 1)->id);
+    done();
+    memset(longid, 'r', sizeof longid - 1);                           /* a 199-byte root id from another tool */
+    owf_diagram_init(&d);
+    p = owf_diagram_add_page(&d, "p", "Page-1");
+    owf_dpage_remove(p, "1");                                          /* the page's own root and layer out */
+    owf_dpage_remove(p, "0");
+    CHECK_N(p->ncells, 0);
+    owf_dpage_add(p, longid, NULL, OWF_DCELL_PLAIN);
+    owf_dpage_add(p, "L1", longid, OWF_DCELL_PLAIN);
+    odg_init(&doc, &d, 0);
+    {
+        int had = odg_layer_count(&doc);
+        CHECK_N(had, 1);
+        CHECK_N(odg_layer_add(&doc, NULL, &at), OWF_OK);
+        CHECK_N(odg_layer_count(&doc), had + 1);
+        CHECK_N(at, had);
+        CHECK_S(odg_layer_at(&doc, had)->parent, longid);              /* under the whole id, not a cut one */
+    }
+    done();
+}
+
 static void test_layers(void)
 {
     char a[24], b[24], e[24], hit[24];
@@ -541,6 +582,7 @@ int main(void)
     test_long_edges();
     test_long_ids();
     test_layers();
+    test_layer_rules();
     printf("diagram core: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

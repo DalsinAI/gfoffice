@@ -96,6 +96,10 @@ int odg_layer_count(const odg_doc *doc);
 const owf_dcell *odg_layer_at(const odg_doc *doc, int i);
 int odg_layer_shown(const odg_doc *doc, int i);
 int odg_layer_locked(const odg_doc *doc, int i);
+/* The layer new shapes and connectors go on: doc->layer, else the first; -1 when the page has none. A shape or
+ * connector added while it is hidden or locked is refused (OWF_ERR_FORMAT), as draw.io does, so nothing is drawn
+ * where it can't be seen or picked. */
+int odg_layer_current(const odg_doc *doc);
 /* A new layer on top named name (NULL: "Layer n"), made the current one; its number into *at. One Undo step. */
 int odg_layer_add(odg_doc *doc, const char *name, int *at);
 /* Layer i shown or hidden, locked or not, renamed: one Undo step each. OWF_ERR_FORMAT when there is no layer i. */
