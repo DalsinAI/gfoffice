@@ -1,6 +1,6 @@
 /*
  * opendiag_rexx.h: GFOpenDiag's ARexx commands (src/diag/odg_rexx.c) for its GFOPENDIAG port. The app answers
- * VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT, QUIT and the canvas's ZOOM, FIT, TOOL, SELECT and GETSELECTION
+ * VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT, QUIT and the canvas's ZOOM, FIT, TOOL, SELECT, GETSELECTION and SHAPE
  * itself and hands every other command here. Arguments as a
  * ReadArgs template (quotes, KEYWORD=value or KEYWORD value, /S switches); places and sizes are page pixels and
  * may have decimals ("12.5"); cells are named by their ids. Return codes as every Open app's port: 0 done, 5 not

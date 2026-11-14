@@ -381,6 +381,41 @@ static void draw_vertex(oldraw *d, const odg_view *v, const owf_dpage *p, const 
         oldraw_ellipse(d, &r, fill);
         if (stroke != OLDRAW_NONE)
             oldraw_ellipse_frame(d, &r, w, stroke);
+    } else if (owf_dstyle_is(style, "triangle") || owf_dstyle_is(style, "parallelogram") ||
+               owf_dstyle_is(style, "hexagon")) {
+        /* the flowchart polygons as draw.io draws them: a triangle pointing east; a parallelogram leaning, and a
+         * hexagon cut in at each end, by size: pixels with fixedSize=1 (20 when not given), else a part of the
+         * width (0.2 and 0.25 when not given) */
+        int hex = owf_dstyle_is(style, "hexagon"), n;
+        long k;
+        if (style_is(style, "fixedSize", "1"))
+            k = odg_view_len(v, style_num(style, "size", OWF_DNUM(20)));
+        else
+            k = (long)((wide)r.w * style_num(style, "size", hex ? 25 : 20) / 100);
+        if (k < 0) k = 0;
+        if (k > r.w / 2) k = r.w / 2;
+        if (owf_dstyle_is(style, "triangle")) {
+            pts[0].x = r.x;           pts[0].y = r.y;
+            pts[1].x = r.x + r.w - 1; pts[1].y = r.y + r.h / 2;
+            pts[2].x = r.x;           pts[2].y = r.y + r.h - 1;
+            n = 3;
+        } else if (owf_dstyle_is(style, "parallelogram")) {
+            pts[0].x = r.x + k;           pts[0].y = r.y;
+            pts[1].x = r.x + r.w - 1;     pts[1].y = r.y;
+            pts[2].x = r.x + r.w - 1 - k; pts[2].y = r.y + r.h - 1;
+            pts[3].x = r.x;               pts[3].y = r.y + r.h - 1;
+            n = 4;
+        } else {
+            pts[0].x = r.x + k;           pts[0].y = r.y;
+            pts[1].x = r.x + r.w - 1 - k; pts[1].y = r.y;
+            pts[2].x = r.x + r.w - 1;     pts[2].y = r.y + r.h / 2;
+            pts[3].x = r.x + r.w - 1 - k; pts[3].y = r.y + r.h - 1;
+            pts[4].x = r.x + k;           pts[4].y = r.y + r.h - 1;
+            pts[5].x = r.x;               pts[5].y = r.y + r.h / 2;
+            n = 6;
+        }
+        oldraw_polygon(d, pts, n, fill);
+        stroke_path(d, pts, n, 1, w, dashed, stroke);
     } else if (owf_dstyle_is(style, "rhombus")) {
         pts[0].x = r.x + r.w / 2; pts[0].y = r.y;
         pts[1].x = r.x + r.w - 1; pts[1].y = r.y + r.h / 2;
@@ -413,6 +448,13 @@ static void draw_vertex(oldraw *d, const odg_view *v, const owf_dpage *p, const 
             oldraw_polygon(d, grown, n, fill);
         }
         stroke_path(d, pts, n, 1, w, dashed, stroke);
+        if (owf_dstyle_is(style, "process")) {   /* a predefined process: a line a tenth in from each side */
+            long in = r.w / 10;
+            if (in > 1) {
+                oldraw_line(d, (int)(r.x + in), r.y, (int)(r.x + in), r.y + r.h - 1, w, stroke);
+                oldraw_line(d, (int)(r.x + r.w - 1 - in), r.y, (int)(r.x + r.w - 1 - in), r.y + r.h - 1, w, stroke);
+            }
+        }
         if (owf_dstyle_is(style, "swimlane")) {
             header = odg_view_len(v, style_num(style, "startSize", 2300));
             if (header > r.h)
@@ -491,7 +533,7 @@ static void draw_edge(oldraw *d, const odg_view *v, const owf_dpage *p, const ow
 {
     oldraw_point pts[MAX_PTS];
     char buf[24];
-    int n = view_path(v, p, e, pts), i;
+    int n = view_path(v, p, e, pts);
     oldraw_colour stroke = odg_style_colour(e->style, "strokeColor", OLDRAW_RGB(0x000000));
     if (n < 2)
         return;
@@ -507,14 +549,20 @@ static void draw_edge(oldraw *d, const odg_view *v, const owf_dpage *p, const ow
         draw_label(d, v, e->value, e->style, at.x + odg_view_len(v, e->geo.offset.x),
                    at.y + odg_view_len(v, e->geo.offset.y), 1, 1, OLDRAW_RGB(0xffffff));
     }
-    for (i = 0; i < p->ncells; i++) {
-        const owf_dcell *l = &p->cells[i];
-        if (l->kind == OWF_DCELL_VERTEX && l->parent && !strcmp(l->parent, e->id) && owf_dcell_shown(p, l)) {
-            oldraw_point at = along(pts, n, (long)l->geo.x);
-            draw_label(d, v, l->value, l->style, at.x + odg_view_len(v, l->geo.offset.x),
-                       at.y + odg_view_len(v, l->geo.offset.y), 1, 1, OLDRAW_RGB(0xffffff));
-        }
-    }
+}
+
+/* A label cell l on the edge e: at geo.x along the line (-1 start, 0 middle, 1 end) and its offset. Drawn where
+ * l comes in the page's cells, so no edge has to look through every cell for its labels. */
+static void draw_edge_label(oldraw *d, const odg_view *v, const owf_dpage *p, const owf_dcell *e,
+                            const owf_dcell *l)
+{
+    oldraw_point pts[MAX_PTS], at;
+    int n = view_path(v, p, e, pts);
+    if (n < 2)
+        return;
+    at = along(pts, n, (long)l->geo.x);
+    draw_label(d, v, l->value, l->style, at.x + odg_view_len(v, l->geo.offset.x),
+               at.y + odg_view_len(v, l->geo.offset.y), 1, 1, OLDRAW_RGB(0xffffff));
 }
 
 /* ---- the grid and the selection ---- */
@@ -612,8 +660,10 @@ void odg_draw(oldraw *d, const odg_view *v, const odg_doc *doc, const oldraw_rec
             continue;
         if (c->kind == OWF_DCELL_EDGE)
             draw_edge(d, v, p, c);
-        else if (c->kind == OWF_DCELL_VERTEX && !(parent && parent->kind == OWF_DCELL_EDGE))
-            draw_vertex(d, v, p, c);           /* a label on an edge is drawn with its edge */
+        else if (c->kind == OWF_DCELL_VERTEX && parent && parent->kind == OWF_DCELL_EDGE)
+            draw_edge_label(d, v, p, parent, c);
+        else if (c->kind == OWF_DCELL_VERTEX)
+            draw_vertex(d, v, p, c);
     }
     draw_selection(d, v, p);
     dash_area = NULL;

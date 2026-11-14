@@ -11,6 +11,7 @@
 #define OPENDIAG_EDIT_H
 
 #include "opendiag_view.h"
+#include "opendiag_stencil.h"
 
 #define ODG_EDIT_MAX 64                  /* cells selected at most */
 #define ODG_EDIT_ID 64                   /* an id's bytes; a cell with a longer id can't be picked with the mouse */
@@ -19,7 +20,7 @@
 
 typedef enum {
     ODG_TOOL_SELECT, ODG_TOOL_BOX, ODG_TOOL_ROUNDED, ODG_TOOL_ELLIPSE, ODG_TOOL_RHOMBUS, ODG_TOOL_TEXT,
-    ODG_TOOL_CONNECTOR, ODG_NTOOLS
+    ODG_TOOL_CONNECTOR, ODG_TOOL_SHAPE, ODG_NTOOLS          /* ODG_TOOL_SHAPE: the palette's shape e->shape */
 } odg_tool;
 
 typedef enum {
@@ -28,6 +29,7 @@ typedef enum {
 
 typedef struct {
     odg_tool tool;
+    int shape;                           /* ODG_TOOL_SHAPE: odg_stencil_at(shape) */
     char ids[ODG_EDIT_MAX][ODG_EDIT_ID]; /* the selection, in the order picked */
     const char *list[ODG_EDIT_MAX];      /* ids[0..n-1], for odg_view.selected and the core's calls */
     int n;

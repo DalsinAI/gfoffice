@@ -357,6 +357,37 @@ static void test_labels(void)
     done();
 }
 
+/* A label cell on a connector is drawn where it comes in the page, at its place along the line; a hidden
+ * connector takes its labels with it. */
+static void test_edge_label_cells(void)
+{
+    odg_view v;
+    char e[24];
+    const text_rec *t;
+    owf_dcell *l;
+    owf_dpoint p0 = { PX(20), PX(200) }, p1 = { PX(220), PX(200) };
+    fresh(0);
+    odg_view_init(&v, W, H);
+    odg_add_edge(&doc, NULL, NULL, &p0, &p1, "", e);
+    l = owf_dpage_add(odg_page(&doc), "lbl", e, OWF_DCELL_VERTEX);
+    CHECK(l != NULL);
+    if (!l) { done(); return; }
+    l->geo.x = -50;                          /* a quarter of the way: (70, 200) */
+    odg_set_value(&doc, "lbl", "near");
+    draw(&v);
+    t = drew("near");
+    CHECK(t != NULL);
+    if (t) {
+        CHECK_N(t->x, 58);
+        CHECK_N(t->y, 201);
+    }
+    CHECK_X(px[200][70], WHITE);              /* on its white ground */
+    owf_dattrs_set(&owf_dpage_find(odg_page(&doc), e)->extra, "visible", "0");
+    draw(&v);
+    CHECK(drew("near") == NULL);
+    done();
+}
+
 static void test_grid_and_area(void)
 {
     odg_view v;
@@ -507,6 +538,56 @@ static void test_long_dashes(void)
     done();
 }
 
+/* The palette's polygons: a triangle pointing east, a parallelogram leaning a fifth, a hexagon cut a quarter in, and
+ * a predefined process's two inner lines. */
+static void test_flowchart_shapes(void)
+{
+    odg_view v;
+    char a[24], b[24], c[24], e[24];
+    fresh(0);
+    odg_view_init(&v, W, H);
+    odg_add_shape(&doc, PX(10), PX(10), PX(60), PX(41), "triangle;fillColor=#ff0000;", NULL, a);
+    odg_add_shape(&doc, PX(100), PX(10), PX(100), PX(40), "shape=parallelogram;fillColor=#ff0000;", NULL, b);
+    odg_add_shape(&doc, PX(10), PX(100), PX(100), PX(40), "shape=hexagon;fillColor=#ff0000;", NULL, c);
+    odg_add_shape(&doc, PX(200), PX(100), PX(100), PX(40), "shape=process;fillColor=#ff0000;", NULL, e);
+    draw(&v);
+    /* the triangle: its tip at 69,30, its back the left side */
+    CHECK_X(px[30][20], RED);
+    CHECK_X(px[30][69], BLACK);
+    CHECK_X(px[12][60], WHITE);                /* past the slope near the top right */
+    CHECK_X(px[30][10], BLACK);
+    /* the parallelogram: 20 pixels of lean, the top left corner and bottom right corner left out */
+    CHECK_X(px[11][101], WHITE);
+    CHECK_X(px[48][198], WHITE);
+    CHECK_X(px[30][150], RED);
+    CHECK_X(px[10][150], BLACK);
+    CHECK_X(px[10][120], BLACK);               /* the top starts 20 in */
+    /* the hexagon: 25 in at the corners, points at the middle of each end */
+    CHECK_X(px[101][12], WHITE);
+    CHECK_X(px[120][10], BLACK);
+    CHECK_X(px[120][60], RED);
+    CHECK_X(px[100][35], BLACK);
+    /* the process: a box with lines 10 in from each side */
+    CHECK_X(px[120][210], BLACK);
+    CHECK_X(px[120][289], BLACK);
+    CHECK_X(px[120][205], RED);
+    CHECK_X(px[120][250], RED);
+    done();
+    /* fixedSize=1, as the palette's Data and Preparation have: the lean is size pixels (20 when not given), not a
+     * part of the width, as diagrams.net draws it */
+    fresh(0);
+    odg_add_shape(&doc, PX(100), PX(200), PX(200), PX(40), "shape=parallelogram;fixedSize=1;fillColor=#ff0000;", NULL, a);
+    odg_add_shape(&doc, PX(10), PX(250), PX(200), PX(40), "shape=hexagon;fixedSize=1;size=10;fillColor=#ff0000;", NULL, c);
+    draw(&v);
+    CHECK_X(px[200][121], BLACK);              /* the top starts 20 in, not 40 */
+    CHECK_X(px[202][125], RED);
+    CHECK_X(px[201][105], WHITE);
+    CHECK_X(px[250][21], BLACK);               /* 10 in at the corners, not 50 */
+    CHECK_X(px[255][30], RED);
+    CHECK_X(px[251][12], WHITE);
+    done();
+}
+
 int main(void)
 {
     d = cur = oldraw_new(&ops, NULL, W, H, NULL);
@@ -515,9 +596,11 @@ int main(void)
     test_shapes();
     test_rounded_and_swimlane();
     test_labels();
+    test_edge_label_cells();
     test_grid_and_area();
     test_selection_and_handles();
     test_long_dashes();
+    test_flowchart_shapes();
     oldraw_free(d);
     printf("diagram view: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;

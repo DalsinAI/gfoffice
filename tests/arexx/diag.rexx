@@ -64,6 +64,13 @@ CALL want 'TOOL', 0
 CALL same 'TOOL', res, 'Ellipse'
 CALL want 'TOOL Spline', 10
 CALL want 'TOOL Select', 0
+CALL want 'SHAPE Decision', 0
+CALL want 'SHAPE', 0
+CALL same 'SHAPE', res, 'Decision'
+CALL want 'SHAPE Flowerpot', 10
+CALL want 'ADDSHAPE 480 200 120 60 STYLE "shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;" TEXT Prepare', 0
+CALL want 'ADDSHAPE 480 300 120 60 STYLE "shape=parallelogram;whiteSpace=wrap;html=1;" TEXT Data', 0
+CALL want 'TOOL Select', 0
 CALL want 'SELECT' a','b, 0
 CALL want 'GETSELECTION', 0
 CALL same 'GETSELECTION', res, a','b
@@ -76,7 +83,7 @@ CALL want 'GETSELECTION', 0
 CALL same 'GETSELECTION after DELETE', res, ''
 CALL want 'UNDO', 0
 CALL want 'CELLS', 0
-IF WORDS(res) ~= 5 THEN CALL bad 'CELLS after UNDO =' res '(wanted 5 ids)'
+IF WORDS(res) ~= 7 THEN CALL bad 'CELLS after UNDO =' res '(wanted 7 ids)'
 
 /* Edits: move, resize, label, style; Undo and Redo. */
 CALL want 'MOVE' b '0 -10', 0
