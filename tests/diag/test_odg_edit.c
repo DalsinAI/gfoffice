@@ -485,6 +485,41 @@ static void test_shapes_palette(void)
     done();
 }
 
+/* A selection made before a Hide or Lock: the next prune drops it, so Delete, a nudge and Style leave the cell
+ * alone; and a locked cell on top doesn't hide an open one under it from the mouse. */
+static void test_selection_after_lock(void)
+{
+    char a[24], c[24], id[ODG_EDIT_ID];
+    int at;
+    fresh(0);
+    odg_add_shape(&doc, PX(10), PX(10), PX(40), PX(20), "", NULL, a);
+    CHECK(odg_edit_select(&e, a, 0));
+    odg_layer_show(&doc, 0, 0);                           /* hidden */
+    odg_edit_prune(&e, &doc);
+    CHECK_N(e.n, 0);
+    CHECK_N(odg_edit_delete(&e, &doc), OWF_ERR_FORMAT);
+    CHECK(cell(a) != NULL);                               /* nothing deleted */
+    CHECK(!odg_edit_pickable(&doc, a));
+    odg_layer_show(&doc, 0, 1);
+    CHECK(odg_edit_pickable(&doc, a));
+    CHECK(odg_edit_select(&e, a, 0));
+    odg_layer_lock(&doc, 0, 1);                           /* locked */
+    odg_edit_prune(&e, &doc);
+    CHECK_N(e.n, 0);
+    CHECK_N(odg_edit_nudge(&e, &doc, PX(5), 0), OWF_ERR_FORMAT);
+    CHECK_N(cell(a)->geo.x, PX(10));
+    odg_layer_lock(&doc, 0, 0);
+    odg_layer_add(&doc, "Top", &at);                      /* a locked cell over a */
+    odg_add_shape(&doc, PX(0), PX(0), PX(80), PX(60), "", NULL, c);
+    odg_layer_lock(&doc, 1, 1);
+    CHECK(odg_edit_hit(&v, &doc, 20, 20, 0, id));
+    CHECK_S(id, a);
+    CHECK(odg_edit_hit(&v, &doc, 20, 20, 1, id));
+    CHECK_S(id, a);
+    CHECK(!odg_edit_hit(&v, &doc, 70, 50, 0, id));        /* only the locked one there */
+    done();
+}
+
 int main(void)
 {
     test_tools();
@@ -497,6 +532,7 @@ int main(void)
     test_lasso();
     test_locked_and_hidden();
     test_shapes_palette();
+    test_selection_after_lock();
     printf("diagram edit: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

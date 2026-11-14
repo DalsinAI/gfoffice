@@ -1042,6 +1042,11 @@ static int rexx_select(const char *arg)
                 odg_edit_clear(&ed);
                 return app_error(ODG_RX_ERROR, why);
             }
+            if (!odg_edit_pickable(DOC, id)) {       /* the redraw would drop it from the selection */
+                snprintf(why, sizeof why, "SELECT: %.100s is hidden or locked", id);
+                odg_edit_clear(&ed);
+                return app_error(ODG_RX_ERROR, why);
+            }
         }
         if (!odg_edit_select(&ed, id, 1)) return app_error(ODG_RX_ERROR, "SELECT: too many ids");
     }

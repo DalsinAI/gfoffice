@@ -777,7 +777,7 @@ static int near_segment(owf_dpoint a, owf_dpoint b, owf_dnum x, owf_dnum y, owf_
     return cross <= t * (isqrt_wide(len2) + 1);
 }
 
-int odg_hit(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size)
+static int hit_from(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size, int open)
 {
     const owf_dpage *p = odg_page(doc);
     int i, k, hit;
@@ -786,6 +786,8 @@ int odg_hit(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, 
         owf_dnum box[4];
         hit = 0;
         if (!owf_dcell_shown(p, c))      /* hidden, or on a hidden layer */
+            continue;
+        if (open && (c->kind == OWF_DCELL_VERTEX || c->kind == OWF_DCELL_EDGE) && odg_cell_locked(doc, c))
             continue;
         if (c->kind == OWF_DCELL_VERTEX && owf_dcell_box(p, c, box))
             hit = x >= box[0] && x <= box[0] + box[2] && y >= box[1] && y <= box[1] + box[3];
@@ -803,4 +805,14 @@ int odg_hit(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, 
         }
     }
     return 0;
+}
+
+int odg_hit(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size)
+{
+    return hit_from(doc, x, y, tol, id, size, 0);
+}
+
+int odg_hit_open(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size)
+{
+    return hit_from(doc, x, y, tol, id, size, 1);
 }
