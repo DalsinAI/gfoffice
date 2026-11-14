@@ -53,18 +53,31 @@ $(OUT)/test-dpdf-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dpdf.c
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dpdf.c -lz -o $@
 
-diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf
+# Step D6: EPS.
+$(OUT)/test-deps: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_deps.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_deps.c -lz -o $@
+
+$(OUT)/test-deps-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_deps.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_deps.c -lz -o $@
+
+diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf $(OUT)/test-deps
 	$(OUT)/test-diagram
 	$(OUT)/test-diagram-nozlib
 	$(OUT)/test-dexport
 	$(OUT)/test-doutline
 	$(OUT)/test-dpdf
+	$(OUT)/test-deps
 
-diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan
+diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan $(OUT)/test-deps-asan
 	$(OUT)/test-diagram-asan
 	$(OUT)/test-dexport-asan
 	$(OUT)/test-doutline-asan
 	$(OUT)/test-dpdf-asan
+	$(OUT)/test-deps-asan
 
 test: diagram-test
 check: diagram-check
