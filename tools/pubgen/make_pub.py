@@ -8,7 +8,8 @@ Each file sets out to reach one part of the reader (libowf/src/in_pub.c):
   gen-2007-plain.pub     the 2007 form at its simplest: one text box, the
                          default style (Times New Roman 10 pt), a master
   gen-2007-runs.pub      character runs (bold, italic, sizes, typefaces), a
-                         table, a PNG picture, two pages and a scratch frame
+                         table, a PNG picture, two pages, a scratch frame,
+                         and links: a web address, an e-mail, a page
   gen-2010-styles.pub    the 2010 mark; paragraph styles, centred, right and
                          left alignment over a style's
   gen-2013-look.pub      the 2013 mark; the colour scheme, fills, outlines,
@@ -228,10 +229,40 @@ class Text:
         self.styles = styles                 # [(char props, para props)]
         self.old = old
         self.stories = []                    # [(text id, [(para props, [(text, char props)])])]
+        self.links = {}                      # story: [(from, length, kind, target)]
 
-    def story(self, text_id, paras):
+    def story(self, text_id, paras, links=None):
         self.stories.append((text_id, paras))
+        if links:
+            self.links[len(self.stories) - 1] = links
         return len(self.stories) - 1
+
+    def tokn(self, k, length):
+        """Story k's links as TOKN (PUB-FORMAT.md 6.7): places, each link's
+        changed properties, each link's target, then the targets' table."""
+        links = self.links[k]
+        out = struct.pack('<III', len(links), 12, 0x1FFFF)
+        out += b''.join(struct.pack('<I', f) for f, _, _, _ in links) + struct.pack('<I', length)
+        last = (None, None)
+        for i, (f, n, kind, _) in enumerate(links):
+            fields = b''
+            if i == 0:
+                fields += qf(0x200, 0x20, 0x8C0)
+            if n != last[0]:
+                fields += qf(0x201, 0x20, n)
+            if kind != last[1]:
+                fields += qf(0x202, 0x20, kind)
+            last = (n, kind)
+            out += block(fields)
+        for i in range(len(links)):
+            out += block(qf(0x200, 0x20, i))
+        strs = [struct.pack('<H', len(t.encode('utf-16-le')) // 2) + t.encode('utf-16-le') for _, _, _, t in links]
+        offs, at = [], 4 * len(strs)
+        for x in strs:
+            offs.append(at)
+            at += len(x)
+        body = b''.join(struct.pack('<I', o) for o in offs) + b''.join(strs)
+        return out + struct.pack('<II', len(body), len(strs)) + bytes(12) + body
 
     def build(self):
         text = ''
@@ -252,6 +283,7 @@ class Text:
                     cruns.append((units(), None))
                 pruns.append((units(), pprops))
             lengths.append(units() - start)
+        tokns = [('TOKN', k, self.tokn(k, lengths[k])) for k in sorted(self.links)]
         tbytes = text.encode('utf-16-le')
         strs = struct.pack('<III', len(lengths), 8, 0xFF) + b''.join(struct.pack('<I', n) for n in lengths)
         syid = struct.pack('<II', 0, len(self.stories)) + b''.join(struct.pack('<I', t) for t, _ in self.stories)
@@ -274,7 +306,7 @@ class Text:
         stsh0 = struct.pack('<II', 0, 0)
         # chunks: name, index, data; TEXT at 0x200 as the files have it
         chunks = [('TEXT', 0, tbytes), ('STRS', 0, strs), ('SYID', 0, syid), ('FONT', 0, font),
-                  ('STSH', 0, stsh0), ('STSH', 1, stsh1), ('FDPC', 0, None), ('FDPP', 0, None)]
+                  ('STSH', 0, stsh0), ('STSH', 1, stsh1), ('FDPC', 0, None), ('FDPP', 0, None)] + tokns
         out = bytearray(0x200)
         out[0:8] = b'CHNKINK '
         struct.pack_into('<HH', out, 0x0C, len(chunks), 0)
@@ -575,17 +607,22 @@ def runs():
                 (None, [('Cell four', None)]), (None, [('Cell five', None)]), (None, [('Cell six', None)])])
     t.story(4, [(None, [('On the second page', None)])])
     t.story(5, [(None, [('Left on the scratch area', None)])])
+    t.story(6, [(None, [('See our site, write to us, or turn to page 1.', None)])],
+            links=[(4, 8, 1, 'https://example.org/gfoffice/'), (14, 11, 4, 'mailto:team@example.org?subject=Hello'),
+                   (30, 14, 3, '\u010a')])
     f1 = frame_chunk(c, p1, text_id=1)
     f2 = frame_chunk(c, p1, text_id=2)
     tb = frame_chunk(c, p1, kind=0x10, text_id=3, extra=[fv(0x66, 0x20, 3), fv(0x67, 0x20, 2)])
     pic = frame_chunk(c, p1)
     f4 = frame_chunk(c, p2, text_id=4)
     f5 = frame_chunk(c, scratch, text_id=5)
+    f6 = frame_chunk(c, p2, text_id=6)
     page1 = [Shape(f1, box_mm(pw, ph, 20, 20, 170, 20), text_id=1),
              Shape(f2, box_mm(pw, ph, 20, 50, 170, 40), text_id=2),
              Shape(tb, box_mm(pw, ph, 20, 100, 120, 40), stype=1),
              Shape(pic, box_mm(pw, ph, 150, 100, 30, 30), stype=75, blip=1)]
-    page2 = [Shape(f4, box_mm(pw, ph, 20, 20, 170, 20), text_id=4)]
+    page2 = [Shape(f4, box_mm(pw, ph, 20, 20, 170, 20), text_id=4),
+             Shape(f6, box_mm(pw, ph, 20, 50, 170, 20), text_id=6)]
     page3 = [Shape(f5, box_mm(pw, ph, 20, -60, 80, 20), text_id=5)]
     return publication(c.build(doc_fields(c, pw, ph, [m, p1, p2, scratch])), t, [[], page1, page2, page3],
                        [(0xF01E, blip_bitmap(png(4, 3, (0x20, 0x80, 0x40))))], (12, 0))
