@@ -1593,8 +1593,9 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
                 return;
             }
             owf_buf_printf(b, "><items count=\"%d\">", it.n + 1);
-            for (i = 0; i < it.n; i++)
-                owf_buf_printf(b, "<item x=\"%d\"/>", i);
+            for (i = 0; i < it.n; i++)            /* a hidden row or column item: h="1" */
+                owf_buf_printf(b, "<item x=\"%d\"%s/>", i,
+                               strcmp(axis, "axisPage") && owf_pivot_is_hidden(def, f, it.items[i]) ? " h=\"1\"" : "");
             owf_buf_puts(b, "<item t=\"default\"/></items></pivotField>");
             free(it.items);
         } else

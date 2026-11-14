@@ -505,6 +505,35 @@ static void data_name(const owf_book *book, const owf_pivotdef *def, unsigned d,
 /* Lays out def's table on the output sheet of an already private workbook,
  * and sets def->rows and def->cols to its size. old: the previous
  * definition on that sheet (its rectangle is emptied), or NULL. */
+static int is_axis(const owf_pivotdef *def, unsigned field)
+{
+    unsigned k;
+    for (k = 0; k < def->nrow; k++)
+        if (def->row[k] == field)
+            return 1;
+    for (k = 0; k < def->ncol; k++)
+        if (def->col[k] == field)
+            return 1;
+    return 0;
+}
+
+/* Whether a source row is in the table: each page field chooses it, and none of its row or
+ * column fields' items is hidden (a hidden item of a field not on the rows or columns now is
+ * kept for when it is again). */
+static int row_kept(const owf_pivotdef *def, const owf_sheet *source, unsigned srow)
+{
+    unsigned f;
+    for (f = 0; f < def->npage; f++)
+        if (!owf_pivot_item_matches(&def->page[f],
+                                    owf_sheet_find(source, srow, def->source.first_col + def->page[f].field)))
+            return 0;
+    for (f = 0; f < def->nhide && f < OWF_PIVOT_HIDES; f++)
+        if (is_axis(def, def->hide[f].field) && owf_pivot_item_matches(&def->hide[f],
+                                   owf_sheet_find(source, srow, def->source.first_col + def->hide[f].field)))
+            return 0;
+    return 1;
+}
+
 static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, const owf_pivotdef *old,
                        owf_calc **made_calc)
 {
@@ -541,11 +570,8 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
         goto done;
     for (i = 0; i < nsrc; i++) {
         unsigned srow = def->source.first_row + 1u + i;
-        int k, skip = 0;
-        for (f = 0; f < def->npage && !skip; f++)
-            skip = !owf_pivot_item_matches(&def->page[f],
-                                           owf_sheet_find(source, srow, def->source.first_col + def->page[f].field));
-        if (skip)
+        int k;
+        if (!row_kept(def, source, srow))
             continue;
         for (f = 0; f < nf; f++) {
             unsigned field = f < def->nrow ? def->row[f] : def->col[f - def->nrow];
@@ -587,11 +613,7 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
         goto done;
     for (i = 0, kept = 0; i < nsrc; i++) {
         unsigned srow = def->source.first_row + 1u + i;
-        int skip = 0;
-        for (f = 0; f < def->npage && !skip; f++)
-            skip = !owf_pivot_item_matches(&def->page[f],
-                                           owf_sheet_find(source, srow, def->source.first_col + def->page[f].field));
-        if (skip)
+        if (!row_kept(def, source, srow))
             continue;
         r = row_of[kept];
         c = col_of[kept];
