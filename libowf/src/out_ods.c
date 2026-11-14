@@ -2880,14 +2880,18 @@ static void put_pivot_field(ods_out *w, owf_buf *b, const owf_pivotdef *def, uns
 static void put_pivot_level(ods_out *w, owf_buf *b, const owf_pivotdef *def, unsigned field)
 {
     int sort = owf_pivot_sort_of(def, field), any = 0;
+    const owf_pivot_group *group = owf_pivot_group_of(def, field);
     unsigned k;
     for (k = 0; k < def->nhide && k < OWF_PIVOT_HIDES; k++)
         any |= def->hide[k].field == field;
-    if (sort == OWF_PIVOT_SORT_SOURCE && !any) {
+    if (sort == OWF_PIVOT_SORT_SOURCE && !any && !group) {
         owf_buf_puts(b, "/>");
         return;
     }
-    owf_buf_puts(b, "><table:data-pilot-level>");
+    owf_buf_puts(b, ">");
+    if (sort == OWF_PIVOT_SORT_SOURCE && !any)
+        goto groups;
+    owf_buf_puts(b, "<table:data-pilot-level>");
     if (any) {
         owf_buf_puts(b, "<table:data-pilot-members>");
         for (k = 0; k < def->nhide && k < OWF_PIVOT_HIDES; k++) {
@@ -2904,7 +2908,30 @@ static void put_pivot_level(ods_out *w, owf_buf *b, const owf_pivotdef *def, uns
     if (sort != OWF_PIVOT_SORT_SOURCE)
         owf_buf_printf(b, "<table:data-pilot-sort-info table:sort-mode=\"name\" table:order=\"%s\"/>",
                        sort == OWF_PIVOT_SORT_DESCENDING ? "descending" : "ascending");
-    owf_buf_puts(b, "</table:data-pilot-level></table:data-pilot-field>");
+    owf_buf_puts(b, "</table:data-pilot-level>");
+groups:
+    if (group && group->by == OWF_PIVOT_GROUP_RANGE) {
+        /* numbers in ranges: start, end and step */
+        char heading[160], n[32];
+        owf_pivot_field_heading(w->book, def, field, heading, sizeof heading);
+        owf_buf_puts(b, "<table:data-pilot-groups table:source-field-name=\"");
+        attr(w, b, heading);
+        owf_number_text(group->start, n);
+        owf_buf_printf(b, "\" table:start=\"%s\"", n);
+        owf_number_text(group->end, n);
+        owf_buf_printf(b, " table:end=\"%s\"", n);
+        owf_number_text(group->step, n);
+        owf_buf_printf(b, " table:step=\"%s\"/>", n);
+    } else if (group) {
+        char heading[160];
+        owf_pivot_field_heading(w->book, def, field, heading, sizeof heading);
+        owf_buf_puts(b, "<table:data-pilot-groups table:source-field-name=\"");
+        attr(w, b, heading);
+        owf_buf_printf(b, "\" table:date-start=\"auto\" table:date-end=\"auto\" table:grouped-by=\"%s\"/>",
+                       group->by == OWF_PIVOT_GROUP_YEARS ? "years"
+                       : group->by == OWF_PIVOT_GROUP_QUARTERS ? "quarters" : "months");
+    }
+    owf_buf_puts(b, "</table:data-pilot-field>");
 }
 
 static void put_pivots(ods_out *w, owf_buf *b)

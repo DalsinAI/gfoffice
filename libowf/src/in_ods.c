@@ -142,6 +142,7 @@ typedef struct {
     int orientation, function, kind, has_page;
     int sort;                    /* table:data-pilot-sort-info by name: OWF_PIVOT_SORT_... */
     int show;                    /* table:data-pilot-field-reference: OWF_PIVOT_SHOW_... */
+    owf_pivot_group group;       /* table:data-pilot-groups (by NONE when it has none) */
     char *page;                  /* table:selected-page */
 } ods_pivot_field;
 
@@ -3861,7 +3862,8 @@ static void body_start(ods *o, const owf_xml_event *e)
                 owf_report_add(o->report, OWF_NOTE_LOST, "Links to other programs (DDE) keep their last values");
             } else if (!strcmp(n, "data-pilot-table") || !strcmp(n, "source-cell-range") ||
                        !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info") ||
-                       !strcmp(n, "data-pilot-member") || !strcmp(n, "data-pilot-field-reference")) {
+                       !strcmp(n, "data-pilot-member") || !strcmp(n, "data-pilot-field-reference") ||
+                       !strcmp(n, "data-pilot-groups")) {
                 pivot_start(o, e);
             }
         } else if (!strcmp(n, "scenario")) {
@@ -4127,6 +4129,26 @@ static void pivot_start(ods *o, const owf_xml_event *e)
         pv->hides[pv->nhides].kind = (int)pivot_whole(ev(e, NS_GFO, "item-kind"));
         pv->hides[pv->nhides].name = copy(o, ev(e, NS_TABLE, "name") ? ev(e, NS_TABLE, "name") : "");
         pv->nhides++;
+    } else if (is(e, NS_TABLE, "data-pilot-groups")) {
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        const char *by = ev(e, NS_TABLE, "grouped-by"), *start = ev(e, NS_TABLE, "start");
+        const char *end = ev(e, NS_TABLE, "end"), *step = ev(e, NS_TABLE, "step");
+        owf_pivot_group g;
+        if (!f || (f->orientation != PV_ROW && f->orientation != PV_COLUMN))
+            return;
+        memset(&g, 0, sizeof g);
+        if (by) {
+            g.by = !strcmp(by, "years") ? OWF_PIVOT_GROUP_YEARS : !strcmp(by, "quarters") ? OWF_PIVOT_GROUP_QUARTERS
+                 : !strcmp(by, "months") ? OWF_PIVOT_GROUP_MONTHS : OWF_PIVOT_GROUP_NONE;
+        } else if (start && end && step && owf_number_parse(start, strlen(start), &g.start) &&
+                   owf_number_parse(end, strlen(end), &g.end) && owf_number_parse(step, strlen(step), &g.step)) {
+            g.by = OWF_PIVOT_GROUP_RANGE;
+        }
+        if (g.by == OWF_PIVOT_GROUP_NONE)
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table field grouped by hand, by day or by time shows its items ungrouped");
+        else
+            f->group = g;
     } else if (is(e, NS_TABLE, "data-pilot-field-reference")) {
         ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
         const char *type = ev(e, NS_TABLE, "type");
@@ -4242,10 +4264,20 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
             case PV_ROW:
                 if (def->nrow < OWF_PIVOT_FIELDS) def->row[def->nrow++] = (unsigned)index; else ok = 0;
                 if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
+                if (ok && f->group.by) {
+                    owf_pivot_group g = f->group;
+                    g.field = (unsigned)index;
+                    owf_pivot_set_group(def, &g);
+                }
                 break;
             case PV_COLUMN:
                 if (def->ncol < OWF_PIVOT_FIELDS) def->col[def->ncol++] = (unsigned)index; else ok = 0;
                 if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
+                if (ok && f->group.by) {
+                    owf_pivot_group g = f->group;
+                    g.field = (unsigned)index;
+                    owf_pivot_set_group(def, &g);
+                }
                 break;
             case PV_DATA:
                 if (def->ndata < OWF_PIVOT_DATA) {

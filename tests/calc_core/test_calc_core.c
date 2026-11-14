@@ -6182,6 +6182,158 @@ static void test_pivot_show_as(void)
     oc_core_free(core);
 }
 
+static void test_pivot_group(void)
+{
+    /* serials: 45658 is 2025-01-01, 45689 2025-02-01, 45748 2025-04-01, 46023 2026-01-01 */
+    static const char *const rows[][5] = {
+        { "Age", "Day", "Sales", "", "" },
+        { "3", "45658", "10", "", "" }, { "17", "45689", "20", "", "" }, { "12", "45748", "5", "", "" },
+        { "25", "46023", "15", "", "" }, { "-4", "45750", "1", "", "" }, { "n/a", "45690", "2", "", "" },
+        { "40", "45659", "4", "", "" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got;
+    owf_pivot_group g;
+    char config[OWF_PIVOT_TEXT_MAX], label[40];
+    int k;
+    if (!core)
+        return;
+    /* the keys and names alone */
+    memset(&g, 0, sizeof g);
+    g.by = OWF_PIVOT_GROUP_RANGE; g.start = 0; g.end = 29; g.step = 10;
+    CHECK(owf_pivot_group_key(&g, 17.0, 0) == 10.0 && owf_pivot_group_key(&g, 0.0, 0) == 0.0 &&
+          owf_pivot_group_key(&g, 29.0, 0) == 20.0 && owf_pivot_group_key(&g, -0.5, 0) < 0.0 &&
+          owf_pivot_group_key(&g, 30.0, 0) > 1e299);
+    owf_pivot_group_label(&g, 10.0, label, sizeof label);
+    CHECK_STR(label, "10-19");
+    owf_pivot_group_label(&g, -1e300, label, sizeof label);
+    CHECK_STR(label, "<0");
+    owf_pivot_group_label(&g, 1e300, label, sizeof label);
+    CHECK_STR(label, ">29");
+    g.start = 0.5; g.step = 0.25;
+    owf_pivot_group_label(&g, 0.75, label, sizeof label);
+    CHECK_STR(label, "0.75-1");
+    g.by = OWF_PIVOT_GROUP_YEARS;
+    CHECK(owf_pivot_group_key(&g, 45658.0, 0) == 2025.0 && owf_pivot_group_key(&g, 46022.75, 0) == 2025.0 &&
+          owf_pivot_group_key(&g, 46023.0, 0) == 2026.0 && owf_pivot_group_key(&g, 60.0, 0) == 1900.0 &&
+          owf_pivot_group_key(&g, 0.0, 1) == 1904.0 && owf_pivot_group_key(&g, 44197.0, 1) == 2025.0);
+    g.by = OWF_PIVOT_GROUP_MONTHS;
+    CHECK(owf_pivot_group_key(&g, 60.0, 0) == 2.0 && owf_pivot_group_key(&g, 61.0, 0) == 3.0 &&
+          owf_pivot_group_key(&g, 45689.0, 0) == 2.0 && owf_pivot_group_key(&g, 1.0, 0) == 1.0);
+    owf_pivot_group_label(&g, 2.0, label, sizeof label);
+    CHECK_STR(label, "Feb");
+    g.by = OWF_PIVOT_GROUP_QUARTERS;
+    CHECK(owf_pivot_group_key(&g, 45748.0, 0) == 2.0 && owf_pivot_group_key(&g, 45689.0, 0) == 1.0);
+    owf_pivot_group_label(&g, 2.0, label, sizeof label);
+    CHECK_STR(label, "Qtr2");
+    g.by = OWF_PIVOT_GROUP_RANGE; g.start = 5; g.end = 1; g.step = 1;
+    owf_pivot_init(&def);
+    CHECK(!owf_pivot_set_group(&def, &g) && def.ngroup == 0);         /* end before start */
+    g.end = 9; g.step = 0;
+    CHECK(!owf_pivot_set_group(&def, &g));
+
+    pivot_table_at(core, rows, 8);
+    CHECK(oc_parse_range("A1:C8", &selected));
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 0;
+    def.ndata = 1; def.data[0].field = 2; def.data[0].function = OC_SUBTOTAL_SUM;
+    memset(&g, 0, sizeof g);
+    g.field = 0; g.by = OWF_PIVOT_GROUP_RANGE; g.start = 0; g.end = 29; g.step = 10;
+    CHECK(owf_pivot_set_group(&def, &g) && def.ngroup == 1);
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    /* in order: <0 (-4: 1), 0-9 (3: 10), 10-19 (17, 12: 25), 20-29 (25: 15), >29 (40: 4), then n/a (2) */
+    CHECK_STR(text(core, "A2"), "<0");
+    CHECK_STR(text(core, "A3"), "0-9");
+    CHECK_STR(text(core, "A4"), "10-19");
+    CHECK_STR(text(core, "A5"), "20-29");
+    CHECK_STR(text(core, "A6"), ">29");
+    CHECK_STR(text(core, "A7"), "n/a");
+    CHECK_STR(text(core, "A8"), "Grand Total");
+    CHECK(near(num(core, "B2"), 1.0) && near(num(core, "B3"), 10.0) && near(num(core, "B4"), 25.0) &&
+          near(num(core, "B5"), 15.0) && near(num(core, "B6"), 4.0) && near(num(core, "B7"), 2.0) &&
+          near(num(core, "B8"), 57.0));
+    CHECK(oc_core_pivot_get(core, &got) && got.ngroup == 1);
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && strstr(config, ";b=0:n:0:29:10\""));
+
+    /* descending keeps groups together; a hidden group item leaves out its rows */
+    CHECK(owf_pivot_set_sort(&got, 0, OWF_PIVOT_SORT_DESCENDING));
+    {
+        owf_pivot_page item;
+        memset(&item, 0, sizeof item);
+        item.field = 0;
+        item.kind = OWF_PIVOT_NUMBER;
+        item.number = 10.0;                      /* the 10-19 group */
+        CHECK(owf_pivot_set_hidden(&got, &item, 1));
+    }
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "n/a");          /* text before numbers, going down */
+    CHECK_STR(text(core, "A3"), ">29");
+    CHECK_STR(text(core, "A4"), "20-29");
+    CHECK_STR(text(core, "A5"), "0-9");
+    CHECK_STR(text(core, "A6"), "<0");
+    CHECK(near(num(core, "B7"), 32.0));          /* Grand Total without 10-19's 25 */
+
+    /* Day by year to the columns, by month to the rows (one grouping per field: Day once) */
+    CHECK(oc_core_pivot_get(core, &got));
+    owf_pivot_init(&def);
+    def.source_sheet = got.source_sheet;
+    def.source = got.source;
+    def.nrow = 1; def.row[0] = 1;
+    def.ndata = 1; def.data[0].field = 2; def.data[0].function = OC_SUBTOTAL_SUM;
+    memset(&g, 0, sizeof g);
+    g.field = 1; g.by = OWF_PIVOT_GROUP_MONTHS;
+    CHECK(owf_pivot_set_group(&def, &g));
+    oc_core_free(core);
+    core = fresh();
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 8);
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    /* Jan (45658, 45659, 46023: 29), Feb (45689, 45690: 22), Apr (45748, 45750: 6) */
+    CHECK_STR(text(core, "A2"), "Jan");
+    CHECK_STR(text(core, "A3"), "Feb");
+    CHECK_STR(text(core, "A4"), "Apr");
+    CHECK(near(num(core, "B2"), 29.0) && near(num(core, "B3"), 22.0) && near(num(core, "B4"), 6.0));
+    CHECK(oc_core_pivot_get(core, &got));
+    g.by = OWF_PIVOT_GROUP_YEARS;
+    CHECK(owf_pivot_set_group(&got, &g) && got.ngroup == 1 && got.group[0].by == OWF_PIVOT_GROUP_YEARS);
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "2025");
+    CHECK_STR(text(core, "A3"), "2026");
+    CHECK(near(num(core, "B2"), 42.0) && near(num(core, "B3"), 15.0));
+    CHECK(oc_core_pivot_get(core, &got) && owf_pivot_config_text(&got, config, sizeof config) &&
+          strstr(config, ";b=1:y"));
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot-group.ods", "/tmp/opencalc-pivot-group.xlsx" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            owf_pivotdef back;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
+            if (k == 0)
+                CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 1 && back.group[0].field == 1 &&
+                      back.group[0].by == OWF_PIVOT_GROUP_YEARS);
+            else                                 /* .xlsx: saved ungrouped, for now */
+                CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 0);
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+    g.by = OWF_PIVOT_GROUP_NONE;
+    CHECK(owf_pivot_set_group(&got, &g) && got.ngroup == 0);
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && !strstr(config, ";b="));
+
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:9;b=0:x\"", &def));
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:9;b=0:n:5:1:1\"", &def));           /* end before start */
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:9;b=0:y,0:m\"", &def));            /* a field twice */
+    CHECK(owf_pivot_parse_config("\"2;r=0;d=1:9;b=0:n:-10.5:100:2.5\"", &def) && def.ngroup == 1 &&
+          def.group[0].start == -10.5 && def.group[0].end == 100.0 && def.group[0].step == 2.5);
+    oc_core_free(core);
+}
+
 static void test_pivot_definition_text(void)
 {
     owf_book *book = owf_book_new();
@@ -6848,6 +7000,7 @@ int main(void)
     test_pivot_sort();
     test_pivot_hide();
     test_pivot_show_as();
+    test_pivot_group();
     test_pivot_definition_text();
     test_solver_lp();
     test_solver();
