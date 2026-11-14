@@ -140,7 +140,7 @@ static void test_recording(void)
     CHECK(ow_editor_change_count(ed) == 3, "three changes");
 
     /* Backspace in the author's own insertion takes it out */
-    caret(ed, 0, 20);
+    caret(ed, 0, 22);
     ow_editor_backspace(ed);
     CHECK(!strcmp(dump(doc), "Hello{+ big+} [-world-]{+ther+}|Second line"), dump(doc));
 
@@ -438,10 +438,8 @@ static const char *format_changes_dump(const owf_doc *doc)
     return buf;
 }
 
-static void test_format_changes(void)
-{
-    static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
-    static const char *const parts[] = {
+static const char *const format_names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
+static const char *const format_parts[] = {
         "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
         "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
         "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
@@ -460,13 +458,16 @@ static void test_format_changes(void)
         "<w:ins w:id=\"6\" w:author=\"Hal\" w:date=\"2026-11-03T11:02:00Z\"><w:r><w:rPr><w:u w:val=\"single\"/>"
         "<w:rPrChange w:id=\"7\" w:author=\"Hal\"><w:rPr/></w:rPrChange></w:rPr><w:t>both</w:t></w:r></w:ins>"
         "</w:p><w:sectPr/></w:body></w:document>" };
+
+static void test_format_changes(void)
+{
     static const char want[] = "<Plain ><unbolded was b Gil 2026-11-03T11:00:00Z>< then ><bolded b was i Gil 2026-11-03T11:01:00Z>"
                                "<both u ins was Hal ->";
     owf_doc *doc = NULL, *back = NULL, *view = NULL;
     owf_report *rp = owf_report_new();
     char first[1024];
     int i, kept = 0;
-    CHECK(rp && zip_import(names, parts, 3, &doc) == OWF_OK && doc, "Word's format changes");
+    CHECK(rp && zip_import(format_names, format_parts, 3, &doc) == OWF_OK && doc, "Word's format changes");
     if (!doc) { owf_report_free(rp); return; }
     strcpy(first, format_changes_dump(doc));
     CHECK(!strcmp(first, want), first);
@@ -530,6 +531,47 @@ static void test_format_changes(void)
     owf_doc_free(doc);
 }
 
+/* Accepting and rejecting format changes in the editor: the one at the caret, then all; undo */
+static void test_format_accept(void)
+{
+    static const char want[] = "<Plain ><unbolded was b Gil 2026-11-03T11:00:00Z>< then ><bolded b was i Gil 2026-11-03T11:01:00Z>"
+                               "<both u ins was Hal ->";
+    owf_doc *doc = NULL;
+    ow_editor *ed;
+    int i;
+    CHECK(zip_import(format_names, format_parts, 3, &doc) == OWF_OK && doc, "Word's format changes");
+    if (!doc) return;
+    ed = ow_editor_new(doc);
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    /* reject the one at the caret, in "bolded" */
+    caret(ed, 0, 22);
+    CHECK(ow_editor_accept_change(ed, 0) == OWF_OK, "reject at the caret");
+    CHECK(!strcmp(format_changes_dump(doc), "<Plain ><unbolded was b Gil 2026-11-03T11:00:00Z>< then ><bolded i>"
+                                            "<both u ins was Hal ->"), format_changes_dump(doc));
+    CHECK(ow_editor_undo(ed) == 1 && !strcmp(format_changes_dump(doc), want), format_changes_dump(doc));
+    /* accept the one at the caret, in "unbolded": it joins the plain text before and after it */
+    caret(ed, 0, 8);
+    CHECK(ow_editor_accept_change(ed, 1) == OWF_OK, "accept at the caret");
+    CHECK(!strcmp(format_changes_dump(doc), "<Plain unbolded then ><bolded b was i Gil 2026-11-03T11:01:00Z>"
+                                            "<both u ins was Hal ->"), format_changes_dump(doc));
+    CHECK(ow_editor_undo(ed) == 1 && !strcmp(format_changes_dump(doc), want), format_changes_dump(doc));
+    /* all: accepted, the formats now and the insertion kept; rejected, the formats before and no insertion */
+    CHECK(ow_editor_accept_all_changes(ed, 1) == OWF_OK, "accept all");
+    CHECK(!strcmp(format_changes_dump(doc), "<Plain unbolded then ><bolded b><both u>"), format_changes_dump(doc));
+    CHECK(!owf_doc_has_changes(doc), "none left");
+    CHECK(ow_editor_undo(ed) == 1 && !strcmp(format_changes_dump(doc), want), format_changes_dump(doc));
+    CHECK(ow_editor_accept_all_changes(ed, 0) == OWF_OK, "reject all");
+    CHECK(!strcmp(format_changes_dump(doc), "<Plain ><unbolded b>< then ><bolded i>"), format_changes_dump(doc));
+    /* a caret with no change anywhere near it: nothing to do */
+    CHECK(ow_editor_undo(ed) == 1, "undo reject all");
+    caret(ed, 0, 2);
+    CHECK(ow_editor_accept_change(ed, 1) == OWF_ERR_UNSUPPORTED, "no change at the caret");
+    for (i = 0; i < 2; ++i) CHECK(doc->nformat_changes == 3, "the list stays");
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     test_recording();
@@ -540,6 +582,7 @@ int main(void)
     test_word_form();
     test_odf_form();
     test_format_changes();
+    test_format_accept();
     printf("track changes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
