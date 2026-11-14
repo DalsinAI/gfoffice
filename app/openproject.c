@@ -274,7 +274,7 @@ static int run_file(const char *verb, const char *name, const char *more)
         snprintf(rx.lasterror, sizeof rx.lasterror, "A file name with a quote in it can't be used");
         return OPJ_RX_ERROR;
     }
-    snprintf(line, sizeof line, "%s \"%s\"%s%s", verb, name, more ? " " : "", more ? more : "");
+    snprintf(line, sizeof line, "%.15s \"%.500s\"%s%.40s", verb, name, more ? " " : "", more ? more : "");
     return run(line, NULL, 0);
 }
 
@@ -302,8 +302,8 @@ static void update_title(void)
 {
     const char *name = rx.file[0] ? leaf(rx.file) : "Untitled";
     if (!win) return;
-    if (status[0]) snprintf(title_text, sizeof title_text, "GFOpenProject - %s%s - %s", name, DOC->dirty ? " *" : "", status);
-    else snprintf(title_text, sizeof title_text, "GFOpenProject - %s%s", name, DOC->dirty ? " *" : "");
+    if (status[0]) snprintf(title_text, sizeof title_text, "GFOpenProject - %.100s%s - %.150s", name, DOC->dirty ? " *" : "", status);
+    else snprintf(title_text, sizeof title_text, "GFOpenProject - %.100s%s", name, DOC->dirty ? " *" : "");
     SetWindowTitles(win, (UBYTE *)title_text, (UBYTE *)~0);
 }
 
@@ -392,8 +392,8 @@ static void edit_failed(int rc, const char *what)
 {
     char msg[300];
     if (rc == OWF_OK) return;
-    if (rc == OWF_ERR_MEMORY) snprintf(msg, sizeof msg, "%s: not enough memory", what);
-    else snprintf(msg, sizeof msg, "%s: not possible (out of range, text it doesn't take, or a loop of links)", what);
+    if (rc == OWF_ERR_MEMORY) snprintf(msg, sizeof msg, "%.60s: not enough memory", what);
+    else snprintf(msg, sizeof msg, "%.60s: not possible (out of range, text it doesn't take, or a loop of links)", what);
     tell(msg);
 }
 
@@ -411,7 +411,7 @@ static void edit_cell(void)
         return;
     }
     opj_cell_text(DOC, view.selected, sel_col, text, sizeof text);
-    snprintf(prompt, sizeof prompt, "%s", opj_column_title(sel_col));
+    snprintf(prompt, sizeof prompt, "%.60s", opj_column_title(sel_col));
     if (!ask_text("Edit Cell", prompt, text, sizeof text)) return;
     rc = opj_set_cell(DOC, view.selected, sel_col, text);
     edit_failed(rc, opj_column_title(sel_col));
@@ -494,7 +494,7 @@ static void export_as(const char *format, const char *pattern)
 {
     char path[512], more[24];
     if (!ask_file("Export the plan as", TRUE, pattern, path, sizeof path)) return;
-    snprintf(more, sizeof more, "FORMAT %s", format);
+    snprintf(more, sizeof more, "FORMAT %.10s", format);
     if (run_file("EXPORT", path, more) != OPJ_RX_OK) tell(rx.lasterror);
     else set_status("Exported");
     redraw();
@@ -999,7 +999,7 @@ static void rexx_open(void)
     Forbid();
     for (n = 1; n < 10; n++) {                       /* GFOPENPROJECT, then GFOPENPROJECT.2 for a second copy */
         if (n == 1) put_text(rexx_name, sizeof rexx_name, REXX_PORT_NAME);
-        else snprintf(rexx_name, sizeof rexx_name, "%s.%d", REXX_PORT_NAME, n);
+        else snprintf(rexx_name, sizeof rexx_name, REXX_PORT_NAME ".%d", n);
         if (!FindPort((STRPTR)rexx_name)) break;
     }
     if (n == 10) { Permit(); DeleteMsgPort(p); return; }
