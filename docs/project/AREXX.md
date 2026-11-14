@@ -28,7 +28,7 @@ These follow the GFOffice conventions (docs/gfoffice/Design-Suite-Shared.md 6.3)
 | ISDIRTY | | `1` or `0` |
 | GETFILE | | the plan's file, or nothing |
 | NEW | `START/K,FORCE/S` | an empty plan from START (a date), or from the plan's start |
-| OPEN | `FILE/A,FORCE/S` | .gfproj, MS Project XML (MSPDI) or CSV, by what the file holds |
+| OPEN | `FILE/A,FORCE/S` | .gfproj, MS Project XML (MSPDI), MPX or CSV, by what the file holds |
 | SAVE | | to the plan's file, in the format its extension names |
 | SAVEAS | `FILE/A` | .xml is MSPDI, .csv is CSV, anything else .gfproj |
 | EXPORT | `FILE/A,FORMAT/K` | a copy (MSPDI, CSV or GFPROJ); the plan keeps its file |

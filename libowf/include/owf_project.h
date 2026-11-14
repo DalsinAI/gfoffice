@@ -215,15 +215,18 @@ size_t owf_project_bytes(const owf_project *p);
  * .gfproj: GFOpenProject's own, a zip holding "mimetype" (stored first), content.xml and meta.xml;
  *   content.xml uses MSPDI's element names in GFOpenProject's namespace.
  * MSPDI: MS Project's XML (Microsoft's published Project XML Data Interchange schema).
- * CSV: the task table, a header row then one row per task, columns found by their header. */
-enum { OWF_PFILE_GFPROJ, OWF_PFILE_MSPDI, OWF_PFILE_CSV };
+ * CSV: the task table, a header row then one row per task, columns found by their header.
+ * MPX: MS Project's older text exchange format (MPX 4.0), read only (owf_pmpx.c). */
+enum { OWF_PFILE_GFPROJ, OWF_PFILE_MSPDI, OWF_PFILE_CSV, OWF_PFILE_MPX };
 #define OWF_PFILE_MIME "application/x-gfopenproject"
 #define OWF_PFILE_NS "urn:amicradle:gfopenproject:1"
 
 /* What data looks like: an OWF_PFILE_, or -1 when it is none of them (anything that is not a zip or
  * XML is taken for CSV). */
 int owf_project_detect(const unsigned char *data, size_t length);
-/* Reads a plan of any of the three into a new project (not scheduled). OWF_OK, OWF_ERR_FORMAT (not a
+/* An MPX file into a new project (not scheduled), as owf_project_read. */
+int owf_pmpx_read(const unsigned char *data, size_t length, owf_project **out);
+/* Reads a plan of any of these into a new project (not scheduled). OWF_OK, OWF_ERR_FORMAT (not a
  * plan), OWF_ERR_CORRUPT (damaged), OWF_ERR_UNSUPPORTED or OWF_ERR_MEMORY. A CSV's project starts at
  * its earliest Start, or 1 Jan 2000 when it has none. */
 int owf_project_read(const unsigned char *data, size_t length, owf_project **out);
