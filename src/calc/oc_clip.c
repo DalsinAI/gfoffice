@@ -541,3 +541,43 @@ char *oc_text_from_latin1(const char *latin1, size_t length, size_t *out_length)
         *out_length = n;
     return out;
 }
+
+/* ---- ARexx answers in UTF-8 (GETCELL ... UTF8) ---- */
+
+int oc_rexx_wants_utf8(const char *rest)
+{
+    static const char word[] = "UTF8";
+    size_t i;
+    if (!rest)
+        return 0;
+    while (*rest == ' ' || *rest == '\t')
+        rest++;
+    for (i = 0; i < 4; i++) {
+        char c = rest[i] >= 'a' && rest[i] <= 'z' ? (char)(rest[i] - 'a' + 'A') : rest[i];
+        if (c != word[i])
+            return 0;
+    }
+    rest += 4;
+    while (*rest == ' ' || *rest == '\t')
+        rest++;
+    return !*rest;
+}
+
+size_t oc_rexx_utf8_copy(const char *utf8, char *out, size_t cap)
+{
+    size_t n, cut;
+    if (!cap)
+        return 0;
+    n = utf8 ? strlen(utf8) : 0;
+    if (n > cap - 1) {
+        n = cap - 1;
+        cut = n;
+        while (cut > 0 && ((unsigned char)utf8[cut] & 0xC0) == 0x80)   /* utf8[n] goes on a character */
+            cut--;
+        n = cut;
+    }
+    if (n)
+        memcpy(out, utf8, n);
+    out[n] = 0;
+    return n;
+}

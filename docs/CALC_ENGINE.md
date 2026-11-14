@@ -260,6 +260,13 @@ test of 13 Nov:
   stays text. ARexx `GETCELL` still returns Latin-1, so it gives "?" for these
   cells (#178).
 
+GFOpenCalc 0.1.78 (`opencalc_core.h` 0.36.0):
+- ARexx `GETCELL` and `GETFORMULA` take the word `UTF8` after the cell
+  (`GETCELL G2 UTF8`). Then they answer the cell's UTF-8 as it is, so a
+  script can see a Gantt's "■" (E2 96 A0) instead of Latin-1's "?". The
+  answer is never cut in the middle of a character. Without the word, the
+  answer is Latin-1 as before.
+
 ## Pivot-summary aggregation
 
 GFOpenCalc 0.1.62's Data > Pivot Summary is the first DataPilot-style vertical

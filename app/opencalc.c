@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.77 (14.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.78 (14.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -6647,18 +6647,22 @@ static int rexx_do_command(const char *command, char **result_out)
         else if (oc_core_comment_info(core, oc_core_sheet(core), row, col, text, sizeof text, NULL, 0, NULL) >= 0)
             to_latin1(text, strlen(text), result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCELL", &arg)) {
-        if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
+        const char *rest;   /* GETCELL cell [UTF8]: UTF8 answers the cell's UTF-8, not Latin-1's '?' for U+25A0 */
+        if (!rexx_cell(arg, &row, &col, &rest)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
         else {
             char shown[512];
             oc_core_cell_text(core, oc_core_sheet(core), row, col, shown, sizeof shown);
-            to_latin1(shown, strlen(shown), result_text, sizeof result_text);
+            if (oc_rexx_wants_utf8(rest)) oc_rexx_utf8_copy(shown, result_text, sizeof result_text);
+            else to_latin1(shown, strlen(shown), result_text, sizeof result_text);
         }
     } else if (starts_word_ci(command, "GETFORMULA", &arg)) {
-        if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
+        const char *rest;
+        if (!rexx_cell(arg, &row, &col, &rest)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
         else {
             char *in = oc_core_cell_input(core, oc_core_sheet(core), row, col);
-            if (in) to_latin1(in, strlen(in), result_text, sizeof result_text);
-            else ok = 0;
+            if (!in) ok = 0;
+            else if (oc_rexx_wants_utf8(rest)) oc_rexx_utf8_copy(in, result_text, sizeof result_text);
+            else to_latin1(in, strlen(in), result_text, sizeof result_text);
             owf_free(in);
         }
     } else if (starts_word_ci(command, "SETCELL", &arg)) {

@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.35.1"
+#define OC_CORE_VERSION "0.36.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -744,6 +744,15 @@ char *oc_core_selection_text(const oc_core *core, size_t *length);
  * sequence) and back. owf_malloc'd, NUL-ended; NULL when memory runs out. */
 char *oc_text_to_latin1(const char *utf8, size_t length, size_t *out_length);
 char *oc_text_from_latin1(const char *latin1, size_t length, size_t *out_length);
+
+/* ARexx: GETCELL and GETFORMULA answer in Latin-1, so a character Latin-1
+ * hasn't (a Gantt's U+25A0 bar) comes back as '?'. With the word UTF8 after the
+ * cell they answer the cell's UTF-8 as it is. oc_rexx_wants_utf8: 1 when
+ * REST (what follows the cell) is the word UTF8, any case, spaces around it.
+ * oc_rexx_utf8_copy: UTF-8 into OUT (CAP bytes with the NUL), never cutting
+ * a character in half; its length. */
+int oc_rexx_wants_utf8(const char *rest);
+size_t oc_rexx_utf8_copy(const char *utf8, char *out, size_t cap);
 
 /* ---- Styles of the selection (each one undo step) ---- */
 
