@@ -139,6 +139,31 @@ int owf_drawio_read(const unsigned char *data, size_t length, owf_diagram *d);
  * writes by default. OWF_OK or OWF_ERR_MEMORY. */
 int owf_drawio_write(const owf_diagram *d, int compressed, unsigned char **data, size_t *length);
 
+/* ---- Where cells are ---- */
+
+/* A cell's box on the page in hundredths (x, y, width, height): its geometry, moved by every vertex it is
+ * inside. 1 when it has one, 0 when not (no geometry, or a label placed along an edge). */
+int owf_dcell_box(const owf_dpage *p, const owf_dcell *c, owf_dnum box[4]);
+/* The box round everything drawn on a page; 0 when nothing is. */
+int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4]);
+
+/* ---- SVG and PNG with the diagram inside ----
+ * As diagrams.net exports them, so that a picture opens again as the diagram it came from: an SVG holds
+ * the whole mxfile in its root's content attribute, a PNG in a tEXt chunk keyed "mxfile" (URI-encoded). */
+
+/* One page drawn as SVG 1.1 (shapes, connectors, labels), with the whole diagram inside. OWF_OK;
+ * OWF_ERR_FORMAT when there is no such page; OWF_ERR_MEMORY. */
+int owf_dsvg_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* The diagram inside an SVG. OWF_ERR_FORMAT when it is not an SVG or holds none; else as owf_drawio_read. */
+int owf_dsvg_read(const unsigned char *data, size_t length, owf_diagram *d);
+/* A copy of the PNG with the diagram put in (after IHDR; any diagram it held is replaced). OWF_OK;
+ * OWF_ERR_FORMAT when png is not a PNG; OWF_ERR_MEMORY. */
+int owf_dpng_embed(const unsigned char *png, size_t png_length, const owf_diagram *d, unsigned char **data,
+                   size_t *length);
+/* The diagram inside a PNG (tEXt, or zTXt as older exports have it). OWF_ERR_FORMAT when it is not a PNG or
+ * holds none; OWF_ERR_CORRUPT when a chunk is damaged; else as owf_drawio_read. */
+int owf_dpng_read(const unsigned char *png, size_t length, owf_diagram *d);
+
 #ifdef __cplusplus
 }
 #endif
