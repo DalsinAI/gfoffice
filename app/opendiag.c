@@ -34,6 +34,7 @@
 #include <graphics/rastport.h>
 #include <devices/inputevent.h>
 #include <utility/tagitem.h>
+#include <cybergraphx/cybergraphics.h>
 
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -42,6 +43,7 @@
 #include <proto/gadtools.h>
 #include <proto/asl.h>
 #include <proto/diskfont.h>
+#include <proto/cybergraphics.h>
 #include <rexx/storage.h>
 #include <rexx/errors.h>
 #include <proto/rexxsyslib.h>
@@ -56,7 +58,8 @@
 #include "opendiag_style.h"
 #include "opendiag_mind.h"
 
-struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL;   /* labels' sizes: OpenDiskFont */
+struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL;
+struct Library *CyberGfxBase = NULL;     /* the page as a picture (PNG, ILBM): its pixels read back; optional */   /* labels' sizes: OpenDiskFont */
 struct RxsLib *RexxSysBase = NULL;
 
 #define VERSION_TEXT "GFOpenDiag 0.1.0 (14.11.2026)"
@@ -66,7 +69,7 @@ static const char version[] __attribute__((used)) =
 /* ---- Menus ---- */
 
 enum {
-    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_EXPORT_PDF, M_ABOUT, M_QUIT,
+    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_EXPORT_PDF, M_EXPORT_PNG, M_EXPORT_ILBM, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS, M_MAP_NEW, M_MAP_IMPORT, M_MAP_EXPORT,
     M_TOOL = 100,                        /* M_TOOL + odg_tool */
@@ -86,6 +89,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Save As...", "A", 0, 0, (APTR)M_SAVEAS },
     { NM_ITEM, "Export SVG...", NULL, 0, 0, (APTR)M_EXPORT_SVG },
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_EXPORT_PDF },
+    { NM_ITEM, "Export PNG...", NULL, 0, 0, (APTR)M_EXPORT_PNG },
+    { NM_ITEM, "Export IFF ILBM...", NULL, 0, 0, (APTR)M_EXPORT_ILBM },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "About...", "?", 0, 0, (APTR)M_ABOUT },
     { NM_ITEM, "Quit", "Q", 0, 0, (APTR)M_QUIT },
@@ -452,6 +457,57 @@ static void redraw(void)
     oldraw_damage_all(od);
     oldraw_redraw(od, draw_cb, NULL);
     update_title();
+}
+
+/* ---- The page as a picture (EXPORT to PNG and IFF ILBM, opendiag_rexx.h's odg_picture_fn) ----
+ * The page drawn by odg_draw, as the window draws it but at 100%, with no grid and no selection, into an
+ * off-screen bitmap like the screen's, and its pixels read back as RGB (cybergraphics.library). The same drawing
+ * as the window, so what the picture shows is what the canvas shows. */
+
+static void picture_cb(void *user, oldraw *d, const oldraw_rect *area)
+{
+    odg_draw(d, (const odg_view *)user, DOC, area);
+}
+
+static unsigned char *page_picture(void *user, const owf_dnum box[4], int width, int height)
+{
+    struct BitMap *bm;
+    struct RastPort rp;
+    oldraw *pd;
+    odg_view pv;
+    unsigned char *rgb = NULL;
+    ULONG depth;
+    (void)user;
+    if (!CyberGfxBase || !scr || width < 1 || height < 1) return NULL;
+    depth = GetBitMapAttr(scr->RastPort.BitMap, BMA_DEPTH);
+    bm = AllocBitMap((ULONG)width, (ULONG)height, depth, BMF_CLEAR | BMF_DISPLAYABLE, scr->RastPort.BitMap);
+    if (!bm) return NULL;
+    InitRastPort(&rp);
+    rp.BitMap = bm;
+    pd = oldraw_new_rastport(&rp, scr, width, height);
+    if (pd) {
+        odg_view_init(&pv, width, height);
+        pv.left = box[0];
+        pv.top = box[1];
+        pv.grid = 0;
+        pv.paper = view.paper;
+        pv.font = font_name;
+        oldraw_damage_all(pd);
+        oldraw_redraw(pd, picture_cb, &pv);
+        oldraw_flush(pd);
+        oldraw_free(pd);
+        /* ReadPixelArray says how many pixels it read; fewer than the whole page is no picture, not one with
+         * whatever was in the memory (a planar screen's bitmap reads through cybergraphics' emulation) */
+        if ((rgb = (unsigned char *)malloc((size_t)width * (size_t)height * 3)) != NULL &&
+            ReadPixelArray(rgb, 0, 0, (UWORD)(width * 3), &rp, 0, 0, (UWORD)width, (UWORD)height, RECTFMT_RGB) <
+                (ULONG)width * (ULONG)height) {
+            free(rgb);
+            rgb = NULL;
+        }
+    }
+    WaitBlit();
+    FreeBitMap(bm);
+    return rgb;
 }
 
 static void set_zoom(int zoom)
@@ -987,9 +1043,11 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SAVEAS: save(1); return;
     case M_EXPORT_SVG: export_as("SVG", "#?.svg"); return;
     case M_EXPORT_PDF: export_as("PDF", "#?.pdf"); return;
+    case M_EXPORT_PNG: export_as("PNG", "#?.png"); return;
+    case M_EXPORT_ILBM: export_as("ILBM", "#?.(iff|ilbm)"); return;
     case M_ABOUT:
         tell(VERSION_TEXT "\nThe diagram editor of the GFOffice Suite.\n\n.drawio diagrams, as diagrams.net reads them;\n"
-             "SVG and PNG with the diagram inside open;\nSVG and PDF exports.\nMIT, Copyright (c) 2026 AmiCradle Team");
+             "SVG and PNG with the diagram inside open;\nSVG, PDF, PNG and IFF ILBM exports.\nMIT, Copyright (c) 2026 AmiCradle Team");
         break;
     case M_QUIT: if (may_drop()) quit_now = 1; break;
     case M_UNDO: undo_redo(0); return;
@@ -1396,6 +1454,8 @@ int main(int argc, char **argv)
         goto out;
     }
     have_rx = 1;
+    CyberGfxBase = OpenLibrary((STRPTR)"cybergraphics.library", 40);
+    if (CyberGfxBase) rx.picture = page_picture;  /* without it EXPORT to PNG or ILBM says it needs the drawn page */
     odg_view_init(&view, 100, 100);
     view.grid = 1;
     odg_edit_init(&ed);
@@ -1422,6 +1482,7 @@ out:
     close_window();
     if (have_rx) odg_rexx_free(&rx);
     if (DiskfontBase) CloseLibrary(DiskfontBase);
+    if (CyberGfxBase) { CloseLibrary(CyberGfxBase); CyberGfxBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
     return rc;

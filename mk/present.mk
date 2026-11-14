@@ -77,16 +77,16 @@ $(OUT)/test-opr-clip: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h t
 	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) \
 		tests/deck/test_opr_clip.c -lz -o $@
 
-$(OUT)/test-opr-picture: src/deck/opr_picture.c include/openpresentation_core.h tests/deck/test_opr_picture.c
+$(OUT)/test-opr-picture: src/deck/opr_picture.c src/deck/ow_picture.c include/ow_picture.h include/openpresentation_core.h tests/deck/test_opr_picture.c
 	mkdir -p $(OUT)
 	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -I$(OPENLAYOUT_SRC)/include -Ilibowf/include -Ilibowf/src \
-		src/deck/opr_picture.c tests/deck/test_opr_picture.c -lz -o $@
+		src/deck/opr_picture.c src/deck/ow_picture.c tests/deck/test_opr_picture.c -lz -o $@
 
-$(OUT)/test-opr-picture-asan: src/deck/opr_picture.c include/openpresentation_core.h tests/deck/test_opr_picture.c
+$(OUT)/test-opr-picture-asan: src/deck/opr_picture.c src/deck/ow_picture.c include/ow_picture.h include/openpresentation_core.h tests/deck/test_opr_picture.c
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
 		-DOWF_HAVE_ZLIB -DOWF_TEST_NO_ZLIBRARY -Iinclude -I$(OPENLAYOUT_SRC)/include -Ilibowf/include -Ilibowf/src \
-		src/deck/opr_picture.c tests/deck/test_opr_picture.c -lz -o $@
+		src/deck/opr_picture.c src/deck/ow_picture.c tests/deck/test_opr_picture.c -lz -o $@
 
 $(OUT)/test-opr-clip-asan: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_clip.c
 	mkdir -p $(OUT)

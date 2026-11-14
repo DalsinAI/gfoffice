@@ -842,8 +842,7 @@ int opr_clip_paste(const opr_clip *c, opr_undo *u, owf_deck *deck, int at, int *
  * opr_picture_name: "Talk.png", slide index 2 of 12 -> "Talk-03.png". */
 #define OPR_PICTURE_PNG 0
 #define OPR_PICTURE_ILBM 1
-unsigned char *opr_png_encode(const unsigned char *rgb, int width, int height, size_t stride, size_t *length);
-unsigned char *opr_ilbm_encode(const unsigned char *rgb, int width, int height, size_t stride, size_t *length);
+#include "ow_picture.h"                  /* opr_png_encode, opr_ilbm_encode: GFOpenDiag writes pictures with them too */
 int opr_picture_format_for(const char *path);
 int opr_picture_write(const char *path, int format, const unsigned char *rgb, int width, int height, size_t stride);
 int opr_picture_name(char *out, size_t size, const char *path, int index, int count);
