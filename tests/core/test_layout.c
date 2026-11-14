@@ -531,15 +531,19 @@ static void contents_checks(const ow_layout *l, const owf_doc *doc)
           doc->body.paras[4].fmt.tabs[0].position == 8000);
     for (i = 0; i < 4; ++i) {
         const owf_para *p = &doc->body.paras[entries[i].para];
-        CHECK(p->nruns == 3 && p->runs[1].kind == OWF_RUN_TAB && p->runs[2].kind == OWF_RUN_TEXT);
+        /* 2.0.30: the page number is Word's PAGEREF, a page reference field */
+        CHECK(p->nruns == 3 && p->runs[1].kind == OWF_RUN_TAB && p->runs[2].kind == OWF_RUN_FIELD &&
+              p->runs[2].field == OWF_FIELD_REF_PAGE);
         if (p->nruns != 3) continue;
         CHECK(run_end(l, doc, entries[i].para, 0, &pa, &a) && run_end(l, doc, entries[i].para, 2, &pb, &b));
-        /* on the entry's line, ending at the stop */
+        /* on the entry's line, the number ending at the stop */
         CHECK(pa == pb && a.y == b.y);
-        CHECK(b.x == margin + entries[i].stop * OL_UNITS_PER_TWIP);
+        op = run_op(l, entries[i].para, 2);
+        CHECK(op && op->u.text.bounds.x + op->u.text.bounds.width == margin + entries[i].stop * OL_UNITS_PER_TWIP);
+        if (op) b.x = op->u.text.bounds.x;           /* the leader runs up to the number */
         op = run_op(l, entries[i].para, 1);
         CHECK(op && OL_TEXT_LEADER_OF(op->u.text.style.text_flags) == entries[i].leader &&
-              op->u.text.bounds.x + op->u.text.bounds.width < b.x && op->u.text.bounds.width > 0);
+              op->u.text.bounds.x + op->u.text.bounds.width <= b.x && op->u.text.bounds.width > 0);
     }
     /* "Centred" centred at 4513, "1234.50" with its point at 8000 */
     {
