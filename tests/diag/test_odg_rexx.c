@@ -266,6 +266,13 @@ static void test_long_lines(void)
     memset(line + n, 'c', sizeof line - n - 1);
     line[sizeof line - 1] = 0;
     CHECK(rx_do(line) != ODG_RX_OK);                /* no cell x; the point is it ends cleanly under ASan */
+    CHECK_N(rx_do("SETVALUE \"\" text"), ODG_RX_ERROR);           /* a quoted empty id: no such cell */
+    CHECK_N(rx_do("SETVALUE \"\""), ODG_RX_ERROR);
+    CHECK_N(rx_do("GETVALUE \"\""), ODG_RX_ERROR);
+    memcpy(line, "SETVALUE ", 9);                 /* an id of 2047 bytes, the room less its NUL, then text */
+    memset(line + 9, 'd', 2047);
+    strcpy(line + 9 + 2047, " text");
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
     odg_rexx_free(&rx);
 }
 
