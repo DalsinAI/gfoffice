@@ -69,7 +69,7 @@ page 1 master 1 frames 43
       align centre
   frame 3 group box 12.7 12.7 190.5 4.6 mm (emu 457200 457200 7315200 621792) shape 0
   frame 4 shape in 3 box 12.7 12.7 190.5 4.6 mm (emu 457200 457200 7315200 621792) shape 1
-    look no-line margins 36576 36576 36576 36576
+    look fill #ffffff no-line margins 36576 36576 36576 36576
   frame 5 shape in 3 box 12.7 12.7 190.5 4.6 mm (emu 457200 457200 7315200 621792) shape 1
     look fill #000000 no-line width 0 margins 36576 36576 36576 36576
   frame 6 shape in 3 box 12.7 13.3 15.9 3.3 mm (emu 457200 479624 1028700 599458) shape 1

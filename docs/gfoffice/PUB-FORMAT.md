@@ -195,6 +195,16 @@ section 7, in 289 of 290 frames); 0x02, 0x03 flags; 0x04 = 3; 0x0C and 0x0D
 (8 bytes each) zero in every sample. Its position is in the drawing
 (section 7), not here.
 
+**Linked frames** [V 1: SampleNewsletter, 13 chains of 2 or 3 frames, every
+one left to right on its page as its thumbnail's columns are]: frames that
+share a text id are one story flowing through them. 0x28 = the frame's place
+in its chain (none: the first, then 1, 2); 0x36 = the chunk of the frame
+before it and 0x37 the one after. The chunks, and the drawing, may list a
+chain's frames in another order (page 2: middle, left, right), so the reader
+orders them by 0x28. 0x46 and the array 0x47 (items of type 0x68, chunk
+numbers) [H: the objects the frame's text wraps around; 0x46 their count is
+not always the array's length].
+
 **A table (0x10)** [V 8]: 0x27 the text id; 0x66 the rows and 0x67 the
 columns (3 and 2 in Sample, whose thumbnail shows its table's six cells'
 text, in that order); 0x68 and 0x69 two lengths in EMU [H: width and
@@ -329,7 +339,7 @@ The same pages as `FDPC`, one run per paragraph. The fields seen:
 | Id | What | Mark |
 |---|---|---|
 | 0x219 | the paragraph's style: k is style k of 6.6. None: style 0 | [V 2: 60685's headings are 4, its body 5, which give its thumbnail's italic headings and centred text; SampleBrochure's back cover is 0xB, centred 9 point, as its thumbnail shows] |
-| 0x204 | the alignment, over the style's: its low byte (2: centred) | [V 3 for 2: as above, and 51318's styles, 0x5A02, whose headline and line its thumbnail shows centred; the high byte: unknown]; SampleBrochure's 6 on its banner's lines: unknown |
+| 0x204 | the alignment, over the style's: its low byte (0: left, 1: right, 2: centred) | [V 3 for 2: as above, and 51318's styles, 0x5A02, whose headline and line its thumbnail shows centred; the high byte: unknown]; [V 1 for 0 and 1: SampleNewsletter's "Page #" lines are 1 (right, as a page number in a header's right corner), its "Volume 1, Issue 1" says 0 over its style's 1 and sits at its frame's left in the thumbnail; govdocs1-923566 has 0xFF00 and 0xFF01]; SampleBrochure's 6 on its banner's lines: unknown |
 | 0x230, 0x234, 0x213, 0x23C | | unknown ([H]: 0x213 a space in EMU, 76200 = 6 pt) |
 
 ### 6.6 Paragraph styles: `STSH` [V 8]
@@ -413,7 +423,7 @@ Other shapes can hold text too: christmas's ellipses have (empty) text ids
 | 0xC0C0 | WordArt's text, UTF-16 with a NUL | [V 4: "Haunted" and "Halloween" (halloween-flyer), "Easter Egg Hunt" (easter-egg-hunt-flyer), "Liberty" (SampleNewsletter), each where its thumbnail shows it] |
 | 0xC0C5 | WordArt's font name, UTF-16 | [V 1: "skullphabet"] |
 | 0x181 | fill colour; 0x1C0 line colour | colours: 0x00BBGGRR, red in the low byte [V by hue on christmas: 0x0000CCFF shows yellow, 0xCC0000 red, 0x006600 green; 5 exact matches elsewhere]. A top byte of 0x08 marks a place in the colour scheme (5.5) [V 2: 51318 and SampleBrochure, every fill and line their thumbnails show] |
-| 0x1BF | fill switches: bit 4 filled, counted only when bit 20 is set | [V 2: as 0x181; 0x1F001C filled, 0x100000 not] |
+| 0x1BF | fill switches: bit 4 filled, counted only when bit 20 is set; filled with no 0x181 is white, [MS-ODRAW]'s default | [V 2: as 0x181; 0x1F001C filled, 0x100000 not] |
 | 0x1FF | line switches: bit 3 outlined, counted only when bit 19 is set | [V 2: 0xF000E and 0x80008 outlined (lines, borders), 0xF0006 and 0x80000 not] |
 | 0x1CB | line width, EMU | [V 2: 51318's border 38100 (3 pt) and header 12700 (1 pt); SampleBrochure's panel lines 3175] |
 | 0x81-0x84 | a text box's margins, EMU: left, top, right, bottom | 0x8D63 (36195) in SampleBrochure's and 51318's text boxes, 0x8EE0 (36576, 0.04 inch) in shapes [H: measured nowhere yet] |
@@ -498,11 +508,11 @@ path in section 5.1.
 
 ## 12. Not known yet (phase 1's work)
 
-- Paragraph spacing, indents and the alignments other than centred (6.5,
-  6.6); style names; colour schemes (`Contents` kinds 0x46-0x8C); underline
+- Paragraph spacing, indents and the alignments other than left, right and
+  centred (6.5, 6.6; justified not seen yet, SampleBrochure's 6 unknown); style names; colour schemes (`Contents` kinds 0x46-0x8C); underline
   and colour in `FDPC` (6.4).
-- Linked text frames (one story through several frames), columns, text
-  wrap, layering beyond the back-to-front order, rotation and flips.
+- A frame's own text columns (none of the samples has one: their columns
+  are linked frames, 5.3), text wrap (5.3's 0x47 is a guess), layering beyond the back-to-front order, rotation and flips.
 - Tables' cell borders, merged cells, and which paragraph goes in which cell
   (`TCD `).
 - Master pages' own frames (the samples' masters are empty), headers and

@@ -280,6 +280,10 @@ int main(void)
         owf_deck_free(roundtrip); roundtrip = NULL;
     }
     owf_deck_free(deck); deck = NULL;
+    /* [MS-ODRAW]: a shape filled with no colour said is white; 51318's badge backs are */
+    CHECK(opp_import_pub_file("tests/pub/samples/51318.pub", &deck, report, &version) == OWF_OK);
+    CHECK(count_look(deck, OWF_SHADE(0xFFFFFF), 0, 0) >= 1);
+    owf_deck_free(deck); deck = NULL;
     /* SampleBrochure's scheme starts #000080: its panel border lines are navy, a quarter point */
     CHECK(opp_import_pub_file("tests/pub/samples/SampleBrochure.pub", &deck, report, &version) == OWF_OK);
     CHECK(count_look(deck, 0, OWF_SHADE(0x000080), 5) >= 3);
@@ -291,6 +295,34 @@ int main(void)
         const owf_charfmt *f = run_fmt(&deck->slides[0].objs[0].text, "0123456789");
         CHECK(f && f->size == 200 && !strcmp(font_name(deck->res, f), "Times New Roman"));
         CHECK(deck->slides[0].objs[0].text.paras[0].fmt.align == OWF_ALIGN_LEFT);
+    }
+    owf_deck_free(deck); deck = NULL;
+
+    /* P1c linked frames: the newsletter's stories run through three columns, which the file lists
+     * middle, left, right on page 2; the chain (frame field 0x28) puts them left to right, so the layout
+     * flows each story from its first column. "Page #" is right aligned (0x204 low byte 1); "Volume 1,
+     * Issue 1" says left (0) over its right-aligned style. */
+    CHECK(opp_import_pub_file("tests/pub/stress/SampleNewsletter.pub", &deck, report, &version) == OWF_OK);
+    if (deck) {
+        int j, k, chained = 0, ordered = 1, right = 0, left = 0;
+        CHECK(deck->nslides >= 2);
+        for (i = 0; i < deck->nslides; i++)
+            for (j = 0; j < deck->slides[i].nobjs; j++) {
+                const owf_obj *a = &deck->slides[i].objs[j];
+                const owf_story *st = &a->text;
+                if (st->nparas && run_fmt(st, "Page #") && st->paras[0].fmt.align == OWF_ALIGN_RIGHT) right = 1;
+                if (st->nparas && run_fmt(st, "Volume 1, Issue 1") && st->paras[0].fmt.align == OWF_ALIGN_LEFT) left = 1;
+                if (a->kind != OWF_OBJ_TEXT || a->flow_story < 0) continue;
+                for (k = j + 1; k < deck->slides[i].nobjs; k++) {
+                    const owf_obj *b = &deck->slides[i].objs[k];
+                    if (b->kind != OWF_OBJ_TEXT || b->flow_story != a->flow_story) continue;
+                    chained++;
+                    if (b->x <= a->x) ordered = 0;
+                }
+            }
+        CHECK(chained >= 20 && ordered);
+        CHECK(right && left);
+        CHECK(opp_flow_chain_count(deck, NULL) >= 9);
     }
     owf_deck_free(deck); deck = NULL;
 

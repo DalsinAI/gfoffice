@@ -8,7 +8,7 @@ pages 1
 page 1 master 1 frames 17
   frame 0 group box 12.7 12.7 31.7 31.8 mm (emu 458787 457200 1601786 1600200) shape 0
   frame 1 shape in 0 box 12.7 12.7 31.7 31.8 mm (emu 458787 457200 1601786 1600200) shape 1
-    look no-line margins 36576 36576 36576 36576
+    look fill #ffffff no-line margins 36576 36576 36576 36576
   frame 2 shape in 0 box 12.7 12.7 31.7 31.8 mm (emu 458787 457200 1601786 1600200) shape 1
     look fill #000099 no-line width 0 margins 36576 36576 36576 36576
   frame 3 shape in 0 box 23.3 23.3 10.6 10.6 mm (emu 839779 838192 1220770 1219195) shape 1

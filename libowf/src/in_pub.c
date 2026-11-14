@@ -538,7 +538,8 @@ static void char_props(const reader *r, span props, owf_charfmt *fmt)
 }
 
 /* Paragraph properties (FDPP's, or a style's): the style (0x219) and the
- * alignment (0x204's low byte; 2 is centred, PUB-FORMAT.md 6.5). */
+ * alignment (0x204's low byte: 0 left, 1 right, 2 centred; PUB-FORMAT.md 6.5).
+ * A paragraph's own alignment, left too, is over its style's. */
 static void para_props(span props, int *style, owf_align *align)
 {
     size_t at = 0;
@@ -546,8 +547,14 @@ static void para_props(span props, int *style, owf_align *align)
     while (next_qfield(props, &at, &f) > 0) {
         if (f.id == 0x219 && style && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20))
             *style = (int)f.value;
-        else if (f.id == 0x204 && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20) && (f.value & 0xFF) == 2)
-            *align = OWF_ALIGN_CENTRE;
+        else if (f.id == 0x204 && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20)) {
+            switch (f.value & 0xFF) {
+            case 0: *align = OWF_ALIGN_LEFT; break;
+            case 1: *align = OWF_ALIGN_RIGHT; break;
+            case 2: *align = OWF_ALIGN_CENTRE; break;
+            default: break;                  /* 6 and others: not known yet, the style's stays */
+            }
+        }
     }
 }
 
@@ -637,9 +644,19 @@ static void read_styles(reader *r, span st)
     }
 }
 
-/* The run at character n; *hint walks forward. NULL past the last. */
+/* The run at character n: the first that ends after n. *hint walks
+ * forward from the last answer; a jump back (a story before the last one)
+ * finds its place by halving. NULL past the last. */
 static const trun *run_at(const trun *runs, int count, unsigned long n, int *hint)
 {
+    if (*hint < 0 || *hint > count || (*hint > 0 && runs[*hint - 1].end > n)) {
+        int lo = 0, hi = count;
+        while (lo < hi) {
+            int mid = lo + (hi - lo) / 2;
+            if (runs[mid].end <= n) lo = mid + 1; else hi = mid;
+        }
+        *hint = lo;
+    }
     while (*hint < count && runs[*hint].end <= n)
         (*hint)++;
     return *hint < count ? &runs[*hint] : NULL;
@@ -672,7 +689,9 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
     owf_builder b;
     owf_buf run;
     size_t at = from * 2, end = to * 2;
-    int open = 0, chint = 0, phint = 0, style = 0;
+    int open = 0, chint = -1, phint = -1, style = 0, made_style = -1;
+    const trun *made_run = NULL;             /* want below is made for this run and style */
+    owf_charfmt want;
     owf_builder_init(&b, r->pub->res, story);
     owf_buf_init(&run);
     if (end > text.n)
@@ -680,17 +699,20 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
     while (at < end) {
         unsigned c = rd16(text, at);
         const trun *cr;
-        owf_charfmt want;
         if (!open) {                         /* a paragraph starts: its style and alignment */
             style = para_at(r, at / 2, &phint, &b.parafmt.align);
         }
         cr = run_at(r->cruns, r->ncruns, at / 2, &chint);
-        if (style < r->nstyles)
-            want = r->styles[style].chars;   /* the style's, then the run's own over it */
-        else
-            owf_charfmt_init(&want);
-        if (cr)
-            char_props(r, cr->props, &want);
+        if (made_style < 0 || cr != made_run || style != made_style) {
+            if (style < r->nstyles)
+                want = r->styles[style].chars;   /* the style's, then the run's own over it */
+            else
+                owf_charfmt_init(&want);
+            if (cr)
+                char_props(r, cr->props, &want);
+            made_run = cr;
+            made_style = style;
+        }
         if (!same_fmt(&want, &b.charfmt)) {
             if (run.length) {
                 owf_builder_text(&b, (const char *)run.data, run.length);
@@ -1335,6 +1357,8 @@ static void frame_look(const owf_pub *pub, owf_pub_frame *f, const eshape *s)
     f->filled = s->filled;
     if (s->has_fill && (c = shape_colour(pub, s->fill)) >= 0)
         f->fill = (unsigned long)c;
+    else if (f->filled == 1 && !s->has_fill)
+        f->fill = 0xFFFFFFUL;            /* filled with no colour said: [MS-ODRAW]'s default, white */
     else if (f->filled == 1)
         f->filled = -1;                  /* filled, but with a colour not known: as if not said */
     f->lined = s->lined;
@@ -1347,9 +1371,42 @@ static void frame_look(const owf_pub *pub, owf_pub_frame *f, const eshape *s)
         f->inset[k] = s->inset[k];
 }
 
+/* A linked text frame's place in its story's chain: its chunk's field
+ * 0x28 (none: the first; the chunk's 0x36 and 0x37 name the frames before
+ * and after, PUB-FORMAT.md 5.6). */
+static long chain_place(reader *r, const owf_pub_frame *f)
+{
+    return field_value(chunk_body(r, f->chunk), 0x28, 0);
+}
+
+/* The layout flows a story through its frames in the page's order, and the
+ * file may list them in another (a newsletter's three columns middle, left,
+ * right). So one story's frames swap among their own places into their
+ * chain's order; every other frame keeps its place. Only frames on the page
+ * itself: a group's members keep theirs. */
+static void order_chains(reader *r, owf_pub_page *page, int first)
+{
+    int i, j;
+    for (i = first; i < page->nframes; i++) {
+        owf_pub_frame *a = &page->frames[i];
+        if (a->story < 0 || a->wordart || a->parent >= 0 || a->kind == OWF_PUB_GROUP)
+            continue;
+        for (j = i + 1; j < page->nframes; j++) {
+            owf_pub_frame *b = &page->frames[j], t;
+            if (b->story != a->story || b->wordart || b->parent >= 0 || b->kind == OWF_PUB_GROUP)
+                continue;
+            if (chain_place(r, b) < chain_place(r, a)) {
+                t = *a;
+                *a = *b;
+                *b = t;
+            }
+        }
+    }
+}
+
 static void place_shapes(reader *r, long pc, owf_pub_page *page)
 {
-    int i, *at;
+    int i, *at, first = page->nframes;
     if (!r->nshapes)
         return;
     at = owf_malloc((size_t)r->nshapes * sizeof *at);
@@ -1396,6 +1453,8 @@ static void place_shapes(reader *r, long pc, owf_pub_page *page)
         }
     }
     owf_free(at);
+    if (!r->failed)
+        order_chains(r, page, first);
 }
 
 /* The colour scheme: the Contents chunk of kind 0x5C. Field 0x02 is an
