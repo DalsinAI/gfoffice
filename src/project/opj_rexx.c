@@ -158,6 +158,7 @@ static const char *take_rest(const char **s, args *a)
     const char *p = *s, *end = p + strlen(p);
     char *out = a->text + a->used;
     size_t n, room = sizeof a->text - a->used;
+    if (room < 2) return NULL;           /* the words before it filled the text: "too long" */
     while (end > p && (end[-1] == ' ' || end[-1] == '\t')) end--;
     if (*p == '"') {
         const char *q = p;
@@ -482,6 +483,7 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         }
         opj_doc_free(doc);
         rx->doc = fresh;
+        rx->docs++;
         if (c == C_OPEN) set_file(rx, a->value[0]);
         else rx->file[0] = 0;
         return OPJ_RX_OK;
