@@ -403,6 +403,19 @@ static int child_flag(xr *r, const owf_xml_node *n, const char *name)
     return s && (*s == '1' || owf_lower((unsigned char)*s) == 't');
 }
 
+/* A decimal ("1.5", "25.00") in hundredths. */
+static int child_hundredths(xr *r, const owf_xml_node *n, const char *name, long *v)
+{
+    const char *s = child_text(r, n, name);
+    num x;
+    while (s && is_space(*s)) s++;
+    if (!s || !take_num(&s, &x)) return 0;
+    if (x.whole > 20000000L) x.whole = 20000000L;
+    if (x.whole < -20000000L) x.whole = -20000000L;
+    *v = x.whole * 100 + x.frac / 10;
+    return 1;
+}
+
 /* A WeekDay's or an Exception's spans; the count, or -1 when there are none written or they are bad. */
 static int read_spans(xr *r, const owf_xml_node *day, unsigned short *pairs)
 {
@@ -487,6 +500,80 @@ static int format_elapsed(long f)
 {
     return f == 4 || f == 6 || f == 8 || f == 10 || f == 12 || f == 20 ||
            f == 36 || f == 38 || f == 40 || f == 42 || f == 44 || f == 52;
+}
+
+/* MSPDI's resource Type: 0 material, 1 work, 2 cost. */
+static const int res_from_mspdi[3] = { OWF_RES_MATERIAL, OWF_RES_WORK, OWF_RES_COST };
+static const int res_to_mspdi[3] = { 1, 0, 2 };
+
+/* Resources (UID 0 is MS Project's own "unassigned" one: left out) and their assignments. */
+static int read_resources(xr *r, const owf_xml_node *root, owf_project *p, const uid_map *cals, int ncals,
+                          const uid_map *tasks, int ntasks, int *failed)
+{
+    owf_xml_node *n = owf_xml_child(owf_xml_child(root, r->ns, "Resources"), r->ns, "Resource"), *t;
+    uid_map *res = NULL;
+    int nres = 0, top_res = 0, top_assign = 0, rc = OWF_OK;
+    long v;
+    for (t = n; t; t = owf_xml_next(t, r->ns, "Resource")) nres++;
+    if (nres && !(res = owf_malloc((size_t)nres * sizeof *res))) return OWF_ERR_MEMORY;
+    nres = 0;
+    for (t = n; t; t = owf_xml_next(t, r->ns, "Resource")) {
+        owf_xml_node *x;
+        owf_presource *k;
+        long uid = 0;
+        int at;
+        if (!child_long(r, t, "UID", &uid) || uid <= 0 || uid >= 0x7FFFFFFFL || child_flag(r, t, "IsNull")) continue;
+        if ((at = owf_project_add_resource(p, NULL)) < 0) {
+            rc = OWF_ERR_MEMORY;
+            break;
+        }
+        k = &p->resources[at];
+        k->uid = (int)uid;
+        if (uid > top_res) top_res = (int)uid;
+        if ((x = owf_xml_child(t, r->ns, "Name")) != NULL) k->name = text_dup(x, failed);
+        if ((x = owf_xml_child(t, r->ns, "Initials")) != NULL) k->initials = text_dup(x, failed);
+        if ((x = owf_xml_child(t, r->ns, "Group")) != NULL) k->group = text_dup(x, failed);
+        if (child_long(r, t, "Type", &v) && v >= 0 && v <= 2) k->type = res_from_mspdi[v];
+        if (child_flag(r, t, "IsCostResource")) k->type = OWF_RES_COST;
+        if (child_hundredths(r, t, "MaxUnits", &v) && v >= 0) k->max_units = v;
+        if (child_hundredths(r, t, "StandardRate", &v) && v >= 0) k->rate = v;
+        if (child_long(r, t, "CalendarUID", &v)) k->calendar = find_uid(cals, ncals, v);
+        res[nres].uid = uid;
+        res[nres].index = at;
+        nres++;
+    }
+    if (nres) qsort(res, (size_t)nres, sizeof *res, cmp_uid);
+    n = owf_xml_child(owf_xml_child(root, r->ns, "Assignments"), r->ns, "Assignment");
+    for (t = n; t && rc == OWF_OK; t = owf_xml_next(t, r->ns, "Assignment")) {
+        long tuid, ruid, units = 100, uid = 0;
+        int task, resource, at;
+        if (!child_long(r, t, "TaskUID", &tuid) || !child_long(r, t, "ResourceUID", &ruid) ||
+            (task = find_uid(tasks, ntasks, tuid)) < 0 || (resource = find_uid(res, nres, ruid)) < 0)
+            continue;
+        child_hundredths(r, t, "Units", &units);
+        if (p->resources[resource].type == OWF_RES_COST) {                    /* the amount is the Cost, in cents */
+            long cost;
+            if (child_hundredths(r, t, "Cost", &cost)) units = cost / 100;
+        }
+        if (units < 0) units = 0;
+        if ((at = owf_project_assign(p, task, resource, units)) < 0) {
+            rc = OWF_ERR_MEMORY;
+            break;
+        }
+        if (child_long(r, t, "UID", &uid) && uid > 0 && uid < 0x7FFFFFFFL) {
+            p->assigns[at].uid = (int)uid;
+            if (uid > top_assign) top_assign = (int)uid;
+        }
+    }
+    if (top_res >= p->next_resource_uid) p->next_resource_uid = top_res + 1;
+    {
+        int i;
+        for (i = 0; i < p->nassigns; i++)
+            if (p->assigns[i].uid > top_assign) top_assign = p->assigns[i].uid;
+        p->next_assign_uid = top_assign + 1;
+    }
+    owf_free(res);
+    return rc;
 }
 
 static int read_xml(const char *text, size_t length, owf_project **out)
@@ -612,6 +699,7 @@ static int read_xml(const char *text, size_t length, owf_project **out)
             if (p->tasks[i].uid >= top) top = p->tasks[i].uid;
         p->next_uid = top + 1;
     }
+    if (rc == OWF_OK) rc = read_resources(&r, root, p, cals, ncals, tasks, ntasks, &failed);
     owf_free(cals);
     owf_free(tasks);
     owf_xml_free(xml);
@@ -636,6 +724,11 @@ static void put_text(owf_buf *b, const char *tag, const char *s)
 static void put_long(owf_buf *b, const char *tag, long v)
 {
     owf_buf_printf(b, "<%s>%ld</%s>", tag, v, tag);
+}
+
+static void put_hundredths(owf_buf *b, const char *tag, long v)
+{
+    owf_buf_printf(b, "<%s>%s%ld.%02ld</%s>", tag, v < 0 ? "-" : "", (v < 0 ? -v : v) / 100, (v < 0 ? -v : v) % 100, tag);
 }
 
 static void put_date(owf_buf *b, const char *tag, owf_ptime t)
@@ -767,7 +860,38 @@ static void write_xml(const owf_project *p, owf_buf *b, const char *ns)
         }
         owf_buf_puts(b, "</Task>\n");
     }
-    owf_buf_puts(b, "</Tasks>\n</Project>\n");
+    owf_buf_puts(b, "</Tasks>\n<Resources>\n");
+    for (i = 0; i < p->nresources; i++) {
+        const owf_presource *r = &p->resources[i];
+        owf_buf_puts(b, "<Resource>");
+        put_long(b, "UID", r->uid);
+        put_long(b, "ID", i + 1);
+        put_text(b, "Name", r->name);
+        put_long(b, "Type", res_to_mspdi[r->type >= 0 && r->type <= 2 ? r->type : 0]);
+        if (r->initials && r->initials[0]) put_text(b, "Initials", r->initials);
+        if (r->group && r->group[0]) put_text(b, "Group", r->group);
+        if (r->type == OWF_RES_WORK) put_hundredths(b, "MaxUnits", r->max_units);
+        put_hundredths(b, "StandardRate", r->rate);
+        if (r->type != OWF_RES_COST) put_long(b, "StandardRateFormat", r->type == OWF_RES_WORK ? 2 : 8);   /* per hour, per unit */
+        if (r->calendar >= 0 && r->calendar < p->ncalendars) put_long(b, "CalendarUID", r->calendar + 1);
+        if (r->type == OWF_RES_COST) put_long(b, "IsCostResource", 1);           /* how Project marks one */
+        owf_buf_puts(b, "</Resource>\n");
+    }
+    owf_buf_puts(b, "</Resources>\n<Assignments>\n");
+    for (i = 0; i < p->nassigns; i++) {
+        const owf_passign *a = &p->assigns[i];
+        if (a->task < 0 || a->task >= p->ntasks || a->resource < 0 || a->resource >= p->nresources) continue;
+        owf_buf_puts(b, "<Assignment>");
+        put_long(b, "UID", a->uid);
+        put_long(b, "TaskUID", p->tasks[a->task].uid);
+        put_long(b, "ResourceUID", p->resources[a->resource].uid);
+        if (p->resources[a->resource].type == OWF_RES_COST) put_long(b, "Cost", a->units);   /* in cents */
+        put_hundredths(b, "Units", a->units);
+        owf_buf_puts(b, "<Work>");
+        put_iso_duration(b, a->work);
+        owf_buf_puts(b, "</Work></Assignment>\n");
+    }
+    owf_buf_puts(b, "</Assignments>\n</Project>\n");
 }
 
 /* ---- .gfproj ---- */
@@ -827,11 +951,11 @@ static const char *const csv_constraints[8][2] = {
 static const char link_names[4][3] = { "FS", "SS", "FF", "SF" };
 
 enum { COL_ID, COL_UID, COL_NAME, COL_LEVEL, COL_DURATION, COL_START, COL_FINISH, COL_PREDECESSORS,
-       COL_CONSTRAINT, COL_CONSTRAINT_DATE, COL_PERCENT, COL_MILESTONE, COL_NOTES, NCOLS };
+       COL_CONSTRAINT, COL_CONSTRAINT_DATE, COL_PERCENT, COL_MILESTONE, COL_NOTES, COL_RESOURCES, NCOLS };
 
 static const char *const csv_columns[NCOLS] = {
     "ID", "Unique ID", "Name", "Outline Level", "Duration", "Start", "Finish", "Predecessors",
-    "Constraint Type", "Constraint Date", "% Complete", "Milestone", "Notes",
+    "Constraint Type", "Constraint Date", "% Complete", "Milestone", "Notes", "Resource Names",
 };
 
 static void csv_field(owf_buf *b, const char *s, int sep)
@@ -879,6 +1003,95 @@ static void put_predecessors(owf_buf *b, const owf_project *p, const owf_ptask *
     }
 }
 
+/* "Dale,Bob[50%]": a task's assignments as MS Project types them (units shown when not 100%). */
+static void put_resource_names(owf_buf *b, const owf_project *p, int task)
+{
+    int i, any = 0;
+    for (i = 0; i < p->nassigns; i++) {
+        const owf_passign *a = &p->assigns[i];
+        if (a->task != task || a->resource < 0 || a->resource >= p->nresources) continue;
+        if (any++) owf_buf_putc(b, ',');
+        owf_buf_puts(b, p->resources[a->resource].name ? p->resources[a->resource].name : "");
+        if (a->units != 100) {
+            if (p->resources[a->resource].type == OWF_RES_WORK) owf_buf_printf(b, "[%ld%%]", a->units);
+            else owf_buf_printf(b, "[%ld.%02ld]", a->units / 100, a->units % 100);
+        }
+    }
+}
+
+void owf_presource_names_text(const owf_project *p, int task, char *out, size_t size)
+{
+    owf_buf b;
+    size_t n;
+    if (!out || !size) return;
+    out[0] = 0;
+    if (!p || task < 0 || task >= p->ntasks) return;
+    owf_buf_init(&b);
+    put_resource_names(&b, p, task);
+    if (!b.failed && b.length) {
+        n = b.length < size - 1 ? b.length : size - 1;
+        memcpy(out, b.data, n);
+        out[n] = 0;
+    }
+    owf_buf_free(&b);
+}
+
+static int find_resource(const owf_project *p, const char *name, size_t n)
+{
+    int i;
+    for (i = 0; i < p->nresources; i++) {
+        const char *r = p->resources[i].name ? p->resources[i].name : "";
+        if (strlen(r) == n && memcmp(r, name, n) == 0) return i;
+    }
+    for (i = 0; i < p->nresources; i++)
+        if (same_word(name, n, p->resources[i].name ? p->resources[i].name : "")) return i;
+    return -1;
+}
+
+int owf_presource_names_parse(owf_project *p, int task, const char *text, int create)
+{
+    const char *s = text;
+    int i, k;
+    if (!p || task < 0 || task >= p->ntasks || !text) return OWF_ERR_FORMAT;
+    for (i = 0, k = 0; i < p->nassigns; i++)        /* the task's assignments are replaced */
+        if (p->assigns[i].task != task) p->assigns[k++] = p->assigns[i];
+    p->nassigns = k;
+    while (*s) {
+        const char *name, *end;
+        long units = 100;
+        int res;
+        while (*s == ' ' || *s == ',' || *s == ';') s++;
+        if (!*s) break;
+        name = s;
+        while (*s && *s != ',' && *s != ';' && *s != '[') s++;
+        end = s;
+        while (end > name && end[-1] == ' ') end--;
+        if (*s == '[') {
+            num x;
+            s++;
+            while (*s == ' ') s++;
+            if (!take_num(&s, &x) || x.whole < 0) return OWF_ERR_FORMAT;
+            if (x.whole > 10000000L) x.whole = 10000000L;
+            while (*s == ' ') s++;
+            if (*s == '%') units = x.whole, s++;
+            else units = x.whole > 100000L ? 10000000L : x.whole * 100 + x.frac / 10;
+            while (*s == ' ') s++;
+            if (*s++ != ']') return OWF_ERR_FORMAT;
+        }
+        if (end == name) return OWF_ERR_FORMAT;
+        if ((res = find_resource(p, name, (size_t)(end - name))) < 0) {
+            char *copy;
+            if (!create) return OWF_ERR_FORMAT;
+            if (!(copy = dup_n(name, (size_t)(end - name)))) return OWF_ERR_MEMORY;
+            res = owf_project_add_resource(p, copy);
+            owf_free(copy);
+            if (res < 0) return OWF_ERR_MEMORY;
+        }
+        if (owf_project_assign(p, task, res, units) < 0) return OWF_ERR_MEMORY;
+    }
+    return OWF_OK;
+}
+
 static void write_csv(const owf_project *p, owf_buf *b)
 {
     owf_buf cell;
@@ -908,6 +1121,11 @@ static void write_csv(const owf_project *p, owf_buf *b)
         if (t->constraint != OWF_CON_ASAP && t->constraint != OWF_CON_ALAP) put_time(b, t->constraint_date, 1);
         owf_buf_printf(b, ",%d%%,%s,", t->percent, t->milestone ? "Yes" : "No");
         csv_field(b, t->notes, ',');
+        owf_buf_putc(b, ',');
+        cell.length = 0;
+        put_resource_names(&cell, p, i);
+        owf_buf_putc(&cell, 0);
+        csv_field(b, cell.failed ? "" : (const char *)cell.data, ',');
         owf_buf_puts(b, "\r\n");
         if (cell.failed) b->failed = 1;
     }
@@ -1071,7 +1289,7 @@ static int read_csv(const unsigned char *data, size_t length, owf_project **out)
     char *field[64];
     int column[64], nhead, i, n, rc = OWF_OK, nids = 0, cap = 0, have_start = 0, row = 0;
     uid_map *ids = NULL;
-    char **preds = NULL;
+    char **preds = NULL, **names = NULL;
     owf_project *p;
     owf_ptime earliest = 0;
     const unsigned char *d = data;
@@ -1109,12 +1327,15 @@ static int read_csv(const unsigned char *data, size_t length, owf_project **out)
             char **gp;
             if (gi) ids = gi;
             gp = gi ? owf_realloc(preds, (size_t)grown_cap * sizeof *gp) : NULL;
+            if (gp) preds = gp;
+            gp = gp ? owf_realloc(names, (size_t)grown_cap * sizeof *gp) : NULL;
             if (!gp) {
                 rc = OWF_ERR_MEMORY;
                 break;
             }
-            preds = gp;
+            names = gp;
             memset(preds + cap, 0, (size_t)(grown_cap - cap) * sizeof *preds);
+            memset(names + cap, 0, (size_t)(grown_cap - cap) * sizeof *names);
             cap = grown_cap;
         }
         if ((at = owf_project_add_task(p, NULL, 480)) < 0) {
@@ -1177,6 +1398,9 @@ static int read_csv(const unsigned char *data, size_t length, owf_project **out)
             case COL_NOTES:
                 if (*s && !(t->notes = dup_n(s, strlen(s)))) rc = OWF_ERR_MEMORY;
                 break;
+            case COL_RESOURCES:
+                if (*s && !(names[at] = dup_n(s, strlen(s)))) rc = OWF_ERR_MEMORY;
+                break;
             default:
                 break;
             }
@@ -1191,13 +1415,19 @@ static int read_csv(const unsigned char *data, size_t length, owf_project **out)
             if ((t->constraint != OWF_CON_ASAP && t->constraint != OWF_CON_ALAP) && !t->constraint_date)
                 p->tasks[i].constraint = OWF_CON_ASAP;
             if (preds[i]) rc = parse_predecessors(p, i, preds[i], ids, nids, 0, 1);
+            if (rc == OWF_OK && names[i] && owf_presource_names_parse(p, i, names[i], 1) == OWF_ERR_MEMORY)
+                rc = OWF_ERR_MEMORY;
             if (t->uid > top) top = t->uid;
         }
         p->next_uid = top + 1;
         p->start = p->finish = have_start ? earliest : 0;
     }
-    for (i = 0; i < nids; i++) owf_free(preds[i]);
+    for (i = 0; i < nids; i++) {
+        owf_free(preds[i]);
+        owf_free(names[i]);
+    }
     owf_free(preds);
+    owf_free(names);
     owf_free(ids);
     owf_free(r.text);
     if (rc != OWF_OK) {

@@ -322,6 +322,74 @@ static void test_loop_and_holiday(void)
     owf_project_free(p);
 }
 
+/* Resources: A (2d) and C (2d) both from Monday 16th, B (3d) after A. Dale on A and C full time is two people's
+ * work at once on Monday and Tuesday: over-allocated. Bob half time on B. Steel, a material, 3 units on B. */
+static void test_resources(void)
+{
+    owf_project *p = plan(), *q;
+    int a = owf_project_add_task(p, "A", 2 * D), b = owf_project_add_task(p, "B", 3 * D), c = owf_project_add_task(p, "C", 2 * D);
+    int dale = owf_project_add_resource(p, "Dale"), bob = owf_project_add_resource(p, "Bob");
+    int steel = owf_project_add_resource(p, "Steel");
+    owf_project_link(p, a, b, OWF_LINK_FS, 0, 0);
+    CHECK(dale == 0 && bob == 1 && steel == 2);
+    CHECK_N(p->resources[bob].uid, 2);
+    p->resources[dale].rate = 2000;                                 /* 20.00 an hour */
+    p->resources[steel].type = OWF_RES_MATERIAL;
+    p->resources[steel].rate = 500;                                 /* 5.00 a unit */
+    CHECK_N(owf_project_assign(p, a, dale, 100), 0);
+    CHECK_N(owf_project_assign(p, c, dale, 100), 1);
+    CHECK_N(owf_project_assign(p, b, bob, 50), 2);
+    CHECK_N(owf_project_assign(p, b, steel, 300), 3);
+    CHECK_N(owf_project_assign(p, b, bob, 50), 2);                 /* the same pair: the same assignment */
+    CHECK_N(owf_project_assign(p, 9, bob, 50), -1);
+    CHECK_N(owf_project_assign(p, a, 9, 50), -1);
+    CHECK_N(owf_project_assign(p, a, bob, -1), -1);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(p->assigns[0].work, 2 * D);
+    CHECK_N(p->assigns[2].work, 3 * D / 2);                         /* half of three days: 12 hours */
+    CHECK_N(p->assigns[3].work, 0);
+    CHECK_N(p->resources[dale].work, 4 * D);                        /* 32 hours */
+    CHECK_N(p->resources[dale].cost, 64000);                        /* 32 hours at 20.00: 640.00 */
+    CHECK_N(p->resources[dale].peak, 200);
+    CHECK(p->resources[dale].overallocated);
+    CHECK_N(p->resources[bob].peak, 50);
+    CHECK(!p->resources[bob].overallocated);
+    CHECK_N(p->resources[steel].cost, 1500);                        /* 3 at 5.00 */
+    CHECK(!p->resources[steel].overallocated);
+    /* Work over time: Monday is A's day and C's; Bob's Wednesday morning is half of four hours. */
+    CHECK_N(owf_presource_work(p, dale, AT(16, 0, 0), AT(17, 0, 0)), 2 * D);
+    CHECK_N(owf_presource_work(p, bob, AT(18, 8, 0), AT(18, 12, 0)), 120);
+    CHECK_N(owf_presource_work(p, bob, AT(16, 0, 0), AT(30, 0, 0)), 3 * D / 2);
+    CHECK_N(owf_passign_work(p, 1, AT(17, 13, 0), AT(30, 0, 0)), 240);
+    CHECK_N(owf_presource_work(p, steel, AT(16, 0, 0), AT(30, 0, 0)), 0);
+    /* C a day later: Dale no longer works two tasks at once. */
+    TASK(p, c)->constraint = OWF_CON_SNET;
+    TASK(p, c)->constraint_date = AT(18, 8, 0);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(p->resources[dale].peak, 100);
+    CHECK(!p->resources[dale].overallocated);
+    /* A copy holds them too. */
+    q = owf_project_copy(p);
+    CHECK(q && q->nresources == 3 && q->nassigns == 4 && strcmp(q->resources[2].name, "Steel") == 0);
+    CHECK(q && q->resources[0].name != p->resources[0].name);
+    owf_project_free(q);
+    /* Removing Bob takes his assignment; Steel moves down. */
+    owf_project_remove_resource(p, bob);
+    CHECK_N(p->nresources, 2);
+    CHECK_N(p->nassigns, 3);
+    CHECK_N(p->assigns[2].resource, 1);
+    owf_project_unassign(p, c, dale);
+    CHECK_N(p->nassigns, 2);
+    /* Tasks moving: A deleted, B and C down a row. */
+    {
+        int map[3] = { -1, 0, 1 };
+        owf_project_remap_assignments(p, map, 3);
+        CHECK_N(p->nassigns, 1);
+        CHECK(p->assigns[0].task == 0 && p->assigns[0].resource == 1);
+    }
+    owf_project_free(p);
+}
+
 int main(void)
 {
     test_dates();
@@ -335,6 +403,7 @@ int main(void)
     test_summary();
     test_milestone_and_elapsed();
     test_loop_and_holiday();
+    test_resources();
     if (fails) {
         printf("project tests: %d of %d checks failed\n", fails, checks);
         return 1;

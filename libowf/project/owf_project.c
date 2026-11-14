@@ -26,6 +26,7 @@ owf_project *owf_project_new(owf_ptime start)
     p->minutes_per_day = 480;
     p->minutes_per_week = 2400;
     p->next_uid = 1;
+    p->next_resource_uid = p->next_assign_uid = 1;
     p->loop_task = -1;
     if (owf_project_add_calendar(p, "Standard") != 0) {
         owf_project_free(p);
@@ -45,6 +46,13 @@ void owf_project_free(owf_project *p)
         owf_free(p->tasks[i].links);
     }
     for (i = 0; i < p->ncalendars; i++) owf_pcal_free(&p->calendars[i]);
+    for (i = 0; i < p->nresources; i++) {
+        owf_free(p->resources[i].name);
+        owf_free(p->resources[i].initials);
+        owf_free(p->resources[i].group);
+    }
+    owf_free(p->resources);
+    owf_free(p->assigns);
     owf_free(p->tasks);
     owf_free(p->calendars);
     owf_free(p->title);
@@ -493,6 +501,7 @@ int owf_project_schedule(owf_project *p)
         backward(&s);
     }
     slack(p);
+    owf_project_resources_update(p);
 done:
     owf_free(s.order);
     owf_free(s.alap_fixed);
@@ -512,6 +521,9 @@ owf_project *owf_project_copy(const owf_project *p)
     c->tasks = NULL;
     c->calendars = NULL;
     c->ntasks = c->captasks = c->ncalendars = c->capcalendars = 0;
+    c->resources = NULL;
+    c->assigns = NULL;
+    c->nresources = c->capresources = c->nassigns = c->capassigns = 0;
     if (p->title && !(c->title = dup_text(p->title))) goto fail;
     if (p->ntasks && !(c->tasks = owf_calloc((size_t)p->ntasks, sizeof *c->tasks))) goto fail;
     c->captasks = p->ntasks;
@@ -547,6 +559,23 @@ owf_project *owf_project_copy(const owf_project *p)
             k->nexceptions = k->capexceptions = s->nexceptions;
         }
     }
+    if (p->nresources && !(c->resources = owf_calloc((size_t)p->nresources, sizeof *c->resources))) goto fail;
+    c->capresources = p->nresources;
+    for (i = 0; i < p->nresources; i++) {
+        owf_presource *r = &c->resources[i];
+        const owf_presource *s = &p->resources[i];
+        *r = *s;
+        r->name = r->initials = r->group = NULL;
+        c->nresources = i + 1;
+        if ((s->name && !(r->name = dup_text(s->name))) || (s->initials && !(r->initials = dup_text(s->initials))) ||
+            (s->group && !(r->group = dup_text(s->group))))
+            goto fail;
+    }
+    if (p->nassigns) {
+        if (!(c->assigns = owf_malloc((size_t)p->nassigns * sizeof *c->assigns))) goto fail;
+        memcpy(c->assigns, p->assigns, (size_t)p->nassigns * sizeof *c->assigns);
+        c->nassigns = c->capassigns = p->nassigns;
+    }
     return c;
 fail:
     owf_project_free(c);
@@ -566,5 +595,11 @@ size_t owf_project_bytes(const owf_project *p)
     }
     for (i = 0; i < p->ncalendars; i++)
         n += sizeof p->calendars[i] + (size_t)p->calendars[i].capexceptions * sizeof *p->calendars[i].exceptions;
+    for (i = 0; i < p->nresources; i++) {
+        const owf_presource *r = &p->resources[i];
+        n += sizeof *r + (r->name ? strlen(r->name) + 1 : 0) + (r->initials ? strlen(r->initials) + 1 : 0) +
+             (r->group ? strlen(r->group) + 1 : 0);
+    }
+    n += (size_t)p->capassigns * sizeof *p->assigns;
     return n;
 }
