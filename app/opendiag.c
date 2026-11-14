@@ -6,7 +6,7 @@
  * shapes), and the GFOPENDIAG ARexx port. Everything about the diagram is the core's: this file only shows it and
  * hands it what the user does. Files open, save and export through the core's ARexx commands (OPEN, SAVE, SAVEAS,
  * EXPORT), so a script and the menus do the same thing. .drawio is the file; SVG and PNG files with the diagram inside
- * open too, and SVG exports. Plain GadTools menus in the screen's font, so it works on any Workbench screen; 68040 code,
+ * open too, and SVG and PDF export. Plain GadTools menus in the screen's font, so it works on any Workbench screen; 68040 code,
  * integer arithmetic only, no FPU needed.
  *
  *   GFOpenDiag [FILE]        FILE: a diagram (.drawio, or an .svg or .png with one inside)
@@ -66,7 +66,7 @@ static const char version[] __attribute__((used)) =
 /* ---- Menus ---- */
 
 enum {
-    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_ABOUT, M_QUIT,
+    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_EXPORT_PDF, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS, M_MAP_NEW, M_MAP_IMPORT, M_MAP_EXPORT,
     M_TOOL = 100,                        /* M_TOOL + odg_tool */
@@ -85,6 +85,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Save", "S", 0, 0, (APTR)M_SAVE },
     { NM_ITEM, "Save As...", "A", 0, 0, (APTR)M_SAVEAS },
     { NM_ITEM, "Export SVG...", NULL, 0, 0, (APTR)M_EXPORT_SVG },
+    { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_EXPORT_PDF },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "About...", "?", 0, 0, (APTR)M_ABOUT },
     { NM_ITEM, "Quit", "Q", 0, 0, (APTR)M_QUIT },
@@ -985,9 +986,10 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SAVE: save(0); return;
     case M_SAVEAS: save(1); return;
     case M_EXPORT_SVG: export_as("SVG", "#?.svg"); return;
+    case M_EXPORT_PDF: export_as("PDF", "#?.pdf"); return;
     case M_ABOUT:
         tell(VERSION_TEXT "\nThe diagram editor of the GFOffice Suite.\n\n.drawio diagrams, as diagrams.net reads them;\n"
-             "SVG and PNG with the diagram inside open;\nSVG exports.\nMIT, Copyright (c) 2026 AmiCradle Team");
+             "SVG and PNG with the diagram inside open;\nSVG and PDF exports.\nMIT, Copyright (c) 2026 AmiCradle Team");
         break;
     case M_QUIT: if (may_drop()) quit_now = 1; break;
     case M_UNDO: undo_redo(0); return;

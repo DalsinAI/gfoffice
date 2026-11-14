@@ -33,8 +33,9 @@ int odg_rexx_init(odg_rexx *rx);
 void odg_rexx_free(odg_rexx *rx);
 /* A command, its answer into result (cut to size, "" when it has none). */
 int odg_rexx_command(odg_rexx *rx, const char *command, char *result, size_t size);
-/* The file a name's extension asks for: ODG_FILE_SVG for .svg, ODG_FILE_PNG for .png, else ODG_FILE_DRAWIO. */
-enum { ODG_FILE_DRAWIO, ODG_FILE_SVG, ODG_FILE_PNG };
+/* The file a name's extension asks for: ODG_FILE_SVG for .svg, ODG_FILE_PNG for .png, ODG_FILE_PDF for .pdf (every
+ * page; EXPORT only, as a PDF doesn't open again), else ODG_FILE_DRAWIO. */
+enum { ODG_FILE_DRAWIO, ODG_FILE_SVG, ODG_FILE_PNG, ODG_FILE_PDF };
 int odg_rexx_format(const char *file);
 
 #endif

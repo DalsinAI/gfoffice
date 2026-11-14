@@ -169,6 +169,8 @@ CALL want 'OPEN "'dir'lab-diag.drawio" FORCE', 0
 CALL want 'GETBOX' b, 0
 CALL same 'GETBOX after a compressed SAVE', res, '320 30 140 80'
 CALL want 'EXPORT "'dir'lab-diag.svg"', 0
+CALL want 'EXPORT "'dir'lab-diag.pdf"', 0
+CALL want 'SAVEAS "'dir'lab-diag-as.pdf"', 10
 CALL want 'OPEN "'dir'lab-diag.svg"', 0
 CALL want 'GETVALUE' b, 0
 CALL same 'GETVALUE from the SVG', res, 'End here'

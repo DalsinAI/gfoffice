@@ -209,6 +209,15 @@ void owf_outline_free(owf_ditem *items, int n);
 int owf_outline_write(const owf_ditem *items, int n, owf_outline_kind kind, const char *title, char **data,
                       size_t *length);
 
+/* ---- PDF ----
+ * Pages drawn as PDF (libowf's owf_pdf.h): shapes, connectors, arrowheads and labels as the SVG writer places them,
+ * the flowchart shapes (triangle, parallelogram, hexagon, process) as GFOpenDiag draws them; text in PDF's
+ * standard fonts, so it stays text. Each page is a PDF page the size of what is on it, 10 pixels round. */
+
+/* page (-1: every page, in order) as PDF, into owf_malloc'd *data. OWF_OK; OWF_ERR_FORMAT when there is no such
+ * page; OWF_ERR_MEMORY. */
+int owf_dpdf_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+
 #ifdef __cplusplus
 }
 #endif

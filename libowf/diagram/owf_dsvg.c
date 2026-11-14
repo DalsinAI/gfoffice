@@ -196,7 +196,7 @@ int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4])
 /* ---- Drawing ---- */
 
 /* Integer square root, for lengths along an edge. */
-static wide isqrt(wide v)
+long long owf_diag_isqrt(long long v)
 {
     wide r = 0, bit = (wide)1 << 62;
     if (v <= 0)
@@ -217,11 +217,11 @@ static wide isqrt(wide v)
 static wide seg_len(owf_dpoint a, owf_dpoint b)
 {
     wide dx = b.x - a.x, dy = b.y - a.y;
-    return isqrt(dx * dx + dy * dy);
+    return owf_diag_isqrt(dx * dx + dy * dy);
 }
 
 /* The point at frac (hundredths, -100 the start, 0 the middle, 100 the end) of the way along a path. */
-static owf_dpoint along(const owf_dpoint *pts, int n, long frac)
+owf_dpoint owf_diag_along(const owf_dpoint *pts, int n, long frac)
 {
     wide total = 0, want, at = 0;
     int i;
@@ -561,7 +561,7 @@ static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
 /* An arrowhead at tip, pointing from the point before it. */
 static void put_arrow(owf_buf *b, owf_dpoint from, owf_dpoint tip, const char *stroke)
 {
-    wide dx = tip.x - from.x, dy = tip.y - from.y, len = isqrt(dx * dx + dy * dy);
+    wide dx = tip.x - from.x, dy = tip.y - from.y, len = owf_diag_isqrt(dx * dx + dy * dy);
     wide ux, uy, size = 800, half = 300;
     owf_dnum bx, by;
     if (!len)
@@ -624,14 +624,14 @@ static void put_edge(owf_buf *b, const owf_dpage *p, const owf_dcell *e)
             put_arrow(b, pts[1], pts[0], stroke);
     }
     if (e->value && *e->value) {
-        owf_dpoint at = along(pts, n, 0);
+        owf_dpoint at = owf_diag_along(pts, n, 0);
         put_label(b, e->value, e->style, at.x + e->geo.offset.x, at.y + e->geo.offset.y, "middle", "middle", "#ffffff");
     }
     /* labels placed along it: geometry x is how far, -1 to 1; the offset moves them off the line */
     for (i = 0; i < p->ncells; i++) {
         const owf_dcell *l = &p->cells[i];
         if (l->kind == OWF_DCELL_VERTEX && l->parent && !strcmp(l->parent, e->id) && owf_dcell_shown(p, l)) {
-            owf_dpoint at = along(pts, n, (long)l->geo.x);
+            owf_dpoint at = owf_diag_along(pts, n, (long)l->geo.x);
             put_label(b, l->value, l->style, at.x + l->geo.offset.x, at.y + l->geo.offset.y, "middle", "middle", "#ffffff");
         }
     }

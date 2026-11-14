@@ -14,7 +14,8 @@ else
     # shellcheck disable=SC2086
     "$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC -DOLDRAW_AMIGA -m68040 -specs=$SPECS -O2 -Wno-pointer-sign \
         $OWFFLAGS -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$OPENLAYOUT_SRC/draw" \
-        $OWFSRC_DOCS "$HERE"/libowf/diagram/*.c "$HERE"/src/diag/*.c \
+        $OWFSRC_DOCS "$HERE/libowf/src/owf_pdf.c" "$HERE/libowf/src/owf_pdffonts.c" \
+        "$HERE"/libowf/diagram/*.c "$HERE"/src/diag/*.c \
         "$OPENLAYOUT_SRC/draw/oldraw.c" "$OPENLAYOUT_SRC/amiga/oldraw_amiga.c" "$HERE/app/opendiag.c" -lamiga \
         -o "$OUT/GFOpenDiag"
     echo "GFOpenDiag: $(wc -c < "$OUT/GFOpenDiag") bytes"
