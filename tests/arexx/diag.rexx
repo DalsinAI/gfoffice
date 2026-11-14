@@ -72,9 +72,9 @@ CALL want 'SHAPE Flowerpot', 10
 CALL want 'ADDSHAPE 480 200 120 60 STYLE "shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;" TEXT Prepare', 0
 CALL want 'ADDSHAPE 480 300 120 60 STYLE "shape=parallelogram;whiteSpace=wrap;html=1;" TEXT Data', 0
 CALL want 'TOOL Select', 0
-CALL want 'SELECT' a','b, 0
+CALL want 'SELECT' a || ',' || b, 0
 CALL want 'GETSELECTION', 0
-CALL same 'GETSELECTION', res, a','b
+CALL same 'GETSELECTION', res, a || ',' || b
 CALL want 'SELECT nosuchid', 10
 CALL want 'GETSELECTION', 0
 CALL same 'GETSELECTION after a bad SELECT', res, ''
