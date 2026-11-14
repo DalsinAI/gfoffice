@@ -203,7 +203,7 @@ static void test_files(void)
     CHECK_S(rx.lasterror, "SAVEAS: a PDF doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
     CHECK_N(rx_do("EXPORT build/host/x FORMAT DOC"), ODG_RX_ERROR);
-    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM or DRAWIO, not DOC");
+    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM, MERMAID, DOT or DRAWIO, not DOC");
 
     /* EPS: the page as Encapsulated PostScript, by its name or FORMAT EPS; EXPORT only */
     CHECK_N(odg_rexx_format("x.eps"), ODG_FILE_EPS);
@@ -227,6 +227,38 @@ static void test_files(void)
     }
     CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.eps"), ODG_RX_ERROR);
     CHECK_S(rx.lasterror, "SAVEAS: an EPS doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
+    CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
+
+    /* Mermaid and DOT: the page as a graph to lay out again, by name or FORMAT; EXPORT only */
+    CHECK_N(odg_rexx_format("x.mmd"), ODG_FILE_MERMAID);
+    CHECK_N(odg_rexx_format("x.Mermaid"), ODG_FILE_MERMAID);
+    CHECK_N(odg_rexx_format("x.dot"), ODG_FILE_DOT);
+    CHECK_N(odg_rexx_format("x.GV"), ODG_FILE_DOT);
+    ok("EXPORT build/host/odg-rexx.mmd");
+    ok("EXPORT build/host/odg-rexx-mmd.out FORMAT mermaid");
+    ok("EXPORT build/host/odg-rexx.gv");
+    ok("EXPORT build/host/odg-rexx-dot.out FORMAT DOT");
+    {
+        const char *names[4] = { "build/host/odg-rexx.mmd", "build/host/odg-rexx-mmd.out", "build/host/odg-rexx.gv",
+                                 "build/host/odg-rexx-dot.out" };
+        const char *heads[4] = { "---\ntitle: ", "---\ntitle: ", "digraph ", "digraph " };
+        int k;
+        for (k = 0; k < 4; k++) {
+            FILE *f = fopen(names[k], "rb");
+            char head[16] = "";
+            size_t want = strlen(heads[k]);
+            CHECK(f != NULL);
+            if (f) {
+                CHECK_N(fread(head, 1, want, f), want);
+                fclose(f);
+            }
+            CHECK_S(head, heads[k]);
+        }
+    }
+    CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.mmd"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: a Mermaid chart doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
+    CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.dot"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: a DOT graph doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
 
     /* OPEN won't drop unsaved changes without FORCE */
