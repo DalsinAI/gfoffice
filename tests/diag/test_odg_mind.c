@@ -398,6 +398,93 @@ static void test_locked_and_big(void)
     done();
 }
 
+/* Outlines: a map out as items and in again (one Undo step), folds both ways, labels as plain text, and the
+ * trees refused. */
+static void test_outline(void)
+{
+    char r[24], a[24], b[24], a1[24], root2[24];
+    owf_ditem *it, back[4];
+    int n, steps;
+    char t0[] = "Root", t1[] = "A & <b>", t2[] = "two\nlines", t3[] = "Leaf";
+    fresh();
+    odg_mind_new(&doc, PX(100), PX(200), "Plan", r);
+    odg_mind_add_child(&doc, r, "Alpha &amp; co", 0, a);
+    odg_mind_add_child(&doc, r, "Beta", 0, b);
+    odg_mind_add_child(&doc, a, "One<br>Two", 0, a1);
+    odg_mind_fold(&doc, a, 1, 0);
+    CHECK_N(odg_mind_items(&doc, a1, &it, &n), OWF_OK);   /* from any node: the whole map */
+    CHECK_N(n, 4);
+    if (n == 4) {
+        CHECK_S(it[0].text, "Plan");
+        CHECK_N(it[0].depth, 0);
+        CHECK_S(it[1].text, "Alpha & co");
+        CHECK_N(it[1].depth, 1);
+        CHECK(it[1].folded && !it[0].folded);
+        CHECK_S(it[2].text, "One\nTwo");                  /* a folded branch is written too */
+        CHECK_N(it[2].depth, 2);
+        CHECK_S(it[3].text, "Beta");
+        CHECK_N(it[3].depth, 1);
+    }
+
+    steps = doc.nundo;                                    /* in again, beside it */
+    CHECK_N(odg_mind_import(&doc, PX(600), PX(200), it, n, 0, root2), OWF_OK);
+    CHECK_N(doc.nundo, steps + 1);
+    CHECK(odg_mind_is_node(cell(root2)) && odg_mind_parent(&doc, root2) == NULL);
+    check_at(root2, 600, 200);
+    owf_outline_free(it, n);
+    CHECK_N(odg_mind_items(&doc, root2, &it, &n), OWF_OK);
+    CHECK_N(n, 4);
+    if (n == 4) {
+        const owf_dcell *kids[4];
+        CHECK_S(it[1].text, "Alpha & co");
+        CHECK(it[1].folded);
+        CHECK_S(it[2].text, "One\nTwo");
+        CHECK_N(odg_mind_children(&doc, root2, kids, 4), 2);
+        CHECK(odg_mind_folded(kids[0]));
+        CHECK(!odg_mind_folded(kids[1]));
+    }
+    owf_outline_free(it, n);
+    CHECK_N(odg_undo(&doc), OWF_OK);                      /* one step takes the whole map away */
+    CHECK(cell(root2) == NULL);
+
+    back[0].depth = 0, back[0].text = t0, back[0].folded = 0;   /* labels escaped, a folded leaf left open */
+    back[1].depth = 1, back[1].text = t1, back[1].folded = 1;
+    back[2].depth = 2, back[2].text = t2, back[2].folded = 1;
+    back[3].depth = 1, back[3].text = t3, back[3].folded = 0;
+    CHECK_N(odg_mind_import(&doc, PX(0), PX(600), back, 4, 1, root2), OWF_OK);
+    {
+        const owf_dcell *kids[4];
+        CHECK_N(odg_mind_children(&doc, root2, kids, 4), 2);
+        CHECK_S(kids[0]->value, "A &amp; &lt;b&gt;");
+        CHECK(odg_mind_folded(kids[0]));
+        CHECK(kids[0]->geo.x > cell(root2)->geo.x && kids[1]->geo.x < cell(root2)->geo.x);   /* both sides */
+        CHECK_N(odg_mind_children(&doc, kids[0]->id, kids + 2, 2), 1);
+        CHECK_S(kids[2]->value, "two<br>lines");
+        CHECK(!odg_mind_folded(kids[2]) && !shown(kids[2]->id));
+    }
+
+    steps = doc.nundo;                                    /* not trees: nothing made */
+    back[1].depth = 2;
+    CHECK_N(odg_mind_import(&doc, 0, 0, back, 4, 0, NULL), OWF_ERR_FORMAT);
+    back[1].depth = 0;
+    CHECK_N(odg_mind_import(&doc, 0, 0, back, 4, 0, NULL), OWF_ERR_FORMAT);
+    back[1].depth = 1;
+    back[0].depth = 1;
+    CHECK_N(odg_mind_import(&doc, 0, 0, back, 4, 0, NULL), OWF_ERR_FORMAT);
+    CHECK_N(odg_mind_import(&doc, 0, 0, back, 0, 0, NULL), OWF_ERR_FORMAT);
+    back[0].depth = 0;
+    back[1].depth = ODG_MIND_DEPTH;
+    CHECK_N(odg_mind_import(&doc, 0, 0, back, 2, 0, NULL), OWF_ERR_FORMAT);
+    back[1].depth = 1;
+    CHECK_N(odg_layer_lock(&doc, 0, 1), OWF_OK);
+    CHECK_N(odg_mind_import(&doc, 0, 0, back, 4, 0, NULL), OWF_ERR_FORMAT);
+    CHECK_N(odg_layer_lock(&doc, 0, 0), OWF_OK);
+    CHECK_N(doc.nundo, steps + 2);                        /* only the lock and unlock */
+    CHECK_N(odg_mind_items(&doc, "nope", &it, &n), OWF_ERR_FORMAT);
+    CHECK(it == NULL && n == 0);
+    done();
+}
+
 int main(void)
 {
     test_build_and_layout();
@@ -405,6 +492,7 @@ int main(void)
     test_odd_maps();
     test_keys();
     test_locked_and_big();
+    test_outline();
     printf("diagram mind map: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

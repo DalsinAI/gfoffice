@@ -479,6 +479,99 @@ static void test_map(void)
     odg_rexx_free(&rx);
 }
 
+/* MAPEXPORT and MAPIMPORT: a map out as each outline and in again; the format by name or FORMAT; errors. */
+static const char *slurp(const char *name)
+{
+    static char buf[4096];
+    FILE *f = fopen(name, "rb");
+    size_t n = f ? fread(buf, 1, sizeof buf - 1, f) : 0;
+    if (f) fclose(f);
+    buf[n] = 0;
+    return buf;
+}
+
+static void test_map_outline(void)
+{
+    char r[24], a[24], line[200], r2[24];
+    CHECK_N(odg_rexx_init(&rx), OWF_OK);
+    strcpy(r, ok("MAPNEW 100 200 Trip"));
+    snprintf(line, sizeof line, "MAPCHILD %s Pack", r);
+    strcpy(a, ok(line));
+    snprintf(line, sizeof line, "MAPCHILD %s Socks", a);
+    ok(line);
+    snprintf(line, sizeof line, "MAPCHILD %s Tickets", r);
+    ok(line);
+    snprintf(line, sizeof line, "MAPFOLD %s", a);
+    ok(line);
+
+    snprintf(line, sizeof line, "MAPEXPORT %s build/host/odg-map.md", a);
+    ok(line);
+    CHECK_S(slurp("build/host/odg-map.md"), "# Trip\n\n- Pack\n  - Socks\n- Tickets\n");
+    snprintf(line, sizeof line, "MAPEXPORT %s build/host/odg-map.txt FORMAT mm", r);
+    ok(line);
+    CHECK_S(slurp("build/host/odg-map.txt"), "<map version=\"1.0.1\">\n<node TEXT=\"Trip\">\n"
+            " <node TEXT=\"Pack\" FOLDED=\"true\">\n  <node TEXT=\"Socks\"/>\n </node>\n"
+            " <node TEXT=\"Tickets\"/>\n</node>\n</map>\n");
+    snprintf(line, sizeof line, "MAPEXPORT %s build/host/odg-map.opml", r);
+    ok(line);
+    CHECK(strstr(slurp("build/host/odg-map.opml"), "<outline text=\"Socks\"/>") != NULL);
+
+    strcpy(r2, ok("MAPIMPORT build/host/odg-map.txt 600 200"));   /* .txt read as FreeMind by its first bytes */
+    snprintf(line, sizeof line, "MAPCHILDREN %s", r2);
+    {
+        char kids[64], first[24];
+        const char *sp;
+        strcpy(kids, ok(line));
+        sp = strchr(kids, ' ');
+        CHECK(sp != NULL);
+        if (sp) {
+            snprintf(first, sizeof first, "%.*s", (int)(sp - kids), kids);
+            snprintf(line, sizeof line, "GETVALUE %s", first);
+            CHECK_S(ok(line), "Pack");
+            CHECK(odg_mind_folded(owf_dpage_find(odg_page(&rx.doc), first)));
+        }
+    }
+    snprintf(line, sizeof line, "GETBOX %s", r2);
+    CHECK(strncmp(ok(line), "600 200 ", 8) == 0);
+    CHECK(ok("UNDO") != NULL);                            /* one step */
+    CHECK(owf_dpage_find(odg_page(&rx.doc), r2) == NULL);
+    strcpy(r2, ok("MAPIMPORT build/host/odg-map.md"));      /* no place: right of the page's drawing */
+    {
+        owf_dnum box[4];
+        const owf_dcell *c = owf_dpage_find(odg_page(&rx.doc), r2);
+        CHECK(c != NULL);
+        if (c) {
+            owf_dcell_box(odg_page(&rx.doc), owf_dpage_find(odg_page(&rx.doc), r), box);
+            CHECK(c->geo.x > box[0]);
+            snprintf(line, sizeof line, "GETVALUE %s", r2);
+            CHECK_S(ok(line), "Trip");
+        }
+    }
+    strcpy(r2, ok("MAPIMPORT build/host/odg-map.opml 0 900 FORMAT OPML"));
+    CHECK(r2[0] != 0);
+
+    CHECK_N(rx_do("MAPEXPORT nosuch build/host/odg-map.md"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPEXPORT: nosuch is not in a map (or its map loops back on itself)");
+    snprintf(line, sizeof line, "MAPEXPORT %s build/host/odg-map.md FORMAT DOC", r);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPEXPORT: FORMAT is MM, OPML or MD, not DOC");
+    snprintf(line, sizeof line, "MAPEXPORT %s build/host/no/such/dir/x.md", r);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPEXPORT: could not write build/host/no/such/dir/x.md");
+    CHECK_N(rx_do("MAPIMPORT build/host/no-such-outline.mm"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPIMPORT: could not read build/host/no-such-outline.mm");
+    {
+        FILE *f = fopen("build/host/odg-map-words.md", "wb");
+        if (f) { fputs("just words\n", f); fclose(f); }
+    }
+    CHECK_N(rx_do("MAPIMPORT build/host/odg-map-words.md"), ODG_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "is not an outline GFOpenDiag reads") != NULL);
+    CHECK_N(rx_do("LOCKLAYER 1"), ODG_RX_OK);
+    CHECK_N(rx_do("MAPIMPORT build/host/odg-map.md"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "MAPIMPORT: layer 1 is locked (LOCKLAYER 1 OFF unlocks it)");
+    odg_rexx_free(&rx);
+}
+
 int main(void)
 {
     test_edits();
@@ -488,6 +581,7 @@ int main(void)
     test_long_lines();
     test_many_ids();
     test_map();
+    test_map_outline();
     printf("diagram ARexx: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -659,3 +659,150 @@ int odg_mind_whole(const odg_doc *doc, const char *id)
     walk_from(p, owf_dpage_index(p, root->id), 1);
     return !walk.cut;
 }
+
+/* ---- Outlines ---- */
+
+typedef struct {
+    owf_ditem *items;
+    int n, room;
+} outline;
+
+static int item_add(outline *o, const owf_dcell *c, int depth)
+{
+    owf_ditem *it;
+    if (o->n == o->room) {
+        int room = o->room ? o->room * 2 : 32;
+        owf_ditem *more = (owf_ditem *)owf_malloc((size_t)room * sizeof *more);
+        if (!more)
+            return OWF_ERR_MEMORY;
+        if (o->n)
+            memcpy(more, o->items, (size_t)o->n * sizeof *more);
+        owf_free(o->items);
+        o->items = more;
+        o->room = room;
+    }
+    it = &o->items[o->n];
+    it->depth = depth;
+    it->folded = odg_mind_folded(c);
+    it->text = owf_dlabel_text(c->value ? c->value : "", c->style && is_on(c->style, "html"), NULL);
+    if (!it->text)
+        return OWF_ERR_MEMORY;
+    o->n++;
+    return OWF_OK;
+}
+
+/* Node id and its branch into o, depth first; folded branches too. Recursion: at most ODG_MIND_DEPTH levels. */
+static int items_from(const odg_doc *doc, const char *id, int depth, outline *o)
+{
+    const owf_dcell *c = owf_dpage_find(odg_page(doc), id), **kids;
+    char **ids;
+    int r, k, n;
+    if (o->n >= ODG_MIND_MAX)
+        return OWF_OK;
+    if ((r = item_add(o, c, depth)) != OWF_OK)
+        return r;
+    if (depth + 1 >= ODG_MIND_DEPTH || !(n = odg_mind_children(doc, id, NULL, 0)))
+        return OWF_OK;
+    kids = (const owf_dcell **)owf_malloc((size_t)n * sizeof *kids);
+    ids = (char **)owf_malloc((size_t)n * sizeof *ids);
+    if (!kids || !ids) {
+        owf_free(kids);
+        owf_free(ids);
+        return OWF_ERR_MEMORY;
+    }
+    odg_mind_children(doc, id, kids, n);
+    for (k = 0; k < n; k++)
+        ids[k] = kids[k]->id;            /* reading only: the cells stay where they are */
+    owf_free(kids);
+    for (k = 0; k < n && r == OWF_OK; k++)
+        r = items_from(doc, ids[k], depth + 1, o);
+    owf_free(ids);
+    return r;
+}
+
+int odg_mind_items(const odg_doc *doc, const char *id, owf_ditem **items, int *n)
+{
+    const owf_dcell *root = id ? odg_mind_root(doc, id) : NULL;
+    outline o = { NULL, 0, 0 };
+    int r;
+    *items = NULL;
+    *n = 0;
+    if (!root)
+        return OWF_ERR_FORMAT;
+    if ((r = items_from(doc, root->id, 0, &o)) != OWF_OK) {
+        owf_outline_free(o.items, o.n);
+        return r;
+    }
+    *items = o.items;
+    *n = o.n;
+    return OWF_OK;
+}
+
+/* Plain text as an HTML label: &, < and > escaped, line breaks as <br>. owf_malloc'd. */
+static char *as_label(const char *s)
+{
+    size_t n = 1, k = 0;
+    const char *p;
+    char *out;
+    for (p = s; *p; p++)
+        n += *p == '&' ? 5 : *p == '<' || *p == '>' ? 4 : *p == '\n' ? 4 : 1;
+    if (!(out = (char *)owf_malloc(n)))
+        return NULL;
+    for (p = s; *p; p++) {
+        const char *rep = *p == '&' ? "&amp;" : *p == '<' ? "&lt;" : *p == '>' ? "&gt;" : *p == '\n' ? "<br>" : NULL;
+        if (rep) {
+            memcpy(out + k, rep, strlen(rep));
+            k += strlen(rep);
+        } else if (*p != '\r')
+            out[k++] = *p;
+    }
+    out[k] = 0;
+    return out;
+}
+
+int odg_mind_import(odg_doc *doc, owf_dnum x, owf_dnum y, const owf_ditem *items, int n, int both, char *id)
+{
+    static char ids[ODG_MIND_DEPTH][24]; /* the open node at each depth (one task uses the core) */
+    int i = odg_layer_current(doc), k, r = OWF_OK;
+    char *in, *label = NULL;
+    owf_dpage *p;
+    owf_dcell *c;
+    if (i < 0 || !odg_layer_shown(doc, i) || odg_layer_locked(doc, i))
+        return OWF_ERR_FORMAT;
+    if (n < 1 || items[0].depth != 0)
+        return OWF_ERR_FORMAT;
+    for (k = 1; k < n; k++)
+        if (items[k].depth < 1 || items[k].depth >= ODG_MIND_DEPTH || items[k].depth > items[k - 1].depth + 1)
+            return OWF_ERR_FORMAT;
+    if (!(in = dup(odg_layer_at(doc, i)->id)))
+        return OWF_ERR_MEMORY;
+    if (odg_begin(doc) != OWF_OK) {
+        owf_free(in);
+        return OWF_ERR_MEMORY;
+    }
+    p = odg_page(doc);
+    for (k = 0; k < n && r == OWF_OK; k++) {
+        const owf_ditem *it = &items[k];
+        int parent_folds = it->folded && k + 1 < n && items[k + 1].depth > it->depth;
+        if (!(label = as_label(it->text ? it->text : ""))) {
+            r = OWF_ERR_MEMORY;
+            break;
+        }
+        c = k == 0 ? new_node(p, in, odg_snap(doc, x), odg_snap(doc, y), ROOT_W, ROOT_H, ODG_MIND_ROOT_STYLE, label)
+                   : new_node(p, in, odg_snap(doc, x), odg_snap(doc, y), NODE_W, NODE_H, ODG_MIND_NODE_STYLE, label);
+        owf_free(label);
+        if (!c || (parent_folds && owf_dattrs_set(&c->extra, "collapsed", "1") != OWF_OK)) {
+            r = OWF_ERR_MEMORY;
+            break;
+        }
+        snprintf(ids[it->depth], sizeof ids[it->depth], "%s", c->id);
+        if (k > 0 && !new_branch(p, in, ids[it->depth - 1], ids[it->depth]))
+            r = OWF_ERR_MEMORY;
+    }
+    if (r == OWF_OK) {
+        put_id(id, ids[0]);
+        r = finish(doc, ids[0], both, NULL);
+    }
+    owf_free(in);
+    return odg_end(doc, r);
+}
