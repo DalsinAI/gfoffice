@@ -408,16 +408,22 @@ static void put_word(char *result, size_t size, size_t *at, const char *w)
     *at += n;
 }
 
-/* ID given as "a,b,c" into ids (pointing into buf); how many. */
-static int split_ids(const char *s, char *buf, size_t size, const char **ids)
+/* ID given as "a,b,c" into ids (pointing into buf); how many, or -1 (and LASTERROR set) past MAX_IDS. */
+static int split_ids(odg_rexx *rx, const char *what, const char *s, char *buf, size_t size, const char **ids)
 {
     int n = 0;
     char *p;
     put(buf, size, s);
-    for (p = buf; *p && n < MAX_IDS;) {
+    for (p = buf; *p;) {
         char *comma = strchr(p, ',');
         if (comma) *comma = 0;
-        if (*p) ids[n++] = p;
+        if (*p) {
+            if (n == MAX_IDS) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "%s: more than %d ids", what, MAX_IDS);
+                return -1;
+            }
+            ids[n++] = p;
+        }
         if (!comma) break;
         p = comma + 1;
     }
@@ -595,13 +601,13 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             put(result, size, text);
         return rc;
     case C_MOVE:
-        n = split_ids(a->value[0], idbuf, sizeof idbuf, ids);
+        if ((n = split_ids(rx, "MOVE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
         return edit_rc(rx, odg_move(doc, ids, n, a->num[1], a->num[2]), "MOVE", "no such shape or connector");
     case C_RESIZE:
         return edit_rc(rx, odg_resize(doc, a->value[0], a->num[1], a->num[2], a->num[3], a->num[4]), "RESIZE",
                        "not a shape, or the size is not above 0");
     case C_DELETE:
-        n = split_ids(a->value[0], idbuf, sizeof idbuf, ids);
+        if ((n = split_ids(rx, "DELETE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
         return edit_rc(rx, odg_delete(doc, ids, n), "DELETE", "no such cell (the page and its layers stay)");
     case C_SETVALUE:
         return edit_rc(rx, odg_set_value(doc, a->value[0], a->value[1]), "SETVALUE", "no such cell");
@@ -612,7 +618,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return ODG_RX_OK;
     }
     case C_STYLE:
-        n = split_ids(a->value[0], idbuf, sizeof idbuf, ids);
+        if ((n = split_ids(rx, "STYLE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
         return edit_rc(rx, odg_set_style(doc, ids, n, a->value[1], a->value[2]), "STYLE", "no such cell");
     case C_GETSTYLE: {
         const owf_dcell *cell = find_cell(rx, "GETSTYLE", a->value[0]);
