@@ -238,6 +238,9 @@ int owf_ddot_write(const owf_diagram *d, int page, unsigned char **data, size_t 
 /* page as a GraphML graph: shapes as nodes keeping their places and sizes, a container as a node holding a
  * nested graph; as owf_dmermaid_write. */
 int owf_dgraphml_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* page as an Excalidraw scene (JSON): shapes, their labels and the arrows joining them where they are on the
+ * page; as owf_dmermaid_write. */
+int owf_dexcal_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
 
 #ifdef __cplusplus
 }
