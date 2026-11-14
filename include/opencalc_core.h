@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.35.0"
+#define OC_CORE_VERSION "0.35.1"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u

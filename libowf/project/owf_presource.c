@@ -14,6 +14,8 @@
 
 #define MAX_WORK 200000000L              /* minutes, as owf_pfile.c cuts */
 #define MAX_COST 2000000000L             /* hundredths */
+#define MAX_PEAK 2000000000L             /* units at once, the most a resource's peak shows */
+#define PEAK_STEP 1000000000L
 
 static char *dup_text(const char *s)
 {
@@ -239,7 +241,7 @@ void owf_project_resources_update(owf_project *p)
     for (r = 0; r < p->nresources; r++) {
         owf_presource *res = &p->resources[r];
         int n = 0;
-        long now = 0;
+        long hi = 0, lo = 0;                   /* units assigned now: hi * PEAK_STEP + lo, 0 <= lo < PEAK_STEP */
         if (res->type != OWF_RES_WORK) continue;
         for (i = 0; i < p->nassigns; i++) {
             const owf_passign *a = &p->assigns[i];
@@ -253,9 +255,14 @@ void owf_project_resources_update(owf_project *p)
             ev[n++].units = -a->units;
         }
         qsort(ev, (size_t)n, sizeof *ev, cmp_event);
+        /* Each assignment is at most 10,000,000 units, but thousands at once would pass a 32-bit long:
+           the running sum is kept in two parts and the peak stops at MAX_PEAK. */
         for (i = 0; i < n; i++) {
-            now += ev[i].units;
-            if (now > res->peak) res->peak = now;
+            lo += ev[i].units;
+            while (lo >= PEAK_STEP) lo -= PEAK_STEP, hi++;
+            while (lo < 0) lo += PEAK_STEP, hi--;
+            if (hi >= MAX_PEAK / PEAK_STEP) res->peak = MAX_PEAK;
+            else if (hi >= 0 && hi * PEAK_STEP + lo > res->peak) res->peak = hi * PEAK_STEP + lo;
         }
         res->overallocated = res->peak > res->max_units;
     }
