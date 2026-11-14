@@ -54,6 +54,7 @@ static void test_check(void)
     char out[24];
     CHECK(odg_prop_check(ODG_PROP_FILL, "#DAE8FC", out, sizeof out)); CHECK_S(out, "#dae8fc");
     CHECK(odg_prop_check(ODG_PROP_FILL, " #f0A ", out, sizeof out)); CHECK_S(out, "#ff00aa");
+    CHECK(odg_prop_check(ODG_PROP_FILL, "\t#f0A\t ", out, sizeof out)); CHECK_S(out, "#ff00aa");   /* tabs too */
     CHECK(odg_prop_check(ODG_PROP_STROKE, "None", out, sizeof out)); CHECK_S(out, "none");
     CHECK(odg_prop_check(ODG_PROP_STROKE, "", out, sizeof out)); CHECK_S(out, "");
     CHECK(odg_prop_check(ODG_PROP_STROKE, "   ", out, sizeof out)); CHECK_S(out, "");
@@ -166,12 +167,48 @@ static void test_field(void)
     done();
 }
 
+/* The window's OK: every changed property in one Undo step, or nothing when one doesn't check. */
+static void test_apply_all(void)
+{
+    char a[24], b[24];
+    const char *ids[2], *texts[ODG_NPROPS];
+    int bad, i, steps;
+    fresh();
+    odg_add_shape(&doc, PX(10), PX(10), PX(40), PX(20), "fillColor=#dae8fc;dashed=1;", NULL, a);
+    odg_add_shape(&doc, PX(100), PX(10), PX(40), PX(20), "", NULL, b);
+    ids[0] = a; ids[1] = b;
+    for (i = 0; i < ODG_NPROPS; i++) texts[i] = NULL;
+    steps = doc.nundo;
+    CHECK_N(odg_style_apply_all(&doc, ids, 2, texts, &bad), OWF_OK);      /* nothing given: no step */
+    CHECK_N(doc.nundo, steps);
+    texts[ODG_PROP_FILL] = "#F00";
+    texts[ODG_PROP_STROKE_WIDTH] = "2.5";
+    texts[ODG_PROP_DASHED] = "0";
+    CHECK_N(odg_style_apply_all(&doc, ids, 2, texts, &bad), OWF_OK);
+    CHECK_N(doc.nundo, steps + 1);                                        /* one step for all three */
+    CHECK(strstr(style_of(a), "fillColor=#ff0000") != NULL);
+    CHECK(strstr(style_of(b), "strokeWidth=2.5") != NULL);
+    CHECK(strstr(style_of(a), "dashed") == NULL);                         /* a switch off takes the key off */
+    CHECK_N(odg_undo(&doc), OWF_OK);                                      /* and one Undo puts all back */
+    CHECK(strstr(style_of(a), "fillColor=#dae8fc") != NULL);
+    CHECK(strstr(style_of(a), "dashed=1") != NULL);
+    CHECK(strstr(style_of(b), "strokeWidth") == NULL);
+    texts[ODG_PROP_FONT_SIZE] = "12.345";                                 /* one bad: none set, *bad names it */
+    steps = doc.nundo;
+    CHECK_N(odg_style_apply_all(&doc, ids, 2, texts, &bad), OWF_ERR_FORMAT);
+    CHECK_N(bad, ODG_PROP_FONT_SIZE);
+    CHECK_N(doc.nundo, steps);
+    CHECK(strstr(style_of(a), "fillColor=#dae8fc") != NULL);
+    done();
+}
+
 int main(void)
 {
     test_names();
     test_check();
     test_common_and_apply();
     test_field();
+    test_apply_all();
     printf("diagram style: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

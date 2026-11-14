@@ -497,11 +497,15 @@ static void style_window(void)
     struct Gadget *eg = NULL, *g, *field[ODG_NPROPS];
     struct NewGadget ng;
     char was[ODG_NPROPS][24], why[300] = "";
-    int same[ODG_NPROPS], ticked[ODG_NPROPS], done = 0, okd = 0, i, lw = 0, w, h, row = fh + 8;
+    char now[ODG_NPROPS][24];
+    const char *texts[ODG_NPROPS];
+    int same[ODG_NPROPS], ticked[ODG_NPROPS], touched[ODG_NPROPS], done = 0, okd = 0, i, lw = 0, w, h, row = fh + 8;
     if (!ed.n || rexx_busy) return;
     for (i = 0; i < ODG_NPROPS; i++) {
         int l = (int)strlen(odg_prop_title((odg_prop)i)) * fw + 12;
         if (l > lw) lw = l;
+        touched[i] = 0;
+        ticked[i] = 0;
         if (odg_prop_kind_of((odg_prop)i) == ODG_KIND_SWITCH) {
             same[i] = odg_style_common(DOC, ed.list, ed.n, (odg_prop)i, was[i], sizeof was[i]);
             ticked[i] = same[i] && !strcmp(was[i], "1");
@@ -564,32 +568,35 @@ static void style_window(void)
             else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(sw); GT_EndRefresh(sw, TRUE); }
             else if (class == IDCMP_GADGETUP && gg->GadgetID == 2) done = okd = 1;
             else if (class == IDCMP_GADGETUP && gg->GadgetID == 3) done = 1;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID >= 10 && gg->GadgetID < 10 + ODG_NPROPS)
+                touched[gg->GadgetID - 10] = 1;  /* a mixed switch clicked counts, even back to off */
         }
     }
     if (okd) {
+        int bad, rc;
         for (i = 0; i < ODG_NPROPS; i++) {
-            char now[24];
-            int rc;
+            texts[i] = NULL;
             if (odg_prop_kind_of((odg_prop)i) == ODG_KIND_SWITCH) {
                 LONG on = 0;
                 GT_GetGadgetAttrs(field[i], sw, NULL, GTCB_Checked, (ULONG)&on, TAG_DONE);
-                if ((on != 0) == ticked[i]) continue;      /* not changed */
-                put_text(now, sizeof now, on ? "1" : "0");
+                /* agreed: changed when it differs; mixed: when it was clicked at all */
+                if (same[i] ? (on != 0) == ticked[i] : !touched[i]) continue;
+                put_text(now[i], sizeof now[i], on ? "1" : "0");
             } else {
                 STRPTR str = NULL;
                 GT_GetGadgetAttrs(field[i], sw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
-                put_text(now, sizeof now, str ? (const char *)str : "");
-                if (!strcmp(now, same[i] ? was[i] : "")) continue;
+                put_text(now[i], sizeof now[i], str ? (const char *)str : "");
+                if (!strcmp(now[i], same[i] ? was[i] : "")) continue;
             }
-            rc = odg_style_apply(DOC, ed.list, ed.n, (odg_prop)i, now);
-            if (rc == OWF_ERR_MEMORY) { put_text(why, sizeof why, "Style: not enough memory"); break; }
-            if (rc != OWF_OK) {
-                size_t at = strlen(why);
-                snprintf(why + at, sizeof why - at, "%s%.20s: %.20s isn't %s", at ? "\n" : "", odg_prop_title((odg_prop)i), now,
-                         odg_prop_kind_of((odg_prop)i) == ODG_KIND_COLOUR ? "#rgb, #rrggbb or none" :
-                         "a number above 0 and below 1000");
-            }
+            texts[i] = now[i];
         }
+        rc = odg_style_apply_all(DOC, ed.list, ed.n, texts, &bad);   /* all of it one Undo step */
+        if (rc == OWF_ERR_MEMORY) put_text(why, sizeof why, "Style: not enough memory");
+        else if (rc != OWF_OK && bad >= 0)
+            snprintf(why, sizeof why, "%.20s: %.20s isn't %s; nothing was changed", odg_prop_title((odg_prop)bad),
+                     now[bad], odg_prop_kind_of((odg_prop)bad) == ODG_KIND_COLOUR ? "#rgb, #rrggbb or none" :
+                     "a number above 0 and up to 999.99, with two decimals at most");
+        else if (rc != OWF_OK) put_text(why, sizeof why, "Style: the cells are not on the page any more");
     }
     RemoveGList(sw, eg, -1);
     FreeGadgets(eg);

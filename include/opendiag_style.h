@@ -41,5 +41,9 @@ int odg_style_field(const odg_doc *doc, const char *const *ids, int n, odg_prop 
 /* text set as p on each cell, as one Undo step. OWF_ERR_FORMAT when the text doesn't check or no id is a cell on
  * the page; OWF_ERR_MEMORY. */
 int odg_style_apply(odg_doc *doc, const char *const *ids, int n, odg_prop p, const char *text);
+/* What the Style window's OK does: texts[p] (ODG_NPROPS of them, NULL for a property left as it was) set on each
+ * cell as one Undo step, after every one is checked. OWF_OK and no step when none is given; OWF_ERR_FORMAT with
+ * the first that doesn't check in *bad (nothing set), or when no id is a cell on the page; OWF_ERR_MEMORY. */
+int odg_style_apply_all(odg_doc *doc, const char *const *ids, int n, const char *const *texts, int *bad);
 
 #endif

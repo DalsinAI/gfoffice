@@ -68,6 +68,9 @@ int odg_delete(odg_doc *doc, const char *const *ids, int n);
 int odg_set_value(odg_doc *doc, const char *id, const char *value);
 /* One style key of each cell (value NULL removes it). */
 int odg_set_style(odg_doc *doc, const char *const *ids, int n, const char *key, const char *value);
+/* nkeys style keys of each cell (a NULL value removes its key), all as one Undo step. */
+int odg_set_styles(odg_doc *doc, const char *const *ids, int n, const char *const *keys, const char *const *values,
+                   int nkeys);
 
 /* ---- Ports and glue ---- */
 typedef enum { ODG_PORT_NONE = -1, ODG_PORT_N, ODG_PORT_E, ODG_PORT_S, ODG_PORT_W } odg_port;
