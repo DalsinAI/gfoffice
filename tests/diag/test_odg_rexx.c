@@ -244,11 +244,37 @@ static void test_files(void)
     remove("build/host/odg-rexx-bad.drawio");
 }
 
+/* A line whose first words fill the argument room: refused, never written past it (Hollister's #193 review). */
+static void test_long_lines(void)
+{
+    static char line[4200];
+    size_t n;
+    CHECK_N(odg_rexx_init(&rx), OWF_OK);
+    memcpy(line, "SETVALUE ", 9);
+    memset(line + 9, 'a', 2100);
+    strcpy(line + 9 + 2100, " hello world");
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "too long") != NULL);
+    memcpy(line, "SETVALUE ", 9);                 /* the id quoted, then more */
+    line[9] = '"';
+    memset(line + 10, 'b', 2100);
+    strcpy(line + 10 + 2100, "\" \"quoted rest\"");
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "too long") != NULL);
+    n = strlen("SETVALUE x ");                    /* a short id and a 4 KB label: cut to the room, not past it */
+    memcpy(line, "SETVALUE x ", n);
+    memset(line + n, 'c', sizeof line - n - 1);
+    line[sizeof line - 1] = 0;
+    CHECK(rx_do(line) != ODG_RX_OK);                /* no cell x; the point is it ends cleanly under ASan */
+    odg_rexx_free(&rx);
+}
+
 int main(void)
 {
     test_edits();
     test_errors();
     test_files();
+    test_long_lines();
     printf("diagram ARexx: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }
