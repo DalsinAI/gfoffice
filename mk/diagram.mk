@@ -59,11 +59,26 @@ $(OUT)/test-odg-asan: $(ODG_DEPS) $(OWF_SRC)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) tests/diag/test_odg.c -lz -o $@
 
-diagram-core-test: $(OUT)/test-odg
-	$(OUT)/test-odg
+ODG_REXX_DEPS = $(ODG_DEPS) src/diag/odg_rexx.c include/opendiag_rexx.h tests/diag/test_odg_rexx.c
 
-diagram-core-check: $(OUT)/test-odg-asan
+$(OUT)/test-odg-rexx: $(ODG_REXX_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_rexx.c tests/diag/test_odg_rexx.c -lz -o $@
+
+$(OUT)/test-odg-rexx-asan: $(ODG_REXX_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_rexx.c \
+		tests/diag/test_odg_rexx.c -lz -o $@
+
+diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx
+	$(OUT)/test-odg
+	$(OUT)/test-odg-rexx
+
+diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan
 	$(OUT)/test-odg-asan
+	$(OUT)/test-odg-rexx-asan
 
 test: diagram-core-test
 check: diagram-core-check
