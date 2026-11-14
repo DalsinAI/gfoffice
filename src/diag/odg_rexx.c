@@ -445,11 +445,12 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             snprintf(rx->lasterror, sizeof rx->lasterror, "HELP: no command %.100s", a->value[0]);
             return ODG_RX_ERROR;
         } else {
-            static const char *const app[] = { "VERSION", "ACTIVATE", "DEACTIVATE", "FAULT", "PRINT", "QUIT" };
+            static const char *const app[] = { "VERSION", "ACTIVATE", "DEACTIVATE", "FAULT", "PRINT", "QUIT", "ZOOM",
+                                               "FIT", "TOOL", "SELECT", "GETSELECTION" };
             size_t at = 0;
             int i;
             result[0] = 0;
-            for (i = 0; i < 6; i++) put_word(result, size, &at, app[i]);
+            for (i = 0; i < (int)(sizeof app / sizeof app[0]); i++) put_word(result, size, &at, app[i]);
             for (i = 0; i < NCOMMANDS; i++) put_word(result, size, &at, commands[i].name);
         }
         return ODG_RX_OK;

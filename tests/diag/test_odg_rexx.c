@@ -160,7 +160,8 @@ static void test_errors(void)
     CHECK_S(rx.lasterror, "PAGE: there are pages 1 to 1");
     CHECK_N(rx_do("PAGE 1.5"), ODG_RX_ERROR);
     CHECK_S(ok("HELP ADDSHAPE"), "ADDSHAPE X/A/N,Y/A/N,WIDTH/A/N,HEIGHT/A/N,STYLE/K,TEXT/K");
-    CHECK(strstr(ok("HELP"), "VERSION ACTIVATE") == res && strstr(res, " CONNECT ") && strstr(res, " REDO"));
+    CHECK(strstr(ok("HELP"), "VERSION ACTIVATE") == res && strstr(res, " CONNECT ") && strstr(res, " REDO") &&
+          strstr(res, " TOOL SELECT GETSELECTION "));
     CHECK_N(rx_do("HELP FROB"), ODG_RX_ERROR);
     CHECK_N(rx_do("SAVE"), ODG_RX_NOW);
     CHECK_S(rx.lasterror, "SAVE: the diagram has no file yet (SAVEAS names one)");
