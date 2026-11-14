@@ -370,6 +370,30 @@ static void test_from_file(void)
     done();
 }
 
+/* Long connectors: the hit test's sums stay inside 64 bits (Budgie's review: an edge 27,000 px long overflowed). */
+static void test_long_edges(void)
+{
+    owf_dpoint a = { PX(0), PX(0) }, b = { PX(27000), PX(27000) }, fa = { -PX(20000000), -PX(20000000) },
+               fb = { PX(20000000), PX(20000000) };
+    char e[24], hit[24];
+    fresh(0);
+    CHECK_N(odg_add_edge(&doc, NULL, NULL, &a, &b, "endArrow=none;", e), OWF_OK);
+    CHECK(odg_hit(&doc, PX(13500), PX(13500), PX(3), hit, sizeof hit));
+    CHECK_S(hit, e);
+    CHECK(odg_hit(&doc, PX(13502), PX(13498), PX(3), hit, sizeof hit));      /* 2.8 px off the line */
+    CHECK(!odg_hit(&doc, PX(13505), PX(13495), PX(3), hit, sizeof hit));     /* 7.1 px off */
+    CHECK(odg_hit(&doc, PX(27002), PX(27000), PX(3), hit, sizeof hit));      /* past the end, near it */
+    CHECK(!odg_hit(&doc, PX(27010), PX(27010), PX(3), hit, sizeof hit));
+    CHECK(!odg_hit(&doc, -PX(5), -PX(5), PX(3), hit, sizeof hit));
+    done();
+    fresh(0);
+    CHECK_N(odg_add_edge(&doc, NULL, NULL, &fa, &fb, "endArrow=none;", e), OWF_OK);
+    CHECK(odg_hit(&doc, 0, 0, PX(3), hit, sizeof hit));
+    CHECK(odg_hit(&doc, PX(1000), PX(1000), PX(3), hit, sizeof hit));
+    CHECK(!odg_hit(&doc, PX(1000), PX(1010), PX(3), hit, sizeof hit));
+    done();
+}
+
 int main(void)
 {
     test_shapes_and_undo();
@@ -380,6 +404,7 @@ int main(void)
     test_grid();
     test_groups_and_styles();
     test_from_file();
+    test_long_edges();
     printf("diagram core: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -574,22 +574,52 @@ int odg_set_style(odg_doc *doc, const char *const *ids, int n, const char *key, 
 
 /* ---- Hit-testing ---- */
 
-/* 1 when (x, y) is within tol of the segment a-b. */
+/* A whole square root, for the hit test's distances. */
+static wide isqrt_wide(wide v)
+{
+    wide r = 0, bit = (wide)1 << 62;
+    if (v <= 0)
+        return 0;
+    while (bit > v)
+        bit >>= 2;
+    while (bit) {
+        if (v >= r + bit) {
+            v -= r + bit;
+            r = (r >> 1) + bit;
+        } else
+            r >>= 1;
+        bit >>= 2;
+    }
+    return r;
+}
+
+/* 1 when (x, y) is within tol of the segment a-b. No product is more than two lengths multiplied: the distance
+ * from the line is the cross product over the length, and lengths past 2^30 hundredths are halved first (with tol),
+ * so a connector of any length can't overflow. */
 static int near_segment(owf_dpoint a, owf_dpoint b, owf_dnum x, owf_dnum y, owf_dnum tol)
 {
-    wide vx = b.x - a.x, vy = b.y - a.y, wx = x - a.x, wy = y - a.y;
-    wide len2 = vx * vx + vy * vy, dot = vx * wx + vy * wy, px, py;
-    if (len2 == 0 || dot <= 0) {
-        px = wx;
-        py = wy;
-    } else if (dot >= len2) {
-        px = x - b.x;
-        py = y - b.y;
-    } else {
-        px = wx - vx * dot / len2;
-        py = wy - vy * dot / len2;
+    wide vx = (wide)b.x - a.x, vy = (wide)b.y - a.y, wx = (wide)x - a.x, wy = (wide)y - a.y, t = tol, lim = (wide)1 << 30;
+    wide len2, dot, cross, ux, uy;
+    while (vx > lim || -vx > lim || vy > lim || -vy > lim || wx > lim || -wx > lim || wy > lim || -wy > lim) {
+        vx /= 2;
+        vy /= 2;
+        wx /= 2;
+        wy /= 2;
+        t /= 2;
     }
-    return px * px + py * py <= (wide)tol * tol;
+    len2 = vx * vx + vy * vy;
+    dot = vx * wx + vy * wy;
+    if (len2 == 0 || dot <= 0)
+        return wx * wx + wy * wy <= t * t;
+    if (dot >= len2) {
+        ux = wx - vx;
+        uy = wy - vy;
+        return ux * ux + uy * uy <= t * t;
+    }
+    cross = vx * wy - vy * wx;
+    if (cross < 0)
+        cross = -cross;
+    return cross <= t * (isqrt_wide(len2) + 1);
 }
 
 int odg_hit(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size)
