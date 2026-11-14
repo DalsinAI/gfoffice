@@ -317,7 +317,7 @@ The same pages as `FDPC`, one run per paragraph. The fields seen:
 | Id | What | Mark |
 |---|---|---|
 | 0x219 | the paragraph's style: k is style k of 6.6. None: style 0 | [V 2: 60685's headings are 4, its body 5, which give its thumbnail's italic headings and centred text; SampleBrochure's back cover is 0xB, centred 9 point, as its thumbnail shows] |
-| 0x204 | the alignment, over the style's (2: centred) | [V 2 for 2, as above]; SampleBrochure's 6 on its banner's lines: unknown |
+| 0x204 | the alignment, over the style's: its low byte (2: centred) | [V 3 for 2: as above, and 51318's styles, 0x5A02, whose headline and line its thumbnail shows centred; the high byte: unknown]; SampleBrochure's 6 on its banner's lines: unknown |
 | 0x230, 0x234, 0x213, 0x23C | | unknown ([H]: 0x213 a space in EMU, 76200 = 6 pt) |
 
 ### 6.6 Paragraph styles: `STSH` [V 8]

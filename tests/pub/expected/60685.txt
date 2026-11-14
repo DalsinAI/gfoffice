@@ -60,8 +60,10 @@ page 1 master 1 frames 43
       align centre
   frame 1 text box 12.7 245.6 190.5 17.1 mm (emu 457200 8840153 7315200 9454896) shape 202 text-id 3 story 1
     para ""
+      align centre
   frame 2 text box 12.7 224.8 190.5 17.8 mm (emu 457200 8092440 7315200 8732577) shape 202 text-id 4 story 2
     para ""
+      align centre
   frame 3 group box 12.7 12.7 190.5 4.6 mm (emu 457200 457200 7315200 621792) shape 0
   frame 4 shape in 3 box 12.7 12.7 190.5 4.6 mm (emu 457200 457200 7315200 621792) shape 1
   frame 5 shape in 3 box 12.7 12.7 190.5 4.6 mm (emu 457200 457200 7315200 621792) shape 1
@@ -103,6 +105,7 @@ page 1 master 1 frames 43
   frame 41 line in 3 box 187.3 15.0 12.1 0.0 mm (emu 6743700 539496 7178646 539496) shape 20
   frame 42 text box 12.7 18.3 190.5 10.8 mm (emu 457200 657225 7315200 1047750) shape 202 text-id 5 story 3
     para ""
+      align centre
 stories 4
 fonts 34
 font "Times New Roman"

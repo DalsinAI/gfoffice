@@ -529,7 +529,7 @@ static void char_props(const reader *r, span props, owf_charfmt *fmt)
 }
 
 /* Paragraph properties (FDPP's, or a style's): the style (0x219) and the
- * alignment (0x204; 2 is centred, PUB-FORMAT.md 6.5). */
+ * alignment (0x204's low byte; 2 is centred, PUB-FORMAT.md 6.5). */
 static void para_props(span props, int *style, owf_align *align)
 {
     size_t at = 0;
@@ -537,7 +537,7 @@ static void para_props(span props, int *style, owf_align *align)
     while (next_qfield(props, &at, &f) > 0) {
         if (f.id == 0x219 && style && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20))
             *style = (int)f.value;
-        else if (f.id == 0x204 && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20) && f.value == 2)
+        else if (f.id == 0x204 && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20) && (f.value & 0xFF) == 2)
             *align = OWF_ALIGN_CENTRE;
     }
 }

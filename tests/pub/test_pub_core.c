@@ -236,6 +236,18 @@ int main(void)
         owf_deck_free(roundtrip); roundtrip = NULL;
     }
     owf_deck_free(deck); deck = NULL;
+    /* 51318's styles say 0x5A02: the low byte, 2, centres its headline (as its thumbnail shows) */
+    CHECK(opp_import_pub_file("tests/pub/samples/51318.pub", &deck, report, &version) == OWF_OK);
+    if (deck) {
+        int centred = 0, j;
+        for (i = 0; i < deck->nslides; i++)
+            for (j = 0; j < deck->slides[i].nobjs; j++) {
+                const owf_story *st = &deck->slides[i].objs[j].text;
+                if (run_fmt(st, "This is where") && st->paras[0].fmt.align == OWF_ALIGN_CENTRE) centred = 1;
+            }
+        CHECK(centred);
+    }
+    owf_deck_free(deck); deck = NULL;
     /* Simple has no paragraph runs that name a style: every paragraph is the default style's, left */
     CHECK(opp_import_pub_file("tests/pub/samples/Simple.pub", &deck, report, &version) == OWF_OK);
     if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 0) {
