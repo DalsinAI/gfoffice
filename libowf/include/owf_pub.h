@@ -4,8 +4,9 @@
  * Phase 0's reader (docs/gfoffice/Design-OpenPublisher.md): it tells the
  * version, gives the page size, the pages and master pages, each page's
  * frames with their boxes and kinds, the text of text frames and tables as
- * paragraphs, the fonts the text names and the pictures. Formatting,
- * colours, wrap and the rest come in phase 1.
+ * paragraphs, the fonts the text names and the pictures. Phase 1 adds the
+ * text's character runs (bold, italic, size, typeface: PUB-FORMAT.md 6.4);
+ * styles, colours, wrap and the rest follow.
  *
  * There is no published specification of .pub. Everything this reader
  * knows was worked out from sample files' bytes (a clean room); the record

@@ -27,7 +27,25 @@ static void put_string(const char *s)
     putchar('"');
 }
 
-static void put_story(const owf_story *story, const char *indent)
+/* A run's character formatting when it has any: "bold italic 20pt font \"Arial\"". */
+static void put_fmt(const owf_doc *res, const owf_charfmt *f)
+{
+    if (f->flags & OWF_BOLD)
+        printf(" bold");
+    if (f->flags & OWF_ITALIC)
+        printf(" italic");
+    if (f->size)
+        printf(" %d.%dpt", f->size / 20, (f->size % 20) * 10 / 20);
+    if (f->font >= 0 && res && f->font < res->nfonts)
+        printf(" font \"%s\"", res->fonts[f->font].name);
+}
+
+static int has_fmt(const owf_charfmt *f)
+{
+    return (f->flags & (OWF_BOLD | OWF_ITALIC)) || f->size || f->font >= 0;
+}
+
+static void put_story(const owf_doc *res, const owf_story *story, const char *indent)
 {
     int i, j;
     for (i = 0; i < story->nparas; i++) {
@@ -51,6 +69,14 @@ static void put_story(const owf_story *story, const char *indent)
             }
         }
         printf("\"\n");
+        for (j = 0; j < p->nruns; j++) {
+            const owf_run *run = &p->runs[j];
+            if (run->kind != OWF_RUN_TEXT || !run->text || !has_fmt(&run->fmt))
+                continue;
+            printf("%s  run %d \"%.24s\"", indent, j, run->text);
+            put_fmt(res, &run->fmt);
+            printf("\n");
+        }
     }
 }
 
@@ -90,7 +116,7 @@ static void put_page(const owf_pub *pub, const owf_pub_page *page, int with_text
             printf(" table %dx%d", f->rows, f->cols);
         printf("\n");
         if (with_text && f->story >= 0 && f->story < pub->nstories)
-            put_story(&pub->stories[f->story], "    ");
+            put_story(pub->res, &pub->stories[f->story], "    ");
     }
 }
 
@@ -148,7 +174,7 @@ int main(int argc, char **argv)
     if (stories)
         for (i = 0; i < pub->nstories; i++) {
             printf("story %d\n", i);
-            put_story(&pub->stories[i], "  ");
+            put_story(pub->res, &pub->stories[i], "  ");
         }
     printf("fonts %d\n", pub->res->nfonts);
     for (i = 0; i < pub->res->nfonts; i++) {
