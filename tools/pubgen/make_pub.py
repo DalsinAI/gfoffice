@@ -231,6 +231,7 @@ class Text:
         self.stories = []                    # [(text id, [(para props, [(text, char props)])])]
         self.links = {}                      # story: [(from, length, kind, target)]
         self.cells = {}                      # story: paragraphs in each cell
+        self.spare = {}                      # story: links of a second TOKN, which readers ignore
 
     def story(self, text_id, paras, links=None, cells=None):
         self.stories.append((text_id, paras))
@@ -299,6 +300,10 @@ class Text:
             lengths.append(units() - start)
             marks.append(None)                # a story's end: marks restart
         tokns = [('TOKN', k, self.tokn(k, lengths[k])) for k in sorted(self.links)]
+        for k in sorted(self.spare):                 # a later copy of story k's links
+            first, self.links[k] = self.links[k], self.spare[k]
+            tokns.append(('TOKN', k, self.tokn(k, lengths[k])))
+            self.links[k] = first
         per_story, cur = [], []
         for m in marks:
             if m is None:
@@ -632,9 +637,10 @@ def runs():
             cells=[1, 1, 2, 1, 1, 1])
     t.story(4, [(None, [('On the second page', None)])])
     t.story(5, [(None, [('Left on the scratch area', None)])])
-    t.story(6, [(None, [('See our site, write to us, or turn to page 1.', None)])],
+    s6 = t.story(6, [(None, [('See our site, write to us, or turn to page 1.', None)])],
             links=[(4, 8, 1, 'https://example.org/gfoffice/'), (14, 11, 4, 'mailto:team@example.org?subject=Hello'),
                    (30, 14, 3, '\u010a')])
+    t.spare[s6] = [(0, 3, 1, 'https://example.org/not-this-one/')]
     f1 = frame_chunk(c, p1, text_id=1)
     f2 = frame_chunk(c, p1, text_id=2)
     tb = frame_chunk(c, p1, kind=0x10, text_id=3, extra=[fv(0x66, 0x20, 3), fv(0x67, 0x20, 2)])

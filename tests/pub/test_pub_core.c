@@ -159,7 +159,8 @@ int main(void)
      * frame on the scratch area (left out). */
     CHECK(opp_import_pub_file(PUB("gen-2007-runs.pub"), &deck, report, &version) == OWF_OK);
     CHECK(deck && deck->nslides == 2 && deck->slides[0].nobjs == 4 && deck->res->nimages == 1);
-    /* P1d links (TOKN): a web address and an e-mail on their words; a link to a page is text for now */
+    /* P1d links (TOKN): a web address and an e-mail on their words; a link to a page is text for now;
+     * the file carries a second TOKN for the story (linking "See"), which is ignored */
     CHECK(deck_href(deck, "our site") && !strcmp(deck_href(deck, "our site"), "https://example.org/gfoffice/"));
     CHECK(deck_href(deck, "write to us") && !strcmp(deck_href(deck, "write to us"), "mailto:team@example.org?subject=Hello"));
     CHECK(deck_href(deck, "See ") == NULL && deck_href(deck, ", or turn to page 1.") == NULL);

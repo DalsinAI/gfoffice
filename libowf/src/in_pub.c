@@ -1026,13 +1026,18 @@ static void read_text(reader *r)
         {
             tlink *links = NULL;
             int nlinks = 0, k;
-            for (k = 0; k < qd.ntokn; k++)
-                if (qd.tokn_story[k] == i)
-                    nlinks = read_links(r, qd.tokn[k], (unsigned long)len, &links);
             span tcd = { NULL, 0 };
+            /* a story's first TOKN and first TCD; any later copy is ignored */
+            for (k = 0; k < qd.ntokn; k++)
+                if (qd.tokn_story[k] == i) {
+                    nlinks = read_links(r, qd.tokn[k], (unsigned long)len, &links);
+                    break;
+                }
             for (k = 0; k < qd.ntcd; k++)
-                if (qd.tcd_story[k] == i)
+                if (qd.tcd_story[k] == i) {
                     tcd = qd.tcd[k];
+                    break;
+                }
             make_story(r, &r->pub->stories[r->pub->nstories++], qd.text, pos, pos + len, links, nlinks, tcd);
             free_links(links, nlinks);
         }
@@ -1591,7 +1596,15 @@ static long chain_place(reader *r, const owf_pub_frame *f)
  * itself: a group's members keep theirs. */
 static void order_chains(reader *r, owf_pub_page *page, int first)
 {
-    int i, j;
+    int i, j, n = page->nframes - first;
+    long *place, tp;
+    if (n < 2)
+        return;
+    place = owf_malloc((size_t)n * sizeof *place);
+    if (!place)
+        return;
+    for (i = 0; i < n; i++)            /* each chunk's 0x28 read once */
+        place[i] = chain_place(r, &page->frames[first + i]);
     for (i = first; i < page->nframes; i++) {
         owf_pub_frame *a = &page->frames[i];
         if (a->story < 0 || a->wordart || a->parent >= 0 || a->kind == OWF_PUB_GROUP)
@@ -1600,13 +1613,17 @@ static void order_chains(reader *r, owf_pub_page *page, int first)
             owf_pub_frame *b = &page->frames[j], t;
             if (b->story != a->story || b->wordart || b->parent >= 0 || b->kind == OWF_PUB_GROUP)
                 continue;
-            if (chain_place(r, b) < chain_place(r, a)) {
+            if (place[j - first] < place[i - first]) {
                 t = *a;
                 *a = *b;
                 *b = t;
+                tp = place[i - first];
+                place[i - first] = place[j - first];
+                place[j - first] = tp;
             }
         }
     }
+    owf_free(place);
 }
 
 /* A table frame's story: each cell's paragraphs into their row and column. */
