@@ -9,6 +9,7 @@
  */
 #include "opendiag_rexx.h"
 #include "opendiag_mind.h"
+#include "ow_picture.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -306,6 +307,7 @@ int odg_rexx_format(const char *file)
     if (ext_is(file, "svg")) return ODG_FILE_SVG;
     if (ext_is(file, "png")) return ODG_FILE_PNG;
     if (ext_is(file, "pdf")) return ODG_FILE_PDF;
+    if (ext_is(file, "iff") || ext_is(file, "ilbm")) return ODG_FILE_ILBM;
     return ODG_FILE_DRAWIO;
 }
 
@@ -337,20 +339,66 @@ static int read_file(const char *name, unsigned char **data, size_t *length)
     return 1;
 }
 
-/* The diagram (or, for an SVG, its page) written to name. */
+/* The page drawn by the app (rx->picture) as a PNG with the diagram inside, or as an IFF ILBM, into *data
+ * (owf_malloc'd). OWF_OK; OWF_ERR_FORMAT (lasterror says why); OWF_ERR_MEMORY. */
+static int picture_file(odg_rexx *rx, const char *name, int format, unsigned char **data, size_t *length)
+{
+    owf_dnum box[4];
+    long w, h;
+    unsigned char *rgb, *pic;
+    size_t n = 0;
+    int rc = OWF_OK;
+    if (!rx->picture) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%.150s: a %s needs the drawn page, which the app makes", name,
+                 format == ODG_FILE_PNG ? "PNG" : "picture");
+        return OWF_ERR_FORMAT;
+    }
+    if (!owf_dpage_bounds(odg_page(&rx->doc), box)) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%.150s: the page has nothing on it to draw", name);
+        return OWF_ERR_FORMAT;
+    }
+    box[0] -= OWF_DNUM(ODG_PICTURE_MARGIN);
+    box[1] -= OWF_DNUM(ODG_PICTURE_MARGIN);
+    box[2] += OWF_DNUM(2 * ODG_PICTURE_MARGIN);
+    box[3] += OWF_DNUM(2 * ODG_PICTURE_MARGIN);
+    w = (box[2] + 99) / 100;               /* whole pixels, a part one counted */
+    h = (box[3] + 99) / 100;
+    if (w > ODG_PICTURE_MAX || h > ODG_PICTURE_MAX) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%.100s: the page is %ld by %ld pixels; a picture is %d at most "
+                 "each way (EXPORT to SVG or PDF instead)", name, w, h, ODG_PICTURE_MAX);
+        return OWF_ERR_FORMAT;
+    }
+    rgb = rx->picture(rx->picture_user, box, (int)w, (int)h);
+    if (!rgb) return OWF_ERR_MEMORY;
+    pic = format == ODG_FILE_PNG ? opr_png_encode(rgb, (int)w, (int)h, (size_t)w * 3, &n)
+                                 : opr_ilbm_encode(rgb, (int)w, (int)h, (size_t)w * 3, &n);
+    free(rgb);
+    if (!pic) return OWF_ERR_MEMORY;
+    if (format == ODG_FILE_PNG)
+        rc = owf_dpng_embed(pic, n, &rx->d, data, length);
+    else if ((*data = (unsigned char *)owf_malloc(n)) != NULL) {
+        memcpy(*data, pic, n);
+        *length = n;
+    } else
+        rc = OWF_ERR_MEMORY;
+    free(pic);
+    return rc;
+}
+
+/* The diagram (or, for an SVG, its page; for a PNG or ILBM, its page drawn) written to name. */
 static int write_file(odg_rexx *rx, const char *name, int format, int compressed)
 {
     unsigned char *data = NULL;
     size_t length = 0;
     FILE *f;
     int rc, ok;
-    if (format == ODG_FILE_PNG) {
-        snprintf(rx->lasterror, sizeof rx->lasterror, "%.150s: a PNG needs the drawn picture, which the app's Export makes", name);
-        return ODG_RX_ERROR;
-    }
-    rc = format == ODG_FILE_PDF ? owf_dpdf_write(&rx->d, -1, &data, &length)
-         : format == ODG_FILE_SVG ? owf_dsvg_write(&rx->d, rx->doc.page, &data, &length)
-                                : owf_drawio_write(&rx->d, compressed, &data, &length);
+    if (format == ODG_FILE_PNG || format == ODG_FILE_ILBM) {
+        rc = picture_file(rx, name, format, &data, &length);
+        if (rc == OWF_ERR_FORMAT) return ODG_RX_ERROR;
+    } else
+        rc = format == ODG_FILE_PDF ? owf_dpdf_write(&rx->d, -1, &data, &length)
+             : format == ODG_FILE_SVG ? owf_dsvg_write(&rx->d, rx->doc.page, &data, &length)
+                                    : owf_drawio_write(&rx->d, compressed, &data, &length);
     if (rc == OWF_ERR_MEMORY) {
         snprintf(rx->lasterror, sizeof rx->lasterror, "Out of memory writing %.200s", name);
         return ODG_RX_FAIL;
@@ -590,9 +638,11 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return rc;
     case C_SAVEAS:
         if (!name_fits(rx, "SAVEAS", a->value[0])) return ODG_RX_ERROR;
-        if (odg_rexx_format(a->value[0]) == ODG_FILE_PDF) {   /* it would not open again: EXPORT writes one */
-            snprintf(rx->lasterror, sizeof rx->lasterror, "SAVEAS: a PDF doesn't open again as a diagram (EXPORT "
-                     "writes one; SAVEAS takes .drawio or .svg)");
+        if (odg_rexx_format(a->value[0]) == ODG_FILE_PDF || odg_rexx_format(a->value[0]) == ODG_FILE_ILBM) {
+            /* it would not open again: EXPORT writes one */
+            snprintf(rx->lasterror, sizeof rx->lasterror, "SAVEAS: %s doesn't open again as a diagram (EXPORT "
+                     "writes one; SAVEAS takes .drawio, .svg or .png)",
+                     odg_rexx_format(a->value[0]) == ODG_FILE_PDF ? "a PDF" : "an IFF picture");
             return ODG_RX_ERROR;
         }
         if ((rc = write_file(rx, a->value[0], odg_rexx_format(a->value[0]), a->value[1] != NULL)) == ODG_RX_OK) {
@@ -607,8 +657,10 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             else if (word_at(a->value[1], "DRAWIO", 6, 0)) format = ODG_FILE_DRAWIO;
             else if (word_at(a->value[1], "PNG", 3, 0)) format = ODG_FILE_PNG;
             else if (word_at(a->value[1], "PDF", 3, 0)) format = ODG_FILE_PDF;
+            else if (word_at(a->value[1], "ILBM", 4, 0) || word_at(a->value[1], "IFF", 3, 0)) format = ODG_FILE_ILBM;
             else {
-                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is SVG, PDF or DRAWIO, not %.100s", a->value[1]);
+                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is SVG, PDF, PNG, ILBM or DRAWIO, not %.100s",
+                         a->value[1]);
                 return ODG_RX_ERROR;
             }
         }

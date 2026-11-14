@@ -3,7 +3,8 @@
 # (libowf/diagram), the editing core, ARexx commands, canvas and mouse (src/diag) and GFOpenLayout's drawing
 # (draw/oldraw.c with its Amiga target, amiga/oldraw_amiga.c: lines, polygons and ellipses need gfopenlayout
 # 34472a1 or later, deps/openamigalayout.ref) are linked in; libowf too, so it is built with OWF=linked only
-# (owf.library has no diagram code). Integer arithmetic only: no FPU, no maths library.
+# (owf.library has no diagram code). Integer arithmetic only: no FPU, no maths library. The PNG and ILBM writers
+# (src/deck/ow_picture.c, shared with GFOpenPresentation) make EXPORT's pictures of the page.
 # MIT, Copyright (c) 2026 AmiCradle Team.
 if [ "$OWF" != linked ]; then
     echo "build.d/diag.sh: GFOpenDiag is built with libowf linked in only (OWF=linked)"
@@ -15,7 +16,7 @@ else
     "$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC -DOLDRAW_AMIGA -m68040 -specs=$SPECS -O2 -Wno-pointer-sign \
         $OWFFLAGS -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$OPENLAYOUT_SRC/draw" \
         $OWFSRC_DOCS "$HERE/libowf/src/owf_pdf.c" "$HERE/libowf/src/owf_pdffonts.c" \
-        "$HERE"/libowf/diagram/*.c "$HERE"/src/diag/*.c \
+        "$HERE"/libowf/diagram/*.c "$HERE"/src/diag/*.c "$HERE/src/deck/ow_picture.c" \
         "$OPENLAYOUT_SRC/draw/oldraw.c" "$OPENLAYOUT_SRC/amiga/oldraw_amiga.c" "$HERE/app/opendiag.c" -lamiga \
         -o "$OUT/GFOpenDiag"
     echo "GFOpenDiag: $(wc -c < "$OUT/GFOpenDiag") bytes"
