@@ -875,7 +875,7 @@ static void events(void)
     while (win && (m = GT_GetIMsg(win->UserPort)) != NULL) {
         ULONG class = m->Class, secs = m->Seconds, micros = m->Micros;
         UWORD code = m->Code, qual = m->Qualifier;
-        WORD mx = m->GZZMouseX, my = m->GZZMouseY;
+        WORD mx = m->MouseX - win->BorderLeft, my = m->MouseY - win->BorderTop;   /* in the inner (GZZ) area */
         GT_ReplyIMsg(m);
         switch (class) {
         case IDCMP_CLOSEWINDOW: if (may_drop()) quit_now = 1; break;
