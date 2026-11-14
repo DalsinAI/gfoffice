@@ -67,7 +67,7 @@ static const char version[] __attribute__((used)) =
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
-    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD,
+    M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS,
     M_TOOL = 100                         /* M_TOOL + odg_tool */
 };
 
@@ -107,6 +107,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Next Page", ">", 0, 0, (APTR)M_PAGE_NEXT },
     { NM_ITEM, "Previous Page", "<", 0, 0, (APTR)M_PAGE_PREV },
     { NM_ITEM, "Add Page...", NULL, 0, 0, (APTR)M_PAGE_ADD },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Layers...", "J", 0, 0, (APTR)M_LAYERS },
     { NM_TITLE, "Tool", NULL, 0, 0, NULL },
     TOOL_ITEM("Select", "1", ODG_TOOL_SELECT),
     TOOL_ITEM("Box", "2", ODG_TOOL_BOX),
@@ -605,6 +607,135 @@ static void style_window(void)
     redraw();
 }
 
+/* ---- The Layers window: the page's layers, top first, with the current one marked ---- */
+
+static struct List lay_list;
+static struct Node lay_nodes[32];
+static char lay_text[32][80];
+
+static int lay_count(void)
+{
+    int n = odg_layer_count(DOC);
+    return n > 32 ? 32 : n;
+}
+
+/* row r of the list (0 the top) is layer n - 1 - r */
+static void lay_build(void)
+{
+    int n = lay_count(), r;
+    NewList(&lay_list);
+    for (r = 0; r < n; r++) {
+        int i = n - 1 - r;
+        const owf_dcell *c = odg_layer_at(DOC, i);
+        snprintf(lay_text[r], sizeof lay_text[r], "%s %.50s%s%s", i == DOC->layer ? ">" : " ",
+                 c && c->value && c->value[0] ? c->value : (i == 0 ? "Background" : "Layer"),
+                 odg_layer_shown(DOC, i) ? "" : " (hidden)", odg_layer_locked(DOC, i) ? " (locked)" : "");
+        lay_nodes[r].ln_Name = lay_text[r];
+        AddTail(&lay_list, &lay_nodes[r]);
+    }
+}
+
+static void layers_window(void)
+{
+    enum { L_LIST = 1, L_CURRENT, L_SHOW, L_LOCK, L_NEW, L_RENAME };
+    static const char *const labels[] = { "Draw On", "Show/Hide", "Lock/Unlock", "New...", "Rename..." };
+    struct Window *lw;
+    struct Gadget *eg = NULL, *g, *g_list;
+    struct NewGadget ng;
+    int done = 0, row = 0, w = fw * 40, lines = 8, h, i, bw;
+    if (rexx_busy) return;
+    lay_build();
+    h = (fh + 2) * lines + 4 + (fh + 8) * 2 + 16;
+    lw = OpenWindowTags(NULL, WA_Title, (ULONG)"Layers", WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 50, WA_Top, win->TopEdge + 50, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP |
+                  BUTTONIDCMP,
+        TAG_DONE);
+    if (!lw) return;
+    if (!(g = CreateContext(&eg))) { CloseWindow(lw); return; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_LeftEdge = lw->BorderLeft + 8;
+    ng.ng_TopEdge = lw->BorderTop + 6;
+    ng.ng_Width = w - 16;
+    ng.ng_Height = (fh + 2) * lines + 4;
+    ng.ng_GadgetID = L_LIST;
+    g = g_list = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&lay_list, GTLV_ShowSelected, 0,
+                              GTLV_Selected, 0, TAG_DONE);
+    bw = (w - 16 - 4 * 4) / 5;
+    ng.ng_TopEdge += ng.ng_Height + 6;
+    ng.ng_Height = fh + 6;
+    ng.ng_Width = bw;
+    ng.ng_Flags = PLACETEXT_IN;
+    for (i = 0; i < 5; i++) {
+        ng.ng_LeftEdge = lw->BorderLeft + 8 + i * (bw + 4);
+        ng.ng_GadgetText = (UBYTE *)labels[i];
+        ng.ng_GadgetID = L_CURRENT + i;
+        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    }
+    if (!g) { FreeGadgets(eg); CloseWindow(lw); return; }
+    AddGList(lw, eg, ~0, -1, NULL);
+    RefreshGList(eg, lw, NULL, -1);
+    GT_RefreshWindow(lw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(lw->UserPort);
+        while ((m = GT_GetIMsg(lw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            int n = lay_count(), layer = n - 1 - row, rc = OWF_OK, changed = 1;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; continue; }
+            if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(lw); GT_EndRefresh(lw, TRUE); continue; }
+            if (class != IDCMP_GADGETUP || layer < 0) continue;
+            switch (gg->GadgetID) {
+            case L_LIST: row = code; changed = 0; break;
+            case L_CURRENT: DOC->layer = layer; break;
+            case L_SHOW: rc = odg_layer_show(DOC, layer, !odg_layer_shown(DOC, layer)); break;
+            case L_LOCK: rc = odg_layer_lock(DOC, layer, !odg_layer_locked(DOC, layer)); break;
+            case L_NEW: {
+                char name[60] = "";
+                int at = 0;
+                struct Window *keep = win;
+                win = lw;
+                if (!ask_text("New Layer", "Name", name, sizeof name)) { win = keep; changed = 0; break; }
+                win = keep;
+                rc = odg_layer_add(DOC, name[0] ? name : NULL, &at);
+                if (rc == OWF_OK) row = lay_count() - 1 - at;
+                break;
+            }
+            case L_RENAME: {
+                const owf_dcell *c = odg_layer_at(DOC, layer);
+                char name[60] = "";
+                struct Window *keep = win;
+                if (c && c->value) put_text(name, sizeof name, c->value);
+                win = lw;
+                if (!ask_text("Rename Layer", "Name", name, sizeof name)) { win = keep; changed = 0; break; }
+                win = keep;
+                rc = odg_layer_rename(DOC, layer, name);
+                break;
+            }
+            default: changed = 0; break;
+            }
+            if (rc != OWF_OK) edit_failed(rc, "Layer");
+            if (changed) {
+                GT_SetGadgetAttrs(g_list, lw, NULL, GTLV_Labels, ~0, TAG_DONE);
+                lay_build();
+                GT_SetGadgetAttrs(g_list, lw, NULL, GTLV_Labels, (ULONG)&lay_list, GTLV_Selected, (ULONG)row, TAG_DONE);
+                redraw();
+            }
+        }
+    }
+    RemoveGList(lw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(lw);
+    redraw();
+}
+
 static void undo_redo(int redo)
 {
     if (!(redo ? odg_can_redo(DOC) : odg_can_undo(DOC))) set_status(redo ? "Nothing to redo" : "Nothing to undo");
@@ -733,6 +864,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_PAGE_NEXT: go_page(1); return;
     case M_PAGE_PREV: go_page(-1); return;
     case M_PAGE_ADD: add_page(); return;
+    case M_LAYERS: layers_window(); return;
     }
     redraw();
 }
@@ -892,6 +1024,11 @@ static int rexx_select(const char *arg)
             char why[160];
             if (!c || (c->kind != OWF_DCELL_VERTEX && c->kind != OWF_DCELL_EDGE)) {
                 snprintf(why, sizeof why, "SELECT: no shape or connector %.100s on the page", id);
+                odg_edit_clear(&ed);
+                return app_error(ODG_RX_ERROR, why);
+            }
+            if (!odg_edit_pickable(DOC, id)) {       /* the redraw would drop it from the selection */
+                snprintf(why, sizeof why, "SELECT: %.100s is hidden or locked", id);
                 odg_edit_clear(&ed);
                 return app_error(ODG_RX_ERROR, why);
             }

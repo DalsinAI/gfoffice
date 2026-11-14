@@ -245,6 +245,53 @@ static void test_files(void)
     remove("build/host/odg-rexx-bad.drawio");
 }
 
+static void test_layers(void)
+{
+    char a[24], line[96];
+    CHECK_N(odg_rexx_init(&rx), OWF_OK);
+    CHECK_N(rx_do("SHOWLAYER 1 OFF"), ODG_RX_OK);                     /* no drawing on a hidden or locked layer */
+    CHECK_N(rx_do("ADDSHAPE 0 0 10 10"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "ADDSHAPE: layer 1 is hidden (SHOWLAYER 1 shows it)");
+    CHECK_N(rx_do("SHOWLAYER 1"), ODG_RX_OK);
+    CHECK_N(rx_do("LOCKLAYER 1"), ODG_RX_OK);
+    CHECK_N(rx_do("ADDSHAPE 0 0 10 10"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "ADDSHAPE: layer 1 is locked (LOCKLAYER 1 OFF unlocks it)");
+    CHECK_N(rx_do("CONNECT a b"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "CONNECT: layer 1 is locked (LOCKLAYER 1 OFF unlocks it)");
+    CHECK_N(rx_do("LOCKLAYER 1 OFF"), ODG_RX_OK);
+    CHECK_S(ok("CELLS"), "");
+    CHECK_S(ok("LAYERS"), "1");
+    CHECK_S(ok("LAYER"), "1");
+    CHECK_S(ok("ADDLAYER Notes"), "2");
+    CHECK_S(ok("LAYERS"), "2");
+    CHECK_S(ok("LAYER"), "2");                     /* the new one is current */
+    CHECK_S(ok("GETLAYER 2"), "Notes");
+    snprintf(a, sizeof a, "%s", ok("ADDSHAPE 10 10 40 20"));
+    CHECK_S(ok("HIT 20 20"), a);
+    CHECK_S(ok("SHOWLAYER 2 OFF"), "");
+    CHECK_S(ok("HIT 20 20"), "");                  /* hidden: not hit */
+    ok("SHOWLAYER 2");
+    CHECK_S(ok("HIT 20 20"), a);
+    ok("LOCKLAYER 1");
+    snprintf(line, sizeof line, "GETSTYLE %s", "1");
+    CHECK_S(ok(line), "locked=1;");
+    ok("LOCKLAYER 1 OFF");
+    CHECK_S(ok(line), "");
+    ok("RENAMELAYER 1 \"Back ground\"");
+    CHECK_S(ok("GETLAYER 1"), "Back ground");
+    CHECK_S(ok("LAYER 1"), "1");
+    CHECK_N(rx_do("LAYER 3"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "LAYER: there are layers 1 to 2");
+    CHECK_N(rx_do("LAYER 1.5"), ODG_RX_ERROR);
+    CHECK_N(rx_do("GETLAYER 0"), ODG_RX_ERROR);
+    CHECK_N(rx_do("SHOWLAYER 9"), ODG_RX_ERROR);
+    CHECK_N(rx_do("RENAMELAYER 1"), ODG_RX_ERROR);
+    CHECK_S(ok("HELP SHOWLAYER"), "SHOWLAYER NUMBER/A/N,OFF/S");
+    ok("UNDO");                                     /* the rename */
+    CHECK_S(ok("GETLAYER 1"), "");
+    odg_rexx_free(&rx);
+}
+
 /* A line whose first words fill the argument room: refused, never written past it (Hollister's #193 review). */
 static void test_long_lines(void)
 {
@@ -322,6 +369,7 @@ int main(void)
     test_edits();
     test_errors();
     test_files();
+    test_layers();
     test_long_lines();
     test_many_ids();
     printf("diagram ARexx: %d checks, %d failed\n", checks, fails);

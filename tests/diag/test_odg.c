@@ -456,6 +456,119 @@ static void test_long_ids(void)
     long_ids("abcdefghijklmnopqrstuvw-1", "abcdefghijklmnopqrstuvw-2", "abcdefghijklmnopqrstuvw-3");
 }
 
+/* New cells don't go on a hidden or locked layer; a layer is added under a root id of any length. */
+static void test_layer_rules(void)
+{
+    static char longid[200];
+    char a[24], b[24], e[24];
+    owf_dpage *p;
+    int at;
+    fresh(0);
+    odg_add_shape(&doc, PX(10), PX(10), PX(40), PX(20), NULL, NULL, a);
+    CHECK_N(odg_layer_current(&doc), 0);
+    CHECK_N(odg_layer_show(&doc, 0, 0), OWF_OK);
+    CHECK_N(odg_add_shape(&doc, PX(10), PX(100), PX(40), PX(20), NULL, NULL, b), OWF_ERR_FORMAT);   /* hidden */
+    CHECK_N(odg_layer_show(&doc, 0, 1), OWF_OK);
+    CHECK_N(odg_layer_lock(&doc, 0, 1), OWF_OK);
+    CHECK_N(odg_add_shape(&doc, PX(10), PX(100), PX(40), PX(20), NULL, NULL, b), OWF_ERR_FORMAT);   /* locked */
+    CHECK_N(odg_add_edge(&doc, a, a, NULL, NULL, "", e), OWF_ERR_FORMAT);
+    CHECK_N(odg_layer_add(&doc, "Top", &at), OWF_OK);                  /* a new layer is open: draw there */
+    CHECK_N(odg_layer_current(&doc), 1);
+    CHECK_N(odg_add_shape(&doc, PX(10), PX(100), PX(40), PX(20), NULL, NULL, b), OWF_OK);
+    CHECK_S(cell(b)->parent, odg_layer_at(&doc, 1)->id);
+    done();
+    memset(longid, 'r', sizeof longid - 1);                           /* a 199-byte root id from another tool */
+    owf_diagram_init(&d);
+    p = owf_diagram_add_page(&d, "p", "Page-1");
+    owf_dpage_remove(p, "1");                                          /* the page's own root and layer out */
+    owf_dpage_remove(p, "0");
+    CHECK_N(p->ncells, 0);
+    owf_dpage_add(p, longid, NULL, OWF_DCELL_PLAIN);
+    owf_dpage_add(p, "L1", longid, OWF_DCELL_PLAIN);
+    odg_init(&doc, &d, 0);
+    {
+        int had = odg_layer_count(&doc);
+        CHECK_N(had, 1);
+        CHECK_N(odg_layer_add(&doc, NULL, &at), OWF_OK);
+        CHECK_N(odg_layer_count(&doc), had + 1);
+        CHECK_N(at, had);
+        CHECK_S(odg_layer_at(&doc, had)->parent, longid);              /* under the whole id, not a cut one */
+    }
+    done();
+}
+
+static void test_layers(void)
+{
+    char a[24], b[24], e[24], hit[24];
+    int at = -1;
+    owf_dpoint p0 = { PX(0), PX(200) }, p1 = { PX(100), PX(200) };
+    fresh(0);
+    CHECK_N(odg_layer_count(&doc), 1);
+    CHECK_S(odg_layer_at(&doc, 0)->id, "1");
+    CHECK(odg_layer_at(&doc, 1) == NULL);
+    CHECK(odg_layer_at(&doc, -1) == NULL);
+    CHECK(odg_layer_shown(&doc, 0));
+    CHECK(!odg_layer_locked(&doc, 0));
+    odg_add_shape(&doc, PX(10), PX(10), PX(40), PX(20), NULL, NULL, a);
+
+    /* a new layer on top: the current one, so what is drawn next goes on it */
+    CHECK_N(odg_layer_add(&doc, NULL, &at), OWF_OK);
+    CHECK_N(at, 1);
+    CHECK_N(doc.layer, 1);
+    CHECK_N(odg_layer_count(&doc), 2);
+    CHECK_S(odg_layer_at(&doc, 1)->value, "Layer 2");
+    CHECK_S(odg_layer_at(&doc, 1)->parent, "0");
+    odg_add_shape(&doc, PX(10), PX(10), PX(40), PX(20), NULL, NULL, b);
+    CHECK_S(cell(b)->parent, odg_layer_at(&doc, 1)->id);
+    CHECK_S(cell(a)->parent, "1");
+    odg_add_edge(&doc, NULL, NULL, &p0, &p1, NULL, e);
+    CHECK_S(cell(e)->parent, odg_layer_at(&doc, 1)->id);
+    CHECK(odg_hit(&doc, PX(20), PX(20), 0, hit, sizeof hit));
+    CHECK_S(hit, b);                              /* the top layer's shape is on top */
+
+    /* hidden: neither drawn nor hit; the layer below shows through */
+    CHECK_N(odg_layer_show(&doc, 1, 0), OWF_OK);
+    CHECK(!odg_layer_shown(&doc, 1));
+    CHECK(!owf_dcell_shown(odg_page(&doc), cell(b)));
+    CHECK(odg_hit(&doc, PX(20), PX(20), 0, hit, sizeof hit));
+    CHECK_S(hit, a);
+    CHECK(!odg_hit(&doc, PX(50), PX(200), PX(2), hit, sizeof hit));
+    CHECK_N(odg_layer_show(&doc, 1, 1), OWF_OK);
+    CHECK(odg_layer_shown(&doc, 1));
+    CHECK(owf_dattrs_get(&odg_layer_at(&doc, 1)->extra, "visible") == NULL);
+
+    /* locked: kept as draw.io writes it, and what is on it counts as locked */
+    CHECK_N(odg_layer_lock(&doc, 0, 1), OWF_OK);
+    CHECK(odg_layer_locked(&doc, 0));
+    CHECK_S(odg_layer_at(&doc, 0)->style, "locked=1;");
+    CHECK(odg_cell_locked(&doc, cell(a)));
+    CHECK(!odg_cell_locked(&doc, cell(b)));
+    CHECK_N(odg_layer_lock(&doc, 0, 0), OWF_OK);
+    CHECK(!odg_cell_locked(&doc, cell(a)));
+    odg_set_style(&doc, (const char *[]){ b }, 1, "locked", "1");     /* a cell locked itself */
+    CHECK(odg_cell_locked(&doc, cell(b)));
+
+    CHECK_N(odg_layer_rename(&doc, 1, "Notes"), OWF_OK);
+    CHECK_S(odg_layer_at(&doc, 1)->value, "Notes");
+    CHECK_N(odg_layer_rename(&doc, 2, "x"), OWF_ERR_FORMAT);
+    CHECK_N(odg_layer_show(&doc, 5, 0), OWF_ERR_FORMAT);
+    CHECK_N(odg_layer_lock(&doc, -1, 1), OWF_ERR_FORMAT);
+    CHECK_N(odg_layer_rename(&doc, 0, NULL), OWF_ERR_FORMAT);
+
+    /* each is one Undo step; undone past the new layer, new cells go on the first again */
+    CHECK_N(odg_undo(&doc), OWF_OK);
+    CHECK_S(odg_layer_at(&doc, 1)->value, "Layer 2");
+    while (odg_layer_count(&doc) > 1 && odg_can_undo(&doc))
+        odg_undo(&doc);
+    CHECK_N(odg_layer_count(&doc), 1);
+    CHECK_N(doc.layer, 1);                        /* out of range now: the first is used */
+    CHECK_N(odg_add_shape(&doc, PX(0), PX(0), PX(5), PX(5), NULL, NULL, b), OWF_OK);
+    CHECK_S(cell(b)->parent, "1");
+    CHECK_N(odg_layer_add(&doc, "Top", &at), OWF_OK);
+    CHECK_S(odg_layer_at(&doc, 1)->value, "Top");
+    done();
+}
+
 int main(void)
 {
     test_shapes_and_undo();
@@ -468,6 +581,8 @@ int main(void)
     test_from_file();
     test_long_edges();
     test_long_ids();
+    test_layers();
+    test_layer_rules();
     printf("diagram core: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

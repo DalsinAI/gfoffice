@@ -22,6 +22,7 @@ typedef struct {
     owf_dpage *undo, *redo;              /* the page as it was before each step, oldest first */
     int nundo, nredo;
     int changed;                         /* edited since odg_saved */
+    int layer;                           /* the layer new shapes and connectors go on (odg_layer_at); 0 the first */
 } odg_doc;
 
 /* Sets up editing page of d (which must exist), with the page's own gridSize when it has grid="1". */
@@ -87,8 +88,32 @@ int odg_connect(odg_doc *doc, const char *edge, int end, const char *shape, odg_
  * operations call it); OWF_OK, OWF_ERR_FORMAT when it has no two ends, or OWF_ERR_MEMORY. */
 int odg_route(odg_doc *doc, const char *edge);
 
+/* ---- Layers ---- */
+/* The page's layers (the cells whose parent is the root), bottom first. A layer's name is its value; it is hidden
+ * with visible="0" and locked with style locked=1, as draw.io writes them. New shapes and connectors go on layer
+ * doc->layer (the first when it is out of range). */
+int odg_layer_count(const odg_doc *doc);
+const owf_dcell *odg_layer_at(const odg_doc *doc, int i);
+int odg_layer_shown(const odg_doc *doc, int i);
+int odg_layer_locked(const odg_doc *doc, int i);
+/* The layer new shapes and connectors go on: doc->layer, else the first; -1 when the page has none. A shape or
+ * connector added while it is hidden or locked is refused (OWF_ERR_FORMAT), as draw.io does, so nothing is drawn
+ * where it can't be seen or picked. */
+int odg_layer_current(const odg_doc *doc);
+/* A new layer on top named name (NULL: "Layer n"), made the current one; its number into *at. One Undo step. */
+int odg_layer_add(odg_doc *doc, const char *name, int *at);
+/* Layer i shown or hidden, locked or not, renamed: one Undo step each. OWF_ERR_FORMAT when there is no layer i. */
+int odg_layer_show(odg_doc *doc, int i, int shown);
+int odg_layer_lock(odg_doc *doc, int i, int locked);
+int odg_layer_rename(odg_doc *doc, int i, const char *name);
+/* 1 when the cell is on a locked layer or locked itself: the mouse leaves it alone. */
+int odg_cell_locked(const odg_doc *doc, const owf_dcell *c);
+
 /* ---- Hit-testing ---- */
 /* The topmost shape or connector at x, y (a connector within tol of its line), into id; 0 when none. */
 int odg_hit(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size);
+/* odg_hit for the mouse: locked cells (odg_cell_locked) are passed over, so one on top doesn't hide an open one
+ * under it. */
+int odg_hit_open(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size);
 
 #endif

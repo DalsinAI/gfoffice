@@ -49,7 +49,7 @@ const char *odg_tool_style(odg_tool t);
 /* The selection given to the view to draw. */
 void odg_edit_show(odg_edit *e, odg_view *v);
 /* Selection: is id in it; clear it; add id (add 1) or make it the only one; drop id; drop what isn't on the page
- * any more (after Undo, Delete, NEW or OPEN). odg_edit_select returns 0 when the id is too long or ODG_EDIT_MAX are
+ * any more (after Undo, Delete, NEW or OPEN) or is hidden or locked now. odg_edit_select returns 0 when the id is too long or ODG_EDIT_MAX are
  * selected. */
 int odg_edit_has(const odg_edit *e, const char *id);
 void odg_edit_clear(odg_edit *e);
@@ -58,6 +58,8 @@ void odg_edit_drop(odg_edit *e, const char *id);
 void odg_edit_prune(odg_edit *e, const odg_doc *doc);
 /* Every shape and connector on the page selected; how many. */
 int odg_edit_select_all(odg_edit *e, const odg_doc *doc);
+/* 1 when id is a shape or connector the mouse may pick: on the page, shown, not locked (nor on a locked layer). */
+int odg_edit_pickable(const odg_doc *doc, const char *id);
 
 /* The topmost shape or connector at px, py into id (ODG_EDIT_ID bytes); 0 when none (or its id is too long).
  * shapes 1: shapes only. */
