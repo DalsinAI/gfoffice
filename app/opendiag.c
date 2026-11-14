@@ -67,7 +67,8 @@ enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS,
-    M_TOOL = 100                         /* M_TOOL + odg_tool */
+    M_TOOL = 100,                        /* M_TOOL + odg_tool */
+    M_SHAPE = 200                        /* M_SHAPE + odg_stencil_at's number */
 };
 
 #define TOOL_ITEM(name, key, t) \
@@ -116,6 +117,15 @@ static struct NewMenu menus[] = {
     TOOL_ITEM("Rhombus", "5", ODG_TOOL_RHOMBUS),
     TOOL_ITEM("Text", "6", ODG_TOOL_TEXT),
     TOOL_ITEM("Connector", "7", ODG_TOOL_CONNECTOR),
+    { NM_TITLE, "Shapes", NULL, 0, 0, NULL },          /* opendiag_stencil.h's, in its order */
+    { NM_ITEM, "Process", NULL, 0, 0, (APTR)(M_SHAPE + 0) },
+    { NM_ITEM, "Decision", NULL, 0, 0, (APTR)(M_SHAPE + 1) },
+    { NM_ITEM, "Terminator", NULL, 0, 0, (APTR)(M_SHAPE + 2) },
+    { NM_ITEM, "Data", NULL, 0, 0, (APTR)(M_SHAPE + 3) },
+    { NM_ITEM, "Predefined Process", NULL, 0, 0, (APTR)(M_SHAPE + 4) },
+    { NM_ITEM, "Preparation", NULL, 0, 0, (APTR)(M_SHAPE + 5) },
+    { NM_ITEM, "Triangle", NULL, 0, 0, (APTR)(M_SHAPE + 6) },
+    { NM_ITEM, "Circle", NULL, 0, 0, (APTR)(M_SHAPE + 7) },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -338,7 +348,7 @@ static void sync_tool_menu(void)
     int t;
     if (!win || !menu) return;
     ClearMenuStrip(win);
-    for (t = 0; t < ODG_NTOOLS; t++)
+    for (t = 0; t < ODG_TOOL_SHAPE; t++)     /* the palette's shapes are the Shapes menu's, not ticked */
         if ((item = ItemAddress(menu, FULLMENUNUM(3, t, NOSUB))) != NULL) {
             if (t == (int)ed.tool) item->Flags |= CHECKED;
             else item->Flags &= ~CHECKED;
@@ -371,7 +381,7 @@ static void update_title(void)
     if (!win) return;
     if (rx.d.npages > 1) snprintf(where, sizeof where, " page %d/%d", DOC->page + 1, rx.d.npages);
     snprintf(title_text, sizeof title_text, "GFOpenDiag - %.80s%s%s - %s %d%%%s%.120s", name, DOC->changed ? " *" : "",
-             where, odg_tool_name(ed.tool), view.zoom, status[0] ? " - " : "", status);
+             where, ed.tool == ODG_TOOL_SHAPE ? odg_stencil_at(ed.shape)->name : odg_tool_name(ed.tool), view.zoom, status[0] ? " - " : "", status);
     SetWindowTitles(win, (UBYTE *)title_text, (UBYTE *)~0);
 }
 
@@ -806,7 +816,12 @@ static void menu_action(ULONG id, struct MenuItem *item)
 {
     char path[512];
     set_status("");
-    if (id >= M_TOOL && id < M_TOOL + ODG_NTOOLS) { set_tool((odg_tool)(id - M_TOOL)); return; }
+    if (id >= M_TOOL && id < M_TOOL + ODG_TOOL_SHAPE) { set_tool((odg_tool)(id - M_TOOL)); return; }
+    if (id >= M_SHAPE && id < M_SHAPE + (ULONG)odg_stencil_count()) {
+        ed.shape = (int)(id - M_SHAPE);
+        set_tool(ODG_TOOL_SHAPE);
+        return;
+    }
     switch (id) {
     case M_NEW:
         if (may_drop() && run("NEW FORCE", NULL, 0) != ODG_RX_OK) tell(rx.lasterror);
@@ -1041,10 +1056,15 @@ static int rexx_do_command(const char *command, char *result, size_t size)
         int t;
         if (!*arg) put_text(result, size, odg_tool_name(ed.tool));
         else {
-            for (t = 0; t < ODG_NTOOLS; t++) if (starts_word_ci(arg, odg_tool_name((odg_tool)t), NULL)) break;
-            if (t == ODG_NTOOLS) rc = app_error(ODG_RX_ERROR, "TOOL: Select, Box, Rounded, Ellipse, Rhombus, Text or Connector");
+            for (t = 0; t < ODG_TOOL_SHAPE; t++) if (starts_word_ci(arg, odg_tool_name((odg_tool)t), NULL)) break;
+            if (t == ODG_TOOL_SHAPE) rc = app_error(ODG_RX_ERROR, "TOOL: Select, Box, Rounded, Ellipse, Rhombus, Text or Connector");
             else set_tool((odg_tool)t);
         }
+    } else if (starts_word_ci(command, "SHAPE", &arg)) {
+        int k;
+        if (!*arg) put_text(result, size, ed.tool == ODG_TOOL_SHAPE ? odg_stencil_at(ed.shape)->name : "");
+        else if ((k = odg_stencil_find(arg)) < 0) rc = app_error(ODG_RX_ERROR, "SHAPE: Process, Decision, Terminator, Data, Predefined Process, Preparation, Triangle or Circle");
+        else { ed.shape = k; set_tool(ODG_TOOL_SHAPE); }
     } else if (starts_word_ci(command, "SELECT", &arg)) {
         follow_doc();
         rc = rexx_select(arg);

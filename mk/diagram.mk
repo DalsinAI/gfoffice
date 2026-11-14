@@ -120,17 +120,18 @@ $(OUT)/test-odg-view-asan: $(ODG_VIEW_DEPS) $(OWF_SRC)
 		-lz -o $@
 
 # The mouse on the canvas (src/diag/odg_edit.c), over the canvas's places.
-ODG_EDIT_DEPS = $(ODG_VIEW_DEPS) src/diag/odg_edit.c include/opendiag_edit.h tests/diag/test_odg_edit.c
+ODG_EDIT_DEPS = $(ODG_VIEW_DEPS) src/diag/odg_edit.c include/opendiag_edit.h src/diag/odg_stencil.c \
+	include/opendiag_stencil.h tests/diag/test_odg_edit.c
 
 $(OUT)/test-odg-edit: $(ODG_EDIT_DEPS) $(OWF_SRC)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB $(ODG_VIEW_FLAGS) $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_view.c \
-		src/diag/odg_edit.c $(ODG_OLDRAW) tests/diag/test_odg_edit.c -lz -o $@
+		src/diag/odg_edit.c src/diag/odg_stencil.c $(ODG_OLDRAW) tests/diag/test_odg_edit.c -lz -o $@
 
 $(OUT)/test-odg-edit-asan: $(ODG_EDIT_DEPS) $(OWF_SRC)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
-		$(ODG_VIEW_FLAGS) $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_view.c src/diag/odg_edit.c $(ODG_OLDRAW) \
+		$(ODG_VIEW_FLAGS) $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_view.c src/diag/odg_edit.c src/diag/odg_stencil.c $(ODG_OLDRAW) \
 		tests/diag/test_odg_edit.c -lz -o $@
 
 diagram-view-test: $(OUT)/test-odg-view $(OUT)/test-odg-edit

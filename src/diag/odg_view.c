@@ -381,6 +381,33 @@ static void draw_vertex(oldraw *d, const odg_view *v, const owf_dpage *p, const 
         oldraw_ellipse(d, &r, fill);
         if (stroke != OLDRAW_NONE)
             oldraw_ellipse_frame(d, &r, w, stroke);
+    } else if (owf_dstyle_is(style, "triangle") || owf_dstyle_is(style, "parallelogram") ||
+               owf_dstyle_is(style, "hexagon")) {
+        /* the flowchart polygons, as draw.io draws them by default: a triangle pointing east, a parallelogram
+         * leaning a fifth of its width, a hexagon cut a quarter in at each end */
+        int n, k = (int)((wide)r.w * (owf_dstyle_is(style, "hexagon") ? 1 : 2) / (owf_dstyle_is(style, "hexagon") ? 4 : 10));
+        if (owf_dstyle_is(style, "triangle")) {
+            pts[0].x = r.x;           pts[0].y = r.y;
+            pts[1].x = r.x + r.w - 1; pts[1].y = r.y + r.h / 2;
+            pts[2].x = r.x;           pts[2].y = r.y + r.h - 1;
+            n = 3;
+        } else if (owf_dstyle_is(style, "parallelogram")) {
+            pts[0].x = r.x + k;           pts[0].y = r.y;
+            pts[1].x = r.x + r.w - 1;     pts[1].y = r.y;
+            pts[2].x = r.x + r.w - 1 - k; pts[2].y = r.y + r.h - 1;
+            pts[3].x = r.x;               pts[3].y = r.y + r.h - 1;
+            n = 4;
+        } else {
+            pts[0].x = r.x + k;           pts[0].y = r.y;
+            pts[1].x = r.x + r.w - 1 - k; pts[1].y = r.y;
+            pts[2].x = r.x + r.w - 1;     pts[2].y = r.y + r.h / 2;
+            pts[3].x = r.x + r.w - 1 - k; pts[3].y = r.y + r.h - 1;
+            pts[4].x = r.x + k;           pts[4].y = r.y + r.h - 1;
+            pts[5].x = r.x;               pts[5].y = r.y + r.h / 2;
+            n = 6;
+        }
+        oldraw_polygon(d, pts, n, fill);
+        stroke_path(d, pts, n, 1, w, dashed, stroke);
     } else if (owf_dstyle_is(style, "rhombus")) {
         pts[0].x = r.x + r.w / 2; pts[0].y = r.y;
         pts[1].x = r.x + r.w - 1; pts[1].y = r.y + r.h / 2;
@@ -413,6 +440,13 @@ static void draw_vertex(oldraw *d, const odg_view *v, const owf_dpage *p, const 
             oldraw_polygon(d, grown, n, fill);
         }
         stroke_path(d, pts, n, 1, w, dashed, stroke);
+        if (owf_dstyle_is(style, "process")) {   /* a predefined process: a line a tenth in from each side */
+            long in = r.w / 10;
+            if (in > 1) {
+                oldraw_line(d, (int)(r.x + in), r.y, (int)(r.x + in), r.y + r.h - 1, w, stroke);
+                oldraw_line(d, (int)(r.x + r.w - 1 - in), r.y, (int)(r.x + r.w - 1 - in), r.y + r.h - 1, w, stroke);
+            }
+        }
         if (owf_dstyle_is(style, "swimlane")) {
             header = odg_view_len(v, style_num(style, "startSize", 2300));
             if (header > r.h)

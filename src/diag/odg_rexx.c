@@ -466,7 +466,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             return ODG_RX_ERROR;
         } else {
             static const char *const app[] = { "VERSION", "ACTIVATE", "DEACTIVATE", "FAULT", "PRINT", "QUIT", "ZOOM",
-                                               "FIT", "TOOL", "SELECT", "GETSELECTION" };
+                                               "FIT", "TOOL", "SELECT", "GETSELECTION", "SHAPE" };
             size_t at = 0;
             int i;
             result[0] = 0;

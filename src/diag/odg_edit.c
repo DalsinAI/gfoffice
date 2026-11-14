@@ -10,7 +10,7 @@
 #include "opendiag_edit.h"
 
 static const char *const tool_names[ODG_NTOOLS] = {
-    "Select", "Box", "Rounded", "Ellipse", "Rhombus", "Text", "Connector"
+    "Select", "Box", "Rounded", "Ellipse", "Rhombus", "Text", "Connector", "Shape"
 };
 static const char *const tool_styles[ODG_NTOOLS] = {
     "",
@@ -19,7 +19,8 @@ static const char *const tool_styles[ODG_NTOOLS] = {
     "ellipse;whiteSpace=wrap;html=1;",
     "rhombus;whiteSpace=wrap;html=1;",
     "text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;",
-    "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;"
+    "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;",
+    ""                                   /* the palette's: odg_stencil_at(e->shape)->style */
 };
 
 const char *odg_tool_name(odg_tool t)
@@ -376,11 +377,14 @@ static int do_create(odg_edit *e, const odg_view *v, odg_doc *doc)
     owf_dnum x, y, w, h;
     char id[32];
     int text = e->tool == ODG_TOOL_TEXT, rc;
+    const odg_stencil *st = e->tool == ODG_TOOL_SHAPE ? odg_stencil_at(e->shape) : NULL;
+    if (e->tool == ODG_TOOL_SHAPE && !st)
+        return OWF_ERR_FORMAT;
     if (!e->moved) {                     /* a click: a shape of the usual size with its corner there */
         x = x0;
         y = y0;
-        w = OWF_DNUM(text ? 60 : 120);
-        h = OWF_DNUM(text ? 30 : 60);
+        w = OWF_DNUM(st ? st->width : text ? 60 : 120);
+        h = OWF_DNUM(st ? st->height : text ? 30 : 60);
     } else {
         x = x0 < x1 ? x0 : x1;
         y = y0 < y1 ? y0 : y1;
@@ -394,7 +398,7 @@ static int do_create(odg_edit *e, const odg_view *v, odg_doc *doc)
         if (w < OWF_DNUM(1)) w = doc->grid > 0 ? doc->grid : OWF_DNUM(1);
         if (h < OWF_DNUM(1)) h = doc->grid > 0 ? doc->grid : OWF_DNUM(1);
     }
-    rc = odg_add_shape(doc, x, y, w, h, odg_tool_style(e->tool), text ? "Text" : "", id);
+    rc = odg_add_shape(doc, x, y, w, h, st ? st->style : odg_tool_style(e->tool), text ? "Text" : "", id);
     if (rc != OWF_OK)
         return rc;
     snprintf(e->made, sizeof e->made, "%s", id);

@@ -444,6 +444,47 @@ static void test_locked_and_hidden(void)
     done();
 }
 
+static void test_shapes_palette(void)
+{
+    owf_dcell *c;
+    int i;
+    CHECK_N(odg_stencil_count(), 8);
+    CHECK_S(odg_stencil_at(0)->name, "Process");
+    CHECK(odg_stencil_at(8) == NULL);
+    CHECK(odg_stencil_at(-1) == NULL);
+    CHECK_N(odg_stencil_find("decision"), 1);
+    CHECK_N(odg_stencil_find("PREDEFINED PROCESS"), 4);
+    CHECK_N(odg_stencil_find("Predefined"), -1);
+    CHECK_N(odg_stencil_find("Decisions"), -1);
+    CHECK_N(odg_stencil_find(NULL), -1);
+    for (i = 0; i < odg_stencil_count(); i++) {           /* each a style the files keep, with no stray ';;' */
+        CHECK(odg_stencil_at(i)->style[0] && strstr(odg_stencil_at(i)->style, ";;") == NULL);
+        CHECK(odg_stencil_at(i)->width > 0 && odg_stencil_at(i)->height > 0);
+    }
+    CHECK_S(odg_tool_name(ODG_TOOL_SHAPE), "Shape");
+
+    fresh(0);
+    e.tool = ODG_TOOL_SHAPE;                             /* a click: the shape's own size */
+    e.shape = odg_stencil_find("Decision");
+    odg_edit_press(&e, &v, &doc, 30, 40, 0);
+    CHECK_N(odg_edit_release(&e, &v, &doc, 30, 40), OWF_OK);
+    c = cell(e.made);
+    CHECK(c != NULL);
+    CHECK_S(c->style, "rhombus;whiteSpace=wrap;html=1;");
+    CHECK_N(c->geo.width, PX(80)); CHECK_N(c->geo.height, PX(80));
+    CHECK_N(e.tool, ODG_TOOL_SELECT);
+    e.tool = ODG_TOOL_SHAPE;                             /* dragged: the box drawn */
+    e.shape = odg_stencil_find("Data");
+    CHECK_N(drag(100, 100, 200, 150, 0), OWF_OK);
+    c = cell(e.made);
+    CHECK(owf_dstyle_is(c->style, "parallelogram"));
+    CHECK_N(c->geo.width, PX(100)); CHECK_N(c->geo.height, PX(50));
+    e.tool = ODG_TOOL_SHAPE;                             /* a shape number out of range draws nothing */
+    e.shape = 99;
+    CHECK_N(drag(300, 100, 350, 150, 0), OWF_ERR_FORMAT);
+    done();
+}
+
 int main(void)
 {
     test_tools();
@@ -455,6 +496,7 @@ int main(void)
     test_connect();
     test_lasso();
     test_locked_and_hidden();
+    test_shapes_palette();
     printf("diagram edit: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -507,6 +507,43 @@ static void test_long_dashes(void)
     done();
 }
 
+/* The palette's polygons: a triangle pointing east, a parallelogram leaning a fifth, a hexagon cut a quarter in, and
+ * a predefined process's two inner lines. */
+static void test_flowchart_shapes(void)
+{
+    odg_view v;
+    char a[24], b[24], c[24], e[24];
+    fresh(0);
+    odg_view_init(&v, W, H);
+    odg_add_shape(&doc, PX(10), PX(10), PX(60), PX(41), "triangle;fillColor=#ff0000;", NULL, a);
+    odg_add_shape(&doc, PX(100), PX(10), PX(100), PX(40), "shape=parallelogram;fillColor=#ff0000;", NULL, b);
+    odg_add_shape(&doc, PX(10), PX(100), PX(100), PX(40), "shape=hexagon;fillColor=#ff0000;", NULL, c);
+    odg_add_shape(&doc, PX(200), PX(100), PX(100), PX(40), "shape=process;fillColor=#ff0000;", NULL, e);
+    draw(&v);
+    /* the triangle: its tip at 69,30, its back the left side */
+    CHECK_X(px[30][20], RED);
+    CHECK_X(px[30][69], BLACK);
+    CHECK_X(px[12][60], WHITE);                /* past the slope near the top right */
+    CHECK_X(px[30][10], BLACK);
+    /* the parallelogram: 20 pixels of lean, the top left corner and bottom right corner left out */
+    CHECK_X(px[11][101], WHITE);
+    CHECK_X(px[48][198], WHITE);
+    CHECK_X(px[30][150], RED);
+    CHECK_X(px[10][150], BLACK);
+    CHECK_X(px[10][120], BLACK);               /* the top starts 20 in */
+    /* the hexagon: 25 in at the corners, points at the middle of each end */
+    CHECK_X(px[101][12], WHITE);
+    CHECK_X(px[120][10], BLACK);
+    CHECK_X(px[120][60], RED);
+    CHECK_X(px[100][35], BLACK);
+    /* the process: a box with lines 10 in from each side */
+    CHECK_X(px[120][210], BLACK);
+    CHECK_X(px[120][289], BLACK);
+    CHECK_X(px[120][205], RED);
+    CHECK_X(px[120][250], RED);
+    done();
+}
+
 int main(void)
 {
     d = cur = oldraw_new(&ops, NULL, W, H, NULL);
@@ -518,6 +555,7 @@ int main(void)
     test_grid_and_area();
     test_selection_and_handles();
     test_long_dashes();
+    test_flowchart_shapes();
     oldraw_free(d);
     printf("diagram view: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
