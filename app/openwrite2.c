@@ -2225,6 +2225,23 @@ static void paint_op(void *userdata, const ol_device_op *d)
                 ogt_text(rp, ogt_pen(&ctx, "muted"), d->box.x + 6, d->box.y + 6, label, d->box.width - 12);
             }
         }
+        if (pp->body && !pp->thumb) {
+            /* 2.0.38: a tracked picture: a frame in its author's colour, crossed out when deleted */
+            unsigned long rgb = 0;
+            int change = ow_layout_picture_change(pp->layout, d->op->u.image.node_id, &rgb);
+            if (change) {
+                LONG pen = argb_pen(0xFF000000UL | (uint32_t)rgb);
+                int x2 = d->box.x + d->box.width - 1, y2 = d->box.y + d->box.height - 1;
+                ogt_frame(rp, pen, d->box.x, d->box.y, d->box.width, d->box.height);
+                if (d->box.width > 4 && d->box.height > 4)
+                    ogt_frame(rp, pen, d->box.x + 1, d->box.y + 1, d->box.width - 2, d->box.height - 2);
+                if (change == OW_PICTURE_DELETED) {
+                    ogt_set_apen(rp, pen);
+                    Move(rp, d->box.x, d->box.y); Draw(rp, x2, y2);
+                    Move(rp, x2, d->box.y); Draw(rp, d->box.x, y2);
+                }
+            }
+        }
         break;
     }
     case OL_OP_SHAPE:

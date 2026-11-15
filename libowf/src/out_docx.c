@@ -683,8 +683,9 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
             put_note_mark(out, doc, story, run, report);
             continue;
         }
-        /* 1.5: a tracked change's run inside w:ins or w:del (a picture or frame is never one) */
-        const owf_revision *chg = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ? run_change(doc, run->revision) : NULL;
+        /* 1.5: a tracked change's run inside w:ins or w:del (1.12: a picture in the line may be one; a frame
+         * never is) */
+        const owf_revision *chg = run->kind != OWF_RUN_FRAME ? run_change(doc, run->revision) : NULL;
         int del = chg && chg->kind == OWF_REV_DELETE;
         /* 1.11: its tracked format change, in each of its w:r's w:rPr */
         const owf_format_change *fc = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ?

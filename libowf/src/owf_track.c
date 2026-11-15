@@ -169,9 +169,9 @@ void owf_track_switch(owf_track_span *t, owf_builder *b, int rev, int marks)
                 int from = i == t->para ? t->run : 0;
                 int to = i == end_para ? end_run : p->nruns;
                 for (j = from; j < to && j < p->nruns; ++j)
-                    if (p->runs[j].kind != OWF_RUN_FRAME && p->runs[j].kind != OWF_RUN_IMAGE && !p->runs[j].comment)
-                        p->runs[j].revision = t->rev;   /* text, tabs, breaks and fields: a frame or a comment's
-                                                           place is no change */
+                    if (p->runs[j].kind != OWF_RUN_FRAME && !p->runs[j].comment)
+                        p->runs[j].revision = t->rev;   /* text, tabs, breaks, fields and (1.12) pictures in the
+                                                           line: a frame or a comment's place is no change */
                 if (t->marks && i < end_para)
                     p->mark_revision = t->rev;
             }

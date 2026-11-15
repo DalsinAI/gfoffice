@@ -39,13 +39,15 @@
  * 3.10: libowf 1.11, tracked format changes of runs (owf_run.format_change, owf_doc.format_changes,
  * owf_format_change): DOCX w:rPrChange in and out; other formats the format as it is now (accepted). No new
  * calls; owf_run and owf_doc grew, so the three libraries go together again.
+ * 3.11: libowf 1.12, a picture in the line may be a tracked change (owf_run.revision on OWF_RUN_IMAGE): DOCX
+ * w:ins and w:del round its w:drawing, ODT changed regions, in and out. No new calls and no struct grew.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 10
-#define OWF_LIB_VERS "3.10"
-#define OWF_LIB_DATE "14.11.2026"
+#define OWF_LIB_REVISION 11
+#define OWF_LIB_VERS "3.11"
+#define OWF_LIB_DATE "15.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

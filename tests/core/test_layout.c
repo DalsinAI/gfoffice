@@ -1744,6 +1744,45 @@ static void test_final_view(void)
     owf_doc_free(doc);
 }
 
+/* 2.0.38: a tracked picture in the line: the window frames it in its author's colour (crossed out when
+ * deleted); the final view shows an inserted one plain and leaves a deleted one out */
+static void test_picture_changes(void)
+{
+    static const unsigned char png[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3, 4 };
+    owf_doc *doc = owf_doc_new();
+    owf_para *p = para(doc, NULL, 0, "Text", 240);
+    owf_charfmt cf = p->runs[0].fmt;
+    int img = owf_doc_add_image(doc, "tiny.png", "image/png", png, sizeof png, 720, 720, "tiny");
+    int add = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL), del = owf_track_add(doc, OWF_REV_DELETE, "Bob", NULL);
+    ow_layout *shown, *final;
+    const ol_display_op *op;
+    unsigned long rgb[2] = { 0, 0 };
+    int kinds[2] = { 0, 0 }, n, count;
+    CHECK(img >= 0 && add > 0 && del > 0 && owf_para_add_image(p, &cf, img) == 0 && owf_para_add_text(p, &cf, " ", 1) == 0 &&
+          owf_para_add_image(p, &cf, img) == 0 && p->nruns == 4);
+    if (p->nruns != 4) { owf_doc_free(doc); return; }
+    p->runs[1].revision = add;
+    p->runs[3].revision = del;
+    shown = ow_layout_new(doc, measure, NULL);
+    final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(shown && final);
+    if (shown && final) {
+        for (n = 0; n < 2 && (op = nth_op(ow_layout_body(shown), 0, OL_OP_IMAGE, n, NULL)) != NULL; ++n)
+            kinds[n] = ow_layout_picture_change(shown, op->u.image.node_id, &rgb[n]);
+        CHECK(kinds[0] == OW_PICTURE_INSERTED && kinds[1] == OW_PICTURE_DELETED);
+        CHECK(rgb[0] == 0x1F5FBFUL && rgb[1] == 0xB0306AUL);      /* Ann's blue, Bob's red, as their text */
+        op = nth_op(ow_layout_body(shown), 0, OL_OP_TEXT, 0, NULL);
+        CHECK(!op || !ow_layout_picture_change(shown, op->u.text.node_id, NULL));   /* text is no picture */
+        for (count = 0; nth_op(ow_layout_body(final), 0, OL_OP_IMAGE, count, NULL); ++count) {}
+        CHECK(count == 1);                                       /* the deleted one takes no room */
+        op = nth_op(ow_layout_body(final), 0, OL_OP_IMAGE, 0, NULL);
+        CHECK(op && !ow_layout_picture_change(final, op->u.image.node_id, NULL));   /* and is no change there */
+    }
+    ow_layout_free(shown);
+    ow_layout_free(final);
+    owf_doc_free(doc);
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -1752,6 +1791,7 @@ int main(int argc, char **argv)
     test_columns();
     test_generated_toc();
     test_final_view();
+    test_picture_changes();
     test_issue9();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)

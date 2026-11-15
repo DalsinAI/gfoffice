@@ -589,6 +589,107 @@ static void test_final_view(void)
     owf_doc_free(doc);
 }
 
+/* 2.0.38: pictures in the line as tracked changes: one put in while recording is an insertion with the two
+ * paragraph ends round it, one deleted is marked deleted (the author's own insertion goes), accepting and
+ * rejecting take or keep them, and DOCX and ODT keep them */
+static const unsigned char tiny_png[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3, 4 };
+
+static owf_doc *picture_doc(int with_picture)
+{
+    static const char *const text[] = { "Alpha", "", "Omega" };
+    owf_doc *doc = doc_of(text, with_picture ? 3 : 1);
+    owf_charfmt cf;
+    int img;
+    if (!doc) return NULL;
+    owf_charfmt_init(&cf);
+    img = owf_doc_add_image(doc, "tiny.png", "image/png", tiny_png, sizeof tiny_png, 1440, 960, "tiny");
+    if (img < 0 || (with_picture && owf_para_add_image(&doc->body.paras[1], &cf, img) != OWF_OK)) {
+        owf_doc_free(doc);
+        return NULL;
+    }
+    if (!with_picture) {
+        owf_parafmt pf;
+        owf_para *p;
+        owf_parafmt_init(&pf);
+        p = owf_story_add(&doc->body, &pf);
+        if (!p || owf_para_add_text(p, &cf, "Omega", 5) != OWF_OK) { owf_doc_free(doc); return NULL; }
+    }
+    return doc;
+}
+
+static ow_editor *recording(owf_doc *doc, const char *author)
+{
+    ow_editor *ed = ow_editor_new(doc);
+    if (!ed) return NULL;
+    ow_editor_set_track_changes(ed, 1);
+    ow_editor_set_review_author(ed, author);
+    return ed;
+}
+
+static void test_pictures(void)
+{
+    owf_doc *doc = picture_doc(0), *back = NULL;
+    ow_editor *ed;
+    static const char *const inserted = "Alpha|+{+?+}|+|Omega";
+    const char *formats[] = { "docx", "odt" };
+    char path[64];
+    int i;
+    if (!doc || !(ed = recording(doc, "Ann"))) { CHECK(0, "document"); owf_doc_free(doc); return; }
+    CHECK(!strcmp(dump(doc), "Alpha|Omega"), dump(doc));
+    caret(ed, 0, 5);
+    CHECK(ow_editor_insert_image(ed, 0) == OWF_OK, "picture put in while recording");
+    CHECK(!strcmp(dump(doc), inserted), dump(doc));
+    CHECK(OWF_DOC_REVISION(doc, doc->body.paras[1].runs[0].revision) &&
+          !strcmp(OWF_DOC_REVISION(doc, doc->body.paras[1].runs[0].revision)->author, "Ann"), "Ann's insertion");
+    /* both formats keep it */
+    for (i = 0; i < 2; ++i) {
+        snprintf(path, sizeof path, "/tmp/openwrite-track-picture.%s", formats[i]);
+        CHECK(owf_export_file(doc, path, formats[i], NULL) == OWF_OK, formats[i]);
+        back = NULL;
+        CHECK(owf_import_file(path, NULL, &back, NULL, NULL) == OWF_OK && back, formats[i]);
+        if (back) {
+            CHECK(!strcmp(dump(back), inserted), dump(back));
+            CHECK(back->nimages == 1, "the picture comes back");
+        }
+        owf_doc_free(back);
+        remove(path);
+    }
+    /* rejected: as it was */
+    CHECK(ow_editor_accept_all_changes(ed, 0) == OWF_OK, "reject all");
+    CHECK(!strcmp(dump(doc), "Alpha|Omega"), dump(doc));
+    /* Ann deletes her own: it goes, nothing is marked */
+    caret(ed, 0, 5);
+    CHECK(ow_editor_insert_image(ed, 0) == OWF_OK, "again");
+    select_range(ed, 0, 5, 2, 0);                    /* the picture and the two ends round it, not the old end */
+    ow_editor_delete_forward(ed);
+    CHECK(!strcmp(dump(doc), "Alpha|Omega"), dump(doc));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    /* someone else's picture deleted: marked, then accepted (gone) or rejected (kept) */
+    for (i = 0; i < 2; ++i) {
+        doc = picture_doc(1);
+        if (!doc || !(ed = recording(doc, "Bob"))) { CHECK(0, "document"); owf_doc_free(doc); return; }
+        CHECK(!strcmp(dump(doc), "Alpha|?|Omega"), dump(doc));
+        select_range(ed, 0, 5, 2, 0);
+        ow_editor_delete_forward(ed);
+        CHECK(!strcmp(dump(doc), "Alpha|-[-?-]|-Omega"), dump(doc));
+        if (!i) {
+            snprintf(path, sizeof path, "/tmp/openwrite-track-picture.docx");
+            back = NULL;
+            CHECK(owf_export_file(doc, path, "docx", NULL) == OWF_OK &&
+                  owf_import_file(path, NULL, &back, NULL, NULL) == OWF_OK && back, "deleted picture saved");
+            CHECK(back && !strcmp(dump(back), "Alpha|-[-?-]|-Omega"), back ? dump(back) : "read");
+            owf_doc_free(back);
+            remove(path);
+        }
+        CHECK(ow_editor_accept_all_changes(ed, !i) == OWF_OK, i ? "reject all" : "accept all");
+        CHECK(!strcmp(dump(doc), i ? "Alpha|?|Omega" : "AlphaOmega"), dump(doc));
+        ow_editor_free(ed);
+        owf_doc_free(doc);
+    }
+}
+
 int main(void)
 {
     test_recording();
@@ -600,6 +701,7 @@ int main(void)
     test_odf_form();
     test_format_changes();
     test_final_view();
+    test_pictures();
     printf("track changes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
