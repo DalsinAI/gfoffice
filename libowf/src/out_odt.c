@@ -847,6 +847,15 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
 }
 
 /* A paragraph by itself (a table cell's, a text box's): its end is never joined to another. */
+/* 1.12: whether the table starting at paragraph i keeps a row when its tracked row changes are accepted */
+static int table_kept(const owf_doc *doc, const owf_story *story, int i)
+{
+    int id = story->paras[i].table_id;
+    for (; i < story->nparas && story->paras[i].table_id == id; ++i)
+        if (change_kind(doc, story->paras[i].row_revision) != OWF_REV_DELETE) return 1;
+    return 0;
+}
+
 static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s)
 {
     put_para_part(out, doc, para, s, 1, 1, NULL);
@@ -862,7 +871,10 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
             owf_buf_printf(out,"<text:section text:name=\"Section%d\" text:style-name=\"Sect%d\">",i+1,i+1);
             section_open=1;
         }
-        if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
+        if(p->table_id>=0&&!table_kept(doc,story,i)){   /* 1.12: every row a tracked deletion: no table (ODF wants a row) */
+            int id=p->table_id;
+            while(i<story->nparas&&story->paras[i].table_id==id)++i;
+        }else if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
             while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];
                 if(change_kind(doc,p->row_revision)==OWF_REV_DELETE){++i;continue;}   /* 1.12: saved accepted */
                 if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}

@@ -937,6 +937,33 @@ static void test_rows(void)
         ow_editor_free(ed);
         owf_doc_free(doc);
     }
+    /* every row deleted: ODT leaves the table out (ODF wants a row in a table), the text round it kept (Blitter) */
+    doc = table_doc();
+    if (!doc || !(ed = recording(doc, "Bob"))) { CHECK(0, "document"); owf_doc_free(doc); return; }
+    caret(ed, 1, 0);
+    ow_editor_table_delete_row(ed);
+    caret(ed, 3, 0);
+    ow_editor_table_delete_row(ed);
+    CHECK(!strcmp(rows_dump(doc), "[-a-] [-b-]/[-c-] [-d-]"), rows_dump(doc));
+    CHECK(owf_export_file(doc, odt, "odt", NULL) == OWF_OK, "odt");
+    {
+        FILE *f = fopen(odt, "rb");
+        unsigned char *zip = NULL, *xml = NULL;
+        size_t n = 0, xn = 0;
+        long size;
+        owf_unzip uz;
+        if (f && !fseek(f, 0, SEEK_END) && (size = ftell(f)) > 0 && !fseek(f, 0, SEEK_SET) &&
+            (zip = (unsigned char *)malloc((size_t)size)) && fread(zip, 1, (size_t)size, f) == (size_t)size)
+            n = (size_t)size;
+        if (f) fclose(f);
+        CHECK(n && owf_unzip_open(&uz, zip, n) && owf_unzip_read(&uz, "content.xml", &xml, &xn) == OWF_OK, "content.xml");
+        CHECK(xml && !strstr((const char *)xml, "<table:table") && strstr((const char *)xml, "Top"),
+              "no table, Top kept");
+        owf_free(xml);
+        free(zip);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
     /* one change: the caret's row only */
     doc = table_doc();
     if (!doc || !(ed = recording(doc, "Bob"))) { CHECK(0, "document"); owf_doc_free(doc); return; }
