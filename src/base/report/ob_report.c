@@ -205,6 +205,20 @@ static int plan_make(plan *pl, ob_project *p, const ob_report *r, char *err, siz
             goto out;
         }
         pl->group_text = type == OB_TEXT || type == OB_MEMO || type == OB_CHOICE || type == -1;
+        /* Groups are made as the rows come, so a query's must come sorted by the group first. A
+         * grid query says so in its first sorted column; an SQL query's ORDER BY is the caller's. */
+        if (pl->is_query && !pl->query->sql_only) {
+            const ob_qcolumn *first = NULL;
+            for (i = 0; i < pl->query->ncolumns && !first; i++)
+                if (pl->query->columns[i].sort != OB_SORT_NONE) first = &pl->query->columns[i];
+            if (!first || !(same_name(first->field, r->group) || (first->heading[0] && same_name(first->heading, r->group))
+                            || same_name(first->field, pl->group_heading) ||
+                            (first->heading[0] && same_name(first->heading, pl->group_heading)))) {
+                fail(err, errsize, "%s: group by %s: sort the query %s by %s first", r->name, r->group, r->query,
+                     r->group);
+                goto out;
+            }
+        }
     }
     rc = 0;
 out:

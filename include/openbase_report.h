@@ -46,9 +46,13 @@ typedef struct ob_report {
     char title[OB_VALUE_MAX];       /* "" is the name */
     char table[OB_NAME_MAX];        /* the source: a table... */
     char query[OB_NAME_MAX];        /* ...or a saved query, not both */
-    char sort[OB_NAME_MAX];         /* a table's: the order of the rows ("" key order; a group sorts by its field) */
+    char sort[OB_NAME_MAX];         /* a table's: the order of the rows ("" key order). Not used with a
+                                       group: the groups are in their field's order and the rows in a
+                                       group in key order. A query's rows come in its own order. */
     int desc;                       /* sort (or the groups) Z to A */
-    char group[OB_NAME_MAX];        /* "" none: a heading and totals for each value of this field */
+    char group[OB_NAME_MAX];        /* "" none: a heading and totals for each value of this field. A grid
+                                       query must sort by it first (ob_report_check says so); an SQL
+                                       query must ORDER BY it first, which isn't checked. */
     int ncolumns;
     ob_rcolumn columns[OB_REPORT_COLUMNS];
 } ob_report;

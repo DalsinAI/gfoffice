@@ -1,11 +1,12 @@
 # GFOpenBase reports (include/openbase_report.h, Design-OpenBase.md section 7): host tests.
 #   make base-report-test    tests/base/test_base_report.c against the pinned SQLite and libowf
 #   make base-report-check   the same under AddressSanitizer and UBSan
-# Both run from make test and make check. The SQLite object and BASE_SRC come from mk/base.mk.
+# Both run from make test and make check. The SQLite object and BASE_SRC come from mk/base.mk, which is
+# read after this file: the prerequisites (expanded as they are read) name src/base/*.c themselves.
 # MIT, Copyright (c) 2026 AmiCradle Team.
 
 BASE_REPORT_SRC = $(wildcard src/base/report/*.c)
-BASE_REPORT_DEPS = $(OWF_SRC) $(BASE_SRC) $(BASE_REPORT_SRC) include/openbase_core.h include/openbase_report.h \
+BASE_REPORT_DEPS = $(OWF_SRC) $(wildcard src/base/*.c) $(BASE_REPORT_SRC) include/openbase_core.h include/openbase_report.h \
 	libowf/include/owf.h libowf/src/owf_internal.h tests/base/test_base_report.c
 BASE_REPORT_FLAGS = -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(SQLITE_SRC)
 
