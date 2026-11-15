@@ -1360,6 +1360,65 @@ static ow_position visible_step(ow_editor *editor, ow_position pos, int dir)
     return pos;
 }
 
+static int tracked_delete_range(ow_editor *editor, ow_position *start_io, ow_position end);
+static int delete_selection_internal(ow_editor *editor);
+static int rev_kind(const owf_doc *doc, int number);
+static ow_position out_of_hidden(ow_editor *editor, ow_position pos, int dir);
+static size_t para_text_offset(const owf_para *p, ow_position pos);
+static ow_position para_offset_position(ow_editor *editor, int paragraph, size_t offset);
+
+/* The final view: the character (or paragraph end) the reader sees before the caret (dir < 0) or after it,
+ * from *a to *b, past the hidden text between; 0 when there is none. Recording, a paragraph end deleted
+ * already is passed too (there is nothing more to mark there). */
+static int visible_unit(ow_editor *editor, ow_position caret, int dir, ow_position *a, ow_position *b)
+{
+    ow_position pos = clamp_position(editor, caret);
+    int guard;
+    for (guard = 0; guard < 1000000; ++guard) {
+        ow_position np = dir < 0 ? move_left_pos(editor, pos) : move_right_pos(editor, pos);
+        int end_gone = 0;
+        if (same_position(np, pos)) return 0;
+        if (np.paragraph != pos.paragraph && editor->track) {
+            int ended = np.paragraph < pos.paragraph ? np.paragraph : pos.paragraph;
+            end_gone = rev_kind(editor->doc, ed_story(editor)->paras[ended].mark_revision) == OWF_REV_DELETE;
+        }
+        if ((np.paragraph != pos.paragraph && !end_gone) || (np.run == pos.run && !hidden_run(editor, np))) {
+            *a = dir < 0 ? np : pos;
+            *b = dir < 0 ? pos : np;
+            return 1;
+        }
+        pos = np;
+    }
+    return 0;
+}
+
+/* The final view's Backspace (dir < 0) and Delete: the character the reader sees goes (recording, it is
+ * marked deleted), never the hidden text next to it. Backspace leaves the caret where the character was;
+ * Delete leaves it where it is (by its place in its paragraph's text: runs before it may join). */
+static int final_view_delete(ow_editor *editor, int dir)
+{
+    ow_position a, b, caret = clamp_position(editor, editor->selection.focus);
+    size_t at = para_text_offset(&ed_story(editor)->paras[caret.paragraph], caret);
+    int rc;
+    if (!visible_unit(editor, caret, dir, &a, &b)) return 0;
+    if (editor->track) {
+        rc = tracked_delete_range(editor, &a, b);
+        if (rc < 0) return rc;
+    } else {
+        editor->selection.anchor = a;
+        editor->selection.focus = b;
+        if ((rc = delete_selection_internal(editor)) < 0) return rc;
+        a = editor->selection.focus;
+    }
+    if (dir > 0) {
+        a = para_offset_position(editor, caret.paragraph, at);
+        a.box = caret.box;
+    }
+    a = out_of_hidden(editor, a, -1);
+    editor->selection.anchor = editor->selection.focus = a;
+    return rc;
+}
+
 /* Out of a hidden deletion's middle: to its end going right (dir > 0), its start going left */
 static ow_position out_of_hidden(ow_editor *editor, ow_position pos, int dir)
 {
@@ -3763,6 +3822,8 @@ int ow_editor_backspace(ow_editor *editor)
 
     if (!ow_editor_selection_empty(editor)) {
         rc = editor->track ? tracked_delete_selection(editor) : delete_selection_internal(editor);
+    } else if (editor->final_view) {
+        rc = final_view_delete(editor, -1);          /* 2.0.37 */
     } else if (editor->track) {
         /* 2.1.0: recording, the character before the caret is marked deleted; the caret goes before it */
         ow_position end = clamp_position(editor, editor->selection.focus);
@@ -3800,6 +3861,8 @@ int ow_editor_delete_forward(ow_editor *editor)
 
     if (!ow_editor_selection_empty(editor)) {
         rc = editor->track ? tracked_delete_selection(editor) : delete_selection_internal(editor);
+    } else if (editor->final_view) {
+        rc = final_view_delete(editor, 1);           /* 2.0.37 */
     } else if (editor->track) {
         /* 2.1.0: recording, the character after the caret is marked deleted; the caret goes past it */
         ow_position end;

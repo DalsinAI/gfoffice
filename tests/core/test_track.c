@@ -587,6 +587,33 @@ static void test_final_view(void)
     CHECK(!strcmp(dump(doc), changed_dump), dump(doc));
     ow_editor_free(ed);
     owf_doc_free(doc);
+
+    /* Backspace and Delete take the character the reader sees, never the hidden deletion next to it (Agnus);
+     * caret at 14 shows right after "new ", at 10 right before the paragraph's end */
+    {
+        static const struct { int track, backspace; size_t at; int para; size_t then; const char *dump; } keys[] = {
+            { 0, 1, 14, 0, 9, "Alpha{+ new+}[-beta-]|-Gamma|De|+lta" },     /* the space, not "a" of beta */
+            { 1, 1, 14, 0, 9, "Alpha{+ new+}[- -][-beta-]|-Gamma|De|+lta" },/* the space marked; caret before it */
+            { 0, 0, 9, 0, 9, "Alpha{+ new+}[-beta-]|-Gamma|De|+lta" },      /* Delete: the space */
+            { 1, 0, 10, 0, 10, "Alpha{+ new+} [-beta-]|-[-G-]amma|De|+lta" }/* past beta and the deleted end: G */
+        };
+        size_t k;
+        for (k = 0; k < sizeof keys / sizeof keys[0]; ++k) {
+            doc = changed_doc();
+            ed = doc ? ow_editor_new(doc) : NULL;
+            if (!ed) { CHECK(0, "document"); owf_doc_free(doc); return; }
+            ow_editor_set_final_view(ed, 1);
+            ow_editor_set_track_changes(ed, keys[k].track);
+            ow_editor_set_review_author(ed, "Cy");
+            caret(ed, 0, keys[k].at);
+            CHECK((keys[k].backspace ? ow_editor_backspace(ed) : ow_editor_delete_forward(ed)) == OWF_OK, "key");
+            CHECK(!strcmp(dump(doc), keys[k].dump), dump(doc));
+            off = focus_at(ed, &para);
+            CHECK(para == keys[k].para && off == keys[k].then, keys[k].backspace ? "caret after Backspace" : "caret after Delete");
+            ow_editor_free(ed);
+            owf_doc_free(doc);
+        }
+    }
 }
 
 /* 2.0.38: pictures in the line as tracked changes: one put in while recording is an insertion with the two

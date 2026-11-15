@@ -142,8 +142,6 @@ static int hidden_deletion(const ow_layout *l, const owf_doc *doc, const owf_run
     return rv && rv->kind == OWF_REV_DELETE;
 }
 
-static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spacing, ol_style *s);
-
 static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spacing, ol_style *s)
 {
     int font = fmt->font >= 0 ? fmt->font : doc->base.font;
