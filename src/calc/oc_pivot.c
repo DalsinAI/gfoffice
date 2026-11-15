@@ -536,7 +536,12 @@ static int percent_of(owf_book *book, int style)
     int format = owf_book_numfmt(book, "0.00%");
     if (format < 0)
         return -1;
-    copy = book->styles[style >= 0 && style < book->nstyles ? style : 0];
+    if (style >= 0 && style < book->nstyles)
+        copy = book->styles[style];
+    else if (book->nstyles > 0)
+        copy = book->styles[0];
+    else
+        owf_cellstyle_init(&copy);           /* a book with no styles yet */
     copy.number_format = format;
     return owf_book_style(book, &copy);
 }

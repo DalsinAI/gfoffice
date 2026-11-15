@@ -6416,6 +6416,19 @@ static void test_pivot_group(void)
     CHECK(owf_pivot_set_group(&got, &g) && got.ngroup == 0);
     CHECK(owf_pivot_config_text(&got, config, sizeof config) && !strstr(config, ";b="));
 
+    {
+        /* a group that is not one (by NONE) in front is skipped, and the key still starts the list */
+        owf_pivotdef odd;
+        owf_pivot_init(&odd);
+        odd.nrow = 2; odd.row[0] = 0; odd.row[1] = 1;
+        odd.ndata = 1; odd.data[0].field = 2; odd.data[0].function = OC_SUBTOTAL_SUM;
+        odd.ngroup = 2;
+        odd.group[0].field = 0; odd.group[0].by = OWF_PIVOT_GROUP_NONE;
+        odd.group[1].field = 1; odd.group[1].by = OWF_PIVOT_GROUP_YEARS;
+        CHECK(owf_pivot_config_text(&odd, config, sizeof config) && strstr(config, ";b=1:y\"") &&
+              !strstr(config, ";,"));
+        CHECK(owf_pivot_parse_config(config, &odd) && odd.ngroup == 1 && odd.group[0].field == 1);
+    }
     CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:9;b=0:x\"", &def));
     CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:9;b=0:n:5:1:1\"", &def));           /* end before start */
     CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:9;b=0:y,0:m\"", &def));            /* a field twice */

@@ -550,13 +550,13 @@ int owf_pivot_config_text(const owf_pivotdef *def, char *out, size_t size)
         pt_put(&t, ":");
         pt_put(&t, pivot_show_letters[def->data[i].show]);
     }
-    for (i = 0; i < def->ngroup && i < OWF_PIVOT_GROUPS; i++) {   /* the same */
+    for (i = 0, n = 0; i < def->ngroup && i < OWF_PIVOT_GROUPS; i++) {   /* the same */
         static const char by_letter[] = " nyqm";
         const owf_pivot_group *g = &def->group[i];
         char number[32];
         if (g->by <= OWF_PIVOT_GROUP_NONE || g->by > OWF_PIVOT_GROUP_LAST)
             continue;
-        pt_put(&t, i ? "," : ";b=");
+        pt_put(&t, n++ ? "," : ";b=");
         pt_unsigned(&t, g->field);
         number[0] = ':';
         number[1] = by_letter[g->by];
