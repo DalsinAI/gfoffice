@@ -2257,10 +2257,47 @@ static int resolve_items(ow_editor *editor, owf_story *story, const ow_change_it
     return changed;
 }
 
+/* libowf 1.11: the tracked format changes of a story's runs, all or those the selection touches (from <= to):
+ * accepting one keeps the run's format, rejecting it gives the run its format before. 1 when one was there.
+ * (Before the insertions and deletions, which take runs away and join them.) */
+static int resolve_formats(ow_editor *editor, owf_story *story, int all, ow_position from, ow_position to,
+                           int accept, int *first_para, int *low, int *high)
+{
+    int i, j, changed = 0;
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        for (j = 0; j < p->nruns; ++j) {
+            owf_run *r = &p->runs[j];
+            const owf_format_change *fc = OWF_DOC_FORMAT_CHANGE(editor->doc, r->format_change);
+            if (!r->format_change) continue;
+            if (!all) {
+                ow_position s, e;
+                int touch;
+                s.paragraph = e.paragraph = i;
+                s.run = e.run = j;
+                s.box = e.box = from.box;
+                s.byte_offset = 0;
+                e.byte_offset = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 0;
+                touch = same_position(from, to)
+                      ? compare_position(s, from) <= 0 && compare_position(from, e) <= 0
+                      : compare_position(s, to) < 0 && compare_position(from, e) < 0;
+                if (!touch) continue;
+            }
+            if (!accept && fc) r->fmt = fc->before;
+            r->format_change = 0;
+            changed = 1;
+            if (i < *low) *low = i;
+            if (i > *high) *high = i;
+            if (first_para && (*first_para < 0 || i < *first_para)) *first_para = i;
+        }
+    }
+    return changed;                                  /* the runs are joined after (resolve_story) */
+}
+
 static int resolve_story(ow_editor *editor, owf_story *story, int all, int accept, int *first_para)
 {
     change_pick pk;
-    int rc;
+    int rc, formats, low = story->nparas, high = -1, k;
     memset(&pk, 0, sizeof pk);
     pk.editor = editor;
     pk.all = all;
@@ -2269,12 +2306,18 @@ static int resolve_story(ow_editor *editor, owf_story *story, int all, int accep
         pk.to = clamp_position(editor, editor->selection.focus);
         if (compare_position(pk.from, pk.to) > 0) { ow_position t = pk.from; pk.from = pk.to; pk.to = t; }
     }
+    formats = resolve_formats(editor, story, all, pk.from, pk.to, accept, first_para, &low, &high);
     walk_changes(story, pick_cb, &pk);
     if (pk.failed) { owf_free(pk.items); return -1; }
-    if (first_para && pk.nitems) *first_para = pk.items[0].para;
+    if (first_para && pk.nitems && (*first_para < 0 || pk.items[0].para < *first_para)) *first_para = pk.items[0].para;
     rc = pk.nitems ? resolve_items(editor, story, pk.items, pk.nitems, accept) : 0;
     owf_free(pk.items);
-    return rc;
+    if (rc < 0) return rc;
+    /* the paragraphs whose format changes went: runs now alike join (rejected paragraph ends may have joined
+     * paragraphs, so the range is clamped and may join a few more than needed, which is harmless) */
+    if (high >= story->nparas) high = story->nparas - 1;
+    for (k = low; k <= high; ++k) join_runs(&story->paras[k]);
+    return rc || formats;
 }
 
 int ow_editor_accept_change(ow_editor *editor, int accept)

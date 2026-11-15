@@ -39,7 +39,7 @@ completion adds one more.
 | Track changes: ODT | Done | 2.0.27 | text:tracked-changes with insertion and deletion regions, office:change-info (author and date), change-start/end and change marks, deleted paragraph ends, insertions across paragraphs, the record setting. |
 | Track changes: DOCX | Done | 2.0.27 | w:ins, w:del with w:delText, w:moveTo/w:moveFrom (read as insertion/deletion), inserted and deleted paragraph marks, w:trackRevisions. |
 | Track changes: other formats | Done | 2.0.27 | RTF, plain text, HTML and the Amiga formats are saved with every change accepted, and the save report says so. |
-| Tracked format changes of text (w:rPrChange) | Part | libowf 1.11 | DOCX keeps them in and out, with who, when and the format before; other formats save the format as it is now (the ODT save report says so). GFOpenWrite does not show them or accept and reject them one by one yet. |
+| Tracked format changes of text (w:rPrChange) | Part | libowf 1.11 | DOCX keeps them in and out, with who, when and the format before; other formats save the format as it is now (the ODT save report says so). GFOpenWrite shows their text in the author's colour, and Accept and Reject (one at the caret, or all) keep the format or give the one before back; Next Change does not stop at them yet. |
 | Tracked format changes of paragraphs (w:pPrChange) and ODT format-change | Gap | | Read as the new format, with a note in the import report. |
 | Tracked picture, frame and table-structure changes | Gap | | Pictures and frames typed while recording are plain insertions; table row and column deletes are not recorded. |
 | Show/hide changes (final view while recording) | Gap | | |
