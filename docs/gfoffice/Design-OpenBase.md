@@ -382,7 +382,7 @@ print) needs no script.
 - The core calls are `ob_view_position` (a key's place in a view),
   `ob_view_find` (one `row_number()` window over the view's order and
   filter) and `ob_children` (the Lookups pointing at a table).
-- Filter by Form (core 0.7, GFOpenBase 0.7.0): the form's Filter by Form
+- Filter by Form (core 0.6.2, GFOpenBase 0.6.2): the form's Filter by Form
   button turns its fields into criteria in the query grid's words (Leeds,
   > 10, Smith*, between 1 and 5, empty, not York; no [questions]), a row
   at a time (Look for, Or, Or); Apply Filter makes them the view's, on top

@@ -53,7 +53,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.7.0 (15.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.6.2 (15.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -3003,7 +3003,7 @@ static void open_form(void)
     struct Window *w_;
     struct Gadget *eg = NULL, *g, *fg[ED_MAX];
     struct NewGadget ng;
-    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih;
+    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full;
     if (q_on) { set_status("Forms show a table: choose one in the list"); return; }
     if (!proj || !have_cur) { set_status("Choose a table first"); return; }
     for (i = 0; i < OB_MAX_FIELDS; i++) {
@@ -3232,13 +3232,13 @@ static void open_form(void)
             }
         }
         /* keep what was typed */
+        full = 0;
         for (i = 0; i < nshow; i++) {
             const ob_field *f = &cur.fields[first + i];
             if (f_filtering && fg[i]) {
                 STRPTR s = NULL;
                 GT_GetGadgetAttrs(fg[i], w_, NULL, GTST_String, (ULONG)&s, TAG_DONE);
-                if (!ob_view_form_set(&f_fview, f->name, f_frow, s ? (const char *)s : ""))
-                    tell("Filter by Form looks at 16 fields at most: clear some first");
+                if (!ob_view_form_set(&f_fview, f->name, f_frow, s ? (const char *)s : "")) full = 1;
             } else if (fg[i] && f->type != OB_COUNTER && f->type != OB_OBJECT) {
                 STRPTR s = NULL;
                 GT_GetGadgetAttrs(fg[i], w_, NULL, GTST_String, (ULONG)&s, TAG_DONE);
@@ -3248,6 +3248,7 @@ static void open_form(void)
         RemoveGList(w_, eg, -1);
         FreeGadgets(eg);
         eg = NULL;
+        if (full) tell("Filter by Form looks at 16 fields at most: what was typed past that is left out");
         if (f_filtering && action == F_CLOSE) action = F_FCANCEL;
         switch (action) {
         case F_FROW: f_frow = (int)acode < OB_FORM_OR ? (int)acode : 0; break;

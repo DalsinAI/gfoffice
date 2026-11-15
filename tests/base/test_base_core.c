@@ -1023,7 +1023,7 @@ static void test_views(void)
     ob_close(p);
 }
 
-/* ---- Filter by Form (0.7) ---- */
+/* ---- Filter by Form (0.6.2) ---- */
 
 static void form_set(ob_view *v, const char *field, int row, const char *text)
 {

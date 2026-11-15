@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.7.0"
+#define OB_CORE_VERSION "0.6.2"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -256,7 +256,7 @@ typedef enum ob_filter_op {
     OB_FILTER_COUNT
 } ob_filter_op;
 
-/* Filter by Form (core 0.7, design 6.3): what is typed into a form's
+/* Filter by Form (core 0.6.2, design 6.3): what is typed into a form's
  * fields, in the plain words of a query's criteria (Leeds, > 10, Smith*,
  * between 1 and 5, empty, not York; no [questions]). The criteria in one
  * row ("Look for", then "Or" rows) must all hold; a row passes when any
