@@ -142,6 +142,7 @@ typedef struct {
     int orientation, function, kind, has_page;
     int sort;                    /* table:data-pilot-sort-info by name: OWF_PIVOT_SORT_... */
     int show;                    /* table:data-pilot-field-reference: OWF_PIVOT_SHOW_... */
+    int subtotal;                /* a table:data-pilot-subtotal: a subtotal per item */
     owf_pivot_group group;       /* table:data-pilot-groups (by NONE when it has none) */
     char *page;                  /* table:selected-page */
 } ods_pivot_field;
@@ -3863,7 +3864,7 @@ static void body_start(ods *o, const owf_xml_event *e)
             } else if (!strcmp(n, "data-pilot-table") || !strcmp(n, "source-cell-range") ||
                        !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info") ||
                        !strcmp(n, "data-pilot-member") || !strcmp(n, "data-pilot-field-reference") ||
-                       !strcmp(n, "data-pilot-groups")) {
+                       !strcmp(n, "data-pilot-groups") || !strcmp(n, "data-pilot-subtotal")) {
                 pivot_start(o, e);
             }
         } else if (!strcmp(n, "scenario")) {
@@ -4160,6 +4161,15 @@ static void pivot_start(ods *o, const owf_xml_event *e)
         else
             owf_report_add(o->report, OWF_NOTE_APPROX,
                            "A pivot table data field shown as a difference or running total shows its values");
+    } else if (is(e, NS_TABLE, "data-pilot-subtotal")) {
+        const char *fn = ev(e, NS_TABLE, "function");
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        if (!f || (f->orientation != PV_ROW && f->orientation != PV_COLUMN))
+            return;
+        if (fn && strcmp(fn, "auto") && !f->subtotal)
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table subtotal with its own function uses each data field's function");
+        f->subtotal = 1;
     } else if (is(e, NS_TABLE, "data-pilot-sort-info")) {
         const char *mode = ev(e, NS_TABLE, "sort-mode"), *order = ev(e, NS_TABLE, "order");
         ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
@@ -4264,6 +4274,7 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
             case PV_ROW:
                 if (def->nrow < OWF_PIVOT_FIELDS) def->row[def->nrow++] = (unsigned)index; else ok = 0;
                 if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
+                if (ok && f->subtotal) owf_pivot_set_subtotal(def, (unsigned)index, 1);
                 if (ok && f->group.by) {
                     owf_pivot_group g = f->group;
                     g.field = (unsigned)index;
@@ -4273,6 +4284,7 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
             case PV_COLUMN:
                 if (def->ncol < OWF_PIVOT_FIELDS) def->col[def->ncol++] = (unsigned)index; else ok = 0;
                 if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
+                if (ok && f->subtotal) owf_pivot_set_subtotal(def, (unsigned)index, 1);
                 if (ok && f->group.by) {
                     owf_pivot_group g = f->group;
                     g.field = (unsigned)index;

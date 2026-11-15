@@ -78,6 +78,34 @@ static void bucket_add(pivot_bucket *bucket, const owf_cell *cell)
     bucket->numbers++;
 }
 
+/* from's rows put into into's, as if they had been added there (the
+ * parallel form of the running mean and variance). */
+static void bucket_merge(pivot_bucket *into, const pivot_bucket *from)
+{
+    if (!from->rows)
+        return;
+    into->rows += from->rows;
+    into->nonempty += from->nonempty;
+    if (!from->numbers)
+        return;
+    if (!into->numbers) {
+        into->product = from->product;
+        into->min = from->min;
+        into->max = from->max;
+        into->mean = from->mean;
+        into->m2 = from->m2;
+    } else {
+        double n1 = (double)into->numbers, n2 = (double)from->numbers, delta = from->mean - into->mean;
+        into->product *= from->product;
+        if (from->min < into->min) into->min = from->min;
+        if (from->max > into->max) into->max = from->max;
+        into->mean += delta * n2 / (n1 + n2);
+        into->m2 += from->m2 + delta * delta * n1 * n2 / (n1 + n2);
+    }
+    into->sum += from->sum;
+    into->numbers += from->numbers;
+}
+
 static int bucket_value(const pivot_bucket *bucket, int function, double *value)
 {
     if (!bucket->rows)
@@ -624,6 +652,22 @@ static int row_kept(const owf_book *book, const owf_pivotdef *def, const owf_she
     return 1;
 }
 
+/* Whether the i-th row (or column) key in order starts a new item of field f or of any field
+ * outside it. */
+static int keys_break(const pivot_keys *k, const unsigned *order, unsigned i, unsigned f)
+{
+    const unsigned *a, *b;
+    unsigned g;
+    if (!i)
+        return 1;
+    a = &k->keys[(size_t)order[i - 1u] * k->width];
+    b = &k->keys[(size_t)order[i] * k->width];
+    for (g = 0; g <= f; g++)
+        if (a[g] != b[g])
+            return 1;
+    return 0;
+}
+
 /* Lays out def's table on the output sheet of an already private workbook,
  * and sets def->rows and def->cols to its size. old: the previous
  * definition on that sheet (its rectangle is emptied), or NULL. */
@@ -633,13 +677,15 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
     const owf_sheet *source = &work->sheets[def->source_sheet];
     pivot_values values[OWF_PIVOT_FIELDS * 2];
     pivot_keys rkeys, ckeys;
-    pivot_bucket *matrix = NULL, *rtot = NULL, *ctot = NULL, *grand = NULL;
+    pivot_bucket *matrix = NULL, *rtot = NULL, *ctot = NULL, *grand = NULL, *sub = NULL, *subr = NULL;
     unsigned *row_of = NULL, *col_of = NULL, *rorder = NULL, *corder = NULL, *tmp = NULL;
     unsigned *rank[OWF_PIVOT_FIELDS * 2];
     unsigned nsrc = def->source.last_row - def->source.first_row, kept = 0, nd = def->ndata;
     unsigned nf = def->nrow + def->ncol, i, f, r, c, d, n;
     unsigned key[OWF_PIVOT_FIELDS * 2];
-    unsigned top, header_rows, label_cols, nrk, nck, total_cols, first_value_row;
+    unsigned top, header_rows, label_cols, nrk, nck, total_cols, first_value_row, nsub = 0, shift = 0;
+    unsigned gstart[OWF_PIVOT_FIELDS];
+    int subtotalled[OWF_PIVOT_FIELDS];
     int value_style[OWF_PIVOT_DATA], percent_style[OWF_PIVOT_DATA];
     pivot_out o;
     char text[160];
@@ -744,6 +790,20 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
         sort_keys(&rkeys, rank, rorder, tmp);
     if (def->ncol)
         sort_keys(&ckeys, rank + def->nrow, corder, tmp);
+    /* subtotal rows: one under each item of a row field that has them, the innermost field aside */
+    for (f = 0; f < OWF_PIVOT_FIELDS; f++) {
+        subtotalled[f] = f + 1u < def->nrow && owf_pivot_subtotal_of(def, def->row[f]);
+        gstart[f] = 0;
+    }
+    for (f = 0; f + 1u < def->nrow; f++)
+        for (i = 0; subtotalled[f] && i < nrk; i++)
+            nsub += i + 1u == nrk || keys_break(&rkeys, rorder, i + 1u, f);
+    if (nsub) {
+        sub = calloc((size_t)nck * nd + 1u, sizeof *sub);
+        subr = calloc((size_t)nd + 1u, sizeof *subr);
+        if (!sub || !subr)
+            goto done;
+    }
 
     /* the layout */
     header_rows = def->ncol ? def->ncol + (nd > 1 ? 1u : 0u) : 1u;
@@ -751,7 +811,7 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
     total_cols = def->ncol && def->col_grand ? nd : 0u;
     top = def->at_row + (def->npage ? def->npage + 1u : 0u);
     first_value_row = top + header_rows;
-    def->rows = (top - def->at_row) + header_rows + nrk + (def->row_grand && def->nrow ? 1u : 0u);
+    def->rows = (top - def->at_row) + header_rows + nrk + nsub + (def->row_grand && def->nrow ? 1u : 0u);
     def->cols = label_cols + nck * nd + total_cols;
     if (def->at_row + def->rows > OC_MAX_ROWS || def->at_col + def->cols > OC_MAX_COLS) {
         o.rc = OWF_ERR_UNSUPPORTED;
@@ -832,7 +892,10 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
 
     /* the body */
     for (i = 0; i < nrk; i++) {
-        unsigned rk = rorder[i], row = first_value_row + i;
+        unsigned rk = rorder[i], row = first_value_row + i + shift;
+        for (f = 0; f < def->nrow; f++)
+            if (keys_break(&rkeys, rorder, i, f))
+                gstart[f] = i;
         for (f = 0; f < def->nrow; f++) {
             const unsigned *kk = &rkeys.keys[(size_t)rk * rkeys.width];
             int differs = i == 0 || f + 1u == def->nrow;
@@ -861,9 +924,41 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
                       &def->data[d], value_style[d], percent_style[d]);
             out_bold(&o, row, col);
         }
+        /* the items that end here, innermost first: a subtotal row each */
+        for (f = def->nrow ? def->nrow - 1u : 0u; f-- > 0;) {
+            const unsigned *kk = &rkeys.keys[(size_t)rk * rkeys.width];
+            char item[96];
+            unsigned j;
+            if (!subtotalled[f] || (i + 1u < nrk && !keys_break(&rkeys, rorder, i + 1u, f)))
+                continue;
+            row = first_value_row + i + ++shift;
+            memset(sub, 0, ((size_t)nck * nd + 1u) * sizeof *sub);
+            memset(subr, 0, ((size_t)nd + 1u) * sizeof *subr);
+            for (j = gstart[f]; j <= i; j++) {
+                unsigned jk = rorder[j];
+                for (c = 0; c < nck; c++)
+                    for (d = 0; d < nd; d++)
+                        bucket_merge(&sub[(size_t)c * nd + d], &matrix[((size_t)jk * nck + corder[c]) * nd + d]);
+                for (d = 0; d < nd; d++)
+                    bucket_merge(&subr[d], &rtot[(size_t)jk * nd + d]);
+            }
+            category_label(work, values[f].group, values[f].sample[kk[f]], item, sizeof item);
+            snprintf(text, sizeof text, "%s Total", item);
+            out_text(&o, row, def->at_col + f, text);
+            for (c = 0; c < nck; c++)
+                for (d = 0; d < nd; d++)
+                    out_shown(&o, row, def->at_col + label_cols + c * nd + d, &sub[(size_t)c * nd + d], &subr[d],
+                              &ctot[(size_t)corder[c] * nd + d], &grand[d], &def->data[d], value_style[d],
+                              percent_style[d]);
+            for (d = 0; d < total_cols; d++)
+                out_shown(&o, row, def->at_col + label_cols + nck * nd + d, &subr[d], &subr[d], &grand[d], &grand[d],
+                          &def->data[d], value_style[d], percent_style[d]);
+            for (c = f; c < def->cols; c++)
+                out_bold(&o, row, def->at_col + c);
+        }
     }
     if (def->row_grand && def->nrow) {
-        unsigned row = first_value_row + nrk;
+        unsigned row = first_value_row + nrk + nsub;
         out_text(&o, row, def->at_col, "Grand Total");
         for (c = 0; c < nck; c++)
             for (d = 0; d < nd; d++)
@@ -894,6 +989,8 @@ done:
     free(rtot);
     free(ctot);
     free(grand);
+    free(sub);
+    free(subr);
     free(row_of);
     free(col_of);
     free(rorder);

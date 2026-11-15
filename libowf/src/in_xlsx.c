@@ -2122,7 +2122,10 @@ static int read_pivot(xlsx *x, int sheet, const char *table_part)
         unsigned k;
         for (k = 0; k < def.nrow + def.ncol; k++) {
             unsigned f = k < def.nrow ? def.row[k] : def.col[k - def.nrow];
-            const char *sort = attr(nth_child(main_child(table, "pivotFields"), (long)f), "sortType");
+            const owf_xml_node *pf = nth_child(main_child(table, "pivotFields"), (long)f);
+            const char *sort = attr(pf, "sortType");
+            if (pf && xbool(attr(pf, "defaultSubtotal"), 1))    /* Excel's default: a subtotal per item */
+                owf_pivot_set_subtotal(&def, f, 1);
             if (sort && !strcmp(sort, "ascending"))
                 owf_pivot_set_sort(&def, f, OWF_PIVOT_SORT_ASCENDING);
             else if (sort && !strcmp(sort, "descending"))
