@@ -2047,6 +2047,63 @@ static void pivot_page_item(const owf_xml_node *table, const owf_xml_node *cache
     }
 }
 
+/* A row or column field grouped in place by Excel's fieldGroup: rangePr by
+ * numbers, years, quarters or months. *n is its group items' count (they
+ * run "<start", the groups, ">end"), *first_year a date grouping's first
+ * year. 0 when the field has none; -1 when Excel's grouping is not one
+ * GFOpenCalc keeps (by hand, by days or hours, or into a field of its own). */
+static int pivot_field_group(const owf_xml_node *cache_fields, unsigned field, owf_pivot_group *g, long *n,
+                             long *first_year)
+{
+    const owf_xml_node *fg = main_child(nth_child(cache_fields, (long)field), "fieldGroup"), *rp;
+    const char *by;
+    memset(g, 0, sizeof *g);
+    *n = 0;
+    *first_year = 0;
+    if (!fg)
+        return 0;
+    rp = main_child(fg, "rangePr");
+    if (!rp || xlong(attr(fg, "base"), (long)field, -1, 16383) != (long)field || main_child(fg, "discretePr"))
+        return -1;
+    g->field = field;
+    *n = xlong(attr(main_child(fg, "groupItems"), "count"), 0, 0, 0x7FFFFFFF);
+    by = attr(rp, "groupBy");
+    if (!by || !strcmp(by, "range")) {
+        g->by = OWF_PIVOT_GROUP_RANGE;
+        if (!xdouble(attr(rp, "startNum"), &g->start) || !xdouble(attr(rp, "endNum"), &g->end))
+            return -1;
+        if (!xdouble(attr(rp, "groupInterval"), &g->step))
+            g->step = 1.0;
+        return g->step > 0.0 && g->end >= g->start ? 1 : -1;
+    }
+    if (!strcmp(by, "years"))
+        g->by = OWF_PIVOT_GROUP_YEARS;
+    else if (!strcmp(by, "quarters"))
+        g->by = OWF_PIVOT_GROUP_QUARTERS;
+    else if (!strcmp(by, "months"))
+        g->by = OWF_PIVOT_GROUP_MONTHS;
+    else
+        return -1;
+    if (!attr(rp, "startDate"))
+        return -1;
+    *first_year = strtol(attr(rp, "startDate"), NULL, 10);   /* "2025-01-01T00:00:00": its year */
+    return *first_year >= 1 && *first_year <= 9999 ? 1 : -1;
+}
+
+/* A grouped field's item index as the key its cells take; 0 for none. */
+static int pivot_group_item(const owf_pivot_group *g, long n, long first_year, long index, double *key)
+{
+    if (index <= 0 || index >= n - 1)
+        *key = index <= 0 ? -1e300 : 1e300;
+    else if (g->by == OWF_PIVOT_GROUP_RANGE)
+        *key = g->start + g->step * (double)(index - 1);
+    else if (g->by == OWF_PIVOT_GROUP_YEARS)
+        *key = (double)(first_year + index - 1);
+    else
+        *key = (double)index;
+    return g->by == OWF_PIVOT_GROUP_RANGE || (index > 0 && index < n - 1);
+}
+
 static void drop_pivot_names(owf_book *book, int sheet)
 {
     int i, k;
@@ -2129,19 +2186,44 @@ static int read_pivot(xlsx *x, int sheet, const char *table_part)
                 owf_pivot_set_sort(&def, f, OWF_PIVOT_SORT_DESCENDING);
         }
     }
+    {                                            /* grouped row and column fields: cacheField fieldGroup */
+        unsigned k;
+        long count, year;
+        owf_pivot_group g;
+        for (k = 0; k < def.nrow + def.ncol; k++) {
+            int got = pivot_field_group(fields, k < def.nrow ? def.row[k] : def.col[k - def.nrow], &g, &count, &year);
+            if (got > 0)
+                owf_pivot_set_group(&def, &g);
+            else if (got < 0)
+                owf_report_add(x->report, OWF_NOTE_APPROX,
+                               "A pivot table field grouped by hand, by days or hours, or into a field of its own "
+                               "shows its items ungrouped");
+        }
+    }
     {                                            /* hidden row and column items: item h="1" */
         unsigned k;
         for (k = 0; k < def.nrow + def.ncol; k++) {
             unsigned f = k < def.nrow ? def.row[k] : def.col[k - def.nrow];
             const owf_xml_node *items = main_child(nth_child(main_child(table, "pivotFields"), (long)f), "items");
             const owf_xml_node *it;
-            long index = 0;
+            const owf_pivot_group *grouped = owf_pivot_group_of(&def, f);
+            owf_pivot_group g;
+            long index = 0, count = 0, year = 0;
+            if (grouped && pivot_field_group(fields, f, &g, &count, &year) <= 0)
+                grouped = NULL;
             for (it = main_child(items, "item"); it; it = main_next(it, "item"), index++) {
                 owf_pivot_page pg;
                 if (!xbool(attr(it, "h"), 0))
                     continue;
                 memset(&pg, 0, sizeof pg);
-                pivot_page_item(table, fields, (long)f, index, &pg);
+                if (grouped) {                   /* x is a group item, not a shared one */
+                    long x_item = xlong(attr(it, "x"), -1, 0, 0x7FFFFFFF);
+                    if (attr(it, "t") || x_item < 0 || x_item >= count ||
+                        !pivot_group_item(grouped, count, year, x_item, &pg.number))
+                        continue;
+                    pg.kind = OWF_PIVOT_NUMBER;
+                } else
+                    pivot_page_item(table, fields, (long)f, index, &pg);
                 pg.field = f;
                 if (pg.kind != OWF_PIVOT_ALL && !owf_pivot_set_hidden(&def, &pg, 1)) {
                     owf_report_add(x->report, OWF_NOTE_LOST, "A pivot table with more than 32 hidden items shows the rest");

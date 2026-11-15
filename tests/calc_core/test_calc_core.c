@@ -3007,6 +3007,26 @@ static int saved_has(const char *path, const char *part)
     return has;
 }
 
+/* Whether a saved file (a zip) holds a part with text in it. */
+static int saved_part_holds(const char *path, const char *part, const char *text)
+{
+    FILE *f = fopen(path, "rb");
+    unsigned char *data = NULL, *got = NULL;
+    size_t length = 0;
+    long n = 0;
+    int holds = 0;
+    owf_unzip zip;
+    if (f && fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 && (data = malloc((size_t)n)) &&
+        fread(data, 1, (size_t)n, f) == (size_t)n && owf_unzip_open(&zip, data, (size_t)n) &&
+        owf_unzip_read(&zip, part, &got, &length) == OWF_OK)
+        holds = strstr((const char *)got, text) != NULL;   /* owf_unzip_read puts a NUL after it */
+    if (f)
+        fclose(f);
+    owf_free(got);
+    free(data);
+    return holds;
+}
+
 /* A sheet's pictures and charts kept as they were (the book's kept parts
  * and the sheet's drawing): through a change and its undo, a sheet
  * deleted and brought back, and saving; a deleted sheet's not written. */
@@ -6258,6 +6278,89 @@ static void test_pivot_show_as(void)
     oc_core_free(core);
 }
 
+/* Grouped pivot fields in an Excel workbook: Excel's fieldGroup in the cache
+ * (rangePr and the group items, "<start" and ">end" round them), the
+ * pivotField's items pointing at the group items (a hidden group: h="1"),
+ * and read back; a field with text among its numbers saves ungrouped. */
+static void test_pivot_group_xlsx(void)
+{
+    static const char *const rows[][5] = {
+        { "Age", "Day", "Sales", "", "" },
+        { "3", "45658", "10", "", "" }, { "17", "45689", "20", "", "" }, { "12", "45748", "5", "", "" },
+        { "25", "46023", "15", "", "" }, { "-4", "45750", "1", "", "" }, { "n/a", "45690", "2", "", "" },
+        { "40", "45659", "4", "", "" }
+    };
+    static const char *const path = "/tmp/opencalc-pivot-group-range.xlsx";
+    static const char *const cache = "xl/pivotCache/pivotCacheDefinition1.xml";
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, back;
+    owf_pivot_group g;
+    owf_pivot_page item;
+    owf_book *round = NULL;
+    owf_cell five;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 8);
+    CHECK(oc_parse_range("A1:C8", &selected));
+    oc_core_select_range(core, &selected);
+    /* Sales to the rows, by fives from 0 to 19, with 5-9 hidden */
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 2;
+    def.ndata = 1; def.data[0].field = 1; def.data[0].function = OC_SUBTOTAL_COUNT;
+    memset(&g, 0, sizeof g);
+    g.field = 2; g.by = OWF_PIVOT_GROUP_RANGE; g.start = 0; g.end = 19; g.step = 5;
+    CHECK(owf_pivot_set_group(&def, &g));
+    memset(&item, 0, sizeof item);
+    item.field = 2; item.kind = OWF_PIVOT_NUMBER; item.number = 5.0;
+    CHECK(owf_pivot_set_hidden(&def, &item, 1));
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    /* 0-4 (1, 2, 4), 10-14 (10), 15-19 (15), >19 (20) */
+    CHECK_STR(text(core, "A2"), "0-4");
+    CHECK_STR(text(core, "A3"), "10-14");
+    CHECK_STR(text(core, "A4"), "15-19");
+    CHECK_STR(text(core, "A5"), ">19");
+    CHECK(owf_export_book_file(oc_core_book(core), path, NULL, NULL) == OWF_OK);
+    CHECK(saved_part_holds(path, cache,
+                           "<fieldGroup base=\"2\"><rangePr autoStart=\"0\" autoEnd=\"0\" startNum=\"0\" endNum=\"19\" "
+                           "groupInterval=\"5\"/><groupItems count=\"6\"><s v=\"&lt;0\"/><s v=\"0-4\"/><s v=\"5-9\"/>"
+                           "<s v=\"10-14\"/><s v=\"15-19\"/><s v=\"&gt;19\"/></groupItems></fieldGroup>"));
+    CHECK(saved_part_holds(path, "xl/pivotTables/pivotTable1.xml",
+                           "<item x=\"0\"/><item x=\"1\"/><item x=\"2\" h=\"1\"/><item x=\"3\"/>"
+                           "<item x=\"4\"/><item x=\"5\"/>"));   /* the six group items, 5-9 hidden */
+    CHECK(owf_import_book_file(path, NULL, &round, NULL, NULL) == OWF_OK && round);
+    CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 1 && back.group[0].field == 2 &&
+          back.group[0].by == OWF_PIVOT_GROUP_RANGE && back.group[0].start == 0.0 && back.group[0].end == 19.0 &&
+          back.group[0].step == 5.0);
+    memset(&five, 0, sizeof five);
+    five.type = OWF_VALUE_NUMBER; five.number = 5.0; five.style = -1;
+    CHECK(round && back.nhide == 1 && owf_pivot_is_hidden(&back, 2, &five));
+    owf_book_free(round);
+    round = NULL;
+    remove(path);
+
+    /* Age has "n/a" among its numbers: saved ungrouped, with a note */
+    CHECK(oc_core_pivot_get(core, &def));
+    def.row[0] = 0;
+    def.nhide = 0;
+    def.ngroup = 0;
+    g.field = 0; g.end = 29; g.step = 10;
+    CHECK(owf_pivot_set_group(&def, &g));
+    CHECK(oc_core_pivot_set_layout(core, &def) == OWF_OK);
+    {
+        owf_report *report = owf_report_new();
+        CHECK(report && owf_export_book_file(oc_core_book(core), path, NULL, report) == OWF_OK);
+        CHECK(report && owf_report_count(report) > 0);
+        owf_report_free(report);
+    }
+    CHECK(!saved_part_holds(path, cache, "<fieldGroup"));
+    CHECK(owf_import_book_file(path, NULL, &round, NULL, NULL) == OWF_OK && round);
+    CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 0);
+    owf_book_free(round);
+    remove(path);
+    oc_core_free(core);
+}
+
 static void test_pivot_group(void)
 {
     /* serials: 45658 is 2025-01-01, 45689 2025-02-01, 45748 2025-04-01, 46023 2026-01-01 */
@@ -6389,11 +6492,15 @@ static void test_pivot_group(void)
             owf_pivotdef back;
             CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
             CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
-            if (k == 0)
-                CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 1 && back.group[0].field == 1 &&
-                      back.group[0].by == OWF_PIVOT_GROUP_YEARS);
-            else                                 /* .xlsx: saved ungrouped, for now */
-                CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 0);
+            if (k == 1)                          /* Excel's fieldGroup, by years, over 2025 and 2026 */
+                CHECK(saved_part_holds(paths[k], "xl/pivotCache/pivotCacheDefinition1.xml",
+                                       "<fieldGroup base=\"1\"><rangePr groupBy=\"years\" autoStart=\"0\" "
+                                       "autoEnd=\"0\" startDate=\"2025-01-01T00:00:00\" "
+                                       "endDate=\"2026-12-31T00:00:00\"/><groupItems count=\"4\">"
+                                       "<s v=\"&lt;1/1/2025\"/><s v=\"2025\"/><s v=\"2026\"/>"
+                                       "<s v=\"&gt;12/31/2026\"/></groupItems></fieldGroup>"));
+            CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 1 && back.group[0].field == 1 &&
+                  back.group[0].by == OWF_PIVOT_GROUP_YEARS);
             owf_book_free(round);
             remove(paths[k]);
         }
@@ -7105,6 +7212,7 @@ int main(void)
     test_pivot_hide();
     test_pivot_show_as();
     test_pivot_group();
+    test_pivot_group_xlsx();
     test_pivot_definition_text();
     test_solver_lp();
     test_solver();
