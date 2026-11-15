@@ -1295,9 +1295,33 @@ static void details_name(const owf_book *book, char *out, size_t size)
     } while (found);
 }
 
+/* Whether the output rectangle of a's sheet holds what b's does (b: the table made afresh). */
+static int same_output(const owf_book *a, const owf_book *b, int sheet, const owf_pivotdef *drawn,
+                       const owf_pivotdef *now)
+{
+    const owf_sheet *sa = &a->sheets[sheet], *sb = &b->sheets[sheet];
+    int i;
+    if (drawn->rows != now->rows || drawn->cols != now->cols || drawn->at_row != now->at_row ||
+        drawn->at_col != now->at_col)
+        return 0;
+    for (i = 0; i < sa->ncells; i++) {
+        const owf_cell *c = &sa->cells[i];
+        if (c->row >= now->at_row && c->row < now->at_row + now->rows && c->col >= now->at_col &&
+            c->col < now->at_col + now->cols && !same_value(c, owf_sheet_find(sb, c->row, c->col)))
+            return 0;
+    }
+    for (i = 0; i < sb->ncells; i++) {
+        const owf_cell *c = &sb->cells[i];
+        if (c->row >= now->at_row && c->row < now->at_row + now->rows && c->col >= now->at_col &&
+            c->col < now->at_col + now->cols && !same_value(c, owf_sheet_find(sa, c->row, c->col)))
+            return 0;
+    }
+    return 1;
+}
+
 int oc_core_pivot_details(oc_core *core, unsigned row, unsigned col)
 {
-    owf_pivotdef def, at;
+    owf_pivotdef def, at, drawn;
     owf_book *work;
     owf_calc *calc = NULL;
     pivot_probe probe;
@@ -1316,7 +1340,16 @@ int oc_core_pivot_details(oc_core *core, unsigned row, unsigned col)
     memset(&probe, 0, sizeof probe);
     probe.row = row;
     probe.col = col;
-    rc = pivot_build(work, &def, core->sheet, NULL, &calc, &probe);
+    /* the cursor is on the table as last drawn: made afresh it must be the same, or the cell
+       would stand for other rows */
+    drawn = def;
+    rc = pivot_build(work, &def, core->sheet, &drawn, &calc, NULL);
+    owf_calc_free(calc);
+    calc = NULL;
+    if (rc == OWF_OK && !same_output(core->book, work, core->sheet, &drawn, &def))
+        rc = OC_PIVOT_STALE;
+    if (rc == OWF_OK)
+        rc = pivot_build(work, &def, core->sheet, NULL, &calc, &probe);
     owf_calc_free(calc);                     /* none is made for a probe */
     calc = NULL;
     width = def.source.last_col - def.source.first_col + 1u;

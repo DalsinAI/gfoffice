@@ -651,7 +651,11 @@ int oc_core_refresh_pivot(oc_core *core);
  * a new sheet ("Details", "Details2"...), which becomes active; one Undo
  * step removes it. A subtotal or total cell gives every row it sums; page
  * fields and hidden items apply. OWF_ERR_UNSUPPORTED: the active sheet has
- * no pivot table; OWF_ERR_FORMAT: (row, col) is not one of its value cells. */
+ * no pivot table; OWF_ERR_FORMAT: (row, col) is not one of its value cells;
+ * OC_PIVOT_STALE: the table as drawn is not what its source makes now (the
+ * source changed since the last Refresh), so the cell's rows are not known:
+ * refresh it first. */
+#define OC_PIVOT_STALE 170
 int oc_core_pivot_details(oc_core *core, unsigned row, unsigned col);
 
 /* ---- AutoFilter ----

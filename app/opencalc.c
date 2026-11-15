@@ -5939,6 +5939,8 @@ static void menu_action(ULONG id)
                 set_status("The active sheet has no pivot table (or the details would not fit).");
             else if (rc == OWF_ERR_FORMAT)
                 set_status("Put the cursor on one of the pivot table's values or totals first.");
+            else if (rc == OC_PIVOT_STALE)
+                set_status("The source has changed since the table was drawn: Data > Refresh Pivot Table first.");
             else
                 result(rc, "The rows behind that value are on a new sheet; Undo removes it.");
         }
@@ -6607,6 +6609,7 @@ static int rexx_do_command(const char *command, char **result_out)
             if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
             snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_UNSUPPORTED ? "No pivot table on this sheet"
                                                              : rc == OWF_ERR_FORMAT ? "Not a value cell of the pivot table"
+                                                             : rc == OC_PIVOT_STALE ? "The source has changed: PIVOTREFRESH first"
                                                              : owf_error_text(rc));
         }
     } else if (starts_word_ci(command, "PIVOTINFO", &arg)) {     /* the active sheet's pivot table, as its definition */

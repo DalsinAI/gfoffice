@@ -6670,6 +6670,25 @@ static void test_pivot_details(void)
     CHECK(oc_core_pivot_details(core, 3, 2) == OWF_OK);
     CHECK_STR(text(core, "B2"), "Leeds");
     CHECK(near(num(core, "E2"), 3.0) && empty(core, "A3"));
+
+    /* the source changed since the table was drawn: an edit the table doesn't use is fine; one it
+       uses (East, Leeds, B's sales) needs a Refresh first, after which the rows are today's */
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    enter_at(core, "D2", "11");
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(oc_core_pivot_details(core, 3, 2) == OWF_OK);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    enter_at(core, "D4", "6");
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(near(num(core, "C4"), 5.0));                   /* as drawn */
+    CHECK(oc_core_pivot_details(core, 3, 2) == OC_PIVOT_STALE && oc_core_sheet(core) == 1);
+    CHECK(oc_core_refresh_pivot(core) == OWF_OK && near(num(core, "C4"), 6.0));
+    CHECK(oc_core_pivot_details(core, 3, 2) == OWF_OK && near(num(core, "D2"), 6.0));
+    /* a source row moved to another region: the same cell would stand for other rows */
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    enter_at(core, "A4", "West");
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(oc_core_pivot_details(core, 3, 2) == OC_PIVOT_STALE);
     oc_core_free(core);
 }
 
