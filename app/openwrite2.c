@@ -1294,6 +1294,8 @@ static size_t to_latin1(const char *s, size_t n, char *out, size_t cap)
         i += (size_t)len;
         if (cp >= 0xA0 && cp <= 0xFF) out[o++] = (char)cp;
         else if (cp == 0x2022 || cp == 0x25CF || cp == 0x25AA || cp == 0x2219) out[o++] = (char)0xB7;
+        else if (cp == 0x2020) out[o++] = '+';      /* 2.0.40: a note's dagger and double dagger (Latin-1 has none) */
+        else if (cp == 0x2021) out[o++] = '#';
         else if (cp == 0x2018 || cp == 0x2019 || cp == 0x201A || cp == 0x2032) out[o++] = '\'';
         else if (cp == 0x201C || cp == 0x201D || cp == 0x201E || cp == 0x2033) out[o++] = '"';
         else if (cp == 0x2013 || cp == 0x2014 || cp == 0x2212 || cp == 0x2010 || cp == 0x2011) out[o++] = '-';
@@ -4738,7 +4740,7 @@ static int no_note_here(int rc)
 
 /* 2.0.40: Tools > Notes > Numbering...: a kind and its format from one list, then the first number */
 static const char *const note_format_names[OWF_NOTE_FORMAT_COUNT] = {
-    "", "1, 2, 3", "i, ii, iii", "I, II, III", "a, b, c", "A, B, C", "*, \x86, \x87, \xa7 (symbols)" };
+    "", "1, 2, 3", "i, ii, iii", "I, II, III", "a, b, c", "A, B, C", "*, dagger, double dagger, section" };
 
 static void do_note_numbering(void)
 {

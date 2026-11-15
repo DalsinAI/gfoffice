@@ -557,6 +557,17 @@ static void test_numbering(void)
     /* symbols: ODT has none, so numbers, and the report says so; DOCX keeps Word's chicago */
     CHECK(ow_editor_set_note_numbering(ed, 0, OWF_NOTE_FORMAT_SYMBOL, 0) == OWF_OK &&
           ow_editor_note_info(ed, 1, &info) && !strcmp(info.mark, "\xe2\x80\xa0"), "symbols: a dagger second");
+    {   /* the PDF draws the dagger in WinAnsi (0x86, written \206), not '?' */
+        unsigned char *data = NULL;
+        size_t n = 0, k;
+        int dagger = 0;
+        const owf_format *fmt = owf_format_named("pdf");
+        CHECK(fmt && fmt->export(doc, &data, &n, NULL) == OWF_OK && data, "pdf");
+        for (k = 0; data && k + 2 < n; ++k)
+            if (k + 6 < n && !memcmp(data + k, "(\\206)", 6)) dagger = 1;
+        CHECK(dagger, "the PDF's second mark is a dagger");
+        owf_free(data);
+    }
     CHECK(owf_export_file(doc, "/tmp/openwrite-notes-numbering.odt", "odt", rp) == OWF_OK, "odt with symbols");
     {
         int said = 0;
