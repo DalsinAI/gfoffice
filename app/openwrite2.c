@@ -4759,8 +4759,18 @@ static void do_note_numbering(void)
         return;
     start = atoi(typed);
     if (start < 1 || start > 9999) { tell("Note Numbering", "The first number is from 1 to 9999."); return; }
-    snprintf(msg, sizeof msg, "%s numbered %s from %d.", k ? "Endnotes" : "Footnotes", note_format_names[f], start);
-    editor_result(ow_editor_set_note_numbering(editor, k, f, start), msg);
+    {   /* 2.0.42: then where they start again (endnotes: never on each page) */
+        static const char *const again[3] = { "Through the document", "At each section", "On each page" };
+        char picks[3][72];
+        int r, i;
+        for (i = 0; i < (k ? 2 : 3); ++i) snprintf(picks[i], sizeof picks[i], "%s", again[i]);
+        r = pick_requester("Note Numbering", k ? "Number endnotes again:" : "Number footnotes again:", picks, k ? 2 : 3);
+        if (r < 0) return;
+        snprintf(msg, sizeof msg, "%s numbered %s from %d, %s.", k ? "Endnotes" : "Footnotes", note_format_names[f],
+                 start, r == 0 ? "through" : r == 1 ? "again at each section" : "again on each page");
+        if (editor_result(ow_editor_set_note_numbering(editor, k, f, start), msg))
+            editor_result(ow_editor_set_note_restart(editor, k, r), msg);
+    }
 }
 
 static void do_note(int what)
@@ -5352,7 +5362,7 @@ static int rexx_do_command(const char *command, char **result_out)
         "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND TRACKCHANGES CHANGES NEXTCHANGE PREVCHANGE "
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
         "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
-        "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE NOTENUMBERING "
+        "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE NOTENUMBERING NOTERESTART "
         "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX "
         "AUTOCORRECT ACREPLACE TYPETEXT COMPLETE LABELSHEETS LABELS ENVELOPE QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
@@ -5428,6 +5438,21 @@ static int rexx_do_command(const char *command, char **result_out)
                 if(f>0||start>0){ok=editor_result(ow_editor_set_note_numbering(editor,k,f>0?f:cur_f,start>0?start:cur_s),"Note numbering changed.");
                     ow_editor_note_numbering(editor,k,&cur_f,&cur_s);}
                 snprintf(result,sizeof result,"%s %d",codes[cur_f>0&&cur_f<OWF_NOTE_FORMAT_COUNT?cur_f:1],cur_s);
+            }
+        }
+    }
+    else if(starts_word_ci(command,"NOTERESTART",&arg)){   /* 2.0.42: NOTERESTART FOOTNOTE|ENDNOTE [CONTINUOUS|SECTION|PAGE]; answers it */
+        static const char *const words[OWF_NOTE_RESTART_COUNT]={"CONTINUOUS","SECTION","PAGE"};
+        const char *w;int k=-1,r=-1,i;
+        if(starts_word_ci(arg,"FOOTNOTE",&w))k=0;else if(starts_word_ci(arg,"ENDNOTE",&w))k=1;
+        if(k<0||!editor){ok=0;snprintf(result,sizeof result,"NOTERESTART FOOTNOTE|ENDNOTE [CONTINUOUS|SECTION|PAGE]");}
+        else{
+            while(*w==' ')++w;
+            for(i=0;*w&&i<OWF_NOTE_RESTART_COUNT;++i)if(!strcasecmp(w,words[i]))r=i;
+            if(*w&&(r<0||(k&&r==OWF_NOTE_RESTART_PAGE))){ok=0;snprintf(result,sizeof result,"%s",k?"Endnotes start again at CONTINUOUS or SECTION":"Unknown restart: CONTINUOUS, SECTION or PAGE");}
+            else{
+                if(r>=0)ok=editor_result(ow_editor_set_note_restart(editor,k,r),"Note numbering changed.");
+                snprintf(result,sizeof result,"%s",words[ow_editor_note_restart(editor,k)]);
             }
         }
     }

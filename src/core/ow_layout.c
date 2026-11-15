@@ -334,19 +334,27 @@ static const owf_story *note_story(const owf_doc *doc, int n)
     return n >= 0 && n < doc->nframes ? &doc->frames[n].story : NULL;
 }
 
-/* Every note's mark into marks (doc->nnotes of them; "" for a note no run names) */
-static void number_notes(const owf_doc *doc, char (*marks)[16])
+/* Every note's mark into marks (doc->nnotes of them; "" for a note no run names). libowf 1.12.3: numbered again
+ * at each section's start, and footnotes on each page when note_page gives each note's page (-1: none; NULL:
+ * not laid out yet, so through the document) */
+static void number_notes(const owf_doc *doc, char (*marks)[16], const int *note_page)
 {
     const owf_story *st;
-    int n, i, j, count[2] = {0, 0};
+    int n, i, j, count[2] = {0, 0}, page = -1;
+    int by_page = note_page && owf_note_kind_restart_impl(doc, 0) == OWF_NOTE_RESTART_PAGE;
     for (i = 0; i < doc->nnotes; ++i) marks[i][0] = 0;
     for (n = 0; (st = note_story(doc, n)) != NULL; ++n)
-        for (i = 0; i < st->nparas; ++i)
+        for (i = 0; i < st->nparas; ++i) {
+            owf_note_section_restart_impl(doc, st, i, count);
             for (j = 0; j < st->paras[i].nruns; ++j) {
                 int m = st->paras[i].runs[j].note;
                 const owf_note *note;
                 if (m <= 0 || m > doc->nnotes || marks[m - 1][0]) continue;
                 note = &doc->notes[m - 1];
+                if (by_page && !note->endnote && note_page[m - 1] >= 0 && note_page[m - 1] != page) {
+                    page = note_page[m - 1];
+                    count[0] = 0;
+                }
                 if (note->label) { snprintf(marks[m - 1], sizeof marks[m - 1], "%s", note->label); continue; }
                 ++count[note->endnote ? 1 : 0];
                 /* libowf 1.12.1: the page's format and first number */
@@ -354,6 +362,7 @@ static void number_notes(const owf_doc *doc, char (*marks)[16])
                                        count[note->endnote ? 1 : 0] + owf_note_kind_start_impl(doc, note->endnote) - 1,
                                        marks[m - 1], sizeof marks[m - 1]);
             }
+        }
 }
 
 int ow_layout_note_mark(const owf_doc *doc, int index, char *out, size_t size)
@@ -364,7 +373,7 @@ int ow_layout_note_mark(const owf_doc *doc, int index, char *out, size_t size)
     if (!doc || index < 0 || index >= doc->nnotes) return 0;
     marks = (char (*)[16])malloc((size_t)doc->nnotes * sizeof(*marks));
     if (!marks) return 0;
-    number_notes(doc, marks);
+    number_notes(doc, marks, NULL);
     snprintf(out, size, "%s", marks[index]);
     free(marks);
     return out[0] != 0;
@@ -836,7 +845,8 @@ static int uniform_body_columns(const owf_doc *doc, int *count, int *gap);
 static int body_page_sections(const ow_layout *layout, ol_page_section **out, int *count);
 
 static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
-                              const ol_unit *inline_dx, const ol_unit *inline_dy);
+                              const ol_unit *inline_dx, const ol_unit *inline_dy, const int *note_page);
+static ow_layout *by_page(ow_layout *l, size_t ops);
 
 /* 2.0.17: where each text box in the line went, against its room in the line: how far to move it there, by
  * frame (dx, dy, nframes long). 1 when one needs moving; the boxes whose room is on another page stay. */
@@ -887,9 +897,9 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
     /* 2.0.22: the first layout's room from a guess (ow_layout_estimate_ops), so its display list is made once,
      * not doubled from 64 up (eight blocks a 20-page document, each copied into the next) */
     if (!ops) ops = ow_layout_estimate_ops(doc);
-    l = layout_with(doc, measure, measure_userdata, ops, NULL, NULL);
+    l = layout_with(doc, measure, measure_userdata, ops, NULL, NULL, NULL);
     for (i = 0; l && !in_line && i < doc->nframes; ++i) in_line = doc->frames[i].in_line;
-    if (!in_line) return l;
+    if (!in_line) return by_page(l, ops);
     /* 2.0.17: a text box in the line goes from its paragraph's corner onto its room in the line: laid out again
      * with it moved there (it moves no line: it doesn't wrap) */
     dx = (ol_unit *)calloc((size_t)doc->nframes, sizeof(*dx));
@@ -897,7 +907,7 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
     if (dx && dy && inline_moves(l, dx, dy)) {
         ow_layout *moved;
         ow_layout_free(l);
-        moved = layout_with(doc, measure, measure_userdata, ops, dx, dy);
+        moved = layout_with(doc, measure, measure_userdata, ops, dx, dy, NULL);
         l = moved;
     }
     if (l && l->inline_dx == dx) {              /* the moved layout keeps its offsets */
@@ -905,11 +915,39 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
     }
     free(dx);
     free(dy);
-    return l;
+    return by_page(l, ops);
+}
+
+/* libowf 1.12.3: footnotes numbered again on each page. Their pages are known only once laid out, so the marks
+ * are numbered from the first layout's pages and, when that changes any, it is laid out again with them (once:
+ * a mark narrower or wider than before seldom moves a note onto another page) */
+static ow_layout *by_page(ow_layout *l, size_t ops)
+{
+    const owf_doc *doc = l ? l->doc : NULL;
+    int *note_page;
+    char (*marks)[16];
+    int f, i, same;
+    ow_layout *again;
+    if (!l || !l->nfeet || !l->note_marks || owf_note_kind_restart_impl(doc, 0) != OWF_NOTE_RESTART_PAGE) return l;
+    note_page = (int *)malloc((size_t)doc->nnotes * sizeof(*note_page));
+    marks = (char (*)[16])malloc((size_t)doc->nnotes * sizeof(*marks));
+    if (!note_page || !marks) { free(note_page); free(marks); return l; }   /* numbered through: still a layout */
+    for (i = 0; i < doc->nnotes; ++i) note_page[i] = -1;
+    for (f = 0; f < l->nfeet; ++f) note_page[l->foot_note[f]] = l->foot_page[f];
+    number_notes(doc, marks, note_page);
+    same = !memcmp(marks, l->note_marks, (size_t)doc->nnotes * sizeof(*marks));
+    free(marks);
+    if (same) { free(note_page); return l; }
+    again = layout_with(doc, l->measure, l->measure_userdata, ops, l->inline_dx, l->inline_dy, note_page);
+    free(note_page);
+    if (!again) return l;
+    l->inline_dx = l->inline_dy = NULL;          /* the new layout has them now */
+    ow_layout_free(l);
+    return again;
 }
 
 static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
-                              const ol_unit *inline_dx, const ol_unit *inline_dy)
+                              const ol_unit *inline_dx, const ol_unit *inline_dy, const int *note_page)
 {
     ow_layout *l;
     ol_document *body;
@@ -966,7 +1004,7 @@ static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, vo
             ow_layout_free(l);
             return NULL;
         }
-        number_notes(doc, l->note_marks);
+        number_notes(doc, l->note_marks, note_page);
     }
     if (!l->body || !l->blocks || !add_story(l, doc, l->body, NULL, &doc->body, 1, NULL)) {
         ow_layout_free(l);

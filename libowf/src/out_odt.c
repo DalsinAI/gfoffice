@@ -920,11 +920,13 @@ static void put_named_styles(owf_buf *out, const owf_doc *doc)
         for (k = 0; k < 2; ++k) {
             int f = pg->note_format[k] > OWF_NOTE_FORMAT_DEFAULT && pg->note_format[k] < OWF_NOTE_FORMAT_COUNT
                     ? pg->note_format[k] : OWF_NOTE_FORMAT_DEFAULT;
-            if (!f && pg->note_start[k] <= 1) continue;
+            int page = !k && pg->note_restart[k] == OWF_NOTE_RESTART_PAGE;   /* 1.12.3 */
+            if (!f && pg->note_start[k] <= 1 && !page) continue;
             owf_buf_printf(out, "<text:notes-configuration text:note-class=\"%s\" style:num-format=\"%s\"", cls[k],
                            f ? fmt[f] : k ? "i" : "1");
             if (pg->note_start[k] > 1) owf_buf_printf(out, " text:start-value=\"%d\"", pg->note_start[k] - 1);
-            owf_buf_puts(out, k ? "/>" : " text:footnotes-position=\"page\" text:start-numbering-at=\"document\"/>");
+            owf_buf_puts(out, k ? "/>" : page ? " text:footnotes-position=\"page\" text:start-numbering-at=\"page\"/>"
+                                         : " text:footnotes-position=\"page\" text:start-numbering-at=\"document\"/>");
         }
     }
     owf_buf_puts(out, "</office:styles>");
@@ -1107,6 +1109,8 @@ static int export_odt(const owf_doc *doc, unsigned char **data, size_t *length, 
     owf_zip_add(zip, "mimetype", mimetype, sizeof mimetype - 1, 0);
     if (doc->page.note_format[0] == OWF_NOTE_FORMAT_SYMBOL || doc->page.note_format[1] == OWF_NOTE_FORMAT_SYMBOL)
         owf_report_add(report, OWF_NOTE_APPROX, "Notes numbered with symbols were saved numbered 1, 2, 3: ODT has no symbols");
+    if (doc->page.note_restart[0] == OWF_NOTE_RESTART_SECTION || doc->page.note_restart[1] == OWF_NOTE_RESTART_SECTION)
+        owf_report_add(report, OWF_NOTE_APPROX, "Notes numbered again in each section were saved numbered through: ODT has no such setting");   /* 1.12.3 */
 
     owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                         "<manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\" manifest:version=\"1.3\">"

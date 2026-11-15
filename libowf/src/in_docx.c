@@ -2080,7 +2080,7 @@ static void section(docx *d, const owf_xml_node *sect)
         default: pg->pagenum_style = OWF_PAGENUM_ARABIC; break;
         }
     }
-    {   /* 1.12.1: how footnotes and endnotes are numbered: w:numFmt and w:numStart */
+    {   /* 1.12.1: how footnotes and endnotes are numbered: w:numFmt and w:numStart; 1.12.3: w:numRestart */
         static const char *const pr[2] = { "footnotePr", "endnotePr" };
         int k;
         for (k = 0; k < 2; ++k) {
@@ -2100,6 +2100,11 @@ static void section(docx *d, const owf_xml_node *sect)
             }
             if ((f = wchild(d, np, "numStart")) && wint(d, f, "val", &v) && v >= 1)
                 pg->note_start[k] = v;
+            if ((f = wchild(d, np, "numRestart")) && (fmt = wval(d, f)) != NULL) {   /* 1.12.3 */
+                if (!strcmp(fmt, "eachSect")) pg->note_restart[k] = OWF_NOTE_RESTART_SECTION;
+                else if (!strcmp(fmt, "eachPage") && !k) pg->note_restart[k] = OWF_NOTE_RESTART_PAGE;
+                else pg->note_restart[k] = OWF_NOTE_RESTART_CONTINUOUS;
+            }
         }
     }
     if ((n = wchild(d, sect, "titlePg")))

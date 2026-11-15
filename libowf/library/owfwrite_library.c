@@ -45,13 +45,15 @@
  * again.
  * 3.13: libowf 1.12.2, the notes' text with its formats (owf_doc.note_stories, OWF_DOC_NOTE_STORY): DOCX's
  * notes' runs in and out. No new calls; owf_doc grew, so the three libraries go together again.
+ * 3.14: libowf 1.12.3, notes numbered again at each section or page (owf_page.note_restart): DOCX
+ * w:numRestart, ODT text:start-numbering-at, in and out. No new calls; owf_page grew, and owf_doc with it.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 13
-#define OWF_LIB_VERS "3.13"
+#define OWF_LIB_REVISION 14
+#define OWF_LIB_VERS "3.14"
 #define OWF_LIB_DATE "15.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

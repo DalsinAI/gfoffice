@@ -95,7 +95,8 @@ static void put_rpr(owf_buf *out, const owf_doc *doc, const owf_charfmt *f, owf_
     put_rpr_change(out, doc, f, NULL, 0, report);
 }
 
-/* 1.12.1: how footnotes and endnotes are numbered, when not the usual way: w:footnotePr and w:endnotePr, which
+/* 1.12.1: how footnotes and endnotes are numbered, when not the usual way: w:footnotePr and w:endnotePr (1.12.3:
+ * with w:numRestart, last in CT_FtnProps), which
  * come first in a w:sectPr after its header and footer references (CT_SectPr) */
 static void put_note_pr(owf_buf *out, const owf_page *pg)
 {
@@ -106,10 +107,13 @@ static void put_note_pr(owf_buf *out, const owf_page *pg)
     for (k = 0; k < 2; ++k) {
         int f = pg->note_format[k] > OWF_NOTE_FORMAT_DEFAULT && pg->note_format[k] < OWF_NOTE_FORMAT_COUNT
                 ? pg->note_format[k] : OWF_NOTE_FORMAT_DEFAULT;
-        if (!f && pg->note_start[k] <= 1) continue;
+        int r = pg->note_restart[k] == OWF_NOTE_RESTART_SECTION || (!k && pg->note_restart[k] == OWF_NOTE_RESTART_PAGE)
+                ? pg->note_restart[k] : OWF_NOTE_RESTART_CONTINUOUS;
+        if (!f && pg->note_start[k] <= 1 && !r) continue;
         owf_buf_printf(out, "<w:%s>", pr[k]);
         if (f) owf_buf_printf(out, "<w:numFmt w:val=\"%s\"/>", fmt[f]);
         if (pg->note_start[k] > 1) owf_buf_printf(out, "<w:numStart w:val=\"%d\"/>", pg->note_start[k]);
+        if (r) owf_buf_printf(out, "<w:numRestart w:val=\"%s\"/>", r == OWF_NOTE_RESTART_PAGE ? "eachPage" : "eachSect");
         owf_buf_printf(out, "</w:%s>", pr[k]);
     }
 }

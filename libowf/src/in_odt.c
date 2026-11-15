@@ -1534,6 +1534,12 @@ static int read_document(odt *o, const owf_xml_node *content_root, const owf_xml
                     o->doc->page.note_format[k] = OWF_NOTE_FORMAT_DEFAULT;   /* the kind's own */
             }
             if (sv && atoi(sv) > 0) o->doc->page.note_start[k] = atoi(sv) + 1;
+            {   /* 1.12.3: page (footnotes only); a chapter is no section of ours, so it runs on */
+                const char *at = owf_xml_attr(c, NS_TEXT, "start-numbering-at");
+                if (at && !strcmp(at, "page") && !k) o->doc->page.note_restart[k] = OWF_NOTE_RESTART_PAGE;
+                else if (at && !strcmp(at, "chapter"))
+                    owf_report_add(o->report, OWF_NOTE_APPROX, "Notes numbered again in each chapter are numbered through");
+            }
         }
     }
     read_styles(o, owf_xml_child(styles_root, NS_OFFICE, "automatic-styles"), &o->autos_styles);
