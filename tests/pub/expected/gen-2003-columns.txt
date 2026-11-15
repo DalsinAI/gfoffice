@@ -48,5 +48,5 @@ font "Franklin Gothic Book"
 pictures 4
 picture 0 image/gif 35 bytes
 picture 1 image/jpeg 159 bytes
-picture 2 image/x-wmf 24 bytes
+picture 2 image/x-wmf 80 bytes
 picture 3 image/x-dib 56 bytes

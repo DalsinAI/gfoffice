@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include "openwrite_core.h"
+#include "ow_merge.h"
 
 #define OW_UNDO_LIMIT 16
 /* 2.0.11: what the undo and redo snapshots may hold between them, about; the last edit's is always kept */
@@ -118,6 +119,11 @@ static void clear_doc_data(owf_doc *doc)
     for (i = 0; i < doc->nnotes; ++i) { owf_free(doc->notes[i].text); owf_free(doc->notes[i].label); }   /* 2.4.0 */
     owf_free(doc->notes);
     owf_free(doc->merge_source);                     /* 2.5.0 */
+    for (i = 0; i < doc->nformat_changes; ++i) {     /* libowf 1.11 */
+        owf_free(doc->format_changes[i].author);
+        owf_free(doc->format_changes[i].date);
+    }
+    owf_free(doc->format_changes);
     memset(doc, 0, sizeof(*doc));
 }
 
@@ -227,6 +233,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     owf_note *notes;
     int nnotes, capnotes;
     char *merge_source;
+    owf_format_change *format_changes;
+    int nformat_changes, capformat_changes;
     if (!dst || !snapshot) return;
     images = dst->images;           /* 2.0.11: the pictures stay the document's (clone_doc) */
     nimages = dst->nimages;
@@ -259,6 +267,11 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capnotes = dst->capnotes;
     dst->notes = NULL;
     dst->nnotes = dst->capnotes = 0;
+    format_changes = dst->format_changes;   /* libowf 1.11: the format changes, which the runs name and which only grow */
+    nformat_changes = dst->nformat_changes;
+    capformat_changes = dst->capformat_changes;
+    dst->format_changes = NULL;
+    dst->nformat_changes = dst->capformat_changes = 0;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
     dst->images = images;
@@ -280,6 +293,9 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->nnotes = nnotes;
     dst->capnotes = capnotes;
     dst->merge_source = merge_source;
+    dst->format_changes = format_changes;
+    dst->nformat_changes = nformat_changes;
+    dst->capformat_changes = capformat_changes;
     owf_free(snapshot);                 /* only the old outer shell */
 }
 
@@ -1251,6 +1267,73 @@ static ow_position paragraph_end(ow_editor *editor, ow_position pos)
     return pos;
 }
 
+/* 2.0.36: word moves. A character is a space (space, tab, line break), a word letter (ASCII letters and digits,
+ * '_', any UTF-8 beyond ASCII) or punctuation; a word move crosses one class run and the spaces after it (right)
+ * or before it (left), and stops at a paragraph's start and end, as Ctrl+arrows do in other word processors. */
+static int char_class(unsigned char c)
+{
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 0;
+    if (c >= 0x80 || c == '_' || (c >= '0' && c <= '9') || ((c | 0x20) >= 'a' && (c | 0x20) <= 'z')) return 1;
+    return 2;
+}
+
+/* the class of the character after pos in its paragraph, -1 at the paragraph's end; pos is moved over run ends */
+static int class_after(owf_para *p, ow_position *pos)
+{
+    for (;;) {
+        owf_run *r = &p->runs[pos->run];
+        int nr;
+        if (r->text && r->text[pos->byte_offset])     /* byte_offset is within the run's text (clamp_position) */
+            return char_class((unsigned char)r->text[pos->byte_offset]);
+        nr = next_text_run(p, pos->run);
+        if (nr < 0) return -1;
+        pos->run = nr;
+        pos->byte_offset = 0;
+    }
+}
+
+static int class_before(owf_para *p, ow_position *pos)
+{
+    for (;;) {
+        owf_run *r = &p->runs[pos->run];
+        int pr;
+        if (pos->byte_offset)
+            return char_class((unsigned char)r->text[utf8_prev(r->text, pos->byte_offset)]);
+        pr = prev_text_run(p, pos->run);
+        if (pr < 0) return -1;
+        pos->run = pr;
+        pos->byte_offset = p->runs[pr].text ? strlen(p->runs[pr].text) : 0;
+    }
+}
+
+static ow_position word_right_pos(ow_editor *editor, ow_position pos)
+{
+    owf_para *p;
+    int c;
+    pos = clamp_position(editor, pos);
+    p = &ed_story(editor)->paras[pos.paragraph];
+    c = class_after(p, &pos);
+    if (c < 0) return move_right_pos(editor, pos);          /* the paragraph's end: to the next one's start */
+    if (c > 0)
+        while (class_after(p, &pos) == c) pos.byte_offset = utf8_next(p->runs[pos.run].text, pos.byte_offset);
+    while (class_after(p, &pos) == 0) pos.byte_offset = utf8_next(p->runs[pos.run].text, pos.byte_offset);
+    return pos;
+}
+
+static ow_position word_left_pos(ow_editor *editor, ow_position pos)
+{
+    owf_para *p;
+    int c;
+    pos = clamp_position(editor, pos);
+    p = &ed_story(editor)->paras[pos.paragraph];
+    if (class_before(p, &pos) < 0) return move_left_pos(editor, pos);
+    while (class_before(p, &pos) == 0) pos.byte_offset = utf8_prev(p->runs[pos.run].text, pos.byte_offset);
+    c = class_before(p, &pos);
+    if (c > 0)
+        while (class_before(p, &pos) == c) pos.byte_offset = utf8_prev(p->runs[pos.run].text, pos.byte_offset);
+    return pos;
+}
+
 static ow_position vertical_pos(ow_editor *editor, ow_position pos, int delta)
 {
     owf_story *story = ed_story(editor);
@@ -1669,7 +1752,7 @@ static void join_runs(owf_para *p)
     while (j + 1 < p->nruns) {
         owf_run *a = &p->runs[j], *b = &p->runs[j + 1];
         if (a->kind == OWF_RUN_TEXT && b->kind == OWF_RUN_TEXT && a->revision == b->revision && !a->comment && !b->comment &&
-            !a->note && !b->note &&
+            !a->note && !b->note && a->format_change == b->format_change &&   /* libowf 1.11 */
             same_charfmt_local(&a->fmt, &b->fmt) && same_text_or_null(a->href, b->href)) {
             size_t la = a->text ? strlen(a->text) : 0, lb = b->text ? strlen(b->text) : 0;
             char *t = (char *)owf_malloc(la + lb + 1);
@@ -3746,6 +3829,18 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
         case OW_MOVE_DOWN:  pos = vertical_pos(editor, pos, 1); break;
         case OW_MOVE_HOME:  pos = paragraph_home(editor, pos); break;
         case OW_MOVE_END:   pos = paragraph_end(editor, pos); break;
+        case OW_MOVE_WORD_LEFT:  pos = word_left_pos(editor, pos); break;
+        case OW_MOVE_WORD_RIGHT: pos = word_right_pos(editor, pos); break;
+        case OW_MOVE_DOC_START:
+            pos = clamp_position(editor, pos);
+            pos.paragraph = 0;
+            pos = paragraph_home(editor, pos);
+            break;
+        case OW_MOVE_DOC_END:
+            pos = clamp_position(editor, pos);
+            pos.paragraph = ed_story(editor)->nparas - 1;
+            pos = paragraph_end(editor, pos);
+            break;
         }
     }
 
@@ -5547,208 +5642,12 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
  * one document, each record from a new page, or into a file each. The document keeps its data source's path
  * (owf_doc.merge_source), so that it is read again when the document is opened. */
 
-typedef struct ow_merge_table {
-    int ncols, nrows;            /* nrows: the records, not counting the names' row */
-    char **cells;                /* (nrows + 1) * ncols, row 0 the names; NULL: empty */
-} ow_merge_table;
-
-#define OW_MERGE_MAX_BYTES (4UL * 1024UL * 1024UL)
-
-static void merge_table_free(ow_merge_table *t)
-{
-    int i;
-    if (!t) return;
-    for (i = 0; i < (t->nrows + 1) * t->ncols; ++i) owf_free(t->cells[i]);
-    owf_free(t->cells);
-    owf_free(t);
-}
-
 void ow_editor_merge_close(ow_editor *editor)
 {
     if (!editor) return;
-    merge_table_free(editor->merge);
+    ow_merge_table_free(editor->merge);
     editor->merge = NULL;
     editor->merge_at = 0;
-}
-
-static int utf8_ok(const unsigned char *s, size_t n)
-{
-    size_t i = 0;
-    while (i < n) {
-        unsigned c = s[i];
-        size_t k, more = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : 9;
-        if (more == 9 || (more == 1 && c < 0xC2) || i + more >= n + (more ? 0 : 1)) return 0;
-        for (k = 1; k <= more; ++k) if ((s[i + k] & 0xC0) != 0x80) return 0;
-        i += more + 1;
-    }
-    return 1;
-}
-
-/* The bytes as UTF-8: the same, or Latin-1 made UTF-8 */
-static char *source_utf8(const char *data, size_t n, size_t *out_n)
-{
-    size_t i, o = 0;
-    char *out;
-    if (utf8_ok((const unsigned char *)data, n)) {
-        *out_n = n;
-        return copy_bytes(data, n);
-    }
-    if (!(out = (char *)owf_malloc(2 * n + 1))) return NULL;
-    for (i = 0; i < n; ++i) {
-        unsigned char c = (unsigned char)data[i];
-        if (c < 0x80) out[o++] = (char)c;
-        else { out[o++] = (char)(0xC0 | (c >> 6)); out[o++] = (char)(0x80 | (c & 0x3F)); }
-    }
-    out[o] = 0;
-    *out_n = o;
-    return out;
-}
-
-/* The separator: the most of comma, semicolon and tab on the first line outside quotes (a comma when none) */
-static char merge_separator(const char *s, size_t n)
-{
-    size_t i;
-    int quoted = 0, comma = 0, semi = 0, tab = 0;
-    for (i = 0; i < n && (quoted || (s[i] != '\n' && s[i] != '\r')); ++i) {
-        if (s[i] == '"') quoted = !quoted;
-        else if (!quoted && s[i] == ',') ++comma;
-        else if (!quoted && s[i] == ';') ++semi;
-        else if (!quoted && s[i] == '\t') ++tab;
-    }
-    if (semi > comma && semi >= tab) return ';';
-    if (tab > comma && tab > semi) return '\t';
-    return ',';
-}
-
-typedef struct {
-    char **cells;
-    int ncells, cap;
-    int *row_end;                /* each row's cells end here */
-    int nrows, caprows;
-    char *buf;
-    size_t len, capbuf;
-    int failed;
-} merge_parse;
-
-static void parse_putc(merge_parse *p, char c)
-{
-    if (p->len + 2 > p->capbuf) {
-        size_t want = p->capbuf ? p->capbuf * 2 : 64;
-        char *g = (char *)owf_realloc(p->buf, want);
-        if (!g) { p->failed = 1; return; }
-        p->buf = g;
-        p->capbuf = want;
-    }
-    p->buf[p->len++] = c;
-}
-
-static void parse_cell(merge_parse *p)
-{
-    char *cell;
-    if (p->failed) return;
-    if (p->ncells == p->cap) {
-        int want = p->cap ? p->cap * 2 : 64;
-        char **g = (char **)owf_realloc(p->cells, (size_t)want * sizeof *g);
-        if (!g) { p->failed = 1; return; }
-        p->cells = g;
-        p->cap = want;
-    }
-    cell = p->len ? copy_bytes(p->buf, p->len) : NULL;
-    if (p->len && !cell) { p->failed = 1; return; }
-    p->cells[p->ncells++] = cell;
-    p->len = 0;
-}
-
-static void parse_row(merge_parse *p)
-{
-    if (p->failed) return;
-    if (p->nrows == p->caprows) {
-        int want = p->caprows ? p->caprows * 2 : 32;
-        int *g = (int *)owf_realloc(p->row_end, (size_t)want * sizeof *g);
-        if (!g) { p->failed = 1; return; }
-        p->row_end = g;
-        p->caprows = want;
-    }
-    p->row_end[p->nrows++] = p->ncells;
-}
-
-static void trim_name(char *s)
-{
-    size_t n = strlen(s), a = 0;
-    while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = 0;
-    while (s[a] == ' ' || s[a] == '\t') ++a;
-    if (a) memmove(s, s + a, n - a + 1);
-}
-
-/* A table from CSV text (UTF-8): NULL when it has no columns or memory runs out (*memory set) */
-static ow_merge_table *merge_table_parse(const char *s, size_t n, int *memory)
-{
-    merge_parse p;
-    ow_merge_table *t = NULL;
-    size_t i = 0;
-    char sep;
-    int quoted = 0, r, k, start, rows = 0, row_start;
-    memset(&p, 0, sizeof p);
-    *memory = 0;
-    if (n >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) {
-        s += 3; n -= 3;                              /* a byte-order mark */
-    }
-    sep = merge_separator(s, n);
-    row_start = 0;
-    while (i < n && !p.failed) {
-        char c = s[i++];
-        if (quoted) {
-            if (c == '"' && i < n && s[i] == '"') { parse_putc(&p, '"'); ++i; }
-            else if (c == '"') quoted = 0;
-            else parse_putc(&p, c);
-        } else if (c == '"') quoted = 1;
-        else if (c == sep) parse_cell(&p);
-        else if (c == '\r' || c == '\n') {
-            if (c == '\r' && i < n && s[i] == '\n') ++i;
-            if (p.len || p.ncells > row_start) { parse_cell(&p); parse_row(&p); }
-            row_start = p.ncells;                    /* an empty line is left out */
-        } else parse_putc(&p, c);
-    }
-    if (!p.failed && (p.len || p.ncells > row_start)) { parse_cell(&p); parse_row(&p); }
-    if (p.failed) { *memory = 1; goto out; }
-    if (!p.nrows || p.row_end[0] == 0) goto out;
-    if (!(t = (ow_merge_table *)owf_calloc(1, sizeof *t))) { *memory = 1; goto out; }
-    t->ncols = p.row_end[0];
-    for (r = 1; r < p.nrows; ++r) {                  /* rows of empty cells are no records */
-        for (k = p.row_end[r - 1]; k < p.row_end[r] && !p.cells[k]; ++k) ;
-        if (k < p.row_end[r]) ++rows;
-    }
-    t->nrows = rows;
-    t->cells = (char **)owf_calloc((size_t)(rows + 1) * (size_t)t->ncols, sizeof *t->cells);
-    if (!t->cells) { owf_free(t); t = NULL; *memory = 1; goto out; }
-    for (r = 0, rows = 0; r < p.nrows; ++r) {
-        int got;
-        start = r ? p.row_end[r - 1] : 0;
-        got = p.row_end[r] - start;
-        if (r) {
-            for (k = start; k < p.row_end[r] && !p.cells[k]; ++k) ;
-            if (k == p.row_end[r]) continue;
-        }
-        for (k = 0; k < got && k < t->ncols; ++k) {  /* cells past the last column are left out */
-            t->cells[rows * t->ncols + k] = p.cells[start + k];
-            p.cells[start + k] = NULL;
-        }
-        ++rows;
-    }
-    for (k = 0; k < t->ncols; ++k) {                 /* a column without a name gets one */
-        char made[24], **name = &t->cells[k];
-        if (*name) trim_name(*name);
-        if (*name && **name) continue;
-        snprintf(made, sizeof made, "Column%d", k + 1);
-        owf_free(*name);
-        if (!(*name = copy_bytes(made, strlen(made)))) { merge_table_free(t); t = NULL; *memory = 1; goto out; }
-    }
-out:
-    for (k = 0; k < p.ncells; ++k) owf_free(p.cells[k]);
-    owf_free(p.cells);
-    owf_free(p.row_end);
-    owf_free(p.buf);
-    return t;
 }
 
 static int tolower_ascii(int c)
@@ -5756,23 +5655,10 @@ static int tolower_ascii(int c)
     return c >= 'A' && c <= 'Z' ? c + 32 : c;
 }
 
-static int merge_column(const ow_merge_table *t, const char *name)
-{
-    int k;
-    if (!t || !name) return -1;
-    for (k = 0; k < t->ncols; ++k) if (!strcmp(t->cells[k], name)) return k;
-    for (k = 0; k < t->ncols; ++k) {                 /* then without minding case (ASCII) */
-        const char *a = t->cells[k], *b = name;
-        while (*a && *b && tolower_ascii(*a) == tolower_ascii(*b)) { ++a; ++b; }
-        if (!*a && !*b) return k;
-    }
-    return -1;
-}
-
 const char *ow_editor_merge_value(const ow_editor *editor, int record, const char *column)
 {
     const ow_merge_table *t = editor ? editor->merge : NULL;
-    int k = merge_column(t, column);
+    int k = ow_merge_column(t, column);
     const char *v;
     if (k < 0 || record < 0 || record >= t->nrows) return NULL;
     v = t->cells[(record + 1) * t->ncols + k];
@@ -5813,11 +5699,11 @@ int ow_editor_merge_load_text(ow_editor *editor, const char *name, const char *d
     size_t n;
     int memory;
     if (!editor || !editor->doc || !data) return OWF_ERR_FORMAT;
-    if (!(utf8 = source_utf8(data, length, &n))) return OWF_ERR_MEMORY;
-    t = merge_table_parse(utf8, n, &memory);
+    if (!(utf8 = ow_merge_utf8(data, length, &n))) return OWF_ERR_MEMORY;
+    t = ow_merge_table_parse(utf8, n, &memory);
     owf_free(utf8);
     if (!t) return memory ? OWF_ERR_MEMORY : OWF_ERR_FORMAT;
-    if (name && *name && !merge_set_source(editor, name)) { merge_table_free(t); return OWF_ERR_MEMORY; }
+    if (name && *name && !merge_set_source(editor, name)) { ow_merge_table_free(t); return OWF_ERR_MEMORY; }
     ow_editor_merge_close(editor);
     editor->merge = t;
     editor->merge_at = 0;
@@ -5921,6 +5807,7 @@ static int story_final(owf_doc *d, owf_story *story)
                 continue;
             }
             r.revision = 0;
+            r.format_change = 0;                     /* libowf 1.11: accepted too, as the list stays empty */
             if (r.kind == OWF_RUN_FIELD && r.field > OWF_FIELD_TIME) {
                 char *value = r.text, *nl;
                 const char *t = value ? value : "";

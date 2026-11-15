@@ -724,6 +724,55 @@ static void test_print(void)
     opj_doc_free(doc);
 }
 
+static int has_bytes(const unsigned char *data, size_t n, const char *what)
+{
+    size_t k = strlen(what), i;
+    for (i = 0; i + k <= n; i++)
+        if (memcmp(data + i, what, k) == 0) return 1;
+    return 0;
+}
+
+/* The printed Gantt view as a PDF (opj_pdf.c): a page each opj_print page, text searchable, the footer. */
+static void test_pdf(void)
+{
+    opj_doc *doc = three(), *empty;
+    opj_view proto;
+    unsigned char *data = NULL;
+    size_t n = 0;
+    int pages = -1;
+    doc->plan->title = owf_malloc(8);
+    if (doc->plan->title) strcpy(doc->plan->title, "Kitchen");
+    opj_view_init(&proto, doc, 0, 0, 16, OPJ_ZOOM_DAYS);
+    /* A4 landscape less 1 cm round it, 12 twips a pixel: 1308 by 897. Rows 17 high, 49 a page; 31 days of chart on
+     * the first page across (1308 - 548 = 760, 24 a day): the plan's 6 days fit on one page. */
+    CHECK_N(opj_pdf_write(doc, &proto, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, 1);
+    CHECK(data && n > 5 && memcmp(data, "%PDF-", 5) == 0);
+    CHECK(has_bytes(data, n, "(Kitchen) Tj") && has_bytes(data, n, "(Page 1 of 1) Tj"));
+    CHECK(has_bytes(data, n, "(Task Name) Tj") && has_bytes(data, n, "(Plan) Tj") && has_bytes(data, n, "(Build) Tj"));
+    CHECK(has_bytes(data, n, "/Title "));                                  /* the plan's title names the PDF */
+    CHECK(has_bytes(data, n, "/Count 1"));
+    owf_free(data);
+    /* Build at 60 working days runs the plan past 31 days and 31 + 54: two more pages across (4 pixels of
+     * split, then 54 days a page). */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "60d"), OWF_OK);
+    CHECK_N(opj_pdf_write(doc, &proto, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, 3);
+    CHECK(has_bytes(data, n, "(Page 3 of 3) Tj") && has_bytes(data, n, "/Count 3"));
+    owf_free(data);
+    /* Refused: a plan with no tasks, a missing argument; nothing is handed back. */
+    empty = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(empty != NULL);
+    data = (unsigned char *)"x";
+    pages = 9;
+    CHECK_N(opj_pdf_write(empty, &proto, &data, &n, &pages), OWF_ERR_FORMAT);
+    CHECK(data == NULL && n == 0 && pages == 0);
+    CHECK_N(opj_pdf_write(doc, NULL, &data, &n, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_pdf_write(NULL, &proto, &data, &n, NULL), OWF_ERR_FORMAT);
+    opj_doc_free(empty);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -736,6 +785,7 @@ int main(void)
     test_resources();
     test_baseline();
     test_print();
+    test_pdf();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;

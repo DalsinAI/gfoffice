@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.6.0"
+#define OB_CORE_VERSION "0.6.3"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -256,15 +256,41 @@ typedef enum ob_filter_op {
     OB_FILTER_COUNT
 } ob_filter_op;
 
+/* Filter by Form (core 0.6.2, design 6.3): what is typed into a form's
+ * fields, in the plain words of a query's criteria (Leeds, > 10, Smith*,
+ * between 1 and 5, empty, not York; no [questions]). The criteria in one
+ * row ("Look for", then "Or" rows) must all hold; a row passes when any
+ * row does. They are on top of the one-field filter above. */
+#define OB_FORM_CRIT 16             /* criteria in all the rows together */
+#define OB_FORM_OR 3                /* rows: Look for, Or, Or */
+
+typedef struct ob_form_crit {
+    char field[OB_NAME_MAX];
+    int row;                        /* 0 Look for, 1 and 2 Or */
+    char text[OB_VALUE_MAX];
+} ob_form_crit;
+
+/* About 5 KB: fine on a 64 KB stack, but not many at once. */
 typedef struct ob_view {
     char sort[OB_NAME_MAX];
     int desc;
     char field[OB_NAME_MAX];
     ob_filter_op op;
     char value[OB_VALUE_MAX];
+    int ncrit;
+    ob_form_crit crit[OB_FORM_CRIT];
 } ob_view;
 
 void ob_view_init(ob_view *v);                  /* key order, every row */
+/* Filter by Form: sets field's criterion in row (0 Look for, 1 and 2 Or);
+ * empty text takes it out. 0 when row is not one of them, or there is no
+ * room for another (OB_FORM_CRIT). The text is checked when the view is. */
+int ob_view_form_set(ob_view *v, const char *field, int row, const char *text);
+/* field's criterion in row; "" when it has none. */
+const char *ob_view_form_get(const ob_view *v, const char *field, int row);
+void ob_view_form_clear(ob_view *v);
+/* Whether v leaves rows out (its filter, or Filter by Form). */
+int ob_view_filtered(const ob_view *v);
 const char *ob_filter_name(ob_filter_op op);    /* "Contains"... */
 /* Whether v is good for table (its fields exist, the value suits the field);
  * 0 with the reason in ob_error(). */
@@ -295,6 +321,16 @@ ob_int ob_view_find(ob_project *p, const char *table, const ob_view *v, const ch
  * child table's rows whose Lookup holds the record's key: a view filtered on
  * r.field Equals the key. Returns how many there are, -1 on error. */
 int ob_children(ob_project *p, const char *table, ob_relation *out, int max);
+/* Changing a subform's rows (core 0.6.3). The key of the row at position
+ * `pos` (from 0, key order) among r's rows for record `parent`: -1 when
+ * there is none, -2 on error. */
+ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int pos);
+/* Adds a row to r's table for record `parent`: its Lookup r->field holds
+ * parent whatever the fields give for it; the rest as ob_row_add takes them.
+ * 0 with the reason when parent is not a key (a new record not yet saved:
+ * "Save the record first") or ob_row_add refuses the row. */
+int ob_child_add(ob_project *p, const ob_relation *r, ob_int parent, int n, const char *const *fields,
+                 const char *const *values, ob_int *key);
 
 /* ---- CSV (design 8) ----
  * Export: a header of field names, then each row of the view (NULL: every

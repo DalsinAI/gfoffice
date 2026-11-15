@@ -203,7 +203,31 @@ static void test_files(void)
     CHECK_S(rx.lasterror, "SAVEAS: a PDF doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
     CHECK_N(rx_do("EXPORT build/host/x FORMAT DOC"), ODG_RX_ERROR);
-    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF, PNG, ILBM or DRAWIO, not DOC");
+    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM or DRAWIO, not DOC");
+
+    /* EPS: the page as Encapsulated PostScript, by its name or FORMAT EPS; EXPORT only */
+    CHECK_N(odg_rexx_format("x.eps"), ODG_FILE_EPS);
+    CHECK_N(odg_rexx_format("x.EPSF"), ODG_FILE_EPS);
+    CHECK_N(odg_rexx_format("x.ps"), ODG_FILE_EPS);
+    ok("EXPORT build/host/odg-rexx.eps");
+    ok("EXPORT build/host/odg-rexx-eps.out FORMAT eps");
+    {
+        const char *names[2] = { "build/host/odg-rexx.eps", "build/host/odg-rexx-eps.out" };
+        int k;
+        for (k = 0; k < 2; k++) {
+            FILE *f = fopen(names[k], "rb");
+            char head[25] = "";
+            CHECK(f != NULL);
+            if (f) {
+                CHECK_N(fread(head, 1, 24, f), 24);
+                fclose(f);
+            }
+            CHECK_S(head, "%!PS-Adobe-3.0 EPSF-3.0\n");
+        }
+    }
+    CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.eps"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: an EPS doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
+    CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
 
     /* OPEN won't drop unsaved changes without FORCE */
     snprintf(a, sizeof a, "%s", ok("ADDSHAPE 500 500 10 10"));
