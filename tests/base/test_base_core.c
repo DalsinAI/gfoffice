@@ -1023,6 +1023,125 @@ static void test_views(void)
     ob_close(p);
 }
 
+/* ---- Filter by Form (0.7) ---- */
+
+static void form_set(ob_view *v, const char *field, int row, const char *text)
+{
+    CHECK(ob_view_form_set(v, field, row, text), "set %s in row %d", field, row);
+}
+
+static void test_form_filter(void)
+{
+    ob_project *p = fresh("formfilter.oadb");
+    ob_view v;
+    int i;
+    if (!p) return;
+    five_customers(p);
+
+    /* keeping the criteria */
+    ob_view_init(&v);
+    CHECK(!ob_view_filtered(&v) && v.ncrit == 0, "a new view filters nothing");
+    form_set(&v, "Town", 0, "York");
+    form_set(&v, "town", 0, "york");
+    CHECK(v.ncrit == 1 && !strcmp(ob_view_form_get(&v, "Town", 0), "york"), "one criterion a field and row, any case");
+    CHECK(ob_view_filtered(&v), "Filter by Form filters");
+    CHECK(!strcmp(ob_view_form_get(&v, "Town", 1), ""), "none in the Or row");
+    form_set(&v, "Town", 0, "  ");
+    CHECK(v.ncrit == 0 && !ob_view_filtered(&v), "a blank one is taken out");
+    CHECK(!ob_view_form_set(&v, "Town", OB_FORM_OR, "York"), "no row past the last Or");
+    CHECK(!ob_view_form_set(&v, "Town", -1, "York"), "no row before Look for");
+    for (i = 0; i < OB_FORM_CRIT; i++) {
+        char name[16];
+        snprintf(name, sizeof name, "F%d", i);
+        form_set(&v, name, i % OB_FORM_OR, "1");
+    }
+    CHECK(!ob_view_form_set(&v, "Name", 0, "x"), "full at %d", OB_FORM_CRIT);
+    CHECK(ob_view_form_set(&v, "F0", 0, "2") && v.ncrit == OB_FORM_CRIT, "a full one still changes a criterion");
+    ob_view_form_clear(&v);
+    CHECK(v.ncrit == 0 && !ob_view_filtered(&v), "cleared");
+
+    /* Look for: every criterion in the row */
+    form_set(&v, "Town", 0, "york");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "dan,bob") && ob_view_total(p, "Customers", &v) == 2,
+          "Town york: %s", names_of(p, &v, 0, -1));
+    form_set(&v, "Member", 0, "yes");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "dan") && ob_view_total(p, "Customers", &v) == 1,
+          "and a member: %s", names_of(p, &v, 0, -1));
+
+    /* Or rows */
+    ob_view_form_clear(&v);
+    form_set(&v, "Town", 0, "York");
+    form_set(&v, "Credit", 1, "> 1000");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "dan,Ann,bob") && ob_view_total(p, "Customers", &v) == 3,
+          "York, or Credit over 1,000: %s", names_of(p, &v, 0, -1));
+    form_set(&v, "Member", 1, "no");
+    form_set(&v, "Name", 2, "e*");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "dan,Ann,bob,Eve"),
+          "York, or a non-member over 1,000, or E...: %s", names_of(p, &v, 0, -1));
+
+    /* the plain words of a query's criteria */
+    ob_view_form_clear(&v);
+    form_set(&v, "Name", 0, "?y");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Cy"), "?y: %s", names_of(p, &v, 0, -1));
+    form_set(&v, "Name", 0, "a*");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Ann"), "a*: %s", names_of(p, &v, 0, -1));
+    form_set(&v, "Name", 0, "not a*");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "dan,Cy,bob,Eve"), "not a*: %s", names_of(p, &v, 0, -1));
+    ob_view_form_clear(&v);
+    form_set(&v, "Credit", 0, "between 0 and 300");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "dan,Cy"), "between 0 and 300: %s", names_of(p, &v, 0, -1));
+    ob_view_form_clear(&v);
+    form_set(&v, "Joined", 0, "< 1/1/2026");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Ann,Eve"), "joined before 2026: %s", names_of(p, &v, 0, -1));
+    ob_view_form_clear(&v);
+    form_set(&v, "Email", 0, "empty");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Ann"), "no Email: %s", names_of(p, &v, 0, -1));
+    ob_view_form_clear(&v);
+    form_set(&v, "Town", 0, "not Leeds");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "dan,Cy,bob"), "not Leeds: %s", names_of(p, &v, 0, -1));
+    ob_view_form_clear(&v);
+    form_set(&v, "id", 0, ">= 4");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "bob,Eve"), "id >= 4: %s", names_of(p, &v, 0, -1));
+
+    /* on top of the one-field filter, and sorted */
+    view_set(&v, "", 0, "Member", OB_FILTER_EQUALS, "Yes");
+    form_set(&v, "Town", 0, "Leeds");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Eve"), "members in Leeds: %s", names_of(p, &v, 0, -1));
+    view_set(&v, "", 0, "Email", OB_FILTER_EMPTY, "");
+    form_set(&v, "Town", 0, "York");
+    CHECK(ob_view_total(p, "Customers", &v) == 0, "no Email and York (the filter's OR kept inside)");
+    view_set(&v, "Name", 0, "", OB_FILTER_NONE, "");
+    form_set(&v, "Town", 0, "York");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "bob,dan"), "York by name: %s", names_of(p, &v, 0, -1));
+    CHECK(ob_view_position(p, "Customers", &v, 1) == 1, "dan's place in it");
+    CHECK(ob_view_position(p, "Customers", &v, 2) == -1, "Ann is left out");
+    CHECK(ob_view_find(p, "Customers", &v, "Email", "dan", 0, 0) == 1, "Find in it");
+
+    /* plain words when it is wrong */
+    ob_view_form_clear(&v);
+    form_set(&v, "Credit", 0, "> lots");
+    CHECK(!ob_view_check(p, "Customers", &v), "Credit > lots");
+    CHECK_ERR(p, "Credit limit must be an amount of money");
+    CHECK(ob_view_total(p, "Customers", &v) == -1, "total of a bad one");
+    CHECK(!strncmp(names_of(p, &v, 0, -1), "error:", 6), "rows of a bad one");
+    ob_view_form_clear(&v);
+    form_set(&v, "Town", 0, "[Which town?]");
+    CHECK(!ob_view_check(p, "Customers", &v), "a question");
+    CHECK_ERR(p, "Filter by Form can't ask a question");
+    ob_view_form_clear(&v);
+    form_set(&v, "Nope", 0, "1");
+    CHECK(!ob_view_check(p, "Customers", &v), "a field that isn't");
+    CHECK_ERR(p, "Customers has no field Nope");
+    ob_view_form_clear(&v);
+    form_set(&v, "Credit", 0, "between 1");
+    CHECK(!ob_view_check(p, "Customers", &v), "between without and");
+    CHECK_ERR(p, "write between 1 and 5");
+    ob_view_form_clear(&v);
+    form_set(&v, "Name", 0, "x'); DROP TABLE Customers; --");
+    CHECK(ob_view_total(p, "Customers", &v) == 0 && ob_row_total(p, "Customers") == 5, "quotes stay text");
+    ob_close(p);
+}
+
 static char *slurp(const char *file)
 {
     static char buf[4096];
@@ -1820,6 +1939,7 @@ int main(int argc, char **argv)
     test_relations();
     test_cache();
     test_views();
+    test_form_filter();
     test_csv();
     test_undo();
     test_csv_options();
