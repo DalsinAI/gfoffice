@@ -148,6 +148,9 @@ void owf_doc_free(owf_doc *doc)
         free(doc->format_changes[i].date);
     }
     free(doc->format_changes);
+    for (i = 0; i < doc->nnote_stories; ++i)        /* 1.12.2 */
+        free_story(&doc->note_stories[i]);
+    free(doc->note_stories);
     free(doc);
 }
 
