@@ -600,7 +600,7 @@ static int field_run_at(const owf_para *p, size_t at, int last)
     size_t cum = 0;
     int j, found = -1;
     for (j = 0; j < p->nruns; j++) {
-        if (cum == at && p->runs[j].kind == OWF_RUN_FIELD) {
+        if (cum == at && p->runs[j].kind == OWF_RUN_FIELD && p->runs[j].field != OWF_FIELD_INDEX) {   /* an index mark shows nothing */
             found = j;
             if (!last)
                 break;

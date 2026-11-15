@@ -1728,6 +1728,13 @@ static void field_editing(void)
     sel.anchor.para = sel.focus.para = 1; sel.anchor.offset = 1; sel.focus.offset = 3;
     CHECK(!opr_text_delete_selection(d, 0, 0, &sel), "delete a selection across a field");
     CHECK(!strcmp(runs_of(&o->text.paras[1]), "ad"), "the field inside gone: %s", runs_of(&o->text.paras[1]));
+
+    /* an index mark shows nothing, so Backspace takes the character seen */
+    p = &o->text.paras[0];
+    CHECK(owf_para_add_special(p, &cf, OWF_RUN_FIELD, OWF_FIELD_INDEX) == 0, "an index mark");
+    at.para = 0; at.offset = 5;
+    CHECK(!opr_text_backspace(d, 0, 0, &at) && at.offset == 4, "backspace by an index mark");
+    CHECK(!strcmp(runs_of(&o->text.paras[0]), "Deab{#}"), "the c gone, the mark kept: %s", runs_of(&o->text.paras[0]));
     owf_deck_free(d);
 }
 
