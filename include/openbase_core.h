@@ -565,7 +565,10 @@ int ob_form_auto(ob_project *p, const char *table, const char *name, ob_form *ou
  * one of its fields, a line is 1 thick. 0 with the reason. */
 int ob_form_check(ob_project *p, const ob_form *f);
 /* Forms kept in the project (oadb_forms), in name order. Saving a name that
- * is there replaces it. */
+ * is there replaces it. A table's rename, on its own or in a design change,
+ * renames it in its forms, and a design change's field renames (from[])
+ * rename their items. A table or field a form shows can't be dropped
+ * ("The form Card shows Email: take it off the form first"). */
 int ob_form_count(ob_project *p);
 const char *ob_form_name(ob_project *p, int i);
 int ob_form_get(ob_project *p, const char *name, ob_form *out);

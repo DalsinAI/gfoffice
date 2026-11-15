@@ -403,8 +403,12 @@ print) needs no script.
   one; `ob_form_at` finds the item under a cell (a box by its edge) and
   `ob_form_place` moves and sizes one inside the grid; forms are kept as
   text in `oadb_forms` (name, table, a tab-separated line an item; a word a
-  newer GFOpenBase writes is passed over). The designer window and showing
-  a designed form come next.
+  newer GFOpenBase writes is passed over). Forms follow their table: a
+  rename, on its own or in a design change, renames it in the forms on it,
+  and a design change's field renames rename their items. A table or
+  field a form shows can't be dropped ("The form Card shows Email: take
+  it off the form first"), as a table another looks up can't. The designer
+  window and showing a designed form come next.
 - Not yet: the form designer's window (6.2), buttons
   and events (6.5), forms kept in `oadb_forms`.
 

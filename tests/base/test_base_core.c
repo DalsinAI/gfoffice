@@ -1734,6 +1734,58 @@ static void test_designed_forms(void)
     CHECK_ERR(p, "There is no form named Card");
     CHECK(!ob_form_delete(p, "Card"), "gone");
 
+    /* forms follow their table: a rename, a design change's renames; drops refused */
+    {
+        static ob_table t;
+        CHECK(ob_form_auto(p, "Customers", "Card", &f) && ob_form_save(p, &f), "Card: %s", ob_error(p));
+        CHECK(ob_table_rename(p, "customers", "Clients"), "rename: %s", ob_error(p));
+        CHECK(ob_form_get(p, "Card", &g) && !strcmp(g.table, "Clients") && ob_form_check(p, &g), "follows the rename: %s %s",
+              g.table, ob_error(p));
+        CHECK(ob_form_get(p, "Orders", &g) && !strcmp(g.table, "Orders"), "the Orders form is left alone");
+        /* a design change renames Email to Mail: the form's item follows */
+        CHECK(ob_table_get(p, "Clients", &t), "%s", ob_error(p));
+        for (i = 0; i < t.nfields; i++) copy_s(t.fields[i].from, sizeof t.fields[i].from, t.fields[i].name);
+        i = ob_table_find_field(&t, "Email");
+        copy_s(t.fields[i].name, sizeof t.fields[i].name, "Mail");
+        CHECK(ob_table_change(p, "Clients", &t), "change: %s", ob_error(p));
+        CHECK(ob_form_get(p, "Card", &g) && !strcmp(g.table, "Clients") && ob_form_check(p, &g), "follows the change: %s",
+              ob_error(p));
+        for (i = 0; i < g.nitems && !(g.items[i].kind == OB_FI_FIELD && !strcmp(g.items[i].field, "Mail")); i++) ;
+        CHECK(i < g.nitems && !strcmp(g.items[i - 1].text, "Email"), "the item is Mail, its label kept as typed");
+        /* drop the field the form shows: refused, nothing changed */
+        ob_table_get(p, "Clients", &t);
+        for (i = 0; i < t.nfields; i++) copy_s(t.fields[i].from, sizeof t.fields[i].from, t.fields[i].name);
+        ob_table_remove_field(&t, ob_table_find_field(&t, "Mail"));
+        CHECK(!ob_table_change(p, "Clients", &t), "a field the form shows");
+        CHECK_ERR(p, "The form Card shows Mail: take it off the form first");
+        CHECK(ob_table_get(p, "Clients", &t) && ob_table_find_field(&t, "Mail") >= 0, "Mail is still there");
+        /* off the form, then it can go */
+        ob_form_get(p, "Card", &g);
+        for (i = 0; i < g.nitems && !(g.items[i].kind == OB_FI_FIELD && !strcmp(g.items[i].field, "Mail")); i++) ;
+        ob_form_remove(&g, i);
+        CHECK(ob_form_save(p, &g), "%s", ob_error(p));
+        for (i = 0; i < t.nfields; i++) copy_s(t.fields[i].from, sizeof t.fields[i].from, t.fields[i].name);
+        ob_table_remove_field(&t, ob_table_find_field(&t, "Mail"));
+        CHECK(ob_table_change(p, "Clients", &t), "now it goes: %s", ob_error(p));
+        /* a design change that renames the table (Orders, which nothing looks up) and a field */
+        ob_form_auto(p, "Orders", NULL, &g);
+        CHECK(ob_form_save(p, &g), "%s", ob_error(p));
+        ob_table_get(p, "Orders", &t);
+        for (i = 0; i < t.nfields; i++) copy_s(t.fields[i].from, sizeof t.fields[i].from, t.fields[i].name);
+        copy_s(t.name, sizeof t.name, "Sales");
+        copy_s(t.fields[ob_table_find_field(&t, "Total")].name, sizeof t.fields[0].name, "Amount");
+        CHECK(ob_table_change(p, "Orders", &t), "Orders to Sales: %s", ob_error(p));
+        CHECK(ob_form_get(p, "Orders", &g) && !strcmp(g.table, "Sales") && ob_form_check(p, &g), "the form keeps its name, on Sales: %s",
+              ob_error(p));
+        for (i = 0; i < g.nitems && strcmp(g.items[i].field, "Amount"); i++) ;
+        CHECK(i < g.nitems, "Total is Amount on the form");
+        /* a table a form shows can't be dropped */
+        CHECK(!ob_table_drop(p, "Sales"), "Sales has a form");
+        CHECK_ERR(p, "The form Orders shows Sales: delete the form first");
+        CHECK(ob_form_delete(p, "Orders"), "the form deleted");
+        CHECK(ob_table_drop(p, "Sales"), "then it drops: %s", ob_error(p));
+    }
+
     /* a newer GFOpenBase's word is passed over; a damaged form says so */
     ob_close(p);
     {

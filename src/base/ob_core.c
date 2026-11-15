@@ -25,6 +25,8 @@
 #define OB_MAX_TABLES 256
 #define OB_UNDO_MAX 100
 #define QUERIES_SQL "CREATE TABLE IF NOT EXISTS oadb_queries(name TEXT PRIMARY KEY COLLATE NOCASE, grid TEXT, sql TEXT NOT NULL)"
+static int forms_allow(ob_project *p, const ob_table *old, const ob_table *t);
+static int forms_follow(ob_project *p, const ob_table *old, const ob_table *t, const char *new_name);
 
 struct undo_step;
 
@@ -1476,6 +1478,7 @@ static int change_table(ob_project *p, const char *old_name, const ob_table *t, 
     for (i = 0; i < t->nfields; i++)
         if (t->fields[i].from[0] && ob_table_find_field(old, t->fields[i].from) < 0)
             return fail(p, "%s has no field %s", old->name, t->fields[i].from);
+    if (!forms_allow(p, old, t)) return 0;
     cols = sqlite3_str_new(NULL);
     vals = sqlite3_str_new(NULL);
     for (i = 0; i < t->nfields; i++) {
@@ -1505,6 +1508,7 @@ static int change_table(ob_project *p, const char *old_name, const ob_table *t, 
     if (!runf(p, "DROP TABLE \"%w\"", old->name)) goto undo;
     if (!runf(p, "ALTER TABLE oadb_change RENAME TO \"%w\"", t->name)) goto undo;
     if (!runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", old->name) || !save_fields(p, t)) goto undo;
+    if (!forms_follow(p, old, t, t->name)) goto undo;     /* designed forms follow (core 0.7.0) */
     if (!make_indexes(p, t)) {
         if (strstr(p->err, "must be")) {
             char keep[OB_ERR_MAX];
@@ -1577,7 +1581,8 @@ int ob_table_rename(ob_project *p, const char *old_name, const char *new_name)
     if (!step_begin(p)) return 0;
     good = runf(p, "ALTER TABLE \"%w\" RENAME TO \"%w\"", t->name, new_name)
         && runf(p, "UPDATE oadb_fields SET tbl = %Q WHERE tbl = %Q", new_name, t->name)
-        && runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", new_name, t->name);
+        && runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", new_name, t->name)
+        && forms_follow(p, t, NULL, new_name);
     forget(p);
     return step_end(p, good) && ok(p);
 }
@@ -1597,6 +1602,7 @@ int ob_table_drop(ob_project *p, const char *name)
         return 0;
     }
     sqlite3_finalize(st);
+    if (!forms_allow(p, t, NULL)) return 0;
     if (!step_begin(p)) return 0;
     good = runf(p, "DROP TABLE \"%w\"", t->name) && runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", t->name);
     forget(p);
@@ -4252,4 +4258,92 @@ int ob_form_delete(ob_project *p, const char *name)
 {
     if (!form_exists(p, name)) return fail(p, "There is no form named %s", name);
     return runf(p, "DELETE FROM oadb_forms WHERE name = %Q", name) && ok(p);
+}
+
+/* ---- Designed forms follow their table (core 0.7.0) ----
+ * A table's rename (ob_table_rename, or a design change) renames it in the
+ * forms on it, and a design change's field renames (from[]) rename their
+ * items. A field or table a form shows can't be dropped: the form's item
+ * comes off first, or the form goes, as a Lookup's table can't. */
+
+/* The names of the forms on table, up to max; how many, -1 on error. */
+static int forms_on(ob_project *p, const char *table, char (*names)[OB_NAME_MAX], int max)
+{
+    sqlite3_stmt *st;
+    int n = 0;
+    if (!has_forms(p)) return 0;
+    if (!(st = prep(p, "SELECT name FROM oadb_forms WHERE tbl = ?1 COLLATE NOCASE ORDER BY name COLLATE NOCASE")))
+        return -1;
+    sqlite3_bind_text(st, 1, table, -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        if (n < max) copy(names[n], OB_NAME_MAX, (const char *)sqlite3_column_text(st, 0));
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n < max ? n : max;
+}
+
+#define FORMS_ON_MAX 64
+
+/* The new design's field for old field `name`: its index, -1 when it is dropped. */
+static int field_now(const ob_table *t, const char *name)
+{
+    int i;
+    for (i = 0; i < t->nfields; i++)
+        if (same(t->fields[i].from, name)) return i;
+    return -1;
+}
+
+static int forms_allow(ob_project *p, const ob_table *old, const ob_table *t)
+{
+    static char names[FORMS_ON_MAX][OB_NAME_MAX];
+    ob_form *f;
+    int n, i, k, good = 1;
+    if ((n = forms_on(p, old->name, names, FORMS_ON_MAX)) <= 0) return n == 0;
+    if (!t) return fail(p, "The form %s shows %s: delete the form first", names[0], old->name);
+    if (!(f = malloc(sizeof *f))) return fail(p, "Not enough memory");
+    for (i = 0; good && i < n; i++) {
+        if (!ob_form_get(p, names[i], f)) { good = 0; break; }
+        for (k = 0; k < f->nitems; k++) {
+            const ob_fitem *it = &f->items[k];
+            if (it->kind != OB_FI_FIELD || ob_table_find_field(old, it->field) < 0) continue;
+            if (field_now(t, it->field) < 0) {
+                good = fail(p, "The form %s shows %s: take it off the form first", f->name, it->field);
+                break;
+            }
+        }
+    }
+    free(f);
+    return good;
+}
+
+static int forms_follow(ob_project *p, const ob_table *old, const ob_table *t, const char *new_name)
+{
+    static char names[FORMS_ON_MAX][OB_NAME_MAX];
+    ob_form *f;
+    sqlite3_stmt *st;
+    char *text;
+    int n, i, k, j, rc, good = 1;
+    if ((n = forms_on(p, old->name, names, FORMS_ON_MAX)) <= 0) return n == 0;
+    if (!(f = malloc(sizeof *f))) return fail(p, "Not enough memory");
+    for (i = 0; good && i < n; i++) {
+        if (!ob_form_get(p, names[i], f)) { good = 0; break; }
+        copy(f->table, sizeof f->table, new_name);
+        for (k = 0; t && k < f->nitems; k++) {
+            ob_fitem *it = &f->items[k];
+            if (it->kind == OB_FI_FIELD && (j = field_now(t, it->field)) >= 0)
+                copy(it->field, sizeof it->field, t->fields[j].name);
+        }
+        if (!(text = form_text(f))) { good = fail(p, "Not enough memory"); break; }
+        if (!(st = prep(p, "UPDATE oadb_forms SET tbl = ?1, items = ?2 WHERE name = ?3"))) { sqlite3_free(text); good = 0; break; }
+        sqlite3_bind_text(st, 1, new_name, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st, 2, text, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st, 3, f->name, -1, SQLITE_TRANSIENT);
+        rc = sqlite3_step(st);
+        sqlite3_finalize(st);
+        sqlite3_free(text);
+        if (rc != SQLITE_DONE) good = sql_fail(p, NULL, rc);
+    }
+    free(f);
+    return good;
 }
