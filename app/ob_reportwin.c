@@ -134,6 +134,8 @@ static void load_cols(void)
 }
 
 /* A new report: from the table or the query the main window shows. */
+static void source_into_report(void);
+
 static void start_new(void)
 {
     ob_report_init(&rr, "");
@@ -142,6 +144,7 @@ static void start_new(void)
     csel = -1;
     new_field[0] = new_head[0] = 0;
     new_total = 0;
+    source_into_report();   /* rr matches what the window shows, so nothing reads as changed */
     dirty = 0;
 }
 
