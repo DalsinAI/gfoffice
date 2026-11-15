@@ -151,6 +151,12 @@ typedef struct {
     ods_pivot_field fields[ODS_PIVOT_FIELDS];
     int nfields;
     int open_field;              /* the data-pilot-field being read was kept as fields[nfields - 1] */
+    struct {                     /* hidden items (data-pilot-member display="false") */
+        int slot;                /* in fields[] */
+        int kind;                /* gfocalc:item-kind, or -1 */
+        char *name;
+    } hides[OWF_PIVOT_HIDES];
+    int nhides;
 } ods_pivot;
 
 /* A scenario table (table:scenario): the sheet it was read into, its ranges and words. */
@@ -3853,7 +3859,8 @@ static void body_start(ods *o, const owf_xml_event *e)
             } else if (!strcmp(n, "dde-link")) {
                 owf_report_add(o->report, OWF_NOTE_LOST, "Links to other programs (DDE) keep their last values");
             } else if (!strcmp(n, "data-pilot-table") || !strcmp(n, "source-cell-range") ||
-                       !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info")) {
+                       !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info") ||
+                       !strcmp(n, "data-pilot-member")) {
                 pivot_start(o, e);
             }
         } else if (!strcmp(n, "scenario")) {
@@ -4107,6 +4114,18 @@ static void pivot_start(ods *o, const owf_xml_event *e)
     if (is(e, NS_TABLE, "source-cell-range")) {
         if (!pv->source)
             pv->source = copy(o, ev(e, NS_TABLE, "cell-range-address"));
+    } else if (is(e, NS_TABLE, "data-pilot-member")) {
+        const char *display = ev(e, NS_TABLE, "display");
+        if (!pv->open_field || !pv->nfields || !display || strcmp(display, "false"))
+            return;
+        if (pv->nhides == OWF_PIVOT_HIDES) {
+            owf_report_add(o->report, OWF_NOTE_LOST, "A pivot table with more than 32 hidden items shows the rest");
+            return;
+        }
+        pv->hides[pv->nhides].slot = pv->nfields - 1;
+        pv->hides[pv->nhides].kind = (int)pivot_whole(ev(e, NS_GFO, "item-kind"));
+        pv->hides[pv->nhides].name = copy(o, ev(e, NS_TABLE, "name") ? ev(e, NS_TABLE, "name") : "");
+        pv->nhides++;
     } else if (is(e, NS_TABLE, "data-pilot-sort-info")) {
         const char *mode = ev(e, NS_TABLE, "sort-mode"), *order = ev(e, NS_TABLE, "order");
         ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
@@ -4166,6 +4185,19 @@ static long pivot_field_index(const owf_book *book, const owf_pivotdef *def, con
     return -1;
 }
 
+/* An item from the file's text and libowf's own kind (-1 when the file has none). */
+static void pivot_item(owf_pivot_page *pg, const char *text, int kind)
+{
+    owf_pivot_item_from_text(pg, text);
+    if (kind == OWF_PIVOT_TEXT && pg->kind != OWF_PIVOT_TEXT) {
+        pg->kind = OWF_PIVOT_TEXT;
+        snprintf(pg->text, sizeof pg->text, "%s", text ? text : "");
+    } else if (kind == OWF_PIVOT_BOOL) {
+        pg->kind = OWF_PIVOT_BOOL;
+        pg->number = text && (!strcmp(text, "TRUE") || !strcmp(text, "1"));
+    }
+}
+
 /* Turns one data-pilot-table into a definition; 1 when it fits GFOpenCalc's. */
 static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
 {
@@ -4215,21 +4247,26 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
                     owf_pivot_page *pg = &def->page[def->npage++];
                     pg->field = (unsigned)index;
                     pg->kind = OWF_PIVOT_ALL;
-                    if (f->has_page) {
-                        owf_pivot_item_from_text(pg, f->page);
-                        if (f->kind == OWF_PIVOT_TEXT && pg->kind != OWF_PIVOT_TEXT) {
-                            pg->kind = OWF_PIVOT_TEXT;
-                            snprintf(pg->text, sizeof pg->text, "%s", f->page ? f->page : "");
-                        } else if (f->kind == OWF_PIVOT_BOOL) {
-                            pg->kind = OWF_PIVOT_BOOL;
-                            pg->number = f->page && (!strcmp(f->page, "TRUE") || !strcmp(f->page, "1"));
-                        }
-                    }
+                    if (f->has_page)
+                        pivot_item(pg, f->page, f->kind);
                 } else
                     ok = 0;
                 break;
             }
         }
+    }
+    for (k = 0; k < pv->nhides && ok; k++) {        /* hidden items of the row and column fields */
+        const ods_pivot_field *f = &pv->fields[pv->hides[k].slot];
+        long index;
+        owf_pivot_page item;
+        if (f->orientation != PV_ROW && f->orientation != PV_COLUMN)
+            continue;
+        if ((index = pivot_field_index(o->book, def, f)) < 0)
+            continue;
+        memset(&item, 0, sizeof item);
+        pivot_item(&item, pv->hides[k].name, pv->hides[k].kind);
+        item.field = (unsigned)index;
+        owf_pivot_set_hidden(def, &item, 1);
     }
     return ok && owf_pivot_check(o->book, def);
 }
@@ -4341,6 +4378,8 @@ static void free_reader(ods *o)
             free(o->pivots[i].fields[k].name);
             free(o->pivots[i].fields[k].page);
         }
+        for (k = 0; k < o->pivots[i].nhides; k++)
+            free(o->pivots[i].hides[k].name);
     }
     free(o->pivots);
     for (i = 0; i < o->nscens; i++) {

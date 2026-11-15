@@ -38,6 +38,7 @@ extern "C" {
 #define OWF_PIVOT_DATA 8             /* data fields */
 #define OWF_PIVOT_PAGES 4            /* page fields (filters) */
 #define OWF_PIVOT_SORTS 16           /* sorted fields (rows and columns) */
+#define OWF_PIVOT_HIDES 32           /* hidden items, all fields together */
 #define OWF_PIVOT_ITEM 96            /* a page field's chosen item, bytes */
 #define OWF_PIVOT_TEXT_MAX 2048      /* _GF_PIVOT_CONFIG's text, at most */
 
@@ -80,6 +81,8 @@ typedef struct {
     unsigned nsort;                  /* fields whose items are sorted, kept by field, so that */
     unsigned sort_field[OWF_PIVOT_SORTS];   /* moving a field in the layout keeps its order */
     unsigned char sort_order[OWF_PIVOT_SORTS];   /* OWF_PIVOT_SORT_ASCENDING or _DESCENDING */
+    unsigned nhide;                  /* row and column items left out: each a field and a value */
+    owf_pivot_page hide[OWF_PIVOT_HIDES];   /* (kind is never OWF_PIVOT_ALL) */
 } owf_pivotdef;
 
 /* An empty definition: no fields, both grand totals, output at A1. */
@@ -120,6 +123,14 @@ int owf_pivot_function_from_word(const char *word);
  * no room for another sorted field or the order is not one. */
 int owf_pivot_sort_of(const owf_pivotdef *def, unsigned field);
 int owf_pivot_set_sort(owf_pivotdef *def, unsigned field, int order);
+/* Hidden items: a row or column field's item that is left out of the
+ * table, its totals with it, as a page field leaves out what it doesn't
+ * choose. owf_pivot_is_hidden: 1 when a source cell of that field is one.
+ * owf_pivot_set_hidden adds (hidden 1) or removes (0) item's value for
+ * item->field; 0 when there is no room or item is OWF_PIVOT_ALL. */
+int owf_pivot_is_hidden(const owf_pivotdef *def, unsigned field, const owf_cell *cell);
+int owf_pivot_set_hidden(owf_pivotdef *def, const owf_pivot_page *item, int hidden);
+
 /* A field's heading: its heading cell's text or number, or "Column N"
  * when that is blank. */
 void owf_pivot_field_heading(const owf_book *book, const owf_pivotdef *def, unsigned field, char *out,
