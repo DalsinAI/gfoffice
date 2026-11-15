@@ -377,6 +377,71 @@ out:
     owf_doc_free(plain);
 }
 
+/* 1.12.1 (2.0.40): Print Comments in the margin: the notes beside their lines in a strip at the text's right */
+static void test_print_margin(void)
+{
+    owf_doc *doc = commented_doc();
+    unsigned char *m = NULL, *end = NULL, *narrow = NULL, *narrow_end = NULL, *longer = NULL;
+    size_t nm = 0, ne = 0, nn = 0, nne = 0, nl = 0;
+    char head[96];
+    if (!doc) { CHECK(0, "document"); return; }
+    CHECK(owf_format_named("pdf-comments-margin") != NULL, "the pdf-comments-margin format");
+    CHECK(owf_format_for_filename("Letter.pdf") == owf_format_named("pdf"), "a .pdf name is still plain pdf");
+    m = pdf_of(doc, "pdf-comments-margin", "", &nm, NULL);
+    end = pdf_of(doc, "pdf-comments", "", &ne, NULL);
+    CHECK(m && nm > 0 && end && ne > 0, "both written");
+    if (!m || !end) goto out;
+    /* the marks in the text once each, the notes beside them, and no list after the text */
+    CHECK(pdf_count(m, nm, "([1]) Tj") == 1 && pdf_count(m, nm, "([2]) Tj") == 1 && pdf_count(m, nm, "([3]) Tj") == 1,
+          "each mark once, in the text");
+    CHECK(pdf_count(m, nm, "(Comments) Tj") == 0, "no list after the text");
+    snprintf(head, sizeof head, "([1] Ann & co, %.10s) Tj", doc->comments[0].date ? doc->comments[0].date : "");
+    CHECK(pdf_count(m, nm, head) == 1, "the first note's head: mark, who, when");
+    CHECK(pdf_count(m, nm, "/F2 8 Tf") == 3 && pdf_count(m, nm, ", done) Tj") == 1, "three heads, the done one says so");
+    CHECK(pdf_count(m, nm, "(Which <fox>?) Tj") == 1 && pdf_count(m, nm, "(The red one.) Tj") == 1 &&
+          pdf_count(m, nm, "(The brown one.) Tj") == 1 && pdf_count(m, nm, "(Over.) Tj") == 1,
+          "every comment's text, a line each of its paragraphs");
+    CHECK(pdf_count(m, nm, "1 0.96 0.75 rg") == 2 && pdf_count(m, nm, "0.93 0.93 0.93 rg") == 1, "pale boxes, the done one grey");
+    {
+        /* the notes are level with their lines, beside them: the first note's box at x past the narrowed text */
+        const char *box = strstr((const char *)m, "1 0.96 0.75 rg ");
+        int x = 0, y = 0, w = 0, h = 0, page_w = 0;
+        page_w = (doc->page.width + 10) / 20;
+        CHECK(box && sscanf(box + 15, "%d %d %d %d", &x, &y, &w, &h) == 4, "a box");
+        CHECK(x > page_w / 2 && x + w <= page_w - (doc->page.margin_right + 10) / 20 && w > 60 && h > 20,
+              "in the strip at the text's right, inside the margin");
+        CHECK(pdf_count(m, nm, "(jumps) Tj") == 1, "the text is there");
+    }
+    /* a page too narrow for a strip: as pdf-comments, the list after the text */
+    doc->page.width = 4 * 1440;
+    narrow = pdf_of(doc, "pdf-comments-margin", "narrow-", &nn, NULL);
+    narrow_end = pdf_of(doc, "pdf-comments", "narrow-", &nne, NULL);
+    CHECK(narrow && narrow_end && nn == nne && !memcmp(narrow, narrow_end, nn), "too narrow: the same as at the end");
+    doc->page.width = 11906;
+    /* a note too long for the page: listed after the text instead, and the others still in the margin */
+    {
+        char *big = (char *)owf_malloc(300 * 5 + 1);
+        int i;
+        if (big) {
+            for (i = 0; i < 300; ++i) memcpy(big + i * 5, "line\n", 5);
+            big[300 * 5 - 1] = 0;
+            int over = -1;                           /* the done one's record, as its run names it */
+            for (i = 0; i < doc->body.paras[1].nruns; ++i)
+                if (doc->body.paras[1].runs[i].comment > 0) over = doc->body.paras[1].runs[i].comment - 1;
+            CHECK(over >= 0 && !strcmp(doc->comments[over].text, "Over."), "the done one");
+            if (over < 0) { free(big); goto out; }
+            owf_free(doc->comments[over].text);
+            doc->comments[over].text = big;
+            longer = pdf_of(doc, "pdf-comments-margin", "long-", &nl, NULL);
+            CHECK(longer && pdf_count(longer, nl, "(Comments) Tj") == 1 && pdf_count(longer, nl, "([3]) Tj") == 2 &&
+                  pdf_count(longer, nl, "/F2 8 Tf") == 2, "the long one listed, the other two in the margin");
+        }
+    }
+out:
+    free(m); free(end); free(narrow); free(narrow_end); free(longer);
+    owf_doc_free(doc);
+}
+
 static int zip_import(const char *const *names, const char *const *parts, int n, owf_doc **doc)
 {
     owf_buf out;
@@ -548,6 +613,7 @@ int main(void)
     test_round_trip("odt", "The <quick[Which <fox>?\nThe red one.][The brown one.] fox|jumps[Over.] over");
     test_other_formats();
     test_print_comments();
+    test_print_margin();
     test_word_form();
     test_odf_form();
     test_filter();
