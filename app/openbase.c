@@ -2791,6 +2791,7 @@ static int f_sn;
 static char f_count[64], f_scount[80];
 static int f_ssel = -1, f_ssub = -1;        /* the subform row chosen, for record f_skey */
 static ob_int f_skey = -2;
+static int f_slines = 7;                     /* the subform list's lines */
 
 /* Filter by Form (design 6.3): the form's fields take what to look for, a
  * row at a time (Look for, Or, Or); Apply Filter makes it the view's. */
@@ -3016,7 +3017,7 @@ static void open_form(void)
     struct Window *w_;
     struct Gadget *eg = NULL, *g, *fg[ED_MAX];
     struct NewGadget ng;
-    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full;
+    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full, wt, oh;
     if (q_on) { set_status("Forms show a table: choose one in the list"); return; }
     if (!proj || !have_cur) { set_status("Choose a table first"); return; }
     for (i = 0; i < OB_MAX_FIELDS; i++) {
@@ -3046,17 +3047,29 @@ static void open_form(void)
     if (iw < 8 * (bw + 6) + fw * 16) iw = 8 * (bw + 6) + fw * 16;
     if (iw > scr->Width - 40) iw = scr->Width - 40;
     vw = iw - lw - 20;
-    sub_h = f_nsubs ? (fh + 8) + 7 * (fh + 2) + 8 + fh + 12 : 0;
+    f_slines = 7;
+    sub_h = f_nsubs ? (fh + 8) + f_slines * (fh + 2) + 8 + fh + 12 : 0;
     per = (scr->Height - 160 - sub_h - 3 * (fh + 12)) / row_h;
     if (per > ED_MAX) per = ED_MAX;
     if (per < 3) per = 3;
     pages = (cur.nfields + per - 1) / per;
     nshow = cur.nfields < per ? cur.nfields : per;
     ih = 8 + nshow * row_h + (pages > 1 ? fh + 12 : 0) + sub_h + 2 * (fh + 12) + 8;
+    /* on a short screen the subform's list gives up lines first, down to 3 */
+    oh = ih + scr->WBorTop + fh + 1 + scr->WBorBottom;     /* the window, borders and title */
+    while (f_nsubs && f_slines > 3 && oh > scr->Height - scr->BarHeight - 1) {
+        f_slines--;
+        sub_h -= fh + 2;
+        ih -= fh + 2;
+        oh -= fh + 2;
+    }
+    wt = win->TopEdge + 20;                    /* below the main window's title, if it fits */
+    if (wt + oh > scr->Height) wt = scr->Height - oh;
+    if (wt < 0) wt = 0;
     w_ = OpenWindowTags(NULL,
         WA_Title, (ULONG)cur.name,
         WA_PubScreen, (ULONG)scr,
-        WA_Left, win->LeftEdge + 30, WA_Top, win->TopEdge + 20,
+        WA_Left, win->LeftEdge + 30, WA_Top, wt,
         WA_InnerWidth, iw, WA_InnerHeight, ih,
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
         WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
@@ -3159,7 +3172,7 @@ static void open_form(void)
             ng.ng_TopEdge = top + 4 + fh + 8;
             ng.ng_LeftEdge = w_->BorderLeft + 10;
             ng.ng_Width = iw - 20;
-            ng.ng_Height = 7 * (fh + 2);
+            ng.ng_Height = f_slines * (fh + 2);
             ng.ng_GadgetID = F_SUBLIST;
             ng.ng_Flags = 0;
             g = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&f_sl, GTLV_ShowSelected, 0,
@@ -3167,7 +3180,7 @@ static void open_form(void)
             ng.ng_Height = fh + 6;
             ng.ng_Flags = PLACETEXT_IN;
             /* change the subform's rows: Add for this record, Edit and Delete the one chosen */
-            ng.ng_TopEdge = top + 4 + fh + 8 + 7 * (fh + 2) + 4;
+            ng.ng_TopEdge = top + 4 + fh + 8 + f_slines * (fh + 2) + 4;
             ng.ng_Width = fw * 12 + 12;
             ng.ng_LeftEdge = w_->BorderLeft + 10; ng.ng_GadgetText = (UBYTE *)"Add Row..."; ng.ng_GadgetID = F_SUBADD;
             g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_key <= 0, TAG_DONE);
