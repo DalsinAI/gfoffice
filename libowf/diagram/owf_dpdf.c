@@ -1,6 +1,6 @@
 /*
  * owf_dpdf.c: a diagram's pages drawn as PDF (owf_diagram.h), through libowf's page-drawing PDF writer
- * (owf_pdf.h): the shapes, connectors with their arrowheads and labels, as the SVG writer (owf_dsvg.c) places
+ * (owf_pdf.h), and one page as EPS through owf_eps.c, which takes the same calls: the shapes, connectors with their arrowheads and labels, as the SVG writer (owf_dsvg.c) places
  * them, and the flowchart shapes as GFOpenDiag's canvas draws them. Each page is a PDF page the size of what is
  * on it. Text is in PDF's standard fonts, so it stays text. Integer arithmetic only.
  * Written from published descriptions, not from any program's code: mxGraph's API documentation (Apache 2.0, by
@@ -20,10 +20,51 @@
 typedef long long wide;
 
 typedef struct {
-    owf_pdf *pdf;
+    owf_pdf *pdf;                        /* the PDF drawn into, or */
+    owf_eps *eps;                        /* the EPS */
     owf_dnum ox, oy;                     /* the page's top left, in the diagram */
     int bad;                             /* memory ran out */
 } pen;
+
+/* the drawing calls, to whichever the pen has */
+static int d_text(pen *p, int x, int baseline, int width, const char *utf8, size_t length, owf_font_kind kind,
+                  unsigned flags, int size, unsigned long colour)
+{
+    return p->eps ? owf_eps_text(p->eps, x, baseline, width, utf8, length, kind, flags, size, colour)
+                  : owf_pdf_text(p->pdf, x, baseline, width, utf8, length, kind, flags, size, colour);
+}
+
+static int d_rect(pen *p, int x, int y, int w, int h, unsigned long fill, unsigned long line, int width)
+{
+    return p->eps ? owf_eps_rect(p->eps, x, y, w, h, fill, line, width)
+                  : owf_pdf_rect(p->pdf, x, y, w, h, fill, line, width);
+}
+
+static int d_round_rect(pen *p, int x, int y, int w, int h, int r, unsigned long fill, unsigned long line, int width)
+{
+    return p->eps ? owf_eps_round_rect(p->eps, x, y, w, h, r, fill, line, width)
+                  : owf_pdf_round_rect(p->pdf, x, y, w, h, r, fill, line, width);
+}
+
+static int d_ellipse(pen *p, int x, int y, int w, int h, unsigned long fill, unsigned long line, int width)
+{
+    return p->eps ? owf_eps_ellipse(p->eps, x, y, w, h, fill, line, width)
+                  : owf_pdf_ellipse(p->pdf, x, y, w, h, fill, line, width);
+}
+
+static int d_path(pen *p, const int *xy, int n, int closed, unsigned long fill, unsigned long line, int width)
+{
+    return p->eps ? owf_eps_path(p->eps, xy, n, closed, fill, line, width)
+                  : owf_pdf_path(p->pdf, xy, n, closed, fill, line, width);
+}
+
+static void d_dash(pen *p, int dash)
+{
+    if (p->eps)
+        owf_eps_dash(p->eps, dash);
+    else
+        owf_pdf_dash(p->pdf, dash);
+}
 
 /* Diagram hundredths of a pixel as twips (a pixel is 15: 96 to the inch). */
 static int tw(owf_dnum n)
@@ -110,7 +151,7 @@ static void path(pen *p, const owf_dpoint *pts, int n, int closed, unsigned long
         xy[2 * i] = tx(p, pts[i].x);
         xy[2 * i + 1] = ty(p, pts[i].y);
     }
-    note(p, owf_pdf_path(p->pdf, xy, n, closed, fill, line, width));
+    note(p, d_path(p, xy, n, closed, fill, line, width));
 }
 
 /* ---- Labels ---- */
@@ -165,12 +206,12 @@ static void label(pen *p, const char *value, const char *style, owf_dnum x, owf_
     top = valign == 0 ? y : valign == 2 ? y - line * nlines : y - line * nlines / 2;
     if (bg) {                            /* behind the text, a pixel more each side */
         int left = anchor == 0 ? tx(p, x) - 15 : anchor == 2 ? tx(p, x) - widest - 15 : tx(p, x) - widest / 2 - 15;
-        note(p, owf_pdf_rect(p->pdf, left, ty(p, top), widest + 30, tw(line * nlines), bg, 0, 0));
+        note(p, d_rect(p, left, ty(p, top), widest + 30, tw(line * nlines), bg, 0, 0));
     }
     for (i = 0; i < nlines; i++) {
         int left = anchor == 0 ? tx(p, x) : anchor == 2 ? tx(p, x) - widths[i] : tx(p, x) - widths[i] / 2;
         if (lens[i])
-            note(p, owf_pdf_text(p->pdf, left, ty(p, top + line * i + size * 9 / 10), 0, text + starts[i], lens[i],
+            note(p, d_text(p, left, ty(p, top + line * i + size * 9 / 10), 0, text + starts[i], lens[i],
                                  kind, flags, pt, colour ? OWF_SHADE_RGB(colour) : 0));
     }
     owf_free(text);
@@ -220,11 +261,11 @@ static void vertex(pen *p, const owf_dpage *page, const owf_dcell *c)
 
     if (!owf_dcell_box(page, c, box))
         return;
-    owf_pdf_dash(p->pdf, dashed);
+    d_dash(p, dashed);
     if (owf_dstyle_is(style, "text") || owf_dstyle_is(style, "edgeLabel"))
         ;
     else if (owf_dstyle_is(style, "ellipse"))
-        note(p, owf_pdf_ellipse(p->pdf, tx(p, box[0]), ty(p, box[1]), tw(box[2]), tw(box[3]), fill, line, w));
+        note(p, d_ellipse(p, tx(p, box[0]), ty(p, box[1]), tw(box[2]), tw(box[3]), fill, line, w));
     else if (owf_dstyle_is(style, "triangle") || owf_dstyle_is(style, "parallelogram") ||
              owf_dstyle_is(style, "hexagon")) {
         /* as the canvas (src/diag/odg_view.c) draws them: a triangle pointing east; a parallelogram leaning and a
@@ -269,10 +310,10 @@ static void vertex(pen *p, const owf_dpage *page, const owf_dcell *c)
             owf_dnum small = box[2] < box[3] ? box[2] : box[3];
             if (arc < 0) arc = 0;
             if (arc > OWF_DNUM(100)) arc = OWF_DNUM(100);
-            note(p, owf_pdf_round_rect(p->pdf, tx(p, box[0]), ty(p, box[1]), tw(box[2]), tw(box[3]),
+            note(p, d_round_rect(p, tx(p, box[0]), ty(p, box[1]), tw(box[2]), tw(box[3]),
                                        tw((owf_dnum)((wide)small * arc / 10000 / 2)), fill, line, w));
         } else
-            note(p, owf_pdf_rect(p->pdf, tx(p, box[0]), ty(p, box[1]), tw(box[2]), tw(box[3]), fill, line, w));
+            note(p, d_rect(p, tx(p, box[0]), ty(p, box[1]), tw(box[2]), tw(box[3]), fill, line, w));
         if (owf_dstyle_is(style, "process") && box[2] / 10 > OWF_DNUM(1)) {   /* a line a tenth in from each side */
             owf_dnum in = box[2] / 10;
             pts[0].x = pts[1].x = box[0] + in;
@@ -291,7 +332,7 @@ static void vertex(pen *p, const owf_dpage *page, const owf_dcell *c)
             path(p, pts, 2, 0, 0, line, w);
         }
     }
-    owf_pdf_dash(p->pdf, 0);
+    d_dash(p, 0);
     box_label(p, c, box, header);
 }
 
@@ -343,9 +384,9 @@ static void edge(pen *p, const owf_dpage *page, const owf_dcell *e)
             xy[2 * k] = tx(p, pts[k].x);
             xy[2 * k + 1] = ty(p, pts[k].y);
         }
-        owf_pdf_dash(p->pdf, is_on(e->style, "dashed"));
-        note(p, owf_pdf_path(p->pdf, xy, n, 0, 0, line, w));
-        owf_pdf_dash(p->pdf, 0);
+        d_dash(p, is_on(e->style, "dashed"));
+        note(p, d_path(p, xy, n, 0, 0, line, w));
+        d_dash(p, 0);
         owf_free(xy);
         if (n >= 2 && wants_arrow(e->style, "endArrow", "classic"))
             arrow(p, pts[n - 2], pts[n - 1], line);
@@ -417,4 +458,29 @@ int owf_dpdf_write(const owf_diagram *d, int page, unsigned char **data, size_t 
     r = owf_pdf_finish(p.pdf, d->pages[first].name, data, length, NULL);
     owf_pdf_free(p.pdf);
     return r == OWF_OK ? OWF_OK : r < 0 ? OWF_ERR_MEMORY : r;
+}
+
+int owf_deps_write(const owf_diagram *d, int page, unsigned char **data, size_t *length)
+{
+    pen p;
+    owf_dnum box[4];
+    int r;
+    *data = NULL;
+    if (length)
+        *length = 0;
+    if (page < 0 || page >= d->npages)
+        return OWF_ERR_FORMAT;
+    if (!owf_dpage_bounds(&d->pages[page], box)) {   /* nothing on it: a blank page 100 pixels square */
+        box[0] = box[1] = 0;
+        box[2] = box[3] = OWF_DNUM(100);
+    }
+    memset(&p, 0, sizeof p);
+    p.ox = box[0] - MARGIN;
+    p.oy = box[1] - MARGIN;
+    if (!(p.eps = owf_eps_new(tw(box[2] + 2 * MARGIN), tw(box[3] + 2 * MARGIN))))
+        return OWF_ERR_MEMORY;
+    draw_page(&p, &d->pages[page]);
+    r = p.bad ? OWF_ERR_MEMORY : owf_eps_finish(p.eps, d->pages[page].name, data, length);
+    owf_eps_free(p.eps);
+    return r;
 }

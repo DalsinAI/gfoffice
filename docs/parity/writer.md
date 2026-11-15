@@ -18,6 +18,7 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 12 Nov 2026 | 2.0.33 | Phase 2: AutoCorrect | 76% |
 | 12 Nov 2026 | 2.0.34 | Phase 2: labels and envelopes | 77% |
 | 12 Nov 2026 | 2.0.35 | Word completion | 78% |
+| 14 Nov 2026 | 2.0.36 | Print and export comments | 78% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
@@ -38,7 +39,8 @@ completion adds one more.
 | Track changes: ODT | Done | 2.0.27 | text:tracked-changes with insertion and deletion regions, office:change-info (author and date), change-start/end and change marks, deleted paragraph ends, insertions across paragraphs, the record setting. |
 | Track changes: DOCX | Done | 2.0.27 | w:ins, w:del with w:delText, w:moveTo/w:moveFrom (read as insertion/deletion), inserted and deleted paragraph marks, w:trackRevisions. |
 | Track changes: other formats | Done | 2.0.27 | RTF, plain text, HTML and the Amiga formats are saved with every change accepted, and the save report says so. |
-| Tracked format changes (w:rPrChange, w:pPrChange, ODT format-change) | Gap | | Read as the new format, with a note in the import report. |
+| Tracked format changes of text (w:rPrChange) | Part | libowf 1.11 | DOCX keeps them in and out, with who, when and the format before; other formats save the format as it is now (the ODT save report says so). GFOpenWrite does not show them or accept and reject them one by one yet. |
+| Tracked format changes of paragraphs (w:pPrChange) and ODT format-change | Gap | | Read as the new format, with a note in the import report. |
 | Tracked picture, frame and table-structure changes | Gap | | Pictures and frames typed while recording are plain insertions; table row and column deletes are not recorded. |
 | Show/hide changes (final view while recording) | Gap | | |
 | Comments: insert, reply, edit, done, delete | Done | 2.0.28 | Insert > Comment... on the selection (a range) or at the caret (a point), under the review author. Tools > Comments: Next/Previous (replies passed over), Reply..., Edit Comment..., Mark Done, Delete Comment (with its replies), all undoable. Typing at a comment's place goes after it. ARexx ADDCOMMENT, COMMENTS, NEXTCOMMENT, PREVCOMMENT, GETCOMMENT, REPLYCOMMENT, EDITCOMMENT, RESOLVECOMMENT, DELETECOMMENT. |
@@ -46,7 +48,8 @@ completion adds one more.
 | Comments: DOCX | Done | 2.0.28 | comments.xml (author, initials, date, paragraphs), commentRangeStart/End and commentReference, commentsExtended for replies and done. |
 | Comments: ODT | Part | 2.0.28 | office:annotation and office:annotation-end, dc:creator, dc:date, initials. Replies and done are saved as plain comments (the save report says so). |
 | Comments: other formats | Done | 2.0.28 | RTF, plain text, HTML and the Amiga formats leave comments out, and the save report says so. |
-| Comments: edit text in the margin, filter by author, print in the margin | Gap | | Edited through a requester; printing leaves comments out. |
+| Comments: print and PDF | Done | 2.0.36 | Project > Print Comments (off at first): Print and Export PDF put a raised mark ([1], [2]) where each comment is and list them after the text: who, when, the one it answers, done, then the text. libowf's "pdf-comments" format (owconvert, ARexx EXPORT with a .pdf goes on leaving them out, and its report says pdf-comments keeps them). ARexx PRINT COMMENTS, PRINT NOCOMMENTS. Without GFOpenPrint, printer.device's plain text leaves them out. |
+| Comments: edit text in the margin, filter by author, print in the margin itself | Gap | | Edited through a requester; printed at the end of the document, not beside their lines. |
 | Fields: document info, file name, word count, chapter | Done | 2.0.29 | Insert > Field: Title, Author, Subject (Project > Document Info...), File Name, Word Count and Chapter (the heading above), next to Page, Page Count, Date and Time. Values are worked out again on load, on save and by Tools > Update Fields. ARexx INSERTFIELD, DOCINFO, UPDATEFIELDS; GETTEXT shows the values. |
 | Fields: user fields | Done | 2.0.29 | Tools > User Fields... sets, changes and removes named values; Insert > Field > User Field... places one. ARexx USERFIELD. |
 | Fields: cross-references | Done | 2.0.29 | Insert > Cross-reference... picks a heading and shows its text or its page; the heading gets a bookmark. ARexx CROSSREF. |

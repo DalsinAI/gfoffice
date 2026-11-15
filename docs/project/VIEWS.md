@@ -75,6 +75,14 @@ chart, whole days each, to a day past the plan's finish. `opj_print_page_view` g
 page, and `opj_print_draw` draws it with the footer (the plan's title, and "Page n of m") onto any
 `oldraw` target. The Amiga app's PRINT gives it a printer.device target.
 
+`opj_pdf_write` (src/project/opj_pdf.c) prints the same pages to a PDF: A4 landscape with a 1 cm
+margin, 12 twips (0.6 pt) a pixel, so 1308 by 897 pixels a page. It draws through an `oldraw` target
+on libowf's page PDF writer (owf_pdf.h): fills become rectangles, text is Helvetica at 7.2 pt in rows
+17 pixels high, whatever the screen's font, so the PDF is small and its text searchable. It is
+printed black on white; white fills are left out, as the paper is white already. The window's columns
+and zoom are kept. The app's Project menu has Export PDF..., and ARexx has EXPORT with FORMAT PDF or a
+.pdf name.
+
 ## Checked
 
 `tests/project/test_opj.c`: dates typed and shown; every edit, including the ones refused and the

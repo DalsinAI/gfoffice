@@ -69,6 +69,9 @@ static void put_story(const owf_doc *res, const owf_story *story, const char *in
             }
         }
         printf("\"\n");
+        if (p->fmt.align != OWF_ALIGN_LEFT)
+            printf("%s  align %s\n", indent, p->fmt.align == OWF_ALIGN_CENTRE ? "centre" :
+                   p->fmt.align == OWF_ALIGN_RIGHT ? "right" : "justify");
         for (j = 0; j < p->nruns; j++) {
             const owf_run *run = &p->runs[j];
             if (run->kind != OWF_RUN_TEXT || !run->text || !has_fmt(&run->fmt))
@@ -115,6 +118,23 @@ static void put_page(const owf_pub *pub, const owf_pub_page *page, int with_text
         if (f->kind == OWF_PUB_TABLE)
             printf(" table %dx%d", f->rows, f->cols);
         printf("\n");
+        /* the look, when the file says any of it */
+        if (f->filled >= 0 || f->lined >= 0 || f->line_width >= 0 || f->inset[0] >= 0) {
+            printf("    look");
+            if (f->filled == 1)
+                printf(" fill #%06lx", f->fill);
+            else if (f->filled == 0)
+                printf(" no-fill");
+            if (f->lined == 1)
+                printf(" line #%06lx", f->line);
+            else if (f->lined == 0)
+                printf(" no-line");
+            if (f->line_width >= 0)
+                printf(" width %ld", f->line_width);
+            if (f->inset[0] >= 0 || f->inset[1] >= 0 || f->inset[2] >= 0 || f->inset[3] >= 0)
+                printf(" margins %ld %ld %ld %ld", f->inset[0], f->inset[1], f->inset[2], f->inset[3]);
+            printf("\n");
+        }
         if (with_text && f->story >= 0 && f->story < pub->nstories)
             put_story(pub->res, &pub->stories[f->story], "    ");
     }
@@ -176,6 +196,12 @@ int main(int argc, char **argv)
             printf("story %d\n", i);
             put_story(pub->res, &pub->stories[i], "  ");
         }
+    if (pub->nscheme) {
+        printf("scheme");
+        for (i = 0; i < pub->nscheme; i++)
+            printf(" #%06lx", pub->scheme[i]);
+        printf("\n");
+    }
     printf("fonts %d\n", pub->res->nfonts);
     for (i = 0; i < pub->res->nfonts; i++) {
         printf("font ");

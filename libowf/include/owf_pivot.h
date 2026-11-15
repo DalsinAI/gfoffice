@@ -37,11 +37,18 @@ extern "C" {
 #define OWF_PIVOT_FIELDS 8           /* row fields, and column fields */
 #define OWF_PIVOT_DATA 8             /* data fields */
 #define OWF_PIVOT_PAGES 4            /* page fields (filters) */
+#define OWF_PIVOT_SORTS 16           /* sorted fields (rows and columns) */
 #define OWF_PIVOT_ITEM 96            /* a page field's chosen item, bytes */
 #define OWF_PIVOT_TEXT_MAX 2048      /* _GF_PIVOT_CONFIG's text, at most */
 
 enum { OWF_PIVOT_FN_FIRST = 1, OWF_PIVOT_FN_COUNT = 2, OWF_PIVOT_FN_COUNTA = 3, OWF_PIVOT_FN_SUM = 9,
        OWF_PIVOT_FN_LAST = 11 };
+
+/* The order of a row or column field's items: as they first come in the
+ * source (the default), or sorted by their values. Ascending puts numbers
+ * and booleans first, then text (case aside), then errors; blanks come last
+ * in either direction, as in GFOpenCalc's Data > Sort. */
+enum { OWF_PIVOT_SORT_SOURCE, OWF_PIVOT_SORT_ASCENDING, OWF_PIVOT_SORT_DESCENDING };
 
 /* A page field's chosen item: every item, or one value. */
 enum { OWF_PIVOT_ALL, OWF_PIVOT_TEXT, OWF_PIVOT_NUMBER, OWF_PIVOT_BOOL, OWF_PIVOT_BLANK };
@@ -70,6 +77,9 @@ typedef struct {
     int col_grand;                   /* a Grand Total column at its right (with column fields) */
     unsigned at_row, at_col;         /* where the output starts on its sheet */
     unsigned rows, cols;             /* the output's size when last made; 0: not known */
+    unsigned nsort;                  /* fields whose items are sorted, kept by field, so that */
+    unsigned sort_field[OWF_PIVOT_SORTS];   /* moving a field in the layout keeps its order */
+    unsigned char sort_order[OWF_PIVOT_SORTS];   /* OWF_PIVOT_SORT_ASCENDING or _DESCENDING */
 } owf_pivotdef;
 
 /* An empty definition: no fields, both grand totals, output at A1. */
@@ -105,6 +115,11 @@ void owf_pivot_item_text(const owf_pivot_page *page, char *out, size_t size);
  * back from either (case does not matter); 0 when it is not one. */
 const char *owf_pivot_function_word(int function, int ooxml);
 int owf_pivot_function_from_word(const char *word);
+/* A row or column field's item order (OWF_PIVOT_SORT_SOURCE when it has
+ * none), and setting it: SOURCE removes the field's entry. 0 when there is
+ * no room for another sorted field or the order is not one. */
+int owf_pivot_sort_of(const owf_pivotdef *def, unsigned field);
+int owf_pivot_set_sort(owf_pivotdef *def, unsigned field, int order);
 /* A field's heading: its heading cell's text or number, or "Column N"
  * when that is blank. */
 void owf_pivot_field_heading(const owf_book *book, const owf_pivotdef *def, unsigned field, char *out,

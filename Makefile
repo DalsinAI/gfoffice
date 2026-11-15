@@ -40,7 +40,7 @@ clean:
 
 .PHONY: all test check clean
 
-CORE_SRC = src/core/editor.c
+CORE_SRC = src/core/editor.c src/core/ow_merge.c
 
 $(OUT)/test-core: $(OWF_SRC) $(CORE_SRC) tests/core/test_core.c include/openwrite_core.h
 	mkdir -p $(OUT)
@@ -60,6 +60,28 @@ core-check: $(OUT)/test-core-asan
 	$(OUT)/test-core-asan
 
 .PHONY: core-check
+
+MERGE_TABLE_DEPS = $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c include/ow_merge.h
+
+$(OUT)/test-merge-table: $(MERGE_TABLE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c -lz -o $@
+
+$(OUT)/test-merge-table-asan: $(MERGE_TABLE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c -lz -o $@
+
+merge-table-test: $(OUT)/test-merge-table
+	$(OUT)/test-merge-table
+
+merge-table-check: $(OUT)/test-merge-table-asan
+	$(OUT)/test-merge-table-asan
+
+test: merge-table-test
+check: merge-table-check
+
+.PHONY: merge-table-test merge-table-check
 
 $(OUT)/test-spell: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h
 	mkdir -p $(OUT)
@@ -124,6 +146,28 @@ inflate-check: $(OUT)/test-inflate-asan $(OUT)/owconvert-asan $(OUT)/owconvert-n
 
 test: inflate-test
 check: inflate-check
+
+# The compound file writer (libowf/src/owf_cfbw.c), the container for
+# GFOpenPublisher's .pub save; tests/cfb/test_cfbw.c reads what it writes
+# back through owf_cfb.c.
+$(OUT)/test-cfbw: $(OWF_SRC) libowf/src/owf_internal.h tests/cfb/test_cfbw.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/cfb/test_cfbw.c -lz -lm -o $@
+
+$(OUT)/test-cfbw-asan: $(OWF_SRC) libowf/src/owf_internal.h tests/cfb/test_cfbw.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/cfb/test_cfbw.c -lz -lm -o $@
+
+.PHONY: cfbw-test cfbw-check
+cfbw-test: $(OUT)/test-cfbw
+	$(OUT)/test-cfbw
+
+cfbw-check: $(OUT)/test-cfbw-asan
+	$(OUT)/test-cfbw-asan
+
+test: cfbw-test
+check: cfbw-check
 
 .PHONY: inflate-test inflate-check
 
@@ -428,7 +472,15 @@ endif
 
 # GFOpenPublisher's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
 # compares pub_dump's output with tests/pub/expected and reads cut-short and
-# changed copies of every sample (more of them under ASan/UBSan).
+# changed copies of every sample (more of them under ASan/UBSan). The samples
+# are made by tools/pubgen/make_pub.py: no outside .pub files are kept.
+PUB_SAMPLES = $(OUT)/pubgen
+PUB_MADE = $(PUB_SAMPLES)/.made
+
+$(PUB_MADE): tools/pubgen/make_pub.py
+	python3 tools/pubgen/make_pub.py $(PUB_SAMPLES)
+	touch $@
+
 PUB_DEPS = $(OWF_SRC) tests/pub/pub_dump.c libowf/include/owf.h libowf/include/owf_pub.h libowf/src/owf_internal.h
 
 $(OUT)/pub-dump: $(PUB_DEPS)
@@ -445,11 +497,12 @@ $(OUT)/pub-streams: $(OWF_SRC) tools/publab/pub_streams.c libowf/src/owf_interna
 	mkdir -p $(OUT)
 	$(CC) $(WARN) $(CFLAGS) -Wno-format-truncation -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/publab/pub_streams.c -lz -o $@
 
-pub-test: $(OUT)/pub-dump
-	python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
+pub-test: $(OUT)/pub-dump $(PUB_MADE)
+	python3 tests/pub/test_pubgen.py
+	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
 
-pub-check: $(OUT)/pub-dump-asan
-	python3 tests/pub/test_pub.py $(OUT)/pub-dump-asan 150
+pub-check: $(OUT)/pub-dump-asan $(PUB_MADE)
+	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump-asan 150
 
 test: pub-test
 check: pub-check
@@ -462,18 +515,18 @@ PUB_CORE_DEPS = $(PUB_DEPS) $(PUB_CORE_SRC) include/openpublisher_core.h include
 $(OUT)/test-publisher-core: $(PUB_CORE_DEPS) tests/pub/test_pub_core.c
 	mkdir -p $(OUT)
 	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
-		$(OWF_SRC) $(PUB_CORE_SRC) $(OPENLAYOUT_ENGINE_SRC) tests/pub/test_pub_core.c -lz -o $@
+		-DPUB_SAMPLES='"$(PUB_SAMPLES)"' $(OWF_SRC) $(PUB_CORE_SRC) $(OPENLAYOUT_ENGINE_SRC) tests/pub/test_pub_core.c -lz -o $@
 
 $(OUT)/test-publisher-core-asan: $(PUB_CORE_DEPS) tests/pub/test_pub_core.c
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
 		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
-		$(OWF_SRC) $(PUB_CORE_SRC) $(OPENLAYOUT_ENGINE_SRC) tests/pub/test_pub_core.c -lz -o $@
+		-DPUB_SAMPLES='"$(PUB_SAMPLES)"' $(OWF_SRC) $(PUB_CORE_SRC) $(OPENLAYOUT_ENGINE_SRC) tests/pub/test_pub_core.c -lz -o $@
 
-publisher-core-test: $(OUT)/test-publisher-core
+publisher-core-test: $(OUT)/test-publisher-core $(PUB_MADE)
 	$(OUT)/test-publisher-core
 
-publisher-core-check: $(OUT)/test-publisher-core-asan
+publisher-core-check: $(OUT)/test-publisher-core-asan $(PUB_MADE)
 	$(OUT)/test-publisher-core-asan
 
 test: publisher-core-test
@@ -494,8 +547,8 @@ endif
 # jump table (check_zsdk.py); and the maths' tables (gen_libm_tables.py).
 LIBM_DEPS = libowf/library/owf_libm.c libowf/library/owf_libm.h
 LIBM_ON = -fno-builtin -Ilibowf/library libowf/library/owf_libm.c tests/library/libm_shim.c
-LIB_FIXTURES = tests/book/fixtures/book.xls tests/book/fixtures/book-lo.xlsx tests/book/fixtures/book-lo.ods \
-	tests/pub/samples/Sample.pub
+# Sample.pub: a .pub made by tools/pubgen/make_pub.py (gen-2007-runs.pub)
+LIB_FIXTURES = tests/book/fixtures/book.xls tests/book/fixtures/book-lo.xlsx tests/book/fixtures/book-lo.ods
 LIBCHECK_DEPS = $(OWF_SRC) $(CALC_SRC) $(LIBM_DEPS) tests/library/libm_shim.c tests/library/owf_lib_checks.c \
 	tests/library/owf_lib_checks.h tests/library/test_owf_lib_checks.c libowf/include/owf.h libowf/include/owf_zip.h
 SANITIZE = -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
@@ -528,25 +581,27 @@ $(OUT)/test-calc-owflibm-asan: $(OWF_SRC) $(CALC_SRC) $(LIBM_DEPS) tests/library
 	$(CC) $(WARN) $(SANITIZE) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/calc $(LIBM_ON) $(OWF_SRC) $(CALC_SRC) \
 		tests/calc/test_calc.c -lz -o $@
 
-$(OUT)/test-owf-lib-checks: $(LIBCHECK_DEPS)
+$(OUT)/test-owf-lib-checks: $(LIBCHECK_DEPS) $(PUB_MADE)
 	mkdir -p $(OUT)/libfixtures
 	cp $(LIB_FIXTURES) $(OUT)/libfixtures/
+	cp $(PUB_SAMPLES)/gen-2007-runs.pub $(OUT)/libfixtures/Sample.pub
 	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/calc $(LIBM_ON) $(OWF_SRC) $(CALC_SRC) \
 		tests/library/owf_lib_checks.c tests/library/test_owf_lib_checks.c -lz -o $@
 
-$(OUT)/test-owf-lib-checks-asan: $(LIBCHECK_DEPS)
+$(OUT)/test-owf-lib-checks-asan: $(LIBCHECK_DEPS) $(PUB_MADE)
 	mkdir -p $(OUT)/libfixtures
 	cp $(LIB_FIXTURES) $(OUT)/libfixtures/
+	cp $(PUB_SAMPLES)/gen-2007-runs.pub $(OUT)/libfixtures/Sample.pub
 	$(CC) $(WARN) $(SANITIZE) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src -Ilibowf/calc $(LIBM_ON) $(OWF_SRC) $(CALC_SRC) \
 		tests/library/owf_lib_checks.c tests/library/test_owf_lib_checks.c -lz -o $@
 
-$(OUT)/test-owf-kind: $(OWF_SRC) tests/library/test_owf_kind.c libowf/include/owf.h libowf/include/owf_zip.h
+$(OUT)/test-owf-kind: $(OWF_SRC) tests/library/test_owf_kind.c libowf/include/owf.h libowf/include/owf_zip.h $(PUB_MADE)
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/library/test_owf_kind.c -lz -o $@
+	$(CC) $(WARN) $(CFLAGS) -DPUB_SAMPLES='"$(PUB_SAMPLES)"' -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/library/test_owf_kind.c -lz -o $@
 
-$(OUT)/test-owf-kind-asan: $(OWF_SRC) tests/library/test_owf_kind.c libowf/include/owf.h libowf/include/owf_zip.h
+$(OUT)/test-owf-kind-asan: $(OWF_SRC) tests/library/test_owf_kind.c libowf/include/owf.h libowf/include/owf_zip.h $(PUB_MADE)
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(SANITIZE) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/library/test_owf_kind.c -lz -o $@
+	$(CC) $(WARN) $(SANITIZE) -DPUB_SAMPLES='"$(PUB_SAMPLES)"' -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/library/test_owf_kind.c -lz -o $@
 
 sfd-check:
 	python3 tests/library/check_sfd.py

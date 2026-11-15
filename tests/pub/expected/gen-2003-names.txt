@@ -1,0 +1,20 @@
+note 2 "A frame's text is not in the file's text; it is left out" x1
+version Publisher 2002/2003
+build-mark 0x13
+written-by 11.9999
+page-size 148.0 x 210.0 mm (emu 5328000 x 7560000, twips 8391 x 11906)
+masters 1
+master 1 "Front Matter" frames 0
+pages 1
+page 1 master 1 frames 3
+  frame 0 text box 10.0 10.0 128.0 30.0 mm (emu 360000 360000 4968000 1440000) shape 202 text-id 7 story 0
+    para "Tab\there, a break\nthen more; a clef 𝄞 and é"
+      run 0 "Tab" 10.0pt font "Times New Roman"
+      run 2 "here, a break" 10.0pt font "Times New Roman"
+      run 4 "then more; a clef 𝄞 a" 10.0pt font "Times New Roman"
+  frame 1 text box 10.0 50.0 128.0 30.0 mm (emu 360000 1800000 4968000 2880000) shape 202 text-id 99 story -1
+  frame 2 line box 10.0 90.0 128.0 0.0 mm (emu 360000 3240000 4968000 3240000) shape 20
+stories 1
+fonts 1
+font "Times New Roman"
+pictures 0
