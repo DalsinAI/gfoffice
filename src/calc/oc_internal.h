@@ -134,6 +134,8 @@ struct oc_core {
     unsigned long changes;
     int multiop_quiet;              /* Multiple Operations worked out again by themselves (no Undo step) */
     unsigned long multiop_seen;     /* changes when they last were */
+    int multiop_behind;             /* a big book's tables not yet worked out since its last change */
+    int multiop_next;               /* the next of them, for oc_core_auto_multiple_operations_step */
 
     /* conditional formatting's looks for the cells showing (oc_cf_looks), kept while nothing changes */
     oc_look *cf_looks;

@@ -24,4 +24,21 @@ long long owf_diag_isqrt(long long v);
 /* The point at frac (hundredths: -100 the start, 0 the middle, 100 the end) of the way along a path of n points. */
 owf_dpoint owf_diag_along(const owf_dpoint *pts, int n, long frac);
 
+/* One page as Encapsulated PostScript (owf_eps.c), with owf_pdf.h's calls and units: twips from the top left,
+ * colours OWF_SHADE(0xRRGGBB) or 0 for none. The drawing calls return 0, or -1 when memory ran out. */
+typedef struct owf_eps owf_eps;
+owf_eps *owf_eps_new(int width, int height);
+void owf_eps_free(owf_eps *e);
+int owf_eps_text(owf_eps *e, int x, int baseline, int width, const char *utf8, size_t length, owf_font_kind kind,
+                 unsigned flags, int size, unsigned long colour);
+int owf_eps_rect(owf_eps *e, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width);
+int owf_eps_round_rect(owf_eps *e, int x, int y, int w, int h, int radius, unsigned long fill, unsigned long line,
+                       int line_width);
+int owf_eps_ellipse(owf_eps *e, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width);
+int owf_eps_path(owf_eps *e, const int *xy, int npoints, int closed, unsigned long fill, unsigned long line,
+                 int line_width);
+void owf_eps_dash(owf_eps *e, int dash);
+/* The file, owf_malloc'd: OWF_OK or OWF_ERR_MEMORY. The writer is freed by the caller after. */
+int owf_eps_finish(owf_eps *e, const char *title, unsigned char **data, size_t *length);
+
 #endif

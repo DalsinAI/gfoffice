@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.3.16 is the current P1 application. Its portable core turns
+GFOpenPublisher 0.3.23 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -108,7 +108,7 @@ remain later P1 work.
 
 # GFOpenWrite
 
-GFOpenWrite 2.0.26 is a native word processor for AmigaOS 3.2.
+GFOpenWrite 2.0.35 is a native word processor for AmigaOS 3.2.
 
 ![GFOpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
 
@@ -502,9 +502,9 @@ GFOpenLayout found (`OPENLAYOUT_SRC`) the PDF tests run too.
 
 Phase P2 has PPTX opened (`libowf/src/in_pptx.c`; `make deck-test` runs
 `tests/deck/test_pptx.py` on decks made with python-pptx) and the program,
-`app/openpresent.c` (GFOpenPresentation 0.6.22), built by `build-os3.sh`: it opens
+`app/openpresent.c` (GFOpenPresentation 0.6.32), built by `build-os3.sh`: it opens
 ODP and PPTX, shows the slide at the window's size with the slide sorter
-beside it, and saves ODP (a PPTX is saved as ODP, through Save As). The first
+beside it, and saves ODP or PPTX (since 0.6.27; a PPTX it opened is saved back as PPTX). The first
 part of P3 is in too: Insert > Text Box creates an undoable native frame and
 starts typing in it; Insert > Picture embeds a file through datatypes, fits it
 to the slide and selects it for positioning. Click in any slide text box and type (Return, Backspace,
@@ -566,7 +566,7 @@ window's zoom gadget fills the screen. Object > Position and Size provides
 exact slide-unit geometry for one top-level object. Object > Appearance edits a selected
 top-level text box or shape's solid fill, stroke colour and width, line style
 and arrowheads as one undoable operation, with ODP persistence. An optional
-own screen, PPTX saving, richer fills and the rest of the editor come next.
+own screen, richer fills and the rest of the editor come next.
 
 ## Licence
 

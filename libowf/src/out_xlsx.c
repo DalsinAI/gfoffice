@@ -1582,6 +1582,9 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
         if (xp_is_data(def, f))
             owf_buf_puts(b, " dataField=\"1\"");
         owf_buf_puts(b, " showAll=\"0\"");
+        if (axis_field && owf_pivot_sort_of(def, f) != OWF_PIVOT_SORT_SOURCE)
+            owf_buf_printf(b, " sortType=\"%s\"",
+                           owf_pivot_sort_of(def, f) == OWF_PIVOT_SORT_DESCENDING ? "descending" : "ascending");
         if (axis_field) {
             xpivot_items it;
             if (!xp_collect(w->book, def, f, &it)) {
