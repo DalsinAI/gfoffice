@@ -161,6 +161,30 @@ static void test_files(void)
     ok("EXPORT build/host/rexx-test.xml");
     ok("EXPORT build/host/rexx-test.txt FORMAT=CSV");
     CHECK_N(rx_do("EXPORT build/host/rexx-test.doc FORMAT=Word"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "EXPORT: FORMAT is MSPDI, CSV, GFPROJ or PDF, not Word");
+    /* The printed Gantt view as a PDF: by a .pdf name, or FORMAT PDF whatever the name. */
+    ok("EXPORT build/host/rexx-test.pdf");
+    ok("EXPORT build/host/rexx-test.out FORMAT=pdf");
+    f = fopen("build/host/rexx-test.out", "rb");
+    CHECK(f != NULL);
+    if (f) {
+        CHECK(fgets(line, sizeof line, f) && strncmp(line, "%PDF-", 5) == 0);
+        fclose(f);
+    }
+    f = fopen("build/host/rexx-test.pdf", "rb");
+    CHECK(f != NULL);
+    if (f) {
+        CHECK(fgets(line, sizeof line, f) && strncmp(line, "%PDF-", 5) == 0);
+        fclose(f);
+    }
+    CHECK_N(rx_do("SAVEAS build/host/rexx-test-saved.pdf"), OPJ_RX_OK);  /* SAVEAS never writes a PDF */
+    f = fopen("build/host/rexx-test-saved.pdf", "rb");
+    CHECK(f != NULL);
+    if (f) {
+        CHECK(fgets(line, sizeof line, f) && strncmp(line, "%PDF-", 5) != 0);
+        fclose(f);
+    }
+    ok("SAVEAS build/host/rexx-test.gfproj");
     CHECK_N(rx_do("EXPORT /no/such/place/plan.xml"), OPJ_RX_ERROR);
     CHECK(strstr(rx.lasterror, "Could not write"));
     CHECK_S(ok("GETFILE"), "build/host/rexx-test.gfproj");                   /* EXPORT keeps the plan's file */
@@ -225,6 +249,8 @@ static void test_files(void)
     }
     CHECK_N(rx.doc->plan->start, AT(23, 8, 0));                            /* the plan's start kept */
     CHECK_N(rx_do("DELETETASK 1"), OPJ_RX_ERROR);                          /* nothing there */
+    CHECK_N(rx_do("EXPORT build/host/rexx-empty.pdf"), OPJ_RX_NOW);         /* no tasks: nothing to print */
+    CHECK_S(rx.lasterror, "The plan has no tasks to print");
 }
 
 /* A ROW or COUNT that overflows an int on the way in is refused, never wrapped into a negative size. */
