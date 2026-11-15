@@ -221,6 +221,64 @@ static void test_query_and_save(ob_project *p)
     owf_report_free(notes);
 }
 
+/* Groups are made as the rows come: a query grouped on a column it isn't sorted by first would give
+ * Leeds, York, Leeds, York, so the check refuses it; sorted by the group first, the groups are whole. */
+static void test_query_groups(ob_project *p)
+{
+    static ob_query q;
+    ob_qcolumn *c;
+    ob_report r;
+    owf_doc *doc = NULL;
+    char err[OB_ERR_MAX] = "";
+    char *text;
+
+    ob_query_init(&q, "ByCustomer");
+    ob_query_add_table(&q, "Orders");
+    c = ob_query_add_column(&q, "Orders", "Customer");
+    c->sort = OB_SORT_UP;
+    ob_query_add_column(&q, "Orders", "Town");
+    ob_query_add_column(&q, "Orders", "Qty");
+    CHECK(ob_query_save(p, &q), "save query: %s", ob_error(p));
+    ob_report_init(&r, "Towns");
+    strcpy(r.query, "ByCustomer");
+    strcpy(r.group, "Town");
+    ob_report_add_column(&r, "Customer", OB_TOTAL_NONE);
+    ob_report_add_column(&r, "Qty", OB_TOTAL_SUM);
+    CHECK(ob_report_check(p, &r, err, sizeof err) == -1 && strstr(err, "sort the query ByCustomer by Town first"),
+          "%s", err);
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == -1 && !doc, "build refuses");
+
+    ob_query_init(&q, "ByTown");
+    ob_query_add_table(&q, "Orders");
+    c = ob_query_add_column(&q, "Orders", "Town");
+    c->sort = OB_SORT_UP;
+    c = ob_query_add_column(&q, "Orders", "Customer");
+    c->sort = OB_SORT_UP;
+    ob_query_add_column(&q, "Orders", "Qty");
+    CHECK(ob_query_save(p, &q), "save query: %s", ob_error(p));
+    strcpy(r.query, "ByTown");
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == 0 && doc, "build: %s", err);
+    if (!doc) return;
+    text = as_text(doc, "towns.txt");
+    CHECK(text && !strcmp(text,
+        "Towns\n"
+        "Town: Leeds\n"
+        "Customer\tQty\n"
+        "Ann\t2\n"
+        "Cy\t5\n"
+        "\tSum 7\n"
+        "Town: York\n"
+        "Customer\tQty\n"
+        "Bob\t1\n"
+        "Di\t4\n"
+        "\tSum 5\n"
+        "Report totals\n"
+        "Customer\tQty\n"
+        "\tSum 12\n"), "text:\n%s", text ? text : "(none)");
+    free(text);
+    owf_doc_free(doc);
+}
+
 static void test_errors_and_empty(ob_project *p)
 {
     static ob_table t;
@@ -280,6 +338,7 @@ int main(int argc, char **argv)
     if (p) {
         test_grouped_table(p);
         test_query_and_save(p);
+        test_query_groups(p);
         test_errors_and_empty(p);
         ob_close(p);
     }
