@@ -25,6 +25,8 @@ typedef struct ob_rwin_env {
     const char *proj_path;      /* the project's file: the document requester starts in its drawer */
     const char *table;          /* the table shown ("" none): a new report's source */
     const char *query;          /* or the query shown ("" none) */
+    /* asks for one line of text (a query's parameter), 0 when cancelled; NULL: parameters aren't asked */
+    int (*ask_text)(const char *title, const char *prompt, char *buf, size_t size);
 } ob_rwin_env;
 
 /* Opens the window and returns when it is closed. */
