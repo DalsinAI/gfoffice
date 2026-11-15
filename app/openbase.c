@@ -4320,7 +4320,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if (starts_word_ci(command, "LASTERROR", &arg)) put_text(result_text, sizeof result_text, rexx_lasterror);
     else if (starts_word_ci(command, "HELP", &arg))
         put_text(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE "
-                 "OPEN TABLES TABLE ROW QUIT");
+                 "OPEN TABLES TABLE FORMS ROW QUIT");
     else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
         rc = RX_NOW; put_text(result_text, sizeof result_text, "DEACTIVATE: GFOpenBase has no icon to go to");
     } else if (starts_word_ci(command, "FAULT", &arg)) {
@@ -4342,6 +4342,19 @@ static int rexx_do_command(const char *command, char **result_out)
             result_text[k++] = '"'; memcpy(result_text + k, t, l); k += l; result_text[k++] = '"';
         }
         result_text[k] = 0;
+    } else if (starts_word_ci(command, "FORMS", &arg)) {      /* the current table's designed forms */
+        static char fn[PICK_FORMS][OB_NAME_MAX];
+        int i, n = proj && have_cur ? ob_forms_of(proj, cur.name, fn, PICK_FORMS) : 0;
+        size_t k = 0;
+        if (n > PICK_FORMS) n = PICK_FORMS;
+        for (i = 0; i < n; i++) {
+            size_t l = strlen(fn[i]);
+            if (k + l + 4 >= sizeof result_text) break;
+            if (k) result_text[k++] = ' ';
+            result_text[k++] = '"'; memcpy(result_text + k, fn[i], l); k += l; result_text[k++] = '"';
+        }
+        result_text[k] = 0;
+        if (n < 0) { rc = RX_ERROR; put_text(result_text, sizeof result_text, ob_error(proj)); }
     } else if (starts_word_ci(command, "TABLE", &arg)) {
         char t[OB_NAME_MAX];
         int i;
