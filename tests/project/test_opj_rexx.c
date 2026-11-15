@@ -2,11 +2,13 @@
  * GFOpenProject's ARexx commands on the PC (src/project/opj_rexx.c): each command run as a script would
  * send it, its return code, its result and LASTERROR, and the plan it leaves. The plan starts on Monday 16
  * November 2026 at 08:00 on the Standard calendar (Monday to Friday, 08:00-12:00 and 13:00-17:00). Files
- * go to build/host. Run under ASan and UBSan by make check.
+ * go to build/host/rexx-<pid>/build/host. Run under ASan and UBSan by make check.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "openproject_core.h"
 
 static int fails, checks;
@@ -322,8 +324,22 @@ static void test_huge_numbers(void)
     }
 }
 
+/* The plain and the ASan builds run side by side under make -j: each writes its files in a folder of its
+ * own (build/host/rexx-<pid>/build/host), so neither reads a plan the other is halfway through writing. */
+static int own_folder(void)
+{
+    char dir[64];
+    snprintf(dir, sizeof dir, "build/host/rexx-%ld", (long)getpid());
+    if (mkdir(dir, 0777) != 0 || chdir(dir) != 0) return 0;
+    return mkdir("build", 0777) == 0 && mkdir("build/host", 0777) == 0;
+}
+
 int main(void)
 {
+    if (!own_folder()) {
+        printf("project ARexx tests: no folder of their own under build/host\n");
+        return 1;
+    }
     rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
     CHECK(rx.doc != NULL);
     if (!rx.doc) return 1;
