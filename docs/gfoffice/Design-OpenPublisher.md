@@ -174,8 +174,8 @@ Amiga has none of them. The plan, through the shared font module
   that turns the records into the PDF writer's paths and, for the screen, pixels
   (`owf_mfraster.c`). EMF plays too: its Frame, mapping modes, pens, brushes, fonts,
   stock objects, the 16 and 32-bit Poly records (curves as lines), paths and
-  ExtTextOutW. Arc, Chord and Pie (WMF and EMF, with SetArcDirection) are drawn as
-  64-sided pieces of the ellipse, the way round they are seen. Pictures inside, ArcTo,
+  ExtTextOutW. Arc, Chord and Pie (WMF and EMF, with SetArcDirection) and EMF ArcTo are
+  drawn as 64-sided pieces of the ellipse, the way round they are seen. Pictures inside,
   clipping and world transforms are left out and the report says so.
 - **Embedded objects** (Excel tables and the like, in the `Objects`
   storage) are shown by the preview picture saved with them.
