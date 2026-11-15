@@ -41,9 +41,12 @@ static int same_value(const owf_cell *a, const owf_cell *b)
     }
 }
 
-static void category_label(const owf_book *book, const owf_cell *cell, char *out, size_t size)
+static void category_label(const owf_book *book, const owf_pivot_group *group, const owf_cell *cell, char *out,
+                           size_t size)
 {
-    if (!cell || cell->type == OWF_VALUE_EMPTY)
+    if (group && cell && cell->type == OWF_VALUE_NUMBER)
+        owf_pivot_group_label(group, cell->number, out, size);
+    else if (!cell || cell->type == OWF_VALUE_EMPTY)
         snprintf(out, size, "(blank)");
     else
         owf_calc_format(book, cell, out, size);
@@ -217,6 +220,9 @@ typedef struct {
     unsigned n, cap;
     unsigned *slots;             /* index + 1; 0 empty */
     unsigned nslots;
+    const owf_pivot_group *group;    /* a grouped field: its samples are its own group cells */
+    owf_cell **owned;
+    unsigned nowned;
 } pivot_values;
 
 /* Distinct tuples of value indexes (a row's or a column's key). */
@@ -247,7 +253,8 @@ static int rehash(unsigned **slots, unsigned *nslots, const unsigned *hash, unsi
     return 1;
 }
 
-static int values_index(pivot_values *v, const owf_cell *cell)
+/* copy: cell is the caller's for now only, so a new value keeps a copy of its own. */
+static int values_index(pivot_values *v, const owf_cell *cell, int copy)
 {
     unsigned h = value_hash(cell), at;
     if (v->n * 2u >= v->nslots && !rehash(&v->slots, &v->nslots, v->hash, v->n))
@@ -269,6 +276,20 @@ static int values_index(pivot_values *v, const owf_cell *cell)
             return -1;
         v->hash = hh;
         v->cap = cap;
+    }
+    if (copy) {
+        owf_cell *own = malloc(sizeof *own), **list;
+        if (!own)
+            return -1;
+        *own = *cell;                /* a number: nothing of its own to copy */
+        list = realloc(v->owned, (size_t)(v->nowned + 1u) * sizeof *list);
+        if (!list) {
+            free(own);
+            return -1;
+        }
+        v->owned = list;
+        v->owned[v->nowned++] = own;
+        cell = own;
     }
     v->sample[v->n] = cell;
     v->hash[v->n] = h;
@@ -308,6 +329,10 @@ static int keys_index(pivot_keys *k, const unsigned *key)
 
 static void values_free(pivot_values *v)
 {
+    unsigned i;
+    for (i = 0; i < v->nowned; i++)
+        free(v->owned[i]);
+    free(v->owned);
     free(v->sample);
     free(v->hash);
     free(v->slots);
@@ -548,9 +573,7 @@ static void data_name(const owf_book *book, const owf_pivotdef *def, unsigned d,
     snprintf(out, size, "%s of %s", function_name(def->data[d].function), heading);
 }
 
-/* Lays out def's table on the output sheet of an already private workbook,
- * and sets def->rows and def->cols to its size. old: the previous
- * definition on that sheet (its rectangle is emptied), or NULL. */
+/* A row or column field (where hidden items apply). */
 static int is_axis(const owf_pivotdef *def, unsigned field)
 {
     unsigned k;
@@ -566,20 +589,39 @@ static int is_axis(const owf_pivotdef *def, unsigned field)
 /* Whether a source row is in the table: each page field chooses it, and none of its row or
  * column fields' items is hidden (a hidden item of a field not on the rows or columns now is
  * kept for when it is again). */
-static int row_kept(const owf_pivotdef *def, const owf_sheet *source, unsigned srow)
+/* A grouped field's number as its group's cell (in *own), else cell as it is. */
+static const owf_cell *grouped(const owf_book *book, const owf_pivotdef *def, unsigned field, const owf_cell *cell,
+                               owf_cell *own)
+{
+    const owf_pivot_group *group = owf_pivot_group_of(def, field);
+    if (!group || !cell || cell->type != OWF_VALUE_NUMBER)
+        return cell;
+    memset(own, 0, sizeof *own);
+    own->type = OWF_VALUE_NUMBER;
+    own->number = owf_pivot_group_key(group, cell->number, book->date1904);
+    own->style = -1;
+    return own;
+}
+
+static int row_kept(const owf_book *book, const owf_pivotdef *def, const owf_sheet *source, unsigned srow)
 {
     unsigned f;
+    owf_cell own;
     for (f = 0; f < def->npage; f++)
         if (!owf_pivot_item_matches(&def->page[f],
                                     owf_sheet_find(source, srow, def->source.first_col + def->page[f].field)))
             return 0;
     for (f = 0; f < def->nhide && f < OWF_PIVOT_HIDES; f++)
-        if (is_axis(def, def->hide[f].field) && owf_pivot_item_matches(&def->hide[f],
-                                   owf_sheet_find(source, srow, def->source.first_col + def->hide[f].field)))
+        if (is_axis(def, def->hide[f].field) &&
+            owf_pivot_item_matches(&def->hide[f], grouped(book, def, def->hide[f].field,
+                                   owf_sheet_find(source, srow, def->source.first_col + def->hide[f].field), &own)))
             return 0;
     return 1;
 }
 
+/* Lays out def's table on the output sheet of an already private workbook,
+ * and sets def->rows and def->cols to its size. old: the previous
+ * definition on that sheet (its rectangle is emptied), or NULL. */
 static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, const owf_pivotdef *old,
                        owf_calc **made_calc)
 {
@@ -598,6 +640,8 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
     char text[160];
 
     memset(values, 0, sizeof values);
+    for (f = 0; f < nf; f++)
+        values[f].group = owf_pivot_group_of(def, f < def->nrow ? def->row[f] : def->col[f - def->nrow]);
     memset(rank, 0, sizeof rank);
     memset(&rkeys, 0, sizeof rkeys);
     memset(&ckeys, 0, sizeof ckeys);
@@ -617,11 +661,14 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
     for (i = 0; i < nsrc; i++) {
         unsigned srow = def->source.first_row + 1u + i;
         int k;
-        if (!row_kept(def, source, srow))
+        if (!row_kept(work, def, source, srow))
             continue;
         for (f = 0; f < nf; f++) {
             unsigned field = f < def->nrow ? def->row[f] : def->col[f - def->nrow];
-            k = values_index(&values[f], owf_sheet_find(source, srow, def->source.first_col + field));
+            const owf_cell *cell = owf_sheet_find(source, srow, def->source.first_col + field), *as;
+            owf_cell own;
+            as = grouped(work, def, field, cell, &own);
+            k = values_index(&values[f], as, as == &own);
             if (k < 0)
                 goto done;
             key[f] = (unsigned)k;
@@ -666,7 +713,7 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
         goto done;
     for (i = 0, kept = 0; i < nsrc; i++) {
         unsigned srow = def->source.first_row + 1u + i;
-        if (!row_kept(def, source, srow))
+        if (!row_kept(work, def, source, srow))
             continue;
         r = row_of[kept];
         c = col_of[kept];
@@ -679,10 +726,14 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
             bucket_add(&grand[d], v);
         }
     }
-    for (f = 0; f < nf; f++)
-        if (!rank_values(&values[f], owf_pivot_sort_of(def, f < def->nrow ? def->row[f] : def->col[f - def->nrow]),
-                         &rank[f]))
+    for (f = 0; f < nf; f++) {
+        unsigned field = f < def->nrow ? def->row[f] : def->col[f - def->nrow];
+        int sort = owf_pivot_sort_of(def, field);
+        if (sort == OWF_PIVOT_SORT_SOURCE && values[f].group)
+            sort = OWF_PIVOT_SORT_ASCENDING;     /* groups come in their own order */
+        if (!rank_values(&values[f], sort, &rank[f]))
             goto done;
+    }
     rorder[0] = corder[0] = 0;
     if (def->nrow)
         sort_keys(&rkeys, rank, rorder, tmp);
@@ -749,7 +800,8 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
                     differs = pk[g] != kk[g];
             }
             if (differs) {
-                category_label(work, values[def->nrow + f].sample[kk[f]], text, sizeof text);
+                category_label(work, values[def->nrow + f].group, values[def->nrow + f].sample[kk[f]], text,
+                               sizeof text);
                 out_text(&o, top + f, col0, text);
             }
         }
@@ -786,7 +838,7 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
                     differs = pk[g] != kk[g];
             }
             if (differs) {
-                category_label(work, values[f].sample[kk[f]], text, sizeof text);
+                category_label(work, values[f].group, values[f].sample[kk[f]], text, sizeof text);
                 out_text(&o, row, def->at_col + f, text);
             }
         }

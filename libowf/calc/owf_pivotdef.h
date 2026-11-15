@@ -104,6 +104,138 @@ int owf_pivot_set_hidden(owf_pivotdef *def, const owf_pivot_page *item, int hidd
     return 1;
 }
 
+const owf_pivot_group *owf_pivot_group_of(const owf_pivotdef *def, unsigned field)
+{
+    unsigned i;
+    for (i = 0; def && i < def->ngroup && i < OWF_PIVOT_GROUPS; i++)
+        if (def->group[i].field == field)
+            return &def->group[i];
+    return NULL;
+}
+
+static int pivot_group_ok(const owf_pivot_group *g)
+{
+    if (g->by < OWF_PIVOT_GROUP_NONE || g->by > OWF_PIVOT_GROUP_LAST)
+        return 0;
+    /* !(a < b) as well catches NaN */
+    return g->by != OWF_PIVOT_GROUP_RANGE ||
+           (g->step > 0.0 && g->step < 1e15 && !(g->end < g->start) && g->start > -1e15 && g->end < 1e15);
+}
+
+int owf_pivot_set_group(owf_pivotdef *def, const owf_pivot_group *group)
+{
+    unsigned i;
+    if (!def || !group || !pivot_group_ok(group))
+        return 0;
+    for (i = 0; i < def->ngroup && i < OWF_PIVOT_GROUPS; i++)
+        if (def->group[i].field == group->field) {
+            if (group->by != OWF_PIVOT_GROUP_NONE) {
+                def->group[i] = *group;
+                return 1;
+            }
+            for (; i + 1u < def->ngroup; i++)
+                def->group[i] = def->group[i + 1u];
+            def->ngroup--;
+            return 1;
+        }
+    if (group->by == OWF_PIVOT_GROUP_NONE)
+        return 1;
+    if (def->ngroup >= OWF_PIVOT_GROUPS)
+        return 0;
+    def->group[def->ngroup++] = *group;
+    return 1;
+}
+
+/* floor() without the maths library, for |v| < 1E15 */
+static double pivot_floor(double v)
+{
+    double w;
+    if (!(v > -1e15 && v < 1e15))
+        return v;
+    w = (double)(long long)v;
+    return w > v ? w - 1.0 : w;
+}
+
+/* A date's year and month from its serial number (time of day aside). */
+static void pivot_date(double serial, int date1904, long *year, int *month)
+{
+    long z = (long)pivot_floor(serial), era, doe, yoe, doy, mp;
+    /* days since 1970-01-01: the 1900 system counts 1900 as a leap year (serial 60 is 29 Feb) */
+    if (date1904)
+        z -= 24107;                      /* serial 0 is 1904-01-01, 24107 days before 1970 */
+    else
+        z -= z < 60 ? 25568 : 25569;     /* serial 0 is 1899-12-30 from 61 on, 1899-12-31 before */
+    z += 719468;                         /* H. Hinnant's days-to-civil */
+    era = (z >= 0 ? z : z - 146096) / 146097;
+    doe = z - era * 146097;
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    mp = (5 * doy + 2) / 153;
+    *month = (int)(mp < 10 ? mp + 3 : mp - 9);
+    *year = yoe + era * 400 + (*month <= 2);
+}
+
+double owf_pivot_group_key(const owf_pivot_group *group, double number, int date1904)
+{
+    long year;
+    int month;
+    if (!group)
+        return number;
+    switch (group->by) {
+    case OWF_PIVOT_GROUP_RANGE:
+        if (number < group->start)
+            return -1e300;
+        if (number > group->end)
+            return 1e300;
+        return group->start + group->step * pivot_floor((number - group->start) / group->step);
+    case OWF_PIVOT_GROUP_YEARS:
+    case OWF_PIVOT_GROUP_QUARTERS:
+    case OWF_PIVOT_GROUP_MONTHS:
+        if (!(number >= -1e7 && number < 3e6))   /* beyond the year 9999: as it is */
+            return number;
+        pivot_date(number, date1904, &year, &month);
+        return group->by == OWF_PIVOT_GROUP_YEARS ? (double)year
+             : group->by == OWF_PIVOT_GROUP_QUARTERS ? (double)((month + 2) / 3) : (double)month;
+    default:
+        return number;
+    }
+}
+
+void owf_pivot_group_label(const owf_pivot_group *group, double key, char *out, size_t size)
+{
+    static const char *const months[12] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    char a[32], b[32];
+    if (!out || !size)
+        return;
+    if (group && group->by == OWF_PIVOT_GROUP_RANGE) {
+        double last;
+        if (key < group->start) {
+            owf_number_text(group->start, a);
+            snprintf(out, size, "<%s", a);
+            return;
+        }
+        if (key > group->end) {
+            owf_number_text(group->end, a);
+            snprintf(out, size, ">%s", a);
+            return;
+        }
+        /* whole steps from a whole start: "10-19"; else the range's two ends, "0.5-1" */
+        last = pivot_floor(group->start) == group->start && pivot_floor(group->step) == group->step
+             ? key + group->step - 1.0 : key + group->step;
+        owf_number_text(key, a);
+        owf_number_text(last, b);
+        snprintf(out, size, "%s-%s", a, b);
+    } else if (group && group->by == OWF_PIVOT_GROUP_QUARTERS && key >= 1.0 && key <= 4.0) {
+        snprintf(out, size, "Qtr%d", (int)key);
+    } else if (group && group->by == OWF_PIVOT_GROUP_MONTHS && key >= 1.0 && key <= 12.0) {
+        snprintf(out, size, "%s", months[(int)key - 1]);
+    } else {
+        owf_number_text(key, a);
+        snprintf(out, size, "%s", a);
+    }
+}
+
 int owf_pivot_is_name(const char *name)
 {
     return name && (!strcmp(name, OWF_PIVOT_SOURCE) || !strcmp(name, OWF_PIVOT_CONFIG));
@@ -418,6 +550,30 @@ int owf_pivot_config_text(const owf_pivotdef *def, char *out, size_t size)
         pt_put(&t, ":");
         pt_put(&t, pivot_show_letters[def->data[i].show]);
     }
+    for (i = 0; i < def->ngroup && i < OWF_PIVOT_GROUPS; i++) {   /* the same */
+        static const char by_letter[] = " nyqm";
+        const owf_pivot_group *g = &def->group[i];
+        char number[32];
+        if (g->by <= OWF_PIVOT_GROUP_NONE || g->by > OWF_PIVOT_GROUP_LAST)
+            continue;
+        pt_put(&t, i ? "," : ";b=");
+        pt_unsigned(&t, g->field);
+        number[0] = ':';
+        number[1] = by_letter[g->by];
+        number[2] = 0;
+        pt_put(&t, number);
+        if (g->by == OWF_PIVOT_GROUP_RANGE) {
+            owf_number_text(g->start, number);
+            pt_put(&t, ":");
+            pt_put(&t, number);
+            owf_number_text(g->end, number);
+            pt_put(&t, ":");
+            pt_put(&t, number);
+            owf_number_text(g->step, number);
+            pt_put(&t, ":");
+            pt_put(&t, number);
+        }
+    }
     if (def->nhide) {                        /* the same: only when used */
         pt_put(&t, ";h=");
         for (i = 0; i < def->nhide && i < OWF_PIVOT_HIDES; i++) {
@@ -519,7 +675,7 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
         p++;
     if (*p++ != '"')
         return 0;
-    def->nrow = def->ncol = def->ndata = def->npage = def->nsort = def->nhide = 0;
+    def->nrow = def->ncol = def->ndata = def->npage = def->nsort = def->nhide = def->ngroup = 0;
     if (p[0] != '2' || p[1] != ';')
         return parse_old_config(p, def);
     p += 2;
@@ -603,6 +759,42 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
                 !pivot_number_at(&p, &def->cols))
                 return 0;
             break;
+        case 'b':
+            while (*p >= '0' && *p <= '9') {
+                owf_pivot_group g;
+                memset(&g, 0, sizeof g);
+                if (!pivot_number_at(&p, &g.field) || *p++ != ':')
+                    return 0;
+                switch (*p++) {
+                case 'n': g.by = OWF_PIVOT_GROUP_RANGE; break;
+                case 'y': g.by = OWF_PIVOT_GROUP_YEARS; break;
+                case 'q': g.by = OWF_PIVOT_GROUP_QUARTERS; break;
+                case 'm': g.by = OWF_PIVOT_GROUP_MONTHS; break;
+                default: return 0;
+                }
+                if (g.by == OWF_PIVOT_GROUP_RANGE) {
+                    double *at[3];
+                    int k;
+                    at[0] = &g.start;
+                    at[1] = &g.end;
+                    at[2] = &g.step;
+                    for (k = 0; k < 3; k++) {
+                        const char *from;
+                        if (*p++ != ':')
+                            return 0;
+                        from = p;
+                        while (*p && *p != ':' && *p != ',' && *p != ';' && *p != '"')
+                            p++;
+                        if (p == from || !OWF_PIVOT_NUMBER(from, (size_t)(p - from), at[k]))
+                            return 0;
+                    }
+                }
+                if (owf_pivot_group_of(def, g.field) || !owf_pivot_set_group(def, &g))
+                    return 0;
+                if (*p == ',')
+                    p++;
+            }
+            break;
         case 'v':
             while (*p >= '0' && *p <= '9') {
                 int show;
@@ -646,7 +838,7 @@ int owf_pivot_check(const owf_book *book, const owf_pivotdef *def)
         def->source.first_row >= def->source.last_row || def->source.last_col < def->source.first_col ||
         !def->ndata || def->ndata > OWF_PIVOT_DATA || def->nrow > OWF_PIVOT_FIELDS ||
         def->ncol > OWF_PIVOT_FIELDS || def->npage > OWF_PIVOT_PAGES || def->nsort > OWF_PIVOT_SORTS ||
-        def->nhide > OWF_PIVOT_HIDES ||
+        def->nhide > OWF_PIVOT_HIDES || def->ngroup > OWF_PIVOT_GROUPS ||
         !(def->nrow + def->ncol))
         return 0;
     width = def->source.last_col - def->source.first_col + 1u;
@@ -663,6 +855,15 @@ int owf_pivot_check(const owf_book *book, const owf_pivotdef *def)
             if (used[k] == used[i])
                 return 0;
     }
+    for (i = 0; i < def->ngroup; i++)
+        if (def->group[i].field >= width || !pivot_group_ok(&def->group[i]))
+            return 0;
+    for (i = 0; i < def->nsort; i++)
+        if (def->sort_field[i] >= width)
+            return 0;
+    for (i = 0; i < def->nhide; i++)
+        if (def->hide[i].field >= width)
+            return 0;
     for (i = 0; i < def->ndata; i++)
         if (def->data[i].field >= width || def->data[i].function < OWF_PIVOT_FN_FIRST ||
             def->data[i].function > OWF_PIVOT_FN_LAST || def->data[i].show < OWF_PIVOT_SHOW_NORMAL ||
