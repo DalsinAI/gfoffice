@@ -676,12 +676,15 @@ static int path_open_figure(mf_player *m)
     }
     {
         long here[4];
+        int had = m->nfigs;
         here[0] = here[2] = m->dc.cur_x;
         here[1] = here[3] = m->dc.cur_y;
         emf_figure(m, here, 2, 0, 0);          /* a figure of the one point, twice; the next points follow it */
-        if (m->nfigs) { m->figs[(m->nfigs - 1) * 3 + 1] = 1; m->npath--; }
+        if (m->nfigs == had) return 0;         /* refused (figures or points used up): the earlier figures kept */
+        m->figs[(m->nfigs - 1) * 3 + 1] = 1;
+        m->npath--;
     }
-    return m->nfigs > 0;
+    return 1;
 }
 
 /* appends lp (n points) to the path's open figure */

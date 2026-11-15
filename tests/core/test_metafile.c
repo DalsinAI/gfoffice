@@ -103,6 +103,7 @@ static void text_out(wmf *w, int x, int y, const char *s)
 
 typedef struct {
     char log[4096];
+    char last[512];          /* the last path call, whole, however full log is */
     size_t used;
     int stop_after;          /* > 0: the sink says stop at that call */
     int calls;
@@ -120,12 +121,21 @@ static int rec_path(void *ctx, const int *xy, int n, int closed, unsigned long f
     recorder *r = (recorder *)ctx;
     char buf[64];
     int i;
+    char out[512];
+    size_t k = 0;
     if (r->stop_after && ++r->calls >= r->stop_after) return -1;
-    say(r, closed ? "P" : "L");
-    for (i = 0; i < n; i++) { snprintf(buf, sizeof buf, " %d,%d", xy[i * 2], xy[i * 2 + 1]); say(r, buf); }
+    out[k++] = closed ? 'P' : 'L';
+    out[k] = 0;
+    for (i = 0; i < n && k < sizeof out - 64; i++) {
+        snprintf(buf, sizeof buf, " %d,%d", xy[i * 2], xy[i * 2 + 1]);
+        strcpy(out + k, buf);
+        k += strlen(buf);
+    }
     snprintf(buf, sizeof buf, " f%06lx l%06lx w%d%s;", OWF_SHADE_SET(fill) ? OWF_SHADE_RGB(fill) : 0xEEEEEEUL,
              OWF_SHADE_SET(line) ? OWF_SHADE_RGB(line) : 0xEEEEEEUL, lw, dash ? " dash" : "");
-    say(r, buf);
+    strcpy(out + k, buf);
+    say(r, out);
+    strcpy(r->last, out);
     return 0;
 }
 
@@ -413,7 +423,7 @@ static void test_pdf(void)
 /* ---- an EMF, built ([MS-EMF] 2.3): records of Type, Size (bytes), fields ---- */
 
 typedef struct {
-    unsigned char d[8192];
+    unsigned char d[131072];
     size_t n;
     size_t rec;
     int records;
@@ -625,6 +635,31 @@ static void test_emf_paths(void)
     CHECK(strstr(r.log, "L 0,100 700,0 ") != NULL, "the pen ends where the curve did");
 }
 
+static void test_emf_path_full(void)
+{
+    static emf e;                                     /* 4096 figures: too big for the stack's taste */
+    recorder *r = (recorder *)calloc(1, sizeof *r);
+    owf_mf_result res;
+    char first[512];
+    int i;
+    estart(&e, 10000, 5000, 1);
+    enone(&e, 59);                                    /* BeginPath */
+    for (i = 0; i < 4096; i++) erect(&e, 43, 0, 0, 100, 100);   /* Rectangle: the path's figures used up */
+    epoint(&e, 27, 900, 400);
+    epoint(&e, 54, 950, 450);                         /* no room for this figure: dropped, the last one kept */
+    enone(&e, 60);
+    ebegin(&e, 64); e32(&e, 0); e32(&e, 0); e32(&e, 0); e32(&e, 0); eend(&e);   /* StrokePath */
+    efinish(&e);
+    CHECK(r && owf_metafile_play(e.d, e.n, 0, 0, 1000, 500, &sink, r, &res) == OWF_OK, "a full path plays");
+    if (!r) return;
+    i = (int)strcspn(r->log, ";");
+    memcpy(first, r->log, (size_t)i + 1);
+    first[i + 1] = 0;
+    CHECK(res.drawn == 4096 && !strcmp(r->last, first) && !strstr(r->last, "90,40") && !strstr(r->last, "95,45"),
+          "every figure as it was put in, and the one past the limit left out");
+    free(r);
+}
+
 static void test_emf_damaged(void)
 {
     emf e;
@@ -708,6 +743,7 @@ int main(void)
     test_emf_play();
     test_emf_mapping();
     test_emf_paths();
+    test_emf_path_full();
     test_emf_damaged();
     test_emf_render_and_pdf();
     printf("metafile: %d checks, %d failed\n", checks, failures);
