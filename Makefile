@@ -511,6 +511,33 @@ check: publisher-merge-check
 
 .PHONY: publisher-merge-test publisher-merge-check
 
+# GFOpenPublisher's built-in publication templates (src/pub/opp_template.c)
+PUB_TEMPLATE_DEPS = $(OWF_SRC) src/pub/opp_template.c src/pub/opp_merge.c src/core/ow_merge.c \
+	tests/pub/test_pub_template.c include/openpublisher_template.h include/openpublisher_merge.h \
+	include/ow_merge.h libowf/include/owf_deck.h
+
+$(OUT)/test-publisher-template: $(PUB_TEMPLATE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_template.c \
+		src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_template.c -lz -o $@
+
+$(OUT)/test-publisher-template-asan: $(PUB_TEMPLATE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_template.c \
+		src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_template.c -lz -o $@
+
+publisher-template-test: $(OUT)/test-publisher-template
+	$(OUT)/test-publisher-template
+
+publisher-template-check: $(OUT)/test-publisher-template-asan
+	$(OUT)/test-publisher-template-asan
+
+test: publisher-template-test
+check: publisher-template-check
+
+.PHONY: publisher-template-test publisher-template-check
+
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
 # merge fields shown by the page layout and kept by ODP and PPTX (tests/pub/test_pub_merge_show.c)
 PUB_MERGE_SHOW_DEPS = $(PUB_MERGE_DEPS) $(DECK_DEPS) $(DECK_SRC) tests/pub/test_pub_merge_show.c include/openpresentation_core.h
