@@ -279,6 +279,58 @@ static void test_query_groups(ob_project *p)
     owf_doc_free(doc);
 }
 
+/* Budgie's two (#241): a table's text groups take "leeds" and "Leeds" as one, as ob_view's NOCASE sort
+ * puts them together; and a Sum or Average past a 64-bit integer says so instead of wrapping. */
+static void test_case_groups_and_overflow(ob_project *p)
+{
+    static ob_table t;
+    static const char *const fields[] = { "Town", "Big" };
+    static const char *const rows[][2] = {
+        { "Leeds", "9000000000000000000" },
+        { "york", "1" },
+        { "leeds", "9000000000000000000" },
+        { "York", "2" },
+    };
+    ob_report r;
+    owf_doc *doc = NULL;
+    char err[OB_ERR_MAX] = "";
+    char *text;
+    ob_int key;
+    int i;
+
+    ob_table_init(&t, "Mixed");
+    ob_table_add_field(&t, "Town", OB_TEXT);
+    ob_table_add_field(&t, "Big", OB_INTEGER);
+    CHECK(ob_table_create(p, &t), "table: %s", ob_error(p));
+    for (i = 0; i < 4; i++)
+        CHECK(ob_row_add(p, "Mixed", 2, fields, rows[i], &key), "row %d: %s", i, ob_error(p));
+    ob_report_init(&r, "Mixed");
+    strcpy(r.table, "Mixed");
+    strcpy(r.group, "Town");
+    ob_report_add_column(&r, "Big", OB_TOTAL_SUM);
+    ob_report_add_column(&r, "Big", OB_TOTAL_AVERAGE);
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == 0 && doc, "build: %s", err);
+    if (!doc) return;
+    text = as_text(doc, "mixed.txt");
+    CHECK(text && !strcmp(text,
+        "Mixed\n"
+        "Town: Leeds\n"
+        "Big\tBig\n"
+        "9000000000000000000\t9000000000000000000\n"
+        "9000000000000000000\t9000000000000000000\n"
+        "Sum too large\tAverage too large\n"
+        "Town: york\n"
+        "Big\tBig\n"
+        "1\t1\n"
+        "2\t2\n"
+        "Sum 3\tAverage 1.5\n"
+        "Report totals\n"
+        "Big\tBig\n"
+        "Sum too large\tAverage too large\n"), "text:\n%s", text ? text : "(none)");
+    free(text);
+    owf_doc_free(doc);
+}
+
 static void test_errors_and_empty(ob_project *p)
 {
     static ob_table t;
@@ -339,6 +391,7 @@ int main(int argc, char **argv)
         test_grouped_table(p);
         test_query_and_save(p);
         test_query_groups(p);
+        test_case_groups_and_overflow(p);
         test_errors_and_empty(p);
         ob_close(p);
     }
