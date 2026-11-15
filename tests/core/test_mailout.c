@@ -85,6 +85,15 @@ static void test_sheet_check(void)
     CHECK(ow_label_sheet_check(&s) == OWF_OK, "one column");
     s.columns = 0;
     CHECK(ow_label_sheet_check(&s) == OWF_ERR_FORMAT && ow_label_sheet_check(NULL) == OWF_ERR_FORMAT, "none");
+    s = *ow_label_sheet_at(0);
+    s.columns = s.rows = 999999;                     /* as the parse lets through: no int overflow (UBSan) */
+    CHECK(ow_label_sheet_check(&s) == OWF_ERR_FORMAT, "a million by a million");
+    s = *ow_label_sheet_at(0);
+    s.columns = 2;
+    s.rows = 1;
+    s.across = 2147483000;                           /* (columns - 1) * across past 32 bits */
+    s.left = 2147483000;
+    CHECK(ow_label_sheet_check(&s) == OWF_ERR_FORMAT, "a pitch past 32 bits");
 }
 
 static void test_sheet_text(void)

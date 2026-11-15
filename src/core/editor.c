@@ -6468,15 +6468,16 @@ int ow_editor_labels(ow_editor *editor, const ow_label_sheet *sheet, int first, 
 
 int ow_label_sheet_check(const ow_label_sheet *s)
 {
-    long right, bottom;
-    if (!s || s->columns < 1 || s->rows < 1 || s->columns * s->rows > 400 || s->label_width < 1 ||
+    long long right, bottom;                         /* long is 32 bits on the Amiga */
+    if (!s || s->columns < 1 || s->rows < 1 || s->columns > 400 || s->rows > 400 ||
+        s->columns * s->rows > 400 || s->label_width < 1 ||
         s->label_height < 1 || s->page_width < 1440 || s->page_height < 1440 || s->page_width > 31680 ||
         s->page_height > 31680 || s->left < 0 || s->top < 0)
         return OWF_ERR_FORMAT;
     if ((s->columns > 1 && s->across < s->label_width) || (s->rows > 1 && s->down < s->label_height))
         return OWF_ERR_FORMAT;                       /* labels on top of each other */
-    right = (long)s->left + (long)(s->columns - 1) * s->across + s->label_width;
-    bottom = (long)s->top + (long)(s->rows - 1) * s->down + s->label_height;
+    right = (long long)s->left + (long long)(s->columns - 1) * s->across + s->label_width;
+    bottom = (long long)s->top + (long long)(s->rows - 1) * s->down + s->label_height;
     return right <= s->page_width && bottom <= s->page_height ? OWF_OK : OWF_ERR_FORMAT;
 }
 
