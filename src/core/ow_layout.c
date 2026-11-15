@@ -1601,3 +1601,25 @@ ol_document *ow_layout_footnotes(const ow_layout *l, int page, ol_unit *x, ol_un
     return od;
 }
 
+
+/* 2.0.40: where a comment's place shows: its run has nothing laid out, so the end of the text before it in its
+ * paragraph (else the paragraph's start, as ow_layout_caret answers) */
+int ow_layout_comment_place(const ow_layout *l, ow_position pos, int *page, ol_rect *box)
+{
+    const owf_story *story = l && !pos.box ? &l->doc->body : NULL;
+    int j;
+    if (story && pos.paragraph >= 0 && pos.paragraph < story->nparas) {
+        const owf_para *p = &story->paras[pos.paragraph];
+        for (j = pos.run - 1; j >= 0 && j < p->nruns; --j) {
+            const owf_run *r = &p->runs[j];
+            if (r->kind == OWF_RUN_TEXT && !r->comment && r->text && r->text[0]) {
+                ow_position at = pos;
+                at.run = j;
+                at.byte_offset = strlen(r->text);
+                if (ow_layout_caret(l, at, page, box)) return 1;
+                break;
+            }
+        }
+    }
+    return ow_layout_caret(l, pos, page, box);
+}

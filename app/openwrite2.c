@@ -2255,44 +2255,35 @@ static int line_inside(int y, int h, const ol_pixel_rect *clip)
     return !clip || (y >= clip->y && y + h <= clip->y + clip->height);
 }
 
+#define MAX_MARGIN_NOTES 64
+
 static void paint_comments(struct RastPort *rp, ow_layout *l, int page, const ol_scale *s,
                            const ol_pixel_rect *clip)
 {
-    const ol_page *pg = ow_layout_page(l);
-    int n = ow_editor_comment_count(editor), k, current = -1, bottom = -100000;
-    int x0, x1, fh = font ? font->tf_YSize : 8, line = fh + 2;
+    /* 2.0.40: where the notes go is the core's (ow_layout_margin_notes), so a click finds the same ones */
+    ow_margin_note notes[MAX_MARGIN_NOTES];
+    int n, k, current = -1, fh = font ? font->tf_YSize : 8, line = fh + 2;
     ow_comment_info info;
-    if (!n || !pg) return;
+    n = ow_layout_margin_notes(l, editor, page, s, line, notes, MAX_MARGIN_NOTES);
+    if (n > MAX_MARGIN_NOTES) n = MAX_MARGIN_NOTES;
+    if (n <= 0) return;
     if (ow_editor_current_comment(editor, &info)) current = info.index;
-    x0 = ol_scale_x(s, pg->width - pg->margin_right) + 6;
-    x1 = ol_scale_x(s, pg->width) - 4;
-    if (x1 - x0 < 24) return;                        /* no room: the highlighted text shows it */
     if (font) SetFont(rp, font);
     SetSoftStyle(rp, FS_NORMAL, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
     for (k = 0; k < n; ++k) {
-        int at_page, x, y, w, h, i, top;
-        ol_rect at;
+        const ow_margin_note *m = &notes[k];
+        int x = m->x, y = m->y, w = m->width, h = m->height, i, indent = x - m->margin_x;
         char head[96], body[160];
         const char *who, *nl;
         size_t len;
         LONG edge, ink;
-        if (!ow_editor_comment_info(editor, k, &info) || !info.shown ||   /* 2.0.39: the author filter */
-            !ow_layout_caret(l, info.end, &at_page, &at) || at_page != page)
-            continue;
-        x = x0 + (info.reply_to >= 0 ? 8 : 0);
-        w = x1 - x;
-        if (w < 16) continue;
-        h = 2 * line + 4;
-        top = ol_scale_y(s, at.y);
-        y = top > bottom + 3 ? top : bottom + 3;
-        bottom = y + h;
-        edge = ogt_pen(&ctx, k == current ? "accent" : "group.line");
+        if (!ow_editor_comment_info(editor, m->index, &info)) continue;
+        edge = ogt_pen(&ctx, m->index == current ? "accent" : "group.line");
         ink = ogt_pen(&ctx, info.done ? "muted" : "fill.text");
         /* the place in the text, and a line from the margin to the note */
-        if (line_inside(top, ol_scale_length(s, at.height), clip))
-            ogt_vline(rp, edge, ol_scale_x(s, at.x), top, ol_scale_length(s, at.height) > 1 ?
-                      ol_scale_length(s, at.height) : 2);
-        clip_box(rp, edge, x0 - 6, top, 6 + (info.reply_to >= 0 ? 8 : 0), 1, clip);
+        if (line_inside(m->place_y, m->place_height, clip))
+            ogt_vline(rp, edge, m->place_x, m->place_y, m->place_height > 1 ? m->place_height : 2);
+        clip_box(rp, edge, m->margin_x - 6, m->place_y, 6 + indent, 1, clip);
         clip_box(rp, ogt_pen_rgb(&ctx, info.done ? (ogt_rgb){236,236,236} : (ogt_rgb){255,246,190}), x, y, w, h, clip);
         clip_box(rp, edge, x, y, w, 1, clip);
         clip_box(rp, edge, x, y + h - 1, w, 1, clip);
@@ -2314,6 +2305,24 @@ static void paint_comments(struct RastPort *rp, ow_layout *l, int page, const ol
         }
         if (line_inside(y + 2 + line, fh, clip)) ogt_text(rp, ink, x + 3, y + 2 + line, body, w - 6);
     }
+}
+
+static int last_note = -1;                           /* 2.0.40: the note last clicked, and when */
+static ULONG last_note_secs, last_note_micros;
+
+/* 2.0.40: the comment whose margin note is under the pointer, -1: none */
+static int margin_note_hit(int mx, int my)
+{
+    ow_layout *l = pages();
+    ow_margin_note notes[MAX_MARGIN_NOTES];
+    int cx, cy, page, n, fh = font ? font->tf_YSize : 8;
+    ol_scale s;
+    if (!l || !pv || !editor || !ogt_pageview_to_content(pv, mx, my, &cx, &cy)) return -1;
+    page = ogt_pageview_page_at(pv, cy);
+    if (page < 0) return -1;
+    page_scale(&s, PAGE_MARGIN, ogt_pageview_page_top(pv, page));
+    n = ow_layout_margin_notes(l, editor, page, &s, fh + 2, notes, MAX_MARGIN_NOTES);
+    return ow_margin_note_at(notes, n > MAX_MARGIN_NOTES ? MAX_MARGIN_NOTES : n, cx, cy);
 }
 
 static void paint_page(struct RastPort *rp, ow_layout *l, int page, const ol_scale *s,
@@ -5816,12 +5825,27 @@ static void events(void)
         int mx = im->MouseX, my = im->MouseY;
         struct Gadget *g = (struct Gadget *)ia;
         ULONG secs = im->Seconds, micros = im->Micros;
-        int handled = 0, cx = 0, cy = 0, row = -1, r;
+        int handled = 0, cx = 0, cy = 0, row = -1, r, k_note;
         /* 2.0: the kinds see every message first, before it is replied (the scroller's tags live in it) */
         if (pv) {
             r = ogt_pageview_event(pv, class, code, ia, mx, my, &cx, &cy);
             if (r == OGT_PV_SCROLLED) { page_index = ogt_pageview_page(pv); if (nav) { ogt_list_select(nav, page_index); ogt_list_show(nav, page_index); } draw_status(); handled = 1; }
+            else if (r == OGT_PV_PRESS && (k_note = margin_note_hit(mx, my)) >= 0) {
+                /* 2.0.40: a note in the margin picks its comment (a reply's too); twice quickly, Edit Comment */
+                int twice = k_note == last_note && DoubleClick(last_note_secs, last_note_micros, secs, micros);
+                ow_editor_select_comment(editor, k_note);
+                selected_frame = -1;
+                mouse_selecting = 0;
+                last_note = twice ? -1 : k_note;
+                last_note_secs = secs;
+                last_note_micros = micros;
+                request_document_redraw();
+                if (twice) menu_action(M_COMMENT_EDIT);
+                else set_status("Comment picked: Tools > Comments to change, answer, mark or delete it; double-click to change it.");
+                handled = 1;
+            }
             else if (r == OGT_PV_PRESS) {
+                last_note = -1;
                 mouse_set_selection(mx, my, (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0);
                 if (frame_drag_begin(mx, my)) mouse_selecting = 0;
                 else mouse_selecting = 1;

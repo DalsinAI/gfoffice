@@ -388,6 +388,10 @@ int ow_editor_current_comment(ow_editor *editor, ow_comment_info *info);
 /* Selects the next comment's text (or the one before): 1, 2 when it went round the story's end, 0: none.
  * Replies are passed over (they are where their comment is). */
 int ow_editor_next_comment(ow_editor *editor, int backwards);
+/* 2.0.40: selects comment index's text (a reply's too, which is where its comment is) and makes it the
+ * comment at the caret until the selection moves, so a click on its note in the margin can change, answer or
+ * mark that one. 1, 0: no such comment. */
+int ow_editor_select_comment(ow_editor *editor, int index);
 /* 2.0.39: show only one author's comments (NULL or "": everyone's, as at first). The margin draws a comment
  * only when ow_comment_info.shown; Next and Previous Comment go only to comments whose thread has one shown.
  * The document is not changed. */

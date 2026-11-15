@@ -57,6 +57,10 @@ struct ow_editor {
     struct ow_merge_table *merge;
     int merge_at;
     char *comment_filter;    /* 2.0.39: the author whose comments are shown (NULL: everyone's) */
+    /* 2.0.40: the comment picked by its margin note (its place's run), current while the selection is the
+     * one picking it made (a reply's note too, though a reply is where its comment is) */
+    int pick_on, pick_para, pick_run;
+    ow_selection pick_sel;
 };
 
 static int update_story_fields(ow_editor *editor, owf_story *story);   /* 2.3.0 */
@@ -2531,12 +2535,23 @@ int ow_editor_comment_authors(ow_editor *editor, char (*names)[72], int max)
 
 /* The comment at the caret: one whose range holds it, or whose place it is at; the narrowest, a comment
  * before its replies. -1: none. */
+static int same_place(ow_position a, ow_position b)
+{
+    return a.box == b.box && a.paragraph == b.paragraph && a.run == b.run && a.byte_offset == b.byte_offset;
+}
+
 static int comment_at(ow_editor *editor, const ed_comment *list, int n)
 {
     owf_story *story = ed_story(editor);
     ow_position caret = clamp_position(editor, editor->selection.focus);
     int k, best = -1;
     size_t best_len = (size_t)-1;
+    /* 2.0.40: the one picked by its note, while nothing has moved the selection since */
+    if (editor->pick_on && same_place(editor->selection.anchor, editor->pick_sel.anchor) &&
+        same_place(editor->selection.focus, editor->pick_sel.focus)) {
+        for (k = 0; k < n; ++k)
+            if (list[k].para == editor->pick_para && list[k].run == editor->pick_run) return k;
+    }
     /* the one Next/Previous selected: its runs are the selection's ends (others can be at the same places) */
     for (k = 0; k < n; ++k) {
         ow_position s = comment_start(editor, &list[k]);
@@ -2613,7 +2628,24 @@ static void select_comment(ow_editor *editor, const ed_comment *c)
     editor->selection.anchor = comment_start(editor, c);
     editor->selection.focus = run_position(editor, c->para, c->run);
     editor->typing_group = 0;
+    editor->pick_on = 0;
     sync_typing_fmt(editor);
+}
+
+int ow_editor_select_comment(ow_editor *editor, int index)
+{
+    ed_comment *list;
+    int n = 0, failed;
+    if (!editor || !editor->doc || index < 0) return 0;
+    list = story_comments(editor->doc, ed_story(editor), &n, &failed);
+    if (index >= n) { owf_free(list); return 0; }
+    select_comment(editor, &list[index]);
+    editor->pick_on = 1;
+    editor->pick_para = list[index].para;
+    editor->pick_run = list[index].run;
+    editor->pick_sel = editor->selection;
+    owf_free(list);
+    return 1;
 }
 
 int ow_editor_next_comment(ow_editor *editor, int backwards)
@@ -2854,6 +2886,18 @@ static int change_comment(ow_editor *editor, int remove, const char *text, int d
         owf_free(list);
         if (r < 0) { edit_undone(editor); return OWF_ERR_MEMORY; }
         repoint_runs(editor, story, root, r);
+        edit_done(editor);
+        return OWF_OK;
+    }
+    if (remove && doc->comments[root].parent >= 0) {
+        /* 2.0.40: a reply picked by its note: that reply alone goes */
+        editor->typing_group = 0;
+        if (!remember_before_edit(editor)) { owf_free(list); return OWF_ERR_MEMORY; }
+        caret = clamp_position(editor, comment_start(editor, &list[k]));
+        owf_free(list);
+        repoint_runs(editor, story, root, -1);
+        editor->pick_on = 0;
+        editor->selection.anchor = editor->selection.focus = clamp_position(editor, caret);
         edit_done(editor);
         return OWF_OK;
     }
