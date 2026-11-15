@@ -1967,6 +1967,7 @@ static int walk_changes(const owf_story *story, change_fn fn, void *userdata)
                 const owf_run *r = &p->runs[j];
                 it.run = j;
                 rev = r->revision;
+                if (!rev && r->format_change > 0) rev = -r->format_change;   /* libowf 1.11: a format change */
                 /* an empty text run with no change between two pieces of one is no gap */
                 if (!rev && cur && r->kind == OWF_RUN_TEXT && (!r->text || !*r->text)) continue;
             } else {
@@ -2110,11 +2111,12 @@ int ow_editor_change_count(const ow_editor *editor)
 static void fill_info(ow_editor *editor, const change_find *f, ow_change_info *info)
 {
     const owf_revision *r = OWF_DOC_REVISION(editor->doc, f->rev);
+    const owf_format_change *fc = f->rev < 0 ? OWF_DOC_FORMAT_CHANGE(editor->doc, -f->rev) : NULL;
     memset(info, 0, sizeof(*info));
     info->index = f->want;
-    info->kind = r ? r->kind : 0;
-    info->author = r ? r->author : NULL;
-    info->date = r ? r->date : NULL;
+    info->kind = r ? r->kind : fc ? OW_CHANGE_FORMAT : 0;
+    info->author = r ? r->author : fc ? fc->author : NULL;
+    info->date = r ? r->date : fc ? fc->date : NULL;
     info->start = item_start(editor, f->first);
     info->end = item_end(editor, f->last);
 }

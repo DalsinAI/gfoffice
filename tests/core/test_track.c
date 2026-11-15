@@ -572,6 +572,62 @@ static void test_format_accept(void)
     owf_doc_free(doc);
 }
 
+/* Next and Previous Change stop at format changes, and say what they are; a complex field whose runs all carry
+ * the change (as Word writes them) gets it, with no change left over for its begin and code runs */
+static void test_format_nav(void)
+{
+    static const char *const fparts[] = {
+        NULL, NULL,
+        "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+        "<w:p><w:r><w:t xml:space=\"preserve\">Title: </w:t></w:r>"
+        "<w:r><w:rPr><w:b/><w:rPrChange w:id=\"1\" w:author=\"Gil\"><w:rPr/></w:rPrChange></w:rPr><w:fldChar w:fldCharType=\"begin\"/></w:r>"
+        "<w:r><w:rPr><w:b/><w:rPrChange w:id=\"2\" w:author=\"Gil\"><w:rPr/></w:rPrChange></w:rPr><w:instrText xml:space=\"preserve\"> TITLE </w:instrText></w:r>"
+        "<w:r><w:rPr><w:b/><w:rPrChange w:id=\"3\" w:author=\"Gil\"><w:rPr/></w:rPrChange></w:rPr><w:fldChar w:fldCharType=\"separate\"/></w:r>"
+        "<w:r><w:rPr><w:b/><w:rPrChange w:id=\"4\" w:author=\"Gil\"><w:rPr/></w:rPrChange></w:rPr><w:t>Lamps</w:t></w:r>"
+        "<w:r><w:rPr><w:b/><w:rPrChange w:id=\"5\" w:author=\"Gil\"><w:rPr/></w:rPrChange></w:rPr><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        "</w:p><w:sectPr/></w:body></w:document>" };
+    const char *parts[3];
+    owf_doc *doc = NULL;
+    ow_editor *ed;
+    ow_change_info ci;
+    int i, field = -1, used = 0;
+    /* the format changes' document: three changes in a row, the second inside an insertion (counted as that) */
+    CHECK(zip_import(format_names, format_parts, 3, &doc) == OWF_OK && doc, "Word's format changes");
+    if (!doc) return;
+    ed = ow_editor_new(doc);
+    CHECK(ed != NULL, "editor");
+    if (ed) {
+        CHECK(ow_editor_change_count(ed) == 3, "two format changes and an insertion");
+        caret(ed, 0, 0);
+        CHECK(ow_editor_next_change(ed, 0) == 1 && ow_editor_current_change(ed, &ci) && ci.kind == OW_CHANGE_FORMAT &&
+              ci.author && !strcmp(ci.author, "Gil") && ci.date && !strcmp(ci.date, "2026-11-03T11:00:00Z") && ci.index == 0,
+              "the first is a format change by Gil");
+        CHECK(ow_editor_next_change(ed, 0) == 1 && ow_editor_current_change(ed, &ci) && ci.kind == OW_CHANGE_FORMAT &&
+              ci.index == 1, "then the second");
+        CHECK(ow_editor_next_change(ed, 0) == 1 && ow_editor_current_change(ed, &ci) && ci.kind == OWF_REV_INSERT &&
+              ci.author && !strcmp(ci.author, "Hal"), "then the insertion, with its own format change inside it");
+        CHECK(ow_editor_next_change(ed, 1) == 1 && ow_editor_current_change(ed, &ci) && ci.index == 1, "back to the second");
+        ow_editor_free(ed);
+    }
+    owf_doc_free(doc);
+
+    parts[0] = format_parts[0];
+    parts[1] = format_parts[1];
+    parts[2] = fparts[2];
+    doc = NULL;
+    CHECK(zip_import(format_names, parts, 3, &doc) == OWF_OK && doc, "a changed complex field");
+    if (!doc) return;
+    for (i = 0; i < doc->body.paras[0].nruns; ++i) {
+        const owf_run *r = &doc->body.paras[0].runs[i];
+        if (r->kind == OWF_RUN_FIELD) field = i;
+        if (r->format_change) ++used;
+    }
+    CHECK(field >= 0 && doc->body.paras[0].runs[field].format_change > 0 &&
+          (doc->body.paras[0].runs[field].fmt.flags & OWF_BOLD), "the field has the change");
+    CHECK(doc->nformat_changes == used && used == 1, "no change is left over for the field's other runs");
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     test_recording();
@@ -583,6 +639,7 @@ int main(void)
     test_odf_form();
     test_format_changes();
     test_format_accept();
+    test_format_nav();
     printf("track changes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

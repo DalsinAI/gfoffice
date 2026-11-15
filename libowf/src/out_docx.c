@@ -444,7 +444,7 @@ static long change_id(const owf_doc *doc, const owf_story *story, const owf_para
     if (k > 900) k = 900;
     for (q = story->paras; q < para; ++q)
         before += q->nruns + 1;
-    return base + (long)k * 2000000L + (before + j) * 8L;    /* +1 to +3: a run's later pieces */
+    return base + (long)k * 2000000L + (before + j) * 8L;    /* +1 to +3: a run's later pieces, +4 to +7 their format changes */
 }
 
 static const owf_revision *run_change(const owf_doc *doc, int number)
