@@ -1,6 +1,6 @@
 /*
- * libowf's WMF player (owf_metafile.c) and the page PDF writer playing WMF pictures (owf_pdf.c). Every metafile
- * here is made by this file from [MS-WMF]'s record layouts, so no picture from any program goes into the
+ * libowf's WMF and EMF player (owf_metafile.c) and the page PDF writer playing them (owf_pdf.c). Every metafile
+ * here is made by this file from [MS-WMF]'s and [MS-EMF]'s record layouts, so no picture from any program goes into the
  * repository. Into pixels too (owf_mfraster.c). make metafile-test, make metafile-check (ASan).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -401,13 +401,299 @@ static void test_pdf(void)
         owf_note_level level;
         const char *note = owf_report_note(rp, i, &level, NULL);
         if (note && strstr(note, "does not draw yet")) lost = 1;
-        if (note && strstr(note, "Parts of WMF pictures")) approx = 1;
+        if (note && strstr(note, "Parts of WMF and EMF pictures")) approx = 1;
     }
     CHECK(!lost, "not reported as a picture left out");
     CHECK(approx, "the StretchDIB inside reported");
     free(out);
     owf_report_free(rp);
     owf_pdf_free(pdf);
+}
+
+/* ---- an EMF, built ([MS-EMF] 2.3): records of Type, Size (bytes), fields ---- */
+
+typedef struct {
+    unsigned char d[8192];
+    size_t n;
+    size_t rec;
+    int records;
+} emf;
+
+static void e32(emf *e, long v)
+{
+    unsigned long u = (unsigned long)v;
+    e->d[e->n++] = (unsigned char)(u & 255); e->d[e->n++] = (unsigned char)((u >> 8) & 255);
+    e->d[e->n++] = (unsigned char)((u >> 16) & 255); e->d[e->n++] = (unsigned char)((u >> 24) & 255);
+}
+static void e16(emf *e, int v) { e->d[e->n++] = (unsigned char)(v & 255); e->d[e->n++] = (unsigned char)((v >> 8) & 255); }
+static void ebegin(emf *e, long type) { e->rec = e->n; e32(e, type); e32(e, 0); }
+static void eend(emf *e)
+{
+    size_t size;
+    while (e->n & 3) e->d[e->n++] = 0;
+    size = e->n - e->rec;
+    e->d[e->rec + 4] = (unsigned char)(size & 255);
+    e->d[e->rec + 5] = (unsigned char)((size >> 8) & 255);
+    e->d[e->rec + 6] = 0;
+    e->d[e->rec + 7] = 0;
+    e->records++;
+}
+static void ecolour(emf *e, int r, int g, int b) { e->d[e->n++] = (unsigned char)r; e->d[e->n++] = (unsigned char)g; e->d[e->n++] = (unsigned char)b; e->d[e->n++] = 0; }
+
+/* the header: Frame 0,0 to fw,fh (0.01 mm) on a device of 1000 by 500 pixels and 100 by 50 mm (10 a mm), so the
+ * frame is fw/10 by fh/10 pixels; handles objects' places (0 the file's own) */
+static void estart(emf *e, long fw, long fh, int handles)
+{
+    memset(e, 0, sizeof *e);
+    ebegin(e, 1);
+    e32(e, 0); e32(e, 0); e32(e, fw / 10 - 1); e32(e, fh / 10 - 1);   /* Bounds, inclusive */
+    e32(e, 0); e32(e, 0); e32(e, fw); e32(e, fh);                     /* Frame */
+    e32(e, 0x464D4520L); e32(e, 0x10000); e32(e, 0); e32(e, 0);       /* " EMF", Version, Bytes, Records */
+    e16(e, handles); e16(e, 0); e32(e, 0); e32(e, 0); e32(e, 0);      /* Handles, Reserved, nDescription, off, nPal */
+    e32(e, 1000); e32(e, 500); e32(e, 100); e32(e, 50);               /* Device, Millimeters */
+    eend(e);
+}
+static void efinish(emf *e)
+{
+    ebegin(e, 14); e32(e, 0); e32(e, 16); e32(e, 20); eend(e);        /* EOF: nPalEntries, offPalEntries, SizeLast */
+    e->d[48] = (unsigned char)(e->n & 255); e->d[49] = (unsigned char)((e->n >> 8) & 255);
+    e->d[52] = (unsigned char)e->records;
+}
+static void erect(emf *e, long type, long l, long t, long r, long b)
+{
+    ebegin(e, type); e32(e, l); e32(e, t); e32(e, r); e32(e, b); eend(e);
+}
+static void epoint(emf *e, long type, long x, long y) { ebegin(e, type); e32(e, x); e32(e, y); eend(e); }
+static void eone(emf *e, long type, long v) { ebegin(e, type); e32(e, v); eend(e); }
+static void enone(emf *e, long type) { ebegin(e, type); eend(e); }
+static void epen(emf *e, int index, int style, int width, int r, int g, int b)
+{
+    ebegin(e, 38); e32(e, index); e32(e, style); e32(e, width); e32(e, 0); ecolour(e, r, g, b); eend(e);
+}
+static void ebrush(emf *e, int index, int style, int r, int g, int b)
+{
+    ebegin(e, 39); e32(e, index); e32(e, style); ecolour(e, r, g, b); e32(e, 0); eend(e);
+}
+/* PolyXxx16 (type): Bounds, Count, the points as int16 pairs */
+static void epoly16(emf *e, long type, const short *xy, int n)
+{
+    int i;
+    ebegin(e, type); e32(e, 0); e32(e, 0); e32(e, 0); e32(e, 0); e32(e, n);
+    for (i = 0; i < n * 2; i++) e16(e, xy[i]);
+    eend(e);
+}
+static void efont(emf *e, int index, long height, long weight, int italic, const char *face)
+{
+    int i;
+    ebegin(e, 82); e32(e, index);
+    e32(e, height); e32(e, 0); e32(e, 0); e32(e, 0); e32(e, weight);
+    e->d[e->n++] = (unsigned char)italic; e->d[e->n++] = 0; e->d[e->n++] = 0; e->d[e->n++] = 0;
+    e->d[e->n++] = 0; e->d[e->n++] = 0; e->d[e->n++] = 0; e->d[e->n++] = 0;
+    for (i = 0; i < 32; i++) e16(e, i < (int)strlen(face) ? face[i] : 0);
+    eend(e);
+}
+/* ExtTextOutW: Bounds, iGraphicsMode, exScale, eyScale, Reference, Chars, offString, Options, Rectangle, offDx */
+static void etext(emf *e, long x, long y, const unsigned short *s, int n)
+{
+    int i;
+    ebegin(e, 84);
+    e32(e, 0); e32(e, 0); e32(e, 0); e32(e, 0); e32(e, 1); e32(e, 0); e32(e, 0);
+    e32(e, x); e32(e, y); e32(e, n); e32(e, 76); e32(e, 0);
+    e32(e, 0); e32(e, 0); e32(e, 0); e32(e, 0); e32(e, 0);
+    for (i = 0; i < n; i++) e16(e, s[i]);
+    eend(e);
+}
+
+/* the EMF most of its checks play: a 1000 by 500 pixel frame, drawn into 2000 by 1000 */
+static void emf_sample(emf *e)
+{
+    static const short tri[6] = { 0, 0, 10, 0, 0, 10 };
+    static const short curve[8] = { 0, 500, 0, 400, 100, 400, 100, 500 };
+    static const unsigned short hi[3] = { 'H', 'i', 0x20AC };
+    estart(e, 10000, 5000, 5);
+    epen(e, 1, 0, 10, 0xFF, 0, 0);                /* a red pen, 10 wide */
+    ebrush(e, 2, 0, 0, 0, 0xFF);                  /* a blue brush */
+    eone(e, 37, 1);                               /* SelectObject */
+    eone(e, 37, 2);
+    erect(e, 43, 100, 50, 300, 250);              /* Rectangle */
+    erect(e, 42, 400, 50, 500, 150);              /* Ellipse */
+    epoly16(e, 86, tri, 3);                       /* Polygon16 */
+    epoint(e, 27, 600, 400);                      /* MoveToEx */
+    epoint(e, 54, 700, 450);                      /* LineTo */
+    efont(e, 3, -100, 700, 1, "Times New Roman");
+    eone(e, 37, 3);
+    eone(e, 24, 0x008000L);                       /* SetTextColor: green (ColorRef 00 80 00) */
+    etext(e, 50, 300, hi, 3);
+    ebegin(e, 81); e32(e, 0); eend(e);            /* StretchDIBits: played as nothing */
+    ebegin(e, 70); e32(e, 4); e32(e, 0x2B464D45L); eend(e);   /* a comment (EMF+): passed over */
+    eone(e, 37, (long)0x80000008UL);              /* the stock NULL_PEN */
+    erect(e, 43, 0, 400, 100, 500);               /* filled, no line */
+    enone(e, 59);                                 /* BeginPath */
+    epoint(e, 27, 800, 0);
+    epoint(e, 54, 900, 0);
+    epoint(e, 54, 900, 100);
+    enone(e, 61);                                 /* CloseFigure */
+    enone(e, 60);                                 /* EndPath */
+    ebegin(e, 62); e32(e, 0); e32(e, 0); e32(e, 0); e32(e, 0); eend(e);   /* FillPath */
+    eone(e, 37, (long)0x80000007UL);              /* the stock BLACK_PEN */
+    epoly16(e, 85, curve, 4);                     /* PolyBezier16: one curve, as lines */
+    eone(e, 37, (long)0x80000005UL);              /* NULL_BRUSH, and */
+    eone(e, 37, (long)0x80000008UL);              /* NULL_PEN: nothing drawn */
+    erect(e, 43, 0, 0, 10, 10);
+    efinish(e);
+}
+
+static void test_emf_play(void)
+{
+    emf e;
+    recorder r;
+    owf_mf_result res;
+    emf_sample(&e);
+    CHECK(owf_metafile_is_emf(e.d, e.n) && !owf_metafile_is_wmf(e.d, e.n), "an EMF, not a WMF");
+    CHECK(owf_metafile_can_play(e.d, e.n), "played");
+    memset(&r, 0, sizeof r);
+    CHECK(owf_metafile_play(e.d, e.n, 0, 0, 2000, 1000, &sink, &r, &res) == OWF_OK, "an EMF plays");
+    CHECK(strstr(r.log, "P 200,100 600,100 600,500 200,500 f0000ff lff0000 w20;") != NULL,
+          "Rectangle: twice the size, blue under a red pen 20 wide");
+    CHECK(strstr(r.log, "E 800,100 200x200 f0000ff lff0000 w20;") != NULL, "Ellipse");
+    CHECK(strstr(r.log, "P 0,0 20,0 0,20 f0000ff lff0000 w20;") != NULL, "Polygon16");
+    CHECK(strstr(r.log, "L 1200,800 1400,900 feeeeee lff0000 w20;") != NULL, "MoveToEx and LineTo");
+    CHECK(strstr(r.log, "\"Hi\xE2\x82\xAC\"") != NULL, "ExtTextOutW's UTF-16, the euro as UTF-8");
+    CHECK(strstr(r.log, "k1 f3 s200 c008000;") != NULL, "Times (serif), bold italic, 100 tall: 200, green");
+    CHECK(strstr(r.log, "P 0,800 200,800 200,1000 0,1000 f0000ff leeeeee w0;") != NULL, "a null pen: fill only");
+    CHECK(strstr(r.log, "P 1600,0 1800,0 1800,200 f0000ff leeeeee w0;") != NULL,
+          "a path, filled (FillPath draws no line)");
+    CHECK(strstr(r.log, "L 0,1000 ") != NULL && strstr(r.log, " 200,1000 feeeeee l000000 w0;") != NULL,
+          "PolyBezier16 as lines, from its first point to its last");
+    CHECK(strstr(r.log, "P 0,0 20,0 20,20 0,20") == NULL, "the null pen and brush: nothing");
+    CHECK(res.skipped == 1 && res.drawn == 8, "eight drawn; the StretchDIBits left out");
+}
+
+/* MM_ANISOTROPIC with a window and a viewport; MM_HIMETRIC (y up, through the reference device) */
+static void test_emf_mapping(void)
+{
+    emf e;
+    recorder r;
+    estart(&e, 10000, 5000, 1);
+    eone(&e, 17, 8);                                  /* SetMapMode MM_ANISOTROPIC */
+    epoint(&e, 9, 100, 100);                          /* SetWindowExtEx */
+    epoint(&e, 11, 1000, 500);                        /* SetViewportExtEx: 10 across, 5 down a unit */
+    epoint(&e, 10, 10, 10);                           /* SetWindowOrgEx: 10,10 at the corner */
+    erect(&e, 43, 10, 10, 20, 20);
+    enone(&e, 33);                                    /* SaveDC */
+    eone(&e, 17, 3);                                  /* MM_HIMETRIC: 0.01 mm, 10 pixels a mm, y up */
+    erect(&e, 43, 0, -1000, 1000, -2000);
+    eone(&e, 34, -1);                                 /* RestoreDC: back to the window and viewport */
+    erect(&e, 43, 20, 20, 30, 30);
+    efinish(&e);
+    memset(&r, 0, sizeof r);
+    CHECK(owf_metafile_play(e.d, e.n, 0, 0, 1000, 500, &sink, &r, NULL) == OWF_OK, "mapped EMF plays");
+    CHECK(strstr(r.log, "P 0,0 100,0 100,50 0,50 ") != NULL, "the window into the viewport");
+    CHECK(strstr(r.log, "P 0,100 100,100 100,200 0,200 ") != NULL, "MM_HIMETRIC: 10 mm is 100 pixels, y going up");
+    CHECK(strstr(r.log, "P 100,50 200,50 200,100 100,100 ") != NULL, "RestoreDC brings the mapping back");
+}
+
+/* paths: an open figure stroked, a PolylineTo and a PolyBezierTo carrying a figure on, an ellipse in a path */
+static void test_emf_paths(void)
+{
+    static const short to[4] = { 100, 0, 100, 100 };
+    static const short curve[6] = { 100, 200, 0, 200, 0, 100 };
+    emf e;
+    recorder r;
+    owf_mf_result res;
+    estart(&e, 10000, 5000, 1);
+    enone(&e, 59);                                    /* BeginPath */
+    epoint(&e, 27, 0, 0);
+    epoly16(&e, 89, to, 2);                           /* PolylineTo16 */
+    epoly16(&e, 88, curve, 3);                        /* PolyBezierTo16: on from 100,100 */
+    enone(&e, 60);
+    ebegin(&e, 64); e32(&e, 0); e32(&e, 0); e32(&e, 0); e32(&e, 0); eend(&e);   /* StrokePath */
+    enone(&e, 59);
+    erect(&e, 42, 400, 0, 600, 200);                  /* Ellipse, in a path */
+    enone(&e, 60);
+    ebegin(&e, 63); e32(&e, 0); e32(&e, 0); e32(&e, 0); e32(&e, 0); eend(&e);   /* StrokeAndFillPath */
+    ebegin(&e, 64); e32(&e, 0); e32(&e, 0); e32(&e, 0); e32(&e, 0); eend(&e);   /* the path is used up: nothing */
+    epoint(&e, 54, 700, 0);                           /* LineTo, outside a path: from where the curve ended */
+    efinish(&e);
+    memset(&r, 0, sizeof r);
+    CHECK(owf_metafile_play(e.d, e.n, 0, 0, 1000, 500, &sink, &r, &res) == OWF_OK, "paths play");
+    CHECK(!strncmp(r.log, "L 0,0 100,0 100,100 ", 20) && strstr(r.log, " 0,100 feeeeee l000000 w0;") != NULL,
+          "one open figure, stroked: MoveTo, PolylineTo, then the curve's lines to 0,100");
+    CHECK(strstr(r.log, "P 600,100 ") != NULL && strstr(strstr(r.log, "P 600,100 "), " fffffff l000000 w0;") &&
+          res.drawn == 3,
+          "the ellipse as a closed figure from its right, filled and stroked; then the LineTo: three in all");
+    CHECK(strstr(r.log, "L 0,100 700,0 ") != NULL, "the pen ends where the curve did");
+}
+
+static void test_emf_damaged(void)
+{
+    emf e;
+    recorder r;
+    size_t cut;
+    int ok = 1;
+    emf_sample(&e);
+    for (cut = 0; cut <= e.n; cut++) {           /* every cut (ASan): played as far as it holds, or refused */
+        int rc;
+        memset(&r, 0, sizeof r);
+        rc = owf_metafile_play(e.d, cut, 0, 0, 2000, 1000, &sink, &r, NULL);
+        if (rc != OWF_OK && rc != OWF_ERR_FORMAT) ok = 0;
+    }
+    CHECK(ok, "an EMF cut anywhere: no harm");
+    memset(&r, 0, sizeof r);
+    r.stop_after = 2;
+    CHECK(owf_metafile_play(e.d, e.n, 0, 0, 2000, 1000, &sink, &r, NULL) == OWF_ERR_MEMORY, "the sink stops it");
+    e.d[40] = 'X';
+    CHECK(!owf_metafile_is_emf(e.d, e.n) && owf_metafile_play(e.d, e.n, 0, 0, 10, 10, &sink, &r, NULL) ==
+          OWF_ERR_FORMAT, "no signature: not an EMF");
+    {
+        /* a Poly record whose Count runs past its record, and an object index past Handles */
+        emf b;
+        static const short tri[6] = { 0, 0, 10, 0, 0, 10 };
+        estart(&b, 10000, 5000, 2);
+        epoly16(&b, 86, tri, 3);
+        b.d[b.rec + 24] = 200;                    /* Count 200 in a record of 3 points */
+        epen(&b, 9, 0, 1, 0, 0, 0);               /* place 9 of 2 */
+        eone(&b, 37, 9);
+        ebegin(&b, 81); e32(&b, 0); eend(&b);
+        b.d[b.rec + 4] = 0xFF; b.d[b.rec + 5] = 0xFF;   /* a size past the end */
+        memset(&r, 0, sizeof r);
+        CHECK(owf_metafile_play(b.d, b.n, 0, 0, 100, 100, &sink, &r, NULL) == OWF_OK && !r.log[0],
+              "bad counts and places: nothing drawn, no harm");
+    }
+}
+
+static void test_emf_render_and_pdf(void)
+{
+    emf e;
+    unsigned char *argb = (unsigned char *)malloc(100 * 50 * 4);
+    owf_image im;
+    owf_pdf *pdf = owf_pdf_new();
+    unsigned char *out = NULL;
+    size_t n = 0;
+    int tw = 0, th = 0;
+    if (!argb || !pdf) { CHECK(0, "memory"); free(argb); owf_pdf_free(pdf); return; }
+    emf_sample(&e);
+    CHECK(owf_metafile_size(e.d, e.n, &tw, &th) && tw == 5669 && th == 2834, "its size from Frame: 100 by 50 mm");
+    memset(argb, 255, 100 * 50 * 4);
+    CHECK(owf_metafile_render(e.d, e.n, argb, 100, 50, NULL) == OWF_OK, "an EMF into pixels");
+    CHECK(pixel(argb, 100, 20, 15) == 0x0000FF, "inside its rectangle: blue");
+    CHECK(pixel(argb, 100, 9, 15) == 0xFF0000, "its left edge: the red pen");
+    CHECK(pixel(argb, 100, 88, 3) == 0x0000FF, "the filled path");
+    memset(&im, 0, sizeof im);
+    im.mime = (char *)"image/x-emf";
+    im.data = e.d;
+    im.length = e.n;
+    CHECK(owf_pdf_page(pdf, 12240, 15840) == 0 && owf_pdf_image(pdf, &im, 1440, 1440, 2000, 1000, NULL) == 0,
+          "the EMF placed on a page");
+    CHECK(owf_pdf_finish(pdf, "emf", &out, &n, NULL) == OWF_OK && out, "the PDF");
+    if (out) {
+        CHECK(count(out, n, "/XObject") == 0, "drawn as paths, no picture object");
+        CHECK(count(out, n, "(Hi\\200) Tj") == 1, "its text");
+        CHECK(count(out, n, "0.000 0.000 1.000 rg") >= 1, "its blue");
+    }
+    free(out);
+    owf_pdf_free(pdf);
+    free(argb);
 }
 
 int main(void)
@@ -419,6 +705,11 @@ int main(void)
     test_render();
     test_render_far();
     test_pdf();
+    test_emf_play();
+    test_emf_mapping();
+    test_emf_paths();
+    test_emf_damaged();
+    test_emf_render_and_pdf();
     printf("metafile: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

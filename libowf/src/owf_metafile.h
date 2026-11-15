@@ -10,6 +10,14 @@
  * kind), text colour and alignment, MoveTo and LineTo, Rectangle, RoundRect, Ellipse, Polygon, Polyline,
  * PolyPolygon, TextOut and ExtTextOut, SaveDC and RestoreDC. Pictures inside (StretchDIB and the like), arcs, pies,
  * chords, regions and clipping are left out and counted.
+ *
+ * An EMF ([MS-EMF] 2.3) plays the same way: its Frame (or Bounds), the mapping modes with the window's and the
+ * viewport's origins and extents, pens (CreatePen, ExtCreatePen), brushes, fonts (ExtCreateFontIndirectW) and stock
+ * objects, MoveToEx and LineTo, Rectangle, RoundRect, Ellipse, the Poly records in 32 and 16 bits (Polygon,
+ * Polyline, PolyBezier and their To forms, PolyPolygon, PolyPolyline; curves as lines), paths (BeginPath to
+ * EndPath, then FillPath, StrokePath or StrokeAndFillPath), ExtTextOutW and A, SaveDC and RestoreDC. EMF+ comments
+ * are passed over for the EMF records beside them; pictures inside, arcs, clipping and world transforms are left
+ * out and counted.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_METAFILE_H
@@ -42,20 +50,28 @@ typedef struct owf_mf_result {
 /* 1: the bytes are a WMF (with or without the placeable header), 0: not */
 int owf_metafile_is_wmf(const unsigned char *data, size_t length);
 
-/* Plays a WMF into the box x, y, w, h (w, h > 0): the picture's own bounds (the window, else the placeable
- * header's) fill the box. OWF_OK; OWF_ERR_FORMAT when it is not a WMF or its first records don't hold together
+/* 1: the bytes are an EMF (its header record, " EMF"), 0: not */
+int owf_metafile_is_emf(const unsigned char *data, size_t length);
+
+/* 1: a WMF or an EMF, which owf_metafile_play and owf_metafile_render draw */
+int owf_metafile_can_play(const unsigned char *data, size_t length);
+
+/* Plays a WMF or an EMF into the box x, y, w, h (w, h > 0): the picture's own bounds (a WMF's window, else its
+ * placeable header's; an EMF's Frame, else its Bounds) fill the box. OWF_OK; OWF_ERR_FORMAT when it is neither or
+ * its first records don't hold together
  * (nothing drawn); a record cut short ends the playing, keeping what was drawn; -1 from the sink stops it
  * (OWF_ERR_MEMORY). result may be NULL. */
 int owf_metafile_play(const unsigned char *data, size_t length, int x, int y, int w, int h, const owf_mf_sink *sink,
                       void *ctx, owf_mf_result *result);
 
-/* The WMF drawn into w x h pixels (A, R, G, B bytes a pixel, rows of w), over what argb holds: the picture's
+/* The WMF or EMF drawn into w x h pixels (A, R, G, B bytes a pixel, rows of w), over what argb holds: the picture's
  * bounds fill it. Shapes and lines only, solid: text and the records the player leaves out are counted as
  * skipped (owf_mfraster.c). OWF_OK, OWF_ERR_FORMAT, or OWF_ERR_MEMORY. */
 int owf_metafile_render(const unsigned char *data, size_t length, unsigned char *argb, int w, int h,
                         owf_mf_result *result);
 
-/* A placeable WMF's size from its bounds and units an inch, twips: 1, or 0 when it doesn't say. */
+/* A placeable WMF's size from its bounds and units an inch, or an EMF's from its Frame, twips: 1, or 0 when it
+ * doesn't say. */
 int owf_metafile_size(const unsigned char *data, size_t length, int *w, int *h);
 
 #endif

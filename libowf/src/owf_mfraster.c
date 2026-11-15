@@ -197,11 +197,28 @@ int owf_metafile_render(const unsigned char *data, size_t length, unsigned char 
     return rc;
 }
 
+/* a signed 32-bit little-endian number */
+static long le32s(const unsigned char *p)
+{
+    unsigned long v = (unsigned long)p[0] | (unsigned long)p[1] << 8 | (unsigned long)p[2] << 16 |
+                      (unsigned long)p[3] << 24;
+    return v & 0x80000000UL ? -(long)((~v & 0xFFFFFFFFUL) + 1) : (long)v;
+}
+
 int owf_metafile_size(const unsigned char *data, size_t length, int *w, int *h)
 {
     long dx, dy, inch;
     if (w) *w = 0;
     if (h) *h = 0;
+    if (owf_metafile_is_emf(data, length)) {
+        /* Frame (RectL, 0.01 mm) at 24: 2540 to the inch, 1440 twips */
+        long l = le32s(data + 24), t = le32s(data + 28), r = le32s(data + 32), b = le32s(data + 36);
+        long long fw = (long long)r - l, fh = (long long)b - t;
+        if (fw <= 0 || fh <= 0 || fw > 10000000 || fh > 10000000) return 0;
+        if (w) *w = (int)(fw * 1440 / 2540);
+        if (h) *h = (int)(fh * 1440 / 2540);
+        return fw * 1440 / 2540 > 0 && fh * 1440 / 2540 > 0;
+    }
     if (!owf_metafile_is_wmf(data, length) || length < 22 || data[0] != 0xD7 || data[1] != 0xCD) return 0;
     dx = (long)(short)(data[10] | data[11] << 8) - (long)(short)(data[6] | data[7] << 8);
     dy = (long)(short)(data[12] | data[13] << 8) - (long)(short)(data[8] | data[9] << 8);

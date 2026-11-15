@@ -1519,7 +1519,7 @@ static picture *picture_get(int index)
             return pictures[i].argb ? &pictures[i] : NULL;
         }
     im = &deck->res->images[index];
-    if (owf_metafile_is_wmf(im->data, im->length))
+    if (owf_metafile_can_play(im->data, im->length))
         return picture_wmf(index, im);
     snprintf(tmp, sizeof tmp, "T:GFOpenPresentation-Picture-%ld-%d.tmp", (long)FindTask(NULL), index);
     f = im->data && im->length ? Open((STRPTR)tmp, MODE_NEWFILE) : 0;
