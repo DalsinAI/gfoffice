@@ -83,16 +83,29 @@ static unsigned long colour_ref(const unsigned char *p)
     return OWF_SHADE(((unsigned long)p[0] << 16) | ((unsigned long)p[1] << 8) | p[2]);
 }
 
+/* far enough for any page, and well inside an int when the box's corner is added and points are subtracted */
+#define MAP_LIMIT 0x3FFFFFFFLL
+
+static long long clamp_map(long long v)
+{
+    return v > MAP_LIMIT ? MAP_LIMIT : v < -MAP_LIMIT ? -MAP_LIMIT : v;
+}
+
+/* a logical position l in the window (its origin and extent) to the box (its corner and size) */
+static int map_one(long win_origin, long win_extent, int box_corner, int box_size, long l)
+{
+    long long v = win_extent ? clamp_map((long long)(l - win_origin) * box_size / win_extent) : 0;
+    return (int)clamp_map(v + box_corner);
+}
+
 static int map_x(const mf_player *m, long lx)
 {
-    long long v = (long long)(lx - m->dc.win_x) * m->bw;
-    return m->bx + (int)(m->dc.win_w ? v / m->dc.win_w : 0);
+    return map_one(m->dc.win_x, m->dc.win_w, m->bx, m->bw, lx);
 }
 
 static int map_y(const mf_player *m, long ly)
 {
-    long long v = (long long)(ly - m->dc.win_y) * m->bh;
-    return m->by + (int)(m->dc.win_h ? v / m->dc.win_h : 0);
+    return map_one(m->dc.win_y, m->dc.win_h, m->by, m->bh, ly);
 }
 
 /* a length across (a pen's width), the caller's units, never negative */
@@ -101,7 +114,7 @@ static int map_w(const mf_player *m, long l)
     long long v = (long long)l * m->bw;
     long w = m->dc.win_w < 0 ? -m->dc.win_w : m->dc.win_w;
     if (l < 0) v = -v;
-    return w ? (int)(v / w) : 0;
+    return w ? (int)clamp_map(v / w) : 0;
 }
 
 static int map_h(const mf_player *m, long l)
@@ -109,7 +122,7 @@ static int map_h(const mf_player *m, long l)
     long long v = (long long)l * m->bh;
     long h = m->dc.win_h < 0 ? -m->dc.win_h : m->dc.win_h;
     if (l < 0) v = -v;
-    return h ? (int)(v / h) : 0;
+    return h ? (int)clamp_map(v / h) : 0;
 }
 
 static unsigned long line_of(const mf_player *m) { return m->dc.pen.type == OBJ_PEN ? m->dc.pen.colour : OWF_SHADE(0); }

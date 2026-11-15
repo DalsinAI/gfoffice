@@ -470,9 +470,15 @@ def jpeg():
 
 
 def wmf():
-    """A placeable-less WMF: its header and the end record."""
-    words = 9 + 3
-    return struct.pack('<HHHIHIH', 1, 9, 0x300, words, 0, 3, 0) + struct.pack('<IH', 3, 0)
+    """A placeable-less WMF ([MS-WMF] 2.3): a 1000 x 1000 window, a blue brush, a box, the end record."""
+    def rec(func, *fields):
+        return struct.pack('<IH', 3 + len(fields), func) + struct.pack('<%dh' % len(fields), *fields)
+    body = (rec(0x020B, 0, 0) + rec(0x020C, 1000, 1000) +        # SetWindowOrg, SetWindowExt (y, x)
+            rec(0x02FC, 0, 0, 0xFF, 0) +                          # CreateBrushIndirect: solid, blue
+            rec(0x012D, 0) + rec(0x041B, 900, 900, 100, 100) +    # SelectObject; Rectangle (b, r, t, l)
+            rec(0x0000))
+    words = 9 + len(body) // 2
+    return struct.pack('<HHHIHIH', 1, 9, 0x300, words, 1, 7, 0) + body
 
 
 def dib():

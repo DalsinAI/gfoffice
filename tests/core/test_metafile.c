@@ -241,6 +241,22 @@ static void test_window(void)
           "no window and no bounds: nothing drawn");
 }
 
+/* a point far outside a tiny window maps past an int: it is held at 0x3FFFFFFF, not wrapped */
+static void test_far(void)
+{
+    wmf w;
+    recorder r;
+    start(&w, 0, 0, 0, 0, 0, 0);
+    begin(&w, 0x020B); put16(&w, 0); put16(&w, 0); end(&w);
+    begin(&w, 0x020C); put16(&w, 1); put16(&w, 1); end(&w);
+    box_record(&w, 0x041B, -32768, -32768, 32767, 32767);
+    finish(&w);
+    memset(&r, 0, sizeof r);
+    CHECK(owf_metafile_play(w.d, w.n, 0, 0, 1000000, 1000000, &sink, &r, NULL) == OWF_OK, "a far box played");
+    CHECK(strstr(r.log, "P -1073741823,-1073741823 1073741823,-1073741823 1073741823,1073741823") != NULL,
+          "its corners held at plus and minus 0x3FFFFFFF");
+}
+
 static void test_damaged(void)
 {
     static const unsigned char png[8] = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
@@ -326,6 +342,7 @@ int main(void)
 {
     test_play();
     test_window();
+    test_far();
     test_damaged();
     test_pdf();
     printf("metafile: %d checks, %d failed\n", checks, failures);
