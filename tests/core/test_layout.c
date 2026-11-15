@@ -5,6 +5,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "ow_layout.h"
+#include "owf_track.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1698,6 +1699,51 @@ static void test_issue9(void)
     owf_doc_free(list);
 }
 
+/* 2.0.37: the final view (OW_LAYOUT_FINAL): a deletion takes no room and nothing has change colours; the
+ * caret in a hidden deletion is at its node's start */
+static void test_final_view(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_para *p = para(doc, NULL, 0, "Keep ", 240);
+    owf_charfmt cf = p->runs[0].fmt;
+    ow_layout *shown, *final;
+    const ol_display_op *a, *b, *ins;
+    int del = owf_track_add(doc, OWF_REV_DELETE, "Ann", NULL), add = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL);
+    ow_position pos = { 0, 1, 2, 0 };
+    ol_text_position tp;
+    owf_charfmt bold = cf, italic = cf;
+    bold.flags |= OWF_BOLD;                          /* formats of their own, so the runs stay apart */
+    italic.flags |= OWF_ITALIC;
+    CHECK(del > 0 && add > 0 && owf_para_add_text(p, &bold, "gone", 4) == 0 && owf_para_add_text(p, &cf, " end", 4) == 0 &&
+          owf_para_add_text(p, &italic, " new", 4) == 0);
+    if (p->nruns < 4) {
+        /* runs join when alike; the revisions keep them apart once set, so set them on their own runs */
+        CHECK(0);
+        owf_doc_free(doc);
+        return;
+    }
+    p->runs[1].revision = del;
+    p->runs[3].revision = add;
+    shown = ow_layout_new(doc, measure, NULL);
+    final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(shown && final);
+    if (shown && final) {
+        a = text_on(ow_layout_body(shown), 0, " end", NULL);
+        b = text_on(ow_layout_body(final), 0, " end", NULL);
+        CHECK(a && b && b->u.text.bounds.x < a->u.text.bounds.x);              /* "gone" takes no room */
+        CHECK(text_on(ow_layout_body(shown), 0, "gone", NULL) && !text_on(ow_layout_body(final), 0, "gone", NULL));
+        ins = text_on(ow_layout_body(final), 0, " new", NULL);
+        CHECK(ins && ins->u.text.style.foreground == 0xFF000000u && !(ins->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        ins = text_on(ow_layout_body(shown), 0, " new", NULL);
+        CHECK(ins && (ins->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        CHECK(ow_layout_to_text(final, pos, &tp) && tp.offset == 0);
+        CHECK(ow_layout_to_text(shown, pos, &tp) && tp.offset == 2);
+    }
+    ow_layout_free(shown);
+    ow_layout_free(final);
+    owf_doc_free(doc);
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -1705,6 +1751,7 @@ int main(int argc, char **argv)
     test_built();
     test_columns();
     test_generated_toc();
+    test_final_view();
     test_issue9();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)

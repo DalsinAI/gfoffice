@@ -50,6 +50,7 @@ struct ow_layout {
     int nfeet;
     int *foot_note, *foot_page;
     ol_unit *foot_height;
+    unsigned view;              /* 2.0.37: OW_LAYOUT_FINAL: changes accepted as laid out */
 };
 
 /* The text a field shows. */
@@ -121,6 +122,20 @@ static void change_style(const owf_doc *doc, int number, ol_style *s)
     s->foreground = argb(colours[author % (int)(sizeof colours / sizeof colours[0])]);
     s->text_flags |= r->kind == OWF_REV_DELETE ? OL_TEXT_STRIKE : OL_TEXT_UNDERLINE;
 }
+
+/* 2.0.37: whether the view hides a run: a deletion's, in the final view (not a comment's place or a note's mark,
+ * which are no text of the deletion's) */
+static int hidden_deletion(const ow_layout *l, const owf_doc *doc, const owf_run *r)
+{
+    const owf_revision *rv;
+    if (!l || !(l->view & OW_LAYOUT_FINAL) || r->comment || r->note > 0 ||
+        r->kind == OWF_RUN_IMAGE || r->kind == OWF_RUN_FRAME)
+        return 0;
+    rv = OWF_DOC_REVISION(doc, r->revision);
+    return rv && rv->kind == OWF_REV_DELETE;
+}
+
+static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spacing, ol_style *s);
 
 static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spacing, ol_style *s)
 {
@@ -578,6 +593,16 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         const owf_run *r = &p->runs[j];
         ol_node *n;
         ol_style rs;
+        if (hidden_deletion(l, doc, r)) {
+            /* 2.0.37: the final view: a deletion's text, tab, break or field takes no room (its node stays, so
+             * run j is still node block + 1 + j); a picture or frame is never one (owf_track_switch) */
+            n = ol_node_append(od, block, OL_ROLE_TEXT, "");
+            if (!n) return NULL;
+            run_style(doc, &r->fmt, spacing, &rs);
+            ol_node_set_style(n, &rs);
+            if (!remember(record ? l : NULL, n, record - 1, index, j)) return NULL;
+            continue;
+        }
         switch (r->kind) {
         case OWF_RUN_TEXT:
             if (r->note > 0) {                       /* 2.4.0: a note's mark, its number */
@@ -623,7 +648,9 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         } else {
             run_style(doc, &r->fmt, spacing, &rs);
         }
-        if (r->revision) change_style(doc, r->revision, &rs);
+        if (l && (l->view & OW_LAYOUT_FINAL)) {
+            /* 2.0.37: the final view: no change colours */
+        } else if (r->revision) change_style(doc, r->revision, &rs);
         if (l && record == 1 && r->comment) {
             /* 2.2.0: a comment's range: its text highlighted from its start to its place */
             int k, idx = r->comment > 0 ? r->comment - 1 : -r->comment - 1;
@@ -786,7 +813,7 @@ static int uniform_body_columns(const owf_doc *doc, int *count, int *gap);
 static int body_page_sections(const ow_layout *layout, ol_page_section **out, int *count);
 
 static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
-                              const ol_unit *inline_dx, const ol_unit *inline_dy);
+                              const ol_unit *inline_dx, const ol_unit *inline_dy, unsigned view);
 
 /* 2.0.17: where each text box in the line went, against its room in the line: how far to move it there, by
  * frame (dx, dy, nframes long). 1 when one needs moving; the boxes whose room is on another page stay. */
@@ -830,6 +857,12 @@ static int inline_moves(const ow_layout *l, ol_unit *dx, ol_unit *dy)
 ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata,
                                   size_t ops)
 {
+    return ow_layout_new_view(doc, measure, measure_userdata, ops, 0);
+}
+
+ow_layout *ow_layout_new_view(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
+                              unsigned view)
+{
     ow_layout *l;
     ol_unit *dx, *dy;
     int i, in_line = 0;
@@ -837,7 +870,7 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
     /* 2.0.22: the first layout's room from a guess (ow_layout_estimate_ops), so its display list is made once,
      * not doubled from 64 up (eight blocks a 20-page document, each copied into the next) */
     if (!ops) ops = ow_layout_estimate_ops(doc);
-    l = layout_with(doc, measure, measure_userdata, ops, NULL, NULL);
+    l = layout_with(doc, measure, measure_userdata, ops, NULL, NULL, view);
     for (i = 0; l && !in_line && i < doc->nframes; ++i) in_line = doc->frames[i].in_line;
     if (!in_line) return l;
     /* 2.0.17: a text box in the line goes from its paragraph's corner onto its room in the line: laid out again
@@ -847,7 +880,7 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
     if (dx && dy && inline_moves(l, dx, dy)) {
         ow_layout *moved;
         ow_layout_free(l);
-        moved = layout_with(doc, measure, measure_userdata, ops, dx, dy);
+        moved = layout_with(doc, measure, measure_userdata, ops, dx, dy, view);
         l = moved;
     }
     if (l && l->inline_dx == dx) {              /* the moved layout keeps its offsets */
@@ -859,7 +892,7 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
 }
 
 static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
-                              const ol_unit *inline_dx, const ol_unit *inline_dy)
+                              const ol_unit *inline_dx, const ol_unit *inline_dy, unsigned view)
 {
     ow_layout *l;
     ol_document *body;
@@ -882,6 +915,7 @@ static ow_layout *layout_with(const owf_doc *doc, ol_measure_text_fn measure, vo
     l->measure_userdata = measure_userdata;
     l->inline_dx = inline_dx;
     l->inline_dy = inline_dy;
+    l->view = view;
     pg = &doc->page;                                 /* 2.0.10: first, for the frames placed on it */
     l->page.width = TW(pg->width > 0 ? pg->width : 11906);
     l->page.height = TW(pg->height > 0 ? pg->height : 16838);
@@ -1164,6 +1198,8 @@ int ow_layout_to_text(const ow_layout *l, ow_position pos, ol_text_position *out
     }
     out->node_id = blocks[pos.paragraph] + 1 + (ol_id)pos.run;
     out->offset = 0;
+    if (hidden_deletion(l, l->doc, &p->runs[pos.run]))
+        return 1;                                    /* 2.0.37: its node has no text */
     if (p->runs[pos.run].kind == OWF_RUN_TEXT && p->runs[pos.run].text) {
         size_t len = strlen(p->runs[pos.run].text);
         out->offset = pos.byte_offset < len ? pos.byte_offset : len;

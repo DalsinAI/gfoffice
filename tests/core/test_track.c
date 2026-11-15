@@ -530,6 +530,65 @@ static void test_format_changes(void)
     owf_doc_free(doc);
 }
 
+/* 2.0.37: the final view (Show Changes off): caret moves step over deleted text and never stop in it */
+static size_t focus_at(ow_editor *ed, int *para)
+{
+    owf_doc *doc = ow_editor_document(ed);
+    ow_selection sel = ow_editor_selection(ed);
+    size_t off = sel.focus.byte_offset;
+    int j;
+    *para = sel.focus.paragraph;
+    for (j = 0; j < sel.focus.run; ++j)
+        if (doc->body.paras[*para].runs[j].kind == OWF_RUN_TEXT && doc->body.paras[*para].runs[j].text)
+            off += strlen(doc->body.paras[*para].runs[j].text);
+    return off;
+}
+
+static void test_final_view(void)
+{
+    owf_doc *doc = changed_doc();                    /* Alpha{+ new+} [-beta-]|-Gamma|De|+lta */
+    ow_editor *ed;
+    int para;
+    size_t off;
+    if (!doc) { CHECK(0, "document"); return; }
+    ed = ow_editor_new(doc);
+    CHECK(ed && !ow_editor_final_view(ed), "changes shown at first");
+    if (!ed) { owf_doc_free(doc); return; }
+    /* shown: Right from before "beta" goes into it */
+    caret(ed, 0, 10);
+    ow_editor_move_caret(ed, OW_MOVE_RIGHT, 0);
+    off = focus_at(ed, &para);
+    ow_editor_move_caret(ed, OW_MOVE_RIGHT, 0);       /* (the first may only cross from the space's run to beta's) */
+    off = focus_at(ed, &para);
+    CHECK(para == 0 && off == 11, "shown, the caret goes into the deletion");
+    /* hidden: the deletion is the paragraph's end as the reader sees it, so Right goes to the next paragraph */
+    ow_editor_set_final_view(ed, 1);
+    CHECK(ow_editor_final_view(ed), "final view on");
+    caret(ed, 0, 10);
+    ow_editor_move_caret(ed, OW_MOVE_RIGHT, 0);
+    off = focus_at(ed, &para);
+    CHECK(para == 1 && off == 0, "hidden, Right steps over the deletion to the next paragraph");
+    ow_editor_move_caret(ed, OW_MOVE_LEFT, 0);
+    off = focus_at(ed, &para);
+    CHECK(para == 0, "Left goes back to the paragraph's end");
+    ow_editor_move_caret(ed, OW_MOVE_LEFT, 0);
+    off = focus_at(ed, &para);
+    CHECK(para == 0 && off == 9, "then over the deletion and the space before it, one step");
+    /* a caret put in the deletion's middle comes out of it with the next move */
+    caret(ed, 0, 12);
+    ow_editor_move_caret(ed, OW_MOVE_END, 0);
+    off = focus_at(ed, &para);
+    CHECK(para == 0 && off == 14, "End: the paragraph's end");
+    caret(ed, 0, 12);
+    ow_editor_move_caret(ed, OW_MOVE_UP, 0);
+    off = focus_at(ed, &para);
+    CHECK(para == 0 && (off <= 10 || off == 14), "Up from inside it stops outside it");
+    /* the document still has every change */
+    CHECK(!strcmp(dump(doc), changed_dump), dump(doc));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     test_recording();
@@ -540,6 +599,7 @@ int main(void)
     test_word_form();
     test_odf_form();
     test_format_changes();
+    test_final_view();
     printf("track changes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

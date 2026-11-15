@@ -39,6 +39,12 @@ ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure,
  * malloc otherwise kept 3 MB of a 30-page document's in its pools after each change). */
 ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata,
                                   size_t ops);
+/* 2.0.37: the same, in a view: OW_LAYOUT_FINAL lays the document out as it is with its tracked changes
+ * accepted (deleted text takes no room, inserted and reformatted text has no change colours), while the
+ * document keeps them; a deleted paragraph end still ends its paragraph. 0: changes shown, as above. */
+#define OW_LAYOUT_FINAL 1u
+ow_layout *ow_layout_new_view(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
+                              unsigned view);
 /* 2.0.22: about how many display ops the document's layout makes, a little more than it does, worked out
  * from its words, runs, paragraphs and frames without laying it out. ow_layout_new and a 0 for ops above
  * reserve that many, so a first layout's display list is made once instead of doubling. */

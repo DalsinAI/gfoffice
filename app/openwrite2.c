@@ -111,7 +111,7 @@ enum {
     M_THEME_OPEN, M_THEME_GRAPHITE, M_THEME_EMBER, M_THEME_CLEAR, M_THEME_CLASSIC,
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_TRACK, M_CHANGE_NEXT, M_CHANGE_PREV, M_CHANGE_ACCEPT, M_CHANGE_REJECT, M_CHANGE_ACCEPT_ALL,
-    M_CHANGE_REJECT_ALL, M_REVIEW_AUTHOR,
+    M_CHANGE_REJECT_ALL, M_REVIEW_AUTHOR, M_SHOW_CHANGES,
     M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS,
@@ -272,6 +272,7 @@ static struct NewMenu menus[] = {
     /* 2.0.27: tracked changes (core 1.2), in Tools so the menu bar still fits a 640 screen */
     { NM_ITEM, "Track Changes", NULL, 0, 0, NULL },
     { NM_SUB, "Record Changes", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_TRACK },
+    { NM_SUB, "Show Changes", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_SHOW_CHANGES },   /* 2.0.37 */
     { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_SUB, "Next Change", NULL, 0, 0, (APTR)M_CHANGE_NEXT },
     { NM_SUB, "Previous Change", NULL, 0, 0, (APTR)M_CHANGE_PREV },
@@ -461,6 +462,13 @@ static void draw_all(void);
 static void redraw_document_area(void);
 static void layout(void);
 static void pages_changed(void);
+/* 2.0.37: Tools > Track Changes > Show Changes off: the final view (deletions hidden, no change colours); the
+ * window's, kept across documents, not saved in them */
+static int show_changes = 1;
+static unsigned layout_view(void)
+{
+    return show_changes ? 0u : OW_LAYOUT_FINAL;
+}
 static void pages_free(void);
 static void fields_update(void);
 static int page_hit(int mx, int my, ow_position *out);
@@ -866,6 +874,7 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
     if (doc) owf_doc_free(doc);
     doc = newdoc;
     editor = doc ? ow_editor_new(doc) : NULL;
+    if (editor) ow_editor_set_final_view(editor, !show_changes);   /* 2.0.37 */
     if (editor) {
         review_author_init();
         ow_editor_set_review_author(editor, review_author);
@@ -1870,7 +1879,7 @@ static int resolve_toc_pages(void *userdata, const owf_doc *document,
     ow_layout *layout;
     int i, ok = 1;
     (void)userdata;
-    layout = ow_layout_new(document, measure_units, NULL);
+    layout = ow_layout_new_view(document, measure_units, NULL, 0, layout_view());
     if (!layout) return 0;
     for (i = 0; i < count; ++i) {
         ol_rect box;
@@ -1910,7 +1919,7 @@ static ow_layout *pages(void)
         if (!had) pages_room = (ow_layout_estimate_ops(ow_editor_document(editor)) + 1023) / 1024 * 1024;
     }
     pages_free();
-    pages_layout = ow_layout_new_reserved(ow_editor_document(editor), measure_units, NULL, pages_room);
+    pages_layout = ow_layout_new_view(ow_editor_document(editor), measure_units, NULL, pages_room, layout_view());
     pages_editor = editor;
     pages_changes = ow_editor_changes(editor);
     return pages_layout;
@@ -5117,6 +5126,13 @@ static void menu_action(ULONG id)
     case M_TB_BOTH: tb_style = OGT_TB_ICONS_TEXT; relayout(); break;
     case M_TB_ICONS: tb_style = OGT_TB_ICONS; relayout(); break;
     case M_TB_TEXT: tb_style = OGT_TB_TEXT; relayout(); break;
+    case M_SHOW_CHANGES:                         /* 2.0.37 */
+        show_changes = !show_changes;
+        if (editor) ow_editor_set_final_view(editor, !show_changes);
+        pages_free();                            /* laid out again in the new view */
+        pages_changed();
+        editor_repaint(show_changes ? "Changes shown." : "Changes hidden: the document as it is with them accepted.");
+        break;
     case M_TRACK: if (editor) { ow_editor_set_track_changes(editor, !ow_editor_track_changes(editor)); sync_track_menu(); editor_repaint(ow_editor_track_changes(editor) ? "Recording changes." : "Changes no longer recorded."); } break;
     case M_CHANGE_NEXT: do_next_change(0); break;
     case M_CHANGE_PREV: do_next_change(1); break;

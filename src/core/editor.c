@@ -41,6 +41,7 @@ struct ow_editor {
      * text typed now is (0: none); ins_rev, del_rev and their minute: the last numbers made, used again by
      * the same author in the same minute. */
     int track;
+    int final_view;          /* 2.0.37: deletions hidden (ow_editor_set_final_view): the caret steps over them */
     char *author;
     int typing_rev;
     int ins_rev, del_rev;
@@ -1333,6 +1334,43 @@ static ow_position word_left_pos(ow_editor *editor, ow_position pos)
     return pos;
 }
 
+/* 2.0.37: in the final view a deletion's text is not shown: whether pos's run is one */
+static int hidden_run(ow_editor *editor, ow_position pos)
+{
+    const owf_para *p = &ed_story(editor)->paras[pos.paragraph];
+    const owf_revision *r;
+    if (!editor->final_view || pos.run < 0 || pos.run >= p->nruns) return 0;
+    r = OWF_DOC_REVISION(editor->doc, p->runs[pos.run].revision);
+    return r && r->kind == OWF_REV_DELETE;
+}
+
+/* One step left (dir < 0) or right that passes a character the reader sees, or a paragraph's end: steps over
+ * hidden text and run ends go on to the next one */
+static ow_position visible_step(ow_editor *editor, ow_position pos, int dir)
+{
+    int guard;
+    for (guard = 0; guard < 1000000; ++guard) {
+        ow_position np = dir < 0 ? move_left_pos(editor, pos) : move_right_pos(editor, pos);
+        int visible;
+        if (same_position(np, pos)) return pos;
+        visible = np.paragraph != pos.paragraph || (np.run == pos.run && !hidden_run(editor, np));
+        pos = np;
+        if (visible) return pos;
+    }
+    return pos;
+}
+
+/* Out of a hidden deletion's middle: to its end going right (dir > 0), its start going left */
+static ow_position out_of_hidden(ow_editor *editor, ow_position pos, int dir)
+{
+    const owf_run *r;
+    if (!hidden_run(editor, pos)) return pos;
+    r = &ed_story(editor)->paras[pos.paragraph].runs[pos.run];
+    if (pos.byte_offset > 0 && r->text && pos.byte_offset < strlen(r->text))
+        pos.byte_offset = dir > 0 ? strlen(r->text) : 0;
+    return pos;
+}
+
 static ow_position vertical_pos(ow_editor *editor, ow_position pos, int delta)
 {
     owf_story *story = ed_story(editor);
@@ -2064,6 +2102,16 @@ static int count_cb(void *userdata, const owf_story *story, int rev, ow_change_i
     (void)story; (void)rev; (void)first; (void)last;
     ++*(int *)userdata;
     return 0;
+}
+
+void ow_editor_set_final_view(ow_editor *editor, int on)
+{
+    if (editor) editor->final_view = on ? 1 : 0;
+}
+
+int ow_editor_final_view(const ow_editor *editor)
+{
+    return editor ? editor->final_view : 0;
 }
 
 void ow_editor_set_track_changes(ow_editor *editor, int on)
@@ -3822,8 +3870,8 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
     } else {
         pos = editor->selection.focus;
         switch (move) {
-        case OW_MOVE_LEFT:  pos = move_left_pos(editor, pos); break;
-        case OW_MOVE_RIGHT: pos = move_right_pos(editor, pos); break;
+        case OW_MOVE_LEFT:  pos = editor->final_view ? visible_step(editor, pos, -1) : move_left_pos(editor, pos); break;
+        case OW_MOVE_RIGHT: pos = editor->final_view ? visible_step(editor, pos, 1) : move_right_pos(editor, pos); break;
         case OW_MOVE_UP:    pos = vertical_pos(editor, pos, -1); break;
         case OW_MOVE_DOWN:  pos = vertical_pos(editor, pos, 1); break;
         case OW_MOVE_HOME:  pos = paragraph_home(editor, pos); break;
@@ -3843,6 +3891,9 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
         }
     }
 
+    /* 2.0.37: never in the middle of text the final view hides */
+    pos = out_of_hidden(editor, pos, move == OW_MOVE_LEFT || move == OW_MOVE_UP || move == OW_MOVE_HOME ||
+                                     move == OW_MOVE_WORD_LEFT || move == OW_MOVE_DOC_START ? -1 : 1);
     if (extend_selection) editor->selection.focus = pos;
     else {
         editor->selection.anchor = pos;
