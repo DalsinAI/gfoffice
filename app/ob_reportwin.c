@@ -51,6 +51,7 @@ static char source[OB_NAME_MAX];
 static int csel = -1;                     /* the column chosen in the list, -1 none */
 static char new_field[OB_NAME_MAX], new_head[OB_NAME_MAX];
 static int new_total;                     /* index in r_totals */
+static int dirty;                         /* changed since it was opened, kept or started */
 
 static struct List kept_list, col_list;
 static struct Node *kept_nodes;
@@ -133,6 +134,8 @@ static void load_cols(void)
 }
 
 /* A new report: from the table or the query the main window shows. */
+static void source_into_report(void);
+
 static void start_new(void)
 {
     ob_report_init(&rr, "");
@@ -141,6 +144,8 @@ static void start_new(void)
     csel = -1;
     new_field[0] = new_head[0] = 0;
     new_total = 0;
+    source_into_report();   /* rr matches what the window shows, so nothing reads as changed */
+    dirty = 0;
 }
 
 /* The report as the window shows it, its source set from the cycle and the string. */
@@ -182,6 +187,38 @@ static void open_kept(int i)
     csel = -1;
     new_field[0] = new_head[0] = 0;
     new_total = 0;
+    dirty = 0;
+}
+
+/* Whether the report's changes may go: yes when there are none or the user says so. */
+static int may_drop(void)
+{
+    char msg[OB_NAME_MAX + 60];
+    if (!dirty) return 1;
+    snprintf(msg, sizeof msg, "Drop the changes to %s?", rr.name[0] ? rr.name : "this report");
+    return ask_yes(msg);
+}
+
+/* A query's parameter values, asked one at a time: 1 with them in vals (and ptrs pointing at them),
+ * 0 when the user cancels or the query can't be read; *n how many. */
+static int ask_params(char (*vals)[OB_VALUE_MAX], const char **ptrs, int *n)
+{
+    static ob_query q;
+    static char names[OB_QUERY_PARAMS][OB_VALUE_MAX];  /* off the stack */
+    int i, k;
+    *n = 0;
+    if (!rr.query[0]) return 1;
+    if (!ob_query_get(env->proj, rr.query, &q)) { say(ob_error(env->proj)); return 0; }
+    k = ob_query_params(env->proj, &q, names, OB_QUERY_PARAMS);
+    if (k < 0) { say(ob_error(env->proj)); return 0; }
+    if (k > OB_QUERY_PARAMS) k = OB_QUERY_PARAMS;
+    for (i = 0; i < k; i++) {
+        vals[i][0] = 0;
+        if (!env->ask_text || !env->ask_text(rr.query, names[i], vals[i], OB_VALUE_MAX)) return 0;
+        ptrs[i] = vals[i];
+    }
+    *n = k;
+    return 1;
 }
 
 /* A document's file name from the ASL requester, starting in the project's drawer: 0 when cancelled. */
@@ -212,16 +249,20 @@ static int ask_document(char *out, size_t size)
 
 static void make_document(void)
 {
+    static char vals[OB_QUERY_PARAMS][OB_VALUE_MAX];
+    const char *ptrs[OB_QUERY_PARAMS];
     char path[512], err[OB_ERR_MAX], msg[600];
     const char *ext;
     owf_report *notes;
+    int nparams;
     if (!rr.name[0]) put_text(rr.name, sizeof rr.name, "Report");
     if (ob_report_check(env->proj, &rr, err, sizeof err)) { say(err); return; }
+    if (!ask_params(vals, ptrs, &nparams)) return;
     if (!ask_document(path, sizeof path)) return;
     ext = strrchr((const char *)FilePart((STRPTR)path), '.');
     notes = owf_report_new();
     /* .txt is libowf's "text"; the others go by their extension */
-    if (ob_report_save(env->proj, &rr, NULL, path, ext && !strcmp(ext, ".txt") ? "text" : NULL, notes, err,
+    if (ob_report_save(env->proj, &rr, nparams ? ptrs : NULL, path, ext && !strcmp(ext, ".txt") ? "text" : NULL, notes, err,
                        sizeof err))
         say(err);
     else {
@@ -393,19 +434,31 @@ void ob_report_window(const ob_rwin_env *e)
                 struct Gadget *gg = (struct Gadget *)m->IAddress;
                 char err[OB_ERR_MAX], msg[OB_NAME_MAX + 40];
                 GT_ReplyIMsg(m);
-                if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+                if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) {
+                    if (gad[R_NAME]) read_strings(gad);
+                    done = may_drop();
+                    break;
+                }
                 if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
                 if (class != IDCMP_GADGETUP && class != IDCMP_GADGETDOWN) continue;
-                read_strings(gad);
+                {
+                    /* edits that change the report (not the draft column's strings) */
+                    ob_report before = rr;
+                    read_strings(gad);
+                    if (memcmp(&before, &rr, sizeof rr)) dirty = 1;
+                }
                 switch (gg->GadgetID) {
                 case R_NAME: case R_TITLE: case R_SOURCE: case R_GROUP: break;
                 case R_FIELD: case R_HEAD: if (csel >= 0) rebuild = 1; break;
-                case R_KEPT: open_kept((int)code); rebuild = 1; break;
-                case R_KIND: is_query = code == 1; source_into_report(); break;
+                case R_KEPT:
+                    if (may_drop()) open_kept((int)code);
+                    rebuild = 1;
+                    break;
+                case R_KIND: is_query = code == 1; source_into_report(); dirty = 1; break;
                 case R_COLS: csel = (int)code < rr.ncolumns ? (int)code : -1; rebuild = 1; break;
                 case R_TOTAL:
                     if (code < R_NTOTALS) {
-                        if (csel >= 0 && csel < rr.ncolumns) rr.columns[csel].total = r_totals[code];
+                        if (csel >= 0 && csel < rr.ncolumns) { rr.columns[csel].total = r_totals[code]; dirty = 1; }
                         else new_total = code;
                         rebuild = csel >= 0;
                     }
@@ -422,6 +475,7 @@ void ob_report_window(const ob_rwin_env *e)
                         if (!nc) say("A report has at most 16 columns");
                         else {
                             put_text(nc->heading, sizeof nc->heading, new_head);
+                            dirty = 1;
                             new_field[0] = new_head[0] = 0;
                             new_total = 0;
                         }
@@ -435,6 +489,7 @@ void ob_report_window(const ob_rwin_env *e)
                         rr.ncolumns--;
                         memset(&rr.columns[rr.ncolumns], 0, sizeof rr.columns[0]);
                         csel = -1;
+                        dirty = 1;
                         rebuild = 1;
                     }
                     break;
@@ -443,6 +498,7 @@ void ob_report_window(const ob_rwin_env *e)
                     else if (ob_report_store(env->proj, &rr, err, sizeof err)) say(err);
                     else {
                         SetWindowTitles(rw, (UBYTE *)"Report (kept)", (UBYTE *)~0);
+                        dirty = 0;
                         rebuild = 1;
                     }
                     break;
@@ -458,7 +514,7 @@ void ob_report_window(const ob_rwin_env *e)
                     }
                     break;
                 case R_MAKE: make_document(); break;
-                case R_CLOSE: done = 1; break;
+                case R_CLOSE: done = may_drop(); break;
                 }
             }
         }

@@ -3732,6 +3732,7 @@ static void report_window(void)
     e.proj_path = proj_path;
     e.table = have_cur && !q_on ? cur.name : "";
     e.query = q_on ? qy.name : "";
+    e.ask_text = ask_text;
     ob_report_window(&e);
 }
 

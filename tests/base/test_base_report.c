@@ -415,6 +415,42 @@ static void test_errors_and_empty(ob_project *p)
 
 /* Reports kept in the project (oadb_reports): the core keeps each one's text under its name, the
  * report code turns it to and from an ob_report. */
+/* A report on a query that asks for a value: the value given is the one the rows are made with, and
+ * without one the build says what to give. */
+static void test_query_params(ob_project *p)
+{
+    static ob_query q;
+    ob_qcolumn *c;
+    ob_report r;
+    owf_doc *doc = NULL;
+    char err[OB_ERR_MAX] = "";
+    char *text;
+    const char *const york[] = { "York" };
+
+    ob_query_init(&q, "OneTown");
+    ob_query_add_table(&q, "Orders");
+    c = ob_query_add_column(&q, "Orders", "Customer");
+    c->sort = OB_SORT_UP;
+    c = ob_query_add_column(&q, "Orders", "Town");
+    c->show = 0;
+    strcpy(c->criteria[0], "[Which town?]");
+    ob_query_add_column(&q, "Orders", "Qty");
+    CHECK(ob_query_save(p, &q), "save query: %s", ob_error(p));
+    ob_report_init(&r, "Town");
+    strcpy(r.query, "OneTown");
+    ob_report_add_column(&r, "Customer", OB_TOTAL_COUNT);
+    ob_report_add_column(&r, "Qty", OB_TOTAL_SUM);
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == -1 && !doc && strstr(err, "Which town?"),
+          "no value: %s", err);
+    CHECK(ob_report_build(p, &r, york, &doc, err, sizeof err) == 0 && doc, "build: %s", err);
+    if (!doc) return;
+    text = as_text(doc, "onetown.txt");
+    CHECK(text && !strcmp(text, "Town\nCustomer\tQty\nBob\t1\nDi\t4\nCount 2\tSum 5\n"), "text:\n%s",
+          text ? text : "(none)");
+    free(text);
+    owf_doc_free(doc);
+}
+
 static void test_kept_reports(ob_project *p)
 {
     static char text[OB_REPORT_TEXT_MAX];
@@ -475,6 +511,7 @@ int main(int argc, char **argv)
         test_case_groups_and_overflow(p);
         test_text_form();
         test_kept_reports(p);
+        test_query_params(p);
         test_errors_and_empty(p);
         ob_close(p);
     }
