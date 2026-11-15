@@ -246,6 +246,16 @@ void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, siz
  * opj_view_time, opj_chart_left and opj_row_y give the usage view's places. */
 void opj_usage_view(const opj_view *v, opj_view *usage);
 void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+/* The task edits, which act on the Gantt chart's selected task, from the Edit menu or a key. Resource
+ * Usage hides that selection, so none of them runs while it shows. */
+enum { OPJ_EDIT_NONE = -1, OPJ_EDIT_CELL, OPJ_EDIT_INSERT, OPJ_EDIT_DELETE, OPJ_EDIT_INDENT, OPJ_EDIT_OUTDENT,
+       OPJ_EDIT_LINK, OPJ_EDIT_UNLINK, OPJ_NEDITS };
+/* The edit a key in the window asks for: Return the cell, Del the task's deletion, Tab indent (shift:
+ * outdent). OPJ_EDIT_NONE for any other key. */
+int opj_edit_for_key(int key, int shift);
+/* Why edit can't run with usage (1: Resource Usage shows, 0: the Gantt chart), as the status line says it;
+ * NULL when it may run (OPJ_EDIT_NONE always may). */
+const char *opj_edit_refused(int usage, int edit);
 
 /* ---- Printing the Gantt view: pages down, then across, as MS Project prints ----
  * The first page across holds the table and the start of the chart; the pages after it hold more of the

@@ -804,6 +804,27 @@ static int has_bytes(const unsigned char *data, size_t n, const char *what)
 }
 
 /* The printed Gantt view as a PDF (opj_pdf.c): a page each opj_print page, text searchable, the footer. */
+/* Lisette's review of #240: the task edits act on the Gantt chart's selection, which Resource Usage
+ * hides, so none runs while it shows, from the menu or a key; all run on the Gantt chart. */
+static void test_usage_edits(void)
+{
+    int e;
+    CHECK_N(opj_edit_for_key(13, 0), OPJ_EDIT_CELL);
+    CHECK_N(opj_edit_for_key(127, 0), OPJ_EDIT_DELETE);
+    CHECK_N(opj_edit_for_key(9, 0), OPJ_EDIT_INDENT);
+    CHECK_N(opj_edit_for_key(9, 1), OPJ_EDIT_OUTDENT);
+    CHECK_N(opj_edit_for_key('g', 0), OPJ_EDIT_NONE);
+    CHECK_N(opj_edit_for_key(27, 1), OPJ_EDIT_NONE);
+    for (e = OPJ_EDIT_CELL; e < OPJ_NEDITS; ++e) {
+        CHECK(opj_edit_refused(0, e) == NULL);
+        CHECK(opj_edit_refused(1, e) != NULL &&
+              !strcmp(opj_edit_refused(1, e),
+                      "Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources"));
+    }
+    CHECK(opj_edit_refused(1, OPJ_EDIT_NONE) == NULL);                    /* other keys and menu items */
+    CHECK(opj_edit_refused(1, OPJ_NEDITS) == NULL);
+}
+
 static void test_pdf(void)
 {
     opj_doc *doc = three(), *empty;
@@ -858,6 +879,7 @@ int main(void)
     test_print();
     test_pdf();
     test_usage();
+    test_usage_edits();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;

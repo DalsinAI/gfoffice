@@ -541,6 +541,22 @@ const char *opj_usage_column_title(int column)
     return column >= 0 && column < OPJ_NUCOLS ? titles[column] : "";
 }
 
+int opj_edit_for_key(int key, int shift)
+{
+    switch (key) {
+    case 13: return OPJ_EDIT_CELL;
+    case 127: return OPJ_EDIT_DELETE;
+    case 9: return shift ? OPJ_EDIT_OUTDENT : OPJ_EDIT_INDENT;
+    default: return OPJ_EDIT_NONE;
+    }
+}
+
+const char *opj_edit_refused(int usage, int edit)
+{
+    if (!usage || edit < 0 || edit >= OPJ_NEDITS) return NULL;
+    return "Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources";
+}
+
 /* A cell of resource r's row (a -1) or of its assignment a's. */
 static void usage_cell(const opj_doc *doc, int r, int a, int column, char *out, size_t size)
 {

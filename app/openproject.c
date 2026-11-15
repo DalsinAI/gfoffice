@@ -430,15 +430,21 @@ static void edit_failed(int rc, const char *what)
     tell(msg);
 }
 
+/* 0, with the status line saying why, when edit can't run in the view shown (opj_edit_refused) */
+static int edit_allowed(int edit)
+{
+    const char *why = opj_edit_refused(usage_mode, edit);
+    if (!why) return 1;
+    set_status(why);
+    redraw();
+    return 0;
+}
+
 static void edit_cell(void)
 {
     char text[400], prompt[64];
     int rc;
-    if (usage_mode) {
-        set_status("Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources");
-        redraw();
-        return;
-    }
+    if (!edit_allowed(OPJ_EDIT_CELL)) return;
     if (view.selected < 0) {
         if ((rc = opj_insert_task(DOC, DOC->plan->ntasks, "")) != OWF_OK) { edit_failed(rc, "New task"); return; }
         view.selected = DOC->plan->ntasks - 1;
@@ -471,11 +477,7 @@ static void insert_task(void)
 static void delete_task(void)
 {
     int rc;
-    if (usage_mode) {
-        set_status("Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources");
-        redraw();
-        return;
-    }
+    if (!edit_allowed(OPJ_EDIT_DELETE)) return;
     if (view.selected < 0) return;
     if ((rc = opj_delete_tasks(DOC, view.selected, 1)) != OWF_OK) edit_failed(rc, "Delete Task");
     redraw();
@@ -837,12 +839,11 @@ static void menu_action(ULONG id, struct MenuItem *item)
 {
     char path[512], why[200];
     set_status("");
-    if (usage_mode && (id == M_EDIT || id == M_INSERT || id == M_DELETE || id == M_INDENT || id == M_OUTDENT ||
-                       id == M_LINK || id == M_UNLINK)) {
-        /* the task edits act on the Gantt chart's selection, which the Resource Usage view hides */
-        set_status("Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources");
-        redraw();
-        return;
+    {   /* the task edits act on the Gantt chart's selection, which the Resource Usage view hides */
+        int edit = id == M_EDIT ? OPJ_EDIT_CELL : id == M_INSERT ? OPJ_EDIT_INSERT : id == M_DELETE ? OPJ_EDIT_DELETE
+                 : id == M_INDENT ? OPJ_EDIT_INDENT : id == M_OUTDENT ? OPJ_EDIT_OUTDENT : id == M_LINK ? OPJ_EDIT_LINK
+                 : id == M_UNLINK ? OPJ_EDIT_UNLINK : OPJ_EDIT_NONE;
+        if (!edit_allowed(edit)) return;
     }
     switch (id) {
     case M_NEW:
@@ -974,16 +975,18 @@ static void events(void)
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN) click(mx, my, secs, micros);
             break;
-        case IDCMP_VANILLAKEY:
-            if (code == 13) edit_cell();
-            else if (code == 127) delete_task();
-            else if (code == 9 && usage_mode) edit_cell();                 /* says it is read only */
-            else if (code == 9 && view.selected >= 0) {
-                edit_failed(opj_indent(DOC, view.selected, 1, (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) ? -1 : 1),
-                            "Indent");
+        case IDCMP_VANILLAKEY: {
+            int edit = opj_edit_for_key(code, (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0);
+            if (!edit_allowed(edit)) break;
+            if (edit == OPJ_EDIT_CELL) edit_cell();
+            else if (edit == OPJ_EDIT_DELETE) delete_task();
+            else if ((edit == OPJ_EDIT_INDENT || edit == OPJ_EDIT_OUTDENT) && view.selected >= 0) {
+                edit_failed(opj_indent(DOC, view.selected, 1, edit == OPJ_EDIT_OUTDENT ? -1 : 1),
+                            edit == OPJ_EDIT_OUTDENT ? "Outdent" : "Indent");
                 redraw();
             }
             break;
+        }
         case IDCMP_RAWKEY: {
             int shift = (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
             if (code == 0x4c) move_selection(shift ? -opj_rows_shown(&view) : -1, 0);
