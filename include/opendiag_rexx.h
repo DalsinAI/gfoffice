@@ -45,9 +45,9 @@ void odg_rexx_free(odg_rexx *rx);
 int odg_rexx_command(odg_rexx *rx, const char *command, char *result, size_t size);
 /* The file a name's extension asks for: ODG_FILE_SVG for .svg, ODG_FILE_PNG for .png (the page drawn, with the
  * diagram inside, so it opens again), ODG_FILE_PDF for .pdf (every page; EXPORT only, as a PDF doesn't open
- * again), ODG_FILE_ILBM for .iff or .ilbm (the page drawn; EXPORT only, as an ILBM holds no diagram), else
- * ODG_FILE_DRAWIO. */
-enum { ODG_FILE_DRAWIO, ODG_FILE_SVG, ODG_FILE_PNG, ODG_FILE_PDF, ODG_FILE_ILBM };
+ * again), ODG_FILE_ILBM for .iff or .ilbm (the page drawn; EXPORT only, as an ILBM holds no diagram), ODG_FILE_EPS
+ * for .eps, .epsf or .ps (the page; EXPORT only, as a PDF), else ODG_FILE_DRAWIO. */
+enum { ODG_FILE_DRAWIO, ODG_FILE_SVG, ODG_FILE_PNG, ODG_FILE_PDF, ODG_FILE_ILBM, ODG_FILE_EPS };
 int odg_rexx_format(const char *file);
 
 #endif

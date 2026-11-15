@@ -171,6 +171,10 @@ CALL same 'GETBOX after a compressed SAVE', res, '320 30 140 80'
 CALL want 'EXPORT "'dir'lab-diag.svg"', 0
 CALL want 'EXPORT "'dir'lab-diag.pdf"', 0
 CALL want 'SAVEAS "'dir'lab-diag-as.pdf"', 10
+/* The page as EPS, by its name or FORMAT EPS; export only, as a PDF */
+CALL want 'EXPORT "'dir'lab-diag.eps"', 0
+CALL want 'EXPORT "'dir'lab-diag-eps.out" FORMAT EPS', 0
+CALL want 'SAVEAS "'dir'lab-diag-as.eps"', 10
 /* The page drawn as a picture (cybergraphics.library): PNG with the diagram inside opens again; ILBM is export only */
 CALL want 'EXPORT "'dir'lab-diag.png"', 0
 CALL want 'EXPORT "'dir'lab-diag.iff"', 0
