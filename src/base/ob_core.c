@@ -1535,11 +1535,12 @@ static int change_table(ob_project *p, const char *old_name, const ob_table *t, 
      * schema changes"), with foreign keys off for the copy and checked after */
     if (!run(p, "PRAGMA foreign_keys=OFF")) goto out;
     if (!run(p, "BEGIN IMMEDIATE")) goto keys;
-    /* A change that renames a table that views name: rename it first, the
-     * plain way, so SQLite rewrites the views (and the other tables'
-     * REFERENCES); the steps below then work on it under its new name. */
+    /* A change that renames the table: rename it first, the plain way, so
+     * SQLite rewrites the other tables' REFERENCES (a Lookup of it would
+     * otherwise name a table that is gone) and the views that name it; the
+     * steps below then work on it under its new name. */
     views = view_count(p) > 0;
-    if (views && !same(old->name, t->name)) {
+    if (!same(old->name, t->name)) {
         if (!runf(p, "ALTER TABLE \"%w\" RENAME TO \"%w\"", old->name, t->name)) goto undo;
         src = t->name;
     }
@@ -1576,7 +1577,8 @@ static int change_table(ob_project *p, const char *old_name, const ob_table *t, 
         goto undo;
     }
     if (!same(old->name, t->name)) {
-        /* other tables' Lookups follow the rename (SQLite rewrote their REFERENCES) */
+        /* other tables' Lookups follow the rename (SQLite rewrote their REFERENCES
+         * in the plain rename above) */
         if (!runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", t->name, old->name)) goto undo;
         forget(p);
         if (!queries_follow(p, old->name, t->name)) goto undo;
