@@ -3,11 +3,11 @@
 
     test_pub.py PUB_DUMP [RUNS]
 
-1. Each sample in tests/pub/samples with an expected file in
-   tests/pub/expected (NAME.txt) must dump exactly as expected. The
-   expected files were checked by hand against what each file shows: its
-   own thumbnail (the picture Publisher saves in the file's summary), the
-   same document saved by other versions, and its text.
+1. Each sample in PUB_SAMPLES (the .pub files tools/pubgen/make_pub.py
+   makes; `make pub-test` makes them in build/host/pubgen) with an expected
+   file in tests/pub/expected (NAME.txt) must dump exactly as expected.
+   The expected files were checked by hand against what make_pub.py puts
+   in each file.
 2. Every sample, cut short and with bytes changed, must be read or refused
    cleanly: exit 0 or 10, nothing on stderr (where ASan and UBSan report),
    no hang. RUNS changed copies per sample (default 40); the bytes changed
@@ -26,7 +26,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SAMPLES = os.path.join(HERE, 'samples')
+SAMPLES = os.environ.get('PUB_SAMPLES') or os.path.join(HERE, '..', '..', 'build', 'host', 'pubgen')
 EXPECTED = os.path.join(HERE, 'expected')
 
 

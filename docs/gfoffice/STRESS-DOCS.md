@@ -18,7 +18,7 @@ licence, is in `tests/amiga/fixtures/PROVENANCE.md` and
 
 | Format | Stress document | How it was made | In the repository |
 |---|---|---|---|
-| Microsoft Publisher (`.pub`) | `SampleNewsletter.pub`: 4 pages, 99 frames, 10 linked-frame chains, 9 pictures, WordArt; `govdocs1-923566.pub`: a US government newsletter, 4 US Letter pages, 74 frames, 9 linked-frame chains, a table, 37 fonts; with the corpus's other samples for tables, hyperlinks, landscape pages and the 98, 2000 and 2007-2013 formats | Real: Apache POI's test data, saved by Publisher 2003; govdocs1, saved by Publisher 2003 (11.9999) | Yes: `tests/pub/stress/` (Apache-2.0; govdocs1's terms) |
+| Microsoft Publisher (`.pub`) | `SampleNewsletter.pub`: 4 pages, 99 frames, 10 linked-frame chains, 9 pictures, WordArt; `govdocs1-923566.pub`: a US government newsletter, 4 US Letter pages, 74 frames, 9 linked-frame chains, a table, 37 fonts; with the corpus's other samples for tables, hyperlinks, landscape pages and the 98, 2000 and 2007-2013 formats | Real: Apache POI's test data, saved by Publisher 2003; govdocs1, saved by Publisher 2003 (11.9999) | No: `tests/pub/fetch_samples.sh` fetches them (not kept since 14 Nov 2026); the tests use `tools/pubgen/make_pub.py`'s files |
 | PageStream (2 to 5) | 17 real documents: club newsletters with embedded pictures and articles over several pages, a periodic table (182 table cells), CD covers, character sheets, labels | Real: Aminet | No (licences not stated); listed, fetched by `tests/amiga/fetch_stress_samples.sh` |
 | Final Writer | 32 real documents: the four Amiga C Encyclopedia volumes (to 950 KB, 10 sections each), a manual with 32 pictures, 23 templates (text frames, tables, master pages), a table example | Real: Aminet | No; listed and fetched as above |
 | Wordworth | 10 real documents: two 300 KB manuals, text boxes linked in chains, drawings with text, a calendar | Real: Aminet | No; listed and fetched as above |
@@ -42,13 +42,13 @@ section 2) learns it only from Publisher's own files. For the same reason no
 sample was opened in LibreOffice (libmspub) to compare: the corpus has never
 been through another .pub reader.
 
-**The stress set:** `SampleNewsletter.pub`, now checked in, is the most
+**The stress set:** `SampleNewsletter.pub` is the most
 complicated freely licensed .pub we know of. `govdocs1-923566.pub`, the one
-Publisher file in govdocs1, is checked in beside it: the only sample saved
+Publisher file in govdocs1, sits beside it (both fetched, not kept in the
+repository since 14 November 2026): the only sample saved
 by Publisher 2003's last build (11.9999) and a real document from outside
 POI's test data (`tests/pub/stress/PROVENANCE.md`). The rest of the set is the
-corpus already in `tests/pub/samples` (and fetched by
-`tests/pub/fetch_samples.sh`), each for what it adds:
+corpus `tests/pub/fetch_samples.sh` fetches, each for what it adds:
 
 | Feature | Sample |
 |---|---|
@@ -209,8 +209,9 @@ python3 tests/amiga/make_stress_prowrite.py tests/amiga/fixtures
 build/host/owconvert --report tests/amiga/fixtures/prowrite-stress.pw /tmp/pw.odt
 build/host/owconvert --report tests/amiga/fixtures/ftxt-stress.ftxt /tmp/ftxt.txt
 diff tests/amiga/fixtures/ftxt-stress.txt /tmp/ftxt.txt              # the FTXT gaps
-build/host/pub-dump tests/pub/stress/SampleNewsletter.pub
-PUB_CORPUS=tests/pub/stress make pub-check                           # both .pub, and changed copies, under ASan
+sh tests/pub/fetch_samples.sh pub-corpus                             # the outside .pub files, ignored by git
+build/host/pub-dump pub-corpus/SampleNewsletter.pub
+PUB_CORPUS=pub-corpus make pub-check                                 # them all, and changed copies, under ASan
 python3 tests/amiga/test_prowrite.py build/host/owconvert            # Convert Notes and ProWrite's chunks
 sh tests/amiga/fetch_stress_samples.sh --extract DIR                 # the real documents, on a PC
 ```

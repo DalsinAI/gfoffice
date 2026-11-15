@@ -251,7 +251,8 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | --- | --- |
 | `libowf/src/in_pub.c`, `libowf/include/owf_pub.h` | The .pub reader (P0); in P1 it fills the deck model instead |
 | `libowf/src/owf_cfb.c` | Compound files; P0 added entries by number and storages by path |
-| `tests/pub/` | Samples, expected dumps, `pub_dump.c`, `test_pub.py`, `CORPUS.md`, `fetch_samples.sh` |
+| `tests/pub/` | Expected dumps, `pub_dump.c`, `test_pub.py`, `CORPUS.md`, `fetch_samples.sh` (outside samples, never committed) |
+| `tools/pubgen/` | `make_pub.py`: the .pub files the tests read, made from PUB-FORMAT's notes |
 | `tools/publab/` | The format lab's tools (PUB-FORMAT 1) |
 | `src/pub/` (P1) | GFOpenPublisher's portable core, host-tested, as `src/calc` |
 | `app/openpresent.c` with `OPENPUBLISHER` (P1a) | The Amiga page window, sharing Presentation's GFOpenLayout renderer rather than copying it |
