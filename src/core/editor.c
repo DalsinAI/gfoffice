@@ -118,6 +118,11 @@ static void clear_doc_data(owf_doc *doc)
     for (i = 0; i < doc->nnotes; ++i) { owf_free(doc->notes[i].text); owf_free(doc->notes[i].label); }   /* 2.4.0 */
     owf_free(doc->notes);
     owf_free(doc->merge_source);                     /* 2.5.0 */
+    for (i = 0; i < doc->nformat_changes; ++i) {     /* libowf 1.11 */
+        owf_free(doc->format_changes[i].author);
+        owf_free(doc->format_changes[i].date);
+    }
+    owf_free(doc->format_changes);
     memset(doc, 0, sizeof(*doc));
 }
 
@@ -227,6 +232,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     owf_note *notes;
     int nnotes, capnotes;
     char *merge_source;
+    owf_format_change *format_changes;
+    int nformat_changes, capformat_changes;
     if (!dst || !snapshot) return;
     images = dst->images;           /* 2.0.11: the pictures stay the document's (clone_doc) */
     nimages = dst->nimages;
@@ -259,6 +266,11 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capnotes = dst->capnotes;
     dst->notes = NULL;
     dst->nnotes = dst->capnotes = 0;
+    format_changes = dst->format_changes;   /* libowf 1.11: the format changes, which the runs name and which only grow */
+    nformat_changes = dst->nformat_changes;
+    capformat_changes = dst->capformat_changes;
+    dst->format_changes = NULL;
+    dst->nformat_changes = dst->capformat_changes = 0;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
     dst->images = images;
@@ -280,6 +292,9 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->nnotes = nnotes;
     dst->capnotes = capnotes;
     dst->merge_source = merge_source;
+    dst->format_changes = format_changes;
+    dst->nformat_changes = nformat_changes;
+    dst->capformat_changes = capformat_changes;
     owf_free(snapshot);                 /* only the old outer shell */
 }
 
@@ -1736,7 +1751,7 @@ static void join_runs(owf_para *p)
     while (j + 1 < p->nruns) {
         owf_run *a = &p->runs[j], *b = &p->runs[j + 1];
         if (a->kind == OWF_RUN_TEXT && b->kind == OWF_RUN_TEXT && a->revision == b->revision && !a->comment && !b->comment &&
-            !a->note && !b->note &&
+            !a->note && !b->note && a->format_change == b->format_change &&   /* libowf 1.11 */
             same_charfmt_local(&a->fmt, &b->fmt) && same_text_or_null(a->href, b->href)) {
             size_t la = a->text ? strlen(a->text) : 0, lb = b->text ? strlen(b->text) : 0;
             char *t = (char *)owf_malloc(la + lb + 1);
@@ -6000,6 +6015,7 @@ static int story_final(owf_doc *d, owf_story *story)
                 continue;
             }
             r.revision = 0;
+            r.format_change = 0;                     /* libowf 1.11: accepted too, as the list stays empty */
             if (r.kind == OWF_RUN_FIELD && r.field > OWF_FIELD_TIME) {
                 char *value = r.text, *nl;
                 const char *t = value ? value : "";

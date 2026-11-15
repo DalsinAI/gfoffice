@@ -36,13 +36,16 @@
  * grew, so the three libraries go together again.
  * 3.9: libowf 1.10, alphabetical index entries (OWF_FIELD_INDEX): DOCX XE fields and ODT
  * text:alphabetical-index-mark; other formats show nothing for them. No new calls and no struct grew.
+ * 3.10: libowf 1.11, tracked format changes of runs (owf_run.format_change, owf_doc.format_changes,
+ * owf_format_change): DOCX w:rPrChange in and out; other formats the format as it is now (accepted). No new
+ * calls; owf_run and owf_doc grew, so the three libraries go together again.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 9
-#define OWF_LIB_VERS "3.9"
-#define OWF_LIB_DATE "12.11.2026"
+#define OWF_LIB_REVISION 10
+#define OWF_LIB_VERS "3.10"
+#define OWF_LIB_DATE "14.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"
