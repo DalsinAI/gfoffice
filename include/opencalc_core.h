@@ -646,6 +646,13 @@ int oc_core_pivot_set_layout(oc_core *core, const owf_pivotdef *layout);
  * defined name. OWF_ERR_UNSUPPORTED means the active sheet has no pivot
  * table; OWF_ERR_FORMAT that its source or fields no longer fit. */
 int oc_core_refresh_pivot(oc_core *core);
+/* Show Details (drill-down): the source rows behind one value cell of the
+ * active sheet's pivot table, copied as values with their heading row onto
+ * a new sheet ("Details", "Details2"...), which becomes active; one Undo
+ * step removes it. A subtotal or total cell gives every row it sums; page
+ * fields and hidden items apply. OWF_ERR_UNSUPPORTED: the active sheet has
+ * no pivot table; OWF_ERR_FORMAT: (row, col) is not one of its value cells. */
+int oc_core_pivot_details(oc_core *core, unsigned row, unsigned col);
 
 /* ---- AutoFilter ----
  * Turns the selection into a table with filter buttons. A one-cell
