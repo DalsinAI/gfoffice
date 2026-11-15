@@ -7105,6 +7105,43 @@ static int merge_show(int at)
     return 1;
 }
 
+/* Reads a data source and shows its first record: OWF_OK or the error */
+static int merge_load(const char *path, char *msg, size_t size)
+{
+    ow_merge_table *t = NULL;
+    int rc = opp_merge_load_file(path, &t), n = 0;
+    if (rc != OWF_OK) return rc;
+    ow_merge_table_free(merge_table);
+    merge_table = t;
+    if ((rc = opp_merge_show(deck, t, t->nrows ? 0 : -1, NULL)) != OWF_OK) return rc;
+    merge_at = t->nrows ? 0 : -1;
+    relayout();
+    snprintf(msg, size, "%.100s: %d columns, %d records. ", leaf(path), t->ncols, t->nrows);
+    if (opp_merge_fields(deck, t, &n) && n)
+        snprintf(msg + strlen(msg), size - strlen(msg), "%d field%s name a column it lacks. ", n, n == 1 ? "" : "s");
+    return OWF_OK;
+}
+
+/* The pages once for each record, as a new untitled publication: OWF_OK or the error */
+static int merge_pages_now(void)
+{
+    char msg[120];
+    int rc, n = merge_table ? merge_table->nrows : 0;
+    stop_typing();
+    if ((rc = opp_merge_pages(deck, merge_table, -1, -1)) != OWF_OK) return rc;
+    if (undo) opr_undo_clear(undo);
+    laid_clear();
+    current = 0;
+    clear_object_selection();
+    current_path[0] = 0;
+    dirty = 1;
+    update_window_title();
+    relayout();
+    snprintf(msg, sizeof msg, "%d records merged: %d %s.", n, deck->nslides, deck->nslides == 1 ? UNIT_LOWER : UNITS_LOWER);
+    set_status(msg);
+    return OWF_OK;
+}
+
 static void do_merge(int what)
 {
     char path[512], msg[240];
@@ -7112,22 +7149,11 @@ static void do_merge(int what)
     if (!deck) return;
     master_view_leave();
     switch (what) {
-    case M_MERGE_SOURCE: {
-        ow_merge_table *t = NULL;
+    case M_MERGE_SOURCE:
         if (!ask_file(0, "Mail merge data source (CSV)", NULL, path, sizeof path)) return;
-        rc = opp_merge_load_file(path, &t);
-        if (rc != OWF_OK) { tell("Mail Merge", merge_error(rc)); return; }
-        ow_merge_table_free(merge_table);
-        merge_table = t;
-        if (!merge_show(t->nrows ? 0 : -1)) return;
-        snprintf(msg, sizeof msg, "%.100s: %d columns, %d records. ", leaf(path), t->ncols, t->nrows);
-        if (opp_merge_fields(deck, t, &n) && n) {
-            snprintf(msg + strlen(msg), sizeof msg - strlen(msg), "%d field%s name a column it lacks. ", n,
-                     n == 1 ? "" : "s");
-        }
+        if ((rc = merge_load(path, msg, sizeof msg)) != OWF_OK) { tell("Mail Merge", merge_error(rc)); return; }
         merge_status(msg);
         break;
-    }
     case M_MERGE_FIELD: {
         char (*names)[72];
         owf_obj *o;
@@ -7173,19 +7199,7 @@ static void do_merge(int what)
                  dirty ? "The changes to this publication that are not saved are lost." :
                          "The publication's own file is left as it is.");
         if (ask("Merge to New Publication", msg, "Merge|Cancel") != 1) return;
-        stop_typing();
-        rc = opp_merge_pages(deck, merge_table, -1, -1);
-        if (rc != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return; }
-        if (undo) opr_undo_clear(undo);
-        laid_clear();
-        current = 0;
-        clear_object_selection();
-        current_path[0] = 0;
-        dirty = 1;
-        update_window_title();
-        relayout();
-        snprintf(msg, sizeof msg, "%d records merged: %d %s.", n, deck->nslides, deck->nslides == 1 ? UNIT_LOWER : UNITS_LOWER);
-        set_status(msg);
+        if ((rc = merge_pages_now()) != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return; }
         break;
     }
     draw_status();
@@ -8061,7 +8075,11 @@ static int rexx_do_command(const char *command, char **result_out)
         rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
                   "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
                   "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
-                  "SETTEXT UNDO REDO QUIT");
+                  "SETTEXT UNDO REDO QUIT"
+#ifdef OPENPUBLISHER
+                  " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES"
+#endif
+                  );
     else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -8564,6 +8582,64 @@ static int rexx_do_command(const char *command, char **result_out)
             }
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Out of memory");
         }
+#ifdef OPENPUBLISHER
+    } else if (starts_word_ci(command, "MERGESOURCE", &arg)) {   /* MERGESOURCE path: a CSV data source */
+        char msg[240];
+        int rc;
+        if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
+        else if ((rc = merge_load(arg, msg, sizeof msg)) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, merge_error(rc)); }
+        else { merge_status(msg); draw_status(); rexx_copy(result_text, sizeof result_text, msg); }
+    } else if (starts_word_ci(command, "MERGEFIELD", &arg)) {    /* MERGEFIELD n column: a field at the end of object n */
+        const char *column;
+        char *utf8;
+        int rc;
+        if (!merge_table) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No data source"); }
+        else if ((obj = rexx_obj(arg, &column)) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
+        else if (!opr_obj_editable(deck, current, obj)) { ok = 0; rexx_copy(result_text, sizeof result_text, "That object takes no text"); }
+        else if (!*column) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing column"); }
+        else if (!(utf8 = name_from_latin1(column))) { ok = 0; rexx_copy(result_text, sizeof result_text, "Out of memory"); }
+        else {
+            stop_typing();
+            rc = opr_undo_push(undo, deck, current, obj) < 0 ? OWF_ERR_MEMORY
+               : opp_merge_insert_field(&deck->slides[current].objs[obj], -1, utf8, NULL);
+            if (rc == OWF_OK) rc = opp_merge_show(deck, merge_table, merge_at, NULL);
+            owf_free(utf8);
+            if (rc != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+            else {
+                laid_clear();
+                slide_changed(current);
+                dirty = 1;
+                update_window_title();
+                relayout();
+                set_status("Merge field inserted.");
+                draw_status();
+                rexx_copy(result_text, sizeof result_text, "OK");
+            }
+        }
+    } else if (starts_word_ci(command, "MERGERECORD", &arg)) {   /* MERGERECORD [n | NEXT | PREVIOUS | NAMES]: the record shown */
+        int n = merge_table ? merge_table->nrows : 0, at = merge_at;
+        if (!*arg) at = merge_at;
+        else if (starts_word_ci(arg, "NAMES", NULL)) at = -1;
+        else if (starts_word_ci(arg, "NEXT", NULL)) at = merge_at + 1 < n ? merge_at + 1 : n - 1;
+        else if (starts_word_ci(arg, "PREVIOUS", NULL)) at = merge_at > 0 ? merge_at - 1 : 0;
+        else at = atoi(arg) - 1;
+        if (*arg && at >= 0 && at >= n) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No such record"); }
+        else if (*arg && !merge_show(at)) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not shown"); }
+        else {
+            if (*arg) { merge_status(""); draw_status(); }
+            snprintf(result_text, sizeof result_text, "%d %d", merge_at + 1, n);   /* the record shown (0: names), of n */
+        }
+    } else if (starts_word_ci(command, "MERGEFIELDS", &arg)) {   /* how many fields, and how many name no column */
+        int missing = 0, n = opp_merge_fields(deck, merge_table, &missing);
+        snprintf(result_text, sizeof result_text, "%d %d", n, missing);
+    } else if (starts_word_ci(command, "MERGEPAGES", &arg)) {    /* MERGEPAGES [FORCE]: merge to a new publication */
+        int rc;
+        if (!merge_table || !merge_table->nrows) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No records"); }
+        else if (!opp_merge_fields(deck, merge_table, NULL)) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No merge fields"); }
+        else if (dirty && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else if ((rc = merge_pages_now()) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+        else { draw_status(); snprintf(result_text, sizeof result_text, "%d", deck->nslides); }
+#endif
     } else if (starts_word_ci(command, "UNDO", &arg) || starts_word_ci(command, "REDO", &arg)) {
         int redo = toupper((unsigned char)command[0]) == 'R';
         if (!(redo ? opr_redo_can(undo) : opr_undo_can(undo))) {
