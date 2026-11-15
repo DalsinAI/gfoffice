@@ -321,6 +321,16 @@ ob_int ob_view_find(ob_project *p, const char *table, const ob_view *v, const ch
  * child table's rows whose Lookup holds the record's key: a view filtered on
  * r.field Equals the key. Returns how many there are, -1 on error. */
 int ob_children(ob_project *p, const char *table, ob_relation *out, int max);
+/* Changing a subform's rows (core 0.6.3). The key of the row at position
+ * `pos` (from 0, key order) among r's rows for record `parent`: -1 when
+ * there is none, -2 on error. */
+ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int pos);
+/* Adds a row to r's table for record `parent`: its Lookup r->field holds
+ * parent whatever the fields give for it; the rest as ob_row_add takes them.
+ * 0 with the reason when parent is not a key (a new record not yet saved:
+ * "Save the record first") or ob_row_add refuses the row. */
+int ob_child_add(ob_project *p, const ob_relation *r, ob_int parent, int n, const char *const *fields,
+                 const char *const *values, ob_int *key);
 
 /* ---- CSV (design 8) ----
  * Export: a header of field names, then each row of the view (NULL: every

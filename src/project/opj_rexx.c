@@ -345,7 +345,20 @@ static int write_file(opj_rexx *rx, const char *name, int format)
     unsigned char *data;
     size_t length;
     FILE *f;
-    int rc = owf_project_write(rx->doc->plan, format, &data, &length), ok;
+    int rc, ok;
+    if (format == OPJ_EXPORT_PDF) {
+        opj_view v;
+        if (rx->view) v = *rx->view;
+        else opj_view_init(&v, rx->doc, 0, 0, 16, OPJ_ZOOM_DAYS);
+        rc = opj_pdf_write(rx->doc, &v, &data, &length, NULL);
+        if (rc == OWF_ERR_FORMAT) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "%s", rx->doc->plan->ntasks ? "The page is too small for the plan"
+                                                                                    : "The plan has no tasks to print");
+            return OPJ_RX_NOW;
+        }
+    } else {
+        rc = owf_project_write(rx->doc->plan, format, &data, &length);
+    }
     if (rc == OWF_ERR_MEMORY) {
         snprintf(rx->lasterror, sizeof rx->lasterror, "Out of memory writing %s", name);
         return OPJ_RX_FAIL;
@@ -504,14 +517,21 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         return rc;
     case C_EXPORT: {
         int format = opj_rexx_format(a->value[0]);
+        const char *dot = strrchr(a->value[0], '.');
+        if (dot) {
+            char ext[8];
+            squash(dot, ext, sizeof ext);
+            if (strcmp(ext, "pdf") == 0) format = OPJ_EXPORT_PDF;
+        }
         if (a->value[1]) {
             char f[16];
             squash(a->value[1], f, sizeof f);
             if (strcmp(f, "mspdi") == 0 || strcmp(f, "xml") == 0) format = OWF_PFILE_MSPDI;
             else if (strcmp(f, "csv") == 0) format = OWF_PFILE_CSV;
             else if (strcmp(f, "gfproj") == 0) format = OWF_PFILE_GFPROJ;
+            else if (strcmp(f, "pdf") == 0) format = OPJ_EXPORT_PDF;
             else {
-                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is MSPDI, CSV or GFPROJ, not %s", a->value[1]);
+                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is MSPDI, CSV, GFPROJ or PDF, not %s", a->value[1]);
                 return OPJ_RX_ERROR;
             }
         }
