@@ -6043,6 +6043,221 @@ static void test_pivot_sort(void)
     oc_core_free(core);
 }
 
+/* Hidden items (owf_pivot_set_hidden): a row item and a column item left out with their totals,
+ * kept through a new layout, XLSX and ODS, idle while their field is not on the rows or columns. */
+static void test_pivot_hide(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "Product", "Year", "Sales", "Units" },
+        { "East", "A", "2025", "10", "1" }, { "East", "B", "2025", "20", "2" },
+        { "West", "A", "2025", "5", "3" }, { "West", "A", "2026", "15", "4" },
+        { "West", "B", "2026", "25", "5" }, { "North", "B", "2026", "30", "6" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got;
+    owf_pivot_page item;
+    char config[OWF_PIVOT_TEXT_MAX];
+    int k;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 7);
+    CHECK(oc_parse_range("A1:E7", &selected));
+    oc_core_select_range(core, &selected);
+
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 0;
+    def.ncol = 1; def.col[0] = 2;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    memset(&item, 0, sizeof item);
+    item.field = 0;
+    owf_pivot_item_from_text(&item, "West");
+    CHECK(owf_pivot_set_hidden(&def, &item, 1) && def.nhide == 1);
+    CHECK(owf_pivot_set_hidden(&def, &item, 1) && def.nhide == 1);          /* once */
+    item.field = 2;
+    owf_pivot_item_from_text(&item, "2025");
+    CHECK(item.kind == OWF_PIVOT_NUMBER && owf_pivot_set_hidden(&def, &item, 1) && def.nhide == 2);
+    item.kind = OWF_PIVOT_ALL;
+    CHECK(!owf_pivot_set_hidden(&def, &item, 1) && def.nhide == 2);
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    /* West and 2025 are gone, and their sales from the totals: East 2026 has none, North 30 */
+    CHECK_STR(text(core, "B1"), "2026");
+    CHECK_STR(text(core, "A2"), "North");
+    CHECK_STR(text(core, "A3"), "Grand Total");
+    CHECK(fabs(num(core, "B2") - 30.0) < 1e-12 && fabs(num(core, "B3") - 30.0) < 1e-12);
+    CHECK(oc_core_pivot_get(core, &got) && got.nhide == 2);
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && strstr(config, ";h=0:tWest,2:n2025\""));
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot-hide.xlsx", "/tmp/opencalc-pivot-hide.ods" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            owf_pivotdef back;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
+            CHECK(round && owf_pivot_get(round, 1, &back) && back.nhide == 2);
+            if (round && back.nhide == 2) {
+                owf_cell west, y2025;
+                memset(&west, 0, sizeof west);
+                memset(&y2025, 0, sizeof y2025);
+                west.type = OWF_VALUE_TEXT;
+                west.text = (char *)"West";
+                y2025.type = OWF_VALUE_NUMBER;
+                y2025.number = 2025.0;
+                CHECK(owf_pivot_is_hidden(&back, 0, &west) && owf_pivot_is_hidden(&back, 2, &y2025) &&
+                      !owf_pivot_is_hidden(&back, 2, &west));
+            }
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+
+    /* Region to a page field (every item): its hidden item waits; 2025 is still hidden */
+    got.nrow = 1; got.row[0] = 1;
+    got.npage = 1; got.page[0].field = 0; got.page[0].kind = OWF_PIVOT_ALL;
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK && oc_core_pivot_get(core, &got) && got.nhide == 2);
+    /* the page row, a gap, the headings, then Product by 2026: A 15 (West), B 55 (West 25, North 30) */
+    CHECK_STR(text(core, "A4"), "A");
+    CHECK_STR(text(core, "A5"), "B");
+    CHECK_STR(text(core, "B3"), "2026");
+    CHECK(fabs(num(core, "B4") - 15.0) < 1e-12 && fabs(num(core, "B5") - 55.0) < 1e-12);
+
+    /* shown again */
+    item.field = 2;
+    owf_pivot_item_from_text(&item, "2025");
+    CHECK(owf_pivot_set_hidden(&got, &item, 0) && got.nhide == 1);
+    item.field = 0;
+    owf_pivot_item_from_text(&item, "West");
+    CHECK(owf_pivot_set_hidden(&got, &item, 0) && got.nhide == 0);
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && !strstr(config, ";h="));
+    oc_core_free(core);
+}
+
+static int near(double a, double b)
+{
+    return fabs(a - b) < 1e-12;
+}
+
+static const char *format_at(oc_core *core, const char *name)
+{
+    const owf_book *book = oc_core_book(core);
+    const owf_cell *c = at(core, name);
+    int f;
+    if (!c || c->style < 0 || c->style >= book->nstyles)
+        return "";
+    f = book->styles[c->style].number_format;
+    return f > 0 && f < book->nnumfmts ? book->numfmts[f] : "";
+}
+
+static void test_pivot_show_as(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "Product", "Year", "Sales", "Units" },
+        { "East", "A", "2025", "10", "1" }, { "East", "B", "2025", "20", "2" },
+        { "West", "A", "2025", "5", "3" }, { "West", "A", "2026", "15", "4" },
+        { "West", "B", "2026", "25", "5" }, { "North", "B", "2026", "30", "6" }
+    };
+    static const char *const zero[][5] = {
+        { "R", "V", "", "", "" }, { "a", "1", "", "", "" }, { "b", "0", "", "", "" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got;
+    char config[OWF_PIVOT_TEXT_MAX];
+    int k;
+    if (!core)
+        return;
+    CHECK(owf_pivot_show_from_word("row-percentage") == OWF_PIVOT_SHOW_ROW &&
+          owf_pivot_show_from_word("percentOfCol") == OWF_PIVOT_SHOW_COLUMN &&
+          owf_pivot_show_from_word("TOTAL-PERCENTAGE") == OWF_PIVOT_SHOW_TOTAL &&
+          owf_pivot_show_from_word("index") == OWF_PIVOT_SHOW_INDEX &&
+          owf_pivot_show_from_word("none") == OWF_PIVOT_SHOW_NORMAL &&
+          owf_pivot_show_from_word("running-total") < 0 && owf_pivot_show_from_word(NULL) < 0);
+    CHECK_STR(owf_pivot_show_word(OWF_PIVOT_SHOW_TOTAL, 1), "percentOfTotal");
+    CHECK(!owf_pivot_show_word(OWF_PIVOT_SHOW_LAST + 1, 0));
+    pivot_table_at(core, rows, 7);
+    CHECK(oc_parse_range("A1:E7", &selected));
+    oc_core_select_range(core, &selected);
+
+    /* Region by Year, Sales: East 30 | -, West 5 | 40, North - | 30; totals 35 | 70, 105.
+       B..D are 2025, 2026 and the total column; rows 2..4 the regions, 5 the Grand Total. */
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 0;
+    def.ncol = 1; def.col[0] = 2;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.data[0].show = OWF_PIVOT_SHOW_ROW;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A3"), "West");
+    CHECK(near(num(core, "B2"), 1.0) && empty(core, "C2") && near(num(core, "B3"), 5.0 / 45.0) &&
+          near(num(core, "C3"), 40.0 / 45.0) && near(num(core, "D3"), 1.0) &&
+          near(num(core, "B5"), 35.0 / 105.0) && near(num(core, "D5"), 1.0));
+    CHECK_STR(format_at(core, "B3"), "0.00%");
+    CHECK(oc_core_pivot_get(core, &got) && got.data[0].show == OWF_PIVOT_SHOW_ROW);
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && strstr(config, ";v=0:r"));
+
+    got.data[0].show = OWF_PIVOT_SHOW_COLUMN;
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK(near(num(core, "B2"), 30.0 / 35.0) && near(num(core, "B3"), 5.0 / 35.0) &&
+          near(num(core, "C3"), 40.0 / 70.0) && near(num(core, "D2"), 30.0 / 105.0) &&
+          near(num(core, "B5"), 1.0) && near(num(core, "D5"), 1.0));
+
+    CHECK(oc_core_pivot_get(core, &got));
+    got.data[0].show = OWF_PIVOT_SHOW_TOTAL;
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK(near(num(core, "B3"), 5.0 / 105.0) && near(num(core, "C4"), 30.0 / 105.0) && near(num(core, "D5"), 1.0));
+
+    CHECK(oc_core_pivot_get(core, &got));
+    got.data[0].show = OWF_PIVOT_SHOW_INDEX;
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    /* West 2025: 5 x 105 / (45 x 35) */
+    CHECK(near(num(core, "B3"), 5.0 * 105.0 / (45.0 * 35.0)) && near(num(core, "B5"), 1.0) &&
+          near(num(core, "D5"), 1.0));
+    CHECK_STR(format_at(core, "B3"), "");                 /* an index is a plain number */
+
+    /* two data fields, one shown as a share: the other stays as it is, in the text and the files */
+    CHECK(oc_core_pivot_get(core, &got));
+    got.ndata = 2;
+    got.data[0].show = OWF_PIVOT_SHOW_NORMAL;
+    got.data[1].field = 3; got.data[1].function = OC_SUBTOTAL_SUM; got.data[1].show = OWF_PIVOT_SHOW_TOTAL;
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK && oc_core_pivot_get(core, &got));
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && strstr(config, ";v=1:t") && !strstr(config, "0:t"));
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot-show.xlsx", "/tmp/opencalc-pivot-show.ods" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            owf_pivotdef back;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
+            CHECK(round && owf_pivot_get(round, 1, &back) && back.ndata == 2 &&
+                  back.data[0].show == OWF_PIVOT_SHOW_NORMAL && back.data[1].show == OWF_PIVOT_SHOW_TOTAL);
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:9;v=1:r\"", &def));      /* no data field 1 */
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:9;v=0:x\"", &def));
+    CHECK(owf_pivot_parse_config("\"2;r=0;d=1:9,2:9;v=1:i\"", &def) && def.data[0].show == OWF_PIVOT_SHOW_NORMAL &&
+          def.data[1].show == OWF_PIVOT_SHOW_INDEX);
+    CHECK(owf_pivot_parse_config("\"2;r=0;d=1:9\"", &def) && def.ndata == 1 && def.data[0].show == OWF_PIVOT_SHOW_NORMAL);
+    oc_core_free(core);
+
+    /* a total of 0: #DIV/0! */
+    core = fresh();
+    if (!core)
+        return;
+    pivot_table_at(core, zero, 3);
+    CHECK(oc_parse_range("A1:B3", &selected));
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 0;
+    def.ndata = 1; def.data[0].field = 1; def.data[0].function = OC_SUBTOTAL_SUM;
+    def.data[0].show = OWF_PIVOT_SHOW_ROW;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A3"), "b");
+    CHECK(near(num(core, "B2"), 1.0) && at(core, "B3") && at(core, "B3")->type == OWF_VALUE_ERROR &&
+          at(core, "B3")->error == OWF_ERROR_DIV0);
+    oc_core_free(core);
+}
+
 static void test_pivot_definition_text(void)
 {
     owf_book *book = owf_book_new();
@@ -6093,6 +6308,10 @@ static void test_pivot_definition_text(void)
     CHECK(owf_pivot_parse_config("\"2;r=0;d=1:4\"", &back) && back.nsort == 0);    /* none is kept from before */
     CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4;s=0:x\"", &back));
     CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4;s=0\"", &back));
+    CHECK(owf_pivot_parse_config("\"2;r=0;d=1:4;h=0:tWest,0:e,0:n2.5,0:b1\"", &back) && back.nhide == 4 &&
+          back.hide[0].kind == OWF_PIVOT_TEXT && !strcmp(back.hide[0].text, "West") &&
+          back.hide[1].kind == OWF_PIVOT_BLANK && back.hide[2].number == 2.5 && back.hide[3].kind == OWF_PIVOT_BOOL);
+    CHECK(!owf_pivot_parse_config("\"2;r=0;d=1:4;h=0:a\"", &back));          /* every item is not one */
     CHECK(owf_pivot_function_from_word("countNums") == OC_SUBTOTAL_COUNT &&
           owf_pivot_function_from_word("COUNT") == OC_SUBTOTAL_COUNTA &&
           owf_pivot_function_from_word("stdDevp") == OC_SUBTOTAL_STDEVP &&
@@ -6704,6 +6923,8 @@ int main(void)
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_sort();
+    test_pivot_hide();
+    test_pivot_show_as();
     test_pivot_definition_text();
     test_solver_lp();
     test_solver();

@@ -123,6 +123,31 @@ static void change_style(const owf_doc *doc, int number, ol_style *s)
     s->text_flags |= r->kind == OWF_REV_DELETE ? OL_TEXT_STRIKE : OL_TEXT_UNDERLINE;
 }
 
+/* libowf 1.11: a tracked format change's text in its author's colour (not underlined or struck: the format
+ * shown is the new one). The author's place: among the changes' authors, then the format changes' before it. */
+static int same_author(const char *a, const char *b)
+{
+    return (!a && !b) || (a && b && !strcmp(a, b));
+}
+
+static void format_change_style(const owf_doc *doc, int number, ol_style *s)
+{
+    static const unsigned long colours[] = { 0x1F5FBF, 0xB0306A, 0x2E7D32, 0x8E44AD, 0xC0601A, 0x00838F };
+    const owf_format_change *fc = OWF_DOC_FORMAT_CHANGE(doc, number);
+    int i, k, author = 0, total = doc->nrevisions + number - 1;
+    if (!fc) return;
+    for (i = 0; i < total; ++i) {
+        const char *a = i < doc->nrevisions ? doc->revisions[i].author : doc->format_changes[i - doc->nrevisions].author;
+        int seen = 0;
+        if (same_author(a, fc->author)) break;
+        for (k = 0; k < i && !seen; ++k)
+            seen = same_author(a, k < doc->nrevisions ? doc->revisions[k].author
+                                                       : doc->format_changes[k - doc->nrevisions].author);
+        if (!seen) ++author;
+    }
+    s->foreground = argb(colours[author % (int)(sizeof colours / sizeof colours[0])]);
+}
+
 static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spacing, ol_style *s)
 {
     int font = fmt->font >= 0 ? fmt->font : doc->base.font;
@@ -609,6 +634,7 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
             run_style(doc, &r->fmt, spacing, &rs);
         }
         if (r->revision) change_style(doc, r->revision, &rs);
+        else if (r->format_change > 0) format_change_style(doc, r->format_change, &rs);
         if (l && record == 1 && r->comment) {
             /* 2.2.0: a comment's range: its text highlighted from its start to its place */
             int k, idx = r->comment > 0 ? r->comment - 1 : -r->comment - 1;

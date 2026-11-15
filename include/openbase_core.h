@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.6.3"
+#define OB_CORE_VERSION "0.8.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -428,6 +428,26 @@ void ob_undo_clear(ob_project *p);
 #define OB_QUERY_OUT 128        /* result columns, "*" spread out */
 #define OB_EXPR_MAX 160
 #define OB_SQL_MAX 4096
+#define OB_QUERY_JOINS 12
+
+/* A join drawn between two of the query's tables (core 0.8): left.lfield =
+ * right.rfield. Inner: the rows that match on both sides; left: every row of
+ * the left table, with the right table's where one matches; right: the
+ * other way round. */
+typedef enum ob_join {
+    OB_JOIN_INNER,
+    OB_JOIN_LEFT,
+    OB_JOIN_RIGHT,
+    OB_JOINS
+} ob_join;
+
+typedef struct ob_qjoin {
+    char left[OB_NAME_MAX];
+    char lfield[OB_NAME_MAX];
+    char right[OB_NAME_MAX];
+    char rfield[OB_NAME_MAX];
+    ob_join kind;
+} ob_qjoin;
 
 typedef enum ob_total {
     OB_TOTAL_NONE,
@@ -462,6 +482,8 @@ typedef struct ob_query {
     ob_qcolumn columns[OB_QUERY_COLUMNS];
     int sql_only;
     char sql[OB_SQL_MAX];           /* sql_only: the statement */
+    int njoins;                     /* 0: tables joined by their relationships */
+    ob_qjoin joins[OB_QUERY_JOINS];
 } ob_query;
 
 /* A result column: its heading, and the type its values are shown as
@@ -474,8 +496,22 @@ typedef struct ob_qresult {
 void ob_query_init(ob_query *q, const char *name);
 /* Adds a table (once); its index, -1 when full or there already. */
 int ob_query_add_table(ob_query *q, const char *table);
-/* Removes table i and its columns. */
+/* Removes table i, its columns and its joins. */
 void ob_query_remove_table(ob_query *q, int i);
+/* Draws a join, left.lfield = right.rfield; its index, -1 when full, when
+ * the two are one table, or when those two fields are joined already.
+ * With no join drawn a query joins its tables by their relationships, as
+ * before; once one is drawn only the drawn ones are used, and each table
+ * must be joined to the others. Several joins between two tables are all
+ * kept (ON a AND b), the first one's kind used. */
+int ob_query_add_join(ob_query *q, const char *left, const char *lfield, const char *right, const char *rfield,
+                      ob_join kind);
+void ob_query_remove_join(ob_query *q, int i);
+const char *ob_join_name(ob_join k);        /* "Inner", "Left", "Right" */
+/* Draws an inner join for each relationship between two of the query's
+ * tables that aren't joined yet (the Lookup to the table's key), as a
+ * designer does when a table is added; how many were drawn, -1 on error. */
+int ob_query_relation_joins(ob_project *p, ob_query *q);
 /* A column showing table.field ("*" for every field), or the expression
  * expr when table is NULL or ""; NULL when full. */
 ob_qcolumn *ob_query_add_column(ob_query *q, const char *table, const char *field);
@@ -502,7 +538,9 @@ int ob_query_rows(ob_project *p, const ob_query *q, const char *const *params, o
                   ob_row_fn cb, void *user);
 
 /* Saved queries (oadb_queries), in name order. A query's name is a table's
- * kind of name, and no table has it. Saving a name that is there replaces it. */
+ * kind of name, and no table has it. Saving a name that is there replaces it.
+ * A query with joins drawn is kept as "oadb query 2" (an older GFOpenBase
+ * opens it as its SQL, which has the joins). */
 int ob_query_count(ob_project *p);
 const char *ob_query_name(ob_project *p, int i);
 int ob_query_get(ob_project *p, const char *name, ob_query *out);
@@ -522,6 +560,23 @@ void ob_currency_format(ob_int pence, char *out, size_t size);
 
 const char *ob_type_name(ob_type t);          /* "Text", "Currency"... */
 int ob_type_from_name(const char *name);      /* -1 when unknown */
+
+/* ---- Reports kept in the project (oadb_reports) ----
+ * Each report's text under its name; include/openbase_report.h writes and reads the text
+ * (ob_report_store, ob_report_load). A report's name is a query's kind of name, and no table has it.
+ * 1 when they work, 0 with the reason in ob_error. */
+
+#define OB_REPORT_TEXT_MAX 8192        /* the most a report's text can be, with its 0 */
+
+int ob_report_count(ob_project *p);
+/* In name order; NULL past the end. The text lasts until the next call. */
+const char *ob_report_name(ob_project *p, int i);
+/* The text kept as name (any case) into out; 0 when there is none or it doesn't fit in size. */
+int ob_report_get_text(ob_project *p, const char *name, char *out, size_t size);
+/* Keeps text as name, replacing what is kept there (the name keeps the case it was first given). */
+int ob_report_put_text(ob_project *p, const char *name, const char *text);
+int ob_report_rename(ob_project *p, const char *old_name, const char *new_name);
+int ob_report_delete(ob_project *p, const char *name);
 
 #ifdef __cplusplus
 }
