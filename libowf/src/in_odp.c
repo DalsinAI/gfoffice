@@ -2020,7 +2020,9 @@ static void read_background(odp *o, const gstyle *st, unsigned long *colour, int
             *angle = g.gradient_angle;
             *colour2 = g.fill2;
         } else {
+            /* its draw:gradient is missing: the page's fill-color, and the report says so */
             *colour = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Gradient backgrounds are drawn in one colour");
         }
     } else if (!strcmp(fill, "hatch")) {
         *colour = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));

@@ -257,6 +257,25 @@ static void test_background(void)
     if (data) CHECK(count(data, length, "h W n") == 1 && count(data, length, " c h ") == 48, "the background's 48 rings");
     free(data);
     owf_deck_free(deck);
+    {
+        /* the page names a draw:gradient that isn't there: its fill-color, plain, and the report says so */
+        char missing[sizeof FODP_BG + 64], *at;
+        owf_report *report = owf_report_new();
+        int k, noted = 0;
+        deck = NULL;
+        memcpy(missing, FODP_BG, sizeof FODP_BG);
+        at = strstr(missing, "draw:fill-gradient-name=\"sky\"");
+        CHECK(at != NULL, "the test file");
+        if (at) memcpy(at + 25, "skx", 3);             /* "sky" to "skx" in the page's style only */
+        CHECK(owf_import_deck_memory((const unsigned char *)missing, strlen(missing), "fodp", &deck, report, NULL) ==
+              OWF_OK && deck && deck->nslides == 1, "read with the gradient missing");
+        if (deck) CHECK(!deck->slides[0].background_gradient, "no gradient");
+        for (k = 0; report && k < owf_report_count(report); k++)
+            if (strstr(owf_report_note(report, k, NULL, NULL), "Gradient backgrounds are drawn in one colour")) noted = 1;
+        CHECK(noted, "the report says it is drawn in one colour");
+        owf_report_free(report);
+        owf_deck_free(deck);
+    }
 }
 
 /* whether the pixel centre (px + 0.5, py + 0.5) is inside the polygon, even-odd, doubled to stay whole */
