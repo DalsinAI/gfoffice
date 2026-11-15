@@ -388,8 +388,12 @@ print) needs no script.
   at a time (Look for, Or, Or); Apply Filter makes them the view's, on top
   of Sort and Filter's one test, so the datasheet shows the same rows.
   `ob_view_form_set` keeps up to 16 of them in the `ob_view`.
-- Not yet: the form designer (6.2), rows added or changed
-  in the subform, Return on a subform row to open its table's form, buttons
+- Subform rows (core 0.6.3, GFOpenBase 0.6.3): under the subform's list,
+  Add Row... opens the row editor for its table with the Lookup set to
+  the record and shown, not typed (`ob_child_add`); choose a row, then
+  Edit Row... or Delete Row... (`ob_child_key` gives its key). The
+  record is saved first, so a new record has its key.
+- Not yet: the form designer (6.2), Return on a subform row to open its table's form, buttons
   and events (6.5), forms kept in `oadb_forms`.
 
 ## 7. Reports
