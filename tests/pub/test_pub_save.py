@@ -19,8 +19,8 @@ For each file tools/pubgen/make_pub.py makes (PUB_SAMPLES, as test_pub.py):
    nothing goes to stderr (where ASan and UBSan report).
 
 The expected files were checked by hand against the first files' dumps:
-the only differences are what the writer does not write yet (WordArt,
-groups' own records, the scratch area) and the 98/2000 forms'
+the only differences are what the writer does not write yet (WordArt
+and the scratch area) and the 98/2000 forms'
 own shape numbers.
 
 MIT, Copyright (c) 2026 AmiCradle Team.
@@ -34,7 +34,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAMPLES = os.environ.get('PUB_SAMPLES') or os.path.join(HERE, '..', '..', 'build', 'host', 'pubgen')
 EXPECTED = os.path.join(HERE, 'expected', 'resaved')
-LOSSLESS = ['gen-2007-plain', 'gen-2010-styles', 'gen-2003-names', 'gen-cut']
+LOSSLESS = ['gen-2007-plain', 'gen-2010-styles', 'gen-2003-names', 'gen-cut', 'gen-2013-look']
 REFUSED = ['gen-notpub', 'gen-damaged']
 # a note pub_resave must print for the file (the writer's report)
 NOTES = {'gen-colours': '5 run(s) of text past the first 255 colours saved in the automatic colour'}
