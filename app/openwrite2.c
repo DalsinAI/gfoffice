@@ -5085,8 +5085,9 @@ static int feed_choice(void)
 
 static void set_feed(int k)
 {
-    char text[8];
+    char text[16];
     feed_read = 1;
+    if (k > 6) k = 6;
     feed_way = k <= 0 ? OW_FEED_AS_SET : (k - 1) % 3 + OW_FEED_LEFT;
     feed_paper = k >= 4 ? 12240 : 11906;
     snprintf(text, sizeof text, "%d\n", k < 0 ? 0 : k);
