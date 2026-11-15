@@ -320,9 +320,86 @@ static void keys_free(pivot_keys *k)
     free(k->slots);
 }
 
-/* Keys in order: each field's values in their first order, outer fields first, so a group's
- * rows are together. A plain insertion-merge sort (no qsort context). */
-static void sort_keys(const pivot_keys *k, unsigned *order, unsigned *tmp)
+/* Sorted items (owf_pivot.h): blanks last either way; numbers and booleans, then text (case aside),
+ * then errors; as Data > Sort orders cells. 0 for two values that sort together. */
+static int item_class(const owf_cell *c)
+{
+    if (!c || c->type == OWF_VALUE_EMPTY || (c->type == OWF_VALUE_TEXT && !(c->text && *c->text)))
+        return 3;
+    if (c->type == OWF_VALUE_NUMBER || c->type == OWF_VALUE_BOOL)
+        return 0;
+    return c->type == OWF_VALUE_TEXT ? 1 : 2;
+}
+
+static int item_compare(const owf_cell *a, const owf_cell *b, int order)
+{
+    int ca = item_class(a), cb = item_class(b), result = 0;
+    if (ca == 3 || cb == 3)
+        return ca == cb ? 0 : ca == 3 ? 1 : -1;
+    if (ca != cb)
+        result = ca < cb ? -1 : 1;
+    else if (ca == 0)
+        result = a->number < b->number ? -1 : a->number > b->number ? 1 : 0;
+    else if (ca == 1) {
+        const unsigned char *p = (const unsigned char *)a->text, *q = (const unsigned char *)b->text;
+        while (*p && *q) {
+            int x = *p >= 'A' && *p <= 'Z' ? *p + 32 : *p, y = *q >= 'A' && *q <= 'Z' ? *q + 32 : *q;
+            if (x != y) {
+                result = x < y ? -1 : 1;
+                break;
+            }
+            p++;
+            q++;
+        }
+        if (!result)
+            result = *p == *q ? 0 : *p ? 1 : -1;
+    } else
+        result = a->error < b->error ? -1 : a->error > b->error ? 1 : 0;
+    return order == OWF_PIVOT_SORT_DESCENDING ? -result : result;
+}
+
+/* rank[i]: where a field's i-th value (in first order) comes once sorted; values that sort
+ * together keep their first order. A merge sort, as sort_keys. 0 when out of memory. */
+static int rank_values(const pivot_values *v, int sort, unsigned **rank)
+{
+    unsigned n = v->n, *order, *tmp, width, lo, mid, hi, a, b, t, i;
+    *rank = NULL;
+    if (sort == OWF_PIVOT_SORT_SOURCE || n < 2u)
+        return 1;
+    order = malloc((size_t)n * sizeof *order);
+    tmp = malloc((size_t)n * sizeof *tmp);
+    *rank = malloc((size_t)n * sizeof **rank);
+    if (!order || !tmp || !*rank) {
+        free(order);
+        free(tmp);
+        free(*rank);
+        *rank = NULL;
+        return 0;
+    }
+    for (i = 0; i < n; i++)
+        order[i] = i;
+    for (width = 1; width < n; width *= 2u) {
+        for (lo = 0; lo < n; lo += 2u * width) {
+            mid = lo + width < n ? lo + width : n;
+            hi = lo + 2u * width < n ? lo + 2u * width : n;
+            a = lo; b = mid; t = lo;
+            while (a < mid || b < hi)
+                tmp[t++] = a < mid && (b >= hi || item_compare(v->sample[order[a]], v->sample[order[b]], sort) <= 0)
+                         ? order[a++] : order[b++];
+        }
+        memcpy(order, tmp, (size_t)n * sizeof *order);
+    }
+    for (i = 0; i < n; i++)
+        (*rank)[order[i]] = i;
+    free(order);
+    free(tmp);
+    return 1;
+}
+
+/* Keys in order: each field's values in their first order (or rank[f]'s, for a sorted field),
+ * outer fields first, so a group's rows are together. A plain insertion-merge sort (no qsort
+ * context). */
+static void sort_keys(const pivot_keys *k, unsigned *const *rank, unsigned *order, unsigned *tmp)
 {
     unsigned width, n = k->n, i, lo, mid, hi, a, b, t;
     for (i = 0; i < n; i++)
@@ -343,7 +420,7 @@ static void sort_keys(const pivot_keys *k, unsigned *order, unsigned *tmp)
                     take_a = 1;
                     for (f = 0; f < k->width; f++)
                         if (ka[f] != kb[f]) {
-                            take_a = ka[f] < kb[f];
+                            take_a = rank[f] ? rank[f][ka[f]] < rank[f][kb[f]] : ka[f] < kb[f];
                             break;
                         }
                 }
@@ -436,6 +513,7 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
     pivot_keys rkeys, ckeys;
     pivot_bucket *matrix = NULL, *rtot = NULL, *ctot = NULL, *grand = NULL;
     unsigned *row_of = NULL, *col_of = NULL, *rorder = NULL, *corder = NULL, *tmp = NULL;
+    unsigned *rank[OWF_PIVOT_FIELDS * 2];
     unsigned nsrc = def->source.last_row - def->source.first_row, kept = 0, nd = def->ndata;
     unsigned nf = def->nrow + def->ncol, i, f, r, c, d, n;
     unsigned key[OWF_PIVOT_FIELDS * 2];
@@ -445,6 +523,7 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
     char text[160];
 
     memset(values, 0, sizeof values);
+    memset(rank, 0, sizeof rank);
     memset(&rkeys, 0, sizeof rkeys);
     memset(&ckeys, 0, sizeof ckeys);
     rkeys.width = def->nrow;
@@ -525,11 +604,15 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
             bucket_add(&grand[d], v);
         }
     }
+    for (f = 0; f < nf; f++)
+        if (!rank_values(&values[f], owf_pivot_sort_of(def, f < def->nrow ? def->row[f] : def->col[f - def->nrow]),
+                         &rank[f]))
+            goto done;
     rorder[0] = corder[0] = 0;
     if (def->nrow)
-        sort_keys(&rkeys, rorder, tmp);
+        sort_keys(&rkeys, rank, rorder, tmp);
     if (def->ncol)
-        sort_keys(&ckeys, corder, tmp);
+        sort_keys(&ckeys, rank + def->nrow, corder, tmp);
 
     /* the layout */
     header_rows = def->ncol ? def->ncol + (nd > 1 ? 1u : 0u) : 1u;
@@ -665,8 +748,10 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
     }
 done:
     owf_calc_free(o.calc);
-    for (f = 0; f < OWF_PIVOT_FIELDS * 2; f++)
+    for (f = 0; f < OWF_PIVOT_FIELDS * 2; f++) {
         values_free(&values[f]);
+        free(rank[f]);
+    }
     keys_free(&rkeys);
     keys_free(&ckeys);
     free(matrix);
