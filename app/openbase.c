@@ -48,6 +48,7 @@
 #include <string.h>
 
 #include "openbase_core.h"
+#include "ob_reportwin.h"
 #include "ow_stack.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
@@ -65,6 +66,9 @@ enum {
     M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV,
     M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM
 };
+
+/* 4.3: the Report window (app/ob_reportwin.c) */
+enum { M_REPORTS = 100 };
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
@@ -106,6 +110,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First Row", NULL, 0, 0, (APTR)M_R_FIRST },
     { NM_ITEM, "Last Row", NULL, 0, 0, (APTR)M_R_LAST },
+    { NM_TITLE, "Report", NULL, 0, 0, NULL },
+    { NM_ITEM, "Reports...", "P", 0, 0, (APTR)M_REPORTS },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -2427,7 +2433,7 @@ static int run_query(int ask_again)
 /* The designer: one window for the grid (tables, columns, criteria) or the
  * SQL, with Run, Save and Close. */
 enum {
-    Q_NAME = 1, Q_SQLONLY, Q_SQL, Q_TABLES, Q_ADDTABLE, Q_REMTABLE, Q_COLS, Q_ADDFIELD, Q_ADDEXPR, Q_REMCOL,
+    Q_NAME = 1, Q_SQLONLY, Q_SQL, Q_TABLES, Q_ADDTABLE, Q_REMTABLE, Q_JOINS, Q_COLS, Q_ADDFIELD, Q_ADDEXPR, Q_REMCOL,
     Q_EXPR, Q_HEAD, Q_SORT, Q_TOTAL, Q_SHOW, Q_CRIT0, Q_CRIT1, Q_CRIT2, Q_SQLTEXT, Q_RUN, Q_SAVE, Q_CLOSE, Q_COUNT
 };
 
@@ -2531,6 +2537,295 @@ static void q_read_strings(struct Window *qw, struct Gadget **gad, int csel)
 #undef QSTR
 }
 
+/* ---- Joins (the query designer's Joins... window) ----
+ * The query's tables as boxes of their fields, its joins as lines between
+ * fields. Drag a field onto a field of another table, or click one and then
+ * the other, to join them; click a line to choose it; Inner, Left and Right
+ * set what it keeps; Remove (or Del) takes it away. With no join drawn yet
+ * the window starts from the tables' relationships. */
+
+#define JV_FIELDS 24
+
+struct jv_box {
+    int x, y, w, h, nf, more;
+    char fields[JV_FIELDS][OB_NAME_MAX];
+};
+
+static struct jv_box jv[OB_QUERY_TABLES];
+static int jv_seg[OB_QUERY_JOINS][8];       /* each join's line: four points */
+static int jv_rowh, jv_sel, jv_pt, jv_pf;    /* row height, chosen join, picked table and field */
+static int jv_cx, jv_cy, jv_cw, jv_ch, jv_sty;
+
+static int jv_table(const char *name)
+{
+    int i;
+    for (i = 0; i < q_ed.ntables; i++) if (same_name(q_ed.tables[i], name)) return i;
+    return -1;
+}
+
+static int jv_field(int t, const char *name)
+{
+    int i;
+    for (i = 0; i < jv[t].nf; i++) if (same_name(jv[t].fields[i], name)) return i;
+    return -1;
+}
+
+/* The boxes in rows across the canvas, each as tall as its fields (up to
+ * what fits). */
+static void jv_layout(void)
+{
+    int bw = fw * 16, gap = fw * 6, cols, rows, maxh, i, j, show;
+    cols = (jv_cw + gap) / (bw + gap);
+    if (cols < 1) cols = 1;
+    rows = (q_ed.ntables + cols - 1) / cols;
+    if (rows < 1) rows = 1;
+    maxh = (jv_ch - (rows - 1) * jv_rowh) / rows;
+    show = (maxh - 6) / jv_rowh - 1;
+    if (show < 1) show = 1;
+    if (show > JV_FIELDS) show = JV_FIELDS;
+    for (i = 0; i < q_ed.ntables; i++) {
+        struct jv_box *b = &jv[i];
+        b->nf = b->more = 0;
+        if (ob_table_get(proj, q_ed.tables[i], &q_t))
+            for (j = 0; j < q_t.nfields; j++) {
+                if (b->nf < show) put_text(b->fields[b->nf++], OB_NAME_MAX, q_t.fields[j].name);
+                else b->more++;
+            }
+        b->w = bw;
+        b->h = jv_rowh * (b->nf + 1 + (b->more ? 1 : 0)) + 6;
+        b->x = jv_cx + (i % cols) * (bw + gap);
+        b->y = jv_cy + (i / cols) * (maxh + jv_rowh);
+    }
+}
+
+static int jv_field_y(int t, int f)
+{
+    return f >= 0 ? jv[t].y + 3 + jv_rowh * (f + 1) + jv_rowh / 2 : jv[t].y + jv[t].h / 2;
+}
+
+static void jv_draw(struct Window *jw)
+{
+    struct RastPort *rp = jw->RPort;
+    char line[3 * OB_NAME_MAX + 120];
+    int i, j;
+    SetFont(rp, font);
+    SetDrMd(rp, JAM1);
+    SetAPen(rp, pen(BACKGROUNDPEN));
+    RectFill(rp, jv_cx, jv_cy, jv_cx + jv_cw - 1, jv_cy + jv_ch - 1);
+    RectFill(rp, jv_cx, jv_sty, jv_cx + jv_cw - 1, jv_sty + fh + 1);
+    for (i = 0; i < q_ed.ntables; i++) {
+        struct jv_box *b = &jv[i];
+        SetAPen(rp, pen(FILLPEN));
+        RectFill(rp, b->x, b->y, b->x + b->w - 1, b->y + jv_rowh + 1);
+        SetAPen(rp, pen(SHADOWPEN));
+        Move(rp, b->x, b->y); Draw(rp, b->x + b->w - 1, b->y); Draw(rp, b->x + b->w - 1, b->y + b->h - 1);
+        Draw(rp, b->x, b->y + b->h - 1); Draw(rp, b->x, b->y);
+        SetAPen(rp, pen(FILLTEXTPEN));
+        SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
+        Move(rp, b->x + 4, b->y + 1 + rp->TxBaseline);
+        Text(rp, (STRPTR)q_ed.tables[i], (ULONG)TextFit(rp, (STRPTR)q_ed.tables[i], strlen(q_ed.tables[i]), &rv_te, NULL, 1,
+                                                        b->w - 8, jv_rowh + 2));
+        SetSoftStyle(rp, 0, FSF_BOLD);
+        for (j = 0; j < b->nf + (b->more ? 1 : 0); j++) {
+            const char *t = j < b->nf ? b->fields[j] : "...";
+            int ry = b->y + 3 + jv_rowh * (j + 1);
+            if (i == jv_pt && j == jv_pf) {
+                SetAPen(rp, pen(FILLPEN));
+                RectFill(rp, b->x + 2, ry, b->x + b->w - 3, ry + jv_rowh - 1);
+                SetAPen(rp, pen(FILLTEXTPEN));
+            } else {
+                SetAPen(rp, pen(TEXTPEN));
+            }
+            Move(rp, b->x + 6, ry + (jv_rowh - fh) / 2 + rp->TxBaseline);
+            Text(rp, (STRPTR)t, (ULONG)TextFit(rp, (STRPTR)t, strlen(t), &rv_te, NULL, 1, b->w - 10, jv_rowh));
+        }
+    }
+    /* the joins: out of one box's side, across the gap, into the other's */
+    for (i = 0; i < q_ed.njoins; i++) {
+        const ob_qjoin *k = &q_ed.joins[i];
+        int a = jv_table(k->left), b = jv_table(k->right), ax, bx, ay, by, mid, *sg = jv_seg[i];
+        memset(sg, 0, sizeof jv_seg[i]);
+        if (a < 0 || b < 0) continue;
+        ay = jv_field_y(a, jv_field(a, k->lfield));
+        by = jv_field_y(b, jv_field(b, k->rfield));
+        if (jv[b].x >= jv[a].x + jv[a].w) { ax = jv[a].x + jv[a].w; bx = jv[b].x; }
+        else if (jv[b].x + jv[b].w <= jv[a].x) { ax = jv[a].x; bx = jv[b].x + jv[b].w; }
+        else { ax = jv[a].x + jv[a].w; bx = jv[b].x + jv[b].w; }
+        mid = ax == bx || (ax == jv[a].x + jv[a].w && bx == jv[b].x + jv[b].w)
+            ? (ax > bx ? ax : bx) + fw * 3 : (ax + bx) / 2;
+        sg[0] = ax; sg[1] = ay; sg[2] = mid; sg[3] = ay; sg[4] = mid; sg[5] = by; sg[6] = bx; sg[7] = by;
+        SetAPen(rp, pen(i == jv_sel ? FILLPEN : SHADOWPEN));
+        for (j = 0; j < (i == jv_sel ? 2 : 1); j++) {
+            Move(rp, ax, ay + j); Draw(rp, mid + j, ay + j); Draw(rp, mid + j, by + j); Draw(rp, bx, by + j);
+        }
+        /* a block at the end whose every row is kept */
+        if (k->kind == OB_JOIN_LEFT) RectFill(rp, ax + (ax < mid ? 0 : -4), ay - 2, ax + (ax < mid ? 4 : 0), ay + 2);
+        if (k->kind == OB_JOIN_RIGHT) RectFill(rp, bx + (bx < mid ? 0 : -4), by - 2, bx + (bx < mid ? 4 : 0), by + 2);
+    }
+    if (jv_sel >= 0 && jv_sel < q_ed.njoins) {
+        const ob_qjoin *k = &q_ed.joins[jv_sel];
+        snprintf(line, sizeof line, "%s.%s = %s.%s: %s", k->left, k->lfield, k->right, k->rfield,
+                 k->kind == OB_JOIN_INNER ? "Inner, only the rows that match"
+                 : k->kind == OB_JOIN_LEFT ? "Left, every row of the first" : "Right, every row of the second");
+    } else if (jv_pt >= 0) {
+        snprintf(line, sizeof line, "%s.%s: now click or drop on a field of another table", q_ed.tables[jv_pt], jv[jv_pt].fields[jv_pf]);
+    } else {
+        snprintf(line, sizeof line, "%d join%s. Drag a field onto another table's field to join them.",
+                 q_ed.njoins, q_ed.njoins == 1 ? "" : "s");
+    }
+    SetAPen(rp, pen(TEXTPEN));
+    text_fit(rp, jv_cx, jv_sty, jv_cw, line);
+}
+
+/* The field under x, y: table and field, or 0. */
+static int jv_hit_field(int x, int y, int *t, int *f)
+{
+    int i;
+    for (i = 0; i < q_ed.ntables; i++) {
+        const struct jv_box *b = &jv[i];
+        int row = (y - b->y - 3) / jv_rowh - 1;
+        if (x < b->x || x >= b->x + b->w || y < b->y + 3 + jv_rowh || row < 0 || row >= b->nf) continue;
+        *t = i;
+        *f = row;
+        return 1;
+    }
+    return 0;
+}
+
+/* The join whose line passes within 3 pixels of x, y; -1 for none. */
+static int jv_hit_join(int x, int y)
+{
+    int i, s;
+    for (i = q_ed.njoins - 1; i >= 0; i--)
+        for (s = 0; s < 3; s++) {
+            int x1 = jv_seg[i][2 * s], y1 = jv_seg[i][2 * s + 1], x2 = jv_seg[i][2 * s + 2], y2 = jv_seg[i][2 * s + 3];
+            int lo = x1 < x2 ? x1 : x2, hi = x1 < x2 ? x2 : x1, top = y1 < y2 ? y1 : y2, bot = y1 < y2 ? y2 : y1;
+            if (!x1 && !x2) continue;
+            if (x >= lo - 3 && x <= hi + 3 && y >= top - 3 && y <= bot + 3) return i;
+        }
+    return -1;
+}
+
+/* Joins the picked field to table t's field f. */
+static void jv_join(int t, int f)
+{
+    int i;
+    if (jv_pt < 0 || t == jv_pt) return;
+    i = ob_query_add_join(&q_ed, q_ed.tables[jv_pt], jv[jv_pt].fields[jv_pf], q_ed.tables[t], jv[t].fields[f], OB_JOIN_INNER);
+    if (i < 0) tell(q_ed.njoins >= OB_QUERY_JOINS ? "A query has at most 12 joins" : "Those two fields are joined already");
+    else jv_sel = i;
+    jv_pt = jv_pf = -1;
+}
+
+enum { JV_INNER = 1, JV_LEFT, JV_RIGHT, JV_REMOVE, JV_RELS, JV_CLOSE, JV_NBUTTONS = JV_CLOSE };
+
+static void join_window(void)
+{
+    static const char *const btext[JV_NBUTTONS] = { "Inner", "Left", "Right", "Remove", "Relationships", "Close" };
+    struct Window *jw;
+    struct Gadget *eg = NULL, *g;
+    struct NewGadget ng;
+    int w, h, i, bw, bh = fh + 6, done = 0, down = 0;
+    if (q_ed.ntables < 2) { tell("Add a second table first."); return; }
+    if (q_ed.njoins == 0 && ob_query_relation_joins(proj, &q_ed) < 0) { tell(ob_error(proj)); return; }
+    w = fw * 80;
+    h = scr->Height * 3 / 4;
+    if (w > scr->Width - 20) w = scr->Width - 20;
+    jw = OpenWindowTags(NULL, WA_Title, (ULONG)"Joins", WA_PubScreen, (ULONG)scr,
+        WA_Left, (scr->Width - w) / 2, WA_Top, scr->BarHeight + 1, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | IDCMP_MOUSEBUTTONS | BUTTONIDCMP,
+        TAG_DONE);
+    if (!jw) { tell("The window could not be opened."); return; }
+    w = jw->Width - jw->BorderLeft - jw->BorderRight;
+    h = jw->Height - jw->BorderTop - jw->BorderBottom;
+    jv_rowh = fh + 2;
+    jv_cx = jw->BorderLeft + 8;
+    jv_cy = jw->BorderTop + 6;
+    jv_cw = w - 16;
+    jv_ch = h - 6 - (fh + 6) - (bh + 8) - 4;
+    jv_sty = jv_cy + jv_ch + 4;
+    jv_sel = q_ed.njoins ? 0 : -1;
+    jv_pt = jv_pf = -1;
+    jv_layout();
+    if (!(g = CreateContext(&eg))) { CloseWindow(jw); return; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_Flags = PLACETEXT_IN;
+    ng.ng_Height = bh;
+    ng.ng_TopEdge = jw->Height - jw->BorderBottom - 6 - bh;
+    bw = (jv_cw - 5 * 4) / JV_NBUTTONS;
+    for (i = 0; i < JV_NBUTTONS && g; i++) {
+        ng.ng_LeftEdge = jv_cx + i * (bw + 4);
+        ng.ng_Width = bw;
+        ng.ng_GadgetText = (UBYTE *)btext[i];
+        ng.ng_GadgetID = i + 1;
+        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    }
+    if (!g) { FreeGadgets(eg); CloseWindow(jw); tell("Not enough memory."); return; }
+    AddGList(jw, eg, ~0, -1, NULL);
+    RefreshGList(eg, jw, NULL, -1);
+    GT_RefreshWindow(jw, NULL);
+    jv_draw(jw);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(jw->UserPort);
+        while (!done && (m = GT_GetIMsg(jw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            WORD mx = m->MouseX, my = m->MouseY;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            int redraw = 1, t, f;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(jw); GT_EndRefresh(jw, TRUE); continue; }
+            if (class == IDCMP_VANILLAKEY) {
+                if (code == 9 && q_ed.njoins) jv_sel = (jv_sel + 1) % q_ed.njoins;
+                else if ((code == 127 || code == 8) && jv_sel >= 0) { ob_query_remove_join(&q_ed, jv_sel); jv_sel = -1; }
+                else redraw = 0;
+            } else if (class == IDCMP_MOUSEBUTTONS) {
+                if (code == SELECTDOWN) {
+                    if (jv_hit_field(mx, my, &t, &f)) {
+                        if (jv_pt >= 0 && t != jv_pt) jv_join(t, f);       /* the second click */
+                        else { jv_pt = t; jv_pf = f; jv_sel = -1; down = 1; }
+                    } else {
+                        jv_sel = jv_hit_join(mx, my);
+                        jv_pt = jv_pf = -1;
+                    }
+                } else if (code == SELECTUP && down) {                       /* a drag ends */
+                    down = 0;
+                    if (jv_hit_field(mx, my, &t, &f) && t != jv_pt) jv_join(t, f);
+                    else redraw = 0;
+                } else redraw = 0;
+            } else if (class == IDCMP_GADGETUP) {
+                ob_qjoin *k = jv_sel >= 0 && jv_sel < q_ed.njoins ? &q_ed.joins[jv_sel] : NULL;
+                switch (gg->GadgetID) {
+                case JV_INNER: case JV_LEFT: case JV_RIGHT:
+                    if (k) k->kind = gg->GadgetID == JV_LEFT ? OB_JOIN_LEFT : gg->GadgetID == JV_RIGHT ? OB_JOIN_RIGHT : OB_JOIN_INNER;
+                    else tell("Click a join's line first.");
+                    break;
+                case JV_REMOVE:
+                    if (k) { ob_query_remove_join(&q_ed, jv_sel); jv_sel = -1; }
+                    else tell("Click a join's line first.");
+                    break;
+                case JV_RELS:
+                    if ((i = ob_query_relation_joins(proj, &q_ed)) < 0) tell(ob_error(proj));
+                    else if (!i) tell("Every relationship between these tables is drawn already.");
+                    break;
+                case JV_CLOSE: done = 1; break;
+                }
+                if (!done) ActivateWindow(jw);
+            } else redraw = 0;
+            if (!done && redraw) jv_draw(jw);
+        }
+    }
+    RemoveGList(jw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(jw);
+}
+
 static void design_query(int fresh)
 {
     struct Window *qw;
@@ -2618,6 +2913,10 @@ static void design_query(int fresh)
                 ng.ng_GadgetText = (UBYTE *)"Take Table Out";
                 ng.ng_GadgetID = Q_REMTABLE;
                 g = gad[Q_REMTABLE] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, tsel < 0, TAG_DONE);
+                ng.ng_TopEdge = y + rowh * 2;
+                ng.ng_GadgetText = (UBYTE *)(q_ed.njoins ? "Joins (drawn)..." : "Joins...");
+                ng.ng_GadgetID = Q_JOINS;
+                g = gad[Q_JOINS] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, q_ed.ntables < 2, TAG_DONE);
                 ng.ng_Flags = PLACETEXT_LEFT;
                 ng.ng_LeftEdge = l + lw;
                 ng.ng_TopEdge = y += rowh * 3 + 4;
@@ -2745,12 +3044,15 @@ static void design_query(int fresh)
                     if (code > 0 && q_tlabels[code]) {
                         if (ob_query_add_table(&q_ed, (const char *)q_tlabels[code]) < 0)
                             tell(q_ed.ntables >= OB_QUERY_TABLES ? "A query has at most 8 tables" : "That table is in the query already");
+                        else if (q_ed.njoins > 0 && ob_query_relation_joins(proj, &q_ed) < 0)   /* drawn: draw its relationships too */
+                            tell(ob_error(proj));
                         rebuild = 1;
                     }
                     break;
                 case Q_REMTABLE:
                     if (tsel >= 0 && tsel < q_ed.ntables) { ob_query_remove_table(&q_ed, tsel); tsel = -1; csel = -1; rebuild = 1; }
                     break;
+                case Q_JOINS: join_window(); rebuild = 1; break;
                 case Q_COLS: csel = code; rebuild = 1; break;
                 case Q_ADDFIELD:
                     if (code > 0 && code <= q_nf) {
@@ -3606,6 +3908,27 @@ static void undo_last(void)
     set_status(msg);
 }
 
+/* The Report window over this one, its new report from the table or query shown. */
+static void report_window(void)
+{
+    ob_rwin_env e;
+    if (!proj) { set_status("Open a project first"); return; }
+    memset(&e, 0, sizeof e);
+    e.scr = scr;
+    e.vi = vi;
+    e.font = font;
+    e.ta = &font_attr;
+    e.fw = fw;
+    e.fh = fh;
+    e.parent = win;
+    e.proj = proj;
+    e.proj_path = proj_path;
+    e.table = have_cur && !q_on ? cur.name : "";
+    e.query = q_on ? qy.name : "";
+    e.ask_text = ask_text;
+    ob_report_window(&e);
+}
+
 static void menu_action(ULONG id)
 {
     char path[512];
@@ -3653,6 +3976,7 @@ static void menu_action(ULONG id)
     case M_T_EXPORT: export_csv(); break;
     case M_T_FROMCSV: new_table_from_csv(); break;
     case M_UNDO: undo_last(); break;
+    case M_REPORTS: report_window(); break;
     case M_Q_NEW: design_query(1); break;
     case M_Q_OPEN: open_query(); break;
     case M_Q_DESIGN: design_query(!qy.ntables && !qy.sql_only); break;

@@ -38,6 +38,8 @@ extern "C" {
 #define OWF_PIVOT_DATA 8             /* data fields */
 #define OWF_PIVOT_PAGES 4            /* page fields (filters) */
 #define OWF_PIVOT_SORTS 16           /* sorted fields (rows and columns) */
+#define OWF_PIVOT_HIDES 32           /* hidden items, all fields together */
+#define OWF_PIVOT_GROUPS 8           /* grouped row and column fields */
 #define OWF_PIVOT_ITEM 96            /* a page field's chosen item, bytes */
 #define OWF_PIVOT_TEXT_MAX 2048      /* _GF_PIVOT_CONFIG's text, at most */
 
@@ -46,16 +48,39 @@ enum { OWF_PIVOT_FN_FIRST = 1, OWF_PIVOT_FN_COUNT = 2, OWF_PIVOT_FN_COUNTA = 3, 
 
 /* The order of a row or column field's items: as they first come in the
  * source (the default), or sorted by their values. Ascending puts numbers
- * and booleans first, then text (case aside), then errors; blanks come last
- * in either direction, as in GFOpenCalc's Data > Sort. */
+ * and booleans first, then text (case aside), then errors; descending is
+ * that order turned round, so errors come first. Blanks come last in
+ * either direction, as in GFOpenCalc's Data > Sort. */
 enum { OWF_PIVOT_SORT_SOURCE, OWF_PIVOT_SORT_ASCENDING, OWF_PIVOT_SORT_DESCENDING };
+
+/* A row or column field's numbers grouped into items: ranges of step from
+ * start ("0-9", "10-19", with "<0" and ">99" for the numbers outside start
+ * and end), or dates (serial numbers) by year, quarter ("Qtr1") or month
+ * ("Jan"). Cells that are not numbers stay items of their own. */
+enum { OWF_PIVOT_GROUP_NONE, OWF_PIVOT_GROUP_RANGE, OWF_PIVOT_GROUP_YEARS, OWF_PIVOT_GROUP_QUARTERS,
+       OWF_PIVOT_GROUP_MONTHS, OWF_PIVOT_GROUP_LAST = OWF_PIVOT_GROUP_MONTHS };
+
+typedef struct {
+    unsigned field;
+    int by;                          /* OWF_PIVOT_GROUP_... */
+    double start, end, step;         /* RANGE only: step > 0, end >= start */
+} owf_pivot_group;
 
 /* A page field's chosen item: every item, or one value. */
 enum { OWF_PIVOT_ALL, OWF_PIVOT_TEXT, OWF_PIVOT_NUMBER, OWF_PIVOT_BOOL, OWF_PIVOT_BLANK };
 
+/* How a data field's values are shown: as they are (the default), as a
+ * share of their row's total, of their column's total or of the grand
+ * total, or as an index: value x grand total / (row total x column total).
+ * Each total is made with the field's own function. A total of 0 shows
+ * #DIV/0!. */
+enum { OWF_PIVOT_SHOW_NORMAL, OWF_PIVOT_SHOW_ROW, OWF_PIVOT_SHOW_COLUMN, OWF_PIVOT_SHOW_TOTAL,
+       OWF_PIVOT_SHOW_INDEX, OWF_PIVOT_SHOW_LAST = OWF_PIVOT_SHOW_INDEX };
+
 typedef struct {
     unsigned field;
     int function;
+    int show;                        /* OWF_PIVOT_SHOW_... */
 } owf_pivot_data;
 
 typedef struct {
@@ -80,6 +105,10 @@ typedef struct {
     unsigned nsort;                  /* fields whose items are sorted, kept by field, so that */
     unsigned sort_field[OWF_PIVOT_SORTS];   /* moving a field in the layout keeps its order */
     unsigned char sort_order[OWF_PIVOT_SORTS];   /* OWF_PIVOT_SORT_ASCENDING or _DESCENDING */
+    unsigned nhide;                  /* row and column items left out: each a field and a value */
+    owf_pivot_page hide[OWF_PIVOT_HIDES];   /* (kind is never OWF_PIVOT_ALL) */
+    unsigned ngroup;                 /* grouped fields, kept by field as sorts are */
+    owf_pivot_group group[OWF_PIVOT_GROUPS];
 } owf_pivotdef;
 
 /* An empty definition: no fields, both grand totals, output at A1. */
@@ -115,11 +144,33 @@ void owf_pivot_item_text(const owf_pivot_page *page, char *out, size_t size);
  * back from either (case does not matter); 0 when it is not one. */
 const char *owf_pivot_function_word(int function, int ooxml);
 int owf_pivot_function_from_word(const char *word);
+/* A data field's way of showing its values, by name in ODF
+ * (table:data-pilot-field-reference's table:type) or OOXML (showDataAs),
+ * and back from either; NULL and -1 when it is not one. */
+const char *owf_pivot_show_word(int show, int ooxml);
+int owf_pivot_show_from_word(const char *word);
 /* A row or column field's item order (OWF_PIVOT_SORT_SOURCE when it has
  * none), and setting it: SOURCE removes the field's entry. 0 when there is
  * no room for another sorted field or the order is not one. */
 int owf_pivot_sort_of(const owf_pivotdef *def, unsigned field);
 int owf_pivot_set_sort(owf_pivotdef *def, unsigned field, int order);
+/* Hidden items: a row or column field's item that is left out of the
+ * table, its totals with it, as a page field leaves out what it doesn't
+ * choose. owf_pivot_is_hidden: 1 when a source cell of that field is one.
+ * owf_pivot_set_hidden adds (hidden 1) or removes (0) item's value for
+ * item->field; 0 when there is no room or item is OWF_PIVOT_ALL. */
+int owf_pivot_is_hidden(const owf_pivotdef *def, unsigned field, const owf_cell *cell);
+/* A field's grouping (NULL when it has none), and setting it: by NONE
+ * removes it. 0 when there is no room or the grouping is not one. */
+const owf_pivot_group *owf_pivot_group_of(const owf_pivotdef *def, unsigned field);
+int owf_pivot_set_group(owf_pivotdef *def, const owf_pivot_group *group);
+/* The item a number falls in: the start of its range (-1E300 below start,
+ * 1E300 above end), the year, the quarter (1-4) or the month
+ * (1-12). date1904 as the book has it. And that item's name. */
+double owf_pivot_group_key(const owf_pivot_group *group, double number, int date1904);
+void owf_pivot_group_label(const owf_pivot_group *group, double key, char *out, size_t size);
+int owf_pivot_set_hidden(owf_pivotdef *def, const owf_pivot_page *item, int hidden);
+
 /* A field's heading: its heading cell's text or number, or "Column N"
  * when that is blank. */
 void owf_pivot_field_heading(const owf_book *book, const owf_pivotdef *def, unsigned field, char *out,

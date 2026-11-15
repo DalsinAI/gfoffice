@@ -2129,6 +2129,27 @@ static int read_pivot(xlsx *x, int sheet, const char *table_part)
                 owf_pivot_set_sort(&def, f, OWF_PIVOT_SORT_DESCENDING);
         }
     }
+    {                                            /* hidden row and column items: item h="1" */
+        unsigned k;
+        for (k = 0; k < def.nrow + def.ncol; k++) {
+            unsigned f = k < def.nrow ? def.row[k] : def.col[k - def.nrow];
+            const owf_xml_node *items = main_child(nth_child(main_child(table, "pivotFields"), (long)f), "items");
+            const owf_xml_node *it;
+            long index = 0;
+            for (it = main_child(items, "item"); it; it = main_next(it, "item"), index++) {
+                owf_pivot_page pg;
+                if (!xbool(attr(it, "h"), 0))
+                    continue;
+                memset(&pg, 0, sizeof pg);
+                pivot_page_item(table, fields, (long)f, index, &pg);
+                pg.field = f;
+                if (pg.kind != OWF_PIVOT_ALL && !owf_pivot_set_hidden(&def, &pg, 1)) {
+                    owf_report_add(x->report, OWF_NOTE_LOST, "A pivot table with more than 32 hidden items shows the rest");
+                    break;
+                }
+            }
+        }
+    }
     for (n = main_child(main_child(table, "pageFields"), "pageField"); n; n = main_next(n, "pageField")) {
         long f = xlong(attr(n, "fld"), -1, 0, 16383);
         owf_pivot_page *pg;
@@ -2141,11 +2162,20 @@ static int read_pivot(xlsx *x, int sheet, const char *table_part)
     }
     for (n = main_child(main_child(table, "dataFields"), "dataField"); n; n = main_next(n, "dataField")) {
         long f = xlong(attr(n, "fld"), -1, 0, 16383);
-        const char *fn = attr(n, "subtotal");
+        const char *fn = attr(n, "subtotal"), *as;
         int function = fn ? owf_pivot_function_from_word(fn) : OWF_PIVOT_FN_SUM;
         if (f < 0 || !function || def.ndata >= OWF_PIVOT_DATA)
             continue;
         def.data[def.ndata].field = (unsigned)f;
+        def.data[def.ndata].show = OWF_PIVOT_SHOW_NORMAL;
+        if ((as = attr(n, "showDataAs")) != NULL) {
+            int show = owf_pivot_show_from_word(as);
+            if (show >= 0)
+                def.data[def.ndata].show = show;
+            else
+                owf_report_add(x->report, OWF_NOTE_APPROX,
+                               "A pivot table data field shown as a difference or running total shows its values");
+        }
         def.data[def.ndata++].function = function;
     }
     def.row_grand = xbool(attr(table, "rowGrandTotals"), 1);

@@ -365,6 +365,39 @@ u32 the style's number [V 8].
   could is -1 in all 8]. A style without a size or typeface takes style 0's
   [H].
 
+### 6.7 Hyperlinks: `TOKN` [V 7: Sample's stories 4 and 5, and POI's six LinkAt files, whose names say where their links are]
+
+`TOKN` n (a `PLC` chunk) holds story n's links. The six LinkAt files settle
+the places: `LinkAt10` has one link at character 10, `LinkAt0And10` two at
+0 and 10, and so on, and each file's text shows "LINK" there.
+
+| Offset | What |
+|---|---|
+| 0x00 | u32 n, the number of links |
+| 0x04, 0x08 | u32 12, u32 0x1FFFF [unknown] |
+| 0x0C | n + 1 u32: each link's first character in the story, then the story's length |
+
+Then n blocks (u32 length counting itself, then fields with 11-bit ids,
+6.3), one per link. Each holds only what changed from the link before it,
+so an empty block (length 4) is a link like the one before:
+
+| Field | What | Mark |
+|---|---|---|
+| 0x200 | 0x8C0, in the first block only | unknown |
+| 0x201 | the link's length in characters | [V 7: "LINK" 4, "LINK2" 5, "Link to a file" 14, "email link" 10, "Within doc to page 1" 20] |
+| 0x202 | the kind: 1 a web address or a file, 3 a place in the publication, 4 an e-mail address | [V 3; the e-mail one is a `mailto:`] |
+
+Then n more blocks, one per link, each with 0x200, the link's place in the
+table that follows [V 3: `LinkAt10And20And30`'s three links go to its
+three addresses in order; Sample's story 5 goes 1, 0, 2].
+
+The table: u32 the size of the offsets and strings, u32 the count, 12 bytes
+(a u32 that changes from file to file, then 8 zero bytes) [unknown], then
+count u32 offsets counted from the first offset, and at each a u16 length
+and that many UTF-16 characters [V 7: all their addresses]. A place in the
+publication is one character (0x010A in Sample) [H: the page's chunk
+number]; the reader keeps those links' words as plain text for now.
+
 ## 7. The drawing: `Escher/EscherStm`
 
 ### 7.1 Records [V 24]
@@ -517,7 +550,8 @@ path in section 5.1.
   (`TCD `).
 - Master pages' own frames (the samples' masters are empty), headers and
   footers, page numbers.
-- Hyperlinks and fields (`TOKN`), catalog and mail-merge data.
+- Links to places in the publication (6.7), fields, catalog and mail-merge
+  data.
 - Shape numbers beyond those in 7.3, gradients, picture crops and fills;
   rotation and flips (not looked for yet); columns and wrap.
 - The 98/2000 form's masters and pictures; the older form (section 10).

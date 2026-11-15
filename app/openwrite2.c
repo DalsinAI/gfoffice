@@ -113,6 +113,7 @@ enum {
     M_TRACK, M_CHANGE_NEXT, M_CHANGE_PREV, M_CHANGE_ACCEPT, M_CHANGE_REJECT, M_CHANGE_ACCEPT_ALL,
     M_CHANGE_REJECT_ALL, M_REVIEW_AUTHOR,
     M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
+    M_COMMENT_FILTER,                                /* 2.0.39 */
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS,
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE,
@@ -290,6 +291,8 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Edit Comment...", NULL, 0, 0, (APTR)M_COMMENT_EDIT },
     { NM_SUB, "Mark Done", NULL, 0, 0, (APTR)M_COMMENT_DONE },
     { NM_SUB, "Delete Comment", NULL, 0, 0, (APTR)M_COMMENT_DELETE },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Show Comments By...", NULL, 0, 0, (APTR)M_COMMENT_FILTER },   /* 2.0.39 */
     /* 2.0.30: footnotes and endnotes (core 1.5) */
     { NM_ITEM, "Notes", NULL, 0, 0, NULL },
     { NM_SUB, "Next Note", NULL, 0, 0, (APTR)M_NOTE_NEXT },
@@ -2267,8 +2270,8 @@ static void paint_comments(struct RastPort *rp, ow_layout *l, int page, const ol
         const char *who, *nl;
         size_t len;
         LONG edge, ink;
-        if (!ow_editor_comment_info(editor, k, &info) || !ow_layout_caret(l, info.end, &at_page, &at) ||
-            at_page != page)
+        if (!ow_editor_comment_info(editor, k, &info) || !info.shown ||   /* 2.0.39: the author filter */
+            !ow_layout_caret(l, info.end, &at_page, &at) || at_page != page)
             continue;
         x = x0 + (info.reply_to >= 0 ? 8 : 0);
         w = x1 - x;
@@ -4669,6 +4672,49 @@ static int no_comment_here(int rc)
     return 1;
 }
 
+/* 2.0.39: Tools > Comments > Show Comments By...: everyone's, or one author's (the margin and Next/Previous
+ * Comment) */
+static void comment_filter_status(void)
+{
+    const char *f = editor ? ow_editor_comment_filter(editor) : NULL;
+    char msg[120], who[72];
+    size_t o;
+    if (!f) { set_status("Showing everyone's comments."); return; }
+    o = to_latin1(f, strlen(f), who, sizeof who);
+    who[o < sizeof who ? o : sizeof who - 1] = 0;
+    snprintf(msg, sizeof msg, "Showing comments by %s.", who);
+    set_status(msg);
+}
+
+static void do_comment_filter(void)
+{
+    char (*authors)[72], (*shown)[72];
+    int n, k, m = 1;
+    if (!editor) return;
+    authors = (char (*)[72])calloc(32, sizeof *authors);
+    shown = (char (*)[72])calloc(33, sizeof *shown);
+    if (!authors || !shown) { free(authors); free(shown); return; }
+    n = ow_editor_comment_authors(editor, authors, 32);
+    snprintf(shown[0], sizeof shown[0], "Everyone");
+    for (k = 0; k < n; ++k) {
+        size_t o;
+        if (!authors[k][0]) continue;               /* an unknown author can't be picked */
+        o = to_latin1(authors[k], strlen(authors[k]), shown[m], sizeof shown[m]);
+        shown[m][o < sizeof shown[m] ? o : sizeof shown[m] - 1] = 0;
+        if (m != k + 1) memcpy(authors[m - 1], authors[k], sizeof authors[k]);
+        ++m;
+    }
+    if (m == 1) set_status("No comments have an author to pick.");
+    else if ((k = pick_requester("Show Comments By", "Author", shown, m)) >= 0) {
+        if (ow_editor_set_comment_filter(editor, k ? authors[k - 1] : NULL) != OWF_OK)
+            tell("GFOpenWrite", "There is not enough memory to complete that edit.");
+        comment_filter_status();
+        request_document_redraw();
+    }
+    free(authors);
+    free(shown);
+}
+
 static void do_comment(int what)
 {
     ow_comment_info info;
@@ -5127,6 +5173,7 @@ static void menu_action(ULONG id)
     case M_REVIEW_AUTHOR: do_review_author(); break;
     case M_COMMENT: case M_COMMENT_NEXT: case M_COMMENT_PREV: case M_COMMENT_REPLY: case M_COMMENT_EDIT:
     case M_COMMENT_DONE: case M_COMMENT_DELETE: do_comment((int)id); break;
+    case M_COMMENT_FILTER: do_comment_filter(); break;
     case M_FOOTNOTE: case M_ENDNOTE: case M_NOTE_NEXT: case M_NOTE_PREV: case M_NOTE_EDIT: case M_NOTE_CONVERT:
     case M_NOTE_DELETE: do_note((int)id); break;
     case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
@@ -5319,7 +5366,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"HELP",&arg))snprintf(result,sizeof result,"VERSION ACTIVATE DEACTIVATE HELP FAULT LASTERROR WORDCOUNT PAGECOUNT FONTCHECK MEMCHECK "
         "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND TRACKCHANGES CHANGES NEXTCHANGE PREVCHANGE "
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
-        "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
+        "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT COMMENTSBY INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
         "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE "
         "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX "
         "AUTOCORRECT ACREPLACE TYPETEXT COMPLETE LABELSHEETS LABELS ENVELOPE QUIT");
@@ -5356,6 +5403,15 @@ static int rexx_do_command(const char *command, char **result_out)
         if(!editor){ok=0;snprintf(result,sizeof result,"No document");}else if(!*arg){ok=0;snprintf(result,sizeof result,"The comment needs its text");}else if(!(u=comment_utf8(arg))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
         else{review_author_init();ow_editor_set_review_author(editor,review_author);rc=c0=='a'?ow_editor_insert_comment(editor,u):c0=='r'?ow_editor_reply_comment(editor,u):ow_editor_set_comment_text(editor,u);free(u);
             if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No comment at the caret");}else{ok=editor_result(rc,c0=='a'?"Comment added.":c0=='r'?"Reply added.":"Comment changed.");snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
+    /* 2.0.39: COMMENTSBY [author]: show only that author's comments (none named: everyone's); answers the author
+     * shown, or "" for everyone */
+    else if(starts_word_ci(command,"COMMENTSBY",&arg)){
+        if(!editor){ok=0;snprintf(result,sizeof result,"No document");}
+        else{char *u=*arg?comment_utf8(arg):NULL;
+            if(*arg&&!u){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
+            else{if(ow_editor_set_comment_filter(editor,u)!=OWF_OK){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
+                else{comment_filter_status();request_document_redraw();snprintf(result,sizeof result,"%s",*arg?arg:"");}}
+            free(u);}}
     else if(starts_word_ci(command,"COMMENTS",&arg))snprintf(result,sizeof result,"%d",editor?ow_editor_comment_count(editor):0);
     else if(starts_word_ci(command,"NEXTCOMMENT",&arg)||starts_word_ci(command,"PREVCOMMENT",&arg)||starts_word_ci(command,"GETCOMMENT",&arg)){ow_comment_info ci;char c0=(char)tolower((unsigned char)command[0]);
         if(!editor||(c0!='g'&&ow_editor_next_comment(editor,c0=='p')<=0)||!ow_editor_current_comment(editor,&ci)){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",c0=='g'?"No comment at the caret":"No comments");}
