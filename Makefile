@@ -507,6 +507,32 @@ pub-check: $(OUT)/pub-dump-asan $(PUB_MADE)
 test: pub-test
 check: pub-check
 
+# GFOpenPublisher's mail merge on the page model (src/pub/opp_merge.c)
+PUB_MERGE_DEPS = $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_merge.c \
+	include/openpublisher_merge.h include/ow_merge.h libowf/include/owf_deck.h
+
+$(OUT)/test-publisher-merge: $(PUB_MERGE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_merge.c \
+		src/core/ow_merge.c tests/pub/test_pub_merge.c -lz -o $@
+
+$(OUT)/test-publisher-merge-asan: $(PUB_MERGE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_merge.c \
+		src/core/ow_merge.c tests/pub/test_pub_merge.c -lz -o $@
+
+publisher-merge-test: $(OUT)/test-publisher-merge
+	$(OUT)/test-publisher-merge
+
+publisher-merge-check: $(OUT)/test-publisher-merge-asan
+	$(OUT)/test-publisher-merge-asan
+
+test: publisher-merge-test
+check: publisher-merge-check
+
+.PHONY: publisher-merge-test publisher-merge-check
+
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
 PUB_CORE_SRC = src/pub/opp_import.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c
 PUB_CORE_DEPS = $(PUB_DEPS) $(PUB_CORE_SRC) include/openpublisher_core.h include/openpresentation_core.h \
