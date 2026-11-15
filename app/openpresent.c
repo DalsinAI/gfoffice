@@ -53,6 +53,7 @@
 #include <proto/dos.h>
 #include <proto/intuition.h>
 #include <proto/graphics.h>
+#include <graphics/displayinfo.h>
 #include <proto/gadtools.h>
 #include <proto/asl.h>
 #include <proto/datatypes.h>
@@ -106,7 +107,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.32 (12.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.33 (15.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -149,7 +150,7 @@ enum {
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_SHOW_GRID, M_SNAP_GRID, M_SHOW_GUIDES, M_SNAP_GUIDES,
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
-    M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
+    M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP, M_SHOW_ON_AUTO, M_SHOW_ON_OWN, M_SHOW_ON_WB,
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
     M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES
 };
@@ -316,6 +317,11 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Start from First", NULL, 0, 0, (APTR)M_SHOW_FIRST },
     { NM_ITEM, "Start from Current", NULL, 0, 0, (APTR)M_SHOW_CURRENT },
     { NM_ITEM, "Loop from First", NULL, 0, 0, (APTR)M_SHOW_LOOP },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Show On", NULL, 0, 0, NULL },
+    { NM_SUB, "Automatic", NULL, CHECKIT | CHECKED, ~1 & 7, (APTR)M_SHOW_ON_AUTO },
+    { NM_SUB, "Its Own Screen", NULL, CHECKIT, ~2 & 7, (APTR)M_SHOW_ON_OWN },
+    { NM_SUB, "The Workbench Screen", NULL, CHECKIT, ~4 & 7, (APTR)M_SHOW_ON_WB },
 
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
     { NM_ITEM, "About " PROGRAM "...", NULL, 0, 0, (APTR)M_ABOUT },
@@ -4457,11 +4463,149 @@ static ULONG show_tick_delta(ULONG seconds, ULONG micros, ULONG *last_seconds, U
     return delta;
 }
 
+/* ---- Where the show goes (design 7.1): Show > Show On, kept in ENV: and ENVARC: ---- */
+#define SHOW_PLACE_DIR PROGRAM
+static int show_place_choice = OPR_SHOW_AUTO;
+
+static void show_place_marks(void)
+{
+    struct NewMenu *m;
+    for (m = menus; m->nm_Type != NM_END; m++) {
+        ULONG id = (ULONG)m->nm_UserData;
+        if (id == M_SHOW_ON_AUTO || id == M_SHOW_ON_OWN || id == M_SHOW_ON_WB)
+            m->nm_Flags = CHECKIT | ((id == M_SHOW_ON_AUTO && show_place_choice == OPR_SHOW_AUTO) ||
+                                     (id == M_SHOW_ON_OWN && show_place_choice == OPR_SHOW_OWN_SCREEN) ||
+                                     (id == M_SHOW_ON_WB && show_place_choice == OPR_SHOW_WORKBENCH) ? CHECKED : 0);
+    }
+}
+
+/* Before the menus are made: the choice kept, ticked */
+static void show_place_load(void)
+{
+    char *s = read_file("ENV:" SHOW_PLACE_DIR "/ShowScreen");
+    show_place_choice = opr_show_place_from(s);
+    free(s);
+    show_place_marks();
+}
+
+static void show_place_write(const char *root)
+{
+    char path[64];
+    BPTR l, f;
+    const char *word = opr_show_place_word(show_place_choice);
+    snprintf(path, sizeof path, "%s:%s", root, SHOW_PLACE_DIR);
+    if ((l = Lock((STRPTR)path, ACCESS_READ)) != 0) UnLock(l);
+    else if ((l = CreateDir((STRPTR)path)) != 0) UnLock(l);
+    snprintf(path, sizeof path, "%s:%s/ShowScreen", root, SHOW_PLACE_DIR);
+    if ((f = Open((STRPTR)path, MODE_NEWFILE)) != 0) {
+        Write(f, (APTR)word, (LONG)strlen(word));
+        Write(f, (APTR)"\n", 1);
+        Close(f);
+    }
+}
+
+static void show_place_set(int choice)
+{
+    show_place_choice = choice;
+    show_place_write("ENV");
+    show_place_write("ENVARC");
+}
+
+/* The show's own screen: the slide's shape, at least 640 x 480, the best
+ * mode for it at 8 bits (AGA) or 16 or 24 (RTG), opened behind; NULL when
+ * none can open (the show goes on the Workbench screen). */
+static struct Screen *show_screen_open(void)
+{
+    static UWORD pens[] = { (UWORD)~0 };
+    struct DimensionInfo dims;
+    struct Screen *s;
+    ULONG id, flags;
+    int w, h, depth, wb_depth = screen_depth(), rtg;
+    if (((struct Library *)GfxBase)->lib_Version < 39 || !deck) return NULL;
+    flags = GetBitMapAttr(scr->RastPort.BitMap, BMA_FLAGS);
+    rtg = wb_depth > 8 || !(flags & BMF_STANDARD);
+    opr_show_screen_size(deck->width, deck->height, &w, &h);
+    depth = opr_show_screen_depth(rtg, wb_depth);
+    id = BestModeID(BIDTAG_NominalWidth, (ULONG)w, BIDTAG_NominalHeight, (ULONG)h, BIDTAG_Depth, (ULONG)depth, TAG_DONE);
+    if (id == INVALID_ID && depth > 8) {
+        depth = 8;
+        id = BestModeID(BIDTAG_NominalWidth, (ULONG)w, BIDTAG_NominalHeight, (ULONG)h, BIDTAG_Depth, (ULONG)depth, TAG_DONE);
+    }
+    if (id == INVALID_ID && wb_depth < depth) {           /* fewer colours than 8 bits: as many as Workbench has */
+        depth = wb_depth;
+        id = BestModeID(BIDTAG_NominalWidth, (ULONG)w, BIDTAG_NominalHeight, (ULONG)h, BIDTAG_Depth, (ULONG)depth, TAG_DONE);
+    }
+    if (id == INVALID_ID) return NULL;
+    if (GetDisplayInfoData(NULL, (UBYTE *)&dims, sizeof dims, DTAG_DIMS, id) > 0) {
+        w = dims.Nominal.MaxX - dims.Nominal.MinX + 1;
+        h = dims.Nominal.MaxY - dims.Nominal.MinY + 1;
+        if (dims.MaxDepth > 0 && depth > (int)dims.MaxDepth) depth = (int)dims.MaxDepth;
+    }
+    s = OpenScreenTags(NULL,
+        SA_DisplayID, id, SA_Width, (ULONG)w, SA_Height, (ULONG)h, SA_Depth, (ULONG)depth,
+        SA_Type, CUSTOMSCREEN, SA_Title, (ULONG)SHOW_TITLE, SA_ShowTitle, FALSE, SA_Quiet, TRUE,
+        SA_Behind, TRUE, SA_Draggable, FALSE, SA_SharePens, TRUE, SA_Interleaved, TRUE,
+        SA_Pens, (ULONG)pens, SA_Font, (ULONG)&font_attr,
+        TAG_DONE);
+    if (s) {        /* black until the first slide is drawn */
+        ULONG i;
+        for (i = 0; i < 4 && i < (1UL << depth); i++) SetRGB32(&s->ViewPort, i, 0, 0, 0);
+    }
+    return s;
+}
+
+/* The menu on the show's own screen (design 7.3, the right button): Next,
+ * Previous, Go to <unit> (the first SHOW_GOTO of them; a number and
+ * Return reaches the rest), Black, White, End. */
+#define SHOW_GOTO 40
+enum { SM_NEXT = 1, SM_PREV, SM_BLACK, SM_WHITE, SM_END, SM_GOTO = 100 };
+static struct NewMenu show_nm[10 + SHOW_GOTO];
+static char show_goto_text[SHOW_GOTO][32];
+
+static struct Menu *show_menu_make(APTR svi)
+{
+    struct Menu *m;
+    int n = 0, i;
+    show_nm[n++] = (struct NewMenu){ NM_TITLE, (STRPTR)"Show", NULL, 0, 0, NULL };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"Next", NULL, 0, 0, (APTR)SM_NEXT };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"Previous", NULL, 0, 0, (APTR)SM_PREV };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"Go to " UNIT, NULL, 0, 0, NULL };
+    for (i = 0; deck && i < deck->nslides && i < SHOW_GOTO; i++) {
+        snprintf(show_goto_text[i], sizeof show_goto_text[i], UNIT " %d%s", i + 1, deck->slides[i].hidden ? " (hidden)" : "");
+        show_nm[n++] = (struct NewMenu){ NM_SUB, (STRPTR)show_goto_text[i], NULL, 0, 0, (APTR)(ULONG)(SM_GOTO + i) };
+    }
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"Black Screen", (STRPTR)"B", 0, 0, (APTR)SM_BLACK };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"White Screen", (STRPTR)"W", 0, 0, (APTR)SM_WHITE };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"End Show", NULL, 0, 0, (APTR)SM_END };
+    show_nm[n++] = (struct NewMenu){ NM_END, NULL, NULL, 0, 0, NULL };
+    if (!svi || !(m = CreateMenus(show_nm, TAG_DONE))) return NULL;
+    if (!LayoutMenus(m, svi, GTMN_NewLookMenus, TRUE, TAG_DONE)) { FreeMenus(m); return NULL; }
+    return m;
+}
+
+static void show_home(struct Screen *show_scr, struct Screen *home_scr, ogt_ctx *home_ctx)
+{
+    ogt_ctx gone;
+    if (!show_scr) return;
+    own_pen_free();
+    gone = ctx;
+    ctx = *home_ctx;              /* still the context direct colours are matched in */
+    ogt_ctx_free(&gone);
+    scr = home_scr;
+    CloseScreen(show_scr);
+}
+
 static void run_show(int from, int loop)
 {
     master_view_leave();
     struct Window *sw;
     struct IntuiMessage *im;
+    struct Screen *show_scr = NULL, *home_scr;
+    struct Menu *show_menu = NULL;
+    APTR show_vi = NULL;
+    ogt_ctx home_ctx;
     opr_show show;
     show_buffers buffers;
     int running = 1, blank = 0, number = 0, have_time = 0, drawn_slide, drawn_blank = 0, drawn_step;
@@ -4471,24 +4615,43 @@ static void run_show(int from, int loop)
         return;
     }
     stop_typing();
+    home_scr = scr;
+    if (opr_show_place(show_place_choice, screen_depth(), scr->Width, scr->Height) == OPR_SHOW_OWN_SCREEN &&
+        (show_scr = show_screen_open()) != NULL) {
+        home_ctx = ctx;                    /* the Workbench screen's pens, back after the show */
+        own_pen_free();
+        scr = show_scr;
+        if (!ogt_ctx_init(&ctx, scr, &theme, theme_mode)) {
+            ogt_ctx failed = ctx;
+            ctx = home_ctx;
+            ogt_ctx_free(&failed);
+            scr = home_scr;
+            CloseScreen(show_scr);
+            show_scr = NULL;
+        }
+    }
     sw = OpenWindowTags(NULL,
-        WA_PubScreen, (ULONG)scr,
+        show_scr ? WA_CustomScreen : WA_PubScreen, (ULONG)scr,
         WA_Left, 0, WA_Top, 0, WA_Width, scr->Width, WA_Height, scr->Height,
         WA_Borderless, TRUE, WA_Backdrop, TRUE, WA_Activate, TRUE,
-        WA_RMBTrap, TRUE, WA_SimpleRefresh, TRUE,
+        WA_RMBTrap, show_scr ? FALSE : TRUE, WA_SimpleRefresh, TRUE, WA_NewLookMenus, TRUE,
         WA_IDCMP, IDCMP_REFRESHWINDOW | IDCMP_MOUSEBUTTONS | IDCMP_VANILLAKEY |
-                  IDCMP_RAWKEY | IDCMP_INTUITICKS,
+                  IDCMP_RAWKEY | IDCMP_INTUITICKS | IDCMP_MENUPICK,
         TAG_DONE);
     if (!sw) {
+        show_home(show_scr, home_scr, &home_ctx);
         tell(SHOW_TITLE, "The full-screen show window could not open.");
         return;
     }
+    if (show_scr && (show_vi = GetVisualInfo(show_scr, TAG_DONE)) != NULL && (show_menu = show_menu_make(show_vi)) != NULL)
+        SetMenuStrip(sw, show_menu);
     show_buffers_open(&buffers, sw->Width, sw->Height);
     if (show_entry_step(&show) < 0) {
         show_paint_at(sw->RPort, sw->Width, sw->Height, &show, -1, 0, 0);
         show_play_step(sw, &buffers, &show, 0);
     } else
         show_draw(sw, &show, blank, number);
+    if (show_scr) ScreenToFront(show_scr);
     drawn_slide = show.slide;
     drawn_step = show.step;
     while (running) {
@@ -4505,7 +4668,24 @@ static void run_show(int from, int loop)
                 EndRefresh(sw, TRUE);
                 continue;
             }
-            if (class == IDCMP_INTUITICKS) {
+            if (class == IDCMP_MENUPICK) {
+                UWORD pick = code;
+                while (pick != MENUNULL && show_menu) {
+                    struct MenuItem *item = ItemAddress(show_menu, pick);
+                    ULONG what;
+                    if (!item) break;
+                    what = (ULONG)GTMENUITEM_USERDATA(item);
+                    if (what == SM_NEXT) { if (opr_show_next(&show) < 0) running = 0; blank = number = 0; redraw = 1; }
+                    else if (what == SM_PREV) { opr_show_previous(&show); blank = number = 0; redraw = 1; }
+                    else if (what == SM_BLACK) { blank = blank == 1 ? 0 : 1; number = 0; redraw = 1; }
+                    else if (what == SM_WHITE) { blank = blank == 2 ? 0 : 2; number = 0; redraw = 1; }
+                    else if (what == SM_END) running = 0;
+                    else if (what >= SM_GOTO && what < SM_GOTO + SHOW_GOTO) {
+                        opr_show_goto(&show, (int)(what - SM_GOTO)); blank = number = 0; redraw = 1;
+                    }
+                    pick = item->NextSelect;
+                }
+            } else if (class == IDCMP_INTUITICKS) {
                 rc = opr_show_tick(&show, show_tick_delta(seconds, micros, &last_seconds, &last_micros, &have_time));
                 if (rc < 0) running = 0;
                 else if (rc > 0) { blank = number = 0; redraw = 1; }
@@ -4566,7 +4746,10 @@ static void run_show(int from, int loop)
         }
     }
     show_buffers_close(&buffers);
+    if (show_menu) { ClearMenuStrip(sw); FreeMenus(show_menu); }
     CloseWindow(sw);
+    if (show_vi) FreeVisualInfo(show_vi);
+    show_home(show_scr, home_scr, &home_ctx);
     show_slide(show.slide);
     ActivateWindow(win);
     draw_all();
@@ -7590,6 +7773,9 @@ static void menu_action(ULONG id)
     case M_SHOW_FIRST: run_show(0, 0); break;
     case M_SHOW_CURRENT: run_show(current, 0); break;
     case M_SHOW_LOOP: run_show(0, 1); break;
+    case M_SHOW_ON_AUTO: show_place_set(OPR_SHOW_AUTO); break;
+    case M_SHOW_ON_OWN: show_place_set(OPR_SHOW_OWN_SCREEN); break;
+    case M_SHOW_ON_WB: show_place_set(OPR_SHOW_WORKBENCH); break;
     }
 }
 
@@ -8465,6 +8651,7 @@ static int open_window(void)
     if (!(font = ogt_open_font(&theme, scr, &font_attr))) return 0;
     fh = font->tf_YSize;
     ogt_ctx_init(&ctx, scr, &theme, theme_mode);
+    show_place_load();
     menu = CreateMenus(menus, TAG_DONE);
     if (menu) LayoutMenus(menu, vi, GTMN_NewLookMenus, TRUE, TAG_DONE);
     free_area(&l, &t, &aw, &ah);
