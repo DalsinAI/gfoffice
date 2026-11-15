@@ -302,8 +302,9 @@ typedef struct owf_format_change {
  * A note in the margin: who wrote it, when, its text, the comment it answers. Its place in the text is a run
  * (owf_run.comment); one with a range has a run where the range starts too. A changed comment (its text, done)
  * is a new one that its runs name instead. ODT's office:annotation and DOCX's comments come in and go out as
- * these; other formats leave them out. Its size never changes (owf_struct_size doesn't list it). (owf_comment is
- * a spreadsheet cell's.) */
+ * these; other formats leave them out, but for "pdf-comments" (1.10.1), the PDF with a raised mark where each is
+ * and the comments listed after the text. Its size never changes (owf_struct_size doesn't list it). (owf_comment
+ * is a spreadsheet cell's.) */
 typedef struct owf_annotation {
     char *author;            /* UTF-8; NULL: unknown */
     char *initials;          /* NULL: none */

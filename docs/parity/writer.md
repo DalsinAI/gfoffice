@@ -18,6 +18,7 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 12 Nov 2026 | 2.0.33 | Phase 2: AutoCorrect | 76% |
 | 12 Nov 2026 | 2.0.34 | Phase 2: labels and envelopes | 77% |
 | 12 Nov 2026 | 2.0.35 | Word completion | 78% |
+| 14 Nov 2026 | 2.0.36 | Print and export comments | 78% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
@@ -47,7 +48,8 @@ completion adds one more.
 | Comments: DOCX | Done | 2.0.28 | comments.xml (author, initials, date, paragraphs), commentRangeStart/End and commentReference, commentsExtended for replies and done. |
 | Comments: ODT | Part | 2.0.28 | office:annotation and office:annotation-end, dc:creator, dc:date, initials. Replies and done are saved as plain comments (the save report says so). |
 | Comments: other formats | Done | 2.0.28 | RTF, plain text, HTML and the Amiga formats leave comments out, and the save report says so. |
-| Comments: edit text in the margin, filter by author, print in the margin | Gap | | Edited through a requester; printing leaves comments out. |
+| Comments: print and PDF | Done | 2.0.36 | Project > Print Comments (off at first): Print and Export PDF put a raised mark ([1], [2]) where each comment is and list them after the text: who, when, the one it answers, done, then the text. libowf's "pdf-comments" format (owconvert, ARexx EXPORT with a .pdf goes on leaving them out, and its report says pdf-comments keeps them). ARexx PRINT COMMENTS, PRINT NOCOMMENTS. Without GFOpenPrint, printer.device's plain text leaves them out. |
+| Comments: edit text in the margin, filter by author, print in the margin itself | Gap | | Edited through a requester; printed at the end of the document, not beside their lines. |
 | Fields: document info, file name, word count, chapter | Done | 2.0.29 | Insert > Field: Title, Author, Subject (Project > Document Info...), File Name, Word Count and Chapter (the heading above), next to Page, Page Count, Date and Time. Values are worked out again on load, on save and by Tools > Update Fields. ARexx INSERTFIELD, DOCINFO, UPDATEFIELDS; GETTEXT shows the values. |
 | Fields: user fields | Done | 2.0.29 | Tools > User Fields... sets, changes and removes named values; Insert > Field > User Field... places one. ARexx USERFIELD. |
 | Fields: cross-references | Done | 2.0.29 | Insert > Cross-reference... picks a heading and shows its text or its page; the heading gets a bookmark. ARexx CROSSREF. |

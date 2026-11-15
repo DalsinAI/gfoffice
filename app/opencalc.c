@@ -7500,7 +7500,9 @@ static void events(void)
             if (mouse_down && !resizing && !chart_drag) {   /* held past the edge: keep scrolling */
                 int x = mx - grid_box.x, y = my - grid_box.y;
                 if (x < 0 || y < 0 || x >= grid_box.w || y >= grid_box.h) grid_drag(mx, my);
-            }
+            } else if (core && !mouse_down && !resizing && !chart_drag &&
+                       oc_core_auto_multiple_operations_step(core, OC_MULTIOP_STEP_TRIALS))
+                refresh();      /* a big book's Multiple Operations tables, a few at a time while idle */
             break;
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN) {

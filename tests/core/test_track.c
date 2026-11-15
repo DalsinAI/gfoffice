@@ -140,7 +140,7 @@ static void test_recording(void)
     CHECK(ow_editor_change_count(ed) == 3, "three changes");
 
     /* Backspace in the author's own insertion takes it out */
-    caret(ed, 0, 22);
+    caret(ed, 0, 20);
     ow_editor_backspace(ed);
     CHECK(!strcmp(dump(doc), "Hello{+ big+} [-world-]{+ther+}|Second line"), dump(doc));
 
