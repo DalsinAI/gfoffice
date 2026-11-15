@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.1 (15.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.2 (15.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -57,7 +57,7 @@ static const char version[] __attribute__((used)) =
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
-    M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START,
+    M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE,
     M_SET_BASELINE, M_CLEAR_BASELINE
 };
 
@@ -98,6 +98,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Go to Project Start", NULL, 0, 0, (APTR)M_START },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Resources...", "R", 0, 0, (APTR)M_RESOURCES },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Gantt Chart", "G", CHECKIT | CHECKED, 1 << 11, (APTR)M_GANTT },
+    { NM_ITEM, "Resource Usage", "W", CHECKIT, 1 << 10, (APTR)M_USAGE },
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Set Baseline", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
@@ -119,6 +122,9 @@ static unsigned long shown;         /* rx.docs + 1 for the doc the view was made
 static opj_view view;
 static oldraw *od;
 static int sel_col = OPJ_COL_NAME;
+/* The Resource Usage view in place of the Gantt view (View menu): it shares the zoom and the timescale's
+ * place, and keeps its own top row and selected row (a resource or an assignment). Read only. */
+static int usage_mode, usage_first, usage_sel = -1;
 static char status[256];
 static char title_text[300];
 
@@ -297,6 +303,8 @@ static void view_for_doc(void)
     view.width = inner_w();
     view.height = inner_h();
     if (view.selected >= DOC->plan->ntasks) view.selected = DOC->plan->ntasks - 1;
+    if (usage_sel >= opj_usage_rows(DOC)) usage_sel = opj_usage_rows(DOC) - 1;
+    if (usage_first > usage_sel && usage_first > 0) usage_first = usage_sel > 0 ? usage_sel : 0;
 }
 
 static void update_title(void)
@@ -328,6 +336,13 @@ static void draw_cb(void *user, oldraw *d, const oldraw_rect *area)
 {
     oldraw_rect c;
     (void)user;
+    if (usage_mode) {
+        opj_view u = view;
+        u.first_row = usage_first;
+        u.selected = usage_sel;
+        opj_usage_draw(d, &u, DOC, area);
+        return;
+    }
     opj_draw(d, &view, DOC, area);
     if (cell_box(&c)) {
         oldraw_rect t;
@@ -360,9 +375,26 @@ static void keep_selection_shown(void)
     if (view.first_row < 0) view.first_row = 0;
 }
 
+/* Up and down the Resource Usage view's rows, scrolled to keep the selection on show. */
+static void move_usage(int rows)
+{
+    int n = opj_usage_rows(DOC), shown_rows = opj_rows_shown(&view), s;
+    if (!n) return;
+    s = usage_sel < 0 ? 0 : usage_sel + rows;
+    usage_sel = s < 0 ? 0 : s >= n ? n - 1 : s;
+    if (usage_sel < usage_first) usage_first = usage_sel;
+    if (shown_rows > 1 && usage_sel >= usage_first + shown_rows - 1) usage_first = usage_sel - shown_rows + 2;
+    if (usage_first < 0) usage_first = 0;
+    redraw();
+}
+
 static void move_selection(int rows, int cols)
 {
     int n = DOC->plan->ntasks;
+    if (usage_mode) {
+        if (rows) move_usage(rows);
+        return;
+    }
     if (rows && n) {
         int s = view.selected < 0 ? 0 : view.selected + rows;
         view.selected = s < 0 ? 0 : s >= n ? n - 1 : s;
@@ -402,6 +434,11 @@ static void edit_cell(void)
 {
     char text[400], prompt[64];
     int rc;
+    if (usage_mode) {
+        set_status("Resource Usage is read only: Resources... edits the resources");
+        redraw();
+        return;
+    }
     if (view.selected < 0) {
         if ((rc = opj_insert_task(DOC, DOC->plan->ntasks, "")) != OWF_OK) { edit_failed(rc, "New task"); return; }
         view.selected = DOC->plan->ntasks - 1;
@@ -434,7 +471,7 @@ static void insert_task(void)
 static void delete_task(void)
 {
     int rc;
-    if (view.selected < 0) return;
+    if (usage_mode || view.selected < 0) return;
     if ((rc = opj_delete_tasks(DOC, view.selected, 1)) != OWF_OK) edit_failed(rc, "Delete Task");
     redraw();
 }
@@ -816,7 +853,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
         break;
     case M_ABOUT:
         tell(VERSION_TEXT "\nThe project planner of the GFOffice Suite.\n\nPlans in .gfproj, MSPDI XML and CSV;\n"
-             "MPX and .gan read; the Gantt chart exported as PDF.\nMIT, Copyright (c) 2026 AmiCradle Team");
+             "MPX and .gan read; the Gantt chart exported as PDF;\nthe Resource Usage view.\nMIT, Copyright (c) 2026 AmiCradle Team");
         break;
     case M_QUIT: if (may_drop()) quit_now = 1; break;
     case M_UNDO: undo_redo(0); return;
@@ -842,10 +879,30 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SHOW_BASELINE: view.show_baseline = item && (item->Flags & CHECKED) ? 1 : 0; break;
     case M_START: view.origin = opj_period_start(OPJ_ZOOM_WEEKS, DOC->plan->start); break;
     case M_RESOURCES: resources_window(); break;
+    case M_GANTT: usage_mode = 0; set_status(""); break;
+    case M_USAGE:
+        usage_mode = 1;
+        if (usage_sel < 0 && opj_usage_rows(DOC)) usage_sel = 0;
+        if (!DOC->plan->nresources) set_status("No resources yet: Resources... adds them");
+        break;
     case M_SET_BASELINE: edit_failed(opj_set_baseline(DOC, 0, -1), "Set Baseline"); view.show_baseline = 1; break;
     case M_CLEAR_BASELINE: edit_failed(opj_clear_baseline(DOC, 0, -1), "Clear Baseline"); break;
     }
     redraw();
+}
+
+/* The View menu's Gantt Chart and Resource Usage ticks, after ARexx VIEW changed the view. */
+static void tick_view(void)
+{
+    struct MenuItem *g, *u;
+    if (!win || !menu) return;
+    g = ItemAddress(menu, FULLMENUNUM(2, 10, NOSUB));
+    u = ItemAddress(menu, FULLMENUNUM(2, 11, NOSUB));
+    if (!g || !u) return;
+    ClearMenuStrip(win);
+    if (usage_mode) { g->Flags &= ~CHECKED; u->Flags |= CHECKED; }
+    else { u->Flags &= ~CHECKED; g->Flags |= CHECKED; }
+    ResetMenuStrip(win, menu);
 }
 
 static void click(int x, int y, ULONG secs, ULONG micros)
@@ -853,6 +910,12 @@ static void click(int x, int y, ULONG secs, ULONG micros)
     static ULONG last_s, last_m;
     static int last_row = -1, last_col = -1;
     opj_hit hit;
+    if (usage_mode) {
+        int row = y >= 2 * view.row_height ? usage_first + (y - 2 * view.row_height) / view.row_height : -1;
+        (void)secs; (void)micros;
+        if (row >= 0 && row < opj_usage_rows(DOC)) { usage_sel = row; redraw(); }
+        return;
+    }
     opj_hit_test(&view, DOC, x, y, &hit);
     if (hit.what == OPJ_HIT_CELL) {
         int dbl = hit.row == last_row && hit.column == last_col && DoubleClick(last_s, last_m, secs, micros);
@@ -902,7 +965,7 @@ static void events(void)
         case IDCMP_VANILLAKEY:
             if (code == 13) edit_cell();
             else if (code == 127) delete_task();
-            else if (code == 9 && view.selected >= 0) {
+            else if (code == 9 && view.selected >= 0 && !usage_mode) {
                 edit_failed(opj_indent(DOC, view.selected, 1, (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) ? -1 : 1),
                             "Indent");
                 redraw();
@@ -956,6 +1019,17 @@ static int rexx_do_command(const char *command, char *result, size_t size)
     } else if (starts_word_ci(command, "PRINT", &arg)) {
         char why[200];
         if (!print_plan(why, sizeof why)) { rc = OPJ_RX_ERROR; put_text(app_lasterror, sizeof app_lasterror, why); }
+    } else if (starts_word_ci(command, "VIEW", &arg)) {
+        if (!*arg) put_text(result, size, usage_mode ? "USAGE" : "GANTT");
+        else if (starts_word_ci(arg, "GANTT", NULL) || starts_word_ci(arg, "USAGE", NULL)) {
+            usage_mode = starts_word_ci(arg, "USAGE", NULL);
+            if (usage_mode && usage_sel < 0 && opj_usage_rows(DOC)) usage_sel = 0;
+            tick_view();
+            redraw();
+        } else {
+            rc = OPJ_RX_ERROR;
+            put_text(app_lasterror, sizeof app_lasterror, "VIEW: GANTT or USAGE");
+        }
     } else if (starts_word_ci(command, "QUIT", &arg)) {
         if (DOC->dirty && !starts_word_ci(arg, "FORCE", NULL)) {
             rc = OPJ_RX_NOW; put_text(app_lasterror, sizeof app_lasterror, "QUIT: the plan has unsaved changes (FORCE drops them)");
