@@ -539,6 +539,77 @@ static void test_seq(void)
     }
 }
 
+/* libowf 1.12.4: references to figures and tables: a caption's reference shows "Figure 1", renumbered as the
+ * figures move; a bookmark with a place shows its place; one with a place in its name is found (2.0.21) */
+static void test_caption_refs(void)
+{
+    owf_doc *doc = doc_of(), *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    static const char *const fmts[] = { "docx", "odt" };
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    /* paragraph 2 ("Plug it in and wait.") a caption: "Figure " + SEQ + ": the plug" */
+    {
+        ow_selection sel;
+        memset(&sel, 0, sizeof sel);
+        sel.anchor.paragraph = 1;
+        sel.focus = sel.anchor;
+        ow_editor_set_selection(ed, &sel);
+        ow_editor_insert_text_block(ed, "Figure ", 7);
+        ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+        ow_editor_insert_text_block(ed, ": ", 2);
+    }
+    CHECK(!ow_editor_is_caption(ed, 0) && ow_editor_is_caption(ed, 1) && !ow_editor_is_caption(ed, 2), "the caption");
+    CHECK(ow_editor_insert_caption_reference(ed, 0, 0) == OWF_ERR_FORMAT, "a heading is no caption");
+    caret_end(ed, 3);
+    CHECK(ow_editor_insert_caption_reference(ed, 1, 0) == OWF_OK, "a reference to it");
+    caret_end(ed, 3);
+    CHECK(ow_editor_insert_caption_reference(ed, 1, 1) == OWF_OK, "and to its page");
+    ow_editor_update_fields(ed);
+    CHECK(strstr(dump(doc), "Press the button.{REF:_Ref1=Figure 1}{REFPAGE:_Ref") != NULL, dump(doc));
+    CHECK(doc->body.paras[1].bookmarks && strstr(doc->body.paras[1].bookmarks, "_Ref1@0-7"), "its bookmark's place");
+    /* a figure before it: Figure 2, and the reference says so */
+    {
+        ow_selection sel;
+        memset(&sel, 0, sizeof sel);
+        sel.anchor.paragraph = 0;
+        sel.focus = sel.anchor;
+        ow_editor_set_selection(ed, &sel);
+        ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+    }
+    ow_editor_update_fields(ed);
+    CHECK(strstr(dump(doc), "{REF:_Ref1=Figure 2}") != NULL, dump(doc));
+    /* a second reference uses the same bookmark */
+    caret_end(ed, 2);
+    ow_editor_insert_caption_reference(ed, 1, 0);
+    ow_editor_update_fields(ed);
+    CHECK(strstr(dump(doc), "Using it{REF:_Ref1=Figure 2}") != NULL && !strstr(doc->body.paras[1].bookmarks, "_Ref3"),
+          dump(doc));
+    /* through DOCX and ODT, and worked out again */
+    for (k = 0; k < 2; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL;
+        size_t length = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+        if (back) {
+            ow_editor *e2 = ow_editor_new(back);
+            if (e2) {
+                ow_editor_update_fields(e2);
+                CHECK(strstr(dump(back), "Using it{REF:_Ref1=Figure 2}") != NULL, dump(back));
+                ow_editor_free(e2);
+            }
+            owf_doc_free(back);
+            back = NULL;
+        }
+        free(data);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     test_editing();
@@ -549,6 +620,7 @@ int main(void)
     test_word_form();
     test_odf_form();
     test_seq();
+    test_caption_refs();
     printf("fields: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

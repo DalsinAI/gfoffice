@@ -4324,7 +4324,8 @@ static int heading_requester(int *page)
     int *paras = NULL, n = 0, i, k, chosen = -1, picked = 0, done = 0, ww = 420, wh = 200;
     owf_doc *d = editor ? ow_editor_document(editor) : NULL;
     if (!scr || !vi || !d) return -1;
-    for (i = 0; i < d->body.nparas; ++i) if (d->body.paras[i].fmt.heading > 0) ++n;
+    /* 2.0.44: the headings, then the captions (a paragraph with a number range: Figure 1, Table 2) */
+    for (i = 0; i < d->body.nparas; ++i) if (d->body.paras[i].fmt.heading > 0 || ow_editor_is_caption(editor, i)) ++n;
     if (!n) return -2;
     nodes = (struct Node *)calloc((size_t)n, sizeof *nodes);
     labels = (char (*)[72])calloc((size_t)n, sizeof *labels);
@@ -4335,11 +4336,12 @@ static int heading_requester(int *page)
         const owf_para *p = &d->body.paras[i];
         size_t o;
         int j;
-        if (p->fmt.heading <= 0) continue;
+        if (p->fmt.heading <= 0 && !ow_editor_is_caption(editor, i)) continue;
         o = (size_t)(p->fmt.heading > 1 ? 2 * (p->fmt.heading - 1) : 0);
         memset(labels[k], ' ', o);
         for (j = 0; j < p->nruns && o + 1 < sizeof labels[k]; ++j)
-            if (p->runs[j].kind == OWF_RUN_TEXT && p->runs[j].text)
+            if ((p->runs[j].kind == OWF_RUN_TEXT || (p->runs[j].kind == OWF_RUN_FIELD &&
+                                                     p->runs[j].field > OWF_FIELD_TIME)) && p->runs[j].text)
                 o += to_latin1(p->runs[j].text, strlen(p->runs[j].text), labels[k] + o, sizeof labels[k] - o);
         labels[k][o < sizeof labels[k] ? o : sizeof labels[k] - 1] = 0;
         nodes[k].ln_Name = labels[k];
@@ -4350,7 +4352,7 @@ static int heading_requester(int *page)
     ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
     last = CreateContext(&glist);
     ng.ng_LeftEdge = 12; ng.ng_TopEdge = 20; ng.ng_Width = 396; ng.ng_Height = 120;
-    ng.ng_GadgetText = (STRPTR)"Refer to the heading"; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_GadgetText = (STRPTR)"Refer to the heading or caption"; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_ABOVE;
     last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&items, GTLV_ShowSelected, 0,
                               GTLV_Selected, 0, TAG_DONE);
     ng.ng_TopEdge = 146; ng.ng_Width = 26; ng.ng_Height = 14; ng.ng_LeftEdge = 12;
@@ -4621,9 +4623,12 @@ static void do_cross_reference(void)
     int para;
     if (!editor) return;
     para = heading_requester(&page_form);
-    if (para == -2) { set_status("The document has no headings to refer to."); DisplayBeep(scr); return; }
+    if (para == -2) { set_status("The document has no headings or captions to refer to."); DisplayBeep(scr); return; }
     if (para < 0) return;
-    if (editor_result(ow_editor_insert_cross_reference(editor, para, page_form), "Cross-reference inserted."))
+    /* 2.0.44: a caption's shows its label and number ("Figure 1") */
+    if (editor_result(ow_editor_is_caption(editor, para) ? ow_editor_insert_caption_reference(editor, para, page_form)
+                                                         : ow_editor_insert_cross_reference(editor, para, page_form),
+                      "Cross-reference inserted."))
         fields_update();
     request_document_redraw();
 }
@@ -5377,7 +5382,7 @@ static void mem_check(char *out, size_t size)
 
 static int rexx_do_command(const char *command, char **result_out)
 {
-    const char *arg="";char result[768];int ok=1,rc_fail=RX_ERROR;char *dynamic=NULL;
+    const char *arg="",*arg2="";char result[768];int ok=1,rc_fail=RX_ERROR;char *dynamic=NULL;
     result[0]=0;command=skip_space(command);
     if(starts_word_ci(command,"VERSION",&arg))snprintf(result,sizeof result,"%s",VERSION_TEXT);
     /* ACTIVATE, DEACTIVATE, HELP, FAULT and LASTERROR: with VERSION and QUIT, the commands every Open app's port has */
@@ -5579,6 +5584,11 @@ static int rexx_do_command(const char *command, char **result_out)
         else{if(*rest){if(!strcmp(rest,"-"))rc=ow_editor_set_user_field(editor,un,NULL);else{char *uv=comment_utf8(rest);rc=uv?ow_editor_set_user_field(editor,un,uv):OWF_ERR_MEMORY;free(uv);}if(rc==OWF_OK){fields_update();request_document_redraw();}}
             for(i=0;i<ow_editor_user_field_count(editor);++i){const char *nn,*vv;if(ow_editor_user_field_at(editor,i,&nn,&vv)&&!strcmp(nn,un))now=vv;}free(un);
             if(rc!=OWF_OK&&rc!=OWF_ERR_UNSUPPORTED){ok=0;snprintf(result,sizeof result,"Failed");}else if(!now&&strcmp(rest,"-")){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No user field of that name");}else to_latin1(now?now:"",now?strlen(now):0,result,sizeof result);}}
+    else if(starts_word_ci(command,"CROSSREF",&arg)&&(starts_word_ci(arg,"CAPTION",&arg2)||starts_word_ci(arg,"CAPTIONS",&arg2))){   /* 2.0.44: CROSSREF CAPTION n [PAGE] */
+        owf_doc *d=editor?ow_editor_document(editor):NULL;int want=atoi(arg2),i,k=0,para=-1,page=strstr(arg2,"PAGE")||strstr(arg2,"page");
+        for(i=0;d&&i<d->body.nparas&&para<0;++i)if(ow_editor_is_caption(editor,i)&&++k==want)para=i;
+        if(para<0){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No caption %d",want);}
+        else{ok=editor_result(ow_editor_insert_caption_reference(editor,para,page),"Cross-reference inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
     else if(starts_word_ci(command,"CROSSREF",&arg)){owf_doc *d=editor?ow_editor_document(editor):NULL;int want=atoi(arg),i,k=0,para=-1,page=strstr(arg,"PAGE")||strstr(arg,"page");
         for(i=0;d&&i<d->body.nparas&&para<0;++i)if(d->body.paras[i].fmt.heading>0&&++k==want)para=i;
         if(para<0){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No heading %d",want);}

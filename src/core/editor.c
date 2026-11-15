@@ -5300,22 +5300,63 @@ static int count_words(const owf_doc *doc)
     return words;
 }
 
-/* The body paragraph a bookmark of that name begins, -1: none */
-static int bookmark_paragraph(const owf_doc *doc, const char *name)
+/* The body paragraph a bookmark of that name begins, -1: none; and its place in the paragraph's text bytes (0 and
+ * 0: none, the paragraph). libowf 1.12.4: a name with a place ("_Ref1@0-7", 2.0.21) is found too. */
+static int bookmark_find(const owf_doc *doc, const char *name, size_t *start, size_t *end)
 {
+    ed_mark m[MAX_EDIT_MARKS];
     size_t n = name ? strlen(name) : 0;
-    int i;
+    int i, k, count;
+    if (start) *start = 0;
+    if (end) *end = 0;
     if (!n) return -1;
     for (i = 0; i < doc->body.nparas; ++i) {
-        const char *b = doc->body.paras[i].bookmarks;
-        while (b && *b) {
-            const char *e = strchr(b, ' ');
-            size_t len = e ? (size_t)(e - b) : strlen(b);
-            if (len == n && !memcmp(b, name, n)) return i;
-            b = e ? e + 1 : NULL;
-        }
+        if (!doc->body.paras[i].bookmarks) continue;
+        count = marks_read(doc->body.paras[i].bookmarks, m, MAX_EDIT_MARKS);
+        for (k = 0; k < count; ++k)
+            if (m[k].length == n && !memcmp(m[k].name, name, n)) {
+                if (start) *start = m[k].start;
+                if (end) *end = m[k].end;
+                return i;
+            }
     }
     return -1;
+}
+
+static int bookmark_paragraph(const owf_doc *doc, const char *name)
+{
+    return bookmark_find(doc, name, NULL, NULL);
+}
+
+/* libowf 1.12.4: what a bookmark's place in a paragraph shows: its text bytes from start to end, with the fields
+ * from start to end (both ends: a caption's "Figure 1" is "Figure " and its SEQ field, which has no bytes) */
+static void range_line(const owf_doc *doc, const owf_para *p, size_t start, size_t end, char *out, size_t size)
+{
+    size_t n = 0, at = 0;
+    int j;
+    if (!size) return;
+    for (j = 0; j < p->nruns && n + 1 < size; ++j) {
+        const owf_run *r = &p->runs[j];
+        if (r->kind == OWF_RUN_TEXT) {
+            size_t len = r->text ? strlen(r->text) : 0, k;
+            if (rev_kind(doc, r->revision) != OWF_REV_DELETE)
+                for (k = 0; k < len && n + 1 < size; ++k)
+                    if (at + k >= start && at + k < end) out[n++] = r->text[k];
+            at += len;
+        } else if (r->kind == OWF_RUN_FIELD && at >= start && at <= end && rev_kind(doc, r->revision) != OWF_REV_DELETE) {
+            const char *t = r->text ? r->text : "";
+            for (; *t && n + 1 < size; ++t) out[n++] = *t;
+        } else if ((r->kind == OWF_RUN_TAB || r->kind == OWF_RUN_LINEBREAK) && at >= start && at < end) {
+            out[n++] = ' ';
+        }
+        if (at > end) break;
+    }
+    while (n && out[n - 1] == ' ') --n;
+    if (n + 1 >= size) {
+        while (n && ((unsigned char)out[n - 1] & 0xC0) == 0x80) --n;
+        if (n && ((unsigned char)out[n - 1] & 0xC0) == 0xC0) --n;
+    }
+    out[n] = 0;
 }
 
 static const char *leaf_name(const char *path)
@@ -5354,7 +5395,14 @@ static void field_value(ow_editor *editor, const owf_story *story, int para, con
         break;
     case OWF_FIELD_REF:
     case OWF_FIELD_REF_PAGE:
-        k = bookmark_paragraph(doc, run->href);
+        {
+            size_t from, to;
+            k = bookmark_find(doc, run->href, &from, &to);
+            if (k >= 0 && run->field == OWF_FIELD_REF && to > from) {   /* libowf 1.12.4: its place's text */
+                range_line(doc, &doc->body.paras[k], from, to, out, size);
+                break;
+            }
+        }
         if (k < 0) snprintf(out, size, "%s", "(no such bookmark)");
         else if (run->field == OWF_FIELD_REF) para_line(doc, &doc->body.paras[k], out, size);
         else {
@@ -5524,10 +5572,12 @@ static const char *paragraph_bookmark(ow_editor *editor, int paragraph, char *ma
     owf_para *p = &editor->doc->body.paras[paragraph];
     const char *b = p->bookmarks;
     int n;
-    if (b && *b) {
-        const char *e = strchr(b, ' ');
-        snprintf(made, size, "%.*s", e ? (int)(e - b) : (int)strlen(b), b);
-        return made;
+    if (b && *b) {                                   /* its name, without a place (libowf 1.12.4) */
+        ed_mark m[1];
+        if (marks_read(b, m, 1) == 1) {
+            snprintf(made, size, "%.*s", (int)m[0].length, m[0].name);
+            return made;
+        }
     }
     for (n = 1; n < 100000; ++n) {
         snprintf(made, size, "_Ref%d", n);
@@ -5553,6 +5603,70 @@ int ow_editor_insert_cross_reference(ow_editor *editor, int paragraph, int page)
     if (rc != OWF_OK && !had && p->bookmarks && !strcmp(p->bookmarks, name)) {
         owf_free(p->bookmarks);
         p->bookmarks = NULL;
+    }
+    return rc;
+}
+
+/* libowf 1.12.4: a caption: a body paragraph with a number range (SEQ), not a heading; its first SEQ's place in
+ * the paragraph's text bytes, -1: no caption */
+static long caption_seq_at(const owf_para *p)
+{
+    size_t at = 0;
+    int j;
+    if (p->fmt.heading > 0) return -1;
+    for (j = 0; j < p->nruns; ++j) {
+        const owf_run *r = &p->runs[j];
+        if (r->kind == OWF_RUN_FIELD && r->field == OWF_FIELD_SEQ) return (long)at;
+        if (r->kind == OWF_RUN_TEXT && r->text) at += strlen(r->text);
+    }
+    return -1;
+}
+
+int ow_editor_is_caption(const ow_editor *editor, int paragraph)
+{
+    if (!editor || !editor->doc || paragraph < 0 || paragraph >= editor->doc->body.nparas) return 0;
+    return caption_seq_at(&editor->doc->body.paras[paragraph]) >= 0;
+}
+
+int ow_editor_insert_caption_reference(ow_editor *editor, int paragraph, int page)
+{
+    char name[64];
+    owf_doc *doc = editor ? editor->doc : NULL;
+    owf_para *p;
+    ed_mark m[MAX_EDIT_MARKS];
+    long seq;
+    int rc, n, k, made = 0;
+    char *old = NULL;
+    if (!doc || paragraph < 0 || paragraph >= doc->body.nparas) return OWF_ERR_FORMAT;
+    p = &doc->body.paras[paragraph];
+    if ((seq = caption_seq_at(p)) < 0) return OWF_ERR_FORMAT;
+    if (page || seq == 0) return ow_editor_insert_cross_reference(editor, paragraph, page);   /* the paragraph's */
+    /* a bookmark over its label and number ("Figure 1"): one there already, or a new _Ref */
+    name[0] = 0;
+    n = p->bookmarks ? marks_read(p->bookmarks, m, MAX_EDIT_MARKS) : 0;
+    for (k = 0; k < n && !name[0]; ++k)
+        if (m[k].start == 0 && m[k].end == (size_t)seq) snprintf(name, sizeof name, "%.*s", (int)m[k].length, m[k].name);
+    if (!name[0]) {
+        int i;
+        size_t need;
+        char *b;
+        for (i = 1; i < 100000; ++i) {
+            snprintf(name, sizeof name, "_Ref%d", i);
+            if (bookmark_paragraph(doc, name) < 0) break;
+        }
+        need = (p->bookmarks ? strlen(p->bookmarks) + 1 : 0) + strlen(name) + 24;
+        if (!(b = (char *)owf_malloc(need))) return OWF_ERR_MEMORY;
+        snprintf(b, need, "%s%s%s@0-%ld", p->bookmarks ? p->bookmarks : "", p->bookmarks ? " " : "", name, seq);
+        old = p->bookmarks;
+        p->bookmarks = b;
+        made = 1;
+    }
+    /* the new bookmark stays when the field is undone, as a heading's does */
+    rc = ow_editor_insert_field_arg(editor, OWF_FIELD_REF, name);
+    if (made) {
+        p = &doc->body.paras[paragraph];
+        if (rc != OWF_OK) { owf_free(p->bookmarks); p->bookmarks = old; }
+        else owf_free(old);
     }
     return rc;
 }
