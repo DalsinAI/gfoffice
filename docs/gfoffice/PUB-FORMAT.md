@@ -604,7 +604,10 @@ text in 0xC0C0 (UTF-16, paragraphs apart by CR, a NUL), not in Quill. The
 default style (STSH 1, style 0) gets the first WordArt's size and typeface,
 and its colour when every run written has a colour of its own; every run
 writes its own size and typeface, so only WordArt takes the default's.
-Not written yet, named in the report: the scratch area. PL holds 255 text colours; runs past them keep the automatic colour,
+Not written yet, named in the report: the scratch area (the reader keeps only
+its count). GFOpenPublisher's own pages reach the writer through
+`opp_deck_to_pub` (src/pub/opp_export.c), the inverse of `opp_pub_to_deck`:
+frames sharing a text flow share one story, boxes are kept in twips. PL holds 255 text colours; runs past them keep the automatic colour,
 with a note. tests/pub/test_pub_save.py reads every generated file back through
 our own reader; whether Publisher itself opens these files has not been
 checked yet.

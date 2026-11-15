@@ -121,6 +121,97 @@ static const owf_charfmt *deck_run(const owf_deck *deck, const char *word)
     return NULL;
 }
 
+/* A story's text, all runs, into buf. */
+static void story_text(const owf_story *s, char *buf, size_t size)
+{
+    int i, j;
+    size_t n = 0;
+    buf[0] = 0;
+    for (i = 0; i < s->nparas; i++)
+        for (j = 0; j < s->paras[i].nruns; j++)
+            if (s->paras[i].runs[j].text) {
+                size_t k = strlen(s->paras[i].runs[j].text);
+                if (n + k + 1 >= size) return;
+                memcpy(buf + n, s->paras[i].runs[j].text, k + 1);
+                n += k;
+            }
+}
+
+static int same_fmt(const owf_charfmt *a, const owf_charfmt *b)
+{
+    return a->flags == b->flags && a->size == b->size && a->font == b->font && a->colour == b->colour;
+}
+
+/* Two objects alike as a .pub keeps them: kind, box, group, picture, look, text. */
+static int same_obj(const owf_obj *a, const owf_obj *b, const owf_deck *da, const owf_deck *db)
+{
+    static char ta[4096], tb[4096];
+    if (a->kind != b->kind || a->x != b->x || a->y != b->y || a->width != b->width || a->height != b->height ||
+        a->parent != b->parent || a->look.fill != b->look.fill || a->look.line != b->look.line ||
+        (a->look.line && a->look.line_width != b->look.line_width) || (a->flow_story >= 0) != (b->flow_story >= 0))
+        return 0;
+    if (a->kind == OWF_OBJ_PICTURE) {
+        const owf_image *ia, *ib;
+        if ((a->image < 0) != (b->image < 0)) return 0;
+        if (a->image >= 0) {
+            ia = &da->res->images[a->image];
+            ib = &db->res->images[b->image];
+            if (ia->length != ib->length || memcmp(ia->data, ib->data, ia->length) || strcmp(ia->mime, ib->mime))
+                return 0;
+        }
+    }
+    if (a->kind == OWF_OBJ_TABLE && a->ncols != b->ncols) return 0;
+    story_text(&a->text, ta, sizeof ta);
+    story_text(&b->text, tb, sizeof tb);
+    if (strcmp(ta, tb) || a->text.nparas != b->text.nparas) return 0;
+    if (a->text.nparas && a->text.paras[0].nruns && b->text.paras[0].nruns &&
+        !same_fmt(&a->text.paras[0].runs[0].fmt, &b->text.paras[0].runs[0].fmt))
+        return 0;
+    return 1;
+}
+
+/* A publication's deck saved as .pub (opp_export_pub) and read back gives the
+ * same deck; saving that again gives the same bytes. */
+static void deck_round_trip(const char *path, owf_report *report)
+{
+    owf_deck *a = NULL, *b = NULL;
+    owf_pub *pub = NULL;
+    unsigned char *one = NULL, *two = NULL;
+    size_t n1 = 0, n2 = 0;
+    int i, j, same = 1, objects = 0;
+    CHECK(opp_import_pub_file(path, &a, report, NULL) == OWF_OK && a);
+    if (!a) return;
+    CHECK(opp_export_pub(a, &one, &n1, report) == OWF_OK && one && n1 > 512);
+    CHECK(one && owf_pub_read(one, n1, &pub, report) == OWF_OK && pub);
+    CHECK(pub && opp_pub_to_deck(pub, &b, report) == OWF_OK && b);
+    if (b) {
+        CHECK(b->nslides == a->nslides && b->nmasters == a->nmasters);
+        for (i = 0; i < a->nslides && i < b->nslides; i++) {
+            if (a->slides[i].nobjs != b->slides[i].nobjs || a->slides[i].master != b->slides[i].master) {
+                same = 0;
+                fprintf(stderr, "%s: page %d: %d objects, master %d; read back %d, %d\n", path, i + 1,
+                        a->slides[i].nobjs, a->slides[i].master, b->slides[i].nobjs, b->slides[i].master);
+                continue;
+            }
+            for (j = 0; j < a->slides[i].nobjs; j++, objects++)
+                if (!same_obj(&a->slides[i].objs[j], &b->slides[i].objs[j], a, b)) {
+                    same = 0;
+                    fprintf(stderr, "%s: page %d object %d differs when read back\n", path, i + 1, j);
+                }
+        }
+        CHECK(same);
+        CHECK(opp_flow_chain_count(a, NULL) == opp_flow_chain_count(b, NULL));
+        CHECK(opp_export_pub(b, &two, &n2, report) == OWF_OK && two);
+        CHECK(two && n1 == n2 && !memcmp(one, two, n1));
+    }
+    CHECK(objects > 0);
+    owf_free(one);
+    owf_free(two);
+    owf_pub_free(pub);
+    owf_deck_free(a);
+    owf_deck_free(b);
+}
+
 int main(void)
 {
     static const char *const corpus[] = {
@@ -386,6 +477,30 @@ int main(void)
             deck = NULL;
         } else {
             CHECK(version == OWF_PUB_UNKNOWN);
+        }
+    }
+
+    /* GFOpenPublisher save: the deck back to .pub */
+    deck_round_trip(PUB("gen-2007-plain.pub"), report);
+    deck_round_trip(PUB("gen-2007-runs.pub"), report);
+    deck_round_trip(PUB("gen-2010-styles.pub"), report);
+    deck_round_trip(PUB("gen-2013-look.pub"), report);
+    deck_round_trip(PUB("gen-2003-columns.pub"), report);
+    deck_round_trip(PUB("gen-2003-names.pub"), report);
+    {
+        owf_pub *none = NULL;
+        unsigned char *data = (unsigned char *)"x";
+        size_t n = 1;
+        owf_deck *empty = owf_deck_new_empty();
+        CHECK(opp_deck_to_pub(NULL, &none, report) == OWF_ERR_FORMAT && !none);
+        CHECK(opp_export_pub(NULL, &data, &n, report) == OWF_ERR_FORMAT && !data && !n);
+        CHECK(opp_export_pub_file(empty, NULL, report) == OWF_ERR_FORMAT);
+        if (empty) {
+            empty->width = 11906;
+            empty->height = 16838;
+            CHECK(opp_export_pub(empty, &data, &n, report) == OWF_OK && data && n > 512);
+            owf_free(data);
+            owf_deck_free(empty);
         }
     }
 

@@ -498,7 +498,7 @@ test: pub-test
 check: pub-check
 
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
-PUB_CORE_SRC = src/pub/opp_import.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c
+PUB_CORE_SRC = src/pub/opp_import.c src/pub/opp_export.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c
 PUB_CORE_DEPS = $(PUB_DEPS) $(PUB_CORE_SRC) include/openpublisher_core.h include/openpresentation_core.h \
 	libowf/include/owf_deck.h $(OPENLAYOUT_ENGINE_SRC)
 
