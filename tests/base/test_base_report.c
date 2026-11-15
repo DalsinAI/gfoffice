@@ -279,6 +279,95 @@ static void test_query_groups(ob_project *p)
     owf_doc_free(doc);
 }
 
+/* Budgie's two (#241): a table's text groups take "leeds" and "Leeds" as one, as ob_view's NOCASE sort
+ * puts them together; and a Sum or Average past a 64-bit integer says so instead of wrapping. */
+static void test_case_groups_and_overflow(ob_project *p)
+{
+    static ob_table t;
+    static const char *const fields[] = { "Town", "Big" };
+    static const char *const rows[][2] = {
+        { "Leeds", "9000000000000000000" },
+        { "york", "1" },
+        { "leeds", "9000000000000000000" },
+        { "York", "2" },
+    };
+    ob_report r;
+    owf_doc *doc = NULL;
+    char err[OB_ERR_MAX] = "";
+    char *text;
+    ob_int key;
+    int i;
+
+    ob_table_init(&t, "Mixed");
+    ob_table_add_field(&t, "Town", OB_TEXT);
+    ob_table_add_field(&t, "Big", OB_INTEGER);
+    CHECK(ob_table_create(p, &t), "table: %s", ob_error(p));
+    for (i = 0; i < 4; i++)
+        CHECK(ob_row_add(p, "Mixed", 2, fields, rows[i], &key), "row %d: %s", i, ob_error(p));
+    ob_report_init(&r, "Mixed");
+    strcpy(r.table, "Mixed");
+    strcpy(r.group, "Town");
+    ob_report_add_column(&r, "Big", OB_TOTAL_SUM);
+    ob_report_add_column(&r, "Big", OB_TOTAL_AVERAGE);
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == 0 && doc, "build: %s", err);
+    if (!doc) return;
+    text = as_text(doc, "mixed.txt");
+    CHECK(text && !strcmp(text,
+        "Mixed\n"
+        "Town: Leeds\n"
+        "Big\tBig\n"
+        "9000000000000000000\t9000000000000000000\n"
+        "9000000000000000000\t9000000000000000000\n"
+        "Sum too large\tAverage too large\n"
+        "Town: york\n"
+        "Big\tBig\n"
+        "1\t1\n"
+        "2\t2\n"
+        "Sum 3\tAverage 1.5\n"
+        "Report totals\n"
+        "Big\tBig\n"
+        "Sum too large\tAverage too large\n"), "text:\n%s", text ? text : "(none)");
+    free(text);
+    owf_doc_free(doc);
+}
+
+/* The text a report is kept as (oadb_reports.def): every field back as it was, awkward characters
+ * included; a later version's file, a broken line and an unknown total refused; unknown keys skipped. */
+static void test_text_form(void)
+{
+    ob_report r, back;
+    char text[4096], err[OB_ERR_MAX] = "";
+    int n;
+
+    ob_report_init(&r, "Sales");
+    strcpy(r.title, "Ventes \xe0 Leeds | York\\2026\nsecond line");
+    strcpy(r.table, "Orders");
+    strcpy(r.sort, "Customer");
+    r.desc = 1;
+    strcpy(r.group, "Town");
+    ob_report_add_column(&r, "Customer", OB_TOTAL_COUNT);
+    strcpy(ob_report_add_column(&r, "Amount", OB_TOTAL_SUM)->heading, "Total | \xa3");
+    ob_report_add_column(&r, "Qty", OB_TOTAL_NONE);
+    n = ob_report_to_text(&r, text, sizeof text);
+    CHECK(n > 0 && (size_t)n == strlen(text), "to text: %d", n);
+    CHECK(!strncmp(text, "OADBREPORT 1\n", 13), "first line:\n%s", text);
+    CHECK(!strchr(text + 13, '\r') && strstr(text, "column=Amount|Total \\| \xa3|Sum\n"), "columns:\n%s", text);
+    CHECK(ob_report_from_text(&back, "Sales", text, err, sizeof err) == 0, "from text: %s", err);
+    CHECK(!memcmp(&r, &back, sizeof r), "the same report back");
+    CHECK(ob_report_to_text(&r, text, 20) == -1, "too small for the buffer");
+
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 2\ntable=T\n", err, sizeof err) == -1 &&
+          strstr(err, "a newer GFOpenBase"), "%s", err);
+    CHECK(ob_report_from_text(&back, "X", "table=T\n", err, sizeof err) == -1 && strstr(err, "not a report"), "%s", err);
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 1\ncolumn=Qty|x|Median\n", err, sizeof err) == -1 &&
+          strstr(err, "Median"), "%s", err);
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 1\nnonsense\n", err, sizeof err) == -1 &&
+          strstr(err, "line 2"), "%s", err);
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 1\ntable=T\nlater=1\ncolumn=A||\n", err, sizeof err) == 0 &&
+          !strcmp(back.name, "X") && !strcmp(back.table, "T") && back.ncolumns == 1 &&
+          back.columns[0].total == OB_TOTAL_NONE && !back.columns[0].heading[0], "unknown keys skipped: %s", err);
+}
+
 static void test_errors_and_empty(ob_project *p)
 {
     static ob_table t;
@@ -324,6 +413,50 @@ static void test_errors_and_empty(ob_project *p)
     owf_doc_free(doc);
 }
 
+/* Reports kept in the project (oadb_reports): the core keeps each one's text under its name, the
+ * report code turns it to and from an ob_report. */
+static void test_kept_reports(ob_project *p)
+{
+    static char text[OB_REPORT_TEXT_MAX];
+    ob_report r, back;
+    char err[OB_ERR_MAX] = "";
+
+    CHECK(ob_report_count(p) == 0, "no reports yet: %d", ob_report_count(p));
+    CHECK(!ob_report_get_text(p, "Sales", text, sizeof text) && strstr(ob_error(p), "no report named Sales"),
+          "%s", ob_error(p));
+    CHECK(ob_report_put_text(p, "Sales", "OADBREPORT 1\ntable=Orders\n"), "put: %s", ob_error(p));
+    CHECK(ob_report_put_text(p, "Away", "OADBREPORT 1\ntable=Mixed\n"), "put: %s", ob_error(p));
+    CHECK(ob_report_count(p) == 2, "two reports: %d", ob_report_count(p));
+    CHECK(!strcmp(ob_report_name(p, 0), "Away") && !strcmp(ob_report_name(p, 1), "Sales"), "in name order");
+    CHECK(ob_report_name(p, 2) == NULL, "past the end");
+    CHECK(ob_report_get_text(p, "sales", text, sizeof text) && !strcmp(text, "OADBREPORT 1\ntable=Orders\n"),
+          "get without case: %s", ob_error(p));
+    CHECK(!ob_report_get_text(p, "Sales", text, 8), "too small for the buffer");
+    CHECK(!ob_report_put_text(p, "Orders", "OADBREPORT 1\n") && strstr(ob_error(p), "a table named Orders"),
+          "%s", ob_error(p));
+    CHECK(!ob_report_put_text(p, "", "OADBREPORT 1\n"), "a report needs a name");
+    CHECK(ob_report_rename(p, "Sales", "Sales 2026"), "rename: %s", ob_error(p));
+    CHECK(!ob_report_rename(p, "Sales 2026", "Away") && strstr(ob_error(p), "Away"), "%s", ob_error(p));
+    CHECK(ob_report_delete(p, "Away") && ob_report_count(p) == 1, "delete: %s", ob_error(p));
+    CHECK(!ob_report_delete(p, "Away"), "deleted already");
+
+    /* an ob_report kept and read back whole */
+    ob_report_init(&r, "Towns");
+    strcpy(r.title, "Sales by town");
+    strcpy(r.table, "Orders");
+    strcpy(r.group, "Town");
+    ob_report_add_column(&r, "Customer", OB_TOTAL_COUNT);
+    ob_report_add_column(&r, "Amount", OB_TOTAL_SUM);
+    CHECK(ob_report_store(p, &r, err, sizeof err) == 0, "store: %s", err);
+    CHECK(ob_report_load(p, "towns", &back, err, sizeof err) == 0, "load: %s", err);
+    CHECK(!strcmp(back.name, "Towns") && !memcmp(&r, &back, sizeof r), "the same report back: %s", back.name);
+    CHECK(ob_report_load(p, "Nothing", &back, err, sizeof err) == -1 && strstr(err, "no report named Nothing"),
+          "%s", err);
+    ob_report_add_column(&r, "Price", OB_TOTAL_NONE);
+    CHECK(ob_report_store(p, &r, err, sizeof err) == -1 && strstr(err, "Orders has no field Price"),
+          "a report that can't be made isn't kept: %s", err);
+}
+
 int main(int argc, char **argv)
 {
     ob_project *p;
@@ -339,6 +472,9 @@ int main(int argc, char **argv)
         test_grouped_table(p);
         test_query_and_save(p);
         test_query_groups(p);
+        test_case_groups_and_overflow(p);
+        test_text_form();
+        test_kept_reports(p);
         test_errors_and_empty(p);
         ob_close(p);
     }
