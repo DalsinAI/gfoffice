@@ -148,11 +148,13 @@ static int para_final(owf_para *p, const ow_merge_table *t, int record)
     for (j = 0; j < p->nruns; ++j) any |= is_merge(&p->runs[j]);
     if (!any) return 0;
     for (j = 0, cap = 0; j < p->nruns; ++j) {        /* room: a value's lines each take two runs */
-        const char *v;
+        const char *v, *col;
         ++cap;
-        if (!is_merge(&p->runs[j]) || !t) continue;
-        v = ow_merge_value(t, record, p->runs[j].href ? p->runs[j].href : "");
-        while (v && (v = strchr(v, '\n')) != NULL) { cap += 2; ++v; }
+        if (!is_merge(&p->runs[j])) continue;
+        col = p->runs[j].href ? p->runs[j].href : "";
+        v = t ? ow_merge_value(t, record, col) : NULL;
+        if (!v) v = col;                             /* shown() gives the column's name then */
+        while ((v = strchr(v, '\n')) != NULL) { cap += 2; ++v; }
     }
     runs = (owf_run *)owf_calloc((size_t)cap, sizeof *runs);
     made = (unsigned char *)owf_calloc((size_t)cap, 1);

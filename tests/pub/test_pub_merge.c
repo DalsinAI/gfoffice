@@ -193,6 +193,22 @@ static void missing_column(void)
     CHECK(d->slides[1].objs[0].text.paras[0].runs[0].href == NULL);
     ow_merge_table_free(t);
     owf_deck_free(d);
+
+    /* a column name with line breaks (a quoted header, or a field from another source) shows as its name */
+    d = letter();
+    t = table("Name\nAnn\nBob\n");
+    if (!d || !t) { owf_deck_free(d); ow_merge_table_free(t); CHECK(0); return; }
+    {
+        int k;
+        for (k = 0; k < 4; ++k) CHECK(opp_merge_insert_field(&d->slides[1].objs[0], -1, "a\nb\nc\nd\ne", NULL) == OWF_OK);
+    }
+    CHECK(opp_merge_pages(d, t, -1, -1) == OWF_OK && d->nslides == 4);
+    CHECK(same(frame_text(&d->slides[1].objs[0]),
+               "\xC2\xABTown\xC2\xBB"
+               "\xC2\xAB" "a|b|c|d|e\xC2\xBB\xC2\xAB" "a|b|c|d|e\xC2\xBB\xC2\xAB" "a|b|c|d|e\xC2\xBB\xC2\xAB" "a|b|c|d|e\xC2\xBB"));
+    CHECK(d->slides[1].objs[0].text.paras[0].nruns == 1 + 4 * 9);
+    ow_merge_table_free(t);
+    owf_deck_free(d);
 }
 
 int main(void)
