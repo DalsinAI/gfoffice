@@ -48,6 +48,7 @@
 #include <string.h>
 
 #include "openbase_core.h"
+#include "ob_reportwin.h"
 #include "ow_stack.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
@@ -65,6 +66,9 @@ enum {
     M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV,
     M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM
 };
+
+/* 4.3: the Report window (app/ob_reportwin.c) */
+enum { M_REPORTS = 100 };
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
@@ -106,6 +110,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First Row", NULL, 0, 0, (APTR)M_R_FIRST },
     { NM_ITEM, "Last Row", NULL, 0, 0, (APTR)M_R_LAST },
+    { NM_TITLE, "Report", NULL, 0, 0, NULL },
+    { NM_ITEM, "Reports...", "P", 0, 0, (APTR)M_REPORTS },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -3353,6 +3359,26 @@ static void undo_last(void)
     set_status(msg);
 }
 
+/* The Report window over this one, its new report from the table or query shown. */
+static void report_window(void)
+{
+    ob_rwin_env e;
+    if (!proj) { set_status("Open a project first"); return; }
+    memset(&e, 0, sizeof e);
+    e.scr = scr;
+    e.vi = vi;
+    e.font = font;
+    e.ta = &font_attr;
+    e.fw = fw;
+    e.fh = fh;
+    e.parent = win;
+    e.proj = proj;
+    e.proj_path = proj_path;
+    e.table = have_cur && !q_on ? cur.name : "";
+    e.query = q_on ? qy.name : "";
+    ob_report_window(&e);
+}
+
 static void menu_action(ULONG id)
 {
     char path[512];
@@ -3400,6 +3426,7 @@ static void menu_action(ULONG id)
     case M_T_EXPORT: export_csv(); break;
     case M_T_FROMCSV: new_table_from_csv(); break;
     case M_UNDO: undo_last(); break;
+    case M_REPORTS: report_window(); break;
     case M_Q_NEW: design_query(1); break;
     case M_Q_OPEN: open_query(); break;
     case M_Q_DESIGN: design_query(!qy.ntables && !qy.sql_only); break;
