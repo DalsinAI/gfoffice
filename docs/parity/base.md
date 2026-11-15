@@ -18,7 +18,7 @@ as a form, one record at a time, with Find and its related rows below.
 | Table designer, datasheet view with add/edit/delete | Part | 1 | Core: the 13 field types of the design, rules as named SQL constraints, create, change (copy and rename, one transaction), rename, drop; rows added, changed and deleted with every value checked, in transactions; datasheet pages by key. Window: table designer (every field type and rule, Show SQL), datasheet with scroller and keys, row editor; errors in plain words. B1a: the datasheet sorted (Sort and Filter..., or a click on a heading) and filtered by one test on one field. B1b: Edit > Undo of rows and imports (100 steps) |
 | Primary keys, relationships | Part | 1 | Core: a Counter key, or a key of chosen fields (`PRIMARY KEY(...)`); indexes, unique or not, on up to 8 fields, kept through table changes; Lookups are real `FOREIGN KEY` clauses with refuse, cascade or clear on delete; `PRAGMA foreign_keys` on for every connection; renames follow; every relationship listed. Window: Key in the designer, an Indexes window, the relationships view (boxes and lines). Not yet: drawing a relationship in the view (it is made in the designer), a Lookup to a table keyed by its fields |
 | SQL view, query designer | Part | 2 | B2a (core 0.5, GFOpenBase 0.5.0): the designer's grid (8 tables joined by their relationships, 16 columns, sort, Show, Group/Sum/Count/Average/Min/Max, three rows of criteria in plain words, `[questions]`), the SQL it makes shown live, Type the SQL (one read-only statement), saved queries, results read only in the datasheet. Not yet: tables drawn as boxes, a query saved as a VIEW, a query's rows as CSV |
-| Forms and subforms | Part | 2 | B2b (core 0.6, GFOpenBase 0.6.0): the auto form of any table in the datasheet's sort and filter, a record bar (first, back, n of N, on, last, new, delete), edits written once when you leave the record, Undo Record, Find (contains for text, equals for other fields, on or back), and a subform for each Lookup that points at the table, its rows for the record shown read only. Not yet: the form designer, Filter by Form, changing rows in the subform, buttons and events |
+| Forms and subforms | Part | 2 | B2b (core 0.6, GFOpenBase 0.6.0): the auto form of any table in the datasheet's sort and filter, a record bar (first, back, n of N, on, last, new, delete), edits written once when you leave the record, Undo Record, Find (contains for text, equals for other fields, on or back), and a subform for each Lookup that points at the table, its rows for the record shown read only. B2c (core 0.6.2, GFOpenBase 0.6.2): Filter by Form, criteria typed into the form's fields in the query grid's words, Look for and two Or rows, applied to the form and the datasheet. Not yet: the form designer, changing rows in the subform, buttons and events |
 | Reports | Gap | 2 | Generated as GFOpenWrite documents |
 | CSV/DBF/Calc import and export | Part | 2 | B1a: CSV import into a table (all or none, by header or field order, separator found) and export of the datasheet as shown; round trips keep keys and values. B1b: New Table from CSV (types guessed from 200 rows, changeable), ISO-8859-1 or UTF-8 both ways, bad rows left out and listed. Not yet: DBF, sheets |
 | Locking, recovery | Part | 1 | B0a on the lab: the dot-file lock refuses a second writer, `unix-none` takes none; the rollback journal recovers; journal mode TRUNCATE; the RAM: issue does not happen with today's build |
@@ -27,6 +27,14 @@ as a form, one record at a time, with Find and its related rows below.
 
 ## Evidence
 
+- B2c: `make base-test` and `make base-check` (803 checks each): Filter by
+  Form's criteria kept a field and row at a time (any case, blank takes one
+  out, 16 at most, rows 0 to 2 only); one row's criteria all hold, rows
+  joined by OR; the query grid's words (`?y`, `a*`, `not a*`, between,
+  dates, empty, `not Leeds`, `>= 4` on the Counter); on top of the
+  one-field filter (its own OR kept inside brackets) and a sort; a record's
+  place and Find through it; plain words for a bad value, a [question], a
+  field that isn't, `between 1`; quotes stay text.
 - B2b: `make base-test` and `make base-check` (716 checks each, ASan and
   UBSan clean): a key's place in key order and in a sorted, filtered view;
   Find on text (any case, `%` and `_` as typed), money, Yes/No, on and back,

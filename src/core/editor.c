@@ -118,6 +118,11 @@ static void clear_doc_data(owf_doc *doc)
     for (i = 0; i < doc->nnotes; ++i) { owf_free(doc->notes[i].text); owf_free(doc->notes[i].label); }   /* 2.4.0 */
     owf_free(doc->notes);
     owf_free(doc->merge_source);                     /* 2.5.0 */
+    for (i = 0; i < doc->nformat_changes; ++i) {     /* libowf 1.11 */
+        owf_free(doc->format_changes[i].author);
+        owf_free(doc->format_changes[i].date);
+    }
+    owf_free(doc->format_changes);
     memset(doc, 0, sizeof(*doc));
 }
 
@@ -227,6 +232,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     owf_note *notes;
     int nnotes, capnotes;
     char *merge_source;
+    owf_format_change *format_changes;
+    int nformat_changes, capformat_changes;
     if (!dst || !snapshot) return;
     images = dst->images;           /* 2.0.11: the pictures stay the document's (clone_doc) */
     nimages = dst->nimages;
@@ -259,6 +266,11 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capnotes = dst->capnotes;
     dst->notes = NULL;
     dst->nnotes = dst->capnotes = 0;
+    format_changes = dst->format_changes;   /* libowf 1.11: the format changes, which the runs name and which only grow */
+    nformat_changes = dst->nformat_changes;
+    capformat_changes = dst->capformat_changes;
+    dst->format_changes = NULL;
+    dst->nformat_changes = dst->capformat_changes = 0;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
     dst->images = images;
@@ -280,6 +292,9 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->nnotes = nnotes;
     dst->capnotes = capnotes;
     dst->merge_source = merge_source;
+    dst->format_changes = format_changes;
+    dst->nformat_changes = nformat_changes;
+    dst->capformat_changes = capformat_changes;
     owf_free(snapshot);                 /* only the old outer shell */
 }
 
@@ -1251,6 +1266,73 @@ static ow_position paragraph_end(ow_editor *editor, ow_position pos)
     return pos;
 }
 
+/* 2.0.36: word moves. A character is a space (space, tab, line break), a word letter (ASCII letters and digits,
+ * '_', any UTF-8 beyond ASCII) or punctuation; a word move crosses one class run and the spaces after it (right)
+ * or before it (left), and stops at a paragraph's start and end, as Ctrl+arrows do in other word processors. */
+static int char_class(unsigned char c)
+{
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 0;
+    if (c >= 0x80 || c == '_' || (c >= '0' && c <= '9') || ((c | 0x20) >= 'a' && (c | 0x20) <= 'z')) return 1;
+    return 2;
+}
+
+/* the class of the character after pos in its paragraph, -1 at the paragraph's end; pos is moved over run ends */
+static int class_after(owf_para *p, ow_position *pos)
+{
+    for (;;) {
+        owf_run *r = &p->runs[pos->run];
+        int nr;
+        if (r->text && r->text[pos->byte_offset])     /* byte_offset is within the run's text (clamp_position) */
+            return char_class((unsigned char)r->text[pos->byte_offset]);
+        nr = next_text_run(p, pos->run);
+        if (nr < 0) return -1;
+        pos->run = nr;
+        pos->byte_offset = 0;
+    }
+}
+
+static int class_before(owf_para *p, ow_position *pos)
+{
+    for (;;) {
+        owf_run *r = &p->runs[pos->run];
+        int pr;
+        if (pos->byte_offset)
+            return char_class((unsigned char)r->text[utf8_prev(r->text, pos->byte_offset)]);
+        pr = prev_text_run(p, pos->run);
+        if (pr < 0) return -1;
+        pos->run = pr;
+        pos->byte_offset = p->runs[pr].text ? strlen(p->runs[pr].text) : 0;
+    }
+}
+
+static ow_position word_right_pos(ow_editor *editor, ow_position pos)
+{
+    owf_para *p;
+    int c;
+    pos = clamp_position(editor, pos);
+    p = &ed_story(editor)->paras[pos.paragraph];
+    c = class_after(p, &pos);
+    if (c < 0) return move_right_pos(editor, pos);          /* the paragraph's end: to the next one's start */
+    if (c > 0)
+        while (class_after(p, &pos) == c) pos.byte_offset = utf8_next(p->runs[pos.run].text, pos.byte_offset);
+    while (class_after(p, &pos) == 0) pos.byte_offset = utf8_next(p->runs[pos.run].text, pos.byte_offset);
+    return pos;
+}
+
+static ow_position word_left_pos(ow_editor *editor, ow_position pos)
+{
+    owf_para *p;
+    int c;
+    pos = clamp_position(editor, pos);
+    p = &ed_story(editor)->paras[pos.paragraph];
+    if (class_before(p, &pos) < 0) return move_left_pos(editor, pos);
+    while (class_before(p, &pos) == 0) pos.byte_offset = utf8_prev(p->runs[pos.run].text, pos.byte_offset);
+    c = class_before(p, &pos);
+    if (c > 0)
+        while (class_before(p, &pos) == c) pos.byte_offset = utf8_prev(p->runs[pos.run].text, pos.byte_offset);
+    return pos;
+}
+
 static ow_position vertical_pos(ow_editor *editor, ow_position pos, int delta)
 {
     owf_story *story = ed_story(editor);
@@ -1669,7 +1751,7 @@ static void join_runs(owf_para *p)
     while (j + 1 < p->nruns) {
         owf_run *a = &p->runs[j], *b = &p->runs[j + 1];
         if (a->kind == OWF_RUN_TEXT && b->kind == OWF_RUN_TEXT && a->revision == b->revision && !a->comment && !b->comment &&
-            !a->note && !b->note &&
+            !a->note && !b->note && a->format_change == b->format_change &&   /* libowf 1.11 */
             same_charfmt_local(&a->fmt, &b->fmt) && same_text_or_null(a->href, b->href)) {
             size_t la = a->text ? strlen(a->text) : 0, lb = b->text ? strlen(b->text) : 0;
             char *t = (char *)owf_malloc(la + lb + 1);
@@ -3746,6 +3828,18 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
         case OW_MOVE_DOWN:  pos = vertical_pos(editor, pos, 1); break;
         case OW_MOVE_HOME:  pos = paragraph_home(editor, pos); break;
         case OW_MOVE_END:   pos = paragraph_end(editor, pos); break;
+        case OW_MOVE_WORD_LEFT:  pos = word_left_pos(editor, pos); break;
+        case OW_MOVE_WORD_RIGHT: pos = word_right_pos(editor, pos); break;
+        case OW_MOVE_DOC_START:
+            pos = clamp_position(editor, pos);
+            pos.paragraph = 0;
+            pos = paragraph_home(editor, pos);
+            break;
+        case OW_MOVE_DOC_END:
+            pos = clamp_position(editor, pos);
+            pos.paragraph = ed_story(editor)->nparas - 1;
+            pos = paragraph_end(editor, pos);
+            break;
         }
     }
 
@@ -5921,6 +6015,7 @@ static int story_final(owf_doc *d, owf_story *story)
                 continue;
             }
             r.revision = 0;
+            r.format_change = 0;                     /* libowf 1.11: accepted too, as the list stays empty */
             if (r.kind == OWF_RUN_FIELD && r.field > OWF_FIELD_TIME) {
                 char *value = r.text, *nl;
                 const char *t = value ? value : "";

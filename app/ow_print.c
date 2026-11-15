@@ -72,14 +72,15 @@ static void print_path(const char *name, char *path, size_t cap)
     snprintf(path, cap, "T:%s.pdf", stem[0] ? stem : "GFOpenWrite-Print");
 }
 
-static int print_with_openprint(const owf_doc *doc, const char *name, char *status, size_t status_size)
+static int print_with_openprint(const owf_doc *doc, const char *name, int comments, char *status,
+                                size_t status_size)
 {
     char path[96];
     owf_report *report;
     int rc;
     print_path(name, path, sizeof path);
     report = owf_report_new();
-    rc = owf_export_file(doc, path, "pdf", report);
+    rc = owf_export_file(doc, path, comments ? "pdf-comments" : "pdf", report);
     owf_report_free(report);
     if (rc != OWF_OK) {
         if (status && status_size)
@@ -115,6 +116,12 @@ int ow_print_document(const owf_doc *doc, char *status, size_t status_size)
 
 int ow_print_document_named(const owf_doc *doc, const char *name, char *status, size_t status_size)
 {
+    return ow_print_document_comments(doc, name, 0, status, status_size);
+}
+
+int ow_print_document_comments(const owf_doc *doc, const char *name, int comments, char *status,
+                               size_t status_size)
+{
     struct MsgPort *port = NULL;
     struct IOStdReq *io = NULL;
     int opened = 0, ok = 0, p, r;
@@ -125,7 +132,7 @@ int ow_print_document_named(const owf_doc *doc, const char *name, char *status, 
         return 0;
     }
     if (have_openprint())
-        return print_with_openprint(doc, name, status, status_size);
+        return print_with_openprint(doc, name, comments, status, status_size);
 
     port = CreateMsgPort();
     if (port) io = (struct IOStdReq *)CreateIORequest(port, sizeof(*io));

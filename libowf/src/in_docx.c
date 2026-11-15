@@ -1370,6 +1370,30 @@ static void run(docx *d, const owf_xml_node *r, const owf_charfmt *para_char)
     memset(&cp, 0, sizeof cp);
     read_rpr(d, rpr, &cp);
     owf_charprops_apply(&f, &cp);
+    {
+        /* 1.11: a tracked format change (w:rPrChange): its w:rPr is the run's whole format before it */
+        const owf_xml_node *chg = wchild(d, rpr, "rPrChange");
+        if (chg) {
+            const owf_xml_node *old = wchild(d, chg, "rPr");
+            const owf_xml_node *ostyle = wchild(d, old, "rStyle");
+            owf_charfmt before = *para_char;
+            owf_format_span span;
+            int number;
+            if (ostyle)
+                owf_styles_resolve(d->tables, 1, wval(d, ostyle), OWF_FAMILY_TEXT, NULL, &before);
+            memset(&cp, 0, sizeof cp);
+            read_rpr(d, old, &cp);
+            owf_charprops_apply(&before, &cp);
+            before = relative(d, before);            /* as the runs' formats are kept (set_fmt) */
+            number = owf_track_format_add(d->doc, owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"),
+                                          &before);
+            if (!number) d->failed = 1;
+            owf_format_begin(&span, d->b);
+            run_children(d, r, &f);
+            owf_format_end(&span, d->b, number);
+            return;
+        }
+    }
     run_children(d, r, &f);
 }
 
@@ -1674,8 +1698,8 @@ static void paragraph(docx *d, const owf_xml_node *p)
             if (!rev) d->failed = 1;
             st->paras[st->nparas - 1].mark_revision = rev;
         }
-        if (wchild(d, ppr, "pPrChange") || wchild(d, mrpr, "rPrChange"))
-            owf_report_add(d->report, OWF_NOTE_APPROX, "Tracked format changes are kept as the format is now");
+        if (wchild(d, ppr, "pPrChange") || wchild(d, mrpr, "rPrChange"))   /* 1.11: the runs' are kept */
+            owf_report_add(d->report, OWF_NOTE_APPROX, "Tracked paragraph format changes are kept as the format is now");
     }
     if (wchild(d, ppr, "sectPr")) {
         const owf_xml_node *sect = wchild(d, ppr, "sectPr");
