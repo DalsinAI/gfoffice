@@ -74,8 +74,14 @@ owf_font_kind opr_font_kind(const owf_deck *deck, int font);
 typedef enum {
     OPR_PDF_SLIDES,              /* a page a slide, at the slide's size */
     OPR_PDF_NOTES,               /* a notes page a slide: the slide above its notes */
-    OPR_PDF_HANDOUTS             /* handouts: handout_slides slides to a page */
+    OPR_PDF_HANDOUTS,            /* handouts: handout_slides slides to a page */
+    OPR_PDF_BOOKLET              /* a folded booklet: two pages side by side on each sheet side, in the order that
+                                    folds and staples in the middle (blank pages made up to a multiple of four) */
 } opr_pdf_pages;
+
+/* For a booklet of n pages: sheet side k's (0 the first sheet's front, 1 its back, ...) left and right page,
+   from 0, or -1 for a blank. The sides come to (n + 3) / 4 * 2. 0, or -1 when k is not a side. */
+int opr_booklet_side(int n, int k, int *left, int *right);
 
 typedef struct {
     int with_hidden;             /* hidden slides too */
