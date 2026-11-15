@@ -1505,6 +1505,10 @@ static void pivot_cache_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def)
     owf_buf_puts(b, "\" sheet=\"");
     put_xml(b, w->names[def->source_sheet], X_ATTR);
     owf_buf_printf(b, "\"/></cacheSource><cacheFields count=\"%u\">", width);
+    if (def->ngroup)                         /* Excel's fieldGroup is a later step */
+        owf_report_add(w->report, OWF_NOTE_APPROX,
+                       "Pivot table fields grouped by range or date are saved ungrouped in an Excel workbook; "
+                       "the table's cells keep the groups");
     for (f = 0; f < width && !w->failed; f++) {
         owf_buf_puts(b, "<cacheField name=\"");
         put_xml(b, xp_heading(def, w, f, heading, sizeof heading), X_ATTR);
@@ -1593,8 +1597,9 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
                 return;
             }
             owf_buf_printf(b, "><items count=\"%d\">", it.n + 1);
-            for (i = 0; i < it.n; i++)
-                owf_buf_printf(b, "<item x=\"%d\"/>", i);
+            for (i = 0; i < it.n; i++)            /* a hidden row or column item: h="1" */
+                owf_buf_printf(b, "<item x=\"%d\"%s/>", i,
+                               strcmp(axis, "axisPage") && owf_pivot_is_hidden(def, f, it.items[i]) ? " h=\"1\"" : "");
             owf_buf_puts(b, "<item t=\"default\"/></items></pivotField>");
             free(it.items);
         } else
@@ -1654,7 +1659,13 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
         owf_buf_printf(b, "\" fld=\"%u\"", def->data[k].field);
         if (def->data[k].function != OWF_PIVOT_FN_SUM)
             owf_buf_printf(b, " subtotal=\"%s\"", owf_pivot_function_word(def->data[k].function, 1));
-        owf_buf_puts(b, " baseField=\"0\" baseItem=\"0\"/>");
+        if (def->data[k].show > OWF_PIVOT_SHOW_NORMAL && def->data[k].show <= OWF_PIVOT_SHOW_LAST)
+            owf_buf_printf(b, " showDataAs=\"%s\"", owf_pivot_show_word(def->data[k].show, 1));
+        owf_buf_puts(b, " baseField=\"0\" baseItem=\"0\"");
+        if (def->data[k].show == OWF_PIVOT_SHOW_ROW || def->data[k].show == OWF_PIVOT_SHOW_COLUMN ||
+            def->data[k].show == OWF_PIVOT_SHOW_TOTAL)
+            owf_buf_puts(b, " numFmtId=\"10\"");      /* 0.00%, as Excel gives a share */
+        owf_buf_puts(b, "/>");
     }
     owf_buf_puts(b, "</dataFields><pivotTableStyleInfo name=\"PivotStyleLight16\" showRowHeaders=\"1\" "
                     "showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/>"

@@ -56,6 +56,7 @@ struct ow_editor {
      * (0: the columns' names) */
     struct ow_merge_table *merge;
     int merge_at;
+    char *comment_filter;    /* 2.0.39: the author whose comments are shown (NULL: everyone's) */
 };
 
 static int update_story_fields(ow_editor *editor, owf_story *story);   /* 2.3.0 */
@@ -2257,10 +2258,47 @@ static int resolve_items(ow_editor *editor, owf_story *story, const ow_change_it
     return changed;
 }
 
+/* libowf 1.11: the tracked format changes of a story's runs, all or those the selection touches (from <= to):
+ * accepting one keeps the run's format, rejecting it gives the run its format before. 1 when one was there.
+ * (Before the insertions and deletions, which take runs away and join them.) */
+static int resolve_formats(ow_editor *editor, owf_story *story, int all, ow_position from, ow_position to,
+                           int accept, int *first_para, int *low, int *high)
+{
+    int i, j, changed = 0;
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        for (j = 0; j < p->nruns; ++j) {
+            owf_run *r = &p->runs[j];
+            const owf_format_change *fc = OWF_DOC_FORMAT_CHANGE(editor->doc, r->format_change);
+            if (!r->format_change) continue;
+            if (!all) {
+                ow_position s, e;
+                int touch;
+                s.paragraph = e.paragraph = i;
+                s.run = e.run = j;
+                s.box = e.box = from.box;
+                s.byte_offset = 0;
+                e.byte_offset = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 0;
+                touch = same_position(from, to)
+                      ? compare_position(s, from) <= 0 && compare_position(from, e) <= 0
+                      : compare_position(s, to) < 0 && compare_position(from, e) < 0;
+                if (!touch) continue;
+            }
+            if (!accept && fc) r->fmt = fc->before;
+            r->format_change = 0;
+            changed = 1;
+            if (i < *low) *low = i;
+            if (i > *high) *high = i;
+            if (first_para && (*first_para < 0 || i < *first_para)) *first_para = i;
+        }
+    }
+    return changed;                                  /* the runs are joined after (resolve_story) */
+}
+
 static int resolve_story(ow_editor *editor, owf_story *story, int all, int accept, int *first_para)
 {
     change_pick pk;
-    int rc;
+    int rc, formats, low = story->nparas, high = -1, k;
     memset(&pk, 0, sizeof pk);
     pk.editor = editor;
     pk.all = all;
@@ -2269,12 +2307,18 @@ static int resolve_story(ow_editor *editor, owf_story *story, int all, int accep
         pk.to = clamp_position(editor, editor->selection.focus);
         if (compare_position(pk.from, pk.to) > 0) { ow_position t = pk.from; pk.from = pk.to; pk.to = t; }
     }
+    formats = resolve_formats(editor, story, all, pk.from, pk.to, accept, first_para, &low, &high);
     walk_changes(story, pick_cb, &pk);
     if (pk.failed) { owf_free(pk.items); return -1; }
-    if (first_para && pk.nitems) *first_para = pk.items[0].para;
+    if (first_para && pk.nitems && (*first_para < 0 || pk.items[0].para < *first_para)) *first_para = pk.items[0].para;
     rc = pk.nitems ? resolve_items(editor, story, pk.items, pk.nitems, accept) : 0;
     owf_free(pk.items);
-    return rc;
+    if (rc < 0) return rc;
+    /* the paragraphs whose format changes went: runs now alike join (rejected paragraph ends may have joined
+     * paragraphs, so the range is clamped and may join a few more than needed, which is harmless) */
+    if (high >= story->nparas) high = story->nparas - 1;
+    for (k = low; k <= high; ++k) join_runs(&story->paras[k]);
+    return rc || formats;
 }
 
 int ow_editor_accept_change(ow_editor *editor, int accept)
@@ -2414,6 +2458,26 @@ static ow_position comment_start(ow_editor *editor, const ed_comment *c)
     return c->spara >= 0 ? run_position(editor, c->spara, c->srun) : run_position(editor, c->para, c->run);
 }
 
+/* 2.0.39: whether a comment passes the author filter: its own author is the one shown (or no filter) */
+static int comment_author_shown(const ow_editor *editor, int record)
+{
+    return !editor->comment_filter || same_text_or_null(editor->doc->comments[record].author, editor->comment_filter);
+}
+
+/* 2.0.39: whether a comment's thread (it and its replies, at any depth) has one the filter shows */
+static int thread_shown(const ow_editor *editor, int record)
+{
+    const owf_doc *doc = editor->doc;
+    int i;
+    if (comment_author_shown(editor, record)) return 1;
+    for (i = 0; i < doc->ncomments; ++i) {
+        int up = doc->comments[i].parent, guard = 0;
+        while (up >= 0 && up != record && up < doc->ncomments && guard++ < doc->ncomments) up = doc->comments[up].parent;
+        if (up == record && comment_author_shown(editor, i)) return 1;
+    }
+    return 0;
+}
+
 static void comment_fill(ow_editor *editor, const ed_comment *list, int n, int k, ow_comment_info *info)
 {
     const owf_annotation *a = &editor->doc->comments[list[k].record];
@@ -2430,6 +2494,37 @@ static void comment_fill(ow_editor *editor, const ed_comment *list, int n, int k
         if (list[i].record == a->parent) { info->reply_to = i; break; }
     info->start = comment_start(editor, &list[k]);
     info->end = run_position(editor, list[k].para, list[k].run);
+    info->shown = comment_author_shown(editor, list[k].record);   /* 2.0.39 */
+}
+
+int ow_editor_set_comment_filter(ow_editor *editor, const char *author)
+{
+    char *copy = NULL;
+    if (!editor) return OWF_ERR_FORMAT;
+    if (author && *author && !(copy = copy_bytes(author, strlen(author)))) return OWF_ERR_MEMORY;
+    owf_free(editor->comment_filter);
+    editor->comment_filter = copy;
+    return OWF_OK;
+}
+
+const char *ow_editor_comment_filter(const ow_editor *editor)
+{
+    return editor ? editor->comment_filter : NULL;
+}
+
+int ow_editor_comment_authors(ow_editor *editor, char (*names)[72], int max)
+{
+    const owf_doc *doc;
+    int i, k, n = 0;
+    if (!editor || !editor->doc || !names || max <= 0) return 0;
+    doc = editor->doc;
+    for (i = 0; i < doc->ncomments && n < max; ++i) {
+        const char *a = doc->comments[i].author ? doc->comments[i].author : "";
+        for (k = 0; k < n && strncmp(names[k], a, 71); ++k) {}
+        if (k < n) continue;
+        snprintf(names[n++], 72, "%s", a);
+    }
+    return n;
 }
 
 /* The comment at the caret: one whose range holds it, or whose place it is at; the narrowest, a comment
@@ -2532,21 +2627,25 @@ int ow_editor_next_comment(ow_editor *editor, int backwards)
     b = clamp_position(editor, editor->selection.focus);
     if (place_compare(story, a, b) > 0) { ow_position t = a; a = b; b = t; }
     /* comments, not their replies (a reply is where its comment is) */
+    /* (2.0.39: and only threads the author filter shows a comment of) */
     if (!backwards) {
         for (k = 0; k < n && pick < 0; ++k)
-            if (editor->doc->comments[list[k].record].parent < 0 &&
+            if (editor->doc->comments[list[k].record].parent < 0 && thread_shown(editor, list[k].record) &&
                 place_compare(story, comment_start(editor, &list[k]), a) > 0)
                 pick = k;
     } else {
         for (k = n - 1; k >= 0 && pick < 0; --k)
-            if (editor->doc->comments[list[k].record].parent < 0 &&
+            if (editor->doc->comments[list[k].record].parent < 0 && thread_shown(editor, list[k].record) &&
                 place_compare(story, comment_start(editor, &list[k]), a) < 0)
                 pick = k;
     }
     if (pick < 0) {
         /* round to the other end of the story */
         for (k = backwards ? n - 1 : 0; k >= 0 && k < n; k += backwards ? -1 : 1)
-            if (editor->doc->comments[list[k].record].parent < 0) { pick = k; break; }
+            if (editor->doc->comments[list[k].record].parent < 0 && thread_shown(editor, list[k].record)) {
+                pick = k;
+                break;
+            }
         wrapped = 1;
     }
     if (pick >= 0) select_comment(editor, &list[pick]);
@@ -3127,6 +3226,7 @@ void ow_editor_free(ow_editor *editor)
     owf_free(editor->para_y);
     owf_free(editor->author);
     owf_free(editor->file_name);
+    owf_free(editor->comment_filter);
     ow_editor_merge_close(editor);                   /* 2.5.0 */
     owf_free(editor);
 }

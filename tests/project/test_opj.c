@@ -724,6 +724,77 @@ static void test_print(void)
     opj_doc_free(doc);
 }
 
+/* The Resource Usage view: each resource, its assignments under it, and the work in each period. Dale
+ * full time on Plan (Mon-Tue) and on Build, which no longer follows Plan, so both from Monday: 16h on an 8
+ * hour Monday, over-allocated. Bob half time on Plan. */
+static void test_usage(void)
+{
+    opj_doc *doc = three();
+    opj_view v, u;
+    oldraw *d;
+    char out[64];
+    int r = -1, a = -2;
+    unsigned long bg;
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale,Bob[50%]"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);
+    /* Rows: Dale, his Plan and Build; Bob, his Plan. */
+    CHECK_N(opj_usage_rows(doc), 5);
+    CHECK(opj_usage_row(doc, 0, &r, &a) && r == 0 && a == -1);
+    CHECK(opj_usage_row(doc, 2, &r, &a) && r == 0 && a >= 0 && doc->plan->assigns[a].task == 1);
+    CHECK(opj_usage_row(doc, 3, &r, &a) && r == 1 && a == -1);
+    CHECK(opj_usage_row(doc, 4, &r, &a) && r == 1 && doc->plan->assigns[a].task == 0);
+    CHECK_N(opj_usage_row(doc, 5, &r, &a), 0);
+    CHECK_N(opj_usage_row(doc, -1, &r, &a), 0);
+    CHECK_N(opj_usage_row(NULL, 0, &r, &a), 0);
+    CHECK_N(opj_usage_rows(NULL), 0);
+    /* The table: the resource sheet's ID, name and work; an assignment's task and work. */
+    CHECK_S(opj_usage_column_title(OPJ_UCOL_NAME), "Resource Name");
+    CHECK_S(opj_usage_column_title(9), "");
+    opj_usage_cell_text(doc, 0, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "1!");
+    opj_usage_cell_text(doc, 0, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "40h");                                                   /* Plan's 16h and Build's 24h */
+    opj_usage_cell_text(doc, 1, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "Plan");
+    opj_usage_cell_text(doc, 1, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "");
+    opj_usage_cell_text(doc, 2, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "24h");
+    opj_usage_cell_text(doc, 4, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "8h");                                                    /* half of Plan's 16h */
+    opj_usage_cell_text(doc, 9, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "");
+    /* Its places: a table of 32 + 180 + 72, then the split, then the Days chart from Monday. */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    opj_usage_view(&v, &u);
+    CHECK_N(opj_chart_left(&u), 288);
+    CHECK_N(opj_view_x(&u, AT(17, 0, 0)), 312);
+    /* Drawn: titles, names, each day's work; a resource's row shaded across the chart. */
+    v.selected = 1;
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Resource Name") && drew("Work") && drew("Dale") && drew("Bob") && drew("Build") && drew("1!"));
+    CHECK(drew("16h") && drew("8h") && drew("4h"));                         /* Dale's, his Plan's, Bob's Monday */
+    CHECK(!drew("Task Name"));                                              /* not the Gantt view's table */
+    CHECK_X(px[40][300], 0xF0F0F0);                                        /* Dale's row */
+    CHECK_X(px[56][300], bg);                                              /* his Plan's */
+    CHECK_X(px[40][311], 0xC8C8C8);                                        /* Monday's right edge */
+    CHECK_X(px[56][10], oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_FILL)) & 0xFFFFFFUL);   /* row 1 selected */
+    /* Scrolled to Bob: only his rows. */
+    v.first_row = 3;
+    v.selected = -1;
+    ntexts = 0;
+    opj_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Bob") && !drew("Dale") && drew("Plan") && !drew("Build"));
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
 static int has_bytes(const unsigned char *data, size_t n, const char *what)
 {
     size_t k = strlen(what), i;
@@ -733,6 +804,27 @@ static int has_bytes(const unsigned char *data, size_t n, const char *what)
 }
 
 /* The printed Gantt view as a PDF (opj_pdf.c): a page each opj_print page, text searchable, the footer. */
+/* Lisette's review of #240: the task edits act on the Gantt chart's selection, which Resource Usage
+ * hides, so none runs while it shows, from the menu or a key; all run on the Gantt chart. */
+static void test_usage_edits(void)
+{
+    int e;
+    CHECK_N(opj_edit_for_key(13, 0), OPJ_EDIT_CELL);
+    CHECK_N(opj_edit_for_key(127, 0), OPJ_EDIT_DELETE);
+    CHECK_N(opj_edit_for_key(9, 0), OPJ_EDIT_INDENT);
+    CHECK_N(opj_edit_for_key(9, 1), OPJ_EDIT_OUTDENT);
+    CHECK_N(opj_edit_for_key('g', 0), OPJ_EDIT_NONE);
+    CHECK_N(opj_edit_for_key(27, 1), OPJ_EDIT_NONE);
+    for (e = OPJ_EDIT_CELL; e < OPJ_NEDITS; ++e) {
+        CHECK(opj_edit_refused(0, e) == NULL);
+        CHECK(opj_edit_refused(1, e) != NULL &&
+              !strcmp(opj_edit_refused(1, e),
+                      "Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources"));
+    }
+    CHECK(opj_edit_refused(1, OPJ_EDIT_NONE) == NULL);                    /* other keys and menu items */
+    CHECK(opj_edit_refused(1, OPJ_NEDITS) == NULL);
+}
+
 static void test_pdf(void)
 {
     opj_doc *doc = three(), *empty;
@@ -786,6 +878,8 @@ int main(void)
     test_baseline();
     test_print();
     test_pdf();
+    test_usage();
+    test_usage_edits();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;
