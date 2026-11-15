@@ -99,6 +99,9 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
  * one before. The point count (0: nothing to draw), or -1 when out is too small. */
 #define OPR_GRADIENT_LINEAR 1
 #define OPR_GRADIENT_RADIAL 2
+/* enough points for any band of an OL_MAX_SHAPE_POINTS outline: each cut keeps the outline's points
+ * and adds at most two per edge, and a ring adds its sides */
+#define OPR_GRADIENT_MAX_POINTS (3 * OL_MAX_SHAPE_POINTS + 32 + 8)
 int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind, int angle, unsigned long from,
                       unsigned long to, int band, int bands, int *out, int cap, unsigned long *colour);
 

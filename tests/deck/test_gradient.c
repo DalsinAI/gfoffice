@@ -326,6 +326,84 @@ static void test_screen_bands(void)
           "not an outline: nothing");
 }
 
+/* a 128-point star (radii 3000 and 300, Lisette's probe): every band of either kind fits, none is lost */
+static void test_star_bands(void)
+{
+    static const int star[2 * OL_MAX_SHAPE_POINTS] = {
+        6000, 3000, 3300, 3015, 5986, 3294, 3297, 3044, 5942, 3585, 3291, 3073, 5871, 3871, 3282, 3101,
+        5772, 4148, 3271, 3128, 5646, 4414, 3257, 3154, 5494, 4667, 3241, 3179, 5319, 4903, 3222, 3201,
+        5121, 5121, 3201, 3222, 4903, 5319, 3179, 3241, 4667, 5494, 3154, 3257, 4414, 5646, 3128, 3271,
+        4148, 5772, 3101, 3282, 3871, 5871, 3073, 3291, 3585, 5942, 3044, 3297, 3294, 5986, 3015, 3300,
+        3000, 6000, 2985, 3300, 2706, 5986, 2956, 3297, 2415, 5942, 2927, 3291, 2129, 5871, 2899, 3282,
+        1852, 5772, 2872, 3271, 1586, 5646, 2846, 3257, 1333, 5494, 2821, 3241, 1097, 5319, 2799, 3222,
+        879, 5121, 2778, 3201, 681, 4903, 2759, 3179, 506, 4667, 2743, 3154, 354, 4414, 2729, 3128,
+        228, 4148, 2718, 3101, 129, 3871, 2709, 3073, 58, 3585, 2703, 3044, 14, 3294, 2700, 3015,
+        0, 3000, 2700, 2985, 14, 2706, 2703, 2956, 58, 2415, 2709, 2927, 129, 2129, 2718, 2899,
+        228, 1852, 2729, 2872, 354, 1586, 2743, 2846, 506, 1333, 2759, 2821, 681, 1097, 2778, 2799,
+        879, 879, 2799, 2778, 1097, 681, 2821, 2759, 1333, 506, 2846, 2743, 1586, 354, 2872, 2729,
+        1852, 228, 2899, 2718, 2129, 129, 2927, 2709, 2415, 58, 2956, 2703, 2706, 14, 2985, 2700,
+        3000, 0, 3015, 2700, 3294, 14, 3044, 2703, 3585, 58, 3073, 2709, 3871, 129, 3101, 2718,
+        4148, 228, 3128, 2729, 4414, 354, 3154, 2743, 4667, 506, 3179, 2759, 4903, 681, 3201, 2778,
+        5121, 879, 3222, 2799, 5319, 1097, 3241, 2821, 5494, 1333, 3257, 2846, 5646, 1586, 3271, 2872,
+        5772, 1852, 3282, 2899, 5871, 2129, 3291, 2927, 5942, 2415, 3297, 2956, 5986, 2706, 3300, 2985,
+    };
+    int out[2 * OPR_GRADIENT_MAX_POINTS], band, kind, lost = 0, drawn = 0;
+    unsigned long colour;
+    for (kind = OPR_GRADIENT_LINEAR; kind <= OPR_GRADIENT_RADIAL; kind++)
+        for (band = 0; band < 32; band++) {
+            int m = opr_gradient_band(star, OL_MAX_SHAPE_POINTS, 0, 0, 6000, 6000, kind, 450, 0, 0xFFFFFF, band, 32,
+                                      out, OPR_GRADIENT_MAX_POINTS, &colour);
+            if (m < 0) lost++;
+            if (m >= 3) drawn++;
+        }
+    CHECK(!lost, "a 128-point star loses no band");
+    CHECK(drawn >= 60, "and nearly every band has something to draw");
+}
+
+/* a shape 400,000 units across: the band corners stay on the shape (no 32-bit overflow, tried with -m32) */
+static void test_pdf_far(void)
+{
+    owf_pdf *pdf = owf_pdf_new();
+    unsigned char *data = NULL;
+    size_t length = 0;
+    int box[8] = {0, 0, 400000, 0, 400000, 1000, 0, 1000};
+    CHECK(pdf && owf_pdf_page(pdf, 400000, 4000) == 0, "a wide page");
+    CHECK(owf_pdf_gradient(pdf, box, 4, 0, 0, 400000, 1000, OWF_PDF_GRADIENT_LINEAR, 0, OWF_SHADE(0x000000),
+                           OWF_SHADE(0xFFFFFF)) == 0, "a linear gradient across it");
+    CHECK(owf_pdf_finish(pdf, "g", &data, &length, NULL) == OWF_OK && data, "finished");
+    if (data) {
+        /* every point of every band within a band's width of the page (points are twentieths: 20,000 wide) */
+        /* every "x y m" and "x y l" within the page, points being twentieths (20,000 across) */
+        char *text = malloc(length + 1), *tok;
+        double prev[2] = {0, 0};
+        int bad = 0, seen = 0, have = 0;
+        if (text) {
+            memcpy(text, data, length);
+            text[length] = 0;
+            for (tok = strtok(text, " \n"); tok; tok = strtok(NULL, " \n")) {
+                char *e;
+                double v = strtod(tok, &e);
+                if (e != tok && !*e) {
+                    prev[0] = prev[1];
+                    prev[1] = v;
+                    have = have < 2 ? have + 1 : 2;
+                } else {
+                    if (have == 2 && (!strcmp(tok, "m") || !strcmp(tok, "l"))) {
+                        seen++;
+                        if (prev[0] < -1000 || prev[0] > 21000) bad++;
+                    }
+                    have = 0;
+                }
+            }
+            free(text);
+        }
+        CHECK(seen >= 48 * 4, "the bands' corners are there");
+        CHECK(!bad, "and all on the page");
+    }
+    free(data);
+    owf_pdf_free(pdf);
+}
+
 int main(void)
 {
     owf_deck *deck = NULL;
@@ -337,6 +415,8 @@ int main(void)
     owf_deck_free(deck);
     test_pdf_writer();
     test_screen_bands();
+    test_star_bands();
+    test_pdf_far();
     test_background();
     printf("gradient: %d checks, %d failed\n", checks, failures);
     return failures != 0;
