@@ -12,6 +12,7 @@
 #include <string.h>
 #include "openwrite_core.h"
 #include "owf_internal.h"
+#include "owf_zip.h"
 
 static int checks, failures;
 
@@ -28,7 +29,7 @@ static int checks, failures;
 static const char *dump(const owf_doc *doc)
 {
     static const char *const names[] = { "PAGE", "PAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE" };
+                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE", "INDEX", "SEQ" };
     static char out[2048];
     size_t used = 0;
     int i, j;
@@ -328,6 +329,115 @@ static void test_odf_form(void)
     owf_doc_free(doc);
 }
 
+/* libowf 1.12.4: number ranges (SEQ): numbered by name in order, renumbered on an edit, undone, through DOCX
+ * and ODT (its text:sequence-decls), and Word's SEQ with its switches */
+static void test_seq(void)
+{
+    owf_doc *doc = doc_of(), *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    static const char *const want =
+        "Getting started|Plug it in and wait.{SEQ:Figure=1}|Using it{SEQ:Table=1}|Press the button.{SEQ:Figure=2}";
+    static const char *const fmts[] = { "docx", "odt" };
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, NULL) == OWF_ERR_FORMAT, "a number range needs a name");
+    caret_end(ed, 1);
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure") == OWF_OK, "Figure");
+    caret_end(ed, 2);
+    ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Table");
+    caret_end(ed, 3);
+    ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+    ow_editor_update_fields(ed);
+    CHECK(!strcmp(dump(doc), want), dump(doc));
+    /* one before them: they move on */
+    caret_end(ed, 0);
+    ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+    ow_editor_update_fields(ed);
+    CHECK(!strcmp(dump(doc), "Getting started{SEQ:Figure=1}|Plug it in and wait.{SEQ:Figure=2}|Using it{SEQ:Table=1}|"
+                             "Press the button.{SEQ:Figure=3}"), dump(doc));
+    ow_editor_undo(ed);
+    ow_editor_update_fields(ed);
+    CHECK(!strcmp(dump(doc), want), dump(doc));
+    for (k = 0; k < 2; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL;
+        size_t length = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        {   /* the file's own form */
+            owf_unzip zip;
+            unsigned char *xml = NULL;
+            size_t n = 0;
+            const char *part = k ? "content.xml" : "word/document.xml";
+            CHECK(owf_unzip_open(&zip, data, length) && owf_unzip_read(&zip, part, &xml, &n) == OWF_OK, part);
+            if (xml) {
+                if (!k) CHECK(strstr((char *)xml, "SEQ Figure \\* ARABIC") != NULL, "SEQ Figure");
+                else {
+                    const char *d = strstr((char *)xml, "<text:sequence-decls>");
+                    CHECK(d && strstr(d, "text:name=\"Figure\"") && strstr(d, "text:name=\"Table\"") &&
+                          strstr(d, "</text:sequence-decls>") && !strstr(strstr(d, "text:name=\"Figure\"") + 1,
+                          "<text:sequence-decl text:display-outline-level=\"0\" text:name=\"Figure\""), "each name once");
+                    CHECK(strstr((char *)xml, "<text:sequence text:name=\"Table\" text:formula=\"ooow:Table+1\" "
+                                              "style:num-format=\"1\">1</text:sequence>") != NULL, "text:sequence");
+                }
+                owf_free(xml);
+            }
+        }
+        CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+        if (back) {
+            CHECK(!strcmp(dump(back), want), dump(back));
+            owf_doc_free(back);
+            back = NULL;
+        }
+        free(data);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    /* Word's: SEQ with its switches and the number it showed, numbered again by the editor */
+    {
+        static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
+        static const char *const parts[] = {
+            "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+            "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+            "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+            "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+            "</Types>",
+            "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+            "</Relationships>",
+            "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+            "<w:p><w:r><w:t xml:space=\"preserve\">Table </w:t></w:r><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>"
+            "<w:r><w:instrText xml:space=\"preserve\"> SEQ Table \\* ARABIC \\s 1 </w:instrText></w:r>"
+            "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>7</w:t></w:r>"
+            "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>"
+            "<w:p><w:r><w:t xml:space=\"preserve\">Table </w:t></w:r>"
+            "<w:fldSimple w:instr=\" SEQ Table \\* ARABIC \"><w:r><w:t>8</w:t></w:r></w:fldSimple></w:p>"
+            "</w:body></w:document>" };
+        owf_buf zipped;
+        owf_zip *z;
+        owf_doc *word = NULL;
+        int i;
+        owf_buf_init(&zipped);
+        z = owf_zip_new(&zipped);
+        for (i = 0; z && i < 3; ++i) owf_zip_add(z, names[i], parts[i], strlen(parts[i]), 1);
+        if (z) owf_zip_finish(z);
+        CHECK(owf_import_memory(zipped.data, zipped.length, NULL, &word, NULL, NULL) == OWF_OK && word, "Word's SEQ");
+        owf_buf_free(&zipped);
+        if (word) {
+            CHECK(!strcmp(dump(word), "Table {SEQ:Table=7}|Table {SEQ:Table=8}"), dump(word));
+            ed = ow_editor_new(word);
+            if (ed) {
+                ow_editor_update_fields(ed);
+                CHECK(!strcmp(dump(word), "Table {SEQ:Table=1}|Table {SEQ:Table=2}"), dump(word));
+                ow_editor_free(ed);
+            }
+            owf_doc_free(word);
+        }
+    }
+}
+
 int main(void)
 {
     test_editing();
@@ -337,6 +447,7 @@ int main(void)
                              "Press the button.Using itGetting started1");
     test_word_form();
     test_odf_form();
+    test_seq();
     printf("fields: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

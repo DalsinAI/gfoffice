@@ -47,13 +47,15 @@
  * notes' runs in and out. No new calls; owf_doc grew, so the three libraries go together again.
  * 3.14: libowf 1.12.3, notes numbered again at each section or page (owf_page.note_restart): DOCX
  * w:numRestart, ODT text:start-numbering-at, in and out. No new calls; owf_page grew, and owf_doc with it.
+ * 3.15: libowf 1.12.4, number ranges (OWF_FIELD_SEQ): DOCX SEQ fields, ODT text:sequence and its
+ * text:sequence-decl, in and out. No new calls and no structure grew, so owfpub and owfpresent stay.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 14
-#define OWF_LIB_VERS "3.14"
+#define OWF_LIB_REVISION 15
+#define OWF_LIB_VERS "3.15"
 #define OWF_LIB_DATE "15.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

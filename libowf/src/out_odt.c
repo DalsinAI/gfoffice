@@ -568,12 +568,41 @@ static void change_to(owf_buf *out, odt_track *tk, int rev, int para_style)
     }
 }
 
+/* 1.12.4: the number ranges' names, each once, before the text (text:sequence-decls) */
+static void put_sequence_decls(owf_buf *out, const owf_doc *doc)
+{
+    owf_story *st;
+    int n, i, j, any = 0;
+    for (n = 0; (st = owf_doc_story((owf_doc *)doc, n)) != NULL; ++n)
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j) {
+                const owf_run *r = &st->paras[i].runs[j];
+                owf_story *s2;
+                int n2, i2, j2, seen = 0;
+                if (r->kind != OWF_RUN_FIELD || r->field != OWF_FIELD_SEQ || !r->href || !*r->href) continue;
+                /* named before? */
+                for (n2 = 0; !seen && (s2 = owf_doc_story((owf_doc *)doc, n2)) != NULL && n2 <= n; ++n2)
+                    for (i2 = 0; !seen && i2 < s2->nparas && (n2 < n || i2 <= i); ++i2)
+                        for (j2 = 0; !seen && j2 < s2->paras[i2].nruns && (n2 < n || i2 < i || j2 < j); ++j2) {
+                            const owf_run *q = &s2->paras[i2].runs[j2];
+                            seen = q->kind == OWF_RUN_FIELD && q->field == OWF_FIELD_SEQ && q->href &&
+                                   !strcmp(q->href, r->href);
+                        }
+                if (seen) continue;
+                if (!any++) owf_buf_puts(out, "<text:sequence-decls>");
+                owf_buf_puts(out, "<text:sequence-decl text:display-outline-level=\"0\" text:name=\"");
+                owf_buf_puts_xml(out, r->href);
+                owf_buf_puts(out, "\"/>");
+            }
+    if (any) owf_buf_puts(out, "</text:sequence-decls>");
+}
+
 /* 1.7: a field with a shown value, as its ODF element */
 static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
 {
     static const char *const names[] = { "title", "initial-creator", "subject", "file-name", "word-count",
                                          "chapter", "user-field-get", "bookmark-ref", "bookmark-ref",
-                                         "database-display", "alphabetical-index-mark" };
+                                         "database-display", "alphabetical-index-mark", "sequence" };
     const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_LAST
                      ? names[run->field - OWF_FIELD_TITLE] : NULL;
     if (!name) return;
@@ -594,6 +623,13 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
     owf_buf_printf(out, "<text:%s", name);
     if (run->field == OWF_FIELD_FILENAME) owf_buf_puts(out, " text:display=\"name-and-extension\"");
     if (run->field == OWF_FIELD_CHAPTER) owf_buf_puts(out, " text:display=\"name\" text:outline-level=\"1\"");
+    if (run->field == OWF_FIELD_SEQ) {               /* 1.12.4: a number range, counted as ours are */
+        owf_buf_puts(out, " text:name=\"");
+        owf_buf_puts_xml(out, run->href ? run->href : "");
+        owf_buf_puts(out, "\" text:formula=\"ooow:");
+        owf_buf_puts_xml(out, run->href ? run->href : "");
+        owf_buf_puts(out, "+1\" style:num-format=\"1\"");
+    }
     if (run->field == OWF_FIELD_USER) {
         owf_buf_puts(out, " text:name=\"");
         owf_buf_puts_xml(out, run->href ? run->href : "");
@@ -1065,6 +1101,7 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
         }
     }
     owf_buf_puts(out, "</office:automatic-styles><office:body><office:text>");
+    put_sequence_decls(out, doc);                    /* 1.12.4 */
     if (doc->nuserfields) {                          /* 1.7: the user fields */
         int k;
         owf_buf_puts(out, "<text:user-field-decls>");

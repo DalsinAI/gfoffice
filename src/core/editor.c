@@ -5201,7 +5201,7 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
 static int field_wants_arg(owf_field f)
 {
     return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE || f == OWF_FIELD_MERGE ||
-           f == OWF_FIELD_INDEX;
+           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ;
 }
 
 static void merge_field_value(const ow_editor *editor, const char *column, char *out, size_t size);   /* 2.5.0 */
@@ -5315,6 +5315,19 @@ static void field_value(ow_editor *editor, const owf_story *story, int para, con
         }
         break;
     case OWF_FIELD_MERGE: merge_field_value(editor, run->href, out, size); break;   /* 2.5.0 */
+    case OWF_FIELD_SEQ:                              /* libowf 1.12.4: its name's fields in its story up to it */
+        k = 0;
+        for (i = 0; run->href && i <= para && i < story->nparas; ++i) {
+            int j;
+            for (j = 0; j < story->paras[i].nruns; ++j) {
+                const owf_run *q = &story->paras[i].runs[j];
+                if (q->kind == OWF_RUN_FIELD && q->field == OWF_FIELD_SEQ && q->href && !strcmp(q->href, run->href) &&
+                    rev_kind(doc, q->revision) != OWF_REV_DELETE) ++k;
+                if (q == run) break;
+            }
+        }
+        snprintf(out, size, "%d", k);
+        break;
     default: break;
     }
 }
