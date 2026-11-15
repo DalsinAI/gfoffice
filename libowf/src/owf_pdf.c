@@ -40,6 +40,7 @@ struct owf_pdf {
     int dash;
     int failed;
     int mf_skipped;              /* records of WMF and EMF pictures played as nothing (owf_metafile.h) */
+    int mf_box[4];               /* the picture being played: what it is drawn inside, x y w h */
 };
 
 owf_pdf *owf_pdf_new(void)
@@ -477,19 +478,40 @@ static int mf_text_width(void *ctx, const char *utf8, size_t length, owf_font_ki
     return owf_pdf_text_width(utf8, length, kind, flags, size);
 }
 
+static void clip_to(pdf_page *p, long x, long y, long w, long h)
+{
+    put_xy(&p->content, p, x, y + h);
+    put_num(&p->content, w);
+    owf_buf_putc(&p->content, ' ');
+    put_num(&p->content, h);
+    owf_buf_puts(&p->content, " re W n\n");
+}
+
+/* the picture's own clip (IntersectClipRect): its state put back to the picture's box, then cut down again */
+static int mf_clip(void *ctx, int x, int y, int w, int h)
+{
+    owf_pdf *pdf = (owf_pdf *)ctx;
+    pdf_page *p = current(pdf);
+    if (!p) return -1;
+    owf_buf_puts(&p->content, "Q\nq\n");
+    clip_to(p, pdf->mf_box[0], pdf->mf_box[1], pdf->mf_box[2], pdf->mf_box[3]);
+    if (w >= 0) clip_to(p, x, y, w, h);
+    return p->content.failed ? -1 : 0;
+}
+
 /* the picture's records drawn in its box, nothing outside the box (or clip) */
 static int pdf_metafile(owf_pdf *pdf, pdf_page *p, const owf_image *image, int x, int y, int w, int h,
                         const int *clip)
 {
-    static const owf_mf_sink sink = { mf_path, mf_ellipse, mf_text, mf_text_width };
+    static const owf_mf_sink sink = { mf_path, mf_ellipse, mf_text, mf_text_width, mf_clip };
     owf_mf_result res;
     int dash = pdf->dash, rc;
+    pdf->mf_box[0] = clip ? clip[0] : x;
+    pdf->mf_box[1] = clip ? clip[1] : y;
+    pdf->mf_box[2] = clip ? clip[2] : w;
+    pdf->mf_box[3] = clip ? clip[3] : h;
     owf_buf_puts(&p->content, "q\n");
-    put_xy(&p->content, p, clip ? clip[0] : x, clip ? (long)clip[1] + clip[3] : (long)y + h);
-    put_num(&p->content, clip ? clip[2] : w);
-    owf_buf_putc(&p->content, ' ');
-    put_num(&p->content, clip ? clip[3] : h);
-    owf_buf_puts(&p->content, " re W n\n");
+    clip_to(p, pdf->mf_box[0], pdf->mf_box[1], pdf->mf_box[2], pdf->mf_box[3]);
     rc = owf_metafile_play(image->data, image->length, x, y, w, h, &sink, pdf, &res);
     owf_buf_puts(&p->content, "Q\n");
     pdf->dash = dash;
@@ -657,7 +679,7 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
         owf_report_add(report, OWF_NOTE_LOST, "Pictures in a format the PDF export does not draw yet (only JPEG, PNG and WMF) are left out");
     if (pdf->mf_skipped)
         owf_report_add(report, OWF_NOTE_APPROX,
-                       "Parts of WMF and EMF pictures (pictures inside them, clipping, world transforms) are left out");
+                       "Parts of WMF and EMF pictures (pictures inside them, clip regions, world transforms) are left out");
     link_obj = nobj;
     nobj += pdf->nlinks;
     info_obj = nobj++;
