@@ -125,6 +125,28 @@ inflate-check: $(OUT)/test-inflate-asan $(OUT)/owconvert-asan $(OUT)/owconvert-n
 test: inflate-test
 check: inflate-check
 
+# The compound file writer (libowf/src/owf_cfbw.c), the container for
+# GFOpenPublisher's .pub save; tests/cfb/test_cfbw.c reads what it writes
+# back through owf_cfb.c.
+$(OUT)/test-cfbw: $(OWF_SRC) libowf/src/owf_internal.h tests/cfb/test_cfbw.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/cfb/test_cfbw.c -lz -lm -o $@
+
+$(OUT)/test-cfbw-asan: $(OWF_SRC) libowf/src/owf_internal.h tests/cfb/test_cfbw.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/cfb/test_cfbw.c -lz -lm -o $@
+
+.PHONY: cfbw-test cfbw-check
+cfbw-test: $(OUT)/test-cfbw
+	$(OUT)/test-cfbw
+
+cfbw-check: $(OUT)/test-cfbw-asan
+	$(OUT)/test-cfbw-asan
+
+test: cfbw-test
+check: cfbw-check
+
 .PHONY: inflate-test inflate-check
 
 # GFOpenWrite's pages on GFOpenLayout (DalsinAI/gfopenlayout 0.2 or later)
