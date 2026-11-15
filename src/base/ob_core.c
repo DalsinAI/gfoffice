@@ -27,6 +27,7 @@
 #define QUERIES_SQL "CREATE TABLE IF NOT EXISTS oadb_queries(name TEXT PRIMARY KEY COLLATE NOCASE, grid TEXT, sql TEXT NOT NULL)"
 static int forms_allow(ob_project *p, const ob_table *old, const ob_table *t);
 static int forms_follow(ob_project *p, const ob_table *old, const ob_table *t, const char *new_name);
+static int buttons_follow(ob_project *p, ob_faction action, const char *old_name, const char *new_name);
 
 struct undo_step;
 
@@ -4002,7 +4003,9 @@ int ob_query_rename(ob_project *p, const char *old_name, const char *new_name)
 {
     if (!query_exists(p, old_name)) return fail(p, "There is no query named %s", old_name);
     if (!query_name_ok(p, new_name, old_name)) return 0;
-    return runf(p, "UPDATE oadb_queries SET name = %Q WHERE name = %Q", new_name, old_name) && ok(p);
+    if (!step_begin(p)) return 0;
+    return step_end(p, runf(p, "UPDATE oadb_queries SET name = %Q WHERE name = %Q", new_name, old_name)
+                       && buttons_follow(p, OB_FA_RUNQUERY, old_name, new_name)) && ok(p);
 }
 
 int ob_query_delete(ob_project *p, const char *name)
@@ -4015,7 +4018,31 @@ int ob_query_delete(ob_project *p, const char *name)
 
 #define FORMS_SQL "CREATE TABLE IF NOT EXISTS oadb_forms(name TEXT PRIMARY KEY COLLATE NOCASE, tbl TEXT NOT NULL, items TEXT NOT NULL)"
 
-static const char *const fitem_words[OB_FI_KINDS] = { "field", "label", "line", "box" };
+static const char *const fitem_words[OB_FI_KINDS] = { "field", "label", "line", "box", "button" };
+static const char *const faction_words[OB_FA_COUNT] = {
+    "none", "first", "previous", "next", "last", "new", "save", "delete", "find", "close", "openform", "runquery", "arexx"
+};
+static const char *const faction_names[OB_FA_COUNT] = {
+    "", "First Record", "Previous Record", "Next Record", "Last Record", "New Record", "Save Record",
+    "Delete Record", "Find", "Close Form", "Open Form", "Run Query", "ARexx Macro"
+};
+static const char *const fevent_words[OB_FE_COUNT] = { "open", "current", "beforesave", "aftersave", "close" };
+static const char *const fevent_names[OB_FE_COUNT] = { "On Open", "On Record", "Before Save", "After Save", "On Close" };
+
+const char *ob_faction_name(ob_faction a)
+{
+    return (unsigned)a < OB_FA_COUNT ? faction_names[a] : "";
+}
+
+int ob_faction_arg(ob_faction a)
+{
+    return a == OB_FA_OPENFORM ? 1 : a == OB_FA_RUNQUERY ? 2 : a == OB_FA_AREXX ? 3 : 0;
+}
+
+const char *ob_fevent_name(ob_fevent e)
+{
+    return (unsigned)e < OB_FE_COUNT ? fevent_names[e] : "";
+}
 
 void ob_form_init(ob_form *f, const char *name, const char *table)
 {
@@ -4078,6 +4105,18 @@ int ob_form_place(ob_form *f, int i, int x, int y, int w, int h)
     return 1;
 }
 
+ob_fitem *ob_form_add_button(ob_form *f, const char *text, ob_faction action, const char *arg, int x, int y)
+{
+    int n = text ? (int)strlen(text) : 0;
+    ob_fitem *it;
+    if ((unsigned)action >= OB_FA_COUNT) return NULL;
+    if (!(it = ob_form_add(f, OB_FI_BUTTON, x, y, (n > 8 ? n : 8) + 4, 1))) return NULL;
+    copy(it->text, sizeof it->text, text ? text : "");
+    it->action = action;
+    copy(it->arg, sizeof it->arg, arg ? arg : "");
+    return it;
+}
+
 int ob_form_auto(ob_project *p, const char *table, const char *name, ob_form *out)
 {
     static ob_table t;
@@ -4119,6 +4158,14 @@ int ob_form_check(ob_project *p, const ob_form *f)
         }
         if (it->kind == OB_FI_LINE && it->w != 1 && it->h != 1)
             return fail(p, "%s: a line goes across or down, one cell thick", f->name);
+        if (it->kind == OB_FI_BUTTON) {
+            const char *b = it->text[0] ? it->text : "a button";
+            if ((unsigned)it->action >= OB_FA_COUNT || it->action == OB_FA_NONE)
+                return fail(p, "%s: the button %s does nothing: give it an action", f->name, b);
+            if (ob_faction_arg(it->action) && !it->arg[0])
+                return fail(p, "%s: the button %s needs %s", f->name, b,
+                            it->action == OB_FA_OPENFORM ? "a form to open" : it->action == OB_FA_RUNQUERY ? "a query to run" : "a macro to run");
+        }
     }
     return ok(p);
 }
@@ -4171,8 +4218,19 @@ static char *form_text(const ob_form *f)
         sqlite3_str_appendall(s, fitem_words[it->kind]);
         put_escaped(s, it->field);
         put_escaped(s, it->text);
-        sqlite3_str_appendf(s, "\t%d\t%d\t%d\t%d\n", it->x, it->y, it->w, it->h);
+        sqlite3_str_appendf(s, "\t%d\t%d\t%d\t%d", it->x, it->y, it->w, it->h);
+        if (it->kind == OB_FI_BUTTON) {
+            sqlite3_str_appendf(s, "\t%s", faction_words[(unsigned)it->action < OB_FA_COUNT ? it->action : 0]);
+            put_escaped(s, it->arg);
+        }
+        sqlite3_str_appendall(s, "\n");
     }
+    for (i = 0; i < OB_FE_COUNT; i++)
+        if (f->events[i][0]) {
+            sqlite3_str_appendf(s, "event\t%s", fevent_words[i]);
+            put_escaped(s, f->events[i]);
+            sqlite3_str_appendall(s, "\n");
+        }
     return sqlite3_str_finish(s);
 }
 
@@ -4196,10 +4254,23 @@ static int form_read(const char *text, ob_form *f)
             grid_cell(&s, num, sizeof num); y = atoi(num);
             grid_cell(&s, num, sizeof num); w = atoi(num);
             grid_cell(&s, num, sizeof num); h = atoi(num);
+            if (k == OB_FI_BUTTON) {
+                int a;
+                grid_cell(&s, word, sizeof word);
+                for (a = 0; a < OB_FA_COUNT && strcmp(word, faction_words[a]); a++) ;
+                it.action = a < OB_FA_COUNT ? (ob_faction)a : OB_FA_NONE;
+                grid_cell(&s, it.arg, sizeof it.arg);
+            }
             if ((to = ob_form_add(f, (ob_fitem_kind)k, clampi(x, 0, OB_FORM_COLS - 1), clampi(y, 0, OB_FORM_ROWS - 1), w, h))) {
                 copy(to->field, sizeof to->field, it.field);
                 copy(to->text, sizeof to->text, it.text);
+                to->action = it.action;
+                copy(to->arg, sizeof to->arg, it.arg);
             }
+        } else if (!strcmp(word, "event")) {
+            grid_cell(&s, word, sizeof word);
+            for (k = 0; k < OB_FE_COUNT && strcmp(word, fevent_words[k]); k++) ;
+            if (k < OB_FE_COUNT) grid_cell(&s, f->events[k], sizeof f->events[k]);
         }
         while (*s && *s != '\n') s++;     /* a word a newer GFOpenBase writes is passed over */
         if (*s == '\n') s++;
@@ -4251,7 +4322,9 @@ int ob_form_rename(ob_project *p, const char *old_name, const char *new_name)
     if (!form_exists(p, old_name)) return fail(p, "There is no form named %s", old_name);
     if (!name_ok(new_name, why, sizeof why, "form")) return fail(p, "%s", why);
     if (!same(old_name, new_name) && form_exists(p, new_name)) return fail(p, "There is a form named %s already", new_name);
-    return runf(p, "UPDATE oadb_forms SET name = %Q WHERE name = %Q", new_name, old_name) && ok(p);
+    if (!step_begin(p)) return 0;
+    return step_end(p, runf(p, "UPDATE oadb_forms SET name = %Q WHERE name = %Q", new_name, old_name)
+                       && buttons_follow(p, OB_FA_OPENFORM, old_name, new_name)) && ok(p);
 }
 
 int ob_form_delete(ob_project *p, const char *name)
@@ -4345,6 +4418,51 @@ static int forms_follow(ob_project *p, const ob_table *old, const ob_table *t, c
         if (rc != SQLITE_DONE) good = sql_fail(p, NULL, rc);
     }
     free(f);
+    return good;
+}
+
+/* Buttons doing action with arg old_name now name new_name, in every form.
+ * Inside the caller's step. */
+static int buttons_follow(ob_project *p, ob_faction action, const char *old_name, const char *new_name)
+{
+    sqlite3_stmt *st;
+    sqlite3_str *names;
+    ob_form *f;
+    char *list, *s, *e;
+    int good = 1, k, n;
+    if (!has_forms(p)) return 1;
+    if (!(st = prep(p, "SELECT name FROM oadb_forms"))) return 0;
+    names = sqlite3_str_new(NULL);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        sqlite3_str_appendall(names, (const char *)sqlite3_column_text(st, 0));
+        sqlite3_str_appendchar(names, 1, '\n');     /* names have no line ends */
+    }
+    sqlite3_finalize(st);
+    list = sqlite3_str_finish(names);
+    if (!(f = malloc(sizeof *f))) { sqlite3_free(list); return fail(p, "Not enough memory"); }
+    for (s = list; good && s && *s; s = e + 1) {
+        char *text;
+        int rc;
+        e = strchr(s, '\n');
+        *e = 0;
+        if (!(good = ob_form_get(p, s, f))) break;
+        for (k = n = 0; k < f->nitems; k++)
+            if (f->items[k].kind == OB_FI_BUTTON && f->items[k].action == action && same(f->items[k].arg, old_name)) {
+                copy(f->items[k].arg, sizeof f->items[k].arg, new_name);
+                n++;
+            }
+        if (!n) continue;
+        if (!(text = form_text(f))) { good = fail(p, "Not enough memory"); break; }
+        if (!(st = prep(p, "UPDATE oadb_forms SET items = ?1 WHERE name = ?2"))) { sqlite3_free(text); good = 0; break; }
+        sqlite3_bind_text(st, 1, text, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st, 2, f->name, -1, SQLITE_TRANSIENT);
+        rc = sqlite3_step(st);
+        sqlite3_finalize(st);
+        sqlite3_free(text);
+        if (rc != SQLITE_DONE) good = sql_fail(p, NULL, rc);
+    }
+    free(f);
+    sqlite3_free(list);
     return good;
 }
 

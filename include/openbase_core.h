@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.7.2"
+#define OB_CORE_VERSION "0.7.3"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -528,14 +528,39 @@ typedef enum ob_fitem_kind {
     OB_FI_LABEL,    /* text */
     OB_FI_LINE,     /* across (h 1) or down (w 1) */
     OB_FI_BOX,      /* a frame round other items; text is its title, may be "" */
+    OB_FI_BUTTON,   /* text on it; action and arg say what it does (core 0.7.3) */
     OB_FI_KINDS
 } ob_fitem_kind;
+
+/* What a button does (core 0.7.3). The record ones act on the form's
+ * record as its record bar does; Open Form opens the form arg names (at the
+ * rows of its table), Run Query runs the saved query arg names, ARexx runs
+ * arg as an ARexx macro (a file, or a line of ARexx in quotes). */
+#define OB_ARG_MAX 128
+typedef enum ob_faction {
+    OB_FA_NONE,
+    OB_FA_FIRST, OB_FA_PREVIOUS, OB_FA_NEXT, OB_FA_LAST,
+    OB_FA_NEW, OB_FA_SAVE, OB_FA_DELETE, OB_FA_FIND, OB_FA_CLOSE,
+    OB_FA_OPENFORM, OB_FA_RUNQUERY, OB_FA_AREXX,
+    OB_FA_COUNT
+} ob_faction;
+
+/* A form's events: an ARexx macro run when the form opens, when it moves
+ * to a record, before and after a record is saved, and when it closes. ""
+ * is none. Before Save's macro can refuse the save by giving a return code
+ * of 5 or more. */
+typedef enum ob_fevent {
+    OB_FE_OPEN, OB_FE_CURRENT, OB_FE_BEFORE_SAVE, OB_FE_AFTER_SAVE, OB_FE_CLOSE,
+    OB_FE_COUNT
+} ob_fevent;
 
 typedef struct ob_fitem {
     ob_fitem_kind kind;
     char field[OB_NAME_MAX];
     char text[OB_LABEL_MAX];
     int x, y, w, h;
+    ob_faction action;              /* a button's */
+    char arg[OB_ARG_MAX];           /* its form, query or macro */
 } ob_fitem;
 
 typedef struct ob_form {
@@ -543,7 +568,17 @@ typedef struct ob_form {
     char table[OB_NAME_MAX];
     int nitems;
     ob_fitem items[OB_FORM_ITEMS];
+    char events[OB_FE_COUNT][OB_ARG_MAX];
 } ob_form;
+
+/* "First Record"...; "" for none or out of range. */
+const char *ob_faction_name(ob_faction a);
+/* What a button's arg names: 0 nothing, 1 a form, 2 a query, 3 a macro. */
+int ob_faction_arg(ob_faction a);
+const char *ob_fevent_name(ob_fevent e);     /* "On Open"... */
+/* Adds a button with text doing action (arg its form, query or macro);
+ * NULL as ob_form_add. */
+ob_fitem *ob_form_add_button(ob_form *f, const char *text, ob_faction action, const char *arg, int x, int y);
 
 void ob_form_init(ob_form *f, const char *name, const char *table);
 /* Adds an item, kept inside the grid (w and h at least 1); NULL when the
@@ -562,7 +597,9 @@ int ob_form_place(ob_form *f, int i, int x, int y, int w, int h);
  * 4 lines). */
 int ob_form_auto(ob_project *p, const char *table, const char *name, ob_form *out);
 /* Whether the form can be shown: its table is there, each field item names
- * one of its fields, a line is 1 thick. 0 with the reason. */
+ * one of its fields, a line is 1 thick, a button does something and has the
+ * form, query or macro it needs named (one that is gone since shows as a
+ * button that says so when pressed). 0 with the reason. */
 int ob_form_check(ob_project *p, const ob_form *f);
 /* The cells the items use: cols across (the furthest x + w), rows down. */
 void ob_form_extent(const ob_form *f, int *cols, int *rows);
@@ -588,7 +625,10 @@ int ob_forms_of(ob_project *p, const char *table, char (*names)[OB_NAME_MAX], in
  * is there replaces it. A table's rename, on its own or in a design change,
  * renames it in its forms, and a design change's field renames (from[])
  * rename their items. A table or field a form shows can't be dropped
- * ("The form Card shows Email: take it off the form first"). */
+ * ("The form Card shows Email: take it off the form first"). Renaming a
+ * form or a saved query renames it in the buttons that open or run it. A
+ * button's caption, action and macro, and a form's events, are kept as
+ * "button" and "event" lines an older GFOpenBase passes over. */
 int ob_form_count(ob_project *p);
 const char *ob_form_name(ob_project *p, int i);
 int ob_form_get(ob_project *p, const char *name, ob_form *out);
