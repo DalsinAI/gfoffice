@@ -1364,6 +1364,7 @@ static int tracked_delete_range(ow_editor *editor, ow_position *start_io, ow_pos
 static int delete_selection_internal(ow_editor *editor);
 static int rev_kind(const owf_doc *doc, int number);
 static ow_position out_of_hidden(ow_editor *editor, ow_position pos, int dir);
+static int delete_one_before(ow_editor *editor, ow_position *pos);
 static size_t para_text_offset(const owf_para *p, ow_position pos);
 static ow_position para_offset_position(ow_editor *editor, int paragraph, size_t offset);
 
@@ -1404,6 +1405,11 @@ static int final_view_delete(ow_editor *editor, int dir)
     if (editor->track) {
         rc = tracked_delete_range(editor, &a, b);
         if (rc < 0) return rc;
+    } else if (a.paragraph != b.paragraph) {
+        /* a paragraph end: only the join (a range from a would reach into a hidden run at a, Agnus) */
+        ow_position pos = b;
+        if ((rc = delete_one_before(editor, &pos)) < 0) return rc;
+        a = pos;
     } else {
         editor->selection.anchor = a;
         editor->selection.focus = b;
