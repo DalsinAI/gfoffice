@@ -79,10 +79,11 @@ static int fill_polygon(raster *r, const int *xy, int n, unsigned long rgb)
         long sy = (long)y * SUB + SUB / 2;
         int k = 0, j;
         for (i = 0; i < n; i++) {
-            long x0 = xy[i * 2], y0 = xy[i * 2 + 1];
-            long x1 = xy[((i + 1) % n) * 2], y1 = xy[((i + 1) % n) * 2 + 1];
+            long long x0 = xy[i * 2], y0 = xy[i * 2 + 1];
+            long long x1 = xy[((i + 1) % n) * 2], y1 = xy[((i + 1) % n) * 2 + 1];
+            /* in long long: points reach +-0x3FFFFFFF (owf_metafile.c), and a long is 32 bits on m68k */
             if ((y0 <= sy && y1 > sy) || (y1 <= sy && y0 > sy))
-                r->cross[k++] = x0 + (sy - y0) * (x1 - x0) / (y1 - y0);
+                r->cross[k++] = (long)(x0 + (sy - y0) * (x1 - x0) / (y1 - y0));
         }
         sort_longs(r->cross, k);
         for (j = 0; j + 1 < k; j += 2) {
@@ -101,10 +102,13 @@ static int fill_polygon(raster *r, const int *xy, int n, unsigned long rgb)
 }
 
 /* a line from one point to the next as a polygon width wide (at least a pixel) */
-static int stroke_segment(raster *r, long x0, long y0, long x1, long y1, int width, unsigned long rgb)
+static int stroke_segment(raster *r, long long x0, long long y0, long long x1, long long y1, int width,
+                          unsigned long rgb)
 {
-    long dx = x1 - x0, dy = y1 - y0, adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy, len, nx, ny;
+    /* long long: far points' differences pass 32 bits */
+    long long dx = x1 - x0, dy = y1 - y0, adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy, len, nx, ny;
     int half = (width > SUB ? width : SUB) / 2, q[8];
+    if (half > 0x10000000) half = 0x10000000;      /* a point and twice this still fit an int */
     /* the length, near enough: the larger plus a third of the smaller */
     len = adx > ady ? adx + ady * 3 / 8 : ady + adx * 3 / 8;
     if (!len) {
@@ -148,7 +152,7 @@ static const int quarter[17] = { 0, 100, 200, 297, 392, 483, 569, 650, 724, 792,
 static int r_ellipse(void *ctx, int x, int y, int w, int h, unsigned long fill, unsigned long line, int lw, int dash)
 {
     raster *r = (raster *)ctx;
-    long cx = x + w / 2, cy = y + h / 2, rx = w / 2, ry = h / 2;
+    long long cx = (long long)x + w / 2, cy = (long long)y + h / 2, rx = w / 2, ry = h / 2;
     int i;
     if (!grow_pts(r, 64)) return -1;
     for (i = 0; i < 64; i++) {

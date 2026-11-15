@@ -298,6 +298,35 @@ static unsigned long pixel(const unsigned char *argb, int w, int x, int y)
     return ((unsigned long)p[1] << 16) | ((unsigned long)p[2] << 8) | p[3];
 }
 
+/* a wedge whose points lie far outside a 1 x 1 window (about 33 million sixteenths of a pixel either side): its
+ * crossings need more than 32 bits on the way (a long is 32 bits on m68k). Its long edge crosses the picture's
+ * middle almost level, so the bottom half is filled and the top half is not. */
+static void test_render_far(void)
+{
+    wmf w;
+    unsigned char *argb = (unsigned char *)malloc(64 * 64 * 4);
+    int x, y, top = 0, bottom = 0;
+    if (!argb) { CHECK(0, "memory"); return; }
+    start(&w, 0, 0, 0, 0, 0, 2);
+    begin(&w, 0x020B); put16(&w, 0); put16(&w, 0); end(&w);
+    begin(&w, 0x020C); put16(&w, 1); put16(&w, 1); end(&w);
+    pen(&w, 5, 0, 0, 0, 0);
+    select_object(&w, 0);
+    brush(&w, 0, 0, 0, 255);
+    select_object(&w, 1);
+    begin(&w, 0x0324); put16(&w, 3);
+    put16(&w, -32768); put16(&w, 0); put16(&w, 32767); put16(&w, 1); put16(&w, -32768); put16(&w, 1);
+    end(&w);
+    finish(&w);
+    memset(argb, 255, 64 * 64 * 4);
+    CHECK(owf_metafile_render(w.d, w.n, argb, 64, 64, NULL) == OWF_OK, "the far wedge drawn");
+    for (y = 0; y < 64; y++)
+        for (x = 0; x < 64; x++)
+            if (pixel(argb, 64, x, y) == 0x0000FF) { if (y < 32) top++; else bottom++; }
+    CHECK(top == 0 && bottom == 32 * 64, "the far wedge: the bottom half filled, the top half not");
+    free(argb);
+}
+
 static void test_render(void)
 {
     wmf w;
@@ -388,6 +417,7 @@ int main(void)
     test_far();
     test_damaged();
     test_render();
+    test_render_far();
     test_pdf();
     printf("metafile: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

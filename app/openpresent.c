@@ -1481,6 +1481,9 @@ static picture *picture_wmf(int index, const owf_image *im)
     }
     if (w < 16) w = 16;
     if (h < 16) h = 16;
+    /* owf_metafile_render takes up to 8192 a side: a very thin picture is cut to that */
+    if (w > 8192) w = 8192;
+    if (h > 8192) h = 8192;
     while ((ULONG)w * h > IMAGE_MAX_PIXELS) { w = w * 3 / 4; h = h * 3 / 4; }
     pictures_room((ULONG)w * h * 4);
     c = &pictures[npictures++];
