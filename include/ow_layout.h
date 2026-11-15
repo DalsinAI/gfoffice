@@ -124,6 +124,10 @@ typedef struct {
     int margin_x;                 /* the margin's left edge, where the line from its place starts */
     int place_x, place_y, place_height;   /* its place in the text */
 } ow_margin_note;
+/* Where a comment's place (its run, which has nothing laid out) shows: the end of the text before it in its
+ * paragraph, else as ow_layout_caret. */
+int ow_layout_comment_place(const ow_layout *layout, ow_position pos, int *page, ol_rect *box);
+/* (ow_layout_margin_notes and ow_margin_note_at are in src/core/ow_margin.c, with the editor) */
 int ow_layout_margin_notes(const ow_layout *layout, ow_editor *editor, int page, const ol_scale *s,
                            int line_height, ow_margin_note *notes, int max);
 int ow_margin_note_at(const ow_margin_note *notes, int n, int x, int y);

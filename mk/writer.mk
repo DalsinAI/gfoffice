@@ -86,19 +86,19 @@ test: notes-test
 check: notes-check
 
 # 2.0.40: the comment notes in the margin, with the layout
-MARGIN_NOTES_SRC = $(OWF_SRC) $(CORE_SRC) $(LAYOUT_SRC) tests/core/test_margin_notes.c include/openwrite_core.h \
-	include/ow_layout.h
+MARGIN_NOTES_SRC = $(OWF_SRC) $(CORE_SRC) $(LAYOUT_SRC) src/core/ow_margin.c tests/core/test_margin_notes.c \
+	include/openwrite_core.h include/ow_layout.h
 
 $(OUT)/test-margin-notes: $(MARGIN_NOTES_SRC)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
-		$(OWF_SRC) $(CORE_SRC) $(LAYOUT_SRC) tests/core/test_margin_notes.c -lz -o $@
+		$(OWF_SRC) $(CORE_SRC) $(LAYOUT_SRC) src/core/ow_margin.c tests/core/test_margin_notes.c -lz -o $@
 
 $(OUT)/test-margin-notes-asan: $(MARGIN_NOTES_SRC)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
 		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
-		$(OWF_SRC) $(CORE_SRC) $(LAYOUT_SRC) tests/core/test_margin_notes.c -lz -o $@
+		$(OWF_SRC) $(CORE_SRC) $(LAYOUT_SRC) src/core/ow_margin.c tests/core/test_margin_notes.c -lz -o $@
 
 margin-notes-test: $(OUT)/test-margin-notes
 	$(OUT)/test-margin-notes
