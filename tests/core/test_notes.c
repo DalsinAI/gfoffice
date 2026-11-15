@@ -14,6 +14,7 @@
 #include "ow_layout.h"
 #include "owf_internal.h"
 #include "owf_note.h"
+#include "owf_zip.h"
 
 static int checks, failures;
 
@@ -442,6 +443,152 @@ static void test_pages(void)
     owf_doc_free(doc);
 }
 
+/* The note a body paragraph's mark names (its index), -1: none */
+static int note_in(const owf_doc *doc, int paragraph)
+{
+    int j;
+    for (j = 0; j < doc->body.paras[paragraph].nruns; ++j)
+        if (doc->body.paras[paragraph].runs[j].note > 0) return doc->body.paras[paragraph].runs[j].note - 1;
+    return -1;
+}
+
+/* libowf 1.12.1 (2.0.40): numbering settings: each kind's format and first number, on the marks, in the editor
+ * (undoable), through DOCX and ODT (ODF has no symbols), and on the pages */
+static void test_numbering(void)
+{
+    owf_doc *doc = doc_of(4), *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    ow_note_info info;
+    char mark[32];
+    int f = -1, st = -1, i;
+    ow_layout *l;
+    owf_report *rp = owf_report_new();
+    /* the formats */
+    owf_note_format_number(OWF_NOTE_FORMAT_ARABIC, 0, 12, mark, sizeof mark);
+    CHECK(!strcmp(mark, "12"), mark);
+    owf_note_format_number(OWF_NOTE_FORMAT_DEFAULT, 1, 4, mark, sizeof mark);
+    CHECK(!strcmp(mark, "iv"), "an endnote's own: iv");
+    owf_note_format_number(OWF_NOTE_FORMAT_DEFAULT, 0, 4, mark, sizeof mark);
+    CHECK(!strcmp(mark, "4"), "a footnote's own: 4");
+    owf_note_format_number(OWF_NOTE_FORMAT_UPPER_ROMAN, 0, 14, mark, sizeof mark);
+    CHECK(!strcmp(mark, "XIV"), mark);
+    owf_note_format_number(OWF_NOTE_FORMAT_LOWER_LETTER, 0, 1, mark, sizeof mark);
+    CHECK(!strcmp(mark, "a"), mark);
+    owf_note_format_number(OWF_NOTE_FORMAT_LOWER_LETTER, 0, 27, mark, sizeof mark);
+    CHECK(!strcmp(mark, "aa"), "27: aa, as Word does");
+    owf_note_format_number(OWF_NOTE_FORMAT_UPPER_LETTER, 0, 54, mark, sizeof mark);
+    CHECK(!strcmp(mark, "BBB"), "54: BBB");
+    owf_note_format_number(OWF_NOTE_FORMAT_SYMBOL, 0, 1, mark, sizeof mark);
+    CHECK(!strcmp(mark, "*"), mark);
+    owf_note_format_number(OWF_NOTE_FORMAT_SYMBOL, 0, 2, mark, sizeof mark);
+    CHECK(!strcmp(mark, "\xe2\x80\xa0"), "2: a dagger");
+    owf_note_format_number(OWF_NOTE_FORMAT_SYMBOL, 0, 4, mark, sizeof mark);
+    CHECK(!strcmp(mark, "\xc2\xa7"), "4: a section sign");
+    owf_note_format_number(OWF_NOTE_FORMAT_SYMBOL, 0, 6, mark, sizeof mark);
+    CHECK(!strcmp(mark, "\xe2\x80\xa0\xe2\x80\xa0"), "6: two daggers");
+    owf_note_format_number(OWF_NOTE_FORMAT_SYMBOL, 0, 400, mark, 8);
+    CHECK(strlen(mark) < 8, "cut to the room");
+
+    CHECK(ed != NULL && rp != NULL, "editor");
+    if (!ed || !rp) { owf_report_free(rp); owf_doc_free(doc); return; }
+    for (i = 0; i < 3; ++i) { caret_end(ed, i); ow_editor_insert_note(ed, 0, "A footnote."); }
+    caret_end(ed, 3);
+    ow_editor_insert_note(ed, 1, "An endnote.");
+    CHECK(ow_editor_note_numbering(ed, 0, &f, &st) && f == OWF_NOTE_FORMAT_ARABIC && st == 1, "footnotes 1, 2 at first");
+    CHECK(ow_editor_note_numbering(ed, 1, &f, &st) && f == OWF_NOTE_FORMAT_LOWER_ROMAN && st == 1, "endnotes i at first");
+    CHECK(ow_editor_note_info(ed, 2, &info) && !strcmp(info.mark, "3"), info.mark);
+
+    CHECK(ow_editor_set_note_numbering(ed, 0, OWF_NOTE_FORMAT_LOWER_LETTER, 3) == OWF_OK, "footnotes c, d, e");
+    CHECK(ow_editor_set_note_numbering(ed, 1, OWF_NOTE_FORMAT_UPPER_ROMAN, 2) == OWF_OK, "endnotes II");
+    CHECK(ow_editor_note_info(ed, 0, &info) && !strcmp(info.mark, "c") && ow_editor_note_info(ed, 2, &info) &&
+          !strcmp(info.mark, "e") && ow_editor_note_info(ed, 3, &info) && !strcmp(info.mark, "II"), "the marks");
+    owf_note_mark_text(doc, note_in(doc, 1), mark, sizeof mark);
+    CHECK(!strcmp(mark, "d"), "libowf's mark the same");
+    CHECK(ow_editor_set_note_numbering(ed, 0, OWF_NOTE_FORMAT_COUNT, 1) == OWF_ERR_FORMAT &&
+          ow_editor_set_note_numbering(ed, 0, 1, -1) == OWF_ERR_FORMAT, "no such format or start");
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l && ow_layout_note_mark(doc, note_in(doc, 0), mark,
+                                   sizeof mark) && !strcmp(mark, "c"), "the layout's mark the same");
+    ow_layout_free(l);
+
+    /* DOCX: w:footnotePr and w:endnotePr in the w:sectPr, before w:pgSz; back the same */
+    CHECK(owf_export_file(doc, "/tmp/openwrite-notes-numbering.docx", "docx", NULL) == OWF_OK, "docx");
+    CHECK(owf_import_file("/tmp/openwrite-notes-numbering.docx", NULL, &back, NULL, NULL) == OWF_OK && back, "docx back");
+    if (back) {
+        CHECK(back->page.note_format[0] == OWF_NOTE_FORMAT_LOWER_LETTER && back->page.note_start[0] == 3 &&
+              back->page.note_format[1] == OWF_NOTE_FORMAT_UPPER_ROMAN && back->page.note_start[1] == 2,
+              "docx keeps both kinds' numbering");
+        owf_doc_free(back);
+        back = NULL;
+    }
+    {
+        unsigned char *data = NULL;
+        size_t n = 0;
+        const owf_format *fmt = owf_format_named("docx");
+        CHECK(fmt && fmt->export(doc, &data, &n, NULL) == OWF_OK, "docx bytes");
+        if (data) {
+            owf_unzip z;
+            unsigned char *xml = NULL;
+            size_t xn = 0;
+            CHECK(owf_unzip_open(&z, data, n) && owf_unzip_read(&z, "word/document.xml", &xml, &xn) == OWF_OK && xml,
+                  "document.xml");
+            if (xml) {
+                CHECK(strstr((const char *)xml, "<w:footnotePr><w:numFmt w:val=\"lowerLetter\"/><w:numStart w:val=\"3\"/>"
+                             "</w:footnotePr><w:endnotePr><w:numFmt w:val=\"upperRoman\"/><w:numStart w:val=\"2\"/>"
+                             "</w:endnotePr><w:pgSz") != NULL, "Word's form, in CT_SectPr's order");
+                owf_free(xml);
+            }
+            owf_free(data);
+        }
+    }
+    /* ODT: text:notes-configuration, start-value LibreOffice's offset from 1 */
+    CHECK(owf_export_file(doc, "/tmp/openwrite-notes-numbering.odt", "odt", NULL) == OWF_OK, "odt");
+    CHECK(owf_import_file("/tmp/openwrite-notes-numbering.odt", NULL, &back, NULL, NULL) == OWF_OK && back, "odt back");
+    if (back) {
+        char m2[32];
+        CHECK(back->page.note_format[0] == OWF_NOTE_FORMAT_LOWER_LETTER && back->page.note_start[0] == 3 &&
+              back->page.note_format[1] == OWF_NOTE_FORMAT_UPPER_ROMAN && back->page.note_start[1] == 2,
+              "odt keeps both kinds' numbering");
+        owf_note_mark_text(back, note_in(back, 0), m2, sizeof m2);
+        CHECK(!strcmp(m2, "c"), "the first footnote is still c");
+        owf_doc_free(back);
+        back = NULL;
+    }
+    /* symbols: ODT has none, so numbers, and the report says so; DOCX keeps Word's chicago */
+    CHECK(ow_editor_set_note_numbering(ed, 0, OWF_NOTE_FORMAT_SYMBOL, 0) == OWF_OK &&
+          ow_editor_note_info(ed, 1, &info) && !strcmp(info.mark, "\xe2\x80\xa0"), "symbols: a dagger second");
+    CHECK(owf_export_file(doc, "/tmp/openwrite-notes-numbering.odt", "odt", rp) == OWF_OK, "odt with symbols");
+    {
+        int said = 0;
+        for (i = 0; i < owf_report_count(rp); ++i) {
+            const char *note = owf_report_note(rp, i, NULL, NULL);
+            if (note && strstr(note, "ODT has no symbols")) said = 1;
+        }
+        CHECK(said, "the report says symbols went as numbers");
+    }
+    CHECK(owf_import_file("/tmp/openwrite-notes-numbering.odt", NULL, &back, NULL, NULL) == OWF_OK && back &&
+          back->page.note_format[0] == OWF_NOTE_FORMAT_DEFAULT && back->page.note_start[0] == 0, "odt: 1, 2, 3");
+    owf_doc_free(back);
+    back = NULL;
+    CHECK(owf_export_file(doc, "/tmp/openwrite-notes-numbering.docx", "docx", NULL) == OWF_OK &&
+          owf_import_file("/tmp/openwrite-notes-numbering.docx", NULL, &back, NULL, NULL) == OWF_OK && back &&
+          back->page.note_format[0] == OWF_NOTE_FORMAT_SYMBOL, "docx keeps symbols");
+    owf_doc_free(back);
+    back = NULL;
+
+    /* undo, back to the usual: and nothing written for the usual numbering */
+    ow_editor_undo(ed);
+    ow_editor_undo(ed);
+    ow_editor_undo(ed);
+    CHECK(ow_editor_note_info(ed, 0, &info) && !strcmp(info.mark, "1") && ow_editor_note_info(ed, 3, &info) &&
+          !strcmp(info.mark, "i"), "undone: 1 and i");
+    CHECK(ow_editor_set_note_numbering(ed, 0, OWF_NOTE_FORMAT_ARABIC, 1) == OWF_OK &&
+          doc->page.note_format[0] == OWF_NOTE_FORMAT_DEFAULT && doc->page.note_start[0] == 0, "the kind's own is the usual");
+    ow_editor_free(ed);
+    owf_report_free(rp);
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     static const char *const rtf[] = { "{\\footnote", "\\ftnalt", "See the manual.", "\\par Page 4.", "Ends & notes." };
@@ -460,6 +607,7 @@ int main(void)
     test_word_form();
     test_odf_form();
     test_pages();
+    test_numbering();
     printf("notes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

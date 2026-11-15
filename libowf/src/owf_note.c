@@ -2,6 +2,7 @@
  * libowf: footnotes and endnotes (owf_note.h).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
+#include "owf_notenum_impl.h"
 #include "owf_note.h"
 #include "owf_comment.h"
 #include "owf_track.h"
@@ -163,6 +164,21 @@ void owf_note_roman(int number, char *out, size_t size)
         }
 }
 
+int owf_note_kind_format(const owf_doc *doc, int endnote)
+{
+    return owf_note_kind_format_impl(doc, endnote);
+}
+
+int owf_note_kind_start(const owf_doc *doc, int endnote)
+{
+    return owf_note_kind_start_impl(doc, endnote);
+}
+
+void owf_note_format_number(int format, int endnote, int number, char *out, size_t size)
+{
+    owf_note_format_impl(format, endnote, number, out, size);
+}
+
 void owf_note_mark_text(const owf_doc *doc, int index, char *out, size_t size)
 {
     int number;
@@ -176,10 +192,10 @@ void owf_note_mark_text(const owf_doc *doc, int index, char *out, size_t size)
         return;
     }
     number = owf_note_number(doc, index);
-    if (doc->notes[index].endnote)
-        owf_note_roman(number, out, size);
-    else
-        snprintf(out, size, "%d", number);
+    if (number > 0)                                  /* 1.12.1: the page's format and first number */
+        number += owf_note_kind_start(doc, doc->notes[index].endnote) - 1;
+    owf_note_format_number(owf_note_kind_format(doc, doc->notes[index].endnote), doc->notes[index].endnote,
+                           number, out, size);
 }
 
 int owf_note_place(const owf_doc *doc, int index, int *story, int *para, int *run)

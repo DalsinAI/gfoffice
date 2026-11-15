@@ -1519,6 +1519,23 @@ static int read_document(odt *o, const owf_xml_node *content_root, const owf_xml
     if (content_root != styles_root)
         read_font_faces(o, owf_xml_child(content_root, NS_OFFICE, "font-face-decls"));
     read_styles(o, owf_xml_child(styles_root, NS_OFFICE, "styles"), &o->common);
+    {   /* 1.12.1: how footnotes and endnotes are numbered (text:start-value LibreOffice's offset from 1) */
+        const owf_xml_node *c;
+        for (c = owf_xml_child(owf_xml_child(styles_root, NS_OFFICE, "styles"), NS_TEXT, "notes-configuration"); c;
+             c = owf_xml_next(c, NS_TEXT, "notes-configuration")) {
+            const char *cls = owf_xml_attr(c, NS_TEXT, "note-class"), *f = owf_xml_attr(c, NS_STYLE, "num-format");
+            const char *sv = owf_xml_attr(c, NS_TEXT, "start-value");
+            int k = cls && !strcmp(cls, "endnote") ? 1 : 0;
+            if (f && *f) {
+                o->doc->page.note_format[k] = !strcmp(f, "i") ? OWF_NOTE_FORMAT_LOWER_ROMAN
+                    : !strcmp(f, "I") ? OWF_NOTE_FORMAT_UPPER_ROMAN : !strcmp(f, "a") ? OWF_NOTE_FORMAT_LOWER_LETTER
+                    : !strcmp(f, "A") ? OWF_NOTE_FORMAT_UPPER_LETTER : OWF_NOTE_FORMAT_ARABIC;
+                if (o->doc->page.note_format[k] == (k ? OWF_NOTE_FORMAT_LOWER_ROMAN : OWF_NOTE_FORMAT_ARABIC))
+                    o->doc->page.note_format[k] = OWF_NOTE_FORMAT_DEFAULT;   /* the kind's own */
+            }
+            if (sv && atoi(sv) > 0) o->doc->page.note_start[k] = atoi(sv) + 1;
+        }
+    }
     read_styles(o, owf_xml_child(styles_root, NS_OFFICE, "automatic-styles"), &o->autos_styles);
     if (content_root != styles_root)
         read_styles(o, owf_xml_child(content_root, NS_OFFICE, "automatic-styles"), &o->autos_content);

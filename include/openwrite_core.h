@@ -386,6 +386,11 @@ int ow_editor_insert_note(ow_editor *editor, int endnote, const char *utf8);
 int ow_editor_set_note_text(ow_editor *editor, const char *utf8);
 int ow_editor_convert_note(ow_editor *editor);
 int ow_editor_delete_note(ow_editor *editor);
+/* libowf 1.12.1 (2.0.40): how a kind of note (endnote 0: footnotes) is numbered: an owf_note_format (never
+ * DEFAULT when read: footnotes ARABIC, endnotes LOWER_ROMAN as at first) and the first number. Setting it is
+ * undoable; DEFAULT or the kind's own format, and a start of 0 or 1, are the usual numbering. */
+int ow_editor_note_numbering(const ow_editor *editor, int endnote, int *format, int *start);
+int ow_editor_set_note_numbering(ow_editor *editor, int endnote, int format, int start);
 
 /* ---- Fields with a value (core 1.4) ----
  * The document's title, author and subject, the file's name, its words, the chapter (the level-1 heading a

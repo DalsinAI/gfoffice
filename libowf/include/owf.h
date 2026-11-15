@@ -222,7 +222,18 @@ typedef struct {
     int start_page;
     owf_pagenum_style pagenum_style;
     int header_on_first, footer_on_first;
+    /* 1.12.1: how footnotes ([0]) and endnotes ([1]) are numbered (DOCX's w:footnotePr and w:endnotePr, ODF's
+     * text:notes-configuration): an owf_note_format (OWF_NOTE_FORMAT_DEFAULT: the kind's own, footnotes 1, 2,
+     * endnotes i, ii) and the first number (0 or 1: 1) */
+    int note_format[2], note_start[2];
 } owf_page;
+
+/* 1.12.1: a kind of note's numbers. Symbols are Word's Chicago style: *, dagger, double dagger, section, then
+ * doubled (**), and so on. Letters run a to z, then aa to zz (as Word does). */
+typedef enum {
+    OWF_NOTE_FORMAT_DEFAULT, OWF_NOTE_FORMAT_ARABIC, OWF_NOTE_FORMAT_LOWER_ROMAN, OWF_NOTE_FORMAT_UPPER_ROMAN,
+    OWF_NOTE_FORMAT_LOWER_LETTER, OWF_NOTE_FORMAT_UPPER_LETTER, OWF_NOTE_FORMAT_SYMBOL, OWF_NOTE_FORMAT_COUNT
+} owf_note_format;
 
 /* A physical page number in the document's selected style: 1, iv, IV, d or
  * D. Shared by layout fields, generated references and front ends. */
