@@ -40,7 +40,7 @@ clean:
 
 .PHONY: all test check clean
 
-CORE_SRC = src/core/editor.c
+CORE_SRC = src/core/editor.c src/core/ow_merge.c
 
 $(OUT)/test-core: $(OWF_SRC) $(CORE_SRC) tests/core/test_core.c include/openwrite_core.h
 	mkdir -p $(OUT)
@@ -60,6 +60,28 @@ core-check: $(OUT)/test-core-asan
 	$(OUT)/test-core-asan
 
 .PHONY: core-check
+
+MERGE_TABLE_DEPS = $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c include/ow_merge.h
+
+$(OUT)/test-merge-table: $(MERGE_TABLE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c -lz -o $@
+
+$(OUT)/test-merge-table-asan: $(MERGE_TABLE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c -lz -o $@
+
+merge-table-test: $(OUT)/test-merge-table
+	$(OUT)/test-merge-table
+
+merge-table-check: $(OUT)/test-merge-table-asan
+	$(OUT)/test-merge-table-asan
+
+test: merge-table-test
+check: merge-table-check
+
+.PHONY: merge-table-test merge-table-check
 
 $(OUT)/test-spell: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h
 	mkdir -p $(OUT)
@@ -124,6 +146,28 @@ inflate-check: $(OUT)/test-inflate-asan $(OUT)/owconvert-asan $(OUT)/owconvert-n
 
 test: inflate-test
 check: inflate-check
+
+# The compound file writer (libowf/src/owf_cfbw.c), the container for
+# GFOpenPublisher's .pub save; tests/cfb/test_cfbw.c reads what it writes
+# back through owf_cfb.c.
+$(OUT)/test-cfbw: $(OWF_SRC) libowf/src/owf_internal.h tests/cfb/test_cfbw.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/cfb/test_cfbw.c -lz -lm -o $@
+
+$(OUT)/test-cfbw-asan: $(OWF_SRC) libowf/src/owf_internal.h tests/cfb/test_cfbw.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/cfb/test_cfbw.c -lz -lm -o $@
+
+.PHONY: cfbw-test cfbw-check
+cfbw-test: $(OUT)/test-cfbw
+	$(OUT)/test-cfbw
+
+cfbw-check: $(OUT)/test-cfbw-asan
+	$(OUT)/test-cfbw-asan
+
+test: cfbw-test
+check: cfbw-check
 
 .PHONY: inflate-test inflate-check
 
