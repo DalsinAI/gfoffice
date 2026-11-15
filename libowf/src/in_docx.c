@@ -2062,6 +2062,28 @@ static void section(docx *d, const owf_xml_node *sect)
         default: pg->pagenum_style = OWF_PAGENUM_ARABIC; break;
         }
     }
+    {   /* 1.12.1: how footnotes and endnotes are numbered: w:numFmt and w:numStart */
+        static const char *const pr[2] = { "footnotePr", "endnotePr" };
+        int k;
+        for (k = 0; k < 2; ++k) {
+            const owf_xml_node *np = wchild(d, sect, pr[k]), *f;
+            const char *fmt;
+            if (!np) continue;
+            if ((f = wchild(d, np, "numFmt")) && (fmt = wval(d, f)) != NULL) {
+                if (!strcmp(fmt, "decimal")) pg->note_format[k] = OWF_NOTE_FORMAT_ARABIC;
+                else if (!strcmp(fmt, "lowerRoman")) pg->note_format[k] = OWF_NOTE_FORMAT_LOWER_ROMAN;
+                else if (!strcmp(fmt, "upperRoman")) pg->note_format[k] = OWF_NOTE_FORMAT_UPPER_ROMAN;
+                else if (!strcmp(fmt, "lowerLetter")) pg->note_format[k] = OWF_NOTE_FORMAT_LOWER_LETTER;
+                else if (!strcmp(fmt, "upperLetter")) pg->note_format[k] = OWF_NOTE_FORMAT_UPPER_LETTER;
+                else if (!strcmp(fmt, "chicago")) pg->note_format[k] = OWF_NOTE_FORMAT_SYMBOL;
+                else owf_report_add(d->report, OWF_NOTE_APPROX, "A note numbering (%s) was read as the usual one", fmt);
+                if (pg->note_format[k] == (k ? OWF_NOTE_FORMAT_LOWER_ROMAN : OWF_NOTE_FORMAT_ARABIC))
+                    pg->note_format[k] = OWF_NOTE_FORMAT_DEFAULT;   /* the kind's own */
+            }
+            if ((f = wchild(d, np, "numStart")) && wint(d, f, "val", &v) && v >= 1)
+                pg->note_start[k] = v;
+        }
+    }
     if ((n = wchild(d, sect, "titlePg")))
         title_page = on_off(d, n);
     for (n = sect->first; n; n = n->next) {

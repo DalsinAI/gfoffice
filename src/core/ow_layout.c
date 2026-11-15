@@ -5,6 +5,7 @@
  */
 #include "ow_layout.h"
 #include "owf_pagenum_impl.h"
+#include "owf_notenum_impl.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -358,24 +359,6 @@ static const owf_story *note_story(const owf_doc *doc, int n)
     return n >= 0 && n < doc->nframes ? &doc->frames[n].story : NULL;
 }
 
-static void roman(int number, char *out, size_t size)
-{
-    static const int values[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
-    static const char *const digits[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
-    size_t at = 0;
-    int k;
-    out[0] = 0;
-    if (number < 1 || number > 3999) { snprintf(out, size, "%d", number); return; }
-    for (k = 0; k < 13; ++k)
-        while (number >= values[k]) {
-            size_t len = strlen(digits[k]);
-            if (at + len >= size) return;
-            memcpy(out + at, digits[k], len + 1);
-            at += len;
-            number -= values[k];
-        }
-}
-
 /* Every note's mark into marks (doc->nnotes of them; "" for a note no run names) */
 static void number_notes(const owf_doc *doc, char (*marks)[16])
 {
@@ -391,8 +374,10 @@ static void number_notes(const owf_doc *doc, char (*marks)[16])
                 note = &doc->notes[m - 1];
                 if (note->label) { snprintf(marks[m - 1], sizeof marks[m - 1], "%s", note->label); continue; }
                 ++count[note->endnote ? 1 : 0];
-                if (note->endnote) roman(count[1], marks[m - 1], sizeof marks[m - 1]);
-                else snprintf(marks[m - 1], sizeof marks[m - 1], "%d", count[0]);
+                /* libowf 1.12.1: the page's format and first number */
+                owf_note_format_impl(owf_note_kind_format_impl(doc, note->endnote), note->endnote,
+                                       count[note->endnote ? 1 : 0] + owf_note_kind_start_impl(doc, note->endnote) - 1,
+                                       marks[m - 1], sizeof marks[m - 1]);
             }
 }
 

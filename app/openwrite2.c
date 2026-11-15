@@ -116,7 +116,7 @@ enum {
     M_COMMENT_FILTER,                                /* 2.0.39 */
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS,
-    M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE,
+    M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE, M_NOTE_NUMBERING,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
     M_AC_ON, M_AC_REPLACE, M_AC_SENTENCE, M_AC_TWO_CAPS, M_AC_QUOTES, M_AC_DASHES, M_AC_ADD, M_AC_REMOVE,
@@ -305,6 +305,8 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Edit Note...", NULL, 0, 0, (APTR)M_NOTE_EDIT },
     { NM_SUB, "Footnote <-> Endnote", NULL, 0, 0, (APTR)M_NOTE_CONVERT },
     { NM_SUB, "Delete Note", NULL, 0, 0, (APTR)M_NOTE_DELETE },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Numbering...", NULL, 0, 0, (APTR)M_NOTE_NUMBERING },   /* 2.0.40 */
     /* 2.0.31: mail merge (core 1.6) */
     { NM_ITEM, "Mail Merge", NULL, 0, 0, NULL },
     { NM_SUB, "Data Source...", NULL, 0, 0, (APTR)M_MERGE_SOURCE },
@@ -1301,6 +1303,8 @@ static size_t to_latin1(const char *s, size_t n, char *out, size_t cap)
         i += (size_t)len;
         if (cp >= 0xA0 && cp <= 0xFF) out[o++] = (char)cp;
         else if (cp == 0x2022 || cp == 0x25CF || cp == 0x25AA || cp == 0x2219) out[o++] = (char)0xB7;
+        else if (cp == 0x2020) out[o++] = '+';      /* 2.0.40: a note's dagger and double dagger (Latin-1 has none) */
+        else if (cp == 0x2021) out[o++] = '#';
         else if (cp == 0x2018 || cp == 0x2019 || cp == 0x201A || cp == 0x2032) out[o++] = '\'';
         else if (cp == 0x201C || cp == 0x201D || cp == 0x201E || cp == 0x2033) out[o++] = '"';
         else if (cp == 0x2013 || cp == 0x2014 || cp == 0x2212 || cp == 0x2010 || cp == 0x2011) out[o++] = '-';
@@ -4795,6 +4799,31 @@ static int no_note_here(int rc)
     return 1;
 }
 
+/* 2.0.40: Tools > Notes > Numbering...: a kind and its format from one list, then the first number */
+static const char *const note_format_names[OWF_NOTE_FORMAT_COUNT] = {
+    "", "1, 2, 3", "i, ii, iii", "I, II, III", "a, b, c", "A, B, C", "*, dagger, double dagger, section" };
+
+static void do_note_numbering(void)
+{
+    char names[12][72], initial[16], typed[32], msg[160];
+    int k, f, start, pick, n = 0;
+    for (k = 0; k < 2; ++k)
+        for (f = OWF_NOTE_FORMAT_ARABIC; f < OWF_NOTE_FORMAT_COUNT; ++f)
+            snprintf(names[n++], sizeof names[0], "%s: %s", k ? "Endnotes" : "Footnotes", note_format_names[f]);
+    pick = pick_requester("Note Numbering", "Number which notes, how:", names, n);
+    if (pick < 0) return;
+    k = pick / (OWF_NOTE_FORMAT_COUNT - 1);
+    f = pick % (OWF_NOTE_FORMAT_COUNT - 1) + OWF_NOTE_FORMAT_ARABIC;
+    if (!ow_editor_note_numbering(editor, k, NULL, &start)) start = 1;
+    snprintf(initial, sizeof initial, "%d", start);
+    if (!text_requester("Note Numbering", k ? "Endnotes start at:" : "Footnotes start at:", initial, typed, sizeof typed))
+        return;
+    start = atoi(typed);
+    if (start < 1 || start > 9999) { tell("Note Numbering", "The first number is from 1 to 9999."); return; }
+    snprintf(msg, sizeof msg, "%s numbered %s from %d.", k ? "Endnotes" : "Footnotes", note_format_names[f], start);
+    editor_result(ow_editor_set_note_numbering(editor, k, f, start), msg);
+}
+
 static void do_note(int what)
 {
     ow_note_info info;
@@ -4832,6 +4861,9 @@ static void do_note(int what)
     case M_NOTE_DELETE:
         rc = ow_editor_delete_note(editor);
         if (!no_note_here(rc)) editor_result(rc, "Note deleted.");
+        break;
+    case M_NOTE_NUMBERING:
+        do_note_numbering();
         break;
     }
 }
@@ -5400,7 +5432,7 @@ static void menu_action(ULONG id)
     case M_COMMENT_DONE: case M_COMMENT_DELETE: do_comment((int)id); break;
     case M_COMMENT_FILTER: do_comment_filter(); break;
     case M_FOOTNOTE: case M_ENDNOTE: case M_NOTE_NEXT: case M_NOTE_PREV: case M_NOTE_EDIT: case M_NOTE_CONVERT:
-    case M_NOTE_DELETE: do_note((int)id); break;
+    case M_NOTE_DELETE: case M_NOTE_NUMBERING: do_note((int)id); break;
     case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
     case M_MERGE_DOC: case M_MERGE_FILES: case M_MERGE_PRINT: do_merge((int)id); break;
     case M_INDEX_ENTRY: case M_INDEX: do_index((int)id); break;
@@ -5594,7 +5626,7 @@ static int rexx_do_command(const char *command, char **result_out)
         "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND TRACKCHANGES CHANGES NEXTCHANGE PREVCHANGE "
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
         "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT COMMENTSBY INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
-        "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE "
+        "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE NOTENUMBERING "
         "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX "
         "AUTOCORRECT ACREPLACE TYPETEXT COMPLETE LABELSHEETS LABELS LABELSIZE ENVELOPE RETURNADDRESS FEED QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
@@ -5660,6 +5692,28 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"NEXTNOTE",&arg)||starts_word_ci(command,"PREVNOTE",&arg)||starts_word_ci(command,"GETNOTE",&arg)){ow_note_info ni;char c0=(char)tolower((unsigned char)command[0]);
         if(!editor||(c0!='g'&&ow_editor_next_note(editor,c0=='p')<=0)||!ow_editor_current_note(editor,&ni)){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",c0=='g'?"No note at the caret":"No notes");}
         else{if(c0!='g')bring_focus_into_view();note_text(&ni,ow_editor_note_count(editor),result,sizeof result);}}
+    else if(starts_word_ci(command,"NOTENUMBERING",&arg)){   /* 2.0.40: NOTENUMBERING FOOTNOTE|ENDNOTE [1|i|I|a|A|*] [start]; answers "format start" */
+        static const char *const codes[OWF_NOTE_FORMAT_COUNT]={"","1","i","I","a","A","*"};
+        const char *w;int k=-1,f=-1,start=-1,i,cur_f=0,cur_s=1;char word[16];size_t wl;
+        if(starts_word_ci(arg,"FOOTNOTE",&w))k=0;else if(starts_word_ci(arg,"ENDNOTE",&w))k=1;
+        if(k<0||!editor){ok=0;snprintf(result,sizeof result,"NOTENUMBERING FOOTNOTE|ENDNOTE [1|i|I|a|A|*] [start]");}
+        else{
+            while(*w==' ')++w;
+            for(wl=0;w[wl]&&w[wl]!=' '&&wl<sizeof word-1;++wl)word[wl]=w[wl];
+            word[wl]=0;w+=wl;
+            for(i=1;word[0]&&i<OWF_NOTE_FORMAT_COUNT;++i)if(!strcmp(word,codes[i]))f=i;   /* case matters: i and I */
+            while(*w==' ')++w;
+            if(*w)start=atoi(w);
+            if(word[0]&&f<0){ok=0;snprintf(result,sizeof result,"Unknown note format %s",word);}
+            else if(*w&&(start<1||start>9999)){ok=0;snprintf(result,sizeof result,"The first number is from 1 to 9999");}
+            else{
+                ow_editor_note_numbering(editor,k,&cur_f,&cur_s);
+                if(f>0||start>0){ok=editor_result(ow_editor_set_note_numbering(editor,k,f>0?f:cur_f,start>0?start:cur_s),"Note numbering changed.");
+                    ow_editor_note_numbering(editor,k,&cur_f,&cur_s);}
+                snprintf(result,sizeof result,"%s %d",codes[cur_f>0&&cur_f<OWF_NOTE_FORMAT_COUNT?cur_f:1],cur_s);
+            }
+        }
+    }
     else if(starts_word_ci(command,"CONVERTNOTE",&arg)||starts_word_ci(command,"DELETENOTE",&arg)){int del=toupper((unsigned char)command[0])=='D';int rc=!editor?OWF_ERR_UNSUPPORTED:del?ow_editor_delete_note(editor):ow_editor_convert_note(editor);
         if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No note at the caret");}else{ok=editor_result(rc,del?"Note deleted.":"Note changed kind.");snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
     /* 2.0.31: mail merge. MERGESOURCE [file|-] reads a data source ("-": none) or answers the document's (RC 5:

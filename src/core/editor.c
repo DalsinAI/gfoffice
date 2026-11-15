@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include "openwrite_core.h"
+#include "owf_notenum_impl.h"
 #include "ow_merge.h"
 
 #define OW_UNDO_LIMIT 16
@@ -2959,13 +2960,12 @@ int ow_editor_delete_comment(ow_editor *editor)
  * an empty text run, its mark). The list only grows and is kept outside the undo snapshots, as comments are:
  * deleting a note removes its mark, and changing its text is a new note that the mark names instead. */
 
-/* Every note's mark text into marks (doc->nnotes of them), numbered as ow_layout numbers them */
+/* Every note's mark text into marks (doc->nnotes of them), numbered as ow_layout numbers them (libowf 1.12.1:
+ * in the page's format, from its first number) */
 static void editor_number_notes(const owf_doc *doc, char (*marks)[16])
 {
-    static const int values[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
-    static const char *const digits[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
     const owf_story *stories[5];
-    int n, i, j, k, count[2] = {0, 0};
+    int n, i, j, count[2] = {0, 0};
     stories[0] = &doc->body; stories[1] = &doc->header; stories[2] = &doc->footer;
     stories[3] = &doc->header_left; stories[4] = &doc->footer_left;
     for (i = 0; i < doc->nnotes; ++i) marks[i][0] = 0;
@@ -2978,19 +2978,37 @@ static void editor_number_notes(const owf_doc *doc, char (*marks)[16])
                 if (m <= 0 || m > doc->nnotes || marks[m - 1][0]) continue;
                 note = &doc->notes[m - 1];
                 if (note->label) { snprintf(marks[m - 1], sizeof marks[m - 1], "%s", note->label); continue; }
-                number = ++count[note->endnote ? 1 : 0];
-                if (!note->endnote || number > 3999) {
-                    snprintf(marks[m - 1], sizeof marks[m - 1], "%d", number);
-                    continue;
-                }
-                for (k = 0; k < 13; ++k)
-                    while (number >= values[k]) {
-                        size_t at = strlen(marks[m - 1]);
-                        if (at + strlen(digits[k]) < sizeof marks[m - 1]) strcat(marks[m - 1], digits[k]);
-                        number -= values[k];
-                    }
+                number = ++count[note->endnote ? 1 : 0] + owf_note_kind_start_impl(doc, note->endnote) - 1;
+                owf_note_format_impl(owf_note_kind_format_impl(doc, note->endnote), note->endnote, number,
+                                     marks[m - 1], sizeof marks[m - 1]);
             }
     }
+}
+
+int ow_editor_note_numbering(const ow_editor *editor, int endnote, int *format, int *start)
+{
+    if (!editor || !editor->doc) return 0;
+    if (format) *format = owf_note_kind_format_impl(editor->doc, endnote);
+    if (start) *start = owf_note_kind_start_impl(editor->doc, endnote);
+    return 1;
+}
+
+int ow_editor_set_note_numbering(ow_editor *editor, int endnote, int format, int start)
+{
+    owf_page *pg;
+    int k = endnote ? 1 : 0;
+    if (!editor || !editor->doc || format < OWF_NOTE_FORMAT_DEFAULT || format >= OWF_NOTE_FORMAT_COUNT || start < 0)
+        return OWF_ERR_FORMAT;
+    pg = &editor->doc->page;
+    if (format == (k ? OWF_NOTE_FORMAT_LOWER_ROMAN : OWF_NOTE_FORMAT_ARABIC)) format = OWF_NOTE_FORMAT_DEFAULT;
+    if (start <= 1) start = 0;
+    if (pg->note_format[k] == format && pg->note_start[k] == start) return OWF_OK;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    pg->note_format[k] = format;
+    pg->note_start[k] = start;
+    edit_done(editor);
+    return OWF_OK;
 }
 
 typedef struct {
