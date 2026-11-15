@@ -545,18 +545,25 @@ static int wordart_format(const owf_pub *pub, owf_charfmt *out)
     return 0;
 }
 
-/* Whether every run written says its own colour: only then can the default
- * style have one, which a run in the automatic colour would take instead. */
-static int all_runs_coloured(const writer *w)
+/* What every run written says for itself: 1 its size, 2 its typeface, 4
+ * its colour. Only those can go in the default style, which a run that
+ * leaves one out (new text, in the automatic colour) would take instead. */
+#define OWN_SIZE 1
+#define OWN_FONT 2
+#define OWN_COLOUR 4
+static int runs_own(const writer *w)
 {
-    int i, j, k;
+    int i, j, k, own = OWN_SIZE | OWN_FONT | OWN_COLOUR;
     for (i = 0; i < w->pub->nstories; i++)
         if (w->story_out[i] >= 0)
             for (j = 0; j < w->pub->stories[i].nparas; j++)
-                for (k = 0; k < w->pub->stories[i].paras[j].nruns; k++)
-                    if (w->pub->stories[i].paras[j].runs[k].fmt.colour == OWF_COLOUR_AUTO)
-                        return 0;
-    return 1;
+                for (k = 0; k < w->pub->stories[i].paras[j].nruns; k++) {
+                    const owf_charfmt *f = &w->pub->stories[i].paras[j].runs[k].fmt;
+                    if (f->size <= 0) own &= ~OWN_SIZE;
+                    if (f->font < 0) own &= ~OWN_FONT;
+                    if (f->colour == OWF_COLOUR_AUTO) own &= ~OWN_COLOUR;
+                }
+    return own;
 }
 
 /* WordArt's text as 0xC0C0 holds it: UTF-16, its paragraphs apart by
@@ -1158,17 +1165,18 @@ static void write_quill(writer *w, owf_buf *out)
             owf_buf_free(&names);
             owf_free(offs);
         }
-        /* STSH 0 and 1: one style, the default. Every run says its own size and
-         * typeface, so the default's matter only to WordArt, whose text has no
-         * runs: it takes the first WordArt's size, typeface and colour, as read. */
+        /* STSH 0 and 1: one style, the default. It matters to WordArt, whose
+         * text has no runs: it takes the first WordArt's size, typeface and
+         * colour, as read, each only when every run written has its own. */
         {
             owf_buf dc;
             owf_charfmt def;
             owf_buf_init(&dc);
             if (wordart_format(w->pub, &def)) {
-                if (def.size > 0)
+                int own = runs_own(w);
+                if (def.size > 0 && (own & OWN_SIZE))
                     f32(&dc, 0x20C, 0x20, (unsigned long)def.size * 635UL, 1);
-                if (def.font >= 0) {
+                if (def.font >= 0 && (own & OWN_FONT)) {
                     size_t a = open_field(&dc, 0x224, 0x88, 1), sl;
                     for (i = 0; i < 2; i++) {
                         sl = open_field(&dc, (unsigned)i, 0x88, 1);
@@ -1177,7 +1185,7 @@ static void write_quill(writer *w, owf_buf *out)
                     }
                     close_block(&dc, a);
                 }
-                if (def.colour != OWF_COLOUR_AUTO && all_runs_coloured(w)) {
+                if (def.colour != OWF_COLOUR_AUTO && (own & OWN_COLOUR)) {
                     int c = colour_place(w, def.colour);
                     if (c > 0) {
                         size_t a = open_field(&dc, 0x244, 0x88, 1);

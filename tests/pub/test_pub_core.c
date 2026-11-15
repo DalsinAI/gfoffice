@@ -488,6 +488,47 @@ int main(void)
     deck_round_trip(PUB("gen-2003-columns.pub"), report);
     deck_round_trip(PUB("gen-2003-names.pub"), report);
     {
+        /* new text with no size, typeface or colour of its own keeps none: the
+           default style (which WordArt takes) holds only what every run has */
+        owf_deck *d = NULL, *back = NULL;
+        owf_pub *p = NULL;
+        unsigned char *data = NULL;
+        size_t n = 0;
+        int i2, j2, found = 0;
+        CHECK(opp_import_pub_file(PUB("gen-2003-columns.pub"), &d, report, NULL) == OWF_OK && d);
+        for (i2 = 0; d && i2 < d->nslides && !found; i2++)
+            for (j2 = 0; j2 < d->slides[i2].nobjs && !found; j2++) {
+                owf_obj *o = &d->slides[i2].objs[j2];
+                if (o->kind == OWF_OBJ_TEXT && o->text.nparas && o->text.paras[0].nruns) {
+                    owf_charfmt *f = &o->text.paras[0].runs[0].fmt;
+                    f->size = 0;
+                    f->font = -1;
+                    f->colour = OWF_COLOUR_AUTO;
+                    o->flow_story = -1;   /* its own story, so this copy is the one written */
+                    found = 1;
+                }
+            }
+        CHECK(found);
+        CHECK(d && opp_export_pub(d, &data, &n, report) == OWF_OK && data);
+        CHECK(data && owf_pub_read(data, n, &p, report) == OWF_OK && p);
+        CHECK(p && opp_pub_to_deck(p, &back, report) == OWF_OK && back);
+        found = 0;
+        for (i2 = 0; back && i2 < back->nslides && !found; i2++)
+            for (j2 = 0; j2 < back->slides[i2].nobjs && !found; j2++) {
+                const owf_obj *o = &back->slides[i2].objs[j2];
+                if (o->kind == OWF_OBJ_TEXT && o->text.nparas && o->text.paras[0].nruns) {
+                    const owf_charfmt *f = &o->text.paras[0].runs[0].fmt;
+                    CHECK(f->size == 0 && f->font == -1 && f->colour == OWF_COLOUR_AUTO);
+                    found = 1;
+                }
+            }
+        CHECK(found);
+        owf_free(data);
+        owf_pub_free(p);
+        owf_deck_free(d);
+        owf_deck_free(back);
+    }
+    {
         owf_pub *none = NULL;
         unsigned char *data = (unsigned char *)"x";
         size_t n = 1;
