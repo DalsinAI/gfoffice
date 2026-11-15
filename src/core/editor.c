@@ -2421,7 +2421,11 @@ static ow_position comment_start(ow_editor *editor, const ed_comment *c)
 /* 2.0.39: whether a comment passes the author filter: its own author is the one shown (or no filter) */
 static int comment_author_shown(const ow_editor *editor, int record)
 {
-    return !editor->comment_filter || same_text_or_null(editor->doc->comments[record].author, editor->comment_filter);
+    const char *a = editor->doc->comments[record].author;
+    if (!editor->comment_filter) return 1;
+    /* 2.0.40: a name ow_editor_comment_authors cut at 71 bytes matches the names it starts */
+    if (strlen(editor->comment_filter) == 71 && a && !strncmp(a, editor->comment_filter, 71)) return 1;
+    return same_text_or_null(a, editor->comment_filter);
 }
 
 /* 2.0.39: whether a comment's thread (it and its replies, at any depth) has one the filter shows */
@@ -2637,6 +2641,22 @@ int ow_editor_next_comment(ow_editor *editor, int backwards)
         wrapped = 1;
     }
     if (pick >= 0) select_comment(editor, &list[pick]);
+    if (pick >= 0 && !comment_author_shown(editor, list[pick].record)) {
+        /* 2.0.40: a thread picked for a reply the filter shows (its comment hidden): that reply, picked */
+        int top = list[pick].record;
+        for (k = 0; k < n; ++k) {
+            int up = list[k].record, guard = 0;
+            while (up >= 0 && up != top && up < editor->doc->ncomments && guard++ < editor->doc->ncomments)
+                up = editor->doc->comments[up].parent;
+            if (up == top && comment_author_shown(editor, list[k].record)) {
+                editor->pick_on = 1;
+                editor->pick_para = list[k].para;
+                editor->pick_run = list[k].run;
+                editor->pick_sel = editor->selection;
+                break;
+            }
+        }
+    }
     owf_free(list);
     return pick < 0 ? 0 : wrapped ? 2 : 1;
 }
