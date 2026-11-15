@@ -115,8 +115,8 @@ void owf_pub_free(owf_pub *pub);
 /* owfpub.library 3.3: the publication as a .pub in the 2002-or-later form
  * (Publisher 2007's), into memory from malloc: pages and master pages, text
  * boxes, shapes and tables with their boxes and looks, the text with its
- * runs, links and cells, the colour scheme, pictures and groups. WordArt
- * and the scratch area are not written yet (notes in the report say so).
+ * runs, links and cells, the colour scheme, pictures, groups and WordArt.
+ * The scratch area is not written yet (a note in the report says so).
  * OWF_OK, or OWF_ERR_MEMORY. */
 int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_report *report);
 
