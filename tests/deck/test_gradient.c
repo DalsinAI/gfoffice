@@ -195,6 +195,70 @@ static void test_pdf_writer(void)
     owf_pdf_free(pdf);
 }
 
+/* a slide whose page style has a radial gradient background, white at the centre to teal at the edge */
+static const char FODP_BG[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+    "<office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+    "xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" "
+    "xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" "
+    "xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" "
+    "xmlns:presentation=\"urn:oasis:names:tc:opendocument:xmlns:presentation:1.0\" "
+    "office:version=\"1.2\" office:mimetype=\"application/vnd.oasis.opendocument.presentation\">"
+    "<office:styles><draw:gradient draw:name=\"sky\" draw:style=\"radial\" draw:start-color=\"#008080\" "
+    "draw:end-color=\"#ffffff\"/></office:styles>"
+    "<office:automatic-styles><style:style style:name=\"dp1\" style:family=\"drawing-page\">"
+    "<style:drawing-page-properties draw:fill=\"gradient\" draw:fill-gradient-name=\"sky\"/></style:style>"
+    "</office:automatic-styles>"
+    "<office:body><office:presentation><draw:page draw:name=\"one\" draw:style-name=\"dp1\"/>"
+    "</office:presentation></office:body></office:document>";
+
+static void check_bg(const owf_deck *d, const char *where)
+{
+    char what[160];
+    snprintf(what, sizeof what, "%s: a radial background, white centre, teal edge", where);
+    CHECK(d && d->nslides == 1 && d->slides[0].background_gradient == OWF_GRADIENT_RADIAL &&
+          d->slides[0].background == OWF_SHADE(0xFFFFFF) && d->slides[0].background2 == OWF_SHADE(0x008080), what);
+}
+
+static void test_background(void)
+{
+    owf_deck *deck = NULL, *again = NULL;
+    const owf_deck_format *odp = owf_deck_format_named("odp");
+    unsigned char *data = NULL;
+    size_t length = 0, i;
+    opr_slide *laid;
+    int found = 0;
+    CHECK(owf_import_deck_memory((const unsigned char *)FODP_BG, sizeof FODP_BG - 1, "fodp", &deck, NULL, NULL) ==
+          OWF_OK, "the background ODP read");
+    check_bg(deck, "ODP");
+    if (!deck) return;
+    CHECK(odp && odp->export(deck, &data, &length, NULL) == OWF_OK, "saved as ODP");
+    CHECK(owf_import_deck_memory(data, length, "odp", &again, NULL, NULL) == OWF_OK, "read back");
+    check_bg(again, "ODP saved and read");
+    free(data); data = NULL;
+    owf_deck_free(again); again = NULL;
+    CHECK(opr_export_pptx(deck, &data, &length, NULL) == OWF_OK, "saved as PPTX");
+    CHECK(owf_import_deck_memory(data, length, "pptx", &again, NULL, NULL) == OWF_OK, "read back");
+    check_bg(again, "PPTX saved and read");
+    free(data); data = NULL;
+    owf_deck_free(again);
+    laid = opr_slide_layout(deck, 0, NULL, NULL, "1 January 2026");
+    if (laid) {
+        for (i = 0; i < ol_display_count(laid->doc); i++) {
+            const ol_display_op *op = ol_display_get(laid->doc, i);
+            if (op->type == OL_OP_SHAPE && op->graphic && opr_slide_frame_of(laid, op) == 0 &&
+                op->graphic->shape.gradient == OL_GRADIENT_RADIAL && op->graphic->shape.stroke_argb == 0)
+                found++;
+        }
+        opr_slide_free(laid);
+    }
+    CHECK(found == 1, "the background frame carries the gradient, with no outline");
+    CHECK(opr_export_pdf(deck, NULL, &data, &length, NULL) == OWF_OK && data, "the PDF");
+    if (data) CHECK(count(data, length, "h W n") == 1 && count(data, length, " c h ") == 48, "the background's 48 rings");
+    free(data);
+    owf_deck_free(deck);
+}
+
 /* whether the pixel centre (px + 0.5, py + 0.5) is inside the polygon, even-odd, doubled to stay whole */
 static int inside(const int *xy, int n, int px, int py)
 {
@@ -273,6 +337,7 @@ int main(void)
     owf_deck_free(deck);
     test_pdf_writer();
     test_screen_bands();
+    test_background();
     printf("gradient: %d checks, %d failed\n", checks, failures);
     return failures != 0;
 }

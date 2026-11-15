@@ -34,8 +34,9 @@
  * writes the effects.
  *
  * 3.8: gradient fills. owf_look ends with gradient, gradient_angle and
- * fill2, so owf_obj is larger; ODP and PPTX read and write them. No call
- * changes.
+ * fill2, so owf_obj is larger; owf_slide and owf_master end with
+ * background_gradient, background_angle and background2. ODP and PPTX
+ * read and write them. No call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
