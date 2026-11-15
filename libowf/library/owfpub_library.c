@@ -1,5 +1,5 @@
 /*
- * owfpub.library 3.1, GFOpenPublisher's part of libowf: Publisher files. The
+ * owfpub.library 3.2, GFOpenPublisher's part of libowf: Publisher files. The
  * .pub reader and its compound-file reader, with the document model its text
  * uses.
  *
@@ -12,12 +12,16 @@
  * document model's owf_doc is larger and a program's size check refuses
  * 3.0. No call changes.
  *
+ * 3.2: owf_pub_frame's look (filled, lined, fill, line, line_width,
+ * inset) and owf_pub's colour scheme, so owf_pub_frame and owf_pub are
+ * larger and a program's size check refuses 3.1. No call changes.
+ *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpub.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 1
-#define OWF_LIB_VERS "3.1"
-#define OWF_LIB_DATE "27.10.2026"
+#define OWF_LIB_REVISION 2
+#define OWF_LIB_VERS "3.2"
+#define OWF_LIB_DATE "14.11.2026"
 #define OWF_LIB_CALLS_H "owfpub_calls.h"
 #include "owf_libbase.h"
