@@ -112,6 +112,13 @@ int owf_pub_detect(const unsigned char *data, size_t length);
 int owf_pub_read(const unsigned char *data, size_t length, owf_pub **pub, owf_report *report);
 int owf_pub_read_file(const char *path, owf_pub **pub, owf_report *report);
 void owf_pub_free(owf_pub *pub);
+/* owfpub.library 3.3: the publication as a .pub in the 2002-or-later form
+ * (Publisher 2007's), into memory from malloc: pages and master pages, text
+ * boxes, shapes and tables with their boxes and looks, the text with its
+ * runs, links and cells, and the colour scheme. Pictures, WordArt and the
+ * scratch area are not written yet (notes in the report say so); a group's
+ * frames are written on their own. OWF_OK, or OWF_ERR_MEMORY. */
+int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_report *report);
 
 #ifdef __cplusplus
 }
