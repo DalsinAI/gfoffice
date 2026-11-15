@@ -529,6 +529,20 @@ int main(void)
         owf_deck_free(back);
     }
     {
+        /* the page model keeps no WordArt yet: opening says so (saving again keeps it as a shape) */
+        owf_report *notes = owf_report_new();
+        owf_deck *d = NULL;
+        int k, said = 0;
+        CHECK(notes && opp_import_pub_file(PUB("gen-2003-columns.pub"), &d, notes, NULL) == OWF_OK);
+        for (k = 0; notes && k < owf_report_count(notes); k++) {
+            const char *t = owf_report_note(notes, k, NULL, NULL);
+            if (t && strstr(t, "1 WordArt object(s) are shown, and saved, as shapes with text")) said = 1;
+        }
+        CHECK(said);
+        owf_deck_free(d);
+        owf_report_free(notes);
+    }
+    {
         /* groups nested past what the reader reads back: left out, and said */
         owf_deck *d = owf_deck_new_empty();
         owf_report *notes = owf_report_new();

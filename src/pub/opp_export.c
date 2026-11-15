@@ -226,7 +226,7 @@ int opp_deck_to_pub(const owf_deck *deck, owf_pub **out, owf_report *report)
     }
     if (most >= 0) {
         x.nflow = most + 1;
-        if (!(x.flow = malloc((size_t)x.nflow * sizeof *x.flow))) goto memory;
+        if (!(x.flow = owf_malloc((size_t)x.nflow * sizeof *x.flow))) goto memory;
         for (i = 0; i < x.nflow; i++) x.flow[i] = -1;
     }
     if (deck->nmasters) {
@@ -251,11 +251,11 @@ int opp_deck_to_pub(const owf_deck *deck, owf_pub **out, owf_report *report)
         p->master = deck->slides[i].master >= 0 && deck->slides[i].master < deck->nmasters ? deck->slides[i].master : -1;
         if (fill_page(&x, p, deck->slides[i].objs, deck->slides[i].nobjs) < 0) goto memory;
     }
-    free(x.flow);
+    owf_free(x.flow);
     *out = pub;
     return OWF_OK;
 memory:
-    free(x.flow);
+    owf_free(x.flow);
     owf_pub_free(pub);
     return OWF_ERR_MEMORY;
 }
