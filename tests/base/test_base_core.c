@@ -1578,6 +1578,18 @@ static void test_forms(void)
         CHECK(strstr(got, "|4|4.50|") != NULL, "changed: %s", got);
         CHECK(ob_row_delete(p, "Orders", ob_child_key(p, &r[0], 4, 1)), "delete: %s", ob_error(p));
         CHECK(ob_child_key(p, &r[0], 4, 0) == 6 && ob_child_key(p, &r[0], 4, 1) == -1, "bob has one left");
+
+        /* a subform row opened in its table's form: the record's rows (core 0.6.4) */
+        ob_child_view(&kids, &r[0], 1);
+        CHECK(ob_view_filtered(&kids) && !kids.sort[0], "filtered, key order");
+        CHECK(ob_view_total(p, "Orders", &kids) == 2, "dan's two orders");
+        CHECK(ob_view_position(p, "Orders", &kids, 1) == 0 && ob_view_position(p, "Orders", &kids, 2) == 1,
+              "Tea first, then the second");
+        CHECK(ob_view_position(p, "Orders", &kids, 3) == -1, "Ann's order is not dan's");
+        CHECK(ob_view_position(p, "Orders", &kids, ob_child_key(p, &r[0], 1, 1)) == 1, "the key a place gives is at that place");
+        ob_child_view(&kids, &r[0], 4);
+        CHECK(ob_view_total(p, "Orders", &kids) == 1 && ob_view_position(p, "Orders", &kids, 6) == 0, "bob's one");
+        CHECK(ob_view_check(p, "Orders", &kids), "a view Orders takes: %s", ob_error(p));
     }
     ob_close(p);
 }

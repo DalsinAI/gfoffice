@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.6.3"
+#define OB_CORE_VERSION "0.6.4"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -325,6 +325,10 @@ int ob_children(ob_project *p, const char *table, ob_relation *out, int max);
  * `pos` (from 0, key order) among r's rows for record `parent`: -1 when
  * there is none, -2 on error. */
 ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int pos);
+/* The view of r's rows for record `parent` (core 0.6.4): r->field Equals
+ * parent, key order. A subform row opened in its own table's form is
+ * shown in this view, so the form steps through that record's rows. */
+void ob_child_view(ob_view *v, const ob_relation *r, ob_int parent);
 /* Adds a row to r's table for record `parent`: its Lookup r->field holds
  * parent whatever the fields give for it; the rest as ob_row_add takes them.
  * 0 with the reason when parent is not a key (a new record not yet saved:

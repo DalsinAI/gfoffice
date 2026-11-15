@@ -393,7 +393,11 @@ print) needs no script.
   the record and shown, not typed (`ob_child_add`); choose a row, then
   Edit Row... or Delete Row... (`ob_child_key` gives its key). The
   record is saved first, so a new record has its key.
-- Not yet: the form designer (6.2), Return on a subform row to open its table's form, buttons
+- A subform row's own form (core 0.6.4, GFOpenBase 0.6.4): Open Form,
+  Return, or a double-click on the chosen row closes the form and opens
+  the subform table's, at that row, in the view of the record's rows
+  (`ob_child_view`); Table > Show All Rows goes back to every row.
+- Not yet: the form designer (6.2), buttons
   and events (6.5), forms kept in `oadb_forms`.
 
 ## 7. Reports
