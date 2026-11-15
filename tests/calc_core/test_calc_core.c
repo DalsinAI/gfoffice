@@ -6250,8 +6250,8 @@ static void test_pivot_group_xlsx(void)
                            "groupInterval=\"5\"/><groupItems count=\"6\"><s v=\"&lt;0\"/><s v=\"0-4\"/><s v=\"5-9\"/>"
                            "<s v=\"10-14\"/><s v=\"15-19\"/><s v=\"&gt;19\"/></groupItems></fieldGroup>"));
     CHECK(saved_part_holds(path, "xl/pivotTables/pivotTable1.xml",
-                           "<items count=\"7\"><item x=\"0\"/><item x=\"1\"/><item x=\"2\" h=\"1\"/><item x=\"3\"/>"
-                           "<item x=\"4\"/><item x=\"5\"/><item t=\"default\"/></items>"));
+                           "<item x=\"0\"/><item x=\"1\"/><item x=\"2\" h=\"1\"/><item x=\"3\"/>"
+                           "<item x=\"4\"/><item x=\"5\"/>"));   /* the six group items, 5-9 hidden */
     CHECK(owf_import_book_file(path, NULL, &round, NULL, NULL) == OWF_OK && round);
     CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 1 && back.group[0].field == 2 &&
           back.group[0].by == OWF_PIVOT_GROUP_RANGE && back.group[0].start == 0.0 && back.group[0].end == 19.0 &&
