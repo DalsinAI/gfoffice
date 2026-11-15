@@ -43,7 +43,8 @@ n = WORD(res, 1)
 CALL same 'Catalog Page objects', n, 5
 CALL want 'MERGEFIELD 4 Name', 0
 CALL want 'OBJECTBOX 2', 0
-PARSE VAR res x y w h
+PARSE VAR res x y w h                             /* a group's box as drawn: its children's; the group's own is */
+x = x - 300; y = y - 300; w = w + 600; h = h + 600  /* a little wider, so take a margin to have the group too */
 CALL want 'MERGECATALOG' x y w h 2 1 'FORCE', 0
 CALL same 'MERGECATALOG made, pages', res, '1 1'
 CALL want 'OBJECTS', 0
