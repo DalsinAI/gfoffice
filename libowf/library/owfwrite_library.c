@@ -40,7 +40,8 @@
  * owf_format_change): DOCX w:rPrChange in and out; other formats the format as it is now (accepted). No new
  * calls; owf_run and owf_doc grew, so the three libraries go together again.
  * 3.11: libowf 1.12, a picture in the line may be a tracked change (owf_run.revision on OWF_RUN_IMAGE): DOCX
- * w:ins and w:del round its w:drawing, ODT changed regions, in and out. No new calls and no struct grew.
+ * w:ins and w:del round its w:drawing, ODT changed regions, in and out. A frame's run may be one too (DOCX in
+ * and out; ODT saves it accepted). No new calls and no struct grew.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */

@@ -766,7 +766,13 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
             continue;
         }
         t=char_style(s,&run->fmt);
-        kind = run->kind == OWF_RUN_FRAME ? 0 : change_kind(doc, run->revision);   /* 1.12: pictures too */
+        kind = change_kind(doc, run->revision);      /* 1.12: pictures too */
+        if (run->kind == OWF_RUN_FRAME && kind) {
+            /* 1.12: a frame's change is saved accepted (owf_export_file reports it): a deleted frame is left
+             * out, an inserted one is the document's */
+            if (kind == OWF_REV_DELETE) continue;
+            kind = 0;
+        }
         if (kind == OWF_REV_DELETE) {
             /* 1.5: deleted text: in the deletion's region (written accepted when there is none: left out) */
             if (tk) {

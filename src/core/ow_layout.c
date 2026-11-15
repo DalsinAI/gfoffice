@@ -132,11 +132,12 @@ static void change_style(const owf_doc *doc, int number, ol_style *s)
 }
 
 /* 2.0.37: whether the view hides a run: a deletion's, in the final view (not a comment's place or a note's mark,
- * which are no text of the deletion's). 2.0.38: a deleted picture in the line too. */
+ * which are no text of the deletion's). 2.0.38: a deleted picture in the line, or a deleted frame's run (the
+ * frame is left out, add_paragraph), too. */
 static int hidden_deletion(const ow_layout *l, const owf_doc *doc, const owf_run *r)
 {
     const owf_revision *rv;
-    if (!l || !(l->view & OW_LAYOUT_FINAL) || r->comment || r->note > 0 || r->kind == OWF_RUN_FRAME)
+    if (!l || !(l->view & OW_LAYOUT_FINAL) || r->comment || r->note > 0)
         return 0;
     rv = OWF_DOC_REVISION(doc, r->revision);
     return rv && rv->kind == OWF_REV_DELETE;
@@ -258,7 +259,7 @@ static ol_unit frame_at(const ol_page *pg, const owf_frame *fr, int across, uint
  * (GFOpenLayout 0.6): square and tight beside it, top and bottom above and below it, Word's usual eighth of an
  * inch from its sides; with no wrap (behind or in front of the text), it moves no line. */
 static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *block, const owf_frame *fr,
-                     const field_values *fv)
+                     const field_values *fv, int change)
 {
     ol_style s;
     ol_box_style b;
@@ -313,6 +314,12 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
         b.border_sides = OL_BORDER_ALL;
     } else {
         b.border_sides = 0;
+    }
+    if (change && OWF_DOC_REVISION(doc, change) && !(l && (l->view & OW_LAYOUT_FINAL))) {
+        /* 2.0.38: a tracked frame: its edge twice as thick in its author's colour (as changed text's) */
+        b.border_width = BORDER_WIDTH * 2;
+        b.border_argb = argb(change_colour(doc, change));
+        b.border_sides = OL_BORDER_ALL;
     }
     ol_node_set_box(f, &b);
     if (fr->image >= 0 && fr->image < doc->nimages) {
@@ -673,7 +680,9 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
      * left out */
     for (j = 0; ((record == 1 && l) || (l && fv && fv->frames)) && j < p->nruns; ++j)
         if (p->runs[j].kind == OWF_RUN_FRAME && p->runs[j].image >= 0 && p->runs[j].image < doc->nframes &&
-            !add_frame(l, doc, od, block, &doc->frames[p->runs[j].image], record == 1 ? NULL : fv))
+            !hidden_deletion(l, doc, &p->runs[j]) &&    /* 2.0.38: the final view leaves a deleted frame out */
+            !add_frame(l, doc, od, block, &doc->frames[p->runs[j].image], record == 1 ? NULL : fv,
+                       p->runs[j].revision))
             return NULL;
     return block;
 }

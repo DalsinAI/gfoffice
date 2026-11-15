@@ -721,6 +721,108 @@ static void test_pictures(void)
     }
 }
 
+/* 2.0.38: frames (text boxes) as tracked changes: one put in while recording is an insertion (its run's),
+ * Delete Frame marks someone else's deleted (the author's own goes), accepting and rejecting take the frame
+ * or keep it, later frames renumbered; DOCX keeps them, ODT saves them accepted and says so */
+static int frame_change(const owf_doc *doc, int frame_index)
+{
+    int i, j;
+    for (i = 0; i < doc->body.nparas; ++i)
+        for (j = 0; j < doc->body.paras[i].nruns; ++j)
+            if (doc->body.paras[i].runs[j].kind == OWF_RUN_FRAME && doc->body.paras[i].runs[j].image == frame_index) {
+                const owf_revision *rv = OWF_DOC_REVISION(doc, doc->body.paras[i].runs[j].revision);
+                return rv ? (rv->kind == OWF_REV_DELETE ? -1 : 1) : 0;
+            }
+    return -2;                                       /* no run */
+}
+
+static int report_has(const owf_report *rp, const char *s)
+{
+    int i;
+    for (i = 0; i < owf_report_count(rp); ++i) {
+        const char *note = owf_report_note(rp, i, NULL, NULL);
+        if (note && strstr(note, s)) return 1;
+    }
+    return 0;
+}
+
+static void test_frames(void)
+{
+    static const char *const text[] = { "Alpha", "Omega" };
+    owf_doc *doc = doc_of(text, 2), *back = NULL;
+    ow_editor *ed;
+    owf_report *rp;
+    const char *path = "/tmp/openwrite-track-frame.docx", *odt = "/tmp/openwrite-track-frame.odt";
+    int i;
+    if (!doc || !(ed = recording(doc, "Ann"))) { CHECK(0, "document"); owf_doc_free(doc); return; }
+    caret(ed, 0, 2);
+    CHECK(ow_editor_insert_text_box(ed, "Box", 2880, 1440, OWF_WRAP_SQUARE) == OWF_OK, "text box while recording");
+    CHECK(doc->nframes == 1 && frame_change(doc, 0) == 1, "an insertion");
+    CHECK(!strcmp(OWF_DOC_REVISION(doc, doc->body.paras[0].runs[doc->body.paras[0].nruns - 1].revision)->author, "Ann"),
+          "Ann's");
+    /* DOCX keeps it; ODT saves it accepted and says so */
+    CHECK(owf_export_file(doc, path, "docx", NULL) == OWF_OK &&
+          owf_import_file(path, NULL, &back, NULL, NULL) == OWF_OK && back, "docx");
+    CHECK(back && back->nframes == 1 && frame_change(back, 0) == 1, "docx keeps the frame's insertion");
+    owf_doc_free(back);
+    back = NULL;
+    rp = owf_report_new();
+    CHECK(rp && owf_export_file(doc, odt, "odt", rp) == OWF_OK, "odt");
+    CHECK(report_has(rp, "text box and frame changes were saved accepted"), "odt says so");
+    owf_report_free(rp);
+    CHECK(owf_import_file(odt, NULL, &back, NULL, NULL) == OWF_OK && back && back->nframes == 1 &&
+          frame_change(back, 0) == 0, "odt: the frame, accepted");
+    owf_doc_free(back);
+    back = NULL;
+    /* rejected: gone, and the caret back in the body */
+    CHECK(ow_editor_accept_all_changes(ed, 0) == OWF_OK, "reject all");
+    CHECK(doc->nframes == 0 && frame_change(doc, 0) == -2, "the frame is gone");
+    CHECK(ow_editor_selection(ed).focus.box == 0, "the caret in the body");
+    CHECK(!strcmp(dump(doc), "Alpha|Omega"), dump(doc));
+    CHECK(ow_editor_undo(ed) == 1 && doc->nframes == 1 && frame_change(doc, 0) == 1, "undone: back");
+    /* Ann deletes her own: it goes */
+    CHECK(ow_editor_delete_frame(ed, 0) == OWF_OK && doc->nframes == 0, "her own frame goes");
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    /* two frames from before; Bob deletes the first: marked, then accepted (gone, the second renumbered) or
+     * rejected (kept) */
+    for (i = 0; i < 2; ++i) {
+        doc = doc_of(text, 2);
+        ed = doc ? ow_editor_new(doc) : NULL;
+        if (!ed) { CHECK(0, "document"); owf_doc_free(doc); return; }
+        caret(ed, 0, 2);
+        CHECK(ow_editor_insert_text_box(ed, "One", 2880, 1440, OWF_WRAP_SQUARE) == OWF_OK, "first");
+        caret(ed, 1, 2);
+        CHECK(ow_editor_insert_text_box(ed, "Two", 2880, 1440, OWF_WRAP_SQUARE) == OWF_OK, "second");
+        caret(ed, 0, 0);
+        ow_editor_set_track_changes(ed, 1);
+        ow_editor_set_review_author(ed, "Bob");
+        CHECK(ow_editor_delete_frame(ed, 0) == OWF_OK, "delete frame while recording");
+        CHECK(doc->nframes == 2 && frame_change(doc, 0) == -1 && frame_change(doc, 1) == 0, "marked deleted, kept");
+        CHECK(ow_editor_delete_frame(ed, 0) == OWF_OK && doc->nframes == 2, "again: nothing more");
+        if (!i) {
+            CHECK(owf_export_file(doc, path, "docx", NULL) == OWF_OK &&
+                  owf_import_file(path, NULL, &back, NULL, NULL) == OWF_OK && back, "docx");
+            CHECK(back && back->nframes == 2 && frame_change(back, 0) == -1, "docx keeps the deletion");
+            owf_doc_free(back);
+            back = NULL;
+        }
+        CHECK(ow_editor_accept_all_changes(ed, !i) == OWF_OK, i ? "reject all" : "accept all");
+        if (!i) {
+            CHECK(doc->nframes == 1 && frame_change(doc, 0) == 0 && doc->frames[0].story.nparas &&
+                  doc->frames[0].story.paras[0].nruns && doc->frames[0].story.paras[0].runs[0].text &&
+                  !strcmp(doc->frames[0].story.paras[0].runs[0].text, "Two"), "the first gone, Two now frame 0");
+        } else {
+            CHECK(doc->nframes == 2 && frame_change(doc, 0) == 0 && frame_change(doc, 1) == 0, "both kept");
+        }
+        ow_editor_free(ed);
+        owf_doc_free(doc);
+    }
+    remove(path);
+    remove(odt);
+}
+
 int main(void)
 {
     test_recording();
@@ -733,6 +835,7 @@ int main(void)
     test_format_changes();
     test_final_view();
     test_pictures();
+    test_frames();
     printf("track changes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
