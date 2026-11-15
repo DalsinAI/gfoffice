@@ -2053,12 +2053,19 @@ static void test_query_out(void)
     CHECK(ob_table_get(p, "Orders", &t) && ob_table_find_field(&t, "Weight") > 0 && ob_row_total(p, "Orders") == 5,
           "Orders as it was");
     strcpy(t.name, "Sales");
-    CHECK(!ob_table_change(p, "Orders", &t), "a rename in a design change, a view on it");
-    CHECK_ERR(p, "The view Weights uses Orders");
+    CHECK(ob_table_change(p, "Orders", &t), "a rename in a design change, a view on it: %s", ob_error(p));
+    CHECK(ob_table_count(p) == 2 && !strcmp(ob_table_name(p, 1), "Sales") && ob_row_total(p, "Sales") == 5,
+          "renamed with its rows");
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "2"), "the view follows the design change's rename: %s",
+          qrows(p, &back, NULL, 0, -1));
+    {
+        static ob_table o;
+        CHECK(ob_table_get(p, "Orders", &o) == 0 && ob_table_get(p, "Sales", &o)
+              && !strcmp(o.fields[ob_table_find_field(&o, "Customer")].lookup, "Clients"), "Sales' design");
+    }
     CHECK(ob_sqlview_drop(p, "weights") && ob_sqlview_count(p) == 1, "drop the view: %s", ob_error(p));
     CHECK(!ob_sqlview_drop(p, "Weights"), "drop it twice");
     CHECK_ERR(p, "There is no view named Weights");
-    CHECK(ob_table_change(p, "Orders", &t), "rename in a design change: %s", ob_error(p));
     CHECK(ob_query_get(p, "Spend", &back) && !strcmp(back.tables[1], "Sales") && !strcmp(back.columns[1].table, "Sales"),
           "the grid query follows a design change's rename");
     CHECK(!strcmp(back.columns[2].expr, "\"Sales\".\"id\""), "and its expression: %s", back.columns[2].expr);

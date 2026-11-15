@@ -510,8 +510,9 @@ int ob_query_delete(ob_project *p, const char *name);
  * SQLite programs (and typed SQL) can read it. Its name is a table's kind of
  * name and no table or saved query has it; saving a name that is there
  * replaces that view. A query that asks [questions] can't be a view.
- * Renaming a table rewrites the views that name it (SQLite does); a design
- * change or a delete that would leave a view unable to read is refused.
+ * Renaming a table rewrites the views that name it (SQLite does), also when
+ * a design change renames it; a design change or a delete that would leave a
+ * view unable to read is refused.
  * Saving or deleting a view is not on the Undo list.
  *
  * Renaming a table (ob_table_rename, or a design change that renames it) also
