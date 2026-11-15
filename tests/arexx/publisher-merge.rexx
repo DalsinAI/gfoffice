@@ -43,6 +43,15 @@ CALL want 'MERGERECORD NAMES', 0
 CALL same 'MERGERECORD NAMES', res, '0 2'
 CALL want 'MERGERECORD PREVIOUS', 0
 CALL same 'MERGERECORD PREVIOUS', res, '1 2'
+CALL want 'MERGERECORD 0', 0
+CALL same 'MERGERECORD 0 is the names', res, '0 2'
+CALL want 'MERGERECORD 1', 0
+CALL want 'MERGERECORD -1', 5
+CALL want 'MERGERECORD -5', 5
+CALL want 'MERGERECORD abc', 5
+CALL want 'MERGERECORD 1x', 5
+CALL want 'MERGERECORD', 0
+CALL same 'MERGERECORD after the refusals', res, '1 2'
 CALL want 'PAGES', 0
 pages = res
 CALL want 'MERGEPAGES', 5                         /* unsaved changes */

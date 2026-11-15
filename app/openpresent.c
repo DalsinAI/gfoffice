@@ -7096,12 +7096,20 @@ static const char *merge_error(int rc)
 }
 
 /* The merge fields show record at (-1: their names): 1, or 0 with the user told */
-static int merge_show(int at)
+/* Shows record at (-1: the field names) with no requester: OWF_OK or the error */
+static int merge_show_rc(int at)
 {
     int rc = opp_merge_show(deck, merge_table, at, NULL);
-    if (rc != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return 0; }
+    if (rc != OWF_OK) return rc;
     merge_at = at;
     relayout();
+    return OWF_OK;
+}
+
+static int merge_show(int at)
+{
+    int rc = merge_show_rc(at);
+    if (rc != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return 0; }
     return 1;
 }
 
@@ -8617,14 +8625,19 @@ static int rexx_do_command(const char *command, char **result_out)
             }
         }
     } else if (starts_word_ci(command, "MERGERECORD", &arg)) {   /* MERGERECORD [n | NEXT | PREVIOUS | NAMES]: the record shown */
-        int n = merge_table ? merge_table->nrows : 0, at = merge_at;
+        int n = merge_table ? merge_table->nrows : 0, at = merge_at, rc = OWF_OK;
         if (!*arg) at = merge_at;
         else if (starts_word_ci(arg, "NAMES", NULL)) at = -1;
         else if (starts_word_ci(arg, "NEXT", NULL)) at = merge_at + 1 < n ? merge_at + 1 : n - 1;
         else if (starts_word_ci(arg, "PREVIOUS", NULL)) at = merge_at > 0 ? merge_at - 1 : 0;
-        else at = atoi(arg) - 1;
-        if (*arg && at >= 0 && at >= n) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No such record"); }
-        else if (*arg && !merge_show(at)) { ok = 0; rexx_copy(result_text, sizeof result_text, "Not shown"); }
+        else {   /* a whole number only: 0 is the names, 1..n a record */
+            char *end = NULL;
+            long v = strtol(arg, &end, 10);
+            while (end && (*end == ' ' || *end == '\t')) end++;
+            at = (end == arg || !end || *end || v < 0 || v > n) ? -2 : (int)v - 1;
+        }
+        if (*arg && (at < -1 || at >= n)) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No such record"); }
+        else if (*arg && (rc = merge_show_rc(at)) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
         else {
             if (*arg) { merge_status(""); draw_status(); }
             snprintf(result_text, sizeof result_text, "%d %d", merge_at + 1, n);   /* the record shown (0: names), of n */
