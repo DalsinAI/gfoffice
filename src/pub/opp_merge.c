@@ -341,3 +341,91 @@ undo:
     while (deck->nslides > pages) owf_deck_delete_slide(deck, deck->nslides - 1);
     return OWF_ERR_MEMORY;
 }
+
+/* A catalog item's object: its box wholly inside the area's first item */
+static int in_item(const owf_obj *o, const opp_catalog *c)
+{
+    return o->x >= c->x && o->y >= c->y && o->width >= 0 && o->height >= 0 &&
+           (long long)o->x + o->width <= (long long)c->x + c->width &&
+           (long long)o->y + o->height <= (long long)c->y + c->height;
+}
+
+int opp_merge_catalog(owf_deck *deck, const ow_merge_table *t, int page, const opp_catalog *cat,
+                      int first, int last, int *made)
+{
+    unsigned char *item = NULL;
+    int *map = NULL;
+    int n, nitem = 0, per, records, out, p, cell, i, o, base = 0, unit = 0, created = 0;
+    if (made) *made = 0;
+    if (!deck || !t || t->nrows <= 0 || !cat || page < 0 || page >= deck->nslides) return OWF_ERR_UNSUPPORTED;
+    if (cat->width <= 0 || cat->height <= 0 || cat->across < 1 || cat->down < 1 ||
+        cat->across > OPP_CATALOG_MAX || cat->down > OPP_CATALOG_MAX ||
+        (long long)cat->x + (long long)cat->width * cat->across > 0x7FFFFFFF ||
+        (long long)cat->y + (long long)cat->height * cat->down > 0x7FFFFFFF)
+        return OWF_ERR_UNSUPPORTED;
+    if (first == -1) first = 0;
+    if (last == -1) last = t->nrows - 1;
+    if (first < 0 || last < first || last >= t->nrows) return OWF_ERR_UNSUPPORTED;
+    n = deck->slides[page].nobjs;
+    if (n <= 0) return OWF_ERR_FORMAT;
+    item = (unsigned char *)owf_calloc((size_t)n, 1);
+    map = (int *)owf_calloc((size_t)n, sizeof *map);
+    if (!item || !map) { owf_free(item); owf_free(map); return OWF_ERR_MEMORY; }
+    for (o = 0; o < n; ++o)
+        if (in_item(&deck->slides[page].objs[o], cat)) { item[o] = 1; ++nitem; }
+    if (!nitem) { owf_free(item); owf_free(map); return OWF_ERR_FORMAT; }
+    per = cat->across * cat->down;
+    records = last - first + 1;
+    out = (records + per - 1) / per;
+    for (i = 0; i < deck->nslides; ++i)               /* each page's and item's flows get numbers of their own */
+        for (o = 0; o < deck->slides[i].nobjs; ++o)
+            if (deck->slides[i].objs[o].flow_story >= base) base = deck->slides[i].objs[o].flow_story + 1;
+    if (base && (long long)(out + records + 1) * base > 0x7FFFFFFF) { owf_free(item); owf_free(map); return OWF_ERR_UNSUPPORTED; }
+    if ((long long)nitem * per + n > 0x7FFFFFFF / 2) { owf_free(item); owf_free(map); return OWF_ERR_UNSUPPORTED; }
+    for (p = 0; p < out; ++p) {
+        int at = page + 1 + p, r0 = first + p * per, own, mine;
+        if (!owf_deck_duplicate_slide(deck, page, at)) goto undo;
+        ++created;
+        own = ++unit;                                 /* the page's own objects */
+        for (cell = 1; cell < per && r0 + cell <= last; ++cell) {   /* copies of the item, its fields still fields */
+            int dx = (cell % cat->across) * cat->width, dy = (cell / cat->across) * cat->height;
+            ++unit;
+            for (o = 0; o < n; ++o) {
+                owf_obj *dst;
+                if (!item[o]) continue;
+                if (!(dst = owf_slide_add(&deck->slides[at], deck->slides[at].objs[o].kind))) goto undo;
+                owf_obj_clear(dst);
+                if (owf_obj_copy(dst, &deck->slides[at].objs[o])) { owf_obj_init(dst, OWF_OBJ_TEXT); goto undo; }
+                map[o] = deck->slides[at].nobjs - 1;
+                dst->x += dx;
+                dst->y += dy;
+                if (dst->flow_story >= 0) dst->flow_story += unit * base;
+            }
+            for (o = 0; o < n; ++o) {
+                owf_obj *dst;
+                int parent;
+                if (!item[o]) continue;
+                dst = &deck->slides[at].objs[map[o]];
+                parent = deck->slides[at].objs[o].parent;
+                dst->parent = parent >= 0 && parent < n && item[parent] ? map[parent] : -1;
+                if (obj_final(dst, t, r0 + cell)) goto undo;
+            }
+        }
+        mine = ++unit;                                /* the first item */
+        for (o = 0; o < n; ++o) {                     /* the item itself and the rest: the page's first record */
+            owf_obj *obj = &deck->slides[at].objs[o];
+            if (obj_final(obj, t, r0)) goto undo;
+            if (obj->flow_story >= 0) obj->flow_story += (item[o] ? mine : own) * base;
+        }
+    }
+    owf_deck_delete_slide(deck, page);
+    owf_free(item);
+    owf_free(map);
+    if (made) *made = out;
+    return OWF_OK;
+undo:
+    while (created-- > 0) owf_deck_delete_slide(deck, page + 1);
+    owf_free(item);
+    owf_free(map);
+    return OWF_ERR_MEMORY;
+}
