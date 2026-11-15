@@ -332,16 +332,20 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
  * keeps the setting (owf_doc.track_changes). Accepting or rejecting is undoable.
  *
  * A change, as these calls count them, is a row of text and paragraph ends in the caret's story that name
- * the same owf_revision. */
+ * the same owf_revision, or (libowf 1.11) a row of runs that name the same format change. */
 void ow_editor_set_track_changes(ow_editor *editor, int on);
 int ow_editor_track_changes(const ow_editor *editor);
 /* The name new changes are made under; NULL or "" for none (an unknown author). */
 int ow_editor_set_review_author(ow_editor *editor, const char *utf8);
 const char *ow_editor_review_author(const ow_editor *editor);
 
+/* libowf 1.11: ow_change_info.kind for a tracked format change (owf_run.format_change); its runs count as a
+ * change of their own unless they are an insertion's or deletion's too */
+#define OW_CHANGE_FORMAT 3
+
 typedef struct {
     int index;               /* 0, 1... in the story */
-    int kind;                /* OWF_REV_INSERT or OWF_REV_DELETE */
+    int kind;                /* OWF_REV_INSERT, OWF_REV_DELETE or OW_CHANGE_FORMAT */
     const char *author;      /* the document's; NULL: unknown */
     const char *date;        /* ISO 8601; NULL: unknown */
     ow_position start, end;  /* where it is, as a selection */

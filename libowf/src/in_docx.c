@@ -1378,19 +1378,17 @@ static void run(docx *d, const owf_xml_node *r, const owf_charfmt *para_char)
             const owf_xml_node *ostyle = wchild(d, old, "rStyle");
             owf_charfmt before = *para_char;
             owf_format_span span;
-            int number;
             if (ostyle)
                 owf_styles_resolve(d->tables, 1, wval(d, ostyle), OWF_FAMILY_TEXT, NULL, &before);
             memset(&cp, 0, sizeof cp);
             read_rpr(d, old, &cp);
             owf_charprops_apply(&before, &cp);
             before = relative(d, before);            /* as the runs' formats are kept (set_fmt) */
-            number = owf_track_format_add(d->doc, owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"),
-                                          &before);
-            if (!number) d->failed = 1;
             owf_format_begin(&span, d->b);
             run_children(d, r, &f);
-            owf_format_end(&span, d->b, number);
+            if (owf_format_end(&span, d->b, owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"),
+                               &before) < 0)
+                d->failed = 1;
             return;
         }
     }

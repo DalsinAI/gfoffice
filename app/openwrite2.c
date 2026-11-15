@@ -4153,7 +4153,8 @@ static void sync_track_menu(void)
 
 static void change_text(const ow_change_info *info, int count, char *out, size_t size)
 {
-    snprintf(out, size, "%s by %s%s%s (%d of %d)", info->kind == OWF_REV_DELETE ? "Deletion" : "Insertion",
+    snprintf(out, size, "%s by %s%s%s (%d of %d)",
+             info->kind == OWF_REV_DELETE ? "Deletion" : info->kind == OW_CHANGE_FORMAT ? "Format change" : "Insertion",
              info->author && *info->author ? info->author : "unknown author", info->date && *info->date ? ", " : "",
              info->date ? info->date : "", info->index + 1, count);
 }
