@@ -75,6 +75,7 @@
 #ifdef OPENPUBLISHER
 #include "openpublisher_core.h"
 #include "openpublisher_merge.h"
+#include "openpublisher_template.h"
 #endif
 #include "ow_layout.h"
 #include "owf_pdf.h"
@@ -153,12 +154,16 @@ enum {
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
     M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
-    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES, M_MERGE_CATALOG
+    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES, M_MERGE_CATALOG,
+    M_NEW_TEMPLATE
 };
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
     { NM_ITEM, "New", "N", 0, 0, (APTR)M_NEW },
+#ifdef OPENPUBLISHER
+    { NM_ITEM, "New from Template...", NULL, 0, 0, (APTR)M_NEW_TEMPLATE },
+#endif
     { NM_ITEM, "Open...", "O", 0, 0, (APTR)M_OPEN },
     { NM_ITEM, "Save", "S", 0, 0, (APTR)M_SAVE },
     { NM_ITEM, "Save As...", NULL, 0, 0, (APTR)M_SAVE_AS },
@@ -7283,6 +7288,40 @@ static void new_deck(void)
     relayout();
 }
 
+#ifdef OPENPUBLISHER
+/* A new publication from built-in template i: OWF_OK or the error */
+static int template_now(int i)
+{
+    owf_deck *d = NULL;
+    char msg[120];
+    const opp_template_info *t = opp_template_info_at(i);
+    int rc = opp_template_new(i, &d);
+    if (rc != OWF_OK) return rc;
+    master_view_leave();
+    set_deck(d, "", "ODP");
+    snprintf(msg, sizeof msg, "A new %s: click a box to type in it.", t ? t->name : "publication");
+    set_status(msg);
+    relayout();
+    return OWF_OK;
+}
+
+static void new_from_template(void)
+{
+    char (*names)[72];
+    int k, n = opp_template_count(), rc;
+    if (!confirm_discard()) return;
+    if (!(names = (char (*)[72])calloc((size_t)n, sizeof *names))) return;
+    for (k = 0; k < n; ++k) {
+        const opp_template_info *t = opp_template_info_at(k);
+        snprintf(names[k], sizeof names[k], "%s", t ? t->name : "");
+    }
+    k = pick_requester("New from Template", "Template", "New", names, n);
+    free(names);
+    if (k < 0) return;
+    if ((rc = template_now(k)) != OWF_OK) tell(PROGRAM, owf_error_text(rc));
+}
+#endif
+
 static void do_open(void)
 {
     char path[512];
@@ -7722,6 +7761,9 @@ static void menu_action(ULONG id)
     case M_VIEW_NOTES: set_view(2); break;
     case M_VIEW_OUTLINE: set_view(3); break;
     case M_NEW: new_deck(); break;
+#ifdef OPENPUBLISHER
+    case M_NEW_TEMPLATE: new_from_template(); break;
+#endif
     case M_OPEN: do_open(); break;
     case M_SAVE: do_save(); break;
     case M_SAVE_AS: do_save_as(); break;
@@ -8132,7 +8174,7 @@ static int rexx_do_command(const char *command, char **result_out)
                   "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
                   "SETTEXT UNDO REDO QUIT"
 #ifdef OPENPUBLISHER
-                  " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES MERGECATALOG"
+                  " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES MERGECATALOG NEWTEMPLATE"
 #endif
                   );
     else if (starts_word_ci(command, "FAULT", &arg)) {
@@ -8699,6 +8741,25 @@ static int rexx_do_command(const char *command, char **result_out)
         else if (dirty && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
         else if ((rc = merge_pages_now()) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
         else { draw_status(); snprintf(result_text, sizeof result_text, "%d", deck->nslides); }
+    } else if (starts_word_ci(command, "NEWTEMPLATE", &arg)) {   /* NEWTEMPLATE [name [FORCE]]: the names, or a new publication */
+        char name[64] = "";
+        int k, force = 0, rc;
+        size_t len = strlen(arg);
+        if (len >= 6 && !strcasecmp(arg + len - 5, "FORCE") && arg[len - 6] == ' ') { force = 1; len -= 6; }
+        while (len && arg[len - 1] == ' ') --len;
+        if (len >= sizeof name) len = sizeof name - 1;
+        memcpy(name, arg, len);
+        name[len] = 0;
+        if (*name == '"' && len >= 2 && name[len - 1] == '"') { memmove(name, name + 1, len - 2); name[len - 2] = 0; }
+        if (!*name) {                                /* the template names, one per line */
+            size_t at = 0;
+            result_text[0] = 0;
+            for (k = 0; k < opp_template_count() && at + 2 < sizeof result_text; ++k)
+                at += (size_t)snprintf(result_text + at, sizeof result_text - at, "%s%s", k ? "\n" : "", opp_template_info_at(k)->name);
+        } else if ((k = opp_template_find(name)) < 0) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No such template"); }
+        else if (dirty && !force) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else if ((rc = template_now(k)) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+        else snprintf(result_text, sizeof result_text, "%d", deck->nslides);
     } else if (starts_word_ci(command, "MERGECATALOG", &arg)) {  /* MERGECATALOG x y width height across down [FORCE] */
         opp_catalog cat;
         char force[8] = "";
