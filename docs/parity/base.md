@@ -22,7 +22,7 @@ as a form, one record at a time, with Find and its related rows below.
 | Reports | Gap | 2 | Generated as GFOpenWrite documents |
 | CSV/DBF/Calc import and export | Part | 2 | B1a: CSV import into a table (all or none, by header or field order, separator found) and export of the datasheet as shown; round trips keep keys and values. B1b: New Table from CSV (types guessed from 200 rows, changeable), ISO-8859-1 or UTF-8 both ways, bad rows left out and listed. Not yet: DBF, sheets |
 | Locking, recovery | Part | 1 | B0a on the lab: the dot-file lock refuses a second writer, `unix-none` takes none; the rollback journal recovers; journal mode TRUNCATE; the RAM: issue does not happen with today's build |
-| ARexx | Part | 2 | Per ARexx-RULE.md. #155 (0.4.1): port GFOPENBASE with VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN TABLES TABLE ROW QUIT, no requesters while a command runs; `FILE TABLE=t ROW=n` from the Shell. Not yet: commands that add, change or find rows, run a query |
+| ARexx | Part | 2 | Per ARexx-RULE.md. #155 (0.4.1): port GFOPENBASE with VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN TABLES TABLE ROW QUIT, no requesters while a command runs; `FILE TABLE=t ROW=n` from the Shell. 0.10.0: FIRSTROW NEXTROW PREVROW LASTROW walk the datasheet's rows in its sort and filter and COUNTROWS counts them; GETFIELDS, GETROW [KEY k] [FIELD f], ADDROW Field=Value..., CHANGEROW [KEY k] Field=Value... and DELETEROW [KEY k] read and change rows (KEY left out: the row chosen), results in RESULT, the reason in LASTERROR, no requesters. Not yet: finding rows, running a query |
 | Connect to other databases (ODBC/JDBC) | Gap | - | Not planned: no such stack on AmigaOS |
 
 ## Evidence

@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.6.2"
+#define OB_CORE_VERSION "0.10.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -235,6 +235,25 @@ int ob_rows(ob_project *p, const char *table, ob_int after, int max, ob_row_fn c
 /* The same from the row at position `first` (0 is the first) in key order:
  * a datasheet scrolled to a place (LIMIT and OFFSET, design 5.4). */
 int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_fn cb, void *user);
+
+/* ---- ARexx row commands (core 0.10.0, src/base/ob_rexx.c) ----
+ * One of these, as GFOpenBase's port gets it, on table:
+ *   ADDROW Field=Value ...        RESULT the new row's key
+ *   CHANGEROW [KEY k] Field=Value ...   OK
+ *   DELETEROW [KEY k]             OK, with no requester
+ *   GETROW [KEY k] [FIELD f]      the field's value, or every value in
+ *                                 field order with a tab between
+ *   GETFIELDS                     the field names, each in quotes
+ * A pair is Field=Value, "Field=Value" or Field="Value" (a value with
+ * spaces in quotes); field names in any case; a field named Key or Field
+ * goes in quotes. Values are the fields' own text, as ob_row_add takes
+ * them. KEY left out is current (0: none). The answer, or the reason,
+ * goes in out; the return is ARexx's code (0 OK, 5 no such row or none
+ * chosen, 10 a bad command or value, 20 out of memory), or -1 when
+ * command isn't one of these. *row (if not NULL) gets the row it was
+ * about, 0 when none. */
+int ob_rexx_rows(ob_project *p, const char *table, ob_int current, const char *command,
+                 char *out, size_t size, ob_int *row);
 
 /* ---- Views: a datasheet sorted and filtered (design 5.4) ----
  * sort: a field to sort by ("" keeps key order), desc for Z to A; ties keep
