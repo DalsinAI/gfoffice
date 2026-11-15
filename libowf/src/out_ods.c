@@ -2959,7 +2959,12 @@ static void put_pivots(ods_out *w, owf_buf *b)
         }
         for (k = 0; k < def.ndata; k++) {
             put_pivot_field(w, b, &def, def.data[k].field, "data", k);
-            owf_buf_printf(b, " table:function=\"%s\"/>", owf_pivot_function_word(def.data[k].function, 0));
+            owf_buf_printf(b, " table:function=\"%s\"", owf_pivot_function_word(def.data[k].function, 0));
+            if (def.data[k].show > OWF_PIVOT_SHOW_NORMAL && def.data[k].show <= OWF_PIVOT_SHOW_LAST)
+                owf_buf_printf(b, "><table:data-pilot-field-reference table:field-name=\"\" table:type=\"%s\"/>"
+                                  "</table:data-pilot-field>", owf_pivot_show_word(def.data[k].show, 0));
+            else
+                owf_buf_puts(b, "/>");
         }
         if (def.ndata > 1)                       /* the data fields' own place: under the column fields */
             owf_buf_printf(b, "<table:data-pilot-field table:source-field-name=\"\" table:orientation=\"%s\" "

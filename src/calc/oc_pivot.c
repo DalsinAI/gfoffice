@@ -462,12 +462,58 @@ static void out_bold(pivot_out *o, unsigned row, unsigned col)
         o->rc = bold_cell(o->work, &o->work->sheets[o->sheet], row, col);
 }
 
-static void out_bucket(pivot_out *o, unsigned row, unsigned col, const pivot_bucket *bucket, int function,
-                       int style)
+static void out_error(pivot_out *o, unsigned row, unsigned col, const char *word)
 {
-    double value;
-    if (bucket_value(bucket, function, &value))
+    if (o->rc == OWF_OK && row < OC_MAX_ROWS && col < OC_MAX_COLS)
+        o->rc = owf_calc_enter(o->calc, o->sheet, row, col, word);
+}
+
+/* A value as its data field shows it (owf_pivot.h): cell is its own
+ * bucket, row_total, col_total and grand the totals that it is shared out
+ * of, each made with the same function. A share uses percent, the style
+ * of its own; a total of 0 gives #DIV/0!. */
+static void out_shown(pivot_out *o, unsigned row, unsigned col, const pivot_bucket *cell,
+                      const pivot_bucket *row_total, const pivot_bucket *col_total, const pivot_bucket *grand,
+                      const owf_pivot_data *data, int style, int percent_style)
+{
+    double value, r, c, g;
+    if (!bucket_value(cell, data->function, &value))
+        return;
+    switch (data->show) {
+    case OWF_PIVOT_SHOW_ROW:
+    case OWF_PIVOT_SHOW_COLUMN:
+    case OWF_PIVOT_SHOW_TOTAL:
+        if (!bucket_value(data->show == OWF_PIVOT_SHOW_ROW ? row_total :
+                          data->show == OWF_PIVOT_SHOW_COLUMN ? col_total : grand, data->function, &r) ||
+            r == 0.0) {
+            out_error(o, row, col, "#DIV/0!");
+            return;
+        }
+        out_number(o, row, col, value / r, percent_style);
+        return;
+    case OWF_PIVOT_SHOW_INDEX:
+        if (!bucket_value(row_total, data->function, &r) || !bucket_value(col_total, data->function, &c) ||
+            !bucket_value(grand, data->function, &g) || r * c == 0.0) {
+            out_error(o, row, col, "#DIV/0!");
+            return;
+        }
+        out_number(o, row, col, value * g / (r * c), style);
+        return;
+    default:
         out_number(o, row, col, value, style);
+    }
+}
+
+/* The style of a value cell with a percent format in place of its own. */
+static int percent_of(owf_book *book, int style)
+{
+    owf_cellstyle copy;
+    int format = owf_book_numfmt(book, "0.00%");
+    if (format < 0)
+        return -1;
+    copy = book->styles[style >= 0 && style < book->nstyles ? style : 0];
+    copy.number_format = format;
+    return owf_book_style(book, &copy);
 }
 
 /* Empties the old output: its rectangle when known, else the whole sheet. */
@@ -547,7 +593,7 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
     unsigned nf = def->nrow + def->ncol, i, f, r, c, d, n;
     unsigned key[OWF_PIVOT_FIELDS * 2];
     unsigned top, header_rows, label_cols, nrk, nck, total_cols, first_value_row;
-    int value_style[OWF_PIVOT_DATA];
+    int value_style[OWF_PIVOT_DATA], percent_style[OWF_PIVOT_DATA];
     pivot_out o;
     char text[160];
 
@@ -592,6 +638,13 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
                 value_style[d] = v->style;
         }
         kept++;
+    }
+    for (d = 0; d < nd; d++) {
+        int show = def->data[d].show;
+        percent_style[d] = value_style[d];
+        if ((show == OWF_PIVOT_SHOW_ROW || show == OWF_PIVOT_SHOW_COLUMN || show == OWF_PIVOT_SHOW_TOTAL) &&
+            (percent_style[d] = percent_of(work, value_style[d])) < 0)
+            goto done;
     }
     /* no row fields: one row of totals; no column fields: one column per data field. A filter
        that keeps no source row leaves the table with headings only. */
@@ -741,11 +794,14 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
             out_text(&o, row, def->at_col, "Total");
         for (c = 0; c < nck; c++)
             for (d = 0; d < nd; d++)
-                out_bucket(&o, row, def->at_col + label_cols + c * nd + d,
-                           &matrix[((size_t)rk * nck + corder[c]) * nd + d], def->data[d].function, value_style[d]);
+                out_shown(&o, row, def->at_col + label_cols + c * nd + d,
+                          &matrix[((size_t)rk * nck + corder[c]) * nd + d], &rtot[(size_t)rk * nd + d],
+                          &ctot[(size_t)corder[c] * nd + d], &grand[d], &def->data[d], value_style[d],
+                          percent_style[d]);
         for (d = 0; d < total_cols; d++) {
             unsigned col = def->at_col + label_cols + nck * nd + d;
-            out_bucket(&o, row, col, &rtot[(size_t)rk * nd + d], def->data[d].function, value_style[d]);
+            out_shown(&o, row, col, &rtot[(size_t)rk * nd + d], &rtot[(size_t)rk * nd + d], &grand[d], &grand[d],
+                      &def->data[d], value_style[d], percent_style[d]);
             out_bold(&o, row, col);
         }
     }
@@ -754,11 +810,12 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
         out_text(&o, row, def->at_col, "Grand Total");
         for (c = 0; c < nck; c++)
             for (d = 0; d < nd; d++)
-                out_bucket(&o, row, def->at_col + label_cols + c * nd + d, &ctot[(size_t)corder[c] * nd + d],
-                           def->data[d].function, value_style[d]);
+                out_shown(&o, row, def->at_col + label_cols + c * nd + d, &ctot[(size_t)corder[c] * nd + d],
+                          &grand[d], &ctot[(size_t)corder[c] * nd + d], &grand[d], &def->data[d], value_style[d],
+                          percent_style[d]);
         for (d = 0; d < total_cols; d++)
-            out_bucket(&o, row, def->at_col + label_cols + nck * nd + d, &grand[d], def->data[d].function,
-                       value_style[d]);
+            out_shown(&o, row, def->at_col + label_cols + nck * nd + d, &grand[d], &grand[d], &grand[d], &grand[d],
+                      &def->data[d], value_style[d], percent_style[d]);
         for (c = 0; c < def->cols; c++)
             out_bold(&o, row, def->at_col + c);
     }

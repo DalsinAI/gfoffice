@@ -293,6 +293,19 @@ typedef struct {
     int failed;
 } pivot_text;
 
+/* ";v=0:r,1:i": data fields shown as a share of the row (r), the column
+ * (c) or the grand total (t), or as an index (i); the rest as they are. */
+static const char *const pivot_show_letters[OWF_PIVOT_SHOW_LAST + 1] = { "", "r", "c", "t", "i" };
+
+static int pivot_show_from_letter(char letter)
+{
+    int i;
+    for (i = OWF_PIVOT_SHOW_NORMAL + 1; i <= OWF_PIVOT_SHOW_LAST; i++)
+        if (letter == pivot_show_letters[i][0])
+            return i;
+    return -1;
+}
+
 static void pt_put(pivot_text *t, const char *s)
 {
     while (*s) {
@@ -349,7 +362,7 @@ static void pt_page(pivot_text *t, const owf_pivot_page *pg)
 int owf_pivot_config_text(const owf_pivotdef *def, char *out, size_t size)
 {
     pivot_text t;
-    unsigned i;
+    unsigned i, n;
     if (!def || !out || size < 8)
         return 0;
     t.out = out;
@@ -396,6 +409,14 @@ int owf_pivot_config_text(const owf_pivotdef *def, char *out, size_t size)
             pt_unsigned(&t, def->sort_field[i]);
             pt_put(&t, def->sort_order[i] == OWF_PIVOT_SORT_DESCENDING ? ":d" : ":a");
         }
+    }
+    for (i = 0, n = 0; i < def->ndata; i++) {    /* the same */
+        if (def->data[i].show <= OWF_PIVOT_SHOW_NORMAL || def->data[i].show > OWF_PIVOT_SHOW_LAST)
+            continue;
+        pt_put(&t, n++ ? "," : ";v=");
+        pt_unsigned(&t, i);
+        pt_put(&t, ":");
+        pt_put(&t, pivot_show_letters[def->data[i].show]);
     }
     if (def->nhide) {                        /* the same: only when used */
         pt_put(&t, ";h=");
@@ -484,6 +505,7 @@ static int parse_old_config(const char *p, owf_pivotdef *def)
     def->ndata = 1;
     def->data[0].field = value - def->source.first_col;
     def->data[0].function = (int)function;
+    def->data[0].show = OWF_PIVOT_SHOW_NORMAL;
     return 1;
 }
 
@@ -524,6 +546,7 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
                     def->ndata >= OWF_PIVOT_DATA)
                     return 0;
                 def->data[def->ndata].field = v;
+                def->data[def->ndata].show = OWF_PIVOT_SHOW_NORMAL;
                 def->data[def->ndata++].function = (int)w;
                 if (*p == ',')
                     p++;
@@ -580,6 +603,18 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
                 !pivot_number_at(&p, &def->cols))
                 return 0;
             break;
+        case 'v':
+            while (*p >= '0' && *p <= '9') {
+                int show;
+                if (!pivot_number_at(&p, &v) || *p++ != ':' || v >= def->ndata ||
+                    (show = pivot_show_from_letter(*p)) <= OWF_PIVOT_SHOW_NORMAL)
+                    return 0;
+                def->data[v].show = show;
+                p++;
+                if (*p == ',')
+                    p++;
+            }
+            break;
         case 's':
             while (*p >= '0' && *p <= '9') {
                 if (!pivot_number_at(&p, &v) || *p++ != ':' || (*p != 'a' && *p != 'd') ||
@@ -630,7 +665,8 @@ int owf_pivot_check(const owf_book *book, const owf_pivotdef *def)
     }
     for (i = 0; i < def->ndata; i++)
         if (def->data[i].field >= width || def->data[i].function < OWF_PIVOT_FN_FIRST ||
-            def->data[i].function > OWF_PIVOT_FN_LAST)
+            def->data[i].function > OWF_PIVOT_FN_LAST || def->data[i].show < OWF_PIVOT_SHOW_NORMAL ||
+            def->data[i].show > OWF_PIVOT_SHOW_LAST)
             return 0;
     return 1;
 }
@@ -734,6 +770,30 @@ const char *owf_pivot_function_word(int function, int ooxml)
     if (function < OWF_PIVOT_FN_FIRST || function > OWF_PIVOT_FN_LAST)
         return NULL;
     return ooxml ? pivot_xml_words[function] : pivot_odf_words[function];
+}
+
+static const char *const pivot_show_odf[OWF_PIVOT_SHOW_LAST + 1] = { "none", "row-percentage",
+    "column-percentage", "total-percentage", "index" };
+static const char *const pivot_show_xml[OWF_PIVOT_SHOW_LAST + 1] = { "normal", "percentOfRow", "percentOfCol",
+    "percentOfTotal", "index" };
+
+const char *owf_pivot_show_word(int show, int ooxml)
+{
+    if (show < OWF_PIVOT_SHOW_NORMAL || show > OWF_PIVOT_SHOW_LAST)
+        return NULL;
+    return ooxml ? pivot_show_xml[show] : pivot_show_odf[show];
+}
+
+int owf_pivot_show_from_word(const char *word)
+{
+    int i;
+    if (!word)
+        return -1;
+    for (i = OWF_PIVOT_SHOW_NORMAL; i <= OWF_PIVOT_SHOW_LAST; i++)
+        if (pivot_same_word(word, pivot_show_odf[i], strlen(pivot_show_odf[i])) ||
+            pivot_same_word(word, pivot_show_xml[i], strlen(pivot_show_xml[i])))
+            return i;
+    return -1;
 }
 
 int owf_pivot_function_from_word(const char *word)

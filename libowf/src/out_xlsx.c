@@ -1655,7 +1655,13 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
         owf_buf_printf(b, "\" fld=\"%u\"", def->data[k].field);
         if (def->data[k].function != OWF_PIVOT_FN_SUM)
             owf_buf_printf(b, " subtotal=\"%s\"", owf_pivot_function_word(def->data[k].function, 1));
-        owf_buf_puts(b, " baseField=\"0\" baseItem=\"0\"/>");
+        if (def->data[k].show > OWF_PIVOT_SHOW_NORMAL && def->data[k].show <= OWF_PIVOT_SHOW_LAST)
+            owf_buf_printf(b, " showDataAs=\"%s\"", owf_pivot_show_word(def->data[k].show, 1));
+        owf_buf_puts(b, " baseField=\"0\" baseItem=\"0\"");
+        if (def->data[k].show == OWF_PIVOT_SHOW_ROW || def->data[k].show == OWF_PIVOT_SHOW_COLUMN ||
+            def->data[k].show == OWF_PIVOT_SHOW_TOTAL)
+            owf_buf_puts(b, " numFmtId=\"10\"");      /* 0.00%, as Excel gives a share */
+        owf_buf_puts(b, "/>");
     }
     owf_buf_puts(b, "</dataFields><pivotTableStyleInfo name=\"PivotStyleLight16\" showRowHeaders=\"1\" "
                     "showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/>"
