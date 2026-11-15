@@ -315,7 +315,7 @@ static int add_frame(const ow_layout *l, const owf_doc *doc, ol_document *od, ol
     } else {
         b.border_sides = 0;
     }
-    if (change && OWF_DOC_REVISION(doc, change) && !(l && (l->view & OW_LAYOUT_FINAL))) {
+    if (change > 0 && change <= doc->nrevisions && !(l && (l->view & OW_LAYOUT_FINAL))) {
         /* 2.0.38: a tracked frame: its edge twice as thick in its author's colour (as changed text's) */
         b.border_width = BORDER_WIDTH * 2;
         b.border_argb = argb(change_colour(doc, change));
