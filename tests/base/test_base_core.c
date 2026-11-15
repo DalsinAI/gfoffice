@@ -1717,6 +1717,32 @@ static void test_form_buttons(void)
     for (i = 0; i < OB_FE_COUNT; i++) f.events[i][0] = 0;
     CHECK(ob_form_save(p, &f) && ob_form_get(p, "Plain", &g) && g.nitems == 1 && !g.events[OB_FE_OPEN][0], "a plain form");
     ob_close(p);
+    {
+        sqlite3 *db;
+        CHECK(sqlite3_open(path("fbuttons.oadb"), &db) == SQLITE_OK
+              && sqlite3_exec(db, "INSERT INTO oadb_forms VALUES('Newer', 'Customers', 'oadb form 1\n"
+                                  "button\t\tGo\t0\t0\t6\t1\topenform\tCard\tlater\n"
+                                  "glow\tsoft\t3\nevent\tsparkle\tx.rexx\nevent\topen\tgo.rexx\n');"
+                                  "INSERT INTO oadb_forms VALUES('Later', 'Customers', 'oadb form 2\n"
+                                  "button\t\tGo\t0\t0\t6\t1\topenform\tCard\n')", NULL, NULL, NULL) == SQLITE_OK,
+              "newer words written by hand");
+        sqlite3_close(db);
+    }
+    {
+        char err[OB_ERR_MAX];
+        p = ob_open(path("fbuttons.oadb"), 0, err, sizeof err);
+        CHECK(p != NULL, "reopened: %s", err);
+        if (!p) return;
+    }
+    CHECK(ob_form_get(p, "Newer", &g) && g.nitems == 1 && g.items[0].kind == OB_FI_BUTTON && g.items[0].action == OB_FA_OPENFORM
+          && !strcmp(g.items[0].arg, "Card") && !strcmp(g.events[OB_FE_OPEN], "go.rexx") && !g.events[OB_FE_CURRENT][0],
+          "a newer GFOpenBase's words (glow, a sparkle event, a word after a button) passed over: %d", g.nitems);
+    CHECK(!ob_form_get(p, "Later", &g), "an oadb form 2 can't be read");
+    /* a form it can't read doesn't stop renames; it is left as it is */
+    CHECK(ob_form_rename(p, "Card", "Card2"), "a rename all the same: %s", ob_error(p));
+    CHECK(ob_form_get(p, "Newer", &g) && !strcmp(g.items[0].arg, "Card2") && ob_form_get(p, "Other", &g) && !strcmp(g.items[0].arg, "Card2"),
+          "the buttons it can read follow");
+    ob_close(p);
 }
 
 /* What the designer window does to a form: room for a new item, cursor

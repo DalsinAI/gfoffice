@@ -4421,8 +4421,8 @@ static int forms_follow(ob_project *p, const ob_table *old, const ob_table *t, c
     return good;
 }
 
-/* Buttons doing action with arg old_name now name new_name, in every form.
- * Inside the caller's step. */
+/* Buttons doing action with arg old_name now name new_name, in every form
+ * it can read. Inside the caller's step. */
 static int buttons_follow(ob_project *p, ob_faction action, const char *old_name, const char *new_name)
 {
     sqlite3_stmt *st;
@@ -4445,7 +4445,7 @@ static int buttons_follow(ob_project *p, ob_faction action, const char *old_name
         int rc;
         e = strchr(s, '\n');
         *e = 0;
-        if (!(good = ob_form_get(p, s, f))) break;
+        if (!ob_form_get(p, s, f)) continue;     /* one it can't read (a newer GFOpenBase's) is left as it is */
         for (k = n = 0; k < f->nitems; k++)
             if (f->items[k].kind == OB_FI_BUTTON && f->items[k].action == action && same(f->items[k].arg, old_name)) {
                 copy(f->items[k].arg, sizeof f->items[k].arg, new_name);

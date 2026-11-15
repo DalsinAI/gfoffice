@@ -2805,16 +2805,64 @@ static char f_go_form[OB_NAME_MAX];          /* a button's form to open next */
 static char f_run_query[OB_NAME_MAX];        /* a button's query to run when the form closes */
 #define FB_MAX 24                            /* buttons on one designed form */
 
+static struct MsgPort *rexx_port;            /* GFOpenBase's own ARexx port (below) */
+static char rexx_name[16];
+static void rexx_messages(void);
+static int form_up;                          /* a form window is open: ARexx can't change what it shows */
+
+/* A macro the form waits for: sent to ARexx's REXX port with GFOpenBase's
+ * port as its host, so its commands come here by themselves; GFOpenBase's
+ * port is answered while it runs (a macro that sends ROW or TABLE gets its
+ * answer), and its return code is what comes back. -1 when ARexx isn't
+ * there or the message can't be made. */
+static LONG form_macro_wait(const char *text, int is_string)
+{
+    struct MsgPort *reply, *rexx;
+    struct RexxMsg *rm;
+    LONG rc;
+    if (!RexxSysBase || !(reply = CreateMsgPort())) return -1;
+    rm = CreateRexxMsg(reply, (STRPTR)"rexx", rexx_port ? (STRPTR)rexx_name : NULL);
+    if (rm && !(rm->rm_Args[0] = (STRPTR)CreateArgstring((STRPTR)text, (LONG)strlen(text)))) { DeleteRexxMsg(rm); rm = NULL; }
+    if (!rm) { DeleteMsgPort(reply); return -1; }
+    rm->rm_Action = RXCOMM | (is_string ? RXFF_STRING : 0);
+    Forbid();
+    if ((rexx = FindPort((STRPTR)"REXX")) != NULL) PutMsg(rexx, (struct Message *)rm);
+    Permit();
+    if (rexx) {
+        while (!GetMsg(reply)) {
+            ULONG rsig = rexx_port ? (1UL << rexx_port->mp_SigBit) : 0;
+            if (Wait((1UL << reply->mp_SigBit) | rsig) & rsig) rexx_messages();
+        }
+        rc = rm->rm_Result1;
+    } else rc = -1;
+    DeleteArgstring((UBYTE *)rm->rm_Args[0]);
+    DeleteRexxMsg(rm);
+    DeleteMsgPort(reply);
+    return rc;
+}
+
 /* Runs an ARexx macro for the form: a file, given the form, its table and
- * the record's key, or ARexx in quotes. wait: the macro's return code (the
- * form waits, so the macro can't send it commands); else it runs on its own
- * and 0 is returned. -1 when it can't be started. */
+ * the record's key, or ARexx in quotes. wait: the macro's return code, the
+ * form answering GFOpenBase's port meanwhile (form_macro_wait), -1 (and
+ * nothing said) when it can't be started; else it runs on its own and 0 is
+ * returned, or -1 with the reason told. */
 static LONG form_macro(const char *macro, int wait)
 {
     char cmd[OB_ARG_MAX + 3 * OB_NAME_MAX + 48];
     BPTR in, out;
     LONG rc;
     if (!macro || !macro[0]) return 0;
+    if (wait) {
+        if (macro[0] == '\'' || macro[0] == '"') {          /* ARexx in quotes: the text between them */
+            size_t n = strlen(macro);
+            put_text(cmd, sizeof cmd, macro + 1);
+            if (n >= 2 && macro[n - 1] == macro[0]) cmd[n - 2 < sizeof cmd - 1 ? n - 2 : sizeof cmd - 1] = 0;
+            return form_macro_wait(cmd, 1);
+        }
+        snprintf(cmd, sizeof cmd, "\"%s\" \"%s\" \"%s\" %lld", macro,
+                 f_design ? f_design->name : cur.name, cur.name, (long long)f_key);
+        return form_macro_wait(cmd, 0);
+    }
     if (macro[0] == '\'' || macro[0] == '"') snprintf(cmd, sizeof cmd, "SYS:Rexxc/RX %s", macro);
     else snprintf(cmd, sizeof cmd, "SYS:Rexxc/RX \"%s\" \"%s\" \"%s\" %lld", macro,
                   f_design ? f_design->name : cur.name, cur.name, (long long)f_key);
@@ -2825,19 +2873,21 @@ static LONG form_macro(const char *macro, int wait)
         if (out) Close(out);
         return -1;
     }
-    rc = SystemTags((STRPTR)cmd, SYS_Input, (ULONG)in, SYS_Output, (ULONG)out, SYS_Asynch, wait ? FALSE : TRUE, TAG_DONE);
-    if (wait || rc == -1) { Close(in); Close(out); }      /* on its own, it closes them itself */
-    if (rc == -1) {
+    rc = SystemTags((STRPTR)cmd, SYS_Input, (ULONG)in, SYS_Output, (ULONG)out, SYS_Asynch, TRUE, TAG_DONE);
+    if (rc == -1) {                                        /* on its own, it closes them itself */
         char msg[OB_ARG_MAX + 40];
+        Close(in);
+        Close(out);
         snprintf(msg, sizeof msg, "The macro %.100s couldn't be started.", macro);
         tell(msg);
+        return -1;
     }
-    return wait ? rc : (rc == -1 ? -1 : 0);
+    return 0;
 }
 
 static void form_event(ob_fevent e)
 {
-    if (f_design && f_design->events[e][0]) form_macro(f_design->events[e], e == OB_FE_BEFORE_SAVE);
+    if (f_design && f_design->events[e][0] && e != OB_FE_BEFORE_SAVE) form_macro(f_design->events[e], 0);
 }
 
 /* Filter by Form (design 6.3): the form's fields take what to look for, a
@@ -2936,10 +2986,15 @@ static int form_save(struct Window *fw_)
     int i, n = 0, good;
     ob_int key = f_key;
     if (f_key > 0 && !form_changed()) return 1;
-    if (f_design && f_design->events[OB_FE_BEFORE_SAVE][0] && form_macro(f_design->events[OB_FE_BEFORE_SAVE], 1) >= 5) {
-        struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
-        EasyRequest(fw_, &es, NULL, (ULONG)"The form's Before Save macro refused to save the record.");
-        return 0;
+    if (f_design && f_design->events[OB_FE_BEFORE_SAVE][0]) {
+        LONG rc = form_macro(f_design->events[OB_FE_BEFORE_SAVE], 1);
+        if (rc == -1 || rc >= 5) {
+            struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
+            EasyRequest(fw_, &es, NULL, (ULONG)(rc == -1
+                ? "The form's Before Save macro couldn't be started (is ARexx running?), so the record wasn't saved."
+                : "The form's Before Save macro refused to save the record."));
+            return 0;
+        }
     }
     for (i = 0; i < cur.nfields; i++) {
         const ob_field *f = &cur.fields[i];
@@ -3696,7 +3751,17 @@ static void design_forms(void)
 }
 
 /* The form; 1 when it closed to open a subform row in its own form. */
+static int form_window_in(void);
 static int form_window(void)
+{
+    int r;
+    form_up = 1;
+    r = form_window_in();
+    form_up = 0;
+    return r;
+}
+
+static int form_window_in(void)
 {
     struct Window *w_;
     struct Gadget *eg = NULL, *g, *fg[FG_MAX];
@@ -3991,7 +4056,10 @@ static int form_window(void)
             }
         while (!action) {
             struct IntuiMessage *m;
-            WaitPort(w_->UserPort);
+            {
+                ULONG rsig = rexx_port ? (1UL << rexx_port->mp_SigBit) : 0;
+                if (Wait((1UL << w_->UserPort->mp_SigBit) | rsig) & rsig) rexx_messages();   /* the form's macros get answers */
+            }
             while (!action && (m = GT_GetIMsg(w_->UserPort)) != NULL) {
                 ULONG class = m->Class;
                 UWORD code = m->Code;
@@ -4411,7 +4479,6 @@ static void events(void)
 #define RX_ERROR 10
 #define RX_UNKNOWN 20
 #define REXX_PORT_NAME "GFOPENBASE"
-static struct MsgPort *rexx_port;
 static char rexx_name[16];
 
 static int is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
@@ -4533,7 +4600,11 @@ static int rexx_do_command(const char *command, char **result_out)
     int rc = RX_OK;
     result_text[0] = 0;
     command = skip_space(command);
-    if (starts_word_ci(command, "VERSION", &arg)) put_text(result_text, sizeof result_text, VERSION_TEXT);
+    if (form_up && (starts_word_ci(command, "OPEN", NULL) || starts_word_ci(command, "QUIT", NULL)
+                    || ((starts_word_ci(command, "TABLE", &arg) || starts_word_ci(command, "ROW", &arg)) && *arg))) {
+        rc = RX_NOW;
+        put_text(result_text, sizeof result_text, "A form is open: close it first (TABLE and ROW on their own still answer)");
+    } else if (starts_word_ci(command, "VERSION", &arg)) put_text(result_text, sizeof result_text, VERSION_TEXT);
     else if (starts_word_ci(command, "LASTERROR", &arg)) put_text(result_text, sizeof result_text, rexx_lasterror);
     else if (starts_word_ci(command, "HELP", &arg))
         put_text(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE "
