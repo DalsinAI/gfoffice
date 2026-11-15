@@ -16,6 +16,18 @@ set -u
 [ $# -eq 1 ] || { echo "usage: $0 DIR" >&2; exit 2; }
 DEST=$1
 mkdir -p "$DEST/src" || exit 1
+# Outside documents are never committed (the tests' .pub files are made by
+# tools/pubgen/make_pub.py): inside this repository only an ignored folder
+# will do, such as pub-corpus/ (.gitignore).
+HERE=$(cd "$(dirname "$0")/../.." && pwd)
+if git -C "$HERE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    case "$(cd "$DEST" && pwd)/" in
+    "$HERE"/*)
+        git -C "$HERE" check-ignore -q "$(cd "$DEST" && pwd)/src" ||
+            { echo "$0: $DEST is inside the repository and not ignored; use pub-corpus/ or a folder outside it" >&2; exit 2; }
+        ;;
+    esac
+fi
 FAILED=""
 
 # repo commit path... : a sparse, blobless clone at that commit, then the
@@ -54,6 +66,20 @@ fetch_git aspose-pub/Aspose.PUB-for-.NET beee619f9a4b7e2c8908e0fa132f4f4650b0897
 fetch_git gabriel-vasile/mimetype 7feb76447ef040104e1f283c376ec51f625a7a21 "mimetype-" \
     '/testdata/pub.pub'
 # apache/tika's testPUBLISHER.pub is the same file as POI's Simple.pub.
+
+# ---- govdocs1's one Publisher file (digitalcorpora.org; tests/pub/stress/PROVENANCE.md) ----
+fetch_url "https://digitalcorpora.s3.amazonaws.com/corpora/files/govdocs1/zipfiles/923.zip" govdocs1-923.zip
+if [ -f "$DEST/govdocs1-923.zip" ] && command -v python3 >/dev/null; then
+    python3 -I - "$DEST/govdocs1-923.zip" "$DEST" <<'EOF'
+import os, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    for n in z.namelist():
+        if n.endswith('923566.pub'):
+            with open(os.path.join(sys.argv[2], 'govdocs1-923566.pub'), 'wb') as f:
+                f.write(z.read(n))
+EOF
+    rm -f "$DEST/govdocs1-923.zip"
+fi
 
 # ---- .pub elsewhere (a PC; not reachable from the session's shell) ----
 # freedesktop.org bug 82362's attachments, through the tracker's REST

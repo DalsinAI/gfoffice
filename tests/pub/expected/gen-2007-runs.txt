@@ -1,0 +1,45 @@
+note 0 "1 frames on the scratch area, off the pages, are not shown" x1
+version Publisher 2007
+build-mark 0x15
+written-by 12.0
+page-size 210.0 x 297.0 mm (emu 7560000 x 10692000, twips 11906 x 16838)
+masters 1
+master 1 "Master Page A" frames 0
+pages 2
+page 1 master 1 frames 4
+  frame 0 text box 20.0 20.0 170.0 20.0 mm (emu 720000 720000 6840000 1440000) shape 202 text-id 1 story 0
+    para "Plain text in the default style."
+      run 0 "Plain text in the defaul" 10.0pt font "Times New Roman"
+  frame 1 text box 20.0 50.0 170.0 40.0 mm (emu 720000 1800000 6840000 3240000) shape 202 text-id 2 story 1
+    para "Bold and italic in Arial, 20 point. Then Courier at 12, bold alone"
+      run 0 "Bold and italic in Arial" bold italic 20.0pt font "Arial"
+      run 1 "Then Courier at 12, " 12.0pt font "Courier New"
+      run 2 "bold alone" bold 10.0pt font "Times New Roman"
+    para "A second paragraph, italic"
+      run 0 "A second paragraph, ital" italic 10.0pt font "Times New Roman"
+  frame 2 table box 20.0 100.0 120.0 40.0 mm (emu 720000 3600000 5040000 5040000) shape 1 text-id 3 story 2 table 3x2
+    para "Cell one"
+      run 0 "Cell one" 10.0pt font "Times New Roman"
+    para "Cell two"
+      run 0 "Cell two" 10.0pt font "Times New Roman"
+    para "Cell three"
+      run 0 "Cell three" 10.0pt font "Times New Roman"
+    para "Cell four"
+      run 0 "Cell four" 10.0pt font "Times New Roman"
+    para "Cell five"
+      run 0 "Cell five" 10.0pt font "Times New Roman"
+    para "Cell six"
+      run 0 "Cell six" 10.0pt font "Times New Roman"
+  frame 3 picture box 150.0 100.0 30.0 30.0 mm (emu 5400000 3600000 6480000 4680000) shape 75 picture 0
+page 2 master 1 frames 1
+  frame 0 text box 20.0 20.0 170.0 20.0 mm (emu 720000 720000 6840000 1440000) shape 202 text-id 4 story 3
+    para "On the second page"
+      run 0 "On the second page" 10.0pt font "Times New Roman"
+scratch-frames 1
+stories 5
+fonts 3
+font "Times New Roman"
+font "Arial"
+font "Courier New"
+pictures 1
+picture 0 image/png 107 bytes
