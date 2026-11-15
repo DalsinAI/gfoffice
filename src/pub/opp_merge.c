@@ -77,6 +77,108 @@ int opp_merge_insert_field(owf_obj *obj, int para, const char *column, const owf
     return OWF_OK;
 }
 
+static size_t edit_length(const owf_run *r)
+{
+    if (r->kind == OWF_RUN_TEXT) return r->text ? strlen(r->text) : 0;
+    return r->kind == OWF_RUN_TAB || r->kind == OWF_RUN_LINEBREAK ? 1 : 0;
+}
+
+/* Room for one more run in a paragraph */
+static int run_room(owf_para *p)
+{
+    owf_run *runs;
+    int want;
+    if (p->nruns < p->capruns) return 0;
+    want = p->capruns ? p->capruns * 2 : 4;
+    if (!(runs = (owf_run *)owf_realloc(p->runs, (size_t)want * sizeof *runs))) return -1;
+    p->runs = runs;
+    p->capruns = want;
+    return 0;
+}
+
+int opp_merge_insert_field_at(owf_obj *obj, int para, size_t offset, const char *column)
+{
+    owf_para *p;
+    owf_run field;
+    size_t cum = 0;
+    int j, at = -1;
+    char *tail = NULL;
+    if (!obj || !column || !*column) return OWF_ERR_FORMAT;
+    if (!obj->text.nparas && para == 0 && offset == 0) return opp_merge_insert_field(obj, -1, column, NULL);
+    if (para < 0 || para >= obj->text.nparas) return OWF_ERR_FORMAT;
+    p = &obj->text.paras[para];
+    for (j = 0; j < p->nruns && at < 0; ++j) {       /* the run the place is in, or after */
+        size_t k = edit_length(&p->runs[j]);
+        if (offset < cum + k) at = j;
+        else cum += k;
+    }
+    if (at < 0) {
+        if (offset != cum) return OWF_ERR_FORMAT;    /* past the end */
+        at = p->nruns;
+    } else if (offset > cum) {                       /* inside a text run: split it */
+        size_t inner = offset - cum;
+        const char *t = p->runs[at].text;
+        if (!(tail = text_copy(t + inner, strlen(t + inner)))) return OWF_ERR_MEMORY;
+    }
+    memset(&field, 0, sizeof field);
+    field.kind = OWF_RUN_FIELD;
+    field.field = OWF_FIELD_MERGE;
+    if (at > 0) field.fmt = p->runs[at - 1].fmt;
+    else if (p->nruns) field.fmt = p->runs[0].fmt;
+    else owf_charfmt_init(&field.fmt);
+    if (tail) field.fmt = p->runs[at].fmt;
+    field.href = text_copy(column, strlen(column));
+    field.text = shown(NULL, -1, column);
+    if (!field.href || !field.text || run_room(p) < 0) goto memory;
+    if (tail) {                                      /* text, field, rest of the text: two more runs */
+        owf_run rest = p->runs[at];
+        if (p->nruns + 2 > p->capruns) {
+            owf_run *runs = (owf_run *)owf_realloc(p->runs, (size_t)(p->capruns + 2) * sizeof *runs);
+            if (!runs) goto memory;
+            p->runs = runs;
+            p->capruns += 2;
+        }
+        rest.text = tail;
+        rest.href = p->runs[at].href ? text_copy(p->runs[at].href, strlen(p->runs[at].href)) : NULL;
+        if (p->runs[at].href && !rest.href) goto memory;
+        p->runs[at].text[offset - cum] = 0;
+        memmove(&p->runs[at + 3], &p->runs[at + 1], (size_t)(p->nruns - at - 1) * sizeof *p->runs);
+        p->runs[at + 1] = field;
+        p->runs[at + 2] = rest;
+        p->nruns += 2;
+        return OWF_OK;
+    }
+    memmove(&p->runs[at + 1], &p->runs[at], (size_t)(p->nruns - at) * sizeof *p->runs);
+    p->runs[at] = field;
+    p->nruns++;
+    return OWF_OK;
+memory:
+    owf_free(field.href);
+    owf_free(field.text);
+    owf_free(tail);
+    return OWF_ERR_MEMORY;
+}
+
+int opp_merge_load_file(const char *path, ow_merge_table **table)
+{
+    FILE *f;
+    char *data;
+    long size;
+    int memory = 0;
+    if (!table) return OWF_ERR_FORMAT;
+    *table = NULL;
+    if (!path || !(f = fopen(path, "rb"))) return OWF_ERR_IO;
+    if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return OWF_ERR_IO; }
+    if ((unsigned long)size > OW_MERGE_MAX_BYTES) { fclose(f); return OWF_ERR_UNSUPPORTED; }
+    if (!(data = (char *)owf_malloc((size_t)size + 1))) { fclose(f); return OWF_ERR_MEMORY; }
+    if (size && fread(data, 1, (size_t)size, f) != (size_t)size) { fclose(f); owf_free(data); return OWF_ERR_IO; }
+    fclose(f);
+    *table = ow_merge_table_from_text(data, (size_t)size, &memory);
+    owf_free(data);
+    if (!*table) return memory ? OWF_ERR_MEMORY : OWF_ERR_FORMAT;
+    return OWF_OK;
+}
+
 typedef struct {
     const ow_merge_table *t;
     int record, fields, missing, set;
