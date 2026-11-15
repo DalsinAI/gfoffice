@@ -529,6 +529,41 @@ int main(void)
         owf_deck_free(back);
     }
     {
+        /* groups nested past what the reader reads back: left out, and said */
+        owf_deck *d = owf_deck_new_empty();
+        owf_report *notes = owf_report_new();
+        owf_slide *sl = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+        owf_pub *p = NULL;
+        unsigned char *data = NULL;
+        size_t n = 0;
+        int k, said = 0;
+        CHECK(d && sl && notes);
+        if (d && sl && notes) {
+            d->width = 11906;
+            d->height = 16838;
+            for (k = 0; k < 21; k++) {
+                owf_obj *o = owf_slide_add(sl, k < 20 ? OWF_OBJ_GROUP : OWF_OBJ_SHAPE);
+                CHECK(o != NULL);
+                if (!o) break;
+                o->parent = k - 1;
+                o->x = o->y = 1440;
+                o->width = o->height = 2880;
+            }
+            CHECK(opp_export_pub(d, &data, &n, notes) == OWF_OK && data);
+            for (k = 0; k < owf_report_count(notes); k++) {
+                const char *t = owf_report_note(notes, k, NULL, NULL);
+                if (t && strstr(t, "5 object(s) in groups nested more than 16 deep")) said = 1;
+            }
+            CHECK(said);
+            CHECK(data && owf_pub_read(data, n, &p, report) == OWF_OK && p);
+            CHECK(p && p->npages == 1 && p->pages[0].nframes == 16);
+        }
+        owf_free(data);
+        owf_pub_free(p);
+        owf_report_free(notes);
+        owf_deck_free(d);
+    }
+    {
         owf_pub *none = NULL;
         unsigned char *data = (unsigned char *)"x";
         size_t n = 1;

@@ -146,7 +146,7 @@ typedef struct {
     int nout;
     unsigned long colours[256];          /* PL: the text's colours as 0x00BBGGRR */
     int ncolours;
-    int lost_pictures, lost_kinds, lost_colours;
+    int lost_pictures, lost_kinds, lost_colours, lost_deep;
 } writer;
 
 static int npages_all(const owf_pub *pub)
@@ -702,6 +702,21 @@ static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chun
     close_rec(b, sp);
 }
 
+/* Groups in groups: no deeper than the reader's MAX_DEPTH (in_pub.c, 24)
+ * leaves room for, with the page's own containers around them. */
+#define MAX_GROUP_DEPTH 16
+
+/* A frame and everything in it, when it is a group. */
+static int count_tree(const owf_pub_page *pg, int i)
+{
+    int j, n = 1;
+    if (pg->frames[i].kind == OWF_PUB_GROUP)
+        for (j = i + 1; j < pg->nframes; j++)
+            if (pg->frames[j].parent == i)
+                n += count_tree(pg, j);
+    return n;
+}
+
 /* A frame whose group is written goes in that group's container, not on the page. */
 static int in_written_group(const writer *w, int k, int i)
 {
@@ -725,8 +740,10 @@ static void write_tree(writer *w, owf_buf *b, int k, int i, unsigned long base, 
     if (f->kind == OWF_PUB_GROUP) {
         for (j = i + 1; j < pg->nframes; j++)
             if (pg->frames[j].parent == i && w->frame_chunk[k][j] >= 0) {
-                if (depth + 1 < 16)
+                if (depth + 1 < MAX_GROUP_DEPTH)
                     write_tree(w, b, k, j, base, shapes, depth + 1);
+                else
+                    w->lost_deep += count_tree(pg, j);   /* nested past what our reader reads back */
             }
         close_rec(b, c);
     }
@@ -1452,6 +1469,9 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
         if (w.lost_colours)
             owf_report_add(report, OWF_NOTE_APPROX, "%d run(s) of text past the first 255 colours saved in the automatic colour",
                            w.lost_colours);
+        if (w.lost_deep)
+            owf_report_add(report, OWF_NOTE_LOST, "%d object(s) in groups nested more than %d deep were left out",
+                           w.lost_deep, MAX_GROUP_DEPTH);
         if (pub->scratch_frames)
             owf_report_add(report, OWF_NOTE_LOST, "%d object(s) on the scratch area were not kept", pub->scratch_frames);
     }

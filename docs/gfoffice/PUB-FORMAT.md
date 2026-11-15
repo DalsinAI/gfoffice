@@ -598,7 +598,8 @@ our reader; whether Publisher checks them is not known). Groups: an F003
 container whose first shape has F009 (the group's rectangle, set to its own
 box about the page centre, so its frames' F00F boxes are the same numbers)
 and flags 0x201; its frames follow with flag 0x2 and their Contents chunks
-have the group's chunk as parent. Shape numbers are the file's own for the
+have the group's chunk as parent. Groups nest 16 deep at most (the reader
+reads 24 containers); frames deeper are left out with a note. Shape numbers are the file's own for the
 2002-or-later forms (202 for text boxes). WordArt: its shape number, and its
 text in 0xC0C0 (UTF-16, paragraphs apart by CR, a NUL), not in Quill. The
 default style (STSH 1, style 0) gets the first WordArt's size, typeface and
