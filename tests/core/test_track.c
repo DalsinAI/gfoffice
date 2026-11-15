@@ -595,7 +595,10 @@ static void test_final_view(void)
             { 0, 1, 14, 0, 9, "Alpha{+ new+}[-beta-]|-Gamma|De|+lta" },     /* the space, not "a" of beta */
             { 1, 1, 14, 0, 9, "Alpha{+ new+}[- -][-beta-]|-Gamma|De|+lta" },/* the space marked; caret before it */
             { 0, 0, 9, 0, 9, "Alpha{+ new+}[-beta-]|-Gamma|De|+lta" },      /* Delete: the space */
-            { 1, 0, 10, 0, 10, "Alpha{+ new+} [-beta-]|-[-G-]amma|De|+lta" }/* past beta and the deleted end: G */
+            { 1, 0, 10, 0, 10, "Alpha{+ new+} [-beta-]|-[-G-]amma|De|+lta" },/* past beta and the deleted end: G */
+            /* not recording, the paragraph end between: only the join, beta whole (Agnus, 0146) */
+            { 0, 1, 100, 0, 14, "Alpha{+ new+} [-beta-]Gamma|De|+lta" },    /* Backspace at Gamma's start */
+            { 0, 0, 10, 0, 10, "Alpha{+ new+} [-beta-]Gamma|De|+lta" }      /* Delete at the end before it */
         };
         size_t k;
         for (k = 0; k < sizeof keys / sizeof keys[0]; ++k) {
@@ -605,7 +608,8 @@ static void test_final_view(void)
             ow_editor_set_final_view(ed, 1);
             ow_editor_set_track_changes(ed, keys[k].track);
             ow_editor_set_review_author(ed, "Cy");
-            caret(ed, 0, keys[k].at);
+            if (keys[k].at == 100) caret(ed, 1, 0);      /* (100: the next paragraph's start) */
+            else caret(ed, 0, keys[k].at);
             CHECK((keys[k].backspace ? ow_editor_backspace(ed) : ow_editor_delete_forward(ed)) == OWF_OK, "key");
             CHECK(!strcmp(dump(doc), keys[k].dump), dump(doc));
             off = focus_at(ed, &para);
