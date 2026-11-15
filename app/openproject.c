@@ -435,7 +435,7 @@ static void edit_cell(void)
     char text[400], prompt[64];
     int rc;
     if (usage_mode) {
-        set_status("Resource Usage is read only: Resources... edits the resources");
+        set_status("Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources");
         redraw();
         return;
     }
@@ -471,7 +471,12 @@ static void insert_task(void)
 static void delete_task(void)
 {
     int rc;
-    if (usage_mode || view.selected < 0) return;
+    if (usage_mode) {
+        set_status("Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources");
+        redraw();
+        return;
+    }
+    if (view.selected < 0) return;
     if ((rc = opj_delete_tasks(DOC, view.selected, 1)) != OWF_OK) edit_failed(rc, "Delete Task");
     redraw();
 }
@@ -832,6 +837,13 @@ static void menu_action(ULONG id, struct MenuItem *item)
 {
     char path[512], why[200];
     set_status("");
+    if (usage_mode && (id == M_EDIT || id == M_INSERT || id == M_DELETE || id == M_INDENT || id == M_OUTDENT ||
+                       id == M_LINK || id == M_UNLINK)) {
+        /* the task edits act on the Gantt chart's selection, which the Resource Usage view hides */
+        set_status("Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources");
+        redraw();
+        return;
+    }
     switch (id) {
     case M_NEW:
         if (may_drop() && run("NEW FORCE", NULL, 0) != OPJ_RX_OK) tell(rx.lasterror);
@@ -965,7 +977,8 @@ static void events(void)
         case IDCMP_VANILLAKEY:
             if (code == 13) edit_cell();
             else if (code == 127) delete_task();
-            else if (code == 9 && view.selected >= 0 && !usage_mode) {
+            else if (code == 9 && usage_mode) edit_cell();                 /* says it is read only */
+            else if (code == 9 && view.selected >= 0) {
                 edit_failed(opj_indent(DOC, view.selected, 1, (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) ? -1 : 1),
                             "Indent");
                 redraw();

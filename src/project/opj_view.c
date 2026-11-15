@@ -541,16 +541,13 @@ const char *opj_usage_column_title(int column)
     return column >= 0 && column < OPJ_NUCOLS ? titles[column] : "";
 }
 
-void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size)
+/* A cell of resource r's row (a -1) or of its assignment a's. */
+static void usage_cell(const opj_doc *doc, int r, int a, int column, char *out, size_t size)
 {
     static const int rcols[OPJ_NUCOLS] = { OPJ_RCOL_ID, OPJ_RCOL_NAME, OPJ_RCOL_WORK };
-    int r, a;
     char text[16];
     const owf_passign *as;
     const char *name;
-    if (!out || !size) return;
-    out[0] = 0;
-    if (column < 0 || column >= OPJ_NUCOLS || !opj_usage_row(doc, row, &r, &a)) return;
     if (a < 0) {
         opj_resource_cell_text(doc, r, rcols[column], out, size);
         return;
@@ -564,6 +561,15 @@ void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, siz
         opj_work_text(as->work, text);
         snprintf(out, size, "%s", text);
     }
+}
+
+void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size)
+{
+    int r, a;
+    if (!out || !size) return;
+    out[0] = 0;
+    if (column < 0 || column >= OPJ_NUCOLS || !opj_usage_row(doc, row, &r, &a)) return;
+    usage_cell(doc, r, a, column, out, size);
 }
 
 void opj_usage_view(const opj_view *v, opj_view *usage)
@@ -594,7 +600,7 @@ static void draw_usage_titles(oldraw *d, const opj_view *u)
     }
 }
 
-static void draw_usage_row(oldraw *d, const opj_view *u, const opj_doc *doc, int row, int assign)
+static void draw_usage_row(oldraw *d, const opj_view *u, const opj_doc *doc, int row, int resource, int assign)
 {
     static const int widths[OPJ_NUCOLS] = { OPJ_USAGE_ID_W, OPJ_USAGE_NAME_W, OPJ_USAGE_WORK_W };
     int c, x = 0, y = opj_row_y(u, row), selected = row == u->selected;
@@ -604,7 +610,8 @@ static void draw_usage_row(oldraw *d, const opj_view *u, const opj_doc *doc, int
         char text[256];
         oldraw_rect r;
         int indent = c == OPJ_UCOL_NAME && assign >= 0 ? u->row_height * 3 / 4 : 0;
-        opj_usage_cell_text(doc, row, c, text, sizeof text);
+        text[0] = 0;
+        usage_cell(doc, resource, assign, c, text, sizeof text);
         r.x = x + 3 + indent;
         r.y = y;
         r.w = widths[c] - 6 - indent;
@@ -687,7 +694,7 @@ void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldr
         for (row = u.first_row; row < last; row++) {
             int r, a;
             if (crosses(area, 0, opj_row_y(&u, row), USAGE_SHEET, rh) && opj_usage_row(doc, row, &r, &a))
-                draw_usage_row(d, &u, doc, row, a);
+                draw_usage_row(d, &u, doc, row, r, a);
         }
         draw_usage_titles(d, &u);
     }
