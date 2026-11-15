@@ -53,7 +53,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.6.0 (12.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.6.2 (15.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -511,7 +511,7 @@ status_line:
         }
         text_fit(rp, ds_x + 2, ds_y + ds_h + 3, ds_w - 4, line);
     } else if (have_cur) {
-        if (view.op != OB_FILTER_NONE)
+        if (ob_view_filtered(&view))
             snprintf(line, sizeof line, "%.40s: %lld of %lld rows (filtered), %d fields", cur.name, total_rows, all_rows, cur.nfields);
         else
             snprintf(line, sizeof line, "%.40s: %lld rows, %d fields", cur.name, total_rows, cur.nfields);
@@ -1883,7 +1883,7 @@ static void export_csv(void)
     SetWindowPointer(win, TAG_DONE);
     if (n < 0) { tell(ob_error(proj)); return; }
     snprintf(msg, sizeof msg, "Wrote %lld rows to %.60s%s", n, leaf(path),
-             view.op != OB_FILTER_NONE ? " (the filtered rows)" : "");
+             ob_view_filtered(&view) ? " (the filtered rows)" : "");
     set_status(msg);
 }
 
@@ -2760,7 +2760,9 @@ static void open_query(void)
 
 enum {
     F_FIRST = 1, F_PREV, F_POS, F_NEXT, F_LAST, F_NEW, F_DELETE, F_FIND, F_SAVE, F_UNDO, F_CLOSE,
-    F_BACK, F_ON, F_SUBPICK, F_SUBLIST, F_SUBCOUNT, F_FIELD0
+    F_BACK, F_ON, F_SUBPICK, F_SUBLIST, F_SUBCOUNT,
+    F_FILTER, F_FROW, F_FHINT, F_FCLEAR, F_FCANCEL,     /* Filter by Form */
+    F_FIELD0
 };
 
 #define FORM_SUB_MAX 40
@@ -2778,6 +2780,13 @@ static struct Node f_snodes[FORM_SUB_MAX];
 static char f_stext[FORM_SUB_MAX][160];
 static int f_sn;
 static char f_count[64], f_scount[80];
+
+/* Filter by Form (design 6.3): the form's fields take what to look for, a
+ * row at a time (Look for, Or, Or); Apply Filter makes it the view's. */
+static int f_filtering, f_frow;
+static ob_view f_fview;                      /* the criteria being typed */
+static STRPTR f_frow_labels[] = { (STRPTR)"Look for", (STRPTR)"Or", (STRPTR)"Or (2)", NULL };
+static char f_fhint[96];
 
 static int form_row_cb(void *user, ob_int key, int n, const char *const *v)
 {
@@ -2994,7 +3003,7 @@ static void open_form(void)
     struct Window *w_;
     struct Gadget *eg = NULL, *g, *fg[ED_MAX];
     struct NewGadget ng;
-    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih;
+    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full;
     if (q_on) { set_status("Forms show a table: choose one in the list"); return; }
     if (!proj || !have_cur) { set_status("Choose a table first"); return; }
     for (i = 0; i < OB_MAX_FIELDS; i++) {
@@ -3011,6 +3020,7 @@ static void open_form(void)
     }
     f_sub_labels[f_nsubs] = NULL;
     f_sub = 0;
+    f_filtering = 0;
     f_pos = sel_row >= 0 ? sel_row : 0;
     form_read();
     for (i = 0; i < cur.nfields; i++) {
@@ -3066,7 +3076,11 @@ static void open_form(void)
             ng.ng_GadgetText = (UBYTE *)(f->label[0] ? f->label : f->name);
             ng.ng_Flags = PLACETEXT_LEFT;
             ng.ng_GadgetID = F_FIELD0 + i;
-            if (f->type == OB_COUNTER || f->type == OB_OBJECT)
+            if (f_filtering)
+                g = fg[i] = CreateGadget(STRING_KIND, g, &ng,
+                                         GTST_String, (ULONG)ob_view_form_get(&f_fview, f->name, f_frow),
+                                         GTST_MaxChars, OB_VALUE_MAX - 1, GA_TabCycle, TRUE, TAG_DONE);
+            else if (f->type == OB_COUNTER || f->type == OB_OBJECT)
                 g = fg[i] = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text,
                                          (ULONG)(f->type == OB_COUNTER && f_key < 0 ? "(new)" : f_vals[first + i]),
                                          GTTX_Border, TRUE, TAG_DONE);
@@ -3090,7 +3104,33 @@ static void open_form(void)
             g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, page == pages - 1, TAG_DONE);
             top += fh + 12;
         }
-        if (f_nsubs) {
+        if (f_filtering) {
+            /* the filter's bar: which row, and how to write it */
+            ng.ng_TopEdge = top + 4;
+            ng.ng_LeftEdge = w_->BorderLeft + 10 + lw;
+            ng.ng_Width = fw * 12 + 28;
+            ng.ng_GadgetText = (UBYTE *)"Row";
+            ng.ng_Flags = PLACETEXT_LEFT;
+            ng.ng_GadgetID = F_FROW;
+            g = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)f_frow_labels, GTCY_Active, f_frow, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8;
+            ng.ng_Width = w_->Width - w_->BorderRight - 10 - ng.ng_LeftEdge;
+            ng.ng_GadgetText = NULL;
+            ng.ng_GadgetID = F_FHINT;
+            snprintf(f_fhint, sizeof f_fhint, "Leeds, > 10, Smith*, between 1 and 5, empty, not York");
+            g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)f_fhint, TAG_DONE);
+            ng.ng_Flags = PLACETEXT_IN;
+            ng.ng_TopEdge = top + 4 + fh + 12;
+            ng.ng_Width = fw * 12 + 12;
+            ng.ng_LeftEdge = w_->BorderLeft + 10; ng.ng_GadgetText = (UBYTE *)"Apply Filter"; ng.ng_GadgetID = F_FILTER;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Clear All"; ng.ng_GadgetID = F_FCLEAR;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge = w_->Width - w_->BorderRight - 10 - ng.ng_Width; ng.ng_GadgetText = (UBYTE *)"Cancel";
+            ng.ng_GadgetID = F_FCANCEL;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+        }
+        if (!f_filtering && f_nsubs) {
             ng.ng_TopEdge = top + 4;
             ng.ng_LeftEdge = w_->BorderLeft + 10 + lw;
             ng.ng_Width = vw / 2;
@@ -3115,46 +3155,52 @@ static void open_form(void)
             top += sub_h;
         }
         /* the record bar */
-        x = w_->BorderLeft + 10;
-        ng.ng_TopEdge = top + 4;
-        ng.ng_Width = bw;
-        {
-            static const char *const bar[] = { "|<", "<" };
-            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)bar[0]; ng.ng_GadgetID = F_FIRST;
-            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos == 0 || !f_total, TAG_DONE);
+        if (!f_filtering) {
+            x = w_->BorderLeft + 10;
+            ng.ng_TopEdge = top + 4;
+            ng.ng_Width = bw;
+            {
+                static const char *const bar[] = { "|<", "<" };
+                ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)bar[0]; ng.ng_GadgetID = F_FIRST;
+                g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos == 0 || !f_total, TAG_DONE);
+                x += bw + 4;
+                ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)bar[1]; ng.ng_GadgetID = F_PREV;
+                g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos == 0 || !f_total, TAG_DONE);
+                x += bw + 4;
+            }
+            ng.ng_LeftEdge = x; ng.ng_Width = fw * 16; ng.ng_GadgetText = NULL; ng.ng_GadgetID = F_POS;
+            g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)f_count, GTTX_Justification, GTJ_CENTER, GTTX_Border, TRUE, TAG_DONE);
+            x += fw * 16 + 4;
+            ng.ng_Width = bw;
+            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)">"; ng.ng_GadgetID = F_NEXT;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0 || f_pos >= f_total - 1, TAG_DONE);
             x += bw + 4;
-            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)bar[1]; ng.ng_GadgetID = F_PREV;
-            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos == 0 || !f_total, TAG_DONE);
-            x += bw + 4;
+            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)">|"; ng.ng_GadgetID = F_LAST;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0 || f_pos >= f_total - 1, TAG_DONE);
+            x += bw + 12;
+            ng.ng_Width = fw * 7 + 12;
+            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)"New"; ng.ng_GadgetID = F_NEW;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0, TAG_DONE);
+            x += ng.ng_Width + 4;
+            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)"Delete..."; ng.ng_Width = fw * 9 + 12; ng.ng_GadgetID = F_DELETE;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0, TAG_DONE);
+            /* the second row: Find, Save, Undo Record, Close */
+            ng.ng_TopEdge = top + 4 + fh + 12;
+            ng.ng_Width = fw * 11 + 12;
+            ng.ng_LeftEdge = w_->BorderLeft + 10; ng.ng_GadgetText = (UBYTE *)"Find..."; ng.ng_GadgetID = F_FIND;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, !f_total, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Save"; ng.ng_GadgetID = F_SAVE;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Undo Record"; ng.ng_GadgetID = F_UNDO;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Filter by Form"; ng.ng_GadgetID = F_FILTER;
+            ng.ng_Width = fw * 14 + 12;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_Width = fw * 11 + 12;
+            ng.ng_LeftEdge = w_->Width - w_->BorderRight - 10 - ng.ng_Width; ng.ng_GadgetText = (UBYTE *)"Close";
+            ng.ng_GadgetID = F_CLOSE;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
         }
-        ng.ng_LeftEdge = x; ng.ng_Width = fw * 16; ng.ng_GadgetText = NULL; ng.ng_GadgetID = F_POS;
-        g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)f_count, GTTX_Justification, GTJ_CENTER, GTTX_Border, TRUE, TAG_DONE);
-        x += fw * 16 + 4;
-        ng.ng_Width = bw;
-        ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)">"; ng.ng_GadgetID = F_NEXT;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0 || f_pos >= f_total - 1, TAG_DONE);
-        x += bw + 4;
-        ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)">|"; ng.ng_GadgetID = F_LAST;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0 || f_pos >= f_total - 1, TAG_DONE);
-        x += bw + 12;
-        ng.ng_Width = fw * 7 + 12;
-        ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)"New"; ng.ng_GadgetID = F_NEW;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0, TAG_DONE);
-        x += ng.ng_Width + 4;
-        ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)"Delete..."; ng.ng_Width = fw * 9 + 12; ng.ng_GadgetID = F_DELETE;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0, TAG_DONE);
-        /* the second row: Find, Save, Undo Record, Close */
-        ng.ng_TopEdge = top + 4 + fh + 12;
-        ng.ng_Width = fw * 11 + 12;
-        ng.ng_LeftEdge = w_->BorderLeft + 10; ng.ng_GadgetText = (UBYTE *)"Find..."; ng.ng_GadgetID = F_FIND;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, !f_total, TAG_DONE);
-        ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Save"; ng.ng_GadgetID = F_SAVE;
-        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
-        ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Undo Record"; ng.ng_GadgetID = F_UNDO;
-        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
-        ng.ng_LeftEdge = w_->Width - w_->BorderRight - 10 - ng.ng_Width; ng.ng_GadgetText = (UBYTE *)"Close";
-        ng.ng_GadgetID = F_CLOSE;
-        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
         if (!g) break;
         SetAPen(w_->RPort, pen(BACKGROUNDPEN));
         RectFill(w_->RPort, w_->BorderLeft, w_->BorderTop, w_->Width - w_->BorderRight - 1, w_->Height - w_->BorderBottom - 1);
@@ -3162,7 +3208,7 @@ static void open_form(void)
         RefreshGList(eg, w_, NULL, -1);
         GT_RefreshWindow(w_, NULL);
         for (i = 0; i < nshow; i++)
-            if (fg[i] && cur.fields[first + i].type != OB_COUNTER && cur.fields[first + i].type != OB_OBJECT) {
+            if (fg[i] && (f_filtering || (cur.fields[first + i].type != OB_COUNTER && cur.fields[first + i].type != OB_OBJECT))) {
                 ActivateGadget(fg[i], w_, NULL);
                 break;
             }
@@ -3176,18 +3222,24 @@ static void open_form(void)
                 GT_ReplyIMsg(m);
                 if (class == IDCMP_CLOSEWINDOW) action = F_CLOSE;
                 else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(w_); GT_EndRefresh(w_, TRUE); }
-                else if (class == IDCMP_VANILLAKEY && code == 27) action = F_UNDO;
-                else if (class == IDCMP_GADGETUP && gad->GadgetID >= F_FIRST && gad->GadgetID <= F_SUBPICK
-                         && gad->GadgetID != F_POS) {
+                else if (class == IDCMP_VANILLAKEY && code == 27) action = f_filtering ? F_FCANCEL : F_UNDO;
+                else if (class == IDCMP_GADGETUP && gad->GadgetID >= F_FIRST && gad->GadgetID < F_FIELD0
+                         && gad->GadgetID != F_POS && gad->GadgetID != F_SUBLIST && gad->GadgetID != F_SUBCOUNT
+                         && gad->GadgetID != F_FHINT) {
                     action = gad->GadgetID;
                     acode = code;
                 }
             }
         }
         /* keep what was typed */
+        full = 0;
         for (i = 0; i < nshow; i++) {
             const ob_field *f = &cur.fields[first + i];
-            if (fg[i] && f->type != OB_COUNTER && f->type != OB_OBJECT) {
+            if (f_filtering && fg[i]) {
+                STRPTR s = NULL;
+                GT_GetGadgetAttrs(fg[i], w_, NULL, GTST_String, (ULONG)&s, TAG_DONE);
+                if (!ob_view_form_set(&f_fview, f->name, f_frow, s ? (const char *)s : "")) full = 1;
+            } else if (fg[i] && f->type != OB_COUNTER && f->type != OB_OBJECT) {
                 STRPTR s = NULL;
                 GT_GetGadgetAttrs(fg[i], w_, NULL, GTST_String, (ULONG)&s, TAG_DONE);
                 put_text(f_vals[first + i], 1024, s ? (const char *)s : "");
@@ -3196,7 +3248,34 @@ static void open_form(void)
         RemoveGList(w_, eg, -1);
         FreeGadgets(eg);
         eg = NULL;
+        if (full) tell("Filter by Form looks at 16 fields at most: what was typed past that is left out");
+        if (f_filtering && action == F_CLOSE) action = F_FCANCEL;
         switch (action) {
+        case F_FROW: f_frow = (int)acode < OB_FORM_OR ? (int)acode : 0; break;
+        case F_FCLEAR: ob_view_form_clear(&f_fview); break;
+        case F_FCANCEL: f_filtering = 0; set_status("Filter by Form cancelled"); break;
+        case F_FILTER:
+            if (!f_filtering) {
+                if (!form_save(w_)) break;
+                f_fview = view;
+                f_frow = 0;
+                f_filtering = 1;
+                page = 0;
+                set_status("Type what to look for, then Apply Filter");
+            } else if (!ob_view_check(proj, cur.name, &f_fview)) {
+                tell(ob_error(proj));
+            } else {
+                char msg[96];
+                view = f_fview;
+                f_filtering = 0;
+                f_pos = 0;
+                form_read();
+                if (!f_total) f_pos = -1;
+                snprintf(msg, sizeof msg, ob_view_filtered(&view) ? "Filter applied: %lld records" : "Filter removed: %lld records",
+                         (long long)f_total);
+                set_status(msg);
+            }
+            break;
         case F_BACK: if (page > 0) page--; break;
         case F_ON: if (page < pages - 1) page++; break;
         case F_SUBPICK: f_sub = (int)acode < f_nsubs ? (int)acode : 0; break;
