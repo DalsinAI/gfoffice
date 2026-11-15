@@ -2482,6 +2482,57 @@ int ob_children(ob_project *p, const char *table, ob_relation *out, int max)
     return n < 0 ? -1 : k;
 }
 
+/* A subform's rows: r's table filtered on its Lookup Equals the record. */
+static void child_view(ob_view *v, const ob_relation *r, ob_int parent)
+{
+    ob_view_init(v);
+    snprintf(v->field, sizeof v->field, "%s", r->field);
+    v->op = OB_FILTER_EQUALS;
+    snprintf(v->value, sizeof v->value, "%lld", (long long)parent);
+}
+
+static int child_key_cb(void *user, ob_int key, int n, const char *const *v)
+{
+    (void)n;
+    (void)v;
+    *(ob_int *)user = key;
+    return 1;
+}
+
+ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int pos)
+{
+    ob_view v;
+    ob_int key = -1;
+    if (!r || !r->table[0] || !r->field[0]) { fail(p, "No subform"); return -2; }
+    if (parent <= 0 || pos < 0) return -1;
+    child_view(&v, r, parent);
+    if (ob_view_rows(p, r->table, &v, pos, 1, child_key_cb, &key) < 0) return -2;
+    return key;
+}
+
+int ob_child_add(ob_project *p, const ob_relation *r, ob_int parent, int n, const char *const *fields,
+                 const char *const *values, ob_int *key)
+{
+    const char *f[OB_MAX_FIELDS], *v[OB_MAX_FIELDS];
+    char pk[24];
+    int i, k = 0;
+    if (!r || !r->table[0] || !r->field[0]) return fail(p, "No subform");
+    if (parent <= 0) return fail(p, "Save the record first: its rows in %s need its key", r->table);
+    if (n < 0 || n > OB_MAX_FIELDS) return fail(p, "Too many fields");
+    for (i = 0; i < n; i++) {
+        if (same(fields[i], r->field)) continue;     /* the link is the record's */
+        if (k >= OB_MAX_FIELDS - 1) return fail(p, "Too many fields");
+        f[k] = fields[i];
+        v[k] = values[i];
+        k++;
+    }
+    snprintf(pk, sizeof pk, "%lld", (long long)parent);
+    f[k] = r->field;
+    v[k] = pk;
+    k++;
+    return ob_row_add(p, r->table, k, f, v, key);
+}
+
 /* ---- CSV ---- */
 
 void ob_csv_opts_init(ob_csv_opts *o)
