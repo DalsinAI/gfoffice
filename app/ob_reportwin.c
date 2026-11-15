@@ -21,6 +21,7 @@
 #include <proto/graphics.h>
 #include <proto/gadtools.h>
 #include <proto/asl.h>
+#include <clib/alib_protos.h>
 
 #include <stdio.h>
 #include <stdlib.h>
