@@ -331,6 +331,43 @@ static void test_case_groups_and_overflow(ob_project *p)
     owf_doc_free(doc);
 }
 
+/* The text a report is kept as (oadb_reports.def): every field back as it was, awkward characters
+ * included; a later version's file, a broken line and an unknown total refused; unknown keys skipped. */
+static void test_text_form(void)
+{
+    ob_report r, back;
+    char text[4096], err[OB_ERR_MAX] = "";
+    int n;
+
+    ob_report_init(&r, "Sales");
+    strcpy(r.title, "Ventes \xe0 Leeds | York\\2026\nsecond line");
+    strcpy(r.table, "Orders");
+    strcpy(r.sort, "Customer");
+    r.desc = 1;
+    strcpy(r.group, "Town");
+    ob_report_add_column(&r, "Customer", OB_TOTAL_COUNT);
+    strcpy(ob_report_add_column(&r, "Amount", OB_TOTAL_SUM)->heading, "Total | \xa3");
+    ob_report_add_column(&r, "Qty", OB_TOTAL_NONE);
+    n = ob_report_to_text(&r, text, sizeof text);
+    CHECK(n > 0 && (size_t)n == strlen(text), "to text: %d", n);
+    CHECK(!strncmp(text, "OADBREPORT 1\n", 13), "first line:\n%s", text);
+    CHECK(!strchr(text + 13, '\r') && strstr(text, "column=Amount|Total \\| \xa3|Sum\n"), "columns:\n%s", text);
+    CHECK(ob_report_from_text(&back, "Sales", text, err, sizeof err) == 0, "from text: %s", err);
+    CHECK(!memcmp(&r, &back, sizeof r), "the same report back");
+    CHECK(ob_report_to_text(&r, text, 20) == -1, "too small for the buffer");
+
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 2\ntable=T\n", err, sizeof err) == -1 &&
+          strstr(err, "a newer GFOpenBase"), "%s", err);
+    CHECK(ob_report_from_text(&back, "X", "table=T\n", err, sizeof err) == -1 && strstr(err, "not a report"), "%s", err);
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 1\ncolumn=Qty|x|Median\n", err, sizeof err) == -1 &&
+          strstr(err, "Median"), "%s", err);
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 1\nnonsense\n", err, sizeof err) == -1 &&
+          strstr(err, "line 2"), "%s", err);
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 1\ntable=T\nlater=1\ncolumn=A||\n", err, sizeof err) == 0 &&
+          !strcmp(back.name, "X") && !strcmp(back.table, "T") && back.ncolumns == 1 &&
+          back.columns[0].total == OB_TOTAL_NONE && !back.columns[0].heading[0], "unknown keys skipped: %s", err);
+}
+
 static void test_errors_and_empty(ob_project *p)
 {
     static ob_table t;
@@ -392,6 +429,7 @@ int main(int argc, char **argv)
         test_query_and_save(p);
         test_query_groups(p);
         test_case_groups_and_overflow(p);
+        test_text_form();
         test_errors_and_empty(p);
         ob_close(p);
     }
