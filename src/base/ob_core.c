@@ -3136,10 +3136,48 @@ void ob_query_remove_column(ob_query *q, int i)
     q->ncolumns--;
 }
 
+void ob_query_remove_join(ob_query *q, int i)
+{
+    if (i < 0 || i >= q->njoins) return;
+    memmove(&q->joins[i], &q->joins[i + 1], sizeof q->joins[0] * (size_t)(q->njoins - i - 1));
+    q->njoins--;
+}
+
+int ob_query_add_join(ob_query *q, const char *left, const char *lfield, const char *right, const char *rfield,
+                      ob_join kind)
+{
+    int i;
+    ob_qjoin *k;
+    if (!left || !lfield || !right || !rfield || !*left || !*lfield || !*right || !*rfield) return -1;
+    if (q->njoins < 0 || q->njoins >= OB_QUERY_JOINS || (unsigned)kind >= OB_JOINS || same(left, right)) return -1;
+    for (i = 0; i < q->njoins; i++) {
+        const ob_qjoin *o = &q->joins[i];
+        if ((same(o->left, left) && same(o->lfield, lfield) && same(o->right, right) && same(o->rfield, rfield))
+            || (same(o->left, right) && same(o->lfield, rfield) && same(o->right, left) && same(o->rfield, lfield)))
+            return -1;
+    }
+    k = &q->joins[q->njoins];
+    memset(k, 0, sizeof *k);
+    copy(k->left, sizeof k->left, left);
+    copy(k->lfield, sizeof k->lfield, lfield);
+    copy(k->right, sizeof k->right, right);
+    copy(k->rfield, sizeof k->rfield, rfield);
+    k->kind = kind;
+    return q->njoins++;
+}
+
+const char *ob_join_name(ob_join k)
+{
+    static const char *const names[OB_JOINS] = { "Inner", "Left", "Right" };
+    return (unsigned)k < OB_JOINS ? names[k] : "";
+}
+
 void ob_query_remove_table(ob_query *q, int i)
 {
     int c;
     if (i < 0 || i >= q->ntables) return;
+    for (c = q->njoins - 1; c >= 0; c--)
+        if (same(q->joins[c].left, q->tables[i]) || same(q->joins[c].right, q->tables[i])) ob_query_remove_join(q, c);
     for (c = q->ncolumns - 1; c >= 0; c--)
         if (q->columns[c].table[0] && same(q->columns[c].table, q->tables[i])) ob_query_remove_column(q, c);
     memmove(q->tables[i], q->tables[i + 1], OB_NAME_MAX * (size_t)(q->ntables - i - 1));
@@ -3408,6 +3446,60 @@ static int add_out(ob_project *p, qplan *pl, const char *heading, int type)
     return 1;
 }
 
+/* The table of a join's side: its index in the query; 0 with the reason. */
+static int join_side(ob_project *p, const ob_query *q, const ob_table *tabs, const char *t, const char *f, int *ti)
+{
+    int i;
+    for (i = 0; i < q->ntables && !same(tabs[i].name, t); i++) ;
+    if (i == q->ntables) return fail(p, "%s: a join uses %s, which isn't in the query", qname(q), t);
+    if (ob_table_find_field(&tabs[i], f) < 0) return fail(p, "%s: a join uses %s.%s, which isn't there", qname(q), t, f);
+    *ti = i;
+    return 1;
+}
+
+/* FROM's joins as drawn: from the first table, each next one that a join
+ * reaches from the tables placed so far, ON every join between it and them;
+ * the first join's kind, turned round when the new table is its left side. */
+static int joins_from(ob_project *p, const ob_query *q, const ob_table *tabs, sqlite3_str *from)
+{
+    int placed[OB_QUERY_TABLES] = { 0 }, jl[OB_QUERY_JOINS], jr[OB_QUERY_JOINS];
+    int n, j, t;
+    if (q->njoins < 0 || q->njoins > OB_QUERY_JOINS) return fail(p, "%s: too many joins", qname(q));
+    for (j = 0; j < q->njoins; j++) {
+        const ob_qjoin *k = &q->joins[j];
+        if ((unsigned)k->kind >= OB_JOINS) return fail(p, "%s: a join of no kind", qname(q));
+        if (!join_side(p, q, tabs, k->left, k->lfield, &jl[j]) || !join_side(p, q, tabs, k->right, k->rfield, &jr[j]))
+            return 0;
+        if (jl[j] == jr[j]) return fail(p, "%s: a join goes from %s to itself", qname(q), tabs[jl[j]].name);
+    }
+    placed[0] = 1;
+    for (n = 1; n < q->ntables; n++) {
+        int pick = -1, first = -1, any = 0;
+        ob_join kind;
+        for (t = 1; t < q->ntables && pick < 0; t++) {
+            if (placed[t]) continue;
+            for (j = 0; j < q->njoins; j++)
+                if ((jl[j] == t && placed[jr[j]]) || (jr[j] == t && placed[jl[j]])) { pick = t; first = j; break; }
+        }
+        if (pick < 0) {
+            for (t = 1; placed[t]; t++) ;
+            return fail(p, "%s isn't joined to the query's other tables: draw a join to it", tabs[t].name);
+        }
+        kind = q->joins[first].kind;
+        if (kind != OB_JOIN_INNER && jl[first] == pick) kind = kind == OB_JOIN_LEFT ? OB_JOIN_RIGHT : OB_JOIN_LEFT;
+        sqlite3_str_appendf(from, " %sJOIN \"%w\" ON ",
+                            kind == OB_JOIN_LEFT ? "LEFT " : kind == OB_JOIN_RIGHT ? "RIGHT " : "", tabs[pick].name);
+        for (j = 0; j < q->njoins; j++)
+            if ((jl[j] == pick && placed[jr[j]]) || (jr[j] == pick && placed[jl[j]])) {
+                sqlite3_str_appendf(from, "%s\"%w\".\"%w\" = \"%w\".\"%w\"", any ? " AND " : "",
+                                    tabs[jl[j]].name, q->joins[j].lfield, tabs[jr[j]].name, q->joins[j].rfield);
+                any = 1;
+            }
+        placed[pick] = 1;
+    }
+    return 1;
+}
+
 static qplan *plan_make(ob_project *p, const ob_query *q)
 {
     qplan *pl = calloc(1, sizeof *pl);
@@ -3442,7 +3534,9 @@ static qplan *plan_make(ob_project *p, const ob_query *q)
     order = sqlite3_str_new(NULL);
     /* FROM, each table joined to one before it by a relationship */
     sqlite3_str_appendf(from, " FROM \"%w\"", tabs[0].name);
-    if (q->ntables > 1) {
+    if (q->ntables > 1 && q->njoins > 0) {
+        if (!joins_from(p, q, tabs, from)) goto bad;
+    } else if (q->ntables > 1) {
         nrels = ob_relations(p, NULL, 0);
         if (nrels < 0) goto bad;
         rels = calloc((size_t)(nrels ? nrels : 1), sizeof *rels);
@@ -3651,6 +3745,39 @@ int ob_query_check(ob_project *p, const ob_query *q)
     if (!pl) return 0;
     plan_free(pl);
     return ok(p);
+}
+
+static int joined(const ob_query *q, const char *a, const char *b)
+{
+    int i;
+    for (i = 0; i < q->njoins; i++)
+        if ((same(q->joins[i].left, a) && same(q->joins[i].right, b)) || (same(q->joins[i].left, b) && same(q->joins[i].right, a)))
+            return 1;
+    return 0;
+}
+
+int ob_query_relation_joins(ob_project *p, ob_query *q)
+{
+    static ob_table pt;
+    ob_relation *rels;
+    int n, i, j, r, added = 0;
+    if ((n = ob_relations(p, NULL, 0)) < 0) return -1;
+    if (!(rels = calloc((size_t)(n ? n : 1), sizeof *rels))) { fail(p, "Not enough memory"); return -1; }
+    n = ob_relations(p, rels, n);
+    for (i = 0; i < q->ntables; i++)
+        for (j = 0; j < q->ntables; j++) {
+            if (i == j || joined(q, q->tables[i], q->tables[j])) continue;
+            for (r = 0; r < n; r++) {
+                const char *key;
+                if (!same(rels[r].table, q->tables[i]) || !same(rels[r].lookup, q->tables[j])) continue;
+                if (!ob_table_get(p, rels[r].lookup, &pt) || !(key = counter_of(&pt))) continue;
+                if (ob_query_add_join(q, q->tables[i], rels[r].field, q->tables[j], key, OB_JOIN_INNER) >= 0) added++;
+                break;
+            }
+        }
+    free(rels);
+    ok(p);
+    return added;
 }
 
 int ob_query_sql(ob_project *p, const ob_query *q, char *out, size_t size)
@@ -3864,7 +3991,7 @@ static char *grid_text(const ob_query *q)
 {
     sqlite3_str *s = sqlite3_str_new(NULL);
     int i, r;
-    sqlite3_str_appendall(s, "oadb query 1\n");
+    sqlite3_str_appendall(s, q->njoins > 0 ? "oadb query 2\n" : "oadb query 1\n");
     for (i = 0; i < q->ntables; i++) {
         sqlite3_str_appendall(s, "table");
         put_escaped(s, q->tables[i]);
@@ -3880,6 +4007,15 @@ static char *grid_text(const ob_query *q)
         sqlite3_str_appendf(s, "\t%d\t%d\t%d", c->show ? 1 : 0, c->sort, (int)c->total);
         for (r = 0; r < OB_QUERY_OR; r++) put_escaped(s, c->criteria[r]);
         sqlite3_str_appendall(s, "\n");
+    }
+    for (i = 0; i < q->njoins && i < OB_QUERY_JOINS; i++) {
+        const ob_qjoin *k = &q->joins[i];
+        sqlite3_str_appendall(s, "join");
+        put_escaped(s, k->left);
+        put_escaped(s, k->lfield);
+        put_escaped(s, k->right);
+        put_escaped(s, k->rfield);
+        sqlite3_str_appendf(s, "\t%d\n", (int)k->kind);
     }
     return sqlite3_str_finish(s);
 }
@@ -3906,7 +4042,7 @@ static int grid_read(const char *text, ob_query *q)
 {
     const char *s = text;
     char word[16], num[16];
-    if (strncmp(s, "oadb query 1\n", 13)) return 0;
+    if (strncmp(s, "oadb query 1\n", 13) && strncmp(s, "oadb query 2\n", 13)) return 0;
     s += 13;
     while (*s) {
         grid_cell(&s, word, sizeof word);
@@ -3926,6 +4062,15 @@ static int grid_read(const char *text, ob_query *q)
             grid_cell(&s, num, sizeof num); c->total = (ob_total)atoi(num);
             if ((unsigned)c->total >= OB_TOTALS) c->total = OB_TOTAL_NONE;
             for (r = 0; r < OB_QUERY_OR; r++) grid_cell(&s, c->criteria[r], sizeof c->criteria[r]);
+        } else if (!strcmp(word, "join") && q->njoins < OB_QUERY_JOINS) {
+            ob_qjoin *k = &q->joins[q->njoins++];
+            memset(k, 0, sizeof *k);
+            grid_cell(&s, k->left, sizeof k->left);
+            grid_cell(&s, k->lfield, sizeof k->lfield);
+            grid_cell(&s, k->right, sizeof k->right);
+            grid_cell(&s, k->rfield, sizeof k->rfield);
+            grid_cell(&s, num, sizeof num); k->kind = (ob_join)atoi(num);
+            if ((unsigned)k->kind >= OB_JOINS) k->kind = OB_JOIN_INNER;
         }
         while (*s && *s != '\n') s++;
         if (*s == '\n') s++;
