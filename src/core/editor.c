@@ -1266,6 +1266,73 @@ static ow_position paragraph_end(ow_editor *editor, ow_position pos)
     return pos;
 }
 
+/* 2.0.36: word moves. A character is a space (space, tab, line break), a word letter (ASCII letters and digits,
+ * '_', any UTF-8 beyond ASCII) or punctuation; a word move crosses one class run and the spaces after it (right)
+ * or before it (left), and stops at a paragraph's start and end, as Ctrl+arrows do in other word processors. */
+static int char_class(unsigned char c)
+{
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 0;
+    if (c >= 0x80 || c == '_' || (c >= '0' && c <= '9') || ((c | 0x20) >= 'a' && (c | 0x20) <= 'z')) return 1;
+    return 2;
+}
+
+/* the class of the character after pos in its paragraph, -1 at the paragraph's end; pos is moved over run ends */
+static int class_after(owf_para *p, ow_position *pos)
+{
+    for (;;) {
+        owf_run *r = &p->runs[pos->run];
+        int nr;
+        if (r->text && r->text[pos->byte_offset])     /* byte_offset is within the run's text (clamp_position) */
+            return char_class((unsigned char)r->text[pos->byte_offset]);
+        nr = next_text_run(p, pos->run);
+        if (nr < 0) return -1;
+        pos->run = nr;
+        pos->byte_offset = 0;
+    }
+}
+
+static int class_before(owf_para *p, ow_position *pos)
+{
+    for (;;) {
+        owf_run *r = &p->runs[pos->run];
+        int pr;
+        if (pos->byte_offset)
+            return char_class((unsigned char)r->text[utf8_prev(r->text, pos->byte_offset)]);
+        pr = prev_text_run(p, pos->run);
+        if (pr < 0) return -1;
+        pos->run = pr;
+        pos->byte_offset = p->runs[pr].text ? strlen(p->runs[pr].text) : 0;
+    }
+}
+
+static ow_position word_right_pos(ow_editor *editor, ow_position pos)
+{
+    owf_para *p;
+    int c;
+    pos = clamp_position(editor, pos);
+    p = &ed_story(editor)->paras[pos.paragraph];
+    c = class_after(p, &pos);
+    if (c < 0) return move_right_pos(editor, pos);          /* the paragraph's end: to the next one's start */
+    if (c > 0)
+        while (class_after(p, &pos) == c) pos.byte_offset = utf8_next(p->runs[pos.run].text, pos.byte_offset);
+    while (class_after(p, &pos) == 0) pos.byte_offset = utf8_next(p->runs[pos.run].text, pos.byte_offset);
+    return pos;
+}
+
+static ow_position word_left_pos(ow_editor *editor, ow_position pos)
+{
+    owf_para *p;
+    int c;
+    pos = clamp_position(editor, pos);
+    p = &ed_story(editor)->paras[pos.paragraph];
+    if (class_before(p, &pos) < 0) return move_left_pos(editor, pos);
+    while (class_before(p, &pos) == 0) pos.byte_offset = utf8_prev(p->runs[pos.run].text, pos.byte_offset);
+    c = class_before(p, &pos);
+    if (c > 0)
+        while (class_before(p, &pos) == c) pos.byte_offset = utf8_prev(p->runs[pos.run].text, pos.byte_offset);
+    return pos;
+}
+
 static ow_position vertical_pos(ow_editor *editor, ow_position pos, int delta)
 {
     owf_story *story = ed_story(editor);
@@ -3761,6 +3828,18 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
         case OW_MOVE_DOWN:  pos = vertical_pos(editor, pos, 1); break;
         case OW_MOVE_HOME:  pos = paragraph_home(editor, pos); break;
         case OW_MOVE_END:   pos = paragraph_end(editor, pos); break;
+        case OW_MOVE_WORD_LEFT:  pos = word_left_pos(editor, pos); break;
+        case OW_MOVE_WORD_RIGHT: pos = word_right_pos(editor, pos); break;
+        case OW_MOVE_DOC_START:
+            pos = clamp_position(editor, pos);
+            pos.paragraph = 0;
+            pos = paragraph_home(editor, pos);
+            break;
+        case OW_MOVE_DOC_END:
+            pos = clamp_position(editor, pos);
+            pos.paragraph = ed_story(editor)->nparas - 1;
+            pos = paragraph_end(editor, pos);
+            break;
         }
     }
 
