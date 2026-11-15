@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.39.0"
+#define OPR_CORE_VERSION "0.40.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -90,6 +90,17 @@ typedef struct {
  * OWF_OK, or OWF_ERR_MEMORY. */
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report);
+
+/* A gradient fill as plain polygons, for a screen that fills polygons but can't clip (opr_gradient.c):
+ * band (0..bands-1) of the gradient inside the closed outline xy (n points, at most OL_MAX_SHAPE_POINTS)
+ * across the box x, y, w, h, into out (at most cap points) with its colour (0xRRGGBB). LINEAR runs from
+ * one colour to the other along angle (tenths anticlockwise, 0 left to right; each band overlaps the
+ * next by a unit); RADIAL's band 0 is the outermost ring, from at the centre, each band drawn over the
+ * one before. The point count (0: nothing to draw), or -1 when out is too small. */
+#define OPR_GRADIENT_LINEAR 1
+#define OPR_GRADIENT_RADIAL 2
+int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind, int angle, unsigned long from,
+                      unsigned long to, int band, int bands, int *out, int cap, unsigned long *colour);
 
 /* The deck as PowerPoint (PPTX, opr_pptx.c): its slides with their objects
  * where they are drawn, text with its look and levels, pictures, shapes,

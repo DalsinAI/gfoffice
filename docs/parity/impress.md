@@ -19,6 +19,7 @@ docs/gfoffice/Impress-Parity.md.
 | 12 Nov 2026 | 0.6.30 | 81% | P7: the Master view and Slide Design |
 | 12 Nov 2026 | 0.6.31 | 83% | P8: slides on the clipboard, Insert Slides from File |
 | 12 Nov 2026 | 0.6.32 | 84% | P9: Export as Pictures (PNG, IFF ILBM); Phase 2 done |
+| 15 Nov 2026 | 0.6.33 | 85% | Gradient fills (linear and radial) read, saved, printed and shown (gap 2.8) |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 
