@@ -334,6 +334,11 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
  * A change, as these calls count them, is a row of text and paragraph ends in the caret's story that name
  * the same owf_revision, or (libowf 1.11) a row of runs that name the same format change. */
 void ow_editor_set_track_changes(ow_editor *editor, int on);
+/* 2.0.37: the final view (Show Changes off): what the document is with its changes accepted, while they are
+ * still kept and recorded. Deleted text is not shown (ow_layout_new_view's OW_LAYOUT_FINAL), and caret moves
+ * step over it, never stopping inside it. The window's setting: not saved with the document. */
+void ow_editor_set_final_view(ow_editor *editor, int on);
+int ow_editor_final_view(const ow_editor *editor);
 int ow_editor_track_changes(const ow_editor *editor);
 /* The name new changes are made under; NULL or "" for none (an unknown author). */
 int ow_editor_set_review_author(ow_editor *editor, const char *utf8);
