@@ -48,12 +48,13 @@
 #include <string.h>
 
 #include "openbase_core.h"
+#include "ob_reportwin.h"
 #include "ow_stack.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.6.0 (12.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.8.0 (15.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -65,6 +66,9 @@ enum {
     M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV,
     M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM
 };
+
+/* 4.3: the Report window (app/ob_reportwin.c) */
+enum { M_REPORTS = 100 };
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
@@ -106,6 +110,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First Row", NULL, 0, 0, (APTR)M_R_FIRST },
     { NM_ITEM, "Last Row", NULL, 0, 0, (APTR)M_R_LAST },
+    { NM_TITLE, "Report", NULL, 0, 0, NULL },
+    { NM_ITEM, "Reports...", "P", 0, 0, (APTR)M_REPORTS },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -511,7 +517,7 @@ status_line:
         }
         text_fit(rp, ds_x + 2, ds_y + ds_h + 3, ds_w - 4, line);
     } else if (have_cur) {
-        if (view.op != OB_FILTER_NONE)
+        if (ob_view_filtered(&view))
             snprintf(line, sizeof line, "%.40s: %lld of %lld rows (filtered), %d fields", cur.name, total_rows, all_rows, cur.nfields);
         else
             snprintf(line, sizeof line, "%.40s: %lld rows, %d fields", cur.name, total_rows, cur.nfields);
@@ -712,33 +718,27 @@ static int whole_cb(void *user, ob_int key, int n, const char *const *v)
 
 #define ED_MAX 24          /* fields on one page of the editor */
 
-static void edit_row(int adding)
+/* The row editor for table tb: the datasheet's (tb == &cur), or a form's
+ * subform, whose Lookup rel->field holds the form's record `parent`: shown,
+ * not typed. */
+static void edit_row_of(const ob_table *tb, ob_int key, int adding, const ob_relation *rel, ob_int parent)
 {
     struct Window *ew;
     struct Gadget *eg = NULL, *g, *fields_g[ED_MAX] = { 0 };
     struct NewGadget ng;
-    char *values[OB_MAX_FIELDS], *before[OB_MAX_FIELDS];
-    ob_int key = 0;
+    char *values[OB_MAX_FIELDS], *before[OB_MAX_FIELDS], title[96], pk[24];
     int i, page = 0, pages, per, done = 0, lw = 0, vw, h, row_h = fh + 8, nshow, first;
-    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
-    if (!proj || !have_cur) return;
-    if (!adding && (sel_row < 0 || sel_row < top_row || sel_row >= top_row + page_n)) {
-        tell("Choose a row first.");
-        return;
-    }
     memset(values, 0, sizeof values);
     memset(before, 0, sizeof before);
-    for (i = 0; i < cur.nfields; i++) {
+    snprintf(pk, sizeof pk, "%lld", (long long)parent);
+    if (rel) snprintf(title, sizeof title, adding ? "Add Row to %.63s" : "Edit Row of %.63s", tb->name);
+    else put_text(title, sizeof title, adding ? "Add Row" : "Edit Row");
+    for (i = 0; i < tb->nfields; i++) {
         const char *v = "";
-        int n = (int)strlen(cur.fields[i].label[0] ? cur.fields[i].label : cur.fields[i].name);
+        int n = (int)strlen(tb->fields[i].label[0] ? tb->fields[i].label : tb->fields[i].name);
         if (n > lw) lw = n;
-        if (!adding) {
-            int k = sel_row - (int)top_row;
-            key = page_keys[k];
-            v = page_cells[k][i] ? page_cells[k][i] : "";
-        } else if (cur.fields[i].has_default) {
-            v = cur.fields[i].deflt;
-        }
+        if (adding && rel && !strcmp(tb->fields[i].name, rel->field)) v = pk;
+        else if (adding && tb->fields[i].has_default) v = tb->fields[i].deflt;
         values[i] = malloc(1024);
         before[i] = malloc(1024);
         if (!values[i] || !before[i]) goto out;
@@ -747,20 +747,20 @@ static void edit_row(int adding)
     }
     /* the datasheet keeps values cut short: read the row whole */
     if (!adding) {
-        ob_rows(proj, cur.name, key - 1, 1, whole_cb, values);
-        for (i = 0; i < cur.nfields; i++) put_text(before[i], 1024, values[i]);
+        ob_rows(proj, tb->name, key - 1, 1, whole_cb, values);
+        for (i = 0; i < tb->nfields; i++) put_text(before[i], 1024, values[i]);
     }
     per = (scr->Height - 120) / row_h;
     if (per > ED_MAX) per = ED_MAX;
     if (per < 4) per = 4;
-    pages = (cur.nfields + per - 1) / per;
+    pages = (tb->nfields + per - 1) / per;
     lw = (lw > 24 ? 24 : lw) * fw + 16;
     vw = fw * 40;
     if (lw + vw + 40 > scr->Width) vw = scr->Width - lw - 40;
-    nshow = cur.nfields < per ? cur.nfields : per;
+    nshow = tb->nfields < per ? tb->nfields : per;
     h = nshow * row_h + fh * 2 + 40;
     ew = OpenWindowTags(NULL,
-        WA_Title, (ULONG)(adding ? "Add Row" : "Edit Row"),
+        WA_Title, (ULONG)title,
         WA_PubScreen, (ULONG)scr,
         WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 30,
         WA_InnerWidth, lw + vw + 20, WA_InnerHeight, h,
@@ -773,13 +773,13 @@ static void edit_row(int adding)
     while (!done) {
         /* the page's gadgets */
         first = page * per;
-        nshow = cur.nfields - first < per ? cur.nfields - first : per;
+        nshow = tb->nfields - first < per ? tb->nfields - first : per;
         if (!(g = CreateContext(&eg))) break;
         memset(&ng, 0, sizeof ng);
         ng.ng_VisualInfo = vi;
         ng.ng_TextAttr = &font_attr;
         for (i = 0; i < nshow; i++) {
-            const ob_field *f = &cur.fields[first + i];
+            const ob_field *f = &tb->fields[first + i];
             ng.ng_LeftEdge = ew->BorderLeft + 10 + lw;
             ng.ng_TopEdge = ew->BorderTop + 8 + i * row_h;
             ng.ng_Width = vw;
@@ -787,7 +787,7 @@ static void edit_row(int adding)
             ng.ng_GadgetText = (UBYTE *)(f->label[0] ? f->label : f->name);
             ng.ng_Flags = PLACETEXT_LEFT;
             ng.ng_GadgetID = 100 + i;
-            if (f->type == OB_COUNTER || f->type == OB_OBJECT)
+            if (f->type == OB_COUNTER || f->type == OB_OBJECT || (rel && !strcmp(f->name, rel->field)))
                 g = fields_g[i] = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text,
                                                (ULONG)(f->type == OB_COUNTER && adding ? "(new)" : values[first + i]),
                                                GTTX_Border, TRUE, TAG_DONE);
@@ -824,7 +824,8 @@ static void edit_row(int adding)
         RefreshGList(eg, ew, NULL, -1);
         GT_RefreshWindow(ew, NULL);
         for (i = 0; i < nshow; i++)
-            if (fields_g[i] && cur.fields[first + i].type != OB_COUNTER && cur.fields[first + i].type != OB_OBJECT) {
+            if (fields_g[i] && tb->fields[first + i].type != OB_COUNTER && tb->fields[first + i].type != OB_OBJECT
+                && !(rel && !strcmp(tb->fields[first + i].name, rel->field))) {
                 ActivateGadget(fields_g[i], ew, NULL);
                 break;
             }
@@ -846,8 +847,8 @@ static void edit_row(int adding)
             }
             /* keep what was typed on this page */
             for (i = 0; i < nshow; i++) {
-                const ob_field *f = &cur.fields[first + i];
-                if (f->type != OB_COUNTER && f->type != OB_OBJECT) {
+                const ob_field *f = &tb->fields[first + i];
+                if (f->type != OB_COUNTER && f->type != OB_OBJECT && !(rel && !strcmp(f->name, rel->field))) {
                     STRPTR s = NULL;
                     GT_GetGadgetAttrs(fields_g[i], ew, NULL, GTST_String, (ULONG)&s, TAG_DONE);
                     put_text(values[first + i], 1024, s ? (const char *)s : "");
@@ -862,20 +863,22 @@ static void edit_row(int adding)
             else if (action == 1) {
                 const char *names[OB_MAX_FIELDS], *vals[OB_MAX_FIELDS];
                 int n = 0, good;
-                for (i = 0; i < cur.nfields; i++) {
-                    const ob_field *f = &cur.fields[i];
+                for (i = 0; i < tb->nfields; i++) {
+                    const ob_field *f = &tb->fields[i];
                     if (f->type == OB_COUNTER || f->type == OB_OBJECT) continue;
+                    if (rel && !strcmp(f->name, rel->field)) continue;     /* the record's */
                     if (adding ? values[i][0] == 0 && !f->has_default : !strcmp(values[i], before[i])) continue;
                     names[n] = f->name;
                     vals[n] = values[i];
                     n++;
                 }
-                if (adding) good = ob_row_add(proj, cur.name, n, names, vals, &key);
-                else good = ob_row_change(proj, cur.name, key, n, names, vals);
+                if (adding && rel) good = ob_child_add(proj, rel, parent, n, names, vals, &key);
+                else if (adding) good = ob_row_add(proj, tb->name, n, names, vals, &key);
+                else good = ob_row_change(proj, tb->name, key, n, names, vals);
                 if (good) {
                     done = 1;
                     set_status(adding ? "Row added" : "Row saved");
-                    if (adding) {
+                    if (adding && tb == &cur) {
                         load_page();
                         sel_row = (int)total_rows - 1;
                         top_row = total_rows - ds_rows;
@@ -889,12 +892,23 @@ static void edit_row(int adding)
         }
     }
     CloseWindow(ew);
-    if (win) ActivateWindow(win);     /* keys go to the main window again */
+    if (win && tb == &cur) ActivateWindow(win);     /* keys go to the main window again */
 out:
     if (eg) FreeGadgets(eg);
     for (i = 0; i < OB_MAX_FIELDS; i++) { free(values[i]); free(before[i]); }
     load_page();
     refresh();
+}
+
+static void edit_row(int adding)
+{
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
+    if (!proj || !have_cur) return;
+    if (!adding && (sel_row < 0 || sel_row < top_row || sel_row >= top_row + page_n)) {
+        tell("Choose a row first.");
+        return;
+    }
+    edit_row_of(&cur, adding ? 0 : page_keys[sel_row - top_row], adding, NULL, 0);
 }
 
 static void delete_row(void)
@@ -1883,7 +1897,7 @@ static void export_csv(void)
     SetWindowPointer(win, TAG_DONE);
     if (n < 0) { tell(ob_error(proj)); return; }
     snprintf(msg, sizeof msg, "Wrote %lld rows to %.60s%s", n, leaf(path),
-             view.op != OB_FILTER_NONE ? " (the filtered rows)" : "");
+             ob_view_filtered(&view) ? " (the filtered rows)" : "");
     set_status(msg);
 }
 
@@ -2226,7 +2240,7 @@ static int run_query(int ask_again)
 /* The designer: one window for the grid (tables, columns, criteria) or the
  * SQL, with Run, Save and Close. */
 enum {
-    Q_NAME = 1, Q_SQLONLY, Q_SQL, Q_TABLES, Q_ADDTABLE, Q_REMTABLE, Q_COLS, Q_ADDFIELD, Q_ADDEXPR, Q_REMCOL,
+    Q_NAME = 1, Q_SQLONLY, Q_SQL, Q_TABLES, Q_ADDTABLE, Q_REMTABLE, Q_JOINS, Q_COLS, Q_ADDFIELD, Q_ADDEXPR, Q_REMCOL,
     Q_EXPR, Q_HEAD, Q_SORT, Q_TOTAL, Q_SHOW, Q_CRIT0, Q_CRIT1, Q_CRIT2, Q_SQLTEXT, Q_RUN, Q_SAVE, Q_CLOSE, Q_COUNT
 };
 
@@ -2330,6 +2344,295 @@ static void q_read_strings(struct Window *qw, struct Gadget **gad, int csel)
 #undef QSTR
 }
 
+/* ---- Joins (the query designer's Joins... window) ----
+ * The query's tables as boxes of their fields, its joins as lines between
+ * fields. Drag a field onto a field of another table, or click one and then
+ * the other, to join them; click a line to choose it; Inner, Left and Right
+ * set what it keeps; Remove (or Del) takes it away. With no join drawn yet
+ * the window starts from the tables' relationships. */
+
+#define JV_FIELDS 24
+
+struct jv_box {
+    int x, y, w, h, nf, more;
+    char fields[JV_FIELDS][OB_NAME_MAX];
+};
+
+static struct jv_box jv[OB_QUERY_TABLES];
+static int jv_seg[OB_QUERY_JOINS][8];       /* each join's line: four points */
+static int jv_rowh, jv_sel, jv_pt, jv_pf;    /* row height, chosen join, picked table and field */
+static int jv_cx, jv_cy, jv_cw, jv_ch, jv_sty;
+
+static int jv_table(const char *name)
+{
+    int i;
+    for (i = 0; i < q_ed.ntables; i++) if (same_name(q_ed.tables[i], name)) return i;
+    return -1;
+}
+
+static int jv_field(int t, const char *name)
+{
+    int i;
+    for (i = 0; i < jv[t].nf; i++) if (same_name(jv[t].fields[i], name)) return i;
+    return -1;
+}
+
+/* The boxes in rows across the canvas, each as tall as its fields (up to
+ * what fits). */
+static void jv_layout(void)
+{
+    int bw = fw * 16, gap = fw * 6, cols, rows, maxh, i, j, show;
+    cols = (jv_cw + gap) / (bw + gap);
+    if (cols < 1) cols = 1;
+    rows = (q_ed.ntables + cols - 1) / cols;
+    if (rows < 1) rows = 1;
+    maxh = (jv_ch - (rows - 1) * jv_rowh) / rows;
+    show = (maxh - 6) / jv_rowh - 1;
+    if (show < 1) show = 1;
+    if (show > JV_FIELDS) show = JV_FIELDS;
+    for (i = 0; i < q_ed.ntables; i++) {
+        struct jv_box *b = &jv[i];
+        b->nf = b->more = 0;
+        if (ob_table_get(proj, q_ed.tables[i], &q_t))
+            for (j = 0; j < q_t.nfields; j++) {
+                if (b->nf < show) put_text(b->fields[b->nf++], OB_NAME_MAX, q_t.fields[j].name);
+                else b->more++;
+            }
+        b->w = bw;
+        b->h = jv_rowh * (b->nf + 1 + (b->more ? 1 : 0)) + 6;
+        b->x = jv_cx + (i % cols) * (bw + gap);
+        b->y = jv_cy + (i / cols) * (maxh + jv_rowh);
+    }
+}
+
+static int jv_field_y(int t, int f)
+{
+    return f >= 0 ? jv[t].y + 3 + jv_rowh * (f + 1) + jv_rowh / 2 : jv[t].y + jv[t].h / 2;
+}
+
+static void jv_draw(struct Window *jw)
+{
+    struct RastPort *rp = jw->RPort;
+    char line[3 * OB_NAME_MAX + 120];
+    int i, j;
+    SetFont(rp, font);
+    SetDrMd(rp, JAM1);
+    SetAPen(rp, pen(BACKGROUNDPEN));
+    RectFill(rp, jv_cx, jv_cy, jv_cx + jv_cw - 1, jv_cy + jv_ch - 1);
+    RectFill(rp, jv_cx, jv_sty, jv_cx + jv_cw - 1, jv_sty + fh + 1);
+    for (i = 0; i < q_ed.ntables; i++) {
+        struct jv_box *b = &jv[i];
+        SetAPen(rp, pen(FILLPEN));
+        RectFill(rp, b->x, b->y, b->x + b->w - 1, b->y + jv_rowh + 1);
+        SetAPen(rp, pen(SHADOWPEN));
+        Move(rp, b->x, b->y); Draw(rp, b->x + b->w - 1, b->y); Draw(rp, b->x + b->w - 1, b->y + b->h - 1);
+        Draw(rp, b->x, b->y + b->h - 1); Draw(rp, b->x, b->y);
+        SetAPen(rp, pen(FILLTEXTPEN));
+        SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
+        Move(rp, b->x + 4, b->y + 1 + rp->TxBaseline);
+        Text(rp, (STRPTR)q_ed.tables[i], (ULONG)TextFit(rp, (STRPTR)q_ed.tables[i], strlen(q_ed.tables[i]), &rv_te, NULL, 1,
+                                                        b->w - 8, jv_rowh + 2));
+        SetSoftStyle(rp, 0, FSF_BOLD);
+        for (j = 0; j < b->nf + (b->more ? 1 : 0); j++) {
+            const char *t = j < b->nf ? b->fields[j] : "...";
+            int ry = b->y + 3 + jv_rowh * (j + 1);
+            if (i == jv_pt && j == jv_pf) {
+                SetAPen(rp, pen(FILLPEN));
+                RectFill(rp, b->x + 2, ry, b->x + b->w - 3, ry + jv_rowh - 1);
+                SetAPen(rp, pen(FILLTEXTPEN));
+            } else {
+                SetAPen(rp, pen(TEXTPEN));
+            }
+            Move(rp, b->x + 6, ry + (jv_rowh - fh) / 2 + rp->TxBaseline);
+            Text(rp, (STRPTR)t, (ULONG)TextFit(rp, (STRPTR)t, strlen(t), &rv_te, NULL, 1, b->w - 10, jv_rowh));
+        }
+    }
+    /* the joins: out of one box's side, across the gap, into the other's */
+    for (i = 0; i < q_ed.njoins; i++) {
+        const ob_qjoin *k = &q_ed.joins[i];
+        int a = jv_table(k->left), b = jv_table(k->right), ax, bx, ay, by, mid, *sg = jv_seg[i];
+        memset(sg, 0, sizeof jv_seg[i]);
+        if (a < 0 || b < 0) continue;
+        ay = jv_field_y(a, jv_field(a, k->lfield));
+        by = jv_field_y(b, jv_field(b, k->rfield));
+        if (jv[b].x >= jv[a].x + jv[a].w) { ax = jv[a].x + jv[a].w; bx = jv[b].x; }
+        else if (jv[b].x + jv[b].w <= jv[a].x) { ax = jv[a].x; bx = jv[b].x + jv[b].w; }
+        else { ax = jv[a].x + jv[a].w; bx = jv[b].x + jv[b].w; }
+        mid = ax == bx || (ax == jv[a].x + jv[a].w && bx == jv[b].x + jv[b].w)
+            ? (ax > bx ? ax : bx) + fw * 3 : (ax + bx) / 2;
+        sg[0] = ax; sg[1] = ay; sg[2] = mid; sg[3] = ay; sg[4] = mid; sg[5] = by; sg[6] = bx; sg[7] = by;
+        SetAPen(rp, pen(i == jv_sel ? FILLPEN : SHADOWPEN));
+        for (j = 0; j < (i == jv_sel ? 2 : 1); j++) {
+            Move(rp, ax, ay + j); Draw(rp, mid + j, ay + j); Draw(rp, mid + j, by + j); Draw(rp, bx, by + j);
+        }
+        /* a block at the end whose every row is kept */
+        if (k->kind == OB_JOIN_LEFT) RectFill(rp, ax + (ax < mid ? 0 : -4), ay - 2, ax + (ax < mid ? 4 : 0), ay + 2);
+        if (k->kind == OB_JOIN_RIGHT) RectFill(rp, bx + (bx < mid ? 0 : -4), by - 2, bx + (bx < mid ? 4 : 0), by + 2);
+    }
+    if (jv_sel >= 0 && jv_sel < q_ed.njoins) {
+        const ob_qjoin *k = &q_ed.joins[jv_sel];
+        snprintf(line, sizeof line, "%s.%s = %s.%s: %s", k->left, k->lfield, k->right, k->rfield,
+                 k->kind == OB_JOIN_INNER ? "Inner, only the rows that match"
+                 : k->kind == OB_JOIN_LEFT ? "Left, every row of the first" : "Right, every row of the second");
+    } else if (jv_pt >= 0) {
+        snprintf(line, sizeof line, "%s.%s: now click or drop on a field of another table", q_ed.tables[jv_pt], jv[jv_pt].fields[jv_pf]);
+    } else {
+        snprintf(line, sizeof line, "%d join%s. Drag a field onto another table's field to join them.",
+                 q_ed.njoins, q_ed.njoins == 1 ? "" : "s");
+    }
+    SetAPen(rp, pen(TEXTPEN));
+    text_fit(rp, jv_cx, jv_sty, jv_cw, line);
+}
+
+/* The field under x, y: table and field, or 0. */
+static int jv_hit_field(int x, int y, int *t, int *f)
+{
+    int i;
+    for (i = 0; i < q_ed.ntables; i++) {
+        const struct jv_box *b = &jv[i];
+        int row = (y - b->y - 3) / jv_rowh - 1;
+        if (x < b->x || x >= b->x + b->w || y < b->y + 3 + jv_rowh || row < 0 || row >= b->nf) continue;
+        *t = i;
+        *f = row;
+        return 1;
+    }
+    return 0;
+}
+
+/* The join whose line passes within 3 pixels of x, y; -1 for none. */
+static int jv_hit_join(int x, int y)
+{
+    int i, s;
+    for (i = q_ed.njoins - 1; i >= 0; i--)
+        for (s = 0; s < 3; s++) {
+            int x1 = jv_seg[i][2 * s], y1 = jv_seg[i][2 * s + 1], x2 = jv_seg[i][2 * s + 2], y2 = jv_seg[i][2 * s + 3];
+            int lo = x1 < x2 ? x1 : x2, hi = x1 < x2 ? x2 : x1, top = y1 < y2 ? y1 : y2, bot = y1 < y2 ? y2 : y1;
+            if (!x1 && !x2) continue;
+            if (x >= lo - 3 && x <= hi + 3 && y >= top - 3 && y <= bot + 3) return i;
+        }
+    return -1;
+}
+
+/* Joins the picked field to table t's field f. */
+static void jv_join(int t, int f)
+{
+    int i;
+    if (jv_pt < 0 || t == jv_pt) return;
+    i = ob_query_add_join(&q_ed, q_ed.tables[jv_pt], jv[jv_pt].fields[jv_pf], q_ed.tables[t], jv[t].fields[f], OB_JOIN_INNER);
+    if (i < 0) tell(q_ed.njoins >= OB_QUERY_JOINS ? "A query has at most 12 joins" : "Those two fields are joined already");
+    else jv_sel = i;
+    jv_pt = jv_pf = -1;
+}
+
+enum { JV_INNER = 1, JV_LEFT, JV_RIGHT, JV_REMOVE, JV_RELS, JV_CLOSE, JV_NBUTTONS = JV_CLOSE };
+
+static void join_window(void)
+{
+    static const char *const btext[JV_NBUTTONS] = { "Inner", "Left", "Right", "Remove", "Relationships", "Close" };
+    struct Window *jw;
+    struct Gadget *eg = NULL, *g;
+    struct NewGadget ng;
+    int w, h, i, bw, bh = fh + 6, done = 0, down = 0;
+    if (q_ed.ntables < 2) { tell("Add a second table first."); return; }
+    if (q_ed.njoins == 0 && ob_query_relation_joins(proj, &q_ed) < 0) { tell(ob_error(proj)); return; }
+    w = fw * 80;
+    h = scr->Height * 3 / 4;
+    if (w > scr->Width - 20) w = scr->Width - 20;
+    jw = OpenWindowTags(NULL, WA_Title, (ULONG)"Joins", WA_PubScreen, (ULONG)scr,
+        WA_Left, (scr->Width - w) / 2, WA_Top, scr->BarHeight + 1, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | IDCMP_MOUSEBUTTONS | BUTTONIDCMP,
+        TAG_DONE);
+    if (!jw) { tell("The window could not be opened."); return; }
+    w = jw->Width - jw->BorderLeft - jw->BorderRight;
+    h = jw->Height - jw->BorderTop - jw->BorderBottom;
+    jv_rowh = fh + 2;
+    jv_cx = jw->BorderLeft + 8;
+    jv_cy = jw->BorderTop + 6;
+    jv_cw = w - 16;
+    jv_ch = h - 6 - (fh + 6) - (bh + 8) - 4;
+    jv_sty = jv_cy + jv_ch + 4;
+    jv_sel = q_ed.njoins ? 0 : -1;
+    jv_pt = jv_pf = -1;
+    jv_layout();
+    if (!(g = CreateContext(&eg))) { CloseWindow(jw); return; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_Flags = PLACETEXT_IN;
+    ng.ng_Height = bh;
+    ng.ng_TopEdge = jw->Height - jw->BorderBottom - 6 - bh;
+    bw = (jv_cw - 5 * 4) / JV_NBUTTONS;
+    for (i = 0; i < JV_NBUTTONS && g; i++) {
+        ng.ng_LeftEdge = jv_cx + i * (bw + 4);
+        ng.ng_Width = bw;
+        ng.ng_GadgetText = (UBYTE *)btext[i];
+        ng.ng_GadgetID = i + 1;
+        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    }
+    if (!g) { FreeGadgets(eg); CloseWindow(jw); tell("Not enough memory."); return; }
+    AddGList(jw, eg, ~0, -1, NULL);
+    RefreshGList(eg, jw, NULL, -1);
+    GT_RefreshWindow(jw, NULL);
+    jv_draw(jw);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(jw->UserPort);
+        while (!done && (m = GT_GetIMsg(jw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            WORD mx = m->MouseX, my = m->MouseY;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            int redraw = 1, t, f;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(jw); GT_EndRefresh(jw, TRUE); continue; }
+            if (class == IDCMP_VANILLAKEY) {
+                if (code == 9 && q_ed.njoins) jv_sel = (jv_sel + 1) % q_ed.njoins;
+                else if ((code == 127 || code == 8) && jv_sel >= 0) { ob_query_remove_join(&q_ed, jv_sel); jv_sel = -1; }
+                else redraw = 0;
+            } else if (class == IDCMP_MOUSEBUTTONS) {
+                if (code == SELECTDOWN) {
+                    if (jv_hit_field(mx, my, &t, &f)) {
+                        if (jv_pt >= 0 && t != jv_pt) jv_join(t, f);       /* the second click */
+                        else { jv_pt = t; jv_pf = f; jv_sel = -1; down = 1; }
+                    } else {
+                        jv_sel = jv_hit_join(mx, my);
+                        jv_pt = jv_pf = -1;
+                    }
+                } else if (code == SELECTUP && down) {                       /* a drag ends */
+                    down = 0;
+                    if (jv_hit_field(mx, my, &t, &f) && t != jv_pt) jv_join(t, f);
+                    else redraw = 0;
+                } else redraw = 0;
+            } else if (class == IDCMP_GADGETUP) {
+                ob_qjoin *k = jv_sel >= 0 && jv_sel < q_ed.njoins ? &q_ed.joins[jv_sel] : NULL;
+                switch (gg->GadgetID) {
+                case JV_INNER: case JV_LEFT: case JV_RIGHT:
+                    if (k) k->kind = gg->GadgetID == JV_LEFT ? OB_JOIN_LEFT : gg->GadgetID == JV_RIGHT ? OB_JOIN_RIGHT : OB_JOIN_INNER;
+                    else tell("Click a join's line first.");
+                    break;
+                case JV_REMOVE:
+                    if (k) { ob_query_remove_join(&q_ed, jv_sel); jv_sel = -1; }
+                    else tell("Click a join's line first.");
+                    break;
+                case JV_RELS:
+                    if ((i = ob_query_relation_joins(proj, &q_ed)) < 0) tell(ob_error(proj));
+                    else if (!i) tell("Every relationship between these tables is drawn already.");
+                    break;
+                case JV_CLOSE: done = 1; break;
+                }
+                if (!done) ActivateWindow(jw);
+            } else redraw = 0;
+            if (!done && redraw) jv_draw(jw);
+        }
+    }
+    RemoveGList(jw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(jw);
+}
+
 static void design_query(int fresh)
 {
     struct Window *qw;
@@ -2417,6 +2720,10 @@ static void design_query(int fresh)
                 ng.ng_GadgetText = (UBYTE *)"Take Table Out";
                 ng.ng_GadgetID = Q_REMTABLE;
                 g = gad[Q_REMTABLE] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, tsel < 0, TAG_DONE);
+                ng.ng_TopEdge = y + rowh * 2;
+                ng.ng_GadgetText = (UBYTE *)(q_ed.njoins ? "Joins (drawn)..." : "Joins...");
+                ng.ng_GadgetID = Q_JOINS;
+                g = gad[Q_JOINS] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, q_ed.ntables < 2, TAG_DONE);
                 ng.ng_Flags = PLACETEXT_LEFT;
                 ng.ng_LeftEdge = l + lw;
                 ng.ng_TopEdge = y += rowh * 3 + 4;
@@ -2544,12 +2851,15 @@ static void design_query(int fresh)
                     if (code > 0 && q_tlabels[code]) {
                         if (ob_query_add_table(&q_ed, (const char *)q_tlabels[code]) < 0)
                             tell(q_ed.ntables >= OB_QUERY_TABLES ? "A query has at most 8 tables" : "That table is in the query already");
+                        else if (q_ed.njoins > 0 && ob_query_relation_joins(proj, &q_ed) < 0)   /* drawn: draw its relationships too */
+                            tell(ob_error(proj));
                         rebuild = 1;
                     }
                     break;
                 case Q_REMTABLE:
                     if (tsel >= 0 && tsel < q_ed.ntables) { ob_query_remove_table(&q_ed, tsel); tsel = -1; csel = -1; rebuild = 1; }
                     break;
+                case Q_JOINS: join_window(); rebuild = 1; break;
                 case Q_COLS: csel = code; rebuild = 1; break;
                 case Q_ADDFIELD:
                     if (code > 0 && code <= q_nf) {
@@ -2760,7 +3070,10 @@ static void open_query(void)
 
 enum {
     F_FIRST = 1, F_PREV, F_POS, F_NEXT, F_LAST, F_NEW, F_DELETE, F_FIND, F_SAVE, F_UNDO, F_CLOSE,
-    F_BACK, F_ON, F_SUBPICK, F_SUBLIST, F_SUBCOUNT, F_FIELD0
+    F_BACK, F_ON, F_SUBPICK, F_SUBLIST, F_SUBCOUNT,
+    F_FILTER, F_FROW, F_FHINT, F_FCLEAR, F_FCANCEL,     /* Filter by Form */
+    F_SUBADD, F_SUBEDIT, F_SUBDEL,                      /* the subform's rows */
+    F_FIELD0
 };
 
 #define FORM_SUB_MAX 40
@@ -2778,6 +3091,16 @@ static struct Node f_snodes[FORM_SUB_MAX];
 static char f_stext[FORM_SUB_MAX][160];
 static int f_sn;
 static char f_count[64], f_scount[80];
+static int f_ssel = -1, f_ssub = -1;        /* the subform row chosen, for record f_skey */
+static ob_int f_skey = -2;
+static int f_slines = 7;                     /* the subform list's lines */
+
+/* Filter by Form (design 6.3): the form's fields take what to look for, a
+ * row at a time (Look for, Or, Or); Apply Filter makes it the view's. */
+static int f_filtering, f_frow;
+static ob_view f_fview;                      /* the criteria being typed */
+static STRPTR f_frow_labels[] = { (STRPTR)"Look for", (STRPTR)"Or", (STRPTR)"Or (2)", NULL };
+static char f_fhint[96];
 
 static int form_row_cb(void *user, ob_int key, int n, const char *const *v)
 {
@@ -2837,6 +3160,7 @@ static void form_subrows(void)
     NewList(&f_sl);
     f_sn = 0;
     f_scount[0] = 0;
+    if (f_key != f_skey || f_sub != f_ssub) { f_ssel = -1; f_skey = f_key; f_ssub = f_sub; }
     if (!f_nsubs) return;
     if (f_key <= 0) { put_text(f_scount, sizeof f_scount, "Save the record to see its rows"); return; }
     if (!ob_table_get(proj, f_subs[f_sub].table, &f_child)) { put_text(f_scount, sizeof f_scount, ob_error(proj)); return; }
@@ -2849,6 +3173,7 @@ static void form_subrows(void)
     ob_view_rows(proj, f_child.name, &kids, 0, FORM_SUB_MAX, form_sub_cb, f_subs[f_sub].field);
     if (n > FORM_SUB_MAX) snprintf(f_scount, sizeof f_scount, "The first %d of %lld rows", FORM_SUB_MAX, (long long)n);
     else snprintf(f_scount, sizeof f_scount, "%lld row%s", (long long)n, n == 1 ? "" : "s");
+    if (f_ssel >= f_sn) f_ssel = -1;
 }
 
 static int form_changed(void)
@@ -2994,7 +3319,7 @@ static void open_form(void)
     struct Window *w_;
     struct Gadget *eg = NULL, *g, *fg[ED_MAX];
     struct NewGadget ng;
-    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih;
+    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full, wt, oh;
     if (q_on) { set_status("Forms show a table: choose one in the list"); return; }
     if (!proj || !have_cur) { set_status("Choose a table first"); return; }
     for (i = 0; i < OB_MAX_FIELDS; i++) {
@@ -3011,6 +3336,7 @@ static void open_form(void)
     }
     f_sub_labels[f_nsubs] = NULL;
     f_sub = 0;
+    f_filtering = 0;
     f_pos = sel_row >= 0 ? sel_row : 0;
     form_read();
     for (i = 0; i < cur.nfields; i++) {
@@ -3023,17 +3349,29 @@ static void open_form(void)
     if (iw < 8 * (bw + 6) + fw * 16) iw = 8 * (bw + 6) + fw * 16;
     if (iw > scr->Width - 40) iw = scr->Width - 40;
     vw = iw - lw - 20;
-    sub_h = f_nsubs ? (fh + 8) + 7 * (fh + 2) + 8 : 0;
+    f_slines = 7;
+    sub_h = f_nsubs ? (fh + 8) + f_slines * (fh + 2) + 8 + fh + 12 : 0;
     per = (scr->Height - 160 - sub_h - 3 * (fh + 12)) / row_h;
     if (per > ED_MAX) per = ED_MAX;
     if (per < 3) per = 3;
     pages = (cur.nfields + per - 1) / per;
     nshow = cur.nfields < per ? cur.nfields : per;
     ih = 8 + nshow * row_h + (pages > 1 ? fh + 12 : 0) + sub_h + 2 * (fh + 12) + 8;
+    /* on a short screen the subform's list gives up lines first, down to 3 */
+    oh = ih + scr->WBorTop + fh + 1 + scr->WBorBottom;     /* the window, borders and title */
+    while (f_nsubs && f_slines > 3 && oh > scr->Height - scr->BarHeight - 1) {
+        f_slines--;
+        sub_h -= fh + 2;
+        ih -= fh + 2;
+        oh -= fh + 2;
+    }
+    wt = win->TopEdge + 20;                    /* below the main window's title, if it fits */
+    if (wt + oh > scr->Height) wt = scr->Height - oh;
+    if (wt < 0) wt = 0;
     w_ = OpenWindowTags(NULL,
         WA_Title, (ULONG)cur.name,
         WA_PubScreen, (ULONG)scr,
-        WA_Left, win->LeftEdge + 30, WA_Top, win->TopEdge + 20,
+        WA_Left, win->LeftEdge + 30, WA_Top, wt,
         WA_InnerWidth, iw, WA_InnerHeight, ih,
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
         WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
@@ -3066,7 +3404,11 @@ static void open_form(void)
             ng.ng_GadgetText = (UBYTE *)(f->label[0] ? f->label : f->name);
             ng.ng_Flags = PLACETEXT_LEFT;
             ng.ng_GadgetID = F_FIELD0 + i;
-            if (f->type == OB_COUNTER || f->type == OB_OBJECT)
+            if (f_filtering)
+                g = fg[i] = CreateGadget(STRING_KIND, g, &ng,
+                                         GTST_String, (ULONG)ob_view_form_get(&f_fview, f->name, f_frow),
+                                         GTST_MaxChars, OB_VALUE_MAX - 1, GA_TabCycle, TRUE, TAG_DONE);
+            else if (f->type == OB_COUNTER || f->type == OB_OBJECT)
                 g = fg[i] = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text,
                                          (ULONG)(f->type == OB_COUNTER && f_key < 0 ? "(new)" : f_vals[first + i]),
                                          GTTX_Border, TRUE, TAG_DONE);
@@ -3090,7 +3432,33 @@ static void open_form(void)
             g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, page == pages - 1, TAG_DONE);
             top += fh + 12;
         }
-        if (f_nsubs) {
+        if (f_filtering) {
+            /* the filter's bar: which row, and how to write it */
+            ng.ng_TopEdge = top + 4;
+            ng.ng_LeftEdge = w_->BorderLeft + 10 + lw;
+            ng.ng_Width = fw * 12 + 28;
+            ng.ng_GadgetText = (UBYTE *)"Row";
+            ng.ng_Flags = PLACETEXT_LEFT;
+            ng.ng_GadgetID = F_FROW;
+            g = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)f_frow_labels, GTCY_Active, f_frow, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8;
+            ng.ng_Width = w_->Width - w_->BorderRight - 10 - ng.ng_LeftEdge;
+            ng.ng_GadgetText = NULL;
+            ng.ng_GadgetID = F_FHINT;
+            snprintf(f_fhint, sizeof f_fhint, "Leeds, > 10, Smith*, between 1 and 5, empty, not York");
+            g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)f_fhint, TAG_DONE);
+            ng.ng_Flags = PLACETEXT_IN;
+            ng.ng_TopEdge = top + 4 + fh + 12;
+            ng.ng_Width = fw * 12 + 12;
+            ng.ng_LeftEdge = w_->BorderLeft + 10; ng.ng_GadgetText = (UBYTE *)"Apply Filter"; ng.ng_GadgetID = F_FILTER;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Clear All"; ng.ng_GadgetID = F_FCLEAR;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge = w_->Width - w_->BorderRight - 10 - ng.ng_Width; ng.ng_GadgetText = (UBYTE *)"Cancel";
+            ng.ng_GadgetID = F_FCANCEL;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+        }
+        if (!f_filtering && f_nsubs) {
             ng.ng_TopEdge = top + 4;
             ng.ng_LeftEdge = w_->BorderLeft + 10 + lw;
             ng.ng_Width = vw / 2;
@@ -3106,55 +3474,71 @@ static void open_form(void)
             ng.ng_TopEdge = top + 4 + fh + 8;
             ng.ng_LeftEdge = w_->BorderLeft + 10;
             ng.ng_Width = iw - 20;
-            ng.ng_Height = 7 * (fh + 2);
+            ng.ng_Height = f_slines * (fh + 2);
             ng.ng_GadgetID = F_SUBLIST;
             ng.ng_Flags = 0;
-            g = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&f_sl, GTLV_ReadOnly, TRUE, TAG_DONE);
+            g = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&f_sl, GTLV_ShowSelected, 0,
+                             GTLV_Selected, f_ssel >= 0 ? (ULONG)f_ssel : ~0UL, TAG_DONE);
             ng.ng_Height = fh + 6;
             ng.ng_Flags = PLACETEXT_IN;
+            /* change the subform's rows: Add for this record, Edit and Delete the one chosen */
+            ng.ng_TopEdge = top + 4 + fh + 8 + f_slines * (fh + 2) + 4;
+            ng.ng_Width = fw * 12 + 12;
+            ng.ng_LeftEdge = w_->BorderLeft + 10; ng.ng_GadgetText = (UBYTE *)"Add Row..."; ng.ng_GadgetID = F_SUBADD;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_key <= 0, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Edit Row..."; ng.ng_GadgetID = F_SUBEDIT;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Delete Row..."; ng.ng_GadgetID = F_SUBDEL;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
             top += sub_h;
         }
         /* the record bar */
-        x = w_->BorderLeft + 10;
-        ng.ng_TopEdge = top + 4;
-        ng.ng_Width = bw;
-        {
-            static const char *const bar[] = { "|<", "<" };
-            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)bar[0]; ng.ng_GadgetID = F_FIRST;
-            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos == 0 || !f_total, TAG_DONE);
+        if (!f_filtering) {
+            x = w_->BorderLeft + 10;
+            ng.ng_TopEdge = top + 4;
+            ng.ng_Width = bw;
+            {
+                static const char *const bar[] = { "|<", "<" };
+                ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)bar[0]; ng.ng_GadgetID = F_FIRST;
+                g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos == 0 || !f_total, TAG_DONE);
+                x += bw + 4;
+                ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)bar[1]; ng.ng_GadgetID = F_PREV;
+                g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos == 0 || !f_total, TAG_DONE);
+                x += bw + 4;
+            }
+            ng.ng_LeftEdge = x; ng.ng_Width = fw * 16; ng.ng_GadgetText = NULL; ng.ng_GadgetID = F_POS;
+            g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)f_count, GTTX_Justification, GTJ_CENTER, GTTX_Border, TRUE, TAG_DONE);
+            x += fw * 16 + 4;
+            ng.ng_Width = bw;
+            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)">"; ng.ng_GadgetID = F_NEXT;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0 || f_pos >= f_total - 1, TAG_DONE);
             x += bw + 4;
-            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)bar[1]; ng.ng_GadgetID = F_PREV;
-            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos == 0 || !f_total, TAG_DONE);
-            x += bw + 4;
+            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)">|"; ng.ng_GadgetID = F_LAST;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0 || f_pos >= f_total - 1, TAG_DONE);
+            x += bw + 12;
+            ng.ng_Width = fw * 7 + 12;
+            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)"New"; ng.ng_GadgetID = F_NEW;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0, TAG_DONE);
+            x += ng.ng_Width + 4;
+            ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)"Delete..."; ng.ng_Width = fw * 9 + 12; ng.ng_GadgetID = F_DELETE;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0, TAG_DONE);
+            /* the second row: Find, Save, Undo Record, Close */
+            ng.ng_TopEdge = top + 4 + fh + 12;
+            ng.ng_Width = fw * 11 + 12;
+            ng.ng_LeftEdge = w_->BorderLeft + 10; ng.ng_GadgetText = (UBYTE *)"Find..."; ng.ng_GadgetID = F_FIND;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, !f_total, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Save"; ng.ng_GadgetID = F_SAVE;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Undo Record"; ng.ng_GadgetID = F_UNDO;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Filter by Form"; ng.ng_GadgetID = F_FILTER;
+            ng.ng_Width = fw * 14 + 12;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_Width = fw * 11 + 12;
+            ng.ng_LeftEdge = w_->Width - w_->BorderRight - 10 - ng.ng_Width; ng.ng_GadgetText = (UBYTE *)"Close";
+            ng.ng_GadgetID = F_CLOSE;
+            g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
         }
-        ng.ng_LeftEdge = x; ng.ng_Width = fw * 16; ng.ng_GadgetText = NULL; ng.ng_GadgetID = F_POS;
-        g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)f_count, GTTX_Justification, GTJ_CENTER, GTTX_Border, TRUE, TAG_DONE);
-        x += fw * 16 + 4;
-        ng.ng_Width = bw;
-        ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)">"; ng.ng_GadgetID = F_NEXT;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0 || f_pos >= f_total - 1, TAG_DONE);
-        x += bw + 4;
-        ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)">|"; ng.ng_GadgetID = F_LAST;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0 || f_pos >= f_total - 1, TAG_DONE);
-        x += bw + 12;
-        ng.ng_Width = fw * 7 + 12;
-        ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)"New"; ng.ng_GadgetID = F_NEW;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0, TAG_DONE);
-        x += ng.ng_Width + 4;
-        ng.ng_LeftEdge = x; ng.ng_GadgetText = (UBYTE *)"Delete..."; ng.ng_Width = fw * 9 + 12; ng.ng_GadgetID = F_DELETE;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_pos < 0, TAG_DONE);
-        /* the second row: Find, Save, Undo Record, Close */
-        ng.ng_TopEdge = top + 4 + fh + 12;
-        ng.ng_Width = fw * 11 + 12;
-        ng.ng_LeftEdge = w_->BorderLeft + 10; ng.ng_GadgetText = (UBYTE *)"Find..."; ng.ng_GadgetID = F_FIND;
-        g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, !f_total, TAG_DONE);
-        ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Save"; ng.ng_GadgetID = F_SAVE;
-        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
-        ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Undo Record"; ng.ng_GadgetID = F_UNDO;
-        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
-        ng.ng_LeftEdge = w_->Width - w_->BorderRight - 10 - ng.ng_Width; ng.ng_GadgetText = (UBYTE *)"Close";
-        ng.ng_GadgetID = F_CLOSE;
-        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
         if (!g) break;
         SetAPen(w_->RPort, pen(BACKGROUNDPEN));
         RectFill(w_->RPort, w_->BorderLeft, w_->BorderTop, w_->Width - w_->BorderRight - 1, w_->Height - w_->BorderBottom - 1);
@@ -3162,7 +3546,7 @@ static void open_form(void)
         RefreshGList(eg, w_, NULL, -1);
         GT_RefreshWindow(w_, NULL);
         for (i = 0; i < nshow; i++)
-            if (fg[i] && cur.fields[first + i].type != OB_COUNTER && cur.fields[first + i].type != OB_OBJECT) {
+            if (fg[i] && (f_filtering || (cur.fields[first + i].type != OB_COUNTER && cur.fields[first + i].type != OB_OBJECT))) {
                 ActivateGadget(fg[i], w_, NULL);
                 break;
             }
@@ -3176,18 +3560,24 @@ static void open_form(void)
                 GT_ReplyIMsg(m);
                 if (class == IDCMP_CLOSEWINDOW) action = F_CLOSE;
                 else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(w_); GT_EndRefresh(w_, TRUE); }
-                else if (class == IDCMP_VANILLAKEY && code == 27) action = F_UNDO;
-                else if (class == IDCMP_GADGETUP && gad->GadgetID >= F_FIRST && gad->GadgetID <= F_SUBPICK
-                         && gad->GadgetID != F_POS) {
+                else if (class == IDCMP_VANILLAKEY && code == 27) action = f_filtering ? F_FCANCEL : F_UNDO;
+                else if (class == IDCMP_GADGETUP && gad->GadgetID >= F_FIRST && gad->GadgetID < F_FIELD0
+                         && gad->GadgetID != F_POS && gad->GadgetID != F_SUBCOUNT
+                         && gad->GadgetID != F_FHINT) {
                     action = gad->GadgetID;
                     acode = code;
                 }
             }
         }
         /* keep what was typed */
+        full = 0;
         for (i = 0; i < nshow; i++) {
             const ob_field *f = &cur.fields[first + i];
-            if (fg[i] && f->type != OB_COUNTER && f->type != OB_OBJECT) {
+            if (f_filtering && fg[i]) {
+                STRPTR s = NULL;
+                GT_GetGadgetAttrs(fg[i], w_, NULL, GTST_String, (ULONG)&s, TAG_DONE);
+                if (!ob_view_form_set(&f_fview, f->name, f_frow, s ? (const char *)s : "")) full = 1;
+            } else if (fg[i] && f->type != OB_COUNTER && f->type != OB_OBJECT) {
                 STRPTR s = NULL;
                 GT_GetGadgetAttrs(fg[i], w_, NULL, GTST_String, (ULONG)&s, TAG_DONE);
                 put_text(f_vals[first + i], 1024, s ? (const char *)s : "");
@@ -3196,10 +3586,61 @@ static void open_form(void)
         RemoveGList(w_, eg, -1);
         FreeGadgets(eg);
         eg = NULL;
+        if (full) tell("Filter by Form looks at 16 fields at most: what was typed past that is left out");
+        if (f_filtering && action == F_CLOSE) action = F_FCANCEL;
         switch (action) {
+        case F_FROW: f_frow = (int)acode < OB_FORM_OR ? (int)acode : 0; break;
+        case F_FCLEAR: ob_view_form_clear(&f_fview); break;
+        case F_FCANCEL: f_filtering = 0; set_status("Filter by Form cancelled"); break;
+        case F_FILTER:
+            if (!f_filtering) {
+                if (!form_save(w_)) break;
+                f_fview = view;
+                f_frow = 0;
+                f_filtering = 1;
+                page = 0;
+                set_status("Type what to look for, then Apply Filter");
+            } else if (!ob_view_check(proj, cur.name, &f_fview)) {
+                tell(ob_error(proj));
+            } else {
+                char msg[96];
+                view = f_fview;
+                f_filtering = 0;
+                f_pos = 0;
+                form_read();
+                if (!f_total) f_pos = -1;
+                snprintf(msg, sizeof msg, ob_view_filtered(&view) ? "Filter applied: %lld records" : "Filter removed: %lld records",
+                         (long long)f_total);
+                set_status(msg);
+            }
+            break;
         case F_BACK: if (page > 0) page--; break;
         case F_ON: if (page < pages - 1) page++; break;
         case F_SUBPICK: f_sub = (int)acode < f_nsubs ? (int)acode : 0; break;
+        case F_SUBLIST: f_ssel = (int)acode; break;
+        case F_SUBADD: case F_SUBEDIT: case F_SUBDEL: {
+            ob_int k = 0;
+            if (!form_save(w_)) break;
+            form_read();
+            if (f_key <= 0) { tell("Save the record first: its rows need its key"); break; }
+            if (action != F_SUBADD) {
+                k = ob_child_key(proj, &f_subs[f_sub], f_key, f_ssel);
+                if (k == -2) { tell(ob_error(proj)); break; }
+                if (k < 0) { tell("Choose a row in the list first."); break; }
+            }
+            if (action == F_SUBDEL) {
+                char q[160];
+                snprintf(q, sizeof q, "Delete row %d of %.63s?", f_ssel + 1, f_child.name);
+                if (ask(q, "Delete|Cancel") == 1) {
+                    if (!ob_row_delete(proj, f_child.name, k)) tell(ob_error(proj));
+                    else { set_status("Row deleted"); f_ssel = -1; }
+                }
+            } else {
+                edit_row_of(&f_child, k, action == F_SUBADD, &f_subs[f_sub], f_key);
+                ActivateWindow(w_);
+            }
+            break;
+        }
         case F_UNDO:
             for (i = 0; i < cur.nfields; i++) put_text(f_vals[i], 1024, f_before[i]);
             if (f_pos < 0) { f_pos = f_total ? 0 : -1; form_read(); }
@@ -3274,6 +3715,27 @@ static void undo_last(void)
     set_status(msg);
 }
 
+/* The Report window over this one, its new report from the table or query shown. */
+static void report_window(void)
+{
+    ob_rwin_env e;
+    if (!proj) { set_status("Open a project first"); return; }
+    memset(&e, 0, sizeof e);
+    e.scr = scr;
+    e.vi = vi;
+    e.font = font;
+    e.ta = &font_attr;
+    e.fw = fw;
+    e.fh = fh;
+    e.parent = win;
+    e.proj = proj;
+    e.proj_path = proj_path;
+    e.table = have_cur && !q_on ? cur.name : "";
+    e.query = q_on ? qy.name : "";
+    e.ask_text = ask_text;
+    ob_report_window(&e);
+}
+
 static void menu_action(ULONG id)
 {
     char path[512];
@@ -3321,6 +3783,7 @@ static void menu_action(ULONG id)
     case M_T_EXPORT: export_csv(); break;
     case M_T_FROMCSV: new_table_from_csv(); break;
     case M_UNDO: undo_last(); break;
+    case M_REPORTS: report_window(); break;
     case M_Q_NEW: design_query(1); break;
     case M_Q_OPEN: open_query(); break;
     case M_Q_DESIGN: design_query(!qy.ntables && !qy.sql_only); break;

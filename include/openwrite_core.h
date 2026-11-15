@@ -346,6 +346,7 @@ typedef struct {
     int reply_to;            /* the index of the comment it answers; -1: none */
     int done;                /* marked done */
     ow_position start, end;  /* its text (start == end's place: a point) */
+    int shown;               /* 2.0.39: the author filter shows it (ow_editor_set_comment_filter) */
 } ow_comment_info;
 int ow_editor_comment_count(const ow_editor *editor);
 /* 1 and *info for the index-th comment, 0 when there is none. The strings are valid until the next edit. */
@@ -355,6 +356,14 @@ int ow_editor_current_comment(ow_editor *editor, ow_comment_info *info);
 /* Selects the next comment's text (or the one before): 1, 2 when it went round the story's end, 0: none.
  * Replies are passed over (they are where their comment is). */
 int ow_editor_next_comment(ow_editor *editor, int backwards);
+/* 2.0.39: show only one author's comments (NULL or "": everyone's, as at first). The margin draws a comment
+ * only when ow_comment_info.shown; Next and Previous Comment go only to comments whose thread has one shown.
+ * The document is not changed. */
+int ow_editor_set_comment_filter(ow_editor *editor, const char *author);
+const char *ow_editor_comment_filter(const ow_editor *editor);
+/* 2.0.39: the comments' authors, each once in the order first met ("" for an unknown one), up to max: the
+ * number put in names */
+int ow_editor_comment_authors(ow_editor *editor, char (*names)[72], int max);
 /* A comment of the review author's on the selection (or at the caret), made now; the caret after it. */
 int ow_editor_insert_comment(ow_editor *editor, const char *utf8);
 /* The review author's reply to the comment at the caret. OWF_ERR_UNSUPPORTED: no comment there. */

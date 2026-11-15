@@ -4676,7 +4676,10 @@ static void pv_item(const owf_pivotdef *def, unsigned field, const char *latin1,
 /* Fills def's fields from the window's choices; 0 (with a status line) when they do not make a table. */
 static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
 {
-    unsigned want, i;
+    unsigned want, i, k;
+    owf_pivot_data was[OWF_PIVOT_DATA];
+    unsigned nwas = def->ndata <= OWF_PIVOT_DATA ? def->ndata : OWF_PIVOT_DATA;
+    memcpy(was, def->data, sizeof was);      /* a data field keeps how it is shown */
     def->nrow = def->ncol = def->npage = def->ndata = 0;
     for (want = 1; want <= n * 2u + 2u; ++want)
         for (i = 0; i < n; ++i) {
@@ -4695,6 +4698,12 @@ static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
             if (fields[i].data && fields[i].data_order == want) {
                 if (def->ndata == OWF_PIVOT_DATA) { set_status("A pivot table takes up to 8 data fields."); return 0; }
                 def->data[def->ndata].field = i;
+                def->data[def->ndata].show = OWF_PIVOT_SHOW_NORMAL;
+                for (k = 0; k < nwas; ++k)
+                    if (was[k].field == i) {
+                        def->data[def->ndata].show = was[k].show;
+                        break;
+                    }
                 def->data[def->ndata++].function = pv_data_function[fields[i].data];
             }
         }
@@ -4887,6 +4896,7 @@ static void do_pivot_table(void)
         def.ndata = 1;
         def.data[0].field = selection.ranges[0].last_col - selection.ranges[0].first_col;
         def.data[0].function = OC_SUBTOTAL_SUM;
+        def.data[0].show = OWF_PIVOT_SHOW_NORMAL;
     }
     if (pivot_layout_window(&def, 0))
         pivot_result(oc_core_pivot_create(core, &def), "Pivot table created on a new sheet; Undo removes it.");
@@ -6125,6 +6135,7 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
             else if (mode == 2 && def.ncol < OWF_PIVOT_FIELDS) def.col[def.ncol++] = col;
             else if (mode == 3 && def.ndata < OWF_PIVOT_DATA && subtotal_function(sep + 1)) {
                 def.data[def.ndata].field = col;
+                def.data[def.ndata].show = OWF_PIVOT_SHOW_NORMAL;
                 def.data[def.ndata++].function = subtotal_function(sep + 1);
             } else if (mode == 4 && def.npage < OWF_PIVOT_PAGES)
                 pv_item(&def, col, sep + 1, &def.page[def.npage++]);

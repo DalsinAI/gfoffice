@@ -469,6 +469,49 @@ static void test_odf_form(void)
     owf_doc_free(doc);
 }
 
+/* 2.0.39: Show Comments By: the authors listed once; the filter marks which comments the margin shows, and
+ * Next/Previous Comment go only to threads with one shown; the document is not changed */
+static void test_filter(void)
+{
+    owf_doc *doc = commented_doc();
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    ow_comment_info info;
+    char names[8][72];
+    int i, n, shown[3];
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    n = ow_editor_comment_authors(ed, names, 8);
+    CHECK(n == 2 && !strcmp(names[0], "Ann & co") && !strcmp(names[1], "Bob"), "the authors, once each");
+    CHECK(ow_editor_comment_authors(ed, names, 1) == 1, "no more than max");
+    CHECK(!ow_editor_comment_filter(ed), "everyone's at first");
+    for (i = 0; i < 3; ++i) shown[i] = ow_editor_comment_info(ed, i, &info) && info.shown;
+    CHECK(shown[0] && shown[1] && shown[2], "all shown");
+
+    CHECK(ow_editor_set_comment_filter(ed, "Bob") == OWF_OK && !strcmp(ow_editor_comment_filter(ed), "Bob"), "Bob's");
+    for (i = 0; i < 3; ++i) shown[i] = ow_editor_comment_info(ed, i, &info) && info.shown;
+    CHECK(!shown[0] && shown[1] && shown[2], "Ann's comment not shown, Bob's reply and comment shown");
+    caret(ed, 0, 0);
+    CHECK(ow_editor_next_comment(ed, 0) == 1 && ow_editor_current_comment(ed, &info) && info.index == 0,
+          "Next: Ann's comment, for Bob's reply to it");
+
+    CHECK(ow_editor_set_comment_filter(ed, "Ann & co") == OWF_OK, "Ann's");
+    for (i = 0; i < 3; ++i) shown[i] = ow_editor_comment_info(ed, i, &info) && info.shown;
+    CHECK(shown[0] && !shown[1] && !shown[2], "only Ann's");
+    caret(ed, 0, 0);
+    CHECK(ow_editor_next_comment(ed, 0) == 1 && ow_editor_current_comment(ed, &info) && info.index == 0, "Next: Ann's");
+    CHECK(ow_editor_next_comment(ed, 0) == 2 && ow_editor_current_comment(ed, &info) && info.index == 0,
+          "Next again: round to it, past Bob's");
+    CHECK(ow_editor_next_comment(ed, 1) == 2 && ow_editor_current_comment(ed, &info) && info.index == 0,
+          "Previous: the same");
+
+    CHECK(ow_editor_set_comment_filter(ed, "Nobody") == OWF_OK && ow_editor_next_comment(ed, 0) == 0, "no one's: none");
+    CHECK(ow_editor_set_comment_filter(ed, "") == OWF_OK && !ow_editor_comment_filter(ed), "\"\": everyone's again");
+    CHECK(ow_editor_set_comment_filter(ed, NULL) == OWF_OK && ow_editor_comment_info(ed, 0, &info) && info.shown, "NULL too");
+    CHECK(!strcmp(dump(doc), commented_dump), dump(doc));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     test_editing();
@@ -480,6 +523,7 @@ int main(void)
     test_print_comments();
     test_word_form();
     test_odf_form();
+    test_filter();
     printf("comments: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

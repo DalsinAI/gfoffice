@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include "openwrite_core.h"
+#include "ow_merge.h"
 
 #define OW_UNDO_LIMIT 16
 /* 2.0.11: what the undo and redo snapshots may hold between them, about; the last edit's is always kept */
@@ -56,6 +57,7 @@ struct ow_editor {
      * (0: the columns' names) */
     struct ow_merge_table *merge;
     int merge_at;
+    char *comment_filter;    /* 2.0.39: the author whose comments are shown (NULL: everyone's) */
 };
 
 static int update_story_fields(ow_editor *editor, owf_story *story);   /* 2.3.0 */
@@ -2369,10 +2371,47 @@ static int resolve_items(ow_editor *editor, owf_story *story, const ow_change_it
     return changed;
 }
 
+/* libowf 1.11: the tracked format changes of a story's runs, all or those the selection touches (from <= to):
+ * accepting one keeps the run's format, rejecting it gives the run its format before. 1 when one was there.
+ * (Before the insertions and deletions, which take runs away and join them.) */
+static int resolve_formats(ow_editor *editor, owf_story *story, int all, ow_position from, ow_position to,
+                           int accept, int *first_para, int *low, int *high)
+{
+    int i, j, changed = 0;
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        for (j = 0; j < p->nruns; ++j) {
+            owf_run *r = &p->runs[j];
+            const owf_format_change *fc = OWF_DOC_FORMAT_CHANGE(editor->doc, r->format_change);
+            if (!r->format_change) continue;
+            if (!all) {
+                ow_position s, e;
+                int touch;
+                s.paragraph = e.paragraph = i;
+                s.run = e.run = j;
+                s.box = e.box = from.box;
+                s.byte_offset = 0;
+                e.byte_offset = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 0;
+                touch = same_position(from, to)
+                      ? compare_position(s, from) <= 0 && compare_position(from, e) <= 0
+                      : compare_position(s, to) < 0 && compare_position(from, e) < 0;
+                if (!touch) continue;
+            }
+            if (!accept && fc) r->fmt = fc->before;
+            r->format_change = 0;
+            changed = 1;
+            if (i < *low) *low = i;
+            if (i > *high) *high = i;
+            if (first_para && (*first_para < 0 || i < *first_para)) *first_para = i;
+        }
+    }
+    return changed;                                  /* the runs are joined after (resolve_story) */
+}
+
 static int resolve_story(ow_editor *editor, owf_story *story, int all, int accept, int *first_para)
 {
     change_pick pk;
-    int rc;
+    int rc, formats, low = story->nparas, high = -1, k;
     memset(&pk, 0, sizeof pk);
     pk.editor = editor;
     pk.all = all;
@@ -2381,12 +2420,18 @@ static int resolve_story(ow_editor *editor, owf_story *story, int all, int accep
         pk.to = clamp_position(editor, editor->selection.focus);
         if (compare_position(pk.from, pk.to) > 0) { ow_position t = pk.from; pk.from = pk.to; pk.to = t; }
     }
+    formats = resolve_formats(editor, story, all, pk.from, pk.to, accept, first_para, &low, &high);
     walk_changes(story, pick_cb, &pk);
     if (pk.failed) { owf_free(pk.items); return -1; }
-    if (first_para && pk.nitems) *first_para = pk.items[0].para;
+    if (first_para && pk.nitems && (*first_para < 0 || pk.items[0].para < *first_para)) *first_para = pk.items[0].para;
     rc = pk.nitems ? resolve_items(editor, story, pk.items, pk.nitems, accept) : 0;
     owf_free(pk.items);
-    return rc;
+    if (rc < 0) return rc;
+    /* the paragraphs whose format changes went: runs now alike join (rejected paragraph ends may have joined
+     * paragraphs, so the range is clamped and may join a few more than needed, which is harmless) */
+    if (high >= story->nparas) high = story->nparas - 1;
+    for (k = low; k <= high; ++k) join_runs(&story->paras[k]);
+    return rc || formats;
 }
 
 int ow_editor_accept_change(ow_editor *editor, int accept)
@@ -2526,6 +2571,26 @@ static ow_position comment_start(ow_editor *editor, const ed_comment *c)
     return c->spara >= 0 ? run_position(editor, c->spara, c->srun) : run_position(editor, c->para, c->run);
 }
 
+/* 2.0.39: whether a comment passes the author filter: its own author is the one shown (or no filter) */
+static int comment_author_shown(const ow_editor *editor, int record)
+{
+    return !editor->comment_filter || same_text_or_null(editor->doc->comments[record].author, editor->comment_filter);
+}
+
+/* 2.0.39: whether a comment's thread (it and its replies, at any depth) has one the filter shows */
+static int thread_shown(const ow_editor *editor, int record)
+{
+    const owf_doc *doc = editor->doc;
+    int i;
+    if (comment_author_shown(editor, record)) return 1;
+    for (i = 0; i < doc->ncomments; ++i) {
+        int up = doc->comments[i].parent, guard = 0;
+        while (up >= 0 && up != record && up < doc->ncomments && guard++ < doc->ncomments) up = doc->comments[up].parent;
+        if (up == record && comment_author_shown(editor, i)) return 1;
+    }
+    return 0;
+}
+
 static void comment_fill(ow_editor *editor, const ed_comment *list, int n, int k, ow_comment_info *info)
 {
     const owf_annotation *a = &editor->doc->comments[list[k].record];
@@ -2542,6 +2607,37 @@ static void comment_fill(ow_editor *editor, const ed_comment *list, int n, int k
         if (list[i].record == a->parent) { info->reply_to = i; break; }
     info->start = comment_start(editor, &list[k]);
     info->end = run_position(editor, list[k].para, list[k].run);
+    info->shown = comment_author_shown(editor, list[k].record);   /* 2.0.39 */
+}
+
+int ow_editor_set_comment_filter(ow_editor *editor, const char *author)
+{
+    char *copy = NULL;
+    if (!editor) return OWF_ERR_FORMAT;
+    if (author && *author && !(copy = copy_bytes(author, strlen(author)))) return OWF_ERR_MEMORY;
+    owf_free(editor->comment_filter);
+    editor->comment_filter = copy;
+    return OWF_OK;
+}
+
+const char *ow_editor_comment_filter(const ow_editor *editor)
+{
+    return editor ? editor->comment_filter : NULL;
+}
+
+int ow_editor_comment_authors(ow_editor *editor, char (*names)[72], int max)
+{
+    const owf_doc *doc;
+    int i, k, n = 0;
+    if (!editor || !editor->doc || !names || max <= 0) return 0;
+    doc = editor->doc;
+    for (i = 0; i < doc->ncomments && n < max; ++i) {
+        const char *a = doc->comments[i].author ? doc->comments[i].author : "";
+        for (k = 0; k < n && strncmp(names[k], a, 71); ++k) {}
+        if (k < n) continue;
+        snprintf(names[n++], 72, "%s", a);
+    }
+    return n;
 }
 
 /* The comment at the caret: one whose range holds it, or whose place it is at; the narrowest, a comment
@@ -2644,21 +2740,25 @@ int ow_editor_next_comment(ow_editor *editor, int backwards)
     b = clamp_position(editor, editor->selection.focus);
     if (place_compare(story, a, b) > 0) { ow_position t = a; a = b; b = t; }
     /* comments, not their replies (a reply is where its comment is) */
+    /* (2.0.39: and only threads the author filter shows a comment of) */
     if (!backwards) {
         for (k = 0; k < n && pick < 0; ++k)
-            if (editor->doc->comments[list[k].record].parent < 0 &&
+            if (editor->doc->comments[list[k].record].parent < 0 && thread_shown(editor, list[k].record) &&
                 place_compare(story, comment_start(editor, &list[k]), a) > 0)
                 pick = k;
     } else {
         for (k = n - 1; k >= 0 && pick < 0; --k)
-            if (editor->doc->comments[list[k].record].parent < 0 &&
+            if (editor->doc->comments[list[k].record].parent < 0 && thread_shown(editor, list[k].record) &&
                 place_compare(story, comment_start(editor, &list[k]), a) < 0)
                 pick = k;
     }
     if (pick < 0) {
         /* round to the other end of the story */
         for (k = backwards ? n - 1 : 0; k >= 0 && k < n; k += backwards ? -1 : 1)
-            if (editor->doc->comments[list[k].record].parent < 0) { pick = k; break; }
+            if (editor->doc->comments[list[k].record].parent < 0 && thread_shown(editor, list[k].record)) {
+                pick = k;
+                break;
+            }
         wrapped = 1;
     }
     if (pick >= 0) select_comment(editor, &list[pick]);
@@ -3239,6 +3339,7 @@ void ow_editor_free(ow_editor *editor)
     owf_free(editor->para_y);
     owf_free(editor->author);
     owf_free(editor->file_name);
+    owf_free(editor->comment_filter);
     ow_editor_merge_close(editor);                   /* 2.5.0 */
     owf_free(editor);
 }
@@ -5761,208 +5862,12 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
  * one document, each record from a new page, or into a file each. The document keeps its data source's path
  * (owf_doc.merge_source), so that it is read again when the document is opened. */
 
-typedef struct ow_merge_table {
-    int ncols, nrows;            /* nrows: the records, not counting the names' row */
-    char **cells;                /* (nrows + 1) * ncols, row 0 the names; NULL: empty */
-} ow_merge_table;
-
-#define OW_MERGE_MAX_BYTES (4UL * 1024UL * 1024UL)
-
-static void merge_table_free(ow_merge_table *t)
-{
-    int i;
-    if (!t) return;
-    for (i = 0; i < (t->nrows + 1) * t->ncols; ++i) owf_free(t->cells[i]);
-    owf_free(t->cells);
-    owf_free(t);
-}
-
 void ow_editor_merge_close(ow_editor *editor)
 {
     if (!editor) return;
-    merge_table_free(editor->merge);
+    ow_merge_table_free(editor->merge);
     editor->merge = NULL;
     editor->merge_at = 0;
-}
-
-static int utf8_ok(const unsigned char *s, size_t n)
-{
-    size_t i = 0;
-    while (i < n) {
-        unsigned c = s[i];
-        size_t k, more = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : 9;
-        if (more == 9 || (more == 1 && c < 0xC2) || i + more >= n + (more ? 0 : 1)) return 0;
-        for (k = 1; k <= more; ++k) if ((s[i + k] & 0xC0) != 0x80) return 0;
-        i += more + 1;
-    }
-    return 1;
-}
-
-/* The bytes as UTF-8: the same, or Latin-1 made UTF-8 */
-static char *source_utf8(const char *data, size_t n, size_t *out_n)
-{
-    size_t i, o = 0;
-    char *out;
-    if (utf8_ok((const unsigned char *)data, n)) {
-        *out_n = n;
-        return copy_bytes(data, n);
-    }
-    if (!(out = (char *)owf_malloc(2 * n + 1))) return NULL;
-    for (i = 0; i < n; ++i) {
-        unsigned char c = (unsigned char)data[i];
-        if (c < 0x80) out[o++] = (char)c;
-        else { out[o++] = (char)(0xC0 | (c >> 6)); out[o++] = (char)(0x80 | (c & 0x3F)); }
-    }
-    out[o] = 0;
-    *out_n = o;
-    return out;
-}
-
-/* The separator: the most of comma, semicolon and tab on the first line outside quotes (a comma when none) */
-static char merge_separator(const char *s, size_t n)
-{
-    size_t i;
-    int quoted = 0, comma = 0, semi = 0, tab = 0;
-    for (i = 0; i < n && (quoted || (s[i] != '\n' && s[i] != '\r')); ++i) {
-        if (s[i] == '"') quoted = !quoted;
-        else if (!quoted && s[i] == ',') ++comma;
-        else if (!quoted && s[i] == ';') ++semi;
-        else if (!quoted && s[i] == '\t') ++tab;
-    }
-    if (semi > comma && semi >= tab) return ';';
-    if (tab > comma && tab > semi) return '\t';
-    return ',';
-}
-
-typedef struct {
-    char **cells;
-    int ncells, cap;
-    int *row_end;                /* each row's cells end here */
-    int nrows, caprows;
-    char *buf;
-    size_t len, capbuf;
-    int failed;
-} merge_parse;
-
-static void parse_putc(merge_parse *p, char c)
-{
-    if (p->len + 2 > p->capbuf) {
-        size_t want = p->capbuf ? p->capbuf * 2 : 64;
-        char *g = (char *)owf_realloc(p->buf, want);
-        if (!g) { p->failed = 1; return; }
-        p->buf = g;
-        p->capbuf = want;
-    }
-    p->buf[p->len++] = c;
-}
-
-static void parse_cell(merge_parse *p)
-{
-    char *cell;
-    if (p->failed) return;
-    if (p->ncells == p->cap) {
-        int want = p->cap ? p->cap * 2 : 64;
-        char **g = (char **)owf_realloc(p->cells, (size_t)want * sizeof *g);
-        if (!g) { p->failed = 1; return; }
-        p->cells = g;
-        p->cap = want;
-    }
-    cell = p->len ? copy_bytes(p->buf, p->len) : NULL;
-    if (p->len && !cell) { p->failed = 1; return; }
-    p->cells[p->ncells++] = cell;
-    p->len = 0;
-}
-
-static void parse_row(merge_parse *p)
-{
-    if (p->failed) return;
-    if (p->nrows == p->caprows) {
-        int want = p->caprows ? p->caprows * 2 : 32;
-        int *g = (int *)owf_realloc(p->row_end, (size_t)want * sizeof *g);
-        if (!g) { p->failed = 1; return; }
-        p->row_end = g;
-        p->caprows = want;
-    }
-    p->row_end[p->nrows++] = p->ncells;
-}
-
-static void trim_name(char *s)
-{
-    size_t n = strlen(s), a = 0;
-    while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = 0;
-    while (s[a] == ' ' || s[a] == '\t') ++a;
-    if (a) memmove(s, s + a, n - a + 1);
-}
-
-/* A table from CSV text (UTF-8): NULL when it has no columns or memory runs out (*memory set) */
-static ow_merge_table *merge_table_parse(const char *s, size_t n, int *memory)
-{
-    merge_parse p;
-    ow_merge_table *t = NULL;
-    size_t i = 0;
-    char sep;
-    int quoted = 0, r, k, start, rows = 0, row_start;
-    memset(&p, 0, sizeof p);
-    *memory = 0;
-    if (n >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) {
-        s += 3; n -= 3;                              /* a byte-order mark */
-    }
-    sep = merge_separator(s, n);
-    row_start = 0;
-    while (i < n && !p.failed) {
-        char c = s[i++];
-        if (quoted) {
-            if (c == '"' && i < n && s[i] == '"') { parse_putc(&p, '"'); ++i; }
-            else if (c == '"') quoted = 0;
-            else parse_putc(&p, c);
-        } else if (c == '"') quoted = 1;
-        else if (c == sep) parse_cell(&p);
-        else if (c == '\r' || c == '\n') {
-            if (c == '\r' && i < n && s[i] == '\n') ++i;
-            if (p.len || p.ncells > row_start) { parse_cell(&p); parse_row(&p); }
-            row_start = p.ncells;                    /* an empty line is left out */
-        } else parse_putc(&p, c);
-    }
-    if (!p.failed && (p.len || p.ncells > row_start)) { parse_cell(&p); parse_row(&p); }
-    if (p.failed) { *memory = 1; goto out; }
-    if (!p.nrows || p.row_end[0] == 0) goto out;
-    if (!(t = (ow_merge_table *)owf_calloc(1, sizeof *t))) { *memory = 1; goto out; }
-    t->ncols = p.row_end[0];
-    for (r = 1; r < p.nrows; ++r) {                  /* rows of empty cells are no records */
-        for (k = p.row_end[r - 1]; k < p.row_end[r] && !p.cells[k]; ++k) ;
-        if (k < p.row_end[r]) ++rows;
-    }
-    t->nrows = rows;
-    t->cells = (char **)owf_calloc((size_t)(rows + 1) * (size_t)t->ncols, sizeof *t->cells);
-    if (!t->cells) { owf_free(t); t = NULL; *memory = 1; goto out; }
-    for (r = 0, rows = 0; r < p.nrows; ++r) {
-        int got;
-        start = r ? p.row_end[r - 1] : 0;
-        got = p.row_end[r] - start;
-        if (r) {
-            for (k = start; k < p.row_end[r] && !p.cells[k]; ++k) ;
-            if (k == p.row_end[r]) continue;
-        }
-        for (k = 0; k < got && k < t->ncols; ++k) {  /* cells past the last column are left out */
-            t->cells[rows * t->ncols + k] = p.cells[start + k];
-            p.cells[start + k] = NULL;
-        }
-        ++rows;
-    }
-    for (k = 0; k < t->ncols; ++k) {                 /* a column without a name gets one */
-        char made[24], **name = &t->cells[k];
-        if (*name) trim_name(*name);
-        if (*name && **name) continue;
-        snprintf(made, sizeof made, "Column%d", k + 1);
-        owf_free(*name);
-        if (!(*name = copy_bytes(made, strlen(made)))) { merge_table_free(t); t = NULL; *memory = 1; goto out; }
-    }
-out:
-    for (k = 0; k < p.ncells; ++k) owf_free(p.cells[k]);
-    owf_free(p.cells);
-    owf_free(p.row_end);
-    owf_free(p.buf);
-    return t;
 }
 
 static int tolower_ascii(int c)
@@ -5970,23 +5875,10 @@ static int tolower_ascii(int c)
     return c >= 'A' && c <= 'Z' ? c + 32 : c;
 }
 
-static int merge_column(const ow_merge_table *t, const char *name)
-{
-    int k;
-    if (!t || !name) return -1;
-    for (k = 0; k < t->ncols; ++k) if (!strcmp(t->cells[k], name)) return k;
-    for (k = 0; k < t->ncols; ++k) {                 /* then without minding case (ASCII) */
-        const char *a = t->cells[k], *b = name;
-        while (*a && *b && tolower_ascii(*a) == tolower_ascii(*b)) { ++a; ++b; }
-        if (!*a && !*b) return k;
-    }
-    return -1;
-}
-
 const char *ow_editor_merge_value(const ow_editor *editor, int record, const char *column)
 {
     const ow_merge_table *t = editor ? editor->merge : NULL;
-    int k = merge_column(t, column);
+    int k = ow_merge_column(t, column);
     const char *v;
     if (k < 0 || record < 0 || record >= t->nrows) return NULL;
     v = t->cells[(record + 1) * t->ncols + k];
@@ -6027,11 +5919,11 @@ int ow_editor_merge_load_text(ow_editor *editor, const char *name, const char *d
     size_t n;
     int memory;
     if (!editor || !editor->doc || !data) return OWF_ERR_FORMAT;
-    if (!(utf8 = source_utf8(data, length, &n))) return OWF_ERR_MEMORY;
-    t = merge_table_parse(utf8, n, &memory);
+    if (!(utf8 = ow_merge_utf8(data, length, &n))) return OWF_ERR_MEMORY;
+    t = ow_merge_table_parse(utf8, n, &memory);
     owf_free(utf8);
     if (!t) return memory ? OWF_ERR_MEMORY : OWF_ERR_FORMAT;
-    if (name && *name && !merge_set_source(editor, name)) { merge_table_free(t); return OWF_ERR_MEMORY; }
+    if (name && *name && !merge_set_source(editor, name)) { ow_merge_table_free(t); return OWF_ERR_MEMORY; }
     ow_editor_merge_close(editor);
     editor->merge = t;
     editor->merge_at = 0;

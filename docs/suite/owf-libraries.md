@@ -110,7 +110,7 @@ These changes are small, and they don't change behaviour:
 | --- | --- | --- | --- | --- |
 | `owfwrite.library` | `OWFWriteBase` | 3.3 | 40 | `<proto/owfwrite.h>` |
 | `owfcalc.library` | `OWFCalcBase` | 3.9 | 98 | `<proto/owfcalc.h>` |
-| `owfpub.library` | `OWFPubBase` | 3.1 | 37 | `<proto/owfpub.h>` |
+| `owfpub.library` | `OWFPubBase` | 3.2 | 37 | `<proto/owfpub.h>` |
 | `owfpresent.library` | `OWFPresentBase` | 3.5 | 81 | `<proto/owfpresent.h>` |
 
 **Version 3 for all four.** The four libraries continue owf.library 2, so
@@ -266,7 +266,7 @@ built together with no library at all.
     checks the library's own calls:
     - documents saved and read back;
     - the workbook fixtures and the formula engine;
-    - `Sample.pub`;
+    - `Sample.pub` (made by `tools/pubgen/make_pub.py`);
     - an ODP saved and read back, a new deck, and a PDF page.
 
     It runs everything again from a second task at the same time.

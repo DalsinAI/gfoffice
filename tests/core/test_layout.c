@@ -1609,6 +1609,39 @@ static void test_sample(const char *path)
     owf_doc_free(doc);
 }
 
+/* libowf 1.11: a tracked format change's text is drawn in its author's colour, not underlined or struck, as
+ * it looks now; authors take their colours in the order the changes and then the format changes name them */
+static void test_format_change_colour(void)
+{
+    owf_doc *doc = owf_doc_new();
+    ow_layout *l;
+    const ol_display_op *op = NULL;
+    int ins, gil, ann;
+    CHECK(para(doc, NULL, 0, "Typed", 240) && para(doc, NULL, 0, "Gilded", 240) && para(doc, NULL, 0, "Annotated", 240));
+    ins = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL);
+    gil = owf_track_format_add(doc, "Gil", NULL, &doc->body.paras[1].runs[0].fmt);
+    ann = owf_track_format_add(doc, "Ann", NULL, &doc->body.paras[2].runs[0].fmt);
+    CHECK(ins > 0 && gil > 0 && ann > 0);
+    doc->body.paras[0].runs[0].revision = ins;
+    doc->body.paras[1].runs[0].format_change = gil;
+    doc->body.paras[1].runs[0].fmt.flags |= OWF_BOLD;
+    doc->body.paras[2].runs[0].format_change = ann;
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        const ol_document *od = ow_layout_body(l);
+        CHECK((op = text_on(od, 0, "Gilded", NULL)) != NULL && op->u.text.style.foreground == 0xFFB0306Au &&
+              !(op->u.text.style.text_flags & (OL_TEXT_UNDERLINE | OL_TEXT_STRIKE)) &&
+              (op->u.text.style.text_flags & OL_TEXT_BOLD));
+        CHECK((op = text_on(od, 0, "Annotated", NULL)) != NULL && op->u.text.style.foreground == 0xFF1F5FBFu &&
+              !(op->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        CHECK((op = text_on(od, 0, "Typed", NULL)) != NULL && op->u.text.style.foreground == 0xFF1F5FBFu &&
+              (op->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        ow_layout_free(l);
+    }
+    owf_doc_free(doc);
+}
+
 /* Issue #9 (7 October 2026), what of it the layout decides: a heading's own colour reaches its text's op, a
  * table row's cells start on one line, small-text punctuation stays in the words a line draws, and a
  * list's items are spaced alike (no blank line after the first). The rest of #9 (bullets drawn through a Latin-1 font) is the
@@ -1752,6 +1785,7 @@ int main(int argc, char **argv)
     test_columns();
     test_generated_toc();
     test_final_view();
+    test_format_change_colour();
     test_issue9();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)
