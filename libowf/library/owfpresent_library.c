@@ -1,5 +1,5 @@
 /*
- * owfpresent.library 3.8, GFOpenPresentation's part of libowf: presentations.
+ * owfpresent.library 3.9, GFOpenPresentation's part of libowf: presentations.
  * The deck model, its formats (ODP, flat ODP) and the page PDF writer, with
  * the document model its text uses.
  *
@@ -33,15 +33,15 @@
  * owf_slide_add_anim and owf_slide_delete_anim are new; ODP reads and
  * writes the effects.
  *
- * 3.8: owf_page.note_format and note_start (owfwrite.library 3.12, libowf 1.12.1), so owf_page and owf_doc
- * are larger and a program's size check refuses 3.7. No call changes.
+ * 3.9 (after 3.8's gradients): owf_page.note_format and note_start (owfwrite.library 3.12, libowf
+ * 1.12.1), so owf_page and owf_doc are larger and a program's size check refuses 3.8. No call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 8
-#define OWF_LIB_VERS "3.8"
+#define OWF_LIB_REVISION 9
+#define OWF_LIB_VERS "3.9"
 #define OWF_LIB_DATE "15.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"
