@@ -1639,6 +1639,19 @@ static void test_format_change_colour(void)
               (op->u.text.style.text_flags & OL_TEXT_UNDERLINE));
         ow_layout_free(l);
     }
+    /* the final view (Show Changes off): no change colours, a format change's included; its new format stays */
+    l = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(l != NULL);
+    if (l) {
+        const ol_document *od = ow_layout_body(l);
+        CHECK((op = text_on(od, 0, "Gilded", NULL)) != NULL && op->u.text.style.foreground == 0xFF000000u &&
+              (op->u.text.style.text_flags & OL_TEXT_BOLD) &&
+              !(op->u.text.style.text_flags & (OL_TEXT_UNDERLINE | OL_TEXT_STRIKE)));
+        CHECK((op = text_on(od, 0, "Annotated", NULL)) != NULL && op->u.text.style.foreground == 0xFF000000u);
+        CHECK((op = text_on(od, 0, "Typed", NULL)) != NULL && op->u.text.style.foreground == 0xFF000000u &&
+              !(op->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        ow_layout_free(l);
+    }
     owf_doc_free(doc);
 }
 
