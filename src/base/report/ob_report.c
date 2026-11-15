@@ -516,3 +516,161 @@ int ob_report_save(ob_project *p, const ob_report *r, const char *const *params,
     if (rc == OWF_ERR_MEMORY) return fail(err, errsize, "Not enough memory");
     return fail(err, errsize, "%s: could not write %s", r->name, path);
 }
+
+/* ---- The text a report is kept as ---- */
+
+#define TEXT_MAGIC "OADBREPORT "
+#define TEXT_VERSION 1
+
+typedef struct tout {
+    char *out;
+    size_t size, n;
+    int full;
+} tout;
+
+static void t_putc(tout *t, char c)
+{
+    if (t->n + 1 < t->size) t->out[t->n] = c;
+    else t->full = 1;
+    t->n++;
+}
+
+static void t_puts(tout *t, const char *s)
+{
+    while (*s) t_putc(t, *s++);
+}
+
+static void t_value(tout *t, const char *s)
+{
+    for (; *s; s++) {
+        if (*s == '\\' || *s == '|') { t_putc(t, '\\'); t_putc(t, *s); }
+        else if (*s == '\n') { t_putc(t, '\\'); t_putc(t, 'n'); }
+        else t_putc(t, *s);
+    }
+}
+
+static void t_setting(tout *t, const char *key, const char *value)
+{
+    if (!value[0]) return;
+    t_puts(t, key);
+    t_putc(t, '=');
+    t_value(t, value);
+    t_putc(t, '\n');
+}
+
+int ob_report_to_text(const ob_report *r, char *out, size_t size)
+{
+    tout t;
+    char num[16];
+    int i;
+    t.out = out;
+    t.size = size;
+    t.n = 0;
+    t.full = size == 0;
+    snprintf(num, sizeof num, "%d", TEXT_VERSION);
+    t_puts(&t, TEXT_MAGIC);
+    t_puts(&t, num);
+    t_putc(&t, '\n');
+    t_setting(&t, "title", r->title);
+    t_setting(&t, "table", r->table);
+    t_setting(&t, "query", r->query);
+    t_setting(&t, "sort", r->sort);
+    if (r->desc) t_setting(&t, "desc", "1");
+    t_setting(&t, "group", r->group);
+    for (i = 0; i < r->ncolumns && i < OB_REPORT_COLUMNS; i++) {
+        const ob_rcolumn *c = &r->columns[i];
+        t_puts(&t, "column=");
+        t_value(&t, c->field);
+        t_putc(&t, '|');
+        t_value(&t, c->heading);
+        t_putc(&t, '|');
+        t_puts(&t, ob_total_name(c->total));
+        t_putc(&t, '\n');
+    }
+    if (t.full || t.n >= size) {
+        if (size) out[0] = 0;
+        return -1;
+    }
+    out[t.n] = 0;
+    return (int)t.n;
+}
+
+/* The value from *s to the end of the line or (bar) an unescaped '|', unescaped into out (cut at size);
+ * *s is left on the '|' or the line's end. */
+static void t_take(const char **s, int bar, char *out, size_t size)
+{
+    const char *p = *s;
+    size_t k = 0;
+    while (*p && *p != '\n' && !(bar && *p == '|')) {
+        char c = *p++;
+        if (c == '\\' && *p && *p != '\n') {
+            c = *p++;
+            if (c == 'n') c = '\n';
+        }
+        if (k + 1 < size) out[k++] = c;
+    }
+    if (size) out[k] = 0;
+    *s = p;
+}
+
+static int total_from_name(const char *name, ob_total *t)
+{
+    int i;
+    for (i = 0; i < OB_TOTALS; i++)
+        if (i != OB_TOTAL_GROUP && same_name(name, ob_total_name((ob_total)i))) {
+            *t = (ob_total)i;
+            return 1;
+        }
+    return 0;
+}
+
+int ob_report_from_text(ob_report *r, const char *name, const char *text, char *err, size_t errsize)
+{
+    const char *s = text ? text : "";
+    int line = 1, version;
+    ob_report_init(r, name);
+    if (strncmp(s, TEXT_MAGIC, strlen(TEXT_MAGIC)))
+        return fail(err, errsize, "%s: not a report", name);
+    version = atoi(s + strlen(TEXT_MAGIC));
+    if (version > TEXT_VERSION)
+        return fail(err, errsize, "%s: made by a newer GFOpenBase (report version %d)", name, version);
+    if (version < 1) return fail(err, errsize, "%s: not a report", name);
+    s = strchr(s, '\n');
+    while (s && *s) {
+        char key[16];
+        size_t k = 0;
+        s++;
+        line++;
+        if (!*s) break;
+        if (*s == '\n') continue;
+        while (*s && *s != '=' && *s != '\n' && k + 1 < sizeof key) key[k++] = *s++;
+        key[k] = 0;
+        if (*s != '=') return fail(err, errsize, "%s: line %d: no setting", name, line);
+        s++;
+        if (!strcmp(key, "column")) {
+            ob_rcolumn *c;
+            char total[16];
+            if (!(c = ob_report_add_column(r, "", OB_TOTAL_NONE)))
+                return fail(err, errsize, "%s: line %d: more than %d columns", name, line, OB_REPORT_COLUMNS);
+            t_take(&s, 1, c->field, sizeof c->field);
+            if (*s == '|') { s++; t_take(&s, 1, c->heading, sizeof c->heading); }
+            total[0] = 0;
+            if (*s == '|') { s++; t_take(&s, 1, total, sizeof total); }
+            if (total[0] && !total_from_name(total, &c->total))
+                return fail(err, errsize, "%s: line %d: no total called %s", name, line, total);
+        } else {
+            char value[OB_VALUE_MAX], *to = NULL;
+            size_t size = 0;
+            t_take(&s, 0, value, sizeof value);
+            if (!strcmp(key, "title")) to = r->title, size = sizeof r->title;
+            else if (!strcmp(key, "table")) to = r->table, size = sizeof r->table;
+            else if (!strcmp(key, "query")) to = r->query, size = sizeof r->query;
+            else if (!strcmp(key, "sort")) to = r->sort, size = sizeof r->sort;
+            else if (!strcmp(key, "group")) to = r->group, size = sizeof r->group;
+            else if (!strcmp(key, "desc")) r->desc = atoi(value) != 0;
+            if (to) copy(to, size, value);
+        }
+        s = strchr(s, '\n');
+    }
+    return 0;
+}
