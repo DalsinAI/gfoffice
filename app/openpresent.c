@@ -155,7 +155,7 @@ enum {
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
     M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES, M_MERGE_CATALOG,
-    M_NEW_TEMPLATE
+    M_NEW_TEMPLATE, M_PDF_PRINTER
 };
 
 static struct NewMenu menus[] = {
@@ -170,6 +170,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_PDF },
+#ifdef OPENPUBLISHER
+    { NM_ITEM, "Export PDF for a Printer...", NULL, 0, 0, (APTR)M_PDF_PRINTER },
+#endif
     { NM_ITEM, "Export as Pictures...", NULL, 0, 0, (APTR)M_PICTURES },
 #ifndef OPENPUBLISHER
     { NM_ITEM, "Export Handouts...", NULL, 0, 0, (APTR)M_HANDOUTS },
@@ -7428,6 +7431,8 @@ static void do_save(void)
 /* What a PDF holds: the slides, notes pages (Notes view, or EXPORT NOTES) or handouts. */
 static opr_pdf_pages pdf_pages = OPR_PDF_SLIDES;
 static int pdf_handout_slides = 6;
+static int pdf_bleed, pdf_marks;                     /* for a printer: twips past the trimmed edge, crop marks */
+#define PRINTER_BLEED 170                            /* 3 mm, what most printers ask for */
 
 static int write_pdf(const char *path)
 {
@@ -7441,6 +7446,8 @@ static int write_pdf(const char *path)
     memset(&options, 0, sizeof options);
     options.pages = pdf_pages;
     options.handout_slides = pdf_handout_slides;
+    options.bleed = pdf_bleed;
+    options.crop_marks = pdf_marks;
     rc = opr_export_pdf(deck, &options, &data, &length, report);
     owf_report_free(report);
     if (rc == OWF_OK && (f = Open((STRPTR)path, MODE_NEWFILE))) {
@@ -7466,6 +7473,25 @@ static void do_export_pdf(void)
     set_status(msg);
     draw_status();
 }
+
+#ifdef OPENPUBLISHER
+/* Project > Export PDF for a Printer...: crop marks and a 3 mm bleed round every page */
+static void do_export_pdf_printer(void)
+{
+    char path[512], name[128], msg[600];
+    if (!deck) return;
+    with_extension(current_path, "pdf", name, sizeof name);
+    if (!ask_file(1, "Export the " UNITS_LOWER " as PDF for a printer", name, path, sizeof path)) return;
+    pdf_pages = OPR_PDF_SLIDES;
+    pdf_bleed = PRINTER_BLEED;
+    pdf_marks = 1;
+    if (write_pdf(path)) snprintf(msg, sizeof msg, "%.200s written with crop marks and a 3 mm bleed.", leaf(path));
+    else snprintf(msg, sizeof msg, "%.200s could not be written.", leaf(path));
+    pdf_bleed = pdf_marks = 0;
+    set_status(msg);
+    draw_status();
+}
+#endif
 
 /* ---- File > Export as Pictures... (P9) ----
  * A slide painted as the show paints it, into a bitmap of its own, read back
@@ -7769,6 +7795,9 @@ static void menu_action(ULONG id)
     case M_SAVE_AS: do_save_as(); break;
     case M_PRINT: pdf_pages = notes_view ? OPR_PDF_NOTES : OPR_PDF_SLIDES; do_print(); pdf_pages = OPR_PDF_SLIDES; break;
     case M_PDF: do_export_pdf(); break;
+#ifdef OPENPUBLISHER
+    case M_PDF_PRINTER: do_export_pdf_printer(); break;
+#endif
     case M_PICTURES: export_pictures(NULL, 0, 0); break;
     case M_HANDOUTS: do_export_handouts(); break;
     case M_ABOUT: about(); break;
@@ -8204,11 +8233,24 @@ static int rexx_do_command(const char *command, char **result_out)
             rexx_copy(result_text, sizeof result_text, status);
         } else { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs SAVEAS"); }
     } else if (starts_word_ci(command, "EXPORT", &arg) || starts_word_ci(command, "PRINT", &arg)) {
-        /* EXPORT [NOTES | HANDOUTS [n]] path, PRINT [NOTES | HANDOUTS [n]]: the slides, notes pages or handouts */
+        /* EXPORT [NOTES | HANDOUTS [n] | MARKS | BLEED n ...] path, PRINT [NOTES | HANDOUTS [n]]: the slides, notes
+           pages or handouts; MARKS (crop marks) and BLEED n (twips, at most an inch) for a printer, slides only */
         int printing = !strncasecmp(command, "PRINT", 5), per = 6, bad = 0;
         const char *rest;
         pdf_pages = OPR_PDF_SLIDES;
-        if (starts_word_ci(arg, "NOTES", &rest)) { pdf_pages = OPR_PDF_NOTES; arg = rest; }
+        pdf_bleed = pdf_marks = 0;
+        while (!printing && !bad) {
+            if (starts_word_ci(arg, "MARKS", &rest)) { pdf_marks = 1; arg = rest; }
+            else if (starts_word_ci(arg, "BLEED", &rest)) {
+                arg = rest;
+                if (*arg < '0' || *arg > '9') bad = 2;
+                pdf_bleed = 0;
+                while (*arg >= '0' && *arg <= '9' && pdf_bleed <= OPR_PDF_MAX_BLEED) pdf_bleed = pdf_bleed * 10 + (*arg++ - '0');
+                if (pdf_bleed > OPR_PDF_MAX_BLEED || (*arg && *arg != ' ')) bad = 2;
+                while (*arg == ' ') arg++;
+            } else break;
+        }
+        if (!bad && starts_word_ci(arg, "NOTES", &rest)) { pdf_pages = OPR_PDF_NOTES; arg = rest; }
         else if (starts_word_ci(arg, "HANDOUTS", &rest)) {
             pdf_pages = OPR_PDF_HANDOUTS;
             arg = rest;
@@ -8220,7 +8262,11 @@ static int rexx_do_command(const char *command, char **result_out)
             }
         }
         pdf_handout_slides = per;
-        if (bad) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "HANDOUTS takes 1, 2, 3, 4, 6 or 9"); }
+        if (bad == 2) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "BLEED takes 0 to 1440 twips"); }
+        else if (bad) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "HANDOUTS takes 1, 2, 3, 4, 6 or 9"); }
+        else if ((pdf_marks || pdf_bleed) && pdf_pages != OPR_PDF_SLIDES) {
+            ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "MARKS and BLEED are for the " UNITS_LOWER " only");
+        }
         else if (printing) {
             int r = do_print();
             ok = r > 0;
@@ -8229,6 +8275,7 @@ static int rexx_do_command(const char *command, char **result_out)
         } else if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
         else { ok = write_pdf(arg); rexx_copy(result_text, sizeof result_text, ok ? "Exported" : "Export failed"); }
         pdf_pages = OPR_PDF_SLIDES;
+        pdf_bleed = pdf_marks = 0;
     } else if (starts_word_ci(command, UNIT_UPPER "S", &arg)) {
         snprintf(result_text, sizeof result_text, "%d", deck ? deck->nslides : 0);
     } else if (starts_word_ci(command, UNIT_UPPER, &arg)) {   /* n: go to it; none given: which */
