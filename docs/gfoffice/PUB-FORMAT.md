@@ -591,7 +591,8 @@ and a DocumentSummaryInformation that says 12.0. The compound file is
 libowf/src/owf_cfbw.c (MS-CFB v3, 512-byte sectors, deterministic). Not
 written yet, each named in the report: pictures (written as empty frames),
 WordArt, groups' own records (their frames are kept, flat) and the scratch
-area. tests/pub/test_pub_save.py reads every generated file back through
+area. PL holds 255 text colours; runs past them keep the automatic colour,
+with a note. tests/pub/test_pub_save.py reads every generated file back through
 our own reader; whether Publisher itself opens these files has not been
 checked yet.
 

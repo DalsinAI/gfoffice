@@ -10,6 +10,9 @@ page 1 master 1 frames 6
       run 1 "headline" 10.0pt colour #ff0000 font "Times New Roman"
       run 2 " over" 10.0pt colour #000099 font "Times New Roman"
       run 3 " a bar" 10.0pt font "Times New Roman"
+    para "Styled red"
+      run 0 "Styled " 10.0pt colour #993300 font "Times New Roman"
+      run 1 "red" 10.0pt colour #ff0000 font "Times New Roman"
   frame 1 shape box 10.0 10.0 10.0 10.0 mm (emu 360000 360000 720000 720000) shape 1
     look fill #000099 no-line
   frame 2 shape box 5.0 5.0 200.0 287.0 mm (emu 180000 180000 7380000 10512000) shape 1
@@ -26,6 +29,9 @@ story 0
     run 1 "headline" 10.0pt colour #ff0000 font "Times New Roman"
     run 2 " over" 10.0pt colour #000099 font "Times New Roman"
     run 3 " a bar" 10.0pt font "Times New Roman"
+  para "Styled red"
+    run 0 "Styled " 10.0pt colour #993300 font "Times New Roman"
+    run 1 "red" 10.0pt colour #ff0000 font "Times New Roman"
 scheme #000000 #cccceb #000099 #993300 #ffffff
 fonts 1
 font "Times New Roman"

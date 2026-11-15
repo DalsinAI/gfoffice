@@ -21,6 +21,8 @@ Each file sets out to reach one part of the reader (libowf/src/in_pub.c):
                          tabs and line breaks
   gen-98.pub, gen-2000.pub  the 98/2000 form: text frames, a table, a shape
   gen-cut.pub            a 2010 file cut short: what is left is read
+  gen-colours.pub        260 runs, each its own text colour: more than the
+                         writer's 255 (tests/pub/test_pub_save.py)
   gen-notpub.pub         a compound file that is not a publication
   gen-damaged.pub        Publisher's storages around a Contents that isn't one
 
@@ -703,11 +705,13 @@ def look():
     c.add(0x5C, 0x100, fv(0x01, 0x18, 8), fv(0x02, 0xA0, items), fv(0x06, 0xC0, u16text('Ours')))
     m = page_chunk(c, name='Master Page A')
     p = page_chunk(c, master=m)
-    t = Text(['Times New Roman'], [DEFAULT_STYLE])
+    # style 1's colour is the scheme's place 3, which the reader resolves too
+    t = Text(['Times New Roman'], [DEFAULT_STYLE, (TIMES + char_props(colour=4), para_props())])
     # text colours: red as 0x00BBGGRR, the scheme's place 2, then one not known (left as it is)
-    t.colours = [0x08000000, 0x000000FF, 0x08000002, 0xFFFFFFFE]
+    t.colours = [0x08000000, 0x000000FF, 0x08000002, 0xFFFFFFFE, 0x08000003]
     t.story(1, [(None, [('A ', None), ('headline', char_props(colour=1)), (' over', char_props(colour=2)),
-                        (' a bar', char_props(colour=3))])])
+                        (' a bar', char_props(colour=3))]),
+                (para_props(style=1), [('Styled ', None), ('red', char_props(colour=1))])])
     bar = frame_chunk(c, p, text_id=1)
     corner = frame_chunk(c, p)
     border = frame_chunk(c, p)
@@ -856,6 +860,19 @@ def notpub():
     return cfb({'WordDocument': b'\0' * 600, '\x01CompObj': b'\1\0\xfe\xff' + bytes(60)})
 
 
+def colours():
+    pw, ph = 210 * EMU_MM, 297 * EMU_MM
+    c = Contents(0x15, pw, ph)
+    m = page_chunk(c, name='Master Page A')
+    p = page_chunk(c, master=m)
+    t = Text(['Times New Roman'], [DEFAULT_STYLE])
+    t.colours = [0x08000000] + [k * 0x0301 for k in range(1, 261)]
+    t.story(1, [(None, [('%c' % (0x41 + k % 26), char_props(colour=k + 1)) for k in range(260)])])
+    fc = frame_chunk(c, p, text_id=1)
+    shapes = [Shape(fc, box_mm(pw, ph, 20, 22, 166, 20), text_id=1, look=NO_FILL_LINE + INSET)]
+    return publication(c.build(doc_fields(c, pw, ph, [m, p])), t, [[], shapes], [], (12, 0))
+
+
 def damaged():
     t = Text(['Times New Roman'], [DEFAULT_STYLE])
     t.story(1, [(None, [('text without a publication', None)])])
@@ -866,7 +883,7 @@ FILES = {
     'gen-2007-plain.pub': plain, 'gen-2007-runs.pub': runs, 'gen-2010-styles.pub': styles,
     'gen-2013-look.pub': look, 'gen-2003-columns.pub': columns, 'gen-2003-names.pub': names,
     'gen-98.pub': lambda: old(0xB2D2, 2), 'gen-2000.pub': lambda: old(0xB2E8, 4),
-    'gen-cut.pub': cut, 'gen-notpub.pub': notpub, 'gen-damaged.pub': damaged,
+    'gen-cut.pub': cut, 'gen-colours.pub': colours, 'gen-notpub.pub': notpub, 'gen-damaged.pub': damaged,
 }
 
 

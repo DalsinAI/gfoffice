@@ -146,7 +146,7 @@ typedef struct {
     int nout;
     unsigned long colours[256];          /* PL: the text's colours as 0x00BBGGRR */
     int ncolours;
-    int lost_pictures, lost_wordart, lost_groups;
+    int lost_pictures, lost_wordart, lost_groups, lost_colours;
 } writer;
 
 static int npages_all(const owf_pub *pub)
@@ -550,6 +550,11 @@ typedef struct {
     int n, cap;
 } wruns;
 
+static int same_props(const owf_buf *a, const owf_buf *b)
+{
+    return a->length == b->length && (!a->length || !memcmp(a->data, b->data, a->length));
+}
+
 static wrun *add_run(writer *w, wruns *rs, unsigned long end)
 {
     if (rs->n == rs->cap) {
@@ -610,6 +615,8 @@ static void char_props(writer *w, owf_buf *b, const owf_charfmt *f)
     }
     if (f->colour != OWF_COLOUR_AUTO) {
         int k = colour_place(w, f->colour);
+        if (k < 0)
+            w->lost_colours++;               /* PL is full: the run keeps the automatic colour */
         if (k > 0) {
             size_t a = open_field(b, 0x244, 0x88, 1);
             f32(b, 0x200, 0x20, (unsigned long)k, 1);
@@ -798,6 +805,11 @@ static void write_quill(writer *w, owf_buf *out)
                 if (!(wr = add_run(w, &cr, units)))
                     break;
                 char_props(w, &wr->props, &r->fmt);
+                if (had && cr.n > 1 && same_props(&cr.r[cr.n - 2].props, &wr->props)) {
+                    cr.r[cr.n - 2].end = units;  /* written the same (a colour PL had no room for): one run, as read back */
+                    owf_buf_free(&wr->props);
+                    cr.n--;
+                }
                 had = 1;
                 if (r->kind == OWF_RUN_TEXT && r->href && *r->href) {
                     if (nlinks && links[nlinks - 1].href && !strcmp(links[nlinks - 1].href, r->href) &&
@@ -1155,6 +1167,9 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
                            w.lost_wordart);
         if (w.lost_groups)
             owf_report_add(report, OWF_NOTE_APPROX, "%d group(s) saved as their separate objects", w.lost_groups);
+        if (w.lost_colours)
+            owf_report_add(report, OWF_NOTE_APPROX, "%d run(s) of text past the first 255 colours saved in the automatic colour",
+                           w.lost_colours);
         if (pub->scratch_frames)
             owf_report_add(report, OWF_NOTE_LOST, "%d object(s) on the scratch area were not kept", pub->scratch_frames);
     }

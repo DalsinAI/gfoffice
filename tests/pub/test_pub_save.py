@@ -14,7 +14,8 @@ For each file tools/pubgen/make_pub.py makes (PUB_SAMPLES, as test_pub.py):
    the same as the first file's.
 3. Writing the written file again gives the same bytes (nothing drifts),
    and so does writing the first file twice.
-4. Files the reader refuses are refused by pub_resave too (exit 10), and
+4. The writer's report names what it could not keep (NOTES).
+5. Files the reader refuses are refused by pub_resave too (exit 10), and
    nothing goes to stderr (where ASan and UBSan report).
 
 The expected files were checked by hand against the first files' dumps:
@@ -35,6 +36,8 @@ SAMPLES = os.environ.get('PUB_SAMPLES') or os.path.join(HERE, '..', '..', 'build
 EXPECTED = os.path.join(HERE, 'expected', 'resaved')
 LOSSLESS = ['gen-2007-plain', 'gen-2010-styles', 'gen-2003-names', 'gen-cut']
 REFUSED = ['gen-notpub', 'gen-damaged']
+# a note pub_resave must print for the file (the writer's report)
+NOTES = {'gen-colours': '5 run(s) of text past the first 255 colours saved in the automatic colour'}
 SKIP = ('note ', 'version ', 'build-mark ', 'written-by ')
 
 
@@ -72,6 +75,8 @@ def main():
             if rc != 0:
                 failures.append('%s: pub_resave exit %d' % (name, rc))
                 continue
+            if name in NOTES and NOTES[name] not in out:
+                failures.append('%s: no note "%s" from pub_resave' % (name, NOTES[name]))
             got = dump(pubdump, once, failures, name)
             exp = os.path.join(EXPECTED, name + '.txt')
             if update:
