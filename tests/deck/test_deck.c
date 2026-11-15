@@ -624,6 +624,60 @@ static void test_layout(void)
 }
 #endif
 
+#ifdef OPR_WITH_LAYOUT
+static int count_of(const unsigned char *data, size_t n, const char *what)
+{
+    size_t k = strlen(what), i;
+    int c = 0;
+    for (i = 0; k && i + k <= n; i++)
+        if (!memcmp(data + i, what, k)) c++;
+    return c;
+}
+
+/* For a printer: bleed and crop marks make each page larger, the slide in the middle */
+static void test_print_marks(void)
+{
+    owf_deck *d = owf_deck_new(11906, 16838);
+    opr_pdf_options o;
+    unsigned char *plain = NULL, *marked = NULL, *bled = NULL;
+    size_t np = 0, nm = 0, nb = 0;
+    char box[64];
+    int m;
+    CHECK(d && owf_deck_add_slide(d, -1, -1), "a page");
+    if (!d || !d->nslides) { owf_deck_free(d); return; }
+    d->slides[0].background = OWF_SHADE(0x336699);
+    memset(&o, 0, sizeof o);
+    CHECK(opr_pdf_margin(&o) == 0 && opr_pdf_margin(NULL) == 0, "no room without marks or bleed");
+    CHECK(opr_export_pdf(d, &o, &plain, &np, NULL) == OWF_OK && xref_ok(plain, np), "the plain PDF");
+    o.crop_marks = 1;
+    m = opr_pdf_margin(&o);
+    CHECK(m == OPR_PDF_MARK_GAP + OPR_PDF_MARK_LENGTH + 60, "marks alone: %d", m);
+    CHECK(opr_export_pdf(d, &o, &marked, &nm, NULL) == OWF_OK && xref_ok(marked, nm), "the PDF with crop marks");
+    snprintf(box, sizeof box, "/MediaBox [0 0 %d.%02d %d.%02d]", (11906 + 2 * m) / 20, (11906 + 2 * m) % 20 * 5,
+             (16838 + 2 * m) / 20, (16838 + 2 * m) % 20 * 5);      /* points, as owf_pdf.c writes them */
+    CHECK(marked && find(marked, nm, box) != NULL, "the page larger by the marks' room: %s", box);
+    CHECK(marked && plain && count_of(marked, nm, " l ") == count_of(plain, np, " l ") + 8, "eight mark lines: %d %d",
+          marked ? count_of(marked, nm, " l ") : -1, plain ? count_of(plain, np, " l ") : -1);
+    o.crop_marks = 0;
+    o.bleed = 180;                                         /* about 3 mm */
+    CHECK(opr_pdf_margin(&o) == 180, "bleed alone: %d", opr_pdf_margin(&o));
+    CHECK(opr_export_pdf(d, &o, &bled, &nb, NULL) == OWF_OK && xref_ok(bled, nb), "the PDF with bleed");
+    CHECK(bled && find(bled, nb, "/MediaBox [0 0 613.30 859.90]") != NULL, "the page larger by the bleed");
+    CHECK(bled && plain && count_of(bled, nb, " re") == count_of(plain, np, " re") + 1, "the background into the bleed");
+    CHECK(bled && plain && count_of(bled, nb, " l ") == count_of(plain, np, " l "), "no marks");
+    o.crop_marks = 1;
+    CHECK(opr_pdf_margin(&o) == 180 + OPR_PDF_MARK_LENGTH + 60, "marks outside the bleed: %d", opr_pdf_margin(&o));
+    o.bleed = 99999;
+    CHECK(opr_pdf_margin(&o) == OPR_PDF_MAX_BLEED + OPR_PDF_MARK_LENGTH + 60, "the bleed at most an inch");
+    o.pages = OPR_PDF_NOTES;
+    CHECK(opr_pdf_margin(&o) == 0, "notes pages take no marks");
+    free(plain);
+    free(marked);
+    free(bled);
+    owf_deck_free(d);
+}
+#endif
+
 int main(void)
 {
     test_model();
@@ -633,6 +687,7 @@ int main(void)
 #ifdef OPR_WITH_LAYOUT
     test_shape_layout();
     test_layout();
+    test_print_marks();
 #else
     printf("test_deck: built without OpenLayout: the layout and PDF tests were skipped\n");
 #endif
