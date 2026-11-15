@@ -810,7 +810,7 @@ static int step_end(ob_project *p, int good)
     return 0;
 }
 
-/* ---- SQL views (core 0.6.1) ---- */
+/* ---- SQL views (core 0.6.3) ---- */
 
 static int view_exists(ob_project *p, const char *name)
 {
@@ -2104,9 +2104,89 @@ static int view_order(ob_project *p, const ob_table *t, const ob_view *v, sqlite
     return 1;
 }
 
+struct qplan;
+static int criterion(ob_project *p, struct qplan *pl, const char *ref, const ob_field *f, const char *heading,
+                     const char *text, sqlite3_str *s);
+
+int ob_view_form_set(ob_view *v, const char *field, int row, const char *text)
+{
+    int i;
+    if (row < 0 || row >= OB_FORM_OR || !field || !field[0]) return 0;
+    for (i = 0; i < v->ncrit; i++)
+        if (v->crit[i].row == row && same(v->crit[i].field, field)) break;
+    if (!text || !*skip_space(text)) {
+        if (i < v->ncrit) {
+            memmove(&v->crit[i], &v->crit[i + 1], (size_t)(v->ncrit - i - 1) * sizeof v->crit[0]);
+            v->ncrit--;
+        }
+        return 1;
+    }
+    if (i == v->ncrit) {
+        if (v->ncrit >= OB_FORM_CRIT) return 0;
+        v->ncrit++;
+        copy(v->crit[i].field, sizeof v->crit[i].field, field);
+        v->crit[i].row = row;
+    }
+    copy(v->crit[i].text, sizeof v->crit[i].text, text);
+    return 1;
+}
+
+const char *ob_view_form_get(const ob_view *v, const char *field, int row)
+{
+    int i;
+    for (i = 0; v && i < v->ncrit && i < OB_FORM_CRIT; i++)
+        if (v->crit[i].row == row && same(v->crit[i].field, field)) return v->crit[i].text;
+    return "";
+}
+
+void ob_view_form_clear(ob_view *v)
+{
+    v->ncrit = 0;
+    memset(v->crit, 0, sizeof v->crit);
+}
+
+int ob_view_filtered(const ob_view *v)
+{
+    return v && (v->op != OB_FILTER_NONE || v->ncrit > 0);
+}
+
+/* Filter by Form's criteria, after `join` (" WHERE " or " AND "): the
+ * rows' criteria joined by AND, the rows by OR, as a query's are. */
+static int form_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, const char *join)
+{
+    int r, i, rows = 0;
+    if (!v || v->ncrit <= 0) return 1;
+    if (v->ncrit > OB_FORM_CRIT) return fail(p, "Filter by Form tests at most %d fields", OB_FORM_CRIT);
+    for (i = 0; i < v->ncrit; i++) {
+        if (v->crit[i].row < 0 || v->crit[i].row >= OB_FORM_OR) return fail(p, "Filter by Form has %d rows", OB_FORM_OR);
+        if (!field_named(t, v->crit[i].field)) return fail(p, "%s has no field %s", t->name, v->crit[i].field);
+    }
+    sqlite3_str_appendf(s, "%s(", join);
+    for (r = 0; r < OB_FORM_OR; r++) {
+        int n = 0;
+        for (i = 0; i < v->ncrit; i++) {
+            const ob_form_crit *c = &v->crit[i];
+            const ob_field *f;
+            char *ref;
+            int good;
+            if (c->row != r || !*skip_space(c->text)) continue;
+            f = field_named(t, c->field);
+            sqlite3_str_appendall(s, n ? " AND " : rows ? " OR (" : "(");
+            if (!(ref = sqlite3_mprintf("\"%w\"", f->name))) return fail(p, "Not enough memory");
+            good = criterion(p, NULL, ref, f, field_label(f), c->text, s);
+            sqlite3_free(ref);
+            if (!good) return 0;
+            n++;
+        }
+        if (n) { sqlite3_str_appendall(s, ")"); rows++; }
+    }
+    sqlite3_str_appendall(s, rows ? ")" : "1)");
+    return 1;
+}
+
 /* What a view's filter adds to a SELECT ... FROM table: its WHERE,
- * appended to s, the filter's value into *bind (?3; kind V_NULL when none).
- * 0 with the reason. */
+ * appended to s, the filter's value into *bind (?3; kind V_NULL when none),
+ * then Filter by Form's criteria. 0 with the reason. */
 static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
 {
     const ob_field *f;
@@ -2121,11 +2201,11 @@ static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite
         nc = holds_text(f->type) ? " COLLATE NOCASE" : "";
         switch (v->op) {
         case OB_FILTER_EMPTY:
-            sqlite3_str_appendf(s, " WHERE \"%w\" IS NULL", f->name);
+            sqlite3_str_appendf(s, " WHERE (\"%w\" IS NULL", f->name);
             if (holds_text(f->type)) sqlite3_str_appendf(s, " OR \"%w\" = ''", f->name);
             break;
         case OB_FILTER_NOT_EMPTY:
-            sqlite3_str_appendf(s, " WHERE \"%w\" IS NOT NULL", f->name);
+            sqlite3_str_appendf(s, " WHERE (\"%w\" IS NOT NULL", f->name);
             if (holds_text(f->type)) sqlite3_str_appendf(s, " AND \"%w\" <> ''", f->name);
             break;
         case OB_FILTER_CONTAINS:
@@ -2142,7 +2222,7 @@ static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite
             bind->text[o++] = '%';
             bind->text[o] = 0;
             bind->kind = V_TEXT;
-            sqlite3_str_appendf(s, " WHERE \"%w\" LIKE ?3 ESCAPE '\\'", f->name);
+            sqlite3_str_appendf(s, " WHERE (\"%w\" LIKE ?3 ESCAPE '\\'", f->name);
             break;
         }
         default: {
@@ -2155,12 +2235,13 @@ static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite
             if (!convert(&loose, v->value, bind, e, sizeof e)) return fail(p, "%s", e);
             if (bind->kind == V_NULL)
                 return fail(p, "%s: give a value to compare with, or use Is empty", field_label(f));
-            sqlite3_str_appendf(s, " WHERE \"%w\" %s ?3%s", f->name, ops[v->op], nc);
+            sqlite3_str_appendf(s, " WHERE (\"%w\" %s ?3%s", f->name, ops[v->op], nc);
             break;
         }
         }
+        sqlite3_str_appendall(s, ")");
     }
-    return 1;
+    return form_where(p, t, v, s, v && v->op != OB_FILTER_NONE ? " AND " : " WHERE ");
 }
 
 static int view_sql(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
@@ -2189,7 +2270,7 @@ ob_int ob_view_total(ob_project *p, const char *table, const ob_view *v)
     char *sql;
     value b;
     ob_int n = -1;
-    if (!v || v->op == OB_FILTER_NONE) return ob_row_total(p, table);
+    if (!ob_view_filtered(v)) return ob_row_total(p, table);
     if (!(t = design(p, table))) return -1;
     s = sqlite3_str_new(NULL);
     sqlite3_str_appendf(s, "SELECT count(*) FROM \"%w\"", t->name);
@@ -3220,6 +3301,7 @@ static int criterion(ob_project *p, qplan *pl, const char *ref, const ob_field *
     if (*v == '[') {
         size_t n = strlen(v);
         qparam *q;
+        if (!pl) return fail(p, "%s: Filter by Form can't ask a question: type the value", heading);
         if (v[n - 1] != ']' || n < 3) return fail(p, "%s: a question to ask is written in [ ], such as [Which town?]", heading);
         if (pl->nparams >= OB_QUERY_PARAMS) return fail(p, "A query asks at most %d questions", OB_QUERY_PARAMS);
         q = &pl->params[pl->nparams++];
@@ -3939,7 +4021,7 @@ int ob_query_delete(ob_project *p, const char *name)
     return runf(p, "DELETE FROM oadb_queries WHERE name = %Q", name) && ok(p);
 }
 
-/* ---- Saved queries follow a table's rename (core 0.6.1) ---- */
+/* ---- Saved queries follow a table's rename (core 0.6.3) ---- */
 
 /* An expression's "Old". (the designer's way of naming a table's field)
  * becomes "New".; how many were changed. */
@@ -4035,7 +4117,7 @@ static int queries_follow(ob_project *p, const char *old_name, const char *new_n
     return good;
 }
 
-/* ---- A query's rows as CSV, a query as a view (core 0.6.1) ---- */
+/* ---- A query's rows as CSV, a query as a view (core 0.6.3) ---- */
 
 ob_int ob_query_csv_export(ob_project *p, const ob_query *q, const char *const *params, const char *path,
                            const ob_csv_opts *opts)

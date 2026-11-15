@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.6.1"
+#define OB_CORE_VERSION "0.6.3"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -256,15 +256,41 @@ typedef enum ob_filter_op {
     OB_FILTER_COUNT
 } ob_filter_op;
 
+/* Filter by Form (core 0.6.2, design 6.3): what is typed into a form's
+ * fields, in the plain words of a query's criteria (Leeds, > 10, Smith*,
+ * between 1 and 5, empty, not York; no [questions]). The criteria in one
+ * row ("Look for", then "Or" rows) must all hold; a row passes when any
+ * row does. They are on top of the one-field filter above. */
+#define OB_FORM_CRIT 16             /* criteria in all the rows together */
+#define OB_FORM_OR 3                /* rows: Look for, Or, Or */
+
+typedef struct ob_form_crit {
+    char field[OB_NAME_MAX];
+    int row;                        /* 0 Look for, 1 and 2 Or */
+    char text[OB_VALUE_MAX];
+} ob_form_crit;
+
+/* About 5 KB: fine on a 64 KB stack, but not many at once. */
 typedef struct ob_view {
     char sort[OB_NAME_MAX];
     int desc;
     char field[OB_NAME_MAX];
     ob_filter_op op;
     char value[OB_VALUE_MAX];
+    int ncrit;
+    ob_form_crit crit[OB_FORM_CRIT];
 } ob_view;
 
 void ob_view_init(ob_view *v);                  /* key order, every row */
+/* Filter by Form: sets field's criterion in row (0 Look for, 1 and 2 Or);
+ * empty text takes it out. 0 when row is not one of them, or there is no
+ * room for another (OB_FORM_CRIT). The text is checked when the view is. */
+int ob_view_form_set(ob_view *v, const char *field, int row, const char *text);
+/* field's criterion in row; "" when it has none. */
+const char *ob_view_form_get(const ob_view *v, const char *field, int row);
+void ob_view_form_clear(ob_view *v);
+/* Whether v leaves rows out (its filter, or Filter by Form). */
+int ob_view_filtered(const ob_view *v);
 const char *ob_filter_name(ob_filter_op op);    /* "Contains"... */
 /* Whether v is good for table (its fields exist, the value suits the field);
  * 0 with the reason in ob_error(). */
@@ -474,7 +500,7 @@ int ob_query_save(ob_project *p, const ob_query *q);
 int ob_query_rename(ob_project *p, const char *old_name, const char *new_name);
 int ob_query_delete(ob_project *p, const char *name);
 
-/* ---- A query's rows as CSV, a query as a view (core 0.6.1) ----
+/* ---- A query's rows as CSV, a query as a view (core 0.6.3) ----
  * CSV: a header of the result's headings, then every row the query gives,
  * as ob_csv_export_with writes a table's (o: separator and charset; NULL is
  * a comma and ISO-8859-1). Datatype object columns are left out. The answers

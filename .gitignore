@@ -1,3 +1,6 @@
 build/
 __pycache__/
 release/
+# outside documents fetched for study (tests/pub/fetch_samples.sh): never committed
+/pub-corpus/
+*.pub
