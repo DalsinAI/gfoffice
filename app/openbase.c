@@ -53,7 +53,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.6.2 (15.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.9.0 (15.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -63,7 +63,7 @@ enum {
     M_NEW = 1, M_OPEN, M_CLOSE, M_COPY, M_COMPACT, M_CHECK, M_ABOUT, M_QUIT,
     M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST,
     M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV,
-    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM
+    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM, M_T_FROMDBF, M_T_IMPORTDBF, M_T_EXPORTDBF
 };
 
 static struct NewMenu menus[] = {
@@ -94,6 +94,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "New Table from CSV...", NULL, 0, 0, (APTR)M_T_FROMCSV },
     { NM_ITEM, "Import CSV...", "I", 0, 0, (APTR)M_T_IMPORT },
     { NM_ITEM, "Export CSV...", NULL, 0, 0, (APTR)M_T_EXPORT },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "New Table from dBASE...", NULL, 0, 0, (APTR)M_T_FROMDBF },
+    { NM_ITEM, "Import dBASE...", NULL, 0, 0, (APTR)M_T_IMPORTDBF },
+    { NM_ITEM, "Export dBASE...", NULL, 0, 0, (APTR)M_T_EXPORTDBF },
     { NM_TITLE, "Query", NULL, 0, 0, NULL },
     { NM_ITEM, "New Query...", "Y", 0, 0, (APTR)M_Q_NEW },
     { NM_ITEM, "Open Query...", "U", 0, 0, (APTR)M_Q_OPEN },
@@ -1887,6 +1891,123 @@ static void export_csv(void)
     set_status(msg);
 }
 
+/* ---- Table > Import dBASE..., Export dBASE..., New Table from dBASE... ----
+ * dBASE III and IV tables (.dbf, memos in the .dbt beside it); the text is
+ * taken byte for byte, as ISO-8859-1. */
+
+/* Rows from path into the table: all or none, and if a record is bad, the
+ * others on request with the bad ones listed. -1 with the reason told. */
+static ob_int dbf_rows_in(const char *table, const char *path)
+{
+    ob_int n;
+    ob_csv_opts_init(&csv_o);
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    n = ob_dbf_import(proj, table, path, &csv_o);
+    SetWindowPointer(win, TAG_DONE);
+    if (n < 0) {
+        char q[OB_ERR_MAX + 120];
+        if (strncmp(ob_error(proj), "Record ", 7)) { tell(ob_error(proj)); return -1; }
+        snprintf(q, sizeof q, "%s\n\nNothing was added. Add the other records and list the bad ones?", ob_error(proj));
+        if (!ask(q, "Add the Others|Cancel")) return -1;
+        ob_csv_opts_init(&csv_o);
+        csv_o.skip_bad = 1;
+        SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+        n = ob_dbf_import(proj, table, path, &csv_o);
+        SetWindowPointer(win, TAG_DONE);
+        if (n < 0) { tell(ob_error(proj)); return -1; }
+    }
+    return n;
+}
+
+static void dbf_done(ob_int n, const char *path)
+{
+    char msg[200];
+    snprintf(msg, sizeof msg, "Added %lld rows from %.60s", (long long)n, leaf(path));
+    if (csv_o.deleted) snprintf(msg + strlen(msg), sizeof msg - strlen(msg), " (%lld deleted records left out)", (long long)csv_o.deleted);
+    load_page();
+    set_status(msg);
+    if (csv_o.bad) show_report(n, &csv_o);
+}
+
+static void import_dbf(void)
+{
+    char path[512], msg[160];
+    ob_int n;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
+    if (!proj || !have_cur) return;
+    snprintf(msg, sizeof msg, "Import dBASE into %.60s", cur.name);
+    if (!ask_file(msg, FALSE, "#?.dbf", path, sizeof path)) return;
+    if ((n = dbf_rows_in(cur.name, path)) >= 0) dbf_done(n, path);
+}
+
+static void export_dbf(void)
+{
+    char path[512], msg[160];
+    ob_int n;
+    BPTR l;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
+    if (!proj || !have_cur) return;
+    snprintf(msg, sizeof msg, "Export %.60s as dBASE", cur.name);
+    if (!ask_file(msg, TRUE, "#?.dbf", path, sizeof path)) return;
+    if ((l = Lock((STRPTR)path, ACCESS_READ)) != 0) {
+        UnLock(l);
+        snprintf(msg, sizeof msg, "%.100s is already there.\nReplace it (and its .dbt)?", leaf(path));
+        if (!ask(msg, "Replace|Cancel")) return;
+    }
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    n = ob_dbf_export(proj, cur.name, &view, path);
+    SetWindowPointer(win, TAG_DONE);
+    if (n < 0) { tell(ob_error(proj)); return; }
+    snprintf(msg, sizeof msg, "Wrote %lld rows to %.60s%s", (long long)n, leaf(path),
+             ob_view_filtered(&view) ? " (the filtered rows)" : "");
+    set_status(msg);
+}
+
+static int table_named(const char *name);
+static ob_table dbf_t;      /* the new table's design (too big for the stack) */
+
+static void new_table_from_dbf(void)
+{
+    char path[512], msg[600];
+    size_t k;
+    ob_int n;
+    int i, made = 0;
+    if (!proj) return;
+    if (!ask_file("New table from a dBASE file", FALSE, "#?.dbf", path, sizeof path)) return;
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    i = ob_dbf_guess(proj, path, NULL, &dbf_t);
+    SetWindowPointer(win, TAG_DONE);
+    if (!i) { tell(ob_error(proj)); return; }
+    if (table_named(dbf_t.name) >= 0) {     /* Sales there already: Sales 2 */
+        char base[OB_NAME_MAX];
+        put_text(base, sizeof base, dbf_t.name);
+        for (i = 2; i < 100; i++) {
+            snprintf(dbf_t.name, sizeof dbf_t.name, "%.*s %d", (int)sizeof base - 5, base, i);
+            if (table_named(dbf_t.name) < 0) break;
+        }
+    }
+    snprintf(msg, sizeof msg, "Make the table %.60s from %.100s, with these fields?\n\n", dbf_t.name, leaf(path));
+    for (i = 0; i < dbf_t.nfields; i++) {
+        k = strlen(msg);
+        if (k + 60 >= sizeof msg) { put_text(msg + k, sizeof msg - k, "..."); break; }
+        snprintf(msg + k, sizeof msg - k, "%s%.30s %.12s", i ? (i % 3 ? ", " : ",\n") : "", dbf_t.fields[i].name, ob_type_name(dbf_t.fields[i].type));
+    }
+    if (!ask(msg, "Make|Cancel")) return;
+    /* the table and its rows together, or neither */
+    if (!ob_begin(proj)) { tell(ob_error(proj)); return; }
+    if (!ob_table_create(proj, &dbf_t)) { char e[OB_ERR_MAX]; put_text(e, sizeof e, ob_error(proj)); ob_rollback(proj); tell(e); return; }
+    if ((n = dbf_rows_in(dbf_t.name, path)) >= 0 && ob_commit(proj)) made = 1;
+    else {
+        if (n >= 0) tell(ob_error(proj));
+        ob_rollback(proj);
+    }
+    if (!made) return;
+    load_tables(dbf_t.name);
+    top_row = 0;
+    sel_row = -1;
+    dbf_done(n, path);
+}
+
 /* ---- Table > New Table from CSV... ---- */
 
 enum { W_NAME = 1, W_SEP, W_CHARSET, W_HEADER, W_FIELDS, W_TYPE, W_SKIP, W_IMPORT, W_CANCEL, W_COUNT };
@@ -3399,6 +3520,9 @@ static void menu_action(ULONG id)
     case M_T_IMPORT: import_csv(); break;
     case M_T_EXPORT: export_csv(); break;
     case M_T_FROMCSV: new_table_from_csv(); break;
+    case M_T_FROMDBF: new_table_from_dbf(); break;
+    case M_T_IMPORTDBF: import_dbf(); break;
+    case M_T_EXPORTDBF: export_dbf(); break;
     case M_UNDO: undo_last(); break;
     case M_Q_NEW: design_query(1); break;
     case M_Q_OPEN: open_query(); break;
