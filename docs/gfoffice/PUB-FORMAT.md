@@ -588,9 +588,14 @@ path in section 5.1.
 about the page centre, F011 chunk, F00D text id), `Quill/QuillSub/CONTENTS`
 (TEXT, FDPC/FDPP pages, STRS, SYID, FONT, an empty STSH 0/1, TOKN, TCD, PL)
 and a DocumentSummaryInformation that says 12.0. The compound file is
-libowf/src/owf_cfbw.c (MS-CFB v3, 512-byte sectors, deterministic). Not
-written yet, each named in the report: pictures (written as empty frames),
-WordArt, groups' own records (their frames are kept, flat) and the scratch
+libowf/src/owf_cfbw.c (MS-CFB v3, 512-byte sectors, deterministic).
+Pictures (section 8): one F007 entry per picture the publication holds, in
+its order, the picture itself in `Escher/EscherDelayStm` (PNG and GIF in
+0xF01E, JPEG 0xF01D, DIB 0xF01F, WMF 0xF01B and EMF 0xF01A with the 34-byte
+header and zlib data in stored blocks), and the frame's 0x4104 naming its
+entry; the 16-byte ids are written as zero (MD4 in [MS-ODRAW], not checked by
+our reader; whether Publisher checks them is not known). Not written yet,
+each named in the report: WordArt, groups' own records (their frames are kept, flat) and the scratch
 area. PL holds 255 text colours; runs past them keep the automatic colour,
 with a note. tests/pub/test_pub_save.py reads every generated file back through
 our own reader; whether Publisher itself opens these files has not been

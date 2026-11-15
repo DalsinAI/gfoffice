@@ -19,8 +19,8 @@ For each file tools/pubgen/make_pub.py makes (PUB_SAMPLES, as test_pub.py):
    nothing goes to stderr (where ASan and UBSan report).
 
 The expected files were checked by hand against the first files' dumps:
-the only differences are what the writer does not write yet (pictures,
-WordArt, groups' own records, the scratch area) and the 98/2000 forms'
+the only differences are what the writer does not write yet (WordArt,
+groups' own records, the scratch area) and the 98/2000 forms'
 own shape numbers.
 
 MIT, Copyright (c) 2026 AmiCradle Team.
