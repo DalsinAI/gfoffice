@@ -1,0 +1,34 @@
+version Publisher 2010
+build-mark 0x18
+written-by 14.0
+page-size 215.9 x 279.4 mm (emu 7772399 x 10058400, twips 12240 x 15840)
+masters 1
+master 1 "Master Page A" frames 0
+pages 1
+page 1 master 1 frames 1
+  frame 0 text box 20.0 20.0 170.0 120.0 mm (emu 720000 720000 6840000 5040000) shape 202 text-id 1 story 0
+    para "A centred heading"
+      align centre
+      run 0 "A centred heading" italic 14.0pt font "Garamond"
+    para "Body text in the body style"
+      run 0 "Body text in the body st" 11.0pt font "Garamond"
+    para "A body paragraph centred by hand"
+      align centre
+      run 0 "A body paragraph centred" 11.0pt font "Garamond"
+    para "Page 2"
+      align right
+      run 0 "Page 2" bold 10.0pt font "Arial"
+    para "Left over a right style"
+      run 0 "Left over a right style" bold 10.0pt font "Arial"
+    para "Left, with a high byte"
+      run 0 "Left, with a high byte" italic 14.0pt font "Garamond"
+    para "An alignment not known yet"
+      run 0 "An alignment not known y" 10.0pt font "Times New Roman"
+    para "A style not in the sheet"
+      run 0 "A style not in the sheet" 10.0pt font "Times New Roman"
+stories 1
+fonts 3
+font "Times New Roman"
+font "Garamond"
+font "Arial"
+pictures 0

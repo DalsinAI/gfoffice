@@ -6,14 +6,21 @@ sections 2 and 3. Nothing here is from a private document, and nothing was
 opened in another program that reads .pub (the clean room,
 `docs/gfoffice/Design-OpenPublisher.md`, section 2).
 
-## Microsoft Publisher: checked in
+## Microsoft Publisher: no longer checked in
+
+The two files below were checked in here from 26 and 27 October (Team 5's
+W142) until 14 November 2026, when the repository stopped keeping outside
+documents. `tests/pub/fetch_samples.sh DIR` fetches both; the reader's own
+tests now use `tools/pubgen/make_pub.py`'s files, among them
+`gen-2003-columns.pub` for linked frames out of their chain's order.
+
 
 | File | Source | Licence | Version (written by) | Bytes | SHA-256 |
 |---|---|---|---|---|---|
 | `SampleNewsletter.pub` | apache/poi `test-data/publisher/SampleNewsletter.pub`, commit `4f3c25563919e7efa4a75feccf6cef1ac3d05a04`, fetched by `tests/pub/fetch_samples.sh` | Apache-2.0 (`licenses/Apache-2.0.txt`; POI's notice in `tests/pub/samples/NOTICE-Apache-POI.txt`) | 2002/2003 format (11.5606) | 291840 | `6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf` |
 | `govdocs1-923566.pub` | govdocs1, thread 923, file `923/923566.pub`: `https://digitalcorpora.s3.amazonaws.com/corpora/files/govdocs1/zipfiles/923.zip` (also `https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/923.zip`), fetched 26 October 2026 | govdocs1's own terms (below) | 2002/2003 format (11.9999) | 600576 | `7ba83938c1c18705fbf24257fc157b89a96d51cd1d715d379f84c45b46d21db5` |
 
-`SampleNewsletter.pub` is the same file `tests/pub/CORPUS.md` lists as fetched; it is checked in here
+`SampleNewsletter.pub` is the same file `tests/pub/CORPUS.md` lists as fetched; it was checked in here
 because it is the most complicated .pub with a licence that lets us: 4 A4
 pages, 99 frames (63 text, 10 pictures, 13 shapes, 9 groups, 4 lines), 45
 stories of which 10 run through linked frames (29 frames), 9 pictures (8
@@ -37,7 +44,7 @@ US Letter.
   Digital Forensics with Standardized Forensic Corpora", DFRWS 2009.
 - **Its author:** the file's own summary properties (the compound file's
   `SummaryInformation` stream) name the person who wrote it, as Publisher
-  saves them. The file is checked in as it was published, byte for byte;
+  saves them. The file was checked in as it was published, byte for byte;
   this document doesn't repeat the name. libowf's reader doesn't read
   those properties (it reads only `DocumentSummaryInformation`'s version).
 
@@ -50,9 +57,11 @@ US Letter.
   directories of all 1,000 zip threads by HTTP ranges, without an error, and
   every member named `.pub` fetched and looked at. 55 are named `.pub`; 54
   are plain text (lists of publications), and one is a Publisher file,
-  checked in above.
-- **Generated .pub:** not made. The format has no specification; a file we
-  wrote would hold only what PUB-FORMAT.md already believes.
+  listed above.
+- **Generated .pub:** made since 14 November 2026 by `tools/pubgen/make_pub.py`
+  for the tests. They hold only what PUB-FORMAT.md already believes, so they
+  test the reader against the notes; the notes are still checked against the
+  files fetched here.
 
 ## PageStream: listed, not checked in
 
