@@ -1726,7 +1726,8 @@ static void test_final_view(void)
     p->runs[3].revision = add;
     shown = ow_layout_new(doc, measure, NULL);
     final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
-    CHECK(shown && final);
+    CHECK(shown);
+    CHECK(final);
     if (shown && final) {
         a = text_on(ow_layout_body(shown), 0, " end", NULL);
         b = text_on(ow_layout_body(final), 0, " end", NULL);
@@ -1765,7 +1766,8 @@ static void test_picture_changes(void)
     p->runs[3].revision = del;
     shown = ow_layout_new(doc, measure, NULL);
     final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
-    CHECK(shown && final);
+    CHECK(shown);
+    CHECK(final);
     if (shown && final) {
         for (n = 0; n < 2 && (op = nth_op(ow_layout_body(shown), 0, OL_OP_IMAGE, n, NULL)) != NULL; ++n)
             kinds[n] = ow_layout_picture_change(shown, op->u.image.node_id, &rgb[n]);
@@ -1820,13 +1822,48 @@ static void test_frame_changes(void)
     p->runs[2].revision = del;
     shown = ow_layout_new(doc, measure, NULL);
     final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
-    CHECK(shown && final);
+    CHECK(shown);
+    CHECK(final);
     if (shown && final) {
         CHECK(rules_of(ow_layout_body(shown), 0xFF1F5FBFu) >= 4);    /* Ann's blue all round the first */
         CHECK(rules_of(ow_layout_body(shown), 0xFFB0306Au) >= 4);    /* Bob's red round the deleted one */
         CHECK(!rules_of(ow_layout_body(final), 0xFF1F5FBFu) && !rules_of(ow_layout_body(final), 0xFFB0306Au));
         CHECK(text_on(ow_layout_body(shown), 0, "Gone", NULL) && !text_on(ow_layout_body(final), 0, "Gone", NULL));
         CHECK(text_on(ow_layout_body(final), 0, "Added", NULL) != NULL);
+    }
+    ow_layout_free(shown);
+    ow_layout_free(final);
+    owf_doc_free(doc);
+}
+
+/* 2.0.38: a tracked table row: its cells edged in its author's colour; the final view leaves a deleted row
+ * out */
+static void test_row_changes(void)
+{
+    owf_doc *doc = owf_doc_new();
+    int add = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL), del = owf_track_add(doc, OWF_REV_DELETE, "Bob", NULL);
+    static const char *const cells[] = { "keep", "new", "gone" };
+    ow_layout *shown, *final;
+    int i;
+    for (i = 0; i < 3; ++i) {
+        owf_para *p = para(doc, NULL, 0, cells[i], 240);
+        p->table_id = 0;
+        p->table_row = i;
+        p->table_col = 0;
+        p->table_cols = 1;
+        p->row_revision = i == 1 ? add : i == 2 ? del : 0;
+    }
+    shown = ow_layout_new(doc, measure, NULL);
+    final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(add > 0 && del > 0);
+    CHECK(shown);
+    CHECK(final);
+    if (shown && final) {
+        CHECK(rules_of(ow_layout_body(shown), 0xFF1F5FBFu) >= 4);    /* Ann's new row */
+        CHECK(rules_of(ow_layout_body(shown), 0xFFB0306Au) >= 4);    /* Bob's deleted one */
+        CHECK(!rules_of(ow_layout_body(final), 0xFF1F5FBFu) && !rules_of(ow_layout_body(final), 0xFFB0306Au));
+        CHECK(text_on(ow_layout_body(shown), 0, "gone", NULL) && !text_on(ow_layout_body(final), 0, "gone", NULL));
+        CHECK(text_on(ow_layout_body(final), 0, "new", NULL) && text_on(ow_layout_body(final), 0, "keep", NULL));
     }
     ow_layout_free(shown);
     ow_layout_free(final);
@@ -1843,6 +1880,7 @@ int main(int argc, char **argv)
     test_final_view();
     test_picture_changes();
     test_frame_changes();
+    test_row_changes();
     test_issue9();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)

@@ -5095,8 +5095,13 @@ static void menu_action(ULONG id)
     case M_TABLE_STYLE: do_table_style(); break;
     case M_TABLE_ROW_ADD: editor_result(ow_editor_table_insert_row(editor),"Table row inserted."); break;
     case M_TABLE_ROW_DEL: editor_result(ow_editor_table_delete_row(editor),"Table row deleted."); break;
-    case M_TABLE_COL_ADD: editor_result(ow_editor_table_insert_column(editor),"Table column inserted."); break;
-    case M_TABLE_COL_DEL: editor_result(ow_editor_table_delete_column(editor),"Table column deleted."); break;
+    case M_TABLE_COL_ADD:
+    case M_TABLE_COL_DEL:
+        /* 2.0.38: rows are recorded as changes, columns not yet: none while recording */
+        if (ow_editor_track_changes(editor)) set_status("Columns cannot be put in or deleted while changes are recorded.");
+        else if (id == M_TABLE_COL_ADD) editor_result(ow_editor_table_insert_column(editor), "Table column inserted.");
+        else editor_result(ow_editor_table_delete_column(editor), "Table column deleted.");
+        break;
     case M_PAGE_SETUP: {
         owf_page pg;
         if (editor) {

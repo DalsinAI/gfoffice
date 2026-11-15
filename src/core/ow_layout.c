@@ -687,7 +687,7 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
     return block;
 }
 
-static ol_node *add_cell(ol_document *od, ol_node *row, const owf_para *p)
+static ol_node *add_cell(ol_document *od, ol_node *row, const owf_para *p, unsigned long change_rgb)
 {
     ol_style s;
     ol_box_style b;
@@ -700,6 +700,10 @@ static ol_node *add_cell(ol_document *od, ol_node *row, const owf_para *p)
     ol_node_set_style(cell, &s);
     ol_box_style_init(&b);
     b.border_width = BORDER_WIDTH;
+    if (change_rgb) {                                /* 2.0.38: a tracked row's cell: its author's colour */
+        b.border_width = BORDER_WIDTH * 2;
+        b.border_argb = argb(change_rgb & 0xFFFFFFUL);
+    }
     ol_node_set_box(cell, &b);
     return cell;
 }
@@ -710,7 +714,7 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
                      int first, int end, int record, const field_values *fv)
 {
     ol_style s;
-    ol_node *table, *row = NULL, *cell = NULL;
+    ol_node *table, *row = NULL, *cell = NULL, *hidden = NULL;
     int cols = 1, i, row_value = 0, have_row = 0, col = -1;
 
     for (i = first; i < end; ++i)
@@ -726,10 +730,29 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
     for (i = first; i < end; ++i) {
         const owf_para *p = &story->paras[i];
         int c = p->table_col < 0 ? 0 : (p->table_col >= cols ? cols - 1 : p->table_col);
+        const owf_revision *rv = OWF_DOC_REVISION(doc, p->row_revision);
+        /* 2.0.38: a tracked row: edged in its author's colour, or (the final view) a deleted one left out */
+        unsigned long change_rgb = 0;
+        if (rv && l && (l->view & OW_LAYOUT_FINAL)) {
+            if (rv->kind == OWF_REV_DELETE) {
+                /* its paragraphs still each have a block (the caret code wants one), in a box shown not at all */
+                if (!hidden) {
+                    hidden = ol_node_append(od, parent, OL_ROLE_BLOCK, NULL);
+                    if (!hidden) return 0;
+                    ol_style_init(&s);
+                    s.display = OL_DISPLAY_NONE;
+                    ol_node_set_style(hidden, &s);
+                }
+                if (!add_paragraph(l, record, doc, od, hidden, p, i, fv)) return 0;
+                continue;
+            }
+        } else if (rv) {
+            change_rgb = change_colour(doc, p->row_revision) | 0x1000000UL;   /* (nonzero even for black) */
+        }
         if (!have_row || p->table_row != row_value) {
             /* the last row's missing cells, then a new row */
             while (have_row && col < cols - 1) {
-                if (!add_cell(od, row, NULL)) return 0;
+                if (!add_cell(od, row, NULL, 0)) return 0;
                 ++col;
             }
             row = ol_node_append(od, table, OL_ROLE_ROW, NULL);
@@ -743,14 +766,14 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
             cell = NULL;
         }
         while (col < c) {
-            cell = add_cell(od, row, p);
+            cell = add_cell(od, row, p, change_rgb);
             if (!cell) return 0;
             ++col;
         }
         if (!add_paragraph(l, record, doc, od, cell, p, i, fv)) return 0;
     }
     while (have_row && col < cols - 1) {
-        if (!add_cell(od, row, NULL)) return 0;
+        if (!add_cell(od, row, NULL, 0)) return 0;
         ++col;
     }
     return 1;

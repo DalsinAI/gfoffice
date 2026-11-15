@@ -41,7 +41,8 @@
  * calls; owf_run and owf_doc grew, so the three libraries go together again.
  * 3.11: libowf 1.12, a picture in the line may be a tracked change (owf_run.revision on OWF_RUN_IMAGE): DOCX
  * w:ins and w:del round its w:drawing, ODT changed regions, in and out. A frame's run may be one too (DOCX in
- * and out; ODT saves it accepted). No new calls and no struct grew.
+ * and out; ODT saves it accepted). A table row may be one (owf_para.row_revision: DOCX w:trPr/w:ins and
+ * w:del; ODT saves it accepted). No new calls; owf_para grew, so the three libraries go together again.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */

@@ -1948,8 +1948,16 @@ static void table(docx *d, const owf_xml_node *t)
                 table(d, wchild(d, row, "sdtContent") ? wchild(d, row, "sdtContent") : row);
             continue;
         }
+        int row_rev = 0;
         for (cell=row->first;cell;cell=cell->next) if(is_w(d,cell,"tc")) ++cols;
         if(!cols)continue;
+        {   /* 1.12: the row put in or deleted as a tracked change (w:trPr/w:ins, w:del) */
+            const owf_xml_node *trpr = wchild(d, row, "trPr"), *ins = wchild(d, trpr, "ins"), *del = wchild(d, trpr, "del");
+            const owf_xml_node *chg = del ? del : ins;
+            if (chg && !(row_rev = owf_track_add(d->doc, del ? OWF_REV_DELETE : OWF_REV_INSERT,
+                                                 owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"))))
+                d->failed = 1;
+        }
         for (cell = row->first; cell; cell = cell->next) {
             int first = 1, before;
             owf_para *p;
@@ -1970,7 +1978,7 @@ static void table(docx *d, const owf_xml_node *t)
                 para_names(d, ps ? wval(d, ps) : NULL);
             }
             p=&d->b->story->paras[d->b->story->nparas-1];
-            p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
+            p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;p->row_revision=row_rev;
             { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd");
               p->cell_shading = shd ? docx_fill(d, shd) : cell_style_shading(d); }
             ++col;

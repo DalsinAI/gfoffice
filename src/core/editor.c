@@ -147,6 +147,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->section_gap = sp->section_gap;
         dp->section_break = sp->section_break;
         dp->mark_revision = sp->mark_revision;       /* 2.1.0 */
+        dp->row_revision = sp->row_revision;         /* 2.0.38 */
         dp->style = NULL;                            /* 2.0.12: its style and bookmarks too */
         dp->bookmarks = NULL;
         if (sp->style && !(dp->style = copy_bytes(sp->style, strlen(sp->style)))) return 0;
@@ -1335,12 +1336,24 @@ static ow_position word_left_pos(ow_editor *editor, ow_position pos)
     return pos;
 }
 
-/* 2.0.37: in the final view a deletion's text is not shown: whether pos's run is one */
+/* 2.0.38: in the final view a deleted table row is not shown: whether paragraph i is one of its cells */
+static int hidden_para(ow_editor *editor, int i)
+{
+    const owf_story *story = ed_story(editor);
+    const owf_revision *r;
+    if (!editor->final_view || i < 0 || i >= story->nparas || story->paras[i].table_id < 0) return 0;
+    r = OWF_DOC_REVISION(editor->doc, story->paras[i].row_revision);
+    return r && r->kind == OWF_REV_DELETE;
+}
+
+/* 2.0.37: in the final view a deletion's text is not shown: whether pos's run is one (2.0.38: or in a deleted
+ * row) */
 static int hidden_run(ow_editor *editor, ow_position pos)
 {
     const owf_para *p = &ed_story(editor)->paras[pos.paragraph];
     const owf_revision *r;
     if (!editor->final_view || pos.run < 0 || pos.run >= p->nruns) return 0;
+    if (hidden_para(editor, pos.paragraph)) return 1;
     r = OWF_DOC_REVISION(editor->doc, p->runs[pos.run].revision);
     return r && r->kind == OWF_REV_DELETE;
 }
@@ -1354,7 +1367,9 @@ static ow_position visible_step(ow_editor *editor, ow_position pos, int dir)
         ow_position np = dir < 0 ? move_left_pos(editor, pos) : move_right_pos(editor, pos);
         int visible;
         if (same_position(np, pos)) return pos;
-        visible = np.paragraph != pos.paragraph || (np.run == pos.run && !hidden_run(editor, np));
+        /* (2.0.38: into a deleted row's cell is no step the reader sees; on out of it is) */
+        visible = np.paragraph != pos.paragraph ? !hidden_para(editor, np.paragraph)
+                                                : np.run == pos.run && !hidden_run(editor, np);
         pos = np;
         if (visible) return pos;
     }
@@ -1380,6 +1395,9 @@ static int visible_unit(ow_editor *editor, ow_position caret, int dir, ow_positi
         ow_position np = dir < 0 ? move_left_pos(editor, pos) : move_right_pos(editor, pos);
         int end_gone = 0;
         if (same_position(np, pos)) return 0;
+        if (np.paragraph != pos.paragraph &&
+            (hidden_para(editor, np.paragraph) || hidden_para(editor, pos.paragraph)))
+            return 0;                                /* 2.0.38: never into or across a hidden row */
         if (np.paragraph != pos.paragraph && editor->track) {
             int ended = np.paragraph < pos.paragraph ? np.paragraph : pos.paragraph;
             end_gone = rev_kind(editor->doc, ed_story(editor)->paras[ended].mark_revision) == OWF_REV_DELETE;
@@ -1430,6 +1448,23 @@ static int final_view_delete(ow_editor *editor, int dir)
 static ow_position out_of_hidden(ow_editor *editor, ow_position pos, int dir)
 {
     const owf_run *r;
+    if (hidden_para(editor, pos.paragraph)) {
+        /* 2.0.38: out of a hidden row: the next paragraph the reader sees that way, else the other way */
+        int i, n = ed_story(editor)->nparas, d;
+        for (d = dir > 0 ? 1 : -1, i = pos.paragraph; i >= 0 && i < n && hidden_para(editor, i); i += d) {}
+        if (i < 0 || i >= n)
+            for (d = -d, i = pos.paragraph; i >= 0 && i < n && hidden_para(editor, i); i += d) {}
+        if (i >= 0 && i < n) {
+            ow_position at;
+            const owf_para *p = &ed_story(editor)->paras[i];
+            at.paragraph = i;
+            at.box = pos.box;
+            at.run = d > 0 ? first_text_run(p) : last_text_run(p);
+            at.byte_offset = d > 0 || at.run < 0 || !p->runs[at.run].text ? 0 : strlen(p->runs[at.run].text);
+            return clamp_position(editor, at);
+        }
+        return pos;
+    }
     if (!hidden_run(editor, pos)) return pos;
     r = &ed_story(editor)->paras[pos.paragraph].runs[pos.run];
     if (pos.byte_offset > 0 && r->text && pos.byte_offset < strlen(r->text))
@@ -2051,7 +2086,8 @@ static int tracked_delete_selection(ow_editor *editor)
     return 1;
 }
 
-/* One item of a change: a run (run >= 0) or a paragraph's end (run -1). */
+/* One item of a change: a run (run >= 0), a paragraph's end (run -1) or (2.0.38) a table cell's row (run -2,
+ * before its runs). */
 typedef struct { int para, run; } ow_change_item;
 
 /* The changes of a story in order: each a row of items with one number. The callback gets each change's
@@ -2064,11 +2100,16 @@ static int walk_changes(const owf_story *story, change_fn fn, void *userdata)
     ow_change_item first = { 0, 0 }, last = { 0, 0 };
     for (i = 0; i < story->nparas; ++i) {
         const owf_para *p = &story->paras[i];
-        for (j = 0; j <= p->nruns; ++j) {
+        for (j = -1; j <= p->nruns; ++j) {
             int rev;
             ow_change_item it;
             it.para = i;
-            if (j < p->nruns) {
+            if (j < 0) {
+                if (p->table_id < 0) continue;
+                it.run = -2;                         /* 2.0.38: its row */
+                rev = p->row_revision;
+                if (!rev && cur) continue;           /* a row with no change is no gap in its cells' text */
+            } else if (j < p->nruns) {
                 const owf_run *r = &p->runs[j];
                 it.run = j;
                 rev = r->revision;
@@ -2099,7 +2140,10 @@ static ow_position item_start(ow_editor *editor, ow_change_item it)
     owf_para *p = &ed_story(editor)->paras[it.para];
     pos.paragraph = it.para;
     pos.box = box_of(editor, editor->selection.focus.box);
-    if (it.run < 0) {
+    if (it.run == -2) {                              /* 2.0.38: a row: its cell's start */
+        pos.run = first_text_run(p);
+        pos.byte_offset = 0;
+    } else if (it.run < 0) {
         pos.run = last_text_run(p);
         pos.byte_offset = pos.run >= 0 && p->runs[pos.run].text ? strlen(p->runs[pos.run].text) : 0;
     } else if (p->runs[it.run].kind == OWF_RUN_TEXT) {
@@ -2120,7 +2164,10 @@ static ow_position item_end(ow_editor *editor, ow_change_item it)
     owf_para *p = &story->paras[it.para];
     pos.paragraph = it.para;
     pos.box = box_of(editor, editor->selection.focus.box);
-    if (it.run < 0) {
+    if (it.run == -2) {                              /* 2.0.38: a row: its cell's end */
+        pos.run = last_text_run(p);
+        pos.byte_offset = pos.run >= 0 && p->runs[pos.run].text ? strlen(p->runs[pos.run].text) : 0;
+    } else if (it.run < 0) {
         pos.paragraph = it.para + 1 < story->nparas ? it.para + 1 : it.para;
         pos.run = first_text_run(&story->paras[pos.paragraph]);
         pos.byte_offset = 0;
@@ -2326,9 +2373,13 @@ static int pick_cb(void *userdata, const owf_story *story, int rev, ow_change_it
         pk->items[pk->nitems++] = it;
         if (it.para == last.para && it.run == last.run) break;
         /* the next item */
-        if (it.run >= 0 && it.run + 1 < story->paras[it.para].nruns) ++it.run;
+        if (it.run == -2) it.run = story->paras[it.para].nruns ? 0 : -1;
+        else if (it.run >= 0 && it.run + 1 < story->paras[it.para].nruns) ++it.run;
         else if (it.run >= 0) it.run = -1;
-        else { ++it.para; it.run = 0; if (!story->paras[it.para].nruns) it.run = -1; }
+        else {
+            ++it.para;
+            it.run = story->paras[it.para].table_id >= 0 ? -2 : story->paras[it.para].nruns ? 0 : -1;
+        }
     }
     return 0;
 }
@@ -2338,14 +2389,73 @@ static int pick_cb(void *userdata, const owf_story *story, int rev, ow_change_it
 static int gone_frame(ow_editor *editor, int frame_index);
 static int resolve_done(ow_editor *editor);
 
+/* 2.0.38: a table's rows numbered 0, 1, 2 ... again in the order they come (after one went) */
+static void renumber_rows(owf_story *story, int id)
+{
+    int i, row = -1, last = -1;
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        if (p->table_id != id) continue;
+        if (p->table_row != last) { last = p->table_row; ++row; }
+        p->table_row = row;
+    }
+}
+
+static void remove_para_at(owf_story *story, int index);
+
+/* 2.0.38: the rows of the items (run -2), once their text is resolved: kept (no change) or gone, whole. The
+ * rows are found first (each by its table and number) and the gone ones taken away after, so no item's
+ * paragraph moves under it; the tables' rows are numbered again last. */
+static int resolve_rows(ow_editor *editor, owf_story *story, const ow_change_item *items, int n, int accept)
+{
+    typedef struct { int id, row, gone; } row_pick;
+    row_pick *rp;
+    int k, i, m = 0, changed = 0;
+    if (!n) return 0;
+    rp = (row_pick *)owf_malloc((size_t)n * sizeof(*rp));
+    if (!rp) return -1;
+    for (k = 0; k < n; ++k) {
+        const owf_para *p;
+        int kind, j;
+        if (items[k].run != -2 || items[k].para >= story->nparas) continue;
+        p = &story->paras[items[k].para];
+        if (!p->row_revision || p->table_id < 0) continue;
+        for (j = 0; j < m && (rp[j].id != p->table_id || rp[j].row != p->table_row); ++j) {}
+        if (j < m) continue;
+        kind = rev_kind(editor->doc, p->row_revision);
+        rp[m].id = p->table_id;
+        rp[m].row = p->table_row;
+        rp[m].gone = kind && (kind == OWF_REV_INSERT) != (accept != 0);
+        ++m;
+    }
+    for (k = 0; k < m; ++k) {
+        for (i = story->nparas - 1; i >= 0; --i) {
+            owf_para *p = &story->paras[i];
+            if (p->table_id != rp[k].id || p->table_row != rp[k].row) continue;
+            if (rp[k].gone) remove_para_at(story, i);
+            else p->row_revision = 0;
+        }
+        changed = 1;
+    }
+    for (k = 0; k < m; ++k) if (rp[k].gone) renumber_rows(story, rp[k].id);
+    owf_free(rp);
+    if (!story->nparas) {
+        owf_para *p = owf_story_add(story, NULL);
+        if (!p || !append_empty_text_run(p, &editor->doc->base)) return -1;
+    }
+    return changed;
+}
+
 static int resolve_items(ow_editor *editor, owf_story *story, const ow_change_item *items, int n, int accept)
 {
-    int k, changed = 0, low = story->nparas, high = -1;
+    int k, changed = 0, low = story->nparas, high = -1, rows;
     for (k = n - 1; k >= 0; --k) {
         owf_para *p = &story->paras[items[k].para];
-        int number = items[k].run < 0 ? p->mark_revision : p->runs[items[k].run].revision;
-        int kind = rev_kind(editor->doc, number);
-        int keep = (kind == OWF_REV_INSERT) == (accept != 0);
+        int number, kind, keep;
+        if (items[k].run == -2) continue;            /* 2.0.38: rows after (resolve_rows) */
+        number = items[k].run < 0 ? p->mark_revision : p->runs[items[k].run].revision;
+        kind = rev_kind(editor->doc, number);
+        keep = (kind == OWF_REV_INSERT) == (accept != 0);
         if (!number) continue;
         if (items[k].para < low) low = items[k].para;
         if (items[k].para > high) high = items[k].para;
@@ -2376,7 +2486,8 @@ static int resolve_items(ow_editor *editor, owf_story *story, const ow_change_it
         if (first_text_run(&story->paras[k]) < 0 && !append_empty_text_run(&story->paras[k], &editor->doc->base))
             return -1;
     }
-    return changed;
+    if ((rows = resolve_rows(editor, story, items, n, accept)) < 0) return -1;
+    return changed || rows;
 }
 
 static int resolve_story(ow_editor *editor, owf_story *story, int all, int accept, int *first_para)
@@ -4775,22 +4886,39 @@ int ow_editor_table_move(ow_editor *editor,int delta)
 
 int ow_editor_table_insert_row(ow_editor *editor)
 {
-    int id,row,cols,i,pos,c;if(!current_table_cell(editor,&id,&row,NULL,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;pos=editor->selection.focus.paragraph;while(pos+1<ed_story(editor)->nparas&&ed_story(editor)->paras[pos+1].table_id==id&&ed_story(editor)->paras[pos+1].table_row==row)++pos;++pos;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row>row)++ed_story(editor)->paras[i].table_row;for(c=0;c<cols;++c){owf_para *p=insert_paragraph(ed_story(editor),pos+c,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=row+1;p->table_col=c;p->table_cols=cols;}caret_to_para(editor,pos);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    int id,row,cols,i,pos,c,ins;if(!current_table_cell(editor,&id,&row,NULL,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
+    /* 2.0.38: recording, the new row is an insertion (every cell's row_revision) */
+    ins=editor->track?editor_revision(editor,OWF_REV_INSERT):0;if(editor->track&&!ins){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    pos=editor->selection.focus.paragraph;while(pos+1<ed_story(editor)->nparas&&ed_story(editor)->paras[pos+1].table_id==id&&ed_story(editor)->paras[pos+1].table_row==row)++pos;++pos;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row>row)++ed_story(editor)->paras[i].table_row;for(c=0;c<cols;++c){owf_para *p=insert_paragraph(ed_story(editor),pos+c,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=row+1;p->table_col=c;p->table_cols=cols;p->row_revision=ins;}caret_to_para(editor,pos);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_table_delete_row(ow_editor *editor)
 {
-    int id,row,i,start=-1,count=0;if(!current_table_cell(editor,&id,&row,NULL,NULL))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row==row){if(start<0)start=i;++count;}for(i=0;i<count;++i)remove_para_at(ed_story(editor),start);for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row>row)--ed_story(editor)->paras[i].table_row;if(!ed_story(editor)->nparas){owf_para *p=owf_story_add(ed_story(editor),NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}}caret_to_para(editor,start<ed_story(editor)->nparas?start:ed_story(editor)->nparas-1);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    int id,row,i,start=-1,count=0;if(!current_table_cell(editor,&id,&row,NULL,NULL))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
+    if(editor->track){
+        /* 2.0.38: recording, someone else's row (or one from before) is marked deleted and stays till that is
+         * accepted; the author's own inserted row goes */
+        owf_para *cur=&ed_story(editor)->paras[editor->selection.focus.paragraph];
+        if(rev_kind(editor->doc,cur->row_revision)==OWF_REV_DELETE){snapshot_free(&editor->undo[editor->nundo-1]);--editor->nundo;return OWF_OK;}
+        if(!rev_mine(editor,cur->row_revision)){
+            int del=editor_revision(editor,OWF_REV_DELETE);
+            if(!del){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+            for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row==row)ed_story(editor)->paras[i].row_revision=del;
+            editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+        }
+    }for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row==row){if(start<0)start=i;++count;}for(i=0;i<count;++i)remove_para_at(ed_story(editor),start);for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row>row)--ed_story(editor)->paras[i].table_row;if(!ed_story(editor)->nparas){owf_para *p=owf_story_add(ed_story(editor),NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}}caret_to_para(editor,start<ed_story(editor)->nparas?start:ed_story(editor)->nparas-1);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_table_insert_column(ow_editor *editor)
 {
-    int id,col,cols,i,maxrow=-1,r;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id){if(ed_story(editor)->paras[i].table_row>maxrow)maxrow=ed_story(editor)->paras[i].table_row;if(ed_story(editor)->paras[i].table_col>col)++ed_story(editor)->paras[i].table_col;ed_story(editor)->paras[i].table_cols=cols+1;}for(r=maxrow;r>=0;--r){int pos=-1;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row==r&&ed_story(editor)->paras[i].table_col==col){pos=i+1;break;}if(pos>=0){owf_para *p=insert_paragraph(ed_story(editor),pos,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=r;p->table_col=col+1;p->table_cols=cols+1;}}editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    /* 2.0.38: columns are not recorded as changes (rows are): none while recording */
+    int id,col,cols,i,maxrow=-1,r;if(editor&&editor->track)return OWF_ERR_UNSUPPORTED;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id){if(ed_story(editor)->paras[i].table_row>maxrow)maxrow=ed_story(editor)->paras[i].table_row;if(ed_story(editor)->paras[i].table_col>col)++ed_story(editor)->paras[i].table_col;ed_story(editor)->paras[i].table_cols=cols+1;}for(r=maxrow;r>=0;--r){int pos=-1;for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_row==r&&ed_story(editor)->paras[i].table_col==col){pos=i+1;break;}if(pos>=0){owf_para *p=insert_paragraph(ed_story(editor),pos,NULL);if(!p||!append_empty_text_run(p,&editor->typing_fmt)){ow_editor_undo(editor);return OWF_ERR_MEMORY;}p->table_id=id;p->table_row=r;p->table_col=col+1;p->table_cols=cols+1;}}editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_table_delete_column(ow_editor *editor)
 {
-    int id,col,cols,i;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(cols<=1)return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=ed_story(editor)->nparas-1;i>=0;--i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_col==col)remove_para_at(ed_story(editor),i);for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id){if(ed_story(editor)->paras[i].table_col>col)--ed_story(editor)->paras[i].table_col;ed_story(editor)->paras[i].table_cols=cols-1;}caret_to_para(editor,editor->selection.focus.paragraph<ed_story(editor)->nparas?editor->selection.focus.paragraph:ed_story(editor)->nparas-1);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
+    /* 2.0.38: columns are not recorded as changes (rows are): none while recording */
+    int id,col,cols,i;if(editor&&editor->track)return OWF_ERR_UNSUPPORTED;if(!current_table_cell(editor,&id,NULL,&col,&cols))return OWF_ERR_FORMAT;if(cols<=1)return OWF_ERR_FORMAT;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;for(i=ed_story(editor)->nparas-1;i>=0;--i)if(ed_story(editor)->paras[i].table_id==id&&ed_story(editor)->paras[i].table_col==col)remove_para_at(ed_story(editor),i);for(i=0;i<ed_story(editor)->nparas;++i)if(ed_story(editor)->paras[i].table_id==id){if(ed_story(editor)->paras[i].table_col>col)--ed_story(editor)->paras[i].table_col;ed_story(editor)->paras[i].table_cols=cols-1;}caret_to_para(editor,editor->selection.focus.paragraph<ed_story(editor)->nparas?editor->selection.focus.paragraph:ed_story(editor)->nparas-1);editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
 int ow_editor_insert_image(ow_editor *editor, int image_index)
