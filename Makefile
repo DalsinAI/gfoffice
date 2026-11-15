@@ -40,7 +40,7 @@ clean:
 
 .PHONY: all test check clean
 
-CORE_SRC = src/core/editor.c
+CORE_SRC = src/core/editor.c src/core/ow_merge.c
 
 $(OUT)/test-core: $(OWF_SRC) $(CORE_SRC) tests/core/test_core.c include/openwrite_core.h
 	mkdir -p $(OUT)
@@ -60,6 +60,28 @@ core-check: $(OUT)/test-core-asan
 	$(OUT)/test-core-asan
 
 .PHONY: core-check
+
+MERGE_TABLE_DEPS = $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c include/ow_merge.h
+
+$(OUT)/test-merge-table: $(MERGE_TABLE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c -lz -o $@
+
+$(OUT)/test-merge-table-asan: $(MERGE_TABLE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c -lz -o $@
+
+merge-table-test: $(OUT)/test-merge-table
+	$(OUT)/test-merge-table
+
+merge-table-check: $(OUT)/test-merge-table-asan
+	$(OUT)/test-merge-table-asan
+
+test: merge-table-test
+check: merge-table-check
+
+.PHONY: merge-table-test merge-table-check
 
 $(OUT)/test-spell: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h
 	mkdir -p $(OUT)
