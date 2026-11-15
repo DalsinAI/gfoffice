@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.6.3"
+#define OB_CORE_VERSION "0.6.4"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -321,6 +321,16 @@ ob_int ob_view_find(ob_project *p, const char *table, const ob_view *v, const ch
  * child table's rows whose Lookup holds the record's key: a view filtered on
  * r.field Equals the key. Returns how many there are, -1 on error. */
 int ob_children(ob_project *p, const char *table, ob_relation *out, int max);
+/* Changing a subform's rows (core 0.6.3). The key of the row at position
+ * `pos` (from 0, key order) among r's rows for record `parent`: -1 when
+ * there is none, -2 on error. */
+ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int pos);
+/* Adds a row to r's table for record `parent`: its Lookup r->field holds
+ * parent whatever the fields give for it; the rest as ob_row_add takes them.
+ * 0 with the reason when parent is not a key (a new record not yet saved:
+ * "Save the record first") or ob_row_add refuses the row. */
+int ob_child_add(ob_project *p, const ob_relation *r, ob_int parent, int n, const char *const *fields,
+                 const char *const *values, ob_int *key);
 
 /* ---- CSV (design 8) ----
  * Export: a header of field names, then each row of the view (NULL: every
@@ -500,7 +510,7 @@ int ob_query_save(ob_project *p, const ob_query *q);
 int ob_query_rename(ob_project *p, const char *old_name, const char *new_name);
 int ob_query_delete(ob_project *p, const char *name);
 
-/* ---- A query's rows as CSV, a query as a view (core 0.6.3) ----
+/* ---- A query's rows as CSV, a query as a view (core 0.6.4) ----
  * CSV: a header of the result's headings, then every row the query gives,
  * as ob_csv_export_with writes a table's (o: separator and charset; NULL is
  * a comma and ISO-8859-1). Datatype object columns are left out. The answers

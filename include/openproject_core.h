@@ -244,6 +244,21 @@ int opj_print_page_view(const opj_print *pr, int page, opj_view *v);
 /* Draws a page onto d (sized as the page). */
 void opj_print_draw(oldraw *d, const opj_print *pr, const opj_doc *doc, int page);
 
+/* ---- The printed Gantt view as a PDF (src/project/opj_pdf.c) ----
+ * Each page opj_print_layout lays out, drawn through an oldraw target that writes into libowf's page PDF
+ * writer (owf_pdf.h): A4 landscape, a 1 cm margin, OPJ_PDF_TWIPS twips a pixel, text in PDF's standard fonts,
+ * so it stays searchable. proto gives the columns, zoom and baselines; the font is the paper's own, Helvetica
+ * at OPJ_PDF_FONT_PX pixels in rows OPJ_PDF_ROW high, whatever the screen's. */
+#define OPJ_PDF_PAGE_W 16838                  /* A4 landscape, twips */
+#define OPJ_PDF_PAGE_H 11906
+#define OPJ_PDF_MARGIN 567                    /* 1 cm */
+#define OPJ_PDF_TWIPS 12                      /* a pixel: 0.6 pt */
+#define OPJ_PDF_FONT_PX 12                    /* 7.2 pt */
+#define OPJ_PDF_ROW 17
+/* The PDF, from malloc (owf_free it), and its page count in *pages (may be NULL). OWF_OK; OWF_ERR_MEMORY;
+ * OWF_ERR_FORMAT when the plan has no tasks or a page is too small for it. */
+int opj_pdf_write(const opj_doc *doc, const opj_view *proto, unsigned char **data, size_t *length, int *pages);
+
 /* What is at a point. */
 enum { OPJ_HIT_NONE, OPJ_HIT_COLUMN_TITLE, OPJ_HIT_TIMESCALE, OPJ_HIT_CELL, OPJ_HIT_SPLIT, OPJ_HIT_BAR, OPJ_HIT_CHART };
 typedef struct {
@@ -270,12 +285,17 @@ typedef struct {
     char file[256];                      /* the plan's file, "" when it has none */
     char lasterror[256];
     unsigned long docs;                  /* bumped each time NEW or OPEN replaces doc: a new plan, even at the old address */
+    const opj_view *view;                /* the window's view, whose columns and zoom EXPORT FORMAT PDF prints;
+                                          * NULL: a fresh one at days zoom */
 } opj_rexx;
 
 /* A command, its answer into result (cut to size, "" when it has none). */
 int opj_rexx_command(opj_rexx *rx, const char *command, char *result, size_t size);
 /* The file format a name's extension asks for: .xml MSPDI, .csv CSV, else .gfproj. */
 int opj_rexx_format(const char *file);
+/* EXPORT's format for the printed Gantt view as a PDF (FORMAT PDF, or a .pdf name): not a plan file, so
+ * SAVE and SAVEAS never write it. */
+#define OPJ_EXPORT_PDF 100
 
 #ifdef __cplusplus
 }

@@ -39,7 +39,7 @@ struct owf_pdf {
     int npics, cappics;
     int dash;
     int failed;
-    int mf_skipped;              /* records of WMF pictures played as nothing (owf_metafile.h) */
+    int mf_skipped;              /* records of WMF and EMF pictures played as nothing (owf_metafile.h) */
 };
 
 owf_pdf *owf_pdf_new(void)
@@ -510,7 +510,7 @@ int owf_pdf_image(owf_pdf *pdf, const owf_image *image, int x, int y, int w, int
         return -1;
     if (!image || w <= 0 || h <= 0)
         return 0;
-    if (owf_metafile_is_wmf(image->data, image->length))
+    if (owf_metafile_can_play(image->data, image->length))
         return pdf_metafile(pdf, p, image, x, y, w, h, clip);
     for (i = 0; i < pdf->npics; i++)
         if (pdf->pics[i].image == image)
@@ -657,7 +657,7 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
         owf_report_add(report, OWF_NOTE_LOST, "Pictures in a format the PDF export does not draw yet (only JPEG, PNG and WMF) are left out");
     if (pdf->mf_skipped)
         owf_report_add(report, OWF_NOTE_APPROX,
-                       "Parts of WMF pictures (pictures inside them, arcs, clipping) are left out");
+                       "Parts of WMF and EMF pictures (pictures inside them, arcs, clipping) are left out");
     link_obj = nobj;
     nobj += pdf->nlinks;
     info_obj = nobj++;
