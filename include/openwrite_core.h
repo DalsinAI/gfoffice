@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.10.0"
+#define OW_CORE_VERSION "1.11.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -231,6 +231,39 @@ typedef struct {
 int ow_label_sheet_count(void);
 const ow_label_sheet *ow_label_sheet_at(int i);
 int ow_editor_labels(ow_editor *editor, const ow_label_sheet *sheet, int first, int last, owf_doc **out);
+
+/* 2.0.37 (core 1.11): gap 4.2.
+ * A sheet of one's own: ow_label_sheet_check says whether its labels fit the page without overlapping (OWF_OK,
+ * else OWF_ERR_FORMAT; ow_editor_labels asks it too). ow_label_sheet_parse reads one from millimetres, the
+ * numbers in this order whatever is between them: page width and height, columns and rows (whole), label width
+ * and height, the first label's left and top, and (optionally) the pitch across and down, else the label's
+ * size; its name is "Custom". ow_label_sheet_format writes one the same way, to a hundredth of a millimetre. */
+int ow_label_sheet_check(const ow_label_sheet *sheet);
+int ow_label_sheet_parse(const char *text, ow_label_sheet *out);
+int ow_label_sheet_format(const ow_label_sheet *sheet, char *out, size_t size);
+/* Records to merge from text: "all" (or empty), "3", "2-5", "2 to 5", "4-" (to the end), numbered from 1; into
+ * first and last from 0, the last held to the records there are. OWF_ERR_FORMAT for anything else. */
+int ow_merge_range_parse(const char *text, int records, int *first, int *last);
+/* Envelopes, turned for printing across (the long side across), and where the address goes (twips). */
+typedef struct {
+    const char *name;
+    int width, height;
+    int address_left, address_top;
+} ow_envelope_size;
+int ow_envelope_count(void);
+const ow_envelope_size *ow_envelope_at(int i);
+/* The page set to the envelope with its address's margins (10 mm at the right and bottom), and the return
+ * address (lines between '\n'; NULL or "": none) as a 9 point text box 10 mm in from the top left, in place of one
+ * put there before: one Undo step. ow_editor_envelope_return_box: that box's frame, or -1. */
+int ow_editor_envelope(ow_editor *editor, const ow_envelope_size *env, const char *return_utf8);
+int ow_editor_envelope_return_box(const ow_editor *editor);
+/* Printing on the printer's envelope feed: a page narrower than the paper is widened to paper_width with what is
+ * on it moved to the feed's side (left, centre or right), page-placed frames with it. ow_doc_feed_shift answers
+ * how far it moved (twips), or -1 when it left the page as it was (as set, or not narrower);
+ * ow_doc_feed_unshift(doc, paper_width, the old width, that answer) puts it back. */
+typedef enum { OW_FEED_AS_SET, OW_FEED_LEFT, OW_FEED_CENTRE, OW_FEED_RIGHT } ow_envelope_feed;
+int ow_doc_feed_shift(owf_doc *doc, int paper_width, ow_envelope_feed feed);
+void ow_doc_feed_unshift(owf_doc *doc, int paper_width, int old_width, int dx);
 
 /* 2.9.0 (core 1.10): word completion. ow_editor_complete, after a letter is typed: when the word before the caret
  * (3 letters or more) starts a longer word of the body (min_word letters or more, at least 4), the rest of the one

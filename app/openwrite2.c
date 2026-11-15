@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.36 (14.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.37 (15.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -120,7 +120,7 @@ enum {
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
     M_AC_ON, M_AC_REPLACE, M_AC_SENTENCE, M_AC_TWO_CAPS, M_AC_QUOTES, M_AC_DASHES, M_AC_ADD, M_AC_REMOVE,
-    M_LABELS, M_ENV_DL, M_ENV_C5, M_ENV_C6,
+    M_LABELS, M_ENV_DL, M_ENV_C5, M_ENV_C6, M_ENV_US10, M_ENV_RETURN, M_ENV_FEED, M_MERGE_PRINT,   /* 2.0.37 */
     M_AC_COMPLETE,
     M_PRINT_COMMENTS
 };
@@ -244,6 +244,10 @@ static struct NewMenu menus[] = {
     { NM_SUB, "DL (220 x 110 mm)", NULL, 0, 0, (APTR)M_ENV_DL },
     { NM_SUB, "C5 (229 x 162 mm)", NULL, 0, 0, (APTR)M_ENV_C5 },
     { NM_SUB, "C6 (162 x 114 mm)", NULL, 0, 0, (APTR)M_ENV_C6 },
+    { NM_SUB, "US #10 (9.5 x 4.125 in)", NULL, 0, 0, (APTR)M_ENV_US10 },              /* 2.0.37 (core 1.11) */
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Return Address...", NULL, 0, 0, (APTR)M_ENV_RETURN },
+    { NM_SUB, "Printer Feed...", NULL, 0, 0, (APTR)M_ENV_FEED },
     { NM_ITEM, "Document Columns...", NULL, 0, 0, (APTR)M_COLUMNS },
     { NM_ITEM, "Frame...", NULL, 0, 0, (APTR)M_FRAME },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -312,6 +316,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_SUB, "Merge to Document...", NULL, 0, 0, (APTR)M_MERGE_DOC },
     { NM_SUB, "Merge to Files...", NULL, 0, 0, (APTR)M_MERGE_FILES },
+    { NM_SUB, "Merge to Printer...", NULL, 0, 0, (APTR)M_MERGE_PRINT },                /* 2.0.37 (core 1.11) */
     { NM_SUB, "Labels...", NULL, 0, 0, (APTR)M_LABELS },              /* 2.0.34 (core 1.9) */
     { NM_ITEM, "User Fields...", NULL, 0, 0, (APTR)M_USER_FIELDS },
     { NM_ITEM, "Update Fields", NULL, 0, 0, (APTR)M_UPDATE_FIELDS },
@@ -486,6 +491,7 @@ static void review_author_init(void);
 static void sync_track_menu(void);
 static void sync_ac_menu(void);                     /* 2.0.33 */
 static int pick_requester(const char *title, const char *label, char (*names)[72], int n);
+static int print_with_feed(owf_doc *d, const char *name, int comments, char *status, size_t size);   /* 2.0.37 */
 static char review_author[64];                       /* 2.0.27: the name tracked changes are made under */
 static int review_author_set;
 static int mm_to_twips(int mm);
@@ -4013,8 +4019,7 @@ static void do_command(int id)
     case C_SAVE: do_save(); break;
     case C_PRINT: {
         char msg[220];
-        if (ow_print_document_comments(doc, current_path[0] ? leaf(current_path) : NULL, print_comments, msg,
-                                       sizeof msg)) {
+        if (print_with_feed(doc, current_path[0] ? leaf(current_path) : NULL, print_comments, msg, sizeof msg)) {
             set_status(msg); request_document_redraw();
         } else tell("Print", msg);
         break;
@@ -4924,15 +4929,80 @@ static int merge_out(const char *path, int files)
     return rc == OWF_OK ? n : -rc;
 }
 
+/* 2.0.37 (core 1.11): settings for every document, in ENV:GFOpenWrite/ (and ENVARC:): the label sheet of one's
+ * own (as ow_label_sheet_format writes it), the return address (its lines between '|'), the printer's feed */
+static void setting_save(const char *name, const char *text)
+{
+    static const char *const dirs[2] = { "ENV:", "ENVARC:" };
+    char path[96];
+    BPTR f, lock;
+    int i;
+    for (i = 0; i < 2; ++i) {
+        snprintf(path, sizeof path, "%sGFOpenWrite", dirs[i]);
+        if ((lock = Lock((STRPTR)path, ACCESS_READ)) != 0) UnLock(lock);
+        else if ((lock = CreateDir((STRPTR)path)) != 0) UnLock(lock);
+        snprintf(path, sizeof path, "%sGFOpenWrite/%s", dirs[i], name);
+        if ((f = Open((STRPTR)path, MODE_NEWFILE)) != 0) {
+            Write(f, (APTR)text, (LONG)strlen(text));
+            Close(f);
+        }
+    }
+}
+
+/* a setting's text, its line ends taken off, into out ("" when there is none) */
+static void setting_load(const char *name, char *out, size_t size)
+{
+    char path[96], *text;
+    size_t n;
+    snprintf(path, sizeof path, "ENV:GFOpenWrite/%s", name);
+    out[0] = 0;
+    if (!(text = read_file(path))) return;
+    n = strlen(text);
+    while (n && (text[n - 1] == '\n' || text[n - 1] == '\r')) --n;
+    if (n >= size) n = size - 1;
+    memcpy(out, text, n);
+    out[n] = 0;
+    free(text);
+}
+
+static ow_label_sheet custom_sheet;
+static int custom_sheet_set = -1;                    /* -1: not read yet */
+
+static const ow_label_sheet *custom_label_sheet(void)
+{
+    if (custom_sheet_set < 0) {
+        char text[200];
+        setting_load("LabelSheet", text, sizeof text);
+        custom_sheet_set = text[0] && ow_label_sheet_parse(text, &custom_sheet) == OWF_OK;
+    }
+    return custom_sheet_set ? &custom_sheet : NULL;
+}
+
+/* a sheet of one's own from millimetres: 1, or 0 with why told */
+static int set_custom_sheet(const char *text, char *why, size_t why_size)
+{
+    ow_label_sheet s;
+    char out[200];
+    if (ow_label_sheet_parse(text, &s) != OWF_OK) {
+        snprintf(why, why_size, "Give the page's width and height, columns and rows, a label's width and height, the "
+                 "first one's left and top, and the pitch across and down (mm); the labels must fit the page.");
+        return 0;
+    }
+    custom_sheet = s;
+    custom_sheet_set = 1;
+    if (ow_label_sheet_format(&s, out, sizeof out) == OWF_OK) setting_save("LabelSheet", out);
+    return 1;
+}
+
 /* 2.0.34: a sheet of labels (core 1.9): one record a label, or with no data source a page of the document;
- * saved as a new document. sheet < 0: ask. Answers how many labels, or -error. */
-static int labels_out(int sheet, const char *path)
+ * saved as a new document. Answers how many labels, or -error. */
+static int labels_out(const ow_label_sheet *sheet, const char *path)
 {
     owf_doc *out = NULL;
     owf_report *report;
     int rc, n;
     fields_update();
-    rc = ow_editor_labels(editor, ow_label_sheet_at(sheet), -1, -1, &out);
+    rc = ow_editor_labels(editor, sheet, -1, -1, &out);
     pages_changed();
     if (rc != OWF_OK) return -rc;
     n = out->nframes;
@@ -4945,16 +5015,28 @@ static int labels_out(int sheet, const char *path)
 
 static void do_labels(void)
 {
-    char (*names)[72], path[512], msg[200];
+    char (*names)[72], path[512], msg[200], text[200];
+    const ow_label_sheet *sheet;
     int k, n = ow_label_sheet_count();
     if (!editor) return;
-    if (!(names = (char (*)[72])calloc((size_t)n, sizeof *names))) return;
+    if (!(names = (char (*)[72])calloc((size_t)n + 1, sizeof *names))) return;
     for (k = 0; k < n; ++k) snprintf(names[k], sizeof names[k], "%s", ow_label_sheet_at(k)->name);
-    k = pick_requester("Labels", "Label sheet", names, n);
+    snprintf(names[n], sizeof names[n], "%s", custom_label_sheet() ? "Your own (as last set)..." : "Your own...");
+    k = pick_requester("Labels", "Label sheet", names, n + 1);
     free(names);
     if (k < 0) return;
+    if (k == n) {                                    /* 2.0.37: a sheet of one's own, in millimetres */
+        text[0] = 0;
+        if (custom_label_sheet()) ow_label_sheet_format(&custom_sheet, text, sizeof text);
+        else snprintf(text, sizeof text, "page 210 x 297 mm, 3 x 7 labels 63.5 x 38.1 mm, at 7.2, 15.4 mm, pitch 66 x 38.1 mm");
+        if (!text_requester("Labels", "Your sheet (mm)", text, text, sizeof text)) return;
+        if (!set_custom_sheet(text, msg, sizeof msg)) { tell("Labels", msg); return; }
+        sheet = &custom_sheet;
+    } else {
+        sheet = ow_label_sheet_at(k);
+    }
     if (!ask_file_for(1, "Save the labels as", path, sizeof path)) return;
-    n = labels_out(k, path);
+    n = labels_out(sheet, path);
     if (n == -OWF_ERR_UNSUPPORTED) {
         tell("Labels", "Labels are made from plain text: take out tables and text boxes first (or there are no records).");
         return;
@@ -4965,20 +5047,138 @@ static void do_labels(void)
     request_document_redraw();
 }
 
-/* 2.0.34: an envelope's page, turned for printing across, the address where a window would be */
+/* 2.0.37: the return address, its lines between '|' as typed and kept; into lines between '\n' */
+static void return_address(char *lines, size_t size)
+{
+    char *c;
+    setting_load("ReturnAddress", lines, size);
+    for (c = lines; *c; ++c) if (*c == '|') *c = '\n';
+}
+
+/* 2.0.34, 2.0.37 (core 1.11): an envelope's page, turned for printing across, the address where a window would
+ * be, the return address at the top left */
+static int envelope_index(int what)
+{
+    return what == M_ENV_DL ? 0 : what == M_ENV_C5 ? 1 : what == M_ENV_C6 ? 2 : what == M_ENV_US10 ? 3 : -1;
+}
+
 static void do_envelope(int what)
 {
-    owf_page pg;
+    char ret[400];
     int rc;
     if (!editor) return;
+    return_address(ret, sizeof ret);
+    rc = ow_editor_envelope(editor, ow_envelope_at(envelope_index(what)), ret);
+    if (rc == OWF_OK) {
+        pages_changed();
+        editor_repaint(ret[0] ? "Envelope page set, the return address at the top; type the address."
+                              : "Envelope page set; type the address (Return Address... adds yours).");
+    } else tell("Envelope", "The envelope page could not be set (leave the text box first).");
+}
+
+/* the envelope the document's page is, or -1 */
+static int envelope_now(void)
+{
+    owf_page pg;
+    int i;
+    if (!editor) return -1;
     ow_editor_page_setup(editor, &pg);
-    if (what == M_ENV_DL) { pg.width = mm_to_twips(220); pg.height = mm_to_twips(110); pg.margin_left = mm_to_twips(100); pg.margin_top = mm_to_twips(50); }
-    else if (what == M_ENV_C5) { pg.width = mm_to_twips(229); pg.height = mm_to_twips(162); pg.margin_left = mm_to_twips(110); pg.margin_top = mm_to_twips(80); }
-    else { pg.width = mm_to_twips(162); pg.height = mm_to_twips(114); pg.margin_left = mm_to_twips(75); pg.margin_top = mm_to_twips(50); }
-    pg.margin_right = pg.margin_bottom = mm_to_twips(10);
-    rc = ow_editor_apply_page_setup(editor, &pg);
-    if (rc == OWF_OK) { pages_changed(); editor_repaint("Envelope page set; type the address."); }
-    else tell("Envelope", "The envelope page could not be set.");
+    for (i = 0; i < ow_envelope_count(); ++i)
+        if (pg.width == ow_envelope_at(i)->width && pg.height == ow_envelope_at(i)->height) return i;
+    return -1;
+}
+
+static void do_return_address(void)
+{
+    char text[400];
+    int e;
+    setting_load("ReturnAddress", text, sizeof text);
+    if (!text_requester("Return Address", "Its lines between |", text, text, sizeof text)) return;
+    setting_save("ReturnAddress", text);
+    if ((e = envelope_now()) >= 0) {                /* on an envelope now: put it there */
+        char ret[400];
+        return_address(ret, sizeof ret);
+        if (editor_result(ow_editor_envelope(editor, ow_envelope_at(e), ret), "Return address set.")) pages_changed();
+    } else {
+        set_status("Return address kept for the next envelope (Layout > Envelope).");
+    }
+}
+
+/* 2.0.37: the printer's envelope feed, for an envelope narrower than the paper: as set, or at the left, centre or
+ * right of A4 or Letter paper */
+static int feed_way = OW_FEED_AS_SET, feed_paper = 11906, feed_read;
+static const char *const feed_names[7] = {
+    "As set (the envelope's own size)", "A4, at the left", "A4, in the centre", "A4, at the right",
+    "Letter, at the left", "Letter, in the centre", "Letter, at the right"
+};
+
+static void feed_load(void)
+{
+    char text[40];
+    int k;
+    if (feed_read) return;
+    feed_read = 1;
+    setting_load("EnvelopeFeed", text, sizeof text);
+    k = atoi(text);
+    if (k >= 1 && k <= 6) { feed_way = (k - 1) % 3 + OW_FEED_LEFT; feed_paper = k <= 3 ? 11906 : 12240; }
+}
+
+static int feed_choice(void)
+{
+    feed_load();
+    return feed_way == OW_FEED_AS_SET ? 0 : (feed_paper == 12240 ? 3 : 0) + feed_way;
+}
+
+static void set_feed(int k)
+{
+    char text[16];
+    feed_read = 1;
+    if (k > 6) k = 6;
+    feed_way = k <= 0 ? OW_FEED_AS_SET : (k - 1) % 3 + OW_FEED_LEFT;
+    feed_paper = k >= 4 ? 12240 : 11906;
+    snprintf(text, sizeof text, "%d\n", k < 0 ? 0 : k);
+    setting_save("EnvelopeFeed", text);
+}
+
+static void do_feed(void)
+{
+    char names[7][72], msg[120];
+    int k;
+    for (k = 0; k < 7; ++k) snprintf(names[k], sizeof names[k], "%s%s", feed_names[k], k == feed_choice() ? " *" : "");
+    k = pick_requester("Printer Feed", "Envelopes go in", names, 7);
+    if (k < 0) return;
+    set_feed(k);
+    snprintf(msg, sizeof msg, "Envelopes print %s.", k ? feed_names[k] : "at their own size");
+    set_status(msg);
+}
+
+/* the document printed (with its comments when asked), an envelope at the printer's feed: 1, or 0 with status */
+static int print_with_feed(owf_doc *d, const char *name, int comments, char *status, size_t size)
+{
+    int old_width, dx, ok;
+    feed_load();
+    old_width = d->page.width;
+    dx = ow_doc_feed_shift(d, feed_paper, (ow_envelope_feed)feed_way);
+    ok = ow_print_document_comments(d, name, comments, status, size);
+    if (dx >= 0) ow_doc_feed_unshift(d, feed_paper, old_width, dx);
+    return ok;
+}
+
+/* 2.0.37: records merged straight to the printer (records as typed: all, 3, 2-5): how many, or -(an OWF_ERR_) */
+static int merge_print(const char *range, char *status, size_t size)
+{
+    owf_doc *all = NULL;
+    int first, last, rc, records = ow_editor_merge_records(editor);
+    if (!records) return -OWF_ERR_UNSUPPORTED;
+    if (ow_merge_range_parse(range, records, &first, &last) != OWF_OK) return -OWF_ERR_FORMAT;
+    fields_update();
+    rc = ow_editor_merge_document(editor, first, last, &all);
+    pages_changed();
+    if (rc != OWF_OK) return -rc;
+    rc = print_with_feed(all, current_path[0] ? leaf(current_path) : NULL, 0, status, size) ? last - first + 1
+                                                                                          : -OWF_ERR_IO;
+    owf_doc_free(all);
+    return rc;
 }
 
 static void do_merge(int what)
@@ -5023,6 +5223,21 @@ static void do_merge(int what)
         pages_changed();
         merge_status("");
         break;
+    case M_MERGE_PRINT: {                            /* 2.0.37 (core 1.11) */
+        char range[64], status[220];
+        n = ow_editor_merge_records(editor);
+        if (!n) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        snprintf(range, sizeof range, "all");
+        if (!text_requester("Merge to Printer", "Records (all, 3, 2-5)", range, range, sizeof range)) return;
+        status[0] = 0;
+        n = merge_print(range, status, sizeof status);
+        if (n == -OWF_ERR_FORMAT) { tell("Mail Merge", "Give the records as all, one number, or from-to (2-5)."); return; }
+        if (n < 0) { tell("Mail Merge", status[0] ? status : owf_error_text(-n)); return; }
+        snprintf(msg, sizeof msg, "%d records merged to the printer. %.150s", n, status);
+        set_status(msg);
+        request_document_redraw();
+        break;
+    }
     case M_MERGE_DOC: case M_MERGE_FILES:
         if (!ow_editor_merge_records(editor)) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
         if (!ask_file_for(1, what == M_MERGE_DOC ? "Merge into one document" : "Merge into files (numbered)",
@@ -5177,12 +5392,14 @@ static void menu_action(ULONG id)
     case M_FOOTNOTE: case M_ENDNOTE: case M_NOTE_NEXT: case M_NOTE_PREV: case M_NOTE_EDIT: case M_NOTE_CONVERT:
     case M_NOTE_DELETE: do_note((int)id); break;
     case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
-    case M_MERGE_DOC: case M_MERGE_FILES: do_merge((int)id); break;
+    case M_MERGE_DOC: case M_MERGE_FILES: case M_MERGE_PRINT: do_merge((int)id); break;
     case M_INDEX_ENTRY: case M_INDEX: do_index((int)id); break;
     case M_AC_ON: case M_AC_REPLACE: case M_AC_SENTENCE: case M_AC_TWO_CAPS: case M_AC_QUOTES: case M_AC_DASHES: case M_AC_COMPLETE:
     case M_AC_ADD: case M_AC_REMOVE: do_autocorrect((int)id); break;
     case M_LABELS: do_labels(); break;
-    case M_ENV_DL: case M_ENV_C5: case M_ENV_C6: do_envelope((int)id); break;
+    case M_ENV_DL: case M_ENV_C5: case M_ENV_C6: case M_ENV_US10: do_envelope((int)id); break;
+    case M_ENV_RETURN: do_return_address(); break;
+    case M_ENV_FEED: do_feed(); break;
     case M_PRINT_COMMENTS:
         print_comments = !print_comments;
         set_status(print_comments ? "Print and Export PDF put the comments in." : "Print and Export PDF leave the comments out.");
@@ -5369,7 +5586,7 @@ static int rexx_do_command(const char *command, char **result_out)
         "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT COMMENTSBY INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
         "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE "
         "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX "
-        "AUTOCORRECT ACREPLACE TYPETEXT COMPLETE LABELSHEETS LABELS ENVELOPE QUIT");
+        "AUTOCORRECT ACREPLACE TYPETEXT COMPLETE LABELSHEETS LABELS LABELSIZE ENVELOPE RETURNADDRESS FEED QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
     else if(starts_word_ci(command,"WORDCOUNT",&arg))snprintf(result,sizeof result,"%d",word_count());
     else if(starts_word_ci(command,"PAGECOUNT",&arg))snprintf(result,sizeof result,"%d",editor?page_total():0);
@@ -5381,7 +5598,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"EXPORT",&arg)){owf_report *rp;if(!*arg){ok=0;snprintf(result,sizeof result,"Missing export path");}else{rp=owf_report_new();ok=owf_export_file(doc,arg,NULL,rp)==OWF_OK;owf_report_free(rp);snprintf(result,sizeof result,"%s",ok?"Exported":"Export failed");}}
     else if(starts_word_ci(command,"PRINT",&arg)){const char *w;int with=print_comments;   /* 2.0.36: PRINT [COMMENTS|NOCOMMENTS] */
         if(starts_word_ci(arg,"COMMENTS",&w))with=1;else if(starts_word_ci(arg,"NOCOMMENTS",&w))with=0;
-        ok=ow_print_document_comments(doc,current_path[0]?leaf(current_path):NULL,with,result,sizeof result);}
+        ok=print_with_feed(doc,current_path[0]?leaf(current_path):NULL,with,result,sizeof result);}
     else if(starts_word_ci(command,"INSERTTEXT",&arg)){ok=editor_result(ow_editor_insert_text_block(editor,arg,strlen(arg)),"ARexx text inserted.");snprintf(result,sizeof result,"%s",ok?"Inserted":"Insert failed");}
     else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;if(ok)bring_focus_into_view();else{request_document_redraw();rc_fail=RX_WARN;}snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
     else if(starts_word_ci(command,"GETTEXT",&arg)){dynamic=document_plain_text();if(!dynamic){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}}
@@ -5455,22 +5672,43 @@ static int rexx_do_command(const char *command, char **result_out)
         if(!editor||!*arg){ok=0;snprintf(result,sizeof result,"INSERTMERGEFIELD needs a column");}
         else if(!(u=latin1_utf8(arg))){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}
         else{rc=ow_editor_insert_merge_field(editor,u);free(u);ok=editor_result(rc,"Merge field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}
+    /* 2.0.37: MERGE PRINT [records] merges records (all, 3, 2-5) to the printer and answers how many */
+    else if(starts_word_ci(command,"MERGE",&arg)&&starts_word_ci(arg,"PRINT",NULL)){const char *range;int n;
+        starts_word_ci(arg,"PRINT",&range);
+        if(!editor){ok=0;snprintf(result,sizeof result,"No document");}
+        else if((n=merge_print(range,result,sizeof result))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;if(n!=-OWF_ERR_IO||!result[0])snprintf(result,sizeof result,"%s",n==-OWF_ERR_UNSUPPORTED?"No records":n==-OWF_ERR_FORMAT?"Records as all, n or from-to":owf_error_text(-n));}
+        else snprintf(result,sizeof result,"%d",n);}
     else if(starts_word_ci(command,"MERGE",&arg)){char path[400];const char *rest=arg;int n=0,files;
         while(*rest&&*rest!=' '&&n<399){path[n++]=*rest++;}path[n]=0;rest=skip_space(rest);files=starts_word_ci(rest,"FILES",NULL);
         if(!editor||!path[0]){ok=0;snprintf(result,sizeof result,"MERGE needs a file");}
         else if((n=merge_out(path,files))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",-n==OWF_ERR_UNSUPPORTED?"No records":owf_error_text(-n));}
         else snprintf(result,sizeof result,"%d",n);}
-    /* 2.0.34: labels and envelopes. LABELSHEETS answers the sheets between '|'; LABELS n file saves a sheet (n from
-     * 1) of labels, a record each (or a page of the document), and answers how many; ENVELOPE DL|C5|C6 */
+    /* 2.0.34: labels and envelopes. LABELSHEETS answers the sheets between '|' (2.0.37: and "Custom" last when
+     * there is one); LABELS n file saves a sheet (n from 1) of labels, a record each (or a page of the document),
+     * and answers how many; 2.0.37: LABELSIZE [mm] sets one's own sheet (ow_label_sheet_parse) and answers it;
+     * ENVELOPE DL|C5|C6|US10 answers the page's width and height; RETURNADDRESS [lines between |] sets the return
+     * address (put on the envelope when the page is one) and answers it; FEED [n] sets the printer's envelope feed
+     * (0 as set, 1-3 A4 left, centre, right, 4-6 Letter) and answers it */
     else if(starts_word_ci(command,"LABELSHEETS",&arg)){int k;size_t o=0;result[0]=0;
-        for(k=0;k<ow_label_sheet_count()&&o+2<sizeof result;++k){if(k)result[o++]='|';o+=(size_t)snprintf(result+o,sizeof result-o,"%s",ow_label_sheet_at(k)->name);if(o>=sizeof result)o=sizeof result-1;result[o]=0;}}
-    else if(starts_word_ci(command,"LABELS",&arg)){char *end;long k=strtol(arg,&end,10);const char *path=skip_space(end);int n;
-        if(!editor||k<1||k>ow_label_sheet_count()||!*path){ok=0;snprintf(result,sizeof result,"LABELS needs a sheet (1 to %d) and a file",ow_label_sheet_count());}
-        else if((n=labels_out((int)k-1,path))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",n==-OWF_ERR_UNSUPPORTED?"Not plain text, or no records":owf_error_text(-n));}
+        for(k=0;k<ow_label_sheet_count()&&o+2<sizeof result;++k){if(k)result[o++]='|';o+=(size_t)snprintf(result+o,sizeof result-o,"%s",ow_label_sheet_at(k)->name);if(o>=sizeof result)o=sizeof result-1;result[o]=0;}
+        if(custom_label_sheet()&&o+8<sizeof result)snprintf(result+o,sizeof result-o,"|Custom");}
+    else if(starts_word_ci(command,"LABELSIZE",&arg)){
+        if(*arg&&!set_custom_sheet(arg,result,sizeof result)){ok=0;}
+        else if(!custom_label_sheet()){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No sheet of your own yet");}
+        else ow_label_sheet_format(&custom_sheet,result,sizeof result);}
+    else if(starts_word_ci(command,"LABELS",&arg)){char *end;long k=strtol(arg,&end,10);const char *path=skip_space(end);int n,count=ow_label_sheet_count()+(custom_label_sheet()?1:0);
+        if(!editor||k<1||k>count||!*path){ok=0;snprintf(result,sizeof result,"LABELS needs a sheet (1 to %d) and a file",count);}
+        else if((n=labels_out(k>ow_label_sheet_count()?&custom_sheet:ow_label_sheet_at((int)k-1),path))<0){ok=0;if(n==-OWF_ERR_UNSUPPORTED)rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",n==-OWF_ERR_UNSUPPORTED?"Not plain text, or no records":owf_error_text(-n));}
         else snprintf(result,sizeof result,"%d",n);}
-    else if(starts_word_ci(command,"ENVELOPE",&arg)){int w=!strcasecmp(arg,"DL")?M_ENV_DL:!strcasecmp(arg,"C5")?M_ENV_C5:!strcasecmp(arg,"C6")?M_ENV_C6:0;
-        if(!editor||!w){ok=0;snprintf(result,sizeof result,"ENVELOPE takes DL, C5 or C6");}
+    else if(starts_word_ci(command,"ENVELOPE",&arg)){int w=!strcasecmp(arg,"DL")?M_ENV_DL:!strcasecmp(arg,"C5")?M_ENV_C5:!strcasecmp(arg,"C6")?M_ENV_C6:!strcasecmp(arg,"US10")?M_ENV_US10:0;
+        if(!editor||!w){ok=0;snprintf(result,sizeof result,"ENVELOPE takes DL, C5, C6 or US10");}
         else{owf_page pg;do_envelope(w);ow_editor_page_setup(editor,&pg);snprintf(result,sizeof result,"%d %d",pg.width,pg.height);}}
+    else if(starts_word_ci(command,"RETURNADDRESS",&arg)){int e;
+        if(*arg){setting_save("ReturnAddress",arg);if((e=envelope_now())>=0){char ret[400];return_address(ret,sizeof ret);if(ow_editor_envelope(editor,ow_envelope_at(e),ret)==OWF_OK)pages_changed();else ok=0;}}
+        setting_load("ReturnAddress",result,sizeof result);}
+    else if(starts_word_ci(command,"FEED",&arg)){
+        if(*arg){long k=strtol(arg,NULL,10);if(k<0||k>6){ok=0;snprintf(result,sizeof result,"FEED takes 0 to 6");}else set_feed((int)k);}
+        if(ok)snprintf(result,sizeof result,"%d %s",feed_choice(),feed_names[feed_choice()]);}
     /* 2.0.33: AutoCorrect. AUTOCORRECT [ON|OFF|n] answers its options (0: off; 1 replace, 2 sentences, 4 two
      * capitals, 8 quotes, 16 dashes; n sets them and turns it on); ACREPLACE word [with|-] answers the word's
      * replacement (RC 5: none), sets it or ("-") removes it; TYPETEXT text types it as the keyboard does */

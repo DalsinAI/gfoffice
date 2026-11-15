@@ -19,6 +19,7 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 12 Nov 2026 | 2.0.34 | Phase 2: labels and envelopes | 77% |
 | 12 Nov 2026 | 2.0.35 | Word completion | 78% |
 | 14 Nov 2026 | 2.0.36 | Print and export comments | 78% |
+| 15 Nov 2026 | 2.0.37 | Merge to the printer; own label sheets; envelopes with a return address and the printer's feed (gap 4.2) | 79% |
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
@@ -67,7 +68,10 @@ completion adds one more.
 | Mail merge: DOCX and ODT | Done | 2.0.31 | DOCX MERGEFIELD (simple and complex fields) and settings' w:mailMerge query for the data source. ODT text:database-display with its column and database. RTF, HTML, plain text and PDF get the value shown. |
 | Labels | Done | 2.0.34 | Tools > Mail Merge > Labels... picks a sheet (A4 3 x 7, 2 x 7, 3 x 8, 2 x 4; Letter 3 x 10, 2 x 5, by their measures) and saves a new document of labels: each a text box at the sheet's pitch holding the document as one record shows it, a new page when a sheet is full; with no data source, a page of the same label. ODT and DOCX keep them. ARexx LABELSHEETS, LABELS n file. |
 | Envelopes | Done | 2.0.34 | Format > Envelope sets the page to DL, C5 or C6, turned for printing across, with the margins putting the address where a window would be. ARexx ENVELOPE. |
-| Mail merge: a database or Calc sheet as data source, conditions (skip a record, IF fields), choosing records, merging to the printer or e-mail; labels: own sizes, a return address and printing on the envelope's feed | Gap | | Phase 2 later; the data source is a CSV file (a Calc sheet saved as CSV works). |
+| Mail merge: to the printer | Done | 2.0.37 | Tools > Mail Merge > Merge to Printer... asks which records (all, 3, 2-5) and prints them through GFOpenPrint as one document, each from a new page (`ow_merge_range_parse`, `ow_editor_merge_document`). ARexx MERGE PRINT [records]. |
+| Labels: own sizes | Done | 2.0.37 | Labels... offers "Your own...": the page, columns and rows, a label's size, the first one's corner and the pitch, in millimetres; refused when the labels overlap or leave the page (`ow_label_sheet_check`), kept in ENV:GFOpenWrite/LabelSheet for next time. ARexx LABELSIZE [mm], LABELS n file (Custom last). |
+| Envelopes: a return address, US #10, the printer's feed | Done | 2.0.37 | Layout > Envelope adds US #10; Return Address... (lines between \|, kept in ENV:GFOpenWrite/ReturnAddress) goes in a 9 point box 10 mm in from the top left, one Undo step with the envelope (`ow_editor_envelope`). Printer Feed... prints an envelope narrower than the paper at the left, centre or right of A4 or Letter (`ow_doc_feed_shift`). ARexx ENVELOPE DL\|C5\|C6\|US10, RETURNADDRESS, FEED n. |
+| Mail merge: a database or Calc sheet as data source, conditions (skip a record, IF fields), merging to e-mail; envelopes turned on the feed (fed short edge first) | Gap | | Later; the data source is a CSV file (a Calc sheet saved as CSV works). |
 | Alphabetical index: entries | Done | 2.0.32 | Insert > Index Entry... marks an entry at the caret (the selected words by default; "Main:Sub" for a subentry). The mark shows nothing, saves, reloads and undoes. ARexx INDEXENTRY, INDEXENTRIES. |
 | Alphabetical index: the index | Done | 2.0.32 | Insert > Alphabetical Index puts the index at the caret: an "Index" title, then each entry in alphabetical order (case folded) with the pages of its marks, subentries indented under it, in the Index1/Index2 styles; one Undo removes it. ARexx INSERTINDEX. |
 | Alphabetical index: DOCX and ODT | Done | 2.0.32 | DOCX XE fields (simple and complex, "Main:Sub"). ODT text:alphabetical-index-mark with text:key1 for a subentry. RTF, HTML, plain text and PDF show nothing for a mark. |
