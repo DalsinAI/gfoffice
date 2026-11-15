@@ -375,8 +375,8 @@ static void test_pdf_far(void)
         /* every point of every band within a band's width of the page (points are twentieths: 20,000 wide) */
         /* every "x y m" and "x y l" within the page, points being twentieths (20,000 across) */
         char *text = malloc(length + 1), *tok;
-        double prev[2] = {0, 0};
-        int bad = 0, seen = 0, have = 0;
+        double prev[2] = {0, 0}, last_start = -1e9;
+        int bad = 0, seen = 0, have = 0, starts = 0, order = 1, first_left = 0;
         if (text) {
             memcpy(text, data, length);
             text[length] = 0;
@@ -391,6 +391,13 @@ static void test_pdf_far(void)
                     if (have == 2 && (!strcmp(tok, "m") || !strcmp(tok, "l"))) {
                         seen++;
                         if (prev[0] < -1000 || prev[0] > 21000) bad++;
+                        if (!strcmp(tok, "m")) {
+                            /* each band's path starts at its left edge: after the clip, left to right */
+                            if (starts == 1) first_left = prev[0] < 10;
+                            if (starts >= 1 && prev[0] + 1 < last_start) order = 0;
+                            if (starts >= 1) last_start = prev[0];
+                            starts++;
+                        }
                     }
                     have = 0;
                 }
@@ -399,6 +406,7 @@ static void test_pdf_far(void)
         }
         CHECK(seen >= 48 * 4, "the bands' corners are there");
         CHECK(!bad, "and all on the page");
+        CHECK(starts == 49 && first_left && order, "the bands step left to right from the left edge");
     }
     free(data);
     owf_pdf_free(pdf);
