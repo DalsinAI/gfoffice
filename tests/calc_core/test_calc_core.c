@@ -6202,6 +6202,138 @@ static void test_pivot_show_as(void)
     oc_core_free(core);
 }
 
+/* Groups made by hand: a field's items put together under a name, the
+ * rest staying items of their own; moved, taken out (an empty group
+ * goes), hidden by name, kept in the definition's text, and refused
+ * beside a range grouping. Files save them ungrouped, with a note. */
+static void test_pivot_named(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "Sales", "", "", "" },
+        { "East", "10", "", "", "" }, { "Hills", "1", "", "", "" }, { "West", "20", "", "", "" },
+        { "East", "5", "", "", "" }, { "Lakes", "2", "", "", "" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got, back;
+    owf_pivot_page east, west, hills;
+    owf_pivot_group g;
+    owf_cell cell;
+    char config[OWF_PIVOT_TEXT_MAX];
+    int k;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 6);
+    CHECK(oc_parse_range("A1:B6", &selected));
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 0;
+    def.ndata = 1; def.data[0].field = 1; def.data[0].function = OC_SUBTOTAL_SUM;
+    memset(&east, 0, sizeof east);
+    east.field = 0; east.kind = OWF_PIVOT_TEXT;
+    west = hills = east;
+    snprintf(east.text, sizeof east.text, "East");
+    snprintf(west.text, sizeof west.text, "West");
+    snprintf(hills.text, sizeof hills.text, "Hills");
+    CHECK(owf_pivot_set_named(&def, &east, "Coast") && owf_pivot_set_named(&def, &west, "Coast"));
+    CHECK(def.nnamed == 1 && def.nmember == 2);
+    memset(&cell, 0, sizeof cell);
+    cell.type = OWF_VALUE_TEXT;
+    cell.text = (char *)"West";
+    CHECK(owf_pivot_named_of(&def, 0, &cell) && !strcmp(owf_pivot_named_of(&def, 0, &cell), "Coast"));
+    cell.text = (char *)"Lakes";
+    CHECK(!owf_pivot_named_of(&def, 0, &cell) && !owf_pivot_named_of(&def, 1, &cell));
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    /* Coast (East 10 + West 20 + East 5), Hills 1, Lakes 2: in the source's order */
+    CHECK_STR(text(core, "A2"), "Coast");
+    CHECK_STR(text(core, "A3"), "Hills");
+    CHECK_STR(text(core, "A4"), "Lakes");
+    CHECK_STR(text(core, "A5"), "Grand Total");
+    CHECK(near(num(core, "B2"), 35.0) && near(num(core, "B3"), 1.0) && near(num(core, "B4"), 2.0) &&
+          near(num(core, "B5"), 38.0));
+    CHECK(oc_core_pivot_get(core, &got) && got.nnamed == 1 && got.nmember == 2);
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && strstr(config, ";m=Coast:0:tEast,Coast:0:tWest\""));
+
+    /* West and Hills to "Up: North" (a ':' in a name is kept); Coast is East alone */
+    CHECK(owf_pivot_set_named(&got, &west, "Up: North") && owf_pivot_set_named(&got, &hills, "Up: North"));
+    CHECK(got.nnamed == 2 && got.nmember == 3);
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "Coast");
+    CHECK_STR(text(core, "A3"), "Up: North");
+    CHECK_STR(text(core, "A4"), "Lakes");
+    CHECK(near(num(core, "B2"), 15.0) && near(num(core, "B3"), 21.0));
+    CHECK(oc_core_pivot_get(core, &got) && owf_pivot_config_text(&got, config, sizeof config) &&
+          strstr(config, ";m=Coast:0:tEast,Up%3A North:0:tWest,Up%3A North:0:tHills\""));
+    {
+        owf_pivotdef parsed = got;
+        CHECK(owf_pivot_parse_config(config, &parsed) && parsed.nnamed == 2 && parsed.nmember == 3 &&
+              !strcmp(parsed.named[1].name, "Up: North") && parsed.member_of[2] == 1);
+    }
+
+    /* a group hidden by its name leaves out its rows */
+    {
+        owf_pivot_page item;
+        memset(&item, 0, sizeof item);
+        item.field = 0; item.kind = OWF_PIVOT_TEXT;
+        snprintf(item.text, sizeof item.text, "Up: North");
+        CHECK(owf_pivot_set_hidden(&got, &item, 1));
+        CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+        CHECK_STR(text(core, "A2"), "Coast");
+        CHECK_STR(text(core, "A3"), "Lakes");
+        CHECK(near(num(core, "B4"), 17.0));
+        CHECK(owf_pivot_set_hidden(&got, &item, 0));
+    }
+
+    /* East out of Coast: Coast goes, and Up: North is renumbered */
+    CHECK(owf_pivot_set_named(&got, &east, NULL) && got.nnamed == 1 && got.nmember == 2 &&
+          !strcmp(got.named[0].name, "Up: North") && got.member_of[0] == 0 && got.member_of[1] == 0);
+    CHECK(owf_pivot_check(oc_core_book(core), &got));
+
+    /* a range grouping and groups by hand on one field: refused either way */
+    memset(&g, 0, sizeof g);
+    g.field = 0; g.by = OWF_PIVOT_GROUP_RANGE; g.start = 0; g.end = 9; g.step = 1;
+    CHECK(!owf_pivot_set_group(&got, &g) && got.ngroup == 0);
+    {
+        owf_pivotdef other;
+        owf_pivot_page n;
+        owf_pivot_init(&other);
+        g.field = 1;
+        CHECK(owf_pivot_set_group(&other, &g));
+        memset(&n, 0, sizeof n);
+        n.field = 1; n.kind = OWF_PIVOT_NUMBER; n.number = 5;
+        CHECK(!owf_pivot_set_named(&other, &n, "Five") && other.nmember == 0);
+        CHECK(!owf_pivot_set_named(&other, &east, "a name far longer than the forty-eight bytes a name may have"));
+        n.kind = OWF_PIVOT_ALL;
+        CHECK(!owf_pivot_set_named(&other, &n, "All"));
+    }
+    {
+        owf_pivotdef bad = got;
+        bad.member_of[1] = 5;
+        CHECK(!owf_pivot_check(oc_core_book(core), &bad));
+        bad = got;
+        bad.named[0].field = 9;
+        CHECK(!owf_pivot_check(oc_core_book(core), &bad));
+    }
+
+    /* files: saved ungrouped with a note, the table's cells as they are */
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot-named.ods", "/tmp/opencalc-pivot-named.xlsx" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            owf_report *report = owf_report_new();
+            CHECK(report && owf_export_book_file(oc_core_book(core), paths[k], NULL, report) == OWF_OK);
+            CHECK(report && owf_report_count(report) > 0);
+            owf_report_free(report);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
+            CHECK(round && owf_pivot_get(round, 1, &back) && back.nnamed == 0 && back.nmember == 0);
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+    oc_core_free(core);
+}
+
 /* Grouped pivot fields in an Excel workbook: Excel's fieldGroup in the cache
  * (rangePr and the group items, "<start" and ">end" round them), the
  * pivotField's items pointing at the group items (a hidden group: h="1"),
@@ -7136,6 +7268,7 @@ int main(void)
     test_pivot_show_as();
     test_pivot_group();
     test_pivot_group_xlsx();
+    test_pivot_named();
     test_pivot_definition_text();
     test_solver_lp();
     test_solver();

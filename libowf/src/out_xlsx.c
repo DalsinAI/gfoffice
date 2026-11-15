@@ -1612,6 +1612,10 @@ static void pivot_cache_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def)
     owf_buf_puts(b, "\" sheet=\"");
     put_xml(b, w->names[def->source_sheet], X_ATTR);
     owf_buf_printf(b, "\"/></cacheSource><cacheFields count=\"%u\">", width);
+    if (def->nmember)                        /* Excel keeps them as a field of their own: a later step */
+        owf_report_add(w->report, OWF_NOTE_APPROX,
+                       "Pivot table items grouped by hand are saved ungrouped in an Excel workbook; the table's "
+                       "cells keep the groups");
     for (f = 0; f < width && !w->failed; f++) {
         owf_buf_puts(b, "<cacheField name=\"");
         put_xml(b, xp_heading(def, w, f, heading, sizeof heading), X_ATTR);
