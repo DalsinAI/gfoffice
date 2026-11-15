@@ -3952,3 +3952,110 @@ int ob_query_delete(ob_project *p, const char *name)
     if (!query_exists(p, name)) return fail(p, "There is no query named %s", name);
     return runf(p, "DELETE FROM oadb_queries WHERE name = %Q", name) && ok(p);
 }
+
+/* ---- Reports kept in the project (oadb_reports; include/openbase_report.h) ----
+ * The core keeps each report's text under its name and never reads it: ob_report.c writes and parses
+ * it. Names are a query's kind of name, and no table has one. */
+
+#define REPORTS_SQL "CREATE TABLE IF NOT EXISTS oadb_reports(name TEXT PRIMARY KEY COLLATE NOCASE, def TEXT NOT NULL)"
+
+static char report_name_buf[OB_NAME_MAX];  /* ob_report_name's answer: one task, one at a time */
+
+static int has_reports(ob_project *p)
+{
+    return scalar(p, "SELECT count(*) FROM sqlite_schema WHERE name = 'oadb_reports'", 0) == 1;
+}
+
+static int report_exists(ob_project *p, const char *name)
+{
+    sqlite3_stmt *st;
+    int found;
+    if (!has_reports(p) || !(st = prep(p, "SELECT 1 FROM oadb_reports WHERE name = ?1"))) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    found = sqlite3_step(st) == SQLITE_ROW;
+    sqlite3_finalize(st);
+    return found;
+}
+
+static int report_name_ok(ob_project *p, const char *name, const char *old)
+{
+    char why[OB_ERR_MAX];
+    if (!name_ok(name, why, sizeof why, "report")) return fail(p, "%s", why);
+    if (table_exists(p, name)) return fail(p, "There is a table named %s: give the report another name", name);
+    if (old && !same(old, name) && report_exists(p, name))
+        return fail(p, "There is a report named %s already", name);
+    return 1;
+}
+
+int ob_report_count(ob_project *p)
+{
+    return has_reports(p) ? (int)scalar(p, "SELECT count(*) FROM oadb_reports", 0) : 0;
+}
+
+const char *ob_report_name(ob_project *p, int i)
+{
+    sqlite3_stmt *st;
+    const char *r = NULL;
+    if (i < 0 || !has_reports(p)) return NULL;
+    if (!(st = prep(p, "SELECT name FROM oadb_reports ORDER BY name COLLATE NOCASE LIMIT 1 OFFSET ?1"))) return NULL;
+    sqlite3_bind_int(st, 1, i);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        copy(report_name_buf, sizeof report_name_buf, (const char *)sqlite3_column_text(st, 0));
+        r = report_name_buf;
+    }
+    sqlite3_finalize(st);
+    return r;
+}
+
+int ob_report_get_text(ob_project *p, const char *name, char *out, size_t size)
+{
+    sqlite3_stmt *st;
+    int rc = 0;
+    if (size) out[0] = 0;
+    if (!report_exists(p, name)) return fail(p, "There is no report named %s", name);
+    if (!(st = prep(p, "SELECT def FROM oadb_reports WHERE name = ?1"))) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *def = (const char *)sqlite3_column_text(st, 0);
+        size_t n = def ? strlen(def) : 0;
+        if (n < size) { memcpy(out, def ? def : "", n + 1); rc = ok(p); }
+        else rc = fail(p, "Report %s is too big to read", name);
+    } else {
+        rc = fail(p, "There is no report named %s", name);
+    }
+    sqlite3_finalize(st);
+    return rc;
+}
+
+int ob_report_put_text(ob_project *p, const char *name, const char *text)
+{
+    sqlite3_stmt *st;
+    int rc;
+    if (!report_name_ok(p, name, NULL)) return 0;
+    if (!has_reports(p) && !run(p, REPORTS_SQL)) return 0;
+    /* replacing keeps the name as it was first given */
+    if (report_exists(p, name)) {
+        if (!(st = prep(p, "UPDATE oadb_reports SET def = ?2 WHERE name = ?1"))) return 0;
+    } else if (!(st = prep(p, "INSERT INTO oadb_reports(name, def) VALUES(?1, ?2)"))) {
+        return 0;
+    }
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, text ? text : "", -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE) return sql_fail(p, NULL, rc);
+    return ok(p);
+}
+
+int ob_report_rename(ob_project *p, const char *old_name, const char *new_name)
+{
+    if (!report_exists(p, old_name)) return fail(p, "There is no report named %s", old_name);
+    if (!report_name_ok(p, new_name, old_name)) return 0;
+    return runf(p, "UPDATE oadb_reports SET name = %Q WHERE name = %Q", new_name, old_name) && ok(p);
+}
+
+int ob_report_delete(ob_project *p, const char *name)
+{
+    if (!report_exists(p, name)) return fail(p, "There is no report named %s", name);
+    return runf(p, "DELETE FROM oadb_reports WHERE name = %Q", name) && ok(p);
+}

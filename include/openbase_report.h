@@ -87,6 +87,15 @@ int ob_report_to_text(const ob_report *r, char *out, size_t size);
 /* r from text, named name: 0, or -1 with the reason in err ("line 3: ..."). */
 int ob_report_from_text(ob_report *r, const char *name, const char *text, char *err, size_t errsize);
 
+/* ---- Reports kept in the project ----
+ * The core keeps each report's text in oadb_reports (ob_report_count... in openbase_core.h). */
+
+/* Checks r (ob_report_check) and keeps it under its name, replacing one kept there: 0, or -1 with the
+ * reason in err. */
+int ob_report_store(ob_project *p, const ob_report *r, char *err, size_t errsize);
+/* The report kept as name (any case), named as it was kept: 0, or -1 with the reason in err. */
+int ob_report_load(ob_project *p, const char *name, ob_report *r, char *err, size_t errsize);
+
 #ifdef __cplusplus
 }
 #endif

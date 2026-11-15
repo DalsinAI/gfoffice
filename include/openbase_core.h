@@ -513,6 +513,23 @@ void ob_currency_format(ob_int pence, char *out, size_t size);
 const char *ob_type_name(ob_type t);          /* "Text", "Currency"... */
 int ob_type_from_name(const char *name);      /* -1 when unknown */
 
+/* ---- Reports kept in the project (oadb_reports) ----
+ * Each report's text under its name; include/openbase_report.h writes and reads the text
+ * (ob_report_store, ob_report_load). A report's name is a query's kind of name, and no table has it.
+ * 1 when they work, 0 with the reason in ob_error. */
+
+#define OB_REPORT_TEXT_MAX 8192        /* the most a report's text can be, with its 0 */
+
+int ob_report_count(ob_project *p);
+/* In name order; NULL past the end. The text lasts until the next call. */
+const char *ob_report_name(ob_project *p, int i);
+/* The text kept as name (any case) into out; 0 when there is none or it doesn't fit in size. */
+int ob_report_get_text(ob_project *p, const char *name, char *out, size_t size);
+/* Keeps text as name, replacing what is kept there (the name keeps the case it was first given). */
+int ob_report_put_text(ob_project *p, const char *name, const char *text);
+int ob_report_rename(ob_project *p, const char *old_name, const char *new_name);
+int ob_report_delete(ob_project *p, const char *name);
+
 #ifdef __cplusplus
 }
 #endif

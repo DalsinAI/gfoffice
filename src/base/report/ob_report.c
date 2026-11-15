@@ -674,3 +674,25 @@ int ob_report_from_text(ob_report *r, const char *name, const char *text, char *
     }
     return 0;
 }
+
+/* ---- Reports kept in the project (oadb_reports, through the core) ---- */
+
+int ob_report_store(ob_project *p, const ob_report *r, char *err, size_t errsize)
+{
+    static char text[OB_REPORT_TEXT_MAX];
+    if (ob_report_check(p, r, err, errsize)) return -1;
+    if (ob_report_to_text(r, text, sizeof text) < 0) return fail(err, errsize, "%s: too big to keep", r->name);
+    if (!ob_report_put_text(p, r->name, text)) return fail(err, errsize, "%s", ob_error(p));
+    return 0;
+}
+
+int ob_report_load(ob_project *p, const char *name, ob_report *r, char *err, size_t errsize)
+{
+    static char text[OB_REPORT_TEXT_MAX];
+    const char *kept = name;
+    int i, n = ob_report_count(p);
+    for (i = 0; i < n; i++)          /* the name as it was kept, not as it was asked for */
+        if (ob_report_name(p, i) && same_name(ob_report_name(p, i), name)) { kept = ob_report_name(p, i); break; }
+    if (!ob_report_get_text(p, name, text, sizeof text)) return fail(err, errsize, "%s", ob_error(p));
+    return ob_report_from_text(r, kept, text, err, errsize);
+}

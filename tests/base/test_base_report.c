@@ -432,7 +432,7 @@ static void test_kept_reports(ob_project *p)
     CHECK(ob_report_get_text(p, "sales", text, sizeof text) && !strcmp(text, "OADBREPORT 1\ntable=Orders\n"),
           "get without case: %s", ob_error(p));
     CHECK(!ob_report_get_text(p, "Sales", text, 8), "too small for the buffer");
-    CHECK(!ob_report_put_text(p, "Orders", "OADBREPORT 1\n") && strstr(ob_error(p), "a table is called Orders"),
+    CHECK(!ob_report_put_text(p, "Orders", "OADBREPORT 1\n") && strstr(ob_error(p), "a table named Orders"),
           "%s", ob_error(p));
     CHECK(!ob_report_put_text(p, "", "OADBREPORT 1\n"), "a report needs a name");
     CHECK(ob_report_rename(p, "Sales", "Sales 2026"), "rename: %s", ob_error(p));
