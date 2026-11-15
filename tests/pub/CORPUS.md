@@ -12,11 +12,19 @@ of the program that wrote the file, from the file's own summary (see
 `docs/gfoffice/PUB-FORMAT.md`, section 3). "Written by 12.0" means Publisher
 2007 saved it, also when it saved it in an older format.
 
-## Checked in (`tests/pub/samples`)
+## Studied, no longer checked in (14 November 2026)
 
-Small files whose licence allows it: Apache POI's test data (Apache-2.0,
-`licenses/Apache-2.0.txt`, POI's notice in `samples/NOTICE-Apache-POI.txt`)
-and one MIT file.
+The reader's tests no longer use outside files: `tools/pubgen/make_pub.py`
+makes the .pub files they read (`make pub-test` writes them to
+`build/host/pubgen`). The files below were checked in as `tests/pub/samples`
+until then and are still where the format notes' facts come from (marks in
+`docs/gfoffice/PUB-FORMAT.md`). `fetch_samples.sh DIR` fetches them again,
+with the rest of the corpus, for study and for `PUB_CORPUS=DIR make pub-test`;
+DIR must be outside the repository or an ignored folder such as `pub-corpus/`.
+
+
+Apache POI's test data (Apache-2.0) and one MIT file (Copyright (c) 2018
+Gabriel Vasile).
 
 | File | Source | Licence | Version (written by) | Bytes | SHA-256 |
 |---|---|---|---|---|---|
@@ -30,7 +38,7 @@ and one MIT file.
 | `SampleBrochure.pub` | apache/poi `test-data/publisher/SampleBrochure.pub` | Apache-2.0 | 2002/2003 format (11.5703), A4 landscape, 2 pages; GIF, JPEG and WMF pictures | 161792 | `ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87` |
 | `clusterfuzz-testcase-minimized-POIHPBFFuzzer-4918886059278336.pub` | apache/poi `test-data/publisher/` | Apache-2.0 | damaged (a fuzzer's): 2010 marks | 32832 | `2641d2d48a345f0eb52b4dd0151330142e3037505fea614c272ec7eba4b3e9b0` |
 | `clusterfuzz-testcase-minimized-POIHPBFFuzzer-6325615354773504.pub` | apache/poi `test-data/publisher/` | Apache-2.0 | damaged (a fuzzer's): not readable | 2042 | `e06b81d1a11a592d890e8d77c7f243c0529a36a0ec9bc4f18e8b1afb9e4f7bd2` |
-| `mimetype-pub.pub` | gabriel-vasile/mimetype `testdata/pub.pub` | MIT (Copyright (c) 2018 Gabriel Vasile; `licenses/MIT-gabriel-vasile-mimetype.txt`) | cut short: the first 4096 bytes of a .pub | 4096 | `62f55a46d8443891c0f102599e64309cb4dbeda882c286ac216c1f028aecbb5f` |
+| `mimetype-pub.pub` | gabriel-vasile/mimetype `testdata/pub.pub` | MIT | cut short: the first 4096 bytes of a .pub | 4096 | `62f55a46d8443891c0f102599e64309cb4dbeda882c286ac216c1f028aecbb5f` |
 
 Commits: apache/poi `4f3c25563919e7efa4a75feccf6cef1ac3d05a04` (24 Oct 2026),
 gabriel-vasile/mimetype `7feb76447ef040104e1f283c376ec51f625a7a21` (19 Oct 2026).

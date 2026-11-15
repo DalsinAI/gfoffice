@@ -96,7 +96,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.23 (14.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.26 (14.11.2026)"
 #define REXX_PORT_NAME "GFOPENPUBLISHER"
 #define UNIT "Page"
 #define UNIT_UPPER "PAGE"
