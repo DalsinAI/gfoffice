@@ -1528,6 +1528,57 @@ static void test_forms(void)
     CHECK(ob_view_total(p, "Orders", &kids) == 2, "dan's orders: %lld", (long long)ob_view_total(p, "Orders", &kids));
     view_set(&kids, "", 0, "Customer", OB_FILTER_EQUALS, "4");
     CHECK(ob_view_total(p, "Orders", &kids) == 0, "bob has none");
+
+    /* changing a subform's rows (core 0.6.3) */
+    {
+        const char *f[] = { "Total", "Customer" }, *v[] = { "3.00", "5" };
+        const char *cf[] = { "Total" }, *cv[] = { "4.50" };
+        char got[1024];
+        ob_int k = 0;
+        ob_relation none;
+        CHECK(ob_child_key(p, &r[0], 1, 0) == 1 && ob_child_key(p, &r[0], 1, 1) == 2, "dan's orders are keys 1, 2");
+        CHECK(ob_child_key(p, &r[0], 1, 2) == -1, "dan has no third");
+        CHECK(ob_child_key(p, &r[0], 4, 0) == -1, "bob has none");
+        CHECK(ob_child_key(p, &r[0], -1, 0) == -1 && ob_child_key(p, &r[0], 1, -1) == -1, "a new record has none");
+        memset(&none, 0, sizeof none);
+        CHECK(ob_child_key(p, &none, 1, 0) == -2, "no subform");
+        snprintf(none.table, sizeof none.table, "Nobody");
+        snprintf(none.field, sizeof none.field, "Customer");
+        CHECK(ob_child_key(p, &none, 1, 0) == -2, "no table");
+
+        /* add: the link is the record's, whatever was typed for it */
+        CHECK(ob_child_add(p, &r[0], 4, 2, f, v, &k) && k == 6, "an order for bob: %s", ob_error(p));
+        CHECK(ob_child_key(p, &r[0], 4, 0) == 6 && ob_child_key(p, &r[0], 5, 1) == -1, "bob's, not Eve's");
+        view_set(&kids, "", 0, "Customer", OB_FILTER_EQUALS, "4");
+        CHECK(ob_view_total(p, "Orders", &kids) == 1, "bob has one");
+        got[0] = 0;
+        ob_rows(p, "Orders", 5, 1, row_cb, got);
+        CHECK(strstr(got, "6:6|4|3.00|") != NULL, "the row: %s", got);
+        CHECK(ob_child_add(p, &r[0], 4, 1, cf, cv, NULL), "no key wanted: %s", ob_error(p));
+        CHECK(ob_child_key(p, &r[0], 4, 1) == 7, "bob's second");
+        CHECK(!ob_child_add(p, &r[0], -1, 1, cf, cv, &k), "a new record");
+        CHECK_ERR(p, "Save the record first");
+        CHECK(!ob_child_add(p, &r[0], 99, 1, cf, cv, &k), "no such customer");
+        CHECK(ob_child_key(p, &r[0], 99, 0) == -1, "nothing was added for 99");
+        {
+            const char *bf[] = { "Total" }, *bv[] = { "lots" };
+            CHECK(!ob_child_add(p, &r[0], 4, 1, bf, bv, &k), "money that isn't");
+            CHECK(ob_child_key(p, &r[0], 4, 2) == -1, "bob still has two");
+        }
+        CHECK(!ob_child_add(p, &none, 1, 1, cf, cv, &k), "no table");
+        memset(&none, 0, sizeof none);
+        CHECK(!ob_child_add(p, &none, 1, 1, cf, cv, &k), "no subform");
+        CHECK_ERR(p, "No subform");
+
+        /* change and delete go by the key ob_child_key gives */
+        k = ob_child_key(p, &r[0], 4, 0);
+        CHECK(ob_row_change(p, "Orders", k, 1, cf, cv), "change: %s", ob_error(p));
+        got[0] = 0;
+        ob_rows(p, "Orders", k - 1, 1, row_cb, got);
+        CHECK(strstr(got, "|4|4.50|") != NULL, "changed: %s", got);
+        CHECK(ob_row_delete(p, "Orders", ob_child_key(p, &r[0], 4, 1)), "delete: %s", ob_error(p));
+        CHECK(ob_child_key(p, &r[0], 4, 0) == 6 && ob_child_key(p, &r[0], 4, 1) == -1, "bob has one left");
+    }
     ob_close(p);
 }
 
