@@ -342,6 +342,13 @@ static void test_seq(void)
     CHECK(ed != NULL, "editor");
     if (!ed) { owf_doc_free(doc); return; }
     CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, NULL) == OWF_ERR_FORMAT, "a number range needs a name");
+    /* Word's rule for the name (Budgie on #292): a letter, then letters, digits and _, 40 at most */
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "My Figure") == OWF_ERR_FORMAT, "no spaces");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "2nd") == OWF_ERR_FORMAT, "a letter first");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Fig-1") == OWF_ERR_FORMAT, "no dashes");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "A2345678901234567890123456789012345678901") == OWF_ERR_FORMAT,
+          "41 is too long");
+    CHECK(!strcmp(dump(doc), "Getting started|Plug it in and wait.|Using it|Press the button."), "nothing inserted");
     caret_end(ed, 1);
     CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure") == OWF_OK, "Figure");
     caret_end(ed, 2);
@@ -393,6 +400,100 @@ static void test_seq(void)
         free(data);
     }
     ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    /* a name with a space from elsewhere (a file): DOCX quotes it, ODT's formula has _ for it; both read back */
+    doc = doc_of();
+    if (doc) {
+        owf_para *p = &doc->body.paras[1];
+        owf_run *runs = (owf_run *)realloc(p->runs, (size_t)(p->nruns + 1) * sizeof(*runs));
+        if (runs) {
+            p->runs = runs;
+            p->capruns = p->nruns + 1;
+            memset(&p->runs[p->nruns], 0, sizeof(owf_run));
+            p->runs[p->nruns].kind = OWF_RUN_FIELD;
+            p->runs[p->nruns].field = OWF_FIELD_SEQ;
+            owf_charfmt_init(&p->runs[p->nruns].fmt);
+            p->runs[p->nruns].href = (char *)malloc(10);
+            p->runs[p->nruns].text = (char *)malloc(2);
+            if (p->runs[p->nruns].href) memcpy(p->runs[p->nruns].href, "My Figure", 10);
+            if (p->runs[p->nruns].text) memcpy(p->runs[p->nruns].text, "1", 2);
+            ++p->nruns;
+        }
+        for (k = 0; k < 2; ++k) {
+            const owf_format *f = owf_format_named(fmts[k]);
+            unsigned char *data = NULL;
+            size_t length = 0;
+            CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+            if (!data) continue;
+            if (k) {
+                owf_unzip zip;
+                unsigned char *xml = NULL;
+                size_t n = 0;
+                if (owf_unzip_open(&zip, data, length) && owf_unzip_read(&zip, "content.xml", &xml, &n) == OWF_OK) {
+                    CHECK(strstr((char *)xml, "text:name=\"My Figure\" text:formula=\"ooow:My_Figure+1\"") != NULL,
+                          "ODT's formula without the space");
+                    owf_free(xml);
+                }
+            }
+            CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+            if (back) {
+                CHECK(!strcmp(dump(back), "Getting started|Plug it in and wait.{SEQ:My Figure=1}|Using it|Press the button."),
+                      dump(back));
+                owf_doc_free(back);
+                back = NULL;
+            }
+            free(data);
+        }
+        owf_doc_free(doc);
+    }
+
+    /* the document's order: a text box's numbers between the body's around its anchor (Budgie's nit) */
+    doc = doc_of();
+    ed = doc ? ow_editor_new(doc) : NULL;
+    if (ed) {
+        owf_frame fr;
+        owf_parafmt pf;
+        owf_charfmt cf;
+        int idx;
+        memset(&fr, 0, sizeof fr);
+        fr.image = -1;
+        fr.width = fr.height = 2880;
+        owf_parafmt_init(&pf);
+        owf_charfmt_init(&cf);
+        owf_para_add_text(owf_story_add(&fr.story, &pf), &cf, "Box", 3);
+        idx = owf_doc_add_frame(doc, &fr);
+        CHECK(idx == 0 && owf_para_add_frame(&doc->body.paras[1], &cf, idx) == 0, "a text box in paragraph 2");
+        caret_end(ed, 0);
+        ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+        caret_end(ed, 3);
+        ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+        {   /* one in the box, put there by hand (the editor types in the body) */
+            owf_para *bp = &doc->frames[0].story.paras[0];
+            owf_run *runs = (owf_run *)realloc(bp->runs, (size_t)(bp->nruns + 1) * sizeof(*runs));
+            if (runs) {
+                bp->runs = runs;
+                bp->capruns = bp->nruns + 1;
+                memset(&bp->runs[bp->nruns], 0, sizeof(owf_run));
+                bp->runs[bp->nruns].kind = OWF_RUN_FIELD;
+                bp->runs[bp->nruns].field = OWF_FIELD_SEQ;
+                owf_charfmt_init(&bp->runs[bp->nruns].fmt);
+                bp->runs[bp->nruns].href = (char *)malloc(7);
+                if (bp->runs[bp->nruns].href) memcpy(bp->runs[bp->nruns].href, "Figure", 7);
+                ++bp->nruns;
+            }
+        }
+        ow_editor_update_fields(ed);
+        {
+            const owf_run *last = NULL, *box = &doc->frames[0].story.paras[0].runs[doc->frames[0].story.paras[0].nruns - 1];
+            int j;
+            for (j = 0; j < doc->body.paras[3].nruns; ++j)
+                if (doc->body.paras[3].runs[j].kind == OWF_RUN_FIELD) last = &doc->body.paras[3].runs[j];
+            CHECK(box->text && !strcmp(box->text, "2"), box->text ? box->text : "(none)");
+            CHECK(last && last->text && !strcmp(last->text, "3"), last && last->text ? last->text : "(none)");
+        }
+        ow_editor_free(ed);
+    }
     owf_doc_free(doc);
 
     /* Word's: SEQ with its switches and the number it showed, numbered again by the editor */

@@ -4600,13 +4600,19 @@ static void do_number_range(void)
     static char last[48] = "Figure";
     char typed[48], msg[96];
     char *u;
+    int rc;
     if (!editor) return;
     if (!text_requester("Number Range", "Name (Figure, Table...):", last, typed, sizeof typed) || !typed[0]) return;
     snprintf(last, sizeof last, "%s", typed);
     if (!(u = comment_utf8(typed))) { DisplayBeep(scr); return; }
     snprintf(msg, sizeof msg, "%s number inserted.", typed);
-    if (editor_result(ow_editor_insert_field_arg(editor, OWF_FIELD_SEQ, u), msg)) fields_update();
+    rc = ow_editor_insert_field_arg(editor, OWF_FIELD_SEQ, u);
     free(u);
+    if (rc == OWF_ERR_FORMAT) {                      /* Word's rule for the name */
+        tell("Number Range", "A name is a letter, then letters, digits and _ (no spaces), 40 at most.");
+        return;
+    }
+    if (editor_result(rc, msg)) fields_update();
 }
 
 static void do_cross_reference(void)
@@ -5561,7 +5567,7 @@ static int rexx_do_command(const char *command, char **result_out)
         for(k=0;k<13&&strcmp(kinds[k],kind);++k);
         if(k==13&&!strcmp(kind,"SEQ"))k=OWF_FIELD_SEQ;   /* 2.0.43: INSERTFIELD SEQ name, a number range */
         if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE or SEQ and a name");}
-        else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
+        else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k==OWF_FIELD_SEQ&&*rest?"A number range's name is a letter, then letters, digits and _, 40 at most":k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
     else if(starts_word_ci(command,"DOCINFO",&arg)){char what[16];const char *rest=arg;int n=0,k;while(*rest&&*rest!=' '&&n<15){what[n++]=(char)toupper((unsigned char)*rest++);}what[n]=0;rest=skip_space(rest);
         k=!strcmp(what,"TITLE")?0:!strcmp(what,"AUTHOR")?1:!strcmp(what,"SUBJECT")?2:-1;
         if(!editor||k<0){ok=0;snprintf(result,sizeof result,"DOCINFO takes TITLE, AUTHOR or SUBJECT, and a value to set");}

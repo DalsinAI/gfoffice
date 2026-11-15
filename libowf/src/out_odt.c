@@ -568,33 +568,43 @@ static void change_to(owf_buf *out, odt_track *tk, int rev, int para_style)
     }
 }
 
-/* 1.12.4: the number ranges' names, each once, before the text (text:sequence-decls) */
+/* 1.12.4: the number ranges' names, each once, before the text (text:sequence-decls); a list of the names seen
+ * (few: Figure, Table), so each SEQ is looked up once */
 static void put_sequence_decls(owf_buf *out, const owf_doc *doc)
 {
     owf_story *st;
-    int n, i, j, any = 0;
+    const char **seen = NULL;
+    int nseen = 0, cap = 0, n, i, j, k;
     for (n = 0; (st = owf_doc_story((owf_doc *)doc, n)) != NULL; ++n)
         for (i = 0; i < st->nparas; ++i)
             for (j = 0; j < st->paras[i].nruns; ++j) {
                 const owf_run *r = &st->paras[i].runs[j];
-                owf_story *s2;
-                int n2, i2, j2, seen = 0;
                 if (r->kind != OWF_RUN_FIELD || r->field != OWF_FIELD_SEQ || !r->href || !*r->href) continue;
-                /* named before? */
-                for (n2 = 0; !seen && (s2 = owf_doc_story((owf_doc *)doc, n2)) != NULL && n2 <= n; ++n2)
-                    for (i2 = 0; !seen && i2 < s2->nparas && (n2 < n || i2 <= i); ++i2)
-                        for (j2 = 0; !seen && j2 < s2->paras[i2].nruns && (n2 < n || i2 < i || j2 < j); ++j2) {
-                            const owf_run *q = &s2->paras[i2].runs[j2];
-                            seen = q->kind == OWF_RUN_FIELD && q->field == OWF_FIELD_SEQ && q->href &&
-                                   !strcmp(q->href, r->href);
-                        }
-                if (seen) continue;
-                if (!any++) owf_buf_puts(out, "<text:sequence-decls>");
-                owf_buf_puts(out, "<text:sequence-decl text:display-outline-level=\"0\" text:name=\"");
-                owf_buf_puts_xml(out, r->href);
-                owf_buf_puts(out, "\"/>");
+                for (k = 0; k < nseen && strcmp(seen[k], r->href); ++k)
+                    ;
+                if (k < nseen) continue;
+                if (nseen == cap) {
+                    const char **grown = realloc((void *)seen, (size_t)(cap ? cap * 2 : 8) * sizeof *grown);
+                    if (!grown) {
+                        out->failed = 1;
+                        free((void *)seen);
+                        return;
+                    }
+                    seen = grown;
+                    cap = cap ? cap * 2 : 8;
+                }
+                seen[nseen++] = r->href;
             }
-    if (any) owf_buf_puts(out, "</text:sequence-decls>");
+    if (nseen) {
+        owf_buf_puts(out, "<text:sequence-decls>");
+        for (k = 0; k < nseen; ++k) {
+            owf_buf_puts(out, "<text:sequence-decl text:display-outline-level=\"0\" text:name=\"");
+            owf_buf_puts_xml(out, seen[k]);
+            owf_buf_puts(out, "\"/>");
+        }
+        owf_buf_puts(out, "</text:sequence-decls>");
+    }
+    free((void *)seen);
 }
 
 /* 1.7: a field with a shown value, as its ODF element */
@@ -627,7 +637,15 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
         owf_buf_puts(out, " text:name=\"");
         owf_buf_puts_xml(out, run->href ? run->href : "");
         owf_buf_puts(out, "\" text:formula=\"ooow:");
-        owf_buf_puts_xml(out, run->href ? run->href : "");
+        {   /* the formula names it as a variable: anything but letters, digits and _ as _ */
+            const char *c;
+            for (c = run->href ? run->href : ""; *c; ++c)
+                if ((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || *c == '_' ||
+                    (unsigned char)*c >= 0x80)
+                    owf_buf_putc(out, *c);
+                else
+                    owf_buf_putc(out, '_');
+        }
         owf_buf_puts(out, "+1\" style:num-format=\"1\"");
     }
     if (run->field == OWF_FIELD_USER) {
