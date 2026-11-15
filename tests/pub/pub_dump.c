@@ -38,13 +38,15 @@ static void put_fmt(const owf_doc *res, const owf_charfmt *f)
         printf(" underline");
     if (f->size)
         printf(" %d.%dpt", f->size / 20, (f->size % 20) * 10 / 20);
+    if (f->colour != OWF_COLOUR_AUTO)
+        printf(" colour #%06lx", f->colour);
     if (f->font >= 0 && res && f->font < res->nfonts)
         printf(" font \"%s\"", res->fonts[f->font].name);
 }
 
 static int has_fmt(const owf_charfmt *f)
 {
-    return (f->flags & (OWF_BOLD | OWF_ITALIC | OWF_UNDERLINE)) || f->size || f->font >= 0;
+    return (f->flags & (OWF_BOLD | OWF_ITALIC | OWF_UNDERLINE)) || f->size || f->font >= 0 || f->colour != OWF_COLOUR_AUTO;
 }
 
 static void put_story(const owf_doc *res, const owf_story *story, const char *indent)
