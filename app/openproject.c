@@ -48,14 +48,14 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.0 (14.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.1 (15.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
 /* ---- Menus ---- */
 
 enum {
-    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_PRINT, M_ABOUT, M_QUIT,
+    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START,
     M_SET_BASELINE, M_CLEAR_BASELINE
@@ -70,6 +70,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Save As...", "A", 0, 0, (APTR)M_SAVEAS },
     { NM_ITEM, "Export MSPDI XML...", NULL, 0, 0, (APTR)M_EXPORT_XML },
     { NM_ITEM, "Export CSV...", NULL, 0, 0, (APTR)M_EXPORT_CSV },
+    { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_EXPORT_PDF },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -808,13 +809,14 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SAVEAS: save(1); return;
     case M_EXPORT_XML: export_as("MSPDI", "#?.xml"); return;
     case M_EXPORT_CSV: export_as("CSV", "#?.csv"); return;
+    case M_EXPORT_PDF: export_as("PDF", "#?.pdf"); return;
     case M_PRINT:
         if (!print_plan(why, sizeof why)) tell(why);
         else set_status(why);
         break;
     case M_ABOUT:
         tell(VERSION_TEXT "\nThe project planner of the GFOffice Suite.\n\nPlans in .gfproj, MSPDI XML and CSV;\n"
-             "MPX and .gan read.\nMIT, Copyright (c) 2026 AmiCradle Team");
+             "MPX and .gan read; the Gantt chart exported as PDF.\nMIT, Copyright (c) 2026 AmiCradle Team");
         break;
     case M_QUIT: if (may_drop()) quit_now = 1; break;
     case M_UNDO: undo_redo(0); return;
@@ -1105,6 +1107,7 @@ int main(int argc, char **argv)
         if (w->sm_NumArgs > 1 && NameFromLock(w->sm_ArgList[1].wa_Lock, (STRPTR)first, sizeof first))
             AddPart((STRPTR)first, w->sm_ArgList[1].wa_Name, sizeof first);
     }
+    rx.view = &view;                       /* EXPORT FORMAT PDF prints the window's columns and zoom */
     if (!(rx.doc = opj_doc_new(NULL, today()))) {
         if (argc) PutStr((STRPTR)"GFOpenProject: not enough memory\n");
         rc = 20;

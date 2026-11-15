@@ -716,33 +716,27 @@ static int whole_cb(void *user, ob_int key, int n, const char *const *v)
 
 #define ED_MAX 24          /* fields on one page of the editor */
 
-static void edit_row(int adding)
+/* The row editor for table tb: the datasheet's (tb == &cur), or a form's
+ * subform, whose Lookup rel->field holds the form's record `parent`: shown,
+ * not typed. */
+static void edit_row_of(const ob_table *tb, ob_int key, int adding, const ob_relation *rel, ob_int parent)
 {
     struct Window *ew;
     struct Gadget *eg = NULL, *g, *fields_g[ED_MAX] = { 0 };
     struct NewGadget ng;
-    char *values[OB_MAX_FIELDS], *before[OB_MAX_FIELDS];
-    ob_int key = 0;
+    char *values[OB_MAX_FIELDS], *before[OB_MAX_FIELDS], title[96], pk[24];
     int i, page = 0, pages, per, done = 0, lw = 0, vw, h, row_h = fh + 8, nshow, first;
-    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
-    if (!proj || !have_cur) return;
-    if (!adding && (sel_row < 0 || sel_row < top_row || sel_row >= top_row + page_n)) {
-        tell("Choose a row first.");
-        return;
-    }
     memset(values, 0, sizeof values);
     memset(before, 0, sizeof before);
-    for (i = 0; i < cur.nfields; i++) {
+    snprintf(pk, sizeof pk, "%lld", (long long)parent);
+    if (rel) snprintf(title, sizeof title, adding ? "Add Row to %.63s" : "Edit Row of %.63s", tb->name);
+    else put_text(title, sizeof title, adding ? "Add Row" : "Edit Row");
+    for (i = 0; i < tb->nfields; i++) {
         const char *v = "";
-        int n = (int)strlen(cur.fields[i].label[0] ? cur.fields[i].label : cur.fields[i].name);
+        int n = (int)strlen(tb->fields[i].label[0] ? tb->fields[i].label : tb->fields[i].name);
         if (n > lw) lw = n;
-        if (!adding) {
-            int k = sel_row - (int)top_row;
-            key = page_keys[k];
-            v = page_cells[k][i] ? page_cells[k][i] : "";
-        } else if (cur.fields[i].has_default) {
-            v = cur.fields[i].deflt;
-        }
+        if (adding && rel && !strcmp(tb->fields[i].name, rel->field)) v = pk;
+        else if (adding && tb->fields[i].has_default) v = tb->fields[i].deflt;
         values[i] = malloc(1024);
         before[i] = malloc(1024);
         if (!values[i] || !before[i]) goto out;
@@ -751,20 +745,20 @@ static void edit_row(int adding)
     }
     /* the datasheet keeps values cut short: read the row whole */
     if (!adding) {
-        ob_rows(proj, cur.name, key - 1, 1, whole_cb, values);
-        for (i = 0; i < cur.nfields; i++) put_text(before[i], 1024, values[i]);
+        ob_rows(proj, tb->name, key - 1, 1, whole_cb, values);
+        for (i = 0; i < tb->nfields; i++) put_text(before[i], 1024, values[i]);
     }
     per = (scr->Height - 120) / row_h;
     if (per > ED_MAX) per = ED_MAX;
     if (per < 4) per = 4;
-    pages = (cur.nfields + per - 1) / per;
+    pages = (tb->nfields + per - 1) / per;
     lw = (lw > 24 ? 24 : lw) * fw + 16;
     vw = fw * 40;
     if (lw + vw + 40 > scr->Width) vw = scr->Width - lw - 40;
-    nshow = cur.nfields < per ? cur.nfields : per;
+    nshow = tb->nfields < per ? tb->nfields : per;
     h = nshow * row_h + fh * 2 + 40;
     ew = OpenWindowTags(NULL,
-        WA_Title, (ULONG)(adding ? "Add Row" : "Edit Row"),
+        WA_Title, (ULONG)title,
         WA_PubScreen, (ULONG)scr,
         WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 30,
         WA_InnerWidth, lw + vw + 20, WA_InnerHeight, h,
@@ -777,13 +771,13 @@ static void edit_row(int adding)
     while (!done) {
         /* the page's gadgets */
         first = page * per;
-        nshow = cur.nfields - first < per ? cur.nfields - first : per;
+        nshow = tb->nfields - first < per ? tb->nfields - first : per;
         if (!(g = CreateContext(&eg))) break;
         memset(&ng, 0, sizeof ng);
         ng.ng_VisualInfo = vi;
         ng.ng_TextAttr = &font_attr;
         for (i = 0; i < nshow; i++) {
-            const ob_field *f = &cur.fields[first + i];
+            const ob_field *f = &tb->fields[first + i];
             ng.ng_LeftEdge = ew->BorderLeft + 10 + lw;
             ng.ng_TopEdge = ew->BorderTop + 8 + i * row_h;
             ng.ng_Width = vw;
@@ -791,7 +785,7 @@ static void edit_row(int adding)
             ng.ng_GadgetText = (UBYTE *)(f->label[0] ? f->label : f->name);
             ng.ng_Flags = PLACETEXT_LEFT;
             ng.ng_GadgetID = 100 + i;
-            if (f->type == OB_COUNTER || f->type == OB_OBJECT)
+            if (f->type == OB_COUNTER || f->type == OB_OBJECT || (rel && !strcmp(f->name, rel->field)))
                 g = fields_g[i] = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text,
                                                (ULONG)(f->type == OB_COUNTER && adding ? "(new)" : values[first + i]),
                                                GTTX_Border, TRUE, TAG_DONE);
@@ -828,7 +822,8 @@ static void edit_row(int adding)
         RefreshGList(eg, ew, NULL, -1);
         GT_RefreshWindow(ew, NULL);
         for (i = 0; i < nshow; i++)
-            if (fields_g[i] && cur.fields[first + i].type != OB_COUNTER && cur.fields[first + i].type != OB_OBJECT) {
+            if (fields_g[i] && tb->fields[first + i].type != OB_COUNTER && tb->fields[first + i].type != OB_OBJECT
+                && !(rel && !strcmp(tb->fields[first + i].name, rel->field))) {
                 ActivateGadget(fields_g[i], ew, NULL);
                 break;
             }
@@ -850,8 +845,8 @@ static void edit_row(int adding)
             }
             /* keep what was typed on this page */
             for (i = 0; i < nshow; i++) {
-                const ob_field *f = &cur.fields[first + i];
-                if (f->type != OB_COUNTER && f->type != OB_OBJECT) {
+                const ob_field *f = &tb->fields[first + i];
+                if (f->type != OB_COUNTER && f->type != OB_OBJECT && !(rel && !strcmp(f->name, rel->field))) {
                     STRPTR s = NULL;
                     GT_GetGadgetAttrs(fields_g[i], ew, NULL, GTST_String, (ULONG)&s, TAG_DONE);
                     put_text(values[first + i], 1024, s ? (const char *)s : "");
@@ -866,20 +861,22 @@ static void edit_row(int adding)
             else if (action == 1) {
                 const char *names[OB_MAX_FIELDS], *vals[OB_MAX_FIELDS];
                 int n = 0, good;
-                for (i = 0; i < cur.nfields; i++) {
-                    const ob_field *f = &cur.fields[i];
+                for (i = 0; i < tb->nfields; i++) {
+                    const ob_field *f = &tb->fields[i];
                     if (f->type == OB_COUNTER || f->type == OB_OBJECT) continue;
+                    if (rel && !strcmp(f->name, rel->field)) continue;     /* the record's */
                     if (adding ? values[i][0] == 0 && !f->has_default : !strcmp(values[i], before[i])) continue;
                     names[n] = f->name;
                     vals[n] = values[i];
                     n++;
                 }
-                if (adding) good = ob_row_add(proj, cur.name, n, names, vals, &key);
-                else good = ob_row_change(proj, cur.name, key, n, names, vals);
+                if (adding && rel) good = ob_child_add(proj, rel, parent, n, names, vals, &key);
+                else if (adding) good = ob_row_add(proj, tb->name, n, names, vals, &key);
+                else good = ob_row_change(proj, tb->name, key, n, names, vals);
                 if (good) {
                     done = 1;
                     set_status(adding ? "Row added" : "Row saved");
-                    if (adding) {
+                    if (adding && tb == &cur) {
                         load_page();
                         sel_row = (int)total_rows - 1;
                         top_row = total_rows - ds_rows;
@@ -893,12 +890,23 @@ static void edit_row(int adding)
         }
     }
     CloseWindow(ew);
-    if (win) ActivateWindow(win);     /* keys go to the main window again */
+    if (win && tb == &cur) ActivateWindow(win);     /* keys go to the main window again */
 out:
     if (eg) FreeGadgets(eg);
     for (i = 0; i < OB_MAX_FIELDS; i++) { free(values[i]); free(before[i]); }
     load_page();
     refresh();
+}
+
+static void edit_row(int adding)
+{
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
+    if (!proj || !have_cur) return;
+    if (!adding && (sel_row < 0 || sel_row < top_row || sel_row >= top_row + page_n)) {
+        tell("Choose a row first.");
+        return;
+    }
+    edit_row_of(&cur, adding ? 0 : page_keys[sel_row - top_row], adding, NULL, 0);
 }
 
 static void delete_row(void)
@@ -2884,6 +2892,7 @@ enum {
     F_FIRST = 1, F_PREV, F_POS, F_NEXT, F_LAST, F_NEW, F_DELETE, F_FIND, F_SAVE, F_UNDO, F_CLOSE,
     F_BACK, F_ON, F_SUBPICK, F_SUBLIST, F_SUBCOUNT,
     F_FILTER, F_FROW, F_FHINT, F_FCLEAR, F_FCANCEL,     /* Filter by Form */
+    F_SUBADD, F_SUBEDIT, F_SUBDEL,                      /* the subform's rows */
     F_FIELD0
 };
 
@@ -2902,6 +2911,9 @@ static struct Node f_snodes[FORM_SUB_MAX];
 static char f_stext[FORM_SUB_MAX][160];
 static int f_sn;
 static char f_count[64], f_scount[80];
+static int f_ssel = -1, f_ssub = -1;        /* the subform row chosen, for record f_skey */
+static ob_int f_skey = -2;
+static int f_slines = 7;                     /* the subform list's lines */
 
 /* Filter by Form (design 6.3): the form's fields take what to look for, a
  * row at a time (Look for, Or, Or); Apply Filter makes it the view's. */
@@ -2968,6 +2980,7 @@ static void form_subrows(void)
     NewList(&f_sl);
     f_sn = 0;
     f_scount[0] = 0;
+    if (f_key != f_skey || f_sub != f_ssub) { f_ssel = -1; f_skey = f_key; f_ssub = f_sub; }
     if (!f_nsubs) return;
     if (f_key <= 0) { put_text(f_scount, sizeof f_scount, "Save the record to see its rows"); return; }
     if (!ob_table_get(proj, f_subs[f_sub].table, &f_child)) { put_text(f_scount, sizeof f_scount, ob_error(proj)); return; }
@@ -2980,6 +2993,7 @@ static void form_subrows(void)
     ob_view_rows(proj, f_child.name, &kids, 0, FORM_SUB_MAX, form_sub_cb, f_subs[f_sub].field);
     if (n > FORM_SUB_MAX) snprintf(f_scount, sizeof f_scount, "The first %d of %lld rows", FORM_SUB_MAX, (long long)n);
     else snprintf(f_scount, sizeof f_scount, "%lld row%s", (long long)n, n == 1 ? "" : "s");
+    if (f_ssel >= f_sn) f_ssel = -1;
 }
 
 static int form_changed(void)
@@ -3125,7 +3139,7 @@ static void open_form(void)
     struct Window *w_;
     struct Gadget *eg = NULL, *g, *fg[ED_MAX];
     struct NewGadget ng;
-    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full;
+    int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full, wt, oh;
     if (q_on) { set_status("Forms show a table: choose one in the list"); return; }
     if (!proj || !have_cur) { set_status("Choose a table first"); return; }
     for (i = 0; i < OB_MAX_FIELDS; i++) {
@@ -3155,17 +3169,29 @@ static void open_form(void)
     if (iw < 8 * (bw + 6) + fw * 16) iw = 8 * (bw + 6) + fw * 16;
     if (iw > scr->Width - 40) iw = scr->Width - 40;
     vw = iw - lw - 20;
-    sub_h = f_nsubs ? (fh + 8) + 7 * (fh + 2) + 8 : 0;
+    f_slines = 7;
+    sub_h = f_nsubs ? (fh + 8) + f_slines * (fh + 2) + 8 + fh + 12 : 0;
     per = (scr->Height - 160 - sub_h - 3 * (fh + 12)) / row_h;
     if (per > ED_MAX) per = ED_MAX;
     if (per < 3) per = 3;
     pages = (cur.nfields + per - 1) / per;
     nshow = cur.nfields < per ? cur.nfields : per;
     ih = 8 + nshow * row_h + (pages > 1 ? fh + 12 : 0) + sub_h + 2 * (fh + 12) + 8;
+    /* on a short screen the subform's list gives up lines first, down to 3 */
+    oh = ih + scr->WBorTop + fh + 1 + scr->WBorBottom;     /* the window, borders and title */
+    while (f_nsubs && f_slines > 3 && oh > scr->Height - scr->BarHeight - 1) {
+        f_slines--;
+        sub_h -= fh + 2;
+        ih -= fh + 2;
+        oh -= fh + 2;
+    }
+    wt = win->TopEdge + 20;                    /* below the main window's title, if it fits */
+    if (wt + oh > scr->Height) wt = scr->Height - oh;
+    if (wt < 0) wt = 0;
     w_ = OpenWindowTags(NULL,
         WA_Title, (ULONG)cur.name,
         WA_PubScreen, (ULONG)scr,
-        WA_Left, win->LeftEdge + 30, WA_Top, win->TopEdge + 20,
+        WA_Left, win->LeftEdge + 30, WA_Top, wt,
         WA_InnerWidth, iw, WA_InnerHeight, ih,
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
         WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
@@ -3268,12 +3294,22 @@ static void open_form(void)
             ng.ng_TopEdge = top + 4 + fh + 8;
             ng.ng_LeftEdge = w_->BorderLeft + 10;
             ng.ng_Width = iw - 20;
-            ng.ng_Height = 7 * (fh + 2);
+            ng.ng_Height = f_slines * (fh + 2);
             ng.ng_GadgetID = F_SUBLIST;
             ng.ng_Flags = 0;
-            g = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&f_sl, GTLV_ReadOnly, TRUE, TAG_DONE);
+            g = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&f_sl, GTLV_ShowSelected, 0,
+                             GTLV_Selected, f_ssel >= 0 ? (ULONG)f_ssel : ~0UL, TAG_DONE);
             ng.ng_Height = fh + 6;
             ng.ng_Flags = PLACETEXT_IN;
+            /* change the subform's rows: Add for this record, Edit and Delete the one chosen */
+            ng.ng_TopEdge = top + 4 + fh + 8 + f_slines * (fh + 2) + 4;
+            ng.ng_Width = fw * 12 + 12;
+            ng.ng_LeftEdge = w_->BorderLeft + 10; ng.ng_GadgetText = (UBYTE *)"Add Row..."; ng.ng_GadgetID = F_SUBADD;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_key <= 0, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Edit Row..."; ng.ng_GadgetID = F_SUBEDIT;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Delete Row..."; ng.ng_GadgetID = F_SUBDEL;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
             top += sub_h;
         }
         /* the record bar */
@@ -3346,7 +3382,7 @@ static void open_form(void)
                 else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(w_); GT_EndRefresh(w_, TRUE); }
                 else if (class == IDCMP_VANILLAKEY && code == 27) action = f_filtering ? F_FCANCEL : F_UNDO;
                 else if (class == IDCMP_GADGETUP && gad->GadgetID >= F_FIRST && gad->GadgetID < F_FIELD0
-                         && gad->GadgetID != F_POS && gad->GadgetID != F_SUBLIST && gad->GadgetID != F_SUBCOUNT
+                         && gad->GadgetID != F_POS && gad->GadgetID != F_SUBCOUNT
                          && gad->GadgetID != F_FHINT) {
                     action = gad->GadgetID;
                     acode = code;
@@ -3401,6 +3437,30 @@ static void open_form(void)
         case F_BACK: if (page > 0) page--; break;
         case F_ON: if (page < pages - 1) page++; break;
         case F_SUBPICK: f_sub = (int)acode < f_nsubs ? (int)acode : 0; break;
+        case F_SUBLIST: f_ssel = (int)acode; break;
+        case F_SUBADD: case F_SUBEDIT: case F_SUBDEL: {
+            ob_int k = 0;
+            if (!form_save(w_)) break;
+            form_read();
+            if (f_key <= 0) { tell("Save the record first: its rows need its key"); break; }
+            if (action != F_SUBADD) {
+                k = ob_child_key(proj, &f_subs[f_sub], f_key, f_ssel);
+                if (k == -2) { tell(ob_error(proj)); break; }
+                if (k < 0) { tell("Choose a row in the list first."); break; }
+            }
+            if (action == F_SUBDEL) {
+                char q[160];
+                snprintf(q, sizeof q, "Delete row %d of %.63s?", f_ssel + 1, f_child.name);
+                if (ask(q, "Delete|Cancel") == 1) {
+                    if (!ob_row_delete(proj, f_child.name, k)) tell(ob_error(proj));
+                    else { set_status("Row deleted"); f_ssel = -1; }
+                }
+            } else {
+                edit_row_of(&f_child, k, action == F_SUBADD, &f_subs[f_sub], f_key);
+                ActivateWindow(w_);
+            }
+            break;
+        }
         case F_UNDO:
             for (i = 0; i < cur.nfields; i++) put_text(f_vals[i], 1024, f_before[i]);
             if (f_pos < 0) { f_pos = f_total ? 0 : -1; form_read(); }
