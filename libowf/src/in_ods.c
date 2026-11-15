@@ -140,6 +140,7 @@ typedef struct {
     char *name;                  /* the heading it names */
     long field, position;        /* libowf's own (gfocalc:): its column in the source, its place; -1 */
     int orientation, function, kind, has_page;
+    int sort;                    /* table:data-pilot-sort-info by name: OWF_PIVOT_SORT_... */
     char *page;                  /* table:selected-page */
 } ods_pivot_field;
 
@@ -149,6 +150,7 @@ typedef struct {
     long rows, cols;             /* gfocalc:output-rows/-columns, or -1 */
     ods_pivot_field fields[ODS_PIVOT_FIELDS];
     int nfields;
+    int open_field;              /* the data-pilot-field being read was kept as fields[nfields - 1] */
 } ods_pivot;
 
 /* A scenario table (table:scenario): the sheet it was read into, its ranges and words. */
@@ -3851,7 +3853,7 @@ static void body_start(ods *o, const owf_xml_event *e)
             } else if (!strcmp(n, "dde-link")) {
                 owf_report_add(o->report, OWF_NOTE_LOST, "Links to other programs (DDE) keep their last values");
             } else if (!strcmp(n, "data-pilot-table") || !strcmp(n, "source-cell-range") ||
-                       !strcmp(n, "data-pilot-field")) {
+                       !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info")) {
                 pivot_start(o, e);
             }
         } else if (!strcmp(n, "scenario")) {
@@ -4105,11 +4107,22 @@ static void pivot_start(ods *o, const owf_xml_event *e)
     if (is(e, NS_TABLE, "source-cell-range")) {
         if (!pv->source)
             pv->source = copy(o, ev(e, NS_TABLE, "cell-range-address"));
+    } else if (is(e, NS_TABLE, "data-pilot-sort-info")) {
+        const char *mode = ev(e, NS_TABLE, "sort-mode"), *order = ev(e, NS_TABLE, "order");
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        if (!f || (f->orientation != PV_ROW && f->orientation != PV_COLUMN) || !mode)
+            return;
+        if (!strcmp(mode, "name"))
+            f->sort = order && !strcmp(order, "descending") ? OWF_PIVOT_SORT_DESCENDING : OWF_PIVOT_SORT_ASCENDING;
+        else if (!strcmp(mode, "data"))
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table field sorted by its data shows its items in the source's order");
     } else if (is(e, NS_TABLE, "data-pilot-field")) {
         const char *orient = ev(e, NS_TABLE, "orientation"), *layout = ev(e, NS_TABLE, "is-data-layout-field");
         const char *page = ev(e, NS_TABLE, "selected-page");
         ods_pivot_field *f;
         int kind;
+        pv->open_field = 0;
         if (!orient || (layout && !strcmp(layout, "true")))
             return;
         kind = !strcmp(orient, "row") ? PV_ROW : !strcmp(orient, "column") ? PV_COLUMN
@@ -4122,6 +4135,7 @@ static void pivot_start(ods *o, const owf_xml_event *e)
         }
         f = &pv->fields[pv->nfields++];
         memset(f, 0, sizeof *f);
+        pv->open_field = 1;
         f->orientation = kind;
         f->name = copy(o, ev(e, NS_TABLE, "source-field-name") ? ev(e, NS_TABLE, "source-field-name") : "");
         f->field = pivot_whole(ev(e, NS_GFO, "field"));
@@ -4183,9 +4197,11 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
             switch (f->orientation) {
             case PV_ROW:
                 if (def->nrow < OWF_PIVOT_FIELDS) def->row[def->nrow++] = (unsigned)index; else ok = 0;
+                if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
                 break;
             case PV_COLUMN:
                 if (def->ncol < OWF_PIVOT_FIELDS) def->col[def->ncol++] = (unsigned)index; else ok = 0;
+                if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
                 break;
             case PV_DATA:
                 if (def->ndata < OWF_PIVOT_DATA) {

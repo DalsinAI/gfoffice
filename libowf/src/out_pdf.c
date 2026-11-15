@@ -5,6 +5,7 @@
  */
 #include "owf_internal.h"
 #include "owf_note.h"
+#include "owf_comment.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,9 @@ typedef struct {
     owf_report *report;
     unsigned char *image_used;   /* per doc image: drawn somewhere, so it is written once */
     char (*note_marks)[32];      /* 1.8: each note's mark, kept while its line waits to be drawn */
+    char (*comment_marks)[16];   /* 1.10.1: with comments, each comment's mark ("[1]"); "" for one not shown */
+    int *comment_order;          /* 1.10.1: the comments' indexes in the order they are numbered */
+    int ncomment_order;
 } pdf_layout;
 
 static int pdf_points(int twips)
@@ -486,6 +490,10 @@ static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
                 /* 1.8: a note's mark, raised; the notes follow the text */
                 owf_run fake=*r;fake.text=l->note_marks[r->note-1];fake.fmt.flags|=OWF_SUPER;
                 if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
+            else if(r->kind==OWF_RUN_TEXT&&r->comment>0&&r->comment<=l->doc->ncomments&&l->comment_marks){
+                /* 1.10.1: a comment's mark, raised where it is anchored; the comments follow the text */
+                owf_run fake=*r;fake.text=l->comment_marks[r->comment-1];fake.fmt.flags|=OWF_SUPER;
+                if(fake.text[0]&&!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
             else if(r->kind==OWF_RUN_TEXT){if(!pdf_layout_text_run(l,p,r,&line,&first))return 0;}
             else if(r->kind==OWF_RUN_TAB){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)"    ";if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
             else if(r->kind==OWF_RUN_LINEBREAK){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
@@ -536,6 +544,56 @@ static int pdf_layout_notes(pdf_layout *l, int endnote)
     return 1;
 }
 
+/* 1.10.1: a paragraph of the comments' list: one run, or the mark's and then the text's (bold the first) */
+static int pdf_comment_para(pdf_layout *l, const char *head, const char *text, int indent, int space)
+{
+    const owf_doc *doc=l->doc; owf_para np; owf_run runs[2]; int n=0;
+    memset(&np,0,sizeof np); owf_parafmt_init(&np.fmt); np.table_id=-1;
+    np.fmt.space_before=space; np.fmt.indent_left=indent;
+    memset(runs,0,sizeof runs);
+    owf_charfmt_init(&runs[0].fmt); runs[0].fmt=doc->base; runs[0].fmt.size=doc->base.size?doc->base.size*5/6:200;
+    runs[1].fmt=runs[0].fmt;
+    if(head){runs[n].kind=OWF_RUN_TEXT;runs[n].text=(char *)head;runs[n].fmt.flags|=OWF_BOLD;++n;}
+    if(text){runs[n].kind=OWF_RUN_TEXT;runs[n].text=(char *)text;++n;}
+    np.runs=runs; np.nruns=n; np.capruns=2;
+    return pdf_layout_para(l,&np,1);
+}
+
+/* 1.10.1: the comments after the text, numbered as their marks are: who and when, the comment it answers,
+ * done; then its paragraphs */
+static int pdf_layout_comments(pdf_layout *l)
+{
+    const owf_doc *doc=l->doc; int k;
+    if(!l->ncomment_order)return 1;
+    if(!pdf_comment_para(l,"Comments",NULL,0,240))return 0;
+    for(k=0;k<l->ncomment_order;++k){
+        const owf_annotation *c=&doc->comments[l->comment_order[k]];
+        char head[64],who[200],when[24]; const char *t,*nl; size_t n;
+        snprintf(head,sizeof head,"%s ",l->comment_marks[l->comment_order[k]]);
+        when[0]=0;
+        if(c->date&&c->date[0]){
+            snprintf(when,sizeof when,"%.16s",c->date);
+            if(when[10]=='T')when[10]=' ';
+        }
+        snprintf(who,sizeof who,"%s%s%s",c->author&&c->author[0]?c->author:"Unknown",when[0]?", ":"",when);
+        if(c->parent>=0&&c->parent<doc->ncomments&&l->comment_marks[c->parent][0]){
+            n=strlen(who); snprintf(who+n,sizeof who-n,", answering %s",l->comment_marks[c->parent]);}
+        if(c->done){n=strlen(who); snprintf(who+n,sizeof who-n,", done");}
+        if(!pdf_comment_para(l,head,who,0,120))return 0;
+        for(t=c->text?c->text:"";;t=nl+1){
+            char *piece; int ok;
+            nl=strchr(t,'\n'); n=nl?(size_t)(nl-t):strlen(t);
+            piece=(char *)malloc(n+1); if(!piece)return 0;
+            memcpy(piece,t,n); piece[n]=0;
+            ok=pdf_comment_para(l,NULL,piece,360,0);
+            free(piece);
+            if(!ok)return 0;
+            if(!nl)break;
+        }
+    }
+    return 1;
+}
+
 static int pdf_layout_document(pdf_layout *l)
 {
     int i;
@@ -543,6 +601,7 @@ static int pdf_layout_document(pdf_layout *l)
     for(i=0;i<l->doc->body.nparas;++i)
         if(!pdf_layout_para(l,&l->doc->body.paras[i],i))return 0;
     if(l->note_marks&&(!pdf_layout_notes(l,0)||!pdf_layout_notes(l,1)))return 0;
+    if(l->comment_marks&&!pdf_layout_comments(l))return 0;
     pdf_add_headers_footers(l);
     return 1;
 }
@@ -556,7 +615,31 @@ static const char *pdf_font_name(int id)
     return id>=1&&id<=12?n[id]:"Times-Roman";
 }
 
-static int export_pdf(const owf_doc *doc, unsigned char **data, size_t *length, owf_report *report)
+/* 1.10.1: number the comments: those marked in the body in the order their marks come, then the rest that are
+ * in the document (a header's, a text box's), which have no mark in the text. 0 when memory runs out. */
+static int pdf_number_comments(pdf_layout *l)
+{
+    const owf_doc *doc=l->doc; int i,j,k;
+    l->comment_marks=(char (*)[16])calloc((size_t)doc->ncomments,sizeof *l->comment_marks);
+    l->comment_order=(int *)calloc((size_t)doc->ncomments,sizeof *l->comment_order);
+    if(!l->comment_marks||!l->comment_order)return 0;
+    for(i=0;i<doc->body.nparas;++i)for(j=0;j<doc->body.paras[i].nruns;++j){
+        int m=doc->body.paras[i].runs[j].comment;
+        if(m<=0||m>doc->ncomments||l->comment_marks[m-1][0])continue;
+        l->comment_order[l->ncomment_order++]=m-1;
+        snprintf(l->comment_marks[m-1],sizeof l->comment_marks[m-1],"[%d]",l->ncomment_order);
+    }
+    for(k=0;k<doc->ncomments;++k){
+        if(l->comment_marks[k][0]||!owf_comment_place(doc,k,NULL,NULL,NULL))continue;
+        l->comment_order[l->ncomment_order++]=k;
+        snprintf(l->comment_marks[k],sizeof l->comment_marks[k],"[%d]",l->ncomment_order);
+    }
+    /* the list shows a mark for these too; in the text only the body's runs draw one */
+    return 1;
+}
+
+static int export_pdf_as(const owf_doc *doc, unsigned char **data, size_t *length, owf_report *report,
+                         int comments)
 {
     pdf_layout l; owf_buf out; unsigned long *offs=NULL,xref; int i,obj_count,result=OWF_OK;
     pdf_image *imgs=NULL; int *imobj=NULL, nextobj;
@@ -572,6 +655,7 @@ static int export_pdf(const owf_doc *doc, unsigned char **data, size_t *length, 
         if(!l.note_marks){result=OWF_ERR_MEMORY;goto done;}
         for(i=0;i<doc->nnotes;++i)owf_note_mark_text(doc,i,l.note_marks[i],sizeof l.note_marks[i]);
     }
+    if(comments&&doc->ncomments>0&&!pdf_number_comments(&l)){result=OWF_ERR_MEMORY;goto done;}   /* 1.10.1 */
     if(!pdf_layout_document(&l)){result=OWF_ERR_MEMORY;goto done;}
     /* objects after the pages: each picture drawn, and its soft mask */
     nextobj=15+l.npages*2;
@@ -607,13 +691,30 @@ static int export_pdf(const owf_doc *doc, unsigned char **data, size_t *length, 
     result=owf_buf_take(&out,data,length);
 done:
     free(l.note_marks);
+    free(l.comment_marks);free(l.comment_order);
     free(offs);for(i=0;i<l.npages;++i)owf_buf_free(&l.pages[i]);free(l.pages);
     for(i=0;imgs&&i<doc->nimages;++i){if(!imgs[i].dct)free(imgs[i].data);free(imgs[i].mask);}
     free(imgs);free(imobj);free(l.image_used);return result;
 }
 
+static int export_pdf(const owf_doc *doc, unsigned char **data, size_t *length, owf_report *report)
+{
+    return export_pdf_as(doc, data, length, report, 0);
+}
+
+/* 1.10.1: the same PDF with the comments: a raised mark where each is anchored and a list after the text (as
+ * printing with comments at the end of the document does) */
+static int export_pdf_comments(const owf_doc *doc, unsigned char **data, size_t *length, owf_report *report)
+{
+    return export_pdf_as(doc, data, length, report, 1);
+}
+
 const owf_format owf_format_pdf = {
     "pdf", "Portable Document Format", "pdf", NULL, NULL, export_pdf
+};
+
+const owf_format owf_format_pdf_comments = {
+    "pdf-comments", "Portable Document Format, with the comments", "pdf", NULL, NULL, export_pdf_comments
 };
 
 /* ---- Pictures for the page writer (owf_pdf.c) ---- */

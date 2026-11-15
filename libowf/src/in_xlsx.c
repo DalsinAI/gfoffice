@@ -2118,6 +2118,17 @@ static int read_pivot(xlsx *x, int sheet, const char *table_part)
         if (f >= 0 && def.ncol < OWF_PIVOT_FIELDS)
             def.col[def.ncol++] = (unsigned)f;
     }
+    {                                            /* sorted row and column fields: pivotField sortType */
+        unsigned k;
+        for (k = 0; k < def.nrow + def.ncol; k++) {
+            unsigned f = k < def.nrow ? def.row[k] : def.col[k - def.nrow];
+            const char *sort = attr(nth_child(main_child(table, "pivotFields"), (long)f), "sortType");
+            if (sort && !strcmp(sort, "ascending"))
+                owf_pivot_set_sort(&def, f, OWF_PIVOT_SORT_ASCENDING);
+            else if (sort && !strcmp(sort, "descending"))
+                owf_pivot_set_sort(&def, f, OWF_PIVOT_SORT_DESCENDING);
+        }
+    }
     for (n = main_child(main_child(table, "pageFields"), "pageField"); n; n = main_next(n, "pageField")) {
         long f = xlong(attr(n, "fld"), -1, 0, 16383);
         owf_pivot_page *pg;

@@ -19,6 +19,43 @@ void owf_pivot_init(owf_pivotdef *def)
     def->row_grand = def->col_grand = 1;
 }
 
+int owf_pivot_sort_of(const owf_pivotdef *def, unsigned field)
+{
+    unsigned i;
+    for (i = 0; def && i < def->nsort && i < OWF_PIVOT_SORTS; i++)
+        if (def->sort_field[i] == field)
+            return def->sort_order[i];
+    return OWF_PIVOT_SORT_SOURCE;
+}
+
+int owf_pivot_set_sort(owf_pivotdef *def, unsigned field, int order)
+{
+    unsigned i;
+    if (!def || (order != OWF_PIVOT_SORT_SOURCE && order != OWF_PIVOT_SORT_ASCENDING &&
+                 order != OWF_PIVOT_SORT_DESCENDING))
+        return 0;
+    if (def->nsort > OWF_PIVOT_SORTS)
+        def->nsort = OWF_PIVOT_SORTS;
+    for (i = 0; i < def->nsort; i++)
+        if (def->sort_field[i] == field)
+            break;
+    if (order == OWF_PIVOT_SORT_SOURCE) {
+        if (i < def->nsort) {
+            memmove(&def->sort_field[i], &def->sort_field[i + 1u], (def->nsort - i - 1u) * sizeof def->sort_field[0]);
+            memmove(&def->sort_order[i], &def->sort_order[i + 1u], (def->nsort - i - 1u) * sizeof def->sort_order[0]);
+            def->nsort--;
+        }
+        return 1;
+    }
+    if (i == def->nsort) {
+        if (def->nsort == OWF_PIVOT_SORTS)
+            return 0;
+        def->sort_field[def->nsort++] = field;
+    }
+    def->sort_order[i] = (unsigned char)order;
+    return 1;
+}
+
 int owf_pivot_is_name(const char *name)
 {
     return name && (!strcmp(name, OWF_PIVOT_SOURCE) || !strcmp(name, OWF_PIVOT_CONFIG));
@@ -299,6 +336,14 @@ int owf_pivot_config_text(const owf_pivotdef *def, char *out, size_t size)
     pt_unsigned(&t, def->rows);
     pt_put(&t, ",");
     pt_unsigned(&t, def->cols);
+    if (def->nsort) {                        /* only when used, so older layouts read as they did */
+        pt_put(&t, ";s=");
+        for (i = 0; i < def->nsort && i < OWF_PIVOT_SORTS; i++) {
+            if (i) pt_put(&t, ",");
+            pt_unsigned(&t, def->sort_field[i]);
+            pt_put(&t, def->sort_order[i] == OWF_PIVOT_SORT_DESCENDING ? ":d" : ":a");
+        }
+    }
     pt_put(&t, "\"");
     return !t.failed;
 }
@@ -392,7 +437,7 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
         p++;
     if (*p++ != '"')
         return 0;
-    def->nrow = def->ncol = def->ndata = def->npage = 0;
+    def->nrow = def->ncol = def->ndata = def->npage = def->nsort = 0;
     if (p[0] != '2' || p[1] != ';')
         return parse_old_config(p, def);
     p += 2;
@@ -470,6 +515,16 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
                 !pivot_number_at(&p, &def->cols))
                 return 0;
             break;
+        case 's':
+            while (*p >= '0' && *p <= '9') {
+                if (!pivot_number_at(&p, &v) || *p++ != ':' || (*p != 'a' && *p != 'd') ||
+                    !owf_pivot_set_sort(def, v, *p == 'd' ? OWF_PIVOT_SORT_DESCENDING : OWF_PIVOT_SORT_ASCENDING))
+                    return 0;
+                p++;
+                if (*p == ',')
+                    p++;
+            }
+            break;
         default:
             /* a later key: skipped */
             while (*p && *p != ';' && *p != '"')
@@ -490,7 +545,8 @@ int owf_pivot_check(const owf_book *book, const owf_pivotdef *def)
     if (!book || !def || def->source_sheet < 0 || def->source_sheet >= book->nsheets ||
         def->source.first_row >= def->source.last_row || def->source.last_col < def->source.first_col ||
         !def->ndata || def->ndata > OWF_PIVOT_DATA || def->nrow > OWF_PIVOT_FIELDS ||
-        def->ncol > OWF_PIVOT_FIELDS || def->npage > OWF_PIVOT_PAGES || !(def->nrow + def->ncol))
+        def->ncol > OWF_PIVOT_FIELDS || def->npage > OWF_PIVOT_PAGES || def->nsort > OWF_PIVOT_SORTS ||
+        !(def->nrow + def->ncol))
         return 0;
     width = def->source.last_col - def->source.first_col + 1u;
     for (i = 0; i < def->nrow; i++)

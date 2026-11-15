@@ -531,15 +531,19 @@ static void contents_checks(const ow_layout *l, const owf_doc *doc)
           doc->body.paras[4].fmt.tabs[0].position == 8000);
     for (i = 0; i < 4; ++i) {
         const owf_para *p = &doc->body.paras[entries[i].para];
-        CHECK(p->nruns == 3 && p->runs[1].kind == OWF_RUN_TAB && p->runs[2].kind == OWF_RUN_TEXT);
+        /* 2.0.30: the page number is Word's PAGEREF, a page reference field */
+        CHECK(p->nruns == 3 && p->runs[1].kind == OWF_RUN_TAB && p->runs[2].kind == OWF_RUN_FIELD &&
+              p->runs[2].field == OWF_FIELD_REF_PAGE);
         if (p->nruns != 3) continue;
         CHECK(run_end(l, doc, entries[i].para, 0, &pa, &a) && run_end(l, doc, entries[i].para, 2, &pb, &b));
-        /* on the entry's line, ending at the stop */
+        /* on the entry's line, the number ending at the stop */
         CHECK(pa == pb && a.y == b.y);
-        CHECK(b.x == margin + entries[i].stop * OL_UNITS_PER_TWIP);
+        op = run_op(l, entries[i].para, 2);
+        CHECK(op && op->u.text.bounds.x + op->u.text.bounds.width == margin + entries[i].stop * OL_UNITS_PER_TWIP);
+        if (op) b.x = op->u.text.bounds.x;           /* the leader runs up to the number */
         op = run_op(l, entries[i].para, 1);
         CHECK(op && OL_TEXT_LEADER_OF(op->u.text.style.text_flags) == entries[i].leader &&
-              op->u.text.bounds.x + op->u.text.bounds.width < b.x && op->u.text.bounds.width > 0);
+              op->u.text.bounds.x + op->u.text.bounds.width <= b.x && op->u.text.bounds.width > 0);
     }
     /* "Centred" centred at 4513, "1234.50" with its point at 8000 */
     {
@@ -1604,6 +1608,96 @@ static void test_sample(const char *path)
     owf_doc_free(doc);
 }
 
+/* Issue #9 (7 October 2026), what of it the layout decides: a heading's own colour reaches its text's op, a
+ * table row's cells start on one line, small-text punctuation stays in the words a line draws, and a
+ * list's items are spaced alike (no blank line after the first). The rest of #9 (bullets drawn through a Latin-1 font) is the
+ * Amiga side: app/openwrite2.c's to_latin1 gives U+2022 as 0xB7. */
+static int op_word(const ol_document *od, const char *word, const ol_display_op **out)
+{
+    size_t k, n = strlen(word);
+    for (k = 0; k < ol_display_count(od); ++k) {
+        const ol_display_op *op = ol_display_get(od, k);
+        const char *t;
+        size_t i;
+        if (op->type != OL_OP_TEXT) continue;
+        t = ol_node_text(ol_node_by_id(od, op->u.text.node_id));
+        if (!t) continue;
+        /* in the slice this op draws, not anywhere in its node's text */
+        for (i = 0; i + n <= op->u.text.text_length; ++i)
+            if (!strncmp(t + op->u.text.text_offset + i, word, n)) {
+                if (out) *out = op;
+                return 1;
+            }
+    }
+    return 0;
+}
+
+static void test_issue9(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_para *p, *cells[3];
+    ow_layout *l;
+    const ol_document *od;
+    const ol_display_op *op = NULL;
+    ow_position pos = { 0, 0, 0, 0 };
+    ol_rect box[3], item[3];
+    int i, page;
+    static const char *const items[] = { "One", "Two", "Three" };
+    owf_doc *list = owf_doc_new();
+    ow_editor *ed;
+
+    p = para(doc, NULL, 1, "Red heading", 320);
+    p->runs[0].fmt.colour = 0xC00000UL;
+    para(doc, NULL, 0, "Runs on AmigaOS 3.2, the PC, saved to the printer device.", 160);
+    for (i = 0; i < 3; ++i) {
+        cells[i] = para(doc, NULL, 0, i == 1 ? "a longer cell that wraps onto a second line of its own" : "cell", 240);
+        cells[i]->table_id = 1;
+        cells[i]->table_row = 0;
+        cells[i]->table_col = i;
+        cells[i]->table_cols = 3;
+    }
+
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (!l) {
+        owf_doc_free(doc);
+        return;
+    }
+    od = ow_layout_body(l);
+    CHECK(op_word(od, "Red", &op) && op->u.text.style.foreground == 0xFFC00000u);
+    CHECK(op_word(od, "3.2,", NULL) && op_word(od, "PC,", NULL) && op_word(od, "printer", NULL));
+    for (i = 0; i < 3; ++i) {
+        pos.paragraph = 2 + i;
+        CHECK(ow_layout_caret(l, pos, &page, &box[i]));
+    }
+    CHECK(box[0].y == box[1].y && box[1].y == box[2].y && box[0].x < box[1].x && box[1].x < box[2].x);
+    ow_layout_free(l);
+    owf_doc_free(doc);
+
+    /* a real list, made as GFOpenWrite's List command makes one (test_core's test_lists) */
+    for (i = 0; i < 3; ++i) para(list, NULL, 0, items[i], 240);
+    ed = ow_editor_new(list);
+    CHECK(ed != NULL);
+    if (!ed) {
+        owf_doc_free(list);
+        return;
+    }
+    ow_editor_select_all(ed);
+    CHECK(ow_editor_toggle_list(ed, 0) == OWF_OK && list->body.paras[0].fmt.indent_first < 0);
+    l = ow_layout_new(list, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        for (i = 0; i < 3; ++i) {
+            pos.paragraph = i;
+            CHECK(ow_layout_caret(l, pos, &page, &item[i]));
+        }
+        CHECK(item[1].y > item[0].y && item[1].y - item[0].y == item[2].y - item[1].y);
+        ow_layout_free(l);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(list);
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -1611,6 +1705,7 @@ int main(int argc, char **argv)
     test_built();
     test_columns();
     test_generated_toc();
+    test_issue9();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)
         if (strstr(argv[i], "cover-wpg.docx")) test_cover_typing(argv[i]);

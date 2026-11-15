@@ -11,6 +11,7 @@
 #include <string.h>
 #include "openwrite_core.h"
 #include "owf_internal.h"
+#include "owf_track.h"
 
 static int checks, failures;
 
@@ -409,6 +410,126 @@ static void test_odf_form(void)
     owf_doc_free(doc);
 }
 
+/* 1.11: Word's tracked format changes (w:rPrChange, ECMA-376 part 1, 17.13.5.31): the run's format now, the
+ * format before in the change's own w:rPr; a change on its own, one inside an insertion, and one whose text
+ * has the same format now as the plain text round it (it must not join it) */
+static const char *format_changes_dump(const owf_doc *doc)
+{
+    static char buf[1024];
+    size_t used = 0;
+    int j;
+    buf[0] = 0;
+    for (j = 0; doc->body.nparas && j < doc->body.paras[0].nruns; ++j) {
+        const owf_run *r = &doc->body.paras[0].runs[j];
+        const owf_format_change *fc = OWF_DOC_FORMAT_CHANGE(doc, r->format_change);
+        if (r->kind != OWF_RUN_TEXT || !r->text || !*r->text) continue;
+        used += (size_t)snprintf(buf + used, sizeof buf - used, "<%s%s%s%s", r->text,
+                                 r->fmt.flags & OWF_BOLD ? " b" : "", r->fmt.flags & OWF_ITALIC ? " i" : "",
+                                 r->fmt.flags & OWF_UNDERLINE ? " u" : "");
+        if (r->revision) used += (size_t)snprintf(buf + used, sizeof buf - used, " ins");
+        if (fc)
+            used += (size_t)snprintf(buf + used, sizeof buf - used, " was%s%s%s %s %s",
+                                     fc->before.flags & OWF_BOLD ? " b" : "", fc->before.flags & OWF_ITALIC ? " i" : "",
+                                     fc->before.flags & OWF_UNDERLINE ? " u" : "", fc->author ? fc->author : "-",
+                                     fc->date ? fc->date : "-");
+        used += (size_t)snprintf(buf + used, sizeof buf - used, ">");
+        if (used >= sizeof buf) break;
+    }
+    return buf;
+}
+
+static void test_format_changes(void)
+{
+    static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
+    static const char *const parts[] = {
+        "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        "</Types>",
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+        "</Relationships>",
+        "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+        "<w:p><w:r><w:t xml:space=\"preserve\">Plain </w:t></w:r>"
+        "<w:r><w:rPr><w:rPrChange w:id=\"4\" w:author=\"Gil\" w:date=\"2026-11-03T11:00:00Z\"><w:rPr><w:b/></w:rPr>"
+        "</w:rPrChange></w:rPr><w:t>unbolded</w:t></w:r>"
+        "<w:r><w:t xml:space=\"preserve\"> then </w:t></w:r>"
+        "<w:r><w:rPr><w:b/><w:rPrChange w:id=\"5\" w:author=\"Gil\" w:date=\"2026-11-03T11:01:00Z\"><w:rPr><w:i/></w:rPr>"
+        "</w:rPrChange></w:rPr><w:t>bolded</w:t></w:r>"
+        "<w:ins w:id=\"6\" w:author=\"Hal\" w:date=\"2026-11-03T11:02:00Z\"><w:r><w:rPr><w:u w:val=\"single\"/>"
+        "<w:rPrChange w:id=\"7\" w:author=\"Hal\"><w:rPr/></w:rPrChange></w:rPr><w:t>both</w:t></w:r></w:ins>"
+        "</w:p><w:sectPr/></w:body></w:document>" };
+    static const char want[] = "<Plain ><unbolded was b Gil 2026-11-03T11:00:00Z>< then ><bolded b was i Gil 2026-11-03T11:01:00Z>"
+                               "<both u ins was Hal ->";
+    owf_doc *doc = NULL, *back = NULL, *view = NULL;
+    owf_report *rp = owf_report_new();
+    char first[1024];
+    int i, kept = 0;
+    CHECK(rp && zip_import(names, parts, 3, &doc) == OWF_OK && doc, "Word's format changes");
+    if (!doc) { owf_report_free(rp); return; }
+    strcpy(first, format_changes_dump(doc));
+    CHECK(!strcmp(first, want), first);
+    CHECK(doc->nformat_changes == 3 && owf_doc_has_changes(doc), "three format changes, and the document has changes");
+    CHECK(doc->nformat_changes == 3 && doc->format_changes[0].before.font == doc->body.paras[0].runs[0].fmt.font &&
+          doc->format_changes[0].before.size == doc->body.paras[0].runs[0].fmt.size,
+          "the format before is kept as the runs' are, the document's defaults left out");
+
+    /* out as DOCX and back: the same, and the same again */
+    CHECK(owf_export_file(doc, "/tmp/openwrite-fmtchange.docx", "docx", rp) == OWF_OK, "docx");
+    CHECK(owf_import_file("/tmp/openwrite-fmtchange.docx", NULL, &back, NULL, NULL) == OWF_OK && back, "docx back");
+    if (back) {
+        CHECK(!strcmp(format_changes_dump(back), want), format_changes_dump(back));
+        CHECK(owf_export_file(back, "/tmp/openwrite-fmtchange.docx", "docx", NULL) == OWF_OK, "docx again");
+        owf_doc_free(back);
+        back = NULL;
+        CHECK(owf_import_file("/tmp/openwrite-fmtchange.docx", NULL, &back, NULL, NULL) == OWF_OK && back &&
+              !strcmp(format_changes_dump(back), want), back ? format_changes_dump(back) : "second read");
+        owf_doc_free(back);
+    }
+    for (i = 0; i < owf_report_count(rp); ++i) {
+        owf_note_level level;
+        const char *note = owf_report_note(rp, i, &level, NULL);
+        if (note && strstr(note, "format changes are kept as the format is now")) kept = 1;
+    }
+    CHECK(!kept, "the runs' format changes are kept, not reported");
+
+    /* ODT keeps none yet, and says so */
+    {
+        owf_report *op = owf_report_new();
+        int said = 0;
+        CHECK(op && owf_export_file(doc, "/tmp/openwrite-fmtchange.odt", "odt", op) == OWF_OK, "odt");
+        for (i = 0; op && i < owf_report_count(op); ++i) {
+            owf_note_level level;
+            const char *note = owf_report_note(op, i, &level, NULL);
+            if (note && strstr(note, "Tracked format changes were saved accepted")) said = 1;
+        }
+        CHECK(said, "the ODT report says the format changes were saved accepted");
+        owf_report_free(op);
+    }
+    /* an edit and its undo leave the changes the document's (the editor keeps the list through undo) */
+    {
+        ow_editor *ed = ow_editor_new(doc);
+        CHECK(ed != NULL, "editor");
+        if (ed) {
+            caret(ed, 0, 3);
+            CHECK(ow_editor_insert_utf8(ed, "x", 1) == OWF_OK && ow_editor_undo(ed) == 1, "an edit undone");
+            CHECK(!strcmp(format_changes_dump(doc), want), format_changes_dump(doc));
+            CHECK(ow_editor_redo(ed) == 1 && ow_editor_undo(ed) == 1 && doc->nformat_changes == 3, "redo, undo");
+            ow_editor_free(ed);
+        }
+    }
+    /* accepted (formats without tracked changes): the format now, no change left */
+    CHECK(owf_doc_accepted(doc, &view) == OWF_OK && view, "accepted view");
+    if (view) {
+        CHECK(!strcmp(format_changes_dump(view), "<Plain ><unbolded>< then ><bolded b><both u>"), format_changes_dump(view));
+        CHECK(!owf_doc_has_changes(view), "no changes once accepted");
+        owf_doc_accepted_free(view);
+    }
+    owf_report_free(rp);
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     test_recording();
@@ -418,6 +539,7 @@ int main(void)
     test_accepted_formats();
     test_word_form();
     test_odf_form();
+    test_format_changes();
     printf("track changes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

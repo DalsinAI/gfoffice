@@ -37,7 +37,12 @@ typedef enum {
     OW_MOVE_UP,
     OW_MOVE_DOWN,
     OW_MOVE_HOME,
-    OW_MOVE_END
+    OW_MOVE_END,
+    /* 2.0.36: Ctrl+Left/Right go a word at a time, Ctrl+Up/Down to the start and end of the text */
+    OW_MOVE_WORD_LEFT,
+    OW_MOVE_WORD_RIGHT,
+    OW_MOVE_DOC_START,
+    OW_MOVE_DOC_END
 } ow_move;
 
 typedef struct {
