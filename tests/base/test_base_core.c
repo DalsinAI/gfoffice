@@ -1644,6 +1644,67 @@ static void copy_s(char *to, size_t n, const char *from)
     snprintf(to, n, "%s", from);
 }
 
+/* What the designer window does to a form: room for a new item, cursor
+ * keys, the fields still to place, a field put on. */
+static void test_form_editing(void)
+{
+    ob_project *p = fresh("fedit.oadb");
+    static ob_form f;
+    static char nm[8][OB_NAME_MAX];
+    ob_fitem *it;
+    int i, k;
+    if (!p) return;
+    five_customers(p);
+
+    ob_form_init(&f, "Card", "Customers");
+    CHECK(ob_form_free_row(&f) == 0, "empty: row 0");
+    ob_form_add(&f, OB_FI_BOX, 0, 0, 30, 5);
+    ob_form_add(&f, OB_FI_LABEL, 40, 7, 5, 1);
+    CHECK(ob_form_free_row(&f) == 8, "under the label: %d", ob_form_free_row(&f));
+    ob_form_add(&f, OB_FI_LINE, 0, OB_FORM_ROWS - 1, 10, 1);
+    CHECK(ob_form_free_row(&f) == -1, "full to the bottom");
+    ob_form_remove(&f, 2);
+
+    /* cursor keys: move keeps the size and stops at the edge */
+    CHECK(ob_form_nudge(&f, 1, 1, -1, 0, 0) && f.items[1].x == 41 && f.items[1].y == 6, "moved: %d,%d", f.items[1].x, f.items[1].y);
+    CHECK(ob_form_nudge(&f, 1, 500, 500, 0, 0) && f.items[1].x == OB_FORM_COLS - 5 && f.items[1].y == OB_FORM_ROWS - 1 && f.items[1].w == 5,
+          "to the corner, still 5 wide: %d,%d w%d", f.items[1].x, f.items[1].y, f.items[1].w);
+    CHECK(ob_form_nudge(&f, 1, -999, -999, 0, 0) && f.items[1].x == 0 && f.items[1].y == 0, "to the top left");
+    CHECK(ob_form_nudge(&f, 0, 0, 0, 2, -1) && f.items[0].w == 32 && f.items[0].h == 4, "sized: %dx%d", f.items[0].w, f.items[0].h);
+    CHECK(ob_form_nudge(&f, 0, 0, 0, -99, -99) && f.items[0].w == 1 && f.items[0].h == 1, "no smaller than a cell");
+    ob_form_place(&f, 0, OB_FORM_COLS - 3, 0, 3, 1);
+    CHECK(ob_form_nudge(&f, 0, 0, 0, 10, 0) && f.items[0].w == 3, "no wider than the grid: %d", f.items[0].w);
+    CHECK(!ob_form_nudge(&f, 9, 1, 0, 0, 0) && !ob_form_nudge(&f, -1, 1, 0, 0, 0), "no such item");
+    it = ob_form_add(&f, OB_FI_LINE, 2, 10, 20, 1);
+    k = f.nitems - 1;
+    CHECK(it && ob_form_nudge(&f, k, 0, 0, 0, 3) && f.items[k].h == 1 && f.items[k].w == 20, "an across line stays thin");
+    ob_form_place(&f, k, 2, 10, 1, 1);
+    CHECK(ob_form_nudge(&f, k, 0, 0, 0, 5) && f.items[k].h == 6 && f.items[k].w == 1, "a dot grows down");
+    CHECK(ob_form_nudge(&f, k, 0, 0, 4, 0) && f.items[k].w == 1 && f.items[k].h == 6, "then stays a down line");
+
+    /* the fields still to place, then one put on */
+    CHECK(ob_form_unplaced(p, &f, nm, 8) == 7 && !strcmp(nm[0], "id") && !strcmp(nm[1], "Name") && !strcmp(nm[6], "Credit"), "all seven with the key, in order");
+    i = ob_form_add_field(p, &f, "credit", 4, 20);
+    CHECK(i == f.nitems - 1 && f.items[i].kind == OB_FI_FIELD && !strcmp(f.items[i].field, "Credit"), "Credit on: %s", ob_error(p));
+    CHECK(f.items[i - 1].kind == OB_FI_LABEL && !strcmp(f.items[i - 1].text, "Credit limit") && f.items[i - 1].x == 4 && f.items[i - 1].w == 12,
+          "its label first: %s w%d", f.items[i - 1].text, f.items[i - 1].w);
+    CHECK(f.items[i].x == 18 && f.items[i].y == 20 && f.items[i].w == 40 && f.items[i].h == 1, "gadget after it: %d,%d", f.items[i].x, f.items[i].y);
+    CHECK(ob_form_unplaced(p, &f, nm, 2) == 6 && !strcmp(nm[0], "id") && !strcmp(nm[1], "Name"), "six left, the first two kept");
+    k = f.nitems;
+    CHECK(ob_form_add_field(p, &f, "Credit", 0, 30) == -1 && strstr(ob_error(p), "already") && f.nitems == k, "not twice: %s", ob_error(p));
+    CHECK(ob_form_add_field(p, &f, "Phone", 0, 30) == -1 && strstr(ob_error(p), "no field Phone"), "no such field: %s", ob_error(p));
+    CHECK(ob_form_add_field(p, &f, "Name", OB_FORM_COLS - 4, 30) == -1 && strstr(ob_error(p), "no room") && f.nitems == k, "no room across: %s", ob_error(p));
+    CHECK(ob_form_add_field(p, &f, "Name", 0, OB_FORM_ROWS) == -1 && strstr(ob_error(p), "no room"), "no room down");
+    CHECK(ob_form_add_field(p, &f, "Name", 0, ob_form_free_row(&f)) >= 0, "Name under the rest: %s", ob_error(p));
+    CHECK(ob_form_check(p, &f) && ob_form_save(p, &f), "it saves: %s", ob_error(p));
+    copy_s(f.table, sizeof f.table, "Nowhere");
+    CHECK(ob_form_unplaced(p, &f, nm, 8) == -1, "no table");
+    while (f.nitems < OB_FORM_ITEMS - 1) ob_form_add(&f, OB_FI_LABEL, 0, 0, 1, 1);
+    copy_s(f.table, sizeof f.table, "Customers");
+    CHECK(ob_form_add_field(p, &f, "Town", 0, 50) == -1 && strstr(ob_error(p), "no room"), "a full form: %s", ob_error(p));
+    ob_close(p);
+}
+
 static void test_designed_forms(void)
 {
     ob_project *p = fresh("dforms.oadb");
@@ -2201,6 +2262,7 @@ int main(int argc, char **argv)
     test_csv_options();
     test_queries();
     test_designed_forms();
+    test_form_editing();
     test_forms();
     test_not_projects();
     test_cut_short();

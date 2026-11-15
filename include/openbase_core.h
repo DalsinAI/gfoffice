@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.7.1"
+#define OB_CORE_VERSION "0.7.2"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -566,6 +566,21 @@ int ob_form_auto(ob_project *p, const char *table, const char *name, ob_form *ou
 int ob_form_check(ob_project *p, const ob_form *f);
 /* The cells the items use: cols across (the furthest x + w), rows down. */
 void ob_form_extent(const ob_form *f, int *cols, int *rows);
+/* The first row under every item, for a new one; -1 when that is off the
+ * grid. */
+int ob_form_free_row(const ob_form *f);
+/* Moves item i by dx, dy and sizes it by dw, dh (cursor keys in the
+ * designer): it keeps its size while it moves, stops at the grid's edge,
+ * and a line stays one cell thick. 0 when there is no item i. */
+int ob_form_nudge(ob_form *f, int i, int dx, int dy, int dw, int dh);
+/* The fields of the form's table it doesn't show yet, in the table's
+ * order, up to max; how many there are, -1 on error. */
+int ob_form_unplaced(ob_project *p, const ob_form *f, char (*names)[OB_NAME_MAX], int max);
+/* Puts field on the form at x, y as the auto form would: its label, then
+ * its gadget 40 wide (a Memo 4 lines). The field item's index; -1 with the
+ * reason when the table has no such field, it is on the form already, or
+ * there is no room. */
+int ob_form_add_field(ob_project *p, ob_form *f, const char *field, int x, int y);
 /* The names of the forms on table, in name order, up to max; how many
  * there are, -1 on error. */
 int ob_forms_of(ob_project *p, const char *table, char (*names)[OB_NAME_MAX], int max);
