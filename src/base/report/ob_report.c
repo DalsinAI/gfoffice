@@ -13,6 +13,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@
 typedef struct acc {
     ob_int count;           /* values that aren't empty */
     ob_int nums;            /* of those, the ones that are numbers */
+    int over;               /* isum went past 64 bits: Sum and Average say "too large" */
     ob_int isum, imin, imax;   /* Integer, Currency (pence) */
     double dsum, dmin, dmax;   /* Number */
 } acc;
@@ -321,7 +323,8 @@ static void acc_add(acc *a, int type, const char *v)
         }
         if (!a->nums || n < a->imin) a->imin = n;
         if (!a->nums || n > a->imax) a->imax = n;
-        a->isum += n;
+        if ((n > 0 && a->isum > LLONG_MAX - n) || (n < 0 && a->isum < LLONG_MIN - n)) a->over = 1;
+        else a->isum += n;
         a->nums++;
     } else if (is_number_type(type)) {
         d = strtod(v, &end);
@@ -351,10 +354,12 @@ static void acc_text(const rcol *c, const acc *a, char *out, size_t size)
         snprintf(v, sizeof v, "%lld", (long long)a->count);
         break;
     case OB_TOTAL_SUM:
+        if (whole && a->over) { copy(v, sizeof v, "too large"); break; }
         put_number(c->type, a->isum, a->dsum, whole, v, sizeof v);
         break;
     case OB_TOTAL_AVERAGE:
         if (!a->nums) break;
+        if (whole && a->over) { copy(v, sizeof v, "too large"); break; }
         if (c->type == OB_CURRENCY) ob_currency_format((ob_int)llround((double)a->isum / (double)a->nums), v, sizeof v);
         else put_number(-1, 0, (whole ? (double)a->isum : a->dsum) / (double)a->nums, 0, v, sizeof v);
         break;
