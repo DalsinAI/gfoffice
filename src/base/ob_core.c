@@ -4347,3 +4347,32 @@ static int forms_follow(ob_project *p, const ob_table *old, const ob_table *t, c
     free(f);
     return good;
 }
+
+void ob_form_extent(const ob_form *f, int *cols, int *rows)
+{
+    int i, c = 0, r = 0;
+    for (i = 0; i < f->nitems; i++) {
+        const ob_fitem *it = &f->items[i];
+        if (it->x + it->w > c) c = it->x + it->w;
+        if (it->y + it->h > r) r = it->y + it->h;
+    }
+    if (cols) *cols = c;
+    if (rows) *rows = r;
+}
+
+int ob_forms_of(ob_project *p, const char *table, char (*names)[OB_NAME_MAX], int max)
+{
+    sqlite3_stmt *st;
+    int n = 0;
+    if (!has_forms(p)) { ok(p); return 0; }
+    if (!(st = prep(p, "SELECT name FROM oadb_forms WHERE tbl = ?1 COLLATE NOCASE ORDER BY name COLLATE NOCASE")))
+        return -1;
+    sqlite3_bind_text(st, 1, table, -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        if (n < max) copy(names[n], OB_NAME_MAX, (const char *)sqlite3_column_text(st, 0));
+        n++;
+    }
+    sqlite3_finalize(st);
+    ok(p);
+    return n;
+}

@@ -1734,6 +1734,28 @@ static void test_designed_forms(void)
     CHECK_ERR(p, "There is no form named Card");
     CHECK(!ob_form_delete(p, "Card"), "gone");
 
+    /* the cells a form uses; the forms on a table */
+    {
+        static char nm[4][OB_NAME_MAX];
+        int c = -1, r = -1;
+        ob_form_init(&g, "E", "Orders");
+        ob_form_extent(&g, &c, &r);
+        CHECK(c == 0 && r == 0, "empty: %d x %d", c, r);
+        ob_form_add(&g, OB_FI_LABEL, 3, 2, 10, 1);
+        ob_form_add(&g, OB_FI_BOX, 1, 5, 4, 6);
+        ob_form_extent(&g, &c, NULL);
+        ob_form_extent(&g, NULL, &r);
+        CHECK(c == 13 && r == 11, "13 x 11: %d x %d", c, r);
+        CHECK(ob_forms_of(p, "Customers", nm, 4) == 0, "no forms on Customers yet");
+        ob_form_auto(p, "Customers", "Zed", &g); ob_form_save(p, &g);
+        ob_form_auto(p, "Customers", "alpha", &g); ob_form_save(p, &g);
+        CHECK(ob_forms_of(p, "customers", nm, 4) == 2 && !strcmp(nm[0], "alpha") && !strcmp(nm[1], "Zed"), "two, in name order");
+        CHECK(ob_forms_of(p, "Customers", nm, 1) == 2 && !strcmp(nm[0], "alpha"), "how many, the first kept");
+        CHECK(ob_forms_of(p, "Orders", nm, 4) == 1 && !strcmp(nm[0], "Orders"), "Orders' own");
+        ob_form_delete(p, "Zed");
+        ob_form_delete(p, "alpha");
+    }
+
     /* forms follow their table: a rename, a design change's renames; drops refused */
     {
         static ob_table t;
