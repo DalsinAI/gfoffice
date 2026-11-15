@@ -173,12 +173,11 @@ int owf_pivot_set_group(owf_pivotdef *def, const owf_pivot_group *group);
 double owf_pivot_group_key(const owf_pivot_group *group, double number, int date1904);
 void owf_pivot_group_label(const owf_pivot_group *group, double key, char *out, size_t size);
 int owf_pivot_set_hidden(owf_pivotdef *def, const owf_pivot_page *item, int hidden);
-/* Whether a row field's items each get a subtotal row under them (an
- * "East Total" row after East's rows), made with each data field's own
- * function; and setting it (on 1) or taking it away (0). The innermost row
- * field has none (its rows are its items). A column field keeps the setting
- * for the files that carry it (XLSX, ODS); its subtotal columns are not
- * laid out yet. 0 when there is no room for another field. */
+/* Whether a row or column field's items each get a subtotal under them (an
+ * "East Total" row after East's rows, or column after its columns), made
+ * with each data field's own function; and setting it (on 1) or taking it
+ * away (0). The innermost row or column field has none (its rows or columns
+ * are its items). 0 when there is no room for another field. */
 int owf_pivot_subtotal_of(const owf_pivotdef *def, unsigned field);
 int owf_pivot_set_subtotal(owf_pivotdef *def, unsigned field, int on);
 
