@@ -352,9 +352,18 @@ static opr_frame *add_frame(builder *b, const owf_obj *obj, int from_master)
     return f;
 }
 
+/* a gradient fill (owf_look.gradient) on a filled object */
+static int has_gradient(const owf_obj *o)
+{
+    return o && OWF_SHADE_SET(o->look.fill) && OWF_SHADE_SET(o->look.fill2) &&
+           (o->look.gradient == OWF_GRADIENT_LINEAR || o->look.gradient == OWF_GRADIENT_RADIAL);
+}
+
+/* drawn as an OpenLayout shape: shapes, and text boxes with a gradient (a box's plain background
+ * can't hold one), as their rectangle */
 static int is_openlayout_shape(const owf_obj *o)
 {
-    return o && o->kind == OWF_OBJ_SHAPE;
+    return o && (o->kind == OWF_OBJ_SHAPE || (o->kind == OWF_OBJ_TEXT && has_gradient(o)));
 }
 
 static unsigned shape_stroke_style(unsigned char line)
@@ -397,6 +406,11 @@ static int set_shape(ol_node *node, const owf_obj *o)
     s.stroke_width = TW(o->look.line_width > 0 ? o->look.line_width : 5);
     s.stroke_style = shape_stroke_style(o->look.line_style);
     s.rotation_tenths = o->rotation;
+    if (has_gradient(o)) {
+        s.gradient = o->look.gradient == OWF_GRADIENT_RADIAL ? OL_GRADIENT_RADIAL : OL_GRADIENT_LINEAR;
+        s.fill2_argb = argb(o->look.fill2);
+        s.gradient_angle_tenths = o->look.gradient_angle;
+    }
     if (o->look.arrows & OWF_ARROW_START) s.flags |= OL_SHAPE_ARROW_START;
     if (o->look.arrows & OWF_ARROW_END) s.flags |= OL_SHAPE_ARROW_END;
     w = o->width > 0 ? o->width : 1;

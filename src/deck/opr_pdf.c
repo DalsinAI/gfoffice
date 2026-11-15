@@ -76,6 +76,25 @@ static int draw_shape(owf_pdf *pdf, const ol_device_op *dop)
     fill = shade_of(s->fill_argb);
     line = shade_of(s->stroke_argb);
     owf_pdf_dash(pdf, dashed(s));
+    if (OWF_SHADE_SET(fill) && OL_SHAPE_STYLE_HAS_GRADIENT(s) && s->gradient != OL_GRADIENT_NONE &&
+        (s->fill2_argb >> 24)) {
+        /* a gradient inside the outline, then the outline alone; the gradient turns with the shape */
+        bounds.x = x;
+        bounds.y = y;
+        bounds.width = w;
+        bounds.height = h;
+        count = ol_shape_path(g, &bounds, path, OL_MAX_SHAPE_POINTS, &closed);
+        for (k = 0; k < count; k++) {
+            xy[k * 2] = path[k].x;
+            xy[k * 2 + 1] = path[k].y;
+        }
+        if (count >= 3 && closed &&
+            owf_pdf_gradient(pdf, xy, count, x, y, w, h,
+                             s->gradient == OL_GRADIENT_RADIAL ? OWF_PDF_GRADIENT_RADIAL : OWF_PDF_GRADIENT_LINEAR,
+                             s->gradient_angle_tenths + s->rotation_tenths, fill, shade_of(s->fill2_argb)) < 0)
+            return -1;
+        fill = 0;
+    }
     if (!s->rotation_tenths) {
         if (s->type == OL_SHAPE_RECT) {
             rc = owf_pdf_rect(pdf, x, y, w, h, fill, line, dop->thickness);

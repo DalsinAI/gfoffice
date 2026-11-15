@@ -33,12 +33,16 @@
  * owf_slide_add_anim and owf_slide_delete_anim are new; ODP reads and
  * writes the effects.
  *
+ * 3.8: gradient fills. owf_look ends with gradient, gradient_angle and
+ * fill2, so owf_obj is larger; ODP and PPTX read and write them. No call
+ * changes.
+ *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 7
-#define OWF_LIB_VERS "3.7"
-#define OWF_LIB_DATE "12.11.2026"
+#define OWF_LIB_REVISION 8
+#define OWF_LIB_VERS "3.8"
+#define OWF_LIB_DATE "15.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"

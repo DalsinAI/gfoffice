@@ -690,6 +690,62 @@ static void put_image(odpw *w, owf_buf *out, const char *element, const char *ex
     owf_buf_puts(out, "\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/>");
 }
 
+/* a gradient look's draw:gradient name, "op-gr-l2700-0000ff-ff0000" (linear, our angle, from, to) or
+ * "op-gr-r-..." (radial, centre, corners): the same gradient, the same name */
+static void gradient_name(const owf_look *l, char *name, size_t size)
+{
+    if (l->gradient == OWF_GRADIENT_RADIAL)
+        snprintf(name, size, "op-gr-r-%06lx-%06lx", OWF_SHADE_RGB(l->fill), OWF_SHADE_RGB(l->fill2));
+    else
+        snprintf(name, size, "op-gr-l%d-%06lx-%06lx", ((l->gradient_angle % 3600) + 3600) % 3600,
+                 OWF_SHADE_RGB(l->fill), OWF_SHADE_RGB(l->fill2));
+}
+
+static int look_has_gradient(const owf_look *l)
+{
+    return OWF_SHADE_SET(l->fill) && OWF_SHADE_SET(l->fill2) &&
+           (l->gradient == OWF_GRADIENT_LINEAR || l->gradient == OWF_GRADIENT_RADIAL);
+}
+
+/* draw:gradient for each different gradient the objects use, once: ODF's linear angle 0 runs top to
+ * bottom (ours 2700); a radial one's start-color is its edge, end-color its centre */
+static void put_gradients_of(owf_buf *out, const owf_obj *objs, int n, char (*seen)[48], int *nseen, int cap)
+{
+    int i, k;
+    char name[48];
+    for (i = 0; i < n; i++) {
+        const owf_look *l = &objs[i].look;
+        if (!look_has_gradient(l))
+            continue;
+        gradient_name(l, name, sizeof name);
+        for (k = 0; k < *nseen && strcmp(seen[k], name); k++)
+            ;
+        if (k < *nseen)
+            continue;
+        if (*nseen < cap)
+            strcpy(seen[(*nseen)++], name);
+        if (l->gradient == OWF_GRADIENT_RADIAL)
+            owf_buf_printf(out, "<draw:gradient draw:name=\"%s\" draw:style=\"radial\" draw:cx=\"50%%\" draw:cy=\"50%%\""
+                                " draw:start-color=\"#%06lx\" draw:end-color=\"#%06lx\" draw:border=\"0%%\"/>",
+                           name, OWF_SHADE_RGB(l->fill2), OWF_SHADE_RGB(l->fill));
+        else
+            owf_buf_printf(out, "<draw:gradient draw:name=\"%s\" draw:style=\"linear\" draw:angle=\"%d\""
+                                " draw:start-color=\"#%06lx\" draw:end-color=\"#%06lx\" draw:border=\"0%%\"/>",
+                           name, ((l->gradient_angle - 2700) % 3600 + 3600) % 3600, OWF_SHADE_RGB(l->fill),
+                           OWF_SHADE_RGB(l->fill2));
+    }
+}
+
+static void put_gradients(owf_buf *out, const owf_deck *d)
+{
+    char seen[64][48];
+    int nseen = 0, i;
+    for (i = 0; i < d->nmasters; i++)
+        put_gradients_of(out, d->masters[i].objs, d->masters[i].nobjs, seen, &nseen, 64);
+    for (i = 0; i < d->nslides; i++)
+        put_gradients_of(out, d->slides[i].objs, d->slides[i].nobjs, seen, &nseen, 64);
+}
+
 /* The object's graphic style: fill, line, insets, alignment, fitting. */
 static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
 {
@@ -700,7 +756,13 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
 
     owf_buf_init(&body);
     owf_buf_puts(&body, "<style:graphic-properties");
-    if (OWF_SHADE_SET(o->look.fill))
+    if (look_has_gradient(&o->look)) {
+        char gname[48];
+        gradient_name(&o->look, gname, sizeof gname);
+        /* fill-color too: what a reader without gradients draws */
+        owf_buf_printf(&body, " draw:fill=\"gradient\" draw:fill-gradient-name=\"%s\" draw:fill-color=\"#%06lx\"", gname,
+                       OWF_SHADE_RGB(o->look.fill));
+    } else if (OWF_SHADE_SET(o->look.fill))
         owf_buf_printf(&body, " draw:fill=\"solid\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(o->look.fill));
     else
         owf_buf_puts(&body, " draw:fill=\"none\"");
@@ -1622,6 +1684,7 @@ static int build_styles(odpw *w, owf_buf *out)
             put_image(w, out, "draw:fill-image", extra, i);
         }
     }
+    put_gradients(out, d);
     for (i = 0; i < d->nkept; i++)
         if (d->kept[i].kind == OWF_KEPT_DEFINITION)
             owf_buf_puts(out, d->kept[i].xml);
