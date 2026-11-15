@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #ifndef __amigaos__
 #include <unistd.h>
 #endif
@@ -1440,6 +1441,13 @@ static void test_dbf(void)
     CHECK(ob_dbf_export(p, "Customers", NULL, path("cust.dbf")) == 5, "export: %s", ob_error(p));
     b = bytes_of("cust.dbf", &n);
     CHECK(b && n == 257 + 5 * 48 + 1, "257 + 5 x 48 + 1 bytes: %ld", n);
+    if (b && n > 3) {
+        time_t now = time(NULL);
+        struct tm *tm = localtime(&now);
+        CHECK(tm && b[1] == tm->tm_year && b[2] == tm->tm_mon + 1 && b[3] == tm->tm_mday && b[1] >= 126,
+              "last updated, the year from 1900 (126 for 2026): %d %d %d", b[1], b[2], b[3]);
+        CHECK(b[29] == 0, "no language driver claimed");
+    }
     if (b && n == 498) {
         static const char *const names[] = { "ID", "NAME", "TOWN", "EMAIL", "JOINED", "MEMBER", "CREDIT" };
         static const char types[] = "NCCCDLN";
@@ -1559,12 +1567,32 @@ static void test_dbf(void)
         CHECK(ob_table_create(p, &g), "Sales made: %s", ob_error(p));
         ob_csv_opts_init(&o);
         CHECK(ob_dbf_import(p, "Sales", path("SALES.DBF"), &o) == 3 && o.deleted == 1, "3 in, 1 deleted: %s", ob_error(p));
+        CHECK(!o.report[0], "nothing to report: %s", o.report);
         ob_csv_export(p, "Sales", NULL, path("sales.csv"), 0);
         a = slurp_own("sales.csv");
         CHECK(a && !strcmp(a, "ID,Name,Price,When,Ok,Note\r\n7,Tea,2.50,2026-11-15,Yes,hello\r\n9,Cake,,,,\r\n10,Big,,,No,plain\r\n"),
               "sales:\n%s", a ? a : "");
         free(a);
         CHECK(ob_dbf_guess(p, path("SALES.DBF"), "Shop sales", &g) && !strcmp(g.name, "Shop sales"), "a name given");
+        /* a file that names its code page: read as it is, and said */
+        {
+            static const char *const one[] = { "NAME:C:3:0" }, *r1[] = { " Zed" };
+            unsigned char *c;
+            long cn;
+            made_dbf("lang.dbf", 0x03, one, 1, r1, 1, -1, 0);
+            c = bytes_of("lang.dbf", &cn);
+            if (c && cn > 29) { c[29] = 0x03; put_bytes("lang.dbf", (const char *)c, (size_t)cn); }
+            free(c);
+            ob_csv_opts_init(&o);
+            CHECK(ob_dbf_import(p, "Sales", path("lang.dbf"), &o) == 1 && strstr(o.report, "Windows code page 1252"), "CP1252 said: %s", o.report);
+            if (c) {
+                c = bytes_of("lang.dbf", &cn);
+                if (c && cn > 29) { c[29] = 0x7E; put_bytes("lang.dbf", (const char *)c, (size_t)cn); }
+                free(c);
+            }
+            ob_csv_opts_init(&o);
+            CHECK(ob_dbf_import(p, "Sales", path("lang.dbf"), &o) == 1 && strstr(o.report, "as 7E"), "an unknown one by number: %s", o.report);
+        }
     }
 
     /* refused */

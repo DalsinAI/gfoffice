@@ -3316,7 +3316,7 @@ ob_int ob_dbf_export(ob_project *p, const char *table, const ob_view *v, const c
     }
     memset(h, 0, sizeof h);
     h[0] = memo ? 0x83 : 0x03;
-    h[1] = (unsigned char)(tm ? tm->tm_year % 100 : 0);
+    h[1] = (unsigned char)(tm && tm->tm_year >= 0 && tm->tm_year <= 255 ? tm->tm_year : 0);   /* years from 1900: 126 for 2026 */
     h[2] = (unsigned char)(tm ? tm->tm_mon + 1 : 1);
     h[3] = (unsigned char)(tm ? tm->tm_mday : 1);
     put_le32(h + 4, (unsigned long)o->rows);
@@ -3360,6 +3360,7 @@ typedef struct dbf_in {
     FILE *f, *memo;
     dbf_col cols[DBF_COLS];
     int ncols, version, reclen, hdrlen, memo_block;
+    int lang;                       /* the language driver byte (29): 0 when not said */
     unsigned long nrecs;
     unsigned char *rec;
     char *val;                      /* one column's value, as text */
@@ -3386,6 +3387,7 @@ static dbf_in *dbf_open(ob_project *p, const char *path)
     if (!(r->f = fopen(path, "rb"))) { free(r); fail(p, "%s could not be opened", path); return NULL; }
     if (fread(h, 1, 32, r->f) != 32) { fail(p, "%s is not a dBASE file", path); goto bad; }
     r->version = h[0];
+    r->lang = h[29];
     if (r->version == 0x30 || r->version == 0x31 || r->version == 0x32) {
         fail(p, "%s is a Visual FoxPro table, which GFOpenBase can't read: save it as dBASE III or IV", path);
         goto bad;
@@ -3563,6 +3565,17 @@ ob_int ob_dbf_import(ob_project *p, const char *table, const char *path, ob_csv_
     if (!(names = malloc(sizeof *names * (size_t)(nf ? nf : 1)))) { fail(p, "Not enough memory"); goto out; }
     for (i = 0; i < nf; i++) copy(names[i], sizeof names[i], t->fields[i].name);
     if (!(r = dbf_open(p, path))) goto out;
+    if (r->lang) {     /* GFOpenBase takes the text as it is: say so */
+        static const struct { int id; const char *name; } langs[] = {
+            { 0x01, "DOS code page 437" }, { 0x02, "DOS code page 850" }, { 0x03, "Windows code page 1252" },
+            { 0x57, "Windows code page 1252" }, { 0x64, "DOS code page 852" }, { 0x65, "DOS code page 866" },
+            { 0xC8, "Windows code page 1250" }, { 0xC9, "Windows code page 1251" }
+        };
+        const char *name = NULL;
+        for (i = 0; i < (int)(sizeof langs / sizeof langs[0]); i++) if (langs[i].id == r->lang) name = langs[i].name;
+        if (name) snprintf(o->report, sizeof o->report, "The file's text is in %s; it was read as ISO-8859-1, so accented letters may be wrong.\n", name);
+        else snprintf(o->report, sizeof o->report, "The file names its text's code page as %02X; it was read as ISO-8859-1, so accented letters may be wrong.\n", r->lang);
+    }
     if (!(t = design(p, tname))) goto out;
     /* by name: each column names a field (as itself, as dBASE would name it, or by label) */
     for (i = 0; i < r->ncols && by_name; i++) {

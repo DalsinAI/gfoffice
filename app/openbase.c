@@ -1927,6 +1927,7 @@ static void dbf_done(ob_int n, const char *path)
     load_page();
     set_status(msg);
     if (csv_o.bad) show_report(n, &csv_o);
+    else if (csv_o.report[0]) tell(csv_o.report);     /* the file's code page */
 }
 
 static void import_dbf(void)
