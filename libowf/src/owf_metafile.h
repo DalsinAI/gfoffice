@@ -15,7 +15,9 @@
 #ifndef OWF_METAFILE_H
 #define OWF_METAFILE_H
 
-#include "owf_internal.h"
+#include "owf.h"
+
+#include <stddef.h>
 
 /* What a metafile is drawn with. Positions are the caller's units (twips for owf_pdf), from the box's top left
  * corner as the caller gave it; colours OWF_SHADE(0xRRGGBB), 0 for none. Each call returns 0, or -1 to stop. */
@@ -46,5 +48,14 @@ int owf_metafile_is_wmf(const unsigned char *data, size_t length);
  * (OWF_ERR_MEMORY). result may be NULL. */
 int owf_metafile_play(const unsigned char *data, size_t length, int x, int y, int w, int h, const owf_mf_sink *sink,
                       void *ctx, owf_mf_result *result);
+
+/* The WMF drawn into w x h pixels (A, R, G, B bytes a pixel, rows of w), over what argb holds: the picture's
+ * bounds fill it. Shapes and lines only, solid: text and the records the player leaves out are counted as
+ * skipped (owf_mfraster.c). OWF_OK, OWF_ERR_FORMAT, or OWF_ERR_MEMORY. */
+int owf_metafile_render(const unsigned char *data, size_t length, unsigned char *argb, int w, int h,
+                        owf_mf_result *result);
+
+/* A placeable WMF's size from its bounds and units an inch, twips: 1, or 0 when it doesn't say. */
+int owf_metafile_size(const unsigned char *data, size_t length, int *w, int *h);
 
 #endif

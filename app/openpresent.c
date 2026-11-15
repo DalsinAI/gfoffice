@@ -77,6 +77,7 @@
 #endif
 #include "ow_layout.h"
 #include "owf_pdf.h"
+#include "owf_metafile.h"
 #include "ow_stack.h"
 #include "lastdir.h"
 #include "ogt_theme.h"
@@ -1465,6 +1466,40 @@ static int read_scaled(Object *o, UBYTE *out, int sw, int sh, int tw, int th)
     return ok;
 }
 
+/* A WMF has no datatype: libowf draws it into pixels (owf_metafile_render), at 96 to the inch of its own size (or
+ * 512 across when it doesn't say), a megapixel at most, on white. Its text is left out on screen; the PDF has it. */
+static picture *picture_wmf(int index, const owf_image *im)
+{
+    int tw = 0, th = 0, w, h;
+    picture *c;
+    if (owf_metafile_size(im->data, im->length, &tw, &th)) {
+        w = tw / 15;
+        h = th / 15;
+    } else {
+        w = 512;
+        h = im->width > 0 && im->height > 0 ? (int)((long)512 * im->height / im->width) : 512;
+    }
+    if (w < 16) w = 16;
+    if (h < 16) h = 16;
+    while ((ULONG)w * h > IMAGE_MAX_PIXELS) { w = w * 3 / 4; h = h * 3 / 4; }
+    pictures_room((ULONG)w * h * 4);
+    c = &pictures[npictures++];
+    memset(c, 0, sizeof *c);
+    c->index = index;
+    c->used = ++picture_tick;
+    if ((c->argb = (UBYTE *)malloc((ULONG)w * h * 4)) != NULL) {
+        memset(c->argb, 255, (size_t)w * h * 4);
+        if (owf_metafile_render(im->data, im->length, c->argb, w, h, NULL) == OWF_OK) {
+            c->w = (UWORD)w;
+            c->h = (UWORD)h;
+        } else {
+            free(c->argb);
+            c->argb = NULL;
+        }
+    }
+    return c->argb ? c : NULL;
+}
+
 static picture *picture_get(int index)
 {
     int i, sw = 0, sh = 0, tw = 0, th = 0, ok;
@@ -1481,6 +1516,8 @@ static picture *picture_get(int index)
             return pictures[i].argb ? &pictures[i] : NULL;
         }
     im = &deck->res->images[index];
+    if (owf_metafile_is_wmf(im->data, im->length))
+        return picture_wmf(index, im);
     snprintf(tmp, sizeof tmp, "T:GFOpenPresentation-Picture-%ld-%d.tmp", (long)FindTask(NULL), index);
     f = im->data && im->length ? Open((STRPTR)tmp, MODE_NEWFILE) : 0;
     if (f) {

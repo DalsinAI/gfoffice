@@ -1,7 +1,7 @@
 /*
  * libowf's WMF player (owf_metafile.c) and the page PDF writer playing WMF pictures (owf_pdf.c). Every metafile
  * here is made by this file from [MS-WMF]'s record layouts, so no picture from any program goes into the
- * repository. make metafile-test, make metafile-check (ASan).
+ * repository. Into pixels too (owf_mfraster.c). make metafile-test, make metafile-check (ASan).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
@@ -274,6 +274,49 @@ static void test_damaged(void)
           "the sink stops it");
 }
 
+/* ---- into pixels, for the screen (owf_mfraster.c) ---- */
+
+static unsigned long pixel(const unsigned char *argb, int w, int x, int y)
+{
+    const unsigned char *p = argb + ((size_t)y * w + x) * 4;
+    return ((unsigned long)p[1] << 16) | ((unsigned long)p[2] << 8) | p[3];
+}
+
+static void test_render(void)
+{
+    wmf w;
+    unsigned char *argb = (unsigned char *)malloc(100 * 50 * 4);
+    owf_mf_result res;
+    int tw = 0, th = 0, cut, ok = 1;
+    if (!argb) { CHECK(0, "memory"); return; }
+    sample(&w);
+    CHECK(owf_metafile_size(w.d, w.n, &tw, &th) && tw == 1000 && th == 500, "its size: 1000 by 500 at 1440 an inch");
+    memset(argb, 255, 100 * 50 * 4);
+    CHECK(owf_metafile_render(w.d, w.n, argb, 100, 50, &res) == OWF_OK, "drawn into pixels");
+    /* the bounds 1000 by 500 into 100 by 50: a tenth */
+    CHECK(pixel(argb, 100, 20, 15) == 0x0000FF, "inside the rectangle: blue");
+    /* the pen is a pixel wide, centred on the edge at x 10.0: the pixel left of it, whose centre is 9.5 */
+    CHECK(pixel(argb, 100, 9, 15) == 0xFF0000 && pixel(argb, 100, 10, 15) == 0x0000FF,
+          "the rectangle's left edge: the red pen, then the fill");
+    CHECK(pixel(argb, 100, 20, 4) == 0xFF0000, "its top edge too");
+    CHECK(pixel(argb, 100, 45, 10) == 0x0000FF, "the ellipse's middle");
+    CHECK(pixel(argb, 100, 40, 5) == 0xFFFFFF, "outside the ellipse, inside its box: untouched");
+    CHECK(pixel(argb, 100, 5, 45) == 0x0000FF, "the null pen's rectangle: filled");
+    CHECK(pixel(argb, 100, 90, 45) == 0xFFFFFF, "nothing drawn there");
+    CHECK(pixel(argb, 100, 65, 42) == 0xFF0000, "the line from 600,400 to 700,450");
+    CHECK(res.drawn == 5 && res.skipped == 2, "five shapes; the text and the StretchDIB left out");
+    CHECK(owf_metafile_render(w.d, w.n, argb, 0, 50, NULL) == OWF_ERR_FORMAT, "no pixels: not drawn");
+    for (cut = 0; cut <= (int)w.n; cut++) {     /* every cut drawn inside the pixels (ASan) */
+        int rc = owf_metafile_render(w.d, (size_t)cut, argb, 7, 3, NULL);
+        if (rc != OWF_OK && rc != OWF_ERR_FORMAT) ok = 0;
+    }
+    CHECK(ok, "cut anywhere, tiny: no harm");
+    start(&w, 0, 0, 0, 0, 0, 0);
+    finish(&w);
+    CHECK(!owf_metafile_size(w.d, w.n, &tw, &th) && !tw && !th, "no placeable header: no size");
+    free(argb);
+}
+
 /* ---- through the page PDF writer ---- */
 
 static int count(const unsigned char *d, size_t n, const char *s)
@@ -327,6 +370,7 @@ int main(void)
     test_play();
     test_window();
     test_damaged();
+    test_render();
     test_pdf();
     printf("metafile: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
