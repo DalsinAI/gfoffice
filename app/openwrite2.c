@@ -4683,7 +4683,8 @@ static void do_conditional_text(void)
     else snprintf(code, sizeof code, "DOCVARIABLE \"%s\"", field);
     snprintf(f.a, sizeof f.a, "%s", code);
     f.a_field = 1;
-    snprintf(f.op, sizeof f.op, "%s", op);
+    f.op[0] = op[0];                                 /* (two characters at most: <> <= >=) */
+    f.op[1] = op[0] ? op[1] : 0;
     snprintf(f.b, sizeof f.b, "%s", value);
     snprintf(f.yes, sizeof f.yes, "%s", yes);
     snprintf(f.no, sizeof f.no, "%s", no);
