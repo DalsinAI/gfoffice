@@ -438,6 +438,46 @@ static void test_baseline(void)
     owf_project_free(p);
 }
 
+/* Earned value against Baseline 0: a 4-day task A (Dale at 20.00 an hour: 640.00) and a 1-day B after
+ * it, under a summary; status Wed 18 at 17:00 (A's third day done as planned). */
+static void test_earned_value(void)
+{
+    owf_project *p = plan();
+    int ph = owf_project_add_task(p, "Phase", 0), a = owf_project_add_task(p, "A", 4 * D);
+    int b = owf_project_add_task(p, "B", D), dale = owf_project_add_resource(p, "Dale");
+    owf_ptime status = AT(18, 17, 0);
+    TASK(p, a)->level = TASK(p, b)->level = 2;
+    owf_project_link(p, a, b, OWF_LINK_FS, 0, 0);
+    p->resources[dale].rate = 2000;
+    owf_project_assign(p, a, dale, 100);
+    owf_project_assign(p, b, dale, 100);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(TASK(p, a)->cost, 64000);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_BCWS), 0);         /* no baseline yet */
+    owf_project_set_baseline(p, 0, -1);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_BCWS), 48000);     /* 3 of 4 days planned */
+    CHECK_N(owf_ptask_earned(p, b, status, OWF_EV_BCWS), 0);         /* not planned to start yet */
+    CHECK_N(owf_ptask_earned(p, a, AT(30, 8, 0), OWF_EV_BCWS), 64000); /* after its finish: all of it */
+    CHECK_N(owf_ptask_earned(p, a, AT(16, 8, 0), OWF_EV_BCWS), 0);
+    /* Half done: BCWP 320.00, behind plan by 160.00; A's cost grows a day, ACWP 400.00 at 50%. */
+    TASK(p, a)->percent = 50;
+    TASK(p, a)->duration = 5 * D;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_BCWP), 32000);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_SV), -16000);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_ACWP), 40000);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_CV), -8000);
+    /* The summary adds its subtasks. */
+    TASK(p, b)->percent = 100;
+    CHECK_N(owf_ptask_earned(p, ph, status, OWF_EV_BCWP), 32000 + 16000);
+    CHECK_N(owf_ptask_earned(p, ph, status, OWF_EV_BCWS), 48000);
+    CHECK_N(owf_ptask_earned(p, ph, status, OWF_EV_ACWP), 40000 + 16000);
+    CHECK_N(owf_ptask_earned(p, ph, status, 9), 0);
+    CHECK_N(owf_ptask_earned(p, 7, status, OWF_EV_BCWP), 0);
+    CHECK_N(owf_ptask_earned(NULL, 0, status, OWF_EV_BCWP), 0);
+    owf_project_free(p);
+}
+
 /* Baselines 1 to 10 beside Baseline 0: each saved and cleared on its own, read back by number. */
 static void test_more_baselines(void)
 {
@@ -623,6 +663,7 @@ int main(void)
     test_loop_and_holiday();
     test_resources();
     test_baseline();
+    test_earned_value();
     test_more_baselines();
     test_actuals();
     test_summary_back_to_task();

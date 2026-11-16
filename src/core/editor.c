@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include "openwrite_core.h"
 #include "owf_notenum_impl.h"
+#include "owf_ifform.h"
 #include "ow_merge.h"
 
 #define OW_UNDO_LIMIT 16
@@ -134,7 +135,7 @@ static void clear_doc_data(owf_doc *doc)
         owf_free(doc->format_changes[i].date);
     }
     owf_free(doc->format_changes);
-    for (i = 0; i < doc->npara_format_changes; ++i) {   /* libowf 1.15 */
+    for (i = 0; i < doc->npara_format_changes; ++i) {   /* libowf 1.17 */
         owf_free(doc->para_format_changes[i].author);
         owf_free(doc->para_format_changes[i].date);
         owf_free(doc->para_format_changes[i].style);
@@ -165,7 +166,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->section_break = sp->section_break;
         dp->mark_revision = sp->mark_revision;       /* 2.1.0 */
         dp->row_revision = sp->row_revision;         /* 2.0.38 */
-        dp->para_format_change = sp->para_format_change;   /* libowf 1.15 */
+        dp->para_format_change = sp->para_format_change;   /* libowf 1.17 */
         dp->style = NULL;                            /* 2.0.12: its style and bookmarks too */
         dp->bookmarks = NULL;
         if (sp->style && !(dp->style = copy_bytes(sp->style, strlen(sp->style)))) return 0;
@@ -296,7 +297,7 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capformat_changes = dst->capformat_changes;
     dst->format_changes = NULL;
     dst->nformat_changes = dst->capformat_changes = 0;
-    para_format_changes = dst->para_format_changes;   /* libowf 1.15: the paragraphs' too */
+    para_format_changes = dst->para_format_changes;   /* libowf 1.17: the paragraphs' too */
     npara_format_changes = dst->npara_format_changes;
     cappara_format_changes = dst->cappara_format_changes;
     dst->para_format_changes = NULL;
@@ -1829,7 +1830,7 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     }
     p->nruns = pos.run + 1;
     marks_split(p, np, at);                          /* 2.0.21: the bookmarks after the caret go with the text */
-    np->para_format_change = p->para_format_change;   /* libowf 1.15: both halves have the format, and its change */
+    np->para_format_change = p->para_format_change;   /* libowf 1.17: both halves have the format, and its change */
     np->mark_revision = p->mark_revision;            /* 2.1.0: the old end is the new paragraph's; the new end */
     p->mark_revision = editor->typing_rev;           /* is the change being typed, if one is */
 
@@ -5769,7 +5770,7 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
 static int field_wants_arg(owf_field f)
 {
     return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE || f == OWF_FIELD_MERGE ||
-           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ;
+           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ || f == OWF_FIELD_IF;
 }
 
 static void merge_field_value(const ow_editor *editor, const char *column, char *out, size_t size);   /* 2.5.0 */
@@ -5934,6 +5935,33 @@ static const char *leaf_name(const char *path)
     return a ? a + 1 : path;
 }
 
+/* libowf 1.16: an IF operand's value: text as it is, or a field in it worked out (a document variable, a
+ * merge field's column, the document's title, author or subject; any other field's code shows nothing) */
+static void if_operand(ow_editor *editor, const char *v, int field, char *out, size_t size)
+{
+    const owf_doc *doc = editor->doc;
+    char word[16], name[128];
+    const char *p = v;
+    size_t n = 0;
+    int i;
+    out[0] = 0;
+    if (!field) { snprintf(out, size, "%s", v); return; }
+    while (*p && *p != ' ' && n + 1 < sizeof word) word[n++] = (char)toupper((unsigned char)*p++);
+    word[n] = 0;
+    while (*p == ' ') ++p;
+    n = 0;
+    if (*p == '"') for (++p; *p && *p != '"' && n + 1 < sizeof name; ) name[n++] = *p++;
+    else while (*p && *p != ' ' && n + 1 < sizeof name) name[n++] = *p++;
+    name[n] = 0;
+    if (!strcmp(word, "DOCVARIABLE")) {
+        for (i = 0; i < doc->nuserfields; ++i)
+            if (!strcmp(doc->userfields[i].name, name)) { snprintf(out, size, "%s", doc->userfields[i].value); break; }
+    } else if (!strcmp(word, "MERGEFIELD")) merge_field_value(editor, name, out, size);
+    else if (!strcmp(word, "TITLE")) snprintf(out, size, "%s", doc->title ? doc->title : "");
+    else if (!strcmp(word, "AUTHOR")) snprintf(out, size, "%s", doc->author ? doc->author : "");
+    else if (!strcmp(word, "SUBJECT")) snprintf(out, size, "%s", doc->subject ? doc->subject : "");
+}
+
 static void field_value(ow_editor *editor, const owf_story *story, int para, const owf_run *run, char *out,
                         size_t size)
 {
@@ -5984,6 +6012,15 @@ static void field_value(ow_editor *editor, const owf_story *story, int para, con
         k = seq_count(doc, story, run, run->href);
         snprintf(out, size, "%d", k);
         break;
+    case OWF_FIELD_IF: {                             /* libowf 1.16: the text for whether it holds */
+        owf_if_form f;
+        char a[256], b[256];
+        if (!owf_if_parse(run->href, &f)) break;
+        if_operand(editor, f.a, f.a_field, a, sizeof a);
+        if_operand(editor, f.b, f.b_field, b, sizeof b);
+        snprintf(out, size, "%s", owf_if_holds(a, f.op, b) ? f.yes : f.no);
+        break;
+    }
     default: break;
     }
 }
@@ -6256,6 +6293,10 @@ int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *a
     if (!editor || field < OWF_FIELD_PAGE || field > OWF_FIELD_LAST) return OWF_ERR_FORMAT;
     if (field_wants_arg(field) != (arg && *arg)) return OWF_ERR_FORMAT;   /* 2.3.0: a name, for those that take one */
     if (field == OWF_FIELD_SEQ && !seq_name_ok(arg)) return OWF_ERR_FORMAT;   /* libowf 1.12.6: Word's rule */
+    if (field == OWF_FIELD_IF) {                     /* libowf 1.16: a form that reads (owf_ifform.h) */
+        owf_if_form f;
+        if (!owf_if_parse(arg, &f)) return OWF_ERR_FORMAT;
+    }
     editor->typing_group = 0;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     if (!ow_editor_selection_empty(editor) && delete_selection_internal(editor) < 0) {
@@ -6597,7 +6638,7 @@ static int story_final(owf_doc *d, owf_story *story)
         owf_para *p = &story->paras[i];
         owf_run *runs;
         p->mark_revision = 0;
-        p->para_format_change = 0;                   /* libowf 1.15 */
+        p->para_format_change = 0;                   /* libowf 1.17 */
         for (j = 0, cap = 1; j < p->nruns; ++j) {    /* room: a value's lines each take two runs */
             const char *t = p->runs[j].kind == OWF_RUN_FIELD && p->runs[j].text ? p->runs[j].text : NULL;
             ++cap;

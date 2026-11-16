@@ -51,8 +51,8 @@
  * 3.9 to 3.12's owf_page, owf_doc and owf_para, so owf_obj is larger and a program's size check refuses 3.12
  * and before. No call changes.
  *
- * 3.15 (3.14 is #262's): owf_para.para_format_change and owf_doc.para_format_changes (owfwrite.library 3.20,
- * libowf 1.15), so owf_para and owf_doc are larger and a program's size check refuses 3.14 and before. No call
+ * 3.15 (3.14 is #262's): owf_para.para_format_change and owf_doc.para_format_changes (owfwrite.library 3.22,
+ * libowf 1.17), so owf_para and owf_doc are larger and a program's size check refuses 3.14 and before. No call
  * changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.

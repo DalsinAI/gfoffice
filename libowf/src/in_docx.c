@@ -12,6 +12,7 @@
  * between the cells; footnotes and endnotes go to the end.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
+#include "owf_ifform.h"
 #include "owf_internal.h"
 #include "owf_track.h"
 #include "owf_comment.h"
@@ -51,9 +52,9 @@ typedef struct {
     int hide;                /* hiding its result (a field we write ourselves) */
     owf_field field;
     int special;             /* PAGE, NUMPAGES, DATE or TIME */
-    char instr[128];
+    char instr[320];         /* 1.16: room for an IF's form, its fields in braces */
     int collect;             /* 1.7: keeping its result as the field's shown value (a field with one) */
-    char arg[96];            /* its argument: a bookmark's or a document variable's name */
+    char arg[256];           /* its argument: a bookmark's or a document variable's name (1.16: an IF's form) */
     char shown[256];
 } field_state;
 
@@ -656,6 +657,7 @@ static int hiding(const docx *d)
  * STYLEREF of the first heading level, DOCVARIABLE, REF and PAGEREF with their argument; 1 if instr is one. */
 static int special_field(const char *instr, owf_field *field, char *arg, size_t arg_size)
 {
+    const char *rest;
     char word[16];
     size_t n = 0;
     if (arg_size) arg[0] = 0;
@@ -666,6 +668,7 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     word[n] = 0;
     while (*instr == ' ')
         instr++;
+    rest = instr;                                    /* 1.16: an IF's whole form */
     /* its argument: a word, or a quoted name */
     n = 0;
     if (*instr == '"') {
@@ -694,6 +697,16 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     else if (!strcmp(word, "MERGEFIELD") && *arg) *field = OWF_FIELD_MERGE;      /* 1.9 */
     else if (!strcmp(word, "XE") && *arg) *field = OWF_FIELD_INDEX;               /* 1.10 */
     else if (!strcmp(word, "SEQ") && *arg) *field = OWF_FIELD_SEQ;                /* 1.12.6: its switches go */
+    else if (!strcmp(word, "IF")) {                  /* 1.16: conditional text, its form kept as it is */
+        owf_if_form f;
+        size_t len;
+        if (!owf_if_parse(rest, &f) || !arg_size) return 0;
+        snprintf(arg, arg_size, "%s", rest);
+        len = strlen(arg);
+        while (len && arg[len - 1] == ' ') arg[--len] = 0;
+        *field = OWF_FIELD_IF;
+        return 1;
+    }
     else return 0;
     if (*field <= OWF_FIELD_TIME || *field == OWF_FIELD_CHAPTER) arg[0] = 0;
     return 1;
@@ -1279,6 +1292,22 @@ static void run_child(docx *d, const owf_xml_node *c, const owf_charfmt *fmt)
                 }
             }
         } else if (type && !strcmp(type, "end") && d->nfields) {
+            if (d->nfields >= 2 && d->nfields <= MAX_FIELDS && d->fields[d->nfields - 2].code) {
+                /* 1.16: a field in another's code (an IF's MERGEFIELD): its code, in braces, in that code */
+                field_state *outer = &d->fields[d->nfields - 2];
+                const char *code = d->fields[d->nfields - 1].instr;
+                size_t have = strlen(outer->instr), len;
+                while (*code == ' ') ++code;
+                len = strlen(code);
+                while (len && code[len - 1] == ' ') --len;
+                if (have + len + 3 < sizeof outer->instr) {
+                    outer->instr[have++] = '{';
+                    memcpy(outer->instr + have, code, len);
+                    have += len;
+                    outer->instr[have++] = '}';
+                    outer->instr[have] = 0;
+                }
+            }
             if (d->nfields <= MAX_FIELDS) {
                 field_state *f = &d->fields[d->nfields - 1];
                 /* A field without a result: show ours if it is one. */
@@ -1482,7 +1511,7 @@ static void para_content(docx *d, const owf_xml_node *p, const owf_charfmt *para
             /* marks */
         } else if (is_w(d, c, "fldSimple")) {
             owf_field field;
-            char arg[96];
+            char arg[256];
             const char *instr = owf_xml_attr(c, d->w, "instr");
             if (instr && special_field(instr, &field, arg, sizeof arg)) {
                 set_fmt(d, para_char);
@@ -1715,11 +1744,11 @@ static void paragraph(docx *d, const owf_xml_node *p)
             if (!rev) d->failed = 1;
             st->paras[st->nparas - 1].mark_revision = rev;
         }
-        if (wchild(d, mrpr, "rPrChange"))         /* 1.11: the runs' are kept; 1.15: the paragraphs' too */
+        if (wchild(d, mrpr, "rPrChange"))         /* 1.11: the runs' are kept; 1.17: the paragraphs' too */
             owf_report_add(d->report, OWF_NOTE_APPROX, "Tracked format changes of paragraph marks are kept as the format is now");
     }
     {
-        /* 1.15: a tracked paragraph format change (w:pPrChange): its w:pPr is the paragraph's whole format
+        /* 1.17: a tracked paragraph format change (w:pPrChange): its w:pPr is the paragraph's whole format
          * before it, from its style (the document's default when it names none) up, as the paragraph's own is */
         const owf_xml_node *chg = wchild(d, ppr, "pPrChange");
         owf_story *st = d->b->story;
