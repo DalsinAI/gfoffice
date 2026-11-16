@@ -290,6 +290,12 @@ int abs(int v)
     return v < 0 ? -v : v;
 }
 
+/* owf_pdf.c's WMF and EMF pies measure with it (f060c24) */
+long labs(long v)
+{
+    return v < 0 ? -v : v;
+}
+
 /* ---- printf -------------------------------------------------------------- */
 
 int vsnprintf(char *out, size_t size, const char *fmt, va_list ap)
