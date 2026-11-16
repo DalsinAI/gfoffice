@@ -86,19 +86,31 @@ enum {
     OPJ_COL_BASELINE_FINISH,
     OPJ_COL_START_VARIANCE,              /* working time later than the baseline: "2d", "-4h", "0d" */
     OPJ_COL_FINISH_VARIANCE,
+    OPJ_COL_CONSTRAINT_TYPE,             /* "Start No Earlier Than", as MS Project names them */
+    OPJ_COL_CONSTRAINT_DATE,             /* "NA" for As Soon / Late As Possible */
+    OPJ_COL_NOTES,
     OPJ_NCOLS
 };
 
 /* A column's heading. */
 const char *opj_column_title(int column);
+/* A constraint type's name, "As Soon As Possible" .. "Finish No Later Than" (OWF_CON_), "" out of range. */
+const char *opj_constraint_name(int constraint);
 /* A cell as the sheet shows it, into out (cut to size, NUL-terminated):
  * a duration "5d", "3ed", "1d?"; a date "Mon 16/11/26" (day/month/year); predecessors "2,3SS+1d". */
 void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
 /* Typed text into a cell, as one edit. Name; Duration (owf_pduration_parse's text); Start (sets Start No
  * Earlier Than, as MS Project does), Finish (Finish No Earlier Than); Predecessors (replaces the row's
  * links); % Complete; Resource Names (replaces the row's assignments; a name not in the plan is added as
- * a work resource). ID and WBS can't be typed into (OWF_ERR_FORMAT). */
+ * a work resource); Constraint Type (its name, any case, or a short one: ASAP, ALAP, MSO, MFO, SNET, SNLT, FNET,
+ * FNLT; a type with a date and none yet takes the task's start, or finish for the finish types); Constraint
+ * Date (NA makes it As Soon As Possible; a date on an ASAP or ALAP task makes it Start No Earlier Than);
+ * Notes. ID, WBS and the baseline columns can't be typed into (OWF_ERR_FORMAT). */
 int opj_set_cell(opj_doc *doc, int row, int column, const char *text);
+/* Task Information's OK: several of row's cells typed at once, in the order given, as one edit (one Undo
+ * step), scheduled once at the end. Nothing changes when any cell is refused: its place in columns goes
+ * in *bad (when not NULL; -1 when none was), with OWF_ERR_FORMAT, or OWF_ERR_MEMORY. */
+int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *texts, int n, int *bad);
 /* The outline number of a row, "1.2.3". */
 void opj_outline_number(const opj_doc *doc, int row, char *out, size_t size);
 /* "Mon 16/11/26" (with_time: "Mon 16/11/26 08:00"). out holds at least 24 bytes. */
@@ -168,12 +180,24 @@ typedef struct {
     int first_row;                       /* the top row shown */
     int selected;                        /* a selected row, -1 none */
     int show_baseline;                   /* a thin grey bar under each bar, at its baseline dates */
+    int scroll_x, scroll_y;              /* the Network Diagram's scroll, in pixels */
     oldraw_font font;
 } opj_view;
 
 /* A view of doc, width by height pixels, rows row_height high, at a zoom, starting at the Monday on or
  * before the plan's start. Shows ID, Name, Duration, Start, Finish and Predecessors. */
 void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int row_height, int zoom);
+/* The column chooser (View > Columns, ARexx COLUMN). A column's width when shown: 32 ID, 180 Task Name, 56
+ * Duration, 96 Start and Finish, 84 Predecessors, 64 % Complete, 48 WBS, 140 Resource Names, 96 the baseline
+ * dates, 72 the variances, 140 Constraint Type, 96 Constraint Date, 160 Notes; 0 out of range. */
+int opj_column_width(int column);
+/* 1 when v's table shows column. */
+int opj_view_column_shown(const opj_view *v, int column);
+/* Shows column at its width (a shown column keeps its own) or hides it; the columns stay in the sheet's
+ * order. 1 done (nothing to do counts), 0 out of range or when it would hide the last column shown. */
+int opj_view_show_column(opj_view *v, int column, int show);
+/* column when shown, else the next shown column after it, else the last one before it; -1 when none is. */
+int opj_view_near_column(const opj_view *v, int column);
 /* Pixels a day takes at a zoom: 24, 6, 2, 1. */
 int opj_zoom_day_width(int zoom);
 /* The chart's left edge (where origin is). */
@@ -225,6 +249,94 @@ int opj_link_path(const opj_view *v, const opj_doc *doc, int row, int link, opj_
 /* Draws what of the view crosses area (the view's own pixels) onto d. */
 void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
 
+/* ---- The Resource Usage view (MS Project's): each resource's row, its assignments' rows under it, and
+ * the work of each in every period of the timescale's lower tier (a day, week, month or quarter, by the
+ * zoom); a period over the resource's max units is in red, and its ID has "!" (the resource sheet's). It
+ * uses a view's size, row height, zoom, origin, first row, selected row and font; its table is its own:
+ * ID, Resource Name and Work. ---- */
+#define OPJ_USAGE_ID_W 32
+#define OPJ_USAGE_NAME_W 180
+#define OPJ_USAGE_WORK_W 72
+enum { OPJ_UCOL_ID, OPJ_UCOL_NAME, OPJ_UCOL_WORK, OPJ_NUCOLS };
+/* The rows: every resource, each followed by its assignments in the order they were made. */
+int opj_usage_rows(const opj_doc *doc);
+/* Row's resource, and its assignment (-1: the resource's own row). 0 when there is no such row. */
+int opj_usage_row(const opj_doc *doc, int row, int *resource, int *assign);
+const char *opj_usage_column_title(int column);
+/* A table cell: the resource's ID, name and work (the resource sheet's), or for an assignment "", its
+ * task's name and its work. "" out of range. */
+void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
+/* v as the usage view draws it: its table's width in place of the Gantt view's columns, so opj_view_x,
+ * opj_view_time, opj_chart_left and opj_row_y give the usage view's places. */
+void opj_usage_view(const opj_view *v, opj_view *usage);
+void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+
+/* ---- The Task Usage view (MS Project's): Resource Usage turned round. Each task's row (indented by its
+ * outline level, a summary's name bold), its assignments' rows under it, and the work of each in every
+ * period; a task's row holds its own and its subtasks' work and is shaded. Its table: ID, Task Name and
+ * Work, as wide as Resource Usage's; it uses the same view fields (opj_usage_view gives its places).
+ * Read only. ---- */
+int opj_task_usage_rows(const opj_doc *doc);
+/* Row's task, and its assignment (-1: the task's own row). 0 when there is no such row. */
+int opj_task_usage_row(const opj_doc *doc, int row, int *task, int *assign);
+const char *opj_task_usage_column_title(int column);
+/* A table cell: the task's ID, name and work, or for an assignment "", its resource's name and its work. */
+void opj_task_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
+/* Work of a task (assign -1: its own assignments' and its subtasks') or of one of its assignments in
+ * [from, to), as opj_work_text puts it, "" when none. */
+void opj_task_usage_text(const opj_doc *doc, int task, int assign, owf_ptime from, owf_ptime to, char *out,
+                         size_t size);
+void opj_task_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+/* ---- The Network Diagram view (MS Project's, src/project/opj_network.c): a box for every task that
+ * isn't a summary, holding its name, ID and duration, start and finish, four rows of the view's row height
+ * high. A box stands in the column one past its furthest predecessor's (the first column: no
+ * predecessors), and down its column in the sheet's order. A link is a line with an arrow from the
+ * predecessor's box's right side to the successor's left side; red when both tasks are critical. A
+ * critical task's box is edged in red; a milestone's edge is doubled; a task under way is struck through
+ * once and a finished one crossed. It uses a view's size, row height, selected row, font and scroll. ---- */
+#define OPJ_NET_BOX_W 160
+#define OPJ_NET_GAP_X 40
+#define OPJ_NET_GAP_Y 16
+#define OPJ_NET_MARGIN 16
+typedef struct {
+    int ntasks;                          /* the plan's tasks when laid out */
+    int *column, *line;                  /* each task's box's column and place down it; -1 for a summary */
+    int columns, lines;                  /* how many columns, and the most boxes in one */
+} opj_network;
+/* Lays doc's boxes out (lay it out again after any edit). OWF_OK, OWF_ERR_MEMORY, OWF_ERR_FORMAT. */
+int opj_network_layout(const opj_doc *doc, opj_network *net);
+void opj_network_free(opj_network *net);
+/* Row's box in the view (scrolled); 0 for a summary or out of range. */
+int opj_network_box(const opj_view *v, const opj_network *net, int row, oldraw_rect *box);
+/* The whole diagram's size in pixels, margins included; 0 by 0 with no boxes. */
+void opj_network_size(const opj_view *v, const opj_network *net, int *width, int *height);
+/* The row whose box is at x, y; -1 none. */
+int opj_network_hit(const opj_view *v, const opj_network *net, int x, int y);
+/* Scrolls by dx, dy pixels, kept to the diagram; scrolls just enough to show row's box whole. */
+void opj_network_scroll(opj_view *v, const opj_network *net, int dx, int dy);
+void opj_network_reveal(opj_view *v, const opj_network *net, int row);
+/* The line of link (of row's links) to row's box: 2 or 4 points, the last at the arrow's tip. 0 when
+ * either end is a summary or out of range. */
+int opj_network_link_path(const opj_view *v, const opj_network *net, const opj_doc *doc, int row, int link,
+                          opj_path *path);
+/* A box's line of text, 0 to 3: the name; "ID: 2  Dur: 3d"; "Start: Mon 16/11/26"; "Finish: ...". */
+void opj_network_line_text(const opj_doc *doc, int row, int line, char *out, size_t size);
+void opj_network_draw(oldraw *d, const opj_view *v, const opj_network *net, const opj_doc *doc,
+                      const oldraw_rect *area);
+
+/* The task edits, which act on the Gantt chart's selected task, from the Edit menu or a key (OPJ_EDIT_INFO:
+ * Task Information). Resource
+ * Usage hides that selection, so none of them runs while it shows. */
+enum { OPJ_EDIT_NONE = -1, OPJ_EDIT_CELL, OPJ_EDIT_INSERT, OPJ_EDIT_DELETE, OPJ_EDIT_INDENT, OPJ_EDIT_OUTDENT,
+       OPJ_EDIT_LINK, OPJ_EDIT_UNLINK, OPJ_EDIT_INFO, OPJ_NEDITS };
+/* The edit a key in the window asks for: Return the cell, Del the task's deletion, Tab indent (shift:
+ * outdent). OPJ_EDIT_NONE for any other key. */
+int opj_edit_for_key(int key, int shift);
+/* Why edit can't run with usage showing (OPJ_VIEW_: the usage views are read only), as the status line
+ * says it; NULL when it may run (OPJ_EDIT_NONE always may). */
+enum { OPJ_VIEW_GANTT, OPJ_VIEW_USAGE, OPJ_VIEW_TASK_USAGE };
+const char *opj_edit_refused(int usage, int edit);
+
 /* ---- Printing the Gantt view: pages down, then across, as MS Project prints ----
  * The first page across holds the table and the start of the chart; the pages after it hold more of the
  * chart (to a day past the plan's finish) with no table. Every page has the timescale at its top and a
@@ -244,6 +356,21 @@ int opj_print_page_view(const opj_print *pr, int page, opj_view *v);
 /* Draws a page onto d (sized as the page). */
 void opj_print_draw(oldraw *d, const opj_print *pr, const opj_doc *doc, int page);
 
+/* ---- The printed Gantt view as a PDF (src/project/opj_pdf.c) ----
+ * Each page opj_print_layout lays out, drawn through an oldraw target that writes into libowf's page PDF
+ * writer (owf_pdf.h): A4 landscape, a 1 cm margin, OPJ_PDF_TWIPS twips a pixel, text in PDF's standard fonts,
+ * so it stays searchable. proto gives the columns, zoom and baselines; the font is the paper's own, Helvetica
+ * at OPJ_PDF_FONT_PX pixels in rows OPJ_PDF_ROW high, whatever the screen's. */
+#define OPJ_PDF_PAGE_W 16838                  /* A4 landscape, twips */
+#define OPJ_PDF_PAGE_H 11906
+#define OPJ_PDF_MARGIN 567                    /* 1 cm */
+#define OPJ_PDF_TWIPS 12                      /* a pixel: 0.6 pt */
+#define OPJ_PDF_FONT_PX 12                    /* 7.2 pt */
+#define OPJ_PDF_ROW 17
+/* The PDF, from malloc (owf_free it), and its page count in *pages (may be NULL). OWF_OK; OWF_ERR_MEMORY;
+ * OWF_ERR_FORMAT when the plan has no tasks or a page is too small for it. */
+int opj_pdf_write(const opj_doc *doc, const opj_view *proto, unsigned char **data, size_t *length, int *pages);
+
 /* What is at a point. */
 enum { OPJ_HIT_NONE, OPJ_HIT_COLUMN_TITLE, OPJ_HIT_TIMESCALE, OPJ_HIT_CELL, OPJ_HIT_SPLIT, OPJ_HIT_BAR, OPJ_HIT_CHART };
 typedef struct {
@@ -255,7 +382,7 @@ typedef struct {
 void opj_hit_test(const opj_view *v, const opj_doc *doc, int x, int y, opj_hit *hit);
 
 /* ---- ARexx (opj_rexx.c): the plan's commands of the GFOPENPROJECT port ----
- * The app answers VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT and QUIT itself and hands every other
+ * The app answers VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT, VIEW and QUIT itself and hands every other
  * command here. Arguments as a ReadArgs template (quotes, KEYWORD=value or KEYWORD value, /S switches);
  * rows and resources are numbered from 1, as the sheets' ID columns. Return codes as every Open app's
  * port: 0 done, 5 not possible now, 10 an error, 20 an unknown command or out of memory; on any but 0,
@@ -270,12 +397,18 @@ typedef struct {
     char file[256];                      /* the plan's file, "" when it has none */
     char lasterror[256];
     unsigned long docs;                  /* bumped each time NEW or OPEN replaces doc: a new plan, even at the old address */
+    opj_view *view;                      /* the window's view: EXPORT FORMAT PDF prints its columns and zoom,
+                                          * COLUMN shows and hides its columns; NULL: a fresh one at days zoom
+                                          * for EXPORT, and COLUMN is not possible (5) */
 } opj_rexx;
 
 /* A command, its answer into result (cut to size, "" when it has none). */
 int opj_rexx_command(opj_rexx *rx, const char *command, char *result, size_t size);
 /* The file format a name's extension asks for: .xml MSPDI, .csv CSV, else .gfproj. */
 int opj_rexx_format(const char *file);
+/* EXPORT's format for the printed Gantt view as a PDF (FORMAT PDF, or a .pdf name): not a plan file, so
+ * SAVE and SAVEAS never write it. */
+#define OPJ_EXPORT_PDF 100
 
 #ifdef __cplusplus
 }
