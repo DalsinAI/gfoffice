@@ -999,7 +999,8 @@ enum {
     OC_ROLE_NOTE_LINE,      /* its frame */
     OC_ROLE_FILTER,         /* an AutoFilter's button */
     OC_ROLE_CHART,          /* a chart's area, bars and lines (its text is OC_ROLE_TEXT): rgb */
-    OC_ROLE_SCENARIO        /* the shown scenario's frame and its name's tab (its text is OC_ROLE_TEXT) */
+    OC_ROLE_SCENARIO,       /* the shown scenario's frame and its name's tab (its text is OC_ROLE_TEXT) */
+    OC_ROLE_CHANGE          /* a tracked change's frame around its cell (not printed) */
 };
 enum { OC_ALIGN_LEFT, OC_ALIGN_CENTRE, OC_ALIGN_RIGHT };
 
@@ -1241,6 +1242,12 @@ int oc_core_accept_change(oc_core *core, int index);
 int oc_core_reject_change(oc_core *core, int index);
 int oc_core_accept_all_changes(oc_core *core);
 int oc_core_reject_all_changes(oc_core *core);
+/* The change's place shown: its sheet made the active one and its cell (a row's or column's first) selected.
+ * OWF_ERR_UNSUPPORTED: no such change, or its sheet is gone. */
+int oc_core_change_go(oc_core *core, int index);
+/* A change as the Manage Changes list shows it: oc_core_change_text, then its author and time
+ * ("... (Dale, 2026-11-16 06:30)"; no author: "Unknown Author"): as snprintf */
+int oc_core_change_line(const oc_core *core, int index, char *out, size_t size);
 
 /* ---- What the window reads of the book: copies only ----
  * The window reads the book through these calls and oc_view_draw's display list,

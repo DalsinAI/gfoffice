@@ -2017,14 +2017,32 @@ static unsigned long tint(unsigned long rgb, long long v)
 static void read_table(objctx *c, int index, const owf_xml_node *tbl)
 {
     const owf_xml_node *tblPr = achild(tbl, "tblPr"), *grid = achild(tbl, "tblGrid"), *g, *tr, *tc;
-    int widths[TABLE_MAX_COLS], ncols = 0, nrows = 0, merged = 0, i;
+    int widths[TABLE_MAX_COLS], ncols = 0, nrows = 0, i;
     int styled = achild(tblPr, "tableStyleId") != NULL;
     int first_row = same(att(tblPr, "firstRow"), "1"), bands = same(att(tblPr, "bandRow"), "1");
+    const owf_xml_node *style_id = achild(tblPr, "tableStyleId");
     unsigned long accent = c->master ? c->master->th.scheme[C_ACC1] : 0x4F81BD;
     unsigned long white = c->master ? c->master->th.scheme[C_LT1] : 0xFFFFFF;
     owf_obj *obj = &(*c->objs)[index];
 
     obj->kind = OWF_OBJ_TABLE;
+    obj->table_design = (first_row ? OWF_TABLE_FIRST_ROW : 0) | (bands ? OWF_TABLE_BANDED_ROWS : 0) |
+                        (same(att(tblPr, "lastRow"), "1") ? OWF_TABLE_LAST_ROW : 0) |
+                        (same(att(tblPr, "firstCol"), "1") ? OWF_TABLE_FIRST_COL : 0) |
+                        (same(att(tblPr, "lastCol"), "1") ? OWF_TABLE_LAST_COL : 0) |
+                        (same(att(tblPr, "bandCol"), "1") ? OWF_TABLE_BANDED_COLS : 0);
+    if (style_id) {
+        owf_buf id;
+        owf_buf_init(&id);
+        text_of(style_id, &id, 0);
+        if (id.failed || (id.length && id.length < 128 &&
+                          !(obj->table_style = owf_deck_strdup((const char *)id.data, id.length)))) {
+            owf_buf_free(&id);
+            c->x->r.failed = 1;
+            return;
+        }
+        owf_buf_free(&id);
+    }
     for (g = grid ? grid->first : NULL; g; g = g->next)
         if (isa(g, "gridCol") && ncols < TABLE_MAX_COLS)
             widths[ncols++] = clamp(emu_to_twips(number(att(g, "w"), 0)), 0, MAX_COORD);
@@ -2032,6 +2050,12 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
         int col = 0;
         if (!isa(tr, "tr"))
             continue;
+        obj = &(*c->objs)[index];
+        if (att(tr, "h") && owf_table_set_row_height(obj, nrows, clamp(emu_to_twips(number(att(tr, "h"), 0)), 0,
+                                                                         MAX_COORD)) < 0) {
+            c->x->r.failed = 1;
+            return;
+        }
         for (tc = tr->first; tc && !c->x->r.failed; tc = tc->next) {
             const owf_xml_node *tcPr;
             textjob j;
@@ -2039,8 +2063,14 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
             int before, k, header;
             if (!isa(tc, "tc") || col >= TABLE_MAX_COLS)
                 continue;
-            if (att(tc, "gridSpan") || att(tc, "rowSpan") || att(tc, "hMerge") || att(tc, "vMerge"))
-                merged = 1;
+            if (att(tc, "gridSpan") || att(tc, "rowSpan")) {   /* the merge's first cell; hMerge, vMerge: covered */
+                int span_c = (int)number(att(tc, "gridSpan"), 1), span_r = (int)number(att(tc, "rowSpan"), 1);
+                obj = &(*c->objs)[index];
+                if (owf_table_add_merge(obj, nrows, col, span_r, span_c) < 0) {
+                    c->x->r.failed = 1;
+                    return;
+                }
+            }
             tcPr = achild(tc, "tcPr");
             header = styled && first_row && nrows == 0;
             if (!fill_of(&c->x->r, &c->cc, tcPr, &fill, NULL) && styled) {
@@ -2086,6 +2116,8 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
         nrows++;
     }
     obj = &(*c->objs)[index];
+    if (obj->nrows > 0 && obj->nrows < nrows && owf_table_set_row_height(obj, nrows - 1, 0) < 0)
+        c->x->r.failed = 1;   /* rows past the last with a height: as their text needs */
     for (i = 0; i < obj->text.nparas; i++)
         obj->text.paras[i].table_cols = ncols;
     obj->ncols = ncols;
@@ -2098,8 +2130,6 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
                 obj->col_widths[i] = i < TABLE_MAX_COLS && grid ? widths[i] : 0;
     }
     obj->inset[0] = obj->inset[1] = obj->inset[2] = obj->inset[3] = 0;
-    if (merged)
-        owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Merged table cells are shown apart");
     if (styled)
         owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Table styles are drawn as PowerPoint's default one");
 }
@@ -2209,7 +2239,7 @@ static void read_tree(objctx *c, const owf_xml_node *tree, int parent, int depth
 
 /* A p:cSld's p:bg onto *colour and *image; 0 when it has none. */
 static int read_background(pptx *x, const colours *cc, const rels *r, const owf_xml_node *cSld,
-                           unsigned long *colour, int *image)
+                           unsigned long *colour, int *image, owf_look *g)
 {
     const owf_xml_node *bg = pchild(cSld, "bg"), *pr, *ref;
     unsigned long rgb, fill;
@@ -2221,7 +2251,7 @@ static int read_background(pptx *x, const colours *cc, const rels *r, const owf_
             *image = load_picture(x, r, ratt(blip, "embed"), x->deck->width, x->deck->height, NULL);
             return 1;
         }
-        if (fill_of(&x->r, cc, pr, &fill, NULL)) {
+        if (fill_of(&x->r, cc, pr, &fill, g)) {
             *colour = fill ? fill : OWF_SHADE(0xFFFFFF);
             return 1;
         }
@@ -2388,8 +2418,15 @@ static int get_master(pptx *x, const char *name)
     memcpy(c.cc.map, mp->map, sizeof c.cc.map);
     c.slide = -1;
     m->background = OWF_SHADE(mp->th.scheme[mp->map[0]]);
-    read_background(x, &c.cc, &mp->rels, cSld, &x->deck->masters[index].background,
-                    &x->deck->masters[index].background_image);
+    {
+        owf_look g;
+        memset(&g, 0, sizeof g);
+        read_background(x, &c.cc, &mp->rels, cSld, &x->deck->masters[index].background,
+                        &x->deck->masters[index].background_image, &g);
+        x->deck->masters[index].background_gradient = g.gradient;
+        x->deck->masters[index].background_angle = g.gradient_angle;
+        x->deck->masters[index].background2 = g.fill2;
+    }
     m = &x->deck->masters[index];
     c.objs = &m->objs;
     c.n = &m->nobjs;
@@ -2581,10 +2618,17 @@ static void read_slide(pptx *x, const char *name)
             read_map(ov, c.cc.map);
     }
     c.slide = index;
-    if (!read_background(x, &c.cc, &r, cSld, &x->deck->slides[index].background,
-                         &x->deck->slides[index].background_image) && lp)
-        read_background(x, &c.cc, &lp->rels, pchild(lp->root, "cSld"), &x->deck->slides[index].background,
-                        &x->deck->slides[index].background_image);
+    {
+        owf_look g;
+        memset(&g, 0, sizeof g);
+        if (!read_background(x, &c.cc, &r, cSld, &x->deck->slides[index].background,
+                             &x->deck->slides[index].background_image, &g) && lp)
+            read_background(x, &c.cc, &lp->rels, pchild(lp->root, "cSld"), &x->deck->slides[index].background,
+                            &x->deck->slides[index].background_image, &g);
+        x->deck->slides[index].background_gradient = g.gradient;
+        x->deck->slides[index].background_angle = g.gradient_angle;
+        x->deck->slides[index].background2 = g.fill2;
+    }
     s = &x->deck->slides[index];
     c.objs = &s->objs;
     c.n = &s->nobjs;

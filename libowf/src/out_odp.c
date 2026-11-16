@@ -753,14 +753,36 @@ static void put_gradients_of(owf_buf *out, const owf_obj *objs, int n, char (*se
     }
 }
 
+/* a page's background as a look, for its gradient */
+static owf_look background_look(unsigned long colour, unsigned char gradient, int angle, unsigned long colour2)
+{
+    owf_look l;
+    memset(&l, 0, sizeof l);
+    l.fill = colour;
+    l.gradient = gradient;
+    l.gradient_angle = angle;
+    l.fill2 = colour2;
+    return l;
+}
+
 static void put_gradients(owf_buf *out, const owf_deck *d)
 {
     char seen[64][48];
     int nseen = 0, i;
-    for (i = 0; i < d->nmasters; i++)
-        put_gradients_of(out, d->masters[i].objs, d->masters[i].nobjs, seen, &nseen, 64);
-    for (i = 0; i < d->nslides; i++)
-        put_gradients_of(out, d->slides[i].objs, d->slides[i].nobjs, seen, &nseen, 64);
+    owf_obj bg;
+    memset(&bg, 0, sizeof bg);
+    for (i = 0; i < d->nmasters; i++) {
+        const owf_master *m = &d->masters[i];
+        bg.look = background_look(m->background, m->background_gradient, m->background_angle, m->background2);
+        put_gradients_of(out, &bg, 1, seen, &nseen, 64);
+        put_gradients_of(out, m->objs, m->nobjs, seen, &nseen, 64);
+    }
+    for (i = 0; i < d->nslides; i++) {
+        const owf_slide *s = &d->slides[i];
+        bg.look = background_look(s->background, s->background_gradient, s->background_angle, s->background2);
+        put_gradients_of(out, &bg, 1, seen, &nseen, 64);
+        put_gradients_of(out, s->objs, s->nobjs, seen, &nseen, 64);
+    }
 }
 
 /* The object's graphic style: fill, line, insets, alignment, fitting. */
@@ -962,8 +984,34 @@ static void put_alt(owf_buf *out, const owf_obj *o)
     }
 }
 
+/* The merge whose first cell is row, col; or (cover) the one that covers it otherwise. */
+static const owf_table_merge *table_merge_at(const owf_obj *o, int row, int col, int cover)
+{
+    int i;
+    for (i = 0; o->merges && i < o->nmerges; i++) {
+        const owf_table_merge *m = &o->merges[i];
+        int first = m->row == row && m->col == col;
+        if (cover ? !first && row >= m->row && row < m->row + m->rows && col >= m->col && col < m->col + m->cols
+                  : first)
+            return m;
+    }
+    return NULL;
+}
+
+/* A cell with nothing in it: covered by a merge, or empty. */
+static void put_empty_cell(owf_buf *out, const owf_obj *o, int row, int col)
+{
+    owf_buf_puts(out, table_merge_at(o, row, col, 1) ? "<table:covered-table-cell/>" : "<table:table-cell/>");
+}
+
 static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
 {
+    static const struct { const char *attr; unsigned flag; } design[] = {
+        { "table:use-first-row-styles", OWF_TABLE_FIRST_ROW }, { "table:use-last-row-styles", OWF_TABLE_LAST_ROW },
+        { "table:use-first-column-styles", OWF_TABLE_FIRST_COL }, { "table:use-last-column-styles", OWF_TABLE_LAST_COL },
+        { "table:use-banding-rows-styles", OWF_TABLE_BANDED_ROWS },
+        { "table:use-banding-columns-styles", OWF_TABLE_BANDED_COLS },
+    };
     int ncols = o->ncols > 0 ? o->ncols : 1, i = 0, c, row;
     char name[32];
     owf_buf body;
@@ -974,7 +1022,17 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
             ncols = o->text.paras[c].table_cols;
     if (ncols > 64)
         ncols = 64;
-    owf_buf_puts(out, "<table:table>");
+    /* its design: the template's name and which of its parts are on */
+    owf_buf_puts(out, "<table:table");
+    if (o->table_style && *o->table_style) {
+        owf_buf_puts(out, " table:template-name=\"");
+        owf_buf_put_xml(out, o->table_style, strlen(o->table_style));
+        owf_buf_putc(out, '"');
+    }
+    for (c = 0; c < (int)(sizeof design / sizeof design[0]); c++)
+        if (o->table_design & design[c].flag)
+            owf_buf_printf(out, " %s=\"true\"", design[c].attr);
+    owf_buf_putc(out, '>');
     for (c = 0; c < ncols; c++) {
         int width = o->col_widths && c < o->ncols ? o->col_widths[c] : o->width / ncols;
         body.length = 0;
@@ -986,16 +1044,46 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
     }
     while (i < o->text.nparas) {
         int col = 0;
+        const owf_table_merge *m;
         row = o->text.paras[i].table_row;
-        owf_buf_puts(out, "<table:table-row>");
+        owf_buf_puts(out, "<table:table-row");
+        if (o->row_heights && row >= 0 && row < o->nrows && o->row_heights[row] > 0) {
+            /* its height: the least it is (Impress's row height) */
+            body.length = 0;
+            owf_buf_puts(&body, "<style:table-row-properties");
+            len_attr(&body, "style:row-height", o->row_heights[row]);
+            owf_buf_puts(&body, "/>");
+            reg_style(w->reg, EL_STYLE, "table-row", "ro", NULL, &body, name);
+            owf_buf_printf(out, " table:style-name=\"%s\"", name);
+        }
+        owf_buf_putc(out, '>');
         while (i < o->text.nparas && o->text.paras[i].table_row == row) {
             const owf_para *p = &o->text.paras[i];
             int target = p->table_col < ncols ? p->table_col : ncols - 1;
             while (col < target) {
-                owf_buf_puts(out, "<table:table-cell/>");
+                put_empty_cell(out, o, row, col);
                 col++;
             }
+            if (table_merge_at(o, row, col, 1)) {
+                /* covered: its text, if any, is not shown, as in Impress */
+                owf_buf_puts(out, "<table:covered-table-cell/>");
+                while (i < o->text.nparas && o->text.paras[i].table_row == row && o->text.paras[i].table_col == p->table_col)
+                    i++;
+                col++;
+                if (col >= ncols)
+                    while (i < o->text.nparas && o->text.paras[i].table_row == row)
+                        i++;
+                continue;
+            }
             owf_buf_puts(out, "<table:table-cell office:value-type=\"string\"");
+            if ((m = table_merge_at(o, row, col, 0)) != NULL) {
+                /* no wider than the columns written (the 64-column cap) */
+                int span = m->cols < ncols - col ? m->cols : ncols - col;
+                if (span > 1)
+                    owf_buf_printf(out, " table:number-columns-spanned=\"%d\"", span);
+                if (m->rows > 1)
+                    owf_buf_printf(out, " table:number-rows-spanned=\"%d\"", m->rows);
+            }
             if (OWF_SHADE_SET(p->cell_shading)) {
                 body.length = 0;
                 owf_buf_printf(&body, "<style:graphic-properties draw:fill=\"solid\" draw:fill-color=\"#%06lx\"/>"
@@ -1017,7 +1105,7 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
                     i++;
         }
         while (col < ncols) {
-            owf_buf_puts(out, "<table:table-cell/>");
+            put_empty_cell(out, o, row, col);
             col++;
         }
         owf_buf_puts(out, "</table:table-row>");
@@ -1217,9 +1305,16 @@ static void put_objects(odpw *w, owf_buf *out, const owf_obj *objs, int n, int p
 
 /* ---- Pages ---- */
 
-static void put_background(owf_buf *out, const owf_deck *d, unsigned long colour, int image, int master)
+static void put_background(owf_buf *out, const owf_deck *d, unsigned long colour, int image, int master,
+                           unsigned char gradient, int angle, unsigned long colour2)
 {
-    if (image >= 0 && image < d->res->nimages)
+    owf_look l = background_look(colour, gradient, angle, colour2);
+    if (image < 0 && look_has_gradient(&l)) {
+        char gname[48];
+        gradient_name(&l, gname, sizeof gname);
+        owf_buf_printf(out, " draw:fill=\"gradient\" draw:fill-gradient-name=\"%s\" draw:fill-color=\"#%06lx\"", gname,
+                       OWF_SHADE_RGB(colour));
+    } else if (image >= 0 && image < d->res->nimages)
         owf_buf_printf(out, " draw:fill=\"bitmap\" draw:fill-image-name=\"op-bg%d\" style:repeat=\"stretch\"", image + 1);
     else if (OWF_SHADE_SET(colour))
         owf_buf_printf(out, " draw:fill=\"solid\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(colour));
@@ -1527,7 +1622,8 @@ static int build_content(odpw *w, owf_buf *out)
         /* the page's style: background, fields, transition */
         body.length = 0;
         owf_buf_puts(&body, "<style:drawing-page-properties");
-        put_background(&body, d, s->background, s->background_image, 0);
+        put_background(&body, d, s->background, s->background_image, 0, s->background_gradient,
+                       s->background_angle, s->background2);
         owf_buf_printf(&body, " presentation:display-footer=\"%s\" presentation:display-page-number=\"%s\""
                               " presentation:display-date-time=\"%s\"",
                        s->show & OWF_SHOW_FOOTER ? "true" : "false", s->show & OWF_SHOW_NUMBER ? "true" : "false",
@@ -1683,7 +1779,8 @@ static int build_styles(odpw *w, owf_buf *out)
         w->master = m;
         body.length = 0;
         owf_buf_puts(&body, "<style:drawing-page-properties draw:background-size=\"full\"");
-        put_background(&body, d, m->background, m->background_image, 1);
+        put_background(&body, d, m->background, m->background_image, 1, m->background_gradient,
+                       m->background_angle, m->background2);
         owf_buf_puts(&body, "/>");
         reg_style(w->reg, EL_STYLE, "drawing-page", "dp", NULL, &body, style);
         owf_buf_puts(&masters, "<style:master-page");

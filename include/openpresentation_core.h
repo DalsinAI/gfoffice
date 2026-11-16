@@ -116,6 +116,9 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
  * one before. The point count (0: nothing to draw), or -1 when out is too small. */
 #define OPR_GRADIENT_LINEAR 1
 #define OPR_GRADIENT_RADIAL 2
+/* enough points for any band of an OL_MAX_SHAPE_POINTS outline: each cut keeps the outline's points
+ * and adds at most two per edge, and a ring adds its sides */
+#define OPR_GRADIENT_MAX_POINTS (3 * OL_MAX_SHAPE_POINTS + 32 + 8)
 int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind, int angle, unsigned long from,
                       unsigned long to, int band, int bands, int *out, int cap, unsigned long *colour);
 
@@ -370,6 +373,20 @@ int opr_table_apply_style(opr_undo *u, owf_deck *deck, int slide, int obj,
                           int row, int column, opr_table_scope scope,
                           unsigned long shading, int borders,
                           unsigned long border_colour);
+/* Presentation tables part 4: merge rows x cols cells from row, col into one
+ * (-2: one cell, past the table, or over a cell another merge has); split
+ * the merge that has row, col in it (-2: none); set a row's least height in
+ * twips (0: as its text needs); turn the design's parts on and off
+ * (OWF_TABLE_...). The text of the cells a merge covers is kept, not shown,
+ * and comes back on a split. Each is one Undo step. */
+int opr_table_merge(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column, int rows, int columns);
+int opr_table_split(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column);
+int opr_table_set_row_height(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             int row, int twips);
+int opr_table_set_design(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         unsigned design);
 /* A new embedded picture. The resource bytes and metadata are copied into
  * deck->res; coordinates are slide twips and crop is thousandths cut from
  * left, top, right and bottom. */

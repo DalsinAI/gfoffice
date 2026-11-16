@@ -543,10 +543,12 @@ pub-test: $(OUT)/pub-dump $(OUT)/pub-resave $(PUB_MADE)
 	python3 tests/pub/test_pubgen.py
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave $(OUT)/pub-dump
+	python3 tests/pub/test_pub_long_list.py $(OUT)/pub-dump
 
 pub-check: $(OUT)/pub-dump-asan $(OUT)/pub-resave-asan $(PUB_MADE)
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump-asan 150
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave-asan $(OUT)/pub-dump-asan
+	python3 tests/pub/test_pub_long_list.py $(OUT)/pub-dump-asan
 
 test: pub-test
 check: pub-check
@@ -634,6 +636,32 @@ pressmaster-merge-show-check: $(OUT)/test-publisher-merge-show-asan
 
 test: pressmaster-merge-show-test
 check: pressmaster-merge-show-check
+
+# GFOpenPressmaster's master pages (the shared Master view) and Insert > Page Number (src/pub/opp_pagenum.c)
+PUB_MASTERS_SRC = src/pub/opp_pagenum.c src/pub/opp_merge.c src/pub/opp_template.c src/core/ow_merge.c
+PUB_MASTERS_DEPS = $(PUB_MERGE_SHOW_DEPS) $(PUB_MASTERS_SRC) tests/pub/test_pub_masters.c \
+	include/openpressmaster_pagenum.h include/openpressmaster_template.h
+
+$(OUT)/test-pressmaster-masters: $(PUB_MASTERS_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) $(PUB_MASTERS_SRC) \
+		tests/pub/test_pub_masters.c -lz -o $@
+
+$(OUT)/test-pressmaster-masters-asan: $(PUB_MASTERS_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) $(PUB_MASTERS_SRC) tests/pub/test_pub_masters.c -lz -o $@
+
+pressmaster-masters-test: $(OUT)/test-pressmaster-masters
+	$(OUT)/test-pressmaster-masters
+
+pressmaster-masters-check: $(OUT)/test-pressmaster-masters-asan
+	$(OUT)/test-pressmaster-masters-asan
+
+test: pressmaster-masters-test
+check: pressmaster-masters-check
+
+.PHONY: pressmaster-masters-test pressmaster-masters-check
 pressmaster-merge-test: pressmaster-merge-show-test
 pressmaster-merge-check: pressmaster-merge-show-check
 

@@ -53,13 +53,16 @@
  *
  * 3.14: owf_pdf_gradient is a call, at the end, so OWConvert's deck PDF (opr_pdf.c's gradient fills) links
  * against owfpresent.library again.
+ * 3.15: gradient slide and master backgrounds (#262): owf_slide and owf_master end with background_gradient,
+ * background_angle and background2, so they are larger and a program's size check refuses 3.14 and before. No
+ * call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 14
-#define OWF_LIB_VERS "3.14"
+#define OWF_LIB_REVISION 15
+#define OWF_LIB_VERS "3.15"
 #define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"

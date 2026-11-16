@@ -778,6 +778,52 @@ static const char mpx_sample[] =
 /* Actual start and finish and the status date go out in MSPDI (with the actual and remaining duration MS
  * Project shows) and come back, in .gfproj too; a task with none writes none. By hand: an ActualFinish with
  * no ActualStart, or before it, is left out. */
+/* Leveling delays go through .gfproj and MSPDI, in tenths of a minute with their format; MS Project's
+ * own "edays" (8) reads back as elapsed. */
+static void test_leveling_delay(void)
+{
+    static const char hand[] =
+        "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+        "<StartDate>2026-11-16T08:00:00</StartDate><Tasks>"
+        "<Task><UID>1</UID><ID>1</ID><Name>A</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<LevelingDelay>14400</LevelingDelay><LevelingDelayFormat>8</LevelingDelayFormat></Task>"
+        "<Task><UID>2</UID><ID>2</ID><Name>B</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<LevelingDelay>0</LevelingDelay><LevelingDelayFormat>8</LevelingDelayFormat></Task>"
+        "</Tasks></Project>\n";
+    owf_project *p = sample(), *q = NULL;
+    unsigned char *data;
+    size_t length;
+    int f;
+    p->tasks[1].level_delay = 960;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+        CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+        if (f == OWF_PFILE_MSPDI) CHECK_HAS(data, "<LevelingDelay>9600</LevelingDelay><LevelingDelayFormat>7</LevelingDelayFormat>");
+        q = NULL;
+        CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+        if (q && q->ntasks == p->ntasks) {
+            CHECK_N(q->tasks[1].level_delay, 960);
+            CHECK(!q->tasks[1].level_delay_elapsed);
+            CHECK_N(q->tasks[0].level_delay, 0);
+        } else
+            CHECK(q && q->ntasks == p->ntasks);
+        owf_project_free(q);
+        owf_free(data);
+    }
+    owf_project_free(p);
+    q = NULL;
+    CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
+    if (q && q->ntasks == 2) {
+        CHECK_N(q->tasks[0].level_delay, 1440);
+        CHECK(q->tasks[0].level_delay_elapsed);
+        CHECK_N(q->tasks[1].level_delay, 0);
+        CHECK_N(owf_project_schedule(q), OWF_OK);
+        CHECK_N(q->tasks[0].early_start, owf_ptime_make(2026, 11, 17, 8, 0));
+    } else
+        CHECK(q && q->ntasks == 2);
+    owf_project_free(q);
+}
+
 static void test_actuals(void)
 {
     static const char hand[] =
@@ -1065,6 +1111,7 @@ int main(void)
     test_cost_resource();
     test_baseline();
     test_actuals();
+    test_leveling_delay();
     test_mpx();
     test_gan();
     test_damaged();
