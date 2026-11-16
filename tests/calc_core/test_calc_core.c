@@ -12,6 +12,7 @@
 #include "opencalc_core.h"
 #include "oc_internal.h"                /* oc_lp_solve */
 #include "owf_zip.h"
+#include "owf_internal.h"              /* owf_zip_new, owf_buf: an .ods written by hand */
 
 static int failures, checks;
 
@@ -6031,6 +6032,162 @@ static void test_edit_links(void)
     remove(src_path);
 }
 
+/* Tracked changes kept in ODS (table:tracked-changes): read back as they were, the new content from the cells. */
+/* An .ods written by hand from its tracked changes' content.xml (mimetype first, stored). */
+static int write_track_ods(const char *path, const char *changes)
+{
+    static const char *const head =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-content "
+        "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+        "xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" "
+        "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+        "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" office:version=\"1.2\"><office:body><office:spreadsheet>"
+        "<table:tracked-changes>";
+    static const char *const tail =
+        "</table:tracked-changes><table:table table:name=\"Sheet1\"><table:table-row><table:table-cell/>"
+        "</table:table-row></table:table></office:spreadsheet></office:body></office:document-content>";
+    static const char *const manifest =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><manifest:manifest "
+        "xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\"><manifest:file-entry "
+        "manifest:full-path=\"/\" manifest:media-type=\"application/vnd.oasis.opendocument.spreadsheet\"/>"
+        "<manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/></manifest:manifest>";
+    static const char *const mime = "application/vnd.oasis.opendocument.spreadsheet";
+    owf_buf out, content;
+    owf_zip *zip;
+    FILE *f;
+    int ok;
+    owf_buf_init(&out);
+    owf_buf_init(&content);
+    owf_buf_puts(&content, head);
+    owf_buf_puts(&content, changes);
+    owf_buf_puts(&content, tail);
+    if (!(zip = owf_zip_new(&out))) {
+        owf_buf_free(&content);
+        return 0;
+    }
+    owf_zip_add(zip, "mimetype", mime, strlen(mime), 0);
+    owf_zip_add(zip, "META-INF/manifest.xml", manifest, strlen(manifest), 1);
+    owf_zip_add(zip, "content.xml", content.data, content.length, 1);
+    owf_zip_finish(zip);
+    ok = (f = fopen(path, "wb")) != NULL && fwrite(out.data, 1, out.length, f) == out.length;
+    if (f)
+        ok = fclose(f) == 0 && ok;
+    owf_buf_free(&out);
+    owf_buf_free(&content);
+    return ok;
+}
+
+#define TRACK_INFO "<office:change-info><dc:creator>Kryten</dc:creator><dc:date>2026-11-16T07:00:00</dc:date></office:change-info>"
+
+/* What a file's deletions name: one already rejected names nothing that is read after it; one named inside
+ * another takes its own changes first, whatever order the file lists them in. */
+static void test_track_changes_ods_refs(void)
+{
+    static const char *const path = "build/host/calc-core-track-refs.ods";
+    oc_core *core = fresh();
+    const owf_change *c;
+    if (!core) return;
+    CHECK(write_track_ods(path,
+        "<table:cell-content-change table:id=\"ct1\"><table:cell-address table:column=\"0\" table:row=\"4\" "
+        "table:table=\"0\"/>" TRACK_INFO "<table:previous><table:change-track-table-cell/></table:previous>"
+        "</table:cell-content-change>"
+        "<table:deletion table:id=\"ct2\" table:acceptance-state=\"rejected\" table:type=\"row\" table:position=\"4\" "
+        "table:table=\"0\">" TRACK_INFO "<table:deletions><table:change-deletion table:id=\"ct1\"/></table:deletions>"
+        "</table:deletion>"
+        "<table:deletion table:id=\"ct3\" table:type=\"row\" table:position=\"2\" table:table=\"0\">" TRACK_INFO
+        "</table:deletion>"));
+    CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK && oc_core_change_count(core) == 2);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_CELL && c->row == 4 && c->id == 1);
+    c = oc_core_change_at(core, 1);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->row == 2 && c->nchildren == 0);
+    /* the outer deletion listed first, naming the inner, which names the cell */
+    CHECK(write_track_ods(path,
+        "<table:deletion table:id=\"ct3\" table:type=\"row\" table:position=\"1\" table:table=\"0\">" TRACK_INFO
+        "<table:deletions><table:change-deletion table:id=\"ct2\"/></table:deletions></table:deletion>"
+        "<table:deletion table:id=\"ct2\" table:type=\"row\" table:position=\"1\" table:table=\"0\">" TRACK_INFO
+        "<table:deletions><table:change-deletion table:id=\"ct1\"/></table:deletions></table:deletion>"
+        "<table:cell-content-change table:id=\"ct1\"><table:cell-address table:column=\"0\" table:row=\"1\" "
+        "table:table=\"0\"/>" TRACK_INFO "<table:previous><table:change-track-table-cell/></table:previous>"
+        "</table:cell-content-change>"));
+    CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK && oc_core_change_count(core) == 1);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->id == 3 && c->nchildren == 1);
+    CHECK(c && c->nchildren == 1 && c->children[0].kind == OWF_CHANGE_DELETE_ROWS && c->children[0].row == 0 &&
+          c->children[0].nchildren == 1 && c->children[0].children[0].kind == OWF_CHANGE_CELL &&
+          c->children[0].children[0].row == 0);
+    oc_core_free(core);
+}
+
+static void test_track_changes_ods(void)
+{
+    static const char path[] = "build/host/calc-core-track.ods";
+    oc_core *core = fresh();
+    const owf_change *c;
+    if (!core) return;
+    oc_core_set_track_clock(core, track_clock, NULL);
+    CHECK(oc_core_set_track_author(core, "Lister") == OWF_OK);
+    enter_at(core, "A1", "5");
+    enter_at(core, "B2", "'0123");
+    CHECK(oc_core_set_track_changes(core, 1) == OWF_OK);
+    enter_at(core, "A1", "7");
+    enter_at(core, "B2", "=A1*2");
+    go(core, "A3");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    enter_at(core, "C4", "x & <y>");
+    go(core, "C4");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(oc_core_add_sheet(core, "Two") == 1 && oc_core_rename_sheet(core, 1, "Second") == OWF_OK);
+    CHECK(oc_core_change_count(core) == 6);
+    CHECK(oc_core_save(core, path, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_track_changes(core) && oc_core_change_count(core) == 6 && oc_core_sheet_count(core) == 2);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_CELL && c->row == 0 && c->col == 0 && c->id == 1 && c->before &&
+          !strcmp(c->before, "5") && c->after && !strcmp(c->after, "7"));
+    CHECK(c && c->author && !strcmp(c->author, "Lister") && c->date && !strcmp(c->date, "2026-11-16T07:00:00"));
+    c = oc_core_change_at(core, 1);
+    CHECK(c && c->before && !strcmp(c->before, "'0123") && c->after && !strcmp(c->after, "=A1*2"));
+    c = oc_core_change_at(core, 2);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_ROWS && c->row == 2 && c->count == 1 && c->sheet == 0);
+    c = oc_core_change_at(core, 3);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->row == 3 && c->count == 1 && c->ncells == 1 && c->nchildren == 1);
+    CHECK(c && c->ncells == 1 && c->cells[0].row == 0 && c->cells[0].col == 2 && !strcmp(c->cells[0].input, "x & <y>"));
+    CHECK(c && c->nchildren == 1 && c->children[0].kind == OWF_CHANGE_CELL && c->children[0].row == 0 &&
+          c->children[0].col == 2 && !c->children[0].before);
+    c = oc_core_change_at(core, 4);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_SHEET && c->sheet == 1 && c->after && !strcmp(c->after, "Second"));
+    c = oc_core_change_at(core, 5);
+    CHECK(c && c->kind == OWF_CHANGE_RENAME_SHEET && c->sheet == 1 && c->before && !strcmp(c->before, "Two") &&
+          c->after && !strcmp(c->after, "Second"));
+    CHECK(oc_core_reject_all_changes(core) == OWF_OK && oc_core_sheet_count(core) == 1);
+    CHECK(fabs(num(core, "A1") - 5) < 1e-9 && !strcmp(text(core, "B2"), "0123") && empty_at(core, "C4"));
+    /* a deletion of three rows goes as three lines, LibreOffice's way, and comes back as one */
+    CHECK(oc_core_accept_all_changes(core) == OWF_ERR_UNSUPPORTED);
+    enter_at(core, "A5", "a5");
+    enter_at(core, "A7", "a7");
+    go(core, "A5");
+    {
+        owf_range r;
+        CHECK(oc_parse_range("A5:A7", &r));
+        oc_core_select_range(core, &r);
+    }
+    CHECK(oc_core_delete(core, 0) == OWF_OK && oc_core_change_count(core) == 1);
+    CHECK(oc_core_save(core, path, NULL, NULL) == OWF_OK && oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_change_count(core) == 1);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->row == 4 && c->count == 3 && c->nchildren == 2 && c->ncells == 2);
+    CHECK(c && c->ncells == 2 && c->cells[0].row == 0 && c->cells[1].row == 2 && !strcmp(c->cells[1].input, "a7"));
+    CHECK(c && c->nchildren == 2 && c->children[0].row == 0 && c->children[1].row == 2);
+    CHECK(oc_core_reject_all_changes(core) == OWF_OK && empty_at(core, "A5") && empty_at(core, "A7") &&
+          empty_at(core, "A6") && oc_core_change_count(core) == 0);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_change_count(core) == 1);
+    CHECK(oc_core_reject_change(core, 0) == OWF_OK && oc_core_change_count(core) == 2);   /* the rows back */
+    CHECK(oc_core_change_at(core, 0)->row == 4 && oc_core_change_at(core, 1)->row == 6);
+    CHECK(!strcmp(text(core, "A5"), "a5") && !strcmp(text(core, "A7"), "a7") && empty_at(core, "A6"));
+    oc_core_free(core);
+}
+
 static void test_book_protection(void)
 {
     static const char *const paths[] = { "build/host/calc-core-bookprotect.xlsx", "build/host/calc-core-bookprotect.ods" };
@@ -8477,6 +8634,47 @@ static void test_consolidate_refresh(void)
     oc_core_free(core);
 }
 
+/* Tracked changes show on the sheet: a frame round each changed cell, a pixel outside it; none once accepted. */
+static int change_frames_in(const oc_draw_list *l, int *first)
+{
+    int i, n = 0;
+    *first = -1;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_FRAME && l->items[i].role == OC_ROLE_CHANGE) {
+            if (*first < 0)
+                *first = i;
+            n++;
+        }
+    return n;
+}
+
+static void test_change_frames(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    int frame;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    enter_at(core, "C3", "1");                                 /* before recording: not a change */
+    CHECK(oc_view_draw(core, &l) == OWF_OK && change_frames_in(&l, &frame) == 0);
+    CHECK(oc_core_set_track_changes(core, 1) == OWF_OK);
+    enter_at(core, "B2", "10");
+    go(core, "H12");
+    CHECK(oc_view_draw(core, &l) == OWF_OK && change_frames_in(&l, &frame) == 1);
+    {
+        const oc_draw_item *f = &l.items[frame];
+        CHECK(f->x == 40 + 64 - 1 && f->y == 18 + 17 - 1 && f->w == 64 + 1 && f->h == 17 + 1 && f->line == 1);
+        CHECK(f->row == 1 && f->col == 1 && f->clip_x == 40 && f->clip_y == 18);
+    }
+    CHECK(oc_core_add_sheet(core, "Two") == 1 && oc_core_set_sheet(core, 1) == OWF_OK);   /* another sheet's: not here */
+    CHECK(oc_view_draw(core, &l) == OWF_OK && change_frames_in(&l, &frame) == 0);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK && oc_core_accept_all_changes(core) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && change_frames_in(&l, &frame) == 0);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 /* The shown scenario's frame round each range and its name's tab, in the grid's draw list. */
 static int scenario_items(const oc_draw_list *l, int kind, int *first)
 {
@@ -9115,6 +9313,8 @@ int main(void)
     test_track_changes();
     test_change_window_helpers();
     test_edit_links();
+    test_track_changes_ods();
+    test_track_changes_ods_refs();
     test_web_tables();
     test_extdata();
     test_pivot_summary();
@@ -9137,6 +9337,7 @@ int main(void)
     test_scenarios();
     test_consolidate_refresh();
     test_scenario_frame();
+    test_change_frames();
     test_consolidate();
     test_consolidate_names();
     test_pdf();

@@ -343,12 +343,14 @@ int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, in
         len++;
         span = (long)(hi - lo) + 1;
         for (i = 0; i < GRADIENT_BANDS; i++) {
-            long t0 = (long)lo + span * i / GRADIENT_BANDS, t1 = (long)lo + span * (i + 1) / GRADIENT_BANDS + 2;
+            /* long long: ux * t0 is past a 32-bit long once a shape is about 131,000 units across */
+            long long t0 = lo + (long long)span * i / GRADIENT_BANDS, t1 = lo + (long long)span * (i + 1) / GRADIENT_BANDS + 2;
+            long long ux8 = ux, uy8 = uy, len8 = len;
             int q[8];
-            q[0] = (int)(cx + ux * t0 / 16384 - uy * len / 16384); q[1] = (int)(cy + uy * t0 / 16384 + ux * len / 16384);
-            q[2] = (int)(cx + ux * t1 / 16384 - uy * len / 16384); q[3] = (int)(cy + uy * t1 / 16384 + ux * len / 16384);
-            q[4] = (int)(cx + ux * t1 / 16384 + uy * len / 16384); q[5] = (int)(cy + uy * t1 / 16384 - ux * len / 16384);
-            q[6] = (int)(cx + ux * t0 / 16384 + uy * len / 16384); q[7] = (int)(cy + uy * t0 / 16384 - ux * len / 16384);
+            q[0] = (int)(cx + ux8 * t0 / 16384 - uy8 * len8 / 16384); q[1] = (int)(cy + uy8 * t0 / 16384 + ux8 * len8 / 16384);
+            q[2] = (int)(cx + ux8 * t1 / 16384 - uy8 * len8 / 16384); q[3] = (int)(cy + uy8 * t1 / 16384 + ux8 * len8 / 16384);
+            q[4] = (int)(cx + ux8 * t1 / 16384 + uy8 * len8 / 16384); q[5] = (int)(cy + uy8 * t1 / 16384 - ux8 * len8 / 16384);
+            q[6] = (int)(cx + ux8 * t0 / 16384 + uy8 * len8 / 16384); q[7] = (int)(cy + uy8 * t0 / 16384 - ux8 * len8 / 16384);
             if (owf_pdf_path(pdf, q, 4, 1, OWF_SHADE(blend(from, to, i * 2 + 1, GRADIENT_BANDS * 2)), 0, 0) < 0)
                 return -1;
         }
