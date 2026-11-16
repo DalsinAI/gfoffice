@@ -14,6 +14,7 @@
 #define OPENDIAG_REXX_H
 
 #include "opendiag_core.h"
+#include "opendiag_clip.h"
 
 #define ODG_RX_OK 0
 #define ODG_RX_NOW 5
@@ -34,6 +35,8 @@ typedef struct {
     char file[256];                      /* the diagram's file, "" when it has none */
     char lasterror[256];
     int changes;                         /* goes up with every command that changed what is drawn */
+    odg_clip clip;                       /* COPY and CUT's cells for PASTE (and the Edit menu's); kept across NEW
+                                          * and OPEN, so cells go from one diagram to another */
     odg_picture_fn picture;              /* the app's page drawer for PNG and ILBM; NULL: they are refused */
     void *picture_user;
 } odg_rexx;

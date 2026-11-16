@@ -9,6 +9,8 @@
  */
 #include "opendiag_rexx.h"
 #include "opendiag_mind.h"
+#include "opendiag_order.h"
+#include "opendiag_align.h"
 #include "ow_picture.h"
 
 #include <stdio.h>
@@ -30,7 +32,8 @@ enum {
     C_ADDPAGE, C_CELLS, C_ADDSHAPE, C_CONNECT, C_MOVE, C_RESIZE, C_DELETE, C_SETVALUE, C_GETVALUE, C_STYLE,
     C_GETSTYLE, C_GETBOX, C_HIT, C_GRID, C_UNDO, C_REDO, C_LAYERS, C_LAYER, C_ADDLAYER, C_GETLAYER, C_SHOWLAYER,
     C_LOCKLAYER, C_RENAMELAYER, C_MAPNEW, C_MAPCHILD, C_MAPSIBLING, C_MAPDELETE, C_MAPMOVE, C_MAPFOLD, C_MAPLAYOUT,
-    C_MAPROOT, C_MAPPARENT, C_MAPCHILDREN, C_MAPSTEP, C_MAPEXPORT, C_MAPIMPORT, NCOMMANDS
+    C_MAPROOT, C_MAPPARENT, C_MAPCHILDREN, C_MAPSTEP, C_MAPEXPORT, C_MAPIMPORT, C_COPY, C_CUT, C_PASTE,
+    C_DUPLICATE, C_ORDER, C_GROUP, C_UNGROUP, C_ALIGN, C_DISTRIBUTE, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -81,6 +84,15 @@ static const command commands[NCOMMANDS] = {
     { "MAPSTEP", "NODE/A,WAY/A" },
     { "MAPEXPORT", "NODE/A,FILE/A,FORMAT/K" },
     { "MAPIMPORT", "FILE/A,X/N,Y/N,FORMAT/K" },
+    { "COPY", "ID/A" },
+    { "CUT", "ID/A" },
+    { "PASTE", "DX/N,DY/N" },
+    { "DUPLICATE", "ID/A,DX/N,DY/N" },
+    { "ORDER", "ID/A,WAY/A" },
+    { "GROUP", "ID/A" },
+    { "UNGROUP", "ID/A" },
+    { "ALIGN", "ID/A,WAY/A" },
+    { "DISTRIBUTE", "ID/A,DOWN/S" },
 };
 
 #define ODG_PICTURE_UNDRAWN (-1000)   /* picture_file: the app's drawer gave no pixels */
@@ -463,11 +475,13 @@ int odg_rexx_init(odg_rexx *rx)
         return OWF_ERR_MEMORY;
     }
     odg_init(&rx->doc, &rx->d, 0);
+    odg_clip_init(&rx->clip);
     return OWF_OK;
 }
 
 void odg_rexx_free(odg_rexx *rx)
 {
+    odg_clip_free(&rx->clip);
     odg_free(&rx->doc);
     owf_diagram_free(&rx->d);
 }
@@ -568,6 +582,27 @@ static const owf_dcell *find_cell(odg_rexx *rx, const char *what, const char *id
     const owf_dcell *c = owf_dpage_find(odg_page(&rx->doc), id);
     if (!c) snprintf(rx->lasterror, sizeof rx->lasterror, "%s: no cell %.100s on the page", what, id);
     return c;
+}
+
+/* The ids made (count of them, max in made) as the answer, space between; "+" after the last when some didn't fit. */
+static void put_made(char *result, size_t size, char (*made)[ODG_CLIP_ID], int count, int max)
+{
+    size_t at = 0;
+    int i;
+    result[0] = 0;
+    for (i = 0; i < count && i < max; i++) put_word(result, size, &at, made[i]);
+    if (count > max) put_word(result, size, &at, "+");
+}
+
+/* WAY's word, from words[0..n-1] (any case); -1 with LASTERROR when it is none of them */
+static int way_arg(odg_rexx *rx, const char *what, const char *w, const char *const *words, int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        if (word_at(w, words[i], strlen(words[i]), 0) && !w[strlen(words[i])]) return i;
+    snprintf(rx->lasterror, sizeof rx->lasterror, "%s: WAY is one of %s", what, n == 4 ? "FRONT, BACK, FORWARD or BACKWARD" :
+             "LEFT, CENTRE, RIGHT, TOP, MIDDLE or BOTTOM");
+    return -1;
 }
 
 static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
@@ -1027,6 +1062,90 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         else rc = odg_layer_rename(doc, i, a->value[1]);
         return edit_rc(rx, rc, commands[c].name, "no such layer");
     }
+    case C_COPY:
+    case C_CUT:
+    case C_DUPLICATE: {
+        static char made[MAX_IDS][ODG_CLIP_ID];
+        const char *what = commands[c].name;
+        int count = 0;
+        if ((n = split_ids(rx, what, a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if (c == C_COPY) {
+            rc = odg_copy(doc, ids, n, &rx->clip);
+            if (rc == OWF_OK) return ODG_RX_OK;      /* the page doesn't change */
+            return edit_rc(rx, rc, what, "no shape or connector to copy");
+        }
+        if (c == C_DUPLICATE && !layer_open(rx, what)) return ODG_RX_ERROR;
+        rc = c == C_CUT ? odg_cut(doc, ids, n, &rx->clip)
+                        : odg_duplicate(doc, ids, n, a->value[1] ? a->num[1] : ODG_CLIP_STEP,
+                                        a->value[2] ? a->num[2] : ODG_CLIP_STEP, made, MAX_IDS, &count);
+        if ((rc = edit_rc(rx, rc, what, "no shape or connector to copy")) == ODG_RX_OK && c == C_DUPLICATE)
+            put_made(result, size, made, count, MAX_IDS);
+        return rc;
+    }
+    case C_PASTE: {
+        static char made[MAX_IDS][ODG_CLIP_ID];
+        int count = 0;
+        if (odg_clip_empty(&rx->clip)) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "PASTE: nothing has been copied");
+            return ODG_RX_NOW;
+        }
+        if (!layer_open(rx, "PASTE")) return ODG_RX_ERROR;
+        if (a->value[0] || a->value[1])
+            rc = odg_paste(doc, &rx->clip, a->value[0] ? a->num[0] : 0, a->value[1] ? a->num[1] : 0, made, MAX_IDS,
+                           &count);
+        else
+            rc = odg_paste_next(doc, &rx->clip, made, MAX_IDS, &count);
+        if ((rc = edit_rc(rx, rc, "PASTE", "not possible")) == ODG_RX_OK) put_made(result, size, made, count, MAX_IDS);
+        return rc;
+    }
+    case C_ORDER: {
+        static const char *const ways[4] = { "FRONT", "BACK", "FORWARD", "BACKWARD" };
+        static const odg_order how[4] = { ODG_ORDER_FRONT, ODG_ORDER_BACK, ODG_ORDER_FORWARD, ODG_ORDER_BACKWARD };
+        int w = way_arg(rx, "ORDER", a->value[1], ways, 4);
+        if (w < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "ORDER", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        rc = odg_reorder(doc, ids, n, how[w]);
+        if (rc == OWF_ERR_FORMAT) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "ORDER: no shape or connector to move %s", ways[w]);
+            return ODG_RX_NOW;
+        }
+        return edit_rc(rx, rc, "ORDER", "not possible");
+    }
+    case C_GROUP:
+        if ((n = split_ids(rx, "GROUP", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        rc = odg_group(doc, ids, n, text);
+        if ((rc = edit_rc(rx, rc, "GROUP", "no shape or connector to group")) == ODG_RX_OK) put(result, size, text);
+        return rc;
+    case C_UNGROUP: {
+        static char made[MAX_IDS][ODG_ORDER_ID];
+        int count = 0;
+        if ((n = split_ids(rx, "UNGROUP", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        rc = odg_ungroup(doc, ids, n, made, MAX_IDS, &count);
+        if ((rc = edit_rc(rx, rc, "UNGROUP", "no group (or shape holding others) to take apart")) == ODG_RX_OK)
+            put_made(result, size, made, count, MAX_IDS);
+        return rc;
+    }
+    case C_ALIGN: {
+        static const char *const ways[6] = { "LEFT", "CENTRE", "RIGHT", "TOP", "MIDDLE", "BOTTOM" };
+        int w;
+        if (a->value[1] && word_at(a->value[1], "CENTER", 6, 0) && !a->value[1][6]) w = 1;
+        else if ((w = way_arg(rx, "ALIGN", a->value[1], ways, 6)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "ALIGN", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        rc = odg_align(doc, ids, n, (odg_align_how)w);
+        if (rc == OWF_ERR_FORMAT) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "ALIGN: needs two shapes or more, not lined up already");
+            return ODG_RX_NOW;
+        }
+        return edit_rc(rx, rc, "ALIGN", "not possible");
+    }
+    case C_DISTRIBUTE:
+        if ((n = split_ids(rx, "DISTRIBUTE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        rc = odg_distribute(doc, ids, n, a->value[1] == NULL);
+        if (rc == OWF_ERR_FORMAT) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "DISTRIBUTE: needs three shapes or more, not spread evenly already");
+            return ODG_RX_NOW;
+        }
+        return edit_rc(rx, rc, "DISTRIBUTE", "not possible");
     case C_UNDO:
     case C_REDO:
         rc = c == C_UNDO ? odg_undo(doc) : odg_redo(doc);
