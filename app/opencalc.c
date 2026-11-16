@@ -4807,12 +4807,31 @@ static long extdata_now(void)
     return ds.ds_Days * 86400L + ds.ds_Minute * 60L + ds.ds_Tick / TICKS_PER_SECOND;
 }
 
-/* The book opened: those set to refresh on opening are read, quietly; the clock starts again. */
+/* The book opened: those set to refresh on opening are read, quietly, once the user says so (a book from
+ * elsewhere could read files and databases into its sheets, as LibreOffice asks before updating links); the
+ * clock starts again. An ARexx OPEN reads none: EXTDATAREFRESH does. */
 static void extdata_opened(void)
 {
-    int i, n;
+    char text[1200], shown[200];
+    size_t at;
+    int i, n = oc_core_extdata_count(core), on_open = 0;
     for (i = 0; i < OC_EXTDATA_MAX; i++)
         extdata_last[i] = extdata_now();
+    at = (size_t)snprintf(text, sizeof text, "This workbook reads external data as it opens, from:\n");
+    for (i = 0; i < n; i++) {
+        oc_extdata_spec spec;
+        if (oc_core_extdata(core, i, &spec, NULL, NULL) != OWF_OK || !spec.refresh_on_open) continue;
+        on_open++;
+        to_latin1(spec.source, strlen(spec.source), shown, sizeof shown);
+        if (at + 2 < sizeof text) at += (size_t)snprintf(text + at, sizeof text - at, "  %.150s\n", shown);
+    }
+    if (!on_open) return;
+    if (at + 2 < sizeof text)
+        snprintf(text + at, sizeof text - at, "\nRead it now? Only if you trust where the workbook came from.");
+    if (ask_window("External Data", text, "Read Now|Not Now") != 1) {
+        set_status("External data not read: Data > Refresh External Data reads it.");
+        return;
+    }
     n = oc_core_extdata_refresh_on_open(core, extdata_io());
     if (n) {
         char msg[80];

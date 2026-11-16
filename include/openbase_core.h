@@ -142,6 +142,13 @@ const char *ob_error(const ob_project *p);
 /* Sets it (core 0.14, sheets #326), for GFOpenBase's parts outside the core (sheets): 0
  * with text as the reason ("" or NULL clears it). */
 int ob_set_error(ob_project *p, const char *text);
+/* A bound on the work each statement may do from now on (core 0.14, GFOpenCalc's External Data): SQLite's
+ * progress handler is called every OB_STEP_OPS of its steps, and past limit calls the statement stops with an
+ * error (a query that would run without end: WITH RECURSIVE without LIMIT). limit 0 takes the bound away; the
+ * count starts again with each call. ob_step_limit_hit: 1 when the last error was the bound's. */
+#define OB_STEP_OPS 10000
+int ob_set_step_limit(ob_project *p, long limit);
+int ob_step_limit_hit(const ob_project *p);
 
 /* The project's title (oadb_meta "title"); "" when it has none. */
 const char *ob_title(ob_project *p);

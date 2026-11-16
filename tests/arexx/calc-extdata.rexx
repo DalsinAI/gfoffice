@@ -51,13 +51,15 @@ CALL want 'EXTDATACHANGE 1 WEB RAM:extdata-page.html HTML_1 ONOPEN EVERY 60', 0
 CALL want 'EXTDATAINFO 1', 0
 IF res ~= 'WEB|B2:C5|RAM:extdata-page.html|HTML_1|1 1 60' THEN CALL bad 'EXTDATAINFO gave' res
 
-/* saved and opened again: kept, and refreshed on opening */
+/* saved and opened again: kept; an ARexx OPEN reads nothing (the window asks first), EXTDATAREFRESH does */
 CALL want 'SAVEAS RAM:extdata-book.xlsx', 0
 CALL page '<table><tr><th>Currency<th>Rate<tr><td>Kept<td>9</table>'
 ADDRESS VALUE port
 CALL want 'OPEN RAM:extdata-book.xlsx', 0
 CALL want 'EXTDATA', 0
 IF res ~= '1' THEN CALL bad 'EXTDATA gave' res '(wanted 1)'
+CALL cell 'B3', 'A'
+CALL want 'EXTDATAREFRESH ALL', 0
 CALL cell 'B3', 'Kept'
 CALL cell 'C3', '9'
 

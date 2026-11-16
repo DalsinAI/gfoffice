@@ -8772,6 +8772,15 @@ static void test_web_tables(void)
     CHECK_STR(ext_text(&t, 0, 0), "caf\xc3\xa9 \xe2\x80\x93 \xf0\x9f\x98\x80 \xe2\x80\x93 &bogus; &");
     oc_exttable_free(&t);
 
+    {   /* a NUL byte and an overlong NUL do not cut the text short; an id of digits */
+        static const char nul[] = "<table id=2><tr><td>a\0b \xe0\x80\x80" "c</td></tr></table><table><tr><td>second</td></tr></table>";
+        CHECK(oc_web_table(nul, sizeof nul - 1, "2", &t) == OWF_OK);
+        CHECK_STR(ext_text(&t, 0, 0), "a\xef\xbf\xbd" "b \xef\xbf\xbd" "c");
+        oc_exttable_free(&t);
+        CHECK(oc_web_table_number(nul, sizeof nul - 1, "2") == 1);        /* the id "2" */
+        CHECK(oc_web_table_number(nul, sizeof nul - 1, "HTML_2") == 2);   /* the second */
+    }
+
     /* oc_exttable */
     CHECK(oc_exttable_alloc(&t, 0, 3) == OWF_OK && t.rows == 0 && !t.cells);
     CHECK(oc_exttable_alloc(&t, 100000, 100000) == OWF_ERR_UNSUPPORTED && !t.cells);

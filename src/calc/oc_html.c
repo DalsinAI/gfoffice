@@ -291,7 +291,10 @@ static void add_char(web_reader *w, unsigned long c)
 {
     char buf[8];
     size_t n;
-    int space = c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == 0xA0;
+    int space;
+    if (!c)
+        c = 0xFFFD;                      /* a NUL byte (or an overlong one) would cut the text short */
+    space = c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == 0xA0;
     if (w->in_caption && w->info) {
         web_table *t = w->depth ? &w->stack[w->caption_of] : NULL;
         oc_webtable_info *in = info_of(w, t);
@@ -742,16 +745,31 @@ int oc_web_table_number(const char *page, size_t length, const char *which)
     count = oc_web_tables(page, length, NULL, 0);
     if (count <= 0)
         return 0;
-    if (number)
-        return number <= count ? number : 0;
     if (!(info = owf_calloc((size_t)count, sizeof *info)))
         return -1;
     if (oc_web_tables(page, length, info, count) < 0) {
         owf_free(info);
         return -1;
     }
-    for (p = which; *p == ' '; p++)
-        ;
+    {
+        const char *w = which;
+        int explicit_number = 0;
+        while (*w == ' ')
+            w++;
+        explicit_number = ci_prefix(w, strlen(w), "html_");
+        if (number && !explicit_number)          /* "2": a table whose id is "2" first, else the second */
+            for (i = 0; i < count; i++)
+                if (info[i].id[0] && same_text(info[i].id, w)) {
+                    number = i + 1;
+                    explicit_number = 1;
+                    break;
+                }
+        if (number) {
+            owf_free(info);
+            return number <= count ? number : 0;
+        }
+        p = w;
+    }
     for (i = 0; i < count && !number; i++)          /* an id first, then a caption */
         if (info[i].id[0] && same_text(info[i].id, p))
             number = i + 1;
