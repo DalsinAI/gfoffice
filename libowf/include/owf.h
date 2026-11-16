@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.10.0"
+#define OWF_VERSION "1.12.1"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -105,6 +105,9 @@ typedef struct {
                                 a range ends); -(1 + its index) where its range starts. 0: none */
     int note;                /* 1.8: a footnote's or endnote's mark (an OWF_RUN_TEXT run with no text, kept apart
                                 like a comment's; it shows the note's number): 1 + its index in doc->notes. 0: none */
+    int format_change;       /* 1.11: a tracked format change: fmt is the format now, and its format before is
+                                doc->format_changes' (1 + the index there). Apart from revision: a run may be
+                                inserted and have its format changed too. 0: none */
 } owf_run;
 
 typedef enum { OWF_ALIGN_LEFT, OWF_ALIGN_CENTRE, OWF_ALIGN_RIGHT, OWF_ALIGN_JUSTIFY } owf_align;
@@ -219,7 +222,18 @@ typedef struct {
     int start_page;
     owf_pagenum_style pagenum_style;
     int header_on_first, footer_on_first;
+    /* 1.12.1: how footnotes ([0]) and endnotes ([1]) are numbered (DOCX's w:footnotePr and w:endnotePr, ODF's
+     * text:notes-configuration): an owf_note_format (OWF_NOTE_FORMAT_DEFAULT: the kind's own, footnotes 1, 2,
+     * endnotes i, ii) and the first number (0 or 1: 1) */
+    int note_format[2], note_start[2];
 } owf_page;
+
+/* 1.12.1: a kind of note's numbers. Symbols are Word's Chicago style: *, dagger, double dagger, section, then
+ * doubled (**), and so on. Letters run a to z, then aa to zz (as Word does). */
+typedef enum {
+    OWF_NOTE_FORMAT_DEFAULT, OWF_NOTE_FORMAT_ARABIC, OWF_NOTE_FORMAT_LOWER_ROMAN, OWF_NOTE_FORMAT_UPPER_ROMAN,
+    OWF_NOTE_FORMAT_LOWER_LETTER, OWF_NOTE_FORMAT_UPPER_LETTER, OWF_NOTE_FORMAT_SYMBOL, OWF_NOTE_FORMAT_COUNT
+} owf_note_format;
 
 /* A physical page number in the document's selected style: 1, iv, IV, d or
  * D. Shared by layout fields, generated references and front ends. */
@@ -286,12 +300,22 @@ typedef struct {
     char *date;              /* ISO 8601, "2026-11-11T14:03:00"; NULL: unknown */
 } owf_revision;
 
+/* 1.11: a tracked format change (DOCX's w:rPrChange): who made it, when, and the run's format before it.
+ * Accepting it keeps the run's format; rejecting it gives the run this one back. Its size never changes
+ * (owf_struct_size doesn't list it). */
+typedef struct owf_format_change {
+    char *author;            /* UTF-8; NULL: unknown */
+    char *date;              /* ISO 8601; NULL: unknown */
+    owf_charfmt before;
+} owf_format_change;
+
 /* ---- Comments (1.6) ----
  * A note in the margin: who wrote it, when, its text, the comment it answers. Its place in the text is a run
  * (owf_run.comment); one with a range has a run where the range starts too. A changed comment (its text, done)
  * is a new one that its runs name instead. ODT's office:annotation and DOCX's comments come in and go out as
- * these; other formats leave them out. Its size never changes (owf_struct_size doesn't list it). (owf_comment is
- * a spreadsheet cell's.) */
+ * these; other formats leave them out, but for "pdf-comments" (1.10.1), the PDF with a raised mark where each is
+ * and the comments listed after the text. Its size never changes (owf_struct_size doesn't list it). (owf_comment
+ * is a spreadsheet cell's.) */
 typedef struct owf_annotation {
     char *author;            /* UTF-8; NULL: unknown */
     char *initials;          /* NULL: none */
@@ -356,6 +380,10 @@ typedef struct owf_doc {
     struct owf_note *notes;
     /* 1.9: the mail merge data source its merge fields come from (a file's path, UTF-8), NULL: none */
     char *merge_source;
+    /* 1.11: tracked format changes (owf_format_change), named by their runs (owf_run.format_change); the list
+     * only grows, as the comments' and notes' do */
+    int nformat_changes, capformat_changes;
+    struct owf_format_change *format_changes;
 } owf_doc;
 
 /* ---- Memory ----
@@ -391,6 +419,10 @@ int owf_doc_set_title(owf_doc *doc, const char *utf8);
  * number the document doesn't have. A macro, so that programs on the library have it too. */
 #define OWF_DOC_REVISION(doc, number)                                                                      \
     ((number) > 0 && (number) <= (doc)->nrevisions ? &(doc)->revisions[(number) - 1] : (owf_revision *)0)
+/* 1.11: the format change a run names (owf_run.format_change), NULL for 0 or one the document doesn't have */
+#define OWF_DOC_FORMAT_CHANGE(doc, number)                                                                 \
+    ((number) > 0 && (number) <= (doc)->nformat_changes ? &(doc)->format_changes[(number) - 1]             \
+                                                         : (owf_format_change *)0)
 
 /* Today's equivalent of an Amiga font name ("times" gives "Liberation
  * Serif"), or NULL when the name is not one we map. */

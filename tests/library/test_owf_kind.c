@@ -8,6 +8,10 @@
 #include "owf.h"
 #include "owf_internal.h"
 #include "owf_pub.h"
+
+#ifndef PUB_SAMPLES
+#define PUB_SAMPLES "build/host/pubgen"     /* tools/pubgen/make_pub.py writes them there */
+#endif
 #include "owf_zip.h"
 #include "owf_deck.h"
 
@@ -77,9 +81,9 @@ int main(void)
         { "tests/book/fixtures/book.fods", OWF_KIND_WORKBOOK },
         { "tests/calc/fixtures/calc.fods", OWF_KIND_WORKBOOK },
         { "tests/book/fixtures/csv/quoting.csv", OWF_KIND_DOCUMENT },      /* plain text: see owf.h */
-        { "tests/pub/samples/Sample.pub", OWF_KIND_PUBLICATION },
-        { "tests/pub/samples/Sample98.pub", OWF_KIND_PUBLICATION },
-        { "tests/pub/samples/Sample_2010.pub", OWF_KIND_PUBLICATION },
+        { PUB_SAMPLES "/gen-2007-runs.pub", OWF_KIND_PUBLICATION },   /* tools/pubgen/make_pub.py's */
+        { PUB_SAMPLES "/gen-98.pub", OWF_KIND_PUBLICATION },
+        { PUB_SAMPLES "/gen-2010-styles.pub", OWF_KIND_PUBLICATION },
     };
     static const char fodp[] =
         "<?xml version=\"1.0\"?>\n<office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "

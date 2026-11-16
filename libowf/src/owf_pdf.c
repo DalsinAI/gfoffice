@@ -7,6 +7,7 @@
  */
 #include "owf_pdf.h"
 #include "owf_internal.h"
+#include "owf_metafile.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,7 @@ struct owf_pdf {
     int npics, cappics;
     int dash;
     int failed;
+    int mf_skipped;              /* records of WMF and EMF pictures played as nothing (owf_metafile.h) */
 };
 
 owf_pdf *owf_pdf_new(void)
@@ -444,6 +446,61 @@ int owf_pdf_text(owf_pdf *pdf, int x, int baseline, int width, const char *utf8,
 
 /* ---- Pictures and links ---- */
 
+/* ---- WMF pictures, played as paths and text (owf_metafile.c) ---- */
+
+static int mf_path(void *ctx, const int *xy, int n, int closed, unsigned long fill, unsigned long line,
+                   int line_width, int dash)
+{
+    owf_pdf *pdf = (owf_pdf *)ctx;
+    pdf->dash = dash;
+    return owf_pdf_path(pdf, xy, n, closed, fill, line, line_width);
+}
+
+static int mf_ellipse(void *ctx, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width,
+                      int dash)
+{
+    owf_pdf *pdf = (owf_pdf *)ctx;
+    pdf->dash = dash;
+    return owf_pdf_ellipse(pdf, x, y, w, h, fill, line, line_width);
+}
+
+static int mf_text(void *ctx, int x, int baseline, const char *utf8, size_t length, owf_font_kind kind,
+                   unsigned flags, int size, unsigned long colour)
+{
+    return owf_pdf_text((owf_pdf *)ctx, x, baseline, 0, utf8, length, kind, flags, size,
+                        OWF_SHADE_SET(colour) ? OWF_SHADE_RGB(colour) : 0);
+}
+
+static int mf_text_width(void *ctx, const char *utf8, size_t length, owf_font_kind kind, unsigned flags, int size)
+{
+    (void)ctx;
+    return owf_pdf_text_width(utf8, length, kind, flags, size);
+}
+
+/* the picture's records drawn in its box, nothing outside the box (or clip) */
+static int pdf_metafile(owf_pdf *pdf, pdf_page *p, const owf_image *image, int x, int y, int w, int h,
+                        const int *clip)
+{
+    static const owf_mf_sink sink = { mf_path, mf_ellipse, mf_text, mf_text_width };
+    owf_mf_result res;
+    int dash = pdf->dash, rc;
+    owf_buf_puts(&p->content, "q\n");
+    put_xy(&p->content, p, clip ? clip[0] : x, clip ? (long)clip[1] + clip[3] : (long)y + h);
+    put_num(&p->content, clip ? clip[2] : w);
+    owf_buf_putc(&p->content, ' ');
+    put_num(&p->content, clip ? clip[3] : h);
+    owf_buf_puts(&p->content, " re W n\n");
+    rc = owf_metafile_play(image->data, image->length, x, y, w, h, &sink, pdf, &res);
+    owf_buf_puts(&p->content, "Q\n");
+    pdf->dash = dash;
+    pdf->mf_skipped += res.skipped;
+    if (rc == OWF_ERR_MEMORY || p->content.failed) {
+        pdf->failed = 1;
+        return -1;
+    }
+    return 0;
+}
+
 int owf_pdf_image(owf_pdf *pdf, const owf_image *image, int x, int y, int w, int h, const int *clip)
 {
     pdf_page *p = current(pdf);
@@ -453,6 +510,8 @@ int owf_pdf_image(owf_pdf *pdf, const owf_image *image, int x, int y, int w, int
         return -1;
     if (!image || w <= 0 || h <= 0)
         return 0;
+    if (owf_metafile_can_play(image->data, image->length))
+        return pdf_metafile(pdf, p, image, x, y, w, h, clip);
     for (i = 0; i < pdf->npics; i++)
         if (pdf->pics[i].image == image)
             break;
@@ -595,7 +654,10 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
         nobj += pdf->pics[i].pic.mask ? 2 : 1;
     }
     if (lost)
-        owf_report_add(report, OWF_NOTE_LOST, "Pictures in a format the PDF export does not draw yet (only JPEG and PNG) are left out");
+        owf_report_add(report, OWF_NOTE_LOST, "Pictures in a format the PDF export does not draw yet (only JPEG, PNG and WMF) are left out");
+    if (pdf->mf_skipped)
+        owf_report_add(report, OWF_NOTE_APPROX,
+                       "Parts of WMF and EMF pictures (pictures inside them, clipping, world transforms) are left out");
     link_obj = nobj;
     nobj += pdf->nlinks;
     info_obj = nobj++;

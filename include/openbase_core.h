@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.6.0"
+#define OB_CORE_VERSION "0.10.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -236,6 +236,25 @@ int ob_rows(ob_project *p, const char *table, ob_int after, int max, ob_row_fn c
  * a datasheet scrolled to a place (LIMIT and OFFSET, design 5.4). */
 int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_fn cb, void *user);
 
+/* ---- ARexx row commands (core 0.10.0, src/base/ob_rexx.c) ----
+ * One of these, as GFOpenBase's port gets it, on table:
+ *   ADDROW Field=Value ...        RESULT the new row's key
+ *   CHANGEROW [KEY k] Field=Value ...   OK
+ *   DELETEROW [KEY k]             OK, with no requester
+ *   GETROW [KEY k] [FIELD f]      the field's value, or every value in
+ *                                 field order with a tab between
+ *   GETFIELDS                     the field names, each in quotes
+ * A pair is Field=Value, "Field=Value" or Field="Value" (a value with
+ * spaces in quotes); field names in any case; a field named Key or Field
+ * goes in quotes. Values are the fields' own text, as ob_row_add takes
+ * them. KEY left out is current (0: none). The answer, or the reason,
+ * goes in out; the return is ARexx's code (0 OK, 5 no such row or none
+ * chosen, 10 a bad command or value, 20 out of memory), or -1 when
+ * command isn't one of these. *row (if not NULL) gets the row it was
+ * about, 0 when none. */
+int ob_rexx_rows(ob_project *p, const char *table, ob_int current, const char *command,
+                 char *out, size_t size, ob_int *row);
+
 /* ---- Views: a datasheet sorted and filtered (design 5.4) ----
  * sort: a field to sort by ("" keeps key order), desc for Z to A; ties keep
  * key order. Text fields sort and compare without case.
@@ -256,15 +275,41 @@ typedef enum ob_filter_op {
     OB_FILTER_COUNT
 } ob_filter_op;
 
+/* Filter by Form (core 0.6.2, design 6.3): what is typed into a form's
+ * fields, in the plain words of a query's criteria (Leeds, > 10, Smith*,
+ * between 1 and 5, empty, not York; no [questions]). The criteria in one
+ * row ("Look for", then "Or" rows) must all hold; a row passes when any
+ * row does. They are on top of the one-field filter above. */
+#define OB_FORM_CRIT 16             /* criteria in all the rows together */
+#define OB_FORM_OR 3                /* rows: Look for, Or, Or */
+
+typedef struct ob_form_crit {
+    char field[OB_NAME_MAX];
+    int row;                        /* 0 Look for, 1 and 2 Or */
+    char text[OB_VALUE_MAX];
+} ob_form_crit;
+
+/* About 5 KB: fine on a 64 KB stack, but not many at once. */
 typedef struct ob_view {
     char sort[OB_NAME_MAX];
     int desc;
     char field[OB_NAME_MAX];
     ob_filter_op op;
     char value[OB_VALUE_MAX];
+    int ncrit;
+    ob_form_crit crit[OB_FORM_CRIT];
 } ob_view;
 
 void ob_view_init(ob_view *v);                  /* key order, every row */
+/* Filter by Form: sets field's criterion in row (0 Look for, 1 and 2 Or);
+ * empty text takes it out. 0 when row is not one of them, or there is no
+ * room for another (OB_FORM_CRIT). The text is checked when the view is. */
+int ob_view_form_set(ob_view *v, const char *field, int row, const char *text);
+/* field's criterion in row; "" when it has none. */
+const char *ob_view_form_get(const ob_view *v, const char *field, int row);
+void ob_view_form_clear(ob_view *v);
+/* Whether v leaves rows out (its filter, or Filter by Form). */
+int ob_view_filtered(const ob_view *v);
 const char *ob_filter_name(ob_filter_op op);    /* "Contains"... */
 /* Whether v is good for table (its fields exist, the value suits the field);
  * 0 with the reason in ob_error(). */
@@ -295,6 +340,16 @@ ob_int ob_view_find(ob_project *p, const char *table, const ob_view *v, const ch
  * child table's rows whose Lookup holds the record's key: a view filtered on
  * r.field Equals the key. Returns how many there are, -1 on error. */
 int ob_children(ob_project *p, const char *table, ob_relation *out, int max);
+/* Changing a subform's rows (core 0.6.3). The key of the row at position
+ * `pos` (from 0, key order) among r's rows for record `parent`: -1 when
+ * there is none, -2 on error. */
+ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int pos);
+/* Adds a row to r's table for record `parent`: its Lookup r->field holds
+ * parent whatever the fields give for it; the rest as ob_row_add takes them.
+ * 0 with the reason when parent is not a key (a new record not yet saved:
+ * "Save the record first") or ob_row_add refuses the row. */
+int ob_child_add(ob_project *p, const ob_relation *r, ob_int parent, int n, const char *const *fields,
+                 const char *const *values, ob_int *key);
 
 /* ---- CSV (design 8) ----
  * Export: a header of field names, then each row of the view (NULL: every
@@ -392,6 +447,26 @@ void ob_undo_clear(ob_project *p);
 #define OB_QUERY_OUT 128        /* result columns, "*" spread out */
 #define OB_EXPR_MAX 160
 #define OB_SQL_MAX 4096
+#define OB_QUERY_JOINS 12
+
+/* A join drawn between two of the query's tables (core 0.8): left.lfield =
+ * right.rfield. Inner: the rows that match on both sides; left: every row of
+ * the left table, with the right table's where one matches; right: the
+ * other way round. */
+typedef enum ob_join {
+    OB_JOIN_INNER,
+    OB_JOIN_LEFT,
+    OB_JOIN_RIGHT,
+    OB_JOINS
+} ob_join;
+
+typedef struct ob_qjoin {
+    char left[OB_NAME_MAX];
+    char lfield[OB_NAME_MAX];
+    char right[OB_NAME_MAX];
+    char rfield[OB_NAME_MAX];
+    ob_join kind;
+} ob_qjoin;
 
 typedef enum ob_total {
     OB_TOTAL_NONE,
@@ -426,6 +501,8 @@ typedef struct ob_query {
     ob_qcolumn columns[OB_QUERY_COLUMNS];
     int sql_only;
     char sql[OB_SQL_MAX];           /* sql_only: the statement */
+    int njoins;                     /* 0: tables joined by their relationships */
+    ob_qjoin joins[OB_QUERY_JOINS];
 } ob_query;
 
 /* A result column: its heading, and the type its values are shown as
@@ -438,8 +515,22 @@ typedef struct ob_qresult {
 void ob_query_init(ob_query *q, const char *name);
 /* Adds a table (once); its index, -1 when full or there already. */
 int ob_query_add_table(ob_query *q, const char *table);
-/* Removes table i and its columns. */
+/* Removes table i, its columns and its joins. */
 void ob_query_remove_table(ob_query *q, int i);
+/* Draws a join, left.lfield = right.rfield; its index, -1 when full, when
+ * the two are one table, or when those two fields are joined already.
+ * With no join drawn a query joins its tables by their relationships, as
+ * before; once one is drawn only the drawn ones are used, and each table
+ * must be joined to the others. Several joins between two tables are all
+ * kept (ON a AND b), the first one's kind used. */
+int ob_query_add_join(ob_query *q, const char *left, const char *lfield, const char *right, const char *rfield,
+                      ob_join kind);
+void ob_query_remove_join(ob_query *q, int i);
+const char *ob_join_name(ob_join k);        /* "Inner", "Left", "Right" */
+/* Draws an inner join for each relationship between two of the query's
+ * tables that aren't joined yet (the Lookup to the table's key), as a
+ * designer does when a table is added; how many were drawn, -1 on error. */
+int ob_query_relation_joins(ob_project *p, ob_query *q);
 /* A column showing table.field ("*" for every field), or the expression
  * expr when table is NULL or ""; NULL when full. */
 ob_qcolumn *ob_query_add_column(ob_query *q, const char *table, const char *field);
@@ -466,7 +557,9 @@ int ob_query_rows(ob_project *p, const ob_query *q, const char *const *params, o
                   ob_row_fn cb, void *user);
 
 /* Saved queries (oadb_queries), in name order. A query's name is a table's
- * kind of name, and no table has it. Saving a name that is there replaces it. */
+ * kind of name, and no table has it. Saving a name that is there replaces it.
+ * A query with joins drawn is kept as "oadb query 2" (an older GFOpenBase
+ * opens it as its SQL, which has the joins). */
 int ob_query_count(ob_project *p);
 const char *ob_query_name(ob_project *p, int i);
 int ob_query_get(ob_project *p, const char *name, ob_query *out);
@@ -486,6 +579,23 @@ void ob_currency_format(ob_int pence, char *out, size_t size);
 
 const char *ob_type_name(ob_type t);          /* "Text", "Currency"... */
 int ob_type_from_name(const char *name);      /* -1 when unknown */
+
+/* ---- Reports kept in the project (oadb_reports) ----
+ * Each report's text under its name; include/openbase_report.h writes and reads the text
+ * (ob_report_store, ob_report_load). A report's name is a query's kind of name, and no table has it.
+ * 1 when they work, 0 with the reason in ob_error. */
+
+#define OB_REPORT_TEXT_MAX 8192        /* the most a report's text can be, with its 0 */
+
+int ob_report_count(ob_project *p);
+/* In name order; NULL past the end. The text lasts until the next call. */
+const char *ob_report_name(ob_project *p, int i);
+/* The text kept as name (any case) into out; 0 when there is none or it doesn't fit in size. */
+int ob_report_get_text(ob_project *p, const char *name, char *out, size_t size);
+/* Keeps text as name, replacing what is kept there (the name keeps the case it was first given). */
+int ob_report_put_text(ob_project *p, const char *name, const char *text);
+int ob_report_rename(ob_project *p, const char *old_name, const char *new_name);
+int ob_report_delete(ob_project *p, const char *name);
 
 #ifdef __cplusplus
 }

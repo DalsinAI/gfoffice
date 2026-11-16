@@ -3,6 +3,8 @@
 #include <string.h>
 #include <time.h>
 #include "openwrite_core.h"
+#include "owf_notenum_impl.h"
+#include "ow_merge.h"
 
 #define OW_UNDO_LIMIT 16
 /* 2.0.11: what the undo and redo snapshots may hold between them, about; the last edit's is always kept */
@@ -41,6 +43,7 @@ struct ow_editor {
      * text typed now is (0: none); ins_rev, del_rev and their minute: the last numbers made, used again by
      * the same author in the same minute. */
     int track;
+    int final_view;          /* 2.0.37: deletions hidden (ow_editor_set_final_view): the caret steps over them */
     char *author;
     int typing_rev;
     int ins_rev, del_rev;
@@ -55,6 +58,11 @@ struct ow_editor {
      * (0: the columns' names) */
     struct ow_merge_table *merge;
     int merge_at;
+    char *comment_filter;    /* 2.0.39: the author whose comments are shown (NULL: everyone's) */
+    /* 2.0.40: the comment picked by its margin note (its place's run), current while the selection is the
+     * one picking it made (a reply's note too, though a reply is where its comment is) */
+    int pick_on, pick_para, pick_run;
+    ow_selection pick_sel;
 };
 
 static int update_story_fields(ow_editor *editor, owf_story *story);   /* 2.3.0 */
@@ -118,6 +126,11 @@ static void clear_doc_data(owf_doc *doc)
     for (i = 0; i < doc->nnotes; ++i) { owf_free(doc->notes[i].text); owf_free(doc->notes[i].label); }   /* 2.4.0 */
     owf_free(doc->notes);
     owf_free(doc->merge_source);                     /* 2.5.0 */
+    for (i = 0; i < doc->nformat_changes; ++i) {     /* libowf 1.11 */
+        owf_free(doc->format_changes[i].author);
+        owf_free(doc->format_changes[i].date);
+    }
+    owf_free(doc->format_changes);
     memset(doc, 0, sizeof(*doc));
 }
 
@@ -227,6 +240,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     owf_note *notes;
     int nnotes, capnotes;
     char *merge_source;
+    owf_format_change *format_changes;
+    int nformat_changes, capformat_changes;
     if (!dst || !snapshot) return;
     images = dst->images;           /* 2.0.11: the pictures stay the document's (clone_doc) */
     nimages = dst->nimages;
@@ -259,6 +274,11 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capnotes = dst->capnotes;
     dst->notes = NULL;
     dst->nnotes = dst->capnotes = 0;
+    format_changes = dst->format_changes;   /* libowf 1.11: the format changes, which the runs name and which only grow */
+    nformat_changes = dst->nformat_changes;
+    capformat_changes = dst->capformat_changes;
+    dst->format_changes = NULL;
+    dst->nformat_changes = dst->capformat_changes = 0;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
     dst->images = images;
@@ -280,6 +300,9 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->nnotes = nnotes;
     dst->capnotes = capnotes;
     dst->merge_source = merge_source;
+    dst->format_changes = format_changes;
+    dst->nformat_changes = nformat_changes;
+    dst->capformat_changes = capformat_changes;
     owf_free(snapshot);                 /* only the old outer shell */
 }
 
@@ -1251,6 +1274,175 @@ static ow_position paragraph_end(ow_editor *editor, ow_position pos)
     return pos;
 }
 
+/* 2.0.36: word moves. A character is a space (space, tab, line break), a word letter (ASCII letters and digits,
+ * '_', any UTF-8 beyond ASCII) or punctuation; a word move crosses one class run and the spaces after it (right)
+ * or before it (left), and stops at a paragraph's start and end, as Ctrl+arrows do in other word processors. */
+static int char_class(unsigned char c)
+{
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 0;
+    if (c >= 0x80 || c == '_' || (c >= '0' && c <= '9') || ((c | 0x20) >= 'a' && (c | 0x20) <= 'z')) return 1;
+    return 2;
+}
+
+/* the class of the character after pos in its paragraph, -1 at the paragraph's end; pos is moved over run ends */
+static int class_after(owf_para *p, ow_position *pos)
+{
+    for (;;) {
+        owf_run *r = &p->runs[pos->run];
+        int nr;
+        if (r->text && r->text[pos->byte_offset])     /* byte_offset is within the run's text (clamp_position) */
+            return char_class((unsigned char)r->text[pos->byte_offset]);
+        nr = next_text_run(p, pos->run);
+        if (nr < 0) return -1;
+        pos->run = nr;
+        pos->byte_offset = 0;
+    }
+}
+
+static int class_before(owf_para *p, ow_position *pos)
+{
+    for (;;) {
+        owf_run *r = &p->runs[pos->run];
+        int pr;
+        if (pos->byte_offset)
+            return char_class((unsigned char)r->text[utf8_prev(r->text, pos->byte_offset)]);
+        pr = prev_text_run(p, pos->run);
+        if (pr < 0) return -1;
+        pos->run = pr;
+        pos->byte_offset = p->runs[pr].text ? strlen(p->runs[pr].text) : 0;
+    }
+}
+
+static ow_position word_right_pos(ow_editor *editor, ow_position pos)
+{
+    owf_para *p;
+    int c;
+    pos = clamp_position(editor, pos);
+    p = &ed_story(editor)->paras[pos.paragraph];
+    c = class_after(p, &pos);
+    if (c < 0) return move_right_pos(editor, pos);          /* the paragraph's end: to the next one's start */
+    if (c > 0)
+        while (class_after(p, &pos) == c) pos.byte_offset = utf8_next(p->runs[pos.run].text, pos.byte_offset);
+    while (class_after(p, &pos) == 0) pos.byte_offset = utf8_next(p->runs[pos.run].text, pos.byte_offset);
+    return pos;
+}
+
+static ow_position word_left_pos(ow_editor *editor, ow_position pos)
+{
+    owf_para *p;
+    int c;
+    pos = clamp_position(editor, pos);
+    p = &ed_story(editor)->paras[pos.paragraph];
+    if (class_before(p, &pos) < 0) return move_left_pos(editor, pos);
+    while (class_before(p, &pos) == 0) pos.byte_offset = utf8_prev(p->runs[pos.run].text, pos.byte_offset);
+    c = class_before(p, &pos);
+    if (c > 0)
+        while (class_before(p, &pos) == c) pos.byte_offset = utf8_prev(p->runs[pos.run].text, pos.byte_offset);
+    return pos;
+}
+
+/* 2.0.37: in the final view a deletion's text is not shown: whether pos's run is one */
+static int hidden_run(ow_editor *editor, ow_position pos)
+{
+    const owf_para *p = &ed_story(editor)->paras[pos.paragraph];
+    const owf_revision *r;
+    if (!editor->final_view || pos.run < 0 || pos.run >= p->nruns) return 0;
+    r = OWF_DOC_REVISION(editor->doc, p->runs[pos.run].revision);
+    return r && r->kind == OWF_REV_DELETE;
+}
+
+/* One step left (dir < 0) or right that passes a character the reader sees, or a paragraph's end: steps over
+ * hidden text and run ends go on to the next one */
+static ow_position visible_step(ow_editor *editor, ow_position pos, int dir)
+{
+    int guard;
+    for (guard = 0; guard < 1000000; ++guard) {
+        ow_position np = dir < 0 ? move_left_pos(editor, pos) : move_right_pos(editor, pos);
+        int visible;
+        if (same_position(np, pos)) return pos;
+        visible = np.paragraph != pos.paragraph || (np.run == pos.run && !hidden_run(editor, np));
+        pos = np;
+        if (visible) return pos;
+    }
+    return pos;
+}
+
+static int tracked_delete_range(ow_editor *editor, ow_position *start_io, ow_position end);
+static int delete_selection_internal(ow_editor *editor);
+static int rev_kind(const owf_doc *doc, int number);
+static ow_position out_of_hidden(ow_editor *editor, ow_position pos, int dir);
+static int delete_one_before(ow_editor *editor, ow_position *pos);
+static size_t para_text_offset(const owf_para *p, ow_position pos);
+static ow_position para_offset_position(ow_editor *editor, int paragraph, size_t offset);
+
+/* The final view: the character (or paragraph end) the reader sees before the caret (dir < 0) or after it,
+ * from *a to *b, past the hidden text between; 0 when there is none. Recording, a paragraph end deleted
+ * already is passed too (there is nothing more to mark there). */
+static int visible_unit(ow_editor *editor, ow_position caret, int dir, ow_position *a, ow_position *b)
+{
+    ow_position pos = clamp_position(editor, caret);
+    int guard;
+    for (guard = 0; guard < 1000000; ++guard) {
+        ow_position np = dir < 0 ? move_left_pos(editor, pos) : move_right_pos(editor, pos);
+        int end_gone = 0;
+        if (same_position(np, pos)) return 0;
+        if (np.paragraph != pos.paragraph && editor->track) {
+            int ended = np.paragraph < pos.paragraph ? np.paragraph : pos.paragraph;
+            end_gone = rev_kind(editor->doc, ed_story(editor)->paras[ended].mark_revision) == OWF_REV_DELETE;
+        }
+        if ((np.paragraph != pos.paragraph && !end_gone) || (np.run == pos.run && !hidden_run(editor, np))) {
+            *a = dir < 0 ? np : pos;
+            *b = dir < 0 ? pos : np;
+            return 1;
+        }
+        pos = np;
+    }
+    return 0;
+}
+
+/* The final view's Backspace (dir < 0) and Delete: the character the reader sees goes (recording, it is
+ * marked deleted), never the hidden text next to it. Backspace leaves the caret where the character was;
+ * Delete leaves it where it is (by its place in its paragraph's text: runs before it may join). */
+static int final_view_delete(ow_editor *editor, int dir)
+{
+    ow_position a, b, caret = clamp_position(editor, editor->selection.focus);
+    size_t at = para_text_offset(&ed_story(editor)->paras[caret.paragraph], caret);
+    int rc;
+    if (!visible_unit(editor, caret, dir, &a, &b)) return 0;
+    if (editor->track) {
+        rc = tracked_delete_range(editor, &a, b);
+        if (rc < 0) return rc;
+    } else if (a.paragraph != b.paragraph) {
+        /* a paragraph end: only the join (a range from a would reach into a hidden run at a, Agnus) */
+        ow_position pos = b;
+        if ((rc = delete_one_before(editor, &pos)) < 0) return rc;
+        a = pos;
+    } else {
+        editor->selection.anchor = a;
+        editor->selection.focus = b;
+        if ((rc = delete_selection_internal(editor)) < 0) return rc;
+        a = editor->selection.focus;
+    }
+    if (dir > 0) {
+        a = para_offset_position(editor, caret.paragraph, at);
+        a.box = caret.box;
+    }
+    a = out_of_hidden(editor, a, -1);
+    editor->selection.anchor = editor->selection.focus = a;
+    return rc;
+}
+
+/* Out of a hidden deletion's middle: to its end going right (dir > 0), its start going left */
+static ow_position out_of_hidden(ow_editor *editor, ow_position pos, int dir)
+{
+    const owf_run *r;
+    if (!hidden_run(editor, pos)) return pos;
+    r = &ed_story(editor)->paras[pos.paragraph].runs[pos.run];
+    if (pos.byte_offset > 0 && r->text && pos.byte_offset < strlen(r->text))
+        pos.byte_offset = dir > 0 ? strlen(r->text) : 0;
+    return pos;
+}
+
 static ow_position vertical_pos(ow_editor *editor, ow_position pos, int delta)
 {
     owf_story *story = ed_story(editor);
@@ -1669,7 +1861,7 @@ static void join_runs(owf_para *p)
     while (j + 1 < p->nruns) {
         owf_run *a = &p->runs[j], *b = &p->runs[j + 1];
         if (a->kind == OWF_RUN_TEXT && b->kind == OWF_RUN_TEXT && a->revision == b->revision && !a->comment && !b->comment &&
-            !a->note && !b->note &&
+            !a->note && !b->note && a->format_change == b->format_change &&   /* libowf 1.11 */
             same_charfmt_local(&a->fmt, &b->fmt) && same_text_or_null(a->href, b->href)) {
             size_t la = a->text ? strlen(a->text) : 0, lb = b->text ? strlen(b->text) : 0;
             char *t = (char *)owf_malloc(la + lb + 1);
@@ -1885,6 +2077,7 @@ static int walk_changes(const owf_story *story, change_fn fn, void *userdata)
                 const owf_run *r = &p->runs[j];
                 it.run = j;
                 rev = r->revision;
+                if (!rev && r->format_change > 0) rev = -r->format_change;   /* libowf 1.11: a format change */
                 /* an empty text run with no change between two pieces of one is no gap */
                 if (!rev && cur && r->kind == OWF_RUN_TEXT && (!r->text || !*r->text)) continue;
             } else {
@@ -1984,6 +2177,16 @@ static int count_cb(void *userdata, const owf_story *story, int rev, ow_change_i
     return 0;
 }
 
+void ow_editor_set_final_view(ow_editor *editor, int on)
+{
+    if (editor) editor->final_view = on ? 1 : 0;
+}
+
+int ow_editor_final_view(const ow_editor *editor)
+{
+    return editor ? editor->final_view : 0;
+}
+
 void ow_editor_set_track_changes(ow_editor *editor, int on)
 {
     if (!editor) return;
@@ -2028,11 +2231,12 @@ int ow_editor_change_count(const ow_editor *editor)
 static void fill_info(ow_editor *editor, const change_find *f, ow_change_info *info)
 {
     const owf_revision *r = OWF_DOC_REVISION(editor->doc, f->rev);
+    const owf_format_change *fc = f->rev < 0 ? OWF_DOC_FORMAT_CHANGE(editor->doc, -f->rev) : NULL;
     memset(info, 0, sizeof(*info));
     info->index = f->want;
-    info->kind = r ? r->kind : 0;
-    info->author = r ? r->author : NULL;
-    info->date = r ? r->date : NULL;
+    info->kind = r ? r->kind : fc ? OW_CHANGE_FORMAT : 0;
+    info->author = r ? r->author : fc ? fc->author : NULL;
+    info->date = r ? r->date : fc ? fc->date : NULL;
     info->start = item_start(editor, f->first);
     info->end = item_end(editor, f->last);
 }
@@ -2174,10 +2378,47 @@ static int resolve_items(ow_editor *editor, owf_story *story, const ow_change_it
     return changed;
 }
 
+/* libowf 1.11: the tracked format changes of a story's runs, all or those the selection touches (from <= to):
+ * accepting one keeps the run's format, rejecting it gives the run its format before. 1 when one was there.
+ * (Before the insertions and deletions, which take runs away and join them.) */
+static int resolve_formats(ow_editor *editor, owf_story *story, int all, ow_position from, ow_position to,
+                           int accept, int *first_para, int *low, int *high)
+{
+    int i, j, changed = 0;
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        for (j = 0; j < p->nruns; ++j) {
+            owf_run *r = &p->runs[j];
+            const owf_format_change *fc = OWF_DOC_FORMAT_CHANGE(editor->doc, r->format_change);
+            if (!r->format_change) continue;
+            if (!all) {
+                ow_position s, e;
+                int touch;
+                s.paragraph = e.paragraph = i;
+                s.run = e.run = j;
+                s.box = e.box = from.box;
+                s.byte_offset = 0;
+                e.byte_offset = r->kind == OWF_RUN_TEXT && r->text ? strlen(r->text) : 0;
+                touch = same_position(from, to)
+                      ? compare_position(s, from) <= 0 && compare_position(from, e) <= 0
+                      : compare_position(s, to) < 0 && compare_position(from, e) < 0;
+                if (!touch) continue;
+            }
+            if (!accept && fc) r->fmt = fc->before;
+            r->format_change = 0;
+            changed = 1;
+            if (i < *low) *low = i;
+            if (i > *high) *high = i;
+            if (first_para && (*first_para < 0 || i < *first_para)) *first_para = i;
+        }
+    }
+    return changed;                                  /* the runs are joined after (resolve_story) */
+}
+
 static int resolve_story(ow_editor *editor, owf_story *story, int all, int accept, int *first_para)
 {
     change_pick pk;
-    int rc;
+    int rc, formats, low = story->nparas, high = -1, k;
     memset(&pk, 0, sizeof pk);
     pk.editor = editor;
     pk.all = all;
@@ -2186,12 +2427,18 @@ static int resolve_story(ow_editor *editor, owf_story *story, int all, int accep
         pk.to = clamp_position(editor, editor->selection.focus);
         if (compare_position(pk.from, pk.to) > 0) { ow_position t = pk.from; pk.from = pk.to; pk.to = t; }
     }
+    formats = resolve_formats(editor, story, all, pk.from, pk.to, accept, first_para, &low, &high);
     walk_changes(story, pick_cb, &pk);
     if (pk.failed) { owf_free(pk.items); return -1; }
-    if (first_para && pk.nitems) *first_para = pk.items[0].para;
+    if (first_para && pk.nitems && (*first_para < 0 || pk.items[0].para < *first_para)) *first_para = pk.items[0].para;
     rc = pk.nitems ? resolve_items(editor, story, pk.items, pk.nitems, accept) : 0;
     owf_free(pk.items);
-    return rc;
+    if (rc < 0) return rc;
+    /* the paragraphs whose format changes went: runs now alike join (rejected paragraph ends may have joined
+     * paragraphs, so the range is clamped and may join a few more than needed, which is harmless) */
+    if (high >= story->nparas) high = story->nparas - 1;
+    for (k = low; k <= high; ++k) join_runs(&story->paras[k]);
+    return rc || formats;
 }
 
 int ow_editor_accept_change(ow_editor *editor, int accept)
@@ -2331,6 +2578,26 @@ static ow_position comment_start(ow_editor *editor, const ed_comment *c)
     return c->spara >= 0 ? run_position(editor, c->spara, c->srun) : run_position(editor, c->para, c->run);
 }
 
+/* 2.0.39: whether a comment passes the author filter: its own author is the one shown (or no filter) */
+static int comment_author_shown(const ow_editor *editor, int record)
+{
+    return !editor->comment_filter || same_text_or_null(editor->doc->comments[record].author, editor->comment_filter);
+}
+
+/* 2.0.39: whether a comment's thread (it and its replies, at any depth) has one the filter shows */
+static int thread_shown(const ow_editor *editor, int record)
+{
+    const owf_doc *doc = editor->doc;
+    int i;
+    if (comment_author_shown(editor, record)) return 1;
+    for (i = 0; i < doc->ncomments; ++i) {
+        int up = doc->comments[i].parent, guard = 0;
+        while (up >= 0 && up != record && up < doc->ncomments && guard++ < doc->ncomments) up = doc->comments[up].parent;
+        if (up == record && comment_author_shown(editor, i)) return 1;
+    }
+    return 0;
+}
+
 static void comment_fill(ow_editor *editor, const ed_comment *list, int n, int k, ow_comment_info *info)
 {
     const owf_annotation *a = &editor->doc->comments[list[k].record];
@@ -2347,16 +2614,58 @@ static void comment_fill(ow_editor *editor, const ed_comment *list, int n, int k
         if (list[i].record == a->parent) { info->reply_to = i; break; }
     info->start = comment_start(editor, &list[k]);
     info->end = run_position(editor, list[k].para, list[k].run);
+    info->shown = comment_author_shown(editor, list[k].record);   /* 2.0.39 */
+}
+
+int ow_editor_set_comment_filter(ow_editor *editor, const char *author)
+{
+    char *copy = NULL;
+    if (!editor) return OWF_ERR_FORMAT;
+    if (author && *author && !(copy = copy_bytes(author, strlen(author)))) return OWF_ERR_MEMORY;
+    owf_free(editor->comment_filter);
+    editor->comment_filter = copy;
+    return OWF_OK;
+}
+
+const char *ow_editor_comment_filter(const ow_editor *editor)
+{
+    return editor ? editor->comment_filter : NULL;
+}
+
+int ow_editor_comment_authors(ow_editor *editor, char (*names)[72], int max)
+{
+    const owf_doc *doc;
+    int i, k, n = 0;
+    if (!editor || !editor->doc || !names || max <= 0) return 0;
+    doc = editor->doc;
+    for (i = 0; i < doc->ncomments && n < max; ++i) {
+        const char *a = doc->comments[i].author ? doc->comments[i].author : "";
+        for (k = 0; k < n && strncmp(names[k], a, 71); ++k) {}
+        if (k < n) continue;
+        snprintf(names[n++], 72, "%s", a);
+    }
+    return n;
 }
 
 /* The comment at the caret: one whose range holds it, or whose place it is at; the narrowest, a comment
  * before its replies. -1: none. */
+static int same_place(ow_position a, ow_position b)
+{
+    return a.box == b.box && a.paragraph == b.paragraph && a.run == b.run && a.byte_offset == b.byte_offset;
+}
+
 static int comment_at(ow_editor *editor, const ed_comment *list, int n)
 {
     owf_story *story = ed_story(editor);
     ow_position caret = clamp_position(editor, editor->selection.focus);
     int k, best = -1;
     size_t best_len = (size_t)-1;
+    /* 2.0.40: the one picked by its note, while nothing has moved the selection since */
+    if (editor->pick_on && same_place(editor->selection.anchor, editor->pick_sel.anchor) &&
+        same_place(editor->selection.focus, editor->pick_sel.focus)) {
+        for (k = 0; k < n; ++k)
+            if (list[k].para == editor->pick_para && list[k].run == editor->pick_run) return k;
+    }
     /* the one Next/Previous selected: its runs are the selection's ends (others can be at the same places) */
     for (k = 0; k < n; ++k) {
         ow_position s = comment_start(editor, &list[k]);
@@ -2433,7 +2742,24 @@ static void select_comment(ow_editor *editor, const ed_comment *c)
     editor->selection.anchor = comment_start(editor, c);
     editor->selection.focus = run_position(editor, c->para, c->run);
     editor->typing_group = 0;
+    editor->pick_on = 0;
     sync_typing_fmt(editor);
+}
+
+int ow_editor_select_comment(ow_editor *editor, int index)
+{
+    ed_comment *list;
+    int n = 0, failed;
+    if (!editor || !editor->doc || index < 0) return 0;
+    list = story_comments(editor->doc, ed_story(editor), &n, &failed);
+    if (index >= n) { owf_free(list); return 0; }
+    select_comment(editor, &list[index]);
+    editor->pick_on = 1;
+    editor->pick_para = list[index].para;
+    editor->pick_run = list[index].run;
+    editor->pick_sel = editor->selection;
+    owf_free(list);
+    return 1;
 }
 
 int ow_editor_next_comment(ow_editor *editor, int backwards)
@@ -2449,21 +2775,25 @@ int ow_editor_next_comment(ow_editor *editor, int backwards)
     b = clamp_position(editor, editor->selection.focus);
     if (place_compare(story, a, b) > 0) { ow_position t = a; a = b; b = t; }
     /* comments, not their replies (a reply is where its comment is) */
+    /* (2.0.39: and only threads the author filter shows a comment of) */
     if (!backwards) {
         for (k = 0; k < n && pick < 0; ++k)
-            if (editor->doc->comments[list[k].record].parent < 0 &&
+            if (editor->doc->comments[list[k].record].parent < 0 && thread_shown(editor, list[k].record) &&
                 place_compare(story, comment_start(editor, &list[k]), a) > 0)
                 pick = k;
     } else {
         for (k = n - 1; k >= 0 && pick < 0; --k)
-            if (editor->doc->comments[list[k].record].parent < 0 &&
+            if (editor->doc->comments[list[k].record].parent < 0 && thread_shown(editor, list[k].record) &&
                 place_compare(story, comment_start(editor, &list[k]), a) < 0)
                 pick = k;
     }
     if (pick < 0) {
         /* round to the other end of the story */
         for (k = backwards ? n - 1 : 0; k >= 0 && k < n; k += backwards ? -1 : 1)
-            if (editor->doc->comments[list[k].record].parent < 0) { pick = k; break; }
+            if (editor->doc->comments[list[k].record].parent < 0 && thread_shown(editor, list[k].record)) {
+                pick = k;
+                break;
+            }
         wrapped = 1;
     }
     if (pick >= 0) select_comment(editor, &list[pick]);
@@ -2673,6 +3003,18 @@ static int change_comment(ow_editor *editor, int remove, const char *text, int d
         edit_done(editor);
         return OWF_OK;
     }
+    if (remove && doc->comments[root].parent >= 0) {
+        /* 2.0.40: a reply picked by its note: that reply alone goes */
+        editor->typing_group = 0;
+        if (!remember_before_edit(editor)) { owf_free(list); return OWF_ERR_MEMORY; }
+        caret = clamp_position(editor, comment_start(editor, &list[k]));
+        owf_free(list);
+        repoint_runs(editor, story, root, -1);
+        editor->pick_on = 0;
+        editor->selection.anchor = editor->selection.focus = clamp_position(editor, caret);
+        edit_done(editor);
+        return OWF_OK;
+    }
     while (doc->comments[root].parent >= 0) root = doc->comments[root].parent;
     editor->typing_group = 0;
     if (!remember_before_edit(editor)) { owf_free(list); return OWF_ERR_MEMORY; }
@@ -2731,13 +3073,12 @@ int ow_editor_delete_comment(ow_editor *editor)
  * an empty text run, its mark). The list only grows and is kept outside the undo snapshots, as comments are:
  * deleting a note removes its mark, and changing its text is a new note that the mark names instead. */
 
-/* Every note's mark text into marks (doc->nnotes of them), numbered as ow_layout numbers them */
+/* Every note's mark text into marks (doc->nnotes of them), numbered as ow_layout numbers them (libowf 1.12.1:
+ * in the page's format, from its first number) */
 static void editor_number_notes(const owf_doc *doc, char (*marks)[16])
 {
-    static const int values[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
-    static const char *const digits[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
     const owf_story *stories[5];
-    int n, i, j, k, count[2] = {0, 0};
+    int n, i, j, count[2] = {0, 0};
     stories[0] = &doc->body; stories[1] = &doc->header; stories[2] = &doc->footer;
     stories[3] = &doc->header_left; stories[4] = &doc->footer_left;
     for (i = 0; i < doc->nnotes; ++i) marks[i][0] = 0;
@@ -2750,19 +3091,37 @@ static void editor_number_notes(const owf_doc *doc, char (*marks)[16])
                 if (m <= 0 || m > doc->nnotes || marks[m - 1][0]) continue;
                 note = &doc->notes[m - 1];
                 if (note->label) { snprintf(marks[m - 1], sizeof marks[m - 1], "%s", note->label); continue; }
-                number = ++count[note->endnote ? 1 : 0];
-                if (!note->endnote || number > 3999) {
-                    snprintf(marks[m - 1], sizeof marks[m - 1], "%d", number);
-                    continue;
-                }
-                for (k = 0; k < 13; ++k)
-                    while (number >= values[k]) {
-                        size_t at = strlen(marks[m - 1]);
-                        if (at + strlen(digits[k]) < sizeof marks[m - 1]) strcat(marks[m - 1], digits[k]);
-                        number -= values[k];
-                    }
+                number = ++count[note->endnote ? 1 : 0] + owf_note_kind_start_impl(doc, note->endnote) - 1;
+                owf_note_format_impl(owf_note_kind_format_impl(doc, note->endnote), note->endnote, number,
+                                     marks[m - 1], sizeof marks[m - 1]);
             }
     }
+}
+
+int ow_editor_note_numbering(const ow_editor *editor, int endnote, int *format, int *start)
+{
+    if (!editor || !editor->doc) return 0;
+    if (format) *format = owf_note_kind_format_impl(editor->doc, endnote);
+    if (start) *start = owf_note_kind_start_impl(editor->doc, endnote);
+    return 1;
+}
+
+int ow_editor_set_note_numbering(ow_editor *editor, int endnote, int format, int start)
+{
+    owf_page *pg;
+    int k = endnote ? 1 : 0;
+    if (!editor || !editor->doc || format < OWF_NOTE_FORMAT_DEFAULT || format >= OWF_NOTE_FORMAT_COUNT || start < 0)
+        return OWF_ERR_FORMAT;
+    pg = &editor->doc->page;
+    if (format == (k ? OWF_NOTE_FORMAT_LOWER_ROMAN : OWF_NOTE_FORMAT_ARABIC)) format = OWF_NOTE_FORMAT_DEFAULT;
+    if (start <= 1) start = 0;
+    if (pg->note_format[k] == format && pg->note_start[k] == start) return OWF_OK;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    pg->note_format[k] = format;
+    pg->note_start[k] = start;
+    edit_done(editor);
+    return OWF_OK;
 }
 
 typedef struct {
@@ -3044,6 +3403,7 @@ void ow_editor_free(ow_editor *editor)
     owf_free(editor->para_y);
     owf_free(editor->author);
     owf_free(editor->file_name);
+    owf_free(editor->comment_filter);
     ow_editor_merge_close(editor);                   /* 2.5.0 */
     owf_free(editor);
 }
@@ -3632,6 +3992,8 @@ int ow_editor_backspace(ow_editor *editor)
 
     if (!ow_editor_selection_empty(editor)) {
         rc = editor->track ? tracked_delete_selection(editor) : delete_selection_internal(editor);
+    } else if (editor->final_view) {
+        rc = final_view_delete(editor, -1);          /* 2.0.37 */
     } else if (editor->track) {
         /* 2.1.0: recording, the character before the caret is marked deleted; the caret goes before it */
         ow_position end = clamp_position(editor, editor->selection.focus);
@@ -3669,6 +4031,8 @@ int ow_editor_delete_forward(ow_editor *editor)
 
     if (!ow_editor_selection_empty(editor)) {
         rc = editor->track ? tracked_delete_selection(editor) : delete_selection_internal(editor);
+    } else if (editor->final_view) {
+        rc = final_view_delete(editor, 1);           /* 2.0.37 */
     } else if (editor->track) {
         /* 2.1.0: recording, the character after the caret is marked deleted; the caret goes past it */
         ow_position end;
@@ -3740,15 +4104,30 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
     } else {
         pos = editor->selection.focus;
         switch (move) {
-        case OW_MOVE_LEFT:  pos = move_left_pos(editor, pos); break;
-        case OW_MOVE_RIGHT: pos = move_right_pos(editor, pos); break;
+        case OW_MOVE_LEFT:  pos = editor->final_view ? visible_step(editor, pos, -1) : move_left_pos(editor, pos); break;
+        case OW_MOVE_RIGHT: pos = editor->final_view ? visible_step(editor, pos, 1) : move_right_pos(editor, pos); break;
         case OW_MOVE_UP:    pos = vertical_pos(editor, pos, -1); break;
         case OW_MOVE_DOWN:  pos = vertical_pos(editor, pos, 1); break;
         case OW_MOVE_HOME:  pos = paragraph_home(editor, pos); break;
         case OW_MOVE_END:   pos = paragraph_end(editor, pos); break;
+        case OW_MOVE_WORD_LEFT:  pos = word_left_pos(editor, pos); break;
+        case OW_MOVE_WORD_RIGHT: pos = word_right_pos(editor, pos); break;
+        case OW_MOVE_DOC_START:
+            pos = clamp_position(editor, pos);
+            pos.paragraph = 0;
+            pos = paragraph_home(editor, pos);
+            break;
+        case OW_MOVE_DOC_END:
+            pos = clamp_position(editor, pos);
+            pos.paragraph = ed_story(editor)->nparas - 1;
+            pos = paragraph_end(editor, pos);
+            break;
         }
     }
 
+    /* 2.0.37: never in the middle of text the final view hides */
+    pos = out_of_hidden(editor, pos, move == OW_MOVE_LEFT || move == OW_MOVE_UP || move == OW_MOVE_HOME ||
+                                     move == OW_MOVE_WORD_LEFT || move == OW_MOVE_DOC_START ? -1 : 1);
     if (extend_selection) editor->selection.focus = pos;
     else {
         editor->selection.anchor = pos;
@@ -4762,35 +5141,42 @@ static int remove_frame_refs(ow_editor *editor, owf_story *story,
     return 1;
 }
 
-int ow_editor_delete_frame(ow_editor *editor, int frame_index)
+/* the frame and the runs naming it taken out, later frames renumbered (after remember_before_edit): 1, or 0 when
+ * memory ran out (the caller undoes); *anchor its body paragraph, or -1 */
+static int drop_frame(ow_editor *editor, int frame_index, int *anchor)
 {
-    owf_doc *doc;
+    owf_doc *doc = editor->doc;
     owf_story *fixed[5];
-    int i, anchor = -1;
-    if (!editor || !editor->doc || frame_index < 0 || frame_index >= editor->doc->nframes)
-        return OWF_ERR_FORMAT;
-    editor->typing_group = 0;
-    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
-    doc = editor->doc;
+    int i;
     fixed[0] = &doc->body; fixed[1] = &doc->header; fixed[2] = &doc->footer;
     fixed[3] = &doc->header_left; fixed[4] = &doc->footer_left;
+    *anchor = -1;
     for (i = 0; i < 5; ++i)
-        if (!remove_frame_refs(editor, fixed[i], frame_index, i == 0, &anchor)) {
-            ow_editor_undo(editor);
-            return OWF_ERR_MEMORY;
-        }
+        if (!remove_frame_refs(editor, fixed[i], frame_index, i == 0, anchor)) return 0;
     for (i = 0; i < doc->nframes; ++i)
-        if (i != frame_index &&
-            !remove_frame_refs(editor, &doc->frames[i].story, frame_index, 0, NULL)) {
-            ow_editor_undo(editor);
-            return OWF_ERR_MEMORY;
-        }
+        if (i != frame_index && !remove_frame_refs(editor, &doc->frames[i].story, frame_index, 0, NULL)) return 0;
     free_story_data(&doc->frames[frame_index].story);
     if (frame_index + 1 < doc->nframes)
         memmove(&doc->frames[frame_index], &doc->frames[frame_index + 1],
                 (size_t)(doc->nframes - frame_index - 1) * sizeof(*doc->frames));
     --doc->nframes;
     memset(&doc->frames[doc->nframes], 0, sizeof(*doc->frames));
+    return 1;
+}
+
+int ow_editor_delete_frame(ow_editor *editor, int frame_index)
+{
+    owf_doc *doc;
+    int anchor = -1;
+    if (!editor || !editor->doc || frame_index < 0 || frame_index >= editor->doc->nframes)
+        return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    doc = editor->doc;
+    if (!drop_frame(editor, frame_index, &anchor)) {
+        ow_editor_undo(editor);
+        return OWF_ERR_MEMORY;
+    }
     if (anchor < 0) anchor = editor->selection.focus.paragraph;
     if (anchor < 0) anchor = 0;
     if (anchor >= doc->body.nparas) anchor = doc->body.nparas - 1;
@@ -5547,208 +5933,12 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
  * one document, each record from a new page, or into a file each. The document keeps its data source's path
  * (owf_doc.merge_source), so that it is read again when the document is opened. */
 
-typedef struct ow_merge_table {
-    int ncols, nrows;            /* nrows: the records, not counting the names' row */
-    char **cells;                /* (nrows + 1) * ncols, row 0 the names; NULL: empty */
-} ow_merge_table;
-
-#define OW_MERGE_MAX_BYTES (4UL * 1024UL * 1024UL)
-
-static void merge_table_free(ow_merge_table *t)
-{
-    int i;
-    if (!t) return;
-    for (i = 0; i < (t->nrows + 1) * t->ncols; ++i) owf_free(t->cells[i]);
-    owf_free(t->cells);
-    owf_free(t);
-}
-
 void ow_editor_merge_close(ow_editor *editor)
 {
     if (!editor) return;
-    merge_table_free(editor->merge);
+    ow_merge_table_free(editor->merge);
     editor->merge = NULL;
     editor->merge_at = 0;
-}
-
-static int utf8_ok(const unsigned char *s, size_t n)
-{
-    size_t i = 0;
-    while (i < n) {
-        unsigned c = s[i];
-        size_t k, more = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : 9;
-        if (more == 9 || (more == 1 && c < 0xC2) || i + more >= n + (more ? 0 : 1)) return 0;
-        for (k = 1; k <= more; ++k) if ((s[i + k] & 0xC0) != 0x80) return 0;
-        i += more + 1;
-    }
-    return 1;
-}
-
-/* The bytes as UTF-8: the same, or Latin-1 made UTF-8 */
-static char *source_utf8(const char *data, size_t n, size_t *out_n)
-{
-    size_t i, o = 0;
-    char *out;
-    if (utf8_ok((const unsigned char *)data, n)) {
-        *out_n = n;
-        return copy_bytes(data, n);
-    }
-    if (!(out = (char *)owf_malloc(2 * n + 1))) return NULL;
-    for (i = 0; i < n; ++i) {
-        unsigned char c = (unsigned char)data[i];
-        if (c < 0x80) out[o++] = (char)c;
-        else { out[o++] = (char)(0xC0 | (c >> 6)); out[o++] = (char)(0x80 | (c & 0x3F)); }
-    }
-    out[o] = 0;
-    *out_n = o;
-    return out;
-}
-
-/* The separator: the most of comma, semicolon and tab on the first line outside quotes (a comma when none) */
-static char merge_separator(const char *s, size_t n)
-{
-    size_t i;
-    int quoted = 0, comma = 0, semi = 0, tab = 0;
-    for (i = 0; i < n && (quoted || (s[i] != '\n' && s[i] != '\r')); ++i) {
-        if (s[i] == '"') quoted = !quoted;
-        else if (!quoted && s[i] == ',') ++comma;
-        else if (!quoted && s[i] == ';') ++semi;
-        else if (!quoted && s[i] == '\t') ++tab;
-    }
-    if (semi > comma && semi >= tab) return ';';
-    if (tab > comma && tab > semi) return '\t';
-    return ',';
-}
-
-typedef struct {
-    char **cells;
-    int ncells, cap;
-    int *row_end;                /* each row's cells end here */
-    int nrows, caprows;
-    char *buf;
-    size_t len, capbuf;
-    int failed;
-} merge_parse;
-
-static void parse_putc(merge_parse *p, char c)
-{
-    if (p->len + 2 > p->capbuf) {
-        size_t want = p->capbuf ? p->capbuf * 2 : 64;
-        char *g = (char *)owf_realloc(p->buf, want);
-        if (!g) { p->failed = 1; return; }
-        p->buf = g;
-        p->capbuf = want;
-    }
-    p->buf[p->len++] = c;
-}
-
-static void parse_cell(merge_parse *p)
-{
-    char *cell;
-    if (p->failed) return;
-    if (p->ncells == p->cap) {
-        int want = p->cap ? p->cap * 2 : 64;
-        char **g = (char **)owf_realloc(p->cells, (size_t)want * sizeof *g);
-        if (!g) { p->failed = 1; return; }
-        p->cells = g;
-        p->cap = want;
-    }
-    cell = p->len ? copy_bytes(p->buf, p->len) : NULL;
-    if (p->len && !cell) { p->failed = 1; return; }
-    p->cells[p->ncells++] = cell;
-    p->len = 0;
-}
-
-static void parse_row(merge_parse *p)
-{
-    if (p->failed) return;
-    if (p->nrows == p->caprows) {
-        int want = p->caprows ? p->caprows * 2 : 32;
-        int *g = (int *)owf_realloc(p->row_end, (size_t)want * sizeof *g);
-        if (!g) { p->failed = 1; return; }
-        p->row_end = g;
-        p->caprows = want;
-    }
-    p->row_end[p->nrows++] = p->ncells;
-}
-
-static void trim_name(char *s)
-{
-    size_t n = strlen(s), a = 0;
-    while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = 0;
-    while (s[a] == ' ' || s[a] == '\t') ++a;
-    if (a) memmove(s, s + a, n - a + 1);
-}
-
-/* A table from CSV text (UTF-8): NULL when it has no columns or memory runs out (*memory set) */
-static ow_merge_table *merge_table_parse(const char *s, size_t n, int *memory)
-{
-    merge_parse p;
-    ow_merge_table *t = NULL;
-    size_t i = 0;
-    char sep;
-    int quoted = 0, r, k, start, rows = 0, row_start;
-    memset(&p, 0, sizeof p);
-    *memory = 0;
-    if (n >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) {
-        s += 3; n -= 3;                              /* a byte-order mark */
-    }
-    sep = merge_separator(s, n);
-    row_start = 0;
-    while (i < n && !p.failed) {
-        char c = s[i++];
-        if (quoted) {
-            if (c == '"' && i < n && s[i] == '"') { parse_putc(&p, '"'); ++i; }
-            else if (c == '"') quoted = 0;
-            else parse_putc(&p, c);
-        } else if (c == '"') quoted = 1;
-        else if (c == sep) parse_cell(&p);
-        else if (c == '\r' || c == '\n') {
-            if (c == '\r' && i < n && s[i] == '\n') ++i;
-            if (p.len || p.ncells > row_start) { parse_cell(&p); parse_row(&p); }
-            row_start = p.ncells;                    /* an empty line is left out */
-        } else parse_putc(&p, c);
-    }
-    if (!p.failed && (p.len || p.ncells > row_start)) { parse_cell(&p); parse_row(&p); }
-    if (p.failed) { *memory = 1; goto out; }
-    if (!p.nrows || p.row_end[0] == 0) goto out;
-    if (!(t = (ow_merge_table *)owf_calloc(1, sizeof *t))) { *memory = 1; goto out; }
-    t->ncols = p.row_end[0];
-    for (r = 1; r < p.nrows; ++r) {                  /* rows of empty cells are no records */
-        for (k = p.row_end[r - 1]; k < p.row_end[r] && !p.cells[k]; ++k) ;
-        if (k < p.row_end[r]) ++rows;
-    }
-    t->nrows = rows;
-    t->cells = (char **)owf_calloc((size_t)(rows + 1) * (size_t)t->ncols, sizeof *t->cells);
-    if (!t->cells) { owf_free(t); t = NULL; *memory = 1; goto out; }
-    for (r = 0, rows = 0; r < p.nrows; ++r) {
-        int got;
-        start = r ? p.row_end[r - 1] : 0;
-        got = p.row_end[r] - start;
-        if (r) {
-            for (k = start; k < p.row_end[r] && !p.cells[k]; ++k) ;
-            if (k == p.row_end[r]) continue;
-        }
-        for (k = 0; k < got && k < t->ncols; ++k) {  /* cells past the last column are left out */
-            t->cells[rows * t->ncols + k] = p.cells[start + k];
-            p.cells[start + k] = NULL;
-        }
-        ++rows;
-    }
-    for (k = 0; k < t->ncols; ++k) {                 /* a column without a name gets one */
-        char made[24], **name = &t->cells[k];
-        if (*name) trim_name(*name);
-        if (*name && **name) continue;
-        snprintf(made, sizeof made, "Column%d", k + 1);
-        owf_free(*name);
-        if (!(*name = copy_bytes(made, strlen(made)))) { merge_table_free(t); t = NULL; *memory = 1; goto out; }
-    }
-out:
-    for (k = 0; k < p.ncells; ++k) owf_free(p.cells[k]);
-    owf_free(p.cells);
-    owf_free(p.row_end);
-    owf_free(p.buf);
-    return t;
 }
 
 static int tolower_ascii(int c)
@@ -5756,23 +5946,10 @@ static int tolower_ascii(int c)
     return c >= 'A' && c <= 'Z' ? c + 32 : c;
 }
 
-static int merge_column(const ow_merge_table *t, const char *name)
-{
-    int k;
-    if (!t || !name) return -1;
-    for (k = 0; k < t->ncols; ++k) if (!strcmp(t->cells[k], name)) return k;
-    for (k = 0; k < t->ncols; ++k) {                 /* then without minding case (ASCII) */
-        const char *a = t->cells[k], *b = name;
-        while (*a && *b && tolower_ascii(*a) == tolower_ascii(*b)) { ++a; ++b; }
-        if (!*a && !*b) return k;
-    }
-    return -1;
-}
-
 const char *ow_editor_merge_value(const ow_editor *editor, int record, const char *column)
 {
     const ow_merge_table *t = editor ? editor->merge : NULL;
-    int k = merge_column(t, column);
+    int k = ow_merge_column(t, column);
     const char *v;
     if (k < 0 || record < 0 || record >= t->nrows) return NULL;
     v = t->cells[(record + 1) * t->ncols + k];
@@ -5813,11 +5990,11 @@ int ow_editor_merge_load_text(ow_editor *editor, const char *name, const char *d
     size_t n;
     int memory;
     if (!editor || !editor->doc || !data) return OWF_ERR_FORMAT;
-    if (!(utf8 = source_utf8(data, length, &n))) return OWF_ERR_MEMORY;
-    t = merge_table_parse(utf8, n, &memory);
+    if (!(utf8 = ow_merge_utf8(data, length, &n))) return OWF_ERR_MEMORY;
+    t = ow_merge_table_parse(utf8, n, &memory);
     owf_free(utf8);
     if (!t) return memory ? OWF_ERR_MEMORY : OWF_ERR_FORMAT;
-    if (name && *name && !merge_set_source(editor, name)) { merge_table_free(t); return OWF_ERR_MEMORY; }
+    if (name && *name && !merge_set_source(editor, name)) { ow_merge_table_free(t); return OWF_ERR_MEMORY; }
     ow_editor_merge_close(editor);
     editor->merge = t;
     editor->merge_at = 0;
@@ -5921,6 +6098,7 @@ static int story_final(owf_doc *d, owf_story *story)
                 continue;
             }
             r.revision = 0;
+            r.format_change = 0;                     /* libowf 1.11: accepted too, as the list stays empty */
             if (r.kind == OWF_RUN_FIELD && r.field > OWF_FIELD_TIME) {
                 char *value = r.text, *nl;
                 const char *t = value ? value : "";
@@ -6520,8 +6698,7 @@ int ow_editor_labels(ow_editor *editor, const ow_label_sheet *sheet, int first, 
     owf_parafmt pf;
     int r, k = 0, per, shown, merging, rc = OWF_OK;
     if (out) *out = NULL;
-    if (!editor || !editor->doc || !sheet || !out || sheet->columns < 1 || sheet->rows < 1 || sheet->label_width < 1 ||
-        sheet->label_height < 1) return OWF_ERR_FORMAT;
+    if (!editor || !editor->doc || !out || ow_label_sheet_check(sheet) != OWF_OK) return OWF_ERR_FORMAT;
     if (editor->doc->nframes || !editor->doc->body.nparas) return OWF_ERR_UNSUPPORTED;   /* text boxes: no */
     for (r = 0; r < editor->doc->body.nparas; ++r) if (editor->doc->body.paras[r].table_id >= 0) return OWF_ERR_UNSUPPORTED;
     per = sheet->columns * sheet->rows;
@@ -6568,6 +6745,253 @@ int ow_editor_labels(ow_editor *editor, const ow_label_sheet *sheet, int first, 
     if (rc != OWF_OK) { owf_doc_free(all); return rc; }
     *out = all;
     return OWF_OK;
+}
+
+/* ---- 2.0.37 (core 1.11): gap 4.2: own label sizes, envelopes with a return address and the printer's feed,
+ * merging some of the records (to the printer) ---------------------------------------------------------------- */
+
+int ow_label_sheet_check(const ow_label_sheet *s)
+{
+    long long right, bottom;                         /* long is 32 bits on the Amiga */
+    if (!s || s->columns < 1 || s->rows < 1 || s->columns > 400 || s->rows > 400 ||
+        s->columns * s->rows > 400 || s->label_width < 1 ||
+        s->label_height < 1 || s->page_width < 1440 || s->page_height < 1440 || s->page_width > 31680 ||
+        s->page_height > 31680 || s->left < 0 || s->top < 0)
+        return OWF_ERR_FORMAT;
+    if ((s->columns > 1 && s->across < s->label_width) || (s->rows > 1 && s->down < s->label_height))
+        return OWF_ERR_FORMAT;                       /* labels on top of each other */
+    right = (long long)s->left + (long long)(s->columns - 1) * s->across + s->label_width;
+    bottom = (long long)s->top + (long long)(s->rows - 1) * s->down + s->label_height;
+    return right <= s->page_width && bottom <= s->page_height ? OWF_OK : OWF_ERR_FORMAT;
+}
+
+/* millimetres with up to two decimals at *p, as hundredths; 0 when there is no number */
+static int read_mm100(const char **p, long *out)
+{
+    const char *q = *p;
+    long whole = 0, frac = 0;
+    int digits = 0, fd = 0;
+    while (*q && !(*q >= '0' && *q <= '9') && *q != '.') ++q;
+    while (*q >= '0' && *q <= '9') { if (whole < 100000) whole = whole * 10 + (*q - '0'); ++q; ++digits; }
+    if (*q == '.') {                                  /* a comma is between numbers, never a decimal point */
+        if (q[1] >= '0' && q[1] <= '9') {
+            ++q;
+            while (*q >= '0' && *q <= '9') { if (fd < 2) { frac = frac * 10 + (*q - '0'); ++fd; } ++q; ++digits; }
+        }
+    }
+    if (!digits) return 0;
+    while (fd < 2) { frac *= 10; ++fd; }
+    *out = whole * 100 + frac;
+    *p = q;
+    return 1;
+}
+
+static int mm100_to_twips(long mm100) { return (int)((mm100 * 1440 + 1270) / 2540); }
+
+int ow_label_sheet_parse(const char *text, ow_label_sheet *out)
+{
+    long v[10];
+    int n = 0;
+    const char *p = text;
+    if (!text || !out) return OWF_ERR_FORMAT;
+    while (n < 10 && read_mm100(&p, &v[n])) ++n;
+    if (n != 8 && n != 10) return OWF_ERR_FORMAT;
+    memset(out, 0, sizeof *out);
+    out->name = "Custom";
+    out->page_width = mm100_to_twips(v[0]);
+    out->page_height = mm100_to_twips(v[1]);
+    if (v[2] % 100 || v[3] % 100) return OWF_ERR_FORMAT;      /* columns and rows are whole */
+    out->columns = (int)(v[2] / 100);
+    out->rows = (int)(v[3] / 100);
+    out->label_width = mm100_to_twips(v[4]);
+    out->label_height = mm100_to_twips(v[5]);
+    out->left = mm100_to_twips(v[6]);
+    out->top = mm100_to_twips(v[7]);
+    out->across = n == 10 ? mm100_to_twips(v[8]) : out->label_width;
+    out->down = n == 10 ? mm100_to_twips(v[9]) : out->label_height;
+    return ow_label_sheet_check(out);
+}
+
+/* twips as millimetres to a hundredth (no trailing noughts), into out */
+static int put_mm(char *out, size_t size, int twips)
+{
+    long mm100 = ((long)twips * 2540 + 720) / 1440;
+    if (!(mm100 % 100)) return snprintf(out, size, "%ld", mm100 / 100);
+    if (!(mm100 % 10)) return snprintf(out, size, "%ld.%ld", mm100 / 100, mm100 % 100 / 10);
+    return snprintf(out, size, "%ld.%02ld", mm100 / 100, mm100 % 100);
+}
+
+int ow_label_sheet_format(const ow_label_sheet *s, char *out, size_t size)
+{
+    char m[10][24];
+    if (!s || !out || size < 2) return OWF_ERR_FORMAT;
+    put_mm(m[0], sizeof m[0], s->page_width); put_mm(m[1], sizeof m[1], s->page_height);
+    put_mm(m[2], sizeof m[2], s->label_width); put_mm(m[3], sizeof m[3], s->label_height);
+    put_mm(m[4], sizeof m[4], s->left); put_mm(m[5], sizeof m[5], s->top);
+    put_mm(m[6], sizeof m[6], s->across); put_mm(m[7], sizeof m[7], s->down);
+    return (size_t)snprintf(out, size, "page %s x %s mm, %d x %d labels %s x %s mm, at %s, %s mm, pitch %s x %s mm",
+                            m[0], m[1], s->columns, s->rows, m[2], m[3], m[4], m[5], m[6], m[7]) < size
+           ? OWF_OK : OWF_ERR_FORMAT;
+}
+
+int ow_merge_range_parse(const char *text, int records, int *first, int *last)
+{
+    long a = 0, b = 0;
+    const char *p = text;
+    if (!first || !last || records < 1) return OWF_ERR_FORMAT;
+    while (p && (*p == ' ' || *p == '\t')) ++p;
+    if (!p || !*p || !strncmp(p, "all", 3) || !strncmp(p, "All", 3) || !strncmp(p, "ALL", 3)) {
+        *first = 0; *last = records - 1;
+        return OWF_OK;
+    }
+    if (*p < '0' || *p > '9') return OWF_ERR_FORMAT;
+    while (*p >= '0' && *p <= '9') { if (a < 1000000) a = a * 10 + (*p - '0'); ++p; }
+    while (*p == ' ') ++p;
+    if (*p == '-' || *p == 't') {                   /* "3-7", "3 - ", "3 to 7" */
+        if (*p == 't') { if (p[1] != 'o') return OWF_ERR_FORMAT; ++p; }
+        ++p;
+        while (*p == ' ') ++p;
+        if (!*p) b = records;
+        else {
+            if (*p < '0' || *p > '9') return OWF_ERR_FORMAT;
+            while (*p >= '0' && *p <= '9') { if (b < 1000000) b = b * 10 + (*p - '0'); ++p; }
+        }
+    } else {
+        b = a;
+    }
+    while (*p == ' ') ++p;
+    if (*p || a < 1 || b < a || a > records) return OWF_ERR_FORMAT;
+    if (b > records) b = records;
+    *first = (int)a - 1;
+    *last = (int)b - 1;
+    return OWF_OK;
+}
+
+static const ow_envelope_size envelopes[] = {
+    /* name, width, height (turned: the long side across), the address's corner (twips: mm * 56.7) */
+    { "DL (220 x 110 mm)", 12472, 6236, 5669, 2835 },
+    { "C5 (229 x 162 mm)", 12983, 9184, 6236, 4535 },
+    { "C6 (162 x 114 mm)", 9184, 6463, 4252, 2835 },
+    { "US #10 (9.5 x 4.125 in)", 13680, 5940, 6480, 2880 },
+};
+
+int ow_envelope_count(void) { return (int)(sizeof envelopes / sizeof envelopes[0]); }
+
+const ow_envelope_size *ow_envelope_at(int i)
+{
+    return i >= 0 && i < ow_envelope_count() ? &envelopes[i] : NULL;
+}
+
+#define RETURN_AT 567                                /* the return address 10 mm in from the top left */
+#define RETURN_WIDTH 4536                            /* 80 mm */
+
+int ow_editor_envelope_return_box(const ow_editor *editor)
+{
+    int i;
+    if (!editor || !editor->doc) return -1;
+    for (i = 0; i < editor->doc->nframes; ++i) {
+        const owf_frame *f = &editor->doc->frames[i];
+        if (f->image < 0 && f->story.nparas && f->x_from == OWF_FROM_PAGE && f->y_from == OWF_FROM_PAGE &&
+            f->x_place == OWF_PLACE_AT && f->y_place == OWF_PLACE_AT && f->x == RETURN_AT && f->y == RETURN_AT &&
+            f->width == RETURN_WIDTH)
+            return i;
+    }
+    return -1;
+}
+
+int ow_editor_envelope(ow_editor *editor, const ow_envelope_size *env, const char *return_utf8)
+{
+    owf_page pg;
+    int old, anchor, lines = 1;
+    const char *c;
+    if (!editor || !editor->doc || !env || env->width < 1440 || env->height < 1440 || env->address_left < 0 ||
+        env->address_top < 0 || env->address_left + 567 >= env->width || env->address_top + 567 >= env->height ||
+        !editor->doc->body.nparas || editor->selection.focus.box)
+        return OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    pg = editor->doc->page;
+    pg.width = env->width;
+    pg.height = env->height;
+    pg.margin_left = env->address_left;
+    pg.margin_top = env->address_top;
+    pg.margin_right = pg.margin_bottom = 567;
+    editor->doc->page = pg;
+    if ((old = ow_editor_envelope_return_box(editor)) >= 0 && !drop_frame(editor, old, &anchor)) {
+        ow_editor_undo(editor);
+        return OWF_ERR_MEMORY;
+    }
+    if (return_utf8 && *return_utf8) {
+        /* a text box at the top left, a paragraph a line of the address */
+        owf_frame f;
+        owf_parafmt pf;
+        owf_charfmt cf = editor->doc->base;
+        int at;
+        memset(&f, 0, sizeof f);
+        f.image = -1;
+        for (c = return_utf8; *c; ++c) if (*c == '\n') ++lines;
+        f.width = RETURN_WIDTH;
+        f.height = lines * 300 + 120;
+        if (f.height > env->address_top - RETURN_AT) f.height = env->address_top - RETURN_AT;
+        if (f.height < 300) f.height = 300;
+        f.x = f.y = RETURN_AT;
+        f.x_from = f.y_from = OWF_FROM_PAGE;
+        f.x_place = f.y_place = OWF_PLACE_AT;
+        f.wrap = OWF_WRAP_NONE;
+        cf.size = 180;                               /* 9 point */
+        for (c = return_utf8;;) {
+            const char *e = strchr(c, '\n');
+            size_t n = e ? (size_t)(e - c) : strlen(c);
+            owf_para *p;
+            owf_parafmt_init(&pf);
+            if (n && c[n - 1] == '\r') --n;
+            if (!(p = owf_story_add(&f.story, &pf)) || owf_para_add_text(p, &cf, c, n) != OWF_OK) {
+                free_story_data(&f.story);
+                ow_editor_undo(editor);
+                return OWF_ERR_MEMORY;
+            }
+            if (!e) break;
+            c = e + 1;
+        }
+        if ((at = owf_doc_add_frame(editor->doc, &f)) < 0) {
+            free_story_data(&f.story);
+            ow_editor_undo(editor);
+            return OWF_ERR_MEMORY;
+        }
+        if (owf_para_add_frame(&editor->doc->body.paras[0], &editor->typing_fmt, at) != OWF_OK) {
+            ow_editor_undo(editor);
+            return OWF_ERR_MEMORY;
+        }
+    }
+    editor->selection.anchor = editor->selection.focus = clamp_position(editor, editor->selection.focus);
+    editor->dirty = 1;
+    ++editor->changes;
+    return ow_editor_layout(editor);
+}
+
+int ow_doc_feed_shift(owf_doc *doc, int paper_width, ow_envelope_feed feed)
+{
+    int dx, i, extra;
+    if (!doc || feed == OW_FEED_AS_SET || feed > OW_FEED_RIGHT || paper_width <= doc->page.width) return -1;
+    extra = paper_width - doc->page.width;
+    dx = feed == OW_FEED_LEFT ? 0 : feed == OW_FEED_CENTRE ? extra / 2 : extra;
+    doc->page.width = paper_width;
+    doc->page.margin_left += dx;
+    doc->page.margin_right += extra - dx;
+    for (i = 0; i < doc->nframes; ++i)
+        if (doc->frames[i].x_from == OWF_FROM_PAGE && doc->frames[i].x_place == OWF_PLACE_AT) doc->frames[i].x += dx;
+    return dx;
+}
+
+void ow_doc_feed_unshift(owf_doc *doc, int paper_width, int old_width, int dx)
+{
+    int i;
+    if (!doc || doc->page.width != paper_width || old_width < 1) return;
+    doc->page.width = old_width;
+    doc->page.margin_left -= dx;
+    doc->page.margin_right -= paper_width - old_width - dx;
+    for (i = 0; i < doc->nframes; ++i)
+        if (doc->frames[i].x_from == OWF_FROM_PAGE && doc->frames[i].x_place == OWF_PLACE_AT) doc->frames[i].x -= dx;
 }
 
 /* ---- 2.9.0 (core 1.10): word completion ---------------------------------------------------------------------
