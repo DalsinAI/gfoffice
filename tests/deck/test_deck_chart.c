@@ -487,6 +487,70 @@ static void test_odp_round_trip(void)
     owf_report_free(r);
 }
 
+/* text with every chart:class="chart:..." made chart:radar (a kind owf_chart does not know); count set to how many */
+static char *as_radar(const unsigned char *data, size_t n, int *count)
+{
+    static const char key[] = "chart:class=\"chart:";
+    const char *radar = "radar\"";
+    char *out = malloc(n * 2 + 1), *w = out;
+    size_t i = 0;
+    *count = 0;
+    if (!out) return NULL;
+    while (i < n) {
+        if (n - i >= sizeof key - 1 && !memcmp(data + i, key, sizeof key - 1)) {
+            memcpy(w, key, sizeof key - 1);
+            w += sizeof key - 1;
+            i += sizeof key - 1;
+            while (i < n && data[i] != '"') i++;
+            if (i < n) i++;
+            memcpy(w, radar, strlen(radar));
+            w += strlen(radar);
+            ++*count;
+        } else {
+            *w++ = (char)data[i++];
+        }
+    }
+    *w = 0;
+    return out;
+}
+
+/* A chart of a kind GFOpenPresentation's charts do not know (radar) is kept whole, as before: not read as a chart
+ * and written back as another kind. */
+static void test_odp_unknown_kind_kept(void)
+{
+    size_t n = 0, fn = 0, fn2 = 0;
+    unsigned char *data = make_pptx(&n), *flat = NULL, *flat2 = NULL;
+    owf_deck *deck = NULL, *radar = NULL;
+    char *text = NULL, *t2 = NULL;
+    int count = 0, i, others = 0;
+    CHECK(data && owf_import_deck_memory(data, n, "pptx", &deck, NULL, NULL) == OWF_OK && deck, "radar: the PPTX read");
+    free(data);
+    if (!deck) return;
+    CHECK(owf_export_fodp(deck, &flat, &fn, NULL) == OWF_OK && flat, "radar: saved as FODP");
+    text = flat ? as_radar(flat, fn, &count) : NULL;
+    CHECK(text && count > 0, "radar: the chart's kind changed (%d)", count);
+    CHECK(text && owf_import_deck_memory((const unsigned char *)text, strlen(text), "fodp", &radar, NULL, NULL) == OWF_OK
+          && radar, "radar: read");
+    CHECK(radar && chart_obj(radar) == NULL, "radar: not read as a chart");
+    for (i = 0; radar && radar->nslides && i < radar->slides[0].nobjs; i++)
+        if (radar->slides[0].objs[i].kind == OWF_OBJ_OTHER) others++;
+    CHECK(others == 1, "radar: kept as an object (%d)", others);
+    CHECK(radar && owf_export_fodp(radar, &flat2, &fn2, NULL) == OWF_OK && flat2, "radar: saved again");
+    if (flat2 && (t2 = malloc(fn2 + 1))) {
+        memcpy(t2, flat2, fn2);
+        t2[fn2] = 0;
+    }
+    CHECK(t2 && strstr(t2, "chart:class=\"chart:radar\""), "radar: written back as radar");
+    CHECK(t2 && !strstr(t2, "chart:class=\"chart:bar\"") && !strstr(t2, "chart:class=\"chart:line\""),
+          "radar: not written as another kind");
+    free(t2);
+    free(text);
+    free(flat);
+    free(flat2);
+    owf_deck_free(deck);
+    owf_deck_free(radar);
+}
+
 int main(void)
 {
     test_part();
@@ -494,6 +558,7 @@ int main(void)
     test_embedded();
     test_odf();
     test_odp_round_trip();
+    test_odp_unknown_kind_kept();
     printf("test_deck_chart: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
