@@ -6270,11 +6270,63 @@ static void test_pivot_command(void)
         CHECK(oc_core_pivot_field_choices(core, &def, 0, -1, -1, "", "", why, sizeof why) == OWF_OK &&
               def.nhide == 0);
         CHECK(oc_core_pivot_field_choices(core, &def, 5, -1, -1, NULL, NULL, why, sizeof why) == OWF_ERR_FORMAT);
+        /* "#n" is the number even where a heading is one; the window's choices use it */
+        CHECK(oc_core_pivot_field(core, &def, "#2") == 1 && oc_core_pivot_field(core, &def, "#0") == -1 &&
+              oc_core_pivot_field(core, &def, "#") == -1 && oc_core_pivot_field(core, &def, "#6") == -1);
         /* laid out: North alone, as the window's Apply does */
         CHECK(oc_core_pivot_field_choices(core, &def, 0, -1, -1, NULL, "East West", why, sizeof why) == OWF_OK);
         CHECK(oc_core_pivot_set_layout(core, &def) == OWF_OK);
         CHECK_STR(text(core, "A2"), "North");
     }
+    oc_core_free(core);
+}
+
+/* The window's choices name a field by its number alone, so a source whose headings are numbers ("1", "2")
+   gets them on the field chosen (Agnus's review). */
+static void test_pivot_number_headings(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "1", "2", "Sales", "Units" },
+        { "East", "A", "x", "10", "1" }, { "East", "B", "y", "20", "2" },
+        { "West", "A", "x", "5", "3" }, { "West", "A", "y", "15", "4" },
+        { "West", "B", "x", "25", "5" }, { "North", "B", "y", "30", "6" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def;
+    char why[160];
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 7);
+    CHECK(oc_parse_range("A1:E7", &selected));
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.source_sheet = 0;
+    def.source = selected;
+    def.nrow = 2; def.row[0] = 1; def.row[1] = 2;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    CHECK(oc_core_pivot_field(core, &def, "2") == 2 && oc_core_pivot_field(core, &def, "#2") == 1);
+    /* field index 1 is headed "1": its sort must not go to the field headed "2" */
+    CHECK(oc_core_pivot_field_choices(core, &def, 1, OWF_PIVOT_SORT_DESCENDING, -1, NULL, "A", why,
+                                      sizeof why) == OWF_OK);
+    CHECK(owf_pivot_sort_of(&def, 1) == OWF_PIVOT_SORT_DESCENDING && owf_pivot_sort_of(&def, 2) == OWF_PIVOT_SORT_SOURCE);
+    CHECK(def.nhide == 1 && def.hide[0].field == 1);
+    CHECK(oc_core_pivot_field_choices(core, &def, 2, OWF_PIVOT_SORT_ASCENDING, -1, NULL, "y", why,
+                                      sizeof why) == OWF_OK);
+    CHECK(owf_pivot_sort_of(&def, 2) == OWF_PIVOT_SORT_ASCENDING && owf_pivot_sort_of(&def, 1) == OWF_PIVOT_SORT_DESCENDING);
+    CHECK(def.nhide == 2 && def.hide[1].field == 2);
+    /* too many words: refused with a reason */
+    {
+        char many[400];
+        size_t at = 0;
+        int k;
+        for (k = 0; k < 40 && at + 4 < sizeof many; k++)
+            at += (size_t)snprintf(many + at, sizeof many - at, "%sI%d", k ? " " : "", k);
+        CHECK(oc_core_pivot_field_choices(core, &def, 0, -1, -1, NULL, many, why, sizeof why) == OWF_ERR_FORMAT &&
+              strstr(why, "30 items") && def.nhide == 2);
+    }
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "B");                                   /* "1" descending, A hidden */
     oc_core_free(core);
 }
 
@@ -8191,6 +8243,7 @@ int main(void)
     test_pivot_layout();
     test_pivot_sort();
     test_pivot_hide();
+    test_pivot_number_headings();
     test_pivot_command();
     test_pivot_show_as();
     test_pivot_group();

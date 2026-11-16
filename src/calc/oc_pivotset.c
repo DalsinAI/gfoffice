@@ -71,6 +71,10 @@ int oc_core_pivot_field(const oc_core *core, const owf_pivotdef *def, const char
     if (!core || !def || !name || !*name)
         return -1;
     n = def->source.last_col - def->source.first_col + 1u;
+    if (name[0] == '#') {                          /* "#2": the number only, never a heading */
+        number = strtoul(name + 1, &end, 10);
+        return name[1] && !*end && number >= 1 && number <= n ? (int)number - 1 : -1;
+    }
     for (i = 0; i < n; i++) {
         oc_core_pivot_heading(core, def, i, heading, sizeof heading);
         if (same_word(heading, name))
@@ -114,6 +118,8 @@ static int apply_words(const oc_core *core, owf_pivotdef *defp, const char *text
     int n, field = -1, k;
 #define def (*defp)
     n = split_words(text, w);
+    if (n < 0)
+        return why(out, size, OWF_ERR_FORMAT, "Too many words, or one over 127 bytes: up to 30 items at a time.");
     if (n < 2)
         return why(out, size, OWF_ERR_FORMAT, "SORT, HIDE, SHOW, GROUP, NAME, UNNAME or SHOWAS, then a field.");
     if (!same_word(w[0], "SHOWAS") && (field = oc_core_pivot_field(core, &def, w[1])) < 0)
@@ -342,22 +348,22 @@ int oc_core_pivot_field_choices(const oc_core *core, owf_pivotdef *def, unsigned
 #define RUN(...) do { snprintf(line, sizeof line, __VA_ARGS__); \
                       if ((rc = apply_words(core, &work, line, out, size)) != OWF_OK) return rc; } while (0)
     if (sort >= OWF_PIVOT_SORT_SOURCE && sort <= OWF_PIVOT_SORT_DESCENDING && sort != owf_pivot_sort_of(&work, field))
-        RUN("SORT %u %s", field + 1, sorts[sort]);
+        RUN("SORT #%u %s", field + 1, sorts[sort]);
     if (group) {
         oc_core_pivot_field_words(&work, field, OC_PIVOT_WORDS_GROUP, had, sizeof had);
         while (*group == ' ')
             group++;
         if (strcmp(had, group))
-            RUN("GROUP %u %s", field + 1, *group ? group : "NONE");
+            RUN("GROUP #%u %s", field + 1, *group ? group : "NONE");
     }
     if (hidden) {
         oc_core_pivot_field_words(&work, field, OC_PIVOT_WORDS_HIDDEN, had, sizeof had);
         while (*hidden == ' ')
             hidden++;
         if (strcmp(had, hidden)) {
-            RUN("SHOW %u ALL", field + 1);
+            RUN("SHOW #%u ALL", field + 1);
             if (*hidden)
-                RUN("HIDE %u %s", field + 1, hidden);
+                RUN("HIDE #%u %s", field + 1, hidden);
         }
     }
     if (show >= OWF_PIVOT_SHOW_NORMAL && show <= OWF_PIVOT_SHOW_LAST)

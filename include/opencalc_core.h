@@ -1257,7 +1257,8 @@ void oc_core_pivot_heading(const oc_core *core, const owf_pivotdef *def, unsigne
 void oc_core_pivot_item(const oc_core *core, const owf_pivotdef *def, unsigned field, const char *utf8,
                         owf_pivot_page *page);
 /* A field of the pivot table's source by its heading (case aside), or by its
- * number ("1" the source's first column): from 0, or -1. */
+ * number ("1" the source's first column; a heading that is a number comes
+ * first, "#1" is always the number): from 0, or -1. */
 int oc_core_pivot_field(const oc_core *core, const owf_pivotdef *def, const char *name);
 /* The active sheet's pivot table changed by one line of words, as ARexx's
  * PIVOTSET takes it (a word with spaces in "double quotes"; fields as
