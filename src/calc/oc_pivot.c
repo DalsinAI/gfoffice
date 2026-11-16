@@ -723,11 +723,17 @@ static void out_value_row(pivot_out *o, const owf_pivotdef *def, unsigned row, u
     }
 }
 
+/* A question to pivot_build in place of laying out: the source rows behind one output cell. */
+typedef struct {
+    unsigned row, col;               /* the output cell */
+    unsigned *srows, n;              /* the answer: source sheet rows, in the source's order (malloc'd) */
+} pivot_probe;
+
 /* Lays out def's table on the output sheet of an already private workbook,
  * and sets def->rows and def->cols to its size. old: the previous
  * definition on that sheet (its rectangle is emptied), or NULL. */
 static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, const owf_pivotdef *old,
-                       owf_calc **made_calc)
+                       owf_calc **made_calc, pivot_probe *probe)
 {
     const owf_sheet *source = &work->sheets[def->source_sheet];
     pivot_values values[OWF_PIVOT_FIELDS * 2];
@@ -917,6 +923,64 @@ static int pivot_build(owf_book *work, owf_pivotdef *def, int output_index, cons
         !(def->at_row + def->rows <= def->source.first_row || def->at_row > def->source.last_row ||
           def->at_col + def->cols <= def->source.first_col || def->at_col > def->source.last_col)) {
         o.rc = OWF_ERR_FORMAT;                  /* it would cover its own source */
+        goto done;
+    }
+    if (probe) {
+        /* the row: a data row (all its row fields), a subtotal row (its field and those outside
+           it) or the Grand Total row (none); the column: a column key, a subtotal column or a
+           total column the same way. OWF_ERR_FORMAT for a heading or label cell. */
+        unsigned base = def->at_col + label_cols, rk_fix = 0, ck_fix = 0, rdepth = 0, cdepth = 0, sh = 0, off;
+        int found = 0;
+        o.rc = OWF_ERR_FORMAT;
+        if (probe->row < first_value_row || probe->row >= def->at_row + def->rows || probe->col < base ||
+            probe->col >= def->at_col + def->cols)
+            goto done;
+        for (i = 0; i < nrk && !found; i++) {
+            if (first_value_row + i + sh == probe->row) {
+                found = 1;
+                rk_fix = rorder[i];
+                rdepth = def->nrow;
+                break;
+            }
+            for (f = def->nrow ? def->nrow - 1u : 0u; f-- > 0;) {
+                if (!subtotalled[f] || (i + 1u < nrk && !keys_break(&rkeys, rorder, i + 1u, f)))
+                    continue;
+                if (first_value_row + i + ++sh == probe->row) {
+                    found = 1;
+                    rk_fix = rorder[i];
+                    rdepth = f + 1u;
+                    break;
+                }
+            }
+        }
+        off = probe->col - base;
+        if (off < nslots * nd) {
+            const pivot_slot *sl = &slots[off / nd];
+            ck_fix = corder[sl->key];
+            cdepth = sl->sub ? sl->f + 1u : def->ncol;
+        }
+        probe->n = 0;
+        probe->srows = malloc((size_t)(nsrc ? nsrc : 1u) * sizeof *probe->srows);
+        if (!probe->srows) {
+            o.rc = OWF_ERR_MEMORY;
+            goto done;
+        }
+        for (i = 0, kept = 0; i < nsrc; i++) {
+            unsigned srow = def->source.first_row + 1u + i;
+            int match = 1;
+            if (!row_kept(work, def, source, srow))
+                continue;
+            r = row_of[kept];
+            c = col_of[kept];
+            kept++;
+            for (f = 0; f < rdepth && match; f++)
+                match = rkeys.keys[(size_t)r * rkeys.width + f] == rkeys.keys[(size_t)rk_fix * rkeys.width + f];
+            for (f = 0; f < cdepth && match; f++)
+                match = ckeys.keys[(size_t)c * ckeys.width + f] == ckeys.keys[(size_t)ck_fix * ckeys.width + f];
+            if (match)
+                probe->srows[probe->n++] = srow;
+        }
+        o.rc = OWF_OK;
         goto done;
     }
 
@@ -1184,7 +1248,7 @@ static int pivot_run(oc_core *core, owf_pivotdef *def, int output_index)
         output_index = work->nsheets - 1;
         def->at_row = def->at_col = 0;
     }
-    rc = pivot_build(work, def, output_index, had_old ? &old : NULL, &calc);
+    rc = pivot_build(work, def, output_index, had_old ? &old : NULL, &calc, NULL);
     if (rc == OWF_OK)
         rc = set_names(work, output_index, def);
     if (rc == OWF_OK)
@@ -1193,6 +1257,147 @@ static int pivot_run(oc_core *core, owf_pivotdef *def, int output_index)
         owf_calc_free(calc);
         owf_book_free(work);
     }
+    return rc;
+}
+
+/* A source cell's value into the details sheet, with its style (the same book's). */
+static int copy_value(owf_calc *calc, owf_book *book, int to, unsigned row, unsigned col, int from, unsigned srow,
+                      unsigned scol)
+{
+    const owf_cell *c = owf_sheet_find(&book->sheets[from], srow, scol);
+    char input[48], shown[160];
+    owf_cell *dst;
+    int rc, style;
+    if (!c || c->type == OWF_VALUE_EMPTY)
+        return OWF_OK;
+    style = c->style;
+    switch (c->type) {
+    case OWF_VALUE_NUMBER:
+        owf_number_text(c->number, input);
+        rc = owf_calc_enter(calc, to, row, col, input);
+        break;
+    case OWF_VALUE_BOOL: rc = owf_calc_enter(calc, to, row, col, c->number != 0.0 ? "TRUE" : "FALSE"); break;
+    case OWF_VALUE_TEXT: rc = put_text(calc, to, row, col, c->text); break;
+    default:
+        owf_calc_format(book, c, shown, sizeof shown);
+        rc = put_text(calc, to, row, col, shown);
+        break;
+    }
+    if (rc == OWF_OK && style > 0 && style < book->nstyles && (dst = owf_sheet_cell(&book->sheets[to], row, col, 0)))
+        dst->style = style;
+    return rc;
+}
+
+/* "Details", "Details2"...: the first free name. */
+static void details_name(const owf_book *book, char *out, size_t size)
+{
+    int suffix = 1, found, i;
+    do {
+        found = 0;
+        if (suffix == 1)
+            snprintf(out, size, "Details");
+        else
+            snprintf(out, size, "Details%d", suffix);
+        for (i = 0; i < book->nsheets; i++)
+            if (!strcmp(book->sheets[i].name, out))
+                found = 1;
+        suffix++;
+    } while (found);
+}
+
+/* Whether the output rectangle of a's sheet holds what b's does (b: the table made afresh). */
+static int same_output(const owf_book *a, const owf_book *b, int sheet, const owf_pivotdef *drawn,
+                       const owf_pivotdef *now)
+{
+    const owf_sheet *sa = &a->sheets[sheet], *sb = &b->sheets[sheet];
+    int i;
+    if (drawn->rows != now->rows || drawn->cols != now->cols || drawn->at_row != now->at_row ||
+        drawn->at_col != now->at_col)
+        return 0;
+    for (i = 0; i < sa->ncells; i++) {
+        const owf_cell *c = &sa->cells[i];
+        if (c->row >= now->at_row && c->row < now->at_row + now->rows && c->col >= now->at_col &&
+            c->col < now->at_col + now->cols && !same_value(c, owf_sheet_find(sb, c->row, c->col)))
+            return 0;
+    }
+    for (i = 0; i < sb->ncells; i++) {
+        const owf_cell *c = &sb->cells[i];
+        if (c->row >= now->at_row && c->row < now->at_row + now->rows && c->col >= now->at_col &&
+            c->col < now->at_col + now->cols && !same_value(c, owf_sheet_find(sa, c->row, c->col)))
+            return 0;
+    }
+    return 1;
+}
+
+int oc_core_pivot_details(oc_core *core, unsigned row, unsigned col)
+{
+    owf_pivotdef def, at, drawn;
+    owf_book *work;
+    owf_calc *calc = NULL;
+    pivot_probe probe;
+    char name[32];
+    unsigned k, x, width;
+    int rc, out;
+    if (!core)
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    if (!owf_pivot_get(core->book, core->sheet, &def))
+        return OWF_ERR_UNSUPPORTED;
+    work = oc_book_copy(core->book);
+    if (!work)
+        return OWF_ERR_MEMORY;
+    memset(&probe, 0, sizeof probe);
+    probe.row = row;
+    probe.col = col;
+    /* the cursor is on the table as last drawn: made afresh it must be the same, or the cell
+       would stand for other rows */
+    drawn = def;
+    rc = pivot_build(work, &def, core->sheet, &drawn, &calc, NULL);
+    owf_calc_free(calc);
+    calc = NULL;
+    if (rc == OWF_OK && !same_output(core->book, work, core->sheet, &drawn, &def))
+        rc = OC_PIVOT_STALE;
+    if (rc == OWF_OK)
+        rc = pivot_build(work, &def, core->sheet, NULL, &calc, &probe);
+    owf_calc_free(calc);                     /* none is made for a probe */
+    calc = NULL;
+    width = def.source.last_col - def.source.first_col + 1u;
+    if (rc == OWF_OK && (probe.n + 1u > OC_MAX_ROWS || width > OC_MAX_COLS))
+        rc = OWF_ERR_UNSUPPORTED;
+    if (rc == OWF_OK) {
+        details_name(work, name, sizeof name);
+        if (!owf_book_add_sheet(work, name))
+            rc = OWF_ERR_MEMORY;
+    }
+    if (rc == OWF_OK) {
+        out = work->nsheets - 1;
+        work->active = out;
+        calc = owf_calc_new(work);
+        if (!calc)
+            rc = OWF_ERR_MEMORY;
+        for (x = 0; rc == OWF_OK && x < width; x++) {      /* the heading row, bold */
+            rc = copy_value(calc, work, out, 0, x, def.source_sheet, def.source.first_row, def.source.first_col + x);
+            if (rc == OWF_OK)
+                rc = bold_cell(work, &work->sheets[out], 0, x);
+        }
+        for (k = 0; rc == OWF_OK && k < probe.n; k++)
+            for (x = 0; rc == OWF_OK && x < width; x++)
+                rc = copy_value(calc, work, out, k + 1u, x, def.source_sheet, probe.srows[k], def.source.first_col + x);
+        if (rc == OWF_OK)
+            rc = owf_calc_recalc(calc);
+        if (rc == OWF_OK) {
+            owf_pivot_init(&at);                 /* the selection: the copied rows */
+            at.rows = probe.n + 1u;
+            at.cols = width;
+            rc = pivot_commit(core, work, calc, out, &at);
+        }
+    }
+    if (rc != OWF_OK) {
+        owf_calc_free(calc);
+        owf_book_free(work);
+    }
+    free(probe.srows);
     return rc;
 }
 

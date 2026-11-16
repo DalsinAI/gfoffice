@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_CONSOLIDATE_REFRESH, M_NAME_MANAGE, M_ADV_FILTER,
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_PIVOT_DETAILS, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_CONSOLIDATE_REFRESH, M_NAME_MANAGE, M_ADV_FILTER,
     M_TEXT_COLUMNS, M_REMOVE_DUPS,
     M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT
 };
@@ -257,6 +257,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Remove Duplicates...", NULL, 0, 0, (APTR)M_REMOVE_DUPS },
     { NM_ITEM, "Pivot Table...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
     { NM_ITEM, "Refresh Pivot Table", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
+    { NM_ITEM, "Show Pivot Details", NULL, 0, 0, (APTR)M_PIVOT_DETAILS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -5977,6 +5978,22 @@ static void menu_action(ULONG id)
                 result(rc, "Pivot table refreshed from its source; Undo restores the previous one.");
         }
         break;
+    case M_PIVOT_DETAILS:
+        {
+            unsigned r, c;
+            int rc;
+            oc_core_active(core, &r, &c);
+            rc = oc_core_pivot_details(core, r, c);
+            if (rc == OWF_ERR_UNSUPPORTED)
+                set_status("The active sheet has no pivot table (or the details would not fit).");
+            else if (rc == OWF_ERR_FORMAT)
+                set_status("Put the cursor on one of the pivot table's values or totals first.");
+            else if (rc == OC_PIVOT_STALE)
+                set_status("The source has changed since the table was drawn: Data > Refresh Pivot Table first.");
+            else
+                result(rc, "The rows behind that value are on a new sheet; Undo removes it.");
+        }
+        break;
     case M_VALIDITY: do_validity(); break;
     case M_VALIDITY_CLEAR: result(oc_core_set_validation(core, NULL), "Validity cleared from the selection."); break;
     case M_FILTER_CLEAR:
@@ -6587,7 +6604,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -6644,6 +6661,18 @@ static int rexx_do_command(const char *command, char **result_out)
         if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_UNSUPPORTED ? "No pivot table on this sheet"
                                                          : "The pivot table's source or fields no longer fit");
+    } else if (starts_word_ci(command, "PIVOTDETAILS", &arg)) {  /* PIVOTDETAILS cell: Show Pivot Details there */
+        const char *rest;
+        if (!rexx_cell(arg, &row, &col, &rest)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
+        else {
+            int rc = oc_core_pivot_details(core, row, col);
+            ok = rc == OWF_OK;
+            if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
+            snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_UNSUPPORTED ? "No pivot table on this sheet"
+                                                             : rc == OWF_ERR_FORMAT ? "Not a value cell of the pivot table"
+                                                             : rc == OC_PIVOT_STALE ? "The source has changed: PIVOTREFRESH first"
+                                                             : owf_error_text(rc));
+        }
     } else if (starts_word_ci(command, "PIVOTINFO", &arg)) {     /* the active sheet's pivot table, as its definition */
         owf_pivotdef d;
         char t[OWF_PIVOT_TEXT_MAX];

@@ -7069,6 +7069,135 @@ static void test_pivot_column_subtotals(void)
     oc_core_free(core);
 }
 
+static void test_pivot_details(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "City", "Product", "Sales", "Units" },
+        { "East", "Leeds", "A", "10", "1" }, { "East", "York", "B", "20", "2" },
+        { "East", "Leeds", "B", "5", "3" }, { "West", "Bath", "A", "15", "4" },
+        { "West", "Bath", "B", "25", "5" }, { "North", "Hull", "A", "30", "6" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 7);
+    CHECK(oc_parse_range("A1:E7", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_pivot_details(core, 1, 3) == OWF_ERR_UNSUPPORTED);   /* the source sheet: no pivot table */
+
+    /* Region, City down with region subtotals; Product across. C A, D B, E Grand Total;
+       2 East Leeds, 3 York, 4 East Total, 5 West Bath, 6 West Total, 7 North Hull,
+       8 North Total, 9 Grand Total */
+    owf_pivot_init(&def);
+    def.nrow = 2; def.row[0] = 0; def.row[1] = 1;
+    def.ncol = 1; def.col[0] = 2;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    CHECK(owf_pivot_set_subtotal(&def, 0, 1));
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK(oc_core_sheet(core) == 1 && near(num(core, "D2"), 5.0) && near(num(core, "E4"), 35.0));
+
+    /* East, Leeds, B: one source row, with its heading row, as values on "Details" */
+    CHECK(oc_core_pivot_details(core, 1, 3) == OWF_OK);
+    CHECK(oc_core_sheet_count(core) == 3 && oc_core_sheet(core) == 2);
+    CHECK_STR(oc_core_book(core)->sheets[2].name, "Details");
+    CHECK_STR(text(core, "A1"), "Region");
+    CHECK(bold_at(core, "A1") && bold_at(core, "E1"));
+    CHECK_STR(text(core, "A2"), "East");
+    CHECK_STR(text(core, "B2"), "Leeds");
+    CHECK_STR(text(core, "C2"), "B");
+    CHECK(near(num(core, "D2"), 5.0) && near(num(core, "E2"), 3.0) && empty(core, "A3"));
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_sheet_count(core) == 2);   /* one Undo step */
+
+    /* a subtotal cell (East Total, A), a subtotal's total (East Total, Grand Total) */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(oc_core_pivot_details(core, 3, 2) == OWF_OK);
+    CHECK_STR(text(core, "B2"), "Leeds");
+    CHECK(near(num(core, "D2"), 10.0) && empty(core, "A3"));
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(oc_core_pivot_details(core, 3, 4) == OWF_OK);
+    CHECK_STR(oc_core_book(core)->sheets[3].name, "Details2");
+    CHECK(near(num(core, "D2"), 10.0) && near(num(core, "D3"), 20.0) && near(num(core, "D4"), 5.0) &&
+          empty(core, "A5"));                    /* in the source's order */
+
+    /* a column of a data row (York, B) and the grand total: every row */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(oc_core_pivot_details(core, 2, 3) == OWF_OK);
+    CHECK_STR(text(core, "B2"), "York");
+    CHECK(empty(core, "A3"));
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(oc_core_pivot_details(core, 8, 4) == OWF_OK);
+    CHECK_STR(text(core, "A7"), "North");
+    CHECK(near(num(core, "D7"), 30.0) && empty(core, "A8"));
+
+    /* not value cells: a label, a heading, outside the table */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(oc_core_pivot_details(core, 1, 0) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_details(core, 0, 2) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_details(core, 1, 5) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_details(core, 9, 2) == OWF_ERR_FORMAT);
+
+    /* a hidden item and a page field: the rows they leave out are not there */
+    CHECK(oc_core_pivot_get(core, &def));
+    def.npage = 1;
+    def.page[0].field = 4;
+    owf_pivot_item_from_text(&def.page[0], "3");
+    def.nrow = 1;
+    def.nsubtotal = 0;
+    CHECK(oc_core_pivot_set_layout(core, &def) == OWF_OK);
+    /* the page field's row, a gap, the heading row, then East; B is the only product, C the total */
+    CHECK(oc_core_pivot_details(core, 3, 2) == OWF_OK);
+    CHECK_STR(text(core, "B2"), "Leeds");
+    CHECK(near(num(core, "E2"), 3.0) && empty(core, "A3"));
+
+    /* the source changed since the table was drawn: an edit the table doesn't use is fine; one it
+       uses (East, Leeds, B's sales) needs a Refresh first, after which the rows are today's */
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    enter_at(core, "D2", "11");
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(oc_core_pivot_details(core, 3, 2) == OWF_OK);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    enter_at(core, "D4", "6");
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(near(num(core, "C4"), 5.0));                   /* as drawn */
+    CHECK(oc_core_pivot_details(core, 3, 2) == OC_PIVOT_STALE && oc_core_sheet(core) == 1);
+    CHECK(oc_core_refresh_pivot(core) == OWF_OK && near(num(core, "C4"), 6.0));
+    CHECK(oc_core_pivot_details(core, 3, 2) == OWF_OK && near(num(core, "D2"), 6.0));
+    /* a source row moved to another region: the same cell would stand for other rows */
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    enter_at(core, "A4", "West");
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    CHECK(oc_core_pivot_details(core, 3, 2) == OC_PIVOT_STALE);
+
+    /* a group made by hand: Coast (East and West) gives the rows of both, in the source's order
+       (the source now: East 11, East 20, West 6, West 15, West 25, North 30) */
+    CHECK(oc_core_pivot_get(core, &def));
+    def.npage = 0;
+    def.nrow = 1; def.row[0] = 0;
+    def.ncol = 0;
+    def.nsubtotal = 0;
+    def.nhide = 0;
+    {
+        owf_pivot_page east, west;
+        memset(&east, 0, sizeof east);
+        east.field = 0; east.kind = OWF_PIVOT_TEXT;
+        west = east;
+        snprintf(east.text, sizeof east.text, "East");
+        snprintf(west.text, sizeof west.text, "West");
+        CHECK(owf_pivot_set_named(&def, &east, "Coast") && owf_pivot_set_named(&def, &west, "Coast"));
+    }
+    CHECK(oc_core_pivot_set_layout(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "Coast");
+    CHECK(near(num(core, "B2"), 77.0));
+    CHECK(oc_core_pivot_details(core, 1, 1) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "East");
+    CHECK_STR(text(core, "A4"), "West");
+    CHECK(near(num(core, "D2"), 11.0) && near(num(core, "D3"), 20.0) && near(num(core, "D4"), 6.0) &&
+          near(num(core, "D5"), 15.0) && near(num(core, "D6"), 25.0) && empty(core, "A7"));
+    oc_core_free(core);
+}
+
 static void test_pivot_definition_text(void)
 {
     owf_book *book = owf_book_new();
@@ -8017,6 +8146,7 @@ int main(void)
     test_pivot_group();
     test_pivot_subtotals();
     test_pivot_column_subtotals();
+    test_pivot_details();
     test_pivot_group_xlsx();
     test_pivot_named();
     test_pivot_definition_text();
