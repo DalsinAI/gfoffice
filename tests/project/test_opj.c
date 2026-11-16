@@ -1016,6 +1016,28 @@ static void test_filter_group(void)
     CHECK_S(lines_text(&l), "[2],2,[5],5,[1],1,[4],4");
     l.group = OPJ_NCOLS;
     CHECK_N(opj_lines_update(&l, doc), OWF_ERR_FORMAT);
+    /* a big plan of distinct names, grouped by name, in order (n log n, not n^2) */
+    {
+        opj_doc *big = opj_doc_new(NULL, AT(16, 8, 0));
+        opj_lines g;
+        char name[16];
+        int i, ok = 1;
+        for (i = 0; i < 500 && big; i++) {
+            snprintf(name, sizeof name, "t%04d", (i * 293) % 500);     /* every name once, shuffled */
+            if (opj_insert_task(big, i, name) != OWF_OK) ok = 0;
+        }
+        CHECK(big && ok);
+        opj_lines_init(&g);
+        g.group = OPJ_COL_NAME;
+        CHECK_N(opj_lines_update(&g, big), OWF_OK);
+        CHECK_N(g.n, 1000);
+        for (i = 2; i < g.n && ok; i += 2)
+            if (strcmp(big->plan->tasks[g.task[i - 1]].name, big->plan->tasks[g.task[i + 1]].name) >= 0) ok = 0;
+        CHECK(ok);
+        CHECK_S(big->plan->tasks[g.task[1]].name, "t0000");
+        opj_lines_free(&g);
+        opj_doc_free(big);
+    }
 
     /* the AutoFilter reads a cell whole: a match past a long note's 400th byte */
     {
