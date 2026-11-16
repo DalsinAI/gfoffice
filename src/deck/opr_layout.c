@@ -1178,14 +1178,18 @@ static int build(builder *b)
     const owf_master *m = b->master;
     opr_frame *f;
     ol_node *n;
-    unsigned long bg = s->background;
-    int bg_image = s->background_image, i;
+    unsigned long bg = s->background, bg2 = s->background2;
+    int bg_image = s->background_image, bg_angle = s->background_angle, i;
+    unsigned char bg_gradient = s->background_gradient;
 
     b->out->nframes = 0;
     /* the background: the slide's, else its master's, else white */
     if (!OWF_SHADE_SET(bg) && bg_image < 0 && m) {
         bg = m->background;
         bg_image = m->background_image;
+        bg_gradient = m->background_gradient;
+        bg_angle = m->background_angle;
+        bg2 = m->background2;
     }
     if (!OWF_SHADE_SET(bg))
         bg = OWF_SHADE(0xFFFFFF);
@@ -1199,6 +1203,21 @@ static int build(builder *b)
         ol_style st = *ol_node_style(n);
         st.background = argb(bg);
         ol_node_set_style(n, &st);
+    }
+    /* a gradient background: the page's rectangle as a shape with it, over the plain colour */
+    if (bg_image < 0 && OWF_SHADE_SET(bg2) &&
+        (bg_gradient == OWF_GRADIENT_LINEAR || bg_gradient == OWF_GRADIENT_RADIAL)) {
+        ol_shape_style sh;
+        ol_shape_style_init(&sh);
+        sh.type = OL_SHAPE_RECT;
+        sh.fill_argb = argb(bg);
+        sh.stroke_argb = 0;
+        sh.stroke_width = 0;
+        sh.gradient = bg_gradient == OWF_GRADIENT_RADIAL ? OL_GRADIENT_RADIAL : OL_GRADIENT_LINEAR;
+        sh.fill2_argb = argb(bg2);
+        sh.gradient_angle_tenths = bg_angle;
+        if (!ol_node_set_shape(n, &sh, 0, NULL))
+            return 0;
     }
     f->first = ol_node_id(n) + 1;
     if (bg_image >= 0 && !add_picture(b, n, bg_image, NULL, d->width, d->height))

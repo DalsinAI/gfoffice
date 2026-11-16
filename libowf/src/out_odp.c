@@ -753,14 +753,36 @@ static void put_gradients_of(owf_buf *out, const owf_obj *objs, int n, char (*se
     }
 }
 
+/* a page's background as a look, for its gradient */
+static owf_look background_look(unsigned long colour, unsigned char gradient, int angle, unsigned long colour2)
+{
+    owf_look l;
+    memset(&l, 0, sizeof l);
+    l.fill = colour;
+    l.gradient = gradient;
+    l.gradient_angle = angle;
+    l.fill2 = colour2;
+    return l;
+}
+
 static void put_gradients(owf_buf *out, const owf_deck *d)
 {
     char seen[64][48];
     int nseen = 0, i;
-    for (i = 0; i < d->nmasters; i++)
-        put_gradients_of(out, d->masters[i].objs, d->masters[i].nobjs, seen, &nseen, 64);
-    for (i = 0; i < d->nslides; i++)
-        put_gradients_of(out, d->slides[i].objs, d->slides[i].nobjs, seen, &nseen, 64);
+    owf_obj bg;
+    memset(&bg, 0, sizeof bg);
+    for (i = 0; i < d->nmasters; i++) {
+        const owf_master *m = &d->masters[i];
+        bg.look = background_look(m->background, m->background_gradient, m->background_angle, m->background2);
+        put_gradients_of(out, &bg, 1, seen, &nseen, 64);
+        put_gradients_of(out, m->objs, m->nobjs, seen, &nseen, 64);
+    }
+    for (i = 0; i < d->nslides; i++) {
+        const owf_slide *s = &d->slides[i];
+        bg.look = background_look(s->background, s->background_gradient, s->background_angle, s->background2);
+        put_gradients_of(out, &bg, 1, seen, &nseen, 64);
+        put_gradients_of(out, s->objs, s->nobjs, seen, &nseen, 64);
+    }
 }
 
 /* The object's graphic style: fill, line, insets, alignment, fitting. */
@@ -1217,9 +1239,16 @@ static void put_objects(odpw *w, owf_buf *out, const owf_obj *objs, int n, int p
 
 /* ---- Pages ---- */
 
-static void put_background(owf_buf *out, const owf_deck *d, unsigned long colour, int image, int master)
+static void put_background(owf_buf *out, const owf_deck *d, unsigned long colour, int image, int master,
+                           unsigned char gradient, int angle, unsigned long colour2)
 {
-    if (image >= 0 && image < d->res->nimages)
+    owf_look l = background_look(colour, gradient, angle, colour2);
+    if (image < 0 && look_has_gradient(&l)) {
+        char gname[48];
+        gradient_name(&l, gname, sizeof gname);
+        owf_buf_printf(out, " draw:fill=\"gradient\" draw:fill-gradient-name=\"%s\" draw:fill-color=\"#%06lx\"", gname,
+                       OWF_SHADE_RGB(colour));
+    } else if (image >= 0 && image < d->res->nimages)
         owf_buf_printf(out, " draw:fill=\"bitmap\" draw:fill-image-name=\"op-bg%d\" style:repeat=\"stretch\"", image + 1);
     else if (OWF_SHADE_SET(colour))
         owf_buf_printf(out, " draw:fill=\"solid\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(colour));
@@ -1527,7 +1556,8 @@ static int build_content(odpw *w, owf_buf *out)
         /* the page's style: background, fields, transition */
         body.length = 0;
         owf_buf_puts(&body, "<style:drawing-page-properties");
-        put_background(&body, d, s->background, s->background_image, 0);
+        put_background(&body, d, s->background, s->background_image, 0, s->background_gradient,
+                       s->background_angle, s->background2);
         owf_buf_printf(&body, " presentation:display-footer=\"%s\" presentation:display-page-number=\"%s\""
                               " presentation:display-date-time=\"%s\"",
                        s->show & OWF_SHOW_FOOTER ? "true" : "false", s->show & OWF_SHOW_NUMBER ? "true" : "false",
@@ -1683,7 +1713,8 @@ static int build_styles(odpw *w, owf_buf *out)
         w->master = m;
         body.length = 0;
         owf_buf_puts(&body, "<style:drawing-page-properties draw:background-size=\"full\"");
-        put_background(&body, d, m->background, m->background_image, 1);
+        put_background(&body, d, m->background, m->background_image, 1, m->background_gradient,
+                       m->background_angle, m->background2);
         owf_buf_puts(&body, "/>");
         reg_style(w->reg, EL_STYLE, "drawing-page", "dp", NULL, &body, style);
         owf_buf_puts(&masters, "<style:master-page");

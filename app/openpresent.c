@@ -116,7 +116,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.34 (16.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.35 (16.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -1892,13 +1892,13 @@ static void draw_shape(const painter *p, const ol_device_op *d)
         /* a gradient as bands, each the outline cut to the band (opr_gradient_band): 16 on screen, a
            pen each; a thumbnail's 8 */
         int bands = p->thumb ? 8 : 16, band, m;
-        int pts[2 * (OL_MAX_SHAPE_POINTS + 40)];
+        int pts[2 * OPR_GRADIENT_MAX_POINTS];
         unsigned long rgb;
         for (band = 0; band < bands; ++band) {
             m = opr_gradient_band(xy, n, x, y, w, h,
                                   s->gradient == OL_GRADIENT_RADIAL ? OPR_GRADIENT_RADIAL : OPR_GRADIENT_LINEAR,
                                   s->gradient_angle_tenths + s->rotation_tenths, s->fill_argb & 0xFFFFFFu,
-                                  s->fill2_argb & 0xFFFFFFu, band, bands, pts, OL_MAX_SHAPE_POINTS + 40, &rgb);
+                                  s->fill2_argb & 0xFFFFFFu, band, bands, pts, OPR_GRADIENT_MAX_POINTS, &rgb);
             if (m >= 3) ogt_fill_poly(p->rp, argb_pen(0xFF000000u | (uint32_t)rgb), pts, m);
         }
     } else if (fill >= 0 && closed && n >= 3) {
