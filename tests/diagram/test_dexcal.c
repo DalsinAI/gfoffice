@@ -231,10 +231,35 @@ static void test_small(void)
     owf_diagram_free(&d);
 }
 
+/* Bytes that aren't UTF-8 come out as U+FFFD and good UTF-8 as it is; a huge label's size is clamped, not
+ * overflowed (UBSan in diagram-check watches the arithmetic). */
+static void test_bytes(void)
+{
+    owf_diagram d;
+    unsigned char *out = NULL;
+    size_t n = 0;
+    owf_dpage *p;
+    static char big[30001];
+    owf_diagram_init(&d);
+    p = owf_diagram_add_page(&d, "e", NULL);
+    /* é (C3 A9), a stray FF, a cut-short euro (E2 82), an overlong slash (C0 AF), a surrogate (ED A0 80), U+1F600 */
+    shape(p, "a", "rounded=0;", 0, 0, 10, 10, "\303\251|\377|\342\202|\300\257|\355\240\200|\360\237\230\200");
+    memset(big, 'x', sizeof big - 1);
+    shape(p, "b", "rounded=0;fontSize=400;", 0, 0, 10, 10, big);
+    CHECK_N(owf_dexcal_write(&d, 0, &out, &n), OWF_OK);
+    CHECK(element_has((const char *)out, n, "t3", "\"text\": \"\303\251|\357\277\275|\357\277\275\357\277\275|"
+                                              "\357\277\275\357\277\275|\357\277\275\357\277\275\357\277\275|\360\237\230\200\""));
+    CHECK(element_has((const char *)out, n, "t4", "\"width\": 4400000, \"height\": 500,"));   /* 20000 x 400 x 0.55 */
+    CHECK(json_ok((const char *)out, n));
+    owf_free(out);
+    owf_diagram_free(&d);
+}
+
 int main(void)
 {
     test_scene();
     test_small();
+    test_bytes();
     printf("diagram Excalidraw: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }
