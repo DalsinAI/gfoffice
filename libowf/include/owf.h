@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.12.2"
+#define OWF_VERSION "1.12.5"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -190,6 +190,10 @@ typedef struct {
      * in doc->revisions. Inserted: Return was typed there. Deleted: accepting the deletion joins the next
      * paragraph to this one. 0: none. */
     int mark_revision;
+    /* 1.12: a table cell's row is a tracked change (DOCX w:trPr/w:ins, w:del): 1 + its index in doc->revisions,
+     * the same on every cell of the row. Inserted: the row was put in; deleted: accepting it takes the row
+     * away. 0: none. */
+    int row_revision;
 } owf_para;
 
 typedef enum {

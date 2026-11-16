@@ -258,6 +258,9 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
         if (f == &owf_format_odt && owf_doc_has_format_changes(doc))   /* 1.11: DOCX keeps them; ODT not yet */
             owf_report_add(report, OWF_NOTE_APPROX, "Tracked format changes were saved accepted (as the format is now) in %s",
                            f->description);
+        if (f == &owf_format_odt && owf_doc_has_row_changes(doc))      /* 1.12: DOCX keeps them; ODT not yet */
+            owf_report_add(report, OWF_NOTE_APPROX, "Tracked table row changes were saved accepted in %s",
+                           f->description);
         if (f == &owf_format_odt && owf_doc_has_frame_changes(doc))    /* 1.12: DOCX keeps them; ODT not yet */
             owf_report_add(report, OWF_NOTE_APPROX, "Tracked text box and frame changes were saved accepted in %s",
                            f->description);

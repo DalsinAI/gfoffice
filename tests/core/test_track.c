@@ -824,6 +824,136 @@ static void test_frames(void)
     remove(odt);
 }
 
+/* 2.0.38: table rows as tracked changes: a row put in while recording is an insertion, one deleted is marked
+ * (the author's own goes), accepted or rejected whole; DOCX keeps them (w:trPr/w:ins, w:del), ODT saves them
+ * accepted and says so; columns are not recorded; the final view steps over a deleted row */
+static owf_doc *table_doc(void)
+{
+    static const char *const cells[] = { "a", "b", "c", "d" };
+    static const char *const top[] = { "Top" };
+    owf_doc *doc = doc_of(top, 1);
+    owf_parafmt pf;
+    owf_charfmt cf;
+    int i;
+    if (!doc) return NULL;
+    owf_parafmt_init(&pf);
+    owf_charfmt_init(&cf);
+    for (i = 0; i < 4; ++i) {
+        owf_para *p = owf_story_add(&doc->body, &pf);
+        if (!p || owf_para_add_text(p, &cf, cells[i], 1) != 0) { owf_doc_free(doc); return NULL; }
+        p->table_id = 0;
+        p->table_row = i / 2;
+        p->table_col = i % 2;
+        p->table_cols = 2;
+    }
+    return doc;
+}
+
+/* The table as rows of cells, "a b/c d", an inserted row's cells in {+..+} and a deleted one's in [-..-] */
+static const char *rows_dump(const owf_doc *doc)
+{
+    static char buf[256];
+    int i, row = -1;
+    size_t used = 0;
+    buf[0] = 0;
+    for (i = 0; i < doc->body.nparas; ++i) {
+        const owf_para *p = &doc->body.paras[i];
+        const owf_revision *rv = OWF_DOC_REVISION(doc, p->row_revision);
+        const char *t = p->nruns && p->runs[0].text ? p->runs[0].text : "";
+        int j;
+        for (j = 0; j < p->nruns; ++j) if (p->runs[j].text && *p->runs[j].text) { t = p->runs[j].text; break; }
+        if (p->table_id < 0) continue;
+        used += (size_t)snprintf(buf + used, sizeof buf - used, "%s%s%s%s%s", row < 0 ? "" : p->table_row != row ? "/" : " ",
+                                 rv ? (rv->kind == OWF_REV_DELETE ? "[-" : "{+") : "", *t ? t : "_",
+                                 rv ? (rv->kind == OWF_REV_DELETE ? "-]" : "+}") : "", "");
+        row = p->table_row;
+        if (used >= sizeof buf) break;
+    }
+    return buf;
+}
+
+static void test_rows(void)
+{
+    owf_doc *doc = table_doc(), *back = NULL;
+    ow_editor *ed;
+    owf_report *rp;
+    const char *path = "/tmp/openwrite-track-rows.docx", *odt = "/tmp/openwrite-track-rows.odt";
+    int i, para;
+    if (!doc || !(ed = recording(doc, "Ann"))) { CHECK(0, "document"); owf_doc_free(doc); return; }
+    CHECK(!strcmp(rows_dump(doc), "a b/c d"), rows_dump(doc));
+    caret(ed, 1, 0);
+    CHECK(ow_editor_table_insert_row(ed) == OWF_OK, "row while recording");
+    CHECK(!strcmp(rows_dump(doc), "a b/{+_+} {+_+}/c d"), rows_dump(doc));
+    CHECK(ow_editor_table_insert_column(ed) == OWF_ERR_UNSUPPORTED && ow_editor_table_delete_column(ed) == OWF_ERR_UNSUPPORTED,
+          "no column changes while recording");
+    CHECK(owf_export_file(doc, path, "docx", NULL) == OWF_OK &&
+          owf_import_file(path, NULL, &back, NULL, NULL) == OWF_OK && back, "docx");
+    CHECK(back && !strcmp(rows_dump(back), "a b/{+_+} {+_+}/c d"), back ? rows_dump(back) : "read");
+    owf_doc_free(back);
+    back = NULL;
+    rp = owf_report_new();
+    CHECK(rp && owf_export_file(doc, odt, "odt", rp) == OWF_OK && report_has(rp, "table row changes were saved accepted"),
+          "odt says so");
+    owf_report_free(rp);
+    CHECK(owf_import_file(odt, NULL, &back, NULL, NULL) == OWF_OK && back && !strcmp(rows_dump(back), "a b/_ _/c d"),
+          back ? rows_dump(back) : "odt read");
+    owf_doc_free(back);
+    back = NULL;
+    CHECK(ow_editor_accept_all_changes(ed, 0) == OWF_OK && !strcmp(rows_dump(doc), "a b/c d"), rows_dump(doc));
+    CHECK(doc->body.paras[3].table_row == 1, "the rows numbered again");
+    /* Ann deletes her own new row: it goes */
+    caret(ed, 1, 0);
+    CHECK(ow_editor_table_insert_row(ed) == OWF_OK, "again");
+    CHECK(ow_editor_table_delete_row(ed) == OWF_OK && !strcmp(rows_dump(doc), "a b/c d"), rows_dump(doc));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    /* Bob deletes the first row: marked; DOCX keeps it; accepted it goes, rejected it stays */
+    for (i = 0; i < 2; ++i) {
+        doc = table_doc();
+        if (!doc || !(ed = recording(doc, "Bob"))) { CHECK(0, "document"); owf_doc_free(doc); return; }
+        caret(ed, 1, 0);
+        CHECK(ow_editor_table_delete_row(ed) == OWF_OK && !strcmp(rows_dump(doc), "[-a-] [-b-]/c d"), rows_dump(doc));
+        CHECK(ow_editor_table_delete_row(ed) == OWF_OK && !strcmp(rows_dump(doc), "[-a-] [-b-]/c d"), "again: nothing more");
+        if (!i) {
+            CHECK(owf_export_file(doc, path, "docx", NULL) == OWF_OK &&
+                  owf_import_file(path, NULL, &back, NULL, NULL) == OWF_OK && back &&
+                  !strcmp(rows_dump(back), "[-a-] [-b-]/c d"), back ? rows_dump(back) : "docx");
+            owf_doc_free(back);
+            back = NULL;
+            /* the final view: the row is not there; the caret put in it goes on past it */
+            ow_editor_set_final_view(ed, 1);
+            caret(ed, 0, 3);
+            ow_editor_move_caret(ed, OW_MOVE_RIGHT, 0);
+            focus_at(ed, &para);
+            CHECK(para == 3, "Right from Top goes past the deleted row to c");
+            ow_editor_move_caret(ed, OW_MOVE_LEFT, 0);
+            focus_at(ed, &para);
+            CHECK(para == 0, "and Left back to Top");
+            ow_editor_set_final_view(ed, 0);
+        }
+        CHECK(ow_editor_accept_all_changes(ed, !i) == OWF_OK, i ? "reject all" : "accept all");
+        CHECK(!strcmp(rows_dump(doc), i ? "a b/c d" : "c d"), rows_dump(doc));
+        CHECK(i || (doc->body.nparas == 3 && doc->body.paras[1].table_row == 0), "c d is row 0");
+        ow_editor_free(ed);
+        owf_doc_free(doc);
+    }
+    /* one change: the caret's row only */
+    doc = table_doc();
+    if (!doc || !(ed = recording(doc, "Bob"))) { CHECK(0, "document"); owf_doc_free(doc); return; }
+    caret(ed, 1, 0);
+    ow_editor_table_delete_row(ed);
+    caret(ed, 3, 0);
+    ow_editor_table_delete_row(ed);
+    CHECK(!strcmp(rows_dump(doc), "[-a-] [-b-]/[-c-] [-d-]"), rows_dump(doc));
+    caret(ed, 3, 0);
+    CHECK(ow_editor_accept_change(ed, 0) == OWF_OK && !strcmp(rows_dump(doc), "[-a-] [-b-]/c d"), rows_dump(doc));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    remove(path);
+    remove(odt);
+}
+
 /* Accepting and rejecting format changes in the editor: the one at the caret, then all; undo */
 static void test_format_accept(void)
 {
@@ -934,6 +1064,7 @@ int main(void)
     test_final_view();
     test_pictures();
     test_frames();
+    test_rows();
     test_format_accept();
     test_format_nav();
     printf("track changes: %d checks, %d failed\n", checks, failures);

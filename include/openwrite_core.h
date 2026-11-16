@@ -318,6 +318,9 @@ int ow_editor_table_apply_style(ow_editor *editor, ow_table_scope scope,
                                 unsigned long shading, int borders,
                                 unsigned long border_colour);
 int ow_editor_table_move(ow_editor *editor, int delta);
+/* 2.0.38: recording, a row put in is an insertion and a row deleted is marked deleted (the author's own
+ * inserted row goes), accepted and rejected as one change; columns are not recorded, so inserting or
+ * deleting one while recording is OWF_ERR_UNSUPPORTED. */
 int ow_editor_table_insert_row(ow_editor *editor);
 int ow_editor_table_delete_row(ow_editor *editor);
 int ow_editor_table_insert_column(ow_editor *editor);
