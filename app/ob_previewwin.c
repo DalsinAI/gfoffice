@@ -35,33 +35,17 @@ typedef struct {
 static struct RastPort measure_rp;      /* the window's font, for the layout's widths */
 static int measure_ysize = 8;
 
-/* UTF-8 to Latin-1 (what the Amiga's fonts draw); anything past Latin-1 is a '?'. */
-static int latin1(const char *s, size_t n, char *out, int size)
-{
-    size_t i = 0;
-    int k = 0;
-    while (i < n && k < size - 1) {
-        unsigned char c = (unsigned char)s[i];
-        unsigned long u;
-        int more;
-        if (c < 0x80) { u = c; more = 0; }
-        else if ((c & 0xe0) == 0xc0) { u = c & 0x1f; more = 1; }
-        else if ((c & 0xf0) == 0xe0) { u = c & 0x0f; more = 2; }
-        else { u = c & 0x07; more = 3; }
-        for (++i; more > 0 && i < n && ((unsigned char)s[i] & 0xc0) == 0x80; --more, ++i)
-            u = (u << 6) | ((unsigned char)s[i] & 0x3f);
-        out[k++] = u < 0x100 ? (char)u : '?';
-    }
-    out[k] = 0;
-    return k;
-}
-
 static int measure(void *userdata, const char *utf8, size_t length, const ol_style *style, ol_text_metrics *m)
 {
     static char buf[512];
-    int n = latin1(utf8, length, buf, sizeof buf);
-    long px = n ? TextLength(&measure_rp, (STRPTR)buf, n) : 0;
+    size_t at = 0, took, n;
+    long px = 0;
     (void)userdata;
+    /* a piece at a time, so a long run is measured whole */
+    while (at < length && (took = ob_preview_latin1(utf8 + at, length - at, buf, sizeof buf, &n)) > 0) {
+        if (n) px += TextLength(&measure_rp, (STRPTR)buf, (UWORD)n);
+        at += took;
+    }
     m->width = (ol_unit)(px * style->font_size / measure_ysize);
     m->ascent = style->font_size * 4 / 5;
     m->descent = style->font_size / 5;
@@ -93,8 +77,10 @@ static void paint_op(void *userdata, const ol_device_op *d)
             RectFill(rp, d->box.x, d->baseline - hh, d->box.x + d->box.width - 1, d->baseline - 1);
         } else {
             struct TextExtent te;
-            int n = latin1(s + t->text_offset, t->text_length, buf, sizeof buf);
-            ULONG fit = n ? TextFit(rp, (STRPTR)buf, n, &te, NULL, 1, d->box.width + 2, 32767) : 0;
+            size_t n;
+            ULONG fit;
+            ob_preview_latin1(s + t->text_offset, t->text_length, buf, sizeof buf, &n);
+            fit = n ? TextFit(rp, (STRPTR)buf, (UWORD)n, &te, NULL, 1, d->box.width + 2, 32767) : 0;
             if (!fit) break;
             SetAPen(rp, p->text_pen);
             Move(rp, d->box.x, d->baseline);
@@ -184,7 +170,7 @@ int ob_preview_window(const ob_rwin_env *env, struct Window *over, const ob_repo
     ob_preview *v;
     const ol_page *pg;
     painter paint;
-    int done = 0, rebuild = 1, redraw = 1, page = 0, fh = env->fh, fw = env->fw, rowh = fh + 8;
+    int done = 0, failed = 0, rebuild = 1, redraw = 1, page = 0, fh = env->fh, fw = env->fw, rowh = fh + 8;
     int w, h, paper_w, paper_h, bw;
     InitRastPort(&measure_rp);
     SetFont(&measure_rp, env->font);
@@ -234,7 +220,7 @@ int ob_preview_window(const ob_rwin_env *env, struct Window *over, const ob_repo
             int l = pw->BorderLeft + 8, by = pw->BorderTop + ih - 6 - (fh + 6);
             if (eg) { RemoveGList(pw, eg, -1); FreeGadgets(eg); eg = NULL; }
             memset(gad, 0, sizeof gad);
-            if (!(g = CreateContext(&eg))) break;
+            if (!(g = CreateContext(&eg))) { failed = 1; break; }
             memset(&ng, 0, sizeof ng);
             ng.ng_VisualInfo = env->vi;
             ng.ng_TextAttr = env->ta;
@@ -253,7 +239,7 @@ int ob_preview_window(const ob_rwin_env *env, struct Window *over, const ob_repo
                                            TAG_DONE);
             ob_preview_label(v, page, label, sizeof label);
             ng.ng_LeftEdge = l + 2 * (bw + 8);
-            ng.ng_Width = iw - 16 - 3 * (bw + 8);
+            ng.ng_Width = iw - 16 - 3 * (bw + 8) > fw * 8 ? iw - 16 - 3 * (bw + 8) : fw * 8;
             ng.ng_GadgetText = NULL;
             ng.ng_GadgetID = P_PAGE;
             g = gad[P_PAGE] = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)label, GTTX_Justification,
@@ -263,7 +249,7 @@ int ob_preview_window(const ob_rwin_env *env, struct Window *over, const ob_repo
             ng.ng_GadgetText = (UBYTE *)"Close";
             ng.ng_GadgetID = P_CLOSE;
             g = gad[P_CLOSE] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
-            if (!g) break;
+            if (!g) { failed = 1; break; }
             SetAPen(pw->RPort, dri ? dri->dri_Pens[BACKGROUNDPEN] : 0);
             RectFill(pw->RPort, pw->BorderLeft, pw->BorderTop, pw->Width - pw->BorderRight - 1,
                      pw->Height - pw->BorderBottom - 1);
@@ -318,5 +304,9 @@ int ob_preview_window(const ob_rwin_env *env, struct Window *over, const ob_repo
     CloseWindow(pw);
     ob_preview_free(v);
     if (over) ActivateWindow(over);
+    if (failed) {
+        if (err && errsize) snprintf(err, errsize, "Not enough memory for the preview window's gadgets");
+        return 0;
+    }
     return 1;
 }
