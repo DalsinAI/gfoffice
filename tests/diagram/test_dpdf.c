@@ -1,8 +1,8 @@
 /*
  * The PDF writer of libowf/diagram/owf_dpdf.c on the PC: pages the size of what is on them, each shape drawn
- * with its fill, line and dashes, flowchart shapes as paths, connectors with arrowheads, labels as text in the
- * standard fonts placed and coloured, every page or one, and an empty page. Run under ASan and UBSan by make
- * diagram-check.
+ * with its fill, line and dashes, flowchart shapes and the shapes' outlines (owf_dshape.c) as paths, connectors
+ * with arrowheads, labels as text in the standard fonts placed and coloured, every page or one, and an empty page.
+ * Run under ASan and UBSan by make diagram-check.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
@@ -127,10 +127,33 @@ static void test_pages(void)
     owf_diagram_free(&d);
 }
 
+/* The shapes past the old eight (owf_dshape.c) as paths: a note filled in its colour with its fold a line. */
+static void test_outlines(void)
+{
+    owf_diagram d;
+    owf_dpage *p;
+    unsigned char *pdf = NULL;
+    size_t n = 0;
+    owf_diagram_init(&d);
+    p = owf_diagram_add_page(&d, "a", "One");
+    shape(p, "n", "shape=note;size=20;fillColor=#ffff00;", 0, 0, 100, 60, "Memo");
+    CHECK_N(owf_dpdf_write(&d, 0, &pdf, &n), OWF_OK);
+    if (pdf) {
+        /* 100 by 60 pixels and the margin, 0.75 of a point each; y up */
+        CHECK(find((const char *)pdf, n, "1.000 1.000 0.000 rg") != NULL);
+        CHECK(find((const char *)pdf, n, "7.50 52.50 m 67.50 52.50 l 82.50 37.50 l 82.50 7.50 l 7.50 7.50 l h B") != NULL);
+        CHECK(find((const char *)pdf, n, "67.50 52.50 m 67.50 37.50 l 82.50 37.50 l S") != NULL);   /* the fold */
+        CHECK(find((const char *)pdf, n, "(Memo) Tj") != NULL);
+        owf_free(pdf);
+    }
+    owf_diagram_free(&d);
+}
+
 int main(void)
 {
     test_shapes();
     test_pages();
+    test_outlines();
     printf("diagram PDF: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -284,6 +284,32 @@ owf_dcell *owf_dpage_add(owf_dpage *p, const char *id, const char *parent, int k
     return c;
 }
 
+owf_dcell *owf_dpage_add_copy(owf_dpage *p, const owf_dcell *src, const char *id)
+{
+    char fresh[24];
+    owf_dcell *c;
+    if (!id) {
+        owf_dpage_new_id(p, fresh, sizeof fresh);
+        id = fresh;
+    } else if (owf_dpage_index(p, id) >= 0)
+        return NULL;
+    if (p->ncells == p->capcells) {
+        int cap = p->capcells ? p->capcells * 2 : 8;
+        owf_dcell *grown = owf_realloc(p->cells, (size_t)cap * sizeof *grown);
+        if (!grown)
+            return NULL;
+        p->cells = grown;
+        p->capcells = cap;
+    }
+    c = &p->cells[p->ncells];
+    if (copy_cell(c, src) != OWF_OK || owf_dcell_set(&c->id, id) != OWF_OK) {
+        cell_free(c);
+        return NULL;
+    }
+    p->ncells++;
+    return c;
+}
+
 /* 1 when the cell is to go: marked, inside a marked cell, or an edge joined to one. */
 static int doomed(const owf_dpage *p, const unsigned char *mark, int i)
 {

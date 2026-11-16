@@ -2,11 +2,13 @@
  * GFOpenProject's ARexx commands on the PC (src/project/opj_rexx.c): each command run as a script would
  * send it, its return code, its result and LASTERROR, and the plan it leaves. The plan starts on Monday 16
  * November 2026 at 08:00 on the Standard calendar (Monday to Friday, 08:00-12:00 and 13:00-17:00). Files
- * go to build/host. Run under ASan and UBSan by make check.
+ * go to build/host/rexx-<pid>/build/host. Run under ASan and UBSan by make check.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "openproject_core.h"
 
 static int fails, checks;
@@ -41,7 +43,7 @@ static const char *ok(const char *line)
 
 static void test_words(void)
 {
-    CHECK(strstr(ok("HELP"), "VERSION ACTIVATE DEACTIVATE FAULT PRINT QUIT HELP LASTERROR") == out);
+    CHECK(strstr(ok("HELP"), "VERSION ACTIVATE DEACTIVATE FAULT PRINT VIEW QUIT HELP LASTERROR") == out);
     CHECK(strstr(out, " SETCELL ") && strstr(out, " BASELINE ") && strstr(out, " CRITICAL"));
     CHECK_S(ok("help setcell"), "SETCELL ROW/A/N,COLUMN/A,TEXT/A/F");
     CHECK_N(rx_do("HELP NOTHING"), OPJ_RX_ERROR);
@@ -161,6 +163,30 @@ static void test_files(void)
     ok("EXPORT build/host/rexx-test.xml");
     ok("EXPORT build/host/rexx-test.txt FORMAT=CSV");
     CHECK_N(rx_do("EXPORT build/host/rexx-test.doc FORMAT=Word"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "EXPORT: FORMAT is MSPDI, CSV, GFPROJ or PDF, not Word");
+    /* The printed Gantt view as a PDF: by a .pdf name, or FORMAT PDF whatever the name. */
+    ok("EXPORT build/host/rexx-test.pdf");
+    ok("EXPORT build/host/rexx-test.out FORMAT=pdf");
+    f = fopen("build/host/rexx-test.out", "rb");
+    CHECK(f != NULL);
+    if (f) {
+        CHECK(fgets(line, sizeof line, f) && strncmp(line, "%PDF-", 5) == 0);
+        fclose(f);
+    }
+    f = fopen("build/host/rexx-test.pdf", "rb");
+    CHECK(f != NULL);
+    if (f) {
+        CHECK(fgets(line, sizeof line, f) && strncmp(line, "%PDF-", 5) == 0);
+        fclose(f);
+    }
+    CHECK_N(rx_do("SAVEAS build/host/rexx-test-saved.pdf"), OPJ_RX_OK);  /* SAVEAS never writes a PDF */
+    f = fopen("build/host/rexx-test-saved.pdf", "rb");
+    CHECK(f != NULL);
+    if (f) {
+        CHECK(fgets(line, sizeof line, f) && strncmp(line, "%PDF-", 5) != 0);
+        fclose(f);
+    }
+    ok("SAVEAS build/host/rexx-test.gfproj");
     CHECK_N(rx_do("EXPORT /no/such/place/plan.xml"), OPJ_RX_ERROR);
     CHECK(strstr(rx.lasterror, "Could not write"));
     CHECK_S(ok("GETFILE"), "build/host/rexx-test.gfproj");                   /* EXPORT keeps the plan's file */
@@ -225,6 +251,8 @@ static void test_files(void)
     }
     CHECK_N(rx.doc->plan->start, AT(23, 8, 0));                            /* the plan's start kept */
     CHECK_N(rx_do("DELETETASK 1"), OPJ_RX_ERROR);                          /* nothing there */
+    CHECK_N(rx_do("EXPORT build/host/rexx-empty.pdf"), OPJ_RX_NOW);         /* no tasks: nothing to print */
+    CHECK_S(rx.lasterror, "The plan has no tasks to print");
 }
 
 /* A ROW or COUNT that overflows an int on the way in is refused, never wrapped into a negative size. */
@@ -296,8 +324,62 @@ static void test_huge_numbers(void)
     }
 }
 
+/* The plain and the ASan builds run side by side under make -j: each writes its files in a folder of its
+ * own (build/host/rexx-<pid>/build/host), so neither reads a plan the other is halfway through writing. */
+static int own_folder(void)
+{
+    char dir[64];
+    snprintf(dir, sizeof dir, "build/host/rexx-%ld", (long)getpid());
+    if (mkdir(dir, 0777) != 0 || chdir(dir) != 0) return 0;
+    return mkdir("build", 0777) == 0 && mkdir("build/host", 0777) == 0;
+}
+
+/* COLUMN, the column chooser: a column by title or alias, shown, hidden, and the table keeping one. */
+static void test_columns(void)
+{
+    opj_view v;
+    char line[96];
+    int c;
+    rx.view = NULL;
+    CHECK_N(rx_do("COLUMN Resources"), OPJ_RX_NOW);                      /* no window */
+    CHECK(strstr(rx.lasterror, "no window") != NULL);
+    opj_view_init(&v, rx.doc, 800, 400, 16, OPJ_ZOOM_DAYS);
+    rx.view = &v;
+    CHECK_S(ok("COLUMN \"Resource Names\""), "0");
+    CHECK_S(ok("COLUMN Resources SHOW"), "1");
+    CHECK_N(v.columns[OPJ_COL_RESOURCES], 140);
+    CHECK_S(ok("COLUMN resourcenames"), "1");
+    CHECK_S(ok("COLUMN Duration HIDE"), "0");
+    CHECK_N(v.columns[OPJ_COL_DURATION], 0);
+    CHECK_S(ok("COLUMN percent SHOW"), "1");
+    CHECK_N(rx_do("COLUMN Colour SHOW"), OPJ_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "no column Colour") != NULL);
+    CHECK_N(rx_do("COLUMN WBS SHOW HIDE"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("COLUMN"), OPJ_RX_ERROR);                              /* COLUMN/A */
+    for (c = 0; c < OPJ_NCOLS; c++)
+        if (c != OPJ_COL_NAME) opj_view_show_column(&v, c, 0);
+    CHECK_N(rx_do("COLUMN Name HIDE"), OPJ_RX_NOW);                      /* the last one shown */
+    CHECK_S(ok("COLUMN Name"), "1");
+    CHECK(strstr(ok("HELP COLUMN"), "COLUMN/A,SHOW/S,HIDE/S") != NULL);
+    ok("ADDTASK Review");                                                 /* the new columns through SETCELL */
+    sprintf(line, "SETCELL %s Constraint FNET", ok("TASKS"));
+    ok(line);
+    sprintf(line, "GETCELL %s \"Constraint Type\"", ok("TASKS"));
+    CHECK_S(ok(line), "Finish No Earlier Than");
+    sprintf(line, "SETCELL %s Notes Ask Holly first", ok("TASKS"));
+    ok(line);
+    sprintf(line, "GETCELL %s Notes", ok("TASKS"));
+    CHECK_S(ok(line), "Ask Holly first");
+    CHECK_S(ok("COLUMN Notes SHOW"), "1");
+    rx.view = NULL;
+}
+
 int main(void)
 {
+    if (!own_folder()) {
+        printf("project ARexx tests: no folder of their own under build/host\n");
+        return 1;
+    }
     rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
     CHECK(rx.doc != NULL);
     if (!rx.doc) return 1;
@@ -306,6 +388,7 @@ int main(void)
     test_resources_and_baseline();
     test_files();
     test_huge_numbers();
+    test_columns();
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);
     CHECK_N(opj_rexx_format("plan"), OWF_PFILE_GFPROJ);

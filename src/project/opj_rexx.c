@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, NCOMMANDS
+    C_CRITICAL, C_COLUMN, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -59,6 +59,7 @@ static const command commands[NCOMMANDS] = {
     { "USAGE", "RESOURCE/A,FROM/A,TO/A" },
     { "FINISH", "" },
     { "CRITICAL", "" },
+    { "COLUMN", "COLUMN/A,SHOW/S,HIDE/S" },
 };
 
 /* ---- Words ---- */
@@ -262,6 +263,7 @@ static int find_column(const char *name, int resource_sheet)
         { "name", OPJ_COL_NAME }, { "percent", OPJ_COL_PERCENT }, { "complete", OPJ_COL_PERCENT },
         { "resources", OPJ_COL_RESOURCES }, { "startvariance", OPJ_COL_START_VARIANCE },
         { "finishvariance", OPJ_COL_FINISH_VARIANCE },
+        { "constraint", OPJ_COL_CONSTRAINT_TYPE },
     }, res[] = {
         { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
         { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },
@@ -345,7 +347,20 @@ static int write_file(opj_rexx *rx, const char *name, int format)
     unsigned char *data;
     size_t length;
     FILE *f;
-    int rc = owf_project_write(rx->doc->plan, format, &data, &length), ok;
+    int rc, ok;
+    if (format == OPJ_EXPORT_PDF) {
+        opj_view v;
+        if (rx->view) v = *rx->view;
+        else opj_view_init(&v, rx->doc, 0, 0, 16, OPJ_ZOOM_DAYS);
+        rc = opj_pdf_write(rx->doc, &v, &data, &length, NULL);
+        if (rc == OWF_ERR_FORMAT) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "%s", rx->doc->plan->ntasks ? "The page is too small for the plan"
+                                                                                    : "The plan has no tasks to print");
+            return OPJ_RX_NOW;
+        }
+    } else {
+        rc = owf_project_write(rx->doc->plan, format, &data, &length);
+    }
     if (rc == OWF_ERR_MEMORY) {
         snprintf(rx->lasterror, sizeof rx->lasterror, "Out of memory writing %s", name);
         return OPJ_RX_FAIL;
@@ -426,10 +441,11 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         } else {
             size_t at = 0;
             int i;
-            static const char *const app[] = { "VERSION", "ACTIVATE", "DEACTIVATE", "FAULT", "PRINT", "QUIT" };
+            static const char *const app[] = { "VERSION", "ACTIVATE", "DEACTIVATE", "FAULT", "PRINT", "VIEW", "QUIT" };
+            const int napp = (int)(sizeof app / sizeof *app);
             result[0] = 0;
-            for (i = 0; i < (int)(sizeof app / sizeof *app) + NCOMMANDS; i++) {
-                const char *w = i < 6 ? app[i] : commands[i - 6].name;
+            for (i = 0; i < napp + NCOMMANDS; i++) {
+                const char *w = i < napp ? app[i] : commands[i - napp].name;
                 size_t n = strlen(w);
                 if (at + n + 2 > size) break;
                 if (at) result[at++] = ' ';
@@ -504,14 +520,21 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         return rc;
     case C_EXPORT: {
         int format = opj_rexx_format(a->value[0]);
+        const char *dot = strrchr(a->value[0], '.');
+        if (dot) {
+            char ext[8];
+            squash(dot, ext, sizeof ext);
+            if (strcmp(ext, "pdf") == 0) format = OPJ_EXPORT_PDF;
+        }
         if (a->value[1]) {
             char f[16];
             squash(a->value[1], f, sizeof f);
             if (strcmp(f, "mspdi") == 0 || strcmp(f, "xml") == 0) format = OWF_PFILE_MSPDI;
             else if (strcmp(f, "csv") == 0) format = OWF_PFILE_CSV;
             else if (strcmp(f, "gfproj") == 0) format = OWF_PFILE_GFPROJ;
+            else if (strcmp(f, "pdf") == 0) format = OPJ_EXPORT_PDF;
             else {
-                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is MSPDI, CSV or GFPROJ, not %s", a->value[1]);
+                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is MSPDI, CSV, GFPROJ or PDF, not %s", a->value[1]);
                 return OPJ_RX_ERROR;
             }
         }
@@ -602,6 +625,25 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         put(result, size, text);
         return OPJ_RX_OK;
     }
+    case C_COLUMN:
+        if ((col = find_column(a->value[0], 0)) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "COLUMN: no column %s", a->value[0]);
+            return OPJ_RX_ERROR;
+        }
+        if (!rx->view) {
+            put(rx->lasterror, sizeof rx->lasterror, "COLUMN: there is no window to show columns in");
+            return OPJ_RX_NOW;
+        }
+        if (a->value[1] && a->value[2]) {
+            put(rx->lasterror, sizeof rx->lasterror, "COLUMN: SHOW or HIDE, not both");
+            return OPJ_RX_ERROR;
+        }
+        if ((a->value[1] || a->value[2]) && !opj_view_show_column(rx->view, col, a->value[1] != NULL)) {
+            put(rx->lasterror, sizeof rx->lasterror, "COLUMN: the table keeps one column");
+            return OPJ_RX_NOW;
+        }
+        put(result, size, opj_view_column_shown(rx->view, col) ? "1" : "0");
+        return OPJ_RX_OK;
     case C_CRITICAL: {
         size_t at = 0;
         int i;
