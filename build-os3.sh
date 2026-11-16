@@ -169,8 +169,9 @@ if [ "$OWF" = library ]; then
     echo "build-os3.sh: GFOpenPresentation is built with libowf linked in only (OWF=linked): owf.library has no deck calls yet"
 else
 OWFSRC_DECK="$OWFSRC_DOCS"
-# owf_chart.c: a slide's charts are read and written as chart parts (Presentation gap 2)
-for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c owf_chart.c; do
+# owf_chart.c: a slide's charts are read and written as chart parts (Presentation gap 2); owf_booknum.c reads
+# and writes their numbers
+for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c owf_chart.c owf_booknum.c; do
     OWFSRC_DECK="$OWFSRC_DECK $HERE/libowf/src/$f"
 done
 # shellcheck disable=SC2086
