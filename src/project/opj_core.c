@@ -1140,6 +1140,22 @@ int opj_clear_leveling(opj_doc *doc)
 
 /* ---- Sort ---- */
 
+/* A cell's whole text however long (a Name or Notes can be any length), as the sheet shows it; owf_malloc'd,
+ * NULL for memory. */
+static char *cell_dup(const opj_doc *doc, int resources, int row, int column)
+{
+    size_t size = 256;
+    for (;;) {
+        char *s = owf_malloc(size);
+        if (!s) return NULL;
+        if (resources) opj_resource_cell_text(doc, row, column, s, size);
+        else opj_cell_text(doc, row, column, s, size);
+        if (strlen(s) < size - 1) return s;
+        owf_free(s);
+        size *= 2;
+    }
+}
+
 /* A cell's value to sort by: 1 with *v for a date, duration, number or money; 0 for text; *na set for NA. */
 static int sort_value(const opj_doc *doc, int row, int column, long *v, int *na)
 {
@@ -1186,22 +1202,46 @@ static int text_cmp_ci(const char *a, const char *b)
     return lower((unsigned char)*a) - lower((unsigned char)*b);
 }
 
+/* A row's keys, worked out once before sorting: each key's value, or its text for a text column. */
+typedef struct {
+    long v[3];
+    int na[3];
+    char *text[3];                       /* NULL for a value */
+} sort_row;
+
+/* Every row's keys into rows[]; 0 for memory (rows then freed by free_sort_rows all the same). */
+static int make_sort_rows(const opj_doc *doc, const opj_sort_key *k, int nk, sort_row *rows, int nt)
+{
+    int r, i;
+    for (r = 0; r < nt; r++)
+        for (i = 0; i < nk; i++)
+            if (!sort_value(doc, r, k[i].column, &rows[r].v[i], &rows[r].na[i]) &&
+                !(rows[r].text[i] = cell_dup(doc, 0, r, k[i].column)))
+                return 0;
+    return 1;
+}
+
+static void free_sort_rows(sort_row *rows, int nt)
+{
+    int r, i;
+    if (!rows) return;
+    for (r = 0; r < nt; r++)
+        for (i = 0; i < 3; i++) owf_free(rows[r].text[i]);
+    owf_free(rows);
+}
+
 /* Row a against row b by the keys: below 0 when a goes first. */
-static int sort_cmp(const opj_doc *doc, const opj_sort_key *k, int nk, int a, int b)
+static int sort_cmp(const sort_row *rows, const opj_sort_key *k, int nk, int a, int b)
 {
     int i;
     for (i = 0; i < nk; i++) {
-        long va = 0, vb = 0;
-        int naa, nab, d;
-        if (sort_value(doc, a, k[i].column, &va, &naa)) {
-            sort_value(doc, b, k[i].column, &vb, &nab);
-            if (naa != nab) return naa ? 1 : -1;               /* NA last, either way */
-            d = naa || va == vb ? 0 : va < vb ? -1 : 1;
+        const sort_row *ra = &rows[a], *rb = &rows[b];
+        int d;
+        if (!ra->text[i] && !rb->text[i]) {
+            if (ra->na[i] != rb->na[i]) return ra->na[i] ? 1 : -1;   /* NA last, either way */
+            d = ra->na[i] || ra->v[i] == rb->v[i] ? 0 : ra->v[i] < rb->v[i] ? -1 : 1;
         } else {
-            char ta[160], tb[160];
-            opj_cell_text(doc, a, k[i].column, ta, sizeof ta);
-            opj_cell_text(doc, b, k[i].column, tb, sizeof tb);
-            d = text_cmp_ci(ta, tb);
+            d = text_cmp_ci(ra->text[i] ? ra->text[i] : "", rb->text[i] ? rb->text[i] : "");
             d = d < 0 ? -1 : d > 0 ? 1 : 0;
         }
         if (d) return k[i].descending ? -d : d;
@@ -1218,7 +1258,8 @@ static int row_end(const owf_project *p, int row)
 
 /* The rows of [first, end), one outline level, in sorted order into order[*n...], each followed by its
  * own subtasks sorted the same way. 0 for memory. */
-static int sort_range(const opj_doc *doc, const opj_sort_key *k, int nk, int first, int end, int *order, int *n)
+static int sort_range(const opj_doc *doc, const sort_row *rows, const opj_sort_key *k, int nk, int first, int end,
+                      int *order, int *n)
 {
     int *starts, count = 0, i, j;
     if (first >= end) return 1;
@@ -1226,13 +1267,13 @@ static int sort_range(const opj_doc *doc, const opj_sort_key *k, int nk, int fir
     if (!(starts = owf_malloc((size_t)count * sizeof *starts))) return 0;
     for (count = 0, i = first; i < end; i = row_end(doc->plan, i)) {
         int x = i;
-        for (j = count; j > 0 && sort_cmp(doc, k, nk, x, starts[j - 1]) < 0; j--) starts[j] = starts[j - 1];
+        for (j = count; j > 0 && sort_cmp(rows, k, nk, x, starts[j - 1]) < 0; j--) starts[j] = starts[j - 1];
         starts[j] = x;
         count++;
     }
     for (i = 0; i < count; i++) {
         order[(*n)++] = starts[i];
-        if (!sort_range(doc, k, nk, starts[i] + 1, row_end(doc->plan, starts[i]), order, n)) {
+        if (!sort_range(doc, rows, k, nk, starts[i] + 1, row_end(doc->plan, starts[i]), order, n)) {
             owf_free(starts);
             return 0;
         }
@@ -1245,7 +1286,8 @@ int opj_sort_tasks(opj_doc *doc, const opj_sort_key *keys, int nkeys)
 {
     owf_project *work;
     owf_ptask *moved;
-    int *order, *map, i, j, n = 0, nt;
+    int *order, *map, i, j, n = 0, nt, ok;
+    sort_row *rows;
     if (!doc || !keys || nkeys < 1 || nkeys > 3) return OWF_ERR_FORMAT;
     for (i = 0; i < nkeys; i++)
         if (keys[i].column < 0 || keys[i].column >= OPJ_NCOLS) return OWF_ERR_FORMAT;
@@ -1253,7 +1295,12 @@ int opj_sort_tasks(opj_doc *doc, const opj_sort_key *keys, int nkeys)
     if (nt < 2) return OWF_OK;
     order = owf_malloc((size_t)nt * sizeof *order);
     map = owf_malloc((size_t)nt * sizeof *map);
-    if (!order || !map || !sort_range(doc, keys, nkeys, 0, nt, order, &n) || n != nt) {
+    rows = owf_malloc((size_t)nt * sizeof *rows);
+    if (rows) memset(rows, 0, (size_t)nt * sizeof *rows);
+    ok = order && map && rows && make_sort_rows(doc, keys, nkeys, rows, nt) &&
+         sort_range(doc, rows, keys, nkeys, 0, nt, order, &n) && n == nt;
+    free_sort_rows(rows, nt);
+    if (!ok) {
         owf_free(order), owf_free(map);
         return OWF_ERR_MEMORY;
     }
@@ -1313,7 +1360,6 @@ static int find_row(const opj_doc *doc, int resources, int column, const char *t
                     int backward)
 {
     int n, k, row;
-    char cell[400];
     if (!doc || !text || !*text) return -1;
     n = resources ? doc->plan->nresources : doc->plan->ntasks;
     if (column < 0 || column >= (resources ? OPJ_NRCOLS : OPJ_NCOLS) || n < 1) return -1;
@@ -1321,9 +1367,10 @@ static int find_row(const opj_doc *doc, int resources, int column, const char *t
     for (k = 1; k <= n; k++) {
         if (backward) row = from < 0 ? n - k : ((from - k) % n + n) % n;
         else row = from < 0 ? k - 1 : (from + k) % n;
-        if (resources) opj_resource_cell_text(doc, row, column, cell, sizeof cell);
-        else opj_cell_text(doc, row, column, cell, sizeof cell);
-        if (text_matches(cell, text, how)) return row;
+        char *cell = cell_dup(doc, resources, row, column);
+        int match = cell && text_matches(cell, text, how);
+        owf_free(cell);
+        if (match) return row;
     }
     return -1;
 }
@@ -1342,7 +1389,6 @@ int opj_replace_text(opj_doc *doc, int column, const char *find, const char *wit
                      int *changed, int *refused)
 {
     owf_project *work;
-    char cell[400], now[800];
     int i, done = 0, bad = 0;
     if (changed) *changed = 0;
     if (refused) *refused = 0;
@@ -1353,25 +1399,39 @@ int opj_replace_text(opj_doc *doc, int column, const char *find, const char *wit
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
     for (i = first; i < first + count; i++) {
         const char *s, *at;
-        size_t k = 0, fl = strlen(find), wl = strlen(with);
-        int too_long = 0;
-        opj_cell_text(doc, i, column, cell, sizeof cell);
-        if (!find_ci(cell, find)) continue;
+        size_t k = 0, fl = strlen(find), wl = strlen(with), places = 0;
+        char *cell = cell_dup(doc, 0, i, column), *now;
+        int rc;
+        if (!cell) {
+            owf_project_free(work);
+            return OWF_ERR_MEMORY;
+        }
+        for (s = cell; (at = find_ci(s, find)) != NULL; s = at + fl) places++;
+        if (!places) {
+            owf_free(cell);
+            continue;
+        }
+        if (!(now = owf_malloc(strlen(cell) + places * wl + 1))) {   /* the whole cell, however long */
+            owf_free(cell);
+            owf_project_free(work);
+            return OWF_ERR_MEMORY;
+        }
         for (s = cell; (at = find_ci(s, find)) != NULL; s = at + fl) {
             size_t lead = (size_t)(at - s);
-            if (k + lead + wl >= sizeof now) { too_long = 1; break; }
             memcpy(now + k, s, lead);
             memcpy(now + k + lead, with, wl);
             k += lead + wl;
         }
-        if (!too_long && k + strlen(s) < sizeof now) {
-            strcpy(now + k, s);
-            if (set_field(work, i, column, now) == OWF_OK) {
-                done++;
-                continue;
-            }
+        strcpy(now + k, s);
+        rc = set_field(work, i, column, now);
+        owf_free(now);
+        owf_free(cell);
+        if (rc == OWF_ERR_MEMORY) {
+            owf_project_free(work);
+            return OWF_ERR_MEMORY;
         }
-        bad++;
+        if (rc == OWF_OK) done++;
+        else bad++;
     }
     if (changed) *changed = bad ? 0 : done;
     if (refused) *refused = bad;
