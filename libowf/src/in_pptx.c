@@ -2104,6 +2104,43 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
         owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Table styles are drawn as PowerPoint's default one");
 }
 
+/* A graphicFrame's chart (c:chart r:id, its chart part through the slide's relationships) into obj: an
+ * OWF_OBJ_CHART holding it, with the values its caches hold. 0 when there is none to read (obj stays as it was). */
+static int read_chart_frame(objctx *c, owf_obj *obj, const owf_xml_node *data)
+{
+    const owf_xml_node *ref;
+    const rel *rl;
+    char name[NAME_SIZE];
+    unsigned char *bytes;
+    size_t length;
+    owf_chart *chart;
+    int e;
+    for (ref = data ? data->first : NULL; ref; ref = ref->next)
+        if (ref->type == OWF_XML_ELEMENT && ref->ns && !strcmp(ref->name, "chart") &&
+            strlen(ref->ns) > 6 && !strcmp(ref->ns + strlen(ref->ns) - 6, "/chart"))
+            break;
+    if (!ref || !c->rels || !(rl = rel_id(c->rels, ratt(ref, "id"))) || !rel_part(c->rels, rl, name, sizeof name))
+        return 0;
+    if (owf_unzip_read(c->x->r.zip, name, &bytes, &length) != OWF_OK)
+        return 0;
+    if (!(chart = malloc(sizeof *chart))) {
+        free(bytes);
+        c->x->r.failed = 1;
+        return 0;
+    }
+    e = owf_chart_from_part((const char *)bytes, length, chart);
+    free(bytes);
+    if (e != OWF_OK) {
+        free(chart);
+        if (e == OWF_ERR_MEMORY)
+            c->x->r.failed = 1;
+        return 0;
+    }
+    obj->kind = OWF_OBJ_CHART;
+    obj->chart = chart;
+    return 1;
+}
+
 static void read_frame(objctx *c, const owf_xml_node *n, int parent)
 {
     const owf_xml_node *data = achild(achild(n, "graphic"), "graphicData");
@@ -2117,6 +2154,8 @@ static void read_frame(objctx *c, const owf_xml_node *n, int parent)
     read_box(c, obj, pchild(n, "xfrm"), NULL, NULL);
     if (uri && strstr(uri, "/table") && achild(data, "tbl")) {
         read_table(c, index, achild(data, "tbl"));
+    } else if (uri && strstr(uri, "/chart") && read_chart_frame(c, obj, data)) {
+        owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Charts are shown as their box; their data is kept");
     } else {
         owf_report_add(c->x->r.report, OWF_NOTE_LOST,
                        uri && strstr(uri, "/chart") ? "Charts are shown as their box"

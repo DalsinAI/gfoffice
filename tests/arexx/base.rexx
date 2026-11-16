@@ -55,6 +55,38 @@ CALL want 'ISDIRTY', 0
 CALL same 'ISDIRTY', res, 0
 CALL want 'DEACTIVATE', 5
 CALL want 'ACTIVATE', 0
+
+/* rows (0.10.0): read, add, change, delete and walk, no requesters */
+CALL want 'OPEN TABLE "Customers"', 0
+CALL want 'GETFIELDS', 0
+SAY '     GETFIELDS:' res
+CALL want 'ADDROW "Name=ARexx Test" Town=Hull', 0
+added = res
+CALL want 'GETROW KEY' added 'FIELD town', 0
+CALL same 'GETROW FIELD town', res, 'Hull'
+CALL want 'CHANGEROW KEY' added '"Town=York"', 0
+CALL want 'GETROW FIELD Town', 0                  /* the row changed is the one chosen */
+CALL same 'GETROW after CHANGEROW', res, 'York'
+CALL want 'GETROW KEY' added, 0
+SAY '     GETROW:' TRANSLATE(res, '|', '09'x)
+CALL want 'ADDROW Nosuch=1', 10
+CALL want 'LASTERROR', 0
+SAY '     LASTERROR:' res
+CALL want 'GETROW KEY 99999', 5
+CALL want 'ROW 1', 0                               /* every row, key order */
+CALL want 'COUNTROWS', 0
+rows = res
+CALL want 'FIRSTROW', 0
+CALL same 'FIRSTROW', res, 1
+CALL want 'PREVROW', 5
+CALL want 'LASTROW', 0
+CALL same 'LASTROW', res, added
+CALL want 'NEXTROW', 5
+CALL want 'PREVROW', 0
+CALL want 'DELETEROW KEY' added, 0
+CALL want 'GETROW KEY' added, 5
+CALL want 'COUNTROWS', 0
+CALL same 'COUNTROWS after DELETEROW', res, rows - 1
 CALL want 'QUIT', 0
 
 IF fails = 0 THEN SAY 'ALL PASS'

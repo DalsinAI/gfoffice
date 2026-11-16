@@ -4,3 +4,9 @@
 .PHONY: docs-test
 docs-test:
 	python3 tests/docs/check_readme_versions.py --self-test
+
+# GFOpenWrite's about box and $VER come from VERSION_TEXT, and VERSION_TEXT is not behind the source's 2.0.N tags.
+.PHONY: write-version-check
+write-version-check:
+	python3 tests/docs/check_write_version.py --self-test
+check: write-version-check

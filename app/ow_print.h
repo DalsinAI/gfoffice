@@ -15,7 +15,8 @@
 int ow_print_document_named(const owf_doc *doc, const char *name, char *status, size_t status_size);
 int ow_print_document(const owf_doc *doc, char *status, size_t status_size);   /* no name */
 /* The same, with comments nonzero: the comments printed too, a raised mark where each is and the list after the
- * text (GFOpenPrint's PDF is libowf's "pdf-comments"). printer.device's plain text leaves them out, as before. */
+ * text (GFOpenPrint's PDF is libowf's "pdf-comments"); 2 (2.0.40): beside their lines ("pdf-comments-margin").
+ * printer.device's plain text leaves them out, as before. */
 int ow_print_document_comments(const owf_doc *doc, const char *name, int comments, char *status,
                                size_t status_size);
 

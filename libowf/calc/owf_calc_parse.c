@@ -581,17 +581,44 @@ static int emit_string(compiler *c, const calc_token *t)
     return 1;
 }
 
+/* Another book's cells: the values it last had, when the book keeps that book and sheet; otherwise #REF!, and
+ * a loaded formula keeps the file's value (PROG_EXTERN). */
+static int emit_xref(compiler *c, const calc_token *t)
+{
+    int b, s = -1;
+    const owf_extbook *eb = NULL;
+    for (b = 0; c->book && b < c->book->nextbooks; b++)
+        if (owf_same_word(c->book->extbooks[b].name, c->sr->book)) {
+            eb = &c->book->extbooks[b];
+            break;
+        }
+    if (eb && owf_same_word(c->sr->first, c->sr->last))
+        for (s = eb->nsheets - 1; s >= 0 && !owf_same_word(eb->sheets[s].name, c->sr->first); s--)
+            ;
+    if (s < 0 || t->kind == RK_ERR || b > 0xFFFF || s > 0xFFFF) {
+        c->flags |= PROG_EXTERN;
+        emit_simple(c, OP_EXTERN, 0);
+        return 1;
+    }
+    owf_buf_putc(&c->out, OP_XREF);
+    put_u16(c, (unsigned)b);
+    put_u16(c, (unsigned)s);
+    put_u32(c, t->r0);
+    put_u16(c, t->c0);
+    put_u32(c, t->kind == RK_CELL ? t->r0 : t->r1);
+    put_u16(c, t->kind == RK_CELL ? t->c0 : t->c1);
+    push_depth(c, 1);
+    return 1;
+}
+
 static int emit_ref(compiler *c, const calc_token *t)
 {
     int s0 = c->sheet < 0 ? 0 : c->sheet, s1 = s0;
     if (t->sheet) {
         if (!calc_split_sheet(t, c->sr))
             return fail(c, t->start);
-        if (c->sr->has_book) {
-            c->flags |= PROG_EXTERN;
-            emit_simple(c, OP_EXTERN, 0);
-            return 1;
-        }
+        if (c->sr->has_book)
+            return emit_xref(c, t);
         s0 = calc_find_sheet(c->book, c->sr->first);
         s1 = calc_find_sheet(c->book, c->sr->last);
         if (s0 < 0 || s1 < 0) {
@@ -1096,7 +1123,7 @@ static unsigned op_size(const unsigned char *p)
     case OP_STR: return 3 + get_u16(p + 1);
     case OP_BOOL: case OP_ERR: case OP_UNKNOWN: return 2;
     case OP_REF: return 9;
-    case OP_AREA: return 17;
+    case OP_AREA: case OP_XREF: return 17;
     case OP_ARRAY: return 5;
     case OP_FUNC: return 4;
     }
