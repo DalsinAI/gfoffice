@@ -1809,6 +1809,25 @@ static void test_rexx_rows(void)
     ob_close(p);
 }
 
+/* While a form is open the port refuses what would move it or change rows (core 0.14.3). */
+static void test_rexx_form_guard(void)
+{
+    static const char *const refused[] = {
+        "OPEN DH0:Shop.oadb", "QUIT", "TABLE Orders", "row 3", "  ROW 3", "FIRSTROW", "nextrow", "PREVROW", "LASTROW",
+        "ADDROW Name=Zoe", "addrow", "CHANGEROW KEY 2 Town=Hull", "DELETEROW", "DELETEROW KEY 2",
+    };
+    static const char *const answered[] = {
+        "TABLE", "ROW", "ROW   ", "TABLES", "COUNTROWS", "GETROW", "GETROW KEY 2 FIELD Name", "GETFIELDS", "FORMS",
+        "VERSION", "HELP", "LASTERROR", "ISDIRTY", "GETFILE", "ROWS", "ADDROWS", "OPENED", "",
+    };
+    unsigned i;
+    for (i = 0; i < sizeof refused / sizeof refused[0]; i++)
+        CHECK(ob_rexx_form_refuses(refused[i]), "refused while a form is open: %s", refused[i]);
+    for (i = 0; i < sizeof answered / sizeof answered[0]; i++)
+        CHECK(!ob_rexx_form_refuses(answered[i]), "still answers: %s", answered[i]);
+    CHECK(!ob_rexx_form_refuses(NULL), "no command");
+}
+
 static void test_csv_options(void)
 {
     ob_project *p = fresh("csvopt.oadb");
@@ -2098,6 +2117,168 @@ static void copy_s(char *to, size_t n, const char *from)
     snprintf(to, n, "%s", from);
 }
 
+/* Buttons and events on a designed form: kept, checked, and following the
+ * renames of the forms and queries they name. */
+static void test_form_buttons(void)
+{
+    ob_project *p = fresh("fbuttons.oadb");
+    static ob_form f, g;
+    static ob_query q;
+    ob_fitem *it;
+    int i;
+    if (!p) return;
+    five_customers(p);
+
+    CHECK(!strcmp(ob_faction_name(OB_FA_NEXT), "Next Record") && !strcmp(ob_faction_name(OB_FA_COUNT), "")
+          && !strcmp(ob_faction_name(OB_FA_NONE), ""), "action names");
+    CHECK(ob_faction_arg(OB_FA_OPENFORM) == 1 && ob_faction_arg(OB_FA_RUNQUERY) == 2 && ob_faction_arg(OB_FA_AREXX) == 3
+          && ob_faction_arg(OB_FA_SAVE) == 0, "what an action names");
+    CHECK(!strcmp(ob_fevent_name(OB_FE_BEFORE_SAVE), "Before Save") && !strcmp(ob_fevent_name(OB_FE_COUNT), ""), "event names");
+
+    ob_form_init(&f, "Card", "Customers");
+    it = ob_form_add_button(&f, "Next", OB_FA_NEXT, NULL, 2, 10);
+    CHECK(it && it->kind == OB_FI_BUTTON && it->w == 12 && it->h == 1 && !strcmp(it->text, "Next") && !it->arg[0], "a button, 8 + 4 wide");
+    it = ob_form_add_button(&f, "Who lives in York?", OB_FA_RUNQUERY, "York people", 16, 10);
+    CHECK(it && it->w == 22 && !strcmp(it->arg, "York people"), "as wide as its words");
+    CHECK(ob_form_add_button(&f, "x", OB_FA_COUNT, NULL, 0, 0) == NULL, "no such action");
+    ob_form_add_button(&f, "Orders", OB_FA_OPENFORM, "Card", 40, 10);
+    ob_form_add_button(&f, "Tell", OB_FA_AREXX, "'say hello \"tab\there\"'", 60, 10);
+    copy_s(f.events[OB_FE_OPEN], sizeof f.events[OB_FE_OPEN], "REXX:open.rexx");
+    copy_s(f.events[OB_FE_BEFORE_SAVE], sizeof f.events[OB_FE_BEFORE_SAVE], "'if 1 then exit 5'");
+    CHECK(ob_form_check(p, &f), "checks: %s", ob_error(p));
+    CHECK(ob_form_save(p, &f) && ob_form_get(p, "Card", &g), "kept: %s", ob_error(p));
+    CHECK(g.nitems == 4 && g.items[1].action == OB_FA_RUNQUERY && !strcmp(g.items[1].arg, "York people") && g.items[1].w == 22,
+          "read back: %d items", g.nitems);
+    CHECK(!strcmp(g.items[3].arg, "'say hello \"tab\there\"'") && g.items[0].action == OB_FA_NEXT, "a macro with a tab in it");
+    CHECK(!strcmp(g.events[OB_FE_OPEN], "REXX:open.rexx") && !strcmp(g.events[OB_FE_BEFORE_SAVE], "'if 1 then exit 5'")
+          && !g.events[OB_FE_CURRENT][0] && !g.events[OB_FE_CLOSE][0], "events read back");
+
+    /* refused */
+    g.items[0].action = OB_FA_NONE;
+    CHECK(!ob_form_check(p, &g) && strstr(ob_error(p), "Next does nothing"), "a button with no action: %s", ob_error(p));
+    g.items[0].action = OB_FA_NEXT;
+    g.items[1].arg[0] = 0;
+    CHECK(!ob_form_check(p, &g) && strstr(ob_error(p), "needs a query to run"), "Run Query, no query: %s", ob_error(p));
+    copy_s(g.items[1].arg, sizeof g.items[1].arg, "York people");
+    g.items[2].arg[0] = 0;
+    CHECK(!ob_form_check(p, &g) && strstr(ob_error(p), "needs a form to open"), "Open Form, no form: %s", ob_error(p));
+    g.items[2].text[0] = 0;
+    g.items[2].arg[0] = 0;
+    CHECK(!ob_form_check(p, &g) && strstr(ob_error(p), "the button a button needs"), "no caption: %s", ob_error(p));
+
+    /* a form or query renamed: its buttons follow */
+    ob_query_init(&q, "York people");
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_column(&q, "Customers", "Name");
+    CHECK(ob_query_save(p, &q), "the query: %s", ob_error(p));
+    CHECK(ob_query_rename(p, "york people", "Yorkers"), "query renamed: %s", ob_error(p));
+    CHECK(ob_form_get(p, "Card", &g) && !strcmp(g.items[1].arg, "Yorkers"), "the button runs Yorkers: %s", g.items[1].arg);
+    CHECK(ob_form_rename(p, "card", "Person"), "form renamed: %s", ob_error(p));
+    CHECK(ob_form_get(p, "Person", &g) && !strcmp(g.items[2].arg, "Person") && !strcmp(g.items[1].arg, "Yorkers"), "its own button follows");
+    CHECK(!strcmp(g.items[3].arg, "'say hello \"tab\there\"'"), "a macro left alone");
+    ob_form_init(&f, "Other", "Customers");
+    ob_form_add_button(&f, "Go", OB_FA_OPENFORM, "Person", 0, 0);
+    ob_form_add_button(&f, "Not this", OB_FA_RUNQUERY, "Person", 0, 1);
+    CHECK(ob_form_save(p, &f) && ob_form_rename(p, "Person", "Card"), "again: %s", ob_error(p));
+    CHECK(ob_form_get(p, "Other", &g) && !strcmp(g.items[0].arg, "Card") && !strcmp(g.items[1].arg, "Person"),
+          "another form's Open Form follows, a Run Query of the same name doesn't");
+    CHECK(!ob_form_rename(p, "Other", "Card") && ob_form_get(p, "Other", &g) && !strcmp(g.items[0].arg, "Card"), "a refused rename changes nothing");
+
+    /* an older form's text (no buttons, no events) still reads, and a word from a newer one is passed over */
+    ob_form_init(&f, "Plain", "Customers");
+    ob_form_add(&f, OB_FI_LABEL, 0, 0, 4, 1);
+    for (i = 0; i < OB_FE_COUNT; i++) f.events[i][0] = 0;
+    CHECK(ob_form_save(p, &f) && ob_form_get(p, "Plain", &g) && g.nitems == 1 && !g.events[OB_FE_OPEN][0], "a plain form");
+    ob_close(p);
+    {
+        sqlite3 *db;
+        CHECK(sqlite3_open(path("fbuttons.oadb"), &db) == SQLITE_OK
+              && sqlite3_exec(db, "INSERT INTO oadb_forms VALUES('Newer', 'Customers', 'oadb form 1\n"
+                                  "button\t\tGo\t0\t0\t6\t1\topenform\tCard\tlater\n"
+                                  "glow\tsoft\t3\nevent\tsparkle\tx.rexx\nevent\topen\tgo.rexx\n');"
+                                  "INSERT INTO oadb_forms VALUES('Later', 'Customers', 'oadb form 2\n"
+                                  "button\t\tGo\t0\t0\t6\t1\topenform\tCard\n')", NULL, NULL, NULL) == SQLITE_OK,
+              "newer words written by hand");
+        sqlite3_close(db);
+    }
+    {
+        char err[OB_ERR_MAX];
+        p = ob_open(path("fbuttons.oadb"), 0, err, sizeof err);
+        CHECK(p != NULL, "reopened: %s", err);
+        if (!p) return;
+    }
+    CHECK(ob_form_get(p, "Newer", &g) && g.nitems == 1 && g.items[0].kind == OB_FI_BUTTON && g.items[0].action == OB_FA_OPENFORM
+          && !strcmp(g.items[0].arg, "Card") && !strcmp(g.events[OB_FE_OPEN], "go.rexx") && !g.events[OB_FE_CURRENT][0],
+          "a newer GFOpenBase's words (glow, a sparkle event, a word after a button) passed over: %d", g.nitems);
+    CHECK(!ob_form_get(p, "Later", &g), "an oadb form 2 can't be read");
+    /* a form it can't read doesn't stop renames; it is left as it is */
+    CHECK(ob_form_rename(p, "Card", "Card2"), "a rename all the same: %s", ob_error(p));
+    CHECK(ob_form_get(p, "Newer", &g) && !strcmp(g.items[0].arg, "Card2") && ob_form_get(p, "Other", &g) && !strcmp(g.items[0].arg, "Card2"),
+          "the buttons it can read follow");
+    ob_close(p);
+}
+
+/* What the designer window does to a form: room for a new item, cursor
+ * keys, the fields still to place, a field put on. */
+static void test_form_editing(void)
+{
+    ob_project *p = fresh("fedit.oadb");
+    static ob_form f;
+    static char nm[8][OB_NAME_MAX];
+    ob_fitem *it;
+    int i, k;
+    if (!p) return;
+    five_customers(p);
+
+    ob_form_init(&f, "Card", "Customers");
+    CHECK(ob_form_free_row(&f) == 0, "empty: row 0");
+    ob_form_add(&f, OB_FI_BOX, 0, 0, 30, 5);
+    ob_form_add(&f, OB_FI_LABEL, 40, 7, 5, 1);
+    CHECK(ob_form_free_row(&f) == 8, "under the label: %d", ob_form_free_row(&f));
+    ob_form_add(&f, OB_FI_LINE, 0, OB_FORM_ROWS - 1, 10, 1);
+    CHECK(ob_form_free_row(&f) == -1, "full to the bottom");
+    ob_form_remove(&f, 2);
+
+    /* cursor keys: move keeps the size and stops at the edge */
+    CHECK(ob_form_nudge(&f, 1, 1, -1, 0, 0) && f.items[1].x == 41 && f.items[1].y == 6, "moved: %d,%d", f.items[1].x, f.items[1].y);
+    CHECK(ob_form_nudge(&f, 1, 500, 500, 0, 0) && f.items[1].x == OB_FORM_COLS - 5 && f.items[1].y == OB_FORM_ROWS - 1 && f.items[1].w == 5,
+          "to the corner, still 5 wide: %d,%d w%d", f.items[1].x, f.items[1].y, f.items[1].w);
+    CHECK(ob_form_nudge(&f, 1, -999, -999, 0, 0) && f.items[1].x == 0 && f.items[1].y == 0, "to the top left");
+    CHECK(ob_form_nudge(&f, 0, 0, 0, 2, -1) && f.items[0].w == 32 && f.items[0].h == 4, "sized: %dx%d", f.items[0].w, f.items[0].h);
+    CHECK(ob_form_nudge(&f, 0, 0, 0, -99, -99) && f.items[0].w == 1 && f.items[0].h == 1, "no smaller than a cell");
+    ob_form_place(&f, 0, OB_FORM_COLS - 3, 0, 3, 1);
+    CHECK(ob_form_nudge(&f, 0, 0, 0, 10, 0) && f.items[0].w == 3, "no wider than the grid: %d", f.items[0].w);
+    CHECK(!ob_form_nudge(&f, 9, 1, 0, 0, 0) && !ob_form_nudge(&f, -1, 1, 0, 0, 0), "no such item");
+    it = ob_form_add(&f, OB_FI_LINE, 2, 10, 20, 1);
+    k = f.nitems - 1;
+    CHECK(it && ob_form_nudge(&f, k, 0, 0, 0, 3) && f.items[k].h == 1 && f.items[k].w == 20, "an across line stays thin");
+    ob_form_place(&f, k, 2, 10, 1, 1);
+    CHECK(ob_form_nudge(&f, k, 0, 0, 0, 5) && f.items[k].h == 6 && f.items[k].w == 1, "a dot grows down");
+    CHECK(ob_form_nudge(&f, k, 0, 0, 4, 0) && f.items[k].w == 1 && f.items[k].h == 6, "then stays a down line");
+
+    /* the fields still to place, then one put on */
+    CHECK(ob_form_unplaced(p, &f, nm, 8) == 7 && !strcmp(nm[0], "id") && !strcmp(nm[1], "Name") && !strcmp(nm[6], "Credit"), "all seven with the key, in order");
+    i = ob_form_add_field(p, &f, "credit", 4, 20);
+    CHECK(i == f.nitems - 1 && f.items[i].kind == OB_FI_FIELD && !strcmp(f.items[i].field, "Credit"), "Credit on: %s", ob_error(p));
+    CHECK(f.items[i - 1].kind == OB_FI_LABEL && !strcmp(f.items[i - 1].text, "Credit limit") && f.items[i - 1].x == 4 && f.items[i - 1].w == 12,
+          "its label first: %s w%d", f.items[i - 1].text, f.items[i - 1].w);
+    CHECK(f.items[i].x == 18 && f.items[i].y == 20 && f.items[i].w == 40 && f.items[i].h == 1, "gadget after it: %d,%d", f.items[i].x, f.items[i].y);
+    CHECK(ob_form_unplaced(p, &f, nm, 2) == 6 && !strcmp(nm[0], "id") && !strcmp(nm[1], "Name"), "six left, the first two kept");
+    k = f.nitems;
+    CHECK(ob_form_add_field(p, &f, "Credit", 0, 30) == -1 && strstr(ob_error(p), "already") && f.nitems == k, "not twice: %s", ob_error(p));
+    CHECK(ob_form_add_field(p, &f, "Phone", 0, 30) == -1 && strstr(ob_error(p), "no field Phone"), "no such field: %s", ob_error(p));
+    CHECK(ob_form_add_field(p, &f, "Name", OB_FORM_COLS - 4, 30) == -1 && strstr(ob_error(p), "no room") && f.nitems == k, "no room across: %s", ob_error(p));
+    CHECK(ob_form_add_field(p, &f, "Name", 0, OB_FORM_ROWS) == -1 && strstr(ob_error(p), "no room"), "no room down");
+    CHECK(ob_form_add_field(p, &f, "Name", 0, ob_form_free_row(&f)) >= 0, "Name under the rest: %s", ob_error(p));
+    CHECK(ob_form_check(p, &f) && ob_form_save(p, &f), "it saves: %s", ob_error(p));
+    copy_s(f.table, sizeof f.table, "Nowhere");
+    CHECK(ob_form_unplaced(p, &f, nm, 8) == -1, "no table");
+    while (f.nitems < OB_FORM_ITEMS - 1) ob_form_add(&f, OB_FI_LABEL, 0, 0, 1, 1);
+    copy_s(f.table, sizeof f.table, "Customers");
+    CHECK(ob_form_add_field(p, &f, "Town", 0, 50) == -1 && strstr(ob_error(p), "no room"), "a full form: %s", ob_error(p));
+    ob_close(p);
+}
+
 static void test_designed_forms(void)
 {
     ob_project *p = fresh("dforms.oadb");
@@ -2187,6 +2368,28 @@ static void test_designed_forms(void)
     CHECK(ob_form_delete(p, "card") && ob_form_count(p) == 1 && !ob_form_get(p, "Card", &g), "deleted");
     CHECK_ERR(p, "There is no form named Card");
     CHECK(!ob_form_delete(p, "Card"), "gone");
+
+    /* the cells a form uses; the forms on a table */
+    {
+        static char nm[4][OB_NAME_MAX];
+        int c = -1, r = -1;
+        ob_form_init(&g, "E", "Orders");
+        ob_form_extent(&g, &c, &r);
+        CHECK(c == 0 && r == 0, "empty: %d x %d", c, r);
+        ob_form_add(&g, OB_FI_LABEL, 3, 2, 10, 1);
+        ob_form_add(&g, OB_FI_BOX, 1, 5, 4, 6);
+        ob_form_extent(&g, &c, NULL);
+        ob_form_extent(&g, NULL, &r);
+        CHECK(c == 13 && r == 11, "13 x 11: %d x %d", c, r);
+        CHECK(ob_forms_of(p, "Customers", nm, 4) == 0, "no forms on Customers yet");
+        ob_form_auto(p, "Customers", "Zed", &g); ob_form_save(p, &g);
+        ob_form_auto(p, "Customers", "alpha", &g); ob_form_save(p, &g);
+        CHECK(ob_forms_of(p, "customers", nm, 4) == 2 && !strcmp(nm[0], "alpha") && !strcmp(nm[1], "Zed"), "two, in name order");
+        CHECK(ob_forms_of(p, "Customers", nm, 1) == 2 && !strcmp(nm[0], "alpha"), "how many, the first kept");
+        CHECK(ob_forms_of(p, "Orders", nm, 4) == 1 && !strcmp(nm[0], "Orders"), "Orders' own");
+        ob_form_delete(p, "Zed");
+        ob_form_delete(p, "alpha");
+    }
 
     /* forms follow their table: a rename, a design change's renames; drops refused */
     {
@@ -2917,7 +3120,7 @@ static void test_change_rename_looked_up(void)
     ob_close(p);
 }
 
-/* ---- Rows from a grid (core 0.14.0) ---- */
+/* ---- Rows from a grid (core 0.14, sheets #326) ---- */
 
 typedef struct grid_rows {
     const char *const *cells;   /* nrows x ncols */
@@ -3083,10 +3286,13 @@ int main(int argc, char **argv)
     test_relation_draw();
     test_dbf();
     test_rexx_rows();
+    test_rexx_form_guard();
     test_queries();
     test_query_out();
     test_change_rename_looked_up();
     test_designed_forms();
+    test_form_editing();
+    test_form_buttons();
     test_query_joins();
     test_forms();
     test_not_projects();
