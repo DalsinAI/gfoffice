@@ -104,12 +104,13 @@ static uint32_t argb(unsigned long rgb)
 
 /* 2.1.0: a tracked change's text in its author's colour, an insertion underlined, a deletion struck through.
  * The colour is the author's place among the document's authors, from a short list that reads on white. */
-static void change_style(const owf_doc *doc, int number, ol_style *s)
+/* A change's colour: its author's (the first author blue, the next red, and so on round six) */
+static unsigned long change_colour(const owf_doc *doc, int number)
 {
     static const unsigned long colours[] = { 0x1F5FBF, 0xB0306A, 0x2E7D32, 0x8E44AD, 0xC0601A, 0x00838F };
     const owf_revision *r = OWF_DOC_REVISION(doc, number);
     int i, author = 0;
-    if (!r) return;
+    if (!r) return colours[0];
     for (i = 0; i < number - 1; ++i) {
         const char *a = doc->revisions[i].author, *b = r->author;
         int seen = 0, k;
@@ -120,17 +121,23 @@ static void change_style(const owf_doc *doc, int number, ol_style *s)
         }
         if (!seen) ++author;
     }
-    s->foreground = argb(colours[author % (int)(sizeof colours / sizeof colours[0])]);
+    return colours[author % (int)(sizeof colours / sizeof colours[0])];
+}
+
+static void change_style(const owf_doc *doc, int number, ol_style *s)
+{
+    const owf_revision *r = OWF_DOC_REVISION(doc, number);
+    if (!r) return;
+    s->foreground = argb(change_colour(doc, number));
     s->text_flags |= r->kind == OWF_REV_DELETE ? OL_TEXT_STRIKE : OL_TEXT_UNDERLINE;
 }
 
 /* 2.0.37: whether the view hides a run: a deletion's, in the final view (not a comment's place or a note's mark,
- * which are no text of the deletion's) */
+ * which are no text of the deletion's). 2.0.38: a deleted picture in the line too. */
 static int hidden_deletion(const ow_layout *l, const owf_doc *doc, const owf_run *r)
 {
     const owf_revision *rv;
-    if (!l || !(l->view & OW_LAYOUT_FINAL) || r->comment || r->note > 0 ||
-        r->kind == OWF_RUN_IMAGE || r->kind == OWF_RUN_FRAME)
+    if (!l || !(l->view & OW_LAYOUT_FINAL) || r->comment || r->note > 0 || r->kind == OWF_RUN_FRAME)
         return 0;
     rv = OWF_DOC_REVISION(doc, r->revision);
     return rv && rv->kind == OWF_REV_DELETE;
@@ -421,11 +428,16 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
 
 /* A note's text as paragraphs appended to parent (NULL: the root), smaller than the text, the first with the
  * note's mark raised. 1, or 0 when memory runs out. */
+static int add_note_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note,
+                          const owf_story *st);
+
 static int add_note_text(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note)
 {
     const char *t = doc->notes[note].text ? doc->notes[note].text : "";
     const char *nl;
     int first = 1;
+    const owf_story *st = OWF_DOC_NOTE_STORY(doc, note);
+    if (st) return add_note_story(l, doc, od, parent, note, st);   /* libowf 1.12.2: with its formats */
     for (;; t = nl + 1, first = 0) {
         owf_para np;
         owf_run runs[2];
@@ -456,6 +468,66 @@ static int add_note_text(ow_layout *l, const owf_doc *doc, ol_document *od, ol_n
         free(piece);
         if (!ok) return 0;
         if (!nl) break;
+    }
+    return 1;
+}
+
+/* libowf 1.12.2: a formatted note's paragraphs (owf_doc.note_stories), its runs' formats kept and sized as a
+ * plain note is: its text's size (the first text run's) at five sixths of the document's, the others in
+ * proportion; the first paragraph starts with the mark raised and a space. 1, or 0 when memory runs out. */
+static int add_note_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note,
+                          const owf_story *st)
+{
+    int base = (doc->base.size > 0 ? doc->base.size : DEFAULT_SIZE), small = base * 5 / 6, own = 0, i, j;
+    for (i = 0; i < st->nparas && !own; ++i)
+        for (j = 0; j < st->paras[i].nruns && !own; ++j)
+            if (st->paras[i].runs[j].kind == OWF_RUN_TEXT && st->paras[i].runs[j].text && st->paras[i].runs[j].text[0])
+                own = st->paras[i].runs[j].fmt.size > 0 ? st->paras[i].runs[j].fmt.size : base;
+    if (own <= 0) own = base;
+    for (i = 0; i < st->nparas; ++i) {
+        const owf_para *sp = &st->paras[i];
+        owf_para np;
+        owf_run *runs;
+        int n = 0, lead = i == 0 ? 2 : 0;
+        ol_node *ok;
+        runs = (owf_run *)calloc((size_t)(sp->nruns + lead + 1), sizeof(*runs));
+        if (!runs) return 0;
+        np = *sp;
+        np.table_id = -1;
+        np.section_columns = np.section_gap = 0;
+        np.style = np.bookmarks = NULL;
+        np.mark_revision = 0;
+        if (lead) {
+            runs[0].kind = runs[1].kind = OWF_RUN_TEXT;
+            runs[0].fmt = doc->base;
+            runs[0].fmt.size = small;
+            runs[1].fmt = runs[0].fmt;
+            runs[0].fmt.flags |= OWF_SUPER;
+            runs[0].text = (char *)(l && l->note_marks ? l->note_marks[note] : "");
+            runs[1].text = (char *)" ";
+            n = 2;
+        }
+        for (j = 0; j < sp->nruns; ++j) {
+            owf_run r = sp->runs[j];
+            if (r.note || r.comment) continue;
+            r.fmt.size = (int)((long)(r.fmt.size > 0 ? r.fmt.size : base) * small / own);
+            if (r.fmt.size <= 0) r.fmt.size = small;
+            r.href = NULL;
+            r.revision = r.format_change = 0;
+            runs[n++] = r;
+        }
+        if (!n) {                                    /* an empty paragraph keeps its line */
+            runs[0].kind = OWF_RUN_TEXT;
+            runs[0].fmt = doc->base;
+            runs[0].fmt.size = small;
+            runs[0].text = (char *)"";
+            n = 1;
+        }
+        np.runs = runs;
+        np.nruns = np.capruns = n;
+        ok = add_paragraph(l, 0, doc, od, parent, &np, -1, NULL);
+        free(runs);
+        if (!ok) return 0;
     }
     return 1;
 }
@@ -602,8 +674,8 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         ol_node *n;
         ol_style rs;
         if (hidden_deletion(l, doc, r)) {
-            /* 2.0.37: the final view: a deletion's text, tab, break or field takes no room (its node stays, so
-             * run j is still node block + 1 + j); a picture or frame is never one (owf_track_switch) */
+            /* 2.0.37: the final view: a deletion's text, tab, break, field or (2.0.38) picture takes no room (its
+             * node stays, so run j is still node block + 1 + j); a frame is never one (owf_track_switch) */
             n = ol_node_append(od, block, OL_ROLE_TEXT, "");
             if (!n) return NULL;
             run_style(doc, &r->fmt, spacing, &rs);
@@ -1143,6 +1215,25 @@ static const owf_story *pos_story(const ow_layout *l, int box, const ol_id **blo
 ol_document *ow_layout_body(const ow_layout *l)
 {
     return l ? l->body : NULL;
+}
+
+int ow_layout_picture_change(const ow_layout *l, ol_id node, unsigned long *rgb)
+{
+    const owf_story *story;
+    const owf_run *r;
+    const owf_revision *rv;
+    const node_ref *ref;
+    if (!l || !l->doc || (l->view & OW_LAYOUT_FINAL) || node >= l->caprefs) return 0;
+    ref = &l->refs[node];
+    if (ref->paragraph < 0 || ref->run < 0) return 0;
+    if (!ref->box) story = &l->doc->body;
+    else if (ref->box <= l->doc->nframes) story = &l->doc->frames[ref->box - 1].story;
+    else return 0;
+    if (ref->paragraph >= story->nparas || ref->run >= story->paras[ref->paragraph].nruns) return 0;
+    r = &story->paras[ref->paragraph].runs[ref->run];
+    if (r->kind != OWF_RUN_IMAGE || !(rv = OWF_DOC_REVISION(l->doc, r->revision))) return 0;
+    if (rgb) *rgb = change_colour(l->doc, r->revision);
+    return rv->kind == OWF_REV_DELETE ? OW_PICTURE_DELETED : OW_PICTURE_INSERTED;
 }
 
 int ow_layout_page_count(const ow_layout *l)

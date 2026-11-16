@@ -131,6 +131,8 @@ static void clear_doc_data(owf_doc *doc)
         owf_free(doc->format_changes[i].date);
     }
     owf_free(doc->format_changes);
+    for (i = 0; i < doc->nnote_stories; ++i) free_story_data(&doc->note_stories[i]);   /* libowf 1.12.2 */
+    owf_free(doc->note_stories);
     memset(doc, 0, sizeof(*doc));
 }
 
@@ -242,6 +244,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     char *merge_source;
     owf_format_change *format_changes;
     int nformat_changes, capformat_changes;
+    owf_story *note_stories;
+    int nnote_stories;
     if (!dst || !snapshot) return;
     images = dst->images;           /* 2.0.11: the pictures stay the document's (clone_doc) */
     nimages = dst->nimages;
@@ -279,6 +283,10 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capformat_changes = dst->capformat_changes;
     dst->format_changes = NULL;
     dst->nformat_changes = dst->capformat_changes = 0;
+    note_stories = dst->note_stories;   /* libowf 1.12.2: the notes' formats, which go with the notes */
+    nnote_stories = dst->nnote_stories;
+    dst->note_stories = NULL;
+    dst->nnote_stories = 0;
     clear_doc_data(dst);
     *dst = *snapshot;               /* ownership of all children moves */
     dst->images = images;
@@ -303,6 +311,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->format_changes = format_changes;
     dst->nformat_changes = nformat_changes;
     dst->capformat_changes = capformat_changes;
+    dst->note_stories = note_stories;
+    dst->nnote_stories = nnote_stories;
     owf_free(snapshot);                 /* only the old outer shell */
 }
 
@@ -1977,7 +1987,8 @@ static int tracked_delete_range(ow_editor *editor, ow_position *start_io, ow_pos
                     p->runs[target].revision = del;
                 }
                 changed = 1;
-            } else if (j < lr && (r->kind == OWF_RUN_TAB || r->kind == OWF_RUN_LINEBREAK || r->kind == OWF_RUN_FIELD)) {
+            } else if (j < lr && (r->kind == OWF_RUN_TAB || r->kind == OWF_RUN_LINEBREAK || r->kind == OWF_RUN_FIELD ||
+                                  r->kind == OWF_RUN_IMAGE)) {   /* 2.0.38: a picture in the line too */
                 if (rev_kind(editor->doc, r->revision) == OWF_REV_DELETE) continue;
                 if (rev_mine(editor, r->revision)) remove_run(p, j);
                 else r->revision = del;
@@ -2581,7 +2592,11 @@ static ow_position comment_start(ow_editor *editor, const ed_comment *c)
 /* 2.0.39: whether a comment passes the author filter: its own author is the one shown (or no filter) */
 static int comment_author_shown(const ow_editor *editor, int record)
 {
-    return !editor->comment_filter || same_text_or_null(editor->doc->comments[record].author, editor->comment_filter);
+    const char *a = editor->doc->comments[record].author;
+    if (!editor->comment_filter) return 1;
+    /* 2.0.40: a name ow_editor_comment_authors cut at 71 bytes matches the names it starts */
+    if (strlen(editor->comment_filter) == 71 && a && !strncmp(a, editor->comment_filter, 71)) return 1;
+    return same_text_or_null(a, editor->comment_filter);
 }
 
 /* 2.0.39: whether a comment's thread (it and its replies, at any depth) has one the filter shows */
@@ -2797,6 +2812,22 @@ int ow_editor_next_comment(ow_editor *editor, int backwards)
         wrapped = 1;
     }
     if (pick >= 0) select_comment(editor, &list[pick]);
+    if (pick >= 0 && !comment_author_shown(editor, list[pick].record)) {
+        /* 2.0.40: a thread picked for a reply the filter shows (its comment hidden): that reply, picked */
+        int top = list[pick].record;
+        for (k = 0; k < n; ++k) {
+            int up = list[k].record, guard = 0;
+            while (up >= 0 && up != top && up < editor->doc->ncomments && guard++ < editor->doc->ncomments)
+                up = editor->doc->comments[up].parent;
+            if (up == top && comment_author_shown(editor, list[k].record)) {
+                editor->pick_on = 1;
+                editor->pick_para = list[k].para;
+                editor->pick_run = list[k].run;
+                editor->pick_sel = editor->selection;
+                break;
+            }
+        }
+    }
     owf_free(list);
     return pick < 0 ? 0 : wrapped ? 2 : 1;
 }
@@ -3280,6 +3311,24 @@ static int editor_note_add(ow_editor *editor, int endnote, const char *text, con
     return doc->nnotes++;
 }
 
+/* libowf 1.12.2: note from's formats (owf_doc.note_stories) for note to, a copy of it made the other kind; 0
+ * when memory runs out. A note whose text the editor changes is plain. */
+static int editor_note_story_copy(owf_doc *doc, int from, int to)
+{
+    const owf_story *st = OWF_DOC_NOTE_STORY(doc, from);
+    if (!st || to < 0) return 1;
+    if (to >= doc->nnote_stories) {
+        owf_story *grown = (owf_story *)owf_realloc(doc->note_stories, (size_t)(to + 1) * sizeof(*grown));
+        if (!grown) return 0;
+        memset(grown + doc->nnote_stories, 0, (size_t)(to + 1 - doc->nnote_stories) * sizeof(*grown));
+        doc->note_stories = grown;
+        doc->nnote_stories = to + 1;
+        st = &doc->note_stories[from];           /* it moved */
+    }
+    free_story_data(&doc->note_stories[to]);
+    return clone_story(&doc->note_stories[to], st);
+}
+
 int ow_editor_insert_note(ow_editor *editor, int endnote, const char *utf8)
 {
     ow_position a, b;
@@ -3341,7 +3390,9 @@ static int change_note(ow_editor *editor, int remove, const char *text, int conv
     if (!remove) {
         owf_note from = doc->notes[record];         /* editor_note_add may move the list */
         to = editor_note_add(editor, convert ? !from.endnote : from.endnote, text ? text : from.text, from.label);
-        if (to < 0) { owf_free(list); edit_undone(editor); return OWF_ERR_MEMORY; }
+        if (to < 0 || (!text && !editor_note_story_copy(doc, record, to))) {
+            owf_free(list); edit_undone(editor); return OWF_ERR_MEMORY;
+        }
         story->paras[list[k].para].runs[list[k].run].note = to + 1;
     } else {
         owf_para *p = &story->paras[list[k].para];
@@ -4948,9 +4999,13 @@ int ow_editor_insert_image(ow_editor *editor, int image_index)
     ow_position pos,after,caret;owf_story *story;owf_para *p;int rc,base;
     if(!editor||!editor->doc||image_index<0||image_index>=editor->doc->nimages)return OWF_ERR_FORMAT;
     editor->typing_group=0;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
-    if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    if(!ow_editor_selection_empty(editor)&&(editor->track?tracked_delete_selection(editor):delete_selection_internal(editor))<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    /* 2.0.38: recording, the picture and the two paragraph ends round it are an insertion */
+    editor->typing_rev=editor->track?editor_revision(editor,OWF_REV_INSERT):0;
+    if(editor->track&&!editor->typing_rev){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     pos=editor->selection.focus;rc=split_paragraph(editor,pos,&after);if(rc<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     story=ed_story(editor);base=after.paragraph;p=insert_paragraph(story,base,NULL);if(!p||owf_para_add_image(p,&editor->typing_fmt,image_index)!=OWF_OK){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    if(editor->typing_rev){p->runs[p->nruns-1].revision=editor->typing_rev;p->mark_revision=editor->typing_rev;}
     caret=after;caret.paragraph=base+1;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
@@ -6171,6 +6226,13 @@ static owf_doc *record_doc(ow_editor *editor, int record)
                 (src->notes[i].label && !(d->notes[i].label = copy_bytes(src->notes[i].label, strlen(src->notes[i].label)))))
                 goto fail;
         }
+    }
+    if (src->nnote_stories) {                        /* libowf 1.12.2: their formats */
+        d->note_stories = (owf_story *)owf_calloc((size_t)src->nnote_stories, sizeof *d->note_stories);
+        if (!d->note_stories) goto fail;
+        d->nnote_stories = src->nnote_stories;
+        for (i = 0; i < src->nnote_stories; ++i)
+            if (!clone_story(&d->note_stories[i], &src->note_stories[i])) goto fail;
     }
     /* the changes' list stays empty: story_final accepts them all, so the runs need only theirs to say how */
     d->revisions = src->revisions;

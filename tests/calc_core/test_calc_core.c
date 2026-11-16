@@ -7249,6 +7249,85 @@ static void test_consolidate(void)
     oc_core_free(core);
 }
 
+/* The shown scenario's frame round each range and its name's tab, in the grid's draw list. */
+static int scenario_items(const oc_draw_list *l, int kind, int *first)
+{
+    int i, n = 0;
+    *first = -1;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == kind && l->items[i].role == OC_ROLE_SCENARIO) {
+            if (*first < 0)
+                *first = i;
+            n++;
+        }
+    return n;
+}
+
+static void test_scenario_frame(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    int i, frame, tab, cursor;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    enter_at(core, "B2", "10");
+    enter_at(core, "C2", "20");
+    enter_at(core, "B3", "East");
+    enter_at(core, "E5", "5");
+    CHECK(oc_core_scenario_save(core, -1, "Low", "B2:C2,B3,E5", "") == OWF_OK);
+    CHECK(oc_core_scenario_save(core, -1, "Top", "A1:A2", "") == OWF_OK);
+    /* none shown yet: no frame */
+    CHECK(oc_core_scenario_active(core) == -1);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 0 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
+    /* "Low" shown: a frame round each of its three ranges, a pixel outside the cells as the active cell's */
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK && oc_core_scenario_active(core) == 0);
+    go(core, "H12");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 3);
+    {
+        const oc_draw_item *f = &l.items[frame];
+        CHECK(f->x == 40 + 64 - 1 && f->y == 18 + 17 - 1 && f->w == 2 * 64 + 1 && f->h == 18 && f->line == 1);
+        CHECK(f->row == 1 && f->col == 1 && f->clip_x == 40 && f->clip_y == 18);
+    }
+    /* its name in a tab above the first range's top left corner: 8 points (15 pixels with its margin),
+       the name's width and 4 pixels each side; the text white, after it */
+    CHECK(scenario_items(&l, OC_DRAW_FILL, &tab) == 1);
+    {
+        const oc_draw_item *t = &l.items[tab], *x = &l.items[tab + 1];
+        CHECK(t->x == 103 && t->y == 35 - 1 - 15 && t->w == 3 * 6 + 8 && t->h == 15);
+        CHECK(x->kind == OC_DRAW_TEXT && x->text && !strcmp(x->text, "Low") && x->rgb == 0xFFFFFFUL &&
+              x->text_x == 107 && x->size == 160 && x->clip_x == 103 && x->clip_w == 26);
+    }
+    /* under the active cell's frame */
+    for (i = 0, cursor = -1; i < l.n; i++)
+        if (l.items[i].kind == OC_DRAW_FRAME && l.items[i].role == OC_ROLE_CURSOR)
+            cursor = i;
+    CHECK(cursor > frame);
+    /* "Top" (row 1): no room above in the pane, so the tab sits inside the range; one frame */
+    CHECK(oc_core_scenario_show(core, 1) == OWF_OK && oc_core_scenario_active(core) == 1);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 1 && scenario_items(&l, OC_DRAW_FILL, &tab) == 1);
+    CHECK(l.items[frame].x == 39 && l.items[frame].y == 17 && l.items[frame].h == 2 * 17 + 1);
+    CHECK(l.items[tab].x == 40 && l.items[tab].y == 18 && l.items[tab + 1].text && !strcmp(l.items[tab + 1].text, "Top"));
+    /* scrolled so that its first row is above the view: the frame goes on past the top (no tab) */
+    oc_view_scroll_to(core, 1, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 1 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
+    CHECK(l.items[frame].y < 18 && l.items[frame].y + l.items[frame].h == 18 + 17);
+    oc_view_scroll_to(core, 0, 0);
+    /* Undo goes back to "Low" shown; deleting the shown one takes the frame away */
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_scenario_active(core) == 0);
+    CHECK(oc_core_scenario_delete(core, 0) == OWF_OK && oc_core_scenario_active(core) == -1);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 0 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
+    /* Undo brings it back, shown */
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_scenario_active(core) == 0);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_scenarios(void)
 {
     static const char *const xlsx = "build/host/calc-core-scenarios.xlsx";
@@ -7419,6 +7498,7 @@ int main(void)
     test_solver_lp();
     test_solver();
     test_scenarios();
+    test_scenario_frame();
     test_consolidate();
     test_consolidate_names();
     test_pdf();

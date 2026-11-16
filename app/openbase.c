@@ -54,7 +54,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.10.0 (15.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.12.0 (15.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -64,7 +64,7 @@ enum {
     M_NEW = 1, M_OPEN, M_CLOSE, M_COPY, M_COMPACT, M_CHECK, M_ABOUT, M_QUIT,
     M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST,
     M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV,
-    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM
+    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM, M_T_FROMDBF, M_T_IMPORTDBF, M_T_EXPORTDBF
 };
 
 /* 4.3: the Report window (app/ob_reportwin.c) */
@@ -98,6 +98,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "New Table from CSV...", NULL, 0, 0, (APTR)M_T_FROMCSV },
     { NM_ITEM, "Import CSV...", "I", 0, 0, (APTR)M_T_IMPORT },
     { NM_ITEM, "Export CSV...", NULL, 0, 0, (APTR)M_T_EXPORT },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "New Table from dBASE...", NULL, 0, 0, (APTR)M_T_FROMDBF },
+    { NM_ITEM, "Import dBASE...", NULL, 0, 0, (APTR)M_T_IMPORTDBF },
+    { NM_ITEM, "Export dBASE...", NULL, 0, 0, (APTR)M_T_EXPORTDBF },
     { NM_TITLE, "Query", NULL, 0, 0, NULL },
     { NM_ITEM, "New Query...", "Y", 0, 0, (APTR)M_Q_NEW },
     { NM_ITEM, "Open Query...", "U", 0, 0, (APTR)M_Q_OPEN },
@@ -1901,6 +1905,124 @@ static void export_csv(void)
     set_status(msg);
 }
 
+/* ---- Table > Import dBASE..., Export dBASE..., New Table from dBASE... ----
+ * dBASE III and IV tables (.dbf, memos in the .dbt beside it); the text is
+ * taken byte for byte, as ISO-8859-1. */
+
+/* Rows from path into the table: all or none, and if a record is bad, the
+ * others on request with the bad ones listed. -1 with the reason told. */
+static ob_int dbf_rows_in(const char *table, const char *path)
+{
+    ob_int n;
+    ob_csv_opts_init(&csv_o);
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    n = ob_dbf_import(proj, table, path, &csv_o);
+    SetWindowPointer(win, TAG_DONE);
+    if (n < 0) {
+        char q[OB_ERR_MAX + 120];
+        if (strncmp(ob_error(proj), "Record ", 7)) { tell(ob_error(proj)); return -1; }
+        snprintf(q, sizeof q, "%s\n\nNothing was added. Add the other records and list the bad ones?", ob_error(proj));
+        if (!ask(q, "Add the Others|Cancel")) return -1;
+        ob_csv_opts_init(&csv_o);
+        csv_o.skip_bad = 1;
+        SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+        n = ob_dbf_import(proj, table, path, &csv_o);
+        SetWindowPointer(win, TAG_DONE);
+        if (n < 0) { tell(ob_error(proj)); return -1; }
+    }
+    return n;
+}
+
+static void dbf_done(ob_int n, const char *path)
+{
+    char msg[200];
+    snprintf(msg, sizeof msg, "Added %lld rows from %.60s", (long long)n, leaf(path));
+    if (csv_o.deleted) snprintf(msg + strlen(msg), sizeof msg - strlen(msg), " (%lld deleted records left out)", (long long)csv_o.deleted);
+    load_page();
+    set_status(msg);
+    if (csv_o.bad) show_report(n, &csv_o);
+    else if (csv_o.report[0]) tell(csv_o.report);     /* the file's code page */
+}
+
+static void import_dbf(void)
+{
+    char path[512], msg[160];
+    ob_int n;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
+    if (!proj || !have_cur) return;
+    snprintf(msg, sizeof msg, "Import dBASE into %.60s", cur.name);
+    if (!ask_file(msg, FALSE, "#?.dbf", path, sizeof path)) return;
+    if ((n = dbf_rows_in(cur.name, path)) >= 0) dbf_done(n, path);
+}
+
+static void export_dbf(void)
+{
+    char path[512], msg[160];
+    ob_int n;
+    BPTR l;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
+    if (!proj || !have_cur) return;
+    snprintf(msg, sizeof msg, "Export %.60s as dBASE", cur.name);
+    if (!ask_file(msg, TRUE, "#?.dbf", path, sizeof path)) return;
+    if ((l = Lock((STRPTR)path, ACCESS_READ)) != 0) {
+        UnLock(l);
+        snprintf(msg, sizeof msg, "%.100s is already there.\nReplace it (and its .dbt)?", leaf(path));
+        if (!ask(msg, "Replace|Cancel")) return;
+    }
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    n = ob_dbf_export(proj, cur.name, &view, path);
+    SetWindowPointer(win, TAG_DONE);
+    if (n < 0) { tell(ob_error(proj)); return; }
+    snprintf(msg, sizeof msg, "Wrote %lld rows to %.60s%s", (long long)n, leaf(path),
+             ob_view_filtered(&view) ? " (the filtered rows)" : "");
+    set_status(msg);
+}
+
+static int table_named(const char *name);
+static ob_table dbf_t;      /* the new table's design (too big for the stack) */
+
+static void new_table_from_dbf(void)
+{
+    char path[512], msg[600];
+    size_t k;
+    ob_int n;
+    int i, made = 0;
+    if (!proj) return;
+    if (!ask_file("New table from a dBASE file", FALSE, "#?.dbf", path, sizeof path)) return;
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    i = ob_dbf_guess(proj, path, NULL, &dbf_t);
+    SetWindowPointer(win, TAG_DONE);
+    if (!i) { tell(ob_error(proj)); return; }
+    if (table_named(dbf_t.name) >= 0) {     /* Sales there already: Sales 2 */
+        char base[OB_NAME_MAX];
+        put_text(base, sizeof base, dbf_t.name);
+        for (i = 2; i < 100; i++) {
+            snprintf(dbf_t.name, sizeof dbf_t.name, "%.*s %d", (int)sizeof base - 5, base, i);
+            if (table_named(dbf_t.name) < 0) break;
+        }
+    }
+    snprintf(msg, sizeof msg, "Make the table %.60s from %.100s, with these fields?\n\n", dbf_t.name, leaf(path));
+    for (i = 0; i < dbf_t.nfields; i++) {
+        k = strlen(msg);
+        if (k + 60 >= sizeof msg) { put_text(msg + k, sizeof msg - k, "..."); break; }
+        snprintf(msg + k, sizeof msg - k, "%s%.30s %.12s", i ? (i % 3 ? ", " : ",\n") : "", dbf_t.fields[i].name, ob_type_name(dbf_t.fields[i].type));
+    }
+    if (!ask(msg, "Make|Cancel")) return;
+    /* the table and its rows together, or neither */
+    if (!ob_begin(proj)) { tell(ob_error(proj)); return; }
+    if (!ob_table_create(proj, &dbf_t)) { char e[OB_ERR_MAX]; put_text(e, sizeof e, ob_error(proj)); ob_rollback(proj); tell(e); return; }
+    if ((n = dbf_rows_in(dbf_t.name, path)) >= 0 && ob_commit(proj)) made = 1;
+    else {
+        if (n >= 0) tell(ob_error(proj));
+        ob_rollback(proj);
+    }
+    if (!made) return;
+    load_tables(dbf_t.name);
+    top_row = 0;
+    sel_row = -1;
+    dbf_done(n, path);
+}
+
 /* ---- Table > New Table from CSV... ---- */
 
 enum { W_NAME = 1, W_SEP, W_CHARSET, W_HEADER, W_FIELDS, W_TYPE, W_SKIP, W_IMPORT, W_CANCEL, W_COUNT };
@@ -3072,7 +3194,7 @@ enum {
     F_FIRST = 1, F_PREV, F_POS, F_NEXT, F_LAST, F_NEW, F_DELETE, F_FIND, F_SAVE, F_UNDO, F_CLOSE,
     F_BACK, F_ON, F_SUBPICK, F_SUBLIST, F_SUBCOUNT,
     F_FILTER, F_FROW, F_FHINT, F_FCLEAR, F_FCANCEL,     /* Filter by Form */
-    F_SUBADD, F_SUBEDIT, F_SUBDEL,                      /* the subform's rows */
+    F_SUBADD, F_SUBEDIT, F_SUBDEL, F_SUBOPEN,           /* the subform's rows */
     F_FIELD0
 };
 
@@ -3094,6 +3216,9 @@ static char f_count[64], f_scount[80];
 static int f_ssel = -1, f_ssub = -1;        /* the subform row chosen, for record f_skey */
 static ob_int f_skey = -2;
 static int f_slines = 7;                     /* the subform list's lines */
+static ob_relation f_go_rel;                 /* a subform row to open in its own form */
+static ob_int f_go_parent, f_go_key;
+static int f_go;
 
 /* Filter by Form (design 6.3): the form's fields take what to look for, a
  * row at a time (Look for, Or, Or); Apply Filter makes it the view's. */
@@ -3314,18 +3439,44 @@ static const char *form_find_name(void)
     return cur.nfields ? cur.fields[0].name : "";
 }
 
+static int form_window(void);
+
+/* Table > Open as Form. A subform row opened from it (Open Form, Return or
+ * a double-click on the row) closes this form and opens its table's, in
+ * the view of that record's rows, at the row. */
 static void open_form(void)
+{
+    while (form_window()) {
+        ob_int at;
+        load_tables(f_go_rel.table);
+        if (!have_cur || strcmp(cur.name, f_go_rel.table)) { tell("The subform's table isn't there any more."); break; }
+        ob_child_view(&view, &f_go_rel, f_go_parent);
+        put_text(view_table, sizeof view_table, cur.name);
+        at = ob_view_position(proj, cur.name, &view, f_go_key);
+        top_row = 0;
+        sel_row = at >= 0 ? (int)at : 0;
+        load_page();
+        refresh();
+        set_status("The record's rows: Table > Show All Rows shows every row");
+    }
+}
+
+/* The form; 1 when it closed to open a subform row in its own form. */
+static int form_window(void)
 {
     struct Window *w_;
     struct Gadget *eg = NULL, *g, *fg[ED_MAX];
     struct NewGadget ng;
     int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full, wt, oh;
-    if (q_on) { set_status("Forms show a table: choose one in the list"); return; }
-    if (!proj || !have_cur) { set_status("Choose a table first"); return; }
+    int last = 0;                              /* the action before, for a double-click */
+    ULONG l_secs = 0, l_mics = 0;
+    if (q_on) { set_status("Forms show a table: choose one in the list"); return 0; }
+    if (!proj || !have_cur) { set_status("Choose a table first"); return 0; }
+    f_go = 0;
     for (i = 0; i < OB_MAX_FIELDS; i++) {
         if (!f_vals[i]) f_vals[i] = malloc(1024);
         if (!f_before[i]) f_before[i] = malloc(1024);
-        if (!f_vals[i] || !f_before[i]) { tell("Out of memory"); return; }
+        if (!f_vals[i] || !f_before[i]) { tell("Out of memory"); return 0; }
     }
     f_nsubs = ob_children(proj, cur.name, f_subs, FORM_SUBS);
     if (f_nsubs < 0) f_nsubs = 0;
@@ -3378,7 +3529,7 @@ static void open_form(void)
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | STRINGIDCMP
                   | BUTTONIDCMP | CYCLEIDCMP | LISTVIEWIDCMP,
         TAG_DONE);
-    if (!w_) return;
+    if (!w_) return 0;
     SetFont(w_->RPort, font);
     while (!done) {
         int action = 0;
@@ -3490,6 +3641,8 @@ static void open_form(void)
             g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
             ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Delete Row..."; ng.ng_GadgetID = F_SUBDEL;
             g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Open Form"; ng.ng_GadgetID = F_SUBOPEN;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
             top += sub_h;
         }
         /* the record bar */
@@ -3545,7 +3698,7 @@ static void open_form(void)
         AddGList(w_, eg, ~0, -1, NULL);
         RefreshGList(eg, w_, NULL, -1);
         GT_RefreshWindow(w_, NULL);
-        for (i = 0; i < nshow; i++)
+        for (i = 0; i < nshow && last != F_SUBLIST; i++)
             if (fg[i] && (f_filtering || (cur.fields[first + i].type != OB_COUNTER && cur.fields[first + i].type != OB_OBJECT))) {
                 ActivateGadget(fg[i], w_, NULL);
                 break;
@@ -3557,8 +3710,16 @@ static void open_form(void)
                 ULONG class = m->Class;
                 UWORD code = m->Code;
                 struct Gadget *gad = (struct Gadget *)m->IAddress;
+                ULONG secs = m->Seconds, mics = m->Micros;
                 GT_ReplyIMsg(m);
+                if (class == IDCMP_GADGETUP && gad->GadgetID == F_SUBLIST && (int)code == f_ssel && f_ssel >= 0
+                    && last == F_SUBLIST && DoubleClick(l_secs, l_mics, secs, mics)) {
+                    action = F_SUBOPEN;     /* a double-click on the chosen row */
+                    continue;
+                }
+                if (class == IDCMP_GADGETUP) { l_secs = secs; l_mics = mics; }
                 if (class == IDCMP_CLOSEWINDOW) action = F_CLOSE;
+                else if (class == IDCMP_VANILLAKEY && code == 13 && !f_filtering && f_ssel >= 0) action = F_SUBOPEN;
                 else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(w_); GT_EndRefresh(w_, TRUE); }
                 else if (class == IDCMP_VANILLAKEY && code == 27) action = f_filtering ? F_FCANCEL : F_UNDO;
                 else if (class == IDCMP_GADGETUP && gad->GadgetID >= F_FIRST && gad->GadgetID < F_FIELD0
@@ -3588,6 +3749,7 @@ static void open_form(void)
         eg = NULL;
         if (full) tell("Filter by Form looks at 16 fields at most: what was typed past that is left out");
         if (f_filtering && action == F_CLOSE) action = F_FCANCEL;
+        last = action;
         switch (action) {
         case F_FROW: f_frow = (int)acode < OB_FORM_OR ? (int)acode : 0; break;
         case F_FCLEAR: ob_view_form_clear(&f_fview); break;
@@ -3618,6 +3780,20 @@ static void open_form(void)
         case F_ON: if (page < pages - 1) page++; break;
         case F_SUBPICK: f_sub = (int)acode < f_nsubs ? (int)acode : 0; break;
         case F_SUBLIST: f_ssel = (int)acode; break;
+        case F_SUBOPEN: {
+            ob_int k;
+            if (!form_save(w_)) break;
+            form_read();
+            k = ob_child_key(proj, &f_subs[f_sub], f_key, f_ssel);
+            if (k == -2) { tell(ob_error(proj)); break; }
+            if (k < 0) { tell("Choose a row in the list first."); break; }
+            f_go_rel = f_subs[f_sub];
+            f_go_parent = f_key;
+            f_go_key = k;
+            f_go = 1;
+            done = 1;
+            break;
+        }
         case F_SUBADD: case F_SUBEDIT: case F_SUBDEL: {
             ob_int k = 0;
             if (!form_save(w_)) break;
@@ -3701,6 +3877,7 @@ static void open_form(void)
     }
     ActivateWindow(win);
     refresh();
+    return f_go;
 }
 
 static void undo_last(void)
@@ -3782,6 +3959,9 @@ static void menu_action(ULONG id)
     case M_T_IMPORT: import_csv(); break;
     case M_T_EXPORT: export_csv(); break;
     case M_T_FROMCSV: new_table_from_csv(); break;
+    case M_T_FROMDBF: new_table_from_dbf(); break;
+    case M_T_IMPORTDBF: import_dbf(); break;
+    case M_T_EXPORTDBF: export_dbf(); break;
     case M_UNDO: undo_last(); break;
     case M_REPORTS: report_window(); break;
     case M_Q_NEW: design_query(1); break;

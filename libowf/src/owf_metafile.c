@@ -738,9 +738,11 @@ static int arc_mirrored(const mf_player *m)
     return sx != sy;
 }
 
+static void path_append(mf_player *m, const long *lp, int n);
+
 /* an arc of the ellipse in the box l, t, r, b (logical) from the ray to (xs, ys) round to the ray to (xe, ye),
  * the way the arc direction says as it is seen (y down: counterclockwise is GDI's default); kind 0 an arc (a line),
- * 1 a chord (closed and filled), 2 a pie (to the centre too) */
+ * 1 a chord (closed and filled), 2 a pie (to the centre too), 3 ArcTo (on from the pen, which ends at the arc's end) */
 static void arc_figure(mf_player *m, long l, long t, long r, long b, long xs, long ys, long xe, long ye, int kind)
 {
     long long cx, cy, rx, ry, ux[2], uy[2], a[2], d_end;
@@ -800,6 +802,19 @@ static void arc_figure(mf_player *m, long l, long t, long r, long b, long xs, lo
             m->lp[i * 2] = m->lp[j * 2]; m->lp[i * 2 + 1] = m->lp[j * 2 + 1];
             m->lp[j * 2] = v0; m->lp[j * 2 + 1] = v1;
         }
+    if (kind == 3) {                           /* ArcTo: a line from the pen to the start, the arc, the pen at its end */
+        long ex = m->lp[(n - 1) * 2], ey = m->lp[(n - 1) * 2 + 1];
+        if (m->in_path) path_append(m, m->lp, n);
+        else {
+            memmove(m->lp + 2, m->lp, (size_t)n * 2 * sizeof *m->lp);
+            m->lp[0] = m->dc.cur_x;
+            m->lp[1] = m->dc.cur_y;
+            emf_figure(m, m->lp, n + 1, 0, 0);
+        }
+        m->dc.cur_x = ex;
+        m->dc.cur_y = ey;
+        return;
+    }
     if (kind == 2) { m->lp[n * 2] = (long)cx; m->lp[n * 2 + 1] = (long)cy; n++; }
     emf_figure(m, m->lp, n, kind != 0, kind != 0);
 }
@@ -1136,10 +1151,10 @@ static void emf_record(mf_player *m, unsigned long type, const unsigned char *p,
         else rectangle(m, (int)clamp_map(s32(p)), (int)clamp_map(s32(p + 4)), (int)clamp_map(s32(p + 8)),
                        (int)clamp_map(s32(p + 12)));
         break;
-    case EMR_ARC: case EMR_CHORD: case EMR_PIE:          /* Box (RectL), Start, End (PointL) */
+    case EMR_ARC: case EMR_CHORD: case EMR_PIE: case EMR_ARCTO:   /* Box (RectL), Start, End (PointL) */
         NEED(32);
         arc_figure(m, s32(p), s32(p + 4), s32(p + 8), s32(p + 12), s32(p + 16), s32(p + 20), s32(p + 24),
-                   s32(p + 28), type == EMR_ARC ? 0 : type == EMR_CHORD ? 1 : 2);
+                   s32(p + 28), type == EMR_ARC ? 0 : type == EMR_CHORD ? 1 : type == EMR_PIE ? 2 : 3);
         break;
     case EMR_SETARCDIRECTION:
         NEED(4);
@@ -1265,8 +1280,8 @@ static void emf_record(mf_player *m, unsigned long type, const unsigned char *p,
         free(u);
         break;
     }
-    /* drawn as nothing and counted: pictures inside, ArcTo, clipping, world transforms, gradients */
-    case EMR_ARCTO: case EMR_EXCLUDECLIPRECT:
+    /* drawn as nothing and counted: pictures inside, clipping, world transforms, gradients */
+    case EMR_EXCLUDECLIPRECT:
     case EMR_INTERSECTCLIPRECT: case EMR_EXTSELECTCLIPRGN: case EMR_SELECTCLIPPATH: case EMR_SETWORLDTRANSFORM:
     case EMR_MODIFYWORLDTRANSFORM: case EMR_BITBLT: case EMR_STRETCHBLT: case EMR_MASKBLT: case EMR_PLGBLT:
     case EMR_SETDIBITSTODEVICE: case EMR_STRETCHDIBITS: case EMR_ALPHABLEND: case EMR_TRANSPARENTBLT:

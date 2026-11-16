@@ -767,6 +767,33 @@ static void test_arcs(void)
         CHECK(n == 18 && closed && xy[34] == 200 && xy[35] == 200 && strstr(r.log, "P 400,200 "),
               "a Pie in a path, filled: closed at the centre");
     }
+    {
+        emf e;
+        estart(&e, 10000, 5000, 1);
+        epoint(&e, 27, 600, 200);                           /* MoveToEx */
+        ebegin(&e, 55); e32(&e, 0); e32(&e, 0); e32(&e, 400); e32(&e, 400);
+        e32(&e, 400); e32(&e, 200); e32(&e, 200); e32(&e, 0); eend(&e);      /* ArcTo: right to top */
+        epoint(&e, 54, 0, 0);                               /* LineTo: on from the arc's end */
+        enone(&e, 59);                                      /* in a path: one figure */
+        epoint(&e, 27, 600, 200);
+        ebegin(&e, 55); e32(&e, 0); e32(&e, 0); e32(&e, 400); e32(&e, 400);
+        e32(&e, 400); e32(&e, 200); e32(&e, 200); e32(&e, 0); eend(&e);
+        epoint(&e, 54, 0, 0);
+        enone(&e, 60);
+        ebegin(&e, 64); e32(&e, 0); e32(&e, 0); e32(&e, 0); e32(&e, 0); eend(&e);   /* StrokePath */
+        efinish(&e);
+        memset(&r, 0, sizeof r);
+        CHECK(owf_metafile_play(e.d, e.n, 0, 0, 1000, 500, &sink, &r, &res) == OWF_OK && res.skipped == 0,
+              "ArcTo plays, none left out");
+        n = log_points(r.log, 0, xy, 100, &closed);
+        CHECK(n == 18 && !closed && xy[0] == 600 && xy[1] == 200 && xy[2] == 400 && xy[3] == 200 && xy[34] == 200 &&
+              xy[35] == 0, "ArcTo: a line from the pen to the start, then the arc");
+        n = log_points(r.log, 1, xy, 100, &closed);
+        CHECK(n == 2 && xy[0] == 200 && xy[1] == 0 && xy[2] == 0 && xy[3] == 0, "the pen left at the arc's end");
+        n = log_points(r.log, 2, xy, 100, &closed);
+        CHECK(n == 19 && !closed && xy[0] == 600 && xy[2] == 400 && xy[34] == 200 && xy[35] == 0 && xy[36] == 0 &&
+              xy[37] == 0, "in a path: MoveTo, ArcTo, LineTo as one figure");
+    }
 }
 
 static void test_emf_damaged(void)
