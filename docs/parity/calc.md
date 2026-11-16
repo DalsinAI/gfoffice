@@ -72,6 +72,10 @@ Top three gaps by workflow weight:
    Edit Links... and ARexx LINKS/UPDATELINK list them and update them
    from their files (lab owed).
 3. Sharing and review: tracked changes in sheets (Edit > Track Changes).
+   Started: the core records and reviews them; Edit > Track Changes (Record
+   Changes, Manage Changes..., Accept All, Reject All, Changes Author...) and
+   ARexx TRACKCHANGES/CHANGES/CHANGE/SHOWCHANGE/ACCEPTCHANGE/REJECTCHANGE/
+   CHANGEAUTHOR (lab owed); XLSX and ODS next.
    Workbook structure protection is in, with its Sheet menu items and
    ARexx (lab owed).
 
