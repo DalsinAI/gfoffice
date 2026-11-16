@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.13.1"
+#define OB_CORE_VERSION "0.14.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -139,6 +139,9 @@ void ob_close(ob_project *p);
 
 /* The last error, in plain words; "" after a call that succeeded. */
 const char *ob_error(const ob_project *p);
+/* Sets it (core 0.14.0), for GFOpenBase's parts outside the core (sheets): 0
+ * with text as the reason ("" or NULL clears it). */
+int ob_set_error(ob_project *p, const char *text);
 
 /* The project's title (oadb_meta "title"); "" when it has none. */
 const char *ob_title(ob_project *p);
@@ -429,6 +432,35 @@ ob_int ob_csv_export_with(ob_project *p, const char *table, const ob_view *v, co
  * time, else Text (Memo past 255 characters). The caller may change it, then
  * ob_table_create and ob_csv_import_with. o's found_* say what was found. */
 int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts *o, ob_table *out);
+
+/* ---- Rows from a grid (core 0.14.0) ----
+ * What CSV import and New Table from CSV do, for rows another part of the
+ * program has already read: a spreadsheet's sheet (include/openbase_sheet.h)
+ * or anything else laid out in rows and columns. The rows are asked for one
+ * at a time, so nothing holds them all. row() puts up to max cells of row r
+ * (from 0) into cells (ISO-8859-1 text; NULL or "" is empty) and returns how
+ * many cells the row has (more than max when it has more than a table can
+ * take), -1 when memory ran out; the cells need last only until the next
+ * call. A row with nothing in it is left out, as a blank line is.
+ *
+ * Import and guess are ob_csv_import_with's and ob_csv_guess's, header,
+ * skip_bad and the report included (o's sep and charset are not used; o may
+ * be NULL), with "Row 4" for "Line 4": a row's number is first_row + r, so a
+ * sheet whose data start in its third row says "Row 3". An import is one
+ * step of Undo, as a CSV import is. name says what the rows are in messages
+ * ("Sheet1 is empty"); guess names the new table name, else name. */
+typedef int (*ob_grid_row_fn)(void *user, long row, const char **cells, int max);
+
+typedef struct ob_grid {
+    const char *name;
+    long nrows;
+    long first_row;
+    ob_grid_row_fn row;
+    void *user;
+} ob_grid;
+
+ob_int ob_grid_import(ob_project *p, const char *table, const ob_grid *grid, ob_csv_opts *o);
+int ob_grid_guess(ob_project *p, const ob_grid *grid, const char *name, ob_csv_opts *o, ob_table *out);
 
 /* ---- dBASE files (core 0.9, design 8) ----
  * The .dbf of dBASE III, which most database and spreadsheet programs read

@@ -2746,6 +2746,134 @@ static void test_change_rename_looked_up(void)
     ob_close(p);
 }
 
+/* ---- Rows from a grid (core 0.14.0) ---- */
+
+typedef struct grid_rows {
+    const char *const *cells;   /* nrows x ncols */
+    int ncols;
+    int wide;                   /* row 0 says it has this many cells (more than a table takes) */
+} grid_rows;
+
+static int grid_cb(void *user, long row, const char **cells, int max)
+{
+    const grid_rows *g = user;
+    int i;
+    for (i = 0; i < g->ncols && i < max; i++) cells[i] = g->cells[row * g->ncols + i];
+    return row == 0 && g->wide ? g->wide : g->ncols;
+}
+
+static void grid_of(ob_grid *g, grid_rows *rows, const char *name, long nrows, long first)
+{
+    memset(g, 0, sizeof *g);
+    g->name = name;
+    g->nrows = nrows;
+    g->first_row = first;
+    g->row = grid_cb;
+    g->user = rows;
+}
+
+static void test_grid(void)
+{
+    ob_project *p = fresh("grid.oadb");
+    static ob_table t, made;
+    static const char *const cells[] = {
+        "Credit limit", "Name", NULL,       /* a header by label and name, any order */
+        "12.50", "Kay", NULL,
+        NULL, "", NULL,                     /* nothing in it: left out */
+        "1,000", "Lou", NULL,
+    };
+    static const char *const bad[] = {
+        "Name", "Credit",
+        "Mo", "lots",
+        "", "5",
+        "Ned", "3",
+    };
+    static const char *const plain[] = {
+        "Pat", "York", NULL, "2026-11-16", "Yes", "4",
+    };
+    grid_rows rows = { cells, 3, 0 }, badrows = { bad, 2, 0 }, plainrows = { plain, 6, 0 };
+    ob_grid g;
+    ob_csv_opts o;
+    if (!p) return;
+    customers(&t);
+    CHECK(ob_table_create(p, &t), "Customers: %s", ob_error(p));
+
+    grid_of(&g, &rows, "Sheet1", 4, 3);
+    ob_csv_opts_init(&o);
+    CHECK(ob_grid_import(p, "Customers", &g, &o) == 2 && o.found_header == 1, "grid: %s", ob_error(p));
+    CHECK(!strcmp(all_rows(p, "Customers"), "1:1|Kay|Leeds|-|-|No|12.50;2:2|Lou|Leeds|-|-|No|1,000.00;"),
+          "rows:\n%s", all_rows(p, "Customers"));
+    CHECK(ob_undo_count(p) == 1, "one step of Undo");
+    CHECK(ob_undo(p) && ob_row_total(p, "Customers") == 0, "undone: %s", ob_error(p));
+
+    /* in field order, no header: the Counter left out as CSV's is */
+    grid_of(&g, &plainrows, "Sheet2", 1, 1);
+    CHECK(ob_grid_import(p, "Customers", &g, NULL) == 1, "plain: %s", ob_error(p));
+    CHECK(strstr(all_rows(p, "Customers"), "|Pat|York|-|2026-11-16|Yes|4.00;"), "plain:\n%s", all_rows(p, "Customers"));
+
+    /* messages say Row and the sheet's own row number; all or none */
+    grid_of(&g, &badrows, "Sheet1", 4, 5);
+    ob_csv_opts_init(&o);
+    CHECK(ob_grid_import(p, "Customers", &g, &o) == -1, "bad row refused");
+    CHECK_ERR(p, "Row 6: Credit limit must be an amount of money");
+    CHECK(ob_row_total(p, "Customers") == 1, "none added");
+    ob_csv_opts_init(&o);
+    o.skip_bad = 1;
+    CHECK(ob_grid_import(p, "Customers", &g, &o) == 1 && o.bad == 2, "skip bad: %s (%d)", ob_error(p), o.bad);
+    CHECK(!strcmp(o.report, "Row 6: Credit limit must be an amount of money, such as 1,234.50\nRow 7: Name must be filled in\n"),
+          "report:\n%s", o.report);
+    ob_csv_opts_init(&o);
+    o.header = 1;
+    {
+        static const char *const wrong[] = { "Name", "Shoe size" };
+        grid_rows w = { wrong, 2, 0 };
+        grid_of(&g, &w, "Sheet1", 1, 2);
+        CHECK(ob_grid_import(p, "Customers", &g, &o) == -1, "a header that names no field");
+        CHECK_ERR(p, "Row 2: Shoe size is not a field of Customers");
+    }
+    /* more cells than a table can take */
+    {
+        static const char *const one[] = { "Name" };
+        grid_rows w = { one, 1, OB_MAX_FIELDS + 5 };
+        grid_of(&g, &w, "Wide", 1, 1);
+        CHECK(ob_grid_import(p, "Customers", &g, NULL) == -1, "too wide");
+        CHECK_ERR(p, "Row 1 has more than");
+        CHECK(!ob_grid_guess(p, &g, NULL, NULL, &made), "too wide to guess");
+    }
+    /* empty */
+    grid_of(&g, &rows, "Sheet9", 0, 1);
+    CHECK(ob_grid_import(p, "Customers", &g, NULL) == -1, "empty");
+    CHECK_ERR(p, "Sheet9 is empty");
+    CHECK(ob_grid_import(p, "Customers", NULL, NULL) == -1, "no grid");
+
+    /* a new table, named after the grid or as asked */
+    {
+        static const char *const sold[] = {
+            "id", "Item", "Price", "When", "Paid",
+            "7", "Tea", "1.20", "2026-11-01", "Yes",
+            "9", "Cake", "2.50", "2026-11-02", "No",
+        };
+        grid_rows w = { sold, 5, 0 };
+        grid_of(&g, &w, "Sales 2026", 3, 1);
+        ob_csv_opts_init(&o);
+        CHECK(ob_grid_guess(p, &g, NULL, &o, &made) && o.found_header == 1, "guess: %s", ob_error(p));
+        CHECK(!strcmp(made.name, "Sales 2026") && made.nfields == 5, "made %s with %d fields", made.name, made.nfields);
+        CHECK(made.fields[0].type == OB_COUNTER && !strcmp(made.fields[0].name, "id"), "id is the Counter");
+        CHECK(made.fields[2].type == OB_CURRENCY && made.fields[3].type == OB_DATE && made.fields[4].type == OB_YESNO,
+              "types %d %d %d", made.fields[2].type, made.fields[3].type, made.fields[4].type);
+        CHECK(ob_table_create(p, &made), "create: %s", ob_error(p));
+        CHECK(ob_grid_import(p, "Sales 2026", &g, NULL) == 2, "into it: %s", ob_error(p));
+        CHECK(!strcmp(all_rows(p, "Sales 2026"), "7:7|Tea|1.20|2026-11-01|Yes;9:9|Cake|2.50|2026-11-02|No;"),
+              "kept keys:\n%s", all_rows(p, "Sales 2026"));
+        CHECK(ob_grid_guess(p, &g, "Takings", NULL, &made) && !strcmp(made.name, "Takings"), "named: %s", made.name);
+    }
+    /* ob_set_error, for the parts outside the core */
+    CHECK(ob_set_error(p, "Sheet1 is damaged") == 0 && !strcmp(ob_error(p), "Sheet1 is damaged"), "set");
+    ob_set_error(p, "");
+    CHECK(!ob_error(p)[0], "cleared");
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -2780,6 +2908,7 @@ int main(int argc, char **argv)
     test_csv();
     test_undo();
     test_csv_options();
+    test_grid();
     test_relation_draw();
     test_dbf();
     test_rexx_rows();

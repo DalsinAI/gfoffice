@@ -108,6 +108,13 @@ static int ok(ob_project *p)
     return 1;
 }
 
+int ob_set_error(ob_project *p, const char *text)
+{
+    if (!p) return 0;
+    if (!text || !*text) return ok(p) - 1;
+    return fail(p, "%s", text);
+}
+
 static int same(const char *a, const char *b)
 {
     return sqlite3_stricmp(a, b) == 0;
@@ -2767,6 +2774,9 @@ typedef struct csv_in {
     long line;      /* the line the record starts on */
     long next_line;
     int peek;
+    const char *unit;       /* "Line" (CSV) or "Row" (a grid): what messages call a record */
+    const ob_grid *grid;    /* not NULL: records come from the grid's rows, not from f */
+    long grid_row;
 } csv_in;
 
 static int csv_get(csv_in *r)
@@ -2818,11 +2828,39 @@ static void utf8_to_latin1(char *s)
     *out = 0;
 }
 
+/* A grid's next row as a record: its cells up to the last that isn't
+ * empty (a row with none is one empty cell, a blank line). */
+static int grid_record(csv_in *r)
+{
+    const ob_grid *g = r->grid;
+    const char *cells[OB_MAX_FIELDS + 1];
+    int i, n, last = -1;
+    r->len = 0;
+    r->ncells = 0;
+    r->too_many = 0;
+    r->cell[0] = 0;
+    if (r->grid_row >= g->nrows) return 0;
+    r->line = g->first_row + r->grid_row;
+    for (i = 0; i <= OB_MAX_FIELDS; i++) cells[i] = NULL;
+    n = g->row(g->user, r->grid_row, cells, OB_MAX_FIELDS + 1);
+    if (n < 0) return -1;
+    r->grid_row++;
+    for (i = 0; i < n && i <= OB_MAX_FIELDS; i++) if (cells[i] && cells[i][0]) last = i;
+    if (n > OB_MAX_FIELDS + 1) last = n - 1;     /* more than a table can take, whatever they hold */
+    for (i = 0; i <= last || i == 0; i++) {
+        const char *c = i <= OB_MAX_FIELDS && cells[i] ? cells[i] : "";
+        while (*c) if (!csv_put(r, (unsigned char)*c++)) return -1;
+        if (!csv_end_cell(r)) return -1;
+    }
+    return 1;
+}
+
 /* Reads one record: 1, 0 at the end of the file, -1 out of memory, -2 a
  * quote that never ends. */
 static int csv_record(csv_in *r)
 {
     int c, quoted = 0, any = 0, rc = 1, i;
+    if (r->grid) return grid_record(r);
     r->len = 0;
     r->ncells = 0;
     r->too_many = 0;
@@ -2930,6 +2968,7 @@ static csv_in *csv_open(ob_project *p, const char *path, ob_csv_opts *o)
     r->sep = o->sep ? o->sep : csv_guess_sep(r->f);
     r->peek = EOF - 1;
     r->next_line = 1;
+    r->unit = "Line";
     o->found_sep = r->sep;
     o->found_charset = r->utf8 ? OB_CHARSET_UTF8 : OB_CHARSET_LATIN1;
     return r;
@@ -2943,16 +2982,28 @@ static void csv_close(csv_in *r)
     free(r);
 }
 
-static void report_line(ob_csv_opts *o, long line, const char *why)
+/* A reader of a grid's rows. NULL with the reason. */
+static csv_in *grid_open(ob_project *p, const ob_grid *g)
+{
+    csv_in *r;
+    if (!g || !g->row || g->nrows < 0) { fail(p, "There are no rows to read"); return NULL; }
+    if (!(r = calloc(1, sizeof *r))) { fail(p, "Not enough memory"); return NULL; }
+    r->grid = g;
+    r->unit = "Row";
+    return r;
+}
+
+static void report_line(ob_csv_opts *o, const char *unit, long line, const char *why)
 {
     size_t n = strlen(o->report);
     o->bad++;
     if (n + 4 >= sizeof o->report) return;
-    if (snprintf(o->report + n, sizeof o->report - n, "Line %ld: %s\n", line, why) >= (int)(sizeof o->report - n))
+    if (snprintf(o->report + n, sizeof o->report - n, "%s %ld: %s\n", unit, line, why) >= (int)(sizeof o->report - n))
         copy(o->report + sizeof o->report - 5, 5, "...\n");
 }
 
-ob_int ob_csv_import_with(ob_project *p, const char *table, const char *path, ob_csv_opts *o)
+/* CSV import, from a file (path) or a grid's rows (grid, not NULL). */
+static ob_int import_from(ob_project *p, const char *table, const char *path, const ob_grid *grid, ob_csv_opts *o)
 {
     const ob_table *t;
     csv_in *r = NULL;
@@ -2975,13 +3026,14 @@ ob_int ob_csv_import_with(ob_project *p, const char *table, const char *path, ob
     names = malloc(sizeof *names * (size_t)(nf ? nf : 1));
     if (!names) { fail(p, "Not enough memory"); goto out; }
     for (i = 0; i < nf; i++) copy(names[i], sizeof names[i], t->fields[i].name);
-    if (!(r = csv_open(p, path, o))) goto out;
+    if (grid) path = grid->name ? grid->name : "The sheet";
+    if (!(r = grid ? grid_open(p, grid) : csv_open(p, path, o))) goto out;
     if (!(t = design(p, tname))) goto out;
 
     rc = csv_record(r);
     if (rc == 0) { fail(p, "%s is empty", path); goto out; }
     if (rc < 0) goto bad_read;
-    if (r->too_many) { fail(p, "Line 1 has more than %d values", OB_MAX_FIELDS); goto out; }
+    if (r->too_many) { fail(p, "%s %ld has more than %d values", r->unit, r->line, OB_MAX_FIELDS); goto out; }
     /* a header: every cell names a field */
     header = o->header != 0;
     for (i = 0; i < r->ncells && header; i++) {
@@ -2997,9 +3049,9 @@ ob_int ob_csv_import_with(ob_project *p, const char *table, const char *path, ob
                 for (m = 0; m < i; m++) if (map[m] == j) used = 1;
                 if (used) taken = j; else found = j;
             }
-        if (found < 0 && taken >= 0) { fail(p, "Line 1 names %s twice", names[taken]); goto out; }
+        if (found < 0 && taken >= 0) { fail(p, "%s %ld names %s twice", r->unit, r->line, names[taken]); goto out; }
         if (found < 0) {
-            if (o->header == 1) { fail(p, "Line 1: %s is not a field of %s", h, tname); goto out; }
+            if (o->header == 1) { fail(p, "%s %ld: %s is not a field of %s", r->unit, r->line, h, tname); goto out; }
             header = 0;
         } else {
             map[i] = found;
@@ -3033,8 +3085,8 @@ ob_int ob_csv_import_with(ob_project *p, const char *table, const char *path, ob
         if (r->too_many || r->ncells > ncols) {
             char why[96];
             snprintf(why, sizeof why, "it has %d values: the table takes %d", r->ncells, ncols);
-            if (o->skip_bad) { report_line(o, r->line, why); continue; }
-            fail(p, "Line %ld has %d values: the table takes %d", r->line, r->ncells, ncols);
+            if (o->skip_bad) { report_line(o, r->unit, r->line, why); continue; }
+            fail(p, "%s %ld has %d values: the table takes %d", r->unit, r->line, r->ncells, ncols);
             goto out_undo;
         }
         for (i = 0; i < ncols; i++) {
@@ -3046,8 +3098,8 @@ ob_int ob_csv_import_with(ob_project *p, const char *table, const char *path, ob
         if (!ob_row_add(p, tname, n, fields, vals, &key)) {
             char e[OB_ERR_MAX];
             copy(e, sizeof e, p->err);
-            if (o->skip_bad) { report_line(o, r->line, e); continue; }
-            fail(p, "Line %ld: %s", r->line, e);
+            if (o->skip_bad) { report_line(o, r->unit, r->line, e); continue; }
+            fail(p, "%s %ld: %s", r->unit, r->line, e);
             goto out_undo;
         }
         if (nkeys == capkeys) {
@@ -3060,13 +3112,13 @@ ob_int ob_csv_import_with(ob_project *p, const char *table, const char *path, ob
         added++;
     }
     if (rc < 0) { p->undo_off--; goto bad_read; }
-    if (ferror(r->f)) { fail(p, "%s could not be read", path); goto out_undo; }
+    if (r->f && ferror(r->f)) { fail(p, "%s could not be read", path); goto out_undo; }
     good = 1;
 out_undo:
     p->undo_off--;
     goto out;
 bad_read:
-    if (rc == -2) fail(p, "Line %ld: a quote is never closed", r->line);
+    if (rc == -2) fail(p, "%s %ld: a quote is never closed", r->unit, r->line);
     else fail(p, "Not enough memory");
 out:
     if (began) good = step_end(p, good);
@@ -3081,6 +3133,17 @@ out:
     free(keys);
     ok(p);
     return added;
+}
+
+ob_int ob_csv_import_with(ob_project *p, const char *table, const char *path, ob_csv_opts *o)
+{
+    return import_from(p, table, path, NULL, o);
+}
+
+ob_int ob_grid_import(ob_project *p, const char *table, const ob_grid *grid, ob_csv_opts *o)
+{
+    if (!grid) { fail(p, "There are no rows to read"); return -1; }
+    return import_from(p, table, NULL, grid, o);
 }
 
 ob_int ob_csv_import(ob_project *p, const char *table, const char *path, int sep)
@@ -3181,7 +3244,9 @@ static void unique_name(const ob_table *t, char *name, size_t size)
     while (name_taken(t, name) && k < 1000) snprintf(name, size, "%.50s %d", base, k++);
 }
 
-int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts *o, ob_table *out)
+/* ob_csv_guess, from a file (path) or a grid's rows (grid, not NULL). */
+static int guess_from(ob_project *p, const char *path, const ob_grid *grid, const char *name, ob_csv_opts *o,
+                      ob_table *out)
 {
     csv_in *r;
     col_guess *g = NULL;
@@ -3192,11 +3257,16 @@ int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts 
     char tname[OB_NAME_MAX];
     ob_csv_opts dflt;
     if (!o) { ob_csv_opts_init(&dflt); o = &dflt; }
-    if (!(r = csv_open(p, path, o))) return 0;
+    if (grid) path = grid->name ? grid->name : "The sheet";
+    if (!(r = grid ? grid_open(p, grid) : csv_open(p, path, o))) return 0;
     rc = csv_record(r);
     if (rc == 0) { csv_close(r); return fail(p, "%s is empty", path); }
     if (rc < 0) { csv_close(r); return fail(p, rc == -2 ? "Line 1: a quote is never closed" : "Not enough memory"); }
-    if (r->too_many) { csv_close(r); return fail(p, "Line 1 has more than %d values: a table has at most %d fields", OB_MAX_FIELDS, OB_MAX_FIELDS - 1); }
+    if (r->too_many) {
+        fail(p, "%s %ld has more than %d values: a table has at most %d fields", r->unit, r->line, OB_MAX_FIELDS, OB_MAX_FIELDS - 1);
+        csv_close(r);
+        return 0;
+    }
     ncols = r->ncells;
     if (ncols >= OB_MAX_FIELDS) { csv_close(r); return fail(p, "A table has at most %d fields besides its Counter", OB_MAX_FIELDS - 1); }
     g = calloc((size_t)ncols, sizeof *g);
@@ -3286,6 +3356,17 @@ int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts 
     free(first);
     free(first_len);
     return ok(p);
+}
+
+int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts *o, ob_table *out)
+{
+    return guess_from(p, path, NULL, name, o, out);
+}
+
+int ob_grid_guess(ob_project *p, const ob_grid *grid, const char *name, ob_csv_opts *o, ob_table *out)
+{
+    if (!grid) return fail(p, "There are no rows to read");
+    return guess_from(p, NULL, grid, name, o, out);
 }
 
 /* ---- dBASE files (core 0.9, design 8) ----
