@@ -77,6 +77,25 @@ int ob_report_build(ob_project *p, const ob_report *r, const char *const *params
 int ob_report_save(ob_project *p, const ob_report *r, const char *const *params, const char *path,
                    const char *format, owf_report *notes, char *err, size_t errsize);
 
+/* ---- The text a report is kept as ----
+ * "OADBREPORT 1" then a line a setting ("table=Orders", "column=Amount|Total|Sum"), '\n' at the end of
+ * each; '\\', '\n' and '|' in a value are written \\, \n and \|. A reader skips keys it doesn't know.
+ * The name isn't in the text: it is the key it is kept under. */
+
+/* r as text in out: its length, or -1 when it doesn't fit in size. */
+int ob_report_to_text(const ob_report *r, char *out, size_t size);
+/* r from text, named name: 0, or -1 with the reason in err ("line 3: ..."). */
+int ob_report_from_text(ob_report *r, const char *name, const char *text, char *err, size_t errsize);
+
+/* ---- Reports kept in the project ----
+ * The core keeps each report's text in oadb_reports (ob_report_count... in openbase_core.h). */
+
+/* Checks r (ob_report_check) and keeps it under its name, replacing one kept there: 0, or -1 with the
+ * reason in err. */
+int ob_report_store(ob_project *p, const ob_report *r, char *err, size_t errsize);
+/* The report kept as name (any case), named as it was kept: 0, or -1 with the reason in err. */
+int ob_report_load(ob_project *p, const char *name, ob_report *r, char *err, size_t errsize);
+
 #ifdef __cplusplus
 }
 #endif

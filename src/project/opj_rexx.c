@@ -439,10 +439,11 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         } else {
             size_t at = 0;
             int i;
-            static const char *const app[] = { "VERSION", "ACTIVATE", "DEACTIVATE", "FAULT", "PRINT", "QUIT" };
+            static const char *const app[] = { "VERSION", "ACTIVATE", "DEACTIVATE", "FAULT", "PRINT", "VIEW", "QUIT" };
+            const int napp = (int)(sizeof app / sizeof *app);
             result[0] = 0;
-            for (i = 0; i < (int)(sizeof app / sizeof *app) + NCOMMANDS; i++) {
-                const char *w = i < 6 ? app[i] : commands[i - 6].name;
+            for (i = 0; i < napp + NCOMMANDS; i++) {
+                const char *w = i < napp ? app[i] : commands[i - napp].name;
                 size_t n = strlen(w);
                 if (at + n + 2 > size) break;
                 if (at) result[at++] = ' ';

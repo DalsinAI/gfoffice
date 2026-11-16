@@ -302,7 +302,7 @@ where it began.
 - In GFOpenBase: Query > New Query..., Open Query... (Run, Design...,
   Delete...), Design Query... and Run Again. A query's rows show in the
   datasheet, read only, and a click on a table goes back to it.
-- Core 0.6.4 (GFOpenBase 0.6.4): Query > Save as View... keeps a query
+- Core 0.10.1 (GFOpenBase 0.10.1): Query > Save as View... keeps a query
   as a `VIEW` (no `[questions]`; a change that would break a view is
   refused), Export Results as CSV... writes a query's rows, and a table's
   rename follows into the saved grid queries.
