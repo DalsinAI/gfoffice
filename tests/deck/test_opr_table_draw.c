@@ -11,7 +11,12 @@
  *   - a row or column put in before a merge moves it, one put in across it
  *     grows it; one taken out shrinks it, and a merge left one cell goes;
  *     row heights follow their rows;
- *   - Undo puts the merges and heights back, Redo takes them again.
+ *   - Undo puts the merges and heights back, Redo takes them again;
+ *   - part 4's commands: merge a block of cells (not over another merge, not
+ *     past the table, not one cell), split the merge a cell is in, set a
+ *     row's height (0: as its text needs), turn the design's parts on and
+ *     off; each one Undo step; a merge's head row taken out (the cell below
+ *     becomes its head).
  *
  * Prints what fails; exit 1 when anything did.
  * MIT, Copyright (c) 2026 AmiCradle Team.
@@ -202,10 +207,70 @@ static void editing(void)
     opr_undo_free(u);
 }
 
+static void commands(void)
+{
+    opr_undo *u = opr_undo_new();
+    int obj = -1;
+    owf_deck *d = table_deck(u, &obj);
+    owf_obj *o;
+
+    if (!d || obj < 0) {
+        CHECK(0, "a deck with a table");
+        owf_deck_free(d);
+        opr_undo_free(u);
+        return;
+    }
+    o = &d->slides[0].objs[obj];
+    /* refused: over a merge, past the table, one cell, no such object */
+    CHECK(opr_table_merge(u, d, 0, obj, 0, 1, 1, 2) == -2, "not over (0,0)'s merge");
+    CHECK(opr_table_merge(u, d, 0, obj, 2, 1, 2, 1) == -2, "not past the last row");
+    CHECK(opr_table_merge(u, d, 0, obj, 1, 2, 1, 2) == -2, "not past the last column");
+    CHECK(opr_table_merge(u, d, 0, obj, 1, 1, 1, 1) == -2, "not one cell");
+    CHECK(opr_table_merge(u, d, 0, obj + 5, 1, 1, 1, 2) < 0, "no such object");
+    CHECK(o->nmerges == 2, "nothing changed");
+    /* a 2 x 2 block */
+    CHECK(opr_table_merge(u, d, 0, obj, 1, 1, 2, 2) == 0, "merge (1,1) 2 x 2");
+    CHECK(o->nmerges == 3 && has_merge(o, 1, 1, 2, 2), "merged");
+    /* split from a covered cell */
+    CHECK(opr_table_split(u, d, 0, obj, 2, 2) == 0, "split from (2,2)");
+    CHECK(o->nmerges == 2 && !has_merge(o, 1, 1, 2, 2), "split");
+    CHECK(opr_table_split(u, d, 0, obj, 1, 1) == -2, "nothing to split at (1,1)");
+    CHECK(opr_undo_undo(u, d, NULL, NULL) == 0, "undo the split");
+    o = &d->slides[0].objs[obj];
+    CHECK(has_merge(o, 1, 1, 2, 2), "merged again");
+    CHECK(opr_undo_undo(u, d, NULL, NULL) == 0, "undo the merge");
+    o = &d->slides[0].objs[obj];
+    CHECK(o->nmerges == 2 && !has_merge(o, 1, 1, 2, 2), "as it was");
+
+    /* a row's height */
+    CHECK(opr_table_set_row_height(u, d, 0, obj, 2, 720) == 0, "row 2 half an inch");
+    CHECK(o->nrows == 3 && o->row_heights[2] == 720, "row 2's height");
+    CHECK(opr_table_set_row_height(u, d, 0, obj, 1, 0) == 0, "row 1 as its text needs");
+    CHECK(o->row_heights[1] == 0, "row 1's height gone");
+    CHECK(opr_table_set_row_height(u, d, 0, obj, 3, 720) == -2, "no row 3");
+    CHECK(opr_table_set_row_height(u, d, 0, obj, 0, -1) == -2, "no negative height");
+    CHECK(opr_undo_undo(u, d, NULL, NULL) == 0 && o->row_heights[1] == ROW, "undo: row 1 an inch again");
+
+    /* the design's parts */
+    CHECK(opr_table_set_design(u, d, 0, obj, OWF_TABLE_FIRST_ROW | OWF_TABLE_BANDED_ROWS) == 0, "design on");
+    CHECK(o->table_design == (OWF_TABLE_FIRST_ROW | OWF_TABLE_BANDED_ROWS), "the design's parts");
+    CHECK(opr_table_set_design(u, d, 0, obj, 0x40) == -2, "no such part");
+    CHECK(opr_undo_undo(u, d, NULL, NULL) == 0 && o->table_design == 0, "undo: none");
+
+    /* the down merge's head row out: the cell below heads it, one row */
+    CHECK(opr_table_merge(u, d, 0, obj, 0, 2, 3, 1) == 0, "column 2 down three rows");
+    CHECK(opr_table_delete_row(u, d, 0, obj, 0) == 0, "delete row 0");
+    CHECK(has_merge(o, 0, 2, 2, 1), "column 2's merge now from row 0, two rows");
+    CHECK(o->nmerges == 2 && has_merge(o, 0, 0, 2, 1), "the across merge went with its row; the other moved up");
+    owf_deck_free(d);
+    opr_undo_free(u);
+}
+
 int main(void)
 {
     drawing();
     editing();
+    commands();
     printf("test_opr_table_draw: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
