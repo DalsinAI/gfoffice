@@ -1109,7 +1109,8 @@ enum {
     OC_ROLE_NOTE_LINE,      /* its frame */
     OC_ROLE_FILTER,         /* an AutoFilter's button */
     OC_ROLE_CHART,          /* a chart's area, bars and lines (its text is OC_ROLE_TEXT): rgb */
-    OC_ROLE_SCENARIO        /* the shown scenario's frame and its name's tab (its text is OC_ROLE_TEXT) */
+    OC_ROLE_SCENARIO,       /* the shown scenario's frame and its name's tab (its text is OC_ROLE_TEXT) */
+    OC_ROLE_CHANGE          /* a tracked change's frame around its cell (not printed) */
 };
 enum { OC_ALIGN_LEFT, OC_ALIGN_CENTRE, OC_ALIGN_RIGHT };
 

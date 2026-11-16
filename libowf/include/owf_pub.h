@@ -78,9 +78,17 @@ typedef struct {
     long inset[4];               /* a text box's margins, EMU: left, top, right, bottom; -1: not said */
 } owf_pub_frame;
 
+/* owf_pub_page.side: a master's. A two-page master is two masters with
+ * one name, its left and its right page (PUB-FORMAT.md 5.4). */
+#define OWF_PUB_ONE_PAGE 0
+#define OWF_PUB_LEFT 1
+#define OWF_PUB_RIGHT 2
+
 typedef struct {
     char *name;                  /* a master page's ("Master Page A"); NULL for a page */
     int master;                  /* a page's master: into owf_pub.masters; -1: none */
+    int side;                    /* a master's: OWF_PUB_ONE_PAGE, OWF_PUB_LEFT or OWF_PUB_RIGHT */
+    int pair;                    /* a two-page master's other page: into owf_pub.masters; -1: none */
     int nframes, capframes;
     owf_pub_frame *frames;       /* back to front as the file lists them */
 } owf_pub_page;
@@ -102,6 +110,7 @@ typedef struct owf_pub {
     int nscheme;
     unsigned long scheme[16];
     int scratch_frames;          /* frames on the scratch area, not on any page (not kept) */
+    int facing;                  /* 1: a two-page master, so the pages face each other as spreads */
 } owf_pub;
 
 /* 0 (not .pub) to 100. */

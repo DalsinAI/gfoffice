@@ -70,6 +70,8 @@ static void put_story(const owf_doc *res, const owf_story *story, const char *in
                 printf("\\t");
             } else if (run->kind == OWF_RUN_LINEBREAK) {
                 printf("\\n");
+            } else if (run->kind == OWF_RUN_FIELD) {
+                printf(run->field == OWF_FIELD_PAGE ? "{page}" : "{field %d}", (int)run->field);
             }
         }
         printf("\"\n");
@@ -80,6 +82,12 @@ static void put_story(const owf_doc *res, const owf_story *story, const char *in
                    p->fmt.align == OWF_ALIGN_RIGHT ? "right" : "justify");
         for (j = 0; j < p->nruns; j++) {
             const owf_run *run = &p->runs[j];
+            if (run->kind == OWF_RUN_FIELD) {
+                printf("%s  run %d field %s", indent, j, run->field == OWF_FIELD_PAGE ? "page" : "other");
+                put_fmt(res, &run->fmt);
+                printf("\n");
+                continue;
+            }
             if (run->kind != OWF_RUN_TEXT || !run->text || (!has_fmt(&run->fmt) && !run->href))
                 continue;
             printf("%s  run %d \"%.24s\"", indent, j, run->text);
@@ -184,11 +192,16 @@ int main(int argc, char **argv)
     printf(" x ");
     put_mm(pub->height_emu);
     printf(" mm (emu %ld x %ld, twips %d x %d)\n", pub->width_emu, pub->height_emu, pub->width, pub->height);
+    if (pub->facing)
+        printf("facing-pages\n");
     printf("masters %d\n", pub->nmasters);
     for (i = 0; i < pub->nmasters; i++) {
         printf("master %d ", i + 1);
         put_string(pub->masters[i].name ? pub->masters[i].name : "");
-        printf(" frames %d\n", pub->masters[i].nframes);
+        printf(" frames %d", pub->masters[i].nframes);
+        if (pub->masters[i].pair >= 0)
+            printf(" %s with %d", pub->masters[i].side == OWF_PUB_RIGHT ? "right" : "left", pub->masters[i].pair + 1);
+        printf("\n");
         put_page(pub, &pub->masters[i], 1);
     }
     printf("pages %d\n", pub->npages);

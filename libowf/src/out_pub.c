@@ -202,9 +202,9 @@ static void write_pages(writer *w)
         at = open_block(b);
         if (k < pub->nmasters) {
             char letter[2];
-            letter[0] = (char)('A' + k % 26);
-            letter[1] = 0;
-            f16(b, 0x10, 0x18, 3, 0);
+            letter[0] = (char)('A' + (pg->pair >= 0 && pg->pair < k ? pg->pair : k) % 26);
+            letter[1] = 0;                   /* a two-page master's two pages: one letter */
+            f16(b, 0x10, 0x18, pg->pair < 0 ? 3 : pg->side == OWF_PUB_RIGHT ? 1 : 0, 0);
             f_text(b, 0x0E, letter);
             f_text(b, 0x0F, pg->name ? pg->name : "Master Page");
         } else {
@@ -1066,13 +1066,20 @@ static void write_quill(writer *w, owf_buf *out)
                 } else if (r->kind == OWF_RUN_LINEBREAK) {
                     put16(text, 0x0B);
                     units++;
+                } else if (r->kind == OWF_RUN_FIELD && r->field == OWF_FIELD_PAGE) {
+                    put16(text, '#');            /* Publisher's page number: "#" with field 5 (PUB-FORMAT.md 6.4) */
+                    units++;
                 }
                 if (units == before)
                     continue;
                 if (!(wr = add_run(w, &cr, units)))
                     break;
                 char_props(w, &wr->props, &r->fmt);
-                if (had && cr.n > 1 && same_props(&cr.r[cr.n - 2].props, &wr->props)) {
+                if (r->kind == OWF_RUN_FIELD) {
+                    f16(&wr->props, 0x200, 0x10, 5, 1);
+                    f32(&wr->props, 0x222, 0x20, 0xFFFFFFFFUL, 1);
+                }
+                if (had && r->kind != OWF_RUN_FIELD && cr.n > 1 && same_props(&cr.r[cr.n - 2].props, &wr->props)) {
                     cr.r[cr.n - 2].end = units;  /* written the same (a colour PL had no room for): one run, as read back */
                     owf_buf_free(&wr->props);
                     cr.n--;
