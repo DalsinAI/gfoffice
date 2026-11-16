@@ -894,7 +894,9 @@ def pagenum():
     """A page number on the master (" #", its "#" field 5, as Publisher 2010
     writes it) and one in a page's own text ("Page #", 0xFF05 as 2003's
     files have it), beside a "#" with field 6 (a link's, as Sample has),
-    which stays text."""
+    which stays text. Two page numbers side by side stay two fields when
+    saved, and a page number run over a paragraph mark gives a field on
+    each side of it."""
     pw, ph = 148 * EMU_MM, 210 * EMU_MM
     c = Contents(0x15, pw, ph)
     m = page_chunk(c, name='Master Page A')
@@ -903,7 +905,9 @@ def pagenum():
     t = Text(['Calibri'], [DEFAULT_STYLE])
     t.story(1, [(para_props(align='right'), [(' ', char_props(size=10)), ('#', char_props(size=10, field=5))])])
     t.story(2, [(None, [('Page ', None), ('#', char_props(bold=True, field=0xFF05))]),
-                (None, [('Turn to ', None), ('#', char_props(field=6)), (' for more.', None)])])
+                (None, [('Turn to ', None), ('#', char_props(field=6)), (' for more.', None)]),
+                (None, [('Two side by side: ', None), ('#', char_props(field=5)), ('#', char_props(field=5))]),
+                (None, [('One run over a mark: ', None), ('#\r#', char_props(field=5))])])
     t.story(3, [(None, [('Page two, numbered by its master', None)])])
     fm = frame_chunk(c, m, text_id=1)
     f2 = frame_chunk(c, p1, text_id=2)

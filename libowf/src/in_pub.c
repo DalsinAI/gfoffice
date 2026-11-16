@@ -969,6 +969,7 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
         }
         put_run(&b, &run, href);
         at += 2;
+        field_run = NULL;                    /* a page number run's "#" after this is a field again */
         if (c == 0x0D) {                     /* a paragraph's end */
             owf_builder_end_para(&b);
             open = 0;
