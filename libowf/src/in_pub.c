@@ -324,6 +324,7 @@ static owf_pub_page *add_page(reader *r, int master)
     p = &(*arr)[(*n)++];
     memset(p, 0, sizeof *p);
     p->master = -1;
+    p->pair = -1;
     return p;
 }
 
@@ -571,6 +572,21 @@ static void char_props(const reader *r, span props, owf_charfmt *fmt)
             break;
         }
     }
+}
+
+/* A run's field (PUB-FORMAT.md 6.4): 0x200's low byte, 0 for none. 5 is a
+ * page number, whose character ("#", as Publisher shows the field on a
+ * master) stands for the field. */
+#define PUB_FIELD_PAGE 5
+
+static int run_field(span props)
+{
+    size_t at = 0;
+    field f;
+    while (next_qfield(props, &at, &f) > 0)
+        if (f.id == 0x200 && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20))
+            return (int)(f.value & 0xFF);
+    return 0;
 }
 
 /* Paragraph properties (FDPP's, or a style's): the style (0x219) and the
@@ -888,6 +904,8 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
     int open = 0, chint = -1, phint = -1, style = 0, made_style = -1, lk = 0;
     const char *href = NULL;
     const trun *made_run = NULL;             /* want below is made for this run and style */
+    const trun *field_run = NULL;            /* the page number run whose field is made */
+    int page_run = 0;                        /* made_run is a page number's */
     owf_charfmt want;
     owf_builder_init(&b, r->pub->res, story);
     owf_buf_init(&run);
@@ -914,6 +932,7 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
                 owf_charfmt_init(&want);
             if (cr)
                 char_props(r, cr->props, &want);
+            page_run = cr && run_field(cr->props) == PUB_FIELD_PAGE;
             made_run = cr;
             made_style = style;
         }
@@ -934,6 +953,16 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
             owf_builder_flush(&b);
             b.charfmt = want;
         }
+        if (c >= 0x20 && page_run) {         /* a page number: one field for the run's characters */
+            if (cr != field_run) {
+                put_run(&b, &run, href);
+                owf_builder_special(&b, OWF_RUN_FIELD, OWF_FIELD_PAGE);
+                field_run = cr;
+            }
+            at += 2;
+            open = 1;
+            continue;
+        }
         if (c >= 0x20) {
             put_utf16_char(&run, text, &at);
             open = 1;
@@ -941,6 +970,7 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
         }
         put_run(&b, &run, href);
         at += 2;
+        field_run = NULL;                    /* a page number run's "#" after this is a field again */
         if (c == 0x0D) {                     /* a paragraph's end */
             owf_builder_end_para(&b);
             open = 0;
@@ -1829,11 +1859,63 @@ static void read_scheme(reader *r)
     }
 }
 
+/* Each chunk a page of the list names as its master (field 0x0D): one pass,
+   a byte a chunk (named[nchunks]), so the reading stays linear however long
+   the list. */
+static void mark_named_masters(reader *r, span list, unsigned char *named)
+{
+    size_t at = 0;
+    field item;
+    while (next_field(list, &at, &item) > 0) {
+        long pc = (long)item.value, m;
+        if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43)
+            continue;
+        m = field_value(chunk_body(r, pc), 0x0D, -1);
+        if (m >= 0 && m < r->nchunks && m != pc)
+            named[m] = 1;
+    }
+}
+
+/* Whether page chunk pc is a master: field 0x10 is 3 (the first samples), or
+   another page names it in 0x0D (the masters whose 0x10 is 1 or 0,
+   PUB-FORMAT.md 5.4). */
+/* A two-page master's left and right pages: one of each with the same
+ * name, each paired with the first free one (PUB-FORMAT.md 5.4). A half
+ * left without its other page is a one-page master. */
+static void pair_masters(owf_pub *pub)
+{
+    int i, k;
+    for (i = 0; i < pub->nmasters; i++) {
+        owf_pub_page *a = &pub->masters[i];
+        if (a->side != OWF_PUB_LEFT || a->pair >= 0)
+            continue;
+        for (k = 0; k < pub->nmasters; k++) {
+            owf_pub_page *b = &pub->masters[k];
+            if (b->side == OWF_PUB_RIGHT && b->pair < 0 &&
+                ((!a->name && !b->name) || (a->name && b->name && !strcmp(a->name, b->name)))) {
+                a->pair = k;
+                b->pair = i;
+                pub->facing = 1;
+                break;
+            }
+        }
+    }
+    for (i = 0; i < pub->nmasters; i++)
+        if (pub->masters[i].pair < 0)
+            pub->masters[i].side = OWF_PUB_ONE_PAGE;
+}
+
+static int is_master_page(reader *r, const unsigned char *named, long pc)
+{
+    return named[pc] || field_value(chunk_body(r, pc), 0x10, 0) == 3;
+}
+
 static void read_modern(reader *r)
 {
     owf_pub *pub = r->pub;
     long root = -1, i, master_y = 0;
     long *masters = NULL;
+    unsigned char *named = NULL;
     int nmasters = 0;
     span body;
     field f;
@@ -1869,11 +1951,17 @@ static void read_modern(reader *r)
     if (!find_field(body, 0x02, &f))         /* the pages: masters, then pages, then the program's own */
         return;
     masters = owf_malloc(sizeof *masters * (size_t)(r->nchunks + 1));
-    if (!masters) {
+    named = owf_malloc((size_t)r->nchunks + 1);
+    if (!masters || !named) {
+        owf_free(masters);
+        owf_free(named);
         r->failed = 1;
         return;
     }
-    /* masters first (field 0x10 is 3) */
+    memset(named, 0, (size_t)r->nchunks + 1);
+    mark_named_masters(r, f.body, named);
+    /* masters first: field 0x10 is 3, or another page names it as its master
+       (field 0x0D): some files' masters have 0x10 1 or 0 (PUB-FORMAT.md 5.4) */
     {
         size_t at = 0;
         field item;
@@ -1882,9 +1970,10 @@ static void read_modern(reader *r)
             span pb = chunk_body(r, pc);
             field name, pos;
             owf_pub_page *page;
-            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 ||
-                field_value(pb, 0x10, 0) != 3)
+            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || !is_master_page(r, named, pc) ||
+                named[pc] == 2)          /* a master the list names twice is one master */
                 continue;
+            named[pc] = 2;
             if (!(page = add_page(r, 1)))
                 break;
             masters[nmasters++] = pc;
@@ -1900,9 +1989,14 @@ static void read_modern(reader *r)
             }
             if (nmasters == 1 && find_field(pb, 0x05, &pos))
                 master_y = field_value(pos.body, 0x02, 0);
+            {                            /* 0x10: 1 a two-page master's right page, 0 its left (PUB-FORMAT.md 5.4) */
+                long kind = field_value(pb, 0x10, 3);
+                page->side = kind == 1 ? OWF_PUB_RIGHT : kind == 0 ? OWF_PUB_LEFT : OWF_PUB_ONE_PAGE;
+            }
             place_shapes(r, pc, page);
         }
     }
+    pair_masters(pub);
     /* then the document's pages: not masters, field 0x06 set, at the
        masters' height on the workspace (the scratch area sits half a page
        up: PUB-FORMAT.md 5.4, a hypothesis on the corpus) */
@@ -1915,7 +2009,7 @@ static void read_modern(reader *r)
             field f6, pos;
             owf_pub_page *page;
             int k;
-            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || field_value(pb, 0x10, 0) == 3)
+            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || is_master_page(r, named, pc))
                 continue;
             if (!find_field(pb, 0x06, &f6) || !f6.value ||
                 (nmasters && find_field(pb, 0x05, &pos) && field_value(pos.body, 0x02, 0) != master_y)) {
@@ -1936,6 +2030,7 @@ static void read_modern(reader *r)
         }
     }
     owf_free(masters);
+    owf_free(named);
     if (pub->scratch_frames)
         owf_report_add(r->report, OWF_NOTE_INFO, "%d frames on the scratch area, off the pages, are not shown", pub->scratch_frames);
 }

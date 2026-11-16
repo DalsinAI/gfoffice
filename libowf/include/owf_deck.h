@@ -270,6 +270,11 @@ typedef struct {
        are what the show plays; changing them drops the kept XML. */
     int nanims, capanims;
     owf_anim *anims;
+    /* A gradient background (owfpresent.library 3.8, appended): background runs to background2 by
+       background_gradient (OWF_GRADIENT_...) along background_angle, as owf_look's fill to fill2. */
+    unsigned char background_gradient;
+    int background_angle;
+    unsigned long background2;
 } owf_slide;
 
 typedef struct {
@@ -279,6 +284,9 @@ typedef struct {
     unsigned long background;    /* OWF_SHADE(0xRRGGBB); 0: white */
     int background_image;        /* into res->images; -1: none */
     owf_textlevel title, subtitle, body[OWF_TEXT_LEVELS], notes, other;
+    unsigned char background_gradient;   /* as owf_slide's (owfpresent.library 3.8, appended) */
+    int background_angle;
+    unsigned long background2;
 } owf_master;
 
 typedef struct {

@@ -1641,7 +1641,7 @@ static void read_text(odp *o, owf_obj *obj, const owf_xml_node *box, const owf_x
 static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_master *m, int which)
 {
     const owf_xml_node *groups[8], *g, *row, *cell;
-    int widths[TABLE_MAX_COLS], ncols = 0, ngroups = 0, nrows = 0, i, merged = 0;
+    int widths[TABLE_MAX_COLS], ncols = 0, ngroups = 0, nrows = 0, i;
     textctx t;
 
     memset(&t, 0, sizeof t);
@@ -1728,7 +1728,6 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
                         }
                     }
                     col++;
-                    merged = 1;
                     continue;
                 }
                 if (!is(cell, NS_TABLE, "table-cell") || col >= TABLE_MAX_COLS)
@@ -1739,7 +1738,6 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
                     if (span_c > 1 || span_r > 1) {
                         if (owf_table_add_merge(obj, nrows, col, span_r > 0 ? span_r : 1, span_c > 0 ? span_c : 1) < 0)
                             o->failed = 1;
-                        merged = 1;
                     }
                 }
                 cs = find_style(o, attr(cell, NS_TABLE, "style-name"), "table-cell", which);
@@ -1776,8 +1774,6 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
         obj->text.paras[i].table_cols = ncols;
     if (obj->nrows > 0 && obj->nrows < nrows && owf_table_set_row_height(obj, nrows - 1, 0) < 0)
         o->failed = 1;        /* rows past the last with a height: as their text needs */
-    if (merged)
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Merged table cells are shown apart");
     obj->ncols = ncols;
     if (ncols) {
         int any = 0;
@@ -2092,7 +2088,8 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
 /* ---- Pages ---- */
 
 /* A drawing-page style's background onto *colour and *image. */
-static void read_background(odp *o, const gstyle *st, unsigned long *colour, int *image)
+static void read_background(odp *o, const gstyle *st, unsigned long *colour, int *image, unsigned char *gradient,
+                            int *angle, unsigned long *colour2)
 {
     const char *fill = prop(o, st, "drawing-page-properties", NS_DRAW, "fill");
     if (!fill)
@@ -2108,14 +2105,18 @@ static void read_background(odp *o, const gstyle *st, unsigned long *colour, int
                 break;
             }
     } else if (!strcmp(fill, "gradient")) {
-        const char *name = prop(o, st, "drawing-page-properties", NS_DRAW, "fill-gradient-name");
-        const owf_xml_node *c;
-        for (c = o->common ? o->common->first : NULL; c; c = c->next)
-            if (is(c, NS_DRAW, "gradient") && same(attr(c, NS_DRAW, "name"), name)) {
-                *colour = shade(attr(c, NS_DRAW, "start-color"));
-                break;
-            }
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Gradient backgrounds are drawn in one colour");
+        owf_look g;
+        memset(&g, 0, sizeof g);
+        if (read_gradient(o, prop(o, st, "drawing-page-properties", NS_DRAW, "fill-gradient-name"), &g)) {
+            *colour = g.fill;
+            *gradient = g.gradient;
+            *angle = g.gradient_angle;
+            *colour2 = g.fill2;
+        } else {
+            /* its draw:gradient is missing: the page's fill-color, and the report says so */
+            *colour = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Gradient backgrounds are drawn in one colour");
+        }
     } else if (!strcmp(fill, "hatch")) {
         *colour = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
         owf_report_add(o->report, OWF_NOTE_APPROX, "Hatched backgrounds are drawn in one colour");
@@ -2285,7 +2286,8 @@ static void read_page(odp *o, const owf_xml_node *page)
     if ((v = attr(page, NS_DRAW, "name")) && owf_deck_set_text(&s->name, v) < 0)
         o->failed = 1;
     st = find_style(o, attr(page, NS_DRAW, "style-name"), "drawing-page", OWF_ODF_CONTENT_AUTO);
-    read_background(o, st, &s->background, &s->background_image);
+    read_background(o, st, &s->background, &s->background_image, &s->background_gradient, &s->background_angle,
+                    &s->background2);
     read_transition(o, s, st);
     s->hidden = same(prop(o, st, "drawing-page-properties", NS_PRES, "visibility"), "hidden");
     if (!same(prop(o, st, "drawing-page-properties", NS_PRES, "display-footer"), "false") &&
@@ -2595,7 +2597,8 @@ static void read_master(odp *o, const owf_xml_node *mp)
     read_master_levels(o, m, o->mnames[index], o->deck->res->base.font);
     m->background = OWF_SHADE(0xFFFFFF);
     st = find_style(o, attr(mp, NS_DRAW, "style-name"), "drawing-page", OWF_ODF_STYLES_AUTO);
-    read_background(o, st, &m->background, &m->background_image);
+    read_background(o, st, &m->background, &m->background_image, &m->background_gradient, &m->background_angle,
+                    &m->background2);
     oc.objs = &m->objs;
     oc.n = &m->nobjs;
     oc.cap = &m->capobjs;

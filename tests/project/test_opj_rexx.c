@@ -530,6 +530,123 @@ static void test_level(void)
     CHECK_S(ok("GETCELL 2 Start"), "Mon 16/11/26");
 }
 
+/* SORT, FIND and REPLACETEXT. */
+static void test_sort_find(void)
+{
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Pour DURATION 2d");
+    ok("ADDTASK Dig DURATION 1d");
+    ok("ADDTASK Fill DURATION 3d");
+    ok("ADDRESOURCE Dale");
+    ok("SORT Name");
+    CHECK_S(ok("GETCELL 1 Name"), "Dig");
+    CHECK_S(ok("GETCELL 3 Name"), "Pour");
+    ok("SORT Duration DESC");
+    CHECK_S(ok("GETCELL 1 Name"), "Fill");
+    ok("SORT Start THEN Name THENDESC");
+    CHECK_S(ok("GETCELL 1 Name"), "Pour");
+    CHECK_N(rx_do("SORT Colour"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "SORT: no column Colour");
+    CHECK_S(ok("FIND i"), "2");                                            /* Fill */
+    CHECK_S(ok("FIND i FROM 2"), "3");                                     /* Dig */
+    CHECK_S(ok("FIND i FROM 2 BACK"), "3");                                /* round the top */
+    CHECK_S(ok("FIND dig EXACT"), "3");
+    CHECK_S(ok("FIND 3d COLUMN Duration"), "2");
+    CHECK_S(ok("FIND da RESOURCES BEGINS"), "1");
+    CHECK_N(rx_do("FIND nothing"), OPJ_RX_NOW);
+    CHECK_S(rx.lasterror, "FIND: no nothing");
+    CHECK_N(rx_do("FIND i COLUMN Colour"), OPJ_RX_ERROR);
+    CHECK_S(ok("REPLACETEXT Name i o"), "2");
+    CHECK_S(ok("GETCELL 2 Name"), "Foll");
+    CHECK_S(ok("REPLACETEXT Name o i ROW 2"), "1");
+    CHECK_S(ok("GETCELL 2 Name"), "Fill");
+    CHECK_N(rx_do("REPLACETEXT Duration d x"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "REPLACETEXT: 3 cells wouldn't take it; nothing changed");
+    ok("UNDO");
+    CHECK_S(ok("GETCELL 2 Name"), "Foll");
+}
+
+/* FILTER, GROUP, LINES and LINE: the window's lines, worked out again after every command. */
+static void test_filter_group(void)
+{
+    opj_lines lines;
+    char want[80];
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Pour DURATION 2d");
+    ok("ADDTASK Dig DURATION 1d");
+    ok("ADDTASK Ship DURATION 0d");
+    ok("ADDTASK Fill DURATION 2d");
+    CHECK_N(rx_do("FILTER Milestones"), OPJ_RX_NOW);                       /* no window */
+    CHECK_S(rx.lasterror, "FILTER: there is no window to filter or group");
+    opj_lines_init(&lines);
+    rx.lines = &lines;
+    CHECK_S(ok("LINES"), "4");
+    CHECK_S(ok("FILTER Milestones"), "1");
+    CHECK_S(ok("LINES"), "1");
+    CHECK_S(ok("LINE 1"), "3");
+    CHECK_S(ok("FILTER AutoFilter COLUMN Name TEXT i"), "3");              /* Dig, Ship, Fill */
+    CHECK_S(ok("FILTER AutoFilter COLUMN Name TEXT fill EXACT"), "1");
+    CHECK_S(ok("FILTER AutoFilter COLUMN Name TEXT d BEGINS"), "1");
+    CHECK_N(rx_do("FILTER AutoFilter"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "FILTER: AutoFilter needs a COLUMN");
+    CHECK_N(rx_do("FILTER nope"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "FILTER: no filter nope");
+    CHECK_S(ok("FILTER All"), "4");
+    CHECK_S(ok("GROUP BY Duration"), "3");                                 /* 0, 1 and 2 days */
+    CHECK_S(ok("LINES"), "7");
+    snprintf(want, sizeof want, "Duration: %s", ok("GETCELL 3 Duration"));
+    CHECK_S(ok("LINE 1"), want);
+    CHECK_S(ok("LINE 2"), "3");
+    CHECK_S(ok("GROUP BY Duration DESC"), "3");
+    CHECK_S(ok("LINE 2"), "1");                                            /* 2 days: Pour, Fill */
+    ok("SETCELL 2 Duration 2d");                                           /* the lines follow the edit */
+    CHECK_S(ok("LINES"), "6");
+    CHECK_N(rx_do("GROUP BY Colour"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("LINE 9"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "LINE: no line 9");
+    CHECK_S(ok("GROUP"), "0");
+    CHECK_S(ok("LINES"), "4");
+    rx.lines = NULL;
+    opj_lines_free(&lines);
+}
+
+/* UPDATETASK and PROGRESSLINES. */
+static void test_update_task(void)
+{
+    opj_view v;
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Dig DURATION 4d");
+    ok("UPDATETASK 1 ACTUAL 1d");
+    CHECK_S(ok("GETCELL 1 Percent"), "25%");
+    ok("UPDATETASK 1 REMAINING 1d");
+    CHECK_S(ok("GETCELL 1 Duration"), "2d");
+    ok("UPDATETASK 1 PERCENT 100 FINISH 18/11/26");
+    CHECK_S(ok("GETCELL 1 ActualFinish"), "Wed 18/11/26");
+    ok("UNDO");
+    CHECK_S(ok("GETCELL 1 Percent"), "50%");
+    CHECK_N(rx_do("UPDATETASK 1 ACTUAL soon"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("UPDATETASK 2 PERCENT 5"), OPJ_RX_ERROR);
+    CHECK_S(ok("GETCELL 1 Work"), "0h");
+    CHECK_N(rx_do("PROGRESSLINES ON"), OPJ_RX_NOW);                         /* no window */
+    opj_view_init(&v, rx.doc, 800, 200, 16, OPJ_ZOOM_DAYS);
+    rx.view = &v;
+    CHECK_S(ok("PROGRESSLINES"), "0");
+    CHECK_S(ok("PROGRESSLINES ON"), "1");
+    CHECK(v.progress_lines);
+    CHECK_S(ok("PROGRESSLINES OFF"), "0");
+    CHECK_N(rx_do("PROGRESSLINES ON OFF"), OPJ_RX_ERROR);
+    rx.view = NULL;
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -550,6 +667,9 @@ int main(void)
     test_baselines();
     test_replace();
     test_level();
+    test_sort_find();
+    test_filter_group();
+    test_update_task();
     if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);

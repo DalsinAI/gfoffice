@@ -2017,7 +2017,7 @@ static unsigned long tint(unsigned long rgb, long long v)
 static void read_table(objctx *c, int index, const owf_xml_node *tbl)
 {
     const owf_xml_node *tblPr = achild(tbl, "tblPr"), *grid = achild(tbl, "tblGrid"), *g, *tr, *tc;
-    int widths[TABLE_MAX_COLS], ncols = 0, nrows = 0, merged = 0, i;
+    int widths[TABLE_MAX_COLS], ncols = 0, nrows = 0, i;
     int styled = achild(tblPr, "tableStyleId") != NULL;
     int first_row = same(att(tblPr, "firstRow"), "1"), bands = same(att(tblPr, "bandRow"), "1");
     const owf_xml_node *style_id = achild(tblPr, "tableStyleId");
@@ -2070,7 +2070,6 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
                     c->x->r.failed = 1;
                     return;
                 }
-                merged = 1;
             }
             tcPr = achild(tc, "tcPr");
             header = styled && first_row && nrows == 0;
@@ -2131,8 +2130,6 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
                 obj->col_widths[i] = i < TABLE_MAX_COLS && grid ? widths[i] : 0;
     }
     obj->inset[0] = obj->inset[1] = obj->inset[2] = obj->inset[3] = 0;
-    if (merged)
-        owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Merged table cells are shown apart");
     if (styled)
         owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Table styles are drawn as PowerPoint's default one");
 }
@@ -2242,7 +2239,7 @@ static void read_tree(objctx *c, const owf_xml_node *tree, int parent, int depth
 
 /* A p:cSld's p:bg onto *colour and *image; 0 when it has none. */
 static int read_background(pptx *x, const colours *cc, const rels *r, const owf_xml_node *cSld,
-                           unsigned long *colour, int *image)
+                           unsigned long *colour, int *image, owf_look *g)
 {
     const owf_xml_node *bg = pchild(cSld, "bg"), *pr, *ref;
     unsigned long rgb, fill;
@@ -2254,7 +2251,7 @@ static int read_background(pptx *x, const colours *cc, const rels *r, const owf_
             *image = load_picture(x, r, ratt(blip, "embed"), x->deck->width, x->deck->height, NULL);
             return 1;
         }
-        if (fill_of(&x->r, cc, pr, &fill, NULL)) {
+        if (fill_of(&x->r, cc, pr, &fill, g)) {
             *colour = fill ? fill : OWF_SHADE(0xFFFFFF);
             return 1;
         }
@@ -2421,8 +2418,15 @@ static int get_master(pptx *x, const char *name)
     memcpy(c.cc.map, mp->map, sizeof c.cc.map);
     c.slide = -1;
     m->background = OWF_SHADE(mp->th.scheme[mp->map[0]]);
-    read_background(x, &c.cc, &mp->rels, cSld, &x->deck->masters[index].background,
-                    &x->deck->masters[index].background_image);
+    {
+        owf_look g;
+        memset(&g, 0, sizeof g);
+        read_background(x, &c.cc, &mp->rels, cSld, &x->deck->masters[index].background,
+                        &x->deck->masters[index].background_image, &g);
+        x->deck->masters[index].background_gradient = g.gradient;
+        x->deck->masters[index].background_angle = g.gradient_angle;
+        x->deck->masters[index].background2 = g.fill2;
+    }
     m = &x->deck->masters[index];
     c.objs = &m->objs;
     c.n = &m->nobjs;
@@ -2614,10 +2618,17 @@ static void read_slide(pptx *x, const char *name)
             read_map(ov, c.cc.map);
     }
     c.slide = index;
-    if (!read_background(x, &c.cc, &r, cSld, &x->deck->slides[index].background,
-                         &x->deck->slides[index].background_image) && lp)
-        read_background(x, &c.cc, &lp->rels, pchild(lp->root, "cSld"), &x->deck->slides[index].background,
-                        &x->deck->slides[index].background_image);
+    {
+        owf_look g;
+        memset(&g, 0, sizeof g);
+        if (!read_background(x, &c.cc, &r, cSld, &x->deck->slides[index].background,
+                             &x->deck->slides[index].background_image, &g) && lp)
+            read_background(x, &c.cc, &lp->rels, pchild(lp->root, "cSld"), &x->deck->slides[index].background,
+                            &x->deck->slides[index].background_image, &g);
+        x->deck->slides[index].background_gradient = g.gradient;
+        x->deck->slides[index].background_angle = g.gradient_angle;
+        x->deck->slides[index].background2 = g.fill2;
+    }
     s = &x->deck->slides[index];
     c.objs = &s->objs;
     c.n = &s->nobjs;
