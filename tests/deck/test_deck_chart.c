@@ -387,6 +387,32 @@ static void test_odf(void)
           near(e.series[1].points[2].value, 1.8) && !e.series[1].points[1].has_value, "scatter's points");
     owf_chart_clear(&e);
     owf_buf_free(&b);
+
+    /* a scatter whose series have their own x values: each keeps its own (Budgie's note on #358) */
+    for (k = 0; k < 3; k++)
+        c.series[1].points[k].x = 2.0 * (k + 1);
+    c.series[1].points[1].has_x = 0;      /* no x for this point: none read back either */
+    owf_buf_init(&b);
+    memset(&e, 0, sizeof e);
+    CHECK(owf_chart_odf_xml(&c, 7200, 4320, 0, &b) == OWF_OK &&
+          owf_chart_from_odf((const char *)b.data, b.length, &e) == OWF_OK && e.kind == OWF_CHART_SCATTER,
+          "scatter, own x");
+    CHECK(e.nseries == 2 && e.series[0].npoints == 3 && e.series[1].npoints == 3, "scatter, own x: the points");
+    if (e.nseries == 2 && e.series[0].npoints == 3 && e.series[1].npoints == 3) {
+        CHECK(e.series[0].points[0].has_x && near(e.series[0].points[0].x, 10.5) && near(e.series[0].points[2].x, 31.5),
+              "scatter, own x: the first series' x");
+        CHECK(e.series[1].points[0].has_x && near(e.series[1].points[0].x, 2.0) && near(e.series[1].points[2].x, 6.0),
+              "scatter, own x: the second series' x");
+        CHECK(!e.series[1].points[1].has_x, "scatter, own x: a point without one");
+        CHECK(near(e.series[0].points[1].value, 2.5) && near(e.series[1].points[2].value, 1.8) &&
+              !e.series[1].points[1].has_value, "scatter, own x: the values");
+        CHECK(e.series[1].name && !strcmp(e.series[1].name, "South"), "scatter, own x: the names");
+    }
+    owf_buf_putc(&b, 0);
+    CHECK(b.data && strstr((const char *)b.data, "<chart:domain table:cell-range-address=\"local-table.$C$2:.$C$4\"/>"),
+          "scatter, own x: the second series' domain is its own column");
+    owf_chart_clear(&e);
+    owf_buf_free(&b);
     owf_chart_clear(&c);
 
     memset(&e, 0, sizeof e);
