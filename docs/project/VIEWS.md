@@ -40,6 +40,14 @@ the next PR and only wires windows, menus and requesters to these calls.
   between the halves, a task's bar (its middle, its right end for stretching, its done part) or the
   chart.
 
+- **Dragging on the Gantt chart** (`opj_drag.c`), as MS Project's mouse does it. The middle of a task's
+  bar moves the task by whole days: it gets Start No Earlier Than the first working time of the day dropped
+  on. The right end stretches it: its duration becomes the working time to the end of the day dropped on
+  (elapsed time for an elapsed duration). The done part, or the first 3 pixels of the bar, sets % Complete
+  to where it is dropped. A bar dropped on another task's bar links the two, finish to start (refused when
+  they are linked already or it would make a loop). The status line says what the drop will do while the
+  mouse moves; a drop off the bar's row does nothing. Summaries and milestones only link. Each drop is one
+  edit and one Undo step. Resource Usage refuses drags, as it refuses other edits.
 - **Task Information** (Edit > Task Information..., T, or a double-click on a bar): the task's Name,
   Duration, % Complete, Predecessors, Resource Names, Constraint (a cycle of the eight types, as MS
   Project names them), its Date and Notes in one window. OK types only the fields changed, the
