@@ -7093,6 +7093,75 @@ static void test_solver(void)
     remove(ods);
 }
 
+/* Consolidate's sources as defined names of ranges, and the names the window offers. */
+static void test_consolidate_names(void)
+{
+    oc_core *core = fresh();
+    oc_consolidate_spec spec;
+    int index[OC_CONSOLIDATE_NAMES], n, k;
+    if (!core)
+        return;
+    enter_at(core, "A1", "East");
+    enter_at(core, "B1", "10");
+    enter_at(core, "A2", "West");
+    enter_at(core, "B2", "1");
+    CHECK(oc_core_add_sheet(core, "Q2") == 1);
+    enter_at(core, "A1", "west");
+    enter_at(core, "B1", "5");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_set_name(core, "Q1Sales", -1, "'Sheet1'!$A$1:$B$2") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Q2Sales", -1, "'Q2'!$A$1:$B$1") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Rate", -1, "0.2") == OWF_OK);                 /* not a range */
+    CHECK(oc_core_set_name(core, "Mine", 1, "'Q2'!$A$1:$B$1") == OWF_OK);       /* Q2's own: not seen here */
+    CHECK(oc_core_set_name(core, "Twice", -1, "'Sheet1'!$A$1") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Twice", 0, "'Sheet1'!$B$1:$B$2") == OWF_OK);   /* this sheet's hides the book's */
+    /* the window's list: ranges only, in the book's order, the sheet's own "Twice" and not the book's */
+    n = oc_core_consolidate_names(core, index, OC_CONSOLIDATE_NAMES);
+    CHECK(n == 3);
+    for (k = 0; k < n; k++) {
+        const owf_defname *d = oc_core_name_at(core, index[k]);
+        CHECK(d && strcmp(d->name, "Rate") && strcmp(d->name, "Mine"));
+        if (d && !strcmp(d->name, "Twice"))
+            CHECK(d->sheet == 0);
+    }
+    CHECK(n >= 1 && !strcmp(oc_core_name_at(core, index[0])->name, "Q1Sales"));
+    CHECK(oc_core_consolidate_names(core, index, 1) == 1);
+    /* on Q2 its own name is offered, and the book's "Twice" */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    n = oc_core_consolidate_names(core, index, OC_CONSOLIDATE_NAMES);
+    CHECK(n == 4);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    /* names as sources (case aside), by row labels */
+    oc_consolidate_init(&spec);
+    spec.nsources = 2;
+    snprintf(spec.source[0], sizeof spec.source[0], "q1sales");
+    snprintf(spec.source[1], sizeof spec.source[1], " Q2Sales");
+    snprintf(spec.dest, sizeof spec.dest, "D1");
+    spec.row_labels = 1;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK_STR(text(core, "D1"), "East");
+    CHECK_STR(text(core, "D2"), "West");
+    CHECK(num(core, "E1") == 10 && num(core, "E2") == 6);
+    /* the name kept in the settings, as typed */
+    {
+        oc_consolidate_spec back;
+        CHECK(oc_core_consolidate_settings(core, &back) == 1);
+        CHECK_STR(back.source[0], "q1sales");
+    }
+    /* a name that is not a range, or no such name */
+    snprintf(spec.source[1], sizeof spec.source[1], "Rate");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    snprintf(spec.source[1], sizeof spec.source[1], "Mine");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    /* the sheet's own "Twice" (B1:B2), by position */
+    spec.nsources = 1;
+    spec.row_labels = 0;
+    snprintf(spec.source[0], sizeof spec.source[0], "Twice");
+    snprintf(spec.dest, sizeof spec.dest, "G1");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK && num(core, "G1") == 10 && num(core, "G2") == 1);
+    oc_core_free(core);
+}
+
 static void test_consolidate(void)
 {
     oc_core *core = fresh();
@@ -7351,6 +7420,7 @@ int main(void)
     test_solver();
     test_scenarios();
     test_consolidate();
+    test_consolidate_names();
     test_pdf();
     test_book_reads();
     test_rexx_utf8();
