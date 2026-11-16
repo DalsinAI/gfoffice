@@ -194,6 +194,8 @@ int oc_range_locked(const oc_core *core, int sheet, const owf_range *range);
 int oc_protected(const oc_core *core, unsigned allow);
 int oc_protected_selection(const oc_core *core);
 int oc_formula_hidden(const oc_core *core, int sheet, unsigned row, unsigned col);
+/* 1 when the workbook's structure is protected: its sheets stay as they are. */
+int oc_book_locked(const oc_core *core);
 /* Text entered into a cell through the engine; a cell it makes takes its row's or column's style, as a cell
  * typed into in Excel does. */
 int oc_enter(oc_core *core, int sheet, unsigned row, unsigned col, const char *text);

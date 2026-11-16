@@ -311,6 +311,10 @@ int odg_rexx_format(const char *file)
     if (ext_is(file, "pdf")) return ODG_FILE_PDF;
     if (ext_is(file, "iff") || ext_is(file, "ilbm")) return ODG_FILE_ILBM;
     if (ext_is(file, "eps") || ext_is(file, "epsf") || ext_is(file, "ps")) return ODG_FILE_EPS;
+    if (ext_is(file, "mmd") || ext_is(file, "mermaid")) return ODG_FILE_MERMAID;
+    if (ext_is(file, "dot") || ext_is(file, "gv")) return ODG_FILE_DOT;
+    if (ext_is(file, "graphml")) return ODG_FILE_GRAPHML;
+    if (ext_is(file, "excalidraw")) return ODG_FILE_EXCALIDRAW;
     return ODG_FILE_DRAWIO;
 }
 
@@ -407,6 +411,10 @@ static int write_file(odg_rexx *rx, const char *name, int format, int compressed
     } else
         rc = format == ODG_FILE_PDF ? owf_dpdf_write(&rx->d, -1, &data, &length)
              : format == ODG_FILE_EPS ? owf_deps_write(&rx->d, rx->doc.page, &data, &length)
+             : format == ODG_FILE_MERMAID ? owf_dmermaid_write(&rx->d, rx->doc.page, &data, &length)
+             : format == ODG_FILE_DOT ? owf_ddot_write(&rx->d, rx->doc.page, &data, &length)
+             : format == ODG_FILE_GRAPHML ? owf_dgraphml_write(&rx->d, rx->doc.page, &data, &length)
+             : format == ODG_FILE_EXCALIDRAW ? owf_dexcal_write(&rx->d, rx->doc.page, &data, &length)
              : format == ODG_FILE_SVG ? owf_dsvg_write(&rx->d, rx->doc.page, &data, &length)
                                     : owf_drawio_write(&rx->d, compressed, &data, &length);
     if (rc == OWF_ERR_MEMORY) {
@@ -648,14 +656,18 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return rc;
     case C_SAVEAS:
         if (!name_fits(rx, "SAVEAS", a->value[0])) return ODG_RX_ERROR;
-        if (odg_rexx_format(a->value[0]) == ODG_FILE_PDF || odg_rexx_format(a->value[0]) == ODG_FILE_ILBM ||
-            odg_rexx_format(a->value[0]) == ODG_FILE_EPS) {
-            /* it would not open again: EXPORT writes one */
-            snprintf(rx->lasterror, sizeof rx->lasterror, "SAVEAS: %s doesn't open again as a diagram (EXPORT "
-                     "writes one; SAVEAS takes .drawio, .svg or .png)",
-                     odg_rexx_format(a->value[0]) == ODG_FILE_PDF ? "a PDF"
-                     : odg_rexx_format(a->value[0]) == ODG_FILE_EPS ? "an EPS" : "an IFF picture");
-            return ODG_RX_ERROR;
+        {
+            /* the formats that would not open again as the diagram: EXPORT writes them */
+            int f = odg_rexx_format(a->value[0]);
+            const char *what = f == ODG_FILE_PDF ? "a PDF" : f == ODG_FILE_EPS ? "an EPS"
+                             : f == ODG_FILE_ILBM ? "an IFF picture" : f == ODG_FILE_MERMAID ? "a Mermaid chart"
+                             : f == ODG_FILE_DOT ? "a DOT graph" : f == ODG_FILE_GRAPHML ? "a GraphML graph"
+                             : f == ODG_FILE_EXCALIDRAW ? "an Excalidraw scene" : NULL;
+            if (what) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "SAVEAS: %s doesn't open again as a diagram (EXPORT "
+                         "writes one; SAVEAS takes .drawio, .svg or .png)", what);
+                return ODG_RX_ERROR;
+            }
         }
         if ((rc = write_file(rx, a->value[0], odg_rexx_format(a->value[0]), a->value[1] != NULL)) == ODG_RX_OK) {
             set_file(rx, a->value[0]);
@@ -671,8 +683,12 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             else if (word_at(a->value[1], "PDF", 3, 0)) format = ODG_FILE_PDF;
             else if (word_at(a->value[1], "ILBM", 4, 0) || word_at(a->value[1], "IFF", 3, 0)) format = ODG_FILE_ILBM;
             else if (word_at(a->value[1], "EPS", 3, 0)) format = ODG_FILE_EPS;
+            else if (word_at(a->value[1], "MERMAID", 7, 0)) format = ODG_FILE_MERMAID;
+            else if (word_at(a->value[1], "DOT", 3, 0)) format = ODG_FILE_DOT;
+            else if (word_at(a->value[1], "GRAPHML", 7, 0)) format = ODG_FILE_GRAPHML;
+            else if (word_at(a->value[1], "EXCALIDRAW", 10, 0)) format = ODG_FILE_EXCALIDRAW;
             else {
-                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM or DRAWIO, not %.100s",
+                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM, MERMAID, DOT, GRAPHML, EXCALIDRAW or DRAWIO, not %.80s",
                          a->value[1]);
                 return ODG_RX_ERROR;
             }

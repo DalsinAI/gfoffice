@@ -1490,6 +1490,113 @@ static char *xp_heading(const owf_pivotdef *def, const xlsx_out *w, unsigned fie
     return out;
 }
 
+/* Excel's fieldGroup for a grouped row or column field, grouped in place (base is
+ * the field itself): its rangePr and the group items its pivotField's items
+ * point at, "<start" first and ">end" last, as Excel lists them. */
+#define XP_GROUP_ITEMS 2000
+typedef struct {
+    const owf_pivot_group *g;        /* NULL: the field is written ungrouped */
+    int n;                           /* group items, the two ends included */
+    long first_year, last_year;      /* dates: the source's years */
+} xpivot_group;
+
+static int xp_row_or_col(const owf_pivotdef *def, unsigned field)
+{
+    unsigned k;
+    for (k = 0; k < def->nrow; k++)
+        if (def->row[k] == field)
+            return 1;
+    for (k = 0; k < def->ncol; k++)
+        if (def->col[k] == field)
+            return 1;
+    return 0;
+}
+
+/* 1 when the field is grouped and Excel can hold its groups: only numbers in
+ * its cells, a few thousand ranges at most, dates from the year 1 to 9999. */
+static int xp_group(const owf_book *book, const owf_pivotdef *def, unsigned field, const xpivot_items *it,
+                    xpivot_group *xg)
+{
+    const owf_pivot_group *g = owf_pivot_group_of(def, field);
+    int i;
+    memset(xg, 0, sizeof *xg);
+    if (!g || g->by == OWF_PIVOT_GROUP_NONE || !xp_row_or_col(def, field) || !it->numbers || it->texts ||
+        it->blanks || it->bools || it->errors)
+        return 0;
+    if (g->by == OWF_PIVOT_GROUP_RANGE) {
+        for (i = 0; i <= XP_GROUP_ITEMS && g->start + g->step * i <= g->end; i++)
+            ;
+        if (i > XP_GROUP_ITEMS)
+            return 0;
+        xg->n = i + 2;
+    } else {
+        owf_pivot_group years = *g;
+        years.by = OWF_PIVOT_GROUP_YEARS;
+        for (i = 0; i < it->n; i++) {
+            double x = it->items[i]->number, y;
+            if (!(x >= -1e7 && x < 3e6))
+                return 0;
+            y = owf_pivot_group_key(&years, x, book->date1904);
+            if (!(y >= 1.0 && y <= 9999.0))
+                return 0;
+            if (!i || (long)y < xg->first_year)
+                xg->first_year = (long)y;
+            if (!i || (long)y > xg->last_year)
+                xg->last_year = (long)y;
+        }
+        if (xg->last_year - xg->first_year >= XP_GROUP_ITEMS)
+            return 0;
+        xg->n = g->by == OWF_PIVOT_GROUP_YEARS ? (int)(xg->last_year - xg->first_year) + 3
+              : g->by == OWF_PIVOT_GROUP_QUARTERS ? 6 : 14;
+    }
+    xg->g = g;
+    return 1;
+}
+
+/* Group item i's key, as owf_pivot_group_key gives it for the cells in it. */
+static double xp_group_key(const xpivot_group *xg, int i)
+{
+    if (i <= 0)
+        return -1e300;
+    if (i >= xg->n - 1)
+        return 1e300;
+    if (xg->g->by == OWF_PIVOT_GROUP_RANGE)
+        return xg->g->start + xg->g->step * (i - 1);
+    return xg->g->by == OWF_PIVOT_GROUP_YEARS ? (double)(xg->first_year + i - 1) : (double)i;
+}
+
+static void xp_group_xml(owf_buf *b, unsigned field, const xpivot_group *xg)
+{
+    static const char *const by[] = { "", "range", "years", "quarters", "months" };
+    char label[80], a[32];
+    int i;
+    owf_buf_printf(b, "<fieldGroup base=\"%u\"><rangePr", field);
+    if (xg->g->by == OWF_PIVOT_GROUP_RANGE) {
+        owf_buf_puts(b, " autoStart=\"0\" autoEnd=\"0\" startNum=\"");
+        put_number(b, xg->g->start);
+        owf_buf_puts(b, "\" endNum=\"");
+        put_number(b, xg->g->end);
+        owf_buf_puts(b, "\" groupInterval=\"");
+        put_number(b, xg->g->step);
+        owf_buf_puts(b, "\"/>");
+    } else
+        owf_buf_printf(b, " groupBy=\"%s\" autoStart=\"0\" autoEnd=\"0\" startDate=\"%04ld-01-01T00:00:00\" "
+                          "endDate=\"%04ld-12-31T00:00:00\"/>",
+                       by[xg->g->by], xg->first_year, xg->last_year);
+    owf_buf_printf(b, "<groupItems count=\"%d\">", xg->n);
+    for (i = 0; i < xg->n; i++) {
+        if (xg->g->by != OWF_PIVOT_GROUP_RANGE && (i == 0 || i == xg->n - 1)) {
+            snprintf(a, sizeof a, "%ld", i ? xg->last_year : xg->first_year);
+            snprintf(label, sizeof label, i ? ">12/31/%s" : "<1/1/%s", a);
+        } else
+            owf_pivot_group_label(xg->g, xp_group_key(xg, i), label, sizeof label);
+        owf_buf_puts(b, "<s v=\"");
+        put_xml(b, label, X_ATTR);
+        owf_buf_puts(b, "\"/>");
+    }
+    owf_buf_puts(b, "</groupItems></fieldGroup>");
+}
+
 static void pivot_cache_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def)
 {
     unsigned width = def->source.last_col - def->source.first_col + 1u, f;
@@ -1505,12 +1612,17 @@ static void pivot_cache_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def)
     owf_buf_puts(b, "\" sheet=\"");
     put_xml(b, w->names[def->source_sheet], X_ATTR);
     owf_buf_printf(b, "\"/></cacheSource><cacheFields count=\"%u\">", width);
+    if (def->nmember)                        /* Excel keeps them as a field of their own: a later step */
+        owf_report_add(w->report, OWF_NOTE_APPROX,
+                       "Pivot table items grouped by hand are saved ungrouped in an Excel workbook; the table's "
+                       "cells keep the groups");
     for (f = 0; f < width && !w->failed; f++) {
         owf_buf_puts(b, "<cacheField name=\"");
         put_xml(b, xp_heading(def, w, f, heading, sizeof heading), X_ATTR);
         owf_buf_puts(b, "\" numFmtId=\"0\">");
         if (xp_axis(def, f, &axis)) {
             xpivot_items it;
+            xpivot_group xg;
             if (!xp_collect(w->book, def, f, &it)) {
                 free(it.items);
                 w->failed = 1;
@@ -1529,6 +1641,12 @@ static void pivot_cache_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def)
             for (k = 0; k < it.n; k++)
                 xp_item(b, it.items[k]);
             owf_buf_puts(b, "</sharedItems>");
+            if (xp_group(w->book, def, f, &it, &xg))
+                xp_group_xml(b, f, &xg);
+            else if (owf_pivot_group_of(def, f))
+                owf_report_add(w->report, OWF_NOTE_APPROX,
+                               "A pivot table field grouped over cells that are not all numbers, or into very many "
+                               "ranges, is saved ungrouped in an Excel workbook; the table's cells keep the groups");
             free(it.items);
         } else
             owf_buf_puts(b, "<sharedItems/>");
@@ -1582,20 +1700,38 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
         if (xp_is_data(def, f))
             owf_buf_puts(b, " dataField=\"1\"");
         owf_buf_puts(b, " showAll=\"0\"");
+        if (axis_field && strcmp(axis, "axisPage") && !owf_pivot_subtotal_of(def, f))
+            owf_buf_puts(b, " defaultSubtotal=\"0\"");     /* Excel's default is a subtotal per item */
         if (axis_field && owf_pivot_sort_of(def, f) != OWF_PIVOT_SORT_SOURCE)
             owf_buf_printf(b, " sortType=\"%s\"",
                            owf_pivot_sort_of(def, f) == OWF_PIVOT_SORT_DESCENDING ? "descending" : "ascending");
         if (axis_field) {
             xpivot_items it;
+            int with_default = !strcmp(axis, "axisPage") || owf_pivot_subtotal_of(def, f);
+            xpivot_group xg;
             if (!xp_collect(w->book, def, f, &it)) {
                 free(it.items);
                 w->failed = 1;
                 return;
             }
-            owf_buf_printf(b, "><items count=\"%d\">", it.n + 1);
-            for (i = 0; i < it.n; i++)
-                owf_buf_printf(b, "<item x=\"%d\"/>", i);
-            owf_buf_puts(b, "<item t=\"default\"/></items></pivotField>");
+            if (xp_group(w->book, def, f, &it, &xg)) {  /* the items are the group items */
+                owf_buf_printf(b, "><items count=\"%d\">", xg.n + with_default);
+                for (i = 0; i < xg.n; i++) {
+                    owf_cell key;
+                    memset(&key, 0, sizeof key);
+                    key.type = OWF_VALUE_NUMBER;
+                    key.number = xp_group_key(&xg, i);
+                    key.style = -1;
+                    owf_buf_printf(b, "<item x=\"%d\"%s/>", i, owf_pivot_is_hidden(def, f, &key) ? " h=\"1\"" : "");
+                }
+            } else {
+                owf_buf_printf(b, "><items count=\"%d\">", it.n + with_default);
+                for (i = 0; i < it.n; i++)        /* a hidden row or column item: h="1" */
+                    owf_buf_printf(b, "<item x=\"%d\"%s/>", i,
+                                   strcmp(axis, "axisPage") && owf_pivot_is_hidden(def, f, it.items[i]) ? " h=\"1\""
+                                                                                          : "");
+            }
+            owf_buf_puts(b, with_default ? "<item t=\"default\"/></items></pivotField>" : "</items></pivotField>");
             free(it.items);
         } else
             owf_buf_puts(b, "/>");
@@ -1654,7 +1790,13 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
         owf_buf_printf(b, "\" fld=\"%u\"", def->data[k].field);
         if (def->data[k].function != OWF_PIVOT_FN_SUM)
             owf_buf_printf(b, " subtotal=\"%s\"", owf_pivot_function_word(def->data[k].function, 1));
-        owf_buf_puts(b, " baseField=\"0\" baseItem=\"0\"/>");
+        if (def->data[k].show > OWF_PIVOT_SHOW_NORMAL && def->data[k].show <= OWF_PIVOT_SHOW_LAST)
+            owf_buf_printf(b, " showDataAs=\"%s\"", owf_pivot_show_word(def->data[k].show, 1));
+        owf_buf_puts(b, " baseField=\"0\" baseItem=\"0\"");
+        if (def->data[k].show == OWF_PIVOT_SHOW_ROW || def->data[k].show == OWF_PIVOT_SHOW_COLUMN ||
+            def->data[k].show == OWF_PIVOT_SHOW_TOTAL)
+            owf_buf_puts(b, " numFmtId=\"10\"");      /* 0.00%, as Excel gives a share */
+        owf_buf_puts(b, "/>");
     }
     owf_buf_puts(b, "</dataFields><pivotTableStyleInfo name=\"PivotStyleLight16\" showRowHeaders=\"1\" "
                     "showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/>"
@@ -1698,6 +1840,18 @@ static void workbook_xml(xlsx_out *w, owf_buf *b)
     int i, active = book->active >= 0 && book->active < book->nsheets ? book->active : 0;
     owf_buf_puts(b, XML_HEAD "<workbook xmlns=\"" NS_MAIN "\" xmlns:r=\"" NS_R "\">");
     owf_buf_puts(b, book->date1904 ? "<workbookPr date1904=\"1\"/>" : "<workbookPr/>");
+    if (book->protect_structure) {
+        owf_buf_puts(b, "<workbookProtection");
+        if (book->protect_hash && strlen(book->protect_hash) == 4)
+            owf_buf_printf(b, " workbookPassword=\"%s\"", book->protect_hash);
+        else if (book->protect_kept && !strncmp(book->protect_kept, "xlsx:", 5))
+            owf_buf_puts(b, book->protect_kept + 5);
+        else if (book->protect_kept)
+            owf_report_add(w->report, OWF_NOTE_APPROX,
+                           "The workbook's password from an ODS file is not kept in XLSX: its structure stays "
+                           "protected without one");
+        owf_buf_puts(b, " lockStructure=\"1\"/>");
+    }
     owf_buf_printf(b, "<bookViews><workbookView activeTab=\"%d\"/></bookViews><sheets>", active);
     for (i = 0; i < book->nsheets; i++) {
         owf_buf_puts(b, "<sheet name=\"");

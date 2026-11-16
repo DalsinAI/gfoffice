@@ -495,7 +495,7 @@ static int odf_field(const owf_xml_node *c)
     if (owf_xml_is(c, NS_TEXT, "alphabetical-index-mark") && owf_xml_attr(c, NS_TEXT, "string-value") &&
         *owf_xml_attr(c, NS_TEXT, "string-value")) return OWF_FIELD_INDEX;                 /* 1.10 */
     if (owf_xml_is(c, NS_TEXT, "sequence") && owf_xml_attr(c, NS_TEXT, "name") &&
-        *owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_SEQ;                           /* 1.12.4 */
+        *owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_SEQ;                           /* 1.12.6 */
     if ((owf_xml_is(c, NS_TEXT, "bookmark-ref") || owf_xml_is(c, NS_TEXT, "reference-ref")) &&
         owf_xml_attr(c, NS_TEXT, "ref-name")) {
         form = owf_xml_attr(c, NS_TEXT, "reference-format");

@@ -64,20 +64,46 @@ $(OUT)/test-deps-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_deps.c
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_deps.c -lz -o $@
 
-diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf $(OUT)/test-deps
+# Step D6: Mermaid and DOT.
+$(OUT)/test-dgraph: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dgraph.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_dgraph.c -lz -o $@
+
+$(OUT)/test-dgraph-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dgraph.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dgraph.c -lz -o $@
+
+# Step D6: Excalidraw.
+$(OUT)/test-dexcal: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dexcal.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_dexcal.c -lz -o $@
+
+$(OUT)/test-dexcal-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dexcal.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dexcal.c -lz -o $@
+
+diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf $(OUT)/test-deps $(OUT)/test-dgraph $(OUT)/test-dexcal
 	$(OUT)/test-diagram
 	$(OUT)/test-diagram-nozlib
 	$(OUT)/test-dexport
 	$(OUT)/test-doutline
 	$(OUT)/test-dpdf
 	$(OUT)/test-deps
+	$(OUT)/test-dgraph
+	$(OUT)/test-dexcal
 
-diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan $(OUT)/test-deps-asan
+diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan $(OUT)/test-deps-asan $(OUT)/test-dgraph-asan $(OUT)/test-dexcal-asan
 	$(OUT)/test-diagram-asan
 	$(OUT)/test-dexport-asan
 	$(OUT)/test-doutline-asan
 	$(OUT)/test-dpdf-asan
 	$(OUT)/test-deps-asan
+	$(OUT)/test-dgraph-asan
+	$(OUT)/test-dexcal-asan
 
 test: diagram-test
 check: diagram-check
@@ -125,6 +151,31 @@ $(OUT)/test-odg-style-asan: $(ODG_STYLE_DEPS) $(OWF_SRC)
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_style.c \
 		tests/diag/test_odg_style.c -lz -o $@
 
+# The Arrange menu's Align and Distribute (src/diag/odg_align.c).
+ODG_ALIGN_DEPS = $(ODG_DEPS) src/diag/odg_align.c include/opendiag_align.h tests/diag/test_odg_align.c
+
+$(OUT)/test-odg-align: $(ODG_ALIGN_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_align.c tests/diag/test_odg_align.c -lz -o $@
+
+$(OUT)/test-odg-align-asan: $(ODG_ALIGN_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_align.c \
+		tests/diag/test_odg_align.c -lz -o $@
+
+diagram-align-test: $(OUT)/test-odg-align
+	$(OUT)/test-odg-align
+
+diagram-align-check: $(OUT)/test-odg-align-asan
+	$(OUT)/test-odg-align-asan
+
+test: diagram-align-test
+check: diagram-align-check
+
+.PHONY: diagram-align-test diagram-align-check
+
 # Step D5: the mind-map mode (src/diag/odg_mind.c).
 ODG_MIND_DEPS = $(ODG_DEPS) src/diag/odg_mind.c include/opendiag_mind.h tests/diag/test_odg_mind.c
 
@@ -139,22 +190,64 @@ $(OUT)/test-odg-mind-asan: $(ODG_MIND_DEPS) $(OWF_SRC)
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_mind.c \
 		tests/diag/test_odg_mind.c -lz -o $@
 
-diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style $(OUT)/test-odg-mind
+# The clipboard: Copy, Cut, Paste and Duplicate (src/diag/odg_clip.c).
+ODG_CLIP_DEPS = $(ODG_DEPS) src/diag/odg_clip.c include/opendiag_clip.h tests/diag/test_odg_clip.c
+
+$(OUT)/test-odg-clip: $(ODG_CLIP_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_clip.c tests/diag/test_odg_clip.c -lz -o $@
+
+$(OUT)/test-odg-clip-asan: $(ODG_CLIP_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_clip.c \
+		tests/diag/test_odg_clip.c -lz -o $@
+
+diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style $(OUT)/test-odg-mind $(OUT)/test-odg-clip
 	$(OUT)/test-odg
 	$(OUT)/test-odg-rexx
 	$(OUT)/test-odg-style
 	$(OUT)/test-odg-mind
+	$(OUT)/test-odg-clip
 
-diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan $(OUT)/test-odg-mind-asan
+diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan $(OUT)/test-odg-mind-asan \
+	$(OUT)/test-odg-clip-asan
 	$(OUT)/test-odg-asan
 	$(OUT)/test-odg-rexx-asan
 	$(OUT)/test-odg-style-asan
 	$(OUT)/test-odg-mind-asan
+	$(OUT)/test-odg-clip-asan
 
 test: diagram-core-test
 check: diagram-core-check
 
 .PHONY: diagram-core-test diagram-core-check
+
+# The Arrange menu's drawing order and Group and Ungroup (src/diag/odg_order.c).
+ODG_ORDER_DEPS = $(ODG_DEPS) src/diag/odg_order.c include/opendiag_order.h tests/diag/test_odg_order.c
+
+$(OUT)/test-odg-order: $(ODG_ORDER_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_order.c tests/diag/test_odg_order.c -lz -o $@
+
+$(OUT)/test-odg-order-asan: $(ODG_ORDER_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_order.c \
+		tests/diag/test_odg_order.c -lz -o $@
+
+diagram-order-test: $(OUT)/test-odg-order
+	$(OUT)/test-odg-order
+
+diagram-order-check: $(OUT)/test-odg-order-asan
+	$(OUT)/test-odg-order-asan
+
+test: diagram-order-test
+check: diagram-order-check
+
+.PHONY: diagram-order-test diagram-order-check
 
 # Step D4: the canvas (src/diag/odg_view.c), drawn through GFOpenLayout's drawing calls, so it is tested when
 # GFOpenLayout is there (OPENLAYOUT_SRC) with the lines, polygons and ellipses it draws with.

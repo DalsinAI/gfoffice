@@ -568,7 +568,7 @@ static void change_to(owf_buf *out, odt_track *tk, int rev, int para_style)
     }
 }
 
-/* 1.12.4: the number ranges' names, each once, before the text (text:sequence-decls); a list of the names seen
+/* 1.12.6: the number ranges' names, each once, before the text (text:sequence-decls); a list of the names seen
  * (few: Figure, Table), so each SEQ is looked up once */
 static void put_sequence_decls(owf_buf *out, const owf_doc *doc)
 {
@@ -633,7 +633,7 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
     owf_buf_printf(out, "<text:%s", name);
     if (run->field == OWF_FIELD_FILENAME) owf_buf_puts(out, " text:display=\"name-and-extension\"");
     if (run->field == OWF_FIELD_CHAPTER) owf_buf_puts(out, " text:display=\"name\" text:outline-level=\"1\"");
-    if (run->field == OWF_FIELD_SEQ) {               /* 1.12.4: a number range, counted as ours are */
+    if (run->field == OWF_FIELD_SEQ) {               /* 1.12.6: a number range, counted as ours are */
         owf_buf_puts(out, " text:name=\"");
         owf_buf_puts_xml(out, run->href ? run->href : "");
         owf_buf_puts(out, "\" text:formula=\"ooow:");
@@ -820,7 +820,13 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
             continue;
         }
         t=char_style(s,&run->fmt);
-        kind = run->kind == OWF_RUN_FRAME || run->kind == OWF_RUN_IMAGE ? 0 : change_kind(doc, run->revision);
+        kind = change_kind(doc, run->revision);      /* 1.12: pictures too */
+        if (run->kind == OWF_RUN_FRAME && kind) {
+            /* 1.12: a frame's change is saved accepted (owf_export_file reports it): a deleted frame is left
+             * out, an inserted one is the document's */
+            if (kind == OWF_REV_DELETE) continue;
+            kind = 0;
+        }
         if (kind == OWF_REV_DELETE) {
             /* 1.5: deleted text: in the deletion's region (written accepted when there is none: left out) */
             if (tk) {
@@ -911,7 +917,9 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
             section_open=1;
         }
         if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
-            while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
+            while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];
+                if(change_kind(doc,p->row_revision)==OWF_REV_DELETE){++i;continue;}   /* 1.12: saved accepted */
+                if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
             if(row>=0)owf_buf_puts(out,"</table:table-row>");
             owf_buf_puts(out,"</table:table>");
         }else{
@@ -1119,7 +1127,7 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
         }
     }
     owf_buf_puts(out, "</office:automatic-styles><office:body><office:text>");
-    put_sequence_decls(out, doc);                    /* 1.12.4 */
+    put_sequence_decls(out, doc);                    /* 1.12.6 */
     if (doc->nuserfields) {                          /* 1.7: the user fields */
         int k;
         owf_buf_puts(out, "<text:user-field-decls>");

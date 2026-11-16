@@ -46,8 +46,11 @@ int odg_rexx_command(odg_rexx *rx, const char *command, char *result, size_t siz
 /* The file a name's extension asks for: ODG_FILE_SVG for .svg, ODG_FILE_PNG for .png (the page drawn, with the
  * diagram inside, so it opens again), ODG_FILE_PDF for .pdf (every page; EXPORT only, as a PDF doesn't open
  * again), ODG_FILE_ILBM for .iff or .ilbm (the page drawn; EXPORT only, as an ILBM holds no diagram), ODG_FILE_EPS
- * for .eps, .epsf or .ps (the page; EXPORT only, as a PDF), else ODG_FILE_DRAWIO. */
-enum { ODG_FILE_DRAWIO, ODG_FILE_SVG, ODG_FILE_PNG, ODG_FILE_PDF, ODG_FILE_ILBM, ODG_FILE_EPS };
+ * for .eps, .epsf or .ps (the page; EXPORT only, as a PDF), ODG_FILE_MERMAID for .mmd or .mermaid and ODG_FILE_DOT
+ * for .dot or .gv, ODG_FILE_GRAPHML for .graphml (the page as a graph to lay out again; EXPORT only),
+ * ODG_FILE_EXCALIDRAW for .excalidraw (the page as an Excalidraw scene; EXPORT only), else ODG_FILE_DRAWIO. */
+enum { ODG_FILE_DRAWIO, ODG_FILE_SVG, ODG_FILE_PNG, ODG_FILE_PDF, ODG_FILE_ILBM, ODG_FILE_EPS, ODG_FILE_MERMAID,
+       ODG_FILE_DOT, ODG_FILE_GRAPHML, ODG_FILE_EXCALIDRAW };
 int odg_rexx_format(const char *file);
 
 #endif
