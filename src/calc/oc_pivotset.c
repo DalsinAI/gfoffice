@@ -1,6 +1,6 @@
 /*
  * GFOpenCalc's portable core: the active sheet's pivot table changed by a
- * line of words, as ARexx's PIVOTSET and the window give them: a field's
+ * line of words, as ARexx's PIVOTSET and the layout window give them: a field's
  * items sorted, single items hidden or shown again, a field's numbers or
  * dates grouped, items put together by hand under a name, and how a data
  * field's values are shown. Fields are named by their heading (case aside)
@@ -71,6 +71,10 @@ int oc_core_pivot_field(const oc_core *core, const owf_pivotdef *def, const char
     if (!core || !def || !name || !*name)
         return -1;
     n = def->source.last_col - def->source.first_col + 1u;
+    if (name[0] == '#') {                          /* "#2": the number only, never a heading */
+        number = strtoul(name + 1, &end, 10);
+        return name[1] && !*end && number >= 1 && number <= n ? (int)number - 1 : -1;
+    }
     for (i = 0; i < n; i++) {
         oc_core_pivot_heading(core, def, i, heading, sizeof heading);
         if (same_word(heading, name))
@@ -107,18 +111,15 @@ static int number_word(const char *s, double *v)
     return end != s && !*end;
 }
 
-int oc_core_pivot_command(oc_core *core, const char *text, char *out, size_t size)
+/* The words applied to def, which is not laid out. */
+static int apply_words(const oc_core *core, owf_pivotdef *defp, const char *text, char *out, size_t size)
 {
     char w[WORDS][WORD];
-    owf_pivotdef def;
     int n, field = -1, k;
-    if (out && size)
-        out[0] = 0;
-    if (!core || !text)
-        return OWF_ERR_FORMAT;
-    if (!oc_core_pivot_get(core, &def))
-        return why(out, size, OWF_ERR_UNSUPPORTED, "The active sheet has no pivot table.");
+#define def (*defp)
     n = split_words(text, w);
+    if (n < 0)
+        return why(out, size, OWF_ERR_FORMAT, "Too many words, or one over 127 bytes: up to 30 items at a time.");
     if (n < 2)
         return why(out, size, OWF_ERR_FORMAT, "SORT, HIDE, SHOW, GROUP, NAME, UNNAME or SHOWAS, then a field.");
     if (!same_word(w[0], "SHOWAS") && (field = oc_core_pivot_field(core, &def, w[1])) < 0)
@@ -220,10 +221,156 @@ int oc_core_pivot_command(oc_core *core, const char *text, char *out, size_t siz
     } else {
         return why(out, size, OWF_ERR_FORMAT, "SORT, HIDE, SHOW, GROUP, NAME, UNNAME or SHOWAS, then a field.");
     }
+#undef def
+    return OWF_OK;
+}
+
+int oc_core_pivot_words(const oc_core *core, owf_pivotdef *def, const char *text, char *out, size_t size)
+{
+    owf_pivotdef work;
+    int rc;
+    if (out && size)
+        out[0] = 0;
+    if (!core || !def || !text)
+        return OWF_ERR_FORMAT;
+    work = *def;                               /* all or nothing */
+    rc = apply_words(core, &work, text, out, size);
+    if (rc == OWF_OK)
+        *def = work;
+    return rc;
+}
+
+int oc_core_pivot_command(oc_core *core, const char *text, char *out, size_t size)
+{
+    owf_pivotdef def;
+    int k;
+    if (out && size)
+        out[0] = 0;
+    if (!core || !text)
+        return OWF_ERR_FORMAT;
+    if (!oc_core_pivot_get(core, &def))
+        return why(out, size, OWF_ERR_UNSUPPORTED, "The active sheet has no pivot table.");
+    if ((k = oc_core_pivot_words(core, &def, text, out, size)) != OWF_OK)
+        return k;
     k = oc_core_pivot_set_layout(core, &def);
     if (k == OWF_ERR_UNSUPPORTED)
         return why(out, size, k, "The pivot table would be too large.");
     if (k == OWF_ERR_FORMAT)
         return why(out, size, k, "The pivot table's source or fields no longer fit (Refresh it first).");
     return k;
+}
+
+/* A word as split_words reads it back: in "double quotes" (with "" for ") when it has a space, a quote or
+   nothing. Returns the length it would have; out is cut, ended, at size. */
+static size_t put_word(char *out, size_t size, size_t at, const char *word)
+{
+    int quote = !*word || strpbrk(word, " \t\"") != NULL;
+    const char *p;
+#define PUT(c) do { if (at + 1 < size) out[at] = (c); at++; } while (0)
+    if (at)
+        PUT(' ');
+    if (quote)
+        PUT('"');
+    for (p = word; *p; p++) {
+        if (*p == '"')
+            PUT('"');
+        PUT(*p);
+    }
+    if (quote)
+        PUT('"');
+#undef PUT
+    if (size)
+        out[at < size ? at : size - 1] = 0;
+    return at;
+}
+
+static void number_text(double v, char *out, size_t size)
+{
+    snprintf(out, size, "%.15g", v);
+}
+
+int oc_core_pivot_field_words(const owf_pivotdef *def, unsigned field, int what, char *out, size_t size)
+{
+    size_t at = 0;
+    unsigned i;
+    if (!out || !size)
+        return 0;
+    out[0] = 0;
+    if (!def)
+        return 0;
+    if (what == OC_PIVOT_WORDS_GROUP) {
+        const owf_pivot_group *g = owf_pivot_group_of(def, field);
+        char a[40], b[40], c[40];
+        if (!g)
+            return 1;
+        switch (g->by) {
+        case OWF_PIVOT_GROUP_YEARS: at = put_word(out, size, 0, "YEARS"); break;
+        case OWF_PIVOT_GROUP_QUARTERS: at = put_word(out, size, 0, "QUARTERS"); break;
+        case OWF_PIVOT_GROUP_MONTHS: at = put_word(out, size, 0, "MONTHS"); break;
+        case OWF_PIVOT_GROUP_RANGE:
+            number_text(g->start, a, sizeof a);
+            number_text(g->end, b, sizeof b);
+            number_text(g->step, c, sizeof c);
+            at = put_word(out, size, put_word(out, size, put_word(out, size, 0, a), b), c);
+            break;
+        default: break;
+        }
+    } else if (what == OC_PIVOT_WORDS_HIDDEN) {
+        for (i = 0; i < def->nhide; i++) {
+            char item[OWF_PIVOT_ITEM + 8];
+            if (def->hide[i].field != field)
+                continue;
+            if (def->hide[i].kind == OWF_PIVOT_BLANK)
+                snprintf(item, sizeof item, "(blank)");
+            else
+                owf_pivot_item_text(&def->hide[i], item, sizeof item);
+            at = put_word(out, size, at, item);
+        }
+    } else
+        return 0;
+    return at < size;
+}
+
+int oc_core_pivot_field_choices(const oc_core *core, owf_pivotdef *def, unsigned field, int sort, int show,
+                                const char *group, const char *hidden, char *out, size_t size)
+{
+    static const char *const sorts[] = { "SOURCE", "ASCENDING", "DESCENDING" };
+    static const char *const shows[] = { "NORMAL", "ROW", "COLUMN", "TOTAL", "INDEX" };
+    owf_pivotdef work;
+    char line[WORDS * WORD + 64], had[WORDS * WORD];
+    unsigned k;
+    int rc;
+    if (out && size)
+        out[0] = 0;
+    if (!core || !def || field > def->source.last_col - def->source.first_col)
+        return OWF_ERR_FORMAT;
+    work = *def;
+#define RUN(...) do { snprintf(line, sizeof line, __VA_ARGS__); \
+                      if ((rc = apply_words(core, &work, line, out, size)) != OWF_OK) return rc; } while (0)
+    if (sort >= OWF_PIVOT_SORT_SOURCE && sort <= OWF_PIVOT_SORT_DESCENDING && sort != owf_pivot_sort_of(&work, field))
+        RUN("SORT #%u %s", field + 1, sorts[sort]);
+    if (group) {
+        oc_core_pivot_field_words(&work, field, OC_PIVOT_WORDS_GROUP, had, sizeof had);
+        while (*group == ' ')
+            group++;
+        if (strcmp(had, group))
+            RUN("GROUP #%u %s", field + 1, *group ? group : "NONE");
+    }
+    if (hidden) {
+        oc_core_pivot_field_words(&work, field, OC_PIVOT_WORDS_HIDDEN, had, sizeof had);
+        while (*hidden == ' ')
+            hidden++;
+        if (strcmp(had, hidden)) {
+            RUN("SHOW #%u ALL", field + 1);
+            if (*hidden)
+                RUN("HIDE #%u %s", field + 1, hidden);
+        }
+    }
+    if (show >= OWF_PIVOT_SHOW_NORMAL && show <= OWF_PIVOT_SHOW_LAST)
+        for (k = 0; k < work.ndata; k++)
+            if (work.data[k].field == field && work.data[k].show != show)
+                RUN("SHOWAS %u %s", k + 1, shows[show]);
+#undef RUN
+    *def = work;
+    return OWF_OK;
 }
