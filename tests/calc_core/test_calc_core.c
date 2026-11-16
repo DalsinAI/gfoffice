@@ -5768,6 +5768,8 @@ static void test_edit_links(void)
     CHECK(!oc_link_path("https://example.org/r.xlsx", "Work:", path, sizeof path));
     CHECK(!oc_link_path("Rates.xlsx", "Work:Books", path, 8));
     CHECK(!oc_link_path("", NULL, path, sizeof path));
+    CHECK(!oc_link_path("file://server/share/R.xlsx", NULL, path, sizeof path));   /* another computer's */
+    CHECK(!oc_link_path("R%00.xlsx", "Work:", path, sizeof path));
     /* the book: its link with the last values (Q1!A1 2), a sheet the file does not have (Old!A1 1) */
     CHECK(oc_core_link_count(core) == 0 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_ERR_UNSUPPORTED);
     eb = owf_book_add_extbook(oc_core_book(core), "calc-core-link-src.xlsx", NULL);

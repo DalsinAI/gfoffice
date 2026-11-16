@@ -4722,7 +4722,7 @@ static void do_edit_links(void)
         oc_core_link(core, i, &name, &target, &ks);
         to_latin1(name, strlen(name), a, sizeof a);
         to_latin1(target, strlen(target), b, sizeof b);
-        snprintf(line, sizeof line, "%d. %s (%s, %d sheet%s)\n", i + 1, a, b, ks, ks == 1 ? "" : "s");
+        snprintf(line, sizeof line, "%d. %.180s (%.180s, %d sheet%s)\n", i + 1, a, b, ks, ks == 1 ? "" : "s");
         at += (size_t)snprintf(text + at, sizeof text - at, "%s", line);
     }
     pick = ask_window("Edit Links", text, "Update All|Update One...|Close");
