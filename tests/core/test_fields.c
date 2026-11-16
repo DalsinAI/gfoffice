@@ -675,7 +675,9 @@ static void test_if(void)
               owf_if_holds("abc", "=", "*") && owf_if_holds("", "=", "*") && !owf_if_holds("abc", "=", "a*d"),
               "Word's * and ?");
         CHECK(owf_if_holds("nan", "=", "nan") && owf_if_holds("inf", "=", "inf") && !owf_if_holds("0x10", "=", "16") &&
-              owf_if_holds("1e1", "=", "10") && owf_if_holds("-2.5", "<", "1"), "numbers and words");
+              owf_if_holds("010", "=", "10.00") && owf_if_holds("-2.5", "<", "1") && owf_if_holds("-2.5", "<", "-2.25") &&
+              owf_if_holds("1.05", "<", "1.5") && owf_if_holds("100", ">", "99") && owf_if_holds("-0", "=", "0") &&
+              !owf_if_holds("1e1", "=", "10"), "numbers and words");
     }
     for (k = 0; k < 2; ++k) {
         const owf_format *f = owf_format_named(fmts[k]);

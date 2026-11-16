@@ -11,7 +11,6 @@
 #define OWF_IFFORM_H
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -131,32 +130,58 @@ static inline int owf_if_wild(const char *s, const char *p)
     return !*p;
 }
 
-/* A number as a comparison takes one: digits with a sign, a point and an exponent (not strtod's nan, inf or
- * hex, Budgie) */
-static inline int owf_if_number(const char *s, double *v)
+/* A number as a comparison takes one: a sign, digits and a decimal point (not strtod's nan, inf, hex or
+ * exponents, Budgie on #376). Compared digit by digit, with no floating point: some of the programs linking
+ * this (OWConvert's no-maths build) have none. *cmp: -1, 0 or 1; 0 when either isn't a number. */
+static inline int owf_if_number_parts(const char *s, int *neg, const char **ip, size_t *in, const char **fp, size_t *fn)
 {
     const char *p = s;
-    char *end;
-    int digits = 0;
-    if (*p == '+' || *p == '-') ++p;
-    for (; *p; ++p) {
-        if (*p >= '0' && *p <= '9') digits = 1;
-        else if (*p != '.' && *p != 'e' && *p != 'E' && *p != '+' && *p != '-') return 0;
+    *neg = 0;
+    if (*p == '+' || *p == '-') *neg = *p++ == '-';
+    *ip = p;
+    while (*p >= '0' && *p <= '9') ++p;
+    *in = (size_t)(p - *ip);
+    *fp = p;
+    *fn = 0;
+    if (*p == '.') {
+        *fp = ++p;
+        while (*p >= '0' && *p <= '9') ++p;
+        *fn = (size_t)(p - *fp);
     }
-    if (!digits) return 0;
-    *v = strtod(s, &end);
-    return !*end;
+    if (*p || (!*in && !*fn)) return 0;
+    while (*in && **ip == '0') { ++*ip; --*in; }  /* 007 is 7; 2.50 is 2.5 */
+    while (*fn && (*fp)[*fn - 1] == '0') --*fn;
+    if (!*in && !*fn) *neg = 0;                      /* -0 is 0 */
+    return 1;
+}
+
+static inline int owf_if_numbers(const char *a, const char *b, int *cmp)
+{
+    int na, nb, c = 0;
+    const char *ia, *ib, *fa, *fb;
+    size_t la, lb, ma, mb, k;
+    if (!owf_if_number_parts(a, &na, &ia, &la, &fa, &ma) || !owf_if_number_parts(b, &nb, &ib, &lb, &fb, &mb))
+        return 0;
+    if (na != nb) { *cmp = na ? -1 : 1; return 1; }
+    if (la != lb) c = la < lb ? -1 : 1;
+    for (k = 0; !c && k < la; ++k)
+        if (ia[k] != ib[k]) c = ia[k] < ib[k] ? -1 : 1;
+    for (k = 0; !c && (k < ma || k < mb); ++k) {
+        char x = k < ma ? fa[k] : '0', y = k < mb ? fb[k] : '0';
+        if (x != y) c = x < y ? -1 : 1;
+    }
+    *cmp = na ? -c : c;
+    return 1;
 }
 
 /* Whether the comparison holds between the operands' values: numbers as numbers, else text; = and <> take
  * Word's * and ? in the second */
 static inline int owf_if_holds(const char *a, const char *op, const char *b)
 {
-    double x = 0, y = 0;
-    int c, numbers = owf_if_number(a, &x) && owf_if_number(b, &y);
-    if (!strcmp(op, "=")) return numbers ? x == y : owf_if_wild(a, b);
-    if (!strcmp(op, "<>")) return numbers ? x != y : !owf_if_wild(a, b);
-    c = numbers ? (x > y) - (x < y) : strcmp(a, b);
+    int c, numbers = owf_if_numbers(a, b, &c);
+    if (!strcmp(op, "=")) return numbers ? c == 0 : owf_if_wild(a, b);
+    if (!strcmp(op, "<>")) return numbers ? c != 0 : !owf_if_wild(a, b);
+    if (!numbers) c = strcmp(a, b);
     if (!strcmp(op, "<")) return c < 0;
     if (!strcmp(op, ">")) return c > 0;
     if (!strcmp(op, "<=")) return c <= 0;

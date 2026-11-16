@@ -614,7 +614,7 @@ static void put_sequence_decls(owf_buf *out, const owf_doc *doc)
  * text quoted; 0 for one ODF can't name (a merge field, a reference) */
 static int odf_operand(owf_buf *out, const char *v, int field)
 {
-    char *end;
+    int cmp;
     if (field) {
         const char *name = v;
         size_t n;
@@ -628,7 +628,7 @@ static int odf_operand(owf_buf *out, const char *v, int field)
         owf_buf_put_xml(out, name, n);
         return 1;
     }
-    if (*v && (strtod(v, &end), !*end)) { owf_buf_puts_xml(out, v); return 1; }
+    if (owf_if_numbers(v, "0", &cmp)) { owf_buf_puts_xml(out, v); return 1; }   /* a number as it is */
     owf_buf_puts(out, "&quot;");
     owf_buf_puts_xml(out, v);
     owf_buf_puts(out, "&quot;");
