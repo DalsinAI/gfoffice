@@ -500,8 +500,41 @@ static void put_box_label(owf_buf *b, const owf_dcell *c, const owf_dnum box[4],
     put_label(b, c->value, c->style, x, y, anchor, valign, "none");
 }
 
+/* A shape from the shapes' outlines (owf_dshape.c): each part a path, filled and drawn round as its flags say. */
+static void put_shape(owf_buf *b, const char *style, const owf_dshape *sh)
+{
+    char buf[40];
+    int k, i;
+    for (k = 0; k < sh->nparts; k++) {
+        const owf_dshape_part *pt = &sh->parts[k];
+        owf_buf_puts(b, "<path d=\"");
+        for (i = 0; i < pt->n; i++) {
+            owf_buf_puts(b, i ? " L " : "M ");
+            put_num(b, sh->points[pt->first + i].x);
+            owf_buf_putc(b, ' ');
+            put_num(b, sh->points[pt->first + i].y);
+        }
+        if (pt->flags & OWF_DSHAPE_CLOSED)
+            owf_buf_puts(b, " Z");
+        owf_buf_putc(b, '"');
+        if (pt->flags & OWF_DSHAPE_FILL)
+            put_paint(b, style, "#ffffff");
+        else {
+            owf_dnum width = owf_dnum_parse(style_or(style, "strokeWidth", buf, sizeof buf, "1"));
+            owf_buf_puts(b, " fill=\"none\"");
+            put_attr_text(b, "stroke", colour(style, "strokeColor", buf, sizeof buf, "#000000"));
+            if (width != 100)
+                put_attr_num(b, "stroke-width", width);
+            if (owf_dstyle_get(style, "dashed", buf, sizeof buf) && !strcmp(buf, "1"))
+                owf_buf_puts(b, " stroke-dasharray=\"3 3\"");
+        }
+        owf_buf_puts(b, " />\n");
+    }
+}
+
 static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
 {
+    static owf_dshape sh;                /* 1.5 KB: off the Amiga's small stack; one writer runs at a time */
     owf_dnum box[4], header = 0;
     char buf[40];
     const char *style = c->style;
@@ -511,6 +544,8 @@ static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
         return;
     if (bare)
         ;
+    else if (owf_dshape_outline(style, box, &sh))
+        put_shape(b, style, &sh);
     else if (owf_dstyle_is(style, "ellipse")) {
         owf_buf_puts(b, "<ellipse");
         put_attr_num(b, "cx", box[0] + box[2] / 2);
